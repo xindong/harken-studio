@@ -1,0 +1,38 @@
+{
+  "records": {
+    "bus": {
+      "engine": "PackBusEntry",
+      "studio": "PackBusEntry"
+    },
+    "busSend": {
+      "engine": "PackBusSendEntry",
+      "studio": "PackBusSendEntry"
+    },
+    "busDefinitionSnapshotHeader": {
+      "engine": "PackBusDefinitionSnapshotHeader",
+      "studio": "PackBusDefinitionSnapshotHeader"
+    },
+    "busDefinitionBus": {
+      "engine": "PackBusDefinitionBus",
+      "studio": "PackBusDefinitionBus"
+    },
+    "busDefinitionSend": {
+      "engine": "PackBusDefinitionSend",
+      "studio": "PackBusDefinitionSend"
+    },
+    "busDefinitionDownmix": {
+      "engine": "PackBusDefinitionDownmix",
+      "studio": "PackBusDefinitionDownmix"
+    },
+    "busDefinitionCoefficient": {
+      "engine": "float",
+      "studio": "float"
+    }
+  },
+  "members": {
+    "busDefinitionCoefficient.value": ""
+  },
+  "setters": [
+    "busDefinitionSnapshotHeader.checksum"
+  ]
+}

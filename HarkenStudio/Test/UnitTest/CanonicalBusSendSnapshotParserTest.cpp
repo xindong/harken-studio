@@ -31,7 +31,7 @@ std::vector<std::uint8_t> MakeBusSendSnapshotPack(
     auto& snapshot = image.busDefinitionSnapshotHeader;
     snapshot.schemaVersion = 2;
     snapshot.storageModelVersion = 2;
-    snapshot.headerBytes = harken::kPackBusDefinitionSnapshotV2HeaderBytes;
+    snapshot.headerBytes = harken::kPackBusDefinitionSnapshotHeaderBytes;
     snapshot.publicationCapabilityVintage = capability;
     snapshot.profileVintage = 1;
     snapshot.renderSampleRateHz = 48000;
@@ -66,10 +66,10 @@ std::vector<std::uint8_t> MakeBusSendSnapshotPack(
     snapshot.sendCount = static_cast<std::uint32_t>(sends.size());
     snapshot.downmixCount = 3;
     snapshot.coefficientCount = 192;
-    snapshot.busRowBytes = harken::kPackBusDefinitionBusV2RowBytes;
-    snapshot.sendRowBytes = harken::kPackBusDefinitionSendV2RowBytes;
-    snapshot.downmixRowBytes = harken::kPackBusDefinitionDownmixV2RowBytes;
-    snapshot.coefficientRowBytes = harken::kPackBusDefinitionCoefficientRowBytes;
+    snapshot.busRowBytes = harken::kPackBusDefinitionBusBytes;
+    snapshot.sendRowBytes = harken::kPackBusDefinitionSendBytes;
+    snapshot.downmixRowBytes = harken::kPackBusDefinitionDownmixBytes;
+    snapshot.coefficientRowBytes = harken::kPackBusDefinitionCoefficientBytes;
     snapshot.contentGeneration = harken::CanonicalVolumeBusFingerprint(image);
     snapshot.publishedBusFingerprint = snapshot.contentGeneration;
     snapshot.busOffset = snapshot.headerBytes;
@@ -84,22 +84,22 @@ std::vector<std::uint8_t> MakeBusSendSnapshotPack(
     std::vector<std::uint8_t> payload(
         static_cast<std::size_t>(snapshot.headerBytes + snapshot.payloadBytes), 0);
     for (std::uint32_t i = 0; i < snapshot.busCount; ++i) {
-        harken::SerializePackBusDefinitionBusV2(image.busDefinitionBusesV2[i],
+        harken::SerializePackBusDefinitionBus(image.busDefinitionBusesV2[i],
             payload.data() + snapshot.busOffset + i * snapshot.busRowBytes);
-        harken::SerializePackBusDefinitionDownmixV2(image.busDefinitionDownmixesV2[i],
+        harken::SerializePackBusDefinitionDownmix(image.busDefinitionDownmixesV2[i],
             payload.data() + snapshot.downmixOffset + i * snapshot.downmixRowBytes);
     }
     for (std::uint32_t i = 0; i < snapshot.sendCount; ++i) {
-        harken::SerializePackBusDefinitionSendV2(image.busDefinitionSendsV2[i],
+        harken::SerializePackBusDefinitionSend(image.busDefinitionSendsV2[i],
             payload.data() + snapshot.sendOffset + i * snapshot.sendRowBytes);
     }
     for (std::uint32_t i = 0; i < snapshot.coefficientCount; ++i) {
         harken::StoreLEF32(payload.data() + snapshot.coefficientOffset +
             i * snapshot.coefficientRowBytes, image.busDefinitionCoefficients[i]);
     }
-    harken::SerializePackBusDefinitionSnapshotHeaderV2(snapshot, payload.data());
+    harken::SerializePackBusDefinitionSnapshotHeader(snapshot, payload.data());
     snapshot.checksum = harken::Fnv1a64(payload.data(), payload.size());
-    harken::SerializePackBusDefinitionSnapshotHeaderV2(snapshot, payload.data());
+    harken::SerializePackBusDefinitionSnapshotHeader(snapshot, payload.data());
 
     harken::PackRequirementBlock requirement;
     requirement.schemaVersion = 2;
@@ -138,7 +138,7 @@ std::vector<std::uint8_t> MakeBusSendSnapshotPack(
         bytes.data() + directoryOffset);
     harken::PackV2DirectoryEntry snapshotEntry;
     snapshotEntry.kind = harken::kPackEntryKindBusDefinitionSnapshot;
-    snapshotEntry.vintage = harken::kPackBusDefinitionSnapshotVintage2;
+    snapshotEntry.vintage = harken::kPackBusDefinitionSnapshotVintage;
     snapshotEntry.relationOrdinal = 1;
     snapshotEntry.offset = snapshotOffset;
     snapshotEntry.size = payload.size();

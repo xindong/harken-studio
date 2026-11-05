@@ -602,7 +602,7 @@ void expectInitHasVolumeOnlyKind24(const QString& path)
     const auto& snapshot = image.busDefinitionSnapshotHeader;
     EXPECT_EQ(snapshot.schemaVersion, 2u) << path.toStdString();
     EXPECT_EQ(snapshot.storageModelVersion, 2u) << path.toStdString();
-    EXPECT_EQ(snapshot.headerBytes, harken::kPackBusDefinitionSnapshotV2HeaderBytes)
+    EXPECT_EQ(snapshot.headerBytes, harken::kPackBusDefinitionSnapshotHeaderBytes)
         << path.toStdString();
     EXPECT_EQ(snapshot.publicationCapabilityVintage, 4u) << path.toStdString();
     const auto expected = harken::SnapshotBusTriple(snapshot);

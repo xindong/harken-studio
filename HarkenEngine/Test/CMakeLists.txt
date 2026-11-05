@@ -657,6 +657,13 @@ _harken_add_python_check_test(effect_registry_manifest_check
 _harken_add_python_check_test(binding_generated_check
     "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Tooling/Binding/gen_binding.py"
     --check)
+_harken_add_python_check_test(pack_wire_generated_check
+    "${CMAKE_SOURCE_DIR}/.scripts/pack_wire_codegen.py"
+    --check)
+_harken_add_python_check_test(pack_wire_codegen_unit
+    "${CMAKE_SOURCE_DIR}/.scripts/tests/test_pack_wire_codegen.py")
+_harken_add_python_check_test(schema_archive_unit
+    "${CMAKE_SOURCE_DIR}/.scripts/tests/test_schema_archive.py")
 _harken_add_python_check_test(managed_generation_policy_check
     "${CMAKE_SOURCE_DIR}/HarkenEngine/Test/UnitTest/test_managed_generation_policy.py")
 _harken_add_python_check_test(remote_wire_generated_check

@@ -172,7 +172,7 @@ inline bool WriteGamePacks(const std::filesystem::path& directory, GameFingerpri
                   RequirementPayload(kInitPackStableId, 1, 1, 0, initBodyBytes));
     init.AddEntry(kPackEntryKindCanonicalDefinitionPartition, kInitPackStableId,
                   std::move(initPartition));
-    AppendNeutralMasterSnapshotV1(&init);
+    AppendNeutralMasterSnapshot(&init);
     return WriteFile(directory / "Init.pack", init.Build()) &&
            WriteFile(directory / "Content.pack", contentBytes);
 }

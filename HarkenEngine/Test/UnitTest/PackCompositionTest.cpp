@@ -138,6 +138,17 @@ public:
         return entries_.size() - 1;
     }
 
+    std::size_t AddEntry(std::uint32_t kind, VnObjectId id,
+                         std::vector<std::uint8_t> payload, std::uint32_t vintage) {
+        Entry entry;
+        entry.kind = kind;
+        entry.vintage = vintage;
+        entry.id = id;
+        entry.payload = std::move(payload);
+        entries_.push_back(std::move(entry));
+        return entries_.size() - 1;
+    }
+
     std::size_t AddMedia(VnObjectId soundId, std::vector<float> planar,
                          std::uint16_t channelCount = 1,
                          std::uint32_t sampleRate = 48000,
@@ -469,7 +480,7 @@ std::vector<std::uint8_t> BuildInitCatalog(
     const std::vector<PackInitCatalogRow>& rows,
     const std::vector<std::uint64_t>& startup,
     const WorldCapacitySummaryV1& capacity = {}, std::uint32_t sendBus = 0,
-    const harkentest::packfoundation::RuntimeBusFixtureV1* busFixture = nullptr) {
+    const harkentest::packfoundation::RuntimeBusFixture* busFixture = nullptr) {
     constexpr std::uint64_t kInitId = 11;
     PackInitCatalogHeader header;
     header.schemaVersion = 1;
@@ -487,18 +498,9 @@ std::vector<std::uint8_t> BuildInitCatalog(
                                  &header.catalogBytes));
 
     const auto bus = busFixture != nullptr ? *busFixture : sendBus == 0
-        ? harkentest::packfoundation::DefaultRuntimeBusFixtureV1()
-        : harkentest::packfoundation::Bus2RuntimeBusFixtureV1();
+        ? harkentest::packfoundation::DefaultRuntimeBusFixture()
+        : harkentest::packfoundation::Bus2RuntimeBusFixture();
     ImageBuilder builder(kPackKindInit);
-    if (sendBus != 0) {
-        PackBusEntry bus{};
-        bus.busId = CanonicalSnapshotBusIdV1(sendBus);
-        bus.parentBusId = VN_BUS_MASTER;
-        std::vector<std::uint8_t> payload(kPackV6BusPayloadBytes);
-        SerializePackV6Bus(bus, payload.data());
-        builder.AddEntry(kPackEntryKindBus, sendBus, payload,
-                         kPackV2BusMixSchemaVintage);
-    }
     const std::size_t catalogIndex = builder.AddEntry(
         kPackEntryKindInitRoutingCatalog, 0,
         CatalogPayload(header, rows, startup));
@@ -507,7 +509,7 @@ std::vector<std::uint8_t> BuildInitCatalog(
                          kInitId, 1, 1, 0, 64, bus.triple));
     builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, kInitId,
                      EmptyPartitionPayload(kInitId, 1, capacity, bus.triple));
-    builder.AddEntry(kPackEntryKindBusDefinitionSnapshot, 1, bus.snapshot);
+    harkentest::packfoundation::AppendRuntimeBusFixture(&builder, bus);
     std::vector<std::uint8_t> bytes = builder.Build();
     const std::uint64_t catalogOffset = builder.PayloadOffset(catalogIndex);
     const std::uint64_t initHashField =
@@ -728,7 +730,7 @@ std::vector<std::uint8_t> BuildSingleIdentityInit(
     const char* locator = "ActionA.pack", VnObjectId playableId = harkentest::ObjectId(4510),
     VnObjectId additionalActionId = harkentest::ObjectId(0),
     const WorldCapacitySummaryV1& capacity = {}, std::uint32_t sendBus = 0,
-    const harkentest::packfoundation::RuntimeBusFixtureV1* busFixture = nullptr) {
+    const harkentest::packfoundation::RuntimeBusFixture* busFixture = nullptr) {
     PackInitCatalogRow initOwned;
     initOwned.stableId = harkentest::ObjectId(1001);
     initOwned.identityClass = kInitCatalogIdentityClassAction;
@@ -1538,7 +1540,7 @@ std::vector<std::uint8_t> BuildInitWithoutCatalog() {
                      RequirementPayload(kInitId, 1, 1));
     builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, kInitId,
                      EmptyPartitionPayload(kInitId, 1));
-    harkentest::packfoundation::AppendNeutralMasterSnapshotV1(&builder);
+    harkentest::packfoundation::AppendNeutralMasterSnapshot(&builder);
     return builder.Build();
 }
 
@@ -27820,7 +27822,7 @@ std::vector<std::uint8_t> BuildInitWithVariableOverlay(
         EXPECT_TRUE(EncodeVariableNameCatalog(*names, &payload));
         builder.AddEntry(kPackEntryKindVariableNameCatalog, 0, std::move(payload));
     }
-    harkentest::packfoundation::AppendNeutralMasterSnapshotV1(&builder);
+    harkentest::packfoundation::AppendNeutralMasterSnapshot(&builder);
     if (emitOverlay) {
         builder.AddEntry(kPackEntryKindVariablePolicyOverlay, 0,
                          emptyOverlay
@@ -27865,7 +27867,7 @@ std::vector<std::uint8_t> BuildInitWithTwoVariables(
                      RequirementPayload(11, 1, 1));
     builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, 11,
                      WrapWorldPartition(11, 1, world, 2));
-    harkentest::packfoundation::AppendNeutralMasterSnapshotV1(&builder);
+    harkentest::packfoundation::AppendNeutralMasterSnapshot(&builder);
     builder.AddEntry(kPackEntryKindVariablePolicyOverlay, 0,
                      Kind26OverlayTwo(7, writersA, fingerprintA, 8, writersB,
                                       fingerprintB));
@@ -28318,8 +28320,8 @@ TEST_P(QueueBusQualification, ReplacementPreservesPlaybackAndReclaimsForReplay) 
             : BuildImmediateSequenceQueuePlayPack(22, 1, 7, actionId, rootId,
                   firstId, secondId, first, second, 1, MemoryScopeV1::Emitter,
                   0, busId);
-    const auto makeInit = [&](float sendDb, VnBusId target = VN_BUS_MASTER) {
-        const auto bus = harkentest::packfoundation::MasterSendRuntimeBusFixtureV1(
+    const auto makeInit = [&](float sendDb, VnBusId target = VN_OBJECT_ID(0, 3)) {
+        const auto bus = harkentest::packfoundation::MasterSendRuntimeBusFixture(
             sendDb, 1, target);
         return BuildSingleIdentityInit(Fnv1a64(content.data(), content.size()),
             actionId, "ActionA.pack", rootId, VnObjectId{}, {}, 0, &bus);
@@ -28409,6 +28411,7 @@ TEST_P(QueueBusQualification, ReplacementPreservesPlaybackAndReclaimsForReplay) 
             parentMemory.memoryScope = MemoryScopeV1::Global;
         }
         bool replaced = run != 0;
+        std::uint64_t sendSettleBlock = 0;
         bool refusalPending = false;
         bool refusalAudioChecked = false;
         bool stopRequested = false;
@@ -28521,6 +28524,12 @@ TEST_P(QueueBusQualification, ReplacementPreservesPlaybackAndReclaimsForReplay) 
                     // The zero-fade stop may include its one-block de-click tail.
                     ASSERT_LE(std::abs(left), std::abs(expected) + 1e-5f);
                     ASSERT_NEAR(left, right, 1e-5f);
+                } else if (before < sendSettleBlock) {
+                    const float priorSend = sample * gain(childDb - 3.0f) *
+                        (gain(-6.0f) + gain(-6.0f));
+                    ASSERT_GE(left, std::min(expected, priorSend) - 1e-5f);
+                    ASSERT_LE(left, std::max(expected, priorSend) + 1e-5f);
+                    ASSERT_NEAR(left, right, 1e-5f);
                 } else {
                     const float target = stopRequested ? 0.0f : expected;
                     ASSERT_NEAR(target, left, 1e-5f) << "block=" << block << " frame=" << frame;
@@ -28564,6 +28573,7 @@ TEST_P(QueueBusQualification, ReplacementPreservesPlaybackAndReclaimsForReplay) 
                 EXPECT_EQ(VN_OK, engine.packComposition.ValidateLease(originalLease));
                 ASSERT_EQ(VN_OK, Vn_SetBusVolume(busId, -12.0f, 0));
                 replaced = true;
+                sendSettleBlock = engine.mixer.BlocksRendered() + 16;
                 refusalPending = false;
                 positiveBlocks = negativeBlocks = 0;
             } else if (!replaced && positiveBlocks + negativeBlocks >= 2) {

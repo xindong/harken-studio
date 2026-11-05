@@ -397,11 +397,11 @@ std::vector<EntryPlacement> BuildEntryPlacements(
     }
     for (std::size_t i = 0; i < manifest.buses.size(); ++i) {
         place(harkenstudiobuild::kPackEntryKindBus, manifest.buses[i].id, i,
-              harkenstudiobuild::kPackV6BusPayloadBytes);
+              harkenstudiobuild::kPackBusBytes);
     }
     for (std::size_t i = 0; i < manifest.busSends.size(); ++i) {
         place(harkenstudiobuild::kPackEntryKindBusSend, {}, i,
-              harkenstudiobuild::kPackV2BusSendPayloadBytes);
+              harkenstudiobuild::kPackBusSendBytes);
     }
     for (std::size_t i = 0; i < manifest.attenuations.size(); ++i) {
         place(harkenstudiobuild::kPackEntryKindAttenuation,
@@ -480,7 +480,7 @@ bool SerializeEntryPayload(const Manifest& manifest,
         wire.parentBusId = bus.parent;
         wire.volume = bus.volume;
         wire.outputBusVolume = bus.outputBusVolume;
-        harkenstudiobuild::SerializePackV6Bus(wire, dst);
+        harkenstudiobuild::SerializePackBus(wire, dst);
         break;
     }
     case harkenstudiobuild::kPackEntryKindBusSend: {
@@ -490,7 +490,7 @@ bool SerializeEntryPayload(const Manifest& manifest,
         wire.fromBusId = send.from;
         wire.toBusId = send.to;
         wire.levelDb = send.levelDb;
-        harkenstudiobuild::SerializePackV2BusSend(wire, dst);
+        harkenstudiobuild::SerializePackBusSend(wire, dst);
         break;
     }
     case harkenstudiobuild::kPackEntryKindAttenuation: {
@@ -704,7 +704,9 @@ std::uint32_t EntryVintage(std::uint32_t kind) {
     if (dynamicDeploymentEntry) {
         return harkenstudiobuild::kPackV2DynamicSchemaVintage;
     } else if (kind == harkenstudiobuild::kPackEntryKindBus) {
-        return harkenstudiobuild::kPackV2BusMixSchemaVintage;
+        return harkenstudiobuild::kPackBusVintage;
+    } else if (kind == harkenstudiobuild::kPackEntryKindBusSend) {
+        return harkenstudiobuild::kPackBusSendVintage;
     } else if (kind == harkenstudiobuild::kPackEntryKindVoiceRecipe) {
         return harkenstudiobuild::kPackV2PlaybackRecipeSchemaVintage;
     } else if (kind == harkenstudiobuild::kPackEntryKindAttenuation) {

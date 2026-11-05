@@ -132,7 +132,7 @@ struct SignalPackProvider {
 
 std::vector<std::uint8_t> SignalContentPack(std::uint64_t revision, float sendDb) {
     using namespace harkentest::packfoundation;
-    const auto bus = Bus2RuntimeBusFixtureV1();
+    const auto bus = Bus2RuntimeBusFixture();
     SignalRelationV1 relation;
     relation.stableId = harkentest::ObjectId(1000);
     relation.source.stableId = VN_BUS_MASTER;

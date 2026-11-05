@@ -162,7 +162,7 @@ TEST(HostOptions, CompanionCaptureUsesPairedFilesAndRefusesPartialLanguageOrPubl
     ASSERT_TRUE(std::filesystem::create_directories(root / "English"));
     const auto project = harkentest::ObjectId(1);
     const auto action = harkentest::ObjectId(kActionBase);
-    const auto bus = DefaultRuntimeBusFixtureV1();
+    const auto bus = DefaultRuntimeBusFixture();
     const auto build = [&](bool init, const std::string& language) {
         const auto id = init ? kInitPackStableId :
             harken::CompanionActionPackId(kInitPackStableId, action, language);

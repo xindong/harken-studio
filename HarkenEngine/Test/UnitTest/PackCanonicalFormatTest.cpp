@@ -558,7 +558,7 @@ std::vector<std::uint8_t> BuildMinimalInit() {
                      std::move(requirement));
     builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, kInitId,
                      EmptyPartitionPayload(kInitId, 1));
-    harkentest::packfoundation::AppendNeutralMasterSnapshotV1(&builder);
+    harkentest::packfoundation::AppendNeutralMasterSnapshot(&builder);
     std::vector<std::uint8_t> bytes = builder.Build();
 
     const std::uint64_t catalogOffset = builder.PayloadOffset(catalogIndex);
@@ -649,7 +649,7 @@ std::vector<std::uint8_t> BuildInitWithTypedEntry(
     builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, kInitId,
                      EmptyPartitionPayload(kInitId, 1));
     if (kind != kPackEntryKindBusDefinitionSnapshot) {
-        harkentest::packfoundation::AppendNeutralMasterSnapshotV1(&builder);
+        harkentest::packfoundation::AppendNeutralMasterSnapshot(&builder);
     }
     builder.AddEntry(kind, id, std::move(payload), vintage);
     std::vector<std::uint8_t> bytes = builder.Build();
@@ -1165,11 +1165,11 @@ TEST(PackCanonicalFormat, RuntimeRefusesCanonicalEntryOnContentPack) {
 
 TEST(PackCanonicalFormat, IllegalLogicVintageIsIncompatible) {
     ImageBuilder builder(kPackKindInit);
-    std::vector<std::uint8_t> bus(kPackV2BusPayloadBytes);
+    std::vector<std::uint8_t> bus(kPackBusBytes);
     PackBusEntry busEntry;
     busEntry.busId = harkentest::ObjectId(10);
     busEntry.parentBusId = harkentest::ObjectId(1);
-    SerializePackV2Bus(busEntry, bus.data());
+    SerializePackBus(busEntry, bus.data());
     builder.AddEntry(kPackEntryKindBus, 10, std::move(bus), 3);
     const std::vector<std::uint8_t> bytes = builder.Build();
     PackCanonicalImage image;
@@ -1553,12 +1553,12 @@ TEST(PackCanonicalFormat, KindTenAndLegacyVariableKindsStayBadPack) {
 
 TEST(PackCanonicalFormat, ExistingResidentAndContentGoldensStillParse) {
     ImageBuilder resident(kPackKindResident);
-    std::vector<std::uint8_t> bus(kPackV2BusPayloadBytes);
+    std::vector<std::uint8_t> bus(kPackBusBytes);
     PackBusEntry busEntry;
     busEntry.busId = harkentest::ObjectId(10);
     busEntry.parentBusId = harkentest::ObjectId(1);
-    SerializePackV2Bus(busEntry, bus.data());
-    resident.AddEntry(kPackEntryKindBus, 10, std::move(bus), kPackV2SchemaVintage);
+    SerializePackBus(busEntry, bus.data());
+    resident.AddEntry(kPackEntryKindBus, 10, std::move(bus), kPackBusVintage);
     PackLogicImage image;
     const auto residentBytes = resident.Build();
     ASSERT_EQ(VN_OK, ParsePackV2Image(residentBytes.data(), residentBytes.size(),
@@ -1900,7 +1900,7 @@ TEST(PackCanonicalFormat, MixedCanonicalLayoutsAreIncompatible) {
 }
 
 TEST(PackCanonicalFormat, ParserAcceptsCanonicalBindingScopes) {
-    const auto bus = harkentest::packfoundation::DefaultRuntimeBusFixtureV1();
+    const auto bus = harkentest::packfoundation::DefaultRuntimeBusFixture();
     harkentest::packfoundation::ImageBuilder initBuilder(kPackKindInit);
     std::uint64_t initBodyBytes = 0;
     std::vector<std::uint8_t> initPartition =

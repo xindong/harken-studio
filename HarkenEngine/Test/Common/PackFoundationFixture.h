@@ -182,58 +182,78 @@ inline harken::CanonicalBusTriple DefaultFixtureBusTriple() {
     return harken::NeutralMasterSnapshotTriple();
 }
 
-inline std::vector<std::uint8_t> NeutralMasterSnapshotPayloadV1(
-    harken::CanonicalBusTriple triple = DefaultFixtureBusTriple()) {
-    return harken::NeutralMasterSnapshotPayload(triple);
-}
+using harken::NeutralMasterSnapshotPayload;
 
 template <typename Builder>
-inline void AppendNeutralMasterSnapshotV1(
+inline void AppendNeutralMasterSnapshot(
     Builder* builder,
     harken::CanonicalBusTriple triple = DefaultFixtureBusTriple()) {
     builder->AddEntry(harken::kPackEntryKindBusDefinitionSnapshot, 1,
-                      NeutralMasterSnapshotPayloadV1(triple));
+                      NeutralMasterSnapshotPayload(triple));
 }
 
-struct RuntimeBusFixtureV1 {
+struct RuntimeBusFixture {
     harken::CanonicalBusTriple triple{};
     std::vector<std::uint8_t> snapshot;
+    std::vector<harken::PackBusEntry> buses;
+    std::vector<harken::PackBusSendEntry> sends;
 };
 
-inline RuntimeBusFixtureV1 DefaultRuntimeBusFixtureV1() {
-    RuntimeBusFixtureV1 fixture;
+template <typename Builder>
+inline void AppendRuntimeBusFixture(Builder* builder, const RuntimeBusFixture& fixture) {
+    for (const auto& bus : fixture.buses) {
+        std::vector<std::uint8_t> payload(harken::kPackBusBytes);
+        harken::SerializePackBus(bus, payload.data());
+        builder->AddEntry(harken::kPackEntryKindBus, bus.busId, std::move(payload),
+                          harken::kPackBusVintage);
+    }
+    for (std::size_t i = 0; i < fixture.sends.size(); ++i) {
+        std::vector<std::uint8_t> payload(harken::kPackBusSendBytes);
+        harken::SerializePackBusSend(fixture.sends[i], payload.data());
+        builder->AddEntry(harken::kPackEntryKindBusSend, static_cast<std::uint64_t>(i),
+                          std::move(payload), harken::kPackBusSendVintage);
+    }
+    builder->AddEntry(harken::kPackEntryKindBusDefinitionSnapshot, 1, fixture.snapshot);
+}
+
+inline RuntimeBusFixture DefaultRuntimeBusFixture() {
+    RuntimeBusFixture fixture;
     fixture.triple = DefaultFixtureBusTriple();
-    fixture.snapshot = NeutralMasterSnapshotPayloadV1(fixture.triple);
+    fixture.snapshot = NeutralMasterSnapshotPayload(fixture.triple);
     return fixture;
 }
 
-inline RuntimeBusFixtureV1 MasterSendRuntimeBusFixtureV1(
+inline RuntimeBusFixture MasterSendRuntimeBusFixture(
     float levelDb, std::uint32_t sendRepeat = 1,
-    VnBusId targetBusId = VN_BUS_MASTER) {
+    VnBusId targetBusId = VN_OBJECT_ID(0, 3)) {
     const auto profile = DefaultFixtureBusTriple();
     constexpr std::uint64_t kHeader = harken::kPackBusDefinitionSnapshotHeaderBytes;
     constexpr std::uint64_t kBusOffset = kHeader;
     const std::uint64_t kSendOffset =
-        kBusOffset + 2u * harken::kPackBusDefinitionBusRowBytes;
+        kBusOffset + 3u * harken::kPackBusDefinitionBusBytes;
     const std::uint64_t kDownmixOffset =
         kSendOffset + static_cast<std::uint64_t>(sendRepeat) *
-                          harken::kPackBusDefinitionSendRowBytes;
+                          harken::kPackBusDefinitionSendBytes;
     const std::uint64_t kCoefficientOffset =
-        kDownmixOffset + 2u * harken::kPackBusDefinitionDownmixRowBytes;
+        kDownmixOffset + 3u * harken::kPackBusDefinitionDownmixBytes;
     harken::PackCanonicalImage image;
     image.hasBusDefinitionSnapshot = true;
     auto& header = image.busDefinitionSnapshotHeader;
-    header.schemaVersion = 1;
-    header.storageModelVersion = 1;
+    header.schemaVersion = 2;
+    header.storageModelVersion = 2;
     header.headerBytes = harken::kPackBusDefinitionSnapshotHeaderBytes;
-    header.publicationCapabilityVintage = 1;
+    header.busRowBytes = harken::kPackBusDefinitionBusBytes;
+    header.sendRowBytes = harken::kPackBusDefinitionSendBytes;
+    header.downmixRowBytes = harken::kPackBusDefinitionDownmixBytes;
+    header.coefficientRowBytes = harken::kPackBusDefinitionCoefficientBytes;
+    header.publicationCapabilityVintage = 4;
     header.contentGeneration = profile.busContentGeneration;
     header.compileTargetProfileFingerprint =
         profile.compileTargetProfileFingerprint;
-    header.busCount = 2;
+    header.busCount = 3;
     header.sendCount = sendRepeat;
-    header.downmixCount = 2;
-    header.coefficientCount = 128;
+    header.downmixCount = 3;
+    header.coefficientCount = 192;
     header.busOffset = kBusOffset;
     header.sendOffset = kSendOffset;
     header.effectOffset = kDownmixOffset;
@@ -242,80 +262,98 @@ inline RuntimeBusFixtureV1 MasterSendRuntimeBusFixtureV1(
     header.coefficientOffset = kCoefficientOffset;
     header.payloadBytes =
         (kCoefficientOffset - kHeader) +
-        (128u * harken::kPackBusDefinitionCoefficientRowBytes);
+        (192u * harken::kPackBusDefinitionCoefficientBytes);
     header.profileVintage = 1;
     header.renderSampleRateHz = 48000;
     header.mixLayout = VN_CHANNEL_LAYOUT_STEREO;
     header.deviceLayout = VN_CHANNEL_LAYOUT_STEREO;
     header.runtimeCapabilityMask = harken::busfingerprint::kRequiredBusCapabilityMaskV1;
-    harken::PackBusDefinitionBusV1 master{};
-    master.busId = harken::CanonicalSnapshotPackedBusIdV1(VN_BUS_MASTER);
+    harken::PackBusDefinitionBus master{};
+    master.busId = VN_BUS_MASTER;
     master.faderAfterSlot = harken::busfingerprint::kNeutralFaderAfterSlotV1;
     master.outputLayout = VN_CHANNEL_LAYOUT_STEREO;
     master.downmixCount = 1;
     master.downmixFirst = 0;
-    image.busDefinitionBuses.push_back(master);
-    harken::PackBusDefinitionBusV1 bus2{};
-    bus2.busId = harken::CanonicalSnapshotPackedBusIdV1(VN_OBJECT_ID(0, 2));
-    bus2.parentId = harken::CanonicalSnapshotPackedBusIdV1(VN_BUS_MASTER);
+    image.busDefinitionBusesV2.push_back(master);
+    harken::PackBusDefinitionBus bus2{};
+    bus2.busId = VN_OBJECT_ID(0, 2);
+    bus2.parentId = VN_BUS_MASTER;
     bus2.faderAfterSlot = harken::busfingerprint::kNeutralFaderAfterSlotV1;
     bus2.outputLayout = VN_CHANNEL_LAYOUT_STEREO;
     bus2.downmixCount = 1;
     bus2.downmixFirst = 1;
-    image.busDefinitionBuses.push_back(bus2);
-    harken::PackBusDefinitionSendV1 send{};
-    send.source = harken::CanonicalSnapshotPackedBusIdV1(VN_OBJECT_ID(0, 2));
-    send.target = harken::CanonicalSnapshotPackedBusIdV1(targetBusId);
+    image.busDefinitionBusesV2.push_back(bus2);
+    harken::PackBusDefinitionBus bus3 = bus2;
+    bus3.busId = VN_OBJECT_ID(0, 3);
+    bus3.downmixFirst = 2;
+    image.busDefinitionBusesV2.push_back(bus3);
+    harken::PackBusDefinitionSend send{};
+    send.source = VN_OBJECT_ID(0, 2);
+    send.target = targetBusId;
     send.levelDb = levelDb;
     for (std::uint32_t i = 0; i < sendRepeat; ++i) {
-        image.busDefinitionSends.push_back(send);
+        image.busDefinitionSendsV2.push_back(send);
     }
-    harken::PackBusDefinitionDownmixV1 downmixMaster{};
-    downmixMaster.busId = harken::CanonicalSnapshotPackedBusIdV1(VN_BUS_MASTER);
+    harken::PackBusDefinitionDownmix downmixMaster{};
+    downmixMaster.busId = VN_BUS_MASTER;
     downmixMaster.sourceLayout = VN_CHANNEL_LAYOUT_STEREO;
     downmixMaster.destinationLayout = VN_CHANNEL_LAYOUT_STEREO;
     downmixMaster.coefficientFirst = 0;
     downmixMaster.coefficientCount = 64;
-    image.busDefinitionDownmixes.push_back(downmixMaster);
-    harken::PackBusDefinitionDownmixV1 downmixBus2{};
-    downmixBus2.busId = 2;
+    image.busDefinitionDownmixesV2.push_back(downmixMaster);
+    harken::PackBusDefinitionDownmix downmixBus2{};
+    downmixBus2.busId = VN_OBJECT_ID(0, 2);
     downmixBus2.sourceLayout = VN_CHANNEL_LAYOUT_STEREO;
     downmixBus2.destinationLayout = VN_CHANNEL_LAYOUT_STEREO;
     downmixBus2.coefficientFirst = 64;
     downmixBus2.coefficientCount = 64;
-    image.busDefinitionDownmixes.push_back(downmixBus2);
-    image.busDefinitionCoefficients.assign(128, 0.0f);
+    image.busDefinitionDownmixesV2.push_back(downmixBus2);
+    harken::PackBusDefinitionDownmix downmixBus3 = downmixBus2;
+    downmixBus3.busId = VN_OBJECT_ID(0, 3);
+    downmixBus3.coefficientFirst = 128;
+    image.busDefinitionDownmixesV2.push_back(downmixBus3);
+    image.busDefinitionCoefficients.assign(192, 0.0f);
     harken::DefaultDownmixMatrix(VN_CHANNEL_LAYOUT_STEREO, VN_CHANNEL_LAYOUT_STEREO,
                                 image.busDefinitionCoefficients.data());
     harken::DefaultDownmixMatrix(VN_CHANNEL_LAYOUT_STEREO, VN_CHANNEL_LAYOUT_STEREO,
                                 image.busDefinitionCoefficients.data() + 64);
-    header.publishedBusFingerprint = harken::CanonicalNeutralBusFingerprint(image);
-    RuntimeBusFixtureV1 fixture;
+    harken::DefaultDownmixMatrix(VN_CHANNEL_LAYOUT_STEREO, VN_CHANNEL_LAYOUT_STEREO,
+                                image.busDefinitionCoefficients.data() + 128);
+    header.publishedBusFingerprint = harken::CanonicalVolumeBusFingerprint(image);
+    header.contentGeneration = header.publishedBusFingerprint;
+    RuntimeBusFixture fixture;
+    fixture.buses = {{bus2.busId, bus2.parentId}, {bus3.busId, bus3.parentId}};
+    fixture.sends.assign(sendRepeat, {send.source, send.target, send.levelDb});
     fixture.triple = {header.contentGeneration, header.publishedBusFingerprint,
                       header.compileTargetProfileFingerprint};
     fixture.snapshot.assign(
         static_cast<std::size_t>(header.headerBytes + header.payloadBytes), 0);
-    harken::SerializePackBusDefinitionBusV1(
+    harken::SerializePackBusDefinitionBus(
         master, fixture.snapshot.data() + header.busOffset);
-    harken::SerializePackBusDefinitionBusV1(
+    harken::SerializePackBusDefinitionBus(
         bus2, fixture.snapshot.data() + header.busOffset +
-                  harken::kPackBusDefinitionBusRowBytes);
+                  harken::kPackBusDefinitionBusBytes);
+    harken::SerializePackBusDefinitionBus(
+        bus3, fixture.snapshot.data() + header.busOffset +
+                  2u * harken::kPackBusDefinitionBusBytes);
     for (std::uint32_t i = 0; i < sendRepeat; ++i) {
-        harken::SerializePackBusDefinitionSendV1(
+        harken::SerializePackBusDefinitionSend(
             send, fixture.snapshot.data() + header.sendOffset +
-                      i * harken::kPackBusDefinitionSendRowBytes);
+                      i * harken::kPackBusDefinitionSendBytes);
     }
-    harken::SerializePackBusDefinitionDownmixV1(
+    harken::SerializePackBusDefinitionDownmix(
         downmixMaster, fixture.snapshot.data() + header.downmixOffset);
-    harken::SerializePackBusDefinitionDownmixV1(
+    harken::SerializePackBusDefinitionDownmix(
         downmixBus2, fixture.snapshot.data() + header.downmixOffset +
-                         harken::kPackBusDefinitionDownmixRowBytes);
-    for (std::uint32_t i = 0; i < 128; ++i) {
-        harken::StoreLEF32(fixture.snapshot.data() + header.coefficientOffset +
-                              i * harken::kPackBusDefinitionCoefficientRowBytes,
-                          image.busDefinitionCoefficients[i]);
+                         harken::kPackBusDefinitionDownmixBytes);
+    harken::SerializePackBusDefinitionDownmix(
+        downmixBus3, fixture.snapshot.data() + header.downmixOffset +
+                         2u * harken::kPackBusDefinitionDownmixBytes);
+    for (std::uint32_t i = 0; i < 192; ++i) {
+        harken::SerializePackBusDefinitionCoefficient(image.busDefinitionCoefficients[i], fixture.snapshot.data() + header.coefficientOffset +
+                              i * harken::kPackBusDefinitionCoefficientBytes);
     }
-    harken::SerializePackBusDefinitionSnapshotHeaderV1(header, fixture.snapshot.data());
+    harken::SerializePackBusDefinitionSnapshotHeader(header, fixture.snapshot.data());
     StampSnapshotChecksum(&fixture.snapshot);
     return fixture;
 }
@@ -334,21 +372,25 @@ inline std::vector<std::uint8_t> DependencyPayload(
     return payload;
 }
 
-inline RuntimeBusFixtureV1 Bus2RuntimeBusFixtureV1() {
+inline RuntimeBusFixture Bus2RuntimeBusFixture() {
     const auto profile = DefaultFixtureBusTriple();
     constexpr std::uint64_t kHeader = harken::kPackBusDefinitionSnapshotHeaderBytes;
     constexpr std::uint64_t kBusOffset = kHeader;
     constexpr std::uint64_t kDownmixOffset =
-        kBusOffset + 2u * harken::kPackBusDefinitionBusRowBytes;
+        kBusOffset + 2u * harken::kPackBusDefinitionBusBytes;
     constexpr std::uint64_t kCoefficientOffset =
-        kDownmixOffset + 2u * harken::kPackBusDefinitionDownmixRowBytes;
+        kDownmixOffset + 2u * harken::kPackBusDefinitionDownmixBytes;
     harken::PackCanonicalImage image;
     image.hasBusDefinitionSnapshot = true;
     auto& header = image.busDefinitionSnapshotHeader;
-    header.schemaVersion = 1;
-    header.storageModelVersion = 1;
+    header.schemaVersion = 2;
+    header.storageModelVersion = 2;
     header.headerBytes = harken::kPackBusDefinitionSnapshotHeaderBytes;
-    header.publicationCapabilityVintage = 1;
+    header.busRowBytes = harken::kPackBusDefinitionBusBytes;
+    header.sendRowBytes = harken::kPackBusDefinitionSendBytes;
+    header.downmixRowBytes = harken::kPackBusDefinitionDownmixBytes;
+    header.coefficientRowBytes = harken::kPackBusDefinitionCoefficientBytes;
+    header.publicationCapabilityVintage = 3;
     header.contentGeneration = profile.busContentGeneration;
     header.compileTargetProfileFingerprint =
         profile.compileTargetProfileFingerprint;
@@ -363,68 +405,69 @@ inline RuntimeBusFixtureV1 Bus2RuntimeBusFixtureV1() {
     header.coefficientOffset = kCoefficientOffset;
     header.payloadBytes =
         (kCoefficientOffset - kHeader) +
-        (128u * harken::kPackBusDefinitionCoefficientRowBytes);
+        (128u * harken::kPackBusDefinitionCoefficientBytes);
     header.profileVintage = 1;
     header.renderSampleRateHz = 48000;
     header.mixLayout = VN_CHANNEL_LAYOUT_STEREO;
     header.deviceLayout = VN_CHANNEL_LAYOUT_STEREO;
     header.runtimeCapabilityMask = harken::busfingerprint::kRequiredBusCapabilityMaskV1;
-    harken::PackBusDefinitionBusV1 master{};
-    master.busId = harken::CanonicalSnapshotPackedBusIdV1(VN_BUS_MASTER);
+    harken::PackBusDefinitionBus master{};
+    master.busId = VN_BUS_MASTER;
     master.faderAfterSlot = harken::busfingerprint::kNeutralFaderAfterSlotV1;
     master.outputLayout = VN_CHANNEL_LAYOUT_STEREO;
     master.downmixCount = 1;
     master.downmixFirst = 0;
-    image.busDefinitionBuses.push_back(master);
-    harken::PackBusDefinitionBusV1 bus2{};
-    bus2.busId = harken::CanonicalSnapshotPackedBusIdV1(VN_OBJECT_ID(0, 2));
-    bus2.parentId = harken::CanonicalSnapshotPackedBusIdV1(VN_BUS_MASTER);
+    image.busDefinitionBusesV2.push_back(master);
+    harken::PackBusDefinitionBus bus2{};
+    bus2.busId = VN_OBJECT_ID(0, 2);
+    bus2.parentId = VN_BUS_MASTER;
     bus2.faderAfterSlot = harken::busfingerprint::kNeutralFaderAfterSlotV1;
     bus2.outputLayout = VN_CHANNEL_LAYOUT_STEREO;
     bus2.downmixCount = 1;
     bus2.downmixFirst = 1;
-    image.busDefinitionBuses.push_back(bus2);
-    harken::PackBusDefinitionDownmixV1 downmixMaster{};
-    downmixMaster.busId = harken::CanonicalSnapshotPackedBusIdV1(VN_BUS_MASTER);
+    image.busDefinitionBusesV2.push_back(bus2);
+    harken::PackBusDefinitionDownmix downmixMaster{};
+    downmixMaster.busId = VN_BUS_MASTER;
     downmixMaster.sourceLayout = VN_CHANNEL_LAYOUT_STEREO;
     downmixMaster.destinationLayout = VN_CHANNEL_LAYOUT_STEREO;
     downmixMaster.coefficientFirst = 0;
     downmixMaster.coefficientCount = 64;
-    image.busDefinitionDownmixes.push_back(downmixMaster);
-    harken::PackBusDefinitionDownmixV1 downmixBus2{};
-    downmixBus2.busId = 2;
+    image.busDefinitionDownmixesV2.push_back(downmixMaster);
+    harken::PackBusDefinitionDownmix downmixBus2{};
+    downmixBus2.busId = VN_OBJECT_ID(0, 2);
     downmixBus2.sourceLayout = VN_CHANNEL_LAYOUT_STEREO;
     downmixBus2.destinationLayout = VN_CHANNEL_LAYOUT_STEREO;
     downmixBus2.coefficientFirst = 64;
     downmixBus2.coefficientCount = 64;
-    image.busDefinitionDownmixes.push_back(downmixBus2);
+    image.busDefinitionDownmixesV2.push_back(downmixBus2);
     image.busDefinitionCoefficients.assign(128, 0.0f);
     harken::DefaultDownmixMatrix(VN_CHANNEL_LAYOUT_STEREO, VN_CHANNEL_LAYOUT_STEREO,
                                 image.busDefinitionCoefficients.data());
     harken::DefaultDownmixMatrix(VN_CHANNEL_LAYOUT_STEREO, VN_CHANNEL_LAYOUT_STEREO,
                                 image.busDefinitionCoefficients.data() + 64);
-    header.publishedBusFingerprint = harken::CanonicalNeutralBusFingerprint(image);
-    RuntimeBusFixtureV1 fixture;
+    header.publishedBusFingerprint = harken::CanonicalVolumeBusFingerprint(image);
+    header.contentGeneration = header.publishedBusFingerprint;
+    RuntimeBusFixture fixture;
+    fixture.buses = {{bus2.busId, bus2.parentId}};
     fixture.triple = {header.contentGeneration, header.publishedBusFingerprint,
                       header.compileTargetProfileFingerprint};
     fixture.snapshot.assign(
         static_cast<std::size_t>(header.headerBytes + header.payloadBytes), 0);
-    harken::SerializePackBusDefinitionBusV1(
+    harken::SerializePackBusDefinitionBus(
         master, fixture.snapshot.data() + header.busOffset);
-    harken::SerializePackBusDefinitionBusV1(
+    harken::SerializePackBusDefinitionBus(
         bus2, fixture.snapshot.data() + header.busOffset +
-                  harken::kPackBusDefinitionBusRowBytes);
-    harken::SerializePackBusDefinitionDownmixV1(
+                  harken::kPackBusDefinitionBusBytes);
+    harken::SerializePackBusDefinitionDownmix(
         downmixMaster, fixture.snapshot.data() + header.downmixOffset);
-    harken::SerializePackBusDefinitionDownmixV1(
+    harken::SerializePackBusDefinitionDownmix(
         downmixBus2, fixture.snapshot.data() + header.downmixOffset +
-                         harken::kPackBusDefinitionDownmixRowBytes);
+                         harken::kPackBusDefinitionDownmixBytes);
     for (std::uint32_t i = 0; i < 128; ++i) {
-        harken::StoreLEF32(fixture.snapshot.data() + header.coefficientOffset +
-                              i * harken::kPackBusDefinitionCoefficientRowBytes,
-                          image.busDefinitionCoefficients[i]);
+        harken::SerializePackBusDefinitionCoefficient(image.busDefinitionCoefficients[i], fixture.snapshot.data() + header.coefficientOffset +
+                              i * harken::kPackBusDefinitionCoefficientBytes);
     }
-    harken::SerializePackBusDefinitionSnapshotHeaderV1(header, fixture.snapshot.data());
+    harken::SerializePackBusDefinitionSnapshotHeader(header, fixture.snapshot.data());
     StampSnapshotChecksum(&fixture.snapshot);
     return fixture;
 }
@@ -689,7 +732,7 @@ inline bool BuildFixture(std::uint32_t catalogCount,
     initBuilder.AddEntry(
         harken::kPackEntryKindCanonicalDefinitionPartition,
         kInitPackStableId, std::move(initPartition));
-    AppendNeutralMasterSnapshotV1(&initBuilder);
+    AppendNeutralMasterSnapshot(&initBuilder);
     next.init = initBuilder.Build();
     if (next.init.empty()) {
         return false;

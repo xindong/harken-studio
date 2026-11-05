@@ -2764,7 +2764,7 @@ TEST_F(AuthoredPackLifecycle, CanonicalV2SnapshotRejectsTamperAndUnknownVintage)
         }
     }
     ASSERT_NE(0u, directoryOffset);
-    ASSERT_EQ(harken::kPackBusDefinitionSnapshotVintage2, snapshot.vintage);
+    ASSERT_EQ(harken::kPackBusDefinitionSnapshotVintage, snapshot.vintage);
     ASSERT_GT(snapshot.size, 16u);
     auto damaged = original;
     damaged[static_cast<std::size_t>(snapshot.offset + 16)] ^= 0x5au;
@@ -2775,20 +2775,20 @@ TEST_F(AuthoredPackLifecycle, CanonicalV2SnapshotRejectsTamperAndUnknownVintage)
     ASSERT_GE(valid.busDefinitionBusesV2.size(), 2u);
     auto duplicate = original;
     auto* snapshotPayload = duplicate.data() + snapshot.offset;
-    harken::PackBusDefinitionSnapshotHeaderV1 snapshotHeader{};
-    ASSERT_TRUE(harken::ParsePackBusDefinitionSnapshotHeaderV2(
+    harken::PackBusDefinitionSnapshotHeader snapshotHeader{};
+    ASSERT_TRUE(harken::ReadPackBusDefinitionSnapshotHeader(
         snapshotPayload, snapshot.size, &snapshotHeader));
     auto* secondBus = snapshotPayload + snapshotHeader.busOffset
         + snapshotHeader.busRowBytes;
-    harken::PackBusDefinitionBusV2 secondRow{};
-    ASSERT_TRUE(harken::ParsePackBusDefinitionBusV2(secondBus, &secondRow));
+    harken::PackBusDefinitionBus secondRow{};
+    ASSERT_TRUE(harken::ParsePackBusDefinitionBus(secondBus, harken::kPackBusDefinitionBusBytes, &secondRow));
     secondRow.busId = valid.busDefinitionBusesV2.front().busId;
-    harken::SerializePackBusDefinitionBusV2(secondRow, secondBus);
+    harken::SerializePackBusDefinitionBus(secondRow, secondBus);
     harken::StoreLE64(snapshotPayload + 112, 0);
     const auto snapshotChecksum = harken::Fnv1a64(snapshotPayload,
         static_cast<std::size_t>(snapshot.size));
     harken::StoreLE64(snapshotPayload + 112, snapshotChecksum);
-    ASSERT_TRUE(harken::ParsePackBusDefinitionSnapshotHeaderV2(
+    ASSERT_TRUE(harken::ReadPackBusDefinitionSnapshotHeader(
         snapshotPayload, snapshot.size, &snapshotHeader));
     auto duplicateEntry = snapshot;
     duplicateEntry.payloadChecksum = harken::Fnv1a64(snapshotPayload,
@@ -5218,17 +5218,17 @@ TEST_F(AuthoredPackLifecycle, CanonicalV2RejectsLegacyBusMismatchAndKeepsPublish
                 continue;
             if (mismatch == Mismatch::SendLevel) {
                 harken::PackBusSendEntry send{};
-                ASSERT_TRUE(harken::ParsePackV2BusSend(
+                ASSERT_TRUE(harken::ParsePackBusSend(
                     bytes.data() + entry.offset, entry.size, &send));
                 if (send.fromBusId != harkentest::ToRuntime(source->runtimeId()) ||
                     send.toBusId != harkentest::ToRuntime(target->runtimeId())) continue;
                 ASSERT_FLOAT_EQ(0.0f, send.levelDb);
                 send.levelDb = -12.0f;
-                harken::SerializePackV2BusSend(send, bytes.data() + entry.offset);
+                harken::SerializePackBusSend(send, bytes.data() + entry.offset);
             } else {
-                ASSERT_EQ(harken::kPackV6BusPayloadBytes, entry.size);
+                ASSERT_EQ(harken::kPackBusBytes, entry.size);
                 harken::PackBusEntry bus{};
-                ASSERT_TRUE(harken::ParsePackV6Bus(bytes.data() + entry.offset, entry.size, &bus));
+                ASSERT_TRUE(harken::ParsePackBus(bytes.data() + entry.offset, entry.size, &bus));
                 ASSERT_FLOAT_EQ(-6.0f, bus.outputBusVolume);
                 switch (mismatch) {
                 case Mismatch::Volume: bus.volume = -3.0f; break;
@@ -5239,7 +5239,7 @@ TEST_F(AuthoredPackLifecycle, CanonicalV2RejectsLegacyBusMismatchAndKeepsPublish
                     break;
                 case Mismatch::SendLevel: break;
                 }
-                harken::SerializePackV6Bus(bus, bytes.data() + entry.offset);
+                harken::SerializePackBus(bus, bytes.data() + entry.offset);
             }
             entry.payloadChecksum = harken::Fnv1a64(bytes.data() + entry.offset,
                                                     static_cast<std::size_t>(entry.size));

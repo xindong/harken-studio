@@ -518,13 +518,14 @@ public:
     void AddBus(VnBusId busId, VnBusId parentBusId) {
         Entry entry;
         entry.kind = harken::kPackEntryKindBus;
+        entry.vintage = harken::kPackBusVintage;
         entry.id = busId;
         entry.payload.resize(
-            static_cast<std::size_t>(harken::kPackV2BusPayloadBytes));
+            static_cast<std::size_t>(harken::kPackBusBytes));
         harken::PackBusEntry bus;
         bus.busId = busId;
         bus.parentBusId = parentBusId;
-        harken::SerializePackV2Bus(bus, entry.payload.data());
+        harken::SerializePackBus(bus, entry.payload.data());
         m_entries.push_back(std::move(entry));
     }
 
@@ -532,29 +533,29 @@ public:
                    float outputBusVolume, float makeUpGain) {
         Entry entry;
         entry.kind = harken::kPackEntryKindBus;
-        entry.vintage = harken::kPackV2BusMixSchemaVintage;
+        entry.vintage = harken::kPackBusVintage;
         entry.id = busId;
         entry.payload.resize(
-            static_cast<std::size_t>(harken::kPackV6BusPayloadBytes));
+            static_cast<std::size_t>(harken::kPackBusBytes));
         harken::PackBusEntry bus;
         bus.busId = busId;
         bus.parentBusId = parentBusId;
         bus.volume = volume;
         bus.outputBusVolume = outputBusVolume;
         bus.makeUpGain = makeUpGain;
-        harken::SerializePackV6Bus(bus, entry.payload.data());
+        harken::SerializePackBus(bus, entry.payload.data());
         m_entries.push_back(std::move(entry));
     }
 
     void AddBusSend(VnBusId from, VnBusId to, float levelDb) {
         Entry entry;
         entry.kind = harken::kPackEntryKindBusSend;
-        entry.payload.resize(harken::kPackV2BusSendPayloadBytes);
+        entry.payload.resize(harken::kPackBusSendBytes);
         harken::PackBusSendEntry send;
         send.fromBusId = from;
         send.toBusId = to;
         send.levelDb = levelDb;
-        harken::SerializePackV2BusSend(send, entry.payload.data());
+        harken::SerializePackBusSend(send, entry.payload.data());
         m_entries.push_back(std::move(entry));
     }
 

@@ -558,7 +558,7 @@ TEST(MonitorObserve, ActivatedInitRetainsProjectIdentityWhenOrdinaryUnloadRefuse
         RequirementPayload(kInitPackStableId, 1, 1, 0, bodyBytes));
     builder.AddEntry(harken::kPackEntryKindCanonicalDefinitionPartition, kInitPackStableId,
         std::move(partition));
-    AppendNeutralMasterSnapshotV1(&builder);
+    AppendNeutralMasterSnapshot(&builder);
     auto bytes = builder.Build();
     harkentest::EngineSession engine(harkentest::MakeNullConfig());
     ASSERT_EQ(VN_OK, engine.InitResult());
@@ -639,10 +639,10 @@ TEST(MonitorObserve, LegacyResidentMasterEffectRetainsIdentityAndPackOwnership) 
     harken::PackBusEntry master{};
     master.busId = masterId;
     master.parentBusId = VN_BUS_MASTER;
-    std::vector<std::uint8_t> masterBytes(harken::kPackV2BusPayloadBytes);
-    harken::SerializePackV2Bus(master, masterBytes.data());
+    std::vector<std::uint8_t> masterBytes(harken::kPackBusBytes);
+    harken::SerializePackBus(master, masterBytes.data());
     builder.AddEntry(harken::kPackEntryKindBus, masterId, std::move(masterBytes),
-        harken::kPackV2SchemaVintage);
+        harken::kPackBusVintage);
     harken::PackBusEffectEntry effect{};
     effect.busId = masterId;
     effect.effectId = effectId;

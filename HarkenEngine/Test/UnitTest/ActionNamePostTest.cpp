@@ -187,7 +187,7 @@ std::vector<std::uint8_t> BuildInitWithCatalog(
                      RequirementPayload(kInitId, 1, 1, 0, bodyBytes));
     builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, kInitId,
                      std::move(partition));
-    harkentest::packfoundation::AppendNeutralMasterSnapshotV1(&builder);
+    harkentest::packfoundation::AppendNeutralMasterSnapshot(&builder);
     return builder.Build();
 }
 
@@ -201,7 +201,7 @@ std::vector<std::uint8_t> BuildInitBare() {
                      RequirementPayload(kInitId, 1, 1, 0, bodyBytes));
     builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, kInitId,
                      std::move(partition));
-    harkentest::packfoundation::AppendNeutralMasterSnapshotV1(&builder);
+    harkentest::packfoundation::AppendNeutralMasterSnapshot(&builder);
     return builder.Build();
 }
 

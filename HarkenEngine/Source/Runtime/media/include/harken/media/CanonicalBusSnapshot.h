@@ -1,5 +1,3 @@
-// Kind-24 shipping writer: one stereo Master snapshot, packed bus ids.
-// 10a does not project authored UUID buses (that is U3-10b).
 #ifndef HARKEN_MEDIA_CANONICAL_BUS_SNAPSHOT_H
 #define HARKEN_MEDIA_CANONICAL_BUS_SNAPSHOT_H
 
@@ -16,12 +14,13 @@ inline void StampRequirementCoverage(std::vector<std::uint8_t>* payload) {
 }
 
 inline void StampSnapshotChecksum(std::vector<std::uint8_t>* payload) {
-    StoreLE64(payload->data() + 112, 0);
-    const std::uint8_t zeros[8] = {};
-    std::uint64_t hash = Fnv1a64(payload->data(), 112);
-    hash = Fnv1a64(zeros, 8, hash);
-    hash = Fnv1a64(payload->data() + 120, payload->size() - 120, hash);
-    StoreLE64(payload->data() + 112, hash);
+    constexpr auto checksumOffset = kPackBusDefinitionSnapshotHeaderChecksumOffset;
+    constexpr auto checksumEnd = kPackBusDefinitionSnapshotHeaderCompileTargetProfileFingerprintOffset;
+    const std::uint8_t zeros[checksumEnd - checksumOffset] = {};
+    std::uint64_t hash = Fnv1a64(payload->data(), checksumOffset);
+    hash = Fnv1a64(zeros, sizeof(zeros), hash);
+    hash = Fnv1a64(payload->data() + checksumEnd, payload->size() - checksumEnd, hash);
+    StorePackBusDefinitionSnapshotHeaderChecksum(payload->data(), hash);
 }
 
 inline void ApplyCanonicalBusTriple(PackRequirementBlock* block,
@@ -48,18 +47,18 @@ inline void ApplyCanonicalBusTriple(PackDependencyEdge* edge,
         triple.compileTargetProfileFingerprint;
 }
 
-// Topology is packed VN_BUS_MASTER + stereo identity. contentGeneration stays
-// kNeutralMasterBusContentGeneration. publishedBusFingerprint is
-// CanonicalNeutralBusFingerprint of this image (Activate requires that), not
-// the unused kNeutralMasterPublishedBusFingerprint placeholder.
 inline PackCanonicalImage NeutralMasterSnapshotImage() {
     PackCanonicalImage image;
     image.hasBusDefinitionSnapshot = true;
     auto& header = image.busDefinitionSnapshotHeader;
-    header.schemaVersion = 1;
-    header.storageModelVersion = 1;
+    header.schemaVersion = 2;
+    header.storageModelVersion = 2;
     header.headerBytes = kPackBusDefinitionSnapshotHeaderBytes;
-    header.publicationCapabilityVintage = 1;
+    header.busRowBytes = kPackBusDefinitionBusBytes;
+    header.sendRowBytes = kPackBusDefinitionSendBytes;
+    header.downmixRowBytes = kPackBusDefinitionDownmixBytes;
+    header.coefficientRowBytes = kPackBusDefinitionCoefficientBytes;
+    header.publicationCapabilityVintage = 3;
     header.contentGeneration = kNeutralMasterBusContentGeneration;
     header.profileVintage = 1;
     header.renderSampleRateHz = 48000;
@@ -72,24 +71,25 @@ inline PackCanonicalImage NeutralMasterSnapshotImage() {
     header.busCount = 1;
     header.downmixCount = 1;
     header.coefficientCount = 64;
-    PackBusDefinitionBusV1 bus{};
-    bus.busId = CanonicalSnapshotPackedBusIdV1(VN_BUS_MASTER);
+    PackBusDefinitionBus bus{};
+    bus.busId = VN_BUS_MASTER;
     bus.faderAfterSlot = busfingerprint::kNeutralFaderAfterSlotV1;
     bus.outputLayout = VN_CHANNEL_LAYOUT_STEREO;
     bus.downmixCount = 1;
     bus.downmixFirst = 0;
-    image.busDefinitionBuses.push_back(bus);
-    PackBusDefinitionDownmixV1 downmix{};
-    downmix.busId = CanonicalSnapshotPackedBusIdV1(VN_BUS_MASTER);
+    image.busDefinitionBusesV2.push_back(bus);
+    PackBusDefinitionDownmix downmix{};
+    downmix.busId = VN_BUS_MASTER;
     downmix.sourceLayout = VN_CHANNEL_LAYOUT_STEREO;
     downmix.destinationLayout = VN_CHANNEL_LAYOUT_STEREO;
     downmix.coefficientFirst = 0;
     downmix.coefficientCount = 64;
-    image.busDefinitionDownmixes.push_back(downmix);
+    image.busDefinitionDownmixesV2.push_back(downmix);
     image.busDefinitionCoefficients.assign(64, 0.0f);
     DefaultDownmixMatrix(VN_CHANNEL_LAYOUT_STEREO, VN_CHANNEL_LAYOUT_STEREO,
                          image.busDefinitionCoefficients.data());
-    header.publishedBusFingerprint = CanonicalNeutralBusFingerprint(image);
+    header.publishedBusFingerprint = CanonicalVolumeBusFingerprint(image);
+    header.contentGeneration = header.publishedBusFingerprint;
     return image;
 }
 
@@ -108,9 +108,9 @@ inline std::vector<std::uint8_t> NeutralMasterSnapshotPayload(
     constexpr std::uint64_t kHeader = kPackBusDefinitionSnapshotHeaderBytes;
     constexpr std::uint64_t kBusOffset = kHeader;
     constexpr std::uint64_t kDownmixOffset =
-        kBusOffset + kPackBusDefinitionBusRowBytes;
+        kBusOffset + kPackBusDefinitionBusBytes;
     constexpr std::uint64_t kCoefficientOffset =
-        kDownmixOffset + kPackBusDefinitionDownmixRowBytes;
+        kDownmixOffset + kPackBusDefinitionDownmixBytes;
     auto header = image.busDefinitionSnapshotHeader;
     header.busOffset = kBusOffset;
     header.sendOffset = kDownmixOffset;
@@ -120,19 +120,18 @@ inline std::vector<std::uint8_t> NeutralMasterSnapshotPayload(
     header.coefficientOffset = kCoefficientOffset;
     header.payloadBytes =
         (kCoefficientOffset - kHeader) +
-        (64u * kPackBusDefinitionCoefficientRowBytes);
+        (64u * kPackBusDefinitionCoefficientBytes);
     std::vector<std::uint8_t> payload(
         static_cast<std::size_t>(header.headerBytes + header.payloadBytes), 0);
-    SerializePackBusDefinitionBusV1(image.busDefinitionBuses.front(),
+    SerializePackBusDefinitionBus(image.busDefinitionBusesV2.front(),
                                     payload.data() + header.busOffset);
-    SerializePackBusDefinitionDownmixV1(image.busDefinitionDownmixes.front(),
+    SerializePackBusDefinitionDownmix(image.busDefinitionDownmixesV2.front(),
                                         payload.data() + header.downmixOffset);
     for (std::uint32_t i = 0; i < 64; ++i) {
-        StoreLEF32(payload.data() + header.coefficientOffset +
-                       i * kPackBusDefinitionCoefficientRowBytes,
-                   image.busDefinitionCoefficients[i]);
+        SerializePackBusDefinitionCoefficient(image.busDefinitionCoefficients[i], payload.data() + header.coefficientOffset +
+                       i * kPackBusDefinitionCoefficientBytes);
     }
-    SerializePackBusDefinitionSnapshotHeaderV1(header, payload.data());
+    SerializePackBusDefinitionSnapshotHeader(header, payload.data());
     StampSnapshotChecksum(&payload);
     return payload;
 }

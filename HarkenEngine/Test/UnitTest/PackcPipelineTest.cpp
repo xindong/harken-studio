@@ -2350,14 +2350,14 @@ TEST(PackcPipeline, BusMixFieldsUseFullUuidPayload) {
             bytes.data() + harken::kPackV2HeaderBytes +
             harken::kPackV2DirectoryEntryBytes);
     EXPECT_EQ(harken::kPackEntryKindBus, mixed.kind);
-    EXPECT_EQ(harken::kPackV2BusMixSchemaVintage, mixed.vintage);
-    EXPECT_EQ(harken::kPackV6BusPayloadBytes, mixed.size);
+    EXPECT_EQ(harken::kPackBusVintage, mixed.vintage);
+    EXPECT_EQ(harken::kPackBusBytes, mixed.size);
     EXPECT_EQ(harken::kPackEntryKindBus, defaults.kind);
-    EXPECT_EQ(harken::kPackV2BusMixSchemaVintage, defaults.vintage);
-    EXPECT_EQ(harken::kPackV6BusPayloadBytes, defaults.size);
+    EXPECT_EQ(harken::kPackBusVintage, defaults.vintage);
+    EXPECT_EQ(harken::kPackBusBytes, defaults.size);
 
     harken::PackBusEntry mixedBus;
-    ASSERT_TRUE(harken::ParsePackV6Bus(bytes.data() + mixed.offset, mixed.size,
+    ASSERT_TRUE(harken::ParsePackBus(bytes.data() + mixed.offset, mixed.size,
                                       &mixedBus));
     EXPECT_EQ(harkentest::ObjectId(5101u), mixedBus.busId);
     EXPECT_EQ(VN_BUS_MASTER, mixedBus.parentBusId);
@@ -2366,7 +2366,7 @@ TEST(PackcPipeline, BusMixFieldsUseFullUuidPayload) {
     EXPECT_FLOAT_EQ(0.0f, mixedBus.makeUpGain);
 
     harken::PackBusEntry defaultBus;
-    ASSERT_TRUE(harken::ParsePackV6Bus(
+    ASSERT_TRUE(harken::ParsePackBus(
         bytes.data() + defaults.offset, defaults.size, &defaultBus));
     EXPECT_EQ(harkentest::ObjectId(5102u), defaultBus.busId);
     EXPECT_FLOAT_EQ(0.0f, defaultBus.volume);

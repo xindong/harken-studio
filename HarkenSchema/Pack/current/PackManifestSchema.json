@@ -298,6 +298,330 @@
     "versionLocator": "json:$.schemaVersion",
     "writers": [
       "CanonicalPackSetExport"
-    ]
+    ],
+    "binaryLayout": {
+      "byteOrder": "little",
+      "constants": {
+        "busDefinitionDownmixCoefficientCount": 64
+      },
+      "kinds": [
+        {
+          "name": "bus",
+          "id": 2,
+          "vintage": 6,
+          "record": "bus"
+        },
+        {
+          "name": "busSend",
+          "id": 3,
+          "vintage": 2,
+          "record": "busSend"
+        },
+        {
+          "name": "busDefinitionSnapshot",
+          "id": 24,
+          "vintage": 2,
+          "record": "busDefinitionSnapshotHeader"
+        }
+      ],
+      "records": {
+        "bus": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "busId",
+              "type": "id"
+            },
+            {
+              "name": "parentBusId",
+              "type": "id"
+            },
+            {
+              "name": "volume",
+              "type": "f32"
+            },
+            {
+              "name": "outputBusVolume",
+              "type": "f32"
+            }
+          ]
+        },
+        "busSend": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "fromBusId",
+              "type": "id"
+            },
+            {
+              "name": "toBusId",
+              "type": "id"
+            },
+            {
+              "name": "levelDb",
+              "type": "f32"
+            },
+            {
+              "name": "reserved0",
+              "type": "u32",
+              "reserved": true
+            }
+          ]
+        },
+        "busDefinitionSnapshotHeader": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "schemaVersion",
+              "type": "u32"
+            },
+            {
+              "name": "storageModelVersion",
+              "type": "u32"
+            },
+            {
+              "name": "headerBytes",
+              "type": "u32"
+            },
+            {
+              "name": "publicationCapabilityVintage",
+              "type": "u32"
+            },
+            {
+              "name": "contentGeneration",
+              "type": "u64"
+            },
+            {
+              "name": "publishedBusFingerprint",
+              "type": "u64"
+            },
+            {
+              "name": "busCount",
+              "type": "u32"
+            },
+            {
+              "name": "sendCount",
+              "type": "u32"
+            },
+            {
+              "name": "effectCount",
+              "type": "u32"
+            },
+            {
+              "name": "effectParameterCount",
+              "type": "u32"
+            },
+            {
+              "name": "downmixCount",
+              "type": "u32"
+            },
+            {
+              "name": "coefficientCount",
+              "type": "u32"
+            },
+            {
+              "name": "busOffset",
+              "type": "u64"
+            },
+            {
+              "name": "sendOffset",
+              "type": "u64"
+            },
+            {
+              "name": "effectOffset",
+              "type": "u64"
+            },
+            {
+              "name": "effectParameterOffset",
+              "type": "u64"
+            },
+            {
+              "name": "downmixOffset",
+              "type": "u64"
+            },
+            {
+              "name": "coefficientOffset",
+              "type": "u64"
+            },
+            {
+              "name": "payloadBytes",
+              "type": "u64"
+            },
+            {
+              "name": "checksum",
+              "type": "u64"
+            },
+            {
+              "name": "compileTargetProfileFingerprint",
+              "type": "u64"
+            },
+            {
+              "name": "profileVintage",
+              "type": "u32"
+            },
+            {
+              "name": "renderSampleRateHz",
+              "type": "u32"
+            },
+            {
+              "name": "mixLayout",
+              "type": "u32"
+            },
+            {
+              "name": "deviceLayout",
+              "type": "u32"
+            },
+            {
+              "name": "runtimeCapabilityMask",
+              "type": "u64"
+            },
+            {
+              "name": "reserved0",
+              "type": "u64"
+            },
+            {
+              "name": "busRowBytes",
+              "type": "u32"
+            },
+            {
+              "name": "sendRowBytes",
+              "type": "u32"
+            },
+            {
+              "name": "downmixRowBytes",
+              "type": "u32"
+            },
+            {
+              "name": "coefficientRowBytes",
+              "type": "u32"
+            },
+            {
+              "name": "reserved1",
+              "type": "u64"
+            }
+          ]
+        },
+        "busDefinitionBus": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "busId",
+              "type": "id"
+            },
+            {
+              "name": "parentId",
+              "type": "id"
+            },
+            {
+              "name": "feedsFirstOrdinal",
+              "type": "u32"
+            },
+            {
+              "name": "faderDb",
+              "type": "f32"
+            },
+            {
+              "name": "outputBusVolumeDb",
+              "type": "f32"
+            },
+            {
+              "name": "faderAfterSlot",
+              "type": "u32"
+            },
+            {
+              "name": "outputLayout",
+              "type": "u32"
+            },
+            {
+              "name": "effectFirst",
+              "type": "u32"
+            },
+            {
+              "name": "effectCount",
+              "type": "u32"
+            },
+            {
+              "name": "downmixFirst",
+              "type": "u32"
+            },
+            {
+              "name": "downmixCount",
+              "type": "u32"
+            },
+            {
+              "name": "reserved0",
+              "type": "u32",
+              "reserved": true
+            }
+          ]
+        },
+        "busDefinitionSend": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "source",
+              "type": "id"
+            },
+            {
+              "name": "target",
+              "type": "id"
+            },
+            {
+              "name": "levelDb",
+              "type": "f32"
+            },
+            {
+              "name": "reserved0",
+              "type": "u32",
+              "reserved": true
+            },
+            {
+              "name": "reserved1",
+              "type": "u64",
+              "reserved": true
+            }
+          ]
+        },
+        "busDefinitionDownmix": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "busId",
+              "type": "id"
+            },
+            {
+              "name": "sourceLayout",
+              "type": "u32"
+            },
+            {
+              "name": "destinationLayout",
+              "type": "u32"
+            },
+            {
+              "name": "coefficientFirst",
+              "type": "u32"
+            },
+            {
+              "name": "coefficientCount",
+              "type": "u32"
+            },
+            {
+              "name": "reserved0",
+              "type": "u64",
+              "reserved": true
+            }
+          ]
+        },
+        "busDefinitionCoefficient": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "value",
+              "type": "f32"
+            }
+          ]
+        }
+      }
+    }
   }
 }

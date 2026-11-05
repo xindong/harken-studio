@@ -133,15 +133,15 @@ struct PackCanonicalImage {
     std::vector<PackLogicImage::BindingDefinition> bindingDefinitions;
     std::vector<PackBindingAttachmentEntry> bindingAttachments;
     bool hasBusDefinitionSnapshot = false;
-    PackBusDefinitionSnapshotHeaderV1 busDefinitionSnapshotHeader{};
+    PackBusDefinitionSnapshotHeader busDefinitionSnapshotHeader{};
     std::vector<PackBusDefinitionBusV1> busDefinitionBuses;
     std::vector<PackBusDefinitionSendV1> busDefinitionSends;
     std::vector<PackBusDefinitionEffectV1> busDefinitionEffects;
     std::vector<PackBusDefinitionEffectParameterV1> busDefinitionEffectParameters;
     std::vector<PackBusDefinitionDownmixV1> busDefinitionDownmixes;
-    std::vector<PackBusDefinitionBusV2> busDefinitionBusesV2;
-    std::vector<PackBusDefinitionSendV2> busDefinitionSendsV2;
-    std::vector<PackBusDefinitionDownmixV2> busDefinitionDownmixesV2;
+    std::vector<PackBusDefinitionBus> busDefinitionBusesV2;
+    std::vector<PackBusDefinitionSend> busDefinitionSendsV2;
+    std::vector<PackBusDefinitionDownmix> busDefinitionDownmixesV2;
     std::vector<float> busDefinitionCoefficients;
 };
 
@@ -220,7 +220,7 @@ inline CanonicalBusTriple PartitionBusTriple(
 }
 
 inline CanonicalBusTriple SnapshotBusTriple(
-    const PackBusDefinitionSnapshotHeaderV1& header) noexcept {
+    const PackBusDefinitionSnapshotHeader& header) noexcept {
     return {header.contentGeneration, header.publishedBusFingerprint,
             header.compileTargetProfileFingerprint};
 }

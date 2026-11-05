@@ -117,8 +117,8 @@ inline bool PackAdmissionOpenForInit(harken::Engine* engine,
 
 inline std::vector<std::uint8_t> BuildMasterOnlyInitBytes(
     std::uint64_t packStableId = packfoundation::kInitPackStableId,
-    const packfoundation::RuntimeBusFixtureV1& bus =
-        packfoundation::DefaultRuntimeBusFixtureV1()) {
+    const packfoundation::RuntimeBusFixture& bus =
+        packfoundation::DefaultRuntimeBusFixture()) {
     packfoundation::ImageBuilder builder(harken::kPackKindInit);
     std::uint64_t bodyBytes = 0;
     std::vector<std::uint8_t> partition = packfoundation::PartitionPayload(
@@ -128,14 +128,14 @@ inline std::vector<std::uint8_t> BuildMasterOnlyInitBytes(
                          packStableId, 1, 1, 0, bodyBytes, bus.triple));
     builder.AddEntry(harken::kPackEntryKindCanonicalDefinitionPartition,
                      packStableId, std::move(partition));
-    builder.AddEntry(harken::kPackEntryKindBusDefinitionSnapshot, 1, bus.snapshot);
+    packfoundation::AppendRuntimeBusFixture(&builder, bus);
     return builder.Build();
 }
 
 inline std::vector<std::uint8_t> BuildMasterBus2InitBytes(
     std::uint64_t packStableId = packfoundation::kInitPackStableId) {
     return BuildMasterOnlyInitBytes(packStableId,
-                                    packfoundation::Bus2RuntimeBusFixtureV1());
+                                    packfoundation::Bus2RuntimeBusFixture());
 }
 
 inline VnBindingDesc MakeCanonicalBusVolumeBindingDesc(
@@ -229,8 +229,8 @@ inline std::vector<std::uint8_t> WithCanonicalBindingRows(
 
 inline std::vector<std::uint8_t> BuildMasterInitWithBusBindingBytes(
     VnBindingId bindingId, VnVariableId variableId, VnObjectId busId,
-    const packfoundation::RuntimeBusFixtureV1& bus =
-        packfoundation::DefaultRuntimeBusFixtureV1()) {
+    const packfoundation::RuntimeBusFixture& bus =
+        packfoundation::DefaultRuntimeBusFixture()) {
     harken::PackBindingAttachmentEntry attachment{};
     attachment.bindingId = bindingId;
     attachment.scopeKind = VN_TARGET_SCOPE_BUS;
@@ -370,7 +370,7 @@ inline std::vector<std::uint8_t> BuildMasterSendInitBytes(
     std::uint32_t sendRepeat = 1) {
     return BuildMasterOnlyInitBytes(
         packStableId,
-        packfoundation::MasterSendRuntimeBusFixtureV1(levelDb, sendRepeat));
+        packfoundation::MasterSendRuntimeBusFixture(levelDb, sendRepeat));
 }
 
 inline bool WriteBytes(const std::filesystem::path& path,

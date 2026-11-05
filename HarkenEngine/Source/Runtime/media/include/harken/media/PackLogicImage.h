@@ -176,15 +176,15 @@ struct PackCanonicalImage {
     std::vector<PackLogicImage::BindingDefinition> bindingDefinitions;
     std::vector<PackBindingAttachmentEntry> bindingAttachments;
     bool hasBusDefinitionSnapshot = false;
-    PackBusDefinitionSnapshotHeaderV1 busDefinitionSnapshotHeader{};
+    PackBusDefinitionSnapshotHeader busDefinitionSnapshotHeader{};
     std::vector<PackBusDefinitionBusV1> busDefinitionBuses;
     std::vector<PackBusDefinitionSendV1> busDefinitionSends;
     std::vector<PackBusDefinitionEffectV1> busDefinitionEffects;
     std::vector<PackBusDefinitionEffectParameterV1> busDefinitionEffectParameters;
     std::vector<PackBusDefinitionDownmixV1> busDefinitionDownmixes;
-    std::vector<PackBusDefinitionBusV2> busDefinitionBusesV2;
-    std::vector<PackBusDefinitionSendV2> busDefinitionSendsV2;
-    std::vector<PackBusDefinitionDownmixV2> busDefinitionDownmixesV2;
+    std::vector<PackBusDefinitionBus> busDefinitionBusesV2;
+    std::vector<PackBusDefinitionSend> busDefinitionSendsV2;
+    std::vector<PackBusDefinitionDownmix> busDefinitionDownmixesV2;
     std::vector<float> busDefinitionCoefficients;
 };
 
@@ -339,7 +339,7 @@ inline CanonicalBusTriple PartitionBusTriple(
 }
 
 inline CanonicalBusTriple SnapshotBusTriple(
-    const PackBusDefinitionSnapshotHeaderV1& header) noexcept {
+    const PackBusDefinitionSnapshotHeader& header) noexcept {
     return {header.contentGeneration, header.publishedBusFingerprint,
             header.compileTargetProfileFingerprint};
 }
@@ -411,7 +411,7 @@ inline std::uint64_t CanonicalNeutralBusFingerprint(const PackCanonicalImage& im
 // The v2 snapshot parent check accepts any Bus row order and bounds a full
 // 4096-row chain without recursive traversal.
 bool ValidateCanonicalBusParentForestV2(
-    std::span<const PackBusDefinitionBusV2> buses);
+    std::span<const PackBusDefinitionBus> buses);
 
 // Shipping decode of Init / CanonicalContent files (LoadCanonicalPack).
 // The old LoadPackV2 / ParsePackV2Image path refuses those artifacts

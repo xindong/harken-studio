@@ -131,7 +131,7 @@ public:
         std::vector<PackCanonicalImage::VariableRequirement> variableRequirements;
         bool hasVariableRequirements = false;
         bool hasBusDefinitionSnapshot = false;
-        PackBusDefinitionSnapshotHeaderV1 busDefinitionSnapshotHeader{};
+        PackBusDefinitionSnapshotHeader busDefinitionSnapshotHeader{};
         CanonicalBusTriple requirementTriple{};
         CanonicalBusTriple partitionTriple{};
         PackBindingManifestV1 bindingManifest;
@@ -226,7 +226,7 @@ public:
         std::vector<PackCanonicalImage::VariableRequirement> variableRequirements;
         bool hasVariableRequirements = false;
         bool hasBusDefinitionSnapshot = false;
-        PackBusDefinitionSnapshotHeaderV1 busDefinitionSnapshotHeader{};
+        PackBusDefinitionSnapshotHeader busDefinitionSnapshotHeader{};
         CanonicalBusTriple requirementTriple{};
         CanonicalBusTriple partitionTriple{};
         PackBindingManifestV1 bindingManifest;

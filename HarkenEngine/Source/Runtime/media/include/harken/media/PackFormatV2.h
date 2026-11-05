@@ -83,8 +83,6 @@ inline constexpr std::uint32_t kPackKindCanonicalContent = 3;
 
 // Entry kinds. ABI-frozen values, append-only, never renumbered.
 inline constexpr std::uint32_t kPackEntryKindMedia = 1;
-inline constexpr std::uint32_t kPackEntryKindBus = 2;
-inline constexpr std::uint32_t kPackEntryKindBusSend = 3;
 inline constexpr std::uint32_t kPackEntryKindAttenuation = 4;
 inline constexpr std::uint32_t kPackEntryKindDiscreteVariable = 5;
 inline constexpr std::uint32_t kPackEntryKindMeterWiring = 6;
@@ -103,15 +101,12 @@ inline constexpr std::uint32_t kPackEntryKindInitRoutingCatalog = 20;
 inline constexpr std::uint32_t kPackEntryKindCanonicalDefinitionPartition = 21;
 inline constexpr std::uint32_t kPackEntryKindPackRequirementBlock = 22;
 inline constexpr std::uint32_t kPackEntryKindPackDependencyEdge = 23;
-inline constexpr std::uint32_t kPackEntryKindBusDefinitionSnapshot = 24;
 inline constexpr std::uint32_t kPackEntryKindGameplayCatalog = 25;
 inline constexpr std::uint32_t kPackEntryKindVariablePolicyOverlay = 26;
 inline constexpr std::uint32_t kPackEntryKindVariableRequirements = 27;
 inline constexpr std::uint32_t kPackEntryKindVariableNameCatalog = 28;
 inline constexpr std::uint32_t kPackCanonicalEntryVintage = 1;
 inline constexpr std::uint32_t kPackCanonicalRequirementVintage = 2;
-inline constexpr std::uint32_t kPackBusDefinitionSnapshotVintage = 1;
-inline constexpr std::uint32_t kPackBusDefinitionSnapshotVintage2 = 2;
 inline constexpr std::uint32_t kPackGameplayCatalogVintage = 1;
 inline constexpr std::uint32_t kGameplayCatalogHeaderBytes = 96;
 inline constexpr std::uint32_t kGameplayCatalogActiveRowBytes = 72;
@@ -142,7 +137,6 @@ inline constexpr std::uint32_t kPackV2SchemaVintage = 2;
 inline constexpr std::uint32_t kPackV2AuthoredToneSchemaVintage = 3;
 inline constexpr std::uint32_t kPackV2SpatialRecipeSchemaVintage = 4;
 inline constexpr std::uint32_t kPackV2PlaybackRecipeSchemaVintage = 5;
-inline constexpr std::uint32_t kPackV2BusMixSchemaVintage = 6;
 inline constexpr std::uint32_t kPackV2DynamicSchemaVintage = 1;
 
 // Payload alignment inside the payload region. Media blobs keep the v1
@@ -154,9 +148,6 @@ inline constexpr std::uint64_t kPackV2PayloadAlign = 8;
 // VoiceRecipe write is PackV5VoiceRecipePayloadBytes.
 inline constexpr std::uint64_t kPackV2MediaPayloadBytes =
     kPackTocEntryBytes;                                    // the v1 record
-inline constexpr std::uint64_t kPackV2BusPayloadBytes = 32;
-inline constexpr std::uint64_t kPackV6BusPayloadBytes = 40;
-inline constexpr std::uint64_t kPackV2BusSendPayloadBytes = 40;
 inline constexpr std::uint64_t kPackV2CurveWireBytes = 184;
 inline constexpr std::uint64_t kPackV2AttenuationPayloadBytes =
     48 + 3 * kPackV2CurveWireBytes;                        // 600
@@ -449,63 +440,6 @@ inline PackV2DirectoryEntry ParsePackV2DirectoryEntry(const std::uint8_t* in) {
 }
 
 // --- fixed-size logic payloads ---
-
-inline void SerializePackV2Bus(const PackBusEntry& e, std::uint8_t* out) {
-    StoreObjectId(out + 0, e.busId);
-    StoreObjectId(out + 16, e.parentBusId);
-}
-
-inline bool ParsePackV2Bus(const std::uint8_t* in, std::uint64_t size,
-                           PackBusEntry* out) {
-    if (size != kPackV2BusPayloadBytes) {
-        return false;
-    }
-    out->busId = LoadObjectId(in + 0);
-    out->parentBusId = LoadObjectId(in + 16);
-    out->volume = 0.0f;
-    out->outputBusVolume = 0.0f;
-    out->makeUpGain = 0.0f;
-    return true;
-}
-
-inline void SerializePackV6Bus(const PackBusEntry& e, std::uint8_t* out) {
-    StoreObjectId(out + 0, e.busId);
-    StoreObjectId(out + 16, e.parentBusId);
-    StoreLEF32(out + 32, e.volume);
-    StoreLEF32(out + 36, e.outputBusVolume);
-}
-
-inline bool ParsePackV6Bus(const std::uint8_t* in, std::uint64_t size,
-                           PackBusEntry* out) {
-    if (size != kPackV6BusPayloadBytes) {
-        return false;
-    }
-    out->busId = LoadObjectId(in + 0);
-    out->parentBusId = LoadObjectId(in + 16);
-    out->volume = LoadLEF32(in + 32);
-    out->outputBusVolume = LoadLEF32(in + 36);
-    out->makeUpGain = 0.0f;
-    return true;
-}
-
-inline void SerializePackV2BusSend(const PackBusSendEntry& e,
-                                   std::uint8_t* out) {
-    StoreObjectId(out + 0, e.fromBusId);
-    StoreObjectId(out + 16, e.toBusId);
-    StoreLEF32(out + 32, e.levelDb);
-    StoreLE32(out + 36, 0);
-}
-
-inline bool ParsePackV2BusSend(const std::uint8_t* in, std::uint64_t size,
-                               PackBusSendEntry* out) {
-    if (size != kPackV2BusSendPayloadBytes || LoadLE32(in + 36) != 0) {
-        return false;
-    }
-    out->fromBusId = LoadObjectId(in + 0);
-    out->toBusId = LoadObjectId(in + 16);
-    out->levelDb = LoadLEF32(in + 32);
-    return true;
-}
 
 inline void SerializePackV2BusEffect(const PackBusEffectEntry& e,
                                      std::uint8_t* out) {
@@ -1191,18 +1125,6 @@ inline constexpr std::uint32_t kPackDependencyEdgeBytes = 32;
 inline constexpr std::uint32_t kPackDependencyEdgeV2Bytes = 48;
 inline constexpr std::uint32_t kCanonicalDefinitionPartitionHeaderBytes = 64;
 inline constexpr std::uint32_t kCanonicalDefinitionPartitionHeaderV2Bytes = 88;
-inline constexpr std::uint32_t kPackBusDefinitionSnapshotHeaderBytes = 160;
-inline constexpr std::uint32_t kPackBusDefinitionSnapshotV2HeaderBytes = 184;
-inline constexpr std::uint32_t kPackBusDefinitionBusRowBytes = 64;
-inline constexpr std::uint32_t kPackBusDefinitionSendRowBytes = 32;
-inline constexpr std::uint32_t kPackBusDefinitionBusV2RowBytes = 72;
-inline constexpr std::uint32_t kPackBusDefinitionSendV2RowBytes = 48;
-inline constexpr std::uint32_t kPackBusDefinitionDownmixV2RowBytes = 40;
-inline constexpr std::uint32_t kPackBusDefinitionEffectRowBytes = 48;
-inline constexpr std::uint32_t kPackBusDefinitionEffectParameterRowBytes = 16;
-inline constexpr std::uint32_t kPackBusDefinitionDownmixRowBytes = 32;
-inline constexpr std::uint32_t kPackBusDefinitionCoefficientRowBytes = 4;
-inline constexpr std::uint32_t kPackBusDefinitionDownmixCoefficientCount = 64;
 inline constexpr char kCanonicalDefinitionPartitionMagic[8] = {
     'V', 'N', 'D', 'E', 'F', 'P', '0', '1'};
 inline constexpr char kCanonicalDefinitionPartitionMagicV2[8] = {
@@ -1226,30 +1148,6 @@ inline constexpr std::uint32_t kPackDependencyEdgeKindContent = 3;
 
 inline bool PackV2IsCanonicalKind(std::uint32_t packKind) {
     return packKind == kPackKindInit || packKind == kPackKindCanonicalContent;
-}
-
-inline bool PackV2IsCanonicalEntryKind(std::uint32_t entryKind) {
-    return entryKind == kPackEntryKindInitRoutingCatalog ||
-           entryKind == kPackEntryKindCanonicalDefinitionPartition ||
-           entryKind == kPackEntryKindPackRequirementBlock ||
-           entryKind == kPackEntryKindPackDependencyEdge ||
-           entryKind == kPackEntryKindBusDefinitionSnapshot ||
-           entryKind == kPackEntryKindGameplayCatalog ||
-           entryKind == kPackEntryKindVariablePolicyOverlay ||
-           entryKind == kPackEntryKindVariableRequirements ||
-           entryKind == kPackEntryKindVariableNameCatalog;
-}
-
-inline std::uint32_t PackV2CanonicalDirectoryVintage(std::uint32_t entryKind) {
-    if (entryKind == kPackEntryKindCanonicalDefinitionPartition ||
-        entryKind == kPackEntryKindPackRequirementBlock ||
-        entryKind == kPackEntryKindPackDependencyEdge) {
-        return kPackCanonicalRequirementVintage;
-    }
-    if (entryKind == kPackEntryKindBusDefinitionSnapshot) {
-        return kPackBusDefinitionSnapshotVintage;
-    }
-    return kPackCanonicalEntryVintage;
 }
 
 inline bool CheckedMulU64(std::uint64_t a, std::uint64_t b, std::uint64_t* out) {
@@ -1366,7 +1264,7 @@ struct PackDependencyEdge {
     std::uint64_t expectedCompileTargetProfileFingerprint = 0;
 };
 
-struct PackBusDefinitionSnapshotHeaderV1 {
+struct PackBusDefinitionSnapshotHeader {
     std::uint32_t schemaVersion = 0;
     std::uint32_t storageModelVersion = 0;
     std::uint32_t headerBytes = 0;
@@ -1468,7 +1366,7 @@ struct PackBusDefinitionDownmixV1 {
     std::uint64_t reserved0 = 0;
 };
 
-struct PackBusDefinitionBusV2 {
+struct PackBusDefinitionBus {
     VnObjectId busId{};
     VnObjectId parentId{};
     std::uint32_t feedsFirstOrdinal = 0;
@@ -1483,13 +1381,13 @@ struct PackBusDefinitionBusV2 {
     std::uint32_t downmixCount = 0;
 };
 
-struct PackBusDefinitionSendV2 {
+struct PackBusDefinitionSend {
     VnObjectId source{};
     VnObjectId target{};
     float levelDb = 0.0f;
 };
 
-struct PackBusDefinitionDownmixV2 {
+struct PackBusDefinitionDownmix {
     VnObjectId busId{};
     std::uint32_t sourceLayout = 0;
     std::uint32_t destinationLayout = 0;
@@ -1752,126 +1650,6 @@ inline bool ParsePackDependencyEdgeV2(const std::uint8_t* in, std::uint64_t size
            out->required01 <= 1;
 }
 
-inline void SerializePackBusDefinitionSnapshotHeaderV1(
-    const PackBusDefinitionSnapshotHeaderV1& header, std::uint8_t* out) {
-    StoreLE32(out + 0, header.schemaVersion);
-    StoreLE32(out + 4, header.storageModelVersion);
-    StoreLE32(out + 8, header.headerBytes);
-    StoreLE32(out + 12, header.publicationCapabilityVintage);
-    StoreLE64(out + 16, header.contentGeneration);
-    StoreLE64(out + 24, header.publishedBusFingerprint);
-    StoreLE32(out + 32, header.busCount);
-    StoreLE32(out + 36, header.sendCount);
-    StoreLE32(out + 40, header.effectCount);
-    StoreLE32(out + 44, header.effectParameterCount);
-    StoreLE32(out + 48, header.downmixCount);
-    StoreLE32(out + 52, header.coefficientCount);
-    StoreLE64(out + 56, header.busOffset);
-    StoreLE64(out + 64, header.sendOffset);
-    StoreLE64(out + 72, header.effectOffset);
-    StoreLE64(out + 80, header.effectParameterOffset);
-    StoreLE64(out + 88, header.downmixOffset);
-    StoreLE64(out + 96, header.coefficientOffset);
-    StoreLE64(out + 104, header.payloadBytes);
-    StoreLE64(out + 112, header.checksum);
-    StoreLE64(out + 120, header.compileTargetProfileFingerprint);
-    StoreLE32(out + 128, header.profileVintage);
-    StoreLE32(out + 132, header.renderSampleRateHz);
-    StoreLE32(out + 136, header.mixLayout);
-    StoreLE32(out + 140, header.deviceLayout);
-    StoreLE64(out + 144, header.runtimeCapabilityMask);
-    StoreLE64(out + 152, header.reserved0);
-}
-
-inline void SerializePackBusDefinitionSnapshotHeaderV2(
-    const PackBusDefinitionSnapshotHeaderV1& header, std::uint8_t* out) {
-    SerializePackBusDefinitionSnapshotHeaderV1(header, out);
-    StoreLE32(out + 160, header.busRowBytes);
-    StoreLE32(out + 164, header.sendRowBytes);
-    StoreLE32(out + 168, header.downmixRowBytes);
-    StoreLE32(out + 172, header.coefficientRowBytes);
-    StoreLE64(out + 176, header.reserved1);
-}
-
-inline bool ParsePackBusDefinitionSnapshotHeader(
-    const std::uint8_t* in, std::uint64_t size,
-    PackBusDefinitionSnapshotHeaderV1* out, std::uint32_t vintage) {
-    if (size < (vintage == 2 ? kPackBusDefinitionSnapshotV2HeaderBytes
-                             : kPackBusDefinitionSnapshotHeaderBytes)) {
-        return false;
-    }
-    out->schemaVersion = LoadLE32(in + 0);
-    out->storageModelVersion = LoadLE32(in + 4);
-    out->headerBytes = LoadLE32(in + 8);
-    out->publicationCapabilityVintage = LoadLE32(in + 12);
-    out->contentGeneration = LoadLE64(in + 16);
-    out->publishedBusFingerprint = LoadLE64(in + 24);
-    out->busCount = LoadLE32(in + 32);
-    out->sendCount = LoadLE32(in + 36);
-    out->effectCount = LoadLE32(in + 40);
-    out->effectParameterCount = LoadLE32(in + 44);
-    out->downmixCount = LoadLE32(in + 48);
-    out->coefficientCount = LoadLE32(in + 52);
-    out->busOffset = LoadLE64(in + 56);
-    out->sendOffset = LoadLE64(in + 64);
-    out->effectOffset = LoadLE64(in + 72);
-    out->effectParameterOffset = LoadLE64(in + 80);
-    out->downmixOffset = LoadLE64(in + 88);
-    out->coefficientOffset = LoadLE64(in + 96);
-    out->payloadBytes = LoadLE64(in + 104);
-    out->checksum = LoadLE64(in + 112);
-    out->compileTargetProfileFingerprint = LoadLE64(in + 120);
-    out->profileVintage = LoadLE32(in + 128);
-    out->renderSampleRateHz = LoadLE32(in + 132);
-    out->mixLayout = LoadLE32(in + 136);
-    out->deviceLayout = LoadLE32(in + 140);
-    out->runtimeCapabilityMask = LoadLE64(in + 144);
-    out->reserved0 = LoadLE64(in + 152);
-    if (vintage == 2) {
-        out->busRowBytes = LoadLE32(in + 160);
-        out->sendRowBytes = LoadLE32(in + 164);
-        out->downmixRowBytes = LoadLE32(in + 168);
-        out->coefficientRowBytes = LoadLE32(in + 172);
-        out->reserved1 = LoadLE64(in + 176);
-    }
-    std::uint64_t expectedSize = 0;
-    if (out->schemaVersion != vintage || out->storageModelVersion != vintage ||
-        out->headerBytes != (vintage == 2 ? kPackBusDefinitionSnapshotV2HeaderBytes
-                                          : kPackBusDefinitionSnapshotHeaderBytes) ||
-        (vintage == 2 ? (out->publicationCapabilityVintage != 3u &&
-                         out->publicationCapabilityVintage != 4u)
-                      : out->publicationCapabilityVintage != 1u) ||
-        out->profileVintage != 1 ||
-        out->reserved0 != 0 ||
-        (vintage == 2 &&
-         (out->busRowBytes != kPackBusDefinitionBusV2RowBytes ||
-          out->sendRowBytes != kPackBusDefinitionSendV2RowBytes ||
-          out->downmixRowBytes != kPackBusDefinitionDownmixV2RowBytes ||
-          out->coefficientRowBytes != kPackBusDefinitionCoefficientRowBytes ||
-          out->reserved1 != 0)) ||
-        !CheckedAddU64(out->headerBytes, out->payloadBytes, &expectedSize) ||
-        size != expectedSize) {
-        return false;
-    }
-    std::uint8_t checksumZero[8] = {};
-    std::uint64_t hash = Fnv1a64(in, 112);
-    hash = Fnv1a64(checksumZero, 8, hash);
-    hash = Fnv1a64(in + 120, static_cast<std::size_t>(size - 120), hash);
-    return hash == out->checksum;
-}
-
-inline bool ParsePackBusDefinitionSnapshotHeaderV1(
-    const std::uint8_t* in, std::uint64_t size,
-    PackBusDefinitionSnapshotHeaderV1* out) {
-    return ParsePackBusDefinitionSnapshotHeader(in, size, out, 1);
-}
-
-inline bool ParsePackBusDefinitionSnapshotHeaderV2(
-    const std::uint8_t* in, std::uint64_t size,
-    PackBusDefinitionSnapshotHeaderV1* out) {
-    return ParsePackBusDefinitionSnapshotHeader(in, size, out, 2);
-}
-
 inline void SerializePackCanonicalPartitionHeader(
     const PackCanonicalPartitionHeader& header, std::uint8_t* out) {
     std::memcpy(out, kCanonicalDefinitionPartitionMagic, 8);
@@ -1963,195 +1741,6 @@ inline bool ParsePackCanonicalPartitionHeaderV2(
            Fnv1a64(in + out->headerBytes,
                    static_cast<std::size_t>(out->bodyBytes)) ==
                out->bodyChecksum;
-}
-
-inline void SerializePackBusDefinitionBusV1(const PackBusDefinitionBusV1& row,
-                                            std::uint8_t* out) {
-    StoreLE64(out + 0, row.busId);
-    StoreLE64(out + 8, row.parentId);
-    StoreLE32(out + 16, row.feedsFirstOrdinal);
-    StoreLE32(out + 20, row.flags);
-    StoreLEF32(out + 24, row.faderDb);
-    StoreLE32(out + 28, row.faderAfterSlot);
-    StoreLE32(out + 32, row.outputLayout);
-    StoreLE32(out + 36, row.effectFirst);
-    StoreLE32(out + 40, row.effectCount);
-    StoreLE32(out + 44, row.downmixFirst);
-    StoreLE32(out + 48, row.downmixCount);
-    StoreLE32(out + 52, row.reserved0);
-    StoreLE64(out + 56, row.reserved1);
-}
-
-inline bool ParsePackBusDefinitionBusV1(const std::uint8_t* in,
-                                        PackBusDefinitionBusV1* out) {
-    out->busId = LoadLE64(in + 0);
-    out->parentId = LoadLE64(in + 8);
-    out->feedsFirstOrdinal = LoadLE32(in + 16);
-    out->flags = LoadLE32(in + 20);
-    out->faderDb = LoadLEF32(in + 24);
-    out->faderAfterSlot = LoadLE32(in + 28);
-    out->outputLayout = LoadLE32(in + 32);
-    out->effectFirst = LoadLE32(in + 36);
-    out->effectCount = LoadLE32(in + 40);
-    out->downmixFirst = LoadLE32(in + 44);
-    out->downmixCount = LoadLE32(in + 48);
-    out->reserved0 = LoadLE32(in + 52);
-    out->reserved1 = LoadLE64(in + 56);
-    return out->flags == 0 && out->reserved0 == 0 && out->reserved1 == 0;
-}
-
-inline void SerializePackBusDefinitionSendV1(const PackBusDefinitionSendV1& row,
-                                             std::uint8_t* out) {
-    StoreLE64(out + 0, row.source);
-    StoreLE64(out + 8, row.target);
-    StoreLEF32(out + 16, row.levelDb);
-    StoreLE32(out + 20, row.reserved0);
-    StoreLE64(out + 24, row.reserved1);
-}
-
-inline bool ParsePackBusDefinitionSendV1(const std::uint8_t* in,
-                                         PackBusDefinitionSendV1* out) {
-    out->source = LoadLE64(in + 0);
-    out->target = LoadLE64(in + 8);
-    out->levelDb = LoadLEF32(in + 16);
-    out->reserved0 = LoadLE32(in + 20);
-    out->reserved1 = LoadLE64(in + 24);
-    return out->reserved0 == 0 && out->reserved1 == 0;
-}
-
-inline void SerializePackBusDefinitionEffectV1(
-    const PackBusDefinitionEffectV1& row, std::uint8_t* out) {
-    StoreLE64(out + 0, row.busId);
-    StoreLE64(out + 8, row.effectStableId);
-    StoreLE32(out + 16, row.slot);
-    StoreLE32(out + 20, row.effectType);
-    StoreLE32(out + 24, row.descriptorVintage);
-    StoreLE32(out + 28, row.flags);
-    StoreLE32(out + 32, row.parameterFirst);
-    StoreLE32(out + 36, row.parameterCount);
-    StoreLE64(out + 40, row.reserved0);
-}
-
-inline bool ParsePackBusDefinitionEffectV1(const std::uint8_t* in,
-                                           PackBusDefinitionEffectV1* out) {
-    out->busId = LoadLE64(in + 0);
-    out->effectStableId = LoadLE64(in + 8);
-    out->slot = LoadLE32(in + 16);
-    out->effectType = LoadLE32(in + 20);
-    out->descriptorVintage = LoadLE32(in + 24);
-    out->flags = LoadLE32(in + 28);
-    out->parameterFirst = LoadLE32(in + 32);
-    out->parameterCount = LoadLE32(in + 36);
-    out->reserved0 = LoadLE64(in + 40);
-    return (out->flags & ~1u) == 0 && out->reserved0 == 0;
-}
-
-inline void SerializePackBusDefinitionEffectParameterV1(
-    const PackBusDefinitionEffectParameterV1& row, std::uint8_t* out) {
-    StoreLE32(out + 0, row.parameterIndex);
-    StoreLEF32(out + 4, row.value);
-    StoreLE32(out + 8, row.reserved0);
-    StoreLE32(out + 12, row.reserved1);
-}
-
-inline bool ParsePackBusDefinitionEffectParameterV1(
-    const std::uint8_t* in, PackBusDefinitionEffectParameterV1* out) {
-    out->parameterIndex = LoadLE32(in + 0);
-    out->value = LoadLEF32(in + 4);
-    out->reserved0 = LoadLE32(in + 8);
-    out->reserved1 = LoadLE32(in + 12);
-    return out->reserved0 == 0 && out->reserved1 == 0;
-}
-
-inline void SerializePackBusDefinitionDownmixV1(
-    const PackBusDefinitionDownmixV1& row, std::uint8_t* out) {
-    StoreLE64(out + 0, row.busId);
-    StoreLE32(out + 8, row.sourceLayout);
-    StoreLE32(out + 12, row.destinationLayout);
-    StoreLE32(out + 16, row.coefficientFirst);
-    StoreLE32(out + 20, row.coefficientCount);
-    StoreLE64(out + 24, row.reserved0);
-}
-
-inline bool ParsePackBusDefinitionDownmixV1(const std::uint8_t* in,
-                                            PackBusDefinitionDownmixV1* out) {
-    out->busId = LoadLE64(in + 0);
-    out->sourceLayout = LoadLE32(in + 8);
-    out->destinationLayout = LoadLE32(in + 12);
-    out->coefficientFirst = LoadLE32(in + 16);
-    out->coefficientCount = LoadLE32(in + 20);
-    out->reserved0 = LoadLE64(in + 24);
-    return out->reserved0 == 0;
-}
-
-inline void SerializePackBusDefinitionBusV2(const PackBusDefinitionBusV2& row,
-                                             std::uint8_t* out) {
-    StoreObjectId(out + 0, row.busId);
-    StoreObjectId(out + 16, row.parentId);
-    StoreLE32(out + 32, row.feedsFirstOrdinal);
-    StoreLEF32(out + 36, row.faderDb);
-    StoreLEF32(out + 40, row.outputBusVolumeDb);
-    StoreLE32(out + 44, row.faderAfterSlot);
-    StoreLE32(out + 48, row.outputLayout);
-    StoreLE32(out + 52, row.effectFirst);
-    StoreLE32(out + 56, row.effectCount);
-    StoreLE32(out + 60, row.downmixFirst);
-    StoreLE32(out + 64, row.downmixCount);
-    StoreLE32(out + 68, 0);
-}
-
-inline bool ParsePackBusDefinitionBusV2(const std::uint8_t* in,
-                                         PackBusDefinitionBusV2* out) {
-    out->busId = LoadObjectId(in + 0);
-    out->parentId = LoadObjectId(in + 16);
-    out->feedsFirstOrdinal = LoadLE32(in + 32);
-    out->faderDb = LoadLEF32(in + 36);
-    out->makeUpGainDb = 0.0f;
-    out->outputBusVolumeDb = LoadLEF32(in + 40);
-    out->faderAfterSlot = LoadLE32(in + 44);
-    out->outputLayout = LoadLE32(in + 48);
-    out->effectFirst = LoadLE32(in + 52);
-    out->effectCount = LoadLE32(in + 56);
-    out->downmixFirst = LoadLE32(in + 60);
-    out->downmixCount = LoadLE32(in + 64);
-    return LoadLE32(in + 68) == 0;
-}
-
-inline void SerializePackBusDefinitionSendV2(const PackBusDefinitionSendV2& row,
-                                              std::uint8_t* out) {
-    StoreObjectId(out + 0, row.source);
-    StoreObjectId(out + 16, row.target);
-    StoreLEF32(out + 32, row.levelDb);
-    StoreLE32(out + 36, 0);
-    StoreLE64(out + 40, 0);
-}
-
-inline bool ParsePackBusDefinitionSendV2(const std::uint8_t* in,
-                                          PackBusDefinitionSendV2* out) {
-    out->source = LoadObjectId(in + 0);
-    out->target = LoadObjectId(in + 16);
-    out->levelDb = LoadLEF32(in + 32);
-    return LoadLE32(in + 36) == 0 && LoadLE64(in + 40) == 0;
-}
-
-inline void SerializePackBusDefinitionDownmixV2(
-    const PackBusDefinitionDownmixV2& row, std::uint8_t* out) {
-    StoreObjectId(out + 0, row.busId);
-    StoreLE32(out + 16, row.sourceLayout);
-    StoreLE32(out + 20, row.destinationLayout);
-    StoreLE32(out + 24, row.coefficientFirst);
-    StoreLE32(out + 28, row.coefficientCount);
-    StoreLE64(out + 32, 0);
-}
-
-inline bool ParsePackBusDefinitionDownmixV2(const std::uint8_t* in,
-                                             PackBusDefinitionDownmixV2* out) {
-    out->busId = LoadObjectId(in + 0);
-    out->sourceLayout = LoadLE32(in + 16);
-    out->destinationLayout = LoadLE32(in + 20);
-    out->coefficientFirst = LoadLE32(in + 24);
-    out->coefficientCount = LoadLE32(in + 28);
-    return LoadLE64(in + 32) == 0;
 }
 
 struct PackGameplayCatalogHeader {
@@ -2505,6 +2094,64 @@ inline bool EncodeGameplayCatalog(
     StoreLE64(payload.data() + 88, header.headerChecksum);
     *out = std::move(payload);
     return true;
+}
+
+}
+
+#include <harken/media/generated/harken_pack_wire.g.h>
+
+namespace harken {
+
+inline bool PackV2IsCanonicalEntryKind(std::uint32_t entryKind) {
+    return entryKind == kPackEntryKindInitRoutingCatalog ||
+           entryKind == kPackEntryKindCanonicalDefinitionPartition ||
+           entryKind == kPackEntryKindPackRequirementBlock ||
+           entryKind == kPackEntryKindPackDependencyEdge ||
+           entryKind == kPackEntryKindBusDefinitionSnapshot ||
+           entryKind == kPackEntryKindGameplayCatalog ||
+           entryKind == kPackEntryKindVariablePolicyOverlay ||
+           entryKind == kPackEntryKindVariableRequirements ||
+           entryKind == kPackEntryKindVariableNameCatalog;
+}
+inline std::uint32_t PackV2CanonicalDirectoryVintage(std::uint32_t entryKind) {
+    if (entryKind == kPackEntryKindCanonicalDefinitionPartition ||
+        entryKind == kPackEntryKindPackRequirementBlock ||
+        entryKind == kPackEntryKindPackDependencyEdge) {
+        return kPackCanonicalRequirementVintage;
+    }
+    if (entryKind == kPackEntryKindBusDefinitionSnapshot) {
+        return kPackBusDefinitionSnapshotVintage;
+    }
+    return kPackCanonicalEntryVintage;
+}
+inline bool ReadPackBusDefinitionSnapshotHeader(
+    const std::uint8_t* in, std::uint64_t size,
+    PackBusDefinitionSnapshotHeader* out) noexcept {
+    if (size < kPackBusDefinitionSnapshotHeaderBytes ||
+        !ParsePackBusDefinitionSnapshotHeader(in, kPackBusDefinitionSnapshotHeaderBytes, out)) {
+        return false;
+    }
+    std::uint64_t expectedSize = 0;
+    if (out->schemaVersion != kPackBusDefinitionSnapshotVintage ||
+        out->storageModelVersion != kPackBusDefinitionSnapshotVintage ||
+        out->headerBytes != kPackBusDefinitionSnapshotHeaderBytes ||
+        (out->publicationCapabilityVintage != 3u && out->publicationCapabilityVintage != 4u) ||
+        out->profileVintage != 1 || out->reserved0 != 0 || out->reserved1 != 0 ||
+        out->busRowBytes != kPackBusDefinitionBusBytes ||
+        out->sendRowBytes != kPackBusDefinitionSendBytes ||
+        out->downmixRowBytes != kPackBusDefinitionDownmixBytes ||
+        out->coefficientRowBytes != kPackBusDefinitionCoefficientBytes ||
+        !CheckedAddU64(out->headerBytes, out->payloadBytes, &expectedSize) ||
+        size != expectedSize) {
+        return false;
+    }
+    constexpr auto checksumOffset = kPackBusDefinitionSnapshotHeaderChecksumOffset;
+    constexpr auto checksumEnd = kPackBusDefinitionSnapshotHeaderCompileTargetProfileFingerprintOffset;
+    const std::uint8_t checksumZero[checksumEnd - checksumOffset] = {};
+    std::uint64_t hash = Fnv1a64(in, checksumOffset);
+    hash = Fnv1a64(checksumZero, sizeof(checksumZero), hash);
+    hash = Fnv1a64(in + checksumEnd, static_cast<std::size_t>(size - checksumEnd), hash);
+    return hash == out->checksum;
 }
 
 } // namespace harken

@@ -2437,9 +2437,9 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         return result;
     }
     const auto busSnapshotPayload = harkenstudiobuild::VolumeBusSnapshotPayload(busProjection);
-    harkenstudiobuild::PackBusDefinitionSnapshotHeaderV1 busSnapshotHeader;
+    harkenstudiobuild::PackBusDefinitionSnapshotHeader busSnapshotHeader;
     if (busSnapshotPayload.empty() ||
-        !harkenstudiobuild::ParsePackBusDefinitionSnapshotHeaderV2(
+        !harkenstudiobuild::ReadPackBusDefinitionSnapshotHeader(
             busSnapshotPayload.data(), busSnapshotPayload.size(), &busSnapshotHeader)) {
         result.error = QStringLiteral("Bus snapshot cannot represent target platform %1")
                            .arg(request.options.platform);
@@ -3612,7 +3612,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         if (meta.packKind == harkenstudiobuild::kPackKindInit) {
             Bridge::PackBuildSession::CanonicalPackEntry snapshot;
             snapshot.kind = harkenstudiobuild::kPackEntryKindBusDefinitionSnapshot;
-            snapshot.vintage = harkenstudiobuild::kPackBusDefinitionSnapshotVintage2;
+            snapshot.vintage = harkenstudiobuild::kPackBusDefinitionSnapshotVintage;
             snapshot.id = {};
             snapshot.relationOrdinal = 1;
             snapshot.payload = busSnapshotPayload;

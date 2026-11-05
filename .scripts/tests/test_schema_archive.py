@@ -438,6 +438,51 @@ class SchemaArchiveTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             MODULE["validate_pack_source"](pack)
 
+    def test_pack_current_and_new_archives_require_binary_layout(self) -> None:
+        current = copy.deepcopy(MODULE["load_tree"]("Pack")["currentSource"])
+        current["x-harken-format"].pop("binaryLayout")
+        with self.assertRaises(ValueError):
+            MODULE["materialize_source"]("Pack", current, PACK_VERSION)
+        for version in (3, 4):
+            archive = read_json(SCHEMA_ROOT / "Pack" / str(version) / "PackManifestSchema.json")
+            MODULE["validate_pack_source"](archive)
+        future = copy.deepcopy(MODULE["load_tree"]("Pack")["current"])
+        future["x-harken-format"].pop("binaryLayout")
+        future["x-harken-format"]["formatVersion"] = 5
+        future["$defs"]["schemaVersion"]["const"] = 5
+        with self.assertRaises(ValueError):
+            MODULE["validate_pack_source"](future)
+
+    def test_pack_rejects_invalid_binary_layouts(self) -> None:
+        source = MODULE["load_tree"]("Pack")["current"]
+        layout = {
+            "byteOrder": "little", "constants": {},
+            "kinds": [{"name": "example", "id": 1, "vintage": 1, "record": "example"}],
+            "records": {"example": {"mode": "fixed", "fields": [{"name": "value", "type": "u32"}]}},
+        }
+        valid = copy.deepcopy(source)
+        valid["x-harken-format"]["binaryLayout"] = layout
+        MODULE["validate_pack_source"](valid)
+        invalid_layouts = [None, {}]
+        duplicate = copy.deepcopy(layout)
+        duplicate["records"]["example"]["fields"] *= 2
+        invalid_layouts.append(duplicate)
+        unknown = copy.deepcopy(layout)
+        unknown["records"]["example"]["fields"][0]["type"] = "u24"
+        invalid_layouts.append(unknown)
+        missing = copy.deepcopy(layout)
+        missing["kinds"][0]["record"] = "missing"
+        invalid_layouts.append(missing)
+        recursive = copy.deepcopy(layout)
+        recursive["records"]["example"]["fields"] = [{"name": "nested", "type": "record", "record": "example"}]
+        invalid_layouts.append(recursive)
+        for invalid_layout in invalid_layouts:
+            with self.subTest(layout=invalid_layout):
+                invalid = copy.deepcopy(source)
+                invalid["x-harken-format"]["binaryLayout"] = invalid_layout
+                with self.assertRaises(ValueError):
+                    MODULE["validate_pack_source"](invalid)
+
     def test_one_of_requires_schema_alternatives(self) -> None:
         schema = {"oneOf": [{"type": "object", "required": ["platforms"]},
                             {"type": "object", "required": ["platformId", "packs"]}]}

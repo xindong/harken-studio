@@ -10,6 +10,12 @@ on:
   pull_request:
     paths:
       - 'HarkenStudio/**'
+      - 'HarkenSchema/Pack/**'
+      - '.scripts/pack_wire_codegen.py'
+      - '.scripts/pack-wire-bindings.json'
+      - '.scripts/schema_archive.py'
+      - '.scripts/tests/test_pack_wire_codegen.py'
+      - '.scripts/tests/test_schema_archive.py'
       - 'cmake/**'
       - 'CMakeLists.txt'
       - 'CMakePresets.json'
@@ -51,6 +57,13 @@ jobs:
         run: |
           python .scripts/tests/test_studio_local_qss_gate.py
           python .scripts/studio_local_qss_gate.py
+
+      - name: Pack binary layout contract gate
+        shell: bash
+        run: |
+          python .scripts/pack_wire_codegen.py --check
+          python .scripts/tests/test_pack_wire_codegen.py
+          python .scripts/tests/test_schema_archive.py
 
       - name: Setup MSVC environment
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1

@@ -40,8 +40,6 @@ TEST(PackV2Format, CurveWireSizesArePinned) {
     EXPECT_EQ(608u, kPackV3AttenuationPayloadBytes);
     EXPECT_EQ(180u, kPackV2BindingCurveWireBytes);
     EXPECT_EQ(228u, kPackV2BindingDefinitionPayloadBytes);
-    EXPECT_EQ(32u, kPackV2BusPayloadBytes);
-    EXPECT_EQ(40u, kPackV6BusPayloadBytes);
 }
 
 TEST(PackV2Format, PackContainerUsesPublishedSchemaVersion) {
@@ -53,13 +51,13 @@ TEST(PackV2Format, PackContainerUsesPublishedSchemaVersion) {
 
 TEST(PackV2Format, VolumeSnapshotParentForestAcceptsDeepUnorderedChainAndRejectsCycles) {
     constexpr std::size_t kBusCount = 4096;
-    std::vector<PackBusDefinitionBusV2> buses;
+    std::vector<PackBusDefinitionBus> buses;
     buses.reserve(kBusCount);
-    PackBusDefinitionBusV2 master{};
+    PackBusDefinitionBus master{};
     master.busId = VN_BUS_MASTER;
     buses.push_back(master);
     for (std::size_t i = 1; i < kBusCount; ++i) {
-        PackBusDefinitionBusV2 bus{};
+        PackBusDefinitionBus bus{};
         bus.busId = harkentest::ObjectId(i);
         bus.parentId = buses.back().busId;
         buses.push_back(bus);
@@ -98,10 +96,11 @@ public:
 
     std::size_t AddEntry(std::uint32_t kind, std::uint64_t id,
                          std::vector<std::uint8_t> payload,
-                         std::uint32_t vintage = kPackV2SchemaVintage) {
+                         std::uint32_t vintage = 0) {
         Entry entry;
         entry.kind = kind;
-        entry.vintage = vintage;
+        entry.vintage = vintage != 0 ? vintage : kind == kPackEntryKindBus
+            ? kPackBusVintage : kPackV2SchemaVintage;
         entry.id = id;
         entry.payload = std::move(payload);
         entries_.push_back(std::move(entry));
@@ -253,36 +252,36 @@ private:
 // --- payload factories ---
 
 std::vector<std::uint8_t> BusPayload(VnBusId busId, VnBusId parentBusId) {
-    std::vector<std::uint8_t> payload(kPackV2BusPayloadBytes);
+    std::vector<std::uint8_t> payload(kPackBusBytes);
     PackBusEntry entry;
     entry.busId = busId;
     entry.parentBusId = parentBusId;
-    SerializePackV2Bus(entry, payload.data());
+    SerializePackBus(entry, payload.data());
     return payload;
 }
 
 std::vector<std::uint8_t> BusMixPayload(VnBusId busId, VnBusId parentBusId,
                                         float volume, float outputBusVolume,
                                         float makeUpGain) {
-    std::vector<std::uint8_t> payload(kPackV6BusPayloadBytes);
+    std::vector<std::uint8_t> payload(kPackBusBytes);
     PackBusEntry entry;
     entry.busId = busId;
     entry.parentBusId = parentBusId;
     entry.volume = volume;
     entry.outputBusVolume = outputBusVolume;
     entry.makeUpGain = makeUpGain;
-    SerializePackV6Bus(entry, payload.data());
+    SerializePackBus(entry, payload.data());
     return payload;
 }
 
 std::vector<std::uint8_t> BusSendPayload(VnBusId fromBusId, VnBusId toBusId,
                                          float levelDb) {
-    std::vector<std::uint8_t> payload(kPackV2BusSendPayloadBytes);
+    std::vector<std::uint8_t> payload(kPackBusSendBytes);
     PackBusSendEntry entry;
     entry.fromBusId = fromBusId;
     entry.toBusId = toBusId;
     entry.levelDb = levelDb;
-    SerializePackV2BusSend(entry, payload.data());
+    SerializePackBusSend(entry, payload.data());
     return payload;
 }
 
@@ -1338,41 +1337,13 @@ TEST(PackV2Format, RefusesPreviousSchemaVintage) {
     EXPECT_EQ(0u, image.EntryCount());
 }
 
-TEST(PackV2Format, Vintage2BusPayloadParsesAsZeroMix) {
-    PackBusEntry parsed{};
-    parsed.volume = 1.0f;
-    parsed.outputBusVolume = 2.0f;
-    parsed.makeUpGain = 3.0f;
-    const std::vector<std::uint8_t> payload = BusPayload(harkentest::ObjectId(10), harkentest::ObjectId(1));
-    ASSERT_TRUE(ParsePackV2Bus(payload.data(), payload.size(), &parsed));
-    EXPECT_EQ(harkentest::ObjectId(10u), parsed.busId);
-    EXPECT_EQ(harkentest::ObjectId(1u), parsed.parentBusId);
-    EXPECT_EQ(0.0f, parsed.volume);
-    EXPECT_EQ(0.0f, parsed.outputBusVolume);
-    EXPECT_EQ(0.0f, parsed.makeUpGain);
-    EXPECT_FALSE(ParsePackV2Bus(payload.data(), kPackV6BusPayloadBytes, &parsed));
-}
 
-TEST(PackV2Format, Vintage6BusPayloadRoundTripsMixFields) {
-    const std::vector<std::uint8_t> payload =
-        BusMixPayload(harkentest::ObjectId(10), harkentest::ObjectId(1), -6.0f, -3.5f, 2.0f);
-    ASSERT_EQ(kPackV6BusPayloadBytes, payload.size());
-    PackBusEntry parsed{};
-    parsed.makeUpGain = 2.0f;
-    ASSERT_TRUE(ParsePackV6Bus(payload.data(), payload.size(), &parsed));
-    EXPECT_EQ(harkentest::ObjectId(10u), parsed.busId);
-    EXPECT_EQ(harkentest::ObjectId(1u), parsed.parentBusId);
-    EXPECT_EQ(-6.0f, parsed.volume);
-    EXPECT_EQ(-3.5f, parsed.outputBusVolume);
-    EXPECT_EQ(0.0f, parsed.makeUpGain);
-    EXPECT_FALSE(ParsePackV6Bus(payload.data(), kPackV2BusPayloadBytes, &parsed));
-}
 
 TEST(PackV2Format, Vintage6BusImageRoundTripCarriesMixFields) {
     ImageBuilder builder(kPackKindResident);
     builder.AddEntry(kPackEntryKindBus, 10,
                      BusMixPayload(harkentest::ObjectId(10), harkentest::ObjectId(1), -6.0f, -3.5f, 2.0f),
-                     kPackV2BusMixSchemaVintage);
+                     kPackBusVintage);
     const std::vector<std::uint8_t> bytes = builder.Build();
     PackLogicImage image;
     ASSERT_EQ(VN_OK, ParsePackV2Image(bytes.data(), bytes.size(), &image));
@@ -1389,33 +1360,19 @@ TEST(PackV2Format, RefusesVintage6BusTrailingFields) {
         BusMixPayload(harkentest::ObjectId(10), harkentest::ObjectId(1), -6.0f, -3.5f, 2.0f);
     payload.resize(payload.size() + 8, 0);
     PackBusEntry parsed{};
-    EXPECT_FALSE(ParsePackV6Bus(payload.data(), payload.size(), &parsed));
+    EXPECT_FALSE(ParsePackBus(payload.data(), payload.size(), &parsed));
 
     ImageBuilder builder(kPackKindResident);
     builder.AddEntry(kPackEntryKindBus, 10, std::move(payload),
-                     kPackV2BusMixSchemaVintage);
+                     kPackBusVintage);
     ExpectRefused(builder.Build());
 }
 
-TEST(PackV2Format, RefusesBusVintageAndPayloadSizeMismatch) {
-    {
-        ImageBuilder builder(kPackKindResident);
-        builder.AddEntry(kPackEntryKindBus, 10, BusPayload(harkentest::ObjectId(10), harkentest::ObjectId(1)),
-                         kPackV2BusMixSchemaVintage);
-        ExpectRefused(builder.Build());
-    }
-    {
-        ImageBuilder builder(kPackKindResident);
-        builder.AddEntry(kPackEntryKindBus, 10,
-                         BusMixPayload(harkentest::ObjectId(10), harkentest::ObjectId(1), -6.0f, 0.0f, 0.0f));
-        ExpectRefused(builder.Build());
-    }
-}
 
 TEST(PackV2Format, RefusesBusMixVintageOnOtherKinds) {
     ImageBuilder builder(kPackKindResident);
     builder.AddEntry(kPackEntryKindBusSend, 0, BusSendPayload(harkentest::ObjectId(10), harkentest::ObjectId(11), 0.0f),
-                     kPackV2BusMixSchemaVintage);
+                     kPackBusVintage);
     const std::vector<std::uint8_t> bytes = builder.Build();
     PackLogicImage image;
     EXPECT_EQ(VN_PACK_INCOMPATIBLE,
@@ -1858,7 +1815,7 @@ TEST(PackV2Format, NonFiniteBusMixFieldsRefused) {
         builder.AddEntry(kPackEntryKindBus, 10,
                          BusMixPayload(harkentest::ObjectId(10), harkentest::ObjectId(1), volume, outputBusVolume,
                                        makeUpGain),
-                         kPackV2BusMixSchemaVintage);
+                         kPackBusVintage);
         return builder.Build();
     };
     {
