@@ -17979,11 +17979,11 @@ harken::SegmentProgramHandleV1 FindSegmentSchedule(
                : harken::SegmentProgramHandleV1{};
 }
 
-bool MaterializeSchedulePosition(
+bool MaterializeScheduleCoordinate(
     harken::ScheduleTimeKindV1 timeKind, std::int64_t authoredPosition,
     std::int64_t microsPerQuarter, std::uint64_t sampleRate,
-    std::uint64_t* outFrame) noexcept {
-    if (outFrame == nullptr || authoredPosition < 0 || sampleRate == 0 ||
+    std::int64_t* outFrame) noexcept {
+    if (outFrame == nullptr || sampleRate == 0 ||
         sampleRate > INT64_MAX) {
         return false;
     }
@@ -18011,7 +18011,19 @@ bool MaterializeSchedulePosition(
             authoredPosition) {
         return false;
     }
-    if (frame < 0) return false;
+    if (frame == INT64_MIN || frame == INT64_MAX) return false;
+    *outFrame = frame;
+    return true;
+}
+
+bool MaterializeSchedulePosition(
+    harken::ScheduleTimeKindV1 timeKind, std::int64_t authoredPosition,
+    std::int64_t microsPerQuarter, std::uint64_t sampleRate,
+    std::uint64_t* outFrame) noexcept {
+    std::int64_t frame = 0;
+    if (outFrame == nullptr || authoredPosition < 0 ||
+        !MaterializeScheduleCoordinate(timeKind, authoredPosition, microsPerQuarter, sampleRate, &frame) || frame < 0)
+        return false;
     *outFrame = static_cast<std::uint64_t>(frame);
     return true;
 }
@@ -18480,13 +18492,31 @@ ScheduleMaterializeStatus MaterializeScheduleNode(
         }
         std::int64_t authoredOffset = 0;
         std::uint64_t frameOffset = 0;
-        if (music == nullptr && (!CheckedScheduleDifference(placement.authoredStart, entry,
-                                       &authoredOffset) ||
-            !MaterializeSchedulePosition(
-                timeKind, authoredOffset, microsPerQuarter, sampleRate,
-                &frameOffset) ||
-            frameOffset > UINT64_MAX - baseOffsetFrames)) {
-            return ScheduleMaterializeStatus::Invalid;
+        if (music == nullptr) {
+            if (placement.authoredStart < entry) {
+                if constexpr (!std::is_same_v<ScheduleOutput, harken::EngineScheduleAggregateState>)
+                    return ScheduleMaterializeStatus::Dynamic;
+                if (placement.authoredDuration > 0) {
+                    std::int64_t end = 0;
+                    if (!CheckedScheduleAdd(placement.authoredStart, placement.authoredDuration, &end))
+                        return ScheduleMaterializeStatus::Invalid;
+                    if (end <= entry) {
+                        RecordZeroWorkCompletion(out, baseOffsetFrames);
+                        continue;
+                    }
+                }
+                // Convert the signed endpoints before subtracting, as music
+                // windows do, so fractional negative starts retain source phase.
+                std::int64_t beginFrame = 0, entryFrame = 0;
+                if (!MaterializeScheduleCoordinate(timeKind, placement.authoredStart, microsPerQuarter, sampleRate, &beginFrame) ||
+                    !MaterializeScheduleCoordinate(timeKind, entry, microsPerQuarter, sampleRate, &entryFrame) || entryFrame < beginFrame)
+                    return ScheduleMaterializeStatus::Invalid;
+                sourceOffset = static_cast<std::uint64_t>(entryFrame) - static_cast<std::uint64_t>(beginFrame);
+            } else if (!CheckedScheduleDifference(placement.authoredStart, entry, &authoredOffset) ||
+                !MaterializeSchedulePosition(timeKind, authoredOffset, microsPerQuarter, sampleRate, &frameOffset) ||
+                frameOffset > UINT64_MAX - baseOffsetFrames) {
+                return ScheduleMaterializeStatus::Invalid;
+            }
         }
         selectedOrdinals[selectionCount] =
             placement.stableOccurrenceOrdinal;
@@ -18513,15 +18543,22 @@ ScheduleMaterializeStatus MaterializeScheduleNode(
             std::uint64_t endFrameOffset = 0;
             if (!CheckedScheduleAdd(placement.authoredStart,
                                     placement.authoredDuration,
-                                    &authoredEnd) ||
-                !CheckedScheduleDifference(authoredEnd, entry,
-                                           &authoredEndOffset) ||
-                !MaterializeSchedulePosition(
-                    timeKind, authoredEndOffset, microsPerQuarter, sampleRate,
-                    &endFrameOffset) ||
-                endFrameOffset > UINT64_MAX - baseOffsetFrames) {
+                                    &authoredEnd)) return ScheduleMaterializeStatus::Invalid;
+            if (authoredEnd <= entry) {
+                RecordZeroWorkCompletion(out, baseOffsetFrames);
+                continue;
+            }
+            if (placement.authoredStart < entry) {
+                std::int64_t endFrame = 0, entryFrame = 0;
+                if (!MaterializeScheduleCoordinate(timeKind, authoredEnd, microsPerQuarter, sampleRate, &endFrame) ||
+                    !MaterializeScheduleCoordinate(timeKind, entry, microsPerQuarter, sampleRate, &entryFrame) || endFrame < entryFrame)
+                    return ScheduleMaterializeStatus::Invalid;
+                endFrameOffset = static_cast<std::uint64_t>(endFrame) - static_cast<std::uint64_t>(entryFrame);
+            } else if (!CheckedScheduleDifference(authoredEnd, entry, &authoredEndOffset) ||
+                !MaterializeSchedulePosition(timeKind, authoredEndOffset, microsPerQuarter, sampleRate, &endFrameOffset)) {
                 return ScheduleMaterializeStatus::Invalid;
             }
+            if (endFrameOffset > UINT64_MAX - baseOffsetFrames) return ScheduleMaterializeStatus::Invalid;
             effectiveEndOffset = std::min(
                 effectiveEndOffset, baseOffsetFrames + endFrameOffset);
         }
@@ -19033,7 +19070,9 @@ ScheduleMaterializeStatus PrepareMixedSchedulePlan(
         });
         for (auto& child : candidate->children) {
             if (child.startOffsetFrames < sourceOffsetFrames) {
-                child.sourceOffsetFrames = sourceOffsetFrames - child.startOffsetFrames;
+                const auto crop = sourceOffsetFrames - child.startOffsetFrames;
+                if (child.sourceOffsetFrames > UINT64_MAX - crop) return ScheduleMaterializeStatus::Invalid;
+                child.sourceOffsetFrames += crop;
                 child.startOffsetFrames = 0;
             } else child.startOffsetFrames -= sourceOffsetFrames;
             if (child.endOffsetFrames != UINT64_MAX) child.endOffsetFrames -= sourceOffsetFrames;
