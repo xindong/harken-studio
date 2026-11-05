@@ -1,4 +1,5 @@
 #include "harken/core/QueueRuntime.h"
+#include "harken/core/PrivateSelectedQueueFutureSpan.h"
 #include "harken/core/DecisionTable.h"
 #include "harken/core/CompositeCompletionOwnerPool.h"
 #include "harken/core/OccurrenceStatePool.h"
@@ -803,6 +804,31 @@ void QueueInstanceTable::FrontierInitialCompletionProof::Release() noexcept {
     pool_ = nullptr;
 }
 
+bool QueueInstanceTable::PendingConditionalConsumesCurrentReset(const Row& row) const noexcept {
+    const auto& pending = row.Pending();
+    if (!row.resetPending.load(std::memory_order_acquire) || row.resetIntentGeneration == 0 ||
+        row.resetOrder.sequence == 0 || !pending.pendingConsumesReset.load(std::memory_order_acquire) ||
+        pending.pendingResetIntent != row.resetIntentGeneration ||
+        !originalConditionalRows_.IsConstructed(pending.originalConditionalRow)) return false;
+    const auto& original = originalConditionalRows_[pending.originalConditionalRow];
+    EffectiveQueueState current{}, projected{};
+    return original.body == &pending && original.marker == pending.originalConditionalMarker &&
+        original.state == OriginalConditionalState::Committed && original.consumesReset &&
+        original.resetIntent == row.resetIntentGeneration && original.queue.generation == row.generation &&
+        original.world == row.world && original.rootInstance == row.rootInstance &&
+        original.programSemanticFingerprint == row.programSemanticFingerprint &&
+        SameDecision(original.decision, pending.pendingDecision) &&
+        SameOccurrence(original.current, pending.pendingExpectedCurrent) &&
+        SameOccurrence(original.successor, pending.pendingSuccessor) &&
+        original.stepCount != 0 && original.stepCount == pending.pendingStepCount &&
+        original.next.version == pending.pendingNext.version &&
+        original.version.version == pending.pendingVersion.load(std::memory_order_acquire) &&
+        LoadMirror(row, &current) && SameEffectiveState(current, original.currentState) &&
+        ProjectReset(row, current, &projected) && projected.version == row.resetNextVersion &&
+        original.first.version == projected.version &&
+        (original.stepCount != 1 || SameEffectiveState(projected, pending.pendingNext));
+}
+
 bool QueueInstanceTable::ProveFrontierInitialCompletion(const FrontierGroupBinding& binding,
     const Plan03PageGroupView& source, AudioSliceLease& lease,
     const ScheduledTransactionPool& pool, std::uint64_t sourceSequence,
@@ -858,7 +884,7 @@ bool QueueInstanceTable::ProveFrontierInitialCompletion(const FrontierGroupBindi
     out->lease_ = &lease;
     const auto& conditional = binding.queueInitialCompletion;
     if (row->resetReserved.load(std::memory_order_acquire) ||
-        row->resetPending.load(std::memory_order_acquire) ||
+        (row->resetPending.load(std::memory_order_acquire) && !PendingConditionalConsumesCurrentReset(*row)) ||
         row->conditionalReserved.load(std::memory_order_acquire) ||
         row->failurePhase.load(std::memory_order_acquire) != QueueFailurePhase::Healthy ||
         row->mirrorVersion.load(std::memory_order_acquire) != conditional.currentVersion ||
@@ -956,7 +982,8 @@ bool QueueInstanceTable::MatchesPrivatePendingFrontierBinding(
         row.world != binding.operation.world || row.rootInstance != binding.operation.owner.child ||
         row.initialActivationSequence.load(std::memory_order_acquire) != 0 ||
         row.conditionalReplacementReserved.load(std::memory_order_acquire) ||
-        row.resetReserved.load(std::memory_order_acquire) || row.resetPending.load(std::memory_order_acquire) ||
+        row.resetReserved.load(std::memory_order_acquire) ||
+        (row.resetPending.load(std::memory_order_acquire) && !PendingConditionalConsumesCurrentReset(row)) ||
         !pool.PrivateImmediateLaneFrontierRollbackReady(binding.operation.group) ||
         !pool.ResolvePlan03GroupSliceProducer(binding.operation.group, &native) || native.frontier != &binding ||
         native.lease == nullptr || native.lease->Capture().state != AudioSliceState::Ready) return false;
@@ -1437,6 +1464,38 @@ bool QueueInstanceTable::AcquireInternal(
         return true;
     }
     return false;
+}
+
+bool QueueInstanceTable::PrepareInitialReset(const PreparedQueueInstanceV1& prepared,
+    const PreparedQueueReplacementOrder& order, std::uint64_t frame,
+    std::uint32_t ordinal, const MonitorControlCause& cause) noexcept {
+    const auto sequence = order.Sequence();
+    if (prepared.owner_ != this || !prepared.prepared_ || !prepared.token_.Valid() ||
+        !rows_.IsConstructed(prepared.token_.slot) || sequence == 0) return false;
+    auto& row = rows_[prepared.token_.slot];
+    EffectiveQueueState current{};
+    if (row.generation != prepared.token_.generation ||
+        row.slotState.load(std::memory_order_acquire) != SlotState::Initializing ||
+        row.initialActivationSequence.load(std::memory_order_acquire) != 0 ||
+        row.frontierInitial != nullptr || SignalOwnsNext(row) ||
+        row.resetReserved.load(std::memory_order_acquire) || row.resetIntentGeneration != 0 ||
+        row.conditionalReserved.load(std::memory_order_acquire) ||
+        row.conditionalReplacementReserved.load(std::memory_order_acquire) ||
+        row.Pending().pendingVersion.load(std::memory_order_acquire) != 0 ||
+        row.Pending().originalConditionalRow != UINT32_MAX ||
+        row.failurePhase.load(std::memory_order_acquire) != QueueFailurePhase::Healthy ||
+        !LoadMirror(row, &current) || current.version == UINT64_MAX ||
+        row.resetIntentCounter == UINT64_MAX || !ValidEffectiveState(row.resetInitial, row.childCount)) return false;
+    row.resetNextVersion = current.version + 1u;
+    row.resetIntentGeneration = ++row.resetIntentCounter;
+    row.resetOrder = {frame, sequence, ordinal};
+    row.resetExecuteFrame = frame;
+    row.monitorReset = {cause, row.resetOrder, row.resetIntentGeneration, current.version,
+        row.resetNextVersion, MonitorQueueResetObservation::Stage::Intent};
+    // This private owner is admitted with its same-boundary Action. Its current
+    // selection stays intact; the first conditional consumes the Reset intent.
+    row.resetPending.store(true, std::memory_order_release);
+    return true;
 }
 
 bool QueueInstanceTable::CommitPreparedAcquire(

@@ -3589,6 +3589,7 @@ struct EngineActionStepPlanRow {
     bool stopHasFarLeaves = false;
     bool cooldownSuppressed = false;
     bool quantizeSuppressed = false;
+    bool initialQueueResetApplied = false;
 };
 
 struct EngineActionDeferredScratch {

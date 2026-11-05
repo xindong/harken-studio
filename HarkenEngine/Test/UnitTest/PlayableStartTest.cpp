@@ -32679,3 +32679,183 @@ TEST(PlayableStart, QueueMusicTransitionStartsAtTargetEntryAndReclaims) {
         EXPECT_TRUE(PlayableRowsFree(*engine));
     }
 }
+
+TEST(PlayableStart, ActionQueueResumeResetUsesAuthoredOrderForCurrentAndNext) {
+    for (const bool refusePublication : {false, true})
+    for (const unsigned nesting : {0u, 1u, 2u, 3u})
+    for (const unsigned cropFrames : {0u, 96u})
+    for (const bool resetFirst : {true, false})
+    for (const unsigned workers : {0u, 2u}) {
+        // A standalone Track still uses its legacy nonnegative placement path.
+        // Music Segment crop exercises the existing native position consumer.
+        if (cropFrames != 0 && nesting != 3) continue;
+        if (refusePublication && (cropFrames != 0 || workers != 0)) continue;
+        SCOPED_TRACE(cropFrames);
+        SCOPED_TRACE(refusePublication);
+        SCOPED_TRACE(nesting);
+        SCOPED_TRACE(resetFirst);
+        SCOPED_TRACE(workers);
+        auto config = harkentest::MakeNullConfig(64, 64, 48000);
+        config.renderWorkerCount = workers;
+        harkentest::EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        std::vector<float> a(512, 0.1f), b(512, 0.2f);
+        auto pcmA = harkentest::MonoDesc(a, 48000), pcmB = harkentest::MonoDesc(b, 48000);
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &pcmA));
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSecondSound, &pcmB));
+        SequenceQueueWorldImage queue(engine.registry.Lookup(kSound).contentRevision,
+            engine.registry.Lookup(kSecondSound).contentRevision, harken::QueueCycleV1::Once, true);
+        DirectSegmentWorldImage music(engine.registry.Lookup(kSound).contentRevision,
+            harken::ScheduleTimeKindV1::AbsoluteNanoseconds, 0, 100000000);
+        music.properties[1].authoredStableOrder = 3;
+        music.properties[2].authoredStableOrder = 4;
+        for (unsigned i : {1u, 2u}) music.properties[i].programSemanticFingerprint =
+            harken::ComputePlayablePropertyFingerprintV1(music.properties[i]);
+        music.track.rootDefinition.expectedProgramSemanticFingerprint = music.properties[1].programSemanticFingerprint;
+        music.segment.rootDefinition.expectedProgramSemanticFingerprint = music.properties[2].programSemanticFingerprint;
+        music.trackRef.trackDefinition = music.track.rootDefinition;
+        music.occurrence.parentProgramSemanticFingerprint = music.track.rootDefinition.expectedProgramSemanticFingerprint;
+        music.placement.content = queue.Root();
+        music.placement.authoredStart = cropFrames == 0 ? 0 : -2000000;
+        music.placement.authoredDuration = 100000000 - music.placement.authoredStart;
+        music.occurrence.childPlayable = music.placement.content;
+        music.occurrence.occurrenceSemanticFingerprint = harken::ComputePlayableOccurrenceFingerprintV1(music.occurrence);
+        music.track.scheduleSemanticFingerprint = harken::ComputeTrackScheduleFingerprintV1(music.track);
+        music.trackRef.trackScheduleSemanticFingerprint = music.track.scheduleSemanticFingerprint;
+        music.segment.startPointKind = 0;
+        music.segment.startMarkerId = 0;
+        music.segment.bounds.contentStart = music.placement.authoredStart;
+        music.segment.bounds.contentEnd = music.segment.bounds.nominalEnd = 100000000;
+        music.segment.entryMarker = {harkentest::ObjectId(10002), 0};
+        music.marker.markerKind = 1;
+        music.segment.scheduleSemanticFingerprint = harken::ComputeSegmentScheduleFingerprintV2(music.segment);
+        PlayableWorldImage wrapper(engine.registry.Lookup(kSound).contentRevision, harken::ContainerModeV1::Sequence);
+        wrapper.properties[1].authoredStableOrder = 3;
+        wrapper.container.authoredStableOrder = 1;
+        wrapper.properties[1].stableId = harkentest::ObjectId(2002);
+        wrapper.properties[1].programSemanticFingerprint = harken::ComputePlayablePropertyFingerprintV1(wrapper.properties[1]);
+        wrapper.container.containerStableId = wrapper.properties[1].stableId;
+        wrapper.container.programSemanticFingerprint = wrapper.properties[1].programSemanticFingerprint;
+        wrapper.child.playable = queue.Root();
+        wrapper.occurrence.parentStableId = wrapper.container.containerStableId;
+        wrapper.occurrence.parentProgramSemanticFingerprint = wrapper.container.programSemanticFingerprint;
+        wrapper.occurrence.childPlayable = wrapper.child.playable;
+        wrapper.occurrence.occurrenceSemanticFingerprint = harken::ComputePlayableOccurrenceFingerprintV1(wrapper.occurrence);
+        auto playRoot = nesting == 3 ? music.Root() : nesting == 2 ? music.track.rootDefinition : queue.Root();
+        if (nesting == 1) { playRoot = wrapper.Root(); playRoot.stableId = wrapper.container.containerStableId; }
+        std::vector<harken::PlayablePropertyProgramViewV1> properties(queue.properties.begin(), queue.properties.end());
+        std::vector<harken::PlayableOccurrencePropertyViewV1> occurrences(queue.occurrences.begin(), queue.occurrences.end());
+        std::vector<harken::ContainerProgramViewV3> containers{queue.container};
+        if (nesting == 1) {
+            properties.push_back(wrapper.properties[1]); occurrences.push_back(wrapper.occurrence); containers.push_back(wrapper.container);
+        }
+        if (nesting >= 2) {
+            properties.push_back(music.properties[1]); properties.push_back(music.properties[2]); occurrences.push_back(music.occurrence);
+        }
+        std::sort(properties.begin(), properties.end(), [](const auto& x, const auto& y) {
+            return std::pair{x.contentPropertyKind, x.stableId} < std::pair{y.contentPropertyKind, y.stableId};
+        });
+        std::sort(occurrences.begin(), occurrences.end(), [](const auto& x, const auto& y) {
+            return std::tuple{x.parentKind, x.parentStableId, x.stableOccurrenceOrdinal} <
+                std::tuple{y.parentKind, y.parentStableId, y.stableOccurrenceOrdinal};
+        });
+        std::array<harken::ActionStepProgramViewV1, 2> steps{};
+        for (unsigned index = 0; index < steps.size(); ++index) {
+            auto& step = steps[index];
+            step.authoredEventIndex = index;
+            step.opcode = (index == 0) == resetFirst ? harken::ActionOpcodeV1::Reset : harken::ActionOpcodeV1::Play;
+            step.scope = step.opcode == harken::ActionOpcodeV1::Reset ? harken::ActionScopeV1::Emitter : harken::ActionScopeV1::Global;
+            const auto target = step.opcode == harken::ActionOpcodeV1::Reset ? queue.Root() : playRoot;
+            step.target = {target.kind == harken::PlayableKindV1::Segment ? harken::ActionTargetKindV1::Segment :
+                target.kind == harken::PlayableKindV1::Track ? harken::ActionTargetKindV1::Track : harken::ActionTargetKindV1::Container,
+                0, target.stableId, target.expectedProgramSemanticFingerprint};
+            harkentest::packfoundation::SetAbsoluteTime(&step.delay);
+            harkentest::packfoundation::SetAbsoluteTime(&step.fade);
+            harkentest::packfoundation::SetAbsoluteTime(&step.cooldown);
+        }
+        harken::ActionProgramViewV1 action{};
+        action.actionStableId = harkentest::ObjectId(990003);
+        action.steps = steps.data();
+        action.stepCount = action.expandedStepOccurrenceCount = steps.size();
+        action.expandedFiringCount = 1;
+        action.programSemanticFingerprint = harken::ComputeActionProgramFingerprintV1(action);
+        auto install = queue.InstallView();
+        install.sourceBodyVintage = harken::kCurrentWorldBodyVintageV19;
+        install.playableProperties = properties.data(); install.playablePropertyCount = properties.size();
+        install.playableOccurrences = occurrences.data(); install.playableOccurrenceCount = occurrences.size();
+        install.containers = containers.data(); install.containerCount = containers.size();
+        if (nesting >= 2) {
+            install.trackSchedules = &music.track; install.trackScheduleCount = 1;
+            install.segmentSchedules = &music.segment; install.segmentScheduleCount = 1;
+        }
+        install.actions = &action;
+        install.actionCount = 1;
+        install.identity.capabilityMask = harken::detail::ComputeCurrentWorldLocalCapabilityMaskV1(install);
+        install.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV6(install);
+        const auto installed = harken::InstallContainerWorldV1(engine, install);
+        ASSERT_EQ(harken::WorldInstallStatus::Ok, installed.status);
+        VnEmitterHandle emitter = 0;
+        ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+        harken::QueueCheckpointKey key{installed.resultGeneration, queue.Root().stableId,
+            queue.Root().expectedProgramSemanticFingerprint, engine.transportEpochOwner.Current(),
+            static_cast<std::uint32_t>(emitter), static_cast<std::uint32_t>(emitter >> 32)};
+        harken::QueueCheckpointImage checkpoint{};
+        checkpoint.effective.version = 7;
+        checkpoint.effective.cursor = 1;
+        checkpoint.effective.currentChildOrdinal = queue.children[1].stableChildOrdinal;
+        checkpoint.effective.selectionOrdinal = 3;
+        checkpoint.replayCurrent = true;
+        ASSERT_TRUE(engine.queueCheckpoints.Store(key, checkpoint));
+        VnPostActionDesc post{};
+        post.structSize = sizeof(post);
+        post.actionId = action.actionStableId;
+        post.emitter = emitter;
+        VnActionFiringHandle firing = 0;
+        if (refusePublication) {
+            harken::CommandRecord filler{};
+            filler.opcode = harken::kOpcodeStop;
+            filler.payload.stop.handle = 1;
+            while (engine.commands.FreeSlots() != 0) ASSERT_TRUE(engine.commands.TryPush(filler));
+        }
+        const auto posted = Vn_PostAction(&post, &firing);
+        if (refusePublication) {
+            ASSERT_TRUE(posted == VN_BACKPRESSURE || posted == VN_NO_VOICE) << posted;
+            ASSERT_EQ(0u, firing);
+            harken::QueueCheckpointImage retained{};
+            ASSERT_TRUE(engine.queueCheckpoints.Load(key, &retained));
+            EXPECT_EQ(checkpoint.effective.version, retained.effective.version);
+            EXPECT_EQ(checkpoint.effective.currentChildOrdinal, retained.effective.currentChildOrdinal);
+        } else {
+            ASSERT_EQ(VN_OK, posted) << OccupancyDump(engine);
+            harken::ActionFiringStepResult resetResult{};
+            ASSERT_TRUE(engine.actionFirings.CaptureStep(firing, resetFirst ? 0 : 1, &resetResult));
+            EXPECT_EQ(harken::ActionStepState::Succeeded, resetResult.state);
+        }
+        std::uint64_t first = UINT64_MAX;
+        unsigned heard = 0;
+        for (unsigned block = 0; block < 100; ++block) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            const auto before = engine.mixer.BlocksRendered();
+            engine.nullBackend.Pump(1);
+            ASSERT_EQ(before + 1u, engine.mixer.BlocksRendered());
+            for (unsigned i = 0; i < 64; ++i) {
+                const auto frame = before * 64u + i;
+                const auto actual = engine.nullBackend.LastBlock()[2u * i];
+                if (first == UINT64_MAX && actual > 0.05f) first = frame;
+                const auto age = first == UINT64_MAX ? UINT64_MAX : frame - first;
+                const auto pass = age == UINT64_MAX ? UINT64_MAX : (age + cropFrames) / 512u;
+                const auto count = resetFirst ? 2u : 3u;
+                const float expected = refusePublication || pass >= count ? 0.0f : resetFirst
+                    ? (pass == 0 ? 0.1f : 0.2f) : (pass == 1 ? 0.1f : 0.2f);
+                ASSERT_NEAR(expected, actual, 0.0001f) << "age=" << age << OccupancyDump(engine);
+                heard += actual > 0.05f;
+            }
+            ASSERT_FALSE(engine.runtimeRecreateRequired);
+        }
+        EXPECT_EQ(refusePublication ? 0u : (resetFirst ? 2u : 3u) * 512u - cropFrames, heard);
+        EXPECT_EQ(0u, engine.playableInstances.LiveCount()) << OccupancyDump(engine);
+        EXPECT_EQ(0u, engine.queueInstances.LiveCount());
+        EXPECT_EQ(0u, engine.timelineOccurrences.OccupiedCount());
+    }
+}

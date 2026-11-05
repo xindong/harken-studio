@@ -36,6 +36,7 @@ class PrivateSelectedQueueFutureSpanPool;
 class ImmediateActionLane;
 class OriginalSourceSubmissionRegistry;
 class PreparedQueueProjection;
+class PreparedQueueReplacementOrder;
 struct ImmediateLaneBucket;
 struct Engine;
 
@@ -1036,6 +1037,9 @@ public:
     bool PrepareAcquire(const QueueInstanceCreateRequest& request,
                         PreparedQueueInstanceV1* out,
                         OriginalLifetimePin* originalLifetime = nullptr) noexcept;
+    bool PrepareInitialReset(const PreparedQueueInstanceV1& prepared,
+        const PreparedQueueReplacementOrder& order, std::uint64_t frame,
+        std::uint32_t ordinal, const MonitorControlCause& cause) noexcept;
     bool CommitPreparedAcquire(PreparedQueueInstanceV1* prepared,
                                QueueInstanceToken* outToken) noexcept;
     bool CancelPreparedAcquire(PreparedQueueInstanceV1* prepared,
@@ -1518,6 +1522,7 @@ private:
         std::uint64_t installedAckSequence) noexcept;
     bool IsSelectedOriginalConditionalCurrent(
         const OriginalConditionalFutureReservation& original) const noexcept;
+    bool PendingConditionalConsumesCurrentReset(const Row& row) const noexcept;
     bool IsAcceptedSelectedConditionalHead(const Row& row,
         const OriginalConditionalRow& original) const noexcept;
     bool BindRetainedOriginalFrontierConditional(

@@ -1341,6 +1341,17 @@ QueueRootPlanStatus ResolveQueueEmitterIdentity(
     return QueueRootPlanStatus::Ok;
 }
 
+struct ImmediateActionPlan;
+struct QueueActionInitialization {
+    ImmediateActionPlan* plan = nullptr;
+    std::uint32_t executionOrdinal = 0;
+    std::uint64_t frame = 0;
+};
+harken::EngineActionStepPlanRow* FindQueueInitializationReset(
+    const QueueActionInitialization&, const harken::QueueCheckpointKey&, bool before) noexcept;
+bool PrepareQueueInitializationReset(const QueueActionInitialization&,
+    const harken::QueueInstanceCreateRequest&, harken::PreparedQueueInstanceV1&) noexcept;
+
 struct QueueRootPlanRequest {
     std::uint64_t worldGeneration = 0;
     std::uint64_t worldSemanticFingerprint = 0;
@@ -1348,6 +1359,7 @@ struct QueueRootPlanRequest {
     VnEmitterHandle emitter = 0;
     std::uint64_t callerSeed = 0;
     std::uint64_t acceptedPostOrdinal = 0;
+    QueueActionInitialization action{};
 };
 
 struct QueueRootPlan {
@@ -1369,6 +1381,17 @@ bool PrepareSharedQueueFrontierPlan(
     return ResolveSharedQueueFrontier(
         engine, program, seed, randomQueue, &out->initial,
         &out->resetInitial, &out->next, &out->selected, &out->status);
+}
+
+QueueRootPlanStatus ApplyQueueInitializationReset(const QueueRootPlanRequest& request,
+    QueueRootPlan* out) noexcept {
+    if (FindQueueInitializationReset(request.action, out->checkpointKey, false) != nullptr) {
+        if (out->frontier.initial.version == UINT64_MAX) return QueueRootPlanStatus::RuntimeRecreateRequired;
+        out->frontier.next = out->frontier.resetInitial;
+        out->frontier.next.version = out->frontier.initial.version + 1u;
+        out->frontier.status = harken::QueueSequenceStepStatus::Successor;
+    }
+    return QueueRootPlanStatus::Ok;
 }
 
 QueueRootPlanStatus PrepareSharedQueueRootPlan(
@@ -1418,7 +1441,7 @@ QueueRootPlanStatus PrepareSharedQueueRootPlan(
 
     harken::EffectiveQueueState initial{};
     harken::QueueCheckpointImage checkpoint{};
-    if (program.resumePosition != 0) {
+    if (program.resumePosition != 0 && FindQueueInitializationReset(request.action, out->checkpointKey, true) == nullptr) {
         out->checkpointLoaded = engine.queueCheckpoints.Load(
             out->checkpointKey, &checkpoint);
         if (out->checkpointLoaded) {
@@ -1460,7 +1483,7 @@ QueueRootPlanStatus PrepareSharedQueueRootPlan(
             &out->frontier)) {
         return QueueRootPlanStatus::RuntimeRecreateRequired;
     }
-    return QueueRootPlanStatus::Ok;
+    return ApplyQueueInitializationReset(request, out);
 }
 
 // Resolve one authored Container edge through the same authority and
@@ -6685,6 +6708,65 @@ struct ImmediateActionPlan {
     bool originalActionFiringCommitSucceeded = true;
     VnResult result = VN_DEVICE_ERROR;
 };
+
+harken::EngineActionStepPlanRow* FindQueueInitializationReset(
+    const QueueActionInitialization& view, const harken::QueueCheckpointKey& key, bool before) noexcept {
+    if (view.plan == nullptr || view.plan->engine == nullptr) return nullptr;
+    auto& plan = *view.plan;
+    auto& engine = *plan.engine;
+    harken::EngineActionStepPlanRow* match = nullptr;
+    for (std::uint32_t index = 0; index < plan.stepCount; ++index) {
+        auto& step = engine.actionStepPlanScratch[index];
+        if (step.step == nullptr || step.deferred || step.cooldownSuppressed || step.quantizeSuppressed ||
+            step.step->opcode != harken::ActionOpcodeV1::Reset || step.step->scope != harken::ActionScopeV1::Emitter ||
+            step.container == nullptr || step.firingIndex >= plan.firingCount ||
+            step.step->target.stableId != key.containerStableId ||
+            step.step->target.expectedProgramSemanticFingerprint != key.programSemanticFingerprint ||
+            static_cast<std::uint32_t>(plan.emitter) != key.emitterSlot ||
+            static_cast<std::uint32_t>(plan.emitter >> 32) != key.emitterGeneration ||
+            key.resetEpoch != engine.transportEpochOwner.Current()) continue;
+        const auto& owner = engine.actionFiringPlanScratch[step.firingIndex].owner;
+        const auto world = owner.kind == harken::ActionFiringOwnerKind::Pack ? owner.pack.compositeGeneration : owner.worldGeneration;
+        if (world != key.world) continue;
+        const auto frame = step.deferredFrame != 0 ? step.deferredFrame : plan.admittedImmediateFrame;
+        // Cross-frame Reset remains owned by its existing deferred materializer.
+        if (frame != view.frame || (before ? step.executionOrdinal >= view.executionOrdinal : step.executionOrdinal <= view.executionOrdinal))
+            continue;
+        if (match == nullptr || (before ? step.executionOrdinal > match->executionOrdinal : step.executionOrdinal < match->executionOrdinal))
+            match = &step;
+    }
+    return match;
+}
+
+bool PrepareQueueInitializationReset(const QueueActionInitialization& view,
+    const harken::QueueInstanceCreateRequest& create, harken::PreparedQueueInstanceV1& prepared) noexcept {
+    const harken::QueueCheckpointKey key{create.world, create.containerStableId, create.programSemanticFingerprint,
+        create.resetEpoch, create.emitterSlot, create.emitterGeneration};
+    auto* reset = FindQueueInitializationReset(view, key, false);
+    if (reset == nullptr) return true;
+    auto& plan = *view.plan;
+    auto& engine = *plan.engine;
+    const auto& firing = engine.actionFiringPlanScratch[reset->firingIndex];
+    const harken::PreparedQueueReplacementOrder order = plan.materializingDeferred
+        ? harken::PreparedQueueReplacementOrder(engine.actionFiringPlanScratch[0].prepared)
+        : harken::PreparedQueueReplacementOrder(plan.originalSingleIssue);
+    if (!engine.queueInstances.PrepareInitialReset(prepared, order, view.frame, reset->executionOrdinal,
+            {plan.playbackRequest, firing.handle, 0, reset->executionOrdinal})) return false;
+    harken::ActionFiringStepResult result{};
+    result.state = harken::ActionStepState::Succeeded;
+    result.result = VN_OK;
+    result.opcode = static_cast<std::uint32_t>(harken::ActionOpcodeV1::Reset);
+    result.ownerActionId = firing.action->actionStableId;
+    result.targetStableId = reset->step->target.stableId;
+    result.authoredEventIndex = reset->step->authoredEventIndex;
+    result.executionOrdinal = reset->executionOrdinal;
+    result.depth = reset->depth;
+    result.targetKind = static_cast<std::uint32_t>(reset->step->target.kind);
+    result.monitorExecutionOnCommit = true;
+    if (!engine.actionFirings.SetPreparedStep(firing.prepared, reset->step->authoredEventIndex, result)) return false;
+    reset->initialQueueResetApplied = true;
+    return true;
+}
 
 harken::EngineActionPlayScratch* FindImmediateActionPlay(
     const ImmediateActionPlan& plan, std::uint32_t index) noexcept {
@@ -12152,7 +12234,8 @@ bool PrepareQueueInstanceOwner(harken::Engine& engine, harken::EngineQueueInstan
     harken::EnginePlayableServiceRow& service, const harken::ContainerProgramViewV3& program,
     const harken::EffectiveQueueState& initial, const harken::EffectiveQueueState& resetInitial,
     const harken::RandomQueueSeedContext& seed, bool hasSuccessor,
-    harken::EngineActionPlayScratch* checkpointOwner = nullptr) noexcept {
+    harken::EngineActionPlayScratch* checkpointOwner = nullptr,
+    QueueActionInitialization action = {}) noexcept {
     if (service.queueInstance.Valid() || !engine.PreparePlayableMemberDirectory(service)) return false;
     QueueEmitterIdentity emitter{};
     if (ResolveQueueEmitterIdentity(program.mode, program.memoryScope, program.resumePosition != 0,
@@ -12177,6 +12260,10 @@ bool PrepareQueueInstanceOwner(harken::Engine& engine, harken::EngineQueueInstan
     if (!engine.PrepareOriginalQueueAcquire(create, &context.prepared,
             service.actionPrepared ? &engine.originalPlayableServiceLifetimeHolders[service.identity.slot] : nullptr,
             checkpointOwner)) return false;
+    if (!PrepareQueueInitializationReset(action, create, context.prepared)) {
+        if (!engine.CancelOriginalQueueAcquire(&context.prepared)) engine.runtimeRecreateRequired = true;
+        return false;
+    }
     service.queueInstance = context.prepared.Token();
     service.queueMode = true;
     service.queueWorldUsesCurrentAuthority = service.containerLoopAuthorityKind == harken::PlayableExecutionAuthorityKind::CurrentWorld;
@@ -12198,20 +12285,22 @@ bool PrepareFrontierQueueOwner(harken::Engine& engine, harken::EngineFrontierQue
     const harken::EffectiveQueueState& initial, const harken::EffectiveQueueState& resetInitial,
     const harken::EffectiveQueueState& next,
     const harken::RandomQueueSeedContext& seed, bool hasSuccessor,
-    harken::EngineActionPlayScratch* checkpointOwner = nullptr) noexcept {
+    harken::EngineActionPlayScratch* checkpointOwner = nullptr,
+    QueueActionInitialization action = {}) noexcept {
     context.program = &program;
     context.initial = initial;
     context.next = next;
     context.hasSuccessor = hasSuccessor;
     return PrepareQueueInstanceOwner(engine, context, service, program, initial, resetInitial,
-        seed, hasSuccessor, checkpointOwner);
+        seed, hasSuccessor, checkpointOwner, action);
 }
 
 bool PrepareFrontierQueueMode(harken::Engine& engine, harken::EngineActionPlayScratch& scratch,
     harken::EnginePlayableServiceRow& service, const harken::ContainerProgramViewV3& program,
     const harken::EffectiveQueueState& initial, const harken::EffectiveQueueState& resetInitial,
     const harken::EffectiveQueueState& next,
-    const harken::RandomQueueSeedContext& seed, bool hasSuccessor) noexcept {
+    const harken::RandomQueueSeedContext& seed, bool hasSuccessor,
+    QueueActionInitialization action = {}) noexcept {
     if (scratch.pendingVariableReplacementService.Valid() && !scratch.queueRolesBorrowed) return false;
     auto* record = scratch.storage.frontierQueues.Acquire(scratch.frontierQueueCount,
         scratch.storage.queueRoleCapacity, !scratch.queueRolesBorrowed,
@@ -12220,7 +12309,7 @@ bool PrepareFrontierQueueMode(harken::Engine& engine, harken::EngineActionPlaySc
     auto& context = *record;
     ++scratch.frontierQueueCount;
     if (!PrepareFrontierQueueOwner(engine, context, service, program, initial,
-            resetInitial, next, seed, hasSuccessor, scratch.queueRolesBorrowed ? &scratch : nullptr)) return false;
+            resetInitial, next, seed, hasSuccessor, scratch.queueRolesBorrowed ? &scratch : nullptr, action)) return false;
     const auto* initialService = scratch.row;
     if (initialService != nullptr && initialService->pendingImmediateEntry &&
         !scratch.continuationExecution && !scratch.queueFutureExecution &&
@@ -18549,7 +18638,8 @@ bool PrepareImmediateActionQueueInstance(
     harken::PlayableInstanceHandle ownerInstance,
     std::uint64_t ownerScheduleEpoch,
     std::uint64_t worldGeneration,
-    std::uint64_t emitter, bool signalOnlyNoOverlap, bool prepareTerminalOccurrence) noexcept;
+    std::uint64_t emitter, bool signalOnlyNoOverlap, bool prepareTerminalOccurrence,
+    QueueActionInitialization action) noexcept;
 
 template <typename WorldView>
 bool PrepareVariableControlNestedSelection(
@@ -28918,7 +29008,8 @@ template <typename WorldView>
 bool PrepareFrontierContainerPath(harken::Engine&, harken::EngineActionPlayScratch&,
     harken::EnginePlayableServiceRow&, const harken::PlayableExecutionAuthority&, const WorldView&,
     const harken::PlayableRefV1&, harken::PlayableInstanceHandle, std::uint64_t, std::uint64_t,
-    std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, PreparedFrontierPath&, bool = false) noexcept;
+    std::uint64_t, std::uint64_t, std::uint64_t, std::uint64_t, PreparedFrontierPath&, bool = false,
+    QueueActionInitialization = {}) noexcept;
 
 template <typename WorldView>
 bool ResolveStaticQueueChildTerminal(const WorldView& world,
@@ -32835,7 +32926,7 @@ bool PrepareFrontierContainerPath(
     std::uint64_t parentEpoch, std::uint64_t worldFingerprint,
     std::uint64_t callerSeed, std::uint64_t ticket, std::uint64_t startFrame,
     std::uint64_t loopIteration, PreparedFrontierPath& result,
-    bool stopBeforeVariableControl) noexcept {
+    bool stopBeforeVariableControl, QueueActionInitialization action) noexcept {
     auto& workspace = engine.frontierExpansion;
     const bool adopted = result.adoptedSelectionCount != 0;
     if (workspace.occupied || workspace.nodes.empty() || (!adopted && (parent == 0 || parentEpoch == 0)) ||
@@ -32944,7 +33035,7 @@ bool PrepareFrontierContainerPath(
             SharedInitialFrontier frontier{};
             const SharedInitialFrontierRequest request{
                 {parentService.Invocation().worldGeneration, worldFingerprint,
-                 parentService.root.stableId, parentService.Invocation().invocationEmitter, callerSeed, ticket},
+                 parentService.root.stableId, parentService.Invocation().invocationEmitter, callerSeed, ticket, action},
                 result.ordinals.data(), node.depth, engine.config.mixRate.SampleRate(),
                 engine.config.maxKnownScheduleLeaves, harken::kSelectionPathNodeCapacity};
             const auto frontierStatus = PrepareSharedInitialFrontier(
@@ -32954,7 +33045,7 @@ bool PrepareFrontierContainerPath(
                 (!service->queueInstance.Valid() && !PrepareFrontierQueueMode(engine, scratch, *service, *program,
                     frontier.queue.frontier.initial, frontier.queue.frontier.resetInitial,
                     frontier.queue.frontier.next, frontier.queue.randomSeed,
-                    frontier.queue.frontier.status == harken::QueueSequenceStepStatus::Successor))) return false;
+                    frontier.queue.frontier.status == harken::QueueSequenceStepStatus::Successor, action))) return false;
             node.selectedOrdinal = frontier.queue.frontier.initial.currentChildOrdinal;
             selected = frontier.authoredChild;
             if (adopted && node.selectedOrdinal != result.ordinals[node.depth]) return false;
@@ -33035,14 +33126,14 @@ bool PrepareInitialFrontierPathServices(harken::Engine& engine,
     harken::EngineActionPlayScratch& scratch, harken::EnginePlayableServiceRow& row,
     const harken::PlayableExecutionAuthority& authority, const WorldView& world,
     std::uint64_t worldFingerprint, std::uint64_t callerSeed,
-    std::uint64_t ticket, std::uint64_t startFrame) noexcept {
+    std::uint64_t ticket, std::uint64_t startFrame, QueueActionInitialization action = {}) noexcept {
     PreparedFrontierPath path{};
     path.path = row.selectionPath;
     path.ordinals = row.selectedChildOrdinals;
     path.containers = row.containerInstances;
     path.adoptedSelectionCount = row.containerInstanceCount;
     if (!PrepareFrontierContainerPath(engine, scratch, row, authority, world,
-            row.root, 0, 0, worldFingerprint, callerSeed, ticket, startFrame, 0, path) ||
+            row.root, 0, 0, worldFingerprint, callerSeed, ticket, startFrame, 0, path, false, action) ||
         (path.terminal.kind != harken::PlayableKindV1::Sound &&
          path.terminal.kind != harken::PlayableKindV1::Track &&
          path.terminal.kind != harken::PlayableKindV1::Segment) || !path.rootService.Valid()) return false;
@@ -83915,7 +84006,8 @@ bool PrepareImmediateActionQueueInstance(
     harken::PlayableInstanceHandle ownerInstance,
     std::uint64_t ownerScheduleEpoch,
     std::uint64_t worldGeneration,
-    std::uint64_t emitter, bool signalOnlyNoOverlap, bool prepareTerminalOccurrence) noexcept {
+    std::uint64_t emitter, bool signalOnlyNoOverlap, bool prepareTerminalOccurrence,
+    QueueActionInitialization action) noexcept {
     if (scratch == nullptr || ownerInstance == 0 ||
         ownerScheduleEpoch == 0 || !engine.PreparePlayableMemberDirectory(row)) {
         return false;
@@ -83951,7 +84043,8 @@ bool PrepareImmediateActionQueueInstance(
     create.initial = initial;
     create.resetInitial = resetInitial;
     if (!engine.PrepareOriginalQueueAcquire(create, &scratch->queueInstance,
-            &engine.originalPlayableServiceLifetimeHolders[row.identity.slot])) {
+            &engine.originalPlayableServiceLifetimeHolders[row.identity.slot]) ||
+        !PrepareQueueInitializationReset(action, create, scratch->queueInstance)) {
         return false;
     }
     row.queueMode = true;
@@ -84001,6 +84094,7 @@ struct QueueRootPreparationContext {
     std::uint64_t admittedImmediateFrame;
     bool signalOnlyNoOverlap = false;
     bool directRoot = false;
+    QueueActionInitialization action{};
 };
 
 template <typename Release>
@@ -84067,7 +84161,7 @@ bool PrepareContainerQueueRoot(
             engine, scratch, row, program, initial, resetInitial,
             hasContinuation, currentChildOrdinal, selectedPlayable,
             ownerInstance, ownerEpoch,
-            queueWorldGeneration, context.emitter, context.signalOnlyNoOverlap, context.directRoot)) {
+            queueWorldGeneration, context.emitter, context.signalOnlyNoOverlap, context.directRoot, context.action)) {
         context.result = VN_NO_VOICE;
         return false;
     }
@@ -84260,6 +84354,9 @@ bool PrepareImmediateActionQueueRoot(
     }
     QueueRootPreparationContext context{plan.engine, plan.result, plan.emitter,
         plan.rootHandle, plan.admittedImmediateFrame};
+    const auto& step = plan.engine->actionStepPlanScratch[plannedStepIndex];
+    context.action = {&plan, step.executionOrdinal,
+        step.deferredFrame != 0 ? step.deferredFrame : plan.admittedImmediateFrame};
     return PrepareContainerQueueRoot(context,
         [&](harken::EngineActionPlayScratch* owned) noexcept {
             return ReleaseImmediateActionPlay(*plan.engine, owned, &plan);
@@ -88455,6 +88552,7 @@ struct ContainerPreparationContext {
     VnResult& result;
     bool& queueProgramCapacityRefused;
     harken::Engine* engine = nullptr;
+    QueueActionInitialization actionQueueInitialization{};
     harken::PlayableWorldViewV1 world{};
     harken::PlayableExecutionAuthorityKind worldAuthority =
         harken::PlayableExecutionAuthorityKind::CurrentWorld;
@@ -88595,12 +88693,14 @@ QueueRootPlanStatus PrepareContainerMusicQueueRootPlan(harken::Engine& engine,
     ContainerPreparationContext* context, harken::EngineActionPlayScratch* scratch,
     std::span<const std::uint32_t> localPrefix, QueueRootPlan* out,
     const harken::EngineScheduleAggregateChild* plannedChild) noexcept {
+    auto orderedRequest = request;
+    if (context != nullptr) orderedRequest.action = context->actionQueueInitialization;
     using Status = QueueRootPlanStatus;
     if (context == nullptr || scratch == nullptr)
-        return PrepareSharedQueueRootPlan(engine, program, request, out);
+        return PrepareSharedQueueRootPlan(engine, program, orderedRequest, out);
     auto* parent = engine.ResolvePlayableService(context->parentService);
     if (parent == nullptr || !HasMusicScheduleAncestor(engine, *parent))
-        return PrepareSharedQueueRootPlan(engine, program, request, out);
+        return PrepareSharedQueueRootPlan(engine, program, orderedRequest, out);
     auto* positionOwner = MusicQueuePositionOwner(engine, *scratch);
     if (positionOwner == nullptr) return Status::CapabilityUnavailable;
     try {
@@ -88629,12 +88729,12 @@ QueueRootPlanStatus PrepareContainerMusicQueueRootPlan(harken::Engine& engine,
             if (!restore(*cached)) return Status::CapabilityUnavailable;
             context->sourceOffsetFrames = cached->sourceOffsetFrames;
             context->musicQueueExhausted = cached->exhausted;
-            return Status::Ok;
+            return ApplyQueueInitializationReset(orderedRequest, out);
         }
         auto& baselines = owner->scheduleAggregate->music->queueBaselines;
         const auto baseline = std::find_if(baselines.begin(), baselines.end(), same);
         if (baseline == baselines.end()) {
-            const auto status = PrepareSharedQueueRootPlan(engine, program, request, out);
+            const auto status = PrepareSharedQueueRootPlan(engine, program, orderedRequest, out);
             if (status != Status::Ok) return status;
             key.initial = out->frontier.initial;
             key.resetInitial = out->frontier.resetInitial;
@@ -88642,6 +88742,8 @@ QueueRootPlanStatus PrepareContainerMusicQueueRootPlan(harken::Engine& engine,
             key.checkpoint = out->checkpointKey;
             key.checkpointLoaded = out->checkpointLoaded;
             baselines.push_back(key);
+            // Crop reconstructs history before this Action's later Reset.
+            if (!restore(key)) return Status::CapabilityUnavailable;
         } else if (!restore(*baseline)) return Status::CapabilityUnavailable;
         auto crop = context->sourceOffsetFrames;
         if (crop != 0 && (program.queueSplice != harken::QueueSpliceV1::Butt ||
@@ -88750,7 +88852,7 @@ QueueRootPlanStatus PrepareContainerMusicQueueRootPlan(harken::Engine& engine,
         context->musicQueueExhausted = key.exhausted;
         positions.push_back(std::move(key));
         context->sourceOffsetFrames = crop;
-        return Status::Ok;
+        return ApplyQueueInitializationReset(orderedRequest, out);
     } catch (const std::bad_alloc&) {
         context->result = VN_BACKPRESSURE;
         return Status::Capacity;
@@ -88895,6 +88997,8 @@ ContainerPreparationContext MakeActionContainerPreparationContext(
         plan.result, plan.queueProgramCapacityRefused};
     const auto& planned = plan.engine->actionStepPlanScratch[stepIndex];
     context.admittedImmediateFrame = plan.admittedImmediateFrame;
+    context.actionQueueInitialization = {&plan, planned.executionOrdinal,
+        planned.deferredFrame != 0 ? planned.deferredFrame : plan.admittedImmediateFrame};
     context.deferredCount = plan.deferredCount;
     context.deferredParentFiring = plan.deferredParentFiring;
     context.emitter = plan.emitter;
@@ -89431,7 +89535,7 @@ struct ScheduleContainerPreparationOperations {
     template <typename... Args> bool CallPrepareImmediateActionQueueRoot(Args&&... args) noexcept {
         QueueRootPreparationContext root{&engine, context.result, context.emitter,
             context.rootHandle, context.startFrame,
-            context.directRoot && context.directQueueSignalOnlyNoOverlap, context.directRoot};
+            context.directRoot && context.directQueueSignalOnlyNoOverlap, context.directRoot, context.actionQueueInitialization};
         return HasPreparationAuthority(activeScratch) && PrepareContainerQueueRoot(root,
             [&](harken::EngineActionPlayScratch* scratch) noexcept { return Release(scratch); },
             std::forward<Args>(args)...);
@@ -89788,7 +89892,8 @@ ContainerMixedTerminalResult PrepareContainerMixedScheduleTerminal(ContainerPrep
                     queue.frontier.initial.currentChildOrdinal != selected.ordinals[index] ||
                     !PrepareFrontierQueueMode(engine, scratch, *service, *program, queue.frontier.initial,
                         queue.frontier.resetInitial, queue.frontier.next, queue.randomSeed,
-                        queue.frontier.status == harken::QueueSequenceStepStatus::Successor)) { return false; }
+                        queue.frontier.status == harken::QueueSequenceStepStatus::Successor,
+                        context.actionQueueInitialization)) { return false; }
             }
             if (index + 1u == selected.count) {
                 if (child->playable.kind != selected.terminal.kind || child->playable.stableId != selected.terminal.stableId ||
@@ -90382,9 +90487,9 @@ bool PrepareContainerSingleLeaf(
                 const auto seed = context.callerSeed;
                 const bool servicesPrepared = (scratch->packLeaseOwned || scratch->packLeaseBorrowed)
                     ? PrepareInitialFrontierPathServices(engine, *scratch, *row, authority, scratch->packPlaybackView,
-                        scratch->packPlaybackView.WorldSemanticFingerprint(), seed, provisionalSequence, startFrame)
+                        scratch->packPlaybackView.WorldSemanticFingerprint(), seed, provisionalSequence, startFrame, context.actionQueueInitialization)
                     : PrepareInitialFrontierPathServices(engine, *scratch, *row, authority, world,
-                        world.identity.runtimeSemanticFingerprint, seed, provisionalSequence, startFrame);
+                        world.identity.runtimeSemanticFingerprint, seed, provisionalSequence, startFrame, context.actionQueueInitialization);
                 if (!servicesPrepared) {
                     context.result = VN_NO_VOICE;
                     (void)operations.Release(scratch);
@@ -92599,7 +92704,8 @@ engine.runtimeRecreateRequired = true;
                 parentCreate.resetInitial = resetInitial;
                 if (!engine.PrepareOriginalQueueAcquire(
                         parentCreate, &scratch->queueParentInstance,
-                        &engine.originalPlayableServiceLifetimeHolders[scratch->row->identity.slot])) {
+                        &engine.originalPlayableServiceLifetimeHolders[scratch->row->identity.slot]) ||
+                    !PrepareQueueInitializationReset(context.actionQueueInitialization, parentCreate, scratch->queueParentInstance)) {
                     context.result = VN_NO_VOICE;
                     (void)operations.Release(scratch);
                     return false;
@@ -104952,9 +105058,9 @@ bool ReserveImmediateActionQueueCheckpointResets(
         const bool noCheckpointState =
             plan->engine->actionQueueCheckpointResetScratch[index]
                 .Idempotent();
-        if (noInstanceState && noCheckpointState && plan->claimedResetOrder.Valid()) {
+        if (noInstanceState && noCheckpointState && !planned.initialQueueResetApplied && plan->claimedResetOrder.Valid()) {
             plan->claimedResetNoOp = plan->queueReplacementCount == 0;
-        } else if (noInstanceState && noCheckpointState) {
+        } else if (noInstanceState && noCheckpointState && !planned.initialQueueResetApplied) {
             const auto& firing =
                 plan->engine
                     ->actionFiringPlanScratch[planned.firingIndex];
