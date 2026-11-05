@@ -47,8 +47,7 @@ QHash<VersionReleaseNotes::Product, QHash<QString, QUrl>> parseLinks(
 {
     const QJsonObject root = QJsonDocument::fromJson(data).object();
     if (root.value(QStringLiteral("schemaVersion")).toInt() != 2 ||
-        root.value(QStringLiteral("id")).toString() !=
-            QStringLiteral("harken-studio-%1").arg(version) ||
+        root.value(QStringLiteral("id")).toString().trimmed().isEmpty() ||
         root.value(QStringLiteral("version")).toString() != version)
         return {};
 
