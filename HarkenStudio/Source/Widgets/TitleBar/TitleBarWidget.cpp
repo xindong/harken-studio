@@ -223,19 +223,20 @@ void TitleBarWidget::layoutVersionLabel() {
     QFont projectFont = versionLabel_->font();
     projectFont.setItalic(projectModified_);
     const QFontMetrics projectMetrics(projectFont);
-    const int versionWidth = versionMetrics.horizontalAdvance(version);
+    const int fullProjectWidth = projectMetrics.horizontalAdvance(projectName_ + suffix);
+    if (!projectName_.isEmpty()
+        && available.width() < fullProjectWidth + versionMetrics.horizontalAdvance(version) + 2)
+        version.clear();
     const int titleWidth = qMin(qMax(0, available.width()),
-        versionWidth + projectMetrics.horizontalAdvance(projectName_ + suffix) + 2);
+        versionMetrics.horizontalAdvance(version) + fullProjectWidth + 2);
     const int textWidth = qMax(0, titleWidth - 2);
     QString title;
     if (projectName_.isEmpty()) {
         title = versionMetrics.elidedText(version, Qt::ElideRight, textWidth).toHtmlEscaped();
     } else {
         const int suffixWidth = projectMetrics.horizontalAdvance(suffix);
-        const int minimumProjectWidth = qMin(projectMetrics.horizontalAdvance(projectName_ + suffix),
+        const int minimumProjectWidth = qMin(fullProjectWidth,
             projectMetrics.horizontalAdvance(QString(QChar(0x2026)) + suffix));
-        if (textWidth < versionWidth + minimumProjectWidth)
-            version.clear();
         const int projectWidth = textWidth - versionMetrics.horizontalAdvance(version);
         QString projectTitle = projectWidth < minimumProjectWidth
             ? projectMetrics.elidedText(projectName_ + suffix, Qt::ElideRight, projectWidth)
