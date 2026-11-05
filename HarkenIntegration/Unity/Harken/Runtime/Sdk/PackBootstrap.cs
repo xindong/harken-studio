@@ -48,7 +48,11 @@ namespace Harken
                 }
                 return result;
             }
-            finally { preparing = false; }
+            finally
+            {
+                preparing = false;
+                if (!prepared && count == 0) Array.Clear(owners, 0, owners.Length);
+            }
         }
 
         /// <summary>Prepares on the session's control context. Cancellation never discards a committed lease.</summary>
@@ -71,7 +75,11 @@ namespace Harken
                 }
                 return result;
             }
-            finally { preparing = false; }
+            finally
+            {
+                preparing = false;
+                if (!prepared && count == 0) Array.Clear(owners, 0, owners.Length);
+            }
         }
 
         /// <summary>Releases this scope's references. Retain the scope and retry if unloading fails.</summary>
@@ -84,7 +92,11 @@ namespace Harken
         private VnResult ReleaseCore()
         {
             prepared = false;
-            if (!owner.IsActive) count = 0;
+            if (!owner.IsActive)
+            {
+                count = 0;
+                Array.Clear(owners, 0, owners.Length);
+            }
             while (count > 0)
             {
                 int index = count - 1;
@@ -107,7 +119,7 @@ namespace Harken
         private Dictionary<ulong, SharedPack> packs = new Dictionary<ulong, SharedPack>();
         private readonly ulong[] startupIds;
         private readonly Pack[] startupPacks;
-        private readonly byte[] initBytes;
+        private byte[] initBytes;
 
         internal sealed class SharedPack
         {
@@ -245,6 +257,14 @@ namespace Harken
                     companionNames.Clear();
                     rawCompanionLeases.Clear();
                     CancelCompanionReads();
+                    // Pending captures own their inputs until their real completion.
+                    // An inactive session only retains its public diagnostic state.
+                    initBytes = null;
+                    companionSource = null;
+                    companionLocators = null;
+                    companionOwners = Array.Empty<SharedPack>();
+                    companionKeepMembers = Array.Empty<VnCanonicalPackSetMemberV2>();
+                    companionKeepResults = Array.Empty<VnCanonicalPackSetMemberResultV1>();
                     Array.Clear(startupPacks, 0, startupPacks.Length);
                 }
                 return term;
