@@ -62,6 +62,24 @@ QJsonObject folderPathSchema()
     };
 }
 
+QJsonObject inspectorSchema()
+{
+    return QJsonObject{
+        {QStringLiteral("type"), QStringLiteral("object")},
+        {QStringLiteral("properties"), QJsonObject{
+            {QStringLiteral("schema_id"), QJsonObject{
+                {QStringLiteral("type"), QStringLiteral("string")},
+                {QStringLiteral("enum"), QJsonArray{
+                    QStringLiteral("Sound"), QStringLiteral("Container"), QStringLiteral("Track"),
+                    QStringLiteral("Segment"), QStringLiteral("Layer"), QStringLiteral("Bus"),
+                    QStringLiteral("Action"), QStringLiteral("Variable"), QStringLiteral("Attenuation"),
+                    QStringLiteral("Effect")}}}}
+        }},
+        {QStringLiteral("required"), QJsonArray{QStringLiteral("schema_id")}},
+        {QStringLiteral("additionalProperties"), false}
+    };
+}
+
 QJsonObject voiceIdSchema()
 {
     return QJsonObject{
@@ -71,6 +89,20 @@ QJsonObject voiceIdSchema()
                 {QStringLiteral("type"), QStringLiteral("integer")}, {QStringLiteral("minimum"), 1}}}
         }},
         {QStringLiteral("required"), QJsonArray{QStringLiteral("voice_id")}},
+        {QStringLiteral("additionalProperties"), false}
+    };
+}
+
+QJsonObject sourceIdSchema()
+{
+    return QJsonObject{
+        {QStringLiteral("type"), QStringLiteral("object")},
+        {QStringLiteral("properties"), QJsonObject{
+            {QStringLiteral("source_id"), QJsonObject{
+                {QStringLiteral("type"), QStringLiteral("integer")},
+                {QStringLiteral("minimum"), 1}, {QStringLiteral("maximum"), 4294967295.0}}}
+        }},
+        {QStringLiteral("required"), QJsonArray{QStringLiteral("source_id")}},
         {QStringLiteral("additionalProperties"), false}
     };
 }
@@ -156,6 +188,11 @@ const QList<AICommandSpec>& catalog()
         spec("list_packs", Availability::Enabled, Effect::Query, Confirmation::None, ChangeSupport::None, Source::CommandHandler, 60, emptyObjectSchema(), QStringLiteral("List packs in the current project.")),
         spec("list_items", Availability::Enabled, Effect::Query, Confirmation::None, ChangeSupport::None, Source::CommandHandler, 70, listItemsSchema(), QStringLiteral("List items under an optional parent.")),
         spec("get_item_info", Availability::Enabled, Effect::Query, Confirmation::None, ChangeSupport::None, Source::CommandHandler, 80, itemInfoSchema(), QStringLiteral("Return item information; provide either path or object_id.")),
+        spec("get_inspector_schema", Availability::Disabled, Effect::Query, Confirmation::None, ChangeSupport::None, Source::CommandHandler, 0, inspectorSchema(), QStringLiteral("Return the shared authoring property schema for an item type.")),
+        spec("get_container_info", Availability::Disabled, Effect::Query, Confirmation::None, ChangeSupport::None, Source::CommandHandler, 0, itemInfoSchema(), QStringLiteral("Return container information and children; provide either path or object_id.")),
+        spec("get_asset_info", Availability::Disabled, Effect::Query, Confirmation::None, ChangeSupport::None, Source::CommandHandler, 0, sourceIdSchema(), QStringLiteral("Return imported asset information for source_id from import_audio or list_assets.")),
+        spec("get_conversion_settings", Availability::Disabled, Effect::Query, Confirmation::None, ChangeSupport::None, Source::CommandHandler, 0, sourceIdSchema(), QStringLiteral("Return conversion settings for source_id from import_audio or list_assets.")),
+        spec("get_output_bus_routing", Availability::Disabled, Effect::Query, Confirmation::None, ChangeSupport::None, Source::CommandHandler, 0, folderPathSchema(), QStringLiteral("Return an audio object's output bus and volume in dB; path is its full project path.")),
         spec("get_folder_info", Availability::Enabled, Effect::Query, Confirmation::None, ChangeSupport::None, Source::ActionManager, 81, folderPathSchema(), QStringLiteral("Return physical directory information by bucket-relative path, for example Layers/Ambience. Directories have no GUID.")),
         spec("list_folders", Availability::Enabled, Effect::Query, Confirmation::None, ChangeSupport::None, Source::ActionManager, 82, folderPathSchema(), QStringLiteral("List physical child directories at a bucket or directory path, for example Layers or Layers/Ambience.")),
         spec("get_project_state", Availability::Enabled, Effect::Query, Confirmation::None, ChangeSupport::None, Source::CommandHandler, 90, emptyObjectSchema(), QStringLiteral("Return the current project state.")),

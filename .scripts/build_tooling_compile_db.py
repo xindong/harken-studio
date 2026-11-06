@@ -119,6 +119,8 @@ def _preferred_target(scope: str, relative: PurePosixPath) -> str:
         return "harken_remote"
     if "host" in folded:
         return "harken_host"
+    if "studiocli" in folded:
+        return "harken_studio_cli"
     if "harkenizer" in folded:
         if "resourcecompiler" in folded:
             return "harkenizer_resource_compiler"
@@ -126,7 +128,6 @@ def _preferred_target(scope: str, relative: PurePosixPath) -> str:
             return "harkenizer_core"
         if relative.name.casefold() == "resourcecompilerclient.cpp":
             return "harkenizer_compiler_client"
-        return "harkenizer"
     raise CompilationDatabaseError(
         f"no target precedence is defined for duplicated tooling file {relative}"
     )

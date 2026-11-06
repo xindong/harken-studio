@@ -7,6 +7,7 @@
 #include "CurrentWorldSyncBridgeInternal.h"
 
 #include <harken/Harken.h>
+#include <harken_studio_build/PackImage.h>
 #include <harken_preview/PreviewAbi.h>
 #include <harken_preview/PreviewProject.h>
 
@@ -84,9 +85,18 @@ struct RuntimeActionSeek {
     ActionSeekInfo info;
 };
 
+struct LoadedPack {
+    VnPackHandle handle = 0;
+    uint64_t stableId = 0;
+    uint32_t kind = 0;
+    QByteArray bytes;
+};
+
 struct RuntimeState {
     bool initialized = false;
     bool outputRunning = false;
+    VnVec3 listenerPosition{};
+    VnVec3 listenerForward{0.0f, 0.0f, -1.0f};
     VnMonitorHostSessionV1 monitorHostSession{};
     uint64_t monitorHostSequence = 0;
     EngineSessionConfig requestedConfig;
@@ -121,7 +131,9 @@ struct RuntimeState {
     std::unordered_set<harkenstudio::ObjectId> preparedSounds;
     std::unordered_set<harkenstudio::ObjectId> registeredRawPcm;
     std::unordered_map<harkenstudio::ObjectId, RawPcmDecodeCache> rawPcmDecodes;
-    std::unordered_map<QString, VnPackHandle> loadedPacksByPath;
+    std::unordered_map<QString, LoadedPack> loadedPacksByPath;
+    VnPackHandle initPackHandle = 0;
+    uint64_t packSetRevision = 0;
     std::unordered_set<uint64_t> liveVoices;
     std::unordered_map<uint64_t, QString> voiceNameByHandle;
     std::unordered_map<uint64_t, RuntimePlayback> playbacks;
@@ -144,6 +156,73 @@ struct RuntimeState {
 };
 
 RuntimeState g_runtime;
+
+VnResult provideLoadedPack(void* context, uint64_t stableId, const char*, uint32_t,
+                           uint64_t, VnPackByteSpan* span)
+{
+    const auto& pack = *static_cast<const LoadedPack*>(context);
+    if (pack.stableId != stableId) return VN_CONTENT_NOT_LOADED;
+    *span = {sizeof(VnPackByteSpan), 0,
+        reinterpret_cast<const uint8_t*>(pack.bytes.constData()),
+        static_cast<uint64_t>(pack.bytes.size())};
+    return VN_OK;
+}
+
+bool activatePackSet(std::unordered_map<QString, LoadedPack> desired, EngineResult* outResult)
+{
+    if (outResult) *outResult = VN_REVISION_CONFLICT;
+    if (g_runtime.packSetRevision == UINT64_MAX) return false;
+    std::vector<LoadedPack*> packs;
+    for (auto& [path, pack] : desired) {
+        Q_UNUSED(path);
+        if (pack.stableId != 0) packs.push_back(&pack);
+    }
+    std::sort(packs.begin(), packs.end(), [](const auto* a, const auto* b) {
+        if (a->kind != b->kind) return a->kind == VN_CANONICAL_PACK_SET_MEMBER_INIT;
+        return a->stableId < b->stableId;
+    });
+    if (outResult) *outResult = VN_CONTENT_NOT_LOADED;
+    if (packs.empty() || packs.front()->kind != VN_CANONICAL_PACK_SET_MEMBER_INIT)
+        return false;
+    std::vector<VnCanonicalPackSetMemberV1> members(packs.size());
+    std::vector<VnCanonicalPackSetMemberResultV1> results(packs.size());
+    for (size_t i = 0; i < packs.size(); ++i) {
+        auto& member = members[i];
+        member.structSize = sizeof(member);
+        member.flags = VN_CANONICAL_PACK_SET_MEMBER_PROVIDER;
+        member.packStableId = packs[i]->stableId;
+        member.expectedHandle = packs[i]->handle;
+        member.packKind = packs[i]->kind;
+        member.providerUserData = packs[i];
+        member.provide = provideLoadedPack;
+        member.release = [](void*, uint64_t, VnPackByteSpan) {};
+        results[i].structSize = sizeof(results[i]);
+    }
+    VnCanonicalPackSetActivationDescV1 desc{};
+    desc.structSize = sizeof(desc);
+    desc.expectedCurrentInitHandle = g_runtime.initPackHandle;
+    desc.baseSetRevision = g_runtime.packSetRevision;
+    desc.setRevision = g_runtime.packSetRevision + 1;
+    desc.memberCount = static_cast<uint32_t>(members.size());
+    desc.memberStructSize = sizeof(VnCanonicalPackSetMemberV1);
+    desc.members = members.data();
+    desc.outputMemberCapacity = static_cast<uint32_t>(results.size());
+    desc.outputMemberStructSize = sizeof(VnCanonicalPackSetMemberResultV1);
+    desc.outputMembers = results.data();
+    VnCanonicalPackSetActivationReportV1 report{};
+    report.structSize = sizeof(report);
+    const auto result = Vn_ActivateCanonicalPackSetV1(&desc, &report);
+    if (outResult) *outResult = result;
+    if (result != VN_OK) {
+        qWarning() << "[PlaybackRoute] pack set activation failed: result=" << result;
+        return false;
+    }
+    for (size_t i = 0; i < packs.size(); ++i) packs[i]->handle = results[i].handle;
+    g_runtime.initPackHandle = report.initHandle;
+    g_runtime.packSetRevision = report.resultSetRevision;
+    g_runtime.loadedPacksByPath = std::move(desired);
+    return true;
+}
 
 uint64_t allocatePlaybackHandle()
 {
@@ -479,6 +558,8 @@ bool ensureRuntimeStarted()
 
     g_runtime.initialized = true;
     g_runtime.outputRunning = false;
+    g_runtime.listenerPosition = {};
+    g_runtime.listenerForward = {0.0f, 0.0f, -1.0f};
     g_runtime.monitorHostSession = {};
     g_runtime.monitorHostSequence = 0;
     g_runtime.sampleRate = static_cast<int>(c.sampleRate);
@@ -502,6 +583,8 @@ bool ensureRuntimeStarted()
     g_runtime.registeredRawPcm.clear();
     g_runtime.rawPcmDecodes.clear();
     g_runtime.loadedPacksByPath.clear();
+    g_runtime.initPackHandle = 0;
+    g_runtime.packSetRevision = 0;
     return true;
 }
 
@@ -738,6 +821,8 @@ void runtimeTerm()
     g_runtime.registeredRawPcm.clear();
     g_runtime.rawPcmDecodes.clear();
     g_runtime.loadedPacksByPath.clear();
+    g_runtime.initPackHandle = 0;
+    g_runtime.packSetRevision = 0;
     g_runtime.liveVoices.clear();
     g_runtime.voiceNameByHandle.clear();
     g_runtime.playbacks.clear();
@@ -971,12 +1056,12 @@ EngineResult runtimeReconfigureBufferSize(int32_t newBlockSize)
     return static_cast<EngineResult>(result);
 }
 
-void runtimeSetMasterFade(float volume, int fadeMs)
+bool runtimeSetMasterFade(float volume, int fadeMs)
 {
     if (!g_runtime.initialized)
-        return;
-    Vn_SetBusVolume(VN_BUS_MASTER, linearToDb(volume),
-                    fadeMs > 0 ? static_cast<uint32_t>(fadeMs) : 0u);
+        return false;
+    return Vn_SetBusOutputVolume(VN_BUS_MASTER, linearToDb(volume),
+                    fadeMs > 0 ? static_cast<uint32_t>(fadeMs) : 0u) == VN_OK;
 }
 
 void runtimeRegisterSoundName(const QString& name, harkenstudio::ObjectId objectId,
@@ -1091,7 +1176,6 @@ void runtimeClearSoundNames()
     g_runtime.preparedSounds.clear();
     g_runtime.registeredRawPcm.clear();
     g_runtime.rawPcmDecodes.clear();
-    g_runtime.loadedPacksByPath.clear();
     g_runtime.liveVoices.clear();
     g_runtime.voiceNameByHandle.clear();
     g_runtime.playbacks.clear();
@@ -1372,51 +1456,145 @@ bool runtimeStopRawPcm(uint64_t playbackHandle, uint32_t fadeMs)
     return false;
 }
 
-bool runtimeLoadPack(const QString& path)
+bool runtimeLoadPack(const QString& path, EngineResult* outResult)
 {
+    if (outResult) *outResult = VN_INVALID_ARG;
     if (path.isEmpty() || !QFileInfo::exists(path))
         return false;
+    if (outResult) *outResult = VN_DEVICE_ERROR;
     if (!ensureRuntimeStarted())
         return false;
 
     const QString normalized = QFileInfo(path).absoluteFilePath();
-    if (g_runtime.loadedPacksByPath.find(normalized) != g_runtime.loadedPacksByPath.end())
+    if (g_runtime.loadedPacksByPath.find(normalized) != g_runtime.loadedPacksByPath.end()) {
+        if (outResult) *outResult = VN_OK;
         return true;
+    }
 
+    if (outResult) *outResult = VN_INVALID_ARG;
+    QFile file(normalized);
+    if (!file.open(QIODevice::ReadOnly)) return false;
+    const QByteArray bytes = file.readAll();
+    if (file.error() != QFileDevice::NoError) return false;
+    harkenstudiobuild::PackV2Header header{};
+    if (bytes.size() >= harkenstudiobuild::kPackV2HeaderBytes
+        && harkenstudiobuild::ParsePackV2Header(
+            reinterpret_cast<const uint8_t*>(bytes.constData()), &header)
+        && header.headerBytes == harkenstudiobuild::kPackV2HeaderBytes
+        && (header.packKind == harkenstudiobuild::kPackKindInit
+            || header.packKind == harkenstudiobuild::kPackKindCanonicalContent)) {
+        harkenstudiobuild::PackCanonicalImage image;
+        if (harkenstudiobuild::ParsePackCanonicalImage(
+                reinterpret_cast<const uint8_t*>(bytes.constData()), bytes.size(), &image)
+            != harkenstudiobuild::kPackOk)
+            return false;
+        for (const auto& [loadedPath, loaded] : g_runtime.loadedPacksByPath) {
+            Q_UNUSED(loadedPath);
+            if (loaded.stableId == image.packStableId
+                || (loaded.kind == VN_CANONICAL_PACK_SET_MEMBER_INIT
+                    && image.packKind == VN_CANONICAL_PACK_SET_MEMBER_INIT))
+                return false;
+        }
+        auto desired = g_runtime.loadedPacksByPath;
+        desired.emplace(normalized, LoadedPack{0, image.packStableId, image.packKind, bytes});
+        return activatePackSet(std::move(desired), outResult);
+    }
     const QByteArray utf8 = normalized.toUtf8();
     VnPackDesc desc{};
     desc.structSize = sizeof(VnPackDesc);
     desc.utf8Path = utf8.constData();
     VnPackHandle handle = 0;
     const VnResult result = Vn_LoadPack(&desc, &handle);
+    if (outResult) *outResult = result == VN_OK && handle == 0 ? VN_DEVICE_ERROR : result;
     if (result != VN_OK || handle == 0)
     {
         qWarning() << "[PlaybackRoute] runtime pack load failed:"
                    << normalized << "result=" << static_cast<int>(result);
         return false;
     }
-    g_runtime.loadedPacksByPath[normalized] = handle;
+    g_runtime.loadedPacksByPath[normalized] = LoadedPack{handle};
     return true;
 }
 
-void runtimeUnloadPack(const QString& path)
+bool runtimeUnloadPack(const QString& path, EngineResult* outResult)
 {
+    if (outResult) *outResult = VN_NOT_INITIALIZED;
     if (!g_runtime.initialized)
-        return;
+        return false;
     const QString normalized = QFileInfo(path).absoluteFilePath();
     const auto it = g_runtime.loadedPacksByPath.find(normalized);
+    if (outResult) *outResult = VN_UNKNOWN_ID;
     if (it == g_runtime.loadedPacksByPath.end())
-        return;
-    runtimeStopAll(0);
+        return false;
     runtimeUpdate();
-    const VnResult result = Vn_UnloadPack(it->second);
-    if (result == VN_OK || result == VN_STALE_HANDLE)
+    runtimePumpNullMixer(1);
+    runtimeUpdate();
+    if (it->second.kind == VN_CANONICAL_PACK_SET_MEMBER_INIT) {
+        if (outResult) *outResult = VN_REVISION_CONFLICT;
+        if (g_runtime.packSetRevision == UINT64_MAX) return false;
+        VnCanonicalPackSetUnloadDescV1 desc{};
+        desc.structSize = sizeof(desc);
+        desc.expectedInitHandle = g_runtime.initPackHandle;
+        desc.baseSetRevision = g_runtime.packSetRevision;
+        desc.unloadRevision = g_runtime.packSetRevision + 1;
+        const auto result = Vn_UnloadCanonicalPackSetV1(&desc);
+        if (outResult) *outResult = result;
+        if (result != VN_OK) {
+            qWarning() << "[PlaybackRoute] pack set unload failed: result=" << result;
+            return false;
+        }
+        std::erase_if(g_runtime.loadedPacksByPath,
+            [](const auto& entry) { return entry.second.stableId != 0; });
+        g_runtime.initPackHandle = 0;
+        g_runtime.packSetRevision = 0;
+        return true;
+    }
+    if (it->second.stableId != 0) {
+        auto desired = g_runtime.loadedPacksByPath;
+        desired.erase(normalized);
+        return activatePackSet(std::move(desired), outResult);
+    }
+    const VnResult result = Vn_UnloadPack(it->second.handle);
+    if (outResult) *outResult = result == VN_STALE_HANDLE ? VN_OK : result;
+    if (result == VN_OK || result == VN_STALE_HANDLE) {
         g_runtime.loadedPacksByPath.erase(it);
+        return true;
+    }
+    return false;
+}
+
+bool runtimeSetListenerTransform(VnVec3 position, VnVec3 forward, VnVec3 up)
+{
+    if (!g_runtime.initialized || Vn_SetListener(position, forward, up) != VN_OK)
+        return false;
+    g_runtime.listenerPosition = position;
+    g_runtime.listenerForward = forward;
+    return true;
+}
+
+bool runtimeListenerTransform(VnVec3& position, VnVec3& forward)
+{
+    if (!g_runtime.initialized) return false;
+    position = g_runtime.listenerPosition;
+    forward = g_runtime.listenerForward;
+    return true;
 }
 
 uint32_t runtimeLoadedPackCount()
 {
     return static_cast<uint32_t>(g_runtime.loadedPacksByPath.size());
+}
+
+QStringList runtimeLoadedPackPaths()
+{
+    QStringList paths;
+    paths.reserve(static_cast<qsizetype>(g_runtime.loadedPacksByPath.size()));
+    for (const auto& [path, pack] : g_runtime.loadedPacksByPath) {
+        Q_UNUSED(pack);
+        paths.append(path);
+    }
+    paths.sort();
+    return paths;
 }
 
 bool runtimeHasActionProgram(harkenstudio::ObjectId actionId)
@@ -1697,14 +1875,15 @@ bool runtimeStopPlayback(uint64_t handle, uint32_t fadeMs)
     return false;
 }
 
-void runtimeStopAll(uint32_t fadeMs)
+bool runtimeStopAll(uint32_t fadeMs)
 {
     if (!g_runtime.initialized)
-        return;
+        return false;
     const VnResult result = Vn_StopAll(fadeMs);
     if (result != VN_OK)
         qWarning() << "[PlaybackRoute] stop all failed result="
                    << static_cast<int>(result);
+    return result == VN_OK;
 }
 
 bool runtimeHasCurrentWorldPlayableConsumers()
@@ -1861,7 +2040,7 @@ bool runtimeSetPlaybackPosition(uint64_t handle, float x, float y, float z)
     const VnResult result = record.emitter != 0
         ? Vn_SetEmitterPosition(record.emitter, VnVec3{x, y, z})
         : VN_INVALID_ARG;
-    return result == VN_OK || result == VN_STALE_HANDLE;
+    return result == VN_OK;
 }
 
 bool runtimeOwnsPlayback(uint64_t handle)

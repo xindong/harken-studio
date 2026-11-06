@@ -518,6 +518,9 @@ bool AudioEngine::initialize(const Bridge::EngineSessionConfig& config)
     monitorTimer_->start(100);
     onMonitorTimer();
 
+    if (auto* project = ProjectManager::instance().currentProject())
+        ProjectManager::syncProjectToRuntime(project);
+
     qDebug() << "AudioEngine initialized successfully";
     return true;
 }
@@ -650,12 +653,13 @@ void AudioEngine::stopRuntimeSynchronization()
     resetLivePropertyPreview();
 }
 
-void AudioEngine::setMasterVolume(float volume, int fadeMs)
+bool AudioEngine::setMasterVolume(float volume, int fadeMs)
 {
-    masterVolume_ = qBound(0.0f, volume, 2.0f);
-
-    if (session_)
-        session_->setMasterFade(masterVolume_, fadeMs);
+    const float nextVolume = qBound(0.0f, volume, 2.0f);
+    if (session_ && initialized_ && !session_->setMasterFade(nextVolume, fadeMs))
+        return false;
+    masterVolume_ = nextVolume;
+    return true;
 }
 
 harkenstudio::ObjectId AudioEngine::mintRawPcmSoundId()
@@ -777,41 +781,55 @@ quintptr AudioEngine::playByName(const QString& name)
 
 quintptr AudioEngine::playByName3D(const QString& name, const HarkenEditor::Vec3& position)
 {
-    if (!session_)
-    {
-        emit playbackStarted(0, name);
-        return 0;
-    }
-    if (currentWorldPlaybackGate(runtimeSyncCoordinator())
-        != Bridge::kEngineOk)
-    {
-        emit playbackStarted(0, name);
-        return 0;
-    }
-
-    quintptr handle = static_cast<quintptr>(
-        session_->playByName3D(name, position.x, position.y, position.z));
-    emit playbackStarted(handle, name);
-    return handle;
+    return playByName3DDetailed(name, position).playbackHandle;
 }
 
-void AudioEngine::stopPlayback(quintptr playbackHandle, float fadeMs)
+AudioEngine::PlaybackStartResult AudioEngine::playByName3DDetailed(
+    const QString& name, const HarkenEditor::Vec3& position)
 {
-    if (!playbackHandle)
-        return;
+    PlaybackStartResult result;
+    if (!session_)
+    {
+        result.engineResult = Bridge::kEngineNotInit;
+        result.failure = Bridge::PlaybackFailure::RuntimeRefused;
+        emit playbackStarted(0, name);
+        return result;
+    }
+    result.engineResult = currentWorldPlaybackGate(runtimeSyncCoordinator());
+    if (result.engineResult != Bridge::kEngineOk)
+    {
+        result.failure = Bridge::PlaybackFailure::RuntimeRefused;
+        emit playbackStarted(0, name);
+        return result;
+    }
 
-    if (session_)
-        session_->stopPlayback(static_cast<uint64_t>(playbackHandle), fadeMs);
+    const auto started = session_->playByName3DDetailed(
+        name, position.x, position.y, position.z);
+    result.playbackHandle = static_cast<quintptr>(started.handle);
+    result.hasSound = started.handle != 0;
+    result.engineResult = started.result;
+    result.failure = started.failure;
+    result.topologyFailure = started.topologyFailure;
+    emit playbackStarted(result.playbackHandle, name);
+    return result;
+}
+
+bool AudioEngine::stopPlayback(quintptr playbackHandle, float fadeMs)
+{
+    if (!playbackHandle || !session_
+        || !session_->stopPlayback(static_cast<uint64_t>(playbackHandle), fadeMs))
+        return false;
 
     emit playbackStopped(playbackHandle);
+    return true;
 }
 
-void AudioEngine::stopAll(float fadeMs)
+bool AudioEngine::stopAll(float fadeMs)
 {
     if (!session_)
-        return;
+        return false;
 
-    session_->stopAll(fadeMs);
+    return session_->stopAll(fadeMs);
 }
 
 bool AudioEngine::hasInstalledCurrentWorld() const
@@ -851,56 +869,54 @@ void AudioEngine::resetListenerTransformCache()
     listenerUp_ = HarkenEditor::Vec3(0.0f, 1.0f, 0.0f);
 }
 
-void AudioEngine::setPlaybackPosition(quintptr playbackHandle, const HarkenEditor::Vec3& position)
+bool AudioEngine::setPlaybackPosition(quintptr playbackHandle, const HarkenEditor::Vec3& position)
 {
     if (!playbackHandle || !session_)
-        return;
+        return false;
 
-    session_->setPlaybackPosition(static_cast<uint64_t>(playbackHandle),
+    return session_->setPlaybackPosition(static_cast<uint64_t>(playbackHandle),
                                 position.x, position.y, position.z);
 }
 
 void AudioEngine::setListenerPosition(const HarkenEditor::Vec3& position)
 {
-    listenerPosition_ = position;
     setListenerTransform(position, listenerForward_, listenerUp_);
 }
 
 void AudioEngine::setListenerOrientation(const HarkenEditor::Vec3& forward, const HarkenEditor::Vec3& up)
 {
-    listenerForward_ = forward.normalized();
-    listenerUp_ = up.normalized();
-    setListenerTransform(listenerPosition_, listenerForward_, listenerUp_);
+    setListenerTransform(listenerPosition_, forward.normalized(), up.normalized());
 }
 
-void AudioEngine::setListenerTransform(const HarkenEditor::Vec3& position, const HarkenEditor::Vec3& forward, const HarkenEditor::Vec3& up)
+bool AudioEngine::setListenerTransform(const HarkenEditor::Vec3& position, const HarkenEditor::Vec3& forward, const HarkenEditor::Vec3& up)
 {
+    if (!session_ || !session_->setListenerTransform(position.x, position.y, position.z,
+            forward.x, forward.y, forward.z, up.x, up.y, up.z))
+        return false;
     listenerPosition_ = position;
     listenerForward_ = forward;
     listenerUp_ = up;
-
-    if (!session_)
-        return;
-
-    session_->setListenerTransform(position.x, position.y, position.z,
-                                   forward.x, forward.y, forward.z,
-                                   up.x, up.y, up.z);
+    return true;
 }
 
-bool AudioEngine::loadPack(const QString& path)
+bool AudioEngine::loadPack(const QString& path, Bridge::EngineResult* result)
 {
-    if (!session_)
+    if (!session_) {
+        if (result) *result = Bridge::kEngineNotInit;
         return false;
+    }
 
-    return session_->loadPack(path);
+    return session_->loadPack(path, result);
 }
 
-void AudioEngine::unloadPack(const QString& path)
+bool AudioEngine::unloadPack(const QString& path, Bridge::EngineResult* result)
 {
-    if (!session_)
-        return;
+    if (!session_) {
+        if (result) *result = Bridge::kEngineNotInit;
+        return false;
+    }
 
-    session_->unloadPack(path);
+    return session_->unloadPack(path, result);
 }
 
 uint32_t AudioEngine::getLoadedPackCount() const
@@ -909,6 +925,11 @@ uint32_t AudioEngine::getLoadedPackCount() const
         return 0;
 
     return session_->loadedPackCount();
+}
+
+QStringList AudioEngine::getLoadedPackPaths() const
+{
+    return session_ ? session_->loadedPackPaths() : QStringList{};
 }
 
 double AudioEngine::outputLatency() const
@@ -1140,6 +1161,13 @@ void AudioEngine::onRuntimeServiceTimer()
         applyLivePropertyPreview();
         retryBackpressuredAuditionOverlay();
     }
+}
+
+void AudioEngine::serviceRuntime()
+{
+    onRuntimeServiceTimer();
+    onMeterTimer();
+    onMonitorTimer();
 }
 
 void AudioEngine::onMeterTimer()

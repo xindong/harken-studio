@@ -27,6 +27,8 @@ namespace harken {
 class OriginalImmediateLaneConditionalProjection;
 class QueueContinuationLane;
 class PrivatePendingQueueFrontierBinding;
+class QueuePageConditionalReceiver;
+class OriginalConditionalReplacementBatch;
 
 class OccurrenceStatePool;
 class CompositeCompletionOwnerPool;
@@ -35,6 +37,7 @@ class PrivateSelectedQueueFutureSpanPool;
 class ImmediateActionLane;
 class OriginalSourceSubmissionRegistry;
 class PreparedQueueProjection;
+class PreparedQueueReplacementOrder;
 struct ImmediateLaneBucket;
 struct Engine;
 
@@ -609,6 +612,10 @@ public:
           replacement_(other.replacement_), projectionFirst_(other.projectionFirst_),
           projectionCount_(other.projectionCount_), prepared_(other.prepared_),
           stagedOwner_(std::exchange(other.stagedOwner_, nullptr)),
+          stagedPageOwner_(std::exchange(other.stagedPageOwner_, nullptr)),
+          originalRow_(std::exchange(other.originalRow_, UINT32_MAX)),
+          originalGeneration_(std::exchange(other.originalGeneration_, 0)),
+          originalMarker_(std::exchange(other.originalMarker_, 0)),
           currentOccurrence_(std::move(other.currentOccurrence_)),
           currentDecision_(std::move(other.currentDecision_)) {
         other.owner_ = nullptr;
@@ -632,6 +639,10 @@ public:
             projectionCount_ = other.projectionCount_;
             prepared_ = other.prepared_;
             stagedOwner_ = std::exchange(other.stagedOwner_, nullptr);
+            stagedPageOwner_ = std::exchange(other.stagedPageOwner_, nullptr);
+            originalRow_ = std::exchange(other.originalRow_, UINT32_MAX);
+            originalGeneration_ = std::exchange(other.originalGeneration_, 0);
+            originalMarker_ = std::exchange(other.originalMarker_, 0);
             other.owner_ = nullptr;
             other.queue_ = {};
             other.expectedVersion_ = {};
@@ -657,6 +668,10 @@ private:
     std::uint32_t projectionCount_ = 0;
     bool prepared_ = false;
     const QueueContinuationLane* stagedOwner_ = nullptr;
+    const QueuePageConditionalReceiver* stagedPageOwner_ = nullptr;
+    std::uint32_t originalRow_ = UINT32_MAX;
+    std::uint32_t originalGeneration_ = 0;
+    std::uint64_t originalMarker_ = 0;
     OccurrenceStatePool::OriginalSingleCompletionOwnerPin currentOccurrence_{};
     OriginalDecisionLifetimePin currentDecision_{};
 };
@@ -986,6 +1001,7 @@ public:
     private:
         friend class QueueInstanceTable;
         void* row_ = nullptr;
+        void* conditional_ = nullptr;
         AudioSliceLease* lease_ = nullptr;
         FrontierConditionalSlice slice_ = FrontierConditionalSlice::Activation;
     };
@@ -1032,6 +1048,9 @@ public:
     bool PrepareAcquire(const QueueInstanceCreateRequest& request,
                         PreparedQueueInstanceV1* out,
                         OriginalLifetimePin* originalLifetime = nullptr) noexcept;
+    bool PrepareInitialReset(const PreparedQueueInstanceV1& prepared,
+        const PreparedQueueReplacementOrder& order, std::uint64_t frame,
+        std::uint32_t ordinal, const MonitorControlCause& cause) noexcept;
     bool CommitPreparedAcquire(PreparedQueueInstanceV1* prepared,
                                QueueInstanceToken* outToken) noexcept;
     bool CancelPreparedAcquire(PreparedQueueInstanceV1* prepared,
@@ -1109,9 +1128,16 @@ public:
         const OccurrenceStatePool* occurrences_ = nullptr;
         TimelineArmToken arm_{};
         OccurrenceToken occurrence_{};
+        const DecisionTable* decisions_ = nullptr;
+        DecisionToken admissionDecision_{};
+        FrontierSliceDependency admission_{};
         bool (*validate_)(const ContinuationSourceBinding&) noexcept = nullptr;
     };
-    // A following node retains its actual predecessor and source-arm identity.
+    bool ProveFollowingPageSource(const OriginalConditionalFutureReservation& predecessor,
+        const DecisionTable& decisions, const DecisionFuturePin& lifetime,
+        const Plan03GroupReaderPin& reader, const ScheduledTransactionPool& pool,
+        const FrontierOwnerIdentity& dependent, ContinuationSourceBinding* out) const noexcept;
+    // A following node retains its actual predecessor and source admission.
     bool PrepareFollowingConditional(
         QueueInstanceToken token, const ConditionalQueuePrepareRequest& request,
         const OriginalConditionalFutureReservation& predecessor,
@@ -1164,6 +1190,15 @@ public:
         const ConditionalQueuePrepareRequest& replacement,
         PreparedQueueConditionalReplacementV1* out,
         const QueueContinuationLane* stagedOwner = nullptr) noexcept;
+    bool PageConditionalReplaceable(QueueInstanceToken token, ConditionalQueueVersionToken version,
+        DecisionToken decision, const QueuePageConditionalReceiver& receiver,
+        std::uint16_t slices, std::uint64_t completedAudioSequence, bool localOnly = false,
+        const OriginalConditionalReplacementBatch* batch = nullptr) const noexcept;
+    QueueResetStatusV1 PreparePageConditionalReplacement(
+        QueueInstanceToken token, ConditionalQueueVersionToken expectedVersion,
+        DecisionToken expectedDecision, const ConditionalQueuePrepareRequest& replacement,
+        PreparedQueueConditionalReplacementV1* out, const QueuePageConditionalReceiver& original,
+        OriginalConditionalFutureReservation* outOriginal = nullptr) noexcept;
     // Retain the actual immutable Current while replacing its separate future.
     QueueResetStatusV1 PrepareConditionalReplacementRetainingOriginalCurrent(
         QueueInstanceToken token, ConditionalQueueVersionToken expectedVersion,
@@ -1203,6 +1238,8 @@ public:
                              QueueSignalOutcomeV1 outcome) noexcept;
     bool RollbackUnpublishedConditional(const OriginalConditionalFutureReservation& original,
         const QueueContinuationLane& lane) noexcept;
+    bool RollbackUnpublishedConditional(const OriginalConditionalFutureReservation& original,
+        const DecisionTable& decisions) noexcept;
     bool RetireConditionalForAbort(
         QueueInstanceToken token,
         ConditionalQueueVersionToken version,
@@ -1286,7 +1323,8 @@ private:
         QueueInstanceToken token, ConditionalQueueVersionToken expectedVersion,
         DecisionToken expectedDecision, const ConditionalQueuePrepareRequest& replacement,
         PreparedQueueConditionalReplacementV1* out, bool retainedCurrent,
-        const QueueContinuationLane* stagedOwner = nullptr) noexcept;
+        const QueueContinuationLane* stagedOwner = nullptr,
+        const QueuePageConditionalReceiver* stagedPageOwner = nullptr) noexcept;
     QueueResetStatusV1 CommitConditionalReplacementInternal(
         PreparedQueueConditionalReplacementV1* prepared, LogicCommitSequence sequence,
         bool acceptedStaged) noexcept;
@@ -1329,6 +1367,8 @@ private:
         const std::atomic<bool>* predecessorReceipt = nullptr;
         DecisionToken predecessorDecision{};
         TimelineArmToken sourceArm{};
+        const DecisionTable* sourceDecisions = nullptr;
+        FrontierSliceDependency sourceAdmission{};
         std::uint32_t originalConditionalRow = UINT32_MAX;
         std::uint64_t originalConditionalMarker = 0;
         std::uint64_t pendingResetIntent = 0;
@@ -1404,6 +1444,7 @@ private:
         std::atomic<bool> conditionalReserved{false};
         std::atomic<bool> conditionalReplacementReserved{false};
         const QueueContinuationLane* stagedReplacementOwner = nullptr;
+        const QueuePageConditionalReceiver* stagedPageReplacementOwner = nullptr;
 
         std::atomic<std::uint64_t> mirrorSequence{0};
         std::atomic<std::uint64_t> mirrorVersion{0};
@@ -1477,6 +1518,15 @@ private:
         std::uint64_t resetIntent = 0;
         bool consumesReset = false;
     };
+    bool RollbackUnpublishedConditionalBody(const OriginalConditionalFutureReservation& original) noexcept;
+    bool MatchesConditionalCurrent(const Row& row, const ConditionalState& state,
+        std::uint64_t version, bool requireSourceAdmission) const noexcept;
+    bool ReserveOriginalConditionalStorage(const OriginalLifetimePin& parentOriginal,
+        std::uint32_t& originalIndex, OriginalLifetimePin& parentLoan) noexcept;
+    void InitializeOriginalConditional(QueueInstanceToken token, Row& row, ConditionalState& state,
+        const EffectiveQueueState& current, const EffectiveQueueState& first, std::uint32_t originalIndex,
+        OriginalLifetimePin&& parentLoan, OriginalConditionalFutureReservation&& predecessorLoan,
+        OriginalConditionalFutureReservation* outOriginal) noexcept;
     bool PrepareConditionalInternal(QueueInstanceToken token,
         const ConditionalQueuePrepareRequest& request, PreparedQueueConditionalV1* out,
         const OriginalLifetimePin* parentOriginal,
@@ -1505,6 +1555,7 @@ private:
         std::uint64_t installedAckSequence) noexcept;
     bool IsSelectedOriginalConditionalCurrent(
         const OriginalConditionalFutureReservation& original) const noexcept;
+    bool PendingConditionalConsumesCurrentReset(const Row& row) const noexcept;
     bool IsAcceptedSelectedConditionalHead(const Row& row,
         const OriginalConditionalRow& original) const noexcept;
     bool BindRetainedOriginalFrontierConditional(
@@ -1550,7 +1601,7 @@ private:
     static bool LoadMirror(const Row& row,
                            EffectiveQueueState* out) noexcept;
     static bool StoreMirror(Row& row,
-                            const EffectiveQueueState& state) noexcept;
+                            const EffectiveQueueState& state, DecisionToken settled = {}) noexcept;
     static bool MayMutateFrontier(const Row& row) noexcept;
     static bool HasFrontierReaders(const Row& row) noexcept;
     static bool SameResetTarget(const Row& row,

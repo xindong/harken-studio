@@ -1,3 +1,4 @@
+#include "harken/core/TimelineProgram.h"
 #include "harken/param/ParamSystem.h"
 #include "harken/core/LogicAllocCheckpoint.h"
 
@@ -2087,6 +2088,35 @@ std::uint32_t ParamSystem::PrimeVoiceBindings(VnVoiceHandle handle,
                                               std::uint32_t capacity,
                                               std::uint32_t initialTargetMask) {
     return PrimeVoiceBindingsImpl(handle, emitters, out, capacity, nullptr, false, initialTargetMask);
+}
+
+bool ParamSystem::TryResolveInitialPitch(double baseRatio,
+    std::span<const TimelineVoiceBindingInstall> bindings,
+    const VariableReadCutReader& reader, float* cents, bool* changed) const {
+    if (cents == nullptr || changed == nullptr || !std::isfinite(baseRatio) || baseRatio <= 0.0)
+        return false;
+    VoiceState state{};
+    state.base[kTargetVoicePitch] = static_cast<float>(RatioToCents(baseRatio));
+    auto& target = state.targets[kTargetVoicePitch];
+    target.lastCommitted = state.base[kTargetVoicePitch];
+    for (const auto& captured : bindings) {
+        if (captured.targetId != kTargetVoicePitch) continue;
+        float input = 0.0f;
+        const auto status = reader.Read(captured.variableId, &input);
+        if (status == VariableReadCutValueStatus::Failed) return false;
+        if (status != VariableReadCutValueStatus::Value) continue;
+        Binding binding{};
+        binding.targetId = kTargetVoicePitch;
+        binding.liveCurve = &captured.curve;
+        const auto contribution = EvaluateBinding(binding, input);
+        auto& slot = target.slots[kSlotVariableBindings];
+        slot = target.active[kSlotVariableBindings]
+            ? AddFiniteContributions(slot, contribution) : contribution;
+        target.active[kSlotVariableBindings] = true;
+    }
+    *cents = Reduce(state, kTargetVoicePitch);
+    *changed = PublicationChanged(state, kTargetVoicePitch, *cents, 0.0f);
+    return true;
 }
 
 bool ParamSystem::TryPrimeVoiceBindings(VnVoiceHandle handle, const VariableReadCutReader& reader,

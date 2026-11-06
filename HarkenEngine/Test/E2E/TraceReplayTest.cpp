@@ -923,9 +923,7 @@ TEST(TraceReplayE2E, CurrentWorldInternalInstallAndRefusalPreserveVintage) {
         world.identity.runtimeSemanticFingerprint = vintage == harken::kCurrentWorldBodyVintageV20
             ? harken::ComputeCurrentWorldFingerprintV7(world)
             : harken::ComputeCurrentWorldFingerprintV6(world);
-        ASSERT_EQ(vintage == harken::kCurrentWorldBodyVintageV19
-                      ? harken::WorldInstallStatus::CapabilityUnavailable
-                      : harken::WorldInstallStatus::Ok,
+        ASSERT_EQ(harken::WorldInstallStatus::Ok,
                   harken::InstallContainerWorldV1(*session.Engine(), world).status);
         ++world.identity.runtimeSemanticFingerprint;
         ASSERT_EQ(harken::WorldInstallStatus::InvalidWorld,

@@ -517,11 +517,13 @@ void ApplyTimelineControlEvent(VoiceRenderContext& ctx,
                                                                           : 0u;
         VoiceRenderContext::TimelineEnvelopeState& envelope =
             ctx.timelineEnvelopes[envelopeIndex];
-        envelope.active = event.endFrame > event.frame;
+        envelope.active = event.endFrame > event.frame &&
+            event.envelopeElapsedFrames <= UINT64_MAX - (event.endFrame - event.frame);
         envelope.fadeOut = envelopeIndex != 0;
         envelope.useCurve = event.envelopeCurve != nullptr;
         envelope.startFrame = event.frame;
         envelope.endFrame = event.endFrame;
+        envelope.elapsedFrames = event.envelopeElapsedFrames;
         if (envelope.useCurve) {
             assert(envelope.curve != nullptr);
             *envelope.curve = *event.envelopeCurve;
@@ -584,6 +586,7 @@ bool PreparePlainPcm(const VoiceRenderContext& ctx, std::uint32_t blockFrames,
         ctx.fading || ctx.timelineStopPending || ctx.timelineFallbackStopActive ||
         ctx.authoredRootStopApplied || ctx.timelineEvents.eventCount != 0 ||
         ctx.timelineEnvelopes[0].active || ctx.timelineEnvelopes[1].active ||
+        ctx.sourceExits != nullptr ||
         ctx.variableWeightActive || ctx.variableWeightControlCount != 0 ||
         ctx.gain.remainingFrames != 0 || ctx.outputGain.remainingFrames != 0 ||
         (ctx.pcm.channelCount <= 2 && (ctx.spatialMatrixDirty || !ctx.spatialMatrix.Settled())) ||
@@ -1438,7 +1441,7 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
         }
         const std::uint64_t start = envelope.startFrame;
         const std::uint64_t end = envelope.endFrame;
-        const std::uint64_t length = end > start ? end - start : 0;
+        const std::uint64_t length = end > start ? envelope.elapsedFrames + (end - start) : 0;
         const float reciprocal = length > 1
             ? 1.0f / static_cast<float>(length - 1)
             : 0.0f;
@@ -1450,7 +1453,7 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
                 if (absoluteFrame < start || absoluteFrame >= end) {
                     continue;
                 }
-                const std::uint64_t done = absoluteFrame - start;
+                const std::uint64_t done = envelope.elapsedFrames + (absoluteFrame - start);
                 const float progress = length == 1
                     ? 1.0f
                     : done == 0
@@ -1477,6 +1480,23 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
             envelope.active = false;
         }
     }
+    // Each source transition contributes independently, including an exit
+    // inherited by a later voice partway through its absolute fade interval.
+    for (auto* binding = ctx.sourceExits; binding != nullptr; binding = binding->next) {
+        if (!binding->active || !binding->source->fade) continue;
+        const auto& exit = *binding->source;
+        const auto length = exit.stopFrame - exit.fadeStartFrame + exit.fadeElapsedFrames;
+        const auto inverse = length > 1 ? 1.0f / static_cast<float>(length - 1u) : 0.0f;
+        for (std::uint32_t index = 0; index < produced; ++index) {
+            const auto frame = sourceBlockStart + index;
+            if (frame < exit.fadeStartFrame) continue;
+            const float progress = length <= 1 || frame >= exit.stopFrame - 1u ? 1.0f :
+                static_cast<float>(frame - exit.fadeStartFrame + exit.fadeElapsedFrames) * inverse;
+            const auto gain = 1.0f - exit.curve.Eval(InterpLinear(exit.curve.xMin, exit.curve.xMax, progress));
+            for (std::uint32_t channel = 0; channel < channels; ++channel)
+                scratch[channel][offset + index] *= gain;
+        }
+    }
     // Timeline controls follow the output clock even while a live stream is
     // dry. Adopt the silent suffix only after scaling the produced prefix so a
     // later envelope cannot replace the envelope used by earlier samples.
@@ -1494,17 +1514,31 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
             }
         }
     }
+    // A source-exit cutoff is frozen after all Page/lane claims and has no
+    // span event. Adopt an in-block persistent Stop after earlier controls.
+    const auto blockStart = ctx.timelineEvents.quantumIndex * blockFrames;
+    if (!ctx.authoredRootStopApplied && ctx.authoredRootStopEvent == UINT32_MAX &&
+        ctx.authoredRootStopFrame < blockStart + blockFrames) {
+        auto stop = ctx.authoredRootStopControl;
+        stop.offset = static_cast<std::uint16_t>(ctx.authoredRootStopFrame > blockStart
+            ? ctx.authoredRootStopFrame - blockStart : 0);
+        ApplyTimelineControlEvent(ctx, stop, blockFrames);
+    }
     const VoiceRenderContext::TimelineEnvelopeState& stopFadeOut =
         ctx.timelineEnvelopes[1];
     const std::uint64_t timelineStopFrame =
         ctx.authoredRootStopApplied ? ctx.timelineStopFrame :
             ctx.timelineEvents.quantumIndex * blockFrames + ctx.timelineStopOffset;
+    bool sourceExitCovered = false;
+    for (auto* binding = ctx.sourceExits; binding != nullptr; binding = binding->next)
+        sourceExitCovered = sourceExitCovered || (binding->active && binding->source->stop &&
+            binding->source->fade && binding->source->stopFrame == timelineStopFrame);
     const bool authoredStopCovered =
         ctx.timelineStopPending && ctx.timelineStopAuthored &&
-        ctx.timelineFadeOutCoveredSample && stopFadeOut.fadeOut &&
-        stopFadeOut.endFrame == timelineStopFrame;
+        (sourceExitCovered || (ctx.timelineFadeOutCoveredSample && stopFadeOut.fadeOut &&
+        stopFadeOut.endFrame == timelineStopFrame));
     const bool startFallbackStop =
-        ctx.timelineStopPending && !authoredStopCovered;
+        ctx.timelineStopPending && !authoredStopCovered && !ctx.fading;
     if (startFallbackStop) {
         ctx.timelineFallbackStopActive = true;
         ctx.timelineFallbackStopFrame = timelineStopFrame;

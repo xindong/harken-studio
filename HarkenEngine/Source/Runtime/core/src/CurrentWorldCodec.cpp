@@ -1625,17 +1625,18 @@ bool EncodeCurrentWorldShippingBody(
     return EncodeCurrentWorldBodyImpl(world, out, true, true, true, true);
 }
 
-WorldInstallStatus detail::EncodeCurrentWorldShippingBodyWithBudget(
+WorldInstallStatus detail::EncodeCurrentWorldIdentityBodyWithBudget(
     const ContainerWorldInstallViewV1& world, std::vector<std::uint8_t>& out,
     PackDecodeCharge& charge, std::size_t& requestedSlots) noexcept {
     out.clear();
-    if (world.sourceBodyVintage != kCurrentWorldShippingBodyVintage)
+    const bool entryScheduling = world.sourceBodyVintage == kCurrentWorldBodyVintageV19;
+    if (world.sourceBodyVintage != kCurrentWorldShippingBodyVintage && !entryScheduling)
         return WorldInstallStatus::InvalidFormat;
     const auto validated = ValidateCurrentWorldSectionGroupsWithBudget(world, charge.Budget());
     if (validated != WorldInstallStatus::Ok) return validated;
     try {
         BudgetEncodeOutput output{out, charge, requestedSlots};
-        return EncodeCurrentWorldBodyImpl(world, output, true, true, true, true)
+        return EncodeCurrentWorldBodyImpl(world, output, true, true, true, true, entryScheduling)
             ? WorldInstallStatus::Ok : WorldInstallStatus::InvalidWorld;
     } catch (...) {
         out.clear();

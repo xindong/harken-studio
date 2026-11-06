@@ -220,7 +220,7 @@ struct RuntimeEntryTimelineFixture {
     }
 };
 
-TEST(CurrentWorldCompiler, RuntimeEntry19RoundtripCannotEnableShippingOrInstallation) {
+TEST(CurrentWorldCompiler, RuntimeEntry19RoundtripInstallsWithoutChangingShippingFormat) {
     RuntimeEntryTimelineFixture fixture;
     ASSERT_NO_FATAL_FAILURE(fixture.Build());
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
@@ -242,7 +242,7 @@ TEST(CurrentWorldCompiler, RuntimeEntry19RoundtripCannotEnableShippingOrInstalla
     EXPECT_EQ(harken::ComputeSegmentScheduleFingerprintV2(segment), segment.scheduleSemanticFingerprint);
     EXPECT_EQ(harken::ComputeCurrentWorldFingerprintV6(decoded),
               fixture.world.identity.runtimeSemanticFingerprint);
-    EXPECT_EQ(harken::WorldInstallStatus::CapabilityUnavailable,
+    EXPECT_EQ(harken::WorldInstallStatus::Ok,
               harken::ValidateCurrentWorldV1(decoded));
     std::vector<std::uint8_t> again;
     ASSERT_TRUE(harken::EncodeCurrentWorldBodyV19(decoded, again));
@@ -259,7 +259,7 @@ TEST(CurrentWorldCompiler, RuntimeEntry19RoundtripCannotEnableShippingOrInstalla
     harken::CurrentWorldBodyImage attempt;
     ASSERT_TRUE(attempt.Decode(bytes.data(), bytes.size(), 19,
                                harken::CurrentWorldDecodeMode::ReplayCurrentAttempt));
-    EXPECT_EQ(harken::WorldInstallStatus::CapabilityUnavailable,
+    EXPECT_EQ(harken::WorldInstallStatus::Ok,
               harken::ValidateCurrentWorldV1(*attempt.ProductionView()));
     auto disguised = decoded;
     disguised.sourceBodyVintage = 18;
@@ -279,7 +279,7 @@ TEST(CurrentWorldCompiler, RuntimeEntry19RoundtripCannotEnableShippingOrInstalla
     config.maxActionFirings = 8;
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
-    EXPECT_EQ(harken::WorldInstallStatus::CapabilityUnavailable,
+    EXPECT_EQ(harken::WorldInstallStatus::Ok,
               harken::InstallContainerWorldV1(*session.Engine(), decoded).status);
     EXPECT_EQ(18u, harkenstudiobuild::kCurrentWorldShippingBodyVintage);
 }

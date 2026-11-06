@@ -222,7 +222,7 @@ public:
     // -- output / device --
     EngineResult startOutput();
     void stopOutput();
-    void setMasterFade(float volume, int fadeMs);
+    bool setMasterFade(float volume, int fadeMs);
     double outputLatency() const;
     int actualSampleRate() const;
     EngineResult reconfigureBufferSize(int32_t newBlockSize);
@@ -241,11 +241,11 @@ public:
     uint64_t playByName(const QString& name);
     uint64_t playByName3D(const QString& name, float x, float y, float z);
     bool hasActionProgram(harkenstudio::ObjectId actionId) const;
-    void stopPlayback(uint64_t handle, float fadeMs);
-    void stopAll(float fadeMs);
+    bool stopPlayback(uint64_t handle, float fadeMs);
+    bool stopAll(float fadeMs);
     bool hasCurrentWorldPlayableConsumers() const;
     void pumpNullMixer(std::uint32_t blockCount);
-    void setPlaybackPosition(uint64_t handle, float x, float y, float z);
+    bool setPlaybackPosition(uint64_t handle, float x, float y, float z);
     void setVoicePitchByName(const QString& soundName, float cents);
     void setVoiceVolumeByName(const QString& soundName, float volumeDb);
     void setVoiceOutputVolumeByName(const QString& soundName, float volumeDb);
@@ -253,14 +253,15 @@ public:
     void setVoiceDistanceScaleByName(const QString& soundName, float scale);
     void setVoiceSendsByName(const QString& soundName,
                              const std::vector<std::pair<harkenstudio::ObjectId, float>>& sends);
-    void setListenerTransform(float px, float py, float pz,
+    bool setListenerTransform(float px, float py, float pz,
                               float fx, float fy, float fz,
                               float ux, float uy, float uz);
 
     // -- packs / prepare --
-    bool loadPack(const QString& path);
-    void unloadPack(const QString& path);   // stop-all-referencing before unload
+    bool loadPack(const QString& path, EngineResult* outResult = nullptr);
+    bool unloadPack(const QString& path, EngineResult* outResult = nullptr);
     uint32_t loadedPackCount() const;
+    QStringList loadedPackPaths() const;
     bool prepareMedia(uint32_t sourceId, const QString& absolutePath, uint64_t fileSize);
     bool swapMedia(uint32_t sourceId, const QString& newPath, uint64_t fileSize);
     void clearPreparedMedia();   // preparer clear, else media-registry clear
@@ -318,7 +319,7 @@ public:
     uint32_t addListener();
     void removeListener(uint32_t listenerId);
     bool isListenerActive(uint32_t listenerId) const;
-    void setListenerPositionById(uint32_t listenerId,
+    bool setListenerPositionById(uint32_t listenerId,
                                  float x, float y, float z,
                                  float fwdX, float fwdY, float fwdZ,
                                  float upX, float upY, float upZ);
@@ -328,8 +329,7 @@ public:
                                    uint8_t panningRule, uint8_t speakerConfigType);
     bool listenerInfo(uint32_t listenerId,
                       float* outX, float* outY, float* outZ,
-                      float* outFwdX, float* outFwdY, float* outFwdZ,
-                      int* outSpatialized, uint32_t* outPanningRule);
+                      float* outFwdX, float* outFwdY, float* outFwdZ);
     void setMultiPosition(uint64_t gameObjectId, const float* positions, uint32_t count,
                           uint8_t type);
     void clearMultiPosition(uint64_t gameObjectId);

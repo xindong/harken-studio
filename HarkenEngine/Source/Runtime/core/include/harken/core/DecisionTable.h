@@ -424,6 +424,12 @@ public:
     bool AcquireFuturePin(DecisionToken token, DecisionFuturePin* out) noexcept;
     // Producer-only retention transfer; never restores the Decision's execution state.
     bool CloneFuturePin(const DecisionFuturePin& source, DecisionFuturePin* out) noexcept;
+    bool CaptureFrontierSliceDependency(const DecisionFuturePin& original,
+        const Plan03GroupReaderPin& reader, const ScheduledTransactionPool& pool,
+        const FrontierOwnerIdentity& dependent, FrontierSliceDependency* out) const noexcept;
+    FrontierSliceDependencyStatus ReadFrontierSliceDependency(const FrontierSliceDependency& dependency) const noexcept;
+    bool IsFrontierSliceDependencyFor(const FrontierSliceDependency& dependency,
+        const FrontierGroupBinding& original, const FrontierOwnerIdentity& dependent) const noexcept;
     bool CaptureAppliedSignalDependency(const DecisionFuturePin& original,
         const Plan03GroupReaderPin& primary, const Plan03GroupReaderPin& member,
         const ScheduledTransactionPool& pool, std::uint64_t completedAudioSequence,

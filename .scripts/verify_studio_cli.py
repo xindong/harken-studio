@@ -4,9 +4,11 @@ import argparse
 import json
 import math
 import os
+import queue
 import struct
 import subprocess
 import tempfile
+import threading
 import wave
 from pathlib import Path
 
@@ -16,7 +18,104 @@ def run(binary: Path, arguments: list[str], environment: dict, data: bytes | Non
                           env=environment, timeout=180)
 
 
-def verify(cli: Path, executor: Path, host: Path | None, work: Path) -> None:
+def verify_shell(cli: Path, environment: dict, root: Path) -> None:
+    directory = root / "ShellAudio"
+    project = directory / "ShellAudio.hsp"
+    created = run(cli, ["init", str(directory), "--json"], environment)
+    assert created.returncode == 0, created.stderr
+
+    def shell(lines, exit_code=0):
+        completed = run(cli, ["shell", "--project", str(project), "--json"], environment,
+                        ("\n".join(lines) + ("\n" if lines else "")).encode("utf-8"))
+        assert completed.returncode == exit_code, (completed.stdout, completed.stderr)
+        responses = [json.loads(line) for line in completed.stdout.splitlines()]
+        assert all(response["protocolVersion"] == 1 for response in responses), responses
+        return responses
+
+    responses = shell([
+        "help", "commands create_action", "create_action [", "create_action []",
+        "not_a_registered_command", 'create_action {"name":"SessionAction"}',
+        'get_item_info {"path":"SessionAction"}', "exit", "close_project",
+        "open_project " + json.dumps({"path": str(project)}), "save_project", "exit"])
+    assert responses[0]["status"] == "ok" and responses[1]["result"]["command"] == "create_action"
+    assert [response.get("code") for response in responses[2:5]] == [
+        "INVALID_JSON", "INVALID_ARGS", "UNKNOWN_COMMAND"], responses
+    assert responses[6]["result"]["name"] == "SessionAction", responses
+    assert all(response["code"] == "UNSAVED_CHANGES" for response in responses[7:10]), responses
+    assert all(response["status"] == "ok" for response in responses[10:]), responses
+    persisted = shell(['get_item_info {"path":"SessionAction"}'])
+    assert persisted[0]["result"]["name"] == "SessionAction", persisted
+    assert shell([]) == []
+    refused = shell(['create_action {"name":"UnsavedEof"}'], exit_code=1)
+    assert refused[-1]["code"] == "UNSAVED_CHANGES", refused
+    discarded = shell(['create_action {"name":"Discarded"}', "exit --discard"])
+    assert discarded[-1]["result"]["discarded"] is True, discarded
+    absent = shell(['get_item_info {"path":"UnsavedEof"}', 'get_item_info {"path":"Discarded"}'])
+    assert all(response["status"] == "error" for response in absent), absent
+
+    seeded = shell(['create_folder {"path":"Layers/Destination"}', "save_project", "exit"])
+    assert all(response["status"] == "ok" for response in seeded), seeded
+    expected_folders = {"Layers/Destination"}
+    for mutation, saved_folders in (
+        ('create_folder {"path":"Layers/Source"}', {"Layers/Destination", "Layers/Source"}),
+        ('rename_folder {"path":"Layers/Source","new_name":"Renamed"}',
+         {"Layers/Destination", "Layers/Renamed"}),
+        ('move_folder {"path":"Layers/Renamed","new_parent":"Layers/Destination"}',
+         {"Layers/Destination", "Layers/Destination/Renamed"}),
+        ('delete_folder {"path":"Layers/Destination/Renamed"}', {"Layers/Destination"}),
+    ):
+        edited = shell([
+            "get_project_state", mutation, "get_project_state", "exit", "undo",
+            "get_project_state", 'list_folders {"path":"Layers"}',
+            'list_folders {"path":"Layers/Destination"}', "redo", "get_project_state",
+            "save_project", "get_project_state", "exit"])
+        assert len(edited) == 13, (mutation, edited)
+        assert edited[3]["code"] == "UNSAVED_CHANGES", (mutation, edited)
+        assert all(response["status"] == "ok" for index, response in enumerate(edited)
+                   if index != 3), (mutation, edited)
+        assert [edited[index]["result"]["is_dirty"] for index in (0, 2, 5, 9, 11)] == [
+            False, True, False, True, False], (mutation, edited)
+        restored = {folder["path"] for index in (6, 7)
+                    for folder in edited[index]["result"]["folders"]}
+        assert restored == expected_folders, (mutation, restored, expected_folders)
+        reopened = shell(["get_project_state", 'list_folders {"path":"Layers"}',
+                          'list_folders {"path":"Layers/Destination"}'])
+        assert all(response["status"] == "ok" for response in reopened), reopened
+        assert reopened[0]["result"]["is_dirty"] is False, (mutation, reopened)
+        persisted = {folder["path"] for response in reopened[1:]
+                     for folder in response["result"]["folders"]}
+        assert persisted == saved_folders, (mutation, persisted, saved_folders)
+        expected_folders = saved_folders
+
+    process = subprocess.Popen([str(cli), "shell", "--project", str(project), "--json"],
+                               stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                               stderr=subprocess.DEVNULL, env=environment)
+    responses = queue.Queue()
+
+    def read_responses():
+        for line in process.stdout:
+            responses.put(json.loads(line))
+
+    reader = threading.Thread(target=read_responses, daemon=True)
+    reader.start()
+    try:
+        for line in ('get_item_info {"path":"SessionAction"}', "commands save_project", "exit"):
+            process.stdin.write((line + "\n").encode("utf-8"))
+            process.stdin.flush()
+            response = responses.get(timeout=30)
+            assert response["status"] == "ok", response
+        assert process.wait(timeout=30) == 0
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=30)
+        process.stdin.close()
+        reader.join(timeout=30)
+        process.stdout.close()
+    assert not reader.is_alive()
+
+
+def verify(cli: Path, host: Path | None, work: Path) -> None:
     environment = {**os.environ, "QT_QPA_PLATFORM": "harken-cli-must-not-load-a-display"}
 
     def call(*arguments, data=None, exit_code=0):
@@ -32,14 +131,25 @@ def verify(cli: Path, executor: Path, host: Path | None, work: Path) -> None:
 
     help_result = run(cli, ["--help"], environment)
     assert help_result.returncode == 0 and b"--input" in help_result.stdout
+    worker = run(cli, ["--resource-worker"], environment, b"{}\n")
+    assert worker.returncode == 2, worker.stderr.decode("utf-8", "replace")
+    identity = json.loads(worker.stdout)
+    assert identity["protocol"] == 1 and identity["compiler"], identity
     assert call("--version")["result"]["version"]
     catalog = call("commands")["result"]["commands"]
     names = {entry["command"] for entry in catalog}
     assert len(names) == len(catalog) and {"create_project", "set_item_property", "export_pack"} <= names
     for entry in catalog:
         assert entry["registered"] and entry["inputSchema"]["type"] == "object", entry
-        if entry["requiresDesktop"]:
-            assert call("exec", entry["command"], exit_code=1)["code"] == "DESKTOP_REQUIRED", entry
+        assert not entry["requiresDesktop"], entry
+        assert "hostRestriction" not in entry, entry
+    for excluded in ("get_theme", "click_widget", "batch", "list_codecs", "add_listener",
+                     "set_platform_profile", "set_preferred_format", "audition_get_speed"):
+        assert excluded not in names
+        assert call("commands", excluded, exit_code=1)["code"] == "UNKNOWN_COMMAND"
+        assert call("exec", excluded, exit_code=1)["code"] == "UNKNOWN_COMMAND"
+    for shared in ("audition_get_state", "get_inspector_schema"):
+        assert shared in names
     call("exec", "not_a_registered_command", exit_code=1)
     call("not_a_subcommand", exit_code=2)
     call("exec", "list_items", "--args", "[", exit_code=2)
@@ -54,12 +164,24 @@ def verify(cli: Path, executor: Path, host: Path | None, work: Path) -> None:
         call("init", str(project_dir))
         assert project.is_file()
         call("init", str(project_dir), exit_code=1)
+        verify_shell(cli, environment, root)
+        worker_request = json.dumps({"manifest": str(root / "missing-manifest.json")}).encode("utf-8") + b"\n"
+        worker = run(cli, ["--resource-worker"], environment, worker_request * 2)
+        assert worker.returncode == 0, worker.stderr.decode("utf-8", "replace")
+        responses = [json.loads(line) for line in worker.stdout.splitlines()]
+        assert len(responses) == 3 and responses[0] == identity, responses
+        assert all(response["success"] is False and response["error"] for response in responses[1:]), responses
 
         def execute(name, arguments=None, save=False, exit_code=0):
             flags = ["exec", name, "--project", str(project), "--input", "-"]
             if save:
                 flags.append("--save")
             return call(*flags, data=arguments or {}, exit_code=exit_code)
+
+        def authored_contents():
+            return {path.relative_to(project_dir).as_posix(): path.read_bytes()
+                    for path in project_dir.rglob("*") if path.is_file()
+                    and ".cache" not in path.relative_to(project_dir).parts}
 
         call("run", "--project", str(project), "--input", "-", "--save", data=[
             {"cmd": "create_action", "args": {"name": "ShouldNotExist"}},
@@ -89,8 +211,31 @@ def verify(cli: Path, executor: Path, host: Path | None, work: Path) -> None:
             stream.writeframes(b"".join(struct.pack("<h", int(6000 * math.sin(2 * math.pi * 440 * i / 48000)))
                                        for i in range(24000)))
         imported = execute("import_audio", {"path": str(audio)}, save=True)["result"]
+        assert "languages" in execute("list_project_languages")["result"]
+        states = call("run", "--project", str(project), "--input", "-", data=[
+            {"cmd": "get_project_state"},
+            {"cmd": "set_item_property", "args": {"path": "tone", "property": "volume", "value": -6}},
+            {"cmd": "get_project_state"},
+            {"cmd": "undo"},
+            {"cmd": "get_project_state"},
+            {"cmd": "redo"},
+            {"cmd": "save_project"},
+            {"cmd": "get_project_state"}])["results"]
+        assert [states[i]["result"]["is_dirty"] for i in (0, 2, 4, 7)] == [False, True, False, False], states
         platforms = execute("list_project_platforms")["result"]["platforms"]
         platform = platforms[0]["id"]
+        saved = authored_contents()
+        targets = call("list-targets", "--project", str(project))["result"]
+        assert any(value["id"] == platform for value in targets["platforms"]), targets
+        assert authored_contents() == saved
+        build_flags = ["build", "--project", str(project), "--all", "--platform-id", platform,
+                       "--self-clean", "off"]
+        for flags in (["--save"], ["--args", "{}"], ["--input", "-"], ["--timeout", "1"]):
+            call(*build_flags, *flags, exit_code=2)
+        call("list-targets", "--project", str(project), "--save", exit_code=2)
+        call("list-targets", "--project", str(project), "--all", exit_code=2)
+        call(*build_flags, "--platform-id", platform, exit_code=2)
+        assert authored_contents() == saved
         converted = execute("transcode_asset", {"source_id": imported["source_id"], "platform_id": platform})
         assert converted["result"]["success"] and not converted["result"].get("async"), converted
         workflow = root / "workflow.json"
@@ -102,6 +247,28 @@ def verify(cli: Path, executor: Path, host: Path | None, work: Path) -> None:
         call("run", "--project", str(project), "--input", str(workflow), "--save")
         execute("get_item_info", {"path": "PlayTone"})
         execute("get_action_definition", {"name": "PlayTone"})
+        playback = call("run", "--project", str(project), "--input", "-", data=[
+            {"cmd": "init", "args": {"sample_rate": 48000, "buffer_size": 480}},
+            {"cmd": "set_master_volume", "args": {"volume": 0}},
+            {"cmd": "start_output"},
+            {"cmd": "post_action", "args": {"name": "PlayTone"}},
+            {"cmd": "audition_play", "args": {"object_path": "PlayTone"}},
+            {"cmd": "audition_get_state"},
+            {"cmd": "set_listener", "args": {"pos": [1, 2, 3], "forward": [0, 0, 1], "up": [0, 1, 0]}},
+            {"cmd": "get_listener_info"},
+            {"cmd": "get_status"},
+            {"cmd": "get_buffer_config"},
+            {"cmd": "stop_all"}])["results"]
+        assert playback[3]["result"]["action_handle"] != 0, playback
+        assert playback[4]["result"]["auditionID"] != 0, playback
+        assert playback[5]["result"]["activeCount"] > 0, playback
+        assert playback[7]["result"]["position"] == [1, 2, 3], playback
+        buffer = playback[9]["result"]
+        assert math.isclose(playback[8]["result"]["output_latency_ms"],
+                            1000 * buffer["block_size"] / buffer["sample_rate"]), playback
+        rejected = call("run", "--project", str(project), "--input", "-", exit_code=1, data=[
+            {"cmd": "post_action", "args": {"name": "PlayTone"}}])
+        assert rejected["code"] == "PLAY_FAILED", rejected
         destination = root / "cli-export"
         asset = execute("get_asset_info", {"source_id": imported["source_id"]})["result"]
         source = Path(asset["absolute_path"]).resolve()
@@ -110,6 +277,8 @@ def verify(cli: Path, executor: Path, host: Path | None, work: Path) -> None:
         try:
             source.write_bytes(b"invalid audio input")
             execute("export_pack", {"output_path": str(destination), "platform_id": platform}, exit_code=1)
+            failed = call(*build_flags, "--output", str(root / "failed-saved-export"), exit_code=1)
+            assert not failed["result"]["success"] and failed["result"]["platforms"], failed
             rejected_output = root / "legacy-batch-export"
             execute("batch", {"commands": [
                 {"cmd": "create_action", "args": {"name": "HiddenBatch"}},
@@ -125,31 +294,109 @@ def verify(cli: Path, executor: Path, host: Path | None, work: Path) -> None:
         assert packs and any(pack.stem == "PlayTone" for pack in packs), exported
         for pack in packs:
             assert pack.stat().st_size and json.loads(pack.with_suffix(".json").read_text(encoding="utf-8"))
-        reference = root / "executor-export"
-        generated = run(executor, ["generate-packs", str(project), "--all", "--platform-id", platform,
-                                  "--self-clean", "off", "--output", str(reference)], environment)
-        assert generated.returncode == 0, generated.stderr.decode("utf-8", "replace")
+        init_pack = next(pack for pack in packs if pack.stem == "Init")
+        content_pack = next(pack for pack in packs if pack.stem == "PlayTone")
+        lifecycle = call("run", "--input", "-", data=[
+            {"cmd": "init"},
+            {"cmd": "load_pack", "args": {"path": str(init_pack)}},
+            {"cmd": "load_pack", "args": {"path": str(content_pack)}},
+            {"cmd": "get_loaded_packs"},
+            {"cmd": "unload_pack", "args": {"path": str(content_pack)}},
+            {"cmd": "get_loaded_packs"},
+            {"cmd": "unload_pack", "args": {"path": str(init_pack)}},
+            {"cmd": "get_loaded_packs"}])["results"]
+        for index, expected in ((3, {init_pack, content_pack}), (5, {init_pack}), (7, set())):
+            loaded = lifecycle[index]["result"]
+            assert loaded["count"] == len(expected), lifecycle
+            assert {Path(pack["path"]) for pack in loaded["packs"]} == expected, lifecycle
+        reference = root / "saved-export"
+        saved = authored_contents()
+        generated = call(*build_flags, "--output", str(reference))
+        assert generated["result"]["success"], generated
+        assert authored_contents() == saved
         for pack in packs:
             for artifact in (pack, pack.with_suffix(".json")):
                 counterpart = reference / artifact.relative_to(destination)
                 assert counterpart.read_bytes() == artifact.read_bytes(), artifact.name
+
+        transient = root / "unsaved-export"
+        call("run", "--project", str(project), "--input", "-", data=[
+            {"cmd": "create_action", "args": {"name": "TransientTone"}},
+            {"cmd": "set_item_property", "args": {"path": "TransientTone", "property": "steps",
+                "value": [{"type": "Play", "targetName": "tone"}]}},
+            {"cmd": "export_pack", "args": {"output_path": str(transient),
+                "platform_ids": [platform], "all": True, "force": True, "self_clean": False}}
+        ])
+        assert any(path.stem == "TransientTone" for path in transient.rglob("*.bytes"))
+        assert authored_contents() == saved
+        assert not any(action["name"] == "TransientTone"
+                       for action in call("list-targets", "--project", str(project))["result"]["actions"])
+        call(*build_flags, "--output", str(reference), "--force")
+        assert not any(path.stem == "TransientTone" for path in reference.rglob("*.bytes"))
+        assert authored_contents() == saved
+
+        rejected = root / "rejected-export"
+        for invalid in ({"all": "true"}, {"force": 1}, {"self_clean": "off"},
+                        {"platform_ids": []}, {"platform_ids": [platform, platform]},
+                        {"platform_id": platform, "platform_ids": [platform]},
+                        {"all": True, "action_name": "PlayTone"},
+                        {"self_clean": True, "action_name": "PlayTone"}):
+            execute("export_pack", {"output_path": str(rejected), **invalid}, exit_code=1)
+        assert not rejected.exists()
+
+        execute("create_project_platform", {"name": "Alternate", "base_platform": "Windows"}, save=True)
+        platform_ids = [value["id"] for value in execute("list_project_platforms")["result"]["platforms"]]
+        session_all = root / "session-all"
+        saved_all = root / "saved-all"
+        session_all.mkdir()
+        saved_all.mkdir()
+        (session_all / "obsolete.txt").write_text("obsolete", encoding="utf-8")
+        (saved_all / "obsolete.txt").write_text("obsolete", encoding="utf-8")
+        saved = authored_contents()
+        multiple = execute("export_pack", {"output_path": str(session_all), "platform_ids": platform_ids,
+                           "all": True, "force": True, "self_clean": True})
+        assert multiple["result"]["success"], multiple
+        multiple_flags = ["build", "--project", str(project), "--all", "--self-clean", "on",
+                          "--force", "--output", str(saved_all)]
+        for platform_id in platform_ids:
+            multiple_flags.extend(["--platform-id", platform_id])
+        assert call(*multiple_flags)["result"]["success"]
+        assert not (session_all / "obsolete.txt").exists()
+        assert not (saved_all / "obsolete.txt").exists()
+        session_artifacts = {path.relative_to(session_all): path.read_bytes()
+                             for path in session_all.rglob("*") if path.is_file()}
+        saved_artifacts = {path.relative_to(saved_all): path.read_bytes()
+                           for path in saved_all.rglob("*") if path.is_file()}
+        assert session_artifacts == saved_artifacts
+        assert authored_contents() == saved
+
+        journal = project_dir.with_name(project_dir.name + ".harken-project-transaction.json")
+        journal.write_text("{}", encoding="utf-8")
+        recovery_output = root / "recovery-rejected"
+        for flags in (["list-targets", "--project", str(project)],
+                      [*build_flags, "--output", str(recovery_output)]):
+            refused = call(*flags, exit_code=1)
+            assert refused["code"] == "OPEN_PROJECT_FAILED", refused
+            assert journal.read_text(encoding="utf-8") == "{}"
+            assert authored_contents() == saved
+            assert not recovery_output.exists()
+        journal.unlink()
         if host:
             platform_dir = next(pack.parent for pack in packs if pack.stem == "PlayTone")
             playback = run(host, ["pack-play", "--root", str(platform_dir), "--action-name", "PlayTone",
                                   "--seconds", "1", "--null"], environment)
             assert playback.returncode == 0, (
                 playback.stdout.decode("utf-8", "replace"), playback.stderr.decode("utf-8", "replace"))
-    print("CLI protocol, desktop isolation, persistence, conversion and pack equivalence passed.")
+    print("CLI protocol, desktop isolation, persistence, conversion, read-only builds and pack equivalence passed.")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Verify the native Studio CLI against real project and pack services.")
     parser.add_argument("--cli", type=Path, required=True)
-    parser.add_argument("--executor", type=Path, required=True)
     parser.add_argument("--host", type=Path)
     parser.add_argument("--work-dir", type=Path, default=Path(".temp"))
     args = parser.parse_args()
-    verify(args.cli.resolve(), args.executor.resolve(), args.host.resolve() if args.host else None,
+    verify(args.cli.resolve(), args.host.resolve() if args.host else None,
            args.work_dir.resolve())
 
 

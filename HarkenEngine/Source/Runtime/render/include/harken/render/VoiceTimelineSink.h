@@ -288,7 +288,7 @@ public:
     std::size_t VariableStartStorageBytes() const noexcept {
         return pendingVariableStarts_.RequestedBytes() +
             plainResults_.size() * sizeof(PlainTransactionResult) +
-            retiringPlainArms_.size() * sizeof(TimelineArmToken) +
+            retiringPlainArms_.size() * sizeof(PlainArmRetirement) +
             retiringPlainArmSlots_.size() * sizeof(std::uint32_t);
     }
 
@@ -754,6 +754,7 @@ public:
                     stored.authoredFadeOutCandidate = events[i].authoredFadeOutCandidate;
                     stored.frame = payload.envelopeStartFrame;
                     stored.endFrame = payload.envelopeEndFrame;
+                    stored.envelopeElapsedFrames = payload.envelopeElapsedFrames;
                     stored.value = payload.sourceStartFrame;
                     stored.envelopeCurve = payload.envelopeCurve;
                     if (payload.kind == TimelineEventKind::VariableWeight) {
@@ -796,6 +797,7 @@ public:
                 events[i].authoredFadeOutCandidate;
             event.frame = payload.envelopeStartFrame;
             event.endFrame = payload.envelopeEndFrame;
+            event.envelopeElapsedFrames = payload.envelopeElapsedFrames;
             event.value = payload.sourceStartFrame;
             event.envelopeCurve = payload.envelopeCurve;
             if (payload.kind == TimelineEventKind::VariableWeight) {
@@ -900,6 +902,7 @@ public:
     void EndQuantum(std::uint64_t quantumIndex) noexcept override {
         immediate_.Apply(quantumIndex);
         frontier_.Finish();
+        RetryRetiringPlainArms();
         // All current voice spans are already copied; only future slices observe cancellation.
         for (std::uint32_t i = 0; i < authoredStopFenceCount_; ++i) {
             const auto& fence = *authoredStopFences_[i];
@@ -959,31 +962,64 @@ private:
         std::array<PendingVariableTransaction, kTimelineMaxEventsPerVoiceQuantum + 1u> transactions{};
     };
 
+    struct PlainArmRetirement {
+        TimelineArmToken arm{};
+        bool completeClaimed = false;
+    };
+
+    void DeferClaimedControlCompletion(TimelineArmToken arm) noexcept {
+        if (arm.slot >= retiringPlainArms_.size()) return;
+        auto& pending = retiringPlainArms_[arm.slot];
+        if (pending.arm.Valid()) {
+            if (SamePlainArm(pending.arm, arm)) return; // Cancellation remains authoritative.
+            TimelineArmObservation prior{};
+            if (!arms_.Observe(pending.arm, &prior) || prior.state == ArmState::Tombstoned) {
+                pending = {arm, true};
+                return;
+            }
+            assert(false && "Two live generations cannot share a retirement slot");
+            return;
+        }
+        assert(retiringPlainArmCount_ < retiringPlainArmSlots_.size());
+        retiringPlainArmSlots_[retiringPlainArmCount_++] = arm.slot;
+        pending = {arm, true};
+    }
+
     void RetirePendingVariableStart(PendingVariableStart& pending) noexcept {
         pending.failed = true;
         // A busy Arm owns its retirement independently of the reusable native slot.
         for (std::uint32_t i = 0; i < pending.transactionCount; ++i) {
             const auto arm = pending.transactions[i].arm;
             if (arm.slot >= retiringPlainArms_.size()) return;
-            const auto prior = retiringPlainArms_[arm.slot];
+            const auto prior = retiringPlainArms_[arm.slot].arm;
             if (prior.Valid() && !SamePlainArm(prior, arm)) return;
         }
         for (std::uint32_t i = 0; i < pending.transactionCount; ++i) {
             const auto arm = pending.transactions[i].arm;
             RecordPlainResult(arm, pending.failureDisposition);
             if (TryRetirePlainArm(arm)) continue;
-            if (!retiringPlainArms_[arm.slot].Valid()) {
+            retiringPlainArms_[arm.slot].completeClaimed = false;
+            if (!retiringPlainArms_[arm.slot].arm.Valid()) {
                 assert(retiringPlainArmCount_ < retiringPlainArmSlots_.size());
                 retiringPlainArmSlots_[retiringPlainArmCount_++] = arm.slot;
-                retiringPlainArms_[arm.slot] = arm;
+                retiringPlainArms_[arm.slot] = {arm, false};
             }
         }
         pending = {};
     }
 
-    bool TryRetirePlainArm(TimelineArmToken arm) noexcept {
+    bool TryRetirePlainArm(TimelineArmToken arm, bool completeClaimed = false) noexcept {
         TimelineArmObservation observation{};
         if (!arms_.Observe(arm, &observation) || observation.state == ArmState::Tombstoned) return true;
+        if (completeClaimed && observation.state == ArmState::AudioClaimed) {
+            const auto sequence = plainQuantum_ == UINT64_MAX ? UINT64_MAX : plainQuantum_ + 1u;
+            arms_.CompleteClaimedAudioSlice(arm, sequence);
+            return !arms_.Observe(arm, &observation) || observation.state == ArmState::Tombstoned;
+        }
+        if (completeClaimed && observation.state != ArmState::CancelRequested) {
+            assert(false && "A completed source control must retain its audio claim");
+            return false;
+        }
         const bool cancelled = observation.state == ArmState::Started
             ? arms_.RequestCancelStartedVoice(arm)
             : observation.state == ArmState::AudioClaimed
@@ -995,7 +1031,8 @@ private:
     void RetryRetiringPlainArms() noexcept {
         for (std::uint32_t i = 0; i < retiringPlainArmCount_;) {
             const auto slot = retiringPlainArmSlots_[i];
-            if (!TryRetirePlainArm(retiringPlainArms_[slot])) { ++i; continue; }
+            const auto pending = retiringPlainArms_[slot];
+            if (!TryRetirePlainArm(pending.arm, pending.completeClaimed)) { ++i; continue; }
             retiringPlainArms_[slot] = {};
             retiringPlainArmSlots_[i] = retiringPlainArmSlots_[--retiringPlainArmCount_];
         }
@@ -1194,8 +1231,9 @@ private:
             }
             for (std::uint16_t member = 0;
                  member < context.sourceControlCount; ++member) {
-                context.sink->arms_.CompleteClaimedAudioSlice(
-                    context.members[member], context.quantumIndex + 1u);
+                // A later slice may share this quantum with the source envelope.
+                // Keep its Arm executable until all current spans are copied.
+                context.sink->DeferClaimedControlCompletion(context.members[member]);
             }
             return;
         }
@@ -1418,8 +1456,9 @@ private:
         if (context.applied && context.naturalEndCompletion) {
             for (std::uint16_t member = 0;
                  member < context.sourceControlCount; ++member) {
-                context.sink->arms_.CompleteClaimedAudioSlice(
-                    context.members[member], context.quantumIndex + 1u);
+                // A later slice may share this quantum with the source envelope.
+                // Keep its Arm executable until all current spans are copied.
+                context.sink->DeferClaimedControlCompletion(context.members[member]);
             }
         }
     }
@@ -1470,7 +1509,7 @@ private:
     bool pendingVariableStartSeen_ = false;
     VoicePool::SlotStorageRegistration slotStorageRegistration_;
     std::vector<PlainTransactionResult> plainResults_;
-    std::vector<TimelineArmToken> retiringPlainArms_;
+    std::vector<PlainArmRetirement> retiringPlainArms_;
     std::vector<std::uint32_t> retiringPlainArmSlots_;
     std::uint32_t retiringPlainArmCount_ = 0;
     std::uint32_t plainResultCount_ = 0;

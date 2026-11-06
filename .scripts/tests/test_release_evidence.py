@@ -462,6 +462,18 @@ class ReleaseEvidenceTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.prepare()
 
+    def test_binary_origin_audit_uses_the_packaged_file_selection(self):
+        omitted = self.payload / "previous.exe"
+        omitted.write_bytes(b"MZprevious-build")
+        selected = [evidence.file_record(self.payload / "app.exe", self.payload)]
+        origins = evidence.verify_payload_binaries(self.payload, self.model, None, set(), selected)
+        self.assertEqual([record["path"] for record in origins], ["app.exe"])
+        with self.assertRaises(ValueError):
+            evidence.verify_payload_binaries(self.payload, self.model, None, set())
+        selected.append(evidence.file_record(omitted, self.payload))
+        with self.assertRaises(ValueError):
+            evidence.verify_payload_binaries(self.payload, self.model, None, set(), selected)
+
     def test_unmatched_import_library_is_rejected(self):
         (self.payload / "unknown.lib").write_bytes(b"!<arch>\nunknown")
         with self.assertRaises(ValueError):
@@ -480,16 +492,13 @@ class ReleaseEvidenceTest(unittest.TestCase):
         binary.write_bytes(b"MZfixture")
         library = self.build / "bin/Release/libQWKCore.dylib"
         library.write_bytes(b"\xcf\xfa\xed\xfebuild-library")
-        executable = self.build / "bin/Release/Harkenizer"
-        executable.write_bytes(b"\xcf\xfa\xed\xfebuild-executable")
-        cli = executable.with_name("HarkenStudioCLI")
+        cli = self.build / "bin/Release/HarkenStudioCLI"
         cli.write_bytes(b"\xcf\xfa\xed\xfebuild-cli")
         self.model["artifacts"] = [
             {"target": target, "type": kind, "name": path.name,
              "sha256": evidence.sha256(path), "path": path.relative_to(self.build).as_posix()}
             for target, kind, path in (("harken_editor", "EXECUTABLE", binary),
                                       ("QWKCore", "SHARED_LIBRARY", library),
-                                      ("harkenizer", "EXECUTABLE", executable),
                                       ("harken_studio_cli", "EXECUTABLE", cli))]
         tool = self.root / "macdeployqt"
         tool.write_bytes(b"deployment tool")
@@ -503,17 +512,19 @@ class ReleaseEvidenceTest(unittest.TestCase):
 
     def test_macos_deployment_records_and_verifies_transformed_build_binaries(self):
         bundle, library, tool, deployed = self.macos_deployment_fixture()
-        executable = bundle / "Contents/MacOS/Harkenizer"
+        executable = bundle / "Contents/MacOS/HarkenStudioCLI"
+        retired = executable.with_name("Harkenizer")
+        retired.write_bytes(b"previous-build")
         def transform(command, check):
             self.assertEqual(command, [str(tool), str(bundle), "-always-overwrite",
-                                       f"-executable={executable}",
-                                       f"-executable={executable.with_name('HarkenStudioCLI')}"])
+                                       f"-executable={executable}"])
             self.assertTrue(check)
             self.assertEqual(deployed.read_bytes(), library.read_bytes())
-            self.assertEqual(executable.read_bytes(), library.with_name("Harkenizer").read_bytes())
+            self.assertEqual(executable.read_bytes(), library.with_name("HarkenStudioCLI").read_bytes())
             deployed.write_bytes(b"\xcf\xfa\xed\xfedeployed-library")
             executable.write_bytes(b"\xcf\xfa\xed\xfedeployed-executable")
         self.run_macos_deployment(bundle, tool, transform)
+        self.assertFalse(retired.exists())
         report = evidence.read_macos_deployment(self.build, "studio", "Release", self.model)
         self.assertEqual(report["tool"], {"name": "macdeployqt", "sha256": evidence.sha256(tool)})
         self.assertEqual(report["libraries"][0]["sourceArtifact"], self.model["artifacts"][1])
@@ -574,7 +585,7 @@ class ReleaseEvidenceTest(unittest.TestCase):
 
     def test_macos_deployment_rejects_source_changes_during_deployment(self):
         bundle, library, tool, deployed = self.macos_deployment_fixture()
-        for source in (library, library.with_name("Harkenizer")):
+        for source in (library, library.with_name("HarkenStudioCLI")):
             with self.subTest(source=source):
                 original = source.read_bytes()
                 with self.assertRaises(ValueError):
@@ -582,12 +593,12 @@ class ReleaseEvidenceTest(unittest.TestCase):
                 self.assertFalse(evidence.macos_deployment_path(self.build, "studio", "Release").exists())
                 source.write_bytes(original)
 
-    def test_macos_deployment_requires_the_executor_build_artifact(self):
+    def test_macos_deployment_requires_the_cli_build_artifact(self):
         bundle, library, tool, deployed = self.macos_deployment_fixture()
         self.model["artifacts"] = self.model["artifacts"][:-1]
         receipt = evidence.macos_deployment_path(self.build, "studio", "Release")
         evidence.write_json(receipt, {"previous": True})
-        with self.assertRaisesRegex(ValueError, "requires the built Harkenizer"):
+        with self.assertRaisesRegex(ValueError, "requires the built HarkenStudioCLI"):
             self.run_macos_deployment(bundle, tool, mock.Mock())
         self.assertFalse(receipt.exists())
 

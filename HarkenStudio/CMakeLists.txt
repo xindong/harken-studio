@@ -490,24 +490,19 @@ target_link_libraries(harken_editor PRIVATE harken_editor_lib)
 
 endif()
 
-add_executable(harkenizer
-    Source/Tooling/Harkenizer/Main.cpp
-    Source/Tooling/Harkenizer/ResourceWorker.cpp)
-set_target_properties(harkenizer PROPERTIES OUTPUT_NAME "Harkenizer")
-target_link_libraries(harkenizer PRIVATE harkenizer_build harkenizer_resource_compiler)
-harken_attach_version_resource(harkenizer "Harkenizer" "Harkenizer.exe")
-if(HARKEN_BUILD_EDITOR)
-    add_dependencies(harken_editor harkenizer)
-endif()
-
 if(HARKEN_BUILD_STUDIO_CLI)
 add_executable(harken_studio_cli
     Source/Tooling/StudioCli/Main.cpp
+    Source/Tooling/StudioCli/Shell.cpp
+    Source/Tooling/StudioCli/Shell.h
+    Source/Tooling/StudioCli/SavedProjectBuild.cpp
+    Source/Tooling/StudioCli/SavedProjectBuild.h
+    Source/Tooling/StudioCli/ResourceWorker.cpp
+    Source/Tooling/StudioCli/ResourceWorker.h
     Source/Tooling/StudioCli/StudioSession.cpp
     Source/Tooling/StudioCli/StudioSession.h)
 set_target_properties(harken_studio_cli PROPERTIES OUTPUT_NAME "HarkenStudioCLI")
 target_link_libraries(harken_studio_cli PRIVATE harken_studio_core)
-add_dependencies(harken_studio_cli harkenizer)
 harken_attach_version_resource(harken_studio_cli "Harken Studio CLI" "HarkenStudioCLI.exe")
 if(HARKEN_BUILD_EDITOR)
     add_dependencies(harken_editor harken_studio_cli)
@@ -523,10 +518,6 @@ add_custom_command(TARGET harken_studio_cli POST_BUILD
         --check-generated "${HARKEN_SCHEMA_GENERATED_CORE_DIR}"
         --publish "$<TARGET_FILE_DIR:harken_studio_cli>/schema"
 )
-endif()
-
-if(WIN32)
-    target_link_libraries(harkenizer PRIVATE opengl32 ole32 shell32)
 endif()
 
 if(NOT Python3_Interpreter_FOUND)
@@ -545,17 +536,8 @@ add_custom_command(TARGET harken_editor POST_BUILD
 
 endif()
 
-add_custom_command(TARGET harkenizer POST_BUILD
-    COMMAND ${Python3_EXECUTABLE}
-        "${CMAKE_SOURCE_DIR}/.scripts/schema_archive.py"
-        --schema-root "${HARKEN_SCHEMA_SOURCE_DIR}"
-        --check-generated "${HARKEN_SCHEMA_GENERATED_CORE_DIR}"
-        --publish "$<TARGET_FILE_DIR:harkenizer>/schema"
-)
-
 if(HARKEN_BUILD_EDITOR AND _harken_macos_agl_framework_missing)
     harken_remove_missing_agl_framework(harken_editor)
-    harken_remove_missing_agl_framework(harkenizer)
     harken_remove_missing_agl_framework(harken_studio_cli)
 endif()
 
@@ -581,19 +563,6 @@ if(WIN32)
     )
 
     endif()
-
-    add_custom_command(TARGET harkenizer POST_BUILD
-        COMMAND ${WINDEPLOYQT_EXE}
-            $<$<CONFIG:Debug>:--debug>
-            $<$<NOT:$<CONFIG:Debug>>:--release>
-            --no-translations
-            --no-compiler-runtime
-            --no-system-d3d-compiler
-            --no-system-dxc-compiler
-            --no-opengl-sw
-            --no-quick-import
-            $<TARGET_FILE:harkenizer>
-    )
 
     if(HARKEN_BUILD_EDITOR)
     add_custom_command(TARGET harken_editor POST_BUILD
@@ -646,9 +615,6 @@ if(APPLE AND HARKEN_BUILD_EDITOR)
     add_custom_command(TARGET harken_editor POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory
             "$<TARGET_BUNDLE_DIR:harken_editor>/Contents/PlugIns/platforms"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "$<TARGET_FILE:harkenizer>"
-            "$<TARGET_FILE_DIR:harken_editor>/$<TARGET_FILE_NAME:harkenizer>"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "$<TARGET_FILE:Qt6::QOffscreenIntegrationPlugin>"
             "$<TARGET_BUNDLE_DIR:harken_editor>/Contents/PlugIns/platforms/"
@@ -724,7 +690,7 @@ function(harken_verify_headless_dependencies)
     endforeach()
 endfunction()
 
-foreach(_harken_headless_target harken_studio_core harken_studio_cli harkenizer)
+foreach(_harken_headless_target harken_studio_core harken_studio_cli)
     if(TARGET ${_harken_headless_target})
         harken_verify_headless_dependencies(${_harken_headless_target})
     endif()

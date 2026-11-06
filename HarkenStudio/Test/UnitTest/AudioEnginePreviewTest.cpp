@@ -284,6 +284,37 @@ float pumpUntilPreviewAudible(uint32_t maxBlocks = 32)
 
 }
 
+TEST(AudioEnginePreview, ListenerStateChangesOnlyAfterAcceptedWritesAndResetsWithRuntime)
+{
+    ensureApp();
+    AudioEnginePreviewReset reset;
+    auto& engine = VNX::AudioEngine::instance();
+    engine.shutdown();
+    HarkenEditor::Bridge::EngineSessionConfig config;
+    config.deviceMode = HarkenEditor::Bridge::EngineDeviceMode::Null;
+    ASSERT_TRUE(engine.initialize(config));
+    float x = 0, y = 0, z = 0, fx = 0, fy = 0, fz = 0;
+    ASSERT_TRUE(engine.getListenerInfo(1, &x, &y, &z, &fx, &fy, &fz));
+    EXPECT_FLOAT_EQ(-1.0f, fz);
+    EXPECT_FALSE(engine.getListenerInfo(0, &x, &y, &z, &fx, &fy, &fz));
+    ASSERT_TRUE(engine.setListenerPositionById(1, 2, 3, 4, 1, 0, 0, 0, 1, 0));
+    EXPECT_FALSE(engine.setListenerPositionById(0, 5, 6, 7, 1, 0, 0, 0, 1, 0));
+    EXPECT_FALSE(engine.setListenerTransform({5, 6, 7}, {0, 0, 0}, {0, 1, 0}));
+    ASSERT_TRUE(engine.getListenerInfo(1, &x, &y, &z, &fx, &fy, &fz));
+    EXPECT_FLOAT_EQ(2.0f, x);
+    EXPECT_FLOAT_EQ(3.0f, y);
+    EXPECT_FLOAT_EQ(4.0f, z);
+    EXPECT_FLOAT_EQ(1.0f, fx);
+    EXPECT_FLOAT_EQ(0.0f, fz);
+    engine.shutdown();
+    EXPECT_FALSE(engine.getListenerInfo(1, &x, &y, &z, &fx, &fy, &fz));
+    ASSERT_TRUE(engine.initialize(config));
+    ASSERT_TRUE(engine.getListenerInfo(1, &x, &y, &z, &fx, &fy, &fz));
+    EXPECT_FLOAT_EQ(0.0f, x);
+    EXPECT_FLOAT_EQ(0.0f, fx);
+    EXPECT_FLOAT_EQ(-1.0f, fz);
+}
+
 TEST(AudioEnginePreview,
      RuntimeLifecycleCancelsPendingWorldBeforeTermAndAdvancesEpochOnRestart)
 {
@@ -1238,7 +1269,6 @@ TEST_F(StudioActionSeekTest,
     config.deviceMode = HarkenEditor::Bridge::EngineDeviceMode::Null;
     ASSERT_TRUE(engine.initialize(config));
     ASSERT_TRUE(engine.startOutput());
-    VNX::ProjectManager::syncProjectToRuntime(projects.currentProject());
     ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
 
     const auto stalePlayback = seek(oldPlayback, 10.0);

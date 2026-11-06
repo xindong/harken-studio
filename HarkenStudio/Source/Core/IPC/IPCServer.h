@@ -61,8 +61,10 @@ public:
         bool unrestricted = false;
     };
 
-    explicit IPCServer(AudioEngine* engine, QObject* parent = nullptr);
+    explicit IPCServer(AudioEngine* engine, QObject* parent = nullptr,
+                       CommandHost host = CommandHost::Desktop);
     ~IPCServer() override;
+    CommandHost commandHost() const { return commandHost_; }
     
     void setAppState(AppState state) { appState_ = state; }
     AppState appState() const { return appState_; }
@@ -141,6 +143,7 @@ private:
     void registerDesktopEditorHandlers();
     void registerDesktopAdvancedHandlers();
     QSet<QString> desktopCommands_;
+    CommandHost commandHost_;
     
     void registerCommandHandlers();
 

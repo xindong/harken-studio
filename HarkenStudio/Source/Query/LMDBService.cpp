@@ -1,6 +1,7 @@
 
 #include "LMDBService.h"
 #include <QDebug>
+#include <QDir>
 #include <cstdlib>
 #include <cstring>
 
@@ -44,6 +45,10 @@ bool LMDBService::open(const QString& dbPath, size_t mapSizeMB)
     return false;
 #else
     if (opened_) close();
+    if (!QDir().mkpath(dbPath)) {
+        qWarning() << "[LMDBService] Cannot create database directory:" << dbPath;
+        return false;
+    }
 
     int rc = mdb_env_create(&env_);
     if (rc != 0) {

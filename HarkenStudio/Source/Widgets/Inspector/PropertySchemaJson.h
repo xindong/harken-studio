@@ -9,6 +9,8 @@
 
 namespace VNX {
 
+QJsonObject inspectorSchemaToJson(const QString& schemaId);
+
 QJsonObject propertySchemaToJson(const PropertySchema& schema,
                                  const QString& component,
                                  const QStringList& itemTypes);

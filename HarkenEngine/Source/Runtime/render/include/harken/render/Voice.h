@@ -20,6 +20,7 @@
 #include "harken/core/TimelineProgram.h"
 #include "harken/core/TimelineExecutionOrder.h"
 #include "harken/core/FrontierActivation.h"
+#include "harken/core/FrontierSourceExit.h"
 #include "harken/core/DecisionToken.h"
 #include "harken/core/VariableControlRuntime.h"
 #include "harken/core/VariableWeightControl.h"
@@ -213,6 +214,7 @@ public:
     bool firstOutputDeferred = false;
     std::uint64_t frame = 0;
     std::uint64_t endFrame = 0;
+    std::uint64_t envelopeElapsedFrames = 0;
     std::uint64_t value = 0;
     const CurveLUT* envelopeCurve = nullptr;
     TimelineExecutionOrder order{};
@@ -531,10 +533,12 @@ struct VoiceRenderContext {
         bool fadeOut = false;
         std::uint64_t startFrame = 0;
         std::uint64_t endFrame = 0;
+        std::uint64_t elapsedFrames = 0;
         bool useCurve = false;
         CurveLUT* curve = nullptr;
     };
     TimelineEnvelopeState timelineEnvelopes[2]{};
+    FrontierSourceExitVoice* sourceExits = nullptr;
     bool timelineFadeOutCoveredSample = false;
     bool timelineStopAuthored = false;
     std::uint32_t timelineStopOffset = 0;

@@ -87,8 +87,8 @@
 #error "HARKEN_HOST_PATH must point at the harken_host executable"
 #endif
 
-#ifndef HARKENIZER_PATH
-#error "HARKENIZER_PATH must point at the Harkenizer executable"
+#ifndef HARKEN_STUDIO_CLI_PATH
+#error "HARKEN_STUDIO_CLI_PATH must point at the Studio CLI executable"
 #endif
 
 #ifndef HARKEN_TEMP_DIR
@@ -1579,7 +1579,7 @@ class AuthoredPackLifecycle : public ::testing::Test
 protected:
     void SetUp() override
     {
-        qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+        qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
         ASSERT_TRUE(dir_.isValid());
         ASSERT_NO_FATAL_FAILURE(prepareExportedPackProject(project_, dir_.path()));
     }
@@ -3139,7 +3139,7 @@ class ExportedPackLifecycle : public AuthoredPackLifecycle
 protected:
     static void SetUpTestSuite()
     {
-        qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+        qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
         preparedDir_ = std::make_unique<QTemporaryDir>();
         ASSERT_TRUE(preparedDir_->isValid());
         {
@@ -3176,7 +3176,7 @@ class ExportedPackReadOnlyLifecycle : public ::testing::Test
 protected:
     static void SetUpTestSuite()
     {
-        qputenv("HARKENIZER_PATH", QByteArray(HARKENIZER_PATH));
+        qputenv("HARKEN_STUDIO_CLI_PATH", QByteArray(HARKEN_STUDIO_CLI_PATH));
         preparedDir_ = std::make_unique<QTemporaryDir>();
         ASSERT_TRUE(preparedDir_->isValid());
         {
@@ -3212,6 +3212,51 @@ private:
     static std::unique_ptr<QTemporaryDir> preparedDir_;
 };
 
+
+TEST_F(ExportedPackReadOnlyLifecycle, BridgeOwnsCanonicalSetUntilExplicitUnload)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    const auto path = [&](const QString& name) {
+        return QDir(directory.path()).filePath(name + QStringLiteral(".bytes"));
+    };
+    for (const auto& name : {QStringLiteral("Init"), QStringLiteral("ExportedPackImmediateSound"),
+                              QStringLiteral("ExportedPackPackBAction")})
+        ASSERT_TRUE(QFile::copy(QDir(preparedExportedPackDir()).filePath(name + QStringLiteral(".bytes")),
+                               path(name)));
+    HarkenEditor::Bridge::EngineSessionConfig config;
+    config.deviceMode = HarkenEditor::Bridge::EngineDeviceMode::Null;
+    auto session = HarkenEditor::Bridge::EngineSession::create(config);
+    ASSERT_NE(nullptr, session);
+    const auto init = path(QStringLiteral("Init"));
+    const auto first = path(QStringLiteral("ExportedPackImmediateSound"));
+    const auto second = path(QStringLiteral("ExportedPackPackBAction"));
+    EXPECT_FALSE(session->loadPack(first));
+    EXPECT_EQ(0u, session->loadedPackCount());
+    ASSERT_TRUE(session->loadPack(init));
+    ASSERT_TRUE(session->loadPack(first));
+    EXPECT_EQ(2u, session->loadedPackCount());
+    EXPECT_TRUE(session->loadPack(first));
+    EXPECT_EQ(2u, session->loadedPackCount());
+    ASSERT_TRUE(QFile::remove(init));
+    ASSERT_TRUE(session->loadPack(second));
+    EXPECT_EQ(3u, session->loadedPackCount());
+    EXPECT_FALSE(session->loadPack(path(QStringLiteral("Missing"))));
+    EXPECT_EQ(3u, session->loadedPackCount());
+    ASSERT_TRUE(session->unloadPack(first));
+    EXPECT_EQ(2u, session->loadedPackCount());
+    EXPECT_FALSE(session->unloadPack(first));
+    EXPECT_EQ(2u, session->loadedPackCount());
+    ASSERT_TRUE(session->unloadPack(init));
+    EXPECT_EQ(0u, session->loadedPackCount());
+    EXPECT_FALSE(session->unloadPack(second));
+    ASSERT_TRUE(QFile::copy(QDir(preparedExportedPackDir()).filePath(QStringLiteral("Init.bytes")), init));
+    ASSERT_TRUE(session->loadPack(init));
+    ASSERT_TRUE(session->loadPack(second));
+    EXPECT_EQ(2u, session->loadedPackCount());
+    ASSERT_TRUE(session->unloadPack(init));
+    EXPECT_EQ(0u, session->loadedPackCount());
+}
 
 std::filesystem::path att06FsPath(const std::string& utf8)
 {

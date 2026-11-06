@@ -4,6 +4,7 @@
 #include "harken/core/CompletionOwner.h"
 #include "harken/core/CompletionProgress.h"
 #include "harken/core/PlayableProgramKey.h"
+#include "harken/core/SourcePhase.h"
 
 #include <cstdint>
 
@@ -21,14 +22,16 @@ struct KnownCompletionFactsV1 {
     bool residentExactMedia = false;
     std::uint64_t pcmFrameCount = 0;
     std::uint64_t sourceStartFrame = 0;
+    ExactSourcePhase sourcePhase{};
     std::uint64_t loopStartFrame = 0;
     std::uint64_t loopEndFrame = 0;
     std::uint32_t loopCount = 0;
     std::uint32_t sourceRate = 0;
     std::uint32_t mixRate = 0;
     float pitchRatio = 1.0f;
+    // Prepared crop uses the actual initial wire ratio without float narrowing.
+    double resolvedSourceRatio = 0.0;
     bool pitchFixed = false;
-    bool serialRender = false;
     bool endMutationPossible = false;
     std::uint64_t authoredDurationFrames = UINT64_MAX;
     std::uint64_t absoluteLogicalStartFrame = 0;
@@ -72,6 +75,10 @@ struct KnownCompletionQuantumProof {
 // Classifies immutable playback facts before completion owners are reserved.
 // The duration is in output frames; no occurrence identity is needed yet.
 CompletionPredictability ResolveKnownCompletionDuration(
+    const KnownCompletionFactsV1& facts, std::uint64_t* out) noexcept;
+
+// Pure source positioning arithmetic, independent of completion delivery.
+CompletionPredictability ResolveFixedSourceDuration(
     const KnownCompletionFactsV1& facts, std::uint64_t* out) noexcept;
 
 CompletionPredictability MaterializeKnownCompletion(

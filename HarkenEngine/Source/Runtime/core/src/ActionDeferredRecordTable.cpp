@@ -278,26 +278,82 @@ bool ActionDeferredRecordTable::InspectPlayPrerequisites(
     return true;
 }
 
-bool ActionDeferredRecordTable::InspectClaimedPlayPrerequisites(
+const DeferredIntent* ActionDeferredRecordTable::MatchClaimedPair(
     DeferredIntentPool* pool, DeferredIntentToken poolToken,
-    ActionDeferredRecordToken recordToken, bool* outHeld,
-    ActionDeferredPairState* outFaultState) const noexcept {
+    ActionDeferredRecordToken recordToken, ActionOpcodeV1 opcode) const noexcept {
     const Row* row = Resolve(recordToken);
     const auto* entry = pool == nullptr ? nullptr : pool->Validate(poolToken, DeferredIntentEntryState::Claimed);
-    if (outHeld == nullptr || row == nullptr || row->state != ActionDeferredRecordState::Claimed ||
-        row->record.step.opcode != ActionOpcodeV1::Play || row->retryReservation.Valid() ||
+    if (row == nullptr || row->state != ActionDeferredRecordState::Claimed || row->heldCancelOwned ||
+        row->record.step.opcode != opcode || row->retryReservation.Valid() ||
         row->poolToken.slot != poolToken.slot || row->poolToken.generation != poolToken.generation ||
         entry == nullptr || entry->retryReservation.Valid() ||
         entry->intent.ownerDomain != DeferredIntentOwnerDomain::Action ||
         entry->intent.ownerHandle != row->record.firing ||
         entry->intent.ownerEpoch != row->record.ownerCancellationEpoch ||
         entry->intent.payload != recordToken.slot || entry->intent.dueFrame != row->record.intendedBoundaryFrame ||
-        entry->intent.executionOrdinal != row->record.executionOrdinal) {
+        entry->intent.executionOrdinal != row->record.executionOrdinal) return nullptr;
+    return &entry->intent;
+}
+
+bool ActionDeferredRecordTable::ClaimedResetOrder::Valid() const noexcept {
+    if (owner_ == nullptr || firings_ == nullptr || sequence_ == 0) return false;
+    const auto* intent = owner_->MatchClaimedPair(pool_, poolToken_, record_, ActionOpcodeV1::Reset);
+    if (intent == nullptr || intent->commitSequence != sequence_) return false;
+    const auto* row = owner_->Resolve(record_);
+    ActionFiringSnapshot firing{};
+    ActionFiringStepResult step{};
+    return row != nullptr && firings_->Capture(row->record.firing, &firing) &&
+        firing.state == ActionFiringState::Active &&
+        firing.cancellationEpoch == row->record.ownerCancellationEpoch &&
+        firing.acceptedLogicSequence == sequence_ &&
+        firings_->CaptureStep(row->record.firing, row->record.stepIndex, &step) &&
+        step.state == ActionStepState::AwaitingMaterialization &&
+        step.opcode == static_cast<std::uint32_t>(ActionOpcodeV1::Reset) &&
+        step.executionOrdinal == row->record.executionOrdinal;
+}
+
+bool ActionDeferredRecordTable::BorrowClaimedResetOrder(DeferredIntentPool& pool,
+    DeferredIntentToken poolToken, ActionDeferredRecordToken recordToken,
+    const ActionFiringTable& firings, ClaimedResetOrder* out) const noexcept {
+    if (out == nullptr) return false;
+    const auto* intent = MatchClaimedPair(&pool, poolToken, recordToken, ActionOpcodeV1::Reset);
+    if (intent == nullptr) return false;
+    ClaimedResetOrder order;
+    order.owner_ = this;
+    order.pool_ = &pool;
+    order.firings_ = &firings;
+    order.record_ = recordToken;
+    order.poolToken_ = poolToken;
+    order.sequence_ = intent->commitSequence;
+    if (!order.Valid()) return false;
+    *out = order;
+    return true;
+}
+
+bool ActionDeferredRecordTable::InspectClaimedPlayPrerequisites(
+    DeferredIntentPool* pool, DeferredIntentToken poolToken,
+    ActionDeferredRecordToken recordToken, bool* outHeld,
+    ActionDeferredPairState* outFaultState) const noexcept {
+    const auto* intent = MatchClaimedPair(pool, poolToken, recordToken, ActionOpcodeV1::Play);
+    if (intent == nullptr || outHeld == nullptr) {
         if (pool != nullptr && outFaultState != nullptr)
             (void)InspectPair(*pool, poolToken, recordToken, outFaultState);
         return false;
     }
-    return InspectPlayPrerequisites(*pool, entry->intent, recordToken.slot, outHeld, outFaultState);
+    return InspectPlayPrerequisites(*pool, *intent, recordToken.slot, outHeld, outFaultState);
+}
+
+bool ActionDeferredRecordTable::InspectClaimedResetPrerequisites(
+    DeferredIntentPool* pool, DeferredIntentToken poolToken,
+    ActionDeferredRecordToken recordToken, bool* outHeld,
+    ActionDeferredPairState* outFaultState) const noexcept {
+    const auto* intent = MatchClaimedPair(pool, poolToken, recordToken, ActionOpcodeV1::Reset);
+    if (intent == nullptr || outHeld == nullptr) {
+        if (pool != nullptr && outFaultState != nullptr)
+            (void)InspectPair(*pool, poolToken, recordToken, outFaultState);
+        return false;
+    }
+    return InspectPlayPrerequisites(*pool, *intent, recordToken.slot, outHeld, outFaultState);
 }
 
 FixedPlayClaimStatus ActionDeferredRecordTable::ClaimFixedPlayPair(

@@ -27,12 +27,12 @@ ResourceCompilerClient::~ResourceCompilerClient()
 QString ResourceCompilerClient::executable() const
 {
     if (!program_.isEmpty()) return QFileInfo::exists(program_) ? program_ : QString();
-    const QString overridePath = qEnvironmentVariable("HARKENIZER_PATH");
+    const QString overridePath = qEnvironmentVariable("HARKEN_STUDIO_CLI_PATH");
     if (!overridePath.isEmpty() && QFileInfo::exists(overridePath)) return overridePath;
 #ifdef _WIN32
-    const QString name = QStringLiteral("Harkenizer.exe");
+    const QString name = QStringLiteral("HarkenStudioCLI.exe");
 #else
-    const QString name = QStringLiteral("Harkenizer");
+    const QString name = QStringLiteral("HarkenStudioCLI");
 #endif
     const QStringList roots = {
         QCoreApplication::applicationDirPath(), QDir::currentPath(),
@@ -74,7 +74,7 @@ bool ResourceCompilerClient::readResponse(QJsonObject* response, int timeoutMs, 
         const auto remaining = timeoutMs - timer.elapsed();
         if (remaining <= 0) {
             *status = Status::TimedOut;
-            *error = QStringLiteral("Harkenizer resource compiler timed out");
+            *error = QStringLiteral("Studio CLI resource compiler timed out");
             return false;
         }
         if (!process_->waitForReadyRead(static_cast<int>(remaining))) {
@@ -82,11 +82,11 @@ bool ResourceCompilerClient::readResponse(QJsonObject* response, int timeoutMs, 
             const QString diagnostics = QString::fromUtf8(process_->readAllStandardError()).trimmed();
             if (process_->error() == QProcess::Timedout) {
                 *status = Status::TimedOut;
-                *error = QStringLiteral("Harkenizer resource compiler timed out");
+                *error = QStringLiteral("Studio CLI resource compiler timed out");
             } else {
                 *status = Status::Crashed;
                 *error = diagnostics.isEmpty()
-                    ? QStringLiteral("Harkenizer resource compiler exited before completing the request")
+                    ? QStringLiteral("Studio CLI resource compiler exited before completing the request")
                     : diagnostics;
             }
             return false;
@@ -96,7 +96,7 @@ bool ResourceCompilerClient::readResponse(QJsonObject* response, int timeoutMs, 
     const auto document = QJsonDocument::fromJson(process_->readLine(), &parseError);
     if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
         *status = Status::InvalidResponse;
-        *error = QStringLiteral("Invalid Harkenizer resource compiler response");
+        *error = QStringLiteral("Invalid Studio CLI resource compiler response");
         return false;
     }
     *response = document.object();
@@ -109,7 +109,7 @@ bool ResourceCompilerClient::start(QString* error)
     stop();
     const QString path = executable();
     if (path.isEmpty()) {
-        *error = QStringLiteral("Harkenizer executable was not found");
+        *error = QStringLiteral("Studio CLI executable was not found");
         return false;
     }
     process_ = std::make_unique<QProcess>();
@@ -117,7 +117,7 @@ bool ResourceCompilerClient::start(QString* error)
     process_->setArguments({QStringLiteral("--resource-worker")});
     process_->start();
     if (!process_->waitForStarted()) {
-        *error = QStringLiteral("Cannot start Harkenizer: %1").arg(path);
+        *error = QStringLiteral("Cannot start Studio CLI: %1").arg(path);
         stop();
         return false;
     }
@@ -129,7 +129,7 @@ bool ResourceCompilerClient::start(QString* error)
     }
     if (ready.value(QStringLiteral("protocol")).toInt() != 1
         || ready.value(QStringLiteral("compiler")).toString() != QLatin1String(resourceCompilerIdentity())) {
-        *error = QStringLiteral("Harkenizer resource compiler does not match this build");
+        *error = QStringLiteral("Studio CLI resource compiler does not match this build");
         stop();
         return false;
     }
@@ -144,7 +144,7 @@ ResourceCompilerClient::Result ResourceCompilerClient::compile(
     const QByteArray request = QJsonDocument(QJsonObject{
         {QStringLiteral("manifest"), manifestPath}}).toJson(QJsonDocument::Compact) + '\n';
     if (process_->write(request) != request.size()) {
-        result.error = QStringLiteral("Cannot submit Harkenizer resource compilation for %1").arg(outputPath);
+        result.error = QStringLiteral("Cannot submit Studio CLI resource compilation for %1").arg(outputPath);
         stop();
         return result;
     }
@@ -156,7 +156,7 @@ ResourceCompilerClient::Result ResourceCompilerClient::compile(
     }
     if (!response.value(QStringLiteral("success")).isBool()) {
         result.status = Status::InvalidResponse;
-        result.error = QStringLiteral("Invalid Harkenizer resource compiler result");
+        result.error = QStringLiteral("Invalid Studio CLI resource compiler result");
         stop();
         return result;
     }

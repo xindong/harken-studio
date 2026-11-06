@@ -12,7 +12,10 @@ namespace {
 
 TEST(CompletionProgressRender,
      PublishesEveryLiveBlockBeforeRenderedSequenceIncludingZeroProgress) {
+    for (const unsigned workers : {0u, 2u}) {
+    SCOPED_TRACE(workers);
     VnConfig config = harkentest::MakeNullConfig(2, 256, 48000);
+    config.renderWorkerCount = workers;
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -123,6 +126,7 @@ TEST(CompletionProgressRender,
               snapshot.logicalOutputFramesProduced);
     // The native manual block ends only after its last actual progress user.
     engine->voices.EndAudioBlock();
+    }
 }
 
 TEST(CompletionProgressRender,

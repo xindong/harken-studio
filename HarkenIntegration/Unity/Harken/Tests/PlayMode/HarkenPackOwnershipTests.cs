@@ -18,6 +18,55 @@ namespace Harken.Unity.Tests
 #endif
 
         [UnityTest]
+        public IEnumerator DisabledByEarlierReadyHandlerDoesNotReregister()
+            => RemovedDuringReady(false);
+
+        [UnityTest]
+        public IEnumerator DestroyedByEarlierReadyHandlerDoesNotReregister()
+            => RemovedDuringReady(true);
+
+        private static IEnumerator RemovedDuringReady(bool destroy)
+        {
+            using (var fixture = new Fixture())
+            {
+                fixture.StartForReadyCallback(_ =>
+                {
+                    if (destroy) Object.DestroyImmediate(fixture.Pack);
+                    else fixture.Pack.enabled = false;
+                });
+                Assert.That(fixture.Runtime.IsReady, Is.True);
+                // Interface references remain non-null after Unity destroys the component.
+                Assert.That(Get<IList>(fixture.Runtime, "participants").Contains(fixture.Pack), Is.False);
+                Assert.That(fixture.Runtime.PendingPackLoadCount, Is.Zero);
+                yield return null;
+                Assert.That(Get<ICollection>(fixture.Runtime, "participants").Count, Is.Zero);
+            }
+            yield return null;
+        }
+
+        [UnityTest]
+        public IEnumerator ShutdownByEarlierReadyHandlerDoesNotQueueLoadAndCanRestart()
+        {
+            using (var fixture = new Fixture())
+            {
+                Action<HarkenAudioSystem> stop = owner =>
+                    Assert.That(owner.ShutdownRuntime(), Is.EqualTo(VnResult.VN_OK));
+                fixture.StartForReadyCallback(stop);
+                Assert.That(fixture.Runtime.State, Is.EqualTo(HarkenRuntimeState.Stopped));
+                Assert.That(fixture.Runtime.PendingPackLoadCount, Is.Zero);
+                fixture.Runtime.BecameReady -= stop;
+                Assert.That(fixture.Runtime.StartRuntime(fixture.Root), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(fixture.Runtime.IsReady, Is.True);
+                Assert.That(Get<IList>(fixture.Runtime, "participants").Contains(fixture.Pack), Is.True);
+                Assert.That(Get<ICollection>(fixture.Runtime, "participants").Count, Is.EqualTo(1));
+                Assert.That(fixture.Runtime.PendingPackLoadCount, Is.Zero);
+                fixture.Pack.enabled = false;
+                Assert.That(Get<ICollection>(fixture.Runtime, "participants").Count, Is.Zero);
+            }
+            yield return null;
+        }
+
+        [UnityTest]
         public IEnumerator DestroyedComponentReleasesOnlyItsSharedRequest()
         {
             using (var fixture = new Fixture())
@@ -165,6 +214,27 @@ namespace Harken.Unity.Tests
 
             public void Start()
             {
+                Configure();
+                Set(Pack, "loadOnReady", false);
+                Owner.SetActive(true);
+                Source.SetActive(true);
+                Assert.That(Runtime.Session.PrepareActions(new[] { "Play_U4_B" }, publication.ProjectId,
+                    out ActionPreparation ready), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(Pack.Load(), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(Runtime.Session.AcquirePack(callerId, out caller), Is.EqualTo(VnResult.VN_OK));
+                Assert.That(ready.Release(), Is.EqualTo(VnResult.VN_OK));
+            }
+
+            public void StartForReadyCallback(Action<HarkenAudioSystem> beforeReady)
+            {
+                Configure();
+                Runtime.BecameReady += beforeReady;
+                Source.SetActive(true);
+                Owner.SetActive(true);
+            }
+
+            private void Configure()
+            {
                 Assert.That(CompanionTestPublication.Read(Root, null, out publication, out string error),
                     Is.EqualTo(VnResult.VN_OK), error);
                 Assert.That(publication.TryFindAction("Play_U4_B", out CompanionTestAction dependency), Is.True);
@@ -172,17 +242,9 @@ namespace Harken.Unity.Tests
                 callerId = dependency.OwnerPackStableId;
                 Set(Pack, "runtime", Runtime);
                 Set(Pack, "packStableId", DependencyId);
-                Set(Pack, "loadOnReady", false);
                 settingsLease.Settings.SetPackDirectory(Root);
                 Assert.That(Runtime.ConfigureBeforeStartup("Audio/U4Original", publication.InitPack.Path, Array.Empty<ulong>(), true, false),
                     Is.EqualTo(VnResult.VN_OK));
-                Owner.SetActive(true);
-                Source.SetActive(true);
-                Assert.That(Runtime.Session.PrepareActions(new[] { dependency.Name }, publication.ProjectId,
-                    out ActionPreparation ready), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(Pack.Load(), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(Runtime.Session.AcquirePack(callerId, out caller), Is.EqualTo(VnResult.VN_OK));
-                Assert.That(ready.Release(), Is.EqualTo(VnResult.VN_OK));
             }
 
             public void ReleaseCaller()

@@ -113,7 +113,7 @@ class ToolingCompilationDatabaseTest(unittest.TestCase):
                 ),
                 self._entry(
                     "HarkenEngine/Tool/Host/Main.cpp",
-                    "harkenizer",
+                    "harken_studio_cli",
                     extra="-DALTERNATE_TOOL=1",
                 ),
                 self._entry(
@@ -136,13 +136,15 @@ class ToolingCompilationDatabaseTest(unittest.TestCase):
         self.assertIn("harken_editor_tests.dir", editor_entry["output"])
 
         for relative, target in (
-            ("ResourceCompiler/ResourceCompiler.cpp", "harkenizer_resource_compiler"),
-            ("Core/ProjectPackBuildService.cpp", "harkenizer_core"),
-            ("ResourceCompilerClient.cpp", "harkenizer_compiler_client"),
-            ("Main.cpp", "harkenizer"),
+            ("Harkenizer/ResourceCompiler/ResourceCompiler.cpp", "harkenizer_resource_compiler"),
+            ("Harkenizer/Core/ProjectPackBuildService.cpp", "harkenizer_core"),
+            ("Harkenizer/ResourceCompilerClient.cpp", "harkenizer_compiler_client"),
+            ("StudioCli/Main.cpp", "harken_studio_cli"),
+            ("StudioCli/SavedProjectBuild.cpp", "harken_studio_cli"),
+            ("StudioCli/ResourceWorker.cpp", "harken_studio_cli"),
         ):
             with self.subTest(source=relative):
-                source = "HarkenStudio/Source/Tooling/Harkenizer/" + relative
+                source = "HarkenStudio/Source/Tooling/" + relative
                 owned = self._entry(source, target)
                 alternate = self._entry(source, "harken_editor_tests", extra="-DTEST_VARIANT=1")
                 selected = MODULE._choose_entry(

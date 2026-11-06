@@ -11,11 +11,13 @@ namespace {
 using namespace harken;
 
 PackComposition::CandidateOwner Candidate(std::uint64_t id,
-    const ContainerWorldInstallViewV1& input, std::uint64_t dependency = 0) {
+    const ContainerWorldInstallViewV1& input, std::uint64_t dependency = 0,
+    std::uint32_t vintage = kCurrentWorldBodyVintageV20) {
     auto world = input;
-    world.sourceBodyVintage = kCurrentWorldBodyVintageV20;
+    world.sourceBodyVintage = vintage;
     world.identity.capabilityMask = detail::ComputeCurrentWorldLocalCapabilityMaskV1(world);
-    world.identity.runtimeSemanticFingerprint = ComputeCurrentWorldFingerprintV7(world);
+    world.identity.runtimeSemanticFingerprint = vintage == 19
+        ? ComputeCurrentWorldFingerprintV6(world) : ComputeCurrentWorldFingerprintV7(world);
     EXPECT_EQ(detail::ValidateCurrentWorldPartitionLocalV1(world), WorldInstallStatus::Ok);
     PackComposition::CandidateOwner owner;
     owner.packStableId = id;
@@ -24,8 +26,9 @@ PackComposition::CandidateOwner Candidate(std::uint64_t id,
     owner.slotIndex = static_cast<std::uint32_t>(id);
     owner.contentRevision = owner.partitionRevision = owner.resourceRevision = 1;
     owner.hasPartition = true;
-    owner.partitionBodyVintage = kCurrentWorldBodyVintageV20;
-    EXPECT_TRUE(EncodeCurrentWorldBodyV20(world, owner.partitionBody));
+    owner.partitionBodyVintage = vintage;
+    EXPECT_TRUE(vintage == 19 ? EncodeCurrentWorldBodyV19(world, owner.partitionBody)
+        : EncodeCurrentWorldBodyV20(world, owner.partitionBody));
     owner.definitionBytes = owner.partitionBody.size();
     if (dependency) {
         PackDependencyEdge edge;
@@ -53,6 +56,8 @@ PlayablePropertyProgramViewV1 SoundProperty() {
 }
 
 TEST(PackSignalRelation, SourceMustBelongToDeclaredClosureAndMatchDefinition) {
+    for (const auto providerVintage : {19u, 20u}) {
+    SCOPED_TRACE(providerVintage);
     auto property = SoundProperty();
     ContainerWorldInstallViewV1 provider;
     provider.playableProperties = &property;
@@ -70,20 +75,21 @@ TEST(PackSignalRelation, SourceMustBelongToDeclaredClosureAndMatchDefinition) {
     consumer.signalReceivers = &receiver;
     consumer.signalReceiverCount = 1;
     PackComposition composition(4);
-    ASSERT_EQ(composition.Commit({Candidate(1, provider)}, nullptr, 0, 8, 0), VN_OK);
+    ASSERT_EQ(composition.Commit({Candidate(1, provider, 0, providerVintage)}, nullptr, 0, 8, 0), VN_OK);
     const auto previous = composition.Published();
     const auto generation = composition.CompositeGeneration();
     PackComposition::PreparedCommit prepared;
-    EXPECT_EQ(composition.PrepareCommit({Candidate(1, provider), Candidate(2, consumer)},
+    EXPECT_EQ(composition.PrepareCommit({Candidate(1, provider, 0, providerVintage), Candidate(2, consumer)},
         nullptr, 0, 8, 0, &prepared), VN_BAD_PACK);
     // Valid declared closure preserves the formal aggregate for publication.
-    EXPECT_EQ(composition.PrepareCommit({Candidate(1, provider), Candidate(2, consumer, 1)},
+    EXPECT_EQ(composition.PrepareCommit({Candidate(1, provider, 0, providerVintage), Candidate(2, consumer, 1)},
         nullptr, 0, 8, 0, &prepared), VN_OK);
     ++relation.source.expectedPropertyFingerprint;
-    EXPECT_EQ(composition.PrepareCommit({Candidate(1, provider), Candidate(2, consumer, 1)},
+    EXPECT_EQ(composition.PrepareCommit({Candidate(1, provider, 0, providerVintage), Candidate(2, consumer, 1)},
         nullptr, 0, 8, 0, &prepared), VN_BAD_PACK);
     EXPECT_EQ(composition.Published(), previous);
     EXPECT_EQ(composition.CompositeGeneration(), generation);
+    }
 }
 
 TEST(PackSignalRelation, ReceiverConfigurationAlsoRequiresDeclaredClosure) {

@@ -53,7 +53,7 @@ bool EncodeCurrentWorldShippingBody(
     std::vector<std::uint8_t>& out) noexcept;
 
 namespace detail {
-WorldInstallStatus EncodeCurrentWorldShippingBodyWithBudget(
+WorldInstallStatus EncodeCurrentWorldIdentityBodyWithBudget(
     const ContainerWorldInstallViewV1& world, std::vector<std::uint8_t>& out,
     PackDecodeCharge& charge, std::size_t& requestedSlots) noexcept;
 }

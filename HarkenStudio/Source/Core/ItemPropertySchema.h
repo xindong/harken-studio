@@ -11,7 +11,8 @@ namespace VNX {
 inline QJsonObject setItemPropertySchema()
 {
     QJsonArray propertyNames{
-        QStringLiteral("volume"), QStringLiteral("behavior"), QStringLiteral("selections"),
+        QStringLiteral("volume"), QStringLiteral("mode"), QStringLiteral("playType"),
+        QStringLiteral("behavior"), QStringLiteral("selections"),
         QStringLiteral("loopCount"), QStringLiteral("sources"),
         QStringLiteral("scheduleOffsetSec"), QStringLiteral("distinguishLanguage"),
         QStringLiteral("clips"), QStringLiteral("segmentTime"),
@@ -71,6 +72,14 @@ inline QJsonObject setItemPropertySchema()
             QJsonObject{{QStringLiteral("required"), QJsonArray{QStringLiteral("authoring_handle")}}}}},
         {QStringLiteral("additionalProperties"), false},
         {QStringLiteral("propertyValues"), QJsonObject{
+            {QStringLiteral("mode"), QJsonObject{
+                {QStringLiteral("type"), QStringLiteral("integer")},
+                {QStringLiteral("enum"), QJsonArray{0, 2, 4, 5}},
+                {QStringLiteral("description"), QStringLiteral("Container selection mode: 0 Random, 2 Sequence, 4 Match, 5 Blend.")}}},
+            {QStringLiteral("playType"), QJsonObject{
+                {QStringLiteral("type"), QStringLiteral("integer")},
+                {QStringLiteral("enum"), QJsonArray{0, 1}},
+                {QStringLiteral("description"), QStringLiteral("Container play type: 0 Single, 1 Queue. Queue applies to Random and Sequence modes.")}}},
             {QStringLiteral("steps"), QJsonObject{
                 {QStringLiteral("type"), QStringLiteral("array")},
                 {QStringLiteral("description"), QStringLiteral("Action steps with type, targetObjectID (authoring handle), targetName, and delay in milliseconds. A unique targetName can resolve the target. get_action_definition reports the resulting targets using target and target_object_id.")},

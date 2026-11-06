@@ -9319,7 +9319,8 @@ static void CheckQueueResetAndScheduledStop(bool deferred, bool refuseCommand, b
     harkentest::EngineSession session(harkentest::MakeNullConfig(8, 256, 48000));
     ASSERT_EQ(VN_OK, session.InitResult());
     auto* engine = session.Engine();
-    std::vector<float> samples(4096, 0.25f);
+    const auto parentBoundary = engine->timelinePool.WindowEndFrame();
+    std::vector<float> samples(deferred && availableBanks != 0 ? parentBoundary * 3u / 4u : 4096u, 0.25f);
     const auto pcm = harkentest::MonoDesc(samples, 48000);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kFirstSound, &pcm));
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(CanonicalActionWorld::kSecondSound, &pcm));
@@ -9834,6 +9835,30 @@ static void CheckQueueResetAndScheduledStop(bool deferred, bool refuseCommand, b
     harken::MonitorRequestContext originalPlayback{};
     ASSERT_TRUE(engine->playableInstances.CapturePlaybackRequest(row.rootInstance, &originalPlayback));
     EXPECT_EQ(originalPlayback.key, replacementIdentity.playbackRequest.key);
+    if (deferred) {
+        ASSERT_EQ(VN_ACTION_STEP_AWAITING_MATERIALIZATION, stopResult.state);
+        bool foundStop = false;
+        for (std::uint32_t slot = 0; slot < engine->actionDeferredRecords.Capacity(); ++slot) {
+            harken::ActionDeferredRecordToken token{};
+            harken::ActionDeferredRecord record{};
+            harken::ActionDeferredRecordState state{};
+            if (!engine->actionDeferredRecords.CaptureAt(slot, &token, &record, &state) ||
+                record.firing != stopFiring || record.stepIndex != 1) continue;
+            EXPECT_EQ(harken::ActionOpcodeV1::Stop, record.step.opcode);
+            EXPECT_EQ(parentBoundary + 6000u, record.intendedBoundaryFrame);
+            EXPECT_EQ(root, record.rootPlayable);
+            foundStop = true;
+        }
+        ASSERT_TRUE(foundStop);
+        const auto replacementRender = row.QueuePayload().queueSuccessorRenderHandle;
+        while (stopResult.state == VN_ACTION_STEP_AWAITING_MATERIALIZATION &&
+            engine->mixer.BlocksRendered() * engine->config.blockFrames < parentBoundary + 6000u) {
+            engine->nullBackend.Pump(1);
+            ASSERT_EQ(VN_OK, Vn_Update());
+            ASSERT_EQ(VN_OK, Vn_QueryActionStep(stopFiring, 1, &stopResult));
+        }
+        EXPECT_EQ(replacementRender, row.QueuePayload().queueSuccessorRenderHandle);
+    }
     EXPECT_EQ(VN_ACTION_STEP_ACTIVE, stopResult.state);
     EXPECT_EQ(1u, stopResult.remainingPlayableCount);
     EXPECT_EQ(1u, stopResult.capturedPlayableCount);
@@ -59215,6 +59240,84 @@ struct NativeSelectionOwnershipFixture {
         return issued;
     }
 };
+
+TEST(EngineNativeSelectionFactory, GrowingProducerKeepsAllOperationsBeforeSiblingAndReset) {
+    using Status = harken::SelectionMemoryStatusV1;
+    constexpr std::uint32_t count = harken::kSelectionPathNodeCapacity + 3u;
+    for (const bool cancel : {false, true}) {
+        NativeSelectionOwnershipFixture fixture;
+        harken::SelectionMemoryConfigV1 config{};
+        config.maxEmitters = 2;
+        config.maxPendingDeltasTotal = count + 8u;
+        config.maxPendingGlobalPerRow = count + 8u;
+        ASSERT_TRUE(fixture.table.Reset(config));
+        harken::EnginePendingSelectionBatch first, follower, moved;
+        auto identity = fixture.Identity(1);
+        identity.eventBegin = UINT32_MAX - 2u;
+        identity.eventCount = 1;
+        identity.operationIndexed = true;
+        auto request = fixture.Request(1, identity.eventBegin);
+        harken::PreparedSelectionPlayV1 initial, following;
+        std::uint32_t selected = 0;
+        ASSERT_EQ(Status::Ok, fixture.table.PreparePlayForPendingBatch(request, &initial, &selected));
+        harken::PreparedSelectionPlayV1* token = &initial;
+        ASSERT_EQ(Status::Ok, first.Issue(fixture.table, identity, &token, 1, request.executeFrame, &selected));
+        auto sibling = identity;
+        sibling.operationIndexed = false;
+        ++sibling.eventBegin;
+        auto next = fixture.Request(1, sibling.eventBegin);
+        ASSERT_EQ(Status::Ok, fixture.table.PreparePlayForPendingBatch(next, &following, &selected));
+        token = &following;
+        ASSERT_EQ(Status::Ok, follower.Issue(fixture.table, sibling, &token, 1, next.executeFrame, &selected));
+        harken::PreparedSelectionResetV1 reset;
+        ASSERT_EQ(Status::Ok, fixture.table.PreparePendingReset(fixture.Key(), 1, UINT32_MAX,
+            &reset, request.executeFrame));
+        ASSERT_EQ(Status::Ok, fixture.table.AcceptPreparedPendingReset(&reset, 1));
+        ASSERT_EQ(Status::Ok, first.BeginReplacement());
+        std::vector<std::uint32_t> ordinals(count);
+        for (std::uint32_t index = 0; index < count; ++index) {
+            request.operationIndex = index;
+            ASSERT_EQ(Status::Ok, first.PrepareReplacementPlay(request, &ordinals[index]));
+            EXPECT_EQ(index % 2u == 0 ? 3u : 7u, ordinals[index]);
+        }
+        ASSERT_EQ(Status::Ok, first.SealReplacement(request.executeFrame, ordinals.data(), count));
+        ASSERT_EQ(Status::Ok, first.InstallReplacement());
+        EXPECT_TRUE(first.MatchesMaterialized());
+        EXPECT_FALSE(follower.MatchesMaterialized());
+        ASSERT_TRUE(first.MoveTo(moved));
+        EXPECT_TRUE(first.Empty());
+        if (cancel) ASSERT_TRUE(moved.Cancel());
+        else {
+            auto commit = moved.CommitInput();
+            ASSERT_EQ(Status::Ok, fixture.table.CommitPendingBatches(&commit, 1));
+            ASSERT_TRUE(moved.ReturnAfterCommit());
+        }
+        const std::uint32_t followingOrdinal = cancel || count % 2u == 0 ? 3u : 7u;
+        if (cancel) {
+            ASSERT_FALSE(follower.CertifyMaterialized(next.executeFrame, &followingOrdinal, 1));
+            ASSERT_EQ(Status::Ok, follower.BeginReplacement());
+            ASSERT_EQ(Status::Ok, follower.PrepareReplacementPlay(next, &selected));
+            ASSERT_EQ(followingOrdinal, selected);
+            ASSERT_EQ(Status::Ok, follower.SealReplacement(next.executeFrame, &selected, 1));
+            ASSERT_EQ(Status::Ok, follower.InstallReplacement());
+        } else {
+            ASSERT_TRUE(follower.CertifyMaterialized(next.executeFrame, &followingOrdinal, 1));
+        }
+        auto commit = follower.CommitInput();
+        ASSERT_EQ(Status::Ok, fixture.table.CommitPendingBatches(&commit, 1));
+        ASSERT_TRUE(follower.ReturnAfterCommit());
+        auto after = fixture.Request(2, 0, request.executeFrame);
+        harken::PreparedSelectionPlayV1 afterReset;
+        ASSERT_EQ(Status::Ok, fixture.table.PreparePlayForPendingBatch(after, &afterReset, &selected));
+        EXPECT_EQ(3u, selected);
+        EXPECT_EQ(1u, fixture.table.PreparedPlaySeedProbe(afterReset).selectionOrdinal);
+        EXPECT_EQ(1u, fixture.table.PreparedPlaySeedProbe(afterReset).resetEpoch);
+        ASSERT_EQ(Status::Ok, fixture.table.CancelPreparedPlay(&afterReset));
+        EXPECT_TRUE(moved.Empty());
+        EXPECT_TRUE(follower.Empty());
+        EXPECT_EQ(0u, fixture.table.PendingCount());
+    }
+}
 
 TEST(EngineNativeSelectionFactory, NativePlayResetPlayKeepsEachOriginalProducerUntilJointConsumption) {
     NativeSelectionOwnershipFixture fixture;

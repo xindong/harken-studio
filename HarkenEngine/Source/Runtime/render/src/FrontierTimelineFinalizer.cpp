@@ -1,3 +1,4 @@
+#include "harken/core/QueuePageConditionalReceiver.h"
 #include "harken/render/FrontierTimelineFinalizer.h"
 #include "harken/core/ImmediateActionLane.h"
 #include "harken/core/OriginalImmediateLaneConditionalProjection.h"
@@ -320,6 +321,7 @@ struct FrontierTimelineFinalizer::Impl {
             (payload.reserved & kTimelineEventAuthoredRootStop) != 0;
         event.voice.frame = payload.envelopeStartFrame;
         event.voice.endFrame = payload.envelopeEndFrame;
+        event.voice.envelopeElapsedFrames = payload.envelopeElapsedFrames;
         event.voice.value = payload.sourceStartFrame;
         if (payload.kind == TimelineEventKind::VariableWeight) {
             event.voice.Weight().variableWeight = payload.variableWeight;
@@ -1577,6 +1579,10 @@ struct FrontierTimelineFinalizer::Impl {
 
     static bool ValidateEntry(void* opaque) noexcept {
         auto& group = *static_cast<Group*>(opaque);
+        const auto* exit = group.view.frontier->sourceExit;
+        if (exit != nullptr && group.view.identity.sliceIndex == 0 &&
+            !group.owner->voices.ValidateSourceExit(*exit, *group.view.frontier))
+            group.failure = FrontierReceiptReason::Dependency;
         if (!group.owner->GroupVariableSourcesReady(group.index))
             group.failure = FrontierReceiptReason::Dependency;
         const bool valid = group.failure == FrontierReceiptReason::None;
@@ -2020,10 +2026,10 @@ struct FrontierTimelineFinalizer::Impl {
             armGroup.memberCount != member.view.memberCount || armGroup.ackedCount != member.view.memberCount)
             return false;
         if (decision.transitionGate.Valid() != binding.transition.Valid()) return false;
-        if (variable && decision.sliceCount == 2 && member.view.sourceControlCount != 0) {
+        if (variable && decision.sliceCount == 2 &&
+            (member.view.sourceControlCount != 0 || binding.sourceExit != nullptr)) {
             if (!binding.transition.Valid() || binding.variableSide.side != 0 ||
-                member.view.sourceControlCount == 0 ||
-                member.view.sourceControlCount >= member.view.memberCount) return false;
+                (member.view.sourceControlCount != 0 && member.view.sourceControlCount >= member.view.memberCount)) return false;
             member.variablePrelude = member.view.identity.sliceIndex == 0;
             member.variableCompletion = member.view.identity.sliceIndex == 1;
             const auto frame = binding.operation.order.executeFrame;
@@ -2036,7 +2042,8 @@ struct FrontierTimelineFinalizer::Impl {
             const auto frame = binding.operation.order.executeFrame;
             const auto audible = binding.transition.audibleFrame;
             if (conditional && decision.sliceCount == 2) {
-                if (member.view.sourceControlCount != 0 && member.view.sourceControlCount < member.view.memberCount) {
+                if ((member.view.sourceControlCount != 0 && member.view.sourceControlCount < member.view.memberCount) ||
+                    binding.sourceExit != nullptr) {
                     if (member.view.identity.sliceIndex == 0) {
                         if (frame != audible) return false;
                         member.queueSlice = QueueInstanceTable::FrontierConditionalSlice::Prelude;
@@ -2143,7 +2150,7 @@ struct FrontierTimelineFinalizer::Impl {
                 (member.queueSlice != QueueInstanceTable::FrontierConditionalSlice::Prelude ||
                     index < member.view.sourceControlCount);
             if (required && !found) {
-                if (!laneMode && (variable || signal) && primary != nullptr &&
+                if (!laneMode && (variable || signal || queue) && primary != nullptr &&
                     binding.role == FrontierGroupRole::EntryMember &&
                     index >= member.view.sourceControlCount && completionCount < completionCapacity &&
                     arms.ProveInitialAdmissionDeferredStart(token, binding, *member.view.lease, *pool,
@@ -2173,7 +2180,8 @@ struct FrontierTimelineFinalizer::Impl {
                     ++completionCount;
                     continue;
                 }
-                if (!variable || binding.role != FrontierGroupRole::Future ||
+                const bool nativeQueueTarget = !laneMode && conditional && binding.sourceExit != nullptr;
+                if ((!variable && !nativeQueueTarget) || binding.role != FrontierGroupRole::Future ||
                     index < member.view.sourceControlCount || completionCount == completionCapacity ||
                     !arms.ProveDeferredFrontierStart(token, binding, *member.view.lease, *pool,
                         quantum + 1u, &completionProofs[completionCount])) return false;
@@ -3120,6 +3128,10 @@ struct FrontierTimelineFinalizer::Impl {
     static void ApplyFuture(void* opaque) noexcept {
         auto& group = *static_cast<Group*>(opaque);
         auto& self = *group.owner;
+        if (group.view.frontier->queuePageReceiver != nullptr)
+            group.view.frontier->queuePageReceiver->BeforeAudioWrite();
+        if (group.view.frontier->sourceExit != nullptr && group.view.identity.sliceIndex == 0)
+            self.voices.ApplySourceExit(*group.view.frontier->sourceExit);
         self.ApplyMode(group);
         for (std::uint32_t i = 0; i < self.eventCount; ++i) {
             auto& event = self.events[i];
@@ -3164,6 +3176,17 @@ struct FrontierTimelineFinalizer::Impl {
         if (!failedEntry && sourceStatus != VariableReadCutStatus::Failed &&
             (sourceStatus == VariableReadCutStatus::Waiting || read == FrontierReceiptRead::InFlight) &&
             CanWaitGroup(index) && SavePending(index)) return;
+        // Borrow before any transition/arm proof; release after lease settlement
+        // and every proof, so Accepted cannot overlap an Old reservation.
+        const auto* pageReceiver = binding.queuePageReceiver;
+        if (pageReceiver != nullptr && !pageReceiver->BeginAudio(binding)) {
+            (void)group.view.lease->Invalidate(AudioSliceInvalidateReason::Cancel);
+            for (std::uint32_t i = 0; i < eventCount; ++i)
+                if (events[i].stop == nullptr && events[i].group == index)
+                    Reject(events[i], kTimelineDispositionArmFailed);
+            pageReceiver->EndAudio();
+            return;
+        }
         if (activation == nullptr || read != FrontierReceiptRead::Ready ||
             receipt.outcome != FrontierReceiptOutcome::Applied || !(receipt.order < binding.operation.order))
             group.failure = FrontierReceiptReason::Dependency;
@@ -3258,6 +3281,7 @@ struct FrontierTimelineFinalizer::Impl {
         for (std::uint32_t i = 0; i < completionCount; ++i) completionProofs[i].Release();
         completionCount = 0;
         deferredStartCount = 0;
+        if (pageReceiver != nullptr) pageReceiver->EndAudio();
     }
 
     void FinishUngrouped(std::uint32_t representative) noexcept {
@@ -3554,9 +3578,10 @@ VariableReadCutStatus FrontierTimelineFinalizer::VariableSourcesStatus(
                 self.quantum >= UINT64_MAX / self.frames) return VariableReadCutStatus::Failed;
             const auto& group = self.groups[index].view;
             const bool prelude = binding.transition.Valid() && group.identity.sliceIndex == 0u &&
-                group.sourceControlCount != 0u && group.sourceControlCount < group.memberCount;
+                ((group.sourceControlCount != 0u && group.sourceControlCount < group.memberCount) ||
+                 binding.sourceExit != nullptr);
             const bool targetLock = binding.transition.Valid() && group.identity.sliceIndex == 1u &&
-                group.sourceControlCount == 0u && group.memberCount == 1u;
+                group.sourceControlCount == 0u && group.memberCount == 1u && binding.sourceExit == nullptr;
             QueueConditionalProof proof{};
             const auto status = prelude || targetLock ? QueueConditionalProofStatus::ReadyToActivate :
                 self.queues->PreflightFrontierSourceWait(binding, *group.lease,
@@ -3688,8 +3713,9 @@ bool FrontierTimelineFinalizer::PendingBindingValid(const ConsumedEvent& event,
     DecisionCommittedSnapshot decision{};
     ArmGroupMemberSnapshot actual{};
     if (binding.role != FrontierGroupRole::EntryMember ||
-        (static_cast<unsigned>(binding.variableSide.Valid()) + static_cast<unsigned>(binding.queueSignal.Valid()) != 1u) ||
-        binding.queueInitial.Valid() || binding.queueConditional.Valid() || binding.transition.Valid() ||
+        (static_cast<unsigned>(binding.variableSide.Valid()) + static_cast<unsigned>(binding.queueSignal.Valid()) +
+            static_cast<unsigned>(binding.queueInitial.Valid()) != 1u) ||
+        binding.queueConditional.Valid() || binding.transition.Valid() ||
         binding.operation.kind != FrontierOperationKind::Entry ||
         !(binding.entry == event.frontier.entry) || !(binding.operation.owner == event.frontier.owner) ||
         binding.operation.transport != event.frontier.transport || binding.operation.world != event.frontier.world ||

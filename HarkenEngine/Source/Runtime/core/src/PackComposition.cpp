@@ -937,7 +937,7 @@ VnResult ValidateOccurrences(
 
 VnResult ValidateTransitions(
     const PackComposition::PublishedView& published, std::uint32_t slot,
-    const ContainerWorldInstallViewV1& view) noexcept {
+    const ContainerWorldInstallViewV1& view, const std::vector<std::uint8_t>& member) noexcept {
     for (std::uint32_t i = 0; i < view.transitionCount; ++i) {
         const TransitionProgramViewV1& transition = view.transitions[i];
         const ContainerProgramViewV3* container =
@@ -950,8 +950,33 @@ VnResult ValidateTransitions(
         if (classification == TransitionProgramClassV1::Invalid) {
             return VN_BAD_PACK;
         }
-        if (classification == TransitionProgramClassV1::Advanced) {
-            return VN_CAPABILITY_UNAVAILABLE;
+        if (classification == TransitionProgramClassV1::Advanced &&
+            !SupportsNativeMusicTransitionProgramV1(transition, *container)) return VN_CAPABILITY_UNAVAILABLE;
+        if (container->childCount > view.capacity.maxChildrenPerContainer ||
+            container->discreteRowCount > view.capacity.maxDiscreteRows)
+            return VN_PACK_RESIDENT_CAPACITY;
+        if (!PointerCountOk(container->discreteRowCount, container->discreteRows))
+            return VN_BAD_PACK;
+        const auto isDiscrete = [&](const auto& child) noexcept {
+            if (container->mode == ContainerModeV1::SequenceQueue || container->mode == ContainerModeV1::RandomQueue) return true;
+            for (std::uint32_t index = 0; index < container->discreteRowCount; ++index)
+                if (container->discreteRows[index].childStableOrdinal == child.stableChildOrdinal) return true;
+            return false;
+        };
+        for (std::uint32_t sourceIndex = 0; classification == TransitionProgramClassV1::Advanced &&
+                sourceIndex < container->childCount; ++sourceIndex)
+        for (std::uint32_t targetIndex = 0; targetIndex < container->childCount; ++targetIndex) {
+            if ((sourceIndex == targetIndex && container->mode == ContainerModeV1::VariableControl) ||
+                !isDiscrete(container->children[sourceIndex]) || !isDiscrete(container->children[targetIndex])) continue;
+            if (!detail::SequenceQueueTransitionPairReachableV1(*container, sourceIndex, targetIndex)) continue;
+            const auto* source = &container->children[sourceIndex].playable;
+            const auto* target = &container->children[targetIndex].playable;
+            const auto* rule = ResolveValidatedTransitionRuleV1(transition, *source, *target);
+            if (rule == nullptr || rule->sourceExit <= TransitionSourceExitV1::NaturalEnd) continue;
+            if (!detail::TransparentMusicSourceCompatibleV1(*source, *rule, [&](const auto& ref) noexcept {
+                    const auto* owner = ResolvePlayableOwner(published, member, ref);
+                    return detail::MusicSourceValidationOwnerV1{owner != nullptr ? &owner->view : nullptr, {}};
+                })) return VN_CAPABILITY_UNAVAILABLE;
         }
         if (!PointerCountOk(transition.ruleCount, transition.rules)) {
             return VN_BAD_PACK;
@@ -1052,7 +1077,7 @@ VnResult ValidateSameOwnerCompanions(
         if (childCapacity != VN_OK) {
             return childCapacity;
         }
-        const VnResult transitions = ValidateTransitions(published, slot, view);
+        const VnResult transitions = ValidateTransitions(published, slot, view, member);
         if (transitions != VN_OK) {
             return transitions;
         }
@@ -1841,7 +1866,10 @@ WorldInstallStatus EncodeIdentityDefinition(const PackComposition::PublishedOwne
         slice.containers = &container;
         slice.containerCount = 1;
     }
-    const auto encoded = detail::EncodeCurrentWorldShippingBodyWithBudget(
+    // Entry fields are part of a V19 definition's identity, including replicas.
+    if (world.sourceBodyVintage == kCurrentWorldBodyVintageV19)
+        slice.sourceBodyVintage = kCurrentWorldBodyVintageV19;
+    const auto encoded = detail::EncodeCurrentWorldIdentityBodyWithBudget(
         slice, bytes, staging, requestedSlots);
     if (encoded != WorldInstallStatus::Ok) return encoded;
     if (owner.voiceBindings != nullptr) {
@@ -1996,14 +2024,14 @@ VnResult ValidateCompositeWorld(
     std::uint64_t actionCount = 0;
     std::uint64_t signalRelationCount = 0, signalReceiverCount = 0;
     bool signalsVintage = false;
+    bool entryVintage = false;
+    detail::PackDecodeCharge vintageStaging(published.staging.Budget());
+    std::map<VnObjectId, std::uint32_t> segmentVintages, actionVintages;
     for (const PackComposition::PublishedOwner& owner : published.owners) {
         if (owner.readiness != PackOwnerReadiness::Active) {
             continue;
         }
-        // U1 readers accept V19, but the shipping scheduler is still V18.
-        if (owner.view.sourceBodyVintage == kCurrentWorldBodyVintageV19) {
-            return VN_CAPABILITY_UNAVAILABLE;
-        }
+        entryVintage |= owner.view.sourceBodyVintage == kCurrentWorldBodyVintageV19;
         signalsVintage |= owner.view.sourceBodyVintage == kCurrentWorldBodyVintageV20;
         if (first == nullptr) {
             first = &owner;
@@ -2056,12 +2084,26 @@ VnResult ValidateCompositeWorld(
     detail::DecodeReserve(scratch.signalRelations, static_cast<std::size_t>(signalRelationCount), scratch.signalStaging);
     detail::DecodeReserve(scratch.signalReceivers, static_cast<std::size_t>(signalReceiverCount), scratch.signalStaging);
     if (signalsVintage) scratch.view.sourceBodyVintage = kCurrentWorldBodyVintageV20;
+    else if (entryVintage) scratch.view.sourceBodyVintage = kCurrentWorldBodyVintageV19;
     scratch.view.identity.format = first->view.identity.format;
     scratch.view.identity.projectId = first->view.identity.projectId;
     scratch.view.capacity = first->view.capacity;
     for (const PackComposition::PublishedOwner& owner : published.owners) {
         if (owner.readiness != PackOwnerReadiness::Active) {
             continue;
+        }
+        if (entryVintage) {
+            for (std::uint32_t i = 0; i < owner.view.segmentScheduleCount; ++i) {
+                if (!segmentVintages.contains(owner.view.segmentSchedules[i].rootDefinition.stableId))
+                    vintageStaging.AddRows<decltype(segmentVintages)::value_type>(1);
+                segmentVintages.emplace(owner.view.segmentSchedules[i].rootDefinition.stableId,
+                                        owner.view.sourceBodyVintage);
+            }
+            for (std::uint32_t i = 0; i < owner.view.actionCount; ++i) {
+                if (!actionVintages.contains(owner.view.actions[i].actionStableId))
+                    vintageStaging.AddRows<decltype(actionVintages)::value_type>(1);
+                actionVintages.emplace(owner.view.actions[i].actionStableId, owner.view.sourceBodyVintage);
+            }
         }
         scratch.view.identity.capabilityMask |=
             owner.view.identity.capabilityMask;
@@ -2248,7 +2290,8 @@ VnResult ValidateCompositeWorld(
     scratch.view.signalReceiverCount = static_cast<std::uint32_t>(scratch.signalReceivers.size());
     scratch.view.identity.runtimeSemanticFingerprint =
         signalsVintage ? ComputeCurrentWorldFingerprintV7(scratch.view)
-                       : ComputeCurrentWorldFingerprintV5(scratch.view);
+                       : entryVintage ? ComputeCurrentWorldFingerprintV6(scratch.view)
+                                      : ComputeCurrentWorldFingerprintV5(scratch.view);
 
     const CompositeActionStatus actions =
         ValidateCompositeActions(scratch.view, published.staging.Budget());
@@ -2259,7 +2302,18 @@ VnResult ValidateCompositeWorld(
         return VN_PACK_RESIDENT_CAPACITY;
     }
 
-    switch (detail::ValidateCurrentWorldWithBudget(scratch.view, published.staging.Budget())) {
+    std::vector<std::uint32_t> segmentVersions, actionVersions;
+    if (entryVintage) {
+        detail::DecodeReserve(segmentVersions, scratch.segments.size(), vintageStaging);
+        detail::DecodeReserve(actionVersions, scratch.actions.size(), vintageStaging);
+        for (const auto& segment : scratch.segments)
+            segmentVersions.push_back(segmentVintages.at(segment.rootDefinition.stableId));
+        for (const auto& action : scratch.actions)
+            actionVersions.push_back(actionVintages.at(action.actionStableId));
+    }
+    const detail::CompositeWorldVintagesV1 vintages{segmentVersions, actionVersions, entryVintage};
+    switch (entryVintage ? detail::ValidateCurrentWorldCompositeV1(scratch.view, vintages, published.staging.Budget())
+                         : detail::ValidateCurrentWorldWithBudget(scratch.view, published.staging.Budget())) {
     case WorldInstallStatus::Ok:
         worldSemanticFingerprint =
             scratch.view.identity.runtimeSemanticFingerprint;
@@ -3021,7 +3075,8 @@ VnResult PackComposition::BuildIndex(PublishedView& view,
         }
         // Native candidates and decoded partitions have the same obligation.
         // Validate new tables before closure lookups rely on their ordering.
-        if (owner.view.sourceBodyVintage == kCurrentWorldBodyVintageV20) {
+        if (owner.view.sourceBodyVintage == kCurrentWorldBodyVintageV20 ||
+            owner.view.sourceBodyVintage == kCurrentWorldBodyVintageV19) {
             const auto status = detail::ValidateCurrentWorldPartitionLocalV1(owner.view);
             if (status != WorldInstallStatus::Ok)
                 return status == WorldInstallStatus::Capacity
