@@ -6033,6 +6033,41 @@ TEST(PackComposition, IdenticalContainerDefinitionsHaveIndependentProviders) {
     EXPECT_NE(nullptr, composition.FindContainer(kContainerId));
 }
 
+TEST(PackComposition, InactiveOwnerPreparationAdmitsWorldScratchBeforeAllocation) {
+    PackComposition composition(2);
+    ASSERT_EQ(VN_OK, composition.Commit({}, nullptr, 0, 8, 0));
+    const auto previous = composition.PublishedHandle();
+    const auto generation = composition.CompositeGeneration();
+    const auto candidates = [] {
+        std::vector<PackComposition::CandidateOwner> owners(2);
+        for (std::size_t i = 0; i < owners.size(); ++i) {
+            owners[i].packStableId = i + 1;
+            owners[i].handle = (i + 1) << 32;
+        }
+        return owners;
+    };
+    // Inactive owners need no decoded rows. Their publication fits, including
+    // earlier closure fingerprint scratch, but the requested world array does not.
+    const auto residentPreparation = sizeof(PackComposition::PublishedView) +
+        2 * sizeof(PackComposition::PublishedOwner);
+    const auto worldScratch = 2 * sizeof(ContainerWorldInstallViewV1);
+    auto budget = detail::MakePackDecodeBudget(residentPreparation + worldScratch - 1);
+    PackComposition::PreparedCommit prepared;
+    EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY, composition.PrepareCommit(candidates(),
+        nullptr, 0, 8, 0, &prepared, nullptr, nullptr, false, nullptr, budget));
+    EXPECT_FALSE(prepared.IsPrepared());
+    EXPECT_EQ(previous, composition.PublishedHandle());
+    EXPECT_EQ(generation, composition.CompositeGeneration());
+    EXPECT_EQ(0u, budget->live);
+    ++budget->limit;
+    ASSERT_EQ(VN_OK, composition.PrepareCommit(candidates(), nullptr, 0, 8, 0,
+        &prepared, nullptr, nullptr, false, nullptr, budget));
+    EXPECT_EQ(residentPreparation, budget->live);
+    composition.CommitPrepared(&prepared);
+    EXPECT_EQ(0u, budget->live);
+    EXPECT_EQ(generation + 1, composition.CompositeGeneration());
+}
+
 TEST(PackComposition, ComparisonBudgetRefusalPreservesPublicationAndRetries) {
     constexpr VnObjectId id = harkentest::ObjectId(8101);
     const auto bytesA = BuildCanonicalPartitionPack(22, 1, 7, LocalContainerOccurrencePartitionPayload(22, 7, harkentest::ObjectId(8100), id));
@@ -28974,6 +29009,54 @@ TEST(PackComposition, MixedMusicAndLegacyContractsKeepOwnerFingerprintsAndRollba
         ASSERT_EQ(VN_OK, composition.Commit({candidate(music, 22), candidate(legacy, 33)}, nullptr, 0, 16, 0));
         const auto previous = composition.PublishedHandle();
         ASSERT_NE(nullptr, previous);
+        {
+            auto budget = detail::MakePackDecodeBudget(1024 * 1024);
+            const auto keep = [&] {
+                std::vector<PackComposition::CandidateOwner> owners;
+                for (const auto& owner : previous->owners)
+                    owners.push_back(PackComposition::Keep(owner, budget));
+                auto replica = PackComposition::Keep(previous->owners[0], budget);
+                replica.packStableId = 44;
+                replica.handle = std::uint64_t{44} << 32;
+                owners.push_back(std::move(replica));
+                return owners;
+            };
+            auto owners = keep();
+            PackComposition::PreparedCommit budgetPrepared;
+            allocation_probe::count = 0;
+            allocation_probe::enabled = true;
+            const auto measured = composition.PrepareCommit(std::move(owners), nullptr, 0, 16, 0,
+                &budgetPrepared, nullptr, nullptr, false, nullptr, budget);
+            allocation_probe::enabled = false;
+            const auto attempts = allocation_probe::count;
+            ASSERT_EQ(VN_OK, measured);
+            ASSERT_GT(attempts, 0u);
+            budgetPrepared = {};
+            EXPECT_EQ(0u, budget->live);
+            RecordProperty("mixed_vintage_oom_points_" + std::to_string(vintage), std::to_string(attempts));
+            for (std::size_t nth = 1; nth <= attempts; ++nth) {
+                SCOPED_TRACE(nth);
+                owners = keep();
+                allocation_probe::count = 0;
+                allocation_probe::failAt = nth;
+                allocation_probe::enabled = true;
+                const auto result = composition.PrepareCommit(std::move(owners), nullptr, 0, 16, 0,
+                    &budgetPrepared, nullptr, nullptr, false, nullptr, budget);
+                allocation_probe::enabled = false;
+                const bool consumed = allocation_probe::failAt == 0;
+                allocation_probe::failAt = 0;
+                EXPECT_TRUE(consumed);
+                EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY, result);
+                EXPECT_FALSE(budgetPrepared.IsPrepared());
+                EXPECT_EQ(previous, composition.PublishedHandle());
+                EXPECT_EQ(previous->compositeGeneration, composition.CompositeGeneration());
+                EXPECT_EQ(0u, budget->live);
+            }
+            ASSERT_EQ(VN_OK, composition.PrepareCommit(keep(), nullptr, 0, 16, 0,
+                &budgetPrepared, nullptr, nullptr, false, nullptr, budget));
+            budgetPrepared = {};
+            EXPECT_EQ(0u, budget->live);
+        }
         EXPECT_EQ(19u, previous->owners[0].view.sourceBodyVintage);
         EXPECT_EQ(vintage, previous->owners[1].view.sourceBodyVintage);
         EXPECT_EQ(music.segmentSchedules[0].scheduleSemanticFingerprint,

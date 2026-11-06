@@ -27,9 +27,9 @@
 
 namespace harken {
 
-bool BuildProgramCapabilitySummariesV1(
+static bool BuildProgramCapabilitySummariesWithBudget(
     const ContainerWorldInstallViewV1* worlds, std::uint32_t worldCount,
-    std::vector<ProgramCapabilitySummaryV1>& out) {
+    std::vector<ProgramCapabilitySummaryV1>& out, const detail::PackDecodeBudget& budget) {
     out.clear();
     if (worldCount != 0 && worlds == nullptr) return false;
     bool needsSummary = false;
@@ -39,6 +39,7 @@ bool BuildProgramCapabilitySummariesV1(
     }
     // A homogeneous legacy installation has no Entry19 dependency to cache.
     if (!needsSummary) return true;
+    detail::PackDecodeCharge scratch(budget);
     struct Edge {
         std::size_t child = 0;
         bool initial = true;
@@ -47,10 +48,12 @@ bool BuildProgramCapabilitySummariesV1(
         ProgramCapabilitySummaryV1 summary{};
         std::uint32_t vintage = 0;
         std::vector<Edge> children;
+        std::size_t childSlots = 0;
         std::uint8_t state = 0;
         std::uint32_t height = 1;
     };
     std::vector<Node> nodes;
+    std::size_t nodeSlots = 0;
     std::unordered_map<VnObjectId, std::size_t> index;
     const auto kindOf = [](playableproperties::ContentPropertyKindV1 kind) {
         using Kind = playableproperties::ContentPropertyKindV1;
@@ -70,6 +73,8 @@ bool BuildProgramCapabilitySummariesV1(
             const auto& property = world.playableProperties[p];
             const auto kind = kindOf(property.contentPropertyKind);
             if (static_cast<std::uint32_t>(kind) > 3) continue;
+            if (!index.contains(property.stableId))
+                scratch.AddRows<decltype(index)::value_type>(1);
             const auto [it, inserted] = index.emplace(property.stableId, nodes.size());
             if (!inserted) {
                 const auto& existing = nodes[it->second];
@@ -83,7 +88,7 @@ bool BuildProgramCapabilitySummariesV1(
                 world.sourceBodyVintage == kCurrentWorldBodyVintageV19
                     ? kProgramCapabilityEntrySchedulingV1 : 0u};
             node.vintage = world.sourceBodyVintage;
-            nodes.push_back(std::move(node));
+            detail::DecodeAppend(nodes, std::move(node), scratch, nodeSlots);
         }
     }
     const auto addEdge = [&](VnObjectId parent, const PlayableRefV1& child,
@@ -94,7 +99,8 @@ bool BuildProgramCapabilitySummariesV1(
             nodes[c->second].summary.kind != child.kind ||
             nodes[c->second].summary.semanticFingerprint !=
                 child.expectedProgramSemanticFingerprint) return false;
-        nodes[p->second].children.push_back({c->second, initial});
+        auto& parentNode = nodes[p->second];
+        detail::DecodeAppend(parentNode.children, Edge{c->second, initial}, scratch, parentNode.childSlots);
         return true;
     };
     for (std::uint32_t w = 0; w < worldCount; ++w) {
@@ -123,15 +129,20 @@ bool BuildProgramCapabilitySummariesV1(
                                          container.resumePosition == 0;
             if (fixedQueueEntry && container.initialSequenceCursor >= container.childCount)
                 return false;
+            detail::PackDecodeCharge gridScratch(budget);
             std::unordered_set<std::uint32_t> gridChildren;
+            const auto addGridChild = [&](std::uint32_t ordinal) {
+                if (!gridChildren.contains(ordinal)) gridScratch.AddRows<std::uint32_t>(1);
+                gridChildren.insert(ordinal);
+            };
             if (container.mode == ContainerModeV1::VariableControl) {
                 if ((container.discreteRowCount != 0 && container.discreteRows == nullptr) ||
                     (container.continuousRowCount != 0 && container.continuousRows == nullptr))
                     return false;
                 for (std::uint32_t row = 0; row < container.discreteRowCount; ++row)
-                    gridChildren.insert(container.discreteRows[row].childStableOrdinal);
+                    addGridChild(container.discreteRows[row].childStableOrdinal);
                 for (std::uint32_t row = 0; row < container.continuousRowCount; ++row)
-                    gridChildren.insert(container.continuousRows[row].childStableOrdinal);
+                    addGridChild(container.continuousRows[row].childStableOrdinal);
             }
             for (std::uint32_t child = 0; child < container.childCount; ++child) {
                 const auto& row = container.children[child];
@@ -175,6 +186,12 @@ bool BuildProgramCapabilitySummariesV1(
     return true;
 }
 
+bool BuildProgramCapabilitySummariesV1(
+    const ContainerWorldInstallViewV1* worlds, std::uint32_t worldCount,
+    std::vector<ProgramCapabilitySummaryV1>& out) {
+    return BuildProgramCapabilitySummariesWithBudget(worlds, worldCount, out, {});
+}
+
 namespace {
 
 constexpr std::uint64_t kIndexEntryBytes = 16 + 8 + 4 + 4;
@@ -189,13 +206,17 @@ std::uint64_t IssueOriginalPackIncarnation() noexcept {
     return 0;
 }
 
-std::uint64_t ProviderClosureFingerprint(const PackComposition::PublishedOwner& owner) {
-    std::vector<std::pair<std::uint64_t, std::uint64_t>> required{
-        {owner.packStableId, owner.contentRevision}};
+std::uint64_t ProviderClosureFingerprint(const PackComposition::PublishedOwner& owner,
+    const detail::PackDecodeBudget& budget) {
+    detail::PackDecodeCharge scratch(budget);
+    using Revision = std::pair<std::uint64_t, std::uint64_t>;
+    std::vector<Revision> required;
+    std::size_t slots = 0;
+    detail::DecodeAppend(required, Revision{owner.packStableId, owner.contentRevision}, scratch, slots);
     for (const auto& edge : owner.dependencyEdges) {
         if (edge.required01 != 0)
-            required.emplace_back(edge.prerequisitePackStableId,
-                                  edge.expectedPrerequisiteContentRevision);
+            detail::DecodeAppend(required, Revision{edge.prerequisitePackStableId,
+                                  edge.expectedPrerequisiteContentRevision}, scratch, slots);
     }
     std::sort(required.begin(), required.end());
     required.erase(std::unique(required.begin(), required.end()), required.end());
@@ -554,7 +575,7 @@ BoundedTraversalStatus CountBoundedLeaves(
     std::uint32_t maxKnownScheduleLeaves,
     std::uint32_t maxContainerDepth,
     std::uint32_t maxTrackSegmentScheduleDepth,
-    const TraversalPathNode* path, BoundedLeafCounts& leafCounts) {
+    const TraversalPathNode* path, BoundedLeafCounts& leafCounts, detail::PackDecodeCharge& leafCharge) {
     if (leafCount == nullptr) {
         return BoundedTraversalStatus::Invalid;
     }
@@ -591,6 +612,7 @@ BoundedTraversalStatus CountBoundedLeaves(
         return BoundedTraversalStatus::Valid;
     }
     const auto finish = [&]() {
+        if (!leafCounts.contains(cacheKey)) leafCharge.AddRows<BoundedLeafCounts::value_type>(1);
         leafCounts.emplace(cacheKey, *leafCount);
         return BoundedTraversalStatus::Valid;
     };
@@ -612,6 +634,7 @@ BoundedTraversalStatus CountBoundedLeaves(
                 static_cast<std::uint32_t>(ContainerModeV1::VariableControl)) {
             return BoundedTraversalStatus::Invalid;
         }
+        detail::PackDecodeCharge candidateCharge(leafCharge.Budget());
         std::map<std::uint32_t, std::uint32_t> candidateLeaves;
         for (std::uint32_t i = 0; i < container->childCount; ++i) {
             const PlayableRefV1& childRef = container->children[i].playable;
@@ -631,12 +654,15 @@ BoundedTraversalStatus CountBoundedLeaves(
                 published, member, childRef, childContainerDepth,
                 childScheduleDepth, &childLeaves,
                 maxKnownScheduleLeaves, maxContainerDepth,
-                maxTrackSegmentScheduleDepth, &currentPath, leafCounts);
+                maxTrackSegmentScheduleDepth, &currentPath, leafCounts, leafCharge);
             if (child != BoundedTraversalStatus::Valid) {
                 return child;
             }
-            if (container->mode == ContainerModeV1::VariableControl)
+            if (container->mode == ContainerModeV1::VariableControl) {
+                if (!candidateLeaves.contains(container->children[i].stableChildOrdinal))
+                    candidateCharge.AddRows<decltype(candidateLeaves)::value_type>(1);
                 candidateLeaves.emplace(container->children[i].stableChildOrdinal, childLeaves);
+            }
             else
                 *leafCount = std::max(*leafCount, childLeaves);
         }
@@ -646,12 +672,15 @@ BoundedTraversalStatus CountBoundedLeaves(
                 if (found == candidateLeaves.end()) return BoundedTraversalStatus::Invalid;
                 *leafCount = std::max(*leafCount, found->second);
             }
+            detail::PackDecodeCharge continuousCharge(leafCharge.Budget());
             std::set<std::uint32_t> continuousChildren;
             for (std::uint32_t i = 0; i < container->continuousRowCount; ++i) {
                 const auto ordinal = container->continuousRows[i].childStableOrdinal;
                 const auto found = candidateLeaves.find(ordinal);
                 if (found == candidateLeaves.end()) return BoundedTraversalStatus::Invalid;
-                if (!continuousChildren.insert(ordinal).second) continue;
+                if (continuousChildren.contains(ordinal)) continue;
+                continuousCharge.AddRows<std::uint32_t>(1);
+                continuousChildren.insert(ordinal);
                 if (found->second > maxKnownScheduleLeaves - *leafCount)
                     return BoundedTraversalStatus::Exceeded;
                 *leafCount += found->second;
@@ -686,7 +715,7 @@ BoundedTraversalStatus CountBoundedLeaves(
                 published, member, childRef, childContainerDepth,
                 childScheduleDepth, &childLeaves,
                 maxKnownScheduleLeaves, maxContainerDepth,
-                maxTrackSegmentScheduleDepth, &currentPath, leafCounts);
+                maxTrackSegmentScheduleDepth, &currentPath, leafCounts, leafCharge);
             if (child != BoundedTraversalStatus::Valid) {
                 return child;
             }
@@ -721,7 +750,7 @@ BoundedTraversalStatus CountBoundedLeaves(
             published, member, childRef, childContainerDepth,
             childScheduleDepth, &childLeaves,
             maxKnownScheduleLeaves, maxContainerDepth,
-            maxTrackSegmentScheduleDepth, &currentPath, leafCounts);
+            maxTrackSegmentScheduleDepth, &currentPath, leafCounts, leafCharge);
         if (child != BoundedTraversalStatus::Valid) {
             return child;
         }
@@ -737,7 +766,7 @@ BoundedTraversalStatus EndpointHasBoundedVoices(
     const PackComposition::PublishedView& published,
     const std::vector<std::uint8_t>& member,
     const ContainerWorldInstallViewV1& rootView,
-    const PlayableRefV1& endpoint, BoundedLeafCounts& leafCounts) {
+    const PlayableRefV1& endpoint, BoundedLeafCounts& leafCounts, detail::PackDecodeCharge& leafCharge) {
     std::uint32_t leafCount = 0;
     const std::uint32_t containerDepth =
         endpoint.kind == PlayableKindV1::Container ? 1u : 0u;
@@ -750,7 +779,7 @@ BoundedTraversalStatus EndpointHasBoundedVoices(
         published, member, endpoint, containerDepth, scheduleDepth, &leafCount,
         rootView.capacity.maxKnownScheduleLeaves,
         rootView.capacity.maxContainerDepth,
-        rootView.capacity.maxTrackSegmentScheduleDepth, nullptr, leafCounts);
+        rootView.capacity.maxTrackSegmentScheduleDepth, nullptr, leafCounts, leafCharge);
 }
 
 VnResult ValidateNonAnyEndpoint(
@@ -1015,12 +1044,13 @@ const PackComposition::PublishedOwner* FindActiveOwnerByPack(
 
 VnResult BuildDeclaredClosure(
     const PackComposition::PublishedView& published, std::uint32_t rootSlot,
-    std::size_t maxPacks, std::vector<std::uint8_t>* member);
+    std::size_t maxPacks, std::vector<std::uint8_t>* member, detail::PackDecodeCharge& memberCharge);
 
 VnResult ValidateContainerChildCapacity(
     const PackComposition::PublishedView& published,
     const ContainerWorldInstallViewV1& view,
     const std::vector<std::uint8_t>& member) {
+    detail::PackDecodeCharge leafCharge(published.staging.Budget());
     BoundedLeafCounts leafCounts;
     for (std::uint32_t i = 0; i < view.containerCount; ++i) {
         const ContainerProgramViewV3& container = view.containers[i];
@@ -1030,7 +1060,7 @@ VnResult ValidateContainerChildCapacity(
         for (std::uint32_t c = 0; c < container.childCount; ++c) {
             const ContainerChildProgramViewV2& child = container.children[c];
             const BoundedTraversalStatus bounded = EndpointHasBoundedVoices(
-                published, member, view, child.playable, leafCounts);
+                published, member, view, child.playable, leafCounts, leafCharge);
             if (bounded == BoundedTraversalStatus::Invalid) {
                 return VN_BAD_PACK;
             }
@@ -1066,9 +1096,10 @@ VnResult ValidateSameOwnerCompanions(
         if (occurrences != VN_OK) {
             return occurrences;
         }
+        detail::PackDecodeCharge memberCharge(published.staging.Budget());
         std::vector<std::uint8_t> member;
         const VnResult closure =
-            BuildDeclaredClosure(published, slot, maxPacks, &member);
+            BuildDeclaredClosure(published, slot, maxPacks, &member, memberCharge);
         if (closure != VN_OK) {
             return closure;
         }
@@ -1110,16 +1141,18 @@ bool CatalogKnowsIdentity(const PackComposition::PublishedView& published,
 
 VnResult BuildDeclaredClosure(
     const PackComposition::PublishedView& published, std::uint32_t rootSlot,
-    std::size_t maxPacks, std::vector<std::uint8_t>* member) {
-    member->assign(published.owners.size(), 0);
+    std::size_t maxPacks, std::vector<std::uint8_t>* member, detail::PackDecodeCharge& memberCharge) {
+    detail::DecodeResize(*member, published.owners.size(), memberCharge);
     if (rootSlot >= published.owners.size()) {
         return VN_BAD_PACK;
     }
     if (maxPacks == 0) {
         return VN_PACK_RESIDENT_CAPACITY;
     }
+    detail::PackDecodeCharge slotCharge(memberCharge.Budget());
     std::vector<std::uint32_t> slots;
-    slots.push_back(rootSlot);
+    std::size_t requestedSlots = 0;
+    detail::DecodeAppend(slots, rootSlot, slotCharge, requestedSlots);
     (*member)[rootSlot] = 1;
     for (std::size_t cursor = 0; cursor < slots.size(); ++cursor) {
         const PackComposition::PublishedOwner& owner =
@@ -1144,7 +1177,7 @@ VnResult BuildDeclaredClosure(
                 return VN_PACK_RESIDENT_CAPACITY;
             }
             (*member)[providerSlot] = 1;
-            slots.push_back(providerSlot);
+            detail::DecodeAppend(slots, providerSlot, slotCharge, requestedSlots);
         }
     }
     return VN_OK;
@@ -2385,9 +2418,11 @@ VnResult ValidateInitVariablePolicy(
     const PackComposition::PublishedView& published) {
     const auto* initOwner = FindInitOwner(published);
     bool hasOverlay = published.catalog.hasVariablePolicyOverlay;
+    detail::PackDecodeCharge scratch(published.staging.Budget());
     std::vector<const PackCanonicalImage::VariablePolicyOverlay*> overlayRows;
+    std::size_t overlaySlots = 0;
     const auto addOverlays =
-        [&overlayRows](
+        [&overlayRows, &scratch, &overlaySlots](
             const std::vector<PackCanonicalImage::VariablePolicyOverlay>&
                 rows) {
             for (const auto& row : rows) {
@@ -2399,7 +2434,7 @@ VnResult ValidateInitVariablePolicy(
                     }
                 }
                 if (!seen) {
-                    overlayRows.push_back(&row);
+                    detail::DecodeAppend(overlayRows, &row, scratch, overlaySlots);
                 }
             }
         };
@@ -2416,7 +2451,7 @@ VnResult ValidateInitVariablePolicy(
     if (initOwner != nullptr &&
         initOwner->readiness == PackOwnerReadiness::Active &&
         initOwner->view.variables != nullptr) {
-        initIds.reserve(initOwner->view.variableCount);
+        detail::DecodeReserve(initIds, initOwner->view.variableCount, scratch);
         for (std::uint32_t i = 0; i < initOwner->view.variableCount; ++i) {
             initIds.push_back(initOwner->view.variables[i].variableId);
         }
@@ -2425,7 +2460,7 @@ VnResult ValidateInitVariablePolicy(
     initIds.erase(std::unique(initIds.begin(), initIds.end()), initIds.end());
 
     std::vector<VnObjectId> overlayIds;
-    overlayIds.reserve(overlayRows.size());
+    detail::DecodeReserve(overlayIds, overlayRows.size(), scratch);
     for (const auto* overlay : overlayRows) {
         overlayIds.push_back(overlay->variableId);
     }
@@ -2509,9 +2544,10 @@ VnResult ValidateCrossOwnerReferences(
         if (published.owners[slot].readiness != PackOwnerReadiness::Active) {
             continue;
         }
+        detail::PackDecodeCharge memberCharge(published.staging.Budget());
         std::vector<std::uint8_t> member;
         const VnResult closure =
-            BuildDeclaredClosure(published, slot, maxPacks, &member);
+            BuildDeclaredClosure(published, slot, maxPacks, &member, memberCharge);
         if (closure != VN_OK) {
             return closure;
         }
@@ -2610,12 +2646,13 @@ VnResult BuildPlaybackOwnerStore(PackComposition::PublishedView& published,
     published.staging.AddRows<PackAttenuationBindingMapV1::Binding>(attenuationBindings.entries.size());
     store->attenuationBindings = attenuationBindings;
     store->owners.resize(published.owners.size());
+    detail::PackDecodeCharge scratch(published.staging.Budget());
     std::vector<ContainerWorldInstallViewV1> worlds;
-    worlds.reserve(published.owners.size());
+    detail::DecodeReserve(worlds, published.owners.size(), scratch);
     for (const auto& owner : published.owners)
         if (owner.readiness == PackOwnerReadiness::Active) worlds.push_back(owner.view);
-    if (worlds.size() > UINT32_MAX || !BuildProgramCapabilitySummariesV1(
-            worlds.data(), static_cast<std::uint32_t>(worlds.size()), store->programCapabilities))
+    if (worlds.size() > UINT32_MAX || !BuildProgramCapabilitySummariesWithBudget(
+            worlds.data(), static_cast<std::uint32_t>(worlds.size()), store->programCapabilities, published.staging.Budget()))
         return VN_BAD_PACK;
     for (std::uint32_t slot = 0; slot < published.owners.size(); ++slot) {
         const PackComposition::PublishedOwner& owner = published.owners[slot];
@@ -2632,9 +2669,10 @@ VnResult BuildPlaybackOwnerStore(PackComposition::PublishedView& published,
         if (owner.readiness != PackOwnerReadiness::Active) {
             continue;
         }
+        detail::PackDecodeCharge memberCharge(published.staging.Budget());
         std::vector<std::uint8_t> member;
         const VnResult closure =
-            BuildDeclaredClosure(published, slot, maxPacks, &member);
+            BuildDeclaredClosure(published, slot, maxPacks, &member, memberCharge);
         if (closure != VN_OK) {
             return closure;
         }
@@ -3278,7 +3316,7 @@ VnResult PackComposition::PrepareCommit(
         owner.slotIndex = candidate.slotIndex;
         owner.readiness = candidate.readiness;
         owner.dependencyEdges = std::move(candidate.dependencyEdges);
-        owner.providerClosureFingerprint = ProviderClosureFingerprint(owner);
+        owner.providerClosureFingerprint = ProviderClosureFingerprint(owner, budget);
         owner.voiceBindings = std::move(candidate.voiceBindings);
         owner.definitionBytes = candidate.definitionBytes;
         owner.hasGameplayCatalog = candidate.hasGameplayCatalog;
