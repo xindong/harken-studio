@@ -470,6 +470,87 @@ TEST(StreamRegister, SourceShortReadsAndIndependentReadyResults) {
     EXPECT_EQ(VN_OK, streams.UnregisterFile(id));
 }
 
+TEST(StreamRegister, SourceReadAndReleaseDoNotBlockRegisteredSlotActivation) {
+    using Manager = harken::StreamManager;
+    class ReleaseSource final : public ControlledSource {
+    public:
+        std::shared_ptr<ReadGate> releaseGate;
+        ~ReleaseSource() override {
+            if (!releaseGate) return;
+            releaseGate->entered.store(true, std::memory_order_release);
+            while (!releaseGate->release.load(std::memory_order_acquire))
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    };
+    for (const bool blockRelease : {false, true}) {
+        SCOPED_TRACE(blockRelease);
+        harken::EngineConfig config{};
+        config.maxStreams = 2;
+        config.streamRingFrames = 64;
+        Manager streams(config);
+        auto healthy = std::make_shared<ControlledSource>();
+        StreamSpec spec;
+        spec.soundId = harkentest::ObjectId(17336);
+        spec.chunkFrames = 16;
+        healthy->maxRead = 16 * sizeof(float);
+        const auto samples = ServiceSamples(4096, 0);
+        healthy->bytes = BuildStreamBytes(spec, samples);
+        Manager::SourceToken ready;
+        ASSERT_EQ(VN_OK, streams.BeginSource(spec.soundId, healthy, false, 0, &ready));
+        ASSERT_TRUE(WaitUntil([&] { return streams.QuerySource(ready) == Manager::PreparationState::Ready; }));
+        Manager::StreamFacts facts;
+        ASSERT_EQ(VN_OK, streams.TakeSource(ready, &facts));
+        std::uint64_t tokens[2]{};
+        ASSERT_TRUE(streams.PrepareSlotWorkingSet(0, 1));
+        ASSERT_EQ(VN_OK, streams.ActivateSlot(0, facts.fileIndex, 0, 0, 4096, 1, &tokens[0]));
+
+        auto blocked = std::make_shared<ReleaseSource>();
+        const auto blockedId = harkentest::ObjectId(17337);
+        blocked->bytes = MakeValidImage(blockedId);
+        auto gate = blockRelease ? std::make_shared<ReadGate>() : blocked->gate;
+        auto destroyed = blocked->destroyed;
+        ReleaseReadGate release{*gate};
+        if (blockRelease) blocked->releaseGate = gate;
+        else gate->offset.store(0, std::memory_order_release);
+        Manager::SourceToken pending;
+        ASSERT_EQ(VN_OK, streams.BeginSource(blockedId, blocked, false, 0, &pending));
+        if (blockRelease) {
+            ASSERT_TRUE(WaitUntil([&] { return streams.QuerySource(pending) == Manager::PreparationState::Ready; }));
+            ASSERT_EQ(VN_OK, streams.TakeSource(pending));
+            blocked.reset();
+            ASSERT_EQ(VN_OK, streams.UnregisterFile(blockedId));
+        } else blocked.reset();
+        ASSERT_TRUE(WaitUntil([&] { return gate->entered.load(std::memory_order_acquire); }));
+        EXPECT_EQ(0u, destroyed->load());
+
+        ASSERT_TRUE(streams.PrepareSlotWorkingSet(1, 1));
+        std::atomic<bool> activated{false};
+        VnResult result = VN_DEVICE_ERROR;
+        std::thread caller([&] {
+            result = streams.ActivateSlot(1, facts.fileIndex, 1024, 0, 4096, 1, &tokens[1]);
+            activated.store(true, std::memory_order_release);
+        });
+        streams.RingOf(0)->AdvanceRead(64);
+        const bool refill = WaitUntil([&] { return streams.RingOf(0)->ReadAvailable() == 64; });
+        const bool independent = WaitUntil([&] { return activated.load(std::memory_order_acquire); });
+        // Release the deliberately blocked callback before joining on failure.
+        if (!independent) gate->release.store(true, std::memory_order_release);
+        caller.join();
+        EXPECT_TRUE(refill);
+        EXPECT_TRUE(independent);
+        ASSERT_EQ(VN_OK, result);
+        std::size_t position = 1024;
+        ExpectAndConsume(*streams.RingOf(1), samples, position, 64);
+        if (!blockRelease) EXPECT_TRUE(streams.CancelSource(pending));
+        gate->release.store(true, std::memory_order_release);
+        EXPECT_TRUE(WaitUntil([&] { return destroyed->load() == 1; }));
+        for (unsigned i = 0; i < 2; ++i)
+            EXPECT_TRUE(streams.RetirePreparedSlot(streams.RingOf(i), tokens[i]));
+        streams.SyncServe();
+        EXPECT_EQ(VN_OK, streams.UnregisterFile(spec.soundId));
+    }
+}
+
 TEST(StreamRegister, SlowSameSourceActiveReadDoesNotBlockHealthyInstanceOrReleaseEarly) {
     using Manager = harken::StreamManager;
     for (const bool failWorker : {false, true}) {

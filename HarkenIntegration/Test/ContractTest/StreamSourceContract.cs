@@ -14,6 +14,7 @@ namespace Harken.Test
         sealed class Probe
         {
             internal int Reads, Releases, Entered, AllowRead, ThrowRead, ThrowRelease;
+            internal int AllowRelease = 1;
             internal StreamReadCancellation LastView;
         }
         sealed class Provider : StreamByteSource
@@ -42,6 +43,7 @@ namespace Harken.Test
             public override void Dispose()
             {
                 Interlocked.Increment(ref probe.Releases);
+                while (Volatile.Read(ref probe.AllowRelease) == 0) Thread.Sleep(1);
                 if (Volatile.Read(ref probe.ThrowRelease) != 0) throw new IOException("injected release");
             }
         }
@@ -56,6 +58,8 @@ namespace Harken.Test
         }
         static void Collect()
         { GC.Collect(); GC.WaitForPendingFinalizers(); GC.Collect(); }
+        static void UntilCollected(WeakReference reference, string message)
+        { Until(() => { Collect(); return !reference.IsAlive; }, message); }
         [MethodImpl(MethodImplOptions.NoInlining)]
         static WeakReference Begin(byte[] bytes, Probe probe, bool replace, out StreamSourceRequest request)
         {
@@ -121,7 +125,7 @@ namespace Harken.Test
                     Check(blocked.LastView.IsCancellationRequested, "returned view must be safely invalidated");
                 }
                 finally { Volatile.Write(ref stopPoll, 1); latePoll.Join(); }
-                Collect(); Check(!retained.IsAlive, "accepted adapter root leaked after Release");
+                UntilCollected(retained, "accepted adapter root leaked after Release");
                 Check(StreamSources.Unregister(Sound) == VnResult.VN_OK, "cancelled replacement changed old source");
 
                 var good = new Probe { AllowRead = 1 };
@@ -131,16 +135,23 @@ namespace Harken.Test
                 Check(good.Releases == 0 && live.IsAlive, "request disposal released committed source");
                 Ok(StreamSources.Unregister(Sound), "callback unregister");
                 Until(() => Volatile.Read(ref good.Releases) == 1, "unregister release");
-                Collect(); Check(!live.IsAlive, "committed source root leaked");
+                UntilCollected(live, "committed source root leaked");
 
                 var broken = new Probe { AllowRead = 1, ThrowRead = 1, ThrowRelease = 1 };
                 WeakReference failed = Begin(bytes, broken, false, out var failedRequest);
                 Until(() => failedRequest.Query(out var info) == VnResult.VN_OK && info.state == VnConstants.VN_STREAM_SOURCE_FAILED,
                     "managed exception must become source failure");
                 Check(failedRequest.Commit() == VnResult.VN_BAD_STREAM_FILE && broken.Releases == 0, "failed request must retain ownership");
-                failedRequest.Dispose();
-                Until(() => Volatile.Read(ref broken.Releases) == 1, "failed source Release");
-                Collect(); Check(!failed.IsAlive, "throwing Dispose leaked GCHandle");
+                try
+                {
+                    Volatile.Write(ref broken.AllowRelease, 0);
+                    failedRequest.Dispose();
+                    Until(() => Volatile.Read(ref broken.Releases) == 1, "failed source Release");
+                    Collect(); Check(failed.IsAlive, "provider must remain alive while Dispose is running");
+                }
+                finally { Volatile.Write(ref broken.AllowRelease, 1); }
+                // Release entry is observable before the thunk frees its root.
+                UntilCollected(failed, "throwing Dispose leaked GCHandle");
 
                 var term = new Probe { ThrowRelease = 1 };
                 WeakReference termRoot = Begin(bytes, term, false, out var oldRequest);

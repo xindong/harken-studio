@@ -171,7 +171,9 @@ StreamManager::StreamManager(const EngineConfig& config)
         m_slots[s].ring.Wire(planes, m_ringFrames);
     }
     try {
-        const auto lanes = 1u + std::min(2u, config.maxStreams);
+        // Source validation/cleanup cannot occupy slot prebuffer execution,
+        // and neither preparation domain borrows a steady refill worker.
+        const auto lanes = config.maxStreams == 0 ? 1u : 2u + std::min(2u, config.maxStreams);
         for (unsigned i = 0; i < lanes; ++i) m_ioLanes.push_back(std::make_unique<IoLane>());
         for (unsigned i = 0; i < lanes; ++i)
             m_ioLanes[i]->thread = std::thread(&StreamManager::IoMain, this, i);
@@ -930,7 +932,8 @@ void StreamManager::DetachRetiredSlots() {
             continue;
         }
         if (slot.ioLane >= 0) {
-            if (slot.ioLane == 0) m_ioLanes[0]->cancelled.store(true, std::memory_order_release);
+            if (slot.ioLane == kPreparationIoLane)
+                m_ioLanes[kPreparationIoLane]->cancelled.store(true, std::memory_order_release);
             else slot.io.cancelled.store(true, std::memory_order_release);
             continue;
         }

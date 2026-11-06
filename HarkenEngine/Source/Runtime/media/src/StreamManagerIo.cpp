@@ -246,12 +246,6 @@ void StreamManager::StopIo() noexcept {
         std::lock_guard<std::mutex> lock(m_ioMutex);
         m_ioStop.store(true, std::memory_order_release);
     }
-    for (auto& lane : m_ioLanes) {
-        auto state = lane->state.load(std::memory_order_acquire);
-        while ((state == 0 || state == 3) &&
-               !lane->state.compare_exchange_weak(state, 4, std::memory_order_acq_rel)) {}
-        lane->state.notify_one();
-    }
     m_ioWake.notify_all();
     m_steadyWake.notify_all();
     for (std::size_t i = 1; i < m_ioLanes.size(); ++i)
@@ -265,16 +259,18 @@ void StreamManager::StopIo() noexcept {
 }
 
 void StreamManager::IoMain(std::size_t index) {
-    if (index != 0) { SteadyIoMain(); return; }
+    if (index >= static_cast<std::size_t>(kSteadyIoOwner)) { SteadyIoMain(); return; }
     auto& lane = *m_ioLanes[index];
     for (;;) {
-        const auto state = lane.state.load(std::memory_order_acquire);
-        if (state != 1) {
-            if (m_ioStop.load(std::memory_order_acquire)) break;
-            lane.state.wait(state, std::memory_order_acquire);
-            continue;
+        {
+            std::unique_lock<std::mutex> lock(m_ioMutex);
+            m_ioWake.wait(lock, [&] {
+                return m_ioStop.load(std::memory_order_acquire) ||
+                       lane.state.load(std::memory_order_acquire) == 1;
+            });
+            if (lane.state.load(std::memory_order_acquire) != 1) break;
+            lane.state.store(2, std::memory_order_relaxed);
         }
-        lane.state.store(2, std::memory_order_relaxed);
         lane.exception = false;
         try {
             switch (lane.kind) {
@@ -475,35 +471,42 @@ void StreamManager::ServeSlots() {
 void StreamManager::DispatchIo() {
     if (m_ioLanes.empty()) return;
     auto dispatch = [&](IoLane& lane) {
-        lane.cancelled.store(false, std::memory_order_relaxed);
-        lane.state.store(1, std::memory_order_release);
-        lane.state.notify_one();
+        {
+            std::lock_guard<std::mutex> lock(m_ioMutex);
+            lane.cancelled.store(false, std::memory_order_relaxed);
+            lane.state.store(1, std::memory_order_release);
+        }
+        // The two mailboxes share this condition variable but have different
+        // predicates. Wake both so the owner of this job always observes it.
+        m_ioWake.notify_all();
     };
-    auto& prepare = *m_ioLanes[0];
-    if (prepare.state.load(std::memory_order_acquire) == 0 && m_cleanup) {
-        prepare.kind = IoLane::Kind::Cleanup;
-        prepare.cleanup = std::move(m_cleanup);
-        m_cleanup = std::move(prepare.cleanup->nextCleanup);
-        dispatch(prepare);
+    auto& sourceLane = *m_ioLanes[kSourceIoLane];
+    if (sourceLane.state.load(std::memory_order_acquire) == 0 && m_cleanup) {
+        sourceLane.kind = IoLane::Kind::Cleanup;
+        sourceLane.cleanup = std::move(m_cleanup);
+        m_cleanup = std::move(sourceLane.cleanup->nextCleanup);
+        dispatch(sourceLane);
     }
     if (WorkerState() != StreamWorkerState::Ready) return;
     auto source = [&] {
-        if (prepare.state.load(std::memory_order_acquire) != 0) return false;
+        if (sourceLane.state.load(std::memory_order_acquire) != 0) return false;
         for (std::size_t n = 0; n < m_sourceRequests.size(); ++n) {
             const auto i = (m_sourceCursor + n) % m_sourceRequests.size();
             auto& request = m_sourceRequests[i];
             if (!request || request->discard || request->ioLane >= 0 ||
                 request->state != PreparationState::Preparing) continue;
-            request->ioLane = 0;
-            prepare.kind = IoLane::Kind::Source;
-            prepare.request = request.get();
+            request->ioLane = kSourceIoLane;
+            sourceLane.kind = IoLane::Kind::Source;
+            sourceLane.request = request.get();
             m_sourceCursor = i + 1;
-            dispatch(prepare);
+            dispatch(sourceLane);
             return true;
         }
         return false;
     };
-    if (m_preferSource && source()) m_preferSource = false;
+    (void)source();
+    if (m_slots.empty()) return;
+    auto& prepare = *m_ioLanes[kPreparationIoLane];
     std::size_t queuedSteady = 0;
     for (std::size_t choice = 0; choice <= m_slots.size(); ++choice) {
         const bool steady = choice != 0;
@@ -539,7 +542,7 @@ void StreamManager::DispatchIo() {
             // Queue insertion is the only fallible step. No ownership is
             // published if it fails; the manager can retry that missing chunk.
             m_readySteady.push_back(&slot);
-            slot.ioLane = 1;
+            slot.ioLane = kSteadyIoOwner;
             slot.io.cancelled.store(false, std::memory_order_relaxed);
             job.cancellation = {&slot.io.cancelled};
             slot.io.input = job;
@@ -547,17 +550,15 @@ void StreamManager::DispatchIo() {
             if (queuedSteady == 0) m_steadyWake.notify_one();
             ++queuedSteady;
         } else {
-            slot.ioLane = 0;
+            slot.ioLane = kPreparationIoLane;
             prepare.kind = IoLane::Kind::Chunk;
             prepare.slot = &slot;
             job.cancellation = {&prepare.cancelled};
             prepare.chunk = job;
-            m_preferSource = true;
             dispatch(prepare);
         }
     }
     if (queuedSteady > 1) m_steadyWake.notify_one();
-    if (source()) m_preferSource = false;
 }
 
 } // namespace harken

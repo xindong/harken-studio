@@ -381,10 +381,14 @@ private:
         std::atomic<std::uint64_t> capacityBytes{0};
     };
 
+    static constexpr int kSourceIoLane = 0;
+    static constexpr int kPreparationIoLane = 1;
+    static constexpr int kSteadyIoOwner = 2;
+
     struct StreamSlot {
         StreamRing ring;
         std::atomic<bool> supplied{false};
-        int ioLane = -1; // -1 idle, 0 preparation lane, 1 steady job owner
+        int ioLane = -1; // -1 idle, kPreparationIoLane or kSteadyIoOwner
         SlotIoJob io;
         ReadWindow window;
         std::uint64_t passGoal = 0;
@@ -551,7 +555,6 @@ private:
     std::deque<StreamSlot*> m_readySteady; // one entry per outstanding steady slot
     std::unique_ptr<StreamFile> m_cleanup;
     std::size_t m_sourceCursor = 0, m_slotCursor = 0;
-    bool m_preferSource = true;
     friend struct detail::StreamManagerTestAccess;
     std::array<StableRowStorage<float>, kMaxChannels> m_ringStorage;
     // Logic-owned backing demand follows the existing file pending references.
