@@ -1405,7 +1405,6 @@ TEST(PackComposition, RootActivationNeedsNoCatalogWhileProvisionalLookupDoes) {
     harken::PackCanonicalImage initImage;
     ASSERT_EQ(VN_OK, ParsePackCanonicalImage(initBytes.data(), initBytes.size(),
                                              &initImage));
-    EXPECT_FALSE(initImage.hasCatalog);
 
     EngineSession session(MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -1668,25 +1667,6 @@ TEST(PackCompositionContract, InspectInitRejectsUnresolvableContainmentRoot) {
     std::filesystem::remove(root, ec);
 }
 #endif
-
-TEST(PackComposition, KnownUnloadedAndAbsentStayDistinct) {
-    PackCanonicalImage catalog;
-    catalog.hasCatalog = true;
-    catalog.packKind = kPackKindInit;
-    catalog.packStableId = 11;
-    PackInitCatalogRow row;
-    row.stableId = harkentest::ObjectId(2002);
-    row.identityClass = kInitCatalogIdentityClassAction;
-    row.ownerPackStableId = 22;
-    catalog.catalogRows.push_back(row);
-    catalog.catalogHeader.catalogEntryCount = 1;
-    PackComposition composition(1);
-    ASSERT_EQ(VN_OK, composition.Commit({}, &catalog, 11, 8, 0));
-    EXPECT_EQ(PackIdentityReadiness::KnownUnloaded,
-              composition.Lookup(harkentest::ObjectId(2002)).readiness);
-    EXPECT_EQ(PackIdentityReadiness::Absent,
-              composition.Lookup(harkentest::ObjectId(9999)).readiness);
-}
 
 TEST(PackComposition, OldDescRefusesCanonicalKind) {
     const std::vector<std::uint8_t> bytes = BuildInit();
@@ -14356,8 +14336,6 @@ struct R4SoundNeighborFixture {
             packB.data(), packB.size(), &parsedB);
         std::cerr << "ordinary neighbor parse init=" << initParse
                   << " A=" << aParse << " B=" << bParse
-                  << " catalogRows=" << parsedInit.catalogRows.size()
-                  << " startup=" << parsedInit.startupPackIds.size()
                   << '\n';
         const auto require = [](VnResult result, const char* stage) {
             EXPECT_EQ(VN_OK, result) << stage;

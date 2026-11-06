@@ -206,9 +206,9 @@ TEST(CurrentWorldInstall, TruncatedNestedCountsDoNotAllocateClaimedRows) {
     harken::CurrentWorldBodyImage image;
     ASSERT_TRUE(image.Decode(bytes.data(), bytes.size(), 18,
                             harken::CurrentWorldDecodeMode::StrictArtifact));
-    constexpr std::size_t property = harken::kCurrentWorldV3PrefixWireBytes +
-        harken::kCurrentWorldV6ActionCapacityWireBytes + 4 +
-        harken::kCurrentWorldV9CapacityWireBytes + 16;
+    constexpr std::size_t property = harken::kPackBodyWorldPrefixBytes +
+        harken::kPackBodyWorldActionCapacityBytes + 4 +
+        harken::kPackBodyWorldCapacityBytes + 16;
     // First property's layer ancestors, sends, effect nodes/edges and structural ancestors.
     for (const std::size_t offset : {property + 64, property + 72 + 91,
                                     property + 72 + 103, property + 72 + 107,

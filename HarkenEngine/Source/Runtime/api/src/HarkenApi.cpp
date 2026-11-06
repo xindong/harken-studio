@@ -77620,23 +77620,11 @@ void JournalCanonicalPackVintage2(
     trace.U32(closureCount);
     if (incomingEdges != nullptr) {
         const auto* published = engine.packComposition.Published();
-        const harken::PackCanonicalImage* catalog =
-            published != nullptr && published->hasCatalog ? &published->catalog
-                                                          : nullptr;
         for (const harken::PackDependencyEdge& edge : *incomingEdges) {
             if (edge.required01 == 0 || edge.prerequisitePackStableId == 0) {
                 continue;
             }
-            std::uint64_t prerequisiteHash = 0;
-            if (catalog != nullptr) {
-                for (const auto& row : catalog->catalogRows) {
-                    if (row.ownerPackStableId == edge.prerequisitePackStableId) {
-                        prerequisiteHash = row.expectedContentHash;
-                        break;
-                    }
-                }
-            }
-            trace.U64(edge.prerequisitePackStableId).U64(prerequisiteHash);
+            trace.U64(edge.prerequisitePackStableId).U64(0);
         }
     }
     if (recordReturnedHandle) {
@@ -106745,7 +106733,6 @@ namespace {
 VnResult AcquireCanonicalBytes(const VnPackLoadDesc& desc,
                                PackTable::AlignedBuffer* owned,
                                VnPackByteSpan* span, bool* releaseSpan,
-                               const PackCanonicalImage* catalogOrNull,
                                std::uint64_t maxBytes = UINT64_MAX);
 void ReleaseCanonicalBytes(const VnPackLoadDesc& desc, VnPackByteSpan span,
                            bool releaseSpan);
@@ -108249,7 +108236,7 @@ VnResult Vn_InspectInitPack(const VnPackLoadDesc* desc,
             return finish(VN_INVALID_ARG);
         }
         const VnResult acquired = harken::AcquireCanonicalBytes(
-            *desc, &owned, &bytes.span, &bytes.release, nullptr);
+            *desc, &owned, &bytes.span, &bytes.release);
         if (acquired != VN_OK) {
             return finish(acquired);
         }
@@ -108265,13 +108252,11 @@ VnResult Vn_InspectInitPack(const VnPackLoadDesc* desc,
         }
         outReport->status = 0;
         outReport->packStableId = image.packStableId;
-        outReport->catalogEntries = image.catalogHeader.catalogEntryCount;
-        outReport->catalogBytes = image.catalogHeader.catalogBytes;
-        outReport->recommendedMaxCatalogEntries =
-            image.catalogHeader.recommendedCatalogCapacity;
+        outReport->catalogEntries = 0;
+        outReport->catalogBytes = 0;
+        outReport->recommendedMaxCatalogEntries = 0;
         outReport->recommendedMaxActions = 0;
-        outReport->recommendedCatalogBytes =
-            image.catalogHeader.recommendedCatalogBytes;
+        outReport->recommendedCatalogBytes = 0;
         outReport->recommendedResidentDefinitionBytes =
             image.requirement.installedDefinitionBytes;
         outReport->requiredCapabilityMask =
@@ -108319,7 +108304,6 @@ static VnResult LoadPackObserved(const VnPackDesc* desc,
         if (engine->trace == nullptr || !engine->trace->Active()) return result;
         std::uint64_t packStableId = load->packStableId;
         std::uint64_t contentRevision = 0;
-        std::uint64_t expectedHash = 0;
         const std::vector<harken::PackDependencyEdge>* incomingEdges = nullptr;
         if (result == VN_OK && handle != 0) {
             if (const auto* published = engine->packComposition.Published()) {
@@ -108331,18 +108315,10 @@ static VnResult LoadPackObserved(const VnPackDesc* desc,
                         break;
                     }
                 }
-                if (published->hasCatalog && packStableId != 0) {
-                    for (const auto& row : published->catalog.catalogRows) {
-                        if (row.ownerPackStableId == packStableId) {
-                            expectedHash = row.expectedContentHash;
-                            break;
-                        }
-                    }
-                }
             }
         }
         JournalCanonicalPackVintage2(
-            trace, *engine, packStableId, contentRevision, expectedHash,
+            trace, *engine, packStableId, contentRevision, 0,
             providerTag, incomingEdges,
             handle, true);
         return result;
@@ -108427,7 +108403,6 @@ static VnResult UnloadPackWithFlags(VnPackHandle handle,
             engine->packComposition.Published() != nullptr) {
             std::uint64_t packStableId = 0;
             std::uint64_t contentRevision = 0;
-            std::uint64_t expectedHash = 0;
             if (const auto* published = engine->packComposition.Published()) {
                 for (const auto& owner : published->owners) {
                     if (owner.handle == handle) {
@@ -108436,19 +108411,11 @@ static VnResult UnloadPackWithFlags(VnPackHandle handle,
                         break;
                     }
                 }
-                if (published->hasCatalog && packStableId != 0) {
-                    for (const auto& row : published->catalog.catalogRows) {
-                        if (row.ownerPackStableId == packStableId) {
-                            expectedHash = row.expectedContentHash;
-                            break;
-                        }
-                    }
-                }
             }
             const VnResult result =
                 harken::UnloadCanonicalPack(*engine, handle, flags);
             JournalCanonicalPackVintage2(unloadTrace, *engine, packStableId,
-                                         contentRevision, expectedHash, 0,
+                                         contentRevision, 0, 0,
                                          nullptr, 0, false);
             return result;
         }
@@ -118267,7 +118234,6 @@ VnResult Vn_ReplacePack(VnPackHandle handle, const VnPackDesc* desc) {
             if (engine->trace == nullptr || !engine->trace->Active()) return result;
             std::uint64_t packStableId = load->packStableId;
             std::uint64_t contentRevision = 0;
-            std::uint64_t expectedHash = 0;
             const std::vector<harken::PackDependencyEdge>* incomingEdges = nullptr;
             if (const auto* published = engine->packComposition.Published()) {
                 for (const auto& owner : published->owners) {
@@ -118278,18 +118244,10 @@ VnResult Vn_ReplacePack(VnPackHandle handle, const VnPackDesc* desc) {
                         break;
                     }
                 }
-                if (published->hasCatalog && packStableId != 0) {
-                    for (const auto& row : published->catalog.catalogRows) {
-                        if (row.ownerPackStableId == packStableId) {
-                            expectedHash = row.expectedContentHash;
-                            break;
-                        }
-                    }
-                }
             }
             JournalCanonicalPackVintage2(
                 replaceTrace, *engine, packStableId, contentRevision,
-                expectedHash, provider ? 2u : (root ? 1u : 0u),
+                0, provider ? 2u : (root ? 1u : 0u),
                 incomingEdges, handle,
                 false);
             return result;
@@ -123941,28 +123899,6 @@ bool CatalogLocatorLegal(const char* locator) {
     return true;
 }
 
-const PackInitCatalogRow* FindCatalogOwner(
-    const PackCanonicalImage& catalog, std::uint64_t packStableId) {
-    if (packStableId == 0) {
-        return nullptr;
-    }
-    const PackInitCatalogRow* found = nullptr;
-    for (const PackInitCatalogRow& row : catalog.catalogRows) {
-        if (row.ownerPackStableId != packStableId) {
-            continue;
-        }
-        if (found != nullptr &&
-            (found->expectedContentHash != row.expectedContentHash ||
-             found->variantKey != row.variantKey ||
-             std::strcmp(found->relativeLocator.data(),
-                         row.relativeLocator.data()) != 0)) {
-            return nullptr;
-        }
-        found = &row;
-    }
-    return found;
-}
-
 VnResult ResolveUnderContainmentRoot(const char* rootUtf8, const char* locator,
                                      std::string* outResolved) {
     if (rootUtf8 == nullptr || locator == nullptr || outResolved == nullptr ||
@@ -124050,8 +123986,7 @@ VnResult ResolveRootUtf8Path(const VnPackLoadDesc& desc, std::string* outResolve
     return VN_OK;
 }
 
-const char* CanonicalPackJournalPath(const Engine& engine,
-                                     const VnPackLoadDesc& load,
+const char* CanonicalPackJournalPath(const VnPackLoadDesc& load,
                                      std::string* storage) {
     if (storage == nullptr ||
         (load.flags & VN_PACK_LOAD_FLAG_PROVIDER) != 0) {
@@ -124068,36 +124003,14 @@ const char* CanonicalPackJournalPath(const Engine& engine,
         }
         return load.utf8Path;
     }
-    if ((load.flags & VN_PACK_LOAD_FLAG_ROOT) == 0 ||
-        load.utf8ContainmentRoot == nullptr || load.packStableId == 0) {
-        return nullptr;
-    }
-    const auto* published = engine.packComposition.Published();
-    if (published == nullptr || !published->hasCatalog) {
-        return nullptr;
-    }
-    const PackInitCatalogRow* row =
-        FindCatalogOwner(published->catalog, load.packStableId);
-    if (row == nullptr || row->relativeLocator[0] == '\0') {
-        return nullptr;
-    }
-    if (ResolveUnderContainmentRoot(load.utf8ContainmentRoot,
-                                    row->relativeLocator.data(),
-                                    storage) != VN_OK ||
-        storage->empty()) {
-        return nullptr;
-    }
-    return storage->c_str();
+    return nullptr;
 }
 
-VnResult ResolveCanonicalFilePath(const VnPackLoadDesc& desc,
-    const PackInitCatalogRow* catalogRow, std::string* resolved) {
+VnResult ResolveCanonicalFilePath(const VnPackLoadDesc& desc, std::string* resolved) {
     if ((desc.flags & VN_PACK_LOAD_FLAG_ROOT) != 0) {
         if (desc.utf8ContainmentRoot == nullptr) return VN_INVALID_ARG;
         if (desc.utf8Path != nullptr) return ResolveRootUtf8Path(desc, resolved);
-        if (catalogRow == nullptr) return VN_UNKNOWN_ID;
-        return ResolveUnderContainmentRoot(desc.utf8ContainmentRoot,
-            catalogRow->relativeLocator.data(), resolved);
+        return VN_UNKNOWN_ID;
     }
     if (desc.utf8Path == nullptr) return VN_INVALID_ARG;
     *resolved = desc.utf8Path;
@@ -124107,7 +124020,6 @@ VnResult ResolveCanonicalFilePath(const VnPackLoadDesc& desc,
 VnResult AcquireCanonicalBytes(const VnPackLoadDesc& desc,
                                PackTable::AlignedBuffer* owned,
                                VnPackByteSpan* span, bool* releaseSpan,
-                               const PackCanonicalImage* catalogOrNull,
                                std::uint64_t maxBytes) {
     *releaseSpan = false;
     span->structSize = sizeof(VnPackByteSpan);
@@ -124115,33 +124027,12 @@ VnResult AcquireCanonicalBytes(const VnPackLoadDesc& desc,
     span->bytes = nullptr;
     span->byteCount = 0;
 
-    const PackInitCatalogRow* catalogRow = nullptr;
-    if (catalogOrNull != nullptr && catalogOrNull->hasCatalog &&
-        desc.packStableId != 0) {
-        catalogRow = FindCatalogOwner(*catalogOrNull, desc.packStableId);
-        if (catalogRow == nullptr) {
-            return VN_UNKNOWN_ID;
-        }
-    }
-
-    const char* locator =
-        catalogRow != nullptr ? catalogRow->relativeLocator.data() : nullptr;
-    const std::uint32_t variantKey =
-        catalogRow != nullptr ? catalogRow->variantKey : 0;
-    const std::uint64_t expectedHash =
-        catalogRow != nullptr ? catalogRow->expectedContentHash : 0;
-
     if ((desc.flags & VN_PACK_LOAD_FLAG_PROVIDER) != 0) {
         if (desc.provide == nullptr) {
             return VN_INVALID_ARG;
         }
-        if (catalogRow != nullptr && !CatalogLocatorLegal(locator)) {
-            return VN_PACK_PATH_ESCAPE;
-        }
         const VnResult provided = desc.provide(
-            desc.providerUserData, desc.packStableId,
-            catalogRow != nullptr ? locator : desc.utf8Path, variantKey,
-            expectedHash, span);
+            desc.providerUserData, desc.packStableId, desc.utf8Path, 0, 0, span);
         if (provided != VN_OK) {
             return provided == VN_INVALID_ARG ? VN_INVALID_ARG
                                               : VN_PACK_PROVIDER_FAILED;
@@ -124156,7 +124047,7 @@ VnResult AcquireCanonicalBytes(const VnPackLoadDesc& desc,
         return span->byteCount > maxBytes ? VN_PACK_RESIDENT_CAPACITY : VN_OK;
     }
     std::string resolved;
-    const auto rooted = ResolveCanonicalFilePath(desc, catalogRow, &resolved);
+    const auto rooted = ResolveCanonicalFilePath(desc, &resolved);
     if (rooted != VN_OK) return rooted;
     std::uint64_t fileBytes = 0;
     *owned = ReadPackFileAligned(resolved.c_str(), &fileBytes, maxBytes);
@@ -124253,8 +124144,7 @@ void ReportCanonicalConflict(Engine& engine, VnObjectId objectId,
 
 VnResult CheckContentAgainstGameplayCatalog(
     const PackComposition::PublishedView& published,
-    const PackCanonicalImage& image,
-    std::uint64_t newContentHash) {
+    const PackCanonicalImage& image) {
     if (!published.hasGameplayCatalog) {
         return VN_OK;
     }
@@ -124288,15 +124178,6 @@ VnResult CheckContentAgainstGameplayCatalog(
             continue;
         }
         if (!containsAction) {
-            if (published.hasCatalog) {
-                const PackInitCatalogRow* catalogRow =
-                    FindCatalogOwner(published.catalog, image.packStableId);
-                if (catalogRow != nullptr &&
-                    catalogRow->expectedContentHash != 0 &&
-                    catalogRow->expectedContentHash != newContentHash) {
-                    return VN_PACK_HASH_MISMATCH;
-                }
-            }
             return VN_PACK_STALE_REVISION;
         }
     }
@@ -125753,20 +125634,15 @@ VnResult ValidateCanonicalV2InitBusEntries(const PackCanonicalImage& init) {
 }
 
 VnResult AcquireCanonicalSetMember(Engine& engine, const VnPackLoadDesc& load,
-    const PackCanonicalImage* catalog, std::uint64_t* stagedBytes,
+    std::uint64_t* stagedBytes,
     AcquiredCanonicalSetMember* out, std::uint64_t* traceResource = nullptr,
     std::span<const AcquiredCanonicalSetMember> previous = {}) {
     if (*stagedBytes > engine.config.maxPackDecodeStagingBytes) return VN_PACK_RESIDENT_CAPACITY;
     VnResult parsed = VN_OK;
     CanonicalByteSpanGuard guard{load};
     if ((load.flags & VN_PACK_LOAD_FLAG_PROVIDER) == 0 && engine.trace == nullptr) {
-        const PackInitCatalogRow* catalogRow = nullptr;
-        if (catalog != nullptr && catalog->hasCatalog && load.packStableId != 0) {
-            catalogRow = FindCatalogOwner(*catalog, load.packStableId);
-            if (catalogRow == nullptr) return VN_UNKNOWN_ID;
-        }
         std::string path;
-        const auto rooted = ResolveCanonicalFilePath(load, catalogRow, &path);
+        const auto rooted = ResolveCanonicalFilePath(load, &path);
         if (rooted != VN_OK) return rooted;
         std::vector<const PCMRegistry::PreparedPackSamples*> candidates;
         for (const auto& member : previous)
@@ -125783,7 +125659,7 @@ VnResult AcquireCanonicalSetMember(Engine& engine, const VnPackLoadDesc& load,
         }
     }
     if (!out->boundedFile) {
-        const auto acquired = AcquireCanonicalBytes(load, &out->bytes, &guard.span, &guard.release, catalog,
+        const auto acquired = AcquireCanonicalBytes(load, &out->bytes, &guard.span, &guard.release,
             engine.config.maxPackDecodeStagingBytes - *stagedBytes);
         if (acquired != VN_OK) { return acquired; }
         if (guard.span.structSize != sizeof(VnPackByteSpan) || guard.span.reserved0 != 0) {
@@ -125812,14 +125688,6 @@ VnResult AcquireCanonicalSetMember(Engine& engine, const VnPackLoadDesc& load,
         return VN_BAD_PACK;
     }
     if (out->image.packStableId != load.packStableId) { return VN_UNKNOWN_ID; }
-    if (catalog != nullptr && catalog->hasCatalog) {
-        const auto* row = FindCatalogOwner(*catalog, out->image.packStableId);
-        if (row == nullptr) { return VN_UNKNOWN_ID; }
-        if ((load.flags & VN_PACK_LOAD_FLAG_PROVIDER) != 0 &&
-            row->expectedContentHash != 0 && row->expectedContentHash != out->hash) {
-            return VN_PACK_HASH_MISMATCH;
-        }
-    }
     for (const auto& media : out->image.media) {
         if (StreamIdReserved(&engine, media.soundId)) { return VN_IN_USE; }
     }
@@ -126669,7 +126537,7 @@ VnResult PrepareCanonicalSetActivation(Engine& engine,
         } else {
             if (capturedMembers == nullptr) {
                 const auto loaded = AcquireCanonicalSetMember(engine, MemberToLoadDesc(desc.members[i]),
-                    i == 0 ? nullptr : &out->members.front().image, &stagedBytes, &captured,
+                    &stagedBytes, &captured,
                     nullptr, std::span<const AcquiredCanonicalSetMember>(out->members.data(), i));
                 if (loaded != VN_OK) return loaded;
             }
@@ -126684,10 +126552,6 @@ VnResult PrepareCanonicalSetActivation(Engine& engine,
         }
         if (i == 0 && !image.hasBusDefinitionSnapshot) {
             return VN_BAD_PACK;
-        }
-        if (i == 0 && (image.catalogHeader.catalogEntryCount > engine.config.maxCatalogEntries ||
-                       image.catalogHeader.catalogBytes > engine.config.maxCatalogBytes)) {
-            return VN_PACK_CATALOG_CAPACITY;
         }
         inputs.push_back({desc.members[i].expectedHandle,
             MakeCanonicalRevisionKey(desc.members[i].expectedHandle, image),
@@ -126844,7 +126708,7 @@ VnResult PrepareCanonicalSetActivation(Engine& engine,
     if (references != VN_OK) { return references; }
     for (std::uint32_t i = 1; i < desc.memberCount; ++i) {
         if (operations != nullptr) continue;
-        const auto catalog = CheckContentAgainstGameplayCatalog(*next, out->members[i].image, out->members[i].hash);
+        const auto catalog = CheckContentAgainstGameplayCatalog(*next, out->members[i].image);
         if (catalog != VN_OK) { return catalog; }
     }
     if (out->preserveInit) {
@@ -127079,11 +126943,8 @@ VnResult ActivateCanonicalPackSetImpl(
                         const std::uint64_t identity[] = {2, operation, digest};
                         semanticKey = Fnv1a64(identity, sizeof(identity), semanticKey);
                         if (operation == VN_PACK_MEMBER_KEEP) continue;
-                        const PackCanonicalImage* init = nullptr;
-                        if (i != 0) init = (*operations)[0] == VN_PACK_MEMBER_KEEP && previous != nullptr
-                            ? &previous->catalog : &captured.front().image;
                         const auto result = AcquireCanonicalSetMember(engine,
-                            MemberToLoadDesc(desc.members[i]), init, &staged, &captured[i],
+                            MemberToLoadDesc(desc.members[i]), &staged, &captured[i],
                             traceResources != nullptr ? &(*traceResources)[i] : nullptr,
                             std::span<const AcquiredCanonicalSetMember>(captured.data(), i));
                         if (result != VN_OK) {
@@ -127449,7 +127310,7 @@ VnResult UnloadCanonicalPackSetV1(Engine& engine,
 void JournalCanonicalPackFileRef(TraceCallScribe& trace, const Engine& engine,
                                  const VnPackLoadDesc& load) {
     std::string resolved;
-    const char* path = CanonicalPackJournalPath(engine, load, &resolved);
+    const char* path = CanonicalPackJournalPath(load, &resolved);
     if (path != nullptr) {
         trace.U32(1).FileRef(path);
         return;
@@ -127478,15 +127339,11 @@ VnResult LoadCanonicalPackImpl(Engine& engine, const VnPackLoadDesc* desc,
     PackTable::AlignedBuffer owned;
     CanonicalByteSpanGuard spanGuard{*desc};
     const VnPackByteSpan& span = spanGuard.span;
-    const PackCanonicalImage* publishedCatalog = nullptr;
     if (const auto* published = engine.packComposition.Published()) {
         if (published->companionNames) return VN_AUTHORITY_CONFLICT;
-        if (published->hasCatalog) {
-            publishedCatalog = &published->catalog;
-        }
     }
     const VnResult acquired = AcquireCanonicalBytes(
-        *desc, &owned, &spanGuard.span, &spanGuard.release, publishedCatalog,
+        *desc, &owned, &spanGuard.span, &spanGuard.release,
         engine.config.maxPackDecodeStagingBytes);
     if (acquired != VN_OK) {
         return acquired;
@@ -127521,21 +127378,6 @@ VnResult LoadCanonicalPackImpl(Engine& engine, const VnPackLoadDesc* desc,
     if (desc->packStableId != 0 && desc->packStableId != image.packStableId) {
         return VN_UNKNOWN_ID;
     }
-    if (image.packKind == kPackKindInit && image.hasCatalog &&
-        image.catalogHeader.catalogEntryCount >
-            engine.config.maxCatalogEntries) {
-        engine.packComposition.NoteRefusal(
-            image.catalogHeader.catalogEntryCount,
-            engine.config.maxCatalogEntries, VN_PACK_CATALOG_CAPACITY);
-        return VN_PACK_CATALOG_CAPACITY;
-    }
-    if (image.packKind == kPackKindInit && image.hasCatalog &&
-        image.catalogHeader.catalogBytes > engine.config.maxCatalogBytes) {
-        engine.packComposition.NoteRefusal(image.catalogHeader.catalogBytes,
-                                           engine.config.maxCatalogBytes,
-                                           VN_PACK_CATALOG_CAPACITY);
-        return VN_PACK_CATALOG_CAPACITY;
-    }
     if (image.hasPartition &&
         image.partitionBody.size() >
             engine.config.maxResidentDefinitionBytes) {
@@ -127555,24 +127397,9 @@ VnResult LoadCanonicalPackImpl(Engine& engine, const VnPackLoadDesc* desc,
                       image.packStableId)) {
         return VN_PACK_CYCLE;
     }
-    if (image.packKind == kPackKindCanonicalContent &&
-        publishedCatalog != nullptr) {
-        const PackInitCatalogRow* catalogRow =
-            FindCatalogOwner(*publishedCatalog, image.packStableId);
-        if (catalogRow == nullptr) {
-            return VN_UNKNOWN_ID;
-        }
-        if (desc->utf8Path == nullptr &&
-            Fnv1a64(span.bytes, static_cast<std::size_t>(span.byteCount)) !=
-                catalogRow->expectedContentHash) {
-            return VN_PACK_HASH_MISMATCH;
-        }
-    }
     if (image.packKind == kPackKindCanonicalContent) {
         if (const auto* published = engine.packComposition.Published()) {
-            const VnResult catalogCheck = CheckContentAgainstGameplayCatalog(
-                *published, image,
-                Fnv1a64(span.bytes, static_cast<std::size_t>(span.byteCount)));
+            const VnResult catalogCheck = CheckContentAgainstGameplayCatalog(*published, image);
             if (catalogCheck != VN_OK)
                 return catalogCheck;
         }
@@ -127850,20 +127677,13 @@ VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle,
     PackTable::AlignedBuffer owned;
     CanonicalByteSpanGuard spanGuard{*desc};
     const VnPackByteSpan& span = spanGuard.span;
-    const PackCanonicalImage* publishedCatalog =
-        published->hasCatalog ? &published->catalog : nullptr;
     PackCanonicalImage image;
     std::vector<PCMRegistry::PreparedPackSamples> samples;
     std::uint64_t byteCount = 0, artifactHash = 0;
     bool boundedFile = false;
     if ((desc->flags & VN_PACK_LOAD_FLAG_PROVIDER) == 0 && engine.trace == nullptr) {
-        const PackInitCatalogRow* catalogRow = nullptr;
-        if (publishedCatalog != nullptr && desc->packStableId != 0) {
-            catalogRow = FindCatalogOwner(*publishedCatalog, desc->packStableId);
-            if (catalogRow == nullptr) return VN_UNKNOWN_ID;
-        }
         std::string path;
-        const auto rooted = ResolveCanonicalFilePath(*desc, catalogRow, &path);
+        const auto rooted = ResolveCanonicalFilePath(*desc, &path);
         if (rooted != VN_OK) return rooted;
         bool retry = false;
         const auto read = ReadPackCanonicalFile(path.c_str(), engine.registry, &image, &samples,
@@ -127873,7 +127693,7 @@ VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle,
     }
     if (!boundedFile) {
         const VnResult acquired = AcquireCanonicalBytes(
-            *desc, &owned, &spanGuard.span, &spanGuard.release, publishedCatalog,
+            *desc, &owned, &spanGuard.span, &spanGuard.release,
             engine.config.maxPackDecodeStagingBytes);
         if (acquired != VN_OK) return acquired;
         const VnResult parsed =
@@ -127894,24 +127714,14 @@ VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle,
     if (liveOwner == nullptr) {
         return VN_STALE_HANDLE;
     }
-    if (publishedCatalog != nullptr) {
-        const PackInitCatalogRow* catalogRow =
-            FindCatalogOwner(*publishedCatalog, image.packStableId);
-        if (catalogRow == nullptr) {
-            return VN_UNKNOWN_ID;
-        }
-        if (image.packStableId != liveOwner->packStableId) {
-            return VN_UNKNOWN_ID;
-        }
-    } else if (image.packStableId != liveOwner->packStableId) {
+    if (image.packStableId != liveOwner->packStableId) {
         return VN_UNKNOWN_ID;
     }
     if (RequiredCycle(engine.packComposition, image.dependencyEdges,
                       image.packStableId)) {
         return VN_PACK_CYCLE;
     }
-    const VnResult catalogCheck = CheckContentAgainstGameplayCatalog(
-        *published, image, artifactHash);
+    const VnResult catalogCheck = CheckContentAgainstGameplayCatalog(*published, image);
     if (catalogCheck != VN_OK) {
         return catalogCheck;
     }
@@ -127962,20 +127772,9 @@ VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle,
             break;
         }
     }
-    PackCanonicalImage successorCatalog;
-    const PackCanonicalImage* catalogToPublish = nullptr;
-    if (published->hasCatalog) {
-        successorCatalog = published->catalog;
-        for (PackInitCatalogRow& row : successorCatalog.catalogRows) {
-            if (row.ownerPackStableId == image.packStableId) {
-                row.expectedContentHash = artifactHash;
-            }
-        }
-        catalogToPublish = &successorCatalog;
-    }
     PreparedCanonicalPublication publication;
     const VnResult preparedPublication = PrepareCanonicalOwners(
-        engine, std::move(owners), catalogToPublish, published->initHandle,
+        engine, std::move(owners), nullptr, published->initHandle,
         PackVariablePublicationReason::ContentMutation,
         &publication);
     if (preparedPublication != VN_OK) {

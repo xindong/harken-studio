@@ -161,16 +161,12 @@ struct PackContainerChild {
     std::uint32_t delayJitterMs = 0;
 };
 
-inline constexpr std::uint32_t kInitCatalogMaxLocatorBytes = 256;
-inline constexpr std::uint32_t kInitCatalogMaxStartupPacks = 256;
-inline constexpr std::uint32_t kInitCatalogMaxEntries = 1048576;
 inline constexpr std::uint32_t kCanonicalDefinitionPartitionBodyVintage =
     kCurrentWorldShippingBodyVintage;
 inline constexpr std::uint32_t kInitCatalogIdentityClassAction = 1;
 inline constexpr std::uint32_t kInitCatalogIdentityClassPlayable = 2;
 inline constexpr std::uint32_t kInitCatalogIdentityClassVariable = 3;
 inline constexpr std::uint32_t kInitCatalogIdentityClassResource = 4;
-inline constexpr std::uint32_t kInitCatalogFlagStartupRequired = 1u;
 inline constexpr std::uint32_t kPackDependencyEdgeKindInit = 1;
 inline constexpr std::uint32_t kPackDependencyEdgeKindShared = 2;
 inline constexpr std::uint32_t kPackDependencyEdgeKindContent = 3;
@@ -194,36 +190,6 @@ inline bool CheckedAddU64(std::uint64_t a, std::uint64_t b, std::uint64_t* out) 
     *out = a + b;
     return true;
 }
-
-struct PackInitCatalogHeader {
-    std::uint32_t schemaVersion = 0;
-    std::uint32_t storageModelVersion = 0;
-    std::uint64_t projectBuildId = 0;
-    std::uint32_t platformId = 0;
-    std::uint32_t languageId = 0;
-    std::uint64_t totalDefinitionCount = 0;
-    std::uint64_t totalResourceCount = 0;
-    std::uint32_t catalogEntryCount = 0;
-    std::uint32_t startupPackCount = 0;
-    std::uint64_t catalogBytes = 0;
-    std::uint32_t recommendedCatalogCapacity = 0;
-    std::uint32_t reserved0 = 0;
-    std::uint64_t recommendedCatalogBytes = 0;
-    std::uint64_t checksum = 0;
-    std::uint64_t reserved1 = 0;
-};
-
-struct PackInitCatalogRow {
-    harkenstudio::ObjectId stableId{};
-    std::uint32_t identityClass = 0;
-    std::uint32_t flags = 0;
-    std::uint64_t ownerPackStableId = 0;
-    std::uint64_t prerequisitePackStableId = 0;
-    std::uint32_t variantKey = 0;
-    std::uint32_t locatorByteCount = 0;
-    std::array<char, kInitCatalogMaxLocatorBytes> relativeLocator{};
-    std::uint64_t expectedContentHash = 0;
-};
 
 struct PackRequirementBlock {
     std::uint32_t schemaVersion = 0;

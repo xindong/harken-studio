@@ -1524,9 +1524,6 @@ TEST(EditorProjectPackExporterManifest, InitHasNoRoutingCatalogAndEveryPackHasKi
                   reinterpret_cast<const std::uint8_t*>(initBytes.constData()),
                   static_cast<std::uint64_t>(initBytes.size()), &initImage));
     EXPECT_TRUE(initImage.hasPartition);
-    EXPECT_FALSE(initImage.hasCatalog);
-    EXPECT_FALSE(initImage.hasGameplayCatalog);
-    EXPECT_TRUE(initImage.catalogRows.empty());
     bool sawCatalogEntry = false;
     harken::PackFileHeader initHeader;
     ASSERT_TRUE(harken::ReadPackFileHeader(
@@ -2234,8 +2231,6 @@ TEST(EditorProjectPackExporterManifest, CanonicalContentOmitsKindNineAndClaimsCo
               harken::ParsePackCanonicalImage(
                   reinterpret_cast<const std::uint8_t*>(initBytes.constData()),
                   static_cast<std::uint64_t>(initBytes.size()), &initImage));
-    EXPECT_FALSE(initImage.hasCatalog);
-    EXPECT_TRUE(initImage.catalogRows.empty());
 
     const QJsonObject ownerPack = findByName(
         readPublication(dir.path()),
@@ -3007,14 +3002,11 @@ TEST(EditorProjectPackExporterManifest, LanguageVariantsKeepDistinctPackIdentiti
               harken::ParsePackCanonicalImage(
                   reinterpret_cast<const std::uint8_t*>(initBytes.constData()),
                   static_cast<std::uint64_t>(initBytes.size()), &initImage));
-    EXPECT_FALSE(initImage.hasCatalog);
-    EXPECT_TRUE(initImage.catalogRows.empty());
     expectInitHasVolumeOnlyKind24(QDir(dir.path()).filePath(QStringLiteral("Init.bytes")));
 
     const std::uint64_t englishId = fnvUtf8(HarkenTest::platformIdString("Windows") + QStringLiteral("/English/action_3da91a64-b947-4560-0000-0000000186b5"));
     const std::uint64_t jaId = fnvUtf8(HarkenTest::platformIdString("Windows") + QStringLiteral("/ja/action_3da91a64-b947-4560-0000-0000000186b5"));
     EXPECT_NE(englishId, jaId);
-    EXPECT_FALSE(initImage.hasGameplayCatalog);
     const QJsonArray packs = readPublication(dir.path());
     const auto findByStableId = [&](std::uint64_t id) {
         const QString text = QString::number(id);

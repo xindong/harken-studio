@@ -115,27 +115,12 @@ struct PackLogicImage {
     }
 };
 
-enum class PackCatalogIdentityState : std::uint32_t {
-    Absent = 0,
-    KnownUnloaded = 1,
-};
-
 struct PackCanonicalImage {
     std::uint32_t packKind = 0;
     std::uint64_t packStableId = 0;
     PackRequirementBlock requirement{};
     bool hasRequirement = false;
-    bool hasCatalog = false;
-    bool hasGameplayCatalog = false;
-    GameplayCatalogImage gameplayCatalog;
-    bool hasVariableNameCatalog = false;
-    PackVariableNameCatalog variableNameCatalog;
     bool hasPartition = false;
-    std::uint64_t catalogPayloadOffset = 0;
-    std::uint64_t catalogDirectoryChecksum = 0;
-    PackInitCatalogHeader catalogHeader{};
-    std::vector<PackInitCatalogRow> catalogRows;
-    std::vector<std::uint64_t> startupPackIds;
     PackCanonicalPartitionHeader partitionHeader{};
     std::vector<std::uint8_t> partitionBody;
     std::vector<PackDependencyEdge> dependencyEdges;
@@ -173,32 +158,6 @@ struct PackCanonicalImage {
     std::vector<PackBusDefinitionDownmix> busDefinitionDownmixesV2;
     std::vector<float> busDefinitionCoefficients;
 };
-
-inline PackCatalogIdentityState LookupInitCatalogIdentity(
-    const PackCanonicalImage& image, VnObjectId stableId,
-    const PackInitCatalogRow** outRow = nullptr) {
-    if (outRow != nullptr) {
-        *outRow = nullptr;
-    }
-    std::size_t lo = 0;
-    std::size_t hi = image.catalogRows.size();
-    while (lo < hi) {
-        const std::size_t mid = lo + (hi - lo) / 2;
-        const VnObjectId midId = image.catalogRows[mid].stableId;
-        if (midId == stableId) {
-            if (outRow != nullptr) {
-                *outRow = &image.catalogRows[mid];
-            }
-            return PackCatalogIdentityState::KnownUnloaded;
-        }
-        if (midId < stableId) {
-            lo = mid + 1;
-        } else {
-            hi = mid;
-        }
-    }
-    return PackCatalogIdentityState::Absent;
-}
 
 inline std::uint64_t CanonicalVolumeBusFingerprint(const PackCanonicalImage& image) noexcept {
     const auto& header = image.busDefinitionSnapshotHeader;

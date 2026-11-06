@@ -2128,12 +2128,10 @@ bool inspectPackPublication(const QString& directory, const QString& projectId,
         const bool parsed = readAll(dir.filePath(path), &bytes, &detail)
             && harkenstudiobuild::ParsePackCanonicalImage(reinterpret_cast<const std::uint8_t*>(bytes.constData()),
                 bytes.size(), &image) == harkenstudiobuild::kPackOk;
-        const bool catalog = parsed && ((image.packKind == harkenstudiobuild::kPackKindInit && image.hasCatalog)
-            || image.hasGameplayCatalog || image.hasVariableNameCatalog);
-        const bool decoded = parsed && !catalog
+        const bool decoded = parsed
             && body.Decode(image.partitionBody.data(), image.partitionBody.size(),
                 harkenstudiobuild::kCanonicalDefinitionPartitionBodyVintage);
-        if (!decoded || catalog) {
+        if (!decoded) {
             if (requireComplete && selected && hasCompanion)
                 return reject(QStringLiteral("Invalid published Pack '%1'").arg(path));
             continue;

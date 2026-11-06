@@ -33,7 +33,6 @@ SOURCE_SCANS = {
     'HarkenEngine/Source/Runtime/media/include/harken/media/CanonicalBusSnapshot.h': None,
     'HarkenStudio/Source/Tooling/PackBuild/include/harken_studio_build/BusSnapshot.h': None,
     'HarkenEngine/Source/Runtime/media/include/harken/media/PackVariableNameCatalog.h': None,
-    'HarkenStudio/Source/Tooling/PackBuild/include/harken_studio_build/PackVariableNameCatalog.h': None,
     'HarkenEngine/Source/Runtime/media/src/PackLogicImage.cpp': None,
     'HarkenStudio/Source/Tooling/PackBuild/src/PackImage.cpp': None,
     'HarkenEngine/Source/Runtime/media/src/PackTable.cpp': None,

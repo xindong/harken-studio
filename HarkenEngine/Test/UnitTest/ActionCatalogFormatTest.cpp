@@ -223,8 +223,6 @@ TEST(ActionCatalogFormat, InitWithoutKind25StillParses) {
     const std::vector<std::uint8_t> bytes = BuildInitBare();
     PackCanonicalImage image;
     ASSERT_EQ(VN_OK, ParsePackCanonicalImage(bytes.data(), bytes.size(), &image));
-    EXPECT_FALSE(image.hasGameplayCatalog);
-    EXPECT_FALSE(image.hasCatalog);
 }
 
 TEST(ActionCatalogFormat, CatalogMustMatchActiveInitIdentity) {

@@ -192,37 +192,6 @@ VnResult ReplacePack(VnPackHandle handle, const std::vector<std::uint8_t>& bytes
 
 } // namespace
 
-TEST(ActionCatalogOwnership, PrepareCandidateCopiesCatalogOnInitOnly) {
-    PackCanonicalImage initImage;
-    const std::vector<std::uint8_t> initBytes =
-        BuildInitBare();
-    ASSERT_EQ(VN_OK, ParsePackCanonicalImage(initBytes.data(), initBytes.size(),
-                                             &initImage));
-    const auto catalog = BuildGameplayCatalog(kActionId);
-    ASSERT_EQ(VN_OK, ParseGameplayCatalog(catalog.data(), catalog.size(),
-                                         &initImage.gameplayCatalog));
-    initImage.hasGameplayCatalog = true;
-    PackComposition composition(1);
-    PackComposition::CandidateOwner initOwner;
-    ASSERT_EQ(VN_OK, composition.PrepareCandidate(initImage, kInitHandle,
-                                                  &initOwner));
-    EXPECT_TRUE(initOwner.hasGameplayCatalog);
-    EXPECT_EQ(1u, initOwner.gameplayCatalog.active.size());
-    EXPECT_EQ(kActionId, initOwner.gameplayCatalog.active[0].actionStableId);
-
-    PackCanonicalImage contentImage;
-    const std::vector<std::uint8_t> contentBytes =
-        BuildContentPack(1, kActionId, 0x3f000000u);
-    ASSERT_EQ(VN_OK,
-              ParsePackCanonicalImage(contentBytes.data(), contentBytes.size(),
-                                      &contentImage));
-    PackComposition::CandidateOwner contentOwner;
-    ASSERT_EQ(VN_OK, composition.PrepareCandidate(contentImage, kContentHandle,
-                                                  &contentOwner));
-    EXPECT_FALSE(contentOwner.hasGameplayCatalog);
-    EXPECT_TRUE(contentOwner.gameplayCatalog.active.empty());
-}
-
 TEST(ActionCatalogOwnership, KeepAndPrepareCommitExposeSessionCatalog) {
     PackCanonicalImage initImage;
     const std::vector<std::uint8_t> initBytes =
@@ -230,28 +199,22 @@ TEST(ActionCatalogOwnership, KeepAndPrepareCommitExposeSessionCatalog) {
     ASSERT_EQ(VN_OK, ParsePackCanonicalImage(initBytes.data(), initBytes.size(),
                                              &initImage));
     const auto catalog = BuildGameplayCatalog(kActionId);
-    ASSERT_EQ(VN_OK, ParseGameplayCatalog(catalog.data(), catalog.size(),
-                                         &initImage.gameplayCatalog));
-    initImage.hasGameplayCatalog = true;
+    GameplayCatalogImage gameplay;
+    ASSERT_EQ(VN_OK, ParseGameplayCatalog(catalog.data(), catalog.size(), &gameplay));
     PackComposition composition(1);
     PackComposition::CandidateOwner initOwner;
     ASSERT_EQ(VN_OK, composition.PrepareCandidate(initImage, kInitHandle,
                                                   &initOwner));
     std::vector<PackComposition::CandidateOwner> owners;
     owners.push_back(std::move(initOwner));
-    ASSERT_EQ(VN_OK, composition.Commit(std::move(owners), &initImage,
-                                        kInitHandle, 8, 1));
+    PackComposition::PreparedCommit prepared;
+    ASSERT_EQ(VN_OK, composition.PrepareCommit(std::move(owners), &initImage, kInitHandle, 8, 1,
+                                               &prepared, nullptr, nullptr, false, &gameplay));
+    composition.CommitPrepared(&prepared);
     const auto* published = composition.Published();
     ASSERT_NE(nullptr, published);
     EXPECT_TRUE(published->hasGameplayCatalog);
-    ASSERT_FALSE(published->owners.empty());
-    EXPECT_TRUE(published->owners.front().hasGameplayCatalog);
-    EXPECT_EQ(initImage.gameplayCatalog.header.digest,
-              published->gameplayCatalog.header.digest);
-    const auto keep = PackComposition::Keep(published->owners.front());
-    EXPECT_TRUE(keep.hasGameplayCatalog);
-    EXPECT_EQ(published->gameplayCatalog.header.digest,
-              keep.gameplayCatalog.header.digest);
+    EXPECT_EQ(gameplay.header.digest, published->gameplayCatalog.header.digest);
     const auto bareBytes = BuildInitBare();
     PackCanonicalImage bare;
     ASSERT_EQ(VN_OK, ParsePackCanonicalImage(bareBytes.data(), bareBytes.size(), &bare));
@@ -259,7 +222,6 @@ TEST(ActionCatalogOwnership, KeepAndPrepareCommitExposeSessionCatalog) {
     ASSERT_EQ(VN_OK, composition.PrepareCandidate(bare, kInitHandle, &replacement));
     ASSERT_EQ(VN_OK, composition.Commit({std::move(replacement)}, &bare, kInitHandle, 8, 2));
     EXPECT_TRUE(composition.Published()->hasGameplayCatalog);
-    EXPECT_FALSE(composition.Published()->owners.front().hasGameplayCatalog);
     ++bare.requirement.packContentRevision;
     ASSERT_EQ(VN_OK, composition.PrepareCandidate(bare, kInitHandle, &replacement));
     ASSERT_EQ(VN_OK, composition.Commit({std::move(replacement)}, &bare, kInitHandle, 8, 3));
@@ -321,7 +283,6 @@ TEST(ActionCatalogOwnership, IndependentDirectorySurvivesContentActivationAndRej
     EXPECT_EQ(VN_UNKNOWN_ID, Vn_PostActionByName(&name, &firing));
     name.utf8Name = "Play_Renamed";
     EXPECT_EQ(VN_OK, Vn_PostActionByName(&name, &firing));
-    EXPECT_FALSE(session.Engine()->packComposition.Published()->owners.front().hasGameplayCatalog);
 }
 
 TEST(ActionCatalogOwnership, MissingKind25ReplaceIsNoOp) {

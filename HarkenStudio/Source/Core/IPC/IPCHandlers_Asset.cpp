@@ -711,8 +711,8 @@ QJsonObject IPCServer::handleGetPackInfo(const QJsonObject& args)
 
     using namespace harkenstudiobuild;
     const auto* data = reinterpret_cast<const uint8_t*>(bytes.constData());
-    PackV2Header header;
-    if (bytes.size() < kPackV2HeaderBytes || !ParsePackV2Header(data, &header))
+    PackFileHeader header;
+    if (bytes.size() < kPackFileHeaderBytes || !ReadPackFileHeader(data, &header))
         return errorResponse("INVALID_PACK", "Invalid pack header");
     PackCanonicalImage canonical;
     PackLogicImage logic;
@@ -726,8 +726,8 @@ QJsonObject IPCServer::handleGetPackInfo(const QJsonObject& args)
 
     QJsonArray sections;
     for (uint32_t index = 0; index < header.entryCount; ++index) {
-        const auto entry = ParsePackV2DirectoryEntry(
-            data + header.directoryOffset + static_cast<uint64_t>(index) * kPackV2DirectoryEntryBytes);
+        const auto entry = ReadPackDirectoryEntry(
+            data + header.directoryOffset + static_cast<uint64_t>(index) * kPackDirectoryEntryBytes);
         sections.append(QJsonObject{
             {"kind", static_cast<qint64>(entry.kind)},
             {"vintage", static_cast<qint64>(entry.vintage)},

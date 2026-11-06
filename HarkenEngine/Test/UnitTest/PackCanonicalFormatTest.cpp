@@ -1345,32 +1345,6 @@ TEST(PackCanonicalFormat, RetiredInitRoutingCatalogIsRejected) {
               ParsePackCanonicalImage(bytes.data(), bytes.size(), &image));
 }
 
-TEST(PackCanonicalFormat, CatalogLookupDistinguishesKnownUnloadedAndAbsent) {
-    PackCanonicalImage image;
-    image.hasCatalog = true;
-    image.packKind = kPackKindInit;
-    image.packStableId = 11;
-    PackInitCatalogRow initOwned;
-    initOwned.stableId = harkentest::ObjectId(1001);
-    initOwned.ownerPackStableId = 11;
-    PackInitCatalogRow contentOwned;
-    contentOwned.stableId = harkentest::ObjectId(2002);
-    contentOwned.ownerPackStableId = 22;
-    image.catalogRows = {initOwned, contentOwned};
-    const PackInitCatalogRow* row = nullptr;
-    EXPECT_EQ(PackCatalogIdentityState::KnownUnloaded,
-              LookupInitCatalogIdentity(image, harkentest::ObjectId(1001), &row));
-    ASSERT_NE(row, nullptr);
-    EXPECT_EQ(11u, row->ownerPackStableId);
-    EXPECT_EQ(PackCatalogIdentityState::KnownUnloaded,
-              LookupInitCatalogIdentity(image, harkentest::ObjectId(2002), &row));
-    ASSERT_NE(row, nullptr);
-    EXPECT_EQ(22u, row->ownerPackStableId);
-    EXPECT_EQ(PackCatalogIdentityState::Absent,
-              LookupInitCatalogIdentity(image, harkentest::ObjectId(9999), &row));
-    EXPECT_EQ(nullptr, row);
-}
-
 TEST(PackCanonicalFormat, KindTenAndLegacyVariableKindsStayBadPack) {
     for (std::uint32_t packKind : {kPackKindResident, kPackKindContent}) {
         ImageBuilder action(packKind);

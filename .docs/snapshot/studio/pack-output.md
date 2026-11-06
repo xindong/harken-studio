@@ -316,6 +316,8 @@ Editor 范围排除了 `ExportedPackLifecycle.WasapiImmediateSoundHarness`、`Ex
 
 复核修正（2026-11-06）：恢复 body 编码端在迁移中丢失的 Action 步数累计上限，以及 Engine 对 V19 专属量化时机的拒绝；历史 tag 的 `current` 不含 `binaryLayout`，审计加载它们时不再报错，`binaryLayout` 只对代际大于 4 的 Pack 合同强制，`current` 由 `pack_wire_codegen.py --check` 保证；移除运行时已不可达的 V1 总线快照分支及其类型。重建后 Runtime 执行 6457 项，6451 通过、6 跳过、0 失败；167 项打包回归通过，22 个产物文件与基线逐字节一致。Integration 原生合同未在本次复核中重跑。
 
+退役残留清理（2026-11-06）：运行时和 Studio 移除 Init routing catalog 的全部内部状态（`PackInitCatalog*`、`hasCatalog`、按 catalog 定位与校验哈希的分支），`PackCanonicalImage` 不再携带 Gameplay／变量名 catalog，Studio 删除未使用的 `GameplayCatalogFormat.h` 和 `PackVariableNameCatalog.h`。公开 ABI 保持不变：`VnConfig.maxCatalogEntries`、`VnConfig.maxCatalogBytes` 仍校验但不再约束 Pack；`VnInitPackInspectReport` 的 catalog 字段恒为 0；`VN_PACK_HASH_MISMATCH` 不再由 Pack 路径返回。`Vn_SetGameplayCatalog` 仍可用，其格式是独立于 `.bytes` 的 Engine 输入，`VN_PACK_CATALOG_CAPACITY` 目前只由它返回。Trace 中的预期哈希字段保留并写 0。基于 main `bb80a561` 重建后，Runtime 执行 6458 项，6452 通过、6 跳过、0 失败；Editor 执行 639 项，637 通过、1 跳过、1 失败，失败项为已知的 `EditorDockLayoutTest` 用例；167 项打包回归通过，22 个产物文件与迁移基线逐字节一致。
+
 ## 验证快照（2026-11-03）
 
 基线为 `a3c55d350612f29fbe1db357ccbee90c1618cb9c` 的保留二进制；本次 Harkenizer 的 SHA-256 为 `5dfb098d76abc23a7a84248055e624920326529aa7a7f9815c4dd954bc3fef6e`。167 项回归、14 项补充用例通过，22 个黄金样本产物与基线逐字节一致。真实工程比较共 36 次 CLI 调用，均成功且产物与对应输入的基线逐字节一致；原工程输入未改变。单平台产生 11 包／22 文件，四平台产生 44 包／88 文件。

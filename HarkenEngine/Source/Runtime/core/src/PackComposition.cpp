@@ -1101,13 +1101,6 @@ const PackComposition::PublishedOwner* FindActiveOwnerByPack(
     return nullptr;
 }
 
-bool CatalogKnowsIdentity(const PackComposition::PublishedView& published,
-                          VnObjectId stableId) noexcept {
-    return published.hasCatalog &&
-           LookupInitCatalogIdentity(published.catalog, stableId) ==
-               PackCatalogIdentityState::KnownUnloaded;
-}
-
 VnResult BuildDeclaredClosure(
     const PackComposition::PublishedView& published, std::uint32_t rootSlot,
     std::size_t maxPacks, std::vector<std::uint8_t>* member) {
@@ -1162,8 +1155,7 @@ VnResult ResolveInDeclaredClosure(
     const PackComposition::IdentityIndexEntry* hit =
         FindIdentityInClosure(published, member, stableId);
     if (hit == nullptr) {
-        return CatalogKnowsIdentity(published, stableId) ? VN_CONTENT_NOT_LOADED
-                                                         : VN_BAD_PACK;
+        return VN_BAD_PACK;
     }
     if (hit->packSlot >= member.size() || member[hit->packSlot] == 0 ||
         hit->packSlot >= published.owners.size() ||
@@ -2925,18 +2917,12 @@ VnResult PackComposition::PrepareCandidate(const PackCanonicalImage& image,
         candidate.voiceBindings->size() * sizeof(PackVoiceBinding);
     candidate.variablePolicyOverlays = image.variablePolicyOverlays;
     candidate.hasVariablePolicyOverlay = image.hasVariablePolicyOverlay;
-    candidate.hasVariableNameCatalog = image.hasVariableNameCatalog;
-    candidate.variableNameCatalog = image.variableNameCatalog;
     candidate.variableRequirements = image.variableRequirements;
     candidate.hasVariableRequirements = image.hasVariableRequirements;
     for (const PackDependencyEdge& edge : image.dependencyEdges) {
         if (edge.required01 != 0) {
             candidate.dependencyEdges.push_back(edge);
         }
-    }
-    if (image.packKind == kPackKindInit && image.hasGameplayCatalog) {
-        candidate.hasGameplayCatalog = true;
-        candidate.gameplayCatalog = image.gameplayCatalog;
     }
     candidate.hasBusDefinitionSnapshot = image.hasBusDefinitionSnapshot;
     candidate.busDefinitionSnapshotHeader = image.busDefinitionSnapshotHeader;
@@ -3149,10 +3135,6 @@ VnResult PackComposition::PrepareCommit(
         owner.providerClosureFingerprint = ProviderClosureFingerprint(owner);
         owner.voiceBindings = std::move(candidate.voiceBindings);
         owner.definitionBytes = candidate.definitionBytes;
-        owner.hasGameplayCatalog = candidate.hasGameplayCatalog;
-        owner.gameplayCatalog = std::move(candidate.gameplayCatalog);
-        owner.hasVariableNameCatalog = candidate.hasVariableNameCatalog;
-        owner.variableNameCatalog = std::move(candidate.variableNameCatalog);
         if (candidate.body != nullptr) {
             if (candidate.body->ProductionView() == nullptr) {
                 return VN_BAD_PACK;
@@ -3191,25 +3173,16 @@ VnResult PackComposition::PrepareCommit(
         next->ledger = *ledger;
     }
     if (clearInit) {
-        next->hasCatalog = false;
         next->catalog = {};
         next->initPackStableId = 0;
         next->initHandle = 0;
         next->attenuationBindings = {};
-        prepared.facts_.catalogCount = 0;
-        prepared.facts_.catalogBytes = 0;
     } else if (catalogOrNull != nullptr) {
         next->catalog = *catalogOrNull;
-        next->hasCatalog = catalogOrNull->hasCatalog;
         next->initPackStableId = catalogOrNull->packStableId;
         next->initHandle = initHandle;
-        prepared.facts_.catalogCount =
-            catalogOrNull->catalogHeader.catalogEntryCount;
-        prepared.facts_.catalogBytes =
-            catalogOrNull->catalogHeader.catalogBytes;
     } else if (published_ != nullptr) {
         next->catalog = published_->catalog;
-        next->hasCatalog = published_->hasCatalog;
         next->initPackStableId = published_->initPackStableId;
         next->initHandle = published_->initHandle;
     }
@@ -3222,33 +3195,9 @@ VnResult PackComposition::PrepareCommit(
     } else if (!clearInit && published_ != nullptr && published_->hasGameplayCatalog &&
                published_->initHandle == next->initHandle &&
                next->catalog.packStableId == published_->gameplayCatalog.header.initPackStableId &&
-               next->catalog.requirement.packContentRevision == published_->gameplayCatalog.header.initContentRevision &&
-               (catalogOrNull == nullptr || !catalogOrNull->hasGameplayCatalog ||
-                (published_->catalog.hasGameplayCatalog && catalogOrNull->gameplayCatalog.header.digest ==
-                    published_->catalog.gameplayCatalog.header.digest))) {
+               next->catalog.requirement.packContentRevision == published_->gameplayCatalog.header.initContentRevision) {
         next->hasGameplayCatalog = true;
         next->gameplayCatalog = published_->gameplayCatalog;
-    }
-    for (const PublishedOwner& owner : next->owners) {
-        if (clearInit || next->hasGameplayCatalog || !owner.hasGameplayCatalog) {
-            continue;
-        }
-        if (next->initHandle != 0 && owner.handle != next->initHandle) {
-            continue;
-        }
-        if (next->initPackStableId != 0 &&
-            owner.packStableId != next->initPackStableId) {
-            continue;
-        }
-        next->hasGameplayCatalog = true;
-        next->gameplayCatalog = owner.gameplayCatalog;
-        if (next->initPackStableId == 0) {
-            next->initPackStableId = owner.packStableId;
-        }
-        if (!clearInit && next->initHandle == 0) {
-            next->initHandle = owner.handle;
-        }
-        break;
     }
     for (const PublishedOwner& owner : next->owners) {
         if (owner.body == nullptr) continue;
@@ -3310,25 +3259,6 @@ VnResult PackComposition::PrepareCommit(
     if (next->hasGameplayCatalog &&
         next->projectId != ObjectIdFromBytes(next->gameplayCatalog.header.projectGuid)) {
         return VN_BAD_PACK;
-    }
-    for (const auto& owner : next->owners) {
-        if (next->companionNames) break;
-        if (!owner.hasVariableNameCatalog) continue;
-        if (clearInit || owner.readiness != PackOwnerReadiness::Active) continue;
-        if (next->initHandle != 0 && owner.handle != next->initHandle) continue;
-        if (next->hasVariableNameCatalog ||
-            ObjectIdFromBytes(owner.variableNameCatalog.projectGuid) != next->projectId ||
-            (next->initPackStableId != 0 && owner.packStableId != next->initPackStableId))
-            return VN_BAD_PACK;
-        std::set<VnObjectId> definitions;
-        for (std::uint32_t i = 0; i < owner.view.variableCount; ++i)
-            definitions.insert(owner.view.variables[i].variableId);
-        for (const auto& row : owner.variableNameCatalog.rows) {
-            if (definitions.erase(row.variableId) != 1) return VN_BAD_PACK;
-        }
-        if (!definitions.empty()) return VN_BAD_PACK;
-        next->hasVariableNameCatalog = true;
-        next->variableNameCatalog = owner.variableNameCatalog;
     }
     if (next->hasGameplayCatalog) {
         const auto init = std::find_if(next->owners.begin(), next->owners.end(),
@@ -3894,15 +3824,6 @@ VnResult PackComposition::PrepareLookup(
                         &owner.view.playableProperties[hit->localRow];
                 }
                 return VN_OK;
-            }
-        }
-        if (published_->hasCatalog) {
-            const PackInitCatalogRow* row = nullptr;
-            if (LookupInitCatalogIdentity(published_->catalog, stableId, &row) ==
-                PackCatalogIdentityState::KnownUnloaded) {
-                out->readiness = PackIdentityReadiness::KnownUnloaded;
-                out->result = VN_CONTENT_NOT_LOADED;
-                return out->result;
             }
         }
     }

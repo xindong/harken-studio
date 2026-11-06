@@ -5570,10 +5570,6 @@ TEST_F(ExportedPackLifecycle, Att05MissingAttenuationEntryRejectsInUse)
             ++parsedMatches;
     }
     ASSERT_EQ(1, parsedMatches);
-    for (const auto& row : initImage.catalogRows) {
-        EXPECT_NE(target, row.stableId)
-            << "Init catalog names the attenuation; directory-only removal is not sufficient";
-    }
     auto contentBytes = att05ReadFile(contentPath);
     std::array<std::uint8_t, 16> idBytes{};
     harken::StoreObjectId(idBytes.data(), target);

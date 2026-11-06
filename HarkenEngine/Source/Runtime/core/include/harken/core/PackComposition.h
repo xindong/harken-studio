@@ -122,10 +122,6 @@ public:
         std::uint64_t definitionBytes = 0;
         std::vector<PackDependencyEdge> dependencyEdges;
         std::uint64_t providerClosureFingerprint = 0;
-        bool hasGameplayCatalog = false;
-        GameplayCatalogImage gameplayCatalog;
-        bool hasVariableNameCatalog = false;
-        PackVariableNameCatalog variableNameCatalog;
         std::vector<PackCanonicalImage::VariablePolicyOverlay> variablePolicyOverlays;
         bool hasVariablePolicyOverlay = false;
         std::vector<PackCanonicalImage::VariableRequirement> variableRequirements;
@@ -186,7 +182,6 @@ public:
         std::vector<SignalRelationV1> signalRelations;
         std::vector<SignalReceiverV1> signalReceivers;
         PackCanonicalImage catalog;
-        bool hasCatalog = false;
         std::uint64_t initPackStableId = 0;
         VnPackHandle initHandle = 0;
         bool hasGameplayCatalog = false;
@@ -217,10 +212,6 @@ public:
         std::shared_ptr<const std::vector<PackVoiceBinding>> voiceBindings;
         std::uint64_t definitionBytes = 0;
         std::vector<PackDependencyEdge> dependencyEdges;
-        bool hasGameplayCatalog = false;
-        GameplayCatalogImage gameplayCatalog;
-        bool hasVariableNameCatalog = false;
-        PackVariableNameCatalog variableNameCatalog;
         std::vector<PackCanonicalImage::VariablePolicyOverlay> variablePolicyOverlays;
         bool hasVariablePolicyOverlay = false;
         std::vector<PackCanonicalImage::VariableRequirement> variableRequirements;
@@ -273,10 +264,6 @@ public:
         keep.definitionBytes = existing.definitionBytes;
         keep.hasPartition = existing.body != nullptr;
         keep.dependencyEdges = existing.dependencyEdges;
-        keep.hasGameplayCatalog = existing.hasGameplayCatalog;
-        keep.gameplayCatalog = existing.gameplayCatalog;
-        keep.hasVariableNameCatalog = existing.hasVariableNameCatalog;
-        keep.variableNameCatalog = existing.variableNameCatalog;
         keep.variablePolicyOverlays = existing.variablePolicyOverlays;
         keep.hasVariablePolicyOverlay = existing.hasVariablePolicyOverlay;
         keep.variableRequirements = existing.variableRequirements;
