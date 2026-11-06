@@ -19,6 +19,7 @@ public:
     bool stage(const ProjectData& project, const QString& directory, QString* error);
     void markSaved(const ProjectData& project);
     bool isFolderDirty(const ProjectData& project, const PhysicalFolder* folder) const;
+    bool hasUnsavedChanges(const ProjectData& project) const;
     QSet<QString> bucketsWithPendingFileChanges(const ProjectData& project) const;
 
 private:

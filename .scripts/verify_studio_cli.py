@@ -53,6 +53,40 @@ def verify_shell(cli: Path, environment: dict, root: Path) -> None:
     absent = shell(['get_item_info {"path":"UnsavedEof"}', 'get_item_info {"path":"Discarded"}'])
     assert all(response["status"] == "error" for response in absent), absent
 
+    seeded = shell(['create_folder {"path":"Layers/Destination"}', "save_project", "exit"])
+    assert all(response["status"] == "ok" for response in seeded), seeded
+    expected_folders = {"Layers/Destination"}
+    for mutation, saved_folders in (
+        ('create_folder {"path":"Layers/Source"}', {"Layers/Destination", "Layers/Source"}),
+        ('rename_folder {"path":"Layers/Source","new_name":"Renamed"}',
+         {"Layers/Destination", "Layers/Renamed"}),
+        ('move_folder {"path":"Layers/Renamed","new_parent":"Layers/Destination"}',
+         {"Layers/Destination", "Layers/Destination/Renamed"}),
+        ('delete_folder {"path":"Layers/Destination/Renamed"}', {"Layers/Destination"}),
+    ):
+        edited = shell([
+            "get_project_state", mutation, "get_project_state", "exit", "undo",
+            "get_project_state", 'list_folders {"path":"Layers"}',
+            'list_folders {"path":"Layers/Destination"}', "redo", "get_project_state",
+            "save_project", "get_project_state", "exit"])
+        assert len(edited) == 13, (mutation, edited)
+        assert edited[3]["code"] == "UNSAVED_CHANGES", (mutation, edited)
+        assert all(response["status"] == "ok" for index, response in enumerate(edited)
+                   if index != 3), (mutation, edited)
+        assert [edited[index]["result"]["is_dirty"] for index in (0, 2, 5, 9, 11)] == [
+            False, True, False, True, False], (mutation, edited)
+        restored = {folder["path"] for index in (6, 7)
+                    for folder in edited[index]["result"]["folders"]}
+        assert restored == expected_folders, (mutation, restored, expected_folders)
+        reopened = shell(["get_project_state", 'list_folders {"path":"Layers"}',
+                          'list_folders {"path":"Layers/Destination"}'])
+        assert all(response["status"] == "ok" for response in reopened), reopened
+        assert reopened[0]["result"]["is_dirty"] is False, (mutation, reopened)
+        persisted = {folder["path"] for response in reopened[1:]
+                     for folder in response["result"]["folders"]}
+        assert persisted == saved_folders, (mutation, persisted, saved_folders)
+        expected_folders = saved_folders
+
     process = subprocess.Popen([str(cli), "shell", "--project", str(project), "--json"],
                                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                stderr=subprocess.DEVNULL, env=environment)

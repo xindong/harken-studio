@@ -2653,7 +2653,7 @@ bool ProjectManager::hasUnsavedChanges()
     if (!m_saveBaseline || !m_itemSaveState || !m_folderSaveState) return true;
     m_itemSaveState->refreshPending(*m_currentProject);
     if (!m_itemSaveState->candidates().isEmpty()
-        || !m_folderSaveState->bucketsWithPendingFileChanges(*m_currentProject).isEmpty())
+        || m_folderSaveState->hasUnsavedChanges(*m_currentProject))
         return true;
     if (!m_itemSaveState->ensurePrepared(*m_currentProject)) return true;
     ProjectData project = *m_currentProject;
