@@ -2077,12 +2077,14 @@ struct EngineScheduleTargetFade {
 
 struct EngineScheduleAggregateState;
 struct EngineScheduleSourceCohort;
+struct EngineScheduleSourceRetention;
 struct EngineScheduleCohortSource {
     OriginalSourceLifetimePin source;
     VoicePool::OriginalSourceBodyLifetimePin body;
     TimelineArmToken arm{};
     VoiceReleaseObserver release{};
     std::uint64_t sourceIdentity = 0;
+    std::unique_ptr<EngineScheduleSourceRetention> retention;
 };
 
 struct EngineScheduleAggregateChild {
@@ -2219,6 +2221,7 @@ struct EngineScheduleSourceCohort {
     EnginePlayableServiceReference owner{};
     EnginePlayablePartitionToken partition{};
     TransportEpoch transport = kInvalidTransportEpoch;
+    LogicCommitSequence sequence = 0;
     std::uint64_t onsetOffset = 0;
     std::uint64_t onset = 0;
     PreparedDecisionReservation prepared;
@@ -2229,10 +2232,13 @@ struct EngineScheduleSourceCohort {
     FrontierActivationDescriptor descriptor{};
     std::vector<EngineScheduleAggregateChild*> children;
     std::vector<std::unique_ptr<EngineScheduleSourceSide>> sides;
+    std::unique_ptr<EngineScheduleSourceRetention> retention;
+    PlayableControlReason failure = PlayableControlReason::None;
     bool sealed = false;
     bool published = false;
     bool cancelling = false;
     bool retired = false;
+    bool bindingsReleased = false;
 };
 
 struct EngineScheduleAggregateState {
@@ -9204,25 +9210,7 @@ public:
             if (original.group == &old) original.group = &moved;
     }
 
-    bool ReturnScheduleCohortSourceAfterPhysicalRelease(TimelineArmToken arm) noexcept {
-        EngineScheduleCohortSource* source = nullptr;
-        for (std::uint32_t cursor = 0; auto* row = NextOccupiedPlayableService(&cursor);) {
-            auto* candidate = row->scheduleCohortSource;
-            if (candidate == nullptr || !OriginalSourceSubmissionRegistry::SameToken(candidate->arm, arm)) continue;
-            if (source != nullptr && source != candidate) return false;
-            source = candidate;
-        }
-        if (source == nullptr || !source->source.Valid()) return source == nullptr || !source->body.Valid();
-        if (!voices.ReleaseObserved(source->release) ||
-            !originalSourceSubmissions.IsOriginalSourceLifetimePinFor(source->source, arm) ||
-            !(originalSourceSubmissions.CanReturnPublishedOriginalSourcePairStorage(
-                  source->source, source->body, source->release) ||
-              originalSourceSubmissions.CanReturnUnpublishedOriginalSourcePairStorage(source->source, source->body)))
-            return false;
-        source->body.Release();
-        source->source.Release();
-        return true;
-    }
+    bool ReturnScheduleCohortSourceAfterPhysicalRelease(TimelineArmToken arm) noexcept;
 
     void ReturnPendingVariableLeafSource(OriginalPendingVariableLeafSource& holder) noexcept {
         const bool retained = !holder.Empty();
@@ -15664,6 +15652,33 @@ private:
     bool activeEngine_;
     bool hold_;
 };
+
+
+struct EngineScheduleSourceRetention {
+    Engine::OriginalPlayableServiceLifetimePin service;
+};
+
+inline bool Engine::ReturnScheduleCohortSourceAfterPhysicalRelease(TimelineArmToken arm) noexcept {
+        EngineScheduleCohortSource* source = nullptr;
+        for (std::uint32_t cursor = 0; auto* row = NextOccupiedPlayableService(&cursor);) {
+            auto* candidate = row->scheduleCohortSource;
+            if (candidate == nullptr || !OriginalSourceSubmissionRegistry::SameToken(candidate->arm, arm)) continue;
+            if (source != nullptr && source != candidate) return false;
+            source = candidate;
+        }
+        if (source == nullptr || !source->source.Valid()) return source == nullptr || !source->body.Valid();
+        if (!voices.ReleaseObserved(source->release) ||
+            !originalSourceSubmissions.IsOriginalSourceLifetimePinFor(source->source, arm) ||
+            !(originalSourceSubmissions.CanReturnPublishedOriginalSourcePairStorage(
+                  source->source, source->body, source->release) ||
+              originalSourceSubmissions.CanReturnUnpublishedOriginalSourcePairStorage(source->source, source->body)))
+            return false;
+        source->body.Release();
+        source->source.Release();
+        if (source->retention != nullptr) source->retention->service.Return();
+        return true;
+    }
+
 
 } // namespace harken
 
