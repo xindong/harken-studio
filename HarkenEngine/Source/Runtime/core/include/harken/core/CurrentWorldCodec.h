@@ -17,6 +17,8 @@
 #include "harken/core/CurrentWorld.h"
 #include "harken/media/CurrentWorldBodyVintage.h"
 
+#include "harken/core/detail/PackDecodeBudget.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -49,6 +51,12 @@ enum class CurrentWorldBodyDecodeResult : std::uint8_t {
 bool EncodeCurrentWorldShippingBody(
     const ContainerWorldInstallViewV1& world,
     std::vector<std::uint8_t>& out) noexcept;
+
+namespace detail {
+WorldInstallStatus EncodeCurrentWorldIdentityBodyWithBudget(
+    const ContainerWorldInstallViewV1& world, std::vector<std::uint8_t>& out,
+    PackDecodeCharge& charge, std::size_t& requestedSlots) noexcept;
+}
 
 // V5/V6/V7/V8 remain for historical fixtures and old journals. New captures
 // and shipping writers emit kCurrentWorldShippingBodyVintage only.
@@ -99,6 +107,11 @@ public:
     CurrentWorldBodyDecodeResult DecodeWithResult(
         const std::uint8_t* bytes, std::size_t byteCount,
         std::uint32_t bodyVintage, CurrentWorldDecodeMode mode) noexcept;
+    CurrentWorldBodyDecodeResult DecodeWithBudget(
+        const std::uint8_t* bytes, std::size_t byteCount,
+        std::uint32_t bodyVintage, CurrentWorldDecodeMode mode,
+        const detail::PackDecodeBudget& budget) noexcept;
+    void ReleaseDecodeStaging() noexcept;
     bool Decode(const std::uint8_t* bytes, std::size_t byteCount,
                 std::uint32_t bodyVintage,
                 CurrentWorldDecodeMode mode) noexcept {

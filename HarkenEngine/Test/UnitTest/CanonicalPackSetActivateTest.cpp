@@ -365,6 +365,92 @@ std::vector<std::uint8_t> BuildPreview(bool random, bool multipleSteps = false,
 
 } // namespace companionfixture
 
+TEST(CanonicalPackSetActivate, ProviderMembersShareDecodeBudgetAndPreservePriorPublication) {
+    using namespace companionfixture;
+    using namespace harken;
+    Provider init{Build(true, PackId("Init"))};
+    Provider content{Build(false, PackId("content"))};
+    for (auto* provider : {&init, &content}) {
+        // Trailing encoded padding is legal and belongs to the acquired owner.
+        provider->bytes.resize(64 * 1024, 0);
+        PackV2Header header;
+        ASSERT_TRUE(ParsePackV2Header(provider->bytes.data(), &header));
+        header.fileBytes = provider->bytes.size();
+        SerializePackV2Header(header, provider->bytes.data());
+    }
+    PackCanonicalImage first;
+    ASSERT_EQ(VN_OK, ParsePackCanonicalImage(init.bytes.data(), init.bytes.size(), &first));
+    const auto encodedSum = init.bytes.size() + content.bytes.size();
+    const auto previousMapAllowance = 4 * (sizeof(PackAttenuationBindingMapV1) +
+        first.attenuations.size() * sizeof(PackAttenuationBindingMapV1::Binding));
+    ASSERT_GT(first.staging.Bytes(), previousMapAllowance);
+    const auto limitedBytes = encodedSum + previousMapAllowance +
+        (first.staging.Bytes() - previousMapAllowance) / 2;
+    ASSERT_LE(encodedSum + previousMapAllowance, limitedBytes);
+    ASSERT_GT(encodedSum + first.staging.Bytes(), limitedBytes);
+    RecordProperty("member_encoded_sum", std::to_string(encodedSum));
+    RecordProperty("shared_decode_limit", std::to_string(limitedBytes));
+    RecordProperty("previous_encoded_map_limit", std::to_string(encodedSum + previousMapAllowance));
+    RecordProperty("first_retained_decode_bytes", std::to_string(first.staging.Bytes()));
+    {
+        auto budget = detail::MakePackDecodeBudget(limitedBytes);
+        detail::PackDecodeCharge encoded(budget);
+        encoded.Add(init.bytes.size());
+        PackCanonicalImage retained;
+        ASSERT_EQ(VN_OK, ParsePackCanonicalImageWithBudget(init.bytes.data(), init.bytes.size(),
+            &retained, nullptr, budget));
+        EXPECT_THROW(encoded.Add(content.bytes.size()), detail::PackDecodeCapacity);
+        EXPECT_EQ(init.bytes.size() + retained.staging.Bytes(), budget->live);
+    }
+    // The old encoded aggregate, including its map allowance, fits. Retaining
+    // the first parsed image makes the second encoded owner exceed the ledger.
+    for (auto* provider : {&init, &content}) {
+        auto budget = detail::MakePackDecodeBudget(limitedBytes);
+        detail::PackDecodeCharge encoded(budget);
+        encoded.Add(provider->bytes.size());
+        PackCanonicalImage image;
+        ASSERT_EQ(VN_OK, ParsePackCanonicalImageWithBudget(provider->bytes.data(),
+            provider->bytes.size(), &image, nullptr, budget));
+        EXPECT_LT(budget->live, limitedBytes);
+    }
+    for (const auto limit : {limitedBytes, std::uint64_t{512 * 1024}}) {
+        SCOPED_TRACE(limit);
+        auto config = CanonicalActivationConfig();
+        config.maxPackDecodeStagingBytes = limit;
+        EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        std::array<VnCanonicalPackSetMemberV1, 2> members{
+            Member(PackId("Init"), true, &init, nullptr).source,
+            Member(PackId("content"), false, &content, nullptr).source};
+        std::array<VnCanonicalPackSetMemberResultV1, 2> rows{};
+        for (auto& row : rows) row.structSize = sizeof(row);
+        VnCanonicalPackSetActivationReportV1 report{};
+        ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(members.data(), 1, rows.data(), report));
+        const auto prior = session.Engine()->packComposition.PublishedHandle();
+        const auto generation = session.Engine()->packComposition.CompositeGeneration();
+        members[0].expectedHandle = report.initHandle;
+        init.reads = init.releases = content.reads = content.releases = 0;
+        const auto result = harkentest::ActivateCanonicalMembersV1(members.data(), 2, rows.data(),
+            report, prior->initHandle, prior->ledger.setRevision);
+        EXPECT_EQ(limit == limitedBytes ? VN_PACK_RESIDENT_CAPACITY : VN_OK, result);
+        // Reaching the second provider proves the first member parsed successfully.
+        EXPECT_EQ(1u, init.reads);
+        EXPECT_EQ(1u, content.reads);
+        EXPECT_EQ(init.reads, init.releases);
+        EXPECT_EQ(content.reads, content.releases);
+        if (limit == limitedBytes) {
+            EXPECT_EQ(prior.get(), session.Engine()->packComposition.Published());
+            EXPECT_EQ(generation, session.Engine()->packComposition.CompositeGeneration());
+            EXPECT_EQ(1u, session.Engine()->packs.LoadedCount());
+            ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(members.data(), 1, rows.data(),
+                report, prior->initHandle, prior->ledger.setRevision));
+        } else {
+            EXPECT_EQ(generation + 1, session.Engine()->packComposition.CompositeGeneration());
+            EXPECT_EQ(2u, session.Engine()->packs.LoadedCount());
+        }
+    }
+}
+
 TEST(CanonicalPackSetActivate, CompanionInitOwnsVariableAndLabelNames) {
     using namespace companionfixture;
     using namespace harken;
@@ -3398,6 +3484,9 @@ TEST(CanonicalPackSetActivate, LargeInitProjects257VariablesAndUses65thAttenuati
             row.structSize = sizeof(row);
             VnCanonicalPackSetActivationReportV1 report{};
             VnResult result;
+            allocation_probe::count = 0;
+            allocation_probe::bytes = 0;
+            allocation_probe::enabled = true;
             if (companion) {
                 std::vector<VnCanonicalPackSetMemberV2> named{
                     companionfixture::Member(initId, true, &provider, &names)};
@@ -3405,11 +3494,40 @@ TEST(CanonicalPackSetActivate, LargeInitProjects257VariablesAndUses65thAttenuati
             } else {
                 result = harkentest::ActivateCanonicalMembersV1(&member, 1, &row, report);
             }
-            const bool fits = allowance == 4ull * mapRows;
-            EXPECT_EQ(fits ? VN_OK : VN_PACK_RESIDENT_CAPACITY, result);
-            EXPECT_EQ(fits ? 257u : 0u, session.Engine()->variables.DefinitionCount());
-            EXPECT_EQ(fits ? 65u : 0u, session.Engine()->spatial.ProfileCount());
-            if (!fits) EXPECT_EQ(nullptr, session.Engine()->packComposition.Published());
+            allocation_probe::enabled = false;
+            const auto requestedBytes = allocation_probe::bytes;
+            const auto allocationCount = allocation_probe::count;
+            const auto key = std::string(companion ? "v2_" : "v1_") + std::to_string(allowance);
+            RecordProperty(key + "_requested_bytes", std::to_string(requestedBytes));
+            RecordProperty(key + "_allocation_count", std::to_string(allocationCount));
+            RecordProperty(key + "_budget", std::to_string(config.maxPackDecodeStagingBytes));
+            RecordProperty(key + "_result", static_cast<int>(result));
+            // Encoded bytes and attenuation maps alone no longer cover decode staging.
+            EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY, result);
+            EXPECT_EQ(0u, session.Engine()->variables.DefinitionCount());
+            EXPECT_EQ(0u, session.Engine()->spatial.ProfileCount());
+            EXPECT_EQ(nullptr, session.Engine()->packComposition.Published());
+            EXPECT_EQ(provider.reads, provider.releases);
         }
+        auto config = CanonicalActivationConfig(2, 256, 48000);
+        config.maxPackDecodeStagingBytes = 4u * 1024u * 1024u;
+        EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        VnCanonicalPackSetActivationReportV1 report{};
+        if (companion) {
+            std::vector<VnCanonicalPackSetMemberV2> named{
+                companionfixture::Member(initId, true, &provider, &names)};
+            ASSERT_EQ(VN_OK, companionfixture::Activate(named, report));
+            std::vector<VnCanonicalPackSetMemberV2> kept{
+                companionfixture::Member(initId, true, nullptr, nullptr,
+                    report.initHandle, VN_PACK_MEMBER_KEEP)};
+            ASSERT_EQ(VN_OK, companionfixture::Activate(kept, report, report.resultSetRevision));
+        } else {
+            VnCanonicalPackSetMemberResultV1 row{};
+            row.structSize = sizeof(row);
+            ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(&member, 1, &row, report));
+        }
+        EXPECT_EQ(257u, session.Engine()->variables.DefinitionCount());
+        EXPECT_EQ(65u, session.Engine()->spatial.ProfileCount());
     }
 }

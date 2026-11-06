@@ -1,5 +1,6 @@
 #include "harken/core/CurrentWorldCodec.h"
 #include "harken/core/LogicAllocCheckpoint.h"
+#include "harken/core/detail/CurrentWorldValidation.h"
 #include "harken/param/VariableService.h"
 
 #include <array>
@@ -13,7 +14,8 @@
 
 namespace harken {
 namespace {
-void AppendU32(std::vector<std::uint8_t>& out,
+template <typename Output>
+void AppendU32(Output& out,
                std::uint32_t value) {
     out.push_back(static_cast<std::uint8_t>(value));
     out.push_back(static_cast<std::uint8_t>(value >> 8));
@@ -21,32 +23,37 @@ void AppendU32(std::vector<std::uint8_t>& out,
     out.push_back(static_cast<std::uint8_t>(value >> 24));
 }
 
-void AppendU8(std::vector<std::uint8_t>& out,
+template <typename Output>
+void AppendU8(Output& out,
               std::uint8_t value) {
     out.push_back(value);
 }
 
-void AppendU16(std::vector<std::uint8_t>& out,
+template <typename Output>
+void AppendU16(Output& out,
                std::uint16_t value) {
     out.push_back(static_cast<std::uint8_t>(value));
     out.push_back(static_cast<std::uint8_t>(value >> 8));
 }
 
-void AppendU64(std::vector<std::uint8_t>& out,
+template <typename Output>
+void AppendU64(Output& out,
                std::uint64_t value) {
     AppendU32(out, static_cast<std::uint32_t>(value));
     AppendU32(out, static_cast<std::uint32_t>(value >> 32));
 }
 
-void AppendF32(std::vector<std::uint8_t>& out, float value) {
+template <typename Output>
+void AppendF32(Output& out, float value) {
     std::uint32_t bits = 0;
     std::memcpy(&bits, &value, sizeof bits);
     AppendU32(out, bits);
 }
 
-void AppendObjectId(std::vector<std::uint8_t>& out, VnObjectId value) {
+template <typename Output>
+void AppendObjectId(Output& out, VnObjectId value) {
     const auto bytes = ObjectIdBytes(value);
-    out.insert(out.end(), bytes.begin(), bytes.end());
+    for (const auto byte : bytes) out.push_back(byte);
 }
 
 struct Reader {
@@ -121,8 +128,9 @@ struct Reader {
     }
 };
 
+template <typename Output>
 struct PrefixEncodeVisitor {
-    std::vector<std::uint8_t>& out;
+    Output& out;
     void U32(std::uint32_t value) { AppendU32(out, value); }
     void U64(std::uint64_t value) { AppendU64(out, value); }
     void ObjectId(VnObjectId value) { AppendObjectId(out, value); }
@@ -135,8 +143,9 @@ struct PrefixDecodeVisitor {
     void ObjectId(VnObjectId& value) noexcept { value = reader.ObjectId(); }
 };
 
+template <typename Output>
 void EncodeSignalEndpoint(const SignalEndpointRefV1& ref,
-                          std::vector<std::uint8_t>& out) {
+                          Output& out) {
     AppendU32(out, static_cast<std::uint32_t>(ref.kind));
     AppendU32(out, ref.reserved);
     AppendObjectId(out, ref.stableId);
@@ -182,8 +191,9 @@ bool ValidStructuralAncestorKind(
            kind == playableproperties::ContentPropertyKindV1::Segment;
 }
 
+template <typename Output>
 void EncodePlayableRef(const PlayableRefV1& row,
-                       std::vector<std::uint8_t>& out) {
+                       Output& out) {
     AppendU32(out, static_cast<std::uint32_t>(row.kind));
     AppendU32(out, row.reserved);
     AppendObjectId(out, row.stableId);
@@ -193,29 +203,33 @@ void EncodePlayableRef(const PlayableRefV1& row,
     AppendU64(out, row.compatibilityFingerprint);
 }
 
+template <typename Output>
 void EncodeActionRef(const ActionObjectRefV1& row,
-                     std::vector<std::uint8_t>& out) {
+                     Output& out) {
     AppendU32(out, static_cast<std::uint32_t>(row.kind));
     AppendU32(out, row.reserved);
     AppendObjectId(out, row.stableId);
     AppendU64(out, row.expectedProgramSemanticFingerprint);
 }
 
+template <typename Output>
 void EncodeActionTime(const AuthoredTimeRationalV1& row,
-                      std::vector<std::uint8_t>& out) {
+                      Output& out) {
     AppendU32(out, static_cast<std::uint32_t>(row.domain));
     AppendU64(out, std::bit_cast<std::uint64_t>(row.numerator));
     AppendU32(out, row.denominator);
 }
 
+template <typename Output>
 void EncodeTime(const AuthoredTimeRationalV1& row,
-                std::vector<std::uint8_t>& out) {
+                Output& out) {
     AppendU32(out, static_cast<std::uint32_t>(row.domain));
     AppendU64(out, static_cast<std::uint64_t>(row.numerator));
     AppendU32(out, row.denominator);
 }
 
-bool EncodeCurve(const CurveV1& row, std::vector<std::uint8_t>& out) {
+template <typename Output>
+bool EncodeCurve(const CurveV1& row, Output& out) {
     if (row.curve.pointCount > kMaxCurvePoints) {
         return false;
     }
@@ -235,8 +249,9 @@ bool EncodeCurve(const CurveV1& row, std::vector<std::uint8_t>& out) {
     return true;
 }
 
+template <typename Output>
 void EncodePayloadHeader(const PlayablePropertyPayloadViewV1& payload,
-                         std::vector<std::uint8_t>& out,
+                         Output& out,
                          bool includeSpatializationMix) {
     AppendU64(out, payload.presentMask & ~UINT64_C(0x4));
     AppendU32(out, static_cast<std::uint32_t>(payload.values[0].bits));
@@ -263,8 +278,9 @@ void EncodePayloadHeader(const PlayablePropertyPayloadViewV1& payload,
     AppendU32(out, payload.effectEdgeCount);
 }
 
+template <typename Output>
 bool EncodePayloadBody(const PlayablePropertyPayloadViewV1& payload,
-                       std::vector<std::uint8_t>& out) {
+                       Output& out) {
     if (!CountPointer(payload.sendCount, payload.sends,
                       kHardPlayablePropertyChildRowCapacity) ||
         !CountPointer(payload.effectNodeCount, payload.effectNodes,
@@ -332,8 +348,9 @@ bool CountPayload(const PlayablePropertyPayloadViewV1& payload,
     return true;
 }
 
+template <typename Output>
 bool EncodeCompletion(const AuthoredCompletionTemplateV1& completion,
-                      std::vector<std::uint8_t>& out) {
+                      Output& out) {
     if (!CountPointer(completion.leafCount, completion.leaves,
                       kTraceWorldChildCap)) {
         return false;
@@ -374,8 +391,9 @@ bool EncodeCompletion(const AuthoredCompletionTemplateV1& completion,
     return true;
 }
 
+template <typename Output>
 void EncodeInlineSoundTimingHint(const InlineSoundTimingHintV2& hint,
-                                 std::vector<std::uint8_t>& out) {
+                                 Output& out) {
     EncodeTime(hint.startOffset, out);
     EncodeTime(hint.duration, out);
     AppendU32(out, hint.loopCount);
@@ -429,8 +447,9 @@ bool V9CapacityPrefixMatches(const WorldCapacitySummaryV1& prefix,
            prefix.maxActionExpandedWork == complete.maxActionExpandedWork;
 }
 
+template <typename Output>
 void EncodeSchedulePlacement(const ScheduleClipPlacementV1& row,
-                             std::vector<std::uint8_t>& out) {
+                             Output& out) {
     AppendU32(out, row.stablePlacementOrdinal);
     AppendU32(out, row.stableOccurrenceOrdinal);
     EncodePlayableRef(row.content, out);
@@ -562,6 +581,7 @@ void DecodePayloadHeader(Reader& reader,
 } // namespace
 
 struct CurrentWorldBodyImage::Impl {
+    detail::PackDecodeCharge staging;
     struct OwnedPayload {
         PlayablePropertyPayloadViewV1 view{};
         std::vector<SendV1> sends;
@@ -799,43 +819,43 @@ struct CurrentWorldBodyImage::Impl {
 
     void Refresh() {
         propertyViews.clear();
-        propertyViews.reserve(properties.size());
+        detail::DecodeReserve(propertyViews, properties.size(), staging);
         for (auto& row : properties) {
             row.Refresh();
             propertyViews.push_back(row.view);
         }
         occurrenceViews.clear();
-        occurrenceViews.reserve(occurrences.size());
+        detail::DecodeReserve(occurrenceViews, occurrences.size(), staging);
         for (auto& row : occurrences) {
             row.Refresh();
             occurrenceViews.push_back(row.view);
         }
         trackScheduleViews.clear();
-        trackScheduleViews.reserve(trackSchedules.size());
+        detail::DecodeReserve(trackScheduleViews, trackSchedules.size(), staging);
         for (auto& row : trackSchedules) {
             row.Refresh();
             trackScheduleViews.push_back(row.view);
         }
         segmentScheduleViews.clear();
-        segmentScheduleViews.reserve(segmentSchedules.size());
+        detail::DecodeReserve(segmentScheduleViews, segmentSchedules.size(), staging);
         for (auto& row : segmentSchedules) {
             row.Refresh();
             segmentScheduleViews.push_back(row.view);
         }
         currentContainerViews.clear();
-        currentContainerViews.reserve(currentContainers.size());
+        detail::DecodeReserve(currentContainerViews, currentContainers.size(), staging);
         for (auto& row : currentContainers) {
             row.Refresh();
             currentContainerViews.push_back(row.view);
         }
         containerViews.clear();
-        containerViews.reserve(containers.size());
+        detail::DecodeReserve(containerViews, containers.size(), staging);
         for (auto& row : containers) {
             row.Refresh();
             containerViews.push_back(row.view);
         }
         transitionViews.clear();
-        transitionViews.reserve(transitions.size());
+        detail::DecodeReserve(transitionViews, transitions.size(), staging);
         for (auto& row : transitions) {
             row.Refresh();
             transitionViews.push_back(row.view);
@@ -874,7 +894,7 @@ struct CurrentWorldBodyImage::Impl {
                 static_cast<std::uint32_t>(transitionViews.size());
         }
         actionViews.clear();
-        actionViews.reserve(actions.size());
+        detail::DecodeReserve(actionViews, actions.size(), staging);
         for (auto& row : actions) {
             row.Refresh();
             actionViews.push_back(row.view);
@@ -912,7 +932,7 @@ namespace {
 
 template <typename OwnedPayload>
 bool DecodePayloadBody(Reader& reader, OwnedPayload& payload,
-                       bool) {
+                       bool, detail::PackDecodeCharge& staging) {
     const auto header = payload.view;
     if (header.sendCount > kHardPlayablePropertyChildRowCapacity ||
         header.effectNodeCount > kHardPlayablePropertyChildRowCapacity ||
@@ -920,7 +940,7 @@ bool DecodePayloadBody(Reader& reader, OwnedPayload& payload,
         return false;
     }
     if (!reader.CanReadRecords(header.sendCount, 32)) return false;
-    payload.sends.resize(header.sendCount);
+    detail::DecodeResize(payload.sends, header.sendCount, staging);
     for (SendV1& row : payload.sends) {
         row.stableSendOrdinal = reader.U32();
         row.reserved = reader.U32();
@@ -929,8 +949,8 @@ bool DecodePayloadBody(Reader& reader, OwnedPayload& payload,
         row.reserved2 = reader.U32();
     }
     if (!reader.CanReadRecords(header.effectNodeCount, 32)) return false;
-    payload.nodes.resize(header.effectNodeCount);
-    payload.params.resize(header.effectNodeCount);
+    detail::DecodeResize(payload.nodes, header.effectNodeCount, staging);
+    detail::DecodeResize(payload.params, header.effectNodeCount, staging);
     std::uint32_t paramTotal = 0;
     for (std::size_t i = 0; i < payload.nodes.size(); ++i) {
         EffectNodeV1& row = payload.nodes[i];
@@ -945,14 +965,14 @@ bool DecodePayloadBody(Reader& reader, OwnedPayload& payload,
             return false;
         }
         if (!reader.CanReadRecords(paramCount, 8)) return false;
-        payload.params[i].resize(paramCount);
+        detail::DecodeResize(payload.params[i], paramCount, staging);
         for (EffectParamV1& param : payload.params[i]) {
             param.paramId = reader.U32();
             param.valueBits = reader.U32();
         }
     }
     if (!reader.CanReadRecords(header.effectEdgeCount, 8)) return false;
-    payload.edges.resize(header.effectEdgeCount);
+    detail::DecodeResize(payload.edges, header.effectEdgeCount, staging);
     for (EffectEdgeV1& row : payload.edges) {
         row.fromNodeId = reader.U32();
         row.toNodeId = reader.U32();
@@ -963,7 +983,8 @@ bool DecodePayloadBody(Reader& reader, OwnedPayload& payload,
 bool DecodeCompletion(
     Reader& reader, ContainerChildProgramViewV1& child,
     std::vector<AuthoredCompletionLeafV1>& leaves,
-    std::vector<std::vector<StableAuthoredPathStepV1>>& paths) {
+    std::vector<std::vector<StableAuthoredPathStepV1>>& paths,
+    detail::PackDecodeCharge& staging) {
     child.completion.source = CompletionSourceV1::InlineTemplate;
     child.completion.reserved = 0;
     child.completion.payload.inlineTemplate.completionClass =
@@ -973,8 +994,8 @@ bool DecodeCompletion(
         return false;
     }
     if (!reader.CanReadRecords(leafCount, 152)) return false;
-    leaves.resize(leafCount);
-    paths.resize(leafCount);
+    detail::DecodeResize(leaves, leafCount, staging);
+    detail::DecodeResize(paths, leafCount, staging);
     for (std::size_t i = 0; i < leaves.size(); ++i) {
         AuthoredCompletionLeafV1& leaf = leaves[i];
         leaf.stableLeafOrdinal = reader.U32();
@@ -995,7 +1016,7 @@ bool DecodeCompletion(
             return false;
         }
         if (!reader.CanReadRecords(pathCount, 120)) return false;
-        paths[i].resize(pathCount);
+        detail::DecodeResize(paths[i], pathCount, staging);
         for (StableAuthoredPathStepV1& step : paths[i]) {
             step.playable = DecodePlayableRef(reader);
             step.stableChildOrdinal = reader.U32();
@@ -1011,13 +1032,24 @@ bool DecodeCompletion(
 
 } // namespace
 
-template <typename World>
+struct BudgetEncodeOutput {
+    std::vector<std::uint8_t>& bytes;
+    detail::PackDecodeCharge& charge;
+    std::size_t& requestedSlots;
+    void clear() noexcept { bytes.clear(); }
+    std::size_t size() const noexcept { return bytes.size(); }
+    void push_back(std::uint8_t value) {
+        detail::DecodeAppend(bytes, value, charge, requestedSlots);
+    }
+};
+
+template <typename World, typename Output>
 bool EncodeCurrentWorldBodyImpl(
     const World& world,
-    std::vector<std::uint8_t>& out,
+    Output& out,
     bool includeActions, bool includeStructuralAncestors,
     bool useV9ContainerLayout, bool includeSpatializationMix,
-    bool includeEntryTimeline = false, bool includeSignals = false) noexcept {
+    bool includeEntryTimeline = false, bool includeSignals = false) {
     try {
         out.clear();
         if constexpr (std::is_same_v<World, ContainerWorldInstallViewV1>) {
@@ -1547,6 +1579,7 @@ bool EncodeCurrentWorldBodyImpl(
         }
         return true;
     } catch (...) {
+        if constexpr (std::is_same_v<Output, BudgetEncodeOutput>) throw;
         out.clear();
         return false;
     }
@@ -1590,6 +1623,25 @@ bool EncodeCurrentWorldShippingBody(
         return false;
     }
     return EncodeCurrentWorldBodyImpl(world, out, true, true, true, true);
+}
+
+WorldInstallStatus detail::EncodeCurrentWorldIdentityBodyWithBudget(
+    const ContainerWorldInstallViewV1& world, std::vector<std::uint8_t>& out,
+    PackDecodeCharge& charge, std::size_t& requestedSlots) noexcept {
+    out.clear();
+    const bool entryScheduling = world.sourceBodyVintage == kCurrentWorldBodyVintageV19;
+    if (world.sourceBodyVintage != kCurrentWorldShippingBodyVintage && !entryScheduling)
+        return WorldInstallStatus::InvalidFormat;
+    const auto validated = ValidateCurrentWorldSectionGroupsWithBudget(world, charge.Budget());
+    if (validated != WorldInstallStatus::Ok) return validated;
+    try {
+        BudgetEncodeOutput output{out, charge, requestedSlots};
+        return EncodeCurrentWorldBodyImpl(world, output, true, true, true, true, entryScheduling)
+            ? WorldInstallStatus::Ok : WorldInstallStatus::InvalidWorld;
+    } catch (...) {
+        out.clear();
+        return WorldInstallStatus::Capacity;
+    }
 }
 
 bool EncodeCurrentWorldShippingBodyRawAttempt(
@@ -1654,7 +1706,14 @@ CurrentWorldBodyImage::~CurrentWorldBodyImage() = default;
 
 CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
     const std::uint8_t* bytes, std::size_t byteCount,
-    std::uint32_t worldTraceVintage, CurrentWorldDecodeMode mode) noexcept {
+    std::uint32_t bodyVintage, CurrentWorldDecodeMode mode) noexcept {
+    return DecodeWithBudget(bytes, byteCount, bodyVintage, mode, {});
+}
+
+CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithBudget(
+    const std::uint8_t* bytes, std::size_t byteCount,
+    std::uint32_t worldTraceVintage, CurrentWorldDecodeMode mode,
+    const detail::PackDecodeBudget& budget) noexcept {
     const bool strictArtifact =
         mode == CurrentWorldDecodeMode::StrictArtifact;
     const bool replayRawAttempt =
@@ -1679,7 +1738,10 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
     try {
         detail::LogicAllocCheckpoint(
             detail::LogicAllocSite::CurrentWorldDecodedImage);
+        detail::PackDecodeCharge allocation(budget);
+        allocation.AddRows<Impl>(1);
         auto decoded = std::make_unique<Impl>();
+        decoded->staging = std::move(allocation);
         Reader reader{bytes, byteCount};
         auto& world = decoded->view;
         world.sourceBodyVintage = worldTraceVintage;
@@ -1866,7 +1928,7 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
         if (!reader.CanReadRecords(variableCount, 40)) {
             return CurrentWorldBodyDecodeResult::Invalid;
         }
-        decoded->variables.resize(variableCount);
+        detail::DecodeResize(decoded->variables, variableCount, decoded->staging);
         for (VariableDefinitionV1& row : decoded->variables) {
             row.variableId = reader.ObjectId();
             row.kind = static_cast<VariableKindV1>(reader.U32());
@@ -1888,7 +1950,7 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
         if (!reader.CanReadRecords(propertyCount, 191)) {
             return CurrentWorldBodyDecodeResult::Invalid;
         }
-        decoded->properties.resize(propertyCount);
+        detail::DecodeResize(decoded->properties, propertyCount, decoded->staging);
         for (auto& owned : decoded->properties) {
             auto& row = owned.view;
             row.contentPropertyKind =
@@ -1912,7 +1974,7 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
             if (!reader.CanReadRecords(ancestorCount, 24)) {
                 return CurrentWorldBodyDecodeResult::Invalid;
             }
-            owned.ancestors.resize(ancestorCount);
+            detail::DecodeResize(owned.ancestors, ancestorCount, decoded->staging);
             for (LayerAncestorRefV1& ancestor : owned.ancestors) {
                 ancestor.layerStableId = reader.ObjectId();
                 ancestor.layerProgramSemanticFingerprint = reader.U64();
@@ -1928,8 +1990,8 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                 if (!reader.CanReadRecords(structuralCount, 143)) {
                     return CurrentWorldBodyDecodeResult::Invalid;
                 }
-                owned.structuralAncestors.resize(structuralCount);
-                owned.structuralPayloads.resize(structuralCount);
+                detail::DecodeResize(owned.structuralAncestors, structuralCount, decoded->staging);
+                detail::DecodeResize(owned.structuralPayloads, structuralCount, decoded->staging);
                 for (std::uint32_t a = 0; a < structuralCount; ++a) {
                     auto& ancestor = owned.structuralAncestors[a];
                     ancestor.contentPropertyKind =
@@ -1941,7 +2003,7 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                     DecodePayloadHeader(reader, owned.structuralPayloads[a].view,
                                         worldTraceVintage);
                     if (!DecodePayloadBody(reader, owned.structuralPayloads[a],
-                                           allowRawInvalid)) {
+                                           allowRawInvalid, decoded->staging)) {
                         return CurrentWorldBodyDecodeResult::Invalid;
                     }
                     owned.structuralPayloads[a].Refresh();
@@ -1962,7 +2024,7 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                     }
                 }
             }
-            if (!DecodePayloadBody(reader, owned.payload, allowRawInvalid)) {
+            if (!DecodePayloadBody(reader, owned.payload, allowRawInvalid, decoded->staging)) {
                 return CurrentWorldBodyDecodeResult::Invalid;
             }
             owned.payload.Refresh();
@@ -1977,7 +2039,7 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
         if (!reader.CanReadRecords(occurrenceCount, 215)) {
             return CurrentWorldBodyDecodeResult::Invalid;
         }
-        decoded->occurrences.resize(occurrenceCount);
+        detail::DecodeResize(decoded->occurrences, occurrenceCount, decoded->staging);
         for (auto& owned : decoded->occurrences) {
             auto& row = owned.view;
             row.parentKind =
@@ -1990,7 +2052,7 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
             row.occurrenceSemanticFingerprint = reader.U64();
             DecodePayloadHeader(reader, owned.payload.view,
                                 worldTraceVintage);
-            if (!DecodePayloadBody(reader, owned.payload, allowRawInvalid)) {
+            if (!DecodePayloadBody(reader, owned.payload, allowRawInvalid, decoded->staging)) {
                 return CurrentWorldBodyDecodeResult::Invalid;
             }
             owned.payload.Refresh();
@@ -2002,7 +2064,7 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
         if (!reader.CanReadRecords(trackScheduleCount, 80)) {
             return CurrentWorldBodyDecodeResult::Invalid;
         }
-        decoded->trackSchedules.resize(trackScheduleCount);
+        detail::DecodeResize(decoded->trackSchedules, trackScheduleCount, decoded->staging);
         for (auto& owned : decoded->trackSchedules) {
             auto& row = owned.view;
             row.rootDefinition = DecodePlayableRef(reader);
@@ -2016,7 +2078,7 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
             if (!reader.CanReadRecords(placementCount, 136)) {
                 return CurrentWorldBodyDecodeResult::Invalid;
             }
-            owned.placements.resize(placementCount);
+            detail::DecodeResize(owned.placements, placementCount, decoded->staging);
             for (auto& placement : owned.placements) {
                 placement.stablePlacementOrdinal = reader.U32();
                 placement.stableOccurrenceOrdinal = reader.U32();
@@ -2040,7 +2102,7 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                 worldTraceVintage == kCurrentWorldBodyVintageV19 ? 168 : 112)) {
             return CurrentWorldBodyDecodeResult::Invalid;
         }
-        decoded->segmentSchedules.resize(segmentScheduleCount);
+        detail::DecodeResize(decoded->segmentSchedules, segmentScheduleCount, decoded->staging);
         for (auto& owned : decoded->segmentSchedules) {
             auto& row = owned.view;
             row.rootDefinition = DecodePlayableRef(reader);
@@ -2072,7 +2134,7 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
             if (!reader.CanReadRecords(trackRefCount, 80)) {
                 return CurrentWorldBodyDecodeResult::Invalid;
             }
-            owned.trackRefs.resize(trackRefCount);
+            detail::DecodeResize(owned.trackRefs, trackRefCount, decoded->staging);
             for (auto& ref : owned.trackRefs) {
                 ref.trackDefinition = DecodePlayableRef(reader);
                 ref.trackScheduleSemanticFingerprint = reader.U64();
@@ -2082,7 +2144,7 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
             if (!reader.CanReadRecords(markerCount, 32)) {
                 return CurrentWorldBodyDecodeResult::Invalid;
             }
-            owned.markers.resize(markerCount);
+            detail::DecodeResize(owned.markers, markerCount, decoded->staging);
             for (auto& marker : owned.markers) {
                 marker.stableMarkerId = reader.ObjectId();
                 marker.markerId = reader.U32();
@@ -2094,7 +2156,7 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
         if (!reader.CanReadRecords(containerCount, 132)) {
             return CurrentWorldBodyDecodeResult::Invalid;
         }
-        decoded->currentContainers.resize(containerCount);
+        detail::DecodeResize(decoded->currentContainers, containerCount, decoded->staging);
         for (auto& owned : decoded->currentContainers) {
             auto& row = owned.view;
             row.containerStableId = reader.ObjectId();
@@ -2146,7 +2208,7 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
             if (!reader.CanReadRecords(curveCount, 8)) {
                 return CurrentWorldBodyDecodeResult::Invalid;
             }
-            owned.curves.resize(curveCount);
+            detail::DecodeResize(owned.curves, curveCount, decoded->staging);
             for (CurveV1& curve : owned.curves) {
                 if (!DecodeCurve(reader, curve, allowRawInvalid)) {
                     return CurrentWorldBodyDecodeResult::Invalid;
@@ -2155,7 +2217,7 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
             if (!reader.CanReadRecords(childCount, 96)) {
                 return CurrentWorldBodyDecodeResult::Invalid;
             }
-            owned.children.resize(childCount);
+            detail::DecodeResize(owned.children, childCount, decoded->staging);
             for (std::size_t i = 0; i < owned.children.size(); ++i) {
                 auto& child = owned.children[i];
                 child.playable = DecodePlayableRef(reader);
@@ -2200,7 +2262,7 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                 if (!reader.CanReadRecords(discreteAxisCount, 24)) {
                     return CurrentWorldBodyDecodeResult::Invalid;
                 }
-                owned.discreteAxes.resize(discreteAxisCount);
+                detail::DecodeResize(owned.discreteAxes, discreteAxisCount, decoded->staging);
                 for (auto& axis : owned.discreteAxes) {
                     axis.stableAxisOrdinal = reader.U32();
                     axis.authoredColumnOrder = reader.U32();
@@ -2209,8 +2271,8 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                 if (!reader.CanReadRecords(discreteRowCount, 16)) {
                     return CurrentWorldBodyDecodeResult::Invalid;
                 }
-                owned.discreteRows.resize(discreteRowCount);
-                owned.discreteCells.resize(discreteRowCount);
+                detail::DecodeResize(owned.discreteRows, discreteRowCount, decoded->staging);
+                detail::DecodeResize(owned.discreteCells, discreteRowCount, decoded->staging);
                 for (std::size_t i = 0; i < owned.discreteRows.size(); ++i) {
                     auto& gridRow = owned.discreteRows[i];
                     gridRow.stableRowOrdinal = reader.U32();
@@ -2223,7 +2285,7 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                     if (!reader.CanReadRecords(cellCount, 8)) {
                         return CurrentWorldBodyDecodeResult::Invalid;
                     }
-                    owned.discreteCells[i].resize(cellCount);
+                    detail::DecodeResize(owned.discreteCells[i], cellCount, decoded->staging);
                     for (auto& cell : owned.discreteCells[i]) {
                         cell.kind = static_cast<DiscreteCellKindV1>(
                             reader.U32());
@@ -2234,7 +2296,7 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                 if (!reader.CanReadRecords(continuousAxisCount, 24)) {
                     return CurrentWorldBodyDecodeResult::Invalid;
                 }
-                owned.continuousAxes.resize(continuousAxisCount);
+                detail::DecodeResize(owned.continuousAxes, continuousAxisCount, decoded->staging);
                 for (auto& axis : owned.continuousAxes) {
                     axis.stableAxisOrdinal = reader.U32();
                     axis.authoredColumnOrder = reader.U32();
@@ -2243,8 +2305,8 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                 if (!reader.CanReadRecords(continuousRowCount, 16)) {
                     return CurrentWorldBodyDecodeResult::Invalid;
                 }
-                owned.continuousRows.resize(continuousRowCount);
-                owned.continuousCells.resize(continuousRowCount);
+                detail::DecodeResize(owned.continuousRows, continuousRowCount, decoded->staging);
+                detail::DecodeResize(owned.continuousCells, continuousRowCount, decoded->staging);
                 for (std::size_t i = 0; i < owned.continuousRows.size(); ++i) {
                     auto& gridRow = owned.continuousRows[i];
                     gridRow.stableRowOrdinal = reader.U32();
@@ -2257,7 +2319,7 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                     if (!reader.CanReadRecords(cellCount, 24)) {
                         return CurrentWorldBodyDecodeResult::Invalid;
                     }
-                    owned.continuousCells[i].resize(cellCount);
+                    detail::DecodeResize(owned.continuousCells[i], cellCount, decoded->staging);
                     for (auto& cell : owned.continuousCells[i]) {
                         cell.kind = static_cast<ContinuousCellKindV1>(
                             reader.U32());
@@ -2280,7 +2342,7 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
         if (!reader.CanReadRecords(containerCount, 128)) {
             return CurrentWorldBodyDecodeResult::Invalid;
         }
-        decoded->containers.resize(containerCount);
+        detail::DecodeResize(decoded->containers, containerCount, decoded->staging);
         for (auto& owned : decoded->containers) {
             auto& row = owned.view;
             row.containerStableId = reader.ObjectId();
@@ -2329,7 +2391,7 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
             if (!reader.CanReadRecords(curveCount, 8)) {
                 return CurrentWorldBodyDecodeResult::Invalid;
             }
-            owned.curves.resize(curveCount);
+            detail::DecodeResize(owned.curves, curveCount, decoded->staging);
             for (CurveV1& curve : owned.curves) {
                 if (!DecodeCurve(reader, curve, allowRawInvalid)) {
                     return CurrentWorldBodyDecodeResult::Invalid;
@@ -2338,9 +2400,9 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
             if (!reader.CanReadRecords(childCount, 96)) {
                 return CurrentWorldBodyDecodeResult::Invalid;
             }
-            owned.children.resize(childCount);
-            owned.leaves.resize(childCount);
-            owned.paths.resize(childCount);
+            detail::DecodeResize(owned.children, childCount, decoded->staging);
+            detail::DecodeResize(owned.leaves, childCount, decoded->staging);
+            detail::DecodeResize(owned.paths, childCount, decoded->staging);
             for (std::size_t i = 0; i < owned.children.size(); ++i) {
                 auto& child = owned.children[i];
                 child.playable = DecodePlayableRef(reader);
@@ -2358,7 +2420,7 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                     if (child.completion.source ==
                         CompletionSourceV1::InlineTemplate) {
                         if (!DecodeCompletion(reader, child, owned.leaves[i],
-                                              owned.paths[i])) {
+                                              owned.paths[i], decoded->staging)) {
                             return CurrentWorldBodyDecodeResult::Invalid;
                         }
                     } else if (child.completion.source ==
@@ -2373,7 +2435,7 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                         return CurrentWorldBodyDecodeResult::Invalid;
                     }
                 } else if (!DecodeCompletion(reader, child, owned.leaves[i],
-                                             owned.paths[i])) {
+                                             owned.paths[i], decoded->staging)) {
                     return CurrentWorldBodyDecodeResult::Invalid;
                 }
             }
@@ -2381,7 +2443,7 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                 if (!reader.CanReadRecords(discreteAxisCount, 24)) {
                     return CurrentWorldBodyDecodeResult::Invalid;
                 }
-                owned.discreteAxes.resize(discreteAxisCount);
+                detail::DecodeResize(owned.discreteAxes, discreteAxisCount, decoded->staging);
                 for (auto& axis : owned.discreteAxes) {
                     axis.stableAxisOrdinal = reader.U32();
                     axis.authoredColumnOrder = reader.U32();
@@ -2390,8 +2452,8 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                 if (!reader.CanReadRecords(discreteRowCount, 16)) {
                     return CurrentWorldBodyDecodeResult::Invalid;
                 }
-                owned.discreteRows.resize(discreteRowCount);
-                owned.discreteCells.resize(discreteRowCount);
+                detail::DecodeResize(owned.discreteRows, discreteRowCount, decoded->staging);
+                detail::DecodeResize(owned.discreteCells, discreteRowCount, decoded->staging);
                 for (std::size_t i = 0; i < owned.discreteRows.size(); ++i) {
                     auto& gridRow = owned.discreteRows[i];
                     gridRow.stableRowOrdinal = reader.U32();
@@ -2404,7 +2466,7 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                     if (!reader.CanReadRecords(cellCount, 8)) {
                         return CurrentWorldBodyDecodeResult::Invalid;
                     }
-                    owned.discreteCells[i].resize(cellCount);
+                    detail::DecodeResize(owned.discreteCells[i], cellCount, decoded->staging);
                     for (auto& cell : owned.discreteCells[i]) {
                         cell.kind = static_cast<DiscreteCellKindV1>(
                             reader.U32());
@@ -2415,7 +2477,7 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                 if (!reader.CanReadRecords(continuousAxisCount, 24)) {
                     return CurrentWorldBodyDecodeResult::Invalid;
                 }
-                owned.continuousAxes.resize(continuousAxisCount);
+                detail::DecodeResize(owned.continuousAxes, continuousAxisCount, decoded->staging);
                 for (auto& axis : owned.continuousAxes) {
                     axis.stableAxisOrdinal = reader.U32();
                     axis.authoredColumnOrder = reader.U32();
@@ -2424,8 +2486,8 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                 if (!reader.CanReadRecords(continuousRowCount, 16)) {
                     return CurrentWorldBodyDecodeResult::Invalid;
                 }
-                owned.continuousRows.resize(continuousRowCount);
-                owned.continuousCells.resize(continuousRowCount);
+                detail::DecodeResize(owned.continuousRows, continuousRowCount, decoded->staging);
+                detail::DecodeResize(owned.continuousCells, continuousRowCount, decoded->staging);
                 for (std::size_t i = 0; i < owned.continuousRows.size(); ++i) {
                     auto& gridRow = owned.continuousRows[i];
                     gridRow.stableRowOrdinal = reader.U32();
@@ -2438,7 +2500,7 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                     if (!reader.CanReadRecords(cellCount, 24)) {
                         return CurrentWorldBodyDecodeResult::Invalid;
                     }
-                    owned.continuousCells[i].resize(cellCount);
+                    detail::DecodeResize(owned.continuousCells[i], cellCount, decoded->staging);
                     for (auto& cell : owned.continuousCells[i]) {
                         cell.kind = static_cast<ContinuousCellKindV1>(
                             reader.U32());
@@ -2464,7 +2526,7 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
             if (!reader.CanReadRecords(world.transitionCount, 40)) {
                 return CurrentWorldBodyDecodeResult::Invalid;
             }
-            decoded->transitions.resize(world.transitionCount);
+            detail::DecodeResize(decoded->transitions, world.transitionCount, decoded->staging);
             for (auto& owned : decoded->transitions) {
                 auto& row = owned.view;
                 row.ownerContainerStableId = reader.ObjectId();
@@ -2485,7 +2547,7 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                 if (!reader.CanReadRecords(pathCount, 120)) {
                     return CurrentWorldBodyDecodeResult::Invalid;
                 }
-                owned.downwardPathSteps.resize(pathCount);
+                detail::DecodeResize(owned.downwardPathSteps, pathCount, decoded->staging);
                 for (auto& step : owned.downwardPathSteps) {
                     step.playable = DecodePlayableRef(reader);
                     step.stableChildOrdinal = reader.U32();
@@ -2498,7 +2560,7 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                 if (!reader.CanReadRecords(ruleCount, 296)) {
                     return CurrentWorldBodyDecodeResult::Invalid;
                 }
-                owned.rules.resize(ruleCount);
+                detail::DecodeResize(owned.rules, ruleCount, decoded->staging);
                 for (auto& rule : owned.rules) {
                     rule.stableRuleOrdinal = reader.U32();
                     rule.sourceAny = reader.U8();
@@ -2531,7 +2593,7 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                 }
             }
         } else {
-            decoded->transitionSentinels.resize(world.transitionCount);
+            detail::DecodeResize(decoded->transitionSentinels, world.transitionCount, decoded->staging);
             decoded->useTransitionSentinel = world.transitionCount != 0;
         }
         if (worldTraceVintage >= 6) {
@@ -2539,7 +2601,7 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                                        kCurrentWorldActionHeaderWireBytes)) {
                 return CurrentWorldBodyDecodeResult::Invalid;
             }
-            decoded->actions.resize(actionCount);
+            detail::DecodeResize(decoded->actions, actionCount, decoded->staging);
             std::uint64_t actionStepTotal = 0;
             for (auto& owned : decoded->actions) {
                 auto& action = owned.view;
@@ -2562,7 +2624,7 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                                            kCurrentWorldActionStepWireBytes)) {
                     return CurrentWorldBodyDecodeResult::Invalid;
                 }
-                owned.steps.resize(stepCount);
+                detail::DecodeResize(owned.steps, stepCount, decoded->staging);
                 for (auto& step : owned.steps) {
                     step.opcode = static_cast<ActionOpcodeV1>(reader.U32());
                     step.authoredEventIndex = reader.U32();
@@ -2591,8 +2653,8 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                 relations > decoded->signalRelations.max_size() ||
                 receivers > decoded->signalReceivers.max_size())
                 return CurrentWorldBodyDecodeResult::Invalid;
-            decoded->signalRelations.resize(relations);
-            decoded->signalReceivers.resize(receivers);
+            detail::DecodeResize(decoded->signalRelations, relations, decoded->staging);
+            detail::DecodeResize(decoded->signalReceivers, receivers, decoded->staging);
             for (auto& row : decoded->signalRelations) {
                 row.stableId = reader.ObjectId();
                 row.source = DecodeSignalEndpoint(reader);
@@ -2620,9 +2682,12 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
             return CurrentWorldBodyDecodeResult::Invalid;
         }
         decoded->Refresh();
-        if (strictArtifact &&
-            !ValidateCurrentWorldSectionGroupsV1(decoded->view))
-            return CurrentWorldBodyDecodeResult::Invalid;
+        if (strictArtifact) {
+            const auto sections = detail::ValidateCurrentWorldSectionGroupsWithBudget(decoded->view, budget);
+            if (sections != WorldInstallStatus::Ok)
+                return sections == WorldInstallStatus::Capacity
+                    ? CurrentWorldBodyDecodeResult::Capacity : CurrentWorldBodyDecodeResult::Invalid;
+        }
         decoded->hasReplayView = !currentShippingVintage;
         impl_ = std::move(decoded);
         return CurrentWorldBodyDecodeResult::Ok;
@@ -2631,6 +2696,10 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
     } catch (...) {
         return CurrentWorldBodyDecodeResult::Invalid;
     }
+}
+
+void CurrentWorldBodyImage::ReleaseDecodeStaging() noexcept {
+    if (impl_) impl_->staging.Detach();
 }
 
 const ContainerWorldInstallViewV1* CurrentWorldBodyImage::ProductionView() const noexcept {
