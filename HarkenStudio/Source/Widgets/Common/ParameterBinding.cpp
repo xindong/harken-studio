@@ -52,6 +52,7 @@ void ParameterBinding::setRange(double minimum, double maximum)
     maximum_ = maximum;
     const double normalized = normalizedValue(value_);
     const bool valueChanged = !qFuzzyCompare(value_ + 1.0, normalized + 1.0);
+    normalizationPending_ = normalizationPending_ || valueChanged;
     value_ = normalized;
     emit metadataChanged();
     if (valueChanged)
@@ -90,6 +91,7 @@ void ParameterBinding::setQuantum(double quantum)
     quantum_ = quantum;
     const double normalized = normalizedValue(value_);
     const bool valueChanged = !qFuzzyCompare(value_ + 1.0, normalized + 1.0);
+    normalizationPending_ = normalizationPending_ || valueChanged;
     value_ = normalized;
     emit metadataChanged();
     if (valueChanged)
@@ -139,6 +141,8 @@ QString ParameterBinding::annotationFor(double value) const
 void ParameterBinding::setValue(double value)
 {
     interruptEdit();
+    if (std::isfinite(value))
+        normalizationPending_ = value != normalizedValue(value);
     updateValue(value);
 }
 
@@ -146,8 +150,10 @@ void ParameterBinding::commitValue(double value)
 {
     if (editing_ || !std::isfinite(value)) return;
     const bool wasMixed = mixedValue_;
+    const bool wasNormalized = normalizationPending_;
     mixedValue_ = false;
-    if (updateValue(value) || wasMixed)
+    normalizationPending_ = false;
+    if (updateValue(value) || wasMixed || wasNormalized)
         emit valueCommitted(value_);
 }
 
@@ -171,6 +177,8 @@ void ParameterBinding::commitEdit()
     if (!editing_) return;
     editing_ = false;
     mixedValue_ = false;
+    if (!qFuzzyCompare(editStartValue_ + 1.0, value_ + 1.0))
+        normalizationPending_ = false;
     emit editEnded(editStartValue_, value_, true);
 }
 

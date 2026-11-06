@@ -66,7 +66,8 @@ bool clear(ProjectData* project, const QUuid& fromGuid);
 std::vector<InvalidDiscreteGridCell> invalidDiscreteGridCells(
     const ProjectData* project, const QUuid& variableId,
     float rangeMin, float rangeMax,
-    const std::vector<VariableLabel>* proposedLabels = nullptr);
+    const std::vector<VariableLabel>* proposedLabels = nullptr,
+    const std::vector<VariableConsumerRef>* consumers = nullptr);
 
 }
 

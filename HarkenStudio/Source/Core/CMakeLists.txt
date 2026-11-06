@@ -73,6 +73,8 @@ add_library(harken_studio_core STATIC
     ItemPropertySchema.h
     VariableImpactSemantics.cpp
     VariableImpactSemantics.h
+    VariableRangeEditing.cpp
+    VariableRangeEditing.h
     BindingEditing.cpp
     BindingEditing.h
     TransitionFieldGating.cpp

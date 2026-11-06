@@ -440,11 +440,16 @@ void MixingEditorWidget::loadCurves(int index)
         profile.color = ThemeManager::instance().colors().categoricalColor(view.selected);
     if (variable) profile.setVariableAxis(variable->kind, variable->labels);
     view.canvas->setProfile(profile);
-    view.canvas->setXDomain(variable ? variable->rangeMin : 0.0f, variable ? variable->rangeMax : 100.0f);
+    float minimum = variable ? variable->rangeMin : 0.0f;
+    float maximum = variable ? variable->rangeMax : 100.0f;
     view.canvas->setEnabled(variable != nullptr);
     QVector<MixingCurveClip> clips;
     for (int child = 0; child < static_cast<int>(row.children.size()); ++child) {
         const auto curve = scaledCurve(row.children[child], 100.0f);
+        for (const auto& point : curve.points) {
+            minimum = std::min(minimum, point.x);
+            maximum = std::max(maximum, point.x);
+        }
         const bool selected = child == view.selected;
         QtControlSkin::setSemanticProperty(view.childRows[child], "selected", selected);
         if (selected) {
@@ -454,6 +459,7 @@ void MixingEditorWidget::loadCurves(int index)
         clips.append({target ? target->name : tr("Missing"), curve.points, curve.handles});
     }
     view.children->refreshLayout();
+    view.canvas->setXDomain(minimum, maximum);
     view.canvas->setClips(clips, view.selected);
     view.removeChild->setEnabled(validChild(index, view.selected));
 }

@@ -1,6 +1,7 @@
 
 #include "InspectorPanel.h"
 #include "InspectorPanel_p.h"
+#include "VariableRangeDialog.h"
 #include "Core/ActionManager.h"
 #include "Core/AppSettings.h"
 #include "Core/ItemTypeCatalog.h"
@@ -25,6 +26,7 @@
 #include <QDoubleSpinBox>
 #include <QTableWidget>
 #include <QInputDialog>
+#include <QMessageBox>
 #include <QApplication>
 #include <cmath>
 
@@ -65,13 +67,14 @@ QString variableRangeConflictDetails(const QJsonArray& references)
     for (int i = 0; i < references.size(); ++i) {
         const QJsonObject reference = references[i].toObject();
         lines.append(QObject::tr(
-            "%1. %2 — row %3 (%4), column %5, value %6")
+            "%1. %2 — row %3 (%4), column %5, value %6 (%7)")
                          .arg(i + 1)
                          .arg(reference.value(QStringLiteral("grid_name")).toString())
                          .arg(reference.value(QStringLiteral("row")).toInt())
                          .arg(reference.value(QStringLiteral("row_name")).toString())
                          .arg(reference.value(QStringLiteral("column")).toInt())
-                         .arg(reference.value(QStringLiteral("value")).toInt()));
+                         .arg(reference.value(QStringLiteral("value")).toInt())
+                         .arg(reference.value(QStringLiteral("platform")).toString()));
     }
     return lines.join(QChar('\n'));
 }
@@ -294,6 +297,14 @@ void InspectorPanelPrivate::wireAuthoringCommit(PropertyEditorEngine* engine)
             ActionResult result = ActionManager::instance().execute(
                 "set_item_property", actionArgs, ActionSource::Internal, engine);
             if (!result.success
+                && result.errorCode == QLatin1String("VARIABLE_RANGE_POLICY_REQUIRED")) {
+                if (const auto choice = chooseVariableRangePolicy(q_ptr, result.data)) {
+                    actionArgs[QStringLiteral("range_policy")] = *choice;
+                    result = ActionManager::instance().execute(
+                        "set_item_property", actionArgs, ActionSource::Internal, engine);
+                }
+            }
+            if (!result.success
                 && result.errorCode == QLatin1String("VARIABLE_RANGE_CONFLICT")) {
                 const QJsonArray references = result.data.value(
                     QStringLiteral("invalid_references")).toArray();
@@ -313,13 +324,17 @@ void InspectorPanelPrivate::wireAuthoringCommit(PropertyEditorEngine* engine)
                         ActionSource::Internal, engine);
                 }
             }
+            if (!result.success
+                && (result.errorCode == QLatin1String("VARIABLE_RANGE_CURVE_CONFLICT")
+                    || result.errorCode == QLatin1String("INVALID_VARIABLE_RANGE")))
+                QMessageBox::warning(q_ptr, QObject::tr("Cannot Change Variable Range"), result.errorMessage);
             if (!result.success || field == QLatin1String("outputBusId")
                 || field == QLatin1String("range")
                 || PlayablePropertyAuthoringV1::fieldByName(field))
                 engine->refreshField(field);
             else
                 engine->refreshDomains();
-            emit q_ptr->propertyChanged();
+            if (result.success) emit q_ptr->propertyChanged();
         });
 }
 

@@ -128,3 +128,46 @@ TEST(AttenuationCurveEval, PitchLinearDomainMatchesParametricOracle)
                     expected, 5.0e-3) << "t=" << t;
     }
 }
+
+TEST(CurveDomainClipping, RetainsTheFunctionAcrossAxisScalesAndSegmentBoundaries)
+{
+    const QVector<CurvePointDef> points{{0.0f, -48.0f}, {45.0f, -6.0f}, {100.0f, -24.0f}};
+    const QVector<CurveHandlePairDef> handles{
+        {45.0f, -80.0f, 0.0f, 18.0f}, {60.0f, 12.0f, 90.0f, -72.0f}};
+    for (const auto scale : {VNX::CurveAxisScale::LinearValue,
+                            VNX::CurveAxisScale::AmplitudeDb,
+                            VNX::CurveAxisScale::MirroredAmplitudeDb}) {
+        for (const auto bounds : {std::pair{5.0f, 28.0f}, std::pair{12.0f, 83.0f},
+                                  std::pair{45.0f, 100.0f}, std::pair{0.0f, 100.0f}}) {
+            auto clippedPoints = points;
+            auto clippedHandles = handles;
+            VNX::curveClipX(bounds.first, bounds.second, clippedPoints, clippedHandles, scale);
+            ASSERT_GE(clippedPoints.size(), 2);
+            EXPECT_LE(clippedPoints.size(), VNX::kCurveMaxPoints);
+            ASSERT_EQ(clippedHandles.size(), clippedPoints.size() - 1);
+            EXPECT_FLOAT_EQ(clippedPoints.front().x, bounds.first);
+            EXPECT_FLOAT_EQ(clippedPoints.back().x, bounds.second);
+            auto normalizedPoints = clippedPoints;
+            auto normalizedHandles = clippedHandles;
+            VNX::curveNormalize(-96.0f, 24.0f, normalizedPoints, normalizedHandles);
+            EXPECT_EQ(normalizedPoints, clippedPoints);
+            EXPECT_EQ(normalizedHandles, clippedHandles);
+            for (int sample = 0; sample <= 100; ++sample) {
+                const float x = bounds.first + (bounds.second - bounds.first) * sample / 100.0f;
+                ASSERT_NEAR(VNX::curveBezierValueAt(clippedPoints, clippedHandles, x, scale),
+                            VNX::curveBezierValueAt(points, handles, x, scale), 0.001f)
+                    << "scale=" << static_cast<int>(scale) << " x=" << x;
+            }
+            auto repeatedPoints = clippedPoints;
+            auto repeatedHandles = clippedHandles;
+            VNX::curveClipX(bounds.first, bounds.second, repeatedPoints, repeatedHandles, scale);
+            EXPECT_EQ(repeatedPoints, clippedPoints);
+            EXPECT_EQ(repeatedHandles, clippedHandles);
+        }
+    }
+    auto emptyPoints = points;
+    auto emptyHandles = handles;
+    VNX::curveClipX(110.0f, 150.0f, emptyPoints, emptyHandles);
+    EXPECT_TRUE(emptyPoints.isEmpty());
+    EXPECT_TRUE(emptyHandles.isEmpty());
+}

@@ -305,21 +305,23 @@ AuditionVariableDependencies dependenciesForAudition(
 std::vector<InvalidDiscreteGridCell> invalidDiscreteGridCells(
     const ProjectData* project, const QUuid& variableId,
     float rangeMin, float rangeMax,
-    const std::vector<VariableLabel>* proposedLabels)
+    const std::vector<VariableLabel>* proposedLabels,
+    const std::vector<VariableConsumerRef>* consumers)
 {
     std::vector<InvalidDiscreteGridCell> out;
     const auto* variableItem = Internal::findItem(project, variableId);
     const auto* variable = variableItem ? variableItem->comp<VVariable>() : nullptr;
-    for (const VariableConsumerRef& consumer : consumersOf(project, variableId)) {
+    const auto discovered = consumers ? std::vector<VariableConsumerRef>{} : consumersOf(project, variableId);
+    for (const VariableConsumerRef& consumer : consumers ? *consumers : discovered) {
         if (consumer.kind != VariableConsumerKind::DiscreteGridAxis)
             continue;
         const ProjectItem* host = Internal::findItem(project, consumer.hostGuid);
         const auto* selection = host ? host->comp<VSelection>() : nullptr;
         if (!selection || consumer.axisIndex < 0)
             continue;
-        for (int row = 0; row < static_cast<int>(selection->matchGrid(consumer.platform).rows.size()); ++row) {
-            const auto cell =
-                selection->matchGrid(consumer.platform).cellAt(row, consumer.axisIndex);
+        const auto grid = selection->matchGrid(consumer.platform);
+        for (int row = 0; row < static_cast<int>(grid.rows.size()); ++row) {
+            const auto cell = grid.cellAt(row, consumer.axisIndex);
             if (!cell) continue;
             auto value = GridSemantics::discreteCellValue(*cell, variable);
             if (proposedLabels && !cell->labelId.isNull()) {

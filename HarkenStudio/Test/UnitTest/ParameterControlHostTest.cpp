@@ -10,6 +10,7 @@
 #include <gtest/gtest.h>
 
 #include <QApplication>
+#include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QDir>
 #include <QFile>
@@ -56,6 +57,30 @@ TEST(ParameterControlHost, IndependentValueEditorSurvivesBindingDestruction)
     editor.cancelPendingInput();
     spin->setValue(4.5);
     EXPECT_EQ(commits, before);
+}
+
+TEST(ParameterControlHost, ValueEditorsCanConfirmClampedValuesWithoutChangingThem)
+{
+    ensureApp();
+    for (const bool discrete : {false, true}) {
+        VNX::ParameterBinding binding;
+        binding.setRange(0.0, 0.0);
+        binding.setDiscreteSelection(discrete);
+        binding.setValue(100.0);
+        VNX::ParameterValueEditor editor(&binding, &VNX::ThemeManager::instance());
+        int commits = 0;
+        QObject::connect(&binding, &VNX::ParameterBinding::valueCommitted,
+            [&](double value) { ++commits; EXPECT_DOUBLE_EQ(value, 0.0); });
+        EXPECT_EQ(commits, 0);
+        if (discrete) {
+            auto* combo = editor.choiceEditor();
+            ASSERT_NE(combo, nullptr);
+            ASSERT_TRUE(QMetaObject::invokeMethod(combo, "activated", Q_ARG(int, combo->currentIndex())));
+        } else {
+            ASSERT_TRUE(QMetaObject::invokeMethod(editor.valueEditor(), "editingFinished"));
+        }
+        EXPECT_EQ(commits, 1);
+    }
 }
 
 TEST(ParameterControlHost, ColorPreviewPreservesActiveEditingAndComponentStructure)
