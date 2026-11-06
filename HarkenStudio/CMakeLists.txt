@@ -142,6 +142,8 @@ endif()
 # Source Files — explicit list (no GLOB_RECURSE)
 # When adding new files, add them here and re-run cmake configure.
 set(HARKEN_STUDIO_COMMAND_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Tooling/StudioCli/CommandHelp.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Tooling/StudioCli/CommandHelp.h
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Tooling/StudioCli/Shell.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Tooling/StudioCli/Shell.h
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Tooling/StudioCli/StudioSession.cpp

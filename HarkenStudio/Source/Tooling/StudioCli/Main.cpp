@@ -2,6 +2,7 @@
 #include "SavedProjectBuild.h"
 #include "ResourceWorker.h"
 #include "Shell.h"
+#include "CommandHelp.h"
 #include "Core/IPC/StudioInstanceTransport.h"
 #include "harken_buildinfo.h"
 
@@ -68,159 +69,16 @@ int output(QJsonObject response, bool json, int errorExit = 1)
     return errorExit;
 }
 
-QString jsonValueText(const QJsonValue& value)
-{
-    const auto bytes = QJsonDocument(QJsonArray{value}).toJson(QJsonDocument::Compact);
-    return QString::fromUtf8(bytes.mid(1, bytes.size() - 2));
-}
-
-QString schemaSummary(const QJsonObject& schema)
-{
-    QStringList parts;
-    const auto type = schema.value(QStringLiteral("type"));
-    if (type.isString()) parts.append(type.toString());
-    else if (type.isArray()) {
-        QStringList types;
-        for (const auto& value : type.toArray()) types.append(value.toString());
-        parts.append(types.join(QStringLiteral(" | ")));
-    }
-    for (const auto& keyword : {QStringLiteral("anyOf"), QStringLiteral("oneOf")}) {
-        QStringList options;
-        for (const auto& value : schema.value(keyword).toArray())
-            options.append(schemaSummary(value.toObject()));
-        if (!options.isEmpty()) parts.append(options.join(QStringLiteral(" | ")));
-    }
-    if (parts.isEmpty()) parts.append(QStringLiteral("value"));
-    if (schema.contains(QStringLiteral("items")))
-        parts.append(QStringLiteral("of %1").arg(schemaSummary(schema.value(QStringLiteral("items")).toObject())));
-    for (const auto& keyword : {QStringLiteral("enum"), QStringLiteral("const"),
-            QStringLiteral("default"), QStringLiteral("format"), QStringLiteral("minimum"),
-            QStringLiteral("maximum"), QStringLiteral("exclusiveMinimum"), QStringLiteral("exclusiveMaximum"),
-            QStringLiteral("minLength"), QStringLiteral("maxLength"), QStringLiteral("pattern"),
-            QStringLiteral("minItems"), QStringLiteral("maxItems"), QStringLiteral("uniqueItems"),
-            QStringLiteral("minProperties"), QStringLiteral("maxProperties")})
-        if (schema.contains(keyword)) parts.append(keyword + QLatin1Char('=') + jsonValueText(schema.value(keyword)));
-    return parts.join(QStringLiteral(", "));
-}
-
-void printProperties(const QJsonObject& schema, const QString& prefix = {})
-{
-    const auto properties = schema.value(QStringLiteral("properties")).toObject();
-    const auto required = schema.value(QStringLiteral("required")).toArray();
-    for (auto it = properties.begin(); it != properties.end(); ++it) {
-        const auto field = it.value().toObject();
-        const auto path = prefix + it.key();
-        print((QStringLiteral("  %1  [%2]  %3\n").arg(path,
-            required.contains(it.key()) ? QStringLiteral("required") : QStringLiteral("optional"),
-            schemaSummary(field))).toUtf8());
-        if (!field.value(QStringLiteral("description")).toString().isEmpty())
-            print((QStringLiteral("    ") + field.value(QStringLiteral("description")).toString() + QLatin1Char('\n')).toUtf8());
-        printProperties(field, path + QLatin1Char('.'));
-        printProperties(field.value(QStringLiteral("items")).toObject(), path + QStringLiteral("[]."));
-    }
-}
-
-QString conditionText(const QJsonObject& schema)
-{
-    QStringList conditions;
-    QStringList required;
-    for (const auto& field : schema.value(QStringLiteral("required")).toArray()) required.append(field.toString());
-    if (!required.isEmpty()) conditions.append(QStringLiteral("provide %1").arg(required.join(QStringLiteral(" + "))));
-    const auto properties = schema.value(QStringLiteral("properties")).toObject();
-    for (auto it = properties.begin(); it != properties.end(); ++it)
-        conditions.append(it.key() + QStringLiteral(": ") + schemaSummary(it.value().toObject()));
-    if (schema.contains(QStringLiteral("not")))
-        conditions.append(QStringLiteral("not (%1)").arg(conditionText(schema.value(QStringLiteral("not")).toObject())));
-    for (const auto& keyword : {QStringLiteral("allOf"), QStringLiteral("anyOf"), QStringLiteral("oneOf")}) {
-        QStringList branches;
-        for (const auto& branch : schema.value(keyword).toArray()) branches.append(conditionText(branch.toObject()));
-        if (!branches.isEmpty()) conditions.append(branches.join(keyword == QStringLiteral("allOf")
-            ? QStringLiteral(" and ") : QStringLiteral(" or ")));
-    }
-    return conditions.join(QStringLiteral("; "));
-}
-
-void printConstraints(const QJsonObject& schema)
-{
-    for (const auto& keyword : {QStringLiteral("anyOf"), QStringLiteral("oneOf")}) {
-        const auto branches = schema.value(keyword).toArray();
-        if (branches.isEmpty()) continue;
-        QStringList alternatives;
-        bool onlyRequired = true;
-        for (const auto& value : branches) {
-            const auto branch = value.toObject();
-            onlyRequired &= branch.size() == 1 && branch.contains(QStringLiteral("required"));
-            QStringList required;
-            for (const auto& field : branch.value(QStringLiteral("required")).toArray()) required.append(field.toString());
-            alternatives.append(required.join(QStringLiteral(" + ")));
-        }
-        const auto quantifier = keyword == QStringLiteral("oneOf") ? QStringLiteral("exactly one") : QStringLiteral("at least one");
-        if (onlyRequired) {
-            print((QStringLiteral("  Provide %1 of: %2.\n").arg(quantifier, alternatives.join(QStringLiteral(" | ")))).toUtf8());
-        } else {
-            print((QStringLiteral("  %1 condition must hold:\n").arg(quantifier)).toUtf8());
-            for (const auto& branch : branches)
-                print((QStringLiteral("    - ") + conditionText(branch.toObject()) + QLatin1Char('\n')).toUtf8());
-        }
-    }
-    if (schema.contains(QStringLiteral("not"))) {
-        const auto forbidden = schema.value(QStringLiteral("not")).toObject();
-        if (forbidden.size() == 1 && forbidden.contains(QStringLiteral("required"))) {
-            QStringList fields;
-            for (const auto& field : forbidden.value(QStringLiteral("required")).toArray()) fields.append(field.toString());
-            print((QStringLiteral("  Do not combine: ") + fields.join(QStringLiteral(" + ")) + QStringLiteral(".\n")).toUtf8());
-        } else {
-            print((QStringLiteral("  Disallowed: ") + conditionText(forbidden) + QStringLiteral(".\n")).toUtf8());
-        }
-    }
-    for (const auto& branch : schema.value(QStringLiteral("allOf")).toArray()) printConstraints(branch.toObject());
-}
-
 int describeCommand(const QJsonObject& response, bool json)
 {
     if (json || !HarkenStudioCli::succeeded(response)) return output(response, json);
-    const auto entry = response.value(QStringLiteral("result")).toObject();
-    const auto name = entry.value(QStringLiteral("command")).toString();
-    print((name + QStringLiteral(" - ") + entry.value(QStringLiteral("description")).toString() + QLatin1Char('\n')).toUtf8());
-    print((QStringLiteral("Category: %1 | %2\n\n").arg(entry.value(QStringLiteral("category")).toString(),
-        entry.value(QStringLiteral("readOnly")).toBool() ? QStringLiteral("read only") : QStringLiteral("changes state"))).toUtf8());
-    const auto schema = entry.value(QStringLiteral("inputSchema")).toObject();
-    if (schema.value(QStringLiteral("properties")).toObject().isEmpty()) {
-        print("Arguments: none.\n");
-    } else {
-        print("Arguments (JSON object):\n");
-        printProperties(schema);
-    }
-    const auto propertyValues = schema.value(QStringLiteral("propertyValues")).toObject();
-    if (!propertyValues.isEmpty()) {
-        print("\nValue types by property:\n");
-        for (auto it = propertyValues.begin(); it != propertyValues.end(); ++it) {
-            const auto field = it.value().toObject();
-            print((QStringLiteral("  %1: %2\n").arg(it.key(), schemaSummary(field))).toUtf8());
-            if (!field.value(QStringLiteral("description")).toString().isEmpty())
-                print((QStringLiteral("    ") + field.value(QStringLiteral("description")).toString() + QLatin1Char('\n')).toUtf8());
-            printProperties(field.value(QStringLiteral("items")).toObject(), QStringLiteral("value[]."));
-        }
-    }
-    printConstraints(schema);
-    print((QStringLiteral("\nRun: HarkenStudioCLI exec %1").arg(name)
-        + (schema.value(QStringLiteral("properties")).toObject().isEmpty() ? QString()
-            : QStringLiteral(" --input arguments.json"))
-        + QStringLiteral(" [--project <path> | --instance <id>] [--save]\n")
-        + QStringLiteral("Use --input - to read UTF-8 JSON from stdin; --json returns the full command contract.\n")).toUtf8());
+    print(HarkenStudioCli::commandDescriptionText(response.value(QStringLiteral("result")).toObject()).toUtf8());
     return 0;
 }
 
 void printCommandDirectory(const QJsonArray& entries)
 {
-    for (const auto& value : entries) {
-        const auto entry = value.toObject();
-        print((QStringLiteral("%1  [%2%3]  %4\n").arg(entry.value(QStringLiteral("command")).toString(),
-            entry.value(QStringLiteral("category")).toString(),
-            entry.value(QStringLiteral("readOnly")).toBool() ? QStringLiteral(", read only") : QString(),
-            entry.value(QStringLiteral("description")).toString())).toUtf8());
-    }
-    print((QStringLiteral("\n%1 commands. Use HarkenStudioCLI commands <name> for parameters.\n").arg(entries.size())).toUtf8());
+    print(HarkenStudioCli::commandDirectoryText(entries).toUtf8());
 }
 
 QString commandHelp(const QString& command)
@@ -283,8 +141,12 @@ QString commandHelp(const QString& command)
             "Keep a project and runtime session open, or use --instance <id> to connect to Studio.\n"
             "--instance and --project are mutually exclusive. Enter one command per line:\n"
             "  command {\"argument\":\"value\"}\n"
-            "  help [name]       Show session help or a command's parameters.\n"
+            "  help              Show shell usage and the current command directory.\n"
+            "  help <name>       Explain a command's parameters and constraints.\n"
+            "  <name> --help     Explain the command without executing it.\n"
             "  commands [name]   List commands or describe one.\n"
+            "  commands --search <text> [--category <name>] [--read-only]\n"
+            "                    Filter the directory; help accepts the same filters.\n"
             "  save_project      Save changes explicitly.\n"
             "  exit              Exit when no unsaved changes remain.\n"
             "  exit --discard    Discard unsaved edits and exit.\n\n"
@@ -439,6 +301,21 @@ int main(int argc, char* argv[])
     const auto usage = [&](const QString& message) {
         return output(HarkenStudioCli::failure(QStringLiteral("USAGE"), message), wantsJson, 2);
     };
+    if (!positional.isEmpty() && positional.front() == QStringLiteral("commands")) {
+        const auto arguments = app.arguments();
+        const QStringList options{QStringLiteral("--search"), QStringLiteral("--category"),
+            QStringLiteral("--read-only"), QStringLiteral("--instance"), QStringLiteral("--json"),
+            QStringLiteral("--verbose"), QStringLiteral("--help"), QStringLiteral("--help-all"),
+            QStringLiteral("--version"), QStringLiteral("-h"), QStringLiteral("-v")};
+        for (const auto& option : {QStringLiteral("search"), QStringLiteral("category")}) {
+            if (parser.isSet(option) && parser.value(option).trimmed().isEmpty())
+                return usage(QStringLiteral("--%1 requires a nonempty value.").arg(option));
+            const auto index = arguments.indexOf(QStringLiteral("--") + option);
+            if (index >= 0 && index + 1 < arguments.size()
+                && options.contains(arguments.at(index + 1).section(QLatin1Char('='), 0, 0)))
+                return usage(QStringLiteral("--%1 requires a value before the next option; use --%1=<text> for literal option text.").arg(option));
+        }
+    }
     if (parser.values(QStringLiteral("instance")).size() > 1)
         return usage(QStringLiteral("--instance may only be specified once."));
     if (parser.isSet(QStringLiteral("instance")) && parser.value(QStringLiteral("instance")).trimmed().isEmpty())
@@ -547,36 +424,17 @@ int main(int argc, char* argv[])
 #endif
         return HarkenStudioCli::runShell(session, seconds * 1000, shellJson, interrupted,
             [&](QJsonObject response) {
-                const auto result = response.value(QStringLiteral("result")).toObject();
-                if (!shellJson && HarkenStudioCli::succeeded(response) && result.contains(QStringLiteral("inputSchema")))
-                    describeCommand(response, false);
-                else if (!shellJson && HarkenStudioCli::succeeded(response) && result.contains(QStringLiteral("host"))
-                    && result.value(QStringLiteral("commands")).isArray())
-                    printCommandDirectory(result.value(QStringLiteral("commands")).toArray());
-                else
-                    output(std::move(response), shellJson);
+                HarkenStudioCli::writeShellResponse(std::move(response), shellJson);
             });
     }
     if (command == QStringLiteral("commands")) {
         if (positional.size() == 2) return describeCommand(session.describe(positional.at(1)), wantsJson);
-        auto response = session.commands();
+        const auto response = HarkenStudioCli::filterCommandDirectory(session.commands(),
+            parser.value(QStringLiteral("search")), parser.value(QStringLiteral("category")),
+            parser.isSet(QStringLiteral("read-only")));
         if (!HarkenStudioCli::succeeded(response)) return output(response, wantsJson);
-        auto result = response.value(QStringLiteral("result")).toObject();
-        QJsonArray entries;
-        for (const auto& value : result.value(QStringLiteral("commands")).toArray()) {
-            const auto entry = value.toObject();
-            const auto category = entry.value(QStringLiteral("category")).toString();
-            const auto searchable = entry.value(QStringLiteral("command")).toString() + QLatin1Char(' ')
-                + entry.value(QStringLiteral("description")).toString() + QLatin1Char(' ') + category;
-            if (parser.isSet(QStringLiteral("search"))
-                && !searchable.contains(parser.value(QStringLiteral("search")), Qt::CaseInsensitive)) continue;
-            if (parser.isSet(QStringLiteral("category"))
-                && category.compare(parser.value(QStringLiteral("category")), Qt::CaseInsensitive) != 0) continue;
-            if (parser.isSet(QStringLiteral("read-only")) && !entry.value(QStringLiteral("readOnly")).toBool()) continue;
-            entries.append(entry);
-        }
-        result.insert(QStringLiteral("commands"), entries);
-        response.insert(QStringLiteral("result"), result);
+        const auto entries = response.value(QStringLiteral("result")).toObject()
+            .value(QStringLiteral("commands")).toArray();
         if (wantsJson) return output(response, true);
         printCommandDirectory(entries);
         return 0;

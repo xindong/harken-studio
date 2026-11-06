@@ -18,6 +18,51 @@ def run(binary: Path, arguments: list[str], environment: dict, data: bytes | Non
                           env=environment, timeout=180)
 
 
+def verify_shell_help(send, commands) -> None:
+    def request(line, error=None):
+        response = send(line, error)
+        assert response["protocolVersion"] == 1, response
+        assert response["status"] == ("error" if error else "ok"), (line, response)
+        if error:
+            assert response["code"] == error, (line, response)
+        return response
+
+    def directory(response):
+        return {entry["command"]: entry for entry in response["result"]["commands"]}
+
+    before = request("get_project_state")["result"]["is_dirty"]
+    catalog = directory(commands())
+    assert directory(request("help")) == catalog
+    assert directory(request("commands")) == catalog
+    selected = ["create_action", "save_project"]
+    if "list_ui_windows" in catalog:
+        selected.append("list_ui_windows")
+    for name in selected:
+        expected = commands(name)["result"]
+        for line in ("help " + name, "commands " + name, name + " --help"):
+            assert request(line)["result"] == expected, line
+    category = next(entry["category"] for entry in catalog.values() if entry["readOnly"])
+    for options in (("--search", "project"), ("--search", "current project"),
+                    ("--search", "__no_matching_help_command__"),
+                    ("--category", category), ("--read-only",),
+                    ("--category", category, "--read-only", "--search", "get")):
+        expected = directory(commands(*options))
+        arguments = " ".join(option if option.startswith("--") else json.dumps(option) for option in options)
+        for prefix in ("help ", "commands "):
+            assert directory(request(prefix + arguments)) == expected, (prefix, options)
+    for name in ("help", "commands", "exit"):
+        builtin = request("help " + name)["result"]
+        assert builtin.get("help"), (name, builtin)
+        assert request(name + " --help")["result"] == builtin
+    for line in ("help --unknown-option", "commands --search", "help --category",
+                 "help --search --read-only", "commands --category --read-only",
+                 "help create_action --read-only", "help --search project --search audio",
+                 'help --search ""', 'commands --category ""', 'help --search "unterminated'):
+        request(line, "USAGE")
+    request("help __missing_command__", "UNKNOWN_COMMAND")
+    assert request("get_project_state")["result"]["is_dirty"] == before
+
+
 def verify_shell(cli: Path, environment: dict, root: Path, audio_output: bool) -> None:
     directory = root / "ShellAudio"
     project = directory / "ShellAudio.hsp"
@@ -116,11 +161,17 @@ def verify_shell(cli: Path, environment: dict, root: Path, audio_output: bool) -
     reader = threading.Thread(target=read_responses, daemon=True)
     reader.start()
     try:
-        def send(line):
+        def send(line, error=None):
             process.stdin.write((line + "\n").encode("utf-8"))
             process.stdin.flush()
             return responses.get(timeout=30)
 
+        def commands(*arguments):
+            completed = run(cli, ["commands", *arguments, "--json"], environment)
+            assert completed.returncode == 0, (completed.stdout, completed.stderr)
+            return json.loads(completed.stdout)
+
+        verify_shell_help(send, commands)
         initialize = "init_engine " + json.dumps({"device_mode": "real" if audio_output else "null"})
         for line in ['get_item_info {"path":"SessionAction"}', "commands save_project", initialize,
                      *(["start_output"] if audio_output else []), "close_project"]:
@@ -195,6 +246,13 @@ def verify(cli: Path, host: Path | None, work: Path, audio_output: bool = True) 
         expected = [entry for entry in catalog if entry["category"] == category and entry["readOnly"]]
         assert call("commands", "--category", category, "--read-only")["result"]["commands"] == expected
     call("commands", "save_project", "--search", "project", exit_code=2)
+    for option in ("--search", "--category"):
+        for value in ("", " ", "--read-only"):
+            rejected = call("commands", option, value, exit_code=2)
+            assert rejected["code"] == "USAGE", rejected
+    literal = call("commands", "--search=--read-only")["result"]["commands"]
+    assert literal == [entry for entry in catalog if "--read-only" in
+                       " ".join(entry.get(key, "") for key in ("command", "description", "category")).lower()]
     invalid_lines = [entry["command"] + ' {"__unsupported_argument__":true}' for entry in catalog] + ["exit"]
     invalid = run(cli, ["shell", "--json"], environment, ("\n".join(invalid_lines) + "\n").encode())
     assert invalid.returncode == 0, invalid.stderr

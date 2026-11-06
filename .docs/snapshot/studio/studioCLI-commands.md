@@ -80,7 +80,10 @@ harken> exit
 
 | 操作 | 约定 |
 |---|---|
-| `help`、`commands [name]` | 查看会话语法、命令目录或参数 |
+| `help` | 显示会话语法、退出约定和当前宿主的完整命令目录；终端按分类展示 |
+| `help <name>`、`commands <name>`、`<name> --help` | 查看命令用途、必填/可选参数、类型、范围、默认值和互斥约束，不执行业务命令 |
+| `help/commands --search <text> --category <name> --read-only` | 与外部 CLI 相同的搜索和筛选，可组合；包含空格的值使用引号 |
+| `help commands`、`help exit` | 查看筛选语法或当前会话的退出行为 |
 | `save_project` | 显式保存，无自动保存模式 |
 | `exit` | 有未保存修改时返回 `UNSAVED_CHANGES` 并继续会话 |
 | `exit --discard` | 放弃未保存编辑及工程内未提交的音频源文件变更后退出；已完成保存或导出的结果不回滚 |
@@ -92,6 +95,17 @@ harken> exit
 | 提示符 | 只在交互终端且未指定 `--json` 时向 stderr 输出 |
 
 等待输入期间继续处理事件，音频和后台服务保持运行。无参数启动显示帮助并退出。
+
+```text
+harken> help
+harken> help --search audio --read-only
+harken> commands --search "current project"
+harken> help create_action
+harken> create_action --help
+harken> help exit
+```
+
+独立 CLI、连接实例的 CLI 和 Studio `--shell` 使用相同的帮助格式与筛选规则。目录和参数实时来自当前宿主：独立模式仅显示核心能力，桌面会话包含 GUI 命令。交互终端显示可读文本和当前 shell 的调用语法；重定向或 `--json` 仍为逐行结构化响应，`help` 的 `result.commands` 包含实际目录，`result.help` 包含会话指南。错误筛选不会执行命令或退出会话；未知命令提示使用当前 shell 内的帮助。
 
 ## 共享业务约定
 

@@ -1,8 +1,10 @@
 #include "Shell.h"
 #include "StudioSession.h"
+#include "CommandHelp.h"
 #include "Core/ProjectManager.h"
 
 #include <QCoreApplication>
+#include <QCommandLineParser>
 #include <QEventLoop>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -155,6 +157,119 @@ bool bindStream(FILE* stream, DWORD standardHandle, bool input)
 }
 #endif
 
+QString shellHelpText(const QString& topic, const StudioSession& session)
+{
+    if (topic == QStringLiteral("exit")) {
+        if (session.isRemote())
+            return QStringLiteral("exit - disconnect from Studio and exit this CLI process.\n"
+                "Studio and its unsaved edits stay open. EOF also disconnects.\n"
+                "exit --discard is unavailable for a connected instance.\n");
+        return QStringLiteral("exit - exit this %1 when there are no unsaved edits.\n"
+            "Unsaved edits return UNSAVED_CHANGES and keep the shell open; save with save_project.\n"
+            "exit --discard - discard unsaved edits and exit.\n").arg(
+                session.isAttached() ? QStringLiteral("Studio process, including the GUI") : QStringLiteral("CLI process"))
+            + (session.isAttached()
+                ? QStringLiteral("EOF requests closing Studio; unsaved edits use the GUI confirmation.\n")
+                : QStringLiteral("EOF exits with an error if edits are unsaved.\n"));
+    }
+    if (topic == QStringLiteral("commands"))
+        return QStringLiteral("commands [name] - list available commands or show parameters.\n"
+            "commands --search <text> --category <name> --read-only\n"
+            "Filters combine; quote text containing spaces. Categories appear in the directory.\n"
+            "--search matches command name, description and category; --category matches a category.\n"
+            "--read-only shows queries without state changes.\n"
+            "Use help with the same filters, or help <name> / <name> --help for details.\n"
+            "Examples:\n  commands --search audio\n  commands --search \"project\" --read-only\n");
+    return QStringLiteral("Shell command guide\n\n"
+        "  help                         Show this guide and all available commands.\n"
+        "  help <name>                  Show a command's parameters and constraints.\n"
+        "  <name> --help                Show help without executing the command.\n"
+        "  commands [name]              List commands or describe one.\n"
+        "  help --search <text>         Search names, descriptions and categories.\n"
+        "  help --category <name>       Filter by category; quote names containing spaces.\n"
+        "  help --read-only             Show only queries. Filters can be combined.\n"
+        "  help commands / help exit    Explain filters or session exit behavior.\n\n"
+        "Run commands directly: command {\"argument\":\"value\"}\n"
+        "Omit the JSON object when no arguments are required. Use save_project to save edits.\n"
+        "Examples:\n  get_project_info\n  help create_action\n  help --search audio --read-only\n\n")
+        + shellHelpText(QStringLiteral("exit"), session);
+}
+
+QJsonObject shellHelp(StudioSession& session, const QString& command, const QString& arguments)
+{
+    QStringList tokens{command};
+    QString token;
+    QChar quote;
+    bool started = false;
+    for (qsizetype i = 0; i < arguments.size(); ++i) {
+        const QChar ch = arguments.at(i);
+        if (ch == QLatin1Char('\\') && i + 1 < arguments.size()
+            && (arguments.at(i + 1) == QLatin1Char('\\')
+                || arguments.at(i + 1) == QLatin1Char('"') || arguments.at(i + 1) == QLatin1Char('\''))) {
+            token.append(arguments.at(++i));
+            started = true;
+        } else if (!quote.isNull()) {
+            if (ch == quote) quote = QChar();
+            else token.append(ch);
+        } else if (ch == QLatin1Char('"') || ch == QLatin1Char('\'')) {
+            quote = ch;
+            started = true;
+        } else if (ch.isSpace()) {
+            if (started) tokens.append(std::exchange(token, {}));
+            started = false;
+        } else {
+            token.append(ch);
+            started = true;
+        }
+    }
+    const auto usage = [](const QString& message) {
+        auto response = failure(QStringLiteral("USAGE"), message);
+        response.insert(QStringLiteral("suggestion"), QStringLiteral("Use help commands for filter syntax, or help <name> for parameters."));
+        return response;
+    };
+    if (!quote.isNull()) return usage(QStringLiteral("Unterminated quote in help arguments."));
+    if (started) tokens.append(token);
+    const QStringList options{QStringLiteral("--search"), QStringLiteral("--category"),
+        QStringLiteral("--read-only"), QStringLiteral("--help"), QStringLiteral("-h")};
+    for (qsizetype i = 1; i + 1 < tokens.size(); ++i) {
+        if ((tokens.at(i) == QStringLiteral("--search") || tokens.at(i) == QStringLiteral("--category"))
+            && options.contains(tokens.at(i + 1).section(QLatin1Char('='), 0, 0)))
+            return usage(QStringLiteral("%1 requires a value before %2. Use --option=value for literal option text.")
+                .arg(tokens.at(i), tokens.at(i + 1)));
+    }
+    QCommandLineParser parser;
+    parser.addHelpOption();
+    parser.addOption({QStringLiteral("search"), QStringLiteral("Search commands."), QStringLiteral("text")});
+    parser.addOption({QStringLiteral("category"), QStringLiteral("Filter category."), QStringLiteral("name")});
+    parser.addOption({QStringLiteral("read-only"), QStringLiteral("Show queries only.")});
+    if (!parser.parse(tokens)) return usage(parser.errorText());
+    for (const auto& option : {QStringLiteral("search"), QStringLiteral("category")}) {
+        if (parser.values(option).size() > 1) return usage(QStringLiteral("--%1 may only be specified once.").arg(option));
+        if (parser.isSet(option) && parser.value(option).trimmed().isEmpty())
+            return usage(QStringLiteral("--%1 requires a nonempty value.").arg(option));
+    }
+    const auto names = parser.positionalArguments();
+    const bool filtered = parser.isSet(QStringLiteral("search")) || parser.isSet(QStringLiteral("category"))
+        || parser.isSet(QStringLiteral("read-only"));
+    if (names.size() > 1 || (!names.isEmpty() && filtered))
+        return usage(QStringLiteral("Use one command name, or directory filters without a command name."));
+    const QString topic = names.isEmpty() ? command : names.front();
+    if ((names.isEmpty() && parser.isSet(QStringLiteral("help"))) || (!names.isEmpty()
+        && (topic == QStringLiteral("help") || topic == QStringLiteral("commands") || topic == QStringLiteral("exit"))))
+        return {{QStringLiteral("status"), QStringLiteral("ok")},
+            {QStringLiteral("result"), QJsonObject{{QStringLiteral("help"), shellHelpText(topic, session)}}}};
+    if (!names.isEmpty()) return session.describe(topic);
+    auto response = filterCommandDirectory(session.commands(), parser.value(QStringLiteral("search")),
+        parser.value(QStringLiteral("category")), parser.isSet(QStringLiteral("read-only")));
+    if (succeeded(response) && command == QStringLiteral("help") && !filtered) {
+        auto result = response.value(QStringLiteral("result")).toObject();
+        result.insert(QStringLiteral("help"), shellHelpText(QStringLiteral("help"), session));
+        result.insert(QStringLiteral("syntax"), QStringLiteral("command {\"argument\":\"value\"}"));
+        response.insert(QStringLiteral("result"), result);
+    }
+    return response;
+}
+
 }
 
 bool prepareDesktopShellStdio(QString* error, bool requireInput)
@@ -219,8 +334,20 @@ void writeShellResponse(QJsonObject response, bool json)
     if (fileno(stdout) < 0 || fcntl(fileno(stdout), F_GETFL) < 0) return;
 #endif
     response.insert(QStringLiteral("protocolVersion"), 1);
-    QByteArray bytes = QJsonDocument(response).toJson(json ? QJsonDocument::Compact : QJsonDocument::Indented);
-    if (json) bytes.append('\n');
+    QByteArray bytes;
+    const auto result = response.value(QStringLiteral("result")).toObject();
+    if (!json && succeeded(response)) {
+        if (result.value(QStringLiteral("help")).isString())
+            bytes.append(result.value(QStringLiteral("help")).toString().toUtf8());
+        if (result.contains(QStringLiteral("inputSchema")))
+            bytes.append(commandDescriptionText(result, true).toUtf8());
+        else if (result.contains(QStringLiteral("host")) && result.value(QStringLiteral("commands")).isArray())
+            bytes.append(commandDirectoryText(result.value(QStringLiteral("commands")).toArray(), true).toUtf8());
+    }
+    if (bytes.isEmpty()) {
+        bytes = QJsonDocument(response).toJson(json ? QJsonDocument::Compact : QJsonDocument::Indented);
+        if (json) bytes.append('\n');
+    }
 #ifdef Q_OS_WIN
     DWORD mode = 0;
     const HANDLE handle = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -318,6 +445,8 @@ int runShell(StudioSession& session, int timeoutMs, bool json,
     };
     const auto respond = [&](QJsonObject response, const QString& command) {
         response.insert(QStringLiteral("command"), command);
+        if (response.value(QStringLiteral("code")) == QStringLiteral("UNKNOWN_COMMAND"))
+            response.insert(QStringLiteral("suggestion"), QStringLiteral("Use help to list commands, or help --search <text> to find one."));
         writeResponse(std::move(response));
         if (std::ferror(stdout)) {
             stopping.store(true);
@@ -354,7 +483,12 @@ int runShell(StudioSession& session, int timeoutMs, bool json,
         interrupted = 0;
         executing = true;
         QJsonObject response;
-        if (command == QStringLiteral("exit")) {
+        if (command == QStringLiteral("help") || command == QStringLiteral("commands")) {
+            response = shellHelp(session, command, arguments);
+        } else if (arguments == QStringLiteral("--help") || arguments == QStringLiteral("-h")) {
+            response = command == QStringLiteral("exit")
+                ? shellHelp(session, QStringLiteral("help"), command) : session.describe(command);
+        } else if (command == QStringLiteral("exit")) {
             if (session.isRemote() && !arguments.isEmpty()) {
                 response = failure(QStringLiteral("USAGE"),
                     QStringLiteral("Use exit to disconnect. Edits stay in Studio; --discard is only available when the shell owns the project."));
@@ -374,18 +508,6 @@ int runShell(StudioSession& session, int timeoutMs, bool json,
                 finish(0);
                 return;
             }
-        } else if (command == QStringLiteral("help") && arguments.isEmpty()) {
-            response = {{QStringLiteral("status"), QStringLiteral("ok")},
-                {QStringLiteral("result"), QJsonObject{
-                    {QStringLiteral("syntax"), QStringLiteral("command {\"argument\":\"value\"}")},
-                    {QStringLiteral("commands"), QJsonArray{
-                        QStringLiteral("commands [name] - list commands or show parameters"),
-                        QStringLiteral("save_project - save current edits"),
-                        session.isRemote()
-                            ? QStringLiteral("exit / EOF - exit this CLI process; the connected Studio stays open")
-                            : QStringLiteral("exit - leave after saving; exit --discard - discard unsaved edits and leave")}}}}};
-        } else if (command == QStringLiteral("commands") || command == QStringLiteral("help")) {
-            response = arguments.isEmpty() ? session.commands() : session.describe(arguments);
         } else {
             QJsonParseError error;
             const auto document = QJsonDocument::fromJson(

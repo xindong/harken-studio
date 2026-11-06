@@ -12,6 +12,7 @@ import wave
 from pathlib import Path
 
 from verify_studio_instances import process_options, registry_directory
+from verify_studio_cli import verify_shell_help
 
 
 def verify(cli: Path, studio: Path, work: Path) -> None:
@@ -183,6 +184,10 @@ def verify(cli: Path, studio: Path, work: Path) -> None:
 
         process, responses, instance, project = launch("DirectShellEof")
         instance_id = instance["id"]
+        verify_shell_help(
+            lambda line, error=None: send(process, responses, line, error),
+            lambda *arguments: call("commands", "--instance", instance_id, *arguments))
+        check("Direct shell help matches the live catalog, supports search and details, and cannot mutate the project")
         duplicate = startup("--project", str(project), "--shell")
         assert duplicate["status"] == "error" and process.poll() is None, duplicate
         info = send(process, responses, "get_project_info")

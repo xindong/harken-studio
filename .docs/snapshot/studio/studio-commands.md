@@ -26,6 +26,7 @@ Start-Process .\HarkenStudio.exe -NoNewWindow -Wait -ArgumentList '--project "Ga
 
 ```text
 help
+help --search widget --read-only
 commands list_ui_windows
 create_action {"name":"PlayFootstep"}
 list_ui_windows
@@ -34,6 +35,8 @@ exit
 ```
 
 `--shell` 在 GUI 就绪后持续读取标准输入，使用现有 shell 语法、命令目录、参数验证和分发器。命令在 GUI 线程操作同一个内存工程、撤销栈和界面，不连接本地命名管道或 TCP 服务。共享异步作业等待完成，GUI 事件返回排队身份供后续查询。普通 GUI 启动不读取 stdin，也不创建终端窗口。
+
+`help` 显示会话指南和按分类整理的实际命令目录，包含当前 GUI 扩展；`help <name>`、`commands <name>`、`<name> --help` 显示完整参数说明，不执行操作。`help` 与 `commands` 支持组合 `--search <text>`、`--category <name>`、`--read-only`，无需离开 shell；`help exit` 解释当前会话的退出行为。帮助文本与独立 CLI 共用格式，执行示例使用当前 shell 的直接命令语法。
 
 输入或输出重定向时自动输出逐行 UTF-8 JSON，也可用 `--json` 强制启用；响应包含 `protocolVersion`。每读完一行即执行并刷新 stdout，无需等待 EOF。提示符仅向交互终端的 stderr 输出。`--help`、`--shell --help` 和 `--version [--json]` 可在不打开 GUI 的情况下查询入口及版本。
 

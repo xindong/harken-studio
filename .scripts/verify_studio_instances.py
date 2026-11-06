@@ -12,6 +12,7 @@ import time
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
+from verify_studio_cli import verify_shell_help
 
 
 def process_options() -> dict:
@@ -217,6 +218,11 @@ def verify(cli: Path, studio: Path, work: Path) -> None:
             assert Path(entry["executable"]).resolve() == studio.resolve(), entry
             assert Path(entry["project"]["path"]).resolve() == projects[index].resolve(), entry
         first_id, second_id = first["id"], second["id"]
+        verify_shell_help(
+            lambda line, error=None: attached_shell(first_id, [line, "exit"],
+                errors={0: error} if error else None)[0],
+            lambda *arguments: call("commands", "--instance", first_id, *arguments))
+        check("Attached shell help uses the selected Studio catalog and supports in-session search and command details")
         fixtures.extend(registry_directory(environment) / (entry["id"] + ".json") for entry in (first, second))
         report["instances"] = [first, second]
         for instance_id in (first_id, second_id):
