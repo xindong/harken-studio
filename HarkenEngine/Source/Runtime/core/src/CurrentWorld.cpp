@@ -348,7 +348,7 @@ bool ValidContinuousWeightCurve(const CurveV1& curve) noexcept {
     return true;
 }
 
-bool ValidPayload(const PlayablePropertyPayloadViewV1& payload) noexcept {
+bool ValidPayload(const PlayablePropertyPayloadViewV1& payload) {
     using playableproperties::PlayablePropertyDefaultV1;
     using playableproperties::PlayablePropertyWireV1;
     if ((payload.presentMask &

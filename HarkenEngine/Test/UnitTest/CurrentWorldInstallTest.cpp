@@ -6,6 +6,7 @@
 #include "harken/core/CurrentWorld.h"
 #include "harken/core/CurrentWorldArtifact.h"
 #include "harken/core/CurrentWorldCodec.h"
+#include "harken/core/detail/CurrentWorldValidation.h"
 #include "harken/media/PackFormat.h"
 #include "harken/param/ParamTargetTable.h"
 #include "harken/render/generated/harken_effect_registry.g.h"
@@ -946,10 +947,40 @@ TEST(CurrentWorldInstall, EffectCyclesAreRefused) {
     cyclic.properties[0].payload.effectNodes = nodes;
     cyclic.properties[0].payload.effectEdgeCount = 2;
     cyclic.properties[0].payload.effectEdges = edges;
+    cyclic.RefreshSemanticRows();
     EXPECT_EQ(harken::WorldInstallStatus::InvalidWorld,
               harken::ValidateCurrentWorldV1(cyclic.world));
 
-
+    cyclic.properties[0].payload.effectEdgeCount = 1;
+    cyclic.RefreshSemanticRows();
+    for (const bool partition : {false, true}) {
+        SCOPED_TRACE(partition);
+        const auto validate = [&] {
+            return partition
+                ? harken::detail::ValidateCurrentWorldPartitionLocalV1(cyclic.world)
+                : harken::ValidateCurrentWorldV1(cyclic.world);
+        };
+        allocation_probe::count = 0;
+        allocation_probe::enabled = true;
+        const auto accepted = validate();
+        allocation_probe::enabled = false;
+        const auto allocationCount = allocation_probe::count;
+        ASSERT_EQ(harken::WorldInstallStatus::Ok, accepted);
+        ASSERT_GT(allocationCount, 0u);
+        for (std::size_t nth = 1; nth <= allocationCount; ++nth) {
+            SCOPED_TRACE(nth);
+            allocation_probe::count = 0;
+            allocation_probe::failAt = nth;
+            allocation_probe::enabled = true;
+            const auto result = validate();
+            allocation_probe::enabled = false;
+            const bool injected = allocation_probe::failAt == 0;
+            allocation_probe::failAt = 0;
+            ASSERT_TRUE(injected);
+            ASSERT_EQ(harken::WorldInstallStatus::Capacity, result);
+            EXPECT_EQ(harken::WorldInstallStatus::Ok, validate());
+        }
+    }
 }
 
 TEST(CurrentWorldInstall, NestedContainerCyclesAreRefused) {
