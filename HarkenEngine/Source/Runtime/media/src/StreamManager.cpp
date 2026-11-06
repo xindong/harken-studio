@@ -331,6 +331,7 @@ bool StreamManager::FindFile(VnSoundId soundId, StreamFacts* out) const {
         out->channelCount = file->toc.channelCount;
         out->frameCount = file->toc.frameCount;
         out->contentRevision = file->contentRevision;
+        out->sourceGeneration = file->sourceGeneration;
         out->flags = file->toc.flags;
         out->loopStartFrame = file->toc.loopStartFrame;
         out->loopEndFrame = file->toc.loopEndFrame;
@@ -351,6 +352,7 @@ bool StreamManager::FactsForFileIndex(std::uint32_t fileIndex,
     out->channelCount = file->toc.channelCount;
     out->frameCount = file->toc.frameCount;
     out->contentRevision = file->contentRevision;
+    out->sourceGeneration = file->sourceGeneration;
     out->flags = file->toc.flags;
     out->loopStartFrame = file->toc.loopStartFrame;
     out->loopEndFrame = file->toc.loopEndFrame;
@@ -462,21 +464,37 @@ VnResult StreamManager::ActivateSlot(std::uint32_t slot,
                                      std::uint32_t loopCount,
                                      std::uint64_t* outRingToken) {
     if (outRingToken != nullptr) *outRingToken = 0;
-    if (slot >= m_slots.size() || fileIndex >= m_files.size() ||
-        m_files[fileIndex] == nullptr ||
-        !RingStorageReady(slot, m_files[fileIndex]->toc.channelCount) ||
-        ((loopCount != 1u) && loopStartFrame >= loopEndFrame) ||
-        m_slots[slot].ring.state.load(std::memory_order_acquire) !=
-            StreamSlotState::Free) {
-        return VN_DEVICE_ERROR;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (slot >= m_slots.size() || fileIndex >= m_files.size() ||
+            m_files[fileIndex] == nullptr ||
+            !RingStorageReady(slot, m_files[fileIndex]->toc.channelCount) ||
+            ((loopCount != 1u) && loopStartFrame >= loopEndFrame) ||
+            m_slots[slot].ring.state.load(std::memory_order_acquire) !=
+                StreamSlotState::Free) {
+            return VN_DEVICE_ERROR;
+        }
+        StreamFile& file = *m_files[fileIndex];
+        file.activeStreams.fetch_add(1, std::memory_order_relaxed);
+        const auto token = InitializeSlot(slot, fileIndex, file, startFrame,
+                                         loopStartFrame, loopEndFrame, loopCount);
+        if (outRingToken != nullptr) *outRingToken = token;
     }
+    Request request;
+    request.kind = Request::Kind::Serve;
+    return PostAndWait(request);
+}
+
+std::uint64_t StreamManager::InitializeSlot(
+    std::uint32_t slot, std::uint32_t fileIndex, StreamFile& file,
+    std::uint64_t startFrame, std::uint64_t loopStartFrame,
+    std::uint64_t loopEndFrame, std::uint32_t loopCount) {
     StreamSlot& s = m_slots[slot];
     // The slot is Free: neither real-time thread observes it, so these
-    // plain writes are private until the Active release-store publishes
-    // them. The file record itself cannot be mutated concurrently — table
-    // changes happen on the streaming thread only while the logic thread
-    // is blocked inside a register/unregister request, and this call runs
-    // on the logic thread.
+    // writes are private until Active publishes them. The source reference
+    // was acquired under m_mutex, so retirement cannot close it in between.
+    s.preparationOwner = StreamSlot::PreparationOwner::None;
+    s.preparationGeneration = 0;
     s.fileIndex = fileIndex;
     // Seed the source read position. 0 is start-at-file (the original
     // behavior); a nonzero startFrame begins decoding there — the first prebuffer
@@ -499,26 +517,112 @@ VnResult StreamManager::ActivateSlot(std::uint32_t slot,
     assert((loopCount == 1) || loopStartFrame < loopEndFrame);
     s.stagedChunk = kNoChunk;
     s.feedStopped = false;
-    s.ring.ResetForUse(m_files[fileIndex]->toc.channelCount);
+    s.ring.ResetForUse(file.toc.channelCount);
     const std::uint32_t ringGeneration =
         s.ring.generation.load(std::memory_order_relaxed);
-    m_files[fileIndex]->activeStreams.fetch_add(1,
-                                                std::memory_order_relaxed);
     const std::uint32_t nowActive =
         m_activeSlots.fetch_add(1, std::memory_order_relaxed) + 1;
     if (nowActive > m_streamHighWater) {
         m_streamHighWater = nowActive;
     }
     s.ring.state.store(StreamSlotState::Active, std::memory_order_release);
-    if (outRingToken != nullptr) {
-        *outRingToken = RingToken(slot, ringGeneration);
+    return RingToken(slot, ringGeneration);
+}
+
+VnResult StreamManager::BeginReplacement(
+    const ReplacementRequest& request, PreparedToken* out) {
+    if (out == nullptr) return VN_INVALID_ARG;
+    *out = {};
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (WorkerState() != StreamWorkerState::Ready || m_shutdown)
+            return VN_DEVICE_ERROR;
+        if (request.fileIndex >= m_files.size() ||
+            m_files[request.fileIndex] == nullptr) return VN_STALE_HANDLE;
+        StreamFile& file = *m_files[request.fileIndex];
+        if (request.sourceGeneration == 0 ||
+            file.sourceGeneration != request.sourceGeneration ||
+            file.contentRevision != request.contentRevision) return VN_STALE_HANDLE;
+        if (request.targetFrame > file.toc.frameCount ||
+            request.loopStartFrame > request.loopEndFrame ||
+            request.loopEndFrame > file.toc.frameCount ||
+            (request.loopCount != 1 &&
+             (request.loopStartFrame == request.loopEndFrame ||
+              request.targetFrame >= request.loopEndFrame))) return VN_INVALID_ARG;
+        std::uint32_t slot = 0;
+        if (m_lastPreparationGeneration == UINT64_MAX ||
+            FreeSlotCount() <= request.pendingSlotReservations ||
+            !PeekFreeSlot(&slot)) return VN_BACKPRESSURE;
+
+        // Pin before private storage preparation. Both failure and publication
+        // happen under the same lock that protects retiring file destruction.
+        file.activeStreams.fetch_add(1, std::memory_order_relaxed);
+        if (!PrepareSlotWorkingSet(slot, file.toc.channelCount)) {
+            file.activeStreams.fetch_sub(1, std::memory_order_relaxed);
+            return VN_BACKPRESSURE;
+        }
+        const auto ringToken = InitializeSlot(
+            slot, request.fileIndex, file, request.targetFrame,
+            request.loopStartFrame, request.loopEndFrame, request.loopCount);
+        auto& prepared = m_slots[slot];
+        prepared.preparationGeneration = ++m_lastPreparationGeneration;
+        prepared.preparationOwner = StreamSlot::PreparationOwner::Prepared;
+        prepared.preparedRingToken = ringToken;
+        prepared.prebufferTargetFrames = std::min(
+            std::max(1u, request.prebufferTargetFrames), prepared.ring.capacity);
+        *out = {slot, prepared.preparationGeneration};
+        m_serviceRequested = true;
     }
-    // Kick the streaming thread so prebuffering starts now rather than at
-    // the next periodic wakeup.
-    Request request;
-    request.kind = Request::Kind::Serve;
-    const VnResult result = PostAndWait(request);
-    return result;
+    m_wake.notify_all();
+    return VN_OK;
+}
+
+StreamManager::PreparationState StreamManager::QueryReplacement(
+    PreparedToken token) const noexcept {
+    if (token.slot >= m_slots.size() || token.generation == 0)
+        return PreparationState::Invalid;
+    const auto& slot = m_slots[token.slot];
+    if (slot.preparationGeneration != token.generation)
+        return PreparationState::Invalid;
+    if (slot.preparationOwner == StreamSlot::PreparationOwner::Cancelled)
+        return PreparationState::Cancelled;
+    if (slot.preparationOwner != StreamSlot::PreparationOwner::Prepared ||
+        slot.ring.state.load(std::memory_order_acquire) != StreamSlotState::Active ||
+        slot.ring.generation.load(std::memory_order_relaxed) !=
+            static_cast<std::uint32_t>(slot.preparedRingToken >> 32u))
+        return PreparationState::Invalid;
+    if (WorkerState() != StreamWorkerState::Ready) return PreparationState::Failed;
+    const auto terminal = slot.ring.TerminalReason();
+    if (terminal == StreamTerminalReason::IntegrityAbort ||
+        terminal == StreamTerminalReason::ProducerFailure) return PreparationState::Failed;
+    if (terminal == StreamTerminalReason::NaturalEnd ||
+        slot.ring.ReadAvailable() >= slot.prebufferTargetFrames)
+        return PreparationState::Ready;
+    return PreparationState::Preparing;
+}
+
+bool StreamManager::CancelReplacement(PreparedToken token) noexcept {
+    const auto state = QueryReplacement(token);
+    if (state == PreparationState::Invalid || state == PreparationState::Cancelled)
+        return false;
+    auto& slot = m_slots[token.slot];
+    if (!RetirePreparedSlot(&slot.ring, slot.preparedRingToken)) return false;
+    slot.preparationOwner = StreamSlot::PreparationOwner::Cancelled;
+    return true;
+}
+
+VnResult StreamManager::TakeReplacement(
+    PreparedToken token, PreparedStream* out) noexcept {
+    if (out == nullptr) return VN_INVALID_ARG;
+    *out = {};
+    const auto state = QueryReplacement(token);
+    if (state == PreparationState::Preparing) return VN_BACKPRESSURE;
+    if (state == PreparationState::Failed) return VN_DEVICE_ERROR;
+    if (state != PreparationState::Ready) return VN_STALE_HANDLE;
+    auto& slot = m_slots[token.slot];
+    *out = {token.slot, &slot.ring, slot.preparedRingToken};
+    slot.preparationOwner = StreamSlot::PreparationOwner::None;
+    return VN_OK;
 }
 
 VnResult StreamManager::PrepareSeekSlot(
@@ -680,7 +784,7 @@ void StreamManager::ThreadMain() {
                 batch.clear();
                 dispatched = 0;
                 m_wake.wait_for(lock, kServiceInterval, [&] {
-                    return m_shutdown || !m_requests.empty();
+                    return m_shutdown || m_serviceRequested || !m_requests.empty();
                 });
                 if (m_shutdown) {
                     // Anything queued at this instant would otherwise be
@@ -692,6 +796,7 @@ void StreamManager::ThreadMain() {
                     break;
                 }
                 batch.swap(m_requests);
+                m_serviceRequested = false;
                 lock.unlock();
 
                 if (StreamRequestFaultForTests() ==
@@ -834,6 +939,11 @@ void StreamManager::HandleRegister(Request& request) {
 
     {
         std::lock_guard<std::mutex> lock(m_mutex);
+        if (m_lastSourceGeneration == UINT64_MAX) {
+            request.result = VN_BACKPRESSURE;
+            return;
+        }
+        record->sourceGeneration = ++m_lastSourceGeneration;
         for (std::unique_ptr<StreamFile>& file : m_files) {
             if (file == nullptr) {
                 file = std::move(record);
@@ -1052,6 +1162,11 @@ void StreamManager::HandleReplace(Request& request) {
         if (!haveFreeSlot) {
             m_files.reserve(m_files.size() + 1);
         }
+        if (m_lastSourceGeneration == UINT64_MAX) {
+            request.result = VN_BACKPRESSURE;
+            return;
+        }
+        record->sourceGeneration = ++m_lastSourceGeneration;
         // The old file becomes a retiring generation: unregistered from the
         // id (new lookups resolve the new file) but open for the slots and
         // pending pins still reading it by index.

@@ -495,4 +495,101 @@ TEST(StreamWorkerLifecycle, WorkerDeathStillClosesDrainedRetiringFiles) {
            "the retiring count stays permanently high";
 }
 
+TEST(StreamWorkerLifecycle, ReplacementControlDoesNotWaitForStalledWorker) {
+    using Manager = harken::StreamManager;
+    harken::EngineConfig config{};
+    config.maxStreams = 1;
+    config.streamRingFrames = 1024;
+    Manager streams(config);
+    const auto id = harkentest::ObjectId(9110);
+    const auto path = WriteStream("swl_prepare_stall.stream", id);
+    ASSERT_EQ(VN_OK, streams.RegisterFile(id, path.c_str()));
+    Manager::StreamFacts facts;
+    ASSERT_TRUE(streams.FindFile(id, &facts));
+    Manager::ReplacementRequest request;
+    request.fileIndex = facts.fileIndex;
+    request.sourceGeneration = facts.sourceGeneration;
+    request.contentRevision = facts.contentRevision;
+    request.loopEndFrame = facts.frameCount;
+    request.prebufferTargetFrames = 512;
+
+    harken::SetStreamWorkerStallReleaseForTests(false);
+    const auto before = harken::StreamWorkerStallEntriesForTests();
+    StreamRequestFaultGuard fault(harken::StreamRequestFault::WorkerStall);
+    BoundedCall service;
+    service.Start([&streams] { streams.SyncServe(); return VN_OK; });
+    const auto deadline = std::chrono::steady_clock::now() + kCallBudget;
+    while (harken::StreamWorkerStallEntriesForTests() == before &&
+           std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    const bool stalled = harken::StreamWorkerStallEntriesForTests() > before;
+
+    BoundedCall control;
+    control.Start([&streams, request]() -> VnResult {
+        Manager::PreparedToken token;
+        const auto result = streams.BeginReplacement(request, &token);
+        if (result != VN_OK) return result;
+        if (streams.QueryReplacement(token) != Manager::PreparationState::Preparing)
+            return VN_DEVICE_ERROR;
+        return streams.CancelReplacement(token) ? VN_OK : VN_DEVICE_ERROR;
+    });
+    VnResult result = VN_DEVICE_ERROR;
+    const bool completedWhileStalled = control.Wait(&result);
+    harken::SetStreamWorkerStallReleaseForTests(true);
+    VnResult ignored = VN_OK;
+    ASSERT_TRUE(service.Wait(&ignored));
+    if (!completedWhileStalled) ASSERT_TRUE(control.Wait(&result));
+    ASSERT_TRUE(stalled);
+    EXPECT_TRUE(completedWhileStalled);
+    EXPECT_EQ(VN_OK, result);
+    streams.SyncServe();
+    EXPECT_EQ(1u, streams.FreeSlotCount());
+    EXPECT_EQ(VN_OK, streams.UnregisterFile(id));
+    harken::SetStreamRequestFaultForTests(harken::StreamRequestFault::None);
+    harken::SetStreamWorkerStallReleaseForTests(false);
+}
+
+TEST(StreamWorkerLifecycle, FailedReplacementCancellationDrainsRetiringSource) {
+    using Manager = harken::StreamManager;
+    harken::EngineConfig config{};
+    config.maxStreams = 1;
+    config.streamRingFrames = 1024;
+    Manager streams(config);
+    const auto id = harkentest::ObjectId(9111);
+    const auto path = WriteStream("swl_prepare_failure.stream", id);
+    ASSERT_EQ(VN_OK, streams.RegisterFile(id, path.c_str()));
+    Manager::StreamFacts facts;
+    ASSERT_TRUE(streams.FindFile(id, &facts));
+    Manager::ReplacementRequest request;
+    request.fileIndex = facts.fileIndex;
+    request.sourceGeneration = facts.sourceGeneration;
+    request.contentRevision = facts.contentRevision;
+    request.loopEndFrame = facts.frameCount;
+    Manager::PreparedToken token;
+    ASSERT_EQ(VN_OK, streams.BeginReplacement(request, &token));
+    const auto deadline = std::chrono::steady_clock::now() + kCallBudget;
+    while (streams.QueryReplacement(token) == Manager::PreparationState::Preparing &&
+           std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    ASSERT_EQ(Manager::PreparationState::Ready, streams.QueryReplacement(token));
+    ASSERT_EQ(VN_OK, streams.ReplaceFile(id, path.c_str()));
+    ASSERT_EQ(1u, streams.RetiringFileCount());
+    StreamRequestFaultGuard fault(harken::StreamRequestFault::WorkerLoop);
+    BoundedCall service;
+    service.Start([&streams] { streams.SyncServe(); return VN_OK; });
+    VnResult ignored = VN_OK;
+    ASSERT_TRUE(service.Wait(&ignored));
+    ASSERT_TRUE(WaitForWorkerFailure(streams));
+    EXPECT_EQ(Manager::PreparationState::Failed, streams.QueryReplacement(token));
+    Manager::PreparedStream prepared;
+    EXPECT_EQ(VN_DEVICE_ERROR, streams.TakeReplacement(token, &prepared));
+    EXPECT_EQ(nullptr, prepared.ring);
+    EXPECT_TRUE(streams.CancelReplacement(token));
+    streams.ReclaimAfterWorkerFailure();
+    EXPECT_EQ(1u, streams.FreeSlotCount());
+    EXPECT_EQ(0u, streams.RetiringFileCount());
+    EXPECT_EQ(Manager::PreparationState::Cancelled, streams.QueryReplacement(token));
+    EXPECT_EQ(VN_DEVICE_ERROR, streams.BeginReplacement(request, &token));
+}
+
 } // namespace

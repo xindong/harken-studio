@@ -140,6 +140,7 @@ public:
         std::uint32_t channelCount = 0;
         std::uint64_t frameCount = 0;
         std::uint64_t contentRevision = 0;
+        std::uint64_t sourceGeneration = 0;
         std::uint32_t flags = 0;
         std::uint64_t loopStartFrame = 0;
         std::uint64_t loopEndFrame = 0;
@@ -225,6 +226,43 @@ public:
     bool RetirePreparedSlot(StreamRing* ring,
                             std::uint64_t ringToken) noexcept;
 
+    struct ReplacementRequest {
+        std::uint32_t fileIndex = 0;
+        std::uint64_t sourceGeneration = 0;
+        std::uint64_t contentRevision = 0;
+        std::uint64_t targetFrame = 0;
+        std::uint64_t loopStartFrame = 0;
+        std::uint64_t loopEndFrame = 0;
+        std::uint32_t loopCount = 1;
+        std::uint32_t prebufferTargetFrames = 0;
+        std::uint32_t pendingSlotReservations = 0;
+    };
+
+    // Preparation ownership is independent of the ring generation: taking a
+    // ring invalidates this handle even while that same ring remains Active.
+    struct PreparedToken {
+        std::uint32_t slot = UINT32_MAX;
+        std::uint64_t generation = 0;
+    };
+
+    enum class PreparationState { Invalid, Preparing, Ready, Cancelled, Failed };
+
+    struct PreparedStream {
+        std::uint32_t slot = UINT32_MAX;
+        StreamRing* ring = nullptr;
+        std::uint64_t ringToken = 0;
+    };
+
+    // Internal, serialized logic-thread operations. Begin may prepare private
+    // storage and take the manager lock, but never waits for I/O or readiness.
+    // A live token pins the exact source until cancellation/retirement or Take.
+    // Take transfers the Active ring exactly once; its recipient then owns the
+    // existing RetirePreparedSlot/render retirement obligation.
+    VnResult BeginReplacement(const ReplacementRequest& request, PreparedToken* out);
+    PreparationState QueryReplacement(PreparedToken token) const noexcept;
+    bool CancelReplacement(PreparedToken token) noexcept;
+    VnResult TakeReplacement(PreparedToken token, PreparedStream* out) noexcept;
+
     static std::uint64_t RingToken(std::uint32_t slot,
                                    std::uint32_t generation) noexcept {
         return (static_cast<std::uint64_t>(generation) << 32u) | slot;
@@ -299,6 +337,7 @@ private:
         std::uint32_t chunkFrames = 0;
         std::vector<std::uint64_t> chunkChecksums;
         std::uint64_t contentRevision = 0;
+        std::uint64_t sourceGeneration = 0;
         // Slots currently bound to this file: incremented by the logic
         // thread at activate, decremented by the streaming thread at
         // detach; unregister refuses while non-zero.
@@ -314,6 +353,13 @@ private:
 
     struct StreamSlot {
         StreamRing ring;
+        // Logic-owned preparation metadata. The worker never touches it,
+        // including while returning a retired ring to Free.
+        enum class PreparationOwner { None, Prepared, Cancelled };
+        PreparationOwner preparationOwner = PreparationOwner::None;
+        std::uint64_t preparationGeneration = 0;
+        std::uint64_t preparedRingToken = 0;
+        std::uint32_t prebufferTargetFrames = 0;
         // Written by the logic thread before the Active publication;
         // read by the streaming thread after it (release/acquire on
         // ring.state orders the two).
@@ -342,6 +388,13 @@ private:
     void HandleRegister(Request& request);
     void HandleUnregister(Request& request);
     void HandleReplace(Request& request);
+    // Caller holds m_mutex and has acquired the source's active reference.
+    // The slot is private and its storage is already prepared; cannot fail.
+    std::uint64_t InitializeSlot(std::uint32_t slot, std::uint32_t fileIndex,
+                                StreamFile& file, std::uint64_t startFrame,
+                                std::uint64_t loopStartFrame,
+                                std::uint64_t loopEndFrame,
+                                std::uint32_t loopCount);
     // Opens and validates one .stream file into `record` (soundId already
     // set): the whole RegisterFile validation chain, shared with replace.
     // Streaming thread only.
@@ -420,6 +473,9 @@ private:
     // mutex); the logic thread reads under the mutex (FindFile). Stable
     // addresses so slots can hold indices across table growth.
     std::vector<std::unique_ptr<StreamFile>> m_files;
+    // Monotonic identities; exhaustion refuses publication rather than reuse.
+    std::uint64_t m_lastSourceGeneration = 0; // under m_mutex
+    std::uint64_t m_lastPreparationGeneration = 0; // logic thread only
 
     std::vector<StreamSlot> m_slots;
     friend struct detail::StreamManagerTestAccess;
@@ -434,6 +490,7 @@ private:
     std::condition_variable m_done;  // requesters wait here
     std::deque<Request*> m_requests;
     bool m_shutdown = false;
+    bool m_serviceRequested = false; // under m_mutex
 
     // Reusable per-iteration request batch. A member rather than a streaming-
     // thread local so that reaching Ready involves no allocation at all: the

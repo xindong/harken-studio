@@ -46,6 +46,10 @@ struct StreamManagerTestAccess {
         request.kind = StreamManager::Request::Kind::Serve;
         return manager.PostAndWait(request);
     }
+    static void ExhaustSourceGenerations(StreamManager& manager) {
+        std::lock_guard<std::mutex> lock(manager.m_mutex);
+        manager.m_lastSourceGeneration = UINT64_MAX;
+    }
     static bool StagedDataMatchesVerifiedChunk(const StreamManager& manager,
                                                std::uint32_t slot) {
         const auto& source = manager.m_slots[slot];
@@ -182,6 +186,276 @@ void ExpectAndConsume(harken::StreamRing& ring, const std::vector<float>& expect
         position += span;
         count -= span;
     }
+}
+
+harken::StreamManager::ReplacementRequest ReplacementAt(
+    const harken::StreamManager::StreamFacts& facts, std::uint64_t frame = 0) {
+    harken::StreamManager::ReplacementRequest request;
+    request.fileIndex = facts.fileIndex;
+    request.sourceGeneration = facts.sourceGeneration;
+    request.contentRevision = facts.contentRevision;
+    request.targetFrame = frame;
+    request.loopEndFrame = facts.frameCount;
+    return request;
+}
+
+TEST(StreamRegister, ReplacementWaitsForPrebufferAndTransfersOwnershipOnce) {
+    using Manager = harken::StreamManager;
+    using State = Manager::PreparationState;
+    using Access = harken::detail::StreamManagerTestAccess;
+    harken::EngineConfig config{};
+    config.maxStreams = 2;
+    config.streamRingFrames = 16;
+    Manager streams(config);
+    streams.SetThrottled(true);
+    StreamSpec spec;
+    spec.soundId = harkentest::ObjectId(17200);
+    spec.chunkFrames = 8;
+    const auto samples = ServiceSamples(64, 0);
+    const auto path = TempPath("stream_replacement_ready.stream");
+    WriteFileBytes(path, BuildStreamBytes(spec, samples));
+    ASSERT_EQ(VN_OK, streams.RegisterFile(spec.soundId, path.c_str()));
+    Manager::StreamFacts facts{};
+    ASSERT_TRUE(streams.FindFile(spec.soundId, &facts));
+    auto request = ReplacementAt(facts, 3);
+    request.prebufferTargetFrames = 12;
+    request.pendingSlotReservations = 2;
+    Manager::PreparedToken token{};
+    EXPECT_EQ(VN_BACKPRESSURE, streams.BeginReplacement(request, &token));
+    EXPECT_EQ(2u, streams.FreeSlotCount());
+    request.pendingSlotReservations = 1;
+    ASSERT_EQ(VN_OK, streams.BeginReplacement(request, &token));
+    EXPECT_EQ(State::Preparing, streams.QueryReplacement(token));
+    Manager::PreparedToken refused{};
+    EXPECT_EQ(VN_BACKPRESSURE, streams.BeginReplacement(request, &refused));
+    Manager::PreparedStream taken{};
+    EXPECT_EQ(VN_BACKPRESSURE, streams.TakeReplacement(token, &taken));
+    EXPECT_EQ(nullptr, taken.ring);
+    streams.SetMaxServeFramesForTest(4);
+    streams.SyncServe();
+    Access::ServeSlots(streams);
+    EXPECT_EQ(State::Preparing, streams.QueryReplacement(token));
+    Access::ServeSlots(streams);
+    EXPECT_EQ(State::Preparing, streams.QueryReplacement(token));
+    Access::ServeSlots(streams);
+    ASSERT_EQ(State::Ready, streams.QueryReplacement(token));
+    EXPECT_EQ(State::Ready, streams.QueryReplacement(token));
+    ASSERT_EQ(VN_OK, streams.TakeReplacement(token, &taken));
+    EXPECT_EQ(State::Invalid, streams.QueryReplacement(token));
+    EXPECT_FALSE(streams.CancelReplacement(token));
+    Manager::PreparedStream duplicate{};
+    EXPECT_EQ(VN_STALE_HANDLE, streams.TakeReplacement(token, &duplicate));
+    std::size_t position = 3;
+    ExpectAndConsume(*taken.ring, samples, position, 12);
+    EXPECT_EQ(VN_IN_USE, streams.UnregisterFile(spec.soundId));
+    ASSERT_TRUE(streams.RetirePreparedSlot(taken.ring, taken.ringToken));
+    streams.SyncServe();
+
+    request = ReplacementAt(facts);
+    ASSERT_EQ(VN_OK, streams.BeginReplacement(request, &token));
+    EXPECT_EQ(State::Preparing, streams.QueryReplacement(token))
+        << "zero requested prebuffer does not make an empty source ready";
+    Access::ServeSlots(streams);
+    EXPECT_EQ(State::Ready, streams.QueryReplacement(token));
+    EXPECT_TRUE(streams.CancelReplacement(token));
+    EXPECT_EQ(State::Cancelled, streams.QueryReplacement(token));
+    EXPECT_FALSE(streams.CancelReplacement(token));
+    streams.SyncServe();
+    EXPECT_EQ(VN_OK, streams.UnregisterFile(spec.soundId));
+}
+
+TEST(StreamRegister, ReplacementPreservesSourcePositionLoopCountAndOutro) {
+    using Manager = harken::StreamManager;
+    using Access = harken::detail::StreamManagerTestAccess;
+    harken::EngineConfig config{};
+    config.maxStreams = 1;
+    config.streamRingFrames = 64;
+    Manager streams(config);
+    streams.SetThrottled(true);
+    StreamSpec spec;
+    spec.soundId = harkentest::ObjectId(17201);
+    spec.chunkFrames = 4;
+    const auto samples = ServiceSamples(11, 0);
+    const auto path = TempPath("stream_replacement_loops.stream");
+    WriteFileBytes(path, BuildStreamBytes(spec, samples));
+    ASSERT_EQ(VN_OK, streams.RegisterFile(spec.soundId, path.c_str()));
+    Manager::StreamFacts facts{};
+    ASSERT_TRUE(streams.FindFile(spec.soundId, &facts));
+    for (const auto count : {1u, 3u, 0u}) {
+        SCOPED_TRACE(count);
+        auto request = ReplacementAt(facts, 3);
+        request.loopStartFrame = 2;
+        request.loopEndFrame = 7;
+        request.loopCount = count;
+        request.prebufferTargetFrames = 1000;
+        Manager::PreparedToken token{};
+        ASSERT_EQ(VN_OK, streams.BeginReplacement(request, &token));
+        streams.SyncServe();
+        Access::ServeSlots(streams);
+        ASSERT_EQ(Manager::PreparationState::Ready, streams.QueryReplacement(token));
+        Manager::PreparedStream taken{};
+        ASSERT_EQ(VN_OK, streams.TakeReplacement(token, &taken));
+        std::vector<float> expected;
+        std::uint64_t frame = 3;
+        auto remaining = count;
+        while (expected.size() < taken.ring->capacity) {
+            const bool loop = remaining == 0 || remaining > 1;
+            if (frame == (loop ? 7u : samples.size())) {
+                if (!loop) break;
+                frame = 2;
+                if (remaining != 0) --remaining;
+            }
+            expected.push_back(samples[frame++]);
+        }
+        EXPECT_EQ(count == 0 ? harken::StreamTerminalReason::None
+                             : harken::StreamTerminalReason::NaturalEnd,
+                  taken.ring->TerminalReason());
+        std::size_t consumed = 0;
+        ExpectAndConsume(*taken.ring, expected, consumed,
+                         static_cast<std::uint32_t>(expected.size()));
+        ASSERT_TRUE(streams.RetirePreparedSlot(taken.ring, taken.ringToken));
+        streams.SyncServe();
+    }
+    auto request = ReplacementAt(facts, 9);
+    request.loopStartFrame = 2;
+    request.loopEndFrame = 7;
+    request.loopCount = 2;
+    Manager::PreparedToken token{};
+    EXPECT_EQ(VN_INVALID_ARG, streams.BeginReplacement(request, &token));
+    request.loopCount = 0;
+    request.targetFrame = facts.frameCount;
+    EXPECT_EQ(VN_INVALID_ARG, streams.BeginReplacement(request, &token));
+    request.loopCount = 1;
+    request.targetFrame = facts.frameCount + 1;
+    EXPECT_EQ(VN_INVALID_ARG, streams.BeginReplacement(request, &token));
+    request.targetFrame = 9;
+    ASSERT_EQ(VN_OK, streams.BeginReplacement(request, &token));
+    streams.SyncServe();
+    Access::ServeSlots(streams);
+    Manager::PreparedStream taken{};
+    ASSERT_EQ(VN_OK, streams.TakeReplacement(token, &taken));
+    std::size_t position = 9;
+    ExpectAndConsume(*taken.ring, samples, position, 2);
+    ASSERT_TRUE(streams.RetirePreparedSlot(taken.ring, taken.ringToken));
+    streams.SyncServe();
+    request.targetFrame = facts.frameCount;
+    ASSERT_EQ(VN_OK, streams.BeginReplacement(request, &token));
+    streams.SyncServe();
+    Access::ServeSlots(streams);
+    EXPECT_EQ(Manager::PreparationState::Ready, streams.QueryReplacement(token));
+    EXPECT_TRUE(streams.CancelReplacement(token));
+    streams.SyncServe();
+    EXPECT_EQ(VN_OK, streams.UnregisterFile(spec.soundId));
+}
+
+TEST(StreamRegister, ReplacementPinsRetiringSourceAndRejectsSourceAndRingReuse) {
+    using Manager = harken::StreamManager;
+    harken::EngineConfig config{};
+    config.maxStreams = 2;
+    config.streamRingFrames = 64;
+    Manager streams(config);
+    streams.SetThrottled(true);
+    const auto id = harkentest::ObjectId(17202);
+    const auto path = TempPath("stream_replacement_generations.stream");
+    WriteFileBytes(path, MakeValidImage(id));
+    ASSERT_EQ(VN_OK, streams.RegisterFile(id, path.c_str()));
+    Manager::StreamFacts original{}, current{};
+    ASSERT_TRUE(streams.FindFile(id, &original));
+    auto request = ReplacementAt(original);
+    Manager::PreparedToken first{}, retiring{}, reused{};
+    ASSERT_EQ(VN_OK, streams.BeginReplacement(request, &first));
+    ASSERT_EQ(VN_OK, streams.ReplaceFile(id, path.c_str()));
+    ASSERT_TRUE(streams.FindFile(id, &current));
+    EXPECT_EQ(original.contentRevision, current.contentRevision);
+    EXPECT_NE(original.sourceGeneration, current.sourceGeneration);
+    ASSERT_EQ(VN_OK, streams.BeginReplacement(request, &retiring));
+    EXPECT_EQ(1u, streams.RetiringFileCount());
+    ASSERT_TRUE(streams.CancelReplacement(first));
+    streams.SyncServe();
+    EXPECT_EQ(1u, streams.RetiringFileCount());
+    ASSERT_TRUE(streams.CancelReplacement(retiring));
+    streams.SyncServe();
+    EXPECT_EQ(0u, streams.RetiringFileCount());
+    ASSERT_EQ(VN_OK, streams.UnregisterFile(id));
+    ASSERT_EQ(VN_OK, streams.RegisterFile(id, path.c_str()));
+    ASSERT_TRUE(streams.FindFile(id, &current));
+    ASSERT_EQ(original.fileIndex, current.fileIndex);
+    ASSERT_EQ(original.contentRevision, current.contentRevision);
+    EXPECT_EQ(VN_STALE_HANDLE, streams.BeginReplacement(request, &reused));
+    request = ReplacementAt(current);
+    // Even a wrapped ring generation cannot revive a preparation owner.
+    streams.RingOf(first.slot)->generation.store(UINT32_MAX, std::memory_order_relaxed);
+    ASSERT_EQ(VN_OK, streams.BeginReplacement(request, &reused));
+    EXPECT_EQ(first.slot, reused.slot);
+    EXPECT_NE(first.generation, reused.generation);
+    EXPECT_EQ(Manager::PreparationState::Invalid, streams.QueryReplacement(first));
+    EXPECT_FALSE(streams.CancelReplacement(first));
+    EXPECT_EQ(Manager::PreparationState::Preparing, streams.QueryReplacement(reused));
+    EXPECT_TRUE(streams.CancelReplacement(reused));
+    streams.SyncServe();
+    EXPECT_EQ(VN_OK, streams.UnregisterFile(id));
+}
+
+TEST(StreamRegister, ReplacementIntegrityFailureWinsOverBufferedFrames) {
+    using Manager = harken::StreamManager;
+    using Access = harken::detail::StreamManagerTestAccess;
+    harken::EngineConfig config{};
+    config.maxStreams = 1;
+    config.streamRingFrames = 64;
+    Manager streams(config);
+    streams.SetThrottled(true);
+    StreamSpec spec;
+    spec.soundId = harkentest::ObjectId(17203);
+    spec.chunkFrames = 8;
+    auto bytes = BuildStreamBytes(spec, ServiceSamples(64, 0));
+    const auto toc = harken::ParseStreamTocEntry(bytes.data() + harken::kStreamHeaderBytes);
+    bytes[static_cast<std::size_t>(toc.payloadOffset + harken::StreamChunkBytes(8, 1))] ^= 1u;
+    const auto path = TempPath("stream_replacement_bad_chunk.stream");
+    WriteFileBytes(path, bytes);
+    ASSERT_EQ(VN_OK, streams.RegisterFile(spec.soundId, path.c_str()));
+    Manager::StreamFacts facts{};
+    ASSERT_TRUE(streams.FindFile(spec.soundId, &facts));
+    auto request = ReplacementAt(facts);
+    request.prebufferTargetFrames = 1;
+    Manager::PreparedToken token{};
+    ASSERT_EQ(VN_OK, streams.BeginReplacement(request, &token));
+    streams.SyncServe();
+    Access::ServeSlots(streams);
+    EXPECT_EQ(8u, streams.RingOf(token.slot)->ReadAvailable());
+    EXPECT_EQ(Manager::PreparationState::Failed, streams.QueryReplacement(token));
+    Manager::PreparedStream taken{};
+    EXPECT_EQ(VN_DEVICE_ERROR, streams.TakeReplacement(token, &taken));
+    EXPECT_TRUE(streams.CancelReplacement(token));
+    streams.SyncServe();
+    EXPECT_EQ(VN_OK, streams.UnregisterFile(spec.soundId));
+}
+
+TEST(StreamRegister, ReplacementPrivateFailureRollsBackSourcePin) {
+    using Manager = harken::StreamManager;
+    using Access = harken::detail::StreamManagerTestAccess;
+    harken::EngineConfig config{};
+    config.maxStreams = 1;
+    config.streamRingFrames = 1024;
+    Manager streams(config);
+    const auto id = harkentest::ObjectId(17204);
+    const auto path = TempPath("stream_replacement_capacity.stream");
+    WriteFileBytes(path, MakeValidImage(id));
+    ASSERT_EQ(VN_OK, streams.RegisterFile(id, path.c_str()));
+    Manager::StreamFacts facts{};
+    ASSERT_TRUE(streams.FindFile(id, &facts));
+    Access::SetCommitPageLimit(streams, 0);
+    Manager::PreparedToken token{};
+    EXPECT_EQ(VN_BACKPRESSURE, streams.BeginReplacement(ReplacementAt(facts), &token));
+    EXPECT_EQ(Manager::PreparationState::Invalid, streams.QueryReplacement(token));
+    EXPECT_EQ(1u, streams.FreeSlotCount());
+    Access::ExhaustSourceGenerations(streams);
+    EXPECT_EQ(VN_BACKPRESSURE, streams.ReplaceFile(id, path.c_str()));
+    Manager::StreamFacts unchanged{};
+    ASSERT_TRUE(streams.FindFile(id, &unchanged));
+    EXPECT_EQ(facts.sourceGeneration, unchanged.sourceGeneration);
+    EXPECT_EQ(VN_OK, streams.UnregisterFile(id));
+    EXPECT_EQ(VN_BACKPRESSURE, streams.RegisterFile(id, path.c_str()));
+    EXPECT_FALSE(streams.FindFile(id, &unchanged));
 }
 
 TEST(StreamRegister, ContinuousConsumptionDoesNotStarveAnotherStream) {
