@@ -72,8 +72,6 @@ class PackFoundationQualificationTest(unittest.TestCase):
             "content_warm_us": 45_000.0,
             "replace_us": 79_999.0,
             "unload_us": 19_999.0,
-            "post_loaded_us": 100.0,
-            "post_unloaded_us": 10.0,
         }
         large = {
             "inspect_us": 49_999.0,
@@ -82,28 +80,26 @@ class PackFoundationQualificationTest(unittest.TestCase):
             "content_warm_us": 1.0,
             "replace_us": 1.0,
             "unload_us": 1.0,
-            "post_loaded_us": 299.0,
-            "post_unloaded_us": 29.0,
         }
         gates = MODULE.runtime_gates(
             {
-                "1000-64": case(small),
-                "50000-1024": case(large, 8 << 20),
+                "64": case(small),
+                "1024": case(large, 8 << 20),
             }
         )
         self.assertTrue(all(item["passed"] for item in gates))
 
-        large["post_loaded_us"] = 300.0
+        small["content_cold_us"] = 50_000.0
         gates = MODULE.runtime_gates(
             {
-                "1000-64": case(small),
-                "50000-1024": case(large, (8 << 20) + 1),
+                "64": case(small),
+                "1024": case(large, (8 << 20) + 1),
             }
         )
         failed = {item["name"] for item in gates if not item["passed"]}
         self.assertEqual(
             {
-                "post_loaded_50k_to_1k_ratio",
+                "content_cold_64_us",
                 "resident_1024_body_plus_index_bytes",
             },
             failed,

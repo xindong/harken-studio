@@ -11,16 +11,18 @@
 namespace harkenstudiobuild {
 
 inline void StampRequirementCoverage(std::vector<std::uint8_t>* payload) {
-    StoreLE64(payload->data() + 104, Fnv1a64(payload->data(), 104));
+    StorePackRequirementBlockPayloadChecksumCoverage(payload->data(),
+        Fnv1a64(payload->data(), kPackRequirementBlockPayloadChecksumCoverageOffset));
 }
 
 inline void StampSnapshotChecksum(std::vector<std::uint8_t>* payload) {
-    StoreLE64(payload->data() + 112, 0);
-    const std::uint8_t zeros[8] = {};
-    std::uint64_t hash = Fnv1a64(payload->data(), 112);
-    hash = Fnv1a64(zeros, 8, hash);
-    hash = Fnv1a64(payload->data() + 120, payload->size() - 120, hash);
-    StoreLE64(payload->data() + 112, hash);
+    constexpr auto checksumOffset = kPackBusDefinitionSnapshotHeaderChecksumOffset;
+    constexpr auto checksumEnd = kPackBusDefinitionSnapshotHeaderCompileTargetProfileFingerprintOffset;
+    const std::uint8_t zeros[checksumEnd - checksumOffset] = {};
+    std::uint64_t hash = Fnv1a64(payload->data(), checksumOffset);
+    hash = Fnv1a64(zeros, sizeof(zeros), hash);
+    hash = Fnv1a64(payload->data() + checksumEnd, payload->size() - checksumEnd, hash);
+    StorePackBusDefinitionSnapshotHeaderChecksum(payload->data(), hash);
 }
 
 inline void ApplyCanonicalBusTriple(PackRequirementBlock* block,
@@ -50,10 +52,14 @@ inline PackCanonicalImage NeutralMasterSnapshotImage() {
     PackCanonicalImage image;
     image.hasBusDefinitionSnapshot = true;
     auto& header = image.busDefinitionSnapshotHeader;
-    header.schemaVersion = 1;
-    header.storageModelVersion = 1;
+    header.schemaVersion = kPackBusDefinitionSnapshotVintage;
+    header.storageModelVersion = kPackBusDefinitionSnapshotVintage;
     header.headerBytes = kPackBusDefinitionSnapshotHeaderBytes;
-    header.publicationCapabilityVintage = 1;
+    header.busRowBytes = kPackBusDefinitionBusBytes;
+    header.sendRowBytes = kPackBusDefinitionSendBytes;
+    header.downmixRowBytes = kPackBusDefinitionDownmixBytes;
+    header.coefficientRowBytes = kPackBusDefinitionCoefficientBytes;
+    header.publicationCapabilityVintage = 3;
     header.contentGeneration = kNeutralMasterBusContentGeneration;
     header.profileVintage = 1;
     header.renderSampleRateHz = 48000;
@@ -66,29 +72,56 @@ inline PackCanonicalImage NeutralMasterSnapshotImage() {
     header.busCount = 1;
     header.downmixCount = 1;
     header.coefficientCount = 64;
-    PackBusDefinitionBusV1 bus{};
-    bus.busId = CanonicalSnapshotPackedBusIdV1(harkenstudio::kMasterBusObjectId);
+    PackBusDefinitionBus bus{};
+    bus.busId = harkenstudio::kMasterBusObjectId;
     bus.faderAfterSlot = busfingerprint::kNeutralFaderAfterSlotV1;
     bus.outputLayout = harkenstudio::kChannelLayoutStereo;
     bus.downmixCount = 1;
     bus.downmixFirst = 0;
-    image.busDefinitionBuses.push_back(bus);
-    PackBusDefinitionDownmixV1 downmix{};
-    downmix.busId = CanonicalSnapshotPackedBusIdV1(harkenstudio::kMasterBusObjectId);
+    image.busDefinitionBusesV2.push_back(bus);
+    PackBusDefinitionDownmix downmix{};
+    downmix.busId = harkenstudio::kMasterBusObjectId;
     downmix.sourceLayout = harkenstudio::kChannelLayoutStereo;
     downmix.destinationLayout = harkenstudio::kChannelLayoutStereo;
     downmix.coefficientFirst = 0;
     downmix.coefficientCount = 64;
-    image.busDefinitionDownmixes.push_back(downmix);
+    image.busDefinitionDownmixesV2.push_back(downmix);
     image.busDefinitionCoefficients.assign(64, 0.0f);
     DefaultDownmixMatrix(harkenstudio::kChannelLayoutStereo, harkenstudio::kChannelLayoutStereo,
                          image.busDefinitionCoefficients.data());
-    header.publishedBusFingerprint = CanonicalNeutralBusFingerprint(image);
+    header.publishedBusFingerprint = CanonicalVolumeBusFingerprint(image);
+    header.contentGeneration = header.publishedBusFingerprint;
     return image;
 }
 
 inline CanonicalBusTriple NeutralMasterSnapshotTriple() {
     return SnapshotBusTriple(NeutralMasterSnapshotImage().busDefinitionSnapshotHeader);
+}
+
+struct PackBusDefinitionSnapshotWriter {
+    const PackCanonicalImage& image;
+    const auto& Value() noexcept { return image.busDefinitionSnapshotHeader; }
+    const auto& Header() noexcept { return image.busDefinitionSnapshotHeader; }
+    bool PrepareBuses(std::uint64_t count) noexcept { return count == image.busDefinitionBusesV2.size(); }
+    const auto& Buses(std::uint64_t i) noexcept { return image.busDefinitionBusesV2[static_cast<std::size_t>(i)]; }
+    bool PrepareSends(std::uint64_t count) noexcept { return count == image.busDefinitionSendsV2.size(); }
+    const auto& Sends(std::uint64_t i) noexcept { return image.busDefinitionSendsV2[static_cast<std::size_t>(i)]; }
+    bool PrepareDownmixes(std::uint64_t count) noexcept { return count == image.busDefinitionDownmixesV2.size(); }
+    const auto& Downmixes(std::uint64_t i) noexcept { return image.busDefinitionDownmixesV2[static_cast<std::size_t>(i)]; }
+    bool PrepareCoefficients(std::uint64_t count) noexcept { return count == image.busDefinitionCoefficients.size(); }
+    const auto& Coefficients(std::uint64_t i) noexcept { return image.busDefinitionCoefficients[static_cast<std::size_t>(i)]; }
+    bool Finish() noexcept { return true; }
+};
+
+inline std::vector<std::uint8_t> EncodeBusDefinitionSnapshotPayload(PackCanonicalImage& image) {
+    std::uint64_t size = 0;
+    if (!LayoutPackBusDefinitionSnapshot(image.busDefinitionSnapshotHeader, size)) return {};
+    std::vector<std::uint8_t> payload(static_cast<std::size_t>(size), 0);
+    PackWireBuffer<std::uint8_t> output{payload.data(), payload.size()};
+    PackBusDefinitionSnapshotWriter visitor{image};
+    if (!AppendPackBusDefinitionSnapshot(output, visitor) || output.offset != payload.size()) return {};
+    StampSnapshotChecksum(&payload);
+    return payload;
 }
 
 inline std::vector<std::uint8_t> NeutralMasterSnapshotPayload(
@@ -99,36 +132,7 @@ inline std::vector<std::uint8_t> NeutralMasterSnapshotPayload(
         triple.publishedBusFingerprint;
     image.busDefinitionSnapshotHeader.compileTargetProfileFingerprint =
         triple.compileTargetProfileFingerprint;
-    constexpr std::uint64_t kHeader = kPackBusDefinitionSnapshotHeaderBytes;
-    constexpr std::uint64_t kBusOffset = kHeader;
-    constexpr std::uint64_t kDownmixOffset =
-        kBusOffset + kPackBusDefinitionBusRowBytes;
-    constexpr std::uint64_t kCoefficientOffset =
-        kDownmixOffset + kPackBusDefinitionDownmixRowBytes;
-    auto header = image.busDefinitionSnapshotHeader;
-    header.busOffset = kBusOffset;
-    header.sendOffset = kDownmixOffset;
-    header.effectOffset = kDownmixOffset;
-    header.effectParameterOffset = kDownmixOffset;
-    header.downmixOffset = kDownmixOffset;
-    header.coefficientOffset = kCoefficientOffset;
-    header.payloadBytes =
-        (kCoefficientOffset - kHeader) +
-        (64u * kPackBusDefinitionCoefficientRowBytes);
-    std::vector<std::uint8_t> payload(
-        static_cast<std::size_t>(header.headerBytes + header.payloadBytes), 0);
-    SerializePackBusDefinitionBusV1(image.busDefinitionBuses.front(),
-                                    payload.data() + header.busOffset);
-    SerializePackBusDefinitionDownmixV1(image.busDefinitionDownmixes.front(),
-                                        payload.data() + header.downmixOffset);
-    for (std::uint32_t i = 0; i < 64; ++i) {
-        StoreLEF32(payload.data() + header.coefficientOffset +
-                       i * kPackBusDefinitionCoefficientRowBytes,
-                   image.busDefinitionCoefficients[i]);
-    }
-    SerializePackBusDefinitionSnapshotHeaderV1(header, payload.data());
-    StampSnapshotChecksum(&payload);
-    return payload;
+    return EncodeBusDefinitionSnapshotPayload(image);
 }
 
 inline std::vector<std::uint8_t> VolumeBusSnapshotPayload(
@@ -148,9 +152,9 @@ inline std::vector<std::uint8_t> VolumeBusSnapshotPayload(
     PackCanonicalImage image;
     image.hasBusDefinitionSnapshot = true;
     auto& header = image.busDefinitionSnapshotHeader;
-    header.schemaVersion = 2;
-    header.storageModelVersion = 2;
-    header.headerBytes = kPackBusDefinitionSnapshotV2HeaderBytes;
+    header.schemaVersion = kPackBusDefinitionSnapshotVintage;
+    header.storageModelVersion = kPackBusDefinitionSnapshotVintage;
+    header.headerBytes = kPackBusDefinitionSnapshotHeaderBytes;
     header.publicationCapabilityVintage =
         static_cast<std::uint32_t>(projection.capabilityVintage);
     header.contentGeneration = projection.fingerprint;
@@ -165,10 +169,10 @@ inline std::vector<std::uint8_t> VolumeBusSnapshotPayload(
     header.sendCount = static_cast<std::uint32_t>(projection.sends.size());
     header.downmixCount = static_cast<std::uint32_t>(projection.downmix.size());
     header.coefficientCount = static_cast<std::uint32_t>(projection.downmixCoefficients.size());
-    header.busRowBytes = kPackBusDefinitionBusV2RowBytes;
-    header.sendRowBytes = kPackBusDefinitionSendV2RowBytes;
-    header.downmixRowBytes = kPackBusDefinitionDownmixV2RowBytes;
-    header.coefficientRowBytes = kPackBusDefinitionCoefficientRowBytes;
+    header.busRowBytes = kPackBusDefinitionBusBytes;
+    header.sendRowBytes = kPackBusDefinitionSendBytes;
+    header.downmixRowBytes = kPackBusDefinitionDownmixBytes;
+    header.coefficientRowBytes = kPackBusDefinitionCoefficientBytes;
     for (const auto& bus : projection.buses) {
         image.busDefinitionBusesV2.push_back({bus.busId, bus.parentId,
             bus.feedsFirstOrdinal, bus.faderDb,
@@ -185,37 +189,7 @@ inline std::vector<std::uint8_t> VolumeBusSnapshotPayload(
     }
     image.busDefinitionCoefficients = projection.downmixCoefficients;
     if (CanonicalVolumeBusFingerprint(image) != projection.fingerprint) return {};
-    header.busOffset = header.headerBytes;
-    header.sendOffset = header.busOffset + header.busCount * header.busRowBytes;
-    header.effectOffset = header.sendOffset + header.sendCount * header.sendRowBytes;
-    header.effectParameterOffset = header.effectOffset;
-    header.downmixOffset = header.effectOffset;
-    header.coefficientOffset = header.downmixOffset +
-        header.downmixCount * header.downmixRowBytes;
-    header.payloadBytes = header.coefficientOffset +
-        header.coefficientCount * header.coefficientRowBytes - header.headerBytes;
-    std::vector<std::uint8_t> payload(
-        static_cast<std::size_t>(header.headerBytes + header.payloadBytes), 0);
-    for (std::uint32_t i = 0; i < header.busCount; ++i) {
-        SerializePackBusDefinitionBusV2(image.busDefinitionBusesV2[i],
-            payload.data() + header.busOffset + i * header.busRowBytes);
-    }
-    for (std::uint32_t i = 0; i < header.sendCount; ++i) {
-        SerializePackBusDefinitionSendV2(image.busDefinitionSendsV2[i],
-            payload.data() + header.sendOffset + i * header.sendRowBytes);
-    }
-    for (std::uint32_t i = 0; i < header.downmixCount; ++i) {
-        SerializePackBusDefinitionDownmixV2(image.busDefinitionDownmixesV2[i],
-            payload.data() + header.downmixOffset + i * header.downmixRowBytes);
-    }
-    for (std::uint32_t i = 0; i < header.coefficientCount; ++i) {
-        StoreLEF32(payload.data() + header.coefficientOffset +
-                       i * header.coefficientRowBytes,
-                   image.busDefinitionCoefficients[i]);
-    }
-    SerializePackBusDefinitionSnapshotHeaderV2(header, payload.data());
-    StampSnapshotChecksum(&payload);
-    return payload;
+    return EncodeBusDefinitionSnapshotPayload(image);
 }
 
 } // namespace harkenstudiobuild

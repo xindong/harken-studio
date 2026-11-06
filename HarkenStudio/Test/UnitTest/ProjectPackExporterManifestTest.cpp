@@ -597,12 +597,12 @@ void expectInitHasVolumeOnlyKind24(const QString& path)
     ASSERT_TRUE(image.hasPartition) << path.toStdString();
     EXPECT_EQ(image.requirement.schemaVersion, 2u) << path.toStdString();
     EXPECT_EQ(image.partitionHeader.headerBytes,
-              harken::kCanonicalDefinitionPartitionHeaderV2Bytes)
+              harken::kPackCanonicalPartitionHeaderBytes)
         << path.toStdString();
     const auto& snapshot = image.busDefinitionSnapshotHeader;
     EXPECT_EQ(snapshot.schemaVersion, 2u) << path.toStdString();
     EXPECT_EQ(snapshot.storageModelVersion, 2u) << path.toStdString();
-    EXPECT_EQ(snapshot.headerBytes, harken::kPackBusDefinitionSnapshotV2HeaderBytes)
+    EXPECT_EQ(snapshot.headerBytes, harken::kPackBusDefinitionSnapshotHeaderBytes)
         << path.toStdString();
     EXPECT_EQ(snapshot.publicationCapabilityVintage, 4u) << path.toStdString();
     const auto expected = harken::SnapshotBusTriple(snapshot);
@@ -647,15 +647,15 @@ std::uint64_t fnvUtf8(const QString& text)
 std::uint32_t packKindCount(const QString& path, std::uint32_t kind)
 {
     const QByteArray bytes = readFileBytes(path);
-    harken::PackV2Header header;
-    if (!harken::ParsePackV2Header(
+    harken::PackFileHeader header;
+    if (!harken::ReadPackFileHeader(
             reinterpret_cast<const std::uint8_t*>(bytes.constData()), &header))
         return 0;
     std::uint32_t count = 0;
     for (std::uint32_t i = 0; i < header.entryCount; ++i) {
-        const harken::PackV2DirectoryEntry record = harken::ParsePackV2DirectoryEntry(
+        const harken::PackDirectoryEntry record = harken::ReadPackDirectoryEntry(
             reinterpret_cast<const std::uint8_t*>(bytes.constData()) +
-            header.directoryOffset + i * harken::kPackV2DirectoryEntryBytes);
+            header.directoryOffset + i * harken::kPackDirectoryEntryBytes);
         if (record.kind == kind)
             ++count;
     }
@@ -1524,17 +1524,14 @@ TEST(EditorProjectPackExporterManifest, InitHasNoRoutingCatalogAndEveryPackHasKi
                   reinterpret_cast<const std::uint8_t*>(initBytes.constData()),
                   static_cast<std::uint64_t>(initBytes.size()), &initImage));
     EXPECT_TRUE(initImage.hasPartition);
-    EXPECT_FALSE(initImage.hasCatalog);
-    EXPECT_FALSE(initImage.hasGameplayCatalog);
-    EXPECT_TRUE(initImage.catalogRows.empty());
     bool sawCatalogEntry = false;
-    harken::PackV2Header initHeader;
-    ASSERT_TRUE(harken::ParsePackV2Header(
+    harken::PackFileHeader initHeader;
+    ASSERT_TRUE(harken::ReadPackFileHeader(
         reinterpret_cast<const std::uint8_t*>(initBytes.constData()), &initHeader));
     for (std::uint32_t i = 0; i < initHeader.entryCount; ++i) {
-        const harken::PackV2DirectoryEntry record = harken::ParsePackV2DirectoryEntry(
+        const harken::PackDirectoryEntry record = harken::ReadPackDirectoryEntry(
             reinterpret_cast<const std::uint8_t*>(initBytes.constData()) +
-            initHeader.directoryOffset + i * harken::kPackV2DirectoryEntryBytes);
+            initHeader.directoryOffset + i * harken::kPackDirectoryEntryBytes);
         if (record.kind == harken::kPackEntryKindInitRoutingCatalog)
             sawCatalogEntry = true;
     }
@@ -2090,9 +2087,9 @@ TEST(EditorProjectPackExporterManifest, ProductionPackPairGoldenIsRepeatable)
             const auto bytes = readFileBytes(path);
             EXPECT_EQ(row.value(QStringLiteral("contentHash")).toString().toULongLong(),
                 harken::Fnv1a64(bytes.constData(), bytes.size()));
-            harken::PackV2Header header;
-            ASSERT_GE(bytes.size(), harken::kPackV2HeaderBytes);
-            ASSERT_TRUE(harken::ParsePackV2Header(reinterpret_cast<const uint8_t*>(bytes.constData()), &header));
+            harken::PackFileHeader header;
+            ASSERT_GE(bytes.size(), harken::kPackFileHeaderBytes);
+            ASSERT_TRUE(harken::ReadPackFileHeader(reinterpret_cast<const uint8_t*>(bytes.constData()), &header));
             EXPECT_EQ(header.formatVersion, HARKEN_PACK_SCHEMA_VERSION);
             ASSERT_NO_FATAL_FAILURE(expectCanonicalPackParsesWithPartition(path));
         }
@@ -2234,8 +2231,6 @@ TEST(EditorProjectPackExporterManifest, CanonicalContentOmitsKindNineAndClaimsCo
               harken::ParsePackCanonicalImage(
                   reinterpret_cast<const std::uint8_t*>(initBytes.constData()),
                   static_cast<std::uint64_t>(initBytes.size()), &initImage));
-    EXPECT_FALSE(initImage.hasCatalog);
-    EXPECT_TRUE(initImage.catalogRows.empty());
 
     const QJsonObject ownerPack = findByName(
         readPublication(dir.path()),
@@ -2590,11 +2585,11 @@ TEST(EditorProjectPackExporterManifest,
         const QString path = output.filePath(
             variantFileName(project, harkentest::StudioObjectId(spec.actionObjectId + kStableIdBias)));
         const QByteArray bytes = readFileBytes(path);
-        harken::PackV2Header header;
-        ASSERT_TRUE(harken::ParsePackV2Header(
+        harken::PackFileHeader header;
+        ASSERT_TRUE(harken::ReadPackFileHeader(
             reinterpret_cast<const std::uint8_t*>(bytes.constData()), &header))
             << path.toStdString();
-        EXPECT_EQ(header.formatVersion, harken::kPackFormatVersion2);
+        EXPECT_EQ(header.formatVersion, harken::kPackFormatVersion);
         EXPECT_EQ(packKindCount(
                       path, harken::kPackEntryKindCanonicalDefinitionPartition),
                   1u);
@@ -3007,14 +3002,11 @@ TEST(EditorProjectPackExporterManifest, LanguageVariantsKeepDistinctPackIdentiti
               harken::ParsePackCanonicalImage(
                   reinterpret_cast<const std::uint8_t*>(initBytes.constData()),
                   static_cast<std::uint64_t>(initBytes.size()), &initImage));
-    EXPECT_FALSE(initImage.hasCatalog);
-    EXPECT_TRUE(initImage.catalogRows.empty());
     expectInitHasVolumeOnlyKind24(QDir(dir.path()).filePath(QStringLiteral("Init.bytes")));
 
     const std::uint64_t englishId = fnvUtf8(HarkenTest::platformIdString("Windows") + QStringLiteral("/English/action_3da91a64-b947-4560-0000-0000000186b5"));
     const std::uint64_t jaId = fnvUtf8(HarkenTest::platformIdString("Windows") + QStringLiteral("/ja/action_3da91a64-b947-4560-0000-0000000186b5"));
     EXPECT_NE(englishId, jaId);
-    EXPECT_FALSE(initImage.hasGameplayCatalog);
     const QJsonArray packs = readPublication(dir.path());
     const auto findByStableId = [&](std::uint64_t id) {
         const QString text = QString::number(id);
@@ -4021,7 +4013,7 @@ void verifyIncrementalPublication(const QString& directory)
     for (const auto& name : publicationFiles(live.path())) {
         if (!name.endsWith(QStringLiteral(".bytes"))) continue;
         auto outdated = readFileBytes(live.filePath(name));
-        ASSERT_GE(outdated.size(), harken::kPackV2HeaderBytes);
+        ASSERT_GE(outdated.size(), harken::kPackFileHeaderBytes);
         harken::StoreLE32(reinterpret_cast<std::uint8_t*>(outdated.data()) + 4,
                           HARKEN_PACK_SCHEMA_VERSION + 1);
         writeFileBytes(live.filePath(name), outdated);

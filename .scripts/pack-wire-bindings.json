@@ -1,0 +1,518 @@
+{
+  "records": {
+    "bus": {
+      "engine": "PackBusEntry",
+      "studio": "PackBusEntry"
+    },
+    "busSend": {
+      "engine": "PackBusSendEntry",
+      "studio": "PackBusSendEntry"
+    },
+    "busDefinitionSnapshotHeader": {
+      "engine": "PackBusDefinitionSnapshotHeader",
+      "studio": "PackBusDefinitionSnapshotHeader"
+    },
+    "busDefinitionBus": {
+      "engine": "PackBusDefinitionBus",
+      "studio": "PackBusDefinitionBus"
+    },
+    "busDefinitionSend": {
+      "engine": "PackBusDefinitionSend",
+      "studio": "PackBusDefinitionSend"
+    },
+    "busDefinitionDownmix": {
+      "engine": "PackBusDefinitionDownmix",
+      "studio": "PackBusDefinitionDownmix"
+    },
+    "busDefinitionCoefficient": {
+      "engine": "float",
+      "studio": "float"
+    },
+    "media": {
+      "engine": "PackTocEntry",
+      "studio": "PackTocEntry"
+    },
+    "busEffect": {
+      "engine": "PackBusEffectEntry",
+      "studio": "PackBusEffectEntry"
+    },
+    "effectDynamicRoute": {
+      "engine": "PackEffectDynamicRouteEntry",
+      "studio": "PackEffectDynamicRouteEntry"
+    },
+    "bindingAttachment": {
+      "engine": "PackBindingAttachmentEntry",
+      "studio": "PackBindingAttachmentEntry"
+    },
+    "curvePoint": {
+      "engine": "VnCurvePoint",
+      "studio": "ParameterCurvePoint"
+    },
+    "attenuationCurvePoint": {
+      "engine": "VnAttenuationCurvePoint",
+      "studio": "ParameterCurvePoint"
+    },
+    "curveHandles": {
+      "engine": "VnCurveHandlePair",
+      "studio": "ParameterCurveHandles"
+    },
+    "attenuationCurve": {
+      "engine": "VnAttenuationCurve",
+      "studio": "AttenuationCurve"
+    },
+    "bindingCurve": {
+      "engine": "VnCurveDesc",
+      "studio": "BindingCurve"
+    },
+    "attenuation": {
+      "engine": "VnAttenuationDesc",
+      "studio": "AttenuationDefinition"
+    },
+    "bindingDefinition": {
+      "engine": "PackBindingDefinitionEntry",
+      "studio": "PackBindingDefinitionEntry"
+    },
+    "containerHeader": {
+      "engine": "PackContainerEntryHeader",
+      "studio": "PackContainerEntryHeader"
+    },
+    "containerChild": {
+      "engine": "PackContainerChild",
+      "studio": "PackContainerChild"
+    },
+    "voiceRecipeHeader": {
+      "engine": "PackVoiceRecipeEntryHeader",
+      "studio": "PackVoiceRecipeEntryHeader"
+    },
+    "voiceRecipeTone": {
+      "engine": "PackVoiceRecipeTone",
+      "studio": "PackVoiceRecipeTone"
+    },
+    "voiceRecipeSpatial": {
+      "engine": "PackVoiceRecipeSpatial",
+      "studio": "PackVoiceRecipeSpatial"
+    },
+    "voiceRecipePlayback": {
+      "engine": "PackVoiceRecipePlayback",
+      "studio": "PackVoiceRecipePlayback"
+    },
+    "voiceRecipeInstall": {
+      "engine": "PackVoiceRecipeInstallWire",
+      "studio": "PackVoiceRecipeInstallWire"
+    },
+    "voiceRecipeBinding": {
+      "engine": "VnBindingId",
+      "studio": "harkenstudio::ObjectId"
+    },
+    "containerPayload": {
+      "engine": "PackContainerEntryHeader",
+      "studio": "PackContainerEntryHeader"
+    },
+    "voiceRecipePayload": {
+      "engine": "PackVoiceRecipeEntryHeader",
+      "studio": "PackVoiceRecipeEntryHeader"
+    },
+    "voiceRecipeInstallRow": {
+      "engine": "PackVoiceRecipeInstallWire",
+      "studio": "PackVoiceRecipeInstallWire"
+    },
+    "dependencyEdge": {
+      "engine": "PackDependencyEdge",
+      "studio": "PackDependencyEdge"
+    },
+    "requirementBlock": {
+      "engine": "PackRequirementBlock",
+      "studio": "PackRequirementBlock"
+    },
+    "filePrefix": {
+      "engine": "PackFilePrefix",
+      "studio": "PackFilePrefix"
+    },
+    "fileHeader": {
+      "engine": "PackFileHeader",
+      "studio": "PackFileHeader"
+    },
+    "mediaFileHeader": {
+      "engine": "PackMediaFileHeader",
+      "studio": "PackMediaFileHeader"
+    },
+    "directoryEntry": {
+      "engine": "PackDirectoryEntry",
+      "studio": "PackDirectoryEntry"
+    },
+    "variablePolicyHeader": {
+      "engine": "PackVariablePolicyHeader",
+      "studio": "PackVariablePolicyHeader"
+    },
+    "variablePolicyRow": {
+      "engine": "PackVariablePolicyRow",
+      "studio": "PackVariablePolicyRow"
+    },
+    "variableAnchorCount": {
+      "engine": "PackVariableAnchorHeader",
+      "studio": "PackVariableAnchorHeader"
+    },
+    "variableAnchor": {
+      "engine": "std::int32_t",
+      "studio": "std::int32_t"
+    },
+    "variableLabelHeader": {
+      "engine": "PackVariableLabelHeader",
+      "studio": "PackVariableLabelHeader"
+    },
+    "variableLabel": {
+      "engine": "PackVariableLabel",
+      "studio": "PackVariableLabel"
+    },
+    "variableRequirementsHeader": {
+      "engine": "PackVariableRequirementsHeader",
+      "studio": "PackVariableRequirementsHeader"
+    },
+    "variableRequirement": {
+      "engine": "PackVariableRequirement",
+      "studio": "PackVariableRequirement"
+    },
+    "variablePolicyRecord": {
+      "engine": "PackVariablePolicyRow",
+      "studio": "PackVariablePolicyRow"
+    },
+    "variableLabelRecord": {
+      "engine": "PackVariableLabel",
+      "studio": "PackVariableLabel"
+    },
+    "variableRequirementRecord": {
+      "engine": "PackVariableRequirement",
+      "studio": "PackVariableRequirement"
+    },
+    "variableAnchorSection": {
+      "engine": "PackVariableAnchorHeader",
+      "studio": "PackVariableAnchorHeader"
+    },
+    "variableLabelSection": {
+      "engine": "PackVariableLabelHeader",
+      "studio": "PackVariableLabelHeader"
+    },
+    "variablePolicyPayload": {
+      "engine": "PackVariablePolicyHeader",
+      "studio": "PackVariablePolicyHeader"
+    },
+    "variableRequirementsPayload": {
+      "engine": "PackVariableRequirementsHeader",
+      "studio": "PackVariableRequirementsHeader"
+    },
+    "bodyPayloadHeader": {
+      "engine": "PlayablePropertyPayloadViewV1",
+      "studio": "PlayablePropertyPayloadViewV1"
+    },
+    "bodyPayloadSend": {
+      "engine": "SendV1",
+      "studio": "SendV1"
+    },
+    "bodyPayloadEffectNodeHeader": {
+      "engine": "EffectNodeV1",
+      "studio": "EffectNodeV1"
+    },
+    "bodyPayloadEffectParam": {
+      "engine": "EffectParamV1",
+      "studio": "EffectParamV1"
+    },
+    "bodyPayloadEffectEdge": {
+      "engine": "EffectEdgeV1",
+      "studio": "EffectEdgeV1"
+    },
+    "bodyPayloadEffectNode": {
+      "engine": "EffectNodeV1",
+      "studio": "EffectNodeV1"
+    },
+    "bodyPayloadBody": {
+      "engine": "PlayablePropertyPayloadViewV1",
+      "studio": "PlayablePropertyPayloadViewV1"
+    },
+    "bodyPayload": {
+      "engine": "PlayablePropertyPayloadViewV1",
+      "studio": "PlayablePropertyPayloadViewV1"
+    },
+    "bodyWorldPrefix": {
+      "engine": "CurrentWorldV3PrefixValues",
+      "studio": "CurrentWorldV3PrefixValues"
+    },
+    "bodyWorldCapacity": {
+      "engine": "WorldCapacitySummaryV1",
+      "studio": "WorldCapacitySummaryV1"
+    },
+    "bodyWorldActionCapacity": {
+      "engine": "ContainerWorldInstallViewV1",
+      "studio": "ContainerWorldInstallViewV1"
+    },
+    "bodyWorldStructuralCount": {
+      "engine": "std::uint32_t",
+      "studio": "std::uint32_t"
+    },
+    "bodyWorldProjectId": {
+      "engine": "VnObjectId",
+      "studio": "harkenstudio::ObjectId"
+    },
+    "bodyWorldVariableHeader": {
+      "engine": "PackWorldVariableWire",
+      "studio": "PackWorldVariableWire"
+    },
+    "bodyWorldVariable": {
+      "engine": "PackWorldVariableWire",
+      "studio": "PackWorldVariableWire"
+    },
+    "bodyWorldPlayableRef": {
+      "engine": "PlayableRefV1",
+      "studio": "PlayableRefV1"
+    },
+    "bodyWorldActionRef": {
+      "engine": "ActionObjectRefV1",
+      "studio": "ActionObjectRefV1"
+    },
+    "bodyWorldTime": {
+      "engine": "AuthoredTimeRationalV1",
+      "studio": "AuthoredTimeRationalV1"
+    },
+    "bodyWorldPropertyHeader": {
+      "engine": "PlayablePropertyProgramViewV1",
+      "studio": "PlayablePropertyProgramViewV1"
+    },
+    "bodyWorldLayerAncestor": {
+      "engine": "LayerAncestorRefV1",
+      "studio": "LayerAncestorRefV1"
+    },
+    "bodyWorldStructuralHeader": {
+      "engine": "PlayablePropertyProgramViewV1",
+      "studio": "PlayablePropertyProgramViewV1"
+    },
+    "bodyWorldStructuralAncestorHeader": {
+      "engine": "StructuralAncestorRefV1",
+      "studio": "StructuralAncestorRefV1"
+    },
+    "bodyWorldOccurrenceHeader": {
+      "engine": "PlayableOccurrencePropertyViewV1",
+      "studio": "PlayableOccurrencePropertyViewV1"
+    },
+    "bodyWorldTrackHeader": {
+      "engine": "TrackScheduleProgramViewV1",
+      "studio": "TrackScheduleProgramViewV1"
+    },
+    "bodyWorldPlacement": {
+      "engine": "ScheduleClipPlacementV1",
+      "studio": "ScheduleClipPlacementV1"
+    },
+    "bodyWorldSegmentHeader": {
+      "engine": "SegmentScheduleProgramViewV1",
+      "studio": "SegmentScheduleProgramViewV1"
+    },
+    "bodyWorldTrackRef": {
+      "engine": "ScheduleTrackRefV1",
+      "studio": "ScheduleTrackRefV1"
+    },
+    "bodyWorldMarker": {
+      "engine": "ScheduleMarkerV1",
+      "studio": "ScheduleMarkerV1"
+    },
+    "bodyWorldContainerHeader": {
+      "engine": "ContainerProgramViewV3",
+      "studio": "ContainerProgramViewV3"
+    },
+    "bodyWorldCurveHeader": {
+      "engine": "CurveV1",
+      "studio": "CurveV1"
+    },
+    "bodyWorldCurvePoint": {
+      "engine": "CurvePoint",
+      "studio": "CurvePoint"
+    },
+    "bodyWorldCurveHandle": {
+      "engine": "CurveHandlePair",
+      "studio": "CurveHandlePair"
+    },
+    "bodyWorldChildHeader": {
+      "engine": "ContainerChildProgramViewV2",
+      "studio": "ContainerChildProgramViewV2"
+    },
+    "bodyWorldInlineSound": {
+      "engine": "InlineSoundTimingHintV2",
+      "studio": "InlineSoundTimingHintV2"
+    },
+    "bodyWorldScheduleKey": {
+      "engine": "TrackSegmentScheduleKeyV1",
+      "studio": "TrackSegmentScheduleKeyV1"
+    },
+    "bodyWorldGridAxis": {
+      "engine": "GridAxisV1",
+      "studio": "GridAxisV1"
+    },
+    "bodyWorldDiscreteGridHeader": {
+      "engine": "DiscreteGridRowViewV1",
+      "studio": "DiscreteGridRowViewV1"
+    },
+    "bodyWorldContinuousGridHeader": {
+      "engine": "ContinuousGridRowViewV1",
+      "studio": "ContinuousGridRowViewV1"
+    },
+    "bodyWorldDiscreteCell": {
+      "engine": "DiscreteGridCellV1",
+      "studio": "DiscreteGridCellV1"
+    },
+    "bodyWorldContinuousCell": {
+      "engine": "ContinuousGridCellV1",
+      "studio": "ContinuousGridCellV1"
+    },
+    "bodyWorldTransitionHeader": {
+      "engine": "TransitionProgramViewV1",
+      "studio": "TransitionProgramViewV1"
+    },
+    "bodyWorldPathStep": {
+      "engine": "StableAuthoredPathStepV1",
+      "studio": "StableAuthoredPathStepV1"
+    },
+    "bodyWorldFade": {
+      "engine": "TransitionFadeV1",
+      "studio": "TransitionFadeV1"
+    },
+    "bodyWorldTransitionRule": {
+      "engine": "TransitionRuleViewV1",
+      "studio": "TransitionRuleViewV1"
+    },
+    "bodyWorldActionHeader": {
+      "engine": "ActionProgramViewV1",
+      "studio": "ActionProgramViewV1"
+    },
+    "bodyWorldActionStep": {
+      "engine": "ActionStepProgramViewV1",
+      "studio": "ActionStepProgramViewV1"
+    },
+    "bodyWorldBodyHeader": {
+      "engine": "ContainerWorldInstallViewV1",
+      "studio": "ContainerWorldInstallViewV1"
+    },
+    "bodyWorldBody": {
+      "engine": "ContainerWorldInstallViewV1",
+      "studio": "ContainerWorldInstallViewV1"
+    },
+    "bodyWorldProperty": {
+      "engine": "PlayablePropertyProgramViewV1",
+      "studio": "PlayablePropertyProgramViewV1"
+    },
+    "bodyWorldStructuralAncestor": {
+      "engine": "StructuralAncestorRefV1",
+      "studio": "StructuralAncestorRefV1"
+    },
+    "bodyWorldOccurrence": {
+      "engine": "PlayableOccurrencePropertyViewV1",
+      "studio": "PlayableOccurrencePropertyViewV1"
+    },
+    "bodyWorldTrack": {
+      "engine": "TrackScheduleProgramViewV1",
+      "studio": "TrackScheduleProgramViewV1"
+    },
+    "bodyWorldSegment": {
+      "engine": "SegmentScheduleProgramViewV1",
+      "studio": "SegmentScheduleProgramViewV1"
+    },
+    "bodyWorldContainer": {
+      "engine": "ContainerProgramViewV3",
+      "studio": "ContainerProgramViewV3"
+    },
+    "bodyWorldCurve": {
+      "engine": "CurveV1",
+      "studio": "CurveV1"
+    },
+    "bodyWorldChild": {
+      "engine": "ContainerChildProgramViewV2",
+      "studio": "ContainerChildProgramViewV2"
+    },
+    "bodyWorldDiscreteGrid": {
+      "engine": "DiscreteGridRowViewV1",
+      "studio": "DiscreteGridRowViewV1"
+    },
+    "bodyWorldContinuousGrid": {
+      "engine": "ContinuousGridRowViewV1",
+      "studio": "ContinuousGridRowViewV1"
+    },
+    "bodyWorldTransition": {
+      "engine": "TransitionProgramViewV1",
+      "studio": "TransitionProgramViewV1"
+    },
+    "bodyWorldAction": {
+      "engine": "ActionProgramViewV1",
+      "studio": "ActionProgramViewV1"
+    },
+    "canonicalPartitionHeader": {
+      "engine": "PackCanonicalPartitionHeader",
+      "studio": "PackCanonicalPartitionHeader"
+    },
+    "busDefinitionSnapshot": {
+      "engine": "PackBusDefinitionSnapshotHeader",
+      "studio": "PackBusDefinitionSnapshotHeader"
+    },
+    "bodyWorldSegmentEntryTimeline": {
+      "engine": "PackSegmentEntryTimeline",
+      "studio": "PackSegmentEntryTimeline"
+    },
+    "bodyWorldSignalCounts": {
+      "engine": "ContainerWorldInstallViewV1",
+      "studio": "ContainerWorldInstallViewV1"
+    },
+    "bodyWorldSignalEndpoint": {
+      "engine": "SignalEndpointRefV1",
+      "studio": "SignalEndpointRefV1"
+    },
+    "bodyWorldSignalRelation": {
+      "engine": "SignalRelationV1",
+      "studio": "SignalRelationV1"
+    },
+    "bodyWorldSignalReceiver": {
+      "engine": "SignalReceiverV1",
+      "studio": "SignalReceiverV1"
+    }
+  },
+  "members": {
+    "busDefinitionCoefficient.value": "",
+    "bindingDefinition.variableId": "definition.variableId",
+    "bindingDefinition.targetScopeKind": "definition.targetScopeKind",
+    "bindingDefinition.targetId": "definition.targetId",
+    "bindingDefinition.transitionMs": "definition.transitionMs",
+    "bindingDefinition.curve": "definition.curve",
+    "voiceRecipeBinding.bindingId": "",
+    "variableAnchor.anchor": "",
+    "bodyPayloadHeader.volume": "values[0].bits",
+    "bodyPayloadHeader.pitch": "values[1].bits",
+    "bodyPayloadHeader.outputBusVolume": "values[5].bits",
+    "bodyPayloadHeader.streamingMode": "values[4].bits",
+    "bodyPayloadHeader.loopCount": "values[3].bits",
+    "bodyPayloadHeader.spatialIs3DEnabled": "values[10].bits",
+    "bodyPayloadHeader.spatialPanning": "values[8].bits",
+    "bodyPayloadHeader.spatialSpread": "values[9].bits",
+    "bodyPayloadHeader.spatialAttenuationDistanceScaling": "values[11].bits",
+    "bodyPayloadHeader.legacySpatialValue": "values[12].bits",
+    "bodyPayloadHeader.outputBusRef": "values[6].objectId",
+    "bodyPayloadHeader.spatialAttenuationRef": "values[13].objectId",
+    "bodyPayloadHeader.legacyValue": "values[14].bits",
+    "bodyPayloadHeader.spatializationMix": "values[16].bits",
+    "bodyWorldActionCapacity.maxActionDefinitions": "capacity.maxActionDefinitions",
+    "bodyWorldActionCapacity.maxActionStepsPerDefinition": "capacity.maxActionStepsPerDefinition",
+    "bodyWorldActionCapacity.maxActionStepsTotal": "capacity.maxActionStepsTotal",
+    "bodyWorldActionCapacity.maxActionTriggerDepth": "capacity.maxActionTriggerDepth",
+    "bodyWorldActionCapacity.maxActionExpandedWork": "capacity.maxActionExpandedWork",
+    "bodyWorldStructuralCount.value": "",
+    "bodyWorldProjectId.value": "",
+    "bodyWorldCurveHeader.pointCount": "curve.pointCount",
+    "bodyWorldChildHeader.timingKind": "timingHint.kind",
+    "bodyWorldChildHeader.timingReserved": "timingHint.reserved",
+    "bodyWorldBody.playablePropertyProgramCount": "playablePropertyCount",
+    "bodyWorldBody.playableOccurrencePropertyCount": "playableOccurrenceCount",
+    "bodyWorldBody.transitionProgramCount": "transitionCount",
+    "bodyWorldCurve.pointCount": "curve.pointCount",
+    "bodyWorldChild.timingKind": "timingHint.kind"
+  },
+  "setters": [
+    "busDefinitionSnapshotHeader.checksum",
+    "requirementBlock.payloadChecksumCoverage",
+    "media.blobOffset",
+    "canonicalPartitionHeader.headerChecksum",
+    "canonicalPartitionHeader.bodyChecksum"
+  ]
+}

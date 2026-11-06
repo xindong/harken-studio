@@ -26,19 +26,11 @@ VnResult Decode(const VnPackByteSpan& span, PackCanonicalImage& image,
 bool MainBusGain(const PackCanonicalImage& init, VnObjectId id, float& db) {
     if (id == VnObjectId{}) id = VN_BUS_MASTER;
     for (std::uint32_t visited = 0; visited < init.busDefinitionSnapshotHeader.busCount; ++visited) {
-        VnObjectId parent{};
-        if (init.busDefinitionSnapshotHeader.schemaVersion == 2) {
-            const auto found = std::find_if(init.busDefinitionBusesV2.begin(), init.busDefinitionBusesV2.end(),
-                [&](const auto& row) { return row.busId == id; });
-            if (found == init.busDefinitionBusesV2.end()) return false;
-            db += found->faderDb + found->outputBusVolumeDb;
-            parent = found->parentId;
-        } else {
-            const auto found = std::find_if(init.busDefinitionBuses.begin(), init.busDefinitionBuses.end(),
-                [&](const auto& row) { return CanonicalSnapshotBusIdV1(row.busId) == id; });
-            if (found == init.busDefinitionBuses.end()) return false;
-            parent = CanonicalSnapshotBusIdV1(found->parentId);
-        }
+        const auto found = std::find_if(init.busDefinitionBusesV2.begin(), init.busDefinitionBusesV2.end(),
+            [&](const auto& row) { return row.busId == id; });
+        if (found == init.busDefinitionBusesV2.end()) return false;
+        db += found->faderDb + found->outputBusVolumeDb;
+        const VnObjectId parent = found->parentId;
         if (id == VN_BUS_MASTER) return parent == VnObjectId{} && std::isfinite(db);
         if (parent == VnObjectId{}) return false;
         id = parent;

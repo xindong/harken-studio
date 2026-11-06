@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 
-CASES = ((1000, 64), (10000, 256), (50000, 1024))
+CASES = (64, 256, 1024)
 RUNTIME_TIMING_FIELDS = (
     "export_us",
     "inspect_us",
@@ -26,9 +26,7 @@ RUNTIME_TIMING_FIELDS = (
     "replace_us",
     "unload_us",
     "lookup_loaded_us",
-    "lookup_unloaded_us",
     "post_loaded_us",
-    "post_unloaded_us",
 )
 STUDIO_TIMING_FIELDS = (
     "rebuildMs",
@@ -222,15 +220,10 @@ def gate(name: str, actual: float, limit: float, comparator: str) -> dict[str, A
 
 
 def runtime_gates(cases: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
-    small = cases["1000-64"]
-    large = cases["50000-1024"]
+    small = cases["64"]
+    large = cases["1024"]
     small_metrics = small["metrics"]
-    large_metrics = large["metrics"]
     gates = [
-        gate("inspect_50k_us", large_metrics["inspect_us"]["median"],
-             50_000.0, "lt"),
-        gate("load_init_50k_us", large_metrics["load_init_us"]["median"],
-             100_000.0, "lt"),
         gate("content_cold_64_us",
              small_metrics["content_cold_us"]["median"], 50_000.0, "lt"),
         gate("content_warm_64_us",
@@ -243,16 +236,6 @@ def runtime_gates(cases: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
         gate("resident_1024_body_plus_index_bytes",
              large["resident_footprint_bytes"], float(8 << 20), "le"),
     ]
-    for field, label in (
-        ("post_loaded_us", "post_loaded_50k_to_1k_ratio"),
-        ("post_unloaded_us", "post_unloaded_50k_to_1k_ratio"),
-    ):
-        denominator = small_metrics[field]["median"]
-        ratio = (
-            large_metrics[field]["median"] / denominator
-            if denominator > 0.0 else float("inf")
-        )
-        gates.append(gate(label, ratio, 3.0, "lt"))
     return gates
 
 
@@ -289,7 +272,7 @@ def main() -> int:
     )
     manifest = {
         "record": "manifest",
-        "schema": "plan05-f3-qualification-v1",
+        "schema": "plan05-f3-qualification-v2",
         "mode": args.mode,
         "configuration": args.configuration,
         "commit": commit,
@@ -305,8 +288,8 @@ def main() -> int:
         "runner_sha256": sha256_file(Path(__file__).resolve()),
         "fixture_source_sha256": sha256_file(fixture_source),
         "cases": [
-            {"catalog": catalog, "resident": resident}
-            for catalog, resident in CASES
+            {"resident": resident}
+            for resident in CASES
         ],
         "warmup_iterations": 3 if args.mode == "formal" else 0,
         "measured_iterations": 7 if args.mode == "formal" else 1,
@@ -335,8 +318,8 @@ def main() -> int:
     all_runtime_identity = True
     all_runtime_release = True
     all_runtime_stable = True
-    for catalog, resident in CASES:
-        case_id = f"{catalog}-{resident}"
+    for resident in CASES:
+        case_id = str(resident)
         fixture_root = output / "fixtures" / case_id
         observed: list[dict[str, Any]] = []
         fixture_hashes: list[str] = []
@@ -344,7 +327,6 @@ def main() -> int:
             for iteration in range(1, count + 1):
                 command = [
                     str(runtime_binary),
-                    "--catalog", str(catalog),
                     "--resident", str(resident),
                     "--fixture-root", str(fixture_root),
                 ]
@@ -360,9 +342,8 @@ def main() -> int:
         metrics, unstable = metric_summary(observed, RUNTIME_TIMING_FIELDS)
         complete = all(
             record.get("benchmark") == "pack-foundation-runtime"
-            and record.get("schema") == "plan05-f3-runtime-v1"
+            and record.get("schema") == "plan05-f3-runtime-v2"
             and record.get("status") == "complete"
-            and int(record.get("catalog_count", -1)) == catalog
             and int(record.get("resident_count", -1)) == resident
             and int(record.get("retiring_count", -1)) == 0
             for record in observed
@@ -376,7 +357,6 @@ def main() -> int:
         release = all(record.get("release_build") is True for record in observed)
         fixture_stable = len(set(fixture_hashes)) == 1
         case_summary = {
-            "catalog_count": catalog,
             "resident_count": resident,
             "behavior_complete": complete,
             "build_identity": build_identity,
@@ -450,7 +430,7 @@ def main() -> int:
     )
     summary = {
         "record": "summary",
-        "schema": "plan05-f3-qualification-v1",
+        "schema": "plan05-f3-qualification-v2",
         "status": "complete"
             if (formal_passed if args.mode == "formal" else smoke_passed)
             else "failed",

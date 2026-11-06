@@ -21,6 +21,7 @@
 #include "harken/core/LogRing.h"
 #include "harken/core/StableRowStorage.h"
 #include "harken/media/PackFormat.h"
+#include "harken/media/PackFormatV2.h"
 #include "harken/media/StreamManager.h"
 
 #include <cstdint>
@@ -101,9 +102,9 @@ std::uint64_t AlignUp64(std::uint64_t value) {
 
 std::vector<std::uint8_t> BuildPackBytes(
     const std::vector<PackEntrySpec>& specs) {
-    const std::uint64_t tocOffset = harken::kPackHeaderBytes;
+    const std::uint64_t tocOffset = harken::kPackMediaFileHeaderBytes;
     const std::uint64_t tocBytes =
-        static_cast<std::uint64_t>(specs.size()) * harken::kPackTocEntryBytes;
+        static_cast<std::uint64_t>(specs.size()) * harken::kPackMediaBytes;
     std::vector<std::uint64_t> blobOffsets(specs.size());
     std::uint64_t cursor = AlignUp64(tocOffset + tocBytes);
     std::uint64_t fileBytes = tocOffset + tocBytes;
@@ -136,18 +137,18 @@ std::vector<std::uint8_t> BuildPackBytes(
         entry.flags = 0;
         entry.loopStartFrame = 0;
         entry.loopEndFrame = 0;
-        harken::SerializePackTocEntry(
-            entry, toc.data() + i * harken::kPackTocEntryBytes);
+        harken::SerializePackMedia(
+            entry, toc.data() + i * harken::kPackMediaBytes);
     }
     std::memcpy(bytes.data() + tocOffset, toc.data(), toc.size());
-    harken::PackHeader header;
+    harken::PackMediaFileHeader header;
     header.formatVersion = harken::kPackFormatVersion;
-    header.headerBytes = harken::kPackHeaderBytes;
+    header.headerBytes = harken::kPackMediaFileHeaderBytes;
     header.fileBytes = fileBytes;
     header.entryCount = static_cast<std::uint32_t>(specs.size());
     header.tocOffset = static_cast<std::uint32_t>(tocOffset);
     header.tocChecksum = harken::Fnv1a64(toc.data(), toc.size());
-    harken::SerializePackHeader(header, bytes.data());
+    harken::SerializePackMediaFileHeader(header, bytes.data());
     return bytes;
 }
 

@@ -28,6 +28,7 @@
 #include "harken/core/MediaContentRevision.h"
 #include "harken/media/CurrentWorldBodyVintage.h"
 #include "harken/media/PackFormat.h"
+#include "harken/media/PackFormatV2.h"
 #include "harken/param/EffectParamLocator.h"
 #include "harken/param/MeterProbe.h"
 #include "harken/param/VariableService.h"
@@ -1654,10 +1655,7 @@ TEST(TraceReplayE2E,
 
     std::vector<std::uint8_t> bytes = ReadFileBytes(tracePath);
     std::vector<std::uint8_t> historicalBody;
-    auto historicalWorld = harkentest::AsHistoricalPrefix(world);
-    historicalWorld.identity.runtimeSemanticFingerprint =
-        harken::ComputeCurrentWorldFingerprintV4(historicalWorld);
-    ASSERT_TRUE(harken::EncodeCurrentWorldBodyV6(historicalWorld, historicalBody));
+    ASSERT_TRUE(harken::EncodeCurrentWorldShippingBody(world, historicalBody));
     const std::uint32_t historicalVintage =
         harken::kCurrentWorldBodyVintageV6;
     ASSERT_TRUE(ReplaceCurrentWorldRecordBody(
@@ -1692,11 +1690,11 @@ TEST(TraceReplayE2E, HistoricalCurrentWorldWithAncestorsIsRejected) {
     properties[1].structuralAncestorCount = 1;
     properties[1].structuralAncestors = &ancestor;
     properties[1].payload = ResolvedDefinitionPayload();
-    harken::HistoricalContainerWorldViewV1 historical{};
+    harken::ContainerWorldInstallViewV1 historical{};
     historical.playableProperties = properties;
     historical.playablePropertyCount = 2;
     std::vector<std::uint8_t> body;
-    ASSERT_TRUE(harken::EncodeCurrentWorldBodyV8(historical, body));
+    ASSERT_TRUE(harken::EncodeCurrentWorldShippingBody(historical, body));
 
     const auto tracePath = TempPath("retired_ancestor_world.vtrc");
     {
@@ -1916,10 +1914,7 @@ TEST(TraceReplayE2E,
         bytes, "shipping_current_world_generation_mapping.vtrc");
     ASSERT_EQ(0, shippingReplay.exitCode) << shippingReplay.output;
     std::vector<std::uint8_t> historicalBody;
-    auto historicalFirst = harkentest::AsHistoricalPrefix(firstWorld);
-    historicalFirst.identity.runtimeSemanticFingerprint =
-        harken::ComputeCurrentWorldFingerprintV4(historicalFirst);
-    ASSERT_TRUE(harken::EncodeCurrentWorldBodyV6(historicalFirst, historicalBody));
+    ASSERT_TRUE(harken::EncodeCurrentWorldShippingBody(firstWorld, historicalBody));
     ASSERT_TRUE(ReplaceCurrentWorldRecordBody(
         &bytes, 0, harken::kCurrentWorldBodyVintageV6, historicalBody));
 
@@ -1981,10 +1976,7 @@ TEST(TraceReplayE2E,
                 sizeof firstRecordedResult);
     ASSERT_NE(0u, firstRecordedResult);
     std::vector<std::uint8_t> historicalBody;
-    auto historicalSecond = harkentest::AsHistoricalPrefix(secondWorld);
-    historicalSecond.identity.runtimeSemanticFingerprint =
-        harken::ComputeCurrentWorldFingerprintV4(historicalSecond);
-    ASSERT_TRUE(harken::EncodeCurrentWorldBodyV6(historicalSecond, historicalBody));
+    ASSERT_TRUE(harken::EncodeCurrentWorldShippingBody(secondWorld, historicalBody));
     ASSERT_TRUE(ReplaceCurrentWorldRecordBody(
         &bytes, 1, harken::kCurrentWorldBodyVintageV6, historicalBody));
     RecordLocation finalShippingRecord{};
@@ -2027,10 +2019,7 @@ TEST(TraceReplayE2E, MalformedHistoricalCurrentWorldBodyFailsHard) {
 
     std::vector<std::uint8_t> bytes = ReadFileBytes(tracePath);
     std::vector<std::uint8_t> malformedBody;
-    auto historicalMalformed = harkentest::AsHistoricalPrefix(world);
-    historicalMalformed.identity.runtimeSemanticFingerprint =
-        harken::ComputeCurrentWorldFingerprintV4(historicalMalformed);
-    ASSERT_TRUE(harken::EncodeCurrentWorldBodyV6(historicalMalformed, malformedBody));
+    ASSERT_TRUE(harken::EncodeCurrentWorldShippingBody(world, malformedBody));
     ASSERT_FALSE(malformedBody.empty());
     malformedBody.pop_back();
     ASSERT_TRUE(ReplaceCurrentWorldRecordBody(
@@ -3202,8 +3191,8 @@ std::vector<std::uint8_t> BuildOneEntryPack(VnSoundId id,
                                             std::size_t frames) {
     const std::vector<float> plane =
         harkentest::MakeSine(frames, 330.0, 48000.0, 0.6f);
-    const std::uint64_t tocOffset = harken::kPackHeaderBytes;
-    const std::uint64_t tocBytes = harken::kPackTocEntryBytes;
+    const std::uint64_t tocOffset = harken::kPackMediaFileHeaderBytes;
+    const std::uint64_t tocBytes = harken::kPackMediaBytes;
     const std::uint64_t align = harken::kPackBlobAlign;
     const std::uint64_t blobOffset =
         (tocOffset + tocBytes + align - 1) / align * align;
@@ -3226,18 +3215,18 @@ std::vector<std::uint8_t> BuildOneEntryPack(VnSoundId id,
     entry.flags = 0;
     entry.loopStartFrame = 0;
     entry.loopEndFrame = 0;
-    std::vector<std::uint8_t> toc(harken::kPackTocEntryBytes, 0);
-    harken::SerializePackTocEntry(entry, toc.data());
+    std::vector<std::uint8_t> toc(harken::kPackMediaBytes, 0);
+    harken::SerializePackMedia(entry, toc.data());
     std::memcpy(bytes.data() + tocOffset, toc.data(), toc.size());
 
-    harken::PackHeader header;
+    harken::PackMediaFileHeader header;
     header.formatVersion = harken::kPackFormatVersion;
-    header.headerBytes = harken::kPackHeaderBytes;
+    header.headerBytes = harken::kPackMediaFileHeaderBytes;
     header.fileBytes = bytes.size();
     header.entryCount = 1;
     header.tocOffset = static_cast<std::uint32_t>(tocOffset);
     header.tocChecksum = harken::Fnv1a64(toc.data(), toc.size());
-    harken::SerializePackHeader(header, bytes.data());
+    harken::SerializePackMediaFileHeader(header, bytes.data());
     return bytes;
 }
 

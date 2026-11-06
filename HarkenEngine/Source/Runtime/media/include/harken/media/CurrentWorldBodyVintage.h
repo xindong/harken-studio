@@ -1,11 +1,12 @@
 // Internal layout id of the CurrentWorld playback-program body. Shared by
 // CanonicalDefinitionPartition and the DirectWorld preview envelope
 // (VNCWORLD). Not a product schema; do not register in catalog.json.
-// Change kCurrentWorldShippingBodyVintage when minting a new write table.
 #ifndef HARKEN_MEDIA_CURRENT_WORLD_BODY_VINTAGE_H
 #define HARKEN_MEDIA_CURRENT_WORLD_BODY_VINTAGE_H
 
 #include <cstdint>
+
+#include <harken/media/generated/harken_pack_wire_constants.g.h>
 
 namespace harken {
 
@@ -26,7 +27,7 @@ inline constexpr std::uint32_t kCurrentWorldBodyVintageV18 = 18;
 inline constexpr std::uint32_t kCurrentWorldBodyVintageV19 = 19;
 inline constexpr std::uint32_t kCurrentWorldBodyVintageV20 = 20;
 inline constexpr std::uint32_t kCurrentWorldShippingBodyVintage =
-    kCurrentWorldBodyVintageV18;
+    kPackShippingBodyVintage;
 
 inline constexpr bool IsReadableCurrentWorldBodyVintage(
     std::uint32_t vintage) noexcept {

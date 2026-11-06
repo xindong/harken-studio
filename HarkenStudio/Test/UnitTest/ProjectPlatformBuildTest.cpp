@@ -218,15 +218,15 @@ QVector<harken::PackTocEntry> mediaEntries(const QString& path)
 {
     QVector<harken::PackTocEntry> result;
     const auto content = bytes(path);
-    if (content.size() < static_cast<qsizetype>(harken::kPackV2HeaderBytes)) return result;
+    if (content.size() < static_cast<qsizetype>(harken::kPackFileHeaderBytes)) return result;
     const auto* data = reinterpret_cast<const uint8_t*>(content.constData());
-    harken::PackV2Header header;
-    if (!harken::ParsePackV2Header(data, &header)) return result;
+    harken::PackFileHeader header;
+    if (!harken::ReadPackFileHeader(data, &header)) return result;
     for (uint32_t i = 0; i < header.entryCount; ++i) {
-        const auto entry = harken::ParsePackV2DirectoryEntry(
-            data + header.directoryOffset + i * harken::kPackV2DirectoryEntryBytes);
+        const auto entry = harken::ReadPackDirectoryEntry(
+            data + header.directoryOffset + i * harken::kPackDirectoryEntryBytes);
         if (entry.kind == harken::kPackEntryKindMedia)
-            result.append(harken::ParsePackTocEntry(data + entry.offset));
+            result.append(harken::ReadPackMedia(data + entry.offset));
     }
     return result;
 }

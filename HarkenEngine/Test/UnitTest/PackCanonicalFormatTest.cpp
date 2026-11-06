@@ -51,7 +51,7 @@ public:
                          std::vector<std::uint8_t> payload,
                          std::uint32_t vintage = 0) {
         if (vintage == 0) {
-            vintage = PackV2CanonicalDirectoryVintage(kind);
+            vintage = PackEntryVintage(kind);
         }
         Entry entry;
         entry.kind = kind;
@@ -67,18 +67,18 @@ public:
     }
 
     std::vector<std::uint8_t> Build() {
-        const std::uint64_t dirOffset = kPackV2HeaderBytes;
+        const std::uint64_t dirOffset = kPackFileHeaderBytes;
         const std::uint64_t dirBytes =
             static_cast<std::uint64_t>(entries_.size()) *
-            kPackV2DirectoryEntryBytes;
+            kPackDirectoryEntryBytes;
         const std::uint64_t dirEnd = dirOffset + dirBytes;
         payloadOffsets_.assign(entries_.size(), 0);
-        std::uint64_t cursor = AlignUp(dirEnd, kPackV2PayloadAlign);
+        std::uint64_t cursor = AlignUp(dirEnd, kPackPayloadAlign);
         std::uint64_t contentEnd = dirEnd;
         for (std::size_t i = 0; i < entries_.size(); ++i) {
             payloadOffsets_[i] = cursor;
             contentEnd = cursor + entries_[i].payload.size();
-            cursor = AlignUp(contentEnd, kPackV2PayloadAlign);
+            cursor = AlignUp(contentEnd, kPackPayloadAlign);
         }
         std::vector<std::uint8_t> bytes(static_cast<std::size_t>(contentEnd), 0);
         for (std::size_t i = 0; i < entries_.size(); ++i) {
@@ -87,7 +87,7 @@ public:
                         entries_[i].payload.data(), entries_[i].payload.size());
         }
         for (std::size_t i = 0; i < entries_.size(); ++i) {
-            PackV2DirectoryEntry record;
+            PackDirectoryEntry record;
             record.kind = entries_[i].kind;
             record.vintage = entries_[i].vintage;
             record.id = entries_[i].id;
@@ -97,13 +97,13 @@ public:
             record.payloadChecksum = Fnv1a64(
                 bytes.data() + static_cast<std::size_t>(payloadOffsets_[i]),
                 static_cast<std::size_t>(record.size));
-            SerializePackV2DirectoryEntry(
+            SerializePackDirectoryEntry(
                 record, bytes.data() + static_cast<std::size_t>(dirOffset) +
-                            i * kPackV2DirectoryEntryBytes);
+                            i * kPackDirectoryEntryBytes);
         }
-        PackV2Header header;
-        header.formatVersion = kPackFormatVersion2;
-        header.headerBytes = kPackV2HeaderBytes;
+        PackFileHeader header;
+        header.formatVersion = kPackFormatVersion;
+        header.headerBytes = kPackFileHeaderBytes;
         header.fileBytes = contentEnd;
         header.packKind = packKind_;
         header.entryCount = static_cast<std::uint32_t>(entries_.size());
@@ -111,7 +111,7 @@ public:
         header.directoryChecksum =
             Fnv1a64(bytes.data() + static_cast<std::size_t>(dirOffset),
                     static_cast<std::size_t>(dirBytes));
-        SerializePackV2Header(header, bytes.data());
+        SerializePackFileHeader(header, bytes.data());
         return bytes;
     }
 
@@ -135,37 +135,37 @@ private:
 
 void RecomputeChecksums(std::vector<std::uint8_t>* bytes,
                         bool includePayloadChecksums = true) {
-    PackV2Header header;
-    ASSERT_TRUE(ParsePackV2Header(bytes->data(), &header));
+    PackFileHeader header;
+    ASSERT_TRUE(ReadPackFileHeader(bytes->data(), &header));
     const std::size_t dir = static_cast<std::size_t>(header.directoryOffset);
     for (std::uint32_t i = 0; includePayloadChecksums && i < header.entryCount; ++i) {
         std::uint8_t* record =
-            bytes->data() + dir + i * kPackV2DirectoryEntryBytes;
-        PackV2DirectoryEntry entry = ParsePackV2DirectoryEntry(record);
+            bytes->data() + dir + i * kPackDirectoryEntryBytes;
+        PackDirectoryEntry entry = ReadPackDirectoryEntry(record);
         entry.payloadChecksum =
             Fnv1a64(bytes->data() + static_cast<std::size_t>(entry.offset),
                     static_cast<std::size_t>(entry.size));
-        SerializePackV2DirectoryEntry(entry, record);
+        SerializePackDirectoryEntry(entry, record);
     }
     header.directoryChecksum = Fnv1a64(
         bytes->data() + dir,
-        static_cast<std::size_t>(header.entryCount) * kPackV2DirectoryEntryBytes);
-    SerializePackV2Header(header, bytes->data());
+        static_cast<std::size_t>(header.entryCount) * kPackDirectoryEntryBytes);
+    SerializePackFileHeader(header, bytes->data());
 }
 
 template <typename Mutator>
 void RewriteCanonicalPartitionWorld(std::vector<std::uint8_t>* bytes,
                                     Mutator mutate) {
     ASSERT_NE(bytes, nullptr);
-    PackV2Header packHeader;
-    ASSERT_TRUE(ParsePackV2Header(bytes->data(), &packHeader));
+    PackFileHeader packHeader;
+    ASSERT_TRUE(ReadPackFileHeader(bytes->data(), &packHeader));
     bool found = false;
     const std::size_t directoryOffset =
         static_cast<std::size_t>(packHeader.directoryOffset);
     for (std::uint32_t i = 0; i < packHeader.entryCount; ++i) {
-        const PackV2DirectoryEntry entry = ParsePackV2DirectoryEntry(
+        const PackDirectoryEntry entry = ReadPackDirectoryEntry(
             bytes->data() + directoryOffset +
-            i * kPackV2DirectoryEntryBytes);
+            i * kPackDirectoryEntryBytes);
         if (entry.kind != kPackEntryKindCanonicalDefinitionPartition) {
             continue;
         }
@@ -173,7 +173,7 @@ void RewriteCanonicalPartitionWorld(std::vector<std::uint8_t>* bytes,
         std::uint8_t* payload =
             bytes->data() + static_cast<std::size_t>(entry.offset);
         PackCanonicalPartitionHeader partitionHeader;
-        ASSERT_TRUE(ParsePackCanonicalPartitionHeaderV2(
+        ASSERT_TRUE(ReadPackCanonicalPartitionHeader(
             payload, entry.size, &partitionHeader));
         CurrentWorldBodyImage decoded;
         ASSERT_EQ(CurrentWorldBodyDecodeResult::Ok,
@@ -191,20 +191,16 @@ void RewriteCanonicalPartitionWorld(std::vector<std::uint8_t>* bytes,
                     replacement.data(), replacement.size());
         partitionHeader.bodyChecksum =
             Fnv1a64(replacement.data(), replacement.size());
-        SerializePackCanonicalPartitionHeaderV2(partitionHeader, payload);
-        partitionHeader.headerChecksum = Fnv1a64(payload, 80);
-        SerializePackCanonicalPartitionHeaderV2(partitionHeader, payload);
+        SerializePackCanonicalPartitionHeader(partitionHeader, payload);
+        partitionHeader.headerChecksum = Fnv1a64(payload, kPackCanonicalPartitionHeaderHeaderChecksumOffset);
+        SerializePackCanonicalPartitionHeader(partitionHeader, payload);
         found = true;
     }
     ASSERT_TRUE(found);
     RecomputeChecksums(bytes);
 }
 
-void FillLocator(PackInitCatalogRow* row, const char* locator) {
-    const std::size_t n = std::strlen(locator);
-    row->locatorByteCount = static_cast<std::uint32_t>(n + 1);
-    std::memcpy(row->relativeLocator.data(), locator, n + 1);
-}
+
 
 void ApplyNeutralMasterTriple(PackRequirementBlock* block,
                               CanonicalBusTriple triple =
@@ -227,7 +223,7 @@ void ApplyNeutralMasterTriple(PackCanonicalPartitionHeader* header,
 std::vector<std::uint8_t> RequirementPayload(std::uint64_t packStableId,
                                              std::uint64_t contentRevision,
                                              std::uint64_t partitionRevision,
-                                             std::uint32_t vintage = kPackCanonicalRequirementVintage) {
+                                             std::uint32_t vintage = kPackPackRequirementBlockVintage) {
     PackRequirementBlock block;
     block.schemaVersion = vintage;
     block.storageModelVersion = vintage;
@@ -236,63 +232,23 @@ std::vector<std::uint8_t> RequirementPayload(std::uint64_t packStableId,
     block.definitionPartitionRevision = partitionRevision;
     block.resourceClosureRevision = 1;
     ApplyNeutralMasterTriple(&block);
-    const bool versionTwo = vintage == kPackCanonicalRequirementVintage;
-    std::vector<std::uint8_t> payload(
-        versionTwo ? kPackRequirementBlockV2Bytes : kPackRequirementBlockBytes, 0);
-    if (versionTwo) SerializePackRequirementBlockV2(block, payload.data());
-    else SerializePackRequirementBlock(block, payload.data());
+    std::vector<std::uint8_t> payload(kPackRequirementBlockBytes, 0);
+    SerializePackRequirementBlock(block, payload.data());
     return payload;
 }
 
-std::vector<std::uint8_t> CatalogPayload(const PackInitCatalogHeader& header,
-                                         const std::vector<PackInitCatalogRow>& rows,
-                                         const std::vector<std::uint64_t>& startup) {
-    std::vector<std::uint8_t> payload(
-        static_cast<std::size_t>(header.catalogBytes), 0);
-    SerializePackInitCatalogHeader(header, payload.data());
-    for (std::size_t i = 0; i < rows.size(); ++i) {
-        SerializePackInitCatalogRow(
-            rows[i], payload.data() + kInitCatalogHeaderBytes +
-                         i * kInitCatalogRowBytes);
-    }
-    for (std::size_t i = 0; i < startup.size(); ++i) {
-        StoreLE64(payload.data() + kInitCatalogHeaderBytes +
-                      rows.size() * kInitCatalogRowBytes + i * 8,
-                  startup[i]);
-    }
-    PackInitCatalogHeader stamped = header;
-    stamped.checksum =
-        Fnv1a64(payload.data() + kInitCatalogHeaderBytes,
-                static_cast<std::size_t>(header.catalogBytes -
-                                         kInitCatalogHeaderBytes));
-    SerializePackInitCatalogHeader(stamped, payload.data());
-    return payload;
-}
+
 
 std::vector<std::uint8_t> PartitionPayload(std::uint64_t packStableId,
                                            std::uint64_t revision,
-                                           std::uint32_t bodyVintage,
-                                           std::uint32_t vintage = kPackCanonicalRequirementVintage) {
+                                           std::uint32_t bodyVintage) {
     ContainerWorldInstallViewV1 world{};
     world.identity.runtimeSemanticFingerprint =
         ComputeCurrentWorldFingerprintV4(world);
     std::vector<std::uint8_t> body;
-    if (bodyVintage == kCurrentWorldBodyVintageV6) {
-        EXPECT_TRUE(EncodeCurrentWorldBodyV6(
-            harkentest::AsHistoricalPrefix(world), body));
-    } else if (bodyVintage == kCurrentWorldBodyVintageV7) {
-        EXPECT_TRUE(EncodeCurrentWorldBodyV7(
-            harkentest::AsHistoricalPrefix(world), body));
-    } else if (bodyVintage == kCurrentWorldBodyVintageV8) {
-        EXPECT_TRUE(EncodeCurrentWorldBodyV8(
-            harkentest::AsHistoricalPrefix(world), body));
-    } else {
-        EXPECT_TRUE(EncodeCurrentWorldShippingBody(world, body));
-    }
+    EXPECT_TRUE(EncodeCurrentWorldShippingBody(world, body));
     PackCanonicalPartitionHeader header;
-    const bool versionTwo = vintage == kPackCanonicalRequirementVintage;
-    header.headerBytes = versionTwo ? kCanonicalDefinitionPartitionHeaderV2Bytes
-                                   : kCanonicalDefinitionPartitionHeaderBytes;
+    header.headerBytes = kPackCanonicalPartitionHeaderBytes;
     header.bodyVintage = bodyVintage;
     header.bodyBytes = body.size();
     header.bodyChecksum = Fnv1a64(body.data(), body.size());
@@ -301,11 +257,9 @@ std::vector<std::uint8_t> PartitionPayload(std::uint64_t packStableId,
     header.ownedDefinitionCount = 0;
     ApplyNeutralMasterTriple(&header);
     std::vector<std::uint8_t> payload(header.headerBytes + body.size(), 0);
-    const auto serialize = versionTwo ? SerializePackCanonicalPartitionHeaderV2
-                                      : SerializePackCanonicalPartitionHeader;
-    serialize(header, payload.data());
-    header.headerChecksum = Fnv1a64(payload.data(), versionTwo ? 80 : 56);
-    serialize(header, payload.data());
+    SerializePackCanonicalPartitionHeader(header, payload.data());
+    header.headerChecksum = Fnv1a64(payload.data(), kPackCanonicalPartitionHeaderHeaderChecksumOffset);
+    SerializePackCanonicalPartitionHeader(header, payload.data());
     std::memcpy(payload.data() + header.headerBytes,
                 body.data(), body.size());
     return payload;
@@ -376,7 +330,7 @@ std::vector<std::uint8_t> ActionTargetPartitionPayload(
     std::vector<std::uint8_t> body;
     EXPECT_TRUE(EncodeCurrentWorldShippingBody(world, body));
     PackCanonicalPartitionHeader header;
-    header.headerBytes = kCanonicalDefinitionPartitionHeaderV2Bytes;
+    header.headerBytes = kPackCanonicalPartitionHeaderBytes;
     header.bodyVintage = kCanonicalDefinitionPartitionBodyVintage;
     header.bodyBytes = body.size();
     header.bodyChecksum = Fnv1a64(body.data(), body.size());
@@ -385,11 +339,11 @@ std::vector<std::uint8_t> ActionTargetPartitionPayload(
     header.ownedDefinitionCount = includeLocalTarget ? 2 : 1;
     ApplyNeutralMasterTriple(&header);
     std::vector<std::uint8_t> payload(
-        kCanonicalDefinitionPartitionHeaderV2Bytes + body.size(), 0);
-    SerializePackCanonicalPartitionHeaderV2(header, payload.data());
-    header.headerChecksum = Fnv1a64(payload.data(), 80);
-    SerializePackCanonicalPartitionHeaderV2(header, payload.data());
-    std::memcpy(payload.data() + kCanonicalDefinitionPartitionHeaderV2Bytes,
+        kPackCanonicalPartitionHeaderBytes + body.size(), 0);
+    SerializePackCanonicalPartitionHeader(header, payload.data());
+    header.headerChecksum = Fnv1a64(payload.data(), kPackCanonicalPartitionHeaderHeaderChecksumOffset);
+    SerializePackCanonicalPartitionHeader(header, payload.data());
+    std::memcpy(payload.data() + kPackCanonicalPartitionHeaderBytes,
                 body.data(), body.size());
     return payload;
 }
@@ -489,7 +443,7 @@ std::vector<std::uint8_t> AdvancedTransitionPartitionPayload(
     std::vector<std::uint8_t> body;
     EXPECT_TRUE(EncodeCurrentWorldShippingBody(world, body));
     PackCanonicalPartitionHeader header;
-    header.headerBytes = kCanonicalDefinitionPartitionHeaderV2Bytes;
+    header.headerBytes = kPackCanonicalPartitionHeaderBytes;
     header.bodyVintage = kCanonicalDefinitionPartitionBodyVintage;
     header.bodyBytes = body.size();
     header.bodyChecksum = Fnv1a64(body.data(), body.size());
@@ -498,11 +452,11 @@ std::vector<std::uint8_t> AdvancedTransitionPartitionPayload(
     header.ownedDefinitionCount = 2;
     ApplyNeutralMasterTriple(&header);
     std::vector<std::uint8_t> payload(
-        kCanonicalDefinitionPartitionHeaderV2Bytes + body.size(), 0);
-    SerializePackCanonicalPartitionHeaderV2(header, payload.data());
-    header.headerChecksum = Fnv1a64(payload.data(), 80);
-    SerializePackCanonicalPartitionHeaderV2(header, payload.data());
-    std::memcpy(payload.data() + kCanonicalDefinitionPartitionHeaderV2Bytes,
+        kPackCanonicalPartitionHeaderBytes + body.size(), 0);
+    SerializePackCanonicalPartitionHeader(header, payload.data());
+    header.headerChecksum = Fnv1a64(payload.data(), kPackCanonicalPartitionHeaderHeaderChecksumOffset);
+    SerializePackCanonicalPartitionHeader(header, payload.data());
+    std::memcpy(payload.data() + kPackCanonicalPartitionHeaderBytes,
                 body.data(), body.size());
     return payload;
 }
@@ -519,38 +473,7 @@ void StampRequirementCoverage(std::vector<std::uint8_t>* payload) {
 
 std::vector<std::uint8_t> BuildMinimalInit() {
     constexpr std::uint64_t kInitId = 11;
-    constexpr std::uint64_t kContentId = 22;
-    PackInitCatalogHeader header;
-    header.schemaVersion = 1;
-    header.storageModelVersion = 1;
-    header.projectBuildId = 7;
-    header.platformId = 1;
-    header.languageId = 2;
-    header.totalDefinitionCount = 2;
-    header.totalResourceCount = 0;
-    header.catalogEntryCount = 2;
-    header.startupPackCount = 1;
-    header.recommendedCatalogCapacity = 64;
-    header.recommendedCatalogBytes = 4096;
-    EXPECT_TRUE(InitCatalogBytes(header.catalogEntryCount, header.startupPackCount,
-                                 &header.catalogBytes));
-
-    PackInitCatalogRow initOwned;
-    initOwned.stableId = harkentest::ObjectId(1001);
-    initOwned.identityClass = kInitCatalogIdentityClassAction;
-    initOwned.ownerPackStableId = kInitId;
-    FillLocator(&initOwned, "Init.pack");
-    PackInitCatalogRow contentOwned;
-    contentOwned.stableId = harkentest::ObjectId(2002);
-    contentOwned.identityClass = kInitCatalogIdentityClassAction;
-    contentOwned.ownerPackStableId = kContentId;
-    contentOwned.expectedContentHash = 0xABCDEF;
-    FillLocator(&contentOwned, "Action.pack");
-
     ImageBuilder builder(kPackKindInit);
-    const std::size_t catalogIndex = builder.AddEntry(
-        kPackEntryKindInitRoutingCatalog, 0,
-        CatalogPayload(header, {initOwned, contentOwned}, {kContentId}));
     std::vector<std::uint8_t> requirement =
         RequirementPayload(kInitId, 1, 1);
     StampRequirementCoverage(&requirement);
@@ -558,16 +481,8 @@ std::vector<std::uint8_t> BuildMinimalInit() {
                      std::move(requirement));
     builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, kInitId,
                      EmptyPartitionPayload(kInitId, 1));
-    harkentest::packfoundation::AppendNeutralMasterSnapshotV1(&builder);
-    std::vector<std::uint8_t> bytes = builder.Build();
-
-    const std::uint64_t catalogOffset = builder.PayloadOffset(catalogIndex);
-    const std::uint64_t initHashField =
-        catalogOffset + kInitCatalogHeaderBytes + kInitCatalogContentHashOffset;
-    EXPECT_EQ(0u, LoadLE64(bytes.data() + static_cast<std::size_t>(initHashField)));
-    const std::uint64_t hashed = Fnv1a64(bytes.data(), bytes.size());
-    StoreLE64(bytes.data() + static_cast<std::size_t>(initHashField), hashed);
-    return bytes;
+    harkentest::packfoundation::AppendNeutralMasterSnapshot(&builder);
+    return builder.Build();
 }
 
 struct Kind26RowSpec {
@@ -575,31 +490,38 @@ struct Kind26RowSpec {
     std::uint8_t writers = 1;
     std::uint64_t executionFingerprint = 1;
     std::vector<std::int32_t> discreteAnchors;
+    std::vector<VariableLabelDefinitionV1> labels;
 };
 
 std::vector<std::uint8_t> Kind26Payload(std::vector<Kind26RowSpec> rows) {
-    std::size_t bytes = 16 + rows.size() * 32;
+    std::size_t bytes = kPackVariablePolicyHeaderBytes + rows.size() *
+        (kPackVariablePolicyRowBytes + kPackVariableAnchorCountBytes + kPackVariableLabelHeaderBytes);
     for (const auto& row : rows) {
-        bytes += 4 + row.discreteAnchors.size() * 4;
+        bytes += row.discreteAnchors.size() * kPackVariableAnchorBytes;
+        bytes += row.labels.size() * kPackVariableLabelBytes;
     }
     std::vector<std::uint8_t> payload(bytes, 0);
-    StoreLE32(payload.data(), static_cast<std::uint32_t>(rows.size()));
-    std::size_t rowOffset = 16;
+    SerializePackVariablePolicyHeader({static_cast<std::uint32_t>(rows.size())}, payload.data());
+    std::size_t cursor = kPackVariablePolicyHeaderBytes;
     for (const auto& row : rows) {
-        StoreObjectId(payload.data() + rowOffset, row.variableId);
-        payload[rowOffset + 16] = row.writers;
-        StoreLE64(payload.data() + rowOffset + 24, row.executionFingerprint);
-        rowOffset += 32;
+        SerializePackVariablePolicyRow({row.variableId, row.writers, row.executionFingerprint}, payload.data() + cursor);
+        cursor += kPackVariablePolicyRowBytes;
     }
-    std::size_t cursor = 16 + rows.size() * 32;
     for (const auto& row : rows) {
-        StoreLE32(payload.data() + cursor,
-                  static_cast<std::uint32_t>(row.discreteAnchors.size()));
-        cursor += 4;
+        SerializePackVariableAnchorCount({static_cast<std::uint32_t>(row.discreteAnchors.size())}, payload.data() + cursor);
+        cursor += kPackVariableAnchorCountBytes;
         for (std::int32_t anchor : row.discreteAnchors) {
-            StoreLE32(payload.data() + cursor,
-                      static_cast<std::uint32_t>(anchor));
-            cursor += 4;
+            SerializePackVariableAnchor(anchor, payload.data() + cursor);
+            cursor += kPackVariableAnchorBytes;
+        }
+    }
+    for (const auto& row : rows) {
+        const auto mapping = ComputeVariableLabelMappingFingerprintV1(row.variableId, row.labels);
+        SerializePackVariableLabelHeader({mapping, static_cast<std::uint32_t>(row.labels.size())}, payload.data() + cursor);
+        cursor += kPackVariableLabelHeaderBytes;
+        for (const auto& label : row.labels) {
+            SerializePackVariableLabel({label.labelId, label.anchor}, payload.data() + cursor);
+            cursor += kPackVariableLabelBytes;
         }
     }
     return payload;
@@ -607,40 +529,9 @@ std::vector<std::uint8_t> Kind26Payload(std::vector<Kind26RowSpec> rows) {
 
 std::vector<std::uint8_t> BuildInitWithTypedEntry(
     std::uint32_t kind, std::uint64_t id, std::vector<std::uint8_t> payload,
-    std::uint32_t vintage = kPackCanonicalEntryVintage) {
+    std::uint32_t vintage = 0) {
     constexpr std::uint64_t kInitId = 11;
-    constexpr std::uint64_t kContentId = 22;
-    PackInitCatalogHeader header;
-    header.schemaVersion = 1;
-    header.storageModelVersion = 1;
-    header.projectBuildId = 7;
-    header.platformId = 1;
-    header.languageId = 2;
-    header.totalDefinitionCount = 2;
-    header.totalResourceCount = 0;
-    header.catalogEntryCount = 2;
-    header.startupPackCount = 1;
-    header.recommendedCatalogCapacity = 64;
-    header.recommendedCatalogBytes = 4096;
-    EXPECT_TRUE(InitCatalogBytes(header.catalogEntryCount, header.startupPackCount,
-                                 &header.catalogBytes));
-
-    PackInitCatalogRow initOwned;
-    initOwned.stableId = harkentest::ObjectId(1001);
-    initOwned.identityClass = kInitCatalogIdentityClassAction;
-    initOwned.ownerPackStableId = kInitId;
-    FillLocator(&initOwned, "Init.pack");
-    PackInitCatalogRow contentOwned;
-    contentOwned.stableId = harkentest::ObjectId(2002);
-    contentOwned.identityClass = kInitCatalogIdentityClassAction;
-    contentOwned.ownerPackStableId = kContentId;
-    contentOwned.expectedContentHash = 0xABCDEF;
-    FillLocator(&contentOwned, "Action.pack");
-
     ImageBuilder builder(kPackKindInit);
-    const std::size_t catalogIndex = builder.AddEntry(
-        kPackEntryKindInitRoutingCatalog, 0,
-        CatalogPayload(header, {initOwned, contentOwned}, {kContentId}));
     std::vector<std::uint8_t> requirement =
         RequirementPayload(kInitId, 1, 1);
     StampRequirementCoverage(&requirement);
@@ -649,17 +540,10 @@ std::vector<std::uint8_t> BuildInitWithTypedEntry(
     builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, kInitId,
                      EmptyPartitionPayload(kInitId, 1));
     if (kind != kPackEntryKindBusDefinitionSnapshot) {
-        harkentest::packfoundation::AppendNeutralMasterSnapshotV1(&builder);
+        harkentest::packfoundation::AppendNeutralMasterSnapshot(&builder);
     }
     builder.AddEntry(kind, id, std::move(payload), vintage);
-    std::vector<std::uint8_t> bytes = builder.Build();
-
-    const std::uint64_t catalogOffset = builder.PayloadOffset(catalogIndex);
-    const std::uint64_t initHashField =
-        catalogOffset + kInitCatalogHeaderBytes + kInitCatalogContentHashOffset;
-    const std::uint64_t hashed = Fnv1a64(bytes.data(), bytes.size());
-    StoreLE64(bytes.data() + static_cast<std::size_t>(initHashField), hashed);
-    return bytes;
+    return builder.Build();
 }
 
 std::vector<Kind26RowSpec> TwoOverlayRows() {
@@ -676,15 +560,14 @@ struct Kind27RowSpec {
 };
 
 std::vector<std::uint8_t> Kind27Payload(std::vector<Kind27RowSpec> rows) {
-    std::vector<std::uint8_t> payload(16 + rows.size() * 32, 0);
-    StoreLE32(payload.data(), static_cast<std::uint32_t>(rows.size()));
-    std::size_t offset = 16;
+    std::vector<std::uint8_t> payload(kPackVariableRequirementsHeaderBytes + rows.size() * kPackVariableRequirementBytes, 0);
+    SerializePackVariableRequirementsHeader({static_cast<std::uint32_t>(rows.size())}, payload.data());
+    std::size_t offset = kPackVariableRequirementsHeaderBytes;
     for (const auto& row : rows) {
-        payload[offset] = row.identityClass;
-        StoreObjectId(payload.data() + offset + 8, row.stableId);
-        StoreLE64(payload.data() + offset + 24,
-                  row.expectedExecutionFingerprint);
-        offset += 32;
+        SerializePackVariableRequirement({row.stableId, row.expectedExecutionFingerprint,
+            ComputeVariableLabelMappingFingerprintV1(row.stableId, {})}, payload.data() + offset);
+        payload[offset + kPackVariableRequirementIdentityClassOffset] = row.identityClass;
+        offset += kPackVariableRequirementBytes;
     }
     return payload;
 }
@@ -754,13 +637,13 @@ std::filesystem::path CanonicalReadTestPath(const char* filename) {
 
 TEST(PackCanonicalFormat, BoundedFileKeepsDirectoryOrderAndFinalSampleIdentity) {
     auto bytes = BuildCanonicalMediaFixture({40006, 17000, 90001});
-    PackV2Header header;
-    ASSERT_TRUE(ParsePackV2Header(bytes.data(), &header));
-    auto* firstRecord = bytes.data() + header.directoryOffset + kPackV2DirectoryEntryBytes;
-    auto* lastRecord = firstRecord + 2 * kPackV2DirectoryEntryBytes;
-    const auto first = ParsePackV2DirectoryEntry(firstRecord);
-    const auto last = ParsePackV2DirectoryEntry(lastRecord);
-    auto media = ParsePackTocEntry(bytes.data() + first.offset);
+    PackFileHeader header;
+    ASSERT_TRUE(ReadPackFileHeader(bytes.data(), &header));
+    auto* firstRecord = bytes.data() + header.directoryOffset + kPackDirectoryEntryBytes;
+    auto* lastRecord = firstRecord + 2 * kPackDirectoryEntryBytes;
+    const auto first = ReadPackDirectoryEntry(firstRecord);
+    const auto last = ReadPackDirectoryEntry(lastRecord);
+    auto media = ReadPackMedia(bytes.data() + first.offset);
     media.channelCount = 2;
     media.frameCount /= 2;
     for (std::size_t i = 0; i < media.blobBytes / sizeof(float); ++i) {
@@ -768,15 +651,15 @@ TEST(PackCanonicalFormat, BoundedFileKeepsDirectoryOrderAndFinalSampleIdentity) 
         std::memcpy(bytes.data() + media.blobOffset + i * sizeof(float), &sample, sizeof(sample));
     }
     media.blobChecksum = Fnv1a64(bytes.data() + media.blobOffset, media.blobBytes);
-    SerializePackTocEntry(media, bytes.data() + first.offset);
-    auto finalMedia = ParsePackTocEntry(bytes.data() + last.offset);
+    SerializePackMedia(media, bytes.data() + first.offset);
+    auto finalMedia = ReadPackMedia(bytes.data() + last.offset);
     const float negativeZero = -0.0f;
     std::memcpy(bytes.data() + finalMedia.blobOffset + finalMedia.blobBytes - sizeof(float),
                 &negativeZero, sizeof(float));
     finalMedia.blobChecksum = Fnv1a64(bytes.data() + finalMedia.blobOffset, finalMedia.blobBytes);
-    SerializePackTocEntry(finalMedia, bytes.data() + last.offset);
-    SerializePackV2DirectoryEntry(last, firstRecord);
-    SerializePackV2DirectoryEntry(first, lastRecord);
+    SerializePackMedia(finalMedia, bytes.data() + last.offset);
+    SerializePackDirectoryEntry(last, firstRecord);
+    SerializePackDirectoryEntry(first, lastRecord);
     RecomputeChecksums(&bytes);
     PackCanonicalImage expected;
     ASSERT_EQ(VN_OK, ParsePackCanonicalImage(bytes.data(), bytes.size(), &expected));
@@ -828,7 +711,7 @@ TEST(PackCanonicalFormat, BoundedFileKeepsDirectoryOrderAndFinalSampleIdentity) 
     std::memcpy(bytes.data() + finalMedia.blobOffset + finalMedia.blobBytes - sizeof(float),
                 &changedLast, sizeof(float));
     finalMedia.blobChecksum = Fnv1a64(bytes.data() + finalMedia.blobOffset, finalMedia.blobBytes);
-    SerializePackTocEntry(finalMedia, bytes.data() + last.offset);
+    SerializePackMedia(finalMedia, bytes.data() + last.offset);
     RecomputeChecksums(&bytes);
     ASSERT_TRUE(harkentest::packfoundation::WriteFile(path, bytes));
     bool retry = false;
@@ -872,14 +755,14 @@ TEST(PackCanonicalFormat, BoundedFileSharesOnlyExactDuplicateMediaWithinFile) {
     for (const bool equal : {true, false}) {
         SCOPED_TRACE(equal);
         auto bytes = BuildCanonicalMediaFixture({90001, 90001});
-        PackV2Header header;
-        ASSERT_TRUE(ParsePackV2Header(bytes.data(), &header));
-        auto* firstRecord = bytes.data() + header.directoryOffset + kPackV2DirectoryEntryBytes;
-        auto* secondRecord = firstRecord + kPackV2DirectoryEntryBytes;
-        const auto first = ParsePackV2DirectoryEntry(firstRecord);
-        auto second = ParsePackV2DirectoryEntry(secondRecord);
-        const auto firstMedia = ParsePackTocEntry(bytes.data() + first.offset);
-        auto secondMedia = ParsePackTocEntry(bytes.data() + second.offset);
+        PackFileHeader header;
+        ASSERT_TRUE(ReadPackFileHeader(bytes.data(), &header));
+        auto* firstRecord = bytes.data() + header.directoryOffset + kPackDirectoryEntryBytes;
+        auto* secondRecord = firstRecord + kPackDirectoryEntryBytes;
+        const auto first = ReadPackDirectoryEntry(firstRecord);
+        auto second = ReadPackDirectoryEntry(secondRecord);
+        const auto firstMedia = ReadPackMedia(bytes.data() + first.offset);
+        auto secondMedia = ReadPackMedia(bytes.data() + second.offset);
         second.id = first.id;
         secondMedia.soundId = firstMedia.soundId;
         std::memcpy(bytes.data() + secondMedia.blobOffset,
@@ -888,9 +771,9 @@ TEST(PackCanonicalFormat, BoundedFileSharesOnlyExactDuplicateMediaWithinFile) {
         std::memcpy(bytes.data() + secondMedia.blobOffset + secondMedia.blobBytes - sizeof(float),
                     &last, sizeof(last));
         secondMedia.blobChecksum = Fnv1a64(bytes.data() + secondMedia.blobOffset, secondMedia.blobBytes);
-        SerializePackTocEntry(secondMedia, bytes.data() + second.offset);
-        SerializePackV2DirectoryEntry(second, firstRecord);
-        SerializePackV2DirectoryEntry(first, secondRecord);
+        SerializePackMedia(secondMedia, bytes.data() + second.offset);
+        SerializePackDirectoryEntry(second, firstRecord);
+        SerializePackDirectoryEntry(first, secondRecord);
         RecomputeChecksums(&bytes);
         PackCanonicalImage image;
         ASSERT_EQ(VN_OK, ParsePackCanonicalImage(bytes.data(), bytes.size(), &image));
@@ -916,17 +799,17 @@ TEST(PackCanonicalFormat, BoundedFileSharesOnlyExactDuplicateMediaWithinFile) {
 
 TEST(PackCanonicalFormat, BoundedFileCacheEnvelopeRefusesBeforeOverlappingPayloadAllocation) {
     auto bytes = BuildMinimalInit();
-    PackV2Header header;
-    ASSERT_TRUE(ParsePackV2Header(bytes.data(), &header));
+    PackFileHeader header;
+    ASSERT_TRUE(ReadPackFileHeader(bytes.data(), &header));
     ASSERT_GT(header.entryCount, 1u);
     auto* directory = bytes.data() + header.directoryOffset;
-    const auto first = ParsePackV2DirectoryEntry(directory);
-    auto* lastRecord = directory + (header.entryCount - 1) * kPackV2DirectoryEntryBytes;
-    auto last = ParsePackV2DirectoryEntry(lastRecord);
-    std::uint64_t cached = kPackV2HeaderBytes +
-        static_cast<std::uint64_t>(header.entryCount) * kPackV2DirectoryEntryBytes;
+    const auto first = ReadPackDirectoryEntry(directory);
+    auto* lastRecord = directory + (header.entryCount - 1) * kPackDirectoryEntryBytes;
+    auto last = ReadPackDirectoryEntry(lastRecord);
+    std::uint64_t cached = kPackFileHeaderBytes +
+        static_cast<std::uint64_t>(header.entryCount) * kPackDirectoryEntryBytes;
     for (std::uint32_t i = 0; i + 1 < header.entryCount; ++i) {
-        const auto entry = ParsePackV2DirectoryEntry(directory + i * kPackV2DirectoryEntryBytes);
+        const auto entry = ReadPackDirectoryEntry(directory + i * kPackDirectoryEntryBytes);
         cached += std::max<std::uint64_t>(entry.size, 1);
     }
     last.offset = first.offset;
@@ -936,7 +819,7 @@ TEST(PackCanonicalFormat, BoundedFileCacheEnvelopeRefusesBeforeOverlappingPayloa
     // A distinct overlapping cache key exceeds the encoded envelope. Its bad
     // checksum would refuse earlier than Finish if the payload were allocated.
     last.payloadChecksum = Fnv1a64(bytes.data() + last.offset, last.size) ^ 1;
-    SerializePackV2DirectoryEntry(last, lastRecord);
+    SerializePackDirectoryEntry(last, lastRecord);
     RecomputeChecksums(&bytes, false);
     const auto path = CanonicalReadTestPath("cache-envelope.pack");
     ASSERT_TRUE(harkentest::packfoundation::WriteFile(path, bytes));
@@ -1007,11 +890,10 @@ TEST(PackCanonicalFormat, BoundedFileRejectsCorruptionMetadataChangeAndShortRead
     }
 }
 
-TEST(PackCanonicalFormat, BoundedFileValidatesInitSelfHashWithoutWholeImageCopy) {
-    auto bytes = BuildMinimalInit();
+TEST(PackCanonicalFormat, BoundedFileHashesCurrentInitBytes) {
+    const auto bytes = BuildMinimalInit();
     PackCanonicalImage parsed;
-    ASSERT_EQ(VN_OK, ParsePackCanonicalImage(bytes.data(), bytes.size(), &parsed));
-    const auto path = CanonicalReadTestPath("init-self-hash.pack");
+    const auto path = CanonicalReadTestPath("init-hash.pack");
     PCMRegistry registry;
     std::vector<PCMRegistry::PreparedPackSamples> samples;
     std::uint64_t count = 0, hash = 0;
@@ -1019,19 +901,6 @@ TEST(PackCanonicalFormat, BoundedFileValidatesInitSelfHashWithoutWholeImageCopy)
     ASSERT_EQ(VN_OK, ReadPackCanonicalFile(path.string().c_str(), registry, &parsed,
         &samples, &count, &hash, bytes.size()));
     EXPECT_EQ(Fnv1a64(bytes.data(), bytes.size()), hash);
-    ASSERT_TRUE(samples.empty());
-    bool changed = false;
-    for (std::size_t i = 0; i < parsed.catalogRows.size(); ++i) {
-        const auto& row = parsed.catalogRows[i];
-        if (row.ownerPackStableId != parsed.packStableId) continue;
-        StoreLE64(bytes.data() + parsed.catalogPayloadOffset + kInitCatalogHeaderBytes +
-            i * kInitCatalogRowBytes + kInitCatalogContentHashOffset, row.expectedContentHash ^ 1);
-        changed = true;
-    }
-    ASSERT_TRUE(changed);
-    ASSERT_TRUE(harkentest::packfoundation::WriteFile(path, bytes));
-    EXPECT_EQ(VN_PACK_HASH_MISMATCH, ReadPackCanonicalFile(path.string().c_str(), registry,
-        &parsed, &samples, &count, &hash, bytes.size()));
     EXPECT_TRUE(samples.empty());
 }
 
@@ -1059,17 +928,17 @@ TEST(PackCanonicalFormat, AdjacentMediaWithLongerFirstBlobPreserveOddTail) {
 
 TEST(PackCanonicalFormat, MediaDirectoryOrderCanReversePhysicalBlobOrder) {
     auto bytes = BuildCanonicalMediaFixture({7, 3, 5});
-    PackV2Header header;
-    ASSERT_TRUE(ParsePackV2Header(bytes.data(), &header));
+    PackFileHeader header;
+    ASSERT_TRUE(ReadPackFileHeader(bytes.data(), &header));
     ASSERT_EQ(4u, header.entryCount);
-    auto* firstRecord = bytes.data() + header.directoryOffset + kPackV2DirectoryEntryBytes;
-    auto* lastRecord = bytes.data() + header.directoryOffset + 3 * kPackV2DirectoryEntryBytes;
-    const auto first = ParsePackV2DirectoryEntry(firstRecord);
-    const auto last = ParsePackV2DirectoryEntry(lastRecord);
+    auto* firstRecord = bytes.data() + header.directoryOffset + kPackDirectoryEntryBytes;
+    auto* lastRecord = bytes.data() + header.directoryOffset + 3 * kPackDirectoryEntryBytes;
+    const auto first = ReadPackDirectoryEntry(firstRecord);
+    const auto last = ReadPackDirectoryEntry(lastRecord);
     ASSERT_EQ(kPackEntryKindMedia, first.kind);
     ASSERT_EQ(kPackEntryKindMedia, last.kind);
-    SerializePackV2DirectoryEntry(last, firstRecord);
-    SerializePackV2DirectoryEntry(first, lastRecord);
+    SerializePackDirectoryEntry(last, firstRecord);
+    SerializePackDirectoryEntry(first, lastRecord);
     RecomputeChecksums(&bytes, false);
     const auto expectedHash = Fnv1a64(bytes.data(), bytes.size());
     const std::array<std::uint64_t, 3> frames{5, 3, 7};
@@ -1116,11 +985,11 @@ TEST(PackCanonicalFormat, AdjacentMediaRejectNextPayloadAndBlobBounds) {
     for (unsigned invalid = 0; invalid < 9; ++invalid) {
         SCOPED_TRACE(invalid);
         auto bytes = original;
-        PackV2Header header;
-        ASSERT_TRUE(ParsePackV2Header(bytes.data(), &header));
+        PackFileHeader header;
+        ASSERT_TRUE(ReadPackFileHeader(bytes.data(), &header));
         auto* record = bytes.data() + header.directoryOffset +
-                       2 * kPackV2DirectoryEntryBytes;
-        auto next = ParsePackV2DirectoryEntry(record);
+                       2 * kPackDirectoryEntryBytes;
+        auto next = ReadPackDirectoryEntry(record);
         switch (invalid) {
         case 0:
             --next.size;
@@ -1130,17 +999,17 @@ TEST(PackCanonicalFormat, AdjacentMediaRejectNextPayloadAndBlobBounds) {
             next.offset = header.directoryOffset;
             break;
         case 2:
-            next.offset = UINT64_MAX - (kPackV2PayloadAlign - 1);
+            next.offset = UINT64_MAX - (kPackPayloadAlign - 1);
             break;
         case 3:
-            next.offset = bytes.size() - bytes.size() % kPackV2PayloadAlign -
-                          kPackV2PayloadAlign;
+            next.offset = bytes.size() - bytes.size() % kPackPayloadAlign -
+                          kPackPayloadAlign;
             break;
         case 4:
             ++next.offset;
             break;
         default: {
-            auto media = ParsePackTocEntry(bytes.data() + next.offset);
+            auto media = ReadPackMedia(bytes.data() + next.offset);
             if (invalid == 5) media.blobOffset = 0;
             if (invalid == 6)
                 media.blobOffset = AlignUp(bytes.size(), kPackBlobAlign);
@@ -1149,12 +1018,12 @@ TEST(PackCanonicalFormat, AdjacentMediaRejectNextPayloadAndBlobBounds) {
                 media.blobBytes += sizeof(float);
             }
             if (invalid == 8) ++media.blobOffset;
-            SerializePackTocEntry(media, bytes.data() + next.offset);
+            SerializePackMedia(media, bytes.data() + next.offset);
             next.payloadChecksum = Fnv1a64(bytes.data() + next.offset, next.size);
             break;
         }
         }
-        SerializePackV2DirectoryEntry(next, record);
+        SerializePackDirectoryEntry(next, record);
         // Deliberately invalid spans must not be followed while restamping.
         RecomputeChecksums(&bytes, false);
         ExpectCanonicalMediaRefusal(bytes, VN_BAD_PACK);
@@ -1170,19 +1039,19 @@ TEST(PackCanonicalFormat, AdjacentMediaKeepOriginalValidationOrder) {
     for (unsigned invalid = 0; invalid < 3; ++invalid) {
         SCOPED_TRACE(invalid);
         auto bytes = original;
-        PackV2Header header;
-        ASSERT_TRUE(ParsePackV2Header(bytes.data(), &header));
+        PackFileHeader header;
+        ASSERT_TRUE(ReadPackFileHeader(bytes.data(), &header));
         auto* record = bytes.data() + header.directoryOffset +
-                       2 * kPackV2DirectoryEntryBytes;
-        auto next = ParsePackV2DirectoryEntry(record);
+                       2 * kPackDirectoryEntryBytes;
+        auto next = ReadPackDirectoryEntry(record);
         if (invalid == 0) {
             next.payloadChecksum ^= 1u;
         } else {
-            next.vintage = kPackV2SchemaVintage + 1;
+            next.vintage = PackEntryVintage(next.kind) + 1;
             if (invalid == 2)
                 bytes[static_cast<std::size_t>(valid.media[0].blobOffset)] ^= 1u;
         }
-        SerializePackV2DirectoryEntry(next, record);
+        SerializePackDirectoryEntry(next, record);
         RecomputeChecksums(&bytes, false);
         ExpectCanonicalMediaRefusal(
             bytes, invalid == 1 ? VN_PACK_INCOMPATIBLE : VN_BAD_PACK);
@@ -1243,11 +1112,11 @@ TEST(PackCanonicalFormat, RuntimeRefusesCanonicalEntryOnContentPack) {
 
 TEST(PackCanonicalFormat, IllegalLogicVintageIsIncompatible) {
     ImageBuilder builder(kPackKindInit);
-    std::vector<std::uint8_t> bus(kPackV2BusPayloadBytes);
+    std::vector<std::uint8_t> bus(kPackBusBytes);
     PackBusEntry busEntry;
     busEntry.busId = harkentest::ObjectId(10);
     busEntry.parentBusId = harkentest::ObjectId(1);
-    SerializePackV2Bus(busEntry, bus.data());
+    SerializePackBus(busEntry, bus.data());
     builder.AddEntry(kPackEntryKindBus, 10, std::move(bus), 3);
     const std::vector<std::uint8_t> bytes = builder.Build();
     PackCanonicalImage image;
@@ -1270,7 +1139,8 @@ TEST(PackCanonicalFormat, IllegalCanonicalVintageIsIncompatible) {
 TEST(PackCanonicalFormat, RetiredProgramBodyVintageIsIncompatible) {
     for (const auto vintage : {kCurrentWorldBodyVintageV6,
                                 kCurrentWorldBodyVintageV7,
-                                kCurrentWorldBodyVintageV8}) {
+                                kCurrentWorldBodyVintageV8,
+                                kCurrentWorldBodyVintageV9}) {
         ImageBuilder builder(kPackKindInit);
         std::vector<std::uint8_t> requirement = RequirementPayload(11, 1, 1);
         StampRequirementCoverage(&requirement);
@@ -1309,14 +1179,14 @@ TEST(PackCanonicalFormat, CurrentProgramBodyDamageIsBadPack) {
                      std::move(requirement));
     auto partition = EmptyPartitionPayload(11, 1);
     ASSERT_GT(partition.size(),
-              kCanonicalDefinitionPartitionHeaderV2Bytes +
-                  kCurrentWorldV3PrefixWireBytes + 4);
-    StoreLE32(partition.data() + kCanonicalDefinitionPartitionHeaderV2Bytes +
-                  kCurrentWorldV3PrefixWireBytes,
+              kPackCanonicalPartitionHeaderBytes +
+                  kPackBodyWorldPrefixBytes + 4);
+    StoreLE32(partition.data() + kPackCanonicalPartitionHeaderBytes +
+                  kPackBodyWorldPrefixBytes,
               kHardActionDefinitionCapacity + 1u);
     StoreLE64(partition.data() + 24,
-              Fnv1a64(partition.data() + kCanonicalDefinitionPartitionHeaderV2Bytes,
-                      partition.size() - kCanonicalDefinitionPartitionHeaderV2Bytes));
+              Fnv1a64(partition.data() + kPackCanonicalPartitionHeaderBytes,
+                      partition.size() - kPackCanonicalPartitionHeaderBytes));
     StoreLE64(partition.data() + 80, Fnv1a64(partition.data(), 80));
     builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, 11,
                      std::move(partition));
@@ -1452,16 +1322,16 @@ TEST(PackCanonicalFormat, ContainerKindIsIncompatible) {
     PackContainerEntryHeader header;
     header.containerId = harkentest::ObjectId(200);
     header.childCount = 1;
-    PackContainerChildV2 child;
+    PackContainerChild child;
     child.playableId = harkentest::ObjectId(100);
     child.weight = 1;
     std::vector<std::uint8_t> payload(static_cast<std::size_t>(
-        PackV2ContainerPayloadBytes(1)));
-    SerializePackV2ContainerHeader(header, payload.data());
-    SerializePackV2ContainerChild(child,
-                                  payload.data() + kPackV2ContainerHeaderBytes);
+        PackContainerPayloadBytes(1)));
+    SerializePackContainerHeader(header, payload.data());
+    SerializePackContainerChild(child,
+                                  payload.data() + kPackContainerHeaderBytes);
     builder.AddEntry(kPackEntryKindContainer, 200, std::move(payload),
-                     kPackV2SchemaVintage);
+                     kPackContainerVintage);
     const std::vector<std::uint8_t> bytes = builder.Build();
     PackCanonicalImage image;
     EXPECT_EQ(VN_PACK_INCOMPATIBLE,
@@ -1473,10 +1343,10 @@ TEST(PackCanonicalFormat, VoiceRecipeKindIsIncompatible) {
     PackVoiceRecipeEntryHeader header;
     header.playableId = harkentest::ObjectId(100);
     std::vector<std::uint8_t> payload(static_cast<std::size_t>(
-        PackV5VoiceRecipePayloadBytes(0, 0)), 0);
-    SerializePackV2VoiceRecipeHeader(header, payload.data());
+        PackVoiceRecipePayloadBytes(0, 0)), 0);
+    SerializePackVoiceRecipeHeader(header, payload.data());
     builder.AddEntry(kPackEntryKindVoiceRecipe, 100, std::move(payload),
-                     kPackV2PlaybackRecipeSchemaVintage);
+                     kPackVoiceRecipeVintage);
     const std::vector<std::uint8_t> bytes = builder.Build();
     PackCanonicalImage image;
     EXPECT_EQ(VN_PACK_INCOMPATIBLE,
@@ -1490,31 +1360,26 @@ TEST(PackCanonicalFormat, AttenuationPayloadMatchesOuterVersionExactly) {
     desc.maxDistance = 100;
     desc.airAbsorptionNearHz = desc.airAbsorptionFarHz = 20000;
     desc.proximityFrequency = 400;
-    std::vector<std::uint32_t> versions{kPackFormatVersion, kPackFormatVersion + 1};
-    if (kPackFormatVersion3 < kPackFormatVersion) {
-        versions.push_back(kPackFormatVersion3);
-    }
-    for (const auto version : versions) {
-        for (const auto size : {kPackV3AttenuationPayloadBytes - 1,
-                               kPackV3AttenuationPayloadBytes,
-                               kPackV3AttenuationPayloadBytes + 1,
-                               kPackV3AttenuationPayloadBytes + kPackV2CurveWireBytes}) {
+    for (const auto version : {3u, kPackFormatVersion, kPackFormatVersion + 1}) {
+        for (const auto size : {kPackAttenuationBytes - 1,
+                               kPackAttenuationBytes,
+                               kPackAttenuationBytes + 1,
+                               kPackAttenuationBytes + kPackAttenuationCurveBytes}) {
             ImageBuilder builder(kPackKindInit);
-            auto requirement = RequirementPayload(11, 1, 0,
-                                                   kPackCanonicalEntryVintage);
+            auto requirement = RequirementPayload(11, 1, 0);
             StampRequirementCoverage(&requirement);
             builder.AddEntry(kPackEntryKindPackRequirementBlock, 11,
-                             std::move(requirement), kPackCanonicalEntryVintage);
-            std::vector<std::uint8_t> payload(kPackV3AttenuationPayloadBytes);
-            SerializePackV3Attenuation(desc, payload.data());
+                             std::move(requirement), kPackPackRequirementBlockVintage);
+            std::vector<std::uint8_t> payload(kPackAttenuationBytes);
+            SerializePackAttenuation(desc, payload.data());
             payload.resize(size);
             builder.AddEntry(kPackEntryKindAttenuation, 500, std::move(payload),
-                             kPackV2AuthoredToneSchemaVintage);
+                             kPackAttenuationVintage);
             auto bytes = builder.Build();
             StoreLE32(bytes.data() + 4, version);
             PackCanonicalImage image;
-            const bool valid = version != kPackFormatVersion + 1 &&
-                               size == kPackV3AttenuationPayloadBytes;
+            const bool valid = version == kPackFormatVersion &&
+                               size == kPackAttenuationBytes;
             ASSERT_EQ(valid ? VN_OK : VN_BAD_PACK,
                       ParsePackCanonicalImage(bytes.data(), bytes.size(), &image))
                 << version << "/" << size;
@@ -1539,94 +1404,36 @@ TEST(PackCanonicalFormat, RetiredAttenuationVintageIsIncompatible) {
     desc.maxDistance = 100.0f;
     desc.airAbsorptionNearHz = 20000.0f;
     desc.airAbsorptionFarHz = 20000.0f;
-    std::vector<std::uint8_t> payload(kPackV2AttenuationPayloadBytes);
-    SerializePackV2Attenuation(desc, payload.data());
+    std::vector<std::uint8_t> payload(kPackAttenuationBytes);
+    SerializePackAttenuation(desc, payload.data());
     builder.AddEntry(kPackEntryKindAttenuation, 500, std::move(payload),
-                     kPackV2SchemaVintage);
+                     2u);
     const std::vector<std::uint8_t> bytes = builder.Build();
     PackCanonicalImage image;
     EXPECT_EQ(VN_PACK_INCOMPATIBLE,
               ParsePackCanonicalImage(bytes.data(), bytes.size(), &image));
 }
 
-TEST(PackCanonicalFormat, ConstructionAInitParsesAndFilledHashChecksumsAreRejected) {
-    std::vector<std::uint8_t> stamped = BuildMinimalInit();
+TEST(PackCanonicalFormat, RetiredInitRoutingCatalogIsRejected) {
+    const auto bytes = BuildInitWithTypedEntry(kPackEntryKindInitRoutingCatalog, 0, {0});
     PackCanonicalImage image;
-    ASSERT_EQ(VN_OK, ParsePackCanonicalImage(stamped.data(), stamped.size(), &image));
-    EXPECT_TRUE(image.hasCatalog);
-    const PackInitCatalogRow* row = nullptr;
-    ASSERT_EQ(PackCatalogIdentityState::KnownUnloaded,
-              LookupInitCatalogIdentity(image, harkentest::ObjectId(1001), &row));
-    ASSERT_NE(row, nullptr);
-    EXPECT_NE(0u, row->expectedContentHash);
-
-    PackV2Header header;
-    ASSERT_TRUE(ParsePackV2Header(stamped.data(), &header));
-    for (std::uint32_t i = 0; i < header.entryCount; ++i) {
-        const PackV2DirectoryEntry entry = ParsePackV2DirectoryEntry(
-            stamped.data() + static_cast<std::size_t>(header.directoryOffset) +
-            i * kPackV2DirectoryEntryBytes);
-        if (entry.kind != kPackEntryKindInitRoutingCatalog)
-            continue;
-        PackInitCatalogHeader catalogHeader;
-        ASSERT_TRUE(ParsePackInitCatalogHeader(stamped.data() + entry.offset,
-                                               entry.size, &catalogHeader));
-        catalogHeader.checksum =
-            Fnv1a64(stamped.data() + entry.offset + kInitCatalogHeaderBytes,
-                    static_cast<std::size_t>(catalogHeader.catalogBytes -
-                                             kInitCatalogHeaderBytes));
-        SerializePackInitCatalogHeader(catalogHeader,
-                                       stamped.data() + entry.offset);
-    }
-    RecomputeChecksums(&stamped);
     EXPECT_EQ(VN_BAD_PACK,
-              ParsePackCanonicalImage(stamped.data(), stamped.size(), &image));
-}
-
-TEST(PackCanonicalFormat, ToolingDecodeDistinguishesKnownUnloadedAndAbsent) {
-    const std::vector<std::uint8_t> bytes = BuildMinimalInit();
-    PackCanonicalImage image;
-    const VnResult parsed =
-        ParsePackCanonicalImage(bytes.data(), bytes.size(), &image);
-    if (parsed != VN_OK) {
-        PackV2Header header{};
-        ParsePackV2Header(bytes.data(), &header);
-        ADD_FAILURE() << "canonical parse=" << parsed
-                      << " packKind=" << header.packKind
-                      << " entries=" << header.entryCount
-                      << " fileBytes=" << header.fileBytes
-                      << " size=" << bytes.size();
-    }
-    ASSERT_EQ(VN_OK, parsed);
-    EXPECT_EQ(kPackKindInit, image.packKind);
-    EXPECT_EQ(11u, image.packStableId);
-    const PackInitCatalogRow* row = nullptr;
-    EXPECT_EQ(PackCatalogIdentityState::KnownUnloaded,
-              LookupInitCatalogIdentity(image, harkentest::ObjectId(1001), &row));
-    ASSERT_NE(row, nullptr);
-    EXPECT_EQ(11u, row->ownerPackStableId);
-    EXPECT_EQ(PackCatalogIdentityState::KnownUnloaded,
-              LookupInitCatalogIdentity(image, harkentest::ObjectId(2002), &row));
-    EXPECT_EQ(22u, row->ownerPackStableId);
-    EXPECT_EQ(PackCatalogIdentityState::Absent,
-              LookupInitCatalogIdentity(image, harkentest::ObjectId(9999), &row));
-    EXPECT_EQ(nullptr, row);
+              ParsePackCanonicalImage(bytes.data(), bytes.size(), &image));
 }
 
 TEST(PackCanonicalFormat, KindTenAndLegacyVariableKindsStayBadPack) {
     for (std::uint32_t packKind : {kPackKindResident, kPackKindContent}) {
         ImageBuilder action(packKind);
         action.AddEntry(kPackEntryKindAction, 300,
-                        std::vector<std::uint8_t>(8, 0xA5), kPackV2SchemaVintage);
+                        std::vector<std::uint8_t>(8, 0xA5), 2u);
         PackLogicImage image;
         EXPECT_EQ(VN_BAD_PACK,
                   ParsePackV2Image(action.Build().data(), action.Build().size(),
                                    &image));
         ImageBuilder variable(packKind);
-        std::vector<std::uint8_t> payload(kPackV2DiscreteVariablePayloadBytes);
-        SerializePackV2DiscreteVariable(harkentest::ObjectId(920), payload.data());
+        std::vector<std::uint8_t> payload{0};
         variable.AddEntry(kPackEntryKindDiscreteVariable, 920, std::move(payload),
-                          kPackV2SchemaVintage);
+                          2u);
         EXPECT_EQ(VN_BAD_PACK,
                   ParsePackV2Image(variable.Build().data(),
                                    variable.Build().size(), &image));
@@ -1635,12 +1442,12 @@ TEST(PackCanonicalFormat, KindTenAndLegacyVariableKindsStayBadPack) {
 
 TEST(PackCanonicalFormat, ExistingResidentAndContentGoldensStillParse) {
     ImageBuilder resident(kPackKindResident);
-    std::vector<std::uint8_t> bus(kPackV2BusPayloadBytes);
+    std::vector<std::uint8_t> bus(kPackBusBytes);
     PackBusEntry busEntry;
     busEntry.busId = harkentest::ObjectId(10);
     busEntry.parentBusId = harkentest::ObjectId(1);
-    SerializePackV2Bus(busEntry, bus.data());
-    resident.AddEntry(kPackEntryKindBus, 10, std::move(bus), kPackV2SchemaVintage);
+    SerializePackBus(busEntry, bus.data());
+    resident.AddEntry(kPackEntryKindBus, 10, std::move(bus), kPackBusVintage);
     PackLogicImage image;
     const auto residentBytes = resident.Build();
     ASSERT_EQ(VN_OK, ParsePackV2Image(residentBytes.data(), residentBytes.size(),
@@ -1690,52 +1497,31 @@ TEST(PackCanonicalFormat, Kind26Vintage2Incompatible) {
               ParsePackCanonicalImage(bytes.data(), bytes.size(), &image));
 }
 
-TEST(PackCanonicalFormat, Kind26LabelMappingsStayValidatedAcrossFormats) {
+TEST(PackCanonicalFormat, Kind26LabelMappingsStayValidated) {
     const auto variableId = harkentest::ObjectId(7);
     const VariableLabelDefinitionV1 label{8, "Step", harkentest::ObjectId(9)};
     const auto mapping = ComputeVariableLabelMappingFingerprintV1(variableId, std::span(&label, 1));
-    for (std::uint32_t format : {1u, 2u}) {
-        SCOPED_TRACE(format);
-        auto payload = Kind26Payload({{variableId, 1, 1, {8}}});
-        StoreLE32(payload.data() + 4, format);
-        const auto labelHeaderOffset = payload.size();
-        const std::size_t labelHeaderBytes = format == 1 ? 24 : 16;
-        const auto labelOffset = labelHeaderOffset + labelHeaderBytes;
-        payload.resize(labelOffset + 24 + (format == 1 ? 4 : 0), 0);
-        StoreLE64(payload.data() + labelHeaderOffset, mapping);
-        if (format == 1) StoreLE64(payload.data() + labelHeaderOffset + 8, 1);
-        StoreLE32(payload.data() + labelOffset - 8, 1);
-        StoreObjectId(payload.data() + labelOffset, label.labelId);
-        StoreLE32(payload.data() + labelOffset + 16, label.anchor);
-        if (format == 1) {
-            StoreLE32(payload.data() + labelOffset + 20, 4);
-            std::memcpy(payload.data() + labelOffset + 24, label.name.data(), 4);
-        }
-        const auto bytes = BuildInitWithTypedEntry(kPackEntryKindVariablePolicyOverlay, 0, payload);
-        PackCanonicalImage image;
-        ASSERT_EQ(VN_OK, ParsePackCanonicalImage(bytes.data(), bytes.size(), &image));
-        ASSERT_EQ(1u, image.variablePolicyOverlays.size());
-        const auto& overlay = image.variablePolicyOverlays.front();
-        EXPECT_EQ(variableId, overlay.variableId);
-        EXPECT_EQ(mapping, overlay.labelMappingFingerprint);
-        ASSERT_EQ(1u, overlay.labels.size());
-        EXPECT_EQ(label.labelId, overlay.labels.front().labelId);
-        EXPECT_EQ(label.anchor, overlay.labels.front().anchor);
-        EXPECT_EQ(format == 1 ? label.name : std::string{}, overlay.labels.front().name);
+    const auto payload = Kind26Payload({{variableId, 1, 1, {8}, {label}}});
+    const auto bytes = BuildInitWithTypedEntry(kPackEntryKindVariablePolicyOverlay, 0, payload);
+    PackCanonicalImage image;
+    ASSERT_EQ(VN_OK, ParsePackCanonicalImage(bytes.data(), bytes.size(), &image));
+    ASSERT_EQ(1u, image.variablePolicyOverlays.size());
+    const auto& overlay = image.variablePolicyOverlays.front();
+    EXPECT_EQ(variableId, overlay.variableId);
+    EXPECT_EQ(mapping, overlay.labelMappingFingerprint);
+    ASSERT_EQ(1u, overlay.labels.size());
+    EXPECT_EQ(label.labelId, overlay.labels.front().labelId);
+    EXPECT_EQ(label.anchor, overlay.labels.front().anchor);
+    EXPECT_TRUE(overlay.labels.front().name.empty());
 
-        std::vector<std::vector<std::uint8_t>> malformed(4, payload);
-        malformed[0].pop_back();
-        malformed[1][labelHeaderOffset] ^= 1;
-        StoreLE32(malformed[2].data() + labelOffset - 4, 1);
-        StoreLE32(malformed[3].data() + 4, 3);
-        if (format == 2) {
-            malformed.push_back(payload);
-            StoreLE32(malformed.back().data() + labelOffset + 20, 1);
-        }
-        for (const auto& invalid : malformed) {
-            const auto invalidBytes = BuildInitWithTypedEntry(kPackEntryKindVariablePolicyOverlay, 0, invalid);
-            EXPECT_EQ(VN_BAD_PACK, ParsePackCanonicalImage(invalidBytes.data(), invalidBytes.size(), &image));
-        }
+    std::vector<std::vector<std::uint8_t>> malformed(2, payload);
+    malformed[0].pop_back();
+    const auto labelHeaderOffset = kPackVariablePolicyHeaderBytes + kPackVariablePolicyRowBytes +
+        kPackVariableAnchorCountBytes + kPackVariableAnchorBytes;
+    malformed[1][labelHeaderOffset + kPackVariableLabelHeaderLabelMappingFingerprintOffset] ^= 1;
+    for (const auto& invalid : malformed) {
+        const auto invalidBytes = BuildInitWithTypedEntry(kPackEntryKindVariablePolicyOverlay, 0, invalid);
+        EXPECT_EQ(VN_BAD_PACK, ParsePackCanonicalImage(invalidBytes.data(), invalidBytes.size(), &image));
     }
 }
 
@@ -1832,15 +1618,15 @@ PackBindingAttachmentEntry MakeCanonicalVoiceAttachment(std::uint32_t scope) {
 
 std::vector<std::uint8_t> WithCanonicalScopeRows(
     const std::vector<std::uint8_t>& original, std::uint32_t scope, unsigned rows) {
-    PackV2Header header;
-    if (!ParsePackV2Header(original.data(), &header)) {
+    PackFileHeader header;
+    if (!ReadPackFileHeader(original.data(), &header)) {
         ADD_FAILURE() << "Invalid source fixture";
         return {};
     }
     ImageBuilder builder(header.packKind);
     for (std::uint32_t i = 0; i < header.entryCount; ++i) {
-        const auto entry = ParsePackV2DirectoryEntry(
-            original.data() + header.directoryOffset + i * kPackV2DirectoryEntryBytes);
+        const auto entry = ReadPackDirectoryEntry(
+            original.data() + header.directoryOffset + i * kPackDirectoryEntryBytes);
         const auto copied = builder.AddEntry(
             entry.kind, entry.id,
             std::vector<std::uint8_t>(original.begin() + entry.offset,
@@ -1851,18 +1637,18 @@ std::vector<std::uint8_t> WithCanonicalScopeRows(
     }
     if ((rows & 1u) != 0) {
         const VnBindingDesc desc = MakeCanonicalVoiceBindingDesc(scope);
-        std::vector<std::uint8_t> payload(kPackV2BindingDefinitionPayloadBytes);
-        SerializePackV2BindingDefinition(harkentest::ObjectId(8401), desc, payload.data());
+        std::vector<std::uint8_t> payload(kPackBindingDefinitionBytes);
+        WritePackBindingDefinition(harkentest::ObjectId(8401), desc, payload.data());
         builder.AddEntry(kPackEntryKindBindingDefinition, harkentest::ObjectId(8401),
-                         std::move(payload), kPackV2SchemaVintage);
+                         std::move(payload), kPackBindingDefinitionVintage);
     }
     if ((rows & 2u) != 0) {
         const PackBindingAttachmentEntry attachment =
             MakeCanonicalVoiceAttachment(scope);
-        std::vector<std::uint8_t> payload(kPackV2BindingAttachmentPayloadBytes);
-        SerializePackV2BindingAttachment(attachment, payload.data());
+        std::vector<std::uint8_t> payload(kPackBindingAttachmentBytes);
+        SerializePackBindingAttachment(attachment, payload.data());
         builder.AddEntry(kPackEntryKindBindingAttachment, 0, std::move(payload),
-                         kPackV2SchemaVintage);
+                         kPackBindingAttachmentVintage);
     }
     return builder.Build();
 }
@@ -1878,17 +1664,17 @@ TEST(PackCanonicalFormat, BindingTransitionRangeIsRejectedAtBinaryAdmission) {
         desc.curve.structSize = sizeof(desc.curve);
         desc.curve.pointCount = 1;
         desc.curve.points[0] = {0.0f, 0.0f};
-        std::vector<std::uint8_t> payload(kPackV2BindingDefinitionPayloadBytes);
-        SerializePackV2BindingDefinition(harkentest::ObjectId(8401), desc, payload.data());
+        std::vector<std::uint8_t> payload(kPackBindingDefinitionBytes);
+        WritePackBindingDefinition(harkentest::ObjectId(8401), desc, payload.data());
         std::uint64_t contentBodyBytes = 0;
         const auto original =
             harkentest::packfoundation::BuildContent(1, 0, 0, &contentBodyBytes);
         ImageBuilder builder(kPackKindCanonicalContent);
-        PackV2Header header;
-        ASSERT_TRUE(ParsePackV2Header(original.data(), &header));
+        PackFileHeader header;
+        ASSERT_TRUE(ReadPackFileHeader(original.data(), &header));
         for (std::uint32_t i = 0; i < header.entryCount; ++i) {
-            const auto entry = ParsePackV2DirectoryEntry(
-                original.data() + header.directoryOffset + i * kPackV2DirectoryEntryBytes);
+            const auto entry = ReadPackDirectoryEntry(
+                original.data() + header.directoryOffset + i * kPackDirectoryEntryBytes);
             const auto copied = builder.AddEntry(
                 entry.kind, entry.id,
                 std::vector<std::uint8_t>(original.begin() + entry.offset,
@@ -1898,7 +1684,7 @@ TEST(PackCanonicalFormat, BindingTransitionRangeIsRejectedAtBinaryAdmission) {
             builder.SetRelationOrdinal(copied, entry.relationOrdinal);
         }
         builder.AddEntry(kPackEntryKindBindingDefinition, harkentest::ObjectId(8401),
-                         payload, kPackV2SchemaVintage);
+                         payload, kPackBindingDefinitionVintage);
         const auto packed = builder.Build();
         PackCanonicalImage image;
         EXPECT_EQ(ms == 60000 ? VN_OK : VN_BAD_PACK,
@@ -1917,50 +1703,27 @@ std::vector<std::uint8_t> CanonicalLayoutFixture(std::uint32_t packKind,
     builder.AddEntry(kPackEntryKindPackRequirementBlock, kPackId,
                      std::move(requirement), requirementVintage);
     builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, kPackId,
-                     PartitionPayload(kPackId, 1, kCanonicalDefinitionPartitionBodyVintage,
-                                      partitionVintage), partitionVintage);
+                     PartitionPayload(kPackId, 1, kCanonicalDefinitionPartitionBodyVintage), partitionVintage);
     if (packKind == kPackKindCanonicalContent) {
         PackDependencyEdge edge;
         edge.prerequisitePackStableId = 11;
         edge.edgeKind = kPackDependencyEdgeKindInit;
         edge.required01 = 1;
         edge.expectedPrerequisiteContentRevision = 1;
-        const bool versionTwo = dependencyVintage == kPackCanonicalRequirementVintage;
-        std::vector<std::uint8_t> payload(versionTwo ? kPackDependencyEdgeV2Bytes
-                                                   : kPackDependencyEdgeBytes, 0);
-        if (versionTwo) {
-            const auto triple = harkentest::packfoundation::DefaultFixtureBusTriple();
-            edge.expectedBusContentGeneration = triple.busContentGeneration;
-            edge.expectedPublishedBusFingerprint = triple.publishedBusFingerprint;
-            edge.expectedCompileTargetProfileFingerprint = triple.compileTargetProfileFingerprint;
-            SerializePackDependencyEdgeV2(edge, payload.data());
-        } else {
-            SerializePackDependencyEdge(edge, payload.data());
-        }
+        std::vector<std::uint8_t> payload(kPackDependencyEdgeBytes, 0);
+        const auto triple = harkentest::packfoundation::DefaultFixtureBusTriple();
+        edge.expectedBusContentGeneration = triple.busContentGeneration;
+        edge.expectedPublishedBusFingerprint = triple.publishedBusFingerprint;
+        edge.expectedCompileTargetProfileFingerprint = triple.compileTargetProfileFingerprint;
+        SerializePackDependencyEdge(edge, payload.data());
         builder.AddEntry(kPackEntryKindPackDependencyEdge, 0, std::move(payload), dependencyVintage);
     }
     return builder.Build();
 }
 
-TEST(PackCanonicalFormat, ProductionV1LayoutsKeepBusBindingScopes) {
-    for (auto kind : {kPackKindInit, kPackKindCanonicalContent}) {
-        const auto original = CanonicalLayoutFixture(kind, 1, 1, 1);
-        for (std::uint32_t scope : {VN_TARGET_SCOPE_VOICE, VN_TARGET_SCOPE_BUS,
-                                    VN_TARGET_SCOPE_BUS_EFFECT_PARAM}) {
-            const auto bytes = WithCanonicalScopeRows(original, scope, 3);
-            PackCanonicalImage image;
-            ASSERT_EQ(VN_OK, ParsePackCanonicalImage(bytes.data(), bytes.size(), &image));
-            EXPECT_EQ(image.requirement.storageModelVersion, 1u);
-            EXPECT_FALSE(image.hasBusDefinitionSnapshot);
-            ASSERT_EQ(image.bindingDefinitions.size(), 1u);
-            ASSERT_EQ(image.bindingAttachments.size(), 1u);
-            EXPECT_EQ(image.bindingDefinitions[0].desc.targetScopeKind, scope);
-            EXPECT_EQ(image.bindingAttachments[0].scopeKind, scope);
-        }
-    }
-}
 
-TEST(PackCanonicalFormat, MixedCanonicalLayoutsAreIncompatible) {
+
+TEST(PackCanonicalFormat, RetiredOrMixedCanonicalLayoutsAreIncompatible) {
     for (std::uint32_t requirement : {1u, 2u}) {
         for (std::uint32_t partition : {1u, 2u}) {
             for (std::uint32_t dependency : {1u, 2u}) {
@@ -1970,7 +1733,7 @@ TEST(PackCanonicalFormat, MixedCanonicalLayoutsAreIncompatible) {
                 PackCanonicalImage image;
                 image.packStableId = 77;
                 const auto result = ParsePackCanonicalImage(bytes.data(), bytes.size(), &image);
-                if (requirement == partition && partition == dependency) {
+                if (requirement == 2 && partition == 2 && dependency == 2) {
                     EXPECT_EQ(result, VN_OK);
                 } else {
                     EXPECT_EQ(result, VN_PACK_INCOMPATIBLE);
@@ -1982,7 +1745,7 @@ TEST(PackCanonicalFormat, MixedCanonicalLayoutsAreIncompatible) {
 }
 
 TEST(PackCanonicalFormat, ParserAcceptsCanonicalBindingScopes) {
-    const auto bus = harkentest::packfoundation::DefaultRuntimeBusFixtureV1();
+    const auto bus = harkentest::packfoundation::DefaultRuntimeBusFixture();
     harkentest::packfoundation::ImageBuilder initBuilder(kPackKindInit);
     std::uint64_t initBodyBytes = 0;
     std::vector<std::uint8_t> initPartition =

@@ -1288,32 +1288,7 @@ TEST(TraceCodec, CurrentWorldRoundTripsVariableControlGrids) {
     EXPECT_EQ(encoded, reencoded);
 }
 
-TEST(TraceCodec, CurrentWorldVintageFourOneByteLoopLayoutIsRejected) {
-    harken::PlayablePropertyProgramViewV1 property{};
-    property.payload.values[3].bits = 1;
-    property.payload.values[11].bits = std::bit_cast<std::uint32_t>(1.0f);
-    harken::ContainerWorldInstallViewV1 world{};
-    world.playableProperties = &property;
-    world.playablePropertyCount = 1;
-
-    std::vector<std::uint8_t> encoded;
-    ASSERT_TRUE(harken::EncodeCurrentWorldBodyV5(harkentest::AsHistoricalPrefix(world), encoded));
-    ASSERT_GT(encoded.size(), 287u);
-    encoded.erase(encoded.begin() + 285, encoded.begin() + 288);
-
-    harken::TraceCurrentWorldImage decoded;
-    EXPECT_FALSE(decoded.Decode(
-        encoded.data(), encoded.size(), 4,
-        harken::CurrentWorldDecodeMode::ReplayRawAttempt));
-    EXPECT_EQ(nullptr, decoded.ReplayView());
-
-    harken::TraceCurrentWorldImage wrongVintage;
-    EXPECT_FALSE(wrongVintage.Decode(
-        encoded.data(), encoded.size(), 5,
-        harken::CurrentWorldDecodeMode::ReplayRawAttempt));
-}
-
-TEST(TraceCodec, HistoricalV4V5ZeroActionWorldsAreRejected) {
+TEST(TraceCodec, RetiredBodyVintagesAreRejected) {
     harken::VariableDefinitionV1 variable{};
     variable.variableId = harkentest::ObjectId(1001);
     variable.kind = harken::VariableKindV1::Smooth;
@@ -1328,8 +1303,8 @@ TEST(TraceCodec, HistoricalV4V5ZeroActionWorldsAreRejected) {
         harken::ComputeCurrentWorldFingerprintV3(harkentest::AsHistoricalPrefix(world));
 
     std::vector<std::uint8_t> encoded;
-    ASSERT_TRUE(harken::EncodeCurrentWorldBodyV5(harkentest::AsHistoricalPrefix(world), encoded));
-    for (const std::uint32_t vintage : {4u, 5u}) {
+    ASSERT_TRUE(harken::EncodeCurrentWorldShippingBody(world, encoded));
+    for (const std::uint32_t vintage : {3u, 4u, 5u, 6u, 7u, 8u, 9u}) {
         harken::TraceCurrentWorldImage decoded;
         EXPECT_FALSE(decoded.Decode(
             encoded.data(), encoded.size(), vintage,
@@ -1416,33 +1391,6 @@ TEST(TraceCodec, CurrentWorldRoundTripsTypedTransitionsExactly) {
     std::vector<std::uint8_t> reencoded;
     ASSERT_TRUE(harken::EncodeCurrentWorldShippingBody(roundTrip, reencoded));
     EXPECT_EQ(encoded, reencoded);
-}
-
-TEST(TraceCodec,
-     CurrentWorldVintageThreeOpaqueTransitionIsRejected) {
-    std::array<harken::TransitionProgramViewV1, 2> encodedPlaceholders{};
-    harken::ContainerWorldInstallViewV1 world{};
-    world.transitions = encodedPlaceholders.data();
-    world.transitionCount = encodedPlaceholders.size();
-    world.identity.capabilityMask = harken::kWorldCapabilityTransition;
-    world.identity.runtimeSemanticFingerprint =
-        harken::ComputeCurrentWorldFingerprintV3Replay(harkentest::AsHistoricalPrefix(world));
-
-    std::vector<std::uint8_t> encoded;
-    ASSERT_TRUE(harken::EncodeCurrentWorldBodyV5(harkentest::AsHistoricalPrefix(world), encoded));
-    constexpr std::size_t kVintageFourTransitionHeaderBytes =
-        sizeof(std::uint64_t) + 6u * sizeof(std::uint32_t);
-    constexpr std::size_t kTransitionBytes =
-        encodedPlaceholders.size() * kVintageFourTransitionHeaderBytes;
-    ASSERT_GE(encoded.size(), kTransitionBytes);
-    encoded.resize(encoded.size() - kTransitionBytes);
-
-    harken::TraceCurrentWorldImage decoded;
-    EXPECT_FALSE(decoded.Decode(
-        encoded.data(), encoded.size(), 3,
-        harken::CurrentWorldDecodeMode::ReplayRawAttempt));
-    EXPECT_EQ(nullptr, decoded.ReplayView());
-    EXPECT_EQ(nullptr, decoded.ProductionView());
 }
 
 TEST(TraceCodec, CurrentWorldVintageThreeKeepsZeroGridContainersCompatible) {

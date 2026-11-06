@@ -2749,14 +2749,14 @@ TEST_F(AuthoredPackLifecycle, CanonicalV2SnapshotRejectsTamperAndUnknownVintage)
         original.data(), original.size(), &valid));
     ASSERT_TRUE(valid.hasBusDefinitionSnapshot);
     ASSERT_EQ(2u, valid.busDefinitionSnapshotHeader.schemaVersion);
-    harken::PackV2Header header{};
-    ASSERT_TRUE(harken::ParsePackV2Header(original.data(), &header));
+    harken::PackFileHeader header{};
+    ASSERT_TRUE(harken::ReadPackFileHeader(original.data(), &header));
     std::size_t directoryOffset = 0;
-    harken::PackV2DirectoryEntry snapshot{};
+    harken::PackDirectoryEntry snapshot{};
     for (std::uint32_t i = 0; i < header.entryCount; ++i) {
         const auto offset = static_cast<std::size_t>(header.directoryOffset)
-            + static_cast<std::size_t>(i) * harken::kPackV2DirectoryEntryBytes;
-        const auto entry = harken::ParsePackV2DirectoryEntry(original.data() + offset);
+            + static_cast<std::size_t>(i) * harken::kPackDirectoryEntryBytes;
+        const auto entry = harken::ReadPackDirectoryEntry(original.data() + offset);
         if (entry.kind == harken::kPackEntryKindBusDefinitionSnapshot) {
             snapshot = entry;
             directoryOffset = offset;
@@ -2764,7 +2764,7 @@ TEST_F(AuthoredPackLifecycle, CanonicalV2SnapshotRejectsTamperAndUnknownVintage)
         }
     }
     ASSERT_NE(0u, directoryOffset);
-    ASSERT_EQ(harken::kPackBusDefinitionSnapshotVintage2, snapshot.vintage);
+    ASSERT_EQ(harken::kPackBusDefinitionSnapshotVintage, snapshot.vintage);
     ASSERT_GT(snapshot.size, 16u);
     auto damaged = original;
     damaged[static_cast<std::size_t>(snapshot.offset + 16)] ^= 0x5au;
@@ -2775,40 +2775,40 @@ TEST_F(AuthoredPackLifecycle, CanonicalV2SnapshotRejectsTamperAndUnknownVintage)
     ASSERT_GE(valid.busDefinitionBusesV2.size(), 2u);
     auto duplicate = original;
     auto* snapshotPayload = duplicate.data() + snapshot.offset;
-    harken::PackBusDefinitionSnapshotHeaderV1 snapshotHeader{};
-    ASSERT_TRUE(harken::ParsePackBusDefinitionSnapshotHeaderV2(
+    harken::PackBusDefinitionSnapshotHeader snapshotHeader{};
+    ASSERT_TRUE(harken::ReadPackBusDefinitionSnapshotHeader(
         snapshotPayload, snapshot.size, &snapshotHeader));
     auto* secondBus = snapshotPayload + snapshotHeader.busOffset
         + snapshotHeader.busRowBytes;
-    harken::PackBusDefinitionBusV2 secondRow{};
-    ASSERT_TRUE(harken::ParsePackBusDefinitionBusV2(secondBus, &secondRow));
+    harken::PackBusDefinitionBus secondRow{};
+    ASSERT_TRUE(harken::ParsePackBusDefinitionBus(secondBus, harken::kPackBusDefinitionBusBytes, &secondRow));
     secondRow.busId = valid.busDefinitionBusesV2.front().busId;
-    harken::SerializePackBusDefinitionBusV2(secondRow, secondBus);
+    harken::SerializePackBusDefinitionBus(secondRow, secondBus);
     harken::StoreLE64(snapshotPayload + 112, 0);
     const auto snapshotChecksum = harken::Fnv1a64(snapshotPayload,
         static_cast<std::size_t>(snapshot.size));
     harken::StoreLE64(snapshotPayload + 112, snapshotChecksum);
-    ASSERT_TRUE(harken::ParsePackBusDefinitionSnapshotHeaderV2(
+    ASSERT_TRUE(harken::ReadPackBusDefinitionSnapshotHeader(
         snapshotPayload, snapshot.size, &snapshotHeader));
     auto duplicateEntry = snapshot;
     duplicateEntry.payloadChecksum = harken::Fnv1a64(snapshotPayload,
         static_cast<std::size_t>(snapshot.size));
-    harken::SerializePackV2DirectoryEntry(duplicateEntry, duplicate.data() + directoryOffset);
+    harken::SerializePackDirectoryEntry(duplicateEntry, duplicate.data() + directoryOffset);
     auto duplicateHeader = header;
     duplicateHeader.directoryChecksum = harken::Fnv1a64(
         duplicate.data() + duplicateHeader.directoryOffset,
         static_cast<std::size_t>(duplicateHeader.entryCount)
-            * harken::kPackV2DirectoryEntryBytes);
-    harken::SerializePackV2Header(duplicateHeader, duplicate.data());
+            * harken::kPackDirectoryEntryBytes);
+    harken::SerializePackFileHeader(duplicateHeader, duplicate.data());
     EXPECT_EQ(VN_BAD_PACK, harken::ParsePackCanonicalImage(
         duplicate.data(), duplicate.size(), &rejected));
 
     auto unknown = original;
     snapshot.vintage = 999;
-    harken::SerializePackV2DirectoryEntry(snapshot, unknown.data() + directoryOffset);
+    harken::SerializePackDirectoryEntry(snapshot, unknown.data() + directoryOffset);
     header.directoryChecksum = harken::Fnv1a64(unknown.data() + header.directoryOffset,
-        static_cast<std::size_t>(header.entryCount) * harken::kPackV2DirectoryEntryBytes);
-    harken::SerializePackV2Header(header, unknown.data());
+        static_cast<std::size_t>(header.entryCount) * harken::kPackDirectoryEntryBytes);
+    harken::SerializePackFileHeader(header, unknown.data());
     EXPECT_EQ(VN_PACK_INCOMPATIBLE, harken::ParsePackCanonicalImage(
         unknown.data(), unknown.size(), &rejected));
 }
@@ -3546,21 +3546,21 @@ void att06ExpectNoSuccessLines(const GoldHostRun& run)
 bool att06ChoosePayload(const std::vector<uint8_t>& bytes, uint64_t* offset, uint64_t* size,
                         uint64_t* payloadChecksum, uint64_t* directoryChecksum)
 {
-    if (bytes.size() < harken::kPackV2HeaderBytes)
+    if (bytes.size() < harken::kPackFileHeaderBytes)
         return false;
-    harken::PackV2Header header;
-    if (!harken::ParsePackV2Header(bytes.data(), &header))
+    harken::PackFileHeader header;
+    if (!harken::ReadPackFileHeader(bytes.data(), &header))
         return false;
     if (header.fileBytes != bytes.size() ||
-        header.headerBytes != harken::kPackV2HeaderBytes ||
-        header.directoryOffset != harken::kPackV2HeaderBytes)
+        header.headerBytes != harken::kPackFileHeaderBytes ||
+        header.directoryOffset != harken::kPackFileHeaderBytes)
         return false;
     if (header.entryCount == 0 ||
         header.entryCount > (std::numeric_limits<uint64_t>::max() /
-                             harken::kPackV2DirectoryEntryBytes))
+                             harken::kPackDirectoryEntryBytes))
         return false;
     const uint64_t dirBytes =
-        uint64_t(header.entryCount) * harken::kPackV2DirectoryEntryBytes;
+        uint64_t(header.entryCount) * harken::kPackDirectoryEntryBytes;
     if (header.directoryOffset > bytes.size() ||
         dirBytes > bytes.size() - header.directoryOffset)
         return false;
@@ -3570,13 +3570,13 @@ bool att06ChoosePayload(const std::vector<uint8_t>& bytes, uint64_t* offset, uin
     if (*directoryChecksum != header.directoryChecksum)
         return false;
     for (uint32_t i = 0; i < header.entryCount; ++i) {
-        const auto entry = harken::ParsePackV2DirectoryEntry(
+        const auto entry = harken::ReadPackDirectoryEntry(
             bytes.data() + header.directoryOffset +
-            size_t(i) * harken::kPackV2DirectoryEntryBytes);
+            size_t(i) * harken::kPackDirectoryEntryBytes);
         if (entry.kind == harken::kPackEntryKindInitRoutingCatalog)
             continue;
         if (entry.size == 0 || entry.offset < dirEnd ||
-            entry.offset % harken::kPackV2PayloadAlign != 0 ||
+            entry.offset % harken::kPackPayloadAlign != 0 ||
             entry.offset > bytes.size() ||
             entry.size > bytes.size() - entry.offset)
             continue;
@@ -5059,22 +5059,22 @@ std::vector<std::uint8_t> att05ReadFile(const QString& path)
 
 bool att05DropAttenuationEntry(std::vector<std::uint8_t>* bytes, VnObjectId target, int* removedCount)
 {
-    if (bytes->size() < harken::kPackV2HeaderBytes)
+    if (bytes->size() < harken::kPackFileHeaderBytes)
         return false;
-    harken::PackV2Header header;
-    if (!harken::ParsePackV2Header(bytes->data(), &header))
+    harken::PackFileHeader header;
+    if (!harken::ReadPackFileHeader(bytes->data(), &header))
         return false;
     const uint64_t directoryBytes =
-        static_cast<uint64_t>(header.entryCount) * harken::kPackV2DirectoryEntryBytes;
+        static_cast<uint64_t>(header.entryCount) * harken::kPackDirectoryEntryBytes;
     if (header.directoryOffset != header.headerBytes || header.entryCount == 0
         || header.directoryOffset + directoryBytes > bytes->size())
         return false;
     int found = -1;
     int attenuationCount = 0;
     for (uint32_t index = 0; index < header.entryCount; ++index) {
-        const auto entry = harken::ParsePackV2DirectoryEntry(
+        const auto entry = harken::ReadPackDirectoryEntry(
             bytes->data() + header.directoryOffset
-            + static_cast<size_t>(index) * harken::kPackV2DirectoryEntryBytes);
+            + static_cast<size_t>(index) * harken::kPackDirectoryEntryBytes);
         if (entry.kind != harken::kPackEntryKindAttenuation)
             continue;
         ++attenuationCount;
@@ -5088,13 +5088,13 @@ bool att05DropAttenuationEntry(std::vector<std::uint8_t>* bytes, VnObjectId targ
         return false;
     auto* directory = bytes->data() + header.directoryOffset;
     const uint32_t tail = header.entryCount - static_cast<uint32_t>(found) - 1u;
-    std::memmove(directory + static_cast<size_t>(found) * harken::kPackV2DirectoryEntryBytes,
-                 directory + (static_cast<size_t>(found) + 1u) * harken::kPackV2DirectoryEntryBytes,
-                 static_cast<size_t>(tail) * harken::kPackV2DirectoryEntryBytes);
+    std::memmove(directory + static_cast<size_t>(found) * harken::kPackDirectoryEntryBytes,
+                 directory + (static_cast<size_t>(found) + 1u) * harken::kPackDirectoryEntryBytes,
+                 static_cast<size_t>(tail) * harken::kPackDirectoryEntryBytes);
     header.entryCount -= 1u;
     header.directoryChecksum = harken::Fnv1a64(
-        directory, static_cast<size_t>(header.entryCount) * harken::kPackV2DirectoryEntryBytes);
-    harken::SerializePackV2Header(header, bytes->data());
+        directory, static_cast<size_t>(header.entryCount) * harken::kPackDirectoryEntryBytes);
+    harken::SerializePackFileHeader(header, bytes->data());
     *removedCount = attenuationCount;
     return true;
 }
@@ -5204,13 +5204,13 @@ TEST_F(AuthoredPackLifecycle, CanonicalV2RejectsLegacyBusMismatchAndKeepsPublish
                                   Mismatch::SendLevel}) {
         SCOPED_TRACE(static_cast<int>(mismatch));
         std::vector<std::uint8_t> bytes(original.begin(), original.end());
-        harken::PackV2Header header{};
-        ASSERT_TRUE(harken::ParsePackV2Header(bytes.data(), &header));
+        harken::PackFileHeader header{};
+        ASSERT_TRUE(harken::ReadPackFileHeader(bytes.data(), &header));
         bool changed = false;
         for (std::uint32_t i = 0; i < header.entryCount; ++i) {
             auto* directory = bytes.data() + header.directoryOffset
-                + static_cast<std::size_t>(i) * harken::kPackV2DirectoryEntryBytes;
-            auto entry = harken::ParsePackV2DirectoryEntry(directory);
+                + static_cast<std::size_t>(i) * harken::kPackDirectoryEntryBytes;
+            auto entry = harken::ReadPackDirectoryEntry(directory);
             if (mismatch == Mismatch::SendLevel &&
                 entry.kind != harken::kPackEntryKindBusSend) continue;
             if (mismatch != Mismatch::SendLevel &&
@@ -5218,17 +5218,17 @@ TEST_F(AuthoredPackLifecycle, CanonicalV2RejectsLegacyBusMismatchAndKeepsPublish
                 continue;
             if (mismatch == Mismatch::SendLevel) {
                 harken::PackBusSendEntry send{};
-                ASSERT_TRUE(harken::ParsePackV2BusSend(
+                ASSERT_TRUE(harken::ParsePackBusSend(
                     bytes.data() + entry.offset, entry.size, &send));
                 if (send.fromBusId != harkentest::ToRuntime(source->runtimeId()) ||
                     send.toBusId != harkentest::ToRuntime(target->runtimeId())) continue;
                 ASSERT_FLOAT_EQ(0.0f, send.levelDb);
                 send.levelDb = -12.0f;
-                harken::SerializePackV2BusSend(send, bytes.data() + entry.offset);
+                harken::SerializePackBusSend(send, bytes.data() + entry.offset);
             } else {
-                ASSERT_EQ(harken::kPackV6BusPayloadBytes, entry.size);
+                ASSERT_EQ(harken::kPackBusBytes, entry.size);
                 harken::PackBusEntry bus{};
-                ASSERT_TRUE(harken::ParsePackV6Bus(bytes.data() + entry.offset, entry.size, &bus));
+                ASSERT_TRUE(harken::ParsePackBus(bytes.data() + entry.offset, entry.size, &bus));
                 ASSERT_FLOAT_EQ(-6.0f, bus.outputBusVolume);
                 switch (mismatch) {
                 case Mismatch::Volume: bus.volume = -3.0f; break;
@@ -5239,18 +5239,18 @@ TEST_F(AuthoredPackLifecycle, CanonicalV2RejectsLegacyBusMismatchAndKeepsPublish
                     break;
                 case Mismatch::SendLevel: break;
                 }
-                harken::SerializePackV6Bus(bus, bytes.data() + entry.offset);
+                harken::SerializePackBus(bus, bytes.data() + entry.offset);
             }
             entry.payloadChecksum = harken::Fnv1a64(bytes.data() + entry.offset,
                                                     static_cast<std::size_t>(entry.size));
-            harken::SerializePackV2DirectoryEntry(entry, directory);
+            harken::SerializePackDirectoryEntry(entry, directory);
             changed = true;
             break;
         }
         ASSERT_TRUE(changed);
         header.directoryChecksum = harken::Fnv1a64(bytes.data() + header.directoryOffset,
-            static_cast<std::size_t>(header.entryCount) * harken::kPackV2DirectoryEntryBytes);
-        harken::SerializePackV2Header(header, bytes.data());
+            static_cast<std::size_t>(header.entryCount) * harken::kPackDirectoryEntryBytes);
+        harken::SerializePackFileHeader(header, bytes.data());
         QFile output(initPath);
         ASSERT_TRUE(output.open(QIODevice::WriteOnly | QIODevice::Truncate));
         ASSERT_EQ(static_cast<qint64>(bytes.size()), output.write(
@@ -5570,10 +5570,6 @@ TEST_F(ExportedPackLifecycle, Att05MissingAttenuationEntryRejectsInUse)
             ++parsedMatches;
     }
     ASSERT_EQ(1, parsedMatches);
-    for (const auto& row : initImage.catalogRows) {
-        EXPECT_NE(target, row.stableId)
-            << "Init catalog names the attenuation; directory-only removal is not sufficient";
-    }
     auto contentBytes = att05ReadFile(contentPath);
     std::array<std::uint8_t, 16> idBytes{};
     harken::StoreObjectId(idBytes.data(), target);
@@ -6063,16 +6059,16 @@ TEST_F(ExportedPackLifecycle, Att06TamperedOfficialPayloadIsRejectedInNewProcess
     ASSERT_EQ(1u, changed);
     EXPECT_NE(payloadChecksum,
               harken::Fnv1a64(bytes.data() + payloadOffset, static_cast<size_t>(payloadSize)));
-    harken::PackV2Header header;
-    ASSERT_TRUE(harken::ParsePackV2Header(bytes.data(), &header));
+    harken::PackFileHeader header;
+    ASSERT_TRUE(harken::ReadPackFileHeader(bytes.data(), &header));
     const uint64_t dirBytes =
-        uint64_t(header.entryCount) * harken::kPackV2DirectoryEntryBytes;
+        uint64_t(header.entryCount) * harken::kPackDirectoryEntryBytes;
     EXPECT_EQ(directoryChecksum,
               harken::Fnv1a64(bytes.data() + header.directoryOffset, static_cast<size_t>(dirBytes)));
     for (uint32_t i = 0; i < header.entryCount; ++i) {
-        const auto entry = harken::ParsePackV2DirectoryEntry(
+        const auto entry = harken::ReadPackDirectoryEntry(
             bytes.data() + header.directoryOffset +
-            size_t(i) * harken::kPackV2DirectoryEntryBytes);
+            size_t(i) * harken::kPackDirectoryEntryBytes);
         if (entry.offset == payloadOffset && entry.size == payloadSize)
             continue;
         if (entry.size == 0)

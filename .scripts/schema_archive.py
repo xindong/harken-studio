@@ -7,6 +7,7 @@ import copy
 import hashlib
 import json
 import os
+import runpy
 import sys
 import tempfile
 from contextlib import contextmanager
@@ -16,6 +17,7 @@ from typing import Any, Iterator
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_ROOT = REPO_ROOT / "HarkenSchema"
+_VALIDATE_PACK_LAYOUT = runpy.run_path(str(Path(__file__).with_name("pack_wire_codegen.py")))["validate_layout"]
 PROJECT_SCHEMA_NAME = "ProjectSerializedSchema.json"
 PACK_SCHEMA_NAME = "PackManifestSchema.json"
 TREE_SCHEMA_NAMES = {"Editor": PROJECT_SCHEMA_NAME, "Pack": PACK_SCHEMA_NAME}
@@ -395,6 +397,8 @@ def validate_pack_source(source: dict[str, Any]) -> None:
     version = metadata.get("formatVersion")
     if not isinstance(version, int) or isinstance(version, bool) or version < 1:
         raise ValueError("Pack contract needs a positive formatVersion")
+    if version > 4 or "binaryLayout" in metadata:
+        _VALIDATE_PACK_LAYOUT(metadata.get("binaryLayout"))
     if metadata.get("validationMode") != "generated-json":
         raise ValueError("Pack contract must use generated-json validation")
     expected_locator = "json:$.schemaVersion" if companion else "json:$.schema_version"

@@ -31,6 +31,7 @@
 
 #include "harken/media/PackFormat.h"
 #include "harken/media/PackFormatV2.h"
+#include "harken/media/GameplayCatalogFormat.h"
 #include "harken/media/PcmRegistry.h"
 
 #include <cstdint>
@@ -79,7 +80,7 @@ struct PackLogicImage {
 
     struct Container {
         PackContainerEntryHeader header{};
-        std::vector<PackContainerChildV2> children;
+        std::vector<PackContainerChild> children;
     };
     std::vector<Container> containers;
 
@@ -115,24 +116,6 @@ struct PackLogicImage {
     }
 };
 
-enum class PackCatalogIdentityState : std::uint32_t {
-    Absent = 0,
-    KnownUnloaded = 1,
-};
-
-struct GameplayCatalogImage {
-    PackGameplayCatalogHeader header{};
-    std::vector<PackGameplayCatalogActiveRow> active;
-    std::vector<PackGameplayCatalogRetiredRow> retired;
-    std::vector<std::uint8_t> namePool;
-};
-
-VnResult ParseGameplayCatalogWithBudget(const std::uint8_t* bytes, std::uint64_t size,
-    GameplayCatalogImage* out, detail::PackDecodeCharge& retained);
-
-VnResult ParseGameplayCatalog(const std::uint8_t* bytes, std::uint64_t size,
-                              GameplayCatalogImage* out);
-
 struct PackCanonicalImage {
     PackCanonicalImage() = default;
     PackCanonicalImage(const PackCanonicalImage&) = default;
@@ -150,17 +133,7 @@ struct PackCanonicalImage {
     std::uint64_t packStableId = 0;
     PackRequirementBlock requirement{};
     bool hasRequirement = false;
-    bool hasCatalog = false;
-    bool hasGameplayCatalog = false;
-    GameplayCatalogImage gameplayCatalog;
-    bool hasVariableNameCatalog = false;
-    PackVariableNameCatalog variableNameCatalog;
     bool hasPartition = false;
-    std::uint64_t catalogPayloadOffset = 0;
-    std::uint64_t catalogDirectoryChecksum = 0;
-    PackInitCatalogHeader catalogHeader{};
-    std::vector<PackInitCatalogRow> catalogRows;
-    std::vector<std::uint64_t> startupPackIds;
     PackCanonicalPartitionHeader partitionHeader{};
     std::vector<std::uint8_t> partitionBody;
     std::vector<PackDependencyEdge> dependencyEdges;
@@ -192,46 +165,15 @@ struct PackCanonicalImage {
     std::vector<PackLogicImage::BindingDefinition> bindingDefinitions;
     std::vector<PackBindingAttachmentEntry> bindingAttachments;
     bool hasBusDefinitionSnapshot = false;
-    PackBusDefinitionSnapshotHeaderV1 busDefinitionSnapshotHeader{};
-    std::vector<PackBusDefinitionBusV1> busDefinitionBuses;
-    std::vector<PackBusDefinitionSendV1> busDefinitionSends;
-    std::vector<PackBusDefinitionEffectV1> busDefinitionEffects;
-    std::vector<PackBusDefinitionEffectParameterV1> busDefinitionEffectParameters;
-    std::vector<PackBusDefinitionDownmixV1> busDefinitionDownmixes;
-    std::vector<PackBusDefinitionBusV2> busDefinitionBusesV2;
-    std::vector<PackBusDefinitionSendV2> busDefinitionSendsV2;
-    std::vector<PackBusDefinitionDownmixV2> busDefinitionDownmixesV2;
+    PackBusDefinitionSnapshotHeader busDefinitionSnapshotHeader{};
+    std::vector<PackBusDefinitionBus> busDefinitionBusesV2;
+    std::vector<PackBusDefinitionSend> busDefinitionSendsV2;
+    std::vector<PackBusDefinitionDownmix> busDefinitionDownmixesV2;
     std::vector<float> busDefinitionCoefficients;
 };
 
 PackCanonicalImage CopyCanonicalImageWithBudget(const PackCanonicalImage& source,
     const detail::PackDecodeBudget& budget);
-
-inline PackCatalogIdentityState LookupInitCatalogIdentity(
-    const PackCanonicalImage& image, VnObjectId stableId,
-    const PackInitCatalogRow** outRow = nullptr) {
-    if (outRow != nullptr) {
-        *outRow = nullptr;
-    }
-    std::size_t lo = 0;
-    std::size_t hi = image.catalogRows.size();
-    while (lo < hi) {
-        const std::size_t mid = lo + (hi - lo) / 2;
-        const VnObjectId midId = image.catalogRows[mid].stableId;
-        if (midId == stableId) {
-            if (outRow != nullptr) {
-                *outRow = &image.catalogRows[mid];
-            }
-            return PackCatalogIdentityState::KnownUnloaded;
-        }
-        if (midId < stableId) {
-            lo = mid + 1;
-        } else {
-            hi = mid;
-        }
-    }
-    return PackCatalogIdentityState::Absent;
-}
 
 inline std::uint64_t CanonicalVolumeBusFingerprint(const PackCanonicalImage& image) noexcept {
     const auto& header = image.busDefinitionSnapshotHeader;
@@ -358,7 +300,7 @@ inline CanonicalBusTriple PartitionBusTriple(
 }
 
 inline CanonicalBusTriple SnapshotBusTriple(
-    const PackBusDefinitionSnapshotHeaderV1& header) noexcept {
+    const PackBusDefinitionSnapshotHeader& header) noexcept {
     return {header.contentGeneration, header.publishedBusFingerprint,
             header.compileTargetProfileFingerprint};
 }
@@ -368,69 +310,10 @@ inline CanonicalBusTriple DependencyBusTriple(const PackDependencyEdge& edge) no
             edge.expectedCompileTargetProfileFingerprint};
 }
 
-inline std::uint64_t CanonicalNeutralBusFingerprint(const PackCanonicalImage& image) noexcept {
-    const auto& header = image.busDefinitionSnapshotHeader;
-    std::uint64_t hash = busfingerprint::kOffsetBasis;
-    const auto byte = [&](std::uint8_t value) { hash = busfingerprint::Step(hash, value); };
-    const auto u32 = [&](std::uint32_t value) { busfingerprint::AppendU32(byte, value); };
-    const auto u64 = [&](std::uint64_t value) { busfingerprint::AppendU64(byte, value); };
-    const auto f32 = [&](float value) {
-        u32(busfingerprint::CanonicalFloatBits(value));
-    };
-    constexpr char tag[] = "harken.bus.published.v1";
-    u32(static_cast<std::uint32_t>(sizeof(tag) - 1));
-    for (std::size_t i = 0; i + 1 < sizeof(tag); ++i) {
-        byte(static_cast<std::uint8_t>(tag[i]));
-    }
-    u32(1);
-    u32(header.publicationCapabilityVintage);
-    u32(header.profileVintage);
-    u32(header.renderSampleRateHz);
-    u32(header.mixLayout);
-    u32(header.deviceLayout);
-    u64(header.runtimeCapabilityMask);
-    u64(header.compileTargetProfileFingerprint);
-    u32(header.busCount);
-    u32(header.sendCount);
-    u32(0);
-    u32(0);
-    u32(header.downmixCount);
-    u32(header.coefficientCount);
-    for (const auto& row : image.busDefinitionBuses) {
-        u64(row.busId);
-        u64(row.parentId);
-        u32(row.feedsFirstOrdinal);
-        f32(row.faderDb);
-        u32(row.faderAfterSlot);
-        u32(row.outputLayout);
-        u32(row.effectFirst);
-        u32(row.effectCount);
-        u32(row.downmixFirst);
-        u32(row.downmixCount);
-    }
-    for (const auto& row : image.busDefinitionSends) {
-        u64(row.source);
-        u64(row.target);
-        f32(row.levelDb);
-        u32(0);
-    }
-    for (const auto& row : image.busDefinitionDownmixes) {
-        u64(row.busId);
-        u32(row.sourceLayout);
-        u32(row.destinationLayout);
-        u32(row.coefficientFirst);
-        u32(row.coefficientCount);
-    }
-    for (float value : image.busDefinitionCoefficients) {
-        f32(value);
-    }
-    return busfingerprint::Finalize(hash);
-}
-
 // The v2 snapshot parent check accepts any Bus row order and bounds a full
 // 4096-row chain without recursive traversal.
 bool ValidateCanonicalBusParentForestV2(
-    std::span<const PackBusDefinitionBusV2> buses);
+    std::span<const PackBusDefinitionBus> buses);
 
 // Shipping decode of Init / CanonicalContent files (LoadCanonicalPack).
 // The old LoadPackV2 / ParsePackV2Image path refuses those artifacts

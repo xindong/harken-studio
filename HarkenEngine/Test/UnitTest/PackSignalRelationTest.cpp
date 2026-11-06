@@ -132,7 +132,7 @@ struct SignalPackProvider {
 
 std::vector<std::uint8_t> SignalContentPack(std::uint64_t revision, float sendDb) {
     using namespace harkentest::packfoundation;
-    const auto bus = Bus2RuntimeBusFixtureV1();
+    const auto bus = Bus2RuntimeBusFixture();
     SignalRelationV1 relation;
     relation.stableId = harkentest::ObjectId(1000);
     relation.source.stableId = VN_BUS_MASTER;
@@ -150,7 +150,7 @@ std::vector<std::uint8_t> SignalContentPack(std::uint64_t revision, float sendDb
     std::vector<std::uint8_t> body;
     EXPECT_TRUE(EncodeCurrentWorldBodyV20(world, body));
     PackCanonicalPartitionHeader header;
-    header.headerBytes = kCanonicalDefinitionPartitionHeaderV2Bytes;
+    header.headerBytes = kPackCanonicalPartitionHeaderBytes;
     header.bodyVintage = kCurrentWorldBodyVintageV20;
     header.bodyBytes = body.size();
     header.bodyChecksum = Fnv1a64(body.data(), body.size());
@@ -158,16 +158,16 @@ std::vector<std::uint8_t> SignalContentPack(std::uint64_t revision, float sendDb
     header.partitionRevision = revision;
     ApplyCanonicalBusTriple(&header, bus.triple);
     std::vector<std::uint8_t> partition(header.headerBytes + body.size());
-    SerializePackCanonicalPartitionHeaderV2(header, partition.data());
-    header.headerChecksum = Fnv1a64(partition.data(), 80);
-    SerializePackCanonicalPartitionHeaderV2(header, partition.data());
+    SerializePackCanonicalPartitionHeader(header, partition.data());
+    header.headerChecksum = Fnv1a64(partition.data(), kPackCanonicalPartitionHeaderHeaderChecksumOffset);
+    SerializePackCanonicalPartitionHeader(header, partition.data());
     std::copy(body.begin(), body.end(), partition.begin() + header.headerBytes);
     ImageBuilder builder(kPackKindCanonicalContent);
     builder.AddEntry(kPackEntryKindPackRequirementBlock, kResidentPackStableId,
         RequirementPayload(kResidentPackStableId, revision, revision, 0, body.size(), bus.triple));
     builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, kResidentPackStableId, std::move(partition));
     builder.AddEntry(kPackEntryKindPackDependencyEdge, VnObjectId{},
-        DependencyPayload(kInitPackStableId, 1, bus.triple), kPackCanonicalRequirementVintage);
+        DependencyPayload(kInitPackStableId, 1, bus.triple), kPackPackDependencyEdgeVintage);
     return builder.Build();
 }
 

@@ -442,6 +442,12 @@ _harken_add_python_regen_target(
     "Regenerating Native/Unity Variable catalog constants from variable_catalog.json"
 )
 
+_harken_add_python_regen_target(
+    harken_pack_wire_regen
+    "${CMAKE_SOURCE_DIR}/.scripts/pack_wire_codegen.py"
+    "Regenerating the Pack binary layout from the current contract"
+)
+
 # Remote-control channel (Tool/Remote): a static tooling library the
 # host embeds for its remote-serve verb. Never linked into a game; drives
 # the engine only through the public C API.

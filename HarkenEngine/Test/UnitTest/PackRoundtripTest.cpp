@@ -21,6 +21,7 @@
 #include "Common/TestUtil.h"
 
 #include "harken/media/PackFormat.h"
+#include "harken/media/PackFormatV2.h"
 
 #include <cstdint>
 #include <cstdio>
@@ -311,7 +312,7 @@ TEST(PackRoundtrip, PackcOutputIsByteStable) {
     ASSERT_TRUE(ReadFileBytes(outA, &bytesA));
     ASSERT_TRUE(ReadFileBytes(outB, &bytesB));
     ASSERT_GT(bytesA.size(), static_cast<std::size_t>(
-                                 harken::kPackHeaderBytes));
+                                 harken::kPackMediaFileHeaderBytes));
     EXPECT_EQ(bytesA, bytesB) << "identical input must produce "
                                  "byte-identical packs";
 }
@@ -338,15 +339,15 @@ TEST(PackRoundtrip, ExplicitIdentityPreservesFormatFacts) {
     std::vector<std::uint8_t> bytes;
     ASSERT_TRUE(ReadFileBytes(packPath, &bytes));
     ASSERT_GE(bytes.size(),
-              static_cast<std::size_t>(harken::kPackHeaderBytes +
-                                       2 * harken::kPackTocEntryBytes));
-    harken::PackHeader header;
-    ASSERT_TRUE(harken::ParsePackHeader(bytes.data(), &header));
+              static_cast<std::size_t>(harken::kPackMediaFileHeaderBytes +
+                                       2 * harken::kPackMediaBytes));
+    harken::PackMediaFileHeader header;
+    ASSERT_TRUE(harken::ReadPackMediaFileHeader(bytes.data(), &header));
     ASSERT_EQ(2u, header.entryCount);
     const harken::PackTocEntry first =
-        harken::ParsePackTocEntry(bytes.data() + header.tocOffset);
-    const harken::PackTocEntry second = harken::ParsePackTocEntry(
-        bytes.data() + header.tocOffset + harken::kPackTocEntryBytes);
+        harken::ReadPackMedia(bytes.data() + header.tocOffset);
+    const harken::PackTocEntry second = harken::ReadPackMedia(
+        bytes.data() + header.tocOffset + harken::kPackMediaBytes);
     EXPECT_EQ(48000u, first.sampleRate);
     EXPECT_EQ(44100u, second.sampleRate);
     EXPECT_EQ(harkentest::ObjectId(9001), first.soundId);
@@ -376,13 +377,13 @@ TEST(PackRoundtrip, FullUuidSeparatesObjectsWithIdenticalMedia) {
 
     std::vector<std::uint8_t> bytes;
     ASSERT_TRUE(ReadFileBytes(packPath, &bytes));
-    harken::PackHeader header;
-    ASSERT_TRUE(harken::ParsePackHeader(bytes.data(), &header));
+    harken::PackMediaFileHeader header;
+    ASSERT_TRUE(harken::ReadPackMediaFileHeader(bytes.data(), &header));
     ASSERT_EQ(2u, header.entryCount);
     const harken::PackTocEntry mono =
-        harken::ParsePackTocEntry(bytes.data() + header.tocOffset);
-    const harken::PackTocEntry stereo = harken::ParsePackTocEntry(
-        bytes.data() + header.tocOffset + harken::kPackTocEntryBytes);
+        harken::ReadPackMedia(bytes.data() + header.tocOffset);
+    const harken::PackTocEntry stereo = harken::ReadPackMedia(
+        bytes.data() + header.tocOffset + harken::kPackMediaBytes);
     EXPECT_EQ(1u, mono.channelCount);
     EXPECT_EQ(2u, mono.frameCount);
     EXPECT_EQ(2u, stereo.channelCount);

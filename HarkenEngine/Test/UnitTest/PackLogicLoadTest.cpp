@@ -518,13 +518,14 @@ public:
     void AddBus(VnBusId busId, VnBusId parentBusId) {
         Entry entry;
         entry.kind = harken::kPackEntryKindBus;
+        entry.vintage = harken::kPackBusVintage;
         entry.id = busId;
         entry.payload.resize(
-            static_cast<std::size_t>(harken::kPackV2BusPayloadBytes));
+            static_cast<std::size_t>(harken::kPackBusBytes));
         harken::PackBusEntry bus;
         bus.busId = busId;
         bus.parentBusId = parentBusId;
-        harken::SerializePackV2Bus(bus, entry.payload.data());
+        harken::SerializePackBus(bus, entry.payload.data());
         m_entries.push_back(std::move(entry));
     }
 
@@ -532,29 +533,29 @@ public:
                    float outputBusVolume, float makeUpGain) {
         Entry entry;
         entry.kind = harken::kPackEntryKindBus;
-        entry.vintage = harken::kPackV2BusMixSchemaVintage;
+        entry.vintage = harken::kPackBusVintage;
         entry.id = busId;
         entry.payload.resize(
-            static_cast<std::size_t>(harken::kPackV6BusPayloadBytes));
+            static_cast<std::size_t>(harken::kPackBusBytes));
         harken::PackBusEntry bus;
         bus.busId = busId;
         bus.parentBusId = parentBusId;
         bus.volume = volume;
         bus.outputBusVolume = outputBusVolume;
         bus.makeUpGain = makeUpGain;
-        harken::SerializePackV6Bus(bus, entry.payload.data());
+        harken::SerializePackBus(bus, entry.payload.data());
         m_entries.push_back(std::move(entry));
     }
 
     void AddBusSend(VnBusId from, VnBusId to, float levelDb) {
         Entry entry;
         entry.kind = harken::kPackEntryKindBusSend;
-        entry.payload.resize(harken::kPackV2BusSendPayloadBytes);
+        entry.payload.resize(harken::kPackBusSendBytes);
         harken::PackBusSendEntry send;
         send.fromBusId = from;
         send.toBusId = to;
         send.levelDb = levelDb;
-        harken::SerializePackV2BusSend(send, entry.payload.data());
+        harken::SerializePackBusSend(send, entry.payload.data());
         m_entries.push_back(std::move(entry));
     }
 
@@ -562,23 +563,15 @@ public:
         Entry entry;
         entry.kind = harken::kPackEntryKindDiscreteVariable;
         entry.id = variableId;
-        entry.payload.resize(static_cast<std::size_t>(
-            harken::kPackV2DiscreteVariablePayloadBytes));
-        harken::SerializePackV2DiscreteVariable(variableId,
-                                               entry.payload.data());
+        entry.payload = {0};
         m_entries.push_back(std::move(entry));
     }
 
-    void AddMeterWiring(VnBusId busId, VnVariableId variableId) {
+    void AddMeterWiring(VnBusId busId, VnVariableId) {
         Entry entry;
         entry.kind = harken::kPackEntryKindMeterWiring;
         entry.id = busId;
-        entry.payload.resize(static_cast<std::size_t>(
-            harken::kPackV2MeterWiringPayloadBytes));
-        harken::PackMeterWiringEntry wiring{};
-        wiring.busId = busId;
-        wiring.variableId = variableId;
-        harken::SerializePackV2MeterWiring(wiring, entry.payload.data());
+        entry.payload = {0};
         m_entries.push_back(std::move(entry));
     }
 
@@ -598,8 +591,8 @@ public:
         entry.kind = harken::kPackEntryKindBindingDefinition;
         entry.id = bindingId;
         entry.payload.resize(static_cast<std::size_t>(
-            harken::kPackV2BindingDefinitionPayloadBytes));
-        harken::SerializePackV2BindingDefinition(bindingId, desc,
+            harken::kPackBindingDefinitionBytes));
+        harken::WritePackBindingDefinition(bindingId, desc,
                                                  entry.payload.data());
         m_entries.push_back(std::move(entry));
     }
@@ -611,12 +604,12 @@ public:
         entry.kind = harken::kPackEntryKindBindingAttachment;
         entry.relationOrdinal = ordinal;
         entry.payload.resize(static_cast<std::size_t>(
-            harken::kPackV2BindingAttachmentPayloadBytes));
+            harken::kPackBindingAttachmentBytes));
         harken::PackBindingAttachmentEntry attachment;
         attachment.bindingId = bindingId;
         attachment.scopeKind = scopeKind;
         attachment.objectId = harkentest::ObjectId(objectId);
-        harken::SerializePackV2BindingAttachment(attachment,
+        harken::SerializePackBindingAttachment(attachment,
                                                 entry.payload.data());
         m_entries.push_back(std::move(entry));
     }
@@ -626,68 +619,68 @@ public:
                         const float* params, std::uint32_t paramCount) {
         Entry entry;
         entry.kind = harken::kPackEntryKindVoiceRecipe;
-        entry.vintage = harken::kPackV2PlaybackRecipeSchemaVintage;
+        entry.vintage = harken::kPackVoiceRecipeVintage;
         entry.id = playableId;
         entry.payload.resize(static_cast<std::size_t>(
-            harken::PackV5VoiceRecipePayloadBytes(1, 1)));
+            harken::PackVoiceRecipePayloadBytes(1, 1)));
         harken::PackVoiceRecipeEntryHeader header;
         header.playableId = playableId;
         header.installCount = 1;
         header.bindingCount = 1;
-        harken::SerializePackV2VoiceRecipeHeader(header,
+        harken::SerializePackVoiceRecipeHeader(header,
                                                 entry.payload.data());
         harken::PackVoiceRecipeTone tone;
-        harken::SerializePackV3VoiceRecipeTone(
-            tone, entry.payload.data() + harken::kPackV2VoiceRecipeHeaderBytes);
+        harken::SerializePackVoiceRecipeTone(
+            tone, entry.payload.data() + harken::kPackVoiceRecipeHeaderBytes);
         harken::PackVoiceRecipeSpatial spatial;
         spatial.distanceScale = 0.0f;
-        harken::SerializePackV4VoiceRecipeSpatial(
+        harken::SerializePackVoiceRecipeSpatial(
             spatial,
-            entry.payload.data() + harken::kPackV2VoiceRecipeHeaderBytes +
-                harken::kPackV3VoiceRecipeToneBytes);
+            entry.payload.data() + harken::kPackVoiceRecipeHeaderBytes +
+                harken::kPackVoiceRecipeToneBytes);
         harken::PackVoiceRecipePlayback playback;
-        harken::SerializePackV5VoiceRecipePlayback(
+        harken::SerializePackVoiceRecipePlayback(
             playback,
-            entry.payload.data() + harken::kPackV2VoiceRecipeHeaderBytes +
-                harken::kPackV3VoiceRecipeToneBytes +
-                harken::kPackV4VoiceRecipeSpatialBytes);
+            entry.payload.data() + harken::kPackVoiceRecipeHeaderBytes +
+                harken::kPackVoiceRecipeToneBytes +
+                harken::kPackVoiceRecipeSpatialBytes);
         std::uint8_t* installBase =
-            entry.payload.data() + harken::kPackV2VoiceRecipeHeaderBytes +
-            harken::kPackV3VoiceRecipeToneBytes +
-            harken::kPackV4VoiceRecipeSpatialBytes +
-            harken::kPackV5VoiceRecipePlaybackBytes;
+            entry.payload.data() + harken::kPackVoiceRecipeHeaderBytes +
+            harken::kPackVoiceRecipeToneBytes +
+            harken::kPackVoiceRecipeSpatialBytes +
+            harken::kPackVoiceRecipePlaybackBytes;
         harken::PackVoiceRecipeInstall install;
         install.slot = slot;
         install.effectType = effectType;
         install.descriptorVintage =
-            harken::kPackV2EffectDescriptorVintage;
+            harken::kPackEffectDescriptorVintage;
         install.bypass = 0;
         install.paramCount = paramCount;
         for (std::uint32_t i = 0; i < paramCount; ++i) {
             install.params[i] = params[i];
         }
-        harken::SerializePackV2VoiceRecipeInstall(install, installBase);
-        harken::SerializePackV2VoiceRecipeBinding(
-            bindingId, installBase + harken::kPackV2VoiceRecipeInstallBytes);
+        harken::WritePackVoiceRecipeInstall(install, installBase);
+        harken::SerializePackVoiceRecipeBinding(
+            bindingId, installBase + harken::kPackVoiceRecipeInstallBytes);
         m_entries.push_back(std::move(entry));
     }
 
     std::vector<std::uint8_t> Build() {
-        const std::uint64_t dirOffset = harken::kPackV2HeaderBytes;
+        const std::uint64_t dirOffset = harken::kPackFileHeaderBytes;
         const std::uint64_t dirBytes =
             static_cast<std::uint64_t>(m_entries.size()) *
-            harken::kPackV2DirectoryEntryBytes;
+            harken::kPackDirectoryEntryBytes;
         const std::uint64_t dirEnd = dirOffset + dirBytes;
 
         m_payloadOffsets.assign(m_entries.size(), 0);
         std::vector<std::uint64_t> blobOffsets(m_entries.size(), 0);
 
-        std::uint64_t cursor = AlignUp(dirEnd, harken::kPackV2PayloadAlign);
+        std::uint64_t cursor = AlignUp(dirEnd, harken::kPackPayloadAlign);
         std::uint64_t contentEnd = dirEnd;
         for (std::size_t i = 0; i < m_entries.size(); ++i) {
             m_payloadOffsets[i] = cursor;
             contentEnd = cursor + PayloadSize(m_entries[i]);
-            cursor = AlignUp(contentEnd, harken::kPackV2PayloadAlign);
+            cursor = AlignUp(contentEnd, harken::kPackPayloadAlign);
         }
         std::uint64_t blobCursor = AlignUp(contentEnd, harken::kPackBlobAlign);
         for (std::size_t i = 0; i < m_entries.size(); ++i) {
@@ -725,7 +718,7 @@ public:
                 toc.flags = 0;
                 toc.loopStartFrame = 0;
                 toc.loopEndFrame = 0;
-                harken::SerializePackTocEntry(toc, payload);
+                harken::SerializePackMedia(toc, payload);
             } else {
                 std::memcpy(payload, entry.payload.data(),
                             entry.payload.size());
@@ -733,9 +726,9 @@ public:
         }
         for (std::size_t i = 0; i < m_entries.size(); ++i) {
             const Entry& entry = m_entries[i];
-            harken::PackV2DirectoryEntry record;
+            harken::PackDirectoryEntry record;
             record.kind = entry.kind;
-            record.vintage = entry.vintage;
+            record.vintage = entry.vintage != 0 ? entry.vintage : harken::PackEntryVintage(entry.kind);
             record.id = entry.id;
             record.relationOrdinal = entry.relationOrdinal;
             record.offset = m_payloadOffsets[i];
@@ -743,13 +736,13 @@ public:
             record.payloadChecksum = harken::Fnv1a64(
                 bytes.data() + static_cast<std::size_t>(m_payloadOffsets[i]),
                 static_cast<std::size_t>(record.size));
-            harken::SerializePackV2DirectoryEntry(
+            harken::SerializePackDirectoryEntry(
                 record, bytes.data() + static_cast<std::size_t>(dirOffset) +
-                            i * harken::kPackV2DirectoryEntryBytes);
+                            i * harken::kPackDirectoryEntryBytes);
         }
-        harken::PackV2Header header;
-        header.formatVersion = harken::kPackFormatVersion2;
-        header.headerBytes = harken::kPackV2HeaderBytes;
+        harken::PackFileHeader header;
+        header.formatVersion = harken::kPackFormatVersion;
+        header.headerBytes = harken::kPackFileHeaderBytes;
         header.fileBytes = fileBytes;
         header.packKind = m_packKind;
         header.entryCount = static_cast<std::uint32_t>(m_entries.size());
@@ -757,7 +750,7 @@ public:
         header.directoryChecksum = harken::Fnv1a64(
             bytes.data() + static_cast<std::size_t>(dirOffset),
             static_cast<std::size_t>(dirBytes));
-        harken::SerializePackV2Header(header, bytes.data());
+        harken::SerializePackFileHeader(header, bytes.data());
         return bytes;
     }
 
@@ -768,7 +761,7 @@ public:
 private:
     struct Entry {
         std::uint32_t kind = 0;
-        std::uint32_t vintage = harken::kPackV2SchemaVintage;
+        std::uint32_t vintage = 0;
         VnObjectId id{};
         std::uint64_t relationOrdinal = 0;
         std::vector<std::uint8_t> payload;
@@ -781,7 +774,7 @@ private:
         return (value + align - 1) / align * align;
     }
     static std::uint64_t PayloadSize(const Entry& entry) {
-        return entry.isMedia ? harken::kPackV2MediaPayloadBytes
+        return entry.isMedia ? harken::kPackMediaBytes
                              : entry.payload.size();
     }
     static std::uint64_t BlobBytes(const Entry& entry) {
@@ -970,23 +963,26 @@ void ExpectMixedResidentStateUnchanged(
 
 // --- load: resident happy path ---
 
-TEST(PackLogicLoad, CurrentAndHistoricalContainerVersionsReachLogicLoader) {
+TEST(PackLogicLoad, OnlyCurrentContainerVersionReachesLogicLoader) {
     EngineSession session(PackLogicConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const auto sound = harkentest::ObjectId(71);
     const auto path = TempPath("pll_container_versions.pack");
-    std::vector<std::uint32_t> versions{harken::kPackFormatVersion};
-    if (harken::kPackFormatVersion3 < harken::kPackFormatVersion) {
-        versions.push_back(harken::kPackFormatVersion3);
-    }
-    for (const auto version : versions) {
+    for (const auto version : {3u, harken::kPackFormatVersion}) {
         V2Builder builder(harken::kPackKindContent);
         builder.AddMedia(sound, harkentest::MakeDC(16, 0.25f));
         auto bytes = builder.Build();
         harken::StoreLE32(bytes.data() + 4, version);
         WriteFileBytes(path, bytes);
         VnPackHandle pack = 0;
-        ASSERT_EQ(VN_OK, LoadPack(path, &pack)) << version;
+        if (version != harken::kPackFormatVersion) {
+            EXPECT_EQ(VN_BAD_PACK, LoadPack(path, &pack));
+            EXPECT_EQ(0u, pack);
+            EXPECT_EQ(0u, session.Engine()->packs.LoadedCount());
+            EXPECT_FALSE(session.Engine()->registry.Lookup(sound).Valid());
+            continue;
+        }
+        ASSERT_EQ(VN_OK, LoadPack(path, &pack));
         EXPECT_TRUE(session.Engine()->registry.Lookup(sound).Valid());
         EXPECT_NE(nullptr, session.Engine()->logicPacks.RecordFor(pack));
         ASSERT_EQ(VN_OK, Vn_UnloadPack(pack));
@@ -2200,7 +2196,6 @@ TEST(PackLogicLoad, InvalidVoiceEffectRecipeLocatorsRefuseWithoutResidue) {
 }
 
 
-
 TEST(PackLogicLoad, BindingTransitionRangeRefusesBeforeEngineStateChanges) {
     EngineSession session(PackLogicConfig(4, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -2960,7 +2955,7 @@ TEST(PackLogicLoad, CorruptedPackLeavesEngineUntouched) {
     // One flipped directory byte: the directory checksum refuses.
     {
         std::vector<std::uint8_t> bytes = intact;
-        bytes[harken::kPackV2HeaderBytes + 16] ^= 0x01;
+        bytes[harken::kPackFileHeaderBytes + 16] ^= 0x01;
         const std::string path = TempPath("pll_corrupt_directory.pack");
         WriteFileBytes(path, bytes);
         VnPackHandle pack = 0;
@@ -4138,7 +4133,6 @@ TEST(PackLogicAggregateCapacity, AttenuationSumPreparesWholeLoadBeyond64) {
     EXPECT_NE(nullptr, engine->spatial.FindProfile(harkentest::ObjectId(9101)));
     EXPECT_NE(nullptr, engine->spatial.FindProfile(harkentest::ObjectId(9102)));
 }
-
 
 
 TEST(PackLogicAggregateCapacity, SendSlotBudgetSumRefusesWholeLoad) {
@@ -5696,7 +5690,6 @@ TEST(PackLogicUnload, IdenticalReattachAfterDetachStaysCallerOwned) {
     EXPECT_FALSE(engine->registry.Lookup(harkentest::ObjectId(1071)).Valid());
     EXPECT_EQ(VN_UNKNOWN_ID, Vn_AttachBinding(harkentest::ObjectId(1073), &triple));
 }
-
 
 
 // --- replace: staged revision, activation at the update tick ---

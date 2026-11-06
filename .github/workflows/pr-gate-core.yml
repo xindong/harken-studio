@@ -10,6 +10,8 @@ on:
   pull_request:
     paths:
       - 'HarkenEngine/**'
+      - 'HarkenSchema/Pack/**'
+      - '.scripts/**'
       - 'cmake/**'
       - 'CMakeLists.txt'
       - 'CMakePresets.json'

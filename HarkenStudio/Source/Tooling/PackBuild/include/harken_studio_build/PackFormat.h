@@ -7,12 +7,8 @@
 #include <cstring>
 
 namespace harkenstudiobuild {
-inline constexpr std::uint8_t kPackMagic[4] = {'V', 'S', 'P', 'K'};
 
 inline constexpr std::uint32_t kPackFormatVersion = HARKEN_PACK_SCHEMA_VERSION;
-inline constexpr std::uint32_t kPackHeaderBytes = 36;
-inline constexpr std::uint32_t kPackTocEntryBytes = 76;
-inline constexpr std::uint64_t kPackBlobAlign = 64;
 inline constexpr std::uint16_t kPackSampleFormatF32Planar = 0;
 inline constexpr std::uint32_t kPackFlagLoopable = 1u << 0;
 inline constexpr std::uint32_t kPackKnownFlagsMask =
@@ -78,15 +74,6 @@ inline harkenstudio::ObjectId LoadObjectId(const std::uint8_t* in) {
     return ObjectIdFromBytes(std::span<const std::uint8_t, 16>(in, 16));
 }
 
-struct PackHeader {
-    std::uint32_t formatVersion = 0;
-    std::uint32_t headerBytes = 0;
-    std::uint64_t fileBytes = 0;
-    std::uint32_t entryCount = 0;
-    std::uint32_t tocOffset = 0;
-    std::uint64_t tocChecksum = 0;
-};
-
 struct PackTocEntry {
     harkenstudio::ObjectId soundId{};
     std::uint32_t sampleRate = 0;
@@ -100,62 +87,6 @@ struct PackTocEntry {
     std::uint64_t loopStartFrame = 0;
     std::uint64_t loopEndFrame = 0; // 0 = whole file when loopable
 };
-inline void SerializePackHeader(const PackHeader& h,
-                                     std::uint8_t* out) {
-    out[0] = kPackMagic[0];
-    out[1] = kPackMagic[1];
-    out[2] = kPackMagic[2];
-    out[3] = kPackMagic[3];
-    StoreLE32(out + 4, h.formatVersion);
-    StoreLE32(out + 8, h.headerBytes);
-    StoreLE64(out + 12, h.fileBytes);
-    StoreLE32(out + 20, h.entryCount);
-    StoreLE32(out + 24, h.tocOffset);
-    StoreLE64(out + 28, h.tocChecksum);
-}
-inline bool ParsePackHeader(const std::uint8_t* in,
-                                 PackHeader* out) {
-    if (in[0] != kPackMagic[0] || in[1] != kPackMagic[1] ||
-        in[2] != kPackMagic[2] || in[3] != kPackMagic[3]) {
-        return false;
-    }
-    out->formatVersion = LoadLE32(in + 4);
-    out->headerBytes = LoadLE32(in + 8);
-    out->fileBytes = LoadLE64(in + 12);
-    out->entryCount = LoadLE32(in + 20);
-    out->tocOffset = LoadLE32(in + 24);
-    out->tocChecksum = LoadLE64(in + 28);
-    return true;
-}
-inline void SerializePackTocEntry(const PackTocEntry& e,
-                                       std::uint8_t* out) {
-    StoreObjectId(out + 0, e.soundId);
-    StoreLE32(out + 16, e.sampleRate);
-    StoreLE16(out + 20, e.channelCount);
-    StoreLE16(out + 22, e.sampleFormat);
-    StoreLE64(out + 24, e.frameCount);
-    StoreLE64(out + 32, e.blobOffset);
-    StoreLE64(out + 40, e.blobBytes);
-    StoreLE64(out + 48, e.blobChecksum);
-    StoreLE32(out + 56, e.flags);
-    StoreLE64(out + 60, e.loopStartFrame);
-    StoreLE64(out + 68, e.loopEndFrame);
-}
-inline PackTocEntry ParsePackTocEntry(const std::uint8_t* in) {
-    PackTocEntry e;
-    e.soundId = LoadObjectId(in + 0);
-    e.sampleRate = LoadLE32(in + 16);
-    e.channelCount = LoadLE16(in + 20);
-    e.sampleFormat = LoadLE16(in + 22);
-    e.frameCount = LoadLE64(in + 24);
-    e.blobOffset = LoadLE64(in + 32);
-    e.blobBytes = LoadLE64(in + 40);
-    e.blobChecksum = LoadLE64(in + 48);
-    e.flags = LoadLE32(in + 56);
-    e.loopStartFrame = LoadLE64(in + 60);
-    e.loopEndFrame = LoadLE64(in + 68);
-    return e;
-}
 
 } // namespace harkenstudiobuild
 

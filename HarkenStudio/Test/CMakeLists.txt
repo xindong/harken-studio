@@ -432,3 +432,7 @@ add_test(NAME studio_playable_properties_generated_check
     COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_SOURCE_DIR}/HarkenStudio/Source/Tooling/PlayableProperties/properties/gen_playable_properties.py
         --check)
+add_test(NAME studio_pack_wire_generated_check
+    COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_SOURCE_DIR}/.scripts/pack_wire_codegen.py
+        --check)

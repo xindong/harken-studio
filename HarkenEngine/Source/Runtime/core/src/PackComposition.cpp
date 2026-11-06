@@ -1132,13 +1132,6 @@ const PackComposition::PublishedOwner* FindActiveOwnerByPack(
     return nullptr;
 }
 
-bool CatalogKnowsIdentity(const PackComposition::PublishedView& published,
-                          VnObjectId stableId) noexcept {
-    return published.hasCatalog &&
-           LookupInitCatalogIdentity(published.catalog, stableId) ==
-               PackCatalogIdentityState::KnownUnloaded;
-}
-
 VnResult BuildDeclaredClosure(
     const PackComposition::PublishedView& published, std::uint32_t rootSlot,
     std::size_t maxPacks, std::vector<std::uint8_t>* member, detail::PackDecodeCharge& memberCharge) {
@@ -1195,8 +1188,7 @@ VnResult ResolveInDeclaredClosure(
     const PackComposition::IdentityIndexEntry* hit =
         FindIdentityInClosure(published, member, stableId);
     if (hit == nullptr) {
-        return CatalogKnowsIdentity(published, stableId) ? VN_CONTENT_NOT_LOADED
-                                                         : VN_BAD_PACK;
+        return VN_BAD_PACK;
     }
     if (hit->packSlot >= member.size() || member[hit->packSlot] == 0 ||
         hit->packSlot >= published.owners.size() ||
@@ -1911,9 +1903,9 @@ WorldInstallStatus EncodeIdentityDefinition(const PackComposition::PublishedOwne
                 continue;
             }
             const std::size_t offset = bytes.size();
-            for (std::size_t i = 0; i < kPackV2BindingDefinitionPayloadBytes; ++i)
+            for (std::size_t i = 0; i < kPackBindingDefinitionBytes; ++i)
                 detail::DecodeAppend(bytes, std::uint8_t{0}, staging, requestedSlots);
-            SerializePackV2BindingDefinition(binding.bindingId, binding.descriptor,
+            WritePackBindingDefinition(binding.bindingId, binding.descriptor,
                                               bytes.data() + offset);
         }
     }
@@ -2881,8 +2873,6 @@ void ChargeOverlays(detail::PackDecodeCharge& charge,
 template<class Owner>
 void ChargeOwnerCopies(detail::PackDecodeCharge& charge, const Owner& source) {
     charge.AddRows<PackDependencyEdge>(source.dependencyEdges.size());
-    ChargeGameplay(charge, source.gameplayCatalog);
-    ChargeVariableNames(charge, source.variableNameCatalog);
     ChargeOverlays(charge, source.variablePolicyOverlays);
     charge.AddRows<PackCanonicalImage::VariableRequirement>(source.variableRequirements.size());
     charge.AddRows<VnBindingId>(source.bindingManifest.definitionIds.size());
@@ -2912,10 +2902,6 @@ PackComposition::CandidateOwner PackComposition::Keep(const PublishedOwner& exis
         keep.definitionBytes = existing.definitionBytes;
         keep.hasPartition = existing.body != nullptr;
         keep.dependencyEdges = existing.dependencyEdges;
-        keep.hasGameplayCatalog = existing.hasGameplayCatalog;
-        keep.gameplayCatalog = existing.gameplayCatalog;
-        keep.hasVariableNameCatalog = existing.hasVariableNameCatalog;
-        keep.variableNameCatalog = existing.variableNameCatalog;
         keep.variablePolicyOverlays = existing.variablePolicyOverlays;
         keep.hasVariablePolicyOverlay = existing.hasVariablePolicyOverlay;
         keep.variableRequirements = existing.variableRequirements;
@@ -2948,10 +2934,8 @@ VnResult PackComposition::PrepareCandidate(const PackCanonicalImage& image,
     const auto dependencyCount = std::count_if(image.dependencyEdges.begin(), image.dependencyEdges.end(),
         [](const auto& edge) { return edge.required01 != 0; });
     staging.AddRows<PackDependencyEdge>(static_cast<std::size_t>(dependencyCount));
-    ChargeVariableNames(staging, image.variableNameCatalog);
     ChargeOverlays(staging, image.variablePolicyOverlays);
     staging.AddRows<PackCanonicalImage::VariableRequirement>(image.variableRequirements.size());
-    if (image.packKind == kPackKindInit && image.hasGameplayCatalog) ChargeGameplay(staging, image.gameplayCatalog);
     candidate.packStableId = image.packStableId;
     candidate.handle = handle;
     candidate.contentRevision = image.requirement.packContentRevision;
@@ -3071,18 +3055,12 @@ VnResult PackComposition::PrepareCandidate(const PackCanonicalImage& image,
         candidate.voiceBindings->size() * sizeof(PackVoiceBinding);
     candidate.variablePolicyOverlays = image.variablePolicyOverlays;
     candidate.hasVariablePolicyOverlay = image.hasVariablePolicyOverlay;
-    candidate.hasVariableNameCatalog = image.hasVariableNameCatalog;
-    candidate.variableNameCatalog = image.variableNameCatalog;
     candidate.variableRequirements = image.variableRequirements;
     candidate.hasVariableRequirements = image.hasVariableRequirements;
     for (const PackDependencyEdge& edge : image.dependencyEdges) {
         if (edge.required01 != 0) {
             candidate.dependencyEdges.push_back(edge);
         }
-    }
-    if (image.packKind == kPackKindInit && image.hasGameplayCatalog) {
-        candidate.hasGameplayCatalog = true;
-        candidate.gameplayCatalog = image.gameplayCatalog;
     }
     candidate.hasBusDefinitionSnapshot = image.hasBusDefinitionSnapshot;
     candidate.busDefinitionSnapshotHeader = image.busDefinitionSnapshotHeader;
@@ -3195,13 +3173,13 @@ VnResult PackComposition::BuildIndex(PublishedView& view,
         if (left.first->bindingId != right.first->bindingId) continue;
         leftDefinition.clear();
         rightDefinition.clear();
-        for (std::size_t byte = 0; byte < kPackV2BindingDefinitionPayloadBytes; ++byte) {
+        for (std::size_t byte = 0; byte < kPackBindingDefinitionBytes; ++byte) {
             detail::DecodeAppend(leftDefinition, std::uint8_t{0}, comparisonStaging, leftSlots);
             detail::DecodeAppend(rightDefinition, std::uint8_t{0}, comparisonStaging, rightSlots);
         }
-        SerializePackV2BindingDefinition(left.first->bindingId, left.first->descriptor,
+        WritePackBindingDefinition(left.first->bindingId, left.first->descriptor,
                                          leftDefinition.data());
-        SerializePackV2BindingDefinition(right.first->bindingId, right.first->descriptor,
+        WritePackBindingDefinition(right.first->bindingId, right.first->descriptor,
                                          rightDefinition.data());
         if (leftDefinition != rightDefinition) {
             facts->conflictingStableId = right.first->bindingId;
@@ -3320,10 +3298,6 @@ VnResult PackComposition::PrepareCommit(
         owner.providerClosureFingerprint = ProviderClosureFingerprint(owner, budget);
         owner.voiceBindings = std::move(candidate.voiceBindings);
         owner.definitionBytes = candidate.definitionBytes;
-        owner.hasGameplayCatalog = candidate.hasGameplayCatalog;
-        owner.gameplayCatalog = std::move(candidate.gameplayCatalog);
-        owner.hasVariableNameCatalog = candidate.hasVariableNameCatalog;
-        owner.variableNameCatalog = std::move(candidate.variableNameCatalog);
         if (candidate.body != nullptr) {
             if (candidate.body->ProductionView() == nullptr) {
                 return VN_BAD_PACK;
@@ -3363,25 +3337,16 @@ VnResult PackComposition::PrepareCommit(
         next->ledger = *ledger;
     }
     if (clearInit) {
-        next->hasCatalog = false;
         next->catalog = {};
         next->initPackStableId = 0;
         next->initHandle = 0;
         next->attenuationBindings = {};
-        prepared.facts_.catalogCount = 0;
-        prepared.facts_.catalogBytes = 0;
     } else if (catalogOrNull != nullptr) {
         next->catalog = CopyCanonicalImageWithBudget(*catalogOrNull, budget);
-        next->hasCatalog = catalogOrNull->hasCatalog;
         next->initPackStableId = catalogOrNull->packStableId;
         next->initHandle = initHandle;
-        prepared.facts_.catalogCount =
-            catalogOrNull->catalogHeader.catalogEntryCount;
-        prepared.facts_.catalogBytes =
-            catalogOrNull->catalogHeader.catalogBytes;
     } else if (published_ != nullptr) {
         next->catalog = CopyCanonicalImageWithBudget(published_->catalog, budget);
-        next->hasCatalog = published_->hasCatalog;
         next->initPackStableId = published_->initPackStableId;
         next->initHandle = published_->initHandle;
     }
@@ -3396,35 +3361,10 @@ VnResult PackComposition::PrepareCommit(
     } else if (!clearInit && published_ != nullptr && published_->hasGameplayCatalog &&
                published_->initHandle == next->initHandle &&
                next->catalog.packStableId == published_->gameplayCatalog.header.initPackStableId &&
-               next->catalog.requirement.packContentRevision == published_->gameplayCatalog.header.initContentRevision &&
-               (catalogOrNull == nullptr || !catalogOrNull->hasGameplayCatalog ||
-                (published_->catalog.hasGameplayCatalog && catalogOrNull->gameplayCatalog.header.digest ==
-                    published_->catalog.gameplayCatalog.header.digest))) {
+               next->catalog.requirement.packContentRevision == published_->gameplayCatalog.header.initContentRevision) {
         next->hasGameplayCatalog = true;
         ChargeGameplay(next->staging, published_->gameplayCatalog);
         next->gameplayCatalog = published_->gameplayCatalog;
-    }
-    for (const PublishedOwner& owner : next->owners) {
-        if (clearInit || next->hasGameplayCatalog || !owner.hasGameplayCatalog) {
-            continue;
-        }
-        if (next->initHandle != 0 && owner.handle != next->initHandle) {
-            continue;
-        }
-        if (next->initPackStableId != 0 &&
-            owner.packStableId != next->initPackStableId) {
-            continue;
-        }
-        next->hasGameplayCatalog = true;
-        ChargeGameplay(next->staging, owner.gameplayCatalog);
-        next->gameplayCatalog = owner.gameplayCatalog;
-        if (next->initPackStableId == 0) {
-            next->initPackStableId = owner.packStableId;
-        }
-        if (!clearInit && next->initHandle == 0) {
-            next->initHandle = owner.handle;
-        }
-        break;
     }
     for (const PublishedOwner& owner : next->owners) {
         if (owner.body == nullptr) continue;
@@ -3493,28 +3433,6 @@ VnResult PackComposition::PrepareCommit(
     if (next->hasGameplayCatalog &&
         next->projectId != ObjectIdFromBytes(next->gameplayCatalog.header.projectGuid)) {
         return VN_BAD_PACK;
-    }
-    for (const auto& owner : next->owners) {
-        if (next->companionNames) break;
-        if (!owner.hasVariableNameCatalog) continue;
-        if (clearInit || owner.readiness != PackOwnerReadiness::Active) continue;
-        if (next->initHandle != 0 && owner.handle != next->initHandle) continue;
-        if (next->hasVariableNameCatalog ||
-            ObjectIdFromBytes(owner.variableNameCatalog.projectGuid) != next->projectId ||
-            (next->initPackStableId != 0 && owner.packStableId != next->initPackStableId))
-            return VN_BAD_PACK;
-        detail::PackDecodeCharge definitionsScratch(budget);
-        definitionsScratch.AddRows<VnObjectId>(owner.view.variableCount);
-        std::set<VnObjectId> definitions;
-        for (std::uint32_t i = 0; i < owner.view.variableCount; ++i)
-            definitions.insert(owner.view.variables[i].variableId);
-        for (const auto& row : owner.variableNameCatalog.rows) {
-            if (definitions.erase(row.variableId) != 1) return VN_BAD_PACK;
-        }
-        if (!definitions.empty()) return VN_BAD_PACK;
-        next->hasVariableNameCatalog = true;
-        ChargeVariableNames(next->staging, owner.variableNameCatalog);
-        next->variableNameCatalog = owner.variableNameCatalog;
     }
     if (next->hasGameplayCatalog) {
         const auto init = std::find_if(next->owners.begin(), next->owners.end(),
@@ -4093,15 +4011,6 @@ VnResult PackComposition::PrepareLookup(
                         &owner.view.playableProperties[hit->localRow];
                 }
                 return VN_OK;
-            }
-        }
-        if (published_->hasCatalog) {
-            const PackInitCatalogRow* row = nullptr;
-            if (LookupInitCatalogIdentity(published_->catalog, stableId, &row) ==
-                PackCatalogIdentityState::KnownUnloaded) {
-                out->readiness = PackIdentityReadiness::KnownUnloaded;
-                out->result = VN_CONTENT_NOT_LOADED;
-                return out->result;
             }
         }
     }
