@@ -5617,7 +5617,7 @@ TEST(PackCompositionContract, ProviderSpanReleasedAfterAllocationException) {
     const bool faultConsumed = allocation_probe::failAt == 0;
     allocation_probe::failAt = 0;
     EXPECT_TRUE(faultConsumed);
-    EXPECT_EQ(VN_DEVICE_ERROR, failed);
+    EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY, failed);
     EXPECT_EQ(1u, provider.released);
     EXPECT_EQ(0u, handle);
     EXPECT_EQ(nullptr, session.Engine()->packComposition.Published());
@@ -6031,6 +6031,50 @@ TEST(PackComposition, IdenticalContainerDefinitionsHaveIndependentProviders) {
     owners.push_back(PackComposition::Keep(composition.Published()->owners[1]));
     EXPECT_EQ(VN_OK, composition.Commit(std::move(owners), nullptr, 0, 8, 0));
     EXPECT_NE(nullptr, composition.FindContainer(kContainerId));
+}
+
+TEST(PackComposition, ComparisonBudgetRefusalPreservesPublicationAndRetries) {
+    constexpr VnObjectId id = harkentest::ObjectId(8101);
+    const auto bytesA = BuildCanonicalPartitionPack(22, 1, 7, LegalContainerPartitionPayload(22, 7, id));
+    const auto bytesB = BuildCanonicalPartitionPack(33, 1, 9, LegalContainerPartitionPayload(33, 9, id));
+    PackCanonicalImage imageA, imageB;
+    ASSERT_EQ(VN_OK, ParsePackCanonicalImage(bytesA.data(), bytesA.size(), &imageA));
+    ASSERT_EQ(VN_OK, ParsePackCanonicalImage(bytesB.data(), bytesB.size(), &imageB));
+    PackComposition composition(2);
+    PackComposition::CandidateOwner a, b;
+    ASSERT_EQ(VN_OK, composition.PrepareCandidate(imageA, VnPackHandle{1} << 32, &a));
+    ASSERT_EQ(VN_OK, composition.PrepareCandidate(imageB, VnPackHandle{2} << 32, &b));
+    std::vector<PackComposition::CandidateOwner> owners;
+    owners.push_back(std::move(a)); owners.push_back(std::move(b));
+    ASSERT_EQ(VN_OK, composition.Commit(std::move(owners), nullptr, 0, 8, 0));
+    const auto prior = composition.PublishedHandle();
+    const auto generation = composition.CompositeGeneration();
+    auto budget = detail::MakePackDecodeBudget(UINT64_MAX);
+    const auto keep = [&] {
+        std::vector<PackComposition::CandidateOwner> result;
+        for (const auto& owner : prior->owners) result.push_back(PackComposition::Keep(owner, budget));
+        return result;
+    };
+    owners = keep();
+    // Published rows fit, but the first comparison byte does not.
+    budget->limit = budget->live + sizeof(PackComposition::PublishedView) +
+        2 * sizeof(PackComposition::PublishedOwner);
+    PackComposition::PreparedCommit prepared;
+    EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY, composition.PrepareCommit(std::move(owners),
+        nullptr, 0, 8, 0, &prepared, nullptr, nullptr, false, nullptr, budget));
+    EXPECT_EQ(prior.get(), composition.Published());
+    EXPECT_EQ(generation, composition.CompositeGeneration());
+    EXPECT_EQ(VnObjectId{}, composition.Facts().conflictingStableId);
+    EXPECT_EQ(0u, budget->live);
+    budget->limit = 1024 * 1024;
+    ASSERT_EQ(VN_OK, composition.PrepareCommit(keep(), nullptr, 0, 8, 0, &prepared,
+        nullptr, nullptr, false, nullptr, budget));
+    EXPECT_GT(budget->live, 0u);
+    composition.CommitPrepared(&prepared);
+    EXPECT_EQ(0u, budget->live);
+    EXPECT_EQ(generation + 1, composition.CompositeGeneration());
+    EXPECT_EQ(1u, composition.Facts().loadedCount);
+    EXPECT_NE(nullptr, composition.FindContainer(id));
 }
 
 TEST(PackComposition, ProvisionalActionMediaSharesStorageAndSurvivesEitherUnloadOrder) {

@@ -118727,13 +118727,14 @@ VnResult CheckContentAgainstGameplayCatalog(
     if (!published.hasGameplayCatalog) {
         return VN_OK;
     }
+    detail::PackDecodeCharge scratch(image.staging.Budget());
     std::vector<VnObjectId> actionIds;
     if (image.hasPartition) {
         CurrentWorldBodyImage body;
-        const CurrentWorldBodyDecodeResult decoded = body.DecodeWithResult(
+        const CurrentWorldBodyDecodeResult decoded = body.DecodeWithBudget(
             image.partitionBody.data(), image.partitionBody.size(),
             image.partitionHeader.bodyVintage,
-            CurrentWorldDecodeMode::StrictArtifact);
+            CurrentWorldDecodeMode::StrictArtifact, image.staging.Budget());
         if (decoded != CurrentWorldBodyDecodeResult::Ok ||
             body.ProductionView() == nullptr) {
             return decoded == CurrentWorldBodyDecodeResult::Capacity
@@ -118741,7 +118742,7 @@ VnResult CheckContentAgainstGameplayCatalog(
                        : VN_BAD_PACK;
         }
         const ContainerWorldInstallViewV1& view = *body.ProductionView();
-        actionIds.reserve(view.actionCount);
+        detail::DecodeReserve(actionIds, view.actionCount, scratch);
         for (std::uint32_t i = 0; i < view.actionCount; ++i) {
             actionIds.push_back(view.actions[i].actionStableId);
         }
@@ -118778,8 +118779,8 @@ void ReportCanonicalMediaConflict(Engine& engine, const PackCanonicalImage& cand
     VnObjectId candidateProject{};
     if (candidate.hasPartition) {
         CurrentWorldBodyImage body;
-        if (body.DecodeWithResult(candidate.partitionBody.data(), candidate.partitionBody.size(),
-                candidate.partitionHeader.bodyVintage, CurrentWorldDecodeMode::StrictArtifact) ==
+        if (body.DecodeWithBudget(candidate.partitionBody.data(), candidate.partitionBody.size(),
+                candidate.partitionHeader.bodyVintage, CurrentWorldDecodeMode::StrictArtifact, candidate.staging.Budget()) ==
                 CurrentWorldBodyDecodeResult::Ok && body.ProductionView() != nullptr)
             candidateProject = body.ProductionView()->identity.projectId;
     }
@@ -118803,14 +118804,20 @@ VnResult PrepareCanonicalOwners(
     PreparedCanonicalPublication* out,
     const PackAttenuationBindingMapV1* attenuationBindings = nullptr,
     const PackComposition::CanonicalPackSetLedgerV1* ledger = nullptr,
-    const GameplayCatalogImage* gameplayCatalog = nullptr) {
+    const GameplayCatalogImage* gameplayCatalog = nullptr,
+    detail::PackDecodeBudget budget = {}) {
     if (out == nullptr) {
         return VN_INVALID_ARG;
+    }
+    if (!budget && catalog != nullptr) budget = catalog->staging.Budget();
+    if (!budget) for (const auto& owner : owners) {
+        if (owner.staging.Budget()) { budget = owner.staging.Budget(); break; }
     }
     *out = PreparedCanonicalPublication{};
     PreparedCanonicalPublication prepared;
     VnResult prepare = VN_OK;
     try {
+        if (!budget) budget = detail::MakePackDecodeBudget(engine.config.maxPackDecodeStagingBytes);
         prepare = [&]() -> VnResult {
         if (PackFault(PackStagingFault::CompositeReserve) ||
             PackFault(PackStagingFault::CompositionPublish)) {
@@ -118829,10 +118836,10 @@ VnResult PrepareCanonicalOwners(
         const VnResult composed = engine.packComposition.PrepareCommit(
             std::move(owners), catalog, initHandle, engine.config.maxActions,
             engine.serviceFrameClock, &prepared.composition, attenuationBindings, ledger,
-            reason == PackVariablePublicationReason::InitUnload, gameplayCatalog);
+            reason == PackVariablePublicationReason::InitUnload, gameplayCatalog, budget);
         if (composed != VN_OK) {
             const auto& facts = engine.packComposition.Facts();
-            if (facts.conflictingStableId != VnObjectId{}) {
+            if (composed != VN_PACK_RESIDENT_CAPACITY && facts.conflictingStableId != VnObjectId{}) {
                 ReportCanonicalConflict(engine, facts.conflictingStableId, facts.conflictingPackA, facts.conflictingProjectId);
                 ReportCanonicalConflict(engine, facts.conflictingStableId, facts.conflictingPackB, facts.conflictingProjectId);
             }
@@ -118865,6 +118872,8 @@ VnResult PrepareCanonicalOwners(
         }
         return VN_OK;
         }();
+    } catch (const detail::PackDecodeCapacity&) {
+        prepare = VN_PACK_RESIDENT_CAPACITY;
     } catch (const std::bad_alloc&) {
         prepare = VN_BACKPRESSURE;
     }
@@ -119198,6 +119207,8 @@ void WriteActivationOutputs(
 }
 
 struct AcquiredCanonicalSetMember {
+    detail::PackDecodeCharge encodedStaging;
+    detail::PackDecodeCharge sampleStaging;
     PackTable::AlignedBuffer bytes;
     std::vector<PCMRegistry::PreparedPackSamples> samples;
     bool boundedFile = false;
@@ -119211,8 +119222,11 @@ struct AcquiredCanonicalSetMember {
 
 VnResult ValidateCanonicalSetClosure(
     const std::vector<AcquiredCanonicalSetMember>& members) {
-    std::vector<std::uint32_t> pending(members.size(), 0);
-    std::vector<std::uint8_t> emitted(members.size(), 0);
+    detail::PackDecodeCharge scratch(members.empty() ? detail::PackDecodeBudget{} : members.front().image.staging.Budget());
+    std::vector<std::uint32_t> pending;
+    std::vector<std::uint8_t> emitted;
+    detail::DecodeResize(pending, members.size(), scratch);
+    detail::DecodeResize(emitted, members.size(), scratch);
     for (std::size_t i = 0; i < members.size(); ++i) {
         for (const auto& edge : members[i].image.dependencyEdges) {
             if (edge.required01 == 0) { continue; }
@@ -119263,8 +119277,9 @@ VnResult ValidateCanonicalPackSetVoiceRecipes(
     if (members.empty() || members.front().image.packKind != kPackKindInit) {
         return VN_PACK_INIT_LIFECYCLE;
     }
+    detail::PackDecodeCharge scratch(members.front().image.staging.Budget());
     std::vector<VnAttenuationId> ids;
-    try { ids.resize(members.front().image.attenuations.size()); }
+    try { detail::DecodeResize(ids, members.front().image.attenuations.size(), scratch); }
     catch (...) { return VN_PACK_RESIDENT_CAPACITY; }
     std::size_t indexCount = 0;
     const auto& init = members.front().image;
@@ -119312,10 +119327,10 @@ VnResult ValidateCanonicalPackSetVoiceRecipes(
         CurrentWorldBodyImage body;
         const auto* viewPtr = member.keptOwner != nullptr ? &member.keptOwner->view : nullptr;
         if (viewPtr == nullptr) {
-            const auto decoded = body.DecodeWithResult(
+            const auto decoded = body.DecodeWithBudget(
                 image.partitionBody.data(), image.partitionBody.size(),
                 image.partitionHeader.bodyVintage,
-                CurrentWorldDecodeMode::StrictArtifact);
+                CurrentWorldDecodeMode::StrictArtifact, image.staging.Budget());
             if (decoded != CurrentWorldBodyDecodeResult::Ok || body.ProductionView() == nullptr)
                 return decoded == CurrentWorldBodyDecodeResult::Capacity
                     ? VN_PACK_RESIDENT_CAPACITY : VN_BAD_PACK;
@@ -120077,6 +120092,8 @@ void CommitCanonicalBindingPlanStageC(Engine& engine,
 }
 
 struct PreparedCanonicalPackSetV1 {
+    detail::PackDecodeBudget budget;
+    detail::PackDecodeCharge staging;
     const PackComposition::PublishedView* basePublication = nullptr;
     std::uint64_t baseGeneration = 0;
     bool preserveInit = false;
@@ -120274,10 +120291,12 @@ VnResult ValidateCanonicalV2InitBusEntries(const PackCanonicalImage& init) {
 }
 
 VnResult AcquireCanonicalSetMember(Engine& engine, const VnPackLoadDesc& load,
-    const PackCanonicalImage* catalog, std::uint64_t* stagedBytes,
+    const PackCanonicalImage* catalog, const detail::PackDecodeBudget& budget,
     AcquiredCanonicalSetMember* out, std::uint64_t* traceResource = nullptr,
     std::span<const AcquiredCanonicalSetMember> previous = {}) {
-    if (*stagedBytes > engine.config.maxPackDecodeStagingBytes) return VN_PACK_RESIDENT_CAPACITY;
+    if (!budget || budget->live > budget->limit) return VN_PACK_RESIDENT_CAPACITY;
+    out->encodedStaging = detail::PackDecodeCharge(budget);
+    out->sampleStaging = detail::PackDecodeCharge(budget);
     VnResult parsed = VN_OK;
     CanonicalByteSpanGuard guard{load};
     if ((load.flags & VN_PACK_LOAD_FLAG_PROVIDER) == 0 && engine.trace == nullptr) {
@@ -120289,42 +120308,41 @@ VnResult AcquireCanonicalSetMember(Engine& engine, const VnPackLoadDesc& load,
         std::string path;
         const auto rooted = ResolveCanonicalFilePath(load, catalogRow, &path);
         if (rooted != VN_OK) return rooted;
+        detail::PackDecodeCharge candidateScratch(budget);
+        std::size_t candidateCount = 0;
+        for (const auto& member : previous) candidateCount += member.samples.size();
         std::vector<const PCMRegistry::PreparedPackSamples*> candidates;
+        detail::DecodeReserve(candidates, candidateCount, candidateScratch);
         for (const auto& member : previous)
             for (const auto& samples : member.samples) candidates.push_back(&samples);
         bool retry = false;
         parsed = ReadPackCanonicalFile(path.c_str(), engine.registry, &out->image, &out->samples,
-            &out->byteCount, &out->hash, engine.config.maxPackDecodeStagingBytes - *stagedBytes,
-            candidates, &retry);
+            &out->byteCount, &out->hash, budget->limit - budget->live,
+            candidates, &retry, nullptr, budget, &out->sampleStaging);
         if (parsed == VN_OK) {
             out->boundedFile = true;
-            *stagedBytes += out->byteCount;
         } else if (!retry) {
             return parsed;
         }
     }
     if (!out->boundedFile) {
         const auto acquired = AcquireCanonicalBytes(load, &out->bytes, &guard.span, &guard.release, catalog,
-            engine.config.maxPackDecodeStagingBytes - *stagedBytes);
+            budget->limit - budget->live);
         if (acquired != VN_OK) { return acquired; }
         if (guard.span.structSize != sizeof(VnPackByteSpan) || guard.span.reserved0 != 0) {
             return VN_PACK_PROVIDER_FAILED;
         }
-        if (guard.span.byteCount > engine.config.maxPackDecodeStagingBytes ||
-            *stagedBytes > engine.config.maxPackDecodeStagingBytes - guard.span.byteCount) {
-            return VN_PACK_RESIDENT_CAPACITY;
-        }
-        *stagedBytes += guard.span.byteCount;
+        out->encodedStaging.Add(guard.span.byteCount);
         const auto adopted = AdoptOwnedPackBytes(guard.span, &out->bytes);
         if (adopted != VN_OK) return adopted;
         out->byteCount = guard.span.byteCount;
         if (traceResource != nullptr && engine.trace != nullptr) {
             out->hash = Fnv1a64(out->bytes.get(), static_cast<std::size_t>(out->byteCount));
             *traceResource = engine.trace->RecordPackBytes(out->bytes.get(), out->byteCount);
-            parsed = ParsePackCanonicalImage(out->bytes.get(), out->byteCount, &out->image);
+            parsed = ParsePackCanonicalImageWithBudget(out->bytes.get(), out->byteCount, &out->image, nullptr, budget);
         } else {
-            parsed = ParsePackCanonicalImage(out->bytes.get(), out->byteCount,
-                                             &out->image, &out->hash);
+            parsed = ParsePackCanonicalImageWithBudget(out->bytes.get(), out->byteCount,
+                                             &out->image, &out->hash, budget);
         }
     }
     if (parsed != VN_OK) { return parsed; }
@@ -121190,11 +121208,14 @@ VnResult PrepareCanonicalSetActivation(Engine& engine,
     out->basePublication = previous;
     out->baseGeneration = engine.packComposition.CompositeGeneration();
     out->engine = &engine;
+    const auto& budget = out->budget;
     if (capturedMembers != nullptr) out->members = std::move(*capturedMembers);
-    else out->members.resize(desc.memberCount);
-    std::uint64_t stagedBytes = sizeof(PackAttenuationBindingMapV1) * kCanonicalAttenuationMapPeakCopies;
+    else {
+        detail::DecodeResize(out->members, desc.memberCount, out->staging);
+    }
+    detail::PackDecodeCharge scratch(budget);
     std::vector<PackTable::CanonicalSetMember> inputs;
-    inputs.reserve(desc.memberCount);
+    detail::DecodeReserve(inputs, desc.memberCount, scratch);
     for (std::uint32_t i = 0; i < desc.memberCount; ++i) {
         auto& captured = out->members[i];
         const auto* old = previous != nullptr ? FindPublishedOwner(previous, desc.members[i].expectedHandle) : nullptr;
@@ -121203,17 +121224,19 @@ VnResult PrepareCanonicalSetActivation(Engine& engine,
             if (old == nullptr) return VN_STALE_HANDLE;
             captured.keptOwner = old;
             captured.hash = old->contentHash;
-            if (i == 0) captured.image = previous->catalog;
+            if (i == 0) captured.image = CopyCanonicalImageWithBudget(previous->catalog, budget);
             else {
                 captured.image.packKind = kPackKindCanonicalContent;
                 captured.image.packStableId = old->packStableId;
                 captured.image.requirement.packContentRevision = old->contentRevision;
+                captured.image.staging = detail::PackDecodeCharge(budget);
+                captured.image.staging.AddRows<PackDependencyEdge>(old->dependencyEdges.size());
                 captured.image.dependencyEdges = old->dependencyEdges;
             }
         } else {
             if (capturedMembers == nullptr) {
                 const auto loaded = AcquireCanonicalSetMember(engine, MemberToLoadDesc(desc.members[i]),
-                    i == 0 ? nullptr : &out->members.front().image, &stagedBytes, &captured,
+                    i == 0 ? nullptr : &out->members.front().image, budget, &captured,
                     nullptr, std::span<const AcquiredCanonicalSetMember>(out->members.data(), i));
                 if (loaded != VN_OK) return loaded;
             }
@@ -121241,10 +121264,9 @@ VnResult PrepareCanonicalSetActivation(Engine& engine,
             captured.keptOwner == nullptr && captured.boundedFile ? &captured.samples : nullptr});
     }
     const auto mapCount = out->members.front().image.attenuations.size();
-    if (mapCount > (UINT64_MAX - stagedBytes) / (kCanonicalAttenuationMapPeakCopies * sizeof(PackAttenuationBindingMapV1::Binding)))
-        return VN_PACK_RESIDENT_CAPACITY;
-    stagedBytes += mapCount * kCanonicalAttenuationMapPeakCopies * sizeof(PackAttenuationBindingMapV1::Binding);
-    if (stagedBytes > engine.config.maxPackDecodeStagingBytes) return VN_PACK_RESIDENT_CAPACITY;
+    if (capturedMembers == nullptr)
+        out->staging.Add(detail::DecodeBytes(mapCount,
+            kCanonicalAttenuationMapPeakCopies * sizeof(PackAttenuationBindingMapV1::Binding)));
     const auto closure = ValidateCanonicalSetClosure(out->members);
     if (closure != VN_OK) { return closure; }
     const auto recipeClosure = ValidateCanonicalPackSetVoiceRecipes(out->members, previous);
@@ -121305,11 +121327,11 @@ VnResult PrepareCanonicalSetActivation(Engine& engine,
         [](const auto& a, const auto& b) { return a.id < b.id; });
     if (out->preserveInit) bindings = previous->attenuationBindings;
     std::vector<PackComposition::CandidateOwner> owners;
-    owners.reserve(desc.memberCount);
+    detail::DecodeReserve(owners, desc.memberCount, scratch);
     for (std::uint32_t i = 0; i < desc.memberCount; ++i) {
         PackComposition::CandidateOwner owner;
         const auto& member = out->members[i];
-        if (member.keptOwner != nullptr) owner = PackComposition::Keep(*member.keptOwner);
+        if (member.keptOwner != nullptr) owner = PackComposition::Keep(*member.keptOwner, budget);
         else {
             const auto candidate = engine.packComposition.PrepareCandidate(member.image,
                 member.handle, &owner, member.resourceToken);
@@ -121383,7 +121405,7 @@ VnResult PrepareCanonicalSetActivation(Engine& engine,
     std::memcpy(ledger.lastMemberResults.data(), results.data(), ledger.lastMemberResults.size());
     const auto published = PrepareCanonicalOwners(engine, std::move(owners), &init, initHandle,
         out->preserveInit ? PackVariablePublicationReason::ContentMutation : PackVariablePublicationReason::InitPublication,
-        &out->publication, &bindings, &ledger);
+        &out->publication, &bindings, &ledger, nullptr, budget);
     if (published != VN_OK) { return published; }
     const auto* next = out->publication.composition.Published();
     const auto references = ValidateCanonicalSetReferences(*next, previous);
@@ -121493,7 +121515,7 @@ void JournalSuccessfulCanonicalPackSetActivation(
 }  // namespace
 
 VnResult SetGameplayCatalog(Engine& engine, VnPackHandle expectedInitHandle,
-                            const VnPackByteSpan* catalog) {
+                            const VnPackByteSpan* catalog) try {
     if (catalog == nullptr || catalog->structSize != sizeof(VnPackByteSpan) ||
         catalog->reserved0 != 0 || catalog->bytes == nullptr || expectedInitHandle == 0)
         return VN_INVALID_ARG;
@@ -121503,18 +121525,20 @@ VnResult SetGameplayCatalog(Engine& engine, VnPackHandle expectedInitHandle,
     if (published == nullptr || published->initHandle != expectedInitHandle)
         return VN_STALE_HANDLE;
     if (published->companionNames) return VN_AUTHORITY_CONFLICT;
+    const auto budget = detail::MakePackDecodeBudget(engine.config.maxPackDecodeStagingBytes);
+    detail::PackDecodeCharge staging(budget);
     GameplayCatalogImage image;
-    const auto parsed = ParseGameplayCatalog(
-        static_cast<const std::uint8_t*>(catalog->bytes), catalog->byteCount, &image);
+    const auto parsed = ParseGameplayCatalogWithBudget(
+        static_cast<const std::uint8_t*>(catalog->bytes), catalog->byteCount, &image, staging);
     if (parsed != VN_OK) return parsed;
     std::vector<PackComposition::CandidateOwner> owners;
-    owners.reserve(published->owners.size());
+    detail::DecodeReserve(owners, published->owners.size(), staging);
     for (const auto& owner : published->owners)
-        owners.push_back(PackComposition::Keep(owner));
+        owners.push_back(PackComposition::Keep(owner, budget));
     PreparedCanonicalPublication prepared;
     const auto result = PrepareCanonicalOwners(engine, std::move(owners), nullptr,
         expectedInitHandle, PackVariablePublicationReason::ContentMutation,
-        &prepared, nullptr, &published->ledger, &image);
+        &prepared, nullptr, &published->ledger, &image, budget);
     if (result != VN_OK) return result;
     const auto signals = PrepareCanonicalSignals(engine, prepared);
     if (signals != VN_OK) return signals;
@@ -121523,7 +121547,10 @@ VnResult SetGameplayCatalog(Engine& engine, VnPackHandle expectedInitHandle,
     trace.U64(expectedInitHandle).U64(catalog->byteCount)
         .Bytes(catalog->bytes, static_cast<std::size_t>(catalog->byteCount));
     return VN_OK;
+} catch (const detail::PackDecodeCapacity&) {
+    return VN_PACK_RESIDENT_CAPACITY;
 }
+
 
 VnResult ActivateCanonicalPackSetImpl(
     Engine& engine, const VnCanonicalPackSetActivationDescV1* descriptor,
@@ -121601,6 +121628,10 @@ VnResult ActivateCanonicalPackSetImpl(
         auto desc = input;
         desc.members = members.data();
         PreparedCanonicalPackSetV1 prepared;
+        prepared.budget = detail::MakePackDecodeBudget(engine.config.maxPackDecodeStagingBytes);
+        prepared.staging = detail::PackDecodeCharge(prepared.budget);
+        prepared.staging.Add(capturedNameBytes);
+        prepared.staging.Add(sizeof(PackAttenuationBindingMapV1) * kCanonicalAttenuationMapPeakCopies);
         const auto previousHandle = engine.packComposition.PublishedHandle();
         const PackComposition::PublishedView* success = nullptr;
         bool commit = false;
@@ -121617,8 +121648,7 @@ VnResult ActivateCanonicalPackSetImpl(
                 auto semanticKey = HashCanonicalPackSetSemanticKey(desc, !companion);
                 std::vector<AcquiredCanonicalSetMember> captured;
                 if (companion) {
-                    captured.resize(desc.memberCount);
-                    std::uint64_t staged = capturedNameBytes + sizeof(PackAttenuationBindingMapV1) * kCanonicalAttenuationMapPeakCopies;
+                    detail::DecodeResize(captured, desc.memberCount, prepared.staging);
                     for (std::uint32_t i = 0; i < desc.memberCount; ++i) {
                         const auto operation = (*operations)[i];
                         const auto digest = (*names)[i] != nullptr ? (*names)[i]->digest : 0;
@@ -121629,7 +121659,7 @@ VnResult ActivateCanonicalPackSetImpl(
                         if (i != 0) init = (*operations)[0] == VN_PACK_MEMBER_KEEP && previous != nullptr
                             ? &previous->catalog : &captured.front().image;
                         const auto result = AcquireCanonicalSetMember(engine,
-                            MemberToLoadDesc(desc.members[i]), init, &staged, &captured[i],
+                            MemberToLoadDesc(desc.members[i]), init, prepared.budget, &captured[i],
                             traceResources != nullptr ? &(*traceResources)[i] : nullptr,
                             std::span<const AcquiredCanonicalSetMember>(captured.data(), i));
                         if (result != VN_OK) {
@@ -121641,10 +121671,8 @@ VnResult ActivateCanonicalPackSetImpl(
                     }
                     const auto mapCount = (*operations)[0] == VN_PACK_MEMBER_KEEP && previous != nullptr
                         ? previous->catalog.attenuations.size() : captured.front().image.attenuations.size();
-                    if (mapCount > (UINT64_MAX - staged) / (kCanonicalAttenuationMapPeakCopies * sizeof(PackAttenuationBindingMapV1::Binding)))
-                        return VN_PACK_RESIDENT_CAPACITY;
-                    staged += mapCount * kCanonicalAttenuationMapPeakCopies * sizeof(PackAttenuationBindingMapV1::Binding);
-                    if (staged > engine.config.maxPackDecodeStagingBytes) return VN_PACK_RESIDENT_CAPACITY;
+                    prepared.staging.Add(detail::DecodeBytes(mapCount,
+                        kCanonicalAttenuationMapPeakCopies * sizeof(PackAttenuationBindingMapV1::Binding)));
                 }
                 if (previous != nullptr && previous->ledger.setRevision == desc.setRevision &&
                     previous->ledger.semanticKey == semanticKey && previous->initHandle != 0) {
@@ -121705,6 +121733,8 @@ VnResult ActivateCanonicalPackSetImpl(
                 commit = true;
                 return VN_OK;
             }();
+        } catch (const detail::PackDecodeCapacity&) {
+            result = VN_PACK_RESIDENT_CAPACITY;
         } catch (const std::bad_alloc&) {
             result = VN_DEVICE_ERROR;
         } catch (const std::length_error&) {
@@ -121732,6 +121762,8 @@ VnResult ActivateCanonicalPackSetImpl(
             }
         }
         return result;
+    } catch (const detail::PackDecodeCapacity&) {
+        return VN_PACK_RESIDENT_CAPACITY;
     } catch (const std::bad_alloc&) {
         return VN_DEVICE_ERROR;
     } catch (const std::length_error&) {
@@ -122008,7 +122040,7 @@ namespace {
 enum class CanonicalLoadMode { Public, ProvisionalContent };
 
 VnResult LoadCanonicalPackImpl(Engine& engine, const VnPackLoadDesc* desc,
-                               VnPackHandle* outHandle, CanonicalLoadMode mode) {
+                               VnPackHandle* outHandle, CanonicalLoadMode mode) try {
     if (desc == nullptr || outHandle == nullptr ||
         desc->structSize != sizeof(VnPackLoadDesc) ||
         (desc->flags & ~(VN_PACK_LOAD_FLAG_PROVIDER | VN_PACK_LOAD_FLAG_ROOT)) !=
@@ -122021,6 +122053,8 @@ VnResult LoadCanonicalPackImpl(Engine& engine, const VnPackLoadDesc* desc,
     if (engine.packComposition.Authority() == PackAuthorityMode::DirectWorld) {
         return VN_AUTHORITY_CONFLICT;
     }
+    const auto budget = detail::MakePackDecodeBudget(engine.config.maxPackDecodeStagingBytes);
+    detail::PackDecodeCharge staging(budget);
     PackTable::AlignedBuffer owned;
     CanonicalByteSpanGuard spanGuard{*desc};
     const VnPackByteSpan& span = spanGuard.span;
@@ -122037,9 +122071,10 @@ VnResult LoadCanonicalPackImpl(Engine& engine, const VnPackLoadDesc* desc,
     if (acquired != VN_OK) {
         return acquired;
     }
+    staging.Add(span.byteCount);
     PackCanonicalImage image;
     const VnResult parsed =
-        ParsePackCanonicalImage(span.bytes, span.byteCount, &image);
+        ParsePackCanonicalImageWithBudget(span.bytes, span.byteCount, &image, nullptr, budget);
     if (parsed != VN_OK) {
         return parsed;
     }
@@ -122178,12 +122213,13 @@ VnResult LoadCanonicalPackImpl(Engine& engine, const VnPackLoadDesc* desc,
         return staged;
     }
     std::vector<PackComposition::CandidateOwner> owners;
+    detail::DecodeReserve(owners, 1 + (engine.packComposition.Published() ? engine.packComposition.Published()->owners.size() : 0), staging);
     if (const auto* published = engine.packComposition.Published()) {
         for (const auto& existing : published->owners) {
             if (existing.readiness != PackOwnerReadiness::Active) {
                 continue;
             }
-            owners.push_back(PackComposition::Keep(existing));
+            owners.push_back(PackComposition::Keep(existing, budget));
         }
     }
     owners.push_back(std::move(candidate));
@@ -122199,7 +122235,7 @@ VnResult LoadCanonicalPackImpl(Engine& engine, const VnPackLoadDesc* desc,
                                                : 0),
         image.packKind == kPackKindInit ? PackVariablePublicationReason::InitPublication
                                        : PackVariablePublicationReason::ContentMutation,
-        &publication);
+        &publication, nullptr, nullptr, nullptr, budget);
     if (published != VN_OK) {
         return published;
     }
@@ -122228,7 +122264,10 @@ VnResult LoadCanonicalPackImpl(Engine& engine, const VnPackLoadDesc* desc,
     *outHandle = handle;
     guard.committed = true;
     return VN_OK;
+} catch (const detail::PackDecodeCapacity&) {
+    return VN_PACK_RESIDENT_CAPACITY;
 }
+
 
 } // namespace
 
@@ -122245,7 +122284,7 @@ VnResult LoadProvisionalCanonicalContentForTests(
 }
 
 VnResult UnloadCanonicalPack(Engine& engine, VnPackHandle handle,
-                             std::uint32_t flags) {
+                             std::uint32_t flags) try {
     const auto* published = engine.packComposition.Published();
     if (published == nullptr) {
         return VN_STALE_HANDLE;
@@ -122318,13 +122357,16 @@ VnResult UnloadCanonicalPack(Engine& engine, VnPackHandle handle,
         report.structSize = sizeof(report);
         return ActivateCanonicalPackSetImpl(engine, &desc, &report, &operations, &names);
     }
+    const auto budget = detail::MakePackDecodeBudget(engine.config.maxPackDecodeStagingBytes);
+    detail::PackDecodeCharge staging(budget);
     std::vector<PackComposition::CandidateOwner> owners;
+    detail::DecodeReserve(owners, published->owners.size(), staging);
     for (const auto& existing : published->owners) {
         if (existing.handle == handle ||
             existing.readiness != PackOwnerReadiness::Active) {
             continue;
         }
-        owners.push_back(PackComposition::Keep(existing));
+        owners.push_back(PackComposition::Keep(existing, budget));
     }
     PackTable::PreparedMutation media;
     const VnResult preparedMedia = engine.packs.PrepareUnloadMutation(
@@ -122336,7 +122378,7 @@ VnResult UnloadCanonicalPack(Engine& engine, VnPackHandle handle,
     const VnResult preparedPublication = PrepareCanonicalOwners(
         engine, std::move(owners), nullptr, published->initHandle,
         PackVariablePublicationReason::ContentMutation,
-        &publication);
+        &publication, nullptr, nullptr, nullptr, budget);
     if (preparedPublication != VN_OK) {
         engine.packs.CancelPreparedMutation(&media);
         return preparedPublication;
@@ -122375,10 +122417,13 @@ VnResult UnloadCanonicalPack(Engine& engine, VnPackHandle handle,
         handle, std::move(predecessor),
         engine.packComposition.HasLiveResourceToken(predecessorResourceToken));
     return VN_OK;
+} catch (const detail::PackDecodeCapacity&) {
+    return VN_PACK_RESIDENT_CAPACITY;
 }
 
+
 VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle,
-                              const VnPackLoadDesc* desc) {
+                              const VnPackLoadDesc* desc) try {
     if (desc == nullptr) {
         return VN_INVALID_ARG;
     }
@@ -122393,12 +122438,15 @@ VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle,
             return VN_PACK_INIT_LIFECYCLE;
         }
     }
+    const auto budget = detail::MakePackDecodeBudget(engine.config.maxPackDecodeStagingBytes);
+    detail::PackDecodeCharge staging(budget);
     PackTable::AlignedBuffer owned;
     CanonicalByteSpanGuard spanGuard{*desc};
     const VnPackByteSpan& span = spanGuard.span;
     const PackCanonicalImage* publishedCatalog =
         published->hasCatalog ? &published->catalog : nullptr;
     PackCanonicalImage image;
+    detail::PackDecodeCharge sampleStaging(budget);
     std::vector<PCMRegistry::PreparedPackSamples> samples;
     std::uint64_t byteCount = 0, artifactHash = 0;
     bool boundedFile = false;
@@ -122413,7 +122461,7 @@ VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle,
         if (rooted != VN_OK) return rooted;
         bool retry = false;
         const auto read = ReadPackCanonicalFile(path.c_str(), engine.registry, &image, &samples,
-            &byteCount, &artifactHash, engine.config.maxPackDecodeStagingBytes, {}, &retry);
+            &byteCount, &artifactHash, engine.config.maxPackDecodeStagingBytes, {}, &retry, nullptr, budget, &sampleStaging);
         if (read == VN_OK) boundedFile = true;
         else if (!retry) return read;
     }
@@ -122422,8 +122470,9 @@ VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle,
             *desc, &owned, &spanGuard.span, &spanGuard.release, publishedCatalog,
             engine.config.maxPackDecodeStagingBytes);
         if (acquired != VN_OK) return acquired;
+        staging.Add(span.byteCount);
         const VnResult parsed =
-            ParsePackCanonicalImage(span.bytes, span.byteCount, &image, &artifactHash);
+            ParsePackCanonicalImageWithBudget(span.bytes, span.byteCount, &image, &artifactHash, budget);
         if (parsed != VN_OK) return parsed;
     }
     if (image.packKind != kPackKindCanonicalContent) {
@@ -122472,6 +122521,7 @@ VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle,
         return canReplace;
     }
     std::vector<PackComposition::CandidateOwner> owners;
+    detail::DecodeReserve(owners, published->owners.size(), staging);
     PackResourceRevisionToken predecessorResourceToken = 0;
     for (const auto& existing : published->owners) {
         if (existing.readiness != PackOwnerReadiness::Active) {
@@ -122488,7 +122538,7 @@ VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle,
             owners.push_back(std::move(next));
             continue;
         }
-        owners.push_back(PackComposition::Keep(existing));
+        owners.push_back(PackComposition::Keep(existing, budget));
     }
     const PackRevisionKey successorKey =
         MakeCanonicalRevisionKey(handle, image);
@@ -122511,7 +122561,7 @@ VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle,
     PackCanonicalImage successorCatalog;
     const PackCanonicalImage* catalogToPublish = nullptr;
     if (published->hasCatalog) {
-        successorCatalog = published->catalog;
+        successorCatalog = CopyCanonicalImageWithBudget(published->catalog, budget);
         for (PackInitCatalogRow& row : successorCatalog.catalogRows) {
             if (row.ownerPackStableId == image.packStableId) {
                 row.expectedContentHash = artifactHash;
@@ -122523,13 +122573,14 @@ VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle,
     const VnResult preparedPublication = PrepareCanonicalOwners(
         engine, std::move(owners), catalogToPublish, published->initHandle,
         PackVariablePublicationReason::ContentMutation,
-        &publication);
+        &publication, nullptr, nullptr, nullptr, budget);
     if (preparedPublication != VN_OK) {
         engine.packs.CancelPreparedMutation(&media);
         return preparedPublication;
     }
     CanonicalBindingPlanV1 bindingPlan;
-    std::vector<AcquiredCanonicalSetMember> members(1);
+    std::vector<AcquiredCanonicalSetMember> members;
+    detail::DecodeResize(members, 1, staging);
     members[0].image = image;
     members[0].hash = artifactHash;
     members[0].handle = handle;
@@ -122563,7 +122614,10 @@ VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle,
         handle, std::move(predecessor),
         engine.packComposition.HasLiveResourceToken(predecessorResourceToken));
     return VN_OK;
+} catch (const detail::PackDecodeCapacity&) {
+    return VN_PACK_RESIDENT_CAPACITY;
 }
+
 
 } // namespace harken
 

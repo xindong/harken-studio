@@ -3572,8 +3572,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
     detail::DecodeResize(scheduleHeight, scheduleNodeCount, scratch);
     bool scheduleCycle = false;
     bool scheduleDepthExceeded = false;
-    std::function<bool(std::size_t, std::uint32_t)> visitSchedule =
-        [&](std::size_t node, std::uint32_t pathDepth) {
+    const auto visitSchedule = [&](auto&& self, std::size_t node, std::uint32_t pathDepth) -> bool {
             if (pathDepth > world.capacity.maxTrackSegmentScheduleDepth) {
                 scheduleDepthExceeded = true;
                 return false;
@@ -3594,7 +3593,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
             scheduleVisit[node] = 1;
             std::uint32_t height = 1;
             const auto visitChild = [&](std::size_t child) {
-                if (!visitSchedule(child, pathDepth + 1)) return false;
+                if (!self(self, child, pathDepth + 1)) return false;
                 height = std::max(height, 1u + scheduleHeight[child]);
                 if (height > world.capacity.maxTrackSegmentScheduleDepth) {
                     scheduleDepthExceeded = true;
@@ -3657,7 +3656,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
             return true;
         };
     for (std::size_t node = 0; node < scheduleNodeCount; ++node) {
-        if (!visitSchedule(node, 1)) {
+        if (!visitSchedule(visitSchedule, node, 1)) {
             return scheduleDepthExceeded && !scheduleCycle
                        ? WorldInstallStatus::Capacity
                        : WorldInstallStatus::InvalidWorld;
@@ -3976,8 +3975,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
     std::vector<std::uint8_t> containerState;
     detail::DecodeResize(containerState, world.containerCount, scratch);
     bool containerDepthExceeded = false;
-    std::function<bool(std::uint32_t, std::uint32_t)> visitContainer =
-        [&](std::uint32_t index, std::uint32_t depth) {
+    const auto visitContainer = [&](auto&& self, std::uint32_t index, std::uint32_t depth) -> bool {
             if (depth > world.capacity.maxContainerDepth) {
                 containerDepthExceeded = true;
                 return false;
@@ -4004,7 +4002,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
                     if (IsPartitionLocal(scope)) continue;
                     return false;
                 }
-                if (!visitContainer(static_cast<std::uint32_t>(
+                if (!self(self, static_cast<std::uint32_t>(
                                         found - world.containers),
                                     depth + 1)) {
                     return false;
@@ -4014,7 +4012,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
             return true;
         };
     for (std::uint32_t i = 0; i < world.containerCount; ++i) {
-        if (!visitContainer(i, 1)) {
+        if (!visitContainer(visitContainer, i, 1)) {
             return containerDepthExceeded ? WorldInstallStatus::Capacity
                                           : WorldInstallStatus::InvalidWorld;
         }
@@ -4308,8 +4306,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
     detail::DecodeResize(actionComplete, world.actionCount, scratch);
     std::vector<std::uint32_t> actionDepth;
     detail::DecodeResize(actionDepth, world.actionCount, scratch);
-    std::function<bool(std::uint32_t, std::uint32_t)> visitAction =
-        [&](std::uint32_t index, std::uint32_t traversalDepth) {
+    const auto visitAction = [&](auto&& self, std::uint32_t index, std::uint32_t traversalDepth) -> bool {
             if (actionState[index] == 1) return false;
             if (actionState[index] == 2) return true;
             actionState[index] = 1;
@@ -4346,7 +4343,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
                     static_cast<std::uint32_t>(child - world.actions);
                 if (traversalDepth >=
                         world.capacity.maxActionTriggerDepth ||
-                    !visitAction(childIndex, traversalDepth + 1u)) {
+                    !self(self, childIndex, traversalDepth + 1u)) {
                     return false;
                 }
                 if (actionComplete[childIndex] == 0) {
@@ -4379,7 +4376,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
             return true;
         };
     for (std::uint32_t i = 0; i < world.actionCount; ++i) {
-        if (!visitAction(i, 1)) return WorldInstallStatus::InvalidWorld;
+        if (!visitAction(visitAction, i, 1)) return WorldInstallStatus::InvalidWorld;
     }
     if (world.identity.capabilityMask != requiredMask) {
         return WorldInstallStatus::InvalidFormat;
@@ -4481,13 +4478,18 @@ std::uint64_t detail::ComputeCurrentWorldLocalCapabilityMaskV1(
 
 WorldInstallStatus ValidateCurrentWorldV1(
     const ContainerWorldInstallViewV1& world) noexcept {
+    return detail::ValidateCurrentWorldWithBudget(world, {});
+}
+
+WorldInstallStatus detail::ValidateCurrentWorldWithBudget(
+    const ContainerWorldInstallViewV1& world, const PackDecodeBudget& budget) noexcept {
     try {
         if (!IsReadableCurrentWorldBodyVintage(world.sourceBodyVintage))
             return WorldInstallStatus::InvalidFormat;
-        if (!ValidateCurrentWorldSectionGroupsV1(world))
+        if (!ValidateCurrentWorldSectionGroupsCore(world, budget))
             return WorldInstallStatus::InvalidWorld;
         return ValidateCurrentWorldImpl(
-            world, world.sourceBodyVintage, ValidationScope::ExactWorld);
+            world, world.sourceBodyVintage, ValidationScope::ExactWorld, false, budget);
     } catch (...) {
         return WorldInstallStatus::Capacity;
     }

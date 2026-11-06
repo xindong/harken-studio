@@ -15,6 +15,9 @@ namespace harken::detail {
 HARKEN_CORE_DETAIL_HIDDEN WorldInstallStatus ValidateCurrentWorldPartitionLocalV1(
     const ContainerWorldInstallViewV1& world) noexcept;
 
+HARKEN_CORE_DETAIL_HIDDEN WorldInstallStatus ValidateCurrentWorldWithBudget(
+    const ContainerWorldInstallViewV1& world, const PackDecodeBudget& budget) noexcept;
+
 HARKEN_CORE_DETAIL_HIDDEN WorldInstallStatus ValidateCurrentWorldPartitionLocalWithBudget(
     const ContainerWorldInstallViewV1& world, const PackDecodeBudget& budget) noexcept;
 HARKEN_CORE_DETAIL_HIDDEN WorldInstallStatus ValidateCurrentWorldSectionGroupsWithBudget(

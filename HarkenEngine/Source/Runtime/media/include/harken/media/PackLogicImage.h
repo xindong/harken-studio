@@ -127,10 +127,24 @@ struct GameplayCatalogImage {
     std::vector<std::uint8_t> namePool;
 };
 
+VnResult ParseGameplayCatalogWithBudget(const std::uint8_t* bytes, std::uint64_t size,
+    GameplayCatalogImage* out, detail::PackDecodeCharge& retained);
+
 VnResult ParseGameplayCatalog(const std::uint8_t* bytes, std::uint64_t size,
                               GameplayCatalogImage* out);
 
 struct PackCanonicalImage {
+    PackCanonicalImage() = default;
+    PackCanonicalImage(const PackCanonicalImage&) = default;
+    PackCanonicalImage(PackCanonicalImage&&) noexcept = default;
+    PackCanonicalImage& operator=(PackCanonicalImage&&) noexcept = default;
+    PackCanonicalImage& operator=(const PackCanonicalImage& source) {
+        if (this != &source) {
+            PackCanonicalImage copy(source);
+            *this = std::move(copy);
+        }
+        return *this;
+    }
     detail::PackDecodeCharge staging;
     std::uint32_t packKind = 0;
     std::uint64_t packStableId = 0;
@@ -189,6 +203,9 @@ struct PackCanonicalImage {
     std::vector<PackBusDefinitionDownmixV2> busDefinitionDownmixesV2;
     std::vector<float> busDefinitionCoefficients;
 };
+
+PackCanonicalImage CopyCanonicalImageWithBudget(const PackCanonicalImage& source,
+    const detail::PackDecodeBudget& budget);
 
 inline PackCatalogIdentityState LookupInitCatalogIdentity(
     const PackCanonicalImage& image, VnObjectId stableId,
@@ -443,7 +460,8 @@ VnResult ReadPackCanonicalFile(const char* utf8Path, PCMRegistry& registry,
     std::uint64_t* byteCount, std::uint64_t* artifactHash, std::uint64_t maxBytes,
     std::span<const PCMRegistry::PreparedPackSamples* const> equalCandidates = {},
     bool* retryWithBytes = nullptr, const PackCanonicalReadHooksForTests* hooks = nullptr,
-    const detail::PackDecodeBudget& budget = {});
+    const detail::PackDecodeBudget& budget = {},
+    detail::PackDecodeCharge* sampleStaging = nullptr);
 
 // Already-loaded-state view for the closure check. Every callback
 // answers "does this id resolve outside the pack right now": playables

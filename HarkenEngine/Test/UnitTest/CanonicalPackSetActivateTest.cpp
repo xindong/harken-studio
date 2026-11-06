@@ -3398,6 +3398,9 @@ TEST(CanonicalPackSetActivate, LargeInitProjects257VariablesAndUses65thAttenuati
             row.structSize = sizeof(row);
             VnCanonicalPackSetActivationReportV1 report{};
             VnResult result;
+            allocation_probe::count = 0;
+            allocation_probe::bytes = 0;
+            allocation_probe::enabled = true;
             if (companion) {
                 std::vector<VnCanonicalPackSetMemberV2> named{
                     companionfixture::Member(initId, true, &provider, &names)};
@@ -3405,11 +3408,40 @@ TEST(CanonicalPackSetActivate, LargeInitProjects257VariablesAndUses65thAttenuati
             } else {
                 result = harkentest::ActivateCanonicalMembersV1(&member, 1, &row, report);
             }
-            const bool fits = allowance == 4ull * mapRows;
-            EXPECT_EQ(fits ? VN_OK : VN_PACK_RESIDENT_CAPACITY, result);
-            EXPECT_EQ(fits ? 257u : 0u, session.Engine()->variables.DefinitionCount());
-            EXPECT_EQ(fits ? 65u : 0u, session.Engine()->spatial.ProfileCount());
-            if (!fits) EXPECT_EQ(nullptr, session.Engine()->packComposition.Published());
+            allocation_probe::enabled = false;
+            const auto requestedBytes = allocation_probe::bytes;
+            const auto allocationCount = allocation_probe::count;
+            const auto key = std::string(companion ? "v2_" : "v1_") + std::to_string(allowance);
+            RecordProperty(key + "_requested_bytes", std::to_string(requestedBytes));
+            RecordProperty(key + "_allocation_count", std::to_string(allocationCount));
+            RecordProperty(key + "_budget", std::to_string(config.maxPackDecodeStagingBytes));
+            RecordProperty(key + "_result", static_cast<int>(result));
+            // Encoded bytes and attenuation maps alone no longer cover decode staging.
+            EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY, result);
+            EXPECT_EQ(0u, session.Engine()->variables.DefinitionCount());
+            EXPECT_EQ(0u, session.Engine()->spatial.ProfileCount());
+            EXPECT_EQ(nullptr, session.Engine()->packComposition.Published());
+            EXPECT_EQ(provider.reads, provider.releases);
         }
+        auto config = CanonicalActivationConfig(2, 256, 48000);
+        config.maxPackDecodeStagingBytes = 4u * 1024u * 1024u;
+        EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        VnCanonicalPackSetActivationReportV1 report{};
+        if (companion) {
+            std::vector<VnCanonicalPackSetMemberV2> named{
+                companionfixture::Member(initId, true, &provider, &names)};
+            ASSERT_EQ(VN_OK, companionfixture::Activate(named, report));
+            std::vector<VnCanonicalPackSetMemberV2> kept{
+                companionfixture::Member(initId, true, nullptr, nullptr,
+                    report.initHandle, VN_PACK_MEMBER_KEEP)};
+            ASSERT_EQ(VN_OK, companionfixture::Activate(kept, report, report.resultSetRevision));
+        } else {
+            VnCanonicalPackSetMemberResultV1 row{};
+            row.structSize = sizeof(row);
+            ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(&member, 1, &row, report));
+        }
+        EXPECT_EQ(257u, session.Engine()->variables.DefinitionCount());
+        EXPECT_EQ(65u, session.Engine()->spatial.ProfileCount());
     }
 }

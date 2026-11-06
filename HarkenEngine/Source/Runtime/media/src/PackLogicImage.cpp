@@ -1479,6 +1479,13 @@ VnResult ParseGameplayCatalogPayload(const std::uint8_t* payload,
 
 } // namespace
 
+VnResult ParseGameplayCatalogWithBudget(const std::uint8_t* bytes, std::uint64_t size,
+    GameplayCatalogImage* out, detail::PackDecodeCharge& retained) try {
+    return ParseGameplayCatalogPayload(bytes, size, out, &retained);
+} catch (const std::bad_alloc&) {
+    return VN_PACK_RESIDENT_CAPACITY;
+}
+
 VnResult ParseGameplayCatalog(const std::uint8_t* bytes, std::uint64_t size,
                               GameplayCatalogImage* out) {
     return ParseGameplayCatalogPayload(bytes, size, out);
@@ -1616,6 +1623,7 @@ struct FileCanonicalSource {
     bool retryWithBytes = false;
     std::uint64_t cachedBytes = 0;
     detail::PackDecodeCharge scratch;
+    detail::PackDecodeCharge* outputStaging = nullptr;
     std::map<std::pair<std::uint64_t, std::uint64_t>, std::vector<std::uint8_t>> metadata;
 
     std::uint64_t ByteCount() const noexcept { return fileBytes; }
@@ -1667,8 +1675,9 @@ struct FileCanonicalSource {
             return VN_PACK_HASH_MISMATCH;
         std::vector<PCMRegistry::PackSampleBuilder> builders;
         detail::DecodeResize(builders, image.media.size(), scanScratch);
+        detail::PackDecodeCharge completedStaging(scratch.Budget());
         std::vector<PCMRegistry::PreparedPackSamples> completed;
-        detail::DecodeResize(completed, image.media.size(), scanScratch);
+        detail::DecodeResize(completed, image.media.size(), completedStaging);
         std::vector<std::size_t> physicalOrder;
         detail::DecodeReserve(physicalOrder, image.media.size(), scanScratch);
         std::vector<std::uint64_t> checksums;
@@ -1824,6 +1833,7 @@ struct FileCanonicalSource {
             if (sampleStatus[i] != VN_OK) return sampleStatus[i];
         }
         *output = std::move(completed);
+        if (outputStaging != nullptr) outputStaging->Merge(std::move(completedStaging));
         return VN_OK;
     }
 };
@@ -2437,6 +2447,16 @@ VnResult ParsePackCanonicalImage(const std::uint8_t* bytes, std::uint64_t fileBy
     return ParsePackCanonicalCore(source, out, {});
 }
 
+PackCanonicalImage CopyCanonicalImageWithBudget(const PackCanonicalImage& source,
+    const detail::PackDecodeBudget& budget) {
+    if (source.staging.Budget() == budget) return source;
+    detail::PackDecodeCharge admitted(budget);
+    admitted.Add(source.staging.Bytes());
+    auto copy = source;
+    copy.staging = std::move(admitted);
+    return copy;
+}
+
 VnResult ParsePackCanonicalImageWithBudget(const std::uint8_t* bytes, std::uint64_t fileBytes,
     PackCanonicalImage* out, std::uint64_t* artifactHash, const detail::PackDecodeBudget& budget) {
     try {
@@ -2450,7 +2470,8 @@ VnResult ReadPackCanonicalFile(const char* utf8Path, PCMRegistry& registry,
     std::uint64_t* byteCount, std::uint64_t* artifactHash, std::uint64_t maxBytes,
     std::span<const PCMRegistry::PreparedPackSamples* const> equalCandidates,
     bool* retryWithBytes, const PackCanonicalReadHooksForTests* hooks,
-    const detail::PackDecodeBudget& budget) {
+    const detail::PackDecodeBudget& budget, detail::PackDecodeCharge* sampleStaging) try {
+    if (budget != nullptr && sampleStaging == nullptr) return VN_INVALID_ARG;
     if (retryWithBytes != nullptr) *retryWithBytes = false;
     if (out == nullptr || samples == nullptr || byteCount == nullptr || artifactHash == nullptr)
         return VN_INVALID_ARG;
@@ -2483,7 +2504,10 @@ VnResult ReadPackCanonicalFile(const char* utf8Path, PCMRegistry& registry,
     if (end <= 0 || static_cast<std::uint64_t>(end) > SIZE_MAX) return VN_BAD_PACK;
     const auto size = static_cast<std::uint64_t>(end);
     if (size > maxBytes) return VN_PACK_RESIDENT_CAPACITY;
+    detail::PackDecodeCharge encoded(budget);
+    encoded.Add(size);
     FileCanonicalSource source{file, size, registry, equalCandidates, samples, hooks};
+    source.outputStaging = sampleStaging;
     source.scratch = detail::PackDecodeCharge(budget);
     const auto result = ParsePackCanonicalCore(source, out, budget);
     if (retryWithBytes != nullptr) *retryWithBytes = source.retryWithBytes;
@@ -2492,7 +2516,10 @@ VnResult ReadPackCanonicalFile(const char* utf8Path, PCMRegistry& registry,
         *artifactHash = source.hash;
     }
     return result;
+} catch (const std::bad_alloc&) {
+    return VN_PACK_RESIDENT_CAPACITY;
 }
+
 
 VnResult CheckPackClosure(const PackLogicImage& image,
                           const PackClosureResolver& resolver,

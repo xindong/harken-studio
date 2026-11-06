@@ -3074,4 +3074,36 @@ TEST(CurrentWorldInstall,
     EXPECT_EQ(0u, session.Engine()->variables.CurrentWorldGeneration());
 }
 
+TEST(CurrentWorldInstall, ComparisonEncoderAdmitsGrowthBeforeAllocationAndRetries) {
+    RunnableWorld image;
+    std::vector<std::uint8_t> expected;
+    ASSERT_TRUE(harken::EncodeCurrentWorldShippingBody(image.world, expected));
+    auto budget = harken::detail::MakePackDecodeBudget(0);
+    harken::detail::PackDecodeCharge staging(budget);
+    std::vector<std::uint8_t> encoded;
+    std::size_t slots = 0;
+    allocation_probe::count = 0;
+    allocation_probe::enabled = true;
+    const auto refused = harken::detail::EncodeCurrentWorldShippingBodyWithBudget(
+        image.world, encoded, staging, slots);
+    allocation_probe::enabled = false;
+    EXPECT_EQ(harken::WorldInstallStatus::Capacity, refused);
+    EXPECT_EQ(0u, allocation_probe::count);
+    EXPECT_TRUE(encoded.empty());
+    budget->limit = 32;
+    EXPECT_EQ(harken::WorldInstallStatus::Capacity,
+        harken::detail::EncodeCurrentWorldShippingBodyWithBudget(image.world, encoded, staging, slots));
+    EXPECT_LE(budget->live, budget->limit);
+    budget->limit = 1024 * 1024;
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+        harken::detail::EncodeCurrentWorldShippingBodyWithBudget(image.world, encoded, staging, slots));
+    EXPECT_EQ(expected, encoded);
+    const auto live = budget->live;
+    budget->limit = live;
+    ASSERT_EQ(harken::WorldInstallStatus::Ok,
+        harken::detail::EncodeCurrentWorldShippingBodyWithBudget(image.world, encoded, staging, slots));
+    EXPECT_EQ(expected, encoded);
+    EXPECT_EQ(live, budget->live);
+}
+
 } // namespace

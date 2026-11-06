@@ -839,6 +839,35 @@ TEST(PackCanonicalFormat, BoundedFileKeepsDirectoryOrderAndFinalSampleIdentity) 
     EXPECT_EQ(samples[0].View().channels[0], duplicate[0].View().channels[0]);
 }
 
+TEST(PackCanonicalFormat, FileDecodeBudgetRetainsSampleRowsAndRefusalPreservesOwners) {
+    const auto bytes = BuildCanonicalMediaFixture({1024});
+    const auto path = CanonicalReadTestPath("decode-budget.pack");
+    ASSERT_TRUE(harkentest::packfoundation::WriteFile(path, bytes));
+    PCMRegistry registry;
+    auto budget = detail::MakePackDecodeBudget(1024 * 1024);
+    detail::PackDecodeCharge sampleStaging(budget);
+    PackCanonicalImage image;
+    std::vector<PCMRegistry::PreparedPackSamples> samples;
+    std::uint64_t count = 0, hash = 0;
+    ASSERT_EQ(VN_OK, ReadPackCanonicalFile(path.string().c_str(), registry, &image,
+        &samples, &count, &hash, bytes.size(), {}, nullptr, nullptr, budget, &sampleStaging));
+    ASSERT_EQ(1u, samples.size());
+    EXPECT_EQ(sizeof(PCMRegistry::PreparedPackSamples), sampleStaging.Bytes());
+    EXPECT_EQ(image.staging.Bytes() + sampleStaging.Bytes(), budget->live);
+    const auto* priorSamples = samples[0].View().channels[0];
+    const auto live = budget->live;
+    budget->limit = live;
+    EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY, ReadPackCanonicalFile(path.string().c_str(), registry,
+        &image, &samples, &count, &hash, bytes.size(), {}, nullptr, nullptr, budget, &sampleStaging));
+    EXPECT_EQ(priorSamples, samples[0].View().channels[0]);
+    EXPECT_EQ(live, budget->live);
+    image = {};
+    samples.clear();
+    samples.shrink_to_fit();
+    sampleStaging.Reset();
+    EXPECT_EQ(0u, budget->live);
+}
+
 TEST(PackCanonicalFormat, BoundedFileSharesOnlyExactDuplicateMediaWithinFile) {
     for (const bool equal : {true, false}) {
         SCOPED_TRACE(equal);

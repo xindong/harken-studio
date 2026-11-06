@@ -14,7 +14,8 @@
 
 namespace harken {
 namespace {
-void AppendU32(std::vector<std::uint8_t>& out,
+template <typename Output>
+void AppendU32(Output& out,
                std::uint32_t value) {
     out.push_back(static_cast<std::uint8_t>(value));
     out.push_back(static_cast<std::uint8_t>(value >> 8));
@@ -22,32 +23,37 @@ void AppendU32(std::vector<std::uint8_t>& out,
     out.push_back(static_cast<std::uint8_t>(value >> 24));
 }
 
-void AppendU8(std::vector<std::uint8_t>& out,
+template <typename Output>
+void AppendU8(Output& out,
               std::uint8_t value) {
     out.push_back(value);
 }
 
-void AppendU16(std::vector<std::uint8_t>& out,
+template <typename Output>
+void AppendU16(Output& out,
                std::uint16_t value) {
     out.push_back(static_cast<std::uint8_t>(value));
     out.push_back(static_cast<std::uint8_t>(value >> 8));
 }
 
-void AppendU64(std::vector<std::uint8_t>& out,
+template <typename Output>
+void AppendU64(Output& out,
                std::uint64_t value) {
     AppendU32(out, static_cast<std::uint32_t>(value));
     AppendU32(out, static_cast<std::uint32_t>(value >> 32));
 }
 
-void AppendF32(std::vector<std::uint8_t>& out, float value) {
+template <typename Output>
+void AppendF32(Output& out, float value) {
     std::uint32_t bits = 0;
     std::memcpy(&bits, &value, sizeof bits);
     AppendU32(out, bits);
 }
 
-void AppendObjectId(std::vector<std::uint8_t>& out, VnObjectId value) {
+template <typename Output>
+void AppendObjectId(Output& out, VnObjectId value) {
     const auto bytes = ObjectIdBytes(value);
-    out.insert(out.end(), bytes.begin(), bytes.end());
+    for (const auto byte : bytes) out.push_back(byte);
 }
 
 struct Reader {
@@ -122,8 +128,9 @@ struct Reader {
     }
 };
 
+template <typename Output>
 struct PrefixEncodeVisitor {
-    std::vector<std::uint8_t>& out;
+    Output& out;
     void U32(std::uint32_t value) { AppendU32(out, value); }
     void U64(std::uint64_t value) { AppendU64(out, value); }
     void ObjectId(VnObjectId value) { AppendObjectId(out, value); }
@@ -136,8 +143,9 @@ struct PrefixDecodeVisitor {
     void ObjectId(VnObjectId& value) noexcept { value = reader.ObjectId(); }
 };
 
+template <typename Output>
 void EncodeSignalEndpoint(const SignalEndpointRefV1& ref,
-                          std::vector<std::uint8_t>& out) {
+                          Output& out) {
     AppendU32(out, static_cast<std::uint32_t>(ref.kind));
     AppendU32(out, ref.reserved);
     AppendObjectId(out, ref.stableId);
@@ -183,8 +191,9 @@ bool ValidStructuralAncestorKind(
            kind == playableproperties::ContentPropertyKindV1::Segment;
 }
 
+template <typename Output>
 void EncodePlayableRef(const PlayableRefV1& row,
-                       std::vector<std::uint8_t>& out) {
+                       Output& out) {
     AppendU32(out, static_cast<std::uint32_t>(row.kind));
     AppendU32(out, row.reserved);
     AppendObjectId(out, row.stableId);
@@ -194,29 +203,33 @@ void EncodePlayableRef(const PlayableRefV1& row,
     AppendU64(out, row.compatibilityFingerprint);
 }
 
+template <typename Output>
 void EncodeActionRef(const ActionObjectRefV1& row,
-                     std::vector<std::uint8_t>& out) {
+                     Output& out) {
     AppendU32(out, static_cast<std::uint32_t>(row.kind));
     AppendU32(out, row.reserved);
     AppendObjectId(out, row.stableId);
     AppendU64(out, row.expectedProgramSemanticFingerprint);
 }
 
+template <typename Output>
 void EncodeActionTime(const AuthoredTimeRationalV1& row,
-                      std::vector<std::uint8_t>& out) {
+                      Output& out) {
     AppendU32(out, static_cast<std::uint32_t>(row.domain));
     AppendU64(out, std::bit_cast<std::uint64_t>(row.numerator));
     AppendU32(out, row.denominator);
 }
 
+template <typename Output>
 void EncodeTime(const AuthoredTimeRationalV1& row,
-                std::vector<std::uint8_t>& out) {
+                Output& out) {
     AppendU32(out, static_cast<std::uint32_t>(row.domain));
     AppendU64(out, static_cast<std::uint64_t>(row.numerator));
     AppendU32(out, row.denominator);
 }
 
-bool EncodeCurve(const CurveV1& row, std::vector<std::uint8_t>& out) {
+template <typename Output>
+bool EncodeCurve(const CurveV1& row, Output& out) {
     if (row.curve.pointCount > kMaxCurvePoints) {
         return false;
     }
@@ -236,8 +249,9 @@ bool EncodeCurve(const CurveV1& row, std::vector<std::uint8_t>& out) {
     return true;
 }
 
+template <typename Output>
 void EncodePayloadHeader(const PlayablePropertyPayloadViewV1& payload,
-                         std::vector<std::uint8_t>& out,
+                         Output& out,
                          bool includeSpatializationMix) {
     AppendU64(out, payload.presentMask & ~UINT64_C(0x4));
     AppendU32(out, static_cast<std::uint32_t>(payload.values[0].bits));
@@ -264,8 +278,9 @@ void EncodePayloadHeader(const PlayablePropertyPayloadViewV1& payload,
     AppendU32(out, payload.effectEdgeCount);
 }
 
+template <typename Output>
 bool EncodePayloadBody(const PlayablePropertyPayloadViewV1& payload,
-                       std::vector<std::uint8_t>& out) {
+                       Output& out) {
     if (!CountPointer(payload.sendCount, payload.sends,
                       kHardPlayablePropertyChildRowCapacity) ||
         !CountPointer(payload.effectNodeCount, payload.effectNodes,
@@ -333,8 +348,9 @@ bool CountPayload(const PlayablePropertyPayloadViewV1& payload,
     return true;
 }
 
+template <typename Output>
 bool EncodeCompletion(const AuthoredCompletionTemplateV1& completion,
-                      std::vector<std::uint8_t>& out) {
+                      Output& out) {
     if (!CountPointer(completion.leafCount, completion.leaves,
                       kTraceWorldChildCap)) {
         return false;
@@ -375,8 +391,9 @@ bool EncodeCompletion(const AuthoredCompletionTemplateV1& completion,
     return true;
 }
 
+template <typename Output>
 void EncodeInlineSoundTimingHint(const InlineSoundTimingHintV2& hint,
-                                 std::vector<std::uint8_t>& out) {
+                                 Output& out) {
     EncodeTime(hint.startOffset, out);
     EncodeTime(hint.duration, out);
     AppendU32(out, hint.loopCount);
@@ -430,8 +447,9 @@ bool V9CapacityPrefixMatches(const WorldCapacitySummaryV1& prefix,
            prefix.maxActionExpandedWork == complete.maxActionExpandedWork;
 }
 
+template <typename Output>
 void EncodeSchedulePlacement(const ScheduleClipPlacementV1& row,
-                             std::vector<std::uint8_t>& out) {
+                             Output& out) {
     AppendU32(out, row.stablePlacementOrdinal);
     AppendU32(out, row.stableOccurrenceOrdinal);
     EncodePlayableRef(row.content, out);
@@ -1014,13 +1032,24 @@ bool DecodeCompletion(
 
 } // namespace
 
-template <typename World>
+struct BudgetEncodeOutput {
+    std::vector<std::uint8_t>& bytes;
+    detail::PackDecodeCharge& charge;
+    std::size_t& requestedSlots;
+    void clear() noexcept { bytes.clear(); }
+    std::size_t size() const noexcept { return bytes.size(); }
+    void push_back(std::uint8_t value) {
+        detail::DecodeAppend(bytes, value, charge, requestedSlots);
+    }
+};
+
+template <typename World, typename Output>
 bool EncodeCurrentWorldBodyImpl(
     const World& world,
-    std::vector<std::uint8_t>& out,
+    Output& out,
     bool includeActions, bool includeStructuralAncestors,
     bool useV9ContainerLayout, bool includeSpatializationMix,
-    bool includeEntryTimeline = false, bool includeSignals = false) noexcept {
+    bool includeEntryTimeline = false, bool includeSignals = false) {
     try {
         out.clear();
         if constexpr (std::is_same_v<World, ContainerWorldInstallViewV1>) {
@@ -1550,6 +1579,7 @@ bool EncodeCurrentWorldBodyImpl(
         }
         return true;
     } catch (...) {
+        if constexpr (std::is_same_v<Output, BudgetEncodeOutput>) throw;
         out.clear();
         return false;
     }
@@ -1593,6 +1623,24 @@ bool EncodeCurrentWorldShippingBody(
         return false;
     }
     return EncodeCurrentWorldBodyImpl(world, out, true, true, true, true);
+}
+
+WorldInstallStatus detail::EncodeCurrentWorldShippingBodyWithBudget(
+    const ContainerWorldInstallViewV1& world, std::vector<std::uint8_t>& out,
+    PackDecodeCharge& charge, std::size_t& requestedSlots) noexcept {
+    out.clear();
+    if (world.sourceBodyVintage != kCurrentWorldShippingBodyVintage)
+        return WorldInstallStatus::InvalidFormat;
+    const auto validated = ValidateCurrentWorldSectionGroupsWithBudget(world, charge.Budget());
+    if (validated != WorldInstallStatus::Ok) return validated;
+    try {
+        BudgetEncodeOutput output{out, charge, requestedSlots};
+        return EncodeCurrentWorldBodyImpl(world, output, true, true, true, true)
+            ? WorldInstallStatus::Ok : WorldInstallStatus::InvalidWorld;
+    } catch (...) {
+        out.clear();
+        return WorldInstallStatus::Capacity;
+    }
 }
 
 bool EncodeCurrentWorldShippingBodyRawAttempt(

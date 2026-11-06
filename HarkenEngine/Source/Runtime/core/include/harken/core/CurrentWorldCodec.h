@@ -52,6 +52,12 @@ bool EncodeCurrentWorldShippingBody(
     const ContainerWorldInstallViewV1& world,
     std::vector<std::uint8_t>& out) noexcept;
 
+namespace detail {
+WorldInstallStatus EncodeCurrentWorldShippingBodyWithBudget(
+    const ContainerWorldInstallViewV1& world, std::vector<std::uint8_t>& out,
+    PackDecodeCharge& charge, std::size_t& requestedSlots) noexcept;
+}
+
 // V5/V6/V7/V8 remain for historical fixtures and old journals. New captures
 // and shipping writers emit kCurrentWorldShippingBodyVintage only.
 bool EncodeCurrentWorldBodyV6(

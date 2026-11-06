@@ -19,6 +19,11 @@ struct PackDecodeBudgetState {
 };
 using PackDecodeBudget = std::shared_ptr<PackDecodeBudgetState>;
 
+inline PackDecodeBudget MakePackDecodeBudget(std::uint64_t limit) {
+    try { return std::make_shared<PackDecodeBudgetState>(limit); }
+    catch (const std::bad_alloc&) { throw PackDecodeCapacity{}; }
+}
+
 inline std::uint64_t DecodeBytes(std::uint64_t count, std::uint64_t elementBytes) {
     if (elementBytes != 0 && count > UINT64_MAX / elementBytes) throw PackDecodeCapacity{};
     return count * elementBytes;
@@ -76,7 +81,9 @@ private:
 
 template<class T>
 void DecodeReserve(std::vector<T>& values, std::size_t count, PackDecodeCharge& owner) {
-    if (count <= values.capacity()) return;
+    // One-shot admission for fresh storage; growth uses DecodeAppend instead.
+    if (!values.empty() || values.capacity() != 0) std::terminate();
+    if (count == 0) return;
     PackDecodeCharge next(owner.Budget());
     next.AddRows<T>(count);
     values.reserve(count);
