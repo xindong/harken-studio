@@ -1,4 +1,5 @@
 #include "../ActionManager.h"
+#include "../CommandSchemas.h"
 #include "Tooling/Harkenizer/Core/CanonicalRuntimeProjectAdapterPrivate.h"
 #include "../ProjectManager.h"
 #include "../FieldGroupEditing.h"
@@ -196,20 +197,7 @@ void registerFieldGroupActions(ActionManager& manager, ProjectManager* projectMa
         action.id = QLatin1String(name);
         action.displayName = action.id;
         action.category = QStringLiteral("project");
-        action.paramSchema = {{"definition_guid", "string"}, {"group", "string"},
-                              {"scope", "string?"}, {"platform_ids", "array?"},
-                              {"expected_before", "object?"}};
-        if (action.id == QStringLiteral("set_field_group_mode"))
-            action.paramSchema.insert(QStringLiteral("mode"), QStringLiteral("string"));
-        else if (action.id == QStringLiteral("clear_field_group_field_override"))
-            action.paramSchema.insert(QStringLiteral("field"), QStringLiteral("string"));
-        else if (action.id == QStringLiteral("set_field_group_field")) {
-            action.paramSchema.insert(QStringLiteral("field"), QStringLiteral("string"));
-            action.paramSchema.insert(QStringLiteral("value"), QStringLiteral("any"));
-        } else if (action.id == QStringLiteral("replace_field_group_sends"))
-            action.paramSchema.insert(QStringLiteral("sends"), QStringLiteral("array"));
-        else if (action.id == QStringLiteral("replace_field_group_effects"))
-            action.paramSchema.insert(QStringLiteral("effects"), QStringLiteral("array"));
+        action.paramSchema = commandInputSchema(action.id);
         action.handler = [projectManager, id = action.id](const QJsonObject& args) {
             return executeGroupEdit(projectManager, id, args);
         };

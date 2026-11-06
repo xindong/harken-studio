@@ -1,4 +1,5 @@
 #include "IPCDesktopInternal.h"
+#include "DesktopWidgetTargets.h"
 #include "ActionManager.h"
 #include "DialogManager.h"
 #include "../Components/VAudio.h"
@@ -33,6 +34,7 @@ void IPCServer::registerDesktopEditorHandlers()
             if (!dlg) continue;
             QJsonObject entry;
             entry["id"] = id;
+            entry["widget_id"] = desktopWidgetId(dlg);
             entry["title"] = dlg->windowTitle();
             entry["modal"] = dlg->isModal();
             entry["visible"] = dlg->isVisible();
@@ -56,6 +58,7 @@ void IPCServer::registerDesktopEditorHandlers()
             return err;
         }
         int resultCode = args["result"].toInt(QDialog::Rejected);
+        const QPointer<QDialog> dialog = DialogManager::instance().getDialog(id);
         bool dismissed = DialogManager::instance().dismissDialog(id, resultCode);
         if (!dismissed) {
             QJsonObject err;
@@ -64,6 +67,9 @@ void IPCServer::registerDesktopEditorHandlers()
             err["message"] = QString("No open dialog with id '%1'").arg(id);
             return err;
         }
+        if (dialog && dialog->isVisible())
+            return QJsonObject{{"status", "error"}, {"code", "DIALOG_NOT_CLOSED"},
+                {"message", "The dialog did not accept the requested result."}};
         QJsonObject result;
         result["status"] = "ok";
         result["result"] = QJsonObject{{"id", id}, {"dismissed", true}};
@@ -168,10 +174,15 @@ QJsonObject IPCServer::handleGetNodeGraph(const QJsonObject& args)
 QJsonObject serializeWidget(QWidget* w, int depth, int maxDepth)
 {
     QJsonObject obj;
+    obj["widget_id"] = desktopWidgetId(w);
     obj["name"] = w->objectName();
     obj["type"] = QString::fromLatin1(w->metaObject()->className());
     obj["visible"] = w->isVisible();
     obj["enabled"] = w->isEnabled();
+    if (w->isWindow()) {
+        obj["title"] = w->windowTitle();
+        obj["modal"] = w->isModal();
+    }
 
     if (auto* label = qobject_cast<QLabel*>(w))
         obj["text"] = label->text();
@@ -300,8 +311,7 @@ QJsonObject serializeWidget(QWidget* w, int depth, int maxDepth)
     if (depth < maxDepth) {
         QJsonArray children;
         for (auto* child : w->findChildren<QWidget*>(QString(), Qt::FindDirectChildrenOnly)) {
-            if (!child->objectName().isEmpty() || depth < 2)
-                children.append(serializeWidget(child, depth + 1, maxDepth));
+            children.append(serializeWidget(child, depth + 1, maxDepth));
         }
         if (!children.isEmpty())
             obj["children"] = children;
@@ -359,9 +369,7 @@ QJsonObject IPCServer::handleSetBlueprintLayer(const QJsonObject& args)
                              "Valid layers: 'children', 'parents', 'bus'");
     }
 
-    QMetaObject::invokeMethod(chain, [chain, layer, visible]() {
-        chain->setLayerVisible(layer, visible);
-    }, Qt::QueuedConnection);
+    chain->setLayerVisible(layer, visible);
 
     return successResponse(QJsonObject{
         {"layer", layerName},

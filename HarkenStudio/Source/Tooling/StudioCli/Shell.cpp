@@ -84,6 +84,8 @@ int runShell(StudioSession& session, int timeoutMs, bool json,
     QEventLoop loop;
     const bool terminal = terminalInput();
     const bool prompts = terminal && !json;
+    if (prompts)
+        std::fputs("Harken Studio CLI session. Type help for commands, save_project to save, exit to leave.\n", stderr);
     bool executing = false;
     bool stopping = false;
     bool requested = false;

@@ -10,8 +10,9 @@ namespace Bridge = HarkenEditor::Bridge;
 
 void IPCServer::registerAdvancedHandlers()
 {
-    commandHandlers_["ai_response"] = [this](const QJsonObject& args) { return handleAIResponse(args); };
-    commandHandlers_["ai_event"] = [this](const QJsonObject& args) { return handleAIEvent(args); };
+    registerDesktopHandler("get_ui_operation");
+    registerDesktopHandler("open_context_menu");
+    registerDesktopHandler("list_ui_windows");
 
     commandHandlers_["compare_files"] = [this](const QJsonObject& args) {
         QString refPath = args["reference_path"].toString();

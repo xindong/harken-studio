@@ -1,4 +1,6 @@
 
+#include "../CommandSchemas.h"
+#include "../IPC/DesktopCommandSchemas.h"
 #include "../ActionManager.h"
 #include "../BindingEditing.h"
 #include "../CurveSemantics.h"
@@ -165,12 +167,7 @@ void registerBindingActions(ActionManager& mgr)
         def.id = "set_binding";
         def.displayName = "Set Binding";
         def.category = "project";
-        def.paramSchema = QJsonObject{
-            {QStringLiteral("guid"), QStringLiteral("string")},
-            {QStringLiteral("path"), QStringLiteral("string")},
-            {QStringLiteral("object_id"), QStringLiteral("uint32")},
-            {QStringLiteral("binding"), QStringLiteral("object")}
-        };
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = true;
         def.handler = [](const QJsonObject& args) -> ActionResult {
             ProjectItem* item = resolveBindingHost(args);
@@ -196,12 +193,7 @@ void registerBindingActions(ActionManager& mgr)
         def.id = "remove_binding";
         def.displayName = "Remove Binding";
         def.category = "project";
-        def.paramSchema = QJsonObject{
-            {QStringLiteral("guid"), QStringLiteral("string")},
-            {QStringLiteral("path"), QStringLiteral("string")},
-            {QStringLiteral("object_id"), QStringLiteral("uint32")},
-            {QStringLiteral("runtime_stable_id"), QStringLiteral("string")}
-        };
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = true;
         def.handler = [](const QJsonObject& args) -> ActionResult {
             ProjectItem* item = resolveBindingHost(args);
@@ -227,12 +219,7 @@ void registerBindingActions(ActionManager& mgr)
         def.id = "clear_bindings";
         def.displayName = "Clear Bindings";
         def.category = "project";
-        def.paramSchema = QJsonObject{
-            {QStringLiteral("guid"), QStringLiteral("string")},
-            {QStringLiteral("path"), QStringLiteral("string")},
-            {QStringLiteral("object_id"), QStringLiteral("uint32")},
-            {QStringLiteral("address"), QStringLiteral("object")}
-        };
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = true;
         def.handler = [](const QJsonObject& args) -> ActionResult {
             ProjectItem* item = resolveBindingHost(args);
@@ -257,14 +244,7 @@ void registerBindingActions(ActionManager& mgr)
         def.id = "reorder_bindings";
         def.displayName = "Reorder Bindings";
         def.category = "project";
-        def.paramSchema = QJsonObject{
-            {QStringLiteral("guid"), QStringLiteral("string")},
-            {QStringLiteral("path"), QStringLiteral("string")},
-            {QStringLiteral("object_id"), QStringLiteral("uint32")},
-            {QStringLiteral("address"), QStringLiteral("object")},
-            {QStringLiteral("from"), QStringLiteral("int")},
-            {QStringLiteral("to"), QStringLiteral("int")}
-        };
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = true;
         def.handler = [](const QJsonObject& args) -> ActionResult {
             ProjectItem* item = resolveBindingHost(args);
@@ -291,11 +271,7 @@ void registerBindingActions(ActionManager& mgr)
         def.id = "set_modulator_binding";
         def.displayName = "Set Modulator Binding";
         def.category = "advanced";
-        def.paramSchema = QJsonObject{
-            {QStringLiteral("path"), QStringLiteral("string")},
-            {QStringLiteral("modulators"), QStringLiteral("array")},
-            {QStringLiteral("bindings"), QStringLiteral("array")}
-        };
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = true;
         def.handler = [](const QJsonObject& args) -> ActionResult {
             ProjectItem* item = resolveBindingHost(args);

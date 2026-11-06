@@ -17,6 +17,7 @@ public:
     QJsonObject open(const QString& path, int timeoutMs, const std::function<bool()>& canceled);
     QJsonObject commands() const;
     QJsonObject describe(const QString& name) const;
+    QJsonObject validate(const QString& name, const QJsonObject& args) const;
     QJsonObject execute(const QString& name, const QJsonObject& args,
                         int timeoutMs, const std::function<bool()>& canceled);
     QJsonObject save();

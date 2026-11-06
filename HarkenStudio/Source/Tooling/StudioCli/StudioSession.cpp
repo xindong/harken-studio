@@ -3,6 +3,8 @@
 #include "Core/AuditionManager.h"
 #include "Core/EditorCommandCatalog.h"
 #include "Core/EditorCommandRegistration.h"
+#include "Core/CommandSchemas.h"
+#include "Core/CommandArgumentValidator.h"
 #include "Core/IPC/IPCServer.h"
 #include "Core/ProjectInstance.h"
 #include "Core/ProjectLocator.h"
@@ -57,7 +59,7 @@ StudioSession::~StudioSession()
 {
     state_->dispatcher.waitForPendingOperations();
     QCoreApplication::sendPostedEvents(&state_->dispatcher, QEvent::MetaCall);
-    state_->project.closeProject();
+    if (state_->project.isProjectOpen()) state_->project.closeProject();
     state_->engine.shutdown();
     QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
 }
@@ -103,10 +105,32 @@ QJsonObject StudioSession::commands() const
     return state_->dispatcher.dispatchCommand(QStringLiteral("list_commands"), {});
 }
 
+QJsonObject StudioSession::validate(const QString& name, const QJsonObject& args) const
+{
+    if (!state_->dispatcher.allCommandNames().contains(name))
+        return failure(QStringLiteral("UNKNOWN_COMMAND"),
+            QStringLiteral("Unknown command '%1'. Run HarkenStudioCLI commands to discover available commands.").arg(name));
+    const auto schema = VNX::commandInputSchema(name);
+    if (schema.isEmpty())
+        return failure(QStringLiteral("COMMAND_CONTRACT_MISSING"),
+            QStringLiteral("Command '%1' has no argument contract.").arg(name));
+    QString error;
+    if (!VNX::validateCommandArguments(args, schema, &error)) {
+        auto response = failure(QStringLiteral("INVALID_ARGUMENTS"), error);
+        response.insert(QStringLiteral("command"), name);
+        response.insert(QStringLiteral("suggestion"),
+            QStringLiteral("Run HarkenStudioCLI commands %1 for parameter requirements.").arg(name));
+        return response;
+    }
+    return {{QStringLiteral("status"), QStringLiteral("ok")}};
+}
+
 QJsonObject StudioSession::execute(const QString& name, const QJsonObject& args,
                                   int timeoutMs, const std::function<bool()>& canceled)
 {
     if (canceled()) return failure(QStringLiteral("CANCELED"), QStringLiteral("Interrupted."));
+    const auto validated = validate(name, args);
+    if (!succeeded(validated)) return validated;
     QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
     state_->engine.serviceRuntime();
     const auto settled = waitForProjectClose(timeoutMs, canceled);

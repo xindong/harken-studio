@@ -3,6 +3,9 @@
 #include "IPCBinaryMixerLevels.h"
 #include "IPCBinaryVoiceSnapshot.h"
 #include "ActionManager.h"
+#include "CommandSchemas.h"
+#include "CommandArgumentValidator.h"
+#include "DesktopCommandSchemas.h"
 #include "PackGenerationRecord.h"
 #include <QFileInfo>
 #include <QSet>
@@ -261,6 +264,22 @@ void IPCServer::onClientReadyRead()
             }
 
             QJsonObject request = doc.object();
+            const QJsonObject envelopeSchema{
+                {"type", "object"}, {"properties", QJsonObject{
+                    {"cmd", QJsonObject{{"type", "string"}, {"minLength", 1}}},
+                    {"args", QJsonObject{{"type", "object"}}},
+                    {"request_id", QJsonObject{{"type", QJsonArray{"string", "integer"}}}}
+                }}, {"required", QJsonArray{"cmd"}}, {"additionalProperties", false}
+            };
+            QString envelopeError;
+            if (!doc.isObject() || !validateCommandArguments(request, envelopeSchema, &envelopeError)) {
+                auto response = errorResponse("INVALID_ARGUMENTS", doc.isObject()
+                    ? envelopeError : "Request must be a JSON object with cmd and optional args and request_id.");
+                const auto id = request.value("request_id");
+                if (id.isString() || id.isDouble()) response.insert("request_id", id);
+                sendResponse(client, response);
+                continue;
+            }
             QString cmd = request["cmd"].toString();
             QJsonObject args = request["args"].toObject();
 
@@ -268,6 +287,18 @@ void IPCServer::onClientReadyRead()
 
             if (cmd == QLatin1String("set_channel_role"))
             {
+                const QJsonObject roleSchema{
+                    {"type", "object"}, {"properties", QJsonObject{
+                        {"role", QJsonObject{{"enum", QJsonArray{"command", "events"}}}}
+                    }}, {"required", QJsonArray{"role"}}, {"additionalProperties", false}
+                };
+                QString roleError;
+                if (!validateCommandArguments(args, roleSchema, &roleError)) {
+                    auto response = errorResponse("INVALID_ARGUMENTS", roleError);
+                    if (!requestId.isUndefined()) response.insert("request_id", requestId);
+                    sendResponse(client, response);
+                    continue;
+                }
                 const QString role = args.value("role").toString();
                 if (role == QLatin1String("command"))
                     commandOnlyClients_.insert(client);
@@ -376,6 +407,14 @@ QJsonObject IPCServer::dispatchCommand(const QString& cmd, const QJsonObject& ar
     TransactionContextGuard transactionContextGuard(
         actionManager, transactionContextFor(context));
     const auto withRequestId = [&](QJsonObject response) {
+        if (response.value("status") == "error") {
+            const auto details = response.value("result").toObject();
+            if (response.value("code").toString().isEmpty())
+                response.insert("code", details.value("code").toString("COMMAND_FAILED"));
+            if (response.value("message").toString().isEmpty())
+                response.insert("message", details.value("message").toString(
+                    QString("Command '%1' failed.").arg(cmd)));
+        }
         if (!context.requestId.isEmpty())
             response[QStringLiteral("request_id")] = context.requestId;
         return response;
@@ -391,6 +430,20 @@ QJsonObject IPCServer::dispatchCommand(const QString& cmd, const QJsonObject& ar
         if (auto gateError = enforceAIPolicyGate(cmd, args, context, false))
             return withRequestId(*gateError);
     }
+
+    auto schema = commandInputSchema(cmd);
+    if (schema.isEmpty()) schema = desktopCommandInputSchema(cmd);
+    if (schema.isEmpty()) {
+        const auto* action = actionManager.findAction(cmd);
+        if (action && action->paramSchema.value("type") == "object") schema = action->paramSchema;
+    }
+    if (schema.isEmpty())
+        return withRequestId(errorResponse("COMMAND_CONTRACT_MISSING",
+            QString("Command '%1' has no declared argument contract.").arg(cmd)));
+    QString argumentError;
+    if (!validateCommandArguments(args, schema, &argumentError))
+        return withRequestId(errorResponse("INVALID_ARGUMENTS", argumentError,
+            QString("Use get_command_schema with command '%1' to inspect accepted arguments.").arg(cmd)));
 
     if (!isJsonCommandAvailableInCurrentState(cmd))
         return withRequestId(commandUnavailableInCurrentStateResponse(cmd));
@@ -422,6 +475,7 @@ QJsonObject IPCServer::dispatchCommand(const QString& cmd, const QJsonObject& ar
         && cmd != QLatin1String("get_project_info")
         && cmd != QLatin1String("list_commands")
         && cmd != QLatin1String("get_command_schema")
+        && cmd != QLatin1String("get_ui_operation")
         && cmd != QLatin1String("get_transcode_status")
         && cmd != QLatin1String("cancel_transcode")
         && cmd != QLatin1String("create_project")
@@ -666,6 +720,7 @@ bool IPCServer::isJsonCommandAvailableInCurrentState(const QString& cmd) const
         QStringLiteral("get_project_info"),
         QStringLiteral("list_commands"),
         QStringLiteral("get_command_schema"),
+        QStringLiteral("get_ui_operation"),
         QStringLiteral("get_transcode_status"),
         QStringLiteral("cancel_transcode"),
         QStringLiteral("open_project"),
@@ -688,15 +743,7 @@ QJsonObject IPCServer::commandUnavailableInCurrentStateResponse(const QString& c
 
 bool IPCServer::isReadOnlyCommand(const QString& cmd) const
 {
-    return cmd == QLatin1String("ping") ||
-           cmd == QLatin1String("compare_files") ||
-           cmd == QLatin1String("search_fulltext") ||
-           cmd == QLatin1String("search_status") ||
-           cmd.startsWith(QLatin1String("get_")) ||
-           cmd.startsWith(QLatin1String("list_")) ||
-           cmd.startsWith(QLatin1String("can_")) ||
-           cmd.startsWith(QLatin1String("audition_get_")) ||
-           cmd.startsWith(QLatin1String("link_get_"));
+    return commandIsReadOnly(cmd) || desktopCommandIsReadOnly(cmd);
 }
 
 bool IPCServer::isPreviewSupportedCommand(const QString& cmd) const

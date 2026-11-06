@@ -19,6 +19,7 @@
 
 class QTcpServer;
 class QTcpSocket;
+class QWidget;
 
 namespace VNX {
 
@@ -229,6 +230,8 @@ private:
     QJsonObject handleGetPlaybacks(const QJsonObject& args);
 
     QJsonObject handleGetUiTree(const QJsonObject& args);
+    QJsonObject queueDesktopOperation(QWidget* widget,
+        std::function<QJsonObject(QWidget*)> operation, QJsonObject details = {});
     QJsonObject handleFindWidget(const QJsonObject& args);
     QJsonObject handleGrabWidget(const QJsonObject& args);
     QJsonObject handleGetWidgetValue(const QJsonObject& args);

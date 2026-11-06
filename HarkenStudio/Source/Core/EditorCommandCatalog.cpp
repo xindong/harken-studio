@@ -1,5 +1,7 @@
 #include "EditorCommandCatalog.h"
 #include "ActionManager.h"
+#include "CommandSchemas.h"
+#include "IPC/DesktopCommandSchemas.h"
 #include "AI/AICommandCatalog.h"
 #include "IPC/IPCServer.h"
 
@@ -7,42 +9,6 @@
 #include <QSet>
 
 namespace VNX {
-namespace {
-
-QJsonObject inputSchema(const QJsonObject& parameters)
-{
-    if (parameters.value(QStringLiteral("type")) == QStringLiteral("object"))
-        return parameters;
-    QJsonObject properties;
-    for (auto it = parameters.begin(); it != parameters.end(); ++it) {
-        QJsonObject field;
-        if (it.value().isObject()) {
-            field = it.value().toObject();
-        } else {
-            const QString type = it.value().toString();
-            if (type == QStringLiteral("string") || type == QStringLiteral("object")
-                || type == QStringLiteral("array") || type == QStringLiteral("number")
-                || type == QStringLiteral("boolean") || type == QStringLiteral("integer"))
-                field.insert(QStringLiteral("type"), type);
-            else if (type == QStringLiteral("bool"))
-                field.insert(QStringLiteral("type"), QStringLiteral("boolean"));
-            else if (type == QStringLiteral("float") || type == QStringLiteral("double"))
-                field.insert(QStringLiteral("type"), QStringLiteral("number"));
-            else if (type.startsWith(QStringLiteral("int")) || type.startsWith(QStringLiteral("uint"))) {
-                field.insert(QStringLiteral("type"), QStringLiteral("integer"));
-                if (type.startsWith(QStringLiteral("uint")))
-                    field.insert(QStringLiteral("minimum"), 0);
-            }
-            field.insert(QStringLiteral("description"), type);
-        }
-        properties.insert(it.key(), field);
-    }
-    return {{QStringLiteral("type"), QStringLiteral("object")},
-            {QStringLiteral("properties"), properties}};
-}
-
-}
-
 bool commandSupportedByHost(CommandHost host, const QString& name, bool requiresDesktop)
 {
     if (host == CommandHost::Cli && requiresDesktop) return false;
@@ -52,6 +18,7 @@ bool commandSupportedByHost(CommandHost host, const QString& name, bool requires
         return false;
 #endif
     static const QSet<QString> unavailable{
+        "apply_template_from_data",
         "create_pack", "rename_pack", "delete_pack",
         "set_platform_profile", "set_target_platforms", "set_voice_language", "set_preferred_format",
         "get_object_audio_status", "get_cpu_budget_state", "get_render_plan",
@@ -88,7 +55,7 @@ bool commandSupportedByHost(CommandHost host, const QString& name, bool requires
     };
     if (unavailable.contains(name)) return false;
     static const QSet<QString> desktopOnly{
-        "batch", "ai_event", "ai_response", "observe", "unobserve"
+        "batch"
     };
     return host == CommandHost::Desktop || !desktopOnly.contains(name);
 }
@@ -106,61 +73,14 @@ QJsonObject describeEditorCommand(const QString& name, const IPCServer* dispatch
         {QStringLiteral("readOnly"), dispatcher && dispatcher->isReadOnlyCommand(name)},
         {QStringLiteral("requiresDesktop"), dispatcher && dispatcher->commandRequiresDesktop(name)}
     };
-    QJsonObject parameters;
-    static const QMap<QString, QString> descriptions{
-        {"list_commands", "List commands implemented by this host and their parameter schemas."},
-        {"get_command_schema", "Describe one command implemented by this host."},
-        {"compare_files", "Compare two files byte for byte without decoding audio."},
-        {"get_exec_errors", "Read recent engine execution errors without clearing them."},
-        {"clear_exec_errors", "Clear recent engine execution errors in the requested domain."},
-        {"get_attenuation_distance_scaling", "Read effective attenuation distance scaling for Shared or an explicit project platform."}
-    };
-    if (descriptions.contains(name)) {
-        QJsonObject properties;
-        QJsonArray required;
-        if (name == QStringLiteral("get_command_schema")) {
-            properties.insert(QStringLiteral("command"), QJsonObject{
-                {QStringLiteral("type"), QStringLiteral("string")}, {QStringLiteral("minLength"), 1}});
-            required.append(QStringLiteral("command"));
-        } else if (name == QStringLiteral("compare_files")) {
-            for (const auto& key : {QStringLiteral("reference_path"), QStringLiteral("candidate_path")}) {
-                properties.insert(key, QJsonObject{
-                    {QStringLiteral("type"), QStringLiteral("string")}, {QStringLiteral("minLength"), 1}});
-                required.append(key);
-            }
-        } else if (name == QStringLiteral("get_exec_errors") || name == QStringLiteral("clear_exec_errors")) {
-            properties.insert(QStringLiteral("domain"), QJsonObject{
-                {QStringLiteral("type"), QStringLiteral("string")},
-                {QStringLiteral("enum"), QJsonArray{"Music", "Stop", "Lifecycle", "Dispatch", "Gate"}}});
-            if (name == QStringLiteral("get_exec_errors"))
-                properties.insert(QStringLiteral("max_count"), QJsonObject{
-                    {QStringLiteral("type"), QStringLiteral("integer")}, {QStringLiteral("minimum"), 0}});
-        } else if (name == QStringLiteral("get_attenuation_distance_scaling")) {
-            properties.insert(QStringLiteral("path"), QJsonObject{
-                {QStringLiteral("type"), QStringLiteral("string")}, {QStringLiteral("minLength"), 1}});
-            properties.insert(QStringLiteral("platform_id"), QJsonObject{
-                {QStringLiteral("type"), QStringLiteral("string")}, {QStringLiteral("format"), QStringLiteral("uuid")}});
-            required.append(QStringLiteral("path"));
-        }
-        parameters = {{QStringLiteral("type"), QStringLiteral("object")},
-                      {QStringLiteral("properties"), properties},
-                      {QStringLiteral("required"), required},
-                      {QStringLiteral("additionalProperties"), false}};
-        result.insert(QStringLiteral("source"), QStringLiteral("catalog"));
-        result.insert(QStringLiteral("description"), descriptions.value(name));
-    } else if (spec && (!spec->argumentSchema.isEmpty() || !action || action->paramSchema.isEmpty())) {
-        parameters = spec->argumentSchema;
-        result.insert(QStringLiteral("source"), QStringLiteral("catalog"));
-        result.insert(QStringLiteral("description"), spec->description);
-        result.insert(QStringLiteral("contractVersion"), spec->contractVersion);
-    } else if (action) {
+    auto parameters = commandInputSchema(name);
+    if (parameters.isEmpty()) parameters = desktopCommandInputSchema(name);
+    if (parameters.isEmpty() && action && action->paramSchema.value("type") == "object")
         parameters = action->paramSchema;
-        result.insert(QStringLiteral("source"), QStringLiteral("action"));
-        result.insert(QStringLiteral("description"), action->displayName);
-    } else {
-        result.insert(QStringLiteral("source"), handler ? QStringLiteral("handler") : QStringLiteral("unknown"));
-        result.insert(QStringLiteral("description"), QString(name).replace('_', ' '));
-    }
+    result.insert(QStringLiteral("source"), QStringLiteral("catalog"));
+    result.insert(QStringLiteral("description"), parameters.value("description").toString(
+        spec ? spec->description : QString()));
+    result.insert(QStringLiteral("contractVersion"), 1);
     if (!result.contains(QStringLiteral("category")))
         result.insert(QStringLiteral("category"), QStringLiteral("system"));
     result.insert(QStringLiteral("scope"), commandSupportedByHost(CommandHost::Cli, name,
@@ -175,15 +95,9 @@ QJsonObject describeEditorCommand(const QString& name, const IPCServer* dispatch
         result.insert(QStringLiteral("description"), action ? action->displayName
             : QString(name).replace('_', ' '));
     result.insert(QStringLiteral("parameters"), parameters);
-    result.insert(QStringLiteral("inputSchema"), inputSchema(parameters));
-    const bool declared = parameters.value(QStringLiteral("type")) == QStringLiteral("object");
-    result.insert(QStringLiteral("schemaSource"), declared ? QStringLiteral("declared")
-        : parameters.isEmpty() ? QStringLiteral("undocumented") : QStringLiteral("legacy"));
-    if (!declared)
-        result.insert(QStringLiteral("note"), QStringLiteral(
-            "Legacy parameter descriptions may omit requirements and constraints. "
-            "An undocumented schema does not mean the command takes no arguments. "
-            "The editor validates execution and returns errors for invalid input."));
+    result.insert(QStringLiteral("inputSchema"), parameters);
+    result.insert(QStringLiteral("schemaSource"), parameters.isEmpty()
+        ? QStringLiteral("missing") : QStringLiteral("declared"));
     return result;
 }
 

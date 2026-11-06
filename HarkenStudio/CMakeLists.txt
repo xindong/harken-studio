@@ -144,6 +144,12 @@ endif()
 set(HARKEN_STUDIO_COMMAND_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/HubClient/HubIntake.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/HubClient/HubIntake.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/CommandSchemas.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/CommandSchemas.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/CommandArgumentValidator.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/CommandArgumentValidator.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/IPC/DesktopCommandSchemas.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/IPC/DesktopCommandSchemas.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/EditorCommandCatalog.h
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/EditorCommandCatalog.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/EditorCommandRegistration.h
@@ -203,6 +209,8 @@ set(HARKEN_EDITOR_LIB_SOURCES
     Source/Core/Actions/DesktopActions.cpp
     Source/Core/IPC/IPCDesktopHost.cpp
     Source/Core/IPC/IPCDesktopInternal.h
+    Source/Core/IPC/DesktopWidgetTargets.h
+    Source/Core/IPC/DesktopWidgetTargets.cpp
     Source/Core/IPC/IPCHandlers_DesktopSystem.cpp
     Source/Core/IPC/IPCHandlers_DesktopEditor.cpp
     Source/Core/IPC/IPCHandlers_DesktopAdvanced.cpp

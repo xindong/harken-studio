@@ -90,8 +90,8 @@ void registerDesktopEditorCommands(const DesktopEditorCommandContext& context)
     };
 
     manager.setActionHandler("connect_nodes", [blueprintCanvas](const QJsonObject& args) -> ActionResult {
-            int outputNode = args["output_node"].toInt(-1);
-            int inputNode = args["input_node"].toInt(-1);
+            qint64 outputNode = args["output_node"].toInteger(-1);
+            qint64 inputNode = args["input_node"].toInteger(-1);
             if (outputNode < 0 || inputNode < 0)
                 return {false, {}, "INVALID_ARGS", "output_node and input_node are required"};
 
@@ -151,8 +151,8 @@ void registerDesktopEditorCommands(const DesktopEditorCommandContext& context)
         });
 
     manager.setActionHandler("disconnect_nodes", [blueprintCanvas](const QJsonObject& args) -> ActionResult {
-            int outputNode = args["output_node"].toInt(-1);
-            int inputNode = args["input_node"].toInt(-1);
+            qint64 outputNode = args["output_node"].toInteger(-1);
+            qint64 inputNode = args["input_node"].toInteger(-1);
             if (outputNode < 0 || inputNode < 0)
                 return {false, {}, "INVALID_ARGS", "output_node and input_node are required"};
 
@@ -208,7 +208,7 @@ void registerDesktopEditorCommands(const DesktopEditorCommandContext& context)
         });
 
     manager.setActionHandler("set_node_override", [](const QJsonObject& args) -> ActionResult {
-            int nodeId = args["node_id"].toInt(-1);
+            qint64 nodeId = args["node_id"].toInteger(-1);
             if (nodeId < 0)
                 return {false, {}, "INVALID_ARGS", "node_id is required"};
             if (!args.contains("override"))
@@ -352,8 +352,9 @@ void registerDesktopEditorCommands(const DesktopEditorCommandContext& context)
                         summary.value(QStringLiteral("name")).toString(),
                         summary.value(QStringLiteral("title")).toString(),
                         summary.value(QStringLiteral("instanceId")).toInt())) {
+                    if (!current.isEmpty())
+                        return {false, {}, "AMBIGUOUS_PANEL", "Several panels match. Use a unique name from list_panels."};
                     current = summary;
-                    break;
                 }
             }
             if (current.isEmpty())
@@ -373,11 +374,7 @@ void registerDesktopEditorCommands(const DesktopEditorCommandContext& context)
 
     manager.setActionHandler("open_curve_editor", [mainWindow](const QJsonObject& args) -> ActionResult {
             QString attenuationName = args.value("name").toString().trimmed();
-            if (attenuationName.isEmpty())
-                attenuationName = args.value("attenuation").toString().trimmed();
             QString guidText = args.value("guid").toString().trimmed();
-            if (guidText.isEmpty())
-                guidText = args.value("attenuation_guid").toString().trimmed();
 
             AttenuationDimension dimension = AttenuationDimension::Volume;
             const QJsonValue dimensionValue = args.value("dimension");

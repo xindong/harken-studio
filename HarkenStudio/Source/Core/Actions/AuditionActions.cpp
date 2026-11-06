@@ -1,4 +1,6 @@
 
+#include "../CommandSchemas.h"
+#include "../IPC/DesktopCommandSchemas.h"
 #include "../ActionManager.h"
 #include "../AudioEngine.h"
 #include "AdvancedActionResult.h"
@@ -61,7 +63,7 @@ void registerAuditionActions(ActionManager& mgr,
         def.id = "audition_get_state";
         def.displayName = "Get Audition State";
         def.category = "audition";
-        def.paramSchema = QJsonObject{{"type", "object"}, {"properties", QJsonObject{}}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [auditionManager](const QJsonObject&) -> ActionResult {
             if (!auditionManager) return auditionNotAvailable();
@@ -126,7 +128,7 @@ void registerAuditionActions(ActionManager& mgr,
         def.id = "audition_play";
         def.displayName = "Audition Play";
         def.category = "audition";
-        def.paramSchema = QJsonObject{{"object_path", "string"}, {"game_object_id", "uint64"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [auditionManager](const QJsonObject& args) -> ActionResult {
             if (!auditionManager) return auditionNotAvailable();
@@ -158,11 +160,11 @@ void registerAuditionActions(ActionManager& mgr,
         def.id = "audition_stop";
         def.displayName = "Audition Stop";
         def.category = "audition";
-        def.paramSchema = QJsonObject{{"auditionID", "uint32"}, {"fade_ms", "float"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [auditionManager](const QJsonObject& args) -> ActionResult {
             if (!auditionManager) return auditionNotAvailable();
-            uint32_t tid = static_cast<uint32_t>(args["auditionID"].toInt(0));
+            uint32_t tid = static_cast<uint32_t>(args["auditionID"].toInteger(0));
             float fadeMs = static_cast<float>(args["fade_ms"].toDouble(0));
             if (tid == 0) {
                 auditionManager->stopAll(fadeMs);
@@ -179,7 +181,7 @@ void registerAuditionActions(ActionManager& mgr,
         def.id = "audition_set_position";
         def.displayName = "Audition Set Position";
         def.category = "audition";
-        def.paramSchema = QJsonObject{{"auditionID", "uint32"}, {"samplePosition", "int64"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [auditionManager, engine](const QJsonObject& args) -> ActionResult {
             if (!auditionManager) return auditionNotAvailable();
@@ -224,7 +226,7 @@ void registerAuditionActions(ActionManager& mgr,
         def.undoable = false;
         def.handler = [auditionManager](const QJsonObject& args) -> ActionResult {
             if (!auditionManager) return auditionNotAvailable();
-            uint32_t tid = static_cast<uint32_t>(args["auditionID"].toInt(0));
+            uint32_t tid = static_cast<uint32_t>(args["auditionID"].toInteger(0));
             float speed = static_cast<float>(args["speed"].toDouble(1.0));
             if (tid == 0)
                 return {false, {}, "INVALID_PARAM", "auditionID required"};
@@ -239,11 +241,11 @@ void registerAuditionActions(ActionManager& mgr,
         def.id = "audition_close";
         def.displayName = "Audition Close";
         def.category = "audition";
-        def.paramSchema = QJsonObject{{"auditionID", "uint32"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [auditionManager](const QJsonObject& args) -> ActionResult {
             if (!auditionManager) return auditionNotAvailable();
-            uint32_t tid = static_cast<uint32_t>(args["auditionID"].toInt(0));
+            uint32_t tid = static_cast<uint32_t>(args["auditionID"].toInteger(0));
             if (tid == 0)
                 return {false, {}, "INVALID_PARAM", "auditionID required"};
             auditionManager->closeAudition(tid);
@@ -257,7 +259,7 @@ void registerAuditionActions(ActionManager& mgr,
         def.id = "audition_reset";
         def.displayName = "Audition Reset";
         def.category = "audition";
-        def.paramSchema = QJsonObject{{"authoring_handle", "int64"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [auditionManager, engine](const QJsonObject& args) -> ActionResult {
             if (!auditionManager) return auditionNotAvailable();

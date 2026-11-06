@@ -1,4 +1,6 @@
 
+#include "../CommandSchemas.h"
+#include "../IPC/DesktopCommandSchemas.h"
 #include "../ActionManager.h"
 #include "../ProjectManager.h"
 #include "../NameValidator.h"
@@ -47,7 +49,7 @@ void registerEditorActions(ActionManager& mgr,
         def.requiresDesktop = true;
         def.displayName = "Connect Nodes";
         def.category = "editor";
-        def.paramSchema = QJsonObject{{"output_node", "int"}, {"input_node", "int"}, {"output_node_kind", "string"}, {"input_node_kind", "string"}, {"edge_type", "string"}};
+        def.paramSchema = desktopCommandInputSchema(def.id);
         def.undoable = false;
 
         mgr.registerAction(def);
@@ -59,7 +61,7 @@ void registerEditorActions(ActionManager& mgr,
         def.requiresDesktop = true;
         def.displayName = "Disconnect Nodes";
         def.category = "editor";
-        def.paramSchema = QJsonObject{{"output_node", "int"}, {"input_node", "int"}, {"output_node_kind", "string"}, {"input_node_kind", "string"}, {"edge_type", "string"}};
+        def.paramSchema = desktopCommandInputSchema(def.id);
         def.undoable = false;
 
         mgr.registerAction(def);
@@ -71,7 +73,7 @@ void registerEditorActions(ActionManager& mgr,
         def.requiresDesktop = true;
         def.displayName = "Set Node Override";
         def.category = "editor";
-        def.paramSchema = QJsonObject{{"node_id", "int"}, {"override", "bool"}};
+        def.paramSchema = desktopCommandInputSchema(def.id);
         def.undoable = false;
 
         mgr.registerAction(def);
@@ -83,7 +85,7 @@ void registerEditorActions(ActionManager& mgr,
         def.requiresDesktop = true;
         def.displayName = "Set Blueprint Flow Direction";
         def.category = "editor";
-        def.paramSchema = QJsonObject{{"direction", "string"}};
+        def.paramSchema = desktopCommandInputSchema(def.id);
         def.undoable = false;
 
         mgr.registerAction(def);
@@ -92,6 +94,7 @@ void registerEditorActions(ActionManager& mgr,
     {
         ActionDef def;
         def.id = "get_canvas_flow";
+        def.paramSchema = desktopCommandInputSchema(def.id);
         def.requiresDesktop = true;
         def.displayName = "Get Blueprint Flow Direction";
         def.category = "editor";
@@ -105,7 +108,7 @@ void registerEditorActions(ActionManager& mgr,
         def.id = "create_action";
         def.displayName = "Create Action";
         def.category = "editor";
-        def.paramSchema = QJsonObject{{"name", "string"}, {"parent", "string"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
             if (!projectManager || !projectManager->isProjectOpen())

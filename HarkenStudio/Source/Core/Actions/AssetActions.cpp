@@ -1,4 +1,6 @@
 
+#include "../CommandSchemas.h"
+#include "../IPC/DesktopCommandSchemas.h"
 #include "../ActionManager.h"
 #include "../AudioEngine.h"
 #include "../ProjectManager.h"
@@ -18,6 +20,7 @@
 #include <QJsonArray>
 #include <cmath>
 #include <limits>
+#include <optional>
 
 namespace VNX { ProjectItem* findItemByPathInProject(ProjectData* project, const QString& path); }
 namespace VNX {
@@ -28,31 +31,31 @@ uint32_t itemShortID(const ProjectItem* item);
 namespace VNX {
 
 
-static QMap<uint32_t, QString> replacementMapFromArgs(const QJsonObject& args)
+static std::optional<QMap<uint32_t, QString>> replacementMapFromArgs(const QJsonObject& args)
 {
     QMap<uint32_t, QString> replacements;
 
     const QJsonObject replacementsObj = args.value(QStringLiteral("replacements")).toObject();
     for (auto it = replacementsObj.begin(); it != replacementsObj.end(); ++it) {
-        uint32_t id = it.key().toUInt();
-        QString path = it.value().toString();
-        if (id != 0 && !path.isEmpty()) {
-            replacements[id] = path;
-        }
+        bool valid = false;
+        const uint32_t id = it.key().toUInt(&valid);
+        const QString path = it.value().toString();
+        if (!valid || id == 0 || QString::number(id) != it.key() || !it.value().isString() || path.isEmpty())
+            return std::nullopt;
+        replacements[id] = path;
     }
 
     const QJsonArray items = args.value(QStringLiteral("items")).toArray();
     for (const QJsonValue& value : items) {
         const QJsonObject item = value.toObject();
-        uint32_t id = static_cast<uint32_t>(item.value(QStringLiteral("source_id")).toInteger());
-        if (id == 0) {
-            id = static_cast<uint32_t>(item.value(QStringLiteral("sourceID")).toInteger());
-        }
-        const QString path = item.value(QStringLiteral("path")).toString(
-            item.value(QStringLiteral("new_path")).toString());
-        if (id != 0 && !path.isEmpty()) {
-            replacements[id] = path;
-        }
+        const auto idValue = item.value(QStringLiteral("source_id"));
+        const qint64 idNumber = idValue.toInteger();
+        const QString path = item.value(QStringLiteral("path")).toString();
+        if (!value.isObject() || !idValue.isDouble() || idValue.toDouble() != idNumber
+            || idNumber < 1 || idNumber > UINT32_MAX || path.isEmpty()
+            || replacements.contains(static_cast<uint32_t>(idNumber)))
+            return std::nullopt;
+        replacements[static_cast<uint32_t>(idNumber)] = path;
     }
 
     return replacements;
@@ -69,7 +72,7 @@ void registerAssetActions(ActionManager& mgr,
         def.id = "add_project_language";
         def.displayName = "Add Project Language";
         def.category = "asset";
-        def.paramSchema = QJsonObject{{"name", "string"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [](const QJsonObject& args) -> ActionResult {
             if (!ProjectManager::instance().isProjectOpen())
@@ -89,7 +92,7 @@ void registerAssetActions(ActionManager& mgr,
         def.id = "remove_project_language";
         def.displayName = "Remove Project Language";
         def.category = "asset";
-        def.paramSchema = QJsonObject{{"name", "string"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [](const QJsonObject& args) -> ActionResult {
             if (!ProjectManager::instance().isProjectOpen())
@@ -109,7 +112,7 @@ void registerAssetActions(ActionManager& mgr,
         def.id = "set_default_language";
         def.displayName = "Set Default Language";
         def.category = "asset";
-        def.paramSchema = QJsonObject{{"name", "string"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [](const QJsonObject& args) -> ActionResult {
             if (!ProjectManager::instance().isProjectOpen())
@@ -171,7 +174,7 @@ void registerAssetActions(ActionManager& mgr,
         def.id = "import_audio";
         def.displayName = "Import Audio";
         def.category = "asset";
-        def.paramSchema = QJsonObject{{"path", "string"}, {"pack", "string"}, {"target_parent_path", "string"}, {"target_parent_id", "uint32"}, {"as_music_source", "bool"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [](const QJsonObject& args) -> ActionResult {
             if (!ProjectManager::instance().isProjectOpen())
@@ -335,18 +338,7 @@ void registerAssetActions(ActionManager& mgr,
         def.id = "import_audio_files";
         def.displayName = "Import Audio Files";
         def.category = "asset";
-        def.paramSchema = QJsonObject{
-            {"type", "object"},
-            {"properties", QJsonObject{
-                {"files", QJsonObject{{"type", "array"}, {"minItems", 1},
-                    {"items", QJsonObject{{"type", "string"}, {"minLength", 1}}}}},
-                {"target_container_id", QJsonObject{{"type", "integer"},
-                    {"minimum", 1}, {"maximum", 4294967295.0},
-                    {"description", "Target authoring handle: container, sound, or output bus. Omit to import at the project root."}}}
-            }},
-            {"required", QJsonArray{"files"}},
-            {"additionalProperties", false}
-        };
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [](const QJsonObject& args) -> ActionResult {
             for (auto it = args.begin(); it != args.end(); ++it)
@@ -470,7 +462,7 @@ void registerAssetActions(ActionManager& mgr,
         def.id = "set_conversion_settings";
         def.displayName = "Set Conversion Settings";
         def.category = "asset";
-        def.paramSchema = QJsonObject{{"source_id", "uint32"}, {"codec", "string"}, {"quality", "float"}, {"resample", "bool"}, {"target_sample_rate", "uint32"}, {"as_override", "bool"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [](const QJsonObject& args) -> ActionResult {
             uint32_t sourceID = static_cast<uint32_t>(args["source_id"].toInteger());
@@ -482,8 +474,12 @@ void registerAssetActions(ActionManager& mgr,
                     QString("Asset %1 not found").arg(sourceID)};
             ConversionSettings settings = asset->settings;
             const uint32_t oldProcessingHash = settings.hash();
-            if (args.contains("codec"))
-                settings.format = ConversionSettings::codecFromString(args["codec"].toString());
+            if (args.contains("codec")) {
+                const QString codec = args["codec"].toString();
+                if (codec != "PCM_Float" && codec != "ADPCM" && codec != "Vorbis")
+                    return {false, {}, "INVALID_ARGS", "codec must be PCM_Float, ADPCM, or Vorbis"};
+                settings.format = ConversionSettings::codecFromString(codec);
+            }
             if (args.contains("quality"))
                 settings.vorbisQuality = static_cast<float>(args["quality"].toDouble());
             if (args.contains("resample"))
@@ -525,7 +521,7 @@ void registerAssetActions(ActionManager& mgr,
         def.id = "cleanup_cache";
         def.displayName = "Cleanup Cache";
         def.category = "asset";
-        def.paramSchema = QJsonObject{{"max_age_days", "int"}, {"max_size_bytes", "int64"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [](const QJsonObject& args) -> ActionResult {
             int maxAgeDays = args["max_age_days"].toInt(90);
@@ -547,7 +543,7 @@ void registerAssetActions(ActionManager& mgr,
         def.id = "rescan_media_sources";
         def.displayName = "Rescan Media Sources";
         def.category = "asset";
-        def.paramSchema = QJsonObject{{"platform_id", "string"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [](const QJsonObject& args) -> ActionResult {
             const auto id = ProjectPlatformSemantics::parseId(args["platform_id"].toString());
@@ -570,13 +566,13 @@ void registerAssetActions(ActionManager& mgr,
         def.id = "batch_replace_media";
         def.displayName = "Batch Replace Media";
         def.category = "asset";
-        def.paramSchema = QJsonObject{{"replacements", "object"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [](const QJsonObject& args) -> ActionResult {
-            QMap<uint32_t, QString> replacements = replacementMapFromArgs(args);
-            if (replacements.isEmpty())
-                return {false, {}, "HARKEN_ERR_MISSING_PARAM", "replacements object is required"};
-            auto results = MediaPool::instance().batchReplace(replacements);
+            const auto replacements = replacementMapFromArgs(args);
+            if (!replacements || replacements->isEmpty())
+                return {false, {}, "INVALID_ARGS", "Provide nonempty replacements with unique positive uint32 source IDs and nonempty paths"};
+            auto results = MediaPool::instance().batchReplace(*replacements);
             QJsonArray resultsArr;
             int succeeded = 0, failed = 0;
             for (const auto& r : results) {
@@ -603,7 +599,7 @@ void registerAssetActions(ActionManager& mgr,
         def.id = "set_buffer_size";
         def.displayName = "Set Buffer Size";
         def.category = "asset";
-        def.paramSchema = QJsonObject{{"block_size", "int"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [engine](const QJsonObject& args) -> ActionResult {
             if (!engine) return {false, {}, "ENGINE_NOT_AVAILABLE", "AudioEngine not available"};

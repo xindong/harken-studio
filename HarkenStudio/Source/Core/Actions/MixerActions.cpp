@@ -1,4 +1,6 @@
 
+#include "../CommandSchemas.h"
+#include "../IPC/DesktopCommandSchemas.h"
 #include "../ActionManager.h"
 #include "../AudioEngine.h"
 #include "../BusRouteGraph.h"
@@ -21,26 +23,6 @@
 namespace VNX {
 
 namespace {
-
-QJsonObject sendLevelSchema()
-{
-    return QJsonObject{
-        {"type", "object"},
-        {"properties", QJsonObject{
-            {"src_bus", QJsonObject{
-                {"type", "string"}, {"minLength", 1},
-                {"description", "Source bus GUID, full project path, or unique name."}}},
-            {"target_bus_id", QJsonObject{
-                {"type", "integer"}, {"minimum", 1}, {"maximum", 4294967295.0},
-                {"description", "Target bus authoring handle, returned as id by list_buses."}}},
-            {"level", QJsonObject{
-                {"type", "number"}, {"minimum", 0}, {"default", 1},
-                {"description", "Linear gain: 0 selects the -96 dB silence floor, 1 is unity, 0.5 is approximately -6.02 dB. get_item_info reports sendLevel in dB."}}}
-        }},
-        {"required", QJsonArray{"src_bus", "target_bus_id"}},
-        {"additionalProperties", false}
-    };
-}
 
 std::optional<float> readSendLevel(const QJsonObject& args)
 {
@@ -250,7 +232,7 @@ void registerMixerActions(ActionManager& mgr,
         def.id = "set_bus_mute";
         def.displayName = "Set Bus Mute";
         def.category = "mixer";
-        def.paramSchema = QJsonObject{{"bus_name", "string"}, {"mute", "bool"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [](const QJsonObject& args) -> ActionResult {
             const auto selected = resolveProjectSelector(
@@ -278,7 +260,7 @@ void registerMixerActions(ActionManager& mgr,
         def.id = "set_bus_solo";
         def.displayName = "Set Bus Solo";
         def.category = "mixer";
-        def.paramSchema = QJsonObject{{"bus_name", "string"}, {"solo", "bool"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [](const QJsonObject& args) -> ActionResult {
             const auto selected = resolveProjectSelector(
@@ -307,7 +289,7 @@ void registerMixerActions(ActionManager& mgr,
         def.id = "create_bus";
         def.displayName = "Create Bus";
         def.category = "mixer";
-        def.paramSchema = QJsonObject{{"name", "string"}, {"parent_bus_id", "uint32"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [](const QJsonObject& args) -> ActionResult {
             auto& pm = ProjectManager::instance();
@@ -315,8 +297,8 @@ void registerMixerActions(ActionManager& mgr,
                 return {false, {}, "NO_PROJECT", "No project open"};
 
             QString name = args["name"].toString("New Bus");
-            uint32_t parentBusId = static_cast<uint32_t>(args["parent_bus_id"].toInt(
-                static_cast<int>(VNX::kMasterBusID)));
+            uint32_t parentBusId = static_cast<uint32_t>(args["parent_bus_id"].toInteger(
+                static_cast<qint64>(VNX::kMasterBusID)));
 
             ProjectItem* parent = pm.findBusItem(parentBusId);
             if (!parent)
@@ -352,14 +334,14 @@ void registerMixerActions(ActionManager& mgr,
         def.id = "delete_bus";
         def.displayName = "Delete Bus";
         def.category = "mixer";
-        def.paramSchema = QJsonObject{{"bus_id", "uint32"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [](const QJsonObject& args) -> ActionResult {
             auto& pm = ProjectManager::instance();
             if (!pm.currentProject())
                 return {false, {}, "NO_PROJECT", "No project open"};
 
-            uint32_t busId = static_cast<uint32_t>(args["bus_id"].toInt());
+            uint32_t busId = static_cast<uint32_t>(args["bus_id"].toInteger());
             ProjectItem* busItem = pm.findBusItem(busId);
             if (!busItem)
                 return {false, {}, "DELETE_FAILED", QString("Bus ID %1 not found").arg(busId)};
@@ -380,15 +362,15 @@ void registerMixerActions(ActionManager& mgr,
         def.id = "move_bus";
         def.displayName = "Move Bus";
         def.category = "mixer";
-        def.paramSchema = QJsonObject{{"bus_id", "uint32"}, {"new_parent_bus_id", "uint32"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [](const QJsonObject& args) -> ActionResult {
             auto& pm = ProjectManager::instance();
             if (!pm.currentProject())
                 return {false, {}, "NO_PROJECT", "No project open"};
 
-            uint32_t busId = static_cast<uint32_t>(args["bus_id"].toInt());
-            uint32_t newParentId = static_cast<uint32_t>(args["new_parent_bus_id"].toInt());
+            uint32_t busId = static_cast<uint32_t>(args["bus_id"].toInteger());
+            uint32_t newParentId = static_cast<uint32_t>(args["new_parent_bus_id"].toInteger());
 
             auto* busItem = pm.findBusItem(busId);
             if (!busItem) return {false, {}, "BUS_NOT_FOUND", QString("Bus ID %1 not found").arg(busId)};
@@ -414,14 +396,14 @@ void registerMixerActions(ActionManager& mgr,
         def.id = "rename_bus";
         def.displayName = "Rename Bus";
         def.category = "mixer";
-        def.paramSchema = QJsonObject{{"bus_id", "uint32"}, {"new_name", "string"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [](const QJsonObject& args) -> ActionResult {
             auto& pm = ProjectManager::instance();
             if (!pm.currentProject())
                 return {false, {}, "NO_PROJECT", "No project open"};
 
-            uint32_t busId = static_cast<uint32_t>(args["bus_id"].toInt());
+            uint32_t busId = static_cast<uint32_t>(args["bus_id"].toInteger());
             QString newName = args["new_name"].toString();
 
             auto* busItem = pm.findBusItem(busId);
@@ -452,7 +434,7 @@ void registerMixerActions(ActionManager& mgr,
         def.id = "set_send";
         def.displayName = "Set Send";
         def.category = "mixer";
-        def.paramSchema = sendLevelSchema();
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = true;
         def.handler = [](const QJsonObject& args) -> ActionResult {
             const auto selected = resolveProjectSelector(
@@ -511,7 +493,7 @@ void registerMixerActions(ActionManager& mgr,
         def.id = "remove_send";
         def.displayName = "Remove Send";
         def.category = "mixer";
-        def.paramSchema = QJsonObject{{"src_bus", "string"}, {"target_bus_id", "uint32"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = true;
         def.handler = [](const QJsonObject& args) -> ActionResult {
             const auto selected = resolveProjectSelector(
@@ -571,7 +553,7 @@ void registerMixerActions(ActionManager& mgr,
         def.id = "set_send_level";
         def.displayName = "Set Send Level";
         def.category = "mixer";
-        def.paramSchema = sendLevelSchema();
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [](const QJsonObject& args) -> ActionResult {
             const auto selected = resolveProjectSelector(
@@ -641,7 +623,7 @@ void registerMixerActions(ActionManager& mgr,
         def.id = "set_bus_properties";
         def.displayName = "Set Bus Properties";
         def.category = "mixer";
-        def.paramSchema = QJsonObject{{"bus_id", "uint32"}, {"volume", "float"}, {"pitch", "float"}, {"pan", "float"}, {"mute", "bool"}, {"solo", "bool"}, {"outputBusVolume", "float"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = true;
         def.handler = [](const QJsonObject& args) -> ActionResult {
             return applyBusPropertiesArgs(args, ActionManager::instance().executeOriginator());
@@ -654,7 +636,7 @@ void registerMixerActions(ActionManager& mgr,
         def.id = "set_bus_pitch";
         def.displayName = "Set Bus Pitch";
         def.category = "mixer";
-        def.paramSchema = QJsonObject{{"bus_name", "string"}, {"cents", "float"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = true;
         def.handler = [](const QJsonObject& args) -> ActionResult {
             auto& pm = ProjectManager::instance();
@@ -687,7 +669,7 @@ void registerMixerActions(ActionManager& mgr,
         def.id = "set_bus_volume_db";
         def.displayName = "Set Bus Volume (dB)";
         def.category = "mixer";
-        def.paramSchema = QJsonObject{{"bus_name", "string"}, {"db", "float"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = true;
         def.handler = [](const QJsonObject& args) -> ActionResult {
             auto& pm = ProjectManager::instance();
@@ -756,7 +738,7 @@ void registerMixerActions(ActionManager& mgr,
         def.requiresDesktop = true;
         def.displayName = "Select Bus";
         def.category = "mixer";
-        def.paramSchema = QJsonObject{{"bus_id", "uint32"}};
+        def.paramSchema = desktopCommandInputSchema(def.id);
         def.undoable = false;
 
         mgr.registerAction(def);
@@ -767,17 +749,7 @@ void registerMixerActions(ActionManager& mgr,
         def.id = "set_output_bus_gain";
         def.displayName = "Set Output Bus Gain";
         def.category = "mixer";
-        def.paramSchema = QJsonObject{
-            {"type", "object"},
-            {"properties", QJsonObject{
-                {"bus_name", QJsonObject{{"type", "string"}, {"minLength", 1},
-                    {"description", "Bus GUID, full project path, or unique name."}}},
-                {"db", QJsonObject{{"type", "number"},
-                    {"description", "Output bus gain in decibels; does not change the destination bus."}}}
-            }},
-            {"required", QJsonArray{"bus_name", "db"}},
-            {"additionalProperties", false}
-        };
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = true;
         def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
             for (auto it = args.begin(); it != args.end(); ++it)

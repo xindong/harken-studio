@@ -1,3 +1,4 @@
+#include "CommandArgumentValidator.h"
 #include "IPCServerInternal.h"
 #include "ActionManager.h"
 #include "../Components/VAudio.h"
@@ -37,27 +38,6 @@ void IPCServer::registerEditorHandlers()
 
     commandHandlers_["query"] = [this](const QJsonObject& args) { return handleQuery(args); };
     commandHandlers_["batch"] = [this](const QJsonObject& args) { return handleBatch(args); };
-
-    commandHandlers_["observe"] = [this](const QJsonObject& args) -> QJsonObject {
-        if (!vqlEngine_)
-            return errorResponse("NO_ENGINE", "VQL engine not available");
-        QString vql = args["vql"].toString();
-        if (vql.isEmpty())
-            return errorResponse("MISSING_PARAM", "Missing 'vql' parameter");
-        uint32_t id = vqlEngine_->observe(vql, [](const VQLResultSet&) {});
-        if (id == 0)
-            return errorResponse("COMPILE_ERROR", "Failed to compile VQL query");
-        QJsonObject result;
-        result["observer_id"] = static_cast<int>(id);
-        return successResponse(result);
-    };
-    commandHandlers_["unobserve"] = [this](const QJsonObject& args) -> QJsonObject {
-        if (!vqlEngine_)
-            return errorResponse("NO_ENGINE", "VQL engine not available");
-        uint32_t id = static_cast<uint32_t>(args["observer_id"].toInt());
-        vqlEngine_->unobserve(id);
-        return successResponse();
-    };
 
     commandHandlers_["search_fulltext"] = [this](const QJsonObject& args) -> QJsonObject {
         QString query = args["query"].toString();
@@ -344,38 +324,46 @@ QJsonObject IPCServer::handleBatch(const QJsonObject& args)
     if (commands.isEmpty())
         return errorResponse("INVALID_BATCH", "Missing or empty 'commands' array");
 
-    bool atomic = args["atomic"].toBool(false);
-    QJsonArray results;
-    int succeeded = 0, failed = 0;
-
-    for (const auto& cmdVal : commands) {
-        QJsonObject cmdObj = cmdVal.toObject();
-        QString cmd = cmdObj["cmd"].toString();
-        QJsonObject cmdArgs = cmdObj["args"].toObject();
-
-        if (cmd.isEmpty()) {
-            results.append(QJsonObject{{"status", "error"}, {"message", "Missing 'cmd' in batch entry"}});
-            ++failed;
-            continue;
-        }
-
-        QJsonObject response = handleCommand(cmd, cmdArgs);
-        results.append(response);
-
-        if (response["status"].toString() == "ok")
-            ++succeeded;
-        else {
-            ++failed;
-            if (atomic) break;
-        }
+    for (qsizetype index = 0; index < commands.size(); ++index) {
+        const auto request = commands[index].toObject();
+        const auto name = request.value("cmd").toString();
+        if (name == "batch")
+            return errorResponse("INVALID_ARGUMENTS", QString("args.commands[%1]: nested batches are not supported; flatten the command list.").arg(index));
+        const auto description = describeEditorCommand(name, this);
+        if (!description.value("registered").toBool())
+            return errorResponse("UNKNOWN_COMMAND", QString("args.commands[%1].cmd: unknown command '%2'; no commands were executed.").arg(index).arg(name));
+        const auto schema = description.value("inputSchema").toObject();
+        if (schema.isEmpty())
+            return errorResponse("COMMAND_CONTRACT_MISSING", QString("Command '%1' has no argument contract.").arg(name));
+        QString error;
+        if (!validateCommandArguments(request.value("args").toObject(), schema, &error))
+            return errorResponse("INVALID_ARGUMENTS", QString("args.commands[%1] (%2): %3; no commands were executed.").arg(index).arg(name, error));
     }
 
-    QJsonObject result;
-    result["results"]   = results;
-    result["succeeded"] = succeeded;
-    result["failed"]    = failed;
-    result["total"]     = commands.size();
-    return successResponse(result);
+    const bool stopOnError = args.value("stop_on_error").toBool(true);
+    QJsonArray results;
+    int succeeded = 0, failed = 0;
+    for (const auto& value : commands) {
+        const auto request = value.toObject();
+        const auto name = request.value("cmd").toString();
+        auto response = handleCommand(name, request.value("args").toObject());
+        response.insert("command", name);
+        response.insert("index", results.size());
+        results.append(response);
+        if (response.value("status") == "ok") ++succeeded;
+        else {
+            ++failed;
+            if (stopOnError) break;
+        }
+    }
+    const QJsonObject result{
+        {"results", results}, {"succeeded", succeeded}, {"failed", failed},
+        {"skipped", commands.size() - results.size()}, {"total", commands.size()}
+    };
+    if (failed == 0) return successResponse(result);
+    auto response = errorResponse("BATCH_FAILED", "One or more commands failed. Completed operations are retained; inspect results before retrying.");
+    response.insert("result", result);
+    return response;
 }
 
 

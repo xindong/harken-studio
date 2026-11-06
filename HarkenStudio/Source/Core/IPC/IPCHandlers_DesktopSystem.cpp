@@ -1,4 +1,5 @@
 #include "IPCDesktopInternal.h"
+#include "DesktopWidgetTargets.h"
 #include "ThemeManager.h"
 #include "RuntimeBridge/RemoteConnection.h"
 #include "../BuiltinLayouts.h"
@@ -112,6 +113,7 @@ void IPCServer::registerDesktopSystemHandlers()
             return errorResponse("CREATE_FAILED", "Failed to create inspector panel");
         return successResponse(QJsonObject{
             {"panel_id", panelId},
+            {"widget_id", desktopWidgetId(ip)},
             {"type", ip->contextType()},
             {"name", ip->contextName()},
             {"pinned", ip->isPinned()}
@@ -157,7 +159,9 @@ void IPCServer::registerDesktopSystemHandlers()
             newId = mainWindow_->lastFocusedWorkspacePanelId(resolved);
 
         QString dockObjectName;
+        QString widgetId;
         if (QWidget* panel = mainWindow_->workspacePanelContent(resolved, newId)) {
+            widgetId = desktopWidgetId(panel);
             if (auto* dock = mainWindow_->dockOfPanel(panel))
                 dockObjectName = dock->objectName();
         }
@@ -166,6 +170,7 @@ void IPCServer::registerDesktopSystemHandlers()
             {"success", true},
             {"type", resolved},
             {"panel_id", newId},
+            {"widget_id", widgetId},
             {"dock_object_name", dockObjectName}
         });
     });
@@ -193,6 +198,7 @@ void IPCServer::registerDesktopSystemHandlers()
             if (!ip) continue;
             panels.append(QJsonObject{
                 {"panel_id", ip->panelId()},
+                {"widget_id", desktopWidgetId(ip)},
                 {"pinned", ip->isPinned()},
                 {"type", ip->contextType()},
                 {"name", ip->contextName()}
@@ -238,6 +244,7 @@ QJsonObject IPCServer::handleGetPanelRect(const QJsonObject& args)
         return errorResponse("PANEL_NOT_VISIBLE", QString("Panel '%1' is not visible").arg(name));
     const QRect rect(panel->mapToGlobal(QPoint(0, 0)), panel->size());
     return successResponse(QJsonObject{{"name", panel->objectName()},
+        {"widget_id", desktopWidgetId(panel)},
         {"x", rect.x()}, {"y", rect.y()}, {"width", rect.width()}, {"height", rect.height()}});
 }
 
@@ -439,8 +446,13 @@ QJsonObject IPCServer::handleListPanels(const QJsonObject& )
         return errorResponse("MAIN_WINDOW_NOT_AVAILABLE", "MainWindow not available");
 
     QJsonArray panels;
-    for (const QVariantMap& summary : mainWindow_->workspaceWindowSummaries())
-        panels.append(QJsonObject::fromVariantMap(summary));
+    for (const QVariantMap& summary : mainWindow_->workspaceWindowSummaries()) {
+        auto entry = QJsonObject::fromVariantMap(summary);
+        auto* panel = mainWindow_->workspacePanelContent(summary.value("typeId").toString(),
+            summary.value("instanceId").toInt());
+        if (panel) entry["widget_id"] = desktopWidgetId(panel);
+        panels.append(entry);
+    }
     return successResponse(QJsonObject{{"panels", panels}, {"count", panels.size()}});
 }
 
@@ -461,8 +473,9 @@ QJsonObject IPCServer::handleTogglePanel(const QJsonObject& args)
                 summary.value(QStringLiteral("name")).toString(),
                 summary.value(QStringLiteral("title")).toString(),
                 summary.value(QStringLiteral("instanceId")).toInt())) {
+            if (!current.isEmpty())
+                return errorResponse("AMBIGUOUS_PANEL", "Several panels match. Use a unique name from list_panels.");
             current = summary;
-            break;
         }
     }
     if (current.isEmpty())

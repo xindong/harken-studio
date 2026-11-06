@@ -18,7 +18,7 @@ def run(binary: Path, arguments: list[str], environment: dict, data: bytes | Non
                           env=environment, timeout=180)
 
 
-def verify_shell(cli: Path, environment: dict, root: Path) -> None:
+def verify_shell(cli: Path, environment: dict, root: Path, audio_output: bool) -> None:
     directory = root / "ShellAudio"
     project = directory / "ShellAudio.hsp"
     created = run(cli, ["init", str(directory), "--json"], environment)
@@ -107,8 +107,9 @@ def verify_shell(cli: Path, environment: dict, root: Path) -> None:
             process.stdin.flush()
             return responses.get(timeout=30)
 
-        for line in ('get_item_info {"path":"SessionAction"}', "commands save_project",
-                     "init_engine", "start_output", "close_project"):
+        initialize = "init_engine " + json.dumps({"device_mode": "real" if audio_output else "null"})
+        for line in ['get_item_info {"path":"SessionAction"}', "commands save_project", initialize,
+                     *(["start_output"] if audio_output else []), "close_project"]:
             response = send(line)
             assert response["status"] == "ok", response
         released = run(cli, ["list-targets", "--project", str(project), "--json"], environment)
@@ -128,7 +129,7 @@ def verify_shell(cli: Path, environment: dict, root: Path) -> None:
     assert not reader.is_alive()
 
 
-def verify(cli: Path, host: Path | None, work: Path) -> None:
+def verify(cli: Path, host: Path | None, work: Path, audio_output: bool = True) -> None:
     environment = {**os.environ, "QT_QPA_PLATFORM": "harken-cli-must-not-load-a-display"}
 
     def call(*arguments, data=None, exit_code=0):
@@ -144,6 +145,12 @@ def verify(cli: Path, host: Path | None, work: Path) -> None:
 
     help_result = run(cli, ["--help"], environment)
     assert help_result.returncode == 0 and b"--input" in help_result.stdout
+    assert call("--help")["result"]["help"]
+    for command in ("commands", "init", "exec", "run", "shell", "list-targets", "build"):
+        help_result = run(cli, [command, "--help"], environment)
+        assert help_result.returncode == 0 and f"Usage: HarkenStudioCLI {command}".encode() in help_result.stdout
+        assert call(command, "--help")["result"]["help"]
+    call("not_a_subcommand", "--help", exit_code=2)
     worker = run(cli, ["--resource-worker"], environment, b"{}\n")
     assert worker.returncode == 2, worker.stderr.decode("utf-8", "replace")
     identity = json.loads(worker.stdout)
@@ -153,12 +160,39 @@ def verify(cli: Path, host: Path | None, work: Path) -> None:
     assert call("exec", "list_commands")["result"]["commands"] == catalog
     schema = call("exec", "get_command_schema", "--input", "-", data={"command": "save_project"})
     assert call("commands", "save_project")["result"] == schema["result"]
+    assert call("exec", "save_project", "--help")["result"] == schema["result"]
+    human_schema = run(cli, ["commands", "save_project"], environment)
+    assert human_schema.returncode == 0 and b"Arguments: none." in human_schema.stdout, human_schema.stdout
+    assert not human_schema.stderr, human_schema.stderr
+    human_schema = run(cli, ["exec", "open_project", "--help", "--project", "missing.hsp"], environment)
+    assert human_schema.returncode == 0 and b"path" in human_schema.stdout and b"[required]" in human_schema.stdout
     names = {entry["command"] for entry in catalog}
     assert len(names) == len(catalog) and {"create_project", "set_item_property", "export_pack"} <= names
     for entry in catalog:
         assert entry["registered"] and entry["inputSchema"]["type"] == "object", entry
+        assert entry["schemaSource"] == "declared" and entry["inputSchema"]["additionalProperties"] is False, entry
         assert not entry["requiresDesktop"], entry
         assert "hostRestriction" not in entry, entry
+    for search in ("audio", "PROJECT", "no_such_command_987654321"):
+        expected = [entry for entry in catalog if search.lower() in
+                    " ".join(entry.get(key, "") for key in ("command", "description", "category")).lower()]
+        assert call("commands", "--search", search)["result"]["commands"] == expected
+    for category in {entry["category"] for entry in catalog}:
+        expected = [entry for entry in catalog if entry["category"] == category and entry["readOnly"]]
+        assert call("commands", "--category", category, "--read-only")["result"]["commands"] == expected
+    call("commands", "save_project", "--search", "project", exit_code=2)
+    invalid_lines = [entry["command"] + ' {"__unsupported_argument__":true}' for entry in catalog] + ["exit"]
+    invalid = run(cli, ["shell", "--json"], environment, ("\n".join(invalid_lines) + "\n").encode())
+    assert invalid.returncode == 0, invalid.stderr
+    invalid_responses = [json.loads(line) for line in invalid.stdout.splitlines()]
+    assert len(invalid_responses) == len(invalid_lines), invalid_responses
+    assert all(response.get("code") == "INVALID_ARGUMENTS" for response in invalid_responses[:-1]), invalid_responses
+    for arguments in ({}, {"path": 42}, {"path": "test.hsp", "typo": True}):
+        rejected = call("exec", "open_project", "--input", "-", data=arguments, exit_code=2)
+        assert rejected["code"] == "INVALID_ARGUMENTS" and rejected["suggestion"], rejected
+    rejected = call("exec", "save_project", "--project", "missing.hsp", "--input", "-",
+                    data={"typo": True}, exit_code=2)
+    assert rejected["code"] == "INVALID_ARGUMENTS" and "typo" in rejected["message"], rejected
     for excluded in ("get_theme", "click_widget", "batch", "list_codecs", "add_listener",
                      "set_platform_profile", "set_preferred_format", "audition_get_speed"):
         assert excluded not in names
@@ -181,9 +215,16 @@ def verify(cli: Path, host: Path | None, work: Path) -> None:
         call("exec", "ping", option, value, option, value, exit_code=2)
 
     work.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="studio cli \u00e9-", dir=work) as temporary:
+    with tempfile.TemporaryDirectory(prefix="studio cli \u00e9-\u5de5\u7a0b-", dir=work) as temporary:
         root = Path(temporary).resolve()
         assert root.is_relative_to(work.resolve())
+        for invalid_request in ({"cmd": "not_a_registered_command"},
+                                {"cmd": "save_project", "args": {"typo": True}}):
+            rejected = call("run", "--input", "-", data=[
+                {"cmd": "create_project", "args": {"name": "Preflight", "location": str(root)}},
+                invalid_request], exit_code=1 if invalid_request["cmd"].startswith("not_") else 2)
+            assert rejected["index"] == 1 and rejected["results"] == [], rejected
+            assert not (root / "Preflight").exists()
         reference_file = root / "reference.bin"
         candidate_file = root / "candidate.bin"
         reference_file.write_bytes(b"\x00\x01\x02")
@@ -200,7 +241,7 @@ def verify(cli: Path, host: Path | None, work: Path) -> None:
         call("init", str(project_dir))
         assert project.is_file()
         call("init", str(project_dir), exit_code=1)
-        verify_shell(cli, environment, root)
+        verify_shell(cli, environment, root, audio_output)
         worker_request = json.dumps({"manifest": str(root / "missing-manifest.json")}).encode("utf-8") + b"\n"
         worker = run(cli, ["--resource-worker"], environment, worker_request * 2)
         assert worker.returncode == 0, worker.stderr.decode("utf-8", "replace")
@@ -227,7 +268,7 @@ def verify(cli: Path, host: Path | None, work: Path) -> None:
         execute("get_item_info", {"path": "Unsaved"}, exit_code=1)
         stopped = call("run", "--project", str(project), "--input", "-", "--save", data=[
             {"cmd": "create_action", "args": {"name": "BeforeFailure"}},
-            {"cmd": "not_a_registered_command"},
+            {"cmd": "get_item_info", "args": {"path": "NotAnExistingObject"}},
             {"cmd": "create_action", "args": {"name": "AfterFailure"}}], exit_code=1)
         assert stopped["index"] == 1 and len(stopped["results"]) == 2, stopped
         execute("get_item_info", {"path": "BeforeFailure"}, exit_code=1)
@@ -278,7 +319,7 @@ def verify(cli: Path, host: Path | None, work: Path) -> None:
         assert batch["result"]["success"] and batch["result"]["completed"] == batch["result"]["total"] == 1, batch
         assert batch["result"]["results"][0]["response"]["result"]["cache_path"] == converted["result"]["cache_path"]
         for invalid in ([imported["source_id"], "invalid"], [imported["source_id"], imported["source_id"]]):
-            execute("batch_convert_media", {"source_ids": invalid, "platform_id": platform}, exit_code=1)
+            execute("batch_convert_media", {"source_ids": invalid, "platform_id": platform}, exit_code=2)
         workflow = root / "workflow.json"
         workflow.write_text(json.dumps([
             {"cmd": "create_action", "args": {"name": "PlayTone"}},
@@ -288,25 +329,26 @@ def verify(cli: Path, host: Path | None, work: Path) -> None:
         call("run", "--project", str(project), "--input", str(workflow), "--save")
         execute("get_item_info", {"path": "PlayTone"})
         execute("get_action_definition", {"name": "PlayTone"})
-        playback = call("run", "--project", str(project), "--input", "-", data=[
-            {"cmd": "init_engine", "args": {"sample_rate": 48000, "buffer_size": 480}},
-            {"cmd": "set_master_volume", "args": {"volume": 0}},
-            {"cmd": "start_output"},
-            {"cmd": "post_action", "args": {"name": "PlayTone"}},
-            {"cmd": "audition_play", "args": {"object_path": "PlayTone"}},
-            {"cmd": "audition_get_state"},
-            {"cmd": "set_listener", "args": {"pos": [1, 2, 3], "forward": [0, 0, 1], "up": [0, 1, 0]}},
-            {"cmd": "get_listener_info"},
-            {"cmd": "get_status"},
-            {"cmd": "get_buffer_config"},
-            {"cmd": "stop_all"}])["results"]
-        assert playback[3]["result"]["action_handle"] != 0, playback
-        assert playback[4]["result"]["auditionID"] != 0, playback
-        assert playback[5]["result"]["activeCount"] > 0, playback
-        assert playback[7]["result"]["position"] == [1, 2, 3], playback
-        buffer = playback[9]["result"]
-        assert math.isclose(playback[8]["result"]["output_latency_ms"],
-                            1000 * buffer["block_size"] / buffer["sample_rate"]), playback
+        if audio_output:
+            playback = call("run", "--project", str(project), "--input", "-", data=[
+                {"cmd": "init_engine", "args": {"sample_rate": 48000, "buffer_size": 480}},
+                {"cmd": "set_master_volume", "args": {"volume": 0}},
+                {"cmd": "start_output"},
+                {"cmd": "post_action", "args": {"name": "PlayTone"}},
+                {"cmd": "audition_play", "args": {"object_path": "PlayTone"}},
+                {"cmd": "audition_get_state"},
+                {"cmd": "set_listener", "args": {"pos": [1, 2, 3], "forward": [0, 0, 1], "up": [0, 1, 0]}},
+                {"cmd": "get_listener_info"},
+                {"cmd": "get_status"},
+                {"cmd": "get_buffer_config"},
+                {"cmd": "stop_all"}])["results"]
+            assert playback[3]["result"]["action_handle"] != 0, playback
+            assert playback[4]["result"]["auditionID"] != 0, playback
+            assert playback[5]["result"]["activeCount"] > 0, playback
+            assert playback[7]["result"]["position"] == [1, 2, 3], playback
+            buffer = playback[9]["result"]
+            assert math.isclose(playback[8]["result"]["output_latency_ms"],
+                                1000 * buffer["block_size"] / buffer["sample_rate"]), playback
         rejected = call("run", "--project", str(project), "--input", "-", exit_code=1, data=[
             {"cmd": "post_action", "args": {"name": "PlayTone"}}])
         assert rejected["code"] == "PLAY_FAILED", rejected
@@ -338,7 +380,7 @@ def verify(cli: Path, host: Path | None, work: Path) -> None:
         init_pack = next(pack for pack in packs if pack.stem == "Init")
         content_pack = next(pack for pack in packs if pack.stem == "PlayTone")
         lifecycle = call("run", "--input", "-", data=[
-            {"cmd": "init_engine"},
+            {"cmd": "init_engine", "args": {"device_mode": "real" if audio_output else "null"}},
             {"cmd": "load_pack", "args": {"path": str(init_pack)}},
             {"cmd": "load_pack", "args": {"path": str(content_pack)}},
             {"cmd": "get_loaded_packs"},
@@ -382,7 +424,7 @@ def verify(cli: Path, host: Path | None, work: Path) -> None:
                         {"platform_id": platform, "platform_ids": [platform]},
                         {"all": True, "action_name": "PlayTone"},
                         {"self_clean": True, "action_name": "PlayTone"}):
-            execute("export_pack", {"output_path": str(rejected), **invalid}, exit_code=1)
+            execute("export_pack", {"output_path": str(rejected), **invalid}, exit_code=2)
         assert not rejected.exists()
 
         execute("create_project_platform", {"name": "Alternate", "base_platform": "Windows"}, save=True)
@@ -436,9 +478,11 @@ def main() -> None:
     parser.add_argument("--cli", type=Path, required=True)
     parser.add_argument("--host", type=Path)
     parser.add_argument("--work-dir", type=Path, default=Path(".temp"))
+    parser.add_argument("--skip-audio-output", action="store_true",
+                        help="Skip hardware audio output checks for runners without an audio device.")
     args = parser.parse_args()
     verify(args.cli.resolve(), args.host.resolve() if args.host else None,
-           args.work_dir.resolve())
+           args.work_dir.resolve(), not args.skip_audio_output)
 
 
 if __name__ == "__main__":

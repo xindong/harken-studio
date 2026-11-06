@@ -1,4 +1,6 @@
 
+#include "../CommandSchemas.h"
+#include "../IPC/DesktopCommandSchemas.h"
 #include "../ActionManager.h"
 #include "../AttenuationStore.h"
 #include "../AuthoringPolicy.h"
@@ -1961,6 +1963,7 @@ void registerProjectActions(ActionManager& mgr,
     {
         ActionDef def;
         def.id = "save_project";
+        def.paramSchema = commandInputSchema(def.id);
         def.displayName = "Save Project";
         def.category = "project";
         def.undoable = false;
@@ -1984,7 +1987,7 @@ void registerProjectActions(ActionManager& mgr,
         def.displayName = "Create Project";
         def.category = "project";
         def.undoable = false;
-        def.paramSchema = QJsonObject{{"name", "string"}, {"location", "string"}, {"sample_rate", "int"}, {"channel_config", "string"}, {"platforms", "array"}, {"template_id", "string"}, {"template_data", "object"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
             if (!projectManager)
                 return {false, {}, "PROJECT_MANAGER_NOT_AVAILABLE",
@@ -2054,6 +2057,7 @@ void registerProjectActions(ActionManager& mgr,
     {
         ActionDef def;
         def.id = "close_project";
+        def.paramSchema = commandInputSchema(def.id);
         def.displayName = "Close Project";
         def.category = "project";
         def.undoable = false;
@@ -2126,11 +2130,7 @@ void registerProjectActions(ActionManager& mgr,
         def.requiresDesktop = command == QLatin1String("select_folder");
         def.category = "project";
         def.undoable = false;
-        def.paramSchema = QJsonObject{{"path", "string"}};
-        if (command == QLatin1String("rename_folder"))
-            def.paramSchema.insert("new_name", "string");
-        if (command == QLatin1String("move_folder"))
-            def.paramSchema.insert("new_parent", "string");
+        def.paramSchema = def.requiresDesktop ? desktopCommandInputSchema(def.id) : commandInputSchema(def.id);
         def.handler = [projectManager, selectFolder, command](
                          const QJsonObject& args) -> ActionResult {
             ProjectData* project = projectManager ? projectManager->currentProject() : nullptr;
@@ -2246,7 +2246,7 @@ void registerProjectActions(ActionManager& mgr,
         def.displayName = "Create Item";
         def.category = "project";
         def.undoable = false;
-        def.paramSchema = QJsonObject{{"parent", "string"}, {"name", "string"}, {"type", "string"}, {"kind", "string"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
             if (!projectManager)
                 return {false, {}, "PROJECT_MANAGER_NOT_AVAILABLE", "ProjectManager is not available"};
@@ -2339,7 +2339,7 @@ void registerProjectActions(ActionManager& mgr,
         def.displayName = "Rename Item";
         def.category = "project";
         def.undoable = false;
-        def.paramSchema = QJsonObject{{"path", "string"}, {"guid", "string"}, {"object_id", "uint32"}, {"new_name", "string"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
             if (!projectManager)
                 return {false, {}, "PROJECT_MANAGER_NOT_AVAILABLE", "ProjectManager is not available"};
@@ -2396,7 +2396,7 @@ void registerProjectActions(ActionManager& mgr,
         def.displayName = "Delete Item";
         def.category = "project";
         def.undoable = false;
-        def.paramSchema = QJsonObject{{"path", "string"}, {"object_id", "uint32"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
             if (!projectManager)
                 return {false, {}, "PROJECT_MANAGER_NOT_AVAILABLE", "ProjectManager is not available"};
@@ -2475,7 +2475,7 @@ void registerProjectActions(ActionManager& mgr,
         def.displayName = "Select Project Item";
         def.category = "project";
         def.undoable = false;
-        def.paramSchema = QJsonObject{{"path", "string"}};
+        def.paramSchema = desktopCommandInputSchema(def.id);
 
         mgr.registerAction(def);
     }
@@ -2487,7 +2487,7 @@ void registerProjectActions(ActionManager& mgr,
         def.displayName = "Select Item";
         def.category = "project";
         def.undoable = false;
-        def.paramSchema = QJsonObject{{"path", "string"}};
+        def.paramSchema = desktopCommandInputSchema(def.id);
 
         mgr.registerAction(def);
     }
@@ -2498,7 +2498,7 @@ void registerProjectActions(ActionManager& mgr,
         def.displayName = "Move Item";
         def.category = "project";
         def.undoable = false;
-        def.paramSchema = QJsonObject{{"path", "string"}, {"object_id", "uint32"}, {"new_parent", "string"}, {"new_parent_id", "uint32"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
             if (!projectManager)
                 return {false, {}, "PROJECT_MANAGER_NOT_AVAILABLE", "ProjectManager is not available"};
@@ -2554,6 +2554,7 @@ void registerProjectActions(ActionManager& mgr,
     {
         ActionDef def;
         def.id = kind.first;
+        def.paramSchema = commandInputSchema(def.id);
         def.displayName = (kind.second == ProjectManager::ClipboardOp::Copy) ? "Copy Item" : "Cut Item";
         def.category = "project";
         def.undoable = false;
@@ -2602,7 +2603,7 @@ void registerProjectActions(ActionManager& mgr,
         def.displayName = "Paste Item";
         def.category = "project";
         def.undoable = false;
-        def.paramSchema = QJsonObject{{"target_path", "string"}, {"target_object_id", "uint32"}, {"source_path", "string"}, {"source_object_id", "uint32"}, {"op", "string"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
             if (!projectManager)
                 return {false, {}, "PROJECT_MANAGER_NOT_AVAILABLE", "ProjectManager is not available"};
@@ -2665,7 +2666,7 @@ void registerProjectActions(ActionManager& mgr,
         def.displayName = "Paste Properties";
         def.category = "project";
         def.undoable = false;
-        def.paramSchema = QJsonObject{{"source_path", "string"}, {"source_object_id", "uint32"}, {"target_path", "string"}, {"target_object_id", "uint32"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
             if (!projectManager)
                 return {false, {}, "PROJECT_MANAGER_NOT_AVAILABLE", "ProjectManager is not available"};
@@ -2714,7 +2715,7 @@ void registerProjectActions(ActionManager& mgr,
         def.id = "set_item_property";
         def.displayName = "Set Item Property";
         def.category = "project";
-        def.paramSchema = setItemPropertySchema();
+        def.paramSchema = commandInputSchema(def.id);
         def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
             if (!projectManager || !projectManager->isProjectOpen())
                 return {false, {}, "NO_PROJECT_OPEN", "No project is currently open"};
@@ -2792,7 +2793,7 @@ void registerProjectActions(ActionManager& mgr,
         def.displayName = "Set Pack Platform";
         def.category = "project";
         def.undoable = false;
-        def.paramSchema = QJsonObject{{"platform_id", "string"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
             if (!projectManager || !projectManager->isProjectOpen())
                 return {false, {}, "NO_PROJECT_OPEN", "No project is currently open"};
@@ -2827,7 +2828,7 @@ void registerProjectActions(ActionManager& mgr,
         def.displayName = "Set Pack Platforms";
         def.category = "project";
         def.undoable = false;
-        def.paramSchema = QJsonObject{{"platform_ids", "array"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
             if (!projectManager || !projectManager->isProjectOpen())
                 return {false, {}, "NO_PROJECT_OPEN", "No project is currently open"};
@@ -2881,7 +2882,7 @@ void registerProjectActions(ActionManager& mgr,
         def.displayName = "Set Target Languages";
         def.category = "project";
         def.undoable = true;
-        def.paramSchema = QJsonObject{{"languages", "array"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
             if (!projectManager || !projectManager->isProjectOpen())
                 return {false, {}, "NO_PROJECT_OPEN", "No project is currently open"};
@@ -2930,7 +2931,7 @@ void registerProjectActions(ActionManager& mgr,
         def.displayName = "Set Pack Build Output Directory";
         def.category = "project";
         def.undoable = true;
-        def.paramSchema = QJsonObject{{"path", "string"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
             if (!projectManager || !projectManager->isProjectOpen())
                 return {false, {}, "NO_PROJECT_OPEN", "No project is currently open"};
@@ -2972,7 +2973,7 @@ void registerProjectActions(ActionManager& mgr,
         def.displayName = "Set Project Data Export";
         def.category = "project";
         def.undoable = true;
-        def.paramSchema = QJsonObject{{"enabled", "bool"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
             if (!projectManager || !projectManager->isProjectOpen())
                 return {false, {}, "NO_PROJECT_OPEN", "No project is currently open"};
@@ -3004,7 +3005,7 @@ void registerProjectActions(ActionManager& mgr,
         def.displayName = "Set Pack Metadata Export";
         def.category = "project";
         def.undoable = true;
-        def.paramSchema = QJsonObject{{"enabled", "bool"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
             if (!projectManager || !projectManager->isProjectOpen())
                 return {false, {}, "NO_PROJECT_OPEN", "No project is currently open"};
@@ -3036,7 +3037,7 @@ void registerProjectActions(ActionManager& mgr,
         def.displayName = "Set Waveform Export Settings";
         def.category = "project";
         def.undoable = true;
-        def.paramSchema = QJsonObject{{"enabled", "bool"}, {"path", "string"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
             if (!projectManager || !projectManager->isProjectOpen())
                 return {false, {}, "NO_PROJECT_OPEN", "No project is currently open"};
@@ -3074,8 +3075,7 @@ void registerProjectActions(ActionManager& mgr,
         def.displayName = "Set Action Pack Targeting";
         def.category = "project";
         def.undoable = false;
-        def.paramSchema = QJsonObject{{"stableId", "string"}, {"allPlatforms", "bool?"},
-                                      {"platform_ids", "array?"}, {"language", "string?"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
             if (!projectManager || !projectManager->isProjectOpen())
                 return {false, {}, "NO_PROJECT_OPEN", "No project is currently open"};
