@@ -172,6 +172,78 @@ void WriteBodyCount(std::vector<std::uint8_t>& bytes, std::size_t offset) {
         bytes[offset + i] = static_cast<std::uint8_t>(count >> (8 * i));
 }
 
+TEST(CurrentWorldInstall, DecodeStagingRefusalPreservesPriorImageAndRetries) {
+    RunnableWorld fixture;
+    std::vector<std::uint8_t> bytes;
+    ASSERT_TRUE(harken::EncodeCurrentWorldShippingBody(fixture.world, bytes));
+    auto budget = std::make_shared<harken::detail::PackDecodeBudgetState>(UINT64_MAX);
+    std::uint64_t retained = 0;
+    {
+        harken::CurrentWorldBodyImage measured;
+        ASSERT_EQ(harken::CurrentWorldBodyDecodeResult::Ok, measured.DecodeWithBudget(
+            bytes.data(), bytes.size(), harken::kCurrentWorldShippingBodyVintage,
+            harken::CurrentWorldDecodeMode::StrictArtifact, budget));
+        retained = budget->live;
+        ASSERT_GT(retained, 0u);
+    }
+    ASSERT_EQ(budget->live, 0u);
+    harken::CurrentWorldBodyImage image;
+    ASSERT_TRUE(image.Decode(bytes.data(), bytes.size(), harken::kCurrentWorldShippingBodyVintage,
+        harken::CurrentWorldDecodeMode::StrictArtifact));
+    const auto* previous = image.ProductionView();
+    budget->limit = 0;
+    allocation_probe::count = 0;
+    allocation_probe::bytes = 0;
+    allocation_probe::enabled = true;
+    const auto refused = image.DecodeWithBudget(bytes.data(), bytes.size(),
+        harken::kCurrentWorldShippingBodyVintage, harken::CurrentWorldDecodeMode::StrictArtifact, budget);
+    allocation_probe::enabled = false;
+    EXPECT_EQ(refused, harken::CurrentWorldBodyDecodeResult::Capacity);
+    EXPECT_EQ(allocation_probe::count, 0u);
+    EXPECT_EQ(image.ProductionView(), previous);
+    budget->limit = retained - 1;
+    EXPECT_EQ(harken::CurrentWorldBodyDecodeResult::Capacity, image.DecodeWithBudget(
+        bytes.data(), bytes.size(), harken::kCurrentWorldShippingBodyVintage,
+        harken::CurrentWorldDecodeMode::StrictArtifact, budget));
+    EXPECT_EQ(image.ProductionView(), previous);
+    EXPECT_EQ(budget->live, 0u);
+    budget->limit = retained * 2;
+    ASSERT_EQ(harken::CurrentWorldBodyDecodeResult::Ok, image.DecodeWithBudget(
+        bytes.data(), bytes.size(), harken::kCurrentWorldShippingBodyVintage,
+        harken::CurrentWorldDecodeMode::StrictArtifact, budget));
+    EXPECT_EQ(budget->live, retained);
+    image.ReleaseDecodeStaging();
+    EXPECT_EQ(budget->live, 0u);
+    EXPECT_EQ(image.ProductionView()->playablePropertyCount, fixture.world.playablePropertyCount);
+}
+
+TEST(CurrentWorldInstall, SectionGroupStagingRefusalRemainsCapacity) {
+    RunnableWorld fixture;
+    std::vector<harken::SendV1> sends(17);
+    for (std::uint32_t i = 0; i < sends.size(); ++i) {
+        sends[i].stableSendOrdinal = i;
+        sends[i].targetBusId = harkentest::ObjectId(i + 100);
+    }
+    fixture.properties[0].payload.sends = sends.data();
+    fixture.properties[0].payload.sendCount = static_cast<std::uint32_t>(sends.size());
+    auto budget = std::make_shared<harken::detail::PackDecodeBudgetState>(
+        sends.size() * sizeof(VnObjectId) - 1);
+    allocation_probe::count = 0;
+    allocation_probe::enabled = true;
+    const auto refused = harken::detail::ValidateCurrentWorldSectionGroupsWithBudget(fixture.world, budget);
+    allocation_probe::enabled = false;
+    EXPECT_EQ(refused, harken::WorldInstallStatus::Capacity);
+    EXPECT_EQ(allocation_probe::count, 0u);
+    EXPECT_EQ(budget->live, 0u);
+    ++budget->limit;
+    EXPECT_EQ(harken::detail::ValidateCurrentWorldSectionGroupsWithBudget(fixture.world, budget),
+        harken::WorldInstallStatus::Ok);
+    EXPECT_EQ(budget->live, 0u);
+    sends.back().targetBusId = sends.front().targetBusId;
+    EXPECT_EQ(harken::detail::ValidateCurrentWorldSectionGroupsWithBudget(fixture.world, budget),
+        harken::WorldInstallStatus::InvalidWorld);
+}
+
 TEST(CurrentWorldInstall, TruncatedTopLevelCountsDoNotAllocateClaimedRows) {
     for (const auto vintage : {18u, 19u, 20u}) {
         harken::ContainerWorldInstallViewV1 world{};

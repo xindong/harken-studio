@@ -348,7 +348,8 @@ bool ValidContinuousWeightCurve(const CurveV1& curve) noexcept {
     return true;
 }
 
-bool ValidPayload(const PlayablePropertyPayloadViewV1& payload) {
+bool ValidPayload(const PlayablePropertyPayloadViewV1& payload, const detail::PackDecodeBudget& budget = {}) {
+    detail::PackDecodeCharge scratch(budget);
     using playableproperties::PlayablePropertyDefaultV1;
     using playableproperties::PlayablePropertyWireV1;
     if ((payload.presentMask &
@@ -469,7 +470,8 @@ bool ValidPayload(const PlayablePropertyPayloadViewV1& payload) {
             return false;
         }
     }
-    std::vector<std::uint32_t> indegree(payload.effectNodeCount, 0);
+    std::vector<std::uint32_t> indegree;
+    detail::DecodeResize(indegree, payload.effectNodeCount, scratch);
     for (std::uint32_t i = 0; i < payload.effectEdgeCount; ++i) {
         const auto* destination = std::lower_bound(
             payload.effectNodes, payload.effectNodes + payload.effectNodeCount,
@@ -480,7 +482,7 @@ bool ValidPayload(const PlayablePropertyPayloadViewV1& payload) {
         ++indegree[static_cast<std::size_t>(destination - payload.effectNodes)];
     }
     std::vector<std::uint32_t> ready;
-    ready.reserve(payload.effectNodeCount);
+    detail::DecodeReserve(ready, payload.effectNodeCount, scratch);
     for (std::uint32_t i = 0; i < payload.effectNodeCount; ++i) {
         if (indegree[i] == 0) ready.push_back(i);
     }
@@ -1602,9 +1604,10 @@ auto FindContainerChild(
 template <class WorldView>
 bool ValidGridAxes(const WorldView& world,
                    const GridAxisV1* axes, std::uint32_t axisCount,
-                   ValidationScope scope) {
+                   ValidationScope scope, const detail::PackDecodeBudget& budget = {}) {
+    detail::PackDecodeCharge scratch(budget);
     std::vector<std::uint32_t> authoredOrders;
-    authoredOrders.reserve(axisCount);
+    detail::DecodeReserve(authoredOrders, axisCount, scratch);
     for (std::uint32_t i = 0; i < axisCount; ++i) {
         const auto& axis = axes[i];
         if (axis.variableId == VnObjectId{} ||
@@ -1626,9 +1629,10 @@ bool ValidGridAxes(const WorldView& world,
 template <class WorldView, class ContainerView>
 bool ValidDiscreteGrid(const WorldView& world,
                        const ContainerView& container,
-                       ValidationScope scope) {
+                       ValidationScope scope, const detail::PackDecodeBudget& budget = {}) {
+    detail::PackDecodeCharge scratch(budget);
     if (!ValidGridAxes(world, container.discreteAxes,
-                       container.discreteAxisCount, scope)) {
+                       container.discreteAxisCount, scope, budget)) {
         return false;
     }
     for (std::uint32_t i = 0; i < container.discreteAxisCount; ++i) {
@@ -1641,7 +1645,7 @@ bool ValidDiscreteGrid(const WorldView& world,
         }
     }
     std::vector<std::uint32_t> authoredOrders;
-    authoredOrders.reserve(container.discreteRowCount);
+    detail::DecodeReserve(authoredOrders, container.discreteRowCount, scratch);
     for (std::uint32_t i = 0; i < container.discreteRowCount; ++i) {
         const auto& row = container.discreteRows[i];
         if (row.cellCount != container.discreteAxisCount ||
@@ -1672,13 +1676,14 @@ bool ValidDiscreteGrid(const WorldView& world,
 template <class WorldView, class ContainerView>
 bool ValidContinuousGrid(const WorldView& world,
                          const ContainerView& container,
-                         ValidationScope scope) {
+                         ValidationScope scope, const detail::PackDecodeBudget& budget = {}) {
+    detail::PackDecodeCharge scratch(budget);
     if (!ValidGridAxes(world, container.continuousAxes,
-                       container.continuousAxisCount, scope)) {
+                       container.continuousAxisCount, scope, budget)) {
         return false;
     }
     std::vector<std::uint32_t> authoredOrders;
-    authoredOrders.reserve(container.continuousRowCount);
+    detail::DecodeReserve(authoredOrders, container.continuousRowCount, scratch);
     for (std::uint32_t i = 0; i < container.continuousRowCount; ++i) {
         const auto& row = container.continuousRows[i];
         if (row.cellCount != container.continuousAxisCount ||
@@ -1726,9 +1731,10 @@ template <class WorldView, class ContainerView>
 bool ValidContainerCurveReferences(
     const WorldView& world,
     const ContainerView& container,
-    bool includeTypedTransitions) {
+    bool includeTypedTransitions, const detail::PackDecodeBudget& budget = {}) {
+    detail::PackDecodeCharge scratch(budget);
     std::vector<std::uint32_t> referencedCurves;
-    referencedCurves.reserve(container.curveCount);
+    detail::DecodeReserve(referencedCurves, container.curveCount, scratch);
     const auto referenceCurve = [&](std::uint32_t curveLocalId,
                                     bool continuousWeight) {
         if (curveLocalId == UINT32_MAX) return true;
@@ -1786,15 +1792,16 @@ bool ValidContainerCurveReferences(
 template <class WorldView, class ContainerView>
 bool ValidVariableControlGrids(const WorldView& world,
                                const ContainerView& container,
-                               ValidationScope scope) {
-    return ValidDiscreteGrid(world, container, scope) &&
-           ValidContinuousGrid(world, container, scope);
+                               ValidationScope scope, const detail::PackDecodeBudget& budget = {}) {
+    detail::PackDecodeCharge scratch(budget);
+    return ValidDiscreteGrid(world, container, scope, budget) &&
+           ValidContinuousGrid(world, container, scope, budget);
 }
 
 } // namespace
 
-bool ValidateResolvedSectionGroupPayloadV1(
-    const PlayablePropertyPayloadViewV1& payload) noexcept {
+static bool ValidateResolvedSectionGroupPayloadCore(
+    const PlayablePropertyPayloadViewV1& payload, const detail::PackDecodeBudget& budget) {
     constexpr auto spreadBit = UINT64_C(1) << 9;
     constexpr auto requiredMask = kResolvedSectionGroupPropertyMaskV1 & ~spreadBit;
     if ((payload.presentMask & requiredMask) != requiredMask ||
@@ -1830,19 +1837,24 @@ bool ValidateResolvedSectionGroupPayloadV1(
                 if (payload.sends[previous].targetBusId == send.targetBusId) return false;
     }
     if (payload.sendCount > 16) {
-        try {
+        {
+            detail::PackDecodeCharge scratch(budget);
             std::vector<VnObjectId> targets;
-            targets.reserve(payload.sendCount);
+            detail::DecodeReserve(targets, payload.sendCount, scratch);
             for (std::uint32_t i = 0; i < payload.sendCount; ++i)
                 targets.push_back(payload.sends[i].targetBusId);
             std::sort(targets.begin(), targets.end());
             if (std::adjacent_find(targets.begin(), targets.end()) != targets.end())
                 return false;
-        } catch (...) {
-            return false;
         }
     }
     return true;
+}
+
+bool ValidateResolvedSectionGroupPayloadV1(
+    const PlayablePropertyPayloadViewV1& payload) noexcept {
+    try { return ValidateResolvedSectionGroupPayloadCore(payload, {}); }
+    catch (...) { return false; }
 }
 
 PlayablePropertyPayloadViewV1 MakeStructuralAncestorPayloadV1(
@@ -1867,8 +1879,8 @@ PlayablePropertyPayloadViewV1 MakeStructuralAncestorPayloadV1(
     return payload;
 }
 
-bool ValidateCurrentWorldSectionGroupsV1(
-    const ContainerWorldInstallViewV1& world) noexcept {
+static bool ValidateCurrentWorldSectionGroupsCore(
+    const ContainerWorldInstallViewV1& world, const detail::PackDecodeBudget& budget) {
     if (!IsReadableCurrentWorldBodyVintage(world.sourceBodyVintage) ||
         !PointerMatches(world.playablePropertyCount, world.playableProperties) ||
         !PointerMatches(world.playableOccurrenceCount, world.playableOccurrences) ||
@@ -1881,7 +1893,7 @@ bool ValidateCurrentWorldSectionGroupsV1(
     for (std::uint32_t i = 0; i < world.playablePropertyCount; ++i) {
         const auto& row = world.playableProperties[i];
         if (!ValidKind(row.contentPropertyKind) ||
-            !ValidateResolvedSectionGroupPayloadV1(row.payload) ||
+            !ValidateResolvedSectionGroupPayloadCore(row.payload, budget) ||
             !PointerMatches(row.structuralAncestorCount, row.structuralAncestors) ||
             row.structuralAncestorCount > kHardPlayablePropertyChildRowCapacity) {
             return false;
@@ -1899,6 +1911,19 @@ bool ValidateCurrentWorldSectionGroupsV1(
              kResolvedSectionGroupPropertyMaskV1) != 0)
             return false;
     return true;
+}
+
+bool ValidateCurrentWorldSectionGroupsV1(
+    const ContainerWorldInstallViewV1& world) noexcept {
+    try { return ValidateCurrentWorldSectionGroupsCore(world, {}); }
+    catch (...) { return false; }
+}
+
+WorldInstallStatus detail::ValidateCurrentWorldSectionGroupsWithBudget(
+    const ContainerWorldInstallViewV1& world, const PackDecodeBudget& budget) noexcept {
+    try { return ValidateCurrentWorldSectionGroupsCore(world, budget)
+        ? WorldInstallStatus::Ok : WorldInstallStatus::InvalidWorld; }
+    catch (...) { return WorldInstallStatus::Capacity; }
 }
 
 TransitionProgramClassV1 ClassifyTransitionProgramV1(
@@ -2948,7 +2973,9 @@ template <class WorldView>
 WorldInstallStatus ValidateCurrentWorldImpl(
     const WorldView& world,
     std::uint32_t replayVintage,
-    ValidationScope scope, bool readableOnly = false) {
+    ValidationScope scope, bool readableOnly = false,
+    const detail::PackDecodeBudget& budget = {}) {
+    detail::PackDecodeCharge scratch(budget);
     const bool replayVintageTwo = replayVintage == 2;
     const bool replayVintageThree = replayVintage == 3;
     const bool replayVintageFour = replayVintage == 4;
@@ -3076,7 +3103,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
     std::uint64_t paramTotal = 0;
     std::uint64_t edgeTotal = 0;
     std::vector<std::uint32_t> propertyAuthoredOrders;
-    propertyAuthoredOrders.reserve(world.playablePropertyCount);
+    detail::DecodeReserve(propertyAuthoredOrders, world.playablePropertyCount, scratch);
     for (std::uint32_t i = 0; i < world.playablePropertyCount; ++i) {
         const auto& row = world.playableProperties[i];
         if (!ValidKind(row.contentPropertyKind) || row.stableId == VnObjectId{} ||
@@ -3084,7 +3111,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
                             row.organizationLayerAncestors) ||
             !PointerMatches(row.structuralAncestorCount,
                             row.structuralAncestors) ||
-            !ValidPayload(row.payload) ||
+            !ValidPayload(row.payload, budget) ||
             row.programSemanticFingerprint !=
                 ComputePlayablePropertyFingerprintImpl(
                     row, currentShippingVintage) ||
@@ -3123,7 +3150,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
             if (!ValidStructuralAncestorKind(ancestor.contentPropertyKind) ||
                 ancestor.reserved != 0 || ancestor.stableId == VnObjectId{} ||
                 ancestor.programSemanticFingerprint == 0 ||
-                !ValidPayload(ancestor.payload) ||
+                !ValidPayload(ancestor.payload, budget) ||
                 (a != 0 &&
                  row.structuralAncestors[a - 1].stableId == ancestor.stableId &&
                  row.structuralAncestors[a - 1].contentPropertyKind ==
@@ -3190,7 +3217,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
                  playableproperties::ContentPropertyKindV1::Track) ||
             row.parentStableId == VnObjectId{} ||
             row.parentProgramSemanticFingerprint == 0 ||
-            !ValidPlayableRef(row.childPlayable) || !ValidPayload(row.payload) ||
+            !ValidPlayableRef(row.childPlayable) || !ValidPayload(row.payload, budget) ||
             row.occurrenceSemanticFingerprint !=
                 ComputePlayableOccurrenceFingerprintV1(row) ||
             (i != 0 &&
@@ -3248,7 +3275,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
     std::vector<VnObjectId> scheduleClipIds;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> scheduleClipGuids;
     std::vector<VnObjectId> scheduleMarkerStableIds;
-    segmentOwnedTrackIds.reserve(world.segmentScheduleCount);
+    std::size_t segmentOwnedTrackSlots = 0, clipIdSlots = 0, clipGuidSlots = 0, markerSlots = 0;
     for (std::uint32_t i = 0; i < world.trackScheduleCount; ++i) {
         const auto& row = world.trackSchedules[i];
         if (row.reserved != 0 ||
@@ -3278,8 +3305,9 @@ WorldInstallStatus ValidateCurrentWorldImpl(
                 row.rootDefinition.compatibilityFingerprint) {
             return WorldInstallStatus::InvalidWorld;
         }
+        detail::PackDecodeCharge placementScratch(budget);
         std::vector<std::uint32_t> placementOccurrenceOrdinals;
-        placementOccurrenceOrdinals.reserve(row.placementCount);
+        detail::DecodeReserve(placementOccurrenceOrdinals, row.placementCount, placementScratch);
         for (std::uint32_t p = 0; p < row.placementCount; ++p) {
             const auto& placement = row.placements[p];
             if (placement.stablePlacementOrdinal != p ||
@@ -3324,9 +3352,9 @@ WorldInstallStatus ValidateCurrentWorldImpl(
             }
             placementOccurrenceOrdinals.push_back(
                 placement.stableOccurrenceOrdinal);
-            scheduleClipIds.push_back(placement.clipId);
-            scheduleClipGuids.emplace_back(placement.clipGuidHigh,
-                                           placement.clipGuidLow);
+            detail::DecodeAppend(scheduleClipIds, placement.clipId, scratch, clipIdSlots);
+            detail::DecodeAppend(scheduleClipGuids, std::make_pair(placement.clipGuidHigh,
+                                           placement.clipGuidLow), scratch, clipGuidSlots);
         }
         std::sort(placementOccurrenceOrdinals.begin(),
                   placementOccurrenceOrdinals.end());
@@ -3453,8 +3481,8 @@ WorldInstallStatus ValidateCurrentWorldImpl(
                     ref.trackDefinition.stableId) {
                 if (IsPartitionLocal(scope)) {
                     completeContent = false;
-                    segmentOwnedTrackIds.push_back(
-                        ref.trackDefinition.stableId);
+                    detail::DecodeAppend(segmentOwnedTrackIds,
+                        ref.trackDefinition.stableId, scratch, segmentOwnedTrackSlots);
                     continue;
                 }
                 return WorldInstallStatus::InvalidWorld;
@@ -3464,7 +3492,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
                     ref.trackScheduleSemanticFingerprint) {
                 return WorldInstallStatus::InvalidWorld;
             }
-            segmentOwnedTrackIds.push_back(ref.trackDefinition.stableId);
+            detail::DecodeAppend(segmentOwnedTrackIds, ref.trackDefinition.stableId, scratch, segmentOwnedTrackSlots);
             if (entryScheduling) {
                 for (std::uint32_t p = 0; p < track->placementCount; ++p) {
                     const auto& placement = track->placements[p];
@@ -3483,7 +3511,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
             (row.bounds.contentStart != contentStart || row.bounds.contentEnd != contentEnd))
             return WorldInstallStatus::InvalidWorld;
         if (row.entryMarker.stableMarkerId != VnObjectId{})
-            scheduleMarkerStableIds.push_back(row.entryMarker.stableMarkerId);
+            detail::DecodeAppend(scheduleMarkerStableIds, row.entryMarker.stableMarkerId, scratch, markerSlots);
         for (std::uint32_t c = 0; c < row.markerCount; ++c) {
             const auto& marker = row.markers[c];
             if (marker.stableMarkerId == VnObjectId{} || marker.markerId == 0 ||
@@ -3495,7 +3523,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
                      std::pair(marker.markerId, marker.stableMarkerId))) {
                 return WorldInstallStatus::InvalidWorld;
             }
-            scheduleMarkerStableIds.push_back(marker.stableMarkerId);
+            detail::DecodeAppend(scheduleMarkerStableIds, marker.stableMarkerId, scratch, markerSlots);
         }
         if (row.startPointKind == 1) {
             const auto* marker = std::lower_bound(
@@ -3538,8 +3566,10 @@ WorldInstallStatus ValidateCurrentWorldImpl(
     const std::size_t trackNodeCount = world.trackScheduleCount;
     const std::size_t scheduleNodeCount =
         trackNodeCount + world.segmentScheduleCount;
-    std::vector<std::uint8_t> scheduleVisit(scheduleNodeCount, 0);
-    std::vector<std::uint32_t> scheduleHeight(scheduleNodeCount, 0);
+    std::vector<std::uint8_t> scheduleVisit;
+    detail::DecodeResize(scheduleVisit, scheduleNodeCount, scratch);
+    std::vector<std::uint32_t> scheduleHeight;
+    detail::DecodeResize(scheduleHeight, scheduleNodeCount, scratch);
     bool scheduleCycle = false;
     bool scheduleDepthExceeded = false;
     std::function<bool(std::size_t, std::uint32_t)> visitSchedule =
@@ -3683,7 +3713,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
     }
 
     std::vector<std::uint32_t> containerAuthoredOrders;
-    containerAuthoredOrders.reserve(world.containerCount);
+    detail::DecodeReserve(containerAuthoredOrders, world.containerCount, scratch);
     for (std::uint32_t i = 0; i < world.containerCount; ++i) {
         const auto& row = world.containers[i];
         bool containerValid = false;
@@ -3698,7 +3728,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
             return WorldInstallStatus::InvalidWorld;
         }
         if (row.mode == ContainerModeV1::VariableControl &&
-            !ValidVariableControlGrids(world, row, scope)) {
+            !ValidVariableControlGrids(world, row, scope, budget)) {
             return WorldInstallStatus::InvalidWorld;
         }
         if (row.transitionProgramIndex != UINT32_MAX &&
@@ -3780,7 +3810,7 @@ WorldInstallStatus ValidateCurrentWorldImpl(
             }
         }
         if (!ValidContainerCurveReferences(
-                world, row, includeTypedTransitions)) {
+                world, row, includeTypedTransitions, budget)) {
             return WorldInstallStatus::InvalidWorld;
         }
         const auto* definition = FindProperty(
@@ -3854,8 +3884,9 @@ WorldInstallStatus ValidateCurrentWorldImpl(
             }
         }
         containerAuthoredOrders.push_back(row.authoredStableOrder);
+        detail::PackDecodeCharge childScratch(budget);
         std::vector<std::uint32_t> childAuthoredOrders;
-        childAuthoredOrders.reserve(row.childCount);
+        detail::DecodeReserve(childAuthoredOrders, row.childCount, childScratch);
         for (std::uint32_t c = 0; c < row.childCount; ++c) {
             childAuthoredOrders.push_back(row.children[c].authoredStableOrder);
         }
@@ -3942,7 +3973,8 @@ WorldInstallStatus ValidateCurrentWorldImpl(
         containerAuthoredOrders.end()) {
         return WorldInstallStatus::InvalidWorld;
     }
-    std::vector<std::uint8_t> containerState(world.containerCount, 0);
+    std::vector<std::uint8_t> containerState;
+    detail::DecodeResize(containerState, world.containerCount, scratch);
     bool containerDepthExceeded = false;
     std::function<bool(std::uint32_t, std::uint32_t)> visitContainer =
         [&](std::uint32_t index, std::uint32_t depth) {
@@ -4270,9 +4302,12 @@ WorldInstallStatus ValidateCurrentWorldImpl(
             return WorldInstallStatus::InvalidWorld;
         }
     }
-    std::vector<std::uint8_t> actionState(world.actionCount, 0);
-    std::vector<std::uint8_t> actionComplete(world.actionCount, 0);
-    std::vector<std::uint32_t> actionDepth(world.actionCount, 0);
+    std::vector<std::uint8_t> actionState;
+    detail::DecodeResize(actionState, world.actionCount, scratch);
+    std::vector<std::uint8_t> actionComplete;
+    detail::DecodeResize(actionComplete, world.actionCount, scratch);
+    std::vector<std::uint32_t> actionDepth;
+    detail::DecodeResize(actionDepth, world.actionCount, scratch);
     std::function<bool(std::uint32_t, std::uint32_t)> visitAction =
         [&](std::uint32_t index, std::uint32_t traversalDepth) {
             if (actionState[index] == 1) return false;
@@ -4460,13 +4495,18 @@ WorldInstallStatus ValidateCurrentWorldV1(
 
 WorldInstallStatus detail::ValidateCurrentWorldPartitionLocalV1(
     const ContainerWorldInstallViewV1& world) noexcept {
+    return ValidateCurrentWorldPartitionLocalWithBudget(world, {});
+}
+
+WorldInstallStatus detail::ValidateCurrentWorldPartitionLocalWithBudget(
+    const ContainerWorldInstallViewV1& world, const PackDecodeBudget& budget) noexcept {
     try {
         if (!IsReadableCurrentWorldBodyVintage(world.sourceBodyVintage))
             return WorldInstallStatus::InvalidFormat;
-        if (!ValidateCurrentWorldSectionGroupsV1(world))
+        if (!ValidateCurrentWorldSectionGroupsCore(world, budget))
             return WorldInstallStatus::InvalidWorld;
         return ValidateCurrentWorldImpl(
-            world, world.sourceBodyVintage, ValidationScope::PartitionLocal, true);
+            world, world.sourceBodyVintage, ValidationScope::PartitionLocal, true, budget);
     } catch (...) {
         return WorldInstallStatus::Capacity;
     }

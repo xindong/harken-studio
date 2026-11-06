@@ -4,6 +4,7 @@
 
 #include <set>
 #include <string>
+#include "harken/core/detail/PackDecodeBudget.h"
 
 namespace harken {
 
@@ -36,11 +37,14 @@ inline bool IsSdkCallableName(std::string_view name) {
     return true;
 }
 
-inline bool ValidateVariableNameCatalog(const PackVariableNameCatalog& catalog) {
+inline bool ValidateVariableNameCatalog(const PackVariableNameCatalog& catalog,
+    const detail::PackDecodeBudget& budget = {}) {
+    detail::PackDecodeCharge scratch(budget);
     if (std::all_of(catalog.projectGuid.begin(), catalog.projectGuid.end(),
                     [](auto byte) { return byte == 0; }) ||
         catalog.initPackStableId == 0 || catalog.initContentRevision == 0 ||
         catalog.rows.size() > kVariableNameCatalogMaxRows) return false;
+    scratch.AddRows<VnObjectId>(catalog.rows.size());
     std::set<VnObjectId> active;
     std::string_view prior;
     for (const auto& row : catalog.rows) {
@@ -92,7 +96,9 @@ inline bool EncodeVariableNameCatalog(PackVariableNameCatalog catalog,
 }
 
 inline bool DecodeVariableNameCatalog(const std::uint8_t* bytes, std::uint64_t size,
-                                      PackVariableNameCatalog* out) {
+                                      PackVariableNameCatalog* out, detail::PackDecodeCharge* retained = nullptr) {
+    detail::PackDecodeCharge unbudgeted;
+    auto& staging = retained != nullptr ? *retained : unbudgeted;
     if (bytes == nullptr || out == nullptr || size < kVariableNameCatalogHeaderBytes ||
         size > kVariableNameCatalogMaxBytes || LoadLE32(bytes) != 1 ||
         LoadLE32(bytes + 44) != 0 || LoadLE64(bytes + 56) != Fnv1a64(bytes, 56))
@@ -110,7 +116,7 @@ inline bool DecodeVariableNameCatalog(const std::uint8_t* bytes, std::uint64_t s
     std::memcpy(catalog.projectGuid.data(), bytes + 8, 16);
     catalog.initPackStableId = LoadLE64(bytes + 24);
     catalog.initContentRevision = LoadLE64(bytes + 32);
-    catalog.rows.reserve(count);
+    detail::DecodeReserve(catalog.rows, count, staging);
     std::uint32_t cursor = 0;
     for (std::uint32_t i = 0; i < count; ++i) {
         const auto* rowBytes = bytes + kVariableNameCatalogHeaderBytes +
@@ -122,12 +128,13 @@ inline bool DecodeVariableNameCatalog(const std::uint8_t* bytes, std::uint64_t s
             LoadLE64(rowBytes + 24) != Fnv1a64(rowBytes, 24)) return false;
         PackVariableNameRow row;
         row.variableId = LoadObjectId(rowBytes);
+        staging.Add(static_cast<std::uint64_t>(length) + 1);
         row.name.assign(reinterpret_cast<const char*>(bytes + poolOffset + offset), length);
         catalog.rows.push_back(std::move(row));
         cursor += length;
     }
     if (((static_cast<std::uint64_t>(cursor) + 7) & ~std::uint64_t{7}) != nameBytes ||
-        !ValidateVariableNameCatalog(catalog)) return false;
+        !ValidateVariableNameCatalog(catalog, staging.Budget())) return false;
     for (; cursor < nameBytes; ++cursor)
         if (bytes[poolOffset + cursor] != 0) return false;
     *out = std::move(catalog);

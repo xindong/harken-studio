@@ -161,8 +161,10 @@ bool HasDuplicateId(const std::vector<T>& entries, IdFn&& idOf) {
 } // namespace
 
 bool ValidateCanonicalBusParentForestV2(
-    std::span<const PackBusDefinitionBusV2> buses) {
+    std::span<const PackBusDefinitionBusV2> buses, const detail::PackDecodeBudget& budget) {
+    detail::PackDecodeCharge scratch(budget);
     if (buses.empty() || buses.size() > 4096) return false;
+    scratch.AddRows<std::pair<const VnObjectId, std::size_t>>(buses.size());
     std::map<VnObjectId, std::size_t> indices;
     for (std::size_t i = 0; i < buses.size(); ++i) {
         if (buses[i].busId == VnObjectId{} ||
@@ -172,9 +174,10 @@ bool ValidateCanonicalBusParentForestV2(
     if (master == indices.end() ||
         buses[master->second].parentId != VnObjectId{}) return false;
 
-    std::vector<std::uint8_t> state(buses.size(), 0);
+    std::vector<std::uint8_t> state;
+    detail::DecodeResize(state, buses.size(), scratch);
     std::vector<std::size_t> path;
-    path.reserve(buses.size());
+    detail::DecodeReserve(path, buses.size(), scratch);
     state[master->second] = 2;
     for (std::size_t i = 0; i < buses.size(); ++i) {
         path.clear();
@@ -192,20 +195,30 @@ bool ValidateCanonicalBusParentForestV2(
     return true;
 }
 
+bool ValidateCanonicalBusParentForestV2(std::span<const PackBusDefinitionBusV2> buses) {
+    return ValidateCanonicalBusParentForestV2(buses, {});
+}
+
 bool ValidateCanonicalBusSendGraphV2(
     std::span<const PackBusDefinitionBusV2> buses,
-    std::span<const PackBusDefinitionSendV2> sends) {
+    std::span<const PackBusDefinitionSendV2> sends, const detail::PackDecodeBudget& budget) {
+    detail::PackDecodeCharge scratch(budget);
+    scratch.AddRows<std::pair<const VnObjectId, std::size_t>>(buses.size());
     std::map<VnObjectId, std::size_t> indices;
     for (std::size_t i = 0; i < buses.size(); ++i) {
         indices.emplace(buses[i].busId, i);
     }
-    std::vector<std::vector<std::size_t>> edges(buses.size());
-    std::vector<std::size_t> indegree(buses.size(), 0);
+    std::vector<std::vector<std::size_t>> edges;
+    detail::DecodeResize(edges, buses.size(), scratch);
+    std::vector<std::size_t> indegree;
+    detail::DecodeResize(indegree, buses.size(), scratch);
+    std::vector<std::size_t> edgeSlots;
+    detail::DecodeResize(edgeSlots, buses.size(), scratch);
     const auto addEdge = [&](VnObjectId source, VnObjectId target) {
         const auto from = indices.find(source);
         const auto to = indices.find(target);
         if (from == indices.end() || to == indices.end()) return false;
-        edges[from->second].push_back(to->second);
+        detail::DecodeAppend(edges[from->second], to->second, scratch, edgeSlots[from->second]);
         ++indegree[to->second];
         return true;
     };
@@ -217,7 +230,7 @@ bool ValidateCanonicalBusSendGraphV2(
         if (!addEdge(send.source, send.target)) return false;
     }
     std::vector<std::size_t> ready;
-    ready.reserve(buses.size());
+    detail::DecodeReserve(ready, buses.size(), scratch);
     for (std::size_t i = 0; i < buses.size(); ++i) {
         if (indegree[i] == 0) ready.push_back(i);
     }
@@ -714,7 +727,8 @@ namespace {
 
 VnResult ParseVariablePolicyOverlayPayload(
     const std::uint8_t* payload, std::uint64_t size,
-    std::vector<PackCanonicalImage::VariablePolicyOverlay>* out) {
+    std::vector<PackCanonicalImage::VariablePolicyOverlay>* out, detail::PackDecodeCharge& staging) {
+    detail::PackDecodeCharge scratch(staging.Budget());
     if (payload == nullptr || out == nullptr || size < 16) {
         return VN_BAD_PACK;
     }
@@ -730,7 +744,7 @@ VnResult ParseVariablePolicyOverlayPayload(
         return VN_BAD_PACK;
     }
     std::vector<PackCanonicalImage::VariablePolicyOverlay> rows;
-    rows.reserve(rowCount);
+    detail::DecodeReserve(rows, rowCount, staging);
     for (std::uint32_t i = 0; i < rowCount; ++i) {
         const std::uint8_t* row =
             payload + 16 + static_cast<std::size_t>(i) * 32;
@@ -760,7 +774,7 @@ VnResult ParseVariablePolicyOverlayPayload(
             anchorsBytes > size - cursor) {
             return VN_BAD_PACK;
         }
-        rows[i].discreteAnchors.reserve(count);
+        detail::DecodeReserve(rows[i].discreteAnchors, count, staging);
         for (std::uint32_t j = 0; j < count; ++j) {
             const std::int32_t anchor =
                 static_cast<std::int32_t>(LoadLE32(payload + cursor));
@@ -786,9 +800,12 @@ VnResult ParseVariablePolicyOverlayPayload(
                 return VN_BAD_PACK;
             cursor += headerBytes;
             if (count > (size - cursor) / 24) return VN_BAD_PACK;
+            detail::PackDecodeCharge labelScratch(staging.Budget());
+            labelScratch.AddRows<VnObjectId>(count);
+            labelScratch.AddRows<std::string>(count);
             std::set<VnObjectId> identities;
             std::set<std::string> names;
-            row.labels.reserve(count);
+            detail::DecodeReserve(row.labels, count, staging);
             for (std::uint32_t j = 0; j < count; ++j) {
                 if (size - cursor < 24) return VN_BAD_PACK;
                 VariableLabelDefinitionV1 label;
@@ -799,6 +816,8 @@ VnResult ParseVariablePolicyOverlayPayload(
                 if (format == 1) {
                     const std::uint64_t paddedLength = (static_cast<std::uint64_t>(length) + 3u) & ~std::uint64_t{3};
                     if (paddedLength > size - cursor) return VN_BAD_PACK;
+                    staging.Add(static_cast<std::uint64_t>(length) + 1);
+                    labelScratch.Add(static_cast<std::uint64_t>(length) + 1);
                     label.name.assign(reinterpret_cast<const char*>(payload + cursor), length);
                     for (std::uint64_t k = length; k < paddedLength; ++k)
                         if (payload[cursor + k] != 0) return VN_BAD_PACK;
@@ -827,7 +846,8 @@ VnResult ParseVariablePolicyOverlayPayload(
 
 VnResult ParseVariableRequirementsPayload(
     const std::uint8_t* payload, std::uint64_t size,
-    std::vector<PackCanonicalImage::VariableRequirement>* out) {
+    std::vector<PackCanonicalImage::VariableRequirement>* out, detail::PackDecodeCharge& staging) {
+    detail::PackDecodeCharge scratch(staging.Budget());
     if (payload == nullptr || out == nullptr || size < 16) {
         return VN_BAD_PACK;
     }
@@ -844,7 +864,7 @@ VnResult ParseVariableRequirementsPayload(
         return VN_BAD_PACK;
     }
     std::vector<PackCanonicalImage::VariableRequirement> rows;
-    rows.reserve(rowCount);
+    detail::DecodeReserve(rows, rowCount, staging);
     for (std::uint32_t i = 0; i < rowCount; ++i) {
         const std::uint8_t* row =
             payload + 16 + static_cast<std::size_t>(i) * rowBytes;
@@ -899,6 +919,8 @@ bool ZeroPadding(const std::uint8_t* payload, std::uint64_t from, std::uint64_t 
 VnResult ParseBusDefinitionSnapshotPayload(const std::uint8_t* payload,
                                            std::uint64_t size,
                                            PackCanonicalImage* image) {
+    auto& staging = image->staging;
+    detail::PackDecodeCharge scratch(staging.Budget());
     PackBusDefinitionSnapshotHeaderV1 header;
     if (!ParsePackBusDefinitionSnapshotHeaderV1(payload, size, &header)) {
         return VN_BAD_PACK;
@@ -974,7 +996,7 @@ VnResult ParseBusDefinitionSnapshotPayload(const std::uint8_t* payload,
     }
 
     std::vector<PackBusDefinitionBusV1> buses;
-    buses.reserve(header.busCount);
+    detail::DecodeReserve(buses, header.busCount, staging);
     for (std::uint32_t i = 0; i < header.busCount; ++i) {
         PackBusDefinitionBusV1 row;
         if (!ParsePackBusDefinitionBusV1(
@@ -1002,7 +1024,7 @@ VnResult ParseBusDefinitionSnapshotPayload(const std::uint8_t* payload,
     }
 
     std::vector<PackBusDefinitionSendV1> sends;
-    sends.reserve(header.sendCount);
+    detail::DecodeReserve(sends, header.sendCount, staging);
     for (std::uint32_t i = 0; i < header.sendCount; ++i) {
         PackBusDefinitionSendV1 row;
         if (!ParsePackBusDefinitionSendV1(
@@ -1016,7 +1038,7 @@ VnResult ParseBusDefinitionSnapshotPayload(const std::uint8_t* payload,
     }
 
     std::vector<PackBusDefinitionEffectV1> effects;
-    effects.reserve(header.effectCount);
+    detail::DecodeReserve(effects, header.effectCount, staging);
     for (std::uint32_t i = 0; i < header.effectCount; ++i) {
         PackBusDefinitionEffectV1 row;
         if (!ParsePackBusDefinitionEffectV1(
@@ -1030,7 +1052,7 @@ VnResult ParseBusDefinitionSnapshotPayload(const std::uint8_t* payload,
     }
 
     std::vector<PackBusDefinitionEffectParameterV1> parameters;
-    parameters.reserve(header.effectParameterCount);
+    detail::DecodeReserve(parameters, header.effectParameterCount, staging);
     for (std::uint32_t i = 0; i < header.effectParameterCount; ++i) {
         PackBusDefinitionEffectParameterV1 row;
         if (!ParsePackBusDefinitionEffectParameterV1(
@@ -1044,7 +1066,7 @@ VnResult ParseBusDefinitionSnapshotPayload(const std::uint8_t* payload,
     }
 
     std::vector<PackBusDefinitionDownmixV1> downmixes;
-    downmixes.reserve(header.downmixCount);
+    detail::DecodeReserve(downmixes, header.downmixCount, staging);
     for (std::uint32_t i = 0; i < header.downmixCount; ++i) {
         PackBusDefinitionDownmixV1 row;
         if (!ParsePackBusDefinitionDownmixV1(
@@ -1064,7 +1086,7 @@ VnResult ParseBusDefinitionSnapshotPayload(const std::uint8_t* payload,
     }
 
     std::vector<float> coefficients;
-    coefficients.reserve(header.coefficientCount);
+    detail::DecodeReserve(coefficients, header.coefficientCount, staging);
     for (std::uint32_t i = 0; i < header.coefficientCount; ++i) {
         const float value = LoadLEF32(
             entry + header.coefficientOffset +
@@ -1075,7 +1097,8 @@ VnResult ParseBusDefinitionSnapshotPayload(const std::uint8_t* payload,
         coefficients.push_back(value);
     }
 
-    std::vector<std::uint32_t> claimCount(header.downmixCount, 0);
+    std::vector<std::uint32_t> claimCount;
+    detail::DecodeResize(claimCount, header.downmixCount, scratch);
     for (const auto& bus : buses) {
         if (bus.downmixCount == 0) {
             continue;
@@ -1130,6 +1153,8 @@ VnResult ParseBusDefinitionSnapshotPayload(const std::uint8_t* payload,
 
 VnResult ParseBusDefinitionSnapshotPayloadV2(
     const std::uint8_t* payload, std::uint64_t size, PackCanonicalImage* image) {
+    auto& staging = image->staging;
+    detail::PackDecodeCharge scratch(staging.Budget());
     PackBusDefinitionSnapshotHeaderV1 header;
     if (!ParsePackBusDefinitionSnapshotHeaderV2(payload, size, &header) ||
         header.busCount == 0 || header.busCount > 4096 ||
@@ -1154,8 +1179,9 @@ VnResult ParseBusDefinitionSnapshotPayloadV2(
         return VN_BAD_PACK;
     }
     std::vector<PackBusDefinitionBusV2> buses;
+    scratch.AddRows<VnObjectId>(header.busCount);
     std::set<VnObjectId> ids;
-    buses.reserve(header.busCount);
+    detail::DecodeReserve(buses, header.busCount, staging);
     for (std::uint32_t i = 0; i < header.busCount; ++i) {
         PackBusDefinitionBusV2 row;
         if (!ParsePackBusDefinitionBusV2(payload + header.busOffset +
@@ -1170,10 +1196,11 @@ VnResult ParseBusDefinitionSnapshotPayloadV2(
         }
         buses.push_back(row);
     }
-    if (!ValidateCanonicalBusParentForestV2(buses)) return VN_BAD_PACK;
+    if (!ValidateCanonicalBusParentForestV2(buses, staging.Budget())) return VN_BAD_PACK;
     std::vector<PackBusDefinitionSendV2> sends;
+    scratch.AddRows<std::pair<VnObjectId, VnObjectId>>(header.sendCount);
     std::set<std::pair<VnObjectId, VnObjectId>> sendEdges;
-    sends.reserve(header.sendCount);
+    detail::DecodeReserve(sends, header.sendCount, staging);
     for (std::uint32_t i = 0; i < header.sendCount; ++i) {
         PackBusDefinitionSendV2 row;
         if (!ParsePackBusDefinitionSendV2(payload + header.sendOffset +
@@ -1192,9 +1219,9 @@ VnResult ParseBusDefinitionSnapshotPayloadV2(
         sends.push_back(row);
     }
     if (header.publicationCapabilityVintage == 4 &&
-        !ValidateCanonicalBusSendGraphV2(buses, sends)) return VN_BAD_PACK;
+        !ValidateCanonicalBusSendGraphV2(buses, sends, staging.Budget())) return VN_BAD_PACK;
     std::vector<PackBusDefinitionDownmixV2> downmixes;
-    downmixes.reserve(header.downmixCount);
+    detail::DecodeReserve(downmixes, header.downmixCount, staging);
     for (std::uint32_t i = 0; i < header.downmixCount; ++i) {
         PackBusDefinitionDownmixV2 row;
         if (!ParsePackBusDefinitionDownmixV2(payload + header.downmixOffset +
@@ -1206,7 +1233,7 @@ VnResult ParseBusDefinitionSnapshotPayloadV2(
         downmixes.push_back(row);
     }
     std::vector<float> coefficients;
-    coefficients.reserve(header.coefficientCount);
+    detail::DecodeReserve(coefficients, header.coefficientCount, staging);
     for (std::uint32_t i = 0; i < header.coefficientCount; ++i) {
         const float value = LoadLEF32(payload + header.coefficientOffset +
             static_cast<std::size_t>(i) * header.coefficientRowBytes);
@@ -1259,8 +1286,12 @@ bool CanonicalKindLegal(std::uint32_t entryKind, std::uint32_t packKind,
 }
 
 bool InitSelfHashFields(const PackCanonicalImage& image,
-                        std::vector<std::uint64_t>* fields, std::uint64_t* expected) {
+                        std::vector<std::uint64_t>* fields, std::uint64_t* expected,
+                        detail::PackDecodeCharge& scratch) {
     if (!image.hasCatalog || image.packKind != kPackKindInit) return true;
+    const auto count = std::count_if(image.catalogRows.begin(), image.catalogRows.end(),
+        [&](const auto& row) { return row.ownerPackStableId == image.packStableId; });
+    detail::DecodeReserve(*fields, static_cast<std::size_t>(count), scratch);
     for (std::size_t i = 0; i < image.catalogRows.size(); ++i) {
         const auto& row = image.catalogRows[i];
         if (row.ownerPackStableId != image.packStableId) continue;
@@ -1294,9 +1325,10 @@ std::uint64_t HashWithZeroFields(const std::uint8_t* bytes, std::size_t count,
 
 bool InitSelfHashMatches(const std::uint8_t* bytes, std::uint64_t fileBytes,
                          const PackCanonicalImage& image) {
+    detail::PackDecodeCharge scratch(image.staging.Budget());
     std::vector<std::uint64_t> fields;
     std::uint64_t expected = 0;
-    if (!InitSelfHashFields(image, &fields, &expected)) return false;
+    if (!InitSelfHashFields(image, &fields, &expected, scratch)) return false;
     if (fields.empty()) return true;
     std::size_t cursor = 0;
     return HashWithZeroFields(bytes, static_cast<std::size_t>(fileBytes), 0,
@@ -1305,7 +1337,9 @@ bool InitSelfHashMatches(const std::uint8_t* bytes, std::uint64_t fileBytes,
 
 VnResult ParseGameplayCatalogPayload(const std::uint8_t* payload,
                                      std::uint64_t size,
-                                     GameplayCatalogImage* out) {
+                                     GameplayCatalogImage* out, detail::PackDecodeCharge* retained = nullptr) {
+    detail::PackDecodeCharge unbudgeted;
+    auto& staging = retained != nullptr ? *retained : unbudgeted;
     if (size > kGameplayCatalogMaxBytes) {
         return VN_PACK_CATALOG_CAPACITY;
     }
@@ -1355,8 +1389,9 @@ VnResult ParseGameplayCatalogPayload(const std::uint8_t* payload,
 
     GameplayCatalogImage image;
     image.header = header;
-    image.active.reserve(header.activeCount);
-    image.retired.reserve(header.retiredCount);
+    detail::DecodeReserve(image.active, header.activeCount, staging);
+    detail::DecodeReserve(image.retired, header.retiredCount, staging);
+    detail::DecodeReserve(image.namePool, header.namePoolBytes, staging);
     image.namePool.assign(pool, pool + header.namePoolBytes);
 
     std::uint32_t cursor = 0;
@@ -1553,7 +1588,7 @@ struct SpanCanonicalSource {
         }
         return checksum == media.blobChecksum;
     }
-    VnResult Finish(const PackCanonicalImage& image,
+    VnResult Finish(PackCanonicalImage& image,
         std::vector<std::pair<std::uint64_t, std::uint64_t>>&) const {
         return InitSelfHashMatches(artifact.bytes, ByteCount(), image)
             ? VN_OK : VN_PACK_HASH_MISMATCH;
@@ -1579,6 +1614,8 @@ struct FileCanonicalSource {
     const PackCanonicalReadHooksForTests* hooks;
     std::uint64_t hash = kFnv1a64OffsetBasis;
     bool retryWithBytes = false;
+    std::uint64_t cachedBytes = 0;
+    detail::PackDecodeCharge scratch;
     std::map<std::pair<std::uint64_t, std::uint64_t>, std::vector<std::uint8_t>> metadata;
 
     std::uint64_t ByteCount() const noexcept { return fileBytes; }
@@ -1589,8 +1626,15 @@ struct FileCanonicalSource {
         const auto key = std::make_pair(offset, size);
         const auto found = metadata.find(key);
         if (found != metadata.end()) return found->second.data();
+        const auto requested = size == 0 ? 1 : size;
+        if (cachedBytes > fileBytes || requested > fileBytes - cachedBytes) {
+            retryWithBytes = true;
+            return nullptr;
+        }
+        scratch.AddRows<decltype(metadata)::value_type>(1);
         auto& bytes = metadata[key];
-        bytes.resize(static_cast<std::size_t>(size == 0 ? 1 : size));
+        bytes.resize(static_cast<std::size_t>(requested));
+        cachedBytes += requested;
         file.clear();
         file.seekg(static_cast<std::streamoff>(offset));
         if (!file) return nullptr;
@@ -1603,7 +1647,7 @@ struct FileCanonicalSource {
         // bytes are consumed into unpublished sample owners in Finish.
         return true;
     }
-    VnResult Finish(const PackCanonicalImage& image,
+    VnResult Finish(PackCanonicalImage& image,
                    std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges) {
         std::sort(ranges.begin(), ranges.end());
         std::uint64_t previousEnd = 0;
@@ -1616,16 +1660,23 @@ struct FileCanonicalSource {
             }
             previousEnd = range.first + range.second;
         }
+        detail::PackDecodeCharge scanScratch(scratch.Budget());
         std::vector<std::uint64_t> zeroFields;
         std::uint64_t expectedSelfHash = 0;
-        if (!InitSelfHashFields(image, &zeroFields, &expectedSelfHash))
+        if (!InitSelfHashFields(image, &zeroFields, &expectedSelfHash, scanScratch))
             return VN_PACK_HASH_MISMATCH;
-        std::vector<PCMRegistry::PackSampleBuilder> builders(image.media.size());
-        std::vector<PCMRegistry::PreparedPackSamples> completed(image.media.size());
+        std::vector<PCMRegistry::PackSampleBuilder> builders;
+        detail::DecodeResize(builders, image.media.size(), scanScratch);
+        std::vector<PCMRegistry::PreparedPackSamples> completed;
+        detail::DecodeResize(completed, image.media.size(), scanScratch);
         std::vector<std::size_t> physicalOrder;
-        physicalOrder.reserve(image.media.size());
-        std::vector<std::uint64_t> checksums(image.media.size(), kFnv1a64OffsetBasis);
-        std::vector<VnResult> sampleStatus(image.media.size(), VN_OK);
+        detail::DecodeReserve(physicalOrder, image.media.size(), scanScratch);
+        std::vector<std::uint64_t> checksums;
+        detail::DecodeResize(checksums, image.media.size(), scanScratch);
+        std::fill(checksums.begin(), checksums.end(), kFnv1a64OffsetBasis);
+        std::vector<VnResult> sampleStatus;
+        detail::DecodeResize(sampleStatus, image.media.size(), scanScratch);
+        std::fill(sampleStatus.begin(), sampleStatus.end(), VN_OK);
         for (std::size_t i = 0; i < image.media.size(); ++i) {
             physicalOrder.push_back(i);
         }
@@ -1778,7 +1829,9 @@ struct FileCanonicalSource {
 };
 
 template <class Source>
-VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out) {
+VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out,
+    const detail::PackDecodeBudget& budget) {
+    detail::PackDecodeCharge scratch(budget);
 
     const auto fileBytes = source.ByteCount();
     const auto* bytes = source.Data(0, kPackV2HeaderBytes);
@@ -1814,6 +1867,8 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out) {
     const std::uint64_t dirEnd = header.directoryOffset + dirBytes;
 
     PackCanonicalImage image;
+    image.staging = detail::PackDecodeCharge(budget);
+    std::array<std::size_t, 9> requestedSlots{};
     image.packKind = header.packKind;
     image.catalogPayloadOffset = 0;
 
@@ -1824,7 +1879,7 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out) {
     std::uint64_t dependencyOrdinal = 0;
     std::uint32_t canonicalVintage = 0;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
-    ranges.reserve(static_cast<std::size_t>(header.entryCount) * 2);
+    detail::DecodeReserve(ranges, static_cast<std::size_t>(header.entryCount) * 2, scratch);
 
     for (std::uint32_t i = 0; i < header.entryCount; ++i) {
         const PackV2DirectoryEntry entry = ParsePackV2DirectoryEntry(
@@ -1883,7 +1938,7 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out) {
                 entry.size != catalogHeader.catalogBytes) {
                 return VN_BAD_PACK;
             }
-            image.catalogRows.reserve(catalogHeader.catalogEntryCount);
+            detail::DecodeReserve(image.catalogRows, catalogHeader.catalogEntryCount, image.staging);
             for (std::uint32_t r = 0; r < catalogHeader.catalogEntryCount; ++r) {
                 PackInitCatalogRow row;
                 if (!ParsePackInitCatalogRow(
@@ -1898,7 +1953,7 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out) {
                 }
                 image.catalogRows.push_back(row);
             }
-            image.startupPackIds.reserve(catalogHeader.startupPackCount);
+            detail::DecodeReserve(image.startupPackIds, catalogHeader.startupPackCount, image.staging);
             const std::uint8_t* startup =
                 payload + kInitCatalogHeaderBytes +
                 static_cast<std::size_t>(catalogHeader.catalogEntryCount) *
@@ -1934,7 +1989,7 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out) {
         case kPackEntryKindVariableNameCatalog: {
             if (header.packKind != kPackKindInit || image.hasVariableNameCatalog ||
                 entry.id != decltype(entry.id){} || entry.relationOrdinal != 0 ||
-                !DecodeVariableNameCatalog(payload, entry.size, &image.variableNameCatalog))
+                !DecodeVariableNameCatalog(payload, entry.size, &image.variableNameCatalog, &image.staging))
                 return VN_BAD_PACK;
             image.hasVariableNameCatalog = true;
             break;
@@ -1944,7 +1999,7 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out) {
                 return VN_BAD_PACK;
             }
             const VnResult parsed = ParseGameplayCatalogPayload(
-                payload, entry.size, &image.gameplayCatalog);
+                payload, entry.size, &image.gameplayCatalog, &image.staging);
             if (parsed != VN_OK) {
                 return parsed;
             }
@@ -1971,18 +2026,18 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out) {
                 return VN_PACK_INCOMPATIBLE;
             }
             CurrentWorldBodyImage body;
-            const CurrentWorldBodyDecodeResult decoded = body.DecodeWithResult(
+            const CurrentWorldBodyDecodeResult decoded = body.DecodeWithBudget(
                 payload + partitionHeader.headerBytes,
                 static_cast<std::size_t>(partitionHeader.bodyBytes),
                 partitionHeader.bodyVintage,
-                CurrentWorldDecodeMode::StrictArtifact);
+                CurrentWorldDecodeMode::StrictArtifact, budget);
             if (decoded != CurrentWorldBodyDecodeResult::Ok) {
                 return decoded == CurrentWorldBodyDecodeResult::Capacity
                            ? VN_PACK_RESIDENT_CAPACITY
                            : VN_BAD_PACK;
             }
             const WorldInstallStatus validation =
-                detail::ValidateCurrentWorldPartitionLocalV1(*body.ProductionView());
+                detail::ValidateCurrentWorldPartitionLocalWithBudget(*body.ProductionView(), budget);
             if (validation == WorldInstallStatus::InvalidFormat ||
                 validation == WorldInstallStatus::CapabilityUnavailable) {
                 return VN_PACK_INCOMPATIBLE;
@@ -2002,6 +2057,7 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out) {
                 return VN_BAD_PACK;
             }
             image.partitionHeader = partitionHeader;
+            detail::DecodeReserve(image.partitionBody, static_cast<std::size_t>(partitionHeader.bodyBytes), image.staging);
             image.partitionBody.assign(
                 payload + partitionHeader.headerBytes,
                 payload + partitionHeader.headerBytes +
@@ -2056,7 +2112,7 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out) {
                 return VN_BAD_PACK;
             }
             ++dependencyOrdinal;
-            image.dependencyEdges.push_back(edge);
+            detail::DecodeAppend(image.dependencyEdges, edge, image.staging, requestedSlots[0]);
             break;
         }
         case kPackEntryKindBusDefinitionSnapshot: {
@@ -2080,7 +2136,7 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out) {
                 return VN_BAD_PACK;
             }
             const VnResult parsed = ParseVariablePolicyOverlayPayload(
-                payload, entry.size, &image.variablePolicyOverlays);
+                payload, entry.size, &image.variablePolicyOverlays, image.staging);
             if (parsed != VN_OK) {
                 return parsed;
             }
@@ -2092,7 +2148,7 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out) {
                 return VN_BAD_PACK;
             }
             const VnResult parsed = ParseVariableRequirementsPayload(
-                payload, entry.size, &image.variableRequirements);
+                payload, entry.size, &image.variableRequirements, image.staging);
             if (parsed != VN_OK) {
                 return parsed;
             }
@@ -2110,7 +2166,7 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out) {
             }
             if (!source.VerifyMedia(media, i, dir, header, dirEnd)) return VN_BAD_PACK;
             ranges.emplace_back(media.blobOffset, media.blobBytes);
-            image.media.push_back(media);
+            detail::DecodeAppend(image.media, media, image.staging, requestedSlots[1]);
             break;
         }
         case kPackEntryKindBusEffect: {
@@ -2131,7 +2187,7 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out) {
                     return VN_BAD_PACK;
                 }
             }
-            image.busEffects.push_back(effect);
+            detail::DecodeAppend(image.busEffects, effect, image.staging, requestedSlots[2]);
             break;
         }
         case kPackEntryKindEffectDynamicRoute: {
@@ -2146,7 +2202,7 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out) {
                 !std::isfinite(route.levelDb) || route.levelDb < -96.0f || route.levelDb > 24.0f) {
                 return VN_BAD_PACK;
             }
-            image.dynamicRoutes.push_back(route);
+            detail::DecodeAppend(image.dynamicRoutes, route, image.staging, requestedSlots[3]);
             break;
         }
         case kPackEntryKindBus: {
@@ -2160,7 +2216,7 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out) {
                 !std::isfinite(bus.outputBusVolume)) {
                 return VN_BAD_PACK;
             }
-            image.buses.push_back(bus);
+            detail::DecodeAppend(image.buses, bus, image.staging, requestedSlots[4]);
             break;
         }
         case kPackEntryKindBusSend: {
@@ -2171,7 +2227,7 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out) {
                 return VN_BAD_PACK;
             }
             ++sendOrdinal;
-            image.busSends.push_back(send);
+            detail::DecodeAppend(image.busSends, send, image.staging, requestedSlots[5]);
             break;
         }
         case kPackEntryKindAttenuation: {
@@ -2181,7 +2237,7 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out) {
                                         &attenuation.desc)) {
                 return VN_BAD_PACK;
             }
-            image.attenuations.push_back(attenuation);
+            detail::DecodeAppend(image.attenuations, attenuation, image.staging, requestedSlots[6]);
             break;
         }
         case kPackEntryKindBindingDefinition: {
@@ -2208,7 +2264,7 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out) {
                      VN_TARGET_SCOPE_VOICE_EFFECT_PARAM)) {
                 return VN_BAD_PACK;
             }
-            image.bindingDefinitions.push_back(definition);
+            detail::DecodeAppend(image.bindingDefinitions, definition, image.staging, requestedSlots[7]);
             break;
         }
         case kPackEntryKindBindingAttachment: {
@@ -2232,7 +2288,7 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out) {
                     VN_TARGET_SCOPE_BUS_EFFECT_PARAM) {
                 return VN_BAD_PACK;
             }
-            image.bindingAttachments.push_back(attachment);
+            detail::DecodeAppend(image.bindingAttachments, attachment, image.staging, requestedSlots[8]);
             break;
         }
         case kPackEntryKindContainer:
@@ -2346,6 +2402,8 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out) {
     if (image.hasCatalog) {
         const auto* catalog = source.Data(image.catalogPayloadOffset, image.catalogHeader.catalogBytes);
         if (catalog == nullptr) return VN_BAD_PACK;
+        detail::PackDecodeCharge copyScratch(budget);
+        copyScratch.Add(image.catalogHeader.catalogBytes);
         std::vector<std::uint8_t> catalogCopy(catalog, catalog + image.catalogHeader.catalogBytes);
         for (std::size_t i = 0; i < image.catalogRows.size(); ++i) {
             if (image.catalogRows[i].ownerPackStableId != image.packStableId)
@@ -2376,14 +2434,23 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out) {
 VnResult ParsePackCanonicalImage(const std::uint8_t* bytes, std::uint64_t fileBytes,
                                  PackCanonicalImage* out, std::uint64_t* artifactHash) {
     SpanCanonicalSource source{{bytes, static_cast<std::size_t>(fileBytes), artifactHash}};
-    return ParsePackCanonicalCore(source, out);
+    return ParsePackCanonicalCore(source, out, {});
+}
+
+VnResult ParsePackCanonicalImageWithBudget(const std::uint8_t* bytes, std::uint64_t fileBytes,
+    PackCanonicalImage* out, std::uint64_t* artifactHash, const detail::PackDecodeBudget& budget) {
+    try {
+        SpanCanonicalSource source{{bytes, static_cast<std::size_t>(fileBytes), artifactHash}};
+        return ParsePackCanonicalCore(source, out, budget);
+    } catch (const std::bad_alloc&) { return VN_PACK_RESIDENT_CAPACITY; }
 }
 
 VnResult ReadPackCanonicalFile(const char* utf8Path, PCMRegistry& registry,
     PackCanonicalImage* out, std::vector<PCMRegistry::PreparedPackSamples>* samples,
     std::uint64_t* byteCount, std::uint64_t* artifactHash, std::uint64_t maxBytes,
     std::span<const PCMRegistry::PreparedPackSamples* const> equalCandidates,
-    bool* retryWithBytes, const PackCanonicalReadHooksForTests* hooks) {
+    bool* retryWithBytes, const PackCanonicalReadHooksForTests* hooks,
+    const detail::PackDecodeBudget& budget) {
     if (retryWithBytes != nullptr) *retryWithBytes = false;
     if (out == nullptr || samples == nullptr || byteCount == nullptr || artifactHash == nullptr)
         return VN_INVALID_ARG;
@@ -2417,7 +2484,8 @@ VnResult ReadPackCanonicalFile(const char* utf8Path, PCMRegistry& registry,
     const auto size = static_cast<std::uint64_t>(end);
     if (size > maxBytes) return VN_PACK_RESIDENT_CAPACITY;
     FileCanonicalSource source{file, size, registry, equalCandidates, samples, hooks};
-    const auto result = ParsePackCanonicalCore(source, out);
+    source.scratch = detail::PackDecodeCharge(budget);
+    const auto result = ParsePackCanonicalCore(source, out, budget);
     if (retryWithBytes != nullptr) *retryWithBytes = source.retryWithBytes;
     if (result == VN_OK) {
         *byteCount = size;

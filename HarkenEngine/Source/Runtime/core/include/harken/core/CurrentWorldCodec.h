@@ -17,6 +17,8 @@
 #include "harken/core/CurrentWorld.h"
 #include "harken/media/CurrentWorldBodyVintage.h"
 
+#include "harken/core/detail/PackDecodeBudget.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -99,6 +101,11 @@ public:
     CurrentWorldBodyDecodeResult DecodeWithResult(
         const std::uint8_t* bytes, std::size_t byteCount,
         std::uint32_t bodyVintage, CurrentWorldDecodeMode mode) noexcept;
+    CurrentWorldBodyDecodeResult DecodeWithBudget(
+        const std::uint8_t* bytes, std::size_t byteCount,
+        std::uint32_t bodyVintage, CurrentWorldDecodeMode mode,
+        const detail::PackDecodeBudget& budget) noexcept;
+    void ReleaseDecodeStaging() noexcept;
     bool Decode(const std::uint8_t* bytes, std::size_t byteCount,
                 std::uint32_t bodyVintage,
                 CurrentWorldDecodeMode mode) noexcept {

@@ -2,6 +2,7 @@
 #define HARKEN_CORE_DETAIL_CURRENT_WORLD_VALIDATION_H
 
 #include "harken/core/CurrentWorld.h"
+#include "harken/core/detail/PackDecodeBudget.h"
 
 namespace harken::detail {
 
@@ -13,6 +14,11 @@ namespace harken::detail {
 
 HARKEN_CORE_DETAIL_HIDDEN WorldInstallStatus ValidateCurrentWorldPartitionLocalV1(
     const ContainerWorldInstallViewV1& world) noexcept;
+
+HARKEN_CORE_DETAIL_HIDDEN WorldInstallStatus ValidateCurrentWorldPartitionLocalWithBudget(
+    const ContainerWorldInstallViewV1& world, const PackDecodeBudget& budget) noexcept;
+HARKEN_CORE_DETAIL_HIDDEN WorldInstallStatus ValidateCurrentWorldSectionGroupsWithBudget(
+    const ContainerWorldInstallViewV1& world, const PackDecodeBudget& budget) noexcept;
 
 HARKEN_CORE_DETAIL_HIDDEN std::uint64_t ComputeCurrentWorldLocalCapabilityMaskV1(
     const ContainerWorldInstallViewV1& world) noexcept;
