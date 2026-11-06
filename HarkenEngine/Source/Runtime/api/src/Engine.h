@@ -14786,11 +14786,15 @@ public:
     using MemberOnsetIdentity = RuntimeIndexIdentity<MemberOnsetFamily>;
     RuntimeActivityIndex<MemberOnsetFamily> memberOnsets;
 
-    MemberOnsetIdentity PlayableMemberOnsetIdentity(std::uint32_t slot) const noexcept {
-        const auto& member = ReadPlayableMember(slot).completion;
+    static MemberOnsetIdentity PlayableMemberOnsetIdentity(std::uint32_t slot,
+        const EnginePlayableMemberRecord& record) noexcept {
+        const auto& member = record.completion;
         return member.leafInstance != 0
             ? MemberOnsetIdentity{member.leafEpoch, slot, member.source.generation}
             : MemberOnsetIdentity{};
+    }
+    MemberOnsetIdentity PlayableMemberOnsetIdentity(std::uint32_t slot) const noexcept {
+        return PlayableMemberOnsetIdentity(slot, ReadPlayableMember(slot));
     }
     void RefreshPlayableMemberOnset(std::size_t slot) noexcept {
         const auto identity = PlayableMemberOnsetIdentity(static_cast<std::uint32_t>(slot));

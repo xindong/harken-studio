@@ -13328,6 +13328,15 @@ void ObservePlayableMemberArm(harken::Engine& engine,
     if (!record.occupied || member.leafInstance == 0 || member.leafEpoch == 0 ||
         record.render == 0 || !arm.Valid() || record.render !=
             ((static_cast<std::uint64_t>(arm.renderGeneration) << 32) | arm.renderSlot)) return;
+    const bool retainedOnset = member.sourceRender == record.render &&
+        harken::Engine::SameOriginalSingleArm(member.sourceStartArm, arm) &&
+        member.sourceStartedBlockSequence != 0 && member.sourceActualStartFrame != UINT64_MAX;
+    if (retainedOnset) {
+        harken::ArmState state{};
+        // A live Started arm cannot change its original onset. Other states
+        // still need the full observation, including the retirement receipt.
+        if (engine.timelineArms.State(arm, &state) && state == harken::ArmState::Started) return;
+    }
     harken::TimelineArmObservation observed{};
     if (!engine.timelineArms.Observe(arm, &observed)) return;
     // Unchanged receipts need neither source resolution nor repeated writes.
@@ -13365,11 +13374,16 @@ bool ObserveActiveArrivalsBeforeArmReclaim(harken::Engine& engine) noexcept {
     // Transient Start arms retire before their Sound; preserve their actual onset.
     std::uint32_t cursor = 0;
     for (;;) {
+        harken::EnginePlayableMemberRecord* resolved = nullptr;
         const auto identity = engine.memberOnsets.Next(harken::RuntimeActivitySet::Active,
-            &cursor, [&](std::uint32_t slot) noexcept { return engine.PlayableMemberOnsetIdentity(slot); });
+            &cursor, [&](std::uint32_t slot) noexcept {
+                resolved = engine.FindPlayableMember(static_cast<std::size_t>(slot));
+                return resolved != nullptr ? engine.PlayableMemberOnsetIdentity(slot, *resolved)
+                    : harken::Engine::MemberOnsetIdentity{};
+            });
         if (!identity.Valid()) break;
         const auto slot = identity.slot;
-        auto& record = engine.MutablePlayableMember(slot);
+        auto& record = *resolved;
         ObservePlayableMemberArm(engine, record);
         // Observation only adds receipts; an active onset leaves this set at tombstone.
         if (record.completion.sourceArmTombstoneSequence != 0)
@@ -54751,6 +54765,7 @@ bool ServiceStartedScheduleSoundWithoutPendingWork(harken::Engine& engine,
     }
     if (ancestor.Valid() || !harken::Engine::SameSelectionServiceReference(ancestor, {}) ||
         WaitingForQueueChildPromotion(engine, row)) return false;
+    if (row.scheduleLeafCount == 0) return ServiceStartedSingleSound(engine, row);
     std::size_t slot = 0;
     if (!engine.ResolvePlayableMemberSlot(row.scheduleStorageBase, &slot)) return false;
     const auto& record = engine.ReadPlayableMember(slot);
