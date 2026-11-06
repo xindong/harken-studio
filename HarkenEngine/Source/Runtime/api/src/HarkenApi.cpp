@@ -121322,8 +121322,10 @@ VnResult PrepareCanonicalSetActivation(Engine& engine,
             ++bindings.count;
         }
     }
-    std::sort(bindings.entries.begin(), bindings.entries.begin() + bindings.count,
-        [](const auto& a, const auto& b) { return a.id < b.id; });
+    if (!out->preserveInit) {
+        std::sort(bindings.entries.begin(), bindings.entries.begin() + bindings.count,
+            [](const auto& a, const auto& b) { return a.id < b.id; });
+    }
     std::vector<PackComposition::CandidateOwner> owners;
     detail::DecodeReserve(owners, desc.memberCount, scratch);
     for (std::uint32_t i = 0; i < desc.memberCount; ++i) {

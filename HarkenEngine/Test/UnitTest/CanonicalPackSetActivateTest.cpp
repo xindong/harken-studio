@@ -368,7 +368,6 @@ std::vector<std::uint8_t> BuildPreview(bool random, bool multipleSteps = false,
 TEST(CanonicalPackSetActivate, ProviderMembersShareDecodeBudgetAndPreservePriorPublication) {
     using namespace companionfixture;
     using namespace harken;
-    constexpr std::uint64_t limitedBytes = 96 * 1024;
     Provider init{Build(true, PackId("Init"))};
     Provider content{Build(false, PackId("content"))};
     for (auto* provider : {&init, &content}) {
@@ -378,6 +377,34 @@ TEST(CanonicalPackSetActivate, ProviderMembersShareDecodeBudgetAndPreservePriorP
         ASSERT_TRUE(ParsePackV2Header(provider->bytes.data(), &header));
         header.fileBytes = provider->bytes.size();
         SerializePackV2Header(header, provider->bytes.data());
+    }
+    PackCanonicalImage first;
+    ASSERT_EQ(VN_OK, ParsePackCanonicalImage(init.bytes.data(), init.bytes.size(), &first));
+    const auto encodedSum = init.bytes.size() + content.bytes.size();
+    const auto previousMapAllowance = 4 * (sizeof(PackAttenuationBindingMapV1) +
+        first.attenuations.size() * sizeof(PackAttenuationBindingMapV1::Binding));
+    ASSERT_GT(first.staging.Bytes(), previousMapAllowance);
+    const auto limitedBytes = encodedSum + previousMapAllowance +
+        (first.staging.Bytes() - previousMapAllowance) / 2;
+    ASSERT_LE(encodedSum + previousMapAllowance, limitedBytes);
+    ASSERT_GT(encodedSum + first.staging.Bytes(), limitedBytes);
+    RecordProperty("member_encoded_sum", std::to_string(encodedSum));
+    RecordProperty("shared_decode_limit", std::to_string(limitedBytes));
+    RecordProperty("previous_encoded_map_limit", std::to_string(encodedSum + previousMapAllowance));
+    RecordProperty("first_retained_decode_bytes", std::to_string(first.staging.Bytes()));
+    {
+        auto budget = detail::MakePackDecodeBudget(limitedBytes);
+        detail::PackDecodeCharge encoded(budget);
+        encoded.Add(init.bytes.size());
+        PackCanonicalImage retained;
+        ASSERT_EQ(VN_OK, ParsePackCanonicalImageWithBudget(init.bytes.data(), init.bytes.size(),
+            &retained, nullptr, budget));
+        EXPECT_THROW(encoded.Add(content.bytes.size()), detail::PackDecodeCapacity);
+        EXPECT_EQ(init.bytes.size() + retained.staging.Bytes(), budget->live);
+    }
+    // The old encoded aggregate, including its map allowance, fits. Retaining
+    // the first parsed image makes the second encoded owner exceed the ledger.
+    for (auto* provider : {&init, &content}) {
         auto budget = detail::MakePackDecodeBudget(limitedBytes);
         detail::PackDecodeCharge encoded(budget);
         encoded.Add(provider->bytes.size());
