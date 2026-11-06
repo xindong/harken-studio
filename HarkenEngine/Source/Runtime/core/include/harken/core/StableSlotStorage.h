@@ -93,14 +93,20 @@ public:
         if (memguard::IsAudioTagged() || capacity_ != 0 ||
             capacity > static_cast<std::size_t>(PTRDIFF_MAX) / sizeof(T)) return false;
         const auto words = capacity / 64u + (capacity % 64u != 0);
-        std::unique_ptr<std::atomic<std::uint64_t>[]> directory;
-        try { directory = std::make_unique<std::atomic<std::uint64_t>[]>(words); }
-        catch (...) { return false; }
+        const auto summaryWords = words / 64u + (words % 64u != 0);
+        std::unique_ptr<std::atomic<std::uint64_t>[]> directory, summary;
+        try {
+            directory = std::make_unique<std::atomic<std::uint64_t>[]>(words);
+            summary = std::make_unique<std::atomic<std::uint64_t>[]>(summaryWords);
+        } catch (...) { return false; }
+        for (std::uint32_t word = 0; word < summaryWords; ++word)
+            summary[word].store(0, std::memory_order_relaxed);
         for (std::uint32_t word = 0; word < words; ++word)
             directory[word].store(0, std::memory_order_relaxed);
         if (!reservation_.Reserve(static_cast<std::size_t>(capacity) * sizeof(T), alignof(T), true))
             return false;
         directory_ = std::move(directory);
+        directorySummary_ = std::move(summary);
         directoryWords_ = words;
         capacity_ = capacity;
         return true;
@@ -115,6 +121,9 @@ public:
         try { std::construct_at(AddressOf(slot), std::forward<Args>(args)...); }
         catch (...) { return false; }
         constructed_.fetch_add(1, std::memory_order_relaxed);
+        // Publish navigation before the existing object-publication bit. A reader
+        // may see an empty hinted word and must still acquire its directory bits.
+        directorySummary_[slot / 4096u].fetch_or(std::uint64_t{1} << ((slot / 64u) % 64u), std::memory_order_release);
         directory_[slot / 64u].fetch_or(std::uint64_t{1} << (slot % 64u), std::memory_order_release);
         return true;
     }
@@ -152,7 +161,8 @@ public:
     std::uint32_t ConstructedCount() const noexcept { return constructed_.load(std::memory_order_acquire); }
     std::size_t RequestedBytes() const noexcept { return static_cast<std::size_t>(ConstructedCount()) * sizeof(T); }
     std::size_t DirectoryBytes() const noexcept {
-        return directoryWords_ * sizeof(std::atomic<std::uint64_t>) + reservation_.DirectoryBytes();
+        const auto summaryWords = directoryWords_ / 64u + (directoryWords_ % 64u != 0);
+        return (directoryWords_ + summaryWords) * sizeof(std::atomic<std::uint64_t>) + reservation_.DirectoryBytes();
     }
     std::size_t CommittedBytes() const noexcept { return reservation_.CommittedBytes(); }
     std::size_t ReservedBytes() const noexcept { return reservation_.ReservedBytes(); }
@@ -164,6 +174,7 @@ public:
         assert(!HasPreparedBacking() && !other.HasPreparedBacking());
         reservation_.Swap(other.reservation_);
         directory_.swap(other.directory_);
+        directorySummary_.swap(other.directorySummary_);
         std::swap(directoryWords_, other.directoryWords_);
         std::swap(capacity_, other.capacity_);
         const auto previous = constructed_.load(std::memory_order_relaxed);
@@ -208,18 +219,26 @@ public:
         bool operator==(const Iterator& other) const noexcept { return owner_ == other.owner_ && slot_ == other.slot_; }
     private:
         void Skip() noexcept {
-            while (slot_ < owner_->capacity_) {
-                const auto word = slot_ / 64u;
-                const auto bits = owner_->directory_[word].load(std::memory_order_acquire) &
-                    (UINT64_MAX << (slot_ % 64u));
-                if (bits != 0) {
-                    slot_ = word * 64u + static_cast<std::uint32_t>(std::countr_zero(bits));
-                    return;
-                }
-                if (word + 1u == owner_->directoryWords_) break;
-                slot_ = (word + 1u) * 64u;
+            if (slot_ >= owner_->capacity_) return;
+            std::size_t word = slot_ / 64u;
+            auto bits = owner_->directory_[word].load(std::memory_order_acquire) &
+                (UINT64_MAX << (slot_ % 64u));
+            const auto summaryWords = owner_->directoryWords_ / 64u + (owner_->directoryWords_ % 64u != 0);
+            while (bits == 0) {
+                if (++word >= owner_->directoryWords_) break;
+                auto summaryWord = word / 64u;
+                auto summary = owner_->directorySummary_[summaryWord].load(std::memory_order_acquire) &
+                    (UINT64_MAX << (word % 64u));
+                while (summary == 0 && ++summaryWord < summaryWords)
+                    summary = owner_->directorySummary_[summaryWord].load(std::memory_order_acquire);
+                if (summary == 0) break;
+                word = summaryWord * 64u + static_cast<std::size_t>(std::countr_zero(summary));
+                if (word >= owner_->directoryWords_) break;
+                bits = owner_->directory_[word].load(std::memory_order_acquire);
             }
-            slot_ = owner_->capacity_;
+            slot_ = bits != 0
+                ? static_cast<std::uint32_t>(word * 64u + static_cast<std::size_t>(std::countr_zero(bits)))
+                : owner_->capacity_;
         }
         Owner* owner_ = nullptr;
         std::uint32_t slot_ = 0;
@@ -256,6 +275,7 @@ private:
 
     detail::StablePageReservation reservation_;
     std::unique_ptr<std::atomic<std::uint64_t>[]> directory_;
+    std::unique_ptr<std::atomic<std::uint64_t>[]> directorySummary_;
     std::size_t directoryWords_ = 0;
     std::uint32_t capacity_ = 0;
     std::atomic<std::uint32_t> constructed_{0};

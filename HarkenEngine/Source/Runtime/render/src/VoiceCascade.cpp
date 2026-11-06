@@ -1532,10 +1532,12 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
     bool sourceExitCovered = false;
     for (auto* binding = ctx.sourceExits; binding != nullptr; binding = binding->next)
         sourceExitCovered = sourceExitCovered || (binding->active && binding->source->stop &&
-            binding->source->fade && binding->source->stopFrame == timelineStopFrame);
+            binding->source->stopFrame == timelineStopFrame);
+    // An applied music exit is an exact cutoff, including an explicitly absent fade.
+    // Ordinary Stop controls still use their fallback declick when uncovered.
     const bool authoredStopCovered =
-        ctx.timelineStopPending && ctx.timelineStopAuthored &&
-        (sourceExitCovered || (ctx.timelineFadeOutCoveredSample && stopFadeOut.fadeOut &&
+        ctx.timelineStopPending && (sourceExitCovered ||
+        (ctx.timelineStopAuthored && ctx.timelineFadeOutCoveredSample && stopFadeOut.fadeOut &&
         stopFadeOut.endFrame == timelineStopFrame));
     const bool startFallbackStop =
         ctx.timelineStopPending && !authoredStopCovered && !ctx.fading;
