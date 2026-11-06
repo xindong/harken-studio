@@ -109,6 +109,11 @@ namespace Harken.Unity
 
         private void HandleRuntimeReady(HarkenAudioSystem owner)
         {
+            // Earlier subscribers can disable us or stop the runtime during dispatch.
+            if (!this || !isActiveAndEnabled || owner == null || !runtimeBound ||
+                !ReferenceEquals(boundRuntime, owner) || !ReferenceEquals(runtime, owner) ||
+                !owner.IsReady)
+                return;
             owner.RegisterParticipant(this);
             if (LoadOnReady)
             {
