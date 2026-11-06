@@ -39261,7 +39261,7 @@ struct NativeScheduleTransitionPreparation {
     VariableControlRetargetDecisionGuard* decisionGuard = nullptr;
     harken::Engine::NativeBackingReturnPlan backing;
     std::array<harken::EnginePlayableMemberReference, harken::kMaxKnownScheduleLeaves> members{};
-    std::array<TimelineVoiceInstallResult, harken::kMaxKnownScheduleLeaves> installed{};
+    std::optional<std::array<TimelineVoiceInstallResult, harken::kMaxKnownScheduleLeaves>> installed;
     std::array<harken::TransactionOccurrenceRef, harken::kMaxKnownScheduleLeaves> occurrences{};
     std::vector<harken::CommandRecord> preparedCommands;
     std::uint32_t count = 0;
@@ -39360,7 +39360,7 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
     if (!deferredSchedule) scheduleStorage.emplace();
     auto preparation = BorrowServicePreparation(engine);
     if (!preparation) return VariableRetargetPrepareStatus::Retry;
-    std::array<harken::CapturedTimelineVoiceInstall, harken::kMaxKnownScheduleLeaves> capturedTargets{};
+    std::optional<std::array<harken::CapturedTimelineVoiceInstall, harken::kMaxKnownScheduleLeaves>> capturedTargetStorage;
     harken::DecisionToken decision{};
     harken::LogicCommitSequence ticket = 0;
     auto& incomingTree = engine.VariableControlRetargetScratch();
@@ -39375,7 +39375,7 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
     bool nativeTargets = false;
     bool targetReady = !deferredSchedule && MaterializeVariableControlDiscreteLeafSchedule(
         engine, row, program, selected.childStableOrdinal, &*scheduleStorage,
-        static_cast<std::uint32_t>(capturedTargets.size()));
+        harken::kMaxKnownScheduleLeaves);
     if (!targetReady) {
         const auto* desired =
             FindQueueChild(program, selected.childStableOrdinal);
@@ -39746,10 +39746,11 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
         if (clipStatus == harken::NaturalClipStartStatus::Ended) return VariableRetargetPrepareStatus::NoChange;
     }
     auto& targetSchedule = *scheduleStorage;
-    if (targetSchedule.leafCount > capturedTargets.size() ||
+    if (targetSchedule.leafCount > harken::kMaxKnownScheduleLeaves ||
         row.variableControlDiscreteTransitionOffset > engine.playableStorage.memberStride ||
         targetSchedule.leafCount > engine.playableStorage.memberStride - row.variableControlDiscreteTransitionOffset)
         return VariableRetargetPrepareStatus::Retry;
+    auto& capturedTargets = capturedTargetStorage.emplace();
     const auto captureSpan = std::span{capturedTargets}.first(targetSchedule.leafCount);
     const bool packTargets = row.Invocation().packLease.leaseToken != 0 &&
         (nestedTargets || !row.variableControlWorldUsesCurrentAuthority);
@@ -40141,7 +40142,7 @@ engine.runtimeRecreateRequired = true;
             if (!engine.ResolvePlayableMember(native.members[index], &targetOwners[index], &targetSlots[index]) ||
                 !engine.SetPlayableMemberReference(logicalSlot, native.members[index])) break;
             ++targetStorageCount;
-            installedTargets[index] = native.installed[index];
+            installedTargets[index] = (*native.installed)[index];
             continue;
         }
         auto* resourceOwner = ResolvePreparedResourceService(engine, row, incomingLeaves[index],
@@ -96916,6 +96917,8 @@ bool PrepareNativeScheduleTransition(harken::Engine& engine,
     native.engine = &engine;
     if (!native.HasPreparationAuthority() || !decision.Valid() ||
         native.scratch != nullptr || (!parent.variableControlInstance.Valid() && !parent.queueMode)) return false;
+    // Out-of-window candidates never need installation receipts or their owners.
+    native.installed.emplace();
     const bool nativeQueue = parent.queueMode && !parent.variableControlInstance.Valid();
     native.engine = &engine;
     native.parent = &parent;
@@ -97057,7 +97060,7 @@ bool PrepareNativeScheduleTransition(harken::Engine& engine,
             const auto member = native.count++;
             native.members[member] = {PlayableServiceReference(*resource), resource->partition.generation, offset,
                 found->completion.leafInstance, found->completion.leafEpoch, ordinal};
-            native.installed[member] = {found->monitorSelection, VN_OK, found->render, found->completion.source,
+            (*native.installed)[member] = {found->monitorSelection, VN_OK, found->render, found->completion.source,
                 found->release, found->arm, found->postSourceTailFrames};
             schedule.leaves[member].leaf = found->leaf;
             schedule.leaves[member].startOffsetFrames = found->startFrame - startFrame;
