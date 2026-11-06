@@ -219,6 +219,19 @@ class BuildHubInstallerTest(unittest.TestCase):
             self.assertIn(properties["ProductLanguage"], supported_languages)
             self.assertEqual(properties["UpgradeCode"], "{4EA0003D-209E-45E6-8343-67529D7E7E5A}")
             self.assertEqual(properties["ALLUSERS"], "1")
+            self.assertEqual(properties["REBOOT"], "ReallySuppress")
+            for dialog_name, continuation in (("MsiRMFilesInUse", "Return"), ("FilesInUse", "Retry")):
+                with self.subTest(file_occupancy=dialog_name):
+                    self.assertEqual(db.query(
+                        f"SELECT `Property` FROM `Control` WHERE `Dialog_`='{dialog_name}' AND `Type`='ListBox'"),
+                        [["FileInUseProcess"]])
+                    events = db.query(
+                        f"SELECT `Event`, `Argument` FROM `ControlEvent` WHERE `Dialog_`='{dialog_name}'")
+                    self.assertIn(["EndDialog", continuation], events)
+                    self.assertIn(["EndDialog", "Exit"], events)
+                    self.assertNotIn(["EndDialog", "Ignore"], events)
+                    if dialog_name == "MsiRMFilesInUse":
+                        self.assertIn(["RMShutdownAndRestart", "0"], events)
             for name in ("HARKENSELFUPDATE", "HARKENBRIDGE", "INSTALLFOLDER"):
                 self.assertIn(name, properties["SecureCustomProperties"].split(";"))
             components = {row[0]: row for row in db.query("SELECT * FROM `Component`")}

@@ -7,6 +7,7 @@ class QAction;
 class QListWidget;
 class QScreen;
 class QStackedWidget;
+class QThread;
 class QTimer;
 class QToolButton;
 
@@ -95,6 +96,7 @@ private:
     QAction* autoDownloadYesAction_ = nullptr;
     QAction* autoDownloadNoAction_ = nullptr;
     QToolButton* hubUpdateButton_ = nullptr;
+    QThread* hubUpdateWorker_ = nullptr;
     LogConsoleDialog* logConsole_ = nullptr;
     ReleaseNotesDialog* releaseNotes_ = nullptr;
     LocalBuildRefreshCoordinator* localBuildRefresh_ = nullptr;

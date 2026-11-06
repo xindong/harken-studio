@@ -19,8 +19,14 @@
 #include <QFileInfo>
 #include <QProcess>
 #include <QRegularExpression>
+#include <QScopeGuard>
+#include <QSqlDatabase>
+#include <QSqlError>
+#include <QSqlQuery>
 #include <QStorageInfo>
 #include <QTimer>
+#include <QUuid>
+#include <QVariant>
 
 namespace VNH {
 
@@ -447,6 +453,28 @@ bool HubSelfUpdate::backupUserData(const QDateTime& now, QString* error)
             continue;
         const QString targetPath =
             backupDir + QStringLiteral("/") + name;
+        if (name == QStringLiteral("projects.db")) {
+            const QString connection = QUuid::createUuid().toString();
+            const auto cleanup = qScopeGuard([connection]() {
+                QSqlDatabase::removeDatabase(connection);
+            });
+            auto db = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), connection);
+            db.setDatabaseName(sourcePath);
+            db.setConnectOptions(QStringLiteral("QSQLITE_OPEN_READONLY;QSQLITE_BUSY_TIMEOUT=1000"));
+            if (!db.open()) {
+                *error = QStringLiteral("Cannot open %1 for backup: %2")
+                             .arg(name, db.lastError().text());
+                return false;
+            }
+            QSqlQuery query(db);
+            query.prepare(QStringLiteral("VACUUM INTO ?"));
+            query.addBindValue(targetPath);
+            if (!query.exec()) {
+                *error = QStringLiteral("Cannot back up %1: %2").arg(name, query.lastError().text());
+                return false;
+            }
+            continue;
+        }
         if (!QFile::copy(sourcePath, targetPath)) {
             *error = QStringLiteral("Cannot back up %1").arg(name);
             return false;

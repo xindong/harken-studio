@@ -7,6 +7,22 @@
   },
   "releases": [
     {
+      "version": "0.2.4",
+      "date": "2026-11-06",
+      "pullRequests": [277],
+      "contributors": ["liuxin2-sys"],
+      "changes": [
+        {
+          "category": "improved",
+          "text": "Close applications using Harken Hub files before continuing Windows setup, without prompting to restart the computer."
+        },
+        {
+          "category": "improved",
+          "text": "Keep Hub responsive while preparing an update and reduce the wait before installation after Hub exits."
+        }
+      ]
+    },
+    {
       "version": "0.2.3",
       "date": "2026-11-06",
       "pullRequests": [218, 227, 246, 255],
