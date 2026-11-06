@@ -46,8 +46,11 @@ LogTextEdit::LogTextEdit(QWidget* parent)
     setLineWrapMode(QPlainTextEdit::NoWrap);
     setMaximumBlockCount(10000);
 
+    connect(&FontManager::instance(), &FontManager::fontChanged, this, [this] {
+        setFont(FontManager::instance().getFont(FontRole::Mono, AppSettings::instance().panelFontSize(PanelId::Log)));
+    });
     int fontSize = AppSettings::instance().panelFontSize(PanelId::Log);
-    setFont(FontManager::instance().getFont(FontRole::Body, fontSize));
+    setFont(FontManager::instance().getFont(FontRole::Mono, fontSize));
 }
 
 void LogTextEdit::appendEntry(const LogEntry& entry)
@@ -97,7 +100,7 @@ QTextCharFormat LogTextEdit::formatForLevel(LogEntry::Level level) const
     
     if (level >= LogEntry::Error)
     {
-        format.setFontWeight(QFont::Bold);
+        format.setFontWeight(FontManager::instance().getFont(FontRole::Mono, FontEmphasis::Strong).weight());
     }
     
     return format;
@@ -124,7 +127,7 @@ LogPanel::LogPanel(QWidget* parent)
             this, &LogPanel::onFontSettingsChanged);
     
     int fontSize = AppSettings::instance().panelFontSize(PanelId::Log);
-    logTextEdit_->setFont(FontManager::instance().getFont(FontRole::Body, fontSize));
+    logTextEdit_->setFont(FontManager::instance().getFont(FontRole::Mono, fontSize));
     
     flushTimer_->setInterval(50);
     connect(flushTimer_, &QTimer::timeout, this, &LogPanel::onFlushTimer);
@@ -454,7 +457,7 @@ void LogPanel::onFontSettingsChanged(PanelId panelId, int size)
 {
     if (panelId == PanelId::Log)
     {
-        logTextEdit_->setFont(FontManager::instance().getFont(FontRole::Body, size));
+        logTextEdit_->setFont(FontManager::instance().getFont(FontRole::Mono, size));
     }
 }
 

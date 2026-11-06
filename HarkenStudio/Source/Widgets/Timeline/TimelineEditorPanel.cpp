@@ -516,7 +516,7 @@ const ThemeMetrics::Timeline& TimelineEditorPanel::timelineMetrics() const
 int TimelineEditorPanel::laneHeaderWidth() const
 {
     if (viewKind_ == ViewKind::Track) {
-        const QFontMetrics metrics(FontManager::instance().getFont(FontRole::Axis));
+        const QFontMetrics metrics(FontManager::instance().getFont(FontRole::Caption));
         return std::max(metrics.horizontalAdvance(QStringLiteral("-96.00")) + 8,
             themeManager_->metrics().navigationChevronExtent);
     }
@@ -946,9 +946,9 @@ void TimelineEditorPanel::refreshTickCache() const
     const int width = canvas_->width();
     const bool timePrimary = !hasMeasureBeatsPrimaryAxis();
     const QFontMetrics secondsMetrics(FontManager::instance().getFont(
-        timePrimary ? FontRole::Body : FontRole::Axis), canvas_);
+        timePrimary ? FontRole::Body : FontRole::Caption), canvas_);
     const QFontMetrics clockMetrics(FontManager::instance().getFont(
-        timePrimary ? FontRole::Axis : FontRole::Body), canvas_);
+        timePrimary ? FontRole::Caption : FontRole::Body), canvas_);
     const auto spec = effectiveTimeSpec(0);
     const auto& spacing = timelineMetrics();
     if (!timeTickCache_ || timeTickCache_->start.nanoseconds != viewStart_.nanoseconds

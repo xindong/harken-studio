@@ -966,20 +966,14 @@ bool applyTokenMetric(const QString& key, double value, ThemeSnapshot& theme)
 ThemeFontStyle* fontRole(const QString& key, ThemeSnapshot& theme)
 {
     auto& typography = theme.ui.typography;
-    if (key == QStringLiteral("heading"))
-        return &typography.heading;
     if (key == QStringLiteral("title"))
         return &typography.title;
     if (key == QStringLiteral("body"))
         return &typography.body;
     if (key == QStringLiteral("caption"))
         return &typography.caption;
-    if (key == QStringLiteral("axis"))
-        return &typography.axis;
     if (key == QStringLiteral("mono"))
         return &typography.mono;
-    if (key == QStringLiteral("label"))
-        return &typography.label;
     return nullptr;
 }
 
@@ -1032,6 +1026,10 @@ bool applyCurveColor(const QString& key, const QColor& value, ThemeSnapshot& the
 
 bool applyCurveMetric(const QString& key, double value, ThemeSnapshot& theme)
 {
+    if (key == QStringLiteral("curve.readoutFontPixelSize"))
+        return value >= 0.0 && value <= 96.0
+            && std::floor(value) == value
+            && assignNumber(theme.ui.typography.caption.pointSize, qRound(value * 0.75));
     auto& metrics = theme.domains.curve.metrics;
 #define CURVE_METRIC(name, field)                                               \
     if (key == QStringLiteral("curve." name))                                  \
@@ -1081,7 +1079,6 @@ bool applyCurveMetric(const QString& key, double value, ThemeSnapshot& theme)
     CURVE_METRIC("xMaxLabelTopOffset", xMaxLabelTopOffset);
     CURVE_METRIC("xMaxLabelHeight", xMaxLabelHeight);
     CURVE_METRIC("xMaxEditorVerticalExpansion", xMaxEditorVerticalExpansion);
-    CURVE_METRIC("readoutFontPixelSize", readoutFontPixelSize);
     CURVE_METRIC("readoutHorizontalPadding", readoutHorizontalPadding);
     CURVE_METRIC("readoutHeight", readoutHeight);
     CURVE_METRIC("readoutHorizontalOffset", readoutHorizontalOffset);
@@ -1134,6 +1131,10 @@ bool applyWaveformMetric(const QString& key,
                          double value,
                          ThemeSnapshot& theme)
 {
+    if (key == QStringLiteral("waveform.splitStereo.labelPointSize")
+        || key == QStringLiteral("waveform.dbScale.labelPointSize"))
+        return value >= 0.0 && value <= 72.0
+            && assignNumber(theme.ui.typography.caption.pointSize, value);
     auto& waveform = theme.domains.waveform;
 #define WAVEFORM_METRIC(name, field)                                            \
     if (key == QStringLiteral("waveform." name))                               \
@@ -1142,13 +1143,11 @@ bool applyWaveformMetric(const QString& key,
     WAVEFORM_METRIC("static.accentPeakAlpha", staticMode.accentPeakAlpha);
     WAVEFORM_METRIC("multiBand.alpha", multiBandMode.alpha);
     WAVEFORM_METRIC("splitStereo.dividerWidth", splitStereo.dividerWidth);
-    WAVEFORM_METRIC("splitStereo.labelPointSize", splitStereo.labelPointSize);
     WAVEFORM_METRIC("splitStereo.labelRightInset", splitStereo.labelRightInset);
     WAVEFORM_METRIC("splitStereo.labelBaselineOffset", splitStereo.labelBaselineOffset);
     WAVEFORM_METRIC("rawPeaks.cornerRadius", rawPeaks.cornerRadius);
     WAVEFORM_METRIC("rawPeaks.centerLineWidth", rawPeaks.centerLineWidth);
     WAVEFORM_METRIC("dbScale.gridWidth", dbScale.gridWidth);
-    WAVEFORM_METRIC("dbScale.labelPointSize", dbScale.labelPointSize);
     WAVEFORM_METRIC("dbScale.amplitudeScale", dbScale.amplitudeScale);
     WAVEFORM_METRIC("dbScale.labelLeftInset", dbScale.labelLeftInset);
     WAVEFORM_METRIC("dbScale.labelBaselineOffset", dbScale.labelBaselineOffset);
@@ -1883,55 +1882,6 @@ bool applySemantics(const SemanticDocuments& documents,
             return false;
         }
     }
-    for (auto it = documents.tokens.fonts.constBegin();
-         it != documents.tokens.fonts.constEnd(); ++it)
-    {
-        ThemeFontStyle* role = fontRole(it.key(), theme);
-        const QString path = QStringLiteral("$.fonts.") + it.key();
-        if (!role)
-        {
-            diagnostics.append(diagnostic(
-                ThemePackageErrorCode::UnknownSemanticKey, tokenFile, path,
-                QStringLiteral("Unknown font role.")));
-            return false;
-        }
-        if (it->family)
-        {
-            if (it->family->size() > 128)
-            {
-                diagnostics.append(diagnostic(
-                    ThemePackageErrorCode::InvalidValue, tokenFile,
-                    path + QStringLiteral(".family"),
-                    QStringLiteral("Font family is too long.")));
-                return false;
-            }
-            role->family = *it->family;
-        }
-        if (it->pointSize)
-        {
-            if (*it->pointSize < 6 || *it->pointSize > 72)
-            {
-                diagnostics.append(diagnostic(
-                    ThemePackageErrorCode::MetricOutOfRange, tokenFile,
-                    path + QStringLiteral(".pointSize"),
-                    QStringLiteral("Font point size is out of range.")));
-                return false;
-            }
-            role->pointSize = *it->pointSize;
-        }
-        if (it->weight)
-        {
-            if (*it->weight < 1 || *it->weight > 1000)
-            {
-                diagnostics.append(diagnostic(
-                    ThemePackageErrorCode::MetricOutOfRange, tokenFile,
-                    path + QStringLiteral(".weight"),
-                    QStringLiteral("Font weight is out of range.")));
-                return false;
-            }
-            role->weight = *it->weight;
-        }
-    }
 
     ThemeVisualDto curve = documents.curve;
     ThemeVisualDto meter = documents.meter;
@@ -1989,6 +1939,62 @@ bool applySemantics(const SemanticDocuments& documents,
         || !applyRecipeSelections(documents.recipes, package, mergedAssets,
                                   theme, diagnostics))
         return false;
+
+    for (auto it = documents.tokens.fonts.constBegin();
+         it != documents.tokens.fonts.constEnd(); ++it)
+    {
+        QString key = it.key();
+        if (key == QStringLiteral("heading")) key = QStringLiteral("title");
+        else if (key == QStringLiteral("label")) key = QStringLiteral("body");
+        else if (key == QStringLiteral("axis")) key = QStringLiteral("caption");
+        if (key != it.key() && documents.tokens.fonts.contains(key)) continue;
+        ThemeFontStyle* role = fontRole(key, theme);
+        const QString path = QStringLiteral("$.fonts.") + it.key();
+        if (!role)
+        {
+            diagnostics.append(diagnostic(
+                ThemePackageErrorCode::UnknownSemanticKey, tokenFile, path,
+                QStringLiteral("Unknown font role.")));
+            return false;
+        }
+        if (it->family)
+        {
+            if (it->family->size() > 128)
+            {
+                diagnostics.append(diagnostic(
+                    ThemePackageErrorCode::InvalidValue, tokenFile,
+                    path + QStringLiteral(".family"),
+                    QStringLiteral("Font family is too long.")));
+                return false;
+            }
+            role->family = *it->family;
+        }
+        if (it->pointSize)
+        {
+            if (*it->pointSize < 6 || *it->pointSize > 72)
+            {
+                diagnostics.append(diagnostic(
+                    ThemePackageErrorCode::MetricOutOfRange, tokenFile,
+                    path + QStringLiteral(".pointSize"),
+                    QStringLiteral("Font point size is out of range.")));
+                return false;
+            }
+            role->pointSize = *it->pointSize;
+        }
+        if (it->weight)
+        {
+            if (*it->weight < 1 || *it->weight > 1000)
+            {
+                diagnostics.append(diagnostic(
+                    ThemePackageErrorCode::MetricOutOfRange, tokenFile,
+                    path + QStringLiteral(".weight"),
+                    QStringLiteral("Font weight is out of range.")));
+                return false;
+            }
+            role->weight = *it->weight;
+        }
+    }
+
 
     const auto& curveMetrics = theme.domains.curve.metrics;
     if (curveMetrics.gridColumnCount <= 0 || curveMetrics.linearGridRowCount <= 0

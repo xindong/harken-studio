@@ -139,22 +139,6 @@ ThemeSnapshot createBuiltinDarkTheme()
     metrics.timeline.queueLaneLabelWidth = 88;
     metrics.timeline.headerGripWidth = 4;
 
-    auto& typography = theme.ui.typography;
-    typography.heading.pointSize = 14;
-    typography.heading.weight = QFont::Bold;
-    typography.title.pointSize = 12;
-    typography.title.weight = QFont::DemiBold;
-    typography.body.pointSize = 10;
-    typography.body.weight = QFont::Normal;
-    typography.caption.pointSize = 9;
-    typography.caption.weight = QFont::Normal;
-    typography.axis.pointSize = 8;
-    typography.axis.weight = QFont::Normal;
-    typography.mono.pointSize = 10;
-    typography.mono.weight = QFont::Normal;
-    typography.label.pointSize = 9;
-    typography.label.weight = QFont::Medium;
-
     auto& recipes = theme.ui.recipes.entries;
     const auto makeTrackHeader = [](ComponentRecipeBreakpoint breakpoint) {
         ComponentRecipe track;
@@ -229,7 +213,6 @@ ThemeSnapshot createBuiltinDarkTheme()
     qtAdsMetrics.tabPaddingHorizontal = 4;
     qtAdsMetrics.tabPaddingBottom = 4;
     qtAdsMetrics.tabMinimumHeight = 24;
-    qtAdsMetrics.tabFontSize = 11;
     qtAdsMetrics.tabIconSize = 16;
     qtAdsMetrics.tabCloseMarginTop = 2;
     qtAdsMetrics.tabClosePaddingRight = -2;
@@ -435,7 +418,6 @@ ThemeSnapshot createBuiltinDarkTheme()
     domains.waveform.splitStereo.divider = QColor(80, 80, 90);
     domains.waveform.splitStereo.label = QColor(120, 120, 140);
     domains.waveform.splitStereo.dividerWidth = 1.0;
-    domains.waveform.splitStereo.labelPointSize = 8;
     domains.waveform.splitStereo.labelRightInset = 18;
     domains.waveform.splitStereo.labelBaselineOffset = 12;
     domains.waveform.rawPeaks.background = QColor(11, 14, 20, 120);
@@ -443,7 +425,6 @@ ThemeSnapshot createBuiltinDarkTheme()
     domains.waveform.rawPeaks.cornerRadius = 2.0;
     domains.waveform.rawPeaks.centerLineWidth = 0.5;
     domains.waveform.dbScale.gridWidth = 1.0;
-    domains.waveform.dbScale.labelPointSize = 8;
     domains.waveform.dbScale.amplitudeScale = 0.9;
     domains.waveform.dbScale.labelLeftInset = 2;
     domains.waveform.dbScale.labelBaselineOffset = -1;
@@ -506,7 +487,6 @@ ThemeSnapshot createBuiltinDarkTheme()
     curveMetrics.xMaxLabelTopOffset = 6.0;
     curveMetrics.xMaxLabelHeight = 18.0;
     curveMetrics.xMaxEditorVerticalExpansion = 3.0;
-    curveMetrics.readoutFontPixelSize = 12;
     curveMetrics.readoutHorizontalPadding = 8.0;
     curveMetrics.readoutHeight = 20.0;
     curveMetrics.readoutHorizontalOffset = 6.0;

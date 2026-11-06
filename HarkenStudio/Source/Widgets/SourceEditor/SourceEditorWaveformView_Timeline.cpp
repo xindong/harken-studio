@@ -172,7 +172,7 @@ QRect SourceEditorWaveformView::waveformRect() const
 {
     if (presentation_ == Presentation::Preview)
         return rect().adjusted(8, 8, -8, -8);
-    const QFontMetrics metrics(FontManager::instance().getFont(FontRole::Axis), this);
+    const QFontMetrics metrics(FontManager::instance().getFont(FontRole::Caption), this);
     const int chevronExtent = ThemeManager::instance().metrics().navigationChevronExtent;
     const int axisWidth = std::max(metrics.horizontalAdvance(QStringLiteral("-96.00")) + 8, chevronExtent);
     const int rulerHeight = std::max(metrics.height() + 5, chevronExtent);
@@ -192,14 +192,14 @@ QRect SourceEditorWaveformView::channelViewportRect() const
 
 int SourceEditorWaveformView::channelContentHeight() const
 {
-    const QFontMetrics metrics(FontManager::instance().getFont(FontRole::Axis), this);
+    const QFontMetrics metrics(FontManager::instance().getFont(FontRole::Caption), this);
     const int minimumHeight = std::max(kChannelHeight, metrics.height() * 4 + 16);
     return int(std::lround(std::max(minimumHeight, channelViewportRect().height()) * verticalZoom_));
 }
 
 QRect SourceEditorWaveformView::channelWaveformRect() const
 {
-    const QFontMetrics metrics(FontManager::instance().getFont(FontRole::Axis), this);
+    const QFontMetrics metrics(FontManager::instance().getFont(FontRole::Caption), this);
     QRect viewport = channelViewportRect();
     viewport.setLeft(waveformRect().left());
     return waveformAmplitudeBounds(viewport, channelContentHeight(), channelScroll_->value(), metrics);
@@ -359,7 +359,7 @@ void SourceEditorWaveformView::paintTimeline(QPainter& painter)
     const QRect plot = waveformRect();
     const int rulerHeight = plot.top();
     const int axisWidth = plot.left();
-    painter.setFont(FontManager::instance().getFont(FontRole::Axis));
+    painter.setFont(FontManager::instance().getFont(FontRole::Caption));
     const QFontMetrics metrics(painter.font(), painter.device());
     painter.fillRect(QRect(0, 0, width(), rulerHeight), colors.bgSecondary);
     painter.fillRect(QRect(0, rulerHeight, axisWidth, plot.height()), colors.bgSecondary);
@@ -514,7 +514,7 @@ TimeAxisTicks SourceEditorWaveformView::timeAxisTicks() const
     const double unit = frameDisplay_ ? 1.0 : rate;
     return buildTimeAxisTicks(viewStart_ / unit, viewFrameCount() / unit, waveformRect().width(),
         frameDisplay_ ? 1.0 : 1.0 / rate, frameDisplay_ ? 0 : secondsDecimals(),
-        QFontMetrics(FontManager::instance().getFont(FontRole::Axis), this));
+        QFontMetrics(FontManager::instance().getFont(FontRole::Caption), this));
 }
 
 QString SourceEditorWaveformView::formatFrame(uint64_t frame) const
@@ -735,7 +735,7 @@ void SourceEditorWaveformView::mouseDoubleClickEvent(QMouseEvent* event)
 void SourceEditorWaveformView::contextMenuEvent(QContextMenuEvent* event)
 {
     const QRect plot = waveformRect();
-    const QFontMetrics metrics(FontManager::instance().getFont(FontRole::Axis), this);
+    const QFontMetrics metrics(FontManager::instance().getFont(FontRole::Caption), this);
     const QRect axis = units_
         ? QRect(1, plot.top(), plot.left() - 1, plot.height())
         : QRect(plot.left(), plot.top(), metrics.horizontalAdvance(QStringLiteral("-96.00")) + 8,

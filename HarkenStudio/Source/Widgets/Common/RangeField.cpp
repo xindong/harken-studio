@@ -20,7 +20,7 @@ QDoubleSpinBox* makeBound(QWidget* parent, const QString& objectName)
     spin->setButtonSymbols(QAbstractSpinBox::NoButtons);
     spin->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     spin->setKeyboardTracking(false);
-    spin->setFont(FontManager::instance().getFont(FontRole::Mono));
+
     spin->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     return spin;
 }

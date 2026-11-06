@@ -30,7 +30,6 @@ static constexpr float kBodyPadBot = 12.0f;
 static constexpr float kBodyPadX = 12.0f;
 static constexpr float kRowHeight = 21.0f;
 static constexpr float kWaveformHeight = 22.0f;
-static constexpr float kSubtitleRowHeight = 14.0f;
 static constexpr float kBlueprintWaveformHeight = 26.0f;
 static constexpr float kWaveformGap = 8.0f;
 static constexpr float kRouteGainPadY = 6.0f;
@@ -41,6 +40,11 @@ static constexpr float kPinColumnPad = 29.0f;
 static constexpr float kPortPairSpacing = 32.0f;
 
 namespace {
+
+float subtitleRowHeight()
+{
+    return QFontMetricsF(FontManager::instance().getFont(FontRole::Caption)).height() + 4.0f;
+}
 
 class NodeContentProxy final : public QGraphicsProxyWidget
 {
@@ -350,7 +354,7 @@ NodeItem::~NodeItem()
 QRectF NodeItem::titleRect() const
 {
     if (routeGainMode_ || (effectiveDetailLevel() == BlueprintDetailLevel::Overview && !titleEditing_)) return {};
-    QFont font = FontManager::instance().getFont(FontRole::Caption, 10, QFont::Normal);
+    QFont font = FontManager::instance().getFont(FontRole::Body, FontEmphasis::Strong);
     font.setItalic(titleDirty_);
     const QFontMetricsF metrics(font);
     const qreal x = kBodyPadX + 20.0 + 9.0;
@@ -387,7 +391,7 @@ void NodeItem::beginTitleEditing()
     if (!titleProxy_) {
         auto* editor = new InlineRenameEdit(title_, titleRenameHandler_);
         editor->setObjectName(QStringLiteral("nodeTitleEditor"));
-        editor->setFont(FontManager::instance().getFont(FontRole::Caption, 10, QFont::Normal));
+        editor->setFont(FontManager::instance().getFont(FontRole::Body, FontEmphasis::Strong));
         editor->setProperty("fieldRole", QStringLiteral("inspectorValue"));
         QObject::connect(editor, &InlineRenameEdit::finished, editor, [this, editor](bool committed) {
             titleEditing_ = false;
@@ -704,7 +708,7 @@ void NodeItem::updateContentHeight()
             (contentInfo_.fields() & contentFields_).toInt()));
         height += size.height() - rows * kRowHeight;
         contentProxy_->setPos(kBodyPadX, kHeaderHeight + kBodyPadTop
-            + (subtitle_.isEmpty() ? 0.0f : kSubtitleRowHeight));
+            + (subtitle_.isEmpty() ? 0.0f : subtitleRowHeight()));
         contentProxy_->resize(size);
     }
     if (width_ != width || height_ != height) {
@@ -720,7 +724,7 @@ float NodeItem::heightForContent(const NodeContentInfo& info, bool hasSubtitle,
                                  bool hasWaveform, bool blueprintWaveformMode, int portPairCount,
                                  NodeContentFields fields)
 {
-    const float subtitleRow = hasSubtitle ? kSubtitleRowHeight : 0.0f;
+    const float subtitleRow = hasSubtitle ? subtitleRowHeight() : 0.0f;
     const float portRows = std::max(0, portPairCount - 1) * kPortPairSpacing;
     float body = kBodyPadTop + subtitleRow
         + std::popcount(static_cast<unsigned int>((info.fields() & fields).toInt())) * kRowHeight;
@@ -919,7 +923,7 @@ void NodeItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, 
     const float textW = width_ - textX - headPad;
 
     painter->setPen(titleColor);
-    QFont nameFont = FontManager::instance().getFont(FontRole::Caption, 10, QFont::Normal);
+    QFont nameFont = FontManager::instance().getFont(FontRole::Body, FontEmphasis::Strong);
     nameFont.setItalic(titleDirty_);
     painter->setFont(nameFont);
     QFontMetricsF nameFm(nameFont);
@@ -931,14 +935,14 @@ void NodeItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, 
     float bodyTop = kHeaderHeight;
     if (!subtitle_.isEmpty()) {
         const float padX = 8.0f;
-        QFont subFont = FontManager::instance().getFont(FontRole::Caption, 7);
+        QFont subFont = FontManager::instance().getFont(FontRole::Caption);
         painter->setFont(subFont);
         QFontMetricsF subFm(subFont);
         QString elided = subFm.elidedText(subtitle_, Qt::ElideMiddle, width_ - padX * 2);
         painter->setPen(theme->ui.colors.textSecondary);
-        painter->drawText(QRectF(padX, bodyTop, width_ - padX * 2, kSubtitleRowHeight),
+        painter->drawText(QRectF(padX, bodyTop, width_ - padX * 2, subtitleRowHeight()),
                           Qt::AlignVCenter | Qt::AlignLeft, elided);
-        bodyTop += kSubtitleRowHeight;
+        bodyTop += subtitleRowHeight();
     }
 
     paintContentBody(painter, bodyTop);
@@ -946,15 +950,15 @@ void NodeItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, 
     if (sandboxBypassed_) {
         painter->setPen(Qt::NoPen);
         painter->setBrush(ngn.sandboxBadgeBg);
-        painter->drawEllipse(QPointF(width_ - 12, 12), 6, 6);
+        painter->drawEllipse(QPointF(width_ - 12, 12), 8, 8);
 
         painter->setPen(ngn.sandboxBadgeText);
-        painter->setFont(FontManager::instance().getFont(FontRole::Caption, 7, QFont::Bold));
-        painter->drawText(QRectF(width_ - 18, 6, 12, 12), Qt::AlignCenter, QStringLiteral("!"));
+        painter->setFont(FontManager::instance().getFont(FontRole::Caption, FontEmphasis::Strong));
+        painter->drawText(QRectF(width_ - 20, 4, 16, 16), Qt::AlignCenter, QStringLiteral("!"));
     }
 
     {
-        QFont badgeFont = FontManager::instance().getFont(FontRole::Caption, 9, QFont::Bold);
+        QFont badgeFont = FontManager::instance().getFont(FontRole::Caption, FontEmphasis::Strong);
         const QColor badgeText = ngn.sandboxBadgeText;
         const QPen badgeRim(theme->domains.blueprint.canvasBackground, 2.0);
 
@@ -1001,7 +1005,7 @@ std::optional<NodeContentField> NodeItem::contentFieldAt(const QPointF& localPos
 
     float bodyTop = routeGainMode_ ? (kRouteGainPadY - kBodyPadTop) : kHeaderHeight;
     if (!routeGainMode_ && !subtitle_.isEmpty())
-        bodyTop += kSubtitleRowHeight;
+        bodyTop += subtitleRowHeight();
     float y = bodyTop + kBodyPadTop;
     const auto fields = contentFields_ & contentInfo_.fields();
     const NodeContentField order[] = {
@@ -1029,8 +1033,8 @@ void NodeItem::paintContentBody(QPainter* painter, float bodyTop) const
     const float valueX = width_ - padRight;
     float y = bodyTop + kBodyPadTop;
 
-    QFont labelFont = FontManager::instance().getFont(FontRole::Label, 9);
-    QFont valueFont = FontManager::instance().getFont(FontRole::Label, 9, QFont::DemiBold);
+    QFont labelFont = FontManager::instance().getFont(FontRole::Body);
+    QFont valueFont = FontManager::instance().getFont(FontRole::Body);
     const auto theme = ThemeManager::instance().snapshot();
     const auto& ngnContent = theme->domains.nodeGraphNode;
     const QColor labelColor = ngnContent.contentLabel;

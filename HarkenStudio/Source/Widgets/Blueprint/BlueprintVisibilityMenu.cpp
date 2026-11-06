@@ -1,6 +1,6 @@
 #include "BlueprintVisibilityMenu.h"
-
 #include "Core/FontManager.h"
+
 #include "Core/QtControlSkin.h"
 
 #include <QCheckBox>
@@ -88,9 +88,7 @@ BlueprintVisibilityMenu::BlueprintVisibilityMenu(QWidget* parent)
         labelView->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
         if (definition.group) {
             labelView->setProperty("textRole", "title");
-            QFont font;
-            font.setWeight(QFont::DemiBold);
-            labelView->setFont(font);
+            labelView->setProperty("fontEmphasis", "strong");
         }
         labels_[index] = labelView;
         rowLayout->addWidget(labelView, 1);

@@ -722,7 +722,7 @@ QWidget* PropertyEditorEngine::buildField(const PropertyDescriptor& d, QWidget* 
         {
             spin->setButtonSymbols(QAbstractSpinBox::NoButtons);
             spin->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-            spin->setFont(FontManager::instance().getFont(FontRole::Mono));
+
             QtControlSkin::setSemanticProperty(spin, "fieldRole",
                                               QStringLiteral("inspectorValue"));
         }
@@ -888,7 +888,6 @@ QWidget* PropertyEditorEngine::buildPage(QWidget* parent)
     const auto& inspector = ThemeManager::instance().metrics().inspector;
     auto* page = new QWidget(parent);
     setInspectorFormSlotCount(page, 2);
-    page->setFont(FontManager::instance().getFont(FontRole::Caption));
     const bool tabbed = custom_ && custom_->tabbedLayout;
     auto* layout = new QVBoxLayout(page);
     const int pageMargin = tabbed ? 0 : inspector.pageMargin;

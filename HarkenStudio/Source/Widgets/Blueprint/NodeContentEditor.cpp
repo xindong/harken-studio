@@ -144,7 +144,7 @@ NodeContentEditor::NodeContentEditor(const NodeContentInfo& info, NodeContentFie
         row->property = nodeContentProperty(field);
         row->label = new QLabel(row->property.label, this);
         row->label->setProperty("nodeContentRole", QStringLiteral("label"));
-        row->label->setFont(FontManager::instance().getFont(FontRole::Label, 9));
+        row->label->setFont(FontManager::instance().getFont(FontRole::Body));
         row->label->setFixedWidth(columnWidth);
         row->label->setToolTip(row->label->text());
         row->valueStack = new QStackedWidget(this);
@@ -153,7 +153,7 @@ NodeContentEditor::NodeContentEditor(const NodeContentInfo& info, NodeContentFie
         row->value->setProperty("nodeContentRole", QStringLiteral("value"));
         row->value->setObjectName(QStringLiteral("nodeValue_") + row->property.field);
         row->value->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        row->value->setFont(FontManager::instance().getFont(FontRole::Label, 9, QFont::DemiBold));
+        row->value->setFont(FontManager::instance().getFont(FontRole::Body));
         row->valueStack->addWidget(row->value);
 
         if (field == NodeContentField::Loop) {
@@ -325,7 +325,7 @@ void NodeContentRenderer::clearDrawings()
 int NodeContentEditor::labelWidth(NodeContentFields fields)
 {
     QLabel label;
-    label.setFont(FontManager::instance().getFont(FontRole::Label, 9));
+    label.setFont(FontManager::instance().getFont(FontRole::Body));
     label.ensurePolished();
     int width = 0;
     for (auto field : kFields) {
@@ -582,9 +582,9 @@ void NodeContentEditor::refreshFonts()
         label.ensurePolished();
         return label.font();
     };
-    const auto labelFont = styledFont(FontManager::instance().getFont(FontRole::Label, 9),
+    const auto labelFont = styledFont(FontManager::instance().getFont(FontRole::Body),
         QStringLiteral("label"));
-    const auto valueFont = styledFont(FontManager::instance().getFont(FontRole::Label, 9, QFont::DemiBold),
+    const auto valueFont = styledFont(FontManager::instance().getFont(FontRole::Body),
         QStringLiteral("value"));
     for (const auto& row : rows_) {
         row->label->setFont(labelFont);

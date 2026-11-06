@@ -45,8 +45,7 @@ constexpr double kSpectrogramMaxSpeed = 10.0;
 
 QFont peakValueFont()
 {
-    return FontManager::instance().getFont(FontRole::Mono,
-        ThemeManager::instance().snapshot()->ui.typography.label.pointSize + 2, QFont::Bold);
+    return FontManager::instance().getFont(FontRole::Body, FontEmphasis::Strong);
 }
 
 }
@@ -197,7 +196,7 @@ QSize MeterPanel::minimumSizeHint() const
         return {160, 220};
     if (expandButton_->isChecked())
         return {100, 220};
-    const int readoutWidth = QFontMetrics(FontManager::instance().getFont(FontRole::Axis))
+    const int readoutWidth = QFontMetrics(FontManager::instance().getFont(FontRole::Caption))
         .horizontalAdvance(QStringLiteral("-96.0"));
     const auto margins = layout()->contentsMargins();
     return {std::max(header_->minimumSizeHint().width(), readoutWidth)
@@ -207,7 +206,7 @@ QSize MeterPanel::minimumSizeHint() const
 int MeterPanel::fullPeakWidth() const
 {
     const auto& style = ThemeManager::instance().snapshot()->domains.meter.peakMeter;
-    const QFontMetrics axis(FontManager::instance().getFont(FontRole::Axis));
+    const QFontMetrics axis(FontManager::instance().getFont(FontRole::Caption));
     const int scaleWidth = std::max({30, style.metrics.outerInsetLeft,
         axis.horizontalAdvance(QStringLiteral("-96.0")) + 10});
     const int barWidth = QFontMetrics(peakValueFont()).horizontalAdvance(QStringLiteral("-96.0")) + 8;
@@ -806,7 +805,7 @@ void MeterPanel::paintCanvas(QPainter& painter)
     const auto& curve = snapshot->domains.curve;
     const QRect canvas = canvasBounds();
     const QRect plot = plotBounds();
-    const QFont axisFont = FontManager::instance().getFont(FontRole::Axis);
+    const QFont axisFont = FontManager::instance().getFont(FontRole::Caption);
     const QFontMetrics font(axisFont);
     painter.save();
     painter.setClipRect(canvas);
@@ -819,7 +818,7 @@ void MeterPanel::paintCanvas(QPainter& painter)
         frame.canvasBounds = canvas;
         frame.scaleBounds = scale;
         frame.barCount = plot.isValid() ? (mode_ == Mode::Loudness ? 1 : 2) : 0;
-        frame.labelFont = FontManager::instance().getFont(FontRole::Label);
+        frame.labelFont = FontManager::instance().getFont(FontRole::Caption);
         frame.peakCap = theme.resolveImage(QString::fromLatin1(ThemeAssetIds::MeterPeakCap),
             {{}, devicePixelRatioF(), 0, {}}).resource;
         for (const auto& tick : buildAmplitudeAxisTicks(plot, plot.bottom(), plot.height() - 1,
@@ -904,7 +903,7 @@ void MeterPanel::paintMeasurement(QPainter& painter, const QRect& canvas)
     const auto& display = displayState();
     const auto snapshot = ThemeManager::instance().snapshot();
     const auto& style = snapshot->domains.meter;
-    const QFontMetrics font(FontManager::instance().getFont(FontRole::Axis));
+    const QFontMetrics font(FontManager::instance().getFont(FontRole::Caption));
     const QRect plot = plotBounds();
     const float maximum = std::min(20000.0f, display.spectrumSampleRate * 0.5f);
     if (mode_ == Mode::Spectrum) {

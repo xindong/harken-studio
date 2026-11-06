@@ -1,4 +1,5 @@
 #include "TableItemDelegate.h"
+#include "Core/FontManager.h"
 #include "TableGroupHeader.h"
 #include "ProportionalTreeWidget.h"
 
@@ -111,7 +112,9 @@ void TableItemDelegate::initStyleOption(QStyleOptionViewItem* option, const QMod
     }
     option->palette.setColor(QPalette::Text, text);
     option->palette.setColor(QPalette::HighlightedText, text);
-    option->font.setBold(index.data(TableTextRole).toInt() == static_cast<int>(TableTextState::Modified));
+    option->font.setWeight(FontManager::instance().getFont(themeManager_->snapshot(), FontRole::Body,
+        index.data(TableTextRole).toInt() == static_cast<int>(TableTextState::Modified)
+            ? FontEmphasis::Strong : FontEmphasis::Normal).weight());
     if (option->widget && option->features.testFlag(QStyleOptionViewItem::HasCheckIndicator)) {
         const auto rect = option->widget->style()->subElementRect(
             QStyle::SE_ItemViewItemCheckIndicator, option, option->widget);

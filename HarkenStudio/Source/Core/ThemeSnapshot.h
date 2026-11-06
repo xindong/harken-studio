@@ -191,13 +191,10 @@ struct ThemeFontStyle
 
 struct ThemeTypography
 {
-    ThemeFontStyle heading;
-    ThemeFontStyle title;
-    ThemeFontStyle body;
-    ThemeFontStyle caption;
-    ThemeFontStyle axis;
+    ThemeFontStyle title{{}, 12, 600};
+    ThemeFontStyle body{{}, 10, 400};
+    ThemeFontStyle caption{{}, 9, 0};
     ThemeFontStyle mono;
-    ThemeFontStyle label;
     bool operator==(const ThemeTypography&) const = default;
 };
 
@@ -322,7 +319,6 @@ struct QtAdsStyle
         int tabPaddingHorizontal = 0;
         int tabPaddingBottom = 0;
         int tabMinimumHeight = 0;
-        int tabFontSize = 0;
         int tabIconSize = 0;
         int tabCloseMarginTop = 0;
         int tabClosePaddingRight = 0;
@@ -381,7 +377,6 @@ struct WaveformStyle
         QColor divider;
         QColor label;
         qreal dividerWidth = 0.0;
-        int labelPointSize = 0;
         int labelRightInset = 0;
         int labelBaselineOffset = 0;
         bool operator==(const SplitStereo&) const = default;
@@ -399,7 +394,6 @@ struct WaveformStyle
         QColor grid;
         QColor label;
         qreal gridWidth = 0.0;
-        int labelPointSize = 0;
         qreal amplitudeScale = 0.0;
         int labelLeftInset = 0;
         int labelBaselineOffset = 0;
@@ -500,7 +494,6 @@ struct CurveStyle
         qreal xMaxLabelHeight = 0.0;
         qreal xMaxEditorVerticalExpansion = 0.0;
 
-        int readoutFontPixelSize = 0;
         qreal readoutHorizontalPadding = 0.0;
         qreal readoutHeight = 0.0;
         qreal readoutHorizontalOffset = 0.0;

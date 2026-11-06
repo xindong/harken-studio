@@ -1094,7 +1094,7 @@ QRectF CurveCanvas::graphRect() const
     const int minimumLeft = axisScale() != CurveAxisScale::LinearValue
         ? metrics.amplitudeGraphLeftInset
         : metrics.linearGraphLeftInset;
-    const QFontMetrics fm(FontManager::instance().getFont(FontRole::Axis));
+    const QFontMetrics fm(FontManager::instance().getFont(FontRole::Caption));
     const int labelWidth = std::max(fm.horizontalAdvance(formatDecimal(yMin(), profile_.valueDecimals)),
                                     fm.horizontalAdvance(formatDecimal(yMax(), profile_.valueDecimals)));
     const qreal left = std::min<qreal>(std::max(minimumLeft, labelWidth + 12), width() * 0.4);
@@ -1721,9 +1721,9 @@ void CurveCanvas::beginPointCoordinateEdit(int index)
         QtControlSkin::setSemanticProperty(form->labelForField(spin), "textRole",
                                           QStringLiteral("formLabel"));
         spin->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        spin->setFont(FontManager::instance().getFont(FontRole::Mono));
+        spin->setFont(FontManager::instance().getFont(FontRole::Body));
         connect(&FontManager::instance(), &FontManager::fontChanged, spin, [spin] {
-            spin->setFont(FontManager::instance().getFont(FontRole::Mono));
+            spin->setFont(FontManager::instance().getFont(FontRole::Body));
         });
         const QString unit = spin == ySpin ? profile_.valueUnit.trimmed() : QString();
         const auto updateToolTip = [spin, unit] {
@@ -1969,7 +1969,7 @@ CurveRenderData CurveCanvas::renderData() const
 {
     const auto& style = ThemeManager::instance().snapshot()->domains.curve;
     CurveRenderData data;
-    data.tickFont = FontManager::instance().getFont(FontRole::Axis);
+    data.tickFont = FontManager::instance().getFont(FontRole::Caption);
     const QFontMetrics fontMetrics(data.tickFont);
     data.canvasRect = rect();
     data.graphRect = graphRect();

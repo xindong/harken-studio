@@ -30,7 +30,7 @@ QString frequencyLabel(float frequency)
 
 QRect plotBounds(const QRect& canvas, const QMargins& insets, bool horizontalAxis)
 {
-    const QFontMetrics font(FontManager::instance().getFont(FontRole::Axis));
+    const QFontMetrics font(FontManager::instance().getFont(FontRole::Caption));
     const int verticalInset = std::max(10, font.height() / 2 + 4);
     return canvas.adjusted(std::max({30, insets.left(), font.horizontalAdvance(QStringLiteral("-96.0")) + 10}),
         std::max(insets.top(), verticalInset), -std::max(insets.right(), 10),

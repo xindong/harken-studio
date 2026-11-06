@@ -57,7 +57,7 @@ QString formatTimeNanoseconds(int64_t nanoseconds, int minimumDecimals = 0, int 
 QString formatTimeMinutesSecondsMilliseconds(int64_t nanoseconds,
     int minimumDecimals = 3, int maximumDecimals = 3);
 void drawTimeAxisRuler(QPainter& painter, const ThemeColors& colors,
-    const QRect& bounds, const TimeAxisTicks& ticks, FontRole role = FontRole::Axis,
+    const QRect& bounds, const TimeAxisTicks& ticks, FontRole role = FontRole::Caption,
     TimeAxisLabelAlignment alignment = TimeAxisLabelAlignment::Center, bool pairedLabels = false);
 void drawTimeAxisGrid(QPainter& painter, const QColor& majorColor,
     const QRect& bounds, const TimeAxisTicks& ticks, const QColor& minorColor = {},

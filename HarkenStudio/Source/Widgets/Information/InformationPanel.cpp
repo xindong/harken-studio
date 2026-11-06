@@ -47,6 +47,9 @@ InformationPanel::InformationPanel(QWidget* parent)
                     applyFont(size);
                 }
             });
+    connect(&FontManager::instance(), &FontManager::fontChanged, this, [this] {
+        applyFont(AppSettings::instance().panelFontSize(PanelId::Information));
+    });
     applyFont(AppSettings::instance().panelFontSize(PanelId::Information));
 
     connect(&AppSettings::instance(), &AppSettings::languageChanged,

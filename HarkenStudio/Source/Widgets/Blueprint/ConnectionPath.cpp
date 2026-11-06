@@ -166,7 +166,7 @@ QRectF ConnectionPath::boundingRect() const
 QRectF ConnectionPath::labelRect() const
 {
     const QPointF mid = path().pointAtPercent(0.5);
-    const QFontMetricsF metrics(FontManager::instance().getFont(FontRole::Label, 8));
+    const QFontMetricsF metrics(FontManager::instance().getFont(FontRole::Caption));
     const qreal width = metrics.horizontalAdvance(label_);
     return QRectF(mid.x() - width / 2 - 4, mid.y() - metrics.height() - 2,
                   width + 8, metrics.height() + 2);
@@ -247,7 +247,7 @@ void ConnectionPath::paint(QPainter* painter, const QStyleOptionGraphicsItem* op
     }
 
     if (detailLevel_ == BlueprintDetailLevel::Full && !label_.isEmpty()) {
-        QFont labelFont = FontManager::instance().getFont(FontRole::Label, 8);
+        QFont labelFont = FontManager::instance().getFont(FontRole::Caption);
         painter->setFont(labelFont);
         const QRectF bg = labelRect();
         const auto theme = ThemeManager::instance().snapshot();

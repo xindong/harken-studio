@@ -569,10 +569,12 @@ QString QtControlSkin::applicationStyleSheet() const
     replace(QStringLiteral("@parameterSliderHandleOverhang@"),
             QString::number((parameterMetrics.sliderHandleLength
                              - parameterMetrics.sliderGrooveThickness) / 2));
-    replace(QStringLiteral("@bodyPointSize@"), QString::number(snapshot_->ui.typography.body.pointSize));
-    replace(QStringLiteral("@captionPointSize@"), QString::number(snapshot_->ui.typography.caption.pointSize));
-    replace(QStringLiteral("@titlePointSize@"), QString::number(snapshot_->ui.typography.title.pointSize));
-    replace(QStringLiteral("@headingPointSize@"), QString::number(snapshot_->ui.typography.heading.pointSize));
+    const auto& fonts = FontManager::instance();
+    replace(QStringLiteral("@bodyFont@"), fonts.styleSheet(snapshot_, FontRole::Body));
+    replace(QStringLiteral("@captionFont@"), fonts.styleSheet(snapshot_, FontRole::Caption));
+    replace(QStringLiteral("@titleFont@"), fonts.styleSheet(snapshot_, FontRole::Title));
+    replace(QStringLiteral("@regularWeight@"), QString::number(fonts.getFont(snapshot_, FontRole::Body).weight()));
+    replace(QStringLiteral("@emphasisWeight@"), QString::number(fonts.getFont(snapshot_, FontRole::Body, FontEmphasis::Strong).weight()));
     return styleSheet;
 }
 
@@ -597,8 +599,7 @@ QString QtControlSkin::collapsibleHeaderStyle(const QColor& indicator, bool cust
     const QString indicatorColor = indicator.isValid() ? indicator.name(QColor::HexArgb) : accent();
 
     const QString titleColor = colors().textTitle.name(QColor::HexArgb);
-    const QString font = QStringLiteral("font-size: %1pt; font-weight: 600; letter-spacing: 0;")
-        .arg(snapshot_->ui.typography.body.pointSize);
+    const QString font = FontManager::instance().styleSheet(snapshot_, FontRole::Body, FontEmphasis::Strong);
     QString bg, border, hoverBg, pad;
     int minH;
     if (level <= 0)

@@ -16,6 +16,7 @@
 #include <QStandardPaths>
 #include <QStyleHints>
 #include <QThread>
+#include <QToolTip>
 #include <QWidget>
 
 #include <utility>
@@ -336,6 +337,8 @@ void ThemeManager::applyApplicationTheme(bool structureChanged)
         return;
     auto& fontManager = FontManager::instance();
     const QtControlSkin skin(snapshot_, &assetResolver_);
+    const auto font = fontManager.getFont(snapshot_, FontRole::Body);
+    if (application->font() != font) application->setFont(font);
     application->styleHints()->setColorScheme(
         snapshot_->colorScheme == ThemeColorScheme::Light
             ? Qt::ColorScheme::Light
@@ -357,8 +360,8 @@ void ThemeManager::applyApplicationTheme(bool structureChanged)
         application->setPalette(palette);
         refreshWidgetPalettes = true;
     }
-    const auto font = fontManager.getFont(snapshot_, FontRole::Body);
-    if (application->font() != font) application->setFont(font);
+    application->setFont(font);
+    QToolTip::setFont(fontManager.getFont(snapshot_, FontRole::Caption));
     if (structureChanged) QtAdsThemeAdapter::applyIcons(assetResolver_, snapshot_);
     fontManager.applyTheme(snapshot_);
     for (auto* widget : application->allWidgets()) {

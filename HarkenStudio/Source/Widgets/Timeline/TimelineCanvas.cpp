@@ -370,7 +370,7 @@ TimelineRenderData TimelineCanvas::buildRenderData(const QRect& exposed) const
     const QRect trackViewport = data.frameless ? panel_->trackWaveformRect() : QRect();
     const QRect trackWaveform = data.frameless
         ? waveformAmplitudeBounds(trackViewport,
-            trackViewport.height(), 0, QFontMetrics(FontManager::instance().getFont(FontRole::Axis)))
+            trackViewport.height(), 0, QFontMetrics(FontManager::instance().getFont(FontRole::Caption)))
         : QRect();
     struct ClipContent {
         QString label;

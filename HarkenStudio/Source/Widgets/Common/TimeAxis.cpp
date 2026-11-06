@@ -206,7 +206,7 @@ void drawTimeAxisRuler(QPainter& painter, const ThemeColors& colors,
     painter.setClipRect(bounds, Qt::IntersectClip);
     painter.setRenderHint(QPainter::Antialiasing, false);
     const QFont primaryFont = FontManager::instance().getFont(role);
-    const QFont secondaryFont = FontManager::instance().getFont(FontRole::Axis);
+    const QFont secondaryFont = FontManager::instance().getFont(FontRole::Caption);
     const QFontMetrics metrics(primaryFont, painter.device());
     const QFontMetrics secondaryMetrics(secondaryFont, painter.device());
     const int secondaryHeight = pairedLabels ? secondaryMetrics.height() : 0;

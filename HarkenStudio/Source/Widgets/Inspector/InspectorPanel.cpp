@@ -98,6 +98,9 @@ InspectorPanel::InspectorPanel(QWidget* parent)
     connect(&AppSettings::instance(), &AppSettings::fontSizeChanged,
             this, &InspectorPanel::onFontSettingsChanged);
 
+    connect(&FontManager::instance(), &FontManager::fontChanged, this, [this] {
+        onFontSettingsChanged(PanelId::Inspector, AppSettings::instance().panelFontSize(PanelId::Inspector));
+    });
     int fontSize = AppSettings::instance().panelFontSize(PanelId::Inspector);
     QFont font = FontManager::instance().getFont(FontRole::Body, fontSize);
     setFont(font);

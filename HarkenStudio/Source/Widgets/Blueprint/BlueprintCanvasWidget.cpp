@@ -444,7 +444,10 @@ BlueprintCanvasWidget::BlueprintCanvasWidget(QWidget* parent)
     connectHint_->setTextFormat(Qt::PlainText);
     connectHint_->setTextInteractionFlags(Qt::NoTextInteraction);
     connectHint_->setIndent(0);
-    connectHint_->setFont(FontManager::instance().getFont(FontRole::Label, 9));
+    connectHint_->setFont(FontManager::instance().getFont(FontRole::Caption));
+    connect(&FontManager::instance(), &FontManager::fontChanged, connectHint_, [this] {
+        connectHint_->setFont(FontManager::instance().getFont(FontRole::Caption));
+    });
     connectHint_->hide();
 
     loadPersistedFlowDirection_();
@@ -924,7 +927,7 @@ void BlueprintCanvasWidget::materializeFromSource_()
         }
         for (const auto& [endpoints, group] : parallel) {
             const bool vertical = flowDir_ == CanvasFlowDirection::TB || flowDir_ == CanvasFlowDirection::BT;
-            const QFontMetrics metrics(FontManager::instance().getFont(FontRole::Label, 8));
+            const QFontMetrics metrics(FontManager::instance().getFont(FontRole::Caption));
             qreal spacing = 12.0;
             for (const auto index : group) {
                 if (!edges[index].label.isEmpty())
@@ -3116,7 +3119,7 @@ void BlueprintCanvasWidget::paintTransitionWatch_(QPainter* painter)
                 refNode && refNode->isVisible()) {
                 const QRectF r = refNode->sceneBoundingRect();
                 const QFont chipFont = FontManager::instance().getFont(
-                    FontRole::Caption, 9, QFont::Bold);
+                    FontRole::Caption, FontEmphasis::Strong);
                 const QFontMetrics chipMetrics(chipFont);
                 const QString chipLabel = tr("Timing reference");
                 const QRectF chipRect(
@@ -3147,7 +3150,7 @@ void BlueprintCanvasWidget::paintTransitionWatch_(QPainter* painter)
         painter->restore();
         return;
     }
-    QFont capFont = FontManager::instance().getFont(FontRole::Body, 10);
+    QFont capFont = FontManager::instance().getFont(FontRole::Body);
     painter->setFont(capFont);
     QFontMetrics fm(capFont);
     const int maxTextW = vp.width() - 24;

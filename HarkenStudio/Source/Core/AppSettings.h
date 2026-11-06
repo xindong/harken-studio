@@ -30,7 +30,6 @@ struct PanelInfo {
     PanelId id;
     const char* key;
     const char* displayName;
-    int defaultFontSize;
 };
 
 class PanelRegistry {
@@ -38,13 +37,13 @@ public:
     static constexpr size_t PANEL_COUNT = static_cast<size_t>(PanelId::Count);
     
     static constexpr std::array<PanelInfo, PANEL_COUNT> panels = {{
-        { PanelId::Assistant,       "assistant",         "Assistant",         13 },
-        { PanelId::Explorer,        "explorer",          "Explorer",          12 },
-        { PanelId::Inspector,       "inspector",         "Inspector",         12 },
-        { PanelId::Log,             "log",               "Log Panel",         11 },
-        { PanelId::NodeGraph,       "node_graph",        "Node Graph",        11 },
-        { PanelId::Hierarchy,       "hierarchy",         "Hierarchy",         12 },
-        { PanelId::Information,     "information",       "Information",       12 },
+        { PanelId::Assistant,       "assistant",         "Assistant" },
+        { PanelId::Explorer,        "explorer",          "Explorer" },
+        { PanelId::Inspector,       "inspector",         "Inspector" },
+        { PanelId::Log,             "log",               "Log Panel" },
+        { PanelId::NodeGraph,       "node_graph",        "Node Graph" },
+        { PanelId::Hierarchy,       "hierarchy",         "Hierarchy" },
+        { PanelId::Information,     "information",       "Information" },
     }};
     
     static const PanelInfo& get(PanelId id) {
@@ -53,10 +52,6 @@ public:
     
     static const char* key(PanelId id) {
         return get(id).key;
-    }
-    
-    static int defaultFontSize(PanelId id) {
-        return get(id).defaultFontSize;
     }
     
     static const char* displayName(PanelId id) {
@@ -123,7 +118,7 @@ public:
     static constexpr const char* PANEL_NODE_GRAPH = "node_graph";
 
     static constexpr int DEFAULT_GLOBAL_SCALE = 100;
-    static constexpr int DEFAULT_FONT_SIZE = 12;
+    static constexpr int DEFAULT_FONT_SIZE = 0;
     static constexpr int MIN_FONT_SIZE = 8;
     static constexpr int MAX_FONT_SIZE = 24;
 

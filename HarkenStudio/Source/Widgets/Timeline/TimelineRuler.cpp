@@ -144,7 +144,7 @@ int TimelineRuler::timeRulerHeight() const
     const int primaryHeight = std::max(metrics.height() + 5,
         ThemeManager::instance().metrics().navigationChevronExtent);
     const int secondaryHeight = panel_->hasSecondaryAxis()
-        ? QFontMetrics(FontManager::instance().getFont(FontRole::Axis), this).height() : 0;
+        ? QFontMetrics(FontManager::instance().getFont(FontRole::Caption), this).height() : 0;
     const int markerHeight = panel_->viewKind() == TimelineEditorPanel::ViewKind::Segment
         ? panel_->timelineMetrics().markerLaneHeight : 0;
     return primaryHeight + secondaryHeight + markerHeight;

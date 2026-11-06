@@ -88,7 +88,7 @@ void VerticalFaderPresenter::setCompactValueColumn(int width)
     spinBox_->setMinimumWidth(0);
     spinBox_->setFixedWidth(width);
     spinBox_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-    spinBox_->setFont(FontManager::instance().getFont(FontRole::Mono));
+
     QtControlSkin::setSemanticProperty(spinBox_, "fieldRole",
                                       QStringLiteral("inspectorValue"));
 }

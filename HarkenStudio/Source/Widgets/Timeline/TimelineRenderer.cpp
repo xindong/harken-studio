@@ -151,7 +151,7 @@ void drawSemanticBands(QPainter& painter,
         if (band.label.isEmpty() || band.rect.width() < 40)
             continue;
         painter.setPen(veilLabel);
-        painter.setFont(FontManager::instance().getFont(FontRole::Caption, 9));
+        painter.setFont(FontManager::instance().getFont(FontRole::Caption));
         painter.drawText(band.rect.adjusted(0, 1, 0, 0),
                          Qt::AlignHCenter | Qt::AlignTop, band.label);
     }
@@ -527,7 +527,7 @@ QVector<AmplitudeAxisTick> TimelineRenderer::amplitudeTicks(
     const QRect& viewport, double zoom, int scroll, const ThemeSnapshot& theme,
     double amplitudeExponent)
 {
-    const QFontMetrics metrics(FontManager::instance().getFont(FontRole::Axis));
+    const QFontMetrics metrics(FontManager::instance().getFont(FontRole::Caption));
     const int height = int(std::lround(viewport.height() * zoom));
     const QRect wave = waveformAmplitudeBounds(viewport, height, scroll, metrics);
     const int center = wave.top() + wave.height() / 2;
@@ -554,7 +554,7 @@ void TimelineRenderer::drawTickSet(QPainter& painter,
 {
     const auto& metrics = style.metrics.timeline;
     painter.save();
-    painter.setFont(FontManager::instance().getFont(FontRole::Axis));
+    painter.setFont(FontManager::instance().getFont(FontRole::Caption));
     for (const TimelineTick& tick : ticks.ticks) {
         const int x = originX + tick.pixel;
         if (x < leftBound || x >= rightBound)

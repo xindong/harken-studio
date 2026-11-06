@@ -1,6 +1,7 @@
 #include "QtAdsThemeAdapter.h"
 
 #include "ThemeAssetCatalog.h"
+#include "FontManager.h"
 #include "ThemeAssetResolver.h"
 
 #include <DockManager.h>
@@ -133,7 +134,6 @@ ads--CDockWidgetTab {
     margin-right: @TAB_GAP_WIDTH@px;
     padding: @TAB_PADDING_TOP@px @TAB_PADDING_HORIZONTAL@px @TAB_PADDING_BOTTOM@px @TAB_PADDING_HORIZONTAL@px;
     min-height: @TAB_MIN_HEIGHT@px;
-    font-size: @TAB_FONT_SIZE@px;
     qproperty-iconSize: @TAB_ICON_SIZE@px @TAB_ICON_SIZE@px;
 }
 
@@ -149,6 +149,7 @@ ads--CDockWidgetTab[focused="true"] {
 /* --- Tab Label (CElidingLabel) — explicit color per state --------------- */
 
 ads--CDockWidgetTab QLabel {
+    @TAB_FONT@
     color: @TEXT_PRIMARY@;
     background-color: transparent;
 }
@@ -283,7 +284,7 @@ ads--CResizeHandle {
     result.replace(QStringLiteral("@TAB_PADDING_HORIZONTAL@"), QString::number(metrics.tabPaddingHorizontal));
     result.replace(QStringLiteral("@TAB_PADDING_BOTTOM@"), QString::number(metrics.tabPaddingBottom));
     result.replace(QStringLiteral("@TAB_MIN_HEIGHT@"), QString::number(metrics.tabMinimumHeight));
-    result.replace(QStringLiteral("@TAB_FONT_SIZE@"), QString::number(metrics.tabFontSize));
+    result.replace(QStringLiteral("@TAB_FONT@"), FontManager::instance().styleSheet(snapshot_, FontRole::Body));
     result.replace(QStringLiteral("@TAB_ICON_SIZE@"), QString::number(metrics.tabIconSize));
     result.replace(QStringLiteral("@TAB_CLOSE_MARGIN_TOP@"), QString::number(metrics.tabCloseMarginTop));
     result.replace(QStringLiteral("@TAB_CLOSE_PADDING_RIGHT@"), QString::number(metrics.tabClosePaddingRight));

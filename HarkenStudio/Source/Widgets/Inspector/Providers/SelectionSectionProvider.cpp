@@ -121,7 +121,7 @@ public:
         avoidRepeat_->setObjectName(QStringLiteral("selectionBehaviorAvoidRepeat"));
         avoidRepeat_->setButtonSymbols(QAbstractSpinBox::NoButtons);
         avoidRepeat_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-        avoidRepeat_->setFont(FontManager::instance().getFont(FontRole::Mono));
+
         QtControlSkin::setSemanticProperty(avoidRepeat_, "fieldRole",
                                            QStringLiteral("inspectorValue"));
         avoidRepeatRow_ = makeInspectorFormRow(

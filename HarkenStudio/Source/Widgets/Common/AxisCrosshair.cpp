@@ -48,7 +48,7 @@ void drawAxisCrosshair(QPainter& painter, const CurveStyle& style,
     painter.setClipRect(bounds, Qt::IntersectClip);
     drawAxisCrosshairLines(painter, style, bounds, crosshair.position);
 
-    painter.setFont(FontManager::instance().getFont(FontRole::Axis));
+    painter.setFont(FontManager::instance().getFont(FontRole::Caption));
     const QSizeF bubbleSize(std::min<qreal>(bounds.width(),
         painter.fontMetrics().horizontalAdvance(crosshair.label)
             + style.metrics.readoutHorizontalPadding),

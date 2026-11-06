@@ -1,5 +1,6 @@
 
 #include "ProjectExplorer.h"
+#include "Core/FontManager.h"
 #include "ExplorerSection.h"
 #include "SourcesTreeWidget.h"
 #include "Core/AppSettings.h"
@@ -105,13 +106,16 @@ ProjectExplorer::ProjectExplorer(QWidget* parent)
             [this](PanelId panelId, int size) {
                 if (panelId != PanelId::Explorer || !sourcesTree_)
                     return;
-                QFont font = sourcesTree_->font();
-                font.setPointSize(size);
+                QFont font = FontManager::instance().getFont(FontRole::Body, size);
                 sourcesTree_->setFont(font);
             });
+    connect(&FontManager::instance(), &FontManager::fontChanged, this, [this] {
+        sourcesTree_->setFont(FontManager::instance().getFont(
+            FontRole::Body, AppSettings::instance().panelFontSize(PanelId::Explorer)));
+    });
     if (sourcesTree_) {
-        QFont font = sourcesTree_->font();
-        font.setPointSize(AppSettings::instance().panelFontSize(PanelId::Explorer));
+        QFont font = FontManager::instance().getFont(
+            FontRole::Body, AppSettings::instance().panelFontSize(PanelId::Explorer));
         sourcesTree_->setFont(font);
     }
 

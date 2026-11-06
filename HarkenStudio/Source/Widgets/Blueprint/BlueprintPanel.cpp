@@ -32,7 +32,6 @@ BlueprintPanel::BlueprintPanel(QWidget* parent)
     auto* toolbar = new QFrame(this);
     toolbar_ = toolbar;
     toolbar->setObjectName(QStringLiteral("BlueprintToolBar"));
-    toolbar->setFont(FontManager::instance().getFont(FontRole::Caption, 9));
 
     auto* modes = new QButtonGroup(toolbar);
     modes->setExclusive(true);
@@ -151,7 +150,10 @@ BlueprintPanel::BlueprintPanel(QWidget* parent)
     auto* statusBar = new QFrame(this);
     statusBar->setObjectName(QStringLiteral("BlueprintStatusBar"));
     statusBar->setFixedHeight(20);
-    statusBar->setFont(FontManager::instance().getFont(FontRole::Caption, 9));
+    statusBar->setFont(FontManager::instance().getFont(FontRole::Caption));
+    connect(&FontManager::instance(), &FontManager::fontChanged, statusBar, [statusBar] {
+        statusBar->setFont(FontManager::instance().getFont(FontRole::Caption));
+    });
 
     resetButton_ = new QToolButton(statusBar);
     resetButton_->setText(tr("Reset Layout"));

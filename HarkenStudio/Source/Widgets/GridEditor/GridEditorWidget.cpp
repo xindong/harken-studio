@@ -336,7 +336,7 @@ void GridEditorWidget::rebuildCrumbs(const std::vector<ProjectItem*>& chain)
     last->setObjectName(QStringLiteral("gridEditorTitle"));
     last->setToolTip(chain.back()->name);
     QtControlSkin::setSemanticProperty(last, "textRole", QStringLiteral("secondary"));
-    QtControlSkin::setSemanticProperty(last, "fontWeight", QStringLiteral("medium"));
+    QtControlSkin::setSemanticProperty(last, "fontEmphasis", QStringLiteral("strong"));
     crumbLayout_->addWidget(last, 1);
 }
 

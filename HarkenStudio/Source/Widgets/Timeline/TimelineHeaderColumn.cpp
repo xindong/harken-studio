@@ -173,7 +173,7 @@ void TimelineHeaderColumn::paintEvent(QPaintEvent*)
     const auto theme = ThemeManager::instance().snapshot();
     QPainter painter(this);
     painter.fillRect(rect(), theme->ui.colors.bgSecondary);
-    painter.setFont(FontManager::instance().getFont(FontRole::Axis));
+    painter.setFont(FontManager::instance().getFont(FontRole::Caption));
     const QFontMetrics metrics(painter.font());
     const auto ticks = TimelineRenderer::amplitudeTicks(panel_->trackWaveformRect(),
         1.0, 0, *theme, panel_->amplitudeExponent());

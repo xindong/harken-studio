@@ -34,10 +34,20 @@ QString boundedStatus(const QString& text)
     return text.left(kMaximumStatusCharacters);
 }
 
+QString messageHtml(const QString& text, const QColor& border)
+{
+    const auto& fonts = FontManager::instance();
+    const auto theme = ThemeManager::instance().snapshot();
+    return QStringLiteral("<style>code, pre { %1 } b, strong { font-weight: %2; } "
+                          "h1, h2, h3, h4, h5, h6 { %3 }</style>%4")
+        .arg(fonts.styleSheet(theme, FontRole::Mono))
+        .arg(int(fonts.getFont(theme, FontRole::Body, FontEmphasis::Strong).weight()))
+        .arg(fonts.styleSheet(theme, FontRole::Title), AIMarkdownRenderer::renderToHtml(text, border));
+}
+
 void applyMessageLabelStyle(QLabel* label, bool user, int fontSize)
 {
-    QFont font(FontManager::instance().sansFamily());
-    font.setPixelSize(fontSize);
+    const QFont font = FontManager::instance().getFont(FontRole::Body, fontSize);
     label->setFont(font);
     label->setObjectName(user ? QStringLiteral("aiUserMessageContent")
                               : QStringLiteral("aiMessageContent"));
@@ -65,8 +75,7 @@ public:
         label->setTextFormat(Qt::PlainText);
         label->setWordWrap(true);
         label->setTextInteractionFlags(Qt::TextSelectableByMouse);
-        QFont font(FontManager::instance().sansFamily());
-        font.setPixelSize(fontSize);
+        const QFont font = FontManager::instance().getFont(FontRole::Body, fontSize);
         label->setFont(font);
         layout->addWidget(label);
 
@@ -106,7 +115,7 @@ AIMessageWidget::AIMessageWidget(const QString& text, int fontSize, QWidget* par
             const auto color = ThemeManager::instance().colors().borderSecondary;
             if (border == color) return;
             border = color;
-            const auto html = AIMarkdownRenderer::renderToHtml(text, color);
+            const auto html = messageHtml(text, color);
             if (contentLabel_->text() == html) return;
             const int selectionStart = contentLabel_->selectionStart();
             const int selectionLength = contentLabel_->selectedText().size();
@@ -124,7 +133,7 @@ void AIMessageWidget::setupUI(const QString& text, int fontSize)
 
     contentLabel_ = new QLabel();
     contentLabel_->setTextFormat(Qt::RichText);
-    contentLabel_->setText(AIMarkdownRenderer::renderToHtml(
+    contentLabel_->setText(messageHtml(
         text, ThemeManager::instance().colors().borderSecondary));
     contentLabel_->setWordWrap(true);
     contentLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
@@ -142,10 +151,7 @@ int AIMessageWidget::heightForContentWidth(int width) const
 {
     QTextDocument doc;
     doc.setDocumentMargin(0);
-    // Match the label stylesheet, which sizes the font in pixels; the
-    // FontManager point-size path would diverge from it under DPI scaling.
-    QFont font(FontManager::instance().sansFamily());
-    font.setPixelSize(fontSize_);
+    const QFont font = contentLabel_->font();
     doc.setDefaultFont(font);
     doc.setHtml(contentLabel_->text());
     doc.setTextWidth(qMax(100, width - 16));
@@ -216,13 +222,6 @@ void UserMessageWidget::setupUI(const QString& text, int fontSize)
     contentLabel_->setTextFormat(Qt::PlainText);
     contentLabel_->setWordWrap(true);
     contentLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    // Set the font on the widget (not only via stylesheet px) so the height
-    // measurement below uses the exact same metrics the label paints with.
-    {
-        QFont labelFont(FontManager::instance().sansFamily());
-        labelFont.setPixelSize(fontSize);
-        contentLabel_->setFont(labelFont);
-    }
     QSizePolicy labelPolicy = contentLabel_->sizePolicy();
     labelPolicy.setHeightForWidth(true);
     contentLabel_->setSizePolicy(labelPolicy);
@@ -256,8 +255,7 @@ int UserMessageWidget::heightForContentWidth(int width) const
     // time. All padding is layout margin (frame + row), so the inner text width
     // is exactly frameMaxWidth minus the frame's horizontal margins, and the
     // measured text height is bracketed by those same margins below.
-    QFont font(FontManager::instance().sansFamily());
-    font.setPixelSize(fontSize_);
+    const QFont font = contentLabel_->font();
 
     QTextDocument doc;
     doc.setDocumentMargin(0);
@@ -305,6 +303,7 @@ AssistantPanel::AssistantPanel(QWidget* parent)
 
     connect(&FontManager::instance(), &FontManager::fontChanged,
             this, [this]() {
+                currentFontSize_ = AppSettings::instance().panelFontSize(PanelId::Assistant);
                 applyFontSettings();
                 update();
             });
@@ -882,8 +881,8 @@ void AssistantPanel::onFontSettingsChanged(PanelId panelId, int size)
 
 void AssistantPanel::applyFontSettings()
 {
-    QFont inputFont(FontManager::instance().sansFamily());
-    inputFont.setPixelSize(currentFontSize_);
+    const QFont inputFont = FontManager::instance().getFont(FontRole::Body, currentFontSize_);
+    inputEdit_->ensurePolished();
     inputEdit_->setFont(inputFont);
 
     refreshMessages();

@@ -1,4 +1,5 @@
 #include "Core/ColorPalette.h"
+#include "Core/BuiltinTheme.h"
 #include "Core/FontManager.h"
 #include "Core/MemorySettingsStorage.h"
 #include "Core/QSettingsStorage.h"
@@ -8,9 +9,19 @@
 #include "Core/WidgetAppearance.h"
 
 #include <QCoreApplication>
+#include <QApplication>
+#include <QCheckBox>
+#include <QComboBox>
 #include <QDir>
 #include <QEvent>
 #include <QFile>
+#include <QFontInfo>
+#include <QLabel>
+#include <QLineEdit>
+#include <QMenu>
+#include <QMenuBar>
+#include <QMessageBox>
+#include <QPushButton>
 #include <QSet>
 #include <QTemporaryDir>
 #include <QToolButton>
@@ -129,6 +140,99 @@ TEST(ThemeManager, ReloadDoesNotMutatePreviouslyPublishedSnapshot)
     EXPECT_NE(oldSnapshot->ui.typography.body.pointSize, pointSize);
     EXPECT_EQ(fonts, 1);
     EXPECT_EQ(structures, 1);
+}
+
+TEST(ThemeManager, TypographyInheritsSharedFamilyWeightAndBodySize)
+{
+    auto theme = VNX::createBuiltinDarkTheme();
+    theme.ui.typography.body = {QStringLiteral("Arial"), 13, 450};
+    theme.ui.typography.title.weight = 650;
+    const auto snapshot = std::make_shared<const VNX::ThemeSnapshot>(theme);
+    const auto& fonts = VNX::FontManager::instance();
+    const auto body = fonts.getFont(snapshot, VNX::FontRole::Body);
+    for (const auto role : {VNX::FontRole::Body, VNX::FontRole::Caption, VNX::FontRole::Title}) {
+        const auto font = fonts.getFont(snapshot, role);
+        EXPECT_EQ(font.family(), body.family());
+        EXPECT_EQ(font.stretch(), QFont::Unstretched);
+        EXPECT_EQ(font.letterSpacing(), 0);
+        EXPECT_EQ(font.wordSpacing(), 0);
+        EXPECT_EQ(fonts.getFont(snapshot, role, VNX::FontEmphasis::Strong).weight(),
+                  theme.ui.typography.title.weight);
+    }
+    EXPECT_EQ(fonts.getFont(snapshot, VNX::FontRole::Caption).weight(), body.weight());
+    EXPECT_EQ(fonts.getFont(snapshot, VNX::FontRole::Mono).weight(), body.weight());
+    EXPECT_EQ(fonts.getFont(snapshot, VNX::FontRole::Mono).pointSizeF(), body.pointSizeF());
+}
+
+TEST(ThemeManager, ExistingWidgetsFollowThemeFontsAndKeepExplicitSizes)
+{
+    qobject_cast<QApplication*>(QCoreApplication::instance())->setStyleSheet({});
+    QTemporaryDir root;
+    ASSERT_TRUE(writePackage(root.path(), QStringLiteral("typography"),
+        QStringLiteral("theme.typography"), QStringLiteral("#ff118899"), QStringLiteral("#ff118899")));
+    ASSERT_TRUE(writeFile(QDir(root.path()).filePath(QStringLiteral("typography/tokens.json")),
+        R"json({"fonts":{"body":{"family":"Arial","pointSize":13}}})json"));
+    VNX::ThemeManager manager(root.path(), memoryStorage());
+    QWidget panel;
+    panel.setAttribute(Qt::WA_DontShowOnScreen);
+    QWidget section(&panel);
+    QLabel inherited(QStringLiteral("Inherited"), &section);
+    QMenu menu(&panel);
+    QMenuBar menuBar(&panel);
+    QCheckBox checkbox(&section);
+    QComboBox combo(&section);
+    QLineEdit editor(&section);
+    QPushButton button(&section);
+    QMessageBox dialog(&panel);
+    const QList<QWidget*> inheritedWidgets{
+        &inherited, &menu, &menuBar, &checkbox, &combo, &editor, &button, &dialog};
+    QLabel customized(QStringLiteral("Customized"), &section);
+    QFont explicitSize;
+    explicitSize.setPointSize(17);
+    customized.setFont(explicitSize);
+    panel.show();
+    for (const auto& id : {VNX::builtinThemeId(), QStringLiteral("theme.typography"),
+                          VNX::builtinThemeId(), QStringLiteral("theme.typography"),
+                          VNX::builtinThemeId()}) {
+        ASSERT_TRUE(manager.selectTheme(id).ok());
+        QCoreApplication::processEvents();
+        const auto expected = VNX::FontManager::instance().getFont(manager.snapshot(), VNX::FontRole::Body);
+        QMenu newMenu(&panel);
+        auto widgets = inheritedWidgets;
+        widgets.append(&newMenu);
+        for (auto* widget : widgets) {
+            SCOPED_TRACE(widget->metaObject()->className());
+            widget->ensurePolished();
+            EXPECT_EQ(QFontInfo(widget->font()).family(), QFontInfo(expected).family());
+            EXPECT_EQ(widget->font().pointSizeF(), expected.pointSizeF());
+            EXPECT_EQ(widget->font().weight(), expected.weight());
+        }
+        EXPECT_EQ(QFontInfo(customized.font()).family(), QFontInfo(expected).family());
+        EXPECT_EQ(customized.font().pointSizeF(), explicitSize.pointSizeF());
+    }
+}
+
+TEST(ThemeManager, StyleSheetsAndPaintedTextResolveTheSameTypography)
+{
+    auto theme = VNX::createBuiltinDarkTheme();
+    theme.ui.typography.body.family = QStringLiteral("Arial");
+    theme.ui.typography.body.pointSize = 13;
+    theme.ui.typography.caption.pointSize = 11;
+    const auto snapshot = std::make_shared<const VNX::ThemeSnapshot>(theme);
+    const auto& fonts = VNX::FontManager::instance();
+    for (const auto role : {VNX::FontRole::Body, VNX::FontRole::Caption,
+                            VNX::FontRole::Title, VNX::FontRole::Mono}) {
+        for (const auto emphasis : {VNX::FontEmphasis::Normal, VNX::FontEmphasis::Strong}) {
+            QLabel label(QStringLiteral("Text 0123456789"));
+            label.setStyleSheet(fonts.styleSheet(snapshot, role, emphasis));
+            label.ensurePolished();
+            const auto expected = fonts.getFont(snapshot, role, emphasis);
+            EXPECT_EQ(QFontInfo(label.font()).family(), QFontInfo(expected).family());
+            EXPECT_EQ(label.font().pointSizeF(), expected.pointSizeF());
+            EXPECT_EQ(label.font().weight(), expected.weight());
+            EXPECT_EQ(label.font().letterSpacing(), expected.letterSpacing());
+        }
+    }
 }
 
 TEST(ThemeManager, RejectsPublicationFromAnotherThread)

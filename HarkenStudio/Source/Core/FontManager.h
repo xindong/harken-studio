@@ -10,13 +10,15 @@
 namespace VNX {
 
 enum class FontRole {
-    Heading,
     Title,
     Body,
     Caption,
-    Axis,
-    Mono,
-    Label
+    Mono
+};
+
+enum class FontEmphasis {
+    Normal,
+    Strong
 };
 
 class FontManager : public QObject
@@ -30,12 +32,14 @@ public:
     FontManager& operator=(const FontManager&) = delete;
 
 
-    QFont getFont(FontRole role) const;
+    QFont getFont(FontRole role, FontEmphasis emphasis = FontEmphasis::Normal) const;
 
     QFont getFont(FontRole role, int sizePtOverride) const;
 
-    QFont getFont(FontRole role, int sizePtOverride, QFont::Weight weightOverride) const;
-    QFont getFont(const ThemeSnapshotPtr& snapshot, FontRole role) const;
+    QFont getFont(const ThemeSnapshotPtr& snapshot, FontRole role,
+                  FontEmphasis emphasis = FontEmphasis::Normal) const;
+    QString styleSheet(const ThemeSnapshotPtr& snapshot, FontRole role,
+                       FontEmphasis emphasis = FontEmphasis::Normal) const;
 
     void applyTheme(ThemeSnapshotPtr snapshot);
 
@@ -56,13 +60,6 @@ private:
     ~FontManager() override = default;
 
     void resolveFontFamilies();
-    int scaledSize(int basePt) const;
-
-    static int defaultSize(FontRole role);
-    static QFont::Weight defaultWeight(FontRole role);
-    const ThemeFontStyle* themeStyle(FontRole role) const;
-    static const ThemeFontStyle* themeStyle(const ThemeSnapshotPtr& snapshot,
-                                            FontRole role);
 
 private:
     QString sansFamily_;

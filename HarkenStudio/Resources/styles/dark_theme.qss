@@ -10,7 +10,6 @@
 QWidget {
     background-color: @bgPrimary@;
     color: @textPrimary@;
-    font-size: @bodyPointSize@pt;
     selection-background-color: @accent@;
     selection-color: @accentText@;
 }
@@ -300,7 +299,7 @@ QToolBar#platformBar QToolButton {
     padding: 0px;
     min-height: 22px;
     max-height: 22px;
-    font-size: @bodyPointSize@pt;
+    @bodyFont@
     qproperty-iconSize: 20px 20px;
 }
 QToolBar#platformBar QToolButton[segmentedControl="true"] {
@@ -480,8 +479,8 @@ QToolButton[explorerRole="sectionToggle"] {
     margin: 0;
     padding: 0 4px;
     text-align: left;
-    font-size: @bodyPointSize@pt;
-    font-weight: 600;
+    @bodyFont@
+    font-weight: @emphasisWeight@;
     letter-spacing: 0;
 }
 
@@ -521,7 +520,7 @@ QPushButton {
     border: none;
     padding: 4px 16px;
     border-radius: 0px;
-    font-weight: normal;
+    font-weight: @regularWeight@;
 }
 
 QPushButton:hover,
@@ -589,7 +588,7 @@ QPushButton[danger="true"]:hover {
     background-color: transparent;
     border: none;
     color: @textMuted@;
-    font-size: @bodyPointSize@pt;
+    @bodyFont@
 }
 
 #btnQuit:hover {
@@ -1024,8 +1023,8 @@ QHeaderView::section {
     padding: @tableCellPaddingY@px @tableCellPaddingX@px;
     border: none;
     border-bottom: 1px solid @borderSecondary@;
-    font-size: @bodyPointSize@pt;
-    font-weight: normal;
+    @bodyFont@
+    font-weight: @regularWeight@;
     text-transform: none;
     letter-spacing: 0px;
 }
@@ -1332,7 +1331,7 @@ QGroupBox::title {
     left: 10px;
     padding: 0 5px;
     color: @textTitle@;
-    font-weight: bold;
+    font-weight: @emphasisWeight@;
     background-color: transparent;
 }
 
@@ -1507,13 +1506,13 @@ QScrollBar[scrollRole="panel"]:vertical {
 
 QLabel[settingsRole="subtitle"] {
     color: @textTitle@;
-    font-weight: bold;
+    font-weight: @emphasisWeight@;
     background: transparent;
 }
 
 *[settingsRole="hint"] {
     color: @textMuted@;
-    font-size: @captionPointSize@pt;
+    @captionFont@
 }
 
 QPushButton:disabled,
@@ -1539,7 +1538,7 @@ QLineEdit[settingsRole="invalid"] { border: 1px solid @error@; }
 
 #aboutTagline {
     color: @textSecondary@;
-    font-size: @bodyPointSize@pt;
+    @bodyFont@
 }
 
 #aboutSummary {
@@ -1550,17 +1549,17 @@ QLineEdit[settingsRole="invalid"] { border: 1px solid @error@; }
 
 QLabel[aboutRole="key"] {
     color: @textPrimary@;
-    font-size: @captionPointSize@pt;
+    @captionFont@
 }
 
 QLabel[aboutRole="value"] {
     color: @textPrimary@;
-    font-weight: 500;
+    font-weight: @emphasisWeight@;
 }
 
 #aboutDeveloperTitle {
     color: @textSecondary@;
-    font-weight: 500;
+    font-weight: @emphasisWeight@;
 }
 
 /* ==========================================================================
@@ -1579,14 +1578,14 @@ QLabel[aboutRole="value"] {
 }
 
 #startupLoadingVersion {
-    font-size: @captionPointSize@pt;
+    @captionFont@
 }
 
 #startupLoadingProject {
     background-color: transparent;
     color: @textPrimary@;
-    font-size: @headingPointSize@pt;
-    font-weight: bold;
+    @titleFont@
+    font-weight: @emphasisWeight@;
 }
 
 #startupLoadingStatus {
@@ -1596,7 +1595,7 @@ QLabel[aboutRole="value"] {
 
 #startupLoadingPercent {
     color: @textPrimary@;
-    font-weight: bold;
+    font-weight: @emphasisWeight@;
 }
 
 #startupLoadingProgress {
@@ -1625,20 +1624,20 @@ QLabel[templateRole="cardTitle"] {
     background-color: transparent;
     border: none;
     color: @textTitle@;
-    font-weight: bold;
+    font-weight: @emphasisWeight@;
 }
 
 QLabel[templateRole="cardDescription"] {
     background-color: transparent;
     border: none;
     color: @textMuted@;
-    font-size: @captionPointSize@pt;
-    font-weight: normal;
+    @captionFont@
+    font-weight: @regularWeight@;
 }
 
 QLabel[templateRole="error"] {
     color: @error@;
-    font-weight: bold;
+    font-weight: @emphasisWeight@;
 }
 
 QPushButton[templateRole="card"] {
@@ -1660,7 +1659,7 @@ QPushButton[templateRole="card"]:checked {
     background-color: @bgSelected@;
     border: 2px solid @accent@;
     color: @brightText@;
-    font-weight: bold;
+    font-weight: @emphasisWeight@;
 }
 
 QPushButton[templateRole="card"]:disabled {
@@ -1678,7 +1677,7 @@ QPushButton[templateRole="card"]:disabled {
 
 #dropZoneEmptyLabel {
     color: @textMuted@;
-    font-size: @captionPointSize@pt;
+    @captionFont@
     padding: 20px;
 }
 
@@ -1718,12 +1717,12 @@ QLabel[textRole="error"] { color: @error@; }
 QLabel[textRole="info"] { color: @info@; }
 QLabel[textRole="formLabel"] {
     color: @textPrimary@;
-    font-weight: 500;
+    font-weight: @regularWeight@;
     background: transparent;
 }
-QLabel[textScale="caption"] { font-size: @captionPointSize@pt; }
-QLabel[textScale="body"] { font-size: @bodyPointSize@pt; }
-QLabel[fontWeight="medium"] { font-weight: 500; }
+QLabel[textScale="caption"] { @captionFont@ }
+QLabel[textScale="body"] { @bodyFont@ }
+QLabel[fontEmphasis="strong"] { font-weight: @emphasisWeight@; }
 
 QFrame#listBox {
     background-color: @bgSecondary@;
@@ -1746,7 +1745,7 @@ QWidget#listHead {
 }
 QWidget#listHead QLabel {
     color: @textSecondary@;
-    font-size: @bodyPointSize@pt;
+    @bodyFont@
     background: transparent;
     border: none;
 }
@@ -1797,7 +1796,7 @@ QToolButton[listFootBtn="true"] {
     border: none;
     background: transparent;
     color: @textSecondary@;
-    font-size: @bodyPointSize@pt;
+    @bodyFont@
     padding: 4px;
 }
 QToolButton[listFootBtn="true"][tableCompactAction="true"] { padding: 0px; }
@@ -1914,8 +1913,7 @@ QWidget#inspectorTabBar QToolButton {
     border-bottom: 3px solid transparent;
     border-radius: 0px;
     color: @textPrimary@;
-    font-size: @captionPointSize@pt;
-    font-weight: 600;
+    @bodyFont@
     padding: 4px 10px;
 }
 QWidget#inspectorTabBar QToolButton[sideBar="true"] {
@@ -1965,7 +1963,7 @@ QProgressBar[shellRole="statusProgress"] {
     border-radius: 3px;
     text-align: center;
     color: @textSecondary@;
-    font-size: @captionPointSize@pt;
+    @captionFont@
 }
 
 QProgressBar[shellRole="statusProgress"]::chunk {
@@ -1975,11 +1973,11 @@ QProgressBar[shellRole="statusProgress"]::chunk {
 
 #monitorConnectionLabel {
     color: @success@;
-    font-size: @captionPointSize@pt;
+    @captionFont@
     padding: 2px;
 }
 #monitorConnectionLabel[connectionRole="live"] { color: @accent@; }
-#monitorConnectionLabel[connectionRole="warning"] { color: @warning@; font-weight: bold; }
+#monitorConnectionLabel[connectionRole="warning"] { color: @warning@; font-weight: @emphasisWeight@; }
 
 /* ==========================================================================
    Meter and Publisher semantic roles
@@ -1990,7 +1988,7 @@ QToolButton#meterRedoBtn {
     background: transparent;
     color: @textSecondary@;
     border: none;
-    font-size: @bodyPointSize@pt;
+    @bodyFont@
 }
 QToolButton#meterUndoBtn:hover,
 QToolButton#meterRedoBtn:hover { color: @textPrimary@; }
@@ -1998,12 +1996,12 @@ QToolButton#meterUndoBtn:disabled,
 QToolButton#meterRedoBtn:disabled { color: @textDisabled@; }
 
 QLabel#meterPeakLabelL,
-QLabel#meterPeakLabelR { color: @accent@; font-size: @captionPointSize@pt; }
+QLabel#meterPeakLabelR { color: @accent@; @captionFont@ }
 QLabel#meterClipIndicator {
     background: @bgTertiary@;
     color: @textMuted@;
-    font-weight: bold;
-    font-size: @captionPointSize@pt;
+    @captionFont@
+    font-weight: @emphasisWeight@;
     border-radius: @radiusSmall@px;
 }
 QLabel#meterClipIndicator[clipping="true"] {
@@ -2015,10 +2013,10 @@ QWidget#MeterSubPanelTitleBar {
     background: @bgPrimary@;
     border-bottom: 1px solid @accent@;
 }
-QLabel#meterSubPanelDragHandle { color: @textSecondary@; font-size: @bodyPointSize@pt; }
+QLabel#meterSubPanelDragHandle { color: @textSecondary@; @bodyFont@ }
 QComboBox#meterTypeCombo {
     padding-right: @chevronExtent@px;
-    font-size: @captionPointSize@pt;
+    @bodyFont@
 }
 QToolButton#meterSubPanelGearBtn,
 QToolButton#meterSubPanelSplitHBtn,
@@ -2027,7 +2025,7 @@ QToolButton#meterSubPanelCloseBtn {
     background: transparent;
     color: @textSecondary@;
     border: none;
-    font-size: @bodyPointSize@pt;
+    @bodyFont@
     padding: 2px 4px;
 }
 QToolButton#meterSubPanelGearBtn:hover,
@@ -2040,10 +2038,10 @@ QWidget#MeterSettingsPopup {
     border: 1px solid @accent@;
     border-radius: @radiusSmall@px;
 }
-QWidget#MeterSettingsPopup QLabel { color: @textPrimary@; font-size: @captionPointSize@pt; padding: 0 4px; }
+QWidget#MeterSettingsPopup QLabel { color: @textPrimary@; @bodyFont@ padding: 0 4px; }
 QWidget#MeterSettingsPopup QComboBox {
     padding-right: @chevronExtent@px;
-    font-size: @captionPointSize@pt;
+    @bodyFont@
 }
 
 QFrame#listBox QAbstractItemView[tableRole="data"] {
@@ -2199,14 +2197,14 @@ QSizeGrip {
 #titleBarLabel {
     background-color: transparent;
     color: @textPrimary@;
-    font-size: @bodyPointSize@pt;
-    font-weight: 400;
+    @bodyFont@
+    font-weight: @regularWeight@;
 }
 
 #titleBarVersion {
     background-color: transparent;
     color: @textPrimary@;
-    font-size: @bodyPointSize@pt;
+    @bodyFont@
 }
 
 /* Dialog labels — global QWidget rule at top gives every QLabel the deep-space
@@ -2220,7 +2218,7 @@ QDialog QLabel {
 #titleBarMax,
 #titleBarClose {
     color: @shellButtonText@;
-    font-weight: 400;
+    font-weight: @regularWeight@;
     margin: 0;
     padding: 0;
     min-width: 46px;
