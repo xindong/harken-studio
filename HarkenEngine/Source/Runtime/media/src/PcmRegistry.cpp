@@ -2,6 +2,7 @@
 
 #include "harken/core/MediaContentRevision.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cassert>
 #include <cstring>
@@ -849,14 +850,9 @@ void PCMRegistry::ReinsertRetired(RetiredGeneration&& generation) {
 }
 
 void PCMRegistry::SweepRetired() {
-    for (std::size_t i = 0; i < m_retired.size();) {
-        if (m_retired[i].Drained()) {
-            m_retired.erase(m_retired.begin() +
-                            static_cast<std::ptrdiff_t>(i));
-        } else {
-            ++i;
-        }
-    }
+    std::erase_if(m_retired, [](const RetiredGeneration& generation) {
+        return generation.Drained();
+    });
 }
 
 bool PCMRegistry::HasRetired(VnSoundId soundId) const {

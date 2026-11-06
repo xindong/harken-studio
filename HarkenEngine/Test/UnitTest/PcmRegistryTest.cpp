@@ -11,6 +11,7 @@
 #include "harken/media/PcmRegistry.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -960,6 +961,60 @@ TEST(PCMRegistry, ResidentFormatReplacementRetainsReadersAndRollsBackFailures) {
         registry.SweepRetired();
         EXPECT_EQ(0u, registry.RetiredCount());
         EXPECT_EQ(VN_OK, registry.UnregisterPCM(sound));
+    }
+}
+
+TEST(PCMRegistry, BatchedRetirementPreservesReadersAcrossPartialSweeps) {
+    for (const auto policy : {VN_PCM_POLICY_COPY, VN_PCM_POLICY_REFERENCE}) {
+        harken::PCMRegistry registry;
+        const auto initial = harkentest::MakeDC(8, 0.25f);
+        const auto replacement = harkentest::MakeDC(8, 0.75f);
+        const auto initialDesc = MonoDesc(initial, 48000, policy);
+        const auto replacementDesc = MonoDesc(replacement, 48000, policy);
+        std::array<harken::PCMView, 6> old;
+        std::array<harken::PCMView, 6> current;
+        registry.SweepRetired();
+        for (std::size_t i = 0; i < old.size(); ++i) {
+            const auto sound = harkentest::ObjectId(i + 1);
+            ASSERT_EQ(VN_OK, registry.RegisterPCM(sound, &initialDesc));
+            old[i] = registry.Lookup(sound);
+            old[i].useCount->fetch_add(1, std::memory_order_acq_rel);
+            ASSERT_EQ(VN_OK, registry.ReplacePCM(sound, &replacementDesc));
+            current[i] = registry.Lookup(sound);
+        }
+        registry.SweepRetired();
+        EXPECT_EQ(old.size(), registry.RetiredCount());
+        for (std::size_t i = 0; i < old.size(); i += 2)
+            old[i].useCount->fetch_sub(1, std::memory_order_acq_rel);
+        registry.SweepRetired();
+        registry.SweepRetired();
+        EXPECT_EQ(old.size() / 2, registry.RetiredCount());
+        for (std::size_t i = 0; i < old.size(); ++i) {
+            const auto sound = harkentest::ObjectId(i + 1);
+            EXPECT_EQ(i % 2 != 0, registry.HasRetired(sound));
+            const auto live = registry.Lookup(sound);
+            EXPECT_EQ(current[i].useCount, live.useCount);
+            EXPECT_EQ(current[i].channels[0], live.channels[0]);
+            EXPECT_EQ(0.75f, live.ReadSample(0, 7));
+            if (i % 2 != 0) {
+                EXPECT_EQ(0.25f, old[i].ReadSample(0, 7));
+                EXPECT_EQ(1u, old[i].useCount->load(std::memory_order_acquire));
+                EXPECT_EQ(VN_IN_USE, registry.ReplacePCM(sound, &initialDesc));
+            }
+        }
+        for (std::size_t i = 1; i < old.size(); i += 2)
+            old[i].useCount->fetch_sub(1, std::memory_order_acq_rel);
+        registry.SweepRetired();
+        registry.SweepRetired();
+        EXPECT_EQ(0u, registry.RetiredCount());
+        for (std::size_t i = 0; i < old.size(); ++i) {
+            const auto sound = harkentest::ObjectId(i + 1);
+            EXPECT_FALSE(registry.HasRetired(sound));
+            EXPECT_EQ(VN_OK, registry.ReplacePCM(sound, &initialDesc));
+            EXPECT_EQ(VN_OK, registry.UnregisterPCM(sound));
+        }
+        EXPECT_EQ(0u, registry.Count());
+        EXPECT_EQ(0u, registry.RetiredCount());
     }
 }
 
