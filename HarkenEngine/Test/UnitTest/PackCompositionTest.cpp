@@ -6043,6 +6043,7 @@ TEST(PackComposition, InactiveOwnerPreparationAdmitsWorldScratchBeforeAllocation
         for (std::size_t i = 0; i < owners.size(); ++i) {
             owners[i].packStableId = i + 1;
             owners[i].handle = (i + 1) << 32;
+            owners[i].readiness = PackOwnerReadiness::Inactive;
         }
         return owners;
     };
