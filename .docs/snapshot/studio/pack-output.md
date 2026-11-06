@@ -318,6 +318,8 @@ Editor 范围排除了 `ExportedPackLifecycle.WasapiImmediateSoundHarness`、`Ex
 
 退役残留清理（2026-11-06）：运行时和 Studio 移除 Init routing catalog 的全部内部状态（`PackInitCatalog*`、`hasCatalog`、按 catalog 定位与校验哈希的分支），`PackCanonicalImage` 不再携带 Gameplay／变量名 catalog，Studio 删除未使用的 `GameplayCatalogFormat.h` 和 `PackVariableNameCatalog.h`。公开 ABI 保持不变：`VnConfig.maxCatalogEntries`、`VnConfig.maxCatalogBytes` 仍校验但不再约束 Pack；`VnInitPackInspectReport` 的 catalog 字段恒为 0；`VN_PACK_HASH_MISMATCH` 不再由 Pack 路径返回。`Vn_SetGameplayCatalog` 仍可用，其格式是独立于 `.bytes` 的 Engine 输入，`VN_PACK_CATALOG_CAPACITY` 目前只由它返回。Trace 中的预期哈希字段保留并写 0。基于 main `ebd4f838` 重建后，Runtime 执行 6506 项，6500 通过、6 跳过、0 失败；Editor 排除与上文相同的范围后执行 640 项，638 通过、1 跳过、1 失败，失败项 `EditorDockLayoutTest` 单独复跑通过；168 项打包回归通过，22 个产物文件与迁移基线逐字节一致。Integration 原生合同未在本次重跑。
 
+同步解码预算（2026-11-06）：合并 main 的 #274 时，把 `PackDecodeBudget` 计费接入生成的读取路径：body 解码、变量载荷、总线快照和 identity 编码都按原规则计入预算；退役 catalog 的预算分支随 catalog 一起删除。对同一组极限导出包，纯 main 与合并结果需要的最小预算都是 88.28 MiB。`EditorProjectPackExporterManifest.PartialPublicationCombinesScheduleAndEffectCapacity` 因此在默认 64 MiB 下返回 `VN_PACK_RESIDENT_CAPACITY`，纯 main 上同样失败；该用例属于 daily 范围，是否调整默认预算或用例由 Runtime 负责人决定。
+
 ## 验证快照（2026-11-03）
 
 基线为 `a3c55d350612f29fbe1db357ccbee90c1618cb9c` 的保留二进制；本次 Harkenizer 的 SHA-256 为 `5dfb098d76abc23a7a84248055e624920326529aa7a7f9815c4dd954bc3fef6e`。167 项回归、14 项补充用例通过，22 个黄金样本产物与基线逐字节一致。真实工程比较共 36 次 CLI 调用，均成功且产物与对应输入的基线逐字节一致；原工程输入未改变。单平台产生 11 包／22 文件，四平台产生 44 包／88 文件。

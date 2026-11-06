@@ -27,9 +27,9 @@
 
 namespace harken {
 
-bool BuildProgramCapabilitySummariesV1(
+static bool BuildProgramCapabilitySummariesWithBudget(
     const ContainerWorldInstallViewV1* worlds, std::uint32_t worldCount,
-    std::vector<ProgramCapabilitySummaryV1>& out) {
+    std::vector<ProgramCapabilitySummaryV1>& out, const detail::PackDecodeBudget& budget) {
     out.clear();
     if (worldCount != 0 && worlds == nullptr) return false;
     bool needsSummary = false;
@@ -39,6 +39,7 @@ bool BuildProgramCapabilitySummariesV1(
     }
     // A homogeneous legacy installation has no Entry19 dependency to cache.
     if (!needsSummary) return true;
+    detail::PackDecodeCharge scratch(budget);
     struct Edge {
         std::size_t child = 0;
         bool initial = true;
@@ -47,10 +48,12 @@ bool BuildProgramCapabilitySummariesV1(
         ProgramCapabilitySummaryV1 summary{};
         std::uint32_t vintage = 0;
         std::vector<Edge> children;
+        std::size_t childSlots = 0;
         std::uint8_t state = 0;
         std::uint32_t height = 1;
     };
     std::vector<Node> nodes;
+    std::size_t nodeSlots = 0;
     std::unordered_map<VnObjectId, std::size_t> index;
     const auto kindOf = [](playableproperties::ContentPropertyKindV1 kind) {
         using Kind = playableproperties::ContentPropertyKindV1;
@@ -70,6 +73,8 @@ bool BuildProgramCapabilitySummariesV1(
             const auto& property = world.playableProperties[p];
             const auto kind = kindOf(property.contentPropertyKind);
             if (static_cast<std::uint32_t>(kind) > 3) continue;
+            if (!index.contains(property.stableId))
+                scratch.AddRows<decltype(index)::value_type>(1);
             const auto [it, inserted] = index.emplace(property.stableId, nodes.size());
             if (!inserted) {
                 const auto& existing = nodes[it->second];
@@ -83,7 +88,7 @@ bool BuildProgramCapabilitySummariesV1(
                 world.sourceBodyVintage == kCurrentWorldBodyVintageV19
                     ? kProgramCapabilityEntrySchedulingV1 : 0u};
             node.vintage = world.sourceBodyVintage;
-            nodes.push_back(std::move(node));
+            detail::DecodeAppend(nodes, std::move(node), scratch, nodeSlots);
         }
     }
     const auto addEdge = [&](VnObjectId parent, const PlayableRefV1& child,
@@ -94,7 +99,8 @@ bool BuildProgramCapabilitySummariesV1(
             nodes[c->second].summary.kind != child.kind ||
             nodes[c->second].summary.semanticFingerprint !=
                 child.expectedProgramSemanticFingerprint) return false;
-        nodes[p->second].children.push_back({c->second, initial});
+        auto& parentNode = nodes[p->second];
+        detail::DecodeAppend(parentNode.children, Edge{c->second, initial}, scratch, parentNode.childSlots);
         return true;
     };
     for (std::uint32_t w = 0; w < worldCount; ++w) {
@@ -123,15 +129,20 @@ bool BuildProgramCapabilitySummariesV1(
                                          container.resumePosition == 0;
             if (fixedQueueEntry && container.initialSequenceCursor >= container.childCount)
                 return false;
+            detail::PackDecodeCharge gridScratch(budget);
             std::unordered_set<std::uint32_t> gridChildren;
+            const auto addGridChild = [&](std::uint32_t ordinal) {
+                if (!gridChildren.contains(ordinal)) gridScratch.AddRows<std::uint32_t>(1);
+                gridChildren.insert(ordinal);
+            };
             if (container.mode == ContainerModeV1::VariableControl) {
                 if ((container.discreteRowCount != 0 && container.discreteRows == nullptr) ||
                     (container.continuousRowCount != 0 && container.continuousRows == nullptr))
                     return false;
                 for (std::uint32_t row = 0; row < container.discreteRowCount; ++row)
-                    gridChildren.insert(container.discreteRows[row].childStableOrdinal);
+                    addGridChild(container.discreteRows[row].childStableOrdinal);
                 for (std::uint32_t row = 0; row < container.continuousRowCount; ++row)
-                    gridChildren.insert(container.continuousRows[row].childStableOrdinal);
+                    addGridChild(container.continuousRows[row].childStableOrdinal);
             }
             for (std::uint32_t child = 0; child < container.childCount; ++child) {
                 const auto& row = container.children[child];
@@ -175,6 +186,12 @@ bool BuildProgramCapabilitySummariesV1(
     return true;
 }
 
+bool BuildProgramCapabilitySummariesV1(
+    const ContainerWorldInstallViewV1* worlds, std::uint32_t worldCount,
+    std::vector<ProgramCapabilitySummaryV1>& out) {
+    return BuildProgramCapabilitySummariesWithBudget(worlds, worldCount, out, {});
+}
+
 namespace {
 
 constexpr std::uint64_t kIndexEntryBytes = 16 + 8 + 4 + 4;
@@ -189,13 +206,17 @@ std::uint64_t IssueOriginalPackIncarnation() noexcept {
     return 0;
 }
 
-std::uint64_t ProviderClosureFingerprint(const PackComposition::PublishedOwner& owner) {
-    std::vector<std::pair<std::uint64_t, std::uint64_t>> required{
-        {owner.packStableId, owner.contentRevision}};
+std::uint64_t ProviderClosureFingerprint(const PackComposition::PublishedOwner& owner,
+    const detail::PackDecodeBudget& budget) {
+    detail::PackDecodeCharge scratch(budget);
+    using Revision = std::pair<std::uint64_t, std::uint64_t>;
+    std::vector<Revision> required;
+    std::size_t slots = 0;
+    detail::DecodeAppend(required, Revision{owner.packStableId, owner.contentRevision}, scratch, slots);
     for (const auto& edge : owner.dependencyEdges) {
         if (edge.required01 != 0)
-            required.emplace_back(edge.prerequisitePackStableId,
-                                  edge.expectedPrerequisiteContentRevision);
+            detail::DecodeAppend(required, Revision{edge.prerequisitePackStableId,
+                                  edge.expectedPrerequisiteContentRevision}, scratch, slots);
     }
     std::sort(required.begin(), required.end());
     required.erase(std::unique(required.begin(), required.end()), required.end());
@@ -554,7 +575,7 @@ BoundedTraversalStatus CountBoundedLeaves(
     std::uint32_t maxKnownScheduleLeaves,
     std::uint32_t maxContainerDepth,
     std::uint32_t maxTrackSegmentScheduleDepth,
-    const TraversalPathNode* path, BoundedLeafCounts& leafCounts) {
+    const TraversalPathNode* path, BoundedLeafCounts& leafCounts, detail::PackDecodeCharge& leafCharge) {
     if (leafCount == nullptr) {
         return BoundedTraversalStatus::Invalid;
     }
@@ -591,6 +612,7 @@ BoundedTraversalStatus CountBoundedLeaves(
         return BoundedTraversalStatus::Valid;
     }
     const auto finish = [&]() {
+        if (!leafCounts.contains(cacheKey)) leafCharge.AddRows<BoundedLeafCounts::value_type>(1);
         leafCounts.emplace(cacheKey, *leafCount);
         return BoundedTraversalStatus::Valid;
     };
@@ -612,6 +634,7 @@ BoundedTraversalStatus CountBoundedLeaves(
                 static_cast<std::uint32_t>(ContainerModeV1::VariableControl)) {
             return BoundedTraversalStatus::Invalid;
         }
+        detail::PackDecodeCharge candidateCharge(leafCharge.Budget());
         std::map<std::uint32_t, std::uint32_t> candidateLeaves;
         for (std::uint32_t i = 0; i < container->childCount; ++i) {
             const PlayableRefV1& childRef = container->children[i].playable;
@@ -631,12 +654,15 @@ BoundedTraversalStatus CountBoundedLeaves(
                 published, member, childRef, childContainerDepth,
                 childScheduleDepth, &childLeaves,
                 maxKnownScheduleLeaves, maxContainerDepth,
-                maxTrackSegmentScheduleDepth, &currentPath, leafCounts);
+                maxTrackSegmentScheduleDepth, &currentPath, leafCounts, leafCharge);
             if (child != BoundedTraversalStatus::Valid) {
                 return child;
             }
-            if (container->mode == ContainerModeV1::VariableControl)
+            if (container->mode == ContainerModeV1::VariableControl) {
+                if (!candidateLeaves.contains(container->children[i].stableChildOrdinal))
+                    candidateCharge.AddRows<decltype(candidateLeaves)::value_type>(1);
                 candidateLeaves.emplace(container->children[i].stableChildOrdinal, childLeaves);
+            }
             else
                 *leafCount = std::max(*leafCount, childLeaves);
         }
@@ -646,12 +672,15 @@ BoundedTraversalStatus CountBoundedLeaves(
                 if (found == candidateLeaves.end()) return BoundedTraversalStatus::Invalid;
                 *leafCount = std::max(*leafCount, found->second);
             }
+            detail::PackDecodeCharge continuousCharge(leafCharge.Budget());
             std::set<std::uint32_t> continuousChildren;
             for (std::uint32_t i = 0; i < container->continuousRowCount; ++i) {
                 const auto ordinal = container->continuousRows[i].childStableOrdinal;
                 const auto found = candidateLeaves.find(ordinal);
                 if (found == candidateLeaves.end()) return BoundedTraversalStatus::Invalid;
-                if (!continuousChildren.insert(ordinal).second) continue;
+                if (continuousChildren.contains(ordinal)) continue;
+                continuousCharge.AddRows<std::uint32_t>(1);
+                continuousChildren.insert(ordinal);
                 if (found->second > maxKnownScheduleLeaves - *leafCount)
                     return BoundedTraversalStatus::Exceeded;
                 *leafCount += found->second;
@@ -686,7 +715,7 @@ BoundedTraversalStatus CountBoundedLeaves(
                 published, member, childRef, childContainerDepth,
                 childScheduleDepth, &childLeaves,
                 maxKnownScheduleLeaves, maxContainerDepth,
-                maxTrackSegmentScheduleDepth, &currentPath, leafCounts);
+                maxTrackSegmentScheduleDepth, &currentPath, leafCounts, leafCharge);
             if (child != BoundedTraversalStatus::Valid) {
                 return child;
             }
@@ -721,7 +750,7 @@ BoundedTraversalStatus CountBoundedLeaves(
             published, member, childRef, childContainerDepth,
             childScheduleDepth, &childLeaves,
             maxKnownScheduleLeaves, maxContainerDepth,
-            maxTrackSegmentScheduleDepth, &currentPath, leafCounts);
+            maxTrackSegmentScheduleDepth, &currentPath, leafCounts, leafCharge);
         if (child != BoundedTraversalStatus::Valid) {
             return child;
         }
@@ -737,7 +766,7 @@ BoundedTraversalStatus EndpointHasBoundedVoices(
     const PackComposition::PublishedView& published,
     const std::vector<std::uint8_t>& member,
     const ContainerWorldInstallViewV1& rootView,
-    const PlayableRefV1& endpoint, BoundedLeafCounts& leafCounts) {
+    const PlayableRefV1& endpoint, BoundedLeafCounts& leafCounts, detail::PackDecodeCharge& leafCharge) {
     std::uint32_t leafCount = 0;
     const std::uint32_t containerDepth =
         endpoint.kind == PlayableKindV1::Container ? 1u : 0u;
@@ -750,7 +779,7 @@ BoundedTraversalStatus EndpointHasBoundedVoices(
         published, member, endpoint, containerDepth, scheduleDepth, &leafCount,
         rootView.capacity.maxKnownScheduleLeaves,
         rootView.capacity.maxContainerDepth,
-        rootView.capacity.maxTrackSegmentScheduleDepth, nullptr, leafCounts);
+        rootView.capacity.maxTrackSegmentScheduleDepth, nullptr, leafCounts, leafCharge);
 }
 
 VnResult ValidateNonAnyEndpoint(
@@ -1015,12 +1044,13 @@ const PackComposition::PublishedOwner* FindActiveOwnerByPack(
 
 VnResult BuildDeclaredClosure(
     const PackComposition::PublishedView& published, std::uint32_t rootSlot,
-    std::size_t maxPacks, std::vector<std::uint8_t>* member);
+    std::size_t maxPacks, std::vector<std::uint8_t>* member, detail::PackDecodeCharge& memberCharge);
 
 VnResult ValidateContainerChildCapacity(
     const PackComposition::PublishedView& published,
     const ContainerWorldInstallViewV1& view,
     const std::vector<std::uint8_t>& member) {
+    detail::PackDecodeCharge leafCharge(published.staging.Budget());
     BoundedLeafCounts leafCounts;
     for (std::uint32_t i = 0; i < view.containerCount; ++i) {
         const ContainerProgramViewV3& container = view.containers[i];
@@ -1030,7 +1060,7 @@ VnResult ValidateContainerChildCapacity(
         for (std::uint32_t c = 0; c < container.childCount; ++c) {
             const ContainerChildProgramViewV2& child = container.children[c];
             const BoundedTraversalStatus bounded = EndpointHasBoundedVoices(
-                published, member, view, child.playable, leafCounts);
+                published, member, view, child.playable, leafCounts, leafCharge);
             if (bounded == BoundedTraversalStatus::Invalid) {
                 return VN_BAD_PACK;
             }
@@ -1066,9 +1096,10 @@ VnResult ValidateSameOwnerCompanions(
         if (occurrences != VN_OK) {
             return occurrences;
         }
+        detail::PackDecodeCharge memberCharge(published.staging.Budget());
         std::vector<std::uint8_t> member;
         const VnResult closure =
-            BuildDeclaredClosure(published, slot, maxPacks, &member);
+            BuildDeclaredClosure(published, slot, maxPacks, &member, memberCharge);
         if (closure != VN_OK) {
             return closure;
         }
@@ -1103,16 +1134,18 @@ const PackComposition::PublishedOwner* FindActiveOwnerByPack(
 
 VnResult BuildDeclaredClosure(
     const PackComposition::PublishedView& published, std::uint32_t rootSlot,
-    std::size_t maxPacks, std::vector<std::uint8_t>* member) {
-    member->assign(published.owners.size(), 0);
+    std::size_t maxPacks, std::vector<std::uint8_t>* member, detail::PackDecodeCharge& memberCharge) {
+    detail::DecodeResize(*member, published.owners.size(), memberCharge);
     if (rootSlot >= published.owners.size()) {
         return VN_BAD_PACK;
     }
     if (maxPacks == 0) {
         return VN_PACK_RESIDENT_CAPACITY;
     }
+    detail::PackDecodeCharge slotCharge(memberCharge.Budget());
     std::vector<std::uint32_t> slots;
-    slots.push_back(rootSlot);
+    std::size_t requestedSlots = 0;
+    detail::DecodeAppend(slots, rootSlot, slotCharge, requestedSlots);
     (*member)[rootSlot] = 1;
     for (std::size_t cursor = 0; cursor < slots.size(); ++cursor) {
         const PackComposition::PublishedOwner& owner =
@@ -1137,7 +1170,7 @@ VnResult BuildDeclaredClosure(
                 return VN_PACK_RESIDENT_CAPACITY;
             }
             (*member)[providerSlot] = 1;
-            slots.push_back(providerSlot);
+            detail::DecodeAppend(slots, providerSlot, slotCharge, requestedSlots);
         }
     }
     return VN_OK;
@@ -1796,6 +1829,8 @@ VnResult ValidateStructuralAncestorRefs(
 }
 
 struct CompositeWorldScratch {
+    detail::PackDecodeCharge staging;
+    detail::PackDecodeCharge signalStaging;
     ContainerWorldInstallViewV1 view{};
     std::vector<VariableDefinitionV1> variables;
     std::vector<PlayablePropertyProgramViewV1> properties;
@@ -1809,9 +1844,10 @@ struct CompositeWorldScratch {
     std::vector<SignalReceiverV1> signalReceivers;
 };
 
-bool EncodeIdentityDefinition(const PackComposition::PublishedOwner& owner,
+WorldInstallStatus EncodeIdentityDefinition(const PackComposition::PublishedOwner& owner,
                               const PackComposition::IdentityIndexEntry& entry,
-                              std::vector<std::uint8_t>& bytes) {
+                              std::vector<std::uint8_t>& bytes,
+                              detail::PackDecodeCharge& staging, std::size_t& requestedSlots) {
     const auto& world = owner.view;
     ContainerWorldInstallViewV1 slice{};
     if (entry.identityClass == kInitCatalogIdentityClassVariable) {
@@ -1824,7 +1860,12 @@ bool EncodeIdentityDefinition(const PackComposition::PublishedOwner& owner,
         slice.playableProperties = &world.playableProperties[entry.localRow];
         slice.playablePropertyCount = 1;
     }
+    detail::PackDecodeCharge scratch(staging.Budget());
     std::vector<PlayableOccurrencePropertyViewV1> occurrences;
+    std::size_t occurrenceCount = 0;
+    for (std::uint32_t i = 0; i < world.playableOccurrenceCount; ++i)
+        occurrenceCount += world.playableOccurrences[i].parentStableId == entry.stableId;
+    detail::DecodeReserve(occurrences, occurrenceCount, scratch);
     for (std::uint32_t i = 0; i < world.playableOccurrenceCount; ++i) {
         if (world.playableOccurrences[i].parentStableId == entry.stableId) {
             occurrences.push_back(world.playableOccurrences[i]);
@@ -1853,23 +1894,22 @@ bool EncodeIdentityDefinition(const PackComposition::PublishedOwner& owner,
     // Entry fields are part of a V19 definition's identity, including replicas.
     if (world.sourceBodyVintage == kCurrentWorldBodyVintageV19)
         slice.sourceBodyVintage = kCurrentWorldBodyVintageV19;
-    if (!(slice.sourceBodyVintage == kCurrentWorldBodyVintageV19
-            ? EncodeCurrentWorldBodyV19(slice, bytes)
-            : EncodeCurrentWorldShippingBody(slice, bytes))) {
-        return false;
-    }
+    const auto encoded = detail::EncodeCurrentWorldIdentityBodyWithBudget(
+        slice, bytes, staging, requestedSlots);
+    if (encoded != WorldInstallStatus::Ok) return encoded;
     if (owner.voiceBindings != nullptr) {
         for (const PackVoiceBinding& binding : *owner.voiceBindings) {
             if (binding.objectId != entry.stableId) {
                 continue;
             }
             const std::size_t offset = bytes.size();
-            bytes.resize(offset + kPackBindingDefinitionBytes);
+            for (std::size_t i = 0; i < kPackBindingDefinitionBytes; ++i)
+                detail::DecodeAppend(bytes, std::uint8_t{0}, staging, requestedSlots);
             WritePackBindingDefinition(binding.bindingId, binding.descriptor,
                                               bytes.data() + offset);
         }
     }
-    return true;
+    return WorldInstallStatus::Ok;
 }
 
 template <typename T, typename Key>
@@ -1914,11 +1954,13 @@ enum class CompositeActionStatus : std::uint8_t {
 };
 
 CompositeActionStatus ValidateCompositeActions(
-    const ContainerWorldInstallViewV1& world) {
-    std::vector<std::uint8_t> state(world.actionCount, 0);
-    std::vector<std::uint32_t> depth(world.actionCount, 0);
-    std::function<CompositeActionStatus(std::uint32_t, std::uint32_t)> visit =
-        [&](std::uint32_t index,
+    const ContainerWorldInstallViewV1& world, const detail::PackDecodeBudget& budget) {
+    detail::PackDecodeCharge scratch(budget);
+    std::vector<std::uint8_t> state;
+    std::vector<std::uint32_t> depth;
+    detail::DecodeResize(state, world.actionCount, scratch);
+    detail::DecodeResize(depth, world.actionCount, scratch);
+    const auto visit = [&](auto&& self, std::uint32_t index,
             std::uint32_t traversalDepth) -> CompositeActionStatus {
         if (state[index] == 1) {
             return CompositeActionStatus::Invalid;
@@ -1957,7 +1999,7 @@ CompositeActionStatus ValidateCompositeActions(
                 return CompositeActionStatus::Exceeded;
             }
             const CompositeActionStatus childStatus =
-                visit(childIndex, traversalDepth + 1u);
+                self(self, childIndex, traversalDepth + 1u);
             if (childStatus != CompositeActionStatus::Valid) {
                 return childStatus;
             }
@@ -1984,7 +2026,7 @@ CompositeActionStatus ValidateCompositeActions(
         return CompositeActionStatus::Valid;
     };
     for (std::uint32_t index = 0; index < world.actionCount; ++index) {
-        const CompositeActionStatus status = visit(index, 1);
+        const CompositeActionStatus status = visit(visit, index, 1);
         if (status != CompositeActionStatus::Valid) {
             return status;
         }
@@ -2008,6 +2050,7 @@ VnResult ValidateCompositeWorld(
     std::uint64_t signalRelationCount = 0, signalReceiverCount = 0;
     bool signalsVintage = false;
     bool entryVintage = false;
+    detail::PackDecodeCharge vintageStaging(published.staging.Budget());
     std::map<VnObjectId, std::uint32_t> segmentVintages, actionVintages;
     for (const PackComposition::PublishedOwner& owner : published.owners) {
         if (owner.readiness != PackOwnerReadiness::Active) {
@@ -2053,16 +2096,18 @@ VnResult ValidateCompositeWorld(
     }
 
     CompositeWorldScratch scratch;
-    scratch.variables.reserve(static_cast<std::size_t>(variableCount));
-    scratch.properties.reserve(static_cast<std::size_t>(propertyCount));
-    scratch.occurrences.reserve(static_cast<std::size_t>(occurrenceCount));
-    scratch.tracks.reserve(static_cast<std::size_t>(trackCount));
-    scratch.segments.reserve(static_cast<std::size_t>(segmentCount));
-    scratch.containers.reserve(static_cast<std::size_t>(containerCount));
-    scratch.transitions.reserve(static_cast<std::size_t>(transitionCount));
-    scratch.actions.reserve(static_cast<std::size_t>(actionCount));
-    scratch.signalRelations.reserve(static_cast<std::size_t>(signalRelationCount));
-    scratch.signalReceivers.reserve(static_cast<std::size_t>(signalReceiverCount));
+    scratch.staging = detail::PackDecodeCharge(published.staging.Budget());
+    scratch.signalStaging = detail::PackDecodeCharge(published.staging.Budget());
+    detail::DecodeReserve(scratch.variables, static_cast<std::size_t>(variableCount), scratch.staging);
+    detail::DecodeReserve(scratch.properties, static_cast<std::size_t>(propertyCount), scratch.staging);
+    detail::DecodeReserve(scratch.occurrences, static_cast<std::size_t>(occurrenceCount), scratch.staging);
+    detail::DecodeReserve(scratch.tracks, static_cast<std::size_t>(trackCount), scratch.staging);
+    detail::DecodeReserve(scratch.segments, static_cast<std::size_t>(segmentCount), scratch.staging);
+    detail::DecodeReserve(scratch.containers, static_cast<std::size_t>(containerCount), scratch.staging);
+    detail::DecodeReserve(scratch.transitions, static_cast<std::size_t>(transitionCount), scratch.staging);
+    detail::DecodeReserve(scratch.actions, static_cast<std::size_t>(actionCount), scratch.staging);
+    detail::DecodeReserve(scratch.signalRelations, static_cast<std::size_t>(signalRelationCount), scratch.signalStaging);
+    detail::DecodeReserve(scratch.signalReceivers, static_cast<std::size_t>(signalReceiverCount), scratch.signalStaging);
     if (signalsVintage) scratch.view.sourceBodyVintage = kCurrentWorldBodyVintageV20;
     else if (entryVintage) scratch.view.sourceBodyVintage = kCurrentWorldBodyVintageV19;
     scratch.view.identity.format = first->view.identity.format;
@@ -2073,11 +2118,17 @@ VnResult ValidateCompositeWorld(
             continue;
         }
         if (entryVintage) {
-            for (std::uint32_t i = 0; i < owner.view.segmentScheduleCount; ++i)
+            for (std::uint32_t i = 0; i < owner.view.segmentScheduleCount; ++i) {
+                if (!segmentVintages.contains(owner.view.segmentSchedules[i].rootDefinition.stableId))
+                    vintageStaging.AddRows<decltype(segmentVintages)::value_type>(1);
                 segmentVintages.emplace(owner.view.segmentSchedules[i].rootDefinition.stableId,
                                         owner.view.sourceBodyVintage);
-            for (std::uint32_t i = 0; i < owner.view.actionCount; ++i)
+            }
+            for (std::uint32_t i = 0; i < owner.view.actionCount; ++i) {
+                if (!actionVintages.contains(owner.view.actions[i].actionStableId))
+                    vintageStaging.AddRows<decltype(actionVintages)::value_type>(1);
                 actionVintages.emplace(owner.view.actions[i].actionStableId, owner.view.sourceBodyVintage);
+            }
         }
         scratch.view.identity.capabilityMask |=
             owner.view.identity.capabilityMask;
@@ -2268,7 +2319,7 @@ VnResult ValidateCompositeWorld(
                                       : ComputeCurrentWorldFingerprintV5(scratch.view);
 
     const CompositeActionStatus actions =
-        ValidateCompositeActions(scratch.view);
+        ValidateCompositeActions(scratch.view, published.staging.Budget());
     if (actions == CompositeActionStatus::Invalid) {
         return VN_BAD_PACK;
     }
@@ -2278,21 +2329,22 @@ VnResult ValidateCompositeWorld(
 
     std::vector<std::uint32_t> segmentVersions, actionVersions;
     if (entryVintage) {
-        segmentVersions.reserve(scratch.segments.size());
-        actionVersions.reserve(scratch.actions.size());
+        detail::DecodeReserve(segmentVersions, scratch.segments.size(), vintageStaging);
+        detail::DecodeReserve(actionVersions, scratch.actions.size(), vintageStaging);
         for (const auto& segment : scratch.segments)
             segmentVersions.push_back(segmentVintages.at(segment.rootDefinition.stableId));
         for (const auto& action : scratch.actions)
             actionVersions.push_back(actionVintages.at(action.actionStableId));
     }
     const detail::CompositeWorldVintagesV1 vintages{segmentVersions, actionVersions, entryVintage};
-    switch (entryVintage ? detail::ValidateCurrentWorldCompositeV1(scratch.view, vintages)
-                         : ValidateCurrentWorldV1(scratch.view)) {
+    switch (entryVintage ? detail::ValidateCurrentWorldCompositeV1(scratch.view, vintages, published.staging.Budget())
+                         : detail::ValidateCurrentWorldWithBudget(scratch.view, published.staging.Budget())) {
     case WorldInstallStatus::Ok:
         worldSemanticFingerprint =
             scratch.view.identity.runtimeSemanticFingerprint;
         published.signalRelations.swap(scratch.signalRelations);
         published.signalReceivers.swap(scratch.signalReceivers);
+        published.staging.Merge(std::move(scratch.signalStaging));
         return VN_OK;
     case WorldInstallStatus::InvalidFormat:
         return VN_PACK_INCOMPATIBLE;
@@ -2358,9 +2410,11 @@ VnResult ValidateInitVariablePolicy(
     const PackComposition::PublishedView& published) {
     const auto* initOwner = FindInitOwner(published);
     bool hasOverlay = published.catalog.hasVariablePolicyOverlay;
+    detail::PackDecodeCharge scratch(published.staging.Budget());
     std::vector<const PackCanonicalImage::VariablePolicyOverlay*> overlayRows;
+    std::size_t overlaySlots = 0;
     const auto addOverlays =
-        [&overlayRows](
+        [&overlayRows, &scratch, &overlaySlots](
             const std::vector<PackCanonicalImage::VariablePolicyOverlay>&
                 rows) {
             for (const auto& row : rows) {
@@ -2372,7 +2426,7 @@ VnResult ValidateInitVariablePolicy(
                     }
                 }
                 if (!seen) {
-                    overlayRows.push_back(&row);
+                    detail::DecodeAppend(overlayRows, &row, scratch, overlaySlots);
                 }
             }
         };
@@ -2389,7 +2443,7 @@ VnResult ValidateInitVariablePolicy(
     if (initOwner != nullptr &&
         initOwner->readiness == PackOwnerReadiness::Active &&
         initOwner->view.variables != nullptr) {
-        initIds.reserve(initOwner->view.variableCount);
+        detail::DecodeReserve(initIds, initOwner->view.variableCount, scratch);
         for (std::uint32_t i = 0; i < initOwner->view.variableCount; ++i) {
             initIds.push_back(initOwner->view.variables[i].variableId);
         }
@@ -2398,7 +2452,7 @@ VnResult ValidateInitVariablePolicy(
     initIds.erase(std::unique(initIds.begin(), initIds.end()), initIds.end());
 
     std::vector<VnObjectId> overlayIds;
-    overlayIds.reserve(overlayRows.size());
+    detail::DecodeReserve(overlayIds, overlayRows.size(), scratch);
     for (const auto* overlay : overlayRows) {
         overlayIds.push_back(overlay->variableId);
     }
@@ -2482,9 +2536,10 @@ VnResult ValidateCrossOwnerReferences(
         if (published.owners[slot].readiness != PackOwnerReadiness::Active) {
             continue;
         }
+        detail::PackDecodeCharge memberCharge(published.staging.Budget());
         std::vector<std::uint8_t> member;
         const VnResult closure =
-            BuildDeclaredClosure(published, slot, maxPacks, &member);
+            BuildDeclaredClosure(published, slot, maxPacks, &member, memberCharge);
         if (closure != VN_OK) {
             return closure;
         }
@@ -2580,14 +2635,16 @@ VnResult BuildPlaybackOwnerStore(PackComposition::PublishedView& published,
                                  const PackAttenuationBindingMapV1& attenuationBindings) {
     auto store = std::make_shared<PackPlaybackOwnerStore>();
     store->worldSemanticFingerprint = worldSemanticFingerprint;
+    published.staging.AddRows<PackAttenuationBindingMapV1::Binding>(attenuationBindings.entries.size());
     store->attenuationBindings = attenuationBindings;
     store->owners.resize(published.owners.size());
+    detail::PackDecodeCharge scratch(published.staging.Budget());
     std::vector<ContainerWorldInstallViewV1> worlds;
-    worlds.reserve(published.owners.size());
+    detail::DecodeReserve(worlds, published.owners.size(), scratch);
     for (const auto& owner : published.owners)
         if (owner.readiness == PackOwnerReadiness::Active) worlds.push_back(owner.view);
-    if (worlds.size() > UINT32_MAX || !BuildProgramCapabilitySummariesV1(
-            worlds.data(), static_cast<std::uint32_t>(worlds.size()), store->programCapabilities))
+    if (worlds.size() > UINT32_MAX || !BuildProgramCapabilitySummariesWithBudget(
+            worlds.data(), static_cast<std::uint32_t>(worlds.size()), store->programCapabilities, published.staging.Budget()))
         return VN_BAD_PACK;
     for (std::uint32_t slot = 0; slot < published.owners.size(); ++slot) {
         const PackComposition::PublishedOwner& owner = published.owners[slot];
@@ -2604,9 +2661,10 @@ VnResult BuildPlaybackOwnerStore(PackComposition::PublishedView& published,
         if (owner.readiness != PackOwnerReadiness::Active) {
             continue;
         }
+        detail::PackDecodeCharge memberCharge(published.staging.Budget());
         std::vector<std::uint8_t> member;
         const VnResult closure =
-            BuildDeclaredClosure(published, slot, maxPacks, &member);
+            BuildDeclaredClosure(published, slot, maxPacks, &member, memberCharge);
         if (closure != VN_OK) {
             return closure;
         }
@@ -2793,6 +2851,69 @@ VnResult PackComposition::EnterDirectWorldAuthority() noexcept {
     return VN_OK;
 }
 
+namespace {
+void ChargeGameplay(detail::PackDecodeCharge& charge, const GameplayCatalogImage& source) {
+    charge.AddRows<PackGameplayCatalogActiveRow>(source.active.size());
+    charge.AddRows<PackGameplayCatalogRetiredRow>(source.retired.size());
+    charge.Add(source.namePool.size());
+}
+void ChargeVariableNames(detail::PackDecodeCharge& charge, const PackVariableNameCatalog& source) {
+    charge.AddRows<PackVariableNameRow>(source.rows.size());
+    for (const auto& row : source.rows) charge.Add(row.name.size() + 1);
+}
+void ChargeOverlays(detail::PackDecodeCharge& charge,
+    const std::vector<PackCanonicalImage::VariablePolicyOverlay>& source) {
+    charge.AddRows<PackCanonicalImage::VariablePolicyOverlay>(source.size());
+    for (const auto& row : source) {
+        charge.AddRows<std::int32_t>(row.discreteAnchors.size());
+        charge.AddRows<VariableLabelDefinitionV1>(row.labels.size());
+        for (const auto& label : row.labels) charge.Add(label.name.size() + 1);
+    }
+}
+template<class Owner>
+void ChargeOwnerCopies(detail::PackDecodeCharge& charge, const Owner& source) {
+    charge.AddRows<PackDependencyEdge>(source.dependencyEdges.size());
+    ChargeOverlays(charge, source.variablePolicyOverlays);
+    charge.AddRows<PackCanonicalImage::VariableRequirement>(source.variableRequirements.size());
+    charge.AddRows<VnBindingId>(source.bindingManifest.definitionIds.size());
+    charge.AddRows<PackBindingAttachmentEntry>(source.bindingManifest.attachments.size());
+}
+} // namespace
+
+PackComposition::CandidateOwner PackComposition::Keep(const PublishedOwner& existing,
+    const detail::PackDecodeBudget& budget) {
+        CandidateOwner keep;
+        keep.staging = detail::PackDecodeCharge(budget);
+        ChargeOwnerCopies(keep.staging, existing);
+        keep.packStableId = existing.packStableId;
+        keep.contentHash = existing.contentHash;
+        keep.companionNames = existing.companionNames;
+        keep.handle = existing.handle;
+        keep.contentRevision = existing.contentRevision;
+        keep.partitionRevision = existing.partitionRevision;
+        keep.resourceRevision = existing.resourceRevision;
+        keep.resourceToken = existing.resourceToken;
+        keep.slotIndex = existing.slotIndex;
+        keep.readiness = PackOwnerReadiness::Active;
+        keep.body = existing.body;
+        keep.view = existing.view;
+        keep.partitionBodyVintage = existing.view.sourceBodyVintage;
+        keep.voiceBindings = existing.voiceBindings;
+        keep.definitionBytes = existing.definitionBytes;
+        keep.hasPartition = existing.body != nullptr;
+        keep.dependencyEdges = existing.dependencyEdges;
+        keep.variablePolicyOverlays = existing.variablePolicyOverlays;
+        keep.hasVariablePolicyOverlay = existing.hasVariablePolicyOverlay;
+        keep.variableRequirements = existing.variableRequirements;
+        keep.hasVariableRequirements = existing.hasVariableRequirements;
+        keep.hasBusDefinitionSnapshot = existing.hasBusDefinitionSnapshot;
+        keep.busDefinitionSnapshotHeader = existing.busDefinitionSnapshotHeader;
+        keep.requirementTriple = existing.requirementTriple;
+        keep.partitionTriple = existing.partitionTriple;
+        keep.bindingManifest = existing.bindingManifest;
+        return keep;
+    }
+
 VnResult PackComposition::PrepareCandidate(const PackCanonicalImage& image,
                                            VnPackHandle handle,
                                            CandidateOwner* out,
@@ -2801,6 +2922,20 @@ VnResult PackComposition::PrepareCandidate(const PackCanonicalImage& image,
         return VN_INVALID_ARG;
     }
     CandidateOwner candidate;
+    candidate.staging = detail::PackDecodeCharge(image.staging.Budget());
+    auto& staging = candidate.staging;
+    if (image.hasPartition) staging.Add(image.partitionBody.size());
+    const auto bindingCount = std::count_if(image.bindingAttachments.begin(), image.bindingAttachments.end(),
+        [](const auto& row) { return row.scopeKind == VN_TARGET_SCOPE_VOICE; });
+    staging.AddRows<std::vector<PackVoiceBinding>>(1);
+    staging.AddRows<PackVoiceBinding>(static_cast<std::size_t>(bindingCount));
+    staging.AddRows<VnBindingId>(image.bindingDefinitions.size());
+    staging.AddRows<PackBindingAttachmentEntry>(image.bindingAttachments.size());
+    const auto dependencyCount = std::count_if(image.dependencyEdges.begin(), image.dependencyEdges.end(),
+        [](const auto& edge) { return edge.required01 != 0; });
+    staging.AddRows<PackDependencyEdge>(static_cast<std::size_t>(dependencyCount));
+    ChargeOverlays(staging, image.variablePolicyOverlays);
+    staging.AddRows<PackCanonicalImage::VariableRequirement>(image.variableRequirements.size());
     candidate.packStableId = image.packStableId;
     candidate.handle = handle;
     candidate.contentRevision = image.requirement.packContentRevision;
@@ -2814,6 +2949,7 @@ VnResult PackComposition::PrepareCandidate(const PackCanonicalImage& image,
         candidate.partitionBodyVintage = image.partitionHeader.bodyVintage;
     }
     auto bindings = std::make_shared<std::vector<PackVoiceBinding>>();
+    bindings->reserve(static_cast<std::size_t>(bindingCount));
     for (const PackBindingAttachmentEntry& attachment : image.bindingAttachments) {
         if (attachment.scopeKind == VN_TARGET_SCOPE_VOICE_EFFECT_PARAM) {
             return VN_BAD_PACK;
@@ -2891,6 +3027,8 @@ VnResult PackComposition::PrepareCandidate(const PackCanonicalImage& image,
     candidate.bindingManifest.definitionIds.clear();
     candidate.bindingManifest.attachments.clear();
     candidate.bindingManifest.definitionIds.reserve(image.bindingDefinitions.size());
+    candidate.bindingManifest.attachments.reserve(image.bindingAttachments.size());
+    candidate.dependencyEdges.reserve(static_cast<std::size_t>(dependencyCount));
     const auto definitionEntersTable = [&](std::uint32_t scopeKind) {
         return image.packKind == kPackKindInit &&
                (scopeKind == VN_TARGET_SCOPE_BUS ||
@@ -2955,7 +3093,8 @@ VnResult PackComposition::BuildIndex(PublishedView& view,
         // Validate new tables before closure lookups rely on their ordering.
         if (owner.view.sourceBodyVintage == kCurrentWorldBodyVintageV20 ||
             owner.view.sourceBodyVintage == kCurrentWorldBodyVintageV19) {
-            const auto status = detail::ValidateCurrentWorldPartitionLocalV1(owner.view);
+            const auto status = detail::ValidateCurrentWorldPartitionLocalWithBudget(
+                owner.view, view.staging.Budget());
             if (status != WorldInstallStatus::Ok)
                 return status == WorldInstallStatus::Capacity
                     ? VN_PACK_RESIDENT_CAPACITY : VN_BAD_PACK;
@@ -3010,9 +3149,15 @@ VnResult PackComposition::BuildIndex(PublishedView& view,
                   return std::pair(a.stableId, view.owners[a.packSlot].packStableId) <
                          std::pair(b.stableId, view.owners[b.packSlot].packStableId);
               });
+    detail::PackDecodeCharge comparisonStaging(view.staging.Budget());
+    std::size_t leftSlots = 0, rightSlots = 0;
     std::vector<std::uint8_t> leftDefinition;
     std::vector<std::uint8_t> rightDefinition;
     std::vector<std::pair<const PackVoiceBinding*, std::uint64_t>> bindings;
+    std::size_t bindingCount = 0;
+    for (const auto& owner : view.owners)
+        if (owner.voiceBindings) bindingCount += owner.voiceBindings->size();
+    detail::DecodeReserve(bindings, bindingCount, comparisonStaging);
     for (const auto& owner : view.owners) {
         if (owner.voiceBindings == nullptr) continue;
         for (const auto& binding : *owner.voiceBindings) {
@@ -3026,8 +3171,12 @@ VnResult PackComposition::BuildIndex(PublishedView& view,
         const auto& left = bindings[i - 1];
         const auto& right = bindings[i];
         if (left.first->bindingId != right.first->bindingId) continue;
-        leftDefinition.resize(kPackBindingDefinitionBytes);
-        rightDefinition.resize(kPackBindingDefinitionBytes);
+        leftDefinition.clear();
+        rightDefinition.clear();
+        for (std::size_t byte = 0; byte < kPackBindingDefinitionBytes; ++byte) {
+            detail::DecodeAppend(leftDefinition, std::uint8_t{0}, comparisonStaging, leftSlots);
+            detail::DecodeAppend(rightDefinition, std::uint8_t{0}, comparisonStaging, rightSlots);
+        }
         WritePackBindingDefinition(left.first->bindingId, left.first->descriptor,
                                          leftDefinition.data());
         WritePackBindingDefinition(right.first->bindingId, right.first->descriptor,
@@ -3043,10 +3192,15 @@ VnResult PackComposition::BuildIndex(PublishedView& view,
         const auto& left = view.index[i - 1];
         const auto& right = view.index[i];
         if (left.stableId == right.stableId) {
+            const auto leftEncoded = EncodeIdentityDefinition(
+                view.owners[left.packSlot], left, leftDefinition, comparisonStaging, leftSlots);
+            if (leftEncoded == WorldInstallStatus::Capacity) return VN_PACK_RESIDENT_CAPACITY;
+            const auto rightEncoded = EncodeIdentityDefinition(
+                view.owners[right.packSlot], right, rightDefinition, comparisonStaging, rightSlots);
+            if (rightEncoded == WorldInstallStatus::Capacity) return VN_PACK_RESIDENT_CAPACITY;
             if (left.packSlot == right.packSlot ||
                 left.identityClass != right.identityClass ||
-                !EncodeIdentityDefinition(view.owners[left.packSlot], left, leftDefinition) ||
-                !EncodeIdentityDefinition(view.owners[right.packSlot], right, rightDefinition) ||
+                leftEncoded != WorldInstallStatus::Ok || rightEncoded != WorldInstallStatus::Ok ||
                 leftDefinition != rightDefinition) {
                 facts->conflictingStableId = right.stableId;
                 facts->conflictingPackA = view.owners[left.packSlot].packStableId;
@@ -3090,7 +3244,8 @@ VnResult PackComposition::PrepareCommit(
     PreparedCommit* out,
     const PackAttenuationBindingMapV1* attenuationBindings,
     const CanonicalPackSetLedgerV1* ledger, bool clearInit,
-    const GameplayCatalogImage* gameplayCatalog) {
+    const GameplayCatalogImage* gameplayCatalog,
+    const detail::PackDecodeBudget& budget) try {
     if (out == nullptr) {
         return VN_INVALID_ARG;
     }
@@ -3103,11 +3258,15 @@ VnResult PackComposition::PrepareCommit(
     if (prior == UINT64_MAX) {
         return VN_RUNTIME_RECREATE_REQUIRED;
     }
+    detail::PackDecodeCharge effectiveStaging(budget);
     PackAttenuationBindingMapV1 effectiveBindings;
     if (attenuationBindings != nullptr) {
+        effectiveStaging.AddRows<PackAttenuationBindingMapV1::Binding>(attenuationBindings->entries.size());
         effectiveBindings = *attenuationBindings;
     } else if (published_ != nullptr && published_->playbackStore != nullptr) {
-        effectiveBindings = published_->playbackStore->attenuationBindings;
+        const auto& source = published_->playbackStore->attenuationBindings;
+        effectiveStaging.AddRows<PackAttenuationBindingMapV1::Binding>(source.entries.size());
+        effectiveBindings = source;
     }
     if (!effectiveBindings.Valid()) return VN_BAD_PACK;
     PreparedCommit prepared;
@@ -3116,11 +3275,15 @@ VnResult PackComposition::PrepareCommit(
     prepared.facts_.conflictingProjectId = {};
     prepared.facts_.conflictingPackA = 0;
     prepared.facts_.conflictingPackB = 0;
+    detail::PackDecodeCharge allocation(budget);
+    allocation.AddRows<PublishedView>(1);
     auto next = std::make_shared<PublishedView>();
+    next->staging = std::move(allocation);
     next->compositeGeneration = prior + 1;
-    next->owners.reserve(owners.size());
+    detail::DecodeReserve(next->owners, owners.size(), next->staging);
     for (CandidateOwner& candidate : owners) {
         PublishedOwner owner;
+        owner.staging = std::move(candidate.staging);
         owner.packStableId = candidate.packStableId;
         owner.contentHash = candidate.contentHash;
         owner.companionNames = std::move(candidate.companionNames);
@@ -3132,7 +3295,7 @@ VnResult PackComposition::PrepareCommit(
         owner.slotIndex = candidate.slotIndex;
         owner.readiness = candidate.readiness;
         owner.dependencyEdges = std::move(candidate.dependencyEdges);
-        owner.providerClosureFingerprint = ProviderClosureFingerprint(owner);
+        owner.providerClosureFingerprint = ProviderClosureFingerprint(owner, budget);
         owner.voiceBindings = std::move(candidate.voiceBindings);
         owner.definitionBytes = candidate.definitionBytes;
         if (candidate.body != nullptr) {
@@ -3142,13 +3305,14 @@ VnResult PackComposition::PrepareCommit(
             owner.body = std::move(candidate.body);
             owner.view = *owner.body->ProductionView();
         } else if (candidate.hasPartition) {
+            owner.staging.AddRows<CurrentWorldBodyImage>(1);
             auto decodedBody = std::make_shared<CurrentWorldBodyImage>();
             const CurrentWorldBodyDecodeResult decoded =
-                decodedBody->DecodeWithResult(
+                decodedBody->DecodeWithBudget(
                     candidate.partitionBody.data(),
                     candidate.partitionBody.size(),
                     candidate.partitionBodyVintage,
-                    CurrentWorldDecodeMode::StrictArtifact);
+                    CurrentWorldDecodeMode::StrictArtifact, budget);
             if (decoded != CurrentWorldBodyDecodeResult::Ok) {
                 return decoded == CurrentWorldBodyDecodeResult::Capacity
                            ? VN_PACK_RESIDENT_CAPACITY
@@ -3178,25 +3342,28 @@ VnResult PackComposition::PrepareCommit(
         next->initHandle = 0;
         next->attenuationBindings = {};
     } else if (catalogOrNull != nullptr) {
-        next->catalog = *catalogOrNull;
+        next->catalog = CopyCanonicalImageWithBudget(*catalogOrNull, budget);
         next->initPackStableId = catalogOrNull->packStableId;
         next->initHandle = initHandle;
     } else if (published_ != nullptr) {
-        next->catalog = published_->catalog;
+        next->catalog = CopyCanonicalImageWithBudget(published_->catalog, budget);
         next->initPackStableId = published_->initPackStableId;
         next->initHandle = published_->initHandle;
     }
     if (!clearInit) {
+        next->staging.AddRows<PackAttenuationBindingMapV1::Binding>(effectiveBindings.entries.size());
         next->attenuationBindings = effectiveBindings;
     }
     if (!clearInit && gameplayCatalog != nullptr) {
         next->hasGameplayCatalog = true;
+        ChargeGameplay(next->staging, *gameplayCatalog);
         next->gameplayCatalog = *gameplayCatalog;
     } else if (!clearInit && published_ != nullptr && published_->hasGameplayCatalog &&
                published_->initHandle == next->initHandle &&
                next->catalog.packStableId == published_->gameplayCatalog.header.initPackStableId &&
                next->catalog.requirement.packContentRevision == published_->gameplayCatalog.header.initContentRevision) {
         next->hasGameplayCatalog = true;
+        ChargeGameplay(next->staging, published_->gameplayCatalog);
         next->gameplayCatalog = published_->gameplayCatalog;
     }
     for (const PublishedOwner& owner : next->owners) {
@@ -3217,6 +3384,9 @@ VnResult PackComposition::PrepareCommit(
         next->gameplayCatalog = {};
         next->hasVariableNameCatalog = false;
         next->variableNameCatalog = {};
+        detail::PackDecodeCharge namesScratch(budget);
+        namesScratch.AddRows<VnObjectId>(next->owners.size());
+        detail::DecodeReserve(next->actionNames, next->owners.size(), next->staging);
         std::set<VnObjectId> roots;
         for (const auto& owner : next->owners) {
             if (owner.companionNames == nullptr) return VN_AUTHORITY_CONFLICT;
@@ -3237,13 +3407,17 @@ VnResult PackComposition::PrepareCommit(
                 next->variableNameCatalog.projectGuid = ObjectIdBytes(next->projectId);
                 next->variableNameCatalog.initPackStableId = owner.packStableId;
                 next->variableNameCatalog.initContentRevision = owner.contentRevision;
-                for (const auto& row : names.variables)
+                detail::DecodeReserve(next->variableNameCatalog.rows, names.variables.size(), next->staging);
+                for (const auto& row : names.variables) {
+                    next->staging.Add(row.name.size() + 1);
                     next->variableNameCatalog.rows.push_back({row.id, row.name});
+                }
             } else {
                 if (!roots.insert(names.rootActionId).second) return VN_BAD_PACK;
                 for (std::uint32_t i = 0; i < owner.view.actionCount; ++i) {
                     const auto& action = owner.view.actions[i];
                     if (action.actionStableId == names.rootActionId) {
+                        next->staging.Add(names.rootName.size() + 1);
                         next->actionNames.push_back({names.rootName, names.rootActionId,
                             owner.packStableId, action.programSemanticFingerprint});
                         break;
@@ -3333,6 +3507,7 @@ VnResult PackComposition::PrepareCommit(
     }
     const VnResult indexed = BuildIndex(*next, &prepared.facts_);
     if (indexed != VN_OK) {
+        if (indexed == VN_PACK_RESIDENT_CAPACITY) return indexed;
         facts_.conflictingStableId = prepared.facts_.conflictingStableId;
         facts_.conflictingProjectId = next->projectId;
         facts_.conflictingPackA = prepared.facts_.conflictingPackA;
@@ -3386,7 +3561,13 @@ VnResult PackComposition::PrepareCommit(
     prepared.published_ = std::move(next);
     *out = std::move(prepared);
     return VN_OK;
+} catch (const detail::PackDecodeCapacity&) {
+    return VN_PACK_RESIDENT_CAPACITY;
+} catch (const std::bad_alloc&) {
+    if (budget) return VN_PACK_RESIDENT_CAPACITY;
+    throw;
 }
+
 
 void PackComposition::CommitPrepared(PreparedCommit* prepared) noexcept {
     assert(prepared != nullptr && prepared->owner_ == this &&
@@ -3394,6 +3575,12 @@ void PackComposition::CommitPrepared(PreparedCommit* prepared) noexcept {
     if (prepared == nullptr || prepared->owner_ != this ||
         prepared->published_ == nullptr) {
         return;
+    }
+    prepared->published_->staging.Detach();
+    prepared->published_->catalog.staging.Detach();
+    for (auto& owner : prepared->published_->owners) {
+        owner.staging.Detach();
+        if (owner.body) owner.body->ReleaseDecodeStaging();
     }
     published_ = std::move(prepared->published_);
     authority_ = PackAuthorityMode::Pack;

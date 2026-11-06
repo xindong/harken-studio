@@ -1,5 +1,6 @@
 #pragma once
 
+#include "harken/core/detail/PackDecodeBudget.h"
 #include "harken/media/PackFormatV2.h"
 
 namespace harken {
@@ -399,7 +400,10 @@ struct GameplayCatalogImage {
 
 inline VnResult ParseGameplayCatalog(const std::uint8_t* payload,
                                      std::uint64_t size,
-                                     GameplayCatalogImage* out) {
+                                     GameplayCatalogImage* out,
+                                     detail::PackDecodeCharge* retained = nullptr) {
+    detail::PackDecodeCharge unbudgeted;
+    auto& staging = retained != nullptr ? *retained : unbudgeted;
     if (size > kGameplayCatalogMaxBytes) {
         return VN_PACK_CATALOG_CAPACITY;
     }
@@ -449,8 +453,9 @@ inline VnResult ParseGameplayCatalog(const std::uint8_t* payload,
 
     GameplayCatalogImage image;
     image.header = header;
-    image.active.reserve(header.activeCount);
-    image.retired.reserve(header.retiredCount);
+    detail::DecodeReserve(image.active, header.activeCount, staging);
+    detail::DecodeReserve(image.retired, header.retiredCount, staging);
+    detail::DecodeReserve(image.namePool, header.namePoolBytes, staging);
     image.namePool.assign(pool, pool + header.namePoolBytes);
 
     std::uint32_t cursor = 0;
@@ -534,6 +539,13 @@ inline VnResult ParseGameplayCatalog(const std::uint8_t* payload,
     }
     *out = std::move(image);
     return VN_OK;
+}
+
+inline VnResult ParseGameplayCatalogWithBudget(const std::uint8_t* bytes, std::uint64_t size,
+    GameplayCatalogImage* out, detail::PackDecodeCharge& retained) try {
+    return ParseGameplayCatalog(bytes, size, out, &retained);
+} catch (const std::bad_alloc&) {
+    return VN_PACK_RESIDENT_CAPACITY;
 }
 
 }

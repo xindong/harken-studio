@@ -1,5 +1,6 @@
 #include "harken/core/CurrentWorldCodec.h"
 #include "harken/core/LogicAllocCheckpoint.h"
+#include "harken/core/detail/CurrentWorldValidation.h"
 #include "harken/param/VariableService.h"
 
 #include <array>
@@ -137,6 +138,7 @@ constexpr auto kPackBodyActionStepCap = kHardActionStepCapacity;
 }
 
 struct CurrentWorldBodyImage::Impl {
+    detail::PackDecodeCharge staging;
     struct OwnedPayload {
         PlayablePropertyPayloadViewV1 view{};
         std::vector<SendV1> sends;
@@ -304,37 +306,37 @@ struct CurrentWorldBodyImage::Impl {
 
     void Refresh() {
         propertyViews.clear();
-        propertyViews.reserve(properties.size());
+        detail::DecodeReserve(propertyViews, properties.size(), staging);
         for (auto& row : properties) {
             row.Refresh();
             propertyViews.push_back(row.view);
         }
         occurrenceViews.clear();
-        occurrenceViews.reserve(occurrences.size());
+        detail::DecodeReserve(occurrenceViews, occurrences.size(), staging);
         for (auto& row : occurrences) {
             row.Refresh();
             occurrenceViews.push_back(row.view);
         }
         trackScheduleViews.clear();
-        trackScheduleViews.reserve(trackSchedules.size());
+        detail::DecodeReserve(trackScheduleViews, trackSchedules.size(), staging);
         for (auto& row : trackSchedules) {
             row.Refresh();
             trackScheduleViews.push_back(row.view);
         }
         segmentScheduleViews.clear();
-        segmentScheduleViews.reserve(segmentSchedules.size());
+        detail::DecodeReserve(segmentScheduleViews, segmentSchedules.size(), staging);
         for (auto& row : segmentSchedules) {
             row.Refresh();
             segmentScheduleViews.push_back(row.view);
         }
         currentContainerViews.clear();
-        currentContainerViews.reserve(currentContainers.size());
+        detail::DecodeReserve(currentContainerViews, currentContainers.size(), staging);
         for (auto& row : currentContainers) {
             row.Refresh();
             currentContainerViews.push_back(row.view);
         }
         transitionViews.clear();
-        transitionViews.reserve(transitions.size());
+        detail::DecodeReserve(transitionViews, transitions.size(), staging);
         for (auto& row : transitions) {
             row.Refresh();
             transitionViews.push_back(row.view);
@@ -365,7 +367,7 @@ struct CurrentWorldBodyImage::Impl {
             ? nullptr : transitionViews.data();
         view.transitionCount = static_cast<std::uint32_t>(transitionViews.size());
         actionViews.clear();
-        actionViews.reserve(actions.size());
+        detail::DecodeReserve(actionViews, actions.size(), staging);
         for (auto& row : actions) {
             row.Refresh();
             actionViews.push_back(row.view);
@@ -639,12 +641,13 @@ struct PackBodyReadState {
     std::uint32_t transitionPath = 0;
     std::uint64_t actionSteps = 0;
     std::uint32_t bodyVintage = kCurrentWorldShippingBodyVintage;
+    detail::PackDecodeCharge* staging = nullptr;
 
     template <class Row>
     bool Resize(std::vector<Row>& rows, std::uint64_t count, std::uint64_t cap) noexcept {
         if (count > cap) return false;
         try {
-            rows.resize(static_cast<std::size_t>(count));
+            detail::DecodeResize(rows, static_cast<std::size_t>(count), *staging);
             return true;
         } catch (const std::bad_alloc&) {
             result = CurrentWorldBodyDecodeResult::Capacity;
@@ -1060,12 +1063,28 @@ struct PackBodyReadWorld : PackBodyReadRow<ContainerWorldInstallViewV1> {
     }
 };
 
+struct PackBodyEncodeBudget {
+    detail::PackDecodeCharge& charge;
+    std::size_t& requestedSlots;
+    bool capacity = false;
+    void Reserve(std::vector<std::uint8_t>& out, std::size_t size) {
+        if (size <= requestedSlots) return;
+        detail::PackDecodeCharge replacement(charge.Budget());
+        replacement.AddRows<std::uint8_t>(size);
+        out.reserve(size);
+        charge.Release(detail::DecodeBytes(requestedSlots, sizeof(std::uint8_t)));
+        charge.Merge(std::move(replacement));
+        requestedSlots = size;
+    }
+};
+
 }
 
 bool EncodeCurrentWorldBodyImpl(
     const ContainerWorldInstallViewV1& world,
     std::vector<std::uint8_t>& out,
-    bool includeEntryTimeline = false, bool includeSignals = false) noexcept {
+    bool includeEntryTimeline = false, bool includeSignals = false,
+    PackBodyEncodeBudget* budget = nullptr) noexcept {
     try {
         out.clear();
         {
@@ -1216,6 +1235,7 @@ bool EncodeCurrentWorldBodyImpl(
             byteCount += extensionBytes;
         }
         if (byteCount > out.max_size()) return false;
+        if (budget != nullptr) budget->Reserve(out, static_cast<std::size_t>(byteCount));
         out.resize(static_cast<std::size_t>(byteCount));
         PackWireBuffer<std::uint8_t> output{out.data(), out.size()};
         if (includeEntryTimeline) trace.output = &output;
@@ -1224,6 +1244,10 @@ bool EncodeCurrentWorldBodyImpl(
             return false;
         }
         return true;
+    } catch (const std::bad_alloc&) {
+        if (budget != nullptr) budget->capacity = true;
+        out.clear();
+        return false;
     } catch (...) {
         out.clear();
         return false;
@@ -1239,6 +1263,21 @@ bool EncodeCurrentWorldShippingBody(
         return false;
     }
     return EncodeCurrentWorldBodyImpl(world, out);
+}
+
+WorldInstallStatus detail::EncodeCurrentWorldIdentityBodyWithBudget(
+    const ContainerWorldInstallViewV1& world, std::vector<std::uint8_t>& out,
+    PackDecodeCharge& charge, std::size_t& requestedSlots) noexcept {
+    out.clear();
+    const bool entryScheduling = world.sourceBodyVintage == kCurrentWorldBodyVintageV19;
+    if (world.sourceBodyVintage != kCurrentWorldShippingBodyVintage && !entryScheduling)
+        return WorldInstallStatus::InvalidFormat;
+    const auto validated = ValidateCurrentWorldSectionGroupsWithBudget(world, charge.Budget());
+    if (validated != WorldInstallStatus::Ok) return validated;
+    PackBodyEncodeBudget budget{charge, requestedSlots};
+    if (EncodeCurrentWorldBodyImpl(world, out, entryScheduling, false, &budget))
+        return WorldInstallStatus::Ok;
+    return budget.capacity ? WorldInstallStatus::Capacity : WorldInstallStatus::InvalidWorld;
 }
 
 bool EncodeCurrentWorldShippingBodyRawAttempt(
@@ -1298,7 +1337,14 @@ CurrentWorldBodyImage::~CurrentWorldBodyImage() = default;
 
 CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
     const std::uint8_t* bytes, std::size_t byteCount,
-    std::uint32_t worldTraceVintage, CurrentWorldDecodeMode mode) noexcept {
+    std::uint32_t bodyVintage, CurrentWorldDecodeMode mode) noexcept {
+    return DecodeWithBudget(bytes, byteCount, bodyVintage, mode, {});
+}
+
+CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithBudget(
+    const std::uint8_t* bytes, std::size_t byteCount,
+    std::uint32_t worldTraceVintage, CurrentWorldDecodeMode mode,
+    const detail::PackDecodeBudget& budget) noexcept {
     const bool strictArtifact =
         mode == CurrentWorldDecodeMode::StrictArtifact;
     const bool replayRawAttempt =
@@ -1320,12 +1366,16 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
     try {
         detail::LogicAllocCheckpoint(
             detail::LogicAllocSite::CurrentWorldDecodedImage);
+        detail::PackDecodeCharge allocation(budget);
+        allocation.AddRows<Impl>(1);
         auto decoded = std::make_unique<Impl>();
+        decoded->staging = std::move(allocation);
         Reader reader{bytes, byteCount};
         auto& world = decoded->view;
         world.sourceBodyVintage = worldTraceVintage;
         PackBodyReadState state{reader};
         state.bodyVintage = worldTraceVintage;
+        state.staging = &decoded->staging;
         PackBodyReadWorld<Impl> visitor{{{}, world}, *decoded, state};
         if (!ReadPackBodyWorldBody(reader, visitor)) return state.result;
         if (worldTraceVintage == kCurrentWorldBodyVintageV20) {
@@ -1341,8 +1391,8 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
                 relations > decoded->signalRelations.max_size() ||
                 receivers > decoded->signalReceivers.max_size())
                 return CurrentWorldBodyDecodeResult::Invalid;
-            decoded->signalRelations.resize(relations);
-            decoded->signalReceivers.resize(receivers);
+            detail::DecodeResize(decoded->signalRelations, relations, decoded->staging);
+            detail::DecodeResize(decoded->signalReceivers, receivers, decoded->staging);
             for (auto& row : decoded->signalRelations) {
                 const auto* bytes = reader.Take(kPackBodyWorldSignalRelationBytes);
                 if (bytes == nullptr ||
@@ -1360,9 +1410,12 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
             return CurrentWorldBodyDecodeResult::Invalid;
         }
         decoded->Refresh();
-        if (strictArtifact &&
-            !ValidateCurrentWorldSectionGroupsV1(decoded->view))
-            return CurrentWorldBodyDecodeResult::Invalid;
+        if (strictArtifact) {
+            const auto sections = detail::ValidateCurrentWorldSectionGroupsWithBudget(decoded->view, budget);
+            if (sections != WorldInstallStatus::Ok)
+                return sections == WorldInstallStatus::Capacity
+                    ? CurrentWorldBodyDecodeResult::Capacity : CurrentWorldBodyDecodeResult::Invalid;
+        }
         impl_ = std::move(decoded);
         return CurrentWorldBodyDecodeResult::Ok;
     } catch (const std::bad_alloc&) {
@@ -1370,6 +1423,10 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
     } catch (...) {
         return CurrentWorldBodyDecodeResult::Invalid;
     }
+}
+
+void CurrentWorldBodyImage::ReleaseDecodeStaging() noexcept {
+    if (impl_) impl_->staging.Detach();
 }
 
 const ContainerWorldInstallViewV1* CurrentWorldBodyImage::ProductionView() const noexcept {

@@ -36,6 +36,7 @@
 
 #include <cstdint>
 #include "harken/media/PackVariableNameCatalog.h"
+#include "harken/core/detail/PackDecodeBudget.h"
 #include <span>
 #include <vector>
 
@@ -116,6 +117,18 @@ struct PackLogicImage {
 };
 
 struct PackCanonicalImage {
+    PackCanonicalImage() = default;
+    PackCanonicalImage(const PackCanonicalImage&) = default;
+    PackCanonicalImage(PackCanonicalImage&&) noexcept = default;
+    PackCanonicalImage& operator=(PackCanonicalImage&&) noexcept = default;
+    PackCanonicalImage& operator=(const PackCanonicalImage& source) {
+        if (this != &source) {
+            PackCanonicalImage copy(source);
+            *this = std::move(copy);
+        }
+        return *this;
+    }
+    detail::PackDecodeCharge staging;
     std::uint32_t packKind = 0;
     std::uint64_t packStableId = 0;
     PackRequirementBlock requirement{};
@@ -158,6 +171,9 @@ struct PackCanonicalImage {
     std::vector<PackBusDefinitionDownmix> busDefinitionDownmixesV2;
     std::vector<float> busDefinitionCoefficients;
 };
+
+PackCanonicalImage CopyCanonicalImageWithBudget(const PackCanonicalImage& source,
+    const detail::PackDecodeBudget& budget);
 
 inline std::uint64_t CanonicalVolumeBusFingerprint(const PackCanonicalImage& image) noexcept {
     const auto& header = image.busDefinitionSnapshotHeader;
@@ -311,6 +327,10 @@ VnResult ParsePackCanonicalImage(const std::uint8_t* bytes,
                                  PackCanonicalImage* out,
                                  std::uint64_t* artifactHash = nullptr);
 
+VnResult ParsePackCanonicalImageWithBudget(const std::uint8_t* bytes,
+    std::uint64_t fileBytes, PackCanonicalImage* out,
+    std::uint64_t* artifactHash, const detail::PackDecodeBudget& budget);
+
 // Uses the same semantic parser, then verifies the cached metadata and all
 // physical bytes before returning immutable sample owners. Image and sample
 // outputs are unchanged on failure. Unsupported layouts request a byte-span retry.
@@ -322,7 +342,9 @@ VnResult ReadPackCanonicalFile(const char* utf8Path, PCMRegistry& registry,
     PackCanonicalImage* out, std::vector<PCMRegistry::PreparedPackSamples>* samples,
     std::uint64_t* byteCount, std::uint64_t* artifactHash, std::uint64_t maxBytes,
     std::span<const PCMRegistry::PreparedPackSamples* const> equalCandidates = {},
-    bool* retryWithBytes = nullptr, const PackCanonicalReadHooksForTests* hooks = nullptr);
+    bool* retryWithBytes = nullptr, const PackCanonicalReadHooksForTests* hooks = nullptr,
+    const detail::PackDecodeBudget& budget = {},
+    detail::PackDecodeCharge* sampleStaging = nullptr);
 
 // Already-loaded-state view for the closure check. Every callback
 // answers "does this id resolve outside the pack right now": playables

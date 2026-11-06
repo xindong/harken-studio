@@ -4,6 +4,7 @@
 
 #include <set>
 #include <string>
+#include "harken/core/detail/PackDecodeBudget.h"
 
 namespace harken {
 
@@ -33,11 +34,14 @@ inline bool IsSdkCallableName(std::string_view name) {
     return true;
 }
 
-inline bool ValidateVariableNameCatalog(const PackVariableNameCatalog& catalog) {
+inline bool ValidateVariableNameCatalog(const PackVariableNameCatalog& catalog,
+    const detail::PackDecodeBudget& budget = {}) {
+    detail::PackDecodeCharge scratch(budget);
     if (std::all_of(catalog.projectGuid.begin(), catalog.projectGuid.end(),
                     [](auto byte) { return byte == 0; }) ||
         catalog.initPackStableId == 0 || catalog.initContentRevision == 0 ||
         catalog.rows.size() > kVariableNameCatalogMaxRows) return false;
+    scratch.AddRows<VnObjectId>(catalog.rows.size());
     std::set<VnObjectId> active;
     std::string_view prior;
     for (const auto& row : catalog.rows) {

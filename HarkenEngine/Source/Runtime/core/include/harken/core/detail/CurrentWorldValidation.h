@@ -2,6 +2,7 @@
 #define HARKEN_CORE_DETAIL_CURRENT_WORLD_VALIDATION_H
 
 #include "harken/core/CurrentWorld.h"
+#include "harken/core/detail/PackDecodeBudget.h"
 #include <span>
 
 namespace harken::detail {
@@ -139,10 +140,18 @@ bool TransparentMusicSourceCompatibleV1(const PlayableRefV1& source,
 
 HARKEN_CORE_DETAIL_HIDDEN WorldInstallStatus ValidateCurrentWorldCompositeV1(
     const ContainerWorldInstallViewV1& world,
-    const CompositeWorldVintagesV1& vintages) noexcept;
+    const CompositeWorldVintagesV1& vintages, const PackDecodeBudget& budget = {}) noexcept;
 
 HARKEN_CORE_DETAIL_HIDDEN WorldInstallStatus ValidateCurrentWorldPartitionLocalV1(
     const ContainerWorldInstallViewV1& world) noexcept;
+
+HARKEN_CORE_DETAIL_HIDDEN WorldInstallStatus ValidateCurrentWorldWithBudget(
+    const ContainerWorldInstallViewV1& world, const PackDecodeBudget& budget) noexcept;
+
+HARKEN_CORE_DETAIL_HIDDEN WorldInstallStatus ValidateCurrentWorldPartitionLocalWithBudget(
+    const ContainerWorldInstallViewV1& world, const PackDecodeBudget& budget) noexcept;
+HARKEN_CORE_DETAIL_HIDDEN WorldInstallStatus ValidateCurrentWorldSectionGroupsWithBudget(
+    const ContainerWorldInstallViewV1& world, const PackDecodeBudget& budget) noexcept;
 
 HARKEN_CORE_DETAIL_HIDDEN std::uint64_t ComputeCurrentWorldLocalCapabilityMaskV1(
     const ContainerWorldInstallViewV1& world) noexcept;

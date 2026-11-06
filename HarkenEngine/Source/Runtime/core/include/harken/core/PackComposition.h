@@ -106,6 +106,7 @@ public:
     VnResult AbortOriginalPreparedLease(OriginalLeaseEpisode& original) const noexcept;
     bool HasOriginalLeaseEpisode(const PackPartitionLease& lease) const noexcept;
     struct PublishedOwner {
+        detail::PackDecodeCharge staging;
         std::uint64_t packStableId = 0;
         std::uint64_t contentHash = 0;
         std::shared_ptr<const PackCompanionNames> companionNames;
@@ -167,6 +168,7 @@ public:
     };
 
     struct PublishedView {
+        detail::PackDecodeCharge staging;
         struct ActionName {
             std::string name;
             VnObjectId actionId{};
@@ -194,6 +196,7 @@ public:
     };
 
     struct CandidateOwner {
+        detail::PackDecodeCharge staging;
         std::uint64_t packStableId = 0;
         std::uint64_t contentHash = 0;
         std::shared_ptr<const PackCompanionNames> companionNames;
@@ -245,36 +248,8 @@ public:
         bool namesOnly_ = false;
     };
 
-    static CandidateOwner Keep(const PublishedOwner& existing) {
-        CandidateOwner keep;
-        keep.packStableId = existing.packStableId;
-        keep.contentHash = existing.contentHash;
-        keep.companionNames = existing.companionNames;
-        keep.handle = existing.handle;
-        keep.contentRevision = existing.contentRevision;
-        keep.partitionRevision = existing.partitionRevision;
-        keep.resourceRevision = existing.resourceRevision;
-        keep.resourceToken = existing.resourceToken;
-        keep.slotIndex = existing.slotIndex;
-        keep.readiness = PackOwnerReadiness::Active;
-        keep.body = existing.body;
-        keep.view = existing.view;
-        keep.partitionBodyVintage = existing.view.sourceBodyVintage;
-        keep.voiceBindings = existing.voiceBindings;
-        keep.definitionBytes = existing.definitionBytes;
-        keep.hasPartition = existing.body != nullptr;
-        keep.dependencyEdges = existing.dependencyEdges;
-        keep.variablePolicyOverlays = existing.variablePolicyOverlays;
-        keep.hasVariablePolicyOverlay = existing.hasVariablePolicyOverlay;
-        keep.variableRequirements = existing.variableRequirements;
-        keep.hasVariableRequirements = existing.hasVariableRequirements;
-        keep.hasBusDefinitionSnapshot = existing.hasBusDefinitionSnapshot;
-        keep.busDefinitionSnapshotHeader = existing.busDefinitionSnapshotHeader;
-        keep.requirementTriple = existing.requirementTriple;
-        keep.partitionTriple = existing.partitionTriple;
-        keep.bindingManifest = existing.bindingManifest;
-        return keep;
-    }
+    static CandidateOwner Keep(const PublishedOwner& existing,
+        const detail::PackDecodeBudget& budget = {});
 
     explicit PackComposition(std::size_t leaseCapacity)
         : PackComposition(leaseCapacity, 0, 32) {}
@@ -320,7 +295,8 @@ public:
                            const PackAttenuationBindingMapV1* attenuationBindings = nullptr,
                            const CanonicalPackSetLedgerV1* ledger = nullptr,
                            bool clearInit = false,
-                           const GameplayCatalogImage* gameplayCatalog = nullptr);
+                           const GameplayCatalogImage* gameplayCatalog = nullptr,
+                           const detail::PackDecodeBudget& budget = {});
     void CommitPrepared(PreparedCommit* prepared) noexcept;
     void RestorePublished(std::shared_ptr<const PublishedView> previous) noexcept;
     VnResult ValidateLease(const PackPartitionLease& lease) const noexcept;
