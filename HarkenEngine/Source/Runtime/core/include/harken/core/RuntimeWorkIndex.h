@@ -215,6 +215,7 @@ public:
         auto& bitmap = pages_[page].sets[index];
         const auto word = (id.slot % 256u) / 64u;
         const auto mask = std::uint64_t{1} << (id.slot % 64u);
+        if (((bitmap.leaves[word] & mask) != 0) == present) return true;
         if (present) {
             bitmap.leaves[word] |= mask;
             bitmap.summary |= std::uint64_t{1} << word;

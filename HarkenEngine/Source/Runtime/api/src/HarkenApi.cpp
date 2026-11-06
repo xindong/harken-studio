@@ -13344,8 +13344,11 @@ bool ObserveActiveArrivalsBeforeArmReclaim(harken::Engine& engine) noexcept {
             &cursor, [&](std::uint32_t slot) noexcept { return engine.PlayableMemberOnsetIdentity(slot); });
         if (!identity.Valid()) break;
         const auto slot = identity.slot;
-        ObservePlayableMemberArm(engine, engine.MutablePlayableMember(slot));
-        engine.RefreshPlayableMemberOnset(slot);
+        auto& record = engine.MutablePlayableMember(slot);
+        ObservePlayableMemberArm(engine, record);
+        // Observation only adds receipts; an active onset leaves this set at tombstone.
+        if (record.completion.sourceArmTombstoneSequence != 0)
+            engine.RefreshPlayableMemberOnset(slot);
     }
     for (auto& record : engine.playableMemberRecords) {
         if (record.occupied && !record.primaryOwned && record.programOwners != 0 &&
@@ -17283,7 +17286,9 @@ bool MusicSourceExitDue(harken::Engine& engine, const harken::EngineSourceExit& 
 void ServiceDueMusicSourceExits(harken::Engine& engine, std::uint64_t observed) noexcept {
     // Stop only the exact outgoing occurrence. Keep descriptors and child
     // records stable here; their ordinary retirement pass owns reclamation.
+    bool hasExits = false;
     const auto visit = [&](harken::EnginePlayableServiceRow& parent, auto& child) noexcept {
+        hasExits = hasExits || !child.sourceExits.empty();
         for (auto& exit : child.sourceExits) {
             if (!MusicSourceExitDue(engine, *exit, observed)) continue;
             const auto& identity = exit->control.source;
@@ -17304,17 +17309,21 @@ void ServiceDueMusicSourceExits(harken::Engine& engine, std::uint64_t observed) 
         }
         return true;
     };
-    for (std::uint32_t cursor = 0; auto* parent = engine.NextOccupiedPlayableService(&cursor);) {
+    for (std::uint32_t cursor = 0; auto* parent = engine.NextPlayableServiceSourceExit(&cursor);) {
+        hasExits = false;
         if (parent->scheduleTerminalChild != nullptr) visit(*parent, *parent->scheduleTerminalChild);
         if (parent->scheduleAggregate != nullptr)
             parent->scheduleAggregate->VisitChildren([&](auto& child) { return visit(*parent, child); });
         if (parent->scheduleVariableChildren != nullptr)
             for (auto& child : *parent->scheduleVariableChildren) visit(*parent, child);
+        if (!hasExits) engine.SetPlayableServiceSourceExits(*parent, false);
     }
 }
 
 bool MusicSourceExitRetryPending(harken::Engine& engine, const harken::EnginePlayableServiceRow& row,
     std::uint64_t observed) noexcept {
+    std::uint32_t cursor = 0;
+    if (engine.NextPlayableServiceSourceExit(&cursor) == nullptr) return false;
     const auto* current = &row;
     for (std::size_t depth = 0; current != nullptr && depth < engine.playableServices.size(); ++depth) {
         harken::EngineScheduleAggregateChild* child = nullptr;
@@ -40366,6 +40375,7 @@ engine.runtimeRecreateRequired = true;
         auto* child = FindDirectScheduleAggregateChild(row, musicSourceRoot->ownerInstance, musicSourceRoot->ownerEpoch);
         assert(child != nullptr && child->sourceExits.capacity() > child->sourceExits.size());
         child->sourceExits.push_back(std::move(musicSourceFade));
+        engine.SetPlayableServiceSourceExits(row, true);
     }
     if (!starts.Commit(ticket)) {
         rollbackBeforeInstall();
@@ -41130,20 +41140,25 @@ engine.runtimeRecreateRequired = true;
     return VariableRetargetPrepareStatus::Prepared;
 }
 
-bool HasPlayableMemberSource(const harken::Engine& engine, std::size_t slot) noexcept {
-    const auto& member = engine.ReadPlayableMember(slot).completion;
-    const auto render = engine.ReadPlayableMember(slot).render;
+bool HasPlayableMemberSource(const harken::Engine& engine,
+    const harken::EnginePlayableMemberRecord& record) noexcept {
+    const auto& member = record.completion;
+    const auto render = record.render;
     if (member.leafInstance == 0 || member.leafEpoch == 0 || render == 0) return false;
     const auto* source = engine.sourceTerminals.Resolve(member.source);
     if (source != nullptr)
         return source->leaf == member.leafInstance && source->acceptedEpoch == member.leafEpoch &&
             source->render == render;
-    const auto arm = engine.ReadPlayableMember(slot).arm;
+    const auto arm = record.arm;
     return member.resourcesRetired && member.completedSource.kind != harken::SourceTerminalKind::None &&
         member.sourceRender == render && member.sourceStartArm.slot == arm.slot &&
         member.sourceStartArm.generation == arm.generation &&
         member.sourceStartArm.renderSlot == arm.renderSlot &&
         member.sourceStartArm.renderGeneration == arm.renderGeneration;
+}
+
+bool HasPlayableMemberSource(const harken::Engine& engine, std::size_t slot) noexcept {
+    return HasPlayableMemberSource(engine, engine.ReadPlayableMember(slot));
 }
 
 std::uint64_t PlayableMemberStartSequence(const harken::Engine& engine, std::size_t slot) noexcept {
@@ -41201,18 +41216,23 @@ bool CaptureRetiredQueueSourceProof(const harken::Engine& engine,
 // Lifecycle consumers need source completion, independently of Start-arm retirement.
 // This observation must not be used as an arm publication or mutation proof.
 bool ObservePlayableSourceLifecycle(const harken::Engine& engine,
-    const harken::EnginePlayableServiceRow& row, harken::TimelineArmObservation* observation) noexcept {
+    const harken::EnginePlayableServiceRow& row, harken::TimelineArmObservation* observation,
+    const harken::EnginePlayableMemberRecord* resolvedMember = nullptr) noexcept {
     const bool armObserved = engine.timelineArms.Observe(row.arm, observation);
     if (engine.playableMemberRecords.ConstructedCount() == 0) return armObserved;
     std::size_t slot = 0;
-    if (!engine.ResolvePlayableMemberSlot(row.scheduleStorageBase, &slot) ||
-        !HasPlayableMemberSource(engine, slot)) return armObserved;
-    const auto arm = engine.ReadPlayableMember(slot).arm;
-    if (engine.ReadPlayableMember(slot).render != row.renderHandle ||
+    if (resolvedMember == nullptr) {
+        if (!engine.ResolvePlayableMemberSlot(row.scheduleStorageBase, &slot)) return armObserved;
+        resolvedMember = &engine.ReadPlayableMember(slot);
+    }
+    const auto& record = *resolvedMember;
+    if (!HasPlayableMemberSource(engine, record)) return armObserved;
+    const auto arm = record.arm;
+    if (record.render != row.renderHandle ||
         arm.slot != row.arm.slot || arm.generation != row.arm.generation ||
         arm.renderSlot != row.arm.renderSlot || arm.renderGeneration != row.arm.renderGeneration)
         return armObserved;
-    const auto& member = engine.ReadPlayableMember(slot).completion;
+    const auto& member = record.completion;
     const bool retainedStart = member.sourceRender == row.renderHandle &&
         member.sourceStartArm.slot == arm.slot && member.sourceStartArm.generation == arm.generation &&
         member.sourceStartArm.renderSlot == arm.renderSlot &&
@@ -54569,19 +54589,23 @@ bool ReconcileRetiringQueueArrival(harken::Engine& engine,
     return true;
 }
 
-bool IsStartedRootSound(const harken::EnginePlayableServiceRow& row) noexcept {
+bool IsStartedSingleSound(const harken::EnginePlayableServiceRow& row) noexcept {
     return row.phase == harken::EnginePlayableStartPhase::Started &&
         row.controlLifecycle == harken::PlayableControlLifecycle::Active &&
         row.controlReason == harken::PlayableControlReason::None &&
         row.root.kind == harken::PlayableKindV1::Sound &&
         row.leaf.kind == harken::PlayableKindV1::Sound &&
         row.rootInstance != 0 && row.ownerInstance == row.rootInstance &&
-        row.scheduleLeafCount <= 1u && !row.queueMode && !row.ordinaryLifecycleOwned &&
+        row.scheduleLeafCount <= 1u && !row.queueMode &&
         !row.queueArrivalDecision.Valid() &&
         !row.variableControlInstance.Valid() &&
-        !row.parentService.Valid() && !row.frontierChildService.Valid() &&
+        !row.frontierChildService.Valid() &&
         !row.pendingImmediateEntry && !row.pendingImmediateRetry &&
         !row.hasZeroWorkCompletion && !row.terminalObserved;
+}
+
+bool IsStartedRootSound(const harken::EnginePlayableServiceRow& row) noexcept {
+    return !row.parentService.Valid() && !row.ordinaryLifecycleOwned && IsStartedSingleSound(row);
 }
 
 bool WaitingForQueueChildPromotion(harken::Engine& engine,
@@ -54606,17 +54630,19 @@ bool WaitingForQueueChildPromotion(harken::Engine& engine,
     return false;
 }
 
-bool ServiceStartedRootSound(harken::Engine& engine,
-    harken::EnginePlayableServiceRow& row) noexcept {
-    if (!IsStartedRootSound(row) || !row.selectionCommitted || row.lastAppliedBlockSequence == 0)
+bool ServiceStartedSingleSound(harken::Engine& engine,
+    harken::EnginePlayableServiceRow& row,
+    const harken::EnginePlayableMemberRecord* resolvedMember = nullptr) noexcept {
+    if (!IsStartedSingleSound(row) || !row.selectionCommitted || row.lastAppliedBlockSequence == 0)
         return false;
     std::size_t member = 0;
     const bool plainMember = row.scheduleLeafCount == 0 ||
-        (engine.ResolvePlayableMemberSlot(row.scheduleStorageBase, &member) &&
+        (resolvedMember != nullptr ? resolvedMember->dynamic == 0 :
+         (engine.ResolvePlayableMemberSlot(row.scheduleStorageBase, &member) &&
          member < engine.playableStorage.memberCount &&
-         engine.ReadPlayableMember(member).dynamic == 0);
+         engine.ReadPlayableMember(member).dynamic == 0));
     harken::TimelineArmObservation source{};
-    if (!plainMember || !ObservePlayableSourceLifecycle(engine, row, &source) ||
+    if (!plainMember || !ObservePlayableSourceLifecycle(engine, row, &source, resolvedMember) ||
         source.state != harken::ArmState::Started || source.startedBlockSequence == 0 ||
         source.logicalCompletionSequence != 0) return false;
     row.childLiveCount = 1;
@@ -54625,15 +54651,58 @@ bool ServiceStartedRootSound(harken::Engine& engine,
     return true;
 }
 
-bool ServiceStartedRootSoundWithoutPendingWork(harken::Engine& engine,
+bool ServiceStartedRootSound(harken::Engine& engine,
     harken::EnginePlayableServiceRow& row) noexcept {
-    return !row.privateImmediateEntry.Valid() &&
+    return IsStartedRootSound(row) && ServiceStartedSingleSound(engine, row);
+}
+
+bool HasNoPendingStartedSoundWork(const harken::EnginePlayableServiceRow& row) noexcept {
+    return !row.privateImmediateEntry.Valid() && !row.pendingDirectStartBinding &&
         row.privateVariableControlRollbackGeneration == 0 &&
         row.publishedDeferredStoppingGeneration == 0 &&
         row.privateOrdinaryDeferredRollbackGeneration == 0 &&
         row.pendingCancellationIntent == 0 && !row.variableControlDeferredCancellation &&
         !row.partitionRetiring && !row.zeroWorkMarker && !row.queueTimingPending &&
-        !row.frontierEntry.Valid() && ServiceStartedRootSound(engine, row);
+        !row.frontierEntry.Valid();
+}
+
+bool ServiceStartedRootSoundWithoutPendingWork(harken::Engine& engine,
+    harken::EnginePlayableServiceRow& row) noexcept {
+    return HasNoPendingStartedSoundWork(row) && ServiceStartedRootSound(engine, row);
+}
+
+bool ServiceStartedScheduleSoundWithoutPendingWork(harken::Engine& engine,
+    harken::EnginePlayableServiceRow& row) noexcept {
+    if (!row.parentService.Valid() || !IsStartedSingleSound(row) ||
+        !HasNoPendingStartedSoundWork(row) || row.scheduleAggregate != nullptr ||
+        row.scheduleTerminalChild != nullptr || row.scheduleVariableChildren != nullptr ||
+        row.nativeEntryDependency != nullptr) return false;
+    const auto root = engine.playableInstances.Classify(row.rootInstance);
+    if (!root.live) return false;
+    const auto leaf = row.activeLeafInstance == row.rootInstance
+        ? root : engine.playableInstances.Classify(row.activeLeafInstance);
+    if (!leaf.live || leaf.terminalOutcome.kind != harken::PlayableTerminalKind::None) return false;
+    auto* parent = engine.ResolvePlayableService(row.parentService);
+    if (parent == nullptr || parent->scheduleAggregate == nullptr) return false;
+    const auto* child = FindDirectScheduleAggregateChild(*parent, row.ownerInstance, row.ownerEpoch);
+    if (child == nullptr || !child->lifecycleOwned || child->resourcesReleased ||
+        !harken::Engine::SameSelectionServiceReference(child->service, PlayableServiceReference(row))) return false;
+    auto ancestor = row.parentService;
+    for (std::size_t depth = 0; ancestor.Valid() && depth < engine.playableServices.size(); ++depth) {
+        const auto* current = engine.ResolvePlayableService(ancestor);
+        if (current == nullptr || current->invocation != row.invocation ||
+            current->invocationGeneration != row.invocationGeneration || current->pendingCancellationIntent != 0 ||
+            current->controlLifecycle != harken::PlayableControlLifecycle::Active ||
+            current->phase == harken::EnginePlayableStartPhase::Cancelling) return false;
+        ancestor = current->parentService;
+    }
+    if (ancestor.Valid() || !harken::Engine::SameSelectionServiceReference(ancestor, {}) ||
+        WaitingForQueueChildPromotion(engine, row)) return false;
+    std::size_t slot = 0;
+    if (!engine.ResolvePlayableMemberSlot(row.scheduleStorageBase, &slot)) return false;
+    const auto& record = engine.ReadPlayableMember(slot);
+    if (record.dynamic != 0) return false;
+    return ServiceStartedSingleSound(engine, row, &record);
 }
 
 enum class DirectPendingStartResult : std::uint8_t { Waiting, Filed, Refused };
@@ -54865,6 +54934,10 @@ void ServicePlayableStarts(harken::Engine& engine,
         // Stable roots have no pending work in the generic reconciliation prefix.
         if (engine.activeImmediateEntryAttemptCount == 0 &&
             ServiceStartedRootSoundWithoutPendingWork(engine, row)) continue;
+        // No private attempt or native-entry pins remain. Preserve exact parent
+        // control before avoiding the generic container reconciliation prefix.
+        if (engine.activeImmediateEntryAttemptCount == 0 &&
+            ServiceStartedScheduleSoundWithoutPendingWork(engine, row)) continue;
         if (row.privateImmediateEntry.Valid() && !row.privateImmediateEntry.commonPinsRetired) {
             (void)ServicePrivateImmediateEntryVoiceStops(engine, row);
             continue;
@@ -96988,6 +97061,7 @@ struct EngineNativeQueueMusicCandidate {
             if (source == nullptr || source->sourceExits.size() >= source->sourceExits.capacity()) return false;
             exit->queueFollowingFiling.reset();
             source->sourceExits.push_back(std::move(exit));
+            engine.SetPlayableServiceSourceExits(*row, true);
         }
         return true;
     }
@@ -97397,6 +97471,7 @@ bool PublishNativeQueueMusicCandidate(harken::EngineNativeQueueMusicCandidate& c
     chain.transitionEnd = candidate.targetFrame;
     chain.recorded = true;
     source->sourceExits.push_back(std::move(candidate.exit));
+    engine.SetPlayableServiceSourceExits(row, true);
     if (!candidate.starts.Commit(candidate.sequence)) return false;
     candidate.adopted = true;
     filing.queueTransitionEndFrame = candidate.targetFrame;
