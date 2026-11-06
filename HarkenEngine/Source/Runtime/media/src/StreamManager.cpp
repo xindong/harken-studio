@@ -145,7 +145,10 @@ std::uint32_t StreamWorkerStallEntriesForTests() noexcept {
 
 std::size_t StreamManager::PendingRequestCountForTest() const {
     std::lock_guard<std::mutex> lock(m_mutex);
-    return m_requests.size();
+    return m_requests.size() + static_cast<std::size_t>(std::count_if(
+        m_sourceRequests.begin(), m_sourceRequests.end(), [](const auto& request) {
+            return request && !request->discard && request->state == PreparationState::Preparing;
+        }));
 }
 
 StreamManager::StreamManager(const EngineConfig& config)
@@ -167,11 +170,16 @@ StreamManager::StreamManager(const EngineConfig& config)
         }
         m_slots[s].ring.Wire(planes, m_ringFrames);
     }
-    m_thread = std::thread(&StreamManager::ThreadMain, this);
+    try {
+        const auto lanes = 1u + std::min(2u, config.maxStreams);
+        for (unsigned i = 0; i < lanes; ++i) m_ioLanes.push_back(std::make_unique<IoLane>());
+        for (unsigned i = 0; i < lanes; ++i)
+            m_ioLanes[i]->thread = std::thread(&StreamManager::IoMain, this, i);
+        m_thread = std::thread(&StreamManager::ThreadMain, this);
+    } catch (...) { StopIo(); throw; }
 
-    // Startup handshake. Every stream call blocks until the streaming thread
-    // serves it, so a thread that died on the way up would strand its first
-    // caller forever. Wait until it has published a verdict; it always
+    // Startup handshake. Synchronous callers require a running manager, so a
+    // thread that died on the way up must refuse initialization. Wait until it has published a verdict; it always
     // publishes one, because both transitions are an atomic store followed by
     // a notify and neither can throw. The wait re-checks on a bounded interval
     // rather than trusting the notify, so a wake-up lost to the terminal path
@@ -189,6 +197,7 @@ StreamManager::StreamManager(const EngineConfig& config)
         // throw reaches Vn_Init's construction guard, which reports
         // VN_INVALID_CONFIG -- no half-alive engine whose stream calls hang.
         m_thread.join();
+        StopIo();
         throw std::runtime_error("Harken streaming thread failed to start");
     }
 }
@@ -200,6 +209,7 @@ StreamManager::~StreamManager() {
     }
     m_wake.notify_all();
     m_thread.join();
+    StopIo();
     // The streaming thread is gone for good, so nothing can serve a request
     // that raced the shutdown in. Releasing them here keeps the destructor from
     // leaving a caller blocked on a completion that can never be posted.
@@ -240,46 +250,32 @@ void StreamManager::EndActiveStreamsOnFailure() noexcept {
 }
 
 void StreamManager::HandleTerminalWorkerFailure() noexcept {
-    // Close out the rings first: it needs no lock, so voices are ended even if
-    // the mutex is the thing that failed.
+    std::lock_guard<std::mutex> lock(m_mutex);
     EndActiveStreamsOnFailure();
-    // Best effort on the queue. A waiter this cannot reach is still released by
-    // its own predicate, which re-checks the published state on a bounded
-    // interval -- the reason that wait is not a bare notify.
-    if (m_mutex.try_lock()) {
-        FailQueuedRequestsLocked();
-        m_mutex.unlock();
+    for (auto& lane : m_ioLanes) lane->cancelled.store(true, std::memory_order_release);
+    for (auto& slot : m_slots) slot.io.cancelled.store(true, std::memory_order_release);
+    for (auto& request : m_sourceRequests) {
+        if (!request) continue;
+        request->cancelled.store(true, std::memory_order_release);
+        if (request->state == PreparationState::Preparing || request->state == PreparationState::Ready) {
+            request->state = PreparationState::Failed;
+            if (request->ioLane < 0) request->result = VN_DEVICE_ERROR;
+        }
     }
-    // Failed last, and deliberately so: publishing it hands slot reclamation to
-    // the logic thread, which must not begin while this thread is still
-    // touching slots. After this store this thread only returns.
+    FailQueuedRequestsLocked();
+    for (auto* request : m_batch) { request->result = VN_DEVICE_ERROR; request->done = true; }
+    m_batch.clear();
     PublishWorkerState(StreamWorkerState::Failed);
 }
 
 void StreamManager::ReclaimAfterWorkerFailure() {
-    if (m_workerState.load(std::memory_order_acquire) !=
-        StreamWorkerState::Failed) {
-        return;
-    }
-    // Defence in depth for a slot activated after the failure: a play that
-    // passed its liveness pre-check just before the state flipped publishes an
-    // Active slot nobody will ever feed or end. Marking end-of-data here closes
-    // it on the next pass. Idempotent -- the ring's compare-exchange simply
-    // fails on a slot already terminated or already committed to a park -- and
-    // it runs before the detach below so a slot the audio thread retires as a
-    // result is reclaimed without waiting another pass.
+    if (WorkerState() != StreamWorkerState::Failed) return;
+    std::lock_guard<std::mutex> lock(m_mutex);
     EndActiveStreamsOnFailure();
-    // Ownership transfer, not a second owner: slots are normally returned to
-    // Free by the streaming thread, so with that thread gone nothing would ever
-    // reclaim a slot the audio thread has retired and the stream budget would
-    // drain away for the rest of the session. Failed is published only after the
-    // streaming thread has stopped touching slots, so this is the sole writer.
+    SettleIo();
     DetachRetiredSlots();
-    // Retiring files are likewise closed only by the streaming thread, so
-    // without this a replaced-away generation stays open for the session and
-    // keeps counting against the retiring total long after its last consumer
-    // ended. Takes the mutex for the m_files mutation, uncontended now.
     CloseDrainedRetiringFiles();
+    DispatchIo(); // Failed permits cleanup only.
 }
 
 bool StreamManager::ConsumeWorkerFailureForLog() noexcept {
@@ -294,29 +290,17 @@ bool StreamManager::ConsumeWorkerFailureForLog() noexcept {
     return true;
 }
 
-VnResult StreamManager::RegisterFile(VnSoundId soundId,
-                                     const char* utf8Path) {
-    Request request;
-    request.kind = Request::Kind::Register;
-    request.soundId = soundId;
-    request.utf8Path = utf8Path;
-    return PostAndWait(request);
+VnResult StreamManager::RegisterFile(VnSoundId soundId, const char* utf8Path) {
+    return RegisterSourceAndWait(soundId, utf8Path, false);
 }
-
 VnResult StreamManager::UnregisterFile(VnSoundId soundId) {
     Request request;
     request.kind = Request::Kind::Unregister;
     request.soundId = soundId;
     return PostAndWait(request);
 }
-
-VnResult StreamManager::ReplaceFile(VnSoundId soundId,
-                                    const char* utf8Path) {
-    Request request;
-    request.kind = Request::Kind::Replace;
-    request.soundId = soundId;
-    request.utf8Path = utf8Path;
-    return PostAndWait(request);
+VnResult StreamManager::ReplaceFile(VnSoundId soundId, const char* utf8Path) {
+    return RegisterSourceAndWait(soundId, utf8Path, true);
 }
 
 bool StreamManager::FindFile(VnSoundId soundId, StreamFacts* out) const {
@@ -482,7 +466,9 @@ VnResult StreamManager::ActivateSlot(std::uint32_t slot,
     }
     Request request;
     request.kind = Request::Kind::Serve;
-    return PostAndWait(request);
+    const auto result = PostAndWait(request);
+    m_slots[slot].supplied.store(true, std::memory_order_release);
+    return result;
 }
 
 std::uint64_t StreamManager::InitializeSlot(
@@ -493,6 +479,8 @@ std::uint64_t StreamManager::InitializeSlot(
     // The slot is Free: neither real-time thread observes it, so these
     // writes are private until Active publishes them. The source reference
     // was acquired under m_mutex, so retirement cannot close it in between.
+    s.supplied.store(false, std::memory_order_relaxed);
+    s.passGoal = 0;
     s.preparationOwner = StreamSlot::PreparationOwner::None;
     s.preparationGeneration = 0;
     s.fileIndex = fileIndex;
@@ -622,6 +610,7 @@ VnResult StreamManager::TakeReplacement(
     auto& slot = m_slots[token.slot];
     *out = {token.slot, &slot.ring, slot.preparedRingToken};
     slot.preparationOwner = StreamSlot::PreparationOwner::None;
+    slot.supplied.store(true, std::memory_order_release);
     return VN_OK;
 }
 
@@ -745,215 +734,55 @@ VnResult StreamManager::PostAndWait(Request& request) {
 
 void StreamManager::ThreadMain() {
 #ifdef _WIN32
-    // OS-visible thread identity for debuggers and profilers.
     SetThreadDescription(GetCurrentThread(), L"HarkenStreaming");
 #endif
-    // Function-level last line of defense. Control reaches this outer catch if
-    // startup construction of the lock or reusable batch fails, or if the
-    // per-iteration recovery relock throws. In either terminal case there is no
-    // usable iteration state through which to signal waiters. Swallowing here
-    // keeps the literal guarantee that no exception escapes the thread entry
-    // (which would std::terminate the process). See
-    // .claude/rules/local/audio-dsp-discipline.md ("thread exception boundary").
     try {
         std::unique_lock<std::mutex> lock(m_mutex);
-        // The batch is a member, constructed before this thread existed, so
-        // each iteration reuses it through non-allocating clear and swap
-        // operations and startup allocates nothing.
-        std::deque<Request*>& batch = m_batch;
-        std::size_t dispatched = 0;
-        if (StreamRequestFaultForTests() == StreamRequestFault::WorkerStartup) {
-            throw std::bad_alloc{};
-        }
-        // Ready before the first wait: a caller that observes it knows this
-        // thread got far enough to serve.
+        if (StreamRequestFaultForTests() == StreamRequestFault::WorkerStartup) throw std::bad_alloc{};
         PublishWorkerState(StreamWorkerState::Ready);
         for (;;) {
-            if (StreamRequestFaultForTests() == StreamRequestFault::WorkerLoop) {
-                throw std::bad_alloc{};
+            if (StreamRequestFaultForTests() == StreamRequestFault::WorkerLoop) throw std::bad_alloc{};
+            m_wake.wait_for(lock, kServiceInterval, [&] {
+                return m_shutdown || m_serviceRequested || !m_requests.empty();
+            });
+            if (m_shutdown) {
+                PublishWorkerState(StreamWorkerState::Stopping);
+                FailQueuedRequestsLocked();
+                for (auto* request : m_batch) { request->result = VN_DEVICE_ERROR; request->done = true; }
+                m_batch.clear();
+                m_done.notify_all();
+                break;
             }
-            // Iteration-level boundary: every throw source in the loop body —
-            // wait_for, unlock, request dispatch, ServeSlots, and the relocking
-            // epilogue — is inside this try. An exception must never escape the
-            // thread entry and must never leave a waiter unsignalled
-            // (PostAndWait blocks on request->done, so a skipped completion is
-            // a permanent hang). Each request is also dispatched under its own
-            // inner catch so one failing request fails in isolation without
-            // touching its batch mates.
-            try {
-                batch.clear();
-                dispatched = 0;
-                m_wake.wait_for(lock, kServiceInterval, [&] {
-                    return m_shutdown || m_serviceRequested || !m_requests.empty();
-                });
-                if (m_shutdown) {
-                    // Anything queued at this instant would otherwise be
-                    // dropped un-completed, because the swap below is what
-                    // normally claims it -- and its caller is blocked on a
-                    // completion nobody would post.
-                    PublishWorkerState(StreamWorkerState::Stopping);
-                    FailQueuedRequestsLocked();
-                    break;
-                }
-                batch.swap(m_requests);
-                m_serviceRequested = false;
+            m_serviceRequested = false;
+            if (StreamRequestFaultForTests() == StreamRequestFault::WorkerStall) {
                 lock.unlock();
-
-                if (StreamRequestFaultForTests() ==
-                    StreamRequestFault::WorkerStall) {
-                    // Held here with the request mutex released, so a test can
-                    // queue another request behind this pass and drive shutdown
-                    // deterministically. Bounded so a released-too-late test
-                    // fails rather than hanging the suite.
-                    g_streamWorkerStallEntries.fetch_add(
-                        1, std::memory_order_acq_rel);
-                    for (int spin = 0; spin < 2000; ++spin) {
-                        if (g_streamWorkerStallRelease.load(
-                                std::memory_order_acquire)) {
-                            break;
-                        }
-                        std::this_thread::sleep_for(
-                            std::chrono::milliseconds(5));
-                    }
-                }
-
-                // Detach before requests so an unregister following a voice's
-                // end never sees a phantom active stream; then close retiring
-                // files the detach just drained, so a replaced-away
-                // generation's handle is released as soon as its last consumer
-                // ends.
+                g_streamWorkerStallEntries.fetch_add(1, std::memory_order_acq_rel);
+                for (int spin = 0; spin < 2000 &&
+                     !g_streamWorkerStallRelease.load(std::memory_order_acquire); ++spin)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                lock.lock();
+                if (m_shutdown) continue;
+            }
+            try {
+                SettleIo();
                 DetachRetiredSlots();
                 CloseDrainedRetiringFiles();
-                for (Request* request : batch) {
-                    try {
-                        switch (request->kind) {
-                        case Request::Kind::Register:
-                            HandleRegister(*request);
-                            break;
-                        case Request::Kind::Unregister:
-                            HandleUnregister(*request);
-                            break;
-                        case Request::Kind::Replace:
-                            HandleReplace(*request);
-                            break;
-                        case Request::Kind::Serve:
-                            // The pass around this switch IS the service; the
-                            // request only sequences the caller against its
-                            // completion.
-                            break;
-                        }
-                    } catch (...) {
-                        // One request's failure — resource exhaustion for that
-                        // request included — is that request's bad file, not
-                        // the batch's and not the thread's.
-                        request->result = VN_BAD_STREAM_FILE;
-                    }
-                    ++dispatched;
+                while (!m_requests.empty()) {
+                    m_batch.push_back(m_requests.front());
+                    m_requests.pop_front();
                 }
-                if (!m_throttled.load(std::memory_order_relaxed)) {
-                    ServeSlots();
-                }
-
-                // Normal-path epilogue: relock and complete every request. A
-                // Serve keeps its default VN_OK because the service pass above
-                // genuinely ran this wake.
-                lock.lock();
-                for (Request* request : batch) {
-                    request->done = true;
-                }
-                if (!batch.empty()) {
-                    m_done.notify_all();
-                }
+                ServiceRequests();
+                ServeSlots();
+                ServiceRequests();
+                DispatchIo();
             } catch (...) {
-                // Best-effort recovery for a throw anywhere in the iteration
-                // body. Thread survival takes priority over this one wake. The
-                // lock may or may not be held depending on where the throw
-                // landed: wait_for reacquires it on the way out (its
-                // postcondition) and a failed unlock leaves it held, while a
-                // throw in the unlocked dispatch/ServeSlots/epilogue region
-                // leaves it released. Relock only when not already owned —
-                // relocking a held non-recursive mutex would deadlock — and
-                // guard that relock, since it is itself a throw source.
-                //
-                // Completion marks the undispatched suffix and every Serve
-                // request VN_BAD_STREAM_FILE: a Serve carries no result of its
-                // own, so its default VN_OK would falsely report "service
-                // completed" when the pass never finished; requests already
-                // dispatched to a handler keep the result the handler produced.
-                // Then fall through to the next iteration, which re-enters
-                // wait_for with the lock held — the invariant it requires.
-                try {
-                    if (!lock.owns_lock()) {
-                        lock.lock();
-                    }
-                    for (std::size_t i = 0; i < batch.size(); ++i) {
-                        if (i >= dispatched ||
-                            batch[i]->kind == Request::Kind::Serve) {
-                            batch[i]->result = VN_BAD_STREAM_FILE;
-                        }
-                        batch[i]->done = true;
-                    }
-                    if (!batch.empty()) {
-                        m_done.notify_all();
-                    }
-                } catch (...) {
-                    // The relock itself threw: the mutex is unusable, so there
-                    // is no way to signal waiters from here and no point
-                    // spinning on a broken lock. Propagate to the
-                    // function-level catch, which ends the thread.
-                    throw;
-                }
+                for (auto* request : m_batch) { request->result = VN_BAD_STREAM_FILE; request->done = true; }
+                m_batch.clear();
+                m_done.notify_all();
             }
         }
         PublishWorkerState(StreamWorkerState::Stopped);
-    } catch (...) {
-        // Terminal: startup construction failed or recovery could not reacquire
-        // the lock. The process stays alive, but this subsystem is finished, so
-        // every waiter is released, every fed ring is closed out, and the state
-        // is published as Failed for the constructor and for later callers.
-        HandleTerminalWorkerFailure();
-    }
-}
-
-void StreamManager::HandleRegister(Request& request) {
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        // A retiring file is not registered under any id — it neither
-        // collides with a fresh registration nor blocks one.
-        for (const std::unique_ptr<StreamFile>& file : m_files) {
-            if (file != nullptr && !file->retiring &&
-                file->soundId == request.soundId) {
-                request.result = VN_IN_USE;
-                return;
-            }
-        }
-    }
-
-    auto record = std::make_unique<StreamFile>();
-    record->soundId = request.soundId;
-    const VnResult valid = OpenAndValidate(request, *record);
-    if (valid != VN_OK) {
-        request.result = valid;
-        return;
-    }
-
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        if (m_lastSourceGeneration == UINT64_MAX) {
-            request.result = VN_BACKPRESSURE;
-            return;
-        }
-        record->sourceGeneration = ++m_lastSourceGeneration;
-        for (std::unique_ptr<StreamFile>& file : m_files) {
-            if (file == nullptr) {
-                file = std::move(record);
-                request.result = VN_OK;
-                return;
-            }
-        }
-        m_files.push_back(std::move(record));
-    }
-    request.result = VN_OK;
+    } catch (...) { HandleTerminalWorkerFailure(); }
 }
 
 std::uint32_t StreamManager::OccupiedSlotPrefix() const noexcept {
@@ -988,225 +817,92 @@ bool StreamManager::RingStorageReady(
     return true;
 }
 
-VnResult StreamManager::OpenAndValidate(Request& request,
-                                        StreamFile& record) {
-    // Public path contract is UTF-8; decode through the shared validator so
-    // ill-formed bytes refuse the file instead of throwing out of the ABI on
-    // the streaming thread, and the ANSI codepage never participates.
-    std::filesystem::path path;
-    if (!TryMakeUtf8Path(request.utf8Path, &path)) {
-        return VN_BAD_STREAM_FILE;
-    }
-    std::error_code ec;
-    const std::uintmax_t size = std::filesystem::file_size(path, ec);
-    if (ec || size < kStreamHeaderBytes) {
-        return VN_BAD_STREAM_FILE;
-    }
-    record.file.open(path, std::ios::binary);
-    if (!record.file) {
-        return VN_BAD_STREAM_FILE;
-    }
-#if defined(_MSVC_STL_VERSION)
-    // MSVC filebuf splits byte reads into 4095-byte fread calls. Configure
-    // its existing CRT-owned buffer before the first read so those calls
-    // share a larger fill. A refused hint keeps the normal reader usable.
-    // The buffer belongs to this open file generation, not to each voice.
-    (void)record.file.rdbuf()->pubsetbuf(nullptr, 16 * 1024);
-#endif
-
-    std::uint8_t headerBytes[kStreamHeaderBytes];
-    record.file.read(reinterpret_cast<char*>(headerBytes),
-                     kStreamHeaderBytes);
-    if (record.file.gcount() != kStreamHeaderBytes) {
-        return VN_BAD_STREAM_FILE;
-    }
-    StreamHeader header;
-    if (!ParseStreamHeader(headerBytes, &header)) {
-        return VN_BAD_STREAM_FILE;
-    }
-    if (header.formatVersion != kStreamFormatVersion ||
-        header.headerBytes != kStreamHeaderBytes ||
-        header.fileBytes != size ||
-        header.entryCount != kStreamEntryCount ||
-        header.chunkFrames == 0 ||
-        header.chunkFrames > kMaxStreamChunkFrames) {
-        return VN_BAD_STREAM_FILE;
-    }
-    if (header.tocOffset < header.headerBytes ||
-        header.tocOffset > size ||
-        kStreamTocEntryBytes > size - header.tocOffset) {
-        return VN_BAD_STREAM_FILE;
-    }
-
-    std::uint8_t entryBytes[kStreamTocEntryBytes];
-    record.file.seekg(header.tocOffset);
-    record.file.read(reinterpret_cast<char*>(entryBytes),
-                     kStreamTocEntryBytes);
-    if (record.file.gcount() != kStreamTocEntryBytes) {
-        return VN_BAD_STREAM_FILE;
-    }
-    const StreamTocEntry entry = ParseStreamTocEntry(entryBytes);
-    if (!ValidateStreamEntry(header, entry, size)) {
-        return VN_BAD_STREAM_FILE;
-    }
-    // The TOC carries the id the file was compiled for precisely so a
-    // mislabeled file is caught here at registration, instead of playing
-    // the wrong content at playback.
-    if (entry.soundId != request.soundId) {
-        return VN_BAD_STREAM_FILE;
-    }
-
-    // The chunk-checksum table loads into memory for the file's lifetime
-    // and its bytes join the TOC under tocChecksum, so a corrupted table
-    // is refused here instead of surfacing later as false mid-stream
-    // mismatches.
-    std::vector<std::uint8_t> checksumBytes(
-        static_cast<std::size_t>(entry.chunkCount) *
-        kStreamChunkChecksumBytes);
-    record.file.seekg(static_cast<std::streamoff>(
-        entry.chunkChecksumOffset));
-    record.file.read(reinterpret_cast<char*>(checksumBytes.data()),
-                     static_cast<std::streamsize>(checksumBytes.size()));
-    if (record.file.gcount() !=
-        static_cast<std::streamsize>(checksumBytes.size())) {
-        return VN_BAD_STREAM_FILE;
-    }
-    std::uint64_t checksum = Fnv1a64(entryBytes, kStreamTocEntryBytes);
-    checksum = Fnv1a64(checksumBytes.data(), checksumBytes.size(), checksum);
-    if (checksum != header.tocChecksum) {
-        return VN_BAD_STREAM_FILE;
-    }
-
-    record.toc = entry;
-    record.chunkFrames = header.chunkFrames;
-    record.chunkChecksums.resize(entry.chunkCount);
-    for (std::uint32_t i = 0; i < entry.chunkCount; ++i) {
-        record.chunkChecksums[i] = LoadLE64(
-            checksumBytes.data() +
-            static_cast<std::size_t>(i) * kStreamChunkChecksumBytes);
-    }
-    const MediaStreamSemanticHeaderV1 semanticHeader{
-        entry.sampleRate,
-        entry.channelCount,
-        entry.frameCount,
-        entry.sampleFormat,
-        header.formatVersion,
-        header.chunkFrames,
-        entry.chunkCount,
-        (entry.flags & kStreamFlagLoopable) != 0 ? entry.loopStartFrame : 0,
-        (entry.flags & kStreamFlagLoopable) != 0
-            ? (entry.loopEndFrame == 0 ? entry.frameCount : entry.loopEndFrame)
-            : 0,
-    };
-    if (!ComputeMediaStreamContentRevisionV1(
-            semanticHeader, record.chunkChecksums.data(),
-            &record.contentRevision)) {
-        return VN_BAD_STREAM_FILE;
-    }
-    return VN_OK;
-}
-
-void StreamManager::HandleReplace(Request& request) {
-    // Reap any generation the last detach pass drained before the
-    // structural check, so only a genuinely still-consumed old file
-    // refuses.
-    CloseDrainedRetiringFiles();
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        bool registered = false;
-        for (const std::unique_ptr<StreamFile>& file : m_files) {
-            if (file != nullptr && !file->retiring &&
-                file->soundId == request.soundId) {
-                registered = true;
-                break;
-            }
+void StreamManager::ValidateSourceSlice(SourceRequest& request) {
+    auto& record = *request.candidate;
+    const StreamReadCancellation cancel{&request.cancelled};
+    if (cancel.IsCancelled()) return;
+    if (request.phase == 0) {
+        if (!record.source) record.source = OpenStreamByteSource(request.path.c_str());
+        if (!record.source) { request.result = VN_BAD_STREAM_FILE; return; }
+        std::array<std::uint8_t, kStreamHeaderBytes> bytes{};
+        if (ReadStreamBytes(*record.source, 0, bytes.data(), bytes.size(), cancel) != StreamReadStatus::Ok ||
+            !ParseStreamHeader(bytes.data(), &request.header)) {
+            request.result = VN_BAD_STREAM_FILE; return;
         }
-        if (!registered) {
-            request.result = VN_UNKNOWN_ID; // replace never registers
-            return;
+        const auto& header = request.header;
+        const auto length = record.source->ByteCount();
+        if (header.formatVersion != kStreamFormatVersion || header.headerBytes != kStreamHeaderBytes ||
+            header.fileBytes != length || header.entryCount != kStreamEntryCount ||
+            header.chunkFrames == 0 || header.chunkFrames > kMaxStreamChunkFrames ||
+            header.tocOffset < header.headerBytes || header.tocOffset > length ||
+            kStreamTocEntryBytes > length - header.tocOffset) {
+            request.result = VN_BAD_STREAM_FILE; return;
         }
-        for (const std::unique_ptr<StreamFile>& file : m_files) {
-            if (file != nullptr && file->retiring &&
-                file->retiredFromId == request.soundId) {
-                request.result = VN_IN_USE; // one retiring generation
-                return;
-            }
-        }
-    }
-
-    // Validate the new file completely before touching the registration —
-    // a refusal leaves the old file bound to the id exactly as it was. No
-    // register/unregister can interleave: the logic thread is blocked in
-    // this very request.
-    auto record = std::make_unique<StreamFile>();
-    record->soundId = request.soundId;
-    const VnResult valid = OpenAndValidate(request, *record);
-    if (valid != VN_OK) {
-        request.result = valid;
+        request.phase = 1;
         return;
     }
-
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        // Secure the new file's seat BEFORE the old registration changes: a
-        // table growth that cannot be satisfied must fail with the id still
-        // fully bound to the old file, never mid-swap. With a free slot (or
-        // the reserve done) the placement below cannot throw.
-        bool haveFreeSlot = false;
-        for (const std::unique_ptr<StreamFile>& file : m_files) {
-            if (file == nullptr) {
-                haveFreeSlot = true;
-                break;
-            }
+    if (request.phase == 1) {
+        std::array<std::uint8_t, kStreamTocEntryBytes> bytes{};
+        if (ReadStreamBytes(*record.source, request.header.tocOffset, bytes.data(), bytes.size(), cancel)
+            != StreamReadStatus::Ok) { request.result = VN_BAD_STREAM_FILE; return; }
+        record.toc = ParseStreamTocEntry(bytes.data());
+        const auto& entry = record.toc;
+        const std::uint64_t checksumBytes = static_cast<std::uint64_t>(entry.chunkCount) * sizeof(std::uint64_t);
+        if (!ValidateStreamEntry(request.header, entry, record.source->ByteCount()) ||
+            entry.soundId != request.soundId || checksumBytes > SIZE_MAX) {
+            request.result = VN_BAD_STREAM_FILE; return;
         }
-        if (!haveFreeSlot) {
-            m_files.reserve(m_files.size() + 1);
-        }
-        if (m_lastSourceGeneration == UINT64_MAX) {
-            request.result = VN_BACKPRESSURE;
-            return;
-        }
-        record->sourceGeneration = ++m_lastSourceGeneration;
-        // The old file becomes a retiring generation: unregistered from the
-        // id (new lookups resolve the new file) but open for the slots and
-        // pending pins still reading it by index.
-        for (std::unique_ptr<StreamFile>& file : m_files) {
-            if (file != nullptr && !file->retiring &&
-                file->soundId == request.soundId) {
-                file->retiring = true;
-                file->retiredFromId = request.soundId;
-                file->soundId = {};
-                break;
-            }
-        }
-        for (std::unique_ptr<StreamFile>& file : m_files) {
-            if (file == nullptr) {
-                file = std::move(record);
-                break;
-            }
-        }
-        if (record != nullptr) {
-            m_files.push_back(std::move(record)); // nothrow: reserved above
-        }
+        record.chunkFrames = request.header.chunkFrames;
+        record.chunkChecksums.resize(entry.chunkCount);
+        request.metadataBytes.store(sizeof(StreamFile) +
+            static_cast<std::uint64_t>(record.chunkChecksums.capacity()) * sizeof(std::uint64_t),
+            std::memory_order_release);
+        request.checksum = Fnv1a64(bytes.data(), bytes.size());
+        request.semantic = {entry.sampleRate, entry.channelCount, entry.frameCount, entry.sampleFormat,
+            request.header.formatVersion, record.chunkFrames, entry.chunkCount,
+            (entry.flags & kStreamFlagLoopable) != 0 ? entry.loopStartFrame : 0,
+            (entry.flags & kStreamFlagLoopable) != 0
+                ? (entry.loopEndFrame == 0 ? entry.frameCount : entry.loopEndFrame) : 0};
+        request.revision = BeginMediaStreamContentRevisionV1(request.semantic);
+        request.phase = 2;
+        return;
     }
-    request.result = VN_OK;
-    // An old generation nobody was consuming closes right away.
-    CloseDrainedRetiringFiles();
+    // Only scratch is bounded by the work quantum; the final table is charged
+    // to the actual source metadata and may contain any validated chunk count.
+    std::array<std::uint8_t, 64 * 1024> bytes{};
+    const auto count = std::min<std::uint32_t>(record.toc.chunkCount - request.checksumsRead,
+        static_cast<std::uint32_t>(bytes.size() / kStreamChunkChecksumBytes));
+    const auto size = static_cast<std::size_t>(count) * kStreamChunkChecksumBytes;
+    const auto offset = record.toc.chunkChecksumOffset +
+        static_cast<std::uint64_t>(request.checksumsRead) * kStreamChunkChecksumBytes;
+    if (ReadStreamBytes(*record.source, offset, bytes.data(), size, cancel) != StreamReadStatus::Ok) {
+        request.result = VN_BAD_STREAM_FILE; return;
+    }
+    request.checksum = Fnv1a64(bytes.data(), size, request.checksum);
+    for (std::uint32_t i = 0; i < count; ++i) {
+        const auto checksum = LoadLE64(bytes.data() + i * kStreamChunkChecksumBytes);
+        record.chunkChecksums[request.checksumsRead + i] = checksum;
+        request.revision->AddU64(checksum);
+    }
+    request.checksumsRead += count;
+    if (request.checksumsRead == record.toc.chunkCount) {
+        if (request.checksum != request.header.tocChecksum) { request.result = VN_BAD_STREAM_FILE; return; }
+        record.contentRevision = FinishMediaStreamContentRevisionV1(*request.revision, request.semantic);
+        request.phase = 3;
+    }
 }
 
 void StreamManager::CloseDrainedRetiringFiles() {
-    std::lock_guard<std::mutex> lock(m_mutex);
     for (std::unique_ptr<StreamFile>& file : m_files) {
         if (file != nullptr && file->retiring &&
             file->activeStreams.load(std::memory_order_relaxed) == 0 &&
             file->pendingRefs.load(std::memory_order_relaxed) == 0) {
-            file.reset(); // closes the handle; the index becomes reusable
+            QueueCleanup(std::move(file));
         }
     }
 }
 
 void StreamManager::HandleUnregister(Request& request) {
-    std::lock_guard<std::mutex> lock(m_mutex);
     for (std::unique_ptr<StreamFile>& file : m_files) {
         if (file == nullptr || file->retiring ||
             file->soundId != request.soundId) {
@@ -1217,7 +913,7 @@ void StreamManager::HandleUnregister(Request& request) {
             request.result = VN_IN_USE;
             return;
         }
-        file.reset(); // closes the handle
+        QueueCleanup(std::move(file));
         request.result = VN_OK;
         return;
     }
@@ -1228,6 +924,11 @@ void StreamManager::DetachRetiredSlots() {
     for (StreamSlot& slot : m_slots) {
         if (slot.ring.state.load(std::memory_order_acquire) !=
             StreamSlotState::Retired) {
+            continue;
+        }
+        if (slot.ioLane >= 0) {
+            if (slot.ioLane == 0) m_ioLanes[0]->cancelled.store(true, std::memory_order_release);
+            else slot.io.cancelled.store(true, std::memory_order_release);
             continue;
         }
         m_files[slot.fileIndex]->activeStreams.fetch_sub(
@@ -1245,33 +946,6 @@ void StreamManager::DetachRetiredSlots() {
     }
 }
 
-void StreamManager::ServeSlots() {
-    for (std::size_t i = 0; i < m_slots.size(); i += 2) {
-        if (i + 1 < m_slots.size() &&
-            m_slots[i].ring.state.load(std::memory_order_acquire) ==
-                StreamSlotState::Active &&
-            m_slots[i + 1].ring.state.load(std::memory_order_acquire) ==
-                StreamSlotState::Active) {
-            ServiceCursor first = BeginSlotService(m_slots[i]);
-            ServiceCursor second = BeginSlotService(m_slots[i + 1]);
-            if (first.scalarOnly || second.scalarOnly) {
-                DrainSlot(first);
-                DrainSlot(second);
-            } else {
-                ServeSlotPair(first, second);
-            }
-        } else {
-            const std::size_t end = std::min(i + 2, m_slots.size());
-            for (std::size_t slot = i; slot < end; ++slot) {
-                if (m_slots[slot].ring.state.load(std::memory_order_acquire) ==
-                    StreamSlotState::Active) {
-                    ServeOneSlot(m_slots[slot]);
-                }
-            }
-        }
-    }
-}
-
 bool StreamManager::RunChunkJob(const ChunkJob& job,
                                 std::vector<float>& staging) {
     return ReadChunk(job, staging) &&
@@ -1279,17 +953,11 @@ bool StreamManager::RunChunkJob(const ChunkJob& job,
             Fnv1a64(staging.data(), static_cast<std::size_t>(job.chunkBytes)));
 }
 
-bool StreamManager::ReadChunk(const ChunkJob& job,
-                              std::vector<float>& staging) {
-    StreamFile& file = *job.file;
+bool StreamManager::ReadChunk(const ChunkJob& job, std::vector<float>& staging) {
     staging.resize(static_cast<std::size_t>(job.chunkFrames) * job.channels);
-    file.file.clear();
-    file.file.seekg(static_cast<std::streamoff>(
-        StreamChunkFileOffset(file.toc.payloadOffset, job.chunkIndex,
-                              job.chunkBytes)));
-    file.file.read(reinterpret_cast<char*>(staging.data()),
-                   static_cast<std::streamsize>(job.chunkBytes));
-    return file.file.gcount() == static_cast<std::streamsize>(job.chunkBytes);
+    return ReadStreamBytes(*job.file->source,
+        StreamChunkFileOffset(job.file->toc.payloadOffset, job.chunkIndex, job.chunkBytes),
+        staging.data(), static_cast<std::size_t>(job.chunkBytes), job.cancellation) == StreamReadStatus::Ok;
 }
 
 bool StreamManager::ValidateChunk(const ChunkJob& job,
@@ -1318,37 +986,10 @@ bool StreamManager::ValidateChunk(const ChunkJob& job,
     return true;
 }
 
-void StreamManager::ServeOneSlot(StreamSlot& slot) {
-    ServiceCursor cursor = BeginSlotService(slot);
-    DrainSlot(cursor);
-}
-
-StreamManager::ServiceCursor StreamManager::BeginSlotService(
-    StreamSlot& slot) const {
-    const std::uint32_t testLimit =
-        m_maxServeFramesForTest.load(std::memory_order_relaxed);
-    const std::uint32_t availableAtEntry = slot.ring.WriteAvailable();
-    const std::uint32_t maxServeFrames = testLimit == 0
-        ? availableAtEntry : std::min(availableAtEntry, testLimit);
-    ServiceCursor cursor{&slot, maxServeFrames, 0,
-        slot.ring.writeIndex.load(std::memory_order_relaxed) == 0};
-    LatchScalarService(cursor);
-    return cursor;
-}
-
-bool StreamManager::LatchScalarService(ServiceCursor& cursor) const {
-    if (!cursor.scalarOnly) {
-        const StreamSlot& slot = *cursor.slot;
-        const StreamFile& file = *m_files[slot.fileIndex];
-        const std::uint64_t target =
-            (static_cast<std::uint64_t>(m_prebufferMs) * file.toc.sampleRate +
-             999) / 1000;
-        const std::uint32_t occupancy =
-            slot.ring.capacity - slot.ring.WriteAvailable();
-        cursor.scalarOnly = occupancy == 0 ||
-            occupancy < std::min<std::uint64_t>(slot.ring.capacity, target);
-    }
-    return cursor.scalarOnly;
+StreamManager::ServiceCursor StreamManager::BeginSlotService(StreamSlot& slot) const {
+    const auto limit = m_maxServeFramesForTest.load(std::memory_order_relaxed);
+    const auto available = slot.ring.WriteAvailable();
+    return {&slot, limit == 0 ? available : std::min(available, limit), 0, false};
 }
 
 void StreamManager::CompleteChunk(StreamSlot& slot, const ChunkJob& job,
@@ -1359,85 +1000,6 @@ void StreamManager::CompleteChunk(StreamSlot& slot, const ChunkJob& job,
         // Already published material was verified and drains normally.
         slot.ring.MarkEndOfData(StreamTerminalReason::IntegrityAbort);
         slot.feedStopped = true;
-    }
-}
-
-void StreamManager::DrainSlot(ServiceCursor& cursor, const ChunkJob* pending) {
-    ChunkJob job;
-    if (pending != nullptr) {
-        job = *pending;
-    } else if (!AdvanceSlot(cursor, &job)) {
-        return;
-    }
-    do {
-        StreamSlot& slot = *cursor.slot;
-        // A read can overwrite staging and then throw. Do not leave its old
-        // verified identity available to a later service pass.
-        slot.stagedChunk = kNoChunk;
-        CompleteChunk(slot, job, RunChunkJob(job, slot.staging));
-    } while (AdvanceSlot(cursor, &job));
-}
-
-void StreamManager::ServeSlotPair(ServiceCursor& first, ServiceCursor& second) {
-    for (;;) {
-        ChunkJob firstJob;
-        if (!AdvanceSlot(first, &firstJob)) {
-            DrainSlot(second);
-            return;
-        }
-        if (LatchScalarService(first)) {
-            DrainSlot(first, &firstJob);
-            DrainSlot(second);
-            return;
-        }
-
-        ChunkJob secondJob;
-        if (!AdvanceSlot(second, &secondJob)) {
-            DrainSlot(first, &firstJob);
-            return;
-        }
-        if (LatchScalarService(first) || LatchScalarService(second)) {
-            DrainSlot(first, &firstJob);
-            DrainSlot(second, &secondJob);
-            return;
-        }
-
-        StreamSlot& firstSlot = *first.slot;
-        StreamSlot& secondSlot = *second.slot;
-        firstSlot.stagedChunk = kNoChunk;
-        if (!ReadChunk(firstJob, firstSlot.staging)) {
-            CompleteChunk(firstSlot, firstJob, false);
-            DrainSlot(second, &secondJob);
-            return;
-        }
-        if (LatchScalarService(first) || LatchScalarService(second)) {
-            CompleteChunk(firstSlot, firstJob,
-                ValidateChunk(firstJob, firstSlot.staging,
-                    Fnv1a64(firstSlot.staging.data(),
-                        static_cast<std::size_t>(firstJob.chunkBytes))));
-            DrainSlot(first);
-            DrainSlot(second, &secondJob);
-            return;
-        }
-
-        secondSlot.stagedChunk = kNoChunk;
-        if (!ReadChunk(secondJob, secondSlot.staging)) {
-            CompleteChunk(firstSlot, firstJob,
-                ValidateChunk(firstJob, firstSlot.staging,
-                    Fnv1a64(firstSlot.staging.data(),
-                        static_cast<std::size_t>(firstJob.chunkBytes))));
-            CompleteChunk(secondSlot, secondJob, false);
-            DrainSlot(first);
-            return;
-        }
-
-        const auto hashes = Fnv1a64Pair(
-            firstSlot.staging.data(), static_cast<std::size_t>(firstJob.chunkBytes),
-            secondSlot.staging.data(), static_cast<std::size_t>(secondJob.chunkBytes));
-        CompleteChunk(firstSlot, firstJob,
-            ValidateChunk(firstJob, firstSlot.staging, hashes[0]));
-        CompleteChunk(secondSlot, secondJob,
-            ValidateChunk(secondJob, secondSlot.staging, hashes[1]));
     }
 }
 
