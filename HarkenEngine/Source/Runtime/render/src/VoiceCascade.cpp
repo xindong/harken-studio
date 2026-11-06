@@ -1482,13 +1482,13 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
     for (auto* binding = ctx.sourceExits; binding != nullptr; binding = binding->next) {
         if (!binding->active || !binding->source->fade) continue;
         const auto& exit = *binding->source;
-        const auto length = exit.stopFrame - exit.fadeStartFrame;
+        const auto length = exit.stopFrame - exit.fadeStartFrame + exit.fadeElapsedFrames;
         const auto inverse = length > 1 ? 1.0f / static_cast<float>(length - 1u) : 0.0f;
         for (std::uint32_t index = 0; index < produced; ++index) {
             const auto frame = sourceBlockStart + index;
             if (frame < exit.fadeStartFrame) continue;
             const float progress = length <= 1 || frame >= exit.stopFrame - 1u ? 1.0f :
-                static_cast<float>(frame - exit.fadeStartFrame) * inverse;
+                static_cast<float>(frame - exit.fadeStartFrame + exit.fadeElapsedFrames) * inverse;
             const auto gain = 1.0f - exit.curve.Eval(InterpLinear(exit.curve.xMin, exit.curve.xMax, progress));
             for (std::uint32_t channel = 0; channel < channels; ++channel)
                 scratch[channel][offset + index] *= gain;

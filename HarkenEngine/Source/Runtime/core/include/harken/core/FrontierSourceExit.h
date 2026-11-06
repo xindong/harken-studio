@@ -29,6 +29,7 @@ struct FrontierSourceExit {
     FrontierSliceDependency dependency{};
     FrontierOwnerIdentity source{};
     std::uint64_t fadeStartFrame = 0;
+    std::uint64_t fadeElapsedFrames = 0;
     std::uint64_t stopFrame = UINT64_MAX;
     bool fade = false;
     bool stop = false;

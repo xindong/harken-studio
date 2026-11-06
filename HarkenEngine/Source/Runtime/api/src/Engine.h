@@ -2079,6 +2079,14 @@ struct EngineScheduleAggregateChild {
     std::uint32_t loopIteration = 0;
     std::uint64_t queueSelectionVersion = 0;
     OccurrenceToken queueRetiringOccurrence{};
+    CompositeCompletionOwnerToken queueCompletionOwner{};
+    OccurrenceToken queueCompletionLeaf{};
+    KnownCompletionPredicateV1 queueLeafCompletion{};
+    VnVoiceHandle queueCompletionRender = 0;
+    bool QueueCompletionReleased() const noexcept {
+        return queueRetiringOccurrence.generation == 0 && !queueCompletionOwner.Valid() &&
+            queueCompletionLeaf.generation == 0;
+    }
     std::uint64_t sourceOffsetFrames = 0;
     ScheduleTimeKindV1 scheduleTimeKind = ScheduleTimeKindV1::AbsoluteNanoseconds;
     std::int64_t scheduleMicrosPerQuarter = 0;
@@ -2119,6 +2127,7 @@ struct EngineMusicQueuePosition {
     RandomQueueSeedContext seed{};
     TransitionFadeV1 incomingFade{};
     std::uint64_t sourceOffsetFrames = 0;
+    bool musicFromEntry = false;
     bool checkpointLoaded = false;
     bool exhausted = false;
 };
@@ -2221,7 +2230,7 @@ struct EngineScheduleAggregateState {
     bool ChildrenReleased() const noexcept {
         return VisitChildren([](const auto& child) noexcept {
             return child.resourcesReleased && child.naturalClipDeadline.Empty() && child.sourceExits.empty() &&
-                child.queueRetiringOccurrence.generation == 0;
+                child.QueueCompletionReleased();
         });
     }
 };
@@ -5239,6 +5248,7 @@ struct EngineActionPlayScratch {
     std::uint32_t initialFrontierParticipantCount = 0;
     EngineFrontierAttemptToken queueSignalEntryOwner{};
     EngineFrontierAttemptToken initialNativeForestOwner{};
+    EngineScheduleChildAttemptOwnerContext* scheduleParentOwner = nullptr;
     EnginePlayableServiceReference nativeEntrySeedService{};
     bool nativeEntryForestRoot = false;
     EngineFrontierAttemptToken initialReadCutOwner{};

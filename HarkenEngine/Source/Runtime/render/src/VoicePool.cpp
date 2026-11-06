@@ -956,6 +956,8 @@ bool VoicePool::PrepareSourceExit(VnVoiceHandle handle, FrontierSourceExitVoice&
 bool VoicePool::ValidateSourceExit(const FrontierSourceExit& source, const FrontierGroupBinding& group) const noexcept {
     if (source.decisions == nullptr || !source.source.Valid() ||
         source.stopFrame < source.fadeStartFrame || source.stopFrame == UINT64_MAX ||
+        source.fadeElapsedFrames > UINT64_MAX - (source.stopFrame - source.fadeStartFrame) ||
+        (source.fadeElapsedFrames != 0 && (!source.fade || source.stopFrame == source.fadeStartFrame)) ||
         source.fadeStartFrame != group.transition.audibleFrame ||
         !source.decisions->IsFrontierSliceDependencyFor(source.dependency, group, source.source)) return false;
     for (std::size_t index = 0; index < source.initialVoices.size(); ++index) {
