@@ -7221,6 +7221,7 @@ public:
             !variableControlRetargetPrograms.Reserve(resolved.maxScheduledTransactions) ||
             !memberOnsets.Reserve(static_cast<std::uint32_t>(playableMemberCapacity)) ||
             !playableServiceWork.Reserve(resolved.maxPlayableInstances) ||
+            !scheduleAggregateDue.Reserve(resolved.maxPlayableInstances) ||
             !originalSinglePreparationHolders.Reserve(timelineArms.Capacity()) ||
             !originalQueueSourcePreparationHolders.Reserve(timelineArms.Capacity()))
             throw std::bad_alloc{};
@@ -14397,6 +14398,14 @@ public:
     struct PlayableServiceWorkFamily {};
     using PlayableServiceWorkIdentity = RuntimeIndexIdentity<PlayableServiceWorkFamily>;
     RuntimeActivityIndex<PlayableServiceWorkFamily> playableServiceWork;
+    RuntimeDueIndex<PlayableServiceWorkFamily, RuntimeFrameClock> scheduleAggregateDue;
+
+    void ForgetScheduleAggregateDue(EnginePlayableServiceRow& row) noexcept {
+        const auto identity = CapturePlayableServiceWorkIdentity(row.identity.slot);
+        if (!scheduleAggregateDue.Prepared(identity)) return;
+        if (scheduleAggregateDue.Contains(identity)) (void)scheduleAggregateDue.Erase(identity);
+        (void)scheduleAggregateDue.ReleaseOwner(identity);
+    }
 
     PlayableServiceWorkIdentity CapturePlayableServiceWorkIdentity(std::uint32_t slot) const noexcept {
         if (slot >= playableServices.size()) return {};
@@ -14409,7 +14418,10 @@ public:
         assert(row.identity.slot < playableServices.size() &&
             &playableServices[row.identity.slot] == &row);
         const auto identity = CapturePlayableServiceWorkIdentity(row.identity.slot);
-        if (!occupied) SetPlayableServiceSourceExits(row, false);
+        if (!occupied) {
+            ForgetScheduleAggregateDue(row);
+            SetPlayableServiceSourceExits(row, false);
+        }
         SetPlayableServiceNeedsWork(row, occupied);
         const bool recorded = playableServiceWork.SetMembership(identity, RuntimeActivitySet::Active,
             occupied, [&](PlayableServiceWorkIdentity current) noexcept {
@@ -14436,6 +14448,19 @@ public:
             });
         assert(recorded);
         if (!recorded) runtimeRecreateRequired = true;
+        if (pending) {
+            // Source receipts wake the exact registered parent before the child
+            // can retire. Keep its deadline until service actually handles it.
+            auto* parent = ResolvePlayableService(row.parentService);
+            if (parent != nullptr && scheduleAggregateDue.Prepared(
+                    CapturePlayableServiceWorkIdentity(parent->identity.slot))) {
+                const auto parentIdentity = CapturePlayableServiceWorkIdentity(parent->identity.slot);
+                if (!playableServiceWork.MarkDirty(parentIdentity,
+                        [&](PlayableServiceWorkIdentity current) noexcept {
+                            return current == CapturePlayableServiceWorkIdentity(current.slot);
+                        })) runtimeRecreateRequired = true;
+            }
+        }
     }
     EnginePlayableServiceRow* NextPlayableServiceWork(std::uint32_t* cursor) noexcept {
         const auto identity = playableServiceWork.Next(RuntimeActivitySet::Dirty, cursor,

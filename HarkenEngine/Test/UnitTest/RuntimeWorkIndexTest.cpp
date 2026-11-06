@@ -104,6 +104,23 @@ TEST(RuntimeWorkIndex, DueMutationMatchesOrderedAuthorityAndActivityRejectsOldGe
             EXPECT_EQ(static_cast<std::uint32_t>(best - dates.begin()), first.slot);
             EXPECT_EQ(*best, time.value);
         } else EXPECT_FALSE(due.Peek(&first, &time));
+        std::vector<std::uint32_t> ready;
+        const auto size = due.Size();
+        const bool strict = step % 2u != 0;
+        due.VisitDue({date}, [&](Identity id) noexcept { ready.push_back(id.slot); }, strict);
+        std::sort(ready.begin(), ready.end());
+        std::vector<std::uint32_t> expected;
+        for (std::uint32_t i = 0; i < count; ++i)
+            if (strict ? dates[i] < date : dates[i] <= date) expected.push_back(i);
+        EXPECT_EQ(expected, ready);
+        EXPECT_EQ(size, due.Size());
+        if (*best != UINT64_MAX) {
+            Identity retained{};
+            FrameIndex::Time deadline{};
+            ASSERT_TRUE(due.Peek(&retained, &deadline));
+            EXPECT_EQ(first, retained);
+            EXPECT_EQ(time.value, deadline.value);
+        }
     }
     for (auto slot : {520u, 256u, 63u, 0u}) {
         ASSERT_TRUE(activity.MarkDirty(owners[slot], exact));

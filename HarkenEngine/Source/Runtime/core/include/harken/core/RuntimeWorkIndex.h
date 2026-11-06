@@ -116,6 +116,13 @@ public:
         *out = owner;
         return Erase(owner);
     }
+    // The visitor must not mutate this index. Waking an owner need not discharge
+    // its deadline: publication can still depend on the outstanding obligation.
+    template <class Visitor>
+    void VisitDue(Time now, Visitor&& visitor,
+        bool strict = std::is_same_v<Clock, RuntimeCompletedSequenceClock>) const noexcept {
+        VisitDueAt(0, now, visitor, strict);
+    }
     std::uint32_t Size() const noexcept { return size_; }
     std::uint32_t PreparedCount() const noexcept { return prepared_; }
     std::size_t RequestedBytes() const noexcept { return nodes_.RequestedBytes(); }
@@ -127,6 +134,15 @@ public:
     }
 
 private:
+    template <class Visitor>
+    void VisitDueAt(std::uint64_t position, Time now, Visitor& visitor, bool strict) const noexcept {
+        if (position >= size_) return;
+        const auto& node = nodes_[nodes_[static_cast<std::uint32_t>(position)].heapPosToOwnerNode];
+        if (strict ? now.value <= node.deadline : now.value < node.deadline) return;
+        visitor(node.owner);
+        VisitDueAt(position * 2u + 1u, now, visitor, strict);
+        VisitDueAt(position * 2u + 2u, now, visitor, strict);
+    }
     bool Less(std::uint32_t a, std::uint32_t b) const noexcept {
         const auto& x = nodes_[a];
         const auto& y = nodes_[b];

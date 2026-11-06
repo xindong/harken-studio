@@ -18916,6 +18916,14 @@ TEST(PlayableStart, StableMusicSoundStopsThroughDirectImmediateAndDelayedControl
             ASSERT_NE(nullptr, root->scheduleAggregate);
             ASSERT_EQ(1u, engine->voices.ActiveCount());
             ASSERT_NEAR(0.25f, engine->nullBackend.LastBlock()[0], 0.001f);
+            const auto sleepingIdentity = engine->CapturePlayableServiceWorkIdentity(root->identity.slot);
+            ASSERT_TRUE(engine->scheduleAggregateDue.Prepared(sleepingIdentity));
+            auto dirtyCursor = root->identity.slot;
+            const auto dirty = engine->playableServiceWork.Next(harken::RuntimeActivitySet::Dirty,
+                &dirtyCursor, [&](std::uint32_t slot) noexcept {
+                    return engine->CapturePlayableServiceWorkIdentity(slot);
+                });
+            EXPECT_NE(sleepingIdentity, dirty);
             VnActionFiringHandle firing = 0;
             if (control == 0) {
                 ASSERT_EQ(harken::PlayableControlStatus::Ok, harken::StopPlayable(*engine, instance, 0));
@@ -18957,8 +18965,126 @@ TEST(PlayableStart, StableMusicSoundStopsThroughDirectImmediateAndDelayedControl
             EXPECT_FALSE(engine->runtimeRecreateRequired);
             if (firing != 0) EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
             if (playFiring != 0) EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(playFiring));
+            EXPECT_EQ(0u, engine->scheduleAggregateDue.PreparedCount());
+            EXPECT_EQ(0u, engine->scheduleAggregateDue.Size());
+            EXPECT_FALSE(engine->scheduleAggregateDue.Prepared(sleepingIdentity));
         }
     }
+}
+
+TEST(PlayableStart, SleepingMusicSegmentRetainsUnmaterializedPublicationAndWakesAtSameFrame) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig(8, 64, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    std::vector<float> samples(1600, 0.25f);
+    const auto pcm = harkentest::MonoDesc(samples, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &pcm));
+    DirectSegmentWorldImage image(engine->registry.Lookup(kSound).contentRevision,
+        harken::ScheduleTimeKindV1::MusicalTicks, 0, 64);
+    const auto loopIndex = static_cast<std::size_t>(
+        harken::playableproperties::PlayablePropertyIdV1::LoopCount) - 1u;
+    image.properties[2].payload.presentMask |= UINT64_C(1) << loopIndex;
+    image.properties[2].payload.values[loopIndex].bits = 0;
+    image.properties[2].programSemanticFingerprint =
+        harken::ComputePlayablePropertyFingerprintV1(image.properties[2]);
+    image.segment.rootDefinition.expectedProgramSemanticFingerprint = image.properties[2].programSemanticFingerprint;
+    image.segment.bounds = {0, 64, 0, 64};
+    image.segment.entryMarker = {harkentest::ObjectId(10002), 0};
+    image.segment.startPointKind = 0;
+    image.segment.startMarkerId = 0;
+    image.marker.markerKind = 1;
+    image.marker.position = 64;
+    image.placement.authoredDuration = 64;
+    image.track.scheduleSemanticFingerprint = harken::ComputeTrackScheduleFingerprintV1(image.track);
+    image.trackRef.trackScheduleSemanticFingerprint = image.track.scheduleSemanticFingerprint;
+    image.segment.scheduleSemanticFingerprint = harken::ComputeSegmentScheduleFingerprintV2(image.segment);
+    auto install = PlayableWorldInstall(image.world);
+    install.sourceBodyVintage = harken::kCurrentWorldBodyVintageV19;
+    install.identity.capabilityMask |= harken::kWorldCapabilityEntryScheduling;
+    install.trackSchedules = &image.track;
+    install.trackScheduleCount = 1;
+    install.segmentSchedules = &image.segment;
+    install.segmentScheduleCount = 1;
+    harken::ActionStepProgramViewV1 step{};
+    step.opcode = harken::ActionOpcodeV1::Play;
+    step.scope = harken::ActionScopeV1::Global;
+    step.delay = {harken::AuthoredTimeDomainV1::AbsoluteNanoseconds, 2000000, 1};
+    step.fade = step.cooldown = {harken::AuthoredTimeDomainV1::AbsoluteNanoseconds, 0, 1};
+    step.target = {harken::ActionTargetKindV1::Sound, 0, kSound,
+        image.properties[0].programSemanticFingerprint};
+    harken::ActionProgramViewV1 action{};
+    action.actionStableId = harkentest::ObjectId(10004);
+    action.steps = &step;
+    action.stepCount = action.expandedStepOccurrenceCount = action.expandedFiringCount = 1;
+    action.directFeatureMask = action.transitiveFeatureMask = 1;
+    action.programSemanticFingerprint = harken::ComputeActionProgramFingerprintV1(action);
+    install.identity.capabilityMask |= harken::kWorldCapabilityActionDefinitions;
+    install.actions = &action;
+    install.actionCount = 1;
+    install.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV6(install);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(*engine, install).status);
+    harken::PlayableStartRequest request{};
+    request.root = image.Root();
+    const auto started = harken::StartPlayable(*engine, request);
+    ASSERT_EQ(harken::PlayableStartStatus::Accepted, started.status);
+    auto* root = FindPlayableRow(*engine, started.instance);
+    ASSERT_NE(nullptr, root);
+    const auto identity = engine->CapturePlayableServiceWorkIdentity(root->identity.slot);
+    for (unsigned block = 0; block < 12 && !engine->scheduleAggregateDue.Prepared(identity); ++block) {
+        ASSERT_EQ(VN_OK, Vn_Update());
+        engine->nullBackend.Pump(1);
+    }
+    ASSERT_TRUE(engine->scheduleAggregateDue.Prepared(identity));
+    harken::Engine::PlayableServiceWorkIdentity dueOwner{};
+    harken::RuntimeDueTime<harken::RuntimeFrameClock> due{};
+    ASSERT_TRUE(engine->scheduleAggregateDue.Peek(&dueOwner, &due));
+    ASSERT_EQ(identity, dueOwner);
+    const auto iteration = root->scheduleAggregate->music->nextIteration;
+    ASSERT_GT(due.value, engine->timelinePool.PublishCutoffFrame() + 64);
+    ASSERT_LE(due.value, engine->timelinePool.WindowEndFrame());
+    engine->timelinePlanner.PublishThrough(due.value - 64);
+    ASSERT_EQ(due.value - 64, engine->timelinePool.PublishCutoffFrame());
+    // Equality is not due. A wake is not proof that the next pass exists.
+    engine->SetPlayableServiceNeedsWork(engine->playableServices[root->identity.slot], true);
+    EXPECT_TRUE(engine->scheduleAggregateDue.Contains(identity));
+    harken::RuntimeDueTime<harken::RuntimeFrameClock> retained{};
+    ASSERT_TRUE(engine->scheduleAggregateDue.Peek(&dueOwner, &retained));
+    EXPECT_EQ(due.value, retained.value);
+    VnPostActionDesc post{};
+    post.structSize = sizeof(post);
+    post.actionId = action.actionStableId;
+    VnActionFiringHandle firing = 0;
+    ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
+    VnActionStepResult played{};
+    played.structSize = sizeof(played);
+    ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, 0, &played));
+    const auto* future = FindPlayableRow(*engine, played.producedPlayableInstance);
+    ASSERT_NE(nullptr, future);
+    ASSERT_GT(future->startFrame, due.value);
+    ASSERT_LT(future->startFrame, engine->timelinePool.WindowEndFrame());
+    engine->nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(iteration, root->scheduleAggregate->music->nextIteration);
+    EXPECT_LE(engine->timelinePool.PublishCutoffFrame(), due.value);
+    EXPECT_TRUE(engine->scheduleAggregateDue.Contains(identity));
+    const auto sequence = engine->mixer.BlocksRendered();
+    engine->timelinePlanner.PublishThrough(due.value);
+    ASSERT_EQ(due.value, engine->timelinePool.PublishCutoffFrame());
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(sequence, engine->mixer.BlocksRendered());
+    EXPECT_GT(root->scheduleAggregate->music->nextIteration, iteration);
+    ASSERT_TRUE(engine->scheduleAggregateDue.Peek(&dueOwner, &due));
+    EXPECT_GT(due.value, engine->timelinePool.PublishCutoffFrame());
+    ASSERT_EQ(harken::PlayableControlStatus::Ok, harken::StopPlayable(*engine, started.instance, 0));
+    for (unsigned block = 0; block < 128; ++block) {
+        engine->nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    EXPECT_EQ(0u, engine->scheduleAggregateDue.PreparedCount());
+    EXPECT_EQ(0u, engine->scheduleAggregateDue.Size());
+    EXPECT_EQ(0u, engine->playableInstances.LiveCount());
+    EXPECT_FALSE(engine->runtimeRecreateRequired);
+    EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
 }
 
 TEST(PlayableStart, MusicSegmentNestedCountsRespectSourceAgeAndParentClip) {
