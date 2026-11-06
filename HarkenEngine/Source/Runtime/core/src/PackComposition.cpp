@@ -3115,7 +3115,8 @@ VnResult PackComposition::BuildIndex(PublishedView& view,
         // Validate new tables before closure lookups rely on their ordering.
         if (owner.view.sourceBodyVintage == kCurrentWorldBodyVintageV20 ||
             owner.view.sourceBodyVintage == kCurrentWorldBodyVintageV19) {
-            const auto status = detail::ValidateCurrentWorldPartitionLocalV1(owner.view);
+            const auto status = detail::ValidateCurrentWorldPartitionLocalWithBudget(
+                owner.view, view.staging.Budget());
             if (status != WorldInstallStatus::Ok)
                 return status == WorldInstallStatus::Capacity
                     ? VN_PACK_RESIDENT_CAPACITY : VN_BAD_PACK;

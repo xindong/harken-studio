@@ -6048,11 +6048,15 @@ TEST(PackComposition, InactiveOwnerPreparationAdmitsWorldScratchBeforeAllocation
     };
     // Inactive owners need no decoded rows. Their publication fits, including
     // earlier closure fingerprint scratch, but the requested world array does not.
-    const auto residentPreparation = sizeof(PackComposition::PublishedView) +
-        2 * sizeof(PackComposition::PublishedOwner);
     const auto worldScratch = 2 * sizeof(ContainerWorldInstallViewV1);
-    auto budget = detail::MakePackDecodeBudget(residentPreparation + worldScratch - 1);
+    auto budget = detail::MakePackDecodeBudget(1024 * 1024);
     PackComposition::PreparedCommit prepared;
+    ASSERT_EQ(VN_OK, composition.PrepareCommit(candidates(), nullptr, 0, 8, 0,
+        &prepared, nullptr, nullptr, false, nullptr, budget));
+    const auto retainedPreparation = budget->live;
+    prepared = {};
+    ASSERT_EQ(0u, budget->live);
+    budget->limit = retainedPreparation + worldScratch - 1;
     EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY, composition.PrepareCommit(candidates(),
         nullptr, 0, 8, 0, &prepared, nullptr, nullptr, false, nullptr, budget));
     EXPECT_FALSE(prepared.IsPrepared());
@@ -6062,7 +6066,7 @@ TEST(PackComposition, InactiveOwnerPreparationAdmitsWorldScratchBeforeAllocation
     ++budget->limit;
     ASSERT_EQ(VN_OK, composition.PrepareCommit(candidates(), nullptr, 0, 8, 0,
         &prepared, nullptr, nullptr, false, nullptr, budget));
-    EXPECT_EQ(residentPreparation, budget->live);
+    EXPECT_EQ(retainedPreparation, budget->live);
     composition.CommitPrepared(&prepared);
     EXPECT_EQ(0u, budget->live);
     EXPECT_EQ(generation + 1, composition.CompositeGeneration());
