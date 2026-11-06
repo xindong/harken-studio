@@ -51,6 +51,7 @@ public:
         FrontierEntryReceiptRef* waitingEntries = nullptr, std::uint32_t capacity = 0,
         std::uint32_t* waitingEntryCount = nullptr) noexcept;
     VariableReadCutStatus LaneEventTimingStatus(const ConsumedEvent& event) const noexcept;
+    VariableReadCutStatus StartSourcesStatus(const ConsumedEvent& event) const noexcept;
     bool LaneEventOffset(const ConsumedEvent& event, std::uint16_t* outOffset) const noexcept;
     bool CollectGroup(const Plan03PageGroupView& group) noexcept;
     bool PendingBindingValid(const ConsumedEvent& event,

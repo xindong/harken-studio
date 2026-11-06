@@ -2076,6 +2076,15 @@ struct EngineScheduleTargetFade {
 };
 
 struct EngineScheduleAggregateState;
+struct EngineScheduleSourceCohort;
+struct EngineScheduleCohortSource {
+    OriginalSourceLifetimePin source;
+    VoicePool::OriginalSourceBodyLifetimePin body;
+    TimelineArmToken arm{};
+    VoiceReleaseObserver release{};
+    std::uint64_t sourceIdentity = 0;
+};
+
 struct EngineScheduleAggregateChild {
     PlayableRefV1 content{};
     std::uint64_t startOffsetFrames = 0;
@@ -2112,6 +2121,10 @@ struct EngineScheduleAggregateChild {
     bool lifecycleOwned = false;
     bool pendingEntry = false;
     bool musicFromEntry = false;
+    EngineScheduleSourceCohort* sourceCohort = nullptr;
+    std::uint32_t sourceCohortSide = UINT32_MAX;
+    std::uint16_t sourceCohortMember = UINT16_MAX;
+    bool registeredStream = false;
     std::unique_ptr<EngineScheduleAggregateState> preparedOrdinary;
 };
 
@@ -2188,9 +2201,44 @@ struct EngineOrdinaryScheduleState {
     bool exhausted = false;
 };
 
+struct EngineScheduleSourceSide {
+    std::uint32_t memberCount = 0;
+    PreparedDecisionReservation prepared;
+    OriginalDecisionLifetimePin original;
+    DecisionToken decision{};
+    ArmGroupToken arms{};
+    CommittedPlan03GroupSlice page;
+    Plan03GroupSliceIdentity identity{};
+    std::vector<EngineScheduleAggregateChild*> children;
+    std::vector<EngineScheduleCohortSource> sources;
+    std::vector<TimelineArmToken> members;
+    std::vector<DecisionParticipantRef> participants;
+};
+
+struct EngineScheduleSourceCohort {
+    EnginePlayableServiceReference owner{};
+    EnginePlayablePartitionToken partition{};
+    TransportEpoch transport = kInvalidTransportEpoch;
+    std::uint64_t onsetOffset = 0;
+    std::uint64_t onset = 0;
+    PreparedDecisionReservation prepared;
+    OriginalDecisionLifetimePin original;
+    DecisionToken decision{};
+    ArmGroupToken arms{};
+    CommittedPlan03GroupSlice page;
+    FrontierActivationDescriptor descriptor{};
+    std::vector<EngineScheduleAggregateChild*> children;
+    std::vector<std::unique_ptr<EngineScheduleSourceSide>> sides;
+    bool sealed = false;
+    bool published = false;
+    bool cancelling = false;
+    bool retired = false;
+};
+
 struct EngineScheduleAggregateState {
     // Prepared to the real clip count; membership is immutable after publication.
     std::vector<EngineScheduleAggregateChild> children;
+    std::vector<std::unique_ptr<EngineScheduleSourceCohort>> sourceCohorts;
     std::unique_ptr<EngineMusicScheduleState> music;
     std::unique_ptr<EngineTrackRepeatState> trackRepeat;
     std::unique_ptr<EngineOrdinaryScheduleState> ordinary;
@@ -2254,6 +2302,14 @@ struct EngineNativeEntryDependency {
     bool entryBound = false;
 };
 
+struct EngineSourceStartLane {
+    ImmediateLaneHandle lane{};
+    OriginalImmediateLaneAttemptLifetimePin original;
+    OriginalSourceLifetimePin source;
+    TimelineArmToken sourceArm{};
+    std::uint64_t onset = 0;
+};
+
 struct EnginePlayableServiceRow {
     using UnpublishedVariableGroupCancellation =
         EngineServiceFeatureArrays::UnpublishedVariableGroupCancellation;
@@ -2273,6 +2329,8 @@ struct EnginePlayableServiceRow {
     std::vector<EngineMemberProgramToken> memberPrograms;
     std::vector<EnginePlayableMemberToken> members;
     std::unique_ptr<EngineScheduleAggregateState> scheduleAggregate;
+    EngineScheduleSourceCohort* scheduleSourceCohort = nullptr;
+    EngineScheduleCohortSource* scheduleCohortSource = nullptr;
     std::unique_ptr<EngineScheduleAggregateChild> scheduleTerminalChild;
     std::unique_ptr<std::vector<EngineScheduleAggregateChild>> scheduleVariableChildren;
     std::uint32_t memberRelationHead = UINT32_MAX;
@@ -2288,6 +2346,7 @@ struct EnginePlayableServiceRow {
     bool pendingImmediateEntry = false;
     bool pendingImmediateRetry = false;
     bool pendingDirectStartBinding = false;
+    std::vector<std::unique_ptr<EngineSourceStartLane>> sourceStartLanes;
     std::uint64_t pendingDirectEntryFrame = 0;
     bool zeroWorkMarker = false;
     bool hasZeroWorkCompletion = false;
@@ -2891,6 +2950,7 @@ public:
         const auto serviceIdentity = identity;
         const bool exhausted = quarantined;
         assert(!cohortLinked_);
+        assert(sourceStartLanes.empty());
         assert(memberRelationHead == UINT32_MAX && memberRelationCount == 0);
         assert(std::none_of(memberPrograms.begin(), memberPrograms.end(),
             [](const auto& token) noexcept { return token.Valid(); }));
@@ -3388,6 +3448,7 @@ struct EngineImmediateEntryAttempt {
     std::uint64_t initialInvocationGeneration = 0;
     InitialSoundQueueCohortReceipt soundQueueCohort{};
     std::uint64_t initialEntryFrame = 0;
+    bool initialMediaWaitAllowed = false;
     std::uint64_t entryQuantum = 0;
     std::uint64_t lastQuantum = 0;
     std::uint32_t entryEventCount = 0;
@@ -3842,6 +3903,7 @@ struct EnginePreparedTimelineVoiceStart {
     VoiceLedger::PreparedCommitInput ledgerPreparation{};
     VoicePool::PreparedCommitInput voicePreparation{};
     EngineOriginalQueueSourcePreparation* originalQueueSource = nullptr;
+    EngineScheduleCohortSource* fixedGroupSource = nullptr;
     bool inheritedStopCommitted = false;
     std::array<EffectInstanceRef, kTimelineMaxVoiceEffects> effects{};
     std::array<EffectObjectIdentity, kTimelineMaxVoiceEffects> effectIdentities{};
@@ -5245,6 +5307,7 @@ struct EngineActionPlayScratch {
         std::array<bool, kMaxKnownScheduleLeaves> admissionBound{};
     } pendingVariableReplacementEntry{};
     bool directExecution = false;
+    bool initialMediaWaitAllowed = false;
     bool continuationExecution = false;
     bool initialForestPublication = false;
     bool initialForestCancellationSealed = false;
@@ -7293,12 +7356,14 @@ public:
                 groupsPerBucket);
         timelinePoolConfig.maxImmediateLaneOwnerGates = resolved.maxPlayableInstances;
         timelinePoolConfig.maxImmediateLaneDecisionGates = resolved.maxDecisionRows;
+        const auto laneAttempts = static_cast<std::uint64_t>(resolved.maxActionFirings) + timelineArms.Capacity();
+        if (laneAttempts > UINT32_MAX) throw std::bad_alloc{};
         if (!decisions.Valid() || !transitionInstances.Valid() ||
             !armGroups.Valid() ||
             !timelinePool.Reset(timelinePoolConfig, 0,
                                 transportEpochOwner.Current()) ||
             !immediateActionLane.Reset({
-                resolved.maxActionFirings,
+                static_cast<std::uint32_t>(laneAttempts),
                 privateLaneMetadataCapacity,
                 resolved.maxEventsPerQuantum,
                 resolved.blockFrames, true,
@@ -9139,6 +9204,26 @@ public:
             if (original.group == &old) original.group = &moved;
     }
 
+    bool ReturnScheduleCohortSourceAfterPhysicalRelease(TimelineArmToken arm) noexcept {
+        EngineScheduleCohortSource* source = nullptr;
+        for (std::uint32_t cursor = 0; auto* row = NextOccupiedPlayableService(&cursor);) {
+            auto* candidate = row->scheduleCohortSource;
+            if (candidate == nullptr || !OriginalSourceSubmissionRegistry::SameToken(candidate->arm, arm)) continue;
+            if (source != nullptr && source != candidate) return false;
+            source = candidate;
+        }
+        if (source == nullptr || !source->source.Valid()) return source == nullptr || !source->body.Valid();
+        if (!voices.ReleaseObserved(source->release) ||
+            !originalSourceSubmissions.IsOriginalSourceLifetimePinFor(source->source, arm) ||
+            !(originalSourceSubmissions.CanReturnPublishedOriginalSourcePairStorage(
+                  source->source, source->body, source->release) ||
+              originalSourceSubmissions.CanReturnUnpublishedOriginalSourcePairStorage(source->source, source->body)))
+            return false;
+        source->body.Release();
+        source->source.Release();
+        return true;
+    }
+
     void ReturnPendingVariableLeafSource(OriginalPendingVariableLeafSource& holder) noexcept {
         const bool retained = !holder.Empty();
         if (holder.group != nullptr) {
@@ -10594,6 +10679,15 @@ public:
         (void)device.StopCallback();
         (void)voices.UnbindRealtimeWorkerDomain();
         device.ReleasePrepared();
+        for (auto& row : playableServices) {
+            for (auto& held : row.sourceStartLanes) {
+                held->original.Return();
+                const bool returned = ReturnSourceStartLane(held->sourceArm, held->source);
+                assert(returned);
+                (void)returned;
+            }
+            row.sourceStartLanes.clear();
+        }
         for (auto& revision : logicPacks.pending) revision.dynamicBusTapBacking.Release();
         // Private readers are unread loans, distinct from completed audio fences.
         for (std::uint32_t index = 0; index < immediateEntryAttempts.size(); ++index) {
@@ -10859,6 +10953,7 @@ public:
         TimelineArmToken arm_{};
         VnVoiceHandle sourceIdentity_ = 0;
         VoiceReleaseObserver physicalRelease_{};
+        OriginalSourceSubmissionRegistry::PendingInstalledSourceRetirementReceipt retirement_;
         PreparedSingleCurrentOriginBundle::SourcePin source_;
         PreparedSingleCurrentOriginBundle::BodyPin body_;
         PreparedSingleCurrentOriginBundle::LedgerPin ledgerOriginal_;
@@ -10867,6 +10962,7 @@ public:
         CompletionMutationBinding originalMutation_{};
         VoiceLedger::PreparedCommitInput originalLedgerInput_{};
         bool singleIssued_ = false;
+        bool sourceStartLaneBorrowed_ = false;
         bool returned_ = false;
         void Return() noexcept {
             ledgerCommit_.Release();
@@ -10903,6 +10999,21 @@ public:
             voices.IsOriginalSourceBodyLifetimePinFor(holder.body_, arm, holder.sourceIdentity_)
                 ? &holder : nullptr;
     }
+    bool BorrowSourceStartLane(TimelineArmToken arm, OriginalSourceLifetimePin* out) noexcept {
+        auto* holder = OriginalSinglePreparationForArm(arm);
+        if (holder == nullptr || holder->sourceStartLaneBorrowed_ || !holder->source_.Borrow(out)) return false;
+        holder->sourceStartLaneBorrowed_ = true;
+        return true;
+    }
+    bool ReturnSourceStartLane(TimelineArmToken arm, OriginalSourceLifetimePin& source) noexcept {
+        if (!arm.Valid() || !originalSinglePreparationHolders.IsConstructed(arm.slot)) return false;
+        auto& holder = originalSinglePreparationHolders[arm.slot];
+        if (!holder.sourceStartLaneBorrowed_ || !SameOriginalSingleArm(holder.arm_, arm) ||
+            !originalSourceSubmissions.IsOriginalSourceLifetimePinFor(source, arm)) return false;
+        holder.sourceStartLaneBorrowed_ = false;
+        source.Release();
+        return true;
+    }
     // Invoked by the actual original Capture factory, before any published head.
     // This method never issues an origin from a token or a later Source lookup.
     bool CaptureOriginalSingleSourcePreparation(const CommandRecord& originalHeader,
@@ -10924,6 +11035,7 @@ public:
                 originalVoice, originalEffects, &holder.source_, &holder.body_)) return false;
         // Both outputs and their observer now belong to this genuine factory.
         // There is no fallible operation after issuance and before registration.
+        holder.retirement_.Release();
         holder.receiver_ = this;
         originalSingleSourcePreparationSeen = true;
         holder.arm_ = arm;
@@ -11597,6 +11709,43 @@ public:
         if (outOriginal != nullptr) *outOriginal = current;
         return true;
     }
+    bool RetireOriginalSinglePendingSource(const EnginePreparedTimelineVoiceStart& start) noexcept {
+        if (!start.arm.Valid() || !originalSinglePreparationHolders.IsConstructed(start.arm.slot)) return false;
+        auto& holder = originalSinglePreparationHolders[start.arm.slot];
+        if (holder.receiver_ != this || !SameOriginalSingleArm(holder.arm_, start.arm) ||
+            start.commandCount == 0 || holder.sourceIdentity_ != start.commands[0].payload.play.sourceIdentity ||
+            holder.physicalRelease_.slot != start.releaseObserver.slot ||
+            holder.physicalRelease_.targetSequence != start.releaseObserver.targetSequence) return false;
+        if (!holder.retirement_.Valid()) {
+            if (!originalSourceSubmissions.IsOriginalInstalledSourceCurrent(holder.source_, holder.sourceIdentity_)) return false;
+            const auto requested = originalSourceSubmissions.RequestPendingInstalledSourceRetirementWithReceipt(
+                holder.source_, holder.body_, &holder.retirement_);
+            if (requested != OriginalSourceSubmissionRegistry::InstalledSourceRetirementRequest::Requested) return false;
+        }
+        return originalSourceSubmissions.PendingInstalledSourceRetirementSettled(holder.retirement_, start.arm) &&
+            originalSourceSubmissions.ReturnPendingInstalledSourceRetirementStorage(holder.retirement_, start.arm);
+    }
+    bool PendingOriginalSingleSourceRetirementMatches(const EnginePreparedTimelineVoiceStart& start) const noexcept {
+        if (!start.arm.Valid() || !originalSinglePreparationHolders.IsConstructed(start.arm.slot) ||
+            start.commandCount == 0 || start.commands[0].opcode != kOpcodePlay) return false;
+        const auto& holder = originalSinglePreparationHolders[start.arm.slot];
+        return holder.receiver_ == this && SameOriginalSingleArm(holder.arm_, start.arm) &&
+            holder.retirement_.StorageReturned() && originalSourceSubmissions.MatchesPendingInstalledSourceRetirementIdentity(
+                holder.retirement_, start.arm, start.commands[0].payload.play.sourceIdentity,
+                start.releaseObserver, start.voicePreparation.sourceTerminalToken);
+    }
+    bool OwnsPendingOriginalSingleSourceTerminal(SourceTerminalToken terminal, const SourceTerminalRecord& source) const noexcept {
+        const auto slot = static_cast<std::uint32_t>(source.render);
+        if (slot >= timelineVoiceInstallIdentities.size()) return false;
+        const auto& install = timelineVoiceInstallIdentities[slot];
+        if (install.renderHandle != source.render || !install.startArm.Valid() ||
+            !originalSinglePreparationHolders.IsConstructed(install.startArm.slot)) return false;
+        const auto& holder = originalSinglePreparationHolders[install.startArm.slot];
+        return holder.receiver_ == this && SameOriginalSingleArm(holder.arm_, install.startArm) &&
+            originalSourceSubmissions.OwnsPendingInstalledSourceRetirementTerminal(
+                holder.retirement_, install.startArm, terminal, source);
+    }
+
     bool ReturnOriginalSingleSourcePreparationAfterPhysicalRelease(TimelineArmToken arm) noexcept {
         if (!arm.Valid() || !originalSinglePreparationHolders.IsConstructed(arm.slot)) return true;
         auto& holder = originalSinglePreparationHolders[arm.slot];

@@ -705,6 +705,11 @@ public:
         bool hasStart = false;
         for (std::uint32_t i = 0; i < eventCount; ++i)
             hasStart = hasStart || events[i].payload->kind == TimelineEventKind::Start;
+        if (hasStart && !voices_.TimelineStreamStartReady(renderSlot, renderGeneration)) {
+            RecordPlainResult(armToken, kTimelineDispositionArmFailed);
+            (void)CancelBinding(renderSlot, renderGeneration);
+            return true;
+        }
         const bool publicationRefused = hasStart && !arms_.SourcePublicationAccepted(armToken);
         if (renderSlot < pendingVariableStarts_.size() &&
             (pendingVariableStarts_[renderSlot].count != 0 ||
@@ -1320,6 +1325,11 @@ private:
                 transition.audibleFrame < start + blockFrames &&
                 context.sink->transitions_->CanLockFromAudioClaim(
                     context.transition);
+        }
+        for (std::uint16_t index = context.sourceControlCount; index < context.memberCount; ++index) {
+            if (context.members == nullptr ||
+                !context.sink->voices_.TimelineStreamStartReady(context.members[index].renderSlot,
+                    context.members[index].renderGeneration)) return false;
         }
         context.proofStatus = context.sink->composites_ == nullptr
             ? context.sink->queues_->ProveConditionalForQuantum(

@@ -58,6 +58,7 @@ struct FrontierActivationDescriptor {
     std::uint32_t expectedEntryEventCount = 0;
     std::uint64_t programGeneration = 0;
     VariableReadCutRef initialVariables{};
+    bool initialMediaWaitAllowed = false;
 
     bool operator==(const FrontierActivationDescriptor&) const = default;
 
@@ -323,6 +324,7 @@ struct FrontierGroupBinding {
     FrontierQueueConditionalIdentity queueConditional{};
     FrontierQueueConditionalIdentity queueInitialCompletion{};
     bool canonicalInitialCompletion = false;
+    bool sourceOnly = false;
     FrontierTransitionIdentity transition{};
     const FrontierSourceExit* sourceExit = nullptr;
     const QueuePageConditionalReceiver* queuePageReceiver = nullptr;
@@ -332,6 +334,11 @@ struct FrontierGroupBinding {
         if (role == FrontierGroupRole::Legacy || !entry.Valid() || !operation.Valid() ||
             !operation.group.Exact()) return false;
         if (initialVariables.Valid() && role != FrontierGroupRole::Coordinator) return false;
+        if (sourceOnly && (role != FrontierGroupRole::EntryMember ||
+            operation.kind != FrontierOperationKind::Entry || variableSide.Valid() ||
+            !queueDescendant.Empty() || queueInitial.Valid() || queueSignal.Valid() ||
+            queueConditional.Valid() || canonicalInitialCompletion || transition.Valid() ||
+            sourceExit != nullptr || queuePageReceiver != nullptr || initialVariables.Valid())) return false;
         if (queuePageReceiver != nullptr && (sourceExit == nullptr || !queueConditional.Valid())) return false;
         if (sourceExit != nullptr && (role != FrontierGroupRole::Future || !transition.Valid() ||
                 !((variableSide.Valid() && variableSide.side == 0 && !queueConditional.Valid()) ||

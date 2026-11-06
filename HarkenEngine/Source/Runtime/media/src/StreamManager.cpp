@@ -471,7 +471,7 @@ VnResult StreamManager::ActivateSlot(std::uint32_t slot,
         if (outRingToken != nullptr) *outRingToken = token;
     }
     const auto result = PostAndWait(request);
-    m_slots[slot].supplied.store(true, std::memory_order_release);
+    m_slots[slot].ring.startPromoted.store(true, std::memory_order_release);
     return result;
 }
 
@@ -484,7 +484,11 @@ std::uint64_t StreamManager::InitializeSlot(
     // writes are private until Active publishes them. The source reference
     // was acquired under m_mutex, so retirement cannot close it in between.
     s.window.validBytes = 0;
-    s.supplied.store(false, std::memory_order_relaxed);
+    if (s.promotionPending) {
+        assert(m_pendingPromotionCount != 0);
+        --m_pendingPromotionCount;
+        s.promotionPending = false;
+    }
     s.passGoal = 0;
     s.preparationOwner = StreamSlot::PreparationOwner::None;
     s.preparationGeneration = 0;
@@ -615,8 +619,66 @@ VnResult StreamManager::TakeReplacement(
     auto& slot = m_slots[token.slot];
     *out = {token.slot, &slot.ring, slot.preparedRingToken};
     slot.preparationOwner = StreamSlot::PreparationOwner::None;
-    slot.supplied.store(true, std::memory_order_release);
+    slot.ring.startPromoted.store(true, std::memory_order_release);
     return VN_OK;
+}
+
+VnResult StreamManager::TransferReplacement(
+    PreparedToken token, PreparedStream* out) noexcept {
+    if (out == nullptr) return VN_INVALID_ARG;
+    *out = {};
+    const auto state = QueryReplacement(token);
+    if (state == PreparationState::Failed) return VN_DEVICE_ERROR;
+    if (state != PreparationState::Preparing && state != PreparationState::Ready)
+        return VN_STALE_HANDLE;
+    auto& slot = m_slots[token.slot];
+    *out = {token.slot, &slot.ring, slot.preparedRingToken};
+    slot.preparationOwner = StreamSlot::PreparationOwner::None;
+    assert(!slot.promotionPending);
+    slot.promotionPending = true;
+    ++m_pendingPromotionCount;
+    return VN_OK;
+}
+
+StreamManager::PreparationState StreamManager::PromoteTransferredStream(
+    const PreparedStream& stream) noexcept {
+    if (stream.slot >= m_slots.size() || stream.ringToken == 0)
+        return PreparationState::Invalid;
+    auto& slot = m_slots[stream.slot];
+    if (stream.ring != &slot.ring || stream.ringToken != slot.preparedRingToken ||
+        slot.preparationOwner != StreamSlot::PreparationOwner::None ||
+        slot.ring.state.load(std::memory_order_acquire) != StreamSlotState::Active ||
+        slot.ring.generation.load(std::memory_order_acquire) !=
+            static_cast<std::uint32_t>(stream.ringToken >> 32u))
+        return PreparationState::Invalid;
+    if (WorkerState() != StreamWorkerState::Ready) return PreparationState::Failed;
+    const auto terminal = slot.ring.TerminalReason();
+    if (terminal == StreamTerminalReason::IntegrityAbort ||
+        terminal == StreamTerminalReason::ProducerFailure) return PreparationState::Failed;
+    if (terminal != StreamTerminalReason::NaturalEnd &&
+        slot.ring.ReadAvailable() < slot.prebufferTargetFrames)
+        return PreparationState::Preparing;
+    slot.ring.startPromoted.store(true, std::memory_order_release);
+    if (slot.promotionPending) {
+        assert(m_pendingPromotionCount != 0);
+        --m_pendingPromotionCount;
+        slot.promotionPending = false;
+    }
+    return PreparationState::Ready;
+}
+
+void StreamManager::ServiceTransferredPreparations() noexcept {
+    if (m_pendingPromotionCount == 0) return;
+    for (std::uint32_t index = 0; index < m_slots.size(); ++index) {
+        auto& slot = m_slots[index];
+        if (!slot.promotionPending) continue;
+        const auto status = PromoteTransferredStream({index, &slot.ring, slot.preparedRingToken});
+        if (status == PreparationState::Invalid || status == PreparationState::Failed) {
+            assert(m_pendingPromotionCount != 0);
+            --m_pendingPromotionCount;
+            slot.promotionPending = false;
+        }
+    }
 }
 
 VnResult StreamManager::PrepareSeekSlot(

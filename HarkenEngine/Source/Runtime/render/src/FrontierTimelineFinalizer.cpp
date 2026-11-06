@@ -269,6 +269,7 @@ struct FrontierTimelineFinalizer::Impl {
     std::uint32_t groupCapacity = 0;
     std::uint32_t eventCount = 0;
     std::uint32_t groupCount = 0;
+    bool hasStreamStart = false;
     std::uint64_t quantum = 0;
     std::uint32_t frames = 0;
     bool laneOnly = false;
@@ -307,7 +308,7 @@ struct FrontierTimelineFinalizer::Impl {
             self.order.ConstructThrough(std::max(eventCount, self.events.ConstructedCount()) +
                 self.groupCapacity) && self.events.ConstructThrough(eventCount);
     }
-    static void DecodeVoiceEvent(Event& event, const TimelineEventPayload& payload,
+    void DecodeVoiceEvent(Event& event, const TimelineEventPayload& payload,
         std::uint16_t offset) noexcept {
         event.controller = payload.kind == TimelineEventKind::ControllerActivation;
         event.completesControl = payload.kind == TimelineEventKind::VariableWeight ||
@@ -315,6 +316,13 @@ struct FrontierTimelineFinalizer::Impl {
             (payload.kind == TimelineEventKind::Stop && (payload.reserved & kTimelineEventTransientControlArm) != 0);
         event.voice = VoiceTimelineEvent{payload.kind};
         event.voice.offset = offset;
+        if (!hasStreamStart && payload.kind == TimelineEventKind::Start) {
+            const auto& arm = event.source.armToken;
+            std::uint64_t token = 0;
+            hasStreamStart = voices.CaptureStreamRingToken(
+                (std::uint64_t{arm.renderGeneration} << 32u) | arm.renderSlot, &token) ||
+                !voices.TimelineStreamStartReady(arm.renderSlot, arm.renderGeneration);
+        }
         event.voice.envelopeDirection = payload.envelopeDirection;
         event.voice.authoredFadeOutCandidate = event.source.authoredFadeOutCandidate;
         event.voice.authoredRootStop = payload.kind == TimelineEventKind::Stop &&
@@ -1342,10 +1350,59 @@ struct FrontierTimelineFinalizer::Impl {
         }
     }
 
-    bool VariableSourceReady(const Event& event) const noexcept {
+    bool InitialMediaWaitAllowed(const ConsumedEvent& event) const noexcept {
+        if (decisions == nullptr || pool == nullptr || !event.frontier.Valid() ||
+            event.frontier.kind != FrontierOperationKind::Entry) return false;
+        Plan03PageGroupView member{};
+        if (!event.frontier.group.Exact() ||
+            !pool->ResolvePlan03GroupSliceRt(event.frontier.group, &member) || member.frontier == nullptr)
+            return false;
+        const auto& binding = *member.frontier;
+        if ((binding.role != FrontierGroupRole::Coordinator && binding.role != FrontierGroupRole::EntryMember) ||
+            binding.operation.kind != FrontierOperationKind::Entry || !(binding.entry == event.frontier.entry) ||
+            !(binding.operation.owner == event.frontier.owner) || binding.operation.transport != pool->Epoch() ||
+            event.frontier.transport != binding.operation.transport || event.frontier.world != binding.operation.world ||
+            member.lease == nullptr || member.lease->Capture().state != AudioSliceState::Ready) return false;
+        const auto* activation = decisions->ResolveFrontierActivation(binding.entry.coordinator);
+        if (activation == nullptr) return false;
+        const auto& descriptor = activation->Descriptor();
+        const auto index = FindGroup(member.identity);
+        const bool ownStaging = index != UINT32_MAX && groups[index].audioWriter &&
+            groups[index].activation == activation && !groups[index].applied &&
+            activation->State() == FrontierReceiptState::AudioStaging;
+        if (!descriptor.initialMediaWaitAllowed ||
+            (activation->State() != FrontierReceiptState::Pending && !ownStaging) ||
+            !(descriptor.entry == binding.entry) || !(descriptor.primary == binding.primary) ||
+            descriptor.worldGeneration != binding.operation.world ||
+            descriptor.order.executeFrame != binding.operation.order.executeFrame ||
+            descriptor.order.executeFrame != event.executeFrame) return false;
+        if (binding.role == FrontierGroupRole::Coordinator) return member.identity == descriptor.primary;
+        DecisionCommittedSnapshot coordinator{};
+        if (!decisions->CaptureCommitted(binding.entry.coordinator, &coordinator)) return false;
+        std::uint32_t matches = 0;
+        for (std::uint32_t index = 0; index < coordinator.participantCount; ++index) {
+            DecisionParticipantRef declared{};
+            if (!decisions->CaptureCommittedParticipant(binding.entry.coordinator, index, &declared)) return false;
+            matches += declared.kind == DecisionParticipantKind::Subdecision &&
+                declared.slot == member.identity.decision.slot && declared.generation == member.identity.decision.generation;
+        }
+        return matches == 1;
+    }
+
+    VariableReadCutStatus StartSourcesStatus(const ConsumedEvent& event) const noexcept {
+        const auto stream = voices.TimelineStreamStartStatus(event.armToken.renderSlot, event.armToken.renderGeneration);
+        if (stream == VariableReadCutStatus::Failed ||
+            (stream == VariableReadCutStatus::Waiting && !InitialMediaWaitAllowed(event)))
+            return VariableReadCutStatus::Failed;
+        const auto variables = voices.TimelineVariableSourcesStatus(event.armToken.renderSlot, event.armToken.renderGeneration);
+        if (variables == VariableReadCutStatus::Failed) return variables;
+        return stream == VariableReadCutStatus::Waiting || variables == VariableReadCutStatus::Waiting
+            ? VariableReadCutStatus::Waiting : VariableReadCutStatus::Applied;
+    }
+
+    bool StartSourceReady(const Event& event) const noexcept {
         return event.controller || event.voice.Kind() != TimelineEventKind::Start ||
-            voices.TimelineVariableSourcesStatus(event.source.armToken.renderSlot,
-                event.source.armToken.renderGeneration) == VariableReadCutStatus::Applied;
+            StartSourcesStatus(event.source) == VariableReadCutStatus::Applied;
     }
 
     VariableReadCutStatus CohortPublicationStatus(std::uint32_t groupIndex) const noexcept {
@@ -1353,10 +1410,21 @@ struct FrontierTimelineFinalizer::Impl {
         const auto& binding = *primary.view.frontier;
         const auto* activation = decisions->ResolveFrontierActivation(binding.entry.coordinator);
         if (activation == nullptr) return VariableReadCutStatus::Failed;
-        if (activation->SourceWaitSequence(binding.entry, quantum + 1u) == 0 &&
-            !activation->Descriptor().initialVariables.Valid())
-            return VariableReadCutStatus::Applied;
         bool waiting = false;
+        for (std::uint32_t i = 0; hasStreamStart && i < eventCount; ++i) {
+            const auto& event = events[i];
+            if (event.stop != nullptr || event.controller ||
+                event.voice.Kind() != TimelineEventKind::Start || event.group >= groupCount) continue;
+            const auto* member = groups[event.group].view.frontier;
+            if (member == nullptr || (event.group != groupIndex && !(member->entry == binding.entry) &&
+                !SameFrameEntryChild(*member, binding))) continue;
+            const auto status = StartSourcesStatus(event.source);
+            if (status == VariableReadCutStatus::Failed) return status;
+            waiting = waiting || status == VariableReadCutStatus::Waiting;
+        }
+        if (activation->SourceWaitSequence(binding.entry, quantum + 1u) == 0 &&
+            !activation->Descriptor().initialVariables.Valid() && !waiting)
+            return waiting ? VariableReadCutStatus::Waiting : VariableReadCutStatus::Applied;
         std::uint32_t memberCount = 0;
         for (std::uint32_t i = 0; i < groupCount; ++i) {
             const auto& member = groups[i].view;
@@ -1482,8 +1550,7 @@ struct FrontierTimelineFinalizer::Impl {
                 !(group.savedPending && event.disposition == kTimelineDispositionArmPending))
                 return VariableReadCutStatus::Failed;
             if (!event.controller && event.voice.Kind() == TimelineEventKind::Start) {
-                const auto status = voices.TimelineVariableSourcesStatus(event.source.armToken.renderSlot,
-                    event.source.armToken.renderGeneration);
+                const auto status = StartSourcesStatus(event.source);
                 if (status == VariableReadCutStatus::Failed) return status;
                 waiting = waiting || status == VariableReadCutStatus::Waiting;
             }
@@ -1530,8 +1597,7 @@ struct FrontierTimelineFinalizer::Impl {
                     return VariableReadCutStatus::Failed;
             }
             if (!event.controller && event.voice.Kind() == TimelineEventKind::Start) {
-                const auto status = voices.TimelineVariableSourcesStatus(
-                    event.source.armToken.renderSlot, event.source.armToken.renderGeneration);
+                const auto status = StartSourcesStatus(event.source);
                 if (status == VariableReadCutStatus::Failed) return status;
                 waiting = waiting || status == VariableReadCutStatus::Waiting;
             }
@@ -1567,7 +1633,7 @@ struct FrontierTimelineFinalizer::Impl {
 
     bool LaneVariableSourcesReady() const noexcept {
         for (std::uint32_t i = 0; i < eventCount; ++i)
-            if (events[i].stop == nullptr && !VariableSourceReady(events[i])) return false;
+            if (events[i].stop == nullptr && !StartSourceReady(events[i])) return false;
         return true;
     }
 
@@ -1630,6 +1696,7 @@ struct FrontierTimelineFinalizer::Impl {
     }
 
     void ApplyMode(Group& member) noexcept {
+        if (member.view.frontier->sourceOnly) return;
         if (member.transitionProof.Valid()) transitions->ApplyFrontier(member.transitionProof);
         if (member.view.frontier->variableSide.Valid()) {
             if (!member.variablePrelude) variableControls->ApplyFrontierSide(member.sideProof);
@@ -1996,6 +2063,7 @@ struct FrontierTimelineFinalizer::Impl {
     bool ProveModeMember(Group& member, const Group* primary) noexcept {
         const auto& binding = *member.view.frontier;
         member.firstCompletionProof = completionCount;
+        const bool sourceOnly = binding.sourceOnly;
         const bool variable = binding.variableSide.Valid();
         const bool queue = binding.queueInitial.Valid();
         const bool signal = binding.queueSignal.Valid();
@@ -2005,7 +2073,8 @@ struct FrontierTimelineFinalizer::Impl {
         member.conditionalQueueCompletion = naturalConditional && binding.role == FrontierGroupRole::Future &&
             member.view.identity.sliceIndex == 1u;
         if (static_cast<unsigned>(variable) + static_cast<unsigned>(queue) +
-            static_cast<unsigned>(signal) + static_cast<unsigned>(conditional) != 1 ||
+            static_cast<unsigned>(signal) + static_cast<unsigned>(conditional) +
+            static_cast<unsigned>(sourceOnly) != 1 ||
             (variable && variableControls == nullptr) || ((queue || signal || conditional) && queues == nullptr) ||
             (conditional && occurrences == nullptr)) return false;
         const DecisionParticipantRef participant = variable ?
@@ -2019,12 +2088,27 @@ struct FrontierTimelineFinalizer::Impl {
             (primary != nullptr && (!(binding.primary == primary->view.identity) || member.view.lease != primary->view.lease ||
                 binding.operation.order.executeFrame != primary->view.frontier->operation.order.executeFrame)) ||
             !decisions->CaptureCommitted(member.view.identity.decision, &decision) ||
-            !decisions->HasExclusiveParticipant(member.view.identity.decision, participant) ||
+            (!sourceOnly && !decisions->HasExclusiveParticipant(member.view.identity.decision, participant)) ||
             !armGroups->Capture(decision.armGroup, &armGroup) || armGroup.state != ArmGroupState::Ready ||
             armGroup.parent.slot != member.view.identity.decision.slot ||
             armGroup.parent.generation != member.view.identity.decision.generation ||
             armGroup.memberCount != member.view.memberCount || armGroup.ackedCount != member.view.memberCount)
             return false;
+        if (sourceOnly) {
+            if (!binding.Valid() || primary == nullptr || member.view.members == nullptr ||
+                member.view.memberCount == 0 || member.view.sourceControlCount != 0 ||
+                decision.sliceCount != 1u || member.view.identity.sliceIndex != 0u ||
+                decision.participantCount != member.view.memberCount ||
+                !(binding.operation.owner == primary->view.frontier->operation.owner)) return false;
+            // ArmGroup reservation proves unique immutable members. Preserve that exact order.
+            for (std::uint16_t index = 0; index < member.view.memberCount; ++index) {
+                DecisionParticipantRef actual{};
+                const auto token = member.view.members[index];
+                if (!decisions->CaptureCommittedParticipant(member.view.identity.decision, index, &actual) ||
+                    actual.kind != DecisionParticipantKind::TimelineArm ||
+                    actual.slot != token.slot || actual.generation != token.generation) return false;
+            }
+        }
         if (decision.transitionGate.Valid() != binding.transition.Valid()) return false;
         if (variable && decision.sliceCount == 2 &&
             (member.view.sourceControlCount != 0 || binding.sourceExit != nullptr)) {
@@ -2126,7 +2210,9 @@ struct FrontierTimelineFinalizer::Impl {
             member.queueSlice == QueueInstanceTable::FrontierConditionalSlice::Prelude && groupEvents == 1u;
         const bool conditionalCompletionOnly = member.conditionalQueueCompletion && primary == nullptr && controls == 0u &&
             groupEvents == ConditionalTargetEventCount(member.view, *immediateLane, immediateLaneSlot, immediateLaneGeneration);
-        if (controls != 1 && !(groupOnly && controls == 0) && !initialQueueSourceOnly && !initialQueueTargetOnly &&
+        if (sourceOnly && controls != 0u) return false;
+        const bool sourceEventsOnly = sourceOnly && controls == 0u;
+        if (controls != 1 && !sourceEventsOnly && !(groupOnly && controls == 0) && !initialQueueSourceOnly && !initialQueueTargetOnly &&
             !conditionalTargetOnly && !conditionalSourceOnly && !conditionalCompletionOnly) return false;
         for (std::uint16_t index = 0; index < member.view.memberCount; ++index) {
             const auto token = member.view.members[index];
@@ -2135,12 +2221,20 @@ struct FrontierTimelineFinalizer::Impl {
                 !SameArm(actual.token, token) || !actual.acked ||
                 (actual.tombstoned && !((member.initialQueueCompletion || member.conditionalQueueCompletion) && index == 0u))) return false;
             bool found = false;
+            std::uint32_t starts = 0;
             for (std::uint32_t event = 0; event < eventCount; ++event) {
                 const auto& candidate = events[event];
-                found = found || (candidate.stop == nullptr && candidate.source.frontier.group == member.view.identity &&
+                const bool matches = candidate.stop == nullptr && candidate.source.frontier.group == member.view.identity &&
                     candidate.source.frontier.kind == binding.operation.kind &&
-                    SameArm(candidate.source.armToken, token));
+                    SameArm(candidate.source.armToken, token);
+                found = found || matches;
+                if (sourceOnly && matches) {
+                    if (candidate.controller || (candidate.voice.Kind() != TimelineEventKind::Start &&
+                        candidate.voice.Kind() != TimelineEventKind::Envelope)) return false;
+                    starts += candidate.voice.Kind() == TimelineEventKind::Start;
+                }
             }
+            if (sourceOnly && starts != 1u) return false;
             const bool required = !member.delayedActivation &&
                 (!member.variablePrelude || index < member.view.sourceControlCount) &&
                 (!member.variableCompletion || index >= member.view.sourceControlCount) &&
@@ -2195,6 +2289,7 @@ struct FrontierTimelineFinalizer::Impl {
             completionCount - member.firstCompletionProof;
         if (!decisions->ValidateFrontierMemberDecisionApply(binding, *member.view.lease, quantum + 1u,
             &member.decisionProof)) return false;
+        if (sourceOnly) return true;
         if (variable) return variableControls->ProveFrontierSide(binding, *member.view.lease, &member.sideProof);
         if (member.initialQueueCompletion) {
             if (immediateLane == nullptr || decision.consumedSlices != 1u ||
@@ -3316,8 +3411,7 @@ struct FrontierTimelineFinalizer::Impl {
             duplicateStart = duplicateStart || (starts && event.voice.Kind() == TimelineEventKind::Start);
             starts = starts || event.voice.Kind() == TimelineEventKind::Start;
             const auto status = event.controller || event.voice.Kind() != TimelineEventKind::Start
-                ? VariableReadCutStatus::Applied : voices.TimelineVariableSourcesStatus(
-                    event.source.armToken.renderSlot, event.source.armToken.renderGeneration);
+                ? VariableReadCutStatus::Applied : StartSourcesStatus(event.source);
             failedSource = failedSource || status == VariableReadCutStatus::Failed;
             waiting = waiting || status == VariableReadCutStatus::Waiting || EarlierPending(event);
             valid = status == VariableReadCutStatus::Applied && valid;
@@ -3464,6 +3558,7 @@ bool FrontierTimelineFinalizer::Attach(DecisionTable& decisions,
     self.pendingGroups.Swap(pendingGroups);
     self.pendingEventCount = self.pendingGroupCount = 0;
     self.eventCount = self.groupCount = 0;
+    self.hasStreamStart = false;
     self.nextPendingWork = 1;
     self.participantCapacity = participantCapacity;
     self.participants = std::move(participants);
@@ -3523,6 +3618,7 @@ void FrontierTimelineFinalizer::Begin(std::uint64_t quantum, std::uint32_t frame
         std::construct_at(&self.groups[i]);
     }
     self.eventCount = self.groupCount = 0;
+    self.hasStreamStart = false;
     self.stagedLaneStartCount = 0;
     self.quantum = quantum;
     self.frames = frames;
@@ -3612,14 +3708,17 @@ VariableReadCutStatus FrontierTimelineFinalizer::VariableSourcesStatus(
     for (std::uint32_t index = 0; index < self.eventCount; ++index) {
         const auto& event = self.events[index];
         if (event.controller || event.stop != nullptr || event.voice.Kind() != TimelineEventKind::Start) continue;
-        const auto status = self.voices.TimelineVariableSourcesStatus(event.source.armToken.renderSlot,
-            event.source.armToken.renderGeneration);
+        const auto status = self.StartSourcesStatus(event.source);
         if (status == VariableReadCutStatus::Failed) return status;
         if (status == VariableReadCutStatus::Waiting && event.source.frontier.entry.Valid() &&
             !record(event.source.frontier.entry)) return VariableReadCutStatus::Failed;
         waiting = waiting || status == VariableReadCutStatus::Waiting;
     }
     return waiting ? VariableReadCutStatus::Waiting : VariableReadCutStatus::Applied;
+}
+
+VariableReadCutStatus FrontierTimelineFinalizer::StartSourcesStatus(const ConsumedEvent& event) const noexcept {
+    return impl_->StartSourcesStatus(event);
 }
 
 bool FrontierTimelineFinalizer::LaneEventOffset(const ConsumedEvent& event, std::uint16_t* outOffset) const noexcept {
@@ -3720,7 +3819,7 @@ bool FrontierTimelineFinalizer::PendingBindingValid(const ConsumedEvent& event,
         !(binding.entry == event.frontier.entry) || !(binding.operation.owner == event.frontier.owner) ||
         binding.operation.transport != event.frontier.transport || binding.operation.world != event.frontier.world ||
         activation == nullptr || activation->State() != FrontierReceiptState::Pending ||
-        !activation->Descriptor().initialVariables.Valid() ||
+        (!activation->Descriptor().initialVariables.Valid() && !self.InitialMediaWaitAllowed(event)) ||
         !(activation->Descriptor().entry == binding.entry) ||
         !(activation->Descriptor().primary == binding.primary) ||
         activation->Descriptor().order.executeFrame != binding.operation.order.executeFrame ||
@@ -3755,7 +3854,8 @@ bool FrontierTimelineFinalizer::PendingBindingValid(const ConsumedEvent& event,
             !(self.groups[primary].view.frontier->entry == binding.entry) ||
             self.groups[primary].view.lease != member.lease) return false;
     } else if (activation->SourceWaitSequence(binding.entry, self.quantum + 1u) == 0) return false;
-    return self.voices.PendingTimelineVariableReadMatchesArm(event.armToken);
+    return self.voices.PendingTimelineVariableReadMatchesArm(event.armToken) ||
+        (self.InitialMediaWaitAllowed(event) && self.voices.PendingTimelineSourceMatchesArm(event.armToken));
 }
 
 bool FrontierTimelineFinalizer::CollectEvent(const ConsumedEvent& source,

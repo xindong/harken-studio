@@ -130,6 +130,9 @@ struct StreamRing {
     std::atomic<std::uint32_t> winnerGeneration{0};
 
     std::atomic<StreamSlotState> state{StreamSlotState::Free};
+    // Logic publishes steady-I/O admission separately from ring ownership.
+    // Initial timeline starts observe this exact generation's promotion.
+    std::atomic<bool> startPromoted{false};
 
     // Init-time wiring; both real-time threads exist only after this.
     void Wire(float* const* storage, std::uint32_t cap) {
@@ -151,6 +154,7 @@ struct StreamRing {
             next = 1;
         }
         generation.store(next, std::memory_order_relaxed);
+        startPromoted.store(false, std::memory_order_relaxed);
         channelCount = channels;
         writeIndex.store(0, std::memory_order_relaxed);
         readIndex.store(0, std::memory_order_relaxed);

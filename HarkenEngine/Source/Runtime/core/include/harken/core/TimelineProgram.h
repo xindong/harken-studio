@@ -193,6 +193,7 @@ struct TimelineVoiceInstallDesc {
     std::uint32_t streamFlags = 0;
     std::uint64_t streamFrameCount = 0;
     std::uint64_t streamContentRevision = 0;
+    std::uint64_t streamSourceGeneration = 0;
     std::uint64_t streamLoopStartFrame = 0;
     std::uint64_t streamLoopEndFrame = 0;
     std::uint32_t bindingCount = 0;

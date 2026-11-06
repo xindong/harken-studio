@@ -210,11 +210,18 @@ public:
     void ApplyTimelineVariableInitializer(VariableTimelineInitializerProof& proof) noexcept;
     VariableReadCutStatus TimelineVariableSourcesStatus(std::uint32_t renderSlot,
         std::uint32_t renderGeneration) const noexcept;
+    VariableReadCutStatus TimelineStreamStartStatus(std::uint32_t renderSlot,
+        std::uint32_t renderGeneration) const noexcept;
+    bool TimelineStreamStartReady(std::uint32_t renderSlot, std::uint32_t renderGeneration) const noexcept;
+    VariableReadCutStatus TimelineStartSourcesStatus(std::uint32_t renderSlot,
+        std::uint32_t renderGeneration) const noexcept;
     VariableReadCutStatus TimelineStartSourcesStatus(const TimelineArmTable& arms,
         TimelineArmToken arm, bool* waitingPublication = nullptr) const noexcept;
     VariableReadCutStatus TimelineEntryVariableSourcesStatus(
         const FrontierActivationDescriptor& descriptor) const noexcept;
     bool PendingTimelineVariableReadMatchesArm(TimelineArmToken arm) const noexcept;
+    // Audio-consumer only: installation may have moved the original loan.
+    bool PendingTimelineSourceMatchesArm(TimelineArmToken arm) const noexcept;
     bool HasTimelineVariableSourceRead(std::uint32_t renderSlot,
         std::uint32_t renderGeneration) const noexcept;
     VariableTimelineReadUseRef TimelineVariableSourceRead(std::uint32_t renderSlot,

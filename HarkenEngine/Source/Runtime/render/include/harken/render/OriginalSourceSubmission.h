@@ -672,7 +672,7 @@ private:
         const PendingInstalledSourceRetirementReceipt& receipt, TimelineArmToken arm,
         VnVoiceHandle identity, VoiceReleaseObserver release, SourceTerminalToken terminal) const noexcept {
         if (!PendingInstalledSourceRetirementSettled(receipt, arm) || identity == 0 ||
-            !release.Valid() || !terminal.Valid() || receipt.release_.slot != release.slot ||
+            !release.Valid() || receipt.terminal_.Valid() != terminal.Valid() || receipt.release_.slot != release.slot ||
             receipt.release_.targetSequence != release.targetSequence || receipt.terminal_.slot != terminal.slot ||
             receipt.terminal_.generation != terminal.generation) return false;
         return receipt.owner_ != nullptr ? receipt.identity_ == identity
@@ -686,6 +686,14 @@ private:
                 receipt, arm, identity, release, receipt.terminal_)) return false;
         *out = receipt.terminal_;
         return true;
+    }
+
+    bool OwnsPendingInstalledSourceRetirementTerminal(const PendingInstalledSourceRetirementReceipt& receipt,
+        TimelineArmToken arm, SourceTerminalToken terminal, const SourceTerminalRecord& source) const noexcept {
+        return MatchesPendingInstalledSourceRetirementReceipt(receipt, arm) && terminal.Valid() &&
+            receipt.terminal_.slot == terminal.slot && receipt.terminal_.generation == terminal.generation &&
+            source.render == RenderOf(arm) && source.release.slot == receipt.release_.slot &&
+            source.release.targetSequence == receipt.release_.targetSequence;
     }
 
     void ObservePendingInstalledSourceTerminalReturn(PendingInstalledSourceRetirementReceipt& receipt,

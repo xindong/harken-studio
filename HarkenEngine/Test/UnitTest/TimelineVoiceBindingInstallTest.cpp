@@ -1,4 +1,5 @@
 #include "Common/ObjectIdTestSupport.h"
+#include "Common/StreamBuilder.h"
 #include "Engine.h"
 #include "PlayableRuntime.h"
 #include "Common/TestUtil.h"
@@ -874,13 +875,18 @@ TEST(TimelineVoiceInstall, BorrowedInputCopiesOnlyNativeFactsAndKeepsBindingSnap
 
 TEST(TimelineVoiceInstall, OutputCropUsesBoundPitchAndPreservesLoopOutroSamples) {
     for (const auto workers : {0u, 2u}) {
+      for (const bool streamed : {false, true}) {
         for (const auto offset : {192u, 448u, 704u}) {
             SCOPED_TRACE(workers);
+            SCOPED_TRACE(streamed);
             SCOPED_TRACE(offset);
             std::vector<float> reference;
             for (const bool crop : {false, true}) {
                 auto config = TimelineInstallConfig(8, kBlock, kRate);
                 config.renderWorkerCount = workers;
+                config.maxStreams = 1;
+                config.streamRingFrames = 4096;
+                config.prebufferMs = 4;
                 EngineSession session(config);
                 ASSERT_EQ(VN_OK, session.InitResult());
                 auto& engine = *session.Engine();
@@ -889,15 +895,40 @@ TEST(TimelineVoiceInstall, OutputCropUsesBoundPitchAndPreservesLoopOutroSamples)
                 std::vector<float> pcm(1024);
                 for (std::size_t i = 0; i < pcm.size(); ++i)
                     pcm[i] = 0.2f * std::sin(static_cast<float>(i) * 0.071f);
-                auto desc = MonoDesc(pcm, 44100);
-                ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &desc));
                 harken::TimelineVoiceInstallFacts facts{};
                 facts.soundId = kSound;
                 facts.outputBusId = VN_BUS_MASTER;
-                facts.capturedMedia = engine.registry.Lookup(kSound);
-                facts.capturedMedia.loop = {64, 256};
+                if (streamed) {
+                    harkentest::StreamSpec spec;
+                    spec.soundId = kSound;
+                    spec.sampleRate = 44100;
+                    spec.loopable = true;
+                    spec.loopStartFrame = 64;
+                    spec.loopEndFrame = 256;
+                    const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "compose_crop.stream").string();
+                    harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, pcm));
+                    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSound, path.c_str()));
+                    harken::StreamManager::StreamFacts source;
+                    ASSERT_TRUE(engine.streams.FindFile(kSound, &source));
+                    facts.streamed = true;
+                    facts.streamFileIndex = source.fileIndex;
+                    facts.streamSampleRate = source.sampleRate;
+                    facts.streamChannelCount = source.channelCount;
+                    facts.streamFlags = source.flags;
+                    facts.streamFrameCount = source.frameCount;
+                    facts.streamContentRevision = source.contentRevision;
+                    facts.streamSourceGeneration = source.sourceGeneration;
+                    facts.streamLoopStartFrame = source.loopStartFrame;
+                    facts.streamLoopEndFrame = source.loopEndFrame;
+                } else {
+                    auto desc = MonoDesc(pcm, 44100);
+                    ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &desc));
+                    facts.capturedMedia = engine.registry.Lookup(kSound);
+                    facts.capturedMedia.loop = {64, 256};
+                }
                 facts.loopCount = 3;
                 facts.pitchRatio = 1.25f;
+                facts.sourcePhase = {UINT64_C(3) << 61, 0};
                 facts.sourceOutputOffsetFrames = crop ? offset : 0;
                 harken::TimelineVoiceBindingInstall binding{};
                 binding.objectId = kSound;
@@ -920,6 +951,10 @@ TEST(TimelineVoiceInstall, OutputCropUsesBoundPitchAndPreservesLoopOutroSamples)
                 ASSERT_TRUE(engine.CaptureTimelineVoiceInstallIdentity(result.renderHandle, &installed));
                 EXPECT_GT(installed.initialSourceRatio, 1.25 * 44100.0 / 48000.0);
                 EXPECT_EQ(crop ? offset : 0u, facts.sourceOutputOffsetFrames);
+                if (streamed) {
+                    engine.streams.SyncServe();
+                    engine.streams.ServiceTransferredPreparations();
+                }
                 InstalledVoiceStart start;
                 ASSERT_NO_FATAL_FAILURE(start.Publish(engine, result.renderHandle, offset + kBlock));
                 if (!crop) engine.nullBackend.Pump(offset / kBlock);
@@ -945,6 +980,71 @@ TEST(TimelineVoiceInstall, OutputCropUsesBoundPitchAndPreservesLoopOutroSamples)
                 EXPECT_FALSE(engine.runtimeRecreateRequired);
             }
         }
+      }
+    }
+}
+
+TEST(TimelineVoiceInstall, OneFrameStreamRingRejectsMissingNeighborButAcceptsNaturalSingleFrameAndEmptyCrop) {
+    for (const auto workers : {0u, 2u}) for (const auto sourceFrames : {1u, 8u}) {
+        SCOPED_TRACE(::testing::Message() << "workers=" << workers << " frames=" << sourceFrames);
+        auto config = TimelineInstallConfig(2, kBlock, kRate);
+        config.renderWorkerCount = workers;
+        config.maxStreams = 1;
+        config.streamRingFrames = 1;
+        EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        const auto voicesBefore = engine.voices.AvailableSlotCount();
+        harkentest::StreamSpec spec;
+        spec.soundId = kSound;
+        const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "compose_ring_one.stream").string();
+        harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, std::vector<float>(sourceFrames, 0.25f)));
+        ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSound, path.c_str()));
+        harken::StreamManager::StreamFacts source;
+        ASSERT_TRUE(engine.streams.FindFile(kSound, &source));
+        harken::TimelineVoiceInstallFacts facts{};
+        facts.soundId = kSound;
+        facts.outputBusId = VN_BUS_MASTER;
+        facts.streamed = true;
+        facts.streamFileIndex = source.fileIndex;
+        facts.streamSampleRate = source.sampleRate;
+        facts.streamChannelCount = source.channelCount;
+        facts.streamFlags = source.flags;
+        facts.streamFrameCount = source.frameCount;
+        facts.streamContentRevision = source.contentRevision;
+        facts.streamSourceGeneration = source.sourceGeneration;
+        facts.sourceOutputOffsetFrames = sourceFrames;
+        const auto parent = engine.playableInstances.Acquire(harken::PlayableKind::Sound, 0);
+        ASSERT_NE(0u, parent);
+        const harken::TimelineVoiceInstallInput input{&facts};
+        for (unsigned attempt = 0; attempt < 4; ++attempt) {
+            const auto empty = harken::test::InstallTimelineVoiceStart(engine, input, parent, parent, parent, true);
+            ASSERT_EQ(VN_OK, empty.status);
+            EXPECT_TRUE(empty.emptySource);
+            EXPECT_EQ(0u, empty.renderHandle);
+            EXPECT_EQ(voicesBefore, engine.voices.AvailableSlotCount());
+            EXPECT_EQ(1u, engine.streams.FreeSlotCount());
+        }
+        facts.sourceOutputOffsetFrames = 0;
+        const auto installed = harken::test::InstallTimelineVoiceStart(engine, input, parent, parent, parent, true,
+            engine.timelinePool.PublishCutoffFrame());
+        if (sourceFrames != 1) {
+            EXPECT_EQ(VN_NO_STREAM, installed.status);
+            EXPECT_EQ(0u, installed.renderHandle);
+            EXPECT_EQ(voicesBefore, engine.voices.AvailableSlotCount());
+            EXPECT_EQ(1u, engine.streams.FreeSlotCount());
+            continue;
+        }
+        ASSERT_EQ(VN_OK, installed.status);
+        engine.streams.SyncServe();
+        engine.streams.ServiceTransferredPreparations();
+        InstalledVoiceStart start;
+        ASSERT_NO_FATAL_FAILURE(start.Publish(engine, installed.renderHandle, kBlock));
+        engine.nullBackend.Pump(1);
+        EXPECT_NEAR(0.25f, engine.nullBackend.LastBlock()[0], 0.00001f);
+        for (unsigned sample = 2; sample < kBlock * 2; ++sample)
+            EXPECT_FLOAT_EQ(0.0f, engine.nullBackend.LastBlock()[sample]);
+        EXPECT_FALSE(engine.runtimeRecreateRequired);
     }
 }
 
