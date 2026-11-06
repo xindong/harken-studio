@@ -17107,6 +17107,12 @@ bool MatchesPrivateScheduleSuccessorCancellation(
 }
 
 
+bool IsTransportResetCancellation(const harken::EnginePlayableServiceRow& row) noexcept {
+    return row.phase == harken::EnginePlayableStartPhase::Cancelling &&
+        row.controlReason == harken::PlayableControlReason::None && row.InvocationValid() &&
+        row.Invocation().actionTerminalReason == harken::ActionTerminalReason::TransportReset;
+}
+
 bool ObserveScheduleAggregateChildBeforeRetire(
     harken::Engine& engine, const harken::EnginePlayableServiceRow& row,
     const harken::EngineActionPlayScratch* privateScheduleOwner) noexcept {
@@ -17126,14 +17132,16 @@ bool ObserveScheduleAggregateChildBeforeRetire(
     auto outcome = view.terminalOutcome;
     if (outcome.kind == harken::PlayableTerminalKind::None) {
         // Cancellation has no Source-natural receipt; preserve its actual terminal cause.
+        const bool transportReset = IsTransportResetCancellation(row);
         if (row.controlReason == harken::PlayableControlReason::Natural ||
-            row.controlReason == harken::PlayableControlReason::None) return false;
-        outcome.kind = row.controlReason == harken::PlayableControlReason::StopRequested
+            (row.controlReason == harken::PlayableControlReason::None && !transportReset)) return false;
+        outcome.kind = transportReset ? harken::PlayableTerminalKind::ReplacementReset
+            : row.controlReason == harken::PlayableControlReason::StopRequested
             ? harken::PlayableTerminalKind::RequestedStop
             : row.controlReason == harken::PlayableControlReason::ContentRevision
                 ? harken::PlayableTerminalKind::ReplacementReset
                 : harken::PlayableTerminalKind::Failure;
-        outcome.resultCode = outcome.kind == harken::PlayableTerminalKind::RequestedStop
+        outcome.resultCode = transportReset || outcome.kind == harken::PlayableTerminalKind::RequestedStop
             ? VN_OK : VN_RUNTIME_RECREATE_REQUIRED;
         outcome.reasonCode = static_cast<std::uint32_t>(row.controlReason);
     }
@@ -17196,7 +17204,8 @@ bool RetirePlayableRoot(harken::Engine& engine,
         if (publicOwner) (void)engine.playableInstances.CaptureRetirementObserver(
             treeRoot, &stopObserver);
         const harken::PlayableTerminalKind terminalKind =
-            row.controlReason == harken::PlayableControlReason::StopRequested
+            IsTransportResetCancellation(row) ? harken::PlayableTerminalKind::ReplacementReset
+            : row.controlReason == harken::PlayableControlReason::StopRequested
                 ? harken::PlayableTerminalKind::RequestedStop
                 : row.controlReason == harken::PlayableControlReason::
                           ContentRevision
@@ -37774,7 +37783,15 @@ bool FailQueueForInvalidation(
     harken::PlayableControlReason controlReason) noexcept {
     harken::QueueFailureDisposition disposition =
         harken::QueueFailureDisposition::Stale;
-    if (row.queueContinuationPrepared && row.QueueFiling().queueDecision.Valid() &&
+    if (row.HasFeatureArrays() && row.QueuePayload().nativeTransitionPending) {
+        // The native transition retains its filing until its own abort fences return.
+        disposition = row.QueueFiling().queueConditional.Valid()
+            ? engine.queueInstances.FailContainer(row.queueInstance, row.QueueFiling().queueConditional,
+                activation, failureReason, failureFrame)
+            : engine.queueInstances.FailContainerBeforeConditional(row.queueInstance, failureReason, failureFrame);
+        if (disposition == harken::QueueFailureDisposition::Stale ||
+            disposition == harken::QueueFailureDisposition::DeferredByFrontier) return false;
+    } else if (row.queueContinuationPrepared && row.QueueFiling().queueDecision.Valid() &&
         row.QueueFiling().queueConditional.Valid()) {
         disposition = engine.queueInstances.FailContainer(
             row.queueInstance, row.QueueFiling().queueConditional,
@@ -54901,20 +54918,43 @@ bool CanSuspendStartedScheduleSound(harken::Engine& engine,
     const harken::EnginePlayableServiceRow& row) noexcept {
     auto ancestor = row.parentService;
     if (!ancestor.Valid()) return false;
+    const auto* pathChild = &row;
     for (std::size_t depth = 0; ancestor.Valid() && depth < engine.playableServices.size(); ++depth) {
         const auto* parent = engine.ResolvePlayableService(ancestor);
         if (parent == nullptr || parent->invocation != row.invocation ||
             parent->invocationGeneration != row.invocationGeneration ||
-            (parent->root.kind != harken::PlayableKindV1::Track &&
-             parent->root.kind != harken::PlayableKindV1::Segment) ||
-            parent->scheduleAggregate == nullptr || !parent->scheduleAggregate->committed ||
-            parent->scheduleAggregate->ordinary != nullptr || parent->queueMode ||
-            parent->variableControlInstance.Valid() || parent->ordinaryLifecycleOwned ||
+            parent->variableControlInstance.Valid() ||
             parent->phase != harken::EnginePlayableStartPhase::Started ||
             parent->controlLifecycle != harken::PlayableControlLifecycle::Active ||
             parent->controlReason != harken::PlayableControlReason::None ||
             !HasNoPendingStartedSoundWork(*parent) || parent->nativeEntryDependency != nullptr)
             return false;
+        if (parent->queueMode) {
+            const auto* current = parent->scheduleTerminalChild.get();
+            const auto owner = engine.playableInstances.Classify(parent->ownerInstance);
+            const auto child = engine.playableInstances.Classify(pathChild->ownerInstance);
+            harken::ContainerPlaybackRow playback{};
+            if (parent->root.kind != harken::PlayableKindV1::Container ||
+                !parent->ordinaryLifecycleOwned || parent->scheduleAggregate != nullptr ||
+                !parent->HasFeatureArrays() || !IsNativeScheduleContainerWrapper(engine, *parent) ||
+                parent->queueContinuationPrepared || parent->QueuePayload().queueCurrentScheduleLeafCount != 0 ||
+                parent->queueAbortRequested || parent->queueCleanupStarted || parent->terminalObserved ||
+                current == nullptr || !current->lifecycleOwned || current->logicalComplete ||
+                current->resourcesReleased || current->pendingEntry || current->queueRetiringOccurrence.generation != 0 ||
+                !harken::Engine::SameSelectionServiceReference(current->service, PlayableServiceReference(*pathChild)) ||
+                !owner.live || owner.scheduleEpoch != parent->ownerEpoch ||
+                !child.live || child.scheduleEpoch != pathChild->ownerEpoch || child.parent != parent->ownerInstance ||
+                !engine.containerPlayback.Capture(parent->ownerInstance, &playback) ||
+                playback.expectedScheduleEpoch != parent->ownerEpoch ||
+                playback.activeChild != pathChild->ownerInstance || playback.activeChildEpoch != pathChild->ownerEpoch)
+                return false;
+        } else if ((parent->root.kind != harken::PlayableKindV1::Track &&
+                    parent->root.kind != harken::PlayableKindV1::Segment) ||
+                   parent->scheduleAggregate == nullptr || !parent->scheduleAggregate->committed ||
+                   parent->scheduleAggregate->ordinary != nullptr || parent->ordinaryLifecycleOwned) {
+            return false;
+        }
+        pathChild = parent;
         ancestor = parent->parentService;
     }
     if (ancestor.Valid() || !harken::Engine::SameSelectionServiceReference(ancestor, {})) return false;
@@ -78470,6 +78510,19 @@ static PlayableControlStatus BeginPlayableCancellation(
     if (row == nullptr) {
         return PlayableControlStatus::InvalidHandle;
     }
+    if (contentRevision || transportReset) {
+        auto ancestor = row->parentService;
+        for (std::size_t depth = 0; ancestor.Valid() && depth < engine.playableServices.size(); ++depth) {
+            const auto* parent = engine.ResolvePlayableService(ancestor);
+            if (parent == nullptr) break;
+            // Keep descendants intact until the native Queue accepts cancellation.
+            if (parent->queueMode && parent->HasFeatureArrays() && parent->QueuePayload().nativeTransitionPending &&
+                !parent->queueAbortRequested && parent->phase != EnginePlayableStartPhase::Cancelling &&
+                parent->controlLifecycle != PlayableControlLifecycle::Cancelling)
+                return PlayableControlStatus::Backpressure;
+            ancestor = parent->parentService;
+        }
+    }
     if (!preflightOnly) {
         // A later refusal still safely leaves the original polling path enabled.
         WakePlayableServiceTree(engine, *row);
@@ -79235,6 +79288,18 @@ engine.runtimeRecreateRequired = true;
     }
     if (!preflightOnly && row->ordinaryStartTransaction.Valid())
         (void)CaptureOrdinaryUnpublishedStartProof(engine, *row);
+    const auto invalidateQueue = [&]() noexcept {
+        const auto blocks = engine.mixer.BlocksRendered();
+        const auto frame = blocks > UINT64_MAX / engine.config.blockFrames
+            ? UINT64_MAX : blocks * engine.config.blockFrames;
+        return contentRevision ? FailQueueForWorldReplacement(engine, *row, frame)
+                               : FailQueueForTransportReset(engine, *row, frame);
+    };
+    const bool nativeQueueInvalidation = (contentRevision || transportReset) && row->queueMode &&
+        row->HasFeatureArrays() && row->QueuePayload().nativeTransitionPending;
+    // A pending activation may need its normal settlement before cancellation.
+    // A retry must not change the epoch of that still-owned native subtree.
+    if (nativeQueueInvalidation && !invalidateQueue()) return PlayableControlStatus::Backpressure;
     const IssueResult epoch =
         engine.playableInstances.BumpScheduleEpochChecked(instance, MonitorCauseForInstance(engine, instance, cause));
     if (epoch.status != IssueStatus::Ok) {
@@ -79250,19 +79315,8 @@ engine.runtimeRecreateRequired = true;
         return PlayableControlStatus::Backpressure;
     }
 
-    if ((contentRevision || transportReset) && row->queueMode) {
-        const std::uint64_t blocks = engine.mixer.BlocksRendered();
-        const std::uint64_t failureFrame =
-            blocks > UINT64_MAX / engine.config.blockFrames
-                ? UINT64_MAX
-                : blocks * engine.config.blockFrames;
-        const bool failed = contentRevision
-            ? FailQueueForWorldReplacement(engine, *row, failureFrame)
-            : FailQueueForTransportReset(engine, *row, failureFrame);
-        if (!failed) {
-            return PlayableControlStatus::Backpressure;
-        }
-    }
+    if ((contentRevision || transportReset) && row->queueMode && !nativeQueueInvalidation &&
+        !invalidateQueue()) return PlayableControlStatus::Backpressure;
 
     if ((contentRevision || transportReset) && row->Invocation().actionFiring != 0 &&
         !engine.actionFirings.MarkTreeStopping(

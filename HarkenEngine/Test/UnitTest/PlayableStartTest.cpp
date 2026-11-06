@@ -33597,7 +33597,10 @@ TEST(PlayableStart, MusicQueueCropsAcrossEntriesAndRestoresEachBodyPass) {
 }
 
 TEST(PlayableStart, DefaultMusicQueueRepeatsCompleteSegmentsWithoutGapsAndReclaims) {
+    for (const unsigned control : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u})
     for (const unsigned workers : {0u, 2u}) {
+        SCOPED_TRACE(control);
+        SCOPED_TRACE(workers);
         auto config = harkentest::MakeNullConfig(32, 64, 48000);
         config.renderWorkerCount = workers;
         harkentest::EngineSession session(config);
@@ -33673,30 +33676,166 @@ TEST(PlayableStart, DefaultMusicQueueRepeatsCompleteSegmentsWithoutGapsAndReclai
         install.playableOccurrences = occurrences.data(); install.playableOccurrenceCount = occurrences.size();
         install.trackSchedules = &music.track; install.trackScheduleCount = 1;
         install.segmentSchedules = &music.segment; install.segmentScheduleCount = 1;
+        harken::ActionStepProgramViewV1 stopStep{};
+        stopStep.opcode = harken::ActionOpcodeV1::Stop;
+        stopStep.scope = harken::ActionScopeV1::Global;
+        stopStep.delay = {harken::AuthoredTimeDomainV1::AbsoluteNanoseconds, control == 3 ? 2000000 : 0, 1};
+        stopStep.fade = stopStep.cooldown = {harken::AuthoredTimeDomainV1::AbsoluteNanoseconds, 0, 1};
+        stopStep.target = {harken::ActionTargetKindV1::Container, 0, queue.Root().stableId,
+            queue.Root().expectedProgramSemanticFingerprint};
+        harken::ActionProgramViewV1 action{};
+        action.actionStableId = harkentest::ObjectId(10004);
+        action.steps = &stopStep;
+        action.stepCount = action.expandedStepOccurrenceCount = action.expandedFiringCount = 1;
+        action.directFeatureMask = action.transitiveFeatureMask = control == 3 ? 1u : 0u;
+        action.programSemanticFingerprint = harken::ComputeActionProgramFingerprintV1(action);
+        auto playStep = stopStep;
+        playStep.opcode = harken::ActionOpcodeV1::Play;
+        playStep.delay = {harken::AuthoredTimeDomainV1::AbsoluteNanoseconds, 0, 1};
+        std::array<harken::ActionProgramViewV1, 2> actions{action, action};
+        actions[1].actionStableId = harkentest::ObjectId(10005);
+        actions[1].steps = &playStep;
+        actions[1].directFeatureMask = actions[1].transitiveFeatureMask = 0;
+        actions[1].programSemanticFingerprint = harken::ComputeActionProgramFingerprintV1(actions[1]);
+        install.actions = actions.data();
+        install.actionCount = static_cast<std::uint32_t>(actions.size());
         install.identity.capabilityMask = harken::detail::ComputeCurrentWorldLocalCapabilityMaskV1(install);
         install.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV6(install);
         ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(*engine, install).status);
         for (unsigned cycle = 0; cycle < 2; ++cycle) {
             harken::PlayableStartRequest request{};
             request.root = queue.Root();
-            const auto started = harken::StartPlayable(*engine, request);
-            ASSERT_EQ(harken::PlayableStartStatus::Accepted, started.status);
+            harken::PlayableInstanceHandle instance = 0;
+            VnActionFiringHandle playFiring = 0;
+            if (control == 2 || control == 3) {
+                VnPostActionDesc post{};
+                post.structSize = sizeof(post);
+                post.actionId = actions[1].actionStableId;
+                ASSERT_EQ(VN_OK, Vn_PostAction(&post, &playFiring));
+                VnActionStepResult played{};
+                played.structSize = sizeof(played);
+                ASSERT_EQ(VN_OK, Vn_QueryActionStep(playFiring, 0, &played));
+                instance = played.producedPlayableInstance;
+                ASSERT_NE(0u, instance);
+            } else {
+                const auto started = harken::StartPlayable(*engine, request);
+                ASSERT_EQ(harken::PlayableStartStatus::Accepted, started.status);
+                instance = started.instance;
+            }
             const auto service = std::find_if(engine->playableServices.begin(), engine->playableServices.end(),
-                [&](const auto& row) { return row.ownerInstance == started.instance; });
+                [&](const auto& row) { return row.ownerInstance == instance; });
             ASSERT_NE(engine->playableServices.end(), service);
             const auto start = service->startFrame;
+            bool sawSleepingSound = false;
+            VnActionFiringHandle stopFiring = 0;
+            std::uint64_t resetFrame = 0;
+            auto resetStatus = harken::RuntimeTransportResetStatus::Backpressure;
+            auto replacementStatus = harken::WorldInstallStatus::Backpressure;
             for (unsigned block = 0; block < 200; ++block) {
                 ASSERT_EQ(VN_OK, Vn_Update());
+                for (const auto& leaf : engine->playableServices) {
+                    if (leaf.phase != harken::EnginePlayableStartPhase::Started ||
+                        leaf.root.kind != harken::PlayableKindV1::Sound) continue;
+                    const auto identity = engine->CapturePlayableServiceWorkIdentity(leaf.identity.slot);
+                    auto cursor = leaf.identity.slot;
+                    const auto dirty = engine->playableServiceWork.Next(harken::RuntimeActivitySet::Dirty,
+                        &cursor, [&](std::uint32_t slot) noexcept {
+                            return engine->CapturePlayableServiceWorkIdentity(slot);
+                        });
+                    if (dirty == identity) continue;
+                    sawSleepingSound = true;
+                    auto parentCursor = service->identity.slot;
+                    EXPECT_EQ(engine->CapturePlayableServiceWorkIdentity(service->identity.slot),
+                        engine->playableServiceWork.Next(harken::RuntimeActivitySet::Dirty,
+                            &parentCursor, [&](std::uint32_t slot) noexcept {
+                                return engine->CapturePlayableServiceWorkIdentity(slot);
+                            }));
+                }
+                if (control != 0 && block == 10) {
+                    ASSERT_TRUE(sawSleepingSound);
+                    auto before = engine->mixer.BlocksRendered();
+                    if (control == 1) {
+                        ASSERT_EQ(harken::PlayableControlStatus::Ok,
+                            harken::StopPlayable(*engine, instance, 0));
+                    } else if (control >= 4) {
+                        if (control == 5 || control == 7) {
+                            harken::QueueInstanceSnapshot pending{};
+                            bool activated = false;
+                            for (unsigned step = 0; step < 64 && !activated; ++step) {
+                                ASSERT_EQ(VN_OK, Vn_Update());
+                                engine->nullBackend.Pump(1);
+                                ASSERT_TRUE(engine->queueInstances.Capture(service->queueInstance, &pending));
+                                activated = pending.pendingActivation == harken::ConditionalQueueActivation::Activated;
+                            }
+                            ASSERT_TRUE(activated);
+                            before = engine->mixer.BlocksRendered();
+                        }
+                        std::vector<std::pair<harken::PlayableInstanceHandle, std::uint64_t>> epochs;
+                        if (control == 5 || control == 7) {
+                            for (const auto& member : engine->playableServices) {
+                                if (member.phase == harken::EnginePlayableStartPhase::Free) continue;
+                                const auto view = engine->playableInstances.Classify(member.ownerInstance);
+                                if (view.live) epochs.emplace_back(member.ownerInstance, view.scheduleEpoch);
+                            }
+                        }
+                        if (control >= 6) {
+                            actions[1].actionStableId = harkentest::ObjectId(10006 + cycle);
+                            actions[1].programSemanticFingerprint = harken::ComputeActionProgramFingerprintV1(actions[1]);
+                            install.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV6(install);
+                            replacementStatus = harken::InstallContainerWorldV1(*engine, install).status;
+                            ASSERT_EQ(harken::WorldInstallStatus::Backpressure, replacementStatus);
+                        } else {
+                            resetFrame = before * 64;
+                            resetStatus = harken::BeginRuntimeTransportReset(*engine, resetFrame);
+                            ASSERT_EQ(harken::RuntimeTransportResetStatus::Backpressure, resetStatus);
+                        }
+                        for (const auto& [owner, epoch] : epochs) {
+                            const auto view = engine->playableInstances.Classify(owner);
+                            EXPECT_TRUE(view.live);
+                            EXPECT_EQ(epoch, view.scheduleEpoch);
+                        }
+                    } else {
+                        VnPostActionDesc post{};
+                        post.structSize = sizeof(post);
+                        post.actionId = action.actionStableId;
+                        ASSERT_EQ(VN_OK, Vn_PostAction(&post, &stopFiring));
+                        VnActionStepResult stopped{};
+                        stopped.structSize = sizeof(stopped);
+                        ASSERT_EQ(VN_OK, Vn_QueryActionStep(stopFiring, 0, &stopped));
+                        ASSERT_EQ(1u, stopped.capturedPlayableCount);
+                    }
+                    ASSERT_EQ(VN_OK, Vn_Update());
+                    ASSERT_EQ(before, engine->mixer.BlocksRendered());
+                    if (control != 3 && control != 5 && control != 7) {
+                        for (const auto& leaf : engine->playableServices)
+                            if (leaf.phase != harken::EnginePlayableStartPhase::Free &&
+                                leaf.root.kind == harken::PlayableKindV1::Sound)
+                                EXPECT_NE(harken::PlayableControlLifecycle::Active, leaf.controlLifecycle);
+                    }
+                }
                 const auto frame = engine->mixer.BlocksRendered() * 64;
                 engine->nullBackend.Pump(1);
                 for (unsigned sample = 0; sample < 64; ++sample) {
                     const auto age = frame + sample >= start ? frame + sample - start : UINT64_MAX;
-                    const float expected = age < 9600 ? 4.0f * pcm[age % 1600] : 0.0f;
+                    // Preserve full natural Queue PCM checks; allow the existing stop declick.
+                    if (control != 0 && block >= 10 && block < 26) continue;
+                    const float expected = control != 0 && block >= 26 ? 0.0f
+                        : age < 9600 ? 4.0f * pcm[age % 1600] : 0.0f;
                     ASSERT_NEAR(expected, engine->nullBackend.LastBlock()[sample * 2], 1e-6f)
                         << "age=" << age << " cycle=" << cycle << " workers=" << workers;
                 }
                 ASSERT_EQ(VN_OK, Vn_Update());
+                if ((control == 4 || control == 5) && block >= 10 &&
+                    resetStatus == harken::RuntimeTransportResetStatus::Backpressure)
+                    resetStatus = harken::BeginRuntimeTransportReset(*engine, resetFrame);
+                if (control >= 6 && block >= 10 && replacementStatus == harken::WorldInstallStatus::Backpressure)
+                    replacementStatus = harken::InstallContainerWorldV1(*engine, install).status;
             }
+            if (control == 4 || control == 5) EXPECT_EQ(harken::RuntimeTransportResetStatus::Complete, resetStatus);
+            if (control >= 6) EXPECT_EQ(harken::WorldInstallStatus::Ok, replacementStatus);
+            if (stopFiring != 0) EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(stopFiring));
+            if (playFiring != 0) EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(playFiring));
+            EXPECT_TRUE(sawSleepingSound) << "cycle=" << cycle << " workers=" << workers;
             EXPECT_FALSE(engine->runtimeRecreateRequired);
             EXPECT_EQ(0u, engine->playableInstances.LiveCount());
             EXPECT_EQ(0u, engine->playablePartitions.OccupiedCount());
