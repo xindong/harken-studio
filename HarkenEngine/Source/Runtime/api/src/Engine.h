@@ -2060,6 +2060,9 @@ struct EngineSourceExit {
     QueuePageConditionalReceiver queueReceiver;
     EngineQueueChainFuture queueChain;
     std::unique_ptr<EngineOwnedQueueFutureFiling> queueFollowingFiling;
+    Plan03GroupSliceIdentity targetAdmission{};
+    DecisionFuturePin sourceAdmissionLifetime{};
+    Plan03GroupReaderPin sourceAdmissionReader{};
     DecisionFuturePin lifetime{};
     Plan03GroupReaderPin reader{};
     bool cancellationAccepted = false;
@@ -5250,6 +5253,7 @@ struct EngineActionPlayScratch {
     std::uint32_t initialFrontierParticipantCount = 0;
     EngineFrontierAttemptToken queueSignalEntryOwner{};
     EngineFrontierAttemptToken initialNativeForestOwner{};
+    ParentAudioGroupRef initialExternalAdmission{};
     EngineScheduleChildAttemptOwnerContext* scheduleParentOwner = nullptr;
     EnginePlayableServiceReference nativeEntrySeedService{};
     bool nativeEntryForestRoot = false;

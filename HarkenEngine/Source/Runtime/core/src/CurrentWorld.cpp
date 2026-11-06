@@ -1420,11 +1420,12 @@ bool QueueTransitionEndpointSupported(const WorldView& world,
                 return detail::MusicSourceValidationOwnerV1{&world, composite != nullptr
                     ? composite->segments : std::span<const std::uint32_t>{}};
             };
-            auto shape = *rule;
-            shape.sourceExit = TransitionSourceExitV1::NaturalEnd;
+            // Boundary ownership belongs to the source. A native target may
+            // contain several stems or have no music clock of its own.
+            const bool singleSoundEnd = from.kind == PlayableKindV1::Sound &&
+                rule->sourceExit == TransitionSourceExitV1::NaturalEnd;
             if (rule->sourceExit < TransitionSourceExitV1::NaturalEnd ||
-                !detail::TransparentMusicSourceCompatibleV1(child.playable, shape, resolve) ||
-                !detail::TransparentMusicSourceCompatibleV1(from, *rule, resolve)) return false;
+                (!singleSoundEnd && !detail::TransparentMusicSourceCompatibleV1(from, *rule, resolve))) return false;
         }
         return true;
     }
