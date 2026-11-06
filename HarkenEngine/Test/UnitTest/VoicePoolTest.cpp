@@ -2108,6 +2108,12 @@ TEST(VoicePool, ProfessionalStreamSeekAndParkResumeReuseWorkingSet) {
         return (static_cast<std::uint64_t>(ring.generation.load()) << 32u) | slot;
     };
     VnVoiceHandle voice = 0;
+    const harken::ExactSourcePhase half{1ull << 63, 0};
+    EXPECT_EQ(VN_INVALID_ARG, engine.voices.PlayStream(&rings[0], 1, kSampleRate,
+        kBlockFrames, 0, 1, 0, false, 0, 0, 0, pan,
+        0, 65536, 0, 65536, 1, profile, &voice, 1, UINT32_MAX, 0, nullptr,
+        0, false, 1, half));
+    EXPECT_EQ(0u, engine.voices.ActiveCount());
     ASSERT_EQ(VN_OK, engine.voices.PlayStream(&rings[0], 1, kSampleRate,
         kBlockFrames, 0, 1, 0, false, 0, 0, 0, pan,
         0, 65536, 0, 65536, 1, profile, &voice));
@@ -2156,6 +2162,11 @@ TEST(VoicePool, ProfessionalStreamSeekAndParkResumeReuseWorkingSet) {
     const auto* saved = engine.voices.ResolveParkOwnedToken(outcome.token);
     ASSERT_NE(nullptr, saved);
     EXPECT_EQ(profile, saved->profile);
+    EXPECT_EQ(VN_INVALID_ARG, engine.voices.PlayStream(&rings[2], 1, kSampleRate,
+        kBlockFrames, 0, 1.5, 0, false, 0, 0, 0, pan,
+        0, 65536, 0, 65536, 1, profile, &voice, 1, UINT32_MAX, 0, &outcome.token,
+        0, false, 1, half));
+    EXPECT_EQ(0u, engine.voices.ActiveCount());
     ASSERT_EQ(VN_OK, engine.voices.PlayStream(&rings[2], 1, kSampleRate,
         kBlockFrames, 0, 1.5, 0, false, 0, 0, 0, pan,
         0, 65536, 0, 65536, 1, profile, &voice, 1, UINT32_MAX, 0, &outcome.token));

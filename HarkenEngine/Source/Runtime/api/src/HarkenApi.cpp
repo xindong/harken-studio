@@ -8412,7 +8412,7 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
                     engine.config.mixRate.SampleRate()),
                 &render, bus.generation, ~std::uint32_t{0}, 0, nullptr,
                 install.outputBusVolumeDb, true,
-                install.spatializationMix);
+                install.spatializationMix, install.sourcePhase);
             if (play == VN_OK) {
                 play = engine.streams.ActivateSlot(
                     streamSlot, streamFacts.fileIndex,
