@@ -25,6 +25,7 @@
         <file alias="bus.svg">Resources/icons/bus.svg</file>
         <file alias="layer.svg">Resources/icons/layer.svg</file>
         <file alias="attenuation.svg">Resources/icons/attenuation.svg</file>
+        <file alias="effect.svg">Resources/icons/effect.svg</file>
         <file alias="chat.svg">Resources/icons/chat.svg</file>
         <file alias="check-black.png">Resources/icons/check-black.png</file>
         <file alias="check-black@2x.png">Resources/icons/check-black@2x.png</file>
