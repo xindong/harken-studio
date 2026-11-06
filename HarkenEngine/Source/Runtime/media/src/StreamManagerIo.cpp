@@ -503,7 +503,12 @@ void StreamManager::DispatchIo() {
                                 m_files[slot.fileIndex]->toc.sampleRate;
             if (time < leastTime) { selected = &slot; leastTime = time; }
         }
-        if (!selected) continue;
+        if (!selected) {
+            // Remaining steady choices observe the same eligibility set.
+            // The preparation choice must still yield to steady work.
+            if (steady) break;
+            continue;
+        }
         auto& slot = *selected;
         auto cursor = BeginSlotService(slot);
         cursor.maxServeFrames = static_cast<std::uint32_t>(std::min<std::uint64_t>(
