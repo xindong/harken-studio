@@ -45,21 +45,19 @@ QJsonObject inputSchema(const QJsonObject& parameters)
 
 bool commandSupportedByHost(CommandHost host, const QString& name, bool requiresDesktop)
 {
-    if (host == CommandHost::Desktop) return true;
-    if (requiresDesktop) return false;
+    if (host == CommandHost::Cli && requiresDesktop) return false;
 #ifndef HARKEN_HAS_LMDB
     if (name == QStringLiteral("search_fulltext") || name == QStringLiteral("search_status")
         || name == QStringLiteral("run_search_benchmark"))
         return false;
 #endif
     static const QSet<QString> unavailable{
-        "batch", "ai_event", "ai_response", "observe", "unobserve",
         "create_pack", "rename_pack", "delete_pack",
         "set_platform_profile", "set_target_platforms", "set_voice_language", "set_preferred_format",
         "get_object_audio_status", "get_cpu_budget_state", "get_render_plan",
         "audition_get_position", "audition_get_speed", "audition_set_speed",
         "bind_attenuation_to_object", "unbind_attenuation_from_object", "set_attenuation_distance_scaling",
-        "list_named_layouts", "get_selected_bus", "set_send_filter", "get_send_filter",
+        "set_send_filter", "get_send_filter",
         "link_capture_start", "link_capture_stop", "link_get_status", "link_mute_bus",
         "link_pause_engine", "link_post_action", "link_resume_engine", "link_set_property",
         "link_solo_bus", "link_stop_all",
@@ -88,7 +86,11 @@ bool commandSupportedByHost(CommandHost host, const QString& name, bool requires
         "spatial_set_smoothing", "spatial_set_load_balancing", "spatial_set_game_object_radius",
         "get_binaural_status"
     };
-    return !unavailable.contains(name);
+    if (unavailable.contains(name)) return false;
+    static const QSet<QString> desktopOnly{
+        "batch", "ai_event", "ai_response", "observe", "unobserve"
+    };
+    return host == CommandHost::Desktop || !desktopOnly.contains(name);
 }
 
 QJsonObject describeEditorCommand(const QString& name, const IPCServer* dispatcher)
@@ -98,12 +100,55 @@ QJsonObject describeEditorCommand(const QString& name, const IPCServer* dispatch
     const bool handler = dispatcher && dispatcher->hasCommandHandler(name);
     QJsonObject result{
         {QStringLiteral("command"), name},
-        {QStringLiteral("registered"), action != nullptr || handler},
+        {QStringLiteral("registered"), dispatcher && commandSupportedByHost(
+            dispatcher->commandHost(), name, dispatcher->commandRequiresDesktop(name))
+            && (action != nullptr || handler)},
         {QStringLiteral("readOnly"), dispatcher && dispatcher->isReadOnlyCommand(name)},
         {QStringLiteral("requiresDesktop"), dispatcher && dispatcher->commandRequiresDesktop(name)}
     };
     QJsonObject parameters;
-    if (spec && (!spec->argumentSchema.isEmpty() || !action || action->paramSchema.isEmpty())) {
+    static const QMap<QString, QString> descriptions{
+        {"list_commands", "List commands implemented by this host and their parameter schemas."},
+        {"get_command_schema", "Describe one command implemented by this host."},
+        {"compare_files", "Compare two files byte for byte without decoding audio."},
+        {"get_exec_errors", "Read recent engine execution errors without clearing them."},
+        {"clear_exec_errors", "Clear recent engine execution errors in the requested domain."},
+        {"get_attenuation_distance_scaling", "Read effective attenuation distance scaling for Shared or an explicit project platform."}
+    };
+    if (descriptions.contains(name)) {
+        QJsonObject properties;
+        QJsonArray required;
+        if (name == QStringLiteral("get_command_schema")) {
+            properties.insert(QStringLiteral("command"), QJsonObject{
+                {QStringLiteral("type"), QStringLiteral("string")}, {QStringLiteral("minLength"), 1}});
+            required.append(QStringLiteral("command"));
+        } else if (name == QStringLiteral("compare_files")) {
+            for (const auto& key : {QStringLiteral("reference_path"), QStringLiteral("candidate_path")}) {
+                properties.insert(key, QJsonObject{
+                    {QStringLiteral("type"), QStringLiteral("string")}, {QStringLiteral("minLength"), 1}});
+                required.append(key);
+            }
+        } else if (name == QStringLiteral("get_exec_errors") || name == QStringLiteral("clear_exec_errors")) {
+            properties.insert(QStringLiteral("domain"), QJsonObject{
+                {QStringLiteral("type"), QStringLiteral("string")},
+                {QStringLiteral("enum"), QJsonArray{"Music", "Stop", "Lifecycle", "Dispatch", "Gate"}}});
+            if (name == QStringLiteral("get_exec_errors"))
+                properties.insert(QStringLiteral("max_count"), QJsonObject{
+                    {QStringLiteral("type"), QStringLiteral("integer")}, {QStringLiteral("minimum"), 0}});
+        } else if (name == QStringLiteral("get_attenuation_distance_scaling")) {
+            properties.insert(QStringLiteral("path"), QJsonObject{
+                {QStringLiteral("type"), QStringLiteral("string")}, {QStringLiteral("minLength"), 1}});
+            properties.insert(QStringLiteral("platform_id"), QJsonObject{
+                {QStringLiteral("type"), QStringLiteral("string")}, {QStringLiteral("format"), QStringLiteral("uuid")}});
+            required.append(QStringLiteral("path"));
+        }
+        parameters = {{QStringLiteral("type"), QStringLiteral("object")},
+                      {QStringLiteral("properties"), properties},
+                      {QStringLiteral("required"), required},
+                      {QStringLiteral("additionalProperties"), false}};
+        result.insert(QStringLiteral("source"), QStringLiteral("catalog"));
+        result.insert(QStringLiteral("description"), descriptions.value(name));
+    } else if (spec && (!spec->argumentSchema.isEmpty() || !action || action->paramSchema.isEmpty())) {
         parameters = spec->argumentSchema;
         result.insert(QStringLiteral("source"), QStringLiteral("catalog"));
         result.insert(QStringLiteral("description"), spec->description);
@@ -114,12 +159,21 @@ QJsonObject describeEditorCommand(const QString& name, const IPCServer* dispatch
         result.insert(QStringLiteral("description"), action->displayName);
     } else {
         result.insert(QStringLiteral("source"), handler ? QStringLiteral("handler") : QStringLiteral("unknown"));
+        result.insert(QStringLiteral("description"), QString(name).replace('_', ' '));
     }
+    if (!result.contains(QStringLiteral("category")))
+        result.insert(QStringLiteral("category"), QStringLiteral("system"));
+    result.insert(QStringLiteral("scope"), commandSupportedByHost(CommandHost::Cli, name,
+        result.value(QStringLiteral("requiresDesktop")).toBool())
+        ? QStringLiteral("shared") : QStringLiteral("desktop"));
     if (action) {
         result.insert(QStringLiteral("displayName"), action->displayName);
         result.insert(QStringLiteral("category"), action->category);
         result.insert(QStringLiteral("undoable"), action->undoable);
     }
+    if (result.value(QStringLiteral("description")).toString().isEmpty())
+        result.insert(QStringLiteral("description"), action ? action->displayName
+            : QString(name).replace('_', ' '));
     result.insert(QStringLiteral("parameters"), parameters);
     result.insert(QStringLiteral("inputSchema"), inputSchema(parameters));
     const bool declared = parameters.value(QStringLiteral("type")) == QStringLiteral("object");
@@ -131,6 +185,17 @@ QJsonObject describeEditorCommand(const QString& name, const IPCServer* dispatch
             "An undocumented schema does not mean the command takes no arguments. "
             "The editor validates execution and returns errors for invalid input."));
     return result;
+}
+
+QJsonObject listEditorCommands(const IPCServer* dispatcher)
+{
+    QJsonArray commands;
+    for (const auto& name : dispatcher->allCommandNames())
+        commands.append(describeEditorCommand(name, dispatcher));
+    return {{QStringLiteral("protocolVersion"), 1},
+            {QStringLiteral("host"), dispatcher->commandHost() == CommandHost::Desktop
+                ? QStringLiteral("desktop") : QStringLiteral("headless")},
+            {QStringLiteral("commands"), commands}};
 }
 
 }

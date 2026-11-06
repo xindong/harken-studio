@@ -20,6 +20,8 @@
 #ifdef Q_OS_WIN
 #include <fcntl.h>
 #include <io.h>
+#else
+#include <unistd.h>
 #endif
 
 namespace {
@@ -117,6 +119,7 @@ int main(int argc, char* argv[])
     std::signal(SIGTERM, interrupt);
 
     QCommandLineParser parser;
+    parser.setSingleDashWordOptionMode(QCommandLineParser::ParseAsCompactedShortOptions);
     parser.setApplicationDescription(QStringLiteral(
         "Headless Harken Studio authoring. No desktop window or running editor is required.\n\n"
         "Commands:\n"
@@ -127,7 +130,7 @@ int main(int argc, char* argv[])
         "  shell              Keep an interactive authoring session open.\n"
         "  list-targets       List saved project platforms, languages and Actions.\n"
         "  build              Build packs from a saved project without editing it.\n\n"
-        "Use --save to commit project edits before exiting; otherwise edits remain in memory.\n"
+        "Use --save to persist exec/run edits before exiting; otherwise unsaved edits are discarded.\n"
         "Creation and external operations such as export write their own outputs.\n"
         "A batch stops on its first error and is not an atomic transaction.\n"
         "build and list-targets require --project and read the saved project without upgrading or recovering it.\n"
@@ -147,7 +150,7 @@ int main(int argc, char* argv[])
     parser.addPositionalArgument(QStringLiteral("command"), QStringLiteral("commands, init, exec, run, shell, list-targets or build"));
     parser.addPositionalArgument(QStringLiteral("name"), QStringLiteral("Editor command name or project directory"), QStringLiteral("[name]"));
     parser.addOption({QStringLiteral("project"), QStringLiteral("Open this .hsp project before execution."), QStringLiteral("path")});
-    parser.addOption({QStringLiteral("args"), QStringLiteral("Command arguments as a JSON object."), QStringLiteral("json")});
+    parser.addOption({QStringLiteral("args"), QStringLiteral("Inline JSON: an object for exec or a request array for run."), QStringLiteral("json")});
     parser.addOption({QStringList{QStringLiteral("i"), QStringLiteral("input")}, QStringLiteral("Read UTF-8 JSON from a file, or - for stdin."), QStringLiteral("file")});
     parser.addOption({QStringLiteral("json"), QStringLiteral("Write compact JSON without human-oriented formatting.")});
     parser.addOption({QStringLiteral("save"), QStringLiteral("Save the active project after successful execution.")});
@@ -159,9 +162,10 @@ int main(int argc, char* argv[])
     parser.addOption({QStringLiteral("output"), QStringLiteral("Build output directory; relative paths use the project directory."), QStringLiteral("directory")});
     parser.addOption({QStringLiteral("force"), QStringLiteral("Force rebuilding packs.")});
 
-    const bool wantsJson = app.arguments().contains(QStringLiteral("--json"));
+    bool wantsJson = app.arguments().contains(QStringLiteral("--json"));
     if (!parser.parse(app.arguments()))
         return output(HarkenStudioCli::failure(QStringLiteral("USAGE"), parser.errorText()), wantsJson, 2);
+    wantsJson = parser.isSet(QStringLiteral("json"));
     verbose = parser.isSet(QStringLiteral("verbose"));
     if (parser.isSet(QStringLiteral("version"))) {
         if (wantsJson) return output({{"status", "ok"}, {"result", QJsonObject{{"version", app.applicationVersion()}}}}, true);
@@ -169,14 +173,21 @@ int main(int argc, char* argv[])
         return 0;
     }
     const QStringList positional = parser.positionalArguments();
-    if (parser.isSet(QStringLiteral("help")) || parser.isSet(QStringLiteral("help-all")) || positional.isEmpty()) {
+    if (parser.isSet(QStringLiteral("help")) || parser.isSet(QStringLiteral("help-all")) || app.arguments().size() == 1) {
         print(parser.helpText().toUtf8());
         return 0;
     }
     const auto usage = [&](const QString& message) {
         return output(HarkenStudioCli::failure(QStringLiteral("USAGE"), message), wantsJson, 2);
     };
+    if (positional.isEmpty())
+        return usage(QStringLiteral("A command is required. Run HarkenStudioCLI --help."));
     const QString command = positional.front();
+    for (const auto& option : {QStringLiteral("project"), QStringLiteral("args"), QStringLiteral("input"),
+                              QStringLiteral("timeout"), QStringLiteral("self-clean"), QStringLiteral("output")}) {
+        if (parser.values(option).size() > 1)
+            return usage(QStringLiteral("--%1 may only be specified once.").arg(option));
+    }
     if (command == QStringLiteral("build") || command == QStringLiteral("list-targets")) {
         const auto response = HarkenStudioCli::runSavedProjectBuild(parser, [] { return interrupted != 0; });
         return output(response, wantsJson, response.value(QStringLiteral("code")) == QStringLiteral("USAGE") ? 2 : 1);
@@ -185,9 +196,17 @@ int main(int argc, char* argv[])
         && command != QStringLiteral("exec") && command != QStringLiteral("run")
         && command != QStringLiteral("shell"))
         return usage(QStringLiteral("Unknown command '%1'. Run HarkenStudioCLI --help.").arg(command));
-    for (const auto& option : {QStringLiteral("all"), QStringLiteral("platform-id"), QStringLiteral("self-clean"),
-                              QStringLiteral("output"), QStringLiteral("force")}) {
-        if (parser.isSet(option)) return usage(QStringLiteral("--%1 is only supported by build.").arg(option));
+    QStringList allowed{QStringLiteral("json"), QStringLiteral("verbose")};
+    if (command == QStringLiteral("init")) {
+        allowed.append(QStringLiteral("timeout"));
+    } else if (command != QStringLiteral("commands")) {
+        allowed.append({QStringLiteral("project"), QStringLiteral("timeout")});
+        if (command != QStringLiteral("shell"))
+            allowed.append({QStringLiteral("args"), QStringLiteral("input"), QStringLiteral("i"), QStringLiteral("save")});
+    }
+    for (const auto& option : parser.optionNames()) {
+        if (!allowed.contains(option))
+            return usage(QStringLiteral("--%1 is not supported by %2.").arg(option, command));
     }
     if (positional.size() > 2 || ((command == QStringLiteral("init") || command == QStringLiteral("exec")) && positional.size() != 2)
         || ((command == QStringLiteral("run") || command == QStringLiteral("shell")) && positional.size() != 1))
@@ -196,20 +215,25 @@ int main(int argc, char* argv[])
     const int seconds = parser.value(QStringLiteral("timeout")).toInt(&validTimeout);
     if (!validTimeout || seconds < 1 || seconds > 86400)
         return usage(QStringLiteral("--timeout must be an integer from 1 to 86400."));
-    if (command == QStringLiteral("shell")) {
-        for (const auto& option : {QStringLiteral("args"), QStringLiteral("input"), QStringLiteral("save")})
-            if (parser.isSet(option))
-                return usage(QStringLiteral("shell does not accept --%1; enter commands and save_project in the session.").arg(option));
-    }
+    if (parser.isSet(QStringLiteral("project")) && parser.value(QStringLiteral("project")).trimmed().isEmpty())
+        return usage(QStringLiteral("--project requires a nonempty project path."));
+    if (command == QStringLiteral("run") && !parser.isSet(QStringLiteral("args")) && !parser.isSet(QStringLiteral("input")))
+        return usage(QStringLiteral("run requires a JSON request array from --input <file|-> or --args <json>."));
 
     HarkenStudioCli::StudioSession session;
     if (command == QStringLiteral("shell")) {
         if (parser.isSet(QStringLiteral("project"))) {
-            const auto opened = session.open(parser.value(QStringLiteral("project")));
+            const auto opened = session.open(parser.value(QStringLiteral("project")), seconds * 1000,
+                [] { return interrupted != 0; });
             if (!HarkenStudioCli::succeeded(opened)) return output(opened, wantsJson);
         }
-        return HarkenStudioCli::runShell(session, seconds * 1000, wantsJson, interrupted,
-            [&](QJsonObject response) { output(std::move(response), wantsJson); });
+#ifdef Q_OS_WIN
+        const bool shellJson = wantsJson || _isatty(_fileno(stdin)) == 0 || _isatty(_fileno(stdout)) == 0;
+#else
+        const bool shellJson = wantsJson || isatty(fileno(stdin)) == 0 || isatty(fileno(stdout)) == 0;
+#endif
+        return HarkenStudioCli::runShell(session, seconds * 1000, shellJson, interrupted,
+            [&](QJsonObject response) { output(std::move(response), shellJson); });
     }
     if (command == QStringLiteral("commands")) {
         const auto response = positional.size() == 2 ? session.describe(positional.at(1)) : session.commands();
@@ -222,8 +246,6 @@ int main(int argc, char* argv[])
         return 0;
     }
     if (command == QStringLiteral("init")) {
-        if (parser.isSet(QStringLiteral("project")) || parser.isSet(QStringLiteral("input")) || parser.isSet(QStringLiteral("args")))
-            return usage(QStringLiteral("init takes a new directory; use exec create_project for advanced project arguments."));
         const QFileInfo directory(QDir::cleanPath(positional.at(1)));
         return output(session.execute(QStringLiteral("create_project"),
             {{QStringLiteral("name"), directory.fileName()}, {QStringLiteral("location"), directory.absolutePath()}},
@@ -241,10 +263,14 @@ int main(int argc, char* argv[])
                 || request.value(QStringLiteral("cmd")).toString().isEmpty()
                 || (request.contains(QStringLiteral("args")) && !request.value(QStringLiteral("args")).isObject()))
                 return usage(QStringLiteral("Each request must contain a nonempty cmd string and an optional args object."));
+            for (auto it = request.begin(); it != request.end(); ++it)
+                if (it.key() != QLatin1String("cmd") && it.key() != QLatin1String("args"))
+                    return usage(QStringLiteral("Unknown request field '%1'; use cmd and args.").arg(it.key()));
         }
     }
     if (parser.isSet(QStringLiteral("project"))) {
-        const auto opened = session.open(parser.value(QStringLiteral("project")));
+        const auto opened = session.open(parser.value(QStringLiteral("project")), seconds * 1000,
+            [] { return interrupted != 0; });
         if (!HarkenStudioCli::succeeded(opened)) return output(opened, wantsJson);
     }
     QJsonObject response;

@@ -16,12 +16,9 @@ QJsonObject deprecateCommand(QJsonObject response, const char* replacement);
 void IPCServer::registerEditorHandlers()
 {
     registerDesktopHandler("get_blueprint");
-    registerDesktopHandler("get_node_graph");
     commandHandlers_["get_signal_chain"] = [this](const QJsonObject& args) { return handleGetSignalChain(args); };
     registerDesktopHandler("set_blueprint_layer");
-    registerDesktopHandler("set_nodegraph_layer");
     registerDesktopHandler("get_blueprint_layers");
-    registerDesktopHandler("get_nodegraph_layers");
     commandHandlers_["get_referencing_actions"] = [this](const QJsonObject& args) { return handleGetReferencingActions(args); };
 
 

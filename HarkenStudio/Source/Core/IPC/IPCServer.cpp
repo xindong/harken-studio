@@ -120,6 +120,7 @@ IPCServer::~IPCServer()
 
 void IPCServer::waitForPendingOperations()
 {
+    if (transcodeCancel_) transcodeCancel_->store(true);
     if (transcodeThread_) transcodeThread_->wait();
     if (packBuildThread_) {
         packBuildThread_->wait();
@@ -380,6 +381,11 @@ QJsonObject IPCServer::dispatchCommand(const QString& cmd, const QJsonObject& ar
         return response;
     };
 
+    if (!commandSupportedByHost(commandHost_, cmd, commandRequiresDesktop(cmd))
+        || (!actionManager.hasAction(cmd) && !hasCommandHandler(cmd)))
+        return withRequestId(errorResponse("UNKNOWN_COMMAND", QString("Unknown command: %1").arg(cmd),
+            "Use list_commands to discover commands available in this host."));
+
     if (context.origin == DispatchOrigin::AI)
     {
         if (auto gateError = enforceAIPolicyGate(cmd, args, context, false))
@@ -394,9 +400,14 @@ QJsonObject IPCServer::dispatchCommand(const QString& cmd, const QJsonObject& ar
         return withRequestId(errorResponse("DESKTOP_REQUIRED",
             "This command requires the desktop editor. Use the corresponding project operation for headless authoring."));
 
+    if (transcodeInProgress_ && !isReadOnlyCommand(cmd) && cmd != QLatin1String("cancel_transcode"))
+        return withRequestId(errorResponse("TRANSCODE_IN_PROGRESS",
+            "The project is read-only while media is being converted. Wait for completion or cancel_transcode."));
+
     if (PackGenerationRecordStore::instance().isExporting()
         && !isReadOnlyCommand(cmd)
         && cmd != QLatin1String("cancel_pack_build")
+        && cmd != QLatin1String("cancel_transcode")
         && cmd != QLatin1String("batch")
         && cmd != QLatin1String("query")
         && cmd != QLatin1String("find_widget")
@@ -408,6 +419,11 @@ QJsonObject IPCServer::dispatchCommand(const QString& cmd, const QJsonObject& ar
 
     if (projectManager_ && projectManager_->isClosing()
         && cmd != QLatin1String("get_app_state")
+        && cmd != QLatin1String("get_project_info")
+        && cmd != QLatin1String("list_commands")
+        && cmd != QLatin1String("get_command_schema")
+        && cmd != QLatin1String("get_transcode_status")
+        && cmd != QLatin1String("cancel_transcode")
         && cmd != QLatin1String("create_project")
         && cmd != QLatin1String("open_project"))
     {
@@ -627,9 +643,11 @@ QStringList IPCServer::allCommandNames() const
 {
     QSet<QString> names;
     for (const QString& name : ActionManager::instance().actionNames())
-        names.insert(name);
+        if (commandSupportedByHost(commandHost_, name, commandRequiresDesktop(name)))
+            names.insert(name);
     for (auto it = commandHandlers_.constBegin(); it != commandHandlers_.constEnd(); ++it)
-        names.insert(it.key());
+        if (commandSupportedByHost(commandHost_, it.key(), commandRequiresDesktop(it.key())))
+            names.insert(it.key());
     QStringList sorted(names.constBegin(), names.constEnd());
     sorted.sort();
     return sorted;
@@ -645,6 +663,11 @@ bool IPCServer::isJsonCommandAvailableInCurrentState(const QString& cmd) const
         QStringLiteral("get_version"),
         QStringLiteral("get_status"),
         QStringLiteral("get_app_state"),
+        QStringLiteral("get_project_info"),
+        QStringLiteral("list_commands"),
+        QStringLiteral("get_command_schema"),
+        QStringLiteral("get_transcode_status"),
+        QStringLiteral("cancel_transcode"),
         QStringLiteral("open_project"),
         QStringLiteral("create_project"),
     };
@@ -666,6 +689,9 @@ QJsonObject IPCServer::commandUnavailableInCurrentStateResponse(const QString& c
 bool IPCServer::isReadOnlyCommand(const QString& cmd) const
 {
     return cmd == QLatin1String("ping") ||
+           cmd == QLatin1String("compare_files") ||
+           cmd == QLatin1String("search_fulltext") ||
+           cmd == QLatin1String("search_status") ||
            cmd.startsWith(QLatin1String("get_")) ||
            cmd.startsWith(QLatin1String("list_")) ||
            cmd.startsWith(QLatin1String("can_")) ||

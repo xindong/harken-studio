@@ -16,6 +16,8 @@
 #include "ActionSelectors.h"
 #include "RuntimeBridge/PackagingBridge.h"
 #include <QJsonArray>
+#include <cmath>
+#include <limits>
 
 namespace VNX { ProjectItem* findItemByPathInProject(ProjectData* project, const QString& path); }
 namespace VNX {
@@ -25,15 +27,6 @@ uint32_t itemShortID(const ProjectItem* item);
 
 namespace VNX {
 
-
-static QJsonArray sourceIDArrayFromArgs(const QJsonObject& args)
-{
-    QJsonArray arr = args.value(QStringLiteral("source_ids")).toArray();
-    if (arr.isEmpty()) {
-        arr = args.value(QStringLiteral("sourceIDs")).toArray();
-    }
-    return arr;
-}
 
 static QMap<uint32_t, QString> replacementMapFromArgs(const QJsonObject& args)
 {
@@ -81,9 +74,11 @@ void registerAssetActions(ActionManager& mgr,
         def.handler = [](const QJsonObject& args) -> ActionResult {
             if (!ProjectManager::instance().isProjectOpen())
                 return {false, {}, "NO_PROJECT", "No project open"};
-            QString name = args["name"].toString();
+            QString name = args["name"].toString().trimmed();
             if (name.isEmpty()) return {false, {}, "MISSING_PARAM", "'name' required"};
             bool ok = ProjectManager::instance().addProjectLanguage(name);
+            if (!ok)
+                return {false, {}, "INVALID_LANGUAGE", "The language name is invalid or conflicts with an existing language"};
             return {true, QJsonObject{{"success", ok}, {"language", name}}};
         };
         mgr.registerAction(def);
@@ -99,9 +94,11 @@ void registerAssetActions(ActionManager& mgr,
         def.handler = [](const QJsonObject& args) -> ActionResult {
             if (!ProjectManager::instance().isProjectOpen())
                 return {false, {}, "NO_PROJECT", "No project open"};
-            QString name = args["name"].toString();
+            QString name = args["name"].toString().trimmed();
             if (name.isEmpty()) return {false, {}, "MISSING_PARAM", "'name' required"};
             bool ok = ProjectManager::instance().removeProjectLanguage(name);
+            if (!ok)
+                return {false, {}, "LANGUAGE_NOT_FOUND", "The language is not in the project"};
             return {true, QJsonObject{{"success", ok}}};
         };
         mgr.registerAction(def);
@@ -117,8 +114,10 @@ void registerAssetActions(ActionManager& mgr,
         def.handler = [](const QJsonObject& args) -> ActionResult {
             if (!ProjectManager::instance().isProjectOpen())
                 return {false, {}, "NO_PROJECT", "No project open"};
-            QString name = args["name"].toString();
+            QString name = args["name"].toString().trimmed();
             if (name.isEmpty()) return {false, {}, "MISSING_PARAM", "'name' required"};
+            if (!ProjectManager::instance().getProjectLanguages().contains(name))
+                return {false, {}, "LANGUAGE_NOT_FOUND", "The default language must be in the project"};
             ProjectManager::instance().setDefaultLanguage(name);
             return {true, QJsonObject{{"success", true}, {"defaultLanguage", name}}};
         };
@@ -333,18 +332,40 @@ void registerAssetActions(ActionManager& mgr,
 
     {
         ActionDef def;
-        def.id = "import_audio_to_canvas";
-        def.displayName = "Import Audio To Blueprint";
+        def.id = "import_audio_files";
+        def.displayName = "Import Audio Files";
         def.category = "asset";
-        def.paramSchema = QJsonObject{{"files", "array"}, {"drop_x", "float"}, {"drop_y", "float"}, {"target_container_id", "uint32"}};
+        def.paramSchema = QJsonObject{
+            {"type", "object"},
+            {"properties", QJsonObject{
+                {"files", QJsonObject{{"type", "array"}, {"minItems", 1},
+                    {"items", QJsonObject{{"type", "string"}, {"minLength", 1}}}}},
+                {"target_container_id", QJsonObject{{"type", "integer"},
+                    {"minimum", 1}, {"maximum", 4294967295.0},
+                    {"description", "Target authoring handle: container, sound, or output bus. Omit to import at the project root."}}}
+            }},
+            {"required", QJsonArray{"files"}},
+            {"additionalProperties", false}
+        };
         def.undoable = false;
         def.handler = [](const QJsonObject& args) -> ActionResult {
+            for (auto it = args.begin(); it != args.end(); ++it)
+                if (it.key() != QLatin1String("files") && it.key() != QLatin1String("target_container_id"))
+                    return {false, {}, "INVALID_ARGS", QString("Unknown parameter: %1").arg(it.key())};
             if (!ProjectManager::instance().isProjectOpen())
                 return {false, {}, "NO_PROJECT_OPEN", "No project is currently open"};
 
             QJsonArray filesArr = args["files"].toArray();
-            const uint32_t targetContainerID =
-                static_cast<uint32_t>(args["target_container_id"].toInteger(0));
+            uint32_t targetContainerID = 0;
+            if (args.contains("target_container_id")) {
+                const auto value = args["target_container_id"];
+                const auto number = value.toDouble();
+                if (!value.isDouble() || number < 1.0
+                    || number > std::numeric_limits<uint32_t>::max()
+                    || std::trunc(number) != number)
+                    return {false, {}, "INVALID_ARGS", "target_container_id must be a positive uint32 integer"};
+                targetContainerID = static_cast<uint32_t>(number);
+            }
 
             if (filesArr.isEmpty())
                 return {false, {}, "MISSING_PARAM", "'files' array is required and non-empty"};
@@ -353,7 +374,8 @@ void registerAssetActions(ActionManager& mgr,
             files.reserve(filesArr.size());
             for (const QJsonValue& v : filesArr) {
                 const QString p = v.toString();
-                if (p.isEmpty()) continue;
+                if (!v.isString() || p.isEmpty())
+                    return {false, {}, "INVALID_ARGS", "files must contain only non-empty path strings"};
                 files.push_back(p);
             }
             files.removeDuplicates();
@@ -418,7 +440,7 @@ void registerAssetActions(ActionManager& mgr,
             }
 
             const QJsonObject data{
-                {"success", successCount > 0},
+                {"success", successCount > 0 && failCount == 0},
                 {"scenario", targetSound ? "sources" : targetParent ? "into_container"
                     : targetBus ? "root_output" : "root"},
                 {"success_count", successCount},
@@ -436,6 +458,8 @@ void registerAssetActions(ActionManager& mgr,
             };
             if (successCount == 0)
                 return {false, data, "IMPORT_FAILED", "No audio file was imported"};
+            if (failCount > 0)
+                return {false, data, "IMPORT_PARTIAL_FAILURE", "Some audio files could not be imported; successful imports remain in the project"};
             return {true, data};
         };
         mgr.registerAction(def);
@@ -564,40 +588,11 @@ void registerAssetActions(ActionManager& mgr,
                 resultsArr.append(entry);
                 if (r.success) ++succeeded; else ++failed;
             }
-            return {true, QJsonObject{
-                {"results", resultsArr}, {"succeeded", succeeded}, {"failed", failed}}};
-        };
-        mgr.registerAction(def);
-    }
-
-    {
-        ActionDef def;
-        def.id = "batch_convert_media";
-        def.displayName = "Batch Convert Media";
-        def.category = "asset";
-        def.paramSchema = QJsonObject{{"source_ids", "array"}, {"platform_id", "string"}};
-        def.undoable = false;
-        def.handler = [](const QJsonObject& args) -> ActionResult {
-            QJsonArray sourceIDsArr = sourceIDArrayFromArgs(args);
-            if (sourceIDsArr.isEmpty())
-                return {false, {}, "HARKEN_ERR_MISSING_PARAM", "source_ids array is required"};
-            const auto id = ProjectPlatformSemantics::parseId(args["platform_id"].toString());
-            const auto* project = ProjectManager::instance().currentProject();
-            if (args.contains("platform") || !id || !project
-                || !ProjectPlatformSemantics::find(project->platforms, *id))
-                return {false, {}, "INVALID_PLATFORM", "platform_id must identify a platform in the current project"};
-            const auto platform = *id;
-            QVector<uint32_t> sourceIDs;
-            sourceIDs.reserve(sourceIDsArr.size());
-            for (const auto& val : sourceIDsArr) {
-                uint32_t id = static_cast<uint32_t>(val.toInteger());
-                if (id != 0) sourceIDs.append(id);
-            }
-            MediaPool::instance().batchConvert(sourceIDs, platform);
-            return {true, QJsonObject{
-                {"queued", sourceIDs.size()},
-                {"platform_id", ProjectPlatformSemantics::idString(platform)},
-                {"message", QStringLiteral("Batch conversion started. Monitor via get_media_status.")}}};
+            const QJsonObject data{
+                {"results", resultsArr}, {"succeeded", succeeded}, {"failed", failed}};
+            if (failed > 0)
+                return {false, data, "BATCH_REPLACE_FAILED", "One or more media sources could not be replaced"};
+            return {true, data};
         };
         mgr.registerAction(def);
     }

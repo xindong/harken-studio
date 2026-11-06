@@ -63,7 +63,7 @@ void registerSystemActions(ActionManager& mgr,
 
     {
         ActionDef def;
-        def.id = "init";
+        def.id = "init_engine";
         def.displayName = "Initialize Engine";
         def.category = "system";
         def.paramSchema = QJsonObject{{"sample_rate", "int"}, {"buffer_size", "int"}, {"max_voices", "int"}};
@@ -83,7 +83,7 @@ void registerSystemActions(ActionManager& mgr,
 
     {
         ActionDef def;
-        def.id = "shutdown";
+        def.id = "shutdown_engine";
         def.displayName = "Shutdown Engine";
         def.category = "system";
         def.undoable = false;
@@ -238,34 +238,6 @@ void registerSystemActions(ActionManager& mgr,
             if (auditionGuard)
                 auditionGuard->stopAll(fadeMs);
             return {true, QJsonObject{}};
-        };
-        mgr.registerAction(def);
-    }
-
-
-    {
-        ActionDef def;
-        def.id = "trigger_action";
-        def.displayName = "Trigger Action";
-        def.category = "system";
-        def.paramSchema = QJsonObject{{"name", "string"}};
-        def.undoable = false;
-        def.handler = [engine](const QJsonObject& args) -> ActionResult {
-            if (!engine) return engineNotAvailable();
-            QString name = args.value("name").toString();
-            {
-                auto sel = VNX::resolveSelector(name);
-                if (!sel.ok) return {false, {}, sel.errorCode, sel.errorMessage};
-                name = sel.name;
-            }
-            if (name.isEmpty())
-                return {false, {}, "MISSING_PARAM", "Missing required parameter: name"};
-            const auto result = engine->playByNameDetailed(name);
-            return playbackResult(result, QJsonObject{
-                {"action_name", name},
-                {"action_handle", static_cast<qint64>(result.playbackHandle)},
-                {"triggered", (result.playbackHandle != 0)}
-            });
         };
         mgr.registerAction(def);
     }
@@ -833,23 +805,11 @@ void registerSystemActions(ActionManager& mgr,
 
     {
         ActionDef def;
-        def.id = "switch_view";
-        def.requiresDesktop = true;
-        def.displayName = "Switch View";
-        def.category = "ui_control";
-        def.paramSchema = QJsonObject{{"view", "string"}};
-        def.undoable = false;
-
-        mgr.registerAction(def);
-    }
-
-    {
-        ActionDef def;
         def.id = "reset_layout";
         def.requiresDesktop = true;
         def.displayName = "Reset Layout";
         def.category = "ui_control";
-        def.paramSchema = QJsonObject{{"view", "string"}};
+        def.paramSchema = QJsonObject{{"layout", "string"}};
         def.undoable = false;
 
         mgr.registerAction(def);

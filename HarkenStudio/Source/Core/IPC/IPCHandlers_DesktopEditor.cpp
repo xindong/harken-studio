@@ -20,22 +20,11 @@ namespace VNX {
 
 namespace Bridge = HarkenEditor::Bridge;
 
-QJsonObject deprecateCommand(QJsonObject response, const char* replacement);
-
 void IPCServer::registerDesktopEditorHandlers()
 {
     registerDesktopHandler("get_blueprint", [this](const QJsonObject& args) { return handleGetNodeGraph(args); });
-    registerDesktopHandler("get_node_graph", [this](const QJsonObject& args) {
-        return deprecateCommand(handleGetNodeGraph(args), "get_blueprint");
-    });
     registerDesktopHandler("set_blueprint_layer", [this](const QJsonObject& args) { return handleSetBlueprintLayer(args); });
-    registerDesktopHandler("set_nodegraph_layer", [this](const QJsonObject& args) {
-        return deprecateCommand(handleSetBlueprintLayer(args), "set_blueprint_layer");
-    });
     registerDesktopHandler("get_blueprint_layers", [this](const QJsonObject& args) { return handleGetBlueprintLayers(args); });
-    registerDesktopHandler("get_nodegraph_layers", [this](const QJsonObject& args) {
-        return deprecateCommand(handleGetBlueprintLayers(args), "get_blueprint_layers");
-    });
     registerDesktopHandler("list_open_dialogs", [](const QJsonObject&) -> QJsonObject {
         auto& dm = DialogManager::instance();
         QJsonArray arr;

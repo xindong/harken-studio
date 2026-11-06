@@ -2,6 +2,7 @@
 #include "../IPC/IPCServerInternal.h"
 #include "../BuiltinLayouts.h"
 #include "../CurveSelection.h"
+#include "../AttenuationStore.h"
 #include "ActionSelectors.h"
 #include "../../MainWindow.h"
 #include "../../Widgets/Blueprint/BlueprintCanvasWidget.h"
@@ -266,29 +267,19 @@ void registerDesktopEditorCommands(const DesktopEditorCommandContext& context)
         });
 
     manager.setActionHandler("select_bus", [mainWindow](const QJsonObject& args) -> ActionResult {
-            if (!args.contains("bus_id"))
-                return {false, {}, "INVALID_ARGS", "bus_id required"};
-            uint32_t busId = static_cast<uint32_t>(args["bus_id"].toInteger());
-
+            if (!mainWindow) return mainWindowNotAvailable();
             auto& pm = ProjectManager::instance();
-            if (pm.currentProject()) {
-                if (pm.findVBus(busId) == nullptr)
-                    return {false, {}, "NOT_FOUND", QString("Bus ID %1 not found").arg(busId)};
-            }
-
-            if (mainWindow) {
-                QMetaObject::invokeMethod(mainWindow, [mainWindow, busId]() {
-                    mainWindow->selectBus(busId, true);
-                }, Qt::QueuedConnection);
-            }
-
-            ActionResult r;
-            r.success = true;
-            r.data = QJsonObject{
-                {"bus_id", static_cast<qint64>(busId)},
-                {"selected", true}
-            };
-            return r;
+            if (!pm.isProjectOpen())
+                return {false, {}, "NO_PROJECT_OPEN", "No project is currently open"};
+            const auto idValue = args.value("bus_id");
+            const qint64 id = idValue.toInteger(-1);
+            if (!idValue.isDouble() || id < 0 || id > UINT32_MAX || idValue.toDouble() != id)
+                return {false, {}, "INVALID_ARGS", "bus_id must be an unsigned 32-bit integer"};
+            const auto busId = static_cast<uint32_t>(id);
+            if (!pm.findVBus(busId))
+                return {false, {}, "NOT_FOUND", QString("Bus ID %1 not found").arg(busId)};
+            mainWindow->selectBus(busId, true);
+            return {true, QJsonObject{{"bus_id", id}, {"selected", true}}};
         });
 
     manager.setActionHandler("select_project_item", selectHandler);
@@ -321,30 +312,9 @@ void registerDesktopEditorCommands(const DesktopEditorCommandContext& context)
                     QString("Failed to switch to layout: %1").arg(layoutName)};
         });
 
-    manager.setActionHandler("switch_view", [mainWindow](const QJsonObject& args) -> ActionResult {
-            qWarning() << "[deprecated] switch_view, use switch_layout";
-            if (!mainWindow) return mainWindowNotAvailable();
-            QString viewName = args["view"].toString();
-            {
-                auto sel = VNX::resolveSelector(viewName);
-                if (!sel.ok) return {false, {}, sel.errorCode, sel.errorMessage};
-                viewName = sel.name;
-            }
-            if (viewName.isEmpty())
-                return {false, {}, "INVALID_ARGS", "View name is required"};
-            const auto* builtin = VNX::BuiltinLayouts::findByToken(viewName);
-            if (!builtin)
-                return {false, {}, "INVALID_VIEW", QString("Unknown view: %1").arg(viewName)};
-            bool success = mainWindow->switchToView(builtin->id);
-            if (success)
-                return {true, QJsonObject{{"view", builtin->id}, {"switched", true}}};
-            return {false, {}, "SWITCH_VIEW_FAILED",
-                    QString("Failed to switch to view: %1").arg(viewName)};
-        });
-
     manager.setActionHandler("reset_layout", [mainWindow](const QJsonObject& args) -> ActionResult {
             if (!mainWindow) return mainWindowNotAvailable();
-            QString target = args["view"].toString();
+            QString target = args["layout"].toString();
             {
                 auto sel = VNX::resolveSelector(target);
                 if (!sel.ok) return {false, {}, sel.errorCode, sel.errorMessage};
@@ -353,15 +323,15 @@ void registerDesktopEditorCommands(const DesktopEditorCommandContext& context)
             const auto resolved = VNX::BuiltinLayouts::resolveResetTarget(
                 target, mainWindow->currentView());
             if (resolved.kind == VNX::BuiltinLayouts::ResetTargetKind::Invalid)
-                return {false, {}, "INVALID_VIEW",
-                        QString("Unknown view: %1").arg(resolved.canonical)};
+                return {false, {}, "INVALID_LAYOUT",
+                        QString("Unknown layout: %1").arg(resolved.canonical)};
             if (resolved.kind == VNX::BuiltinLayouts::ResetTargetKind::Builtin
                 && resolved.canonical != mainWindow->currentView())
                 mainWindow->switchToView(resolved.canonical);
             if (!mainWindow->resetCurrentLayout())
                 return {false, {}, "RESET_FAILED",
                         QString("Failed to reset layout: %1").arg(resolved.canonical)};
-            return {true, QJsonObject{{"view", resolved.canonical}, {"reset", true}}};
+            return {true, QJsonObject{{"layout", resolved.canonical}, {"reset", true}}};
         });
 
     manager.setActionHandler("toggle_panel", [mainWindow](const QJsonObject& args) -> ActionResult {
@@ -423,24 +393,27 @@ void registerDesktopEditorCommands(const DesktopEditorCommandContext& context)
 
             if (!mainWindow) return mainWindowNotAvailable();
 
+            auto* project = ProjectManager::instance().currentProject();
+            if (!project)
+                return {false, {}, "NO_PROJECT_OPEN", "No project is currently open"};
             const QUuid guid = QUuid::fromString(guidText);
+            if (!guidText.isEmpty() && guid.isNull())
+                return {false, {}, "INVALID_ARGS", "guid must be a valid UUID"};
+            if (guid.isNull() && attenuationName.isEmpty())
+                return {false, {}, "INVALID_ARGS", "name or guid is required"};
+            const auto* attenuation = AttenuationStore::find(project, guid, attenuationName);
+            if (!attenuation)
+                return {false, {}, "NOT_FOUND", "Attenuation not found"};
+            const auto* item = attenuation->hostItem();
             const CurveSelection selection = CurveSelection::attenuation(
-                guid, attenuationName, dimension);
-            if (QThread::currentThread() == mainWindow->thread()) {
-                mainWindow->openCurveEditor(selection);
-            } else {
-                QMetaObject::invokeMethod(mainWindow,
-                                          [mainWindow, selection]() {
-                                              mainWindow->openCurveEditor(selection);
-                                          },
-                                          Qt::BlockingQueuedConnection);
-            }
+                item->guid, item->name, dimension);
+            if (!mainWindow->openCurveEditor(selection))
+                return {false, {}, "OPEN_EDITOR_FAILED", "Failed to open the curve editor"};
             return {true, QJsonObject{
                 {"opened", true},
-                {"name", attenuationName},
-                {"guid", guidText},
-                {"dimension", QLatin1String(attenuationDimensionName(dimension))},
-                {"dock", QStringLiteral("CurveEditorDock")}
+                {"name", item->name},
+                {"guid", item->guid.toString(QUuid::WithoutBraces)},
+                {"dimension", QLatin1String(attenuationDimensionName(dimension))}
             }};
         });
 

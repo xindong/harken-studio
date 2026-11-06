@@ -88,7 +88,12 @@ ActionResult applyBusPropertiesArgs(const QJsonObject& args, const QObject* orig
                 QString("Bus property '%1' is not supported by set_bus_properties")
                     .arg(unsupportedKey)};
 
-    uint32_t busId = static_cast<uint32_t>(args["bus_id"].toInt());
+    const auto busIdValue = args.value("bus_id");
+    const double busIdNumber = busIdValue.toDouble();
+    if (!busIdValue.isDouble() || busIdNumber < 1.0 || busIdNumber > 4294967295.0
+        || std::trunc(busIdNumber) != busIdNumber)
+        return {false, {}, "INVALID_ARGS", "bus_id must be a positive uint32 integer"};
+    const auto busId = static_cast<uint32_t>(busIdNumber);
     auto* busItem = pm.findBusItem(busId);
     auto* bus = busItem ? busItem->comp<VBus>() : nullptr;
     auto* mix = busItem ? busItem->comp<VMixNode>() : nullptr;
@@ -106,6 +111,18 @@ ActionResult applyBusPropertiesArgs(const QJsonObject& args, const QObject* orig
         return {false, {}, "INVALID_ARGS",
                 "At least one of volume/pitch/pan/mute/solo/outputBusVolume is required"};
 
+    for (const auto* name : {"volume", "pitch", "pan", "outputBusVolume"}) {
+        const auto value = args.value(QLatin1String(name));
+        if (!value.isUndefined() && (!value.isDouble()
+            || !std::isfinite(static_cast<float>(value.toDouble()))))
+            return {false, {}, "INVALID_ARGS", QString("%1 must be a finite number").arg(QLatin1String(name))};
+    }
+    for (const auto* name : {"mute", "solo"}) {
+        const auto value = args.value(QLatin1String(name));
+        if (!value.isUndefined() && !value.isBool())
+            return {false, {}, "INVALID_ARGS", QString("%1 must be a boolean").arg(QLatin1String(name))};
+    }
+
     const float oldPan = bus->pan;
     const auto locator = PlayablePropertyAuthoringV1::definitionLocator(*busItem);
     auto snapshot = [&](const QString& propertyName)
@@ -119,18 +136,15 @@ ActionResult applyBusPropertiesArgs(const QJsonObject& args, const QObject* orig
     const auto oldPitch = hasPitch ? snapshot(QStringLiteral("pitch")) : std::nullopt;
     const auto oldObv = hasObv
         ? snapshot(QStringLiteral("outputBusVolume")) : std::nullopt;
+    if ((hasVolume && !oldVolume) || (hasPitch && !oldPitch) || (hasObv && !oldObv))
+        return {false, {}, "INVALID_STATE", "Cannot capture the bus properties before editing"};
+    const bool oldMute = pm.auditionOverlay().isMuted(busItem->runtimeId());
+    const bool oldSolo = pm.auditionOverlay().isSoloed(busItem->runtimeId());
 
     const float newVolume = hasVolume ? static_cast<float>(args["volume"].toDouble()) : 0.0f;
     const float newPitch = hasPitch ? static_cast<float>(args["pitch"].toDouble()) : 0.0f;
     const float newPan = hasPan ? static_cast<float>(args["pan"].toDouble()) : oldPan;
     const float newObv = hasObv ? static_cast<float>(args["outputBusVolume"].toDouble()) : 0.0f;
-
-    if (hasVolume) pm.setBusVolumeInternal(busId, newVolume, originator);
-    if (hasPitch) pm.setBusPitchInternal(busId, newPitch, originator);
-    if (hasPan) pm.setBusPanInternal(busId, newPan, originator);
-    if (hasMute) pm.setBusMuteInternal(busId, args["mute"].toBool(), originator);
-    if (hasSolo) pm.setBusSoloInternal(busId, args["solo"].toBool(), originator);
-    if (hasObv) pm.setBusOutputBusVolumeInternal(busId, newObv, originator);
 
     ActionResult r;
     r.success = true;
@@ -138,10 +152,6 @@ ActionResult applyBusPropertiesArgs(const QJsonObject& args, const QObject* orig
         {"bus_id", static_cast<qint64>(busId)},
         {"message", "Properties updated"}
     };
-
-    const bool hasUndoableProp = hasVolume || hasPitch || hasPan || hasObv;
-    if (!hasUndoableProp)
-        return r;
 
     int changedCount = (hasVolume ? 1 : 0) + (hasPitch ? 1 : 0)
         + (hasPan ? 1 : 0) + (hasObv ? 1 : 0);
@@ -206,6 +216,20 @@ ActionResult applyBusPropertiesArgs(const QJsonObject& args, const QObject* orig
         if (hasObv) pmm.setBusOutputBusVolumeInternal(busId, newObv);
     };
 
+    const bool applied = (!hasVolume || pm.setBusVolumeInternal(busId, newVolume, originator))
+        && (!hasPitch || pm.setBusPitchInternal(busId, newPitch, originator))
+        && (!hasPan || pm.setBusPanInternal(busId, newPan, originator))
+        && (!hasMute || pm.setBusMuteInternal(busId, args["mute"].toBool(), originator))
+        && (!hasSolo || pm.setBusSoloInternal(busId, args["solo"].toBool(), originator))
+        && (!hasObv || pm.setBusOutputBusVolumeInternal(busId, newObv, originator));
+    if (!applied) {
+        undoFn();
+        if (hasMute) pm.setBusMuteInternal(busId, oldMute, originator);
+        if (hasSolo) pm.setBusSoloInternal(busId, oldSolo, originator);
+        return {false, {}, "SET_PROPERTY_FAILED", "Bus property update failed; previous values were restored"};
+    }
+    if (changedCount == 0) return r;
+
     r.undoFn = std::move(undoFn);
     r.redoFn = std::move(redoFn);
     r.undoText = changedCount == 1
@@ -223,44 +247,22 @@ void registerMixerActions(ActionManager& mgr,
 
     {
         ActionDef def;
-        def.id = "set_mixer_volume";
-        def.displayName = "Set Mixer Volume";
+        def.id = "set_bus_mute";
+        def.displayName = "Set Bus Mute";
         def.category = "mixer";
-        def.paramSchema = QJsonObject{{"bus", "string"}, {"volume_db", "float"}};
+        def.paramSchema = QJsonObject{{"bus_name", "string"}, {"mute", "bool"}};
         def.undoable = false;
         def.handler = [](const QJsonObject& args) -> ActionResult {
             const auto selected = resolveProjectSelector(
-                ProjectManager::instance().currentProject(), args["bus"].toString(), ProjectItem::Type::Bus);
+                ProjectManager::instance().currentProject(), args["bus_name"].toString(), ProjectItem::Type::Bus);
             if (!selected.ok) return {false, {{"candidates", selected.candidates}}, selected.errorCode, selected.errorMessage};
-            float volumeDb = args["volume_db"].toDouble(0.0);
-            const uint32_t busId = selected.item->objectID;
-
-            ProjectManager::instance().setBusVolumeInternal(busId, volumeDb);
-
-            ActionResult r;
-            r.success = true;
-            r.data = QJsonObject{{"bus", selected.name}, {"bus_guid", selected.item->guid.toString(QUuid::WithoutBraces)},
-                                 {"volume_db", volumeDb}, {"success", true}};
-            return r;
-        };
-        mgr.registerAction(def);
-    }
-
-    {
-        ActionDef def;
-        def.id = "set_mixer_mute";
-        def.displayName = "Set Mixer Mute";
-        def.category = "mixer";
-        def.paramSchema = QJsonObject{{"bus", "string"}, {"mute", "bool"}};
-        def.undoable = false;
-        def.handler = [](const QJsonObject& args) -> ActionResult {
-            const auto selected = resolveProjectSelector(
-                ProjectManager::instance().currentProject(), args["bus"].toString(), ProjectItem::Type::Bus);
-            if (!selected.ok) return {false, {{"candidates", selected.candidates}}, selected.errorCode, selected.errorMessage};
+            if (!args["mute"].isBool())
+                return {false, {}, "INVALID_ARGS", "mute is required and must be a boolean"};
             bool mute = args["mute"].toBool();
             const uint32_t busId = selected.item->objectID;
 
-            ProjectManager::instance().setBusMuteInternal(busId, mute);
+            if (!ProjectManager::instance().setBusMuteInternal(busId, mute))
+                return {false, {}, "SET_PROPERTY_FAILED", "Failed to write bus mute"};
 
             ActionResult r;
             r.success = true;
@@ -273,19 +275,22 @@ void registerMixerActions(ActionManager& mgr,
 
     {
         ActionDef def;
-        def.id = "set_mixer_solo";
-        def.displayName = "Set Mixer Solo";
+        def.id = "set_bus_solo";
+        def.displayName = "Set Bus Solo";
         def.category = "mixer";
-        def.paramSchema = QJsonObject{{"bus", "string"}, {"solo", "bool"}};
+        def.paramSchema = QJsonObject{{"bus_name", "string"}, {"solo", "bool"}};
         def.undoable = false;
         def.handler = [](const QJsonObject& args) -> ActionResult {
             const auto selected = resolveProjectSelector(
-                ProjectManager::instance().currentProject(), args["bus"].toString(), ProjectItem::Type::Bus);
+                ProjectManager::instance().currentProject(), args["bus_name"].toString(), ProjectItem::Type::Bus);
             if (!selected.ok) return {false, {{"candidates", selected.candidates}}, selected.errorCode, selected.errorMessage};
+            if (!args["solo"].isBool())
+                return {false, {}, "INVALID_ARGS", "solo is required and must be a boolean"};
             bool solo = args["solo"].toBool();
             const uint32_t busId = selected.item->objectID;
 
-            ProjectManager::instance().setBusSoloInternal(busId, solo);
+            if (!ProjectManager::instance().setBusSoloInternal(busId, solo))
+                return {false, {}, "SET_PROPERTY_FAILED", "Failed to write bus solo"};
 
             ActionResult r;
             r.success = true;
@@ -683,7 +688,7 @@ void registerMixerActions(ActionManager& mgr,
         def.displayName = "Set Bus Volume (dB)";
         def.category = "mixer";
         def.paramSchema = QJsonObject{{"bus_name", "string"}, {"db", "float"}};
-        def.undoable = false;
+        def.undoable = true;
         def.handler = [](const QJsonObject& args) -> ActionResult {
             auto& pm = ProjectManager::instance();
             if (!pm.currentProject())
@@ -692,10 +697,14 @@ void registerMixerActions(ActionManager& mgr,
                 pm.currentProject(), args["bus_name"].toString(), ProjectItem::Type::Bus);
             if (!selected.ok) return {false, {{"candidates", selected.candidates}}, selected.errorCode, selected.errorMessage};
             auto* busItem = selected.item;
-            float db = static_cast<float>(args["db"].toDouble());
-            pm.setBusVolumeInternal(busItem->objectID, db);
-            ActionResult r;
-            r.success = true;
+            const auto dbValue = args.value("db");
+            const float db = static_cast<float>(dbValue.toDouble());
+            if (!dbValue.isDouble() || !std::isfinite(db))
+                return {false, {}, "INVALID_ARGS", "db is required and must be a finite number"};
+            ActionResult r = applyBusPropertiesArgs(
+                {{"bus_id", static_cast<qint64>(busItem->objectID)}, {"volume", db}},
+                ActionManager::instance().executeOriginator());
+            if (!r.success) return r;
             r.data = QJsonObject{{"bus", busItem->name}, {"bus_guid", busItem->guid.toString(QUuid::WithoutBraces)},
                                  {"bus_volume_db", db}};
             return r;
@@ -755,44 +764,53 @@ void registerMixerActions(ActionManager& mgr,
 
     {
         ActionDef def;
-        def.id = "set_output_bus_routing";
-        def.displayName = "Set Output Routing";
+        def.id = "set_output_bus_gain";
+        def.displayName = "Set Output Bus Gain";
         def.category = "mixer";
-        def.paramSchema = QJsonObject{{"path", "string"}, {"volume_db", "float"}};
-        def.undoable = false;
+        def.paramSchema = QJsonObject{
+            {"type", "object"},
+            {"properties", QJsonObject{
+                {"bus_name", QJsonObject{{"type", "string"}, {"minLength", 1},
+                    {"description", "Bus GUID, full project path, or unique name."}}},
+                {"db", QJsonObject{{"type", "number"},
+                    {"description", "Output bus gain in decibels; does not change the destination bus."}}}
+            }},
+            {"required", QJsonArray{"bus_name", "db"}},
+            {"additionalProperties", false}
+        };
+        def.undoable = true;
         def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
+            for (auto it = args.begin(); it != args.end(); ++it)
+                if (it.key() != QLatin1String("bus_name") && it.key() != QLatin1String("db"))
+                    return {false, {}, "INVALID_ARGS", QString("Unknown parameter: %1").arg(it.key())};
             if (!projectManager || !projectManager->isProjectOpen())
                 return {false, {}, "NO_PROJECT_OPEN", "No project is currently open"};
 
-            const QString path = args.value("path").toString();
-            if (path.isEmpty())
-                return {false, {}, "INVALID_ARGS", "path is required (sound object path)"};
+            const QString busName = args.value("bus_name").toString();
+            if (busName.isEmpty())
+                return {false, {}, "INVALID_ARGS", "bus_name is required (bus GUID, path, or name)"};
+            const auto volumeValue = args.value("db");
+            const float volume = static_cast<float>(volumeValue.toDouble());
+            if (!volumeValue.isDouble() || !std::isfinite(volume))
+                return {false, {}, "INVALID_ARGS", "db is required and must be a finite number"};
 
             ProjectData* project = projectManager->currentProject();
-            const auto selected = resolveProjectSelector(project, path);
+            const auto selected = resolveProjectSelector(project, busName, ProjectItem::Type::Bus);
             if (!selected.ok) return {false, {{"candidates", selected.candidates}}, selected.errorCode, selected.errorMessage};
             ProjectItem* item = selected.item;
-            if (PlayablePropertyAuthoringV1::isFieldGroupDefinitionType(item->type))
-                return {false, {}, "FIELD_GROUP_COMMAND_REQUIRED",
-                        "Use field group commands to edit Output"};
-
             auto* mcomp = item->comp<VMixNode>();
             if (!mcomp)
                 return {false, {}, "NO_AUDIO_COMPONENT", "Item has no VMixNode"};
 
-            if (args.contains("volume_db")) {
-                if (!projectManager->setBusOutputBusVolumeInternal(
-                        item->objectID, static_cast<float>(args.value("volume_db").toDouble()),
-                        ActionManager::instance().executeOriginator()))
-                    return {false, {}, "SET_PROPERTY_FAILED",
-                            "Failed to write output bus volume"};
-            }
+            ActionResult r = applyBusPropertiesArgs(
+                {{"bus_id", static_cast<qint64>(item->objectID)}, {"outputBusVolume", volume}},
+                ActionManager::instance().executeOriginator());
+            if (!r.success) return r;
 
             QJsonObject result;
-            result["path"] = path;
-            result["volume_db"] = mcomp->outputBusVolume;
-            ActionResult r;
-            r.success = true;
+            result["bus_name"] = item->name;
+            result["bus_guid"] = item->guid.toString(QUuid::WithoutBraces);
+            result["db"] = mcomp->outputBusVolume;
             r.data = result;
             return r;
         };

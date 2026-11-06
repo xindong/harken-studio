@@ -42,7 +42,7 @@
 #include "ActionSelectors.h"
 
 #include <QDir>
-#include <QTimer>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QSet>
@@ -1971,11 +1971,9 @@ void registerProjectActions(ActionManager& mgr,
             if (!projectManager->isProjectOpen())
                 return {false, {}, "NO_PROJECT_OPEN", "No project is currently open"};
 
-            bool success = projectManager->saveProject();
-            ActionResult r;
-            r.success = success;
-            r.data = QJsonObject{{"success", success}};
-            return r;
+            if (!projectManager->saveProject())
+                return {false, {}, "SAVE_PROJECT_FAILED", "Failed to save the project"};
+            return {true, QJsonObject{{"success", true}}};
         };
         mgr.registerAction(def);
     }
@@ -1998,15 +1996,30 @@ void registerProjectActions(ActionManager& mgr,
             if (config.name.isEmpty() || config.location.isEmpty())
                 return {false, {}, "INVALID_ARGS",
                         "Required: name, location"};
+            if (config.name == QStringLiteral(".") || config.name == QStringLiteral("..")
+                || config.name.contains('/') || config.name.contains('\\'))
+                return {false, {}, "INVALID_ARGS", "name must be a single directory name"};
+            const QString projectRoot = QDir::cleanPath(QDir(config.location).absoluteFilePath(config.name));
+            if (QFileInfo::exists(projectRoot))
+                return {false, {}, "PROJECT_EXISTS", QString("The project directory already exists: %1").arg(projectRoot)};
 
             config.sampleRate  = args.value("sample_rate").toInt(48000);
+            if (args.contains("sample_rate")
+                && (!args.value("sample_rate").isDouble()
+                    || args.value("sample_rate").toDouble() != config.sampleRate
+                    || config.sampleRate <= 0))
+                return {false, {}, "INVALID_ARGS", "sample_rate must be a positive integer"};
 
-            const QString cc = args.value("channel_config").toString().toLower();
+            if (args.contains("channel_config") && !args.value("channel_config").isString())
+                return {false, {}, "INVALID_ARGS", "channel_config must be a string"};
+            const QString cc = args.value("channel_config").toString("stereo").toLower();
             if      (cc == QStringLiteral("mono"))           config.channelConfig = AudioChannelConfig::Mono;
+            else if (cc == QStringLiteral("stereo"))         config.channelConfig = AudioChannelConfig::Stereo_2_0;
             else if (cc == QStringLiteral("5_1"))            config.channelConfig = AudioChannelConfig::Surround_5_1;
             else if (cc == QStringLiteral("7_1"))            config.channelConfig = AudioChannelConfig::Surround_7_1;
             else if (cc == QStringLiteral("atmos_7_1_4"))    config.channelConfig = AudioChannelConfig::Atmos_7_1_4;
-            else                                              config.channelConfig = AudioChannelConfig::Stereo_2_0;
+            else
+                return {false, {}, "INVALID_ARGS", "channel_config must be mono, stereo, 5_1, 7_1, or atmos_7_1_4"};
 
             if (args.contains("target_platforms"))
                 return {false, {}, "UNSUPPORTED_PLATFORM_FORMAT", "Use platform instance definitions in 'platforms'"};
@@ -2016,25 +2029,20 @@ void registerProjectActions(ActionManager& mgr,
                 return {false, {}, "INVALID_ARGS", platformError};
 
             config.templateId   = args.value("template_id").toString();
-            if (args.value("template_data").isObject()) {
-                config.templateData = args.value("template_data").toObject();
-            } else if (args.value("template_data").isString()) {
-                const auto doc = QJsonDocument::fromJson(
-                    args.value("template_data").toString().toUtf8());
-                if (doc.isObject())
-                    config.templateData = doc.object();
-            }
+            if (args.contains("template_data") && !args.value("template_data").isObject())
+                return {false, {}, "INVALID_ARGS", "template_data must be a JSON object"};
+            config.templateData = args.value("template_data").toObject();
 
             if (!projectManager->createProject(config))
                 return {false, {}, "CREATE_PROJECT_FAILED",
                         "Failed to create project (check location is writable)"};
 
-            ProjectData* p = projectManager->currentProject();
             ActionResult r;
             r.success = true;
             r.data = QJsonObject{
                 {"success",          true},
-                {"path",             p ? p->projectPath : QString()},
+                {"path",             QDir(projectRoot).filePath(config.name + QStringLiteral(".hsp"))},
+                {"closing",          projectManager->isClosing()},
                 {"template_applied", !config.templateId.isEmpty()
                                      && !config.templateData.isEmpty()}
             };
@@ -2054,14 +2062,9 @@ void registerProjectActions(ActionManager& mgr,
             if (!projectManager)
                 return {false, {}, "PROJECT_MANAGER_NOT_AVAILABLE", "ProjectManager is not available"};
 
-            QTimer::singleShot(0, projectManager, [pm = projectManager]() {
-                pm->closeProject();
-            });
-
-            ActionResult r;
-            r.success = true;
-            r.data = QJsonObject{{"success", true}};
-            return r;
+            if (!projectManager->closeProject())
+                return {false, {}, "CLOSE_PROJECT_FAILED", "Cannot close the active project"};
+            return {true, QJsonObject{{"success", true}, {"closing", projectManager->isClosing()}}};
         };
         mgr.registerAction(def);
     }

@@ -6,6 +6,7 @@
 #include <gtest/gtest.h>
 
 #include <QSet>
+#include <QJsonArray>
 
 using namespace VNX;
 
@@ -42,6 +43,13 @@ TEST(AICommandCatalogTest, HostRegistriesContainOnlyTheirOwnCommands)
     IPCServer desktop(nullptr);
     registerEditorCommands({nullptr, nullptr, &desktop});
     const auto desktopNames = desktop.allCommandNames();
+    QMap<QString, QJsonObject> sharedDescriptions;
+    for (const auto& name : desktopNames) {
+        const auto description = describeEditorCommand(name, &desktop);
+        EXPECT_TRUE(description.value("registered").toBool()) << name.toStdString();
+        if (description.value("scope") == "shared")
+            sharedDescriptions.insert(name, description);
+    }
     RecordProperty("desktop_command_count", desktopNames.size());
     QSet<QString> desktopOnly;
     for (const auto& name : desktopNames)
@@ -53,16 +61,47 @@ TEST(AICommandCatalogTest, HostRegistriesContainOnlyTheirOwnCommands)
     IPCServer cli(nullptr, nullptr, CommandHost::Cli);
     registerEditorCommands({nullptr, nullptr, &cli});
     RecordProperty("cli_command_count", cli.allCommandNames().size());
+    EXPECT_EQ(cli.allCommandNames(), sharedDescriptions.keys());
     for (const auto& name : cli.allCommandNames()) {
         EXPECT_FALSE(cli.commandRequiresDesktop(name)) << name.toStdString();
         EXPECT_TRUE(desktopNames.contains(name)) << name.toStdString();
         EXPECT_TRUE(manager.hasAction(name) || cli.hasCommandHandler(name));
+        EXPECT_EQ(describeEditorCommand(name, &cli), sharedDescriptions.value(name))
+            << name.toStdString();
+        EXPECT_EQ(cli.dispatchCommand("get_command_schema", {{"command", name}}).value("result"),
+                  sharedDescriptions.value(name)) << name.toStdString();
     }
     for (const auto& name : desktopOnly) {
         EXPECT_FALSE(manager.hasAction(name)) << name.toStdString();
         EXPECT_FALSE(cli.hasCommandHandler(name)) << name.toStdString();
         EXPECT_EQ(cli.dispatchCommand(name, {}).value("code"), "UNKNOWN_COMMAND")
             << name.toStdString();
+    }
+    manager.clearAllForTesting();
+}
+
+TEST(AICommandCatalogTest, DiscoveryRemainsAvailableWithoutAnOpenProject)
+{
+    TestSupport::ensureApp();
+    auto& manager = ActionManager::instance();
+    for (const auto host : {CommandHost::Desktop, CommandHost::Cli}) {
+        manager.clearAllForTesting();
+        IPCServer server(nullptr, nullptr, host);
+        registerEditorCommands({nullptr, nullptr, &server});
+        server.setAppState(IPCServer::AppState::ProjectPicker);
+        const auto listed = server.dispatchCommand("list_commands", {});
+        ASSERT_EQ(listed.value("status"), "ok");
+        const auto entries = listed.value("result").toObject().value("commands").toArray();
+        EXPECT_EQ(entries.size(), server.allCommandNames().size());
+        for (const auto& entry : entries) {
+            const auto name = entry.toObject().value("command");
+            const auto described = server.dispatchCommand("get_command_schema", {{"command", name}});
+            EXPECT_EQ(described.value("status"), "ok");
+            EXPECT_EQ(described.value("result"), entry);
+        }
+        EXPECT_EQ(server.dispatchCommand("not_a_registered_command", {}).value("code"), "UNKNOWN_COMMAND");
+        EXPECT_EQ(server.dispatchCommand("get_command_schema", {{"command", "not_a_registered_command"}})
+                      .value("code"), "UNKNOWN_COMMAND");
     }
     manager.clearAllForTesting();
 }

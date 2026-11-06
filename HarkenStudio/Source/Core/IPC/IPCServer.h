@@ -269,7 +269,6 @@ private:
     QJsonObject handleGetListenerOutputBus(const QJsonObject& args);
 
     QJsonObject handleSwitchView(const QJsonObject& args);
-    QJsonObject handleGetCurrentView(const QJsonObject& args);
     QJsonObject handleGetCurrentLayout(const QJsonObject& args);
     QJsonObject handleGetLayoutState(const QJsonObject& args);
     QJsonObject handleResetLayout(const QJsonObject& args);
@@ -277,7 +276,6 @@ private:
     InspectorPanel* resolveInspectorForRouting(const QJsonObject& args, QJsonObject& errOut);
     QJsonObject handleSaveNamedLayout(const QJsonObject& args);
     QJsonObject handleLoadNamedLayout(const QJsonObject& args);
-    QJsonObject handleListNamedLayouts(const QJsonObject& args);
     QJsonObject handleDeleteNamedLayout(const QJsonObject& args);
     QJsonObject handleListPanels(const QJsonObject& args);
     QJsonObject handleTogglePanel(const QJsonObject& args);
@@ -328,6 +326,7 @@ private:
 
     QJsonObject handleImportAudio(const QJsonObject& args);
     QJsonObject handleTranscodeAsset(const QJsonObject& args);
+    QJsonObject startTranscode(const QJsonObject& args, bool batch);
     QJsonObject handleGetAssetInfo(const QJsonObject& args);
     QJsonObject handleCleanupCache(const QJsonObject& args);
     QJsonObject handleListAssets(const QJsonObject& args);
@@ -381,7 +380,10 @@ private:
     std::shared_ptr<std::atomic_bool> packBuildCancel_;
     bool transcodeInProgress_ = false;
     QJsonObject transcodeResult_;
-    std::shared_ptr<MediaConversionRequest> transcodeRequest_;
+    QString transcodeOperationId_;
+    int transcodeCompleted_ = 0;
+    int transcodeTotal_ = 0;
+    std::shared_ptr<std::atomic_bool> transcodeCancel_;
     QThread* transcodeThread_ = nullptr;
     std::unique_ptr<VQLEngine> vqlEngine_;
     QMap<QTcpSocket*, QByteArray> binaryBuffers_;

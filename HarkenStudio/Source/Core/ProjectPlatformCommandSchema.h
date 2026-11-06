@@ -55,10 +55,12 @@ inline QJsonObject projectPlatformCommandSchema(const QString& command)
     if (command == "delete_project_platform" || command == "get_platform_profile"
         || command == "rescan_media_sources")
         return object({{"platform_id", projectPlatformIdSchema()}}, {"platform_id"});
-    if (command == "transcode_asset" || command == "get_transcode_status")
+    if (command == "get_transcode_status" || command == "cancel_transcode")
+        return object({{"operation_id", QJsonObject{{"type", "string"}, {"minLength", 1}}}}, {"operation_id"});
+    if (command == "transcode_asset")
         return object({{"platform_id", projectPlatformIdSchema()}, {"source_id", source}}, {"platform_id", "source_id"});
     if (command == "batch_convert_media" || command == "get_media_status")
-        return object({{"platform_id", projectPlatformIdSchema()}, {"source_ids", QJsonObject{{"type", "array"}, {"minItems", 1}, {"items", source}}}},
+        return object({{"platform_id", projectPlatformIdSchema()}, {"source_ids", QJsonObject{{"type", "array"}, {"minItems", 1}, {"uniqueItems", command == "batch_convert_media"}, {"items", source}}}},
                       {"platform_id", "source_ids"});
     if (command == "export_pack")
         return object({

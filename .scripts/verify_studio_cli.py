@@ -24,8 +24,9 @@ def verify_shell(cli: Path, environment: dict, root: Path) -> None:
     created = run(cli, ["init", str(directory), "--json"], environment)
     assert created.returncode == 0, created.stderr
 
-    def shell(lines, exit_code=0):
-        completed = run(cli, ["shell", "--project", str(project), "--json"], environment,
+    def shell(lines, exit_code=0, json_output=True):
+        arguments = ["shell", "--project", str(project)] + (["--json"] if json_output else [])
+        completed = run(cli, arguments, environment,
                         ("\n".join(lines) + ("\n" if lines else "")).encode("utf-8"))
         assert completed.returncode == exit_code, (completed.stdout, completed.stderr)
         responses = [json.loads(line) for line in completed.stdout.splitlines()]
@@ -46,6 +47,8 @@ def verify_shell(cli: Path, environment: dict, root: Path) -> None:
     persisted = shell(['get_item_info {"path":"SessionAction"}'])
     assert persisted[0]["result"]["name"] == "SessionAction", persisted
     assert shell([]) == []
+    piped = shell(["get_project_state", "commands save_project", "exit"], json_output=False)
+    assert len(piped) == 3 and all(response["status"] == "ok" for response in piped), piped
     refused = shell(['create_action {"name":"UnsavedEof"}'], exit_code=1)
     assert refused[-1]["code"] == "UNSAVED_CHANGES", refused
     discarded = shell(['create_action {"name":"Discarded"}', "exit --discard"])
@@ -99,10 +102,20 @@ def verify_shell(cli: Path, environment: dict, root: Path) -> None:
     reader = threading.Thread(target=read_responses, daemon=True)
     reader.start()
     try:
-        for line in ('get_item_info {"path":"SessionAction"}', "commands save_project", "exit"):
+        def send(line):
             process.stdin.write((line + "\n").encode("utf-8"))
             process.stdin.flush()
-            response = responses.get(timeout=30)
+            return responses.get(timeout=30)
+
+        for line in ('get_item_info {"path":"SessionAction"}', "commands save_project",
+                     "init_engine", "start_output", "close_project"):
+            response = send(line)
+            assert response["status"] == "ok", response
+        released = run(cli, ["list-targets", "--project", str(project), "--json"], environment)
+        assert released.returncode == 0, (released.stdout, released.stderr)
+        for line in ("open_project " + json.dumps({"path": str(project)}),
+                     'get_item_info {"path":"SessionAction"}', "exit"):
+            response = send(line)
             assert response["status"] == "ok", response
         assert process.wait(timeout=30) == 0
     finally:
@@ -137,6 +150,9 @@ def verify(cli: Path, host: Path | None, work: Path) -> None:
     assert identity["protocol"] == 1 and identity["compiler"], identity
     assert call("--version")["result"]["version"]
     catalog = call("commands")["result"]["commands"]
+    assert call("exec", "list_commands")["result"]["commands"] == catalog
+    schema = call("exec", "get_command_schema", "--input", "-", data={"command": "save_project"})
+    assert call("commands", "save_project")["result"] == schema["result"]
     names = {entry["command"] for entry in catalog}
     assert len(names) == len(catalog) and {"create_project", "set_item_property", "export_pack"} <= names
     for entry in catalog:
@@ -154,11 +170,31 @@ def verify(cli: Path, host: Path | None, work: Path) -> None:
     call("not_a_subcommand", exit_code=2)
     call("exec", "list_items", "--args", "[", exit_code=2)
     call("run", "--input", "-", data=[{"cmd": "create_project"}, 1], exit_code=2)
+    call("run", exit_code=2)
+    call("--save", exit_code=2)
+    call("exec", "ping", "--project", "", exit_code=2)
+    for command in (["commands"], ["commands", "save_project"], ["init", "unused"], ["shell"]):
+        for option in (["--args", "{}"], ["--input", "-"], ["--save"]):
+            call(*command, *option, exit_code=2)
+    call("commands", "--project", "missing.hsp", exit_code=2)
+    for option, value in (("--project", "missing.hsp"), ("--args", "{}"), ("--input", "-"), ("--timeout", "1")):
+        call("exec", "ping", option, value, option, value, exit_code=2)
 
     work.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="studio cli \u00e9-", dir=work) as temporary:
         root = Path(temporary).resolve()
         assert root.is_relative_to(work.resolve())
+        reference_file = root / "reference.bin"
+        candidate_file = root / "candidate.bin"
+        reference_file.write_bytes(b"\x00\x01\x02")
+        candidate_file.write_bytes(b"\x00\x01\x03\x04")
+        compared = call("exec", "compare_files", "--input", "-", data={
+            "reference_path": str(reference_file), "candidate_path": str(candidate_file)})["result"]
+        assert not compared["identical"] and not compared["length_match"]
+        assert compared["compared_bytes"] == 4 and compared["different_bytes"] == 2, compared
+        reference_file.write_bytes(candidate_file.read_bytes())
+        assert call("exec", "compare_files", "--input", "-", data={
+            "reference_path": str(reference_file), "candidate_path": str(candidate_file)})["result"]["identical"]
         project_dir = root / "GameAudio"
         project = project_dir / "GameAudio.hsp"
         call("init", str(project_dir))
@@ -183,9 +219,9 @@ def verify(cli: Path, host: Path | None, work: Path) -> None:
                     for path in project_dir.rglob("*") if path.is_file()
                     and ".cache" not in path.relative_to(project_dir).parts}
 
-        call("run", "--project", str(project), "--input", "-", "--save", data=[
-            {"cmd": "create_action", "args": {"name": "ShouldNotExist"}},
-            {"cmd": "list_items", "args": []}], exit_code=2)
+        for invalid_request in ({"cmd": "list_items", "args": []}, {"cmd": "list_items", "arguments": {}}):
+            call("run", "--project", str(project), "--input", "-", "--save", data=[
+                {"cmd": "create_action", "args": {"name": "ShouldNotExist"}}, invalid_request], exit_code=2)
         execute("get_item_info", {"path": "ShouldNotExist"}, exit_code=1)
         execute("create_action", {"name": "Unsaved"})
         execute("get_item_info", {"path": "Unsaved"}, exit_code=1)
@@ -238,6 +274,11 @@ def verify(cli: Path, host: Path | None, work: Path) -> None:
         assert authored_contents() == saved
         converted = execute("transcode_asset", {"source_id": imported["source_id"], "platform_id": platform})
         assert converted["result"]["success"] and not converted["result"].get("async"), converted
+        batch = execute("batch_convert_media", {"source_ids": [imported["source_id"]], "platform_id": platform})
+        assert batch["result"]["success"] and batch["result"]["completed"] == batch["result"]["total"] == 1, batch
+        assert batch["result"]["results"][0]["response"]["result"]["cache_path"] == converted["result"]["cache_path"]
+        for invalid in ([imported["source_id"], "invalid"], [imported["source_id"], imported["source_id"]]):
+            execute("batch_convert_media", {"source_ids": invalid, "platform_id": platform}, exit_code=1)
         workflow = root / "workflow.json"
         workflow.write_text(json.dumps([
             {"cmd": "create_action", "args": {"name": "PlayTone"}},
@@ -248,7 +289,7 @@ def verify(cli: Path, host: Path | None, work: Path) -> None:
         execute("get_item_info", {"path": "PlayTone"})
         execute("get_action_definition", {"name": "PlayTone"})
         playback = call("run", "--project", str(project), "--input", "-", data=[
-            {"cmd": "init", "args": {"sample_rate": 48000, "buffer_size": 480}},
+            {"cmd": "init_engine", "args": {"sample_rate": 48000, "buffer_size": 480}},
             {"cmd": "set_master_volume", "args": {"volume": 0}},
             {"cmd": "start_output"},
             {"cmd": "post_action", "args": {"name": "PlayTone"}},
@@ -297,7 +338,7 @@ def verify(cli: Path, host: Path | None, work: Path) -> None:
         init_pack = next(pack for pack in packs if pack.stem == "Init")
         content_pack = next(pack for pack in packs if pack.stem == "PlayTone")
         lifecycle = call("run", "--input", "-", data=[
-            {"cmd": "init"},
+            {"cmd": "init_engine"},
             {"cmd": "load_pack", "args": {"path": str(init_pack)}},
             {"cmd": "load_pack", "args": {"path": str(content_pack)}},
             {"cmd": "get_loaded_packs"},
