@@ -58847,20 +58847,23 @@ engine.runtimeRecreateRequired = true;
                     engine.ReadPlayableMember(observedMemberSlots[index]).startFrame);
             }
             requirePublication(latestScheduledStart);
-            std::array<harken::TimelineArmObservation,
-                       kMaxObservedMemberSpan> arms{};
+            std::optional<std::array<harken::TimelineArmObservation,
+                                     kMaxObservedMemberSpan>> ackArms;
             bool allObserved = true;
-            for (std::uint32_t index = 0; index < memberStorageSpan;
-                 ++index) {
-                if (!memberPresent(index)) continue;
-                allObserved =
-                    engine.timelineArms.Observe(
+            // Only the ACK branches below consume this snapshot. Started and
+            // cancelling services observe their current lifecycle separately.
+            if (row.phase == harken::EnginePlayableStartPhase::AwaitingArmAck) {
+                auto& arms = ackArms.emplace();
+                for (std::uint32_t index = 0; index < memberStorageSpan; ++index) {
+                    if (!memberPresent(index)) continue;
+                    allObserved = engine.timelineArms.Observe(
                         engine.ReadPlayableMember(observedMemberSlots[index]).arm,
-                        &arms[index]) &&
-                    allObserved;
+                        &arms[index]) && allObserved;
+                }
             }
             if (row.phase == harken::EnginePlayableStartPhase::AwaitingArmAck &&
                 row.parentService.Valid() && !row.variableControlInstance.Valid()) {
+                const auto& arms = *ackArms;
                 bool borrowedGroup = true;
                 bool groupPublished = true;
                 for (std::uint32_t index = 0; index < memberStorageSpan; ++index) {
@@ -59029,6 +59032,7 @@ engine.runtimeRecreateRequired = true;
             }
             if (row.phase ==
                 harken::EnginePlayableStartPhase::AwaitingArmAck) {
+                const auto& arms = *ackArms;
                 bool allTimely = allObserved;
                 bool deadlineMissed = !allObserved;
                 for (std::uint32_t index = 0;
