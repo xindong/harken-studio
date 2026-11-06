@@ -128,6 +128,8 @@ public:
         LogicCommitSequence sequence) noexcept;
     bool AttachPage(QueuePageConditionalReceiver& original,
         PreparedQueueConditionalReplacementV1& conditional) noexcept;
+    bool AttachPageWithdrawal(QueuePageConditionalReceiver& original,
+        QueuePageConditionalReceiver& head, std::uint16_t slices, std::uint64_t completed) noexcept;
     bool CommitPage(PreparedQueueConditionalReplacementV1& conditional,
         LogicCommitSequence sequence) noexcept;
     bool TryAccept(const ActionCommitBundle& reservedAction) noexcept;
@@ -152,7 +154,11 @@ private:
         const QueueContinuationLane& head) const noexcept;
     bool IsContinuationSuffix(const QueueContinuationLane& original,
         const OriginalImmediateLaneConditionalProjection& head) const noexcept;
+    bool IsPageSuffix(const QueuePageConditionalReceiver& original,
+        const QueuePageConditionalReceiver& head) const noexcept;
     bool HasEntireSuffix(QueueInstanceToken queue, ConditionalQueueVersionToken head) const noexcept;
+    bool AttachPageMember(QueuePageConditionalReceiver& original,
+        PreparedQueueConditionalReplacementV1* conditional, QueuePageConditionalReceiver* head) noexcept;
     bool AttachContinuationMember(QueueContinuationLane& original,
         QueueContinuationLane* replacement, PreparedQueueConditionalReplacementV1* conditional,
         QueueContinuationLane* withdrawalHead,
@@ -165,6 +171,9 @@ private:
     }
     struct Member {
         QueuePageConditionalReceiver* page = nullptr;
+        QueuePageConditionalReceiver* pageWithdrawalHead = nullptr;
+        ConditionalQueueVersionToken pageWithdrawalVersion{};
+        DecisionToken pageWithdrawalDecision{};
         QueueContinuationLane* continuation = nullptr;
         QueueContinuationLane* replacementContinuation = nullptr;
         QueueContinuationLane* withdrawalHead = nullptr;

@@ -940,24 +940,38 @@ void QueueInstanceTable::FrontierConditionalProof::Release() noexcept {
     if (row_ != nullptr)
         static_cast<Row*>(row_)->conditionalReplacementReserved.store(false, std::memory_order_release);
     row_ = nullptr;
+    conditional_ = nullptr;
     lease_ = nullptr;
+}
+
+bool QueueInstanceTable::MatchesConditionalCurrent(const Row& row, const ConditionalState& state,
+    std::uint64_t version, bool requireSourceAdmission) const noexcept {
+    if (&row.Pending() == &state)
+        return row.mirrorVersion.load(std::memory_order_acquire) == version;
+    if (!originalConditionalRows_.IsConstructed(state.originalConditionalRow)) return false;
+    const auto& original = originalConditionalRows_[state.originalConditionalRow];
+    return original.state == OriginalConditionalState::Committed && original.body == &state &&
+        original.marker == state.originalConditionalMarker && original.currentState.version == version &&
+        original.predecessor.Valid() && state.predecessorReceipt != nullptr && state.sourceArms != nullptr &&
+        (!requireSourceAdmission || FollowingSourceAdmitted(state));
 }
 
 bool QueueInstanceTable::BindFrontierConditional(QueueInstanceToken token,
     const FrontierGroupBinding& binding, const ScheduledTransactionPool& pool) noexcept {
     const auto& identity = binding.queueConditional;
     auto* row = Resolve(token);
+    auto* state = row == nullptr ? nullptr : FindConditional(*row, {identity.pendingVersion});
     Plan03PageGroupView group{};
-    if (row == nullptr || !binding.Valid() || !identity.Valid() || binding.queueInitial.Valid() ||
+    if (row == nullptr || state == nullptr || !binding.Valid() || !identity.Valid() || binding.queueInitial.Valid() ||
         binding.variableSide.Valid() || token.slot != identity.slot || token.generation != identity.generation ||
         row->world != binding.operation.world || row->rootInstance != binding.operation.owner.child ||
-        row->mirrorVersion.load(std::memory_order_acquire) != identity.currentVersion ||
-        row->Pending().pendingVersion.load(std::memory_order_acquire) != identity.pendingVersion ||
+        !MatchesConditionalCurrent(*row, *state, identity.currentVersion, false) ||
+        state->pendingVersion.load(std::memory_order_acquire) != identity.pendingVersion ||
         row->conditionalReserved.load(std::memory_order_acquire) ||
         row->conditionalReplacementReserved.load(std::memory_order_acquire) ||
-        !SameDecision(row->Pending().pendingDecision, binding.operation.group.decision) ||
-        !SameOccurrence(row->Pending().pendingExpectedCurrent, identity.current) ||
-        !SameOccurrence(row->Pending().pendingSuccessor, identity.successor) ||
+        !SameDecision(state->pendingDecision, binding.operation.group.decision) ||
+        !SameOccurrence(state->pendingExpectedCurrent, identity.current) ||
+        !SameOccurrence(state->pendingSuccessor, identity.successor) ||
         !pool.PrivatePlan03GroupBindable(binding.operation.group) ||
         !pool.ResolvePlan03GroupSliceProducer(binding.operation.group, &group) || group.frontier != &binding ||
         group.lease == nullptr || group.lease->Capture().state != AudioSliceState::Ready ||
@@ -1197,14 +1211,15 @@ bool QueueInstanceTable::ProveFrontierConditional(const FrontierGroupBinding& bi
     if (!binding.Valid() || !identity.Valid() || binding.variableSide.Valid() || binding.queueInitial.Valid() ||
         out == nullptr || out->Valid()) return false;
     auto* row = Resolve({identity.slot, identity.generation});
+    auto* conditional = row == nullptr ? nullptr : FindConditional(*row, {identity.pendingVersion});
     Plan03PageGroupView group{};
-    if (row == nullptr || row->frontierPool == nullptr || !(row->frontierOwner == binding.operation.owner) ||
+    if (row == nullptr || conditional == nullptr || row->frontierPool == nullptr || !(row->frontierOwner == binding.operation.owner) ||
         row->world != binding.operation.world || row->rootInstance != binding.operation.owner.child ||
-        row->mirrorVersion.load(std::memory_order_acquire) != identity.currentVersion ||
-        row->Pending().pendingVersion.load(std::memory_order_acquire) != identity.pendingVersion ||
-        !SameDecision(row->Pending().pendingDecision, binding.operation.group.decision) ||
-        !SameOccurrence(row->Pending().pendingExpectedCurrent, identity.current) ||
-        !SameOccurrence(row->Pending().pendingSuccessor, identity.successor) ||
+        !MatchesConditionalCurrent(*row, *conditional, identity.currentVersion, true) ||
+        conditional->pendingVersion.load(std::memory_order_acquire) != identity.pendingVersion ||
+        !SameDecision(conditional->pendingDecision, binding.operation.group.decision) ||
+        !SameOccurrence(conditional->pendingExpectedCurrent, identity.current) ||
+        !SameOccurrence(conditional->pendingSuccessor, identity.successor) ||
         row->failurePhase.load(std::memory_order_acquire) != QueueFailurePhase::Healthy ||
         !row->frontierPool->ResolvePlan03GroupSliceRt(binding.operation.group, &group) ||
         group.frontier != &binding || group.lease != &lease || lease.Capture().state != AudioSliceState::Ready)
@@ -1213,12 +1228,13 @@ bool QueueInstanceTable::ProveFrontierConditional(const FrontierGroupBinding& bi
     if (!row->conditionalReplacementReserved.compare_exchange_strong(expected, true,
         std::memory_order_acq_rel, std::memory_order_acquire)) return false;
     out->row_ = row;
+    out->conditional_ = conditional;
     out->lease_ = &lease;
     out->slice_ = slice;
     if (slice == FrontierConditionalSlice::TargetLock) {
         if (!binding.transition.Valid() || binding.operation.group.sliceIndex != 1 ||
             binding.operation.order.executeFrame != binding.transition.audibleFrame ||
-            row->Pending().pendingActivation.load(std::memory_order_acquire) != ConditionalQueueActivation::Activated) {
+            conditional->pendingActivation.load(std::memory_order_acquire) != ConditionalQueueActivation::Activated) {
             out->Release();
             return false;
         }
@@ -1226,7 +1242,7 @@ bool QueueInstanceTable::ProveFrontierConditional(const FrontierGroupBinding& bi
     }
     SourceWaitAuthority authority;
     const bool recovering = sourceWait != nullptr && slice == FrontierConditionalSlice::Activation &&
-        !row->Pending().pendingCompletionIsLogicalBoundary && !ValidRetiredSourceProof(row->Pending().pendingRetiredSource);
+        !conditional->pendingCompletionIsLogicalBoundary && !ValidRetiredSourceProof(conditional->pendingRetiredSource);
     if (recovering && !ProveSourceWaitAuthority(binding, lease, *row->frontierPool, *sourceWait,
             quantumStartFrame, quantumEndFrame, completedAudioSequence, &authority, stagedInitial)) {
         out->Release();
@@ -1272,20 +1288,27 @@ void QueueInstanceTable::ApplyFrontierConditional(const FrontierConditionalProof
     auto& row = *static_cast<Row*>(proof.row_);
     assert(row.conditionalReplacementReserved.load(std::memory_order_acquire));
     if (proof.slice_ != FrontierConditionalSlice::Activation) return;
-    row.Pending().pendingActivation.store(ConditionalQueueActivation::Activated, std::memory_order_release);
-    if (row.Pending().originalConditionalRow != UINT32_MAX)
-        originalConditionalRows_[row.Pending().originalConditionalRow].activated.store(true, std::memory_order_release);
+    auto& conditional = *static_cast<ConditionalState*>(proof.conditional_);
+    conditional.pendingActivation.store(ConditionalQueueActivation::Activated, std::memory_order_release);
+    if (conditional.originalConditionalRow != UINT32_MAX)
+        originalConditionalRows_[conditional.originalConditionalRow].activated.store(true, std::memory_order_release);
 }
 
 bool QueueInstanceTable::StoreMirror(
-    Row& row, const EffectiveQueueState& state) noexcept {
+    Row& row, const EffectiveQueueState& state, DecisionToken settled) noexcept {
     if (state.randomInitialRecentCount > kMaxQueueAvoidHistoryHard) {
         return false;
     }
     const std::uint64_t sequence =
         row.mirrorSequence.load(std::memory_order_relaxed);
     if ((sequence & 1u) != 0 || sequence > UINT64_MAX - 2u) return false;
-    if (!MayMutateFrontier(row)) return false;
+    if (settled.Valid()) {
+        if (row.Pending().pendingActivation.load(std::memory_order_acquire) != ConditionalQueueActivation::Activated ||
+            !SameDecision(row.Pending().pendingDecision, settled) ||
+            row.Pending().pendingNext.version != state.version ||
+            (row.frontierPool != nullptr && !row.frontierPool->InvalidateFrontierOwnerOperations(
+                row.frontierOwner, settled, AudioSliceInvalidateReason::Cancel))) return false;
+    } else if (!MayMutateFrontier(row)) return false;
     row.mirrorSequence.store(sequence + 1u, std::memory_order_release);
     row.mirrorCursor.store(state.cursor, std::memory_order_relaxed);
     row.mirrorCurrentChildOrdinal.store(
@@ -1833,7 +1856,8 @@ QueueConditionalProofStatus QueueInstanceTable::CaptureConditionalSourceDelay(
         (arm.state == ArmState::Tombstoned && arm.logicalCompletionSequence == 0))
         return QueueConditionalProofStatus::FailedIdentity;
     if (!FollowingSourceAdmitted(*state)) return QueueConditionalProofStatus::Waiting;
-    const auto frozenStart = state->pendingCompletion.absoluteLogicalStartFrame;
+    const auto frozenStart = state->pendingCompletionOwner.kind == CompletionOwnerKind::Composite
+        ? state->sourceStartFrame : state->pendingCompletion.absoluteLogicalStartFrame;
     if (arm.actualStartFrame == UINT64_MAX || arm.actualStartFrame < frozenStart)
         return QueueConditionalProofStatus::FailedIdentity;
     *delay = arm.actualStartFrame - frozenStart;
@@ -2799,6 +2823,14 @@ bool QueueInstanceTable::PrepareConditionalInternal(
         auto& original = originalConditionalRows_[predecessor->row_];
         auto* live = Resolve(token);
         TimelineArmObservation arm{};
+        const bool singleSource = !source->composite_.Valid() &&
+            IsBoundKnownCompletionPredicate(request.completion) &&
+            request.completion.owner.kind == CompletionOwnerKind::SingleQueue &&
+            request.completion.renderGeneration == sourceArm.renderGeneration;
+        const bool compositeSource = source->composite_.Valid() && source->composites_ != nullptr &&
+            request.completionOwner.kind == CompletionOwnerKind::Composite &&
+            request.completionOwner.composite.slot == source->composite_.slot &&
+            request.completionOwner.composite.generation == source->composite_.generation;
         const bool selected = live != nullptr && IsAcceptedSelectedConditionalHead(*live, original);
         const auto version = selected ? original.selectedVersion : original.version;
         const auto successor = selected ? original.selectedSuccessor : original.successor;
@@ -2810,9 +2842,7 @@ bool QueueInstanceTable::PrepareConditionalInternal(
             original.body->following.load(std::memory_order_acquire) != nullptr ||
             !SameOccurrence(successor, request.expectedCurrentOccurrence) ||
             request.completionIsLogicalBoundary || request.completionHasLogicalFloor ||
-            !IsBoundKnownCompletionPredicate(request.completion) ||
-            request.completion.owner.kind != CompletionOwnerKind::SingleQueue ||
-            request.completion.renderGeneration != sourceArm.renderGeneration ||
+            (!singleSource && !compositeSource) ||
             !sourceArms->Observe(sourceArm, &arm) ||
             !SameDecision(arm.parentGroup.decision, decision) ||
             (arm.state != ArmState::Prepared && arm.state != ArmState::PendingApply &&
@@ -2947,6 +2977,8 @@ bool QueueInstanceTable::PrepareConditionalInternal(
     state.sourceArms = sourceArms;
     state.sourceOccurrences = source == nullptr ? nullptr : source->occurrences_;
     state.sourceArm = sourceArm;
+    state.sourceStartFrame = source != nullptr && source->composite_.Valid()
+        ? source->sourceStartFrame_ : request.completion.absoluteLogicalStartFrame;
     state.predecessorReceipt = predecessor == nullptr ? nullptr
         : &originalConditionalRows_[predecessor->row_].activated;
     state.predecessorDecision = prior == nullptr ? DecisionToken{} : prior->pendingDecision;
@@ -3300,15 +3332,17 @@ QueueResetStatusV1 QueueInstanceTable::PrepareConditionalReplacementRetainingOri
 
 bool QueueInstanceTable::PageConditionalReplaceable(QueueInstanceToken token,
     ConditionalQueueVersionToken version, DecisionToken decision, const QueuePageConditionalReceiver& receiver,
-    std::uint16_t slices, std::uint64_t completed) const noexcept {
+    std::uint16_t slices, std::uint64_t completed, bool localOnly,
+    const OriginalConditionalReplacementBatch* batch) const noexcept {
     const auto* row = Resolve(token);
     if (row == nullptr || SignalOwnsNext(*row) || !ProvePendingConditionalIdentity(token, version, decision) ||
         row->frontierPool == nullptr) return false;
-    if (row->signalFrontier != nullptr && (row->signalFrontierPool == nullptr ||
+    if (!localOnly && row->signalFrontier != nullptr && (row->signalFrontierPool == nullptr ||
         !row->signalFrontierPool->PageReplacementScopeReady(row->signalFrontier->operation.owner,
             row->signalFrontier->operation.group.decision, &receiver, decision,
             SameDecision(row->signalFrontier->operation.group.decision, decision) ? slices : 0, completed))) return false;
-    return row->frontierPool->PageReplacementScopeReady(row->frontierOwner, {}, &receiver, decision, slices, completed);
+    return row->frontierPool->PageReplacementScopeReady(row->frontierOwner,
+        localOnly ? decision : DecisionToken{}, &receiver, decision, slices, completed, batch);
 }
 
 QueueResetStatusV1 QueueInstanceTable::PreparePageConditionalReplacement(
@@ -3567,9 +3601,11 @@ bool QueueInstanceTable::SettleActivated(
             source.startedBlockSequence == 0 || source.startedBlockSequence > completedAudioSequence)
             return false;
     }
+    // Only the consumed head is being settled. Its following nodes retain their
+    // exact identities; publishing the mirror before the head keeps both views valid.
     EffectiveQueueState monitorPrevious{};
     (void)LoadMirror(*row, &monitorPrevious);
-    if (!StoreMirror(*row, row->Pending().pendingNext)) return false;
+    if (!StoreMirror(*row, row->Pending().pendingNext, row->Pending().pendingDecision)) return false;
     MonitorLifecycleFacts facts = row->monitorIdentity;
     facts.controlCause = {};
     facts.logicCommitSequence = 0;
@@ -3850,11 +3886,26 @@ bool QueueInstanceTable::RollbackUnpublishedConditional(
     if (!MatchesOriginalConditionalFutureReservation(cap) || !lane.Active() || lane.published_ ||
         lane.queues_ != this || lane.queue_.slot != cap.queue_.slot ||
         lane.queue_.generation != cap.queue_.generation) return false;
+    if (!SameDecision(originalConditionalRows_[cap.row_].decision, lane.decision_)) return false;
+    return RollbackUnpublishedConditionalBody(cap);
+}
+
+bool QueueInstanceTable::RollbackUnpublishedConditional(
+    const OriginalConditionalFutureReservation& cap, const DecisionTable& decisions) noexcept {
+    if (!MatchesOriginalConditionalFutureReservation(cap)) return false;
+    const auto decision = originalConditionalRows_[cap.row_].decision;
+    const auto* row = Resolve(cap.queue_);
+    if (row == nullptr || (!decisions.IsOpen(decision) && !decisions.IsCancelled(decision)) ||
+        decisions.HasFrontierDecisionBinding(decision) || (row->frontierPool != nullptr &&
+        row->frontierPool->HasFrontierOwnerOperations(row->frontierOwner, decision))) return false;
+    return RollbackUnpublishedConditionalBody(cap);
+}
+
+bool QueueInstanceTable::RollbackUnpublishedConditionalBody(const OriginalConditionalFutureReservation& cap) noexcept {
     auto& original = originalConditionalRows_[cap.row_];
     auto* row = Resolve(cap.queue_);
     auto* state = original.body;
     if (row == nullptr || state == nullptr || original.state != OriginalConditionalState::Committed ||
-        !SameDecision(original.decision, lane.decision_) ||
         FindConditional(*row, original.version) != state || state->following.load(std::memory_order_acquire) != nullptr ||
         state->pendingActivation.load(std::memory_order_acquire) != ConditionalQueueActivation::Waiting) return false;
     if (original.predecessor.Valid()) {

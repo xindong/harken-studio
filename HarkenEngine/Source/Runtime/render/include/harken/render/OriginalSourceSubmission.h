@@ -7,6 +7,7 @@
 #include "harken/core/StableSlotStorage.h"
 #include "harken/core/TimelineProgram.h"
 #include "harken/core/QueueRuntime.h"
+#include "harken/core/CompositeCompletionOwnerPool.h"
 #include "harken/core/QueueContinuationLane.h"
 #include "harken/render/VoicePool.h"
 
@@ -278,6 +279,22 @@ private:
     }
 
 public:
+
+    bool RefreshPreparedCompletionProgress(TimelineArmToken token,
+        const VoicePool::PreparedCommitProof& proof) noexcept {
+        auto* row = Find(token);
+        if (row == nullptr || row->State() != Phase::Preparing || row->wasPublished_ ||
+            proof.Owner() != &voices_ || !voices_.MatchesOriginalPreparedVoice(row->voice_, proof)) return false;
+        const CompletionProgressRow* progress = nullptr;
+        OccurrenceToken occurrence{};
+        if (!row->arm_.Valid() || !voices_.CapturePreparedCompletionProgress(proof, &progress, &occurrence) ||
+            (row->completionProgress_ != nullptr && (row->completionProgress_ != progress ||
+             row->completionOccurrence_.slot != occurrence.slot ||
+             row->completionOccurrence_.generation != occurrence.generation))) return false;
+        row->completionProgress_ = progress;
+        row->completionOccurrence_ = occurrence;
+        return true;
+    }
 
     // Every source child is validated before the irreversible outer commit.
     bool BindPreparedChild(const CommandQueue::PreparedBatchProof& batch,
@@ -879,6 +896,48 @@ public:
                 actual->completionOccurrence_.generation == proof.occurrence_.generation;
         };
         return true;
+    }
+
+    bool ProveQueueCompositeContinuationSource(TimelineArmToken source,
+        const OccurrenceStatePool& occurrences, const CompositeCompletionOwnerPool& composites,
+        const CompositeCompletionOwnerPool::OriginalLifetimePin& original, CompositeCompletionOwnerToken owner,
+        QueueInstanceTable::ContinuationSourceBinding* out) const noexcept {
+        CompositeCompletionOwnerInfo info{};
+        KnownScheduleLeafV1 leaf{};
+        if (out == nullptr || out->validate_ != nullptr ||
+            !composites.IsOriginalLifetimePinFor(original, owner) ||
+            !composites.CaptureOriginal(original, &info) || info.leafCount != 1 ||
+            !composites.CaptureOriginalLeaf(original, 0, &leaf) ||
+            leaf.renderGeneration != source.renderGeneration ||
+            !ProveQueueContinuationSource(source, occurrences, leaf.occurrence, out)) return false;
+        out->leafOccurrence_ = leaf.occurrence;
+        out->occurrence_ = info.composedOccurrence;
+        out->composites_ = &composites;
+        out->composite_ = owner;
+        out->sourceStartFrame_ = leaf.absoluteLeafStartFrame;
+        out->validate_ = [](const QueueInstanceTable::ContinuationSourceBinding& proof) noexcept {
+            const auto& issuer = *static_cast<const OriginalSourceSubmissionRegistry*>(proof.issuer_);
+            const auto* actual = issuer.Find(proof.arm_);
+            CompositeCompletionOwnerInfo held{};
+            KnownScheduleLeafV1 leaf{};
+            if (actual == nullptr || actual != proof.source_ || proof.arms_ != &issuer.arms_ ||
+                actual->State() == Phase::Free || actual->State() == Phase::EngineDestroyed ||
+                proof.composites_ == nullptr ||
+                !(proof.composites_->Capture(proof.composite_, &held) ||
+                  proof.composites_->CapturePrepared(proof.composite_, &held)) || held.leafCount != 1 ||
+                !(proof.composites_->CaptureLeaf(proof.composite_, 0, &leaf) ||
+                  proof.composites_->CapturePreparedLeaf(proof.composite_, 0, &leaf))) return false;
+            return held.composedOccurrence.slot == proof.occurrence_.slot &&
+                held.composedOccurrence.generation == proof.occurrence_.generation &&
+                leaf.occurrence.slot == proof.leafOccurrence_.slot &&
+                leaf.occurrence.generation == proof.leafOccurrence_.generation &&
+                leaf.renderGeneration == proof.arm_.renderGeneration &&
+                leaf.absoluteLeafStartFrame == proof.sourceStartFrame_ && actual->completionProgress_ != nullptr &&
+                actual->completionProgress_ == proof.occurrences_->CompletionProgressOf(proof.leafOccurrence_) &&
+                actual->completionOccurrence_.slot == proof.leafOccurrence_.slot &&
+                actual->completionOccurrence_.generation == proof.leafOccurrence_.generation;
+        };
+        return out->Valid();
     }
 
     // Called only after callback admission is revoked and all workers joined.

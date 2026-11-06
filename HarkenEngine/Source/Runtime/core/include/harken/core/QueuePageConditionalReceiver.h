@@ -19,18 +19,28 @@ public:
         ConditionalQueueVersionToken conditional, DecisionToken decision) noexcept;
     bool MatchesConditional(const QueueInstanceTable& queues, QueueInstanceToken queue,
         ConditionalQueueVersionToken conditional, DecisionToken decision) const noexcept;
-    bool PrepareReplacementCheck(std::uint16_t slices, std::uint64_t completed) noexcept {
+    bool PrepareReplacementCheck(std::uint16_t slices, std::uint64_t completed,
+        const OriginalConditionalReplacementBatch* batch = nullptr) noexcept {
         slices_ = slices;
         completed_ = completed;
-        return Replaceable();
+        return Replaceable(batch);
     }
-    bool Replaceable() const noexcept;
+    bool PrepareLocalReplacementCheck(std::uint16_t slices, std::uint64_t completed) noexcept {
+        slices_ = slices;
+        completed_ = completed;
+        return LocallyReplaceable();
+    }
+    bool Replaceable(const OriginalConditionalReplacementBatch* batch = nullptr) const noexcept;
+    bool IsAttachedWithdrawalOf(const QueuePageConditionalReceiver& head,
+        const OriginalConditionalReplacementBatch* batch) const noexcept;
     bool CanRetire() const noexcept;
     bool BeginAudio(const FrontierGroupBinding& binding) const noexcept;
     void BeforeAudioWrite() const noexcept;
     void EndAudio() const noexcept;
 private:
     friend class OriginalConditionalReplacementBatch;
+    friend class QueueInstanceTable;
+    bool LocallyReplaceable() const noexcept;
     static constexpr std::uint64_t kChanging = 1, kAttached = 2, kReading = 4,
         kWritten = 8, kWithdrawn = 16;
     QueueInstanceTable* queues_ = nullptr;

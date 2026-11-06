@@ -32894,13 +32894,16 @@ TEST(PlayableStart, MusicQueueCropsAcrossEntriesAndRestoresEachBodyPass) {
     for (const bool pack : {false, true})
     for (const unsigned workers : {0u, 2u})
     for (const unsigned shape : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u, 10u, 11u, 12u, 13u})
-    for (const unsigned variant : {0u, 1u, 2u, 3u})
+    for (const unsigned sourceFadeFrames : {100u, 350u, 400u})
+    for (const unsigned variant : {0u, 1u, 2u, 3u, 4u, 5u})
     for (const unsigned cropTicks : {0u, 8u, 12u, 14u, 16u, 24u, 28u, 30u, 32u, 60u, 62u, 68u, 80u}) {
+        if (variant >= 4 && (shape != 13 || sourceFadeFrames != 350 || cropTicks != 0)) continue;
+        if (sourceFadeFrames != 100 && (shape != 13 || (variant != 0 && variant < 4) || (cropTicks != 0 && cropTicks != 14 && cropTicks != 32))) continue;
         if (shape == 13 && cropTicks != 0 && cropTicks != 14 && cropTicks != 28 && cropTicks != 32 && cropTicks != 60) continue;
         if (cropTicks == 30 && shape != 11) continue;
         if (shape != 10 && shape != 13 && cropTicks > 32 && cropTicks < 80) continue;
         if (pack && shape < 9) continue;
-        if (variant != 0 && !(variant == 3 && shape >= 11 && (cropTicks == 14 || cropTicks == 30)) &&
+        if (variant != 0 && variant < 4 && !(variant == 3 && shape >= 11 && (cropTicks == 14 || cropTicks == 30)) &&
             (shape != 9 || (variant == 1 && cropTicks != 14 && cropTicks != 24 && cropTicks != 28) ||
              (variant >= 2 && cropTicks != 14))) continue;
         if (shape < 9 && (cropTicks == 12 || cropTicks == 14 || cropTicks == 28)) continue;
@@ -32909,6 +32912,7 @@ TEST(PlayableStart, MusicQueueCropsAcrossEntriesAndRestoresEachBodyPass) {
         [&] {
         SCOPED_TRACE(pack);
         SCOPED_TRACE(shape);
+        SCOPED_TRACE(sourceFadeFrames);
         SCOPED_TRACE(variant);
         SCOPED_TRACE(cropTicks);
         SCOPED_TRACE(workers);
@@ -32930,7 +32934,7 @@ TEST(PlayableStart, MusicQueueCropsAcrossEntriesAndRestoresEachBodyPass) {
         const auto differentChild = queue.children[1];
         const auto differentOccurrence = queue.occurrences[1];
         if (shape >= 5 && shape <= 8) queue.ResolveSecondChildToFirst();
-        if (shape >= 9) queue.EnableNaturalEndTransition(100, 400);
+        if (shape >= 9) queue.EnableNaturalEndTransition(sourceFadeFrames, 400);
         if (variant == 1) {
             queue.transitionCurves[0].curve.handles[0] = {0.1f, 0.0f, 0.7f, 0.2f};
             queue.transitionCurves[1].curve.handles[0] = {0.2f, 0.8f, 0.9f, 1.0f};
@@ -33038,7 +33042,7 @@ TEST(PlayableStart, MusicQueueCropsAcrossEntriesAndRestoresEachBodyPass) {
                 nativeMusic.Root().stableId, nativeMusic.segment.scheduleSemanticFingerprint);
             queue.occurrences[selected].childPlayable = nativeMusic.Root();
             queue.occurrences[selected].occurrenceSemanticFingerprint = harken::ComputePlayableOccurrenceFingerprintV1(queue.occurrences[selected]);
-            queue.EnableNaturalEndTransition(100, 400);
+            queue.EnableNaturalEndTransition(sourceFadeFrames, 400);
             if (shape == 13) {
                 queueChildren = {queue.children[0], queue.children[1], queue.children[0]};
                 queueChildren[2].stableChildOrdinal = 9;
@@ -33230,7 +33234,13 @@ TEST(PlayableStart, MusicQueueCropsAcrossEntriesAndRestoresEachBodyPass) {
         const auto start = row->startFrame;
         if (variant == 3) ASSERT_EQ(harken::PlayableControlStatus::Ok, harken::StopPlayable(*engine, started.instance, 0));
         const auto totalFrames = (shape == 10 || shape == 13) ? 3600u : 3200u;
+        bool stoppedDuringFollowing = false;
         for (unsigned block = 0; block < 120; ++block) {
+            if (variant >= 4 && !stoppedDuringFollowing && engine->mixer.BlocksRendered() * 64u >=
+                    start + (variant == 4 ? 800u : 1136u)) {
+                ASSERT_EQ(harken::PlayableControlStatus::Ok, harken::StopPlayable(*engine, started.instance, 0));
+                stoppedDuringFollowing = true;
+            }
             ASSERT_EQ(VN_OK, Vn_Update()) << OccupancyDump(*engine);
             ASSERT_FALSE(engine->runtimeRecreateRequired) << OccupancyDump(*engine);
             const auto before = engine->mixer.BlocksRendered();
@@ -33267,23 +33277,23 @@ TEST(PlayableStart, MusicQueueCropsAcrossEntriesAndRestoresEachBodyPass) {
                 if (shape == 10 && age < totalFrames && source >= 1600 && source < 2000)
                     expected = 0.1f;
                 if (shape >= 9 && age < totalFrames) {
-                    if (source >= firstEnd - 100 && source < firstEnd) expected *= 1.0f - sourceEnvelope.Eval(static_cast<float>(source - (firstEnd - 100)) / 99.0f);
+                    if (source >= firstEnd - sourceFadeFrames && source < firstEnd) expected *= 1.0f - sourceEnvelope.Eval(static_cast<float>(source - (firstEnd - sourceFadeFrames)) / static_cast<float>(sourceFadeFrames - 1));
                     else if (source >= firstEnd && source < firstEnd + 400) expected *= targetEnvelope.Eval(static_cast<float>(source - firstEnd) / 399.0f);
                 }
                 if (shape == 10 && age < totalFrames) {
                     // No transition prelude is admitted when its target starts at or beyond this pass's clip end.
                     const auto passEnd = (age < 2000 ? 1200u : 2000u) + cropTicks * 25u;
-                    if (source >= 1500 && source < 1600 && 1600 < passEnd) expected *= 1.0f - sourceEnvelope.Eval(static_cast<float>(source - 1500) / 99.0f);
+                    if (source >= 1600 - sourceFadeFrames && source < 1600 && 1600 < passEnd) expected *= 1.0f - sourceEnvelope.Eval(static_cast<float>(source - (1600 - sourceFadeFrames)) / static_cast<float>(sourceFadeFrames - 1));
                     else if (source >= 1600 && source < 2000) expected *= targetEnvelope.Eval(static_cast<float>(source - 1600) / 399.0f);
                 }
                 if (shape == 13 && age < totalFrames) {
                     const auto passEnd = (age < 2000 ? 1200u : 2000u) + cropTicks * 25u;
-                    if (source >= 1100 && source < 1200 && 1200 < passEnd)
-                        expected *= 1.0f - sourceEnvelope.Eval(static_cast<float>(source - 1100) / 99.0f);
+                    if (source >= 1200 - sourceFadeFrames && source < 1200 && 1200 < passEnd)
+                        expected *= 1.0f - sourceEnvelope.Eval(static_cast<float>(source - (1200 - sourceFadeFrames)) / static_cast<float>(sourceFadeFrames - 1));
                     else if (source >= 1200 && source < 1600)
                         expected *= targetEnvelope.Eval(static_cast<float>(source - 1200) / 399.0f);
                 }
-                if (variant == 3) expected = 0.0f;
+                if (variant == 3 || stoppedDuringFollowing) expected = 0.0f;
                 ASSERT_NEAR(expected, engine->nullBackend.LastBlock()[2 * i], 0.0001f)
                     << "frame=" << frame << " start=" << start << OccupancyDump(*engine);
             }

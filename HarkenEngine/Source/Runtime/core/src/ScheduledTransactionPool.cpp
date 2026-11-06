@@ -1,3 +1,4 @@
+#include "harken/core/QueuePageConditionalReceiver.h"
 #include "harken/core/ScheduledTransactionPool.h"
 #include "harken/core/ImmediateActionLane.h"
 #include "harken/core/PrivateOriginalQueueGroupClockProof.h"
@@ -8898,7 +8899,8 @@ bool ScheduledTransactionPool::BindPlan03GroupFrontier(const Plan03GroupSliceIde
 
 bool ScheduledTransactionPool::PageReplacementScopeReady(const FrontierOwnerIdentity& owner,
     DecisionToken scope, const QueuePageConditionalReceiver* receiver, DecisionToken replaced,
-    std::uint16_t expectedSlices, std::uint64_t completed) const noexcept {
+    std::uint16_t expectedSlices, std::uint64_t completed,
+    const OriginalConditionalReplacementBatch* batch) const noexcept {
     if (!owner.Valid() || receiver == nullptr || !replaced.Valid() || expectedSlices > 2) return false;
     const auto matches = [&](DecisionToken decision) noexcept {
         return !scope.Valid() || (decision.slot == scope.slot && decision.generation == scope.generation);
@@ -8949,6 +8951,8 @@ bool ScheduledTransactionPool::PageReplacementScopeReady(const FrontierOwnerIden
                 slice >= expectedSlices || (slices & (1u << slice)) != 0) return false;
             slices |= 1u << slice;
         } else {
+            if (state == AudioSliceState::Ready && binding.queuePageReceiver != nullptr &&
+                binding.queuePageReceiver->IsAttachedWithdrawalOf(*receiver, batch)) continue;
             if (state != AudioSliceState::SliceApplied && state != AudioSliceState::SliceInvalidated) return false;
             const auto last = PageGroupData(i).readers.lastAudioSequence.load(std::memory_order_acquire);
             if (last != 0 && completed <= last) return false;

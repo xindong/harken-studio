@@ -2058,6 +2058,8 @@ struct EngineSourceExit {
     };
     FrontierSourceExit control{};
     QueuePageConditionalReceiver queueReceiver;
+    EngineQueueChainFuture queueChain;
+    std::unique_ptr<EngineOwnedQueueFutureFiling> queueFollowingFiling;
     DecisionFuturePin lifetime{};
     Plan03GroupReaderPin reader{};
     bool cancellationAccepted = false;
