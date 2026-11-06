@@ -18674,6 +18674,7 @@ TEST(PlayableStart, LegacySegmentEntryCropKeepsFractionalEndpointFrame) {
 }
 
 TEST(PlayableStart, MusicSegmentHonorsLoopCountAndReclaimsNaturalStoppedOrFailedPlayback) {
+    for (const auto voiceCapacity : {2u, 8u})
     for (const auto updateCadence : {1u, 2u, 3u})
     for (unsigned updatePhase = 0; updatePhase < updateCadence; ++updatePhase)
     for (const auto scenario : {std::pair{1u, 0u}, std::pair{3u, 0u},
@@ -18682,6 +18683,7 @@ TEST(PlayableStart, MusicSegmentHonorsLoopCountAndReclaimsNaturalStoppedOrFailed
     for (const auto mediaFrames : {200u, 1600u})
     for (const auto workers : {0u, 2u}) {
         const auto [playCount, failureMode] = scenario;
+        if (voiceCapacity == 2 && (playCount != 0 || failureMode != 0 || mediaFrames != 1600)) continue;
         const bool failPreparation = failureMode == 1 || failureMode == 2;
         if (failureMode >= 3 && mediaFrames != 1600) continue;
         if (updateCadence != 1 && (failPreparation || mediaFrames != 1600)) continue;
@@ -18691,7 +18693,8 @@ TEST(PlayableStart, MusicSegmentHonorsLoopCountAndReclaimsNaturalStoppedOrFailed
         SCOPED_TRACE(failureMode);
         SCOPED_TRACE(mediaFrames);
         SCOPED_TRACE(workers);
-        auto config = harkentest::MakeNullConfig(8, 64, 48000);
+        SCOPED_TRACE(voiceCapacity);
+        auto config = harkentest::MakeNullConfig(voiceCapacity, 64, 48000);
         config.renderWorkerCount = workers;
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());

@@ -16053,6 +16053,39 @@ bool ReleaseQueueStopPhysicalArms(
     harken::Engine& engine,
     harken::EnginePlayableServiceRow& row,
     std::uint64_t observedAudioSequence) noexcept {
+    // A published, naturally ended music Sound has already retained its exact
+    // Source receipts. The coordinator can reclaim unrelated arms once after
+    // this service pass instead of rescanning every live owner for each Sound.
+    const auto canShareFinalReclaim = [&]() noexcept {
+        if (row.root.kind != harken::PlayableKindV1::Sound || row.leaf.kind != harken::PlayableKindV1::Sound ||
+            row.scheduleLeafCount != 0 || row.HasFeatureArrays() || row.queueMode ||
+            row.ordinaryLifecycleOwned || row.variableControlInstance.Valid() ||
+            row.controlReason != harken::PlayableControlReason::Natural ||
+            row.initialQueueEntryDecision.Valid() || row.nativeEntryDependency != nullptr ||
+            !engine.playablePartitions.Published(row.partition, row.identity)) return false;
+        const auto* parent = engine.ResolvePlayableService(row.parentService);
+        if (parent == nullptr || parent->root.kind != harken::PlayableKindV1::Segment ||
+            parent->parentService.Valid() || parent->scheduleAggregate == nullptr ||
+            !parent->scheduleAggregate->committed || parent->scheduleAggregate->music == nullptr ||
+            parent->queueMode || parent->ordinaryLifecycleOwned || parent->variableControlInstance.Valid() ||
+            parent->controlLifecycle != harken::PlayableControlLifecycle::Active) return false;
+        const auto* record = engine.FindPlayableMember(row, 0);
+        if (record == nullptr || record->dynamic != 0 || record->render != row.renderHandle ||
+            !harken::Engine::SameOriginalSingleArm(record->arm, row.arm)) return false;
+        const auto& retained = record->completion;
+        if (!retained.resourcesRetired || retained.source.Valid() ||
+            retained.sourceRender != record->render ||
+            !harken::Engine::SameOriginalSingleArm(retained.sourceStartArm, record->arm) ||
+            retained.sourceStartedBlockSequence == 0 || retained.sourceActualStartFrame == UINT64_MAX ||
+            retained.sourceArmTombstoneSequence == 0) return false;
+        harken::TimelineArmObservation observed{};
+        if (!engine.timelineArms.Observe(row.arm, &observed)) return true;
+        return !observed.parentGroup.Valid() && observed.memberIndex == UINT16_MAX &&
+            observed.state == harken::ArmState::Tombstoned &&
+            observed.startedBlockSequence == retained.sourceStartedBlockSequence &&
+            observed.actualStartFrame == retained.sourceActualStartFrame &&
+            observed.tombstoneAudioSequence == retained.sourceArmTombstoneSequence;
+    }();
     (void)engine.timelinePlanner.CompleteRollingAbort(row.arm);
 
     const auto dropArm = [&](harken::TimelineArmToken token) {
@@ -16112,8 +16145,10 @@ bool ReleaseQueueStopPhysicalArms(
                                       nullptr) != QueueCancellationLeaseStatus::Clear) return false;
         engine.timelinePool.DropPreparedOccupancy();
     }
-    if (!ObserveActiveArrivalsBeforeArmReclaim(engine)) return false;
-    (void)engine.timelineArms.ReclaimTombstoned(observedAudioSequence);
+    if (!canShareFinalReclaim) {
+        if (!ObserveActiveArrivalsBeforeArmReclaim(engine)) return false;
+        (void)engine.timelineArms.ReclaimTombstoned(observedAudioSequence);
+    }
     // Preserve the genuine Queue/Group/Decision aliases across a busy physical
     // End. Their later retirement must not erase the old successor identity.
     if (!ClearQueueSuccessorInstallationAfterNativeEnd(engine, row, observedAudioSequence)) return false;
