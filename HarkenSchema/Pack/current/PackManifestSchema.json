@@ -4021,6 +4021,126 @@
             "field": "payloadBytes",
             "from": "busOffset"
           }
+        },
+        "bodyWorldSegmentEntryTimeline": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "stableMarkerId",
+              "type": "id"
+            },
+            {
+              "name": "position",
+              "type": "u64"
+            },
+            {
+              "name": "contentStart",
+              "type": "u64"
+            },
+            {
+              "name": "contentEnd",
+              "type": "u64"
+            },
+            {
+              "name": "nominalStart",
+              "type": "u64"
+            },
+            {
+              "name": "nominalEnd",
+              "type": "u64"
+            }
+          ]
+        },
+        "bodyWorldSignalCounts": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "signalRelationCount",
+              "type": "u32"
+            },
+            {
+              "name": "signalReceiverCount",
+              "type": "u32"
+            }
+          ]
+        },
+        "bodyWorldSignalEndpoint": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "kind",
+              "type": "u32"
+            },
+            {
+              "name": "reserved",
+              "type": "u32"
+            },
+            {
+              "name": "stableId",
+              "type": "id"
+            },
+            {
+              "name": "expectedPropertyFingerprint",
+              "type": "u64"
+            },
+            {
+              "name": "expectedProgramFingerprint",
+              "type": "u64"
+            }
+          ]
+        },
+        "bodyWorldSignalRelation": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "stableId",
+              "type": "id"
+            },
+            {
+              "name": "source",
+              "type": "record",
+              "record": "bodyWorldSignalEndpoint"
+            },
+            {
+              "name": "target",
+              "type": "record",
+              "record": "bodyWorldSignalEndpoint"
+            },
+            {
+              "name": "consumer",
+              "type": "u32"
+            },
+            {
+              "name": "sendGainDb",
+              "type": "f32"
+            }
+          ]
+        },
+        "bodyWorldSignalReceiver": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "target",
+              "type": "record",
+              "record": "bodyWorldSignalEndpoint"
+            },
+            {
+              "name": "algorithm",
+              "type": "u32"
+            },
+            {
+              "name": "attackMs",
+              "type": "f32"
+            },
+            {
+              "name": "releaseMs",
+              "type": "f32"
+            },
+            {
+              "name": "reserved",
+              "type": "u32"
+            }
+          ]
         }
       },
       "retiredKinds": [

@@ -1339,7 +1339,7 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out) {
             if (!parsed) {
                 return VN_BAD_PACK;
             }
-            if (partitionHeader.bodyVintage != kCurrentWorldShippingBodyVintage) {
+            if (!IsReadableCurrentWorldBodyVintage(partitionHeader.bodyVintage)) {
                 return VN_PACK_INCOMPATIBLE;
             }
             CurrentWorldBodyImage body;

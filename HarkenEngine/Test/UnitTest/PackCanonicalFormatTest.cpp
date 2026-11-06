@@ -1062,9 +1062,7 @@ TEST(PackCanonicalFormat, RetiredProgramBodyVintageIsIncompatible) {
     for (const auto vintage : {kCurrentWorldBodyVintageV6,
                                 kCurrentWorldBodyVintageV7,
                                 kCurrentWorldBodyVintageV8,
-                                kCurrentWorldBodyVintageV9,
-                                kCurrentWorldBodyVintageV19,
-                                kCurrentWorldBodyVintageV20}) {
+                                kCurrentWorldBodyVintageV9}) {
         ImageBuilder builder(kPackKindInit);
         std::vector<std::uint8_t> requirement = RequirementPayload(11, 1, 1);
         StampRequirementCoverage(&requirement);

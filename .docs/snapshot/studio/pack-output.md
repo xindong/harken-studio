@@ -269,7 +269,7 @@ GUI、IPC、CLI 会话导出和 CLI 已保存工程构建使用同一个 `Projec
 | 低层资源写入 | Container(9)、VoiceRecipe(11)；虽不由常规最终组包直接生成，仍有有效生产写入路径 |
 | 组合与依赖 | CanonicalDefinitionPartition(21)、RequirementBlock(22)、DependencyEdge(23)、BusDefinitionSnapshot(24) |
 | 变量 | VariablePolicyOverlay(26)、VariableRequirements(27) |
-| 分区 body | shipping V18，包括可播放属性、时间表、容器、转换与 Action 章节 |
+| 分区 body | shipping V18，包括可播放属性、时间表、容器、转换与 Action 章节；V19 的入口时间线与 V20 的信号表扩展同样由合同生成 |
 
 有效目录 kind 共 16 个。DiscreteVariable(5)、MeterWiring(6)、Action(10)、InitRoutingCatalog(20)、GameplayCatalog(25)、VariableNameCatalog(28) 共 6 个列入 `retiredKinds`，读取端不再接纳；其中 Action 的当前生产数据位于分区 body。独立的 `Vn_SetGameplayCatalog` 接口与伴随 JSON 的变量名称映射继续保留，不作为 Pack 目录条目。
 
@@ -277,7 +277,7 @@ GUI、IPC、CLI 会话导出和 CLI 已保存工程构建使用同一个 `Projec
 
 修改布局后运行 `python .scripts/pack_wire_codegen.py`，或显式构建 `harken_pack_wire_regen`。普通构建直接使用入仓产物，不运行 Pack 布局生成器，也不新增 Engine 对 Studio 的依赖。`pack_wire_generated_check` 运行 `--check`，核对生成结果并扫描布局源码中的手写字节访问；Core 和 Studio PR 门禁覆盖合同、生成器及绑定表的改动。发布审计范围保留既有 Pack 范围并加入生成器、绑定表和四份产物，迁移期间增加的手写布局文件列表已移除。
 
-Pack 分区仅接受 shipping V18；V19 的 Trace 扩展和 V20 的预览／Trace 扩展不进入 `.bytes` 合同，保留各自入口并复用生成的公共布局。`.stream`、独立 Gameplay catalog 数据及 World artifact 外层封装不在本次合同内；Effect 参数定义仍来自既有 registry，指纹和校验和算法保持原有职责。
+Studio 写入 Pack 的分区仍只有 shipping V18。Engine 按 owner 接受可读的 V18、V19、V20 分区，用于原生音乐和信号发布，Studio 的 Pack 读取只接受 shipping V18；V19、V20 的扩展段与主体一样来自合同。`.stream`、独立 Gameplay catalog 数据及 World artifact 外层封装不在本次合同内；Effect 参数定义仍来自既有 registry，指纹和校验和算法保持原有职责。
 
 `current` 已补齐实际布局，与已发布的 Pack 4 档案不同。此次只更新当前合同和实现，不修改 `HarkenSchema/Pack/3`、`HarkenSchema/Pack/4` 档案或发布版本，不执行 Pack 5 发布。发布审计仍要求不同合同换代，后续由发布者完成；当前版本号保持 4 不表示本次合同变化已经完成发布。
 
@@ -289,7 +289,7 @@ Pack 分区仅接受 shipping V18；V19 的 Trace 扩展和 V20 的预览／Trac
 | Pack 跨合同代 | 须重新打包，不提供迁移；旧二进制版本号不能证明与当前合同兼容 |
 | Pack 3 | 文件头即拒绝；历史档案保留 |
 | 非当前条目布局 | 有效 kind 的非当前 vintage 返回 `VN_PACK_INCOMPATIBLE`；退役或未知 kind 返回 `VN_BAD_PACK` |
-| 非 shipping 分区 body | Pack 路径拒绝；独立预览／Trace 入口不受此限制 |
+| 不可读的分区 body vintage | Engine 返回 `VN_PACK_INCOMPATIBLE`；可读范围为 V18、V19、V20 |
 | 未知版本或布局 | 读取端拒绝 |
 
 ## 二进制合同验证快照（2026-11-05）
@@ -316,7 +316,7 @@ Editor 范围排除了 `ExportedPackLifecycle.WasapiImmediateSoundHarness`、`Ex
 
 复核修正（2026-11-06）：恢复 body 编码端在迁移中丢失的 Action 步数累计上限，以及 Engine 对 V19 专属量化时机的拒绝；历史 tag 的 `current` 不含 `binaryLayout`，审计加载它们时不再报错，`binaryLayout` 只对代际大于 4 的 Pack 合同强制，`current` 由 `pack_wire_codegen.py --check` 保证；移除运行时已不可达的 V1 总线快照分支及其类型。重建后 Runtime 执行 6457 项，6451 通过、6 跳过、0 失败；167 项打包回归通过，22 个产物文件与基线逐字节一致。Integration 原生合同未在本次复核中重跑。
 
-退役残留清理（2026-11-06）：运行时和 Studio 移除 Init routing catalog 的全部内部状态（`PackInitCatalog*`、`hasCatalog`、按 catalog 定位与校验哈希的分支），`PackCanonicalImage` 不再携带 Gameplay／变量名 catalog，Studio 删除未使用的 `GameplayCatalogFormat.h` 和 `PackVariableNameCatalog.h`。公开 ABI 保持不变：`VnConfig.maxCatalogEntries`、`VnConfig.maxCatalogBytes` 仍校验但不再约束 Pack；`VnInitPackInspectReport` 的 catalog 字段恒为 0；`VN_PACK_HASH_MISMATCH` 不再由 Pack 路径返回。`Vn_SetGameplayCatalog` 仍可用，其格式是独立于 `.bytes` 的 Engine 输入，`VN_PACK_CATALOG_CAPACITY` 目前只由它返回。Trace 中的预期哈希字段保留并写 0。基于 main `bb80a561` 重建后，Runtime 执行 6458 项，6452 通过、6 跳过、0 失败；Editor 执行 639 项，637 通过、1 跳过、1 失败，失败项为已知的 `EditorDockLayoutTest` 用例；167 项打包回归通过，22 个产物文件与迁移基线逐字节一致。
+退役残留清理（2026-11-06）：运行时和 Studio 移除 Init routing catalog 的全部内部状态（`PackInitCatalog*`、`hasCatalog`、按 catalog 定位与校验哈希的分支），`PackCanonicalImage` 不再携带 Gameplay／变量名 catalog，Studio 删除未使用的 `GameplayCatalogFormat.h` 和 `PackVariableNameCatalog.h`。公开 ABI 保持不变：`VnConfig.maxCatalogEntries`、`VnConfig.maxCatalogBytes` 仍校验但不再约束 Pack；`VnInitPackInspectReport` 的 catalog 字段恒为 0；`VN_PACK_HASH_MISMATCH` 不再由 Pack 路径返回。`Vn_SetGameplayCatalog` 仍可用，其格式是独立于 `.bytes` 的 Engine 输入，`VN_PACK_CATALOG_CAPACITY` 目前只由它返回。Trace 中的预期哈希字段保留并写 0。基于 main `ebd4f838` 重建后，Runtime 执行 6506 项，6500 通过、6 跳过、0 失败；Editor 排除与上文相同的范围后执行 640 项，638 通过、1 跳过、1 失败，失败项 `EditorDockLayoutTest` 单独复跑通过；168 项打包回归通过，22 个产物文件与迁移基线逐字节一致。Integration 原生合同未在本次重跑。
 
 ## 验证快照（2026-11-03）
 

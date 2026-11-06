@@ -81,36 +81,9 @@ SOURCE_EXEMPTIONS = {
     'HarkenStudio/Source/Tooling/Harkenizer/ResourceCompiler/ResourceCompiler.cpp': {
         'BuildStreamBytes': 'Independent .stream writer, explicitly excluded from the .bytes contract. Includes stream chunk checksums and PCM channel planes.',
     },
-    'HarkenEngine/Source/Runtime/core/src/CurrentWorldCodec.cpp': {
-        'AppendU32': 'Scalar primitive retained exclusively for V19/V20 Trace or preview extensions after generated shipping-body traversal. Do not exempt callers generically.',
-        'AppendU64': 'Scalar primitive retained exclusively for V19/V20 Trace or preview extensions after generated shipping-body traversal. Do not exempt callers generically.',
-        'AppendF32': 'Scalar primitive retained exclusively for V19/V20 Trace or preview extensions after generated shipping-body traversal. Do not exempt callers generically.',
-        'AppendObjectId': 'Scalar primitive retained exclusively for V19/V20 Trace or preview extensions after generated shipping-body traversal. Do not exempt callers generically.',
-        'EncodeSignalEndpoint': 'V20 Trace/preview signal endpoint extension. Canonical Pack body admission accepts shipping V18 only.',
-        'DecodeSignalEndpoint': 'V20 Trace/preview signal endpoint extension. Canonical Pack body admission accepts shipping V18 only.',
-        'PackBodyWriteTrace::Segment': 'V19 Trace-only segment marker and bounds extension; output is null for shipping V18.',
-        'EncodeCurrentWorldBodyV20': 'V20 Trace writer appends signal tables after generated shipping body; never used by canonical .bytes export.',
-    },
-    'HarkenStudio/Source/Tooling/PackBuild/src/WorldCodec.cpp': {
-        'AppendU32': 'Scalar primitive retained exclusively for V19/V20 Trace or preview extensions after generated shipping-body traversal. Do not exempt callers generically.',
-        'AppendU64': 'Scalar primitive retained exclusively for V19/V20 Trace or preview extensions after generated shipping-body traversal. Do not exempt callers generically.',
-        'AppendF32': 'Scalar primitive retained exclusively for V19/V20 Trace or preview extensions after generated shipping-body traversal. Do not exempt callers generically.',
-        'AppendObjectId': 'Scalar primitive retained exclusively for V19/V20 Trace or preview extensions after generated shipping-body traversal. Do not exempt callers generically.',
-        'EncodeSignalEndpoint': 'V20 Trace/preview signal endpoint extension. Canonical Pack body admission accepts shipping V18 only.',
-        'DecodeSignalEndpoint': 'V20 Trace/preview signal endpoint extension. Canonical Pack body admission accepts shipping V18 only.',
-        'EncodeCurrentWorldPreviewBody': 'V20 preview writer appends signal tables; shipping-vintage branch immediately delegates to the generated shipping writer.',
-    },
 }
 
-SOURCE_BLOCK_EXEMPTIONS = {
-    'HarkenEngine/Source/Runtime/core/src/CurrentWorldCodec.cpp': {
-        "worldTraceVintage == kCurrentWorldBodyVintageV20": "Trace/preview V20 signal extension; Pack accepts only shipping V18.",
-        "state.bodyVintage == kCurrentWorldBodyVintageV19": "Trace V19 segment extension; Pack accepts only shipping V18.",
-    },
-    'HarkenStudio/Source/Tooling/PackBuild/src/WorldCodec.cpp': {
-        "worldTraceVintage == kCurrentWorldBodyVintageV20": "Trace/preview V20 signal extension; Pack accepts only shipping V18.",
-    },
-}
+SOURCE_BLOCK_EXEMPTIONS = {}
 
 CONTENT_REVISION_SOURCE = "HarkenStudio/Source/Tooling/Harkenizer/Core/CanonicalPackSetExport.cpp"
 

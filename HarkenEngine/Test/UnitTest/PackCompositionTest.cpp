@@ -28194,12 +28194,6 @@ TEST(PackComposition, V19PartitionReaderAndFallbackKeepVintageThroughActivation)
     world.identity.capabilityMask = detail::ComputeCurrentWorldLocalCapabilityMaskV1(world);
     world.identity.runtimeSemanticFingerprint = ComputeCurrentWorldFingerprintV6(world);
     ASSERT_EQ(WorldInstallStatus::Ok, detail::ValidateCurrentWorldPartitionLocalV1(world));
-    std::vector<std::uint8_t> body;
-    ASSERT_TRUE(EncodeCurrentWorldBodyV19(world, body));
-    CurrentWorldBodyImage decoded;
-    ASSERT_TRUE(decoded.Decode(body.data(), body.size(), kCurrentWorldBodyVintageV19,
-                               CurrentWorldDecodeMode::StrictArtifact));
-    EXPECT_EQ(kCurrentWorldBodyVintageV19, decoded.ProductionView()->sourceBodyVintage);
     const auto bytes = BuildCanonicalPartitionPack(22, 1, 7, WrapWorldPartition(22, 7, world, 1));
     PackCanonicalImage image;
     ASSERT_EQ(VN_OK, ParsePackCanonicalImage(bytes.data(), bytes.size(), &image));
@@ -28241,7 +28235,7 @@ TEST(PackComposition, V19MusicPackPlaysIntroBodyCountOutroAndRetainsUnloadedMedi
         std::fill(samples.begin() + 400, samples.begin() + 1200, .2f);
         const auto bytes = BuildImmediateSegmentPlayPack(22, 1, 7, actionId,
             segmentId, trackId, soundId, samples, 1, 0, 0, 64, count);
-        const auto init = BuildSingleIdentityInit(Fnv1a64(bytes.data(), bytes.size()), actionId);
+        const auto init = BuildInit();
         const auto initPath = WriteTemp("music19-init.pack", init);
         const auto packPath = WriteTemp("music19-content.pack", bytes);
         auto config = MakeNullConfig(8, 64, 48000);

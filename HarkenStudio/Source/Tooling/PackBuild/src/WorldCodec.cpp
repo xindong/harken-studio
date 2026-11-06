@@ -16,70 +16,11 @@
 namespace harkenstudiobuild {
 namespace {
 
-void AppendU32(std::vector<std::uint8_t> &out, std::uint32_t value) {
-    out.push_back(static_cast<std::uint8_t>(value));
-    out.push_back(static_cast<std::uint8_t>(value >> 8));
-    out.push_back(static_cast<std::uint8_t>(value >> 16));
-    out.push_back(static_cast<std::uint8_t>(value >> 24));
-}
-
-void AppendU64(std::vector<std::uint8_t> &out, std::uint64_t value) {
-    AppendU32(out, static_cast<std::uint32_t>(value));
-    AppendU32(out, static_cast<std::uint32_t>(value >> 32));
-}
-
-void AppendF32(std::vector<std::uint8_t> &out, float value) {
-    std::uint32_t bits = 0;
-    std::memcpy(&bits, &value, sizeof bits);
-    AppendU32(out, bits);
-}
-
-void AppendObjectId(std::vector<std::uint8_t> &out, harkenstudio::ObjectId value) {
-    const auto bytes = ObjectIdBytes(value);
-    out.insert(out.end(), bytes.begin(), bytes.end());
-}
-
 struct Reader {
     const std::uint8_t *bytes = nullptr;
     std::size_t size = 0;
     std::size_t offset = 0;
     bool failed = false;
-
-    std::uint32_t U32() noexcept {
-        if (failed || size - offset < 4) {
-            failed = true;
-            return 0;
-        }
-        const std::uint32_t value = static_cast<std::uint32_t>(bytes[offset]) |
-                                    (static_cast<std::uint32_t>(bytes[offset + 1]) << 8) |
-                                    (static_cast<std::uint32_t>(bytes[offset + 2]) << 16) |
-                                    (static_cast<std::uint32_t>(bytes[offset + 3]) << 24);
-        offset += 4;
-        return value;
-    }
-
-    std::uint64_t U64() noexcept {
-        const std::uint64_t lo = U32();
-        const std::uint64_t hi = U32();
-        return lo | (hi << 32);
-    }
-
-    harkenstudio::ObjectId ObjectId() noexcept {
-        if (failed || size - offset < 16) {
-            failed = true;
-            return {};
-        }
-        const auto value = ObjectIdFromBytes(std::span<const std::uint8_t, 16>(bytes + offset, 16));
-        offset += 16;
-        return value;
-    }
-
-    float F32() noexcept {
-        const std::uint32_t bits = U32();
-        float value = 0.0f;
-        std::memcpy(&value, &bits, sizeof value);
-        return value;
-    }
 
     std::uint64_t Remaining() const noexcept {
         return failed ? 0 : size - offset;
@@ -95,25 +36,6 @@ struct Reader {
         return result;
     }
 };
-
-void EncodeSignalEndpoint(const SignalEndpointRefV1& ref,
-                          std::vector<std::uint8_t>& out) {
-    AppendU32(out, static_cast<std::uint32_t>(ref.kind));
-    AppendU32(out, ref.reserved);
-    AppendObjectId(out, ref.stableId);
-    AppendU64(out, ref.expectedPropertyFingerprint);
-    AppendU64(out, ref.expectedProgramFingerprint);
-}
-
-SignalEndpointRefV1 DecodeSignalEndpoint(Reader& reader) noexcept {
-    SignalEndpointRefV1 ref;
-    ref.kind = static_cast<SignalEndpointKindV1>(reader.U32());
-    ref.reserved = reader.U32();
-    ref.stableId = reader.ObjectId();
-    ref.expectedPropertyFingerprint = reader.U64();
-    ref.expectedProgramFingerprint = reader.U64();
-    return ref;
-}
 
 bool CountPointer(std::uint32_t count, const void *pointer, std::uint32_t cap) noexcept {
     return count <= cap && ((count == 0) == (pointer == nullptr));
@@ -1194,24 +1116,19 @@ bool EncodeCurrentWorldPreviewBody(const ContainerWorldInstallViewV1& world,
         return false;
     }
     try {
-        AppendU32(out, world.signalRelationCount);
-        AppendU32(out, world.signalReceiverCount);
-        for (std::uint32_t i = 0; i < world.signalRelationCount; ++i) {
-            const auto& row = world.signalRelations[i];
-            AppendObjectId(out, row.stableId);
-            EncodeSignalEndpoint(row.source, out);
-            EncodeSignalEndpoint(row.target, out);
-            AppendU32(out, static_cast<std::uint32_t>(row.consumer));
-            AppendF32(out, row.sendGainDb);
-        }
-        for (std::uint32_t i = 0; i < world.signalReceiverCount; ++i) {
-            const auto& row = world.signalReceivers[i];
-            EncodeSignalEndpoint(row.target, out);
-            AppendU32(out, row.algorithm);
-            AppendF32(out, row.attackMs);
-            AppendF32(out, row.releaseMs);
-            AppendU32(out, row.reserved);
-        }
+        const auto offset = out.size();
+        const auto relations = std::uint64_t{world.signalRelationCount};
+        const auto receivers = std::uint64_t{world.signalReceiverCount};
+        out.resize(offset + kPackBodyWorldSignalCountsBytes +
+                   relations * kPackBodyWorldSignalRelationBytes +
+                   receivers * kPackBodyWorldSignalReceiverBytes);
+        auto* cursor = out.data() + offset;
+        SerializePackBodyWorldSignalCounts(world, cursor);
+        cursor += kPackBodyWorldSignalCountsBytes;
+        for (std::uint64_t i = 0; i < relations; ++i, cursor += kPackBodyWorldSignalRelationBytes)
+            SerializePackBodyWorldSignalRelation(world.signalRelations[i], cursor);
+        for (std::uint64_t i = 0; i < receivers; ++i, cursor += kPackBodyWorldSignalReceiverBytes)
+            SerializePackBodyWorldSignalReceiver(world.signalReceivers[i], cursor);
         return true;
     } catch (...) { out.clear(); return false; }
 }
@@ -1238,24 +1155,31 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
         PackBodyReadWorld<Impl> visitor{{{}, world}, *decoded, state};
         if (!ReadPackBodyWorldBody(reader, visitor)) return state.result;
         if (worldTraceVintage == kCurrentWorldBodyVintageV20) {
-            const auto relations = reader.U32(), receivers = reader.U32();
-            const std::uint64_t bytesNeeded = std::uint64_t{relations} * 104 + std::uint64_t{receivers} * 56;
-            if (reader.failed || bytesNeeded != reader.size - reader.offset ||
-                relations > decoded->signalRelations.max_size() || receivers > decoded->signalReceivers.max_size())
+            const auto* counts = reader.Take(kPackBodyWorldSignalCountsBytes);
+            if (counts == nullptr ||
+                !ParsePackBodyWorldSignalCounts(counts, kPackBodyWorldSignalCountsBytes, &world))
+                return CurrentWorldBodyDecodeResult::Invalid;
+            const auto relations = world.signalRelationCount;
+            const auto receivers = world.signalReceiverCount;
+            const auto tableBytes = std::uint64_t{relations} * kPackBodyWorldSignalRelationBytes +
+                std::uint64_t{receivers} * kPackBodyWorldSignalReceiverBytes;
+            if (tableBytes != reader.size - reader.offset ||
+                relations > decoded->signalRelations.max_size() ||
+                receivers > decoded->signalReceivers.max_size())
                 return CurrentWorldBodyDecodeResult::Invalid;
             decoded->signalRelations.resize(relations);
             decoded->signalReceivers.resize(receivers);
             for (auto& row : decoded->signalRelations) {
-                row.stableId = reader.ObjectId();
-                row.source = DecodeSignalEndpoint(reader);
-                row.target = DecodeSignalEndpoint(reader);
-                row.consumer = static_cast<SignalConsumerKindV1>(reader.U32());
-                row.sendGainDb = reader.F32();
+                const auto* bytes = reader.Take(kPackBodyWorldSignalRelationBytes);
+                if (bytes == nullptr ||
+                    !ParsePackBodyWorldSignalRelation(bytes, kPackBodyWorldSignalRelationBytes, &row))
+                    return CurrentWorldBodyDecodeResult::Invalid;
             }
             for (auto& row : decoded->signalReceivers) {
-                row.target = DecodeSignalEndpoint(reader);
-                row.algorithm = reader.U32();
-                row.attackMs = reader.F32(); row.releaseMs = reader.F32(); row.reserved = reader.U32();
+                const auto* bytes = reader.Take(kPackBodyWorldSignalReceiverBytes);
+                if (bytes == nullptr ||
+                    !ParsePackBodyWorldSignalReceiver(bytes, kPackBodyWorldSignalReceiverBytes, &row))
+                    return CurrentWorldBodyDecodeResult::Invalid;
             }
         }
         if (reader.failed || reader.offset != reader.size) {

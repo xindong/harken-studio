@@ -447,6 +447,26 @@
     "busDefinitionSnapshot": {
       "engine": "PackBusDefinitionSnapshotHeader",
       "studio": "PackBusDefinitionSnapshotHeader"
+    },
+    "bodyWorldSegmentEntryTimeline": {
+      "engine": "PackSegmentEntryTimeline",
+      "studio": "PackSegmentEntryTimeline"
+    },
+    "bodyWorldSignalCounts": {
+      "engine": "ContainerWorldInstallViewV1",
+      "studio": "ContainerWorldInstallViewV1"
+    },
+    "bodyWorldSignalEndpoint": {
+      "engine": "SignalEndpointRefV1",
+      "studio": "SignalEndpointRefV1"
+    },
+    "bodyWorldSignalRelation": {
+      "engine": "SignalRelationV1",
+      "studio": "SignalRelationV1"
+    },
+    "bodyWorldSignalReceiver": {
+      "engine": "SignalReceiverV1",
+      "studio": "SignalReceiverV1"
     }
   },
   "members": {

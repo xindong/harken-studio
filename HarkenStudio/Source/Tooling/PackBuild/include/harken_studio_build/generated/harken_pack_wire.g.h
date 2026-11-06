@@ -1605,6 +1605,34 @@ inline void SerializePackBodyWorldScheduleKey(const TrackSegmentScheduleKeyV1& r
     return true;
 }
 
+inline constexpr std::uint64_t kPackBodyWorldSegmentEntryTimelineBytes = 56ULL;
+inline constexpr std::uint64_t kPackBodyWorldSegmentEntryTimelineStableMarkerIdOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyWorldSegmentEntryTimelinePositionOffset = 16ULL;
+inline constexpr std::uint64_t kPackBodyWorldSegmentEntryTimelineContentStartOffset = 24ULL;
+inline constexpr std::uint64_t kPackBodyWorldSegmentEntryTimelineContentEndOffset = 32ULL;
+inline constexpr std::uint64_t kPackBodyWorldSegmentEntryTimelineNominalStartOffset = 40ULL;
+inline constexpr std::uint64_t kPackBodyWorldSegmentEntryTimelineNominalEndOffset = 48ULL;
+
+inline void SerializePackBodyWorldSegmentEntryTimeline(const PackSegmentEntryTimeline& row, std::uint8_t* out) noexcept {
+    StoreObjectId(out + 0, row.stableMarkerId);
+    StoreLE64(out + 16, static_cast<std::uint64_t>(row.position));
+    StoreLE64(out + 24, static_cast<std::uint64_t>(row.contentStart));
+    StoreLE64(out + 32, static_cast<std::uint64_t>(row.contentEnd));
+    StoreLE64(out + 40, static_cast<std::uint64_t>(row.nominalStart));
+    StoreLE64(out + 48, static_cast<std::uint64_t>(row.nominalEnd));
+}
+
+[[nodiscard]] inline bool ParsePackBodyWorldSegmentEntryTimeline(const std::uint8_t* in, std::uint64_t size, PackSegmentEntryTimeline* out) noexcept {
+    if (size != kPackBodyWorldSegmentEntryTimelineBytes) return false;
+    out->stableMarkerId = static_cast<std::remove_cvref_t<decltype(out->stableMarkerId)>>(LoadObjectId(in + 0));
+    out->position = static_cast<std::remove_cvref_t<decltype(out->position)>>(LoadLE64(in + 16));
+    out->contentStart = static_cast<std::remove_cvref_t<decltype(out->contentStart)>>(LoadLE64(in + 24));
+    out->contentEnd = static_cast<std::remove_cvref_t<decltype(out->contentEnd)>>(LoadLE64(in + 32));
+    out->nominalStart = static_cast<std::remove_cvref_t<decltype(out->nominalStart)>>(LoadLE64(in + 40));
+    out->nominalEnd = static_cast<std::remove_cvref_t<decltype(out->nominalEnd)>>(LoadLE64(in + 48));
+    return true;
+}
+
 inline constexpr std::uint64_t kPackBodyWorldSegmentHeaderBytes = 112ULL;
 inline constexpr std::uint64_t kPackBodyWorldSegmentHeaderRootDefinitionOffset = 0ULL;
 inline constexpr std::uint64_t kPackBodyWorldSegmentHeaderScheduleSemanticFingerprintOffset = 64ULL;
@@ -1645,6 +1673,97 @@ inline void SerializePackBodyWorldSegmentHeader(const SegmentScheduleProgramView
     out->meterDenominator = static_cast<std::remove_cvref_t<decltype(out->meterDenominator)>>(LoadLE32(in + 100));
     out->trackRefCount = static_cast<std::remove_cvref_t<decltype(out->trackRefCount)>>(LoadLE32(in + 104));
     out->markerCount = static_cast<std::remove_cvref_t<decltype(out->markerCount)>>(LoadLE32(in + 108));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyWorldSignalCountsBytes = 8ULL;
+inline constexpr std::uint64_t kPackBodyWorldSignalCountsSignalRelationCountOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyWorldSignalCountsSignalReceiverCountOffset = 4ULL;
+
+inline void SerializePackBodyWorldSignalCounts(const ContainerWorldInstallViewV1& row, std::uint8_t* out) noexcept {
+    StoreLE32(out + 0, static_cast<std::uint32_t>(row.signalRelationCount));
+    StoreLE32(out + 4, static_cast<std::uint32_t>(row.signalReceiverCount));
+}
+
+[[nodiscard]] inline bool ParsePackBodyWorldSignalCounts(const std::uint8_t* in, std::uint64_t size, ContainerWorldInstallViewV1* out) noexcept {
+    if (size != kPackBodyWorldSignalCountsBytes) return false;
+    out->signalRelationCount = static_cast<std::remove_cvref_t<decltype(out->signalRelationCount)>>(LoadLE32(in + 0));
+    out->signalReceiverCount = static_cast<std::remove_cvref_t<decltype(out->signalReceiverCount)>>(LoadLE32(in + 4));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyWorldSignalEndpointBytes = 40ULL;
+inline constexpr std::uint64_t kPackBodyWorldSignalEndpointKindOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyWorldSignalEndpointReservedOffset = 4ULL;
+inline constexpr std::uint64_t kPackBodyWorldSignalEndpointStableIdOffset = 8ULL;
+inline constexpr std::uint64_t kPackBodyWorldSignalEndpointExpectedPropertyFingerprintOffset = 24ULL;
+inline constexpr std::uint64_t kPackBodyWorldSignalEndpointExpectedProgramFingerprintOffset = 32ULL;
+
+inline void SerializePackBodyWorldSignalEndpoint(const SignalEndpointRefV1& row, std::uint8_t* out) noexcept {
+    StoreLE32(out + 0, static_cast<std::uint32_t>(row.kind));
+    StoreLE32(out + 4, static_cast<std::uint32_t>(row.reserved));
+    StoreObjectId(out + 8, row.stableId);
+    StoreLE64(out + 24, static_cast<std::uint64_t>(row.expectedPropertyFingerprint));
+    StoreLE64(out + 32, static_cast<std::uint64_t>(row.expectedProgramFingerprint));
+}
+
+[[nodiscard]] inline bool ParsePackBodyWorldSignalEndpoint(const std::uint8_t* in, std::uint64_t size, SignalEndpointRefV1* out) noexcept {
+    if (size != kPackBodyWorldSignalEndpointBytes) return false;
+    out->kind = static_cast<std::remove_cvref_t<decltype(out->kind)>>(LoadLE32(in + 0));
+    out->reserved = static_cast<std::remove_cvref_t<decltype(out->reserved)>>(LoadLE32(in + 4));
+    out->stableId = static_cast<std::remove_cvref_t<decltype(out->stableId)>>(LoadObjectId(in + 8));
+    out->expectedPropertyFingerprint = static_cast<std::remove_cvref_t<decltype(out->expectedPropertyFingerprint)>>(LoadLE64(in + 24));
+    out->expectedProgramFingerprint = static_cast<std::remove_cvref_t<decltype(out->expectedProgramFingerprint)>>(LoadLE64(in + 32));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyWorldSignalReceiverBytes = 56ULL;
+inline constexpr std::uint64_t kPackBodyWorldSignalReceiverTargetOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyWorldSignalReceiverAlgorithmOffset = 40ULL;
+inline constexpr std::uint64_t kPackBodyWorldSignalReceiverAttackMsOffset = 44ULL;
+inline constexpr std::uint64_t kPackBodyWorldSignalReceiverReleaseMsOffset = 48ULL;
+inline constexpr std::uint64_t kPackBodyWorldSignalReceiverReservedOffset = 52ULL;
+
+inline void SerializePackBodyWorldSignalReceiver(const SignalReceiverV1& row, std::uint8_t* out) noexcept {
+    SerializePackBodyWorldSignalEndpoint(row.target, out + 0);
+    StoreLE32(out + 40, static_cast<std::uint32_t>(row.algorithm));
+    StoreLEF32(out + 44, static_cast<float>(row.attackMs));
+    StoreLEF32(out + 48, static_cast<float>(row.releaseMs));
+    StoreLE32(out + 52, static_cast<std::uint32_t>(row.reserved));
+}
+
+[[nodiscard]] inline bool ParsePackBodyWorldSignalReceiver(const std::uint8_t* in, std::uint64_t size, SignalReceiverV1* out) noexcept {
+    if (size != kPackBodyWorldSignalReceiverBytes) return false;
+    if (!ParsePackBodyWorldSignalEndpoint(in + 0, kPackBodyWorldSignalEndpointBytes, &out->target)) return false;
+    out->algorithm = static_cast<std::remove_cvref_t<decltype(out->algorithm)>>(LoadLE32(in + 40));
+    out->attackMs = static_cast<std::remove_cvref_t<decltype(out->attackMs)>>(LoadLEF32(in + 44));
+    out->releaseMs = static_cast<std::remove_cvref_t<decltype(out->releaseMs)>>(LoadLEF32(in + 48));
+    out->reserved = static_cast<std::remove_cvref_t<decltype(out->reserved)>>(LoadLE32(in + 52));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyWorldSignalRelationBytes = 104ULL;
+inline constexpr std::uint64_t kPackBodyWorldSignalRelationStableIdOffset = 0ULL;
+inline constexpr std::uint64_t kPackBodyWorldSignalRelationSourceOffset = 16ULL;
+inline constexpr std::uint64_t kPackBodyWorldSignalRelationTargetOffset = 56ULL;
+inline constexpr std::uint64_t kPackBodyWorldSignalRelationConsumerOffset = 96ULL;
+inline constexpr std::uint64_t kPackBodyWorldSignalRelationSendGainDbOffset = 100ULL;
+
+inline void SerializePackBodyWorldSignalRelation(const SignalRelationV1& row, std::uint8_t* out) noexcept {
+    StoreObjectId(out + 0, row.stableId);
+    SerializePackBodyWorldSignalEndpoint(row.source, out + 16);
+    SerializePackBodyWorldSignalEndpoint(row.target, out + 56);
+    StoreLE32(out + 96, static_cast<std::uint32_t>(row.consumer));
+    StoreLEF32(out + 100, static_cast<float>(row.sendGainDb));
+}
+
+[[nodiscard]] inline bool ParsePackBodyWorldSignalRelation(const std::uint8_t* in, std::uint64_t size, SignalRelationV1* out) noexcept {
+    if (size != kPackBodyWorldSignalRelationBytes) return false;
+    out->stableId = static_cast<std::remove_cvref_t<decltype(out->stableId)>>(LoadObjectId(in + 0));
+    if (!ParsePackBodyWorldSignalEndpoint(in + 16, kPackBodyWorldSignalEndpointBytes, &out->source)) return false;
+    if (!ParsePackBodyWorldSignalEndpoint(in + 56, kPackBodyWorldSignalEndpointBytes, &out->target)) return false;
+    out->consumer = static_cast<std::remove_cvref_t<decltype(out->consumer)>>(LoadLE32(in + 96));
+    out->sendGainDb = static_cast<std::remove_cvref_t<decltype(out->sendGainDb)>>(LoadLEF32(in + 100));
     return true;
 }
 
@@ -3903,6 +4022,28 @@ template <class Buffer>
 }
 
 template <class Buffer>
+[[nodiscard]] bool AppendPackBodyWorldSegmentEntryTimeline(Buffer& buffer, const PackSegmentEntryTimeline& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldSegmentEntryTimelineBytes)));
+    auto* bytes = buffer.Take(kPackBodyWorldSegmentEntryTimelineBytes);
+    if (!bytes) return false;
+    SerializePackBodyWorldSegmentEntryTimeline(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyWorldSegmentEntryTimeline(Buffer& buffer, PackSegmentEntryTimeline& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldSegmentEntryTimelineBytes)));
+    const auto* bytes = buffer.Take(kPackBodyWorldSegmentEntryTimelineBytes);
+    return bytes && ParsePackBodyWorldSegmentEntryTimeline(bytes, kPackBodyWorldSegmentEntryTimelineBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyWorldSegmentEntryTimeline(const PackSegmentEntryTimeline&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyWorldSegmentEntryTimelineBytes) return false;
+    size += kPackBodyWorldSegmentEntryTimelineBytes;
+    return true;
+}
+
+template <class Buffer>
 [[nodiscard]] bool AppendPackBodyWorldSegmentHeader(Buffer& buffer, const SegmentScheduleProgramViewV1& row) noexcept {
     static_assert(noexcept(buffer.Take(kPackBodyWorldSegmentHeaderBytes)));
     auto* bytes = buffer.Take(kPackBodyWorldSegmentHeaderBytes);
@@ -3921,6 +4062,94 @@ template <class Buffer>
 [[nodiscard]] inline bool MeasurePackBodyWorldSegmentHeader(const SegmentScheduleProgramViewV1&, std::uint64_t& size) noexcept {
     if (size > UINT64_MAX - kPackBodyWorldSegmentHeaderBytes) return false;
     size += kPackBodyWorldSegmentHeaderBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyWorldSignalCounts(Buffer& buffer, const ContainerWorldInstallViewV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldSignalCountsBytes)));
+    auto* bytes = buffer.Take(kPackBodyWorldSignalCountsBytes);
+    if (!bytes) return false;
+    SerializePackBodyWorldSignalCounts(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyWorldSignalCounts(Buffer& buffer, ContainerWorldInstallViewV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldSignalCountsBytes)));
+    const auto* bytes = buffer.Take(kPackBodyWorldSignalCountsBytes);
+    return bytes && ParsePackBodyWorldSignalCounts(bytes, kPackBodyWorldSignalCountsBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyWorldSignalCounts(const ContainerWorldInstallViewV1&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyWorldSignalCountsBytes) return false;
+    size += kPackBodyWorldSignalCountsBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyWorldSignalEndpoint(Buffer& buffer, const SignalEndpointRefV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldSignalEndpointBytes)));
+    auto* bytes = buffer.Take(kPackBodyWorldSignalEndpointBytes);
+    if (!bytes) return false;
+    SerializePackBodyWorldSignalEndpoint(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyWorldSignalEndpoint(Buffer& buffer, SignalEndpointRefV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldSignalEndpointBytes)));
+    const auto* bytes = buffer.Take(kPackBodyWorldSignalEndpointBytes);
+    return bytes && ParsePackBodyWorldSignalEndpoint(bytes, kPackBodyWorldSignalEndpointBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyWorldSignalEndpoint(const SignalEndpointRefV1&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyWorldSignalEndpointBytes) return false;
+    size += kPackBodyWorldSignalEndpointBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyWorldSignalReceiver(Buffer& buffer, const SignalReceiverV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldSignalReceiverBytes)));
+    auto* bytes = buffer.Take(kPackBodyWorldSignalReceiverBytes);
+    if (!bytes) return false;
+    SerializePackBodyWorldSignalReceiver(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyWorldSignalReceiver(Buffer& buffer, SignalReceiverV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldSignalReceiverBytes)));
+    const auto* bytes = buffer.Take(kPackBodyWorldSignalReceiverBytes);
+    return bytes && ParsePackBodyWorldSignalReceiver(bytes, kPackBodyWorldSignalReceiverBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyWorldSignalReceiver(const SignalReceiverV1&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyWorldSignalReceiverBytes) return false;
+    size += kPackBodyWorldSignalReceiverBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyWorldSignalRelation(Buffer& buffer, const SignalRelationV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldSignalRelationBytes)));
+    auto* bytes = buffer.Take(kPackBodyWorldSignalRelationBytes);
+    if (!bytes) return false;
+    SerializePackBodyWorldSignalRelation(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyWorldSignalRelation(Buffer& buffer, SignalRelationV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyWorldSignalRelationBytes)));
+    const auto* bytes = buffer.Take(kPackBodyWorldSignalRelationBytes);
+    return bytes && ParsePackBodyWorldSignalRelation(bytes, kPackBodyWorldSignalRelationBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyWorldSignalRelation(const SignalRelationV1&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyWorldSignalRelationBytes) return false;
+    size += kPackBodyWorldSignalRelationBytes;
     return true;
 }
 

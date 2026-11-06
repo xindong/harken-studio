@@ -397,6 +397,19 @@ struct PackWorldVariableWire {
 
 }
 
+namespace harkenstudiobuild {
+
+struct PackSegmentEntryTimeline {
+    harkenstudio::ObjectId stableMarkerId{};
+    std::uint64_t position = 0;
+    std::uint64_t contentStart = 0;
+    std::uint64_t contentEnd = 0;
+    std::uint64_t nominalStart = 0;
+    std::uint64_t nominalEnd = 0;
+};
+
+}
+
 #include <harken_studio_build/generated/harken_pack_wire.g.h>
 
 namespace harkenstudiobuild {
