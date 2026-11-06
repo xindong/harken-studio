@@ -13891,8 +13891,6 @@ public:
     }
 
     bool PreparePlayableMemberDirectory(EnginePlayableServiceRow& row) noexcept {
-        if (!row.HasFeatureArrays() &&
-            (playableServices.PreparedUseActive() || !row.PrepareFeatureArrays())) return false;
         if (row.members.size() == playableStorage.memberStride) return true;
         if (memguard::IsAudioTagged() || playableMemberRecords.PreparedUseActive()) return false;
         try { row.members.resize(playableStorage.memberStride); }
@@ -14424,6 +14422,7 @@ public:
             &playableServices[row.identity.slot] == &row);
         const auto identity = CapturePlayableServiceWorkIdentity(row.identity.slot);
         if (!occupied) SetPlayableServiceSourceExits(row, false);
+        SetPlayableServiceNeedsWork(row, occupied);
         const bool recorded = playableServiceWork.SetMembership(identity, RuntimeActivitySet::Active,
             occupied, [&](PlayableServiceWorkIdentity current) noexcept {
                 return current == CapturePlayableServiceWorkIdentity(current.slot);
@@ -14438,6 +14437,20 @@ public:
     }
     EnginePlayableServiceRow* NextOccupiedPlayableService(std::uint32_t* cursor) noexcept {
         const auto identity = playableServiceWork.Next(RuntimeActivitySet::Active, cursor,
+            [&](std::uint32_t slot) noexcept { return CapturePlayableServiceWorkIdentity(slot); });
+        return identity.Valid() ? &playableServices[identity.slot] : nullptr;
+    }
+    void SetPlayableServiceNeedsWork(EnginePlayableServiceRow& row, bool pending) noexcept {
+        const auto identity = CapturePlayableServiceWorkIdentity(row.identity.slot);
+        const bool recorded = playableServiceWork.SetMembership(identity, RuntimeActivitySet::Dirty,
+            pending, [&](PlayableServiceWorkIdentity current) noexcept {
+                return current == CapturePlayableServiceWorkIdentity(current.slot);
+            });
+        assert(recorded);
+        if (!recorded) runtimeRecreateRequired = true;
+    }
+    EnginePlayableServiceRow* NextPlayableServiceWork(std::uint32_t* cursor) noexcept {
+        const auto identity = playableServiceWork.Next(RuntimeActivitySet::Dirty, cursor,
             [&](std::uint32_t slot) noexcept { return CapturePlayableServiceWorkIdentity(slot); });
         return identity.Valid() ? &playableServices[identity.slot] : nullptr;
     }
