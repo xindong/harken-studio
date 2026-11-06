@@ -23,6 +23,7 @@ public:
                            std::function<bool()> canceled = {});
     ~StudioSession();
     bool isAttached() const { return !state_; }
+    bool isRemote() const { return instance_ != nullptr; }
     QJsonObject open(const QString& path, int timeoutMs, const std::function<bool()>& canceled);
     QJsonObject commands() const;
     QJsonObject describe(const QString& name) const;

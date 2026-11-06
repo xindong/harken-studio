@@ -231,34 +231,51 @@ void writeShellResponse(QJsonObject response, bool json)
         return;
     }
 #endif
-    std::fwrite(bytes.constData(), 1, static_cast<size_t>(bytes.size()), stdout);
-    std::fflush(stdout);
-}
-
-int runDesktopShell(VNX::IPCServer& dispatcher, bool json)
-{
-    desktopInterrupted = 0;
-    const auto previous = std::signal(SIGINT, interruptDesktopShell);
 #ifndef Q_OS_WIN
     const auto previousPipe = std::signal(SIGPIPE, SIG_IGN);
 #endif
-    StudioSession session(dispatcher, 300000, [] { return desktopInterrupted != 0; });
-    const bool jsonOutput = json || shellUsesJson();
-    const int result = runShell(session, 300000, jsonOutput, desktopInterrupted,
-        [jsonOutput](QJsonObject response) { writeShellResponse(std::move(response), jsonOutput); });
-    if (previous != SIG_ERR) std::signal(SIGINT, previous);
+    std::fwrite(bytes.constData(), 1, static_cast<size_t>(bytes.size()), stdout);
+    std::fflush(stdout);
 #ifndef Q_OS_WIN
     if (previousPipe != SIG_ERR) std::signal(SIGPIPE, previousPipe);
 #endif
+}
+
+DesktopShellResult runDesktopShell(VNX::IPCServer& dispatcher, bool json)
+{
+    desktopInterrupted = 0;
+    const auto previous = std::signal(SIGINT, interruptDesktopShell);
+    StudioSession session(dispatcher, 300000, [] { return desktopInterrupted != 0; });
+    const bool jsonOutput = json || shellUsesJson();
+    DesktopShellResult result;
+    result.exitCode = runShell(session, 300000, jsonOutput, desktopInterrupted,
+        [jsonOutput](QJsonObject response) { writeShellResponse(std::move(response), jsonOutput); },
+        &result.exitRequest);
+    if (previous != SIG_ERR) std::signal(SIGINT, previous);
     return result;
 }
 
 int runShell(StudioSession& session, int timeoutMs, bool json,
              volatile std::sig_atomic_t& interrupted,
-             const std::function<void(QJsonObject)>& writeResponse)
+             const std::function<void(QJsonObject)>& writeResponse,
+             ShellExitRequest* exitRequest)
 {
+    if (exitRequest) *exitRequest = ShellExitRequest::None;
     QEventLoop loop;
     const bool terminal = terminalInput();
+#ifdef Q_OS_WIN
+    const HANDLE consoleInput = terminal
+        ? reinterpret_cast<HANDLE>(_get_osfhandle(_fileno(stdin))) : INVALID_HANDLE_VALUE;
+    DWORD consoleMode = 0;
+    if (terminal && (!GetConsoleMode(consoleInput, &consoleMode)
+        || !SetConsoleMode(consoleInput,
+            (consoleMode | ENABLE_PROCESSED_INPUT | ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT)
+                & ~ENABLE_VIRTUAL_TERMINAL_INPUT))) {
+        writeResponse(failure(QStringLiteral("INPUT_FAILED"),
+            QStringLiteral("Cannot configure the terminal for command input.")));
+        return 1;
+    }
+#endif
     const bool prompts = terminal && !json;
     if (prompts)
         std::fputs("Harken Studio CLI session. Type help for commands, save_project to save, exit to leave.\n", stderr);
@@ -294,7 +311,7 @@ int runShell(StudioSession& session, int timeoutMs, bool json,
         inputReady.notify_one();
         finish(0);
     });
-    const auto dirty = [&] { return !session.isAttached() && VNX::ProjectManager::instance().hasUnsavedChanges(); };
+    const auto dirty = [&] { return !session.isRemote() && VNX::ProjectManager::instance().hasUnsavedChanges(); };
     const auto unsaved = [] {
         return failure(QStringLiteral("UNSAVED_CHANGES"),
             QStringLiteral("Save with save_project before exiting, or use exit --discard."));
@@ -313,9 +330,11 @@ int runShell(StudioSession& session, int timeoutMs, bool json,
         if (input.state == InputState::End || input.state == InputState::Error) {
             if (input.state == InputState::Error)
                 writeResponse(failure(QStringLiteral("INPUT_FAILED"), QStringLiteral("Cannot read standard input.")));
-            else if (dirty())
+            else if (dirty() && !exitRequest)
                 writeResponse(unsaved());
-            finish(input.state == InputState::Error || dirty() ? 1 : 0);
+            if (input.state == InputState::End && exitRequest)
+                *exitRequest = ShellExitRequest::EndOfInput;
+            finish(input.state == InputState::Error || (!exitRequest && dirty()) ? 1 : 0);
             return;
         }
         if (input.state == InputState::Interrupted) {
@@ -336,17 +355,21 @@ int runShell(StudioSession& session, int timeoutMs, bool json,
         executing = true;
         QJsonObject response;
         if (command == QStringLiteral("exit")) {
-            if (session.isAttached() && !arguments.isEmpty()) {
+            if (session.isRemote() && !arguments.isEmpty()) {
                 response = failure(QStringLiteral("USAGE"),
-                    QStringLiteral("Use exit to disconnect. Edits stay in Studio; --discard is only available in independent sessions."));
+                    QStringLiteral("Use exit to disconnect. Edits stay in Studio; --discard is only available when the shell owns the project."));
             } else if (!arguments.isEmpty() && arguments != QStringLiteral("--discard")) {
                 response = failure(QStringLiteral("USAGE"), QStringLiteral("Use exit or exit --discard."));
             } else if (arguments.isEmpty() && dirty()) {
                 response = unsaved();
             } else {
-                respond({{QStringLiteral("status"), QStringLiteral("ok")},
-                    {QStringLiteral("result"), QJsonObject{{QStringLiteral("exited"), true},
-                        {QStringLiteral("discarded"), dirty()}}}}, command);
+                if (exitRequest)
+                    *exitRequest = arguments == QStringLiteral("--discard")
+                        ? ShellExitRequest::Discard : ShellExitRequest::Close;
+                if (!exitRequest)
+                    respond({{QStringLiteral("status"), QStringLiteral("ok")},
+                        {QStringLiteral("result"), QJsonObject{{QStringLiteral("exited"), true},
+                            {QStringLiteral("discarded"), dirty()}}}}, command);
                 executing = false;
                 finish(0);
                 return;
@@ -358,8 +381,8 @@ int runShell(StudioSession& session, int timeoutMs, bool json,
                     {QStringLiteral("commands"), QJsonArray{
                         QStringLiteral("commands [name] - list commands or show parameters"),
                         QStringLiteral("save_project - save current edits"),
-                        session.isAttached()
-                            ? QStringLiteral("exit / EOF - disconnect, keeping Studio and its edits open")
+                        session.isRemote()
+                            ? QStringLiteral("exit / EOF - exit this CLI process; the connected Studio stays open")
                             : QStringLiteral("exit - leave after saving; exit --discard - discard unsaved edits and leave")}}}}};
         } else if (command == QStringLiteral("commands") || command == QStringLiteral("help")) {
             response = arguments.isEmpty() ? session.commands() : session.describe(arguments);
@@ -431,6 +454,10 @@ int runShell(StudioSession& session, int timeoutMs, bool json,
     }
 #endif
     reader.join();
+#ifdef Q_OS_WIN
+    if (terminal && !SetConsoleMode(consoleInput, consoleMode))
+        std::fputs("Cannot restore the terminal input mode.\n", stderr);
+#endif
     return exitCode;
 }
 

@@ -68,9 +68,14 @@ int main(int argc, char* argv[])
             "  --version     Show the software version.\n\n"
             "Shell input: command {\"argument\":\"value\"}; help; commands [name]; exit.\n"
             "Redirected input/output automatically uses JSON. No extra console window is created.\n"
-            "exit or EOF ends shell input and keeps Studio and its unsaved edits open.\n"
+            "exit closes Studio; save unsaved edits first, or use exit --discard.\n"
+            "EOF also requests Studio exit; unsaved edits use the normal GUI close confirmation.\n"
             "Use save_project before switching or closing the project.\n"
             "--shell needs an existing terminal or redirected stdin/stdout and a project to open/create.\n"
+            "Windows GUI executables require the parent shell to wait for interactive input.\n"
+            "PowerShell: Start-Process .\\HarkenStudio.exe -NoNewWindow -Wait -ArgumentList '--project \"<path>\" --shell'\n"
+            "CMD: start \"\" /wait HarkenStudio.exe --project \"<path>\" --shell\n"
+            "Close the GUI to return to the parent shell; Ctrl+C can cancel the parent's wait.\n"
             "To control a Studio that is already running, use HarkenStudioCLI instances and --instance <id>.\n");
         if (json) {
             HarkenStudioCli::writeShellResponse({{"status", "ok"},

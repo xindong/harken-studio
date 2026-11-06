@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import wave
 from pathlib import Path
 
 from verify_studio_instances import process_options, registry_directory
@@ -160,22 +161,65 @@ def verify(cli: Path, studio: Path, work: Path) -> None:
         check("Direct shell responds before EOF, preserves UTF-8 input and shares GUI state; duplicate shell startup cannot attach silently")
 
         process.stdin.close()
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            assert process.poll() is None, process.returncode
+            windows = execute(instance_id, "list_ui_windows")["result"]["windows"]
+            if any(window.get("visible") and window.get("modal") for window in windows):
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError(("Dirty EOF did not ask about unsaved edits", windows))
+        execute(instance_id, "answer_dialog", {"response": "cancel"})
         execute(instance_id, "get_item_info", {"path": "FromDirectShell"})
         execute(instance_id, "get_item_info", {"path": "FromAttachedCli"})
         assert execute(instance_id, "get_project_state")["result"]["is_dirty"] is True
         assert process.poll() is None
         close_gui(process, instance_id)
-        check("Direct shell EOF leaves GUI edits intact and the application remains usable until its window closes")
+        check("Dirty EOF requests normal GUI close; cancelling preserves edits and the application can still save and close")
 
-        process, responses, instance, _ = launch("DirectShellExit")
-        send(process, responses, 'create_action {"name":"SurvivesShellExit"}')
-        send(process, responses, "exit --discard", error="USAGE")
-        send(process, responses, "exit")
-        execute(instance["id"], "get_item_info", {"path": "SurvivesShellExit"})
-        assert execute(instance["id"], "get_project_state")["result"]["is_dirty"] is True
+        process, responses, instance, exit_project = launch("DirectShellExit")
+        send(process, responses, 'create_action {"name":"SavedBeforeExit"}')
+        send(process, responses, "exit", error="UNSAVED_CHANGES")
         assert process.poll() is None
-        close_gui(process, instance["id"])
-        check("Direct shell exit detaches without discarding edits or shutting down GUI, and explicit discard is refused")
+        send(process, responses, 'get_item_info {"path":"SavedBeforeExit"}')
+        send(process, responses, "save_project")
+        send(process, responses, "exit")
+        assert process.wait(timeout=20) == 0, process.returncode
+        call("exec", "get_item_info", "--project", str(exit_project), "--input", "-",
+             data={"path": "SavedBeforeExit"})
+        check("Direct exit refuses unsaved edits; saving then exiting terminates Studio and persists the project")
+
+        process, responses, instance, discard_project = launch("DirectShellDiscard")
+        send(process, responses, 'create_action {"name":"SavedBeforeDiscard"}')
+        send(process, responses, "save_project")
+        sources = discard_project.parent / "AudioSources"
+        saved_sources = {path.relative_to(sources): path.read_bytes()
+                         for path in sources.rglob("*") if path.is_file()}
+        audio = work / "discard.wav"
+        with wave.open(str(audio), "wb") as stream:
+            stream.setparams((1, 2, 48000, 0, "NONE", "not compressed"))
+            stream.writeframes(b"\x00\x00" * 4800)
+        send(process, responses, "import_audio_files " + json.dumps({"files": [str(audio)]}))
+        imported_sources = {path.relative_to(sources): path.read_bytes()
+                            for path in sources.rglob("*") if path.is_file()}
+        assert imported_sources != saved_sources, imported_sources.keys()
+        send(process, responses, 'create_action {"name":"DiscardedOnExit"}')
+        send(process, responses, "exit --discard")
+        assert process.wait(timeout=20) == 0, process.returncode
+        discarded_sources = {path.relative_to(sources): path.read_bytes()
+                             for path in sources.rglob("*") if path.is_file()}
+        assert discarded_sources == saved_sources, discarded_sources.keys()
+        reopened = call("exec", "get_project_info", "--project", str(discard_project))
+        names = {pack["name"] for pack in reopened["result"]["packs"]}
+        assert "SavedBeforeDiscard" in names and "DiscardedOnExit" not in names, reopened
+        check("Direct exit --discard terminates Studio, rolls back imported source files and preserves previously saved data")
+
+        process, responses, instance, _ = launch("DirectShellCleanEof")
+        send(process, responses, "get_project_info")
+        process.stdin.close()
+        assert process.wait(timeout=20) == 0, process.returncode
+        check("Clean EOF terminates the Studio process and its GUI")
 
         process, responses, instance, _ = launch("DirectShellPendingInput")
         send(process, responses, "get_project_info")

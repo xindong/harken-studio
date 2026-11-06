@@ -16,8 +16,15 @@
 
 ## Studio 同进程 shell
 
+PowerShell 中先让父终端等待 GUI 程序：
+
+```powershell
+Start-Process .\HarkenStudio.exe -NoNewWindow -Wait -ArgumentList '--project "GameAudio/GameAudio.hsp" --shell'
+```
+
+出现 `harken>` 后输入：
+
 ```text
-HarkenStudio --project GameAudio/GameAudio.hsp --shell
 help
 commands list_ui_windows
 create_action {"name":"PlayFootstep"}
@@ -30,9 +37,11 @@ exit
 
 输入或输出重定向时自动输出逐行 UTF-8 JSON，也可用 `--json` 强制启用；响应包含 `protocolVersion`。每读完一行即执行并刷新 stdout，无需等待 EOF。提示符仅向交互终端的 stderr 输出。`--help`、`--shell --help` 和 `--version [--json]` 可在不打开 GUI 的情况下查询入口及版本。
 
-`exit` 或 EOF 结束输入，但 Studio 进程和 GUI 继续运行，未保存修改保留；`exit --discard` 不适用于桌面会话。调用方不能把输入 EOF 当作进程已经退出。GUI 关闭时，即使 stdin 仍打开或只有未结束的一行，输入等待也会终止。有未保存修改时，CLI 切换或关闭工程被拒绝，可先 `save_project`。
+`exit` 请求退出当前 Studio 进程，GUI 同时关闭；有未保存修改时返回 `UNSAVED_CHANGES` 并继续接受输入，可先 `save_project`，或明确 `exit --discard` 放弃修改后退出。EOF（输入流结束）也请求退出 Studio，有未保存修改时使用正常 GUI 关闭确认，取消关闭会保留工程。关闭 GUI 与 shell 退出共用工程清理流程，放弃未提交的源文件变更并释放运行时和工程锁；即使 stdin 仍打开或只有未结束的一行，输入等待也会终止。
 
-`--shell` 要求已有终端或有效的 stdin/stdout 重定向，并提供 `--project`、`--create-project` 或有效的 `--last`。不会额外分配终端黑框。Windows 的 `cmd.exe` 启动 GUI 程序可能立即返回提示符；交互操作使用 `start "" /wait HarkenStudio.exe --project GameAudio/GameAudio.hsp --shell`，让父终端等待。外部程序直接建立隐藏的 stdin/stdout 管道即可。
+`--shell` 要求已有终端或有效的 stdin/stdout 重定向，并提供 `--project`、`--create-project` 或有效的 `--last`。不会额外分配终端黑框。Windows 的 PowerShell 和 CMD 直接启动 GUI 可执行文件会立即返回提示符，父 shell 与 Studio 会竞争终端输入；`--shell` 无法改变父进程的等待策略。PowerShell 使用上述 `Start-Process -NoNewWindow -Wait`；CMD 使用 `start "" /wait HarkenStudio.exe --project "GameAudio/GameAudio.hsp" --shell`。外部程序直接建立隐藏的 stdin/stdout 管道即可。
+
+Studio 在交互会话期间启用逐行输入与回显，退出后恢复原终端模式。关闭 GUI 会退出 Studio 并归还父终端；PowerShell 的 Ctrl+C 也可能取消 `Start-Process` 的等待，使父 shell 提前恢复读取，因此不要把它当作只取消 Studio 命令的快捷键。需要持续操作已经运行的 Studio 时，可使用 `HarkenStudioCLI shell --instance <id>`；该会话的 `exit` 退出 StudioCLI 自己，目标 Studio 属于另一个进程。
 
 工程已被其他实例打开时，`--shell` 返回错误，不把输入悄悄转发到已有实例；这种场景使用 `HarkenStudioCLI --instance <id>`。启动失败通过结构化错误返回；需要格式升级的工程先正常打开并完成升级，再启动 shell。
 

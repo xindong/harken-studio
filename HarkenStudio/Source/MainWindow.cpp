@@ -4143,6 +4143,12 @@ void MainWindow::rebuildLayoutsMenu()
         layoutController_->rebuildLayoutsMenu();
 }
 
+bool MainWindow::closeWithDiscard()
+{
+    QScopedValueRollback<bool> discardGuard(discardChangesOnClose_, true);
+    return close();
+}
+
 void MainWindow::closeEvent(QCloseEvent* event)
 {
     if (PackGenerationRecordStore::instance().isExporting()) {
@@ -4150,13 +4156,19 @@ void MainWindow::closeEvent(QCloseEvent* event)
         event->ignore();
         return;
     }
-    if (maybeSave())
+    if (discardChangesOnClose_ || maybeSave())
     {
         saveProjectLayout();
         saveSettings();
+        auto& projectManager = ProjectManager::instance();
+        if (projectManager.isProjectOpen() && !projectManager.closeProject()) {
+            event->ignore();
+            return;
+        }
         event->accept();
         if (startupPresentationPrepared_)
             finishStartupPresentation(false);
+        QTimer::singleShot(0, qApp, &QCoreApplication::quit);
     }
     else
     {

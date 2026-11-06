@@ -69,7 +69,7 @@ Studio 正常打开工程并就绪后自动发布实例，无需特殊启动选�
 
 ## 持续会话
 
-Studio 本体也提供 `HarkenStudio --project <path> --shell`，复用相同逐行语法，在 GUI 进程内直接执行。其 `exit`/EOF 与实例模式一致，只结束命令输入并保留 GUI；普通独立 CLI shell 的退出仍结束其自有工程会话。详见 [Studio 同进程 shell](studio-commands.md#studio-同进程-shell)。
+Studio 本体也提供 `HarkenStudio --project <path> --shell`，复用相同逐行语法，在 GUI 进程内直接执行。`exit` 始终退出当前 shell 所属的进程：独立 CLI 退出 CLI，Studio `--shell` 退出 Studio（包含 GUI），实例模式退出 CLI 而保留另一个进程中的目标 Studio。Studio 的 `exit --discard` 明确放弃当前工程修改后退出；EOF 也请求关闭 Studio，未保存内容使用 GUI 确认。详见 [Studio 同进程 shell](studio-commands.md#studio-同进程-shell)。
 
 ```text
 HarkenStudioCLI shell --project GameAudio/GameAudio.hsp
