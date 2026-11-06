@@ -3,6 +3,7 @@
 
 #include "Common/TestUtil.h"
 #include "UnitTest/StudioWorldTestSupport.h"
+#include "UnitTest/AllocationProbe.h"
 
 #include "Engine.h"
 #include "harken/core/CurrentWorldArtifact.h"
@@ -869,6 +870,40 @@ TEST(CurrentWorldCompiler, V9BodyRoundTripsActionTransitionWideLoopCountAndStruc
               world.identity.runtimeSemanticFingerprint);
     EXPECT_EQ(harken::WorldInstallStatus::Ok,
               harkentest::ValidateCompilerWorld(world));
+
+    // Sweep real decoder allocations, including the final view arrays.
+    harken::CurrentWorldBodyImage measured;
+    allocation_probe::count = 0;
+    allocation_probe::enabled = true;
+    const auto measuredResult = measured.DecodeWithResult(
+        bytes.data(), bytes.size(), harken::kCurrentWorldShippingBodyVintage,
+        harken::CurrentWorldDecodeMode::StrictArtifact);
+    allocation_probe::enabled = false;
+    const auto allocationCount = allocation_probe::count;
+    ASSERT_EQ(harken::CurrentWorldBodyDecodeResult::Ok, measuredResult);
+    ASSERT_GT(allocationCount, 0u);
+
+    for (std::size_t nth = 1; nth <= allocationCount; ++nth) {
+        SCOPED_TRACE(nth);
+        const auto* accepted = decoded.ProductionView();
+        allocation_probe::count = 0;
+        allocation_probe::failAt = nth;
+        allocation_probe::enabled = true;
+        const auto result = decoded.DecodeWithResult(
+            bytes.data(), bytes.size(), harken::kCurrentWorldShippingBodyVintage,
+            harken::CurrentWorldDecodeMode::StrictArtifact);
+        allocation_probe::enabled = false;
+        const bool injected = allocation_probe::failAt == 0;
+        allocation_probe::failAt = 0;
+        ASSERT_TRUE(injected);
+        ASSERT_EQ(harken::CurrentWorldBodyDecodeResult::Capacity, result);
+        ASSERT_EQ(accepted, decoded.ProductionView());
+        EXPECT_EQ(harkentest::StudioObjectId(40u), accepted->actions[0].actionStableId);
+        EXPECT_EQ(96u, accepted->transitions[0].rules[0].targetFade.durationFrames);
+        ASSERT_TRUE(decoded.Decode(bytes.data(), bytes.size(),
+            harken::kCurrentWorldShippingBodyVintage,
+            harken::CurrentWorldDecodeMode::StrictArtifact));
+    }
 }
 
 TEST(CurrentWorldCompiler, V9BodyRejectsHostileActionCounts) {

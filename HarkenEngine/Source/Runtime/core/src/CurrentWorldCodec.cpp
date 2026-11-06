@@ -797,7 +797,7 @@ struct CurrentWorldBodyImage::Impl {
     std::vector<SignalRelationV1> signalRelations;
     std::vector<SignalReceiverV1> signalReceivers;
 
-    void Refresh() noexcept {
+    void Refresh() {
         propertyViews.clear();
         propertyViews.reserve(properties.size());
         for (auto& row : properties) {
