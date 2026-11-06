@@ -15449,6 +15449,26 @@ TEST(PlayableStart, TrackContainerClipAndSegmentWrapperProducePcmAndNaturallyRec
             harken::InstallContainerWorldV1(*engine, install).status);
         harken::PlayableStartRequest request{};
         request.root = wrapperRoot ? sequence.Root() : segmentRoot ? segment.rootDefinition : image.Root();
+        if (scenario < 2) {
+            ASSERT_EQ(0u, engine->originalSingleCurrentHolders.size());
+            const auto freeInstances = engine->playableInstances.FreeCount();
+            engine->originalSingleCurrentHolders.SetCommitPageLimitForTests(0);
+            const auto refused = harken::StartPlayable(*engine, request);
+            engine->originalSingleCurrentHolders.SetCommitPageLimitForTests(SIZE_MAX);
+            ASSERT_TRUE(refused.status == harken::PlayableStartStatus::Backpressure ||
+                        refused.status == harken::PlayableStartStatus::Capacity)
+                << static_cast<unsigned>(refused.status);
+            EXPECT_EQ(0u, refused.instance);
+            EXPECT_EQ(0u, refused.ticket);
+            EXPECT_EQ(freeInstances, engine->playableInstances.FreeCount());
+            EXPECT_EQ(0u, engine->playableInstances.LiveCount());
+            EXPECT_EQ(0u, engine->sourceTerminals.OccupiedCount());
+            EXPECT_EQ(0u, engine->playablePartitions.OccupiedCount());
+            EXPECT_EQ(0u, engine->timelineArms.LiveCount());
+            EXPECT_EQ(0u, engine->timelineOccurrences.OccupiedCount());
+            EXPECT_EQ(0u, engine->voices.ActiveCount());
+            EXPECT_FALSE(engine->runtimeRecreateRequired);
+        }
         const auto capture = wrapperStop ? harkentest::monitor::OpenIdentityEvents() : 0u;
         std::vector<harkentest::monitor::IdentityRecord> records;
         std::vector<harken::PlayableInstanceHandle> stoppedChildren;

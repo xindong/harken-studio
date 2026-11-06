@@ -11743,7 +11743,9 @@ public:
         auto* rootOriginal = ResolveOriginalPlayableBaseline(this, playableInstances, root);
         auto* arrangingOriginal = ResolveOriginalPlayableBaseline(this, playableInstances, arranging);
         const auto slot = static_cast<std::uint32_t>(arranging);
-        if (rootOriginal == nullptr || arrangingOriginal == nullptr || slot >= originalSingleCurrentHolders.size()) return false;
+        if (rootOriginal == nullptr || arrangingOriginal == nullptr ||
+            slot >= originalSingleCurrentHolders.Capacity() ||
+            !PrepareOriginalSingleCurrentStorage(slot + 1u)) return false;
         auto& holder = originalSingleCurrentHolders[slot];
         if (holder.state == OriginalSingleCurrentHolder::State::Ending && !holder.ResetAfterNativeRetirement(*this)) return false;
         if (holder.state != OriginalSingleCurrentHolder::State::Empty || holder.bundle.Valid()) return false;
@@ -14289,10 +14291,14 @@ public:
              scratch.extraCommands.ConstructThrough(scratch.extraCommands.Capacity()) &&
              scratch.queueEvents.ConstructThrough(scratch.queueEvents.Capacity())));
     }
-    bool PrepareOriginalSingleCurrentStorage() noexcept {
-        if (originalSingleCurrentHolders.size() == originalSingleCurrentHolders.Capacity()) return true;
+    bool PrepareOriginalSingleCurrentStorage(std::size_t count) noexcept {
+        if (count > originalSingleCurrentHolders.Capacity()) return false;
+        if (originalSingleCurrentHolders.size() >= count) return true;
         if (memguard::IsAudioTagged() || playableServices.PreparedUseActive()) return false;
-        return originalSingleCurrentHolders.ConstructThrough(originalSingleCurrentHolders.Capacity());
+        return originalSingleCurrentHolders.ConstructThrough(count);
+    }
+    bool PrepareOriginalSingleCurrentStorage() noexcept {
+        return PrepareOriginalSingleCurrentStorage(originalSingleCurrentHolders.Capacity());
     }
     bool PreparePlayableFeatureBacking() noexcept {
         if (!PrepareOriginalSingleCurrentStorage() || !PreparePlayablePublicationStorage() ||
@@ -14303,12 +14309,11 @@ public:
         }
         return true;
     }
-    bool PrepareOriginalPlayableStorage(bool needsCurrentHolders = true,
+    bool PrepareOriginalPlayableStorage(bool needsCompleteInstanceStorage = true,
         std::uint32_t independentRoots = 1u) noexcept {
-        return (needsCurrentHolders ? playableInstances.PrepareStorage()
+        return (needsCompleteInstanceStorage ? playableInstances.PrepareStorage()
                 : playableInstances.PrepareStorageForAcquire(independentRoots)) &&
-            originalPlayableLifetimeHolders.ConstructThrough(playableInstances.ConstructedEntryCount()) &&
-            (!needsCurrentHolders || PrepareOriginalSingleCurrentStorage());
+            originalPlayableLifetimeHolders.ConstructThrough(playableInstances.ConstructedEntryCount());
     }
     bool PreparePlayablePublicationStorage(bool needsContainerState = true,
         std::uint32_t independentRoots = 1u) noexcept {
@@ -14336,9 +14341,10 @@ public:
         return true;
     }
     bool PreparePlayableStateStorage(bool needsContainerState = true,
-        std::uint32_t independentRoots = 1u) noexcept {
+        std::uint32_t independentRoots = 1u, bool needsCurrentHolders = true) noexcept {
         return PrepareTimelineStartStorage(needsContainerState, independentRoots) &&
             PrepareOriginalPlayableStorage(needsContainerState, independentRoots) &&
+            (!needsContainerState || !needsCurrentHolders || PrepareOriginalSingleCurrentStorage()) &&
             (!needsContainerState ||
                 (initialFrontierEvents.ConstructThrough(initialFrontierEvents.Capacity()) &&
                  initialFrontierRequests.ConstructThrough(initialFrontierRequests.Capacity()) &&

@@ -16851,9 +16851,11 @@ bool RetirePlayableInstanceTree(harken::Engine& engine,
                                 harken::PlayableInstanceHandle handle,
                                 harken::PlayableTerminalKind terminalKind) noexcept {
     ObservePlayablePlayback(engine);
-    for (std::uint32_t index = 0; index < engine.sourceTerminals.Capacity(); ++index) {
-        auto& source = *engine.sourceTerminals.At(index);
-        if (!source.occupied || !IsPlayableDescendant(engine, source.leaf, handle)) continue;
+    for (std::uint32_t cursor = 0;;) {
+        const auto token = engine.sourceTerminals.NextOccupied(&cursor);
+        if (!token.Valid()) break;
+        auto& source = *engine.sourceTerminals.At(token.slot);
+        if (!IsPlayableDescendant(engine, source.leaf, handle)) continue;
         source.retiring = true;
         if (terminalKind == harken::PlayableTerminalKind::RequestedStop)
             source.ownerResult = harken::SourceTerminalKind::Stop;
@@ -41629,10 +41631,10 @@ void ObserveVariableControlMemberCompletion(
     harken::Engine& engine,
     std::uint64_t observedAudioSequence) noexcept {
     if (engine.sourceTerminals.OccupiedCount() == 0) return;
-    for (std::uint32_t index = 0; index < engine.sourceTerminals.Capacity(); ++index) {
-        auto& source = *engine.sourceTerminals.At(index);
-        if (!source.occupied) continue;
-        const harken::SourceTerminalToken token{index, source.generation};
+    for (std::uint32_t cursor = 0;;) {
+        const auto token = engine.sourceTerminals.NextOccupied(&cursor);
+        if (!token.Valid()) break;
+        auto& source = *engine.sourceTerminals.At(token.slot);
         harken::SourceTerminalPayload payload{};
         bool completed = false;
         auto bypass = harken::SourceTerminalKind::None;
@@ -78381,7 +78383,9 @@ PlayableStartResult PrepareDirectPlayableExecution(
         result.status = PlayableStartStatus::Backpressure;
         return result;
     }
-    if (!engine.PreparePlayableStateStorage()) {
+    const bool scheduleRoot = request.root.kind == PlayableKindV1::Track ||
+        request.root.kind == PlayableKindV1::Segment;
+    if (!engine.PreparePlayableStateStorage(true, 1u, !scheduleRoot)) {
         result.status = PlayableStartStatus::Backpressure;
         return result;
     }
