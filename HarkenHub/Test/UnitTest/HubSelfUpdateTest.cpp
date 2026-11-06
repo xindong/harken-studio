@@ -3,12 +3,18 @@
 #include "Support/ManifestTestUtils.h"
 #include "Support/RangeHttpServer.h"
 #include "Transactions/HandoffArea.h"
+#include "Projects/ProjectStore.h"
+#include "Settings/HubSettings.h"
+#include "UI/HubWindow.h"
+#include "UI/MessageDialog.h"
 #include "Update/UpdateQueue.h"
 #include "Update/UpdateStateStore.h"
 
 #include <gtest/gtest.h>
 
 #include <QCoreApplication>
+#include <QApplication>
+#include <QAbstractButton>
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
@@ -17,7 +23,11 @@
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLockFile>
 #include <QTemporaryDir>
+#include <QTest>
+#include <QTimer>
+#include <QToolButton>
 
 using VNH::HandoffArea;
 using VNH::HubSelfUpdate;
@@ -122,6 +132,60 @@ TEST_F(HubSelfUpdateTest, VerifiesInstallerHashAndSize)
     EXPECT_FALSE(HubSelfUpdate::verifyInstaller(
         dir.filePath(QStringLiteral("missing.exe")), sha, content.size(),
         &error));
+}
+
+TEST_F(HubSelfUpdateTest, UpdatePreparationKeepsTheUiResponsiveDuringStateContention)
+{
+    qputenv("HARKEN_HUB_BRIDGE_COMMAND", "noop");
+    ASSERT_TRUE(VNH::HubSettings::setAutoDownloadStudio(false));
+    auto record = readyBridgeRecord(QByteArrayLiteral("installer"));
+    record.expectedSha256 = QString(64, QLatin1Char('0'));
+    ASSERT_TRUE(UpdateStateStore::save(record, kNow));
+    QLockFile lock(UpdateStateStore::filePath() + QStringLiteral(".lock"));
+    ASSERT_TRUE(lock.tryLock(0));
+    VNH::ProjectStore store;
+    ASSERT_TRUE(store.open(dir.filePath(QStringLiteral("projects.db"))));
+    VNH::HubWindow window(&store);
+    window.show();
+    auto* update = window.findChild<QToolButton*>(QStringLiteral("hubUpdateButton"));
+    ASSERT_NE(update, nullptr);
+    QTimer::singleShot(0, &window, [&]() {
+        auto* dialog = qobject_cast<VNH::MessageDialog*>(QApplication::activeModalWidget());
+        ASSERT_NE(dialog, nullptr);
+        for (auto* button : dialog->buttons()) {
+            if (dialog->buttonRole(button) == QMessageBox::AcceptRole) {
+                button->click();
+                return;
+            }
+        }
+        FAIL() << "Missing update confirmation action";
+    });
+    bool inputHandled = false;
+    QTimer::singleShot(100, &window, [&]() {
+        inputHandled = true;
+        EXPECT_FALSE(update->isEnabled());
+        EXPECT_FALSE(window.close());
+        lock.unlock();
+    });
+    QTimer dismissError;
+    QObject::connect(&dismissError, &QTimer::timeout, &window, []() {
+        auto* dialog = qobject_cast<VNH::MessageDialog*>(QApplication::activeModalWidget());
+        if (dialog && dialog->standardButtons() == QMessageBox::Ok)
+            dialog->button(QMessageBox::Ok)->click();
+    });
+    dismissError.start(10);
+    update->click();
+    EXPECT_FALSE(update->isEnabled());
+    EXPECT_FALSE(inputHandled);
+    QElapsedTimer deadline;
+    deadline.start();
+    while (!update->isEnabled() && deadline.elapsed() < 5000)
+        QTest::qWait(10);
+    EXPECT_TRUE(inputHandled);
+    EXPECT_TRUE(update->isEnabled());
+    EXPECT_EQ(UpdateStateStore::load(QStringLiteral("HarkenHub")).state,
+              QStringLiteral("VerificationFailed"));
+    EXPECT_FALSE(UpdateQueue::hasPendingHubUpdate());
 }
 
 TEST_F(HubSelfUpdateTest, DisabledAutomationDoesNotDownloadAnAvailablePackage)

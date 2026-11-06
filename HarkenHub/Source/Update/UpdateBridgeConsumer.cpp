@@ -156,9 +156,10 @@ bool waitForQuietHub(const UpdateBridgeConsumer::Hooks& hooks)
     QElapsedTimer timer;
     timer.start();
     while (!hooks.runningHubProcesses().isEmpty()) {
-        if (timer.elapsed() >= hooks.hubQuietTimeoutMs)
+        const qint64 remaining = hooks.hubQuietTimeoutMs - timer.elapsed();
+        if (remaining <= 0)
             return false;
-        hooks.wait(500);
+        hooks.wait(qMin<qint64>(50, remaining));
     }
     return true;
 }

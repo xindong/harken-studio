@@ -17,6 +17,7 @@ BEGIN
     HARKEN_SETUP_SYSTEM_UNAVAILABLE "The Windows system directory is unavailable."
     HARKEN_SETUP_LAUNCH_FAILED "Windows Installer could not be started."
     HARKEN_SETUP_ELEVATION_FAILED "The installer could not obtain administrator privileges."
+    HARKEN_SETUP_HUB_RUNNING "Harken Hub could not exit. Close its remaining processes and run setup again."
 END
 
 LANGUAGE LANG_CHINESE, SUBLANG_CHINESE_SIMPLIFIED
@@ -33,4 +34,5 @@ BEGIN
     HARKEN_SETUP_SYSTEM_UNAVAILABLE "Windows 系统目录不可用。"
     HARKEN_SETUP_LAUNCH_FAILED "无法启动 Windows Installer。"
     HARKEN_SETUP_ELEVATION_FAILED "安装程序无法取得管理员权限。"
+    HARKEN_SETUP_HUB_RUNNING "Harken Hub 未能退出。请关闭其残留进程后重新运行安装程序。"
 END

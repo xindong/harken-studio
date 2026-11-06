@@ -49,9 +49,12 @@
 #include <QGuiApplication>
 #include <QScreen>
 #include <QStackedWidget>
+#include <QThread>
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
+
+#include <memory>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -415,6 +418,8 @@ HubWindow::HubWindow(ProjectStore* store, QWidget* parent)
 
 HubWindow::~HubWindow()
 {
+    if (hubUpdateWorker_)
+        hubUpdateWorker_->wait();
     flushPendingWindowGeometry();
     delete integrationStore_;
     delete engineTargetStore_;
@@ -660,6 +665,8 @@ void HubWindow::applyAutoSilentlyUpdateHubPreference(bool enabled)
 
 void HubWindow::refreshHubUpdateButton()
 {
+    if (hubUpdateWorker_)
+        return;
     const UpdateStateRecord record =
         UpdateStateStore::load(QStringLiteral("HarkenHub"));
     const bool ownUpdateReady =
@@ -680,6 +687,8 @@ void HubWindow::refreshHubUpdateButton()
 
 void HubWindow::beginHubUpdateLanding()
 {
+    if (hubUpdateWorker_)
+        return;
     MessageDialog confirm(
         QMessageBox::Question, tr("Harken Hub"),
         tr(
@@ -698,33 +707,47 @@ void HubWindow::beginHubUpdateLanding()
     if (confirm.clickedButton() != proceed)
         return;
 
-    const UpdateStateRecord record =
-        UpdateStateStore::load(QStringLiteral("HarkenHub"));
-    if (record.found && record.state == QStringLiteral("AwaitingRestart")) {
-        HubSelfUpdate selfUpdate;
+    struct LandingResult {
+        bool started = false;
         QString error;
-        if (!selfUpdate.approveViaBridge(QStringLiteral("gui"), &error,
-                                         QDateTime::currentDateTimeUtc())) {
-            MessageDialog::warning(
-                this, tr("Harken Hub"),
-                tr("The Hub update could not be started.\n\n%1").arg(error));
+    };
+    const auto result = std::make_shared<LandingResult>();
+    hubUpdateWorker_ = QThread::create([result]() {
+        const UpdateStateRecord record =
+            UpdateStateStore::load(QStringLiteral("HarkenHub"));
+        if (record.found && record.state == QStringLiteral("AwaitingRestart")) {
+            HubSelfUpdate selfUpdate;
+            result->started = selfUpdate.approveViaBridge(
+                QStringLiteral("gui"), &result->error,
+                QDateTime::currentDateTimeUtc());
+        } else if (UpdateQueue::hasPendingHubUpdate()) {
+            result->started = BridgeDispatcher::dispatch(&result->error);
+        }
+        if (result->started)
+            SingleInstanceGuard::sendTo(SingleInstanceGuard::backgroundServerName(),
+                                       {QStringLiteral("--quit")});
+    });
+    hubUpdateWorker_->setParent(this);
+    centralWidget()->setEnabled(false);
+    hubUpdateButton_->setEnabled(false);
+    hubUpdateButton_->setText(tr("Preparing update..."));
+    connect(hubUpdateWorker_, &QThread::finished, this, [this, result]() {
+        hubUpdateWorker_->deleteLater();
+        hubUpdateWorker_ = nullptr;
+        centralWidget()->setEnabled(true);
+        if (result->started) {
+            QApplication::quit();
             return;
         }
-    } else if (UpdateQueue::hasPendingHubUpdate()) {
-        QString dispatchError;
-        if (!BridgeDispatcher::dispatch(&dispatchError)) {
-            MessageDialog::warning(
-                this, tr("Harken Hub"),
-                tr("The Hub update could not be started.\n\n%1").arg(dispatchError));
-            return;
-        }
-    } else {
+        hubUpdateButton_->setEnabled(true);
+        hubUpdateButton_->setText(tr("Update"));
         refreshHubUpdateButton();
-        return;
-    }
-    SingleInstanceGuard::sendTo(SingleInstanceGuard::backgroundServerName(),
-                                {QStringLiteral("--quit")});
-    QApplication::quit();
+        if (!result->error.isEmpty())
+            MessageDialog::warning(
+                this, tr("Harken Hub"),
+                tr("The Hub update could not be started.\n\n%1").arg(result->error));
+    });
+    hubUpdateWorker_->start();
 }
 
 void HubWindow::installChrome()
@@ -811,6 +834,10 @@ void HubWindow::changeEvent(QEvent* event)
 
 void HubWindow::closeEvent(QCloseEvent* event)
 {
+    if (hubUpdateWorker_) {
+        event->ignore();
+        return;
+    }
     flushPendingWindowGeometry();
     QMainWindow::closeEvent(event);
 }
