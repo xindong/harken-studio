@@ -101223,6 +101223,12 @@ VnResult AcquireCanonicalBytes(const VnPackLoadDesc& desc,
 void ReleaseCanonicalBytes(const VnPackLoadDesc& desc, VnPackByteSpan span,
                            bool releaseSpan);
 
+struct CanonicalSetScope {
+    explicit CanonicalSetScope(Engine& value) : engine(value) { engine.canonicalPackSetBusy = true; }
+    ~CanonicalSetScope() noexcept { engine.canonicalPackSetBusy = false; }
+    Engine& engine;
+};
+
 struct CanonicalByteSpanGuard {
     const VnPackLoadDesc& load;
     VnPackByteSpan span{};
@@ -102765,6 +102771,8 @@ static VnResult LoadPackObserved(const VnPackDesc* desc,
     }
     harken::VariableOperationScope variableOperation(engine);
     if (desc != nullptr && desc->structSize == sizeof(VnPackLoadDesc)) {
+        // Provider acquire/release may reenter the API while engine state is borrowed.
+        harken::CanonicalSetScope scope(*engine);
         const auto* load = reinterpret_cast<const VnPackLoadDesc*>(desc);
         harken::TraceCallScribe trace =
             TraceStateful(engine, harken::kTraceCallLoadPack);
@@ -112711,6 +112719,8 @@ VnResult Vn_ReplacePack(VnPackHandle handle, const VnPackDesc* desc) {
     replaceTrace.U64(handle);
     try {
         if (desc != nullptr && desc->structSize == sizeof(VnPackLoadDesc)) {
+            // Provider acquire/release may reenter the API while engine state is borrowed.
+            harken::CanonicalSetScope scope(*engine);
             const auto* load = reinterpret_cast<const VnPackLoadDesc*>(desc);
             const bool provider =
                 (load->flags & VN_PACK_LOAD_FLAG_PROVIDER) != 0;
@@ -119186,12 +119196,6 @@ void WriteActivationOutputs(
         }
     }
 }
-
-struct CanonicalSetScope {
-    explicit CanonicalSetScope(Engine& value) : engine(value) { engine.canonicalPackSetBusy = true; }
-    ~CanonicalSetScope() noexcept { engine.canonicalPackSetBusy = false; }
-    Engine& engine;
-};
 
 struct AcquiredCanonicalSetMember {
     PackTable::AlignedBuffer bytes;
