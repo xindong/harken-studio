@@ -24,10 +24,15 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLockFile>
+#include <QScopeGuard>
+#include <QSqlDatabase>
+#include <QSqlQuery>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimer>
 #include <QToolButton>
+
+#include <thread>
 
 using VNH::HandoffArea;
 using VNH::HubSelfUpdate;
@@ -261,23 +266,45 @@ TEST_F(HubSelfUpdateTest, InstallerRejectedWhenAuthenticodeRequired)
     qunsetenv("HARKEN_HUB_REQUIRE_AUTHENTICODE");
 }
 
-TEST_F(HubSelfUpdateTest, BackupCopiesUserData)
+TEST_F(HubSelfUpdateTest, BackupReadsACommittedSnapshotWhileAWalWriterIsActive)
 {
-    {
-        QFile db(dir.filePath(QStringLiteral("projects.db")));
-        db.open(QIODevice::WriteOnly);
-        db.write(QByteArrayLiteral("db-bytes"));
-    }
+    const auto cleanup = qScopeGuard([]() {
+        QSqlDatabase::removeDatabase(QStringLiteral("backup-writer"));
+        QSqlDatabase::removeDatabase(QStringLiteral("backup-reader"));
+    });
+    auto writer = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), QStringLiteral("backup-writer"));
+    writer.setDatabaseName(dir.filePath(QStringLiteral("projects.db")));
+    ASSERT_TRUE(writer.open());
+    QSqlQuery write(writer);
+    ASSERT_TRUE(write.exec(QStringLiteral("PRAGMA journal_mode=WAL")));
+    ASSERT_TRUE(write.exec(QStringLiteral("CREATE TABLE records (value INTEGER)")));
+    ASSERT_TRUE(write.exec(QStringLiteral("INSERT INTO records VALUES (1), (1)")));
+    ASSERT_TRUE(writer.transaction());
+    ASSERT_TRUE(write.exec(QStringLiteral("UPDATE records SET value=2")));
     QString error;
-    ASSERT_TRUE(HubSelfUpdate::backupUserData(kNow, &error))
-        << error.toStdString();
+    bool backedUp = false;
+    std::thread worker([&]() { backedUp = HubSelfUpdate::backupUserData(kNow, &error); });
+    worker.join();
+    ASSERT_TRUE(backedUp) << error.toStdString();
 
     const QDir backupRoot(HubSelfUpdate::backupRootDir());
     const auto entries =
         backupRoot.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
     ASSERT_EQ(entries.size(), 1);
-    EXPECT_TRUE(QFile::exists(backupRoot.filePath(
-        entries.first() + QStringLiteral("/projects.db"))));
+    auto reader = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), QStringLiteral("backup-reader"));
+    reader.setDatabaseName(backupRoot.filePath(entries.first() + QStringLiteral("/projects.db")));
+    reader.setConnectOptions(QStringLiteral("QSQLITE_OPEN_READONLY"));
+    ASSERT_TRUE(reader.open());
+    QSqlQuery read(reader);
+    ASSERT_TRUE(read.exec(QStringLiteral("PRAGMA integrity_check")));
+    ASSERT_TRUE(read.next());
+    EXPECT_EQ(read.value(0).toString(), QStringLiteral("ok"));
+    ASSERT_TRUE(read.exec(QStringLiteral("SELECT count(*), min(value), max(value) FROM records")));
+    ASSERT_TRUE(read.next());
+    EXPECT_EQ(read.value(0).toInt(), 2);
+    EXPECT_EQ(read.value(1).toInt(), 1);
+    EXPECT_EQ(read.value(2).toInt(), 1);
+    EXPECT_TRUE(writer.commit());
 }
 
 TEST_F(HubSelfUpdateTest, ApproveRequiresAwaitingState)
