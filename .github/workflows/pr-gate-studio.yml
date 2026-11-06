@@ -11,8 +11,7 @@ on:
     paths:
       - 'HarkenStudio/**'
       - 'HarkenSchema/Pack/**'
-      - '.scripts/pack_wire_codegen.py'
-      - '.scripts/pack-wire-bindings.json'
+      - '.scripts/**'
       - 'cmake/**'
       - 'CMakeLists.txt'
       - 'CMakePresets.json'
