@@ -13323,13 +13323,13 @@ void ObservePlayablePlayback(harken::Engine& engine, std::uint64_t observedAudio
     }
 }
 
-void ObservePlayableMemberArm(harken::Engine& engine,
-    harken::EnginePlayableMemberRecord& record) noexcept {
-    auto& member = record.completion;
+bool PlayableMemberArmOnsetUnchanged(const harken::Engine& engine,
+    const harken::EnginePlayableMemberRecord& record) noexcept {
+    const auto& member = record.completion;
     const auto arm = record.arm;
     if (!record.occupied || member.leafInstance == 0 || member.leafEpoch == 0 ||
         record.render == 0 || !arm.Valid() || record.render !=
-            ((static_cast<std::uint64_t>(arm.renderGeneration) << 32) | arm.renderSlot)) return;
+            ((static_cast<std::uint64_t>(arm.renderGeneration) << 32) | arm.renderSlot)) return false;
     const bool retainedOnset = member.sourceRender == record.render &&
         harken::Engine::SameOriginalSingleArm(member.sourceStartArm, arm) &&
         member.sourceStartedBlockSequence != 0 && member.sourceActualStartFrame != UINT64_MAX;
@@ -13337,8 +13337,19 @@ void ObservePlayableMemberArm(harken::Engine& engine,
         harken::ArmState state{};
         // A live Started arm cannot change its original onset. Other states
         // still need the full observation, including the retirement receipt.
-        if (engine.timelineArms.State(arm, &state) && state == harken::ArmState::Started) return;
+        if (engine.timelineArms.State(arm, &state) && state == harken::ArmState::Started) return true;
     }
+    return false;
+}
+
+void ObservePlayableMemberArm(harken::Engine& engine,
+    harken::EnginePlayableMemberRecord& record) noexcept {
+    if (PlayableMemberArmOnsetUnchanged(engine, record)) return;
+    auto& member = record.completion;
+    const auto arm = record.arm;
+    if (!record.occupied || member.leafInstance == 0 || member.leafEpoch == 0 ||
+        record.render == 0 || !arm.Valid() || record.render !=
+            ((static_cast<std::uint64_t>(arm.renderGeneration) << 32) | arm.renderSlot)) return;
     harken::TimelineArmObservation observed{};
     if (!engine.timelineArms.Observe(arm, &observed)) return;
     // Unchanged receipts need neither source resolution nor repeated writes.
@@ -13379,6 +13390,14 @@ bool ObserveActiveArrivalsBeforeArmReclaim(harken::Engine& engine) noexcept {
         harken::EnginePlayableMemberRecord* resolved = nullptr;
         const auto identity = engine.memberOnsets.Next(harken::RuntimeActivitySet::Active,
             &cursor, [&](std::uint32_t slot) noexcept {
+                if (engine.playableMemberRecords.IsConstructed(slot)) {
+                    const auto& record = engine.playableMemberRecords[slot];
+                    // Skip only this visit, retaining membership for the next
+                    // fresh arm observation and eventual tombstone receipt.
+                    if (record.primaryOwned && record.completion.sourceArmTombstoneSequence == 0 &&
+                        PlayableMemberArmOnsetUnchanged(engine, record))
+                        return harken::Engine::MemberOnsetIdentity{};
+                }
                 resolved = engine.FindPlayableMemberOnset(slot);
                 return resolved != nullptr ? engine.PlayableMemberOnsetIdentity(slot, *resolved)
                     : harken::Engine::MemberOnsetIdentity{};
@@ -41483,11 +41502,13 @@ void RefreshPlayableChildObservation(
     const PlayableStorageBases storageBases =
         StorageBasesForRow(engine, row);
     struct StartOccurrence {
-        harken::TimelineArmToken arm{};
-        VnVoiceHandle render = 0;
+        std::uint32_t armSlot;
+        std::uint32_t armGeneration;
+        VnVoiceHandle render;
     };
     constexpr std::size_t kMaxObservedStarts = 130;
-    std::array<StartOccurrence, kMaxObservedStarts> observed{};
+    // Only the fully assigned prefix below observedCount is read.
+    std::array<StartOccurrence, kMaxObservedStarts> observed;
     std::size_t observedCount = 0;
     std::uint32_t liveCount = 0;
     std::uint32_t retiringCount = 0;
@@ -41505,14 +41526,14 @@ void RefreshPlayableChildObservation(
         if (!arm.Valid() || render == 0) return;
         for (std::size_t index = 0; index < observedCount; ++index) {
             const StartOccurrence& prior = observed[index];
-            if (prior.arm.slot == arm.slot &&
-                prior.arm.generation == arm.generation &&
+            if (prior.armSlot == arm.slot &&
+                prior.armGeneration == arm.generation &&
                 prior.render == render) {
                 return;
             }
         }
         if (observedCount == observed.size()) return;
-        observed[observedCount++] = {arm, render};
+        observed[observedCount++] = {arm.slot, arm.generation, render};
         harken::TimelineArmObservation observation{};
         const bool armObserved = engine.timelineArms.Observe(arm, &observation);
         const bool retainedOnset = member != nullptr && member->sourceRender == render &&
@@ -41570,16 +41591,16 @@ void RefreshPlayableChildObservation(
          index < row.variableControlDiscreteMemberCount; ++index) {
         std::size_t slot = 0;
         if (!engine.ResolvePlayableMemberSlot(base + index, &slot)) break;
-        add(engine.ReadPlayableMember(slot).arm,
-            engine.ReadPlayableMember(slot).render, &engine.ReadPlayableMember(slot).completion);
+        const auto& member = engine.ReadPlayableMember(slot);
+        add(member.arm, member.render, &member.completion);
     }
     for (std::uint32_t index = 0;
          index < row.variableControlContinuousMemberCount; ++index) {
         std::size_t slot = 0;
         if (!engine.ResolvePlayableMemberSlot(base +
                 row.variableControlContinuousMemberOffset + index, &slot)) break;
-        add(engine.ReadPlayableMember(slot).arm,
-            engine.ReadPlayableMember(slot).render, &engine.ReadPlayableMember(slot).completion);
+        const auto& member = engine.ReadPlayableMember(slot);
+        add(member.arm, member.render, &member.completion);
     }
     for (std::uint32_t index = 0;
          index < row.variableControlInitialContinuousMemberCount; ++index) {
@@ -41593,8 +41614,8 @@ void RefreshPlayableChildObservation(
             if (!engine.ResolvePlayableMemberSlot(base + index +
                     (row.variableControlDiscreteRetargetReplacement ? row.variableControlDiscreteTransitionOffset : 0u),
                     &slot)) break;
-            add(engine.ReadPlayableMember(slot).arm, engine.ReadPlayableMember(slot).render,
-                &engine.ReadPlayableMember(slot).completion);
+            const auto& member = engine.ReadPlayableMember(slot);
+            add(member.arm, member.render, &member.completion);
         }
     }
     row.childLiveCount = liveCount;
