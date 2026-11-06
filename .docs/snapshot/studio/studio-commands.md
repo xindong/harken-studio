@@ -135,10 +135,10 @@ Studio 本体目前通过 IPC 接受业务命令，没有 `exec`、`run`、`shel
 
 [EditorCommandCatalog.cpp](../../../HarkenStudio/Source/Core/EditorCommandCatalog.cpp) 定义宿主边界与统一描述；[CommandSchemas.cpp](../../../HarkenStudio/Source/Core/CommandSchemas.cpp) 与 [DesktopCommandSchemas.cpp](../../../HarkenStudio/Source/Core/IPC/DesktopCommandSchemas.cpp) 定义参数合同；[CommandArgumentValidator.cpp](../../../HarkenStudio/Source/Core/CommandArgumentValidator.cpp) 递归校验。[IPCServer.cpp](../../../HarkenStudio/Source/Core/IPC/IPCServer.cpp) 统一分派与状态限制。[DesktopWidgetTargets.cpp](../../../HarkenStudio/Source/Core/IPC/DesktopWidgetTargets.cpp) 统一桌面目标身份、交互限制和队列状态。
 
-通用回归覆盖公开目录的完整声明、两宿主合同相等、所有命令拒绝未知参数、嵌套约束与精确身份规则。桌面生命周期回归覆盖重复名称、作用域、失效身份、隐藏/禁用/模态阻塞、入队后目标变化、作业状态及历史容量。CLI 流程验证位于 [verify_studio_cli.py](../../../.scripts/verify_studio_cli.py)，纳入 Windows/macOS 构建门禁。
+通用回归覆盖公开目录的完整声明、两宿主合同相等、所有命令拒绝未知参数、嵌套约束与精确身份规则。桌面生命周期回归覆盖重复名称、作用域、失效身份、隐藏/禁用/模态阻塞、入队后目标变化、作业状态及历史容量。CLI 本地流程验证位于 [verify_studio_cli.py](../../../.scripts/verify_studio_cli.py)。
 
 本轮真实 Windows 桌面会话验证通过：请求外层结构及参数类型拒绝并保留 request_id、完整合同对齐、顶层窗口身份、隐藏控件读取与交互限制、同名候选身份、面板生命周期、队列完成查询、批次参数预检无先行副作用，以及真实未保存确认框阻塞背景交互、取消后原队列操作完成。最终临时报告为 `harken-desktop-contracts-t4kxs3y0/report.json`，仓库本地日志为 `.temp/desktop-contracts-release-smoke.log`。
 
 最终相关原生回归 128/128 通过，结果保存在 `.temp/cli-contracts-release-tests.xml`。其中事务回归覆盖 27 组总线与容器属性的单独/组合修改，验证预览不修改数据、执行确实修改数据，以及回滚完整恢复 Shared 缺省、显式值、平台覆盖和试听状态。总线音高/输出增益及容器音量/音高的事务支持已与实际执行对齐；不会仅恢复当前数值而遗失原有覆盖关系。真实音频与无声设备两套 CLI 流程分别保存在 `.temp/cli-contracts-release-real.log` 和 `.temp/cli-contracts-release-null.log`。
 
-本地验证环境为 Windows。联合构建、禁用 Qt 图形模块的独立 CLI 构建、原生测试和 CLI 流程分别执行；不能把 Windows 通过或 CI 配置存在等同于 macOS 和所有音频硬件组合已验证。
+本地验证环境为 Windows。联合构建、禁用 Qt 图形模块的独立 CLI 构建、原生测试和 CLI 流程分别执行；macOS 和其他音频硬件组合尚未验证。

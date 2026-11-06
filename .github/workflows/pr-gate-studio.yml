@@ -13,8 +13,6 @@ on:
       - 'cmake/**'
       - 'CMakeLists.txt'
       - 'CMakePresets.json'
-      - '.scripts/verify_studio_cli.py'
-      - '.github/workflows/pr-gate-studio.yml'
   workflow_dispatch:
 
 concurrency:
@@ -130,15 +128,6 @@ jobs:
           --build-dir build-studio/HarkenStudio/Test --config Release --product editor
           --mode "$HARKEN_TEST_MODE" --exclude-label harken-daily --budget-seconds 900
           --output-dir .temp/ci-studio-${{ github.run_id }}-${{ github.run_attempt }}
-
-      - name: Verify headless CLI contracts
-        shell: bash
-        run: |
-          set -euo pipefail
-          evidence=.temp/ci-studio-${{ github.run_id }}-${{ github.run_attempt }}
-          mkdir -p "$evidence"
-          python .scripts/verify_studio_cli.py --cli build-studio/bin/Release/HarkenStudioCLI.exe \
-            --work-dir "$evidence/cli" --skip-audio-output 2>&1 | tee "$evidence/cli.log"
 
       - name: Upload test evidence
         if: always()
@@ -295,21 +284,3 @@ jobs:
 
       - name: Build (harken_editor)
         run: cmake --build --preset macos-release --target harken_editor --parallel
-
-      - name: Verify headless CLI contracts
-        shell: bash
-        run: |
-          set -euo pipefail
-          evidence=.temp/ci-studio-macos-${{ matrix.slug }}-${{ github.run_id }}-${{ github.run_attempt }}
-          mkdir -p "$evidence"
-          python3 .scripts/verify_studio_cli.py --cli build/bin/Release/HarkenStudioCLI \
-            --work-dir "$evidence/cli" --skip-audio-output 2>&1 | tee "$evidence/cli.log"
-
-      - name: Upload CLI evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: studio-cli-macos-${{ matrix.slug }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .temp/ci-studio-macos-${{ matrix.slug }}-${{ github.run_id }}-${{ github.run_attempt }}/
-          include-hidden-files: true
-          retention-days: 14

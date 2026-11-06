@@ -142,6 +142,6 @@ CLI 使用 `QCoreApplication`，依赖 Qt Core/Network/Concurrent，无 Gui/Widg
 
 [verify_studio_cli.py](../../../.scripts/verify_studio_cli.py) 验证命令发现/筛选、帮助、所有公开命令拒绝未知参数、批处理执行前校验、逐行协议、工程生命周期、保存重开、转换及包体一致性；目录一致性测试位于既有 `AICommandCatalogTest.cpp`。Windows 验证不代表 macOS、所有音频设备和全部参数组合均已验证。
 
-Studio PR gate 在 Windows 和 macOS 两种架构运行同一 CLI 流程，使用 `--skip-audio-output` 跳过依赖物理音频设备的检查，并在仍需运行时的流程中使用 `device_mode:null`；本地默认仍验证真实输出和播放。跨平台 CI 的实际结果以对应工作流为准，不能用 Windows 本地结果替代。
+本地验证脚本可使用 `--skip-audio-output` 跳过依赖物理音频设备的检查，并在仍需运行时的流程中使用 `device_mode:null`；默认仍验证真实输出和播放。
 
 本轮 Windows 最终验证：Studio 联合产物使用真实音频设备通过完整 CLI 流程；关闭 Editor/Hub 并禁用 Qt Gui/Widgets/Svg/OpenGL 的独立产物使用无声设备通过相同流程。覆盖中文、重音字符和空格路径、文件与 stdin 输入、纯净发现输出及保存重开；PowerShell 文件参数单独验证通过。对应本地记录为 `.temp/cli-contracts-release-real.log`、`.temp/cli-contracts-release-null.log` 与 `.temp/cli-contracts-powershell-unicode.json`。
