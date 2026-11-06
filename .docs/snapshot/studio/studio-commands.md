@@ -6,17 +6,25 @@
 
 | 层次 | Studio | StudioCLI |
 |---|---|---|
-| 共享业务 | 通过本地 TCP IPC 调用 | 通过 `exec`、`run`、`shell` 调用 |
-| 桌面状态 | 当前窗口、面板、选择、画布及桌面会话 | 无 GUI 上下文，不注册这些命令 |
-| 工程归属 | 当前桌面会话 | 独立持有工程和运行时的无窗口会话 |
+| 共享业务 | 通过 StudioCLI 实例模式或本地 TCP IPC 调用 | 通过 `exec`、`run`、`shell` 独立执行或操作指定实例 |
+| 桌面状态 | 当前窗口、面板、选择、画布及桌面会话 | `--instance <id>` 使用目标 Studio 的 GUI 上下文 |
+| 工程归属 | 当前桌面会话 | 独立会话，或通过 `--instance` 操作已有桌面会话 |
 | 运行入口 | `HarkenStudio.exe --project <path>` | `HarkenStudioCLI.exe`，macOS 为 `HarkenStudioCLI` |
 | 打包 | `export_pack` 使用当前内存工程 | 同一 `export_pack`，另有读取已保存工程的 `build` |
 
-Studio 本体目前通过 IPC 接受业务命令，没有 `exec`、`run`、`shell` 等终端子命令。二者的传输形式不同，但共享命令的名称、参数描述与业务实现相同。CLI 会等待异步操作完成；IPC 返回 `result.operation` 后由客户端查询完成状态。
+终端入口由 HarkenStudioCLI 提供：`instances` 列出存活 Studio 的版本与可用性，`--instance <id>` 将 `commands/exec/run/shell` 交给同软件版本的目标实例。Studio 正常启动即可接受实例命令，无需附带终端窗口。共享命令的名称、参数描述与业务实现相同；CLI 等待共享异步作业完成，GUI 事件保留排队结果与状态查询语义。
 
 ## 发现与调用
 
-默认监听 `127.0.0.1:9527`。请求为换行分隔的 UTF-8 JSON：
+推荐终端用法：
+
+```text
+HarkenStudioCLI instances --json
+HarkenStudioCLI --instance <id> commands
+HarkenStudioCLI --instance <id> exec list_ui_windows --json
+```
+
+实例连接使用当前用户的独立本地端点，执行握手检查版本，不依赖固定 TCP 端口。旧 TCP 接口继续默认监听 `127.0.0.1:9527`。请求为换行分隔的 UTF-8 JSON：
 
 ```json
 {"cmd":"list_commands","args":{},"request_id":"catalog"}

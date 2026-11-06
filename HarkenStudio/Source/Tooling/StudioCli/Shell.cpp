@@ -111,7 +111,7 @@ int runShell(StudioSession& session, int timeoutMs, bool json,
         exitCode = code;
         loop.quit();
     };
-    const auto dirty = [] { return VNX::ProjectManager::instance().hasUnsavedChanges(); };
+    const auto dirty = [&] { return !session.isAttached() && VNX::ProjectManager::instance().hasUnsavedChanges(); };
     const auto unsaved = [] {
         return failure(QStringLiteral("UNSAVED_CHANGES"),
             QStringLiteral("Save with save_project before exiting, or use exit --discard."));
@@ -147,7 +147,10 @@ int runShell(StudioSession& session, int timeoutMs, bool json,
         executing = true;
         QJsonObject response;
         if (command == QStringLiteral("exit")) {
-            if (!arguments.isEmpty() && arguments != QStringLiteral("--discard")) {
+            if (session.isAttached() && !arguments.isEmpty()) {
+                response = failure(QStringLiteral("USAGE"),
+                    QStringLiteral("Use exit to disconnect. Edits stay in Studio; --discard is only available in independent sessions."));
+            } else if (!arguments.isEmpty() && arguments != QStringLiteral("--discard")) {
                 response = failure(QStringLiteral("USAGE"), QStringLiteral("Use exit or exit --discard."));
             } else if (arguments.isEmpty() && dirty()) {
                 response = unsaved();
@@ -166,8 +169,9 @@ int runShell(StudioSession& session, int timeoutMs, bool json,
                     {QStringLiteral("commands"), QJsonArray{
                         QStringLiteral("commands [name] - list commands or show parameters"),
                         QStringLiteral("save_project - save current edits"),
-                        QStringLiteral("exit - leave after saving"),
-                        QStringLiteral("exit --discard - discard unsaved edits and leave")}}}}};
+                        session.isAttached()
+                            ? QStringLiteral("exit / EOF - disconnect, keeping Studio and its edits open")
+                            : QStringLiteral("exit - leave after saving; exit --discard - discard unsaved edits and leave")}}}}};
         } else if (command == QStringLiteral("commands") || command == QStringLiteral("help")) {
             response = arguments.isEmpty() ? session.commands() : session.describe(arguments);
         } else {

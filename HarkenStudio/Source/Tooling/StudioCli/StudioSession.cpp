@@ -6,6 +6,7 @@
 #include "Core/CommandSchemas.h"
 #include "Core/CommandArgumentValidator.h"
 #include "Core/IPC/IPCServer.h"
+#include "Core/IPC/StudioInstanceTransport.h"
 #include "Core/ProjectInstance.h"
 #include "Core/ProjectLocator.h"
 #include "Core/ProjectManager.h"
@@ -43,8 +44,14 @@ struct StudioSession::State {
     VNX::IPCServer dispatcher{&engine, nullptr, VNX::CommandHost::Cli};
 };
 
-StudioSession::StudioSession() : state_(std::make_unique<State>())
+StudioSession::StudioSession(const QString& instanceId, int timeoutMs, std::function<bool()> canceled)
+    : timeoutMs_(timeoutMs), canceled_(std::move(canceled))
 {
+    if (!instanceId.isEmpty()) {
+        instance_ = std::make_unique<StudioInstanceClient>(instanceId);
+        return;
+    }
+    state_ = std::make_unique<State>();
     QObject::connect(&state_->project, &VNX::ProjectManager::errorOccurred,
         &state_->dispatcher, [](const QString& message) { qWarning().noquote() << message; });
     QObject::connect(&state_->project, &VNX::ProjectManager::warningOccurred,
@@ -57,6 +64,7 @@ StudioSession::StudioSession() : state_(std::make_unique<State>())
 
 StudioSession::~StudioSession()
 {
+    if (!state_) return;
     state_->dispatcher.waitForPendingOperations();
     QCoreApplication::sendPostedEvents(&state_->dispatcher, QEvent::MetaCall);
     if (state_->project.isProjectOpen()) state_->project.closeProject();
@@ -66,6 +74,8 @@ StudioSession::~StudioSession()
 
 QJsonObject StudioSession::open(const QString& path, int timeoutMs, const std::function<bool()>& canceled)
 {
+    if (instance_) return instance_->execute(QStringLiteral("open_project"),
+        {{QStringLiteral("path"), path}}, timeoutMs, canceled);
     if (path.trimmed().isEmpty())
         return failure(QStringLiteral("INVALID_ARGS"), QStringLiteral("Project path is required."));
     const auto location = VNX::ProjectLocator::locate(path);
@@ -96,17 +106,20 @@ QJsonObject StudioSession::open(const QString& path, int timeoutMs, const std::f
 
 QJsonObject StudioSession::describe(const QString& name) const
 {
+    if (instance_) return instance_->describe(name, timeoutMs_, canceled_);
     return state_->dispatcher.dispatchCommand(QStringLiteral("get_command_schema"),
         {{QStringLiteral("command"), name}});
 }
 
 QJsonObject StudioSession::commands() const
 {
+    if (instance_) return instance_->commands(timeoutMs_, canceled_);
     return state_->dispatcher.dispatchCommand(QStringLiteral("list_commands"), {});
 }
 
 QJsonObject StudioSession::validate(const QString& name, const QJsonObject& args) const
 {
+    if (instance_) return instance_->validate(name, args, timeoutMs_, canceled_);
     if (!state_->dispatcher.allCommandNames().contains(name))
         return failure(QStringLiteral("UNKNOWN_COMMAND"),
             QStringLiteral("Unknown command '%1'. Run HarkenStudioCLI commands to discover available commands.").arg(name));
@@ -128,6 +141,18 @@ QJsonObject StudioSession::validate(const QString& name, const QJsonObject& args
 QJsonObject StudioSession::execute(const QString& name, const QJsonObject& args,
                                   int timeoutMs, const std::function<bool()>& canceled)
 {
+    if (instance_) {
+        auto response = instance_->execute(name, args, timeoutMs, canceled);
+        if (succeeded(response)
+            && (name == QStringLiteral("close_project") || name == QStringLiteral("create_project"))) {
+            const auto closed = waitForProjectClose(timeoutMs, canceled);
+            if (!succeeded(closed)) return closed;
+            auto result = response.value(QStringLiteral("result")).toObject();
+            result.insert(QStringLiteral("closing"), false);
+            response.insert(QStringLiteral("result"), result);
+        }
+        return finishOperation(std::move(response), timeoutMs, canceled);
+    }
     if (canceled()) return failure(QStringLiteral("CANCELED"), QStringLiteral("Interrupted."));
     const auto validated = validate(name, args);
     if (!succeeded(validated)) return validated;
@@ -259,6 +284,12 @@ QJsonObject StudioSession::execute(const QString& name, const QJsonObject& args,
             loop.exec();
         }
     }
+    return finishOperation(std::move(response), timeoutMs, canceled);
+}
+
+QJsonObject StudioSession::finishOperation(QJsonObject response, int timeoutMs,
+                                          const std::function<bool()>& canceled)
+{
     if (!succeeded(response)) return response;
     const auto result = response.value(QStringLiteral("result")).toObject();
     if (result.value(QStringLiteral("success")).isBool()
@@ -275,10 +306,36 @@ QJsonObject StudioSession::execute(const QString& name, const QJsonObject& args,
         return failure(QStringLiteral("ASYNC_PROTOCOL_REQUIRED"), QStringLiteral("The command has no discoverable completion query."));
     QElapsedTimer timer;
     timer.start();
+    VNX::IPCServer::IPCDispatchContext context;
+    context.source = VNX::ActionSource::IPC;
+    context.origin = VNX::IPCServer::DispatchOrigin::IPC;
+    const auto unfinished = [&](QJsonObject error) {
+        if (instance_) {
+            error.insert(QStringLiteral("result"), result);
+            error.insert(QStringLiteral("suggestion"), QStringLiteral(
+                "The operation may still complete in Studio. Query %1 with the returned operation.status_args before retrying.")
+                    .arg(statusCommand));
+        }
+        return error;
+    };
     while (true) {
+        if (canceled() || timer.elapsed() >= timeoutMs) {
+            if (!instance_) {
+                const QString cancel = operation.value(QStringLiteral("cancel_command")).toString();
+                if (!cancel.isEmpty())
+                    state_->dispatcher.dispatchCommand(cancel, operation.value(QStringLiteral("cancel_args")).toObject(), context);
+                state_->dispatcher.waitForPendingOperations();
+                QCoreApplication::sendPostedEvents(&state_->dispatcher, QEvent::MetaCall);
+            }
+            return unfinished(failure(canceled() ? QStringLiteral("CANCELED") : QStringLiteral("TIMEOUT"),
+                QStringLiteral("The operation did not complete before waiting stopped.")));
+        }
         QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
-        const auto status = state_->dispatcher.dispatchCommand(statusCommand, statusArgs, context);
-        if (!succeeded(status)) return status;
+        const auto status = instance_
+            ? instance_->execute(statusCommand, statusArgs,
+                qMax(1, timeoutMs - static_cast<int>(timer.elapsed())), canceled)
+            : state_->dispatcher.dispatchCommand(statusCommand, statusArgs, context);
+        if (!succeeded(status)) return unfinished(status);
         const auto progress = status.value(QStringLiteral("result")).toObject();
         if (!progress.value(QStringLiteral("in_progress")).toBool()) {
             const auto finished = progress.value(QStringLiteral("result")).toObject();
@@ -293,15 +350,6 @@ QJsonObject StudioSession::execute(const QString& name, const QJsonObject& args,
             }
             return completed;
         }
-        if (canceled() || timer.elapsed() >= timeoutMs) {
-            const QString cancel = operation.value(QStringLiteral("cancel_command")).toString();
-            if (!cancel.isEmpty())
-                state_->dispatcher.dispatchCommand(cancel, operation.value(QStringLiteral("cancel_args")).toObject(), context);
-            state_->dispatcher.waitForPendingOperations();
-            QCoreApplication::sendPostedEvents(&state_->dispatcher, QEvent::MetaCall);
-            return failure(canceled() ? QStringLiteral("CANCELED") : QStringLiteral("TIMEOUT"),
-                           QStringLiteral("The operation did not complete."));
-        }
         QThread::msleep(10);
     }
 }
@@ -310,14 +358,22 @@ QJsonObject StudioSession::waitForProjectClose(int timeoutMs, const std::functio
 {
     QElapsedTimer timer;
     timer.start();
-    while (state_->project.isClosing()) {
+    while (true) {
+        if (instance_) {
+            const auto info = instance_->execute(QStringLiteral("get_project_info"), {},
+                qMax(1, timeoutMs - static_cast<int>(timer.elapsed())), canceled);
+            if (!succeeded(info)) return info;
+            if (!info.value(QStringLiteral("result")).toObject().value(QStringLiteral("closing")).toBool()) break;
+        } else if (!state_->project.isClosing()) {
+            break;
+        }
         if (canceled())
             return failure(QStringLiteral("CANCELED"), QStringLiteral("Interrupted while closing the project."));
         if (timer.elapsed() >= timeoutMs)
             return failure(QStringLiteral("TIMEOUT"), QStringLiteral("The project did not finish closing."));
         QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
-        state_->engine.serviceRuntime();
-        if (state_->project.isClosing()) QThread::msleep(10);
+        if (state_) state_->engine.serviceRuntime();
+        if (instance_ || state_->project.isClosing()) QThread::msleep(10);
     }
     return {{QStringLiteral("status"), QStringLiteral("ok")}};
 }
@@ -371,6 +427,7 @@ QJsonObject StudioSession::waitForCurrentWorld(int timeoutMs, const std::functio
 
 QJsonObject StudioSession::save()
 {
+    if (instance_) return instance_->execute(QStringLiteral("save_project"), {}, timeoutMs_, canceled_);
     if (!state_->project.isProjectOpen())
         return failure(QStringLiteral("NO_PROJECT_OPEN"), QStringLiteral("No project is open to save."));
     return state_->dispatcher.dispatchCommand(QStringLiteral("save_project"), {});

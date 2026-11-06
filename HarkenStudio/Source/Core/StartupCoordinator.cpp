@@ -7,6 +7,7 @@
 #include "Core/ProjectUpgradeMessages.h"
 #include "Dialogs/StartupLoadingWindow.h"
 #include "MainWindow.h"
+#include "Core/IPC/StudioInstanceTransport.h"
 
 #include <QApplication>
 #include <QDir>
@@ -310,6 +311,10 @@ void StartupCoordinator::finish()
         ProjectInstance::setActivationWindow(mainWindow_.get());
         loading_.setPhase(StartupPhase::Ready);
         loading_.dismiss();
+        auto* instanceServer = new StudioInstanceServer(mainWindow_->ipcServer(), mainWindow_.get());
+        QString instanceError;
+        if (!instanceServer->start(&instanceError))
+            qWarning().noquote() << "Studio instance commands unavailable:" << instanceError;
     });
 }
 

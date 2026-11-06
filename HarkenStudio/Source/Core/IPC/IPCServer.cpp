@@ -448,6 +448,13 @@ QJsonObject IPCServer::dispatchCommand(const QString& cmd, const QJsonObject& ar
     if (!isJsonCommandAvailableInCurrentState(cmd))
         return withRequestId(commandUnavailableInCurrentStateResponse(cmd));
 
+    if (context.origin == DispatchOrigin::CLI && commandHost_ == CommandHost::Desktop
+        && projectManager_ && projectManager_->hasUnsavedChanges()
+        && (cmd == QLatin1String("open_project") || cmd == QLatin1String("create_project")
+            || cmd == QLatin1String("close_project")))
+        return withRequestId(errorResponse("UNSAVED_CHANGES",
+            "Save with save_project before switching or closing the Studio project."));
+
     if (commandRequiresDesktop(cmd)
         && !mainWindow_)
         return withRequestId(errorResponse("DESKTOP_REQUIRED",

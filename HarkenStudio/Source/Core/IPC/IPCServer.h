@@ -47,7 +47,7 @@ public:
     static constexpr int DEFAULT_PORT = 9527;
     
     enum class AppState { Starting, ProjectPicker, Ready };
-    enum class DispatchOrigin { Internal, IPC, AI };
+    enum class DispatchOrigin { Internal, IPC, AI, CLI };
 
     struct IPCDispatchContext
     {

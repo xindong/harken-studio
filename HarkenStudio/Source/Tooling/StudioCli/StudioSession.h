@@ -7,13 +7,17 @@
 
 namespace HarkenStudioCli {
 
+class StudioInstanceClient;
+
 QJsonObject failure(const QString& code, const QString& message);
 bool succeeded(const QJsonObject& response);
 
 class StudioSession {
 public:
-    StudioSession();
+    explicit StudioSession(const QString& instanceId = {}, int timeoutMs = 300000,
+                           std::function<bool()> canceled = {});
     ~StudioSession();
+    bool isAttached() const { return instance_ != nullptr; }
     QJsonObject open(const QString& path, int timeoutMs, const std::function<bool()>& canceled);
     QJsonObject commands() const;
     QJsonObject describe(const QString& name) const;
@@ -23,10 +27,15 @@ public:
     QJsonObject save();
 
 private:
+    QJsonObject finishOperation(QJsonObject response, int timeoutMs,
+                                const std::function<bool()>& canceled);
     QJsonObject waitForProjectClose(int timeoutMs, const std::function<bool()>& canceled);
     QJsonObject waitForCurrentWorld(int timeoutMs, const std::function<bool()>& canceled);
     struct State;
     std::unique_ptr<State> state_;
+    std::unique_ptr<StudioInstanceClient> instance_;
+    int timeoutMs_;
+    std::function<bool()> canceled_;
 };
 
 }

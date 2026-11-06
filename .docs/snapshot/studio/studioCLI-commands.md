@@ -10,6 +10,8 @@
 | `exec <name> --help`、`commands <name>` | 查看命令用途、必填/可选参数、类型、范围与默认值 |
 | `commands --search <text> --category <name> --read-only` | 按名称/说明/分类搜索、精确分类筛选、只看查询；筛选可单用或组合 |
 | `--version --json` | 查询程序版本 |
+| `instances --json` | 查询当前用户的存活 Studio 实例，包含版本、`available` 和 `unavailableReason` |
+| `--instance <id> commands/exec/run/shell ...` | 在指定同版本 Studio 会话发现或执行共享与 GUI 命令 |
 | `commands [name] --json` | 查询实际命令目录或单条参数，委托共享 `list_commands` / `get_command_schema` |
 | `init <directory> --json` | 在尚不存在的目录创建工程 |
 | `exec <name> --project <path> --input <file> --save --json` | 打开工程、执行单条业务命令，成功后保存 |
@@ -20,7 +22,7 @@
 
 顶层负责发现、会话执行和离线构建，业务命令沿用统一的 `动词_对象` 标识。`init <directory>` 是创建工程；运行时初始化使用 `exec init_engine` 或会话中的 `init_engine`。
 
-CLI 不注册 GUI 专属、未实现或废弃的接口；未知名称统一返回 `UNKNOWN_COMMAND`。`commands --json` 是当前产物的能力来源，不依赖静态条数。每项提供 `category`、`scope`、`readOnly`、`requiresDesktop`、`inputSchema` 等字段。所有公开命令使用显式参数契约，发现、普通执行和 AI 调用共享同一份约束。无参数命令也声明空对象并拒绝额外字段。
+独立模式不注册 GUI 专属接口；实例模式使用目标 Studio 的完整目录。两种模式都不注册未实现或废弃的接口；未知名称统一返回 `UNKNOWN_COMMAND`。`commands --json` 是当前目标的能力来源，不依赖静态条数。每项提供 `category`、`scope`、`readOnly`、`requiresDesktop`、`inputSchema` 等字段。所有公开命令使用显式参数契约，发现、普通执行和 AI 调用共享同一份约束。无参数命令也声明空对象并拒绝额外字段。
 
 ## 输入与选项
 
@@ -47,6 +49,23 @@ HarkenStudioCLI run --project ./GameAudio/GameAudio.hsp --input edit.json --save
 ```
 
 `exec/run` 只在 `--save` 或显式 `save_project` 时保存。无保存退出会丢弃内存编辑，并回退工程内未提交的音频源文件变更；创建工程、导出等操作仍会产生文件结果。批处理不是文件系统事务，后续失败不回滚之前已完成的保存或外部写入；省略 `--save` 不等于 dry run。
+
+## 操作运行中的 Studio
+
+```text
+HarkenStudioCLI instances --json
+HarkenStudioCLI --instance <id> commands --search widget
+HarkenStudioCLI --instance <id> exec get_project_info --json
+HarkenStudioCLI --instance <id> exec list_ui_windows --json
+HarkenStudioCLI --instance <id> run --input edit.json --save --json
+HarkenStudioCLI --instance <id> shell
+```
+
+Studio 正常打开工程并就绪后自动发布实例，无需特殊启动选项。CLI 与 Studio 沿用统一软件版本；发现列出各版本的存活实例，并注明是否可执行命令。执行连接再次握手，只有 `version` 完全相同时允许执行，其他版本返回 `VERSION_MISMATCH`。构建标识和渠道用于诊断，不参与版本匹配。实例 ID 每次启动重新生成，多实例必须明确选择。
+
+`--instance` 与 `--project` 互斥，仅适用于 `commands/exec/run/shell`。命令在目标 GUI 线程通过原有分发器执行，使用当前内存工程、撤销栈和窗口。目录与参数预检来自目标实例，包含 GUI 命令。CLI 退出不会丢弃修改或关闭 Studio；`--save` 保存该实例已有及本次产生的未保存修改。实例 `shell` 的 `exit`/EOF 仅断开，拒绝 `exit --discard`。有未保存修改时，CLI 切换/关闭工程返回 `UNSAVED_CHANGES`，包括嵌套批处理。
+
+连接使用当前用户的本地命名管道/套接字，各实例独立端点，不依赖 TCP 9527。超时或中断后已经提交的操作可能继续执行，CLI 不自动重试。共享异步作业复用独立 CLI 的状态查询等待；GUI 事件保留明确的排队结果，使用返回的 `get_ui_operation` 查询，避免对话框阻塞后续输入。
 
 ## 持续会话
 

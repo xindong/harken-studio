@@ -2,6 +2,7 @@
 #include "SavedProjectBuild.h"
 #include "ResourceWorker.h"
 #include "Shell.h"
+#include "Core/IPC/StudioInstanceTransport.h"
 #include "harken_buildinfo.h"
 
 #include <QCommandLineParser>
@@ -205,7 +206,7 @@ int describeCommand(const QJsonObject& response, bool json)
     print((QStringLiteral("\nRun: HarkenStudioCLI exec %1").arg(name)
         + (schema.value(QStringLiteral("properties")).toObject().isEmpty() ? QString()
             : QStringLiteral(" --input arguments.json"))
-        + QStringLiteral(" [--project <path>] [--save]\n")
+        + QStringLiteral(" [--project <path> | --instance <id>] [--save]\n")
         + QStringLiteral("Use --input - to read UTF-8 JSON from stdin; --json returns the full command contract.\n")).toUtf8());
     return 0;
 }
@@ -225,10 +226,17 @@ void printCommandDirectory(const QJsonArray& entries)
 QString commandHelp(const QString& command)
 {
     static const QMap<QString, QString> help{
+        {QStringLiteral("instances"), QStringLiteral(
+            "Usage: HarkenStudioCLI instances [--json]\n\n"
+            "List live Studio instances of all software versions.\n"
+            "Each entry includes its id, project, process, executable, version and availability.\n"
+            "Only instances with the same software version as this CLI can execute commands.\n"
+            "Use --instance <id> with commands, exec, run or shell to target that session.\n")},
         {QStringLiteral("commands"), QStringLiteral(
             "Usage: HarkenStudioCLI commands [name] [--json]\n"
             "       HarkenStudioCLI commands [--search <text>] [--category <name>] [--read-only] [--json]\n\n"
             "List commands or explain a command's parameters and constraints. Filters combine.\n"
+            "  --instance <id>   Discover the selected Studio's shared and GUI commands.\n"
             "  --search <text>    Match command name, description or category (case insensitive).\n"
             "  --category <name> Match the category shown in command details.\n"
             "  --read-only       Show queries without state changes.\n"
@@ -239,6 +247,7 @@ QString commandHelp(const QString& command)
             "Usage: HarkenStudioCLI exec <name> [--project <path>] [--input <file|-> | --args <json>] [--save] [--json]\n\n"
             "Execute one command with a JSON argument object; omitted arguments mean {}.\n"
             "  --project <path>  Open a project file or directory before execution.\n"
+            "  --instance <id>   Operate on a running Studio instead; incompatible with --project.\n"
             "  --input <file|->  Read UTF-8 JSON from a file or stdin (-).\n"
             "  --args <json>     Inline JSON; shell quoting rules apply.\n"
             "  --save            Save the active project only after successful execution.\n"
@@ -246,7 +255,8 @@ QString commandHelp(const QString& command)
             "  --json            Write one compact JSON response to stdout.\n"
             "  --verbose         Include debug diagnostics on stderr.\n\n"
             "Use exec <name> --help to see its parameters.\n"
-            "Unsaved edits are discarded on exit; exports and other external writes still take effect.\n\n"
+            "Independent sessions discard unsaved edits on exit; instance edits remain in Studio.\n"
+            "Exports and other external writes still take effect.\n\n"
             "Example: HarkenStudioCLI exec list_items --project ./GameAudio --json\n")},
         {QStringLiteral("run"), QStringLiteral(
             "Usage: HarkenStudioCLI run --input <file|-> [--project <path>] [--save] [--json]\n\n"
@@ -255,6 +265,7 @@ QString commandHelp(const QString& command)
             "Requests then run in order in one session; runtime errors stop execution.\n"
             "  --args <json>     Supply the request array inline instead of --input.\n"
             "  --project <path>  Open a project file or directory after validation.\n"
+            "  --instance <id>   Run in a selected Studio instead; edits remain after CLI exit.\n"
             "  --save            Save only if every request succeeds.\n"
             "  --timeout <sec>   Per-operation wait, 1-86400 seconds (default 300).\n"
             "  --json            Write one compact response with per-request results.\n"
@@ -269,7 +280,8 @@ QString commandHelp(const QString& command)
             "Example: HarkenStudioCLI init ./GameAudio --json\n")},
         {QStringLiteral("shell"), QStringLiteral(
             "Usage: HarkenStudioCLI shell [--project <path>] [--timeout <sec>] [--json] [--verbose]\n\n"
-            "Keep a project and runtime session open. Enter one command per line:\n"
+            "Keep a project and runtime session open, or use --instance <id> to connect to Studio.\n"
+            "--instance and --project are mutually exclusive. Enter one command per line:\n"
             "  command {\"argument\":\"value\"}\n"
             "  help [name]       Show session help or a command's parameters.\n"
             "  commands [name]   List commands or describe one.\n"
@@ -278,7 +290,9 @@ QString commandHelp(const QString& command)
             "  exit --discard    Discard unsaved edits and exit.\n\n"
             "Redirected input or output automatically uses one JSON response per line.\n"
             "A command error leaves the session open; inspect each response's status.\n"
-            "Ctrl+C cancels the current operation when supported. EOF fails if edits are unsaved.\n"
+            "Independent sessions: EOF fails if edits are unsaved.\n"
+            "Instance sessions: exit or EOF disconnects; Studio and its edits stay open; --discard is rejected.\n"
+            "Ctrl+C stops waiting when supported; submitted instance commands may still complete.\n"
             "--timeout is the per-operation wait, 1-86400 seconds (default 300).\n")},
         {QStringLiteral("list-targets"), QStringLiteral(
             "Usage: HarkenStudioCLI list-targets --project <project.hsp> [--json] [--verbose]\n\n"
@@ -359,21 +373,26 @@ int main(int argc, char* argv[])
     QCommandLineParser parser;
     parser.setSingleDashWordOptionMode(QCommandLineParser::ParseAsCompactedShortOptions);
     parser.setApplicationDescription(QStringLiteral(
-        "Headless Harken Studio authoring. No desktop window or running editor is required.\n\n"
+        "Harken Studio commands: author independently or control a running Studio instance.\n\n"
         "Commands:\n"
         "  commands [name]    Discover CLI commands or describe one command's parameters.\n"
+        "  instances          Find running Studio instances and report version compatibility.\n"
         "  init <directory>   Create a new project in a directory that does not exist.\n"
         "  exec <name>        Execute a registered editor command.\n"
         "  run                Execute a JSON array of {cmd,args} requests in order.\n"
         "  shell              Keep an interactive authoring session open.\n"
         "  list-targets       List saved project platforms, languages and Actions.\n"
         "  build              Build packs from a saved project without editing it.\n\n"
-        "Use --save to persist exec/run edits before exiting; otherwise unsaved edits are discarded.\n"
+        "Use --instance <id> with commands, exec, run or shell to operate a running Studio.\n"
+        "Instance edits remain in Studio after CLI exit; --save persists them to disk.\n"
+        "Without --instance, exec/run discard unsaved edits on exit; use --save to persist them.\n"
         "Creation and external operations such as export write their own outputs.\n"
         "A batch stops on its first error and is not an atomic transaction.\n"
         "build and list-targets require --project and read the saved project without upgrading or recovering it.\n"
         "build requires --all, one or more --platform-id values, and --self-clean on|off.\n\n"
         "Examples:\n"
+        "  HarkenStudioCLI instances --json\n"
+        "  HarkenStudioCLI --instance <id> exec get_project_info --json\n"
         "  HarkenStudioCLI commands set_item_property\n"
         "  HarkenStudioCLI commands --search audio\n"
         "  HarkenStudioCLI exec set_item_property --help\n"
@@ -387,9 +406,10 @@ int main(int argc, char* argv[])
         "Exit codes: 0 success, 1 execution failure, 2 invalid usage/input, 124 timeout, 130 interruption."));
     parser.addHelpOption();
     parser.addVersionOption();
-    parser.addPositionalArgument(QStringLiteral("command"), QStringLiteral("commands, init, exec, run, shell, list-targets or build"));
+    parser.addPositionalArgument(QStringLiteral("command"), QStringLiteral("instances, commands, init, exec, run, shell, list-targets or build"));
     parser.addPositionalArgument(QStringLiteral("name"), QStringLiteral("Editor command name or project directory"), QStringLiteral("[name]"));
     parser.addOption({QStringLiteral("project"), QStringLiteral("Open this .hsp project before execution."), QStringLiteral("path")});
+    parser.addOption({QStringLiteral("instance"), QStringLiteral("Execute in this running Studio instance instead of an independent session."), QStringLiteral("id")});
     parser.addOption({QStringLiteral("args"), QStringLiteral("Inline JSON: an object for exec or a request array for run."), QStringLiteral("json")});
     parser.addOption({QStringList{QStringLiteral("i"), QStringLiteral("input")}, QStringLiteral("Read UTF-8 JSON from a file, or - for stdin."), QStringLiteral("file")});
     parser.addOption({QStringLiteral("json"), QStringLiteral("Write compact JSON without human-oriented formatting.")});
@@ -419,12 +439,23 @@ int main(int argc, char* argv[])
     const auto usage = [&](const QString& message) {
         return output(HarkenStudioCli::failure(QStringLiteral("USAGE"), message), wantsJson, 2);
     };
+    if (parser.values(QStringLiteral("instance")).size() > 1)
+        return usage(QStringLiteral("--instance may only be specified once."));
+    if (parser.isSet(QStringLiteral("instance")) && parser.value(QStringLiteral("instance")).trimmed().isEmpty())
+        return usage(QStringLiteral("--instance requires a nonempty instance ID. Run HarkenStudioCLI instances."));
+    if (parser.isSet(QStringLiteral("instance")) && parser.isSet(QStringLiteral("project")))
+        return usage(QStringLiteral("Use either --instance or --project. Instance commands operate on the project already open in Studio."));
+    bool validTimeout = false;
+    const int seconds = parser.value(QStringLiteral("timeout")).toInt(&validTimeout);
+    if (!validTimeout || seconds < 1 || seconds > 86400)
+        return usage(QStringLiteral("--timeout must be an integer from 1 to 86400."));
     if (parser.isSet(QStringLiteral("help")) || parser.isSet(QStringLiteral("help-all")) || app.arguments().size() == 1) {
         QString help = positional.isEmpty() ? parser.helpText() : commandHelp(positional.front());
         if (help.isEmpty()) return usage(QStringLiteral("Unknown command '%1'. Run HarkenStudioCLI --help.").arg(positional.front()));
         if (positional.size() == 2
             && (positional.front() == QStringLiteral("exec") || positional.front() == QStringLiteral("commands"))) {
-            HarkenStudioCli::StudioSession session;
+            HarkenStudioCli::StudioSession session(parser.value(QStringLiteral("instance")), seconds * 1000,
+                [] { return interrupted != 0; });
             return describeCommand(session.describe(positional.at(1)), wantsJson);
         }
         if (wantsJson)
@@ -446,16 +477,19 @@ int main(int argc, char* argv[])
         const auto response = HarkenStudioCli::runSavedProjectBuild(parser, [] { return interrupted != 0; });
         return output(response, wantsJson, response.value(QStringLiteral("code")) == QStringLiteral("USAGE") ? 2 : 1);
     }
-    if (command != QStringLiteral("commands") && command != QStringLiteral("init")
+    if (command != QStringLiteral("instances") && command != QStringLiteral("commands") && command != QStringLiteral("init")
         && command != QStringLiteral("exec") && command != QStringLiteral("run")
         && command != QStringLiteral("shell"))
         return usage(QStringLiteral("Unknown command '%1'. Run HarkenStudioCLI --help.").arg(command));
     QStringList allowed{QStringLiteral("json"), QStringLiteral("verbose")};
+    if (command == QStringLiteral("commands") || command == QStringLiteral("exec")
+        || command == QStringLiteral("run") || command == QStringLiteral("shell"))
+        allowed.append(QStringLiteral("instance"));
     if (command == QStringLiteral("commands")) {
         allowed.append({QStringLiteral("search"), QStringLiteral("category"), QStringLiteral("read-only")});
     } else if (command == QStringLiteral("init")) {
         allowed.append(QStringLiteral("timeout"));
-    } else if (command != QStringLiteral("commands")) {
+    } else if (command != QStringLiteral("instances")) {
         allowed.append({QStringLiteral("project"), QStringLiteral("timeout")});
         if (command != QStringLiteral("shell"))
             allowed.append({QStringLiteral("args"), QStringLiteral("input"), QStringLiteral("i"), QStringLiteral("save")});
@@ -465,22 +499,41 @@ int main(int argc, char* argv[])
             return usage(QStringLiteral("--%1 is not supported by %2.").arg(option, command));
     }
     if (positional.size() > 2 || ((command == QStringLiteral("init") || command == QStringLiteral("exec")) && positional.size() != 2)
-        || ((command == QStringLiteral("run") || command == QStringLiteral("shell")) && positional.size() != 1))
+        || ((command == QStringLiteral("instances") || command == QStringLiteral("run") || command == QStringLiteral("shell")) && positional.size() != 1))
         return usage(QStringLiteral("Invalid positional arguments. Run HarkenStudioCLI --help."));
     if (command == QStringLiteral("commands") && positional.size() == 2
         && (parser.isSet(QStringLiteral("search")) || parser.isSet(QStringLiteral("category"))
             || parser.isSet(QStringLiteral("read-only"))))
         return usage(QStringLiteral("Command filters apply to the directory; omit the command name."));
-    bool validTimeout = false;
-    const int seconds = parser.value(QStringLiteral("timeout")).toInt(&validTimeout);
-    if (!validTimeout || seconds < 1 || seconds > 86400)
-        return usage(QStringLiteral("--timeout must be an integer from 1 to 86400."));
     if (parser.isSet(QStringLiteral("project")) && parser.value(QStringLiteral("project")).trimmed().isEmpty())
         return usage(QStringLiteral("--project requires a nonempty project path."));
     if (command == QStringLiteral("run") && !parser.isSet(QStringLiteral("args")) && !parser.isSet(QStringLiteral("input")))
         return usage(QStringLiteral("run requires a JSON request array from --input <file|-> or --args <json>."));
 
-    HarkenStudioCli::StudioSession session;
+    if (command == QStringLiteral("instances")) {
+        const auto response = HarkenStudioCli::StudioInstanceClient::discover(1000,
+            [] { return interrupted != 0; });
+        if (wantsJson || !HarkenStudioCli::succeeded(response)) return output(response, wantsJson);
+        const auto instances = response.value(QStringLiteral("result")).toObject().value(QStringLiteral("instances")).toArray();
+        for (const auto& value : instances) {
+            const auto instance = value.toObject();
+            print((QStringLiteral("%1  %2  PID %3  %4  %5\n").arg(instance.value(QStringLiteral("id")).toString(),
+                instance.value(QStringLiteral("version")).toString(),
+                QString::number(instance.value(QStringLiteral("pid")).toInteger()),
+                instance.value(QStringLiteral("project")).toObject().value(QStringLiteral("path")).toString(),
+                instance.value(QStringLiteral("available")).toBool() ? QStringLiteral("available")
+                    : QStringLiteral("unavailable: ") + instance.value(QStringLiteral("unavailableReason")).toString())).toUtf8());
+        }
+        print((QStringLiteral("%1 running Studio instances.\n").arg(instances.size())).toUtf8());
+        return 0;
+    }
+    HarkenStudioCli::StudioSession session(parser.value(QStringLiteral("instance")), seconds * 1000,
+        [] { return interrupted != 0; });
+    if (session.isAttached()) {
+        const auto connected = session.execute(QStringLiteral("ping"), {}, seconds * 1000,
+            [] { return interrupted != 0; });
+        if (!HarkenStudioCli::succeeded(connected)) return output(connected, wantsJson);
+    }
     if (command == QStringLiteral("shell")) {
         if (parser.isSet(QStringLiteral("project"))) {
             const auto opened = session.open(parser.value(QStringLiteral("project")), seconds * 1000,

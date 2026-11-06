@@ -156,6 +156,8 @@ set(HARKEN_STUDIO_COMMAND_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/EditorCommandRegistration.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/IPC/IPCServer.h
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/IPC/IPCServer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/IPC/StudioInstanceTransport.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/IPC/StudioInstanceTransport.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/AI/AICommandCatalog.h
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/AI/AICommandCatalog.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/AI/AIPermissionModel.h
