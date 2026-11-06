@@ -2,7 +2,10 @@
 
 #include <harken_studio_build/Curve.h>
 
+#include <QPointF>
+
 #include <algorithm>
+#include <array>
 
 namespace VNX {
 
@@ -84,6 +87,83 @@ float curveVolumeBezierValueAt(const QVector<CurvePointDef>& points,
                                float x)
 {
     return curveBezierValueAt(points, handles, x, CurveAxisScale::AmplitudeDb);
+}
+
+void curveClipX(float minimum, float maximum,
+                QVector<CurvePointDef>& points,
+                QVector<CurveHandlePairDef>& handles,
+                CurveAxisScale scale)
+{
+    using Segment = std::array<QPointF, 4>;
+    const auto split = [](const Segment& s, double t) {
+        const auto a = s[0] + t * (s[1] - s[0]);
+        const auto b = s[1] + t * (s[2] - s[1]);
+        const auto c = s[2] + t * (s[3] - s[2]);
+        const auto d = a + t * (b - a);
+        const auto e = b + t * (c - b);
+        const auto f = d + t * (e - d);
+        return std::pair{Segment{s[0], a, d, f}, Segment{f, e, c, s[3]}};
+    };
+    const auto parameterAt = [&](const Segment& s, double x) {
+        double low = 0.0;
+        double high = 1.0;
+        for (int iteration = 0; iteration < 64; ++iteration) {
+            const double middle = (low + high) * 0.5;
+            if (split(s, middle).first[3].x() < x) low = middle;
+            else high = middle;
+        }
+        return (low + high) * 0.5;
+    };
+    QVector<CurvePointDef> clippedPoints;
+    QVector<CurveHandlePairDef> clippedHandles;
+    const auto append = [&](const CurvePointDef& a, const CurvePointDef& b,
+                            const CurveHandlePairDef& h) {
+        if (clippedPoints.isEmpty()) clippedPoints.append(a);
+        clippedPoints.append(b);
+        clippedHandles.append(h);
+    };
+    const auto appendSegment = [&](const Segment& s, const CurvePointDef& a, const CurvePointDef& b) {
+        append(a, b, {std::clamp(static_cast<float>(s[1].x()), a.x, b.x),
+                      curveAxisValueFromCoordinate(scale, s[1].y()),
+                      std::clamp(static_cast<float>(s[2].x()), a.x, b.x),
+                      curveAxisValueFromCoordinate(scale, s[2].y())});
+    };
+    for (qsizetype index = 0; index + 1 < points.size(); ++index) {
+        const auto& a = points[index];
+        const auto& b = points[index + 1];
+        const auto& h = handles[index];
+        const float left = std::max(minimum, a.x);
+        const float right = std::min(maximum, b.x);
+        if (!(left < right)) continue;
+        CurvePointDef start = a;
+        CurvePointDef end = b;
+        if (left != a.x || right != b.x) {
+            Segment s{{{a.x, curveAxisCoordinate(scale, a.value)},
+                       {h.h1x, curveAxisCoordinate(scale, h.h1y)},
+                       {h.h2x, curveAxisCoordinate(scale, h.h2y)},
+                       {b.x, curveAxisCoordinate(scale, b.value)}}};
+            if (right != b.x) s = split(s, parameterAt(s, right)).first;
+            if (left != a.x) s = split(s, parameterAt(s, left)).second;
+            if (left != a.x) start = {left, curveAxisValueFromCoordinate(scale, s[0].y())};
+            if (right != b.x) end = {right, curveAxisValueFromCoordinate(scale, s[3].y())};
+            const auto outside = [&](double x) {
+                const float stored = static_cast<float>(x);
+                return stored < left || stored > right;
+            };
+            if (outside(s[1].x()) || outside(s[2].x())) {
+                const double d0 = s[1].x() - s[0].x();
+                const double d1 = s[2].x() - s[1].x();
+                const double d2 = s[3].x() - s[2].x();
+                const auto [first, second] = split(s, (d0 - d1) / (d0 - 2.0 * d1 + d2));
+                const CurvePointDef middle{static_cast<float>(first[3].x()),
+                    curveAxisValueFromCoordinate(scale, first[3].y())};
+                appendSegment(first, start, middle);
+                appendSegment(second, middle, end);
+            } else appendSegment(s, start, end);
+        } else append(start, end, h);
+    }
+    points = std::move(clippedPoints);
+    handles = std::move(clippedHandles);
 }
 
 double curveAxisNormalizedY(CurveAxisScale scale, float yMin, float yMax, float value)

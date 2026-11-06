@@ -28,6 +28,8 @@ add_library(harken_editor_inspector STATIC
     InspectorPanel_Sound.cpp
     InspectorPanel_Track.cpp
     InspectorPanel_Variable.cpp
+    VariableRangeDialog.cpp
+    VariableRangeDialog.h
     # Inspector unification S3: descriptor-driven Layer 2 renderer (consumes a
     # C++ PropertySchema; sole Inspector renderer since the declarative path was
     # retired in S6).

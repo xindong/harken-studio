@@ -514,13 +514,15 @@ DisplayDomain displayDomain(float rangeMin, float rangeMax)
 float storedToDisplayX(float stored, const DisplayDomain& domain)
 {
     if (domain.degenerate) return domain.min;
-    return domain.min + stored * (domain.max - domain.min);
+    return static_cast<float>(domain.min
+        + static_cast<double>(stored) * (static_cast<double>(domain.max) - domain.min));
 }
 
 float displayToStoredX(float display, const DisplayDomain& domain)
 {
     if (domain.degenerate) return 0.0f;
-    return (display - domain.min) / (domain.max - domain.min);
+    return static_cast<float>((static_cast<double>(display) - domain.min)
+        / (static_cast<double>(domain.max) - domain.min));
 }
 
 QVector<CurvePointDef> storedToDisplay(

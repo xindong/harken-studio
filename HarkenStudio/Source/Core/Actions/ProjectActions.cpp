@@ -34,6 +34,7 @@
 #include "../AssetPipeline/AssetRegistry.h"
 #include "../Components/VVariable.h"
 #include "../VariableConsumerSemantics.h"
+#include "../VariableRangeEditing.h"
 #include "../Components/VTrack.h"
 #include "../Components/VSegment.h"
 #include "../Timeline/TimelineEditing.h"
@@ -1113,6 +1114,8 @@ QJsonArray invalidDiscreteGridCellDetails(
             target = projectManager->findItemByGuid(
                 selection->matchGrid(invalid.platform).rows[invalid.rowIndex].target);
         }
+        const auto* platform = invalid.platform ? ProjectPlatformSemantics::find(
+            projectManager->currentProject()->platforms, *invalid.platform) : nullptr;
         details.append(QJsonObject{
             {QStringLiteral("grid_name"),
              host ? host->name : QObject::tr("Missing Grid")},
@@ -1123,6 +1126,7 @@ QJsonArray invalidDiscreteGridCellDetails(
              target ? target->name : QObject::tr("Missing target")},
             {QStringLiteral("column"), invalid.axisIndex + 1},
             {QStringLiteral("value"), invalid.value},
+            {QStringLiteral("platform"), platform ? platform->name : QObject::tr("Shared")},
         });
     }
     return details;
@@ -1142,11 +1146,11 @@ QStringList diffVariableDeclarations(const VariableDeclarationState& a,
     QStringList out;
     if (a.kind != b.kind)
         out << QStringLiteral("kind");
-    if (!qFuzzyCompare(a.rangeMin + 1.0f, b.rangeMin + 1.0f))
+    if (a.rangeMin != b.rangeMin)
         out << QStringLiteral("rangeMin");
-    if (!qFuzzyCompare(a.rangeMax + 1.0f, b.rangeMax + 1.0f))
+    if (a.rangeMax != b.rangeMax)
         out << QStringLiteral("rangeMax");
-    if (!qFuzzyCompare(a.defaultValue + 1.0f, b.defaultValue + 1.0f))
+    if (a.defaultValue != b.defaultValue)
         out << QStringLiteral("defaultValue");
     if (!variableLabelsEqual(a.labels, b.labels))
         out << QStringLiteral("labels");
@@ -1154,7 +1158,9 @@ QStringList diffVariableDeclarations(const VariableDeclarationState& a,
 }
 
 void applyVariableDeclaration(uint32_t objectID, const VariableDeclarationState& state,
-                              const QStringList& changedFields)
+                              const QStringList& changedFields,
+                              const VariableRangeConsumerState& consumers,
+                              const QObject* originator = nullptr, const QString& propertyName = {})
 {
     auto& pm = ProjectManager::instance();
     ProjectData* proj = pm.currentProject();
@@ -1166,8 +1172,35 @@ void applyVariableDeclaration(uint32_t objectID, const VariableDeclarationState&
 
     assignVariableDeclaration(*var, state);
     pi->markDirty();
+    for (auto it = consumers.selections.cbegin(); it != consumers.selections.cend(); ++it) {
+        auto* host = pm.findItemByGuid(it.key());
+        auto* selection = host ? host->comp<VSelection>() : nullptr;
+        if (!selection) continue;
+        selection->selections = it.value();
+        host->markDirty();
+    }
+    for (auto it = consumers.bindings.cbegin(); it != consumers.bindings.cend(); ++it) {
+        auto* host = pm.findItemByGuid(it.key());
+        auto* mix = host ? host->comp<VMixNode>() : nullptr;
+        if (!mix) continue;
+        mix->bindings = it.value();
+        host->markDirty();
+    }
+    for (auto it = consumers.actions.cbegin(); it != consumers.actions.cend(); ++it) {
+        auto* host = pm.findItemByGuid(it.key());
+        auto* action = host ? host->comp<VAction>() : nullptr;
+        if (!action) continue;
+        action->steps = it.value();
+        host->markDirty();
+    }
     for (const QString& field : changedFields)
-        emit pm.itemPropertyChanged(pi, field);
+        emit pm.itemPropertyChanged(pi, field, field == propertyName ? originator : nullptr);
+    for (auto it = consumers.selections.cbegin(); it != consumers.selections.cend(); ++it)
+        emit pm.itemPropertyChanged(pm.findItemByGuid(it.key()), QStringLiteral("selections"));
+    for (auto it = consumers.bindings.cbegin(); it != consumers.bindings.cend(); ++it)
+        emit pm.itemPropertyChanged(pm.findItemByGuid(it.key()), QStringLiteral("bindings"));
+    for (auto it = consumers.actions.cbegin(); it != consumers.actions.cend(); ++it)
+        emit pm.itemPropertyChanged(pm.findItemByGuid(it.key()), QStringLiteral("steps"));
 }
 
 }
@@ -1188,15 +1221,21 @@ ActionResult handleVariableItemProperty(ProjectManager* projectManager, ProjectI
     auto* var = item->comp<VVariable>();
     const VariableDeclarationState oldState = captureVariableDeclaration(*var);
 
-    if (!var->setField(propertyName, args["value"].toVariant()))
+    auto proposed = *var;
+    if (!proposed.setField(propertyName, args["value"].toVariant()))
     {
+        if (propertyName == QLatin1String("range") || propertyName == QLatin1String("rangeMin")
+            || propertyName == QLatin1String("rangeMax") || propertyName == QLatin1String("kind"))
+            return {false, {}, "INVALID_VARIABLE_RANGE",
+                QObject::tr("The minimum must be non-negative and strictly less than the maximum, "
+                            "including after Step rounding.")};
         ActionResult failed;
         failed.errorCode = QStringLiteral("SET_PROPERTY_FAILED");
         failed.errorMessage = QString("Failed to set '%1' on '%2'").arg(propertyName, item->name);
         return failed;
     }
 
-    const VariableDeclarationState newState = captureVariableDeclaration(*var);
+    VariableDeclarationState newState = captureVariableDeclaration(proposed);
 
     ActionResult r;
     r.success = true;
@@ -1208,7 +1247,7 @@ ActionResult handleVariableItemProperty(ProjectManager* projectManager, ProjectI
         {"value", args["value"]}
     };
 
-    const QStringList changedFields = diffVariableDeclarations(oldState, newState);
+    QStringList changedFields = diffVariableDeclarations(oldState, newState);
     if (changedFields.isEmpty())
         return r;
 
@@ -1226,7 +1265,6 @@ ActionResult handleVariableItemProperty(ProjectManager* projectManager, ProjectI
                     ? VariableSemantics::labelAtIndex(oldState.labels, cell->legacyValue)
                     : VariableSemantics::labelById(oldState.labels, cell->labelId);
                 if (previous && !VariableSemantics::labelById(newState.labels, previous->id)) {
-                    assignVariableDeclaration(*var, oldState);
                     return {false, {}, "VARIABLE_LABEL_REFERENCED",
                         QObject::tr("Label '%1' is referenced by Grid '%2', row %3.")
                             .arg(previous->name.isEmpty() ? QString::number(previous->anchor) : previous->name,
@@ -1236,21 +1274,38 @@ ActionResult handleVariableItemProperty(ProjectManager* projectManager, ProjectI
         }
     }
 
+    VariableRangeEditPlan rangePlan;
     if (changedFields.contains(QStringLiteral("rangeMin"))
         || changedFields.contains(QStringLiteral("rangeMax"))) {
-        const auto invalidCells = VariableConsumerSemantics::invalidDiscreteGridCells(
-            projectManager->currentProject(), item->guid,
-            newState.rangeMin, newState.rangeMax);
-        const QJsonArray invalidReferences =
-            invalidDiscreteGridCellDetails(projectManager, invalidCells);
         r.data[QStringLiteral("range_min")] = newState.rangeMin;
         r.data[QStringLiteral("range_max")] = newState.rangeMax;
+        r.data[QStringLiteral("old_range_min")] = oldState.rangeMin;
+        r.data[QStringLiteral("old_range_max")] = oldState.rangeMax;
+        const auto requestedPolicy = args.value(QStringLiteral("range_policy"));
+        if (!requestedPolicy.isUndefined()
+            && requestedPolicy != QJsonValue(QStringLiteral("stretch"))
+            && requestedPolicy != QJsonValue(QStringLiteral("fix")))
+            return {false, {}, "INVALID_ARGS", "range_policy must be stretch or fix"};
+        if (requestedPolicy.isUndefined())
+            return {false, r.data, "VARIABLE_RANGE_POLICY_REQUIRED",
+                QObject::tr("Choose Stretch or Fix to change the Variable range.")};
+
+        const auto consumers = VariableConsumerSemantics::consumersOf(
+            projectManager->currentProject(), item->guid);
+        const auto invalidCells = VariableConsumerSemantics::invalidDiscreteGridCells(
+            projectManager->currentProject(), item->guid,
+            newState.rangeMin, newState.rangeMax, &newState.labels, &consumers);
         r.data[QStringLiteral("invalid_reference_count")] =
             static_cast<qint64>(invalidCells.size());
-        r.data[QStringLiteral("invalid_references")] = invalidReferences;
+        r.data[QStringLiteral("invalid_references")] = invalidDiscreteGridCellDetails(projectManager, invalidCells);
+        r.data[QStringLiteral("range_policy")] = requestedPolicy;
+        rangePlan = VariableRangeEditing::prepare(*projectManager->currentProject(),
+            *item, proposed, requestedPolicy.toString() == QLatin1String("stretch")
+                ? VariableRangePolicy::Stretch : VariableRangePolicy::Fix, consumers);
+        if (!rangePlan.error.isEmpty())
+            return {false, r.data, "VARIABLE_RANGE_CURVE_CONFLICT", rangePlan.error};
         if (!invalidCells.empty()
             && !args.value(QStringLiteral("allow_invalid_references")).toBool()) {
-            assignVariableDeclaration(*var, oldState);
             ActionResult failed;
             failed.errorCode = QStringLiteral("VARIABLE_RANGE_CONFLICT");
             failed.errorMessage = QObject::tr(
@@ -1261,22 +1316,23 @@ ActionResult handleVariableItemProperty(ProjectManager* projectManager, ProjectI
             failed.data = r.data;
             return failed;
         }
+        newState.defaultValue = rangePlan.defaultValue;
+        changedFields = diffVariableDeclarations(oldState, newState);
     }
 
-    item->markDirty();
-    for (const QString& field : changedFields)
-        emit projectManager->itemPropertyChanged(item, field,
-                                                 field == propertyName ? originator : nullptr);
-
     const uint32_t objID = item->objectID;
-    r.undoFn = [objID, oldState, changedFields]() {
-        applyVariableDeclaration(objID, oldState, changedFields);
+    applyVariableDeclaration(objID, newState, changedFields, rangePlan.after, originator, propertyName);
+    r.undoFn = [objID, oldState, changedFields, consumers = rangePlan.before]() {
+        applyVariableDeclaration(objID, oldState, changedFields, consumers);
     };
-    r.redoFn = [objID, newState, changedFields]() {
-        applyVariableDeclaration(objID, newState, changedFields);
+    r.redoFn = [objID, newState, changedFields, consumers = rangePlan.after]() {
+        applyVariableDeclaration(objID, newState, changedFields, consumers);
     };
     r.undoText = QString("Set %1").arg(propertyName);
     r.authoringWriteSet = QSet<QUuid>{item->guid};
+    for (const auto& guid : rangePlan.after.selections.keys()) r.authoringWriteSet->insert(guid);
+    for (const auto& guid : rangePlan.after.bindings.keys()) r.authoringWriteSet->insert(guid);
+    for (const auto& guid : rangePlan.after.actions.keys()) r.authoringWriteSet->insert(guid);
     return r;
 }
 

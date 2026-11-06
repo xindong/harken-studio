@@ -7,6 +7,7 @@
 #include <QMouseEvent>
 
 #include <memory>
+#include <limits>
 
 namespace {
 
@@ -63,4 +64,71 @@ TEST(AttenuationCurvePointCoordinate, AcceptingUnchangedRoundedValuesPreservesPr
     dialog->accept();
     EXPECT_FLOAT_EQ(canvas->curve()[1].x, before.x);
     EXPECT_FLOAT_EQ(canvas->curve()[1].value, before.value);
+}
+
+TEST(CurveCanvasDomain, CoordinateEditingPreservesOrderingAtDifferentScales)
+{
+    ensureApp();
+    for (const float span : {100.0f, 0.01f, 0.0001f}) {
+        for (const bool pinned : {false, true}) {
+            SCOPED_TRACE(::testing::Message() << span << ", pinned=" << pinned);
+            VNX::CurveCanvas canvas;
+            auto profile = canvas.profile();
+            profile.endpointsFollowDomain = pinned;
+            canvas.setProfile(profile);
+            canvas.setXDomain(0.0f, span);
+            canvas.setCurve({{0.0f, 0.0f}, {span * 0.4f, -30.0f}, {span, -96.0f}});
+            ASSERT_TRUE(canvas.setPointCoordinates(1, span * 0.4f, -40.0f));
+            EXPECT_FLOAT_EQ(canvas.curve()[1].x, span * 0.4f);
+            ASSERT_TRUE(canvas.setPointCoordinates(1, span * 0.6f, -40.0f));
+            EXPECT_FLOAT_EQ(canvas.curve()[1].x, span * 0.6f);
+            ASSERT_TRUE(canvas.setPointCoordinates(1, span * 2.0f, -40.0f));
+            EXPECT_LT(canvas.curve()[1].x, canvas.curve()[2].x);
+            EXPECT_GT(canvas.curve()[1].x, canvas.curve()[0].x);
+        }
+    }
+}
+
+TEST(CurveCanvasDomain, ExistingOutOfRangeCoordinatesRemainEditable)
+{
+    auto canvas = makeCanvas();
+    auto profile = canvas->profile();
+    profile.endpointsFollowDomain = false;
+    canvas->setProfile(profile);
+    canvas->setCurve({{20.0f, 0.0f}, {50.0f, -40.0f}, {100.0f, -96.0f}});
+    canvas->setXDomain(0.0f, 10.0f);
+    ASSERT_TRUE(canvas->setPointCoordinates(1, 40.0f, -30.0f));
+    EXPECT_FLOAT_EQ(canvas->curve()[1].x, 40.0f);
+    EXPECT_LT(canvas->curve()[0].x, canvas->curve()[1].x);
+    EXPECT_LT(canvas->curve()[1].x, canvas->curve()[2].x);
+}
+
+TEST(CurveCanvasDomain, ClippedPointsCanBeSeparatedAfterRangeContraction)
+{
+    auto canvas = makeCanvas();
+    canvas->setCurve({{0.0f, 0.0f}, {50.0f, -30.0f}, {75.0f, -60.0f}, {100.0f, -96.0f}});
+    canvas->setXDomain(0.0f, 10.0f);
+    ASSERT_TRUE(canvas->setPointCoordinates(1, 3.0f, -30.0f));
+    ASSERT_TRUE(canvas->setPointCoordinates(2, 6.0f, -60.0f));
+    for (int index = 1; index < canvas->curve().size(); ++index)
+        EXPECT_GT(canvas->curve()[index].x, canvas->curve()[index - 1].x);
+}
+
+TEST(CurveCanvasDomain, RenderingIsBoundedNearFloatingPointIntegerLimits)
+{
+    ensureApp();
+    VNX::CurveCanvas canvas;
+    canvas.resize(420, 300);
+    auto profile = canvas.profile();
+    profile.discretePreview = true;
+    canvas.setProfile(profile);
+    canvas.setXDomain(16777216.0f, 16777224.0f);
+    canvas.setCurve({{16777216.0f, 0.0f}, {16777224.0f, -96.0f}});
+    const auto data = canvas.renderData();
+    ASSERT_TRUE(data.discretePath.has_value());
+    EXPECT_LT(data.discretePath->elementCount(), 100);
+    for (const float value : {16777216.0f, std::numeric_limits<float>::max()}) {
+        canvas.setXDomain(value, value);
+        EXPECT_GT(canvas.xMax(), canvas.xMin());
+    }
 }

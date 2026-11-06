@@ -321,8 +321,14 @@ void CurveCanvas::setXDomain(float lo, float hi)
     dismissValueEditor();
     xMin_ = lo;
     xMax_ = hi;
-    if (!(xMax_ > xMin_))
-        xMax_ = xMin_ + 1.0f;
+    if (!(xMax_ > xMin_)) {
+        xMax_ = std::max(xMin_ + 1.0f,
+            std::nextafter(xMin_, std::numeric_limits<float>::infinity()));
+        if (!std::isfinite(xMax_)) {
+            xMax_ = xMin_;
+            xMin_ = std::nextafter(xMax_, -std::numeric_limits<float>::infinity());
+        }
+    }
     normalizeCurve();
     update();
 }
@@ -419,11 +425,7 @@ bool CurveCanvas::setPointCoordinates(int index, float x, float value)
         xDelta = clampXDeltaForMovingPoints(xDelta, points_, {index});
 
     CurvePointDef& point = points_[index];
-    point.x = std::clamp(static_cast<float>(static_cast<double>(before.x) + xDelta),
-                         xMin_,
-                         xMax_);
-    if (!profile_.endpointsFollowDomain && x == before.x)
-        point.x = before.x;
+    point.x = static_cast<float>(static_cast<double>(before.x) + xDelta);
     point.value = profile_.preserveOutOfRangeValues && value == before.value
         ? before.value : std::clamp(value, valueMin(), valueMax());
     if (point.x == before.x && point.value == before.value)
@@ -1283,13 +1285,15 @@ double CurveCanvas::clampXDeltaForMovingPoints(
         const int leftIndex = index - 1;
         if (leftIndex >= 0 && !movingIndices.contains(leftIndex)) {
             minXDelta = std::max(minXDelta,
-                static_cast<double>(anchorPoints.at(leftIndex).x) + kMinCurveXInterval - anchorX);
+                std::min(anchorX, static_cast<double>(std::nextafter(
+                    anchorPoints.at(leftIndex).x, std::numeric_limits<float>::infinity()))) - anchorX);
         }
 
         const int rightIndex = index + 1;
         if (rightIndex < anchorPoints.size() && !movingIndices.contains(rightIndex)) {
             maxXDelta = std::min(maxXDelta,
-                static_cast<double>(anchorPoints.at(rightIndex).x) - kMinCurveXInterval - anchorX);
+                std::max(anchorX, static_cast<double>(std::nextafter(
+                    anchorPoints.at(rightIndex).x, -std::numeric_limits<float>::infinity()))) - anchorX);
         }
     }
 
@@ -1684,15 +1688,17 @@ void CurveCanvas::beginPointCoordinateEdit(int index)
 
     auto* xSpin = new DecimalSpinBox(dialog);
     xSpin->setObjectName("curveCanvasCoordinateXSpin");
-    xSpin->setDecimals(std::max(3, profile_.xDecimals));
+    const double span = static_cast<double>(xMax_) - xMin_;
+    xSpin->setDecimals(std::max({3, profile_.xDecimals,
+        static_cast<int>(std::ceil(-std::log10(span))) + std::numeric_limits<float>::max_digits10}));
     xSpin->setSingleStep(1.0);
     xSpin->setButtonSymbols(QAbstractSpinBox::NoButtons);
     xSpin->setKeyboardTracking(false);
     if (movable)
-        xSpin->setRange(index > 0 ? static_cast<double>(points_.at(index - 1).x) + kMinCurveXInterval
-                                  : std::min<double>(xMin_, point.x),
-                        index + 1 < points_.size() ? static_cast<double>(points_.at(index + 1).x) - kMinCurveXInterval
-                                                   : std::max<double>(xMax_, point.x));
+        xSpin->setRange(static_cast<double>(point.x) + clampXDeltaForMovingPoints(
+                           -std::numeric_limits<double>::infinity(), points_, {index}),
+                       static_cast<double>(point.x) + clampXDeltaForMovingPoints(
+                           std::numeric_limits<double>::infinity(), points_, {index}));
     else
         xSpin->setRange(std::min<double>(xMin_, point.x), std::max<double>(xMax_, point.x));
     xSpin->setValue(collapsedX ? xMin_ : static_cast<double>(point.x));
@@ -2102,12 +2108,12 @@ CurveRenderData CurveCanvas::renderData() const
         int sample = VariableSemantics::discreteRead(start);
         steps.moveTo(pointToScreen(
             {start, valueAt(static_cast<float>(sample))}));
-        const int boundaryCount = std::max(0, static_cast<int>(
-            std::ceil(end - (static_cast<float>(sample) + 0.5f))));
-        if (boundaryCount <= static_cast<int>(graph.width() * 2.0)) {
-            for (float boundary = static_cast<float>(sample) + 0.5f;
-                 boundary < end;
-                 boundary += 1.0f) {
+        const double firstBoundary = static_cast<double>(sample) + 0.5;
+        const double boundaryCount = std::max(0.0,
+            std::ceil(static_cast<double>(end) - firstBoundary));
+        if (boundaryCount <= graph.width() * 2.0) {
+            for (int index = 0; index < static_cast<int>(boundaryCount); ++index) {
+                const float boundary = static_cast<float>(firstBoundary + index);
                 const float before = valueAt(static_cast<float>(sample));
                 const float after = valueAt(static_cast<float>(sample + 1));
                 steps.lineTo(pointToScreen({boundary, before}));

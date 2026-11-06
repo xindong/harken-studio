@@ -66,6 +66,11 @@ float curveVolumeBezierValueAt(const QVector<CurvePointDef>& points,
                                const QVector<CurveHandlePairDef>& handles,
                                float x);
 
+void curveClipX(float minimum, float maximum,
+                QVector<CurvePointDef>& points,
+                QVector<CurveHandlePairDef>& handles,
+                CurveAxisScale scale = CurveAxisScale::LinearValue);
+
 double curveAxisNormalizedY(CurveAxisScale scale, float yMin, float yMax, float value);
 float curveAxisValueFromNormalizedY(CurveAxisScale scale, float yMin, float yMax, double normalizedY);
 

@@ -72,6 +72,21 @@ public:
         if (writers < 1 || writers > 3)
             writers = 1;
     }
+
+    bool setKindAndRange(VariableKind newKind, float minimum, float maximum)
+    {
+        if (!std::isfinite(minimum) || !std::isfinite(maximum) || minimum < 0.0f)
+            return false;
+        const auto normalized = VariableSemantics::normalizeDeclarationForKind(
+            newKind, minimum, maximum, defaultValue);
+        if (!(normalized.rangeMin < normalized.rangeMax))
+            return false;
+        kind = newKind;
+        rangeMin = normalized.rangeMin;
+        rangeMax = normalized.rangeMax;
+        defaultValue = normalized.defaultValue;
+        return true;
+    }
 };
 
 #if defined(__clang__)
@@ -92,9 +107,7 @@ inline const PropertySchema& VVariable::schema()
               if (raw < static_cast<int>(VariableKind::Step)
                   || raw > static_cast<int>(VariableKind::Smooth)) return false;
               auto* var = static_cast<VVariable*>(c);
-              var->kind = static_cast<VariableKind>(raw);
-              var->normalizeDeclaration();
-              return true;
+              return var->setKindAndRange(static_cast<VariableKind>(raw), var->rangeMin, var->rangeMax);
           } },
         { .field="writers", .type=PropType::Int, .label="Writers", .section=PropertySection::Status,
           .min=1, .max=3, .def=1, .flags={ .advanced=true },
@@ -162,10 +175,7 @@ inline const PropertySchema& VVariable::schema()
               auto* var = static_cast<VVariable*>(c);
               bool ok = false;
               const float value = v.toFloat(&ok);
-              if (!ok || !std::isfinite(value) || value < 0.0f || value > var->rangeMax) return false;
-              var->rangeMin = value;
-              var->normalizeDeclaration();
-              return true;
+              return ok && var->setKindAndRange(var->kind, value, var->rangeMax);
           } },
         { .field="rangeMax", .type=PropType::Float, .label="Range Max", .section=PropertySection::Status,
           .def=100.0, .decimals=2,
@@ -174,10 +184,7 @@ inline const PropertySchema& VVariable::schema()
               auto* var = static_cast<VVariable*>(c);
               bool ok = false;
               const float value = v.toFloat(&ok);
-              if (!ok || !std::isfinite(value) || value < 0.0f || value < var->rangeMin) return false;
-              var->rangeMax = value;
-              var->normalizeDeclaration();
-              return true;
+              return ok && var->setKindAndRange(var->kind, var->rangeMin, value);
           } },
         // The declared domain is one property: both bounds land in a single
         // write so no edit passes through an inverted or half-applied range.
@@ -197,10 +204,7 @@ inline const PropertySchema& VVariable::schema()
               if (!aOk || !bOk || !std::isfinite(a) || !std::isfinite(b)
                   || a < 0.0f || b < 0.0f) return false;
               auto* var = static_cast<VVariable*>(c);
-              var->rangeMin = std::min(a, b);
-              var->rangeMax = std::max(a, b);
-              var->normalizeDeclaration();
-              return true;
+              return var->setKindAndRange(var->kind, std::min(a, b), std::max(a, b));
           },
           .domain=[](const VNX::IComponent* c) -> std::optional<FieldDomain> {
               const auto form = VariableSemantics::editFormForKind(

@@ -17,6 +17,7 @@ inline QJsonObject setItemPropertySchema()
         QStringLiteral("clips"), QStringLiteral("segmentTime"),
         QStringLiteral("markers"), QStringLiteral("spliceByMarker"),
         QStringLiteral("dimensions"), QStringLiteral("maxDistance"),
+        QStringLiteral("range"), QStringLiteral("rangeMin"), QStringLiteral("rangeMax"),
         QStringLiteral("transitions"), QStringLiteral("steps")};
     for (const auto& field : VNX::PlayablePropertyAuthoringV1::fields()) {
         if (!PlayablePropertyAuthoringV1::isEditorExposed(field.id)) continue;
@@ -38,6 +39,13 @@ inline QJsonObject setItemPropertySchema()
                     QStringLiteral("set_override"),
                     QStringLiteral("clear_override"),
                     QStringLiteral("clear_platform_override")}}}},
+            {QStringLiteral("range_policy"), QJsonObject{
+                {QStringLiteral("type"), QStringLiteral("string")},
+                {QStringLiteral("enum"), QJsonArray{QStringLiteral("stretch"), QStringLiteral("fix")}},
+                {QStringLiteral("description"), QStringLiteral("Required for Variable range changes. Consumers are inspected after a policy is supplied. Stretch scales X coordinates and values proportionally; Fix clips curves at their existing X coordinates and clamps values.")}}},
+            {QStringLiteral("allow_invalid_references"), QJsonObject{
+                {QStringLiteral("type"), QStringLiteral("boolean")},
+                {QStringLiteral("description"), QStringLiteral("Explicitly retain Match conditions made unreachable by a Variable range change.")}}},
             {QStringLiteral("platform_ids"), QJsonObject{
                 {QStringLiteral("type"), QStringLiteral("array")},
                 {QStringLiteral("items"), QJsonObject{

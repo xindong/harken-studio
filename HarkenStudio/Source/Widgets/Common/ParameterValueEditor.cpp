@@ -120,7 +120,11 @@ ParameterValueEditor::ParameterValueEditor(ParameterBinding* binding, ThemeManag
         if (binding_ && !updating_)
             binding_->commitValue(binding_->fromDisplayValue(value));
     });
-    connect(comboBox_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int index) {
+    connect(spinBox_, &QDoubleSpinBox::editingFinished, this, [this] {
+        if (binding_ && !updating_ && binding_->normalizationPending())
+            binding_->commitValue(binding_->value());
+    });
+    connect(comboBox_, qOverload<int>(&QComboBox::activated), this, [this](int index) {
         if (binding_ && !updating_ && index >= 0)
             binding_->commitValue(comboBox_->itemData(index).toDouble());
     });
