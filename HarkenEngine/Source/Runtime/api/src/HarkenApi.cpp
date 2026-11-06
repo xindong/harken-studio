@@ -107826,7 +107826,7 @@ VnResult Vn_RegisterPCM(VnSoundId soundId, const VnPCMDesc* desc) {
         // registration surface: an id already naming a registered stream or a
         // container is taken, exactly like a duplicate PCM registration.
         harken::StreamManager::StreamFacts streamFacts;
-        if (engine->streams.FindFile(soundId, &streamFacts)) {
+        if (engine->streams.FindFile(soundId, &streamFacts) || engine->streams.HasPendingSource(soundId)) {
             return VN_IN_USE;
         }
         return engine->registry.RegisterPCM(soundId, desc);
@@ -108350,7 +108350,7 @@ static VnResult LoadPackObserved(const VnPackDesc* desc,
         const auto isReserved = [](void* ctx, VnSoundId id) -> bool {
             auto* engine = static_cast<harken::Engine*>(ctx);
             harken::StreamManager::StreamFacts facts;
-            return engine->streams.FindFile(id, &facts);
+            return engine->streams.FindFile(id, &facts) || engine->streams.HasPendingSource(id);
         };
         return engine->packs.Load(desc->utf8Path, engine->registry, outHandle,
                                   +isReserved, engine);
@@ -108527,6 +108527,128 @@ VnResult Vn_ActivateCanonicalPackSetV2(
     } catch (...) {
         return VN_DEVICE_ERROR;
     }
+}
+
+VnResult Vn_BeginStreamSource(VnSoundId soundId, std::uint32_t mode,
+    const VnByteSourceDescV1* source, VnStreamSourceRequest* outRequest) {
+    if (outRequest) *outRequest = 0;
+    try {
+        if (!outRequest || !source || source->structSize != sizeof(*source) || source->flags != 0 ||
+            !source->readAt || !source->release || mode > VN_STREAM_SOURCE_REPLACE) return VN_INVALID_ARG;
+        if (harken::detail::CanonicalSetMutationBlocked()) return VN_IN_USE;
+        auto* engine = harken::detail::g_engine;
+        if (!engine || engine->callbackFatalSticky) return VN_NOT_INITIALIZED;
+        TraceStateful(engine, harken::kTraceCallBeginStreamSource).MarkUnreplayable();
+        if (engine->registry.Lookup(soundId).Valid()) return VN_IN_USE;
+        harken::StreamManager::StreamFacts previous;
+        if (mode == VN_STREAM_SOURCE_REPLACE && !engine->streams.FindFile(soundId, &previous))
+            return engine->streams.WorkerState() == harken::StreamWorkerState::Ready ? VN_UNKNOWN_ID : VN_DEVICE_ERROR;
+        class CallbackSource final : public harken::StreamByteSource {
+        public:
+            VnByteSourceDescV1 desc;
+            std::atomic<bool> armed{false};
+            explicit CallbackSource(const VnByteSourceDescV1& input) : desc(input) {}
+            ~CallbackSource() override {
+                if (armed.load(std::memory_order_acquire)) {
+                    try { desc.release(desc.userData); } catch (...) {}
+                }
+            }
+            std::uint64_t ByteCount() const noexcept override { return desc.byteLength; }
+            static std::uint32_t IsCancelled(const void* context) {
+                return static_cast<const harken::StreamReadCancellation*>(context)->IsCancelled() ? 1u : 0u;
+            }
+            harken::StreamReadResult ReadAt(std::uint64_t offset, void* destination, std::size_t count,
+                harken::StreamReadCancellation cancellation) const override {
+                if (cancellation.IsCancelled()) return {harken::StreamReadStatus::Cancelled, 0};
+                VnReadCancellationViewV1 view{sizeof(view), 0, &cancellation, &IsCancelled};
+                std::uint32_t read = 0;
+                try {
+                    const auto requested = static_cast<std::uint32_t>(std::min<std::size_t>(count, UINT32_MAX));
+                    const auto result = desc.readAt(desc.userData, offset, destination, requested, &read, &view);
+                    if (cancellation.IsCancelled() || result == VN_BYTE_READ_CANCELLED)
+                        return {harken::StreamReadStatus::Cancelled, 0};
+                    if (result != VN_BYTE_READ_OK || read > requested) return {};
+                    return {harken::StreamReadStatus::Ok, read};
+                } catch (...) { return {}; }
+            }
+        };
+        auto adapter = std::make_shared<CallbackSource>(*source);
+        harken::StreamManager::SourceToken token;
+        const auto result = engine->streams.BeginSource(soundId, adapter, mode == VN_STREAM_SOURCE_REPLACE,
+                                                        previous.sourceGeneration, &token);
+        if (result != VN_OK) return result == VN_BACKPRESSURE ? VN_DEVICE_ERROR : result;
+        // Accepted requests retain their candidate through Ready/Failed until a
+        // later control-thread Cancel/Commit/Term. No cleanup can overtake this
+        // nonthrowing arm; refused adapters never invoke the provider Release.
+        adapter->armed.store(true, std::memory_order_release);
+        *outRequest = token.value;
+        return VN_OK;
+    } catch (...) { return VN_DEVICE_ERROR; }
+}
+
+VnResult Vn_BeginStreamFile(VnSoundId soundId, std::uint32_t mode,
+    const char* utf8Path, VnStreamSourceRequest* outRequest) {
+    if (outRequest) *outRequest = 0;
+    try {
+        if (!outRequest || !utf8Path || mode > VN_STREAM_SOURCE_REPLACE) return VN_INVALID_ARG;
+        if (harken::detail::CanonicalSetMutationBlocked()) return VN_IN_USE;
+        auto* engine = harken::detail::g_engine;
+        if (!engine || engine->callbackFatalSticky) return VN_NOT_INITIALIZED;
+        TraceStateful(engine, harken::kTraceCallBeginStreamFile).MarkUnreplayable();
+        if (engine->registry.Lookup(soundId).Valid()) return VN_IN_USE;
+        harken::StreamManager::StreamFacts previous;
+        if (mode == VN_STREAM_SOURCE_REPLACE && !engine->streams.FindFile(soundId, &previous))
+            return engine->streams.WorkerState() == harken::StreamWorkerState::Ready ? VN_UNKNOWN_ID : VN_DEVICE_ERROR;
+        harken::StreamManager::SourceToken token;
+        const auto result = engine->streams.BeginFileSource(soundId, utf8Path, mode == VN_STREAM_SOURCE_REPLACE,
+                                                            previous.sourceGeneration, &token);
+        if (result == VN_OK) *outRequest = token.value;
+        return result == VN_BACKPRESSURE ? VN_DEVICE_ERROR : result;
+    } catch (...) { return VN_DEVICE_ERROR; }
+}
+
+VnResult Vn_QueryStreamSource(VnStreamSourceRequest request, VnStreamSourceInfoV1* outInfo) {
+    try {
+        if (!outInfo || outInfo->structSize != sizeof(*outInfo)) return VN_INVALID_ARG;
+        *outInfo = {sizeof(*outInfo), 0, VN_STALE_HANDLE, 0};
+        auto* engine = harken::detail::g_engine;
+        if (!engine || engine->callbackFatalSticky) return VN_NOT_INITIALIZED;
+        VnResult error;
+        const auto state = engine->streams.QuerySource({request}, &error);
+        using State = harken::StreamManager::PreparationState;
+        if (state == State::Invalid || state == State::Cancelled) return VN_STALE_HANDLE;
+        outInfo->state = state == State::Preparing ? VN_STREAM_SOURCE_PREPARING :
+                         state == State::Ready ? VN_STREAM_SOURCE_READY : VN_STREAM_SOURCE_FAILED;
+        outInfo->result = error;
+        return VN_OK;
+    } catch (...) { return VN_DEVICE_ERROR; }
+}
+
+VnResult Vn_CancelStreamSource(VnStreamSourceRequest request) {
+    try {
+        if (harken::detail::CanonicalSetMutationBlocked()) return VN_IN_USE;
+        auto* engine = harken::detail::g_engine;
+        if (!engine || engine->callbackFatalSticky) return VN_NOT_INITIALIZED;
+        TraceStateful(engine, harken::kTraceCallCancelStreamSource).MarkUnreplayable();
+        return engine->streams.CancelSource({request}) ? VN_OK : VN_STALE_HANDLE;
+    } catch (...) { return VN_DEVICE_ERROR; }
+}
+
+VnResult Vn_CommitStreamSource(VnStreamSourceRequest request) {
+    try {
+        if (harken::detail::CanonicalSetMutationBlocked()) return VN_IN_USE;
+        auto* engine = harken::detail::g_engine;
+        if (!engine || engine->callbackFatalSticky) return VN_NOT_INITIALIZED;
+        TraceStateful(engine, harken::kTraceCallCommitStreamSource).MarkUnreplayable();
+        VnSoundId id{};
+        bool replace = false;
+        const auto state = engine->streams.QuerySource({request}, nullptr, &id, &replace);
+        if (state == harken::StreamManager::PreparationState::Invalid ||
+            state == harken::StreamManager::PreparationState::Cancelled) return VN_STALE_HANDLE;
+        const auto authority = engine->registry.Lookup(id).Valid() ? VN_IN_USE : VN_OK;
+        const auto result = engine->streams.TakeSource({request}, nullptr, authority);
+        return replace ? NoteHotReload(*engine, result, harken::kHotReloadClassStream, id) : result;
+    } catch (...) { return VN_DEVICE_ERROR; }
 }
 
 VnResult Vn_RegisterStreamFile(VnSoundId soundId, const char* utf8Path) {
@@ -118274,7 +118396,7 @@ VnResult Vn_ReplacePack(VnPackHandle handle, const VnPackDesc* desc) {
         const auto isReserved = [](void* ctx, VnSoundId id) -> bool {
             auto* engine = static_cast<harken::Engine*>(ctx);
             harken::StreamManager::StreamFacts facts;
-            return engine->streams.FindFile(id, &facts);
+            return engine->streams.FindFile(id, &facts) || engine->streams.HasPendingSource(id);
         };
         harken::PackTable::PreparedReplaceToken prepared;
         const VnResult valid = engine->packs.PrepareReplace(
@@ -119552,7 +119674,7 @@ VnResult RegisterPcmWithLoopRegionV1(
             result = engine->registry.CommitPreparedReplacePCM(&prepared);
         } else {
             StreamManager::StreamFacts streamFacts;
-            if (engine->streams.FindFile(soundId, &streamFacts))
+            if (engine->streams.FindFile(soundId, &streamFacts) || engine->streams.HasPendingSource(soundId))
                 return VN_IN_USE;
             result = engine->registry.RegisterPCM(soundId, &desc, nullptr, loop);
         }
@@ -120504,7 +120626,7 @@ VnResult ScreenPackRevision(Engine& engine, const PackLogicRecord& record,
     const auto isReserved = [](void* ctx, VnSoundId id) -> bool {
         auto* c = static_cast<ReservedCtx*>(ctx);
         StreamManager::StreamFacts facts;
-        return c->engine->streams.FindFile(id, &facts);
+        return c->engine->streams.FindFile(id, &facts) || c->engine->streams.HasPendingSource(id);
     };
     VnResult r = engine.packs.CanReplacePreparedV2(
         revision.handle, image.media, engine.registry, +isReserved,
@@ -124403,7 +124525,7 @@ VnResult AdoptOwnedPackBytes(const VnPackByteSpan& span,
 bool StreamIdReserved(void* ctx, VnSoundId id) {
     auto* engine = static_cast<Engine*>(ctx);
     StreamManager::StreamFacts facts;
-    return engine->streams.FindFile(id, &facts);
+    return engine->streams.FindFile(id, &facts) || engine->streams.HasPendingSource(id);
 }
 
 bool CanonicalAttenuationGenerationIsLiveV1(

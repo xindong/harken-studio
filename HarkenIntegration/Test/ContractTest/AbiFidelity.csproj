@@ -39,6 +39,8 @@
     <Compile Include="RepositoryPublicationContract.cs" />
     <Compile Include="CompanionDirectoryContract.cs" />
     <Compile Include="CompanionSourceContract.cs" />
+    <Compile Include="StreamSourceContract.cs" />
+    <Content Include="Fixtures/StreamSource.stream" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\UnityFixture\Data\CompanionPacks\**\*.json;..\UnityFixture\Data\CompanionPacks\**\*.bytes"
              Link="NativePublications\UnityFixture\CompanionPacks\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\UnityFixture\Data\U4Original\**\*.json;..\UnityFixture\Data\U4Original\**\*.bytes"

@@ -254,9 +254,10 @@ public:
                          bool replace, std::uint64_t expectedOldGeneration, SourceToken* out);
     VnResult BeginFileSource(VnSoundId soundId, const char* path, bool replace,
                              std::uint64_t expectedOldGeneration, SourceToken* out);
-    PreparationState QuerySource(SourceToken token, VnResult* error = nullptr) const;
+    PreparationState QuerySource(SourceToken token, VnResult* error = nullptr,
+        VnSoundId* soundId = nullptr, bool* replace = nullptr) const;
     bool CancelSource(SourceToken token);
-    VnResult TakeSource(SourceToken token, StreamFacts* out = nullptr);
+    VnResult TakeSource(SourceToken token, StreamFacts* out = nullptr, VnResult authority = VN_OK);
     std::uint64_t SourcePreparationBytes() const;
     // Actual private read-window capacity, separate from staging and metadata.
     std::uint64_t ReadWindowBytes() const noexcept;

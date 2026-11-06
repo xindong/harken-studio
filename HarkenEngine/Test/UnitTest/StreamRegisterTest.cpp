@@ -258,6 +258,180 @@ public:
     }
 };
 
+struct NativeSourceState {
+    std::vector<std::uint8_t> bytes;
+    ReadGate gate;
+    std::atomic<unsigned> reads{0}, releases{0};
+    bool cooperate = true;
+    std::size_t maxRead = SIZE_MAX;
+    std::thread::id releaseThread;
+    static std::int32_t Read(void* context, std::uint64_t offset, void* destination,
+        std::uint32_t count, std::uint32_t* outRead, const VnReadCancellationViewV1* cancel) {
+        auto& self = *static_cast<NativeSourceState*>(context);
+        self.reads.fetch_add(1);
+        *outRead = 0;
+        if (offset == self.gate.offset.load()) {
+            self.gate.entered.store(true);
+            while (!self.gate.release.load()) {
+                if (self.cooperate && cancel->isCancelled(cancel->context)) return VN_BYTE_READ_CANCELLED;
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        }
+        if (cancel->isCancelled(cancel->context)) return VN_BYTE_READ_CANCELLED;
+        if (offset > self.bytes.size() || count > self.bytes.size() - offset) return VN_BYTE_READ_IO_ERROR;
+        *outRead = static_cast<std::uint32_t>(std::min<std::size_t>(count, self.maxRead));
+        std::memcpy(destination, self.bytes.data() + offset, *outRead);
+        return VN_BYTE_READ_OK;
+    }
+    static void Release(void* context) {
+        auto& self = *static_cast<NativeSourceState*>(context);
+        self.releaseThread = std::this_thread::get_id();
+        self.releases.fetch_add(1, std::memory_order_release);
+    }
+    VnByteSourceDescV1 Descriptor() {
+        return {sizeof(VnByteSourceDescV1), 0, bytes.size(), this, &Read, &Release};
+    }
+};
+
+TEST(StreamRegister, PublicSourceAdmissionCancelAndNamespaceStayResponsive) {
+    NativeSourceState blocked, refused;
+    const auto id = harkentest::ObjectId(17330);
+    blocked.bytes = MakeValidImage(id);
+    refused.bytes = blocked.bytes;
+    blocked.gate.offset.store(0);
+    blocked.cooperate = false;
+    EngineSession session(MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    ReleaseReadGate release{blocked.gate};
+    const auto healthyId = harkentest::ObjectId(17331);
+    const auto path = TempPath("stream_sdk_source.stream");
+    WriteFileBytes(path, MakeValidImage(healthyId));
+    VnStreamSourceRequest healthy = 0;
+    ASSERT_EQ(VN_OK, Vn_BeginStreamFile(healthyId, VN_STREAM_SOURCE_REGISTER, path.c_str(), &healthy));
+    VnStreamSourceInfoV1 info{sizeof(info)};
+    ASSERT_TRUE(WaitUntil([&] { return Vn_QueryStreamSource(healthy, &info) == VN_OK && info.state == VN_STREAM_SOURCE_READY; }));
+    ASSERT_EQ(VN_OK, Vn_CommitStreamSource(healthy));
+    VnPlayDesc play = harkentest::MakePlayDesc(healthyId);
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+    auto desc = blocked.Descriptor();
+    VnStreamSourceRequest pending = 0;
+    ASSERT_EQ(VN_OK, Vn_BeginStreamSource(id, VN_STREAM_SOURCE_REGISTER, &desc, &pending));
+    ASSERT_TRUE(WaitUntil([&] { return blocked.gate.entered.load(); }));
+    EXPECT_EQ(VN_OK, Vn_Update());
+    session.Engine()->nullBackend.Pump(1);
+    EXPECT_EQ(VN_BACKPRESSURE, Vn_CommitStreamSource(pending));
+    auto other = refused.Descriptor();
+    VnStreamSourceRequest rejected = 99;
+    EXPECT_EQ(VN_IN_USE, Vn_BeginStreamSource(id, VN_STREAM_SOURCE_REGISTER, &other, &rejected));
+    EXPECT_EQ(0u, rejected);
+    EXPECT_EQ(0u, refused.reads.load());
+    EXPECT_EQ(0u, refused.releases.load());
+    const std::vector<float> tone(64, 0.25f);
+    auto pcm = harkentest::MonoDesc(tone, kRate);
+    EXPECT_EQ(VN_IN_USE, Vn_RegisterPCM(id, &pcm));
+    EXPECT_EQ(VN_OK, Vn_CancelStreamSource(pending));
+    EXPECT_EQ(VN_STALE_HANDLE, Vn_QueryStreamSource(pending, &info));
+    EXPECT_EQ(VN_STALE_HANDLE, Vn_CancelStreamSource(pending));
+    EXPECT_EQ(VN_STALE_HANDLE, Vn_CommitStreamSource(pending));
+    EXPECT_EQ(0u, blocked.releases.load());
+    EXPECT_EQ(VN_OK, Vn_RegisterPCM(id, &pcm));
+    blocked.gate.release.store(true);
+    ASSERT_TRUE(WaitUntil([&] { return blocked.releases.load(std::memory_order_acquire) == 1; }));
+    EXPECT_NE(std::this_thread::get_id(), blocked.releaseThread);
+    other.flags = 1;
+    rejected = 99;
+    EXPECT_EQ(VN_INVALID_ARG, Vn_BeginStreamSource(harkentest::ObjectId(17332), 0, &other, &rejected));
+    EXPECT_EQ(0u, rejected);
+    EXPECT_EQ(0u, refused.reads.load());
+    EXPECT_EQ(0u, refused.releases.load());
+}
+
+TEST(StreamRegister, PublicReadyFailureAndReplacementKeepIndependentOwnership) {
+    NativeSourceState first, second, failed, stale;
+    const auto a = harkentest::ObjectId(17333), b = harkentest::ObjectId(17334);
+    first.bytes = MakeValidImage(a); first.maxRead = 7;
+    second.bytes = MakeValidImage(b);
+    failed.bytes = {0, 1, 2, 3};
+    stale.bytes = first.bytes;
+    EngineSession session(MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto d1 = first.Descriptor(), d2 = second.Descriptor(), bad = failed.Descriptor();
+    VnStreamSourceRequest one = 0, two = 0, replacement = 0;
+    ASSERT_EQ(VN_OK, Vn_BeginStreamSource(a, 0, &d1, &one));
+    ASSERT_EQ(VN_OK, Vn_BeginStreamSource(b, 0, &d2, &two));
+    VnStreamSourceInfoV1 i1{sizeof(i1)}, i2{sizeof(i2)};
+    ASSERT_TRUE(WaitUntil([&] { return Vn_QueryStreamSource(one, &i1) == VN_OK &&
+        Vn_QueryStreamSource(two, &i2) == VN_OK && i1.state == VN_STREAM_SOURCE_READY && i2.state == VN_STREAM_SOURCE_READY; }));
+    ASSERT_EQ(VN_OK, Vn_CommitStreamSource(one));
+    EXPECT_EQ(VN_STALE_HANDLE, Vn_CommitStreamSource(one));
+    ASSERT_EQ(VN_OK, Vn_BeginStreamSource(a, VN_STREAM_SOURCE_REPLACE, &bad, &replacement));
+    ASSERT_TRUE(WaitUntil([&] { return Vn_QueryStreamSource(replacement, &i1) == VN_OK && i1.state == VN_STREAM_SOURCE_FAILED; }));
+    EXPECT_EQ(VN_BAD_STREAM_FILE, Vn_CommitStreamSource(replacement));
+    EXPECT_EQ(0u, failed.releases.load());
+    harken::StreamManager::StreamFacts facts;
+    EXPECT_TRUE(session.Engine()->streams.FindFile(a, &facts));
+    EXPECT_EQ(1000u, facts.frameCount);
+    EXPECT_EQ(VN_OK, Vn_CancelStreamSource(replacement));
+    EXPECT_EQ(VN_OK, Vn_CancelStreamSource(two));
+    ASSERT_TRUE(WaitUntil([&] { return failed.releases.load() == 1 && second.releases.load() == 1; }));
+    EXPECT_EQ(0u, first.releases.load());
+    auto staleDesc = stale.Descriptor();
+    ASSERT_EQ(VN_OK, Vn_BeginStreamSource(a, VN_STREAM_SOURCE_REPLACE, &staleDesc, &replacement));
+    ASSERT_TRUE(WaitUntil([&] { return Vn_QueryStreamSource(replacement, &i1) == VN_OK && i1.state == VN_STREAM_SOURCE_READY; }));
+    EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(a));
+    ASSERT_TRUE(WaitUntil([&] { return first.releases.load() == 1; }));
+    EXPECT_EQ(VN_STALE_HANDLE, Vn_CommitStreamSource(replacement));
+    EXPECT_EQ(VN_OK, Vn_QueryStreamSource(replacement, &i1));
+    EXPECT_EQ(VN_STREAM_SOURCE_FAILED, i1.state);
+    EXPECT_EQ(VN_STALE_HANDLE, i1.result);
+    EXPECT_EQ(0u, stale.releases.load());
+    EXPECT_EQ(VN_OK, Vn_CancelStreamSource(replacement));
+    ASSERT_TRUE(WaitUntil([&] { return stale.releases.load() == 1; }));
+}
+
+TEST(StreamRegister, PublicFailedWorkerAndTermDiscardWithoutTokenReuse) {
+    NativeSourceState old, current;
+    const auto id = harkentest::ObjectId(17335);
+    old.bytes = MakeValidImage(id); current.bytes = old.bytes;
+    VnStreamSourceRequest oldToken = 0;
+    {
+        EngineSession session(MakeNullConfig());
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto desc = old.Descriptor();
+        old.gate.offset.store(0);
+        ReleaseReadGate release{old.gate};
+        ASSERT_EQ(VN_OK, Vn_BeginStreamSource(id, 0, &desc, &oldToken));
+        ASSERT_TRUE(WaitUntil([&] { return old.gate.entered.load(); }));
+        harken::SetStreamRequestFaultForTests(harken::StreamRequestFault::WorkerLoop);
+        const bool failed = WaitUntil([&] { return session.Engine()->streams.WorkerState() == harken::StreamWorkerState::Failed; });
+        harken::SetStreamRequestFaultForTests(harken::StreamRequestFault::None);
+        ASSERT_TRUE(failed);
+        VnStreamSourceInfoV1 info{sizeof(info)};
+        EXPECT_EQ(VN_OK, Vn_QueryStreamSource(oldToken, &info));
+        EXPECT_EQ(VN_STREAM_SOURCE_FAILED, info.state);
+        EXPECT_EQ(VN_DEVICE_ERROR, info.result);
+        EXPECT_EQ(VN_OK, Vn_CancelStreamSource(oldToken));
+        EXPECT_EQ(VN_STALE_HANDLE, Vn_QueryStreamSource(oldToken, &info));
+    }
+    EXPECT_EQ(1u, old.releases.load());
+    {
+        EngineSession session(MakeNullConfig());
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto desc = current.Descriptor();
+        current.gate.offset.store(0);
+        ReleaseReadGate release{current.gate};
+        VnStreamSourceRequest token = 0;
+        ASSERT_EQ(VN_OK, Vn_BeginStreamSource(id, 0, &desc, &token));
+        EXPECT_NE(oldToken, token);
+        EXPECT_EQ(VN_STALE_HANDLE, Vn_CancelStreamSource(oldToken));
+        ASSERT_TRUE(WaitUntil([&] { return current.gate.entered.load(); }));
+        // Term owns the accepted request even when the caller never cancels.
+        EXPECT_EQ(VN_OK, Vn_Term());
+        EXPECT_EQ(1u, current.releases.load());
+    }
+}
+
 TEST(StreamRegister, SourceShortReadsAndIndependentReadyResults) {
     using Manager = harken::StreamManager;
     harken::EngineConfig config{};

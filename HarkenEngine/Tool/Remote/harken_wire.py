@@ -7384,6 +7384,89 @@ TABLE_JSON = r'''
           }
         ]
       ]
+    },
+    "VnReadCancellationViewV1": {
+      "fields": [
+        [
+          "structSize",
+          "u32"
+        ],
+        [
+          "reserved0",
+          "u32"
+        ],
+        [
+          "context",
+          {
+            "ptr": "opaque",
+            "ctype": "const void*"
+          }
+        ],
+        [
+          "isCancelled",
+          {
+            "ptr": "opaque",
+            "ctype": "VnReadIsCancelledFn"
+          }
+        ]
+      ]
+    },
+    "VnByteSourceDescV1": {
+      "fields": [
+        [
+          "structSize",
+          "u32"
+        ],
+        [
+          "flags",
+          "u32"
+        ],
+        [
+          "byteLength",
+          "u64"
+        ],
+        [
+          "userData",
+          {
+            "ptr": "opaque",
+            "ctype": "void*"
+          }
+        ],
+        [
+          "readAt",
+          {
+            "ptr": "opaque",
+            "ctype": "VnByteSourceReadAtFn"
+          }
+        ],
+        [
+          "release",
+          {
+            "ptr": "opaque",
+            "ctype": "VnByteSourceReleaseFn"
+          }
+        ]
+      ]
+    },
+    "VnStreamSourceInfoV1": {
+      "fields": [
+        [
+          "structSize",
+          "u32"
+        ],
+        [
+          "state",
+          "u32"
+        ],
+        [
+          "result",
+          "i32"
+        ],
+        [
+          "reserved0",
+          "u32"
+        ]
+      ]
     }
   },
   "functions": [
@@ -10315,6 +10398,98 @@ TABLE_JSON = r'''
         }
       ],
       "note": "Optional atomic SDK host identity and description; local C ABI only, no remote mutation opcode."
+    },
+    {
+      "name": "Vn_BeginStreamSource",
+      "params": [
+        {
+          "name": "soundId",
+          "ctype": "VnSoundId",
+          "wire": "objectid"
+        },
+        {
+          "name": "mode",
+          "ctype": "uint32_t",
+          "wire": "u32"
+        },
+        {
+          "name": "source",
+          "ctype": "const VnByteSourceDescV1*",
+          "wire": "desc",
+          "type": "VnByteSourceDescV1"
+        },
+        {
+          "name": "outRequest",
+          "ctype": "VnStreamSourceRequest*",
+          "wire": "out"
+        }
+      ],
+      "note": "Local native host API; process-local source/request lifetime. No remote opcode."
+    },
+    {
+      "name": "Vn_BeginStreamFile",
+      "params": [
+        {
+          "name": "soundId",
+          "ctype": "VnSoundId",
+          "wire": "objectid"
+        },
+        {
+          "name": "mode",
+          "ctype": "uint32_t",
+          "wire": "u32"
+        },
+        {
+          "name": "utf8Path",
+          "ctype": "const char*",
+          "wire": "string"
+        },
+        {
+          "name": "outRequest",
+          "ctype": "VnStreamSourceRequest*",
+          "wire": "out"
+        }
+      ],
+      "note": "Local native host API; process-local source/request lifetime. No remote opcode."
+    },
+    {
+      "name": "Vn_QueryStreamSource",
+      "params": [
+        {
+          "name": "request",
+          "ctype": "VnStreamSourceRequest",
+          "wire": "u64"
+        },
+        {
+          "name": "outInfo",
+          "ctype": "VnStreamSourceInfoV1*",
+          "wire": "outstruct",
+          "type": "VnStreamSourceInfoV1"
+        }
+      ],
+      "note": "Local native host API; process-local source/request lifetime. No remote opcode."
+    },
+    {
+      "name": "Vn_CancelStreamSource",
+      "params": [
+        {
+          "name": "request",
+          "ctype": "VnStreamSourceRequest",
+          "wire": "u64"
+        }
+      ],
+      "note": "Local native host API; process-local source/request lifetime. No remote opcode."
+    },
+    {
+      "name": "Vn_CommitStreamSource",
+      "params": [
+        {
+          "name": "request",
+          "ctype": "VnStreamSourceRequest",
+          "wire": "u64"
+        }
+      ],
+      "note": "Local native host API; process-local source/request lifetime. No remote opcode."
     }
   ],
   "binding_overloads": [
@@ -10485,7 +10660,8 @@ TABLE_JSON = r'''
       "VnMonitorRecordingState": "u32",
       "VnMonitorChannelMode": "u32",
       "VnMonitorChunkKind": "u32",
-      "VnMonitorChunkFlags": "u32"
+      "VnMonitorChunkFlags": "u32",
+      "VnStreamSourceRequest": "u64"
     },
     "results": {
       "backing": "i32",
@@ -11898,6 +12074,38 @@ TABLE_JSON = r'''
       "VN_MONITOR_PLAYABLE_PROVENANCE_KNOWN": {
         "type": "u32",
         "value": 1
+      },
+      "VN_STREAM_SOURCE_REGISTER": {
+        "type": "u32",
+        "value": 0
+      },
+      "VN_STREAM_SOURCE_REPLACE": {
+        "type": "u32",
+        "value": 1
+      },
+      "VN_STREAM_SOURCE_PREPARING": {
+        "type": "u32",
+        "value": 1
+      },
+      "VN_STREAM_SOURCE_READY": {
+        "type": "u32",
+        "value": 2
+      },
+      "VN_STREAM_SOURCE_FAILED": {
+        "type": "u32",
+        "value": 3
+      },
+      "VN_BYTE_READ_OK": {
+        "type": "i32",
+        "value": 0
+      },
+      "VN_BYTE_READ_CANCELLED": {
+        "type": "i32",
+        "value": 1
+      },
+      "VN_BYTE_READ_IO_ERROR": {
+        "type": "i32",
+        "value": 2
       }
     },
     "callbacks": {
@@ -11998,6 +12206,64 @@ TABLE_JSON = r'''
             "name": "span",
             "kind": "struct",
             "ctype": "VnPackByteSpan"
+          }
+        ]
+      },
+      "VnReadIsCancelledFn": {
+        "returnType": "uint32_t",
+        "callingConvention": "cdecl",
+        "params": [
+          {
+            "name": "context",
+            "kind": "ptr",
+            "ctype": "const void*"
+          }
+        ]
+      },
+      "VnByteSourceReadAtFn": {
+        "returnType": "int32_t",
+        "callingConvention": "cdecl",
+        "params": [
+          {
+            "name": "userData",
+            "kind": "ptr",
+            "ctype": "void*"
+          },
+          {
+            "name": "offset",
+            "kind": "u64",
+            "ctype": "uint64_t"
+          },
+          {
+            "name": "destination",
+            "kind": "ptr",
+            "ctype": "void*"
+          },
+          {
+            "name": "count",
+            "kind": "u32",
+            "ctype": "uint32_t"
+          },
+          {
+            "name": "outRead",
+            "kind": "ptr",
+            "ctype": "uint32_t*"
+          },
+          {
+            "name": "cancellation",
+            "kind": "ptr",
+            "ctype": "const VnReadCancellationViewV1*"
+          }
+        ]
+      },
+      "VnByteSourceReleaseFn": {
+        "returnType": "void",
+        "callingConvention": "cdecl",
+        "params": [
+          {
+            "name": "userData",
+            "kind": "ptr",
+            "ctype": "void*"
           }
         ]
       }

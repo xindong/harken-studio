@@ -77,11 +77,14 @@ VnResult StreamManager::BeginSourceImpl(VnSoundId id,
     } catch (const std::bad_alloc&) { return VN_BACKPRESSURE; }
 }
 
-StreamManager::PreparationState StreamManager::QuerySource(SourceToken token, VnResult* error) const {
+StreamManager::PreparationState StreamManager::QuerySource(SourceToken token, VnResult* error,
+    VnSoundId* soundId, bool* replace) const {
     std::lock_guard<std::mutex> lock(m_mutex);
     if (error) *error = VN_STALE_HANDLE;
     for (const auto& request : m_sourceRequests) {
         if (!request || request->generation != token.value) continue;
+        if (soundId) *soundId = request->soundId;
+        if (replace) *replace = request->replace;
         if (error) *error = WorkerState() == StreamWorkerState::Failed ? VN_DEVICE_ERROR
             : (request->ioLane < 0 ? request->result : VN_OK);
         return request->state;
@@ -121,7 +124,7 @@ bool StreamManager::CancelSource(SourceToken token) {
     return false;
 }
 
-VnResult StreamManager::TakeSource(SourceToken token, StreamFacts* out) {
+VnResult StreamManager::TakeSource(SourceToken token, StreamFacts* out, VnResult authority) {
     if (out) *out = {};
     std::lock_guard<std::mutex> lock(m_mutex);
     if (WorkerState() != StreamWorkerState::Ready || m_shutdown) return VN_DEVICE_ERROR;
@@ -131,18 +134,22 @@ VnResult StreamManager::TakeSource(SourceToken token, StreamFacts* out) {
         if (request->state == PreparationState::Failed) return request->result;
         if (request->state != PreparationState::Ready) return VN_STALE_HANDLE;
         VnResult refusal = VN_OK;
+        bool retryable = false;
         StreamFile* previous = nullptr;
         for (auto& file : m_files) {
             if (!file) continue;
             if (!file->retiring && file->soundId == request->soundId) previous = file.get();
-            if (request->replace && file->retiring && file->retiredFromId == request->soundId)
+            if (request->replace && file->retiring && file->retiredFromId == request->soundId) {
                 refusal = VN_IN_USE;
+                retryable = true;
+            }
         }
         if (WorkerState() != StreamWorkerState::Ready || m_shutdown) refusal = VN_DEVICE_ERROR;
         else if (request->replace && (!previous || previous->sourceGeneration != request->expectedOldGeneration))
             refusal = VN_STALE_HANDLE;
         else if (!request->replace && previous) refusal = VN_IN_USE;
         else if (m_lastSourceGeneration == UINT64_MAX) refusal = VN_BACKPRESSURE;
+        if (authority != VN_OK) { refusal = authority; retryable = false; }
         if (refusal == VN_OK) {
             try {
                 auto empty = std::find_if(m_files.begin(), m_files.end(), [](const auto& file) { return !file; });
@@ -176,6 +183,7 @@ VnResult StreamManager::TakeSource(SourceToken token, StreamFacts* out) {
                 return VN_OK;
             } catch (const std::bad_alloc&) { refusal = VN_BACKPRESSURE; }
         }
+        if (refusal == VN_BACKPRESSURE || (retryable && refusal == VN_IN_USE)) return refusal;
         request->state = PreparationState::Failed;
         request->result = refusal;
         return refusal;
