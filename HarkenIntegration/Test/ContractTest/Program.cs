@@ -33,6 +33,11 @@ namespace Harken.Test
                 InstallNativeResolver(true);
                 return RunAbiFidelity() && RunAttenuationAbi(args[0] == "--attenuation-old-native") ? 0 : 1;
             }
+            if (args.Length == 1 && args[0] == "--stream-sources-only")
+            {
+                InstallNativeResolver(true);
+                return RunAbiFidelity() && StreamSourceContract.Run() ? 0 : 1;
+            }
             if (args.Length == 1 && args[0] == "--variables-only")
             {
                 InstallNativeResolver(true);
@@ -100,6 +105,7 @@ namespace Harken.Test
             bool repositoryNativeOk = !requireNative || RepositoryPublicationContract.Run();
             bool companionNativeOk = !requireNative || CompanionDirectoryContract.Run();
             companionNativeOk &= !requireNative || CompanionSourceContract.Run();
+            companionNativeOk &= !requireNative || StreamSourceContract.Run();
 
             Console.WriteLine();
             Console.WriteLine("ABI fidelity : " + (abiOk ? "PASS" : "FAIL"));

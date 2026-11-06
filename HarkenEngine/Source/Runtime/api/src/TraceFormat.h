@@ -324,6 +324,10 @@ enum : std::uint16_t {
     kTraceCallActivateCanonicalPackSetV2 = 137,
     kTraceCallUnloadCanonicalPackSet = 138,
     kTraceCallUnloadCompanionPack = 139,
+    kTraceCallBeginStreamSource = 140, // local callback lease, unreplayable
+    kTraceCallBeginStreamFile = 141, // asynchronous request identity, unreplayable
+    kTraceCallCancelStreamSource = 142,
+    kTraceCallCommitStreamSource = 143,
     kTraceCallSetValues = 192,
     kTraceCallSetEmitterValues = 193,
     kTraceCallClearEmitterValues = 194,

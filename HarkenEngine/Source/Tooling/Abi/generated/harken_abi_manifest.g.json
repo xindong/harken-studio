@@ -2,6 +2,53 @@
   "contract": {
     "nativeAbi": {
       "callbacks": {
+        "VnByteSourceReadAtFn": {
+          "callingConvention": "cdecl",
+          "params": [
+            {
+              "ctype": "void*",
+              "kind": "ptr",
+              "name": "userData"
+            },
+            {
+              "ctype": "uint64_t",
+              "kind": "u64",
+              "name": "offset"
+            },
+            {
+              "ctype": "void*",
+              "kind": "ptr",
+              "name": "destination"
+            },
+            {
+              "ctype": "uint32_t",
+              "kind": "u32",
+              "name": "count"
+            },
+            {
+              "ctype": "uint32_t*",
+              "kind": "ptr",
+              "name": "outRead"
+            },
+            {
+              "ctype": "const VnReadCancellationViewV1*",
+              "kind": "ptr",
+              "name": "cancellation"
+            }
+          ],
+          "returnType": "int32_t"
+        },
+        "VnByteSourceReleaseFn": {
+          "callingConvention": "cdecl",
+          "params": [
+            {
+              "ctype": "void*",
+              "kind": "ptr",
+              "name": "userData"
+            }
+          ],
+          "returnType": "void"
+        },
         "VnLogFn": {
           "callingConvention": "cdecl",
           "params": [
@@ -100,6 +147,17 @@
             }
           ],
           "returnType": "void"
+        },
+        "VnReadIsCancelledFn": {
+          "callingConvention": "cdecl",
+          "params": [
+            {
+              "ctype": "const void*",
+              "kind": "ptr",
+              "name": "context"
+            }
+          ],
+          "returnType": "uint32_t"
         }
       },
       "defines": {
@@ -113,6 +171,18 @@
             "high": 0,
             "low": 1
           }
+        },
+        "VN_BYTE_READ_CANCELLED": {
+          "type": "i32",
+          "value": 1
+        },
+        "VN_BYTE_READ_IO_ERROR": {
+          "type": "i32",
+          "value": 2
+        },
+        "VN_BYTE_READ_OK": {
+          "type": "i32",
+          "value": 0
         },
         "VN_CANONICAL_PACK_SET_MEMBER_CONTENT": {
           "type": "u32",
@@ -441,6 +511,26 @@
         "VN_SNAPSHOT_MAX_VOICES": {
           "type": "u32",
           "value": 64
+        },
+        "VN_STREAM_SOURCE_FAILED": {
+          "type": "u32",
+          "value": 3
+        },
+        "VN_STREAM_SOURCE_PREPARING": {
+          "type": "u32",
+          "value": 1
+        },
+        "VN_STREAM_SOURCE_READY": {
+          "type": "u32",
+          "value": 2
+        },
+        "VN_STREAM_SOURCE_REGISTER": {
+          "type": "u32",
+          "value": 0
+        },
+        "VN_STREAM_SOURCE_REPLACE": {
+          "type": "u32",
+          "value": 1
         },
         "VN_VARIABLE_BATCH_WRITE_CAPACITY": {
           "type": "u32",
@@ -3840,6 +3930,89 @@
             }
           ],
           "returnType": "VnResult"
+        },
+        {
+          "callingConvention": "cdecl",
+          "name": "Vn_BeginStreamSource",
+          "parameters": [
+            {
+              "ctype": "VnSoundId",
+              "name": "soundId"
+            },
+            {
+              "ctype": "uint32_t",
+              "name": "mode"
+            },
+            {
+              "ctype": "const VnByteSourceDescV1*",
+              "name": "source"
+            },
+            {
+              "ctype": "VnStreamSourceRequest*",
+              "name": "outRequest"
+            }
+          ],
+          "returnType": "VnResult"
+        },
+        {
+          "callingConvention": "cdecl",
+          "name": "Vn_BeginStreamFile",
+          "parameters": [
+            {
+              "ctype": "VnSoundId",
+              "name": "soundId"
+            },
+            {
+              "ctype": "uint32_t",
+              "name": "mode"
+            },
+            {
+              "ctype": "const char*",
+              "name": "utf8Path"
+            },
+            {
+              "ctype": "VnStreamSourceRequest*",
+              "name": "outRequest"
+            }
+          ],
+          "returnType": "VnResult"
+        },
+        {
+          "callingConvention": "cdecl",
+          "name": "Vn_QueryStreamSource",
+          "parameters": [
+            {
+              "ctype": "VnStreamSourceRequest",
+              "name": "request"
+            },
+            {
+              "ctype": "VnStreamSourceInfoV1*",
+              "name": "outInfo"
+            }
+          ],
+          "returnType": "VnResult"
+        },
+        {
+          "callingConvention": "cdecl",
+          "name": "Vn_CancelStreamSource",
+          "parameters": [
+            {
+              "ctype": "VnStreamSourceRequest",
+              "name": "request"
+            }
+          ],
+          "returnType": "VnResult"
+        },
+        {
+          "callingConvention": "cdecl",
+          "name": "Vn_CommitStreamSource",
+          "parameters": [
+            {
+              "ctype": "VnStreamSourceRequest",
+              "name": "request"
+            }
+          ],
+          "returnType": "VnResult"
         }
       ],
       "platform": {
@@ -3857,7 +4030,10 @@
         "Vn_ApplyBusTopology",
         "Vn_ApplyVoiceBinding",
         "Vn_AttachBinding",
+        "Vn_BeginStreamFile",
+        "Vn_BeginStreamSource",
         "Vn_BindVoiceAttenuation",
+        "Vn_CancelStreamSource",
         "Vn_CaptureCompressorRuntimeInfo",
         "Vn_CaptureEffectCapabilities",
         "Vn_CaptureEffectDynamicCapabilities",
@@ -3872,6 +4048,7 @@
         "Vn_ClearVoiceBinding",
         "Vn_ClearVoiceEffect",
         "Vn_ClearVoiceSend",
+        "Vn_CommitStreamSource",
         "Vn_CommitVoiceStart",
         "Vn_ConnectBusSend",
         "Vn_CreateBus",
@@ -3920,6 +4097,7 @@
         "Vn_QueryActionFiring",
         "Vn_QueryActionSeek",
         "Vn_QueryActionStep",
+        "Vn_QueryStreamSource",
         "Vn_QueryVariable",
         "Vn_QueryVariableCatalog",
         "Vn_QueryVariableTicket",
@@ -4144,6 +4322,7 @@
         "VnMonitorValidityFlags": "u32",
         "VnPackHandle": "u64",
         "VnResult": "i32",
+        "VnStreamSourceRequest": "u64",
         "VnVoiceHandle": "u64"
       },
       "structTypedefs": {
@@ -5447,6 +5626,75 @@
             }
           ],
           "size": 48
+        },
+        "VnByteSourceDescV1": {
+          "alignment": 8,
+          "fields": [
+            {
+              "alignment": 4,
+              "name": "structSize",
+              "offset": 0,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "flags",
+              "offset": 4,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 8,
+              "name": "byteLength",
+              "offset": 8,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "userData",
+              "offset": 16,
+              "shape": {
+                "ctype": "void*",
+                "kind": "pointer",
+                "storage": "opaque"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "readAt",
+              "offset": 24,
+              "shape": {
+                "ctype": "VnByteSourceReadAtFn",
+                "kind": "pointer",
+                "storage": "opaque"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "release",
+              "offset": 32,
+              "shape": {
+                "ctype": "VnByteSourceReleaseFn",
+                "kind": "pointer",
+                "storage": "opaque"
+              },
+              "size": 8
+            }
+          ],
+          "size": 40
         },
         "VnCanonicalPackSetActivationDescV1": {
           "alignment": 8,
@@ -17791,6 +18039,54 @@
           ],
           "size": 64
         },
+        "VnReadCancellationViewV1": {
+          "alignment": 8,
+          "fields": [
+            {
+              "alignment": 4,
+              "name": "structSize",
+              "offset": 0,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "reserved0",
+              "offset": 4,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 8,
+              "name": "context",
+              "offset": 8,
+              "shape": {
+                "ctype": "const void*",
+                "kind": "pointer",
+                "storage": "opaque"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "isCancelled",
+              "offset": 16,
+              "shape": {
+                "ctype": "VnReadIsCancelledFn",
+                "kind": "pointer",
+                "storage": "opaque"
+              },
+              "size": 8
+            }
+          ],
+          "size": 24
+        },
         "VnRemoteConfig": {
           "alignment": 8,
           "fields": [
@@ -19617,6 +19913,52 @@
           ],
           "size": 5400
         },
+        "VnStreamSourceInfoV1": {
+          "alignment": 4,
+          "fields": [
+            {
+              "alignment": 4,
+              "name": "structSize",
+              "offset": 0,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "state",
+              "offset": 4,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "result",
+              "offset": 8,
+              "shape": {
+                "kind": "scalar",
+                "type": "i32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "reserved0",
+              "offset": 12,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            }
+          ],
+          "size": 16
+        },
         "VnThreeBandToneDesc": {
           "alignment": 8,
           "fields": [
@@ -20441,6 +20783,15 @@
               48
             ],
             "currentSize": 48,
+            "mode": "exact-current",
+            "source": "default",
+            "unknownSize": "reject"
+          },
+          "VnByteSourceDescV1": {
+            "acceptedSizes": [
+              40
+            ],
+            "currentSize": 40,
             "mode": "exact-current",
             "source": "default",
             "unknownSize": "reject"
@@ -21388,6 +21739,15 @@
             "source": "default",
             "unknownSize": "reject"
           },
+          "VnReadCancellationViewV1": {
+            "acceptedSizes": [
+              24
+            ],
+            "currentSize": 24,
+            "mode": "exact-current",
+            "source": "default",
+            "unknownSize": "reject"
+          },
           "VnRemoteConfig": {
             "acceptedSizes": [
               56
@@ -21514,6 +21874,15 @@
             "missingFields": "caller-tail-untouched",
             "mode": "exact-discrete-prefix",
             "source": "explicit",
+            "unknownSize": "reject"
+          },
+          "VnStreamSourceInfoV1": {
+            "acceptedSizes": [
+              16
+            ],
+            "currentSize": 16,
+            "mode": "exact-current",
+            "source": "default",
             "unknownSize": "reject"
           },
           "VnThreeBandToneDesc": {
@@ -23418,7 +23787,10 @@
         "kTraceCallApplyBusTopology": 91,
         "kTraceCallApplyVoiceBinding": 63,
         "kTraceCallAttachBinding": 61,
+        "kTraceCallBeginStreamFile": 141,
+        "kTraceCallBeginStreamSource": 140,
         "kTraceCallBindVoiceAttenuation": 14,
+        "kTraceCallCancelStreamSource": 142,
         "kTraceCallCaptureCompressorRuntimeInfo": 86,
         "kTraceCallCaptureEffectCapabilities": 77,
         "kTraceCallCaptureEffectDynamicCapabilities": 83,
@@ -23435,6 +23807,7 @@
         "kTraceCallClearVoiceBinding": 64,
         "kTraceCallClearVoiceEffect": 20,
         "kTraceCallClearVoiceSend": 40,
+        "kTraceCallCommitStreamSource": 143,
         "kTraceCallCommitVoiceStart": 94,
         "kTraceCallConnectBusSend": 36,
         "kTraceCallCreateBus": 5,
@@ -23596,11 +23969,11 @@
       "formatVersion": 7
     }
   },
-  "contractSha256": "304d74000229200751fd2672f1617b82459243f5828d39008d95107c43972ec5",
+  "contractSha256": "8a0e326b235ba37827269eb02d826fcde5da49492b18927669d294bdf252f02c",
   "generatedFiles": {
     "HarkenEngine/Source/Tooling/Binding/generated/harken_binding_abi_pin.g.h": {
-      "sha256": "f81ae314cd8cdc4b0525fe7aede4cb7ee98687140bbaa76751ab6c2d85988536",
-      "size": 323615
+      "sha256": "4b0af7ddf7c966241b99c2e3664a380db6e733e7717d384f13a09fe32370dd4b",
+      "size": 327267
     },
     "HarkenEngine/Tool/Remote/generated/harken_wire_desc_meta.h": {
       "sha256": "d02bee48f10bd551a2887f963fd26ee9e0ba21e66108f186d7e6af6941ee0567",
@@ -23615,61 +23988,61 @@
       "size": 5406
     },
     "HarkenEngine/Tool/Remote/generated/harken_wire_layout_asserts.h": {
-      "sha256": "cfbad2f42893250cf849cdc18ebd7da17f7cd318580a3ae42cf592801cbf6100",
-      "size": 237774
+      "sha256": "7c1fab2cd19d2744a5643ce119946a048281c8602b248b6a761aca51bfb14df2",
+      "size": 240008
     },
     "HarkenEngine/Tool/Remote/harken_wire.py": {
-      "sha256": "8b44b6f595e1b519c8596a667836b043c77aaa0f89853266fe00da56f434b9fc",
-      "size": 251327
+      "sha256": "04b03757c05ddbcfa813f04de8aff2d0d3e6510a97dc79aa2cc47c13a78a5cba",
+      "size": 257139
     },
     "HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenAbi.g.cs": {
-      "sha256": "8d1fc46e6408bc4780815e09f4a8af760868ef46e0a40b44992f332fe61b3d61",
-      "size": 130547
+      "sha256": "78f29dd8e1d509d11409cd0bac940f6a97d01b2963ca2328238253eeb63c5575",
+      "size": 132387
     },
     "HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenNative.g.cs": {
-      "sha256": "97b97b7203d3255d7bb68dd27b97cbeae121359779b88ce3e81664028f78f136",
-      "size": 30219
+      "sha256": "ee867632ab7a1a1102ab427150e77487dec454f87a566405320861b276fdb969",
+      "size": 31330
     },
     "HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs": {
-      "sha256": "86f7ef4aadd403f49f0535dc71b45feb88e67558f290b68a33fae470d3898ce5",
-      "size": 68876
+      "sha256": "24dfa79def82f8d0b969271ce0a513d75853e51c6a2a10fdf56300d00f85b5ea",
+      "size": 70415
     }
   },
   "kind": "harken-contract-suite-manifest",
   "schemaVersion": 1,
   "sectionSha256": {
-    "nativeAbiSha256": "99b91fffecfcd99a3d923ba987c16dce2c1177c3ae74e034af685f11ee8f0490",
+    "nativeAbiSha256": "43d4e8fa8e21fe536ff8de83995a34f4ba7517cf237f4064a6bc39512400128c",
     "remoteWireSha256": "d99304d71d24436e14a34fd990b3ded5e6ddd7bca6c13dc2065a9709d53577d3",
-    "traceFormatSha256": "a960db29fac1a574649b9fb538491e91851ad7f064ee4efbe607602355dea5a7"
+    "traceFormatSha256": "5a48f4b2591eb3c9ade95bc3621d6002cd999290816aede8436b8a4cfdf8e3fd"
   },
   "sourceFiles": {
     "HarkenEngine/Source/Runtime/api/include/harken/Harken.h": {
-      "sha256": "2040dc56a1f13b981e7997c1ae4eab6e6a22e5981c3f579ea64da2dbe382da4d",
-      "size": 236661
+      "sha256": "486c07175c8489f43df0f622f67ffda882a83e7d7b5a02617e23c64149ee2a6b",
+      "size": 239978
     },
     "HarkenEngine/Source/Runtime/api/include/harken/ObjectId.h": {
       "sha256": "90b6f66ad515c5e411564f1e5981b65bec2e461fabbdee6c57aa86b26b9a300d",
       "size": 4323
     },
     "HarkenEngine/Source/Runtime/api/src/TraceFormat.h": {
-      "sha256": "8d2fd316812eff366bef7be21b4ef5a06b4140cd98fda75fbcd650a30b5b56b9",
-      "size": 19602
+      "sha256": "8d2d412c4919c4230a8fefe07ec77be7c673d5a2c62015ea01558e10686b7a9d",
+      "size": 19843
     },
     "HarkenEngine/Source/Tooling/Abi/gen_abi_manifest.py": {
       "sha256": "6b232dd009d7bbbacf38c502d82f016b4f11a8dcc69e257f01bac2a87a05d8cc",
       "size": 56134
     },
     "HarkenEngine/Source/Tooling/Binding/gen_binding.py": {
-      "sha256": "3fa1acd60ced880be874ac14a4bdeb762c578da1bf5e5175b7e6a65bcd5bb52b",
-      "size": 38974
+      "sha256": "8697033865936fcde1fdfc1ef9598d53dcc89e44e805e674c26065ed3c6ac33b",
+      "size": 39079
     },
     "HarkenEngine/Source/Tooling/Remote/wire/gen_wire.py": {
       "sha256": "f156dad54894eaa0977a721f237d333593e121f98a1d2053d5e245b5e7f104f8",
       "size": 30774
     },
     "HarkenEngine/Source/Tooling/Remote/wire/harken_wire_table.json": {
-      "sha256": "43bb182ab4f14ac628e9c577f349df3ac50e3bd529bc6a28f5731ea71a558450",
-      "size": 250082
+      "sha256": "98964f52308005ab85cf70a49a4858c49be5f846b734e763eb3f9b38ac31116a",
+      "size": 255894
     }
   }
 }

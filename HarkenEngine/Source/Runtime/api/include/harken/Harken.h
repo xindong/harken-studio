@@ -2494,6 +2494,73 @@ VnResult Vn_ClearVoiceEffect(VnVoiceHandle handle, uint32_t slot);
 VnResult Vn_SetVoiceEffectParam(VnVoiceHandle handle, uint32_t slot,
                                 uint32_t paramIndex, float value);
 
+/* Nonblocking source preparation. All entry points use the externally
+ * synchronized engine control thread; callbacks must not call Runtime or host
+ * main-thread APIs. Ready is validated but unpublished, not playback prebuffer.
+ * Descriptor/info/view structSize must equal the exact V1 size. */
+typedef uint64_t VnStreamSourceRequest;
+#define VN_STREAM_SOURCE_REGISTER 0u
+#define VN_STREAM_SOURCE_REPLACE 1u
+#define VN_STREAM_SOURCE_PREPARING 1u
+#define VN_STREAM_SOURCE_READY 2u
+#define VN_STREAM_SOURCE_FAILED 3u
+#define VN_BYTE_READ_OK 0
+#define VN_BYTE_READ_CANCELLED 1
+#define VN_BYTE_READ_IO_ERROR 2
+
+typedef uint32_t (*VnReadIsCancelledFn)(const void* context);
+typedef struct VnReadCancellationViewV1 {
+    uint32_t structSize;
+    uint32_t reserved0;
+    const void* context;
+    VnReadIsCancelledFn isCancelled;
+} VnReadCancellationViewV1;
+
+/* Calls may overlap on the same source; use positional reads, no shared seek
+ * cursor. Destination and cancellation view are borrowed only until return.
+ * Poll on entry and around bounded waits. Never throw across this C ABI.
+ * Positive short reads are accepted; zero progress is an I/O error. */
+typedef int32_t (*VnByteSourceReadAtFn)(void* userData, uint64_t offset,
+    void* destination, uint32_t count, uint32_t* outRead,
+    const VnReadCancellationViewV1* cancellation);
+typedef void (*VnByteSourceReleaseFn)(void* userData);
+typedef struct VnByteSourceDescV1 {
+    uint32_t structSize;
+    uint32_t flags;
+    uint64_t byteLength;
+    void* userData;
+    VnByteSourceReadAtFn readAt;
+    VnByteSourceReleaseFn release;
+} VnByteSourceDescV1;
+typedef struct VnStreamSourceInfoV1 {
+    uint32_t structSize;
+    uint32_t state;
+    VnResult result;
+    uint32_t reserved0;
+} VnStreamSourceInfoV1;
+
+/* Begin zeroes outRequest on refusal and invokes no provider callback,
+ * including Release. VN_OK transfers one immutable lease to native; native
+ * owes exactly one Release after all reads/owners drain, including failure,
+ * Cancel and Term. Release runs outside locks off the control/render stack.
+ * Callbacks may run before Begin returns. Flags must be zero, readAt/release
+ * required. BeginFile copies the UTF-8 path and opens it on the I/O executor.
+ * These calls do not wait for I/O, validation or cleanup. */
+VnResult Vn_BeginStreamSource(VnSoundId soundId, uint32_t mode,
+    const VnByteSourceDescV1* source, VnStreamSourceRequest* outRequest);
+VnResult Vn_BeginStreamFile(VnSoundId soundId, uint32_t mode,
+    const char* utf8Path, VnStreamSourceRequest* outRequest);
+/* Query/Cancel remain usable after stream-worker failure. Failed requests
+ * retain their error and lease until Cancel. Successful Commit consumes the
+ * request; Preparing returns VN_BACKPRESSURE. Transient Commit refusal keeps
+ * Ready for retry; identity conflicts become Failed without changing old data.
+ * Cancel discards the handle immediately, but does not prove physical release.
+ * Repeated/old-engine handles return VN_STALE_HANDLE. Term drains all leases;
+ * a nonreturning callback can delay shutdown and cannot be forcibly reclaimed. */
+VnResult Vn_QueryStreamSource(VnStreamSourceRequest request, VnStreamSourceInfoV1* outInfo);
+VnResult Vn_CancelStreamSource(VnStreamSourceRequest request);
+VnResult Vn_CommitStreamSource(VnStreamSourceRequest request);
+
 /* Registers a .stream file for streamed playback under a sound id. The
  * path is UTF-8 regardless of the process codepage. The file is opened and
  * validated (header sanity, TOC + chunk-checksum-table checksum) by the

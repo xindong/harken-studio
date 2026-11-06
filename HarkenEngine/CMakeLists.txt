@@ -95,6 +95,8 @@ set(HARKEN_RUNTIME_SOURCES
     ${HARKEN_RUNTIME_DIR}/media/src/PackLogicImage.cpp
     ${HARKEN_RUNTIME_DIR}/media/src/PackTable.cpp
     ${HARKEN_RUNTIME_DIR}/media/src/StreamManager.cpp
+    ${HARKEN_RUNTIME_DIR}/media/src/StreamByteSource.cpp
+    ${HARKEN_RUNTIME_DIR}/media/src/StreamManagerIo.cpp
     ${HARKEN_RUNTIME_DIR}/param/src/BindingTable.cpp
     ${HARKEN_RUNTIME_DIR}/param/src/BusTargetStore.cpp
     ${HARKEN_RUNTIME_DIR}/param/src/Curve.cpp

@@ -317,7 +317,8 @@ def emit_types(table, policy):
             else:
                 cty = cs_scalar(p["kind"])
             ps.append("%s %s" % (cty, cs_identifier(p["name"])))
-        return_cs = cbdef.get("returnType", "void")
+        return_cs = {"int32_t": "int", "uint32_t": "uint"}.get(
+            cbdef.get("returnType"), cbdef.get("returnType", "void"))
         lines.append("    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]")
         lines.append("    %s delegate %s %s(%s);" % (managed_access(policy, "types", cbname), return_cs, cbname, ", ".join(ps)))
         lines.append("")
@@ -430,7 +431,7 @@ def validate_params(table):
         if cbname.startswith("_"):
             continue
         return_type = cbdef.get("returnType", "void")
-        if return_type not in ("void", "VnResult"):
+        if return_type not in ("void", "VnResult", "int32_t", "uint32_t"):
             raise ValueError("callback %s has unsupported returnType %r"
                              % (cbname, return_type))
         for p in cbdef.get("params", []):

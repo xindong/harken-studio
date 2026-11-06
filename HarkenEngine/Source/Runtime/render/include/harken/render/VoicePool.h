@@ -185,7 +185,8 @@ public:
                         const StreamParkTokenRef* resumeToken = nullptr,
                         float outputBusVolumeDb = 0.0f,
                         bool prepared = false,
-                        float spatializationMix = 1.0f);
+                        float spatializationMix = 1.0f,
+                        ExactSourcePhase sourcePhase = {});
 
     bool BindStreamRingToken(VnVoiceHandle handle, StreamRing* ring,
                              std::uint64_t ringToken) noexcept;

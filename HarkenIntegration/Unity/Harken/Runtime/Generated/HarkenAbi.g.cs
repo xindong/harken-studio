@@ -1130,6 +1130,23 @@ namespace Harken
             Off(f, "VnMonitorExecutionFactV3", "fact", Marshal.OffsetOf<VnMonitorExecutionFactV3>("fact"), 0);
             Off(f, "VnMonitorExecutionFactV3", "activity", Marshal.OffsetOf<VnMonitorExecutionFactV3>("activity"), 432);
             Off(f, "VnMonitorExecutionFactV3", "playable", Marshal.OffsetOf<VnMonitorExecutionFactV3>("playable"), 496);
+            Size(f, "VnReadCancellationViewV1", Marshal.SizeOf<VnReadCancellationViewV1>(), 24);
+            Off(f, "VnReadCancellationViewV1", "structSize", Marshal.OffsetOf<VnReadCancellationViewV1>("structSize"), 0);
+            Off(f, "VnReadCancellationViewV1", "reserved0", Marshal.OffsetOf<VnReadCancellationViewV1>("reserved0"), 4);
+            Off(f, "VnReadCancellationViewV1", "context", Marshal.OffsetOf<VnReadCancellationViewV1>("context"), 8);
+            Off(f, "VnReadCancellationViewV1", "isCancelled", Marshal.OffsetOf<VnReadCancellationViewV1>("isCancelled"), 16);
+            Size(f, "VnByteSourceDescV1", Marshal.SizeOf<VnByteSourceDescV1>(), 40);
+            Off(f, "VnByteSourceDescV1", "structSize", Marshal.OffsetOf<VnByteSourceDescV1>("structSize"), 0);
+            Off(f, "VnByteSourceDescV1", "flags", Marshal.OffsetOf<VnByteSourceDescV1>("flags"), 4);
+            Off(f, "VnByteSourceDescV1", "byteLength", Marshal.OffsetOf<VnByteSourceDescV1>("byteLength"), 8);
+            Off(f, "VnByteSourceDescV1", "userData", Marshal.OffsetOf<VnByteSourceDescV1>("userData"), 16);
+            Off(f, "VnByteSourceDescV1", "readAt", Marshal.OffsetOf<VnByteSourceDescV1>("readAt"), 24);
+            Off(f, "VnByteSourceDescV1", "release", Marshal.OffsetOf<VnByteSourceDescV1>("release"), 32);
+            Size(f, "VnStreamSourceInfoV1", Marshal.SizeOf<VnStreamSourceInfoV1>(), 16);
+            Off(f, "VnStreamSourceInfoV1", "structSize", Marshal.OffsetOf<VnStreamSourceInfoV1>("structSize"), 0);
+            Off(f, "VnStreamSourceInfoV1", "state", Marshal.OffsetOf<VnStreamSourceInfoV1>("state"), 4);
+            Off(f, "VnStreamSourceInfoV1", "result", Marshal.OffsetOf<VnStreamSourceInfoV1>("result"), 8);
+            Off(f, "VnStreamSourceInfoV1", "reserved0", Marshal.OffsetOf<VnStreamSourceInfoV1>("reserved0"), 12);
             return f;
         }
 

@@ -190,6 +190,15 @@ VnVoiceHandle MakeHandle(std::uint32_t slot, std::uint32_t generation) {
     return (static_cast<std::uint64_t>(generation) << 32) | slot;
 }
 
+void InitializeFreshSourcePhase(ResamplerView& resampler, ExactSourcePhase phase) noexcept {
+    // Fresh Linear playback needs the selected frame and its next neighbour,
+    // supplied by the normal resident or stream feeder after Reset.
+    resampler.phaseHigh = phase.high;
+    resampler.phaseLow = phase.low;
+    resampler.readFraction = SourcePhaseFraction(phase);
+    resampler.readPos = static_cast<double>(kResampleHistoryPad) + resampler.readFraction;
+}
+
 // The constant-gain stereo balance pair for a pan scalar. Unlike the equal-power
 // pair carried on the pan command line — which lands the center at 1/sqrt(2) on
 // both sides, a 3 dB dip — this keeps the center at unity: a full-left pan mutes
@@ -419,13 +428,7 @@ VnResult VoicePool::Play(const PCMView& view, float volumeDb,
                                 resampleProfile, m_multirateTables,
                                 resampleProfile == ResampleProfile::Professional44148
                                     ? &m_professionalStorage[slotIndex] : nullptr);
-    // Timeline crops use the same Linear source coordinates as uninterrupted
-    // playback. Its only neighbour is supplied by the normal PCM/loop feeder.
-    slot.render.resampler.phaseHigh = sourcePhase.high;
-    slot.render.resampler.phaseLow = sourcePhase.low;
-    slot.render.resampler.readFraction = SourcePhaseFraction(sourcePhase);
-    slot.render.resampler.readPos = static_cast<double>(kResampleHistoryPad) +
-        slot.render.resampler.readFraction;
+    InitializeFreshSourcePhase(slot.render.resampler, sourcePhase);
 
     if (view.useCount != nullptr) {
         view.useCount->fetch_add(1, std::memory_order_relaxed);
@@ -466,7 +469,11 @@ VnResult VoicePool::PlayStream(StreamRing* ring, std::uint32_t channelCount,
                                const StreamParkTokenRef* resumeToken,
                                float outputBusVolumeDb,
                                bool prepared,
-                               float spatializationMix) {
+                               float spatializationMix,
+                               ExactSourcePhase sourcePhase) {
+    if ((sourcePhase.high != 0 || sourcePhase.low != 0) &&
+        (resumeToken != nullptr || resampleProfile != ResampleProfile::LegacyCompatibility))
+        return VN_INVALID_ARG;
     float linearGain = 0.0f;
     float outputLinearGain = 0.0f;
     if (!TryVolumeGainFromDb(volumeDb, &linearGain) ||
@@ -607,6 +614,7 @@ VnResult VoicePool::PlayStream(StreamRing* ring, std::uint32_t channelCount,
             combined, m_tables, resampleProfile, m_multirateTables,
             resampleProfile == ResampleProfile::Professional44148
                 ? &m_professionalStorage[slotIndex] : nullptr);
+        InitializeFreshSourcePhase(slot.render.resampler, sourcePhase);
     }
 
     if (!prepared) {
