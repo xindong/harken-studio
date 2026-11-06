@@ -17863,6 +17863,7 @@ bool AcceptedVariableControlAlive(
     row.controlLifecycle = harken::PlayableControlLifecycle::FailingSourceActive;
     row.controlReason = harken::PlayableControlReason::StartRefused;
     row.phase = harken::EnginePlayableStartPhase::Cancelling;
+    WakePlayableServiceTree(engine, row);
     return false;
 }
 
@@ -41901,6 +41902,7 @@ engine.runtimeRecreateRequired = true;
         row.controlReason = (lease.pendingReasonBits & harken::AudioSliceReasonDeadline) != 0
             ? harken::PlayableControlReason::Deadline : harken::PlayableControlReason::StartRefused;
         row.pendingFutureCount = 0;
+        WakePlayableServiceTree(engine, row);
         return;
     }
 }
@@ -54912,6 +54914,54 @@ bool ServiceStartedScheduleSoundWithoutPendingWork(harken::Engine& engine,
     return ServiceStartedSingleSound(engine, row, &record);
 }
 
+// VC membership is only checked when a Sound first becomes eligible to sleep.
+#if defined(_MSC_VER)
+__declspec(noinline)
+#elif defined(__GNUC__) || defined(__clang__)
+__attribute__((noinline))
+#endif
+bool IsCurrentVariableScheduleChild(harken::Engine& engine,
+    harken::EnginePlayableServiceRow& parent,
+    const harken::EnginePlayableServiceRow& pathChild) noexcept {
+    const auto owner = engine.playableInstances.Classify(parent.ownerInstance);
+    const auto child = engine.playableInstances.Classify(pathChild.ownerInstance);
+    harken::ContainerPlaybackRow playback{};
+    harken::VariableControlInstanceSnapshot control{};
+    if (parent.root.kind != harken::PlayableKindV1::Container ||
+        !parent.InvocationValid() || !parent.HasFeatureArrays() ||
+        parent.ownerInstance != parent.rootInstance || !owner.live ||
+        owner.kind != harken::PlayableKind::Container || owner.scheduleEpoch != parent.ownerEpoch ||
+        !engine.containerPlayback.Capture(parent.ownerInstance, &playback) ||
+        playback.expectedScheduleEpoch != parent.ownerEpoch ||
+        playback.mode != static_cast<std::uint8_t>(harken::ContainerModeV1::VariableControl) ||
+        playback.phase != harken::ContainerPlaybackPhase::Active ||
+        !engine.variableControlInstances.Capture(parent.variableControlInstance, &control) ||
+        control.rootInstance != parent.rootInstance || control.world != parent.Invocation().worldGeneration ||
+        parent.variableControlAcceptedEpoch == 0 ||
+        parent.variableControlAcceptedEpoch != owner.scheduleEpoch ||
+        control.containerStableId != parent.root.stableId || control.programSemanticFingerprint == 0 ||
+        (parent.root.expectedProgramSemanticFingerprint != 0 &&
+         parent.root.expectedProgramSemanticFingerprint != control.programSemanticFingerprint) ||
+        !child.live || child.scheduleEpoch != pathChild.ownerEpoch || child.parent != parent.ownerInstance ||
+        parent.variableControlChildCount > parent.variableControlChildInstances.size() ||
+        parent.variableControlChildCount > parent.variableControlChildEpochs.size() ||
+        parent.variableControlChildCount > parent.variableControlChildKinds.size()) return false;
+    std::uint32_t matches = 0;
+    for (std::uint32_t index = 0; index < parent.variableControlChildCount; ++index) {
+        if (parent.variableControlChildInstances[index] != pathChild.ownerInstance ||
+            parent.variableControlChildEpochs[index] != pathChild.ownerEpoch) continue;
+        if (parent.variableControlChildKinds[index] != child.kind) return false;
+        ++matches;
+    }
+    const auto* current = FindDirectScheduleAggregateChild(parent,
+        pathChild.ownerInstance, pathChild.ownerEpoch);
+    if (matches != 1 || current == nullptr || !current->lifecycleOwned ||
+        current->logicalComplete || current->resourcesReleased || current->pendingEntry ||
+        !harken::Engine::SameSelectionServiceReference(current->service, PlayableServiceReference(pathChild)))
+        return false;
+    return true;
+}
+
 // Called only after the existing stable Sound path succeeded. Parents keep
 // their original per-Update publication, clip and materialization responsibilities.
 bool CanSuspendStartedScheduleSound(harken::Engine& engine,
@@ -54920,10 +54970,9 @@ bool CanSuspendStartedScheduleSound(harken::Engine& engine,
     if (!ancestor.Valid()) return false;
     const auto* pathChild = &row;
     for (std::size_t depth = 0; ancestor.Valid() && depth < engine.playableServices.size(); ++depth) {
-        const auto* parent = engine.ResolvePlayableService(ancestor);
+        auto* parent = engine.ResolvePlayableService(ancestor);
         if (parent == nullptr || parent->invocation != row.invocation ||
             parent->invocationGeneration != row.invocationGeneration ||
-            parent->variableControlInstance.Valid() ||
             parent->phase != harken::EnginePlayableStartPhase::Started ||
             parent->controlLifecycle != harken::PlayableControlLifecycle::Active ||
             parent->controlReason != harken::PlayableControlReason::None ||
@@ -54948,6 +54997,8 @@ bool CanSuspendStartedScheduleSound(harken::Engine& engine,
                 playback.expectedScheduleEpoch != parent->ownerEpoch ||
                 playback.activeChild != pathChild->ownerInstance || playback.activeChildEpoch != pathChild->ownerEpoch)
                 return false;
+        } else if (parent->variableControlInstance.Valid()) {
+            if (!IsCurrentVariableScheduleChild(engine, *parent, *pathChild)) return false;
         } else if ((parent->root.kind != harken::PlayableKindV1::Track &&
                     parent->root.kind != harken::PlayableKindV1::Segment) ||
                    parent->scheduleAggregate == nullptr || !parent->scheduleAggregate->committed ||
@@ -55389,6 +55440,7 @@ void ServicePlayableStarts(harken::Engine& engine,
                 row.controlReason = reason;
                 row.controlLifecycle = harken::PlayableControlLifecycle::Cancelling;
                 row.phase = harken::EnginePlayableStartPhase::Cancelling;
+                if (row.variableControlInstance.Valid()) WakePlayableServiceTree(engine, row);
             }
         }
         if (row.ordinaryStartTransaction.Valid() &&
@@ -58692,6 +58744,7 @@ engine.runtimeRecreateRequired = true;
             row.controlLifecycle = harken::PlayableControlLifecycle::FailingSourceActive;
                     row.controlReason = harken::PlayableControlReason::StartRefused;
             row.phase = harken::EnginePlayableStartPhase::Cancelling;
+            if (row.variableControlInstance.Valid()) WakePlayableServiceTree(engine, row);
             continue;
         }
         bool hasDynamicVariableMember = false;
@@ -58722,6 +58775,7 @@ engine.runtimeRecreateRequired = true;
                     row.controlReason =
                     harken::PlayableControlReason::StartRefused;
                 row.phase = harken::EnginePlayableStartPhase::Cancelling;
+                if (row.variableControlInstance.Valid()) WakePlayableServiceTree(engine, row);
                 continue;
             }
             const auto memberPresent = [&](std::uint32_t index) {
@@ -58747,6 +58801,7 @@ engine.runtimeRecreateRequired = true;
                     row.controlLifecycle = harken::PlayableControlLifecycle::FailingSourceActive;
                     row.controlReason = harken::PlayableControlReason::ContentRevision;
                     row.phase = harken::EnginePlayableStartPhase::Cancelling;
+                    WakePlayableServiceTree(engine, row);
                     continue;
                 }
                 const bool clipDeadlineReached = !deadline.Empty() && nowFrame >= deadline.frame;
@@ -79769,9 +79824,15 @@ engine.runtimeRecreateRequired = true;
     }
 
     for (EnginePlayableServiceRow& row : engine.playableServices) {
-        if (row.phase == EnginePlayableStartPhase::Free ||
-            ((row.partitionRetiring || row.phase == EnginePlayableStartPhase::Cancelling) &&
-             !engine.playableInstances.Classify(row.rootInstance).live)) {
+        if (row.phase == EnginePlayableStartPhase::Free) continue;
+        const bool terminalRetirement = row.terminalObserved &&
+            (row.controlLifecycle == PlayableControlLifecycle::AudibleRetiring ||
+             row.controlLifecycle == PlayableControlLifecycle::FailingAudibleRetiring);
+        if ((row.partitionRetiring || row.phase == EnginePlayableStartPhase::Cancelling || terminalRetirement) &&
+            !engine.playableInstances.Classify(row.rootInstance).live) {
+            // Native retirement can precede the final Source/storage release.
+            // Let the original service finish; a dead root cannot accept another reset.
+            engine.SetPlayableServiceNeedsWork(row, true);
             continue;
         }
         const PlayableControlStatus status = BeginPlayableCancellation(

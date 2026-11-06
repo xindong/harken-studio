@@ -19959,7 +19959,11 @@ TEST(PlayableStart, MusicTransitionEntryAndNaturalEndUseActualBodyCount) {
     for (const auto count : {1u, 3u, 0u})
     for (const auto workers : {0u, 2u})
     for (const bool targetFadeEnabled : {false, true})
-    for (const bool stopNativePending : {false, true}) {
+    for (const bool stopNativePending : {false, true})
+    for (const unsigned lifecycleCase : {0u, 1u, 2u}) {
+        if (lifecycleCase != 0 && (pack || mode != 5 || wrapperCase != 0 || count != 3 ||
+            targetFadeEnabled || stopNativePending)) continue;
+        SCOPED_TRACE(lifecycleCase);
         if (stopNativePending && (pack || mode != 5 || wrapperCase != 0 || count != 3 || targetFadeEnabled)) continue;
         SCOPED_TRACE(stopNativePending);
         const bool repeatedWrapper = wrapperCase == 5;
@@ -20267,6 +20271,12 @@ TEST(PlayableStart, MusicTransitionEntryAndNaturalEndUseActualBodyCount) {
         }
         if (pack) ASSERT_EQ(VN_OK, packStatus);
         else ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(*engine, install).status);
+        for (unsigned cycle = 0; cycle < (lifecycleCase == 0 ? 1u : 2u); ++cycle) {
+        SCOPED_TRACE(cycle);
+        if (lifecycleCase != 0) {
+            ASSERT_EQ(VN_OK, Vn_SetValue(variable.variableId, 3.0f));
+            harkentest::AdvanceVariableWrite(engine);
+        }
         harken::PlayableStartRequest request{};
         request.root = control.Root();
         harken::PlayableStartResult started{};
@@ -20308,6 +20318,68 @@ TEST(PlayableStart, MusicTransitionEntryAndNaturalEndUseActualBodyCount) {
             observeSourceStarts();
             engine->nullBackend.Pump(1);
         }
+        harken::EnginePlayableServiceReference sleepingSourceService{};
+        harken::SourceTerminalToken sleepingSourceToken{};
+        const bool checkSleepingSource = !pack && wrapperCase == 0 && count == 3 &&
+            !targetFadeEnabled && !stopNativePending &&
+            (mode == 5 || mode == 26);
+        const auto isDirty = [&](const harken::EnginePlayableServiceRow& service) {
+            const auto identity = engine->CapturePlayableServiceWorkIdentity(service.identity.slot);
+            auto cursor = service.identity.slot;
+            return identity == engine->playableServiceWork.Next(harken::RuntimeActivitySet::Dirty,
+                &cursor, [&](std::uint32_t slot) noexcept {
+                    return engine->CapturePlayableServiceWorkIdentity(slot);
+                });
+        };
+        const auto captureSleepingSource = [&] {
+            sleepingSourceService = {};
+            sleepingSourceToken = {};
+            unsigned sleepingSources = 0;
+            for (const auto& leaf : engine->playableServices) {
+                if (leaf.phase != harken::EnginePlayableStartPhase::Started ||
+                    leaf.root.kind != harken::PlayableKindV1::Sound ||
+                    leaf.controlLifecycle != harken::PlayableControlLifecycle::Active ||
+                    leaf.controlReason != harken::PlayableControlReason::None ||
+                    leaf.invocation != controller->invocation ||
+                    leaf.invocationGeneration != controller->invocationGeneration) continue;
+                const auto native = engine->playableInstances.Classify(leaf.ownerInstance);
+                if (!native.live || native.terminalOutcome.kind != harken::PlayableTerminalKind::None) continue;
+                auto parent = leaf.parentService;
+                bool current = false;
+                for (std::size_t depth = 0; parent.Valid() && depth < engine->playableServices.size(); ++depth) {
+                    const auto* ancestor = engine->ResolvePlayableService(parent);
+                    ASSERT_NE(nullptr, ancestor);
+                    if (ancestor->parentService.owner == controller->ownerInstance) {
+                        current = ancestor->ownerInstance == controller->variableControlChildInstances[0] &&
+                            ancestor->ownerEpoch == controller->variableControlChildEpochs[0];
+                        ASSERT_NE(nullptr, ancestor->scheduleAggregate);
+                        ASSERT_NE(nullptr, ancestor->scheduleAggregate->music);
+                        break;
+                    }
+                    parent = ancestor->parentService;
+                }
+                if (!current) continue;
+                const auto token = engine->ReadPlayableMember(CurrentMemberSlot(*engine, leaf.scheduleStorageBase)).completion.source;
+                const auto* source = engine->sourceTerminals.Resolve(token);
+                ASSERT_NE(nullptr, source);
+                EXPECT_EQ(&leaf, engine->ResolveSourceResourceOwner(source->resourceOwner));
+                EXPECT_EQ(leaf.activeLeafInstance, source->leaf);
+                EXPECT_EQ(leaf.ownerEpoch, source->acceptedEpoch);
+                EXPECT_EQ(leaf.rootInstance, source->controller);
+                EXPECT_TRUE(engine->CapturePlayableServiceWorkIdentity(leaf.identity.slot).Valid());
+                EXPECT_FALSE(isDirty(leaf));
+                sleepingSourceService = {leaf.identity, leaf.ownerInstance, leaf.ownerEpoch, leaf.invocationGeneration};
+                sleepingSourceToken = token;
+                ++sleepingSources;
+            }
+            ASSERT_GT(sleepingSources, 0u);
+            EXPECT_TRUE(isDirty(*controller));
+        };
+        if (checkSleepingSource) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            captureSleepingSource();
+            ASSERT_TRUE(sleepingSourceService.Valid());
+        }
         SCOPED_TRACE(::testing::Message() << "sourceStart=" << originalStart
             << " request=" << engine->mixer.BlocksRendered() * 64u
             << " cutoff=" << engine->timelinePool.PublishCutoffFrame()
@@ -20342,10 +20414,81 @@ TEST(PlayableStart, MusicTransitionEntryAndNaturalEndUseActualBodyCount) {
             ASSERT_LT(engine->mixer.BlocksRendered() * 64u + 256u, targetStart - fadeFrames);
             ASSERT_EQ(VN_OK, Vn_SetValue(variable.variableId, 3.0f));
         }
-        const bool teardown = (mode >= 11 && mode < 15) || stopNativePending;
+        const bool teardown = (mode >= 11 && mode < 15) || stopNativePending || lifecycleCase != 0;
         const bool afterPrelude = mode == 12 || mode == 14;
         const auto transitionDecision = controller->VariablePayload().variableControlDiscreteRetargetDecision;
         unsigned teardownBlock = UINT32_MAX;
+        std::uint64_t resetFrame = 0;
+        auto resetStatus = harken::RuntimeTransportResetStatus::Backpressure;
+        std::vector<harken::TimelineArmToken> rejectedTargetArms;
+        bool rejectedTargetStarted = false;
+        const auto observeRejectedTarget = [&] {
+            for (const auto arm : rejectedTargetArms) {
+                harken::TimelineArmObservation observation{};
+                if (engine->timelineArms.Observe(arm, &observation))
+                    rejectedTargetStarted = rejectedTargetStarted || observation.startedBlockSequence != 0;
+            }
+        };
+        if (lifecycleCase != 0) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            captureSleepingSource();
+            ASSERT_TRUE(sleepingSourceService.Valid());
+            auto* oldLeaf = engine->ResolvePlayableService(sleepingSourceService);
+            ASSERT_NE(nullptr, oldLeaf);
+            ASSERT_NE(nullptr, engine->sourceTerminals.Resolve(sleepingSourceToken));
+            ASSERT_FALSE(isDirty(*oldLeaf));
+            if (lifecycleCase == 1) {
+                harken::DecisionCommittedSnapshot decision{};
+                ASSERT_TRUE(engine->decisions.CaptureCommitted(transitionDecision, &decision));
+                ASSERT_EQ(harken::AudioGroupState::Pending, decision.audioState);
+                for (const auto& leaf : engine->playableServices) {
+                    if (leaf.root.kind != harken::PlayableKindV1::Sound || !leaf.arm.Valid() ||
+                        leaf.invocation != controller->invocation ||
+                        leaf.invocationGeneration != controller->invocationGeneration) continue;
+                    auto parent = leaf.parentService;
+                    for (std::size_t depth = 0; parent.Valid() && depth < engine->playableServices.size(); ++depth) {
+                        const auto* ancestor = engine->ResolvePlayableService(parent);
+                        ASSERT_NE(nullptr, ancestor);
+                        if (ancestor->parentService.owner == controller->ownerInstance) {
+                            if (ancestor->ownerInstance != controller->variableControlChildInstances[0])
+                                rejectedTargetArms.push_back(leaf.arm);
+                            break;
+                        }
+                        parent = ancestor->parentService;
+                    }
+                }
+                ASSERT_FALSE(rejectedTargetArms.empty());
+                observeRejectedTarget();
+                ASSERT_FALSE(rejectedTargetStarted);
+                harken::Plan03PageGroupView group{};
+                ASSERT_TRUE(engine->timelinePool.ResolvePlan03GroupSliceProducer(
+                    controller->VariableControlDiscreteRetargetSlice(), &group));
+                ASSERT_NE(nullptr, group.frontier);
+                ASSERT_EQ(harken::FrontierGroupRole::Future, group.frontier->role);
+                const auto entry = controller->frontierLifetimeEntry;
+                ASSERT_EQ(entry, group.frontier->entry);
+                ASSERT_EQ(transitionDecision.slot, group.identity.decision.slot);
+                ASSERT_EQ(transitionDecision.generation, group.identity.decision.generation);
+                ASSERT_EQ(controller->ownerInstance, group.frontier->operation.owner.child);
+                ASSERT_EQ(controller->ownerEpoch, group.frontier->operation.owner.childEpoch);
+                ASSERT_EQ(harken::AudioSliceInvalidateDisposition::InvalidatedReady,
+                    group.lease->Invalidate(harken::AudioSliceInvalidateReason::Identity));
+                ASSERT_EQ(VN_OK, Vn_Update());
+                const auto* activation = engine->decisions.ResolveFrontierActivation(entry.coordinator);
+                ASSERT_NE(nullptr, activation);
+                harken::FrontierActivationReceipt receipt{};
+                ASSERT_EQ(harken::FrontierReceiptRead::Ready,
+                    activation->Read(entry, engine->mixer.BlocksRendered(), &receipt));
+                EXPECT_EQ(harken::FrontierReceiptOutcome::Applied, receipt.outcome);
+                oldLeaf = engine->ResolvePlayableService(sleepingSourceService);
+                EXPECT_TRUE(oldLeaf == nullptr || isDirty(*oldLeaf) ||
+                    oldLeaf->controlLifecycle != harken::PlayableControlLifecycle::Active);
+            } else {
+                resetFrame = engine->mixer.BlocksRendered() * 64u;
+                resetStatus = harken::BeginRuntimeTransportReset(*engine, resetFrame);
+            }
+            teardownBlock = 0;
+        }
         bool commandBackpressureInjected = false;
         for (unsigned block = 0; block < (mixedSoundTarget ? 320u : 120u); ++block) {
             if (teardown && teardownBlock == UINT32_MAX &&
@@ -20376,6 +20519,9 @@ TEST(PlayableStart, MusicTransitionEntryAndNaturalEndUseActualBodyCount) {
             ASSERT_FALSE(engine->runtimeRecreateRequired);
             const auto before = engine->mixer.BlocksRendered();
             engine->nullBackend.Pump(1);
+            observeRejectedTarget();
+            if (lifecycleCase == 2 && resetStatus == harken::RuntimeTransportResetStatus::Backpressure)
+                resetStatus = harken::BeginRuntimeTransportReset(*engine, resetFrame);
             if (mode == 22 && count == 1 && before * 64u == targetStart) {
                 harken::SourceTerminalPayload terminal{};
                 ASSERT_TRUE(engine->sourceTerminals.Capture(sourceTerminal, engine->mixer.BlocksRendered(), &terminal));
@@ -20424,6 +20570,12 @@ TEST(PlayableStart, MusicTransitionEntryAndNaturalEndUseActualBodyCount) {
                 engine->nullBackend.Pump(1);
             }
         }
+        if (lifecycleCase == 2) EXPECT_EQ(harken::RuntimeTransportResetStatus::Complete, resetStatus);
+        EXPECT_FALSE(rejectedTargetStarted);
+        if (lifecycleCase != 0) {
+            EXPECT_EQ(nullptr, engine->ResolvePlayableService(sleepingSourceService));
+            EXPECT_EQ(nullptr, engine->sourceTerminals.Resolve(sleepingSourceToken));
+        }
         if (mode == 24) EXPECT_TRUE(commandBackpressureInjected);
         if (mode == 22 && count == 1) EXPECT_TRUE(checkedBoundaryTerminal);
         if (teardown) EXPECT_NE(UINT32_MAX, teardownBlock);
@@ -20439,6 +20591,7 @@ TEST(PlayableStart, MusicTransitionEntryAndNaturalEndUseActualBodyCount) {
         EXPECT_EQ(0u, engine->timelineOccurrences.OccupiedCount());
         EXPECT_EQ(0u, engine->voices.ActiveCount());
         EXPECT_TRUE(PlayableRowsFree(*engine));
+        }
     }
 }
 
