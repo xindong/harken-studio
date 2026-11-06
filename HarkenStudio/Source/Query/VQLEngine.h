@@ -4,6 +4,7 @@
 #include "VQLTypes.h"
 #include "VQLObserver.h"
 #include "MemoryDataSource.h"
+#include "LMDBQueryPipeline.h"
 #include <list>
 #include <unordered_map>
 #include <memory>
@@ -21,14 +22,8 @@ namespace VNX {
 struct ProjectData;
 struct ProjectItem;
 struct PhysicalFolder;
-#ifndef HARKEN_HAS_LMDB
-struct SearchResult {
-    uint32_t objectID = 0;
-    QString  name;
-    QString  type;
-    float    score = 0.0f;
-};
-#endif
+class LMDBService;
+class LMDBIndexer;
 
 class VQLEngine
 {
@@ -68,7 +63,7 @@ public:
     void cancelSearch();
     bool isSearching() const;
 
-    void rebuildSearchIndex();
+    bool rebuildSearchIndex();
     void indexObjectChanged(const ProjectItem* item);
     void indexObjectRemoved(uint32_t objectID);
 

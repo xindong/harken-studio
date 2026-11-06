@@ -22,6 +22,7 @@ public:
     QJsonObject save();
 
 private:
+    QJsonObject waitForCurrentWorld(int timeoutMs, const std::function<bool()>& canceled);
     struct State;
     std::unique_ptr<State> state_;
 };

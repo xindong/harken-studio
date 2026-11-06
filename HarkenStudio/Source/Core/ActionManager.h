@@ -15,6 +15,7 @@
 #include <QThread>
 #include <QCoreApplication>
 #include <QDateTime>
+#include "EditorCommandCatalog.h"
 
 
 namespace VNX {
@@ -71,6 +72,7 @@ public:
     static ActionManager& instance();
 
     void registerAction(const ActionDef& def);
+    void setCommandHost(CommandHost host);
     void setActionHandler(const QString& id,
                           std::function<ActionResult(const QJsonObject&)> handler);
     void setDesktopAvailable(bool available) { desktopAvailable_ = available; }
@@ -120,6 +122,7 @@ private:
                                const QString& suggestion = {});
 
     QMap<QString, ActionDef> actions_;
+    CommandHost commandHost_ = CommandHost::Desktop;
     bool desktopAvailable_ = false;
     const QObject* executeOriginator_ = nullptr;
 

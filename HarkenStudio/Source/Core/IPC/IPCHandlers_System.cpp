@@ -1,4 +1,5 @@
 #include "IPCServerInternal.h"
+#include "Widgets/Inspector/PropertySchemaJson.h"
 #include <QCoreApplication>
 #include <QStandardPaths>
 #include <QThread>
@@ -36,13 +37,13 @@ void IPCServer::registerSystemHandlers()
     commandHandlers_["get_3d_scene"] = [this](const QJsonObject& args) { return handleGet3DScene(args); };
     commandHandlers_["get_listener_info"] = [this](const QJsonObject& args) {
         if (!engine_) return errorResponse("ENGINE_NOT_AVAILABLE", "AudioEngine is not available");
-        uint32_t listenerId = static_cast<uint32_t>(args["listener_id"].toInt(0));
+        const auto requestedId = args.contains("listener_id") ? args.value("listener_id").toInteger(-1) : 1;
+        if (requestedId < 0 || requestedId > UINT32_MAX)
+            return errorResponse("INVALID_PARAM", "listener_id must be an unsigned integer");
+        const auto listenerId = static_cast<uint32_t>(requestedId);
         float x = 0, y = 0, z = 0, fwdX = 0, fwdY = 0, fwdZ = 0;
-        int spatialized = 1;
-        uint32_t panningRule = 0;
         bool active = engine_->getListenerInfo(listenerId, &x, &y, &z,
-                                                &fwdX, &fwdY, &fwdZ,
-                                                &spatialized, &panningRule);
+                                                &fwdX, &fwdY, &fwdZ);
         if (!active)
             return errorResponse("LISTENER_NOT_ACTIVE",
                                  "Listener " + QString::number(listenerId) + " is not active");
@@ -51,8 +52,6 @@ void IPCServer::registerSystemHandlers()
         result["active"] = true;
         result["position"] = QJsonArray{x, y, z};
         result["forward"] = QJsonArray{fwdX, fwdY, fwdZ};
-        result["spatialized"] = (spatialized != 0);
-        result["panning_rule"] = static_cast<int>(panningRule);
         return successResponse(result);
     };
     commandHandlers_["get_loaded_packs"] = [this](const QJsonObject& args) { return handleGetLoadedPacks(args); };
@@ -197,18 +196,14 @@ void IPCServer::registerSystemHandlers()
         if (!engine_->getSessionRecap(recap))
             return errorResponse("COLLECT_FAILED", "Failed to collect session recap");
         QJsonObject result;
-        result["peak_cpu_percent"]    = static_cast<double>(recap.peakCpuPercent);
-        result["peak_active_voices"]  = static_cast<int>(recap.peakActiveVoices);
+        result["peak_active_voices"] = static_cast<int>(recap.peakActiveVoices);
         result["peak_virtual_voices"] = static_cast<int>(recap.peakVirtualVoices);
-        result["peak_total_voices"]   = static_cast<int>(recap.peakTotalVoices);
-        result["peak_active_buses"]   = static_cast<int>(recap.peakActiveBuses);
+        result["active_buses"] = static_cast<int>(recap.peakActiveBuses);
         result["completed_and_active_voice_count"] = static_cast<int>(recap.completedAndActiveVoiceCount);
-        result["total_underruns"]     = static_cast<int>(recap.totalUnderruns);
-        result["total_frames"]        = static_cast<int>(recap.totalFrames);
-        result["avg_cpu_percent"]     = static_cast<double>(recap.avgCpuPercent);
-        result["avg_active_voices"]   = static_cast<double>(recap.avgActiveVoices);
-        result["session_duration_sec"] = recap.sessionDurationSec;
-        result["active"]              = recap.active;
+        result["backpressure_count"] = static_cast<int>(recap.totalUnderruns);
+        result["last_cpu_percent"] = static_cast<double>(recap.avgCpuPercent);
+        result["active_voices"] = static_cast<int>(recap.avgActiveVoices);
+        result["active"] = recap.active;
         return successResponse(result);
     };
 
@@ -288,7 +283,15 @@ void IPCServer::registerSystemHandlers()
     registerDesktopHandler("get_layout_state");
     registerDesktopHandler("get_inspector_context");
 
-    registerDesktopHandler("get_inspector_schema");
+    commandHandlers_["get_inspector_schema"] = [this](const QJsonObject& args) {
+        const QString schemaId = args.value("schema_id").toString();
+        if (schemaId.isEmpty())
+            return errorResponse("MISSING_PARAM", "Required: schema_id");
+        const auto schema = inspectorSchemaToJson(schemaId);
+        if (schema.isEmpty())
+            return errorResponse("SCHEMA_NOT_FOUND", QString("No schema found for '%1'").arg(schemaId));
+        return successResponse(QJsonObject{{"schema_id", schemaId}, {"schema", schema}});
+    };
 
     registerDesktopHandler("create_inspector_panel");
 
@@ -425,23 +428,10 @@ QJsonObject IPCServer::handleGetStatus(const QJsonObject& args)
         {"simulation_mode", engine_->isSimulationMode()},
         {"active_voices", engine_->activeVoiceCount()},
         {"cpu_usage", engine_->cpuUsage()},
-        {"output_latency_ms", engine_->outputLatency()},
+        {"output_latency_ms", engine_->outputLatency() * 1000.0},
         {"sample_rate", engine_->actualSampleRate()},
         {"master_volume", engine_->masterVolume()}
     };
-
-    AudioEngine::VoiceStateBreakdown sb;
-    if (engine_->getVoiceStateBreakdown(sb)) {
-        result["voice_states"] = QJsonObject{
-            {"idle", sb.idle},
-            {"starting", sb.starting},
-            {"running", sb.running},
-            {"virtual", sb.virtualState},
-            {"releasing", sb.releasing},
-            {"stopping", sb.stopping},
-            {"paused", sb.paused}
-        };
-    }
 
     return successResponse(result);
 }
@@ -689,15 +679,8 @@ QJsonObject IPCServer::handleGetLoadedPacks(const QJsonObject& args)
 
     QJsonArray packArray;
     if (engine_)
-    {
-        uint32_t count = engine_->getLoadedPackCount();
-        if (count > 0)
-        {
-            QJsonObject info;
-            info["count"] = static_cast<int>(count);
-            packArray.append(info);
-        }
-    }
+        for (const auto& path : engine_->getLoadedPackPaths())
+            packArray.append(QJsonObject{{"path", path}, {"name", QFileInfo(path).completeBaseName()}});
 
     return successResponse(QJsonObject{
         {"packs", packArray},
@@ -945,7 +928,7 @@ QJsonObject IPCServer::handleGetProjectState(const QJsonObject& args)
     {
         state["project_name"] = project->name;
         state["project_path"] = project->projectPath;
-        state["is_dirty"] = false;
+        state["is_dirty"] = projectManager_->hasUnsavedChanges();
         
         if (engine_)
         {
@@ -1094,9 +1077,9 @@ QJsonObject IPCServer::handleGetEngineSnapshot(const QJsonObject& args)
         perfJson["cpu_percent"]    = static_cast<double>(perf.audioCpuPercent);
         perfJson["active_voices"]  = static_cast<int>(perf.activeVoices);
         perfJson["virtual_voices"] = static_cast<int>(perf.virtualVoices);
-        perfJson["max_voices"]     = static_cast<int>(perf.maxVoices);
+        perfJson["voice_high_water"]     = static_cast<int>(perf.maxVoices);
         perfJson["active_buses"]   = static_cast<int>(perf.activeBuses);
-        perfJson["underrun_count"] = static_cast<int>(perf.underrunCount);
+        perfJson["backpressure_count"] = static_cast<int>(perf.underrunCount);
         perfJson["parameter_commit_count"] = static_cast<int>(perf.parameterCommitCount);
         result["performance"] = perfJson;
     }
@@ -1165,7 +1148,8 @@ QJsonObject IPCServer::handleGetActiveVoices(const QJsonObject& args)
         return errorResponse("ENGINE_NOT_AVAILABLE", "AudioEngine not available");
 
     std::vector<AudioEngine::DebugVoiceData> voices;
-    if (!engine_->getDebugVoices(voices))
+    AudioEngine::DebugPerfData performance;
+    if (!engine_->getDebugVoices(voices) || !engine_->getDebugPerformance(performance))
         return errorResponse("COLLECT_FAILED", "Failed to collect voice data");
 
     QJsonArray arr;
@@ -1190,7 +1174,8 @@ QJsonObject IPCServer::handleGetActiveVoices(const QJsonObject& args)
 
     return successResponse(QJsonObject{
         {"voices", arr},
-        {"count", static_cast<int>(voices.size())}
+        {"count", static_cast<int>(performance.activeVoices)},
+        {"reported_count", static_cast<int>(voices.size())}
     });
 }
 
@@ -1378,18 +1363,16 @@ QJsonObject IPCServer::handleGetPerformance(const QJsonObject& args)
     result["cpu_percent"]    = static_cast<double>(perf.audioCpuPercent);
     result["active_voices"]  = static_cast<int>(perf.activeVoices);
     result["virtual_voices"] = static_cast<int>(perf.virtualVoices);
-    result["max_voices"]     = static_cast<int>(perf.maxVoices);
+    result["voice_high_water"] = static_cast<int>(perf.maxVoices);
     result["active_buses"]   = static_cast<int>(perf.activeBuses);
-    result["underrun_count"] = static_cast<int>(perf.underrunCount);
+    result["backpressure_count"] = static_cast<int>(perf.underrunCount);
     result["parameter_commit_count"] = static_cast<int>(perf.parameterCommitCount);
-    result["smoothed_cpu_load_pct"] = static_cast<double>(perf.smoothedCpuLoadPct);
-    result["budget_level"]   = static_cast<int>(perf.budgetLevel);
 
     float peakL = 0.0f, peakR = 0.0f;
     engine_->getMasterMeterPeak(peakL, peakR);
     result["master_peak_l"]  = static_cast<double>(peakL);
     result["master_peak_r"]  = static_cast<double>(peakR);
-    result["output_latency_ms"] = engine_->outputLatency();
+    result["output_latency_ms"] = engine_->outputLatency() * 1000.0;
     result["sample_rate"]    = engine_->actualSampleRate();
 
     return successResponse(result);
@@ -1478,31 +1461,15 @@ QJsonObject IPCServer::handleGetJobStats(const QJsonObject& args)
         return errorResponse("ENGINE_NOT_AVAILABLE", "AudioEngine not available");
 
     AudioEngine::JobStatsInfo js;
-    engine_->getJobStats(js);
+    if (!engine_->getJobStats(js))
+        return errorResponse("NOT_AVAILABLE", "Render worker diagnostics are not available");
 
     QJsonObject result;
-    result["used_parallel"]        = js.usedParallel;
-    result["active_worker_count"]  = static_cast<int>(js.activeWorkerCount);
-    result["total_voices_processed"] = static_cast<int>(js.totalVoicesProcessed);
-    result["total_chunks_stolen"]  = static_cast<int>(js.totalChunksStolen);
-    result["max_worker_render_us"] = static_cast<double>(js.maxWorkerRenderUs);
-    result["min_worker_render_us"] = static_cast<double>(js.minWorkerRenderUs);
-    result["parallel_efficiency"]  = static_cast<double>(js.parallelEfficiency);
-    result["chunk_size"]           = static_cast<int>(js.chunkSize);
-    result["total_estimated_cost"] = static_cast<double>(js.totalEstimatedCost);
-    result["active_voice_count"]   = static_cast<int>(js.activeVoiceCount);
-    result["cost_threshold"]       = static_cast<double>(js.costThreshold);
-
-    QJsonArray workersArr;
-    for (uint32_t i = 0; i < js.activeWorkerCount && i < 8; ++i)
-    {
-        QJsonObject w;
-        w["voices_processed"] = static_cast<int>(js.workers[i].voicesProcessed);
-        w["chunks_stolen"]    = static_cast<int>(js.workers[i].chunksStolen);
-        w["render_us"]        = static_cast<double>(js.workers[i].renderUs);
-        workersArr.append(w);
-    }
-    result["workers"] = workersArr;
+    result["active_worker_count"] = static_cast<int>(js.activeWorkerCount);
+    result["worker_busy_peak_us"] = static_cast<double>(js.maxWorkerRenderUs);
+    result["block_size"] = static_cast<int>(js.chunkSize);
+    result["active_voice_count"] = static_cast<int>(js.activeVoiceCount);
+    result["voice_stage_last_us"] = static_cast<double>(js.totalEstimatedCost);
 
     return successResponse(result);
 }

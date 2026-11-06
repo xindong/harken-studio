@@ -36,42 +36,30 @@ add_library(harken_editor_inspector STATIC
     PropertyEditorEngine.cpp
     PropertyEditorEngine.h
     PropertyEditorEngine_FieldGroups.cpp
-    FieldGroupInspectorView.cpp
     FieldGroupInspectorView.h
     # Inspector unification S6: descriptor -> JSON schema dumper. Surviving
     # producer for the get_inspector_schema IPC (legacy schemaToJson() shape).
-    PropertySchemaJson.cpp
     PropertySchemaJson.h
     # Inspector unification S5: VAudio::schema() filtered to the Sound-page
     # scalar allowlist (engine-rendered scalar sections for the Sound page).
-    SoundInspectorSchema.cpp
     SoundInspectorSchema.h
     ContentObjectSchemaRows.h
     EffectsFieldSchema.h
-    EffectInspectorSchema.cpp
     EffectInspectorSchema.h
     # Action inspector S2: empty scalar schema (Action page = single
     # "steps" section provider on the Basic tab, no scalar fields).
-    ActionInspectorSchema.cpp
     ActionInspectorSchema.h
     # Attenuation inspector S1: empty scalar schema (Attenuation page = single
     # "dimensions" section provider on the Basic tab, no scalar fields).
-    AttenuationInspectorSchema.cpp
     AttenuationInspectorSchema.h
     # Inspector redesign S2: VBus::schema() filtered to the Bus-page
     # scalar allowlist (descriptor-driven 5-tab inline).
-    BusInspectorSchema.cpp
     BusInspectorSchema.h
     # Layer scalar schema (VMixNode chassis allowlist for the Layer page).
-    LayerInspectorSchema.cpp
     LayerInspectorSchema.h
-    ContainerInspectorSchema.cpp
     ContainerInspectorSchema.h
-    TrackInspectorSchema.cpp
     TrackInspectorSchema.h
-    SegmentInspectorSchema.cpp
     SegmentInspectorSchema.h
-    VariableInspectorSchema.cpp
     VariableInspectorSchema.h
     ProjectItemInspectorRows.h
     InspectorLayout.cpp

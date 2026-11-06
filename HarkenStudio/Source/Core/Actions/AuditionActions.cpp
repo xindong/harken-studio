@@ -56,6 +56,70 @@ void registerAuditionActions(ActionManager& mgr,
 {
     using namespace HarkenEditor;
 
+    {
+        ActionDef def;
+        def.id = "audition_get_state";
+        def.displayName = "Get Audition State";
+        def.category = "audition";
+        def.paramSchema = QJsonObject{{"type", "object"}, {"properties", QJsonObject{}}};
+        def.undoable = false;
+        def.handler = [auditionManager](const QJsonObject&) -> ActionResult {
+            if (!auditionManager) return auditionNotAvailable();
+            QJsonArray auditions;
+            for (const auto& info : auditionManager->getActiveAuditions()) {
+                QJsonObject entry = auditionManager->previewIpcSnapshot(info.playingId);
+                entry.insert(QStringLiteral("auditionID"), static_cast<int>(info.playingId));
+                entry.insert(QStringLiteral("objectName"), info.objectName);
+                entry.insert(QStringLiteral("gameObjectId"), static_cast<double>(info.gameObjId));
+                auditions.append(entry);
+            }
+            return {true, QJsonObject{{"auditions", auditions},
+                {"activeCount", auditionManager->activeAuditionCount()}}};
+        };
+        mgr.registerAction(def);
+    }
+
+    {
+        ActionDef def;
+        def.id = "audition_get_position";
+        def.displayName = "Get Audition Position";
+        def.category = "audition";
+        def.paramSchema = QJsonObject{{"auditionID", "uint32"}};
+        def.undoable = false;
+        def.handler = [auditionManager](const QJsonObject& args) -> ActionResult {
+            if (!auditionManager) return auditionNotAvailable();
+            uint32_t id = 0;
+            if (!parsePositiveUint32(args["auditionID"], id))
+                return {false, {}, "INVALID_PARAM", "auditionID must be a positive uint32 integer"};
+            const auto position = auditionManager->getPositionSamples(id);
+            return {true, QJsonObject{
+                {"samplePosition", static_cast<double>(position.samplePosition)},
+                {"timeSeconds", position.timeSeconds},
+                {"beat", static_cast<int>(position.beat)},
+                {"bar", static_cast<int>(position.bar)},
+                {"beatFraction", static_cast<double>(position.beatFraction)},
+                {"isMusic", position.isMusic}}};
+        };
+        mgr.registerAction(def);
+    }
+
+    {
+        ActionDef def;
+        def.id = "audition_get_speed";
+        def.displayName = "Get Audition Speed";
+        def.category = "audition";
+        def.paramSchema = QJsonObject{{"auditionID", "uint32"}};
+        def.undoable = false;
+        def.handler = [auditionManager](const QJsonObject& args) -> ActionResult {
+            if (!auditionManager) return auditionNotAvailable();
+            uint32_t id = 0;
+            if (!parsePositiveUint32(args["auditionID"], id))
+                return {false, {}, "INVALID_PARAM", "auditionID must be a positive uint32 integer"};
+            return {true, QJsonObject{{"auditionID", static_cast<int>(id)},
+                {"speed", static_cast<double>(auditionManager->getPlaybackSpeed(id))}}};
+        };
+        mgr.registerAction(def);
+    }
 
     {
         ActionDef def;

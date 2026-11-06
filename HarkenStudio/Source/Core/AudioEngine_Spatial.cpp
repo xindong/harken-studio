@@ -25,14 +25,13 @@ bool AudioEngine::isListenerActive(uint32_t listenerId) const
     return session_->isListenerActive(listenerId);
 }
 
-void AudioEngine::setListenerPositionById(uint32_t listenerId,
+bool AudioEngine::setListenerPositionById(uint32_t listenerId,
                                           float x, float y, float z,
                                           float fwdX, float fwdY, float fwdZ,
                                           float upX, float upY, float upZ)
 {
-    if (!session_) return;
-    session_->setListenerPositionById(listenerId, x, y, z, fwdX, fwdY, fwdZ,
-                                      upX, upY, upZ);
+    if (!isListenerActive(listenerId)) return false;
+    return setListenerTransform({x, y, z}, {fwdX, fwdY, fwdZ}, {upX, upY, upZ});
 }
 
 void AudioEngine::setGameObjectListeners(uint64_t gameObjectId,
@@ -52,13 +51,11 @@ void AudioEngine::setListenerSpatialization(uint32_t listenerId, bool spatialize
 
 bool AudioEngine::getListenerInfo(uint32_t listenerId,
                                    float* outX, float* outY, float* outZ,
-                                   float* outFwdX, float* outFwdY, float* outFwdZ,
-                                   int* outSpatialized, uint32_t* outPanningRule)
+                                   float* outFwdX, float* outFwdY, float* outFwdZ)
 {
     if (!session_) return false;
     return session_->listenerInfo(listenerId, outX, outY, outZ,
-                                  outFwdX, outFwdY, outFwdZ,
-                                  outSpatialized, outPanningRule);
+                                  outFwdX, outFwdY, outFwdZ);
 }
 
 void AudioEngine::setMultiPosition(uint64_t gameObjectId,

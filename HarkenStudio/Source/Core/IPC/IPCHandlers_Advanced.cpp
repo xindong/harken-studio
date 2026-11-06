@@ -18,7 +18,8 @@ void IPCServer::registerAdvancedHandlers()
             return errorResponse("INVALID_PARAM", "reference_path and replay_path required");
 
         Bridge::ReplayCompareResult result;
-        Bridge::replayCompare(refPath, repPath, result);
+        if (!Bridge::replayCompare(refPath, repPath, result))
+            return errorResponse("COMPARE_FAILED", "Cannot read the reference or replay file");
         QJsonObject r;
         r["max_diff"] = static_cast<double>(result.maxDiff);
         r["psnr_db"] = result.psnrDb;
@@ -91,10 +92,6 @@ void IPCServer::registerAdvancedHandlers()
     commandHandlers_["link_capture_stop"] = [unavailable](const QJsonObject&) {
         return unavailable("HarkenLink capture is retired");
     };
-
-    registerDesktopHandler("audition_get_state");
-    registerDesktopHandler("audition_get_position");
-    registerDesktopHandler("audition_get_speed");
 
     commandHandlers_["get_exec_errors"] = [this](const QJsonObject& args) {
         if (!engine_) return errorResponse("NOT_INIT", "Audio engine not initialized");

@@ -22,6 +22,36 @@ namespace VNX {
 
 namespace {
 
+QJsonObject sendLevelSchema()
+{
+    return QJsonObject{
+        {"type", "object"},
+        {"properties", QJsonObject{
+            {"src_bus", QJsonObject{
+                {"type", "string"}, {"minLength", 1},
+                {"description", "Source bus GUID, full project path, or unique name."}}},
+            {"target_bus_id", QJsonObject{
+                {"type", "integer"}, {"minimum", 1}, {"maximum", 4294967295.0},
+                {"description", "Target bus authoring handle, returned as id by list_buses."}}},
+            {"level", QJsonObject{
+                {"type", "number"}, {"minimum", 0}, {"default", 1},
+                {"description", "Linear gain: 0 selects the -96 dB silence floor, 1 is unity, 0.5 is approximately -6.02 dB. get_item_info reports sendLevel in dB."}}}
+        }},
+        {"required", QJsonArray{"src_bus", "target_bus_id"}},
+        {"additionalProperties", false}
+    };
+}
+
+std::optional<float> readSendLevel(const QJsonObject& args)
+{
+    const auto value = args.value("level");
+    if (value.isUndefined()) return 1.0f;
+    if (!value.isDouble() || value.toDouble() < 0.0) return std::nullopt;
+    const auto level = static_cast<float>(value.toDouble());
+    if (!std::isfinite(level)) return std::nullopt;
+    return level;
+}
+
 void restoreSendState(const BusSendState& state)
 {
     auto& manager = ProjectManager::instance();
@@ -417,7 +447,7 @@ void registerMixerActions(ActionManager& mgr,
         def.id = "set_send";
         def.displayName = "Set Send";
         def.category = "mixer";
-        def.paramSchema = QJsonObject{{"src_bus", "string"}, {"target_bus_id", "uint32"}, {"level", "float"}};
+        def.paramSchema = sendLevelSchema();
         def.undoable = true;
         def.handler = [](const QJsonObject& args) -> ActionResult {
             const auto selected = resolveProjectSelector(
@@ -441,13 +471,15 @@ void registerMixerActions(ActionManager& mgr,
             if (srcBusItem->objectID == targetBusId)
                 return {false, {}, "INVALID_ARGS", "src_bus and target_bus_id cannot be the same bus"};
 
-            const float level = static_cast<float>(args.value("level").toDouble(1.0));
+            const auto level = readSendLevel(args);
+            if (!level)
+                return {false, {}, "INVALID_ARGS", "level must be a finite, non-negative linear gain"};
             const uint32_t srcBusId = srcBusItem->objectID;
             const auto before = captureBusSendState(*srcBusItem);
             if (!before)
                 return {false, {}, "INVALID_SEND_STATE", "Unable to read Send configuration"};
 
-            if (!ProjectManager::instance().upsertSendInternal(srcBusId, targetBusId, level))
+            if (!ProjectManager::instance().upsertSendInternal(srcBusId, targetBusId, *level))
                 return {false, {}, "SEND_REJECTED",
                         QString("Send %1 -> %2 rejected: invalid volume, target, output conflict, or routing cycle")
                             .arg(srcBusName).arg(targetBusId)};
@@ -459,7 +491,7 @@ void registerMixerActions(ActionManager& mgr,
                 {"src_bus_guid", srcBusItem->guid.toString(QUuid::WithoutBraces)},
                 {"src_bus_id", static_cast<qint64>(srcBusId)},
                 {"target_bus_id", static_cast<qint64>(targetBusId)},
-                {"level", level}
+                {"level", *level}
             };
             r.undoFn = [state = *before]() { restoreSendState(state); };
             r.redoFn = [state = *captureBusSendState(*srcBusItem)]() { restoreSendState(state); };
@@ -534,7 +566,7 @@ void registerMixerActions(ActionManager& mgr,
         def.id = "set_send_level";
         def.displayName = "Set Send Level";
         def.category = "mixer";
-        def.paramSchema = QJsonObject{{"src_bus", "string"}, {"target_bus_id", "uint32"}, {"level", "float"}};
+        def.paramSchema = sendLevelSchema();
         def.undoable = false;
         def.handler = [](const QJsonObject& args) -> ActionResult {
             const auto selected = resolveProjectSelector(
@@ -553,7 +585,9 @@ void registerMixerActions(ActionManager& mgr,
                         "Use field group commands to edit Send"};
 
             const uint32_t targetBusId = static_cast<uint32_t>(args.value("target_bus_id").toInteger());
-            const float level = static_cast<float>(args.value("level").toDouble(1.0));
+            const auto level = readSendLevel(args);
+            if (!level)
+                return {false, {}, "INVALID_ARGS", "level must be a finite, non-negative linear gain"};
 
             float oldLevel = 1.0f;
             bool foundSend = false;
@@ -569,13 +603,13 @@ void registerMixerActions(ActionManager& mgr,
                         QString("Send %1 -> %2 not found").arg(srcBusName).arg(targetBusId)};
 
             const uint32_t srcBusId = srcBusItem->objectID;
-            if (!ProjectManager::instance().upsertSendInternal(srcBusId, targetBusId, level))
+            if (!ProjectManager::instance().upsertSendInternal(srcBusId, targetBusId, *level))
                 return {false, {}, "SEND_REJECTED", "Unable to update Send"};
 
             UndoRedoManager::instance().push(
                 new BusPropertyChangeCommand(srcBusId,
                     QString("sendLevel_%1").arg(targetBusId),
-                    static_cast<double>(oldLevel), static_cast<double>(level),
+                    static_cast<double>(oldLevel), static_cast<double>(*level),
                     [targetBusId](uint32_t bID, const QVariant& val) {
                         float lvl = val.toFloat();
                         ProjectManager::instance().upsertSendInternal(bID, targetBusId, lvl);
@@ -589,7 +623,7 @@ void registerMixerActions(ActionManager& mgr,
                 {"src_bus_guid", srcBusItem->guid.toString(QUuid::WithoutBraces)},
                 {"src_bus_id", static_cast<qint64>(srcBusId)},
                 {"target_bus_id", static_cast<qint64>(targetBusId)},
-                {"level", level}
+                {"level", *level}
             };
             return r;
         };
@@ -746,19 +780,12 @@ void registerMixerActions(ActionManager& mgr,
             if (!mcomp)
                 return {false, {}, "NO_AUDIO_COMPONENT", "Item has no VMixNode"};
 
-            bool changed = false;
             if (args.contains("volume_db")) {
-                if (!projectManager->writeBusPropertySilent(
-                        item, QStringLiteral("outputBusVolume"),
-                        args.value("volume_db").toDouble()))
+                if (!projectManager->setBusOutputBusVolumeInternal(
+                        item->objectID, static_cast<float>(args.value("volume_db").toDouble()),
+                        ActionManager::instance().executeOriginator()))
                     return {false, {}, "SET_PROPERTY_FAILED",
                             "Failed to write output bus volume"};
-                changed = true;
-            }
-
-            if (changed) {
-                item->markDirty();
-                ProjectManager::resyncItemToRuntime(item);
             }
 
             QJsonObject result;

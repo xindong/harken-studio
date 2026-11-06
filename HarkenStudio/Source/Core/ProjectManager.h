@@ -241,6 +241,7 @@ public:
     bool canDeleteEntries(const QList<ProjectItem*>& items,
                             const QList<PhysicalFolder*>& folders) const;
     bool isFolderDirty(const PhysicalFolder* folder) const;
+    bool hasUnsavedChanges();
     QSet<QString> bucketsWithPendingFileChanges() const;
     bool deleteEntries(const QList<ProjectItem*>& items, const QList<PhysicalFolder*>& folders);
 

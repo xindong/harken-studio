@@ -31,16 +31,14 @@ void IPCServer::registerMixerHandlers()
     commandHandlers_["get_bus_volume_db"] = [this](const QJsonObject& args) {
         auto& pm = ProjectManager::instance();
         if (!pm.isProjectOpen()) return errorResponse("NO_PROJECT", "No project open");
-        if (!engine_) return errorResponse("NO_ENGINE", "Engine not initialized");
         QString busName = args["bus_name"].toString().trimmed();
         auto* item = pm.findBusItemByName(busName);
-        if (!item) return errorResponse("BUS_NOT_FOUND", "Bus not found: " + busName);
-        const auto* bc = item->comp<VBus>();
-        if (!bc) return errorResponse("BUS_NOT_FOUND", "Bus not found: " + busName);
-        float db = engine_->getBusVolumeDbById(item->runtimeId());
+        const auto* mix = item ? item->comp<VMixNode>() : nullptr;
+        if (!item || !item->comp<VBus>() || !mix)
+            return errorResponse("BUS_NOT_FOUND", "Bus not found: " + busName);
         return successResponse(QJsonObject{
             {"bus_id", objectIdString(item->runtimeId())},
-            {"bus", busName}, {"bus_volume_db", db}
+            {"bus", busName}, {"bus_volume_db", mix->volume}
         });
     };
 

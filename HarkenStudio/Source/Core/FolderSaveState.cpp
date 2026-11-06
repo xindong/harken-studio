@@ -152,6 +152,20 @@ bool FolderSaveState::isFolderDirty(const ProjectData& project, const PhysicalFo
         || saved->second.path != project.folderBucket(folder) + QLatin1Char('/') + project.folderRelPath(folder);
 }
 
+bool FolderSaveState::hasUnsavedChanges(const ProjectData& project) const
+{
+    if (!bucketsWithPendingFileChanges(project).isEmpty()) return true;
+    const auto changed = [&](auto&& self, const PhysicalFolder* folder) -> bool {
+        if (isFolderDirty(project, folder)) return true;
+        for (const auto& child : folder->children)
+            if (self(self, child.get())) return true;
+        return false;
+    };
+    for (const auto& binding : project.folders)
+        if (changed(changed, binding.rootFolder.get())) return true;
+    return false;
+}
+
 QSet<QString> FolderSaveState::bucketsWithPendingFileChanges(const ProjectData& project) const
 {
     QHash<QUuid, QString> objectDirectories;

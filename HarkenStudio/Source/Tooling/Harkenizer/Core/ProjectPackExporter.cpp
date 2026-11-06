@@ -1880,6 +1880,16 @@ ProjectPackExporter::ValidatePackBuildReadiness(const ProjectData& project,
 
     const auto sourceIndex = buildContext ? buildContext->capabilities->sourceIndex()
         : Bridge::canonicalRuntimeProjectSourceIndex(project);
+    for (const auto& platform : project.platforms) {
+        for (const auto& diagnostic : Bridge::validateBusPublicationSupport(project, platform.id)) {
+            const auto item = sourceIndex->byQtGuid.find(diagnostic.itemGuid);
+            result.issues.push_back({ValidationIssue::Error,
+                QStringLiteral("%1 [platform: %2]").arg(diagnostic.message, platform.name),
+                item != sourceIndex->byQtGuid.end() ? item->second->objectID : 0});
+            ++result.errorCount;
+            result.valid = false;
+        }
+    }
     const auto& allActions = sourceIndex->actions;
 
     for (const ProjectItem* evt : allActions) {
@@ -1934,14 +1944,9 @@ ProjectPackExporter::GetDependencyTree(const ProjectData& project)
 
     for (const auto* binding : project.allFileBindings()) {
         if (!binding || !binding->rootItem) continue;
-        const auto* wu = binding;
-        for (const auto& child : wu->rootItem->children) {
-            if (!child) continue;
-            QString t = typeToString(child->type);
-            if (!t.isEmpty()) {
-                roots.push_back(buildNode(child.get()));
-            }
-        }
+        const auto* root = binding->rootItem.get();
+        if (!typeToString(root->type).isEmpty())
+            roots.push_back(buildNode(root));
     }
 
     return roots;
@@ -1978,19 +1983,8 @@ void ProjectPackExporter::CollectReferencedMedia(const ProjectData& project,
 {
     for (const auto* binding : project.allFileBindings()) {
         if (!binding || !binding->rootItem) continue;
-        const auto* wu = binding;
-        std::function<void(const ProjectItem*)> scan = [&](const ProjectItem* item) {
-            if (!item) return;
-            if (item->type == ProjectItem::Type::Sound) {
-                const uint32_t sourceId = SoundSourceEditing::activeSourceId(
-                    *item, ProjectPlatformId{}, {});
-                if (sourceId != 0)
-                    referencedMedia.insert(sourceId);
-            }
-            for (const auto& child : item->children)
-                scan(child.get());
-        };
-        scan(wu->rootItem.get());
+        const auto sources = getOwnedMedia(binding->rootItem.get());
+        referencedMedia.insert(sources.begin(), sources.end());
     }
 }
 
@@ -2002,12 +1996,14 @@ ProjectPackExporter::FindUnusedAssets(const ProjectData& project)
 
     std::vector<UnusedAsset> unused;
 
-    for (const auto& as : project.audioSources) {
-        if (referencedMedia.find(as.sourceID) == referencedMedia.end()) {
+    const auto media = AssetRegistry::instance().buildSnapshot(
+        QFileInfo(project.projectPath).absolutePath(), project.platforms);
+    for (const auto& asset : media.assets) {
+        if (referencedMedia.find(asset.sourceID) == referencedMedia.end()) {
             UnusedAsset ua;
-            ua.sourceID = as.sourceID;
-            ua.name     = as.relativePath;
-            ua.path     = as.relativePath;
+            ua.sourceID = asset.sourceID;
+            ua.name     = asset.relativePath;
+            ua.path     = asset.relativePath;
             unused.push_back(ua);
         }
     }

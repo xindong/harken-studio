@@ -2647,6 +2647,25 @@ bool ProjectManager::isFolderDirty(const PhysicalFolder* folder) const
         && m_folderSaveState->isFolderDirty(*m_currentProject, folder);
 }
 
+bool ProjectManager::hasUnsavedChanges()
+{
+    if (!m_currentProject) return false;
+    if (!m_saveBaseline || !m_itemSaveState || !m_folderSaveState) return true;
+    m_itemSaveState->refreshPending(*m_currentProject);
+    if (!m_itemSaveState->candidates().isEmpty()
+        || m_folderSaveState->hasUnsavedChanges(*m_currentProject))
+        return true;
+    if (!m_itemSaveState->ensurePrepared(*m_currentProject)) return true;
+    ProjectData project = *m_currentProject;
+    project.sourceAssets.clear();
+    for (const auto& asset : AssetRegistry::instance().snapshot())
+        project.sourceAssets.insert(asset.sourceID, asset.relativePath);
+    return m_itemSaveState->serializer().projectDocument(project.projectPath, project)
+            != m_saveBaseline->validation.projectRoot()
+        || ProjectSavePlan::encode(AssetRegistry::instance().toJson())
+            != m_saveBaseline->files.value(QStringLiteral(".cache/asset_registry/assets.json"));
+}
+
 QSet<QString> ProjectManager::bucketsWithPendingFileChanges() const
 {
     return m_currentProject && m_folderSaveState

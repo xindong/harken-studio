@@ -300,7 +300,7 @@ float EngineSession::audioCpuPercent() const { return Detail::runtimeAudioCpuPer
 
 EngineResult EngineSession::startOutput() { return Detail::runtimeStartOutput(); }
 void EngineSession::stopOutput() { Detail::runtimeStopOutput(); }
-void EngineSession::setMasterFade(float volume, int fadeMs) { Detail::runtimeSetMasterFade(volume, fadeMs); }
+bool EngineSession::setMasterFade(float volume, int fadeMs) { return Detail::runtimeSetMasterFade(volume, fadeMs); }
 double EngineSession::outputLatency() const { return Detail::runtimeOutputLatency(); }
 int EngineSession::actualSampleRate() const { return Detail::runtimeActualSampleRate(); }
 EngineResult EngineSession::reconfigureBufferSize(int32_t newBlockSize)
@@ -400,14 +400,14 @@ bool EngineSession::hasActionProgram(harkenstudio::ObjectId actionId) const
     return Detail::runtimeHasActionProgram(actionId);
 }
 
-void EngineSession::stopPlayback(uint64_t handle, float fadeMs)
+bool EngineSession::stopPlayback(uint64_t handle, float fadeMs)
 {
-    Detail::runtimeStopPlayback(handle, fadeMs > 0.0f ? static_cast<uint32_t>(fadeMs) : 0u);
+    return Detail::runtimeStopPlayback(handle, fadeMs > 0.0f ? static_cast<uint32_t>(fadeMs) : 0u);
 }
 
-void EngineSession::stopAll(float fadeMs)
+bool EngineSession::stopAll(float fadeMs)
 {
-    Detail::runtimeStopAll(fadeMs > 0.0f ? static_cast<uint32_t>(fadeMs) : 0u);
+    return Detail::runtimeStopAll(fadeMs > 0.0f ? static_cast<uint32_t>(fadeMs) : 0u);
 }
 
 bool EngineSession::hasCurrentWorldPlayableConsumers() const
@@ -420,21 +420,23 @@ void EngineSession::pumpNullMixer(std::uint32_t blockCount)
     Detail::runtimePumpNullMixer(blockCount);
 }
 
-void EngineSession::setPlaybackPosition(uint64_t handle, float x, float y, float z)
+bool EngineSession::setPlaybackPosition(uint64_t handle, float x, float y, float z)
 {
-    Detail::runtimeSetPlaybackPosition(handle, x, y, z);
+    return Detail::runtimeSetPlaybackPosition(handle, x, y, z);
 }
 
-void EngineSession::setListenerTransform(float px, float py, float pz,
+bool EngineSession::setListenerTransform(float px, float py, float pz,
                                          float fx, float fy, float fz,
                                          float ux, float uy, float uz)
 {
-    Vn_SetListener(VnVec3{px, py, pz}, VnVec3{fx, fy, fz}, VnVec3{ux, uy, uz});
+    return Detail::runtimeSetListenerTransform(
+        VnVec3{px, py, pz}, VnVec3{fx, fy, fz}, VnVec3{ux, uy, uz});
 }
 
-bool EngineSession::loadPack(const QString& path) { return Detail::runtimeLoadPack(path); }
-void EngineSession::unloadPack(const QString& path) { Detail::runtimeUnloadPack(path); }
+bool EngineSession::loadPack(const QString& path, EngineResult* outResult) { return Detail::runtimeLoadPack(path, outResult); }
+bool EngineSession::unloadPack(const QString& path, EngineResult* outResult) { return Detail::runtimeUnloadPack(path, outResult); }
 uint32_t EngineSession::loadedPackCount() const { return Detail::runtimeLoadedPackCount(); }
+QStringList EngineSession::loadedPackPaths() const { return Detail::runtimeLoadedPackPaths(); }
 
 bool EngineSession::prepareMedia(uint32_t sourceId, const QString& absolutePath, uint64_t fileSize)
 {
@@ -690,16 +692,19 @@ std::vector<harkenstudio::ObjectId> EngineSession::runtimeBusIds() const
 
 void EngineSession::setMixerVolume(harkenstudio::ObjectId busId, float volumeDb) { setBusVolumeDbById(busId, volumeDb); }
 
-uint32_t EngineSession::addListener() { return kPrimaryListenerId; }
+uint32_t EngineSession::addListener() { return UINT32_MAX; }
 void EngineSession::removeListener(uint32_t listenerId) { Q_UNUSED(listenerId); }
-bool EngineSession::isListenerActive(uint32_t listenerId) const { return listenerId == kPrimaryListenerId; }
-void EngineSession::setListenerPositionById(uint32_t listenerId,
+bool EngineSession::isListenerActive(uint32_t listenerId) const
+{
+    return listenerId == kPrimaryListenerId && Detail::runtimeIsActive();
+}
+bool EngineSession::setListenerPositionById(uint32_t listenerId,
                                             float x, float y, float z,
                                             float fwdX, float fwdY, float fwdZ,
                                             float upX, float upY, float upZ)
 {
-    if (listenerId == kPrimaryListenerId)
-        setListenerTransform(x, y, z, fwdX, fwdY, fwdZ, upX, upY, upZ);
+    return isListenerActive(listenerId)
+        && setListenerTransform(x, y, z, fwdX, fwdY, fwdZ, upX, upY, upZ);
 }
 void EngineSession::setGameObjectListeners(uint64_t gameObjectId, const uint32_t* listenerIds, uint32_t count)
 {
@@ -711,14 +716,17 @@ void EngineSession::setListenerSpatialization(uint32_t listenerId, bool spatiali
 }
 bool EngineSession::listenerInfo(uint32_t listenerId,
                                  float* outX, float* outY, float* outZ,
-                                 float* outFwdX, float* outFwdY, float* outFwdZ,
-                                 int* outSpatialized, uint32_t* outPanningRule)
+                                 float* outFwdX, float* outFwdY, float* outFwdZ)
 {
-    Q_UNUSED(listenerId);
-    if (outX) *outX = 0.0f; if (outY) *outY = 0.0f; if (outZ) *outZ = 0.0f;
-    if (outFwdX) *outFwdX = 0.0f; if (outFwdY) *outFwdY = 0.0f; if (outFwdZ) *outFwdZ = 1.0f;
-    if (outSpatialized) *outSpatialized = 0;
-    if (outPanningRule) *outPanningRule = 0;
+    VnVec3 position{}, forward{};
+    if (!isListenerActive(listenerId) || !Detail::runtimeListenerTransform(position, forward))
+        return false;
+    if (outX) *outX = position.x;
+    if (outY) *outY = position.y;
+    if (outZ) *outZ = position.z;
+    if (outFwdX) *outFwdX = forward.x;
+    if (outFwdY) *outFwdY = forward.y;
+    if (outFwdZ) *outFwdZ = forward.z;
     return true;
 }
 void EngineSession::setMultiPosition(uint64_t gameObjectId, const float* positions, uint32_t count, uint8_t type)

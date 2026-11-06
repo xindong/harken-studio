@@ -70,24 +70,6 @@ void IPCServer::registerDesktopSystemHandlers()
     });
     registerDesktopHandler("get_layout_state", [this](const QJsonObject& args) { return handleGetLayoutState(args); });
     registerDesktopHandler("get_inspector_context", [this](const QJsonObject& args) { return handleGetInspectorContext(args); });
-    registerDesktopHandler("get_inspector_schema", [this](const QJsonObject& args) -> QJsonObject {
-        QJsonObject errOut;
-        auto* ip = resolveInspectorForRouting(args, errOut);
-        if (!ip) {
-            if (!errOut.isEmpty()) return errOut;
-            return errorResponse("NO_INSPECTOR", "InspectorPanel not available");
-        }
-        QString schemaId = args["schema_id"].toString();
-        if (schemaId.isEmpty()) {
-            return errorResponse("MISSING_PARAM", "Required: schema_id");
-        }
-        auto schema = ip->getInspectorSchema(schemaId);
-        if (schema.isEmpty()) {
-            return errorResponse("SCHEMA_NOT_FOUND",
-                QString("No schema found for '%1'").arg(schemaId));
-        }
-        return successResponse(QJsonObject{{"schema_id", schemaId}, {"schema", schema}});
-    });
     registerDesktopHandler("create_inspector_panel", [this](const QJsonObject& args) -> QJsonObject {
         if (!mainWindow_)
             return errorResponse("NO_MAIN_WINDOW", "MainWindow not available");

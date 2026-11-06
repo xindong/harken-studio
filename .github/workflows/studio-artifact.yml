@@ -122,9 +122,9 @@ jobs:
           -DHARKEN_BUILD_EDITOR=ON
           -DHARKEN_BUILD_TOOLS=ON
 
-      - name: Build HarkenEditor and Harkenizer
+      - name: Build HarkenEditor and HarkenStudioCLI
         shell: bash
-        run: cmake --build build --config Release --target harken_editor harkenizer --parallel
+        run: cmake --build build --config Release --target harken_editor harken_studio_cli --parallel
 
       - name: Download Integration bundle
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -155,7 +155,7 @@ jobs:
         run: |
           set -euo pipefail
           status=0
-          for required in HarkenStudio.exe Harkenizer.exe qt.conf HarkenIntegration HarkenIntegration/Unity/Harken Legal/NOTICE.txt; do
+          for required in HarkenStudio.exe HarkenStudioCLI.exe qt.conf HarkenIntegration HarkenIntegration/Unity/Harken Legal/NOTICE.txt; do
             if [ ! -e "build/bin/Release/$required" ]; then
               echo "::error::missing deployed content: build/bin/Release/$required"
               status=1
@@ -173,7 +173,7 @@ jobs:
             fi
           done
           if [ "$status" -eq 0 ]; then
-            build/bin/Release/Harkenizer.exe --help
+            build/bin/Release/HarkenStudioCLI.exe --help
           fi
           exit $status
 
@@ -181,7 +181,10 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: harkenstudio-windows-x64
-          path: build/bin/Release
+          path: |
+            build/bin/Release
+            !build/bin/Release/Harkenizer.exe
+            !build/bin/Release/Harkenizer.pdb
           if-no-files-found: error
           retention-days: 14
 
@@ -416,13 +419,13 @@ jobs:
             echo "::error file=$binary::expected ${{ matrix.arch }}, found: $archs"
             status=1
           fi
-          executor="$bundle/Contents/MacOS/Harkenizer"
+          executor="$bundle/Contents/MacOS/HarkenStudioCLI"
           if [ ! -x "$executor" ]; then
-            echo "::error::missing or non-executable Harkenizer: $executor"
+            echo "::error::missing or non-executable HarkenStudioCLI: $executor"
             status=1
           else
             archs=$(lipo -archs "$executor")
-            echo "Harkenizer architectures: $archs"
+            echo "HarkenStudioCLI architectures: $archs"
             if [ "$archs" != "${{ matrix.arch }}" ]; then
               echo "::error file=$executor::expected ${{ matrix.arch }}, found: $archs"
               status=1
@@ -437,7 +440,7 @@ jobs:
             status=1
           fi
           for required in \
-            "$bundle/Contents/MacOS/Harkenizer" \
+            "$bundle/Contents/MacOS/HarkenStudioCLI" \
             "$bundle/Contents/MacOS/HarkenIntegration" \
             "$bundle/Contents/MacOS/HarkenIntegration/Unity/Harken" \
             "$bundle/Contents/Resources/HarkenStudio.icns" \

@@ -131,7 +131,7 @@ def main() -> int:
     if output.exists():
         parser.error(f"Output must not already exist: {output}")
     suffix = ".exe" if executable.suffix.lower() == ".exe" else ""
-    binaries = [executable, *(executable.parent / (name + suffix) for name in ("Harkenizer", "harken_host"))]
+    binaries = [executable, *(executable.parent / (name + suffix) for name in ("HarkenStudioCLI", "harken_host"))]
     for binary in binaries:
         if not binary.is_file():
             parser.error(f"Required executable does not exist: {binary}")

@@ -55,8 +55,9 @@ struct TransactionContextGuard
 }
 
 
-IPCServer::IPCServer(AudioEngine* engine, QObject* parent)
+IPCServer::IPCServer(AudioEngine* engine, QObject* parent, CommandHost host)
     : QObject(parent)
+    , commandHost_(host)
     , engine_(engine)
     , vqlEngine_(std::make_unique<VQLEngine>())
 {
@@ -333,6 +334,11 @@ void IPCServer::registerCommandHandlers()
     registerContainerHandlers();
     registerAdvancedHandlers();
 
+    for (auto it = commandHandlers_.begin(); it != commandHandlers_.end();) {
+        if (!commandSupportedByHost(commandHost_, it.key())) it = commandHandlers_.erase(it);
+        else ++it;
+    }
+
     VNX::setupTransactionCallbacks(this);
 }
 
@@ -602,6 +608,7 @@ QStringList IPCServer::commandNames() const
 
 void IPCServer::registerDesktopHandler(const QString& name, CommandHandler handler)
 {
+    if (commandHost_ != CommandHost::Desktop) return;
     desktopCommands_.insert(name);
     if (!handler)
         handler = [this](const QJsonObject&) {
@@ -662,6 +669,7 @@ bool IPCServer::isReadOnlyCommand(const QString& cmd) const
            cmd.startsWith(QLatin1String("get_")) ||
            cmd.startsWith(QLatin1String("list_")) ||
            cmd.startsWith(QLatin1String("can_")) ||
+           cmd.startsWith(QLatin1String("audition_get_")) ||
            cmd.startsWith(QLatin1String("link_get_"));
 }
 
