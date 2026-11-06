@@ -385,7 +385,7 @@ def validate_project_source(source: dict[str, Any]) -> None:
         raise ValueError(f"unsupported document envelope: {envelope}")
 
 
-def validate_pack_source(source: dict[str, Any], *, require_binary_layout: bool = False) -> None:
+def validate_pack_source(source: dict[str, Any]) -> None:
     if not isinstance(source, dict):
         raise ValueError("Pack contract must be a JSON object")
     metadata = source.get("x-harken-format")
@@ -397,7 +397,7 @@ def validate_pack_source(source: dict[str, Any], *, require_binary_layout: bool 
     version = metadata.get("formatVersion")
     if not isinstance(version, int) or isinstance(version, bool) or version < 1:
         raise ValueError("Pack contract needs a positive formatVersion")
-    if require_binary_layout or version > 4 or "binaryLayout" in metadata:
+    if version > 4 or "binaryLayout" in metadata:
         _VALIDATE_PACK_LAYOUT(metadata.get("binaryLayout"))
     if metadata.get("validationMode") != "generated-json":
         raise ValueError("Pack contract must use generated-json validation")
@@ -512,10 +512,7 @@ def materialize_source(tree: str, source: dict[str, Any], version: int) -> dict[
             slot["const"] = version
     else:
         raise ValueError(f"unknown schema tree: {tree}")
-    if tree == "Pack":
-        validate_pack_source(result, require_binary_layout=True)
-    else:
-        validate_tree_source(tree, result)
+    validate_tree_source(tree, result)
     return result
 
 

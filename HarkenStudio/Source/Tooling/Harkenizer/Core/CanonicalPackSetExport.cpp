@@ -1109,25 +1109,24 @@ std::vector<std::uint8_t> encodeVariableRequirements(
     const std::unordered_map<harkenstudio::ObjectId, std::uint64_t>& labelFingerprints)
 {
     using namespace harkenstudiobuild;
+    std::vector<PackVariableRequirement> wires;
+    wires.reserve(rows.size());
+    for (const auto& row : rows)
+        wires.push_back({row.first, row.second, labelFingerprints.at(row.first)});
     struct Record {
-        PackVariableRequirement wire;
+        const PackVariableRequirement& wire;
         const auto& Wire() const noexcept { return wire; }
         bool Finish() const noexcept { return true; }
     };
     struct Visitor {
-        const std::vector<std::pair<harkenstudio::ObjectId, std::uint64_t>>& rows;
-        const std::unordered_map<harkenstudio::ObjectId, std::uint64_t>& fingerprints;
+        const std::vector<PackVariableRequirement>& wires;
         PackVariableRequirementsHeader header;
         const auto& Value() const noexcept { return header; }
         const auto& Header() const noexcept { return header; }
-        bool PrepareRows(std::uint64_t count) const noexcept { return count == rows.size(); }
-        Record Rows(std::uint64_t index) const noexcept {
-            const auto& row = rows[static_cast<std::size_t>(index)];
-            return {{row.first, row.second, fingerprints.find(row.first)->second}};
-        }
+        bool PrepareRows(std::uint64_t count) const noexcept { return count == wires.size(); }
+        Record Rows(std::uint64_t index) const noexcept { return {wires[static_cast<std::size_t>(index)]}; }
         bool Finish() const noexcept { return true; }
-    } visitor{rows, labelFingerprints, {static_cast<std::uint32_t>(rows.size())}};
-    for (const auto& row : rows) (void)labelFingerprints.at(row.first);
+    } visitor{wires, {static_cast<std::uint32_t>(rows.size())}};
     std::uint64_t bytes = 0;
     if (!MeasurePackVariableRequirementsPayload(visitor, bytes)) return {};
     std::vector<std::uint8_t> payload(static_cast<std::size_t>(bytes), 0);

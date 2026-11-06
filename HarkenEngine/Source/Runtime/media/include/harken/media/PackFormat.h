@@ -1,16 +1,3 @@
-// .pack container v1 byte layout: the single definition point shared
-// by the engine-side reader (pack_table) and the compiler tool (packc).
-//
-// The on-disk format is fixed little-endian with NO implicit padding, so
-// fields are serialized one at a time through explicit byte stores instead
-// of overlaying structs (a natural-alignment struct would insert padding
-// after the 4-byte fields and break the layout). The in-memory forms below
-// are plain working copies; only the Serialize/Parse helpers define bytes.
-//
-// File shape: Header, then the TOC (entryCount fixed-size entries), then
-// the blob region. Every blob offset is 64-byte aligned so reference-mode
-// registration can point straight into the loaded pack with SIMD-friendly
-// addresses.
 #ifndef HARKEN_MEDIA_PACK_FORMAT_H
 #define HARKEN_MEDIA_PACK_FORMAT_H
 
@@ -23,22 +10,13 @@
 
 namespace harken {
 
-
 inline constexpr std::uint32_t kPackFormatVersion = HARKEN_PACK_SCHEMA_VERSION;
 
 inline constexpr bool SupportedPackFormatVersion(std::uint32_t version) noexcept {
     return version == kPackFormatVersion;
 }
 
-// Serialized sizes. Header: magic(4) + formatVersion(4) + headerBytes(4) +
-// fileBytes(8) + entryCount(4) + tocOffset(4) + tocChecksum(8).
-// TOC entry: soundId(8) + sampleRate(4) + channelCount(2) + sampleFormat(2)
-// + frameCount(8) + blobOffset(8) + blobBytes(8) + blobChecksum(8) +
-// flags(4) + loopStartFrame(8) + loopEndFrame(8).
-
 // The end offset at entryCount is also the complete TOC byte length.
-
-
 
 // TOC sampleFormat values. Only canonical float32 planar exists in v1; the
 // field is reserved for future codecs.
@@ -140,9 +118,6 @@ inline VnObjectId LoadObjectId(const std::uint8_t* in) {
     return ObjectIdFromBytes(std::span<const std::uint8_t, 16>(in, 16));
 }
 
-// --- in-memory working forms ---
-
-
 struct PackTocEntry {
     VnObjectId soundId{};
     std::uint32_t sampleRate = 0;
@@ -156,20 +131,6 @@ struct PackTocEntry {
     std::uint64_t loopStartFrame = 0;
     std::uint64_t loopEndFrame = 0; // 0 = whole file when loopable
 };
-
-// Writes the magic and header fields into out[0..kPackMediaFileHeaderBytes).
-
-
-// Parses in[0..kPackMediaFileHeaderBytes). Returns false when the magic does
-// not match; field sanity beyond the magic is the caller's validation.
-
-
-// Writes one TOC entry into out[0..kPackMediaBytes).
-
-
-// Parses in[0..kPackMediaBytes). Every bit pattern parses; field
-// validation is the caller's job.
-
 
 } // namespace harken
 

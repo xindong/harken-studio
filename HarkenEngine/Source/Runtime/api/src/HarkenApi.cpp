@@ -125662,57 +125662,6 @@ struct PreparedCanonicalPackSetV1 {
     }
 };
 
-VnResult ValidateCanonicalNeutralBusProfile(const Engine& engine,
-                                            const PackCanonicalImage& image) noexcept {
-    const auto& header = image.busDefinitionSnapshotHeader;
-    if (!image.hasBusDefinitionSnapshot || header.publicationCapabilityVintage != 1 ||
-        header.profileVintage != 1 || header.renderSampleRateHz == 0 ||
-        header.renderSampleRateHz > 384000 || header.mixLayout == 0 || header.deviceLayout == 0 ||
-        (header.runtimeCapabilityMask & ~busfingerprint::kKnownTargetCapabilityMaskV1) != 0 ||
-        header.effectCount != 0 || header.effectParameterCount != 0 ||
-        header.compileTargetProfileFingerprint != busfingerprint::ProfileFingerprintV1(
-            header.profileVintage, header.renderSampleRateHz, header.mixLayout,
-            header.deviceLayout, header.runtimeCapabilityMask)) {
-        return VN_BAD_PACK;
-    }
-    if (header.renderSampleRateHz != engine.config.mixRate.SampleRate() ||
-        header.mixLayout != engine.config.mixChannelLayout ||
-        header.deviceLayout != engine.config.deviceChannelLayout ||
-        (header.runtimeCapabilityMask & busfingerprint::kRequiredBusCapabilityMaskV1) !=
-            busfingerprint::kRequiredBusCapabilityMaskV1) {
-        return VN_CAPABILITY_UNAVAILABLE;
-    }
-    if (header.downmixCount != header.busCount ||
-        header.coefficientCount != static_cast<std::uint64_t>(header.busCount) * 64) {
-        return VN_BAD_PACK;
-    }
-    for (const auto& row : image.busDefinitionBuses) {
-        const auto output = CanonicalSnapshotIsMasterV1(row.busId)
-            ? header.deviceLayout : header.mixLayout;
-        if (row.faderDb != 0.0f || row.effectFirst != 0 || row.effectCount != 0 ||
-            row.faderAfterSlot != busfingerprint::kNeutralFaderAfterSlotV1 || row.outputLayout != output ||
-            row.downmixCount != 1 || row.downmixFirst >= image.busDefinitionDownmixes.size()) {
-            return VN_BAD_PACK;
-        }
-        const auto& downmix = image.busDefinitionDownmixes[row.downmixFirst];
-        if (downmix.busId != row.busId || downmix.sourceLayout != header.mixLayout ||
-            downmix.destinationLayout != output || downmix.coefficientCount != 64 ||
-            downmix.coefficientFirst > image.busDefinitionCoefficients.size() ||
-            image.busDefinitionCoefficients.size() - downmix.coefficientFirst < 64) {
-            return VN_BAD_PACK;
-        }
-        float expected[64]{};
-        DefaultDownmixMatrix(header.mixLayout, output, expected);
-        for (std::uint32_t i = 0; i < 64; ++i) {
-            if (busfingerprint::CanonicalFloatBits(expected[i]) != busfingerprint::CanonicalFloatBits(
-                    image.busDefinitionCoefficients[downmix.coefficientFirst + i])) {
-                return VN_BAD_PACK;
-            }
-        }
-    }
-    return CanonicalNeutralBusFingerprint(image) == header.publishedBusFingerprint ? VN_OK : VN_BAD_PACK;
-}
-
 VnResult ValidateCanonicalVolumeBusProfile(const Engine& engine,
                                            const PackCanonicalImage& image) noexcept {
     const auto& header = image.busDefinitionSnapshotHeader;
@@ -125769,7 +125718,6 @@ VnResult ValidateCanonicalVolumeBusProfile(const Engine& engine,
 }
 
 VnResult ValidateCanonicalV2InitBusEntries(const PackCanonicalImage& init) {
-    if (init.busDefinitionSnapshotHeader.schemaVersion != 2) return VN_OK;
     std::map<VnBusId, const PackBusEntry*> legacy;
     for (const auto& row : init.buses) {
         if (row.busId == VN_BUS_MASTER || row.busId == VnObjectId{} ||
@@ -125887,18 +125835,9 @@ VnResult ValidateCanonicalSetReferences(const PackComposition::PublishedView& ne
         if (id == VnObjectId{}) {
             return true;
         }
-        if (next.catalog.busDefinitionSnapshotHeader.schemaVersion == 2) {
-            return std::any_of(next.catalog.busDefinitionBusesV2.begin(),
-                next.catalog.busDefinitionBusesV2.end(),
-                [&](const auto& bus) { return bus.busId == id; });
-        }
-        const auto packed = CanonicalSnapshotPackedBusIdV1(id);
-        if (packed == 0 && id != VnObjectId{}) {
-            return false;
-        }
-        return std::any_of(next.catalog.busDefinitionBuses.begin(),
-            next.catalog.busDefinitionBuses.end(),
-            [&](const auto& bus) { return bus.busId == packed; });
+        return std::any_of(next.catalog.busDefinitionBusesV2.begin(),
+            next.catalog.busDefinitionBusesV2.end(),
+            [&](const auto& bus) { return bus.busId == id; });
     };
     const auto validate = [&](const PlayablePropertyPayloadViewV1& payload) -> VnResult {
         if ((payload.presentMask & (UINT64_C(1) << attenuationSlot)) != 0) {
@@ -126080,13 +126019,9 @@ void ReclaimRetiredAttenuationProfiles(Engine& engine) noexcept {
 }
 
 bool SnapshotHasMaster(const PackCanonicalImage& image) noexcept {
-    if (image.busDefinitionSnapshotHeader.schemaVersion == 2) {
-        return std::any_of(image.busDefinitionBusesV2.begin(),
-            image.busDefinitionBusesV2.end(),
-            [](const auto& bus) { return bus.busId == VN_BUS_MASTER; });
-    }
-    return std::any_of(image.busDefinitionBuses.begin(), image.busDefinitionBuses.end(),
-        [](const auto& bus) { return CanonicalSnapshotIsMasterV1(bus.busId); });
+    return std::any_of(image.busDefinitionBusesV2.begin(),
+        image.busDefinitionBusesV2.end(),
+        [](const auto& bus) { return bus.busId == VN_BUS_MASTER; });
 }
 
 VnResult PreparePackGraphV1(Engine& engine, const PackCanonicalImage* image,
@@ -126095,8 +126030,7 @@ VnResult PreparePackGraphV1(Engine& engine, const PackCanonicalImage* image,
         (image != nullptr && (!image->hasBusDefinitionSnapshot || !SnapshotHasMaster(*image)))) {
         return VN_BAD_PACK;
     }
-    const bool volumeOnly = image != nullptr &&
-        image->busDefinitionSnapshotHeader.schemaVersion == 2;
+    const bool volumeOnly = image != nullptr;
     std::vector<std::pair<VnBusId, VnBusId>> snapshotBuses;
     struct SnapshotSend {
         VnBusId source{};
@@ -126105,19 +126039,10 @@ VnResult PreparePackGraphV1(Engine& engine, const PackCanonicalImage* image,
     };
     std::vector<SnapshotSend> snapshotSends;
     if (image != nullptr) {
-        if (volumeOnly) {
-            for (const auto& row : image->busDefinitionBusesV2)
-                snapshotBuses.emplace_back(row.busId, row.parentId);
-            for (const auto& row : image->busDefinitionSendsV2)
-                snapshotSends.push_back({row.source, row.target, row.levelDb});
-        } else {
-            for (const auto& row : image->busDefinitionBuses)
-                snapshotBuses.emplace_back(CanonicalSnapshotBusIdV1(row.busId),
-                    CanonicalSnapshotBusIdV1(row.parentId));
-            for (const auto& row : image->busDefinitionSends)
-                snapshotSends.push_back({CanonicalSnapshotBusIdV1(row.source),
-                    CanonicalSnapshotBusIdV1(row.target), row.levelDb});
-        }
+        for (const auto& row : image->busDefinitionBusesV2)
+            snapshotBuses.emplace_back(row.busId, row.parentId);
+        for (const auto& row : image->busDefinitionSendsV2)
+            snapshotSends.push_back({row.source, row.target, row.levelDb});
     }
     std::map<VnBusId, std::pair<VnBusId, bool>> graph;
     for (std::uint32_t slot = 0; slot < engine.buses.BusCount(); ++slot) {
@@ -126783,9 +126708,7 @@ VnResult PrepareCanonicalSetActivation(Engine& engine,
     if (PackFault(PackStagingFault::AfterClosure)) { return VN_BAD_PACK; }
     const auto& init = out->members.front().image;
     out->preserveInit = out->members.front().keptOwner != nullptr;
-    const auto profile = init.busDefinitionSnapshotHeader.schemaVersion == 2
-        ? ValidateCanonicalVolumeBusProfile(engine, init)
-        : ValidateCanonicalNeutralBusProfile(engine, init);
+    const auto profile = ValidateCanonicalVolumeBusProfile(engine, init);
     if (profile != VN_OK) { return profile; }
     const auto initBusEntries = ValidateCanonicalV2InitBusEntries(init);
     if (initBusEntries != VN_OK) { return initBusEntries; }

@@ -169,6 +169,16 @@ class PackWireCodegenTest(unittest.TestCase):
             self.assertEqual(len(MODULE.scan_sources(root, {"layout.cpp": None})), 2)
             self.assertTrue(MODULE.scan_sources(root, {"missing.cpp": None}))
 
+    def test_source_scan_keeps_code_after_digit_separators(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "scan.cpp").write_text(
+                "constexpr int kFirst = 1'000;\nStoreLE32(out, 0);\nconstexpr int kLast = 2'000;\nchar c = '\\'';\n",
+                encoding="utf-8",
+            )
+            errors = MODULE.scan_sources(root, {"scan.cpp": None})
+        self.assertEqual(errors, ["scan.cpp:2: handwritten Pack byte access: StoreLE32("])
+
     def test_check_detects_contract_output_and_source_drift(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

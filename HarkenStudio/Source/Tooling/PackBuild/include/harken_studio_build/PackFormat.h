@@ -74,7 +74,6 @@ inline harkenstudio::ObjectId LoadObjectId(const std::uint8_t* in) {
     return ObjectIdFromBytes(std::span<const std::uint8_t, 16>(in, 16));
 }
 
-
 struct PackTocEntry {
     harkenstudio::ObjectId soundId{};
     std::uint32_t sampleRate = 0;
@@ -88,7 +87,6 @@ struct PackTocEntry {
     std::uint64_t loopStartFrame = 0;
     std::uint64_t loopEndFrame = 0; // 0 = whole file when loopable
 };
-
 
 } // namespace harkenstudiobuild
 

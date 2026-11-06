@@ -1250,6 +1250,24 @@ bool EncodeCurrentWorldBodyImpl(
                 return false;
             }
         }
+        std::uint64_t stepTotal = 0;
+        for (std::uint32_t i = 0; i < world.actionCount; ++i) {
+            const auto& action = world.actions[i];
+            if (!CountPointer(action.stepCount, action.steps, kPackBodyActionStepCap) ||
+                action.stepCount == 0) {
+                return false;
+            }
+            stepTotal += action.stepCount;
+            if (stepTotal > kHardActionStepCapacity) return false;
+            for (std::uint32_t s = 0; !includeEntryTimeline && s < action.stepCount; ++s) {
+                const auto timing = action.steps[s].quantizeTiming;
+                if (timing == ActionQuantizeTimingV1::EntryMarker ||
+                    timing == ActionQuantizeTimingV1::ReferenceExitMarker ||
+                    timing == ActionQuantizeTimingV1::TargetNextMarker) {
+                    return false;
+                }
+            }
+        }
         CurrentWorldV3PrefixValues prefix{};
         if (!TryBuildCurrentWorldV3Prefix(world, false, &prefix) ||
             prefix.playablePropertySendCount != totals[0] ||

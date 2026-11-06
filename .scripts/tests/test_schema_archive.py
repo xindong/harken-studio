@@ -438,11 +438,12 @@ class SchemaArchiveTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             MODULE["validate_pack_source"](pack)
 
-    def test_pack_current_and_new_archives_require_binary_layout(self) -> None:
+    def test_new_generations_require_binary_layout_and_older_trees_still_load(self) -> None:
         current = copy.deepcopy(MODULE["load_tree"]("Pack")["currentSource"])
         current["x-harken-format"].pop("binaryLayout")
+        MODULE["materialize_source"]("Pack", current, 4)
         with self.assertRaises(ValueError):
-            MODULE["materialize_source"]("Pack", current, PACK_VERSION)
+            MODULE["materialize_source"]("Pack", current, 5)
         for version in (3, 4):
             archive = read_json(SCHEMA_ROOT / "Pack" / str(version) / "PackManifestSchema.json")
             MODULE["validate_pack_source"](archive)

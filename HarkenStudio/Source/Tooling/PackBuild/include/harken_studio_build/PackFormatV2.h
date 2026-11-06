@@ -37,7 +37,6 @@ inline constexpr std::uint32_t kPackVoiceToneEnableMask =
     kPackVoiceToneLowpassEnabled | kPackVoiceToneHighpassEnabled |
     kPackVoiceToneLowShelfEnabled | kPackVoiceToneHighShelfEnabled;
 
-
 inline void StoreLEF32(std::uint8_t* out, float v) {
     std::uint32_t bits;
     std::memcpy(&bits, &v, sizeof bits);
@@ -51,7 +50,6 @@ inline float LoadLEF32(const std::uint8_t* in) {
     return v;
 }
 
-
 struct PackBusEntry {
     harkenstudio::ObjectId busId{};
     harkenstudio::ObjectId parentBusId{};
@@ -64,7 +62,6 @@ struct PackBusSendEntry {
     harkenstudio::ObjectId toBusId{};
     float levelDb = 0.0f;
 };
-
 
 struct PackBindingDefinitionEntry {
     harkenstudio::ObjectId bindingId{};
@@ -164,7 +161,6 @@ struct PackContainerChild {
     std::uint32_t delayJitterMs = 0;
 };
 
-
 inline constexpr std::uint32_t kInitCatalogMaxLocatorBytes = 256;
 inline constexpr std::uint32_t kInitCatalogMaxStartupPacks = 256;
 inline constexpr std::uint32_t kInitCatalogMaxEntries = 1048576;
@@ -198,10 +194,6 @@ inline bool CheckedAddU64(std::uint64_t a, std::uint64_t b, std::uint64_t* out) 
     *out = a + b;
     return true;
 }
-
-
-
-
 
 struct PackInitCatalogHeader {
     std::uint32_t schemaVersion = 0;
@@ -313,58 +305,6 @@ inline constexpr bool CanonicalSnapshotIsMasterV1(std::uint64_t packed) noexcept
     return packed == harkenstudio::kMasterBusObjectId.low;
 }
 
-struct PackBusDefinitionBusV1 {
-    std::uint64_t busId = 0;
-    std::uint64_t parentId = 0;
-    std::uint32_t feedsFirstOrdinal = 0;
-    std::uint32_t flags = 0;
-    float faderDb = 0.0f;
-    std::uint32_t faderAfterSlot = 0;
-    std::uint32_t outputLayout = 0;
-    std::uint32_t effectFirst = 0;
-    std::uint32_t effectCount = 0;
-    std::uint32_t downmixFirst = 0;
-    std::uint32_t downmixCount = 0;
-    std::uint32_t reserved0 = 0;
-    std::uint64_t reserved1 = 0;
-};
-
-struct PackBusDefinitionSendV1 {
-    std::uint64_t source = 0;
-    std::uint64_t target = 0;
-    float levelDb = 0.0f;
-    std::uint32_t reserved0 = 0;
-    std::uint64_t reserved1 = 0;
-};
-
-struct PackBusDefinitionEffectV1 {
-    std::uint64_t busId = 0;
-    std::uint64_t effectStableId = 0;
-    std::uint32_t slot = 0;
-    std::uint32_t effectType = 0;
-    std::uint32_t descriptorVintage = 0;
-    std::uint32_t flags = 0;
-    std::uint32_t parameterFirst = 0;
-    std::uint32_t parameterCount = 0;
-    std::uint64_t reserved0 = 0;
-};
-
-struct PackBusDefinitionEffectParameterV1 {
-    std::uint32_t parameterIndex = 0;
-    float value = 0.0f;
-    std::uint32_t reserved0 = 0;
-    std::uint32_t reserved1 = 0;
-};
-
-struct PackBusDefinitionDownmixV1 {
-    std::uint64_t busId = 0;
-    std::uint32_t sourceLayout = 0;
-    std::uint32_t destinationLayout = 0;
-    std::uint32_t coefficientFirst = 0;
-    std::uint32_t coefficientCount = 0;
-    std::uint64_t reserved0 = 0;
-};
-
 struct PackBusDefinitionBus {
     harkenstudio::ObjectId busId{};
     harkenstudio::ObjectId parentId{};
@@ -406,25 +346,6 @@ struct PackCanonicalPartitionHeader {
     std::uint64_t publishedBusFingerprint = 0;
     std::uint64_t compileTargetProfileFingerprint = 0;
 };
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 }
 
@@ -552,7 +473,6 @@ inline bool ReadPackDependencyEdge(const std::uint8_t* in, std::uint64_t size,
            out->required01 <= 1;
 }
 
-
 template <class Byte>
 struct PackWireBuffer {
     Byte* data;
@@ -596,12 +516,6 @@ inline bool ReadPackContainerHeader(const std::uint8_t* in, std::uint64_t size,
            size == PackContainerPayloadBytes(out->childCount);
 }
 
-inline PackContainerChild ReadPackContainerChild(const std::uint8_t* in) noexcept {
-    PackContainerChild row{};
-    (void)ParsePackContainerChild(in, kPackContainerChildBytes, &row);
-    return row;
-}
-
 inline bool ReadPackVoiceRecipeHeader(const std::uint8_t* in, std::uint64_t size,
                                       PackVoiceRecipeEntryHeader* out) noexcept {
     return size >= kPackVoiceRecipeHeaderBytes &&
@@ -641,9 +555,12 @@ inline bool ReadPackVoiceRecipeSpatial(const std::uint8_t* in, PackVoiceRecipeSp
     return ParsePackVoiceRecipeSpatial(in, kPackVoiceRecipeSpatialBytes, out) && PackVoiceRecipeSpatialValid(*out);
 }
 
+inline bool PackVoiceRecipePlaybackValid(const PackVoiceRecipePlayback& playback) noexcept {
+    return playback.present <= 1 && (playback.present != 0 || playback.loopCount == 0);
+}
+
 inline bool ReadPackVoiceRecipePlayback(const std::uint8_t* in, PackVoiceRecipePlayback* out) noexcept {
-    return ParsePackVoiceRecipePlayback(in, kPackVoiceRecipePlaybackBytes, out) &&
-           out->present <= 1 && (out->present != 0 || out->loopCount == 0);
+    return ParsePackVoiceRecipePlayback(in, kPackVoiceRecipePlaybackBytes, out) && PackVoiceRecipePlaybackValid(*out);
 }
 
 inline void WritePackVoiceRecipeInstall(const PackVoiceRecipeInstall& install, std::uint8_t* out) noexcept {
@@ -653,19 +570,17 @@ inline void WritePackVoiceRecipeInstall(const PackVoiceRecipeInstall& install, s
     SerializePackVoiceRecipeInstall(row, out);
 }
 
+inline bool PackVoiceRecipeInstallWireValid(const PackVoiceRecipeInstallWire& row) noexcept {
+    return row.bypass <= 1 && row.paramCount <= kPackVoiceRecipeMaxParams &&
+           row.paramBytes == row.paramCount * sizeof(float);
+}
+
 inline bool ReadPackVoiceRecipeInstall(const std::uint8_t* in, PackVoiceRecipeInstall* out) noexcept {
     PackVoiceRecipeInstallWire row{};
     if (!ParsePackVoiceRecipeInstall(in, kPackVoiceRecipeInstallBytes, &row) ||
-        row.bypass > 1 || row.paramCount > kPackVoiceRecipeMaxParams ||
-        row.paramBytes != row.paramCount * sizeof(float)) return false;
+        !PackVoiceRecipeInstallWireValid(row)) return false;
     *out = row;
     return true;
-}
-
-inline harkenstudio::ObjectId ReadPackVoiceRecipeBinding(const std::uint8_t* in) noexcept {
-    harkenstudio::ObjectId row{};
-    (void)ParsePackVoiceRecipeBinding(in, kPackVoiceRecipeBindingBytes, &row);
-    return row;
 }
 
 template <class Container>
@@ -700,8 +615,7 @@ inline bool ReadPackVoiceRecipePayload(const std::uint8_t* in, std::uint64_t siz
         PackVoiceRecipeInstallWire row{};
         auto& Wire() noexcept { return row; }
         bool Finish() noexcept {
-            if (row.bypass > 1 || row.paramCount > kPackVoiceRecipeMaxParams ||
-                row.paramBytes != row.paramCount * sizeof(float)) return false;
+            if (!PackVoiceRecipeInstallWireValid(row)) return false;
             target = row;
             return true;
         }
@@ -716,7 +630,7 @@ inline bool ReadPackVoiceRecipePayload(const std::uint8_t* in, std::uint64_t siz
         bool PrepareInstalls(std::uint64_t count) noexcept {
             if (count != row.installs.size() ||
                 !PackVoiceRecipeToneValid(row.tone) || !PackVoiceRecipeSpatialValid(row.spatial) ||
-                row.playback.present > 1 || (row.playback.present == 0 && row.playback.loopCount != 0)) return false;
+                !PackVoiceRecipePlaybackValid(row.playback)) return false;
             return true;
         }
         InstallVisitor Installs(std::uint64_t index) noexcept { return {row.installs[static_cast<std::size_t>(index)]}; }
@@ -729,7 +643,6 @@ inline bool ReadPackVoiceRecipePayload(const std::uint8_t* in, std::uint64_t siz
     PackWireBuffer<const std::uint8_t> buffer{in, size};
     return ReadPackVoiceRecipePayload(buffer, visitor) && buffer.offset == size;
 }
-
 
 inline PackTocEntry ReadPackMedia(const std::uint8_t* in) noexcept {
     PackTocEntry row{};
@@ -767,7 +680,6 @@ inline bool ReadPackBindingDefinition(const std::uint8_t* in, std::uint64_t size
     *out = row.definition;
     return true;
 }
-
 
 inline bool PackIsCanonicalEntryKind(std::uint32_t entryKind) {
     return entryKind == kPackEntryKindCanonicalDefinitionPartition ||
@@ -807,10 +719,6 @@ inline bool ReadPackBusDefinitionSnapshotHeader(
     return hash == out->checksum;
 }
 
-} // namespace harkenstudiobuild
-
-namespace harkenstudiobuild {
-
 inline bool ReadPackMediaFileHeader(const std::uint8_t* in, PackMediaFileHeader* out) noexcept {
     return ParsePackMediaFileHeader(in, kPackMediaFileHeaderBytes, out);
 }
@@ -824,8 +732,6 @@ inline PackDirectoryEntry ReadPackDirectoryEntry(const std::uint8_t* in) noexcep
     (void)ParsePackDirectoryEntry(in, kPackDirectoryEntryBytes, &row);
     return row;
 }
-
-
 
 }
 

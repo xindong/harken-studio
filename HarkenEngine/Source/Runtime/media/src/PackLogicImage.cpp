@@ -917,7 +917,6 @@ bool CanonicalKindLegal(std::uint32_t entryKind, std::uint32_t packKind,
     case kPackEntryKindBindingDefinition:
     case kPackEntryKindBindingAttachment:
         return PackIsCanonicalKind(packKind);
-        return packKind == kPackKindInit;
     case kPackEntryKindCanonicalDefinitionPartition:
     case kPackEntryKindPackRequirementBlock:
     case kPackEntryKindPackDependencyEdge:

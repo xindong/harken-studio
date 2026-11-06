@@ -314,6 +314,8 @@ Editor 范围排除了 `ExportedPackLifecycle.WasapiImmediateSoundHarness`、`Ex
 
 本地证据在 `.temp/pack-wire/`：`final-validation-summary.json` 汇总最终结论，引用 `final-head-build.log`、`final-head-runtime.json`、`final-head-editor.json`、`final-head-export/report.json`、`final-native-complete.log`、`final-head-schema-recheck.log`、`core-only-build.log` 和 `final-qualification-64-absolute.json`。`baseline/coverage.json` 与各批 `*-equivalence`、`body-stage/`、`snapshot-stage/` 保存覆盖清单和补充探针。原 `final-validation.json` 保留 fixture 修复前的变量失败及总体 false；原 `final-qualification-64.json` 保留相对 fixture 路径失败，绝对路径重跑后完成，不覆盖原始记录。
 
+复核修正（2026-11-06）：恢复 body 编码端在迁移中丢失的 Action 步数累计上限，以及 Engine 对 V19 专属量化时机的拒绝；历史 tag 的 `current` 不含 `binaryLayout`，审计加载它们时不再报错，`binaryLayout` 只对代际大于 4 的 Pack 合同强制，`current` 由 `pack_wire_codegen.py --check` 保证；移除运行时已不可达的 V1 总线快照分支及其类型。重建后 Runtime 执行 6457 项，6451 通过、6 跳过、0 失败；167 项打包回归通过，22 个产物文件与基线逐字节一致。Integration 原生合同未在本次复核中重跑。
+
 ## 验证快照（2026-11-03）
 
 基线为 `a3c55d350612f29fbe1db357ccbee90c1618cb9c` 的保留二进制；本次 Harkenizer 的 SHA-256 为 `5dfb098d76abc23a7a84248055e624920326529aa7a7f9815c4dd954bc3fef6e`。167 项回归、14 项补充用例通过，22 个黄金样本产物与基线逐字节一致。真实工程比较共 36 次 CLI 调用，均成功且产物与对应输入的基线逐字节一致；原工程输入未改变。单平台产生 11 包／22 文件，四平台产生 44 包／88 文件。

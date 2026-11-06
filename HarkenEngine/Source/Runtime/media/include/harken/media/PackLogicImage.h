@@ -168,11 +168,6 @@ struct PackCanonicalImage {
     std::vector<PackBindingAttachmentEntry> bindingAttachments;
     bool hasBusDefinitionSnapshot = false;
     PackBusDefinitionSnapshotHeader busDefinitionSnapshotHeader{};
-    std::vector<PackBusDefinitionBusV1> busDefinitionBuses;
-    std::vector<PackBusDefinitionSendV1> busDefinitionSends;
-    std::vector<PackBusDefinitionEffectV1> busDefinitionEffects;
-    std::vector<PackBusDefinitionEffectParameterV1> busDefinitionEffectParameters;
-    std::vector<PackBusDefinitionDownmixV1> busDefinitionDownmixes;
     std::vector<PackBusDefinitionBus> busDefinitionBusesV2;
     std::vector<PackBusDefinitionSend> busDefinitionSendsV2;
     std::vector<PackBusDefinitionDownmix> busDefinitionDownmixesV2;
@@ -338,65 +333,6 @@ inline CanonicalBusTriple SnapshotBusTriple(
 inline CanonicalBusTriple DependencyBusTriple(const PackDependencyEdge& edge) noexcept {
     return {edge.expectedBusContentGeneration, edge.expectedPublishedBusFingerprint,
             edge.expectedCompileTargetProfileFingerprint};
-}
-
-inline std::uint64_t CanonicalNeutralBusFingerprint(const PackCanonicalImage& image) noexcept {
-    const auto& header = image.busDefinitionSnapshotHeader;
-    std::uint64_t hash = busfingerprint::kOffsetBasis;
-    const auto byte = [&](std::uint8_t value) { hash = busfingerprint::Step(hash, value); };
-    const auto u32 = [&](std::uint32_t value) { busfingerprint::AppendU32(byte, value); };
-    const auto u64 = [&](std::uint64_t value) { busfingerprint::AppendU64(byte, value); };
-    const auto f32 = [&](float value) {
-        u32(busfingerprint::CanonicalFloatBits(value));
-    };
-    constexpr char tag[] = "harken.bus.published.v1";
-    u32(static_cast<std::uint32_t>(sizeof(tag) - 1));
-    for (std::size_t i = 0; i + 1 < sizeof(tag); ++i) {
-        byte(static_cast<std::uint8_t>(tag[i]));
-    }
-    u32(1);
-    u32(header.publicationCapabilityVintage);
-    u32(header.profileVintage);
-    u32(header.renderSampleRateHz);
-    u32(header.mixLayout);
-    u32(header.deviceLayout);
-    u64(header.runtimeCapabilityMask);
-    u64(header.compileTargetProfileFingerprint);
-    u32(header.busCount);
-    u32(header.sendCount);
-    u32(0);
-    u32(0);
-    u32(header.downmixCount);
-    u32(header.coefficientCount);
-    for (const auto& row : image.busDefinitionBuses) {
-        u64(row.busId);
-        u64(row.parentId);
-        u32(row.feedsFirstOrdinal);
-        f32(row.faderDb);
-        u32(row.faderAfterSlot);
-        u32(row.outputLayout);
-        u32(row.effectFirst);
-        u32(row.effectCount);
-        u32(row.downmixFirst);
-        u32(row.downmixCount);
-    }
-    for (const auto& row : image.busDefinitionSends) {
-        u64(row.source);
-        u64(row.target);
-        f32(row.levelDb);
-        u32(0);
-    }
-    for (const auto& row : image.busDefinitionDownmixes) {
-        u64(row.busId);
-        u32(row.sourceLayout);
-        u32(row.destinationLayout);
-        u32(row.coefficientFirst);
-        u32(row.coefficientCount);
-    }
-    for (float value : image.busDefinitionCoefficients) {
-        f32(value);
-    }
-    return busfingerprint::Finalize(hash);
 }
 
 // The v2 snapshot parent check accepts any Bus row order and bounds a full

@@ -847,7 +847,7 @@ def record_layouts(layout: dict) -> dict[str, dict]:
 
 
 def source_code(text: str) -> str:
-    pattern = r'//[^\n]*|/\*[\s\S]*?\*/|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\''
+    pattern = r'//[^\n]*|/\*[\s\S]*?\*/|"(?:\\.|[^"\\])*"|\'(?:\\[^\n]{1,10}?|[^\'\\\n])\''
     return re.sub(pattern, lambda match: "".join("\n" if char == "\n" else " " for char in match[0]), text)
 
 
