@@ -914,6 +914,55 @@ TEST(PackCanonicalFormat, BoundedFileSharesOnlyExactDuplicateMediaWithinFile) {
     }
 }
 
+TEST(PackCanonicalFormat, BoundedFileCacheEnvelopeRefusesBeforeOverlappingPayloadAllocation) {
+    auto bytes = BuildMinimalInit();
+    PackV2Header header;
+    ASSERT_TRUE(ParsePackV2Header(bytes.data(), &header));
+    ASSERT_GT(header.entryCount, 1u);
+    auto* directory = bytes.data() + header.directoryOffset;
+    const auto first = ParsePackV2DirectoryEntry(directory);
+    auto* lastRecord = directory + (header.entryCount - 1) * kPackV2DirectoryEntryBytes;
+    auto last = ParsePackV2DirectoryEntry(lastRecord);
+    std::uint64_t cached = kPackV2HeaderBytes +
+        static_cast<std::uint64_t>(header.entryCount) * kPackV2DirectoryEntryBytes;
+    for (std::uint32_t i = 0; i + 1 < header.entryCount; ++i) {
+        const auto entry = ParsePackV2DirectoryEntry(directory + i * kPackV2DirectoryEntryBytes);
+        cached += std::max<std::uint64_t>(entry.size, 1);
+    }
+    last.offset = first.offset;
+    last.size = bytes.size() - last.offset;
+    ASSERT_LE(cached, bytes.size());
+    ASSERT_GT(cached + last.size, bytes.size());
+    // A distinct overlapping cache key exceeds the encoded envelope. Its bad
+    // checksum would refuse earlier than Finish if the payload were allocated.
+    last.payloadChecksum = Fnv1a64(bytes.data() + last.offset, last.size) ^ 1;
+    SerializePackV2DirectoryEntry(last, lastRecord);
+    RecomputeChecksums(&bytes, false);
+    const auto path = CanonicalReadTestPath("cache-envelope.pack");
+    ASSERT_TRUE(harkentest::packfoundation::WriteFile(path, bytes));
+    PCMRegistry registry;
+    auto budget = detail::MakePackDecodeBudget(1024 * 1024);
+    detail::PackDecodeCharge sampleStaging(budget);
+    PackCanonicalImage image;
+    image.packStableId = 77;
+    std::vector<PCMRegistry::PreparedPackSamples> samples;
+    std::uint64_t count = 19, hash = 23;
+    bool retry = false;
+    EXPECT_EQ(VN_BAD_PACK, ReadPackCanonicalFile(path.string().c_str(), registry, &image,
+        &samples, &count, &hash, bytes.size(), {}, &retry, nullptr, budget, &sampleStaging));
+    EXPECT_TRUE(retry);
+    EXPECT_EQ(77u, image.packStableId);
+    EXPECT_TRUE(samples.empty());
+    EXPECT_EQ(19u, count);
+    EXPECT_EQ(23u, hash);
+    EXPECT_EQ(0u, budget->live);
+    // The requested fallback reaches the ordinary payload checksum rejection.
+    EXPECT_EQ(VN_BAD_PACK, ParsePackCanonicalImageWithBudget(bytes.data(), bytes.size(),
+        &image, &hash, budget));
+    EXPECT_EQ(77u, image.packStableId);
+    EXPECT_EQ(0u, budget->live);
+}
+
 TEST(PackCanonicalFormat, BoundedFileRejectsCorruptionMetadataChangeAndShortRead) {
     const auto original = BuildCanonicalMediaFixture({90001});
     for (const int fault : {0, 1, 2, 3, 4}) {

@@ -365,6 +365,65 @@ std::vector<std::uint8_t> BuildPreview(bool random, bool multipleSteps = false,
 
 } // namespace companionfixture
 
+TEST(CanonicalPackSetActivate, ProviderMembersShareDecodeBudgetAndPreservePriorPublication) {
+    using namespace companionfixture;
+    using namespace harken;
+    constexpr std::uint64_t limitedBytes = 96 * 1024;
+    Provider init{Build(true, PackId("Init"))};
+    Provider content{Build(false, PackId("content"))};
+    for (auto* provider : {&init, &content}) {
+        // Trailing encoded padding is legal and belongs to the acquired owner.
+        provider->bytes.resize(64 * 1024, 0);
+        PackV2Header header;
+        ASSERT_TRUE(ParsePackV2Header(provider->bytes.data(), &header));
+        header.fileBytes = provider->bytes.size();
+        SerializePackV2Header(header, provider->bytes.data());
+        auto budget = detail::MakePackDecodeBudget(limitedBytes);
+        detail::PackDecodeCharge encoded(budget);
+        encoded.Add(provider->bytes.size());
+        PackCanonicalImage image;
+        ASSERT_EQ(VN_OK, ParsePackCanonicalImageWithBudget(provider->bytes.data(),
+            provider->bytes.size(), &image, nullptr, budget));
+        EXPECT_LT(budget->live, limitedBytes);
+    }
+    for (const auto limit : {limitedBytes, std::uint64_t{512 * 1024}}) {
+        SCOPED_TRACE(limit);
+        auto config = CanonicalActivationConfig();
+        config.maxPackDecodeStagingBytes = limit;
+        EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        std::array<VnCanonicalPackSetMemberV1, 2> members{
+            Member(PackId("Init"), true, &init, nullptr).source,
+            Member(PackId("content"), false, &content, nullptr).source};
+        std::array<VnCanonicalPackSetMemberResultV1, 2> rows{};
+        for (auto& row : rows) row.structSize = sizeof(row);
+        VnCanonicalPackSetActivationReportV1 report{};
+        ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(members.data(), 1, rows.data(), report));
+        const auto prior = session.Engine()->packComposition.PublishedHandle();
+        const auto generation = session.Engine()->packComposition.CompositeGeneration();
+        members[0].expectedHandle = report.initHandle;
+        init.reads = init.releases = content.reads = content.releases = 0;
+        const auto result = harkentest::ActivateCanonicalMembersV1(members.data(), 2, rows.data(),
+            report, prior->initHandle, prior->ledger.setRevision);
+        EXPECT_EQ(limit == limitedBytes ? VN_PACK_RESIDENT_CAPACITY : VN_OK, result);
+        // Reaching the second provider proves the first member parsed successfully.
+        EXPECT_EQ(1u, init.reads);
+        EXPECT_EQ(1u, content.reads);
+        EXPECT_EQ(init.reads, init.releases);
+        EXPECT_EQ(content.reads, content.releases);
+        if (limit == limitedBytes) {
+            EXPECT_EQ(prior.get(), session.Engine()->packComposition.Published());
+            EXPECT_EQ(generation, session.Engine()->packComposition.CompositeGeneration());
+            EXPECT_EQ(1u, session.Engine()->packs.LoadedCount());
+            ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(members.data(), 1, rows.data(),
+                report, prior->initHandle, prior->ledger.setRevision));
+        } else {
+            EXPECT_EQ(generation + 1, session.Engine()->packComposition.CompositeGeneration());
+            EXPECT_EQ(2u, session.Engine()->packs.LoadedCount());
+        }
+    }
+}
+
 TEST(CanonicalPackSetActivate, CompanionInitOwnsVariableAndLabelNames) {
     using namespace companionfixture;
     using namespace harken;

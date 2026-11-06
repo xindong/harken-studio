@@ -2553,6 +2553,7 @@ VnResult BuildPlaybackOwnerStore(PackComposition::PublishedView& published,
                                  const PackAttenuationBindingMapV1& attenuationBindings) {
     auto store = std::make_shared<PackPlaybackOwnerStore>();
     store->worldSemanticFingerprint = worldSemanticFingerprint;
+    published.staging.AddRows<PackAttenuationBindingMapV1::Binding>(attenuationBindings.entries.size());
     store->attenuationBindings = attenuationBindings;
     store->owners.resize(published.owners.size());
     std::vector<ContainerWorldInstallViewV1> worlds;
@@ -3185,11 +3186,15 @@ VnResult PackComposition::PrepareCommit(
     if (prior == UINT64_MAX) {
         return VN_RUNTIME_RECREATE_REQUIRED;
     }
+    detail::PackDecodeCharge effectiveStaging(budget);
     PackAttenuationBindingMapV1 effectiveBindings;
     if (attenuationBindings != nullptr) {
+        effectiveStaging.AddRows<PackAttenuationBindingMapV1::Binding>(attenuationBindings->entries.size());
         effectiveBindings = *attenuationBindings;
     } else if (published_ != nullptr && published_->playbackStore != nullptr) {
-        effectiveBindings = published_->playbackStore->attenuationBindings;
+        const auto& source = published_->playbackStore->attenuationBindings;
+        effectiveStaging.AddRows<PackAttenuationBindingMapV1::Binding>(source.entries.size());
+        effectiveBindings = source;
     }
     if (!effectiveBindings.Valid()) return VN_BAD_PACK;
     PreparedCommit prepared;
@@ -3287,6 +3292,7 @@ VnResult PackComposition::PrepareCommit(
         next->initHandle = published_->initHandle;
     }
     if (!clearInit) {
+        next->staging.AddRows<PackAttenuationBindingMapV1::Binding>(effectiveBindings.entries.size());
         next->attenuationBindings = effectiveBindings;
     }
     if (!clearInit && gameplayCatalog != nullptr) {
@@ -3545,6 +3551,9 @@ VnResult PackComposition::PrepareCommit(
     return VN_OK;
 } catch (const detail::PackDecodeCapacity&) {
     return VN_PACK_RESIDENT_CAPACITY;
+} catch (const std::bad_alloc&) {
+    if (budget) return VN_PACK_RESIDENT_CAPACITY;
+    throw;
 }
 
 
