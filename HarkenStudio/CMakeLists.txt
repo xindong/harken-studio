@@ -142,6 +142,10 @@ endif()
 # Source Files — explicit list (no GLOB_RECURSE)
 # When adding new files, add them here and re-run cmake configure.
 set(HARKEN_STUDIO_COMMAND_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Tooling/StudioCli/Shell.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Tooling/StudioCli/Shell.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Tooling/StudioCli/StudioSession.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Tooling/StudioCli/StudioSession.h
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/HubClient/HubIntake.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/HubClient/HubIntake.h
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/CommandSchemas.h
@@ -503,14 +507,10 @@ endif()
 if(HARKEN_BUILD_STUDIO_CLI)
 add_executable(harken_studio_cli
     Source/Tooling/StudioCli/Main.cpp
-    Source/Tooling/StudioCli/Shell.cpp
-    Source/Tooling/StudioCli/Shell.h
     Source/Tooling/StudioCli/SavedProjectBuild.cpp
     Source/Tooling/StudioCli/SavedProjectBuild.h
     Source/Tooling/StudioCli/ResourceWorker.cpp
-    Source/Tooling/StudioCli/ResourceWorker.h
-    Source/Tooling/StudioCli/StudioSession.cpp
-    Source/Tooling/StudioCli/StudioSession.h)
+    Source/Tooling/StudioCli/ResourceWorker.h)
 set_target_properties(harken_studio_cli PROPERTIES OUTPUT_NAME "HarkenStudioCLI")
 target_link_libraries(harken_studio_cli PRIVATE harken_studio_core)
 harken_attach_version_resource(harken_studio_cli "Harken Studio CLI" "HarkenStudioCLI.exe")

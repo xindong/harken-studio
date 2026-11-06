@@ -9,6 +9,8 @@ struct StartupArguments
 {
     QString projectPath;
     bool createProject = false;
+    bool shell = false;
+    bool shellJson = false;
     QString projectName;
     QString projectLocation;
     QString projectTemplateId;

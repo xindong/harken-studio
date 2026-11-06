@@ -6,13 +6,35 @@
 
 | 层次 | Studio | StudioCLI |
 |---|---|---|
-| 共享业务 | 通过 StudioCLI 实例模式或本地 TCP IPC 调用 | 通过 `exec`、`run`、`shell` 独立执行或操作指定实例 |
+| 共享业务 | 通过 `--shell` 同进程输入、StudioCLI 实例模式或本地 TCP IPC 调用 | 通过 `exec`、`run`、`shell` 独立执行或操作指定实例 |
 | 桌面状态 | 当前窗口、面板、选择、画布及桌面会话 | `--instance <id>` 使用目标 Studio 的 GUI 上下文 |
 | 工程归属 | 当前桌面会话 | 独立会话，或通过 `--instance` 操作已有桌面会话 |
 | 运行入口 | `HarkenStudio.exe --project <path>` | `HarkenStudioCLI.exe`，macOS 为 `HarkenStudioCLI` |
 | 打包 | `export_pack` 使用当前内存工程 | 同一 `export_pack`，另有读取已保存工程的 `build` |
 
 终端入口由 HarkenStudioCLI 提供：`instances` 列出存活 Studio 的版本与可用性，`--instance <id>` 将 `commands/exec/run/shell` 交给同软件版本的目标实例。Studio 正常启动即可接受实例命令，无需附带终端窗口。共享命令的名称、参数描述与业务实现相同；CLI 等待共享异步作业完成，GUI 事件保留排队结果与状态查询语义。
+
+## Studio 同进程 shell
+
+```text
+HarkenStudio --project GameAudio/GameAudio.hsp --shell
+help
+commands list_ui_windows
+create_action {"name":"PlayFootstep"}
+list_ui_windows
+save_project
+exit
+```
+
+`--shell` 在 GUI 就绪后持续读取标准输入，使用现有 shell 语法、命令目录、参数验证和分发器。命令在 GUI 线程操作同一个内存工程、撤销栈和界面，不连接本地命名管道或 TCP 服务。共享异步作业等待完成，GUI 事件返回排队身份供后续查询。普通 GUI 启动不读取 stdin，也不创建终端窗口。
+
+输入或输出重定向时自动输出逐行 UTF-8 JSON，也可用 `--json` 强制启用；响应包含 `protocolVersion`。每读完一行即执行并刷新 stdout，无需等待 EOF。提示符仅向交互终端的 stderr 输出。`--help`、`--shell --help` 和 `--version [--json]` 可在不打开 GUI 的情况下查询入口及版本。
+
+`exit` 或 EOF 结束输入，但 Studio 进程和 GUI 继续运行，未保存修改保留；`exit --discard` 不适用于桌面会话。调用方不能把输入 EOF 当作进程已经退出。GUI 关闭时，即使 stdin 仍打开或只有未结束的一行，输入等待也会终止。有未保存修改时，CLI 切换或关闭工程被拒绝，可先 `save_project`。
+
+`--shell` 要求已有终端或有效的 stdin/stdout 重定向，并提供 `--project`、`--create-project` 或有效的 `--last`。不会额外分配终端黑框。Windows 的 `cmd.exe` 启动 GUI 程序可能立即返回提示符；交互操作使用 `start "" /wait HarkenStudio.exe --project GameAudio/GameAudio.hsp --shell`，让父终端等待。外部程序直接建立隐藏的 stdin/stdout 管道即可。
+
+工程已被其他实例打开时，`--shell` 返回错误，不把输入悄悄转发到已有实例；这种场景使用 `HarkenStudioCLI --instance <id>`。启动失败通过结构化错误返回；需要格式升级的工程先正常打开并完成升级，再启动 shell。
 
 ## 发现与调用
 

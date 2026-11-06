@@ -6,6 +6,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMessageBox>
+#include <QSet>
 #include <QSettings>
 #include <QStyleFactory>
 #include <QSurfaceFormat>
@@ -35,9 +36,116 @@
 #include "Core/HarkenStyle.h"
 #include "Dialogs/StartupLoadingWindow.h"
 #include "Widgets/TitleBar/FramelessChromeInstall.h"
+#include "Tooling/StudioCli/Shell.h"
+#include "Tooling/StudioCli/StudioSession.h"
 
 int main(int argc, char* argv[])
 {
+    bool shell = false;
+    bool help = false;
+    bool showVersion = false;
+    bool json = false;
+    for (int i = 1; i < argc; ++i) {
+        shell |= std::strcmp(argv[i], "--shell") == 0;
+        help |= std::strcmp(argv[i], "--help") == 0 || std::strcmp(argv[i], "-h") == 0;
+        showVersion |= std::strcmp(argv[i], "--version") == 0;
+        json |= std::strcmp(argv[i], "--json") == 0;
+    }
+    if (shell || help || showVersion) {
+        QString error;
+        if (!HarkenStudioCli::prepareDesktopShellStdio(&error, shell && !help && !showVersion)) {
+            HarkenStudioCli::writeShellResponse(HarkenStudioCli::failure(QStringLiteral("SHELL_IO_UNAVAILABLE"), error));
+            return 2;
+        }
+    }
+    if (help || showVersion) {
+        const auto version = QString::fromUtf8(Harken::BuildInfo::Version.data(), Harken::BuildInfo::Version.size());
+        const auto text = showVersion ? QStringLiteral("HarkenStudio %1\n").arg(version) : QStringLiteral(
+            "Usage: HarkenStudio [--project <path> | --last | --create-project <directory>] [--shell] [--json]\n\n"
+            "  --shell       Accept commands on stdin in this GUI process after the project is ready.\n"
+            "  --json        With --shell, use one compact UTF-8 JSON response per line.\n"
+            "  --help        Show this help without starting the GUI.\n"
+            "  --version     Show the software version.\n\n"
+            "Shell input: command {\"argument\":\"value\"}; help; commands [name]; exit.\n"
+            "Redirected input/output automatically uses JSON. No extra console window is created.\n"
+            "exit or EOF ends shell input and keeps Studio and its unsaved edits open.\n"
+            "Use save_project before switching or closing the project.\n"
+            "--shell needs an existing terminal or redirected stdin/stdout and a project to open/create.\n"
+            "To control a Studio that is already running, use HarkenStudioCLI instances and --instance <id>.\n");
+        if (json) {
+            HarkenStudioCli::writeShellResponse({{"status", "ok"},
+                {"result", QJsonObject{{showVersion ? QStringLiteral("version") : QStringLiteral("help"),
+                    showVersion ? version : text}}}});
+        } else {
+            const auto bytes = text.toUtf8();
+            std::fwrite(bytes.constData(), 1, static_cast<size_t>(bytes.size()), stdout);
+            std::fflush(stdout);
+        }
+        return 0;
+    }
+    if (shell) {
+        const QSet<QString> valueOptions{
+            QStringLiteral("--project"), QStringLiteral("--project-name"),
+            QStringLiteral("--project-location"), QStringLiteral("--project-template-id"),
+            QStringLiteral("--project-template-file")};
+        const QSet<QString> flags{
+            QStringLiteral("--shell"), QStringLiteral("--json"), QStringLiteral("--last"),
+            QStringLiteral("--create-project")};
+        QSet<QString> supplied;
+        QStringList positional;
+        QString createDirectory;
+        QString argumentError;
+        for (int i = 1; i < argc && argumentError.isEmpty(); ++i) {
+            const QString option = QString::fromLocal8Bit(argv[i]);
+            if (valueOptions.contains(option) || flags.contains(option)) {
+                if (supplied.contains(option)) {
+                    argumentError = QStringLiteral("%1 may only be supplied once.").arg(option);
+                    break;
+                }
+                supplied.insert(option);
+                if (valueOptions.contains(option)) {
+                    if (i + 1 >= argc || argv[i + 1][0] == '\0' || argv[i + 1][0] == '-')
+                        argumentError = QStringLiteral("%1 requires a value.").arg(option);
+                    else ++i;
+                } else if (option == QStringLiteral("--create-project") && i + 1 < argc
+                    && argv[i + 1][0] != '-') {
+                    createDirectory = QString::fromLocal8Bit(argv[++i]);
+                    if (createDirectory.isEmpty())
+                        argumentError = QStringLiteral("--create-project requires a non-empty directory.");
+                }
+            } else if (option.startsWith(QLatin1Char('-'))) {
+                argumentError = QStringLiteral("Unsupported option with --shell: %1. Use --shell --help.").arg(option);
+            } else {
+                positional.append(option);
+            }
+        }
+        const bool creating = supplied.contains(QStringLiteral("--create-project"));
+        const int startupModes = static_cast<int>(creating)
+            + static_cast<int>(supplied.contains(QStringLiteral("--project")))
+            + static_cast<int>(supplied.contains(QStringLiteral("--last")))
+            + static_cast<int>(!positional.isEmpty());
+        if (argumentError.isEmpty() && (startupModes != 1 || positional.size() > 1))
+            argumentError = QStringLiteral("Choose exactly one project startup mode: --project <path>, a project path, --last, or --create-project <directory>.");
+        for (const auto& option : valueOptions) {
+            if (argumentError.isEmpty() && option != QStringLiteral("--project")
+                && supplied.contains(option) && !creating)
+                argumentError = QStringLiteral("%1 requires --create-project.").arg(option);
+        }
+        const bool namedCreation = supplied.contains(QStringLiteral("--project-name"))
+            || supplied.contains(QStringLiteral("--project-location"));
+        if (argumentError.isEmpty() && creating
+            && ((!createDirectory.isEmpty() && namedCreation)
+                || (createDirectory.isEmpty() && (!supplied.contains(QStringLiteral("--project-name"))
+                    || !supplied.contains(QStringLiteral("--project-location"))))))
+            argumentError = QStringLiteral("Use --create-project <directory>, or --create-project with both --project-name and --project-location.");
+        if (argumentError.isEmpty() && supplied.contains(QStringLiteral("--project-template-id"))
+            && !supplied.contains(QStringLiteral("--project-template-file")))
+            argumentError = QStringLiteral("--project-template-id requires --project-template-file.");
+        if (!argumentError.isEmpty()) {
+            HarkenStudioCli::writeShellResponse(HarkenStudioCli::failure(QStringLiteral("INVALID_ARGUMENTS"), argumentError));
+            return 2;
+        }
+    }
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--schema-roundtrip") != 0) continue;
         qputenv("QT_QPA_PLATFORM", "offscreen");
@@ -201,7 +309,11 @@ int main(int argc, char* argv[])
 
     VNX::StartupLoadingWindow loading;
     loading.showAfterInitialFrame();
-    const auto failStartup = [&loading](const QString& message) {
+    const auto failStartup = [&loading, shell](const QString& message) {
+        if (shell) {
+            HarkenStudioCli::writeShellResponse(HarkenStudioCli::failure(QStringLiteral("STARTUP_FAILED"), message));
+            return 3;
+        }
         loading.showFailure(message);
         QMessageBox::critical(&loading, QObject::tr("Harken Studio"), message);
         return 3;
@@ -247,6 +359,8 @@ int main(int argc, char* argv[])
             }
         }
         if (projectFile.isEmpty()) {
+            if (shell)
+                return failStartup(QStringLiteral("--shell requires --project <path>, --create-project <directory>, or --last with a recent project."));
             QString error;
             if (!VNX::HubLauncher::open(VNX::HubPage::Projects, &error, true)) {
                 return failStartup(error);
