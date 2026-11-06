@@ -8,8 +8,8 @@
   "releases": [
     {
       "version": "0.2.3",
-      "date": "2026-11-02",
-      "pullRequests": [218, 227],
+      "date": "2026-11-06",
+      "pullRequests": [218, 227, 246, 255],
       "contributors": [
         "liuxin2-sys"
       ],
