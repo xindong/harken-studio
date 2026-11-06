@@ -7219,7 +7219,7 @@ public:
             !playableMemberRecords.Reserve(static_cast<std::uint32_t>(playableMemberCapacity)) ||
             !memberRelations.Reserve(static_cast<std::uint32_t>(playableStorage.memberCount)) ||
             !variableControlRetargetPrograms.Reserve(resolved.maxScheduledTransactions) ||
-            !memberOnsets.Reserve(static_cast<std::uint32_t>(playableStorage.memberCount)) ||
+            !memberOnsets.Reserve(static_cast<std::uint32_t>(playableMemberCapacity)) ||
             !playableServiceWork.Reserve(resolved.maxPlayableInstances) ||
             !originalSinglePreparationHolders.Reserve(timelineArms.Capacity()) ||
             !originalQueueSourcePreparationHolders.Reserve(timelineArms.Capacity()))
@@ -8348,8 +8348,7 @@ public:
         PlayableInstanceHandle owner, std::uint64_t epoch, EnginePlayableStartRow& invocation,
         bool rootService, EngineActionPlayScratch::PreparedVariableControlOwnerContext* context,
         EngineActionPlayStorage* preparingStorage = nullptr,
-        const EnginePlayableServiceRow* preparingParent = nullptr,
-        bool requireMemberOnsets = true) noexcept {
+        const EnginePlayableServiceRow* preparingParent = nullptr) noexcept {
         if (owner == 0 || epoch == 0 || row.phase != EnginePlayableStartPhase::Free ||
             row.actionPrepared || row.partition.Valid() || row.quarantined || invocation.quarantined ||
             invocation.generation == 0 || invocation.serviceCount == UINT32_MAX ||
@@ -8407,22 +8406,6 @@ public:
         if (!partition.Valid()) {
             if (playablePartitions.OriginalStorageIssuerExhausted()) runtimeRecreateRequired = true;
             return false;
-        }
-        // Inline root Sounds have no member rows. Nested Sounds can still own
-        // member state through a variable-control ancestor.
-        if (requireMemberOnsets || !rootService) {
-            const auto memberBase = playableStorage.MemberBase(partition.slot);
-            const auto memberEnd = memberBase + playableStorage.memberStride;
-            for (auto slot = memberBase; slot < memberEnd;
-                 slot = (slot / 256u + 1u) * 256u) {
-                if (memberOnsets.Prepare({epoch, static_cast<std::uint32_t>(slot), 0})) continue;
-                original.baseline_.Return();
-                const bool cancelled = playablePartitions.Cancel(partition, row.identity);
-                assert(cancelled);
-                (void)cancelled;
-                if (context != nullptr) context->DiscardUnassociatedServiceReservation();
-                return false;
-            }
         }
         row.invocation = &invocation;
         row.invocationGeneration = invocation.generation;
@@ -13900,10 +13883,15 @@ public:
     static bool PlayableMemberReusable(const EnginePlayableMemberRecord& record) noexcept {
         return !record.occupied && record.generation != UINT64_MAX;
     }
+    bool PreparePlayableMemberRecord(std::uint32_t slot) noexcept {
+        // Prepare the observation page before constructing a reusable record.
+        // A failed page preparation must not leave a falsely ready record.
+        return memberOnsets.Prepare({1, slot, 0}) && playableMemberRecords.Emplace(slot);
+    }
     bool PreparePlayableMemberBacking(std::uint32_t count,
         StableSlotStorage<EnginePlayableMemberRecord>::Preparation* out) noexcept {
         return playableMemberRecords.PrepareBacking(count, 0, PlayableMemberReusable,
-            [this](std::uint32_t slot) noexcept { return playableMemberRecords.Emplace(slot); }, out);
+            [this](std::uint32_t slot) noexcept { return PreparePlayableMemberRecord(slot); }, out);
     }
     EnginePlayableMemberRecord* FindPlayableMember(EnginePlayableMemberToken token) noexcept {
         if (!token.Valid() || !playableMemberRecords.IsConstructed(token.slot)) return nullptr;
@@ -13981,12 +13969,12 @@ public:
         for (std::uint32_t slot = 0; slot < playableMemberRecords.size(); ++slot) {
             if (!playableMemberRecords.IsConstructed(slot)) {
                 if (playableMemberRecords.PreparedUseActive()) continue;
-                if (!playableMemberRecords.Emplace(slot)) return {};
+                if (!PreparePlayableMemberRecord(slot)) return {};
             }
             auto& record = playableMemberRecords[slot];
             if (!PlayableMemberReusable(record)) continue;
             if (!playableMemberRecords.ProtectBackingForAcquire(slot, PlayableMemberReusable,
-                    [this](std::uint32_t next) noexcept { return playableMemberRecords.Emplace(next); })) return {};
+                    [this](std::uint32_t next) noexcept { return PreparePlayableMemberRecord(next); })) return {};
             record.occupied = true;
             ++record.generation;
             return {slot, record.generation};
@@ -14786,20 +14774,37 @@ public:
     using MemberOnsetIdentity = RuntimeIndexIdentity<MemberOnsetFamily>;
     RuntimeActivityIndex<MemberOnsetFamily> memberOnsets;
 
-    static MemberOnsetIdentity PlayableMemberOnsetIdentity(std::uint32_t slot,
+    EnginePlayableMemberRecord* FindPlayableMemberOnset(std::uint32_t recordSlot) noexcept {
+        if (!playableMemberRecords.IsConstructed(recordSlot)) return nullptr;
+        auto& record = playableMemberRecords[recordSlot];
+        if (!record.occupied || !record.primaryOwned || !record.service.Valid() ||
+            record.service.slot >= playableServices.size() ||
+            record.physicalSlot >= playableStorage.memberCount) return nullptr;
+        auto& row = playableServices[record.service.slot];
+        const auto base = playableStorage.MemberBase(row.partition.slot);
+        if (record.physicalSlot < base) return nullptr;
+        const auto offset = record.physicalSlot - base;
+        if (offset >= playableStorage.memberStride) return nullptr;
+        return FindPlayableMember(row, static_cast<std::uint32_t>(offset)) == &record ? &record : nullptr;
+    }
+    static MemberOnsetIdentity PlayableMemberOnsetIdentity(std::uint32_t recordSlot,
         const EnginePlayableMemberRecord& record) noexcept {
         const auto& member = record.completion;
-        return member.leafInstance != 0
-            ? MemberOnsetIdentity{member.leafEpoch, slot, member.source.generation}
+        return member.leafInstance != 0 && member.leafEpoch != 0
+            ? MemberOnsetIdentity{record.generation, recordSlot, member.source.generation}
             : MemberOnsetIdentity{};
     }
-    MemberOnsetIdentity PlayableMemberOnsetIdentity(std::uint32_t slot) const noexcept {
-        return PlayableMemberOnsetIdentity(slot, ReadPlayableMember(slot));
+    MemberOnsetIdentity PlayableMemberOnsetIdentity(std::uint32_t recordSlot) noexcept {
+        const auto* record = FindPlayableMemberOnset(recordSlot);
+        return record != nullptr ? PlayableMemberOnsetIdentity(recordSlot, *record) : MemberOnsetIdentity{};
     }
     void RefreshPlayableMemberOnset(std::size_t slot) noexcept {
-        const auto identity = PlayableMemberOnsetIdentity(static_cast<std::uint32_t>(slot));
+        const auto* record = FindPlayableMember(slot);
+        if (record == nullptr) return;
+        const auto recordSlot = playableMemberRecords.IndexOf(*record);
+        const auto identity = PlayableMemberOnsetIdentity(recordSlot, *record);
         if (!identity.Valid()) return;
-        const auto& member = ReadPlayableMember(slot).completion;
+        const auto& member = record->completion;
         const bool pending = (member.source.Valid() || member.resourcesRetired) &&
             member.sourceArmTombstoneSequence == 0;
         const bool recorded = memberOnsets.SetMembership(identity, RuntimeActivitySet::Active,
@@ -14810,7 +14815,9 @@ public:
         if (!recorded) runtimeRecreateRequired = true;
     }
     void RemovePlayableMemberOnset(std::size_t slot) noexcept {
-        const auto previous = PlayableMemberOnsetIdentity(static_cast<std::uint32_t>(slot));
+        const auto* record = FindPlayableMember(slot);
+        if (record == nullptr) return;
+        const auto previous = PlayableMemberOnsetIdentity(playableMemberRecords.IndexOf(*record), *record);
         if (previous.Valid()) {
             const bool removed = memberOnsets.SetMembership(previous, RuntimeActivitySet::Active,
                 false, [&](MemberOnsetIdentity current) noexcept {

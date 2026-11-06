@@ -8458,7 +8458,10 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
             harken::ResampleProfile::LegacyCompatibility, &render,
             bus.generation, ~std::uint32_t{0}, 0, true,
             install.outputBusVolumeDb, install.spatializationMix,
-            !ordinarySound, !ordinarySound || resourceService != nullptr, install.sourcePhase);
+            // An explicit ancestor owner prepares its actual weight bindings
+            // below, before publication, using the existing demand-backed path.
+            !ordinarySound && variableWeightService == nullptr,
+            !ordinarySound || resourceService != nullptr, install.sourcePhase);
     }
     if (play != VN_OK) {
         if (render != 0) {
@@ -12226,8 +12229,7 @@ bool PreparePlayableServiceRow(
     if (requireFeatureArrays && !row.HasFeatureArrays() &&
         (engine.playableServices.PreparedUseActive() || !row.PrepareFeatureArrays())) return false;
     return engine.PrepareOriginalPlayableServiceStorage(
-        row, owner, epoch, *invocationOwner, rootService, originalContext, preparingStorage, preparingParent,
-        requireFeatureArrays);
+        row, owner, epoch, *invocationOwner, rootService, originalContext, preparingStorage, preparingParent);
 }
 
 harken::EnginePlayableServiceReference PlayableServiceReference(
@@ -13377,17 +13379,16 @@ bool ObserveActiveArrivalsBeforeArmReclaim(harken::Engine& engine) noexcept {
         harken::EnginePlayableMemberRecord* resolved = nullptr;
         const auto identity = engine.memberOnsets.Next(harken::RuntimeActivitySet::Active,
             &cursor, [&](std::uint32_t slot) noexcept {
-                resolved = engine.FindPlayableMember(static_cast<std::size_t>(slot));
+                resolved = engine.FindPlayableMemberOnset(slot);
                 return resolved != nullptr ? engine.PlayableMemberOnsetIdentity(slot, *resolved)
                     : harken::Engine::MemberOnsetIdentity{};
             });
         if (!identity.Valid()) break;
-        const auto slot = identity.slot;
         auto& record = *resolved;
         ObservePlayableMemberArm(engine, record);
         // Observation only adds receipts; an active onset leaves this set at tombstone.
         if (record.completion.sourceArmTombstoneSequence != 0)
-            engine.RefreshPlayableMemberOnset(slot);
+            engine.RefreshPlayableMemberOnset(record.physicalSlot);
     }
     if (engine.retiredMemberProgramCount != 0 || engine.queueProgramBanks.ConstructedCount() != 0) {
         for (auto& record : engine.playableMemberRecords) {
