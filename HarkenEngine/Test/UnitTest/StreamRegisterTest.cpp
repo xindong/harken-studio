@@ -539,9 +539,12 @@ TEST(StreamRegister, SlowSameSourceActiveReadDoesNotBlockHealthyInstanceOrReleas
 
 TEST(StreamRegister, PrivateReadWindowsReduceReadsAndDiscardReboundSourceBytes) {
     using Manager = harken::StreamManager;
+    for (const auto ringFrames : {256u, 8192u}) {
+    SCOPED_TRACE(ringFrames);
+    const auto totalFrames = std::max(8192u, ringFrames * 8);
     harken::EngineConfig config{};
     config.maxStreams = 2;
-    config.streamRingFrames = 256;
+    config.streamRingFrames = ringFrames;
     Manager streams(config);
     EXPECT_EQ(0u, streams.ReadWindowBytes());
     std::array<std::shared_ptr<ControlledSource>, 2> sources;
@@ -553,7 +556,7 @@ TEST(StreamRegister, PrivateReadWindowsReduceReadsAndDiscardReboundSourceBytes) 
         StreamSpec spec;
         spec.soundId = harkentest::ObjectId(17320 + i);
         spec.chunkFrames = 64;
-        samples[i] = ServiceSamples(8192, i * 16384);
+        samples[i] = ServiceSamples(totalFrames, i * 16384);
         sources[i]->bytes = BuildStreamBytes(spec, samples[i]);
         Manager::SourceToken sourceToken;
         ASSERT_EQ(VN_OK, streams.BeginSource(spec.soundId, sources[i], false, 0, &sourceToken));
@@ -565,7 +568,7 @@ TEST(StreamRegister, PrivateReadWindowsReduceReadsAndDiscardReboundSourceBytes) 
     }
     std::size_t positions[2]{};
     for (unsigned round = 0; round < 4; ++round) {
-        for (unsigned i = 0; i < 2; ++i) ExpectAndConsume(*streams.RingOf(i), samples[i], positions[i], 256);
+        for (unsigned i = 0; i < 2; ++i) ExpectAndConsume(*streams.RingOf(i), samples[i], positions[i], ringFrames);
         streams.SyncServe();
     }
     for (unsigned i = 0; i < 2; ++i) EXPECT_LT(sources[i]->reads.load(), positions[i] / 64);
@@ -576,7 +579,7 @@ TEST(StreamRegister, PrivateReadWindowsReduceReadsAndDiscardReboundSourceBytes) 
     StreamSpec spec;
     spec.soundId = harkentest::ObjectId(17320);
     spec.chunkFrames = 64;
-    auto changed = ServiceSamples(8192, 32768);
+    auto changed = ServiceSamples(totalFrames, 32768);
     replacement->bytes = BuildStreamBytes(spec, changed);
     Manager::SourceToken sourceToken;
     ASSERT_EQ(VN_OK, streams.BeginSource(spec.soundId, replacement, true, facts[0].sourceGeneration, &sourceToken));
@@ -584,10 +587,11 @@ TEST(StreamRegister, PrivateReadWindowsReduceReadsAndDiscardReboundSourceBytes) 
     ASSERT_EQ(VN_OK, streams.TakeSource(sourceToken, &facts[0]));
     ASSERT_EQ(VN_OK, streams.ActivateSlot(0, facts[0].fileIndex, 0, 0, facts[0].frameCount, 1, &tokens[0]));
     std::size_t changedPosition = 0;
-    ExpectAndConsume(*streams.RingOf(0), changed, changedPosition, 256);
+    ExpectAndConsume(*streams.RingOf(0), changed, changedPosition, ringFrames);
     for (unsigned i = 0; i < 2; ++i) EXPECT_TRUE(streams.RetirePreparedSlot(streams.RingOf(i), tokens[i]));
     streams.SyncServe();
     EXPECT_TRUE(WaitUntil([&] { return streams.ReadWindowBytes() == 0; }));
+    }
 }
 
 TEST(StreamRegister, OptionalReadAheadNeverRequiresFutureBytesOrRetriesCancellation) {
@@ -1261,7 +1265,8 @@ TEST(StreamRegister, AdjacentStreamIntegrityFailureDoesNotStopHealthyNeighbor) {
             ASSERT_EQ(VN_OK, streams.ActivateSlot(slot, files[slot], 0, 0, 512, 1, &tokens[slot]));
         }
         bool failReads = false;
-        ReadObserver observer(Access::Input(streams, files[badSlot]), [] {}, &failReads,
+        unsigned reads = 0;
+        ReadObserver observer(Access::Input(streams, files[badSlot]), [&] { ++reads; }, &failReads,
                               false, fault == Fault::ShortRead ? (badSlot == 0 ? 16 : 32) * sizeof(float) : SIZE_MAX);
         Access::ServeSlots(streams);
         std::size_t positions[2]{};
@@ -1270,7 +1275,9 @@ TEST(StreamRegister, AdjacentStreamIntegrityFailureDoesNotStopHealthyNeighbor) {
             ExpectAndConsume(*streams.RingOf(slot), sources[slot], positions[slot], 64);
             ASSERT_FALSE(::testing::Test::HasFatalFailure());
         }
-        failReads = fault == Fault::ShortRead;
+        // Cached invalid bytes must fail without retrying the provider.
+        reads = 0;
+        failReads = true;
         Access::ServeSlots(streams);
         for (unsigned slot = 0; slot < 2; ++slot) {
             auto& ring = *streams.RingOf(slot);
@@ -1282,6 +1289,7 @@ TEST(StreamRegister, AdjacentStreamIntegrityFailureDoesNotStopHealthyNeighbor) {
             ASSERT_FALSE(::testing::Test::HasFatalFailure());
         }
         Access::ServeSlots(streams);
+        if (fault != Fault::ShortRead) EXPECT_EQ(0u, reads);
         EXPECT_EQ(0u, streams.RingOf(badSlot)->ReadAvailable());
         const unsigned healthy = 1 - badSlot;
         ExpectAndConsume(*streams.RingOf(healthy), sources[healthy], positions[healthy], 128);

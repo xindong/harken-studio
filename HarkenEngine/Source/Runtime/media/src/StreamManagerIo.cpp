@@ -431,8 +431,10 @@ void StreamManager::ServiceRequests() {
 }
 
 void StreamManager::ServeSlots() {
+    std::size_t cachedBytesRemaining = ReadWindow::kCapacityBytes;
     for (auto& slot : m_slots) {
         if (slot.ioLane >= 0 || slot.ring.state.load(std::memory_order_acquire) != StreamSlotState::Active) continue;
+        const auto generation = slot.ring.generation.load(std::memory_order_relaxed);
         auto cursor = BeginSlotService(slot);
         const auto written = slot.ring.writeIndex.load(std::memory_order_relaxed);
         if (slot.passGoal <= written) {
@@ -448,10 +450,25 @@ void StreamManager::ServeSlots() {
         }
         cursor.maxServeFrames = static_cast<std::uint32_t>(std::min<std::uint64_t>(
             cursor.maxServeFrames, slot.passGoal > written ? slot.passGoal - written : 0));
-        ChunkJob ignored;
-        // Only already verified staging is published here. Missing chunks wait
-        // for an execution lane; AdvanceSlot never performs I/O.
-        if (cursor.maxServeFrames != 0) (void)AdvanceSlot(cursor, &ignored);
+        ChunkJob job;
+        // A steady window hit needs no executor or allocation. Keep the same
+        // finite cursor so newly verified staging is published in this pass;
+        // misses and exhausted byte budget retain the normal dispatch path.
+        while (cursor.maxServeFrames != 0 && AdvanceSlot(cursor, &job)) {
+            if (!slot.supplied.load(std::memory_order_acquire) ||
+                job.chunkBytes > cachedBytesRemaining ||
+                slot.ring.state.load(std::memory_order_acquire) != StreamSlotState::Active ||
+                slot.ring.generation.load(std::memory_order_relaxed) != generation ||
+                !TryCopyReadWindow(job, slot.staging, slot.window)) break;
+            cachedBytesRemaining -= static_cast<std::size_t>(job.chunkBytes);
+            slot.stagedChunk = kNoChunk;
+            const bool valid = ValidateChunk(job, slot.staging,
+                Fnv1a64(slot.staging.data(), static_cast<std::size_t>(job.chunkBytes)));
+            if (slot.ring.state.load(std::memory_order_acquire) != StreamSlotState::Active ||
+                slot.ring.generation.load(std::memory_order_relaxed) != generation) break;
+            CompleteChunk(slot, job, valid);
+            if (!valid) break;
+        }
     }
 }
 

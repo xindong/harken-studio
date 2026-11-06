@@ -374,6 +374,7 @@ private:
     };
 
     struct ReadWindow {
+        static constexpr std::size_t kCapacityBytes = 16 * 1024;
         std::vector<std::uint8_t> bytes;
         std::uint64_t offset = 0;
         std::size_t validBytes = 0;
@@ -512,6 +513,8 @@ private:
     // arguments, which is what makes it relocatable.
     static bool RunChunkJob(const ChunkJob& job, std::vector<float>& staging, ReadWindow& window);
     static bool ReadChunk(const ChunkJob& job, std::vector<float>& staging, ReadWindow& window);
+    static bool TryCopyReadWindow(const ChunkJob& job, std::vector<float>& staging,
+                                  const ReadWindow& window) noexcept;
     static bool ValidateChunk(const ChunkJob& job,
                               const std::vector<float>& staging,
                               std::uint64_t checksum);

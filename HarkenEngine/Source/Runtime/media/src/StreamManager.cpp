@@ -966,6 +966,18 @@ std::uint64_t StreamManager::ReadWindowBytes() const noexcept {
     return bytes;
 }
 
+bool StreamManager::TryCopyReadWindow(const ChunkJob& job, std::vector<float>& staging,
+                                      const ReadWindow& window) noexcept {
+    if (job.chunkBytes == 0 || job.chunkBytes / sizeof(float) > staging.size() ||
+        window.validBytes > window.bytes.size()) return false;
+    const auto offset = StreamChunkFileOffset(job.file->toc.payloadOffset, job.chunkIndex, job.chunkBytes);
+    if (offset < window.offset || offset - window.offset > window.validBytes ||
+        job.chunkBytes > window.validBytes - (offset - window.offset)) return false;
+    std::memcpy(staging.data(), window.bytes.data() + static_cast<std::size_t>(offset - window.offset),
+                static_cast<std::size_t>(job.chunkBytes));
+    return true;
+}
+
 bool StreamManager::ReadChunk(const ChunkJob& job, std::vector<float>& staging,
                               ReadWindow& window) {
     staging.resize(static_cast<std::size_t>(job.chunkFrames) * job.channels);
@@ -976,16 +988,11 @@ bool StreamManager::ReadChunk(const ChunkJob& job, std::vector<float>& staging,
         return ReadStreamBytes(source, offset, staging.data(), required, job.cancellation) == StreamReadStatus::Ok;
     };
     if (job.cancellation.IsCancelled()) return false;
-    if (offset >= window.offset && offset - window.offset <= window.validBytes &&
-        required <= window.validBytes - static_cast<std::size_t>(offset - window.offset)) {
-        std::memcpy(staging.data(), window.bytes.data() + (offset - window.offset), required);
-        return !job.cancellation.IsCancelled();
-    }
+    if (TryCopyReadWindow(job, staging, window)) return !job.cancellation.IsCancelled();
     window.validBytes = 0;
-    constexpr std::size_t kReadWindowBytes = 16 * 1024;
     const auto length = source.ByteCount();
-    if (required >= kReadWindowBytes || offset > length || required > length - offset) return direct();
-    const auto wanted = static_cast<std::size_t>(std::min<std::uint64_t>(kReadWindowBytes, length - offset));
+    if (required >= ReadWindow::kCapacityBytes || offset > length || required > length - offset) return direct();
+    const auto wanted = static_cast<std::size_t>(std::min<std::uint64_t>(ReadWindow::kCapacityBytes, length - offset));
     if (wanted <= required) return direct();
     try {
         window.bytes.resize(wanted);
