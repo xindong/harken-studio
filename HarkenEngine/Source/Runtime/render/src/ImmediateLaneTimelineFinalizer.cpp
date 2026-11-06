@@ -596,6 +596,7 @@ void ImmediateLaneTimelineFinalizer::Apply(std::uint64_t quantum) noexcept {
                 voice.envelopeDirection = payload->envelopeDirection;
                 voice.frame = payload->envelopeStartFrame;
                 voice.endFrame = payload->envelopeEndFrame;
+                voice.envelopeElapsedFrames = payload->envelopeElapsedFrames;
                 voice.envelopeCurve = payload->envelopeCurve;
                 voice.authoredFadeOutCandidate = payload->authoredFadeOutCandidate;
                 voice.authoredRootStop = (payload->reserved & kTimelineEventAuthoredRootStop) != 0;

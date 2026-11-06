@@ -11,6 +11,35 @@
 
 namespace {
 
+TEST(ResamplerAdvance, CheckedCropJumpMatchesExactSteppingAndRejectsOverflow) {
+    for (const auto ratio : {0.015625, 0.91875, 1.137, 1.5, 69.65986394557824}) {
+        harken::SourcePhaseStep step{};
+        ASSERT_TRUE(harken::DecodeSourcePhaseStep(ratio, &step));
+        for (const auto initial : {harken::ExactSourcePhase{},
+                 harken::ExactSourcePhase{UINT64_MAX, UINT64_MAX}}) {
+            auto stepped = initial;
+            std::uint64_t consumed = 0;
+            for (std::uint64_t frames = 0; frames != 1001; ++frames) {
+                std::uint64_t actual = 0;
+                harken::ExactSourcePhase phase{};
+                ASSERT_TRUE(harken::TryJumpSourcePhase(step, initial, frames, &actual, &phase));
+                ASSERT_EQ(consumed, actual);
+                ASSERT_EQ(stepped.high, phase.high);
+                ASSERT_EQ(stepped.low, phase.low);
+                consumed += harken::StepSourcePhase(step, &stepped);
+            }
+        }
+    }
+    harken::SourcePhaseStep step{};
+    ASSERT_TRUE(harken::DecodeSourcePhaseStep(1.0, &step));
+    std::uint64_t whole = 0;
+    harken::ExactSourcePhase phase{};
+    ASSERT_TRUE(harken::TryJumpSourcePhase(step, {}, UINT64_MAX, &whole, &phase));
+    EXPECT_EQ(UINT64_MAX, whole);
+    ASSERT_TRUE(harken::DecodeSourcePhaseStep(2.0, &step));
+    EXPECT_FALSE(harken::TryJumpSourcePhase(step, {}, UINT64_MAX, &whole, &phase));
+}
+
 harken::ResamplerAdvanceState UnityPass(std::uint64_t frames,
                                        std::uint64_t start = 0) {
     harken::ResamplerAdvanceState state{};

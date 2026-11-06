@@ -1344,6 +1344,7 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     const auto frontierEventBytes = sizeof(harken::FrontierEventBinding) +
         sizeof(harken::VariableWeightControlIdentity) + sizeof(harken::AuthoredStopOperationIdentity);
     const auto stopFrameBytes = sizeof(harken::AuthoredStopOperationIdentity::stopFrame);
+    const auto envelopePhaseBytes = sizeof(harken::TimelineEventPayload::envelopeElapsedFrames);
     const auto immediateEntryBytes = sizeof(harken::ProgramView::immediateEntry);
     const auto programFenceBytes = sizeof(harken::TimelineProgramView::readFence);
     const auto monitorControlBytes = sizeof(harken::MonitorControlCause);
@@ -1356,7 +1357,8 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     // The frozen stop frame extends each event identity; each schedule owns
     // a full immediate-entry gate reference independently of its runtime view.
     EXPECT_EQ(320u + stopFrameBytes, frontierEventBytes);
-    EXPECT_EQ(264u + frontierEventBytes + monitorControlBytes, currentEventBytesPerSlot);
+    // Cropped fades retain their elapsed phase in each scheduled event.
+    EXPECT_EQ(264u + frontierEventBytes + monitorControlBytes + envelopePhaseBytes, currentEventBytesPerSlot);
     EXPECT_EQ(192u + immediateEntryBytes + programFenceBytes, initialProgramBytesPerSlot);
     const auto playbackPathBytes = sizeof(harken::PlaybackPath);
     EXPECT_EQ(8u + harken::kPlaybackPathRowCapacity * sizeof(harken::PlaybackPathRow), playbackPathBytes);

@@ -153,7 +153,8 @@ public:
                   std::uint32_t expectedGeneration = 0,
                   bool prepared = false, float outputBusVolumeDb = 0.0f,
                   float spatializationMix = 1.0f, bool prepareOwnedWeights = true,
-                  bool prepareTimelineCurves = true);
+                  bool prepareTimelineCurves = true,
+                  ExactSourcePhase sourcePhase = {});
 
     // Claims a Render Voice slot for a streamed Logical Voice. The independent
     // stream slot is owned by StreamManager; the source decode stage feeds
@@ -477,6 +478,9 @@ public:
     std::uint64_t TimelineScratchBytes(std::uint32_t blockFrames) const noexcept;
     void BeginTimelineQuantum(std::uint64_t quantumIndex) noexcept;
     void FinalizeTimelineQuantum(std::uint64_t quantumIndex) noexcept;
+    bool PrepareSourceExit(VnVoiceHandle voice, FrontierSourceExitVoice& binding) noexcept;
+    bool ValidateSourceExit(const FrontierSourceExit& source, const FrontierGroupBinding& group) const noexcept;
+    void ApplySourceExit(const FrontierSourceExit& source) noexcept;
     bool AbortClaimedVoice(VnVoiceHandle handle) noexcept;
     bool CommitPreparedVoice(VnVoiceHandle handle) noexcept;
     bool CancelPreparedVoice(VnVoiceHandle handle) noexcept;

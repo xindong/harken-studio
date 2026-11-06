@@ -88,6 +88,8 @@
 #include <utility>
 
 namespace harken {
+class OriginalConditionalReplacementBatch;
+
 class DecisionTable;
 class OriginalImmediateLaneConditionalProjection;
 
@@ -1972,6 +1974,10 @@ public:
         const Plan03GroupSliceIdentity& identity) noexcept;
     bool ReleaseImmediateLaneFutureDependent(
         const Plan03GroupSliceIdentity& identity) noexcept;
+    bool PageReplacementScopeReady(const FrontierOwnerIdentity& owner, DecisionToken scope,
+        const QueuePageConditionalReceiver* receiver, DecisionToken replaced, std::uint16_t expectedSlices,
+        std::uint64_t completedAudioSequence,
+        const OriginalConditionalReplacementBatch* batch = nullptr) const noexcept;
     bool InvalidateFrontierOwnerOperations(const FrontierOwnerIdentity& owner,
         DecisionToken decision = {}, AudioSliceInvalidateReason reason = AudioSliceInvalidateReason::Cancel) const noexcept;
     FrontierOwnerInvalidationDisposition TryInvalidateFrontierOwnerOperations(

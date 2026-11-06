@@ -28,7 +28,9 @@ inline AuthoredRootStopCutoff SelectAuthoredRootStop(
         if (event.offset >= blockFrames || event.Kind() != TimelineEventKind::Stop ||
             !event.authoredRootStop) continue;
         const auto frame = span.quantumIndex * blockFrames + event.offset;
-        if (frame < cutoff.frame) cutoff = {frame, i, event.Stop().authoredStopOperation};
+        if (frame < cutoff.frame || (frame == cutoff.frame && !cutoff.operation.Valid() &&
+                event.Stop().authoredStopOperation.Valid()))
+            cutoff = {frame, i, event.Stop().authoredStopOperation};
     }
     return cutoff;
 }

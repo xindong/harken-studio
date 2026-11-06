@@ -2424,6 +2424,34 @@ TEST(CurrentWorldInstall,
               harken::ClassifyTransitionProgramV1(transition));
 }
 
+TEST(CurrentWorldInstall, FixedMusicClockFingerprintIsPortableAndRejectsInvalidClock) {
+    harken::SegmentScheduleProgramViewV1 segment{};
+    segment.timeKind = harken::ScheduleTimeKindV1::MusicalTicks;
+    segment.microsPerQuarter = 500000;
+    segment.meterNumerator = segment.meterDenominator = 4;
+    const auto fingerprint = harken::ComputeSegmentClockFingerprintV1(segment);
+    EXPECT_EQ(UINT64_C(1747841073079092156), fingerprint);
+    segment.entryMarker.position = 240;
+    segment.bounds = {-100, 4000, 240, 3840};
+    segment.rootDefinition.stableId = harkentest::ObjectId(123);
+    EXPECT_EQ(fingerprint, harken::ComputeSegmentClockFingerprintV1(segment));
+    ++segment.microsPerQuarter;
+    EXPECT_NE(fingerprint, harken::ComputeSegmentClockFingerprintV1(segment));
+    segment.microsPerQuarter = 500000;
+    segment.meterNumerator = 3;
+    EXPECT_NE(fingerprint, harken::ComputeSegmentClockFingerprintV1(segment));
+    segment.microsPerQuarter = INT64_C(60000000001);
+    EXPECT_EQ(0u, harken::ComputeSegmentClockFingerprintV1(segment));
+    segment.microsPerQuarter = 0;
+    EXPECT_EQ(0u, harken::ComputeSegmentClockFingerprintV1(segment));
+    segment.microsPerQuarter = 500000;
+    segment.meterDenominator = 7;
+    EXPECT_EQ(0u, harken::ComputeSegmentClockFingerprintV1(segment));
+    segment.meterDenominator = 4;
+    segment.timeKind = harken::ScheduleTimeKindV1::AbsoluteNanoseconds;
+    EXPECT_EQ(0u, harken::ComputeSegmentClockFingerprintV1(segment));
+}
+
 TEST(CurrentWorldInstall,
      CanonicalAdvancedTransitionIsCapabilityUnavailableWithoutMutation) {
     RunnableWorld image;

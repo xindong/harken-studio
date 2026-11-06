@@ -2562,6 +2562,140 @@ static void SetSecondMemoryProgram(MemoryProgram& program, harken::SelectionMemo
     key.programSemanticFingerprint = program.program.programSemanticFingerprint = 201;
 }
 
+TEST(CurrentSelectionMemory, FinalizingEarlierTransactionPreservesLaterRollbackReset) {
+    using Status = harken::SelectionMemoryStatusV1;
+    MemoryProgram program(harken::ContainerModeV1::Sequence);
+    harken::SelectionMemoryTableV1 table;
+    ASSERT_TRUE(table.Reset(MemoryConfig()));
+    const auto initial = table.AppendPlay(MemoryRequest(program, 1));
+    ASSERT_EQ(Status::Ok, table.CommitHead(initial.delta));
+    harken::PreparedSelectionResetV1 reset;
+    ASSERT_EQ(Status::Ok, table.PrepareReset(MemoryKey(), 2, 0, &reset, 640));
+    ASSERT_EQ(Status::Ok, table.CommitPreparedReset(&reset, 2));
+    harken::PreparedSelectionPlayV1 earlier, later;
+    auto request = MemoryRequest(program, 3);
+    request.executeFrame = 320;
+    std::uint32_t selected = 0;
+    ASSERT_EQ(Status::Ok, table.PreparePlay(request, &earlier, &selected));
+    ASSERT_EQ(Status::Ok, table.CommitPreparedPlayTransactional(&earlier, 3));
+    request.ticket = 4;
+    request.executeFrame = 1280;
+    ASSERT_EQ(Status::Ok, table.PreparePlay(request, &later, &selected));
+    ASSERT_EQ(Status::Ok, table.CommitPreparedPlayTransactional(&later, 4));
+    ASSERT_EQ(Status::Ok, table.FinalizeCommittedPlay(&earlier));
+    table.ApplyDue(2000);
+    ASSERT_EQ(Status::Ok, table.RollbackCommittedPlay(&later));
+    EXPECT_EQ(0u, table.Snapshot(MemoryKey()).resetEpoch);
+    table.ApplyDue(2000);
+    EXPECT_EQ(1u, table.Snapshot(MemoryKey()).resetEpoch);
+    EXPECT_EQ(0u, table.Snapshot(MemoryKey()).selectionOrdinal);
+    EXPECT_EQ(MemoryConfig().maxPendingDeltasTotal, table.FreeDeltaCount());
+}
+
+TEST(CurrentSelectionMemory, PartialApplyDueRetiresAlreadyConsumedFutureResets) {
+    using Status = harken::SelectionMemoryStatusV1;
+    MemoryProgram program(harken::ContainerModeV1::Sequence);
+    harken::SelectionMemoryTableV1 table;
+    ASSERT_TRUE(table.Reset(MemoryConfig()));
+    const auto initial = table.AppendPlay(MemoryRequest(program, 1));
+    ASSERT_EQ(Status::Ok, table.CommitHead(initial.delta));
+    harken::PreparedSelectionResetV1 reset;
+    ASSERT_EQ(Status::Ok, table.PrepareReset(MemoryKey(), 2, 0, &reset, 640));
+    ASSERT_EQ(Status::Ok, table.CommitPreparedReset(&reset, 2));
+    ASSERT_EQ(Status::Ok, table.PrepareReset(MemoryKey(), 2, 1, &reset, 320));
+    ASSERT_EQ(Status::Ok, table.CommitPreparedReset(&reset, 2));
+    harken::PreparedSelectionPlayV1 earlier, later;
+    auto request = MemoryRequest(program, 3);
+    request.executeFrame = 1280;
+    std::uint32_t selected = 0;
+    ASSERT_EQ(Status::Ok, table.PreparePlay(request, &earlier, &selected));
+    ASSERT_EQ(Status::Ok, table.CommitPreparedPlayTransactional(&earlier, 3));
+    request.ticket = 4;
+    request.executeFrame = 1600;
+    ASSERT_EQ(Status::Ok, table.PreparePlay(request, &later, &selected));
+    ASSERT_EQ(Status::Ok, table.CommitPreparedPlayTransactional(&later, 4));
+    ASSERT_EQ(Status::Ok, table.FinalizeCommittedPlay(&earlier));
+    table.ApplyDue(2000);
+    ASSERT_EQ(Status::Ok, table.RollbackCommittedPlay(&later));
+    EXPECT_EQ(2u, table.Snapshot(MemoryKey()).resetEpoch);
+    EXPECT_EQ(1u, table.Snapshot(MemoryKey()).selectionOrdinal);
+    table.ApplyDue(320);
+    table.ApplyDue(640);
+    EXPECT_EQ(2u, table.Snapshot(MemoryKey()).resetEpoch);
+    EXPECT_EQ(1u, table.Snapshot(MemoryKey()).selectionOrdinal);
+    EXPECT_EQ(MemoryConfig().maxPendingDeltasTotal, table.FreeDeltaCount());
+}
+
+TEST(CurrentSelectionMemory, ProducerReverseFramesConsumeScheduledResetOnlyOnce) {
+    using Status = harken::SelectionMemoryStatusV1;
+    for (const bool replace : {false, true}) {
+        SCOPED_TRACE(replace);
+        MemoryProgram program(harken::ContainerModeV1::Sequence);
+        harken::SelectionMemoryTableV1 table;
+        ASSERT_TRUE(table.Reset(MemoryConfig()));
+        const auto initial = table.AppendPlay(MemoryRequest(program, 1));
+        ASSERT_EQ(Status::Ok, table.CommitHead(initial.delta));
+        harken::PreparedSelectionResetV1 reset;
+        ASSERT_EQ(Status::Ok, table.PrepareReset(MemoryKey(), 2, 0, &reset, 640));
+        ASSERT_EQ(Status::Ok, table.CommitPreparedReset(&reset, 2));
+        auto request = MemoryRequest(program, 3);
+        request.executeFrame = 1280;
+        auto identity = ProducerIdentity(request);
+        identity.operationIndexed = true;
+        identity.perOperationFrames = true;
+        identity.eventCount = 1;
+        harken::PendingSelectionBatchV1 batch;
+        std::uint32_t selected = 0;
+        const std::uint64_t frames[]{1280, 320};
+        if (replace) {
+            ASSERT_EQ(Status::Ok, table.IssueProducerPendingSelectionBatch(identity, nullptr, 0, &batch));
+            harken::PendingSelectionReplacementV1 replacement;
+            ASSERT_EQ(Status::Ok, table.BeginPendingBatchReplacement(batch,
+                table.ReadPendingBatch(batch).revision, &replacement));
+            for (std::uint32_t i = 0; i < 2; ++i) {
+                request.operationIndex = i;
+                request.executeFrame = frames[i];
+                ASSERT_EQ(Status::Ok, table.PrepareReplacementPlay(&replacement, request, &selected));
+                EXPECT_EQ(i == 0 ? 5u : 9u, selected);
+                EXPECT_EQ(frames[i], table.ReadReplacementPlay(replacement, i).executeFrame);
+            }
+            const std::uint64_t wrong[]{1280, 1280};
+            EXPECT_EQ(Status::InvalidInput, table.SealReplacement(&replacement, 2, 1280));
+            EXPECT_EQ(Status::InvalidInput, table.SealReplacementFrames(&replacement, 2, wrong));
+            ASSERT_EQ(Status::Ok, table.SealReplacementFrames(&replacement, 2, frames));
+            ASSERT_EQ(Status::Ok, table.InstallReplacement(&replacement, &batch));
+        } else {
+            harken::PreparedSelectionPlayV1 plays[2];
+            harken::PreparedSelectionPlayV1* members[]{&plays[0], &plays[1]};
+            for (std::uint32_t i = 0; i < 2; ++i) {
+                request.operationIndex = i;
+                request.executeFrame = frames[i];
+                ASSERT_EQ(Status::Ok, table.PreparePlayForPendingBatch(request, members[i], &selected));
+                EXPECT_EQ(i == 0 ? 5u : 9u, selected);
+            }
+            auto scalar = identity;
+            scalar.perOperationFrames = false;
+            EXPECT_EQ(Status::InvalidInput, table.IssueProducerPendingSelectionBatch(scalar, members, 2, &batch));
+            ASSERT_EQ(Status::Ok, table.IssueProducerPendingSelectionBatch(identity, members, 2, &batch));
+        }
+        for (std::uint32_t i = 0; i < 2; ++i)
+            EXPECT_EQ(frames[i], table.ReadPendingBatchMember(batch, i).delta.executeFrame);
+        ASSERT_EQ(Status::Ok, table.CommitPendingBatch(&batch, table.ReadPendingBatch(batch).revision));
+        EXPECT_EQ(1u, table.Snapshot(MemoryKey()).resetEpoch);
+        EXPECT_EQ(2u, table.Snapshot(MemoryKey()).selectionOrdinal);
+        table.ApplyDue(2000);
+        EXPECT_EQ(1u, table.Snapshot(MemoryKey()).resetEpoch);
+        EXPECT_EQ(2u, table.Snapshot(MemoryKey()).selectionOrdinal);
+        ASSERT_EQ(Status::Ok, table.PrepareReset(MemoryKey(), 4, 0, &reset, 320));
+        ASSERT_EQ(Status::Ok, table.CommitPreparedReset(&reset, 4));
+        table.ApplyDue(2000);
+        table.ApplyDue(2000);
+        EXPECT_EQ(2u, table.Snapshot(MemoryKey()).resetEpoch);
+        EXPECT_EQ(0u, table.Snapshot(MemoryKey()).selectionOrdinal);
+        EXPECT_EQ(MemoryConfig().maxPendingDeltasTotal, table.FreeDeltaCount());
+    }
+}
+
 TEST(CurrentSelectionMemory, ReplacementRequiresExplicitSealIncludingIntentionalEmpty) {
     MemoryProgram program(harken::ContainerModeV1::Sequence);
     harken::SelectionMemoryTableV1 table;

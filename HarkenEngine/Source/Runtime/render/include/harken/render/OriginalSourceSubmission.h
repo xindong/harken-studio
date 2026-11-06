@@ -7,6 +7,7 @@
 #include "harken/core/StableSlotStorage.h"
 #include "harken/core/TimelineProgram.h"
 #include "harken/core/QueueRuntime.h"
+#include "harken/core/CompositeCompletionOwnerPool.h"
 #include "harken/core/QueueContinuationLane.h"
 #include "harken/render/VoicePool.h"
 

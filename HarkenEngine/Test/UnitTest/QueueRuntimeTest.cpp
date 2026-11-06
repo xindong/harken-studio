@@ -177,7 +177,6 @@ harken::KnownCompletionPredicateV1 BoundPredicate(
     facts.sourceRate = 48000;
     facts.mixRate = 48000;
     facts.pitchFixed = true;
-    facts.serialRender = true;
     facts.absoluteLogicalStartFrame = 0;
     facts.playbackFactsRevision = 1;
     facts.program.kind = harken::PlayableKindV1::Sound;
@@ -5825,7 +5824,6 @@ struct GenuineHiddenSelectedFuture {
         facts.sourceRate = 48000;
         facts.mixRate = 48000;
         facts.pitchFixed = true;
-        facts.serialRender = true;
         facts.absoluteLogicalStartFrame = 100;
         facts.playbackFactsRevision = currentEpoch;
         facts.program.kind = harken::PlayableKindV1::Sound;
@@ -6594,3 +6592,46 @@ TEST(QueueRuntime, PrivateCatalogNativeOldLastReturnPreservesHistoricalFamilyThe
 }
 } // namespace
 #endif
+
+TEST(QueueRuntime, PreparedInitialResetRequiresItsOwnerAndRollsBackBeforePublication) {
+    harken::QueueInstanceTable table(1), other(1);
+    auto create = OriginalQueueCreateRequest();
+    create.initial.version = 7;
+    create.initial.cursor = 1;
+    create.initial.currentChildOrdinal = 4;
+    create.resetInitial = create.initial;
+    create.resetInitial.version = 1;
+    create.resetInitial.cursor = 0;
+    create.resetInitial.currentChildOrdinal = 3;
+    harken::LogicCommitCoordinator coordinator;
+    harken::LogicCommitCoordinator::PreparedIssue issue, missing;
+    ASSERT_EQ(harken::LogicCommitCoordinator::IssueStatus::Issued, coordinator.PrepareIssue(&issue));
+    harken::PreparedQueueInstanceV1 prepared;
+    ASSERT_TRUE(table.PrepareAcquire(create, &prepared));
+    EXPECT_FALSE(table.PrepareInitialReset(prepared, harken::PreparedQueueReplacementOrder(missing), 128, 1, {}));
+    EXPECT_FALSE(other.PrepareInitialReset(prepared, harken::PreparedQueueReplacementOrder(issue), 128, 1, {}));
+    ASSERT_TRUE(table.PrepareInitialReset(prepared, harken::PreparedQueueReplacementOrder(issue), 128, 1, {}));
+    EXPECT_FALSE(table.PrepareInitialReset(prepared, harken::PreparedQueueReplacementOrder(issue), 128, 2, {}));
+    ASSERT_TRUE(table.CancelPreparedAcquire(&prepared));
+    EXPECT_FALSE(table.PrepareInitialReset(prepared, harken::PreparedQueueReplacementOrder(issue), 128, 1, {}));
+    ASSERT_TRUE(table.PrepareAcquire(create, &prepared));
+    harken::QueueInstanceToken token;
+    ASSERT_TRUE(table.CommitPreparedAcquire(&prepared, &token));
+    harken::EffectiveQueueState current{}, next{};
+    bool reset = true;
+    ASSERT_TRUE(table.ResolveNextSelection(token, &current, &next, &reset));
+    EXPECT_FALSE(reset);
+    EXPECT_EQ(7u, current.version);
+    EXPECT_EQ(4u, current.currentChildOrdinal);
+    ASSERT_TRUE(table.Release(token));
+    ASSERT_TRUE(table.PrepareAcquire(create, &prepared));
+    ASSERT_TRUE(table.PrepareInitialReset(prepared, harken::PreparedQueueReplacementOrder(issue), 128, 1, {}));
+    ASSERT_TRUE(table.CommitPreparedAcquire(&prepared, &token));
+    ASSERT_TRUE(table.ResolveNextSelection(token, &current, &next, &reset));
+    EXPECT_TRUE(reset);
+    EXPECT_EQ(4u, current.currentChildOrdinal);
+    EXPECT_EQ(8u, next.version);
+    EXPECT_EQ(3u, next.currentChildOrdinal);
+    EXPECT_FALSE(table.PrepareInitialReset(prepared, harken::PreparedQueueReplacementOrder(issue), 128, 1, {}));
+    EXPECT_TRUE(table.Release(token));
+}

@@ -5679,6 +5679,21 @@ bool OriginalConditionalReplacementBatch::PrepareDeferred(QueueInstanceTable& qu
     return true;
 }
 
+bool OriginalConditionalReplacementBatch::PrepareDeferred(QueueInstanceTable& queues,
+    QueueInstanceTable::PreparedCatalogResetScope* scope,
+    const ActionDeferredRecordTable::ClaimedResetOrder& reset) noexcept {
+    if (!reset.Valid() || !PrepareScope(queues, scope)) return false;
+    claimedReset_ = reset;
+    return true;
+}
+
+bool OriginalConditionalReplacementBatch::PrepareContinuations(QueueInstanceTable& queues,
+    const ActionDeferredRecordTable::ClaimedResetOrder& reset) noexcept {
+    if (!reset.Valid() || !PrepareContinuationScope(queues)) return false;
+    claimedReset_ = reset;
+    return true;
+}
+
 bool OriginalConditionalReplacementBatch::PrepareScope(QueueInstanceTable& queues,
     QueueInstanceTable::PreparedCatalogResetScope* scope) noexcept {
     if (queues_ != nullptr || count_ != 0 || generation_ == UINT64_MAX || scope == nullptr ||
@@ -5730,7 +5745,7 @@ bool OriginalConditionalReplacementBatch::AttachContinuation(QueueContinuationLa
         replacement.queue_.slot != original.queue_.slot || replacement.queue_.generation != original.queue_.generation)
         return false;
     for (std::uint32_t i = 0; i < count_; ++i) {
-        const auto existing = members_[i].continuation != nullptr ? members_[i].continuation->queue_
+        const auto existing = members_[i].page != nullptr ? members_[i].page->queue_ : members_[i].continuation != nullptr ? members_[i].continuation->queue_
             : members_[i].original.conditional_.Token();
         if (existing.slot == original.queue_.slot && existing.generation == original.queue_.generation) return false;
     }
@@ -5807,6 +5822,23 @@ bool OriginalConditionalReplacementBatch::AttachContinuationWithdrawal(
     return retainedHead != nullptr && AttachContinuationMember(original, nullptr, nullptr, nullptr, retainedHead);
 }
 
+bool OriginalConditionalReplacementBatch::IsPageSuffix(
+    const QueuePageConditionalReceiver& original, const QueuePageConditionalReceiver& head) const noexcept {
+    if (queues_ == nullptr || original.queues_ != queues_ || head.queues_ != queues_ ||
+        original.queue_.slot != head.queue_.slot || original.queue_.generation != head.queue_.generation ||
+        !original.MatchesConditional(*queues_, original.queue_, original.conditional_, original.decision_) ||
+        !head.MatchesConditional(*queues_, head.queue_, head.conditional_, head.decision_)) return false;
+    const auto* row = queues_->Resolve(head.queue_);
+    const auto* current = row == nullptr ? nullptr : queues_->FindConditional(*row, head.conditional_);
+    if (current == nullptr || &row->Pending() != current) return false;
+    for (auto* next = current->following.load(std::memory_order_acquire); next != nullptr;
+         next = next->following.load(std::memory_order_acquire))
+        if (next->pendingVersion.load(std::memory_order_acquire) == original.conditional_.version &&
+            next->pendingDecision.slot == original.decision_.slot &&
+            next->pendingDecision.generation == original.decision_.generation) return true;
+    return false;
+}
+
 bool OriginalConditionalReplacementBatch::HasEntireSuffix(
     QueueInstanceToken queue, ConditionalQueueVersionToken head) const noexcept {
     const auto* row = queues_ == nullptr ? nullptr : queues_->Resolve(queue);
@@ -5817,6 +5849,16 @@ bool OriginalConditionalReplacementBatch::HasEntireSuffix(
         bool attached = false;
         for (std::uint32_t i = 0; i < count_; ++i) {
             const auto& member = members_[i];
+            const auto* page = member.page;
+            if (page != nullptr && member.pageWithdrawalHead != nullptr &&
+                page->queue_.slot == queue.slot && page->queue_.generation == queue.generation &&
+                member.pageWithdrawalVersion.version == head.version &&
+                page->conditional_.version == next->pendingVersion.load(std::memory_order_acquire) &&
+                page->decision_.slot == next->pendingDecision.slot &&
+                page->decision_.generation == next->pendingDecision.generation) {
+                attached = true;
+                break;
+            }
             const auto* lane = member.continuation;
             if (lane != nullptr && (member.withdrawalHead != nullptr || member.nativeWithdrawalHead != nullptr) &&
                 lane->queue_.slot == queue.slot && lane->queue_.generation == queue.generation &&
@@ -5877,6 +5919,164 @@ bool OriginalConditionalReplacementBatch::CommitContinuation(
     return false;
 }
 
+QueuePageConditionalReceiver::~QueuePageConditionalReceiver() {
+    assert(CanRetire());
+}
+
+bool QueuePageConditionalReceiver::Initialize(QueueInstanceTable& queues,
+    const QueueInstanceTable::OriginalLifetimePin& original, QueueInstanceToken queue,
+    ConditionalQueueVersionToken conditional, DecisionToken decision) noexcept {
+    if (queues_ != nullptr || !conditional.Valid() || !decision.Valid() ||
+        original.Token().slot != queue.slot || original.Token().generation != queue.generation ||
+        !queues.ProvePendingConditionalIdentity(queue, conditional, decision) ||
+        !original.Borrow(&original_)) return false;
+    queues_ = &queues;
+    queue_ = queue;
+    conditional_ = conditional;
+    decision_ = decision;
+    return true;
+}
+
+bool QueuePageConditionalReceiver::MatchesConditional(const QueueInstanceTable& queues,
+    QueueInstanceToken queue, ConditionalQueueVersionToken conditional, DecisionToken decision) const noexcept {
+    return queues_ == &queues && original_.Valid() && queue.slot == queue_.slot &&
+        queue.generation == queue_.generation && conditional.version == conditional_.version &&
+        decision.slot == decision_.slot && decision.generation == decision_.generation &&
+        queues.ProvePendingConditionalIdentity(queue, conditional, decision);
+}
+
+bool QueuePageConditionalReceiver::Replaceable(const OriginalConditionalReplacementBatch* batch) const noexcept {
+    return queues_ != nullptr && slices_ != 0 && MatchesConditional(*queues_, queue_, conditional_, decision_) &&
+        (admission_.load(std::memory_order_acquire) & (kWritten | kWithdrawn)) == 0 &&
+        queues_->PageConditionalReplaceable(queue_, conditional_, decision_, *this, slices_, completed_, false, batch);
+}
+
+bool QueuePageConditionalReceiver::LocallyReplaceable() const noexcept {
+    return queues_ != nullptr && slices_ != 0 && MatchesConditional(*queues_, queue_, conditional_, decision_) &&
+        (admission_.load(std::memory_order_acquire) & (kWritten | kWithdrawn)) == 0 &&
+        queues_->PageConditionalReplaceable(queue_, conditional_, decision_, *this, slices_, completed_, true);
+}
+
+bool QueuePageConditionalReceiver::IsAttachedWithdrawalOf(const QueuePageConditionalReceiver& head,
+    const OriginalConditionalReplacementBatch* batch) const noexcept {
+    if (batch == nullptr || batch != replacement_ || replacementGeneration_ != batch->generation_ ||
+        admission_.load(std::memory_order_acquire) != kAttached ||
+        (batch->word_.load(std::memory_order_acquire) &
+            (OriginalConditionalReplacementBatch::kAborted | OriginalConditionalReplacementBatch::kAccepted)) != 0)
+        return false;
+    for (std::uint32_t i = 0; i < batch->count_; ++i)
+        if (batch->members_[i].page == this && batch->members_[i].pageWithdrawalHead == &head &&
+            batch->members_[i].pageWithdrawalVersion.version == head.conditional_.version &&
+            batch->members_[i].pageWithdrawalDecision.slot == head.decision_.slot &&
+            batch->members_[i].pageWithdrawalDecision.generation == head.decision_.generation)
+            return batch->IsPageSuffix(*this, head) && LocallyReplaceable();
+    return false;
+}
+
+bool QueuePageConditionalReceiver::CanRetire() const noexcept {
+    return (admission_.load(std::memory_order_acquire) & (kChanging | kAttached | kReading)) == 0;
+}
+
+bool QueuePageConditionalReceiver::BeginAudio(const FrontierGroupBinding& binding) const noexcept {
+    const auto before = admission_.fetch_or(kReading, std::memory_order_acq_rel);
+    assert((before & kReading) == 0 && !audioRead_);
+    audioRead_ = true;
+    if ((before & kWithdrawn) != 0 || binding.queuePageReceiver != this ||
+        binding.queueConditional.slot != queue_.slot || binding.queueConditional.generation != queue_.generation ||
+        binding.queueConditional.pendingVersion != conditional_.version ||
+        binding.operation.group.decision.slot != decision_.slot ||
+        binding.operation.group.decision.generation != decision_.generation) return false;
+    if ((before & kAttached) != 0) {
+        replacementRead_ = replacement_->BorrowOldRead(replacementGeneration_);
+        if (!replacementRead_) {
+            admission_.fetch_or(kWithdrawn, std::memory_order_acq_rel);
+            return false;
+        }
+    }
+    return true;
+}
+
+void QueuePageConditionalReceiver::BeforeAudioWrite() const noexcept {
+    assert(audioRead_ && (admission_.load(std::memory_order_acquire) & kWithdrawn) == 0);
+    if (replacementRead_) replacement_->BeforeOldWrite();
+    admission_.fetch_or(kWritten, std::memory_order_acq_rel);
+}
+
+void QueuePageConditionalReceiver::EndAudio() const noexcept {
+    if (!audioRead_) return;
+    if (replacementRead_) replacement_->ReturnOldRead();
+    replacementRead_ = audioRead_ = false;
+    admission_.fetch_and(~kReading, std::memory_order_release);
+}
+
+bool OriginalConditionalReplacementBatch::AttachPage(QueuePageConditionalReceiver& original,
+    PreparedQueueConditionalReplacementV1& conditional) noexcept {
+    if (queues_ == nullptr || Sequence() == 0 || count_ == capacity_ ||
+        (word_.load(std::memory_order_acquire) & (kAborted | kAccepted)) != 0 ||
+        !conditional.Valid() || conditional.owner_ != queues_ || conditional.stagedPageOwner_ != &original ||
+        !original.Replaceable(this) || !HasEntireSuffix(original.queue_, original.conditional_)) return false;
+    for (std::uint32_t i = 0; i < count_; ++i) {
+        const auto& member = members_[i];
+        const auto existing = member.page != nullptr ? member.page->queue_ :
+            member.continuation != nullptr ? member.continuation->queue_ : member.original.conditional_.Token();
+        if (existing.slot == original.queue_.slot && existing.generation == original.queue_.generation &&
+            member.pageWithdrawalHead != &original) return false;
+    }
+    return AttachPageMember(original, &conditional, nullptr);
+}
+
+bool OriginalConditionalReplacementBatch::AttachPageWithdrawal(QueuePageConditionalReceiver& original,
+    QueuePageConditionalReceiver& head, std::uint16_t slices, std::uint64_t completed) noexcept {
+    if (queues_ == nullptr || Sequence() == 0 || count_ == capacity_ ||
+        (word_.load(std::memory_order_acquire) & (kAborted | kAccepted)) != 0 ||
+        !IsPageSuffix(original, head)) return false;
+    for (std::uint32_t i = 0; i < count_; ++i)
+        if (members_[i].page == &original) return false;
+    original.slices_ = slices;
+    original.completed_ = completed;
+    return original.LocallyReplaceable() && AttachPageMember(original, nullptr, &head);
+}
+
+bool OriginalConditionalReplacementBatch::AttachPageMember(QueuePageConditionalReceiver& original,
+    PreparedQueueConditionalReplacementV1* conditional, QueuePageConditionalReceiver* head) noexcept {
+    std::uint64_t expected = 0;
+    if (!original.admission_.compare_exchange_strong(expected, QueuePageConditionalReceiver::kChanging,
+            std::memory_order_acq_rel, std::memory_order_acquire)) return false;
+    original.replacement_ = this;
+    original.replacementGeneration_ = generation_;
+    expected = QueuePageConditionalReceiver::kChanging;
+    if (!original.admission_.compare_exchange_strong(expected, QueuePageConditionalReceiver::kAttached,
+            std::memory_order_release, std::memory_order_acquire)) {
+        original.replacement_ = nullptr;
+        original.replacementGeneration_ = 0;
+        original.admission_.fetch_and(~QueuePageConditionalReceiver::kChanging, std::memory_order_release);
+        word_.fetch_or(kAborted, std::memory_order_acq_rel);
+        return false;
+    }
+    auto& member = members_[count_++];
+    member.page = &original;
+    member.pageWithdrawalHead = head;
+    member.pageWithdrawalVersion = head == nullptr ? ConditionalQueueVersionToken{} : head->conditional_;
+    member.pageWithdrawalDecision = head == nullptr ? DecisionToken{} : head->decision_;
+    member.stagedConditional = conditional;
+    ++pageCount_;
+    return true;
+}
+
+bool OriginalConditionalReplacementBatch::CommitPage(
+    PreparedQueueConditionalReplacementV1& conditional, LogicCommitSequence sequence) noexcept {
+    if (!Accepted() || !orderConsumed_ || sequence != acceptedSequence_ || !conditional.Valid()) return false;
+    for (std::uint32_t i = 0; i < count_; ++i) {
+        auto& member = members_[i];
+        if (member.stagedConditional != &conditional || member.page == nullptr) continue;
+        if (queues_->CommitConditionalReplacementInternal(&conditional, sequence, true) != QueueResetStatusV1::Ok)
+            return false;
+        member.stagedConditional = nullptr;
+        return true;
+    }
+    return false;
+}
+
 bool QueueContinuationLane::BeginAudio() const noexcept {
     const auto before = admission_.fetch_or(kReading, std::memory_order_acq_rel);
     assert((before & kReading) == 0 && !audioRead_);
@@ -5911,7 +6111,7 @@ bool OriginalConditionalReplacementBatch::Attach(
     PrivateSelectedQueueFutureSpanPool& spans,
     const PrivateSelectedQueueFutureSpanPool::Owner& selected) noexcept {
     if (queues_ == nullptr || Sequence() == 0 || !scope_.Valid() ||
-        count_ == capacity_ || count_ - continuationCount_ >= scope_.MatchedCount() ||
+        count_ == capacity_ || count_ - continuationCount_ - pageCount_ >= scope_.MatchedCount() ||
         (word_.load(std::memory_order_acquire) & (kAborted | kAccepted)) != 0 ||
         !original.withdrawalOwner_ || !original.Valid() ||
         !queues_->MatchesOriginalConditionalFutureReservation(original.conditional_)) return false;
@@ -5925,7 +6125,7 @@ bool OriginalConditionalReplacementBatch::Attach(
     }
     if (!matched) return false;
     for (std::uint32_t i = 0; i < count_; ++i) {
-        const auto existing = members_[i].continuation != nullptr ? members_[i].continuation->queue_
+        const auto existing = members_[i].page != nullptr ? members_[i].page->queue_ : members_[i].continuation != nullptr ? members_[i].continuation->queue_
             : members_[i].original.conditional_.Token();
         if (existing.slot == queue.slot && existing.generation == queue.generation) return false;
     }
@@ -5967,13 +6167,38 @@ bool OriginalConditionalReplacementBatch::Attach(
 }
 
 bool OriginalConditionalReplacementBatch::TryAccept(const ActionCommitBundle& action) noexcept {
-    const auto originalCount = count_ - continuationCount_;
+    const auto originalCount = count_ - continuationCount_ - pageCount_;
     if (queues_ == nullptr || Sequence() == 0 ||
         action.State() != BundleState::Reserved || action.StepCount() == 0 ||
         count_ == 0 || originalCount != (scope_.Valid() ? scope_.MatchedCount() : 0) ||
         (queueSelectionsPrepared_ != 0 && queueSelectionsPrepared_ != originalCount)) return false;
     for (std::uint32_t i = 0; i < count_; ++i) {
         const auto& member = members_[i];
+        if (member.page != nullptr) {
+            const auto* candidate = member.stagedConditional;
+            if (member.page->replacement_ != this || member.page->replacementGeneration_ != generation_ ||
+                member.page->admission_.load(std::memory_order_acquire) != QueuePageConditionalReceiver::kAttached)
+                return false;
+            if (member.pageWithdrawalHead != nullptr) {
+                if (candidate != nullptr || !member.page->LocallyReplaceable()) return false;
+                const Member* head = nullptr;
+                for (std::uint32_t h = 0; h < count_; ++h) {
+                    const auto& retained = members_[h];
+                    if (retained.page != member.pageWithdrawalHead) continue;
+                    if (head != nullptr || retained.pageWithdrawalHead != nullptr ||
+                        retained.stagedConditional == nullptr || !retained.stagedConditional->Valid() ||
+                        retained.stagedConditional->stagedPageOwner_ != retained.page ||
+                        retained.page->conditional_.version != member.pageWithdrawalVersion.version ||
+                        retained.page->decision_.slot != member.pageWithdrawalDecision.slot ||
+                        retained.page->decision_.generation != member.pageWithdrawalDecision.generation) return false;
+                    head = &retained;
+                }
+                if (head == nullptr || !IsPageSuffix(*member.page, *head->page)) return false;
+            } else if (!member.page->Replaceable(this) || candidate == nullptr || !candidate->Valid() ||
+                candidate->owner_ != queues_ || candidate->stagedPageOwner_ != member.page ||
+                !HasEntireSuffix(member.page->queue_, member.page->conditional_)) return false;
+            continue;
+        }
         if (member.continuation != nullptr) {
             const auto* next = member.replacementContinuation;
             const auto* candidate = member.stagedConditional;
@@ -6014,13 +6239,15 @@ bool OriginalConditionalReplacementBatch::TryAccept(const ActionCommitBundle& ac
     // The shared word already selects every attached scope. These infallible
     // copies preserve that same result after the batch's native readers retire.
     for (std::uint32_t i = 0; i < count_; ++i) {
-        if (members_[i].continuation != nullptr)
+        if (members_[i].page != nullptr)
+            members_[i].page->admission_.fetch_or(QueuePageConditionalReceiver::kWithdrawn, std::memory_order_acq_rel);
+        else if (members_[i].continuation != nullptr)
             members_[i].continuation->admission_.fetch_or(QueueContinuationLane::kWithdrawn, std::memory_order_acq_rel);
         else members_[i].attempt->conditionalProjectionAdmission.fetch_or(kEventWithdrawalRequested, std::memory_order_acq_rel);
     }
     if (queueSelectionsPrepared_)
         for (std::uint32_t i = 0; i < count_; ++i)
-            if (members_[i].continuation == nullptr)
+            if (members_[i].continuation == nullptr && members_[i].page == nullptr)
                 members_[i].spans->ConsumeQueueSelection(members_[i].selected, members_[i].order);
     return true;
 }
@@ -6028,17 +6255,19 @@ bool OriginalConditionalReplacementBatch::TryAccept(const ActionCommitBundle& ac
 bool OriginalConditionalReplacementBatch::PrepareQueueSelections(
     std::uint64_t executeFrame, std::uint32_t executionOrdinal) noexcept {
     if (queues_ == nullptr || queueSelectionsPrepared_ || !scope_.Valid() || Sequence() == 0 ||
-        count_ == 0 || count_ != scope_.MatchedCount() ||
+        count_ == 0 || count_ - continuationCount_ - pageCount_ != scope_.MatchedCount() ||
         (word_.load(std::memory_order_acquire) & (kAborted | kAccepted)) != 0) return false;
     const QueueExecutionOrderV1 order{executeFrame == 0 ? queues_->logicNow_ : executeFrame, Sequence(), executionOrdinal};
     for (std::uint32_t i = 0; i < count_; ++i)
-        if (!members_[i].spans->CanConsumeQueueSelection(
+        if (members_[i].continuation == nullptr && members_[i].page == nullptr &&
+            !members_[i].spans->CanConsumeQueueSelection(
                 members_[i].selected, members_[i].original.conditional_, order)) return false;
     for (std::uint32_t i = 0; i < count_; ++i) {
+        if (members_[i].continuation != nullptr || members_[i].page != nullptr) continue;
         members_[i].order = order;
         members_[i].orderPrepared = true;
     }
-    queueSelectionsPrepared_ = count_;
+    queueSelectionsPrepared_ = count_ - continuationCount_ - pageCount_;
     return true;
 }
 
@@ -6046,11 +6275,12 @@ bool OriginalConditionalReplacementBatch::PrepareQueueSelection(
     const OriginalImmediateLaneConditionalProjection& original,
     std::uint64_t executeFrame, std::uint32_t executionOrdinal) noexcept {
     if (queues_ == nullptr || !scope_.Valid() || Sequence() == 0 || !original.Valid() ||
-        count_ == 0 || count_ != scope_.MatchedCount() ||
+        count_ == 0 || count_ - continuationCount_ - pageCount_ != scope_.MatchedCount() ||
         (word_.load(std::memory_order_acquire) & (kAborted | kAccepted)) != 0) return false;
     const auto queue = original.conditional_.Token();
     for (std::uint32_t i = 0; i < count_; ++i) {
         auto& member = members_[i];
+        if (member.continuation != nullptr || member.page != nullptr) continue;
         const auto actual = member.original.conditional_.Token();
         if (queue.slot != actual.slot || queue.generation != actual.generation) continue;
         const QueueExecutionOrderV1 order{executeFrame == 0 ? queues_->logicNow_ : executeFrame, Sequence(), executionOrdinal};
@@ -6119,6 +6349,23 @@ bool OriginalConditionalReplacementBatch::Close() noexcept {
     bool closed = true;
     for (std::uint32_t i = 0; i < count_; ++i) {
         auto& member = members_[i];
+        if (member.page != nullptr) {
+            auto& old = *member.page;
+            auto before = old.admission_.load(std::memory_order_acquire);
+            if ((before & QueuePageConditionalReceiver::kReading) != 0 ||
+                !old.admission_.compare_exchange_strong(before,
+                    (before & ~QueuePageConditionalReceiver::kAttached) | QueuePageConditionalReceiver::kChanging,
+                    std::memory_order_acq_rel, std::memory_order_acquire)) { closed = false; continue; }
+            old.replacement_ = nullptr;
+            old.replacementGeneration_ = 0;
+            old.admission_.fetch_and(~QueuePageConditionalReceiver::kChanging, std::memory_order_release);
+            member.page = nullptr;
+            member.pageWithdrawalHead = nullptr;
+            member.pageWithdrawalVersion = {};
+            member.pageWithdrawalDecision = {};
+            member.stagedConditional = nullptr;
+            continue;
+        }
         if (member.continuation != nullptr) {
             auto& old = *member.continuation;
             auto before = old.admission_.load(std::memory_order_acquire);
@@ -6156,10 +6403,12 @@ bool OriginalConditionalReplacementBatch::Close() noexcept {
     assert((word_.load(std::memory_order_acquire) & ~(kAborted | kAccepted)) == 0);
     sequence_.Release();
     deferredChild_ = {};
+    claimedReset_ = {};
     scope_.Release();
     queues_ = nullptr;
     count_ = 0;
     continuationCount_ = 0;
+    pageCount_ = 0;
     queueSelectionsPrepared_ = 0;
     orderConsumed_ = false;
     acceptedSequence_ = 0;

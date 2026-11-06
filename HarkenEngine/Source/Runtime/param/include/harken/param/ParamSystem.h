@@ -43,6 +43,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <vector>
+#include <span>
 
 namespace harken {
 
@@ -56,6 +57,7 @@ class BindingTable;
 class BindingDependencyIndex;
 enum class BindingDependencyKind : std::uint32_t;
 struct BindingDependencyIdentity;
+struct TimelineVoiceBindingInstall;
 
 // Fixed contribution slots per target, reduced in index order. The order
 // is part of the model's determinism guarantee.
@@ -555,6 +557,11 @@ public:
                                PrimedValue* out, std::uint32_t capacity,
                                std::uint32_t* written, bool includeUnchanged = false,
                                std::uint32_t initialTargetMask = 0);
+
+    // Resolves the initial pitch without registering a voice or publication state.
+    bool TryResolveInitialPitch(double baseRatio,
+        std::span<const TimelineVoiceBindingInstall> bindings,
+        const VariableReadCutReader& reader, float* cents, bool* changed) const;
 
     // Settles an explicit list of targets for a voice's start batch, the
     // authored-base counterpart of PrimeVoiceBindings: each listed target

@@ -1221,3 +1221,78 @@ TEST(ActionDeferredRecordTable,
 }
 
 } // namespace
+
+TEST(ActionDeferredRecordTable, ClaimedResetOrderRejectsStalePairsAndSettledSteps) {
+    for (unsigned mismatch = 0; mismatch < 11; ++mismatch) {
+        SCOPED_TRACE(mismatch);
+        harken::ActionFiringTable firings;
+        ASSERT_TRUE(firings.Reset(1));
+        harken::PreparedActionFiring firing;
+        ASSERT_TRUE(firings.PrepareRoot(harkentest::ObjectId(41), 11, 1, &firing));
+        auto record = MakeRecord();
+        record.step.opcode = harken::ActionOpcodeV1::Reset;
+        record.firing = firing.Handle();
+        harken::ActionFiringStepResult step;
+        step.state = harken::ActionStepState::AwaitingMaterialization;
+        step.opcode = static_cast<std::uint32_t>(harken::ActionOpcodeV1::Reset);
+        step.executionOrdinal = record.executionOrdinal;
+        ASSERT_TRUE(firings.SetPreparedStep(firing, 0, step));
+        ASSERT_TRUE(firings.Commit(&firing, 99));
+        harken::ActionFiringSnapshot snapshot;
+        ASSERT_TRUE(firings.Capture(record.firing, &snapshot));
+        record.ownerCancellationEpoch = snapshot.cancellationEpoch;
+        harken::ActionDeferredRecordTable records;
+        ASSERT_TRUE(records.Reset(1));
+        harken::DeferredIntentPool pool(1, 1);
+        auto prepared = records.Prepare(record);
+        ASSERT_EQ(harken::ActionDeferredRecordPrepareStatus::Prepared, prepared.status);
+        auto intent = MakeIntent(record, prepared.token);
+        intent.commitSequence = 99;
+        switch (mismatch) {
+        case 1: ++intent.ownerHandle; break;
+        case 2: ++intent.ownerEpoch; break;
+        case 3: ++intent.dueFrame; break;
+        case 4: ++intent.executionOrdinal; break;
+        case 5: ++intent.commitSequence; break;
+        }
+        auto added = pool.AddClaimable(intent);
+        ASSERT_EQ(harken::DeferredIntentRefusal::None, added.status);
+        ASSERT_TRUE(records.Commit(&prepared.token, added.token));
+        harken::PlayableInstanceTable instances(1);
+        harken::DeferredIntentClaim claim;
+        ASSERT_EQ(1u, pool.ClaimDue(1000, instances, &claim, 1));
+        harken::ActionDeferredRecordToken token;
+        harken::ActionDeferredRecord captured;
+        ASSERT_TRUE(records.Claim(claim, &token, &captured));
+        auto recordToken = token;
+        auto poolToken = claim.token;
+        if (mismatch == 6) ++recordToken.generation;
+        if (mismatch == 7) ++poolToken.generation;
+        if (mismatch == 8) ++recordToken.slot;
+        if (mismatch == 9) ++poolToken.slot;
+        if (mismatch == 10) {
+            step.state = harken::ActionStepState::Succeeded;
+            ASSERT_TRUE(firings.TransitionStep(record.firing, 0,
+                harken::ActionStepState::AwaitingMaterialization, step));
+        }
+        harken::ActionDeferredRecordTable::ClaimedResetOrder order;
+        EXPECT_EQ(mismatch == 0, records.BorrowClaimedResetOrder(pool, poolToken, recordToken, firings, &order));
+        EXPECT_EQ(mismatch == 0 ? 99u : 0u, order.Sequence());
+        if (mismatch == 0) {
+            auto borrowed = order;
+            ASSERT_TRUE(borrowed.Valid());
+            ASSERT_TRUE(records.RetryClaim(token));
+            EXPECT_EQ(harken::DeferredIntentRefusal::None, pool.Retry(claim.token));
+            EXPECT_FALSE(order.Valid());
+            EXPECT_FALSE(borrowed.Valid());
+            EXPECT_EQ(harken::ActionDeferredCancelOwnership::Canceller, records.RequestCancel(token));
+            ASSERT_TRUE(pool.Cancel(claim.token));
+            ASSERT_TRUE(records.FinalizeHeld(token));
+        } else {
+            ASSERT_TRUE(records.FinalizeClaim(token));
+            ASSERT_TRUE(pool.Release(claim.token));
+        }
+        EXPECT_EQ(0u, records.LiveCount());
+        EXPECT_EQ(0u, pool.Count());
+    }
+}

@@ -452,8 +452,8 @@ std::vector<std::uint8_t> AdvancedTransitionPartitionPayload(
     TransitionRuleViewV1 rule{};
     rule.sourceAny = 1;
     rule.targetAny = 1;
-    rule.sourceExit = TransitionSourceExitV1::NextBeat;
-    rule.requiredClockFingerprint = 0x1234;
+    rule.sourceExit = TransitionSourceExitV1::NextMarker;
+    rule.requiredMarkerStableId = harkentest::ObjectId(0x1234);
     TransitionProgramViewV1 transition{};
     transition.ownerContainerStableId = properties[1].stableId;
     transition.ruleCount = 1;

@@ -79,10 +79,12 @@ inline void MultiplySourcePhaseWords(std::uint64_t a, std::uint64_t b,
     *high = a1 * b1 + (p01 >> 32) + (p10 >> 32) + (middle >> 32);
 }
 
-// Saturation is sufficient for monotone boundary search and avoids compiler-
-// specific 128-bit integer types. Work is independent of media duration.
-inline std::uint64_t JumpSourcePhase(SourcePhaseStep step, ExactSourcePhase phase,
-                                     std::uint64_t frames) noexcept {
+// Return both coordinates without replaying the omitted output. Checked whole
+// arithmetic distinguishes an unrepresentable crop from an exact UINT64_MAX.
+inline bool TryJumpSourcePhase(SourcePhaseStep step, ExactSourcePhase phase,
+                               std::uint64_t frames, std::uint64_t* whole,
+                               ExactSourcePhase* finalPhase) noexcept {
+    if (whole == nullptr || finalPhase == nullptr) return false;
     std::uint64_t lowHigh = 0, lowLow = 0, highHigh = 0, highLow = 0;
     MultiplySourcePhaseWords(step.fraction.low, frames, &lowHigh, &lowLow);
     MultiplySourcePhaseWords(step.fraction.high, frames, &highHigh, &highLow);
@@ -92,11 +94,22 @@ inline std::uint64_t JumpSourcePhase(SourcePhaseStep step, ExactSourcePhase phas
     carry += withPhase < middle ? 1u : 0u;
     const auto lowCarry = lowLow + phase.low < lowLow ? 1ull : 0ull;
     carry += withPhase + lowCarry < withPhase ? 1u : 0u;
-    if (highHigh > UINT64_MAX - carry) return UINT64_MAX;
+    if (highHigh > UINT64_MAX - carry) return false;
     const auto fractionWhole = highHigh + carry;
     if (step.whole != 0 && frames > (UINT64_MAX - fractionWhole) / step.whole)
-        return UINT64_MAX;
-    return step.whole * frames + fractionWhole;
+        return false;
+    *whole = step.whole * frames + fractionWhole;
+    *finalPhase = {withPhase + lowCarry, lowLow + phase.low};
+    return true;
+}
+
+// Boundary search only needs saturation. Cropping uses the checked form above.
+inline std::uint64_t JumpSourcePhase(SourcePhaseStep step, ExactSourcePhase phase,
+                                     std::uint64_t frames) noexcept {
+    std::uint64_t whole = 0;
+    ExactSourcePhase finalPhase{};
+    return TryJumpSourcePhase(step, phase, frames, &whole, &finalPhase)
+        ? whole : UINT64_MAX;
 }
 
 inline bool FixedSourceOutputFrames(std::uint64_t sourceFrames, double ratio,

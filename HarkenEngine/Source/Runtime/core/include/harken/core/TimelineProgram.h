@@ -1,6 +1,8 @@
 #ifndef HARKEN_CORE_TIMELINE_PROGRAM_H
 #define HARKEN_CORE_TIMELINE_PROGRAM_H
 
+#include "harken/core/SourcePhase.h"
+
 #include <harken/ObjectId.h>
 #include "harken/core/ProgramGenerationRegistry.h"
 #include "harken/core/AuthoredStopOperationIdentity.h"
@@ -65,6 +67,8 @@ struct TimelineEventPayload {
     std::uint64_t sourceStartFrame = 0;
     std::uint64_t envelopeStartFrame = 0;
     std::uint64_t envelopeEndFrame = 0;
+    // Content phase consumed before the represented absolute interval.
+    std::uint64_t envelopeElapsedFrames = 0;
     const CurveLUT* envelopeCurve = nullptr;
     bool authoredFadeOutCandidate = false;
     WeightSegmentV1 variableWeight{};
@@ -197,6 +201,8 @@ struct TimelineVoiceInstallDesc {
     VnObjectId soundId{};
     VnObjectId outputBusId{};
     std::uint64_t sourceStartFrame = 0;
+    ExactSourcePhase sourcePhase{};
+    std::uint64_t sourceOutputOffsetFrames = 0;
     std::uint64_t authoredDurationFrames = UINT64_MAX;
     float volumeDb = 0.0f;
     float outputBusVolumeDb = 0.0f;
