@@ -4220,7 +4220,9 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 bool MainWindow::maybeSave()
 {
     finishProjectSettingsEditing();
-    if (!projectModified_)
+    PropertyEditSession::finishAllActive(true);
+    auto& projectManager = ProjectManager::instance();
+    if (!projectManager.hasUnsavedChanges())
         return true;
     
     QMessageBox::StandardButton ret = QMessageBox::warning(this, tr("Harken Studio"),
@@ -4230,7 +4232,7 @@ bool MainWindow::maybeSave()
     if (ret == QMessageBox::Save)
     {
         onSaveProject();
-        return !projectModified_;
+        return !projectManager.hasUnsavedChanges();
     }
     else if (ret == QMessageBox::Cancel)
     {

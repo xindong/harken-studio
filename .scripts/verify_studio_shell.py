@@ -55,15 +55,18 @@ def verify(cli: Path, studio: Path, work: Path) -> None:
             assert response.get("code"), response
         return response
 
-    def launch(name: str, shell=True, read_output=True):
-        directory = work / name
-        call("init", str(directory))
-        project = directory / (name + ".hsp")
+    def launch(name: str, shell=True, read_output=True, *, create=False, project: Path | None = None):
+        if project is None:
+            directory = work / name
+            if not create:
+                call("init", str(directory))
+            project = directory / (name + ".hsp")
+        arguments = ["--create-project", str(project.parent)] if create else ["--project", str(project)]
         error_log = (work / (name + ".stderr.log")).open("wb")
         output_log = (work / (name + ".stdout.log")).open("wb")
         logs.extend((error_log, output_log))
         process = subprocess.Popen(
-            [str(studio), "--project", str(project), *(["--shell"] if shell else [])],
+            [str(studio), *arguments, *(["--shell"] if shell else [])],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=error_log,
             env=environment, **process_options())
         processes.append(process)
@@ -94,7 +97,6 @@ def verify(cli: Path, studio: Path, work: Path) -> None:
         assert instance and instance["available"], (name, instance)
         assert Path(instance["project"]["path"]).resolve() == project.resolve(), instance
         registrations.append(registry_directory(environment) / (instance["id"] + ".json"))
-        execute(instance["id"], "save_project")
         return process, responses, instance, project
 
     def send(process, responses, line: str, error=None):
@@ -113,15 +115,27 @@ def verify(cli: Path, studio: Path, work: Path) -> None:
             assert response["code"] == error, response
         return response
 
-    def close_gui(process, instance: str):
-        execute(instance, "save_project")
+    def request_gui_close(instance: str):
         windows = execute(instance, "list_ui_windows")["result"]["windows"]
         main = next(window for window in windows if window["name"] == "MainWindow")
         buttons = execute(instance, "find_widget", {
             "name": "titleBarClose", "scope_widget_id": main["widget_id"]})["result"]["widgets"]
         assert len(buttons) == 1, buttons
         execute(instance, "click_widget", {"widget_id": buttons[0]["widget_id"]})
+
+    def close_gui(process, instance: str):
+        request_gui_close(instance)
         assert process.wait(timeout=20) == 0, process.returncode
+
+    def wait_for_dialog(process, instance: str):
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            assert process.poll() is None, process.returncode
+            windows = execute(instance, "list_ui_windows")["result"]["windows"]
+            if any(window.get("visible") and window.get("modal") for window in windows):
+                return
+            time.sleep(0.05)
+        raise AssertionError(("Closing with unsaved edits did not show a dialog", windows))
 
     def check(description: str):
         report["checks"].append(description)
@@ -136,6 +150,36 @@ def verify(cli: Path, studio: Path, work: Path) -> None:
         version = startup("--version", "--json", success=True, unavailable_input=True)
         assert version["result"]["version"] == call("--version")["result"]["version"], version
         check("Shell startup validates missing projects, values and unknown options; help and version work without stdin")
+
+        for name, create in (("StudioCreated", True), ("CoreCreated", False)):
+            process, responses, instance, project = launch(name, create=create)
+            state = send(process, responses, "get_project_state")
+            assert state["result"]["is_dirty"] is False, (name, state)
+            send(process, responses, "exit")
+            assert process.wait(timeout=20) == 0, process.returncode
+            process, responses, instance, _ = launch(name + "Reopened", project=project)
+            state = send(process, responses, "get_project_state")
+            assert state["result"]["is_dirty"] is False, (name, state)
+            send(process, responses, "exit")
+            assert process.wait(timeout=20) == 0, process.returncode
+        check("Studio-created and CLI-created projects are clean on creation and reopening; unchanged exit needs no save")
+
+        process, responses, instance, _ = launch("GuiCloseClean", create=True)
+        assert send(process, responses, "get_project_state")["result"]["is_dirty"] is False
+        close_gui(process, instance["id"])
+        check("Closing an untouched newly created project through the GUI needs no save or confirmation")
+
+        process, responses, instance, _ = launch("GuiCloseDirty", create=True)
+        send(process, responses, 'create_action {"name":"PreservedAfterCancel"}')
+        assert send(process, responses, "get_project_state")["result"]["is_dirty"] is True
+        request_gui_close(instance["id"])
+        wait_for_dialog(process, instance["id"])
+        execute(instance["id"], "answer_dialog", {"response": "cancel"})
+        send(process, responses, 'get_item_info {"path":"PreservedAfterCancel"}')
+        assert send(process, responses, "get_project_state")["result"]["is_dirty"] is True
+        send(process, responses, "save_project")
+        close_gui(process, instance["id"])
+        check("GUI close prompts for actual edits; cancelling preserves the shell, project and unsaved changes")
 
         process, responses, instance, project = launch("DirectShellEof")
         instance_id = instance["id"]
@@ -161,20 +205,13 @@ def verify(cli: Path, studio: Path, work: Path) -> None:
         check("Direct shell responds before EOF, preserves UTF-8 input and shares GUI state; duplicate shell startup cannot attach silently")
 
         process.stdin.close()
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline:
-            assert process.poll() is None, process.returncode
-            windows = execute(instance_id, "list_ui_windows")["result"]["windows"]
-            if any(window.get("visible") and window.get("modal") for window in windows):
-                break
-            time.sleep(0.05)
-        else:
-            raise AssertionError(("Dirty EOF did not ask about unsaved edits", windows))
+        wait_for_dialog(process, instance_id)
         execute(instance_id, "answer_dialog", {"response": "cancel"})
         execute(instance_id, "get_item_info", {"path": "FromDirectShell"})
         execute(instance_id, "get_item_info", {"path": "FromAttachedCli"})
         assert execute(instance_id, "get_project_state")["result"]["is_dirty"] is True
         assert process.poll() is None
+        execute(instance_id, "save_project")
         close_gui(process, instance_id)
         check("Dirty EOF requests normal GUI close; cancelling preserves edits and the application can still save and close")
 
@@ -244,6 +281,7 @@ def verify(cli: Path, studio: Path, work: Path) -> None:
             time.sleep(0.05)
         assert found, info
         assert execute(instance["id"], "get_project_state")["result"]["is_dirty"] is True
+        execute(instance["id"], "save_project")
         close_gui(process, instance["id"])
         check("Controller stdout disconnection ends shell output without terminating GUI or losing applied edits")
 

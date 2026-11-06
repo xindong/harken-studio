@@ -1916,6 +1916,8 @@ bool ProjectManager::commitPreparedProject(PreparedProject&& prepared)
     assetRegistry.replaceSnapshot(projectRoot, prepared.assets);
     assetRegistry.setPlatforms(m_currentProject->platforms);
     assetRegistry.markAllCommitted();
+    if (m_saveBaseline)
+        m_saveBaseline->assetRegistry = assetRegistry.toJson();
     clampProjectSourceFades(*m_currentProject);
 
     if (!prepared.integrityReport.issues.empty()) {
@@ -2314,7 +2316,8 @@ bool ProjectManager::saveProject()
             plan.addDocument(path, document, baseline, m_externalSavePaths.contains(path));
         }
     }
-    plan.addFile(registryPath, ProjectSavePlan::encode(AssetRegistry::instance().toJson()), baseline,
+    const QJsonObject assetRegistry = AssetRegistry::instance().toJson();
+    plan.addFile(registryPath, ProjectSavePlan::encode(assetRegistry), baseline,
                  m_externalSavePaths.contains(registryPath));
     for (const auto& path : m_externalSavePaths)
         if (full && !completeFiles.contains(path) && path != projectFileName && path != registryPath
@@ -2438,6 +2441,7 @@ bool ProjectManager::saveProject()
         m_saveBaseline->hashes.insert(it.key(), committedHashes.value(projectRoot.filePath(it.key())));
     }
     m_saveBaseline->directories = std::move(plan.directories);
+    m_saveBaseline->assetRegistry = assetRegistry;
     m_saveBaseline->validation = std::move(plan.validation);
     m_saveBaseline->normalizedDocuments.clear();
     m_externalSavePaths.clear();
@@ -2662,8 +2666,7 @@ bool ProjectManager::hasUnsavedChanges()
         project.sourceAssets.insert(asset.sourceID, asset.relativePath);
     return m_itemSaveState->serializer().projectDocument(project.projectPath, project)
             != m_saveBaseline->validation.projectRoot()
-        || ProjectSavePlan::encode(AssetRegistry::instance().toJson())
-            != m_saveBaseline->files.value(QStringLiteral(".cache/asset_registry/assets.json"));
+        || AssetRegistry::instance().toJson() != m_saveBaseline->assetRegistry;
 }
 
 QSet<QString> ProjectManager::bucketsWithPendingFileChanges() const

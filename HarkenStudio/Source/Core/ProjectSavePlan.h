@@ -15,6 +15,7 @@ struct ProjectSaveBaseline
     QHash<QString, QByteArray> hashes;
     QSet<QString> directories;
     QSet<QUuid> normalizedDocuments;
+    QJsonObject assetRegistry;
     ProjectContractValidationBaseline validation;
     ProjectContractReadContext context;
 };

@@ -220,7 +220,6 @@ def verify(cli: Path, studio: Path, work: Path) -> None:
         fixtures.extend(registry_directory(environment) / (entry["id"] + ".json") for entry in (first, second))
         report["instances"] = [first, second]
         for instance_id in (first_id, second_id):
-            execute(instance_id, "save_project")
             assert execute(instance_id, "get_project_state")["result"]["is_dirty"] is False
         check("Two simultaneous desktop instances discovered by identity and project with matching software versions")
 

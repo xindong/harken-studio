@@ -24,14 +24,28 @@ def verify_shell(cli: Path, environment: dict, root: Path, audio_output: bool) -
     created = run(cli, ["init", str(directory), "--json"], environment)
     assert created.returncode == 0, created.stderr
 
-    def shell(lines, exit_code=0, json_output=True):
-        arguments = ["shell", "--project", str(project)] + (["--json"] if json_output else [])
+    def shell(lines, exit_code=0, json_output=True, project_path: Path | None = project):
+        arguments = ["shell"] + (["--project", str(project_path)] if project_path else [])
+        arguments += ["--json"] if json_output else []
         completed = run(cli, arguments, environment,
                         ("\n".join(lines) + ("\n" if lines else "")).encode("utf-8"))
         assert completed.returncode == exit_code, (completed.stdout, completed.stderr)
         responses = [json.loads(line) for line in completed.stdout.splitlines()]
         assert all(response["protocolVersion"] == 1 for response in responses), responses
         return responses
+
+    for _ in range(2):
+        unchanged = shell(["get_project_state", "exit"])
+        assert len(unchanged) == 2 and all(response["status"] == "ok" for response in unchanged), unchanged
+        assert unchanged[0]["result"]["is_dirty"] is False, unchanged
+    created_in_shell = shell([
+        "create_project " + json.dumps({"name": "ShellCreated", "location": str(root)}),
+        "get_project_state", "exit"], project_path=None)
+    assert len(created_in_shell) == 3 and all(response["status"] == "ok" for response in created_in_shell), created_in_shell
+    assert created_in_shell[1]["result"]["is_dirty"] is False, created_in_shell
+    reopened = shell(["get_project_state", "exit"], project_path=root / "ShellCreated" / "ShellCreated.hsp")
+    assert len(reopened) == 2 and all(response["status"] == "ok" for response in reopened), reopened
+    assert reopened[0]["result"]["is_dirty"] is False, reopened
 
     responses = shell([
         "help", "commands create_action", "create_action [", "create_action []",
