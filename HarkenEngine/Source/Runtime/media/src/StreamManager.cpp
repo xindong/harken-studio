@@ -432,7 +432,7 @@ bool StreamManager::PeekPreparedFreeSlot(
     // A failed private installation may still occupy a retired ring. Finish
     // that detach before reusing the pending reference's protected prefix.
     Request request;
-    request.kind = Request::Kind::Serve;
+    request.kind = Request::Kind::Reap;
     if (PostAndWait(request) != VN_OK) {
         ReclaimAfterWorkerFailure();
         return false;
@@ -448,6 +448,9 @@ VnResult StreamManager::ActivateSlot(std::uint32_t slot,
                                      std::uint32_t loopCount,
                                      std::uint64_t* outRingToken) {
     if (outRingToken != nullptr) *outRingToken = 0;
+    Request request;
+    request.kind = Request::Kind::Serve;
+    request.onlySlot = slot;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         if (slot >= m_slots.size() || fileIndex >= m_files.size() ||
@@ -462,10 +465,9 @@ VnResult StreamManager::ActivateSlot(std::uint32_t slot,
         file.activeStreams.fetch_add(1, std::memory_order_relaxed);
         const auto token = InitializeSlot(slot, fileIndex, file, startFrame,
                                          loopStartFrame, loopEndFrame, loopCount);
+        request.onlyGeneration = m_slots[slot].ring.generation.load(std::memory_order_relaxed);
         if (outRingToken != nullptr) *outRingToken = token;
     }
-    Request request;
-    request.kind = Request::Kind::Serve;
     const auto result = PostAndWait(request);
     m_slots[slot].supplied.store(true, std::memory_order_release);
     return result;
@@ -479,6 +481,7 @@ std::uint64_t StreamManager::InitializeSlot(
     // The slot is Free: neither real-time thread observes it, so these
     // writes are private until Active publishes them. The source reference
     // was acquired under m_mutex, so retirement cannot close it in between.
+    s.window.validBytes = 0;
     s.supplied.store(false, std::memory_order_relaxed);
     s.passGoal = 0;
     s.preparationOwner = StreamSlot::PreparationOwner::None;
@@ -933,6 +936,9 @@ void StreamManager::DetachRetiredSlots() {
         }
         m_files[slot.fileIndex]->activeStreams.fetch_sub(
             1, std::memory_order_relaxed);
+        slot.window.validBytes = 0;
+        std::vector<std::uint8_t>().swap(slot.window.bytes);
+        slot.window.capacityBytes.store(0, std::memory_order_release);
         slot.stagedChunk = kNoChunk;
         slot.feedStopped = false;
         slot.nextFrame = 0;
@@ -947,17 +953,61 @@ void StreamManager::DetachRetiredSlots() {
 }
 
 bool StreamManager::RunChunkJob(const ChunkJob& job,
-                                std::vector<float>& staging) {
-    return ReadChunk(job, staging) &&
+                                std::vector<float>& staging, ReadWindow& window) {
+    return ReadChunk(job, staging, window) &&
         ValidateChunk(job, staging,
             Fnv1a64(staging.data(), static_cast<std::size_t>(job.chunkBytes)));
 }
 
-bool StreamManager::ReadChunk(const ChunkJob& job, std::vector<float>& staging) {
+std::uint64_t StreamManager::ReadWindowBytes() const noexcept {
+    std::uint64_t bytes = 0;
+    for (const auto& slot : m_slots)
+        bytes += slot.window.capacityBytes.load(std::memory_order_acquire);
+    return bytes;
+}
+
+bool StreamManager::ReadChunk(const ChunkJob& job, std::vector<float>& staging,
+                              ReadWindow& window) {
     staging.resize(static_cast<std::size_t>(job.chunkFrames) * job.channels);
-    return ReadStreamBytes(*job.file->source,
-        StreamChunkFileOffset(job.file->toc.payloadOffset, job.chunkIndex, job.chunkBytes),
-        staging.data(), static_cast<std::size_t>(job.chunkBytes), job.cancellation) == StreamReadStatus::Ok;
+    const auto& source = *job.file->source;
+    const auto offset = StreamChunkFileOffset(job.file->toc.payloadOffset, job.chunkIndex, job.chunkBytes);
+    const auto required = static_cast<std::size_t>(job.chunkBytes);
+    const auto direct = [&] {
+        return ReadStreamBytes(source, offset, staging.data(), required, job.cancellation) == StreamReadStatus::Ok;
+    };
+    if (job.cancellation.IsCancelled()) return false;
+    if (offset >= window.offset && offset - window.offset <= window.validBytes &&
+        required <= window.validBytes - static_cast<std::size_t>(offset - window.offset)) {
+        std::memcpy(staging.data(), window.bytes.data() + (offset - window.offset), required);
+        return !job.cancellation.IsCancelled();
+    }
+    window.validBytes = 0;
+    constexpr std::size_t kReadWindowBytes = 16 * 1024;
+    const auto length = source.ByteCount();
+    if (required >= kReadWindowBytes || offset > length || required > length - offset) return direct();
+    const auto wanted = static_cast<std::size_t>(std::min<std::uint64_t>(kReadWindowBytes, length - offset));
+    if (wanted <= required) return direct();
+    try {
+        window.bytes.resize(wanted);
+        window.capacityBytes.store(window.bytes.capacity(), std::memory_order_release);
+    } catch (const std::bad_alloc&) { return direct(); }
+    std::size_t received = 0;
+    while (received < required) {
+        if (job.cancellation.IsCancelled()) return false;
+        const auto result = source.ReadAt(offset + received, window.bytes.data() + received,
+                                          wanted - received, job.cancellation);
+        if (job.cancellation.IsCancelled() || result.status == StreamReadStatus::Cancelled) return false;
+        if (result.status != StreamReadStatus::Ok || result.bytes == 0 || result.bytes > wanted - received) {
+            // Ahead bytes are optional. Discard the failed attempt and retry
+            // exactly the required chunk once, never a canceled operation.
+            return wanted > required && direct();
+        }
+        received += result.bytes;
+    }
+    window.offset = offset;
+    window.validBytes = received;
+    std::memcpy(staging.data(), window.bytes.data(), required);
+    return !job.cancellation.IsCancelled();
 }
 
 bool StreamManager::ValidateChunk(const ChunkJob& job,

@@ -258,6 +258,8 @@ public:
     bool CancelSource(SourceToken token);
     VnResult TakeSource(SourceToken token, StreamFacts* out = nullptr);
     std::uint64_t SourcePreparationBytes() const;
+    // Actual private read-window capacity, separate from staging and metadata.
+    std::uint64_t ReadWindowBytes() const noexcept;
     bool HasPendingSource(VnSoundId soundId) const;
 
     static std::uint64_t RingToken(std::uint32_t slot,
@@ -370,11 +372,19 @@ private:
         bool valid = false, exception = false;
     };
 
+    struct ReadWindow {
+        std::vector<std::uint8_t> bytes;
+        std::uint64_t offset = 0;
+        std::size_t validBytes = 0;
+        std::atomic<std::uint64_t> capacityBytes{0};
+    };
+
     struct StreamSlot {
         StreamRing ring;
         std::atomic<bool> supplied{false};
         int ioLane = -1; // -1 idle, 0 preparation lane, 1 steady job owner
         SlotIoJob io;
+        ReadWindow window;
         std::uint64_t passGoal = 0;
         std::uint64_t exceptionSerial = 0;
 
@@ -425,10 +435,11 @@ private:
         std::uint64_t writeIndex = 0, exceptionSerial = 0;
     };
     struct Request {
-        enum class Kind { Unregister, Serve } kind;
+        enum class Kind { Unregister, Serve, Reap } kind;
         VnSoundId soundId{};
         VnResult result = VN_OK;
         bool done = false, started = false, forceServe = false;
+        std::uint32_t onlySlot = UINT32_MAX, onlyGeneration = 0;
         std::vector<ServeTarget> targets;
     };
 
@@ -498,8 +509,8 @@ private:
     // checksum mismatch; the caller decides what that means for the slot, since
     // only the caller knows the slot. Static: the job depends on nothing but its
     // arguments, which is what makes it relocatable.
-    static bool RunChunkJob(const ChunkJob& job, std::vector<float>& staging);
-    static bool ReadChunk(const ChunkJob& job, std::vector<float>& staging);
+    static bool RunChunkJob(const ChunkJob& job, std::vector<float>& staging, ReadWindow& window);
+    static bool ReadChunk(const ChunkJob& job, std::vector<float>& staging, ReadWindow& window);
     static bool ValidateChunk(const ChunkJob& job,
                               const std::vector<float>& staging,
                               std::uint64_t checksum);

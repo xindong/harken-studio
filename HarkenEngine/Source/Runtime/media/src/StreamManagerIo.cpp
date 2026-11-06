@@ -271,7 +271,7 @@ void StreamManager::IoMain(std::size_t index) {
         try {
             switch (lane.kind) {
             case IoLane::Kind::Chunk:
-                lane.valid = RunChunkJob(lane.chunk, lane.slot->staging);
+                lane.valid = RunChunkJob(lane.chunk, lane.slot->staging, lane.slot->window);
                 break;
             case IoLane::Kind::Source:
                 ValidateSourceSlice(*lane.request);
@@ -320,7 +320,7 @@ void StreamManager::SteadyIoMain() {
         job.valid = false;
         try {
             if (!job.cancelled.load(std::memory_order_acquire))
-                job.valid = RunChunkJob(job.input, slot->staging);
+                job.valid = RunChunkJob(job.input, slot->staging, slot->window);
         } catch (...) { job.exception = true; }
         job.state.store(3, std::memory_order_release);
         {
@@ -387,11 +387,17 @@ void StreamManager::ServiceRequests() {
         if (request.kind == Request::Kind::Unregister) {
             HandleUnregister(request);
             request.done = true;
+        } else if (request.kind == Request::Kind::Reap) {
+            // Settle/detach/close already ran before request processing.
+            request.done = true;
         } else {
             if (!request.started) {
                 request.targets.reserve(m_slots.size());
                 for (std::uint32_t i = 0; i < m_slots.size(); ++i) {
                     auto& slot = m_slots[i];
+                    if (request.onlySlot != UINT32_MAX &&
+                        (i != request.onlySlot || slot.ring.generation.load(std::memory_order_relaxed) !=
+                         request.onlyGeneration)) continue;
                     if (slot.ring.state.load(std::memory_order_acquire) != StreamSlotState::Active) continue;
                     const auto frames = (!m_throttled.load(std::memory_order_relaxed) || request.forceServe)
                         ? BeginSlotService(slot).maxServeFrames : 0u;
