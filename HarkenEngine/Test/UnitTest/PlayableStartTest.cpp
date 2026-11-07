@@ -21718,8 +21718,10 @@ TEST(PlayableStart, DirectTrackMixedStreamWaitsStartsTogetherAndCancelsBeforeRea
 }
 
 TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFailure) {
-    for (const auto workers : {0u, 2u}) for (const auto scenario : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u, 10u, 11u}) {
+    for (const auto workers : {0u, 2u}) for (const auto scenario : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u, 10u, 11u, 12u, 13u}) {
         const bool nativeChild = scenario >= 6u;
+        const bool nestedNative = scenario >= 12u;
+        const bool variableNative = nativeChild && !nestedNative;
         const bool multipleNative = scenario >= 8u && scenario <= 10u;
         const bool emptyNative = scenario == 11u;
         const bool nativeStreamLate = scenario == 10u;
@@ -21779,7 +21781,35 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
         ASSERT_TRUE(engine.streams.FindFile(kSecondSound, &facts));
         DirectCompositeTrackWorldImage image(engine.registry.Lookup(kSound).contentRevision, facts.contentRevision);
         VariableControlWorldImage native(engine.registry.Lookup(kSound).contentRevision, image.world.generation);
-        if (nativeChild) {
+        NestedQueueWorldImage nested(engine.registry.Lookup(kSound).contentRevision, false, scenario == 13u);
+        std::array<harken::ContainerChildProgramViewV2, 2> sameProgramChildren{
+            nested.nestedChildren[0], nested.nestedChildren[0]};
+        harken::PlayableOccurrencePropertyViewV1 sameProgramOccurrence{};
+        if (nestedNative) {
+            image.world.identity.capabilityMask |= nested.world.identity.capabilityMask;
+            for (std::size_t index = 1; index < nested.properties.size(); ++index) {
+                nested.properties[index].authoredStableOrder = static_cast<std::uint32_t>(index + 2u);
+                nested.properties[index].programSemanticFingerprint =
+                    harken::ComputePlayablePropertyFingerprintV1(nested.properties[index]);
+                nested.containers[index - 1u].programSemanticFingerprint = nested.properties[index].programSemanticFingerprint;
+                nested.occurrences[index - 1u].parentProgramSemanticFingerprint = nested.properties[index].programSemanticFingerprint;
+            }
+            nested.rootChildren[0].playable.expectedProgramSemanticFingerprint = nested.properties[1].programSemanticFingerprint;
+            nested.occurrences[1].childPlayable = nested.rootChildren[0].playable;
+            for (auto& occurrence : nested.occurrences)
+                occurrence.occurrenceSemanticFingerprint = harken::ComputePlayableOccurrenceFingerprintV1(occurrence);
+            if (scenario == 13u) {
+                sameProgramChildren[1].stableChildOrdinal = 32;
+                sameProgramChildren[1].authoredStableOrder = 1;
+                nested.containers[0].children = sameProgramChildren.data();
+                nested.containers[0].childCount = sameProgramChildren.size();
+                sameProgramOccurrence = nested.occurrences[0];
+                sameProgramOccurrence.stableOccurrenceOrdinal = sameProgramChildren[1].stableChildOrdinal;
+                sameProgramOccurrence.occurrenceSemanticFingerprint =
+                    harken::ComputePlayableOccurrenceFingerprintV1(sameProgramOccurrence);
+            }
+        }
+        if (variableNative) {
             image.world.identity.capabilityMask |= native.world.identity.capabilityMask;
             native.properties[1].authoredStableOrder = 3;
             native.properties[1].programSemanticFingerprint = harken::ComputePlayablePropertyFingerprintV1(native.properties[1]);
@@ -21814,6 +21844,7 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
         placements[0].authoredStart = placements[1].authoredStart = largePrebuffer ? INT64_C(2000000000)
             : nativeChild ? INT64_C(33000000) : INT64_C(32000000);
         if (nativeChild) placements[0].content = native.Root();
+        if (nestedNative) placements[0].content = nested.Root();
         if (multipleNative) placements[2].content = native.Root();
         if (nativeStreamLate) {
             placements[0].content = streamedNative.Root();
@@ -21829,6 +21860,7 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
             placements[index].clipGuidLow = 7001u + index;
         }
         for (auto& placement : placements) placement.authoredDuration = INT64_C(8000000);
+        if (nestedNative) placements[0].authoredDuration = INT64_C(24000000);
         if (!multipleNative) placements[2].authoredDuration = 1;
         std::vector<harken::PlayableOccurrencePropertyViewV1> occurrences{
             image.occurrences[0], image.occurrences[1], image.occurrences[0], image.occurrences[0]};
@@ -21843,9 +21875,16 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
         std::vector<harken::PlayablePropertyProgramViewV1> properties(image.properties.begin(), image.properties.end());
         std::vector<harken::ContainerProgramViewV3> containers;
         if (nativeChild) {
-            occurrences.push_back(native.occurrence);
-            properties.push_back(native.properties[1]);
-            containers.push_back(native.container);
+            if (nestedNative) {
+                occurrences.insert(occurrences.end(), nested.occurrences.begin(), nested.occurrences.end());
+                if (scenario == 13u) occurrences.push_back(sameProgramOccurrence);
+                properties.insert(properties.end(), nested.properties.begin() + 1, nested.properties.end());
+                containers.insert(containers.end(), nested.containers.begin(), nested.containers.end());
+            } else {
+                occurrences.push_back(native.occurrence);
+                properties.push_back(native.properties[1]);
+                containers.push_back(native.container);
+            }
             if (nativeStreamLate) {
                 occurrences.push_back(streamedNative.occurrence);
                 properties.push_back(streamedNative.properties[1]);
@@ -21868,8 +21907,10 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
             install.playablePropertyCount = properties.size();
             install.containers = containers.data();
             install.containerCount = containers.size();
-            install.variables = &variable;
-            install.variableCount = 1;
+            if (variableNative) {
+                install.variables = &variable;
+                install.variableCount = 1;
+            }
         }
         install.trackSchedules = &image.track;
         install.trackScheduleCount = 1;
@@ -21910,7 +21951,7 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
         std::array<std::vector<std::uint64_t>, 2> heard;
         for (unsigned pass = 0; pass < (later + 2048u) / config.blockFrames; ++pass) {
             const auto at = engine.mixer.BlocksRendered() * config.blockFrames;
-            if (nativeChild && !emptyNative && !variableChanged && at + 128u >= onset) {
+            if (variableNative && !emptyNative && !variableChanged && at + 128u >= onset) {
                 ASSERT_LT(at, onset);
                 ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(41), 3.0f));
                 variableChanged = true;
@@ -21949,6 +21990,17 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
                 if (nativeChild && cohort.published && !nativeSourcesPublished) {
                     ASSERT_LT(at, onset);
                     nativeSourcesPublished = true;
+                    if (nestedNative) {
+                        const auto* service = engine.ResolvePlayableService(cohort.children[0]->service);
+                        ASSERT_NE(nullptr, service);
+                        const auto inner = engine.playableInstances.FirstChild(service->ownerInstance);
+                        ASSERT_NE(0u, inner);
+                        const auto innerView = engine.playableInstances.Classify(inner);
+                        ASSERT_EQ(service->ownerInstance, innerView.parent);
+                        ASSERT_EQ(harken::PlayableKind::Container, innerView.kind);
+                        ASSERT_NE(0u, engine.playableInstances.FirstChild(inner));
+                        EXPECT_EQ(2u, engine.queueInstances.LiveCount());
+                    }
                 }
                 if (nativeStreamLate && nativeSourcesPublished && at < onset) {
                     for (const auto* child : cohort.children) {
@@ -21993,13 +22045,14 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
             }
         }
         EXPECT_EQ(cancel, stopRequested);
-        EXPECT_EQ(nativeChild && !emptyNative, variableChanged);
+        EXPECT_EQ(variableNative && !emptyNative, variableChanged);
         EXPECT_EQ(nativeChild && !directStreamLate, nativeSourcesPublished);
         EXPECT_EQ(nativeStreamLate, nativeSupplyBlocked);
         EXPECT_EQ(nativeStreamLate, nativeStreamInstalled);
         EXPECT_EQ(temporaryVoicePressure, observedCapacityRetry);
         EXPECT_EQ(largePrebuffer, preparedOutsidePageWindow);
-        const auto expectedLeft = cancel ? 0u : missDeadline || emptyNative ? 384u : 768u;
+        const auto nativeFrames = nestedNative ? (scenario == 13u ? 512u : 1024u) : 384u;
+        const auto expectedLeft = cancel ? 0u : missDeadline || emptyNative ? 384u : nativeFrames + 384u;
         const auto expectedRight = cancel || missDeadline ? 0u : 384u;
         EXPECT_EQ(expectedLeft, heard[0].size()) << OccupancyDump(engine)
             << " onset=" << onset << " later=" << later
@@ -22010,13 +22063,16 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
             << " rightLast=" << (heard[1].empty() ? UINT64_MAX : heard[1].back());
         for (std::size_t frame = 0; !cancel && heard[0].size() == expectedLeft &&
             heard[1].size() == expectedRight && frame < 384; ++frame) {
-            EXPECT_EQ(later + frame, heard[0][(missDeadline || emptyNative ? 0u : 384u) + frame]);
+            EXPECT_EQ(later + frame, heard[0][(missDeadline || emptyNative ? 0u : nativeFrames) + frame]);
             if (!missDeadline) {
                 if (!emptyNative) EXPECT_EQ(onset + frame, heard[0][frame]);
                 EXPECT_EQ(onset + frame, heard[1][frame]);
             }
         }
+        if (nestedNative && heard[0].size() == expectedLeft)
+            for (std::size_t frame = 384u; frame < nativeFrames; ++frame) EXPECT_EQ(onset + frame, heard[0][frame]);
         EXPECT_FALSE(engine.playableInstances.Classify(started.instance).live) << OccupancyDump(engine);
+        EXPECT_EQ(0u, engine.queueInstances.LiveCount());
         EXPECT_EQ(0u, engine.timelineArms.LiveCount());
         EXPECT_EQ(0u, engine.decisions.LiveCount());
         EXPECT_EQ(0u, engine.armGroups.LiveCount());

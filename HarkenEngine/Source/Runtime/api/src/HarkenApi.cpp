@@ -97984,7 +97984,8 @@ bool PrepareMixedScheduleExecution(ContainerPreparationContext& context,
         if (record.sourceCohort != nullptr) {
             std::uint64_t horizon = 0;
             if (!ScheduleSourcePreparationHorizon(engine, &horizon)) return false;
-            if (context.pendingScheduleAnchor || InitialNativePlacementOwner(engine, scratch) != nullptr ||
+            if (record.content.kind != harken::PlayableKindV1::Sound ||
+                context.pendingScheduleAnchor || InitialNativePlacementOwner(engine, scratch) != nullptr ||
                 (record.registeredStream && childContext.startFrame > horizon)) {
                 record.pendingEntry = true;
                 continue;
