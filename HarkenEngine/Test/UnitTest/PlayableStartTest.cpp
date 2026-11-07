@@ -21180,9 +21180,9 @@ TEST(PlayableStart, QueueTrackInitialStreamWaitHoldsResidentSiblingAndReclaims) 
 }
 
 TEST(PlayableStart, QueueTrackInitialStreamWaitPreservesSubBlockFutureCohort) {
-    for (const auto workers : {0u, 2u}) for (const auto lead : {1u, 4u}) for (const unsigned outcome : {0u, 1u}) {
+    for (const bool wrapped : {false, true}) for (const auto workers : {0u, 2u}) for (const auto lead : {1u, 4u}) for (const unsigned outcome : {0u, 1u}) {
         const bool cancel = outcome == 1u;
-        SCOPED_TRACE(::testing::Message() << "workers=" << workers << " lead=" << lead << " outcome=" << outcome);
+        SCOPED_TRACE(::testing::Message() << "wrapped=" << wrapped << " workers=" << workers << " lead=" << lead << " outcome=" << outcome);
         auto config = harkentest::MakeNullConfig(8, 64, 48000);
         config.renderWorkerCount = workers;
         config.maxStreams = 2;
@@ -21251,7 +21251,7 @@ TEST(PlayableStart, QueueTrackInitialStreamWaitPreservesSubBlockFutureCohort) {
             image.schedule.track.scheduleSemanticFingerprint);
         image.container.childCount = 1;
         ApplyQueueLoop(image.container, 1);
-        std::array<harken::PlayableOccurrencePropertyViewV1, 5> occurrences{};
+        std::vector<harken::PlayableOccurrencePropertyViewV1> occurrences(5);
         occurrences[0] = image.occurrences[0];
         for (std::size_t index = 0; index < placements.size(); ++index) {
             occurrences[index + 1] = image.occurrences[2];
@@ -21262,31 +21262,69 @@ TEST(PlayableStart, QueueTrackInitialStreamWaitPreservesSubBlockFutureCohort) {
         }
         image.world.occurrences = occurrences.data();
         image.world.occurrenceCount = occurrences.size();
+        NestedSequenceWorldImage wrapper(facts.contentRevision);
+        wrapper.properties[2].authoredStableOrder = 4;
+        wrapper.rootChildren[0].playable = image.Root();
+        wrapper.SetContainerLoopCount(2, 1);
+        std::vector<harken::PlayablePropertyProgramViewV1> installProperties(image.properties.begin(), image.properties.end());
+        std::vector<harken::ContainerProgramViewV3> containers{image.container};
+        if (wrapped) {
+            installProperties.push_back(wrapper.properties[2]);
+            occurrences.push_back(wrapper.occurrences[1]);
+            containers.push_back(wrapper.containers[1]);
+        }
+        std::sort(installProperties.begin(), installProperties.end(), [](const auto& left, const auto& right) {
+            return std::pair{left.contentPropertyKind, left.stableId} < std::pair{right.contentPropertyKind, right.stableId};
+        });
+        std::sort(occurrences.begin(), occurrences.end(), [](const auto& left, const auto& right) {
+            return std::tuple{left.parentKind, left.parentStableId, left.stableOccurrenceOrdinal} <
+                std::tuple{right.parentKind, right.parentStableId, right.stableOccurrenceOrdinal};
+        });
+        std::sort(containers.begin(), containers.end(), [](const auto& left, const auto& right) {
+            return left.containerStableId < right.containerStableId;
+        });
         auto install = PlayableWorldInstall(image.world);
-        const std::array<harken::PlayablePropertyProgramViewV1, 4> installProperties{
-            image.properties[0], image.properties[1], image.properties[3], image.properties[2]};
+        if (wrapped) install.identity.capabilityMask |= harken::kWorldCapabilitySequence;
         install.playableProperties = installProperties.data();
+        install.playablePropertyCount = installProperties.size();
+        install.playableOccurrences = occurrences.data();
+        install.playableOccurrenceCount = occurrences.size();
+        install.containers = containers.data();
+        install.containerCount = containers.size();
         install.trackSchedules = &image.schedule.track;
         install.trackScheduleCount = 1;
         install.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(install);
         ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, install).status);
         engine.streams.SetThrottled(true);
         harken::PlayableStartRequest request;
-        request.root = image.Root();
+        request.root = wrapped ? wrapper.Root() : image.Root();
         const auto started = harken::StartPlayable(engine, request);
         ASSERT_EQ(harken::PlayableStartStatus::Accepted, started.status);
         harken::EnginePlayableServiceRow* queueOwner = nullptr;
         for (auto& row : engine.playableServices)
-            if (row.rootInstance == started.instance && row.queueMode) queueOwner = &row;
+            if (row.queueMode && (row.rootInstance == started.instance ||
+                engine.playableInstances.Classify(row.ownerInstance).parent == started.instance)) queueOwner = &row;
         ASSERT_NE(nullptr, queueOwner);
         EXPECT_TRUE(queueOwner->queueInstance.Valid());
         const auto queueIdentity = queueOwner->queueInstance;
+        auto* rootOwner = queueOwner;
+        if (wrapped) rootOwner = engine.ResolvePlayableService(queueOwner->parentService);
+        ASSERT_NE(nullptr, rootOwner);
+        ASSERT_EQ(started.instance, rootOwner->ownerInstance);
+        auto* trackOwner = engine.ResolvePlayableService(queueOwner->frontierChildService);
+        ASSERT_NE(nullptr, trackOwner);
+        ASSERT_NE(nullptr, trackOwner->scheduleAggregate);
         for (unsigned block = 0; block < 12; ++block) {
             ASSERT_EQ(VN_OK, Vn_Update());
             engine.nullBackend.Pump(1);
             ASSERT_TRUE(engine.playableInstances.Classify(started.instance).live) << OccupancyDump(engine);
             EXPECT_EQ(queueIdentity.slot, queueOwner->queueInstance.slot);
             EXPECT_EQ(queueIdentity.generation, queueOwner->queueInstance.generation);
+            EXPECT_TRUE(rootOwner->pendingDirectStartBinding);
+            EXPECT_TRUE(queueOwner->pendingDirectStartBinding);
+            EXPECT_TRUE(trackOwner->pendingDirectStartBinding);
+            EXPECT_EQ(rootOwner->startFrame, queueOwner->startFrame);
+            EXPECT_EQ(rootOwner->startFrame, trackOwner->startFrame);
             for (unsigned sample = 0; sample < config.blockFrames * 2; ++sample)
                 EXPECT_FLOAT_EQ(0.0f, engine.nullBackend.LastBlock()[sample]);
         }
@@ -21304,6 +21342,14 @@ TEST(PlayableStart, QueueTrackInitialStreamWaitPreservesSubBlockFutureCohort) {
                 if (std::abs(sample) < 0.00001f) continue;
                 EXPECT_NEAR(-0.25f, sample, 0.00001f);
                 const auto absolute = (engine.mixer.BlocksRendered() - 1u) * config.blockFrames + frame;
+                if (firstHeard == UINT64_MAX) {
+                    EXPECT_FALSE(rootOwner->pendingDirectStartBinding);
+                    EXPECT_FALSE(queueOwner->pendingDirectStartBinding);
+                    EXPECT_FALSE(trackOwner->pendingDirectStartBinding);
+                    EXPECT_EQ(absolute, rootOwner->startFrame);
+                    EXPECT_EQ(absolute, queueOwner->startFrame);
+                    EXPECT_EQ(absolute, trackOwner->startFrame);
+                }
                 firstHeard = std::min(firstHeard, absolute);
                 lastHeard = absolute;
                 heardFrames.push_back(absolute);

@@ -54816,7 +54816,7 @@ bool CommitInitialScheduleReadUses(harken::Engine& engine,
 
 bool IsScheduleSourceAnchorWrapper(const harken::EnginePlayableServiceRow& row) noexcept {
     return row.pendingDirectStartBinding && row.scheduleAggregate == nullptr &&
-        row.scheduleTerminalChild != nullptr && row.ordinaryLifecycleOwned &&
+        (row.scheduleTerminalChild != nullptr || row.frontierChildService.Valid()) && row.ordinaryLifecycleOwned &&
         row.scheduleLeafCount == 0 && row.schedule.eventCount == 0 && !row.arm.Valid() &&
         row.renderHandle == 0 && !row.variableControlInstance.Valid() && !row.frontierEntry.Valid();
 }
@@ -54933,7 +54933,7 @@ DirectPendingStartResult BindAcknowledgedDirectStart(harken::Engine& engine,
     const auto visitRows = [&](auto&& visitor) noexcept {
         if (aggregateAttempt == nullptr) return visitor(row);
         return VisitInitialScheduleAttempts(engine, *aggregateAttempt, [&](auto& attempt) noexcept {
-            return attempt.row != nullptr && visitor(*attempt.row);
+            return attempt.row != nullptr && VisitInitialAttemptServices(engine, attempt, visitor);
         });
     };
     std::array<harken::ProgramView*, capacity> programs{};
@@ -54987,11 +54987,13 @@ DirectPendingStartResult BindAcknowledgedDirectStart(harken::Engine& engine,
     const auto block = engine.config.blockFrames;
     const auto configuredLead = std::max<std::uint64_t>(1u, engine.timelinePool.PublishLeadQuanta());
     std::uint64_t requiredRunway = 1u;
+    bool hasFutureSourceCohorts = false;
     if (aggregateAttempt != nullptr) {
         // Honor Source preparation admission and the normal installation runway, including a retained anchor.
         const auto sourceLead = std::max<std::uint64_t>(configuredLead, 3u);
         if (!visitRows([&](const auto& owner) noexcept {
                 if (owner.scheduleAggregate == nullptr) return true;
+                hasFutureSourceCohorts = hasFutureSourceCohorts || !owner.scheduleAggregate->sourceCohorts.empty();
                 for (const auto& cohort : owner.scheduleAggregate->sourceCohorts) {
                     const auto offsetQuanta = cohort->onsetOffset / block;
                     if (!cohort->retired && !cohort->cancelling && offsetQuanta < sourceLead)
@@ -55231,7 +55233,7 @@ DirectPendingStartResult BindAcknowledgedDirectStart(harken::Engine& engine,
     if (released && aggregateAttempt != nullptr)
         released = CommitInitialScheduleReadUses(engine, *aggregateAttempt);
     bool transferred = false;
-    if (released && aggregateAttempt != nullptr) {
+    if (released && aggregateAttempt != nullptr && hasFutureSourceCohorts) {
         // The committed services own the final anchor before any initial Start
         // can reach audio. Near-future Sources can now use their fixed deadlines.
         aggregateAttempt->storage.phase = harken::EngineFrontierAttemptPhase::Published;
