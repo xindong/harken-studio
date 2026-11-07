@@ -520,7 +520,7 @@ private:
                     detach->setAccessibleName(tr("Open Effect Editor"));
                     const auto refreshIcon = [detach] {
                         auto& theme = ThemeManager::instance();
-                        const int extent = theme.metrics().objectIconExtent;
+                        const int extent = theme.metrics().iconExtent;
                         detach->setIconSize(QSize(extent, extent));
                         detach->setFixedSize(extent, extent);
                         detach->setIcon(theme.resolveIcon(

@@ -117,13 +117,13 @@ void TimelineRuler::refresh()
 void TimelineRuler::syncGeometry()
 {
     const bool segment = panel_->viewKind() == TimelineEditorPanel::ViewKind::Segment;
-    const int markerHeight = segment ? panel_->timelineMetrics().markerLaneHeight : 0;
+    const int markerHeight = segment ? ThemeManager::instance().metrics().timeAxis.handleBandHeight : 0;
     setFixedHeight(timeRulerHeight());
     markerLane_->setGeometry(panel_->laneHeaderWidth(), height() - markerHeight,
         panel_->timelineViewportWidth(), markerHeight);
     markerLane_->setVisible(segment);
     const auto& metrics = ThemeManager::instance().metrics();
-    const int extent = metrics.navigationChevronExtent;
+    const int extent = metrics.iconExtent;
     const int x = segment
         ? panel_->laneHeaderWidth() - panel_->laneHeaderResizeWidth() - metrics.spacingXSmall - extent
         : (panel_->laneHeaderWidth() - extent) / 2;
@@ -143,11 +143,11 @@ int TimelineRuler::timeRulerHeight() const
         return panel_->timelineMetrics().rulerHeight;
     const QFontMetrics metrics(FontManager::instance().getFont(FontRole::Body), this);
     const int primaryHeight = std::max(metrics.height() + ThemeManager::instance().metrics().timeAxis.majorTickLength,
-        ThemeManager::instance().metrics().navigationChevronExtent);
+        ThemeManager::instance().metrics().iconExtent);
     const int secondaryHeight = panel_->hasSecondaryAxis()
         ? QFontMetrics(FontManager::instance().getFont(FontRole::Caption), this).height() : 0;
     const int markerHeight = panel_->viewKind() == TimelineEditorPanel::ViewKind::Segment
-        ? panel_->timelineMetrics().markerLaneHeight : 0;
+        ? ThemeManager::instance().metrics().timeAxis.handleBandHeight : 0;
     return primaryHeight + secondaryHeight + markerHeight;
 }
 

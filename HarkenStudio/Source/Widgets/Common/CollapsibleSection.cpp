@@ -236,7 +236,7 @@ void CollapsibleSection::applyTheme()
                                                     metrics.spacingXSmall, 0, metrics.spacingXSmall);
     }
 
-    const int chevronExtent = theme.metrics().navigationChevronExtent;
+    const int chevronExtent = theme.metrics().iconExtent;
     toggleButton_->setIconSize(QSize(chevronExtent, chevronExtent));
     refreshAppearance();
 }

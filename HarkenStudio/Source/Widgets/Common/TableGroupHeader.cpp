@@ -92,7 +92,7 @@ void TableGroupHeader::setExpanded(bool expanded)
 int TableGroupHeader::preferredHeight(ThemeManager* themeManager)
 {
     const auto& metrics = themeManager->metrics().table;
-    return std::max(metrics.headerHeight,
+    return std::max(themeManager->metrics().controlHeight,
         QFontMetrics(captionFont(themeManager)).height() + metrics.cellPaddingY * 2 + 1);
 }
 
@@ -107,7 +107,7 @@ QRect TableGroupHeader::checkBoxRect(const QRect& rect, ThemeManager* themeManag
 
 QRect TableGroupHeader::chevronRect(const QRect& rect, ThemeManager* themeManager)
 {
-    const int extent = themeManager->metrics().navigationChevronExtent;
+    const int extent = themeManager->metrics().iconExtent;
     return QRect(rect.right() + 1 - themeManager->metrics().table.cellPaddingX - extent,
                  rect.top() + (rect.height() - extent) / 2, extent, extent);
 }
@@ -134,7 +134,7 @@ void TableGroupHeader::paint(QPainter& painter, const QRect& rect, const QString
     painter.setPen(colors.textTitle);
     painter.setFont(font);
     const int controlWidth = std::max(options.checkable ? checkBoxRect(rect, themeManager, widget).width() : 0,
-        options.collapsible ? themeManager->metrics().navigationChevronExtent : 0);
+        options.collapsible ? themeManager->metrics().iconExtent : 0);
     const int inset = metrics.cellPaddingX + (controlWidth ? controlWidth + metrics.cellPaddingX : 0);
     const auto content = rect.adjusted(inset, metrics.cellPaddingY, -inset, -metrics.cellPaddingY);
     painter.drawText(content, Qt::AlignCenter,
@@ -165,7 +165,7 @@ void TableGroupHeader::applyTheme()
     setFont(captionFont(themeManager_));
     setFixedHeight(preferredHeight(themeManager_));
     if (chevron_) {
-        const int extent = themeManager_->metrics().navigationChevronExtent;
+        const int extent = themeManager_->metrics().iconExtent;
         chevron_->setIconSize(QSize(extent, extent));
         chevron_->setIcon(chevronIcon(expanded_, themeManager_));
     }

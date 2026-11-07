@@ -1498,7 +1498,7 @@ void MainWindow::setupTitleBarToggles()
         btn->setIcon(ThemeManager::instance().resolveToggleIcon(
             onAssetId, offAssetId).icon);
         ThemeManager::instance().bindMetrics(btn, [btn](const ThemeMetrics& metrics) {
-            btn->setIconSize(QSize(metrics.objectIconExtent, metrics.objectIconExtent));
+            btn->setIconSize(QSize(metrics.iconExtent, metrics.iconExtent));
         });
         btn->setAutoRaise(true);
         btn->setFocusPolicy(Qt::NoFocus);

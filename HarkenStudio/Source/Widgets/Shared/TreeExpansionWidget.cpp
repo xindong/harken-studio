@@ -12,7 +12,7 @@ QRect toggleRectForItem(const QTreeWidget* tree, QTreeWidgetItem* item)
 {
     const QModelIndex index = tree->indexFromItem(item, 0);
     QRect row = tree->visualRect(index);
-    const int chevronExtent = ThemeManager::instance().metrics().navigationChevronExtent;
+    const int chevronExtent = ThemeManager::instance().metrics().iconExtent;
     if (item->data(0, TreeRowStyle::kBucketRole).toBool()) {
         row = row.united(tree->visualRect(index.siblingAtColumn(tree->columnCount() - 1)));
         return QRect(row.right() - chevronExtent, row.top(), chevronExtent, row.height());

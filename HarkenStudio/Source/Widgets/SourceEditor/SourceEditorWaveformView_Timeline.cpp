@@ -180,7 +180,7 @@ QRect SourceEditorWaveformView::waveformRect() const
         return rect().adjusted(timeAxisMetrics().waveformInset, timeAxisMetrics().waveformInset,
                                -timeAxisMetrics().waveformInset, -timeAxisMetrics().waveformInset);
     const QFontMetrics metrics(FontManager::instance().getFont(FontRole::Caption), this);
-    const int chevronExtent = ThemeManager::instance().metrics().navigationChevronExtent;
+    const int chevronExtent = ThemeManager::instance().metrics().iconExtent;
     const int axisWidth = std::max(metrics.horizontalAdvance(QStringLiteral("-96.00")) + timeAxisMetrics().labelPadding * 2, chevronExtent);
     const int rulerHeight = std::max(metrics.height() + timeAxisMetrics().majorTickLength, chevronExtent);
     const int rightWidth = channelScroll_ ? channelScroll_->sizeHint().width() : 0;
@@ -292,7 +292,7 @@ void SourceEditorWaveformView::layoutTimeline()
     const int footerY = plot.bottom() + 1;
     const int horizontalExtent = scroll_->sizeHint().height();
     const int verticalExtent = channelScroll_->sizeHint().width();
-    const int chevronExtent = ThemeManager::instance().metrics().navigationChevronExtent;
+    const int chevronExtent = ThemeManager::instance().metrics().iconExtent;
     units_->setGeometry((plot.left() - chevronExtent) / 2,
         (plot.top() - chevronExtent) / 2, chevronExtent, chevronExtent);
     zoomIn_->setGeometry(plot.left(), footerY, horizontalExtent, horizontalExtent);

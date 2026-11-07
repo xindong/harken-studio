@@ -48,7 +48,7 @@ BlueprintPanel::BlueprintPanel(QWidget* parent)
     for (auto* button : {selectButton_, panButton_}) {
         button->setToolButtonStyle(Qt::ToolButtonIconOnly);
         ThemeManager::instance().bindMetrics(button, [button](const ThemeMetrics& metrics) {
-            button->setIconSize(QSize(metrics.objectIconExtent, metrics.objectIconExtent));
+            button->setIconSize(QSize(metrics.iconExtent, metrics.iconExtent));
         });
         ThemeManager::instance().bindMetrics(button, [button](const ThemeMetrics& metrics) {
             button->setFixedSize(metrics.controlHeight, metrics.controlHeight);
@@ -74,7 +74,7 @@ BlueprintPanel::BlueprintPanel(QWidget* parent)
     snapButton_->setText(tr("Snap to Grid"));
     snapButton_->setToolTip(tr("Snap to Grid"));
     ThemeManager::instance().bindMetrics(snapButton_, [this](const ThemeMetrics& metrics) {
-        snapButton_->setIconSize(QSize(metrics.objectIconExtent, metrics.objectIconExtent));
+        snapButton_->setIconSize(QSize(metrics.iconExtent, metrics.iconExtent));
     });
     ThemeManager::instance().bindMetrics(snapButton_, [this](const ThemeMetrics& metrics) {
         snapButton_->setFixedSize(metrics.controlHeight, metrics.controlHeight);
@@ -129,7 +129,7 @@ BlueprintPanel::BlueprintPanel(QWidget* parent)
         button->setToolTip(button->text());
         button->setToolButtonStyle(Qt::ToolButtonIconOnly);
         ThemeManager::instance().bindMetrics(button, [button](const ThemeMetrics& metrics) {
-            button->setIconSize(QSize(metrics.objectIconExtent, metrics.objectIconExtent));
+            button->setIconSize(QSize(metrics.iconExtent, metrics.iconExtent));
         });
         ThemeManager::instance().bindMetrics(button, [button](const ThemeMetrics& metrics) {
             button->setFixedSize(metrics.controlHeight, metrics.controlHeight);

@@ -363,7 +363,7 @@ void AssistantPanel::setupUI()
         newConversationBtn_->setFixedSize(metrics.control.largeHeight, metrics.control.largeHeight);
     });
     ThemeManager::instance().bindMetrics(newConversationBtn_, [this](const ThemeMetrics& metrics) {
-        newConversationBtn_->setIconSize(QSize(metrics.objectIconExtent, metrics.objectIconExtent));
+        newConversationBtn_->setIconSize(QSize(metrics.iconExtent, metrics.iconExtent));
     });
     newConversationBtn_->setProperty("flatIconButton", true);
     newConversationBtn_->setCursor(Qt::PointingHandCursor);
@@ -437,7 +437,7 @@ void AssistantPanel::setupUI()
         sendBtn_->setFixedSize(metrics.control.largeHeight, metrics.control.largeHeight);
     });
     ThemeManager::instance().bindMetrics(sendBtn_, [this](const ThemeMetrics& metrics) {
-        sendBtn_->setIconSize(QSize(metrics.objectIconExtent, metrics.objectIconExtent));
+        sendBtn_->setIconSize(QSize(metrics.iconExtent, metrics.iconExtent));
     });
     sendBtn_->setCursor(Qt::PointingHandCursor);
     connect(sendBtn_, &QPushButton::clicked, this, &AssistantPanel::onSendClicked);

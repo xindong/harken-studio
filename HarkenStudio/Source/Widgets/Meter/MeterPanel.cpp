@@ -239,8 +239,8 @@ void MeterPanel::updatePresentation()
         const auto& metrics = theme.metrics();
         for (auto* button : {expandButton_, detachButton_})
             button->setFixedSize(metrics.controlHeight, metrics.controlHeight);
-        expandButton_->setIconSize(QSize(metrics.navigationChevronExtent, metrics.navigationChevronExtent));
-        detachButton_->setIconSize(QSize(metrics.objectIconExtent, metrics.objectIconExtent));
+        expandButton_->setIconSize(QSize(metrics.iconExtent, metrics.iconExtent));
+        detachButton_->setIconSize(QSize(metrics.iconExtent, metrics.iconExtent));
         detachButton_->setVisible(!compact);
         header_->layout()->setAlignment(expandButton_, compact ? Qt::AlignHCenter : Qt::AlignLeft);
         if (compact)

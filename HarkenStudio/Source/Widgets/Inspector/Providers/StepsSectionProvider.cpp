@@ -550,7 +550,7 @@ private:
         iconLabel->setObjectName(QStringLiteral("stepTypeIcon_%1").arg(index));
         const auto refreshIcon = [iconLabel, type = steps_[index].type] {
             auto& theme = ThemeManager::instance();
-            const int extent = theme.metrics().objectIconExtent;
+            const int extent = theme.metrics().iconExtent;
             iconLabel->setFixedSize(extent, extent);
             iconLabel->setPixmap(theme.resolveIcon(QString::fromLatin1(typeIconId(type)))
                 .icon.pixmap(iconLabel->size(), iconLabel->devicePixelRatioF()));

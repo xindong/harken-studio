@@ -20,13 +20,14 @@ InspectorSlotStrip::InspectorSlotStrip(QWidget* parent)
     layout_->setSpacing(0);
 
     const auto& inspector = ThemeManager::instance().metrics().inspector;
+    const auto& control = ThemeManager::instance().metrics().control;
     setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
-    setFixedHeight(inspector.slotHeight);
+    setFixedHeight(control.compactHeight);
     for (auto& slot : slots_) {
         if (slot.kind == InspectorSlotKind::Attenuation)
             layout_->addSpacing(0);
         slot.cell = new QWidget(this);
-        slot.cell->setFixedSize(inspector.bindingSlotWidth, inspector.slotHeight);
+        slot.cell->setFixedSize(inspector.bindingSlotWidth, control.compactHeight);
         auto* cellLayout = new QHBoxLayout(slot.cell);
         cellLayout->setContentsMargins(0, 0, 0, 0);
         cellLayout->setSpacing(0);
@@ -34,9 +35,10 @@ InspectorSlotStrip::InspectorSlotStrip(QWidget* parent)
     }
     ThemeManager::instance().bindMetrics(this, [this](const ThemeMetrics& metrics) {
         const auto& inspector = metrics.inspector;
-        setFixedHeight(inspector.slotHeight);
+        const auto& control = metrics.control;
+        setFixedHeight(control.compactHeight);
         for (auto& slot : slots_)
-            slot.cell->setFixedSize(inspector.bindingSlotWidth, inspector.slotHeight);
+            slot.cell->setFixedSize(inspector.bindingSlotWidth, control.compactHeight);
         for (int index = 0; index < layout_->count(); ++index)
             if (auto* spacer = layout_->itemAt(index)->spacerItem())
                 spacer->changeSize(inspector.slotSpacing, 0, QSizePolicy::Fixed, QSizePolicy::Fixed);

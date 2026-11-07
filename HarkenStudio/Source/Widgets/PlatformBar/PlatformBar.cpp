@@ -58,7 +58,7 @@ PlatformBar::PlatformBar(PlatformContextService& service, QWidget* parent)
     setFloatable(false);
     setContextMenuPolicy(Qt::PreventContextMenu);
     ThemeManager::instance().bindMetrics(this, [this](const ThemeMetrics& metrics) {
-        setIconSize(QSize(metrics.objectIconExtent, metrics.objectIconExtent));
+        setIconSize(QSize(metrics.iconExtent, metrics.iconExtent));
     });
     ensurePolished();
 

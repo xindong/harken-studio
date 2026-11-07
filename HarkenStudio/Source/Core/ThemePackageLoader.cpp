@@ -1,6 +1,7 @@
 #include "ThemePackageLoader.h"
 
 #include "ThemeColorResolver.h"
+#include "ThemeMetricsDerivation.h"
 #include "ComponentRecipeRegistry.h"
 #include "ParameterPresenterRegistry.h"
 
@@ -842,186 +843,29 @@ bool applyTokenMetric(const QString& key, double value, ThemeSnapshot& theme)
 #define TOKEN_METRIC(name, field)                                               \
     if (key == QStringLiteral(name))                                            \
         return value >= 0.0 && assignNumber(metrics.field, value)
-    TOKEN_METRIC("radius.small", radiusSmall);
-    TOKEN_METRIC("radius.medium", radiusMedium);
-    TOKEN_METRIC("radius.large", radiusLarge);
+    TOKEN_METRIC("spacing.compact", spacingCompact);
     TOKEN_METRIC("spacing.xSmall", spacingXSmall);
     TOKEN_METRIC("spacing.small", spacingSmall);
     TOKEN_METRIC("spacing.medium", spacingMedium);
     TOKEN_METRIC("spacing.large", spacingLarge);
-    TOKEN_METRIC("control.height", controlHeight);
-    TOKEN_METRIC("spacing.compact", spacingCompact);
     TOKEN_METRIC("spacing.xLarge", spacingXLarge);
+    TOKEN_METRIC("radius.compact", radiusCompact);
+    TOKEN_METRIC("radius.small", radiusSmall);
+    TOKEN_METRIC("radius.medium", radiusMedium);
+    TOKEN_METRIC("radius.large", radiusLarge);
     TOKEN_METRIC("border.width", borderWidth);
     TOKEN_METRIC("border.accentWidth", accentBorderWidth);
-    TOKEN_METRIC("radius.compact", radiusCompact);
-    TOKEN_METRIC("parameter.compactSliderHeight", parameter.compactSliderHeight);
-    TOKEN_METRIC("parameter.compactSliderHandleWidth", parameter.compactSliderHandleWidth);
-    TOKEN_METRIC("control.compactHeight", control.compactHeight);
-    TOKEN_METRIC("control.largeHeight", control.largeHeight);
-    TOKEN_METRIC("control.smallIconExtent", control.smallIconExtent);
-    TOKEN_METRIC("control.largeIconExtent", control.largeIconExtent);
-    TOKEN_METRIC("control.textPaddingX", control.textPaddingX);
-    TOKEN_METRIC("control.textPaddingY", control.textPaddingY);
-    TOKEN_METRIC("control.checkboxExtent", control.checkboxExtent);
-    TOKEN_METRIC("control.checkboxMarkExtent", control.checkboxMarkExtent);
-    TOKEN_METRIC("control.scrollbarExtent", control.scrollbarExtent);
-    TOKEN_METRIC("control.canvasScrollbarExtent", control.canvasScrollbarExtent);
-    TOKEN_METRIC("control.sliderHandleExtent", control.sliderHandleExtent);
-    TOKEN_METRIC("control.sliderGrooveThickness", control.sliderGrooveThickness);
-    TOKEN_METRIC("control.scrollbarMinimumLength", control.scrollbarMinimumLength);
-    TOKEN_METRIC("control.splitterExtent", control.splitterExtent);
-    TOKEN_METRIC("control.buttonMinimumWidth", control.buttonMinimumWidth);
-    TOKEN_METRIC("control.fieldMinimumWidth", control.fieldMinimumWidth);
-    TOKEN_METRIC("control.searchMinimumWidth", control.searchMinimumWidth);
-    TOKEN_METRIC("popup.minimumWidth", popup.minimumWidth);
-    TOKEN_METRIC("popup.maximumHeight", popup.maximumHeight);
-    TOKEN_METRIC("popup.textPadding", popup.textPadding);
-    TOKEN_METRIC("popup.rowPadding", popup.rowPadding);
-    TOKEN_METRIC("popup.iconColumnWidth", popup.iconColumnWidth);
-    TOKEN_METRIC("popup.shortcutSpacing", popup.shortcutSpacing);
-    TOKEN_METRIC("toast.minimumWidth", toast.minimumWidth);
-    TOKEN_METRIC("toast.maximumWidth", toast.maximumWidth);
-    TOKEN_METRIC("connection.lineWidth", connection.lineWidth);
-    TOKEN_METRIC("connection.hitWidth", connection.hitWidth);
-    TOKEN_METRIC("connection.maximumOverviewWidth", connection.maximumOverviewWidth);
-    TOKEN_METRIC("colorPreview.swatchWidth", colorPreview.swatchWidth);
-    TOKEN_METRIC("colorPreview.swatchHeight", colorPreview.swatchHeight);
-    TOKEN_METRIC("colorPreview.alphaHeight", colorPreview.alphaHeight);
-    TOKEN_METRIC("colorPreview.paletteWidth", colorPreview.paletteWidth);
-    TOKEN_METRIC("colorPreview.paletteHeight", colorPreview.paletteHeight);
-    TOKEN_METRIC("colorPreview.hueWidth", colorPreview.hueWidth);
-    TOKEN_METRIC("colorPreview.markerRadius", colorPreview.markerRadius);
-    TOKEN_METRIC("form.rowSpacing", form.rowSpacing);
-    TOKEN_METRIC("form.columnSpacing", form.columnSpacing);
-    TOKEN_METRIC("form.labelColumnShare", form.labelColumnShare);
-    TOKEN_METRIC("form.valueColumnShare", form.valueColumnShare);
-    TOKEN_METRIC("chrome.titleBarHeight", chrome.titleBarHeight);
-    TOKEN_METRIC("chrome.windowButtonWidth", chrome.windowButtonWidth);
-    TOKEN_METRIC("chrome.windowMinimumWidth", chrome.windowMinimumWidth);
-    TOKEN_METRIC("chrome.windowMinimumHeight", chrome.windowMinimumHeight);
-    TOKEN_METRIC("chrome.progressWidth", chrome.progressWidth);
-    TOKEN_METRIC("chrome.progressHeight", chrome.progressHeight);
-    TOKEN_METRIC("card.minimumWidth", card.minimumWidth);
-    TOKEN_METRIC("card.minimumHeight", card.minimumHeight);
-    TOKEN_METRIC("startup.width", startup.width);
-    TOKEN_METRIC("startup.artworkHeight", startup.artworkHeight);
-    TOKEN_METRIC("startup.logoWidth", startup.logoWidth);
-    TOKEN_METRIC("startup.progressHeight", startup.progressHeight);
-    TOKEN_METRIC("toggle.width", toggle.width);
-    TOKEN_METRIC("toggle.height", toggle.height);
-    TOKEN_METRIC("toggle.thumbPadding", toggle.thumbPadding);
-    TOKEN_METRIC("toggle.compactWidth", toggle.compactWidth);
-    TOKEN_METRIC("toggle.compactHeight", toggle.compactHeight);
-    TOKEN_METRIC("toggle.compactThumbPadding", toggle.compactThumbPadding);
-    TOKEN_METRIC("panel.minimumWidth", panel.minimumWidth);
-    TOKEN_METRIC("panel.minimumHeight", panel.minimumHeight);
-    TOKEN_METRIC("panel.preferredWidth", panel.preferredWidth);
-    TOKEN_METRIC("panel.preferredHeight", panel.preferredHeight);
-    TOKEN_METRIC("panel.sidebarWidth", panel.sidebarWidth);
-    TOKEN_METRIC("panel.previewHeight", panel.previewHeight);
-    TOKEN_METRIC("dialog.minimumWidth", dialog.minimumWidth);
-    TOKEN_METRIC("dialog.minimumHeight", dialog.minimumHeight);
-    TOKEN_METRIC("dialog.compactWidth", dialog.compactWidth);
-    TOKEN_METRIC("dialog.compactHeight", dialog.compactHeight);
-    TOKEN_METRIC("dialog.preferredWidth", dialog.preferredWidth);
-    TOKEN_METRIC("dialog.preferredHeight", dialog.preferredHeight);
-    TOKEN_METRIC("dialog.wideWidth", dialog.wideWidth);
-    TOKEN_METRIC("dialog.wideHeight", dialog.wideHeight);
-    TOKEN_METRIC("node.minimumWidth", node.minimumWidth);
-    TOKEN_METRIC("node.headerHeight", node.headerHeight);
-    TOKEN_METRIC("node.bodyPadding", node.bodyPadding);
-    TOKEN_METRIC("node.rowHeight", node.rowHeight);
-    TOKEN_METRIC("node.waveformHeight", node.waveformHeight);
-    TOKEN_METRIC("node.expandedWaveformHeight", node.expandedWaveformHeight);
-    TOKEN_METRIC("node.waveformSpacing", node.waveformSpacing);
-    TOKEN_METRIC("node.routePadding", node.routePadding);
-    TOKEN_METRIC("node.routeMinimumHeight", node.routeMinimumHeight);
-    TOKEN_METRIC("node.pinColumnWidth", node.pinColumnWidth);
-    TOKEN_METRIC("node.pinSpacing", node.pinSpacing);
-    TOKEN_METRIC("node.pinRadius", node.pinRadius);
-    TOKEN_METRIC("node.pinHitRadius", node.pinHitRadius);
-    TOKEN_METRIC("node.badgeExtent", node.badgeExtent);
-    TOKEN_METRIC("node.columnSpacing", node.columnSpacing);
-    TOKEN_METRIC("node.rowSpacing", node.rowSpacing);
-    TOKEN_METRIC("node.pathColumnSpacing", node.pathColumnSpacing);
-    TOKEN_METRIC("node.pathRowSpacing", node.pathRowSpacing);
-    TOKEN_METRIC("node.sliderWidth", node.sliderWidth);
-    TOKEN_METRIC("node.valueWidth", node.valueWidth);
-    TOKEN_METRIC("timeAxis.handleBandHeight", timeAxis.handleBandHeight);
-    TOKEN_METRIC("timeAxis.handleWidth", timeAxis.handleWidth);
-    TOKEN_METRIC("timeAxis.handleHitRadius", timeAxis.handleHitRadius);
-    TOKEN_METRIC("timeAxis.cursorWidth", timeAxis.cursorWidth);
-    TOKEN_METRIC("timeAxis.cursorHeight", timeAxis.cursorHeight);
-    TOKEN_METRIC("timeAxis.labelPadding", timeAxis.labelPadding);
-    TOKEN_METRIC("timeAxis.minorTickLength", timeAxis.minorTickLength);
-    TOKEN_METRIC("timeAxis.majorTickLength", timeAxis.majorTickLength);
-    TOKEN_METRIC("timeAxis.waveformInset", timeAxis.waveformInset);
-    TOKEN_METRIC("timeAxis.channelHeight", timeAxis.channelHeight);
-    TOKEN_METRIC("section.headerHeight", sectionHeaderHeight);
-    if (key == QStringLiteral("navigation.chevronExtent"))
-        return value >= 1.0 && assignNumber(metrics.navigationChevronExtent, value);
-    if (key == QStringLiteral("object.iconExtent"))
-        return value >= 1.0 && assignNumber(metrics.objectIconExtent, value);
-    TOKEN_METRIC("inspector.pageMargin", inspector.pageMargin);
-    TOKEN_METRIC("inspector.sectionSpacing", inspector.sectionSpacing);
-    TOKEN_METRIC("inspector.rowSpacing", inspector.rowSpacing);
-    TOKEN_METRIC("inspector.columnPadding", inspector.columnPadding);
-    TOKEN_METRIC("table.headerHeight", table.headerHeight);
-    TOKEN_METRIC("table.rowHeight", table.rowHeight);
-    TOKEN_METRIC("table.footerHeight", table.footerHeight);
-    TOKEN_METRIC("table.cellPaddingX", table.cellPaddingX);
-    TOKEN_METRIC("table.cellPaddingY", table.cellPaddingY);
-    TOKEN_METRIC("table.buttonWidth", table.buttonWidth);
-    TOKEN_METRIC("table.buttonHeight", table.buttonHeight);
-    TOKEN_METRIC("table.buttonSpacing", table.buttonSpacing);
-    TOKEN_METRIC("table.compactColumnWidth", table.compactColumnWidth);
-    TOKEN_METRIC("table.minimumColumnWidth", table.minimumColumnWidth);
-    TOKEN_METRIC("table.resizeHandleRadius", table.resizeHandleRadius);
-    TOKEN_METRIC("inspector.rowHeight", inspector.rowHeight);
-    TOKEN_METRIC("inspector.labelColumnShare", inspector.labelColumnShare);
-    TOKEN_METRIC("inspector.valueColumnShare", inspector.valueColumnShare);
-    TOKEN_METRIC("inspector.formLabelWidth", inspector.formLabelWidth);
-    TOKEN_METRIC("inspector.valueColumnWidth", inspector.valueColumnWidth);
-    TOKEN_METRIC("inspector.linkSlotWidth", inspector.linkSlotWidth);
-    TOKEN_METRIC("inspector.sourceSlotWidth", inspector.sourceSlotWidth);
-    TOKEN_METRIC("inspector.platformSlotWidth", inspector.platformSlotWidth);
-    TOKEN_METRIC("inspector.bindingSlotWidth", inspector.bindingSlotWidth);
-    TOKEN_METRIC("inspector.slotHeight", inspector.slotHeight);
-    TOKEN_METRIC("inspector.slotSpacing", inspector.slotSpacing);
-    TOKEN_METRIC("inspector.separatorHeight", inspector.separatorHeight);
-    TOKEN_METRIC("inspector.rangeSeparatorWidth", inspector.rangeSeparatorWidth);
-    TOKEN_METRIC("parameter.faderMinimumHeight", parameter.faderMinimumHeight);
-    TOKEN_METRIC("parameter.labelMinimumWidth", parameter.labelMinimumWidth);
-    TOKEN_METRIC("parameter.valueMinimumWidth", parameter.valueMinimumWidth);
-    TOKEN_METRIC("parameter.compactValueMinimumWidth",
-                 parameter.compactValueMinimumWidth);
-    TOKEN_METRIC("parameter.sliderGrooveThickness",
-                 parameter.sliderGrooveThickness);
-    TOKEN_METRIC("parameter.sliderHandleThickness",
-                 parameter.sliderHandleThickness);
-    TOKEN_METRIC("parameter.sliderHandleLength", parameter.sliderHandleLength);
-    TOKEN_METRIC("timeline.laneHeaderWidth", timeline.laneHeaderWidth);
-    TOKEN_METRIC("timeline.laneHeaderMinimumWidth", timeline.laneHeaderMinimumWidth);
-    TOKEN_METRIC("timeline.laneHeight", timeline.laneHeight);
-    TOKEN_METRIC("timeline.blankRowHeight", timeline.blankRowHeight);
-    TOKEN_METRIC("timeline.laneSpacing", timeline.laneSpacing);
-    TOKEN_METRIC("timeline.rulerHeight", timeline.rulerHeight);
-    TOKEN_METRIC("timeline.markerLaneHeight", timeline.markerLaneHeight);
-    TOKEN_METRIC("timeline.tickLength", timeline.tickLength);
-    TOKEN_METRIC("timeline.majorTickLength", timeline.majorTickLength);
-    TOKEN_METRIC("timeline.minLabelSpacing", timeline.minLabelSpacing);
-    TOKEN_METRIC("timeline.minTickSpacing", timeline.minTickSpacing);
-    TOKEN_METRIC("timeline.clipVerticalInset", timeline.clipVerticalInset);
-    TOKEN_METRIC("timeline.clipRadius", timeline.clipRadius);
-    TOKEN_METRIC("timeline.clipMinimumWidth", timeline.clipMinimumWidth);
-    TOKEN_METRIC("timeline.resizeHandleWidth", timeline.resizeHandleWidth);
-    TOKEN_METRIC("timeline.markerHitRadius", timeline.markerHitRadius);
-    TOKEN_METRIC("timeline.statusBarHeight", timeline.statusBarHeight);
-    TOKEN_METRIC("timeline.compactHeaderWidth", timeline.compactHeaderWidth);
-    TOKEN_METRIC("timeline.queueLaneLabelWidth", timeline.queueLaneLabelWidth);
-    TOKEN_METRIC("timeline.headerGripWidth", timeline.headerGripWidth);
 #undef TOKEN_METRIC
+#define EXTENT_METRIC(name, field)                                              \
+    if (key == QStringLiteral(name))                                            \
+        return value >= 1.0 && assignNumber(metrics.field, value)
+    EXTENT_METRIC("control.compactHeight", control.compactHeight);
+    EXTENT_METRIC("control.height", controlHeight);
+    EXTENT_METRIC("control.largeHeight", control.largeHeight);
+    EXTENT_METRIC("icon.small", control.smallIconExtent);
+    EXTENT_METRIC("icon.regular", iconExtent);
+    EXTENT_METRIC("icon.large", control.largeIconExtent);
+#undef EXTENT_METRIC
     return false;
 }
 
@@ -1087,62 +931,8 @@ bool applyCurveColor(const QString& key, const QColor& value, ThemeSnapshot& the
 
 bool applyCurveMetric(const QString& key, double value, ThemeSnapshot& theme)
 {
-    auto& metrics = theme.domains.curve.metrics;
-#define CURVE_METRIC(name, field)                                               \
-    if (key == QStringLiteral("curve." name))                                  \
-        return assignNumber(metrics.field, value)
-    CURVE_METRIC("linearGraphLeftInset", linearGraphLeftInset);
-    CURVE_METRIC("amplitudeGraphLeftInset", amplitudeGraphLeftInset);
-    CURVE_METRIC("graphTopInset", graphTopInset);
-    CURVE_METRIC("graphRightInset", graphRightInset);
-    CURVE_METRIC("graphBottomInset", graphBottomInset);
-    CURVE_METRIC("gridColumnCount", gridColumnCount);
-    CURVE_METRIC("linearGridRowCount", linearGridRowCount);
-    CURVE_METRIC("amplitudeGridTargetRowSpacing", amplitudeGridTargetRowSpacing);
-    CURVE_METRIC("amplitudeGridMinimumRows", amplitudeGridMinimumRows);
-    CURVE_METRIC("amplitudeGridMaximumRows", amplitudeGridMaximumRows);
-    CURVE_METRIC("gridLineWidth", gridLineWidth);
-    CURVE_METRIC("plotBorderWidth", plotBorderWidth);
-    CURVE_METRIC("lineWidth", curveLineWidth);
-    CURVE_METRIC("curveLineWidth", curveLineWidth);
-    CURVE_METRIC("discreteGuideLineWidth", discreteGuideLineWidth);
-    CURVE_METRIC("discreteGuideAlpha", discreteGuideAlpha);
-    CURVE_METRIC("ghostLineWidth", ghostLineWidth);
-    CURVE_METRIC("lassoBorderWidth", lassoBorderWidth);
-    CURVE_METRIC("handleLineWidth", handleLineWidth);
-    CURVE_METRIC("handleBorderWidth", handleBorderWidth);
-    CURVE_METRIC("pointBorderWidth", pointBorderWidth);
-    CURVE_METRIC("crosshairLineWidth", crosshairLineWidth);
-    CURVE_METRIC("ghostRadius", ghostRadius);
-    CURVE_METRIC("handleRadius", handleRadius);
-    CURVE_METRIC("pointRadius", pointRadius);
-    CURVE_METRIC("pointSelectedRadius", pointSelectedRadius);
-    CURVE_METRIC("crosshairDashLength", crosshairDashLength);
-    CURVE_METRIC("crosshairDashGap", crosshairDashGap);
-    CURVE_METRIC("xAxisLabelTopOffset", xAxisLabelTopOffset);
-    CURVE_METRIC("xAxisLabelHeight", xAxisLabelHeight);
-    CURVE_METRIC("yAxisLabelCenterX", yAxisLabelCenterX);
-    CURVE_METRIC("yAxisLabelWidth", yAxisLabelWidth);
-    CURVE_METRIC("yAxisLabelHeight", yAxisLabelHeight);
-    CURVE_METRIC("amplitudeTickLabelLeft", amplitudeTickLabelLeft);
-    CURVE_METRIC("amplitudeTickLabelRightGap", amplitudeTickLabelRightGap);
-    CURVE_METRIC("amplitudeTickLabelHalfHeight", amplitudeTickLabelHalfHeight);
-    CURVE_METRIC("amplitudeTickLabelHeight", amplitudeTickLabelHeight);
-    CURVE_METRIC("linearYTickLeftOffset", linearYTickLeftOffset);
-    CURVE_METRIC("linearYTickBaselineOffset", linearYTickBaselineOffset);
-    CURVE_METRIC("xMinTickLeftOffset", xMinTickLeftOffset);
-    CURVE_METRIC("xTickBaselineOffset", xTickBaselineOffset);
-    CURVE_METRIC("xMaxLabelWidth", xMaxLabelWidth);
-    CURVE_METRIC("xMaxLabelTopOffset", xMaxLabelTopOffset);
-    CURVE_METRIC("xMaxLabelHeight", xMaxLabelHeight);
-    CURVE_METRIC("xMaxEditorVerticalExpansion", xMaxEditorVerticalExpansion);
-    CURVE_METRIC("readoutHorizontalPadding", readoutHorizontalPadding);
-    CURVE_METRIC("readoutHeight", readoutHeight);
-    CURVE_METRIC("readoutHorizontalOffset", readoutHorizontalOffset);
-    CURVE_METRIC("readoutAboveOffset", readoutAboveOffset);
-    CURVE_METRIC("readoutBelowOffset", readoutBelowOffset);
-    CURVE_METRIC("readoutRadius", readoutRadius);
-#undef CURVE_METRIC
+    if (key == QStringLiteral("curve.discreteGuideAlpha"))
+        return assignNumber(theme.domains.curve.metrics.discreteGuideAlpha, value);
     return false;
 }
 
@@ -1190,16 +980,6 @@ bool applyWaveformMetric(const QString& key,
     WAVEFORM_METRIC("static.accentQuietAlpha", staticMode.accentQuietAlpha);
     WAVEFORM_METRIC("static.accentPeakAlpha", staticMode.accentPeakAlpha);
     WAVEFORM_METRIC("multiBand.alpha", multiBandMode.alpha);
-    WAVEFORM_METRIC("splitStereo.dividerWidth", splitStereo.dividerWidth);
-    WAVEFORM_METRIC("splitStereo.labelRightInset", splitStereo.labelRightInset);
-    WAVEFORM_METRIC("splitStereo.labelBaselineOffset", splitStereo.labelBaselineOffset);
-    WAVEFORM_METRIC("rawPeaks.cornerRadius", rawPeaks.cornerRadius);
-    WAVEFORM_METRIC("rawPeaks.centerLineWidth", rawPeaks.centerLineWidth);
-    WAVEFORM_METRIC("dbScale.gridWidth", dbScale.gridWidth);
-    WAVEFORM_METRIC("dbScale.amplitudeScale", dbScale.amplitudeScale);
-    WAVEFORM_METRIC("dbScale.labelLeftInset", dbScale.labelLeftInset);
-    WAVEFORM_METRIC("dbScale.labelBaselineOffset", dbScale.labelBaselineOffset);
-    WAVEFORM_METRIC("amplitudeScale", amplitudeScale);
 #undef WAVEFORM_METRIC
     const struct ArrayBinding
     {
@@ -1285,76 +1065,14 @@ bool applyMeterMetric(const QString& key, double value, ThemeSnapshot& theme)
 #define METER_METRIC(name, field)                                               \
     if (key == QStringLiteral("meter." name))                                  \
         return assignNumber(meter.field, value)
-    METER_METRIC("interaction.crosshairLineWidth", interaction.metrics.crosshairLineWidth);
-    METER_METRIC("interaction.accentGuideLineWidth", interaction.metrics.accentGuideLineWidth);
-    METER_METRIC("interaction.horizontalPadding", interaction.metrics.horizontalPadding);
-    METER_METRIC("interaction.lineHeight", interaction.metrics.lineHeight);
-    METER_METRIC("interaction.extraHeight", interaction.metrics.extraHeight);
-    METER_METRIC("interaction.horizontalOffset", interaction.metrics.horizontalOffset);
-    METER_METRIC("interaction.aboveGap", interaction.metrics.aboveGap);
-    METER_METRIC("interaction.belowOffset", interaction.metrics.belowOffset);
-    METER_METRIC("interaction.radius", interaction.metrics.radius);
-    METER_METRIC("peakMeter.outerInsetLeft", peakMeter.metrics.outerInsetLeft);
-    METER_METRIC("peakMeter.outerInsetTop", peakMeter.metrics.outerInsetTop);
-    METER_METRIC("peakMeter.outerInsetRight", peakMeter.metrics.outerInsetRight);
-    METER_METRIC("peakMeter.outerInsetBottom", peakMeter.metrics.outerInsetBottom);
-    METER_METRIC("peakMeter.channelGap", peakMeter.metrics.channelGap);
-    METER_METRIC("peakMeter.reservedWidth", peakMeter.metrics.reservedWidth);
-    METER_METRIC("peakMeter.barHorizontalInset", peakMeter.metrics.barHorizontalInset);
     METER_METRIC("peakMeter.gradientErrorStop", peakMeter.metrics.gradientErrorStop);
     METER_METRIC("peakMeter.gradientWarningStop", peakMeter.metrics.gradientWarningStop);
     METER_METRIC("peakMeter.gradientYellowStop", peakMeter.metrics.gradientYellowStop);
     METER_METRIC("peakMeter.gradientAccentStop", peakMeter.metrics.gradientAccentStop);
-    METER_METRIC("peakMeter.gradientGreenStop", peakMeter.metrics.gradientAccentStop);
-    METER_METRIC("peakMeter.rmsLeftInsetRatio", peakMeter.metrics.rmsLeftInsetRatio);
-    METER_METRIC("peakMeter.rmsWidthRatio", peakMeter.metrics.rmsWidthRatio);
-    METER_METRIC("peakMeter.holdHaloTopOffset", peakMeter.metrics.holdHaloTopOffset);
-    METER_METRIC("peakMeter.holdHaloHeight", peakMeter.metrics.holdHaloHeight);
-    METER_METRIC("peakMeter.holdLineTopOffset", peakMeter.metrics.holdLineTopOffset);
-    METER_METRIC("peakMeter.holdLineHeight", peakMeter.metrics.holdLineHeight);
-    METER_METRIC("peakMeter.gridLineWidth", peakMeter.metrics.gridLineWidth);
-    METER_METRIC("peakMeter.tickLeftOffset", peakMeter.metrics.tickLeftOffset);
-    METER_METRIC("peakMeter.tickWidth", peakMeter.metrics.tickWidth);
-    METER_METRIC("peakMeter.tickHalfHeight", peakMeter.metrics.tickHalfHeight);
-    METER_METRIC("peakMeter.tickHeight", peakMeter.metrics.tickHeight);
-    METER_METRIC("peakMeter.clipHeight", peakMeter.metrics.clipHeight);
-    METER_METRIC("peakMeter.channelLabelBottomOffset", peakMeter.metrics.channelLabelBottomOffset);
-    METER_METRIC("peakMeter.valueLabelBottomOffset", peakMeter.metrics.valueLabelBottomOffset);
-    METER_METRIC("peakMeter.labelHeight", peakMeter.metrics.labelHeight);
-    METER_METRIC("spectrum.plotInsetLeft", spectrumMeter.metrics.plotInsetLeft);
-    METER_METRIC("spectrum.plotInsetTop", spectrumMeter.metrics.plotInsetTop);
-    METER_METRIC("spectrum.plotInsetRight", spectrumMeter.metrics.plotInsetRight);
-    METER_METRIC("spectrum.plotInsetBottom", spectrumMeter.metrics.plotInsetBottom);
     METER_METRIC("spectrum.fillTopStop", spectrumMeter.metrics.fillTopStop);
     METER_METRIC("spectrum.fillUpperMiddleStop", spectrumMeter.metrics.fillUpperMiddleStop);
     METER_METRIC("spectrum.fillLowerMiddleStop", spectrumMeter.metrics.fillLowerMiddleStop);
     METER_METRIC("spectrum.fillBottomStop", spectrumMeter.metrics.fillBottomStop);
-    METER_METRIC("spectrum.curveControlRatio", spectrumMeter.metrics.curveControlRatio);
-    METER_METRIC("spectrum.lineGlowWideWidth", spectrumMeter.metrics.lineGlowWideWidth);
-    METER_METRIC("spectrum.lineGlowMediumWidth", spectrumMeter.metrics.lineGlowMediumWidth);
-    METER_METRIC("spectrum.lineGlowNarrowWidth", spectrumMeter.metrics.lineGlowNarrowWidth);
-    METER_METRIC("spectrum.lineHighlightWidth", spectrumMeter.metrics.lineHighlightWidth);
-    METER_METRIC("spectrum.peakLineWidth", spectrumMeter.metrics.peakLineWidth);
-    METER_METRIC("spectrum.gridLineWidth", spectrumMeter.metrics.gridLineWidth);
-    METER_METRIC("spectrum.dbLabelLeft", spectrumMeter.metrics.dbLabelLeft);
-    METER_METRIC("spectrum.dbLabelHalfHeight", spectrumMeter.metrics.dbLabelHalfHeight);
-    METER_METRIC("spectrum.dbLabelWidth", spectrumMeter.metrics.dbLabelWidth);
-    METER_METRIC("spectrum.dbLabelHeight", spectrumMeter.metrics.dbLabelHeight);
-    METER_METRIC("spectrum.frequencyLabelHalfWidth", spectrumMeter.metrics.frequencyLabelHalfWidth);
-    METER_METRIC("spectrum.frequencyLabelTopOffset", spectrumMeter.metrics.frequencyLabelTopOffset);
-    METER_METRIC("spectrum.frequencyLabelWidth", spectrumMeter.metrics.frequencyLabelWidth);
-    METER_METRIC("spectrum.frequencyLabelHeight", spectrumMeter.metrics.frequencyLabelHeight);
-    METER_METRIC("spectrogram.plotInsetLeft", spectrogramMeter.metrics.plotInsetLeft);
-    METER_METRIC("spectrogram.plotInsetTop", spectrogramMeter.metrics.plotInsetTop);
-    METER_METRIC("spectrogram.plotInsetRight", spectrogramMeter.metrics.plotInsetRight);
-    METER_METRIC("spectrogram.plotInsetBottom", spectrogramMeter.metrics.plotInsetBottom);
-    METER_METRIC("spectrogram.gridLineWidth", spectrogramMeter.metrics.gridLineWidth);
-    METER_METRIC("spectrogram.frequencyLabelLeft", spectrogramMeter.metrics.frequencyLabelLeft);
-    METER_METRIC("spectrogram.frequencyLabelHalfHeight", spectrogramMeter.metrics.frequencyLabelHalfHeight);
-    METER_METRIC("spectrogram.frequencyLabelWidth", spectrogramMeter.metrics.frequencyLabelWidth);
-    METER_METRIC("spectrogram.frequencyLabelHeight", spectrogramMeter.metrics.frequencyLabelHeight);
-    METER_METRIC("spectrogram.timeLabelTopOffset", spectrogramMeter.metrics.timeLabelTopOffset);
-    METER_METRIC("spectrogram.timeLabelHeight", spectrogramMeter.metrics.timeLabelHeight);
 #undef METER_METRIC
     return false;
 }
@@ -1815,29 +1533,6 @@ bool applySemantics(const SemanticDocuments& documents,
         }
     }
 
-    const auto& metrics = theme.ui.metrics;
-    const auto& toggle = metrics.toggle;
-    const bool validGeometry = toggle.width >= toggle.height
-        && toggle.height > 2 * toggle.thumbPadding
-        && toggle.compactWidth >= toggle.compactHeight
-        && toggle.compactHeight > 2 * toggle.compactThumbPadding
-        && metrics.node.minimumWidth > 0 && metrics.node.rowHeight > 0
-        && metrics.node.pinRadius > 0 && metrics.node.pinHitRadius >= metrics.node.pinRadius
-        && metrics.timeAxis.handleWidth > 0 && metrics.timeAxis.handleBandHeight > 0
-        && metrics.timeAxis.cursorWidth > 0 && metrics.timeAxis.cursorHeight > 0
-        && metrics.timeAxis.channelHeight > 0
-        && metrics.control.sliderHandleExtent >= metrics.control.sliderGrooveThickness
-        && metrics.toast.maximumWidth >= metrics.toast.minimumWidth
-        && metrics.connection.hitWidth >= metrics.connection.lineWidth
-        && metrics.connection.maximumOverviewWidth >= metrics.connection.lineWidth
-        && metrics.form.labelColumnShare + metrics.form.valueColumnShare > 0;
-    if (!validGeometry) {
-        diagnostics.append(diagnostic(ThemePackageErrorCode::MetricOutOfRange, tokenFile,
-            QStringLiteral("$.metrics"),
-            QStringLiteral("Invalid dimensions: minimum extents, containment constraints, or column shares are inconsistent.")));
-        return false;
-    }
-
     ThemeVisualDto curve = documents.curve;
     ThemeVisualDto meter = documents.meter;
     ThemeVisualDto waveform = documents.waveform;
@@ -1932,23 +1627,7 @@ bool applySemantics(const SemanticDocuments& documents,
             role->weight = *it->weight;
         }
     }
-
-
-    const auto& curveMetrics = theme.domains.curve.metrics;
-    if (curveMetrics.gridColumnCount <= 0 || curveMetrics.linearGridRowCount <= 0
-        || curveMetrics.amplitudeGridMinimumRows <= 0
-        || curveMetrics.amplitudeGridMinimumRows
-            > curveMetrics.amplitudeGridMaximumRows
-        || curveMetrics.curveLineWidth < 0.0 || curveMetrics.pointRadius < 0.0
-        || curveMetrics.pointSelectedRadius < curveMetrics.pointRadius)
-    {
-        diagnostics.append(diagnostic(
-            ThemePackageErrorCode::MetricOutOfRange,
-            prefix + package.manifest.entries.visuals.curve,
-            QStringLiteral("$.metrics"),
-            QStringLiteral("Curve metrics violate semantic bounds.")));
-        return false;
-    }
+    deriveThemeMetrics(theme);
     return true;
 }
 

@@ -87,7 +87,7 @@ ProjectExplorer::ProjectExplorer(QWidget* parent)
     connect(&ProjectManager::instance(), &ProjectManager::projectClosed, this,
             [this]() { rebuildSourcesTree(); });
     connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this, [this]() {
-        const int extent = ThemeManager::instance().metrics().objectIconExtent;
+        const int extent = ThemeManager::instance().metrics().iconExtent;
         sourcesTree_->setIconSize(QSize(extent, extent));
     });
     connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged, this, [this]() {
@@ -172,7 +172,7 @@ void ProjectExplorer::setupPanelChrome()
     sourcesTree_->setDragDropMode(QAbstractItemView::DragDrop);
     sourcesTree_->setAcceptDrops(true);
     sourcesTree_->setAnimated(false);
-    const int iconExtent = ThemeManager::instance().metrics().objectIconExtent;
+    const int iconExtent = ThemeManager::instance().metrics().iconExtent;
     sourcesTree_->setIconSize(QSize(iconExtent, iconExtent));
     sourcesTree_->setExpandsOnDoubleClick(false);
     sourcesTree_->setRootIsDecorated(true);
@@ -296,7 +296,7 @@ QIcon ProjectExplorer::iconWithColorChip(const QIcon& base, uint32_t color) cons
 {
     if (color == 0) return base;
 
-    const int sz = ThemeManager::instance().metrics().objectIconExtent;
+    const int sz = ThemeManager::instance().metrics().iconExtent;
     QPixmap px = base.pixmap(QSize(sz, sz), devicePixelRatioF());
     if (px.isNull()) {
         px = QPixmap(QSize(sz, sz) * devicePixelRatioF());

@@ -555,7 +555,6 @@ void TimelineRenderer::drawTickSet(QPainter& painter,
                                    int labelTop,
                                    int labelHeight)
 {
-    const auto& metrics = style.metrics.timeline;
     painter.save();
     painter.setFont(FontManager::instance().getFont(FontRole::Caption));
     for (const TimelineTick& tick : ticks.ticks) {
@@ -564,7 +563,8 @@ void TimelineRenderer::drawTickSet(QPainter& painter,
             continue;
         painter.setPen(tick.major ? style.music.beatGridMajor
                                   : style.music.beatGridMinor);
-        const int length = tick.major ? metrics.majorTickLength : metrics.tickLength;
+        const int length = tick.major ? style.metrics.timeAxis.majorTickLength
+                                       : style.metrics.timeAxis.minorTickLength;
         painter.drawLine(x, height - length, x, height);
         if (!tick.labeled)
             continue;

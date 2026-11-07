@@ -271,7 +271,7 @@ ColorEditorDialog::ColorEditorDialog(const QColor& color, QWidget* parent)
     screenPick->setProperty("flatIconButton", true);
     screenPick->setProperty("iconButtonBackground", true);
     ThemeManager::instance().bindMetrics(screenPick, [screenPick](const ThemeMetrics& metrics) {
-        screenPick->setIconSize(QSize(metrics.objectIconExtent, metrics.objectIconExtent));
+        screenPick->setIconSize(QSize(metrics.iconExtent, metrics.iconExtent));
     });
     const auto refreshIcon = [screenPick] {
         auto& theme = ThemeManager::instance();

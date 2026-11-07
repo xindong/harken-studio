@@ -137,7 +137,7 @@ public:
                const QModelIndex& index) const override
     {
         const auto& metrics = theme_->metrics();
-        const QRect swatchRect = presetSwatchRect(option.rect.adjusted(metrics.popup.textPadding, 0, -metrics.popup.textPadding, 0), metrics);
+        const QRect swatchRect = presetSwatchRect(option.rect.adjusted(metrics.control.textPaddingX, 0, -metrics.control.textPaddingX, 0), metrics);
         QStyleOptionMenuItem item;
         item.menuHasCheckableItems = false;
         item.rect = option.rect;
@@ -147,7 +147,7 @@ public:
         item.font = option.font;
         item.fontMetrics = option.fontMetrics;
         item.text = option.fontMetrics.elidedText(index.data().toString(), Qt::ElideRight,
-            swatchRect.left() - option.rect.left() - metrics.popup.textPadding - metrics.spacingMedium).replace(QLatin1Char('&'), QStringLiteral("&&"));
+            swatchRect.left() - option.rect.left() - metrics.control.textPaddingX - metrics.spacingMedium).replace(QLatin1Char('&'), QStringLiteral("&&"));
         QtControlSkin(theme_->snapshot()).paintPopupItem(*painter, item, combo_);
         painter->drawPixmap(swatchRect, index.data(Qt::UserRole + 1).value<QPixmap>());
     }

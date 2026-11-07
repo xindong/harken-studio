@@ -103,7 +103,7 @@ bool writeMetricsPackage(const QString& themesRoot, const QString& id, const QBy
                      manifest)
         && writeFile(QDir(root).filePath(QStringLiteral("tokens.json")), tokens)
         && writeFile(QDir(root).filePath(QStringLiteral("visuals/curve.json")),
-                     R"json({"metrics":{"curve.lineWidth":2}})json")
+                     R"json({"metrics":{"curve.discreteGuideAlpha":90}})json")
         && writeFile(QDir(root).filePath(QStringLiteral("visuals/meter.json")),
                      R"json({"colors":{"meter.spectrum.fillTop":"#ff22aa44"}})json")
         && writeFile(QDir(root).filePath(QStringLiteral("visuals/waveform.json")),
@@ -116,10 +116,10 @@ bool writeDenseMetricsPackage(const QString& themesRoot, const QString& id)
 {
     return writeMetricsPackage(themesRoot, id, R"json({
         "metrics": {
-            "table.headerHeight": 43,
-            "table.rowHeight": 49,
-            "table.cellPaddingX": 11,
-            "table.cellPaddingY": 5
+            "control.height": 43,
+            "control.largeHeight": 49,
+            "spacing.xSmall": 11,
+            "spacing.compact": 5
         }
     })json");
 }
@@ -1160,10 +1160,7 @@ TEST(ThemeMetricsMigration, ExistingLayoutsFollowMetricsWithoutReplacingEditorsO
             "spacing.small": 16,
             "spacing.medium": 24,
             "spacing.xSmall": 8,
-            "control.height": 40,
-            "parameter.labelMinimumWidth": 180,
-            "parameter.faderMinimumHeight": 180,
-            "parameter.valueMinimumWidth": 120
+            "control.height": 40
         }
     })json"));
     auto manager = makeManager(directory.path());
@@ -1239,17 +1236,17 @@ TEST(ThemeMetricsMigration, ExistingLayoutsFollowMetricsWithoutReplacingEditorsO
     EXPECT_EQ(editor->selectedText(), QStringLiteral("finis"));
 }
 
-TEST(ThemeMetricsMigration, InconsistentGeometryCannotReplaceTheActiveTheme)
+TEST(ThemeMetricsMigration, InvalidTokenMetricsCannotReplaceTheActiveTheme)
 {
     ensureApp();
     QTemporaryDir directory;
     const QList<QByteArray> variants{
-        R"json({"metrics":{"toggle.height":8,"toggle.thumbPadding":4}})json",
-        R"json({"metrics":{"node.pinRadius":12,"node.pinHitRadius":4}})json",
-        R"json({"metrics":{"timeAxis.handleWidth":0}})json",
-        R"json({"metrics":{"toast.minimumWidth":400,"toast.maximumWidth":200}})json",
-        R"json({"metrics":{"connection.lineWidth":20,"connection.hitWidth":8}})json",
-        R"json({"metrics":{"form.labelColumnShare":0,"form.valueColumnShare":0}})json"
+        R"json({"metrics":{"control.height":0}})json",
+        R"json({"metrics":{"control.compactHeight":0}})json",
+        R"json({"metrics":{"icon.regular":0}})json",
+        R"json({"metrics":{"icon.small":0}})json",
+        R"json({"metrics":{"spacing.small":-4}})json",
+        R"json({"metrics":{"border.width":-1}})json"
     };
     for (int index = 0; index < variants.size(); ++index)
         ASSERT_TRUE(writeMetricsPackage(directory.path(), QStringLiteral("invalid-%1").arg(index), variants[index]));
@@ -1272,7 +1269,7 @@ TEST(ThemeMetricsMigration, TimeHandlePaintAndHitGeometryShareThemeDimensions)
     ensureApp();
     QTemporaryDir directory;
     ASSERT_TRUE(writeMetricsPackage(directory.path(), QStringLiteral("handles"), R"json({
-        "metrics": {"timeAxis.handleWidth": 28, "timeAxis.handleBandHeight": 24}
+        "metrics": {"spacing.medium": 28}
     })json"));
     auto manager = makeManager(directory.path());
     const auto restore = qScopeGuard([&] { manager->selectTheme(VNX::builtinThemeId()); });

@@ -520,7 +520,7 @@ int TimelineEditorPanel::laneHeaderWidth() const
     if (viewKind_ == ViewKind::Track) {
         const QFontMetrics metrics(FontManager::instance().getFont(FontRole::Caption));
         return std::max(metrics.horizontalAdvance(QStringLiteral("-96.00")) + themeManager_->metrics().spacingSmall,
-            themeManager_->metrics().navigationChevronExtent);
+            themeManager_->metrics().iconExtent);
     }
     const int desired = std::max(timelineMetrics().laneHeaderMinimumWidth,
         laneHeaderWidth_ > 0 ? qRound(laneHeaderWidth_ * themeManager_->snapshot()->uiScale)
@@ -672,7 +672,7 @@ void TimelineEditorPanel::applyThemeMetrics()
         button->setFixedSize(extent, extent);
         button->setIconSize(QSize(extent, extent));
     }
-    const int addExtent = metrics.navigationChevronExtent;
+    const int addExtent = metrics.iconExtent;
     addTrackButton_->setFixedSize(addExtent, addExtent);
     addTrackButton_->setIconSize(QSize(addExtent, addExtent));
     refreshThemeIcons();

@@ -101,9 +101,9 @@ protected:
         const int padding = std::clamp(rect.width(), 0, 12);
         const int left = std::min(5, padding);
         rect.adjust(left, 0, -(padding - left), 0);
-        if (rect.width() >= metrics.objectIconExtent) {
-            const QRect iconRect(rect.x(), rect.y() + (rect.height() - metrics.objectIconExtent) / 2,
-                                 metrics.objectIconExtent, metrics.objectIconExtent);
+        if (rect.width() >= metrics.iconExtent) {
+            const QRect iconRect(rect.x(), rect.y() + (rect.height() - metrics.iconExtent) / 2,
+                                 metrics.iconExtent, metrics.iconExtent);
             icon.paint(painter, iconRect, Qt::AlignCenter, QIcon::Disabled);
             rect.setLeft(iconRect.right() + 1 + 5);
         }

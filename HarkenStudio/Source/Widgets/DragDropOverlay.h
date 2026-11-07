@@ -81,7 +81,7 @@ protected:
     }
 
 private:
-    static int iconExtent() { return ThemeManager::instance().metrics().objectIconExtent; }
+    static int iconExtent() { return ThemeManager::instance().metrics().iconExtent; }
     QIcon icon_;
     QPixmap cursor_;
     QPoint iconOffset_;

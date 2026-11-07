@@ -44,7 +44,7 @@ QString QtAdsThemeAdapter::styleSheet() const
 {
     const auto& colors = snapshot_->ui.colors;
     const auto& style = snapshot_->thirdParty.qtAds;
-    const auto& metrics = style.metrics;
+    const auto& metrics = snapshot_->ui.metrics;
 
     QString result = QStringLiteral(R"(
 /* ==========================================================================
@@ -81,37 +81,37 @@ ads--CDockAreaWidget {
 ads--CDockAreaTitleBar {
     background-color: @BG_SECONDARY@;
     border-bottom: @BORDER_WIDTH@px solid @BORDER_PRIMARY@;
-    min-height: @TITLE_BAR_MIN_HEIGHT@px;
+    min-height: @LARGE_HEIGHT@px;
     padding: 0;
 }
 
 ads--CDockAreaTitleBar QPushButton {
     border: none;
-    padding: @TITLE_BUTTON_PADDING@px;
+    padding: @SPACING_COMPACT@px;
 }
 
 ads--CTitleBarButton {
     padding: 0px 0px;
-    qproperty-iconSize: @TITLE_ICON_SIZE@px @TITLE_ICON_SIZE@px;
+    qproperty-iconSize: @ICON_EXTENT@px @ICON_EXTENT@px;
 }
 
 #dockAreaCloseButton,
 #startupLoadingCloseButton,
 #dockPinButton {
     border: none;
-    padding: @CLOSE_BUTTON_PADDING@px;
+    padding: @BORDER_WIDTH@px;
     max-width: @CLOSE_BUTTON_EXTENT@px;
     max-height: @CLOSE_BUTTON_EXTENT@px;
 }
 
 #dockPinButton {
-    qproperty-iconSize: @TITLE_ICON_SIZE@px @TITLE_ICON_SIZE@px;
+    qproperty-iconSize: @ICON_EXTENT@px @ICON_EXTENT@px;
 }
 
 #tabsMenuButton {
-    qproperty-iconSize: @CHEVRON_EXTENT@px @CHEVRON_EXTENT@px;
-    min-width: @CHEVRON_EXTENT@px;
-    min-height: @CHEVRON_EXTENT@px;
+    qproperty-iconSize: @ICON_EXTENT@px @ICON_EXTENT@px;
+    min-width: @ICON_EXTENT@px;
+    min-height: @ICON_EXTENT@px;
 }
 
 #tabsMenuButton::menu-indicator {
@@ -124,17 +124,17 @@ ads--CDockAreaTabBar,
 #tabsContainerWidget {
     background-color: @BG_SECONDARY@;
     border: none;
-    min-height: @TAB_BAR_MIN_HEIGHT@px;
+    min-height: @LARGE_HEIGHT@px;
 }
 
 ads--CDockWidgetTab {
     background-color: @BG_PRIMARY@;
     border: none;
-    border-top: @TAB_ACCENT_BORDER_WIDTH@px solid @ACTIVE_TAB_ACCENT@;
-    margin-right: @TAB_GAP_WIDTH@px;
-    padding: @TAB_PADDING_TOP@px @TAB_PADDING_HORIZONTAL@px @TAB_PADDING_BOTTOM@px @TAB_PADDING_HORIZONTAL@px;
-    min-height: @TAB_MIN_HEIGHT@px;
-    qproperty-iconSize: @TAB_ICON_SIZE@px @TAB_ICON_SIZE@px;
+    border-top: @ACCENT_BORDER_WIDTH@px solid @ACTIVE_TAB_ACCENT@;
+    margin-right: @SPACING_COMPACT@px;
+    padding: @SPACING_COMPACT@px @SPACING_XSMALL@px @SPACING_XSMALL@px @SPACING_XSMALL@px;
+    min-height: @CONTROL_HEIGHT@px;
+    qproperty-iconSize: @SMALL_ICON_EXTENT@px @SMALL_ICON_EXTENT@px;
 }
 
 ads--CDockWidgetTab:hover {
@@ -143,7 +143,7 @@ ads--CDockWidgetTab:hover {
 
 ads--CDockWidgetTab[focused="true"] {
     background-color: @BG_SELECTED@;
-    border-top: @TAB_ACCENT_BORDER_WIDTH@px solid @ACCENT@;
+    border-top: @ACCENT_BORDER_WIDTH@px solid @ACCENT@;
 }
 
 /* --- Tab Label (CElidingLabel) — explicit color per state --------------- */
@@ -161,10 +161,10 @@ ads--CDockWidgetTab[focused="true"] QLabel {
 /* --- Tab Close Button --------------------------------------------------- */
 
 #tabCloseButton {
-    margin-top: @TAB_CLOSE_MARGIN_TOP@px;
+    margin-top: @SPACING_COMPACT@px;
     border: none;
-    padding: 0px @TAB_CLOSE_PADDING_RIGHT@px;
-    qproperty-iconSize: @TITLE_ICON_SIZE@px @TITLE_ICON_SIZE@px;
+    padding: 0px -@SPACING_COMPACT@px;
+    qproperty-iconSize: @ICON_EXTENT@px @ICON_EXTENT@px;
 }
 
 #dockAreaCloseButton:hover:enabled,
@@ -190,15 +190,15 @@ ads--CFloatingDockContainer {
 
 ads--CDockOverlay {
     background-color: @DROP_OVERLAY@;
-    border: @OVERLAY_BORDER_WIDTH@px solid @ACCENT@;
+    border: @ACCENT_BORDER_WIDTH@px solid @ACCENT@;
 }
 
 /* --- Splitter ----------------------------------------------------------- */
 
 ads--CDockSplitter::handle {
     background-color: @CHROME_BACKGROUND@;
-    height: @SPLITTER_HANDLE_EXTENT@px;
-    width: @SPLITTER_HANDLE_EXTENT@px;
+    height: @SPLITTER_EXTENT@px;
+    width: @SPLITTER_EXTENT@px;
 }
 
 ads--CDockSplitter::handle:hover {
@@ -208,13 +208,13 @@ ads--CDockSplitter::handle:hover {
 /* --- Auto-Hide Tabs ----------------------------------------------------- */
 
 ads--CAutoHideTab {
-    qproperty-iconSize: @AUTO_HIDE_TAB_ICON_SIZE@px @AUTO_HIDE_TAB_ICON_SIZE@px;
+    qproperty-iconSize: @SMALL_ICON_EXTENT@px @SMALL_ICON_EXTENT@px;
     background: none;
     border: none;
-    padding-left: @AUTO_HIDE_TAB_PADDING_LEFT@px;
-    padding-right: @AUTO_HIDE_TAB_PADDING_RIGHT@px;
+    padding-left: @SPACING_COMPACT@px;
+    padding-right: 0px;
     text-align: center;
-    min-height: @AUTO_HIDE_TAB_MIN_HEIGHT@px;
+    min-height: @COMPACT_HEIGHT@px;
     color: @INACTIVE_TAB_TEXT@;
 }
 
@@ -225,7 +225,7 @@ ads--CAutoHideTab:hover {
 ads--CAutoHideSideBar {
     background-color: @CHROME_BACKGROUND@;
     border: none;
-    qproperty-spacing: @AUTO_HIDE_SIDE_BAR_SPACING@;
+    qproperty-spacing: @SPACING_MEDIUM@;
 }
 
 #sideTabsContainerWidget {
@@ -238,12 +238,12 @@ ads--CAutoHideDockContainer {
 
 ads--CAutoHideDockContainer ads--CDockAreaTitleBar {
     background-color: @BG_SECONDARY@;
-    border-bottom: @AUTO_HIDE_TITLE_BORDER_WIDTH@px solid @ACCENT@;
+    border-bottom: @ACCENT_BORDER_WIDTH@px solid @ACCENT@;
     padding: 0px;
 }
 
 #autoHideTitleLabel {
-    padding-left: @AUTO_HIDE_TITLE_PADDING_LEFT@px;
+    padding-left: @SPACING_XSMALL@px;
     color: @ACCENT@;
 }
 
@@ -268,34 +268,22 @@ ads--CResizeHandle {
     result.replace(QStringLiteral("@CLOSE_BUTTON_PRESSED@"), colorValue(colors.shellClosePressed));
     result.replace(QStringLiteral("@DROP_OVERLAY@"), rgba(colors.accent, style.dropOverlayOpacity));
 
-    result.replace(QStringLiteral("@BORDER_WIDTH@"), QString::number(metrics.borderWidth));
-    result.replace(QStringLiteral("@TITLE_BAR_MIN_HEIGHT@"), QString::number(metrics.titleBarMinimumHeight));
-    result.replace(QStringLiteral("@TITLE_BUTTON_PADDING@"), QString::number(metrics.titleBarButtonPadding));
-    result.replace(QStringLiteral("@TITLE_ICON_SIZE@"), QString::number(metrics.titleBarIconSize));
-    result.replace(QStringLiteral("@CHEVRON_EXTENT@"),
-                   QString::number(snapshot_->ui.metrics.navigationChevronExtent));
-    result.replace(QStringLiteral("@CLOSE_BUTTON_PADDING@"), QString::number(metrics.closeButtonPadding));
-    result.replace(QStringLiteral("@CLOSE_BUTTON_EXTENT@"), QString::number(metrics.closeButtonExtent));
-    result.replace(QStringLiteral("@TAB_BAR_MIN_HEIGHT@"), QString::number(metrics.tabBarMinimumHeight));
-    result.replace(QStringLiteral("@TAB_ACCENT_BORDER_WIDTH@"), QString::number(metrics.tabAccentBorderWidth));
-    result.replace(QStringLiteral("@TAB_GAP_WIDTH@"), QString::number(metrics.tabGapWidth));
-    result.replace(QStringLiteral("@TAB_PADDING_TOP@"), QString::number(metrics.tabPaddingTop));
-    result.replace(QStringLiteral("@TAB_PADDING_HORIZONTAL@"), QString::number(metrics.tabPaddingHorizontal));
-    result.replace(QStringLiteral("@TAB_PADDING_BOTTOM@"), QString::number(metrics.tabPaddingBottom));
-    result.replace(QStringLiteral("@TAB_MIN_HEIGHT@"), QString::number(metrics.tabMinimumHeight));
+    const auto number = [&result](const char* token, int value) {
+        result.replace(QLatin1String(token), QString::number(value));
+    };
+    number("@BORDER_WIDTH@", metrics.borderWidth);
+    number("@ACCENT_BORDER_WIDTH@", metrics.accentBorderWidth);
+    number("@SPACING_COMPACT@", metrics.spacingCompact);
+    number("@SPACING_XSMALL@", metrics.spacingXSmall);
+    number("@SPACING_MEDIUM@", metrics.spacingMedium);
+    number("@CONTROL_HEIGHT@", metrics.controlHeight);
+    number("@COMPACT_HEIGHT@", metrics.control.compactHeight);
+    number("@LARGE_HEIGHT@", metrics.control.largeHeight);
+    number("@ICON_EXTENT@", metrics.iconExtent);
+    number("@SMALL_ICON_EXTENT@", metrics.control.smallIconExtent);
+    number("@CLOSE_BUTTON_EXTENT@", metrics.iconExtent + metrics.spacingCompact);
+    number("@SPLITTER_EXTENT@", metrics.control.splitterExtent);
     result.replace(QStringLiteral("@TAB_FONT@"), FontManager::instance().styleSheet(snapshot_, FontRole::Body));
-    result.replace(QStringLiteral("@TAB_ICON_SIZE@"), QString::number(metrics.tabIconSize));
-    result.replace(QStringLiteral("@TAB_CLOSE_MARGIN_TOP@"), QString::number(metrics.tabCloseMarginTop));
-    result.replace(QStringLiteral("@TAB_CLOSE_PADDING_RIGHT@"), QString::number(metrics.tabClosePaddingRight));
-    result.replace(QStringLiteral("@OVERLAY_BORDER_WIDTH@"), QString::number(metrics.overlayBorderWidth));
-    result.replace(QStringLiteral("@SPLITTER_HANDLE_EXTENT@"), QString::number(metrics.splitterHandleExtent));
-    result.replace(QStringLiteral("@AUTO_HIDE_TAB_ICON_SIZE@"), QString::number(metrics.autoHideTabIconSize));
-    result.replace(QStringLiteral("@AUTO_HIDE_TAB_PADDING_LEFT@"), QString::number(metrics.autoHideTabPaddingLeft));
-    result.replace(QStringLiteral("@AUTO_HIDE_TAB_PADDING_RIGHT@"), QString::number(metrics.autoHideTabPaddingRight));
-    result.replace(QStringLiteral("@AUTO_HIDE_TAB_MIN_HEIGHT@"), QString::number(metrics.autoHideTabMinimumHeight));
-    result.replace(QStringLiteral("@AUTO_HIDE_SIDE_BAR_SPACING@"), QString::number(metrics.autoHideSideBarSpacing));
-    result.replace(QStringLiteral("@AUTO_HIDE_TITLE_BORDER_WIDTH@"), QString::number(metrics.autoHideTitleBorderWidth));
-    result.replace(QStringLiteral("@AUTO_HIDE_TITLE_PADDING_LEFT@"), QString::number(metrics.autoHideTitlePaddingLeft));
     return result;
 }
 

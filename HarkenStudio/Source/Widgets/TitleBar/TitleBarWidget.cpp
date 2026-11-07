@@ -332,7 +332,7 @@ void TitleBarWidget::syncChromeMetrics() {
     const int barHeight = qMax(ThemeManager::instance().metrics().chrome.titleBarHeight, itemHeight);
     setFixedHeight(barHeight);
     logoLabel_->setFixedSize(barHeight, barHeight);
-    const int extent = ThemeManager::instance().metrics().objectIconExtent;
+    const int extent = ThemeManager::instance().metrics().iconExtent;
     const QSize logoSize(extent, extent);
     const auto logo = ThemeManager::instance().resolveImage(
         QString::fromLatin1(ThemeAssetIds::AppIcon));

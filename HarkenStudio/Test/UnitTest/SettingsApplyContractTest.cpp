@@ -496,7 +496,7 @@ TEST_F(SettingsApplyContractTest, ThemePalettesAndRolesKeepEditsIsolatedAcrossSw
             "entries":{"tokens":"tokens.json","colors":"colors.json","visuals":{"curve":"visuals/curve.json","meter":"visuals/meter.json","waveform":"visuals/waveform.json"},"assetMap":"assets.json"}
         })json"},
         {QStringLiteral("tokens.json"), R"json({
-            "colors":{},"metrics":{"table.rowHeight":49},"fonts":{"body":{"pointSize":15}}
+            "colors":{},"metrics":{"control.largeHeight":49},"fonts":{"body":{"pointSize":15}}
         })json"},
         {QStringLiteral("colors.json"), R"json({
             "defaultPalette":"dark",

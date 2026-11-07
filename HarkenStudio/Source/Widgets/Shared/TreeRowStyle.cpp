@@ -44,7 +44,7 @@ QIcon chevronIcon(bool expanded, const QColor& color)
 
 void paintBucketCaret(QPainter* p, const QRect& box, bool expanded)
 {
-    const int chevronExtent = ThemeManager::instance().metrics().navigationChevronExtent;
+    const int chevronExtent = ThemeManager::instance().metrics().iconExtent;
     const QRect iconRect(box.left() + (box.width() - chevronExtent) / 2,
                          box.top() + (box.height() - chevronExtent) / 2,
                          chevronExtent, chevronExtent);
@@ -94,9 +94,9 @@ void paintBucketRow(QPainter* p, const QStyleOptionViewItem& opt,
     if (selected)
         paintRowAccent(p, r);
 
-    const int caretW = ThemeManager::instance().metrics().navigationChevronExtent;
+    const int caretW = ThemeManager::instance().metrics().iconExtent;
     const QRect caretBox(r.right() - caretW, r.top(), caretW, r.height());
-    const int iconExtent = ThemeManager::instance().metrics().objectIconExtent;
+    const int iconExtent = ThemeManager::instance().metrics().iconExtent;
     const QRect iconCell(r.left(), r.top(), iconExtent, r.height());
     const QRect iconRect(iconCell.left(), iconCell.top() + (iconCell.height() - iconExtent) / 2,
                          iconExtent, iconExtent);
@@ -307,11 +307,11 @@ void paintBranches(QPainter* painter, const QRect& rect, const QModelIndex& inde
     if (depth >= 2) {
         const int xJoint = colX(depth - 2);
         painter->drawLine(xJoint, yTop, xJoint, hasNextSibling(index) ? yBot : yMid);
-        painter->drawLine(xJoint, yMid, hasKids ? xSelf - ThemeManager::instance().metrics().navigationChevronExtent / 2 : rect.right(), yMid);
+        painter->drawLine(xJoint, yMid, hasKids ? xSelf - ThemeManager::instance().metrics().iconExtent / 2 : rect.right(), yMid);
     }
 
     if (hasKids) {
-        const int chevronExtent = ThemeManager::instance().metrics().navigationChevronExtent;
+        const int chevronExtent = ThemeManager::instance().metrics().iconExtent;
         const QRect iconRect(xSelf - chevronExtent / 2, yMid - chevronExtent / 2,
                              chevronExtent, chevronExtent);
         chevronIcon(expanded, chevronColor).paint(painter, iconRect);

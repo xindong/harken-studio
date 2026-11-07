@@ -292,7 +292,7 @@ SelectorWindow::SelectorWindow()
     tree_->setSelectionMode(QAbstractItemView::SingleSelection);
     tree_->setUniformRowHeights(true);
     const auto updateIconSize = [this]() {
-        const int extent = ThemeManager::instance().metrics().objectIconExtent;
+        const int extent = ThemeManager::instance().metrics().iconExtent;
         tree_->setIconSize(QSize(extent, extent));
         if (tree_->columnCount() > 1)
             tree_->header()->resizeSection(1, SwitchIndicator::width()

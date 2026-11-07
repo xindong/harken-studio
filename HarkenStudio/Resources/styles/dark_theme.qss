@@ -300,7 +300,7 @@ QToolBar#platformBar QToolButton {
     min-height: @controlHeight@px;
     max-height: @controlHeight@px;
     @bodyFont@
-    qproperty-iconSize: @objectIconExtent@px @objectIconExtent@px;
+    qproperty-iconSize: @iconExtent@px @iconExtent@px;
 }
 QToolBar#platformBar QToolButton[segmentedControl="true"] {
     background: transparent;
@@ -411,11 +411,11 @@ QAbstractButton[flatIconButton="true"]:disabled {
 QToolButton[navigationRole="chevron"] {
     border: none;
     padding: 0px;
-    min-width: @chevronExtent@px;
-    max-width: @chevronExtent@px;
-    min-height: @chevronExtent@px;
-    max-height: @chevronExtent@px;
-    qproperty-iconSize: @chevronExtent@px @chevronExtent@px;
+    min-width: @iconExtent@px;
+    max-width: @iconExtent@px;
+    min-height: @iconExtent@px;
+    max-height: @iconExtent@px;
+    qproperty-iconSize: @iconExtent@px @iconExtent@px;
 }
 
 /* ==========================================================================
@@ -737,15 +737,15 @@ QComboBox:editable {
 QComboBox::drop-down {
     subcontrol-origin: padding;
     subcontrol-position: top right;
-    width: @chevronExtent@px;
+    width: @iconExtent@px;
     border: none;
     background: transparent;
 }
 
 QComboBox::down-arrow {
     image: url("@chevronDown@");
-    width: @chevronExtent@px;
-    height: @chevronExtent@px;
+    width: @iconExtent@px;
+    height: @iconExtent@px;
 }
 
 QComboBox::down-arrow:disabled {
@@ -863,8 +863,8 @@ QCheckBox::indicator,
 QTreeView::indicator,
 QListView::indicator,
 QTableView::indicator {
-    width: @checkboxExtent@px;
-    height: @checkboxExtent@px;
+    width: @smallIconExtent@px;
+    height: @smallIconExtent@px;
     background-color: @bgSecondary@;
     border: @borderWidth@px solid @borderSecondary@;
     border-radius: 0px;
@@ -1030,8 +1030,8 @@ QHeaderView[columnAccents="true"]::section:checked {
 }
 
 QHeaderView::up-arrow, QHeaderView::down-arrow {
-    width: @chevronExtent@px;
-    height: @chevronExtent@px;
+    width: @iconExtent@px;
+    height: @iconExtent@px;
 }
 
 QHeaderView::up-arrow:horizontal, QHeaderView::down-arrow:horizontal {
@@ -1086,7 +1086,7 @@ QSlider[sliderRole="parameter"] {
 
 QSlider[sliderRole="parameter"]::groove:horizontal {
     border: none;
-    height: @parameterSliderGroove@px;
+    height: @sliderGrooveThickness@px;
     background-color: @sliderTrack@;
     border-radius: 0px;
 }
@@ -1126,7 +1126,7 @@ QSlider[sliderRole="parameter"]::handle:horizontal:disabled {
 
 QSlider[sliderRole="parameter"]::groove:vertical {
     border: none;
-    width: @parameterSliderGroove@px;
+    width: @sliderGrooveThickness@px;
     background-color: @sliderTrack@;
     border-radius: 0px;
 }
@@ -1412,7 +1412,7 @@ QWidget#embeddedEditorTitleBar {
 QWidget#embeddedEditorTitleBar QLabel { background: transparent; color: @textSecondary@; }
 #embeddedEditorDetachButton {
     padding: 0px;
-    qproperty-iconSize: @objectIconExtent@px @objectIconExtent@px;
+    qproperty-iconSize: @iconExtent@px @iconExtent@px;
 }
 
 /* ==========================================================================
@@ -1981,7 +1981,7 @@ QWidget#MeterSubPanelTitleBar {
 }
 QLabel#meterSubPanelDragHandle { color: @textSecondary@; @bodyFont@ }
 QComboBox#meterTypeCombo {
-    padding-right: @chevronExtent@px;
+    padding-right: @iconExtent@px;
     @bodyFont@
 }
 QToolButton#meterSubPanelGearBtn,
@@ -2006,7 +2006,7 @@ QWidget#MeterSettingsPopup {
 }
 QWidget#MeterSettingsPopup QLabel { color: @textPrimary@; @bodyFont@ padding: 0 @spacingXSmall@px; }
 QWidget#MeterSettingsPopup QComboBox {
-    padding-right: @chevronExtent@px;
+    padding-right: @iconExtent@px;
     @bodyFont@
 }
 

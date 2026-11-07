@@ -34,7 +34,7 @@ namespace {
 
 constexpr int LineEditHorizontalMargin = 2;
 int popupTextMargin(const QStyleOptionMenuItem& item, const QWidget* widget,
-                    const VNX::ThemeMetrics::Popup& metrics)
+                    const VNX::ThemeMetrics& metrics)
 {
     QVariant mode;
     for (auto* owner = widget; owner && !mode.isValid(); owner = owner->parentWidget())
@@ -43,7 +43,7 @@ int popupTextMargin(const QStyleOptionMenuItem& item, const QWidget* widget,
         ? mode.toInt() == static_cast<int>(VNX::PopupIconColumn::Reserved)
         : qobject_cast<const QMenu*>(widget) != nullptr;
     return reserved || item.menuHasCheckableItems
-        ? qMax(metrics.iconColumnWidth, item.maxIconWidth) : metrics.textPadding;
+        ? qMax(metrics.popup.iconColumnWidth, item.maxIconWidth) : metrics.control.textPaddingX;
 }
 
 class PopupItemDelegate final : public QStyledItemDelegate
@@ -213,7 +213,7 @@ void QtControlSkin::applyPopupStyle(QComboBox* combo)
 
 int QtControlSkin::popupRowHeight(const QFontMetrics& fontMetrics) const
 {
-    return std::max({fontMetrics.height(), metrics().objectIconExtent, metrics().navigationChevronExtent})
+    return std::max({fontMetrics.height(), metrics().iconExtent, metrics().iconExtent})
         + 2 * metrics().popup.rowPadding;
 }
 
@@ -221,9 +221,9 @@ QSize QtControlSkin::popupItemSize(const QStyleOptionMenuItem& item,
                                  const QSize& contentsSize, const QWidget* widget) const
 {
     const int spacing = item.text.contains(QLatin1Char('\t')) ? metrics().popup.shortcutSpacing : 0;
-    const int margin = popupTextMargin(item, widget, metrics().popup);
+    const int margin = popupTextMargin(item, widget, metrics());
     const int trailingMargin = item.menuItemType == QStyleOptionMenuItem::SubMenu
-        ? qMax(margin, metrics().navigationChevronExtent + metrics().spacingXSmall) : margin;
+        ? qMax(margin, metrics().iconExtent + metrics().spacingXSmall) : margin;
     const int contentWidth = qobject_cast<const QMenu*>(widget)
         ? qMax(metrics().popup.minimumWidth, contentsSize.width() + spacing) : contentsSize.width() + spacing;
     return QSize(contentWidth + margin + trailingMargin, popupRowHeight(item.fontMetrics));
@@ -244,9 +244,9 @@ void QtControlSkin::paintPopupItem(QPainter& painter, const QStyleOptionMenuItem
     painter.setFont(item.font);
     painter.setPen(textColor);
 
-    const int margin = popupTextMargin(item, widget, metrics().popup);
+    const int margin = popupTextMargin(item, widget, metrics());
     const int trailingMargin = item.menuItemType == QStyleOptionMenuItem::SubMenu
-        ? qMax(margin, metrics().navigationChevronExtent + metrics().spacingXSmall) : margin;
+        ? qMax(margin, metrics().iconExtent + metrics().spacingXSmall) : margin;
     QRect textRect = item.rect.adjusted(margin, 0, -trailingMargin, 0);
     const QStringView text(item.text);
     const qsizetype tab = text.indexOf(QLatin1Char('\t'));
@@ -267,7 +267,7 @@ void QtControlSkin::paintPopupItem(QPainter& painter, const QStyleOptionMenuItem
                      text.left(tab >= 0 ? tab : text.size()).toString());
 
     if (margin >= metrics().popup.iconColumnWidth && !item.icon.isNull()) {
-        const int extent = qMin(metrics().objectIconExtent, item.rect.height());
+        const int extent = qMin(metrics().iconExtent, item.rect.height());
         const QRect iconRect(item.rect.left(), item.rect.top(), margin, item.rect.height());
         const auto state = item.checked ? QIcon::On : QIcon::Off;
         QPixmap glyph = item.icon.pixmap(QSize(extent, extent),
@@ -285,7 +285,7 @@ void QtControlSkin::paintPopupItem(QPainter& painter, const QStyleOptionMenuItem
                && item.checkType != QStyleOptionMenuItem::NotCheckable && item.checked) {
         QStyleOptionMenuItem check = item;
         check.rect = QStyle::visualRect(item.direction, item.rect,
-            QStyle::alignedRect(Qt::LeftToRight, Qt::AlignCenter, QSize(metrics().control.checkboxExtent, metrics().control.checkboxExtent),
+            QStyle::alignedRect(Qt::LeftToRight, Qt::AlignCenter, QSize(metrics().control.smallIconExtent, metrics().control.smallIconExtent),
                                 QRect(item.rect.topLeft(), QSize(margin, item.rect.height()))));
         check.state |= QStyle::State_On;
         check.palette.setColor(QPalette::Text, textColor);
@@ -294,7 +294,7 @@ void QtControlSkin::paintPopupItem(QPainter& painter, const QStyleOptionMenuItem
     }
 
     if (item.menuItemType == QStyleOptionMenuItem::SubMenu) {
-        const int extent = metrics().navigationChevronExtent;
+        const int extent = metrics().iconExtent;
         QStyleOptionMenuItem arrow = item;
         arrow.rect = QStyle::visualRect(item.direction, item.rect,
             QStyle::alignedRect(Qt::LeftToRight, Qt::AlignRight | Qt::AlignVCenter,
@@ -309,8 +309,8 @@ void QtControlSkin::paintPopupItem(QPainter& painter, const QStyleOptionMenuItem
 int QtControlSkin::fieldHeight() const
 {
     const QFont font = FontManager::instance().getFont(snapshot_, FontRole::Body);
-    return std::max({metrics().controlHeight, metrics().objectIconExtent + metrics().control.textPaddingY * 2,
-                     metrics().navigationChevronExtent + metrics().borderWidth * 2,
+    return std::max({metrics().controlHeight, metrics().iconExtent + metrics().control.textPaddingY * 2,
+                     metrics().iconExtent + metrics().borderWidth * 2,
                      QFontMetrics(font).height() + 2 * (metrics().control.textPaddingY + metrics().borderWidth)});
 }
 
@@ -455,18 +455,18 @@ QString QtControlSkin::applicationStyleSheet() const
     };
     replace(QStringLiteral("@chevronDown@"),
             imagePath(ThemeAssetIds::NavigationChevronDown,
-                      metrics().navigationChevronExtent, colors().textPrimary));
+                      metrics().iconExtent, colors().textPrimary));
     replace(QStringLiteral("@chevronDownDisabled@"),
             imagePath(ThemeAssetIds::NavigationChevronDown,
-                      metrics().navigationChevronExtent, colors().textDisabled));
+                      metrics().iconExtent, colors().textDisabled));
     replace(QStringLiteral("@checkboxChecked@"),
             imagePath(ThemeAssetIds::CheckboxChecked, metrics().control.checkboxMarkExtent, colors().textPrimary));
     replace(QStringLiteral("@checkboxCheckedDisabled@"),
             imagePath(ThemeAssetIds::CheckboxChecked, metrics().control.checkboxMarkExtent, colors().textDisabled));
     replace(QStringLiteral("@checkboxIndeterminate@"),
-            imagePath(ThemeAssetIds::CheckboxIndeterminate, metrics().control.checkboxExtent, colors().textPrimary));
+            imagePath(ThemeAssetIds::CheckboxIndeterminate, metrics().control.smallIconExtent, colors().textPrimary));
     replace(QStringLiteral("@checkboxIndeterminateDisabled@"),
-            imagePath(ThemeAssetIds::CheckboxIndeterminate, metrics().control.checkboxExtent, colors().textDisabled));
+            imagePath(ThemeAssetIds::CheckboxIndeterminate, metrics().control.smallIconExtent, colors().textDisabled));
     const auto color = [](const QColor& value) {
         return value.name(QColor::HexArgb);
     };
@@ -533,12 +533,8 @@ QString QtControlSkin::applicationStyleSheet() const
     replace(QStringLiteral("@spacingXLarge@"), QString::number(metrics().spacingXLarge));
     replace(QStringLiteral("@controlHeight@"), QString::number(metrics().controlHeight));
     replace(QStringLiteral("@compactControlHeight@"), QString::number(metrics().control.compactHeight));
-    replace(QStringLiteral("@largeControlHeight@"), QString::number(metrics().control.largeHeight));
     replace(QStringLiteral("@smallIconExtent@"), QString::number(metrics().control.smallIconExtent));
-    replace(QStringLiteral("@objectIconExtent@"), QString::number(metrics().objectIconExtent));
-    replace(QStringLiteral("@largeIconExtent@"), QString::number(metrics().control.largeIconExtent));
-    replace(QStringLiteral("@checkboxExtent@"), QString::number(metrics().control.checkboxExtent));
-    replace(QStringLiteral("@checkboxMarkExtent@"), QString::number(metrics().control.checkboxMarkExtent));
+    replace(QStringLiteral("@iconExtent@"), QString::number(metrics().iconExtent));
     replace(QStringLiteral("@scrollbarExtent@"), QString::number(metrics().control.scrollbarExtent));
     replace(QStringLiteral("@canvasScrollbarExtent@"), QString::number(metrics().control.canvasScrollbarExtent));
     replace(QStringLiteral("@sliderHandleExtent@"), QString::number(metrics().control.sliderHandleExtent));
@@ -570,18 +566,14 @@ QString QtControlSkin::applicationStyleSheet() const
             QString::number(std::max(0, fieldMargins.left() - LineEditHorizontalMargin)));
     replace(QStringLiteral("@tableCellPaddingX@"), QString::number(metrics().table.cellPaddingX));
     replace(QStringLiteral("@tableCellPaddingY@"), QString::number(metrics().table.cellPaddingY));
-    replace(QStringLiteral("@chevronExtent@"),
-            QString::number(metrics().navigationChevronExtent));
     const auto& parameterMetrics = metrics().parameter;
-    replace(QStringLiteral("@parameterSliderGroove@"),
-            QString::number(parameterMetrics.sliderGrooveThickness));
     replace(QStringLiteral("@parameterSliderHandleThickness@"),
             QString::number(parameterMetrics.sliderHandleThickness));
     replace(QStringLiteral("@parameterSliderHandleLength@"),
             QString::number(parameterMetrics.sliderHandleLength));
     replace(QStringLiteral("@parameterSliderHandleOverhang@"),
             QString::number((parameterMetrics.sliderHandleLength
-                             - parameterMetrics.sliderGrooveThickness) / 2));
+                             - metrics().control.sliderGrooveThickness) / 2));
     const auto& fonts = FontManager::instance();
     replace(QStringLiteral("@bodyFont@"), fonts.styleSheet(snapshot_, FontRole::Body));
     replace(QStringLiteral("@captionFont@"), fonts.styleSheet(snapshot_, FontRole::Caption));
@@ -626,7 +618,7 @@ QString QtControlSkin::collapsibleHeaderStyle(const QColor& indicator, bool cust
             border += QStringLiteral(" border-top: %1px solid %2;").arg(metrics().borderWidth).arg(borderPrimary());
         hoverBg  = bgTertiary();
         pad      = QString("padding: %1px %2px;").arg(metrics().spacingXSmall).arg(metrics().spacingSmall);
-        minH     = metrics().sectionHeaderHeight;
+        minH     = metrics().controlHeight;
     }
     else if (level == 1)
     {

@@ -231,7 +231,7 @@ SourceEditorWidget::SourceEditorWidget(QWidget* parent)
         playButton_->setFixedSize(metrics.control.largeHeight, metrics.control.largeHeight);
     });
     ThemeManager::instance().bindMetrics(playButton_, [this](const ThemeMetrics& metrics) {
-        playButton_->setIconSize(QSize(metrics.objectIconExtent, metrics.objectIconExtent));
+        playButton_->setIconSize(QSize(metrics.iconExtent, metrics.iconExtent));
     });
     playButton_->setToolTip(tr("Play"));
     stopButton_ = new QToolButton(auditionStrip_);
@@ -243,7 +243,7 @@ SourceEditorWidget::SourceEditorWidget(QWidget* parent)
         stopButton_->setFixedSize(metrics.control.largeHeight, metrics.control.largeHeight);
     });
     ThemeManager::instance().bindMetrics(stopButton_, [this](const ThemeMetrics& metrics) {
-        stopButton_->setIconSize(QSize(metrics.objectIconExtent, metrics.objectIconExtent));
+        stopButton_->setIconSize(QSize(metrics.iconExtent, metrics.iconExtent));
     });
     stopButton_->setToolTip(tr("Stop"));
     auditionLayout->addWidget(playButton_);

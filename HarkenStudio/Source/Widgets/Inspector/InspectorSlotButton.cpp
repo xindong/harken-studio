@@ -12,7 +12,7 @@ InspectorSlotButton::InspectorSlotButton(InspectorSlotKind kind, QWidget* parent
     , kind_(kind)
 {
     ThemeManager::instance().bindMetrics(this, [this](const ThemeMetrics& metrics) {
-        setFixedSize(metrics.inspector.bindingSlotWidth, metrics.inspector.slotHeight);
+        setFixedSize(metrics.inspector.bindingSlotWidth, metrics.control.compactHeight);
     });
     setAutoRaise(true);
     setToolButtonStyle(Qt::ToolButtonIconOnly);

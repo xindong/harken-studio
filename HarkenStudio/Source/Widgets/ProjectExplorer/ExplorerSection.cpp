@@ -103,10 +103,10 @@ void ExplorerSection::setExpanded(bool expanded)
 void ExplorerSection::updateHeader()
 {
     auto& theme = ThemeManager::instance();
-    const int height = qMax(theme.metrics().sectionHeaderHeight,
+    const int height = qMax(theme.metrics().controlHeight,
                            toggle_->fontMetrics().height() + theme.metrics().spacingSmall);
     header_->setFixedHeight(height);
-    const int extent = theme.metrics().navigationChevronExtent;
+    const int extent = theme.metrics().iconExtent;
     toggle_->setIconSize(QSize(extent, extent));
     toggle_->setIcon(theme.resolveIcon(QString::fromLatin1(isExpanded()
         ? ThemeAssetIds::NavigationChevronDown : ThemeAssetIds::NavigationChevronRight)).icon);

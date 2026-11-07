@@ -39,7 +39,7 @@ PlaybackControls::PlaybackControls(QWidget* parent)
             button->setFixedSize(metrics.control.largeHeight, metrics.controlHeight);
         });
         ThemeManager::instance().bindMetrics(button, [button](const ThemeMetrics& metrics) {
-            button->setIconSize(QSize(metrics.objectIconExtent, metrics.objectIconExtent));
+            button->setIconSize(QSize(metrics.iconExtent, metrics.iconExtent));
         });
         button->setAutoRaise(true);
         button->setToolButtonStyle(Qt::ToolButtonIconOnly);

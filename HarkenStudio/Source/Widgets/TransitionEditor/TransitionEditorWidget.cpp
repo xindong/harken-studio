@@ -665,7 +665,7 @@ TransitionEditorWidget::TransitionEditorWidget(QWidget* parent)
         root->setContentsMargins(inspector.pageMargin, inspector.pageMargin,
                                  inspector.pageMargin, inspector.pageMargin);
         root->setSpacing(inspector.rowSpacing);
-        statusBarHost->setFixedHeight(inspector.rowHeight);
+        statusBarHost->setFixedHeight(metrics.controlHeight);
         statusBar->setSpacing(inspector.columnPadding);
         contentLayout->setSpacing(inspector.sectionSpacing);
         mountNoteLabel_->setContentsMargins(inspector.columnPadding, 0,

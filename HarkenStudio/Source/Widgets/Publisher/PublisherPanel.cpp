@@ -527,7 +527,7 @@ QWidget* PublisherPanel::createToolbar()
         auto& theme = ThemeManager::instance();
         publishSettingsButton_->setIcon(theme.resolveIcon(
             QString::fromLatin1(ThemeAssetIds::Settings)).icon);
-        const int extent = theme.metrics().objectIconExtent;
+        const int extent = theme.metrics().iconExtent;
         publishSettingsButton_->setIconSize(QSize(extent, extent));
     };
     connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged,
