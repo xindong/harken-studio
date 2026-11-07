@@ -11,7 +11,10 @@ EXPORTS
     Vn_ApplyBusTopology
     Vn_ApplyVoiceBinding
     Vn_AttachBinding
+    Vn_BeginStreamFile
+    Vn_BeginStreamSource
     Vn_BindVoiceAttenuation
+    Vn_CancelStreamSource
     Vn_CaptureCompressorRuntimeInfo
     Vn_CaptureEffectCapabilities
     Vn_CaptureEffectDynamicCapabilities
@@ -26,6 +29,7 @@ EXPORTS
     Vn_ClearVoiceBinding
     Vn_ClearVoiceEffect
     Vn_ClearVoiceSend
+    Vn_CommitStreamSource
     Vn_CommitVoiceStart
     Vn_ConnectBusSend
     Vn_CreateBus
@@ -74,6 +78,7 @@ EXPORTS
     Vn_QueryActionFiring
     Vn_QueryActionSeek
     Vn_QueryActionStep
+    Vn_QueryStreamSource
     Vn_QueryVariable
     Vn_QueryVariableCatalog
     Vn_QueryVariableTicket

@@ -12,6 +12,7 @@
 #include "Core/ThemeManager.h"
 #include "Core/CurveSemantics.h"
 #include "Widgets/Common/CollapsibleSection.h"
+#include "Widgets/Common/PreviewField.h"
 #include "Widgets/Common/TableWidget.h"
 #include "Widgets/Common/ListFooter.h"
 #include "Widgets/Common/LayoutDebugTint.h"
@@ -73,17 +74,15 @@ const DimensionUiOption& uiOptionFor(AttenuationDimension type)
     return kDimensionOptions[0];
 }
 
-class CurveThumbnail : public QWidget
+class CurveThumbnail : public PreviewField
 {
 public:
     explicit CurveThumbnail(QWidget* parent)
-        : QWidget(parent)
+        : PreviewField(parent)
     {
         setObjectName(QStringLiteral("curveThumbnail"));
         setAttribute(Qt::WA_TranslucentBackground);
         setAttribute(Qt::WA_TransparentForMouseEvents);
-        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-        QtControlSkin::setSemanticProperty(this, "fieldRole", QStringLiteral("preview"));
     }
 
     void setCurve(const QVector<CurvePointDef>& points,
@@ -106,10 +105,8 @@ public:
     }
 
 protected:
-    void paintEvent(QPaintEvent*) override
+    void paintPreview(QPainter& p, const QRectF&) override
     {
-        QPainter p(this);
-        QtControlSkin::paintFieldFrame(p, this);
         p.setRenderHint(QPainter::Antialiasing);
         const auto& metrics = ThemeManager::instance().metrics();
         const qreal border = metrics.borderWidth / 2.0;

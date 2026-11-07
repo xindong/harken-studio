@@ -757,6 +757,14 @@ static_assert(static_cast<std::uint64_t>(VN_MONITOR_STUDIO_DEFAULT_GAME_OBJECT_I
 static_assert(static_cast<std::uint64_t>(VN_MONITOR_RECORD_ENVELOPE_PACKED_BYTES) == 316ull, "binding define drift: VN_MONITOR_RECORD_ENVELOPE_PACKED_BYTES");
 static_assert(static_cast<std::uint64_t>(VN_MONITOR_STATE_ENTITY_SLOTS) == 16ull, "binding define drift: VN_MONITOR_STATE_ENTITY_SLOTS");
 static_assert(static_cast<std::uint64_t>(VN_MONITOR_PLAYABLE_PROVENANCE_KNOWN) == 1ull, "binding define drift: VN_MONITOR_PLAYABLE_PROVENANCE_KNOWN");
+static_assert(static_cast<std::uint64_t>(VN_STREAM_SOURCE_REGISTER) == 0ull, "binding define drift: VN_STREAM_SOURCE_REGISTER");
+static_assert(static_cast<std::uint64_t>(VN_STREAM_SOURCE_REPLACE) == 1ull, "binding define drift: VN_STREAM_SOURCE_REPLACE");
+static_assert(static_cast<std::uint64_t>(VN_STREAM_SOURCE_PREPARING) == 1ull, "binding define drift: VN_STREAM_SOURCE_PREPARING");
+static_assert(static_cast<std::uint64_t>(VN_STREAM_SOURCE_READY) == 2ull, "binding define drift: VN_STREAM_SOURCE_READY");
+static_assert(static_cast<std::uint64_t>(VN_STREAM_SOURCE_FAILED) == 3ull, "binding define drift: VN_STREAM_SOURCE_FAILED");
+static_assert(static_cast<std::uint64_t>(VN_BYTE_READ_OK) == 0ull, "binding define drift: VN_BYTE_READ_OK");
+static_assert(static_cast<std::uint64_t>(VN_BYTE_READ_CANCELLED) == 1ull, "binding define drift: VN_BYTE_READ_CANCELLED");
+static_assert(static_cast<std::uint64_t>(VN_BYTE_READ_IO_ERROR) == 2ull, "binding define drift: VN_BYTE_READ_IO_ERROR");
 
 // Mirrored struct sizes and field offsets (the values the C# ABI test
 // asserts its managed layout against).
@@ -2417,6 +2425,23 @@ static_assert(sizeof(VnMonitorExecutionFactV3) == 544, "binding size drift: VnMo
 static_assert(offsetof(VnMonitorExecutionFactV3, fact) == 0, "binding offset drift: VnMonitorExecutionFactV3.fact");
 static_assert(offsetof(VnMonitorExecutionFactV3, activity) == 432, "binding offset drift: VnMonitorExecutionFactV3.activity");
 static_assert(offsetof(VnMonitorExecutionFactV3, playable) == 496, "binding offset drift: VnMonitorExecutionFactV3.playable");
+static_assert(sizeof(VnReadCancellationViewV1) == 24, "binding size drift: VnReadCancellationViewV1");
+static_assert(offsetof(VnReadCancellationViewV1, structSize) == 0, "binding offset drift: VnReadCancellationViewV1.structSize");
+static_assert(offsetof(VnReadCancellationViewV1, reserved0) == 4, "binding offset drift: VnReadCancellationViewV1.reserved0");
+static_assert(offsetof(VnReadCancellationViewV1, context) == 8, "binding offset drift: VnReadCancellationViewV1.context");
+static_assert(offsetof(VnReadCancellationViewV1, isCancelled) == 16, "binding offset drift: VnReadCancellationViewV1.isCancelled");
+static_assert(sizeof(VnByteSourceDescV1) == 40, "binding size drift: VnByteSourceDescV1");
+static_assert(offsetof(VnByteSourceDescV1, structSize) == 0, "binding offset drift: VnByteSourceDescV1.structSize");
+static_assert(offsetof(VnByteSourceDescV1, flags) == 4, "binding offset drift: VnByteSourceDescV1.flags");
+static_assert(offsetof(VnByteSourceDescV1, byteLength) == 8, "binding offset drift: VnByteSourceDescV1.byteLength");
+static_assert(offsetof(VnByteSourceDescV1, userData) == 16, "binding offset drift: VnByteSourceDescV1.userData");
+static_assert(offsetof(VnByteSourceDescV1, readAt) == 24, "binding offset drift: VnByteSourceDescV1.readAt");
+static_assert(offsetof(VnByteSourceDescV1, release) == 32, "binding offset drift: VnByteSourceDescV1.release");
+static_assert(sizeof(VnStreamSourceInfoV1) == 16, "binding size drift: VnStreamSourceInfoV1");
+static_assert(offsetof(VnStreamSourceInfoV1, structSize) == 0, "binding offset drift: VnStreamSourceInfoV1.structSize");
+static_assert(offsetof(VnStreamSourceInfoV1, state) == 4, "binding offset drift: VnStreamSourceInfoV1.state");
+static_assert(offsetof(VnStreamSourceInfoV1, result) == 8, "binding offset drift: VnStreamSourceInfoV1.result");
+static_assert(offsetof(VnStreamSourceInfoV1, reserved0) == 12, "binding offset drift: VnStreamSourceInfoV1.reserved0");
 
 // C function-signature pins for the whole API. Taking the address of each
 // function into a pointer of the table-declared signature makes ANY
@@ -2581,6 +2606,11 @@ extern "C" {
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_MonitorEndHostSession)(uint64_t, uint64_t) = &Vn_MonitorEndHostSession;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_MonitorRegisterHost)(const VnMonitorHostRegistrationV1*) = &Vn_MonitorRegisterHost;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_MonitorRegisterHostV2)(const VnMonitorHostRegistrationV2*) = &Vn_MonitorRegisterHostV2;
+[[maybe_unused]] static VnResult (*const binding_sig_Vn_BeginStreamSource)(VnSoundId, uint32_t, const VnByteSourceDescV1*, VnStreamSourceRequest*) = &Vn_BeginStreamSource;
+[[maybe_unused]] static VnResult (*const binding_sig_Vn_BeginStreamFile)(VnSoundId, uint32_t, const char*, VnStreamSourceRequest*) = &Vn_BeginStreamFile;
+[[maybe_unused]] static VnResult (*const binding_sig_Vn_QueryStreamSource)(VnStreamSourceRequest, VnStreamSourceInfoV1*) = &Vn_QueryStreamSource;
+[[maybe_unused]] static VnResult (*const binding_sig_Vn_CancelStreamSource)(VnStreamSourceRequest) = &Vn_CancelStreamSource;
+[[maybe_unused]] static VnResult (*const binding_sig_Vn_CommitStreamSource)(VnStreamSourceRequest) = &Vn_CommitStreamSource;
 }
 
 #endif // HARKEN_BINDING_ABI_PIN_H

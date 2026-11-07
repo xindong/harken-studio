@@ -1,7 +1,6 @@
 #include "BindingFieldDecorator.h"
 
 #include "BindingAddMenu.h"
-#include "InspectorPanel.h"
 #include "Core/BindingContract.h"
 #include "Core/BindingEditing.h"
 #include "Core/Components/VMixNode.h"
@@ -22,11 +21,16 @@ QString variableName(const QUuid& guid)
 }
 
 BindingFieldDecorator::BindingFieldDecorator(uint8_t slotId, QWidget* parent)
+    : BindingFieldDecorator(BindingContractSemantics::addressOf(slotId, ProjectItemType::Sound), parent)
+{
+}
+
+BindingFieldDecorator::BindingFieldDecorator(const BindingAddress& address, QWidget* parent)
     : InspectorSlotButton(InspectorSlotKind::Binding, parent)
-    , slotId_(slotId)
+    , address_(address)
 {
     setObjectName(QStringLiteral("bindingPoint_")
-        + BindingSemantics::slotName(slotId));
+        + BindingSemantics::slotName(address));
     setContextMenuPolicy(Qt::PreventContextMenu);
     addMenu_ = new BindingAddMenu(this);
     connect(addMenu_, &BindingAddMenu::bindingAdded, this, [this](harkenstudio::ObjectId id) {
@@ -85,8 +89,10 @@ BindingFieldDecorator::~BindingFieldDecorator() = default;
 
 BindingAddress BindingFieldDecorator::addressFor(const ProjectItem* item) const
 {
-    return BindingContractSemantics::addressOf(
-        slotId_, item ? item->type : ProjectItemType::Sound);
+    BindingAddress address = address_;
+    address.hostClass = BindingContractSemantics::hostClassOf(
+        item ? item->type : ProjectItemType::Sound);
+    return address;
 }
 
 void BindingFieldDecorator::bind(ProjectItem* item)
@@ -113,13 +119,8 @@ void BindingFieldDecorator::showEditor(harkenstudio::ObjectId bindingId)
         const auto* binding = mix ? mix->bindings.find(bindingId) : nullptr;
         if (!binding || binding->address != address_) return;
     }
-    for (QWidget* current = this; current; current = current->parentWidget()) {
-        auto* panel = qobject_cast<InspectorPanel*>(current);
-        if (!panel) continue;
-        panel->requestExternalEditor(ExternalEditorSelection::fromCurve(
-            CurveSelection::binding(item_->guid, address_, bindingId)));
-        return;
-    }
+    emit externalEditorRequested(ExternalEditorSelection::fromCurve(
+        CurveSelection::binding(item_->guid, address_, bindingId)));
 }
 
 QString BindingFieldDecorator::hoverSummary() const
@@ -138,7 +139,7 @@ void BindingFieldDecorator::refreshPresentation()
     address_ = address;
     addMenu_->bind(item_, address);
     setEnabled(item_ && BindingContractSemantics::isBindable(
-        BindingContractSemantics::derive(slotId_, item_->type)));
+        BindingContractSemantics::derive(address)));
     QStringList summary;
     if (const auto* mix = BindingEditing::ledgerHost(item_, address))
         for (const auto* binding : mix->bindings.findAll(address))
@@ -155,9 +156,10 @@ void registerBindingFieldDecorator()
 {
     InspectorCustomizationRegistry::instance().setBindingDecoratorFactory(
         [](const PropertyDescriptor& descriptor) -> QWidget* {
-            const auto slotId = BindingContractSemantics::slotIdFromDescriptor(descriptor);
-            if (!slotId) return nullptr;
-            return new BindingFieldDecorator(*slotId);
+            const auto address = BindingContractSemantics::addressFromDescriptor(
+                descriptor, ProjectItemType::Sound);
+            if (!address) return nullptr;
+            return new BindingFieldDecorator(*address);
         });
 }
 

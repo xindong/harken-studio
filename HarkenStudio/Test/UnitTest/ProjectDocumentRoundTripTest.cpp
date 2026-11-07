@@ -380,6 +380,12 @@ TEST_P(ProjectDocumentVersionRoundTripTest, SupportedDocumentVersionsPreserveCon
             content.insert(QStringLiteral("components"), authoredComponents);
         }
         if (version < ProjectSchema::kProjectSchemaVersion) {
+            if (authoredComponents.contains(QStringLiteral("mixnode"))) {
+                auto mix = authoredComponents.value(QStringLiteral("mixnode")).toObject();
+                mix.remove(QStringLiteral("filter"));
+                authoredComponents.insert(QStringLiteral("mixnode"), mix);
+                content.insert(QStringLiteral("components"), authoredComponents);
+            }
             QJsonArray effects;
             QJsonArray legacyEffects;
             const bool bus = header.value(QStringLiteral("type")) == QStringLiteral("project.bus");

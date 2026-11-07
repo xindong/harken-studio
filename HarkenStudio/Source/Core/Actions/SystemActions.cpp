@@ -1,4 +1,6 @@
 
+#include "../CommandSchemas.h"
+#include "../IPC/DesktopCommandSchemas.h"
 #include "../ActionManager.h"
 #include "../AudioEngine.h"
 #include "../AuditionManager.h"
@@ -63,27 +65,47 @@ void registerSystemActions(ActionManager& mgr,
 
     {
         ActionDef def;
-        def.id = "init";
+        def.id = "init_engine";
         def.displayName = "Initialize Engine";
         def.category = "system";
-        def.paramSchema = QJsonObject{{"sample_rate", "int"}, {"buffer_size", "int"}, {"max_voices", "int"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [engine](const QJsonObject& args) -> ActionResult {
             if (!engine) return engineNotAvailable();
-            int sampleRate = args["sample_rate"].toInt(0);
-            int bufferSize = args["buffer_size"].toInt(0);
-            int maxVoices = args["max_voices"].toInt(64);
-            bool success = engine->initialize(sampleRate, bufferSize, maxVoices);
-            if (success)
-                return {true, QJsonObject{{"initialized", true}}};
-            return {false, {}, "INIT_FAILED", "Failed to initialize audio engine"};
+            if (engine->isInitialized()) {
+                if (engine->isSimulationMode())
+                    return {false, {{"initialized", false}}, "ENGINE_UNAVAILABLE",
+                            "The audio runtime is unavailable. Call shutdown_engine before retrying init_engine."};
+                if (!args.isEmpty())
+                    return {false, {{"initialized", true}}, "ALREADY_INITIALIZED",
+                            "The audio runtime is already initialized. Call shutdown_engine before changing initialization settings."};
+                return {true, {{"initialized", true}, {"already_initialized", true}}};
+            }
+            HarkenEditor::Bridge::EngineSessionConfig config;
+            config.sampleRate = args["sample_rate"].toInt(0);
+            config.bufferSize = args["buffer_size"].toInt(0);
+            config.maxVoices = args["max_voices"].toInt(64);
+            const QString deviceMode = args.value("device_mode").toString("real");
+            if (deviceMode != "real" && deviceMode != "null")
+                return {false, {}, "INVALID_ARGS", "device_mode must be real or null"};
+            config.deviceMode = deviceMode == "null" ? HarkenEditor::Bridge::EngineDeviceMode::Null
+                                                     : HarkenEditor::Bridge::EngineDeviceMode::Real;
+            if (!engine->initialize(config))
+                return {false, {{"initialized", false}}, "INIT_FAILED", "Failed to initialize audio engine"};
+            if (engine->isSimulationMode()) {
+                engine->shutdown();
+                return {false, {{"initialized", false}}, "ENGINE_UNAVAILABLE",
+                        "The audio runtime could not initialize. Check the audio device or use device_mode null for silent execution."};
+            }
+            return {true, {{"initialized", true}, {"device_mode", deviceMode}}};
         };
         mgr.registerAction(def);
     }
 
     {
         ActionDef def;
-        def.id = "shutdown";
+        def.id = "shutdown_engine";
+        def.paramSchema = commandInputSchema(def.id);
         def.displayName = "Shutdown Engine";
         def.category = "system";
         def.undoable = false;
@@ -98,6 +120,7 @@ void registerSystemActions(ActionManager& mgr,
     {
         ActionDef def;
         def.id = "start_output";
+        def.paramSchema = commandInputSchema(def.id);
         def.displayName = "Start Audio Output";
         def.category = "system";
         def.undoable = false;
@@ -116,6 +139,7 @@ void registerSystemActions(ActionManager& mgr,
     {
         ActionDef def;
         def.id = "stop_output";
+        def.paramSchema = commandInputSchema(def.id);
         def.displayName = "Stop Audio Output";
         def.category = "system";
         def.undoable = false;
@@ -133,7 +157,7 @@ void registerSystemActions(ActionManager& mgr,
         def.id = "post_action";
         def.displayName = "Post Action";
         def.category = "system";
-        def.paramSchema = QJsonObject{{"name", "string"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [engine, auditionGuard](const QJsonObject& args) -> ActionResult {
             if (!engine) return engineNotAvailable();
@@ -162,7 +186,7 @@ void registerSystemActions(ActionManager& mgr,
         def.id = "post_action_3d";
         def.displayName = "Post Action 3D";
         def.category = "system";
-        def.paramSchema = QJsonObject{{"name", "string"}, {"x", "float"}, {"y", "float"}, {"z", "float"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [engine, activePlaybacks](const QJsonObject& args) -> ActionResult {
             if (!engine) return engineNotAvailable();
@@ -202,9 +226,7 @@ void registerSystemActions(ActionManager& mgr,
         def.id = "stop_action";
         def.displayName = "Stop Action";
         def.category = "system";
-        def.paramSchema = QJsonObject{
-            {"handle", "int64"}, {"fade_ms", "float"}
-        };
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [engine, activePlaybacks](const QJsonObject& args) -> ActionResult {
             if (!engine) return engineNotAvailable();
@@ -227,7 +249,7 @@ void registerSystemActions(ActionManager& mgr,
         def.id = "stop_all";
         def.displayName = "Stop All Actions";
         def.category = "system";
-        def.paramSchema = QJsonObject{{"fade_ms", "float"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [engine, auditionGuard, activePlaybacks](const QJsonObject& args) -> ActionResult {
             if (!engine) return engineNotAvailable();
@@ -245,38 +267,10 @@ void registerSystemActions(ActionManager& mgr,
 
     {
         ActionDef def;
-        def.id = "trigger_action";
-        def.displayName = "Trigger Action";
-        def.category = "system";
-        def.paramSchema = QJsonObject{{"name", "string"}};
-        def.undoable = false;
-        def.handler = [engine](const QJsonObject& args) -> ActionResult {
-            if (!engine) return engineNotAvailable();
-            QString name = args.value("name").toString();
-            {
-                auto sel = VNX::resolveSelector(name);
-                if (!sel.ok) return {false, {}, sel.errorCode, sel.errorMessage};
-                name = sel.name;
-            }
-            if (name.isEmpty())
-                return {false, {}, "MISSING_PARAM", "Missing required parameter: name"};
-            const auto result = engine->playByNameDetailed(name);
-            return playbackResult(result, QJsonObject{
-                {"action_name", name},
-                {"action_handle", static_cast<qint64>(result.playbackHandle)},
-                {"triggered", (result.playbackHandle != 0)}
-            });
-        };
-        mgr.registerAction(def);
-    }
-
-
-    {
-        ActionDef def;
         def.id = "set_listener";
         def.displayName = "Set Listener Transform";
         def.category = "system";
-        def.paramSchema = QJsonObject{{"pos", "array"}, {"forward", "array"}, {"up", "array"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [engine](const QJsonObject& args) -> ActionResult {
             if (!engine) return engineNotAvailable();
@@ -301,10 +295,7 @@ void registerSystemActions(ActionManager& mgr,
         def.id = "set_action_position";
         def.displayName = "Set Action Position";
         def.category = "system";
-        def.paramSchema = QJsonObject{
-            {"handle", "int64"},
-            {"x", "float"}, {"y", "float"}, {"z", "float"}
-        };
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [engine, activePlaybacks](const QJsonObject& args) -> ActionResult {
             if (!engine) return engineNotAvailable();
@@ -364,7 +355,7 @@ void registerSystemActions(ActionManager& mgr,
         def.id = "set_listener_position";
         def.displayName = "Set Listener Position";
         def.category = "system";
-        def.paramSchema = QJsonObject{{"listener_id", "uint32"}, {"pos", "array"}, {"forward", "array"}, {"up", "array"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [engine](const QJsonObject& args) -> ActionResult {
             if (!engine) return engineNotAvailable();
@@ -531,7 +522,7 @@ void registerSystemActions(ActionManager& mgr,
         def.id = "load_pack";
         def.displayName = "Load Pack";
         def.category = "system";
-        def.paramSchema = QJsonObject{{"path", "string"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [engine](const QJsonObject& args) -> ActionResult {
             if (!engine) return engineNotAvailable();
@@ -553,7 +544,7 @@ void registerSystemActions(ActionManager& mgr,
         def.id = "unload_pack";
         def.displayName = "Unload Pack";
         def.category = "system";
-        def.paramSchema = QJsonObject{{"path", "string"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [engine](const QJsonObject& args) -> ActionResult {
             if (!engine) return engineNotAvailable();
@@ -727,6 +718,7 @@ void registerSystemActions(ActionManager& mgr,
     {
         ActionDef def;
         def.id = "open_remote_connect";
+        def.paramSchema = desktopCommandInputSchema(def.id);
         def.requiresDesktop = true;
         def.displayName = "Open Remote Connect";
         def.category = "system";
@@ -825,19 +817,7 @@ void registerSystemActions(ActionManager& mgr,
         def.requiresDesktop = true;
         def.displayName = "Switch Layout";
         def.category = "ui_control";
-        def.paramSchema = QJsonObject{{"layout", "string"}};
-        def.undoable = false;
-
-        mgr.registerAction(def);
-    }
-
-    {
-        ActionDef def;
-        def.id = "switch_view";
-        def.requiresDesktop = true;
-        def.displayName = "Switch View";
-        def.category = "ui_control";
-        def.paramSchema = QJsonObject{{"view", "string"}};
+        def.paramSchema = desktopCommandInputSchema(def.id);
         def.undoable = false;
 
         mgr.registerAction(def);
@@ -849,7 +829,7 @@ void registerSystemActions(ActionManager& mgr,
         def.requiresDesktop = true;
         def.displayName = "Reset Layout";
         def.category = "ui_control";
-        def.paramSchema = QJsonObject{{"view", "string"}};
+        def.paramSchema = desktopCommandInputSchema(def.id);
         def.undoable = false;
 
         mgr.registerAction(def);
@@ -861,7 +841,7 @@ void registerSystemActions(ActionManager& mgr,
         def.requiresDesktop = true;
         def.displayName = "Toggle Panel";
         def.category = "ui_control";
-        def.paramSchema = QJsonObject{{"name", "string"}, {"visible", "bool"}};
+        def.paramSchema = desktopCommandInputSchema(def.id);
         def.undoable = false;
 
         mgr.registerAction(def);
@@ -873,13 +853,7 @@ void registerSystemActions(ActionManager& mgr,
         def.requiresDesktop = true;
         def.displayName = "Open Curve Editor";
         def.category = "ui_control";
-        def.paramSchema = QJsonObject{
-            {"name", "string"},
-            {"attenuation", "string"},
-            {"guid", "string"},
-            {"attenuation_guid", "string"},
-            {"dimension", "string"}
-        };
+        def.paramSchema = desktopCommandInputSchema(def.id);
         def.undoable = false;
 
         mgr.registerAction(def);
@@ -891,7 +865,7 @@ void registerSystemActions(ActionManager& mgr,
         def.requiresDesktop = true;
         def.displayName = "Save Named Layout";
         def.category = "ui_control";
-        def.paramSchema = QJsonObject{{"name", "string"}};
+        def.paramSchema = desktopCommandInputSchema(def.id);
         def.undoable = false;
 
         mgr.registerAction(def);
@@ -903,7 +877,7 @@ void registerSystemActions(ActionManager& mgr,
         def.requiresDesktop = true;
         def.displayName = "Load Named Layout";
         def.category = "ui_control";
-        def.paramSchema = QJsonObject{{"name", "string"}};
+        def.paramSchema = desktopCommandInputSchema(def.id);
         def.undoable = false;
 
         mgr.registerAction(def);
@@ -915,7 +889,7 @@ void registerSystemActions(ActionManager& mgr,
         def.requiresDesktop = true;
         def.displayName = "Delete Named Layout";
         def.category = "ui_control";
-        def.paramSchema = QJsonObject{{"name", "string"}};
+        def.paramSchema = desktopCommandInputSchema(def.id);
         def.undoable = false;
 
         mgr.registerAction(def);

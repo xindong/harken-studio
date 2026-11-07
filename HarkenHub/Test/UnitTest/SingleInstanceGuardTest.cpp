@@ -7,13 +7,43 @@
 #include <QString>
 #include <QStringList>
 #include <QTimer>
+#include <QProcess>
+#include <QElapsedTimer>
+
+#ifdef Q_OS_WIN
+#include "Setup/SetupHubShutdown.h"
+#endif
 
 #include <atomic>
+#include <cstdio>
 #include <set>
 #include <thread>
 #include <vector>
 
 using VNH::SingleInstanceGuard;
+
+#ifdef Q_OS_WIN
+namespace HarkenHubTest {
+
+int runSetupShutdownFixture(const QStringList& arguments)
+{
+    SingleInstanceGuard guard(arguments.value(2));
+    if (!guard.isPrimary())
+        return 2;
+    QObject::connect(&guard, &SingleInstanceGuard::activationRequested,
+                     QCoreApplication::instance(), [&](const QStringList& received) {
+        if (received == QStringList{QStringLiteral("--quit")} &&
+            !arguments.contains(QStringLiteral("--ignore-quit")))
+            QTimer::singleShot(150, QCoreApplication::instance(), &QCoreApplication::quit);
+    });
+    QTimer::singleShot(15000, QCoreApplication::instance(), &QCoreApplication::quit);
+    std::fputs("ready\n", stdout);
+    std::fflush(stdout);
+    return QCoreApplication::exec();
+}
+
+}
+#endif
 
 namespace {
 
@@ -50,6 +80,38 @@ TEST(SingleInstanceGuard, SecondInstanceIsNotPrimary)
     SingleInstanceGuard second(key);
     EXPECT_FALSE(second.isPrimary());
 }
+
+#ifdef Q_OS_WIN
+TEST(SingleInstanceGuard, SetupShutdownWaitsForExitAndRejectsAnUnresponsiveInstance)
+{
+    for (const bool ignoreQuit : {false, true}) {
+        const QString key = uniqueKey(ignoreQuit ? "setup-stalled" : "setup-exit");
+        const std::wstring pipe = (QStringLiteral("\\\\.\\pipe\\") + key).toStdWString();
+        EXPECT_TRUE(HarkenSetup::requestHubExit(pipe.c_str()));
+        QProcess child;
+        QStringList arguments{QStringLiteral("--setup-shutdown-fixture"), key};
+        if (ignoreQuit)
+            arguments.append(QStringLiteral("--ignore-quit"));
+        child.start(QCoreApplication::applicationFilePath(), arguments);
+        ASSERT_TRUE(child.waitForStarted(5000));
+        ASSERT_TRUE(child.waitForReadyRead(5000));
+        ASSERT_TRUE(child.readAllStandardOutput().contains("ready"));
+        QElapsedTimer elapsed;
+        elapsed.start();
+        EXPECT_EQ(HarkenSetup::requestHubExit(pipe.c_str()), !ignoreQuit);
+        EXPECT_LT(elapsed.elapsed(), 10000);
+        if (ignoreQuit) {
+            EXPECT_EQ(child.state(), QProcess::Running);
+            child.kill();
+            EXPECT_TRUE(child.waitForFinished(5000));
+        } else {
+            EXPECT_TRUE(child.waitForFinished(5000));
+            EXPECT_EQ(child.exitCode(), 0);
+            EXPECT_GE(elapsed.elapsed(), 100);
+        }
+    }
+}
+#endif
 
 TEST(SingleInstanceGuard, SecondaryReportsPrimaryProcessId)
 {

@@ -7,6 +7,9 @@
 #include "Core/ProjectUpgradeMessages.h"
 #include "Dialogs/StartupLoadingWindow.h"
 #include "MainWindow.h"
+#include "Core/IPC/StudioInstanceTransport.h"
+#include "Tooling/StudioCli/Shell.h"
+#include "Tooling/StudioCli/StudioSession.h"
 
 #include <QApplication>
 #include <QDir>
@@ -71,7 +74,8 @@ void StartupCoordinator::start()
                    .filePath(startupArguments_.projectName.trimmed()))
               .filePath(startupArguments_.projectName.trimmed() + QStringLiteral(".hsp"))
         : projectFile_;
-    auto acquisition = ProjectInstance::acquire(instancePath);
+    auto acquisition = ProjectInstance::acquire(instancePath, startupArguments_.shell
+        ? ProjectInstance::ActivationPolicy::Deny : ProjectInstance::ActivationPolicy::Allow);
     if (acquisition.status == ProjectInstance::Status::Failed) {
         fail(acquisition.error, 3, QStringLiteral("PROJECT_INSTANCE_UNAVAILABLE"));
         return;
@@ -155,6 +159,11 @@ void StartupCoordinator::finishProjectAnalysis()
         fail(ProjectUpgradeMessages::userMessage(analysis_.issue, analysis_.detail),
              3, projectIssueCode(analysis_.issue),
              analysis_.blockingErrors.join(QLatin1Char('\n')));
+        return;
+    }
+    if (startupArguments_.shell && analysis_.upgradeRequired) {
+        fail(QStringLiteral("Open and upgrade this project in Studio before starting --shell."),
+            3, QStringLiteral("PROJECT_UPGRADE_SELECTION_REQUIRED"));
         return;
     }
     const ProjectOpenDecision decision = confirmProjectOpen(analysis_, &loading_);
@@ -310,6 +319,23 @@ void StartupCoordinator::finish()
         ProjectInstance::setActivationWindow(mainWindow_.get());
         loading_.setPhase(StartupPhase::Ready);
         loading_.dismiss();
+        auto* instanceServer = new StudioInstanceServer(mainWindow_->ipcServer(), mainWindow_.get());
+        QString instanceError;
+        if (!instanceServer->start(&instanceError))
+            qWarning().noquote() << "Studio instance commands unavailable:" << instanceError;
+        if (startupArguments_.shell) {
+            using Exit = HarkenStudioCli::ShellExitRequest;
+            const auto result = HarkenStudioCli::runDesktopShell(
+                *mainWindow_->ipcServer(), startupArguments_.shellJson, [this](Exit request) -> QJsonObject {
+                    const bool discarded = request == Exit::Discard
+                        && ProjectManager::instance().hasUnsavedChanges();
+                    if (!mainWindow_->closeFromShell(request == Exit::Discard))
+                        return HarkenStudioCli::failure(QStringLiteral("EXIT_NOT_COMPLETED"),
+                            QStringLiteral("Studio did not close. Resolve the active operation or canceled close request before retrying."));
+                    return {{"status", "ok"}, {"result", QJsonObject{{"exiting", true}, {"discarded", discarded}}}};
+                });
+            if (result.exitRequest != Exit::None) application_.quit();
+        }
     });
 }
 
@@ -343,7 +369,10 @@ void StartupCoordinator::finishCancellation()
     cancelling_ = false;
     QTimer::singleShot(0, this, [this]() {
         loading_.dismiss();
-        application_.exit(0);
+        if (startupArguments_.shell)
+            HarkenStudioCli::writeShellResponse(HarkenStudioCli::failure(QStringLiteral("CANCELED"),
+                QStringLiteral("Project opening was canceled before the shell became ready.")));
+        application_.exit(startupArguments_.shell ? 130 : 0);
     });
 }
 
@@ -355,6 +384,12 @@ void StartupCoordinator::fail(const QString& message, int exitCode,
         return;
     terminal_ = true;
     const QString userMessage = ProjectUpgradeMessages::userMessage(message);
+    if (startupArguments_.shell) {
+        HarkenStudioCli::writeShellResponse(HarkenStudioCli::failure(errorCode, userMessage));
+        loading_.dismiss();
+        QTimer::singleShot(0, &application_, [this, exitCode]() { application_.exit(exitCode); });
+        return;
+    }
     loading_.showFailure(userMessage);
     QMessageBox box(QMessageBox::Critical, tr("Harken Studio"),
                     userMessage, QMessageBox::Ok, &loading_);

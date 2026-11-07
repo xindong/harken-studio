@@ -32,16 +32,17 @@ bool Multiply(std::uint64_t a, std::uint64_t b,
 
 } // namespace
 
-CompletionPredictability ResolveKnownCompletionDuration(
+static CompletionPredictability ResolveSourceDuration(
     const KnownCompletionFactsV1& facts,
     std::uint64_t* out) noexcept {
     if (out == nullptr || facts.sourceRate == 0 ||
         facts.mixRate == 0 || !std::isfinite(facts.pitchRatio) ||
-        facts.pitchRatio <= 0.0f) {
+        facts.pitchRatio <= 0.0f || !std::isfinite(facts.resolvedSourceRatio) ||
+        facts.resolvedSourceRatio < 0.0) {
         return CompletionPredictability::Invalid;
     }
     if (!facts.residentExactMedia || !facts.pitchFixed ||
-        !facts.serialRender || facts.endMutationPossible ||
+        facts.endMutationPossible ||
         facts.loopCount == 0) {
         return CompletionPredictability::SignalOnly;
     }
@@ -73,16 +74,17 @@ CompletionPredictability ResolveKnownCompletionDuration(
             return CompletionPredictability::Invalid;
         }
     }
-    const double ratio = static_cast<double>(facts.pitchRatio) *
-        (static_cast<double>(facts.sourceRate) / facts.mixRate);
+    const double ratio = facts.resolvedSourceRatio != 0.0 ? facts.resolvedSourceRatio :
+        static_cast<double>(facts.pitchRatio) *
+            (static_cast<double>(facts.sourceRate) / facts.mixRate);
     SourcePhaseStep step{};
     if (!DecodeSourcePhaseStep(ratio, &step)) {
         return CompletionPredictability::Invalid;
     }
     if (facts.authoredDurationFrames != UINT64_MAX &&
-        JumpSourcePhase(step, {}, facts.authoredDurationFrames) < total) {
+        JumpSourcePhase(step, facts.sourcePhase, facts.authoredDurationFrames) < total) {
         total = facts.authoredDurationFrames;
-    } else if (!FixedSourceOutputFrames(total, ratio, &total)) {
+    } else if (!FixedSourceOutputFrames(total, ratio, &total, facts.sourcePhase)) {
         return CompletionPredictability::Invalid;
     }
     if (facts.authoredDurationFrames != UINT64_MAX) {
@@ -93,6 +95,16 @@ CompletionPredictability ResolveKnownCompletionDuration(
     }
     *out = total;
     return CompletionPredictability::KnownFinite;
+}
+
+CompletionPredictability ResolveKnownCompletionDuration(
+    const KnownCompletionFactsV1& facts, std::uint64_t* out) noexcept {
+    return ResolveSourceDuration(facts, out);
+}
+
+CompletionPredictability ResolveFixedSourceDuration(
+    const KnownCompletionFactsV1& facts, std::uint64_t* out) noexcept {
+    return ResolveSourceDuration(facts, out);
 }
 
 CompletionPredictability MaterializeKnownCompletion(

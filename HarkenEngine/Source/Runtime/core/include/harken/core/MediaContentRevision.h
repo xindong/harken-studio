@@ -229,6 +229,29 @@ struct MediaStreamSemanticHeaderV1 {
     std::uint64_t loopEndFrame = 0;
 };
 
+inline MediaContentRevisionHasherV1 BeginMediaStreamContentRevisionV1(
+    const MediaStreamSemanticHeaderV1& header) noexcept {
+    static constexpr char kDomain[] = "HARKEN-MEDIA-STREAM-V1";
+    MediaContentRevisionHasherV1 hash(kDomain, sizeof(kDomain));
+    hash.AddU32(header.sampleRate);
+    hash.AddU32(header.channelCount);
+    hash.AddU64(header.frameCount);
+    hash.AddU32(header.codec);
+    hash.AddU32(header.formatVintage);
+    hash.AddU32(header.chunkFrames);
+    hash.AddU32(header.chunkCount);
+    return hash;
+}
+
+inline std::uint64_t FinishMediaStreamContentRevisionV1(
+    MediaContentRevisionHasherV1 hash, const MediaStreamSemanticHeaderV1& header) noexcept {
+    if (header.loopEndFrame != 0) {
+        hash.AddU64(header.loopStartFrame);
+        hash.AddU64(header.loopEndFrame);
+    }
+    return hash.Finish();
+}
+
 inline bool ComputeMediaStreamContentRevisionV1(
     const MediaStreamSemanticHeaderV1& header,
     const std::uint64_t* chunkChecksums,
@@ -247,26 +270,11 @@ inline bool ComputeMediaStreamContentRevisionV1(
         return false;
     }
 
-    static constexpr char kDomain[] = "HARKEN-MEDIA-STREAM-V1";
-    MediaContentRevisionHasherV1 hash(kDomain, sizeof(kDomain));
-    hash.AddU32(header.sampleRate);
-    hash.AddU32(header.channelCount);
-    hash.AddU64(header.frameCount);
-    hash.AddU32(header.codec);
-    hash.AddU32(header.formatVintage);
-    hash.AddU32(header.chunkFrames);
-    hash.AddU32(header.chunkCount);
+    auto hash = BeginMediaStreamContentRevisionV1(header);
     for (std::uint32_t i = 0; i < header.chunkCount; ++i) {
         hash.AddU64(chunkChecksums[i]);
     }
-    // As with resident PCM, preserve the non-loop identity and append only
-    // effective loop metadata. File-format sentinels are resolved by the owner.
-    if (header.loopEndFrame != 0) {
-        hash.AddU64(header.loopStartFrame);
-        hash.AddU64(header.loopEndFrame);
-    }
-
-    *outRevision = hash.Finish();
+    *outRevision = FinishMediaStreamContentRevisionV1(hash, header);
     return true;
 }
 

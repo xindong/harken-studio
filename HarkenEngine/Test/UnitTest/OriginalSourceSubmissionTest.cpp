@@ -2225,10 +2225,19 @@ TEST(OriginalSourceSubmission, EngineOriginalSingleCurrentBeforeHeadOwnAndForeig
     GenuinePreparedSingleEpisode episode;
     ASSERT_NO_FATAL_FAILURE(StartIndependent(engine, episode.source, samples));
     ASSERT_TRUE(episode.Prepare(engine));
-    ASSERT_TRUE(engine.IssueOriginalPlayableLifetimes(episode.parentLinks));
+    ASSERT_TRUE(engine.IssueOriginalPlayableLifetimes(episode.parentLinks, false));
+    ASSERT_EQ(0u, engine.originalSingleCurrentHolders.size());
     const auto head = engine.commands.PublishedHead();
     const auto completed = engine.mixer.BlocksRendered();
     harken::Engine::OriginalSingleCurrentHolder* issued = nullptr;
+    engine.originalSingleCurrentHolders.SetCommitPageLimitForTests(0);
+    EXPECT_FALSE(JoinEngineOriginalCurrent(engine, episode, &issued));
+    EXPECT_EQ(nullptr, issued);
+    EXPECT_EQ(0u, engine.originalSingleCurrentCount);
+    EXPECT_EQ(0u, engine.originalSingleCurrentHolders.size());
+    EXPECT_EQ(head, engine.commands.PublishedHead());
+    EXPECT_EQ(completed, engine.mixer.BlocksRendered());
+    engine.originalSingleCurrentHolders.SetCommitPageLimitForTests(SIZE_MAX);
     ASSERT_TRUE(JoinEngineOriginalCurrent(engine, episode, &issued));
     ASSERT_NE(nullptr, issued);
     EXPECT_FALSE(JoinEngineOriginalCurrent(engine, episode, &issued));
@@ -2599,7 +2608,6 @@ struct GenuineInitialSingleClockHarness {
         facts.sourceRate = kRate;
         facts.mixRate = engine.config.mixRate.SampleRate();
         facts.pitchFixed = true;
-        facts.serialRender = true;
         facts.absoluteLogicalStartFrame = 0;
         facts.playbackFactsRevision = episode.owner.factsRevision;
         facts.program.kind = harken::PlayableKindV1::Sound;

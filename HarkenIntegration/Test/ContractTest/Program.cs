@@ -33,6 +33,11 @@ namespace Harken.Test
                 InstallNativeResolver(true);
                 return RunAbiFidelity() && RunAttenuationAbi(args[0] == "--attenuation-old-native") ? 0 : 1;
             }
+            if (args.Length == 1 && args[0] == "--stream-sources-only")
+            {
+                InstallNativeResolver(true);
+                return RunAbiFidelity() && StreamSourceContract.Run() ? 0 : 1;
+            }
             if (args.Length == 1 && args[0] == "--variables-only")
             {
                 InstallNativeResolver(true);
@@ -100,6 +105,7 @@ namespace Harken.Test
             bool repositoryNativeOk = !requireNative || RepositoryPublicationContract.Run();
             bool companionNativeOk = !requireNative || CompanionDirectoryContract.Run();
             companionNativeOk &= !requireNative || CompanionSourceContract.Run();
+            companionNativeOk &= !requireNative || StreamSourceContract.Run();
 
             Console.WriteLine();
             Console.WriteLine("ABI fidelity : " + (abiOk ? "PASS" : "FAIL"));
@@ -533,7 +539,7 @@ namespace Harken.Test
                 int provides = PackByteProvider.LastProvideCalls;
                 int releases = PackByteProvider.LastReleaseCalls;
                 result = Packs.ActivateCanonicalPackSet(members, 1, out var report, out var rows);
-                bool ok = result == VnResult.VN_OK && inspection.CatalogEntries == 1000 &&
+                bool ok = result == VnResult.VN_OK && inspection.CatalogEntries == 0 &&
                     rows.Length == 2 && Array.TrueForAll(rows, row => row.handle != 0) &&
                     PackByteProvider.LastProvideCalls - provides == 2 &&
                     PackByteProvider.LastReleaseCalls - releases == 2 && PackByteProvider.OutstandingPinCount == 0;
@@ -542,7 +548,7 @@ namespace Harken.Test
                     Emitter.None, out ActionFiring firing);
                 ok &= result == VnResult.VN_OK && firing.IsValid;
                 ok &= Actions.Post(new VnObjectId(0x3da91a64b9474560UL, 0xAC710140UL),
-                    Emitter.None, out _) == VnResult.VN_CONTENT_NOT_LOADED;
+                    Emitter.None, out _) == VnResult.VN_UNKNOWN_ID;
                 ok &= Packs.UnloadCanonicalPackSet(new Pack(report.initHandle),
                     report.resultSetRevision, report.resultSetRevision + 1) == VnResult.VN_OK;
                 Console.WriteLine(ok ? "[PackNative] shared Init/content fixture PASS."

@@ -1408,15 +1408,13 @@ void BlueprintCanvasWidget::dropEvent(QDropEvent* event)
     for (const QString& p : files) filesJson.append(p);
     QJsonObject args;
     args.insert(QStringLiteral("files"),  filesJson);
-    args.insert(QStringLiteral("drop_x"), snapped.x());
-    args.insert(QStringLiteral("drop_y"), snapped.y());
     if (targetContainerID != 0) {
         args.insert(QStringLiteral("target_container_id"),
                     static_cast<qint64>(targetContainerID));
     }
     const ActionResult result =
-        ActionManager::instance().execute(QStringLiteral("import_audio_to_canvas"), args);
-    if (!result.success) {
+        ActionManager::instance().execute(QStringLiteral("import_audio_files"), args);
+    if (!result.success && result.errorCode != QStringLiteral("IMPORT_PARTIAL_FAILURE")) {
         if (result.errorCode != QStringLiteral("IMPORT_FAILED"))
             LogPanel::logError(LogCategory::Import, result.errorMessage);
         return;

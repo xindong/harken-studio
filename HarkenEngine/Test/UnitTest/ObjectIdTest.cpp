@@ -4,6 +4,7 @@
 #include <harken/core/CurrentWorldCodec.h>
 #include <harken/param/VariableService.h>
 #include <harken/media/PackFormatV2.h>
+#include <harken/media/GameplayCatalogFormat.h>
 #include <harken/media/StreamFormat.h>
 #include <harken_remote/Protocol.h>
 #include <harken_remote/WireFormat.h>
@@ -160,16 +161,16 @@ TEST(ObjectId, DiagnosticRingPreservesIdentityAndProductionTime)
 
 TEST(ObjectId, PackDirectoryKeepsUuidSeparateFromRelationOrdinal)
 {
-    harken::PackV2DirectoryEntry entry{};
+    harken::PackDirectoryEntry entry{};
     entry.id = {0xcacc73dc2e344d29, 0x894f3ed9db63e6fa};
     entry.relationOrdinal = 123;
     entry.offset = 512;
     entry.size = 256;
     entry.payloadChecksum = 0x1122334455667788;
-    std::array<uint8_t, harken::kPackV2DirectoryEntryBytes + 2> bytes{};
+    std::array<uint8_t, harken::kPackDirectoryEntryBytes + 2> bytes{};
     bytes.front() = bytes.back() = 0xa5;
-    harken::SerializePackV2DirectoryEntry(entry, bytes.data() + 1);
-    const auto decoded = harken::ParsePackV2DirectoryEntry(bytes.data() + 1);
+    harken::SerializePackDirectoryEntry(entry, bytes.data() + 1);
+    const auto decoded = harken::ReadPackDirectoryEntry(bytes.data() + 1);
     EXPECT_EQ(decoded.id, entry.id);
     EXPECT_EQ(decoded.relationOrdinal, entry.relationOrdinal);
     EXPECT_EQ(decoded.offset, entry.offset);

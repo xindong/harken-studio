@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -20,8 +21,18 @@
 #include <functional>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <winioctl.h>
+#undef ReplaceFile
+#endif
 
 #ifndef HARKEN_TEMP_DIR
 #error "HARKEN_TEMP_DIR must point at the repository's .temp directory"
@@ -37,14 +48,23 @@ struct StreamManagerTestAccess {
         for (const auto& column : manager.m_ringStorage) bytes += column.CommittedBytes();
         return bytes;
     }
-    static std::istream& Input(StreamManager& manager, std::uint32_t file) {
-        return manager.m_files[file]->file;
+    static std::shared_ptr<const StreamByteSource>& Input(StreamManager& manager, std::uint32_t file) {
+        return manager.m_files[file]->source;
     }
-    static void ServeSlots(StreamManager& manager) { manager.ServeSlots(); }
+    static void ServeSlots(StreamManager& manager) {
+        StreamManager::Request request;
+        request.kind = StreamManager::Request::Kind::Serve;
+        request.forceServe = true;
+        EXPECT_EQ(VN_OK, manager.PostAndWait(request));
+    }
     static VnResult ServeAndWait(StreamManager& manager) {
         StreamManager::Request request;
         request.kind = StreamManager::Request::Kind::Serve;
         return manager.PostAndWait(request);
+    }
+    static void ExhaustSourceGenerations(StreamManager& manager) {
+        std::lock_guard<std::mutex> lock(manager.m_mutex);
+        manager.m_lastSourceGeneration = UINT64_MAX;
     }
     static bool StagedDataMatchesVerifiedChunk(const StreamManager& manager,
                                                std::uint32_t slot) {
@@ -120,45 +140,45 @@ std::vector<std::uint8_t> MakeValidImage(VnObjectId soundId,
     return BuildStreamBytes(spec, tone);
 }
 
-class ReadObserver final : public std::streambuf {
+class ReadObserver final {
+    class Source final : public harken::StreamByteSource {
+    public:
+        std::shared_ptr<const harken::StreamByteSource> original;
+        std::function<void()> callback;
+        const bool* failReads = nullptr;
+        std::size_t maxRead = SIZE_MAX;
+        bool afterRead = false;
+        std::uint64_t ByteCount() const noexcept override { return original->ByteCount(); }
+        harken::StreamReadResult ReadAt(std::uint64_t offset, void* data, std::size_t size,
+                                       harken::StreamReadCancellation cancel) const override {
+            if (!afterRead) callback();
+            if (failReads && *failReads) return {};
+            const auto result = original->ReadAt(offset, data, std::min(size, maxRead), cancel);
+            if (afterRead) callback();
+            return result;
+        }
+    };
 public:
-    ReadObserver(std::istream& input, std::function<void()> callback,
-                 bool shortenFirstRead = false, bool afterRead = false)
-        : input_(input), original_(input.rdbuf()), callback_(std::move(callback)),
-          originalExceptions_(input.exceptions()), shortenFirstRead_(shortenFirstRead),
-          afterRead_(afterRead) {
-        input_.rdbuf(this);
+    ReadObserver(std::shared_ptr<const harken::StreamByteSource>& input,
+                 std::function<void()> callback, const bool* failReads = nullptr,
+                 bool afterRead = false, std::size_t maxRead = SIZE_MAX)
+        : input_(input), original_(input) {
+        auto observed = std::make_shared<Source>();
+        observed->original = original_;
+        observed->callback = std::move(callback);
+        observed->failReads = failReads;
+        observed->maxRead = maxRead;
+        observed->afterRead = afterRead;
+        input_ = std::move(observed);
     }
-    ~ReadObserver() override {
-        input_.exceptions(std::ios::goodbit);
-        input_.clear();
-        input_.rdbuf(original_);
-        input_.exceptions(originalExceptions_);
+    ~ReadObserver() { Restore(); }
+    void Restore() {
+        if (!restored_) { input_ = original_; restored_ = true; }
     }
 private:
-    std::streamsize xsgetn(char* data, std::streamsize size) override {
-        if (!afterRead_) callback_();
-        if (shortenFirstRead_ && size > 0) {
-            shortenFirstRead_ = false;
-            --size;
-        }
-        const auto read = original_->sgetn(data, size);
-        if (afterRead_) callback_();
-        return read;
-    }
-    pos_type seekoff(off_type offset, std::ios_base::seekdir direction,
-                     std::ios_base::openmode mode) override {
-        return original_->pubseekoff(offset, direction, mode);
-    }
-    pos_type seekpos(pos_type position, std::ios_base::openmode mode) override {
-        return original_->pubseekpos(position, mode);
-    }
-    std::istream& input_;
-    std::streambuf* original_;
-    std::function<void()> callback_;
-    std::ios::iostate originalExceptions_;
-    bool shortenFirstRead_;
-    bool afterRead_;
+    std::shared_ptr<const harken::StreamByteSource>& input_;
+    std::shared_ptr<const harken::StreamByteSource> original_;
+    bool restored_ = false;
 };
 
 std::vector<float> ServiceSamples(std::size_t frames, unsigned bias) {
@@ -182,6 +202,953 @@ void ExpectAndConsume(harken::StreamRing& ring, const std::vector<float>& expect
         position += span;
         count -= span;
     }
+}
+
+harken::StreamManager::ReplacementRequest ReplacementAt(
+    const harken::StreamManager::StreamFacts& facts, std::uint64_t frame = 0) {
+    harken::StreamManager::ReplacementRequest request;
+    request.fileIndex = facts.fileIndex;
+    request.sourceGeneration = facts.sourceGeneration;
+    request.contentRevision = facts.contentRevision;
+    request.targetFrame = frame;
+    request.loopEndFrame = facts.frameCount;
+    return request;
+}
+
+template<class Predicate> bool WaitUntil(Predicate predicate) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(4);
+    while (!predicate() && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    return predicate();
+}
+
+struct ReadGate {
+    std::atomic<bool> entered{false}, release{false};
+    std::atomic<std::uint64_t> offset{UINT64_MAX};
+};
+struct ReleaseReadGate {
+    ReadGate& gate;
+    ~ReleaseReadGate() { gate.release.store(true, std::memory_order_release); }
+};
+class ControlledSource : public harken::StreamByteSource {
+public:
+    std::vector<std::uint8_t> bytes;
+    std::shared_ptr<ReadGate> gate = std::make_shared<ReadGate>();
+    std::shared_ptr<std::atomic<unsigned>> destroyed = std::make_shared<std::atomic<unsigned>>(0);
+    std::size_t maxRead = SIZE_MAX;
+    mutable std::atomic<unsigned> reads{0};
+    bool cooperate = false;
+    ~ControlledSource() override { destroyed->fetch_add(1); }
+    std::uint64_t ByteCount() const noexcept override { return bytes.size(); }
+    harken::StreamReadResult ReadAt(std::uint64_t offset, void* destination, std::size_t count,
+                                    harken::StreamReadCancellation cancellation) const override {
+        reads.fetch_add(1, std::memory_order_relaxed);
+        if (offset == gate->offset.load(std::memory_order_acquire)) {
+            gate->entered.store(true, std::memory_order_release);
+            while (!gate->release.load(std::memory_order_acquire)) {
+                if (cooperate && cancellation.IsCancelled()) return {harken::StreamReadStatus::Cancelled, 0};
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        }
+        if (cancellation.IsCancelled()) return {harken::StreamReadStatus::Cancelled, 0};
+        if (offset > bytes.size() || count > bytes.size() - offset) return {};
+        count = std::min(count, maxRead);
+        std::memcpy(destination, bytes.data() + offset, count);
+        return {harken::StreamReadStatus::Ok, count};
+    }
+};
+
+struct NativeSourceState {
+    std::vector<std::uint8_t> bytes;
+    ReadGate gate;
+    std::atomic<unsigned> reads{0}, releases{0};
+    bool cooperate = true;
+    std::size_t maxRead = SIZE_MAX;
+    std::thread::id releaseThread;
+    static std::int32_t Read(void* context, std::uint64_t offset, void* destination,
+        std::uint32_t count, std::uint32_t* outRead, const VnReadCancellationViewV1* cancel) {
+        auto& self = *static_cast<NativeSourceState*>(context);
+        self.reads.fetch_add(1);
+        *outRead = 0;
+        if (offset == self.gate.offset.load()) {
+            self.gate.entered.store(true);
+            while (!self.gate.release.load()) {
+                if (self.cooperate && cancel->isCancelled(cancel->context)) return VN_BYTE_READ_CANCELLED;
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        }
+        if (cancel->isCancelled(cancel->context)) return VN_BYTE_READ_CANCELLED;
+        if (offset > self.bytes.size() || count > self.bytes.size() - offset) return VN_BYTE_READ_IO_ERROR;
+        *outRead = static_cast<std::uint32_t>(std::min<std::size_t>(count, self.maxRead));
+        std::memcpy(destination, self.bytes.data() + offset, *outRead);
+        return VN_BYTE_READ_OK;
+    }
+    static void Release(void* context) {
+        auto& self = *static_cast<NativeSourceState*>(context);
+        self.releaseThread = std::this_thread::get_id();
+        self.releases.fetch_add(1, std::memory_order_release);
+    }
+    VnByteSourceDescV1 Descriptor() {
+        return {sizeof(VnByteSourceDescV1), 0, bytes.size(), this, &Read, &Release};
+    }
+};
+
+TEST(StreamRegister, PublicSourceAdmissionCancelAndNamespaceStayResponsive) {
+    NativeSourceState blocked, refused;
+    const auto id = harkentest::ObjectId(17330);
+    blocked.bytes = MakeValidImage(id);
+    refused.bytes = blocked.bytes;
+    blocked.gate.offset.store(0);
+    blocked.cooperate = false;
+    EngineSession session(MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    ReleaseReadGate release{blocked.gate};
+    const auto healthyId = harkentest::ObjectId(17331);
+    const auto path = TempPath("stream_sdk_source.stream");
+    WriteFileBytes(path, MakeValidImage(healthyId));
+    VnStreamSourceRequest healthy = 0;
+    ASSERT_EQ(VN_OK, Vn_BeginStreamFile(healthyId, VN_STREAM_SOURCE_REGISTER, path.c_str(), &healthy));
+    VnStreamSourceInfoV1 info{sizeof(info)};
+    ASSERT_TRUE(WaitUntil([&] { return Vn_QueryStreamSource(healthy, &info) == VN_OK && info.state == VN_STREAM_SOURCE_READY; }));
+    ASSERT_EQ(VN_OK, Vn_CommitStreamSource(healthy));
+    VnPlayDesc play = harkentest::MakePlayDesc(healthyId);
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+    auto desc = blocked.Descriptor();
+    VnStreamSourceRequest pending = 0;
+    ASSERT_EQ(VN_OK, Vn_BeginStreamSource(id, VN_STREAM_SOURCE_REGISTER, &desc, &pending));
+    ASSERT_TRUE(WaitUntil([&] { return blocked.gate.entered.load(); }));
+    EXPECT_EQ(VN_OK, Vn_Update());
+    session.Engine()->nullBackend.Pump(1);
+    EXPECT_EQ(VN_BACKPRESSURE, Vn_CommitStreamSource(pending));
+    auto other = refused.Descriptor();
+    VnStreamSourceRequest rejected = 99;
+    EXPECT_EQ(VN_IN_USE, Vn_BeginStreamSource(id, VN_STREAM_SOURCE_REGISTER, &other, &rejected));
+    EXPECT_EQ(0u, rejected);
+    EXPECT_EQ(0u, refused.reads.load());
+    EXPECT_EQ(0u, refused.releases.load());
+    const std::vector<float> tone(64, 0.25f);
+    auto pcm = harkentest::MonoDesc(tone, kRate);
+    EXPECT_EQ(VN_IN_USE, Vn_RegisterPCM(id, &pcm));
+    EXPECT_EQ(VN_OK, Vn_CancelStreamSource(pending));
+    EXPECT_EQ(VN_STALE_HANDLE, Vn_QueryStreamSource(pending, &info));
+    EXPECT_EQ(VN_STALE_HANDLE, Vn_CancelStreamSource(pending));
+    EXPECT_EQ(VN_STALE_HANDLE, Vn_CommitStreamSource(pending));
+    EXPECT_EQ(0u, blocked.releases.load());
+    EXPECT_EQ(VN_OK, Vn_RegisterPCM(id, &pcm));
+    blocked.gate.release.store(true);
+    ASSERT_TRUE(WaitUntil([&] { return blocked.releases.load(std::memory_order_acquire) == 1; }));
+    EXPECT_NE(std::this_thread::get_id(), blocked.releaseThread);
+    other.flags = 1;
+    rejected = 99;
+    EXPECT_EQ(VN_INVALID_ARG, Vn_BeginStreamSource(harkentest::ObjectId(17332), 0, &other, &rejected));
+    EXPECT_EQ(0u, rejected);
+    EXPECT_EQ(0u, refused.reads.load());
+    EXPECT_EQ(0u, refused.releases.load());
+}
+
+TEST(StreamRegister, PublicReadyFailureAndReplacementKeepIndependentOwnership) {
+    NativeSourceState first, second, failed, stale;
+    const auto a = harkentest::ObjectId(17333), b = harkentest::ObjectId(17334);
+    first.bytes = MakeValidImage(a); first.maxRead = 7;
+    second.bytes = MakeValidImage(b);
+    failed.bytes = {0, 1, 2, 3};
+    stale.bytes = first.bytes;
+    EngineSession session(MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto d1 = first.Descriptor(), d2 = second.Descriptor(), bad = failed.Descriptor();
+    VnStreamSourceRequest one = 0, two = 0, replacement = 0;
+    ASSERT_EQ(VN_OK, Vn_BeginStreamSource(a, 0, &d1, &one));
+    ASSERT_EQ(VN_OK, Vn_BeginStreamSource(b, 0, &d2, &two));
+    VnStreamSourceInfoV1 i1{sizeof(i1)}, i2{sizeof(i2)};
+    ASSERT_TRUE(WaitUntil([&] { return Vn_QueryStreamSource(one, &i1) == VN_OK &&
+        Vn_QueryStreamSource(two, &i2) == VN_OK && i1.state == VN_STREAM_SOURCE_READY && i2.state == VN_STREAM_SOURCE_READY; }));
+    ASSERT_EQ(VN_OK, Vn_CommitStreamSource(one));
+    EXPECT_EQ(VN_STALE_HANDLE, Vn_CommitStreamSource(one));
+    ASSERT_EQ(VN_OK, Vn_BeginStreamSource(a, VN_STREAM_SOURCE_REPLACE, &bad, &replacement));
+    ASSERT_TRUE(WaitUntil([&] { return Vn_QueryStreamSource(replacement, &i1) == VN_OK && i1.state == VN_STREAM_SOURCE_FAILED; }));
+    EXPECT_EQ(VN_BAD_STREAM_FILE, Vn_CommitStreamSource(replacement));
+    EXPECT_EQ(0u, failed.releases.load());
+    harken::StreamManager::StreamFacts facts;
+    EXPECT_TRUE(session.Engine()->streams.FindFile(a, &facts));
+    EXPECT_EQ(1000u, facts.frameCount);
+    EXPECT_EQ(VN_OK, Vn_CancelStreamSource(replacement));
+    EXPECT_EQ(VN_OK, Vn_CancelStreamSource(two));
+    ASSERT_TRUE(WaitUntil([&] { return failed.releases.load() == 1 && second.releases.load() == 1; }));
+    EXPECT_EQ(0u, first.releases.load());
+    auto staleDesc = stale.Descriptor();
+    ASSERT_EQ(VN_OK, Vn_BeginStreamSource(a, VN_STREAM_SOURCE_REPLACE, &staleDesc, &replacement));
+    ASSERT_TRUE(WaitUntil([&] { return Vn_QueryStreamSource(replacement, &i1) == VN_OK && i1.state == VN_STREAM_SOURCE_READY; }));
+    EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(a));
+    ASSERT_TRUE(WaitUntil([&] { return first.releases.load() == 1; }));
+    EXPECT_EQ(VN_STALE_HANDLE, Vn_CommitStreamSource(replacement));
+    EXPECT_EQ(VN_OK, Vn_QueryStreamSource(replacement, &i1));
+    EXPECT_EQ(VN_STREAM_SOURCE_FAILED, i1.state);
+    EXPECT_EQ(VN_STALE_HANDLE, i1.result);
+    EXPECT_EQ(0u, stale.releases.load());
+    EXPECT_EQ(VN_OK, Vn_CancelStreamSource(replacement));
+    ASSERT_TRUE(WaitUntil([&] { return stale.releases.load() == 1; }));
+}
+
+TEST(StreamRegister, PublicFailedWorkerAndTermDiscardWithoutTokenReuse) {
+    NativeSourceState old, current;
+    const auto id = harkentest::ObjectId(17335);
+    old.bytes = MakeValidImage(id); current.bytes = old.bytes;
+    VnStreamSourceRequest oldToken = 0;
+    {
+        EngineSession session(MakeNullConfig());
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto desc = old.Descriptor();
+        old.gate.offset.store(0);
+        ReleaseReadGate release{old.gate};
+        ASSERT_EQ(VN_OK, Vn_BeginStreamSource(id, 0, &desc, &oldToken));
+        ASSERT_TRUE(WaitUntil([&] { return old.gate.entered.load(); }));
+        harken::SetStreamRequestFaultForTests(harken::StreamRequestFault::WorkerLoop);
+        const bool failed = WaitUntil([&] { return session.Engine()->streams.WorkerState() == harken::StreamWorkerState::Failed; });
+        harken::SetStreamRequestFaultForTests(harken::StreamRequestFault::None);
+        ASSERT_TRUE(failed);
+        VnStreamSourceInfoV1 info{sizeof(info)};
+        EXPECT_EQ(VN_OK, Vn_QueryStreamSource(oldToken, &info));
+        EXPECT_EQ(VN_STREAM_SOURCE_FAILED, info.state);
+        EXPECT_EQ(VN_DEVICE_ERROR, info.result);
+        EXPECT_EQ(VN_OK, Vn_CancelStreamSource(oldToken));
+        EXPECT_EQ(VN_STALE_HANDLE, Vn_QueryStreamSource(oldToken, &info));
+    }
+    EXPECT_EQ(1u, old.releases.load());
+    {
+        EngineSession session(MakeNullConfig());
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto desc = current.Descriptor();
+        current.gate.offset.store(0);
+        ReleaseReadGate release{current.gate};
+        VnStreamSourceRequest token = 0;
+        ASSERT_EQ(VN_OK, Vn_BeginStreamSource(id, 0, &desc, &token));
+        EXPECT_NE(oldToken, token);
+        EXPECT_EQ(VN_STALE_HANDLE, Vn_CancelStreamSource(oldToken));
+        ASSERT_TRUE(WaitUntil([&] { return current.gate.entered.load(); }));
+        // Term owns the accepted request even when the caller never cancels.
+        EXPECT_EQ(VN_OK, Vn_Term());
+        EXPECT_EQ(1u, current.releases.load());
+    }
+}
+
+TEST(StreamRegister, SourceShortReadsAndIndependentReadyResults) {
+    using Manager = harken::StreamManager;
+    harken::EngineConfig config{};
+    config.maxStreams = 2;
+    config.streamRingFrames = 64;
+    Manager streams(config);
+    auto first = std::make_shared<ControlledSource>();
+    auto second = std::make_shared<ControlledSource>();
+    const auto id = harkentest::ObjectId(17300);
+    first->bytes = MakeValidImage(id);
+    first->maxRead = 3;
+    second->bytes = MakeValidImage(harkentest::ObjectId(17301));
+    Manager::SourceToken a, b, refused;
+    ASSERT_EQ(VN_OK, streams.BeginSource(id, first, false, 0, &a));
+    EXPECT_EQ(VN_IN_USE, streams.BeginSource(id, first, false, 0, &refused));
+    ASSERT_EQ(VN_OK, streams.BeginSource(harkentest::ObjectId(17301), second, false, 0, &b));
+    ASSERT_TRUE(WaitUntil([&] { return streams.QuerySource(a) == Manager::PreparationState::Ready &&
+        streams.QuerySource(b) == Manager::PreparationState::Ready; }));
+    const auto thirdId = harkentest::ObjectId(17302);
+    const auto path = TempPath("stream_source_while_ready.stream");
+    WriteFileBytes(path, MakeValidImage(thirdId));
+    ASSERT_EQ(VN_OK, streams.RegisterFile(thirdId, path.c_str()));
+    Manager::StreamFacts facts;
+    ASSERT_EQ(VN_OK, streams.TakeSource(a, &facts));
+    EXPECT_EQ(VN_STALE_HANDLE, streams.TakeSource(a));
+    EXPECT_EQ(Manager::PreparationState::Invalid, streams.QuerySource(a));
+    EXPECT_TRUE(streams.CancelSource(b));
+    EXPECT_TRUE(WaitUntil([&] { return streams.QuerySource(b) == Manager::PreparationState::Invalid; }));
+    EXPECT_FALSE(streams.HasPendingSource(harkentest::ObjectId(17301)));
+    EXPECT_TRUE(streams.PrepareSlotWorkingSet(0, 1));
+    std::uint64_t ringToken;
+    ASSERT_EQ(VN_OK, streams.ActivateSlot(0, facts.fileIndex, 0, 0, facts.frameCount, 1, &ringToken));
+    EXPECT_EQ(64u, streams.RingOf(0)->ReadAvailable());
+    EXPECT_TRUE(streams.RetirePreparedSlot(streams.RingOf(0), ringToken));
+    streams.SyncServe();
+    EXPECT_EQ(VN_OK, streams.UnregisterFile(id));
+}
+
+TEST(StreamRegister, SourceReadAndReleaseDoNotBlockRegisteredSlotActivation) {
+    using Manager = harken::StreamManager;
+    class ReleaseSource final : public ControlledSource {
+    public:
+        std::shared_ptr<ReadGate> releaseGate;
+        ~ReleaseSource() override {
+            if (!releaseGate) return;
+            releaseGate->entered.store(true, std::memory_order_release);
+            while (!releaseGate->release.load(std::memory_order_acquire))
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    };
+    for (const bool blockRelease : {false, true}) {
+        SCOPED_TRACE(blockRelease);
+        harken::EngineConfig config{};
+        config.maxStreams = 2;
+        config.streamRingFrames = 64;
+        Manager streams(config);
+        auto healthy = std::make_shared<ControlledSource>();
+        StreamSpec spec;
+        spec.soundId = harkentest::ObjectId(17336);
+        spec.chunkFrames = 16;
+        healthy->maxRead = 16 * sizeof(float);
+        const auto samples = ServiceSamples(4096, 0);
+        healthy->bytes = BuildStreamBytes(spec, samples);
+        Manager::SourceToken ready;
+        ASSERT_EQ(VN_OK, streams.BeginSource(spec.soundId, healthy, false, 0, &ready));
+        ASSERT_TRUE(WaitUntil([&] { return streams.QuerySource(ready) == Manager::PreparationState::Ready; }));
+        Manager::StreamFacts facts;
+        ASSERT_EQ(VN_OK, streams.TakeSource(ready, &facts));
+        std::uint64_t tokens[2]{};
+        ASSERT_TRUE(streams.PrepareSlotWorkingSet(0, 1));
+        ASSERT_EQ(VN_OK, streams.ActivateSlot(0, facts.fileIndex, 0, 0, 4096, 1, &tokens[0]));
+
+        auto blocked = std::make_shared<ReleaseSource>();
+        const auto blockedId = harkentest::ObjectId(17337);
+        blocked->bytes = MakeValidImage(blockedId);
+        auto gate = blockRelease ? std::make_shared<ReadGate>() : blocked->gate;
+        auto destroyed = blocked->destroyed;
+        ReleaseReadGate release{*gate};
+        if (blockRelease) blocked->releaseGate = gate;
+        else gate->offset.store(0, std::memory_order_release);
+        Manager::SourceToken pending;
+        ASSERT_EQ(VN_OK, streams.BeginSource(blockedId, blocked, false, 0, &pending));
+        if (blockRelease) {
+            ASSERT_TRUE(WaitUntil([&] { return streams.QuerySource(pending) == Manager::PreparationState::Ready; }));
+            ASSERT_EQ(VN_OK, streams.TakeSource(pending));
+            blocked.reset();
+            ASSERT_EQ(VN_OK, streams.UnregisterFile(blockedId));
+        } else blocked.reset();
+        ASSERT_TRUE(WaitUntil([&] { return gate->entered.load(std::memory_order_acquire); }));
+        EXPECT_EQ(0u, destroyed->load());
+
+        ASSERT_TRUE(streams.PrepareSlotWorkingSet(1, 1));
+        std::atomic<bool> activated{false};
+        VnResult result = VN_DEVICE_ERROR;
+        std::thread caller([&] {
+            result = streams.ActivateSlot(1, facts.fileIndex, 1024, 0, 4096, 1, &tokens[1]);
+            activated.store(true, std::memory_order_release);
+        });
+        streams.RingOf(0)->AdvanceRead(64);
+        const bool refill = WaitUntil([&] { return streams.RingOf(0)->ReadAvailable() == 64; });
+        const bool independent = WaitUntil([&] { return activated.load(std::memory_order_acquire); });
+        // Release the deliberately blocked callback before joining on failure.
+        if (!independent) gate->release.store(true, std::memory_order_release);
+        caller.join();
+        EXPECT_TRUE(refill);
+        EXPECT_TRUE(independent);
+        ASSERT_EQ(VN_OK, result);
+        std::size_t position = 1024;
+        ExpectAndConsume(*streams.RingOf(1), samples, position, 64);
+        if (!blockRelease) EXPECT_TRUE(streams.CancelSource(pending));
+        gate->release.store(true, std::memory_order_release);
+        EXPECT_TRUE(WaitUntil([&] { return destroyed->load() == 1; }));
+        for (unsigned i = 0; i < 2; ++i)
+            EXPECT_TRUE(streams.RetirePreparedSlot(streams.RingOf(i), tokens[i]));
+        streams.SyncServe();
+        EXPECT_EQ(VN_OK, streams.UnregisterFile(spec.soundId));
+    }
+}
+
+TEST(StreamRegister, SlowSameSourceActiveReadDoesNotBlockHealthyInstanceOrReleaseEarly) {
+    using Manager = harken::StreamManager;
+    for (const bool failWorker : {false, true}) {
+    SCOPED_TRACE(failWorker);
+    harken::EngineConfig config{};
+    config.maxStreams = 3;
+    config.streamRingFrames = 64;
+    Manager streams(config);
+    auto source = std::make_shared<ControlledSource>();
+    StreamSpec spec;
+    spec.soundId = harkentest::ObjectId(17303);
+    spec.chunkFrames = 16;
+    source->maxRead = 16 * sizeof(float);
+    const auto samples = ServiceSamples(4096, 0);
+    source->bytes = BuildStreamBytes(spec, samples);
+    const auto toc = harken::ParseStreamTocEntry(source->bytes.data() + harken::kStreamHeaderBytes);
+    Manager::SourceToken prepared;
+    ASSERT_EQ(VN_OK, streams.BeginSource(spec.soundId, source, false, 0, &prepared));
+    ASSERT_TRUE(WaitUntil([&] { return streams.QuerySource(prepared) == Manager::PreparationState::Ready; }));
+    Manager::StreamFacts facts;
+    ASSERT_EQ(VN_OK, streams.TakeSource(prepared, &facts));
+    std::uint64_t tokens[3]{};
+    for (unsigned i = 0; i < 2; ++i) {
+        ASSERT_TRUE(streams.PrepareSlotWorkingSet(i, 1));
+        ASSERT_EQ(VN_OK, streams.ActivateSlot(i, facts.fileIndex, i * 1024, 0, 4096, 1, &tokens[i]));
+    }
+    source->gate->offset.store(toc.payloadOffset + 1088 * sizeof(float));
+    ReleaseReadGate release{*source->gate};
+    streams.RingOf(1)->AdvanceRead(64);
+    ASSERT_TRUE(WaitUntil([&] { return source->gate->entered.load(); }));
+    ASSERT_TRUE(streams.PrepareSlotWorkingSet(2, 1));
+    std::atomic<bool> activated{false};
+    VnResult activation = VN_DEVICE_ERROR;
+    std::thread activate([&] {
+        activation = streams.ActivateSlot(2, facts.fileIndex, 2048, 0, 4096, 1, &tokens[2]);
+        activated.store(true, std::memory_order_release);
+    });
+    const bool independent = WaitUntil([&] { return activated.load(std::memory_order_acquire); });
+    if (!independent) source->gate->release.store(true);
+    activate.join();
+    ASSERT_TRUE(independent);
+    ASSERT_EQ(VN_OK, activation);
+    std::size_t newPosition = 2048;
+    ExpectAndConsume(*streams.RingOf(2), samples, newPosition, 64);
+    std::size_t consumed = 0;
+    for (unsigned pass = 0; pass < 4; ++pass) {
+        ASSERT_TRUE(WaitUntil([&] { return streams.RingOf(0)->ReadAvailable() == 64; }));
+        ExpectAndConsume(*streams.RingOf(0), samples, consumed, 64);
+    }
+    if (failWorker) {
+        harken::SetStreamRequestFaultForTests(harken::StreamRequestFault::WorkerLoop);
+        const bool failed = WaitUntil([&] { return streams.WorkerState() == harken::StreamWorkerState::Failed; });
+        harken::SetStreamRequestFaultForTests(harken::StreamRequestFault::None);
+        EXPECT_TRUE(failed);
+    }
+    for (unsigned i = 0; i < 3; ++i)
+        EXPECT_TRUE(streams.RetirePreparedSlot(streams.RingOf(i), tokens[i]));
+    streams.SyncServe();
+    streams.ReclaimAfterWorkerFailure();
+    EXPECT_LT(streams.FreeSlotCount(), 3u);
+    EXPECT_EQ(failWorker ? VN_DEVICE_ERROR : VN_IN_USE, streams.UnregisterFile(spec.soundId));
+    source->gate->release.store(true);
+    ASSERT_TRUE(WaitUntil([&] { streams.ReclaimAfterWorkerFailure(); return streams.FreeSlotCount() == 3; }));
+    if (!failWorker) EXPECT_EQ(VN_OK, streams.UnregisterFile(spec.soundId));
+    }
+}
+
+TEST(StreamRegister, PrivateReadWindowsReduceReadsAndDiscardReboundSourceBytes) {
+    using Manager = harken::StreamManager;
+    for (const auto ringFrames : {256u, 8192u}) {
+    SCOPED_TRACE(ringFrames);
+    const auto totalFrames = std::max(8192u, ringFrames * 8);
+    harken::EngineConfig config{};
+    config.maxStreams = 2;
+    config.streamRingFrames = ringFrames;
+    Manager streams(config);
+    EXPECT_EQ(0u, streams.ReadWindowBytes());
+    std::array<std::shared_ptr<ControlledSource>, 2> sources;
+    std::array<std::vector<float>, 2> samples;
+    Manager::StreamFacts facts[2]{};
+    std::uint64_t tokens[2]{};
+    for (unsigned i = 0; i < 2; ++i) {
+        sources[i] = std::make_shared<ControlledSource>();
+        StreamSpec spec;
+        spec.soundId = harkentest::ObjectId(17320 + i);
+        spec.chunkFrames = 64;
+        samples[i] = ServiceSamples(totalFrames, i * 16384);
+        sources[i]->bytes = BuildStreamBytes(spec, samples[i]);
+        Manager::SourceToken sourceToken;
+        ASSERT_EQ(VN_OK, streams.BeginSource(spec.soundId, sources[i], false, 0, &sourceToken));
+        ASSERT_TRUE(WaitUntil([&] { return streams.QuerySource(sourceToken) == Manager::PreparationState::Ready; }));
+        ASSERT_EQ(VN_OK, streams.TakeSource(sourceToken, &facts[i]));
+        sources[i]->reads.store(0);
+        ASSERT_TRUE(streams.PrepareSlotWorkingSet(i, 1));
+        ASSERT_EQ(VN_OK, streams.ActivateSlot(i, facts[i].fileIndex, 0, 0, facts[i].frameCount, 1, &tokens[i]));
+    }
+    std::size_t positions[2]{};
+    for (unsigned round = 0; round < 4; ++round) {
+        for (unsigned i = 0; i < 2; ++i) ExpectAndConsume(*streams.RingOf(i), samples[i], positions[i], ringFrames);
+        streams.SyncServe();
+    }
+    for (unsigned i = 0; i < 2; ++i) EXPECT_LT(sources[i]->reads.load(), positions[i] / 64);
+    EXPECT_GT(streams.ReadWindowBytes(), 0u);
+    ASSERT_TRUE(streams.RetirePreparedSlot(streams.RingOf(0), tokens[0]));
+    streams.SyncServe();
+    auto replacement = std::make_shared<ControlledSource>();
+    StreamSpec spec;
+    spec.soundId = harkentest::ObjectId(17320);
+    spec.chunkFrames = 64;
+    auto changed = ServiceSamples(totalFrames, 32768);
+    replacement->bytes = BuildStreamBytes(spec, changed);
+    Manager::SourceToken sourceToken;
+    ASSERT_EQ(VN_OK, streams.BeginSource(spec.soundId, replacement, true, facts[0].sourceGeneration, &sourceToken));
+    ASSERT_TRUE(WaitUntil([&] { return streams.QuerySource(sourceToken) == Manager::PreparationState::Ready; }));
+    ASSERT_EQ(VN_OK, streams.TakeSource(sourceToken, &facts[0]));
+    ASSERT_EQ(VN_OK, streams.ActivateSlot(0, facts[0].fileIndex, 0, 0, facts[0].frameCount, 1, &tokens[0]));
+    std::size_t changedPosition = 0;
+    ExpectAndConsume(*streams.RingOf(0), changed, changedPosition, ringFrames);
+    for (unsigned i = 0; i < 2; ++i) EXPECT_TRUE(streams.RetirePreparedSlot(streams.RingOf(i), tokens[i]));
+    streams.SyncServe();
+    EXPECT_TRUE(WaitUntil([&] { return streams.ReadWindowBytes() == 0; }));
+    }
+}
+
+TEST(StreamRegister, OptionalReadAheadNeverRequiresFutureBytesOrRetriesCancellation) {
+    enum class Behavior { Short, Reject, PartialError, Zero, Cancel, RequiredFailure };
+    class OptionalSource final : public ControlledSource {
+    public:
+        Behavior behavior = Behavior::Short;
+        std::uint64_t payload = 0;
+        mutable std::atomic<unsigned> payloadCalls{0};
+        harken::StreamReadResult ReadAt(std::uint64_t offset, void* destination, std::size_t count,
+                                       harken::StreamReadCancellation cancellation) const override {
+            if (offset >= payload) {
+                payloadCalls.fetch_add(1);
+                if (behavior == Behavior::Cancel) return {harken::StreamReadStatus::Cancelled, 0};
+                if (count > 64 * sizeof(float) || behavior == Behavior::RequiredFailure) {
+                    if (behavior == Behavior::Reject || behavior == Behavior::RequiredFailure) return {};
+                    if (behavior == Behavior::PartialError) {
+                        std::memset(destination, 0xff, 64 * sizeof(float));
+                        return {harken::StreamReadStatus::IoError, 64 * sizeof(float)};
+                    }
+                    if (behavior == Behavior::Zero) return {harken::StreamReadStatus::Ok, 0};
+                }
+                if (behavior == Behavior::Short && offset != payload) return {};
+                count = std::min(count, 64 * sizeof(float));
+            }
+            return ControlledSource::ReadAt(offset, destination, count, cancellation);
+        }
+    };
+    for (auto behavior : {Behavior::Short, Behavior::Reject, Behavior::PartialError,
+                          Behavior::Zero, Behavior::Cancel, Behavior::RequiredFailure}) {
+        SCOPED_TRACE(static_cast<unsigned>(behavior));
+        harken::EngineConfig config{};
+        config.maxStreams = 1;
+        config.streamRingFrames = 64;
+        harken::StreamManager streams(config);
+        auto source = std::make_shared<OptionalSource>();
+        StreamSpec spec;
+        spec.soundId = harkentest::ObjectId(17322);
+        spec.chunkFrames = 64;
+        auto samples = ServiceSamples(4096, 0);
+        source->bytes = BuildStreamBytes(spec, samples);
+        source->payload = harken::ParseStreamTocEntry(source->bytes.data() + harken::kStreamHeaderBytes).payloadOffset;
+        source->behavior = behavior;
+        harken::StreamManager::SourceToken sourceToken;
+        ASSERT_EQ(VN_OK, streams.BeginSource(spec.soundId, source, false, 0, &sourceToken));
+        ASSERT_TRUE(WaitUntil([&] { return streams.QuerySource(sourceToken) == harken::StreamManager::PreparationState::Ready; }));
+        harken::StreamManager::StreamFacts facts;
+        ASSERT_EQ(VN_OK, streams.TakeSource(sourceToken, &facts));
+        ASSERT_TRUE(streams.PrepareSlotWorkingSet(0, 1));
+        std::uint64_t token;
+        ASSERT_EQ(VN_OK, streams.ActivateSlot(0, facts.fileIndex, 0, 0, facts.frameCount, 1, &token));
+        EXPECT_EQ(behavior == Behavior::Short || behavior == Behavior::Cancel ? 1u : 2u,
+                  source->payloadCalls.load());
+        if (behavior == Behavior::Cancel || behavior == Behavior::RequiredFailure) {
+            EXPECT_EQ(0u, streams.RingOf(0)->ReadAvailable());
+            EXPECT_EQ(harken::StreamTerminalReason::IntegrityAbort, streams.RingOf(0)->TerminalReason());
+        } else {
+            std::size_t position = 0;
+            ExpectAndConsume(*streams.RingOf(0), samples, position, 64);
+        }
+        EXPECT_TRUE(streams.RetirePreparedSlot(streams.RingOf(0), token));
+        streams.SyncServe();
+    }
+}
+
+TEST(StreamRegister, CancelledSourceValidationRetainsLeaseUntilReadReturns) {
+    using Manager = harken::StreamManager;
+    harken::EngineConfig config{};
+    config.maxStreams = 1;
+    config.streamRingFrames = 64;
+    Manager streams(config);
+    const auto healthyId = harkentest::ObjectId(17305);
+    const auto healthyPath = TempPath("stream_source_metadata_neighbor.stream");
+    WriteFileBytes(healthyPath, MakeValidImage(healthyId));
+    ASSERT_EQ(VN_OK, streams.RegisterFile(healthyId, healthyPath.c_str()));
+    Manager::StreamFacts healthy;
+    ASSERT_TRUE(streams.FindFile(healthyId, &healthy));
+    ASSERT_TRUE(streams.PrepareSlotWorkingSet(0, 1));
+    std::uint64_t ringToken;
+    ASSERT_EQ(VN_OK, streams.ActivateSlot(0, healthy.fileIndex, 0, 0, healthy.frameCount, 1, &ringToken));
+    auto source = std::make_shared<ControlledSource>();
+    const auto id = harkentest::ObjectId(17304);
+    source->bytes = MakeValidImage(id);
+    auto gate = source->gate;
+    auto destroyed = source->destroyed;
+    gate->offset.store(0);
+    ReleaseReadGate release{*gate};
+    Manager::SourceToken token;
+    ASSERT_EQ(VN_OK, streams.BeginSource(id, source, false, 0, &token));
+    source.reset();
+    ASSERT_TRUE(WaitUntil([&] { return gate->entered.load(); }));
+    streams.RingOf(0)->AdvanceRead(64);
+    EXPECT_TRUE(WaitUntil([&] { return streams.RingOf(0)->ReadAvailable() == 64; }));
+    EXPECT_TRUE(streams.CancelSource(token));
+    EXPECT_FALSE(streams.CancelSource(token));
+    EXPECT_EQ(Manager::PreparationState::Cancelled, streams.QuerySource(token));
+    EXPECT_EQ(VN_STALE_HANDLE, streams.TakeSource(token));
+    EXPECT_EQ(0u, destroyed->load());
+    gate->release.store(true);
+    ASSERT_TRUE(WaitUntil([&] { return destroyed->load() == 1; }));
+    EXPECT_EQ(Manager::PreparationState::Invalid, streams.QuerySource(token));
+    EXPECT_FALSE(streams.HasPendingSource(id));
+    EXPECT_TRUE(streams.RetirePreparedSlot(streams.RingOf(0), ringToken));
+    streams.SyncServe();
+    EXPECT_EQ(VN_OK, streams.UnregisterFile(healthyId));
+}
+
+TEST(StreamRegister, ReadAtUses64BitOffsetsAndRejectsPrematureZero) {
+    struct SparseSource : harken::StreamByteSource {
+        std::uint64_t ByteCount() const noexcept override { return (1ull << 33) + 16; }
+        harken::StreamReadResult ReadAt(std::uint64_t offset, void* destination, std::size_t count,
+                                       harken::StreamReadCancellation) const override {
+            if (offset < (1ull << 33)) return {harken::StreamReadStatus::Ok, 0};
+            count = std::min<std::size_t>(count, 3);
+            std::memset(destination, 0x5a, count);
+            return {harken::StreamReadStatus::Ok, count};
+        }
+    } source;
+    std::array<std::uint8_t, 16> output{};
+    EXPECT_EQ(harken::StreamReadStatus::Ok, harken::ReadStreamBytes(source, 1ull << 33,
+        output.data(), output.size(), {}));
+    EXPECT_TRUE(std::all_of(output.begin(), output.end(), [](auto value) { return value == 0x5a; }));
+    EXPECT_EQ(harken::StreamReadStatus::IoError, harken::ReadStreamBytes(source, 0,
+        output.data(), output.size(), {}));
+    EXPECT_EQ(harken::StreamReadStatus::IoError, harken::ReadStreamBytes(source, UINT64_MAX,
+        output.data(), output.size(), {}));
+}
+
+TEST(StreamRegister, SourceFailureAndTermBalanceOwnershipAndNeverReuseRequestIdentity) {
+    using Manager = harken::StreamManager;
+    harken::EngineConfig config{};
+    config.maxStreams = 1;
+    config.streamRingFrames = 64;
+    const auto id = harkentest::ObjectId(17306);
+    Manager::SourceToken cancelled;
+    auto source = std::make_shared<ControlledSource>();
+    source->bytes = MakeValidImage(id);
+    source->maxRead = 0;
+    auto destroyed = source->destroyed;
+    {
+        Manager streams(config);
+        Manager::SourceToken failed;
+        ASSERT_EQ(VN_OK, streams.BeginSource(id, source, false, 0, &failed));
+        source.reset();
+        ASSERT_TRUE(WaitUntil([&] { return streams.QuerySource(failed) == Manager::PreparationState::Failed; }));
+        VnResult error = VN_OK;
+        EXPECT_EQ(Manager::PreparationState::Failed, streams.QuerySource(failed, &error));
+        EXPECT_EQ(VN_BAD_STREAM_FILE, error);
+        EXPECT_EQ(0u, destroyed->load());
+        EXPECT_TRUE(streams.CancelSource(failed));
+        ASSERT_TRUE(WaitUntil([&] { return destroyed->load() == 1; }));
+        source = std::make_shared<ControlledSource>();
+        source->bytes = MakeValidImage(id);
+        source->cooperate = true;
+        source->gate->offset.store(0);
+        destroyed = source->destroyed;
+        auto gate = source->gate;
+        ASSERT_EQ(VN_OK, streams.BeginSource(id, source, false, 0, &cancelled));
+        source.reset();
+        ASSERT_TRUE(WaitUntil([&] { return gate->entered.load(); }));
+        // Term must request cancellation and join before releasing the source.
+    }
+    EXPECT_EQ(1u, destroyed->load());
+    Manager streams(config);
+    source = std::make_shared<ControlledSource>();
+    source->bytes = MakeValidImage(id);
+    Manager::SourceToken current;
+    ASSERT_EQ(VN_OK, streams.BeginSource(id, source, false, 0, &current));
+    EXPECT_NE(cancelled.value, current.value);
+    EXPECT_EQ(Manager::PreparationState::Invalid, streams.QuerySource(cancelled));
+    EXPECT_FALSE(streams.CancelSource(cancelled));
+    EXPECT_TRUE(streams.CancelSource(current));
+}
+
+TEST(StreamRegister, FileSourceRetainsOpenedIdentityAndReadsSparse64BitRange) {
+    const auto path = TempPath("stream_source_sparse.bin");
+    const auto retained = TempPath("stream_source_sparse_retained.bin");
+    constexpr std::uint64_t offset = (1ull << 32) + 17;
+    {
+#ifdef _WIN32
+        const auto wide = std::filesystem::path(path).wstring();
+        const auto handle = CreateFileW(wide.c_str(), GENERIC_WRITE, 0, nullptr,
+            CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        ASSERT_NE(INVALID_HANDLE_VALUE, handle);
+        DWORD returned = 0;
+        const auto sparse = DeviceIoControl(handle, FSCTL_SET_SPARSE, nullptr, 0,
+            nullptr, 0, &returned, nullptr);
+        CloseHandle(handle);
+        ASSERT_TRUE(sparse);
+        std::fstream file(path, std::ios::binary | std::ios::in | std::ios::out);
+#else
+        std::ofstream file(path, std::ios::binary | std::ios::trunc);
+#endif
+        file.seekp(static_cast<std::streamoff>(offset));
+        file.put('A');
+        ASSERT_TRUE(file.good());
+    }
+    auto opened = harken::OpenStreamByteSource(path.c_str());
+    ASSERT_TRUE(opened);
+    EXPECT_EQ(offset + 1, opened->ByteCount());
+    std::error_code error;
+    std::filesystem::remove(retained, error);
+    std::filesystem::rename(path, retained);
+    { std::ofstream file(path, std::ios::binary | std::ios::trunc); file.put('B'); }
+    char sample = 0;
+    EXPECT_EQ(harken::StreamReadStatus::Ok,
+        harken::ReadStreamBytes(*opened, offset, &sample, 1, {}));
+    EXPECT_EQ('A', sample);
+    auto fresh = harken::OpenStreamByteSource(path.c_str());
+    ASSERT_TRUE(fresh);
+    EXPECT_EQ(harken::StreamReadStatus::Ok,
+        harken::ReadStreamBytes(*fresh, 0, &sample, 1, {}));
+    EXPECT_EQ('B', sample);
+    fresh.reset();
+    opened.reset();
+    std::filesystem::remove(path);
+    std::filesystem::remove(retained);
+}
+
+TEST(StreamRegister, ReplacementWaitsForPrebufferAndTransfersOwnershipOnce) {
+    using Manager = harken::StreamManager;
+    using State = Manager::PreparationState;
+    using Access = harken::detail::StreamManagerTestAccess;
+    harken::EngineConfig config{};
+    config.maxStreams = 2;
+    config.streamRingFrames = 16;
+    Manager streams(config);
+    streams.SetThrottled(true);
+    StreamSpec spec;
+    spec.soundId = harkentest::ObjectId(17200);
+    spec.chunkFrames = 8;
+    const auto samples = ServiceSamples(64, 0);
+    const auto path = TempPath("stream_replacement_ready.stream");
+    WriteFileBytes(path, BuildStreamBytes(spec, samples));
+    ASSERT_EQ(VN_OK, streams.RegisterFile(spec.soundId, path.c_str()));
+    Manager::StreamFacts facts{};
+    ASSERT_TRUE(streams.FindFile(spec.soundId, &facts));
+    auto request = ReplacementAt(facts, 3);
+    request.prebufferTargetFrames = 12;
+    request.pendingSlotReservations = 2;
+    Manager::PreparedToken token{};
+    EXPECT_EQ(VN_BACKPRESSURE, streams.BeginReplacement(request, &token));
+    EXPECT_EQ(2u, streams.FreeSlotCount());
+    request.pendingSlotReservations = 1;
+    ASSERT_EQ(VN_OK, streams.BeginReplacement(request, &token));
+    EXPECT_EQ(State::Preparing, streams.QueryReplacement(token));
+    Manager::PreparedToken refused{};
+    EXPECT_EQ(VN_BACKPRESSURE, streams.BeginReplacement(request, &refused));
+    Manager::PreparedStream taken{};
+    EXPECT_EQ(VN_BACKPRESSURE, streams.TakeReplacement(token, &taken));
+    EXPECT_EQ(nullptr, taken.ring);
+    streams.SetMaxServeFramesForTest(4);
+    streams.SyncServe();
+    Access::ServeSlots(streams);
+    EXPECT_EQ(State::Preparing, streams.QueryReplacement(token));
+    Access::ServeSlots(streams);
+    EXPECT_EQ(State::Preparing, streams.QueryReplacement(token));
+    Access::ServeSlots(streams);
+    ASSERT_EQ(State::Ready, streams.QueryReplacement(token));
+    EXPECT_EQ(State::Ready, streams.QueryReplacement(token));
+    ASSERT_EQ(VN_OK, streams.TakeReplacement(token, &taken));
+    EXPECT_EQ(State::Invalid, streams.QueryReplacement(token));
+    EXPECT_FALSE(streams.CancelReplacement(token));
+    Manager::PreparedStream duplicate{};
+    EXPECT_EQ(VN_STALE_HANDLE, streams.TakeReplacement(token, &duplicate));
+    std::size_t position = 3;
+    ExpectAndConsume(*taken.ring, samples, position, 12);
+    EXPECT_EQ(VN_IN_USE, streams.UnregisterFile(spec.soundId));
+    ASSERT_TRUE(streams.RetirePreparedSlot(taken.ring, taken.ringToken));
+    streams.SyncServe();
+
+    request = ReplacementAt(facts);
+    ASSERT_EQ(VN_OK, streams.BeginReplacement(request, &token));
+    EXPECT_EQ(State::Preparing, streams.QueryReplacement(token))
+        << "zero requested prebuffer does not make an empty source ready";
+    Access::ServeSlots(streams);
+    EXPECT_EQ(State::Ready, streams.QueryReplacement(token));
+    EXPECT_TRUE(streams.CancelReplacement(token));
+    EXPECT_EQ(State::Cancelled, streams.QueryReplacement(token));
+    EXPECT_FALSE(streams.CancelReplacement(token));
+    streams.SyncServe();
+    EXPECT_EQ(VN_OK, streams.UnregisterFile(spec.soundId));
+}
+
+TEST(StreamRegister, ReplacementPreservesSourcePositionLoopCountAndOutro) {
+    using Manager = harken::StreamManager;
+    using Access = harken::detail::StreamManagerTestAccess;
+    harken::EngineConfig config{};
+    config.maxStreams = 1;
+    config.streamRingFrames = 64;
+    Manager streams(config);
+    streams.SetThrottled(true);
+    StreamSpec spec;
+    spec.soundId = harkentest::ObjectId(17201);
+    spec.chunkFrames = 4;
+    const auto samples = ServiceSamples(11, 0);
+    const auto path = TempPath("stream_replacement_loops.stream");
+    WriteFileBytes(path, BuildStreamBytes(spec, samples));
+    ASSERT_EQ(VN_OK, streams.RegisterFile(spec.soundId, path.c_str()));
+    Manager::StreamFacts facts{};
+    ASSERT_TRUE(streams.FindFile(spec.soundId, &facts));
+    for (const auto count : {1u, 3u, 0u}) {
+        SCOPED_TRACE(count);
+        auto request = ReplacementAt(facts, 3);
+        request.loopStartFrame = 2;
+        request.loopEndFrame = 7;
+        request.loopCount = count;
+        request.prebufferTargetFrames = 1000;
+        Manager::PreparedToken token{};
+        ASSERT_EQ(VN_OK, streams.BeginReplacement(request, &token));
+        streams.SyncServe();
+        Access::ServeSlots(streams);
+        ASSERT_EQ(Manager::PreparationState::Ready, streams.QueryReplacement(token));
+        Manager::PreparedStream taken{};
+        ASSERT_EQ(VN_OK, streams.TakeReplacement(token, &taken));
+        std::vector<float> expected;
+        std::uint64_t frame = 3;
+        auto remaining = count;
+        while (expected.size() < taken.ring->capacity) {
+            const bool loop = remaining == 0 || remaining > 1;
+            if (frame == (loop ? 7u : samples.size())) {
+                if (!loop) break;
+                frame = 2;
+                if (remaining != 0) --remaining;
+            }
+            expected.push_back(samples[frame++]);
+        }
+        EXPECT_EQ(count == 0 ? harken::StreamTerminalReason::None
+                             : harken::StreamTerminalReason::NaturalEnd,
+                  taken.ring->TerminalReason());
+        std::size_t consumed = 0;
+        ExpectAndConsume(*taken.ring, expected, consumed,
+                         static_cast<std::uint32_t>(expected.size()));
+        ASSERT_TRUE(streams.RetirePreparedSlot(taken.ring, taken.ringToken));
+        streams.SyncServe();
+    }
+    auto request = ReplacementAt(facts, 9);
+    request.loopStartFrame = 2;
+    request.loopEndFrame = 7;
+    request.loopCount = 2;
+    Manager::PreparedToken token{};
+    EXPECT_EQ(VN_INVALID_ARG, streams.BeginReplacement(request, &token));
+    request.loopCount = 0;
+    request.targetFrame = facts.frameCount;
+    EXPECT_EQ(VN_INVALID_ARG, streams.BeginReplacement(request, &token));
+    request.loopCount = 1;
+    request.targetFrame = facts.frameCount + 1;
+    EXPECT_EQ(VN_INVALID_ARG, streams.BeginReplacement(request, &token));
+    request.targetFrame = 9;
+    ASSERT_EQ(VN_OK, streams.BeginReplacement(request, &token));
+    streams.SyncServe();
+    Access::ServeSlots(streams);
+    Manager::PreparedStream taken{};
+    ASSERT_EQ(VN_OK, streams.TakeReplacement(token, &taken));
+    std::size_t position = 9;
+    ExpectAndConsume(*taken.ring, samples, position, 2);
+    ASSERT_TRUE(streams.RetirePreparedSlot(taken.ring, taken.ringToken));
+    streams.SyncServe();
+    request.targetFrame = facts.frameCount;
+    ASSERT_EQ(VN_OK, streams.BeginReplacement(request, &token));
+    streams.SyncServe();
+    Access::ServeSlots(streams);
+    EXPECT_EQ(Manager::PreparationState::Ready, streams.QueryReplacement(token));
+    EXPECT_TRUE(streams.CancelReplacement(token));
+    streams.SyncServe();
+    EXPECT_EQ(VN_OK, streams.UnregisterFile(spec.soundId));
+}
+
+TEST(StreamRegister, ReplacementPinsRetiringSourceAndRejectsSourceAndRingReuse) {
+    using Manager = harken::StreamManager;
+    harken::EngineConfig config{};
+    config.maxStreams = 2;
+    config.streamRingFrames = 64;
+    Manager streams(config);
+    streams.SetThrottled(true);
+    const auto id = harkentest::ObjectId(17202);
+    const auto path = TempPath("stream_replacement_generations.stream");
+    WriteFileBytes(path, MakeValidImage(id));
+    ASSERT_EQ(VN_OK, streams.RegisterFile(id, path.c_str()));
+    Manager::StreamFacts original{}, current{};
+    ASSERT_TRUE(streams.FindFile(id, &original));
+    auto request = ReplacementAt(original);
+    Manager::PreparedToken first{}, retiring{}, reused{};
+    ASSERT_EQ(VN_OK, streams.BeginReplacement(request, &first));
+    ASSERT_EQ(VN_OK, streams.ReplaceFile(id, path.c_str()));
+    ASSERT_TRUE(streams.FindFile(id, &current));
+    EXPECT_EQ(original.contentRevision, current.contentRevision);
+    EXPECT_NE(original.sourceGeneration, current.sourceGeneration);
+    ASSERT_EQ(VN_OK, streams.BeginReplacement(request, &retiring));
+    EXPECT_EQ(1u, streams.RetiringFileCount());
+    ASSERT_TRUE(streams.CancelReplacement(first));
+    streams.SyncServe();
+    EXPECT_EQ(1u, streams.RetiringFileCount());
+    ASSERT_TRUE(streams.CancelReplacement(retiring));
+    streams.SyncServe();
+    EXPECT_EQ(0u, streams.RetiringFileCount());
+    ASSERT_EQ(VN_OK, streams.UnregisterFile(id));
+    ASSERT_EQ(VN_OK, streams.RegisterFile(id, path.c_str()));
+    ASSERT_TRUE(streams.FindFile(id, &current));
+    ASSERT_EQ(original.fileIndex, current.fileIndex);
+    ASSERT_EQ(original.contentRevision, current.contentRevision);
+    EXPECT_EQ(VN_STALE_HANDLE, streams.BeginReplacement(request, &reused));
+    request = ReplacementAt(current);
+    // Even a wrapped ring generation cannot revive a preparation owner.
+    streams.RingOf(first.slot)->generation.store(UINT32_MAX, std::memory_order_relaxed);
+    ASSERT_EQ(VN_OK, streams.BeginReplacement(request, &reused));
+    EXPECT_EQ(first.slot, reused.slot);
+    EXPECT_NE(first.generation, reused.generation);
+    EXPECT_EQ(Manager::PreparationState::Invalid, streams.QueryReplacement(first));
+    EXPECT_FALSE(streams.CancelReplacement(first));
+    EXPECT_EQ(Manager::PreparationState::Preparing, streams.QueryReplacement(reused));
+    EXPECT_TRUE(streams.CancelReplacement(reused));
+    streams.SyncServe();
+    EXPECT_EQ(VN_OK, streams.UnregisterFile(id));
+}
+
+TEST(StreamRegister, ReplacementIntegrityFailureWinsOverBufferedFrames) {
+    using Manager = harken::StreamManager;
+    using Access = harken::detail::StreamManagerTestAccess;
+    harken::EngineConfig config{};
+    config.maxStreams = 1;
+    config.streamRingFrames = 64;
+    Manager streams(config);
+    streams.SetThrottled(true);
+    StreamSpec spec;
+    spec.soundId = harkentest::ObjectId(17203);
+    spec.chunkFrames = 8;
+    auto bytes = BuildStreamBytes(spec, ServiceSamples(64, 0));
+    const auto toc = harken::ParseStreamTocEntry(bytes.data() + harken::kStreamHeaderBytes);
+    bytes[static_cast<std::size_t>(toc.payloadOffset + harken::StreamChunkBytes(8, 1))] ^= 1u;
+    const auto path = TempPath("stream_replacement_bad_chunk.stream");
+    WriteFileBytes(path, bytes);
+    ASSERT_EQ(VN_OK, streams.RegisterFile(spec.soundId, path.c_str()));
+    Manager::StreamFacts facts{};
+    ASSERT_TRUE(streams.FindFile(spec.soundId, &facts));
+    auto request = ReplacementAt(facts);
+    request.prebufferTargetFrames = 1;
+    Manager::PreparedToken token{};
+    ASSERT_EQ(VN_OK, streams.BeginReplacement(request, &token));
+    streams.SyncServe();
+    Access::ServeSlots(streams);
+    EXPECT_EQ(8u, streams.RingOf(token.slot)->ReadAvailable());
+    EXPECT_EQ(Manager::PreparationState::Failed, streams.QueryReplacement(token));
+    Manager::PreparedStream taken{};
+    EXPECT_EQ(VN_DEVICE_ERROR, streams.TakeReplacement(token, &taken));
+    EXPECT_TRUE(streams.CancelReplacement(token));
+    streams.SyncServe();
+    EXPECT_EQ(VN_OK, streams.UnregisterFile(spec.soundId));
+}
+
+TEST(StreamRegister, ReplacementPrivateFailureRollsBackSourcePin) {
+    using Manager = harken::StreamManager;
+    using Access = harken::detail::StreamManagerTestAccess;
+    harken::EngineConfig config{};
+    config.maxStreams = 1;
+    config.streamRingFrames = 1024;
+    Manager streams(config);
+    const auto id = harkentest::ObjectId(17204);
+    const auto path = TempPath("stream_replacement_capacity.stream");
+    WriteFileBytes(path, MakeValidImage(id));
+    ASSERT_EQ(VN_OK, streams.RegisterFile(id, path.c_str()));
+    Manager::StreamFacts facts{};
+    ASSERT_TRUE(streams.FindFile(id, &facts));
+    Access::SetCommitPageLimit(streams, 0);
+    Manager::PreparedToken token{};
+    EXPECT_EQ(VN_BACKPRESSURE, streams.BeginReplacement(ReplacementAt(facts), &token));
+    EXPECT_EQ(Manager::PreparationState::Invalid, streams.QueryReplacement(token));
+    EXPECT_EQ(1u, streams.FreeSlotCount());
+    Access::ExhaustSourceGenerations(streams);
+    EXPECT_EQ(VN_BACKPRESSURE, streams.ReplaceFile(id, path.c_str()));
+    Manager::StreamFacts unchanged{};
+    ASSERT_TRUE(streams.FindFile(id, &unchanged));
+    EXPECT_EQ(facts.sourceGeneration, unchanged.sourceGeneration);
+    EXPECT_EQ(VN_OK, streams.UnregisterFile(id));
+    EXPECT_EQ(VN_BACKPRESSURE, streams.RegisterFile(id, path.c_str()));
+    EXPECT_FALSE(streams.FindFile(id, &unchanged));
 }
 
 TEST(StreamRegister, ContinuousConsumptionDoesNotStarveAnotherStream) {
@@ -212,19 +1179,19 @@ TEST(StreamRegister, ContinuousConsumptionDoesNotStarveAnotherStream) {
     }
     streams.SyncServe();
 
-    std::uint32_t firstReads = 0;
+    std::atomic<std::uint32_t> firstReads{0};
     std::uint32_t firstReadsWhenSecondServed = UINT32_MAX;
     {
         ReadObserver first(Access::Input(streams, files[0]), [&] {
-            if (++firstReads < 64) {
+            if (firstReads.fetch_add(1) + 1 < 64) {
                 auto* ring = streams.RingOf(0);
                 ring->AdvanceRead(ring->ReadAvailable());
             }
-        });
+        }, nullptr, false, sizeof(float));
         ReadObserver second(Access::Input(streams, files[1]), [&] {
             if (firstReadsWhenSecondServed == UINT32_MAX)
-                firstReadsWhenSecondServed = firstReads;
-        });
+                firstReadsWhenSecondServed = firstReads.load();
+        }, nullptr, false, sizeof(float));
         Access::ServeSlots(streams);
     }
     EXPECT_LT(firstReadsWhenSecondServed, 64u);
@@ -378,6 +1345,10 @@ TEST(StreamRegister, AdjacentStreamIntegrityFailureDoesNotStopHealthyNeighbor) {
             ASSERT_TRUE(streams.PrepareSlotWorkingSet(slot, 1));
             ASSERT_EQ(VN_OK, streams.ActivateSlot(slot, files[slot], 0, 0, 512, 1, &tokens[slot]));
         }
+        bool failReads = false;
+        unsigned reads = 0;
+        ReadObserver observer(Access::Input(streams, files[badSlot]), [&] { ++reads; }, &failReads,
+                              false, fault == Fault::ShortRead ? (badSlot == 0 ? 16 : 32) * sizeof(float) : SIZE_MAX);
         Access::ServeSlots(streams);
         std::size_t positions[2]{};
         for (unsigned slot = 0; slot < 2; ++slot) {
@@ -385,11 +1356,10 @@ TEST(StreamRegister, AdjacentStreamIntegrityFailureDoesNotStopHealthyNeighbor) {
             ExpectAndConsume(*streams.RingOf(slot), sources[slot], positions[slot], 64);
             ASSERT_FALSE(::testing::Test::HasFatalFailure());
         }
-        {
-            ReadObserver observer(Access::Input(streams, files[badSlot]), [] {},
-                                  fault == Fault::ShortRead);
-            Access::ServeSlots(streams);
-        }
+        // Cached invalid bytes must fail without retrying the provider.
+        reads = 0;
+        failReads = true;
+        Access::ServeSlots(streams);
         for (unsigned slot = 0; slot < 2; ++slot) {
             auto& ring = *streams.RingOf(slot);
             const bool bad = slot == badSlot;
@@ -400,6 +1370,7 @@ TEST(StreamRegister, AdjacentStreamIntegrityFailureDoesNotStopHealthyNeighbor) {
             ASSERT_FALSE(::testing::Test::HasFatalFailure());
         }
         Access::ServeSlots(streams);
+        if (fault != Fault::ShortRead) EXPECT_EQ(0u, reads);
         EXPECT_EQ(0u, streams.RingOf(badSlot)->ReadAvailable());
         const unsigned healthy = 1 - badSlot;
         ExpectAndConsume(*streams.RingOf(healthy), sources[healthy], positions[healthy], 128);
@@ -407,8 +1378,10 @@ TEST(StreamRegister, AdjacentStreamIntegrityFailureDoesNotStopHealthyNeighbor) {
         for (unsigned slot = 0; slot < 2; ++slot)
             ASSERT_TRUE(streams.RetirePreparedSlot(streams.RingOf(slot), tokens[slot]));
         streams.SyncServe();
+        observer.Restore();
         for (unsigned slot = 0; slot < 2; ++slot)
             EXPECT_EQ(VN_OK, streams.UnregisterFile(harkentest::ObjectId(17100 + slot)));
+
     }
 }
 
@@ -440,6 +1413,10 @@ TEST(StreamRegister, StreamReadExceptionFailsServeAndRetriesVerifiedData) {
         ASSERT_TRUE(streams.PrepareSlotWorkingSet(slot, 1));
         ASSERT_EQ(VN_OK, streams.ActivateSlot(slot, files[slot], 0, 0, 512, 1, &tokens[slot]));
     }
+    bool throwReads = false;
+    ReadObserver observer(Access::Input(streams, files[1]), [&] {
+        if (throwReads) throw std::ios_base::failure("injected read failure");
+    }, nullptr, true, 32 * sizeof(float));
     Access::ServeSlots(streams);
     std::size_t positions[2]{};
     for (unsigned slot = 0; slot < 2; ++slot) {
@@ -448,11 +1425,8 @@ TEST(StreamRegister, StreamReadExceptionFailsServeAndRetriesVerifiedData) {
         ASSERT_FALSE(::testing::Test::HasFatalFailure());
     }
     {
-        auto& input = Access::Input(streams, files[1]);
-        // The original reader overwrites staging before this failure escapes.
-        ReadObserver observer(input,
-            [] { throw std::ios_base::failure("injected read failure"); }, false, true);
-        input.exceptions(std::ios::badbit);
+        // The source overwrites private read bytes before this failure escapes.
+        throwReads = true;
         streams.SyncServe();
         // Every attempted read fails until quiescence, including an automatic
         // pass that may run before this explicit request reaches the worker.
@@ -467,6 +1441,7 @@ TEST(StreamRegister, StreamReadExceptionFailsServeAndRetriesVerifiedData) {
         }
         EXPECT_EQ(128u, streams.RingOf(1)->writeIndex.load(std::memory_order_acquire));
     }
+    throwReads = false;
     Access::ServeSlots(streams);
     for (unsigned slot = 0; slot < 2; ++slot) {
         ExpectAndConsume(*streams.RingOf(slot), sources[slot], positions[slot], 128);
@@ -480,8 +1455,10 @@ TEST(StreamRegister, StreamReadExceptionFailsServeAndRetriesVerifiedData) {
         ASSERT_TRUE(streams.RetirePreparedSlot(streams.RingOf(slot), tokens[slot]));
     }
     streams.SyncServe();
+    observer.Restore();
     for (unsigned slot = 0; slot < 2; ++slot)
         EXPECT_EQ(VN_OK, streams.UnregisterFile(harkentest::ObjectId(17110 + slot)));
+
 }
 
 TEST(StreamRegister, ConsumptionDuringReadKeepsServiceBudgetBounded) {
@@ -512,8 +1489,15 @@ TEST(StreamRegister, ConsumptionDuringReadKeepsServiceBudgetBounded) {
         ASSERT_TRUE(streams.PrepareSlotWorkingSet(slot, 1));
         ASSERT_EQ(VN_OK, streams.ActivateSlot(slot, files[slot], 0, 0, 512, 1, &tokens[slot]));
     }
-    Access::ServeSlots(streams);
     std::size_t positions[2]{};
+    bool consumeOnRead = false;
+    ReadObserver observer(Access::Input(streams, files[0]), [&] {
+        if (consumeOnRead) {
+            auto& ring = *streams.RingOf(0);
+            ExpectAndConsume(ring, sources[0], positions[0], ring.ReadAvailable());
+        }
+    }, nullptr, false, 16 * sizeof(float));
+    Access::ServeSlots(streams);
     std::uint64_t beforeWrite[2]{};
     std::uint32_t budgets[2]{};
     for (unsigned slot = 0; slot < 2; ++slot) {
@@ -524,13 +1508,9 @@ TEST(StreamRegister, ConsumptionDuringReadKeepsServiceBudgetBounded) {
         beforeWrite[slot] = ring.writeIndex.load(std::memory_order_acquire);
         budgets[slot] = ring.WriteAvailable();
     }
-    {
-        ReadObserver observer(Access::Input(streams, files[0]), [&] {
-            auto& ring = *streams.RingOf(0);
-            ExpectAndConsume(ring, sources[0], positions[0], ring.ReadAvailable());
-        });
-        Access::ServeSlots(streams);
-    }
+    consumeOnRead = true;
+    Access::ServeSlots(streams);
+    consumeOnRead = false;
     ASSERT_FALSE(::testing::Test::HasFatalFailure());
     for (unsigned slot = 0; slot < 2; ++slot) {
         auto& ring = *streams.RingOf(slot);
@@ -544,8 +1524,10 @@ TEST(StreamRegister, ConsumptionDuringReadKeepsServiceBudgetBounded) {
         ASSERT_TRUE(streams.RetirePreparedSlot(streams.RingOf(slot), tokens[slot]));
     }
     streams.SyncServe();
+    observer.Restore();
     for (unsigned slot = 0; slot < 2; ++slot)
         EXPECT_EQ(VN_OK, streams.UnregisterFile(harkentest::ObjectId(17120 + slot)));
+
 }
 
 TEST(StreamRegister, RegisterExposesTocFactsThroughFindFile) {
@@ -626,10 +1608,15 @@ TEST(StreamRegister, PendingReferencePreservesWideBackingThroughNarrowStartsAndR
     spec.chunkFrames = 256;
     const auto widePath = TempPath("stream_pending_wide.stream");
     WriteFileBytes(widePath, BuildStreamBytes(spec, std::vector<float>(8192, 0.25f)));
-    const auto monoPath = TempPath("stream_pending_mono.stream");
-    WriteFileBytes(monoPath, MakeValidImage(harkentest::ObjectId(7012), 4096));
+    auto monoSource = std::make_shared<ControlledSource>();
+    monoSource->bytes = MakeValidImage(harkentest::ObjectId(7012), 4096);
+    monoSource->maxRead = 256 * sizeof(float);
+    const auto monoToc = harken::ParseStreamTocEntry(monoSource->bytes.data() + harken::kStreamHeaderBytes);
     ASSERT_EQ(VN_OK, streams.RegisterFile(spec.soundId, widePath.c_str()));
-    ASSERT_EQ(VN_OK, streams.RegisterFile(harkentest::ObjectId(7012), monoPath.c_str()));
+    harken::StreamManager::SourceToken prepared;
+    ASSERT_EQ(VN_OK, streams.BeginSource(harkentest::ObjectId(7012), monoSource, false, 0, &prepared));
+    ASSERT_TRUE(WaitUntil([&] { return streams.QuerySource(prepared) == harken::StreamManager::PreparationState::Ready; }));
+    ASSERT_EQ(VN_OK, streams.TakeSource(prepared));
     harken::StreamManager::StreamFacts wide{}, mono{};
     ASSERT_TRUE(streams.FindFile(spec.soundId, &wide));
     ASSERT_TRUE(streams.FindFile(harkentest::ObjectId(7012), &mono));
@@ -649,6 +1636,43 @@ TEST(StreamRegister, PendingReferencePreservesWideBackingThroughNarrowStartsAndR
         ASSERT_TRUE(streams.RetirePreparedSlot(streams.RingOf(slot), token));
         EXPECT_EQ(bytes, RingAccess::CommittedBytes(streams));
     }
+    std::uint32_t rollbackSlot = UINT32_MAX;
+    ASSERT_TRUE(streams.PeekPreparedFreeSlot(2, &rollbackSlot));
+    ASSERT_EQ(2u, rollbackSlot);
+    std::uint64_t rollbackToken = 0;
+    ASSERT_EQ(VN_OK, streams.ActivateSlot(rollbackSlot, wide.fileIndex, 0, 0, 4096, 1, &rollbackToken));
+    monoSource->gate->offset.store(monoToc.payloadOffset + 1024 * sizeof(float));
+    ReleaseReadGate release{*monoSource->gate};
+    streams.RingOf(0)->AdvanceRead(1024);
+    ASSERT_TRUE(WaitUntil([&] { return monoSource->gate->entered.load(); }));
+    harken::SetStreamWorkerStallReleaseForTests(false);
+    const auto stalls = harken::StreamWorkerStallEntriesForTests();
+    harken::SetStreamRequestFaultForTests(harken::StreamRequestFault::WorkerStall);
+    const bool stalled = WaitUntil([&] { return harken::StreamWorkerStallEntriesForTests() > stalls; });
+    if (!stalled) {
+        harken::SetStreamRequestFaultForTests(harken::StreamRequestFault::None);
+        harken::SetStreamWorkerStallReleaseForTests(true);
+    }
+    ASSERT_TRUE(stalled);
+    EXPECT_TRUE(streams.RetirePreparedSlot(streams.RingOf(rollbackSlot), rollbackToken));
+    std::atomic<bool> reaped{false};
+    bool available = false;
+    std::uint32_t readySlot = UINT32_MAX;
+    std::thread peek([&] {
+        available = streams.PeekPreparedFreeSlot(2, &readySlot);
+        reaped.store(true, std::memory_order_release);
+    });
+    const bool queued = WaitUntil([&] { return streams.PendingRequestCountForTest() != 0; });
+    harken::SetStreamRequestFaultForTests(harken::StreamRequestFault::None);
+    harken::SetStreamWorkerStallReleaseForTests(true);
+    const bool independent = WaitUntil([&] { return reaped.load(std::memory_order_acquire); });
+    if (!independent) monoSource->gate->release.store(true);
+    peek.join();
+    EXPECT_TRUE(queued);
+    EXPECT_TRUE(independent);
+    EXPECT_TRUE(available);
+    EXPECT_EQ(2u, readySlot);
+    monoSource->gate->release.store(true);
     streams.ReleasePendingRef(wide.fileIndex);
     streams.SyncServe();
     EXPECT_EQ(VN_OK, streams.UnregisterFile(spec.soundId));

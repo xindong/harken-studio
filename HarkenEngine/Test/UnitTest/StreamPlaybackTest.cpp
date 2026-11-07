@@ -11,16 +11,20 @@
 #include "Common/TestUtil.h"
 
 #include "harken/core/LogicAllocCheckpoint.h"
+#include "harken/core/ResamplerAdvance.h"
+#include "harken/core/SourcePhase.h"
 #include "harken/media/StreamFormat.h"
 #include "harken/media/StreamManager.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <limits>
 #include <string>
+#include <thread>
 #include <vector>
 
 #ifndef HARKEN_TEMP_DIR
@@ -1349,6 +1353,198 @@ TEST(StreamPlayback, StreamStartFrameSeeksIntoSource) {
     for (std::size_t i = 0; i < reference.left.size(); ++i) {
         ASSERT_EQ(reference.left[i], seeked.left[i]) << "left sample " << i;
         ASSERT_EQ(reference.right[i], seeked.right[i]) << "right sample " << i;
+    }
+}
+
+void RenderFreshSourceCoordinates(bool streamed, std::uint32_t workers,
+    double pitch, std::uint64_t startFrame, std::uint32_t loops,
+    harken::ExactSourcePhase phase, Capture* capture, bool history = false, bool park = false) {
+    auto config = MakeStreamConfig(nullptr, 2, history ? 512 : 4096, 2, 1);
+    config.blockFrames = 64;
+    config.renderWorkerCount = workers;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const auto id = harkentest::ObjectId(9689);
+    const auto samples = MakeDistinctSignal(1024);
+    const auto pan = harken::ResolvePanGains(engine.config.mixChannelLayout, 0);
+    VnVoiceHandle voice = 0;
+    harken::StreamManager::PreparedStream prepared;
+    harken::StreamManager::StreamFacts facts;
+    harken::StreamManager::ReplacementRequest request;
+    const auto prepareRing = [&] {
+        harken::StreamManager::PreparedToken token;
+        ASSERT_EQ(VN_OK, engine.streams.BeginReplacement(request, &token));
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(4);
+        while (engine.streams.QueryReplacement(token) == harken::StreamManager::PreparationState::Preparing &&
+               std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        ASSERT_EQ(VN_OK, engine.streams.TakeReplacement(token, &prepared));
+    };
+    if (streamed) {
+        StreamSpec spec;
+        spec.soundId = id;
+        spec.sampleRate = 44100;
+        spec.chunkFrames = 64;
+        spec.loopable = true;
+        spec.loopStartFrame = 64;
+        spec.loopEndFrame = 256;
+        const auto path = TempPath("stream_fresh_coordinates.stream");
+        WriteFileBytes(path, BuildStreamBytes(spec, samples));
+        ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(id, path.c_str()));
+        ASSERT_TRUE(engine.streams.FindFile(id, &facts));
+        request.fileIndex = facts.fileIndex;
+        request.sourceGeneration = facts.sourceGeneration;
+        request.contentRevision = facts.contentRevision;
+        request.targetFrame = startFrame;
+        request.loopStartFrame = 64;
+        request.loopEndFrame = 256;
+        request.loopCount = loops;
+        request.prebufferTargetFrames = 4096;
+        ASSERT_NO_FATAL_FAILURE(prepareRing());
+        if (park) ASSERT_TRUE(engine.streams.AcquirePendingRef(facts.fileIndex));
+        ASSERT_EQ(VN_OK, engine.voices.PlayStream(prepared.ring, 1, 44100, 64,
+            0, pitch, 0, false, 0, 0, 0, pan, startFrame, samples.size(),
+            64, 256, loops, harken::ResampleProfile::LegacyCompatibility,
+            &voice, 1, UINT32_MAX, 0, nullptr, 0, true, 1, phase));
+        ASSERT_TRUE(engine.voices.BindStreamRingToken(voice, prepared.ring, prepared.ringToken));
+    } else {
+        const auto desc = harkentest::MonoDesc(samples, 44100);
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(id, &desc));
+        auto pcm = engine.registry.Lookup(id);
+        pcm.loop = {64, 256};
+        ASSERT_EQ(VN_OK, engine.voices.Play(pcm, 0, pitch, 0, false, 0, 0, 0,
+            pan, 64, 256, loops, harken::ResampleProfile::LegacyCompatibility,
+            &voice, 1, UINT32_MAX, 0, true, 0, 1, true, true, phase));
+    }
+    if (history) engine.voices.Resolve(voice)->resampler.quality = harken::ResampleQuality::Sinc16;
+    ASSERT_TRUE(engine.voices.CommitPreparedVoice(voice));
+    engine.voices.ApplyPlay(voice, voice, startFrame, 0);
+    for (unsigned block = 0; block < 32; ++block) {
+        if (streamed) engine.streams.SyncServe();
+        if (history && block == 3)
+            engine.voices.Resolve(voice)->resampler.UpdateRatio(pitch * (44100.0 / 48000.0) * 1.1, 256);
+        if (park && block == 4) {
+            ASSERT_TRUE(engine.voices.ReserveStreamPark(voice, voice, 1,
+                harken::ResampleProfile::LegacyCompatibility));
+            engine.voices.ApplyStop(voice, 0, 64, engine.notifications, block,
+                harken::kStopModeStreamPark, voice, 1);
+        }
+        harkentest::PumpAndCapture(&engine, 1, *capture);
+        if (park && block == 4) {
+            harken::StreamParkOutcome outcome;
+            bool cancelled = false;
+            ASSERT_TRUE(engine.voices.ConsumeStreamParkOutcomeExact(voice, voice, 1, &outcome, &cancelled));
+            ASSERT_FALSE(cancelled);
+            ASSERT_EQ(harken::StreamParkDisposition::ResumeReady, outcome.disposition);
+            const auto* saved = engine.voices.ResolveParkOwnedToken(outcome.token);
+            ASSERT_NE(nullptr, saved);
+            ASSERT_GT(saved->resampler.legacyWriteIndex, saved->resampler.legacyReadIndex);
+            ASSERT_GT(saved->resampler.rampRemaining, 0u);
+            ASSERT_NE(0u, saved->resampler.legacyPhaseHigh);
+            EXPECT_EQ(harken::ResampleQuality::Sinc16, saved->resampler.quality);
+            StreamSpec changed;
+            changed.soundId = id;
+            changed.sampleRate = 44100;
+            const auto replacementPath = TempPath("stream_park_changed_generation.stream");
+            WriteFileBytes(replacementPath, BuildStreamBytes(changed, std::vector<float>(1024, -0.4f)));
+            ASSERT_EQ(VN_OK, Vn_ReplaceStreamFile(id, replacementPath.c_str()));
+            harken::StreamManager::StreamFacts current;
+            ASSERT_TRUE(engine.streams.FindFile(id, &current));
+            ASSERT_NE(facts.sourceGeneration, current.sourceGeneration);
+            request.targetFrame = saved->feedFrame;
+            request.loopCount = saved->feedLoopsRemaining;
+            ASSERT_NO_FATAL_FAILURE(prepareRing());
+            ASSERT_EQ(VN_OK, engine.voices.PlayStream(prepared.ring, 1, 44100, 64,
+                0, saved->resampler.targetRatio / (44100.0 / 48000.0), 0, false, 0, 0, 0, pan,
+                saved->feedFrame, samples.size(), 64, 256, saved->feedLoopsRemaining,
+                harken::ResampleProfile::LegacyCompatibility, &voice, 1, UINT32_MAX, 0,
+                &outcome.token, 0, true));
+            ASSERT_TRUE(engine.voices.BindStreamRingToken(voice, prepared.ring, prepared.ringToken));
+            engine.streams.ReleasePendingRef(facts.fileIndex);
+            engine.voices.ReleaseParkOwnedToken(outcome.token);
+            ASSERT_TRUE(engine.voices.CommitPreparedVoice(voice));
+            engine.voices.ApplyPlay(voice, voice, 0, block + 1);
+        }
+    }
+    HARKENTEST_ASSERT_NON_SILENT(capture->left);
+    EXPECT_EQ(loops == 0 ? 1u : 0u, engine.voices.ActiveCount());
+    engine.voices.ApplyStop(voice, 0, 0, engine.notifications, 32);
+    if (streamed) {
+        engine.streams.SyncServe();
+        EXPECT_EQ(2u, engine.streams.FreeSlotCount());
+        EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(id));
+    }
+}
+
+TEST(StreamPlayback, FreshFractionalCoordinatesMatchResidentAndContinuousLinear) {
+    // Same fixed, already-bound ratio and loop data as the timeline crop case.
+    // Continuous equivalence is specific to Linear with unchanged downstream state.
+    const double pitch = 1.25 * std::pow(2.0, 7.0 / 12.0);
+    harken::SourcePhaseStep step;
+    ASSERT_TRUE(harken::DecodeSourcePhaseStep(pitch * 44100.0 / 48000.0, &step));
+    for (const auto workers : {0u, 2u}) {
+        for (const auto initialLoops : {3u, 0u}) {
+            Capture continuous;
+            ASSERT_NO_FATAL_FAILURE(RenderFreshSourceCoordinates(false, workers, pitch, 0, initialLoops, {}, &continuous));
+            for (const auto offset : {0u, 192u, 448u, 704u}) {
+                SCOPED_TRACE(workers);
+                SCOPED_TRACE(initialLoops);
+                SCOPED_TRACE(offset);
+                std::uint64_t consumed = 0, start = 0;
+                std::uint32_t loops = 0;
+                harken::ExactSourcePhase phase;
+                ASSERT_TRUE(harken::TryJumpSourcePhase(step, {}, offset, &consumed, &phase));
+                harken::MapLoopedSourceFrame(0, initialLoops, consumed, 1024, 64, 256, &start, &loops);
+                Capture resident, stream;
+                ASSERT_NO_FATAL_FAILURE(RenderFreshSourceCoordinates(false, workers, pitch, start, loops, phase, &resident));
+                ASSERT_NO_FATAL_FAILURE(RenderFreshSourceCoordinates(true, workers, pitch, start, loops, phase, &stream));
+                ASSERT_EQ(resident.left, stream.left);
+                ASSERT_EQ(resident.right, stream.right);
+                for (std::size_t i = 0; i + offset < continuous.left.size(); ++i) {
+                    ASSERT_EQ(continuous.left[i + offset], stream.left[i]) << i;
+                    ASSERT_EQ(continuous.right[i + offset], stream.right[i]) << i;
+                }
+            }
+        }
+    }
+}
+
+TEST(StreamPlayback, FractionalNeighbourAcrossChunkAndLoopSeamMatchesResident) {
+    const harken::ExactSourcePhase half{1ull << 63, 0};
+    for (const auto start : {63u, 255u, 777u}) {
+        for (const auto loops : {3u, 1u, 0u}) {
+            if (start > 256 && loops != 1) continue;
+            SCOPED_TRACE(start);
+            SCOPED_TRACE(loops);
+            Capture resident, stream;
+            ASSERT_NO_FATAL_FAILURE(RenderFreshSourceCoordinates(false, 0, 1, start, loops, half, &resident));
+            ASSERT_NO_FATAL_FAILURE(RenderFreshSourceCoordinates(true, 0, 1, start, loops, half, &stream));
+            ASSERT_EQ(resident.left, stream.left);
+            ASSERT_EQ(resident.right, stream.right);
+        }
+    }
+}
+
+TEST(StreamPlayback, ParkedHistoryMatchesContinuousOutputFromPinnedSource) {
+    for (const auto workers : {0u, 2u}) {
+        for (const auto loops : {3u, 0u}) {
+            SCOPED_TRACE(workers);
+            SCOPED_TRACE(loops);
+            Capture continuous, resumed;
+            const harken::ExactSourcePhase half{1ull << 63, 0};
+            ASSERT_NO_FATAL_FAILURE(RenderFreshSourceCoordinates(true, workers, 1.2345, 0, loops,
+                half, &continuous, true));
+            ASSERT_NO_FATAL_FAILURE(RenderFreshSourceCoordinates(true, workers, 1.2345, 0, loops,
+                half, &resumed, true, true));
+            ASSERT_EQ(continuous.left.size(), resumed.left.size());
+            // The park transition itself fades one block. After its captured
+            // endpoint, restored history follows the same ongoing ratio ramp.
+            for (std::size_t i = 5 * 64; i < continuous.left.size(); ++i) {
+                ASSERT_EQ(continuous.left[i], resumed.left[i]) << i;
+                ASSERT_EQ(continuous.right[i], resumed.right[i]) << i;
+            }
+        }
     }
 }
 

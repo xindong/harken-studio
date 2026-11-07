@@ -2,6 +2,7 @@
 #define HARKEN_CORE_SOURCE_TERMINAL_RECORD_H
 
 #include "harken/core/PlayableInstanceTable.h"
+#include "harken/core/RuntimeWorkIndex.h"
 
 #include <atomic>
 #include <cstdint>
@@ -64,8 +65,17 @@ struct SourceTerminalRecord {
 };
 
 class SourceTerminalRecords {
+    struct ActiveFamily {};
+    using ActiveIdentity = RuntimeIndexIdentity<ActiveFamily>;
 public:
-    explicit SourceTerminalRecords(std::uint32_t capacity) : records_(capacity) {}
+    explicit SourceTerminalRecords(std::uint32_t capacity) : records_(capacity) {
+        // Prepare navigation alongside the fixed records, never during a
+        // Source reservation or an audio completion publication.
+        if (capacity == 0) return;
+        if (!active_.Reserve(capacity)) throw std::bad_alloc{};
+        for (std::uint64_t slot = 0; slot < capacity; slot += 256u)
+            if (!active_.Prepare({1, static_cast<std::uint32_t>(slot), 0})) throw std::bad_alloc{};
+    }
     std::uint32_t Capacity() const noexcept {
         return static_cast<std::uint32_t>(records_.size());
     }
@@ -80,6 +90,23 @@ public:
     }
     const SourceTerminalRecord* Resolve(SourceTerminalToken token) const noexcept {
         return const_cast<SourceTerminalRecords*>(this)->Resolve(token);
+    }
+    SourceTerminalToken NextOccupied(std::uint32_t* cursor) const noexcept {
+        if (cursor != nullptr && *cursor < Capacity()) {
+            const auto slot = *cursor;
+            const auto& record = records_[slot];
+            if (record.occupied && record.generation != 0) {
+                ++*cursor;
+                return {slot, record.generation};
+            }
+        }
+        const auto id = active_.Next(RuntimeActivitySet::Active, cursor,
+            [this](std::uint32_t slot) noexcept {
+                const auto& record = records_[slot];
+                return record.occupied ? ActiveIdentity{record.generation, slot, 0} : ActiveIdentity{};
+            });
+        return id.Valid() ? SourceTerminalToken{id.slot, static_cast<std::uint32_t>(id.generation)}
+                          : SourceTerminalToken{};
     }
     SourceTerminalToken Reserve(const PlayableInstanceTable& instances,
         std::uint64_t leaf, std::uint64_t epoch,
@@ -106,12 +133,17 @@ public:
         record->retiring = false;
         record->retryAfterMissedEntry = false;
         record->occupied = true;
+        if (!SetActive({slot, record->generation}, true)) {
+            record->occupied = false;
+            return {};
+        }
         ++occupiedCount_;
         return {slot, record->generation};
     }
     bool Release(SourceTerminalToken token) noexcept {
         auto* record = Resolve(token);
         if (record == nullptr) return false;
+        if (!SetActive(token, false)) return false;
         record->occupied = false;
         --occupiedCount_;
         if (record->generation == UINT32_MAX) record->quarantined = true;
@@ -128,7 +160,14 @@ public:
         return out->kind != SourceTerminalKind::None;
     }
 private:
+    bool SetActive(SourceTerminalToken token, bool present) noexcept {
+        return active_.SetMembership({token.generation, token.slot, 0}, RuntimeActivitySet::Active,
+            present, [this, token](ActiveIdentity id) noexcept {
+                return id.slot == token.slot && id.generation == token.generation && Resolve(token) != nullptr;
+            });
+    }
     std::vector<SourceTerminalRecord> records_;
+    RuntimeActivityIndex<ActiveFamily> active_;
     std::uint32_t occupiedCount_ = 0;
 };
 

@@ -26,8 +26,6 @@ VnConfig QualificationConfig(const Fixture& fixture) {
     VnConfig config = MakeNullConfig();
     config.maxPacks = 4;
     config.maxActions = fixture.residentCount;
-    config.maxCatalogEntries = fixture.catalogCount;
-    config.maxCatalogBytes = fixture.catalogBytes;
     config.maxResidentDefinitionBytes = fixture.initBodyBytes + fixture.residentBodyBytes;
     config.maxCompositeIndexBytes = 4ull << 20;
     config.maxPackDecodeStagingBytes = 32ull << 20;
@@ -60,11 +58,11 @@ VnResult ActivateFixture(const std::filesystem::path& directory,
         members, includeContent ? 2u : 1u, rows, report, previous, base);
 }
 
-TEST(PackFoundationQualification, CatalogMayExceedResidentWindow) {
+TEST(PackFoundationQualification, ExplicitMembersDefineResidentWindow) {
     Fixture fixture;
-    ASSERT_TRUE(BuildFixture(1000, 64, &fixture));
+    ASSERT_TRUE(BuildFixture(64, &fixture));
     const std::filesystem::path directory =
-        FixtureDirectory("f3-catalog-resident-window");
+        FixtureDirectory("f3-resident-window");
     ASSERT_TRUE(WriteFixture(directory, fixture));
 
     const std::string initPath = (directory / "Init.pack").string();
@@ -74,8 +72,8 @@ TEST(PackFoundationQualification, CatalogMayExceedResidentWindow) {
     VnInitPackInspectReport inspection{};
     inspection.structSize = sizeof(inspection);
     ASSERT_EQ(VN_OK, Vn_InspectInitPack(&inspectDesc, &inspection));
-    EXPECT_EQ(1000u, inspection.catalogEntries);
-    EXPECT_EQ(fixture.catalogBytes, inspection.catalogBytes);
+    EXPECT_EQ(0u, inspection.catalogEntries);
+    EXPECT_EQ(0u, inspection.catalogBytes);
 
     EngineSession session(QualificationConfig(fixture));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -97,42 +95,18 @@ TEST(PackFoundationQualification, CatalogMayExceedResidentWindow) {
 
     post.actionId = harkentest::ObjectId(kActionBase + fixture.residentCount);
     firing = 0;
-    EXPECT_EQ(VN_CONTENT_NOT_LOADED, Vn_PostAction(&post, &firing));
+    EXPECT_EQ(VN_UNKNOWN_ID, Vn_PostAction(&post, &firing));
     EXPECT_EQ(0u, firing);
 
-    post.actionId = harkentest::ObjectId(kActionBase + fixture.catalogCount);
-    EXPECT_EQ(VN_UNKNOWN_ID, Vn_PostAction(&post, &firing));
 }
 
-TEST(PackFoundationQualification, CatalogBudgetsPinMinusExactPlus) {
+TEST(PackFoundationQualification, ResidentBudgetsPinMinusExactPlus) {
     Fixture fixture;
-    ASSERT_TRUE(BuildFixture(1000, 64, &fixture));
+    ASSERT_TRUE(BuildFixture(64, &fixture));
     const std::filesystem::path directory =
-        FixtureDirectory("f3-catalog-budgets");
+        FixtureDirectory("f3-resident-budgets");
     ASSERT_TRUE(WriteFixture(directory, fixture));
 
-    {
-        VnConfig config = QualificationConfig(fixture);
-        config.maxCatalogEntries = fixture.catalogCount - 1;
-        EngineSession session(config);
-        ASSERT_EQ(VN_OK, session.InitResult());
-        VnCanonicalPackSetMemberResultV1 rows[2]{};
-        VnCanonicalPackSetActivationReportV1 activation{};
-        EXPECT_EQ(VN_PACK_CATALOG_CAPACITY,
-                  ActivateFixture(directory, false, rows, activation));
-        EXPECT_EQ(0u, rows[0].handle);
-    }
-    {
-        VnConfig config = QualificationConfig(fixture);
-        config.maxCatalogBytes = fixture.catalogBytes - 1;
-        EngineSession session(config);
-        ASSERT_EQ(VN_OK, session.InitResult());
-        VnCanonicalPackSetMemberResultV1 rows[2]{};
-        VnCanonicalPackSetActivationReportV1 activation{};
-        EXPECT_EQ(VN_PACK_CATALOG_CAPACITY,
-                  ActivateFixture(directory, false, rows, activation));
-        EXPECT_EQ(0u, rows[0].handle);
-    }
     {
         VnConfig config = QualificationConfig(fixture);
         --config.maxResidentDefinitionBytes;
@@ -149,7 +123,7 @@ TEST(PackFoundationQualification, CatalogBudgetsPinMinusExactPlus) {
                                   initial.initHandle, initial.resultSetRevision));
         EXPECT_EQ(0u, refusedRows[1].handle);
         EXPECT_EQ(generation, session.Engine()->packComposition.CompositeGeneration());
-        EXPECT_EQ(harken::PackIdentityReadiness::KnownUnloaded,
+        EXPECT_EQ(harken::PackIdentityReadiness::Absent,
                   session.Engine()->packComposition.Lookup(harkentest::ObjectId(kActionBase))
                       .readiness);
         EXPECT_EQ(fixture.initBodyBytes + fixture.residentBodyBytes,
@@ -175,7 +149,7 @@ TEST(PackFoundationQualification, CatalogBudgetsPinMinusExactPlus) {
                                   initial.initHandle, initial.resultSetRevision));
         EXPECT_EQ(0u, refusedRows[1].handle);
         EXPECT_EQ(generation, session.Engine()->packComposition.CompositeGeneration());
-        EXPECT_EQ(harken::PackIdentityReadiness::KnownUnloaded,
+        EXPECT_EQ(harken::PackIdentityReadiness::Absent,
                   session.Engine()->packComposition.Lookup(harkentest::ObjectId(kActionBase))
                       .readiness);
         EXPECT_EQ(fixture.residentCount,
@@ -196,9 +170,7 @@ TEST(PackFoundationQualification, CatalogBudgetsPinMinusExactPlus) {
     }
     {
         VnConfig config = QualificationConfig(fixture);
-        config.maxCatalogEntries = fixture.catalogCount + 1;
-        config.maxCatalogBytes = fixture.catalogBytes + 1;
-        ++config.maxResidentDefinitionBytes;
+                ++config.maxResidentDefinitionBytes;
         config.maxActions = fixture.residentCount + 1;
         EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());

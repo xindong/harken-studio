@@ -413,6 +413,21 @@ namespace Harken
         [DllImport(LibraryName, EntryPoint = "Vn_CreateEmitterEx", CallingConvention = CallingConvention.Cdecl)]
         public static extern VnResult Vn_CreateEmitterEx(in VnEmitterCreateDescV1 desc, out ulong outHandle);
 
+        [DllImport(LibraryName, EntryPoint = "Vn_BeginStreamSource", CallingConvention = CallingConvention.Cdecl)]
+        public static extern VnResult Vn_BeginStreamSource(VnObjectId soundId, uint mode, in VnByteSourceDescV1 source, out ulong outRequest);
+
+        [DllImport(LibraryName, EntryPoint = "Vn_BeginStreamFile", CallingConvention = CallingConvention.Cdecl)]
+        public static extern VnResult Vn_BeginStreamFile(VnObjectId soundId, uint mode, byte* utf8Path, out ulong outRequest);
+
+        [DllImport(LibraryName, EntryPoint = "Vn_QueryStreamSource", CallingConvention = CallingConvention.Cdecl)]
+        public static extern VnResult Vn_QueryStreamSource(ulong request, ref VnStreamSourceInfoV1 outInfo);
+
+        [DllImport(LibraryName, EntryPoint = "Vn_CancelStreamSource", CallingConvention = CallingConvention.Cdecl)]
+        public static extern VnResult Vn_CancelStreamSource(ulong request);
+
+        [DllImport(LibraryName, EntryPoint = "Vn_CommitStreamSource", CallingConvention = CallingConvention.Cdecl)]
+        public static extern VnResult Vn_CommitStreamSource(ulong request);
+
         [DllImport(LibraryName, EntryPoint = "Vn_MonitorGetEventSessionStatus", CallingConvention = CallingConvention.Cdecl)]
         public static extern VnResult Vn_MonitorGetEventSessionStatusV2(ulong handle, ref VnMonitorEventSessionStatusV2 outStatus);
 

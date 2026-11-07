@@ -61,7 +61,7 @@ public:
     QString collapsibleIndicatorStyle(const QColor& color, int alpha,
                                       bool rail) const;
     QString collapsibleHeaderStyle(const QColor& indicator, bool custom, int level,
-                                   bool topSeparator) const;
+                                     bool topSeparator, const QColor& backgroundTint = {}) const;
     static QString rgba(const QColor& color, int alpha);
 
 private:

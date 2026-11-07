@@ -344,22 +344,7 @@ QJsonObject IPCServer::handleOpenProject(const QJsonObject& args)
         engine_->startOutput();
     }
 
-    QJsonArray packs;
-    for (const auto* binding : project->allFileBindings())
-    {
-        if (!binding || !binding->rootItem) continue;
-        packs.append(QJsonObject{
-            {"name", binding->rootItem->name},
-            {"path", project->objectFilePath(binding->rootItem.get())},
-            {"guid", binding->rootItem->guid.toString(QUuid::WithoutBraces)}
-        });
-    }
-
-    return successResponse(QJsonObject{
-        {"name", project->name},
-        {"path", project->projectPath},
-        {"packs", packs}
-    });
+    return handleGetProjectInfo({});
 }
 
 
@@ -378,7 +363,8 @@ QJsonObject IPCServer::handleGetProjectInfo(const QJsonObject& args)
     if (!projectManager_->isProjectOpen())
     {
         return successResponse(QJsonObject{
-            {"project_open", false}
+            {"project_open", false},
+            {"closing", projectManager_->isClosing()}
         });
     }
     
@@ -412,6 +398,7 @@ QJsonObject IPCServer::handleGetProjectInfo(const QJsonObject& args)
 
     return successResponse(QJsonObject{
         {"project_open", true},
+        {"closing", projectManager_->isClosing()},
         {"name", project->name},
         {"path", project->projectPath},
         {"packs", packs},

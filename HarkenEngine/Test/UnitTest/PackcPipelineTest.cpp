@@ -231,16 +231,16 @@ void ReadPackFacts(const std::string& packPath,
     std::vector<std::uint8_t> bytes;
     ASSERT_TRUE(ReadFileBytes(packPath, &bytes)) << packPath;
     ASSERT_GE(bytes.size(),
-              static_cast<std::size_t>(harken::kPackHeaderBytes));
-    harken::PackHeader header;
-    ASSERT_TRUE(harken::ParsePackHeader(bytes.data(), &header));
+              static_cast<std::size_t>(harken::kPackMediaFileHeaderBytes));
+    harken::PackMediaFileHeader header;
+    ASSERT_TRUE(harken::ReadPackMediaFileHeader(bytes.data(), &header));
     ASSERT_EQ(bytes.size(), header.fileBytes);
     *outFileBytes = header.fileBytes;
     *outTocChecksum = header.tocChecksum;
     for (std::uint32_t i = 0; i < header.entryCount; ++i) {
-        const harken::PackTocEntry toc = harken::ParsePackTocEntry(
+        const harken::PackTocEntry toc = harken::ReadPackMedia(
             bytes.data() + header.tocOffset +
-            i * harken::kPackTocEntryBytes);
+            i * harken::kPackMediaBytes);
         ASSERT_LE(toc.blobOffset + toc.blobBytes, bytes.size());
         EXPECT_EQ(toc.blobChecksum,
                   harken::Fnv1a64(bytes.data() + toc.blobOffset,
@@ -399,17 +399,17 @@ TEST(PackcPipeline, EmptyContentV2IsDeterministicHeaderOnly) {
     std::vector<std::uint8_t> second;
     ASSERT_TRUE(ReadFileBytes(firstPath, &first));
     ASSERT_TRUE(ReadFileBytes(secondPath, &second));
-    ASSERT_EQ(harken::kPackV2HeaderBytes, first.size());
+    ASSERT_EQ(harken::kPackFileHeaderBytes, first.size());
     ASSERT_EQ(first, second);
 
-    harken::PackV2Header header;
-    ASSERT_TRUE(harken::ParsePackV2Header(first.data(), &header));
-    EXPECT_EQ(harken::kPackFormatVersion2, header.formatVersion);
-    EXPECT_EQ(harken::kPackV2HeaderBytes, header.headerBytes);
-    EXPECT_EQ(harken::kPackV2HeaderBytes, header.fileBytes);
+    harken::PackFileHeader header;
+    ASSERT_TRUE(harken::ReadPackFileHeader(first.data(), &header));
+    EXPECT_EQ(harken::kPackFormatVersion, header.formatVersion);
+    EXPECT_EQ(harken::kPackFileHeaderBytes, header.headerBytes);
+    EXPECT_EQ(harken::kPackFileHeaderBytes, header.fileBytes);
     EXPECT_EQ(harken::kPackKindContent, header.packKind);
     EXPECT_EQ(0u, header.entryCount);
-    EXPECT_EQ(harken::kPackV2HeaderBytes, header.directoryOffset);
+    EXPECT_EQ(harken::kPackFileHeaderBytes, header.directoryOffset);
     EXPECT_EQ(harken::kFnv1a64OffsetBasis, header.directoryChecksum);
 }
 
@@ -572,13 +572,13 @@ TEST(PackcPipeline, DirectMediaEntriesMatchFileCompilation) {
 
             std::vector<std::uint8_t> packed;
             ASSERT_TRUE(ReadFileBytes(packPath, &packed));
-            harken::PackHeader header;
-            ASSERT_TRUE(harken::ParsePackHeader(packed.data(), &header));
-            const auto toc = harken::ParsePackTocEntry(packed.data() + header.tocOffset);
-            std::vector<std::uint8_t> expected(harken::kPackTocEntryBytes + toc.blobBytes);
-            std::memcpy(expected.data(), packed.data() + header.tocOffset, harken::kPackTocEntryBytes);
+            harken::PackMediaFileHeader header;
+            ASSERT_TRUE(harken::ReadPackMediaFileHeader(packed.data(), &header));
+            const auto toc = harken::ReadPackMedia(packed.data() + header.tocOffset);
+            std::vector<std::uint8_t> expected(harken::kPackMediaBytes + toc.blobBytes);
+            std::memcpy(expected.data(), packed.data() + header.tocOffset, harken::kPackMediaBytes);
             harken::StoreLE64(expected.data() + 32, 0);
-            std::memcpy(expected.data() + harken::kPackTocEntryBytes,
+            std::memcpy(expected.data() + harken::kPackMediaBytes,
                         packed.data() + toc.blobOffset, static_cast<std::size_t>(toc.blobBytes));
             auto actual = entries.front().payload;
             ASSERT_NE(nullptr, entries.front().media);
@@ -750,27 +750,27 @@ TEST(PackcPipeline,
     ASSERT_FALSE(firstBuild.empty());
     ASSERT_GE(firstBuild.size(),
               static_cast<std::size_t>(
-                  harken::kPackV2HeaderBytes +
-                  2 * harken::kPackV2DirectoryEntryBytes));
+                  harken::kPackFileHeaderBytes +
+                  2 * harken::kPackDirectoryEntryBytes));
 
-    harken::PackV2Header header;
-    ASSERT_TRUE(harken::ParsePackV2Header(firstBuild.data(), &header));
-    EXPECT_EQ(harken::kPackFormatVersion2, header.formatVersion);
-    EXPECT_EQ(harken::kPackV2HeaderBytes, header.headerBytes);
+    harken::PackFileHeader header;
+    ASSERT_TRUE(harken::ReadPackFileHeader(firstBuild.data(), &header));
+    EXPECT_EQ(harken::kPackFormatVersion, header.formatVersion);
+    EXPECT_EQ(harken::kPackFileHeaderBytes, header.headerBytes);
     EXPECT_EQ(firstBuild.size(), header.fileBytes);
     EXPECT_EQ(harken::kPackKindContent, header.packKind);
     ASSERT_EQ(2u, header.entryCount);
     ASSERT_LE(header.directoryOffset, firstBuild.size());
-    ASSERT_LE(2u * harken::kPackV2DirectoryEntryBytes,
+    ASSERT_LE(2u * harken::kPackDirectoryEntryBytes,
               firstBuild.size() -
                   static_cast<std::size_t>(header.directoryOffset));
-    const harken::PackV2DirectoryEntry mediaEntry =
-        harken::ParsePackV2DirectoryEntry(
+    const harken::PackDirectoryEntry mediaEntry =
+        harken::ReadPackDirectoryEntry(
             firstBuild.data() + header.directoryOffset);
-    const harken::PackV2DirectoryEntry recipeEntry =
-        harken::ParsePackV2DirectoryEntry(
+    const harken::PackDirectoryEntry recipeEntry =
+        harken::ReadPackDirectoryEntry(
             firstBuild.data() + header.directoryOffset +
-            harken::kPackV2DirectoryEntryBytes);
+            harken::kPackDirectoryEntryBytes);
     EXPECT_EQ(harken::kPackEntryKindMedia, mediaEntry.kind);
     EXPECT_EQ(harkentest::ObjectId(9150u), mediaEntry.id);
     EXPECT_EQ(harken::kPackEntryKindVoiceRecipe, recipeEntry.kind);
@@ -779,10 +779,10 @@ TEST(PackcPipeline,
     ASSERT_LE(recipeEntry.size,
               firstBuild.size() -
                   static_cast<std::size_t>(recipeEntry.offset));
-    EXPECT_EQ(harken::kPackV2PlaybackRecipeSchemaVintage, recipeEntry.vintage);
-    EXPECT_EQ(harken::PackV5VoiceRecipePayloadBytes(4, 3), recipeEntry.size);
+    EXPECT_EQ(harken::kPackVoiceRecipeVintage, recipeEntry.vintage);
+    EXPECT_EQ(harken::PackVoiceRecipePayloadBytes(4, 3), recipeEntry.size);
     harken::PackVoiceRecipeEntryHeader packedRecipe;
-    ASSERT_TRUE(harken::ParsePackV5VoiceRecipeHeader(
+    ASSERT_TRUE(harken::ReadPackVoiceRecipeHeader(
         firstBuild.data() + recipeEntry.offset, recipeEntry.size,
         &packedRecipe));
     EXPECT_EQ(harkentest::ObjectId(9150u), packedRecipe.playableId);
@@ -1125,9 +1125,9 @@ TEST(PackcPipeline, InvalidPreviousOutputInvalidatesCacheWhole) {
     std::vector<std::uint8_t> cleanBytes;
     ASSERT_TRUE(ReadFileBytes(packPath, &cleanBytes));
 
-    harken::PackV2Header header;
-    ASSERT_TRUE(harken::ParsePackV2Header(cleanBytes.data(), &header));
-    ASSERT_EQ(harken::kPackFormatVersion2, header.formatVersion);
+    harken::PackFileHeader header;
+    ASSERT_TRUE(harken::ReadPackFileHeader(cleanBytes.data(), &header));
+    ASSERT_EQ(harken::kPackFormatVersion, header.formatVersion);
     ASSERT_EQ(1u, header.entryCount);
     const std::vector<std::uint8_t> expectedBytes = cleanBytes;
     const std::size_t directoryOffset =
@@ -1152,8 +1152,8 @@ TEST(PackcPipeline, InvalidPreviousOutputInvalidatesCacheWhole) {
         bool restampDirectory;
     };
     const Corruption corruptions[] = {
-        {4, harken::kPackFormatVersion2 + 1, false},
-        {8, harken::kPackV2HeaderBytes + 1, false},
+        {4, harken::kPackFormatVersion + 1, false},
+        {8, harken::kPackFileHeaderBytes + 1, false},
         {directoryOffset + 4, 1, true},
     };
     for (const Corruption& corruption : corruptions) {
@@ -1165,7 +1165,7 @@ TEST(PackcPipeline, InvalidPreviousOutputInvalidatesCacheWhole) {
             harken::StoreLE64(
                 invalidBytes.data() + 36,
                 harken::Fnv1a64(invalidBytes.data() + directoryOffset,
-                               harken::kPackV2DirectoryEntryBytes));
+                               harken::kPackDirectoryEntryBytes));
         }
         WriteFileBytes(packPath, invalidBytes);
         ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
@@ -1183,14 +1183,14 @@ TEST(PackcPipeline, InvalidPreviousOutputInvalidatesCacheWhole) {
         EXPECT_EQ(1u, MemberU64(totals, "cacheMisses"));
     }
 
-    harken::PackV2Header rebuiltHeader;
-    ASSERT_TRUE(harken::ParsePackV2Header(rebuiltBytes.data(), &rebuiltHeader));
-    const harken::PackV2DirectoryEntry entry =
-        harken::ParsePackV2DirectoryEntry(
+    harken::PackFileHeader rebuiltHeader;
+    ASSERT_TRUE(harken::ReadPackFileHeader(rebuiltBytes.data(), &rebuiltHeader));
+    const harken::PackDirectoryEntry entry =
+        harken::ReadPackDirectoryEntry(
             rebuiltBytes.data() +
             static_cast<std::size_t>(rebuiltHeader.directoryOffset));
-    EXPECT_EQ(harken::kPackV2SchemaVintage, entry.vintage);
-    EXPECT_EQ(harken::kPackFormatVersion2, rebuiltHeader.formatVersion);
+    EXPECT_EQ(harken::PackEntryVintage(entry.kind), entry.vintage);
+    EXPECT_EQ(harken::kPackFormatVersion, rebuiltHeader.formatVersion);
 }
 
 TEST(PackcPipeline, IncrementalRebuildOnlyTouchedEntry) {
@@ -1946,27 +1946,27 @@ TEST(PackcPipeline, VoiceRecipeUsesRealKindElevenPackPath) {
     ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
     std::vector<std::uint8_t> bytes;
     ASSERT_TRUE(ReadFileBytes(packPath, &bytes));
-    harken::PackV2Header header;
-    ASSERT_TRUE(harken::ParsePackV2Header(bytes.data(), &header));
+    harken::PackFileHeader header;
+    ASSERT_TRUE(harken::ReadPackFileHeader(bytes.data(), &header));
     ASSERT_EQ(2u, header.entryCount);
-    const harken::PackV2DirectoryEntry recipeEntry =
-        harken::ParsePackV2DirectoryEntry(
-            bytes.data() + harken::kPackV2HeaderBytes +
-            harken::kPackV2DirectoryEntryBytes);
+    const harken::PackDirectoryEntry recipeEntry =
+        harken::ReadPackDirectoryEntry(
+            bytes.data() + harken::kPackFileHeaderBytes +
+            harken::kPackDirectoryEntryBytes);
     ASSERT_EQ(harken::kPackEntryKindVoiceRecipe, recipeEntry.kind);
-    EXPECT_EQ(harken::kPackV2PlaybackRecipeSchemaVintage, recipeEntry.vintage);
-    EXPECT_EQ(harken::PackV5VoiceRecipePayloadBytes(1, 0), recipeEntry.size);
+    EXPECT_EQ(harken::kPackVoiceRecipeVintage, recipeEntry.vintage);
+    EXPECT_EQ(harken::PackVoiceRecipePayloadBytes(1, 0), recipeEntry.size);
     harken::PackVoiceRecipeEntryHeader recipe;
-    ASSERT_TRUE(harken::ParsePackV5VoiceRecipeHeader(
+    ASSERT_TRUE(harken::ReadPackVoiceRecipeHeader(
         bytes.data() + recipeEntry.offset, recipeEntry.size, &recipe));
     EXPECT_EQ(harkentest::ObjectId(9101u), recipe.playableId);
     harken::PackVoiceRecipeInstall install;
-    ASSERT_TRUE(harken::ParsePackV2VoiceRecipeInstall(
+    ASSERT_TRUE(harken::ReadPackVoiceRecipeInstall(
         bytes.data() + recipeEntry.offset +
-            harken::kPackV2VoiceRecipeHeaderBytes +
-            harken::kPackV3VoiceRecipeToneBytes +
-            harken::kPackV4VoiceRecipeSpatialBytes +
-            harken::kPackV5VoiceRecipePlaybackBytes,
+            harken::kPackVoiceRecipeHeaderBytes +
+            harken::kPackVoiceRecipeToneBytes +
+            harken::kPackVoiceRecipeSpatialBytes +
+            harken::kPackVoiceRecipePlaybackBytes,
         &install));
     EXPECT_EQ(VN_EFFECT_GAIN, install.effectType);
     EXPECT_FLOAT_EQ(-6.0f, install.params[0]);
@@ -2007,36 +2007,31 @@ TEST(PackcPipeline, VoiceRecipeAlwaysWritesPlaybackVintage) {
         ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
         std::vector<std::uint8_t> bytes;
         ASSERT_TRUE(ReadFileBytes(packPath, &bytes));
-        harken::PackV2Header header;
-        ASSERT_TRUE(harken::ParsePackV2Header(bytes.data(), &header));
-        const harken::PackV2DirectoryEntry recipeEntry =
-            harken::ParsePackV2DirectoryEntry(
-                bytes.data() + harken::kPackV2HeaderBytes +
-                harken::kPackV2DirectoryEntryBytes);
+        harken::PackFileHeader header;
+        ASSERT_TRUE(harken::ReadPackFileHeader(bytes.data(), &header));
+        const harken::PackDirectoryEntry recipeEntry =
+            harken::ReadPackDirectoryEntry(
+                bytes.data() + harken::kPackFileHeaderBytes +
+                harken::kPackDirectoryEntryBytes);
         ASSERT_EQ(harken::kPackEntryKindVoiceRecipe, recipeEntry.kind);
-        EXPECT_EQ(harken::kPackV2PlaybackRecipeSchemaVintage,
+        EXPECT_EQ(harken::kPackVoiceRecipeVintage,
                   recipeEntry.vintage);
-        EXPECT_EQ(harken::PackV5VoiceRecipePayloadBytes(1, 0),
+        EXPECT_EQ(harken::PackVoiceRecipePayloadBytes(1, 0),
                   recipeEntry.size);
         harken::PackVoiceRecipeEntryHeader v5;
-        ASSERT_TRUE(harken::ParsePackV5VoiceRecipeHeader(
+        ASSERT_TRUE(harken::ReadPackVoiceRecipeHeader(
             bytes.data() + recipeEntry.offset, recipeEntry.size, &v5));
-        harken::PackVoiceRecipeEntryHeader rejected{};
-        EXPECT_FALSE(harken::ParsePackV2VoiceRecipeHeader(
-            bytes.data() + recipeEntry.offset, recipeEntry.size, &rejected));
-        EXPECT_FALSE(harken::ParsePackV3VoiceRecipeHeader(
-            bytes.data() + recipeEntry.offset, recipeEntry.size, &rejected));
         harken::PackVoiceRecipeTone tone;
-        ASSERT_TRUE(harken::ParsePackV3VoiceRecipeTone(
+        ASSERT_TRUE(harken::ReadPackVoiceRecipeTone(
             bytes.data() + recipeEntry.offset +
-                harken::kPackV2VoiceRecipeHeaderBytes,
+                harken::kPackVoiceRecipeHeaderBytes,
             &tone));
         EXPECT_EQ(expectTone ? 1u : 0u, tone.present);
         harken::PackVoiceRecipeSpatial spatial;
-        ASSERT_TRUE(harken::ParsePackV5VoiceRecipeSpatial(
+        ASSERT_TRUE(harken::ReadPackVoiceRecipeSpatial(
             bytes.data() + recipeEntry.offset +
-                harken::kPackV2VoiceRecipeHeaderBytes +
-                harken::kPackV3VoiceRecipeToneBytes,
+                harken::kPackVoiceRecipeHeaderBytes +
+                harken::kPackVoiceRecipeToneBytes,
             &spatial));
         EXPECT_EQ(harkentest::ObjectId(expectedAttenuationId), spatial.attenuationId);
         if (expectedAttenuationId == 0u) {
@@ -2045,11 +2040,11 @@ TEST(PackcPipeline, VoiceRecipeAlwaysWritesPlaybackVintage) {
             EXPECT_FLOAT_EQ(expectedDistanceScale, spatial.distanceScale);
         }
         harken::PackVoiceRecipePlayback playback;
-        ASSERT_TRUE(harken::ParsePackV5VoiceRecipePlayback(
+        ASSERT_TRUE(harken::ReadPackVoiceRecipePlayback(
             bytes.data() + recipeEntry.offset +
-                harken::kPackV2VoiceRecipeHeaderBytes +
-                harken::kPackV3VoiceRecipeToneBytes +
-                harken::kPackV4VoiceRecipeSpatialBytes,
+                harken::kPackVoiceRecipeHeaderBytes +
+                harken::kPackVoiceRecipeToneBytes +
+                harken::kPackVoiceRecipeSpatialBytes,
             &playback));
         EXPECT_EQ(expectPlayback ? 1u : 0u, playback.present);
         EXPECT_EQ(expectedLoopCount, playback.loopCount);
@@ -2104,32 +2099,32 @@ TEST(PackcPipeline, VoiceRecipePlaybackWritesCurrentVintage) {
     ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
     std::vector<std::uint8_t> bytes;
     ASSERT_TRUE(ReadFileBytes(packPath, &bytes));
-    harken::PackV2Header header;
-    ASSERT_TRUE(harken::ParsePackV2Header(bytes.data(), &header));
-    const harken::PackV2DirectoryEntry recipeEntry =
-        harken::ParsePackV2DirectoryEntry(
-            bytes.data() + harken::kPackV2HeaderBytes +
-            harken::kPackV2DirectoryEntryBytes);
+    harken::PackFileHeader header;
+    ASSERT_TRUE(harken::ReadPackFileHeader(bytes.data(), &header));
+    const harken::PackDirectoryEntry recipeEntry =
+        harken::ReadPackDirectoryEntry(
+            bytes.data() + harken::kPackFileHeaderBytes +
+            harken::kPackDirectoryEntryBytes);
     ASSERT_EQ(harken::kPackEntryKindVoiceRecipe, recipeEntry.kind);
-    EXPECT_EQ(harken::kPackV2PlaybackRecipeSchemaVintage,
+    EXPECT_EQ(harken::kPackVoiceRecipeVintage,
               recipeEntry.vintage);
-    EXPECT_EQ(harken::PackV5VoiceRecipePayloadBytes(1, 0), recipeEntry.size);
+    EXPECT_EQ(harken::PackVoiceRecipePayloadBytes(1, 0), recipeEntry.size);
     harken::PackVoiceRecipeEntryHeader v5;
-    EXPECT_TRUE(harken::ParsePackV5VoiceRecipeHeader(
+    EXPECT_TRUE(harken::ReadPackVoiceRecipeHeader(
         bytes.data() + recipeEntry.offset, recipeEntry.size, &v5));
     harken::PackVoiceRecipeSpatial spatial;
-    EXPECT_TRUE(harken::ParsePackV5VoiceRecipeSpatial(
+    EXPECT_TRUE(harken::ReadPackVoiceRecipeSpatial(
         bytes.data() + recipeEntry.offset +
-            harken::kPackV2VoiceRecipeHeaderBytes +
-            harken::kPackV3VoiceRecipeToneBytes,
+            harken::kPackVoiceRecipeHeaderBytes +
+            harken::kPackVoiceRecipeToneBytes,
         &spatial));
     EXPECT_EQ(harkentest::ObjectId(0u), spatial.attenuationId);
     harken::PackVoiceRecipePlayback playback;
-    ASSERT_TRUE(harken::ParsePackV5VoiceRecipePlayback(
+    ASSERT_TRUE(harken::ReadPackVoiceRecipePlayback(
         bytes.data() + recipeEntry.offset +
-            harken::kPackV2VoiceRecipeHeaderBytes +
-            harken::kPackV3VoiceRecipeToneBytes +
-            harken::kPackV4VoiceRecipeSpatialBytes,
+            harken::kPackVoiceRecipeHeaderBytes +
+            harken::kPackVoiceRecipeToneBytes +
+            harken::kPackVoiceRecipeSpatialBytes,
         &playback));
     EXPECT_EQ(1u, playback.present);
     EXPECT_EQ(4u, playback.loopCount);
@@ -2178,25 +2173,21 @@ TEST(PackcPipeline, AttenuationAlwaysWritesCurrentVintage) {
         ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
         std::vector<std::uint8_t> bytes;
         ASSERT_TRUE(ReadFileBytes(packPath, &bytes));
-        harken::PackV2Header header;
-        ASSERT_TRUE(harken::ParsePackV2Header(bytes.data(), &header));
-        const harken::PackV2DirectoryEntry attenuationEntry =
-            harken::ParsePackV2DirectoryEntry(
-                bytes.data() + harken::kPackV2HeaderBytes);
+        harken::PackFileHeader header;
+        ASSERT_TRUE(harken::ReadPackFileHeader(bytes.data(), &header));
+        const harken::PackDirectoryEntry attenuationEntry =
+            harken::ReadPackDirectoryEntry(
+                bytes.data() + harken::kPackFileHeaderBytes);
         ASSERT_EQ(harken::kPackEntryKindAttenuation, attenuationEntry.kind);
-        EXPECT_EQ(harken::kPackV2AuthoredToneSchemaVintage,
+        EXPECT_EQ(harken::kPackAttenuationVintage,
                   attenuationEntry.vintage);
-        EXPECT_EQ(harken::kPackV3AttenuationPayloadBytes,
+        EXPECT_EQ(harken::kPackAttenuationBytes,
                   attenuationEntry.size);
         VnAttenuationDesc v3{};
-        ASSERT_TRUE(harken::ParsePackV3Attenuation(
+        ASSERT_TRUE(harken::ReadPackAttenuation(
             bytes.data() + attenuationEntry.offset, attenuationEntry.size,
             &v3));
         EXPECT_FLOAT_EQ(expectedFrequency, v3.proximityFrequency);
-        VnAttenuationDesc v2{};
-        EXPECT_FALSE(harken::ParsePackV2Attenuation(
-            bytes.data() + attenuationEntry.offset, attenuationEntry.size,
-            &v2));
     };
 
     expectAttenuationVintage("pipeline_atten_current_default", "", 250.0f);
@@ -2279,27 +2270,27 @@ TEST(PackcPipeline, BusEffectAndDynamicRouteUseKindsTwelveAndThirteen) {
 
     std::vector<std::uint8_t> bytes;
     ASSERT_TRUE(ReadFileBytes(packPath, &bytes));
-    harken::PackV2Header header;
-    ASSERT_TRUE(harken::ParsePackV2Header(bytes.data(), &header));
+    harken::PackFileHeader header;
+    ASSERT_TRUE(harken::ReadPackFileHeader(bytes.data(), &header));
     ASSERT_EQ(4u, header.entryCount);
-    const harken::PackV2DirectoryEntry effectDir =
-        harken::ParsePackV2DirectoryEntry(
-            bytes.data() + harken::kPackV2HeaderBytes +
-            2 * harken::kPackV2DirectoryEntryBytes);
-    const harken::PackV2DirectoryEntry routeDir =
-        harken::ParsePackV2DirectoryEntry(
-            bytes.data() + harken::kPackV2HeaderBytes +
-            3 * harken::kPackV2DirectoryEntryBytes);
+    const harken::PackDirectoryEntry effectDir =
+        harken::ReadPackDirectoryEntry(
+            bytes.data() + harken::kPackFileHeaderBytes +
+            2 * harken::kPackDirectoryEntryBytes);
+    const harken::PackDirectoryEntry routeDir =
+        harken::ReadPackDirectoryEntry(
+            bytes.data() + harken::kPackFileHeaderBytes +
+            3 * harken::kPackDirectoryEntryBytes);
     EXPECT_EQ(harken::kPackEntryKindBusEffect, effectDir.kind);
-    EXPECT_EQ(harken::kPackV2DynamicSchemaVintage, effectDir.vintage);
-    EXPECT_EQ(harken::kPackV2BusEffectPayloadBytes, effectDir.size);
+    EXPECT_EQ(harken::kPackBusEffectVintage, effectDir.vintage);
+    EXPECT_EQ(harken::kPackBusEffectBytes, effectDir.size);
     EXPECT_EQ(harken::kPackEntryKindEffectDynamicRoute, routeDir.kind);
-    EXPECT_EQ(harken::kPackV2DynamicSchemaVintage, routeDir.vintage);
-    EXPECT_EQ(harken::kPackV2EffectDynamicRoutePayloadBytes,
+    EXPECT_EQ(harken::kPackEffectDynamicRouteVintage, routeDir.vintage);
+    EXPECT_EQ(harken::kPackEffectDynamicRouteBytes,
               routeDir.size);
 
     harken::PackBusEffectEntry effect;
-    ASSERT_TRUE(harken::ParsePackV2BusEffect(
+    ASSERT_TRUE(harken::ReadPackBusEffect(
         bytes.data() + effectDir.offset, effectDir.size, &effect));
     EXPECT_EQ(harkentest::ObjectId(4101u), effect.busId);
     EXPECT_EQ(2u, effect.slot);
@@ -2309,7 +2300,7 @@ TEST(PackcPipeline, BusEffectAndDynamicRouteUseKindsTwelveAndThirteen) {
     EXPECT_FLOAT_EQ(1.5f, effect.params[5]);
 
     harken::PackEffectDynamicRouteEntry route;
-    ASSERT_TRUE(harken::ParsePackV2EffectDynamicRoute(
+    ASSERT_TRUE(harken::ParsePackEffectDynamicRoute(
         bytes.data() + routeDir.offset, routeDir.size, &route));
     EXPECT_EQ(harkentest::ObjectId(4101u), route.targetBusId);
     EXPECT_EQ(2u, route.effectSlot);
@@ -2338,26 +2329,26 @@ TEST(PackcPipeline, BusMixFieldsUseFullUuidPayload) {
 
     std::vector<std::uint8_t> bytes;
     ASSERT_TRUE(ReadFileBytes(packPath, &bytes));
-    harken::PackV2Header header;
-    ASSERT_TRUE(harken::ParsePackV2Header(bytes.data(), &header));
+    harken::PackFileHeader header;
+    ASSERT_TRUE(harken::ReadPackFileHeader(bytes.data(), &header));
     ASSERT_EQ(2u, header.entryCount);
 
-    const harken::PackV2DirectoryEntry mixed =
-        harken::ParsePackV2DirectoryEntry(bytes.data() +
-                                         harken::kPackV2HeaderBytes);
-    const harken::PackV2DirectoryEntry defaults =
-        harken::ParsePackV2DirectoryEntry(
-            bytes.data() + harken::kPackV2HeaderBytes +
-            harken::kPackV2DirectoryEntryBytes);
+    const harken::PackDirectoryEntry mixed =
+        harken::ReadPackDirectoryEntry(bytes.data() +
+                                         harken::kPackFileHeaderBytes);
+    const harken::PackDirectoryEntry defaults =
+        harken::ReadPackDirectoryEntry(
+            bytes.data() + harken::kPackFileHeaderBytes +
+            harken::kPackDirectoryEntryBytes);
     EXPECT_EQ(harken::kPackEntryKindBus, mixed.kind);
-    EXPECT_EQ(harken::kPackV2BusMixSchemaVintage, mixed.vintage);
-    EXPECT_EQ(harken::kPackV6BusPayloadBytes, mixed.size);
+    EXPECT_EQ(harken::kPackBusVintage, mixed.vintage);
+    EXPECT_EQ(harken::kPackBusBytes, mixed.size);
     EXPECT_EQ(harken::kPackEntryKindBus, defaults.kind);
-    EXPECT_EQ(harken::kPackV2BusMixSchemaVintage, defaults.vintage);
-    EXPECT_EQ(harken::kPackV6BusPayloadBytes, defaults.size);
+    EXPECT_EQ(harken::kPackBusVintage, defaults.vintage);
+    EXPECT_EQ(harken::kPackBusBytes, defaults.size);
 
     harken::PackBusEntry mixedBus;
-    ASSERT_TRUE(harken::ParsePackV6Bus(bytes.data() + mixed.offset, mixed.size,
+    ASSERT_TRUE(harken::ParsePackBus(bytes.data() + mixed.offset, mixed.size,
                                       &mixedBus));
     EXPECT_EQ(harkentest::ObjectId(5101u), mixedBus.busId);
     EXPECT_EQ(VN_BUS_MASTER, mixedBus.parentBusId);
@@ -2366,7 +2357,7 @@ TEST(PackcPipeline, BusMixFieldsUseFullUuidPayload) {
     EXPECT_FLOAT_EQ(0.0f, mixedBus.makeUpGain);
 
     harken::PackBusEntry defaultBus;
-    ASSERT_TRUE(harken::ParsePackV6Bus(
+    ASSERT_TRUE(harken::ParsePackBus(
         bytes.data() + defaults.offset, defaults.size, &defaultBus));
     EXPECT_EQ(harkentest::ObjectId(5102u), defaultBus.busId);
     EXPECT_FLOAT_EQ(0.0f, defaultBus.volume);

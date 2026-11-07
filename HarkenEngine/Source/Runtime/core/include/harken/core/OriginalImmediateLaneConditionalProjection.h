@@ -2,6 +2,7 @@
 
 #include "harken/core/ImmediateActionLane.h"
 #include "harken/core/QueueRuntime.h"
+#include "harken/core/QueuePageConditionalReceiver.h"
 #include "harken/core/PrivateSelectedQueueFutureSpan.h"
 
 namespace harken {
@@ -107,6 +108,11 @@ public:
         LogicCommitCoordinator::PreparedIssue* sequence) noexcept;
     bool PrepareContinuations(QueueInstanceTable& queues,
         const PreparedActionFiring& originalChild) noexcept;
+    bool PrepareDeferred(QueueInstanceTable& queues,
+        QueueInstanceTable::PreparedCatalogResetScope* scope,
+        const ActionDeferredRecordTable::ClaimedResetOrder& reset) noexcept;
+    bool PrepareContinuations(QueueInstanceTable& queues,
+        const ActionDeferredRecordTable::ClaimedResetOrder& reset) noexcept;
     const QueueInstanceTable::PreparedCatalogResetScope& Scope() const noexcept { return scope_; }
     const LogicCommitCoordinator::PreparedIssue& SequenceIssue() const noexcept { return sequence_; }
     bool Attach(const OriginalImmediateLaneConditionalProjection& original,
@@ -119,6 +125,12 @@ public:
     bool AttachContinuationWithdrawal(QueueContinuationLane& original,
         const OriginalImmediateLaneConditionalProjection& head) noexcept;
     bool CommitContinuation(PreparedQueueConditionalReplacementV1& conditional,
+        LogicCommitSequence sequence) noexcept;
+    bool AttachPage(QueuePageConditionalReceiver& original,
+        PreparedQueueConditionalReplacementV1& conditional) noexcept;
+    bool AttachPageWithdrawal(QueuePageConditionalReceiver& original,
+        QueuePageConditionalReceiver& head, std::uint16_t slices, std::uint64_t completed) noexcept;
+    bool CommitPage(PreparedQueueConditionalReplacementV1& conditional,
         LogicCommitSequence sequence) noexcept;
     bool TryAccept(const ActionCommitBundle& reservedAction) noexcept;
     // Prepare only the Queue/reset participant. The caller must retain every
@@ -136,12 +148,17 @@ public:
 private:
     friend class ImmediateActionLane;
     friend class QueueContinuationLane;
+    friend class QueuePageConditionalReceiver;
     bool PrepareContinuationScope(QueueInstanceTable& queues) noexcept;
     bool IsContinuationSuffix(const QueueContinuationLane& original,
         const QueueContinuationLane& head) const noexcept;
     bool IsContinuationSuffix(const QueueContinuationLane& original,
         const OriginalImmediateLaneConditionalProjection& head) const noexcept;
+    bool IsPageSuffix(const QueuePageConditionalReceiver& original,
+        const QueuePageConditionalReceiver& head) const noexcept;
     bool HasEntireSuffix(QueueInstanceToken queue, ConditionalQueueVersionToken head) const noexcept;
+    bool AttachPageMember(QueuePageConditionalReceiver& original,
+        PreparedQueueConditionalReplacementV1* conditional, QueuePageConditionalReceiver* head) noexcept;
     bool AttachContinuationMember(QueueContinuationLane& original,
         QueueContinuationLane* replacement, PreparedQueueConditionalReplacementV1* conditional,
         QueueContinuationLane* withdrawalHead,
@@ -149,9 +166,14 @@ private:
     bool PrepareScope(QueueInstanceTable& queues,
         QueueInstanceTable::PreparedCatalogResetScope* scope) noexcept;
     LogicCommitSequence Sequence() const noexcept {
-        return sequence_.Valid() ? sequence_.Sequence() : deferredChild_.InheritedSequence();
+        return acceptedSequence_ != 0 ? acceptedSequence_ : sequence_.Valid() ? sequence_.Sequence() :
+            deferredChild_.InheritedSequence() != 0 ? deferredChild_.InheritedSequence() : claimedReset_.Sequence();
     }
     struct Member {
+        QueuePageConditionalReceiver* page = nullptr;
+        QueuePageConditionalReceiver* pageWithdrawalHead = nullptr;
+        ConditionalQueueVersionToken pageWithdrawalVersion{};
+        DecisionToken pageWithdrawalDecision{};
         QueueContinuationLane* continuation = nullptr;
         QueueContinuationLane* replacementContinuation = nullptr;
         QueueContinuationLane* withdrawalHead = nullptr;
@@ -170,11 +192,12 @@ private:
     void ReturnOldRead() noexcept;
     static constexpr std::uint64_t kAborted = 1u, kAccepted = 2u, kRead = 4u;
     std::unique_ptr<Member[]> members_;
-    std::uint32_t capacity_ = 0, count_ = 0, continuationCount_ = 0;
+    std::uint32_t capacity_ = 0, count_ = 0, continuationCount_ = 0, pageCount_ = 0;
     QueueInstanceTable* queues_ = nullptr;
     QueueInstanceTable::PreparedCatalogResetScope scope_;
     LogicCommitCoordinator::PreparedIssue sequence_;
     PreparedActionFiring deferredChild_;
+    ActionDeferredRecordTable::ClaimedResetOrder claimedReset_;
     std::uint64_t generation_ = 0;
     std::uint32_t queueSelectionsPrepared_ = 0;
     bool orderConsumed_ = false;

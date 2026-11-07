@@ -3469,6 +3469,43 @@ static_assert(offsetof(VnMonitorExecutionFactV3, activity) == 432,
 static_assert(offsetof(VnMonitorExecutionFactV3, playable) == 496,
               "wire table offset drift: VnMonitorExecutionFactV3.playable");
 
+static_assert(sizeof(VnReadCancellationViewV1) == 24,
+              "wire table size drift: VnReadCancellationViewV1");
+static_assert(offsetof(VnReadCancellationViewV1, structSize) == 0,
+              "wire table offset drift: VnReadCancellationViewV1.structSize");
+static_assert(offsetof(VnReadCancellationViewV1, reserved0) == 4,
+              "wire table offset drift: VnReadCancellationViewV1.reserved0");
+static_assert(offsetof(VnReadCancellationViewV1, context) == 8,
+              "wire table offset drift: VnReadCancellationViewV1.context");
+static_assert(offsetof(VnReadCancellationViewV1, isCancelled) == 16,
+              "wire table offset drift: VnReadCancellationViewV1.isCancelled");
+
+static_assert(sizeof(VnByteSourceDescV1) == 40,
+              "wire table size drift: VnByteSourceDescV1");
+static_assert(offsetof(VnByteSourceDescV1, structSize) == 0,
+              "wire table offset drift: VnByteSourceDescV1.structSize");
+static_assert(offsetof(VnByteSourceDescV1, flags) == 4,
+              "wire table offset drift: VnByteSourceDescV1.flags");
+static_assert(offsetof(VnByteSourceDescV1, byteLength) == 8,
+              "wire table offset drift: VnByteSourceDescV1.byteLength");
+static_assert(offsetof(VnByteSourceDescV1, userData) == 16,
+              "wire table offset drift: VnByteSourceDescV1.userData");
+static_assert(offsetof(VnByteSourceDescV1, readAt) == 24,
+              "wire table offset drift: VnByteSourceDescV1.readAt");
+static_assert(offsetof(VnByteSourceDescV1, release) == 32,
+              "wire table offset drift: VnByteSourceDescV1.release");
+
+static_assert(sizeof(VnStreamSourceInfoV1) == 16,
+              "wire table size drift: VnStreamSourceInfoV1");
+static_assert(offsetof(VnStreamSourceInfoV1, structSize) == 0,
+              "wire table offset drift: VnStreamSourceInfoV1.structSize");
+static_assert(offsetof(VnStreamSourceInfoV1, state) == 4,
+              "wire table offset drift: VnStreamSourceInfoV1.state");
+static_assert(offsetof(VnStreamSourceInfoV1, result) == 8,
+              "wire table offset drift: VnStreamSourceInfoV1.result");
+static_assert(offsetof(VnStreamSourceInfoV1, reserved0) == 12,
+              "wire table offset drift: VnStreamSourceInfoV1.reserved0");
+
 } // namespace harkenremote
 
 #endif // HARKEN_REMOTE_WIRE_LAYOUT_ASSERTS_H

@@ -97,6 +97,11 @@ struct SelectionMemoryKeyV1 {
     std::uint32_t emitterGeneration = 0;
 };
 
+constexpr std::uint64_t MakeSelectionEventOrder(std::uint32_t eventIndex,
+    std::uint32_t operationIndex = 0) noexcept {
+    return (static_cast<std::uint64_t>(eventIndex) << 32u) | operationIndex;
+}
+
 struct SelectionPlayRequestV1 {
     SelectionMemoryKeyV1 key{};
     const ContainerProgramViewV3* program = nullptr;
@@ -111,6 +116,11 @@ struct SelectionPlayRequestV1 {
     std::uint64_t ticket = 0;
     std::uint32_t eventIndex = 0;
     std::uint64_t executeFrame = 0;
+    std::uint32_t operationIndex = 0;
+
+    std::uint64_t EventOrder() const noexcept {
+        return MakeSelectionEventOrder(eventIndex, operationIndex);
+    }
 };
 
 // Read-only copy of the four integers ComputePlay sent into
@@ -177,6 +187,8 @@ struct SelectionDeltaViewV1 {
     std::uint32_t selectedChildOrdinal = 0;
     std::uint64_t resetEpochAfter = 0;
     std::uint64_t selectionOrdinalAfter = 0;
+    std::uint32_t operationIndex = 0;
+    std::uint64_t executeFrame = 0;
 };
 
 struct SelectionMemorySnapshotV1 {
@@ -204,6 +216,8 @@ struct SelectionPendingBatchIdentityV1 {
     std::uint32_t emitterGeneration = 0;
     std::uint32_t eventBegin = 0;
     std::uint32_t eventCount = 0;
+    bool operationIndexed = false;
+    bool perOperationFrames = false;
 };
 
 class PendingSelectionReplacementV1 {
@@ -236,6 +250,7 @@ struct SelectionReplacementPlayViewV1 {
     SelectionMemoryStatusV1 status = SelectionMemoryStatusV1::InvalidInput;
     std::uint32_t selectedChildOrdinal = 0;
     SelectionSeedProbeCopyV1 seedProbe{};
+    std::uint64_t executeFrame = 0;
 };
 
 class PendingSelectionBatchV1 {
@@ -491,6 +506,9 @@ public:
     SelectionMemoryStatusV1 SealReplacement(
         PendingSelectionReplacementV1* replacement, std::uint32_t count,
         std::uint64_t frame) noexcept;
+    SelectionMemoryStatusV1 SealReplacementFrames(
+        PendingSelectionReplacementV1* replacement, std::uint32_t count,
+        const std::uint64_t* frames) noexcept;
     SelectionMemoryStatusV1 CanInstallReplacement(
         const PendingSelectionReplacementV1& replacement) const noexcept;
     SelectionMemoryStatusV1 InstallReplacement(
@@ -585,21 +603,21 @@ private:
         bool hasScheduledFrontier = false;
         std::uint64_t scheduledFrame = 0;
         std::uint64_t scheduledTicket = 0;
-        std::uint32_t scheduledEvent = 0;
+        std::uint64_t scheduledEventOrder = 0;
         bool hasNativeScheduledFrontier = false;
         std::uint64_t nativeScheduledFrame = 0;
         std::uint64_t nativeScheduledTicket = 0;
-        std::uint32_t nativeScheduledEvent = 0;
+        std::uint64_t nativeScheduledEventOrder = 0;
         bool hasImmediateFrontier = false;
         std::uint64_t immediateTicket = 0;
-        std::uint32_t immediateEvent = 0;
+        std::uint64_t immediateEventOrder = 0;
         bool hasPrivateScheduledFrontier = false;
         std::uint64_t privateScheduledFrame = 0;
         std::uint64_t privateScheduledTicket = 0;
-        std::uint32_t privateScheduledEvent = 0;
+        std::uint64_t privateScheduledEventOrder = 0;
         bool hasPrivateImmediateFrontier = false;
         std::uint64_t privateImmediateTicket = 0;
-        std::uint32_t privateImmediateEvent = 0;
+        std::uint64_t privateImmediateEventOrder = 0;
     };
 
     struct Row {
@@ -649,7 +667,7 @@ private:
         SelectionPlayRequestV1 request{};
         std::vector<SelectionPathNodeV1> path;
         std::uint64_t ticket = 0;
-        std::uint32_t eventIndex = 0;
+        std::uint64_t eventOrder = 0;
         std::uint64_t executeFrame = 0;
         std::uint32_t selectedChildOrdinal = 0;
         SelectionSeedProbeCopyV1 seedProbe{};
@@ -695,6 +713,12 @@ private:
     bool ValidateReplacementMembers(std::uint32_t slot) const noexcept;
     void CancelReplacementSlot(std::uint32_t slot) noexcept;
     void AdvanceMutationEpoch() noexcept;
+    SelectionMemoryStatusV1 MovePreparedPlaysToPendingImpl(
+        PreparedSelectionPlayV1* const* prepared, std::uint32_t count,
+        std::uint64_t ticket, PendingSelectionBatchV1* out, bool perOperationFrames) noexcept;
+    SelectionMemoryStatusV1 SealReplacementImpl(
+        PendingSelectionReplacementV1* replacement, std::uint32_t count,
+        std::uint64_t frame, const std::uint64_t* frames, bool perOperationFrames) noexcept;
     bool ValidBatchIdentity(const SelectionPendingBatchIdentityV1& identity) const noexcept;
     bool MatchesBatchIdentity(const SelectionPendingBatchIdentityV1& identity,
         const SelectionPlayRequestV1& request) const noexcept;
@@ -751,7 +775,7 @@ private:
         return !memguard::IsAudioTagged() && !rows_.PreparedUseActive();
     }
     bool PendingOrderValid(const Row& row, std::uint64_t ticket,
-                           std::uint32_t eventIndex) const noexcept;
+                           std::uint64_t eventOrder) const noexcept;
     bool CopyState(const MemoryState& source, MemoryState& target) noexcept;
     void InitializeState(const Row& row, MemoryState& state) noexcept;
     SelectionMemoryStatusV1 ComputePlay(
@@ -764,7 +788,7 @@ private:
                                          MemoryState& after) noexcept;
     const MemoryState& PreparedPredecessor(const Row& row,
         std::uint64_t executeFrame, std::uint64_t ticket,
-        std::uint32_t eventIndex, std::uint32_t stopBefore = UINT32_MAX) const noexcept;
+        std::uint64_t eventOrder, std::uint32_t stopBefore = UINT32_MAX) const noexcept;
     SelectionMemoryStatusV1 PendingPredecessor(const Row& row,
         const MemoryState& before, const SelectionPlayRequestV1& request,
         const MemoryState** out, bool includePrivate = false) noexcept;
@@ -772,7 +796,7 @@ private:
     static void ClearResetFrontiers(MemoryState& state) noexcept;
     static bool ResetConsumed(const MemoryState& state, const DeltaRow& reset) noexcept;
     static bool ResetAppliesBefore(const DeltaRow& reset, std::uint64_t frame,
-        std::uint64_t ticket, std::uint32_t eventIndex) noexcept;
+        std::uint64_t ticket, std::uint64_t eventOrder) noexcept;
     std::uint32_t PrivateResetCount(const SelectionMemoryKeyV1& key) const noexcept;
     bool PrivateResetConflicts(const SelectionMemoryKeyV1& key,
         std::uint64_t ticket = 0) const noexcept;
@@ -787,9 +811,7 @@ private:
                        std::uint32_t deltaIndex) noexcept;
     void UnlinkScheduledHead(Row& row, std::uint32_t deltaIndex) noexcept;
     void UnlinkScheduled(Row& row, std::uint32_t deltaIndex) noexcept;
-    bool DropScheduledThrough(Row& row, std::uint64_t executeFrame,
-                              std::uint64_t ticket,
-                              std::uint32_t eventIndex) noexcept;
+    bool DropConsumedScheduled(Row& row) noexcept;
     void UnlinkHead(Row& row, std::uint32_t deltaIndex) noexcept;
     void UnlinkDelta(Row& row, std::uint32_t deltaIndex) noexcept;
     void RecycleDelta(std::uint32_t deltaIndex) noexcept;

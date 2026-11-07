@@ -15,6 +15,8 @@
 #include <QFileInfo>
 
 #include <memory>
+#include <cmath>
+#include <limits>
 #include <map>
 #include <tuple>
 
@@ -179,20 +181,29 @@ void IPCServer::registerAssetHandlers()
 
     commandHandlers_["import_audio"] = [this](const QJsonObject& args) { return handleImportAudio(args); };
     commandHandlers_["get_transcode_status"] = [this](const QJsonObject& args) {
-        const auto id = ProjectPlatformSemantics::parseId(args.value("platform_id").toString());
-        if (args.keys() != QStringList{"platform_id", "source_id"} || !id
-            || args.value("source_id").toInteger() <= 0)
-            return errorResponse("INVALID_ARGS", "Provide platform_id and source_id from transcode_asset");
-        if (!transcodeRequest_ || transcodeRequest_->platform.id != *id
-            || transcodeRequest_->asset.sourceID != args.value("source_id").toInteger())
-            return errorResponse("CONVERSION_NOT_FOUND", "No conversion requested for this platform and source");
-        if (!AssetRegistry::instance().accepts(*transcodeRequest_))
-            return errorResponse("STALE_CONVERSION", "The project, platform or asset changed; request a new conversion");
+        const QString operation = args.value("operation_id").toString();
+        if (args.keys() != QStringList{"operation_id"} || operation.isEmpty())
+            return errorResponse("INVALID_ARGS", "Provide the operation_id returned by the conversion command");
+        if (operation != transcodeOperationId_)
+            return errorResponse("CONVERSION_NOT_FOUND", "No conversion found for this operation_id");
         return successResponse({{"in_progress", transcodeInProgress_},
-            {"platform_id", args.value("platform_id")}, {"source_id", args.value("source_id")},
+            {"operation_id", operation}, {"completed", transcodeCompleted_}, {"total", transcodeTotal_},
             {"result", transcodeResult_}});
     };
+    commandHandlers_["cancel_transcode"] = [this](const QJsonObject& args) {
+        const QString operation = args.value("operation_id").toString();
+        if (args.keys() != QStringList{"operation_id"} || operation.isEmpty())
+            return errorResponse("INVALID_ARGS", "Provide the operation_id returned by the conversion command");
+        if (operation != transcodeOperationId_)
+            return errorResponse("CONVERSION_NOT_FOUND", "No conversion found for this operation_id");
+        if (transcodeInProgress_) transcodeCancel_->store(true);
+        return successResponse({{"operation_id", operation}, {"cancel_requested", transcodeInProgress_}});
+    };
     commandHandlers_["transcode_asset"] = [this](const QJsonObject& args) { return handleTranscodeAsset(args); };
+    commandHandlers_["batch_convert_media"] = [this](const QJsonObject& args) { return handleBatchConvertMedia(args); };
+    connect(&ProjectManager::instance(), &ProjectManager::projectClosed, this, [this] {
+        if (transcodeCancel_) transcodeCancel_->store(true);
+    });
     commandHandlers_["get_asset_info"] = [this](const QJsonObject& args) { return handleGetAssetInfo(args); };
     commandHandlers_["list_assets"] = [this](const QJsonObject& args) { return handleListAssets(args); };
 
@@ -711,8 +722,8 @@ QJsonObject IPCServer::handleGetPackInfo(const QJsonObject& args)
 
     using namespace harkenstudiobuild;
     const auto* data = reinterpret_cast<const uint8_t*>(bytes.constData());
-    PackV2Header header;
-    if (bytes.size() < kPackV2HeaderBytes || !ParsePackV2Header(data, &header))
+    PackFileHeader header;
+    if (bytes.size() < kPackFileHeaderBytes || !ReadPackFileHeader(data, &header))
         return errorResponse("INVALID_PACK", "Invalid pack header");
     PackCanonicalImage canonical;
     PackLogicImage logic;
@@ -726,8 +737,8 @@ QJsonObject IPCServer::handleGetPackInfo(const QJsonObject& args)
 
     QJsonArray sections;
     for (uint32_t index = 0; index < header.entryCount; ++index) {
-        const auto entry = ParsePackV2DirectoryEntry(
-            data + header.directoryOffset + static_cast<uint64_t>(index) * kPackV2DirectoryEntryBytes);
+        const auto entry = ReadPackDirectoryEntry(
+            data + header.directoryOffset + static_cast<uint64_t>(index) * kPackDirectoryEntryBytes);
         sections.append(QJsonObject{
             {"kind", static_cast<qint64>(entry.kind)},
             {"vintage", static_cast<qint64>(entry.vintage)},
@@ -1024,84 +1035,99 @@ QJsonObject IPCServer::handleImportAudio(const QJsonObject& args)
 
 QJsonObject IPCServer::handleTranscodeAsset(const QJsonObject& args)
 {
-    uint32_t sourceID = static_cast<uint32_t>(args["source_id"].toInteger());
-    const QString platformStr = args["platform_id"].toString();
+    return startTranscode(args, false);
+}
 
-    if (sourceID == 0)
-    {
-        return errorResponse("HARKEN_ERR_MISSING_PARAM",
-                             "source_id is required",
-                             "Provide valid source_id from import_audio result");
-    }
-
-    const auto platformId = ProjectPlatformSemantics::parseId(platformStr);
+QJsonObject IPCServer::startTranscode(const QJsonObject& args, bool batch)
+{
+    const QString sourceKey = batch ? QStringLiteral("source_ids") : QStringLiteral("source_id");
+    if (args.keys() != QStringList{QStringLiteral("platform_id"), sourceKey})
+        return errorResponse("INVALID_ARGS", QStringLiteral("Provide platform_id and %1").arg(sourceKey));
+    const auto platformId = ProjectPlatformSemantics::parseId(args.value("platform_id").toString());
     const auto* project = projectManager_ ? projectManager_->currentProject() : nullptr;
-    if (args.contains("platform") || !platformId || !project
-        || !ProjectPlatformSemantics::find(project->platforms, *platformId))
+    if (!platformId || !project || !ProjectPlatformSemantics::find(project->platforms, *platformId))
         return errorResponse("INVALID_PLATFORM", "platform_id must identify a platform in the current project");
-    const auto platform = *platformId;
-
-    const AssetInfo* asset = AssetRegistry::instance().getAsset(sourceID);
-    if (!asset)
-    {
-        return errorResponse("HARKEN_ERR_NOT_FOUND",
-                             QString("Asset with source_id %1 not found").arg(sourceID),
-                             "Use list_assets or import_audio first");
-    }
-
     if (transcodeInProgress_)
-    {
-        return errorResponse("HARKEN_ERR_BUSY",
-                             "A transcode operation is already running",
-                             "Wait for the current transcode to complete");
+        return errorResponse("TRANSCODE_IN_PROGRESS", "Wait for the current conversion to complete or cancel_transcode");
+    const QJsonArray sources = batch ? args.value(sourceKey).toArray() : QJsonArray{args.value(sourceKey)};
+    if (sources.isEmpty())
+        return errorResponse("INVALID_ARGS", "source_ids must be a nonempty array of positive uint32 integers");
+    QVector<uint32_t> sourceIds;
+    for (const auto& value : sources) {
+        const double number = value.toDouble();
+        if (!value.isDouble() || number < 1.0 || number > std::numeric_limits<uint32_t>::max()
+            || std::trunc(number) != number)
+            return errorResponse("INVALID_ARGS", "Source IDs must be positive uint32 integers");
+        const auto sourceId = static_cast<uint32_t>(number);
+        if (!AssetRegistry::instance().getAsset(sourceId))
+            return errorResponse("ASSET_NOT_FOUND", QStringLiteral("Asset %1 not found").arg(sourceId));
+        if (sourceIds.contains(sourceId))
+            return errorResponse("INVALID_ARGS", QStringLiteral("Duplicate source ID: %1").arg(sourceId));
+        sourceIds.append(sourceId);
     }
-
+    const auto snapshot = AssetRegistry::instance().buildSnapshot();
+    QVector<MediaConversionRequest> requests;
+    for (const auto sourceId : sourceIds) {
+        QString error;
+        const auto request = snapshot.request(sourceId, *platformId, &error);
+        if (!request) return errorResponse("INVALID_ASSET", error);
+        requests.append(*request);
+    }
+    const QString platform = ProjectPlatformSemantics::idString(*platformId);
+    transcodeOperationId_ = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    transcodeCancel_ = std::make_shared<std::atomic_bool>(false);
+    transcodeCompleted_ = 0;
+    transcodeTotal_ = static_cast<int>(requests.size());
+    transcodeResult_ = {};
     transcodeInProgress_ = true;
-    transcodeResult_ = QJsonObject();
-
-    QString requestError;
-    const auto request = AssetRegistry::instance().buildSnapshot().request(sourceID, platform, &requestError);
-    if (!request) {
-        transcodeInProgress_ = false;
-        return errorResponse("INVALID_ASSET", requestError);
-    }
-
-    transcodeRequest_ = std::make_shared<MediaConversionRequest>(*request);
-    transcodeThread_ = QThread::create([this, sourceID, platformStr, request = *request]() {
+    const QString operation = transcodeOperationId_;
+    transcodeThread_ = QThread::create([this, requests, platform, operation, batch, cancel = transcodeCancel_]() {
         AssetConverter converter;
-        ConversionResult result = converter.convert(request);
-
-        QMetaObject::invokeMethod(this, [this, result, sourceID, platformStr, request]() {
-            if (!AssetRegistry::instance().accepts(request)) {
-                transcodeResult_ = errorResponse("STALE_CONVERSION", "Conversion result discarded because the project, platform or asset changed");
-                transcodeInProgress_ = false;
-                return;
+        QVector<ConversionResult> results;
+        for (const auto& request : requests) {
+            if (cancel->load()) break;
+            results.append(converter.convert(request));
+            QMetaObject::invokeMethod(this, [this, completed = static_cast<int>(results.size())] {
+                transcodeCompleted_ = completed;
+            }, Qt::QueuedConnection);
+        }
+        QMetaObject::invokeMethod(this, [this, requests, results, platform, operation, batch]() {
+            QJsonArray entries;
+            int succeeded = 0;
+            int failed = 0;
+            for (qsizetype index = 0; index < results.size(); ++index) {
+                const auto& result = results.at(index);
+                QJsonObject response;
+                if (!AssetRegistry::instance().accepts(requests.at(index)))
+                    response = errorResponse("STALE_CONVERSION", "The project, platform or source changed during conversion");
+                else if (!result.success)
+                    response = errorResponse("HARKEN_ERR_CONVERSION_FAILED", result.errorMessage);
+                else
+                    response = successResponse({{"success", true}, {"source_id", qint64(result.sourceID)},
+                        {"platform_id", platform}, {"cache_path", result.cachePath}, {"output_size", qint64(result.outputSize)}});
+                if (response.value("status") == QStringLiteral("ok")) ++succeeded;
+                else ++failed;
+                entries.append(QJsonObject{{"source_id", qint64(result.sourceID)}, {"response", response}});
             }
-            if (result.success)
-            {
-                transcodeResult_ = QJsonObject{
-                    {"status", "ok"},
-                    {"result", QJsonObject{
-                        {"success", true},
-                        {"source_id", static_cast<qint64>(sourceID)},
-                        {"platform_id", platformStr},
-                        {"cache_path", result.cachePath},
-                        {"output_size", static_cast<qint64>(result.outputSize)}
-                    }}
-                };
-            }
-            else
-            {
-                transcodeResult_ = QJsonObject{
-                    {"status", "error"},
-                    {"code", "HARKEN_ERR_CONVERSION_FAILED"},
-                    {"message", result.errorMessage}
-                };
+            const bool canceled = results.size() < requests.size();
+            if (!batch && !entries.isEmpty()) {
+                transcodeResult_ = entries.first().toObject().value("response").toObject();
+                auto result = transcodeResult_.value("result").toObject();
+                result.insert("operation_id", operation);
+                transcodeResult_.insert("result", result);
+            } else {
+                transcodeResult_ = canceled
+                    ? errorResponse("CANCELED", "Conversion canceled; completed file results are retained")
+                    : failed ? errorResponse("BATCH_CONVERSION_FAILED", "One or more sources could not be converted")
+                    : successResponse({});
+                transcodeResult_.insert("result", QJsonObject{{"success", !canceled && failed == 0},
+                    {"operation_id", operation}, {"platform_id", platform},
+                    {"succeeded", succeeded}, {"failed", failed}, {"total", static_cast<int>(requests.size())},
+                    {"completed", static_cast<int>(results.size())}, {"results", entries}});
             }
             transcodeInProgress_ = false;
         }, Qt::QueuedConnection);
     });
-
     connect(transcodeThread_, &QThread::finished, transcodeThread_, &QThread::deleteLater);
     connect(transcodeThread_, &QThread::finished, this, [this, thread = transcodeThread_]() {
         if (transcodeThread_ == thread) transcodeThread_ = nullptr;
@@ -1110,13 +1136,15 @@ QJsonObject IPCServer::handleTranscodeAsset(const QJsonObject& args)
 
     return successResponse(QJsonObject{
         {"async", true},
-        {"source_id", static_cast<qint64>(sourceID)},
-        {"platform_id", platformStr},
+        {"operation_id", operation},
+        {sourceKey, args.value(sourceKey)},
+        {"platform_id", platform},
         {"message", "Transcode started. Poll get_transcode_status for result."},
         {"operation", QJsonObject{
             {"status_command", "get_transcode_status"},
-            {"status_args", QJsonObject{{"source_id", static_cast<qint64>(sourceID)},
-                                       {"platform_id", platformStr}}}}}
+            {"status_args", QJsonObject{{"operation_id", operation}}},
+            {"cancel_command", "cancel_transcode"},
+            {"cancel_args", QJsonObject{{"operation_id", operation}}}}}
     });
 }
 
@@ -1381,36 +1409,7 @@ QJsonObject IPCServer::handleBatchReplaceMedia(const QJsonObject& args)
 
 QJsonObject IPCServer::handleBatchConvertMedia(const QJsonObject& args)
 {
-    QJsonArray sourceIDsArr = sourceIDArrayFromArgs(args);
-    if (sourceIDsArr.isEmpty()) {
-        return errorResponse("HARKEN_ERR_MISSING_PARAM",
-                             "source_ids array is required",
-                             "Provide an array of source_id integers");
-    }
-
-    const auto id = ProjectPlatformSemantics::parseId(args["platform_id"].toString());
-    const auto* project = projectManager_ ? projectManager_->currentProject() : nullptr;
-    if (args.contains("platform") || !id || !project
-        || !ProjectPlatformSemantics::find(project->platforms, *id))
-        return errorResponse("INVALID_PLATFORM", "platform_id must identify a platform in the current project");
-    const auto platform = *id;
-
-    QVector<uint32_t> sourceIDs;
-    sourceIDs.reserve(sourceIDsArr.size());
-    for (const auto& val : sourceIDsArr) {
-        uint32_t id = static_cast<uint32_t>(val.toInteger());
-        if (id != 0)
-            sourceIDs.append(id);
-    }
-
-    auto& pool = MediaPool::instance();
-    pool.batchConvert(sourceIDs, platform);
-
-    return successResponse(QJsonObject{
-        {"queued", sourceIDs.size()},
-        {"platform_id", ProjectPlatformSemantics::idString(platform)},
-        {"message", QStringLiteral("Batch conversion started. Monitor via get_media_status.")}
-    });
+    return startTranscode(args, true);
 }
 
 

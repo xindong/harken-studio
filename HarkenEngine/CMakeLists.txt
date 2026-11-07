@@ -59,6 +59,7 @@ set(HARKEN_RUNTIME_SOURCES
     ${HARKEN_RUNTIME_DIR}/core/src/BlockArena.cpp
     ${HARKEN_RUNTIME_DIR}/core/src/ClockKernel.cpp
     ${HARKEN_RUNTIME_DIR}/core/src/MarkerIndex.cpp
+    ${HARKEN_RUNTIME_DIR}/core/src/MusicPlaybackTimeline.cpp
     ${HARKEN_RUNTIME_DIR}/core/src/DeferredIntentPool.cpp
     ${HARKEN_RUNTIME_DIR}/core/src/EngineConfig.cpp
     ${HARKEN_RUNTIME_DIR}/core/src/LogicCommitCoordinator.cpp
@@ -94,6 +95,8 @@ set(HARKEN_RUNTIME_SOURCES
     ${HARKEN_RUNTIME_DIR}/media/src/PackLogicImage.cpp
     ${HARKEN_RUNTIME_DIR}/media/src/PackTable.cpp
     ${HARKEN_RUNTIME_DIR}/media/src/StreamManager.cpp
+    ${HARKEN_RUNTIME_DIR}/media/src/StreamByteSource.cpp
+    ${HARKEN_RUNTIME_DIR}/media/src/StreamManagerIo.cpp
     ${HARKEN_RUNTIME_DIR}/param/src/BindingTable.cpp
     ${HARKEN_RUNTIME_DIR}/param/src/BusTargetStore.cpp
     ${HARKEN_RUNTIME_DIR}/param/src/Curve.cpp
@@ -439,6 +442,12 @@ _harken_add_python_regen_target(
     harken_variable_catalog_regen
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/Tooling/VariableCatalog/gen_variable_catalog.py"
     "Regenerating Native/Unity Variable catalog constants from variable_catalog.json"
+)
+
+_harken_add_python_regen_target(
+    harken_pack_wire_regen
+    "${CMAKE_SOURCE_DIR}/.scripts/pack_wire_codegen.py"
+    "Regenerating the Pack binary layout from the current contract"
 )
 
 # Remote-control channel (Tool/Remote): a static tooling library the

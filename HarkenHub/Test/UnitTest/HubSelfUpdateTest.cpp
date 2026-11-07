@@ -3,12 +3,18 @@
 #include "Support/ManifestTestUtils.h"
 #include "Support/RangeHttpServer.h"
 #include "Transactions/HandoffArea.h"
+#include "Projects/ProjectStore.h"
+#include "Settings/HubSettings.h"
+#include "UI/HubWindow.h"
+#include "UI/MessageDialog.h"
 #include "Update/UpdateQueue.h"
 #include "Update/UpdateStateStore.h"
 
 #include <gtest/gtest.h>
 
 #include <QCoreApplication>
+#include <QApplication>
+#include <QAbstractButton>
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDir>
@@ -17,7 +23,16 @@
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLockFile>
+#include <QScopeGuard>
+#include <QSqlDatabase>
+#include <QSqlQuery>
 #include <QTemporaryDir>
+#include <QTest>
+#include <QTimer>
+#include <QToolButton>
+
+#include <thread>
 
 using VNH::HandoffArea;
 using VNH::HubSelfUpdate;
@@ -124,6 +139,60 @@ TEST_F(HubSelfUpdateTest, VerifiesInstallerHashAndSize)
         &error));
 }
 
+TEST_F(HubSelfUpdateTest, UpdatePreparationKeepsTheUiResponsiveDuringStateContention)
+{
+    qputenv("HARKEN_HUB_BRIDGE_COMMAND", "noop");
+    ASSERT_TRUE(VNH::HubSettings::setAutoDownloadStudio(false));
+    auto record = readyBridgeRecord(QByteArrayLiteral("installer"));
+    record.expectedSha256 = QString(64, QLatin1Char('0'));
+    ASSERT_TRUE(UpdateStateStore::save(record, kNow));
+    QLockFile lock(UpdateStateStore::filePath() + QStringLiteral(".lock"));
+    ASSERT_TRUE(lock.tryLock(0));
+    VNH::ProjectStore store;
+    ASSERT_TRUE(store.open(dir.filePath(QStringLiteral("projects.db"))));
+    VNH::HubWindow window(&store);
+    window.show();
+    auto* update = window.findChild<QToolButton*>(QStringLiteral("hubUpdateButton"));
+    ASSERT_NE(update, nullptr);
+    QTimer::singleShot(0, &window, [&]() {
+        auto* dialog = qobject_cast<VNH::MessageDialog*>(QApplication::activeModalWidget());
+        ASSERT_NE(dialog, nullptr);
+        for (auto* button : dialog->buttons()) {
+            if (dialog->buttonRole(button) == QMessageBox::AcceptRole) {
+                button->click();
+                return;
+            }
+        }
+        FAIL() << "Missing update confirmation action";
+    });
+    bool inputHandled = false;
+    QTimer::singleShot(100, &window, [&]() {
+        inputHandled = true;
+        EXPECT_FALSE(update->isEnabled());
+        EXPECT_FALSE(window.close());
+        lock.unlock();
+    });
+    QTimer dismissError;
+    QObject::connect(&dismissError, &QTimer::timeout, &window, []() {
+        auto* dialog = qobject_cast<VNH::MessageDialog*>(QApplication::activeModalWidget());
+        if (dialog && dialog->standardButtons() == QMessageBox::Ok)
+            dialog->button(QMessageBox::Ok)->click();
+    });
+    dismissError.start(10);
+    update->click();
+    EXPECT_FALSE(update->isEnabled());
+    EXPECT_FALSE(inputHandled);
+    QElapsedTimer deadline;
+    deadline.start();
+    while (!update->isEnabled() && deadline.elapsed() < 5000)
+        QTest::qWait(10);
+    EXPECT_TRUE(inputHandled);
+    EXPECT_TRUE(update->isEnabled());
+    EXPECT_EQ(UpdateStateStore::load(QStringLiteral("HarkenHub")).state,
+              QStringLiteral("VerificationFailed"));
+    EXPECT_FALSE(UpdateQueue::hasPendingHubUpdate());
+}
+
 TEST_F(HubSelfUpdateTest, DisabledAutomationDoesNotDownloadAnAvailablePackage)
 {
     HarkenHubTest::RangeHttpServer server;
@@ -197,23 +266,45 @@ TEST_F(HubSelfUpdateTest, InstallerRejectedWhenAuthenticodeRequired)
     qunsetenv("HARKEN_HUB_REQUIRE_AUTHENTICODE");
 }
 
-TEST_F(HubSelfUpdateTest, BackupCopiesUserData)
+TEST_F(HubSelfUpdateTest, BackupReadsACommittedSnapshotWhileAWalWriterIsActive)
 {
-    {
-        QFile db(dir.filePath(QStringLiteral("projects.db")));
-        db.open(QIODevice::WriteOnly);
-        db.write(QByteArrayLiteral("db-bytes"));
-    }
+    const auto cleanup = qScopeGuard([]() {
+        QSqlDatabase::removeDatabase(QStringLiteral("backup-writer"));
+        QSqlDatabase::removeDatabase(QStringLiteral("backup-reader"));
+    });
+    auto writer = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), QStringLiteral("backup-writer"));
+    writer.setDatabaseName(dir.filePath(QStringLiteral("projects.db")));
+    ASSERT_TRUE(writer.open());
+    QSqlQuery write(writer);
+    ASSERT_TRUE(write.exec(QStringLiteral("PRAGMA journal_mode=WAL")));
+    ASSERT_TRUE(write.exec(QStringLiteral("CREATE TABLE records (value INTEGER)")));
+    ASSERT_TRUE(write.exec(QStringLiteral("INSERT INTO records VALUES (1), (1)")));
+    ASSERT_TRUE(writer.transaction());
+    ASSERT_TRUE(write.exec(QStringLiteral("UPDATE records SET value=2")));
     QString error;
-    ASSERT_TRUE(HubSelfUpdate::backupUserData(kNow, &error))
-        << error.toStdString();
+    bool backedUp = false;
+    std::thread worker([&]() { backedUp = HubSelfUpdate::backupUserData(kNow, &error); });
+    worker.join();
+    ASSERT_TRUE(backedUp) << error.toStdString();
 
     const QDir backupRoot(HubSelfUpdate::backupRootDir());
     const auto entries =
         backupRoot.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
     ASSERT_EQ(entries.size(), 1);
-    EXPECT_TRUE(QFile::exists(backupRoot.filePath(
-        entries.first() + QStringLiteral("/projects.db"))));
+    auto reader = QSqlDatabase::addDatabase(QStringLiteral("QSQLITE"), QStringLiteral("backup-reader"));
+    reader.setDatabaseName(backupRoot.filePath(entries.first() + QStringLiteral("/projects.db")));
+    reader.setConnectOptions(QStringLiteral("QSQLITE_OPEN_READONLY"));
+    ASSERT_TRUE(reader.open());
+    QSqlQuery read(reader);
+    ASSERT_TRUE(read.exec(QStringLiteral("PRAGMA integrity_check")));
+    ASSERT_TRUE(read.next());
+    EXPECT_EQ(read.value(0).toString(), QStringLiteral("ok"));
+    ASSERT_TRUE(read.exec(QStringLiteral("SELECT count(*), min(value), max(value) FROM records")));
+    ASSERT_TRUE(read.next());
+    EXPECT_EQ(read.value(0).toInt(), 2);
+    EXPECT_EQ(read.value(1).toInt(), 1);
+    EXPECT_EQ(read.value(2).toInt(), 1);
+    EXPECT_TRUE(writer.commit());
 }
 
 TEST_F(HubSelfUpdateTest, ApproveRequiresAwaitingState)

@@ -169,7 +169,7 @@ namespace Harken.Test
                 Require(Emitter.Create(out Emitter b));
                 Check(Values.SetValue(variable, new VnObjectId(0, 721)) == VnResult.VN_NO_VARIABLE_LABEL,
                     "matching catalog lets typed label identity writes reach native validation");
-                Check(Values.SetValue(variable, "Missing", a) == VnResult.VN_NO_VARIABLE_LABEL,
+                Check(Values.SetValue(variable, "Missing", a) == VnResult.VN_UNKNOWN_ID,
                     "matching catalog lets typed label name writes reach native validation");
                 Require(Values.Resolve("VehicleRPM", out VnObjectId resolved));
                 Check(resolved == variable.stableId, "Variable name resolves the complete generated GUID");
@@ -206,7 +206,7 @@ namespace Harken.Test
                 Check(Values.SetValue("VehicleRPM", "00000000-0000-0000-0000-000000000002", 0.5f) ==
                     VnResult.VN_GAMEPLAY_WRONG_PROJECT, "project-qualified writes use the loaded Pack identity");
                 Check(Values.SetValue("VehicleRPM", "00000000-0000-0000-0000-000000000001", "Missing") ==
-                    VnResult.VN_NO_VARIABLE_LABEL, "name-based label writes resolve the current Variable");
+                    VnResult.VN_UNKNOWN_ID, "name-based label writes resolve the current Variable");
                 var emitters = new Emitter[320];
                 for (int index = 0; index < emitters.Length; ++index)
                     Require(Emitter.Create(out emitters[index]));
@@ -287,17 +287,37 @@ namespace Harken.Test
         private static unsafe void ActivateInit(string path)
         {
             byte[] utf8 = Encoding.UTF8.GetBytes(Path.GetFullPath(path) + "\0");
+            byte[] nameUtf8 = Encoding.UTF8.GetBytes("VehicleRPM\0");
             fixed (byte* p = utf8)
+            fixed (byte* name = nameUtf8)
             {
-                VnCanonicalPackSetMemberV1 member = default;
-                member.structSize = (uint)sizeof(VnCanonicalPackSetMemberV1);
-                member.packStableId = 11;
-                member.packKind = VnConstants.VN_CANONICAL_PACK_SET_MEMBER_INIT;
-                member.utf8Path = (IntPtr)p;
+                byte empty = 0;
+                VnPackVariableNameV1 variable = new VnPackVariableNameV1
+                {
+                    variableId = HarkenVariables.VehicleRPM,
+                    utf8Name = (IntPtr)name
+                };
+                VnPackNamesV1 names = new VnPackNamesV1
+                {
+                    structSize = (uint)sizeof(VnPackNamesV1),
+                    projectId = new VnObjectId(0, 1),
+                    utf8RootName = (IntPtr)(&empty),
+                    utf8Language = (IntPtr)(&empty),
+                    variableCount = 1,
+                    variables = (IntPtr)(&variable)
+                };
+                VnCanonicalPackSetMemberV2 member = default;
+                member.structSize = (uint)sizeof(VnCanonicalPackSetMemberV2);
+                member.operation = VnConstants.VN_PACK_MEMBER_CONTENT;
+                member.source.structSize = (uint)sizeof(VnCanonicalPackSetMemberV1);
+                member.source.packStableId = 11;
+                member.source.packKind = VnConstants.VN_CANONICAL_PACK_SET_MEMBER_INIT;
+                member.source.utf8Path = (IntPtr)p;
+                member.names = (IntPtr)(&names);
                 VnCanonicalPackSetMemberResultV1 row = default;
                 row.structSize = (uint)sizeof(VnCanonicalPackSetMemberResultV1);
-                VnCanonicalPackSetActivationDescV1 desc = default;
-                desc.structSize = (uint)sizeof(VnCanonicalPackSetActivationDescV1);
+                VnCanonicalPackSetActivationDescV2 desc = default;
+                desc.structSize = (uint)sizeof(VnCanonicalPackSetActivationDescV2);
                 desc.setRevision = 1;
                 desc.memberCount = 1;
                 desc.memberStructSize = member.structSize;
@@ -307,7 +327,7 @@ namespace Harken.Test
                 desc.outputMembers = (IntPtr)(&row);
                 VnCanonicalPackSetActivationReportV1 report = default;
                 report.structSize = (uint)sizeof(VnCanonicalPackSetActivationReportV1);
-                Require(HarkenNative.Vn_ActivateCanonicalPackSetV1(in desc, ref report));
+                Require(HarkenNative.Vn_ActivateCanonicalPackSetV2(in desc, ref report));
             }
         }
 

@@ -1725,31 +1725,17 @@ int ExecuteCall(std::uint16_t callId, ByteReader& r, BlobStore& blobs,
                 if (closure.second == 0) {
                     continue;
                 }
-                bool matched = false;
-                if (published->hasCatalog) {
-                    for (const auto& row : published->catalog.catalogRows) {
-                        if (row.ownerPackStableId == closure.first) {
-                            if (row.expectedContentHash != closure.second) {
-                                return 4;
-                            }
-                            matched = true;
-                            break;
-                        }
+                bool ownerLoaded = false;
+                for (const auto& owner : published->owners) {
+                    if (owner.readiness ==
+                            harken::PackOwnerReadiness::Active &&
+                        owner.packStableId == closure.first) {
+                        ownerLoaded = true;
+                        break;
                     }
                 }
-                if (!matched) {
-                    bool ownerLoaded = false;
-                    for (const auto& owner : published->owners) {
-                        if (owner.readiness ==
-                                harken::PackOwnerReadiness::Active &&
-                            owner.packStableId == closure.first) {
-                            ownerLoaded = true;
-                            break;
-                        }
-                    }
-                    if (ownerLoaded) {
-                        return 4;
-                    }
+                if (ownerLoaded) {
+                    return 4;
                 }
             }
         }

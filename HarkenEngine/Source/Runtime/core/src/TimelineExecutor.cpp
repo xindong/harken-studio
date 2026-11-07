@@ -174,6 +174,8 @@ void TimelineExecutor::FoldEvent(
     HashLE(&counters_.digest,
            payload == nullptr ? std::uint64_t{0}
                               : payload->envelopeEndFrame);
+    if (payload != nullptr && payload->envelopeElapsedFrames != 0)
+        HashLE(&counters_.digest, payload->envelopeElapsedFrames);
     HashLE(&counters_.digest,
            payload == nullptr
                ? std::uint8_t{0}

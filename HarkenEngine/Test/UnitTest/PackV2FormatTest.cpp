@@ -34,32 +34,22 @@ using namespace harken;
 
 constexpr std::uint32_t kLegacySelectionRoundRobin = 1;
 
-TEST(PackV2Format, CurveWireSizesArePinned) {
-    EXPECT_EQ(184u, kPackV2CurveWireBytes);
-    EXPECT_EQ(600u, kPackV2AttenuationPayloadBytes);
-    EXPECT_EQ(608u, kPackV3AttenuationPayloadBytes);
-    EXPECT_EQ(180u, kPackV2BindingCurveWireBytes);
-    EXPECT_EQ(228u, kPackV2BindingDefinitionPayloadBytes);
-    EXPECT_EQ(32u, kPackV2BusPayloadBytes);
-    EXPECT_EQ(40u, kPackV6BusPayloadBytes);
-}
-
 TEST(PackV2Format, PackContainerUsesPublishedSchemaVersion) {
     static_assert(kPackFormatVersion == HARKEN_PACK_SCHEMA_VERSION);
-    static_assert(kPackFormatVersion2 == HARKEN_PACK_SCHEMA_VERSION);
+    static_assert(kPackFormatVersion == HARKEN_PACK_SCHEMA_VERSION);
     EXPECT_EQ(HARKEN_PACK_SCHEMA_VERSION, kPackFormatVersion);
-    EXPECT_EQ(HARKEN_PACK_SCHEMA_VERSION, kPackFormatVersion2);
+    EXPECT_EQ(HARKEN_PACK_SCHEMA_VERSION, kPackFormatVersion);
 }
 
 TEST(PackV2Format, VolumeSnapshotParentForestAcceptsDeepUnorderedChainAndRejectsCycles) {
     constexpr std::size_t kBusCount = 4096;
-    std::vector<PackBusDefinitionBusV2> buses;
+    std::vector<PackBusDefinitionBus> buses;
     buses.reserve(kBusCount);
-    PackBusDefinitionBusV2 master{};
+    PackBusDefinitionBus master{};
     master.busId = VN_BUS_MASTER;
     buses.push_back(master);
     for (std::size_t i = 1; i < kBusCount; ++i) {
-        PackBusDefinitionBusV2 bus{};
+        PackBusDefinitionBus bus{};
         bus.busId = harkentest::ObjectId(i);
         bus.parentId = buses.back().busId;
         buses.push_back(bus);
@@ -98,10 +88,10 @@ public:
 
     std::size_t AddEntry(std::uint32_t kind, std::uint64_t id,
                          std::vector<std::uint8_t> payload,
-                         std::uint32_t vintage = kPackV2SchemaVintage) {
+                         std::uint32_t vintage = 0) {
         Entry entry;
         entry.kind = kind;
-        entry.vintage = vintage;
+        entry.vintage = vintage != 0 ? vintage : PackEntryVintage(kind);
         entry.id = id;
         entry.payload = std::move(payload);
         entries_.push_back(std::move(entry));
@@ -116,7 +106,7 @@ public:
                          std::vector<float> planar) {
         Entry entry;
         entry.kind = kPackEntryKindMedia;
-        entry.vintage = kPackV2SchemaVintage;
+        entry.vintage = kPackMediaVintage;
         entry.id = directoryId;
         entry.isMedia = true;
         entry.soundId = soundId;
@@ -127,21 +117,21 @@ public:
     }
 
     std::vector<std::uint8_t> Build() {
-        const std::uint64_t dirOffset = kPackV2HeaderBytes;
+        const std::uint64_t dirOffset = kPackFileHeaderBytes;
         const std::uint64_t dirBytes =
             static_cast<std::uint64_t>(entries_.size()) *
-            kPackV2DirectoryEntryBytes;
+            kPackDirectoryEntryBytes;
         const std::uint64_t dirEnd = dirOffset + dirBytes;
 
         payloadOffsets_.assign(entries_.size(), 0);
         blobOffsets_.assign(entries_.size(), 0);
 
-        std::uint64_t cursor = AlignUp(dirEnd, kPackV2PayloadAlign);
+        std::uint64_t cursor = AlignUp(dirEnd, kPackPayloadAlign);
         std::uint64_t contentEnd = dirEnd;
         for (std::size_t i = 0; i < entries_.size(); ++i) {
             payloadOffsets_[i] = cursor;
             contentEnd = cursor + PayloadSize(entries_[i]);
-            cursor = AlignUp(contentEnd, kPackV2PayloadAlign);
+            cursor = AlignUp(contentEnd, kPackPayloadAlign);
         }
         std::uint64_t blobCursor = AlignUp(contentEnd, kPackBlobAlign);
         for (std::size_t i = 0; i < entries_.size(); ++i) {
@@ -179,7 +169,7 @@ public:
                 toc.flags = 0;
                 toc.loopStartFrame = 0;
                 toc.loopEndFrame = 0;
-                SerializePackTocEntry(toc, payload);
+                SerializePackMedia(toc, payload);
             } else {
                 std::memcpy(payload, entry.payload.data(),
                             entry.payload.size());
@@ -187,7 +177,7 @@ public:
         }
         for (std::size_t i = 0; i < entries_.size(); ++i) {
             const Entry& entry = entries_[i];
-            PackV2DirectoryEntry record;
+            PackDirectoryEntry record;
             record.kind = entry.kind;
             record.vintage = entry.vintage;
             if (entry.kind == kPackEntryKindBusSend || entry.kind == kPackEntryKindBindingAttachment) {
@@ -200,13 +190,13 @@ public:
             record.payloadChecksum = Fnv1a64(
                 bytes.data() + static_cast<std::size_t>(payloadOffsets_[i]),
                 static_cast<std::size_t>(record.size));
-            SerializePackV2DirectoryEntry(
+            SerializePackDirectoryEntry(
                 record, bytes.data() + static_cast<std::size_t>(dirOffset) +
-                            i * kPackV2DirectoryEntryBytes);
+                            i * kPackDirectoryEntryBytes);
         }
-        PackV2Header header;
-        header.formatVersion = kPackFormatVersion2;
-        header.headerBytes = kPackV2HeaderBytes;
+        PackFileHeader header;
+        header.formatVersion = kPackFormatVersion;
+        header.headerBytes = kPackFileHeaderBytes;
         header.fileBytes = fileBytes;
         header.packKind = packKind_;
         header.entryCount = static_cast<std::uint32_t>(entries_.size());
@@ -214,7 +204,7 @@ public:
         header.directoryChecksum =
             Fnv1a64(bytes.data() + static_cast<std::size_t>(dirOffset),
                     static_cast<std::size_t>(dirBytes));
-        SerializePackV2Header(header, bytes.data());
+        SerializePackFileHeader(header, bytes.data());
         return bytes;
     }
 
@@ -236,7 +226,7 @@ private:
     };
 
     static std::uint64_t PayloadSize(const Entry& entry) {
-        return entry.isMedia ? kPackV2MediaPayloadBytes
+        return entry.isMedia ? kPackMediaBytes
                              : entry.payload.size();
     }
     static std::uint64_t BlobBytes(const Entry& entry) {
@@ -253,36 +243,36 @@ private:
 // --- payload factories ---
 
 std::vector<std::uint8_t> BusPayload(VnBusId busId, VnBusId parentBusId) {
-    std::vector<std::uint8_t> payload(kPackV2BusPayloadBytes);
+    std::vector<std::uint8_t> payload(kPackBusBytes);
     PackBusEntry entry;
     entry.busId = busId;
     entry.parentBusId = parentBusId;
-    SerializePackV2Bus(entry, payload.data());
+    SerializePackBus(entry, payload.data());
     return payload;
 }
 
 std::vector<std::uint8_t> BusMixPayload(VnBusId busId, VnBusId parentBusId,
                                         float volume, float outputBusVolume,
                                         float makeUpGain) {
-    std::vector<std::uint8_t> payload(kPackV6BusPayloadBytes);
+    std::vector<std::uint8_t> payload(kPackBusBytes);
     PackBusEntry entry;
     entry.busId = busId;
     entry.parentBusId = parentBusId;
     entry.volume = volume;
     entry.outputBusVolume = outputBusVolume;
     entry.makeUpGain = makeUpGain;
-    SerializePackV6Bus(entry, payload.data());
+    SerializePackBus(entry, payload.data());
     return payload;
 }
 
 std::vector<std::uint8_t> BusSendPayload(VnBusId fromBusId, VnBusId toBusId,
                                          float levelDb) {
-    std::vector<std::uint8_t> payload(kPackV2BusSendPayloadBytes);
+    std::vector<std::uint8_t> payload(kPackBusSendBytes);
     PackBusSendEntry entry;
     entry.fromBusId = fromBusId;
     entry.toBusId = toBusId;
     entry.levelDb = levelDb;
-    SerializePackV2BusSend(entry, payload.data());
+    SerializePackBusSend(entry, payload.data());
     return payload;
 }
 
@@ -291,54 +281,42 @@ std::vector<std::uint8_t> AttenuationPayload(const VnAttenuationDesc& desc) {
     if (!(wire.proximityFrequency > 0.0f)) {
         wire.proximityFrequency = 250.0f;
     }
-    std::vector<std::uint8_t> payload(kPackV3AttenuationPayloadBytes);
-    SerializePackV3Attenuation(wire, payload.data());
+    std::vector<std::uint8_t> payload(kPackAttenuationBytes);
+    SerializePackAttenuation(wire, payload.data());
     return payload;
 }
 
-std::vector<std::uint8_t> RetiredAttenuationPayload(
-    const VnAttenuationDesc& desc) {
-    std::vector<std::uint8_t> payload(kPackV2AttenuationPayloadBytes);
-    SerializePackV2Attenuation(desc, payload.data());
+std::vector<std::uint8_t> RetiredAttenuationPayload(const VnAttenuationDesc& desc) {
+    auto payload = AttenuationPayload(desc);
+    payload.resize(kPackAttenuationProximityFrequencyOffset);
     return payload;
 }
 
-std::vector<std::uint8_t> DiscreteVariablePayload(VnVariableId variableId) {
-    std::vector<std::uint8_t> payload(kPackV2DiscreteVariablePayloadBytes);
-    SerializePackV2DiscreteVariable(variableId, payload.data());
-    return payload;
+std::vector<std::uint8_t> DiscreteVariablePayload(VnVariableId) {
+    return {0};
 }
 
-std::vector<std::uint8_t> MeterWiringPayload(VnBusId busId,
-                                             VnVariableId variableId,
-                                             std::uint32_t attackMs,
-                                             std::uint32_t releaseMs) {
-    std::vector<std::uint8_t> payload(kPackV2MeterWiringPayloadBytes);
-    PackMeterWiringEntry entry;
-    entry.busId = busId;
-    entry.variableId = variableId;
-    entry.attackMs = attackMs;
-    entry.releaseMs = releaseMs;
-    SerializePackV2MeterWiring(entry, payload.data());
-    return payload;
+std::vector<std::uint8_t> MeterWiringPayload(VnBusId, VnVariableId,
+                                             std::uint32_t, std::uint32_t) {
+    return {0};
 }
 
 std::vector<std::uint8_t> BindingDefinitionPayload(VnBindingId bindingId,
                                                    const VnBindingDesc& desc) {
-    std::vector<std::uint8_t> payload(kPackV2BindingDefinitionPayloadBytes);
-    SerializePackV2BindingDefinition(bindingId, desc, payload.data());
+    std::vector<std::uint8_t> payload(kPackBindingDefinitionBytes);
+    WritePackBindingDefinition(bindingId, desc, payload.data());
     return payload;
 }
 
 std::vector<std::uint8_t> AttachmentPayload(VnBindingId bindingId,
                                             std::uint32_t scopeKind,
                                             std::uint64_t objectId) {
-    std::vector<std::uint8_t> payload(kPackV2BindingAttachmentPayloadBytes);
+    std::vector<std::uint8_t> payload(kPackBindingAttachmentBytes);
     PackBindingAttachmentEntry entry;
     entry.bindingId = bindingId;
     entry.scopeKind = scopeKind;
     entry.objectId = harkentest::ObjectId(objectId);
-    SerializePackV2BindingAttachment(entry, payload.data());
+    SerializePackBindingAttachment(entry, payload.data());
     return payload;
 }
 
@@ -347,37 +325,37 @@ std::vector<std::uint8_t> AttachmentPayload(VnBindingId bindingId,
 // can be built for the size-mismatch refusal.
 std::vector<std::uint8_t> ContainerPayload(
     const PackContainerEntryHeader& header,
-    const std::vector<PackContainerChildV2>& children) {
+    const std::vector<PackContainerChild>& children) {
     std::vector<std::uint8_t> payload(static_cast<std::size_t>(
-        kPackV2ContainerHeaderBytes +
-        children.size() * kPackV2ContainerChildBytes));
-    SerializePackV2ContainerHeader(header, payload.data());
+        kPackContainerHeaderBytes +
+        children.size() * kPackContainerChildBytes));
+    SerializePackContainerHeader(header, payload.data());
     for (std::size_t i = 0; i < children.size(); ++i) {
-        SerializePackV2ContainerChild(
-            children[i], payload.data() + kPackV2ContainerHeaderBytes +
-                             i * kPackV2ContainerChildBytes);
+        SerializePackContainerChild(
+            children[i], payload.data() + kPackContainerHeaderBytes +
+                             i * kPackContainerChildBytes);
     }
     return payload;
 }
 
 constexpr std::uint64_t kVoiceRecipeV5PrefixBytes =
-    kPackV2VoiceRecipeHeaderBytes + kPackV3VoiceRecipeToneBytes +
-    kPackV4VoiceRecipeSpatialBytes + kPackV5VoiceRecipePlaybackBytes;
+    kPackVoiceRecipeHeaderBytes + kPackVoiceRecipeToneBytes +
+    kPackVoiceRecipeSpatialBytes + kPackVoiceRecipePlaybackBytes;
 
 void WriteEmptyVoiceRecipeSlots(std::uint8_t* payload) {
     PackVoiceRecipeTone tone;
-    SerializePackV3VoiceRecipeTone(
-        tone, payload + kPackV2VoiceRecipeHeaderBytes);
+    SerializePackVoiceRecipeTone(
+        tone, payload + kPackVoiceRecipeHeaderBytes);
     PackVoiceRecipeSpatial spatial;
     spatial.distanceScale = 0.0f;
-    SerializePackV4VoiceRecipeSpatial(
-        spatial, payload + kPackV2VoiceRecipeHeaderBytes +
-                     kPackV3VoiceRecipeToneBytes);
+    SerializePackVoiceRecipeSpatial(
+        spatial, payload + kPackVoiceRecipeHeaderBytes +
+                     kPackVoiceRecipeToneBytes);
     PackVoiceRecipePlayback playback;
-    SerializePackV5VoiceRecipePlayback(
-        playback, payload + kPackV2VoiceRecipeHeaderBytes +
-                      kPackV3VoiceRecipeToneBytes +
-                      kPackV4VoiceRecipeSpatialBytes);
+    SerializePackVoiceRecipePlayback(
+        playback, payload + kPackVoiceRecipeHeaderBytes +
+                      kPackVoiceRecipeToneBytes +
+                      kPackVoiceRecipeSpatialBytes);
 }
 
 std::vector<std::uint8_t> GainRecipePayload(
@@ -388,24 +366,24 @@ std::vector<std::uint8_t> GainRecipePayload(
     header.installCount = 1;
     header.bindingCount = static_cast<std::uint32_t>(bindings.size());
     std::vector<std::uint8_t> payload(
-        static_cast<std::size_t>(PackV5VoiceRecipePayloadBytes(
+        static_cast<std::size_t>(PackVoiceRecipePayloadBytes(
             header.installCount, header.bindingCount)),
         0);
-    SerializePackV2VoiceRecipeHeader(header, payload.data());
+    SerializePackVoiceRecipeHeader(header, payload.data());
     WriteEmptyVoiceRecipeSlots(payload.data());
     PackVoiceRecipeInstall install;
     install.slot = slot;
     install.effectType = VN_EFFECT_GAIN;
-    install.descriptorVintage = kPackV2EffectDescriptorVintage;
+    install.descriptorVintage = kPackEffectDescriptorVintage;
     install.paramCount = 1;
     install.params[0] = gainDb;
-    SerializePackV2VoiceRecipeInstall(
+    WritePackVoiceRecipeInstall(
         install, payload.data() + kVoiceRecipeV5PrefixBytes);
     std::uint8_t* binding = payload.data() + kVoiceRecipeV5PrefixBytes +
-                            kPackV2VoiceRecipeInstallBytes;
+                            kPackVoiceRecipeInstallBytes;
     for (VnBindingId id : bindings) {
-        SerializePackV2VoiceRecipeBinding(id, binding);
-        binding += kPackV2VoiceRecipeBindingBytes;
+        SerializePackVoiceRecipeBinding(id, binding);
+        binding += kPackVoiceRecipeBindingBytes;
     }
     return payload;
 }
@@ -423,23 +401,23 @@ std::vector<std::uint8_t> TwoInstallGainRecipePayload(VnSoundId playable,
     header.installCount = 2;
     header.bindingCount = 0;
     std::vector<std::uint8_t> payload(
-        static_cast<std::size_t>(PackV5VoiceRecipePayloadBytes(
+        static_cast<std::size_t>(PackVoiceRecipePayloadBytes(
             header.installCount, header.bindingCount)),
         0);
-    SerializePackV2VoiceRecipeHeader(header, payload.data());
+    SerializePackVoiceRecipeHeader(header, payload.data());
     WriteEmptyVoiceRecipeSlots(payload.data());
     const std::uint32_t slots[2] = {slot0, slot1};
     for (std::uint32_t n = 0; n < 2; ++n) {
         PackVoiceRecipeInstall install;
         install.slot = slots[n];
         install.effectType = VN_EFFECT_GAIN;
-        install.descriptorVintage = kPackV2EffectDescriptorVintage;
+        install.descriptorVintage = kPackEffectDescriptorVintage;
         install.paramCount = 1;
         install.params[0] = -6.0f;
-        SerializePackV2VoiceRecipeInstall(
+        WritePackVoiceRecipeInstall(
             install, payload.data() + kVoiceRecipeV5PrefixBytes +
                          static_cast<std::size_t>(n) *
-                             kPackV2VoiceRecipeInstallBytes);
+                             kPackVoiceRecipeInstallBytes);
     }
     return payload;
 }
@@ -451,9 +429,9 @@ std::vector<std::uint8_t> ToneRecipePayload(VnSoundId playable,
     header.installCount = toneOnly ? 0u : 1u;
     header.bindingCount = 0;
     std::vector<std::uint8_t> payload(static_cast<std::size_t>(
-        PackV5VoiceRecipePayloadBytes(header.installCount,
+        PackVoiceRecipePayloadBytes(header.installCount,
                                       header.bindingCount)), 0);
-    SerializePackV2VoiceRecipeHeader(header, payload.data());
+    SerializePackVoiceRecipeHeader(header, payload.data());
     WriteEmptyVoiceRecipeSlots(payload.data());
     PackVoiceRecipeTone tone;
     tone.present = 1;
@@ -468,16 +446,16 @@ std::vector<std::uint8_t> ToneRecipePayload(VnSoundId playable,
     tone.highShelfFrequencyHz = 6000.0f;
     tone.highShelfQ = 0.70710678f;
     tone.highShelfGainDb = 0.0f;
-    SerializePackV3VoiceRecipeTone(
-        tone, payload.data() + kPackV2VoiceRecipeHeaderBytes);
+    SerializePackVoiceRecipeTone(
+        tone, payload.data() + kPackVoiceRecipeHeaderBytes);
     if (!toneOnly) {
         PackVoiceRecipeInstall install;
         install.slot = 0;
         install.effectType = VN_EFFECT_GAIN;
-        install.descriptorVintage = kPackV2EffectDescriptorVintage;
+        install.descriptorVintage = kPackEffectDescriptorVintage;
         install.paramCount = 1;
         install.params[0] = -6.0f;
-        SerializePackV2VoiceRecipeInstall(
+        WritePackVoiceRecipeInstall(
             install, payload.data() + kVoiceRecipeV5PrefixBytes);
     }
     return payload;
@@ -488,15 +466,15 @@ std::vector<std::uint8_t> SpatialRecipePayload(
     PackVoiceRecipeEntryHeader header;
     header.playableId = playable;
     std::vector<std::uint8_t> payload(
-        static_cast<std::size_t>(PackV5VoiceRecipePayloadBytes(0, 0)), 0);
-    SerializePackV2VoiceRecipeHeader(header, payload.data());
+        static_cast<std::size_t>(PackVoiceRecipePayloadBytes(0, 0)), 0);
+    SerializePackVoiceRecipeHeader(header, payload.data());
     WriteEmptyVoiceRecipeSlots(payload.data());
     PackVoiceRecipeSpatial spatial;
     spatial.attenuationId = attenuation;
     spatial.distanceScale = distanceScale;
-    SerializePackV4VoiceRecipeSpatial(
-        spatial, payload.data() + kPackV2VoiceRecipeHeaderBytes +
-                     kPackV3VoiceRecipeToneBytes);
+    SerializePackVoiceRecipeSpatial(
+        spatial, payload.data() + kPackVoiceRecipeHeaderBytes +
+                     kPackVoiceRecipeToneBytes);
     return payload;
 }
 
@@ -506,24 +484,24 @@ std::vector<std::uint8_t> PlaybackRecipePayload(
     PackVoiceRecipeEntryHeader header;
     header.playableId = playable;
     std::vector<std::uint8_t> payload(
-        static_cast<std::size_t>(PackV5VoiceRecipePayloadBytes(0, 0)), 0);
-    SerializePackV2VoiceRecipeHeader(header, payload.data());
+        static_cast<std::size_t>(PackVoiceRecipePayloadBytes(0, 0)), 0);
+    SerializePackVoiceRecipeHeader(header, payload.data());
     PackVoiceRecipeTone tone;
-    SerializePackV3VoiceRecipeTone(
-        tone, payload.data() + kPackV2VoiceRecipeHeaderBytes);
+    SerializePackVoiceRecipeTone(
+        tone, payload.data() + kPackVoiceRecipeHeaderBytes);
     PackVoiceRecipeSpatial spatial;
     spatial.attenuationId = attenuation;
     spatial.distanceScale = distanceScale;
-    SerializePackV4VoiceRecipeSpatial(
-        spatial, payload.data() + kPackV2VoiceRecipeHeaderBytes +
-                     kPackV3VoiceRecipeToneBytes);
+    SerializePackVoiceRecipeSpatial(
+        spatial, payload.data() + kPackVoiceRecipeHeaderBytes +
+                     kPackVoiceRecipeToneBytes);
     PackVoiceRecipePlayback playback;
     playback.present = present;
     playback.loopCount = loopCount;
-    SerializePackV5VoiceRecipePlayback(
-        playback, payload.data() + kPackV2VoiceRecipeHeaderBytes +
-                      kPackV3VoiceRecipeToneBytes +
-                      kPackV4VoiceRecipeSpatialBytes);
+    SerializePackVoiceRecipePlayback(
+        playback, payload.data() + kPackVoiceRecipeHeaderBytes +
+                      kPackVoiceRecipeToneBytes +
+                      kPackVoiceRecipeSpatialBytes);
     return payload;
 }
 
@@ -531,7 +509,7 @@ TEST(PackV2Format, VoiceRecipeGainRoundTripsWithCanonicalBindings) {
     ImageBuilder builder(kPackKindContent);
     builder.AddEntry(kPackEntryKindVoiceRecipe, 100,
                      GainRecipePayload(harkentest::ObjectId(100), 0, -6.0f, {harkentest::ObjectId(700), harkentest::ObjectId(701)}),
-                     kPackV2PlaybackRecipeSchemaVintage);
+                     kPackVoiceRecipeVintage);
     const std::vector<std::uint8_t> bytes = builder.Build();
     PackLogicImage image;
     ASSERT_EQ(VN_OK, ParsePackV2Image(bytes.data(), bytes.size(), &image));
@@ -546,10 +524,10 @@ TEST(PackV2Format, VoiceRecipeGainRoundTripsWithCanonicalBindings) {
 TEST(PackV2Format, AuthoredToneRecipeRoundTripsAndAllowsToneOnly) {
     ImageBuilder builder(kPackKindContent);
     builder.AddEntry(kPackEntryKindVoiceRecipe, 101, ToneRecipePayload(harkentest::ObjectId(101)),
-                     kPackV2PlaybackRecipeSchemaVintage);
+                     kPackVoiceRecipeVintage);
     builder.AddEntry(kPackEntryKindVoiceRecipe, 102,
                      ToneRecipePayload(harkentest::ObjectId(102), true),
-                     kPackV2PlaybackRecipeSchemaVintage);
+                     kPackVoiceRecipeVintage);
     const std::vector<std::uint8_t> bytes = builder.Build();
     PackLogicImage image;
     ASSERT_EQ(VN_OK, ParsePackV2Image(bytes.data(), bytes.size(), &image));
@@ -563,7 +541,7 @@ TEST(PackV2Format, RetiredVoiceRecipeVintagesRefuse) {
     {
         ImageBuilder builder(kPackKindContent);
         builder.AddEntry(kPackEntryKindVoiceRecipe, 103, ToneRecipePayload(harkentest::ObjectId(103)),
-                         kPackV2SchemaVintage);
+                         2u);
         const std::vector<std::uint8_t> bytes = builder.Build();
         PackLogicImage image;
         EXPECT_EQ(VN_PACK_INCOMPATIBLE,
@@ -573,7 +551,7 @@ TEST(PackV2Format, RetiredVoiceRecipeVintagesRefuse) {
     {
         ImageBuilder builder(kPackKindContent);
         builder.AddEntry(kPackEntryKindVoiceRecipe, 104, ToneRecipePayload(harkentest::ObjectId(104)),
-                         kPackV2AuthoredToneSchemaVintage);
+                         kPackAttenuationVintage);
         const std::vector<std::uint8_t> bytes = builder.Build();
         PackLogicImage image;
         EXPECT_EQ(VN_PACK_INCOMPATIBLE,
@@ -584,7 +562,7 @@ TEST(PackV2Format, RetiredVoiceRecipeVintagesRefuse) {
         ImageBuilder builder(kPackKindContent);
         builder.AddEntry(kPackEntryKindVoiceRecipe, 105,
                          SpatialRecipePayload(harkentest::ObjectId(105), harkentest::ObjectId(701), 1.5f),
-                         kPackV2SpatialRecipeSchemaVintage);
+                         4u);
         const std::vector<std::uint8_t> bytes = builder.Build();
         PackLogicImage image;
         EXPECT_EQ(VN_PACK_INCOMPATIBLE,
@@ -597,7 +575,7 @@ TEST(PackV2Format, SpatialRecipeRoundTripsWithoutAuthoredTone) {
     ImageBuilder builder(kPackKindContent);
     builder.AddEntry(kPackEntryKindVoiceRecipe, 104,
                      SpatialRecipePayload(harkentest::ObjectId(104), harkentest::ObjectId(701), 1.5f),
-                     kPackV2PlaybackRecipeSchemaVintage);
+                     kPackVoiceRecipeVintage);
     const std::vector<std::uint8_t> bytes = builder.Build();
     PackLogicImage image;
     ASSERT_EQ(VN_OK, ParsePackV2Image(bytes.data(), bytes.size(), &image));
@@ -614,10 +592,10 @@ TEST(PackV2Format, PlaybackRecipeRoundTripsWithAbsentSpatial) {
     ImageBuilder builder(kPackKindContent);
     builder.AddEntry(kPackEntryKindVoiceRecipe, 105,
                      PlaybackRecipePayload(harkentest::ObjectId(105), 1, 3),
-                     kPackV2PlaybackRecipeSchemaVintage);
+                     kPackVoiceRecipeVintage);
     builder.AddEntry(kPackEntryKindVoiceRecipe, 106,
                      PlaybackRecipePayload(harkentest::ObjectId(106), 1, 0, harkentest::ObjectId(702), 2.0f),
-                     kPackV2PlaybackRecipeSchemaVintage);
+                     kPackVoiceRecipeVintage);
     const std::vector<std::uint8_t> bytes = builder.Build();
     PackLogicImage image;
     ASSERT_EQ(VN_OK, ParsePackV2Image(bytes.data(), bytes.size(), &image));
@@ -636,7 +614,7 @@ TEST(PackV2Format, PlaybackRecipeMalformedBlockRefuses) {
         ImageBuilder builder(kPackKindContent);
         builder.AddEntry(kPackEntryKindVoiceRecipe, 105,
                          PlaybackRecipePayload(harkentest::ObjectId(105), 2, 3),
-                         kPackV2PlaybackRecipeSchemaVintage);
+                         kPackVoiceRecipeVintage);
         const std::vector<std::uint8_t> bytes = builder.Build();
         PackLogicImage image;
         EXPECT_EQ(VN_BAD_PACK,
@@ -646,7 +624,7 @@ TEST(PackV2Format, PlaybackRecipeMalformedBlockRefuses) {
         ImageBuilder builder(kPackKindContent);
         builder.AddEntry(kPackEntryKindVoiceRecipe, 105,
                          PlaybackRecipePayload(harkentest::ObjectId(105), 0, 3),
-                         kPackV2PlaybackRecipeSchemaVintage);
+                         kPackVoiceRecipeVintage);
         const std::vector<std::uint8_t> bytes = builder.Build();
         PackLogicImage image;
         EXPECT_EQ(VN_BAD_PACK,
@@ -657,7 +635,7 @@ TEST(PackV2Format, PlaybackRecipeMalformedBlockRefuses) {
         ImageBuilder builder(kPackKindContent);
         builder.AddEntry(kPackEntryKindVoiceRecipe, 105,
                          PlaybackRecipePayload(harkentest::ObjectId(105), 1, 2, harkentest::ObjectId(703), 0.0f),
-                         kPackV2PlaybackRecipeSchemaVintage);
+                         kPackVoiceRecipeVintage);
         const std::vector<std::uint8_t> bytes = builder.Build();
         PackLogicImage image;
         EXPECT_EQ(VN_BAD_PACK,
@@ -670,10 +648,10 @@ TEST(PackV2Format, VoiceRecipeMalformedInstallAndBindingOrderRefuse) {
         std::vector<std::uint8_t> payload =
             GainRecipePayload(harkentest::ObjectId(100), 0, -6.0f);
         StoreLE32(payload.data() + kVoiceRecipeV5PrefixBytes + 8,
-                  kPackV2EffectDescriptorVintage + 1);
+                  kPackEffectDescriptorVintage + 1);
         ImageBuilder builder(kPackKindContent);
         builder.AddEntry(kPackEntryKindVoiceRecipe, 100, std::move(payload),
-                         kPackV2PlaybackRecipeSchemaVintage);
+                         kPackVoiceRecipeVintage);
         const std::vector<std::uint8_t> bytes = builder.Build();
         PackLogicImage image;
         EXPECT_EQ(VN_BAD_PACK,
@@ -683,7 +661,7 @@ TEST(PackV2Format, VoiceRecipeMalformedInstallAndBindingOrderRefuse) {
         ImageBuilder builder(kPackKindContent);
         builder.AddEntry(kPackEntryKindVoiceRecipe, 100,
                          GainRecipePayload(harkentest::ObjectId(100), 0, -6.0f, {harkentest::ObjectId(701), harkentest::ObjectId(700)}),
-                         kPackV2PlaybackRecipeSchemaVintage);
+                         kPackVoiceRecipeVintage);
         const std::vector<std::uint8_t> bytes = builder.Build();
         PackLogicImage image;
         EXPECT_EQ(VN_BAD_PACK,
@@ -695,7 +673,7 @@ TEST(PackV2Format, VoiceRecipeMalformedInstallAndBindingOrderRefuse) {
         ImageBuilder builder(kPackKindContent);
         builder.AddEntry(kPackEntryKindVoiceRecipe, 100,
                          TwoInstallGainRecipePayload(harkentest::ObjectId(100), 1, 0),
-                         kPackV2PlaybackRecipeSchemaVintage);
+                         kPackVoiceRecipeVintage);
         const std::vector<std::uint8_t> bytes = builder.Build();
         PackLogicImage image;
         EXPECT_EQ(VN_BAD_PACK,
@@ -707,7 +685,7 @@ TEST(PackV2Format, VoiceRecipeMalformedInstallAndBindingOrderRefuse) {
         ImageBuilder builder(kPackKindContent);
         builder.AddEntry(kPackEntryKindVoiceRecipe, 100,
                          TwoInstallGainRecipePayload(harkentest::ObjectId(100), 0, 0),
-                         kPackV2PlaybackRecipeSchemaVintage);
+                         kPackVoiceRecipeVintage);
         const std::vector<std::uint8_t> bytes = builder.Build();
         PackLogicImage image;
         EXPECT_EQ(VN_BAD_PACK,
@@ -722,7 +700,7 @@ TEST(PackV2Format, VoiceRecipeTruncatedAndNonZeroTailRefuse) {
         payload.pop_back();
         ImageBuilder builder(kPackKindContent);
         builder.AddEntry(kPackEntryKindVoiceRecipe, 100, std::move(payload),
-                         kPackV2PlaybackRecipeSchemaVintage);
+                         kPackVoiceRecipeVintage);
         const std::vector<std::uint8_t> bytes = builder.Build();
         PackLogicImage image;
         EXPECT_EQ(VN_BAD_PACK,
@@ -735,7 +713,7 @@ TEST(PackV2Format, VoiceRecipeTruncatedAndNonZeroTailRefuse) {
                   0x3f800000u);
         ImageBuilder builder(kPackKindContent);
         builder.AddEntry(kPackEntryKindVoiceRecipe, 100, std::move(payload),
-                         kPackV2PlaybackRecipeSchemaVintage);
+                         kPackVoiceRecipeVintage);
         const std::vector<std::uint8_t> bytes = builder.Build();
         PackLogicImage image;
         EXPECT_EQ(VN_BAD_PACK,
@@ -772,13 +750,13 @@ void ExpectRefused(const std::vector<std::uint8_t>& bytes) {
 // kind is absent.
 std::uint64_t PayloadOffsetOfKind(const std::vector<std::uint8_t>& bytes,
                                   std::uint32_t kind) {
-    PackV2Header header;
-    EXPECT_TRUE(ParsePackV2Header(bytes.data(), &header));
+    PackFileHeader header;
+    EXPECT_TRUE(ReadPackFileHeader(bytes.data(), &header));
     for (std::uint32_t k = 0; k < header.entryCount; ++k) {
-        const PackV2DirectoryEntry entry = ParsePackV2DirectoryEntry(
+        const PackDirectoryEntry entry = ReadPackDirectoryEntry(
             bytes.data() +
             static_cast<std::size_t>(header.directoryOffset) +
-            k * kPackV2DirectoryEntryBytes);
+            k * kPackDirectoryEntryBytes);
         if (entry.kind == kind) {
             return entry.offset;
         }
@@ -794,24 +772,24 @@ std::uint64_t PayloadOffsetOfKind(const std::vector<std::uint8_t>& bytes,
 // present a checksum-consistent file whose only defect is the layout
 // fact under test.
 void RecomputeChecksums(std::vector<std::uint8_t>* bytes) {
-    PackV2Header header;
-    ASSERT_TRUE(ParsePackV2Header(bytes->data(), &header));
+    PackFileHeader header;
+    ASSERT_TRUE(ReadPackFileHeader(bytes->data(), &header));
     const std::size_t dir =
         static_cast<std::size_t>(header.directoryOffset);
     for (std::uint32_t i = 0; i < header.entryCount; ++i) {
         std::uint8_t* record =
-            bytes->data() + dir + i * kPackV2DirectoryEntryBytes;
-        PackV2DirectoryEntry entry = ParsePackV2DirectoryEntry(record);
+            bytes->data() + dir + i * kPackDirectoryEntryBytes;
+        PackDirectoryEntry entry = ReadPackDirectoryEntry(record);
         entry.payloadChecksum =
             Fnv1a64(bytes->data() + static_cast<std::size_t>(entry.offset),
                     static_cast<std::size_t>(entry.size));
-        SerializePackV2DirectoryEntry(entry, record);
+        SerializePackDirectoryEntry(entry, record);
     }
     header.directoryChecksum = Fnv1a64(
         bytes->data() + dir,
         static_cast<std::size_t>(header.entryCount) *
-            kPackV2DirectoryEntryBytes);
-    SerializePackV2Header(header, bytes->data());
+            kPackDirectoryEntryBytes);
+    SerializePackFileHeader(header, bytes->data());
 }
 
 // --- round trips ---
@@ -829,7 +807,7 @@ TEST(PackV2Format, ContentPackRoundTripCarriesEveryField) {
     containerHeader.selectionVariableId = harkentest::ObjectId(910);
     containerHeader.defaultIndex = 1;
     containerHeader.childCount = 2;
-    std::vector<PackContainerChildV2> children(2);
+    std::vector<PackContainerChild> children(2);
     children[0].playableId = harkentest::ObjectId(100);
     children[0].weight = 5;
     children[0].matchValue = 7;
@@ -948,25 +926,21 @@ TEST(PackV2Format, AttenuationPayloadMatchesOuterVersionExactly) {
     desc.maxDistance = 100;
     desc.airAbsorptionNearHz = desc.airAbsorptionFarHz = 20000;
     desc.proximityFrequency = 400;
-    std::vector<std::uint32_t> versions{kPackFormatVersion, kPackFormatVersion + 1};
-    if (kPackFormatVersion3 < kPackFormatVersion) {
-        versions.push_back(kPackFormatVersion3);
-    }
-    for (const auto version : versions) {
-        for (const auto size : {kPackV3AttenuationPayloadBytes - 1,
-                               kPackV3AttenuationPayloadBytes,
-                               kPackV3AttenuationPayloadBytes + 1,
-                               kPackV3AttenuationPayloadBytes + kPackV2CurveWireBytes}) {
+    for (const auto version : {3u, kPackFormatVersion, kPackFormatVersion + 1}) {
+        for (const auto size : {kPackAttenuationBytes - 1,
+                               kPackAttenuationBytes,
+                               kPackAttenuationBytes + 1,
+                               kPackAttenuationBytes + kPackAttenuationCurveBytes}) {
             auto payload = AttenuationPayload(desc);
             payload.resize(size);
             ImageBuilder builder(kPackKindResident);
             builder.AddEntry(kPackEntryKindAttenuation, 500, std::move(payload),
-                             kPackV2AuthoredToneSchemaVintage);
+                             kPackAttenuationVintage);
             auto bytes = builder.Build();
             StoreLE32(bytes.data() + 4, version);
             PackLogicImage image;
-            const bool valid = version != kPackFormatVersion + 1 &&
-                               size == kPackV3AttenuationPayloadBytes;
+            const bool valid = version == kPackFormatVersion &&
+                               size == kPackAttenuationBytes;
             ASSERT_EQ(valid ? VN_OK : VN_BAD_PACK,
                       ParsePackV2Image(bytes.data(), bytes.size(), &image))
                 << version << "/" << size;
@@ -1009,7 +983,7 @@ TEST(PackV2Format, ResidentPackRoundTripCarriesEveryField) {
         {8.0f, -2.0f, 35.0f, -48.0f};
     builder.AddEntry(kPackEntryKindAttenuation, 500,
                      AttenuationPayload(attenuation),
-                     kPackV2AuthoredToneSchemaVintage);
+                     kPackAttenuationVintage);
 
 
     VnBindingDesc bindingDesc{};
@@ -1118,8 +1092,7 @@ TEST(PackV2Format, RefusesWrongMagic) {
 }
 
 TEST(PackV2Format, RefusesOtherSchemaVersions) {
-    for (const auto version : {kPackFormatVersion3 - 1,
-                               kPackFormatVersion + 1}) {
+    for (const auto version : {2u, 3u, kPackFormatVersion + 1}) {
         std::vector<std::uint8_t> bytes = MinimalContentBytes();
         StoreLE32(bytes.data() + 4, version);
         ExpectRefused(bytes);
@@ -1129,7 +1102,7 @@ TEST(PackV2Format, RefusesOtherSchemaVersions) {
 TEST(PackV2Format, RefusesMediaOnlyHeaderLayout) {
     const std::vector<float> planar = {0.0f, 0.25f, 0.5f, 0.75f};
     const std::uint64_t blobOffset =
-        AlignUp(kPackHeaderBytes + kPackTocEntryBytes, kPackBlobAlign);
+        AlignUp(kPackMediaFileHeaderBytes + kPackMediaBytes, kPackBlobAlign);
     const std::uint64_t blobBytes = planar.size() * sizeof(float);
     const std::uint64_t fileBytes = blobOffset + blobBytes;
     std::vector<std::uint8_t> bytes(static_cast<std::size_t>(fileBytes), 0);
@@ -1145,16 +1118,16 @@ TEST(PackV2Format, RefusesMediaOnlyHeaderLayout) {
     toc.blobBytes = blobBytes;
     toc.blobChecksum =
         Fnv1a64(planar.data(), static_cast<std::size_t>(blobBytes));
-    SerializePackTocEntry(toc, bytes.data() + kPackHeaderBytes);
-    PackHeader header;
+    SerializePackMedia(toc, bytes.data() + kPackMediaFileHeaderBytes);
+    PackMediaFileHeader header;
     header.formatVersion = kPackFormatVersion;
-    header.headerBytes = kPackHeaderBytes;
+    header.headerBytes = kPackMediaFileHeaderBytes;
     header.fileBytes = fileBytes;
     header.entryCount = 1;
-    header.tocOffset = kPackHeaderBytes;
+    header.tocOffset = kPackMediaFileHeaderBytes;
     header.tocChecksum =
-        Fnv1a64(bytes.data() + kPackHeaderBytes, kPackTocEntryBytes);
-    SerializePackHeader(header, bytes.data());
+        Fnv1a64(bytes.data() + kPackMediaFileHeaderBytes, kPackMediaBytes);
+    SerializePackMediaFileHeader(header, bytes.data());
 
     ExpectRefused(bytes);
 }
@@ -1181,7 +1154,7 @@ TEST(PackV2Format, RefusesUnknownPackKind) {
 TEST(PackV2Format, EmptyContentPackRoundTrips) {
     const std::vector<std::uint8_t> bytes =
         ImageBuilder(kPackKindContent).Build();
-    ASSERT_EQ(kPackV2HeaderBytes, bytes.size());
+    ASSERT_EQ(kPackFileHeaderBytes, bytes.size());
     PackLogicImage image;
     ASSERT_EQ(VN_OK,
               ParsePackV2Image(bytes.data(), bytes.size(), &image));
@@ -1206,7 +1179,7 @@ TEST(PackV2Format, EmptyContentPackRefusesMalformedDirectoryMetadata) {
         ImageBuilder(kPackKindContent).Build();
     {
         std::vector<std::uint8_t> bytes = canonical;
-        StoreLE64(bytes.data() + 28, kPackV2HeaderBytes - 1);
+        StoreLE64(bytes.data() + 28, kPackFileHeaderBytes - 1);
         ExpectRefused(bytes);
     }
     {
@@ -1228,7 +1201,7 @@ TEST(PackV2Format, RefusesDirectoryOutOfBounds) {
 
 TEST(PackV2Format, RefusesDirectoryChecksumMismatch) {
     std::vector<std::uint8_t> bytes = MinimalContentBytes();
-    bytes[kPackV2HeaderBytes] ^= 0x01;
+    bytes[kPackFileHeaderBytes] ^= 0x01;
     ExpectRefused(bytes);
 }
 
@@ -1267,7 +1240,7 @@ TEST(PackV2Format, PayloadChecksumGuardsWireLegalCorruption) {
     attenuation.airAbsorptionFarHz = 20000.0f;
     builder.AddEntry(kPackEntryKindAttenuation, 500,
                      AttenuationPayload(attenuation),
-                     kPackV2AuthoredToneSchemaVintage);
+                     kPackAttenuationVintage);
     VnBindingDesc bindingDesc{};
     bindingDesc.variableId = harkentest::ObjectId(920);
     bindingDesc.targetScopeKind = VN_TARGET_SCOPE_BUS;
@@ -1343,41 +1316,12 @@ TEST(PackV2Format, RefusesPreviousSchemaVintage) {
     EXPECT_EQ(0u, image.EntryCount());
 }
 
-TEST(PackV2Format, Vintage2BusPayloadParsesAsZeroMix) {
-    PackBusEntry parsed{};
-    parsed.volume = 1.0f;
-    parsed.outputBusVolume = 2.0f;
-    parsed.makeUpGain = 3.0f;
-    const std::vector<std::uint8_t> payload = BusPayload(harkentest::ObjectId(10), harkentest::ObjectId(1));
-    ASSERT_TRUE(ParsePackV2Bus(payload.data(), payload.size(), &parsed));
-    EXPECT_EQ(harkentest::ObjectId(10u), parsed.busId);
-    EXPECT_EQ(harkentest::ObjectId(1u), parsed.parentBusId);
-    EXPECT_EQ(0.0f, parsed.volume);
-    EXPECT_EQ(0.0f, parsed.outputBusVolume);
-    EXPECT_EQ(0.0f, parsed.makeUpGain);
-    EXPECT_FALSE(ParsePackV2Bus(payload.data(), kPackV6BusPayloadBytes, &parsed));
-}
-
-TEST(PackV2Format, Vintage6BusPayloadRoundTripsMixFields) {
-    const std::vector<std::uint8_t> payload =
-        BusMixPayload(harkentest::ObjectId(10), harkentest::ObjectId(1), -6.0f, -3.5f, 2.0f);
-    ASSERT_EQ(kPackV6BusPayloadBytes, payload.size());
-    PackBusEntry parsed{};
-    parsed.makeUpGain = 2.0f;
-    ASSERT_TRUE(ParsePackV6Bus(payload.data(), payload.size(), &parsed));
-    EXPECT_EQ(harkentest::ObjectId(10u), parsed.busId);
-    EXPECT_EQ(harkentest::ObjectId(1u), parsed.parentBusId);
-    EXPECT_EQ(-6.0f, parsed.volume);
-    EXPECT_EQ(-3.5f, parsed.outputBusVolume);
-    EXPECT_EQ(0.0f, parsed.makeUpGain);
-    EXPECT_FALSE(ParsePackV6Bus(payload.data(), kPackV2BusPayloadBytes, &parsed));
-}
 
 TEST(PackV2Format, Vintage6BusImageRoundTripCarriesMixFields) {
     ImageBuilder builder(kPackKindResident);
     builder.AddEntry(kPackEntryKindBus, 10,
                      BusMixPayload(harkentest::ObjectId(10), harkentest::ObjectId(1), -6.0f, -3.5f, 2.0f),
-                     kPackV2BusMixSchemaVintage);
+                     kPackBusVintage);
     const std::vector<std::uint8_t> bytes = builder.Build();
     PackLogicImage image;
     ASSERT_EQ(VN_OK, ParsePackV2Image(bytes.data(), bytes.size(), &image));
@@ -1394,33 +1338,19 @@ TEST(PackV2Format, RefusesVintage6BusTrailingFields) {
         BusMixPayload(harkentest::ObjectId(10), harkentest::ObjectId(1), -6.0f, -3.5f, 2.0f);
     payload.resize(payload.size() + 8, 0);
     PackBusEntry parsed{};
-    EXPECT_FALSE(ParsePackV6Bus(payload.data(), payload.size(), &parsed));
+    EXPECT_FALSE(ParsePackBus(payload.data(), payload.size(), &parsed));
 
     ImageBuilder builder(kPackKindResident);
     builder.AddEntry(kPackEntryKindBus, 10, std::move(payload),
-                     kPackV2BusMixSchemaVintage);
+                     kPackBusVintage);
     ExpectRefused(builder.Build());
 }
 
-TEST(PackV2Format, RefusesBusVintageAndPayloadSizeMismatch) {
-    {
-        ImageBuilder builder(kPackKindResident);
-        builder.AddEntry(kPackEntryKindBus, 10, BusPayload(harkentest::ObjectId(10), harkentest::ObjectId(1)),
-                         kPackV2BusMixSchemaVintage);
-        ExpectRefused(builder.Build());
-    }
-    {
-        ImageBuilder builder(kPackKindResident);
-        builder.AddEntry(kPackEntryKindBus, 10,
-                         BusMixPayload(harkentest::ObjectId(10), harkentest::ObjectId(1), -6.0f, 0.0f, 0.0f));
-        ExpectRefused(builder.Build());
-    }
-}
 
 TEST(PackV2Format, RefusesBusMixVintageOnOtherKinds) {
     ImageBuilder builder(kPackKindResident);
     builder.AddEntry(kPackEntryKindBusSend, 0, BusSendPayload(harkentest::ObjectId(10), harkentest::ObjectId(11), 0.0f),
-                     kPackV2BusMixSchemaVintage);
+                     kPackBusVintage);
     const std::vector<std::uint8_t> bytes = builder.Build();
     PackLogicImage image;
     EXPECT_EQ(VN_PACK_INCOMPATIBLE,
@@ -1437,7 +1367,7 @@ TEST(PackV2Format, RetiredAttenuationVintageRefuses) {
     desc.airAbsorptionFarHz = 20000.0f;
     ImageBuilder builder(kPackKindResident);
     builder.AddEntry(kPackEntryKindAttenuation, 500,
-                     RetiredAttenuationPayload(desc), kPackV2SchemaVintage);
+                     RetiredAttenuationPayload(desc), 2u);
     const std::vector<std::uint8_t> bytes = builder.Build();
     PackLogicImage image;
     EXPECT_EQ(VN_PACK_INCOMPATIBLE,
@@ -1453,19 +1383,19 @@ TEST(PackV2Format, CurrentVintageWithRetiredPayloadSizeRefuses) {
         header.playableId = harkentest::ObjectId(100);
         header.installCount = 1;
         std::vector<std::uint8_t> payload(static_cast<std::size_t>(
-            PackV2VoiceRecipePayloadBytes(header.installCount, 0)));
-        SerializePackV2VoiceRecipeHeader(header, payload.data());
+            kPackVoiceRecipeHeaderBytes + header.installCount * kPackVoiceRecipeInstallBytes));
+        SerializePackVoiceRecipeHeader(header, payload.data());
         PackVoiceRecipeInstall install;
         install.slot = 0;
         install.effectType = VN_EFFECT_GAIN;
-        install.descriptorVintage = kPackV2EffectDescriptorVintage;
+        install.descriptorVintage = kPackEffectDescriptorVintage;
         install.paramCount = 1;
         install.params[0] = -6.0f;
-        SerializePackV2VoiceRecipeInstall(
-            install, payload.data() + kPackV2VoiceRecipeHeaderBytes);
+        WritePackVoiceRecipeInstall(
+            install, payload.data() + kPackVoiceRecipeHeaderBytes);
         ImageBuilder builder(kPackKindContent);
         builder.AddEntry(kPackEntryKindVoiceRecipe, 100, std::move(payload),
-                         kPackV2PlaybackRecipeSchemaVintage);
+                         kPackVoiceRecipeVintage);
         const std::vector<std::uint8_t> bytes = builder.Build();
         PackLogicImage image;
         EXPECT_EQ(VN_BAD_PACK,
@@ -1482,7 +1412,7 @@ TEST(PackV2Format, CurrentVintageWithRetiredPayloadSizeRefuses) {
         ImageBuilder builder(kPackKindResident);
         builder.AddEntry(kPackEntryKindAttenuation, 500,
                          RetiredAttenuationPayload(desc),
-                         kPackV2AuthoredToneSchemaVintage);
+                         kPackAttenuationVintage);
         const std::vector<std::uint8_t> bytes = builder.Build();
         PackLogicImage image;
         EXPECT_EQ(VN_BAD_PACK,
@@ -1504,7 +1434,7 @@ TEST(PackV2Format, RefusesContainerInResidentPack) {
     PackContainerEntryHeader header;
     header.containerId = harkentest::ObjectId(200);
     header.childCount = 1;
-    std::vector<PackContainerChildV2> children(1);
+    std::vector<PackContainerChild> children(1);
     children[0].playableId = harkentest::ObjectId(100);
     children[0].weight = 1;
     builder.AddEntry(kPackEntryKindContainer, 200,
@@ -1677,7 +1607,7 @@ TEST(PackV2Format, RefusesMediaIdCollidingWithContainerId) {
     PackContainerEntryHeader header;
     header.containerId = harkentest::ObjectId(100);
     header.childCount = 1;
-    std::vector<PackContainerChildV2> children(1);
+    std::vector<PackContainerChild> children(1);
     children[0].playableId = harkentest::ObjectId(5);
     children[0].weight = 1;
     builder.AddEntry(kPackEntryKindContainer, 100,
@@ -1771,7 +1701,7 @@ TEST(PackV2Format, RefusesAttenuationHandleTailNonzero) {
     // Curve starts at 48; handles start at 72; slot 1 is the first tail slot.
     StoreLEF32(payload.data() + 48 + 72 + 16, 1.0f);
     builder.AddEntry(kPackEntryKindAttenuation, 500, std::move(payload),
-                     kPackV2AuthoredToneSchemaVintage);
+                     kPackAttenuationVintage);
     ExpectRefused(builder.Build());
 }
 
@@ -1807,7 +1737,7 @@ TEST(PackV2Format, RefusesContainerChildCountDisagreeingWithSize) {
     PackContainerEntryHeader header;
     header.containerId = harkentest::ObjectId(200);
     header.childCount = 3; // payload carries only two children
-    std::vector<PackContainerChildV2> children(2);
+    std::vector<PackContainerChild> children(2);
     children[0].playableId = harkentest::ObjectId(100);
     children[0].weight = 1;
     children[1].playableId = harkentest::ObjectId(101);
@@ -1863,7 +1793,7 @@ TEST(PackV2Format, NonFiniteBusMixFieldsRefused) {
         builder.AddEntry(kPackEntryKindBus, 10,
                          BusMixPayload(harkentest::ObjectId(10), harkentest::ObjectId(1), volume, outputBusVolume,
                                        makeUpGain),
-                         kPackV2BusMixSchemaVintage);
+                         kPackBusVintage);
         return builder.Build();
     };
     {
@@ -1900,11 +1830,11 @@ TEST(PackV2Format, MisalignedPayloadRefused) {
         ASSERT_EQ(VN_OK,
                   ParsePackV2Image(bytes.data(), bytes.size(), &image));
     }
-    PackV2Header header;
-    ASSERT_TRUE(ParsePackV2Header(bytes.data(), &header));
+    PackFileHeader header;
+    ASSERT_TRUE(ReadPackFileHeader(bytes.data(), &header));
     ASSERT_EQ(1u, header.entryCount);
     std::uint8_t* record = bytes.data() + header.directoryOffset;
-    PackV2DirectoryEntry entry = ParsePackV2DirectoryEntry(record);
+    PackDirectoryEntry entry = ReadPackDirectoryEntry(record);
     // Move the single payload 4 bytes forward: pad inserted at its old
     // offset, file length grown, the directory restated, both checksum
     // layers recomputed. The moved payload bytes are untouched, so the
@@ -1912,10 +1842,10 @@ TEST(PackV2Format, MisalignedPayloadRefused) {
     bytes.insert(bytes.begin() + static_cast<std::ptrdiff_t>(entry.offset),
                  4, 0);
     entry.offset += 4;
-    SerializePackV2DirectoryEntry(entry,
+    SerializePackDirectoryEntry(entry,
                                   bytes.data() + header.directoryOffset);
     header.fileBytes = bytes.size();
-    SerializePackV2Header(header, bytes.data());
+    SerializePackFileHeader(header, bytes.data());
     RecomputeChecksums(&bytes);
     ExpectRefused(bytes);
 }
@@ -1927,23 +1857,23 @@ TEST(PackV2Format, DirectoryGapRefused) {
         ASSERT_EQ(VN_OK,
                   ParsePackV2Image(bytes.data(), bytes.size(), &image));
     }
-    PackV2Header header;
-    ASSERT_TRUE(ParsePackV2Header(bytes.data(), &header));
+    PackFileHeader header;
+    ASSERT_TRUE(ReadPackFileHeader(bytes.data(), &header));
     ASSERT_EQ(1u, header.entryCount);
     // Slide the directory (and everything after it) 8 bytes down so it
     // sits at offset 52 instead of the header's end at 44. Every offset
     // is restated and both checksum layers recomputed — payloads stay
     // 8-aligned — so the refusal is the directory-anchoring rule alone.
     bytes.insert(bytes.begin() +
-                     static_cast<std::ptrdiff_t>(kPackV2HeaderBytes),
+                     static_cast<std::ptrdiff_t>(kPackFileHeaderBytes),
                  8, 0);
-    header.directoryOffset = kPackV2HeaderBytes + 8;
+    header.directoryOffset = kPackFileHeaderBytes + 8;
     header.fileBytes = bytes.size();
-    SerializePackV2Header(header, bytes.data());
+    SerializePackFileHeader(header, bytes.data());
     std::uint8_t* record = bytes.data() + header.directoryOffset;
-    PackV2DirectoryEntry entry = ParsePackV2DirectoryEntry(record);
+    PackDirectoryEntry entry = ReadPackDirectoryEntry(record);
     entry.offset += 8;
-    SerializePackV2DirectoryEntry(entry, record);
+    SerializePackDirectoryEntry(entry, record);
     RecomputeChecksums(&bytes);
     ExpectRefused(bytes);
 }
@@ -1964,13 +1894,13 @@ TEST(PackV2Format, OverlappingPayloadsRefused) {
             ASSERT_EQ(VN_OK,
                       ParsePackV2Image(bytes.data(), bytes.size(), &image));
         }
-        PackV2Header header;
-        ASSERT_TRUE(ParsePackV2Header(bytes.data(), &header));
+        PackFileHeader header;
+        ASSERT_TRUE(ReadPackFileHeader(bytes.data(), &header));
         std::uint8_t* second = bytes.data() + header.directoryOffset +
-                               kPackV2DirectoryEntryBytes;
-        PackV2DirectoryEntry entry = ParsePackV2DirectoryEntry(second);
+                               kPackDirectoryEntryBytes;
+        PackDirectoryEntry entry = ReadPackDirectoryEntry(second);
         entry.offset = builder.PayloadOffset(0);
-        SerializePackV2DirectoryEntry(entry, second);
+        SerializePackDirectoryEntry(entry, second);
         RecomputeChecksums(&bytes);
         ExpectRefused(bytes);
     }
@@ -2047,7 +1977,7 @@ void BuildAllInternalContentImage(PackLogicImage* out) {
     PackContainerEntryHeader header;
     header.containerId = harkentest::ObjectId(200);
     header.childCount = 1;
-    std::vector<PackContainerChildV2> children(1);
+    std::vector<PackContainerChild> children(1);
     children[0].playableId = harkentest::ObjectId(100);
     children[0].weight = 1;
     builder.AddEntry(kPackEntryKindContainer, 200,
@@ -2187,7 +2117,7 @@ void BuildContainerChildImage(PackLogicImage* out) {
     PackContainerEntryHeader header;
     header.containerId = harkentest::ObjectId(200);
     header.childCount = 1;
-    std::vector<PackContainerChildV2> children(1);
+    std::vector<PackContainerChild> children(1);
     children[0].playableId = harkentest::ObjectId(555);
     children[0].weight = 1;
     builder.AddEntry(kPackEntryKindContainer, 200,

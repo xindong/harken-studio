@@ -1,25 +1,6 @@
-// Stream manager: registered .stream files, the stream slot table, and
-// the streaming thread that owns ALL file I/O.
-//
-// Thread roles are strict. The streaming thread ("HarkenStreaming") opens,
-// validates, reads, and closes every file — registration validation
-// included: the logic thread posts a request and blocks until served, so
-// no file handle ever exists outside the streaming thread. The audio
-// thread touches nothing here; its entire contact surface is the per-slot
-// StreamRing (SPSC frames plus the slot lifecycle word), so it never
-// shares a lock with either of the other threads. The logic thread and
-// the streaming thread may share the request mutex freely — only the
-// audio thread is under the no-locks rule.
-//
-// Slot lifecycle: the logic thread claims a Free slot at play time, wires
-// it (ring reset, file binding, read cursor), and publishes Active; the
-// audio thread stores Retired when the voice releases; the streaming
-// thread detaches Retired slots (drops its cursor state, releases the
-// file's stream count) and returns them to Free.
-//
-// Ring addresses are reserved at construction. Logic prepares the required
-// slot/channel planes before accepting playback or a pending reference;
-// activation never grows storage and active planes never move.
+// StreamManager owns registration, slot cursors and ring publication.
+// I/O lanes read immutable sources into private staging; retired slots remain
+// pinned until physical completion. Audio touches StreamRing only.
 #ifndef HARKEN_MEDIA_STREAM_MANAGER_H
 #define HARKEN_MEDIA_STREAM_MANAGER_H
 
@@ -27,16 +8,19 @@
 #include <harken/Harken.h>
 
 #include "harken/core/EngineConfig.h"
+#include "harken/core/MediaContentRevision.h"
 #include "harken/core/StableRowStorage.h"
 #include "harken/core/StreamRing.h"
 #include "harken/media/StreamFormat.h"
+#include "harken/media/StreamByteSource.h"
 
 #include <array>
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
-#include <fstream>
+#include <string>
+#include <optional>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -104,7 +88,7 @@ public:
     StreamManager& operator=(const StreamManager&) = delete;
 
     // Registers a .stream file under soundId. Blocks while the
-    // streaming thread opens the file and verifies the header, TOC, and
+    // preparation lane opens the file and verifies the header, TOC, and
     // chunk-checksum table (the table's own bytes are covered by the TOC
     // checksum; per-chunk payload verification happens later, as chunks
     // are read). The file stays open until unregistration. VN_IN_USE for
@@ -119,7 +103,7 @@ public:
     VnResult UnregisterFile(VnSoundId soundId);
 
     // Hot reload: rebinds a registered stream id to a new .stream file. The
-    // new file opens and validates end to end on the streaming thread (the
+    // new file opens and validates end to end on the preparation lane (the
     // RegisterFile contract, including entry.soundId == soundId); any
     // failure is VN_BAD_STREAM_FILE with the old registration untouched.
     // VN_UNKNOWN_ID when the id names no registered stream; VN_IN_USE while
@@ -140,6 +124,7 @@ public:
         std::uint32_t channelCount = 0;
         std::uint64_t frameCount = 0;
         std::uint64_t contentRevision = 0;
+        std::uint64_t sourceGeneration = 0;
         std::uint32_t flags = 0;
         std::uint64_t loopStartFrame = 0;
         std::uint64_t loopEndFrame = 0;
@@ -225,6 +210,59 @@ public:
     bool RetirePreparedSlot(StreamRing* ring,
                             std::uint64_t ringToken) noexcept;
 
+    struct ReplacementRequest {
+        std::uint32_t fileIndex = 0;
+        std::uint64_t sourceGeneration = 0;
+        std::uint64_t contentRevision = 0;
+        std::uint64_t targetFrame = 0;
+        std::uint64_t loopStartFrame = 0;
+        std::uint64_t loopEndFrame = 0;
+        std::uint32_t loopCount = 1;
+        std::uint32_t prebufferTargetFrames = 0;
+        std::uint32_t pendingSlotReservations = 0;
+    };
+
+    // Preparation ownership is independent of the ring generation: taking a
+    // ring invalidates this handle even while that same ring remains Active.
+    struct PreparedToken {
+        std::uint32_t slot = UINT32_MAX;
+        std::uint64_t generation = 0;
+    };
+
+    enum class PreparationState { Invalid, Preparing, Ready, Cancelled, Failed };
+
+    struct PreparedStream {
+        std::uint32_t slot = UINT32_MAX;
+        StreamRing* ring = nullptr;
+        std::uint64_t ringToken = 0;
+    };
+
+    // Internal, serialized logic-thread operations. Begin may prepare private
+    // storage and take the manager lock, but never waits for I/O or readiness.
+    // A live token pins the exact source until cancellation/retirement or Take.
+    // Take transfers the Active ring exactly once; its recipient then owns the
+    // existing RetirePreparedSlot/render retirement obligation.
+    VnResult BeginReplacement(const ReplacementRequest& request, PreparedToken* out);
+    PreparationState QueryReplacement(PreparedToken token) const noexcept;
+    bool CancelReplacement(PreparedToken token) noexcept;
+    VnResult TakeReplacement(PreparedToken token, PreparedStream* out) noexcept;
+
+    struct SourceToken { std::uint64_t value = 0; };
+    // Ready sources are validated but unpublished. Take installs exactly once.
+    // A lease is retained only when Begin succeeds. Callbacks run on I/O lanes.
+    VnResult BeginSource(VnSoundId soundId, std::shared_ptr<const StreamByteSource> source,
+                         bool replace, std::uint64_t expectedOldGeneration, SourceToken* out);
+    VnResult BeginFileSource(VnSoundId soundId, const char* path, bool replace,
+                             std::uint64_t expectedOldGeneration, SourceToken* out);
+    PreparationState QuerySource(SourceToken token, VnResult* error = nullptr,
+        VnSoundId* soundId = nullptr, bool* replace = nullptr) const;
+    bool CancelSource(SourceToken token);
+    VnResult TakeSource(SourceToken token, StreamFacts* out = nullptr, VnResult authority = VN_OK);
+    std::uint64_t SourcePreparationBytes() const;
+    // Actual private read-window capacity, separate from staging and metadata.
+    std::uint64_t ReadWindowBytes() const noexcept;
+    bool HasPendingSource(VnSoundId soundId) const;
+
     static std::uint64_t RingToken(std::uint32_t slot,
                                    std::uint32_t generation) noexcept {
         return (static_cast<std::uint64_t>(generation) << 32u) | slot;
@@ -261,10 +299,8 @@ public:
     }
     void SyncServe();
 
-    // Requests queued but not yet claimed by the streaming thread. Exists so a
-    // test can prove a request that unwound early left nothing behind: its
-    // Request lives on the caller's stack, so a stale pointer left queued would
-    // be dereferenced by whoever drains the queue next.
+    // Unclaimed control requests and pending source validation records. Tests
+    // use this to verify admission and removal when callers fail or shutdown.
     std::size_t PendingRequestCountForTest() const;
 
     // Logic thread. The streaming thread's own view of its lifecycle.
@@ -290,15 +326,17 @@ private:
         // (FindFile, register-duplicate, and unregister all skip it), kept
         // open only for the slots and pending pins still reading it by file
         // index. retiredFromId keys the one-retiring-generation-per-asset
-        // refusal. The streaming thread closes the file once both counts
-        // drain.
+        // refusal. Cleanup is dispatched off the manager once both counts
+        // drain and every bound slot has settled its last I/O job.
         bool retiring = false;
         VnSoundId retiredFromId{};
-        std::ifstream file; // streaming thread only
+        std::shared_ptr<const StreamByteSource> source;
+        std::unique_ptr<StreamFile> nextCleanup;
         StreamTocEntry toc;
         std::uint32_t chunkFrames = 0;
         std::vector<std::uint64_t> chunkChecksums;
         std::uint64_t contentRevision = 0;
+        std::uint64_t sourceGeneration = 0;
         // Slots currently bound to this file: incremented by the logic
         // thread at activate, decremented by the streaming thread at
         // detach; unregister refuses while non-zero.
@@ -312,13 +350,62 @@ private:
 
     static constexpr std::uint32_t kNoChunk = 0xffffffffu;
 
+    // One unit of streaming work: read a named chunk of a named file and prove
+    // its integrity. Deciding WHICH chunk comes next is slot scheduling -- read
+    // cursor, loop traversal, ring occupancy -- and stays with the streaming
+    // thread that owns that state. This half touches only the file and the CPU
+    // and reads no slot state at all, which is the seam: an asynchronous I/O
+    // stage or a decoding job pool can take this over, submitting jobs and
+    // collecting staged buffers, without the cursor and loop bookkeeping moving
+    // with it.
+    struct ChunkJob {
+        StreamFile* file = nullptr;
+        std::uint32_t chunkIndex = 0;
+        std::uint32_t chunkFrames = 0;
+        std::uint32_t channels = 0;
+        std::uint64_t chunkBytes = 0;
+        StreamReadCancellation cancellation;
+    };
+    struct SlotIoJob {
+        ChunkJob input;
+        std::atomic<unsigned> state{0}; // idle, queued, running, completed
+        std::atomic<bool> cancelled{false};
+        bool valid = false, exception = false;
+    };
+
+    struct ReadWindow {
+        static constexpr std::size_t kCapacityBytes = 16 * 1024;
+        std::vector<std::uint8_t> bytes;
+        std::uint64_t offset = 0;
+        std::size_t validBytes = 0;
+        std::atomic<std::uint64_t> capacityBytes{0};
+    };
+
+    static constexpr int kSourceIoLane = 0;
+    static constexpr int kPreparationIoLane = 1;
+    static constexpr int kSteadyIoOwner = 2;
+
     struct StreamSlot {
         StreamRing ring;
+        std::atomic<bool> supplied{false};
+        int ioLane = -1; // -1 idle, kPreparationIoLane or kSteadyIoOwner
+        SlotIoJob io;
+        ReadWindow window;
+        std::uint64_t passGoal = 0;
+        std::uint64_t exceptionSerial = 0;
+
+        // Logic-owned preparation metadata. The worker never touches it,
+        // including while returning a retired ring to Free.
+        enum class PreparationOwner { None, Prepared, Cancelled };
+        PreparationOwner preparationOwner = PreparationOwner::None;
+        std::uint64_t preparationGeneration = 0;
+        std::uint64_t preparedRingToken = 0;
+        std::uint32_t prebufferTargetFrames = 0;
         // Written by the logic thread before the Active publication;
         // read by the streaming thread after it (release/acquire on
         // ring.state orders the two).
         std::uint32_t fileIndex = 0;
-        // Streaming-thread-only serve state.
+        // Manager-owned serve state; staging is lent exclusively to one I/O job.
         std::uint64_t nextFrame = 0;     // next source frame to push
         std::uint64_t loopStartFrame = 0;
         std::uint64_t loopEndFrame = 0;
@@ -329,23 +416,63 @@ private:
         std::vector<float> staging;      // one verified chunk, planar
     };
 
-    struct Request {
-        enum class Kind { Register, Unregister, Replace, Serve } kind;
+    struct SourceRequest {
+        std::uint64_t generation = 0;
         VnSoundId soundId{};
-        const char* utf8Path = nullptr; // valid: requester blocks until done
+        bool replace = false;
+        std::uint64_t expectedOldGeneration = 0;
+        std::string path;
+        std::unique_ptr<StreamFile> candidate;
+        PreparationState state = PreparationState::Preparing;
         VnResult result = VN_OK;
-        bool done = false;
+        bool discard = false;
+        int ioLane = -1;
+        std::atomic<bool> cancelled{false};
+        std::atomic<std::uint64_t> metadataBytes{sizeof(StreamFile)};
+        unsigned phase = 0;
+        StreamHeader header{};
+        std::uint64_t checksum = 0;
+        std::uint32_t checksumsRead = 0;
+        MediaStreamSemanticHeaderV1 semantic;
+        std::optional<MediaContentRevisionHasherV1> revision;
+    };
+    struct ServeTarget {
+        std::uint32_t slot = 0, generation = 0;
+        std::uint64_t writeIndex = 0, exceptionSerial = 0;
+    };
+    struct Request {
+        enum class Kind { Unregister, Serve, Reap } kind;
+        VnSoundId soundId{};
+        VnResult result = VN_OK;
+        bool done = false, started = false, forceServe = false;
+        std::uint32_t onlySlot = UINT32_MAX, onlyGeneration = 0;
+        std::vector<ServeTarget> targets;
     };
 
     void ThreadMain();
     VnResult PostAndWait(Request& request);
-    void HandleRegister(Request& request);
     void HandleUnregister(Request& request);
-    void HandleReplace(Request& request);
-    // Opens and validates one .stream file into `record` (soundId already
-    // set): the whole RegisterFile validation chain, shared with replace.
-    // Streaming thread only.
-    VnResult OpenAndValidate(Request& request, StreamFile& record);
+    // Caller holds m_mutex and has acquired the source's active reference.
+    // The slot is private and its storage is already prepared; cannot fail.
+    std::uint64_t InitializeSlot(std::uint32_t slot, std::uint32_t fileIndex,
+                                StreamFile& file, std::uint64_t startFrame,
+                                std::uint64_t loopStartFrame,
+                                std::uint64_t loopEndFrame,
+                                std::uint32_t loopCount);
+    // Source validation and I/O are split into bounded execution steps.
+    // Manager methods hold m_mutex; executors touch private job data only.
+    VnResult BeginSourceImpl(VnSoundId soundId, std::shared_ptr<const StreamByteSource> source,
+        const char* path, bool replace, std::uint64_t expected, SourceToken* out);
+    VnResult RegisterSourceAndWait(VnSoundId soundId, const char* path, bool replace);
+    static void ValidateSourceSlice(SourceRequest& request);
+    void SettleIo();
+    void DispatchIo();
+    void ServiceRequests();
+    void IoMain(std::size_t laneIndex);
+    void SteadyIoMain();
+    void StopIo() noexcept;
+    void QueueCleanup(std::unique_ptr<StreamFile> file) noexcept;
+    void DrainCleanupAfterStop() noexcept;
     std::uint32_t OccupiedSlotPrefix() const noexcept;
     bool PrepareRingStorage(std::uint32_t slotPrefix, std::uint32_t channels,
                             bool pending = false) noexcept;
@@ -372,29 +499,26 @@ private:
     // Streaming thread, under the mutex (m_files mutation).
     void CloseDrainedRetiringFiles();
     void ServeSlots();
-    void ServeOneSlot(StreamSlot& slot);
 
-    // One unit of streaming work: read a named chunk of a named file and prove
-    // its integrity. Deciding WHICH chunk comes next is slot scheduling -- read
-    // cursor, loop traversal, ring occupancy -- and stays with the streaming
-    // thread that owns that state. This half touches only the file and the CPU
-    // and reads no slot state at all, which is the seam: an asynchronous I/O
-    // stage or a decoding job pool can take this over, submitting jobs and
-    // collecting staged buffers, without the cursor and loop bookkeeping moving
-    // with it.
-    struct ChunkJob {
-        StreamFile* file = nullptr;
-        std::uint32_t chunkIndex = 0;
-        std::uint32_t chunkFrames = 0;
-        std::uint32_t channels = 0;
-        std::uint64_t chunkBytes = 0;
+    struct IoLane {
+        enum class Kind { Chunk, Source, Cleanup } kind = Kind::Chunk;
+        std::atomic<unsigned> state{0}; // idle, queued, running, completed
+        std::atomic<bool> cancelled{false};
+        ChunkJob chunk;
+        StreamSlot* slot = nullptr;
+        SourceRequest* request = nullptr;
+        std::unique_ptr<StreamFile> cleanup;
+        bool valid = false, exception = false;
+        std::thread thread;
     };
     // Stages one whole verified chunk into `staging`. False on a short read or a
     // checksum mismatch; the caller decides what that means for the slot, since
     // only the caller knows the slot. Static: the job depends on nothing but its
     // arguments, which is what makes it relocatable.
-    static bool RunChunkJob(const ChunkJob& job, std::vector<float>& staging);
-    static bool ReadChunk(const ChunkJob& job, std::vector<float>& staging);
+    static bool RunChunkJob(const ChunkJob& job, std::vector<float>& staging, ReadWindow& window);
+    static bool ReadChunk(const ChunkJob& job, std::vector<float>& staging, ReadWindow& window);
+    static bool TryCopyReadWindow(const ChunkJob& job, std::vector<float>& staging,
+                                  const ReadWindow& window) noexcept;
     static bool ValidateChunk(const ChunkJob& job,
                               const std::vector<float>& staging,
                               std::uint64_t checksum);
@@ -408,20 +532,29 @@ private:
         bool scalarOnly = false;
     };
     ServiceCursor BeginSlotService(StreamSlot& slot) const;
-    bool LatchScalarService(ServiceCursor& cursor) const;
     bool AdvanceSlot(ServiceCursor& cursor, ChunkJob* job);
-    void DrainSlot(ServiceCursor& cursor, const ChunkJob* pending = nullptr);
-    void ServeSlotPair(ServiceCursor& first, ServiceCursor& second);
 
     std::uint32_t m_ringFrames = 0; // per-slot capacity, power of two
     const std::uint32_t m_prebufferMs;
 
-    // Registered files. Mutated only by the streaming thread (under the
-    // mutex); the logic thread reads under the mutex (FindFile). Stable
-    // addresses so slots can hold indices across table growth.
+    // Registered files. Publication and retirement share m_mutex with logic.
+    // Records stay stable while slots or pending starts hold references.
     std::vector<std::unique_ptr<StreamFile>> m_files;
+    // Monotonic identities; exhaustion refuses publication rather than reuse.
+    std::uint64_t m_lastSourceGeneration = 0; // under m_mutex
+    std::uint64_t m_lastPreparationGeneration = 0; // logic thread only
 
     std::vector<StreamSlot> m_slots;
+    std::vector<std::unique_ptr<SourceRequest>> m_sourceRequests;
+    std::vector<std::unique_ptr<IoLane>> m_ioLanes;
+    std::atomic<bool> m_ioStop{false};
+    std::atomic<bool> m_ioShutdownReady{false};
+    std::mutex m_ioMutex;
+    std::condition_variable m_ioWake;
+    std::condition_variable m_steadyWake;
+    std::deque<StreamSlot*> m_readySteady; // one entry per outstanding steady slot
+    std::unique_ptr<StreamFile> m_cleanup;
+    std::size_t m_sourceCursor = 0, m_slotCursor = 0;
     friend struct detail::StreamManagerTestAccess;
     std::array<StableRowStorage<float>, kMaxChannels> m_ringStorage;
     // Logic-owned backing demand follows the existing file pending references.
@@ -434,12 +567,10 @@ private:
     std::condition_variable m_done;  // requesters wait here
     std::deque<Request*> m_requests;
     bool m_shutdown = false;
+    bool m_serviceRequested = false; // under m_mutex
 
-    // Reusable per-iteration request batch. A member rather than a streaming-
-    // thread local so that reaching Ready involves no allocation at all: the
-    // only startup allocation used to live on that thread, where a bad_alloc
-    // killed it silently. Here the same failure is a constructor throw, which
-    // Vn_Init already turns into a defined result code.
+    // Active finite service barriers. Callers own them until completion;
+    // asynchronous I/O jobs never borrow the callers' stack storage.
     std::deque<Request*> m_batch;
 
     std::atomic<StreamWorkerState> m_workerState{StreamWorkerState::Starting};

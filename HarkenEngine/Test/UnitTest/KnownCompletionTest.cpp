@@ -2,6 +2,8 @@
 #include "harken/core/KnownCompletion.h"
 
 #include <gtest/gtest.h>
+#include <algorithm>
+#include <cmath>
 
 namespace {
 
@@ -23,7 +25,6 @@ harken::KnownCompletionFactsV1 KnownFacts() {
     facts.mixRate = 48000;
     facts.pitchRatio = 1.0f;
     facts.pitchFixed = true;
-    facts.serialRender = true;
     facts.endMutationPossible = false;
     facts.absoluteLogicalStartFrame = 50;
     facts.progressBaselineOutputFrames = 9;
@@ -101,6 +102,41 @@ TEST(KnownCompletion, AuthoredDurationUsesEarlierNaturalOrTimelineEnd) {
               harken::MaterializeKnownCompletion(facts, &predicate));
     EXPECT_EQ(120u, predicate.totalLogicalOutputFrames);
     EXPECT_EQ(170u, predicate.absoluteLogicalCompleteFrame);
+}
+
+TEST(KnownCompletion, CroppedFractionChangesTheActualFinalOutputFrame) {
+    auto facts = KnownFacts();
+    facts.pcmFrameCount = 103;
+    facts.sourceStartFrame = 100;
+    facts.pitchRatio = 0.75f;
+    facts.sourcePhase = {UINT64_C(1) << 63, 0};
+    std::uint64_t duration = 0;
+    for (const auto deadline : {UINT64_MAX, UINT64_C(3), UINT64_C(4), UINT64_C(2)}) {
+        facts.authoredDurationFrames = deadline;
+        ASSERT_EQ(harken::CompletionPredictability::KnownFinite,
+            harken::ResolveKnownCompletionDuration(facts, &duration));
+        EXPECT_EQ(std::min(UINT64_C(4), deadline), duration);
+    }
+    facts.sourcePhase = {UINT64_C(3) << 62, 0};
+    facts.authoredDurationFrames = UINT64_MAX;
+    ASSERT_EQ(harken::CompletionPredictability::KnownFinite,
+        harken::ResolveKnownCompletionDuration(facts, &duration));
+    EXPECT_EQ(3u, duration);
+}
+
+TEST(KnownCompletion, ResolvedInitialRatioRetainsWirePrecision) {
+    auto facts = KnownFacts();
+    facts.pcmFrameCount = 101;
+    facts.sourceStartFrame = 100;
+    facts.resolvedSourceRatio = std::nextafter(1.0, 0.0);
+    std::uint64_t duration = 0;
+    ASSERT_EQ(harken::CompletionPredictability::KnownFinite,
+        harken::ResolveKnownCompletionDuration(facts, &duration));
+    EXPECT_EQ(2u, duration);
+    facts.resolvedSourceRatio = 0.0;
+    ASSERT_EQ(harken::CompletionPredictability::KnownFinite,
+        harken::ResolveKnownCompletionDuration(facts, &duration));
+    EXPECT_EQ(1u, duration);
 }
 
 TEST(KnownCompletion, ResampledDurationUsesRenderBoundaryAndOutputDeadline) {
@@ -182,9 +218,6 @@ TEST(KnownCompletion, ClassifiesSupportedFallbacksAndMalformedFactsExactly) {
     EXPECT_EQ(harken::CompletionPredictability::KnownFinite, classify(facts));
     facts = KnownFacts();
     facts.pitchFixed = false;
-    EXPECT_EQ(harken::CompletionPredictability::SignalOnly, classify(facts));
-    facts = KnownFacts();
-    facts.serialRender = false;
     EXPECT_EQ(harken::CompletionPredictability::SignalOnly, classify(facts));
     facts = KnownFacts();
     facts.endMutationPossible = true;

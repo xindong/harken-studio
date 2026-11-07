@@ -7213,3 +7213,111 @@ TEST(DecisionGroup, UnpublishedStorageRetentionRefusesActualGroupAndDecisionRead
     EXPECT_EQ(0u, decisions.LiveCount());
     ASSERT_TRUE(pool.ResetForEpoch(0, 10));
 }
+
+
+TEST(DecisionGroup, TransitionSliceDependencyKeepsActualApplicationThroughRetirement) {
+    for (const bool apply : {false, true}) {
+        SCOPED_TRACE(apply);
+        using Status = harken::FrontierSliceDependencyStatus;
+        harken::ScheduledTransactionPool pool;
+        harken::TimelineArmTable arms(1);
+        harken::DecisionTable decisions(2, 1);
+        harken::TransitionInstancePool transitions(1);
+        ASSERT_TRUE(pool.Reset(MakePoolConfig(), 0, 9));
+        harken::TransitionInstanceToken transition{};
+        ASSERT_TRUE(transitions.Acquire({100, 1, {}}, &transition));
+        auto request = MakeRequest();
+        request.sliceCount = 1;
+        request.transitionGate = transition;
+        harken::DecisionToken token{};
+        ASSERT_TRUE(decisions.Reserve(request, &token));
+        harken::DecisionFuturePin lifetime;
+        ASSERT_TRUE(decisions.AcquireFuturePin(token, &lifetime));
+        harken::Plan03GroupSliceInput input{};
+        input.executeFrame = 100;
+        input.decision = token;
+        ASSERT_EQ(harken::Plan03GroupReserveStatus::Committed, pool.ReservePlan03GroupSlice(input, arms));
+        harken::Plan03PageGroupView group{};
+        ASSERT_EQ(1u, pool.CaptureLivePlan03Groups(&group, 1));
+        const auto identity = group.identity;
+        harken::Plan03GroupReaderPin reader;
+        ASSERT_TRUE(pool.AcquirePlan03GroupReader(identity, &reader));
+        harken::FrontierGroupBinding binding{};
+        binding.role = harken::FrontierGroupRole::Future;
+        binding.entry = {token, 1, {10, 1, 0, 0, 10, 1, 0, 1}};
+        binding.operation.kind = harken::FrontierOperationKind::Dependent;
+        binding.operation.owner = binding.entry.owner;
+        binding.operation.order = {100, 1};
+        binding.operation.group = identity;
+        binding.operation.world = 7;
+        binding.operation.transport = 9;
+        binding.transition = {transition.slot, transition.generation, 100};
+        const harken::FrontierOwnerIdentity child{11, 1, 10, 1, 10, 1, 1, 1};
+        harken::FrontierSliceDependency dependency;
+        EXPECT_FALSE(decisions.CaptureFrontierSliceDependency(lifetime, reader, pool, child, &dependency));
+        ASSERT_TRUE(pool.BindPlan03GroupFrontier(identity, binding));
+        ASSERT_TRUE(pool.ResolvePlan03GroupSliceProducer(identity, &group));
+        ASSERT_TRUE(decisions.BindFrontierDecision(token, *group.frontier, pool));
+        ASSERT_TRUE(transitions.BindFrontier(transition, *group.frontier, pool));
+        ASSERT_TRUE(decisions.CaptureFrontierSliceDependency(lifetime, reader, pool, child, &dependency));
+        EXPECT_FALSE(decisions.CaptureFrontierSliceDependency(lifetime, reader, pool, child, &dependency));
+        EXPECT_EQ(Status::Pending, decisions.ReadFrontierSliceDependency(dependency));
+        EXPECT_TRUE(decisions.IsFrontierSliceDependencyFor(dependency, binding, child));
+        auto wrongChild = child;
+        ++wrongChild.serviceGeneration;
+        EXPECT_FALSE(decisions.IsFrontierSliceDependencyFor(dependency, binding, wrongChild));
+        auto wrongBinding = binding;
+        ++wrongBinding.operation.world;
+        EXPECT_FALSE(decisions.IsFrontierSliceDependencyFor(dependency, wrongBinding, child));
+        wrongBinding = binding;
+        ++wrongBinding.operation.transport;
+        EXPECT_FALSE(decisions.IsFrontierSliceDependencyFor(dependency, wrongBinding, child));
+        harken::DecisionCommitPayload payload{};
+        payload.pages = {1, 1};
+        payload.armGroup = {1, 1};
+        ASSERT_TRUE(decisions.Commit(token, payload));
+        pool.Publish(200, nullptr, nullptr, &arms);
+        ASSERT_TRUE(pool.NotePlan03GroupReadRt(identity, 2));
+        if (apply) {
+            harken::FrontierDecisionApplyProof proof;
+            harken::TransitionInstancePool::FrontierProof transitionProof;
+            ASSERT_TRUE(decisions.ValidateFrontierMemberDecisionApply(*group.frontier, *group.lease, 2, &proof));
+            ASSERT_TRUE(transitions.ProveFrontier(*group.frontier, *group.lease,
+                harken::TransitionAudibleGateState::Replaceable, true, &transitionProof));
+            ASSERT_TRUE(group.lease->TryClaim());
+            EXPECT_EQ(harken::AudioSliceInvalidateDisposition::DeferredAfterClaim,
+                group.lease->Invalidate(harken::AudioSliceInvalidateReason::Cancel));
+            EXPECT_EQ(Status::Pending, decisions.ReadFrontierSliceDependency(dependency));
+            decisions.ApplyClaimedFrontierDecision(proof);
+            transitions.ApplyFrontier(transitionProof);
+            ASSERT_TRUE(group.lease->MarkApplied());
+            transitionProof.Release();
+            EXPECT_EQ(Status::Applied, decisions.ReadFrontierSliceDependency(dependency));
+        } else {
+            ASSERT_EQ(harken::DecisionInvalidationDisposition::NewlyInvalidated, decisions.Invalidate(token));
+            EXPECT_EQ(Status::Rejected, decisions.ReadFrontierSliceDependency(dependency));
+            ASSERT_TRUE(transitions.InvalidateReady(transition));
+        }
+        EXPECT_FALSE(pool.DetachPlan03GroupFrontier(identity, 2));
+        ASSERT_TRUE(pool.DetachPlan03GroupFrontier(identity, 3));
+        ASSERT_TRUE(decisions.ReleaseFrontierDecisionBinding(token));
+        ASSERT_TRUE(transitions.ReleaseFrontierBinding(transition));
+        ASSERT_TRUE(reader.Release(3));
+        ASSERT_TRUE(decisions.Retire(token, 8));
+        EXPECT_FALSE(decisions.ReclaimRetired(token));
+        EXPECT_EQ(apply ? Status::Applied : Status::Rejected,
+            decisions.ReadFrontierSliceDependency(dependency));
+        ASSERT_TRUE(transitions.BeginRetire(transition, 8));
+        ASSERT_TRUE(transitions.Reclaim(transition, 9));
+        ASSERT_TRUE(lifetime.Release());
+        EXPECT_EQ(Status::Rejected, decisions.ReadFrontierSliceDependency(dependency));
+        ASSERT_TRUE(decisions.ReclaimRetired(token));
+        harken::DecisionToken reused{};
+        ASSERT_TRUE(decisions.Reserve(request, &reused));
+        EXPECT_NE(token.generation, reused.generation);
+        EXPECT_EQ(Status::Rejected, decisions.ReadFrontierSliceDependency(dependency));
+        ASSERT_TRUE(decisions.Cancel(reused));
+        ASSERT_TRUE(decisions.ReclaimCancelled(reused));
+        EXPECT_EQ(0u, decisions.LiveCount());
+    }
+}

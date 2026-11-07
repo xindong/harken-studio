@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PlayablePropertyAuthoringV1.h"
+#include "FilterSemantics.h"
 #include "harken_playable_property_studio.g.h"
 
 #include <QJsonArray>
@@ -19,18 +20,20 @@ inline QJsonObject setItemPropertySchema()
         QStringLiteral("markers"), QStringLiteral("spliceByMarker"),
         QStringLiteral("dimensions"), QStringLiteral("maxDistance"),
         QStringLiteral("range"), QStringLiteral("rangeMin"), QStringLiteral("rangeMax"),
-        QStringLiteral("transitions"), QStringLiteral("steps")};
+        QStringLiteral("transitions"), QStringLiteral("steps"), QStringLiteral("filter")};
+    for (const auto& field : FilterSemantics::fields())
+        propertyNames.append(QLatin1String(field.field));
     for (const auto& field : VNX::PlayablePropertyAuthoringV1::fields()) {
         if (!PlayablePropertyAuthoringV1::isEditorExposed(field.id)) continue;
         const QString name = QString::fromLatin1(field.fieldName);
         if (!propertyNames.contains(name)) propertyNames.append(name);
     }
-    return QJsonObject{
+    QJsonObject schema{
         {QStringLiteral("type"), QStringLiteral("object")},
         {QStringLiteral("properties"), QJsonObject{
             {QStringLiteral("path"), QJsonObject{{QStringLiteral("type"), QStringLiteral("string")}, {QStringLiteral("minLength"), 1}}},
-            {QStringLiteral("object_id"), QJsonObject{{QStringLiteral("type"), QStringLiteral("integer")}, {QStringLiteral("minimum"), 1}}},
-            {QStringLiteral("authoring_handle"), QJsonObject{{QStringLiteral("type"), QStringLiteral("integer")}, {QStringLiteral("minimum"), 1}}},
+            {QStringLiteral("object_id"), QJsonObject{{QStringLiteral("type"), QStringLiteral("integer")}, {QStringLiteral("minimum"), 1}, {QStringLiteral("maximum"), 4294967295.0}}},
+            {QStringLiteral("authoring_handle"), QJsonObject{{QStringLiteral("type"), QStringLiteral("integer")}, {QStringLiteral("minimum"), 1}, {QStringLiteral("maximum"), 4294967295.0}}},
             {QStringLiteral("property"), QJsonObject{
                 {QStringLiteral("type"), QStringLiteral("string")},
                 {QStringLiteral("enum"), propertyNames}}},
@@ -62,7 +65,7 @@ inline QJsonObject setItemPropertySchema()
                 {QStringLiteral("type"), QStringLiteral("string")}}},
             {QStringLiteral("occurrence_ordinal"), QJsonObject{
                 {QStringLiteral("type"), QStringLiteral("integer")},
-                {QStringLiteral("minimum"), 0}}},
+                {QStringLiteral("minimum"), 0}, {QStringLiteral("maximum"), 4294967295.0}}},
             {QStringLiteral("value"), QJsonObject{}}
         }},
         {QStringLiteral("required"), QJsonArray{QStringLiteral("property")}},
@@ -147,6 +150,19 @@ inline QJsonObject setItemPropertySchema()
                     QStringLiteral("rangeContentHash")}}}}
         }}
     };
+    auto values = schema.value(QStringLiteral("propertyValues")).toObject();
+    values.insert(QStringLiteral("filter"), QJsonObject{
+        {QStringLiteral("type"), QStringLiteral("object")},
+        {QStringLiteral("required"), QJsonArray{
+            QStringLiteral("lowPass"), QStringLiteral("highPass"),
+            QStringLiteral("lowShelf"), QStringLiteral("highShelf")}}});
+    for (const auto& field : FilterSemantics::fields())
+        values.insert(QLatin1String(field.field), QJsonObject{
+            {QStringLiteral("type"), QStringLiteral("number")},
+            {QStringLiteral("minimum"), field.minimum},
+            {QStringLiteral("maximum"), field.maximum}});
+    schema.insert(QStringLiteral("propertyValues"), values);
+    return schema;
 }
 
 }

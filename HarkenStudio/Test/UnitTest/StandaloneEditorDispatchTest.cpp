@@ -6,6 +6,7 @@
 #include "Core/IPC/IPCServer.h"
 #include "Core/LayoutController.h"
 #include "Core/PlatformContextService.h"
+#include "Core/PackGenerationRecord.h"
 #include "Core/PlayablePropertyAuthoringV1.h"
 #include "Core/SelectionRouter.h"
 #include "Core/ShortcutManager.h"
@@ -32,6 +33,8 @@
 #include "Widgets/Timeline/TimelineCanvas.h"
 #include "Widgets/Timeline/TimelineEditorPanel.h"
 #include "Support/AITestSupport.h"
+#include "Tooling/StudioCli/Shell.h"
+#include "Tooling/StudioCli/StudioSession.h"
 
 #include <gtest/gtest.h>
 
@@ -66,6 +69,13 @@
 #include <QTimer>
 #include <QVBoxLayout>
 #include <memory>
+#include <cstdio>
+
+#ifdef Q_OS_WIN
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -196,6 +206,72 @@ protected:
     VNX::LayoutController* controller_ = nullptr;
 };
 
+}
+
+TEST_F(EditorDockLayoutTest, ShellKeepsBufferedCommandsWhenClosingIsRejected)
+{
+    ASSERT_TRUE(VNX::ProjectManager::instance().saveProject());
+    QFile input(directory_.filePath(QStringLiteral("shell-input.txt")));
+    ASSERT_TRUE(input.open(QIODevice::WriteOnly));
+    ASSERT_GT(input.write("exit\nget_project_info\nexit\n"), 0);
+    input.close();
+    ASSERT_TRUE(input.open(QIODevice::ReadOnly));
+#ifdef Q_OS_WIN
+    const int inputDescriptor = _fileno(stdin);
+    const int savedInput = _dup(inputDescriptor);
+    const auto replaceDescriptor = [](int from, int to) { return _dup2(from, to); };
+    const auto closeDescriptor = [](int descriptor) { _close(descriptor); };
+#else
+    const int inputDescriptor = fileno(stdin);
+    const int savedInput = dup(inputDescriptor);
+    const auto replaceDescriptor = [](int from, int to) { return dup2(from, to); };
+    const auto closeDescriptor = [](int descriptor) { close(descriptor); };
+#endif
+    ASSERT_GE(savedInput, 0);
+    const auto restore = qScopeGuard([&] {
+        replaceDescriptor(savedInput, inputDescriptor);
+        closeDescriptor(savedInput);
+        std::clearerr(stdin);
+    });
+    ASSERT_GE(replaceDescriptor(input.handle(), inputDescriptor), 0);
+    std::clearerr(stdin);
+
+    auto& records = VNX::PackGenerationRecordStore::instance();
+    auto canceled = std::make_shared<std::atomic_bool>(false);
+    const auto runId = records.beginProgress(canceled);
+    const auto finishProgress = qScopeGuard([&] { records.finishProgress(runId, true); });
+    HarkenStudioCli::StudioSession session(*window_->ipcServer());
+    volatile std::sig_atomic_t interrupted = 0;
+    HarkenStudioCli::ShellExitRequest request;
+    QVector<QJsonObject> responses;
+    int closeAttempts = 0;
+    QTimer timeout;
+    timeout.setSingleShot(true);
+    QObject::connect(&timeout, &QTimer::timeout, qApp, &QCoreApplication::quit);
+    timeout.start(5000);
+    const int code = HarkenStudioCli::runShell(session, 1000, true, interrupted,
+        [&](QJsonObject response) { responses.append(response); }, &request,
+        [&](HarkenStudioCli::ShellExitRequest) -> QJsonObject {
+            ++closeAttempts;
+            const bool closed = window_->closeFromShell(false);
+            if (!closed) {
+                EXPECT_TRUE(canceled->load());
+                records.finishProgress(runId, true);
+                return HarkenStudioCli::failure(QStringLiteral("EXIT_NOT_COMPLETED"), QStringLiteral("Export is stopping."));
+            }
+            return {{QStringLiteral("status"), QStringLiteral("ok")}};
+        });
+    EXPECT_TRUE(timeout.isActive());
+    timeout.stop();
+    EXPECT_EQ(code, 0);
+    EXPECT_EQ(closeAttempts, 2);
+    EXPECT_EQ(request, HarkenStudioCli::ShellExitRequest::Close);
+    ASSERT_EQ(responses.size(), 3);
+    EXPECT_EQ(responses[0].value(QStringLiteral("code")).toString(), QStringLiteral("EXIT_NOT_COMPLETED"));
+    EXPECT_EQ(responses[1].value(QStringLiteral("command")).toString(), QStringLiteral("get_project_info"));
+    EXPECT_EQ(responses[1].value(QStringLiteral("status")).toString(), QStringLiteral("ok"));
+    EXPECT_EQ(responses[2].value(QStringLiteral("command")).toString(), QStringLiteral("exit"));
+    EXPECT_EQ(responses[2].value(QStringLiteral("status")).toString(), QStringLiteral("ok"));
 }
 
 TEST_F(EditorDockLayoutTest, ColorRefreshPreservesBlueprintEditorsAndStructureRefreshReplacesThem)

@@ -190,6 +190,15 @@ VnVoiceHandle MakeHandle(std::uint32_t slot, std::uint32_t generation) {
     return (static_cast<std::uint64_t>(generation) << 32) | slot;
 }
 
+void InitializeFreshSourcePhase(ResamplerView& resampler, ExactSourcePhase phase) noexcept {
+    // Fresh Linear playback needs the selected frame and its next neighbour,
+    // supplied by the normal resident or stream feeder after Reset.
+    resampler.phaseHigh = phase.high;
+    resampler.phaseLow = phase.low;
+    resampler.readFraction = SourcePhaseFraction(phase);
+    resampler.readPos = static_cast<double>(kResampleHistoryPad) + resampler.readFraction;
+}
+
 // The constant-gain stereo balance pair for a pan scalar. Unlike the equal-power
 // pair carried on the pan command line — which lands the center at 1/sqrt(2) on
 // both sides, a 3 dB dip — this keeps the center at unity: a full-left pan mutes
@@ -306,7 +315,9 @@ VnResult VoicePool::Play(const PCMView& view, float volumeDb,
                          std::uint32_t expectedGeneration,
                          bool prepared, float outputBusVolumeDb,
                          float spatializationMix, bool prepareOwnedWeights,
-                         bool prepareTimelineCurves) {
+                         bool prepareTimelineCurves, ExactSourcePhase sourcePhase) {
+    if (resampleProfile != ResampleProfile::LegacyCompatibility &&
+        (sourcePhase.high != 0 || sourcePhase.low != 0)) return VN_INVALID_ARG;
     float linearGain = 0.0f;
     float outputLinearGain = 0.0f;
     if (!TryVolumeGainFromDb(volumeDb, &linearGain) ||
@@ -417,6 +428,7 @@ VnResult VoicePool::Play(const PCMView& view, float volumeDb,
                                 resampleProfile, m_multirateTables,
                                 resampleProfile == ResampleProfile::Professional44148
                                     ? &m_professionalStorage[slotIndex] : nullptr);
+    InitializeFreshSourcePhase(slot.render.resampler, sourcePhase);
 
     if (view.useCount != nullptr) {
         view.useCount->fetch_add(1, std::memory_order_relaxed);
@@ -457,7 +469,11 @@ VnResult VoicePool::PlayStream(StreamRing* ring, std::uint32_t channelCount,
                                const StreamParkTokenRef* resumeToken,
                                float outputBusVolumeDb,
                                bool prepared,
-                               float spatializationMix) {
+                               float spatializationMix,
+                               ExactSourcePhase sourcePhase) {
+    if ((sourcePhase.high != 0 || sourcePhase.low != 0) &&
+        (resumeToken != nullptr || resampleProfile != ResampleProfile::LegacyCompatibility))
+        return VN_INVALID_ARG;
     float linearGain = 0.0f;
     float outputLinearGain = 0.0f;
     if (!TryVolumeGainFromDb(volumeDb, &linearGain) ||
@@ -598,6 +614,7 @@ VnResult VoicePool::PlayStream(StreamRing* ring, std::uint32_t channelCount,
             combined, m_tables, resampleProfile, m_multirateTables,
             resampleProfile == ResampleProfile::Professional44148
                 ? &m_professionalStorage[slotIndex] : nullptr);
+        InitializeFreshSourcePhase(slot.render.resampler, sourcePhase);
     }
 
     if (!prepared) {
@@ -931,12 +948,90 @@ bool VoicePool::TimelineBindingValid(
            slot.generation.load(std::memory_order_relaxed) == renderGeneration;
 }
 
+bool VoicePool::PrepareSourceExit(VnVoiceHandle handle, FrontierSourceExitVoice& binding) noexcept {
+    auto* slot = SlotFor(handle);
+    if (slot == nullptr || slot->state.load(std::memory_order_acquire) != SlotState::Prepared ||
+        binding.source == nullptr || !binding.release.Valid() || binding.release.slot != binding.renderSlot ||
+        ReleaseObserved(binding.release) || binding.attached || binding.next != nullptr ||
+        binding.renderSlot != static_cast<std::uint32_t>(handle) ||
+        binding.renderGeneration != static_cast<std::uint32_t>(handle >> 32)) return false;
+    binding.next = slot->render.sourceExits;
+    slot->render.sourceExits = &binding;
+    binding.attached = true;
+    return true;
+}
+
+bool VoicePool::ValidateSourceExit(const FrontierSourceExit& source, const FrontierGroupBinding& group) const noexcept {
+    if (source.decisions == nullptr || !source.source.Valid() ||
+        source.stopFrame < source.fadeStartFrame || source.stopFrame == UINT64_MAX ||
+        source.fadeElapsedFrames > UINT64_MAX - (source.stopFrame - source.fadeStartFrame) ||
+        (source.fadeElapsedFrames != 0 && (!source.fade || source.stopFrame == source.fadeStartFrame)) ||
+        source.fadeStartFrame != group.transition.audibleFrame ||
+        !source.decisions->IsFrontierSliceDependencyFor(source.dependency, group, source.source)) return false;
+    for (std::size_t index = 0; index < source.initialVoices.size(); ++index) {
+        const auto* binding = source.initialVoices[index];
+        if (binding == nullptr || binding->source != &source || binding->renderGeneration == 0 ||
+            binding->renderSlot >= m_slots.ConstructedCount() || !binding->release.Valid() ||
+            binding->release.slot != binding->renderSlot || binding->attached || binding->next != nullptr) return false;
+        for (std::size_t prior = 0; prior < index; ++prior)
+            if (source.initialVoices[prior]->renderSlot == binding->renderSlot &&
+                source.initialVoices[prior]->renderGeneration == binding->renderGeneration) return false;
+        const auto& slot = m_slots[binding->renderSlot];
+        if (ReleaseObserved(binding->release)) continue;
+        if (slot.generation.load(std::memory_order_acquire) != binding->renderGeneration) return false;
+        const auto state = slot.state.load(std::memory_order_acquire);
+        if (!IsAudioRenderingState(state) && state != SlotState::VariableStartWaiting &&
+            state != SlotState::Free && state != SlotState::Quarantined) return false;
+    }
+    return true;
+}
+
+void VoicePool::ApplySourceExit(const FrontierSourceExit& source) noexcept {
+    for (auto* binding : source.initialVoices) {
+        auto& slot = m_slots[binding->renderSlot];
+        const auto state = slot.state.load(std::memory_order_relaxed);
+        if (ReleaseObserved(binding->release) ||
+            slot.generation.load(std::memory_order_relaxed) != binding->renderGeneration ||
+            (!IsAudioRenderingState(state) && state != SlotState::VariableStartWaiting)) continue;
+        binding->next = slot.render.sourceExits;
+        slot.render.sourceExits = binding;
+        binding->attached = true;
+    }
+}
+
 void VoicePool::FinalizeTimelineQuantum(std::uint64_t quantumIndex) noexcept {
     for (Slot& slot : m_slots) {
         if (!IsAudioRenderingState(slot.state.load(std::memory_order_relaxed))) continue;
         assert(slot.timelineProvenMask == 0);
         auto& span = slot.render.timelineEvents;
         if (span.quantumIndex != quantumIndex) continue;
+        const auto existingCutoff = SelectAuthoredRootStop(span, m_blockFrames,
+            slot.render.authoredRootStopFrame, slot.render.authoredRootStopControl.Stop().authoredStopOperation);
+        auto** link = &slot.render.sourceExits;
+        while (*link != nullptr) {
+            auto& binding = **link;
+            const auto& source = *binding.source;
+            const auto status = source.decisions == nullptr ? FrontierSliceDependencyStatus::Rejected :
+                source.decisions->ReadFrontierSliceDependency(source.dependency);
+            if (status == FrontierSliceDependencyStatus::Rejected) {
+                *link = binding.next;
+                binding.next = nullptr;
+                binding.active = false;
+                binding.detachedAudioSequence.store(quantumIndex + 1u, std::memory_order_release);
+                continue;
+            }
+            binding.active = status == FrontierSliceDependencyStatus::Applied;
+            if (binding.active && source.stop && source.stopFrame < existingCutoff.frame &&
+                source.stopFrame < slot.render.authoredRootStopFrame) {
+                // The original transition dependency authorizes this cutoff.
+                // It is not an authored root-stop operation or a new claim.
+                slot.render.authoredRootStopFrame = source.stopFrame;
+                slot.render.authoredRootStopControl = VoiceTimelineEvent{TimelineEventKind::Stop};
+                slot.render.authoredRootStopControl.authoredRootStop = true;
+                slot.render.authoredRootStopControl.authoredFadeOutCandidate = source.fade;
+            }
+            link = &binding.next;
+        }
         // Fixed Page and lane slots share a stable sort without allocating.
         for (std::uint32_t current = 1; current < span.eventCount; ++current) {
             const auto event = span.events[current];
@@ -2775,7 +2870,7 @@ bool VoicePool::BindCompletionProgress(
     std::uint64_t playbackFactsRevision) noexcept {
     Slot* slot = SlotFor(handle);
     if (slot == nullptr || row == nullptr || occurrence.generation == 0 ||
-        playbackFactsRevision == 0 || m_workers.WorkerCount() != 0 ||
+        playbackFactsRevision == 0 ||
         (slot->state.load(std::memory_order_acquire) != SlotState::Claimed &&
          slot->state.load(std::memory_order_acquire) != SlotState::Prepared)) {
         return false;
@@ -3486,7 +3581,7 @@ bool VoicePool::StageCompletionProgress(
     if (render.completionProgress == nullptr) {
         return true;
     }
-    if (m_workers.WorkerCount() != 0 || blockIndex == UINT64_MAX) {
+    if (blockIndex == UINT64_MAX) {
         slot.completionProgressTerminal = true;
         return false;
     }

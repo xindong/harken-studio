@@ -57,6 +57,12 @@
       "HarkenStudio/Test/UnitTest/ProjectMigrationTest.cpp"
     ],
     "Pack": [
+      ".scripts/pack_wire_codegen.py",
+      ".scripts/pack-wire-bindings.json",
+      "HarkenEngine/Source/Runtime/media/include/harken/media/generated/harken_pack_wire_constants.g.h",
+      "HarkenEngine/Source/Runtime/media/include/harken/media/generated/harken_pack_wire.g.h",
+      "HarkenStudio/Source/Tooling/PackBuild/include/harken_studio_build/generated/harken_pack_wire_constants.g.h",
+      "HarkenStudio/Source/Tooling/PackBuild/include/harken_studio_build/generated/harken_pack_wire.g.h",
       ".scripts/schema_archive.py",
       ".scripts/studio-schema-release-scopes.json",
       ".scripts/studio_schema_lock.py",

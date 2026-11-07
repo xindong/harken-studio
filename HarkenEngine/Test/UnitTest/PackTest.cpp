@@ -12,8 +12,10 @@
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/PackFoundationFixture.h"
 #include "Common/TestUtil.h"
+#include "Common/StreamBuilder.h"
 
 #include "harken/media/PackFormat.h"
+#include "harken/media/PackFormatV2.h"
 #include "harken/media/PackTable.h"
 
 #include <bit>
@@ -81,10 +83,10 @@ std::uint64_t AlignUp64(std::uint64_t value) {
 // tampering tests start from these bytes.
 std::vector<std::uint8_t> BuildPackBytes(
     const std::vector<PackEntrySpec>& specs) {
-    const std::uint64_t tocOffset = harken::kPackHeaderBytes;
+    const std::uint64_t tocOffset = harken::kPackMediaFileHeaderBytes;
     const std::uint64_t tocBytes =
         static_cast<std::uint64_t>(specs.size()) *
-        harken::kPackTocEntryBytes;
+        harken::kPackMediaBytes;
 
     std::vector<std::uint64_t> blobOffsets(specs.size());
     std::uint64_t cursor = AlignUp64(tocOffset + tocBytes);
@@ -123,19 +125,19 @@ std::vector<std::uint8_t> BuildPackBytes(
         entry.flags = spec.loopable ? harken::kPackFlagLoopable : 0;
         entry.loopStartFrame = spec.loopable ? spec.loopStart : 0;
         entry.loopEndFrame = spec.loopable ? spec.loopEnd : 0;
-        harken::SerializePackTocEntry(
-            entry, toc.data() + i * harken::kPackTocEntryBytes);
+        harken::SerializePackMedia(
+            entry, toc.data() + i * harken::kPackMediaBytes);
     }
     std::memcpy(bytes.data() + tocOffset, toc.data(), toc.size());
 
-    harken::PackHeader header;
+    harken::PackMediaFileHeader header;
     header.formatVersion = harken::kPackFormatVersion;
-    header.headerBytes = harken::kPackHeaderBytes;
+    header.headerBytes = harken::kPackMediaFileHeaderBytes;
     header.fileBytes = fileBytes;
     header.entryCount = static_cast<std::uint32_t>(specs.size());
     header.tocOffset = static_cast<std::uint32_t>(tocOffset);
     header.tocChecksum = harken::Fnv1a64(toc.data(), toc.size());
-    harken::SerializePackHeader(header, bytes.data());
+    harken::SerializePackMediaFileHeader(header, bytes.data());
     return bytes;
 }
 
@@ -151,10 +153,10 @@ constexpr std::size_t kTocEntryBlobOffsetOffset = 24;
 // tripping the checksum first.
 void FixTocChecksum(std::vector<std::uint8_t>* bytes,
                     std::uint32_t entryCount) {
-    const std::size_t tocOffset = harken::kPackHeaderBytes;
+    const std::size_t tocOffset = harken::kPackMediaFileHeaderBytes;
     const std::size_t tocBytes =
         static_cast<std::size_t>(entryCount) *
-        harken::kPackTocEntryBytes;
+        harken::kPackMediaBytes;
     harken::StoreLE64(bytes->data() + kHeaderTocChecksumOffset,
                      harken::Fnv1a64(bytes->data() + tocOffset, tocBytes));
 }
@@ -180,21 +182,21 @@ static std::vector<std::uint8_t> MakeMediaConsumerProbeBytes(
     definition.curve.pointCount = 1;
     definition.curve.points[0] = {0.0f, 0.0f};
     std::vector<std::uint8_t> definitionBytes(
-        static_cast<std::size_t>(harken::kPackV2BindingDefinitionPayloadBytes));
-    harken::SerializePackV2BindingDefinition(
+        static_cast<std::size_t>(harken::kPackBindingDefinitionBytes));
+    harken::WritePackBindingDefinition(
         binding, definition, definitionBytes.data());
     image.AddEntry(harken::kPackEntryKindBindingDefinition, binding,
-        std::move(definitionBytes), harken::kPackV2SchemaVintage);
+        std::move(definitionBytes), harken::kPackBindingDefinitionVintage);
 
     harken::PackBindingAttachmentEntry attachment{};
     attachment.bindingId = binding;
     attachment.scopeKind = VN_TARGET_SCOPE_VOICE;
     attachment.objectId = sound;
     std::vector<std::uint8_t> attachmentBytes(
-        static_cast<std::size_t>(harken::kPackV2BindingAttachmentPayloadBytes));
-    harken::SerializePackV2BindingAttachment(attachment, attachmentBytes.data());
+        static_cast<std::size_t>(harken::kPackBindingAttachmentBytes));
+    harken::SerializePackBindingAttachment(attachment, attachmentBytes.data());
     image.AddEntry(harken::kPackEntryKindBindingAttachment, std::uint64_t{0},
-        std::move(attachmentBytes), harken::kPackV2SchemaVintage);
+        std::move(attachmentBytes), harken::kPackBindingAttachmentVintage);
     return image.Build();
 }
 
@@ -292,6 +294,26 @@ static void RunMediaProviderProbe(MediaProviderProbeOperation operation) {
     EXPECT_EQ(0u, engine.bindings.DefinitionCount());
 }
 
+TEST(Pack, PendingStreamSourceReservesMediaNamespaceUntilCancel) {
+    EngineSession session(MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    const auto id = harkentest::ObjectId(17336);
+    harkentest::StreamSpec spec;
+    spec.soundId = id;
+    const auto streamPath = TempPath("pack_pending_stream.stream");
+    WriteFileBytes(streamPath, harkentest::BuildStreamBytes(spec, std::vector<float>(64, 0.25f)));
+    const auto packPath = TempPath("pack_pending_stream.pack");
+    WriteFileBytes(packPath, BuildPackBytes({MakeSineEntry(id, 64)}));
+    VnStreamSourceRequest request = 0;
+    ASSERT_EQ(VN_OK, Vn_BeginStreamFile(id, VN_STREAM_SOURCE_REGISTER, streamPath.c_str(), &request));
+    VnPackHandle handle = 0;
+    EXPECT_EQ(VN_IN_USE, LoadPack(packPath, &handle));
+    EXPECT_EQ(0u, handle);
+    EXPECT_EQ(VN_OK, Vn_CancelStreamSource(request));
+    EXPECT_EQ(VN_OK, LoadPack(packPath, &handle));
+    EXPECT_EQ(VN_OK, Vn_UnloadPack(handle));
+}
+
 TEST(Pack, TocOffsetsStayWideAcrossFourGiB) {
     // Independent byte offsets for the fixed 76-byte serialized layout.
     EXPECT_EQ(0ull, harken::PackTocByteOffset(0));
@@ -318,28 +340,21 @@ TEST(Pack, LoadRegistersEntriesAndUnloadRemovesThem) {
     ASSERT_EQ(VN_OK, session.InitResult());
 
     const std::string path = TempPath("pack_basic.pack");
-    std::vector<std::uint32_t> versions{harken::kPackFormatVersion};
-    if (harken::kPackFormatVersion3 < harken::kPackFormatVersion) {
-        versions.push_back(harken::kPackFormatVersion3);
-    }
-    for (const auto version : versions) {
-        auto bytes = BuildPackBytes({MakeSineEntry(harkentest::ObjectId(11), 64),
-                                    MakeSineEntry(harkentest::ObjectId(12), 128)});
-        harken::StoreLE32(bytes.data() + 4, version);
-        WriteFileBytes(path, bytes);
-        VnPackHandle pack = 0;
-        ASSERT_EQ(VN_OK, LoadPack(path, &pack)) << version;
-        EXPECT_NE(0u, pack);
-        EXPECT_EQ(1u, session.Engine()->packs.LoadedCount());
-        EXPECT_EQ(2u, session.Engine()->registry.Count());
-        EXPECT_TRUE(session.Engine()->registry.Lookup(harkentest::ObjectId(11)).Valid());
-        EXPECT_TRUE(session.Engine()->registry.Lookup(harkentest::ObjectId(12)).Valid());
-        ASSERT_EQ(VN_OK, Vn_UnloadPack(pack));
-        EXPECT_EQ(0u, session.Engine()->packs.LoadedCount());
-        EXPECT_EQ(0u, session.Engine()->registry.Count());
-        EXPECT_FALSE(session.Engine()->registry.Lookup(harkentest::ObjectId(11)).Valid());
-        EXPECT_FALSE(session.Engine()->registry.Lookup(harkentest::ObjectId(12)).Valid());
-    }
+    auto bytes = BuildPackBytes({MakeSineEntry(harkentest::ObjectId(11), 64),
+                                MakeSineEntry(harkentest::ObjectId(12), 128)});
+    WriteFileBytes(path, bytes);
+    VnPackHandle pack = 0;
+    ASSERT_EQ(VN_OK, LoadPack(path, &pack));
+    EXPECT_NE(0u, pack);
+    EXPECT_EQ(1u, session.Engine()->packs.LoadedCount());
+    EXPECT_EQ(2u, session.Engine()->registry.Count());
+    EXPECT_TRUE(session.Engine()->registry.Lookup(harkentest::ObjectId(11)).Valid());
+    EXPECT_TRUE(session.Engine()->registry.Lookup(harkentest::ObjectId(12)).Valid());
+    ASSERT_EQ(VN_OK, Vn_UnloadPack(pack));
+    EXPECT_EQ(0u, session.Engine()->packs.LoadedCount());
+    EXPECT_EQ(0u, session.Engine()->registry.Count());
+    EXPECT_FALSE(session.Engine()->registry.Lookup(harkentest::ObjectId(11)).Valid());
+    EXPECT_FALSE(session.Engine()->registry.Lookup(harkentest::ObjectId(12)).Valid());
 }
 
 TEST(Pack, LoopMetadataCarriedThroughLoad) {
@@ -747,8 +762,7 @@ TEST(Pack, HeaderDispatchRequiresSupportedSchemaAndKnownLayout) {
     const auto path = TempPath("pack_header_dispatch.pack");
 
     for (const auto& valid : layouts) {
-        for (const auto version : {harken::kPackFormatVersion3 - 1,
-                                   harken::kPackFormatVersion + 1}) {
+        for (const auto version : {2u, 3u, harken::kPackFormatVersion + 1}) {
             auto bytes = valid;
             harken::StoreLE32(bytes.data() + 4, version);
             WriteFileBytes(path, bytes);
@@ -759,9 +773,9 @@ TEST(Pack, HeaderDispatchRequiresSupportedSchemaAndKnownLayout) {
             EXPECT_EQ(0u, session.Engine()->registry.Count());
         }
         const auto otherLayout =
-            harken::LoadLE32(valid.data() + 8) == harken::kPackHeaderBytes
-                ? harken::kPackV2HeaderBytes : harken::kPackHeaderBytes;
-        for (const auto headerBytes : {0u, otherLayout}) {
+            harken::LoadLE32(valid.data() + 8) == harken::kPackMediaFileHeaderBytes
+                ? harken::kPackFileHeaderBytes : harken::kPackMediaFileHeaderBytes;
+        for (const auto headerBytes : {std::uint64_t{0}, otherLayout}) {
             auto bytes = valid;
             harken::StoreLE32(bytes.data() + 8, headerBytes);
             WriteFileBytes(path, bytes);
@@ -860,8 +874,8 @@ TEST_F(PackCorruption, FlippedBlobByteRefused) {
     std::vector<std::uint8_t> bytes = TwoEntryPackBytes();
     // First blob starts at the first 64-byte boundary after the TOC.
     const std::size_t blobStart = static_cast<std::size_t>(AlignUp64(
-        harken::kPackHeaderBytes +
-        2ull * harken::kPackTocEntryBytes));
+        harken::kPackMediaFileHeaderBytes +
+        2ull * harken::kPackMediaBytes));
     bytes[blobStart + 5] ^= 0x01;
     ExpectRefusal("pack_blobflip.pack", bytes, VN_BAD_PACK);
 }
@@ -870,7 +884,7 @@ TEST_F(PackCorruption, FlippedTocByteRefused) {
     std::vector<std::uint8_t> bytes = TwoEntryPackBytes();
     // A soundId byte inside the second TOC entry; the TOC checksum must
     // catch it.
-    bytes[harken::kPackHeaderBytes + harken::kPackTocEntryBytes] ^=
+    bytes[harken::kPackMediaFileHeaderBytes + harken::kPackMediaBytes] ^=
         0x01;
     ExpectRefusal("pack_tocflip.pack", bytes, VN_BAD_PACK);
 }
@@ -901,7 +915,7 @@ TEST_F(PackCorruption, OutOfBoundsBlobRefused) {
     // the alignment rule passes) and re-seal the TOC checksum: the blob
     // bounds check itself must refuse.
     const std::uint64_t badOffset = AlignUp64(bytes.size() + 4096);
-    harken::StoreLE64(bytes.data() + harken::kPackHeaderBytes +
+    harken::StoreLE64(bytes.data() + harken::kPackMediaFileHeaderBytes +
                          kTocEntryBlobOffsetOffset,
                      badOffset);
     FixTocChecksum(&bytes, 2);

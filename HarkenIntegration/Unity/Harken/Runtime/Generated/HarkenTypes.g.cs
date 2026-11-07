@@ -704,6 +704,14 @@ namespace Harken
         public const uint VN_CANONICAL_PACK_SET_MEMBER_RESULT_INIT = 4u;
         internal const uint VN_MONITOR_RECORD_ENVELOPE_PACKED_BYTES = 316u;
         internal const uint VN_MONITOR_PLAYABLE_PROVENANCE_KNOWN = 1u;
+        public const uint VN_STREAM_SOURCE_REGISTER = 0u;
+        public const uint VN_STREAM_SOURCE_REPLACE = 1u;
+        public const uint VN_STREAM_SOURCE_PREPARING = 1u;
+        public const uint VN_STREAM_SOURCE_READY = 2u;
+        public const uint VN_STREAM_SOURCE_FAILED = 3u;
+        public const int VN_BYTE_READ_OK = 0;
+        public const int VN_BYTE_READ_CANCELLED = 1;
+        public const int VN_BYTE_READ_IO_ERROR = 2;
     }
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
@@ -717,6 +725,15 @@ namespace Harken
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     public delegate void VnPackByteReleaseFn(IntPtr userData, ulong packStableId, VnPackByteSpan span);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    public delegate uint VnReadIsCancelledFn(IntPtr context);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    public delegate int VnByteSourceReadAtFn(IntPtr userData, ulong offset, IntPtr destination, uint count, IntPtr outRead, IntPtr cancellation);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    public delegate void VnByteSourceReleaseFn(IntPtr userData);
 
     [Serializable]
     [StructLayout(LayoutKind.Sequential)]
@@ -2210,6 +2227,35 @@ namespace Harken
     public VnMonitorExecutionFactV1 fact;
     public VnMonitorFactActivity activity;
     public VnMonitorPlayableProvenance playable;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct VnReadCancellationViewV1
+    {
+    public uint structSize;
+    public uint reserved0;
+    public IntPtr context;
+    public IntPtr isCancelled;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct VnByteSourceDescV1
+    {
+    public uint structSize;
+    public uint flags;
+    public ulong byteLength;
+    public IntPtr userData;
+    public IntPtr readAt;
+    public IntPtr release;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct VnStreamSourceInfoV1
+    {
+    public uint structSize;
+    public uint state;
+    public int result;
+    public uint reserved0;
     }
 
 }

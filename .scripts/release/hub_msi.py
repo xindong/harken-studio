@@ -44,6 +44,7 @@ SCHEMA = {
     "ControlEvent": ("Dialog_ CHAR(72) NOT NULL, Control_ CHAR(50) NOT NULL, Event CHAR(50) NOT NULL, Argument CHAR(255) NOT NULL, Condition CHAR(255), Ordering SHORT", "Dialog_, Control_, Event, Argument, Condition"),
     "ControlCondition": ("Dialog_ CHAR(72) NOT NULL, Control_ CHAR(50) NOT NULL, Action CHAR(50) NOT NULL, Condition CHAR(255) NOT NULL", "Dialog_, Control_, Action, Condition"),
     "CheckBox": ("Property CHAR(72) NOT NULL, Value CHAR(64)", "Property"),
+    "ListBox": ("Property CHAR(72) NOT NULL, Order SHORT NOT NULL, Value CHAR(64) NOT NULL, Text CHAR(0)", "Property, Order"),
     "TextStyle": ("TextStyle CHAR(72) NOT NULL, FaceName CHAR(32) NOT NULL, Size SHORT NOT NULL, Color LONG, StyleBits SHORT", "TextStyle"),
     "EventMapping": ("Dialog_ CHAR(72) NOT NULL, Control_ CHAR(50) NOT NULL, Event CHAR(50) NOT NULL, Attribute CHAR(50) NOT NULL", "Dialog_, Control_, Event"),
 }
@@ -72,8 +73,8 @@ def installer_ui(tables, license_rtf, privacy_rtf):
     tables["TextStyle"] = [("HubNormal", "Segoe UI", 9, 0, 0), ("HubTitle", "Segoe UI", 12, 0, 1)]
     tables["CheckBox"] = [("LICENSEACCEPTED", "1"), ("HARKENLAUNCHHUB", "1")]
 
-    def dialog(name, title, first, default, cancel, modal=True, width=420, height=320):
-        tables["Dialog"].append((name, 50, 50, width, height, 3 if modal else 1,
+    def dialog(name, title, first, default, cancel, attributes=3, width=420, height=320):
+        tables["Dialog"].append((name, 50, 50, width, height, attributes,
                                  "[ProductName] Setup", first, default, cancel))
         control(name, "Title", "Text", (18, 14, width - 36, 25), "{\\HubTitle}" + title, attributes=3)
 
@@ -132,7 +133,29 @@ def installer_ui(tables, license_rtf, privacy_rtf):
     event("MaintenanceDialog", "Remove", "EndDialog", "Return", order=2)
     event("MaintenanceDialog", "Cancel", "EndDialog", "Exit")
 
-    dialog("ProgressDialog", "Applying installation changes", "Status", None, None, modal=False)
+    dialog("MsiRMFilesInUse", "Applications are using Harken Hub files", "CloseApplications",
+           "CloseApplications", "Cancel", attributes=19)
+    control("MsiRMFilesInUse", "Description", "Text", (18, 55, 384, 50),
+            "Save any work in the applications listed below. Setup can close them so the installation can continue.")
+    control("MsiRMFilesInUse", "Applications", "ListBox", (18, 112, 384, 145),
+            prop="FileInUseProcess", attributes=7)
+    control("MsiRMFilesInUse", "CloseApplications", "PushButton", (168, 285, 154, 20),
+            "Close applications", next="Cancel")
+    event("MsiRMFilesInUse", "CloseApplications", "EndDialog", "Return")
+    event("MsiRMFilesInUse", "CloseApplications", "RMShutdownAndRestart", "0", order=2)
+    cancel("MsiRMFilesInUse", "CloseApplications")
+
+    dialog("FilesInUse", "Applications are using Harken Hub files", "Retry", "Retry", "Cancel",
+           attributes=19)
+    control("FilesInUse", "Description", "Text", (18, 55, 384, 50),
+            "Close the applications listed below, then choose Retry. If they cannot be closed, cancel setup and try again later.")
+    control("FilesInUse", "Applications", "ListBox", (18, 112, 384, 145),
+            prop="FileInUseProcess", attributes=7)
+    control("FilesInUse", "Retry", "PushButton", (240, 285, 82, 20), "Retry", next="Cancel")
+    event("FilesInUse", "Retry", "EndDialog", "Retry")
+    cancel("FilesInUse", "Retry")
+
+    dialog("ProgressDialog", "Applying installation changes", "Status", None, None, attributes=1)
     control("ProgressDialog", "Status", "Text", (18, 70, 384, 45), "Please wait while setup updates the installation.")
     control("ProgressDialog", "Progress", "ProgressBar", (18, 135, 384, 15))
     tables["EventMapping"] += [("ProgressDialog", "Status", "ActionText", "Text"),
@@ -161,7 +184,7 @@ def package_tables(files, input_dir, version, license_rtf, privacy_rtf):
         ("ALLUSERS", "1"), ("Manufacturer", "XD"), ("ProductName", "Harken Hub"),
         ("ProductCode", "{" + str(uuid.uuid4()).upper() + "}"), ("ProductLanguage", "1033"),
         ("ProductVersion", version), ("UpgradeCode", UPGRADE_CODE), ("ARPNOMODIFY", "1"),
-        ("ARPPRODUCTICON", "HubIcon.ico"),
+        ("ARPPRODUCTICON", "HubIcon.ico"), ("REBOOT", "ReallySuppress"),
         ("SecureCustomProperties", "HARKENBRIDGE;HARKENSELFUPDATE;INSTALLFOLDER;HARKENPREVIOUSINSTALLDIR;HARKEN_UPGRADE_DETECTED;HARKEN_DOWNGRADE_DETECTED"),
     ]
     tables["Icon"] = [("HubIcon.ico", Path(__file__).resolve().parents[2] / "HarkenHub/Resources/icons/HubIcon.ico")]

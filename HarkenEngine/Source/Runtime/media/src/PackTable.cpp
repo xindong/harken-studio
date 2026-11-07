@@ -3,6 +3,7 @@
 #include "harken/core/EngineConfig.h"
 #include "harken/core/Utf8Path.h"
 #include "harken/media/PackFormat.h"
+#include "harken/media/PackFormatV2.h"
 #include "harken/media/PackLogicImage.h"
 
 #include <algorithm>
@@ -473,16 +474,16 @@ VnResult PackTable::ReadAndValidate(
     std::vector<PackTocEntry>* outParsed) const {
     std::uint64_t fileBytes = 0;
     AlignedBuffer bytes(ReadWholeFileAligned(utf8Path, &fileBytes));
-    if (bytes == nullptr || fileBytes < kPackHeaderBytes) {
+    if (bytes == nullptr || fileBytes < kPackMediaFileHeaderBytes) {
         return VN_BAD_PACK;
     }
 
-    PackHeader header;
-    if (!ParsePackHeader(bytes.get(), &header)) {
+    PackMediaFileHeader header;
+    if (!ReadPackMediaFileHeader(bytes.get(), &header)) {
         return VN_BAD_PACK;
     }
     if (!SupportedPackFormatVersion(header.formatVersion) ||
-        header.headerBytes != kPackHeaderBytes ||
+        header.headerBytes != kPackMediaFileHeaderBytes ||
         header.fileBytes != fileBytes || header.entryCount == 0) {
         return VN_BAD_PACK;
     }
@@ -504,7 +505,7 @@ VnResult PackTable::ReadAndValidate(
     std::vector<PackTocEntry> parsed(header.entryCount);
     for (std::uint32_t i = 0; i < header.entryCount; ++i) {
         parsed[i] =
-            ParsePackTocEntry(toc + static_cast<std::size_t>(PackTocByteOffset(i)));
+            ReadPackMedia(toc + static_cast<std::size_t>(PackTocByteOffset(i)));
         if (!ValidateTocEntry(parsed[i], fileBytes, blobRegionStart)) {
             return VN_BAD_PACK;
         }

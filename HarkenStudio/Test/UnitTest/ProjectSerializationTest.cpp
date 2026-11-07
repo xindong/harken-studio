@@ -2,6 +2,7 @@
 #include "ProjectManager.h"
 #include "ProjectSerializer.h"
 #include "ProjectItemSaveState.h"
+#include "AssetPipeline/AssetRegistry.h"
 #include "ItemTypeCatalog.h"
 #include "Components/VAction.h"
 #include "Components/VVariable.h"
@@ -21,6 +22,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMap>
+#include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QUuid>
 
@@ -122,6 +124,105 @@ TEST(ProjectSerialization, NewProjectIdentityRemainsStableAcrossSaves)
             .value(QStringLiteral("id")).toString();
     EXPECT_EQ(secondId, firstId);
     EXPECT_EQ(project.projectId, firstId);
+}
+
+TEST(ProjectSerialization, ProjectSavedStateTracksContentAcrossCreationReopeningAndEdits)
+{
+    ensureApp();
+    QTemporaryDir tempDir;
+    ASSERT_TRUE(tempDir.isValid());
+    auto& manager = VNX::ProjectManager::instance();
+    const auto closeProject = qScopeGuard([&] { manager.closeProject(); });
+    VNX::ProjectConfig config;
+    config.name = QStringLiteral("SavedState");
+    config.location = tempDir.path();
+    ASSERT_TRUE(manager.createProject(config));
+    const QString projectPath = manager.currentProject()->projectPath;
+    const QString projectRoot = QFileInfo(projectPath).absolutePath();
+    const auto originalFiles = projectFileBytes(projectRoot);
+    EXPECT_FALSE(manager.hasUnsavedChanges());
+    ASSERT_TRUE(manager.closeProject());
+    EXPECT_EQ(projectFileBytes(projectRoot), originalFiles);
+    ASSERT_TRUE(manager.loadProject(projectPath));
+    EXPECT_FALSE(manager.hasUnsavedChanges());
+
+    manager.currentProject()->name = QStringLiteral("Edited project");
+    EXPECT_TRUE(manager.hasUnsavedChanges());
+    manager.currentProject()->name = config.name;
+    EXPECT_FALSE(manager.hasUnsavedChanges());
+    auto* action = manager.createItem(
+        nullptr, QStringLiteral("SavedAction"), ProjectItem::Type::Action);
+    ASSERT_NE(action, nullptr);
+    EXPECT_TRUE(manager.hasUnsavedChanges());
+    ASSERT_TRUE(manager.saveProject());
+    EXPECT_FALSE(manager.hasUnsavedChanges());
+    ASSERT_TRUE(manager.renameItem(action, QStringLiteral("EditedAction")));
+    EXPECT_TRUE(manager.hasUnsavedChanges());
+    ASSERT_TRUE(manager.renameItem(action, QStringLiteral("SavedAction")));
+    EXPECT_FALSE(manager.hasUnsavedChanges());
+    ASSERT_TRUE(manager.closeProject());
+    ASSERT_TRUE(manager.loadProject(projectPath));
+    EXPECT_FALSE(manager.hasUnsavedChanges());
+}
+
+TEST(ProjectSerialization, AssetSavedStateIgnoresCacheRepresentationAndTracksContentEdits)
+{
+    ensureApp();
+    QTemporaryDir tempDir;
+    ASSERT_TRUE(tempDir.isValid());
+    auto& manager = VNX::ProjectManager::instance();
+    auto& registry = VNX::AssetRegistry::instance();
+    const auto closeProject = qScopeGuard([&] { manager.closeProject(); });
+    VNX::ProjectConfig config;
+    config.name = QStringLiteral("AssetSavedState");
+    config.location = tempDir.path();
+    ASSERT_TRUE(manager.createProject(config));
+    const QString projectPath = manager.currentProject()->projectPath;
+    const QString projectRoot = QFileInfo(projectPath).absolutePath();
+    const QString registryPath = QDir(projectRoot).filePath(
+        QStringLiteral(".cache/asset_registry/assets.json"));
+    VNX::AssetInfo asset;
+    asset.sourceID = registry.allocateStableID();
+    asset.relativePath = QStringLiteral("source.wav");
+    ASSERT_TRUE(registry.registerAsset(asset));
+    EXPECT_TRUE(manager.hasUnsavedChanges());
+    ASSERT_TRUE(manager.saveProject());
+    EXPECT_FALSE(manager.hasUnsavedChanges());
+    const QByteArray compactRegistry = QJsonDocument(registry.toJson()).toJson(QJsonDocument::Compact);
+    ASSERT_TRUE(manager.closeProject());
+    {
+        QFile file(registryPath);
+        ASSERT_TRUE(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        ASSERT_EQ(file.write(compactRegistry), compactRegistry.size());
+    }
+    ASSERT_TRUE(manager.loadProject(projectPath));
+    EXPECT_FALSE(manager.hasUnsavedChanges());
+    auto* loadedAsset = registry.getAsset(asset.sourceID);
+    ASSERT_NE(loadedAsset, nullptr);
+    const auto savedChannels = loadedAsset->metadata.channels;
+    loadedAsset->metadata.channels = savedChannels + 1;
+    EXPECT_TRUE(manager.hasUnsavedChanges());
+    loadedAsset->metadata.channels = savedChannels;
+    EXPECT_FALSE(manager.hasUnsavedChanges());
+    ASSERT_TRUE(manager.closeProject());
+    ASSERT_TRUE(QFile::remove(registryPath));
+    const auto committedFiles = projectFileBytes(projectRoot);
+    ASSERT_TRUE(manager.loadProject(projectPath));
+    EXPECT_FALSE(manager.hasUnsavedChanges());
+    EXPECT_FALSE(QFileInfo::exists(registryPath));
+    EXPECT_EQ(projectFileBytes(projectRoot), committedFiles);
+    loadedAsset = registry.getAsset(asset.sourceID);
+    ASSERT_NE(loadedAsset, nullptr);
+    loadedAsset->settings.targetSampleRate = 44100;
+    EXPECT_TRUE(manager.hasUnsavedChanges());
+    ASSERT_TRUE(manager.saveProject());
+    EXPECT_FALSE(manager.hasUnsavedChanges());
+    ASSERT_TRUE(manager.closeProject());
+    ASSERT_TRUE(manager.loadProject(projectPath));
+    EXPECT_FALSE(manager.hasUnsavedChanges());
+    loadedAsset = registry.getAsset(asset.sourceID);
+    ASSERT_NE(loadedAsset, nullptr);
+    EXPECT_EQ(loadedAsset->settings.targetSampleRate, 44100u);
 }
 
 TEST(ProjectSerialization, DuplicateTransitionEndpointsRejectItemLoad)

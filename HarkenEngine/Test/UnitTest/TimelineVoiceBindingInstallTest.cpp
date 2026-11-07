@@ -35,6 +35,39 @@ constexpr VnObjectId kBinding = harkentest::ObjectId(9001);
 constexpr VnObjectId kSound = harkentest::ObjectId(21);
 constexpr VnObjectId kAction = harkentest::ObjectId(41);
 
+struct InstalledVoiceStart {
+    harken::TimelineEventPayload payload{};
+    harken::TimelineProgramView program{};
+    harken::EventTemplate event{};
+    harken::ProgramView schedule{};
+
+    void Publish(harken::Engine& engine, VnVoiceHandle render, std::uint64_t frames) {
+        harken::EngineTimelineVoiceInstallIdentity installed{};
+        ASSERT_TRUE(engine.CaptureTimelineVoiceInstallIdentity(render, &installed));
+        payload.kind = harken::TimelineEventKind::Start;
+        payload.target = installed.target;
+        program = {installed.rootInstance, &payload, 1};
+        event.logicCommitSequence = 1;
+        event.subeventPhase = 20;
+        event.armToken = installed.startArm;
+        schedule.ownerInstance = installed.rootInstance;
+        schedule.ownerInstanceScheduleEpoch = engine.playableInstances.Classify(installed.rootInstance).scheduleEpoch;
+        schedule.transactionId = 1;
+        schedule.entryAnchorFrame = installed.onsetFrame;
+        schedule.events = &event;
+        schedule.eventCount = 1;
+        schedule.runtimeProgram = {installed.rootInstance, &program};
+        schedule.armToken = installed.startArm;
+        harken::PostInput post{};
+        post.transportEpoch = engine.timelinePool.Epoch();
+        post.logicCommitSequence = 1;
+        ASSERT_EQ(harken::PostStatus::Reserved, engine.timelinePlanner.PostPlay(schedule, post).status);
+        engine.AcceptSourceCommandPublications();
+        engine.timelinePlanner.PublishThrough(installed.onsetFrame + frames);
+        engine.nullBackend.Pump(static_cast<std::uint32_t>(installed.onsetFrame / kBlock));
+    }
+};
+
 VnConfig TimelineInstallConfig(std::uint32_t maxVoices = 0,
                                std::uint32_t blockFrames = 0,
                                std::uint32_t sampleRate = 0) {
@@ -748,6 +781,7 @@ TEST(TimelineVoiceInstall, BorrowedInputCopiesOnlyNativeFactsAndKeepsBindingSnap
             facts.pan = -0.25f;
             facts.spread = 0.4f;
             facts.sourceStartFrame = 11;
+            facts.sourcePhase = {UINT64_C(3) << 62, 0};
             facts.authoredDurationFrames = 4096;
             facts.target.programSemanticFingerprint = 101;
             facts.target.clipId = clipId;
@@ -803,6 +837,8 @@ TEST(TimelineVoiceInstall, BorrowedInputCopiesOnlyNativeFactsAndKeepsBindingSnap
             EXPECT_EQ(facts.target, arm->target);
             ASSERT_NE(nullptr, engine.voices.Resolve(render));
             EXPECT_EQ(4096u, engine.voices.Resolve(render)->authoredSourceDeadlineFrame);
+            EXPECT_EQ(facts.sourcePhase.high, engine.voices.Resolve(render)->resampler.phaseHigh);
+            EXPECT_DOUBLE_EQ(0.75, engine.voices.Resolve(render)->resampler.readFraction);
             EXPECT_EQ(1u, engine.effectBank.InUseOf(VN_EFFECT_GAIN));
             std::fill(paths.begin(), paths.end(), harken::PlaybackPathRow{});
             sends = {};
@@ -834,6 +870,115 @@ TEST(TimelineVoiceInstall, BorrowedInputCopiesOnlyNativeFactsAndKeepsBindingSnap
         EXPECT_EQ(1u, BindingInstanceCount(&engine, render));
         EXPECT_FALSE(engine.runtimeRecreateRequired);
     }
+}
+
+TEST(TimelineVoiceInstall, OutputCropUsesBoundPitchAndPreservesLoopOutroSamples) {
+    for (const auto workers : {0u, 2u}) {
+        for (const auto offset : {192u, 448u, 704u}) {
+            SCOPED_TRACE(workers);
+            SCOPED_TRACE(offset);
+            std::vector<float> reference;
+            for (const bool crop : {false, true}) {
+                auto config = TimelineInstallConfig(8, kBlock, kRate);
+                config.renderWorkerCount = workers;
+                EngineSession session(config);
+                ASSERT_EQ(VN_OK, session.InitResult());
+                auto& engine = *session.Engine();
+                ASSERT_EQ(harken::WorldInstallStatus::Ok,
+                    harkentest::InstallSmoothDefinitions(&engine, {kVariable}, 0.0f, 1.0f).status);
+                std::vector<float> pcm(1024);
+                for (std::size_t i = 0; i < pcm.size(); ++i)
+                    pcm[i] = 0.2f * std::sin(static_cast<float>(i) * 0.071f);
+                auto desc = MonoDesc(pcm, 44100);
+                ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &desc));
+                harken::TimelineVoiceInstallFacts facts{};
+                facts.soundId = kSound;
+                facts.outputBusId = VN_BUS_MASTER;
+                facts.capturedMedia = engine.registry.Lookup(kSound);
+                facts.capturedMedia.loop = {64, 256};
+                facts.loopCount = 3;
+                facts.pitchRatio = 1.25f;
+                facts.sourceOutputOffsetFrames = crop ? offset : 0;
+                harken::TimelineVoiceBindingInstall binding{};
+                binding.objectId = kSound;
+                binding.bindingId = kBinding;
+                binding.variableId = kVariable;
+                binding.targetId = harken::kTargetVoicePitch;
+                const harken::CurvePoint points[] = {{0.0f, 7.0f}, {1.0f, 7.0f}};
+                const harken::CurveHandlePair handles[] = {
+                    {points[0].x, points[0].y, points[1].x, points[1].y}};
+                ASSERT_TRUE(binding.curve.SetPoints(points, handles, 2));
+                const auto parent = engine.playableInstances.Acquire(harken::PlayableKind::Sound, 0);
+                ASSERT_NE(0u, parent);
+                const harken::TimelineVoiceInstallInput input{&facts, {&binding, 1}};
+                const auto result = harken::test::InstallTimelineVoiceStart(engine, input, parent, parent, parent, true,
+                    engine.timelinePool.PublishCutoffFrame());
+                ASSERT_EQ(VN_OK, result.status);
+                ASSERT_FALSE(result.emptySource);
+                ASSERT_NE(0u, result.renderHandle);
+                harken::EngineTimelineVoiceInstallIdentity installed{};
+                ASSERT_TRUE(engine.CaptureTimelineVoiceInstallIdentity(result.renderHandle, &installed));
+                EXPECT_GT(installed.initialSourceRatio, 1.25 * 44100.0 / 48000.0);
+                EXPECT_EQ(crop ? offset : 0u, facts.sourceOutputOffsetFrames);
+                InstalledVoiceStart start;
+                ASSERT_NO_FATAL_FAILURE(start.Publish(engine, result.renderHandle, offset + kBlock));
+                if (!crop) engine.nullBackend.Pump(offset / kBlock);
+                engine.nullBackend.Pump(1);
+                harken::TimelineArmObservation observation{};
+                ASSERT_TRUE(engine.timelineArms.Observe(installed.startArm, &observation));
+                ASSERT_NE(0u, observation.startedBlockSequence)
+                    << "state=" << static_cast<unsigned>(observation.state)
+                    << " applied=" << observation.armedCompletionSequence
+                    << " final=" << observation.finalSourcePublished
+                    << " onset=" << installed.onsetFrame
+                    << " protocol=" << engine.mixer.CommandProtocolViolationCount();
+                const auto count = engine.nullBackend.BlockFrames() * engine.nullBackend.Channels();
+                const auto* output = engine.nullBackend.LastBlock();
+                ASSERT_TRUE(std::any_of(output, output + count,
+                    [](float sample) { return std::abs(sample) > 0.01f; }));
+                if (!crop) reference.assign(output, output + count);
+                else {
+                    ASSERT_EQ(reference.size(), count);
+                    for (std::size_t i = 0; i < count; ++i)
+                        EXPECT_NEAR(reference[i], output[i], 1e-6f) << i;
+                }
+                EXPECT_FALSE(engine.runtimeRecreateRequired);
+            }
+        }
+    }
+}
+
+TEST(TimelineVoiceInstall, EmptyOutputCropRollsBackPrivateResourcesAndAllowsReuse) {
+    EngineSession session(TimelineInstallConfig(2, kBlock, kRate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
+    const auto parent = engine.playableInstances.Acquire(harken::PlayableKind::Sound, 0);
+    ASSERT_NE(0u, parent);
+    harken::TimelineVoiceInstallFacts facts{};
+    facts.soundId = kSound;
+    facts.outputBusId = VN_BUS_MASTER;
+    facts.capturedMedia = engine.registry.Lookup(kSound);
+    facts.sourceOutputOffsetFrames = facts.capturedMedia.frames;
+    const harken::TimelineVoiceInstallInput input{&facts};
+    for (std::uint32_t attempt = 0; attempt < 16; ++attempt) {
+        const auto result = harken::test::InstallTimelineVoiceStart(engine, input, parent, parent, parent, true);
+        ASSERT_EQ(VN_OK, result.status);
+        EXPECT_TRUE(result.emptySource);
+        EXPECT_EQ(0u, result.renderHandle);
+        EXPECT_EQ(0u, facts.capturedMedia.useCount->load());
+        EXPECT_FALSE(engine.runtimeRecreateRequired);
+    }
+    facts.sourceOutputOffsetFrames = 0;
+    const auto result = harken::test::InstallTimelineVoiceStart(engine, input, parent, parent, parent, true,
+        engine.timelinePool.PublishCutoffFrame());
+    ASSERT_EQ(VN_OK, result.status);
+    ASSERT_NE(0u, result.renderHandle);
+    EXPECT_FALSE(result.emptySource);
+    InstalledVoiceStart start;
+    ASSERT_NO_FATAL_FAILURE(start.Publish(engine, result.renderHandle, kBlock));
+    engine.nullBackend.Pump(1);
+    EXPECT_GT(engine.nullBackend.LastBlock()[0], 0.0f);
 }
 
 TEST(TimelineVoiceInstall, BorrowedInputFailureUnwindsNativePrefixAndAllowsFreshRetry) {

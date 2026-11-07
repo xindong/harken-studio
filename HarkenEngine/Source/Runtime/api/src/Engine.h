@@ -37,6 +37,7 @@
 #include "harken/core/LogRing.h"
 #include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/KnownCompletion.h"
+#include "harken/core/MusicPlaybackTimeline.h"
 #include "harken/core/Random.h"
 #include "harken/core/SnapshotBuffer.h"
 #include "harken/core/SourceCursorMirror.h"
@@ -468,7 +469,7 @@ struct PendingStartRecord {
     std::array<PinnedBinding, kMaxVoiceBindingInstanceSlots> pinnedBindings{};
     std::uint32_t pinnedBindingCount = 0;
     std::vector<ParamSystem::PreparedBindingToken> preparedBindings;
-    std::array<VnBindingId, kPackV2VoiceRecipeMaxBindings>
+    std::array<VnBindingId, kPackVoiceRecipeMaxBindings>
         recipeBindingIds{};
     std::uint32_t recipeBindingCount = 0;
     // Worst-case publication demand reserved at acceptance for the pinned
@@ -511,7 +512,7 @@ struct VoicePlayFacts {
     std::uint32_t priority = 128;       // steal priority, for return-time steal
     bool hasTonePreset = false;
     VoiceTonePreset tonePreset{};
-    std::array<VnBindingId, kPackV2VoiceRecipeMaxBindings>
+    std::array<VnBindingId, kPackVoiceRecipeMaxBindings>
         recipeBindingIds{};
     std::uint32_t recipeBindingCount = 0;
 };
@@ -649,7 +650,7 @@ struct ParkRecord {
     std::uint32_t returnEffectCount = 0;
     VnVoiceHandle returnPreparedRenderHandle = 0;
     bool returnEffectsPrepared = false;
-    std::array<VnBindingId, kPackV2VoiceRecipeMaxBindings>
+    std::array<VnBindingId, kPackVoiceRecipeMaxBindings>
         recipeBindingIds{};
     std::uint32_t recipeBindingCount = 0;
     // The render handle the voice held at park. Effect-parameter binding apply-
@@ -1904,6 +1905,8 @@ struct EngineVariableServicePayload {
 };
 
 struct EngineQueueServicePayload {
+    bool nativeTransitionPending = false;
+    bool nativeTransitionApplied = false;
     EngineQueueProgramBank* queuePreparingFollowing = nullptr;
     EngineQueueProgramBank* queueRetiringChain = nullptr;
     OccurrenceToken queueLookaheadRollbackOccurrence{};
@@ -2047,25 +2050,150 @@ struct EngineScheduleChildPropertyContext {
     std::vector<SelectionPathNodeV1> typedPrefix;
 };
 
+struct EngineSourceExit {
+    struct Voice {
+        FrontierSourceExitVoice binding{};
+        VoiceReleaseObserver release{};
+        bool initial = false;
+    };
+    FrontierSourceExit control{};
+    QueuePageConditionalReceiver queueReceiver;
+    EngineQueueChainFuture queueChain;
+    std::unique_ptr<EngineOwnedQueueFutureFiling> queueFollowingFiling;
+    Plan03GroupSliceIdentity targetAdmission{};
+    DecisionFuturePin sourceAdmissionLifetime{};
+    Plan03GroupReaderPin sourceAdmissionReader{};
+    DecisionFuturePin lifetime{};
+    Plan03GroupReaderPin reader{};
+    bool cancellationAccepted = false;
+    std::vector<std::unique_ptr<Voice>> voices;
+    std::vector<FrontierSourceExitVoice*> initialVoices;
+};
+
+struct EngineScheduleTargetFade {
+    CurveLUT curve{};
+    TimelineEventPayload payload{};
+};
+
+struct EngineScheduleAggregateState;
 struct EngineScheduleAggregateChild {
     PlayableRefV1 content{};
     std::uint64_t startOffsetFrames = 0;
     std::uint64_t endOffsetFrames = UINT64_MAX;
     std::uint32_t stableLeafOrdinal = 0;
+    std::uint32_t loopIteration = 0;
+    std::uint64_t queueSelectionVersion = 0;
+    OccurrenceToken queueRetiringOccurrence{};
+    CompositeCompletionOwnerToken queueCompletionOwner{};
+    OccurrenceToken queueCompletionLeaf{};
+    KnownCompletionPredicateV1 queueLeafCompletion{};
+    VnVoiceHandle queueCompletionRender = 0;
+    bool QueueCompletionReleased() const noexcept {
+        return queueRetiringOccurrence.generation == 0 && !queueCompletionOwner.Valid() &&
+            queueCompletionLeaf.generation == 0;
+    }
+    std::uint64_t sourceOffsetFrames = 0;
+    ScheduleTimeKindV1 scheduleTimeKind = ScheduleTimeKindV1::AbsoluteNanoseconds;
+    std::int64_t scheduleMicrosPerQuarter = 0;
+    std::int64_t scheduleEntryPosition = 0;
+    std::optional<MusicPlaybackTimeline> scheduleMusicWindow;
+    std::uint64_t scheduleMusicIteration = 0;
+    std::uint64_t scheduleMusicSourceOffset = 0;
     EnginePlayableServiceReference service{};
+    std::optional<VariableControlSide> variableControlSide;
     EngineScheduleChildPropertyContext properties;
     EngineNaturalClipDeadline naturalClipDeadline{};
+    std::vector<std::unique_ptr<EngineSourceExit>> sourceExits;
+    std::unique_ptr<EngineScheduleTargetFade> targetFade;
     PlayableTerminalOutcome outcome{};
     PlayableControlReason reason = PlayableControlReason::None;
     bool logicalComplete = false;
     bool resourcesReleased = false;
     bool lifecycleOwned = false;
     bool pendingEntry = false;
+    bool musicFromEntry = false;
+    std::unique_ptr<EngineScheduleAggregateState> preparedOrdinary;
+};
+
+struct EngineMusicScheduleBatch {
+    // These records never move after a preparation owner borrows one.
+    std::vector<EngineScheduleAggregateChild> children;
+    std::uint64_t iteration = 0;
+};
+
+struct EngineMusicQueuePosition {
+    VnObjectId container{};
+    std::uint64_t fingerprint = 0;
+    EngineScheduleChildPropertyContext path;
+    std::vector<std::uint64_t> ancestry;
+    QueueCheckpointKey checkpoint{};
+    EffectiveQueueState initial{};
+    EffectiveQueueState resetInitial{};
+    RandomQueueSeedContext seed{};
+    TransitionFadeV1 incomingFade{};
+    std::uint64_t sourceOffsetFrames = 0;
+    bool musicFromEntry = false;
+    bool checkpointLoaded = false;
+    bool exhausted = false;
+};
+
+struct EngineMusicScheduleState {
+    MusicPlaybackTimeline timeline{};
+    std::vector<EngineMusicQueuePosition> queueBaselines;
+    TempoSegment tempo{};
+    ClockKernel clock;
+    MarkerIndex markers;
+    EngineScheduleChildPropertyContext prefix;
+    std::vector<std::unique_ptr<EngineMusicScheduleBatch>> batches;
+    std::uint64_t sourceOffsetFrames = 0;
+    std::uint64_t nextIteration = 1;
+    std::uint64_t nextPassOffsetFrames = 0;
+    std::uint64_t finalEndOffsetFrames = UINT64_MAX;
+    std::uint64_t inheritedEndOffsetFrames = UINT64_MAX;
+    bool finalPassMaterialized = false;
+};
+
+struct EngineTrackRepeatState {
+    EngineScheduleChildPropertyContext prefix;
+    std::vector<std::unique_ptr<EngineMusicScheduleBatch>> batches;
+    ScheduleTimeKindV1 timeKind = ScheduleTimeKindV1::AbsoluteNanoseconds;
+    std::int64_t microsPerQuarter = 0;
+    std::int64_t entryPosition = 0;
+    std::uint64_t sourceOffsetFrames = 0;
+    std::uint64_t nextIteration = 1;
+    std::uint64_t nextPassOffsetFrames = 0;
+    std::uint64_t finalEndOffsetFrames = 0;
+    std::uint64_t inheritedEndOffsetFrames = UINT64_MAX;
+    std::uint32_t playCount = 1;
+    bool finalPassMaterialized = false;
+};
+
+struct EngineOrdinaryScheduleState {
+    EngineScheduleChildPropertyContext prefix;
+    std::vector<std::unique_ptr<EngineMusicScheduleBatch>> batches;
+    std::uint64_t callerSeed = 0;
+    std::uint64_t acceptedPostOrdinal = 0;
+    std::uint64_t nextOffsetFrames = 0;
+    std::uint64_t inheritedEndOffsetFrames = UINT64_MAX;
+    std::uint32_t loopLimit = 1;
+    std::uint32_t plannedSelections = 0;
+    std::uint8_t mode = 0;
+    EngineScheduleAggregateChild* tail = nullptr;
+    EngineScheduleAggregateChild* unpublished = nullptr;
+    std::uint64_t candidateNextOffsetFrames = 0;
+    std::uint32_t candidatePlannedSelections = 0;
+    bool candidateAwaitingChildEnd = false;
+    bool candidateExhausted = false;
+    bool awaitingChildEnd = false;
+    bool exhausted = false;
 };
 
 struct EngineScheduleAggregateState {
     // Prepared to the real clip count; membership is immutable after publication.
     std::vector<EngineScheduleAggregateChild> children;
+    std::unique_ptr<EngineMusicScheduleState> music;
+    std::unique_ptr<EngineTrackRepeatState> trackRepeat;
+    std::unique_ptr<EngineOrdinaryScheduleState> ordinary;
     std::uint64_t zeroWorkCompletionOffsetFrames = 0;
     bool hasZeroWorkCompletion = false;
     std::uint64_t completionOrdinal = 0;
@@ -2074,11 +2202,41 @@ struct EngineScheduleAggregateState {
     bool parentNotified = false;
     bool cancellationRequested = false;
 
+    template<class Visitor>
+    bool VisitChildren(Visitor&& visitor) {
+        for (auto& child : children) if (!visitor(child)) return false;
+        if (music != nullptr)
+            for (auto& batch : music->batches)
+                for (auto& child : batch->children) if (!visitor(child)) return false;
+        if (trackRepeat != nullptr)
+            for (auto& batch : trackRepeat->batches)
+                for (auto& child : batch->children) if (!visitor(child)) return false;
+        if (ordinary != nullptr)
+            for (auto& batch : ordinary->batches)
+                for (auto& child : batch->children) if (!visitor(child)) return false;
+        return true;
+    }
+
+    template<class Visitor>
+    bool VisitChildren(Visitor&& visitor) const {
+        for (const auto& child : children) if (!visitor(child)) return false;
+        if (music != nullptr)
+            for (const auto& batch : music->batches)
+                for (const auto& child : batch->children) if (!visitor(child)) return false;
+        if (trackRepeat != nullptr)
+            for (const auto& batch : trackRepeat->batches)
+                for (const auto& child : batch->children) if (!visitor(child)) return false;
+        if (ordinary != nullptr)
+            for (const auto& batch : ordinary->batches)
+                for (const auto& child : batch->children) if (!visitor(child)) return false;
+        return true;
+    }
+
     bool ChildrenReleased() const noexcept {
-        return std::all_of(children.begin(), children.end(),
-            [](const auto& child) noexcept {
-                return child.resourcesReleased && child.naturalClipDeadline.Empty();
-            });
+        return VisitChildren([](const auto& child) noexcept {
+            return child.resourcesReleased && child.naturalClipDeadline.Empty() && child.sourceExits.empty() &&
+                child.QueueCompletionReleased();
+        });
     }
 };
 
@@ -2938,6 +3096,11 @@ struct EngineTimelineVoiceInstallIdentity {
     std::uint64_t loopStartFrame = 0;
     std::uint64_t loopEndFrame = 0;
     std::uint64_t exitMarkerSourceFrame = 0;
+    std::uint64_t sourceStartFrame = 0;
+    ExactSourcePhase sourcePhase{};
+    std::uint32_t sourceLoopCount = 1;
+    double initialSourceRatio = 1.0;
+    bool hasExitMarker = false;
 };
 
 struct EnginePlainImmediateSource {
@@ -3469,6 +3632,7 @@ struct EngineActionStepPlanRow {
     bool stopHasFarLeaves = false;
     bool cooldownSuppressed = false;
     bool quantizeSuppressed = false;
+    bool initialQueueResetApplied = false;
 };
 
 struct EngineActionDeferredScratch {
@@ -4431,7 +4595,66 @@ struct EngineActionPlayStorage {
             return owner.Issue(table, identity, prepared, count, executeFrame, materializedOrdinals.data());
         }
     } initialSelection;
+    EngineFrontierAttemptToken selectionProducer{};
+    // A cropped music path can consume more selections than its tree depth.
+    // These tokens remain private until one pending producer takes ownership.
+    struct MusicSelectionOperations {
+        std::vector<PreparedSelectionPlayV1> prepared;
+        std::vector<std::uint32_t> ordinals;
+        std::vector<std::uint64_t> frames;
+        std::vector<PreparedSelectionPlayV1*> members;
+        std::uint32_t count = 0;
+        bool enabled = false;
+
+        bool PrepareNext() noexcept {
+            if (!enabled || count == UINT32_MAX || memguard::IsAudioTagged()) return false;
+            const auto size = count + 1u;
+            try {
+                detail::CheckedGrow(prepared, size, detail::LogicAllocSite::ActionPlayContainerStorage);
+                detail::CheckedGrow(ordinals, size, detail::LogicAllocSite::ActionPlayContainerStorage);
+                prepared.resize(size);
+                ordinals.resize(size);
+                detail::CheckedGrow(frames, size, detail::LogicAllocSite::ActionPlayContainerStorage);
+                frames.resize(size);
+            } catch (...) { return false; }
+            return !prepared[count].Valid();
+        }
+        bool PrepareMembers() noexcept {
+            if (!enabled || count != prepared.size() || count != ordinals.size() || count != frames.size() ||
+                memguard::IsAudioTagged()) return false;
+            try {
+                detail::CheckedGrow(members, count, detail::LogicAllocSite::ActionPlayContainerStorage);
+                members.resize(count);
+            } catch (...) { return false; }
+            for (std::uint32_t index = 0; index < count; ++index) {
+                if (!prepared[index].Valid()) return false;
+                members[index] = &prepared[index];
+            }
+            return true;
+        }
+        bool HasPreparedTokens() const noexcept {
+            return std::any_of(prepared.begin(), prepared.end(),
+                [](const auto& token) { return token.Valid(); });
+        }
+        bool CancelPrepared(SelectionMemoryTableV1& table) noexcept {
+            for (auto it = prepared.rbegin(); it != prepared.rend(); ++it)
+                if (it->Valid() && table.CancelPreparedPlay(&*it) != SelectionMemoryStatusV1::Ok) return false;
+            return true;
+        }
+        void Reset() noexcept {
+            assert(!HasPreparedTokens());
+            prepared.clear();
+            ordinals.clear();
+            frames.clear();
+            members.clear();
+            count = 0;
+            enabled = false;
+        }
+    } musicSelection;
+    std::vector<EngineMusicQueuePosition> musicQueuePositions;
     EnginePendingSelectionBatch initialSelectionBatch;
+    std::vector<EnginePendingSelectionBatch*> musicPublicationOwners;
+    std::vector<PendingSelectionBatchCommitV1> musicPublicationCommits;
     struct InitialSelectionCensusAssociation {
         EngineImmediateEntryAttempt* attempt = nullptr;
         ActionFiringHandle root = 0;
@@ -5030,6 +5253,8 @@ struct EngineActionPlayScratch {
     std::uint32_t initialFrontierParticipantCount = 0;
     EngineFrontierAttemptToken queueSignalEntryOwner{};
     EngineFrontierAttemptToken initialNativeForestOwner{};
+    ParentAudioGroupRef initialExternalAdmission{};
+    EngineScheduleChildAttemptOwnerContext* scheduleParentOwner = nullptr;
     EnginePlayableServiceReference nativeEntrySeedService{};
     bool nativeEntryForestRoot = false;
     EngineFrontierAttemptToken initialReadCutOwner{};
@@ -5263,6 +5488,8 @@ public:
         queueSuccessorLeafOccurrenceOwnerContexts{};
     CompositeCompletionOwnerToken queueSuccessorCompositeOwner{};
     PreparedTransactionBatch queueTransactions{};
+    PreparedTransactionBatch queueCurrentStartTransactions{};
+    std::vector<PreparedDeferredPost> queueCurrentDeferredStarts;
     std::array<PreparedPlan03GroupSlice, 2> queueGroupSlices{};
     std::array<CommittedPlan03GroupSlice, 2> queueCommittedGroupSlices{};
     PreparedQueueConditionalV1 queueConditional{};
@@ -5539,7 +5766,14 @@ struct EngineActionStopScratch {
     bool prepared = false;
 };
 
+struct EngineNativeQueueMusicCandidate;
+struct EngineNativeQueueMusicCandidateDeleter {
+    void operator()(EngineNativeQueueMusicCandidate* candidate) const noexcept;
+};
+
 struct EngineActionQueueReplacementScratch {
+    std::unique_ptr<EngineNativeQueueMusicCandidate, EngineNativeQueueMusicCandidateDeleter> musicCandidate;
+    QueuePageConditionalReceiver* oldPageReceiver = nullptr;
     MonitorControlCause resetCause{};
     EnginePlayableServiceRow* row = nullptr;
     QueueInstanceToken nativeReplacement{};
@@ -6985,8 +7219,9 @@ public:
             !playableMemberRecords.Reserve(static_cast<std::uint32_t>(playableMemberCapacity)) ||
             !memberRelations.Reserve(static_cast<std::uint32_t>(playableStorage.memberCount)) ||
             !variableControlRetargetPrograms.Reserve(resolved.maxScheduledTransactions) ||
-            !memberOnsets.Reserve(static_cast<std::uint32_t>(playableStorage.memberCount)) ||
+            !memberOnsets.Reserve(static_cast<std::uint32_t>(playableMemberCapacity)) ||
             !playableServiceWork.Reserve(resolved.maxPlayableInstances) ||
+            !scheduleAggregateDue.Reserve(resolved.maxPlayableInstances) ||
             !originalSinglePreparationHolders.Reserve(timelineArms.Capacity()) ||
             !originalQueueSourcePreparationHolders.Reserve(timelineArms.Capacity()))
             throw std::bad_alloc{};
@@ -8114,8 +8349,7 @@ public:
         PlayableInstanceHandle owner, std::uint64_t epoch, EnginePlayableStartRow& invocation,
         bool rootService, EngineActionPlayScratch::PreparedVariableControlOwnerContext* context,
         EngineActionPlayStorage* preparingStorage = nullptr,
-        const EnginePlayableServiceRow* preparingParent = nullptr,
-        bool requireMemberOnsets = true) noexcept {
+        const EnginePlayableServiceRow* preparingParent = nullptr) noexcept {
         if (owner == 0 || epoch == 0 || row.phase != EnginePlayableStartPhase::Free ||
             row.actionPrepared || row.partition.Valid() || row.quarantined || invocation.quarantined ||
             invocation.generation == 0 || invocation.serviceCount == UINT32_MAX ||
@@ -8173,22 +8407,6 @@ public:
         if (!partition.Valid()) {
             if (playablePartitions.OriginalStorageIssuerExhausted()) runtimeRecreateRequired = true;
             return false;
-        }
-        // Inline root Sounds have no member rows. Nested Sounds can still own
-        // member state through a variable-control ancestor.
-        if (requireMemberOnsets || !rootService) {
-            const auto memberBase = playableStorage.MemberBase(partition.slot);
-            const auto memberEnd = memberBase + playableStorage.memberStride;
-            for (auto slot = memberBase; slot < memberEnd;
-                 slot = (slot / 256u + 1u) * 256u) {
-                if (memberOnsets.Prepare({epoch, static_cast<std::uint32_t>(slot), 0})) continue;
-                original.baseline_.Return();
-                const bool cancelled = playablePartitions.Cancel(partition, row.identity);
-                assert(cancelled);
-                (void)cancelled;
-                if (context != nullptr) context->DiscardUnassociatedServiceReservation();
-                return false;
-            }
         }
         row.invocation = &invocation;
         row.invocationGeneration = invocation.generation;
@@ -8397,7 +8615,7 @@ public:
             left.rootStableId == right.rootStableId && left.callerSeed == right.callerSeed &&
             left.acceptedPostOrdinal == right.acceptedPostOrdinal && left.ticket == right.ticket &&
             left.emitterSlot == right.emitterSlot && left.emitterGeneration == right.emitterGeneration &&
-            left.eventBegin == right.eventBegin && left.eventCount == right.eventCount;
+            left.eventBegin == right.eventBegin && left.eventCount == right.eventCount && left.operationIndexed == right.operationIndexed && left.perOperationFrames == right.perOperationFrames;
     }
 
     EnginePendingSelectionBatch* ResolvePendingSelectionCensusProducer(
@@ -11525,7 +11743,9 @@ public:
         auto* rootOriginal = ResolveOriginalPlayableBaseline(this, playableInstances, root);
         auto* arrangingOriginal = ResolveOriginalPlayableBaseline(this, playableInstances, arranging);
         const auto slot = static_cast<std::uint32_t>(arranging);
-        if (rootOriginal == nullptr || arrangingOriginal == nullptr || slot >= originalSingleCurrentHolders.size()) return false;
+        if (rootOriginal == nullptr || arrangingOriginal == nullptr ||
+            slot >= originalSingleCurrentHolders.Capacity() ||
+            !PrepareOriginalSingleCurrentStorage(slot + 1u)) return false;
         auto& holder = originalSingleCurrentHolders[slot];
         if (holder.state == OriginalSingleCurrentHolder::State::Ending && !holder.ResetAfterNativeRetirement(*this)) return false;
         if (holder.state != OriginalSingleCurrentHolder::State::Empty || holder.bundle.Valid()) return false;
@@ -13657,8 +13877,6 @@ public:
     }
 
     bool PreparePlayableMemberDirectory(EnginePlayableServiceRow& row) noexcept {
-        if (!row.HasFeatureArrays() &&
-            (playableServices.PreparedUseActive() || !row.PrepareFeatureArrays())) return false;
         if (row.members.size() == playableStorage.memberStride) return true;
         if (memguard::IsAudioTagged() || playableMemberRecords.PreparedUseActive()) return false;
         try { row.members.resize(playableStorage.memberStride); }
@@ -13668,10 +13886,15 @@ public:
     static bool PlayableMemberReusable(const EnginePlayableMemberRecord& record) noexcept {
         return !record.occupied && record.generation != UINT64_MAX;
     }
+    bool PreparePlayableMemberRecord(std::uint32_t slot) noexcept {
+        // Prepare the observation page before constructing a reusable record.
+        // A failed page preparation must not leave a falsely ready record.
+        return memberOnsets.Prepare({1, slot, 0}) && playableMemberRecords.Emplace(slot);
+    }
     bool PreparePlayableMemberBacking(std::uint32_t count,
         StableSlotStorage<EnginePlayableMemberRecord>::Preparation* out) noexcept {
         return playableMemberRecords.PrepareBacking(count, 0, PlayableMemberReusable,
-            [this](std::uint32_t slot) noexcept { return playableMemberRecords.Emplace(slot); }, out);
+            [this](std::uint32_t slot) noexcept { return PreparePlayableMemberRecord(slot); }, out);
     }
     EnginePlayableMemberRecord* FindPlayableMember(EnginePlayableMemberToken token) noexcept {
         if (!token.Valid() || !playableMemberRecords.IsConstructed(token.slot)) return nullptr;
@@ -13749,12 +13972,12 @@ public:
         for (std::uint32_t slot = 0; slot < playableMemberRecords.size(); ++slot) {
             if (!playableMemberRecords.IsConstructed(slot)) {
                 if (playableMemberRecords.PreparedUseActive()) continue;
-                if (!playableMemberRecords.Emplace(slot)) return {};
+                if (!PreparePlayableMemberRecord(slot)) return {};
             }
             auto& record = playableMemberRecords[slot];
             if (!PlayableMemberReusable(record)) continue;
             if (!playableMemberRecords.ProtectBackingForAcquire(slot, PlayableMemberReusable,
-                    [this](std::uint32_t next) noexcept { return playableMemberRecords.Emplace(next); })) return {};
+                    [this](std::uint32_t next) noexcept { return PreparePlayableMemberRecord(next); })) return {};
             record.occupied = true;
             ++record.generation;
             return {slot, record.generation};
@@ -14068,10 +14291,14 @@ public:
              scratch.extraCommands.ConstructThrough(scratch.extraCommands.Capacity()) &&
              scratch.queueEvents.ConstructThrough(scratch.queueEvents.Capacity())));
     }
-    bool PrepareOriginalSingleCurrentStorage() noexcept {
-        if (originalSingleCurrentHolders.size() == originalSingleCurrentHolders.Capacity()) return true;
+    bool PrepareOriginalSingleCurrentStorage(std::size_t count) noexcept {
+        if (count > originalSingleCurrentHolders.Capacity()) return false;
+        if (originalSingleCurrentHolders.size() >= count) return true;
         if (memguard::IsAudioTagged() || playableServices.PreparedUseActive()) return false;
-        return originalSingleCurrentHolders.ConstructThrough(originalSingleCurrentHolders.Capacity());
+        return originalSingleCurrentHolders.ConstructThrough(count);
+    }
+    bool PrepareOriginalSingleCurrentStorage() noexcept {
+        return PrepareOriginalSingleCurrentStorage(originalSingleCurrentHolders.Capacity());
     }
     bool PreparePlayableFeatureBacking() noexcept {
         if (!PrepareOriginalSingleCurrentStorage() || !PreparePlayablePublicationStorage() ||
@@ -14082,12 +14309,11 @@ public:
         }
         return true;
     }
-    bool PrepareOriginalPlayableStorage(bool needsCurrentHolders = true,
+    bool PrepareOriginalPlayableStorage(bool needsCompleteInstanceStorage = true,
         std::uint32_t independentRoots = 1u) noexcept {
-        return (needsCurrentHolders ? playableInstances.PrepareStorage()
+        return (needsCompleteInstanceStorage ? playableInstances.PrepareStorage()
                 : playableInstances.PrepareStorageForAcquire(independentRoots)) &&
-            originalPlayableLifetimeHolders.ConstructThrough(playableInstances.ConstructedEntryCount()) &&
-            (!needsCurrentHolders || PrepareOriginalSingleCurrentStorage());
+            originalPlayableLifetimeHolders.ConstructThrough(playableInstances.ConstructedEntryCount());
     }
     bool PreparePlayablePublicationStorage(bool needsContainerState = true,
         std::uint32_t independentRoots = 1u) noexcept {
@@ -14115,9 +14341,10 @@ public:
         return true;
     }
     bool PreparePlayableStateStorage(bool needsContainerState = true,
-        std::uint32_t independentRoots = 1u) noexcept {
+        std::uint32_t independentRoots = 1u, bool needsCurrentHolders = true) noexcept {
         return PrepareTimelineStartStorage(needsContainerState, independentRoots) &&
             PrepareOriginalPlayableStorage(needsContainerState, independentRoots) &&
+            (!needsContainerState || !needsCurrentHolders || PrepareOriginalSingleCurrentStorage()) &&
             (!needsContainerState ||
                 (initialFrontierEvents.ConstructThrough(initialFrontierEvents.Capacity()) &&
                  initialFrontierRequests.ConstructThrough(initialFrontierRequests.Capacity()) &&
@@ -14177,6 +14404,14 @@ public:
     struct PlayableServiceWorkFamily {};
     using PlayableServiceWorkIdentity = RuntimeIndexIdentity<PlayableServiceWorkFamily>;
     RuntimeActivityIndex<PlayableServiceWorkFamily> playableServiceWork;
+    RuntimeDueIndex<PlayableServiceWorkFamily, RuntimeFrameClock> scheduleAggregateDue;
+
+    void ForgetScheduleAggregateDue(EnginePlayableServiceRow& row) noexcept {
+        const auto identity = CapturePlayableServiceWorkIdentity(row.identity.slot);
+        if (!scheduleAggregateDue.Prepared(identity)) return;
+        if (scheduleAggregateDue.Contains(identity)) (void)scheduleAggregateDue.Erase(identity);
+        (void)scheduleAggregateDue.ReleaseOwner(identity);
+    }
 
     PlayableServiceWorkIdentity CapturePlayableServiceWorkIdentity(std::uint32_t slot) const noexcept {
         if (slot >= playableServices.size()) return {};
@@ -14189,6 +14424,11 @@ public:
         assert(row.identity.slot < playableServices.size() &&
             &playableServices[row.identity.slot] == &row);
         const auto identity = CapturePlayableServiceWorkIdentity(row.identity.slot);
+        if (!occupied) {
+            ForgetScheduleAggregateDue(row);
+            SetPlayableServiceSourceExits(row, false);
+        }
+        SetPlayableServiceNeedsWork(row, occupied);
         const bool recorded = playableServiceWork.SetMembership(identity, RuntimeActivitySet::Active,
             occupied, [&](PlayableServiceWorkIdentity current) noexcept {
                 return current == CapturePlayableServiceWorkIdentity(current.slot);
@@ -14203,6 +14443,48 @@ public:
     }
     EnginePlayableServiceRow* NextOccupiedPlayableService(std::uint32_t* cursor) noexcept {
         const auto identity = playableServiceWork.Next(RuntimeActivitySet::Active, cursor,
+            [&](std::uint32_t slot) noexcept { return CapturePlayableServiceWorkIdentity(slot); });
+        return identity.Valid() ? &playableServices[identity.slot] : nullptr;
+    }
+    void SetPlayableServiceNeedsWork(EnginePlayableServiceRow& row, bool pending) noexcept {
+        const auto identity = CapturePlayableServiceWorkIdentity(row.identity.slot);
+        const bool recorded = playableServiceWork.SetMembership(identity, RuntimeActivitySet::Dirty,
+            pending, [&](PlayableServiceWorkIdentity current) noexcept {
+                return current == CapturePlayableServiceWorkIdentity(current.slot);
+            });
+        assert(recorded);
+        if (!recorded) runtimeRecreateRequired = true;
+        if (pending) {
+            // Source receipts wake the exact registered parent before the child
+            // can retire. Keep its deadline until service actually handles it.
+            auto* parent = ResolvePlayableService(row.parentService);
+            if (parent != nullptr && scheduleAggregateDue.Prepared(
+                    CapturePlayableServiceWorkIdentity(parent->identity.slot))) {
+                const auto parentIdentity = CapturePlayableServiceWorkIdentity(parent->identity.slot);
+                if (!playableServiceWork.MarkDirty(parentIdentity,
+                        [&](PlayableServiceWorkIdentity current) noexcept {
+                            return current == CapturePlayableServiceWorkIdentity(current.slot);
+                        })) runtimeRecreateRequired = true;
+            }
+        }
+    }
+    EnginePlayableServiceRow* NextPlayableServiceWork(std::uint32_t* cursor) noexcept {
+        const auto identity = playableServiceWork.Next(RuntimeActivitySet::Dirty, cursor,
+            [&](std::uint32_t slot) noexcept { return CapturePlayableServiceWorkIdentity(slot); });
+        return identity.Valid() ? &playableServices[identity.slot] : nullptr;
+    }
+    void SetPlayableServiceSourceExits(EnginePlayableServiceRow& row, bool present) noexcept {
+        // NextBlock navigates source-exit owners; the child descriptors own the work.
+        const auto identity = CapturePlayableServiceWorkIdentity(row.identity.slot);
+        const bool recorded = playableServiceWork.SetMembership(identity, RuntimeActivitySet::NextBlock,
+            present, [&](PlayableServiceWorkIdentity current) noexcept {
+                return current == CapturePlayableServiceWorkIdentity(current.slot);
+            });
+        assert(recorded);
+        if (!recorded) runtimeRecreateRequired = true;
+    }
+    EnginePlayableServiceRow* NextPlayableServiceSourceExit(std::uint32_t* cursor) noexcept {
+        const auto identity = playableServiceWork.Next(RuntimeActivitySet::NextBlock, cursor,
             [&](std::uint32_t slot) noexcept { return CapturePlayableServiceWorkIdentity(slot); });
         return identity.Valid() ? &playableServices[identity.slot] : nullptr;
     }
@@ -14523,16 +14805,37 @@ public:
     using MemberOnsetIdentity = RuntimeIndexIdentity<MemberOnsetFamily>;
     RuntimeActivityIndex<MemberOnsetFamily> memberOnsets;
 
-    MemberOnsetIdentity PlayableMemberOnsetIdentity(std::uint32_t slot) const noexcept {
-        const auto& member = ReadPlayableMember(slot).completion;
-        return member.leafInstance != 0
-            ? MemberOnsetIdentity{member.leafEpoch, slot, member.source.generation}
+    EnginePlayableMemberRecord* FindPlayableMemberOnset(std::uint32_t recordSlot) noexcept {
+        if (!playableMemberRecords.IsConstructed(recordSlot)) return nullptr;
+        auto& record = playableMemberRecords[recordSlot];
+        if (!record.occupied || !record.primaryOwned || !record.service.Valid() ||
+            record.service.slot >= playableServices.size() ||
+            record.physicalSlot >= playableStorage.memberCount) return nullptr;
+        auto& row = playableServices[record.service.slot];
+        const auto base = playableStorage.MemberBase(row.partition.slot);
+        if (record.physicalSlot < base) return nullptr;
+        const auto offset = record.physicalSlot - base;
+        if (offset >= playableStorage.memberStride) return nullptr;
+        return FindPlayableMember(row, static_cast<std::uint32_t>(offset)) == &record ? &record : nullptr;
+    }
+    static MemberOnsetIdentity PlayableMemberOnsetIdentity(std::uint32_t recordSlot,
+        const EnginePlayableMemberRecord& record) noexcept {
+        const auto& member = record.completion;
+        return member.leafInstance != 0 && member.leafEpoch != 0
+            ? MemberOnsetIdentity{record.generation, recordSlot, member.source.generation}
             : MemberOnsetIdentity{};
     }
+    MemberOnsetIdentity PlayableMemberOnsetIdentity(std::uint32_t recordSlot) noexcept {
+        const auto* record = FindPlayableMemberOnset(recordSlot);
+        return record != nullptr ? PlayableMemberOnsetIdentity(recordSlot, *record) : MemberOnsetIdentity{};
+    }
     void RefreshPlayableMemberOnset(std::size_t slot) noexcept {
-        const auto identity = PlayableMemberOnsetIdentity(static_cast<std::uint32_t>(slot));
+        const auto* record = FindPlayableMember(slot);
+        if (record == nullptr) return;
+        const auto recordSlot = playableMemberRecords.IndexOf(*record);
+        const auto identity = PlayableMemberOnsetIdentity(recordSlot, *record);
         if (!identity.Valid()) return;
-        const auto& member = ReadPlayableMember(slot).completion;
+        const auto& member = record->completion;
         const bool pending = (member.source.Valid() || member.resourcesRetired) &&
             member.sourceArmTombstoneSequence == 0;
         const bool recorded = memberOnsets.SetMembership(identity, RuntimeActivitySet::Active,
@@ -14543,7 +14846,9 @@ public:
         if (!recorded) runtimeRecreateRequired = true;
     }
     void RemovePlayableMemberOnset(std::size_t slot) noexcept {
-        const auto previous = PlayableMemberOnsetIdentity(static_cast<std::uint32_t>(slot));
+        const auto* record = FindPlayableMember(slot);
+        if (record == nullptr) return;
+        const auto previous = PlayableMemberOnsetIdentity(playableMemberRecords.IndexOf(*record), *record);
         if (previous.Valid()) {
             const bool removed = memberOnsets.SetMembership(previous, RuntimeActivitySet::Active,
                 false, [&](MemberOnsetIdentity current) noexcept {

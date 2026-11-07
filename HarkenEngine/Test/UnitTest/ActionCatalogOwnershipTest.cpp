@@ -96,7 +96,7 @@ std::vector<std::uint8_t> ActionPartitionPayload(std::uint64_t packStableId,
     std::vector<std::uint8_t> body;
     EXPECT_TRUE(EncodeCurrentWorldShippingBody(world, body));
     PackCanonicalPartitionHeader header;
-    header.headerBytes = kCanonicalDefinitionPartitionHeaderV2Bytes;
+    header.headerBytes = kPackCanonicalPartitionHeaderBytes;
     header.bodyVintage = kCanonicalDefinitionPartitionBodyVintage;
     header.bodyBytes = body.size();
     header.bodyChecksum = Fnv1a64(body.data(), body.size());
@@ -106,11 +106,11 @@ std::vector<std::uint8_t> ActionPartitionPayload(std::uint64_t packStableId,
     harkentest::packfoundation::ApplyCanonicalBusTriple(
         &header, harkentest::packfoundation::DefaultFixtureBusTriple());
     std::vector<std::uint8_t> payload(
-        kCanonicalDefinitionPartitionHeaderV2Bytes + body.size(), 0);
-    SerializePackCanonicalPartitionHeaderV2(header, payload.data());
-    header.headerChecksum = Fnv1a64(payload.data(), 80);
-    SerializePackCanonicalPartitionHeaderV2(header, payload.data());
-    std::memcpy(payload.data() + kCanonicalDefinitionPartitionHeaderV2Bytes,
+        kPackCanonicalPartitionHeaderBytes + body.size(), 0);
+    SerializePackCanonicalPartitionHeader(header, payload.data());
+    header.headerChecksum = Fnv1a64(payload.data(), kPackCanonicalPartitionHeaderHeaderChecksumOffset);
+    SerializePackCanonicalPartitionHeader(header, payload.data());
+    std::memcpy(payload.data() + kPackCanonicalPartitionHeaderBytes,
                 body.data(), body.size());
     return payload;
 }
@@ -122,8 +122,8 @@ std::vector<std::uint8_t> BuildContentPack(std::uint64_t revision,
     std::vector<std::uint8_t> partition = ActionPartitionPayload(
         packStableId, revision, actionId, valueBits);
     const std::uint64_t bodyBytes =
-        partition.size() > kCanonicalDefinitionPartitionHeaderV2Bytes
-            ? partition.size() - kCanonicalDefinitionPartitionHeaderV2Bytes
+        partition.size() > kPackCanonicalPartitionHeaderBytes
+            ? partition.size() - kPackCanonicalPartitionHeaderBytes
             : 0;
     ImageBuilder builder(kPackKindCanonicalContent);
     builder.AddEntry(kPackEntryKindPackRequirementBlock, packStableId,
@@ -149,7 +149,7 @@ PackGameplayCatalogActiveDraft MakeActive(std::string_view name,
     return row;
 }
 
-std::vector<std::uint8_t> BuildInitWithGameplayCatalog(
+std::vector<std::uint8_t> BuildGameplayCatalog(
     VnObjectId actionStableId) {
     PackGameplayCatalogHeader identity;
     identity.projectGuid = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16};
@@ -158,18 +158,7 @@ std::vector<std::uint8_t> BuildInitWithGameplayCatalog(
     std::vector<std::uint8_t> catalog;
     EXPECT_TRUE(EncodeGameplayCatalog(
         identity, {MakeActive("Play_Fire", actionStableId)}, {}, &catalog));
-    std::uint64_t bodyBytes = 0;
-    std::vector<std::uint8_t> partition =
-        harkentest::packfoundation::PartitionPayload(kInitId, 1, 0, 0,
-                                                    &bodyBytes, 64, kProjectId);
-    ImageBuilder builder(kPackKindInit);
-    builder.AddEntry(kPackEntryKindGameplayCatalog, 0, std::move(catalog));
-    builder.AddEntry(kPackEntryKindPackRequirementBlock, kInitId,
-                     RequirementPayload(kInitId, 1, 1, 0, bodyBytes));
-    builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, kInitId,
-                     std::move(partition));
-    harkentest::packfoundation::AppendNeutralMasterSnapshotV1(&builder);
-    return builder.Build();
+    return catalog;
 }
 
 std::vector<std::uint8_t> BuildInitBare() {
@@ -182,8 +171,14 @@ std::vector<std::uint8_t> BuildInitBare() {
                      RequirementPayload(kInitId, 1, 1, 0, bodyBytes));
     builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, kInitId,
                      std::move(partition));
-    harkentest::packfoundation::AppendNeutralMasterSnapshotV1(&builder);
+    harkentest::packfoundation::AppendNeutralMasterSnapshot(&builder);
     return builder.Build();
+}
+
+VnResult InstallGameplayCatalog(VnPackHandle initHandle, VnObjectId actionId) {
+    const auto bytes = BuildGameplayCatalog(actionId);
+    VnPackByteSpan span{sizeof(span), 0, bytes.data(), bytes.size()};
+    return Vn_SetGameplayCatalog(initHandle, &span);
 }
 
 VnResult ReplacePack(VnPackHandle handle, const std::vector<std::uint8_t>& bytes,
@@ -197,59 +192,29 @@ VnResult ReplacePack(VnPackHandle handle, const std::vector<std::uint8_t>& bytes
 
 } // namespace
 
-TEST(ActionCatalogOwnership, PrepareCandidateCopiesCatalogOnInitOnly) {
-    PackCanonicalImage initImage;
-    const std::vector<std::uint8_t> initBytes =
-        BuildInitWithGameplayCatalog(kActionId);
-    ASSERT_EQ(VN_OK, ParsePackCanonicalImage(initBytes.data(), initBytes.size(),
-                                             &initImage));
-    ASSERT_TRUE(initImage.hasGameplayCatalog);
-    PackComposition composition(1);
-    PackComposition::CandidateOwner initOwner;
-    ASSERT_EQ(VN_OK, composition.PrepareCandidate(initImage, kInitHandle,
-                                                  &initOwner));
-    EXPECT_TRUE(initOwner.hasGameplayCatalog);
-    EXPECT_EQ(1u, initOwner.gameplayCatalog.active.size());
-    EXPECT_EQ(kActionId, initOwner.gameplayCatalog.active[0].actionStableId);
-
-    PackCanonicalImage contentImage;
-    const std::vector<std::uint8_t> contentBytes =
-        BuildContentPack(1, kActionId, 0x3f000000u);
-    ASSERT_EQ(VN_OK,
-              ParsePackCanonicalImage(contentBytes.data(), contentBytes.size(),
-                                      &contentImage));
-    PackComposition::CandidateOwner contentOwner;
-    ASSERT_EQ(VN_OK, composition.PrepareCandidate(contentImage, kContentHandle,
-                                                  &contentOwner));
-    EXPECT_FALSE(contentOwner.hasGameplayCatalog);
-    EXPECT_TRUE(contentOwner.gameplayCatalog.active.empty());
-}
-
 TEST(ActionCatalogOwnership, KeepAndPrepareCommitExposeSessionCatalog) {
     PackCanonicalImage initImage;
     const std::vector<std::uint8_t> initBytes =
-        BuildInitWithGameplayCatalog(kActionId);
+        BuildInitBare();
     ASSERT_EQ(VN_OK, ParsePackCanonicalImage(initBytes.data(), initBytes.size(),
                                              &initImage));
+    const auto catalog = BuildGameplayCatalog(kActionId);
+    GameplayCatalogImage gameplay;
+    ASSERT_EQ(VN_OK, ParseGameplayCatalog(catalog.data(), catalog.size(), &gameplay));
     PackComposition composition(1);
     PackComposition::CandidateOwner initOwner;
     ASSERT_EQ(VN_OK, composition.PrepareCandidate(initImage, kInitHandle,
                                                   &initOwner));
     std::vector<PackComposition::CandidateOwner> owners;
     owners.push_back(std::move(initOwner));
-    ASSERT_EQ(VN_OK, composition.Commit(std::move(owners), &initImage,
-                                        kInitHandle, 8, 1));
+    PackComposition::PreparedCommit prepared;
+    ASSERT_EQ(VN_OK, composition.PrepareCommit(std::move(owners), &initImage, kInitHandle, 8, 1,
+                                               &prepared, nullptr, nullptr, false, &gameplay));
+    composition.CommitPrepared(&prepared);
     const auto* published = composition.Published();
     ASSERT_NE(nullptr, published);
     EXPECT_TRUE(published->hasGameplayCatalog);
-    ASSERT_FALSE(published->owners.empty());
-    EXPECT_TRUE(published->owners.front().hasGameplayCatalog);
-    EXPECT_EQ(initImage.gameplayCatalog.header.digest,
-              published->gameplayCatalog.header.digest);
-    const auto keep = PackComposition::Keep(published->owners.front());
-    EXPECT_TRUE(keep.hasGameplayCatalog);
-    EXPECT_EQ(published->gameplayCatalog.header.digest,
-              keep.gameplayCatalog.header.digest);
+    EXPECT_EQ(gameplay.header.digest, published->gameplayCatalog.header.digest);
     const auto bareBytes = BuildInitBare();
     PackCanonicalImage bare;
     ASSERT_EQ(VN_OK, ParsePackCanonicalImage(bareBytes.data(), bareBytes.size(), &bare));
@@ -257,7 +222,6 @@ TEST(ActionCatalogOwnership, KeepAndPrepareCommitExposeSessionCatalog) {
     ASSERT_EQ(VN_OK, composition.PrepareCandidate(bare, kInitHandle, &replacement));
     ASSERT_EQ(VN_OK, composition.Commit({std::move(replacement)}, &bare, kInitHandle, 8, 2));
     EXPECT_TRUE(composition.Published()->hasGameplayCatalog);
-    EXPECT_FALSE(composition.Published()->owners.front().hasGameplayCatalog);
     ++bare.requirement.packContentRevision;
     ASSERT_EQ(VN_OK, composition.PrepareCandidate(bare, kInitHandle, &replacement));
     ASSERT_EQ(VN_OK, composition.Commit({std::move(replacement)}, &bare, kInitHandle, 8, 3));
@@ -319,7 +283,6 @@ TEST(ActionCatalogOwnership, IndependentDirectorySurvivesContentActivationAndRej
     EXPECT_EQ(VN_UNKNOWN_ID, Vn_PostActionByName(&name, &firing));
     name.utf8Name = "Play_Renamed";
     EXPECT_EQ(VN_OK, Vn_PostActionByName(&name, &firing));
-    EXPECT_FALSE(session.Engine()->packComposition.Published()->owners.front().hasGameplayCatalog);
 }
 
 TEST(ActionCatalogOwnership, MissingKind25ReplaceIsNoOp) {
@@ -351,7 +314,7 @@ TEST(ActionCatalogOwnership, StaleActionIdRefusesBeforeMutation) {
     EngineSession session(MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const std::string paths[] = {
-        WriteTemp("stale-init.pack", BuildInitWithGameplayCatalog(kActionId)),
+        WriteTemp("stale-init.pack", BuildInitBare()),
         WriteTemp("stale-content.pack", BuildContentPack(1, kActionId, 0x3f000000u))};
     VnCanonicalPackSetMemberV1 members[2]{};
     VnCanonicalPackSetMemberResultV1 rows[2]{};
@@ -365,6 +328,7 @@ TEST(ActionCatalogOwnership, StaleActionIdRefusesBeforeMutation) {
     }
     VnCanonicalPackSetActivationReportV1 report{};
     ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(members, 2, rows, report));
+    ASSERT_EQ(VN_OK, InstallGameplayCatalog(report.initHandle, kActionId));
     const VnPackHandle initHandle = rows[0].handle;
     const VnPackHandle content = rows[1].handle;
     const auto* published = session.Engine()->packComposition.Published();
@@ -393,7 +357,7 @@ TEST(ActionCatalogOwnership, StaleInitialContentActivationKeepsPublishedPair) {
     EngineSession session(MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const std::string paths[] = {
-        WriteTemp("first-stale-init.pack", BuildInitWithGameplayCatalog(kActionId)),
+        WriteTemp("first-stale-init.pack", BuildInitBare()),
         WriteTemp("first-stale-content.pack",
                   BuildContentPack(1, harkentest::ObjectId(3003), 0x3f000000u))};
     VnCanonicalPackSetMemberV1 members[2]{};
@@ -408,6 +372,7 @@ TEST(ActionCatalogOwnership, StaleInitialContentActivationKeepsPublishedPair) {
     }
     VnCanonicalPackSetActivationReportV1 initial{};
     ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(members, 1, rows, initial));
+    ASSERT_EQ(VN_OK, InstallGameplayCatalog(initial.initHandle, kActionId));
     members[0].expectedHandle = initial.initHandle;
     const auto before = session.Engine()->packComposition.PublishedHandle();
     const auto generation = session.Engine()->packComposition.CompositeGeneration();
@@ -424,7 +389,7 @@ TEST(ActionCatalogOwnership, ActionFromWrongOwnerCannotBypassCatalog) {
     EngineSession session(MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const std::string paths[] = {
-        WriteTemp("wrong-owner-init.pack", BuildInitWithGameplayCatalog(kActionId)),
+        WriteTemp("wrong-owner-init.pack", BuildInitBare()),
         WriteTemp("wrong-owner-content.pack",
                   BuildContentPack(1, kActionId, 0x3f000000u, 33))};
     VnCanonicalPackSetMemberV1 members[2]{};
@@ -439,6 +404,7 @@ TEST(ActionCatalogOwnership, ActionFromWrongOwnerCannotBypassCatalog) {
     }
     VnCanonicalPackSetActivationReportV1 initial{};
     ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(members, 1, rows, initial));
+    ASSERT_EQ(VN_OK, InstallGameplayCatalog(initial.initHandle, kActionId));
     members[0].expectedHandle = initial.initHandle;
     const auto before = session.Engine()->packComposition.PublishedHandle();
     const auto generation = session.Engine()->packComposition.CompositeGeneration();
@@ -455,7 +421,7 @@ TEST(ActionCatalogOwnership, MatchingReplaceKeepsInitCatalogBytes) {
     EngineSession session(MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const std::string paths[] = {
-        WriteTemp("match-init.pack", BuildInitWithGameplayCatalog(kActionId)),
+        WriteTemp("match-init.pack", BuildInitBare()),
         WriteTemp("match-content.pack", BuildContentPack(1, kActionId, 0x3f000000u))};
     VnCanonicalPackSetMemberV1 members[2]{};
     VnCanonicalPackSetMemberResultV1 rows[2]{};
@@ -469,6 +435,7 @@ TEST(ActionCatalogOwnership, MatchingReplaceKeepsInitCatalogBytes) {
     }
     VnCanonicalPackSetActivationReportV1 report{};
     ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(members, 2, rows, report));
+    ASSERT_EQ(VN_OK, InstallGameplayCatalog(report.initHandle, kActionId));
     const VnPackHandle initHandle = rows[0].handle;
     const VnPackHandle content = rows[1].handle;
     const auto* before = session.Engine()->packComposition.Published();
@@ -489,7 +456,7 @@ TEST(ActionCatalogOwnership, InitHandleReplaceStaysInitLifecycle) {
     EngineSession session(MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const std::string paths[] = {
-        WriteTemp("init-life-init.pack", BuildInitWithGameplayCatalog(kActionId)),
+        WriteTemp("init-life-init.pack", BuildInitBare()),
         WriteTemp("init-life-content.pack", BuildContentPack(1, kActionId, 0x3f000000u))};
     VnCanonicalPackSetMemberV1 members[2]{};
     VnCanonicalPackSetMemberResultV1 rows[2]{};
@@ -503,6 +470,7 @@ TEST(ActionCatalogOwnership, InitHandleReplaceStaysInitLifecycle) {
     }
     VnCanonicalPackSetActivationReportV1 report{};
     ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(members, 2, rows, report));
+    ASSERT_EQ(VN_OK, InstallGameplayCatalog(report.initHandle, kActionId));
     const VnPackHandle initHandle = rows[0].handle;
     EXPECT_EQ(VN_PACK_INIT_LIFECYCLE,
               ReplacePack(initHandle, BuildContentPack(2, kActionId, 0x3f000000u),
@@ -514,7 +482,7 @@ TEST(ActionCatalogOwnership, PrepareCanonicalOwnersFaultKeepsOldPair) {
     EngineSession session(MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const std::string paths[] = {
-        WriteTemp("fault-init.pack", BuildInitWithGameplayCatalog(kActionId)),
+        WriteTemp("fault-init.pack", BuildInitBare()),
         WriteTemp("fault-content.pack", BuildContentPack(1, kActionId, 0x3f000000u))};
     VnCanonicalPackSetMemberV1 members[2]{};
     VnCanonicalPackSetMemberResultV1 rows[2]{};
@@ -528,6 +496,7 @@ TEST(ActionCatalogOwnership, PrepareCanonicalOwnersFaultKeepsOldPair) {
     }
     VnCanonicalPackSetActivationReportV1 report{};
     ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(members, 2, rows, report));
+    ASSERT_EQ(VN_OK, InstallGameplayCatalog(report.initHandle, kActionId));
     const VnPackHandle initHandle = rows[0].handle;
     const VnPackHandle content = rows[1].handle;
     const auto published = session.Engine()->packComposition.PublishedHandle();

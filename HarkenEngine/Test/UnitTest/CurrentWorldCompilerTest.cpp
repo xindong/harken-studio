@@ -3,6 +3,7 @@
 
 #include "Common/TestUtil.h"
 #include "UnitTest/StudioWorldTestSupport.h"
+#include "UnitTest/AllocationProbe.h"
 
 #include "Engine.h"
 #include "harken/core/CurrentWorldArtifact.h"
@@ -219,7 +220,7 @@ struct RuntimeEntryTimelineFixture {
     }
 };
 
-TEST(CurrentWorldCompiler, RuntimeEntry19RoundtripCannotEnableShippingOrInstallation) {
+TEST(CurrentWorldCompiler, RuntimeEntry19RoundtripInstallsWithoutChangingShippingFormat) {
     RuntimeEntryTimelineFixture fixture;
     ASSERT_NO_FATAL_FAILURE(fixture.Build());
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
@@ -241,7 +242,7 @@ TEST(CurrentWorldCompiler, RuntimeEntry19RoundtripCannotEnableShippingOrInstalla
     EXPECT_EQ(harken::ComputeSegmentScheduleFingerprintV2(segment), segment.scheduleSemanticFingerprint);
     EXPECT_EQ(harken::ComputeCurrentWorldFingerprintV6(decoded),
               fixture.world.identity.runtimeSemanticFingerprint);
-    EXPECT_EQ(harken::WorldInstallStatus::CapabilityUnavailable,
+    EXPECT_EQ(harken::WorldInstallStatus::Ok,
               harken::ValidateCurrentWorldV1(decoded));
     std::vector<std::uint8_t> again;
     ASSERT_TRUE(harken::EncodeCurrentWorldBodyV19(decoded, again));
@@ -258,7 +259,7 @@ TEST(CurrentWorldCompiler, RuntimeEntry19RoundtripCannotEnableShippingOrInstalla
     harken::CurrentWorldBodyImage attempt;
     ASSERT_TRUE(attempt.Decode(bytes.data(), bytes.size(), 19,
                                harken::CurrentWorldDecodeMode::ReplayCurrentAttempt));
-    EXPECT_EQ(harken::WorldInstallStatus::CapabilityUnavailable,
+    EXPECT_EQ(harken::WorldInstallStatus::Ok,
               harken::ValidateCurrentWorldV1(*attempt.ProductionView()));
     auto disguised = decoded;
     disguised.sourceBodyVintage = 18;
@@ -278,7 +279,7 @@ TEST(CurrentWorldCompiler, RuntimeEntry19RoundtripCannotEnableShippingOrInstalla
     config.maxActionFirings = 8;
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
-    EXPECT_EQ(harken::WorldInstallStatus::CapabilityUnavailable,
+    EXPECT_EQ(harken::WorldInstallStatus::Ok,
               harken::InstallContainerWorldV1(*session.Engine(), decoded).status);
     EXPECT_EQ(18u, harkenstudiobuild::kCurrentWorldShippingBodyVintage);
 }
@@ -869,6 +870,40 @@ TEST(CurrentWorldCompiler, V9BodyRoundTripsActionTransitionWideLoopCountAndStruc
               world.identity.runtimeSemanticFingerprint);
     EXPECT_EQ(harken::WorldInstallStatus::Ok,
               harkentest::ValidateCompilerWorld(world));
+
+    // Sweep real decoder allocations, including the final view arrays.
+    harken::CurrentWorldBodyImage measured;
+    allocation_probe::count = 0;
+    allocation_probe::enabled = true;
+    const auto measuredResult = measured.DecodeWithResult(
+        bytes.data(), bytes.size(), harken::kCurrentWorldShippingBodyVintage,
+        harken::CurrentWorldDecodeMode::StrictArtifact);
+    allocation_probe::enabled = false;
+    const auto allocationCount = allocation_probe::count;
+    ASSERT_EQ(harken::CurrentWorldBodyDecodeResult::Ok, measuredResult);
+    ASSERT_GT(allocationCount, 0u);
+
+    for (std::size_t nth = 1; nth <= allocationCount; ++nth) {
+        SCOPED_TRACE(nth);
+        const auto* accepted = decoded.ProductionView();
+        allocation_probe::count = 0;
+        allocation_probe::failAt = nth;
+        allocation_probe::enabled = true;
+        const auto result = decoded.DecodeWithResult(
+            bytes.data(), bytes.size(), harken::kCurrentWorldShippingBodyVintage,
+            harken::CurrentWorldDecodeMode::StrictArtifact);
+        allocation_probe::enabled = false;
+        const bool injected = allocation_probe::failAt == 0;
+        allocation_probe::failAt = 0;
+        ASSERT_TRUE(injected);
+        ASSERT_EQ(harken::CurrentWorldBodyDecodeResult::Capacity, result);
+        ASSERT_EQ(accepted, decoded.ProductionView());
+        EXPECT_EQ(harkentest::StudioObjectId(40u), accepted->actions[0].actionStableId);
+        EXPECT_EQ(96u, accepted->transitions[0].rules[0].targetFade.durationFrames);
+        ASSERT_TRUE(decoded.Decode(bytes.data(), bytes.size(),
+            harken::kCurrentWorldShippingBodyVintage,
+            harken::CurrentWorldDecodeMode::StrictArtifact));
+    }
 }
 
 TEST(CurrentWorldCompiler, V9BodyRejectsHostileActionCounts) {
@@ -896,7 +931,7 @@ TEST(CurrentWorldCompiler, V9BodyRejectsHostileActionCounts) {
         image.ProductionView()->identity.runtimeSemanticFingerprint;
 
     auto hostile = canonical;
-    WriteU32(hostile, harken::kCurrentWorldV3PrefixWireBytes,
+    WriteU32(hostile, harken::kPackBodyWorldPrefixBytes,
              harken::kHardActionDefinitionCapacity + 1u);
     EXPECT_FALSE(image.Decode(hostile.data(), hostile.size(),
                               harken::kCurrentWorldShippingBodyVintage,
@@ -905,8 +940,8 @@ TEST(CurrentWorldCompiler, V9BodyRejectsHostileActionCounts) {
               image.ProductionView()->identity.runtimeSemanticFingerprint);
 
     const std::size_t actionHeader =
-        canonical.size() - harken::kCurrentWorldActionHeaderWireBytes -
-        harken::kCurrentWorldActionStepWireBytes;
+        canonical.size() - harken::kPackBodyWorldActionHeaderBytes -
+        harken::kPackBodyWorldActionStepBytes;
     hostile = canonical;
     WriteU32(hostile, actionHeader + 24, harken::kMaxActionSteps + 1u);
     EXPECT_FALSE(image.Decode(hostile.data(), hostile.size(),
@@ -957,27 +992,6 @@ TEST(CurrentWorldCompiler, RetiredBindingWireSlotsMustRemainZero) {
             EXPECT_EQ(fingerprint, image.ProductionView()->identity.runtimeSemanticFingerprint);
         }
     }
-}
-
-TEST(CurrentWorldCompiler, V6BodyRejectsStructuralAncestorData) {
-    const auto compiled = harkencurrentworldcompiler::CompileCurrentWorldV1(
-        Project(), {}, Materializations(),
-        {Authored(harkenstudiobuild::ContainerModeV1::Random,
-                  harkenstudiobuild::RandomDisciplineV1::Draw)});
-    ASSERT_TRUE(compiled.ok());
-    bool hasStructuralAncestors = false;
-    for (std::uint32_t i = 0;
-         i < compiled.world->View().playablePropertyCount; ++i) {
-        hasStructuralAncestors = hasStructuralAncestors ||
-            compiled.world->View().playableProperties[i].structuralAncestorCount != 0;
-    }
-    ASSERT_TRUE(hasStructuralAncestors);
-
-    std::vector<std::uint8_t> bytes;
-    harken::CurrentWorldBodyImage image;
-    ASSERT_TRUE(harkentest::DecodeStudioWorld(compiled.world->View(), image));
-    EXPECT_FALSE(harken::EncodeCurrentWorldBodyV6(harkentest::AsHistoricalPrefix(*image.ProductionView()), bytes));
-    EXPECT_TRUE(bytes.empty());
 }
 
 TEST(CurrentWorldCompiler, ArtifactEnvelopePinsCanonicalBodyIdentity) {
@@ -1047,7 +1061,7 @@ TEST(CurrentWorldCompiler, StrictAndReplayDecodeRejectHistoricalBody) {
                   harken::CurrentWorldDecodeMode::StrictArtifact));
 
     std::vector<std::uint8_t> historicalBody;
-    ASSERT_TRUE(harken::EncodeCurrentWorldBodyV6(harkentest::AsHistoricalPrefix(world), historicalBody));
+    ASSERT_TRUE(harken::EncodeCurrentWorldShippingBody(world, historicalBody));
     harken::CurrentWorldBodyImage strictHistorical;
     EXPECT_EQ(harken::CurrentWorldBodyDecodeResult::Invalid,
               strictHistorical.DecodeWithResult(
@@ -1112,109 +1126,6 @@ TEST(CurrentWorldCompiler, ArtifactEnvelopeRefusesRetiredBodyVintage) {
               image.ProductionView()->sourceBodyVintage);
     EXPECT_EQ(harken::WorldInstallStatus::InvalidFormat,
               harken::ValidateCurrentWorldV1(*image.ProductionView()));
-}
-
-TEST(CurrentWorldCompiler, VintageEightRetainsV7WireAndCannotBecomeProduction) {
-    harkenprojectschema::CanonicalProject project{};
-    project.objects.push_back(Sound(40));
-    project.roots.push_back(harkentest::StudioObjectId(40));
-    const auto compiled = harkencurrentworldcompiler::CompileCurrentWorldV1(
-        project, {},
-        {{harkenplayableproperties::ContentPropertyKindV1::Sound,
-          harkentest::StudioObjectId(40), 400, harkenstudio::kMasterBusObjectId, 1}}, {});
-    ASSERT_TRUE(compiled.ok());
-    harken::CurrentWorldBodyImage currentImage;
-    ASSERT_TRUE(harkentest::DecodeStudioWorld(compiled.world->View(), currentImage));
-    auto historical = harkentest::AsHistoricalPrefix(*currentImage.ProductionView());
-    const auto& sound = historical.playableProperties[0];
-    harken::ContainerChildProgramViewV1 child{};
-    child.playable.kind = harken::PlayableKindV1::Sound;
-    child.playable.stableId = sound.stableId;
-    child.playable.expectedProgramSemanticFingerprint =
-        sound.programSemanticFingerprint;
-    child.playable.contentRevision = sound.contentRevision;
-    child.playable.routeStableId = sound.routeStableId;
-    child.playable.compatibilityFingerprint = sound.compatibilityFingerprint;
-    child.stableChildOrdinal = 3;
-    harken::AuthoredCompletionLeafV1 leaf{};
-    leaf.content = child.playable;
-    leaf.startOffset = {harken::AuthoredTimeDomainV1::SourceFrames, 0, 1};
-    leaf.duration = {harken::AuthoredTimeDomainV1::SourceFrames, 48000, 1};
-    leaf.loopCount = 1;
-    child.completion.payload.inlineTemplate.completionClass =
-        harken::AuthoredCompletionClassV1::FiniteMediaCandidate;
-    child.completion.payload.inlineTemplate.leafCount = 1;
-    child.completion.payload.inlineTemplate.leaves = &leaf;
-    harken::ContainerProgramViewV2 queue{};
-    queue.containerStableId = harkentest::ObjectId(90);
-    queue.programSemanticFingerprint = 9001;
-    queue.mode = harken::ContainerModeV1::SequenceQueue;
-    queue.queueCycle = harken::QueueCycleV1::Loop;
-    queue.reservedBool[0] = 255;
-    queue.signalOnlyPolicy = harken::SignalOnlyPolicyV1::StopQueue;
-    queue.childCount = 1;
-    queue.children = &child;
-    historical.containers = &queue;
-    historical.containerCount = 1;
-    historical.identity.runtimeSemanticFingerprint =
-        harken::ComputeCurrentWorldFingerprintV4(historical);
-    std::vector<std::uint8_t> vintageSeven;
-    std::vector<std::uint8_t> vintageEight;
-    ASSERT_TRUE(harken::EncodeCurrentWorldBodyV7(historical, vintageSeven));
-    ASSERT_TRUE(harken::EncodeCurrentWorldBodyV8(historical, vintageEight));
-    EXPECT_EQ(vintageSeven, vintageEight);
-    ASSERT_EQ(18u, harken::kCurrentWorldShippingBodyVintage);
-
-    harken::CurrentWorldBodyImage strict;
-    EXPECT_EQ(nullptr, strict.ProductionView());
-    EXPECT_EQ(nullptr, strict.ReplayView());
-    EXPECT_FALSE(strict.Decode(vintageEight.data(), vintageEight.size(),
-                               harken::kCurrentWorldBodyVintageV8,
-                               harken::CurrentWorldDecodeMode::StrictArtifact));
-    EXPECT_FALSE(strict.Decode(vintageEight.data(), vintageEight.size(),
-                               harken::kCurrentWorldShippingBodyVintage,
-                               harken::CurrentWorldDecodeMode::StrictArtifact));
-
-    harken::CurrentWorldBodyImage replay;
-    EXPECT_FALSE(replay.Decode(vintageEight.data(), vintageEight.size(),
-                              harken::kCurrentWorldBodyVintageV8,
-                              harken::CurrentWorldDecodeMode::ReplayRawAttempt));
-    EXPECT_EQ(nullptr, replay.ReplayView());
-    EXPECT_EQ(nullptr, replay.ProductionView());
-
-    auto malformed = vintageEight;
-    WriteU32(malformed, 0, 0);
-    harken::CurrentWorldBodyImage diagnostic;
-    EXPECT_FALSE(diagnostic.Decode(malformed.data(), malformed.size(),
-                                  harken::kCurrentWorldBodyVintageV8,
-                                  harken::CurrentWorldDecodeMode::ReplayRawAttempt));
-    EXPECT_EQ(nullptr, diagnostic.ProductionView());
-    EXPECT_EQ(nullptr, diagnostic.ReplayView());
-
-    std::vector<std::uint8_t> shipping;
-    ASSERT_TRUE(harkenstudiobuild::EncodeCurrentWorldShippingBody(compiled.world->View(),
-                                                     shipping));
-    EXPECT_NE(vintageEight, shipping);
-    ASSERT_TRUE(strict.Decode(shipping.data(), shipping.size(),
-                               harken::kCurrentWorldShippingBodyVintage,
-                               harken::CurrentWorldDecodeMode::StrictArtifact));
-    ASSERT_NE(nullptr, strict.ProductionView());
-    EXPECT_EQ(nullptr, strict.ReplayView());
-    const auto productionFingerprint =
-        strict.ProductionView()->identity.runtimeSemanticFingerprint;
-    EXPECT_FALSE(strict.Decode(vintageEight.data(), vintageEight.size(),
-                                harken::kCurrentWorldBodyVintageV8,
-                                harken::CurrentWorldDecodeMode::StrictArtifact));
-    ASSERT_NE(nullptr, strict.ProductionView());
-    EXPECT_EQ(productionFingerprint,
-              strict.ProductionView()->identity.runtimeSemanticFingerprint);
-    EXPECT_FALSE(replay.Decode(shipping.data(), shipping.size(),
-                               harken::kCurrentWorldBodyVintageV8,
-                               harken::CurrentWorldDecodeMode::ReplayRawAttempt));
-    EXPECT_FALSE(replay.Decode(shipping.data(), shipping.size(),
-                               harken::kCurrentWorldShippingBodyVintage,
-                               harken::CurrentWorldDecodeMode::ReplayRawAttempt));
-    EXPECT_EQ(nullptr, replay.ReplayView());
 }
 
 TEST(CurrentWorldCompiler, ArtifactHeaderUsesFirstFailurePrecedence) {
@@ -1321,7 +1232,7 @@ TEST(CurrentWorldCompiler, ArtifactBodySeparatesChecksumDecodeAndIdentity) {
                   header, body.data(), body.size(), image));
 
     body.assign(bodyBegin, artifact.end());
-    WriteU32(body, harken::kCurrentWorldV3PrefixWireBytes,
+    WriteU32(body, harken::kPackBodyWorldPrefixBytes,
              harken::kHardActionDefinitionCapacity + 1u);
     auto hostileHeader = header;
     hostileHeader.bodyChecksum = harken::Fnv1a64(body.data(), body.size());
@@ -1483,7 +1394,7 @@ TEST(CurrentWorldCompiler, ArtifactPathReportsFirstMalformedFileFailure) {
     hostile = canonical;
     WriteU32(hostile,
              harken::kCurrentWorldArtifactHeaderBytes +
-                 harken::kCurrentWorldV3PrefixWireBytes,
+                 harken::kPackBodyWorldPrefixBytes,
              harken::kHardActionDefinitionCapacity + 1u);
     WriteU64(hostile, 32,
              harken::Fnv1a64(

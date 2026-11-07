@@ -7,7 +7,6 @@
 #include "Core/ThemeManager.h"
 #include "Widgets/Common/WaveformRenderer.h"
 
-#include <QMouseEvent>
 #include <QPainter>
 
 #include <algorithm>
@@ -29,12 +28,10 @@ int frameX(uint64_t frame, uint64_t total, const QRectF& r)
 }
 
 SourceRangeThumb::SourceRangeThumb(QWidget* parent)
-    : QWidget(parent)
+    : PreviewField(parent)
 {
     setObjectName(QStringLiteral("sourceRangeThumb"));
     setEnabled(false);
-    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    QtControlSkin::setSemanticProperty(this, "fieldRole", QStringLiteral("preview"));
     connect(&MediaPool::instance(), &MediaPool::waveformReady, this, [this](uint32_t sourceID) {
         if (source_.sourceId == sourceID)
             setSource(source_, AssetRegistry::instance().getAsset(sourceID));
@@ -63,13 +60,10 @@ void SourceRangeThumb::clearSource(const QString& text)
     emptyText_ = text;
 }
 
-void SourceRangeThumb::paintEvent(QPaintEvent*)
+void SourceRangeThumb::paintPreview(QPainter& painter, const QRectF& bounds)
 {
-    QPainter painter(this);
-    QtControlSkin::paintFieldFrame(painter, this);
     const auto& metrics = ThemeManager::instance().metrics();
-    const int padding = metrics.spacingCompact;
-    const QRect inner = rect().adjusted(padding, padding, -padding, -padding);
+    const QRect inner = bounds.toRect();
     if (!emptyText_.isEmpty()) {
         const auto& colors = ThemeManager::instance().colors();
         painter.setPen(isEnabled() ? colors.textMuted : colors.textDisabled);
@@ -123,12 +117,6 @@ void SourceRangeThumb::paintEvent(QPaintEvent*)
     painter.setPen(QPen(style.trimHandle, metrics.borderWidth));
     painter.drawLine(trimStartX, inner.top(), trimStartX, inner.bottom());
     painter.drawLine(trimEndX, inner.top(), trimEndX, inner.bottom());
-}
-
-void SourceRangeThumb::mousePressEvent(QMouseEvent* event)
-{
-    if (event->button() == Qt::LeftButton)
-        emit clicked();
 }
 
 }

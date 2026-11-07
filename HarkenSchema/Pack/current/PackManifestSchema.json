@@ -298,6 +298,3877 @@
     "versionLocator": "json:$.schemaVersion",
     "writers": [
       "CanonicalPackSetExport"
-    ]
+    ],
+    "binaryLayout": {
+      "byteOrder": "little",
+      "constants": {
+        "busDefinitionDownmixCoefficientCount": 64,
+        "voiceRecipeMaxParams": 64,
+        "blobAlign": 64,
+        "payloadAlign": 8,
+        "shippingBodyVintage": 18
+      },
+      "kinds": [
+        {
+          "name": "media",
+          "id": 1,
+          "vintage": 2,
+          "record": "media"
+        },
+        {
+          "name": "bus",
+          "id": 2,
+          "vintage": 6,
+          "record": "bus"
+        },
+        {
+          "name": "busSend",
+          "id": 3,
+          "vintage": 2,
+          "record": "busSend"
+        },
+        {
+          "name": "attenuation",
+          "id": 4,
+          "vintage": 3,
+          "record": "attenuation"
+        },
+        {
+          "name": "bindingDefinition",
+          "id": 7,
+          "vintage": 2,
+          "record": "bindingDefinition"
+        },
+        {
+          "name": "bindingAttachment",
+          "id": 8,
+          "vintage": 2,
+          "record": "bindingAttachment"
+        },
+        {
+          "name": "container",
+          "id": 9,
+          "vintage": 2,
+          "record": "containerPayload"
+        },
+        {
+          "name": "voiceRecipe",
+          "id": 11,
+          "vintage": 5,
+          "record": "voiceRecipePayload"
+        },
+        {
+          "name": "busEffect",
+          "id": 12,
+          "vintage": 1,
+          "record": "busEffect"
+        },
+        {
+          "name": "effectDynamicRoute",
+          "id": 13,
+          "vintage": 1,
+          "record": "effectDynamicRoute"
+        },
+        {
+          "name": "canonicalDefinitionPartition",
+          "id": 21,
+          "vintage": 2,
+          "record": "canonicalPartitionHeader"
+        },
+        {
+          "name": "packRequirementBlock",
+          "id": 22,
+          "vintage": 2,
+          "record": "requirementBlock"
+        },
+        {
+          "name": "packDependencyEdge",
+          "id": 23,
+          "vintage": 2,
+          "record": "dependencyEdge"
+        },
+        {
+          "name": "busDefinitionSnapshot",
+          "id": 24,
+          "vintage": 2,
+          "record": "busDefinitionSnapshot"
+        },
+        {
+          "name": "variablePolicyOverlay",
+          "id": 26,
+          "vintage": 1,
+          "record": "variablePolicyPayload"
+        },
+        {
+          "name": "variableRequirements",
+          "id": 27,
+          "vintage": 1,
+          "record": "variableRequirementsPayload"
+        }
+      ],
+      "records": {
+        "bus": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "busId",
+              "type": "id"
+            },
+            {
+              "name": "parentBusId",
+              "type": "id"
+            },
+            {
+              "name": "volume",
+              "type": "f32"
+            },
+            {
+              "name": "outputBusVolume",
+              "type": "f32"
+            }
+          ]
+        },
+        "busSend": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "fromBusId",
+              "type": "id"
+            },
+            {
+              "name": "toBusId",
+              "type": "id"
+            },
+            {
+              "name": "levelDb",
+              "type": "f32"
+            },
+            {
+              "name": "reserved0",
+              "type": "u32",
+              "reserved": true
+            }
+          ]
+        },
+        "busDefinitionSnapshotHeader": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "schemaVersion",
+              "type": "u32"
+            },
+            {
+              "name": "storageModelVersion",
+              "type": "u32"
+            },
+            {
+              "name": "headerBytes",
+              "type": "u32"
+            },
+            {
+              "name": "publicationCapabilityVintage",
+              "type": "u32"
+            },
+            {
+              "name": "contentGeneration",
+              "type": "u64"
+            },
+            {
+              "name": "publishedBusFingerprint",
+              "type": "u64"
+            },
+            {
+              "name": "busCount",
+              "type": "u32"
+            },
+            {
+              "name": "sendCount",
+              "type": "u32"
+            },
+            {
+              "name": "effectCount",
+              "type": "u32"
+            },
+            {
+              "name": "effectParameterCount",
+              "type": "u32"
+            },
+            {
+              "name": "downmixCount",
+              "type": "u32"
+            },
+            {
+              "name": "coefficientCount",
+              "type": "u32"
+            },
+            {
+              "name": "busOffset",
+              "type": "u64"
+            },
+            {
+              "name": "sendOffset",
+              "type": "u64"
+            },
+            {
+              "name": "effectOffset",
+              "type": "u64"
+            },
+            {
+              "name": "effectParameterOffset",
+              "type": "u64"
+            },
+            {
+              "name": "downmixOffset",
+              "type": "u64"
+            },
+            {
+              "name": "coefficientOffset",
+              "type": "u64"
+            },
+            {
+              "name": "payloadBytes",
+              "type": "u64"
+            },
+            {
+              "name": "checksum",
+              "type": "u64"
+            },
+            {
+              "name": "compileTargetProfileFingerprint",
+              "type": "u64"
+            },
+            {
+              "name": "profileVintage",
+              "type": "u32"
+            },
+            {
+              "name": "renderSampleRateHz",
+              "type": "u32"
+            },
+            {
+              "name": "mixLayout",
+              "type": "u32"
+            },
+            {
+              "name": "deviceLayout",
+              "type": "u32"
+            },
+            {
+              "name": "runtimeCapabilityMask",
+              "type": "u64"
+            },
+            {
+              "name": "reserved0",
+              "type": "u64"
+            },
+            {
+              "name": "busRowBytes",
+              "type": "u32"
+            },
+            {
+              "name": "sendRowBytes",
+              "type": "u32"
+            },
+            {
+              "name": "downmixRowBytes",
+              "type": "u32"
+            },
+            {
+              "name": "coefficientRowBytes",
+              "type": "u32"
+            },
+            {
+              "name": "reserved1",
+              "type": "u64"
+            }
+          ]
+        },
+        "busDefinitionBus": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "busId",
+              "type": "id"
+            },
+            {
+              "name": "parentId",
+              "type": "id"
+            },
+            {
+              "name": "feedsFirstOrdinal",
+              "type": "u32"
+            },
+            {
+              "name": "faderDb",
+              "type": "f32"
+            },
+            {
+              "name": "outputBusVolumeDb",
+              "type": "f32"
+            },
+            {
+              "name": "faderAfterSlot",
+              "type": "u32"
+            },
+            {
+              "name": "outputLayout",
+              "type": "u32"
+            },
+            {
+              "name": "effectFirst",
+              "type": "u32"
+            },
+            {
+              "name": "effectCount",
+              "type": "u32"
+            },
+            {
+              "name": "downmixFirst",
+              "type": "u32"
+            },
+            {
+              "name": "downmixCount",
+              "type": "u32"
+            },
+            {
+              "name": "reserved0",
+              "type": "u32",
+              "reserved": true
+            }
+          ]
+        },
+        "busDefinitionSend": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "source",
+              "type": "id"
+            },
+            {
+              "name": "target",
+              "type": "id"
+            },
+            {
+              "name": "levelDb",
+              "type": "f32"
+            },
+            {
+              "name": "reserved0",
+              "type": "u32",
+              "reserved": true
+            },
+            {
+              "name": "reserved1",
+              "type": "u64",
+              "reserved": true
+            }
+          ]
+        },
+        "busDefinitionDownmix": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "busId",
+              "type": "id"
+            },
+            {
+              "name": "sourceLayout",
+              "type": "u32"
+            },
+            {
+              "name": "destinationLayout",
+              "type": "u32"
+            },
+            {
+              "name": "coefficientFirst",
+              "type": "u32"
+            },
+            {
+              "name": "coefficientCount",
+              "type": "u32"
+            },
+            {
+              "name": "reserved0",
+              "type": "u64",
+              "reserved": true
+            }
+          ]
+        },
+        "busDefinitionCoefficient": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "value",
+              "type": "f32"
+            }
+          ]
+        },
+        "media": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "soundId",
+              "type": "id"
+            },
+            {
+              "name": "sampleRate",
+              "type": "u32"
+            },
+            {
+              "name": "channelCount",
+              "type": "u16"
+            },
+            {
+              "name": "sampleFormat",
+              "type": "u16"
+            },
+            {
+              "name": "frameCount",
+              "type": "u64"
+            },
+            {
+              "name": "blobOffset",
+              "type": "u64"
+            },
+            {
+              "name": "blobBytes",
+              "type": "u64"
+            },
+            {
+              "name": "blobChecksum",
+              "type": "u64"
+            },
+            {
+              "name": "flags",
+              "type": "u32"
+            },
+            {
+              "name": "loopStartFrame",
+              "type": "u64"
+            },
+            {
+              "name": "loopEndFrame",
+              "type": "u64"
+            }
+          ]
+        },
+        "busEffect": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "busId",
+              "type": "id"
+            },
+            {
+              "name": "slot",
+              "type": "u32"
+            },
+            {
+              "name": "effectType",
+              "type": "u32"
+            },
+            {
+              "name": "descriptorVintage",
+              "type": "u32"
+            },
+            {
+              "name": "bypass",
+              "type": "u32"
+            },
+            {
+              "name": "faderPointGuard",
+              "type": "u32"
+            },
+            {
+              "name": "paramCount",
+              "type": "u32"
+            },
+            {
+              "name": "paramBytes",
+              "type": "u32"
+            },
+            {
+              "name": "reserved44",
+              "type": "u32",
+              "reserved": true
+            },
+            {
+              "name": "params",
+              "type": "array",
+              "of": "f32",
+              "length": "voiceRecipeMaxParams",
+              "live": "paramCount"
+            },
+            {
+              "name": "effectId",
+              "type": "id"
+            }
+          ]
+        },
+        "effectDynamicRoute": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "targetBusId",
+              "type": "id"
+            },
+            {
+              "name": "effectSlot",
+              "type": "u32"
+            },
+            {
+              "name": "routeSlot",
+              "type": "u32"
+            },
+            {
+              "name": "expectedEffectType",
+              "type": "u32"
+            },
+            {
+              "name": "signalForm",
+              "type": "u32"
+            },
+            {
+              "name": "sourceKind",
+              "type": "u32"
+            },
+            {
+              "name": "tap",
+              "type": "u32"
+            },
+            {
+              "name": "sourceId",
+              "type": "id"
+            },
+            {
+              "name": "levelDb",
+              "type": "f32"
+            },
+            {
+              "name": "reserved60",
+              "type": "u32",
+              "reserved": true
+            },
+            {
+              "name": "reserved64",
+              "type": "u64",
+              "reserved": true
+            }
+          ]
+        },
+        "bindingAttachment": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "bindingId",
+              "type": "id"
+            },
+            {
+              "name": "scopeKind",
+              "type": "u32"
+            },
+            {
+              "name": "reserved20",
+              "type": "u32",
+              "reserved": true
+            },
+            {
+              "name": "objectId",
+              "type": "id"
+            }
+          ]
+        },
+        "curvePoint": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "x",
+              "type": "f32"
+            },
+            {
+              "name": "y",
+              "type": "f32"
+            }
+          ]
+        },
+        "attenuationCurvePoint": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "x",
+              "type": "f32"
+            },
+            {
+              "name": "y",
+              "type": "f32"
+            }
+          ]
+        },
+        "curveHandles": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "h1x",
+              "type": "f32"
+            },
+            {
+              "name": "h1y",
+              "type": "f32"
+            },
+            {
+              "name": "h2x",
+              "type": "f32"
+            },
+            {
+              "name": "h2y",
+              "type": "f32"
+            }
+          ]
+        },
+        "attenuationCurve": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "enabled",
+              "type": "u32"
+            },
+            {
+              "name": "pointCount",
+              "type": "u32"
+            },
+            {
+              "name": "points",
+              "type": "array",
+              "of": {
+                "type": "record",
+                "record": "attenuationCurvePoint"
+              },
+              "length": 8,
+              "live": "pointCount"
+            },
+            {
+              "name": "handles",
+              "type": "array",
+              "of": {
+                "type": "record",
+                "record": "curveHandles"
+              },
+              "length": 7,
+              "live": {
+                "count": "pointCount",
+                "limit": 8,
+                "subtract": 1
+              }
+            }
+          ]
+        },
+        "bindingCurve": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "pointCount",
+              "type": "u32"
+            },
+            {
+              "name": "points",
+              "type": "array",
+              "of": {
+                "type": "record",
+                "record": "curvePoint"
+              },
+              "length": 8,
+              "live": "pointCount"
+            },
+            {
+              "name": "handles",
+              "type": "array",
+              "of": {
+                "type": "record",
+                "record": "curveHandles"
+              },
+              "length": 7,
+              "live": {
+                "count": "pointCount",
+                "limit": 8,
+                "subtract": 1
+              }
+            }
+          ]
+        },
+        "attenuation": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "rolloff",
+              "type": "u32"
+            },
+            {
+              "name": "minDistance",
+              "type": "f32"
+            },
+            {
+              "name": "maxDistance",
+              "type": "f32"
+            },
+            {
+              "name": "airAbsorptionNearHz",
+              "type": "f32"
+            },
+            {
+              "name": "airAbsorptionFarHz",
+              "type": "f32"
+            },
+            {
+              "name": "proximityRadius",
+              "type": "f32"
+            },
+            {
+              "name": "proximityMaxBoostDb",
+              "type": "f32"
+            },
+            {
+              "name": "coneEnabled",
+              "type": "u32"
+            },
+            {
+              "name": "coneInnerDeg",
+              "type": "f32"
+            },
+            {
+              "name": "coneOuterDeg",
+              "type": "f32"
+            },
+            {
+              "name": "coneOuterGainDb",
+              "type": "f32"
+            },
+            {
+              "name": "coneOuterLowpassHz",
+              "type": "f32"
+            },
+            {
+              "name": "volumeCurve",
+              "type": "record",
+              "record": "attenuationCurve"
+            },
+            {
+              "name": "lowpassCurve",
+              "type": "record",
+              "record": "attenuationCurve"
+            },
+            {
+              "name": "widthCurve",
+              "type": "record",
+              "record": "attenuationCurve"
+            },
+            {
+              "name": "proximityFrequency",
+              "type": "f32"
+            },
+            {
+              "name": "reserved604",
+              "type": "u32",
+              "reserved": true
+            }
+          ]
+        },
+        "bindingDefinition": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "bindingId",
+              "type": "id"
+            },
+            {
+              "name": "variableId",
+              "type": "id"
+            },
+            {
+              "name": "targetScopeKind",
+              "type": "u32"
+            },
+            {
+              "name": "targetId",
+              "type": "u32"
+            },
+            {
+              "name": "transitionMs",
+              "type": "u32"
+            },
+            {
+              "name": "reserved44",
+              "type": "u32",
+              "reserved": true
+            },
+            {
+              "name": "curve",
+              "type": "record",
+              "record": "bindingCurve"
+            }
+          ]
+        },
+        "containerHeader": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "containerId",
+              "type": "id"
+            },
+            {
+              "name": "selectionOrder",
+              "type": "u32"
+            },
+            {
+              "name": "avoidRepeatWindow",
+              "type": "u32"
+            },
+            {
+              "name": "selectionVariableId",
+              "type": "id"
+            },
+            {
+              "name": "defaultIndex",
+              "type": "u32"
+            },
+            {
+              "name": "childCount",
+              "type": "u32"
+            }
+          ]
+        },
+        "containerChild": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "playableId",
+              "type": "id"
+            },
+            {
+              "name": "weight",
+              "type": "u32"
+            },
+            {
+              "name": "matchValue",
+              "type": "u32"
+            },
+            {
+              "name": "delayMs",
+              "type": "u32"
+            },
+            {
+              "name": "delayJitterMs",
+              "type": "u32"
+            }
+          ]
+        },
+        "voiceRecipeHeader": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "playableId",
+              "type": "id"
+            },
+            {
+              "name": "installCount",
+              "type": "u32"
+            },
+            {
+              "name": "bindingCount",
+              "type": "u32"
+            }
+          ]
+        },
+        "voiceRecipeTone": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "present",
+              "type": "u32"
+            },
+            {
+              "name": "sectionEnableMask",
+              "type": "u32"
+            },
+            {
+              "name": "lowpassFrequencyHz",
+              "type": "f32"
+            },
+            {
+              "name": "lowpassQ",
+              "type": "f32"
+            },
+            {
+              "name": "highpassFrequencyHz",
+              "type": "f32"
+            },
+            {
+              "name": "highpassQ",
+              "type": "f32"
+            },
+            {
+              "name": "lowShelfFrequencyHz",
+              "type": "f32"
+            },
+            {
+              "name": "lowShelfQ",
+              "type": "f32"
+            },
+            {
+              "name": "lowShelfGainDb",
+              "type": "f32"
+            },
+            {
+              "name": "highShelfFrequencyHz",
+              "type": "f32"
+            },
+            {
+              "name": "highShelfQ",
+              "type": "f32"
+            },
+            {
+              "name": "highShelfGainDb",
+              "type": "f32"
+            }
+          ]
+        },
+        "voiceRecipeSpatial": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "attenuationId",
+              "type": "id"
+            },
+            {
+              "name": "distanceScale",
+              "type": "f32"
+            },
+            {
+              "name": "reserved20",
+              "type": "u32",
+              "reserved": true
+            }
+          ]
+        },
+        "voiceRecipePlayback": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "present",
+              "type": "u32"
+            },
+            {
+              "name": "loopCount",
+              "type": "u32"
+            }
+          ]
+        },
+        "voiceRecipeInstall": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "slot",
+              "type": "u32"
+            },
+            {
+              "name": "effectType",
+              "type": "u32"
+            },
+            {
+              "name": "descriptorVintage",
+              "type": "u32"
+            },
+            {
+              "name": "bypass",
+              "type": "u32"
+            },
+            {
+              "name": "paramCount",
+              "type": "u32"
+            },
+            {
+              "name": "paramBytes",
+              "type": "u32"
+            },
+            {
+              "name": "reserved24",
+              "type": "u32",
+              "reserved": true
+            },
+            {
+              "name": "reserved28",
+              "type": "u32",
+              "reserved": true
+            },
+            {
+              "name": "params",
+              "type": "array",
+              "of": "f32",
+              "length": "voiceRecipeMaxParams",
+              "live": "paramCount"
+            },
+            {
+              "name": "effectId",
+              "type": "id"
+            }
+          ]
+        },
+        "voiceRecipeBinding": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "bindingId",
+              "type": "id"
+            }
+          ]
+        },
+        "containerPayload": {
+          "mode": "stream",
+          "fields": [
+            {
+              "name": "header",
+              "type": "record",
+              "record": "containerHeader"
+            },
+            {
+              "name": "children",
+              "type": "rows",
+              "record": "containerChild",
+              "count": "childCount"
+            }
+          ]
+        },
+        "voiceRecipeInstallRow": {
+          "mode": "stream",
+          "fields": [
+            {
+              "name": "wire",
+              "type": "record",
+              "record": "voiceRecipeInstall"
+            }
+          ]
+        },
+        "voiceRecipePayload": {
+          "mode": "stream",
+          "fields": [
+            {
+              "name": "header",
+              "type": "record",
+              "record": "voiceRecipeHeader"
+            },
+            {
+              "name": "tone",
+              "type": "record",
+              "record": "voiceRecipeTone"
+            },
+            {
+              "name": "spatial",
+              "type": "record",
+              "record": "voiceRecipeSpatial"
+            },
+            {
+              "name": "playback",
+              "type": "record",
+              "record": "voiceRecipePlayback"
+            },
+            {
+              "name": "installs",
+              "type": "rows",
+              "record": "voiceRecipeInstallRow",
+              "count": "installCount"
+            },
+            {
+              "name": "bindings",
+              "type": "rows",
+              "record": "voiceRecipeBinding",
+              "count": "bindingCount"
+            }
+          ]
+        },
+        "dependencyEdge": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "prerequisitePackStableId",
+              "type": "u64"
+            },
+            {
+              "name": "edgeKind",
+              "type": "u32"
+            },
+            {
+              "name": "required01",
+              "type": "u32"
+            },
+            {
+              "name": "expectedPrerequisiteContentRevision",
+              "type": "u64"
+            },
+            {
+              "name": "expectedBusContentGeneration",
+              "type": "u64"
+            },
+            {
+              "name": "expectedPublishedBusFingerprint",
+              "type": "u64"
+            },
+            {
+              "name": "expectedCompileTargetProfileFingerprint",
+              "type": "u64"
+            }
+          ]
+        },
+        "requirementBlock": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "schemaVersion",
+              "type": "u32"
+            },
+            {
+              "name": "storageModelVersion",
+              "type": "u32"
+            },
+            {
+              "name": "packStableId",
+              "type": "u64"
+            },
+            {
+              "name": "packContentRevision",
+              "type": "u64"
+            },
+            {
+              "name": "definitionPartitionRevision",
+              "type": "u64"
+            },
+            {
+              "name": "resourceClosureRevision",
+              "type": "u64"
+            },
+            {
+              "name": "semanticFingerprint",
+              "type": "u64"
+            },
+            {
+              "name": "lineageFingerprint",
+              "type": "u64"
+            },
+            {
+              "name": "ownedDefinitionCount",
+              "type": "u32"
+            },
+            {
+              "name": "ownedResourceCount",
+              "type": "u32"
+            },
+            {
+              "name": "installedDefinitionBytes",
+              "type": "u64"
+            },
+            {
+              "name": "installedResourceBytes",
+              "type": "u64"
+            },
+            {
+              "name": "replacementPeakBytes",
+              "type": "u64"
+            },
+            {
+              "name": "decodeStagingBytes",
+              "type": "u64"
+            },
+            {
+              "name": "requiredCapabilityMask",
+              "type": "u32"
+            },
+            {
+              "name": "reserved0",
+              "type": "u32"
+            },
+            {
+              "name": "payloadChecksumCoverage",
+              "type": "u64"
+            },
+            {
+              "name": "busContentGeneration",
+              "type": "u64"
+            },
+            {
+              "name": "publishedBusFingerprint",
+              "type": "u64"
+            },
+            {
+              "name": "compileTargetProfileFingerprint",
+              "type": "u64"
+            }
+          ]
+        },
+        "filePrefix": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "magic",
+              "type": "bytes",
+              "length": 4,
+              "const": "VSPK"
+            },
+            {
+              "name": "formatVersion",
+              "type": "u32"
+            },
+            {
+              "name": "headerBytes",
+              "type": "u32"
+            }
+          ]
+        },
+        "fileHeader": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "magic",
+              "type": "bytes",
+              "length": 4,
+              "const": "VSPK"
+            },
+            {
+              "name": "formatVersion",
+              "type": "u32"
+            },
+            {
+              "name": "headerBytes",
+              "type": "u32"
+            },
+            {
+              "name": "fileBytes",
+              "type": "u64"
+            },
+            {
+              "name": "packKind",
+              "type": "u32"
+            },
+            {
+              "name": "entryCount",
+              "type": "u32"
+            },
+            {
+              "name": "directoryOffset",
+              "type": "u64"
+            },
+            {
+              "name": "directoryChecksum",
+              "type": "u64"
+            }
+          ]
+        },
+        "mediaFileHeader": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "magic",
+              "type": "bytes",
+              "length": 4,
+              "const": "VSPK"
+            },
+            {
+              "name": "formatVersion",
+              "type": "u32"
+            },
+            {
+              "name": "headerBytes",
+              "type": "u32"
+            },
+            {
+              "name": "fileBytes",
+              "type": "u64"
+            },
+            {
+              "name": "entryCount",
+              "type": "u32"
+            },
+            {
+              "name": "tocOffset",
+              "type": "u32"
+            },
+            {
+              "name": "tocChecksum",
+              "type": "u64"
+            }
+          ]
+        },
+        "directoryEntry": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "kind",
+              "type": "u32"
+            },
+            {
+              "name": "vintage",
+              "type": "u32"
+            },
+            {
+              "name": "id",
+              "type": "id"
+            },
+            {
+              "name": "offset",
+              "type": "u64"
+            },
+            {
+              "name": "size",
+              "type": "u64"
+            },
+            {
+              "name": "payloadChecksum",
+              "type": "u64"
+            },
+            {
+              "name": "relationOrdinal",
+              "type": "u64"
+            }
+          ]
+        },
+        "variablePolicyHeader": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "rowCount",
+              "type": "u32"
+            },
+            {
+              "name": "format",
+              "type": "u32",
+              "const": 2
+            },
+            {
+              "name": "reserved",
+              "type": "u64",
+              "reserved": true
+            }
+          ]
+        },
+        "variablePolicyRow": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "variableId",
+              "type": "id"
+            },
+            {
+              "name": "writers",
+              "type": "u8"
+            },
+            {
+              "name": "reserved",
+              "type": "bytes",
+              "length": 7,
+              "reserved": true
+            },
+            {
+              "name": "executionFingerprint",
+              "type": "u64"
+            }
+          ]
+        },
+        "variableAnchorCount": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "count",
+              "type": "u32"
+            }
+          ]
+        },
+        "variableAnchor": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "anchor",
+              "type": "i32"
+            }
+          ]
+        },
+        "variableLabelHeader": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "labelMappingFingerprint",
+              "type": "u64"
+            },
+            {
+              "name": "labelCount",
+              "type": "u32"
+            },
+            {
+              "name": "reserved",
+              "type": "u32",
+              "reserved": true
+            }
+          ]
+        },
+        "variableLabel": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "labelId",
+              "type": "id"
+            },
+            {
+              "name": "anchor",
+              "type": "i32"
+            },
+            {
+              "name": "reserved",
+              "type": "u32",
+              "reserved": true
+            }
+          ]
+        },
+        "variableRequirementsHeader": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "rowCount",
+              "type": "u32"
+            },
+            {
+              "name": "format",
+              "type": "u32",
+              "const": 1
+            },
+            {
+              "name": "reserved",
+              "type": "u64",
+              "reserved": true
+            }
+          ]
+        },
+        "variableRequirement": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "identityClass",
+              "type": "u8",
+              "const": 1
+            },
+            {
+              "name": "reserved",
+              "type": "bytes",
+              "length": 7,
+              "reserved": true
+            },
+            {
+              "name": "stableId",
+              "type": "id"
+            },
+            {
+              "name": "expectedExecutionFingerprint",
+              "type": "u64"
+            },
+            {
+              "name": "expectedLabelMappingFingerprint",
+              "type": "u64"
+            }
+          ]
+        },
+        "variablePolicyRecord": {
+          "mode": "stream",
+          "fields": [
+            {
+              "name": "wire",
+              "type": "record",
+              "record": "variablePolicyRow"
+            }
+          ]
+        },
+        "variableLabelRecord": {
+          "mode": "stream",
+          "fields": [
+            {
+              "name": "wire",
+              "type": "record",
+              "record": "variableLabel"
+            }
+          ]
+        },
+        "variableRequirementRecord": {
+          "mode": "stream",
+          "fields": [
+            {
+              "name": "wire",
+              "type": "record",
+              "record": "variableRequirement"
+            }
+          ]
+        },
+        "variableAnchorSection": {
+          "mode": "stream",
+          "fields": [
+            {
+              "name": "header",
+              "type": "record",
+              "record": "variableAnchorCount"
+            },
+            {
+              "name": "anchors",
+              "type": "rows",
+              "record": "variableAnchor",
+              "count": "count"
+            }
+          ]
+        },
+        "variableLabelSection": {
+          "mode": "stream",
+          "fields": [
+            {
+              "name": "header",
+              "type": "record",
+              "record": "variableLabelHeader"
+            },
+            {
+              "name": "labels",
+              "type": "rows",
+              "record": "variableLabelRecord",
+              "count": "labelCount"
+            }
+          ]
+        },
+        "variablePolicyPayload": {
+          "mode": "stream",
+          "fields": [
+            {
+              "name": "header",
+              "type": "record",
+              "record": "variablePolicyHeader"
+            },
+            {
+              "name": "rows",
+              "type": "rows",
+              "record": "variablePolicyRecord",
+              "count": "rowCount"
+            },
+            {
+              "name": "anchorGroups",
+              "type": "rows",
+              "record": "variableAnchorSection",
+              "count": "rowCount"
+            },
+            {
+              "name": "labelGroups",
+              "type": "rows",
+              "record": "variableLabelSection",
+              "count": "rowCount"
+            }
+          ]
+        },
+        "variableRequirementsPayload": {
+          "mode": "stream",
+          "fields": [
+            {
+              "name": "header",
+              "type": "record",
+              "record": "variableRequirementsHeader"
+            },
+            {
+              "name": "rows",
+              "type": "rows",
+              "record": "variableRequirementRecord",
+              "count": "rowCount"
+            }
+          ]
+        },
+        "bodyPayloadHeader": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "presentMask",
+              "type": "u64"
+            },
+            {
+              "name": "volume",
+              "type": "u32"
+            },
+            {
+              "name": "pitch",
+              "type": "u32"
+            },
+            {
+              "name": "outputBusVolume",
+              "type": "u32"
+            },
+            {
+              "name": "streamingMode",
+              "type": "u32"
+            },
+            {
+              "name": "loopCount",
+              "type": "u32"
+            },
+            {
+              "name": "spatialIs3DEnabled",
+              "type": "u8"
+            },
+            {
+              "name": "reserved",
+              "type": "u16",
+              "reserved": true
+            },
+            {
+              "name": "spatialPanning",
+              "type": "u32"
+            },
+            {
+              "name": "spatialSpread",
+              "type": "u32"
+            },
+            {
+              "name": "spatialAttenuationDistanceScaling",
+              "type": "u32"
+            },
+            {
+              "name": "legacySpatialValue",
+              "type": "u32"
+            },
+            {
+              "name": "outputBusRef",
+              "type": "id"
+            },
+            {
+              "name": "spatialAttenuationRef",
+              "type": "id"
+            },
+            {
+              "name": "legacyValue",
+              "type": "u64"
+            },
+            {
+              "name": "spatializationMix",
+              "type": "u32"
+            },
+            {
+              "name": "sendCount",
+              "type": "u32"
+            },
+            {
+              "name": "reservedCount1",
+              "type": "u32",
+              "reserved": true
+            },
+            {
+              "name": "reservedCount2",
+              "type": "u32",
+              "reserved": true
+            },
+            {
+              "name": "effectNodeCount",
+              "type": "u32"
+            },
+            {
+              "name": "effectEdgeCount",
+              "type": "u32"
+            }
+          ]
+        },
+        "bodyPayloadSend": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "stableSendOrdinal",
+              "type": "u32"
+            },
+            {
+              "name": "reserved",
+              "type": "u32"
+            },
+            {
+              "name": "targetBusId",
+              "type": "id"
+            },
+            {
+              "name": "sendLevel",
+              "type": "f32"
+            },
+            {
+              "name": "reserved2",
+              "type": "u32"
+            }
+          ]
+        },
+        "bodyPayloadEffectNodeHeader": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "nodeId",
+              "type": "u32"
+            },
+            {
+              "name": "effectId",
+              "type": "id"
+            },
+            {
+              "name": "effectType",
+              "type": "u32"
+            },
+            {
+              "name": "paramCount",
+              "type": "u32"
+            },
+            {
+              "name": "reserved",
+              "type": "u32",
+              "reserved": true
+            }
+          ]
+        },
+        "bodyPayloadEffectParam": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "paramId",
+              "type": "u32"
+            },
+            {
+              "name": "valueBits",
+              "type": "u32"
+            }
+          ]
+        },
+        "bodyPayloadEffectEdge": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "fromNodeId",
+              "type": "u32"
+            },
+            {
+              "name": "toNodeId",
+              "type": "u32"
+            }
+          ]
+        },
+        "bodyPayloadEffectNode": {
+          "mode": "stream",
+          "fields": [
+            {
+              "name": "header",
+              "type": "record",
+              "record": "bodyPayloadEffectNodeHeader"
+            },
+            {
+              "name": "params",
+              "type": "rows",
+              "record": "bodyPayloadEffectParam",
+              "count": "paramCount"
+            }
+          ]
+        },
+        "bodyPayloadBody": {
+          "mode": "stream",
+          "fields": [
+            {
+              "name": "sends",
+              "type": "rows",
+              "record": "bodyPayloadSend",
+              "count": "sendCount"
+            },
+            {
+              "name": "effectNodes",
+              "type": "rows",
+              "record": "bodyPayloadEffectNode",
+              "count": "effectNodeCount"
+            },
+            {
+              "name": "effectEdges",
+              "type": "rows",
+              "record": "bodyPayloadEffectEdge",
+              "count": "effectEdgeCount"
+            }
+          ],
+          "context": "bodyPayloadHeader"
+        },
+        "bodyPayload": {
+          "mode": "stream",
+          "fields": [
+            {
+              "name": "header",
+              "type": "record",
+              "record": "bodyPayloadHeader"
+            },
+            {
+              "name": "body",
+              "type": "record",
+              "record": "bodyPayloadBody"
+            }
+          ]
+        },
+        "bodyWorldPrefix": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "schema",
+              "type": "u32"
+            },
+            {
+              "name": "compiler",
+              "type": "u32"
+            },
+            {
+              "name": "selectionAlgorithm",
+              "type": "u32"
+            },
+            {
+              "name": "gridAlgorithm",
+              "type": "u32"
+            },
+            {
+              "name": "transitionAlgorithm",
+              "type": "u32"
+            },
+            {
+              "name": "publicationProtocol",
+              "type": "u32"
+            },
+            {
+              "name": "runtimeSemanticFingerprint",
+              "type": "u64"
+            },
+            {
+              "name": "capabilityMask",
+              "type": "u64"
+            },
+            {
+              "name": "variableCount",
+              "type": "u32"
+            },
+            {
+              "name": "playablePropertyProgramCount",
+              "type": "u32"
+            },
+            {
+              "name": "playableOccurrencePropertyCount",
+              "type": "u32"
+            },
+            {
+              "name": "playablePropertySendCount",
+              "type": "u32"
+            },
+            {
+              "name": "reservedChildCount1",
+              "type": "u32"
+            },
+            {
+              "name": "reservedChildCount2",
+              "type": "u32"
+            },
+            {
+              "name": "playablePropertyLayerAncestorRefCount",
+              "type": "u32"
+            },
+            {
+              "name": "playablePropertyEffectNodeCount",
+              "type": "u32"
+            },
+            {
+              "name": "playablePropertyEffectParamCount",
+              "type": "u32"
+            },
+            {
+              "name": "playablePropertyEffectEdgeCount",
+              "type": "u32"
+            },
+            {
+              "name": "trackScheduleCount",
+              "type": "u32"
+            },
+            {
+              "name": "segmentScheduleCount",
+              "type": "u32"
+            },
+            {
+              "name": "scheduleTrackRefCount",
+              "type": "u32"
+            },
+            {
+              "name": "schedulePlacementCount",
+              "type": "u32"
+            },
+            {
+              "name": "scheduleMarkerCount",
+              "type": "u32"
+            },
+            {
+              "name": "containerCount",
+              "type": "u32"
+            },
+            {
+              "name": "transitionProgramCount",
+              "type": "u32"
+            },
+            {
+              "name": "maxContainerDepth",
+              "type": "u32"
+            },
+            {
+              "name": "maxChildrenPerContainer",
+              "type": "u32"
+            },
+            {
+              "name": "maxAvoidLastN",
+              "type": "u32"
+            },
+            {
+              "name": "maxDiscreteAxes",
+              "type": "u32"
+            },
+            {
+              "name": "maxDiscreteRows",
+              "type": "u32"
+            },
+            {
+              "name": "maxDiscreteTrieNodes",
+              "type": "u32"
+            },
+            {
+              "name": "maxContinuousAxes",
+              "type": "u32"
+            },
+            {
+              "name": "maxContinuousRows",
+              "type": "u32"
+            },
+            {
+              "name": "maxContinuousCandidates",
+              "type": "u32"
+            },
+            {
+              "name": "maxContinuousActiveRows",
+              "type": "u32"
+            },
+            {
+              "name": "maxContinuousLiveRows",
+              "type": "u32"
+            },
+            {
+              "name": "maxTransitionRules",
+              "type": "u32"
+            },
+            {
+              "name": "maxCurvePoints",
+              "type": "u32"
+            },
+            {
+              "name": "maxKnownScheduleLeaves",
+              "type": "u32"
+            },
+            {
+              "name": "maxTrackSchedulePrograms",
+              "type": "u32"
+            },
+            {
+              "name": "maxSegmentSchedulePrograms",
+              "type": "u32"
+            },
+            {
+              "name": "maxScheduleTrackRefsPerSegment",
+              "type": "u32"
+            },
+            {
+              "name": "maxScheduleTrackRefsTotal",
+              "type": "u32"
+            },
+            {
+              "name": "maxSchedulePlacementsPerTrack",
+              "type": "u32"
+            },
+            {
+              "name": "maxSchedulePlacementsTotal",
+              "type": "u32"
+            },
+            {
+              "name": "maxScheduleMarkersPerSegment",
+              "type": "u32"
+            },
+            {
+              "name": "maxScheduleMarkersTotal",
+              "type": "u32"
+            },
+            {
+              "name": "maxTrackSegmentScheduleDepth",
+              "type": "u32"
+            }
+          ]
+        },
+        "bodyWorldCapacity": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "maxVariableDefinitions",
+              "type": "u32"
+            },
+            {
+              "name": "maxContainerPrograms",
+              "type": "u32"
+            },
+            {
+              "name": "maxPlayablePropertyPrograms",
+              "type": "u32"
+            },
+            {
+              "name": "maxPlayableOccurrencePropertyRows",
+              "type": "u32"
+            },
+            {
+              "name": "maxPlayablePropertySendsTotal",
+              "type": "u32"
+            },
+            {
+              "name": "maxPlayablePropertyLayerAncestorRefsTotal",
+              "type": "u32"
+            },
+            {
+              "name": "maxPlayablePropertyEffectNodesTotal",
+              "type": "u32"
+            },
+            {
+              "name": "maxPlayablePropertyEffectParamsTotal",
+              "type": "u32"
+            },
+            {
+              "name": "maxPlayablePropertyEffectEdgesTotal",
+              "type": "u32"
+            },
+            {
+              "name": "maxContainerDepth",
+              "type": "u32"
+            },
+            {
+              "name": "maxChildrenPerContainer",
+              "type": "u32"
+            },
+            {
+              "name": "maxAvoidLastN",
+              "type": "u32"
+            },
+            {
+              "name": "maxDiscreteAxes",
+              "type": "u32"
+            },
+            {
+              "name": "maxDiscreteRows",
+              "type": "u32"
+            },
+            {
+              "name": "maxDiscreteTrieNodes",
+              "type": "u32"
+            },
+            {
+              "name": "maxContinuousAxes",
+              "type": "u32"
+            },
+            {
+              "name": "maxContinuousRows",
+              "type": "u32"
+            },
+            {
+              "name": "maxContinuousCandidates",
+              "type": "u32"
+            },
+            {
+              "name": "maxContinuousActiveRows",
+              "type": "u32"
+            },
+            {
+              "name": "maxContinuousLiveRows",
+              "type": "u32"
+            },
+            {
+              "name": "maxTransitionRules",
+              "type": "u32"
+            },
+            {
+              "name": "maxCurvePoints",
+              "type": "u32"
+            },
+            {
+              "name": "maxKnownScheduleLeaves",
+              "type": "u32"
+            },
+            {
+              "name": "maxTrackSchedulePrograms",
+              "type": "u32"
+            },
+            {
+              "name": "maxSegmentSchedulePrograms",
+              "type": "u32"
+            },
+            {
+              "name": "maxScheduleTrackRefsPerSegment",
+              "type": "u32"
+            },
+            {
+              "name": "maxScheduleTrackRefsTotal",
+              "type": "u32"
+            },
+            {
+              "name": "maxSchedulePlacementsPerTrack",
+              "type": "u32"
+            },
+            {
+              "name": "maxSchedulePlacementsTotal",
+              "type": "u32"
+            },
+            {
+              "name": "maxScheduleMarkersPerSegment",
+              "type": "u32"
+            },
+            {
+              "name": "maxScheduleMarkersTotal",
+              "type": "u32"
+            },
+            {
+              "name": "maxTrackSegmentScheduleDepth",
+              "type": "u32"
+            },
+            {
+              "name": "maxActionDefinitions",
+              "type": "u32"
+            },
+            {
+              "name": "maxActionStepsPerDefinition",
+              "type": "u32"
+            },
+            {
+              "name": "maxActionStepsTotal",
+              "type": "u32"
+            },
+            {
+              "name": "maxActionTriggerDepth",
+              "type": "u32"
+            },
+            {
+              "name": "maxActionExpandedWork",
+              "type": "u32"
+            }
+          ]
+        },
+        "bodyWorldActionCapacity": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "actionCount",
+              "type": "u32"
+            },
+            {
+              "name": "maxActionDefinitions",
+              "type": "u32"
+            },
+            {
+              "name": "maxActionStepsPerDefinition",
+              "type": "u32"
+            },
+            {
+              "name": "maxActionStepsTotal",
+              "type": "u32"
+            },
+            {
+              "name": "maxActionTriggerDepth",
+              "type": "u32"
+            },
+            {
+              "name": "maxActionExpandedWork",
+              "type": "u32"
+            }
+          ]
+        },
+        "bodyWorldStructuralCount": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "value",
+              "type": "u32"
+            }
+          ]
+        },
+        "bodyWorldProjectId": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "value",
+              "type": "id"
+            }
+          ]
+        },
+        "bodyWorldVariableHeader": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "variableId",
+              "type": "id"
+            },
+            {
+              "name": "kind",
+              "type": "u32"
+            },
+            {
+              "name": "scope",
+              "type": "u32",
+              "const": 1
+            },
+            {
+              "name": "rangeMin",
+              "type": "f32"
+            },
+            {
+              "name": "rangeMax",
+              "type": "f32"
+            },
+            {
+              "name": "defaultValue",
+              "type": "f32"
+            },
+            {
+              "name": "reserved",
+              "type": "u32",
+              "reserved": true
+            }
+          ]
+        },
+        "bodyWorldVariable": {
+          "mode": "stream",
+          "fields": [
+            {
+              "name": "header",
+              "type": "record",
+              "record": "bodyWorldVariableHeader"
+            }
+          ]
+        },
+        "bodyWorldPlayableRef": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "kind",
+              "type": "u32"
+            },
+            {
+              "name": "reserved",
+              "type": "u32"
+            },
+            {
+              "name": "stableId",
+              "type": "id"
+            },
+            {
+              "name": "expectedProgramSemanticFingerprint",
+              "type": "u64"
+            },
+            {
+              "name": "contentRevision",
+              "type": "u64"
+            },
+            {
+              "name": "routeStableId",
+              "type": "id"
+            },
+            {
+              "name": "compatibilityFingerprint",
+              "type": "u64"
+            }
+          ]
+        },
+        "bodyWorldActionRef": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "kind",
+              "type": "u32"
+            },
+            {
+              "name": "reserved",
+              "type": "u32"
+            },
+            {
+              "name": "stableId",
+              "type": "id"
+            },
+            {
+              "name": "expectedProgramSemanticFingerprint",
+              "type": "u64"
+            }
+          ]
+        },
+        "bodyWorldTime": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "domain",
+              "type": "u32"
+            },
+            {
+              "name": "numerator",
+              "type": "u64"
+            },
+            {
+              "name": "denominator",
+              "type": "u32"
+            }
+          ]
+        },
+        "bodyWorldPropertyHeader": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "contentPropertyKind",
+              "type": "u32"
+            },
+            {
+              "name": "authoredStableOrder",
+              "type": "u32"
+            },
+            {
+              "name": "stableId",
+              "type": "id"
+            },
+            {
+              "name": "programSemanticFingerprint",
+              "type": "u64"
+            },
+            {
+              "name": "contentRevision",
+              "type": "u64"
+            },
+            {
+              "name": "routeStableId",
+              "type": "id"
+            },
+            {
+              "name": "compatibilityFingerprint",
+              "type": "u64"
+            },
+            {
+              "name": "organizationLayerAncestorCount",
+              "type": "u32"
+            },
+            {
+              "name": "reserved",
+              "type": "u32",
+              "reserved": true
+            }
+          ]
+        },
+        "bodyWorldLayerAncestor": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "layerStableId",
+              "type": "id"
+            },
+            {
+              "name": "layerProgramSemanticFingerprint",
+              "type": "u64"
+            }
+          ]
+        },
+        "bodyWorldStructuralHeader": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "structuralAncestorCount",
+              "type": "u32"
+            },
+            {
+              "name": "reserved",
+              "type": "u32",
+              "reserved": true
+            }
+          ]
+        },
+        "bodyWorldStructuralAncestorHeader": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "contentPropertyKind",
+              "type": "u32"
+            },
+            {
+              "name": "reserved",
+              "type": "u32"
+            },
+            {
+              "name": "stableId",
+              "type": "id"
+            },
+            {
+              "name": "programSemanticFingerprint",
+              "type": "u64"
+            }
+          ]
+        },
+        "bodyWorldOccurrenceHeader": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "parentKind",
+              "type": "u32"
+            },
+            {
+              "name": "stableOccurrenceOrdinal",
+              "type": "u32"
+            },
+            {
+              "name": "parentStableId",
+              "type": "id"
+            },
+            {
+              "name": "parentProgramSemanticFingerprint",
+              "type": "u64"
+            },
+            {
+              "name": "childPlayable",
+              "type": "record",
+              "record": "bodyWorldPlayableRef"
+            },
+            {
+              "name": "occurrenceSemanticFingerprint",
+              "type": "u64"
+            }
+          ]
+        },
+        "bodyWorldTrackHeader": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "rootDefinition",
+              "type": "record",
+              "record": "bodyWorldPlayableRef"
+            },
+            {
+              "name": "scheduleSemanticFingerprint",
+              "type": "u64"
+            },
+            {
+              "name": "placementCount",
+              "type": "u32"
+            },
+            {
+              "name": "reserved",
+              "type": "u32"
+            }
+          ]
+        },
+        "bodyWorldPlacement": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "stablePlacementOrdinal",
+              "type": "u32"
+            },
+            {
+              "name": "stableOccurrenceOrdinal",
+              "type": "u32"
+            },
+            {
+              "name": "content",
+              "type": "record",
+              "record": "bodyWorldPlayableRef"
+            },
+            {
+              "name": "authoredStart",
+              "type": "u64"
+            },
+            {
+              "name": "authoredDuration",
+              "type": "u64"
+            },
+            {
+              "name": "authoredFadeIn",
+              "type": "u64"
+            },
+            {
+              "name": "authoredFadeOut",
+              "type": "u64"
+            },
+            {
+              "name": "clipId",
+              "type": "id"
+            },
+            {
+              "name": "clipGuidHigh",
+              "type": "u64"
+            },
+            {
+              "name": "clipGuidLow",
+              "type": "u64"
+            }
+          ]
+        },
+        "bodyWorldSegmentHeader": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "rootDefinition",
+              "type": "record",
+              "record": "bodyWorldPlayableRef"
+            },
+            {
+              "name": "scheduleSemanticFingerprint",
+              "type": "u64"
+            },
+            {
+              "name": "timeKind",
+              "type": "u32"
+            },
+            {
+              "name": "startPointKind",
+              "type": "u32"
+            },
+            {
+              "name": "startMarkerId",
+              "type": "u32"
+            },
+            {
+              "name": "reserved",
+              "type": "u32"
+            },
+            {
+              "name": "microsPerQuarter",
+              "type": "u64"
+            },
+            {
+              "name": "meterNumerator",
+              "type": "u32"
+            },
+            {
+              "name": "meterDenominator",
+              "type": "u32"
+            },
+            {
+              "name": "trackRefCount",
+              "type": "u32"
+            },
+            {
+              "name": "markerCount",
+              "type": "u32"
+            }
+          ]
+        },
+        "bodyWorldTrackRef": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "trackDefinition",
+              "type": "record",
+              "record": "bodyWorldPlayableRef"
+            },
+            {
+              "name": "trackScheduleSemanticFingerprint",
+              "type": "u64"
+            },
+            {
+              "name": "stableTrackOrdinal",
+              "type": "u32"
+            },
+            {
+              "name": "reserved",
+              "type": "u32"
+            }
+          ]
+        },
+        "bodyWorldMarker": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "stableMarkerId",
+              "type": "id"
+            },
+            {
+              "name": "markerId",
+              "type": "u32"
+            },
+            {
+              "name": "markerKind",
+              "type": "u32"
+            },
+            {
+              "name": "position",
+              "type": "u64"
+            }
+          ]
+        },
+        "bodyWorldContainerHeader": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "containerStableId",
+              "type": "id"
+            },
+            {
+              "name": "programSemanticFingerprint",
+              "type": "u64"
+            },
+            {
+              "name": "mode",
+              "type": "u32"
+            },
+            {
+              "name": "randomDiscipline",
+              "type": "u32"
+            },
+            {
+              "name": "memoryScope",
+              "type": "u32"
+            },
+            {
+              "name": "retriggerPolicy",
+              "type": "u32"
+            },
+            {
+              "name": "resetPolicy",
+              "type": "u32"
+            },
+            {
+              "name": "sequenceEndPolicy",
+              "type": "u32"
+            },
+            {
+              "name": "queueCycle",
+              "type": "u32"
+            },
+            {
+              "name": "queueSplice",
+              "type": "u32"
+            },
+            {
+              "name": "queueCycleCount",
+              "type": "u32"
+            },
+            {
+              "name": "resumePosition",
+              "type": "u8"
+            },
+            {
+              "name": "reserved",
+              "type": "bytes",
+              "length": 3,
+              "reserved": true
+            },
+            {
+              "name": "avoidLastN",
+              "type": "u32"
+            },
+            {
+              "name": "initialSequenceCursor",
+              "type": "u32"
+            },
+            {
+              "name": "discreteTiming",
+              "type": "u32"
+            },
+            {
+              "name": "continuousTiming",
+              "type": "u32"
+            },
+            {
+              "name": "continuousNormalization",
+              "type": "u32"
+            },
+            {
+              "name": "evaluationPeriodFrames",
+              "type": "u32"
+            },
+            {
+              "name": "envelopeFrames",
+              "type": "u32"
+            },
+            {
+              "name": "maxActiveRows",
+              "type": "u32"
+            },
+            {
+              "name": "maxLiveRows",
+              "type": "u32"
+            },
+            {
+              "name": "childCount",
+              "type": "u32"
+            },
+            {
+              "name": "curveCount",
+              "type": "u32"
+            },
+            {
+              "name": "discreteAxisCount",
+              "type": "u32"
+            },
+            {
+              "name": "discreteRowCount",
+              "type": "u32"
+            },
+            {
+              "name": "continuousAxisCount",
+              "type": "u32"
+            },
+            {
+              "name": "continuousRowCount",
+              "type": "u32"
+            },
+            {
+              "name": "transitionProgramIndex",
+              "type": "u32"
+            },
+            {
+              "name": "authoredStableOrder",
+              "type": "u32"
+            }
+          ]
+        },
+        "bodyWorldCurveHeader": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "curveLocalId",
+              "type": "u32"
+            },
+            {
+              "name": "pointCount",
+              "type": "u32"
+            }
+          ]
+        },
+        "bodyWorldCurvePoint": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "x",
+              "type": "f32"
+            },
+            {
+              "name": "y",
+              "type": "f32"
+            }
+          ]
+        },
+        "bodyWorldCurveHandle": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "h1x",
+              "type": "f32"
+            },
+            {
+              "name": "h1y",
+              "type": "f32"
+            },
+            {
+              "name": "h2x",
+              "type": "f32"
+            },
+            {
+              "name": "h2y",
+              "type": "f32"
+            }
+          ]
+        },
+        "bodyWorldChildHeader": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "playable",
+              "type": "record",
+              "record": "bodyWorldPlayableRef"
+            },
+            {
+              "name": "stableChildOrdinal",
+              "type": "u32"
+            },
+            {
+              "name": "authoredStableOrder",
+              "type": "u32"
+            },
+            {
+              "name": "frequencyWeight",
+              "type": "u32"
+            },
+            {
+              "name": "orderWeight",
+              "type": "u32"
+            },
+            {
+              "name": "queueStopPolicy",
+              "type": "u32"
+            },
+            {
+              "name": "reserved",
+              "type": "u32"
+            },
+            {
+              "name": "timingKind",
+              "type": "u32"
+            },
+            {
+              "name": "timingReserved",
+              "type": "u32"
+            }
+          ]
+        },
+        "bodyWorldInlineSound": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "startOffset",
+              "type": "record",
+              "record": "bodyWorldTime"
+            },
+            {
+              "name": "duration",
+              "type": "record",
+              "record": "bodyWorldTime"
+            },
+            {
+              "name": "loopCount",
+              "type": "u32"
+            },
+            {
+              "name": "loopRegionPresent",
+              "type": "u8"
+            },
+            {
+              "name": "reserved",
+              "type": "array",
+              "of": "u8",
+              "length": 3
+            },
+            {
+              "name": "loopStart",
+              "type": "record",
+              "record": "bodyWorldTime"
+            },
+            {
+              "name": "loopEnd",
+              "type": "record",
+              "record": "bodyWorldTime"
+            }
+          ]
+        },
+        "bodyWorldScheduleKey": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "kind",
+              "type": "u32"
+            },
+            {
+              "name": "reserved",
+              "type": "u32"
+            },
+            {
+              "name": "stableId",
+              "type": "id"
+            },
+            {
+              "name": "scheduleSemanticFingerprint",
+              "type": "u64"
+            }
+          ]
+        },
+        "bodyWorldGridAxis": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "stableAxisOrdinal",
+              "type": "u32"
+            },
+            {
+              "name": "authoredColumnOrder",
+              "type": "u32"
+            },
+            {
+              "name": "variableId",
+              "type": "id"
+            }
+          ]
+        },
+        "bodyWorldDiscreteGridHeader": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "stableRowOrdinal",
+              "type": "u32"
+            },
+            {
+              "name": "authoredStableOrder",
+              "type": "u32"
+            },
+            {
+              "name": "childStableOrdinal",
+              "type": "u32"
+            },
+            {
+              "name": "cellCount",
+              "type": "u32"
+            }
+          ]
+        },
+        "bodyWorldContinuousGridHeader": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "stableRowOrdinal",
+              "type": "u32"
+            },
+            {
+              "name": "authoredStableOrder",
+              "type": "u32"
+            },
+            {
+              "name": "childStableOrdinal",
+              "type": "u32"
+            },
+            {
+              "name": "cellCount",
+              "type": "u32"
+            }
+          ]
+        },
+        "bodyWorldDiscreteCell": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "kind",
+              "type": "u32"
+            },
+            {
+              "name": "exactValue",
+              "type": "i32"
+            }
+          ]
+        },
+        "bodyWorldContinuousCell": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "kind",
+              "type": "u32"
+            },
+            {
+              "name": "lower",
+              "type": "f32"
+            },
+            {
+              "name": "upper",
+              "type": "f32"
+            },
+            {
+              "name": "lowerInclusive",
+              "type": "u8"
+            },
+            {
+              "name": "upperInclusive",
+              "type": "u8"
+            },
+            {
+              "name": "reserved",
+              "type": "u16"
+            },
+            {
+              "name": "leftCurveLocalId",
+              "type": "u32"
+            },
+            {
+              "name": "rightCurveLocalId",
+              "type": "u32"
+            }
+          ]
+        },
+        "bodyWorldTransitionHeader": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "ownerContainerStableId",
+              "type": "id"
+            },
+            {
+              "name": "ruleCount",
+              "type": "u32"
+            },
+            {
+              "name": "defaultRuleIndex",
+              "type": "u32"
+            },
+            {
+              "name": "downwardPathStepCount",
+              "type": "u32"
+            },
+            {
+              "name": "maxContainerDescent",
+              "type": "u32"
+            },
+            {
+              "name": "maxOwnerAscent",
+              "type": "u32"
+            },
+            {
+              "name": "watchFallback",
+              "type": "u32"
+            }
+          ]
+        },
+        "bodyWorldPathStep": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "playable",
+              "type": "record",
+              "record": "bodyWorldPlayableRef"
+            },
+            {
+              "name": "stableChildOrdinal",
+              "type": "u32"
+            },
+            {
+              "name": "reserved",
+              "type": "u32"
+            },
+            {
+              "name": "trackId",
+              "type": "id"
+            },
+            {
+              "name": "clipId",
+              "type": "id"
+            },
+            {
+              "name": "clipGuidHigh",
+              "type": "u64"
+            },
+            {
+              "name": "clipGuidLow",
+              "type": "u64"
+            }
+          ]
+        },
+        "bodyWorldFade": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "active",
+              "type": "u8"
+            },
+            {
+              "name": "reserved",
+              "type": "array",
+              "of": "u8",
+              "length": 3
+            },
+            {
+              "name": "durationFrames",
+              "type": "u32"
+            },
+            {
+              "name": "curveLocalId",
+              "type": "u32"
+            }
+          ]
+        },
+        "bodyWorldTransitionRule": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "stableRuleOrdinal",
+              "type": "u32"
+            },
+            {
+              "name": "sourceAny",
+              "type": "u8"
+            },
+            {
+              "name": "targetAny",
+              "type": "u8"
+            },
+            {
+              "name": "bridgePresent",
+              "type": "u8"
+            },
+            {
+              "name": "reserved",
+              "type": "u8"
+            },
+            {
+              "name": "source",
+              "type": "record",
+              "record": "bodyWorldPlayableRef"
+            },
+            {
+              "name": "target",
+              "type": "record",
+              "record": "bodyWorldPlayableRef"
+            },
+            {
+              "name": "sourceExit",
+              "type": "u32"
+            },
+            {
+              "name": "targetEntry",
+              "type": "u32"
+            },
+            {
+              "name": "bridge",
+              "type": "record",
+              "record": "bodyWorldPlayableRef"
+            },
+            {
+              "name": "sourceFade",
+              "type": "record",
+              "record": "bodyWorldFade"
+            },
+            {
+              "name": "bridgeFadeIn",
+              "type": "record",
+              "record": "bodyWorldFade"
+            },
+            {
+              "name": "bridgeFadeOut",
+              "type": "record",
+              "record": "bodyWorldFade"
+            },
+            {
+              "name": "targetFade",
+              "type": "record",
+              "record": "bodyWorldFade"
+            },
+            {
+              "name": "requiredClockFingerprint",
+              "type": "u64"
+            },
+            {
+              "name": "requiredMarkerStableId",
+              "type": "id"
+            },
+            {
+              "name": "samePositionCompatibilityFingerprint",
+              "type": "u64"
+            },
+            {
+              "name": "authoredStableOrder",
+              "type": "u32"
+            },
+            {
+              "name": "reserved2",
+              "type": "u32"
+            }
+          ]
+        },
+        "bodyWorldActionHeader": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "actionStableId",
+              "type": "id"
+            },
+            {
+              "name": "programSemanticFingerprint",
+              "type": "u64"
+            },
+            {
+              "name": "stepCount",
+              "type": "u32"
+            },
+            {
+              "name": "directFeatureMask",
+              "type": "u32"
+            },
+            {
+              "name": "transitiveFeatureMask",
+              "type": "u32"
+            },
+            {
+              "name": "expandedStepOccurrenceCount",
+              "type": "u32"
+            },
+            {
+              "name": "expandedFiringCount",
+              "type": "u32"
+            }
+          ]
+        },
+        "bodyWorldActionStep": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "opcode",
+              "type": "u32"
+            },
+            {
+              "name": "authoredEventIndex",
+              "type": "u32"
+            },
+            {
+              "name": "target",
+              "type": "record",
+              "record": "bodyWorldActionRef"
+            },
+            {
+              "name": "delay",
+              "type": "record",
+              "record": "bodyWorldTime"
+            },
+            {
+              "name": "fade",
+              "type": "record",
+              "record": "bodyWorldTime"
+            },
+            {
+              "name": "quantizeReference",
+              "type": "record",
+              "record": "bodyWorldActionRef"
+            },
+            {
+              "name": "quantizeTiming",
+              "type": "u32"
+            },
+            {
+              "name": "cooldownScope",
+              "type": "u32"
+            },
+            {
+              "name": "ifSilent",
+              "type": "u32"
+            },
+            {
+              "name": "scope",
+              "type": "u32"
+            },
+            {
+              "name": "cooldown",
+              "type": "record",
+              "record": "bodyWorldTime"
+            },
+            {
+              "name": "valueBits",
+              "type": "u32"
+            },
+            {
+              "name": "reserved0",
+              "type": "u32"
+            }
+          ]
+        },
+        "bodyWorldBodyHeader": {
+          "mode": "stream",
+          "fields": [
+            {
+              "name": "prefix",
+              "type": "record",
+              "record": "bodyWorldPrefix"
+            },
+            {
+              "name": "actionCapacity",
+              "type": "record",
+              "record": "bodyWorldActionCapacity"
+            },
+            {
+              "name": "structuralCount",
+              "type": "record",
+              "record": "bodyWorldStructuralCount"
+            },
+            {
+              "name": "capacity",
+              "type": "record",
+              "record": "bodyWorldCapacity"
+            },
+            {
+              "name": "projectId",
+              "type": "record",
+              "record": "bodyWorldProjectId"
+            }
+          ]
+        },
+        "bodyWorldBody": {
+          "mode": "stream",
+          "fields": [
+            {
+              "name": "header",
+              "type": "record",
+              "record": "bodyWorldBodyHeader"
+            },
+            {
+              "name": "variables",
+              "type": "rows",
+              "record": "bodyWorldVariable",
+              "count": "variableCount"
+            },
+            {
+              "name": "properties",
+              "type": "rows",
+              "record": "bodyWorldProperty",
+              "count": "playablePropertyProgramCount"
+            },
+            {
+              "name": "occurrences",
+              "type": "rows",
+              "record": "bodyWorldOccurrence",
+              "count": "playableOccurrencePropertyCount"
+            },
+            {
+              "name": "trackSchedules",
+              "type": "rows",
+              "record": "bodyWorldTrack",
+              "count": "trackScheduleCount"
+            },
+            {
+              "name": "segmentSchedules",
+              "type": "rows",
+              "record": "bodyWorldSegment",
+              "count": "segmentScheduleCount"
+            },
+            {
+              "name": "containers",
+              "type": "rows",
+              "record": "bodyWorldContainer",
+              "count": "containerCount"
+            },
+            {
+              "name": "transitions",
+              "type": "rows",
+              "record": "bodyWorldTransition",
+              "count": "transitionProgramCount"
+            },
+            {
+              "name": "actions",
+              "type": "rows",
+              "record": "bodyWorldAction",
+              "count": "actionCount"
+            }
+          ]
+        },
+        "bodyWorldProperty": {
+          "mode": "stream",
+          "fields": [
+            {
+              "name": "header",
+              "type": "record",
+              "record": "bodyWorldPropertyHeader"
+            },
+            {
+              "name": "payloadHeader",
+              "type": "record",
+              "record": "bodyPayloadHeader"
+            },
+            {
+              "name": "ancestors",
+              "type": "rows",
+              "record": "bodyWorldLayerAncestor",
+              "count": "organizationLayerAncestorCount"
+            },
+            {
+              "name": "structuralHeader",
+              "type": "record",
+              "record": "bodyWorldStructuralHeader"
+            },
+            {
+              "name": "structuralAncestors",
+              "type": "rows",
+              "record": "bodyWorldStructuralAncestor",
+              "count": "structuralAncestorCount"
+            },
+            {
+              "name": "payloadBody",
+              "type": "record",
+              "record": "bodyPayloadBody"
+            }
+          ]
+        },
+        "bodyWorldStructuralAncestor": {
+          "mode": "stream",
+          "fields": [
+            {
+              "name": "header",
+              "type": "record",
+              "record": "bodyWorldStructuralAncestorHeader"
+            },
+            {
+              "name": "payload",
+              "type": "record",
+              "record": "bodyPayload"
+            }
+          ]
+        },
+        "bodyWorldOccurrence": {
+          "mode": "stream",
+          "fields": [
+            {
+              "name": "header",
+              "type": "record",
+              "record": "bodyWorldOccurrenceHeader"
+            },
+            {
+              "name": "payload",
+              "type": "record",
+              "record": "bodyPayload"
+            }
+          ]
+        },
+        "bodyWorldTrack": {
+          "mode": "stream",
+          "fields": [
+            {
+              "name": "header",
+              "type": "record",
+              "record": "bodyWorldTrackHeader"
+            },
+            {
+              "name": "placements",
+              "type": "rows",
+              "record": "bodyWorldPlacement",
+              "count": "placementCount"
+            }
+          ]
+        },
+        "bodyWorldSegment": {
+          "mode": "stream",
+          "fields": [
+            {
+              "name": "header",
+              "type": "record",
+              "record": "bodyWorldSegmentHeader"
+            },
+            {
+              "name": "trackRefs",
+              "type": "rows",
+              "record": "bodyWorldTrackRef",
+              "count": "trackRefCount"
+            },
+            {
+              "name": "markers",
+              "type": "rows",
+              "record": "bodyWorldMarker",
+              "count": "markerCount"
+            }
+          ]
+        },
+        "bodyWorldContainer": {
+          "mode": "stream",
+          "fields": [
+            {
+              "name": "header",
+              "type": "record",
+              "record": "bodyWorldContainerHeader"
+            },
+            {
+              "name": "curves",
+              "type": "rows",
+              "record": "bodyWorldCurve",
+              "count": "curveCount"
+            },
+            {
+              "name": "children",
+              "type": "rows",
+              "record": "bodyWorldChild",
+              "count": "childCount"
+            },
+            {
+              "name": "discreteAxes",
+              "type": "rows",
+              "record": "bodyWorldGridAxis",
+              "count": "discreteAxisCount"
+            },
+            {
+              "name": "discreteRows",
+              "type": "rows",
+              "record": "bodyWorldDiscreteGrid",
+              "count": "discreteRowCount"
+            },
+            {
+              "name": "continuousAxes",
+              "type": "rows",
+              "record": "bodyWorldGridAxis",
+              "count": "continuousAxisCount"
+            },
+            {
+              "name": "continuousRows",
+              "type": "rows",
+              "record": "bodyWorldContinuousGrid",
+              "count": "continuousRowCount"
+            }
+          ]
+        },
+        "bodyWorldCurve": {
+          "mode": "stream",
+          "fields": [
+            {
+              "name": "header",
+              "type": "record",
+              "record": "bodyWorldCurveHeader"
+            },
+            {
+              "name": "points",
+              "type": "rows",
+              "record": "bodyWorldCurvePoint",
+              "count": "pointCount"
+            },
+            {
+              "name": "handles",
+              "type": "rows",
+              "record": "bodyWorldCurveHandle",
+              "count": {
+                "count": "pointCount",
+                "subtract": 1
+              }
+            }
+          ]
+        },
+        "bodyWorldChild": {
+          "mode": "stream",
+          "fields": [
+            {
+              "name": "header",
+              "type": "record",
+              "record": "bodyWorldChildHeader"
+            },
+            {
+              "name": "inlineSound",
+              "type": "record",
+              "record": "bodyWorldInlineSound",
+              "when": {
+                "field": "timingKind",
+                "equals": 1
+              }
+            },
+            {
+              "name": "schedule",
+              "type": "record",
+              "record": "bodyWorldScheduleKey",
+              "when": {
+                "field": "timingKind",
+                "equals": 2
+              }
+            }
+          ]
+        },
+        "bodyWorldDiscreteGrid": {
+          "mode": "stream",
+          "fields": [
+            {
+              "name": "header",
+              "type": "record",
+              "record": "bodyWorldDiscreteGridHeader"
+            },
+            {
+              "name": "cells",
+              "type": "rows",
+              "record": "bodyWorldDiscreteCell",
+              "count": "cellCount"
+            }
+          ]
+        },
+        "bodyWorldContinuousGrid": {
+          "mode": "stream",
+          "fields": [
+            {
+              "name": "header",
+              "type": "record",
+              "record": "bodyWorldContinuousGridHeader"
+            },
+            {
+              "name": "cells",
+              "type": "rows",
+              "record": "bodyWorldContinuousCell",
+              "count": "cellCount"
+            }
+          ]
+        },
+        "bodyWorldTransition": {
+          "mode": "stream",
+          "fields": [
+            {
+              "name": "header",
+              "type": "record",
+              "record": "bodyWorldTransitionHeader"
+            },
+            {
+              "name": "path",
+              "type": "rows",
+              "record": "bodyWorldPathStep",
+              "count": "downwardPathStepCount"
+            },
+            {
+              "name": "rules",
+              "type": "rows",
+              "record": "bodyWorldTransitionRule",
+              "count": "ruleCount"
+            }
+          ]
+        },
+        "bodyWorldAction": {
+          "mode": "stream",
+          "fields": [
+            {
+              "name": "header",
+              "type": "record",
+              "record": "bodyWorldActionHeader"
+            },
+            {
+              "name": "steps",
+              "type": "rows",
+              "record": "bodyWorldActionStep",
+              "count": "stepCount"
+            }
+          ]
+        },
+        "canonicalPartitionHeader": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "magic",
+              "type": "bytes",
+              "length": 8,
+              "const": "VNDEFP02"
+            },
+            {
+              "name": "headerBytes",
+              "type": "u32"
+            },
+            {
+              "name": "bodyVintage",
+              "type": "u32"
+            },
+            {
+              "name": "bodyBytes",
+              "type": "u64"
+            },
+            {
+              "name": "bodyChecksum",
+              "type": "u64"
+            },
+            {
+              "name": "packStableId",
+              "type": "u64"
+            },
+            {
+              "name": "partitionRevision",
+              "type": "u64"
+            },
+            {
+              "name": "ownedDefinitionCount",
+              "type": "u64"
+            },
+            {
+              "name": "busContentGeneration",
+              "type": "u64"
+            },
+            {
+              "name": "publishedBusFingerprint",
+              "type": "u64"
+            },
+            {
+              "name": "compileTargetProfileFingerprint",
+              "type": "u64"
+            },
+            {
+              "name": "headerChecksum",
+              "type": "u64"
+            }
+          ]
+        },
+        "busDefinitionSnapshot": {
+          "mode": "stream",
+          "fields": [
+            {
+              "name": "header",
+              "type": "record",
+              "record": "busDefinitionSnapshotHeader"
+            },
+            {
+              "name": "buses",
+              "type": "rows",
+              "record": "busDefinitionBus",
+              "count": "busCount",
+              "position": [
+                "busOffset"
+              ]
+            },
+            {
+              "name": "sends",
+              "type": "rows",
+              "record": "busDefinitionSend",
+              "count": "sendCount",
+              "position": [
+                "sendOffset"
+              ]
+            },
+            {
+              "name": "downmixes",
+              "type": "rows",
+              "record": "busDefinitionDownmix",
+              "count": "downmixCount",
+              "position": [
+                "effectOffset",
+                "effectParameterOffset",
+                "downmixOffset"
+              ]
+            },
+            {
+              "name": "coefficients",
+              "type": "rows",
+              "record": "busDefinitionCoefficient",
+              "count": "coefficientCount",
+              "position": [
+                "coefficientOffset"
+              ]
+            }
+          ],
+          "length": {
+            "field": "payloadBytes",
+            "from": "busOffset"
+          }
+        },
+        "bodyWorldSegmentEntryTimeline": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "stableMarkerId",
+              "type": "id"
+            },
+            {
+              "name": "position",
+              "type": "u64"
+            },
+            {
+              "name": "contentStart",
+              "type": "u64"
+            },
+            {
+              "name": "contentEnd",
+              "type": "u64"
+            },
+            {
+              "name": "nominalStart",
+              "type": "u64"
+            },
+            {
+              "name": "nominalEnd",
+              "type": "u64"
+            }
+          ]
+        },
+        "bodyWorldSignalCounts": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "signalRelationCount",
+              "type": "u32"
+            },
+            {
+              "name": "signalReceiverCount",
+              "type": "u32"
+            }
+          ]
+        },
+        "bodyWorldSignalEndpoint": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "kind",
+              "type": "u32"
+            },
+            {
+              "name": "reserved",
+              "type": "u32"
+            },
+            {
+              "name": "stableId",
+              "type": "id"
+            },
+            {
+              "name": "expectedPropertyFingerprint",
+              "type": "u64"
+            },
+            {
+              "name": "expectedProgramFingerprint",
+              "type": "u64"
+            }
+          ]
+        },
+        "bodyWorldSignalRelation": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "stableId",
+              "type": "id"
+            },
+            {
+              "name": "source",
+              "type": "record",
+              "record": "bodyWorldSignalEndpoint"
+            },
+            {
+              "name": "target",
+              "type": "record",
+              "record": "bodyWorldSignalEndpoint"
+            },
+            {
+              "name": "consumer",
+              "type": "u32"
+            },
+            {
+              "name": "sendGainDb",
+              "type": "f32"
+            }
+          ]
+        },
+        "bodyWorldSignalReceiver": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "target",
+              "type": "record",
+              "record": "bodyWorldSignalEndpoint"
+            },
+            {
+              "name": "algorithm",
+              "type": "u32"
+            },
+            {
+              "name": "attackMs",
+              "type": "f32"
+            },
+            {
+              "name": "releaseMs",
+              "type": "f32"
+            },
+            {
+              "name": "reserved",
+              "type": "u32"
+            }
+          ]
+        }
+      },
+      "retiredKinds": [
+        {
+          "name": "discreteVariable",
+          "id": 5
+        },
+        {
+          "name": "meterWiring",
+          "id": 6
+        },
+        {
+          "name": "action",
+          "id": 10
+        },
+        {
+          "name": "initRoutingCatalog",
+          "id": 20
+        },
+        {
+          "name": "gameplayCatalog",
+          "id": 25
+        },
+        {
+          "name": "variableNameCatalog",
+          "id": 28
+        }
+      ]
+    }
   }
 }

@@ -160,6 +160,14 @@
 <context>
     <name>HubReleaseNotes</name>
     <message>
+        <source>Close applications using Harken Hub files before continuing Windows setup, without prompting to restart the computer.</source>
+        <translation>Windows 安装程序会先处理占用 Harken Hub 文件的应用程序，再继续安装，不再询问是否重启电脑。</translation>
+    </message>
+    <message>
+        <source>Keep Hub responsive while preparing an update and reduce the wait before installation after Hub exits.</source>
+        <translation>准备更新时保持 Hub 界面响应，并减少 Hub 退出后开始安装前的等待。</translation>
+    </message>
+    <message>
         <source>Fix disabled Studio and Unity Integration Package changelog links for some published versions.</source>
         <translation>修复部分已发布版本的 Studio 和 Unity 集成包更新日志入口不可用的问题。</translation>
     </message>
@@ -449,6 +457,10 @@ Continue?</source>
         <location filename="../Source/UI/HubWindow.cpp" line="668"/>
         <source>Update and Restart</source>
         <translation>更新并重启</translation>
+    </message>
+    <message>
+        <source>Preparing update...</source>
+        <translation>正在准备更新...</translation>
     </message>
     <message>
         <location filename="../Source/UI/HubWindow.cpp" line="682"/>

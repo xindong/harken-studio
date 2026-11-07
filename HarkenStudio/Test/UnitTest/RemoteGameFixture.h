@@ -95,7 +95,7 @@ inline bool WriteGamePacks(const std::filesystem::path& directory, GameFingerpri
         return false;
     }
     PackCanonicalPartitionHeader partition;
-    partition.headerBytes = kCanonicalDefinitionPartitionHeaderV2Bytes;
+    partition.headerBytes = kPackCanonicalPartitionHeaderBytes;
     partition.bodyVintage = kCanonicalDefinitionPartitionBodyVintage;
     partition.bodyBytes = body.size();
     partition.bodyChecksum = Fnv1a64(body.data(), body.size());
@@ -103,11 +103,11 @@ inline bool WriteGamePacks(const std::filesystem::path& directory, GameFingerpri
     partition.partitionRevision = 1;
     partition.ownedDefinitionCount = 3;
     ApplyCanonicalBusTriple(&partition, DefaultFixtureBusTriple());
-    std::vector<std::uint8_t> payload(kCanonicalDefinitionPartitionHeaderV2Bytes + body.size());
-    SerializePackCanonicalPartitionHeaderV2(partition, payload.data());
+    std::vector<std::uint8_t> payload(kPackCanonicalPartitionHeaderBytes + body.size());
+    SerializePackCanonicalPartitionHeader(partition, payload.data());
     partition.headerChecksum = Fnv1a64(payload.data(), 80);
-    SerializePackCanonicalPartitionHeaderV2(partition, payload.data());
-    std::memcpy(payload.data() + kCanonicalDefinitionPartitionHeaderV2Bytes, body.data(),
+    SerializePackCanonicalPartitionHeader(partition, payload.data());
+    std::memcpy(payload.data() + kPackCanonicalPartitionHeaderBytes, body.data(),
                 body.size());
     ImageBuilder content(kPackKindCanonicalContent);
     content.AddEntry(kPackEntryKindPackRequirementBlock, kResidentPackStableId,
@@ -116,32 +116,6 @@ inline bool WriteGamePacks(const std::filesystem::path& directory, GameFingerpri
                      std::move(payload));
     content.AddMedia(kSound, std::move(samples));
     const auto contentBytes = content.Build();
-    std::vector<PackInitCatalogRow> rows(2);
-    rows[0].stableId = harkentest::ObjectId(kSound);
-    rows[0].identityClass = kInitCatalogIdentityClassPlayable;
-    rows[1].stableId = harkentest::ObjectId(kPlayAction);
-    rows[1].identityClass = kInitCatalogIdentityClassAction;
-    for (auto& row : rows) {
-        row.ownerPackStableId = kResidentPackStableId;
-        row.expectedContentHash = Fnv1a64(contentBytes.data(), contentBytes.size());
-        if (!FillLocator(&row, "Content.pack")) {
-            return false;
-        }
-    }
-    PackInitCatalogHeader catalog;
-    catalog.schemaVersion = 1;
-    catalog.storageModelVersion = 1;
-    catalog.projectBuildId = 0x52454d4f5445;
-    catalog.platformId = 1;
-    catalog.languageId = 1;
-    catalog.totalDefinitionCount = 3;
-    catalog.catalogEntryCount = 2;
-    catalog.startupPackCount = 1;
-    catalog.recommendedCatalogCapacity = 2;
-    if (!InitCatalogBytes(2, 1, &catalog.catalogBytes)) {
-        return false;
-    }
-    catalog.recommendedCatalogBytes = catalog.catalogBytes;
     std::uint64_t initBodyBytes = 0;
     auto initPartition = PartitionPayload(kInitPackStableId, 1, 0, 0, &initBodyBytes,
         64, ObjectIdFromBytes(kProjectGuid));
@@ -149,30 +123,11 @@ inline bool WriteGamePacks(const std::filesystem::path& directory, GameFingerpri
         return false;
     }
     ImageBuilder init(kPackKindInit);
-    PackGameplayCatalogHeader gameplay;
-    gameplay.projectGuid = kProjectGuid;
-    gameplay.initPackStableId = kInitPackStableId;
-    gameplay.initContentRevision = 1;
-    PackGameplayCatalogActiveDraft callable;
-    callable.actionStableId = harkentest::ObjectId(kPlayAction);
-    callable.nameBindingRevision = 1;
-    callable.callableFingerprint = 901;
-    callable.ownerPackStableId = kResidentPackStableId;
-    std::uint8_t closure[16];
-    StoreLE64(closure, kResidentPackStableId);
-    StoreLE64(closure + 8, 1);
-    callable.providerClosureFingerprint = Fnv1a64(closure, sizeof(closure));
-    callable.name = "Play Remote Probe";
-    std::vector<std::uint8_t> gameplayPayload;
-    if (!EncodeGameplayCatalog(gameplay, {callable}, {}, &gameplayPayload)) return false;
-    init.AddEntry(kPackEntryKindGameplayCatalog, 0, std::move(gameplayPayload));
-    init.AddEntry(kPackEntryKindInitRoutingCatalog, 0,
-                  CatalogPayload(catalog, rows, {kResidentPackStableId}));
     init.AddEntry(kPackEntryKindPackRequirementBlock, kInitPackStableId,
                   RequirementPayload(kInitPackStableId, 1, 1, 0, initBodyBytes));
     init.AddEntry(kPackEntryKindCanonicalDefinitionPartition, kInitPackStableId,
                   std::move(initPartition));
-    AppendNeutralMasterSnapshotV1(&init);
+    AppendNeutralMasterSnapshot(&init);
     return WriteFile(directory / "Init.pack", init.Build()) &&
            WriteFile(directory / "Content.pack", contentBytes);
 }

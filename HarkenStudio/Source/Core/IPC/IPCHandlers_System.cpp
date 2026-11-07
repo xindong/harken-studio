@@ -26,6 +26,20 @@ VBus* IPCServer::resolveBusByName(const QString& rawName) const
 
 void IPCServer::registerSystemHandlers()
 {
+    commandHandlers_["list_commands"] = [this](const QJsonObject& args) {
+        if (!args.isEmpty())
+            return errorResponse("INVALID_ARGS", "list_commands does not accept arguments.");
+        return successResponse(listEditorCommands(this));
+    };
+    commandHandlers_["get_command_schema"] = [this](const QJsonObject& args) {
+        const QString name = args.value("command").toString();
+        if (args.size() != 1 || name.isEmpty())
+            return errorResponse("INVALID_ARGS", "command must be a non-empty string.");
+        const auto description = describeEditorCommand(name, this);
+        if (!description.value("registered").toBool())
+            return errorResponse("UNKNOWN_COMMAND", QString("Unknown command: %1").arg(name));
+        return successResponse(description);
+    };
     commandHandlers_["ping"] = [this](const QJsonObject& args) { return handlePing(args); };
     commandHandlers_["get_version"] = [this](const QJsonObject& args) { return handleGetVersion(args); };
     commandHandlers_["get_status"] = [this](const QJsonObject& args) { return handleGetStatus(args); };
@@ -279,7 +293,6 @@ void IPCServer::registerSystemHandlers()
 
 
     registerDesktopHandler("get_current_layout");
-    registerDesktopHandler("get_current_view");
     registerDesktopHandler("get_layout_state");
     registerDesktopHandler("get_inspector_context");
 
@@ -305,8 +318,9 @@ void IPCServer::registerSystemHandlers()
 
 
     registerDesktopHandler("get_recent_logs");
-    commandHandlers_["list_named_layouts"] = [this](const QJsonObject& args) { return handleListNamedLayouts(args); };
     registerDesktopHandler("list_panels");
+    registerDesktopHandler("list_named_layouts");
+    registerDesktopHandler("get_selected_bus");
 
     commandHandlers_["get_app_state"] = [this](const QJsonObject& args) { return handleGetAppState(args); };
 
@@ -488,7 +502,7 @@ QJsonObject IPCServer::handleStartOutput(const QJsonObject& args)
     {
         return errorResponse("NOT_INITIALIZED", 
                              "Audio engine is not initialized",
-                             "Call 'init' command first.");
+                             "Call 'init_engine' command first.");
     }
     
     bool success = engine_->startOutput();
@@ -986,34 +1000,6 @@ QJsonObject IPCServer::handleGetPlaybacks(const QJsonObject& args)
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-QJsonObject IPCServer::handleListNamedLayouts(const QJsonObject& )
-{
-    QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/layouts";
-    QDir d(dir);
-    QJsonArray layouts;
-    for (const auto& entry : d.entryInfoList({"*.json"}, QDir::Files, QDir::Name)) {
-        QFile file(entry.absoluteFilePath());
-        if (!file.open(QIODevice::ReadOnly)) continue;
-        QJsonObject json = QJsonDocument::fromJson(file.readAll()).object();
-        file.close();
-        QJsonObject info;
-        info["name"] = json["name"].toString();
-        info["saved_at"] = json["savedAt"].toString();
-        layouts.append(info);
-    }
-    return successResponse(QJsonObject{{"layouts", layouts}, {"count", layouts.size()}});
-}
 
 
 

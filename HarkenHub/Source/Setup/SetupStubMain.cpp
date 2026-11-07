@@ -13,6 +13,7 @@
 
 #include "SetupStrings.h"
 #include "SetupPayload.h"
+#include "SetupHubShutdown.h"
 
 namespace {
 
@@ -218,6 +219,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR rawCommandLine, int)
         arguments += L" ";
         arguments += commandLine;
     }
+
+    const bool backgroundExited = HarkenSetup::requestHubExit(L"\\\\.\\pipe\\HarkenSound.HarkenHub.Background");
+    const bool guiExited = HarkenSetup::requestHubExit(L"\\\\.\\pipe\\HarkenSound.HarkenHub");
+    if (!backgroundExited || !guiExited)
+        return failStaging(HARKEN_SETUP_HUB_RUNNING, quiet, stagingGuard, msiPath, stagingDir);
 
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);

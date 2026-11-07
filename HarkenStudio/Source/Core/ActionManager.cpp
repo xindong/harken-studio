@@ -1,5 +1,7 @@
 
 #include "ActionManager.h"
+#include "CommandArgumentValidator.h"
+#include "CommandSchemas.h"
 #include "UndoCommands.h"
 #include <QCoreApplication>
 #include <QDebug>
@@ -67,6 +69,13 @@ ActionResult ActionManager::execute(const QString& actionId,
 
     if (def->requiresDesktop && (!desktopAvailable_ || !def->handler))
         return {false, {}, "DESKTOP_REQUIRED", "This action requires the desktop editor."};
+
+    if ((source == ActionSource::IPC || source == ActionSource::Remote)
+        && def->paramSchema.value("type") == "object") {
+        QString error;
+        if (!validateCommandArguments(args, def->paramSchema, &error))
+            return {false, {}, "INVALID_ARGUMENTS", error};
+    }
 
     if (def->validate) {
         QString err = def->validate(args);
@@ -232,6 +241,9 @@ QJsonObject ActionManager::txError(const QString& code, const QString& msg, cons
 
 QJsonObject ActionManager::preview(const QJsonObject& args)
 {
+    QString contractError;
+    if (!validateCommandArguments(args, commandInputSchema("preview_actions"), &contractError))
+        return txError("INVALID_ARGUMENTS", contractError);
     if (!args.contains("actions") || !args.value("actions").isArray())
     {
         return txError("INVALID_ARGS", "actions array is required");
@@ -255,7 +267,6 @@ QJsonObject ActionManager::preview(const QJsonObject& args)
         const QJsonObject actionObj = rawActions[i].toObject();
         const QString cmd = actionObj.value("cmd").toString().trimmed();
         QJsonObject actionArgs = actionObj.value("args").toObject();
-        actionArgs.remove("preview");
 
         if (cmd.isEmpty())
         {
@@ -274,6 +285,17 @@ QJsonObject ActionManager::preview(const QJsonObject& args)
                 QString("actions[%1] command '%2' does not support preview mode yet").arg(i).arg(cmd),
                 "Current transactional preview supports: set_bus_properties, create_bus, set_send/remove_send/set_send_level, and container create/add/remove/reorder/set_property commands.");
         }
+
+        auto schema = commandInputSchema(cmd);
+        if (schema.isEmpty()) {
+            const auto* action = findAction(cmd);
+            if (action) schema = action->paramSchema;
+        }
+        if (schema.isEmpty())
+            return txError("COMMAND_CONTRACT_MISSING", QString("Command '%1' has no declared argument contract.").arg(cmd));
+        if (!validateCommandArguments(actionArgs, schema, &contractError))
+            return txError("INVALID_ARGUMENTS", QString("args.actions[%1] (%2): %3").arg(i).arg(cmd, contractError));
+        actionArgs.remove("preview");
 
         QJsonObject rollbackStep;
         QJsonObject previewEntry;
