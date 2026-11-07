@@ -9098,7 +9098,7 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
         installedExitMarkerSourceFrame, install.sourceStartFrame, install.sourcePhase,
         install.loopCount, initialSourceRatio, preparedRender->hasExitMarker,
         {streamSlot, voicePreparation.streamRing, streamRingToken},
-        pendingImmediateStart ? install.authoredDurationFrames : UINT64_MAX, install.streamed};
+        pendingImmediateStart ? install.authoredDurationFrames : UINT64_MAX, install.streamed, initialVariableUse.Valid()};
     if (prepareOnly) {
         preparedOut->ledgerSlot = ledgerSlot;
         preparedOut->renderHandle = render;
@@ -54941,7 +54941,7 @@ DirectPendingStartResult BindAcknowledgedDirectStart(harken::Engine& engine,
             !engine.CaptureTimelineVoiceInstallIdentity(render, &installations[index]) ||
             !harken::OriginalSourceSubmissionRegistry::SameToken(installations[index].startArm, arm) ||
             installations[index].rootInstance != owners[index]->rootInstance ||
-            engine.voices.TimelineVariableSourceRead(arm.renderSlot, arm.renderGeneration).Valid())
+            installations[index].hasInitialVariableReadUse)
             return Result::Refused;
         const auto media = engine.CapturedTimelineStreamStartStatus(installations[index]);
         if (media == harken::VariableReadCutStatus::Failed) return Result::Refused;
@@ -97319,7 +97319,7 @@ PendingScheduleEntryStatus PreparePendingScheduleVariableEntry(harken::Engine& e
         !engine.PrepareNativeBackingReturn(*scratch, &transfer) ||
         !scratch->playableTreeExecutor.CanReleasePublishedOwnership() ||
         !scratch->storage.ownerLedger.CanTransfer(scratch->storage.generation)) return fail(Status::Failed);
-    if (musicEntry) {
+    if (musicEntry && pending.sourceCohort == nullptr) {
         const auto admission = musicAdmission(true);
         if (admission != Status::Published) return fail(admission);
     }
@@ -97469,6 +97469,8 @@ bool ServiceScheduleSourceCohorts(harken::Engine& engine, harken::EnginePlayable
                 if (receipt.outcome == harken::FrontierReceiptOutcome::DefinitivelyNotApplied) {
                     cohort.cancelling = true;
                     cohort.failure = harken::PlayableControlReason::StartRefused;
+                    for (const auto& side : cohort.sides) (void)engine.decisions.Invalidate(side->decision);
+                    (void)engine.decisions.Invalidate(cohort.decision);
                 }
                 (void)DetachScheduleSourceCohort(engine, cohort, completed);
             }
@@ -97494,20 +97496,21 @@ bool ServiceScheduleSourceCohorts(harken::Engine& engine, harken::EnginePlayable
             if (!source.source.Valid() && !source.body.Valid() && source.retention != nullptr)
                 source.retention->service.Return();
         }
-        if ((!cohort.cancelling && !cohort.bindingsReleased) || !sourcesReturned) { retired = false; continue; }
+        if (!cohort.bindingsReleased || !sourcesReturned) { retired = false; continue; }
         const auto returnDecision = [&](harken::PreparedDecisionReservation& prepared,
             harken::OriginalDecisionLifetimePin& original, harken::DecisionToken& decision, harken::ArmGroupToken& group) {
             if (!decision.Valid()) return true;
             if (group.Valid()) {
                 harken::ArmGroupSnapshot captured{};
                 if (!engine.armGroups.Capture(group, &captured)) return false;
-                if (!cohort.published && captured.ackedCount == 0 && captured.tombstonedCount == 0) {
-                    if (!engine.armGroups.CancelBeforePublication(group)) return false;
-                } else {
-                    if ((captured.state != harken::ArmGroupState::Retiring && !engine.armGroups.BeginRetire(group)) ||
+                if (prepared.Valid()) {
+                    if (!cohort.published && captured.ackedCount == 0 && captured.tombstonedCount == 0) {
+                        if (!engine.armGroups.CancelBeforePublication(group)) return false;
+                    } else if ((captured.state != harken::ArmGroupState::Retiring && !engine.armGroups.BeginRetire(group)) ||
                         !engine.armGroups.Reclaim(group, completed)) return false;
-                }
-                group = {};
+                    group = {};
+                } else if (captured.state != harken::ArmGroupState::Retiring &&
+                    !engine.armGroups.BeginRetire(group)) return false;
             }
             if (prepared.Valid()) {
                 if (!engine.decisions.CancelPreparedReservation(&prepared, &original)) return false;
@@ -97516,10 +97519,11 @@ bool ServiceScheduleSourceCohorts(harken::Engine& engine, harken::EnginePlayable
                 engine.originalSingleDecisionBaselines[decision.slot] = std::move(original);
                 harken::DecisionCommittedSnapshot committed{};
                 const bool cancelled = !engine.decisions.CaptureCommitted(decision, &committed);
-                if (!TransferDecisionRetirement(engine, decision, cancelled)) {
+                if (!TransferDecisionRetirement(engine, decision, cancelled, group)) {
                     original = std::move(engine.originalSingleDecisionBaselines[decision.slot]);
                     return false;
                 }
+                group = {};
             }
             decision = {};
             return true;

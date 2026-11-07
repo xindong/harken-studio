@@ -21385,10 +21385,13 @@ TEST(PlayableStart, DirectTrackMixedStreamWaitsStartsTogetherAndCancelsBeforeRea
 }
 
 TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFailure) {
-    for (const auto workers : {0u, 2u}) for (const auto scenario : {0u, 1u, 2u, 3u}) {
+    for (const auto workers : {0u, 2u}) for (const auto scenario : {0u, 1u, 2u, 3u, 4u, 5u}) {
         const bool missDeadline = scenario == 1u;
         const bool largePrebuffer = scenario == 2u;
         const bool temporaryVoicePressure = scenario == 3u;
+        const bool cancelBeforeSeal = scenario == 4u;
+        const bool cancelAfterSeal = scenario == 5u;
+        const bool cancel = cancelBeforeSeal || cancelAfterSeal;
         SCOPED_TRACE(::testing::Message() << "workers=" << workers << " scenario=" << scenario);
         auto config = harkentest::MakeNullConfig(8, 64, 48000);
         config.renderWorkerCount = workers;
@@ -21421,18 +21424,22 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
         image.properties[1].payload.values[streamingSlot].bits = 1;
         image.properties[1].programSemanticFingerprint = harken::ComputePlayablePropertyFingerprintV1(image.properties[1]);
         image.placements[1].content.expectedProgramSemanticFingerprint = image.properties[1].programSemanticFingerprint;
-        std::array<harken::ScheduleClipPlacementV1, 3> placements{
-            image.placements[0], image.placements[1], image.placements[0]};
+        std::array<harken::ScheduleClipPlacementV1, 4> placements{
+            image.placements[0], image.placements[1], image.placements[0], image.placements[0]};
         placements[0].authoredStart = placements[1].authoredStart = largePrebuffer ? INT64_C(2000000000) : INT64_C(32000000);
-        placements[2].authoredStart = largePrebuffer ? INT64_C(2400000000) : INT64_C(64000000);
-        placements[2].stablePlacementOrdinal = 2;
-        placements[2].stableOccurrenceOrdinal = 9;
-        placements[2].clipId = harkentest::ObjectId(5003);
-        placements[2].clipGuidHigh = 6003;
-        placements[2].clipGuidLow = 7003;
+        placements[2].authoredStart = placements[0].authoredStart;
+        placements[3].authoredStart = largePrebuffer ? INT64_C(2400000000) : INT64_C(64000000);
+        for (std::uint32_t index = 2; index < placements.size(); ++index) {
+            placements[index].stablePlacementOrdinal = index;
+            placements[index].stableOccurrenceOrdinal = index + 7u;
+            placements[index].clipId = harkentest::ObjectId(5001u + index);
+            placements[index].clipGuidHigh = 6001u + index;
+            placements[index].clipGuidLow = 7001u + index;
+        }
         for (auto& placement : placements) placement.authoredDuration = INT64_C(8000000);
-        std::array<harken::PlayableOccurrencePropertyViewV1, 3> occurrences{
-            image.occurrences[0], image.occurrences[1], image.occurrences[0]};
+        placements[2].authoredDuration = 1;
+        std::array<harken::PlayableOccurrencePropertyViewV1, 4> occurrences{
+            image.occurrences[0], image.occurrences[1], image.occurrences[0], image.occurrences[0]};
         for (std::size_t index = 0; index < occurrences.size(); ++index) {
             occurrences[index].stableOccurrenceOrdinal = placements[index].stableOccurrenceOrdinal;
             occurrences[index].childPlayable = placements[index].content;
@@ -21475,10 +21482,12 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
         }
         bool observedCapacityRetry = false;
         bool preparedOutsidePageWindow = false;
+        bool stopRequested = false;
         std::array<std::vector<std::uint64_t>, 2> heard;
         for (unsigned pass = 0; pass < (later + 2048u) / config.blockFrames; ++pass) {
             const auto at = engine.mixer.BlocksRendered() * config.blockFrames;
-            if (!missDeadline || at > onset + config.blockFrames) engine.streams.SetThrottled(false);
+            if ((!missDeadline && !cancelBeforeSeal) || at > onset + config.blockFrames)
+                engine.streams.SetThrottled(false);
             if (temporaryVoicePressure && at + 256u >= onset) {
                 for (const auto voice : pressure) ASSERT_TRUE(engine.voices.CancelPreparedVoice(voice));
                 pressure.clear();
@@ -21490,6 +21499,12 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
                     !cohort.sides[0]->sources[1].arm.Valid();
                 if (onset >= engine.timelinePool.WindowEndFrame())
                     preparedOutsidePageWindow |= cohort.sides[0]->sources[1].arm.Valid();
+                if (!stopRequested && ((cancelBeforeSeal && at + 128u >= onset) ||
+                    (cancelAfterSeal && cohort.published))) {
+                    EXPECT_EQ(cancelAfterSeal, cohort.published);
+                    ASSERT_EQ(harken::PlayableControlStatus::Ok, harken::StopPlayable(engine, started.instance, 0));
+                    stopRequested = true;
+                }
             }
             engine.streams.SyncServe();
             EXPECT_FALSE(engine.preparedVoiceCommandBatchProof.Valid());
@@ -21503,11 +21518,12 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
                 EXPECT_NEAR(channel == 0 ? 0.25f : 0.5f, sample, 0.00001f);
             }
         }
+        EXPECT_EQ(cancel, stopRequested);
         EXPECT_EQ(temporaryVoicePressure, observedCapacityRetry);
         EXPECT_EQ(largePrebuffer, preparedOutsidePageWindow);
-        ASSERT_EQ(missDeadline ? 384u : 768u, heard[0].size()) << OccupancyDump(engine);
-        ASSERT_EQ(missDeadline ? 0u : 384u, heard[1].size());
-        for (std::size_t frame = 0; frame < 384; ++frame) {
+        ASSERT_EQ(cancel ? 0u : missDeadline ? 384u : 768u, heard[0].size()) << OccupancyDump(engine);
+        ASSERT_EQ(cancel || missDeadline ? 0u : 384u, heard[1].size());
+        for (std::size_t frame = 0; !cancel && frame < 384; ++frame) {
             EXPECT_EQ(later + frame, heard[0][(missDeadline ? 0u : 384u) + frame]);
             if (!missDeadline) {
                 EXPECT_EQ(onset + frame, heard[0][frame]);
