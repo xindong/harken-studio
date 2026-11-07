@@ -620,6 +620,10 @@ public:
         const TimelineArmTable::GroupedPublicationAfterInstallation& publication) const noexcept;
     void ApplyFixedTimelineReadUseOnset(VariableTimelineReadUseRef use,
         const TimelineArmTable::GroupedPublicationAfterInstallation& publication) noexcept;
+    bool CanBindFixedTimelineReadUseOnset(VariableTimelineReadUseRef use,
+        const TimelineArmTable::BoundArmPublicationProof& publication) const noexcept;
+    void ApplyFixedTimelineReadUseOnset(VariableTimelineReadUseRef use,
+        const TimelineArmTable::BoundArmPublicationProof& publication) noexcept;
     bool BeginPendingTimelineReadUsePlacement(VariableTimelineReadUseRef use,
         const ImmediateActionLane& lane, const PrivatePlainLayoutCommitProof& placement,
         VariableReadCutRef* cut) noexcept;

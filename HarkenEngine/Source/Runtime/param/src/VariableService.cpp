@@ -5368,6 +5368,21 @@ void VariableServiceV1::ApplyFixedTimelineReadUseOnset(VariableTimelineReadUseRe
     ResolveTimelineReadUse(ref)->onsetFrame = onset;
 }
 
+bool VariableServiceV1::CanBindFixedTimelineReadUseOnset(VariableTimelineReadUseRef ref,
+    const TimelineArmTable::BoundArmPublicationProof& publication) const noexcept {
+    std::uint64_t onset = 0;
+    return CaptureFixedTimelineReadUseOnset(ref, publication, &onset);
+}
+
+void VariableServiceV1::ApplyFixedTimelineReadUseOnset(VariableTimelineReadUseRef ref,
+    const TimelineArmTable::BoundArmPublicationProof& publication) noexcept {
+    std::uint64_t onset = 0;
+    const bool valid = CaptureFixedTimelineReadUseOnset(ref, publication, &onset);
+    assert(valid);
+    (void)valid;
+    ResolveTimelineReadUse(ref)->onsetFrame = onset;
+}
+
 bool VariableServiceV1::BindPreparedTimelineReadUseSource(VariableTimelineReadUseRef ref,
     OriginalSourceSubmissionRegistry& sources, OriginalSourceLifetimePin&& original) noexcept {
     auto* use = ResolveTimelineReadUse(ref);

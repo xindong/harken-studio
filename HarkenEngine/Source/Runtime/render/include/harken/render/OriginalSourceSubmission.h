@@ -527,8 +527,95 @@ public:
         SourceTerminalToken terminal_{};
         bool terminalReturned_ = false;
     };
+    class PrivateBoundSourceRetirementReceipt {
+    public:
+        bool Valid() const noexcept { return owner_ != nullptr; }
+        void Release() noexcept { *this = {}; }
+    private:
+        friend class OriginalSourceSubmissionRegistry;
+        const OriginalSourceSubmissionRegistry* owner_ = nullptr;
+        std::uint64_t registryIncarnation_ = 0;
+        std::uint64_t armIncarnation_ = 0;
+        std::uint64_t episode_ = 0;
+        std::uint64_t marker_ = 0;
+        VnVoiceHandle identity_ = 0;
+        TimelineArmToken token_{};
+        VoiceReleaseObserver release_{};
+        SourceTerminalToken terminal_{};
+        std::uint64_t startFrame_ = 0;
+    };
 private:
     friend struct Engine;
+    bool DetachPrivateInstalledPageSource(const OriginalSourceLifetimePin& source,
+        const VoicePool::OriginalSourceBodyLifetimePin& body, TimelineArmReaderPin* reader,
+        const ScheduledTransactionPool& pool, const DecisionTable& decisions) noexcept {
+        if (!MatchesOriginal(source)) return false;
+        auto& row = *static_cast<Record*>(source.row_);
+        return IsOriginalInstalledSourceCurrent(source, row.originalSourceIdentity_) &&
+            row.wasPublished_ && row.State() == Phase::Disposed &&
+            row.range_.State() == CommandQueue::OriginalRangeState::Completed &&
+            voices_.MatchesOriginalSourceRetirementPair(row.voice_, body) &&
+            voices_.IsOriginalSourceBodyLifetimePinFor(body, row.token_, row.originalSourceIdentity_) &&
+            arms_.DetachPrivateInstalledPageSource(row.arm_, &row, row.nativeSourceEpisode_, reader, pool, decisions);
+    }
+    bool RetirePrivateBoundSource(const OriginalSourceLifetimePin& source,
+        const VoicePool::OriginalSourceBodyLifetimePin& body, std::uint64_t completedSequence,
+        PrivateBoundSourceRetirementReceipt* out) noexcept {
+        if (out == nullptr || out->Valid() || completedSequence == 0 || !MatchesOriginal(source)) return false;
+        auto& row = *static_cast<Record*>(source.row_);
+        const auto* arm = arms_.Resolve(row.token_);
+        PrivateBoundSourceRetirementReceipt captured;
+        if (!row.wasPublished_ || row.State() != Phase::Disposed ||
+            row.range_.State() != CommandQueue::OriginalRangeState::Completed ||
+            !row.originalInstallationCompleted_.load(std::memory_order_acquire) ||
+            !row.arm_.Valid() || !row.voice_.Valid() || arm == nullptr ||
+            (arm->state.load(std::memory_order_acquire) != ArmState::Armed &&
+             arm->state.load(std::memory_order_acquire) != ArmState::CancelRequested &&
+             arm->state.load(std::memory_order_acquire) != ArmState::Tombstoned) ||
+            !arm->pendingImmediateStart || !arm->startBound || arm->frontierAdmission != nullptr ||
+            arm->frontierAdmissionLease != nullptr ||
+            arm->frontierReaderPins.load(std::memory_order_acquire) != 0 ||
+            arm->frontierLastReadSequence.load(std::memory_order_acquire) != 0 ||
+            arm->startedBlockSequence.load(std::memory_order_acquire) != 0 ||
+            arm->logicalCompletionSequence.load(std::memory_order_acquire) != 0 ||
+            arm->frontierOperation.Valid() || arm->frontierActiveLease.load(std::memory_order_acquire) != nullptr ||
+            !voices_.IsOriginalSourceBodyLifetimePinFor(body, row.token_, row.originalSourceIdentity_) ||
+            !voices_.CaptureOriginalSourceRetirementIdentity(row.voice_, body, &captured.release_, &captured.terminal_))
+            return false;
+        TimelineArmTable::SourceCommandRowProof cancellation;
+        if (arms_.ProveOriginalSourceCancellation(row.arm_, &row, &cancellation) !=
+            TimelineArmTable::SourceCommandRowStatus::Ready) return false;
+        const auto disposition = voices_.TryDisposeOriginalTimelineVoiceFromLogic(row.voice_);
+        if (disposition != VoicePool::OriginalVoiceDisposal::Released &&
+            disposition != VoicePool::OriginalVoiceDisposal::AlreadyReleased) return false;
+        TimelineArmTable::TombstoneOriginalSourceCommand(cancellation, completedSequence);
+        captured.owner_ = this;
+        captured.registryIncarnation_ = incarnation_;
+        captured.armIncarnation_ = arms_.Incarnation();
+        captured.episode_ = row.nativeSourceEpisode_;
+        captured.marker_ = row.originalMarker_;
+        captured.identity_ = row.originalSourceIdentity_;
+        captured.token_ = row.token_;
+        captured.startFrame_ = arm->startFrame;
+        *out = captured;
+        return true;
+    }
+    bool MatchesPrivateBoundSourceRetirement(const PrivateBoundSourceRetirementReceipt& receipt,
+        TimelineArmToken arm, VnVoiceHandle identity, VoiceReleaseObserver release,
+        SourceTerminalToken terminal) const noexcept {
+        return receipt.owner_ == this && receipt.registryIncarnation_ == incarnation_ &&
+            receipt.armIncarnation_ == arms_.Incarnation() && receipt.episode_ != 0 && receipt.marker_ != 0 &&
+            SameToken(receipt.token_, arm) && identity != 0 && receipt.identity_ == identity &&
+            release.Valid() && receipt.release_.slot == release.slot &&
+            receipt.release_.targetSequence == release.targetSequence &&
+            receipt.terminal_.slot == terminal.slot && receipt.terminal_.generation == terminal.generation &&
+            voices_.ReleaseObserved(release);
+    }
+    bool OwnsPrivateBoundSourceRetirementTerminal(const PrivateBoundSourceRetirementReceipt& receipt,
+        SourceTerminalToken terminal, const SourceTerminalRecord& source) const noexcept {
+        return MatchesPrivateBoundSourceRetirement(receipt, receipt.token_, receipt.identity_,
+            source.release, terminal) && terminal.Valid() && source.render == RenderOf(receipt.token_);
+    }
     bool BindPrivatePageGroupSourceStart(const OriginalSourceLifetimePin& source,
         const VoicePool::OriginalSourceBodyLifetimePin& body, const CommandQueue::PreparedBatchProof& batch,
         const TimelineArmReaderPin& reader, const FrontierGroupBinding& binding, AudioSliceLease& lease,
