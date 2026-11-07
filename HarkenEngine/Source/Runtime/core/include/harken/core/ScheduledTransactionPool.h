@@ -1639,6 +1639,10 @@ public:
         const PreparedTransactionBatch& prepared,
         std::uint32_t requestIndex, std::uint32_t eventOrdinal,
         ConsumedEvent* out) const noexcept;
+    bool CapturePrivatePreparedTransactionStart(
+        const PreparedTransactionBatch& prepared,
+        std::uint32_t requestIndex, std::uint32_t eventOrdinal,
+        ConsumedEvent* out) const noexcept;
     // Qualifies the same uncommitted, frozen one-event requests and actual row keys.
     bool MatchesFrozenPreparedTransactionEvents(
         const PreparedTransactionBatch& prepared, LogicCommitSequence sequence,

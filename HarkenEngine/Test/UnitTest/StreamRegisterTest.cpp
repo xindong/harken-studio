@@ -957,6 +957,64 @@ TEST(StreamRegister, ReplacementWaitsForPrebufferAndTransfersOwnershipOnce) {
     EXPECT_EQ(VN_OK, streams.UnregisterFile(spec.soundId));
 }
 
+TEST(StreamRegister, PrivateTransferKeepsMediaPendingAndRejectsOldOwnershipAfterReuse) {
+    using Manager = harken::StreamManager;
+    using State = Manager::PreparationState;
+    using Access = harken::detail::StreamManagerTestAccess;
+    harken::EngineConfig config{};
+    config.maxStreams = 1;
+    config.streamRingFrames = 16;
+    Manager streams(config);
+    streams.SetThrottled(true);
+    StreamSpec spec;
+    spec.soundId = harkentest::ObjectId(17208);
+    spec.chunkFrames = 8;
+    const auto samples = ServiceSamples(64, 0);
+    const auto path = TempPath("stream_private_transfer.stream");
+    WriteFileBytes(path, BuildStreamBytes(spec, samples));
+    ASSERT_EQ(VN_OK, streams.RegisterFile(spec.soundId, path.c_str()));
+    Manager::StreamFacts facts{};
+    ASSERT_TRUE(streams.FindFile(spec.soundId, &facts));
+    auto request = ReplacementAt(facts, 3);
+    request.prebufferTargetFrames = 12;
+    Manager::PreparedToken token{};
+    ASSERT_EQ(VN_OK, streams.BeginReplacement(request, &token));
+    Manager::PreparedStream owned{};
+    EXPECT_EQ(VN_BACKPRESSURE, streams.TakeReplacement(token, &owned));
+    ASSERT_EQ(VN_OK, streams.TransferReplacement(token, &owned));
+    EXPECT_EQ(State::Invalid, streams.QueryReplacement(token));
+    EXPECT_FALSE(streams.CancelReplacement(token));
+    Manager::PreparedStream duplicate{};
+    EXPECT_EQ(VN_STALE_HANDLE, streams.TransferReplacement(token, &duplicate));
+    EXPECT_EQ(State::Preparing, streams.PromoteTransferredStream(owned));
+    EXPECT_EQ(VN_IN_USE, streams.UnregisterFile(spec.soundId));
+    streams.SetMaxServeFramesForTest(4);
+    streams.SyncServe();
+    Access::ServeSlots(streams);
+    EXPECT_EQ(State::Preparing, streams.PromoteTransferredStream(owned));
+    Access::ServeSlots(streams);
+    EXPECT_EQ(State::Preparing, streams.PromoteTransferredStream(owned));
+    Access::ServeSlots(streams);
+    ASSERT_EQ(State::Ready, streams.PromoteTransferredStream(owned));
+    EXPECT_EQ(State::Ready, streams.PromoteTransferredStream(owned));
+    std::size_t position = 3;
+    ExpectAndConsume(*owned.ring, samples, position, 12);
+    ASSERT_TRUE(streams.RetirePreparedSlot(owned.ring, owned.ringToken));
+    streams.SyncServe();
+    Manager::PreparedToken next{};
+    ASSERT_EQ(VN_OK, streams.BeginReplacement(request, &next));
+    Manager::PreparedStream replacement{};
+    ASSERT_EQ(VN_OK, streams.TransferReplacement(next, &replacement));
+    EXPECT_EQ(owned.slot, replacement.slot);
+    EXPECT_NE(owned.ringToken, replacement.ringToken);
+    EXPECT_EQ(State::Invalid, streams.PromoteTransferredStream(owned));
+    EXPECT_FALSE(streams.RetirePreparedSlot(owned.ring, owned.ringToken));
+    EXPECT_EQ(State::Preparing, streams.PromoteTransferredStream(replacement));
+    ASSERT_TRUE(streams.RetirePreparedSlot(replacement.ring, replacement.ringToken));
+    streams.SyncServe();
+    EXPECT_EQ(VN_OK, streams.UnregisterFile(spec.soundId));
+}
+
 TEST(StreamRegister, ReplacementPreservesSourcePositionLoopCountAndOutro) {
     using Manager = harken::StreamManager;
     using Access = harken::detail::StreamManagerTestAccess;

@@ -247,6 +247,13 @@ public:
     bool CancelReplacement(PreparedToken token) noexcept;
     VnResult TakeReplacement(PreparedToken token, PreparedStream* out) noexcept;
 
+    // Transfers preparation ownership without making the stream ready to start.
+    // The recipient must retire the exact ring; the token cannot cancel it again.
+    // I/O stays on the preparation lane until an exact ready promotion succeeds.
+    VnResult TransferReplacement(PreparedToken token, PreparedStream* out) noexcept;
+    PreparationState PromoteTransferredStream(const PreparedStream& stream) noexcept;
+    void ServiceTransferredPreparations() noexcept;
+
     struct SourceToken { std::uint64_t value = 0; };
     // Ready sources are validated but unpublished. Take installs exactly once.
     // A lease is retained only when Begin succeeds. Callbacks run on I/O lanes.
@@ -387,7 +394,7 @@ private:
 
     struct StreamSlot {
         StreamRing ring;
-        std::atomic<bool> supplied{false};
+        bool promotionPending = false; // Logic-owned; not ring ownership.
         int ioLane = -1; // -1 idle, kPreparationIoLane or kSteadyIoOwner
         SlotIoJob io;
         ReadWindow window;
@@ -545,6 +552,7 @@ private:
     std::uint64_t m_lastPreparationGeneration = 0; // logic thread only
 
     std::vector<StreamSlot> m_slots;
+    std::uint32_t m_pendingPromotionCount = 0;
     std::vector<std::unique_ptr<SourceRequest>> m_sourceRequests;
     std::vector<std::unique_ptr<IoLane>> m_ioLanes;
     std::atomic<bool> m_ioStop{false};

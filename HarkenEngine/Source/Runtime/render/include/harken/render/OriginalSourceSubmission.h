@@ -527,8 +527,154 @@ public:
         SourceTerminalToken terminal_{};
         bool terminalReturned_ = false;
     };
+    class PrivateBoundSourceRetirementReceipt {
+    public:
+        enum class State : std::uint8_t { Empty, Detached, Requested, Settled };
+        bool Valid() const noexcept { return owner_ != nullptr; }
+        bool Settled() const noexcept { return state_ == State::Settled; }
+        void Release() noexcept {
+            body_.Release();
+            source_.Release();
+            owner_ = nullptr;
+            state_ = State::Empty;
+            registryIncarnation_ = armIncarnation_ = episode_ = marker_ = identity_ = startFrame_ = deadline_ = 0;
+            token_ = {}; release_ = {}; terminal_ = {};
+        }
+    private:
+        friend class OriginalSourceSubmissionRegistry;
+        const OriginalSourceSubmissionRegistry* owner_ = nullptr;
+        State state_ = State::Empty;
+        std::uint64_t registryIncarnation_ = 0;
+        std::uint64_t armIncarnation_ = 0;
+        std::uint64_t episode_ = 0;
+        std::uint64_t marker_ = 0;
+        VnVoiceHandle identity_ = 0;
+        TimelineArmToken token_{};
+        VoiceReleaseObserver release_{};
+        SourceTerminalToken terminal_{};
+        std::uint64_t startFrame_ = 0;
+        std::uint64_t deadline_ = 0;
+        OriginalSourceLifetimePin source_;
+        VoicePool::OriginalSourceBodyLifetimePin body_;
+    };
 private:
     friend struct Engine;
+    bool DetachPrivateInstalledPageSource(const OriginalSourceLifetimePin& source,
+        const VoicePool::OriginalSourceBodyLifetimePin& body, TimelineArmReaderPin* reader,
+        const ScheduledTransactionPool& pool, const DecisionTable& decisions,
+        PrivateBoundSourceRetirementReceipt* out) noexcept {
+        if (out == nullptr || out->Valid() || !MatchesOriginal(source)) return false;
+        auto& row = *static_cast<Record*>(source.row_);
+        const auto* arm = arms_.Resolve(row.token_);
+        PrivateBoundSourceRetirementReceipt captured;
+        if (!IsOriginalInstalledSourceCurrent(source, row.originalSourceIdentity_) ||
+            !row.wasPublished_ || row.State() != Phase::Disposed || arm == nullptr ||
+            row.range_.State() != CommandQueue::OriginalRangeState::Completed ||
+            !voices_.MatchesOriginalSourceRetirementPair(row.voice_, body) ||
+            !voices_.IsOriginalSourceBodyLifetimePinFor(body, row.token_, row.originalSourceIdentity_) ||
+            !voices_.CaptureOriginalSourceRetirementIdentity(row.voice_, body, &captured.release_, &captured.terminal_) ||
+            !source.Borrow(&captured.source_) || !body.Borrow(&captured.body_) ||
+            !arms_.DetachPrivateInstalledPageSource(row.arm_, &row, row.nativeSourceEpisode_, reader, pool, decisions))
+            return false;
+        captured.owner_ = this;
+        captured.state_ = PrivateBoundSourceRetirementReceipt::State::Detached;
+        captured.registryIncarnation_ = incarnation_;
+        captured.armIncarnation_ = arms_.Incarnation();
+        captured.episode_ = row.nativeSourceEpisode_;
+        captured.marker_ = row.originalMarker_;
+        captured.identity_ = row.originalSourceIdentity_;
+        captured.token_ = row.token_;
+        captured.startFrame_ = arm->startFrame;
+        captured.deadline_ = arm->armDeadline;
+        *out = std::move(captured);
+        return true;
+    }
+    bool RetirePrivateBoundSource(PrivateBoundSourceRetirementReceipt& receipt,
+        std::uint64_t completedSequence) noexcept {
+        using State = PrivateBoundSourceRetirementReceipt::State;
+        if (receipt.owner_ != this || receipt.registryIncarnation_ != incarnation_ ||
+            receipt.armIncarnation_ != arms_.Incarnation() || completedSequence == 0) return false;
+        if (receipt.state_ == State::Settled) return voices_.ReleaseObserved(receipt.release_);
+        if ((receipt.state_ != State::Detached && receipt.state_ != State::Requested) ||
+            !MatchesOriginal(receipt.source_)) return false;
+        auto& row = *static_cast<Record*>(receipt.source_.row_);
+        const auto* arm = arms_.Resolve(receipt.token_);
+        if (!SameToken(row.token_, receipt.token_) || row.nativeSourceEpisode_ != receipt.episode_ ||
+            row.originalMarker_ != receipt.marker_ || row.originalSourceIdentity_ != receipt.identity_ ||
+            !row.wasPublished_ || row.State() != Phase::Disposed ||
+            row.range_.State() != CommandQueue::OriginalRangeState::Completed ||
+            !row.originalInstallationCompleted_.load(std::memory_order_acquire) ||
+            !row.arm_.Valid() || !row.voice_.Valid() || arm == nullptr ||
+            (arm->state.load(std::memory_order_acquire) != ArmState::Armed &&
+             arm->state.load(std::memory_order_acquire) != ArmState::CancelRequested &&
+             arm->state.load(std::memory_order_acquire) != ArmState::Tombstoned) ||
+            !arm->pendingImmediateStart || !arm->startBound || arm->startFrame != receipt.startFrame_ ||
+            arm->armDeadline != receipt.deadline_ || arm->frontierAdmission != nullptr ||
+            arm->frontierAdmissionLease != nullptr ||
+            arm->frontierReaderPins.load(std::memory_order_acquire) != 0 ||
+            arm->frontierLastReadSequence.load(std::memory_order_acquire) != 0 ||
+            arm->startedBlockSequence.load(std::memory_order_acquire) != 0 ||
+            arm->logicalCompletionSequence.load(std::memory_order_acquire) != 0 ||
+            arm->frontierOperation.Valid() || arm->frontierActiveLease.load(std::memory_order_acquire) != nullptr ||
+            !voices_.IsOriginalSourceBodyLifetimePinFor(receipt.body_, row.token_, receipt.identity_)) return false;
+        // The receipt owns the original identity before any cancellation can advance on audio.
+        receipt.state_ = State::Requested;
+        TimelineArmTable::SourceCommandRowProof cancellation;
+        if (arms_.ProveOriginalSourceCancellation(row.arm_, &row, &cancellation) !=
+            TimelineArmTable::SourceCommandRowStatus::Ready) return false;
+        if (!voices_.ReleaseObserved(receipt.release_)) {
+            const auto disposition = voices_.TryDisposeOriginalTimelineVoiceFromLogic(row.voice_);
+            if (disposition != VoicePool::OriginalVoiceDisposal::Released &&
+                disposition != VoicePool::OriginalVoiceDisposal::AlreadyReleased) return false;
+        }
+        TimelineArmTable::TombstoneOriginalSourceCommand(cancellation, completedSequence);
+        if (!voices_.ReleaseObserved(receipt.release_) ||
+            arm->state.load(std::memory_order_acquire) != ArmState::Tombstoned) return false;
+        receipt.state_ = State::Settled;
+        receipt.body_.Release();
+        receipt.source_.Release();
+        return true;
+    }
+    bool MatchesPrivateBoundSourceRetirement(const PrivateBoundSourceRetirementReceipt& receipt,
+        TimelineArmToken arm, VnVoiceHandle identity, VoiceReleaseObserver release,
+        SourceTerminalToken terminal) const noexcept {
+        return receipt.owner_ == this && receipt.Settled() && receipt.registryIncarnation_ == incarnation_ &&
+            receipt.armIncarnation_ == arms_.Incarnation() && receipt.episode_ != 0 && receipt.marker_ != 0 &&
+            SameToken(receipt.token_, arm) && identity != 0 && receipt.identity_ == identity &&
+            release.Valid() && receipt.release_.slot == release.slot &&
+            receipt.release_.targetSequence == release.targetSequence &&
+            receipt.terminal_.slot == terminal.slot && receipt.terminal_.generation == terminal.generation &&
+            voices_.ReleaseObserved(release);
+    }
+    bool OwnsPrivateBoundSourceRetirementTerminal(const PrivateBoundSourceRetirementReceipt& receipt,
+        SourceTerminalToken terminal, const SourceTerminalRecord& source) const noexcept {
+        return receipt.owner_ == this && receipt.state_ != PrivateBoundSourceRetirementReceipt::State::Empty &&
+            receipt.registryIncarnation_ == incarnation_ && receipt.armIncarnation_ == arms_.Incarnation() &&
+            receipt.episode_ != 0 && receipt.marker_ != 0 && terminal.Valid() &&
+            receipt.terminal_.slot == terminal.slot && receipt.terminal_.generation == terminal.generation &&
+            receipt.release_.slot == source.release.slot && receipt.release_.targetSequence == source.release.targetSequence &&
+            source.render == RenderOf(receipt.token_);
+    }
+    bool BindPrivatePageGroupSourceStart(const OriginalSourceLifetimePin& source,
+        const VoicePool::OriginalSourceBodyLifetimePin& body, const CommandQueue::PreparedBatchProof& batch,
+        const TimelineArmReaderPin& reader, const FrontierGroupBinding& binding, AudioSliceLease& lease,
+        const ScheduledTransactionPool& pages, const DecisionTable& decisions,
+        const PreparedTransactionBatch& events, std::uint32_t requestIndex, std::uint32_t eventOrdinal,
+        ArmGroupTable& groups, ArmGroupToken group,
+        const TimelineArmTable::GroupedPublicationAfterInstallation** publication) noexcept {
+        if (publication == nullptr || !MatchesOriginal(source)) return false;
+        auto& row = *static_cast<Record*>(source.row_);
+        if (!MatchesPrivateCommittedInitialGroupSourcePair(source, body, batch,
+                source.token_, row.originalSourceIdentity_) ||
+            !arms_.BindPrivatePendingPageFrontierStart(row.arm_, reader, binding, lease, pages, decisions,
+                events, requestIndex, eventOrdinal)) return false;
+        const auto* arm = arms_.Resolve(source.token_);
+        if (arm == nullptr || !PrepareEntryBoundGroupPublication(source, body, batch, groups, group,
+                arm->startFrame, binding, lease))
+            return false;
+        *publication = &row.groupInstallPublication_;
+        return true;
+    }
     bool PrepareEntryBoundGroupPublication(const OriginalSourceLifetimePin& source,
         const VoicePool::OriginalSourceBodyLifetimePin& body, const CommandQueue::PreparedBatchProof& batch,
         ArmGroupTable& groups, ArmGroupToken group, std::uint64_t frame,
@@ -672,7 +818,7 @@ private:
         const PendingInstalledSourceRetirementReceipt& receipt, TimelineArmToken arm,
         VnVoiceHandle identity, VoiceReleaseObserver release, SourceTerminalToken terminal) const noexcept {
         if (!PendingInstalledSourceRetirementSettled(receipt, arm) || identity == 0 ||
-            !release.Valid() || !terminal.Valid() || receipt.release_.slot != release.slot ||
+            !release.Valid() || receipt.terminal_.Valid() != terminal.Valid() || receipt.release_.slot != release.slot ||
             receipt.release_.targetSequence != release.targetSequence || receipt.terminal_.slot != terminal.slot ||
             receipt.terminal_.generation != terminal.generation) return false;
         return receipt.owner_ != nullptr ? receipt.identity_ == identity
@@ -686,6 +832,14 @@ private:
                 receipt, arm, identity, release, receipt.terminal_)) return false;
         *out = receipt.terminal_;
         return true;
+    }
+
+    bool OwnsPendingInstalledSourceRetirementTerminal(const PendingInstalledSourceRetirementReceipt& receipt,
+        TimelineArmToken arm, SourceTerminalToken terminal, const SourceTerminalRecord& source) const noexcept {
+        return MatchesPendingInstalledSourceRetirementReceipt(receipt, arm) && terminal.Valid() &&
+            receipt.terminal_.slot == terminal.slot && receipt.terminal_.generation == terminal.generation &&
+            source.render == RenderOf(arm) && source.release.slot == receipt.release_.slot &&
+            source.release.targetSequence == receipt.release_.targetSequence;
     }
 
     void ObservePendingInstalledSourceTerminalReturn(PendingInstalledSourceRetirementReceipt& receipt,

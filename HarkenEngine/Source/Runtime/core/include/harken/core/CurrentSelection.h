@@ -536,6 +536,8 @@ public:
     SelectionMemoryStatusV1 CommitPreparedPlayTransactional(
         PreparedSelectionPlayV1* prepared,
         std::uint64_t ticket) noexcept;
+    SelectionMemoryStatusV1 CanFinalizeCommittedPlay(
+        const PreparedSelectionPlayV1* committed) const noexcept;
     SelectionMemoryStatusV1 FinalizeCommittedPlay(
         PreparedSelectionPlayV1* committed) noexcept;
     SelectionMemoryStatusV1 RollbackCommittedPlay(

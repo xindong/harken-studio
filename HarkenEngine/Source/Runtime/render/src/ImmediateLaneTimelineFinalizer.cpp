@@ -131,7 +131,8 @@ bool ImmediateLaneTimelineFinalizer::Capture(std::uint64_t quantum) noexcept {
     state.prepared = true;
     state.capturedQuantum = quantum;
     if (!state.lane->HasOutstandingAttempts()) return false;
-    for (std::uint32_t slot = 0; slot < state.lane->AttemptCapacity(); ++slot) {
+    const auto prefix = state.lane->ReservedAttemptPrefix();
+    for (std::uint32_t slot = 0; slot < prefix; ++slot) {
         const auto* bucket = state.lane->CaptureDue(slot, quantum);
         if (bucket != nullptr)
             state.receipts[state.receiptCount++] = {slot, bucket, true, false, false};
@@ -389,8 +390,12 @@ void ImmediateLaneTimelineFinalizer::Apply(std::uint64_t quantum) noexcept {
             }
             if (program->role != TimelineProgramRole::Voice || payload->kind != TimelineEventKind::Start) continue;
             bool waitForPublication = false;
-            const auto status = voices_.TimelineStartSourcesStatus(arms_,
-                event.armToken, &waitForPublication);
+            auto status = state.frontier != nullptr ? state.frontier->StartSourcesStatus(event)
+                : voices_.TimelineStartSourcesStatus(event.armToken.renderSlot, event.armToken.renderGeneration);
+            if (status != VariableReadCutStatus::Failed && !arms_.SourcePublicationAccepted(event.armToken)) {
+                waitForPublication = true;
+                status = VariableReadCutStatus::Waiting;
+            }
             publicationWaiting = publicationWaiting || waitForPublication;
             if (status == VariableReadCutStatus::Failed) sources = status;
             else if (status == VariableReadCutStatus::Waiting) {
@@ -580,7 +585,10 @@ void ImmediateLaneTimelineFinalizer::Apply(std::uint64_t quantum) noexcept {
                 }
             }
             if (!control) {
-                const auto source = voices_.TimelineStartSourcesStatus(arms_, event.armToken);
+                auto source = state.frontier != nullptr ? state.frontier->StartSourcesStatus(event)
+                    : voices_.TimelineStartSourcesStatus(event.armToken.renderSlot, event.armToken.renderGeneration);
+                if (source != VariableReadCutStatus::Failed && !arms_.SourcePublicationAccepted(event.armToken))
+                    source = VariableReadCutStatus::Waiting;
                 if (source != VariableReadCutStatus::Applied) {
                     sourcesWaiting = source == VariableReadCutStatus::Waiting;
                     valid = false;
