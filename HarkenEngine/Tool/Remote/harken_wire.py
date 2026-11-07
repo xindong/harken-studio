@@ -17,7 +17,7 @@ TABLE_JSON = r'''
     "constants, wire opcodes, marshalled struct layouts, and per-function",
     "policies. gen_wire.py generates the C++ wire layer and the Python",
     "protocol module from this table; nothing in those generated files is",
-    "hand-maintained. The same table is shaped to later emit SDK bindings.",
+    "hand-maintained. The same table is shaped to later emit language bindings.",
     "",
     "Layout model: MSVC x64, little-endian. Scalars align to their size;",
     "a struct aligns to its widest field and pads to that alignment. The",
@@ -10301,7 +10301,7 @@ TABLE_JSON = r'''
     },
     {
       "name": "Vn_QueryVariableCatalog",
-      "note": "Typed Variable SDK catalog query; not part of the remote command-mirror (no opcode). Present so the C# binding covers the public C API without occupying wire opcodes 198-223.",
+      "note": "Typed Variable API catalog query; not part of the remote command-mirror (no opcode). Present so the C# binding covers the public C API without occupying wire opcodes 198-223.",
       "params": [
         {
           "name": "out",
@@ -10357,7 +10357,7 @@ TABLE_JSON = r'''
           "type": "VnMonitorHostSessionV1"
         }
       ],
-      "note": "Optional SDK host diagnostics; local C ABI only, no remote mutation opcode."
+      "note": "Optional host diagnostics; local C ABI only, no remote mutation opcode."
     },
     {
       "name": "Vn_MonitorEndHostSession",
@@ -10373,7 +10373,7 @@ TABLE_JSON = r'''
           "wire": "u64"
         }
       ],
-      "note": "Optional SDK host diagnostics; local C ABI only, no remote mutation opcode."
+      "note": "Optional host diagnostics; local C ABI only, no remote mutation opcode."
     },
     {
       "name": "Vn_MonitorRegisterHost",
@@ -10385,7 +10385,7 @@ TABLE_JSON = r'''
           "type": "VnMonitorHostRegistrationV1"
         }
       ],
-      "note": "Optional SDK host diagnostics; local C ABI only, no remote mutation opcode."
+      "note": "Optional host diagnostics; local C ABI only, no remote mutation opcode."
     },
     {
       "name": "Vn_MonitorRegisterHostV2",
@@ -10397,7 +10397,7 @@ TABLE_JSON = r'''
           "type": "VnMonitorHostRegistrationV2"
         }
       ],
-      "note": "Optional atomic SDK host identity and description; local C ABI only, no remote mutation opcode."
+      "note": "Optional atomic host identity and description; local C ABI only, no remote mutation opcode."
     },
     {
       "name": "Vn_BeginStreamSource",
@@ -12109,7 +12109,7 @@ TABLE_JSON = r'''
       }
     },
     "callbacks": {
-      "_comment": "C ABI callback function-pointer signatures (VnConfig.onNotification / .logCallback). Pointers marshal as IntPtr; the SDK layer decodes them. Cdecl, matching the extern-C engine exports.",
+      "_comment": "C ABI callback function-pointer signatures (VnConfig.onNotification / .logCallback). Pointers marshal as IntPtr; the managed layer decodes them. Cdecl, matching the extern-C engine exports.",
       "VnNotificationCallback": {
         "returnType": "void",
         "callingConvention": "cdecl",

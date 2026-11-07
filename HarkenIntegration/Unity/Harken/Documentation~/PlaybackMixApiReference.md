@@ -90,4 +90,4 @@ Bus Volume's first assignment snaps even for a positive ramp; later positive
 ramps interpolate in linear amplitude. Bus Output Volume is independent and
 honors a positive ramp on its first assignment too. Internal Bus creation,
 topology, filter, solo, and raw-handle filter helpers are not consumer entry
-points. See the SDK [public API policy](../../../API_SURFACE.md).
+points. See the Integration [public API policy](../../../API_SURFACE.md).

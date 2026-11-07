@@ -123,7 +123,7 @@ private:
                                    const QString& sourceLabel,
                                    bool documentPerObject = false);
     bool registerWriteItem(const ProjectItem& item, const QUuid& documentId);
-    bool registerSdkName(const QString& name, ProjectItem::Type type, const QUuid& guid) const;
+    bool registerCallableName(const QString& name, ProjectItem::Type type, const QUuid& guid) const;
     bool registerReadGuid(const QUuid& guid, ProjectItem::Type type,
                           const QUuid& documentId, const QString& name) const;
     uint32_t transientObjectId(const QUuid& guid) const;
@@ -165,7 +165,7 @@ private:
     mutable QHash<uint32_t, ReferenceTarget> referencesByObjectId_;
     mutable QHash<harkenstudio::ObjectId, ReferenceTarget> referencesByRuntimeStableId_;
     mutable QHash<QUuid, ReferenceTarget> referencesByGuid_;
-    mutable QHash<QString, QUuid> sdkNames_;
+    mutable QHash<QString, QUuid> callableNames_;
     mutable QHash<QUuid, ParentRef> parentOverrides_;
     mutable uint32_t nextTransientObjectId_ = 1;
     mutable bool strictReferenceRead_ = false;

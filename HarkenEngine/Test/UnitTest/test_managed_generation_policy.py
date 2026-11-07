@@ -17,13 +17,13 @@ SPEC.loader.exec_module(binding)
 class GenerationPolicyTests(unittest.TestCase):
     def setUp(self):
         self.table = json.loads(Path(binding.TABLE_PATH).read_text(encoding="utf-8"))
-        self.policy = json.loads(Path(binding.SDK_POLICY_PATH).read_text(encoding="utf-8"))
+        self.policy = json.loads(Path(binding.API_POLICY_PATH).read_text(encoding="utf-8"))
 
     def validate(self, policy, table=None):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "policy.json"
             path.write_text(json.dumps(policy), encoding="utf-8")
-            with patch.object(binding, "SDK_POLICY_PATH", path):
+            with patch.object(binding, "API_POLICY_PATH", path):
                 return binding.managed_policy(self.table if table is None else table)
 
     def test_unclassified_new_native_type_fails_generation(self):
@@ -64,7 +64,7 @@ class GenerationPolicyTests(unittest.TestCase):
         self.assertEqual("internal", binding.managed_access(policy, "types", "HarkenNative"))
         self.assertEqual("public", binding.managed_access(policy, "types", "VnResult"))
 
-    def test_excluded_native_contracts_do_not_change_sdk_outputs(self):
+    def test_excluded_native_contracts_do_not_change_managed_outputs(self):
         baseline_policy = self.validate(self.policy)
         baseline = binding.managed_projection(self.table, baseline_policy)
         table = copy.deepcopy(self.table)
@@ -87,7 +87,7 @@ class GenerationPolicyTests(unittest.TestCase):
                 self.assertEqual(emit(baseline, baseline_policy), emit(projected, policy))
         self.assertIn("VnMonitorBoundaryProbe", binding.emit_cpp_pin(table))
 
-    def test_sdk_dependencies_cannot_cross_excluded_native_boundary(self):
+    def test_managed_dependencies_cannot_cross_excluded_native_boundary(self):
         for dependency in ("field", "function"):
             with self.subTest(dependency=dependency):
                 table = copy.deepcopy(self.table)
@@ -96,7 +96,7 @@ class GenerationPolicyTests(unittest.TestCase):
                 else:
                     table["functions"].append({"name": "Vn_SdkBoundaryProbe", "params": [
                         {"name": "desc", "wire": "desc", "type": "VnMonitorRecordingDesc", "ctype": "const VnMonitorRecordingDesc*"}]})
-                with self.assertRaisesRegex(ValueError, "SDK projection crosses excluded native type"):
+                with self.assertRaisesRegex(ValueError, "managed projection crosses excluded native type"):
                     self.validate(self.policy, table)
 
 

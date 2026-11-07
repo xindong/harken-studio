@@ -285,7 +285,7 @@ bool readObject(const QString& path, QJsonObject* object, QString* error,
     return true;
 }
 
-bool sdkName(const QString& name)
+bool integrationName(const QString& name)
 {
     return name == QStringLiteral("com.harken.core");
 }
@@ -620,19 +620,19 @@ Discovery discover(const QString& projectRoot)
             const auto resolved = it.value().toObject();
             const QString local = value.startsWith(QStringLiteral("file:"))
                 ? QUrl::fromPercentEncoding(value.mid(5).toUtf8()) : QString();
-            if (lockFile && sdkName(it.key())
+            if (lockFile && integrationName(it.key())
                 && resolved.value(QStringLiteral("source")).toString() == QStringLiteral("embedded")
                 && resolved.value(QStringLiteral("depth")).toInt(-1) == 0
                 && safeRelativePath(local) && !local.contains(QLatin1Char('/'))
                 && !local.contains(QLatin1Char('\\')) && !local.startsWith(QLatin1Char('.')))
                 continue;
-            if (sdkName(it.key()))
-                result.sdkReferences << QStringLiteral("%1: %2").arg(it.key(), value);
+            if (integrationName(it.key()))
+                result.integrationReferences << QStringLiteral("%1: %2").arg(it.key(), value);
             if (value.startsWith(QStringLiteral("file:"))) {
                 const QString path = QDir::cleanPath(QDir(base).absoluteFilePath(local));
                 references.push_back({it.key(), path});
                 result.localPackagePaths << path;
-            } else if (sdkName(it.key())) {
+            } else if (integrationName(it.key())) {
                 references.push_back({it.key(), {}});
             }
         }
@@ -645,7 +645,7 @@ Discovery discover(const QString& projectRoot)
             QString error;
             if (!readObject(path, &package, &error, budget)) return;
             const QString identity = package.value(QStringLiteral("name")).toString();
-            if (sdkName(identity)) {
+            if (integrationName(identity)) {
                 add(info.absolutePath());
                 if (samePath(QFileInfo(info.absolutePath()).absolutePath(),
                              QDir(projectRoot).filePath(QStringLiteral("Packages"))))
@@ -705,8 +705,8 @@ Discovery discover(const QString& projectRoot)
                     const auto declared = it.value().toObject().value(QStringLiteral("dependencies")).toObject();
                     for (auto dependency = declared.begin(); dependency != declared.end(); ++dependency) {
                         if (!budget.consume(path)) break;
-                        if (!sdkName(dependency.key())) continue;
-                        result.sdkReferences << QStringLiteral("%1 -> %2: %3")
+                        if (!integrationName(dependency.key())) continue;
+                        result.integrationReferences << QStringLiteral("%1 -> %2: %3")
                             .arg(it.key(), dependency.key(), dependency.value().toString());
                         references.push_back({dependency.key(), {}});
                     }
@@ -785,7 +785,7 @@ Discovery discover(const QString& projectRoot)
     }
     if (!budget.error.isEmpty()) result.errors << budget.error;
     result.errors.removeDuplicates();
-    result.sdkReferences.removeDuplicates();
+    result.integrationReferences.removeDuplicates();
     result.localPackagePaths.removeDuplicates();
     return result;
 }
@@ -814,9 +814,9 @@ bool validateTarget(const QString& projectRoot, const QString& target,
         *error = discovery.errors.join(QLatin1Char('\n'));
         return false;
     }
-    if (removing && !discovery.sdkReferences.isEmpty()) {
+    if (removing && !discovery.integrationReferences.isEmpty()) {
         *error = QStringLiteral("Resolve Integration Package dependencies before removal; Unity could load the referenced Integration Package after the embedded copy is removed:\n%1")
-                     .arg(discovery.sdkReferences.join(QLatin1Char('\n')));
+                     .arg(discovery.integrationReferences.join(QLatin1Char('\n')));
         return false;
     }
     if (discovery.installations.size() > 1) {

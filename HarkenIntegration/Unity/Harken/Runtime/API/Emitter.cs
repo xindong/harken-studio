@@ -3,7 +3,7 @@ using System;
 namespace Harken
 {
     /// <summary>
-    /// Ergonomic handle over an engine emitter (an SDK-facing name) — a
+    /// Ergonomic handle over an engine emitter (an API-facing name) — a
     /// position/orientation source many voices follow, plus a small local
     /// Variable table. It owns no engine state of its own; it is just the
     /// 64-bit handle. Every member is a single C call with zero managed

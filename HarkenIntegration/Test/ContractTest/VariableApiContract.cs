@@ -10,7 +10,7 @@ using Harken.Generated;
 
 namespace Harken.Test
 {
-    internal static class VariableSdkContract
+    internal static class VariableApiContract
     {
         public static bool Run()
         {
@@ -112,7 +112,7 @@ namespace Harken.Test
                 };
                 Require(VariableCatalogGuard.Evaluate(in live));
                 Check(VariableCatalogGuard.DisplayMismatchCount == 1,
-                    "display-only mismatch reports through SDK callback without Unity");
+                    "display-only mismatch reports through managed callback without Unity");
                 live.executionCatalogFingerprint ^= 1;
                 Check(VariableCatalogGuard.Evaluate(in live) == VnResult.VN_VARIABLE_CATALOG_MISMATCH,
                     "execution mismatch refuses");
@@ -141,12 +141,12 @@ namespace Harken.Test
                 VariableCatalogGuard.ResetTestState();
                 string nativeInit = Environment.GetEnvironmentVariable("HARKEN_VARIABLE_INIT");
                 if (!string.IsNullOrEmpty(nativeInit)) RunNative(nativeInit, typed);
-                Console.WriteLine("[Variable SDK] optional emitter, deprecation, session and catalog contracts PASS");
+                Console.WriteLine("[Variable API] optional emitter, deprecation, session and catalog contracts PASS");
                 return true;
             }
             catch (InvalidOperationException error)
             {
-                Console.WriteLine("[Variable SDK] FAIL: " + error);
+                Console.WriteLine("[Variable API] FAIL: " + error);
                 return false;
             }
             finally
@@ -236,7 +236,7 @@ namespace Harken.Test
                     "stale concrete emitter cannot fall back to global");
                 Check(Values.SetValue("VehicleRPM", 0, a) == VnResult.VN_STALE_HANDLE,
                     "named stale concrete emitter cannot fall back to global");
-                Console.WriteLine("[Variable SDK native] scoped320/replacements10000, order, invalid emitter and zero-GC PASS");
+                Console.WriteLine("[Variable API native] scoped320/replacements10000, order, invalid emitter and zero-GC PASS");
             }
             finally { HarkenEngine.Term(); }
             if (Environment.GetEnvironmentVariable("HARKEN_VARIABLE_REALTIME") == "1")
@@ -279,7 +279,7 @@ namespace Harken.Test
                 } while (!settled && deadline.ElapsedMilliseconds < 5000);
                 Check(settled, "all 320 scoped writes apply through normal device callbacks and Update");
                 foreach (Emitter emitter in emitters) Require(emitter.Destroy());
-                Console.WriteLine("[Variable SDK native] device callbacks applied scoped320 with distinct values PASS");
+                Console.WriteLine("[Variable API native] device callbacks applied scoped320 with distinct values PASS");
             }
             finally { HarkenEngine.Term(); }
         }

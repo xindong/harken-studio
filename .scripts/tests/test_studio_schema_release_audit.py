@@ -516,8 +516,8 @@ class ReleaseLifecycleTest(unittest.TestCase):
         (self.root / f"HarkenSchema/Editor/{version}/ProjectSerializedSchema.json").write_text(json.dumps(contract), encoding="utf-8")
         self.assertTrue(any("removed" in error for error in MODULE.release_schema_errors(self.root / "HarkenSchema")))
 
-    def test_sdk_source_changes_are_not_a_generation_hash_lock(self) -> None:
-        reader = self.root / "HarkenIntegration/Unity/Harken/Runtime/Sdk/PackCompanion.cs"
+    def test_integration_source_changes_are_not_a_generation_hash_lock(self) -> None:
+        reader = self.root / "HarkenIntegration/Unity/Harken/Runtime/API/PackCompanion.cs"
         reader.parent.mkdir(parents=True)
         reader.write_text("old reader", encoding="utf-8")
         self.publish_tag("sdk-baseline")
@@ -539,7 +539,7 @@ class ReleaseLifecycleTest(unittest.TestCase):
         MODULE.run_git(["reset", "--hard", "first"])
         original["x-harken-documentTypes"][0]["schema"]["properties"]["content"]["required"].remove("name")
         path.write_text(json.dumps(original), encoding="utf-8")
-        reader = self.root / "HarkenIntegration/Unity/Harken/Runtime/Sdk/PackCompanion.cs"
+        reader = self.root / "HarkenIntegration/Unity/Harken/Runtime/API/PackCompanion.cs"
         reader.parent.mkdir(parents=True)
         reader.write_text("new development", encoding="utf-8")
         self.commit()
@@ -614,7 +614,7 @@ class ReleaseLifecycleTest(unittest.TestCase):
                         "HarkenStudio/Source/Core/ProjectMigration.cpp",
                         "HarkenStudio/Source/Core/ProjectMigration.h",
                         "HarkenStudio/Source/Tooling/Harkenizer/Core/ProjectLoader.cpp"]
-        pack_paths = ["HarkenIntegration/Unity/Harken/Runtime/Sdk/PackCompanion.cs",
+        pack_paths = ["HarkenIntegration/Unity/Harken/Runtime/API/PackCompanion.cs",
                       "HarkenStudio/Source/Tooling/Harkenizer/Core/CanonicalPackSetExport.cpp",
                       "HarkenStudio/Source/Tooling/Harkenizer/Core/ProjectPackExporter.cpp"]
         with patch.object(MODULE, "changed_files", return_value=editor_paths + pack_paths):
@@ -736,17 +736,17 @@ class ReaderGateTest(unittest.TestCase):
                 "packSchemaVersion": expected["trees"]["Pack"]["currentVersion"],
                 "schemaSnapshotHash": expected["snapshotHash"], "projectPath": str(project), "edits": edits}
 
-    def verify(self, old_version: int | None = None, sdk_version: int | None = None,
+    def verify(self, old_version: int | None = None, integration_version: int | None = None,
                native_returncode: int = 0, native_output: str | None = None) -> tuple:
-        if sdk_version is None:
-            sdk_version = self.pack_schema_version
+        if integration_version is None:
+            integration_version = self.pack_schema_version
         expected = copy.deepcopy(MODULE.schema_archive.build_bundle(self.source)["manifest"])
         if old_version is not None:
             expected["trees"]["Editor"]["currentVersion"] = old_version
         baselines = {"baseline": self.old_binary.parent} if old_version is not None else {}
         package = {"_schemaManifest": expected, "buildId": "released"}
         if native_output is None:
-            native_output = f"[PackCompanion] native publication PASS.\n[PackCompanion] schemaVersion {sdk_version}\n"
+            native_output = f"[PackCompanion] native publication PASS.\n[PackCompanion] schemaVersion {integration_version}\n"
         native = SimpleNamespace(returncode=native_returncode, stdout=native_output, stderr="")
         with patch.object(MODULE, "required_baselines", return_value={tag: {} for tag in baselines}), \
                 patch.object(MODULE, "release_schema_errors", return_value=[]), \
@@ -780,9 +780,9 @@ class ReaderGateTest(unittest.TestCase):
 
     def test_native_pass_cannot_certify_a_different_companion_generation(self) -> None:
         with self.assertRaises(ValueError):
-            self.verify(sdk_version=self.pack_schema_version - 1)
+            self.verify(integration_version=self.pack_schema_version - 1)
         with self.assertRaises(ValueError):
-            self.verify(sdk_version=self.pack_schema_version + 1)
+            self.verify(integration_version=self.pack_schema_version + 1)
 
     def test_previous_success_cannot_replace_executing_readers_and_native_checks(self) -> None:
         report, _ = self.verify()

@@ -5207,7 +5207,7 @@ TEST(PlayableStart, NestedSequenceContinuationCreatesAnotherLeafInstance) {
 
     harken::MonitorEmitterOrigin acceptedOrigin{};
     ASSERT_TRUE(engine->playableInstances.CaptureEmitterOrigin(started.instance, &acceptedOrigin));
-    ASSERT_EQ(firstSession, acceptedOrigin.host.sdkSession);
+    ASSERT_EQ(firstSession, acceptedOrigin.host.hostSession);
     const auto replacementSession = hosts.BeginSession();
     ASSERT_GT(replacementSession, firstSession);
     ASSERT_TRUE(hosts.Register(hosts.EngineInstance(), replacementSession, request.emitter, 1,
@@ -5224,7 +5224,7 @@ TEST(PlayableStart, NestedSequenceContinuationCreatesAnotherLeafInstance) {
     EXPECT_EQ(acceptedOrigin.host, continuedOrigin.host);
     EXPECT_EQ(3u, continuedOrigin.registrationRevision);
     EXPECT_EQ(harken::MonitorHostOwnership::UnityEmitter, continuedOrigin.ownership);
-    EXPECT_EQ(replacementSession, hosts.CaptureOrigin(request.emitter).host.sdkSession);
+    EXPECT_EQ(replacementSession, hosts.CaptureOrigin(request.emitter).host.hostSession);
     const auto secondSoundView =
         engine->playableInstances.Classify(secondSound);
     EXPECT_TRUE(secondSoundView.live);

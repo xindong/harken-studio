@@ -9,7 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location(
-    "sdk_surface", ROOT / "HarkenEngine/Source/Tooling/Binding/sdk_surface.py")
+    "api_surface", ROOT / "HarkenEngine/Source/Tooling/Binding/api_surface.py")
 surface = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(surface)
 
@@ -74,7 +74,7 @@ class ManagedSurfaceTest(unittest.TestCase):
         new = cs("namespace N { public class C { public void Play() {} public void CreateBus() {} } }")
         errors = surface.validate(policy(old), new)
         self.assertEqual(1, len(errors))
-        self.assertIn("Unclassified SDK declaration", errors[0])
+        self.assertIn("Unclassified API declaration", errors[0])
         self.assertIn("CreateBus", errors[0])
 
     def test_private_container_and_private_protected_do_not_leak(self):

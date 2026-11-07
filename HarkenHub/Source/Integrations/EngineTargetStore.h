@@ -19,7 +19,7 @@ struct EngineTargetRecord
     QString descriptorPath;
     QString displayName;
     QString addedAt;
-    QString sdkInstallPath;
+    QString integrationInstallPath;
 };
 
 class EngineTargetStore
@@ -35,7 +35,7 @@ public:
     void close();
     bool add(const EngineTargetRecord& record);
     bool remove(const QString& targetId);
-    bool updateSdkInstallPath(const QString& targetId, const QString& relativePath);
+    bool updateIntegrationInstallPath(const QString& targetId, const QString& relativePath);
     std::vector<EngineTargetRecord> list() const;
     QString lastError() const { return lastError_; }
 

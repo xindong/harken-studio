@@ -16,10 +16,10 @@ namespace Harken.Unity.Editor
         }
 
         // Temporarily unregistered until symbol generation reads current Pack companions instead of a legacy manifest.
-        // [MenuItem("Harken/Generate SDK Symbols From Publication")]
+        // [MenuItem("Harken/Generate API Symbols From Publication")]
         public static void GenerateFromMenu()
         {
-            EditorUtility.DisplayDialog("Harken SDK Symbols", HarkenEditorPublicationSupport.Diagnostic, "OK");
+            EditorUtility.DisplayDialog("Harken API Symbols", HarkenEditorPublicationSupport.Diagnostic, "OK");
         }
 
         public static VnResult GeneratePublication(string jsonPath, string variablePath, out string error)

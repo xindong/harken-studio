@@ -292,7 +292,7 @@ def verify_sample_scripts(integration: Path, errors: list[str]) -> None:
 
 
 def verify_voice_wrappers(integration: Path, errors: list[str]) -> None:
-    source = (integration / "Runtime/Sdk/Voice.cs").read_text(encoding="utf-8")
+    source = (integration / "Runtime/API/Voice.cs").read_text(encoding="utf-8")
     try:
         code = csharp_code_only(source)
     except ValueError as error:

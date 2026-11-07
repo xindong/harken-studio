@@ -68,7 +68,7 @@ def main() -> int:
         failures.extend(str(path.relative_to(project)) for path in extras)
     if failures:
         parser.exit(1, "Missing or mismatched fixture files:\n" + "\n".join(failures) + "\n")
-    print(f"Verified {len(copies)} fixture files in {project}; SDK and native plugins were not changed.")
+    print(f"Verified {len(copies)} fixture files in {project}; Integration and native plugins were not changed.")
     return 0
 
 

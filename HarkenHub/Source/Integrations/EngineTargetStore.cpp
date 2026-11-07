@@ -126,7 +126,7 @@ bool EngineTargetStore::add(const EngineTargetRecord& record)
     query.addBindValue(record.descriptorPath);
     query.addBindValue(record.displayName);
     query.addBindValue(record.addedAt);
-    query.addBindValue(record.sdkInstallPath.isNull() ? QStringLiteral("") : record.sdkInstallPath);
+    query.addBindValue(record.integrationInstallPath.isNull() ? QStringLiteral("") : record.integrationInstallPath);
     if (!query.exec()) {
         lastError_ = query.lastError().text();
         return false;
@@ -169,13 +169,13 @@ std::vector<EngineTargetRecord> EngineTargetStore::list() const
         record.descriptorPath = query.value(3).toString();
         record.displayName = query.value(4).toString();
         record.addedAt = query.value(5).toString();
-        record.sdkInstallPath = query.value(6).toString();
+        record.integrationInstallPath = query.value(6).toString();
         records.push_back(std::move(record));
     }
     return records;
 }
 
-bool EngineTargetStore::updateSdkInstallPath(const QString& targetId,
+bool EngineTargetStore::updateIntegrationInstallPath(const QString& targetId,
                                             const QString& relativePath)
 {
     lastError_.clear();

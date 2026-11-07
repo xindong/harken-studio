@@ -70,7 +70,7 @@ namespace Harken.Unity.Tests
                     };
                     VariableCatalogGuard.DisplayMismatchHandler = (live, generated) =>
                         Assert.That(fixture.Runtime.ShutdownRuntime(), Is.EqualTo(VnResult.VN_OK));
-                    LogAssert.Expect(LogType.Warning, "Harken Variable SDK catalog is stale; write still proceeds.");
+                    LogAssert.Expect(LogType.Warning, "Harken Variable API catalog is stale; write still proceeds.");
                     FieldInfo rpm = typeof(HarkenVariables).GetField("VehicleRPM",
                         BindingFlags.Public | BindingFlags.Static);
                     VnObjectId rpmId = rpm != null && rpm.FieldType == typeof(VnObjectId)
@@ -653,7 +653,7 @@ namespace Harken.Unity.Tests
 
 
 #if HARKEN_SDK_TEST_NULL_PUMP
-        // This export exists only in the isolated SDK fixture DLL, never in a shipped plugin.
+        // This export exists only in the isolated Integration fixture DLL, never in a shipped plugin.
         [DllImport(HarkenNative.LibraryName, CallingConvention = CallingConvention.Cdecl)]
         private static extern VnResult HarkenSdkTest_PumpNull(uint blocks);
 
@@ -1021,7 +1021,7 @@ namespace Harken.Unity.Tests
         }
 
         [UnityTest]
-        public IEnumerator NativeNotificationShutdownRestartsAfterSdkUpdateReturns()
+        public IEnumerator NativeNotificationShutdownRestartsAfterManagedUpdateReturns()
             => NotificationShutdownBoundary(true, false, "shutdown");
 
         [UnityTest]
@@ -1040,7 +1040,7 @@ namespace Harken.Unity.Tests
         public IEnumerator NativeNotificationDestroyCompletesWithoutAnotherUnityUpdate()
             => NotificationShutdownBoundary(false, false, "destroy");
 
-        private static IEnumerator NotificationShutdownBoundary(bool sdkUpdate, bool nested, string exit)
+        private static IEnumerator NotificationShutdownBoundary(bool managedUpdate, bool nested, string exit)
         {
             bool originalPause = AudioListener.pause;
             float originalVolume = AudioListener.volume;
@@ -1098,7 +1098,7 @@ namespace Harken.Unity.Tests
                 // Inject only the notification into the real native queue; Update and Term remain production code.
                 Assert.That(HarkenSdkTest_PumpNull(1), Is.EqualTo(VnResult.VN_OK));
                 Assert.That(HarkenSdkTest_QueueNotification(), Is.EqualTo(VnResult.VN_OK));
-                if (sdkUpdate) Invoke(fixture.Runtime, "AdvanceFrame");
+                if (managedUpdate) Invoke(fixture.Runtime, "AdvanceFrame");
                 else Assert.That(HarkenEngine.Update(), Is.EqualTo(VnResult.VN_OK));
                 // Assertions stay outside native callbacks so failures cannot unwind through P/Invoke.
                 Assert.That(notified, Is.True, "The injected notification must pass through native dispatch.");

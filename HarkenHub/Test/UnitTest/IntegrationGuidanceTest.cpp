@@ -46,7 +46,7 @@ class IntegrationGuidanceTest : public QObject
     {
         VNH::UnityIntegrationRequest value;
         value.unityProjectPath = target.canonicalRoot;
-        value.sdkSourcePath = source;
+        value.integrationSourcePath = source;
         value.confirmTargetChanges = true;
         return value;
     }
@@ -123,9 +123,9 @@ private slots:
         else write(installed + '/' + file, damage);
         const auto observation = VNH::EngineTargetProbe::observe(target);
         QCOMPARE(observation.status, "Integration Package metadata needs repair");
-        QVERIFY(observation.canChangeSdk);
-        QVERIFY(!observation.canMoveSdk);
-        QVERIFY(observation.canRemoveSdk);
+        QVERIFY(observation.canChangeIntegration);
+        QVERIFY(!observation.canMoveIntegration);
+        QVERIFY(observation.canRemoveIntegration);
         auto removal = request();
         removal.removeIntegration = true;
         removal.checkOnly = true;
@@ -149,7 +149,7 @@ private slots:
         QVERIFY(custom.open(QIODevice::ReadOnly));
         QCOMPARE(custom.readAll(), "user data");
         const auto repaired = VNH::EngineTargetProbe::observe(target);
-        QVERIFY(repaired.canChangeSdk && repaired.canMoveSdk && repaired.canRemoveSdk);
+        QVERIFY(repaired.canChangeIntegration && repaired.canMoveIntegration && repaired.canRemoveIntegration);
     }
 
     void missingAndInvalidRecordsHaveSeparateGuidance()
@@ -159,12 +159,12 @@ private slots:
         QVERIFY(QFile::remove(record));
         auto observation = VNH::EngineTargetProbe::observe(target);
         QCOMPARE(observation.status, "Installation record missing");
-        QVERIFY(!observation.canChangeSdk && !observation.canMoveSdk && !observation.canRemoveSdk);
+        QVERIFY(!observation.canChangeIntegration && !observation.canMoveIntegration && !observation.canRemoveIntegration);
         QVERIFY(observation.remediation.contains("own backup"));
         write(record, "{}");
         observation = VNH::EngineTargetProbe::observe(target);
         QCOMPARE(observation.status, "Installation record invalid");
-        QVERIFY(!observation.canChangeSdk && !observation.canMoveSdk && !observation.canRemoveSdk);
+        QVERIFY(!observation.canChangeIntegration && !observation.canMoveIntegration && !observation.canRemoveIntegration);
     }
 
     void dependencyRestrictsMoveAndRemovalButAllowsChange()
@@ -174,8 +174,8 @@ private slots:
               R"({"dependencies":{"com.harken.core":"1.0.0"}})");
         const auto observation = VNH::EngineTargetProbe::observe(target);
         QVERIFY(observation.dependencyRestricted);
-        QVERIFY(observation.canChangeSdk);
-        QVERIFY(!observation.canMoveSdk && !observation.canRemoveSdk);
+        QVERIFY(observation.canChangeIntegration);
+        QVERIFY(!observation.canMoveIntegration && !observation.canRemoveIntegration);
         auto check = request();
         check.checkOnly = true;
         QVERIFY(VNH::HubUnityIntegrationService::run(check).success);
@@ -196,7 +196,7 @@ private slots:
         auto observation = VNH::EngineTargetProbe::observe(target);
         QVERIFY(observation.status.isEmpty());
         QVERIFY(!observation.dependencyRestricted);
-        QVERIFY(observation.canChangeSdk && observation.canMoveSdk && observation.canRemoveSdk);
+        QVERIFY(observation.canChangeIntegration && observation.canMoveIntegration && observation.canRemoveIntegration);
         auto check = request();
         check.checkOnly = true;
         QVERIFY(VNH::HubUnityIntegrationService::run(check).success);
@@ -206,13 +206,13 @@ private slots:
         writeLock();
         observation = VNH::EngineTargetProbe::observe(target);
         QVERIFY(observation.dependencyRestricted);
-        QVERIFY(observation.canChangeSdk && !observation.canMoveSdk && !observation.canRemoveSdk);
+        QVERIFY(observation.canChangeIntegration && !observation.canMoveIntegration && !observation.canRemoveIntegration);
         resolved.remove("com.example.consumer");
         writeLock();
         write(target.canonicalRoot + "/Packages/manifest.json",
               R"({"dependencies":{"com.harken.core":"file:com.harken.core"}})");
         observation = VNH::EngineTargetProbe::observe(target);
-        QVERIFY(observation.dependencyRestricted && !observation.canRemoveSdk);
+        QVERIFY(observation.dependencyRestricted && !observation.canRemoveIntegration);
         write(target.canonicalRoot + "/Packages/manifest.json", R"({"dependencies":{}})");
         auto remove = request();
         remove.removeIntegration = true;
@@ -228,11 +228,11 @@ private slots:
               R"({"name":"com.harken.core","version":"1.0.0"})");
         auto observation = VNH::EngineTargetProbe::observe(target);
         QCOMPARE(observation.status, "Multiple Integration Package installations");
-        QVERIFY(!observation.canChangeSdk && !observation.canMoveSdk && !observation.canRemoveSdk);
+        QVERIFY(!observation.canChangeIntegration && !observation.canMoveIntegration && !observation.canRemoveIntegration);
         write(VNX::UnityInstallation::migrationJournalPath(target.canonicalRoot), "{}");
         observation = VNH::EngineTargetProbe::observe(target);
         QCOMPARE(observation.status, "Migration unfinished");
-        QVERIFY(!observation.canChangeSdk && observation.canMoveSdk && !observation.canRemoveSdk);
+        QVERIFY(!observation.canChangeIntegration && observation.canMoveIntegration && !observation.canRemoveIntegration);
         QVERIFY(observation.remediation.contains("Recover Integration Package Migration"));
     }
 
@@ -259,7 +259,7 @@ private slots:
         write(plugin, "invalid");
         const auto observation = VNH::EngineTargetProbe::observe(target);
         QCOMPARE(observation.status, "Integration Package metadata needs repair");
-        QVERIFY(observation.canChangeSdk && observation.canRemoveSdk && !observation.canMoveSdk);
+        QVERIFY(observation.canChangeIntegration && observation.canRemoveIntegration && !observation.canMoveIntegration);
         plan = Executor::planUnreal(target, source, Operation::Repair);
         QVERIFY2(plan.valid, qPrintable(plan.error));
         result = Executor::executeUnreal(target, plan, Operation::Repair, true);
@@ -307,7 +307,7 @@ private slots:
         page.resize(760, 600);
         page.show();
         page.beginEditForProject(project, {}, target.canonicalRoot);
-        auto* verify = page.findChild<QPushButton*>("verifySdk");
+        auto* verify = page.findChild<QPushButton*>("verifyIntegration");
         QVERIFY(verify);
         QVERIFY(QTest::qWaitFor([&]() { return verify->isEnabled(); }));
         QVERIFY(integrations.list().empty());
@@ -316,19 +316,19 @@ private slots:
         const char* associationText = "Linking adds this project pair to Engine Integrations and establishes a one-to-one relationship in this Hub. Unlink the pair before linking either project to another. Integration Package checks and management do not require linking.";
         QCOMPARE(association->text(), QCoreApplication::translate("HarkenHub", associationText));
         if (chinese) QVERIFY(association->text() != QString::fromLatin1(associationText));
-        QVERIFY(!page.findChild<QPushButton*>("changeSdk")->isEnabled());
+        QVERIFY(!page.findChild<QPushButton*>("changeIntegration")->isEnabled());
         verify->click();
-        auto* resolution = page.findChild<QPushButton*>("sdkResolution");
+        auto* resolution = page.findChild<QPushButton*>("integrationResolution");
         QVERIFY(resolution && resolution->isVisible() && resolution->isEnabled());
         bool opened = false;
         QTimer inspectDialog;
         connect(&inspectDialog, &QTimer::timeout, &page, [&]() {
             auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
-            if (!dialog || dialog->objectName() != "sdkResolutionDialog") return;
+            if (!dialog || dialog->objectName() != "integrationResolutionDialog") return;
             inspectDialog.stop();
             const auto closeDialog = qScopeGuard([&]() { dialog->reject(); });
-            QCOMPARE(dialog->objectName(), "sdkResolutionDialog");
-            const auto* details = dialog->findChild<QPlainTextEdit*>("sdkResolutionDetails");
+            QCOMPARE(dialog->objectName(), "integrationResolutionDialog");
+            const auto* details = dialog->findChild<QPlainTextEdit*>("integrationResolutionDetails");
             QVERIFY(details && details->isReadOnly());
             const QString text = details->toPlainText();
             QVERIFY(text.contains(QCoreApplication::translate("HarkenHub", "Installation record missing")));

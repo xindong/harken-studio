@@ -8,7 +8,7 @@ using System.Runtime.InteropServices;
 namespace Harken
 {
     /// <summary>
-    /// SDK P/Invoke projection of the Harken.h C ABI. Every method
+    /// Managed P/Invoke projection of the Harken.h C ABI. Every method
     /// maps to exactly one C function; the binding owns no engine
     /// semantics (thin projection). AOT/IL2CPP-safe: no runtime code
     /// generation, and the native library name is a compile-time constant

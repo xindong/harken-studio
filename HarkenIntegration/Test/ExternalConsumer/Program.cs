@@ -14,7 +14,7 @@ internal static class Program
     {
         try
         {
-            Require(typeof(HarkenEngine).Assembly != typeof(Program).Assembly, "SDK must be a separate assembly.");
+            Require(typeof(HarkenEngine).Assembly != typeof(Program).Assembly, "Integration must be a separate assembly.");
             if (args.Length == 2 && args[0] == "--surface") CheckSurface(args[1]);
             else if (args.Length == 2 && args[0] == "--companion")
             {
@@ -72,8 +72,8 @@ internal static class Program
 
     private static void CheckSurface(string policyPath)
     {
-        Assembly sdk = typeof(HarkenEngine).Assembly;
-        string[] friends = sdk.GetCustomAttributes<InternalsVisibleToAttribute>().Select(x => x.AssemblyName).ToArray();
+        Assembly integration = typeof(HarkenEngine).Assembly;
+        string[] friends = integration.GetCustomAttributes<InternalsVisibleToAttribute>().Select(x => x.AssemblyName).ToArray();
         string[] trusted = { "Harken.Unity", "Harken.Unity.Editor", "Harken.Unity.EditModeTests", "Harken.Unity.PlayModeTests" };
         Require(friends.OrderBy(x => x).SequenceEqual(trusted.OrderBy(x => x)), "Unexpected friend assembly.");
         Require(!friends.Contains(typeof(Program).Assembly.GetName().Name), "Consumer cannot be a friend.");
@@ -83,7 +83,7 @@ internal static class Program
             policy.GetProperty("groups").GetProperty(symbol.Value.GetString()).GetProperty("disposition").GetString() != "move-internal";
         foreach (JsonProperty symbol in policy.GetProperty("managed_generation").GetProperty("types").EnumerateObject())
         {
-            Type type = sdk.GetType("Harken." + symbol.Name, true);
+            Type type = integration.GetType("Harken." + symbol.Name, true);
             Require(type.IsVisible == ExpectedPublic(symbol), "Incorrect generated visibility: " + symbol.Name);
         }
         foreach (JsonProperty symbol in policy.GetProperty("managed_generation").GetProperty("constants").EnumerateObject())
@@ -99,12 +99,12 @@ internal static class Program
                 ? included.EnumerateArray().Select(item => item.GetString()).ToArray() : Array.Empty<string>();
             foreach (JsonElement prefix in excluded.GetProperty(category).EnumerateArray())
                 Require(!names.Any(name => name.StartsWith(prefix.GetString(), StringComparison.Ordinal) && !exact.Contains(name)),
-                    "Excluded native contract in SDK: " + prefix.GetString());
+                    "Excluded native contract in managed API: " + prefix.GetString());
         }
-        RequireNoExcluded("types", sdk.GetTypes().Select(type => type.Name));
+        RequireNoExcluded("types", integration.GetTypes().Select(type => type.Name));
         RequireNoExcluded("constants", typeof(VnConstants).GetFields(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic).Select(field => field.Name));
         RequireNoExcluded("results", Enum.GetNames(typeof(VnResult)));
-        RequireNoExcluded("functions", sdk.GetType("Harken.HarkenNative", true).GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic).Select(method => method.Name));
+        RequireNoExcluded("functions", integration.GetType("Harken.HarkenNative", true).GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic).Select(method => method.Name));
         Console.WriteLine("Separate, non-friend consumer and all generated type/constant visibility PASS.");
     }
 

@@ -233,7 +233,7 @@ namespace Harken.Unity
         }
 
         /// <summary>
-        /// Prepares the Action resource closure synchronously and posts once. SDK ownership lasts
+        /// Prepares the Action resource closure synchronously and posts once. Managed ownership lasts
         /// until natural completion or session shutdown; preload with Session.PrepareActions to avoid cold I/O.
         /// The returned handle may be queried or stopped; callers must not release it.
         /// </summary>

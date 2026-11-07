@@ -54,7 +54,7 @@ TEST(IntegrationStoreTest, EnforcesOneToOneProjectRelationships)
                                 QStringLiteral("unity-a")), false));
 }
 
-TEST(IntegrationStoreTest, PersistsAndUpdatesSdkSourcePath)
+TEST(IntegrationStoreTest, PersistsAndUpdatesIntegrationSourcePath)
 {
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
@@ -65,20 +65,20 @@ TEST(IntegrationStoreTest, PersistsAndUpdatesSdkSourcePath)
     auto value = record(QStringLiteral("one"),
                         QStringLiteral("C:/Harken/A.hsp"),
                         QStringLiteral("unity-a"));
-    value.sdkSourcePath = QStringLiteral("C:/SDK/one");
+    value.integrationSourcePath = QStringLiteral("C:/SDK/one");
     ASSERT_TRUE(store.add(value, false));
     ASSERT_EQ(store.list().size(), 1u);
-    EXPECT_EQ(store.list().front().sdkSourcePath,
+    EXPECT_EQ(store.list().front().integrationSourcePath,
               QStringLiteral("C:/SDK/one"));
 
-    ASSERT_TRUE(store.updateSdkSourcePath(QStringLiteral("one"),
+    ASSERT_TRUE(store.updateIntegrationSourcePath(QStringLiteral("one"),
                                           QStringLiteral("C:/SDK/two")));
     ASSERT_EQ(store.list().size(), 1u);
-    EXPECT_EQ(store.list().front().sdkSourcePath,
+    EXPECT_EQ(store.list().front().integrationSourcePath,
               QStringLiteral("C:/SDK/two"));
 }
 
-TEST(IntegrationStoreTest, MigratesExistingDatabaseForSdkSourcePath)
+TEST(IntegrationStoreTest, MigratesExistingDatabaseForIntegrationSourcePath)
 {
     QTemporaryDir directory;
     ASSERT_TRUE(directory.isValid());
@@ -111,14 +111,14 @@ TEST(IntegrationStoreTest, MigratesExistingDatabaseForSdkSourcePath)
     ASSERT_TRUE(store.open(databasePath))
         << store.lastError().toStdString();
     ASSERT_EQ(store.list().size(), 1u);
-    EXPECT_TRUE(store.list().front().sdkSourcePath.isEmpty());
-    EXPECT_TRUE(store.updateSdkSourcePath(QStringLiteral("one"),
+    EXPECT_TRUE(store.list().front().integrationSourcePath.isEmpty());
+    EXPECT_TRUE(store.updateIntegrationSourcePath(QStringLiteral("one"),
                                           QStringLiteral("C:/SDK")));
-    EXPECT_EQ(store.list().front().sdkSourcePath,
+    EXPECT_EQ(store.list().front().integrationSourcePath,
               QStringLiteral("C:/SDK"));
 }
 
-TEST(IntegrationStoreTest, MigratesAndPersistsPerGameSdkLocationsIndependentlyOfRelationships)
+TEST(IntegrationStoreTest, MigratesAndPersistsPerGameIntegrationLocationsIndependentlyOfRelationships)
 {
     QTemporaryDir directory(QDir::current().filePath(QStringLiteral(".temp/sdk-store-XXXXXX")));
     ASSERT_TRUE(directory.isValid());
@@ -139,18 +139,18 @@ TEST(IntegrationStoreTest, MigratesAndPersistsPerGameSdkLocationsIndependentlyOf
     VNH::EngineTargetStore targets;
     ASSERT_TRUE(targets.open(path));
     ASSERT_EQ(targets.list().size(), 1);
-    EXPECT_TRUE(targets.list().front().sdkInstallPath.isEmpty());
+    EXPECT_TRUE(targets.list().front().integrationInstallPath.isEmpty());
     const QString location = QStringLiteral("Assets/ThirdParty/HarkenSDK");
-    ASSERT_TRUE(targets.updateSdkInstallPath(QStringLiteral("game"), location));
+    ASSERT_TRUE(targets.updateIntegrationInstallPath(QStringLiteral("game"), location));
     VNH::IntegrationStore integrations;
     ASSERT_TRUE(integrations.open(directory.filePath(QStringLiteral("integrations.db"))));
     ASSERT_TRUE(integrations.add(record(QStringLiteral("link"), QStringLiteral("D:/Audio.hsp"), QStringLiteral("game")), false));
     ASSERT_TRUE(integrations.remove(QStringLiteral("link")));
     targets.close();
     ASSERT_TRUE(targets.open(path));
-    EXPECT_EQ(targets.list().front().sdkInstallPath, location);
-    EXPECT_FALSE(targets.updateSdkInstallPath(QStringLiteral("game"), QStringLiteral("../Outside")));
-    EXPECT_EQ(targets.list().front().sdkInstallPath, location);
-    EXPECT_FALSE(targets.updateSdkInstallPath(QStringLiteral("missing"), location));
+    EXPECT_EQ(targets.list().front().integrationInstallPath, location);
+    EXPECT_FALSE(targets.updateIntegrationInstallPath(QStringLiteral("game"), QStringLiteral("../Outside")));
+    EXPECT_EQ(targets.list().front().integrationInstallPath, location);
+    EXPECT_FALSE(targets.updateIntegrationInstallPath(QStringLiteral("missing"), location));
     EXPECT_FALSE(targets.lastError().isEmpty());
 }

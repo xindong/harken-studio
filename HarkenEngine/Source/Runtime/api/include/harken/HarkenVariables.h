@@ -16,7 +16,7 @@ using VariableCatalogWarning = void (*)(std::uint64_t live, std::uint64_t genera
 inline void WarnVariableCatalogMismatch(std::uint64_t live,
                                        std::uint64_t generated) {
 #ifndef NDEBUG
-    std::fprintf(stderr, "Harken Variable SDK catalog stale: live %llu generated %llu\n",
+    std::fprintf(stderr, "Harken Variable API catalog stale: live %llu generated %llu\n",
                  static_cast<unsigned long long>(live),
                  static_cast<unsigned long long>(generated));
 #else

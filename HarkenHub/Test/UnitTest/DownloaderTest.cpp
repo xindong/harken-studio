@@ -496,7 +496,7 @@ TEST_F(DownloaderTest, InterruptedDownloadCanBeResumedByANewDownloader)
     ASSERT_GT(saved, 0);
     ASSERT_LT(saved, payload.size());
     const auto requests = server.requestCount();
-    const auto bytes = mirror.bodyBytesSent();
+    const auto mirrorRequests = mirror.requestCount();
     Downloader second;
     ResultCapture capture(second);
     ASSERT_TRUE(second.start(request));
@@ -504,7 +504,10 @@ TEST_F(DownloaderTest, InterruptedDownloadCanBeResumedByANewDownloader)
     ASSERT_TRUE(capture.result.ok) << capture.result.error.toStdString();
     EXPECT_EQ(readAll(request.targetPath), payload);
     EXPECT_EQ(server.requestCount(), requests);
-    EXPECT_EQ(mirror.bodyBytesSent() - bytes, payload.size() - saved);
+    ASSERT_GT(mirror.requestCount(), mirrorRequests);
+    EXPECT_EQ(mirror.methodHistory().last(), QByteArrayLiteral("GET"));
+    EXPECT_EQ(mirror.rangeHistory().last(),
+              QByteArrayLiteral("bytes=") + QByteArray::number(saved) + QByteArrayLiteral("-"));
 }
 
 TEST_F(DownloaderTest, ArtifactOwnershipSurvivesDownloadUntilConsumerReleasesIt)

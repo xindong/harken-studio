@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inventory the SDK source surface without changing the native ABI or wire policy.
+"""Inventory the Integration API source surface without changing the native ABI or wire policy.
 
 Every observed declaration needs an explicit policy entry. The inventory command
 only reports observations: it never assigns audiences or updates approved policy.
@@ -20,7 +20,7 @@ import tree_sitter_c_sharp
 
 
 ROOT = Path(__file__).resolve().parents[4]
-POLICY = Path(__file__).with_name("sdk_api_surface.json")
+POLICY = Path(__file__).with_name("api_surface.json")
 AUDIENCES = {"gameplay", "host-integration", "tooling", "internal"}
 DISPOSITIONS = {"supported", "move-internal", "compatibility", "tombstone"}
 CS_TYPES = {"class_declaration", "struct_declaration", "interface_declaration",
@@ -321,24 +321,24 @@ def inventory(root: Path) -> dict[str, dict]:
         result[f"native:{name}"] = {"language": "native", "owner": name, "kind": "function",
                                    "native_public": fn.get("public", True),
                                    "file": "HarkenEngine/Source/Tooling/Remote/wire/harken_wire_table.json"}
-    sdk = root / "HarkenIntegration/Unity/Harken"
+    integration = root / "HarkenIntegration/Unity/Harken"
     assemblies = {}
     sources = []
-    for folder in (sdk / "Runtime", sdk / "Editor"):
+    for folder in (integration / "Runtime", integration / "Editor"):
         if list(folder.rglob("*.asmref")):
             raise SurfaceError("New asmref requires explicit assembly-resolution support")
         for path in folder.rglob("*.asmdef"):
             if path.parent in assemblies:
                 raise SurfaceError(f"Multiple assembly definitions: {path.parent}")
             assemblies[path.parent] = load_json(path)["name"]
-    for folder in (sdk / "Runtime", sdk / "Editor"):
+    for folder in (integration / "Runtime", integration / "Editor"):
         for path in sorted(folder.rglob("*.cs")):
             label = path.relative_to(root).as_posix()
             result[f"source:{label}"] = {"language": "managed", "owner": label,
                                          "kind": "binding", "file": label}
             assembly = next((assemblies[p] for p in path.parents if p in assemblies), None)
             if not assembly:
-                raise SurfaceError(f"SDK source has no assembly definition: {label}")
+                raise SurfaceError(f"Integration source has no assembly definition: {label}")
             sources.append((path.read_bytes(), label, assembly))
         for path in sorted(folder.rglob("*.asmdef")):
             label = path.relative_to(root).as_posix()
@@ -352,7 +352,7 @@ def inventory(root: Path) -> dict[str, dict]:
 def validate(policy, observed) -> list[str]:
     errors = []
     if policy.get("schema_version") != 1:
-        return ["Unsupported SDK surface policy version"]
+        return ["Unsupported API surface policy version"]
     entries = {}
     for name, group in policy.get("groups", {}).items():
         if group.get("audience") not in AUDIENCES or group.get("disposition") not in DISPOSITIONS:
@@ -366,9 +366,9 @@ def validate(policy, observed) -> list[str]:
                 errors.append(f"Multiply classified: {key}")
             entries[key] = group
     for key in sorted(observed.keys() - entries.keys()):
-        errors.append(f"Unclassified SDK declaration: {key}")
+        errors.append(f"Unclassified API declaration: {key}")
     for key in sorted(entries.keys() - observed.keys()):
-        errors.append(f"Removed or changed SDK declaration: {key}")
+        errors.append(f"Removed or changed API declaration: {key}")
     for key in observed.keys() & entries.keys():
         if observed[key].get("native_public") is False and entries[key].get("disposition") != "tombstone":
             errors.append(f"Retired native entry must remain a tombstone: {key}")
@@ -388,13 +388,13 @@ def main() -> int:
         if args.inventory:
             args.inventory.parent.mkdir(parents=True, exist_ok=True)
             args.inventory.write_text(json.dumps(observed, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-            print(f"Observed {len(observed)} SDK declarations; no audiences assigned.")
+            print(f"Observed {len(observed)} API declarations; no audiences assigned.")
             return 0
         errors = validate(load_json(args.policy), observed)
         if errors:
             print("\n".join(errors), file=sys.stderr)
             return 1
-        print(f"Classified SDK surface verified: {len(observed)} declarations.")
+        print(f"Classified API surface verified: {len(observed)} declarations.")
         return 0
     except (SurfaceError, OSError, json.JSONDecodeError) as exc:
         print(str(exc), file=sys.stderr)

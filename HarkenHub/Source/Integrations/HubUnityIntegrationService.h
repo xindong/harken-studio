@@ -34,8 +34,8 @@ struct UnityIntegrationStep
 struct UnityIntegrationRequest
 {
     QString unityProjectPath;
-    QString sdkSourcePath;
-    QString sdkInstallPath;
+    QString integrationSourcePath;
+    QString integrationInstallPath;
     bool installToAssets = false;
     bool checkOnly = false;
     bool verifyInstalledOnly = false;
@@ -94,13 +94,13 @@ struct UnityIntegrationResult
     QVector<UnityIntegrationStep> steps;
     QVector<UnityIntegrationFileChange> fileChanges;
     QString unityProjectPath;
-    QString sdkSourcePath;
-    QString sdkInstallPath;
+    QString integrationSourcePath;
+    QString integrationInstallPath;
     QString removalBackupPath;
     QString restorationBackupPath;
     QString jsonReportPath;
     QString textReportPath;
-    int sdkFilesCopied = 0;
+    int integrationFilesCopied = 0;
     int filesAdded = 0;
     int filesChanged = 0;
     int staleFilesToRemove = 0;

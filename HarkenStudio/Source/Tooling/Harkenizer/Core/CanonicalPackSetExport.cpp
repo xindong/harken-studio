@@ -778,7 +778,7 @@ bool encodeVariablePolicyOverlay(
         const auto& def = world.variables[i];
         const ProjectItem* item = findItemByStableId(project, def.variableId);
         if (!item || !NameValidator::validateItemName(item->name, ProjectItem::Type::Variable)) {
-            if (error) *error = QStringLiteral("Variable has an invalid SDK name");
+            if (error) *error = QStringLiteral("Variable has an invalid callable name");
             return false;
         }
         std::uint8_t writers = 1;

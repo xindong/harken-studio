@@ -16,7 +16,7 @@ and emits under <repo>/HarkenEngine/Tool/Remote:
                                        call the C API, encode the reply
   harken_wire.py                       the Python protocol module (embeds the
                                        table verbatim; the driver script and
-                                       future SDK emitters consume it)
+                                       future binding emitters consume it)
 
 The generated files are checked into the repository so the build never
 depends on Python. Regenerate after editing the table:

@@ -94,7 +94,7 @@ struct VariableContractArtifactV1 {
     std::uint16_t schemaVersion = 3;
     std::uint64_t projectBuildId = 0;
     std::uint64_t executionCatalogFingerprint = 0;
-    std::uint64_t sdkCatalogFingerprint = 0;
+    std::uint64_t apiCatalogFingerprint = 0;
     std::vector<VariableContractRecordV1> variables;
     VariableCapacityRecommendationV1 capacity{};
 };

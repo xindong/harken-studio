@@ -11,7 +11,7 @@ namespace Harken.Unity.Tests
     public sealed class HarkenPluginImporterTests
     {
         [Test]
-        public void ResolvesTheInstalledSdkInsteadOfAPresetDirectory()
+        public void ResolvesTheInstalledIntegrationInsteadOfAPresetDirectory()
         {
             string root = HarkenPluginImporterSetup.FindPluginRoot();
             Assert.That(root, Is.Not.Null);
@@ -41,7 +41,7 @@ namespace Harken.Unity.Tests
         }
 
         [UnityTest]
-        public IEnumerator MovingNativeBackIntoSdkConfiguresItWithoutTouchingItOutside()
+        public IEnumerator MovingNativeBackIntoIntegrationConfiguresItWithoutTouchingItOutside()
         {
             string root = HarkenPluginImporterSetup.FindPluginRoot();
             Assert.That(root, Is.Not.Null);
@@ -82,7 +82,7 @@ namespace Harken.Unity.Tests
                     Assert.That(AssetDatabase.MoveAsset(outside, path), Is.Empty,
                         "Native library recovery failed; the temporary folder is retained.");
                 Assert.That(File.Exists(outside), Is.False,
-                    "Native library remains outside the SDK; the temporary folder is retained.");
+                    "Native library remains outside the Integration; the temporary folder is retained.");
                 HarkenPluginImporterSetup.ConfigureImporters();
                 AssetDatabase.DeleteAsset(folder);
             }

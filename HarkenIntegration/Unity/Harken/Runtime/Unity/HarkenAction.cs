@@ -218,7 +218,7 @@ namespace Harken.Unity
                     result = Actions.Post(in cachedResolved, target, callerSeed++, out firing);
             }
             finally { host.EndSpatialPost(in publication); }
-            // Direct native mutations can bypass the SDK stamp. Refuse once, then refresh on a new request.
+            // Direct native mutations can bypass the managed stamp. Refuse once, then refresh on a new request.
             if (result == VnResult.VN_STALE_HANDLE) cacheValid = false;
             if (result != VnResult.VN_OK) ReleaseResources();
             host.NotifySpatialPost(in publication);

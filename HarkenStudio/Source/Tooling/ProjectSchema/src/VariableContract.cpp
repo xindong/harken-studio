@@ -186,7 +186,7 @@ bool CollectAnchors(const VariableCatalogBlockV1& catalog,
 void ComputeArtifactFingerprints(
     const std::vector<VariableContractRecordV1>& variables,
     std::uint64_t* executionCatalogFingerprint,
-    std::uint64_t* sdkCatalogFingerprint) {
+    std::uint64_t* apiCatalogFingerprint) {
     std::vector<harkenstudiobuild::VariableCatalogFingerprintRowV1> executionRows;
     std::vector<std::uint64_t> catalogRows;
     executionRows.reserve(variables.size());
@@ -200,7 +200,7 @@ void ComputeArtifactFingerprints(
         harkenstudiobuild::ComputeVariableExecutionCatalogFingerprintV1(
             executionRows.empty() ? nullptr : executionRows.data(),
             static_cast<std::uint32_t>(executionRows.size()));
-    *sdkCatalogFingerprint = harkenstudiobuild::ComputeVariableSdkCatalogFingerprintV1(
+    *apiCatalogFingerprint = harkenstudiobuild::ComputeVariableApiCatalogFingerprintV1(
         catalogRows.empty() ? nullptr : catalogRows.data(),
         static_cast<std::uint32_t>(catalogRows.size()));
 }
@@ -265,7 +265,7 @@ bool Canonicalize(VariableContractArtifactV1 artifact,
 
     ComputeArtifactFingerprints(artifact.variables,
                                 &artifact.executionCatalogFingerprint,
-                                &artifact.sdkCatalogFingerprint);
+                                &artifact.apiCatalogFingerprint);
     *out = std::move(artifact);
     return true;
 }
@@ -332,7 +332,7 @@ bool EncodeBinary(const VariableContractArtifactV1& artifact,
     WriteU16(bytes, 0);
     WriteU64(bytes, artifact.projectBuildId);
     WriteU64(bytes, artifact.executionCatalogFingerprint);
-    WriteU64(bytes, artifact.sdkCatalogFingerprint);
+    WriteU64(bytes, artifact.apiCatalogFingerprint);
     WriteU32(bytes, static_cast<std::uint32_t>(artifact.variables.size()));
     WriteU32(bytes, 0);
     for (const auto& record : artifact.variables) {
@@ -450,7 +450,7 @@ bool DecodeVariableContractArtifactV1(const std::uint8_t* bytes,
     const std::uint16_t reservedFlags = ReadU16(c);
     parsed.projectBuildId = ReadU64(c);
     parsed.executionCatalogFingerprint = ReadU64(c);
-    parsed.sdkCatalogFingerprint = ReadU64(c);
+    parsed.apiCatalogFingerprint = ReadU64(c);
     const std::uint32_t variableCount = ReadU32(c);
     const std::uint32_t reserved0 = ReadU32(c);
     if (!c.ok || parsed.schemaVersion != kVariableContractSchemaVersionV1 ||
@@ -559,11 +559,11 @@ bool DecodeVariableContractArtifactV1(const std::uint8_t* bytes,
         return false;
     }
     std::uint64_t executionCatalogFingerprint = 0;
-    std::uint64_t sdkCatalogFingerprint = 0;
+    std::uint64_t apiCatalogFingerprint = 0;
     ComputeArtifactFingerprints(parsed.variables, &executionCatalogFingerprint,
-                                &sdkCatalogFingerprint);
+                                &apiCatalogFingerprint);
     if (executionCatalogFingerprint != parsed.executionCatalogFingerprint ||
-        sdkCatalogFingerprint != parsed.sdkCatalogFingerprint) {
+        apiCatalogFingerprint != parsed.apiCatalogFingerprint) {
         return false;
     }
     *outArtifact = std::move(parsed);
@@ -587,7 +587,7 @@ bool EncodeVariableContractArtifactJsonV1(
     AppendJsonRaw(&json, ",\"executionCatalogFingerprint\":");
     AppendJsonU64(&json, canonical.executionCatalogFingerprint);
     AppendJsonRaw(&json, ",\"sdkCatalogFingerprint\":");
-    AppendJsonU64(&json, canonical.sdkCatalogFingerprint);
+    AppendJsonU64(&json, canonical.apiCatalogFingerprint);
     AppendJsonRaw(&json, ",\"variables\":[");
     for (std::size_t i = 0; i < canonical.variables.size(); ++i) {
         const auto& record = canonical.variables[i];

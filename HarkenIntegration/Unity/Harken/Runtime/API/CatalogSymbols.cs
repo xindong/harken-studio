@@ -3,7 +3,7 @@ using System.Collections.Generic;
 
 namespace Harken
 {
-    internal static class SdkSymbols
+    internal static class CatalogSymbols
     {
         private static readonly HashSet<string> Reserved = new HashSet<string>((
             "abstract as base bool break byte case catch char checked class const continue " +

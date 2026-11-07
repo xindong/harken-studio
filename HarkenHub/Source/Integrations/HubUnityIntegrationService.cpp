@@ -75,7 +75,7 @@ VNX::UnityIntegrationService::Result verifyInstalled(
     result.integrationFound = !discovery.installations.isEmpty();
     result.targetInstalled = result.integrationFound;
     if (discovery.installations.size() == 1)
-        result.sdkInstallPath = project.relativeFilePath(discovery.installations.front().path);
+        result.integrationInstallPath = project.relativeFilePath(discovery.installations.front().path);
     if (!discovery.errors.isEmpty() || discovery.installations.size() > 1) {
         inspection.summary = discovery.installations.size() > 1
             ? QStringLiteral("Multiple Integration Package installations were found:")
@@ -84,7 +84,7 @@ VNX::UnityIntegrationService::Result verifyInstalled(
         return finish();
     }
     if (discovery.installations.isEmpty()) {
-        if (!discovery.preservedInstallations.isEmpty() && discovery.sdkReferences.isEmpty()) {
+        if (!discovery.preservedInstallations.isEmpty() && discovery.integrationReferences.isEmpty()) {
             inspection.status = StepStatus::Succeeded;
             inspection.summary = QStringLiteral("The Integration Package is removed. Remaining project files are preserved and can be used with a new installation.");
             for (const auto& retained : discovery.preservedInstallations) inspection.artifacts << retained.path;
@@ -92,10 +92,10 @@ VNX::UnityIntegrationService::Result verifyInstalled(
             result.steps[2].summary = QStringLiteral("No installed Unity Integration Package exists to verify.");
             return finish();
         }
-        inspection.summary = discovery.sdkReferences.isEmpty()
+        inspection.summary = discovery.integrationReferences.isEmpty()
             ? QStringLiteral("No Harken Unity Integration Package is installed in this project.")
             : QStringLiteral("Integration Package references could not be verified.");
-        inspection.details = discovery.sdkReferences;
+        inspection.details = discovery.integrationReferences;
         return finish();
     }
     const auto& installation = discovery.installations.front();
@@ -442,11 +442,11 @@ QString localizeUnityText(const QString& text)
             : translated.arg(match.captured(1));
     }
 
-    const QString validatedSdk = translateMatch(
+    const QString validatedIntegration = translateMatch(
         QRegularExpression(
             QStringLiteral(R"(^Validated Integration Package (.*): ([0-9]+) file\(s\); the (.*) runtime required for this editor is present\.(.*)$)")),
         "Validated Integration Package %1: %2 file(s); the %3 runtime required for this editor is present.");
-    if (!validatedSdk.isEmpty()) {
+    if (!validatedIntegration.isEmpty()) {
         const QRegularExpressionMatch match = QRegularExpression(
             QStringLiteral(R"(^Validated Integration Package (.*): ([0-9]+) file\(s\); the (.*) runtime required for this editor is present\.(.*)$)"))
             .match(text);
@@ -485,13 +485,13 @@ QString localizeUnityText(const QString& text)
     if (!availableRuntimes.isEmpty())
         return availableRuntimes;
 
-    const QRegularExpressionMatch sdkDifferences = QRegularExpression(
+    const QRegularExpressionMatch integrationDifferences = QRegularExpression(
         QStringLiteral(R"(^Check found Integration Package differences: (.*)\.$)"))
         .match(text);
-    if (sdkDifferences.hasMatch())
+    if (integrationDifferences.hasMatch())
         return QCoreApplication::translate(
                    "HarkenHub", "Check found Integration Package differences: %1.")
-            .arg(localizeCountSummary(sdkDifferences.captured(1)));
+            .arg(localizeCountSummary(integrationDifferences.captured(1)));
 
     const QString readyToInstall = translateMatch(
         QRegularExpression(
@@ -508,12 +508,12 @@ QString localizeUnityText(const QString& text)
                    "HarkenHub", "Approved Integration Package update: %1.")
             .arg(localizeCountSummary(approvedUpdate.captured(1)));
 
-    const QString exactSdk = translateMatch(
+    const QString exactIntegration = translateMatch(
         QRegularExpression(
             QStringLiteral(R"(^The installed Integration Package exactly matches selected Integration Package source (.*)\.$)")),
         "The installed Integration Package exactly matches selected Integration Package source %1.");
-    if (!exactSdk.isEmpty())
-        return exactSdk;
+    if (!exactIntegration.isEmpty())
+        return exactIntegration;
 
     const QString managedCurrent = translateMatch(
         QRegularExpression(QStringLiteral(R"(^All Harken-managed files match Integration Package (.*); (\d+) Unity metadata file\(s\) and (\d+) optional target runtime file\(s\) are retained as expected\.$)")),
@@ -663,8 +663,8 @@ UnityIntegrationResult HubUnityIntegrationService::run(
     }
     VNX::UnityIntegrationService::Request studioRequest;
     studioRequest.unityProjectPath = request.unityProjectPath;
-    studioRequest.sdkSourcePath = request.sdkSourcePath;
-    studioRequest.sdkInstallPath = request.sdkInstallPath;
+    studioRequest.integrationSourcePath = request.integrationSourcePath;
+    studioRequest.integrationInstallPath = request.integrationInstallPath;
     studioRequest.installToAssets = request.installToAssets;
     studioRequest.checkOnly = request.checkOnly;
     studioRequest.confirmTargetChanges = request.confirmTargetChanges;
@@ -712,13 +712,13 @@ UnityIntegrationResult HubUnityIntegrationService::run(
     result.migrationTargetPath = source.migrationTargetPath;
     result.migrationPlanHash = source.migrationPlanHash;
     result.unityProjectPath = source.unityProjectPath;
-    result.sdkSourcePath = source.sdkSourcePath;
-    result.sdkInstallPath = source.sdkInstallPath;
+    result.integrationSourcePath = source.integrationSourcePath;
+    result.integrationInstallPath = source.integrationInstallPath;
     result.removalBackupPath = source.removalBackupPath;
     result.restorationBackupPath = source.restorationBackupPath;
     result.jsonReportPath = source.jsonReportPath;
     result.textReportPath = source.textReportPath;
-    result.sdkFilesCopied = source.sdkFilesCopied;
+    result.integrationFilesCopied = source.integrationFilesCopied;
     result.filesAdded = source.filesAdded;
     result.filesChanged = source.filesChanged;
     result.staleFilesToRemove = source.staleFilesToRemove;

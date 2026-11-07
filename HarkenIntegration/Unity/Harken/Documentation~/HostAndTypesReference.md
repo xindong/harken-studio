@@ -51,7 +51,7 @@ constants such as `VN_BUS_MASTER`; use it rather than a copied numeric ID.
 with Z negated. UTF-8 encoding helpers such as `Utf8` are internal; supported
 public wrappers accept managed strings and perform their own native encoding.
 
-Variable thread/session tracking and its mutable probes are internal SDK
+Variable thread/session tracking and its mutable probes are internal managed API
 implementation details. Custom hosts use `HarkenEngine.Init`, `Update`, and
 `Term` on their owning thread; those wrappers maintain the managed session
 tracking. `HarkenPackStartup` is an obsolete subclass retained
@@ -75,11 +75,11 @@ Do not edit generated files by hand.
 | --- | --- |
 | `HarkenTypes.g.cs` | Public signature types such as `VnResult`, `VnConfig`, `VnNotification`, `VnRemoteStatus`, and their semantic enums. Tool-only Snapshot/Monitor and raw media/effect/binding types are internal. Only supported `VnConstants` members are public. |
 | `HarkenNative.g.cs` | Internal P/Invoke projection. Game code and custom managed hosts use public wrappers; they cannot call this class directly. |
-| `HarkenAbi.g.cs` | Internal layout checks used by the SDK and its tests, not a public custom-host entry point. |
+| `HarkenAbi.g.cs` | Internal layout checks used by the managed bindings and their tests, not a public custom-host entry point. |
 | `HarkenActions.g.cs`, `HarkenVariables.g.cs` | Gameplay symbol files. The checked-in Action class is empty and the Variable file is a baseline catalog. Game-specific Editor symbol generation is suspended; these files do not establish names for the loaded game content. |
 
 For exact public enum values and struct fields, inspect the generated
-declarations included in the SDK. A declaration being present in a generated
+declarations included in the Integration Package. A declaration being present in a generated
 file does not make it public. The [API audience contract](../../../API_SURFACE.md)
 separates gameplay, custom-host and internal tooling capabilities; native ABI
 availability does not grant access from a game C# assembly.
@@ -93,7 +93,7 @@ Native binaries must match the selected platform and generated ABI. Platform
 installation and Player export requirements are in the package
 [README](../README.md).
 
-`AOT.MonoPInvokeCallbackAttribute` in the SDK is a compile-only shim outside
+`AOT.MonoPInvokeCallbackAttribute` in the managed bindings is a compile-only shim outside
 Unity; Unity builds use Unity's own AOT attribute. It is not a gameplay API.
 
 ## Finding the right layer

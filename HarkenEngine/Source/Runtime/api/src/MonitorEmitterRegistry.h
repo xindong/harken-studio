@@ -10,7 +10,7 @@
 namespace harken {
 
 // Logic-owned diagnostic values, bounded by the actual public emitter table.
-// No playback owner or SDK object is retained. Capture does not control storage.
+// No playback owner or host object is retained. Capture does not control storage.
 class MonitorEmitterRegistry {
 public:
     enum class Change { Created, BindingChanged, Destroyed };
@@ -81,7 +81,7 @@ public:
         if (ownership == MonitorHostOwnership::StudioDefaultEmitter) {
             for (const auto& other : slots_) {
                 if (other.emitter != emitter && other.host.Valid() &&
-                    other.host.sdkSession == session &&
+                    other.host.hostSession == session &&
                     other.ownership == MonitorHostOwnership::StudioDefaultEmitter &&
                     emitters_.IsPublicLive(other.emitter)) return false;
             }
@@ -93,7 +93,7 @@ public:
             if (description != nullptr && slot->hasDescription && revision == slot->revision &&
                 !slot->description.Same(*description)) return false;
         } else {
-            // The SDK allocates monotonically within its own registration
+            // The host allocates monotonically within its own registration
             // session. A retired key cannot be assigned to a different object.
             if (localSequence <= lastLocalSequence_) return false;
             lastLocalSequence_ = localSequence;

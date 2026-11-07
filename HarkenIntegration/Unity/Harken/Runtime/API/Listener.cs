@@ -1,7 +1,7 @@
 namespace Harken
 {
     /// <summary>
-    /// The listener (an SDK-facing name). A managed convenience over
+    /// The listener (an API-facing name). A managed convenience over
     /// <c>Vn_SetListener</c> with no engine state of its own. Hot-path-safe:
     /// blittable value arguments, zero managed allocation. Values use the
     /// Harken right-handed coordinate system: +X right, +Y up, -Z forward,

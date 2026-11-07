@@ -68,7 +68,7 @@ public:
 
 signals:
     void projectsChanged();
-    void sdkStatusChanged(const QString& targetId);
+    void integrationStatusChanged(const QString& targetId);
 
 private:
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -85,10 +85,10 @@ private:
         NotRun,
     };
 
-    enum class SdkComparison { Unknown, Different, Current, Blocked };
-    enum class SdkPhase { Choosing, Checking, Reviewing, Applying, Finished };
+    enum class IntegrationComparison { Unknown, Different, Current, Blocked };
+    enum class IntegrationPhase { Choosing, Checking, Reviewing, Applying, Finished };
 
-    struct SdkSelection
+    struct IntegrationSelection
     {
         QString sourcePath;
         QString installPath;
@@ -124,23 +124,23 @@ private:
     void beginNewEditor(const QString& harkenProjectPath = QString());
     void beginExistingEditor(const QString& integrationId);
     bool loadExistingIntegration(const QString& integrationId, bool refreshObservation = true);
-    void changeSdkFromList(const QString& integrationId, const QString& sourcePath);
+    void changeIntegrationFromList(const QString& integrationId, const QString& sourcePath);
     void linkProjects();
     void unlinkProjects(const QString& integrationId);
     void browseHarkenProject();
     void browseEngineProject();
-    void browseSdkSource();
-    void browseSdkInstallPath();
-    void beginSdkSelection();
-    void cancelSdkSelection();
+    void browseIntegrationSource();
+    void browseIntegrationInstallPath();
+    void beginIntegrationSelection();
+    void cancelIntegrationSelection();
     void runUnityRemoval();
     void runUnityRestoration();
-    void runSdkRemoval();
+    void runIntegrationRemoval();
     void runUnrealRemoval(const EngineTargetRecord& target);
-    void runSdkMigration(bool recover);
+    void runIntegrationMigration(bool recover);
     void updateRemovalButtonState(bool recoverLocation = false);
     void populateList();
-    void populateQuickSdkMenu(QMenu* menu, const QString& integrationId);
+    void populateQuickIntegrationMenu(QMenu* menu, const QString& integrationId);
     EngineTargetObservation requestTargetObservation(const EngineTargetRecord& target, bool refresh = false);
     void cancelTargetInspections();
     EngineTargetObservation observeTarget(const EngineTargetRecord& target, bool verifyContent = false);
@@ -148,12 +148,12 @@ private:
     IntegrationPlan inspectUnrealTask(const EngineTargetRecord& target, const QString& source = {},
                                      std::optional<IntegrationOperation> operation = std::nullopt);
     void scanStopped();
-    void showSdkResolution();
+    void showIntegrationResolution();
     QString selectedIntegrationPackageName() const;
     void updatePrimaryAction();
     void refreshEngineRunningHint();
-    void updateSdkSelectionContext();
-    void updateSdkSourceState();
+    void updateIntegrationSelectionContext();
+    void updateIntegrationSourceState();
     void cancelPendingOperation();
     void setOperationRunning(bool running);
     bool acceptHarkenProject(const QString& path, bool redirectOnConflict);
@@ -162,14 +162,14 @@ private:
                           EngineTargetRecord* target,
                           bool registerTarget,
                           bool redirectOnConflict,
-                          bool requireSdkSource = true);
+                          bool requireIntegrationSource = true);
     static bool resolveStudioVersion(const ProjectRecord& project,
                                      const QString& launchingExecutable,
                                      InstalledVersion* version);
     void updateStudioVersionFields();
-    void updateDefaultSdkPath();
-    void refreshLocalSdkSources();
-    void setSdkPath(const QString& path, bool userSelected);
+    void updateDefaultIntegrationPath();
+    void refreshLocalIntegrationSources();
+    void setIntegrationPath(const QString& path, bool userSelected);
     void setEditorLocked(bool locked);
     void clearResults();
     void setSummaryText(const QString& text, bool succeeded = false);
@@ -177,10 +177,10 @@ private:
     void runCheck();
     void runIntegration();
     bool runCheckForSelection(const EngineTargetRecord& target,
-                              const QString& sdkPath);
-    bool runUnity(const EngineTargetRecord& target, const QString& sdkPath,
+                              const QString& integrationPath);
+    bool runUnity(const EngineTargetRecord& target, const QString& integrationPath,
                   bool checkOnly);
-    bool runUnreal(const EngineTargetRecord& target, const QString& sdkPath,
+    bool runUnreal(const EngineTargetRecord& target, const QString& integrationPath,
                    bool checkOnly);
     QVector<ResultStep> unityResultSteps(
         const UnityIntegrationResult& result, bool checkOnly = false) const;
@@ -189,7 +189,7 @@ private:
                      const QString& preferredStep = QString(),
                      bool succeeded = false);
     void showSelectedStep();
-    void updateSdkCheckResults();
+    void updateIntegrationCheckResults();
     QString formatStepHtml(const ResultStep& step) const;
     QString formatStepDetails(const ResultStep& step) const;
     QString confirmationDetails() const;
@@ -203,7 +203,7 @@ private:
     void applyHighlight();
     bool persistIntegration(const QString& harkenProjectPath,
                             const QString& engineTargetId,
-                            const QString& sdkSourcePath);
+                            const QString& integrationSourcePath);
 
     IntegrationStore* integrations_ = nullptr;
     EngineTargetStore* targets_ = nullptr;
@@ -216,48 +216,48 @@ private:
     TableSorting* sorting_ = nullptr;
     QLineEdit* harkenProjectEdit_ = nullptr;
     QLineEdit* engineProjectEdit_ = nullptr;
-    QComboBox* sdkSourceCombo_ = nullptr;
-    QLabel* sdkSourceLabel_ = nullptr;
-    QLineEdit* sdkPathEdit_ = nullptr;
-    QPushButton* sdkSourceBrowseButton_ = nullptr;
-    QLineEdit* sdkInstallPathEdit_ = nullptr;
-    QLabel* sdkInstallLabel_ = nullptr;
-    QPushButton* sdkInstallBrowseButton_ = nullptr;
+    QComboBox* integrationSourceCombo_ = nullptr;
+    QLabel* integrationSourceLabel_ = nullptr;
+    QLineEdit* integrationPathEdit_ = nullptr;
+    QPushButton* integrationSourceBrowseButton_ = nullptr;
+    QLineEdit* integrationInstallPathEdit_ = nullptr;
+    QLabel* integrationInstallLabel_ = nullptr;
+    QPushButton* integrationInstallBrowseButton_ = nullptr;
     QPushButton* backButton_ = nullptr;
     QPushButton* harkenBrowseButton_ = nullptr;
     QPushButton* engineBrowseButton_ = nullptr;
     QPushButton* checkButton_ = nullptr;
-    QPushButton* restoreSdkButton_ = nullptr;
-    QPushButton* sdkCheckButton_ = nullptr;
-    QDialog* sdkSelectionDialog_ = nullptr;
-    DialogTextView* sdkSelectionContext_ = nullptr;
-    DialogTextView* sdkSelectionSummary_ = nullptr;
-    DialogTextView* sdkSafetyHint_ = nullptr;
+    QPushButton* restoreIntegrationButton_ = nullptr;
+    QPushButton* integrationCheckButton_ = nullptr;
+    QDialog* integrationSelectionDialog_ = nullptr;
+    DialogTextView* integrationSelectionContext_ = nullptr;
+    DialogTextView* integrationSelectionSummary_ = nullptr;
+    DialogTextView* integrationSafetyHint_ = nullptr;
     QTimer* engineStatusTimer_ = nullptr;
-    QPlainTextEdit* sdkSelectionPaths_ = nullptr;
-    IntegrationTaskProgress* sdkProgress_ = nullptr;
-    QPushButton* sdkReportButton_ = nullptr;
-    QTabWidget* sdkResultsTabs_ = nullptr;
-    DialogTextView* sdkDiffSummary_ = nullptr;
-    QTreeWidget* sdkDiffTree_ = nullptr;
-    QTextBrowser* sdkSelectionDetails_ = nullptr;
+    QPlainTextEdit* integrationSelectionPaths_ = nullptr;
+    IntegrationTaskProgress* integrationProgress_ = nullptr;
+    QPushButton* integrationReportButton_ = nullptr;
+    QTabWidget* integrationResultsTabs_ = nullptr;
+    DialogTextView* integrationDiffSummary_ = nullptr;
+    QTreeWidget* integrationDiffTree_ = nullptr;
+    QTextBrowser* integrationSelectionDetails_ = nullptr;
     QPushButton* integrateButton_ = nullptr;
-    QPushButton* changeSdkButton_ = nullptr;
-    QPushButton* cancelSdkButton_ = nullptr;
-    QWidget* sdkSelectionRow_ = nullptr;
-    QWidget* sdkInstallRow_ = nullptr;
-    QLineEdit* installedSdkPath_ = nullptr;
+    QPushButton* changeIntegrationButton_ = nullptr;
+    QPushButton* cancelIntegrationButton_ = nullptr;
+    QWidget* integrationSelectionRow_ = nullptr;
+    QWidget* integrationInstallRow_ = nullptr;
+    QLineEdit* installedIntegrationPath_ = nullptr;
     QPushButton* unlinkProjectsButton_ = nullptr;
     QPushButton* linkProjectsButton_ = nullptr;
-    QLabel* sdkHeading_ = nullptr;
+    QLabel* integrationHeading_ = nullptr;
     QAction* unlinkProjectsAction_ = nullptr;
-    QPushButton* migrateSdkButton_ = nullptr;
-    QPushButton* removeInstalledSdkButton_ = nullptr;
-    QLabel* installedSdkLabel_ = nullptr;
+    QPushButton* migrateIntegrationButton_ = nullptr;
+    QPushButton* removeInstalledIntegrationButton_ = nullptr;
+    QLabel* installedIntegrationLabel_ = nullptr;
     QLabel* relationshipLabel_ = nullptr;
-    QWidget* sdkIssueRow_ = nullptr;
-    QLabel* sdkIssueLabel_ = nullptr;
-    QPushButton* sdkResolutionButton_ = nullptr;
+    QWidget* integrationIssueRow_ = nullptr;
+    QLabel* integrationIssueLabel_ = nullptr;
+    QPushButton* integrationResolutionButton_ = nullptr;
     QLabel* summaryLabel_ = nullptr;
     QLabel* storageErrorLabel_ = nullptr;
     QTableWidget* stepsTable_ = nullptr;
@@ -268,36 +268,36 @@ private:
     QString selectedHarkenProjectPath_;
     QString selectedEngineTargetId_;
     QString installPathTargetId_;
-    QString installedSdkVersion_;
+    QString installedIntegrationVersion_;
     QString launchingStudioExecutablePath_;
     QString highlightedIntegrationId_;
     qint64 highlightDeadlineMs_ = 0;
     bool highlightPhase_ = false;
-    bool sdkPathUserSelected_ = false;
+    bool integrationPathUserSelected_ = false;
     std::optional<InstalledVersion> studioVersion_;
     quint64 versionRequest_ = 0;
     bool versionResolutionPending_ = false;
     bool operationRunning_ = false;
     bool engineStatusPending_ = false;
     bool engineRunning_ = false;
-    bool quickSdkChange_ = false;
+    bool quickIntegrationChange_ = false;
     bool listMenuOpen_ = false;
     bool refreshingList_ = false;
     bool observationRefreshPending_ = false;
     bool versionRefreshPending_ = false;
     bool inspectionStopped_ = false;
     bool showingIdleSummary_ = true;
-    bool sdkInstalled_ = false;
-    bool sdkSourceAvailable_ = false;
+    bool integrationInstalled_ = false;
+    bool integrationSourceAvailable_ = false;
     bool targetBlocked_ = false;
-    std::optional<SdkSelection> sdkSelection_;
+    std::optional<IntegrationSelection> integrationSelection_;
     std::optional<IntegrationPlan> reviewedUnrealPlan_;
-    QByteArray reviewedSdkHash_;
-    QString sdkPreviousVersion_;
-    QString sdkReportPath_;
-    bool sdkReviewInvalidated_ = false;
-    SdkPhase sdkPhase_ = SdkPhase::Choosing;
-    SdkComparison sdkComparison_ = SdkComparison::Unknown;
+    QByteArray reviewedIntegrationHash_;
+    QString integrationPreviousVersion_;
+    QString integrationReportPath_;
+    bool integrationReviewInvalidated_ = false;
+    IntegrationPhase integrationPhase_ = IntegrationPhase::Choosing;
+    IntegrationComparison integrationComparison_ = IntegrationComparison::Unknown;
     QHash<QString, TargetInspection> targetInspections_;
 };
 
