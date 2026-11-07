@@ -24054,7 +24054,10 @@ TEST(PlayableStart, RepeatedTrackMixedStreamWaitPreservesFutureClipAndCancellati
             auto& capture = *static_cast<PublicationObservation*>(opaque);
             ++capture.calls;
             ASSERT_NE(nullptr, published.scheduleAggregate);
-            EXPECT_TRUE(published.scheduleAggregate->sourceCohorts.empty());
+            for (const auto& cohort : published.scheduleAggregate->sourceCohorts) {
+                EXPECT_GT(cohort->onsetOffset, 0u);
+                EXPECT_FALSE(cohort->published);
+            }
             for (const auto& identity : observed.timelineVoiceInstallIdentities) {
                 if (!identity.initialVariableReadUse.Valid() || identity.onsetFrame != published.startFrame) continue;
                 harken::TimelineArmObservation arm{};

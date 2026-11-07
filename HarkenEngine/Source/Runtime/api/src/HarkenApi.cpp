@@ -56409,6 +56409,14 @@ harken::EngineActionPlayScratch* FindPendingScheduleAnchorAttempt(harken::Engine
     return nullptr;
 }
 
+bool HasPendingScheduleAnchorAncestor(harken::Engine& engine,
+    const harken::EnginePlayableServiceRow& row) noexcept {
+    for (auto* ancestor = engine.ResolvePlayableService(row.parentService); ancestor != nullptr;
+         ancestor = engine.ResolvePlayableService(ancestor->parentService))
+        if (FindPendingScheduleAnchorAttempt(engine, *ancestor) != nullptr) return true;
+    return false;
+}
+
 bool IsEmptyScheduleSourceMarker(const harken::EnginePlayableServiceRow& row) noexcept {
     return row.zeroWorkMarker && !row.pendingDirectStartBinding && row.scheduleAggregate == nullptr &&
         row.schedule.eventCount == 0 && !row.arm.Valid() && row.renderHandle == 0 &&
@@ -56903,6 +56911,8 @@ void PublishSharedScheduleSources(harken::Engine& engine, std::uint64_t* blockin
             continue;
         }
         if (row->pendingDirectStartBinding) {
+            if (!engine.playablePartitions.Published(row->partition, row->identity) &&
+                HasPendingScheduleAnchorAncestor(engine, *row)) continue;
             auto* anchor = FindPendingScheduleAnchorAttempt(engine, *row);
             const auto binding = BindAcknowledgedDirectStart(engine, *row);
             row = engine.ResolvePlayableService(reference);
@@ -57068,11 +57078,7 @@ void ServicePlayableStarts(harken::Engine& engine,
         bool privateCancellationOwned = false;
         if (auto* parent = engine.ResolvePlayableService(row.parentService);
             parent != nullptr && !engine.playablePartitions.Published(row.partition, row.identity)) {
-            bool parentAnchorPending = false;
-            for (auto* ancestor = parent; ancestor != nullptr; ancestor = engine.ResolvePlayableService(ancestor->parentService)) {
-                if (FindPendingScheduleAnchorAttempt(engine, *ancestor) != nullptr) { parentAnchorPending = true; break; }
-            }
-            if (parentAnchorPending) continue;
+            if (HasPendingScheduleAnchorAncestor(engine, row)) continue;
             for (const auto& attempt : engine.actionPlayScratch) {
                 if (attempt.row == &row && attempt.pendingScheduleChild != nullptr &&
                     MatchesPrivateScheduleSuccessorCancellation(engine, row, *parent, &attempt)) {
