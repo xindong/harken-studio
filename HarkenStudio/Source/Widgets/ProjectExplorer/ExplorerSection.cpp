@@ -104,7 +104,8 @@ void ExplorerSection::setExpanded(bool expanded)
 void ExplorerSection::updateHeader()
 {
     auto& theme = ThemeManager::instance();
-    const int height = theme.metrics().layout.sectionHeaderHeight;
+    const auto& layout = theme.metrics().layout;
+    const int height = qMax(layout.sectionHeaderHeight, toggle_->fontMetrics().height() + layout.rowInset * 2);
     header_->setFixedHeight(height);
     const int extent = theme.metrics().iconExtent;
     toggle_->setIconSize(QSize(extent, extent));

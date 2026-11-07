@@ -3059,7 +3059,8 @@ bool TimelineEditorPanel::eventFilter(QObject* watched, QEvent* event)
         const auto* mouse = static_cast<QMouseEvent*>(event);
         const QPoint global = mouse->globalPosition().toPoint();
         const bool onCursorHandle = ruler_->cursorHandleRect().contains(ruler_->mapFromGlobal(global));
-        if (event->type() == QEvent::MouseButtonPress && !headerResizeDrag_)
+        if ((event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonDblClick)
+            && !headerResizeDrag_)
             forwardingRulerPress_ = onCursorHandle;
         if (forwardingRulerPress_) {
             QMouseEvent mapped(mouse->type(), QPointF(ruler_->mapFromGlobal(global)), mouse->globalPosition(),

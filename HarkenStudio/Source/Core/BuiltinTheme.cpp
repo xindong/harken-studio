@@ -206,6 +206,8 @@ ThemeSnapshot createBuiltinDarkTheme()
     domains.waveform.multiBandMode.alpha = 0.85f;
     domains.waveform.colorMapMode.offset = {0.4f, 0.0f, 0.67f, 0.10f};
     domains.waveform.colorMapMode.slope = {0.6f, 0.27f, -0.34f, 0.75f};
+    domains.waveform.rawPeaks.background = QColor(11, 14, 20, 120);
+    domains.waveform.rawPeaks.centerLine = QColor(60, 60, 60, 100);
 
     auto& curveColors = domains.curve.colors;
     curveColors.attenuationVolume = colors.accent;
@@ -377,7 +379,6 @@ ThemeSnapshot createBuiltinLightTheme()
     waveform.colorMapMode.offset = {0.05f, 0.25f, 0.50f, 0.18f};
     waveform.colorMapMode.slope = {0.0f, 0.35f, 0.15f, 0.75f};
     waveform.splitStereo.divider = QColor("#AEBCCA");
-    waveform.splitStereo.label = colors.textSecondary;
     waveform.rawPeaks.background = QColor("#90E1E8F0");
     waveform.rawPeaks.centerLine = QColor("#60607488");
 

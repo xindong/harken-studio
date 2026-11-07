@@ -102,7 +102,7 @@ void deriveUiMetrics(ThemeMetrics& m, const Scale& s)
 
     auto& toggle = m.toggle;
     toggle.height = field;
-    toggle.width = field * 2 - xSmall;
+    toggle.width = field * 2 - qMin(xSmall, field / 2);
     toggle.thumbPadding = qMin(xSmall, (toggle.height - 1) / 2);
     toggle.compactHeight = smallIcon;
     toggle.compactWidth = smallIcon + small;

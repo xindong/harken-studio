@@ -67,8 +67,10 @@ PlatformBar::PlatformBar(PlatformContextService& service, QWidget* parent)
     auto* layout = new QGridLayout(host_);
     ThemeLayout::margins(layout, ThemeLayout::Space::Panel, ThemeLayout::Space::Tight, ThemeLayout::Space::Panel, ThemeLayout::Space::Tight);
     ThemeManager::instance().bindMetrics(host_, [this](const ThemeMetrics& metrics) {
-        host_->setFixedHeight(metrics.layout.rowHeight);
-        setFixedHeight(metrics.layout.rowHeight + metrics.layout.rowInset * 2);
+        const int row = qMax(metrics.layout.rowHeight,
+                             QtControlSkin::current().fieldHeight() + metrics.layout.rowInset * 2);
+        host_->setFixedHeight(row);
+        setFixedHeight(row + metrics.layout.rowInset * 2);
     });
     ThemeLayout::spacing(layout, ThemeLayout::Space::Section);
     layout->setColumnStretch(0, 1);

@@ -34,6 +34,7 @@ const QVector<ThemeColorRole>& studioDefaultColorRoles()
              {QStringLiteral("curve.handleLine"), 110},
              {QStringLiteral("curve.handleBorder"), std::nullopt},
              {QStringLiteral("waveform.dbScale.label"), std::nullopt},
+             {QStringLiteral("waveform.splitStereo.label"), std::nullopt},
              {QStringLiteral("meter.peakMeter.tickText"), std::nullopt},
              {QStringLiteral("meter.spectrum.axisText"), std::nullopt},
              {QStringLiteral("meter.spectrogram.axisText"), std::nullopt},

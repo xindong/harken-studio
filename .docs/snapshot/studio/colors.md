@@ -350,7 +350,7 @@ Timeline 与 Source Editor 的时间轴刻度共用 `timeAxisTickColor`：主刻
 | `curve.plotBorder` | `border.primary` |
 | `waveform.splitStereo.divider` | `border.primary` |
 | `music.beatGridMajor`、`music.beatGridMinor` | `border.tick`，Alpha 分别为 48、18 |
-| `curve.axisText`、`curve.handleBorder`、`waveform.dbScale.label` | `text.secondary` |
+| `curve.axisText`、`curve.handleBorder`、`waveform.dbScale.label`、`waveform.splitStereo.label` | `text.secondary` |
 | `curve.handleLine` | `text.secondary`，Alpha 110 |
 | `curve.handleActiveBorder`、`curve.handleActiveFill`、`curve.pointBorder`、`curve.pointSelectedFill` | `accent.primary` |
 | `curve.pointSelectedBorder`、`curve.readoutText` | `text.primary` |
