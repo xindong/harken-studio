@@ -54952,20 +54952,23 @@ DirectPendingStartResult BindAcknowledgedDirectStart(harken::Engine& engine,
     }
     if (waiting) return Result::Waiting;
     const auto block = engine.config.blockFrames;
-    auto lead = std::max<std::uint64_t>(1u, engine.timelinePool.PublishLeadQuanta());
+    const auto configuredLead = std::max<std::uint64_t>(1u, engine.timelinePool.PublishLeadQuanta());
+    std::uint64_t requiredRunway = 1u;
     if (aggregateAttempt != nullptr) {
-        // Reserve the normal Source submission/installation runway without waiting for future ACKs.
+        // Honor Source preparation admission and the normal installation runway, including a retained anchor.
+        const auto sourceLead = std::max<std::uint64_t>(configuredLead, 3u);
         for (const auto& cohort : row.scheduleAggregate->sourceCohorts) {
             const auto offsetQuanta = cohort->onsetOffset / block;
-            if (!cohort->retired && !cohort->cancelling && offsetQuanta < 3u)
-                lead = std::max(lead, 3u - offsetQuanta);
+            if (!cohort->retired && !cohort->cancelling && offsetQuanta < sourceLead)
+                requiredRunway = std::max(requiredRunway, sourceLead - offsetQuanta);
         }
     }
+    const auto lead = std::max(configuredLead, requiredRunway);
     if (completed > UINT64_MAX - lead || completed + lead > UINT64_MAX / block) return Result::Refused;
     std::uint64_t originalFirst = UINT64_MAX;
     for (std::uint32_t index = 0; index < count; ++index)
         originalFirst = std::min(originalFirst, installations[index].onsetFrame);
-    const auto safeFirst = std::max(engine.timelinePool.PublishCutoffFrame(), (completed + 1u) * block);
+    const auto safeFirst = std::max(engine.timelinePool.PublishCutoffFrame(), (completed + requiredRunway) * block);
     const auto anchor = originalFirst >= safeFirst ? row.pendingDirectEntryFrame :
         std::max({row.pendingDirectEntryFrame, engine.timelinePool.PublishCutoffFrame(), (completed + lead) * block});
     const auto shift = anchor - row.pendingDirectEntryFrame;

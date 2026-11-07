@@ -21543,7 +21543,8 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
 }
 
 TEST(PlayableStart, InitialStreamAnchorKeepsSubBlockFutureStartsFixedAndContainsFailures) {
-    for (const auto workers : {0u, 2u}) for (const auto lead : {1u, 4u}) for (const auto scenario : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u}) {
+    for (const auto workers : {0u, 2u}) for (const auto lead : {1u, 2u, 4u}) for (const auto scenario : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u}) {
+        const bool mediaReadyImmediately = scenario == 8u;
         const bool sourceAckLate = scenario == 7u;
         const bool timedBinding = scenario == 6u;
         const bool boundFuture = scenario == 5u || timedBinding;
@@ -21674,7 +21675,11 @@ TEST(PlayableStart, InitialStreamAnchorKeepsSubBlockFutureStartsFixedAndContains
         ASSERT_EQ(1u, root->scheduleAggregate->sourceCohorts.size());
         ASSERT_TRUE(root->pendingDirectStartBinding);
         EXPECT_EQ(config.maxStreams - 1u, engine.streams.FreeSlotCount());
-        for (unsigned pass = 0; pass < 24; ++pass) {
+        if (mediaReadyImmediately) {
+            engine.streams.SetThrottled(false);
+            engine.streams.SyncServe();
+        }
+        for (unsigned pass = 0; pass < (mediaReadyImmediately ? 1u : 24u); ++pass) {
             ASSERT_EQ(VN_OK, Vn_Update());
             EXPECT_TRUE(root->pendingDirectStartBinding);
             EXPECT_EQ(config.maxStreams - 1u, engine.streams.FreeSlotCount());
@@ -21683,6 +21688,8 @@ TEST(PlayableStart, InitialStreamAnchorKeepsSubBlockFutureStartsFixedAndContains
             for (unsigned sample = 0; sample < config.blockFrames * 2; ++sample)
                 EXPECT_FLOAT_EQ(0.0f, engine.nullBackend.LastBlock()[sample]);
         }
+        if (mediaReadyImmediately)
+            EXPECT_EQ(static_cast<std::uint64_t>(lead) * config.blockFrames, root->pendingDirectEntryFrame);
         const auto expectedAnchor = (engine.mixer.BlocksRendered() + std::max(lead, 3u)) * config.blockFrames;
         const auto variableFrame = expectedAnchor + 24u;
         if (timedBinding) {
