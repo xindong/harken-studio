@@ -439,6 +439,7 @@ PropertyEditorEngine::PropertyEditorEngine(QObject* parent)
         for (const auto& binding : bindings_) {
             if (fieldGroup(binding.field)) continue;
             if (!PlayablePropertyAuthoringV1::fieldByName(binding.field)
+                && !FilterAuthoring::isField(binding.field)
                 && binding.field != QLatin1String("inputs")
                 && binding.field != QLatin1String("receives"))
                 continue;
