@@ -534,7 +534,7 @@ bool HarkenStyle::eventFilter(QObject* watched, QEvent* event)
             button->style()->drawPrimitive(PE_PanelButtonTool, &option, &painter, button);
             if (tabClose) {
                 const QRect rect = alignedRect(option.direction, Qt::AlignCenter,
-                                               QSize(20, 20), option.rect);
+                                               QSize(theme().metrics().objectIconExtent, theme().metrics().objectIconExtent), option.rect);
                 theme().resolveIcon(QString::fromLatin1(ThemeAssetIds::DockClose)).icon.paint(
                     &painter, rect, Qt::AlignCenter,
                     button->isEnabled() ? QIcon::Normal : QIcon::Disabled);
@@ -567,6 +567,17 @@ int HarkenStyle::pixelMetric(PixelMetric metric, const QStyleOption* option,
     }
     if (metric == PM_ButtonDefaultIndicator || metric == PM_ButtonShiftHorizontal || metric == PM_ButtonShiftVertical)
         return 0;
+    if (metric == PM_LayoutLeftMargin || metric == PM_LayoutTopMargin
+        || metric == PM_LayoutRightMargin || metric == PM_LayoutBottomMargin)
+        return theme().metrics().spacingSmall;
+    if (metric == PM_LayoutHorizontalSpacing || metric == PM_LayoutVerticalSpacing)
+        return theme().metrics().spacingXSmall;
+    if (metric == PM_ToolBarIconSize || metric == PM_ButtonIconSize)
+        return theme().metrics().objectIconExtent;
+    if (metric == PM_SplitterWidth)
+        return theme().metrics().control.splitterExtent;
+    if (metric == PM_ScrollBarExtent)
+        return theme().metrics().control.scrollbarExtent;
     if (metric == PM_TabBarTabHSpace || metric == PM_TabBarTabVSpace
         || metric == PM_TabBarTabShiftHorizontal || metric == PM_TabBarTabShiftVertical)
         return 0;

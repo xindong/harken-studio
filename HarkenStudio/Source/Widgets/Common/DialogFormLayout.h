@@ -9,8 +9,6 @@ namespace VNX {
 class DialogFormLayout : public QGridLayout
 {
 public:
-    static constexpr int RowSpacing = 12;
-
     explicit DialogFormLayout(QWidget* parent = nullptr);
 
     void addRow(const QString& text, QWidget* field);

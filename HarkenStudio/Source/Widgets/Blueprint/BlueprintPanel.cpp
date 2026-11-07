@@ -1,5 +1,6 @@
 
 #include "BlueprintPanel.h"
+#include "Core/ThemeLayout.h"
 #include "Core/ContextInfo.h"
 
 #include "BlueprintCanvasWidget.h"
@@ -45,8 +46,12 @@ BlueprintPanel::BlueprintPanel(QWidget* parent)
     panButton_->setText(tr("Pan"));
     for (auto* button : {selectButton_, panButton_}) {
         button->setToolButtonStyle(Qt::ToolButtonIconOnly);
-        button->setIconSize(QSize(20, 20));
-        button->setFixedSize(22, 22);
+        ThemeManager::instance().bindMetrics(button, [button](const ThemeMetrics& metrics) {
+            button->setIconSize(QSize(metrics.objectIconExtent, metrics.objectIconExtent));
+        });
+        ThemeManager::instance().bindMetrics(button, [button](const ThemeMetrics& metrics) {
+            button->setFixedSize(metrics.controlHeight, metrics.controlHeight);
+        });
         button->setProperty("flatIconButton", true);
         button->setAutoRaise(true);
         button->setCheckable(true);
@@ -67,8 +72,12 @@ BlueprintPanel::BlueprintPanel(QWidget* parent)
     snapButton_->setObjectName(QStringLiteral("BlueprintSnapButton"));
     snapButton_->setText(tr("Snap to Grid"));
     snapButton_->setToolTip(tr("Snap to Grid"));
-    snapButton_->setIconSize(QSize(20, 20));
-    snapButton_->setFixedSize(22, 22);
+    ThemeManager::instance().bindMetrics(snapButton_, [this](const ThemeMetrics& metrics) {
+        snapButton_->setIconSize(QSize(metrics.objectIconExtent, metrics.objectIconExtent));
+    });
+    ThemeManager::instance().bindMetrics(snapButton_, [this](const ThemeMetrics& metrics) {
+        snapButton_->setFixedSize(metrics.controlHeight, metrics.controlHeight);
+    });
     snapButton_->setProperty("flatIconButton", true);
     snapButton_->setAutoRaise(true);
     snapButton_->setCheckable(true);
@@ -118,8 +127,12 @@ BlueprintPanel::BlueprintPanel(QWidget* parent)
         button->setAccessibleName(button->text());
         button->setToolTip(button->text());
         button->setToolButtonStyle(Qt::ToolButtonIconOnly);
-        button->setIconSize(QSize(20, 20));
-        button->setFixedSize(22, 22);
+        ThemeManager::instance().bindMetrics(button, [button](const ThemeMetrics& metrics) {
+            button->setIconSize(QSize(metrics.objectIconExtent, metrics.objectIconExtent));
+        });
+        ThemeManager::instance().bindMetrics(button, [button](const ThemeMetrics& metrics) {
+            button->setFixedSize(metrics.controlHeight, metrics.controlHeight);
+        });
         button->setProperty("flatIconButton", true);
         button->setAutoRaise(true);
         button->setCheckable(true);
@@ -129,15 +142,17 @@ BlueprintPanel::BlueprintPanel(QWidget* parent)
     connect(canvas_, &BlueprintCanvasWidget::nodeContentFieldsChanged, this, &BlueprintPanel::syncVisibility_);
     auto* separator = new QFrame(toolbar);
     separator->setObjectName(QStringLiteral("BlueprintToolSeparator"));
-    separator->setFixedSize(1, 16);
+    ThemeManager::instance().bindMetrics(separator, [separator](const ThemeMetrics& metrics) {
+        separator->setFixedSize(metrics.borderWidth, metrics.control.smallIconExtent);
+    });
     auto* toolLayout = new QHBoxLayout(toolbar);
-    toolLayout->setContentsMargins(6, 2, 6, 2);
-    toolLayout->setSpacing(2);
+    ThemeLayout::margins(toolLayout, ThemeLayout::Space::Small, ThemeLayout::Space::Compact, ThemeLayout::Space::Small, ThemeLayout::Space::Compact);
+    ThemeLayout::spacing(toolLayout, ThemeLayout::Space::Compact);
     toolLayout->addWidget(selectButton_);
     toolLayout->addWidget(panButton_);
-    toolLayout->addSpacing(5);
+    ThemeLayout::addSpacing(toolLayout, ThemeLayout::Space::XSmall);
     toolLayout->addWidget(separator);
-    toolLayout->addSpacing(5);
+    ThemeLayout::addSpacing(toolLayout, ThemeLayout::Space::XSmall);
     toolLayout->addWidget(snapButton_);
     toolLayout->addStretch();
     toolLayout->addWidget(filterButton_);
@@ -149,7 +164,9 @@ BlueprintPanel::BlueprintPanel(QWidget* parent)
 
     auto* statusBar = new QFrame(this);
     statusBar->setObjectName(QStringLiteral("BlueprintStatusBar"));
-    statusBar->setFixedHeight(20);
+    ThemeManager::instance().bindMetrics(statusBar, [statusBar](const ThemeMetrics& metrics) {
+        statusBar->setFixedHeight(metrics.control.compactHeight);
+    });
     statusBar->setFont(FontManager::instance().getFont(FontRole::Caption));
     connect(&FontManager::instance(), &FontManager::fontChanged, statusBar, [statusBar] {
         statusBar->setFont(FontManager::instance().getFont(FontRole::Caption));
@@ -195,7 +212,7 @@ BlueprintPanel::BlueprintPanel(QWidget* parent)
 
     auto* barLayout = new QHBoxLayout(statusBar);
     barLayout->setContentsMargins(0, 0, 0, 0);
-    barLayout->setSpacing(6);
+    ThemeLayout::spacing(barLayout, ThemeLayout::Space::Small);
     barLayout->addWidget(resetButton_);
     barLayout->addStretch(1);
     barLayout->addWidget(zoomButton_);

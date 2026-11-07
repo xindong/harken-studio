@@ -67,7 +67,9 @@ void SourceRangeThumb::paintEvent(QPaintEvent*)
 {
     QPainter painter(this);
     QtControlSkin::paintFieldFrame(painter, this);
-    const QRect inner = rect().adjusted(2, 2, -2, -2);
+    const auto& metrics = ThemeManager::instance().metrics();
+    const int padding = metrics.spacingCompact;
+    const QRect inner = rect().adjusted(padding, padding, -padding, -padding);
     if (!emptyText_.isEmpty()) {
         const auto& colors = ThemeManager::instance().colors();
         painter.setPen(isEnabled() ? colors.textMuted : colors.textDisabled);
@@ -113,12 +115,12 @@ void SourceRangeThumb::paintEvent(QPaintEvent*)
         painter.fillRect(QRect(loopStartX, inner.top(),
                                std::max(1, loopEndX - loopStartX), inner.height()),
                          loopFill);
-        painter.setPen(QPen(style.loopHandle, 1));
+        painter.setPen(QPen(style.loopHandle, metrics.borderWidth));
         painter.drawLine(loopStartX, inner.top(), loopStartX, inner.bottom());
         painter.drawLine(loopEndX, inner.top(), loopEndX, inner.bottom());
     }
 
-    painter.setPen(QPen(style.trimHandle, 1));
+    painter.setPen(QPen(style.trimHandle, metrics.borderWidth));
     painter.drawLine(trimStartX, inner.top(), trimStartX, inner.bottom());
     painter.drawLine(trimEndX, inner.top(), trimEndX, inner.bottom());
 }

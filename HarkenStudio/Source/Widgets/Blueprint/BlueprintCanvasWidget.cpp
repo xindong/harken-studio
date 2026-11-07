@@ -2743,12 +2743,14 @@ void BlueprintCanvasWidget::updateConnectPreview_(const QPoint& position)
 
 void BlueprintCanvasWidget::positionConnectHint_()
 {
-    const auto area = viewport()->rect().adjusted(8, 8, -8, -8);
-    const int padding = 2 * (ThemeManager::instance().metrics().spacingSmall + 1);
+    const auto& metrics = ThemeManager::instance().metrics();
+    const int margin = metrics.spacingSmall;
+    const auto area = viewport()->rect().adjusted(margin, margin, -margin, -margin);
+    const int padding = 2 * (margin + metrics.borderWidth);
     connectHint_->setText(connectHint_->fontMetrics().elidedText(
         connectHintText_, Qt::ElideRight, std::max(1, area.width() - padding)));
     connectHint_->adjustSize();
-    QPoint position = connectPosition_ + QPoint(16, -connectHint_->height() - 12);
+    QPoint position = connectPosition_ + QPoint(metrics.spacingLarge, -connectHint_->height() - metrics.spacingMedium);
     position.setX(std::clamp(position.x(), area.left(), std::max(area.left(), area.right() - connectHint_->width())));
     position.setY(std::clamp(position.y(), area.top(), std::max(area.top(), area.bottom() - connectHint_->height())));
     connectHint_->move(position);
@@ -2979,15 +2981,17 @@ void BlueprintCanvasWidget::paintLocationPing_(QPainter* painter)
     painter->resetTransform();
     painter->setClipRect(available, Qt::IntersectClip);
     painter->setRenderHint(QPainter::Antialiasing);
-    painter->setPen(QPen(edge, 2.0));
+    const auto& geometry = ThemeManager::instance().metrics();
+    painter->setPen(QPen(edge, geometry.accentBorderWidth));
     painter->setBrush(fill);
     if (bounds.intersects(available)) {
-        const double inset = 4.0 + 12.0 * (1.0 - pop);
+        const double inset = geometry.spacingXSmall + geometry.spacingMedium * (1.0 - pop);
         const QRectF capsule = bounds.adjusted(-inset, -inset, inset, inset);
-        const double radius = std::min(18.0, capsule.height() / 2.0);
+        const double radius = std::min(geometry.radiusLarge * 2.0, capsule.height() / 2.0);
         painter->drawRoundedRect(capsule, radius, radius);
     } else {
-        const QRectF rim = available.adjusted(3.0, 3.0, -3.0, -3.0);
+        const int inset = geometry.spacingXSmall;
+        const QRectF rim = available.adjusted(inset, inset, -inset, -inset);
         if (rim.isEmpty()) {
             painter->restore();
             return;
@@ -2997,7 +3001,7 @@ void BlueprintCanvasWidget::paintLocationPing_(QPainter* painter)
         const double vertical = std::abs(direction.y()) / (rim.height() / 2.0);
         const QPointF position = available.center() + direction / std::max(horizontal, vertical);
         const double scale = 1.6 - 0.6 * pop;
-        const double radius = 68.0 * scale;
+        const double radius = std::min(bounds.width(), bounds.height()) * 0.5 * scale;
         QRadialGradient glow(position, radius);
         glow.setColorAt(0.0, fill);
         QColor transparent = accent;
@@ -3019,7 +3023,7 @@ void BlueprintCanvasWidget::paintLocationPing_(QPainter* painter)
         }
         const QPointF tangent = (border.p2() - border.p1()) / border.length();
         const QPointF inward(-tangent.y(), tangent.x());
-        const double length = std::min({33.0 * scale, rim.width(), rim.height()});
+        const double length = std::min({radius / 2.0, rim.width(), rim.height()});
         const double before = QPointF::dotProduct(position - border.p1(), tangent);
         const double after = border.length() - before;
         QPainterPath band;
@@ -3035,7 +3039,7 @@ void BlueprintCanvasWidget::paintLocationPing_(QPainter* painter)
         } else {
             band.lineTo(position + tangent * length);
         }
-        painter->setPen(QPen(edge, 3.0, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        painter->setPen(QPen(edge, geometry.accentBorderWidth, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
         painter->setBrush(Qt::NoBrush);
         painter->drawPath(band);
     }
@@ -3085,16 +3089,18 @@ void BlueprintCanvasWidget::paintTransitionWatch_(QPainter* painter)
         painter->setRenderHint(QPainter::Antialiasing, true);
         painter->setBrush(Qt::NoBrush);
         const bool overview = detailLevel_ == BlueprintDetailLevel::Overview;
-        QPen nodePen(accentColor, overview ? 1.5 : 2.0, Qt::SolidLine, Qt::SquareCap, Qt::MiterJoin);
+        const auto& geometry = theme->ui.metrics;
+        QPen nodePen(accentColor, overview ? geometry.accentBorderWidth * 0.75 : geometry.accentBorderWidth, Qt::SolidLine, Qt::SquareCap, Qt::MiterJoin);
         nodePen.setCosmetic(overview);
-        QPen edgePen(accentColor, overview ? 1.5 : 3.0);
+        QPen edgePen(accentColor, overview ? geometry.accentBorderWidth * 0.75 : geometry.accentBorderWidth + geometry.borderWidth);
         edgePen.setCosmetic(overview);
 
         for (NodeItem* node : pathNodes) {
             if (!node || !node->isVisible()) continue;
             const QRectF r = node->mapRectToScene(node->shape().boundingRect());
             painter->setPen(nodePen);
-            painter->drawRect(r.adjusted(-2.0, -2.0, 2.0, 2.0));
+            const int inset = geometry.spacingCompact;
+            painter->drawRect(r.adjusted(-inset, -inset, inset, inset));
         }
 
         for (ConnectionPath* edge : edges_) {
@@ -3123,13 +3129,13 @@ void BlueprintCanvasWidget::paintTransitionWatch_(QPainter* painter)
                 const QFontMetrics chipMetrics(chipFont);
                 const QString chipLabel = tr("Timing reference");
                 const QRectF chipRect(
-                    r.right() - chipMetrics.horizontalAdvance(chipLabel) - 18.0,
-                    r.bottom() - chipMetrics.height() - 10.0,
-                    chipMetrics.horizontalAdvance(chipLabel) + 14.0,
-                    chipMetrics.height() + 6.0);
-                painter->setPen(QPen(theme->domains.blueprint.canvasBackground, 2.0));
+                    r.right() - chipMetrics.horizontalAdvance(chipLabel) - geometry.spacingSmall * 2 - geometry.spacingXSmall,
+                    r.bottom() - chipMetrics.height() - geometry.spacingXSmall * 2 - geometry.spacingCompact,
+                    chipMetrics.horizontalAdvance(chipLabel) + geometry.spacingSmall * 2,
+                    chipMetrics.height() + geometry.spacingXSmall * 2);
+                painter->setPen(QPen(theme->domains.blueprint.canvasBackground, geometry.accentBorderWidth));
                 painter->setBrush(theme->domains.pinDomain.targetOk);
-                painter->drawRoundedRect(chipRect, 6.0, 6.0);
+                painter->drawRoundedRect(chipRect, geometry.radiusMedium, geometry.radiusMedium);
                 painter->setPen(theme->ui.colors.accentText);
                 painter->setFont(chipFont);
                 painter->drawText(chipRect, Qt::AlignCenter, chipLabel);
@@ -3146,23 +3152,26 @@ void BlueprintCanvasWidget::paintTransitionWatch_(QPainter* painter)
     painter->setRenderHint(QPainter::Antialiasing, true);
 
     const QRect vp = viewport()->rect().marginsRemoved(navigationViewportMargins_);
-    if (vp.width() <= 24 || vp.height() < 36) {
+    const auto& geometry = theme->ui.metrics;
+    const int padding = geometry.spacingMedium;
+    const int captionHeight = std::max(geometry.controlHeight, fontMetrics().height() + geometry.spacingXSmall * 2);
+    if (vp.width() <= padding * 4 || vp.height() < captionHeight + padding) {
         painter->restore();
         return;
     }
     QFont capFont = FontManager::instance().getFont(FontRole::Body);
     painter->setFont(capFont);
     QFontMetrics fm(capFont);
-    const int maxTextW = vp.width() - 24;
+    const int maxTextW = vp.width() - padding * 4;
     const QString elided = fm.elidedText(transitionWatch_.caption, Qt::ElideRight, maxTextW);
-    const int textW = qMin(maxTextW, fm.horizontalAdvance(elided) + 20);
-    const QRect textRect(vp.center().x() - textW / 2, vp.bottom() - 35, textW, 24);
+    const int textW = qMin(vp.width() - padding * 2, fm.horizontalAdvance(elided) + padding * 2);
+    const QRect textRect(vp.center().x() - textW / 2, vp.bottom() - captionHeight - padding, textW, captionHeight);
 
     QColor bg = theme->domains.blueprint.canvasBackground;
     bg.setAlphaF(bg.alphaF() * 220 / 255.0);
     painter->setPen(Qt::NoPen);
     painter->setBrush(bg);
-    painter->drawRoundedRect(textRect, 6.0, 6.0);
+    painter->drawRoundedRect(textRect, geometry.radiusMedium, geometry.radiusMedium);
 
     painter->setPen(accentColor);
     painter->drawText(textRect, Qt::AlignCenter, elided);

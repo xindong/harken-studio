@@ -14,6 +14,7 @@
 #include <QString>
 
 #include <memory>
+#include <functional>
 #include <optional>
 
 class QPainter;
@@ -107,6 +108,7 @@ public:
     void cancelAppearancePreview();
     const ThemeColors& colors() const { return snapshot_->ui.colors; }
     const ThemeMetrics& metrics() const { return snapshot_->ui.metrics; }
+    QMetaObject::Connection bindMetrics(QObject* context, std::function<void(const ThemeMetrics&)> apply);
 
     QString accent() const { return colors().accent.name(QColor::HexArgb); }
     QString accentHover() const { return colors().accentHover.name(QColor::HexArgb); }

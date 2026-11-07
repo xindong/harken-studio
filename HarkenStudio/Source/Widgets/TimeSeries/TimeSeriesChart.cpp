@@ -53,7 +53,9 @@ TimeSeriesChart::TimeSeriesChart(QWidget* parent)
     : QWidget(parent)
 {
     setMouseTracking(true);
-    setMinimumSize(80, 48);
+    ThemeManager::instance().bindMetrics(this, [this](const ThemeMetrics& metrics) {
+        setMinimumSize(metrics.panel.minimumWidth, metrics.panel.minimumHeight);
+    });
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged, this, [this] {
         buffer_ = {};

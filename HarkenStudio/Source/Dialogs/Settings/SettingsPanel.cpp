@@ -1,5 +1,6 @@
 
 #include "Dialogs/Settings/SettingsPanel.h"
+#include "Core/ThemeLayout.h"
 
 #include "Core/ContextInfo.h"
 #include "Widgets/Common/SearchField.h"
@@ -15,7 +16,9 @@ SettingsPanel::SettingsPanel(QWidget* parent)
     : QWidget(parent)
 {
     ContextInfo::tag(this, ContextTopic::forPanel(QStringLiteral("settings")));
-    setMinimumSize(420, 280);
+    ThemeManager::instance().bindMetrics(this, [this](const ThemeMetrics& metrics) {
+        setMinimumSize(metrics.dialog.minimumWidth, metrics.dialog.minimumHeight);
+    });
 
     auto* mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(0, 0, 0, 0);
@@ -25,7 +28,7 @@ SettingsPanel::SettingsPanel(QWidget* parent)
     searchContainer->setObjectName(QStringLiteral("settingsSearchBar"));
     searchContainer->setAttribute(Qt::WA_StyledBackground, true);
     auto* searchLayout = new QHBoxLayout(searchContainer);
-    searchLayout->setContentsMargins(8, 8, 8, 9);
+    ThemeLayout::margins(searchLayout, ThemeLayout::Space::Small);
     searchField_ = new SearchField(searchContainer);
     searchField_->setObjectName(QStringLiteral("settingsSearchField"));
     searchField_->setPlaceholderText(tr("Search settings..."));
@@ -40,7 +43,9 @@ SettingsPanel::SettingsPanel(QWidget* parent)
 
     categoryList_ = new QListWidget();
     categoryList_->setObjectName(QStringLiteral("settingsCategoryList"));
-    categoryList_->setFixedWidth(150);
+    ThemeManager::instance().bindMetrics(categoryList_, [this](const ThemeMetrics& metrics) {
+        categoryList_->setFixedWidth(metrics.panel.sidebarWidth);
+    });
     connect(categoryList_, &QListWidget::currentRowChanged,
             this, &SettingsPanel::onCategoryChanged);
     contentLayout->addWidget(categoryList_);
@@ -132,7 +137,8 @@ QString SettingsPanel::currentPageId() const
 
 QSize SettingsPanel::sizeHint() const
 {
-    return QSize(800, 550);
+    const auto& metrics = ThemeManager::instance().metrics().dialog;
+    return QSize(metrics.wideWidth, metrics.wideHeight);
 }
 
 }

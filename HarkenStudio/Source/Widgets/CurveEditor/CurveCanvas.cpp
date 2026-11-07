@@ -1,4 +1,5 @@
 #include "CurveCanvas.h"
+#include "Core/ThemeLayout.h"
 #include "CurveRenderer.h"
 #include "Core/BindingSemantics.h"
 #include "Core/FontManager.h"
@@ -1056,7 +1057,7 @@ void CurveCanvas::beginAxisBoundEdit(CurveAxisBound bound, const QRectF& labelRe
     auto* form = new QFormLayout(dialog);
     form->setSizeConstraint(QLayout::SetNoConstraint);
     form->setRowWrapPolicy(QFormLayout::WrapLongRows);
-    form->setContentsMargins(8, 6, 8, 6);
+    ThemeLayout::margins(form, ThemeLayout::Space::Small);
     auto* spin = new DecimalSpinBox(dialog);
     spin->setObjectName(QStringLiteral("curveCanvasRangeInput"));
     spin->setButtonSymbols(QAbstractSpinBox::NoButtons);
@@ -1178,7 +1179,8 @@ int CurveCanvas::segmentIndexNear(const QPoint& pos) const
     if (points_.size() < 2)
         return -1;
 
-    constexpr double kSegmentHitRadius = 6.0;
+    const double kSegmentHitRadius = ThemeManager::instance().snapshot()->domains.curve.metrics.curveLineWidth / 2
+        + ThemeManager::instance().metrics().spacingXSmall;
     const QRectF hitGraph = graphRect().adjusted(-kSegmentHitRadius,
                                                  -kSegmentHitRadius,
                                                  kSegmentHitRadius,
@@ -1218,7 +1220,8 @@ int CurveCanvas::segmentIndexNearCoarse(const QPoint& pos) const
     if (points_.size() < 2 || handles_.size() != points_.size() - 1)
         return -1;
 
-    constexpr double kSegmentHitRadius = 6.0;
+    const double kSegmentHitRadius = ThemeManager::instance().snapshot()->domains.curve.metrics.curveLineWidth / 2
+        + ThemeManager::instance().metrics().spacingXSmall;
     const QRectF hitGraph = graphRect().adjusted(-kSegmentHitRadius,
                                                  -kSegmentHitRadius,
                                                  kSegmentHitRadius,
@@ -1308,7 +1311,8 @@ int CurveCanvas::findPointAt(const QPoint& pos) const
         const QPointF sp = pointToScreen(points_[i]);
         const double dx = sp.x() - pos.x();
         const double dy = sp.y() - pos.y();
-        if (std::sqrt(dx * dx + dy * dy) <= 9.0)
+        if (std::sqrt(dx * dx + dy * dy) <= ThemeManager::instance().snapshot()->domains.curve.metrics.pointSelectedRadius
+            + ThemeManager::instance().metrics().spacingXSmall)
             return i;
     }
     return -1;
@@ -1331,7 +1335,8 @@ bool CurveCanvas::findHandleAt(const QPoint& pos, int* segment, bool* isH1) cons
         const QPointF hp = handleScreenPos(seg, h1);
         const double dx = hp.x() - pos.x();
         const double dy = hp.y() - pos.y();
-        if (std::sqrt(dx * dx + dy * dy) > 8.0)
+        if (std::sqrt(dx * dx + dy * dy) > ThemeManager::instance().snapshot()->domains.curve.metrics.handleRadius
+            + ThemeManager::instance().metrics().spacingXSmall)
             return false;
         *segment = seg;
         *isH1 = h1;
@@ -1683,8 +1688,8 @@ void CurveCanvas::beginPointCoordinateEdit(int index)
     auto* form = new QFormLayout(dialog);
     form->setSizeConstraint(QLayout::SetNoConstraint);
     form->setRowWrapPolicy(QFormLayout::WrapLongRows);
-    form->setContentsMargins(8, 6, 8, 6);
-    form->setSpacing(6);
+    ThemeLayout::margins(form, ThemeLayout::Space::Small);
+    ThemeLayout::spacing(form, ThemeLayout::Space::Small);
 
     auto* xSpin = new DecimalSpinBox(dialog);
     xSpin->setObjectName("curveCanvasCoordinateXSpin");
@@ -1998,7 +2003,7 @@ CurveRenderData CurveCanvas::renderData() const
             || rect.top() < 0.0 || rect.bottom() > height())
             return;
         for (const auto& existing : data.textTicks) {
-            if (existing.rect.adjusted(-gap / 2.0, -2.0, gap / 2.0, 2.0).intersects(rect))
+            if (existing.rect.adjusted(-gap / 2.0, -gap / 2.0, gap / 2.0, gap / 2.0).intersects(rect))
                 return;
         }
         CurveRenderTextTick tick;

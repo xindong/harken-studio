@@ -49,7 +49,6 @@ public:
     {
         setObjectName(QStringLiteral("clipsList"));
         auto* layout = new QVBoxLayout(this);
-        layout->setContentsMargins(0, 0, ThemeManager::instance().metrics().inspector.columnPadding, 0);
         layout->setSpacing(0);
         reserveInspectorContentSlots(this);
         table_ = new TableWidget(this);
@@ -332,7 +331,9 @@ QWidget* ClipsSectionProvider::build(QWidget* parent)
     auto* widget = new QWidget(parent);
     auto* content = new QVBoxLayout(widget);
     content->setContentsMargins(0, 0, 0, 0);
-    content->setSpacing(ThemeManager::instance().metrics().inspector.rowSpacing);
+    ThemeManager::instance().bindMetrics(content, [content](const ThemeMetrics& metrics) {
+        content->setSpacing(metrics.inspector.rowSpacing);
+    });
     content->addWidget(new ClipsListWidget(widget));
     return widget;
 }

@@ -2,6 +2,12 @@
 #include "Core/HarkenStyle.h"
 #include "Core/QtControlSkin.h"
 #include "Core/ThemeManager.h"
+#include "Core/ThemeLayout.h"
+#include "Widgets/Common/LinearSliderPresenter.h"
+#include "Widgets/Common/VerticalFaderPresenter.h"
+#include "Widgets/Common/ParameterBinding.h"
+#include "Widgets/Common/TimeAxis.h"
+#include "Widgets/Timeline/TimelineRenderer.h"
 #include "Widgets/Common/ProportionalTreeWidget.h"
 #include "Widgets/Common/TableWidget.h"
 #include "Widgets/Common/MatrixTableWidget.h"
@@ -28,6 +34,8 @@
 #include <QMenuBar>
 #include <QImage>
 #include <QProgressBar>
+#include <QSlider>
+#include <QPainter>
 #include <QPushButton>
 #include <QTableWidget>
 #include <QScopeGuard>
@@ -65,7 +73,7 @@ bool writeFile(const QString& path, const QByteArray& bytes)
         && file.write(bytes) == bytes.size();
 }
 
-bool writeDenseMetricsPackage(const QString& themesRoot, const QString& id)
+bool writeMetricsPackage(const QString& themesRoot, const QString& id, const QByteArray& tokens)
 {
     const QString root = QDir(themesRoot).filePath(id);
     const QByteArray manifest = QByteArray("{")
@@ -81,15 +89,6 @@ bool writeDenseMetricsPackage(const QString& themesRoot, const QString& id)
           "\"waveform\":\"visuals/waveform.json\"},"
           "\"assetMap\":\"assets.json\"}}";
 
-    const QByteArray tokens = R"json({
-        "metrics": {
-            "table.headerHeight": 43,
-            "table.rowHeight": 49,
-            "table.cellPaddingX": 11,
-            "table.cellPaddingY": 5
-        }
-    })json";
-
     return writeFile(QDir(root).filePath(QStringLiteral("manifest.json")),
                      manifest)
         && writeFile(QDir(root).filePath(QStringLiteral("tokens.json")), tokens)
@@ -101,6 +100,18 @@ bool writeDenseMetricsPackage(const QString& themesRoot, const QString& id)
                      R"json({"colors":{"waveform.line":"#ff334455"}})json")
         && writeFile(QDir(root).filePath(QStringLiteral("assets.json")),
                      R"json({"assets":{}})json");
+}
+
+bool writeDenseMetricsPackage(const QString& themesRoot, const QString& id)
+{
+    return writeMetricsPackage(themesRoot, id, R"json({
+        "metrics": {
+            "table.headerHeight": 43,
+            "table.rowHeight": 49,
+            "table.cellPaddingX": 11,
+            "table.cellPaddingY": 5
+        }
+    })json");
 }
 
 std::unique_ptr<VNX::ThemeManager> makeManager(const QString& root)
@@ -965,5 +976,133 @@ TEST(ThemeMetricsMigration, TableThemeChangesPreserveEditingStateAcrossBodies)
         EXPECT_EQ(changes, 0);
         EXPECT_EQ(native.currentItem(), item);
         EXPECT_EQ(list->currentItem(), listItem);
+    }
+}
+
+TEST(ThemeMetricsMigration, ExistingLayoutsFollowMetricsWithoutReplacingEditorsOrCommittingGestures)
+{
+    ensureApp();
+    QTemporaryDir directory;
+    ASSERT_TRUE(writeMetricsPackage(directory.path(), QStringLiteral("geometry"), R"json({
+        "metrics": {
+            "spacing.small": 16,
+            "spacing.medium": 24,
+            "spacing.xSmall": 8,
+            "control.height": 40,
+            "parameter.labelMinimumWidth": 180,
+            "parameter.faderMinimumHeight": 180,
+            "parameter.valueMinimumWidth": 120
+        }
+    })json"));
+    auto manager = makeManager(directory.path());
+    const auto restore = qScopeGuard([&] { manager->selectTheme(VNX::builtinThemeId()); });
+    VNX::ParameterBinding binding;
+    binding.setName(QStringLiteral("Gain"));
+    binding.setValue(0.25);
+    QWidget panel;
+    auto* layout = new QVBoxLayout(&panel);
+    VNX::ThemeLayout::margins(layout, VNX::ThemeLayout::Space::Medium, *manager);
+    VNX::ThemeLayout::spacing(layout, VNX::ThemeLayout::Space::Small, *manager);
+    auto* editor = new QLineEdit(QStringLiteral("unfinished input"), &panel);
+    layout->addWidget(editor);
+    VNX::ThemeLayout::addSpacing(layout, VNX::ThemeLayout::Space::Small, *manager);
+    const int spacerIndex = layout->count() - 1;
+    auto* slider = new VNX::LinearSliderPresenter(&binding, true, manager.get(), &panel);
+    auto* fader = new VNX::VerticalFaderPresenter(&binding, manager.get(), &panel);
+    layout->addWidget(slider);
+    layout->addWidget(fader);
+    panel.resize(700, 700);
+    panel.show();
+    QCoreApplication::processEvents();
+    editor->setSelection(2, 5);
+    const auto originalMargins = layout->contentsMargins();
+    const int originalFaderHeight = fader->slider()->minimumHeight();
+    binding.beginEdit();
+    binding.previewEdit(0.75);
+    ASSERT_TRUE(manager->selectTheme(QStringLiteral("geometry")).ok());
+    QCoreApplication::processEvents();
+    EXPECT_GT(layout->contentsMargins().left(), originalMargins.left());
+    EXPECT_GT(fader->slider()->minimumHeight(), originalFaderHeight);
+    EXPECT_EQ(editor->selectedText(), QStringLiteral("finis"));
+    EXPECT_TRUE(binding.isEditing());
+    EXPECT_DOUBLE_EQ(binding.value(), 0.75);
+
+    QWidget fresh;
+    auto* freshLayout = new QVBoxLayout(&fresh);
+    VNX::ThemeLayout::margins(freshLayout, VNX::ThemeLayout::Space::Medium, *manager);
+    VNX::ThemeLayout::spacing(freshLayout, VNX::ThemeLayout::Space::Small, *manager);
+    VNX::ThemeLayout::addSpacing(freshLayout, VNX::ThemeLayout::Space::Small, *manager);
+    EXPECT_EQ(layout->contentsMargins(), freshLayout->contentsMargins());
+    EXPECT_EQ(layout->spacing(), freshLayout->spacing());
+    EXPECT_EQ(layout->itemAt(spacerIndex)->sizeHint(), freshLayout->itemAt(0)->sizeHint());
+    delete layout->takeAt(spacerIndex);
+    delete freshLayout->takeAt(0);
+    ASSERT_TRUE(manager->reloadTheme().ok());
+    binding.cancelEdit();
+    EXPECT_DOUBLE_EQ(binding.value(), 0.25);
+    ASSERT_TRUE(manager->selectTheme(VNX::builtinThemeId()).ok());
+    QCoreApplication::processEvents();
+    EXPECT_EQ(layout->contentsMargins(), originalMargins);
+    EXPECT_EQ(fader->slider()->minimumHeight(), originalFaderHeight);
+    EXPECT_EQ(editor->text(), QStringLiteral("unfinished input"));
+    EXPECT_EQ(editor->selectedText(), QStringLiteral("finis"));
+}
+
+TEST(ThemeMetricsMigration, InconsistentGeometryCannotReplaceTheActiveTheme)
+{
+    ensureApp();
+    QTemporaryDir directory;
+    const QList<QByteArray> variants{
+        R"json({"metrics":{"toggle.height":8,"toggle.thumbPadding":4}})json",
+        R"json({"metrics":{"node.pinRadius":12,"node.pinHitRadius":4}})json",
+        R"json({"metrics":{"timeAxis.handleWidth":0}})json",
+        R"json({"metrics":{"toast.minimumWidth":400,"toast.maximumWidth":200}})json",
+        R"json({"metrics":{"connection.lineWidth":20,"connection.hitWidth":8}})json",
+        R"json({"metrics":{"form.labelColumnShare":0,"form.valueColumnShare":0}})json"
+    };
+    for (int index = 0; index < variants.size(); ++index)
+        ASSERT_TRUE(writeMetricsPackage(directory.path(), QStringLiteral("invalid-%1").arg(index), variants[index]));
+    auto manager = makeManager(directory.path());
+    const auto original = manager->snapshot();
+    const auto appearance = manager->appearance();
+    for (int index = 0; index < variants.size(); ++index) {
+        SCOPED_TRACE(index);
+        const auto result = manager->selectTheme(QStringLiteral("invalid-%1").arg(index));
+        EXPECT_FALSE(result.ok());
+        ASSERT_FALSE(result.diagnostics.isEmpty());
+        EXPECT_EQ(result.diagnostics.first().code, VNX::ThemePackageErrorCode::MetricOutOfRange);
+        EXPECT_EQ(manager->snapshot(), original);
+        EXPECT_EQ(manager->appearance(), appearance);
+    }
+}
+
+TEST(ThemeMetricsMigration, TimeHandlePaintAndHitGeometryShareThemeDimensions)
+{
+    ensureApp();
+    QTemporaryDir directory;
+    ASSERT_TRUE(writeMetricsPackage(directory.path(), QStringLiteral("handles"), R"json({
+        "metrics": {"timeAxis.handleWidth": 28, "timeAxis.handleBandHeight": 24}
+    })json"));
+    auto manager = makeManager(directory.path());
+    const auto restore = qScopeGuard([&] { manager->selectTheme(VNX::builtinThemeId()); });
+    for (const auto& theme : {VNX::builtinThemeId(), QStringLiteral("handles")}) {
+        ASSERT_TRUE(manager->selectTheme(theme).ok());
+        const auto& geometry = manager->metrics().timeAxis;
+        for (bool start : {false, true}) {
+            const auto shape = start ? VNX::TimelineMarkerShape::EntryHandle : VNX::TimelineMarkerShape::ExitHandle;
+            const QRect hit = VNX::TimelineRenderer::markerHandleRect(50, 100, shape, geometry);
+            EXPECT_EQ(hit, VNX::timeAxisHandleRect(50, 0, start, geometry));
+            QImage image(100, 100, QImage::Format_ARGB32_Premultiplied);
+            image.fill(Qt::transparent);
+            QPainter painter(&image);
+            VNX::drawTimeAxisHandle(painter, Qt::red, Qt::white, hit);
+            painter.end();
+            QRect painted;
+            for (int y = 0; y < image.height(); ++y)
+                for (int x = 0; x < image.width(); ++x)
+                    if (qAlpha(image.pixel(x, y)) != 0)
+                        painted = painted.united(QRect(x, y, 1, 1));
+            EXPECT_EQ(painted, hit);
+        }
     }
 }

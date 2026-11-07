@@ -1,4 +1,5 @@
 #include "ProjectPlatformEditor.h"
+#include "Core/ThemeLayout.h"
 
 #include "Core/BaseDialog.h"
 #include "Core/QtControlSkin.h"
@@ -85,7 +86,8 @@ bool editPolicy(SizePolicy& policy, bool create, const std::vector<SizePolicy>& 
     BaseDialog dialog(parent);
     dialog.setWindowTitle(create ? QObject::tr("Add Range") : QObject::tr("Edit Range"));
     dialog.setObjectName("platformSizePolicyDialog");
-    dialog.resize(340, 160);
+    const auto& metrics = ThemeManager::instance().metrics().dialog;
+    dialog.resize(metrics.compactWidth, metrics.compactHeight);
     auto* layout = new QVBoxLayout(&dialog);
     auto* form = new DialogFormLayout();
     auto* limit = new QWidget(&dialog);
@@ -167,7 +169,7 @@ ProjectPlatformEditor::ProjectPlatformEditor(QWidget* parent)
     setAttribute(Qt::WA_StyledBackground, true);
     QtControlSkin::setSemanticProperty(this, "surfaceRole", QStringLiteral("panel"));
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(12, 12, 12, 12);
+    ThemeLayout::margins(layout, ThemeLayout::Space::Medium);
     auto* form = new DialogFormLayout();
     name_ = new QLineEdit(this);
     name_->setObjectName("projectPlatformName");

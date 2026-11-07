@@ -1,4 +1,5 @@
 #include "TransitionEditorWidget.h"
+#include "Core/ThemeLayout.h"
 
 #include "Core/ActionManager.h"
 #include "Core/AuthoringPolicy.h"
@@ -53,7 +54,6 @@ namespace VNX {
 
 namespace {
 
-constexpr int kNarrowWidthThreshold = 480;
 constexpr int kSourceShare = 280;
 constexpr int kExitShare = 220;
 constexpr int kEntryShare = 220;
@@ -347,7 +347,7 @@ TransitionEditorWidget::TransitionEditorWidget(QWidget* parent)
     {
         auto* slotLayout = new QHBoxLayout(bridgeSlotAdd_);
         slotLayout->setContentsMargins(0, 0, 0, 0);
-        slotLayout->setSpacing(8);
+        ThemeLayout::spacing(slotLayout, ThemeLayout::Space::Small);
         bridgeInsertButton_ = new QToolButton(bridgeSlotAdd_);
         bridgeInsertButton_->setObjectName(QStringLiteral("transitionInsertBridge"));
         bridgeInsertButton_->setText(tr("+ Insert a bridge"));
@@ -1225,7 +1225,7 @@ void TransitionEditorWidget::resizeEvent(QResizeEvent* event)
 
 bool TransitionEditorWidget::isNarrow() const
 {
-    return width() > 0 && width() < kNarrowWidthThreshold;
+    return width() > 0 && width() < ThemeManager::instance().metrics().dialog.minimumWidth;
 }
 
 void TransitionEditorWidget::refreshHeadTooltips()

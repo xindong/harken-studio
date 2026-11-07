@@ -1,3 +1,4 @@
+#include "Core/ThemeManager.h"
 
 #include "SignalChainSource.h"
 
@@ -192,21 +193,21 @@ composeColumns(const SignalChainView& view, const std::array<bool, 3>& layers)
 
 void layoutColumns(std::vector<LayoutColumn>& cols)
 {
-    const float colStride = SignalChainSource::kNodeWidth +
-                            SignalChainSource::kColumnSpacing;
+    const float colStride = ThemeManager::instance().metrics().node.minimumWidth +
+                            ThemeManager::instance().metrics().node.columnSpacing;
     for (auto& col : cols) {
         float totalHeight = 0.0f;
         for (auto const& d : col.nodes) totalHeight += descHeight(d);
         if (col.nodes.size() > 1) {
             totalHeight += static_cast<float>(col.nodes.size() - 1) *
-                           SignalChainSource::kRowSpacing;
+                           ThemeManager::instance().metrics().node.rowSpacing;
         }
         const float x = static_cast<float>(col.depth) * colStride;
         float y = -totalHeight / 2.0f + static_cast<float>(col.branch) * 180.0f;
         for (auto& desc : col.nodes) {
             desc.position    = QPointF(x, y);
             desc.hasPosition = true;
-            y += descHeight(desc) + SignalChainSource::kRowSpacing;
+            y += descHeight(desc) + ThemeManager::instance().metrics().node.rowSpacing;
         }
     }
 }
@@ -249,11 +250,11 @@ buildSendTargetNodes(const SignalChainView& view,
             BlueprintNodeDesc d = descSendTarget(send);
             const float sendH = descHeight(d);
             const float sendX = busPos.x() +
-                                SignalChainSource::kNodeWidth * 0.6f;
+                                ThemeManager::instance().metrics().node.minimumWidth * 0.6f;
             const float sendY = busPos.y() - sendH -
-                                SignalChainSource::kRowSpacing -
+                                ThemeManager::instance().metrics().node.rowSpacing -
                                 sendIndex * (sendH +
-                                             SignalChainSource::kRowSpacing);
+                                             ThemeManager::instance().metrics().node.rowSpacing);
             d.position    = QPointF(sendX, sendY);
             d.hasPosition = true;
             out.push_back(d);
@@ -314,11 +315,11 @@ buildIncomingSendNodes(const SignalChainView& view,
         d.draggable = false;
         d.height    = contentHeight(d);
         const float inH = descHeight(d);
-        const float inX = headPos.x() - SignalChainSource::kNodeWidth * 0.6f;
+        const float inX = headPos.x() - ThemeManager::instance().metrics().node.minimumWidth * 0.6f;
         const float inY = headPos.y() + headH +
-                          SignalChainSource::kRowSpacing +
+                          ThemeManager::instance().metrics().node.rowSpacing +
                           inIndex * (inH +
-                                     SignalChainSource::kRowSpacing);
+                                     ThemeManager::instance().metrics().node.rowSpacing);
         d.position    = QPointF(inX, inY);
         d.hasPosition = true;
         out.push_back(d);

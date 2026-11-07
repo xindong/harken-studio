@@ -51,8 +51,12 @@ namespace VNX {
 
 namespace {
 
-constexpr int kFloatEditorWidth = 74 + 7 + 64;
-constexpr int kFloatReadOnlyWidth = 64;
+int floatReadOnlyWidth() { return ThemeManager::instance().metrics().parameter.valueMinimumWidth; }
+int floatEditorWidth()
+{
+    const auto& metrics = ThemeManager::instance().metrics();
+    return metrics.parameter.labelMinimumWidth + metrics.spacingSmall + floatReadOnlyWidth();
+}
 
 constexpr int kLeadColWeight = 220;
 constexpr int kTailColWeight = 200;
@@ -378,7 +382,7 @@ private:
                 weight = kLeadColWeight;
             else if (ed.type == PropType::Float)
                 weight = ((ed.flags.readOnly || desc_.flags.readOnly)
-                              ? kFloatReadOnlyWidth : kFloatEditorWidth)
+                              ? floatReadOnlyWidth() : floatEditorWidth())
                     + 2 * ThemeManager::instance().metrics().table.cellPaddingX;
             else if (ed.type == PropType::Enum || ed.type == PropType::ObjectRef)
                 weight = kTailColWeight;
@@ -1058,7 +1062,9 @@ private:
             new NumericToolTip(spin, ed.unit);
             spin->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
             if (stretch) {
-                spin->setMaximumWidth(kFloatReadOnlyWidth);
+                ThemeManager::instance().bindMetrics(spin, [spin](const ThemeMetrics& metrics) {
+                    spin->setMaximumWidth(metrics.parameter.valueMinimumWidth);
+                });
                 spin->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
             }
             QtControlSkin::setSemanticProperty(spin, "fieldRole",

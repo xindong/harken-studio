@@ -1,4 +1,5 @@
 #include "CurveEditorWidget.h"
+#include "Core/ThemeLayout.h"
 
 #include "Core/ActionManager.h"
 #include "Core/AttenuationStore.h"
@@ -148,7 +149,7 @@ CurveEditorWidget::~CurveEditorWidget()
 void CurveEditorWidget::setupUi()
 {
     auto* root = new QVBoxLayout(this);
-    root->setContentsMargins(8, 8, 8, 8);
+    ThemeLayout::margins(root, ThemeLayout::Space::Small);
     root->setSpacing(0);
 
     stack_ = new QStackedWidget();

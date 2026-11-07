@@ -1,4 +1,5 @@
 #include "ProjectPlatformDialog.h"
+#include "Core/ThemeManager.h"
 
 #include "ProjectPlatformEditor.h"
 #include "Core/QtControlSkin.h"
@@ -15,13 +16,16 @@ ProjectPlatformDialog::ProjectPlatformDialog(QWidget* parent)
 {
     setObjectName("projectPlatformDialog");
     setWindowTitle(tr("Add Platform"));
-    resize(600, 360);
+    const auto& metrics = ThemeManager::instance().metrics().dialog;
+    resize(metrics.preferredWidth, metrics.preferredHeight);
     auto* layout = new QVBoxLayout(this);
     auto* content = new QHBoxLayout();
     content->setSpacing(0);
     auto* platformTabs = new TableWidget(
         {TableKind::Config, TableBodySizing::Expanding}, this);
-    platformTabs->setFixedWidth(150);
+    ThemeManager::instance().bindMetrics(platformTabs, [platformTabs](const ThemeMetrics& metrics) {
+        platformTabs->setFixedWidth(metrics.panel.sidebarWidth);
+    });
     auto* platforms = platformTabs->createNavigationView(QStringLiteral("supportedPlatformList"));
     for (const auto base : {BasePlatform::Windows, BasePlatform::Android, BasePlatform::Linux,
                             BasePlatform::macOS, BasePlatform::iOS}) {

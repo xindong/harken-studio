@@ -1,4 +1,5 @@
 #include "Monitor/MonitorRemoteStatusStrip.h"
+#include "Core/ThemeLayout.h"
 #include "Monitor/MonitorTypes.h"
 
 #include <QLabel>
@@ -12,7 +13,7 @@ MonitorRemoteStatusStrip::MonitorRemoteStatusStrip(QWidget* parent)
 {
     setObjectName(QStringLiteral("MonitorRemoteStatus"));
     auto* root = new QVBoxLayout(this);
-    root->setContentsMargins(8, 4, 8, 4);
+    ThemeLayout::margins(root, ThemeLayout::Space::Small, ThemeLayout::Space::XSmall, ThemeLayout::Space::Small, ThemeLayout::Space::XSmall);
     faceLabel_ = new QLabel(this);
     faceLabel_->setObjectName(QStringLiteral("MonitorRemoteStatusFace"));
     faceLabel_->setWordWrap(true);

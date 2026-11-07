@@ -1,4 +1,5 @@
 #include "ColorEditorDialog.h"
+#include "Core/ThemeLayout.h"
 
 #include "Core/QtControlSkin.h"
 #include "Core/ThemeAssetCatalog.h"
@@ -33,7 +34,9 @@ public:
         setObjectName(QStringLiteral("colorPicker"));
         setAccessibleName(tr("Color picker"));
         setFocusPolicy(Qt::StrongFocus);
-        setMinimumSize(280, 200);
+        ThemeManager::instance().bindMetrics(this, [this](const ThemeMetrics& metrics) {
+            setMinimumSize(metrics.panel.minimumWidth, metrics.panel.minimumHeight);
+        });
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     }
 
@@ -81,15 +84,18 @@ protected:
         painter.setRenderHint(QPainter::Antialiasing);
         const QPointF point(plane.left() + saturation_ * (plane.width() - 1),
                             plane.top() + (1.0 - value_) * (plane.height() - 1));
-        painter.setPen(QPen(Qt::black, 3));
-        painter.drawEllipse(point, 5, 5);
-        painter.setPen(QPen(Qt::white, 1));
-        painter.drawEllipse(point, 5, 5);
+        const auto& metrics = ThemeManager::instance().metrics();
+        const int radius = metrics.colorPreview.markerRadius;
+        painter.setPen(QPen(Qt::black, metrics.borderWidth + metrics.accentBorderWidth));
+        painter.drawEllipse(point, radius, radius);
+        painter.setPen(QPen(Qt::white, metrics.borderWidth));
+        painter.drawEllipse(point, radius, radius);
         const qreal y = hue.top() + hue_ * (hue.height() - 1);
-        const QRectF marker(hue.left() - 2, y - 2, hue.width() + 4, 4);
-        painter.setPen(QPen(Qt::black, 3));
+        const int padding = metrics.spacingCompact;
+        const QRectF marker(hue.left() - padding, y - radius / 2.0, hue.width() + padding * 2, radius);
+        painter.setPen(QPen(Qt::black, metrics.borderWidth + metrics.accentBorderWidth));
         painter.drawRect(marker);
-        painter.setPen(QPen(Qt::white, 1));
+        painter.setPen(QPen(Qt::white, metrics.borderWidth));
         painter.drawRect(marker);
     }
 
@@ -137,8 +143,18 @@ protected:
     }
 
 private:
-    QRect planeRect() const { return rect().adjusted(6, 6, -42, -6); }
-    QRect hueRect() const { return QRect(width() - 26, 6, 20, height() - 12); }
+    QRect planeRect() const
+    {
+        const auto& metrics = ThemeManager::instance().metrics();
+        return rect().adjusted(metrics.spacingSmall, metrics.spacingSmall,
+            -metrics.spacingSmall * 2 - metrics.colorPreview.hueWidth, -metrics.spacingSmall);
+    }
+    QRect hueRect() const
+    {
+        const auto& metrics = ThemeManager::instance().metrics();
+        return QRect(width() - metrics.spacingSmall - metrics.colorPreview.hueWidth, metrics.spacingSmall,
+            metrics.colorPreview.hueWidth, height() - metrics.spacingSmall * 2);
+    }
 
     void selectPosition(const QPointF& point)
     {
@@ -163,10 +179,11 @@ private:
 ColorEditorDialog::ColorEditorDialog(const QColor& color, QWidget* parent)
     : BaseDialog(parent)
 {
-    resize(380, 430);
+    const auto& metrics = ThemeManager::instance().metrics().dialog;
+    resize(metrics.compactWidth, metrics.preferredHeight);
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(16, 16, 16, 16);
-    layout->setSpacing(12);
+    ThemeLayout::margins(layout, ThemeLayout::Space::Large);
+    ThemeLayout::spacing(layout, ThemeLayout::Space::Medium);
     picker_ = new ColorPicker(this);
     picker_->changed = [this](qreal hue, qreal saturation, qreal value) {
         hue_ = hue;
@@ -177,8 +194,8 @@ ColorEditorDialog::ColorEditorDialog(const QColor& color, QWidget* parent)
     layout->addWidget(picker_, 1);
 
     auto* values = new QGridLayout();
-    values->setHorizontalSpacing(8);
-    values->setVerticalSpacing(8);
+    ThemeLayout::horizontalSpacing(values, ThemeLayout::Space::Small);
+    ThemeLayout::verticalSpacing(values, ThemeLayout::Space::Small);
     const std::array<const char*, 6> labels{"H", "S", "V", "R", "G", "B"};
     const std::array<const char*, 6> names{"colorHue", "colorSaturation", "colorValue",
                                          "colorRed", "colorGreen", "colorBlue"};
@@ -240,7 +257,9 @@ ColorEditorDialog::ColorEditorDialog(const QColor& color, QWidget* parent)
     screenPick->setToolTip(tr("Pick screen color. Click to select; Esc cancels."));
     screenPick->setProperty("flatIconButton", true);
     screenPick->setProperty("iconButtonBackground", true);
-    screenPick->setIconSize(QSize(20, 20));
+    ThemeManager::instance().bindMetrics(screenPick, [screenPick](const ThemeMetrics& metrics) {
+        screenPick->setIconSize(QSize(metrics.objectIconExtent, metrics.objectIconExtent));
+    });
     const auto refreshIcon = [screenPick] {
         auto& theme = ThemeManager::instance();
         screenPick->setIcon(theme.resolveIcon(QString::fromLatin1(ThemeAssetIds::ColorEyedropper)).icon);

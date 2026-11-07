@@ -43,11 +43,12 @@ public:
     explicit SelectionSectionWidget(QWidget* parent)
         : QWidget(parent)
     {
-        const auto& inspector = ThemeManager::instance().metrics().inspector;
         const int occupiedSlots = inspectorFormSlotCount(parent);
         auto* layout = new QVBoxLayout(this);
         layout->setContentsMargins(0, 0, 0, 0);
-        layout->setSpacing(inspector.rowSpacing);
+        ThemeManager::instance().bindMetrics(layout, [layout](const ThemeMetrics& metrics) {
+            layout->setSpacing(metrics.inspector.rowSpacing);
+        });
 
         mode_ = new QComboBox(this);
         mode_->setObjectName(QStringLiteral("prop_mode"));
@@ -105,7 +106,9 @@ public:
         behavior_->setProperty("inspectorField", QStringLiteral("behavior"));
         auto* behaviorLayout = new QVBoxLayout(behavior_);
         behaviorLayout->setContentsMargins(0, 0, 0, 0);
-        behaviorLayout->setSpacing(inspector.rowSpacing);
+        ThemeManager::instance().bindMetrics(behaviorLayout, [behaviorLayout](const ThemeMetrics& metrics) {
+            behaviorLayout->setSpacing(metrics.inspector.rowSpacing);
+        });
 
         discipline_ = new QComboBox(behavior_);
         discipline_->setObjectName(QStringLiteral("selectionBehaviorDiscipline"));
@@ -194,9 +197,7 @@ public:
         placeholder_->setObjectName(QStringLiteral("selectionSectionPlaceholder"));
         placeholder_->setProperty("textRole", QStringLiteral("muted"));
         placeholder_->setWordWrap(true);
-        placeholder_->setContentsMargins(inspector.pageMargin, 0,
-                                         inspector.pageMargin, 0);
-        reserveInspectorContentSlots(placeholder_);
+        reserveInspectorContentSlots(placeholder_, InspectorContentInset::Page);
         layout->addWidget(placeholder_);
 
         connect(&ProjectManager::instance(), &ProjectManager::itemPropertyChanged, this,
@@ -449,7 +450,9 @@ QWidget* SelectionSectionProvider::build(QWidget* parent)
     auto* section = new QWidget(parent);
     auto* content = new QVBoxLayout(section);
     content->setContentsMargins(0, 0, 0, 0);
-    content->setSpacing(ThemeManager::instance().metrics().inspector.rowSpacing);
+    ThemeManager::instance().bindMetrics(content, [content](const ThemeMetrics& metrics) {
+        content->setSpacing(metrics.inspector.rowSpacing);
+    });
     auto* widget = new SelectionSectionWidget(section);
     widget->setObjectName(QStringLiteral("selectionSectionContent"));
     content->addWidget(widget);

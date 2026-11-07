@@ -1,6 +1,7 @@
 #include "DialogFormLayout.h"
 
 #include "Core/QtControlSkin.h"
+#include "Core/ThemeManager.h"
 
 #include <QLabel>
 
@@ -10,10 +11,12 @@ DialogFormLayout::DialogFormLayout(QWidget* parent)
     : QGridLayout(parent)
 {
     setContentsMargins(0, 0, 0, 0);
-    setHorizontalSpacing(16);
-    setVerticalSpacing(RowSpacing);
-    setColumnStretch(0, 3);
-    setColumnStretch(1, 7);
+    ThemeManager::instance().bindMetrics(this, [this](const ThemeMetrics& metrics) {
+        setHorizontalSpacing(metrics.form.columnSpacing);
+        setVerticalSpacing(metrics.form.rowSpacing);
+        setColumnStretch(0, metrics.form.labelColumnShare);
+        setColumnStretch(1, metrics.form.valueColumnShare);
+    });
 }
 
 void DialogFormLayout::addRow(const QString& text, QWidget* field)

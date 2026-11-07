@@ -47,7 +47,6 @@ public:
     {
         setObjectName(QStringLiteral("effectsList"));
         auto* layout = new QVBoxLayout(this);
-        layout->setContentsMargins(0, 0, ThemeManager::instance().metrics().inspector.columnPadding, 0);
         layout->setSpacing(0);
         reserveInspectorContentSlots(this);
         table_ = new TableWidget(this);

@@ -1,4 +1,5 @@
 #include "Monitor/MonitorPlaceholderPage.h"
+#include "Core/ThemeLayout.h"
 
 #include <QLabel>
 #include <QVBoxLayout>
@@ -14,7 +15,7 @@ MonitorPlaceholderPage::MonitorPlaceholderPage(const QString& title,
 {
     setObjectName(QStringLiteral("MonitorPlaceholderPage"));
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(12, 12, 12, 12);
+    ThemeLayout::margins(layout, ThemeLayout::Space::Medium);
     messageLabel_ = new QLabel(this);
     messageLabel_->setObjectName(QStringLiteral("MonitorPlaceholderMessage"));
     messageLabel_->setWordWrap(true);

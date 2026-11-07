@@ -28,13 +28,19 @@ QString frequencyLabel(float frequency)
         : formatAxisValue(frequency, 0);
 }
 
+int labelPadding(const QFontMetrics& font)
+{
+    return font.horizontalAdvance(QLatin1Char(' ')) * 2;
+}
+
 QRect plotBounds(const QRect& canvas, const QMargins& insets, bool horizontalAxis)
 {
     const QFontMetrics font(FontManager::instance().getFont(FontRole::Caption));
-    const int verticalInset = std::max(10, font.height() / 2 + 4);
-    return canvas.adjusted(std::max({30, insets.left(), font.horizontalAdvance(QStringLiteral("-96.0")) + 10}),
-        std::max(insets.top(), verticalInset), -std::max(insets.right(), 10),
-        -std::max(insets.bottom(), horizontalAxis ? font.height() + 8 : verticalInset));
+    const int padding = labelPadding(font);
+    const int verticalInset = font.height() / 2 + padding / 2;
+    return canvas.adjusted(std::max(insets.left(), font.horizontalAdvance(QStringLiteral("-96.0")) + padding),
+        std::max(insets.top(), verticalInset), -std::max(insets.right(), padding),
+        -std::max(insets.bottom(), horizontalAxis ? font.height() + padding : verticalInset));
 }
 
 QVector<SpectrumMeterFrequencyTick> frequencyTicks(float maximum, int extent,
@@ -50,10 +56,10 @@ QVector<SpectrumMeterFrequencyTick> frequencyTicks(float maximum, int extent,
         const float position = FrequencyScale::freqToNorm(frequency, kMinFrequency, maximum, FreqScaleType::Log);
         const qreal pixel = position * (extent - 1);
         for (const auto& tick : result)
-            if (std::abs(tick.normalizedPosition - position) * (extent - 1) < 8.0)
+            if (std::abs(tick.normalizedPosition - position) * (extent - 1) < labelPadding(font))
                 return;
         QString text = frequencyLabel(frequency);
-        const qreal size = vertical ? font.height() + 8 : font.horizontalAdvance(text) + 12;
+        const qreal size = vertical ? font.height() + labelPadding(font) : font.horizontalAdvance(text) + labelPadding(font) * 1.5;
         const qreal start = vertical ? pixel - size / 2.0
             : std::clamp(pixel - size / 2.0, 0.0, std::max(0.0, extent - size));
         for (const auto& occupied : labels)

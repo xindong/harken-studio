@@ -236,6 +236,7 @@ add_library(harken_editor_foundation STATIC
     WidgetAppearance.cpp
     WidgetAppearance.h
     ThemeSnapshot.h
+    ThemeLayout.h
     ColorPalette.cpp
     ColorPalette.h
     ThemeColorCatalog.cpp

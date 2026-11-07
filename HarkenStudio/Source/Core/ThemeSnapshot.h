@@ -93,11 +93,173 @@ struct ThemeMetrics
     int spacingSmall = 0;
     int spacingMedium = 0;
     int spacingLarge = 0;
+    int spacingCompact = 0;
+    int spacingXLarge = 0;
+    int borderWidth = 0;
+    int accentBorderWidth = 0;
+    int radiusCompact = 0;
 
     int controlHeight = 0;
     int sectionHeaderHeight = 0;
     int navigationChevronExtent = 0;
     int objectIconExtent = 0;
+
+    struct Control {
+        int compactHeight = 0;
+        int largeHeight = 0;
+        int smallIconExtent = 0;
+        int largeIconExtent = 0;
+        int textPaddingX = 0;
+        int textPaddingY = 0;
+        int checkboxExtent = 0;
+        int checkboxMarkExtent = 0;
+        int scrollbarExtent = 0;
+        int canvasScrollbarExtent = 0;
+        int scrollbarMinimumLength = 0;
+        int sliderHandleExtent = 0;
+        int sliderGrooveThickness = 0;
+        int splitterExtent = 0;
+        int buttonMinimumWidth = 0;
+        int fieldMinimumWidth = 0;
+        int searchMinimumWidth = 0;
+        bool operator==(const Control&) const = default;
+    } control;
+
+    struct Popup {
+        int minimumWidth = 0;
+        int maximumHeight = 0;
+        int textPadding = 0;
+        int rowPadding = 0;
+        int iconColumnWidth = 0;
+        int shortcutSpacing = 0;
+        bool operator==(const Popup&) const = default;
+    } popup;
+
+    struct Toast {
+        int minimumWidth = 0;
+        int maximumWidth = 0;
+        bool operator==(const Toast&) const = default;
+    } toast;
+
+    struct Connection {
+        qreal lineWidth = 0;
+        qreal hitWidth = 0;
+        qreal maximumOverviewWidth = 0;
+        bool operator==(const Connection&) const = default;
+    } connection;
+
+    struct ColorPreview {
+        int swatchWidth = 0;
+        int swatchHeight = 0;
+        int alphaHeight = 0;
+        int paletteWidth = 0;
+        int paletteHeight = 0;
+        int hueWidth = 0;
+        int markerRadius = 0;
+        bool operator==(const ColorPreview&) const = default;
+    } colorPreview;
+
+    struct Form {
+        int rowSpacing = 0;
+        int columnSpacing = 0;
+        int labelColumnShare = 0;
+        int valueColumnShare = 0;
+        bool operator==(const Form&) const = default;
+    } form;
+
+    struct Chrome {
+        int titleBarHeight = 0;
+        int windowButtonWidth = 0;
+        int windowMinimumWidth = 0;
+        int windowMinimumHeight = 0;
+        int progressWidth = 0;
+        int progressHeight = 0;
+        bool operator==(const Chrome&) const = default;
+    } chrome;
+
+    struct Switch {
+        int width = 0;
+        int height = 0;
+        int thumbPadding = 0;
+        int compactWidth = 0;
+        int compactHeight = 0;
+        int compactThumbPadding = 0;
+        bool operator==(const Switch&) const = default;
+    } toggle;
+
+    struct Panel {
+        int minimumWidth = 0;
+        int minimumHeight = 0;
+        int preferredWidth = 0;
+        int preferredHeight = 0;
+        int sidebarWidth = 0;
+        int previewHeight = 0;
+        bool operator==(const Panel&) const = default;
+    } panel;
+
+    struct Dialog {
+        int minimumWidth = 0;
+        int minimumHeight = 0;
+        int compactWidth = 0;
+        int compactHeight = 0;
+        int preferredWidth = 0;
+        int preferredHeight = 0;
+        int wideWidth = 0;
+        int wideHeight = 0;
+        bool operator==(const Dialog&) const = default;
+    } dialog;
+
+    struct Card {
+        int minimumWidth = 0;
+        int minimumHeight = 0;
+        bool operator==(const Card&) const = default;
+    } card;
+
+    struct Startup {
+        int width = 0;
+        int artworkHeight = 0;
+        int logoWidth = 0;
+        int progressHeight = 0;
+        bool operator==(const Startup&) const = default;
+    } startup;
+
+    struct Node {
+        float minimumWidth = 0;
+        float headerHeight = 0;
+        float bodyPadding = 0;
+        float rowHeight = 0;
+        float waveformHeight = 0;
+        float expandedWaveformHeight = 0;
+        float waveformSpacing = 0;
+        float routePadding = 0;
+        float routeMinimumHeight = 0;
+        float pinColumnWidth = 0;
+        float pinSpacing = 0;
+        float pinRadius = 0;
+        float pinHitRadius = 0;
+        float badgeExtent = 0;
+        float columnSpacing = 0;
+        float rowSpacing = 0;
+        float pathColumnSpacing = 0;
+        float pathRowSpacing = 0;
+        int sliderWidth = 0;
+        int valueWidth = 0;
+        bool operator==(const Node&) const = default;
+    } node;
+
+    struct TimeAxis {
+        int handleBandHeight = 0;
+        int handleWidth = 0;
+        int handleHitRadius = 0;
+        int cursorWidth = 0;
+        int cursorHeight = 0;
+        int labelPadding = 0;
+        int minorTickLength = 0;
+        int majorTickLength = 0;
+        int waveformInset = 0;
+        int channelHeight = 0;
+        bool operator==(const TimeAxis&) const = default;
+    } timeAxis;
 
     struct Table {
         int headerHeight = 0;
@@ -152,6 +314,8 @@ struct ThemeMetrics
         int sliderGrooveThickness = 0;
         int sliderHandleThickness = 0;
         int sliderHandleLength = 0;
+        int compactSliderHeight = 0;
+        int compactSliderHandleWidth = 0;
         bool operator==(const Parameter&) const = default;
     } parameter;
 

@@ -108,6 +108,8 @@ void BlueprintCanvasWidget::refreshContentPresentations_()
             editor->setLabelWidth(NodeContentEditor::labelWidth(node->contentFields()));
         node->refreshContentPresentation();
     }
+    for (auto* edge : edges_)
+        edge->refreshMetrics();
 }
 
 void BlueprintCanvasWidget::activateNodeEditorAt_(const QPoint& position)

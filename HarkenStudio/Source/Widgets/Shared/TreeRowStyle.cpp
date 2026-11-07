@@ -23,7 +23,7 @@ namespace VNX::TreeRowStyle {
 
 namespace {
 
-constexpr int kIconTextGapPx = 4;
+int iconTextGap() { return ThemeManager::instance().metrics().spacingXSmall; }
 
 // Painter-side tint for delegate-drawn tree rows, where the stylesheet-based
 // appliers never reach.
@@ -72,7 +72,7 @@ QTreeWidgetItem* makeBucketRow(const QString& folderKey)
 
 void paintRowAccent(QPainter* p, const QRect& rowRect)
 {
-    p->fillRect(QRect(rowRect.left(), rowRect.top(), 2, rowRect.height()),
+    p->fillRect(QRect(rowRect.left(), rowRect.top(), ThemeManager::instance().metrics().accentBorderWidth, rowRect.height()),
                 ThemeManager::instance().colors().accent);
 }
 
@@ -102,7 +102,7 @@ void paintBucketRow(QPainter* p, const QStyleOptionViewItem& opt,
                          iconExtent, iconExtent);
     const int textX = iconCell.right() + 1;
     const QRect textRect(textX, r.top(), r.right() - caretW - 2 - textX, r.height());
-    const QRect textInner = textRect.adjusted(kIconTextGapPx, 0, 0, 0);
+    const QRect textInner = textRect.adjusted(iconTextGap(), 0, 0, 0);
 
     dbgFill(p, r, DebugTint::Role::Head, 70);
     dbgFill(p, textRect, DebugTint::Role::Flex, 90);
@@ -147,7 +147,7 @@ void paintItemContents(QPainter* p, const QStyleOptionViewItem& opt)
     const QRect iconCell(r.left(), r.top(), ds.width(), r.height());
     const QRect textCell(iconCell.right() + 1, r.top(),
                          r.right() - iconCell.right(), r.height());
-    const QRect textInner = textCell.adjusted(kIconTextGapPx, 0, -kIconTextGapPx, 0);
+    const QRect textInner = textCell.adjusted(iconTextGap(), 0, -iconTextGap(), 0);
 
     dbgFill(p, textCell, DebugTint::Role::Flex, 90);
     dbgFill(p, iconCell, DebugTint::Role::Label, 130);
@@ -193,8 +193,8 @@ void ItemRowDelegate::setRenameEditorFactory(RenameEditorFactory factory)
         option.rect = tree->visualRect(index);
         option.decorationSize = tree->iconSize();
         initStyleOption(&option, index);
-        QRect label = option.rect.adjusted(option.decorationSize.width() + kIconTextGapPx,
-                                           0, -kIconTextGapPx, 0);
+        QRect label = option.rect.adjusted(option.decorationSize.width() + iconTextGap(),
+                                           0, -iconTextGap(), 0);
         label.setWidth(qMin(label.width(), option.fontMetrics.horizontalAdvance(option.text)));
         if (!label.contains(point)) return {};
         const QPersistentModelIndex persistent(index);
@@ -241,7 +241,7 @@ void ItemRowDelegate::updateEditorGeometry(QWidget* editor, const QStyleOptionVi
     }
     QStyleOptionViewItem opt = option;
     initStyleOption(&opt, index);
-    editor->setGeometry(opt.rect.adjusted(opt.decorationSize.width() + kIconTextGapPx, 0, 0, 0));
+    editor->setGeometry(opt.rect.adjusted(opt.decorationSize.width() + iconTextGap(), 0, 0, 0));
 }
 
 bool ItemRowDelegate::eventFilter(QObject* watched, QEvent* event)
@@ -307,7 +307,7 @@ void paintBranches(QPainter* painter, const QRect& rect, const QModelIndex& inde
     if (depth >= 2) {
         const int xJoint = colX(depth - 2);
         painter->drawLine(xJoint, yTop, xJoint, hasNextSibling(index) ? yBot : yMid);
-        painter->drawLine(xJoint, yMid, hasKids ? xSelf - 7 : rect.right(), yMid);
+        painter->drawLine(xJoint, yMid, hasKids ? xSelf - ThemeManager::instance().metrics().navigationChevronExtent / 2 : rect.right(), yMid);
     }
 
     if (hasKids) {

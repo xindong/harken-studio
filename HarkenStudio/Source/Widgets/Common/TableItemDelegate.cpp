@@ -170,7 +170,7 @@ void TableItemDelegate::paint(QPainter* painter, const QStyleOptionViewItem& opt
     if (!table || !table->showGrid())
         painter->drawLine(option.rect.bottomLeft(), option.rect.bottomRight());
     if (styled.state.testFlag(QStyle::State_Selected) && option.rect.left() == 0)
-        painter->fillRect(QRect(option.rect.left(), option.rect.top(), 2, option.rect.height()), colors.accent);
+        painter->fillRect(QRect(option.rect.left(), option.rect.top(), themeManager_->metrics().accentBorderWidth, option.rect.height()), colors.accent);
     if (index.siblingAtColumn(0).data(TableDropTargetRole).toBool()) {
         painter->setPen(colors.accent);
         painter->drawLine(option.rect.topLeft(), option.rect.topRight());

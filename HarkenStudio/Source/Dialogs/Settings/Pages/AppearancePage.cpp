@@ -1,4 +1,5 @@
 #include "Dialogs/Settings/Pages/AppearancePage.h"
+#include "Core/ThemeLayout.h"
 
 #include "Core/AppSettings.h"
 #include "Core/ContextInfo.h"
@@ -31,7 +32,11 @@ namespace VNX {
 
 namespace {
 
-constexpr QSize kColorSwatchSize(44, 20);
+QSize colorSwatchSize(const ThemeMetrics& metrics)
+{
+    return {metrics.colorPreview.swatchWidth,
+            metrics.colorPreview.swatchHeight + metrics.colorPreview.alphaHeight + metrics.borderWidth};
+}
 
 QString colorText(const QColor& color)
 {
@@ -39,25 +44,29 @@ QString colorText(const QColor& color)
 }
 
 QIcon colorIcon(const QColor& color, const QPalette& palette, const QColor& border,
-                qreal devicePixelRatio)
+                qreal devicePixelRatio, const ThemeMetrics& metrics)
 {
-    QPixmap swatch(kColorSwatchSize * devicePixelRatio);
+    const QSize size = colorSwatchSize(metrics);
+    QPixmap swatch(size * devicePixelRatio);
     swatch.setDevicePixelRatio(devicePixelRatio);
     swatch.fill(Qt::transparent);
     QPainter painter(&swatch);
-    const QRect colorRect(0, 0, kColorSwatchSize.width(), 16);
+    const QRect colorRect(0, 0, size.width(), metrics.colorPreview.swatchHeight);
     painter.fillRect(colorRect, palette.color(QPalette::Base));
-    for (int y = 0; y < colorRect.height(); y += 4)
-        for (int x = 0; x < colorRect.width(); x += 4)
-            if ((x / 4 + y / 4) % 2 == 0)
-                painter.fillRect(QRect(x, y, 4, 4).intersected(colorRect), palette.color(QPalette::AlternateBase));
+    const int cell = qMax(1, metrics.colorPreview.swatchHeight / 4);
+    for (int y = 0; y < colorRect.height(); y += cell)
+        for (int x = 0; x < colorRect.width(); x += cell)
+            if ((x / cell + y / cell) % 2 == 0)
+                painter.fillRect(QRect(x, y, cell, cell).intersected(colorRect), palette.color(QPalette::AlternateBase));
     painter.fillRect(colorRect, color);
-    const QRect alphaRect(1, colorRect.bottom() + 1, kColorSwatchSize.width() - 2, 3);
+    const QRect alphaRect(metrics.borderWidth, colorRect.bottom() + 1,
+        size.width() - metrics.borderWidth * 2, metrics.colorPreview.alphaHeight);
     painter.fillRect(alphaRect, Qt::black);
     painter.fillRect(QRect(alphaRect.topLeft(), QSize(qRound(alphaRect.width() * color.alphaF()),
                                                      alphaRect.height())), Qt::white);
-    painter.setPen(border);
-    painter.drawRect(QRect(QPoint(), kColorSwatchSize).adjusted(0, 0, -1, -1));
+    painter.setPen(QPen(border, metrics.borderWidth));
+    const qreal inset = metrics.borderWidth / 2.0;
+    painter.drawRect(QRectF(QPoint(), size).adjusted(inset, inset, -inset, -inset));
     painter.drawLine(colorRect.bottomLeft(), colorRect.bottomRight());
     QIcon icon;
     for (QIcon::Mode mode : {QIcon::Normal, QIcon::Active, QIcon::Selected, QIcon::Disabled})
@@ -68,14 +77,18 @@ QIcon colorIcon(const QColor& color, const QPalette& palette, const QColor& bord
 class ColorSwatchDelegate final : public TableItemDelegate
 {
 public:
-    using TableItemDelegate::TableItemDelegate;
+    ColorSwatchDelegate(QObject* parent, ThemeManager* theme)
+        : TableItemDelegate(parent, theme), theme_(theme) {}
 
 protected:
     void initStyleOption(QStyleOptionViewItem* option, const QModelIndex& index) const override
     {
-        option->decorationSize = kColorSwatchSize;
+        option->decorationSize = colorSwatchSize(theme_->metrics());
         TableItemDelegate::initStyleOption(option, index);
     }
+
+private:
+    ThemeManager* theme_;
 };
 
 QString roleText(const QString& text)
@@ -95,7 +108,7 @@ QPixmap presetSwatch(const ColorPalette& palette, const QVector<ThemeColorRole>&
     const QColor samples[]{colors.bgPrimary, colors.bgSecondary, colors.bgSelected,
         colors.accent, colors.textPrimary, colors.textSecondary, colors.success,
         colors.warning, colors.error, colors.info};
-    QPixmap swatch(160, 8);
+    QPixmap swatch(snapshot.ui.metrics.colorPreview.paletteWidth, snapshot.ui.metrics.colorPreview.paletteHeight);
     QColor background = colors.bgPrimary;
     background.setAlpha(255);
     swatch.fill(background);
@@ -108,21 +121,23 @@ QPixmap presetSwatch(const ColorPalette& palette, const QVector<ThemeColorRole>&
     return swatch;
 }
 
-QRect presetSwatchRect(const QRect& content)
+QRect presetSwatchRect(const QRect& content, const ThemeMetrics& metrics)
 {
-    const QSize size(qMin(160, content.width() / 2), 8);
+    const QSize size(qMin(metrics.colorPreview.paletteWidth, content.width() / 2), metrics.colorPreview.paletteHeight);
     return QStyle::alignedRect(Qt::LeftToRight, Qt::AlignRight | Qt::AlignVCenter, size, content);
 }
 
 class ColorPresetDelegate final : public QStyledItemDelegate
 {
 public:
-    explicit ColorPresetDelegate(QComboBox* combo) : QStyledItemDelegate(combo), combo_(combo) {}
+    ColorPresetDelegate(QComboBox* combo, ThemeManager* theme)
+        : QStyledItemDelegate(combo), combo_(combo), theme_(theme) {}
 
     void paint(QPainter* painter, const QStyleOptionViewItem& option,
                const QModelIndex& index) const override
     {
-        const QRect swatchRect = presetSwatchRect(option.rect.adjusted(8, 0, -8, 0));
+        const auto& metrics = theme_->metrics();
+        const QRect swatchRect = presetSwatchRect(option.rect.adjusted(metrics.popup.textPadding, 0, -metrics.popup.textPadding, 0), metrics);
         QStyleOptionMenuItem item;
         item.menuHasCheckableItems = false;
         item.rect = option.rect;
@@ -132,8 +147,8 @@ public:
         item.font = option.font;
         item.fontMetrics = option.fontMetrics;
         item.text = option.fontMetrics.elidedText(index.data().toString(), Qt::ElideRight,
-            swatchRect.left() - option.rect.left() - 20).replace(QLatin1Char('&'), QStringLiteral("&&"));
-        QtControlSkin::current().paintPopupItem(*painter, item, combo_);
+            swatchRect.left() - option.rect.left() - metrics.popup.textPadding - metrics.spacingMedium).replace(QLatin1Char('&'), QStringLiteral("&&"));
+        QtControlSkin(theme_->snapshot()).paintPopupItem(*painter, item, combo_);
         painter->drawPixmap(swatchRect, index.data(Qt::UserRole + 1).value<QPixmap>());
     }
 
@@ -142,27 +157,28 @@ public:
         QStyleOptionMenuItem item;
         item.menuHasCheckableItems = false;
         item.fontMetrics = option.fontMetrics;
-        return QtControlSkin::current().popupItemSize(item,
-            QSize(option.fontMetrics.horizontalAdvance(index.data().toString()) + 172,
+        return QtControlSkin(theme_->snapshot()).popupItemSize(item,
+            QSize(option.fontMetrics.horizontalAdvance(index.data().toString()) + theme_->metrics().colorPreview.paletteWidth + theme_->metrics().spacingMedium,
                   option.fontMetrics.height()), combo_);
     }
 
 private:
     QComboBox* combo_;
+    ThemeManager* theme_;
 };
 
 class ColorPresetComboBox final : public QComboBox
 {
 public:
-    explicit ColorPresetComboBox(QWidget* parent) : QComboBox(parent)
+    ColorPresetComboBox(QWidget* parent, ThemeManager* theme) : QComboBox(parent), theme_(theme)
     {
-        setItemDelegate(new ColorPresetDelegate(this));
+        setItemDelegate(new ColorPresetDelegate(this, theme));
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     }
 
     QSize sizeHint() const override
     {
-        return QComboBox::sizeHint() + QSize(172, 0);
+        return QComboBox::sizeHint() + QSize(theme_->metrics().colorPreview.paletteWidth, 0);
     }
 
 protected:
@@ -173,13 +189,16 @@ protected:
         initStyleOption(&option);
         const QRect content = style()->subControlRect(QStyle::CC_ComboBox, &option,
                                                       QStyle::SC_ComboBoxEditField, this);
-        const QRect swatchRect = presetSwatchRect(content);
+        const QRect swatchRect = presetSwatchRect(content, theme_->metrics());
         option.currentText = fontMetrics().elidedText(option.currentText, Qt::ElideRight,
-                                                     swatchRect.left() - content.left() - 12);
+                                                     swatchRect.left() - content.left() - theme_->metrics().spacingMedium);
         painter.drawComplexControl(QStyle::CC_ComboBox, option);
         painter.drawControl(QStyle::CE_ComboBoxLabel, option);
         painter.drawPixmap(swatchRect, currentData(Qt::UserRole + 1).value<QPixmap>());
     }
+
+private:
+    ThemeManager* theme_;
 };
 
 }
@@ -189,8 +208,8 @@ AppearancePage::AppearancePage(ThemeManager& themeManager, QWidget* parent)
     , themeManager_(&themeManager)
 {
     auto* body = makePageBody();
-    body->setContentsMargins(24, 16, 24, 16);
-    body->setSpacing(12);
+    ThemeLayout::margins(body, ThemeLayout::Space::XLarge, ThemeLayout::Space::Large, ThemeLayout::Space::XLarge, ThemeLayout::Space::Large, *themeManager_);
+    ThemeLayout::spacing(body, ThemeLayout::Space::Medium, *themeManager_);
     auto* appearance = makeSection(tr("Appearance"));
     auto* appearanceForm = makeForm();
     auto* themeLabel = new QLabel(tr("Theme:"));
@@ -219,10 +238,10 @@ AppearancePage::AppearancePage(ThemeManager& themeManager, QWidget* parent)
     const auto colorsTopic = ContextTopic::forPanel(QStringLiteral("settings.appearance.colors"));
     ContextInfo::tag(colors, colorsTopic);
     auto* colorsLayout = static_cast<QVBoxLayout*>(colors->layout());
-    colorsLayout->setSpacing(8);
+    ThemeLayout::spacing(colorsLayout, ThemeLayout::Space::Small, *themeManager_);
     auto* colorsForm = makeForm();
     auto* presetLabel = new QLabel(tr("Color Palette:"));
-    colorPresets_ = new ColorPresetComboBox(colors);
+    colorPresets_ = new ColorPresetComboBox(colors, themeManager_);
     colorPresets_->setObjectName(QStringLiteral("appearanceColorPresets"));
     colorPresets_->setAccessibleName(tr("Color palette"));
     ContextInfo::tag(colorPresets_, colorsTopic);
@@ -243,7 +262,9 @@ AppearancePage::AppearancePage(ThemeManager& themeManager, QWidget* parent)
 
     auto* table = new TableWidget(TableOptions::display(), colors, themeManager_);
     table->setColumnsMovable(false);
-    table->setFixedHeight(260);
+    themeManager_->bindMetrics(table, [table](const ThemeMetrics& metrics) {
+        table->setFixedHeight(metrics.panel.previewHeight);
+    });
     colorTree_ = table->createItemView(QStringLiteral("appearanceColorTree"),
         {tr("Role"), tr("Color"), tr("Palette Default")}, {46, 27, 27});
     colorTree_->setRootIsDecorated(false);
@@ -257,7 +278,9 @@ AppearancePage::AppearancePage(ThemeManager& themeManager, QWidget* parent)
     colorDescription_->setObjectName(QStringLiteral("appearanceColorDescription"));
     colorDescription_->setProperty("textRole", QStringLiteral("secondary"));
     colorDescription_->setWordWrap(true);
-    colorDescription_->setMinimumHeight(34);
+    themeManager_->bindMetrics(colorDescription_, [this](const ThemeMetrics& metrics) {
+        colorDescription_->setMinimumHeight(metrics.control.largeHeight);
+    });
     colorsLayout->addWidget(colorDescription_);
 
     auto* actions = new QHBoxLayout();
@@ -507,10 +530,10 @@ void AppearancePage::refreshColors()
         const QColor original = basePalette_->colors.value(role->key);
         item->setText(1, colorText(value));
         item->setIcon(1, colorIcon(value, palette(), themeManager_->colors().borderSecondary,
-                                  devicePixelRatioF()));
+                                  devicePixelRatioF(), themeManager_->metrics()));
         item->setText(2, colorText(original));
         item->setIcon(2, colorIcon(original, palette(), themeManager_->colors().borderSecondary,
-                                  devicePixelRatioF()));
+                                  devicePixelRatioF(), themeManager_->metrics()));
         item->setToolTip(1, value == original ? tr("Palette default") : tr("Customized palette color"));
         item->setData(1, TableTextRole, static_cast<int>(
             value == original ? TableTextState::Normal : TableTextState::Custom));

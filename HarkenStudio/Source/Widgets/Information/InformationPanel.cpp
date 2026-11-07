@@ -1,5 +1,6 @@
 
 #include "InformationPanel.h"
+#include "Core/ThemeLayout.h"
 
 #include "Core/AppSettings.h"
 #include "Core/ContextInfoService.h"
@@ -70,8 +71,8 @@ InformationPanel::InformationPanel(QWidget* parent)
 void InformationPanel::setupUI()
 {
     QVBoxLayout* mainLayout = new QVBoxLayout(this);
-    mainLayout->setContentsMargins(8, 8, 8, 8);
-    mainLayout->setSpacing(6);
+    ThemeLayout::margins(mainLayout, ThemeLayout::Space::Small);
+    ThemeLayout::spacing(mainLayout, ThemeLayout::Space::Small);
 
     headerLabel_ = new QLabel(this);
     headerLabel_->setObjectName(QStringLiteral("informationHeaderLabel"));
@@ -91,7 +92,9 @@ void InformationPanel::setupUI()
     separator_->setObjectName(QStringLiteral("informationSeparator"));
     separator_->setFrameShape(QFrame::HLine);
     separator_->setFrameShadow(QFrame::Plain);
-    separator_->setFixedHeight(1);
+    ThemeManager::instance().bindMetrics(separator_, [this](const ThemeMetrics& metrics) {
+        separator_->setFixedHeight(metrics.borderWidth);
+    });
     mainLayout->addWidget(separator_);
 
     QScrollArea* scrollArea = new QScrollArea(this);

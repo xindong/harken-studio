@@ -43,7 +43,7 @@ public:
     static void setPopupIconColumn(QWidget* widget, PopupIconColumn mode);
     static void setPopupCurrentItemChecked(QComboBox* combo, bool checked);
     static void applyPopupStyle(QComboBox* combo);
-    static int popupRowHeight(const QFontMetrics& fontMetrics);
+    int popupRowHeight(const QFontMetrics& fontMetrics) const;
     QSize popupItemSize(const QStyleOptionMenuItem& item, const QSize& contentsSize,
                         const QWidget* widget) const;
     void paintPopupItem(QPainter& painter, const QStyleOptionMenuItem& item,

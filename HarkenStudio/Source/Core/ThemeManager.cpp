@@ -95,6 +95,15 @@ ThemePackageDiscoveryResult ThemeManager::refreshThemes()
     return result;
 }
 
+QMetaObject::Connection ThemeManager::bindMetrics(QObject* context, std::function<void(const ThemeMetrics&)> apply)
+{
+    apply(metrics());
+    return connect(this, &ThemeManager::themeChanged, context,
+            [apply = std::move(apply)](const ThemeSnapshotPtr& snapshot) {
+                apply(snapshot->ui.metrics);
+            });
+}
+
 ThemeManagerOperationResult ThemeManager::selectTheme(const QString& themeId)
 {
     auto desired = appearance();

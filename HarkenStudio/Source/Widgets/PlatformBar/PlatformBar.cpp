@@ -1,4 +1,5 @@
 #include "PlatformBar.h"
+#include "Core/ThemeLayout.h"
 
 #include "../../Core/LanguageContextService.h"
 #include "../../Core/PlatformContextService.h"
@@ -24,7 +25,9 @@ public:
     explicit ToolBarButton(QWidget* parent)
         : QToolButton(parent)
     {
-        setFixedSize(22, 22);
+        ThemeManager::instance().bindMetrics(this, [this](const ThemeMetrics& metrics) {
+            setFixedSize(metrics.controlHeight, metrics.controlHeight);
+        });
         setProperty("flatIconButton", true);
     }
 
@@ -54,14 +57,16 @@ PlatformBar::PlatformBar(PlatformContextService& service, QWidget* parent)
     setMovable(false);
     setFloatable(false);
     setContextMenuPolicy(Qt::PreventContextMenu);
-    setIconSize(QSize(20, 20));
+    ThemeManager::instance().bindMetrics(this, [this](const ThemeMetrics& metrics) {
+        setIconSize(QSize(metrics.objectIconExtent, metrics.objectIconExtent));
+    });
     ensurePolished();
 
     host_ = new QWidget(this);
     host_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     auto* layout = new QGridLayout(host_);
-    layout->setContentsMargins(4, 1, 4, 0);
-    layout->setSpacing(6);
+    ThemeLayout::margins(layout, ThemeLayout::Space::XSmall, ThemeLayout::Space::Compact, ThemeLayout::Space::XSmall, ThemeLayout::Space::None);
+    ThemeLayout::spacing(layout, ThemeLayout::Space::Small);
     layout->setColumnStretch(0, 1);
     layout->setColumnStretch(2, 1);
     auto* leading = new QWidget(host_);

@@ -1,5 +1,6 @@
 
 #include "InspectorPanel.h"
+#include "Core/ThemeLayout.h"
 #include "InspectorPanel_p.h"
 #include "VariableRangeDialog.h"
 #include "Core/ActionManager.h"
@@ -402,7 +403,7 @@ void InspectorPanelPrivate::setupUI()
 
     QWidget* searchContainer = new QWidget();
     QHBoxLayout* searchLayout = new QHBoxLayout(searchContainer);
-    searchLayout->setContentsMargins(8, 8, 8, 8);
+    ThemeLayout::margins(searchLayout, ThemeLayout::Space::Small);
 
     searchBox_ = new SearchField();
     searchBox_->setPlaceholderText(q_ptr->tr("Search properties..."));

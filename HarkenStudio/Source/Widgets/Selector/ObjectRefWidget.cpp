@@ -1,5 +1,6 @@
 
 #include "ObjectRefWidget.h"
+#include "Core/ThemeLayout.h"
 #include "ObjectRefNavigation.h"
 #include "Widgets/Common/ElidedLabel.h"
 
@@ -40,8 +41,8 @@ ObjectRefWidget::ObjectRefWidget(QWidget* parent)
 
     auto* h = new QHBoxLayout(this);
     h->setSizeConstraint(QLayout::SetNoConstraint);
-    h->setContentsMargins(7, 0, 4, 0);
-    h->setSpacing(6);
+    ThemeLayout::margins(h, ThemeLayout::Space::Small, ThemeLayout::Space::None, ThemeLayout::Space::XSmall, ThemeLayout::Space::None);
+    ThemeLayout::spacing(h, ThemeLayout::Space::Small);
 
     iconLabel_ = new QLabel(this);
     iconLabel_->setAlignment(Qt::AlignCenter);
@@ -58,9 +59,13 @@ ObjectRefWidget::ObjectRefWidget(QWidget* parent)
     pickButton_->setObjectName(QStringLiteral("refPick"));
     pickButton_->setIcon(theme.resolveIcon(
         QString::fromLatin1(ThemeAssetIds::SelectorTarget)).icon);
-    pickButton_->setIconSize(QSize(20, 20));
+    ThemeManager::instance().bindMetrics(pickButton_, [this](const ThemeMetrics& metrics) {
+        pickButton_->setIconSize(QSize(metrics.objectIconExtent, metrics.objectIconExtent));
+    });
     pickButton_->setAutoRaise(true);
-    pickButton_->setFixedSize(20, 20);
+    ThemeManager::instance().bindMetrics(pickButton_, [this](const ThemeMetrics& metrics) {
+        pickButton_->setFixedSize(metrics.control.compactHeight, metrics.control.compactHeight);
+    });
     pickButton_->setProperty("flatIconButton", true);
     pickButton_->setCursor(Qt::PointingHandCursor);
     h->addWidget(pickButton_);

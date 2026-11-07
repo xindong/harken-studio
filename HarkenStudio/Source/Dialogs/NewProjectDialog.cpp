@@ -1,5 +1,6 @@
 
 #include "NewProjectDialog.h"
+#include "Core/ThemeLayout.h"
 
 #include <QFrame>
 #include <QHBoxLayout>
@@ -13,11 +14,13 @@ NewProjectDialog::NewProjectDialog(QWidget* parent)
 {
     setWindowTitle(tr("New Project"));
     setModal(true);
-    setMinimumSize(1100, 600);
+    ThemeManager::instance().bindMetrics(this, [this](const ThemeMetrics& metrics) {
+        setMinimumSize(metrics.dialog.wideWidth, metrics.dialog.wideHeight);
+    });
 
     auto* root = new QVBoxLayout(this);
-    root->setContentsMargins(20, 16, 20, 16);
-    root->setSpacing(14);
+    ThemeLayout::margins(root, ThemeLayout::Space::XLarge, ThemeLayout::Space::Large, ThemeLayout::Space::XLarge, ThemeLayout::Space::Large);
+    ThemeLayout::spacing(root, ThemeLayout::Space::Large);
 
     chooser_ = new TemplateChooserWidget(this);
     root->addWidget(chooser_, 1);

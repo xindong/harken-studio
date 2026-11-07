@@ -45,7 +45,9 @@ SplitButton::SplitButton(QWidget* parent)
     dropdownButton_->installEventFilter(this);
 
     divider_->setProperty("splitButtonPart", QStringLiteral("divider"));
-    divider_->setFixedWidth(1);
+    ThemeManager::instance().bindMetrics(divider_, [this](const ThemeMetrics& metrics) {
+        divider_->setFixedWidth(metrics.borderWidth);
+    });
     divider_->setAttribute(Qt::WA_TransparentForMouseEvents);
 
     auto* row = new QHBoxLayout(this);

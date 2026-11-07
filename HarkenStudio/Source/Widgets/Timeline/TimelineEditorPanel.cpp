@@ -1,4 +1,5 @@
 #include "TimelineEditorPanel.h"
+#include "Core/ThemeLayout.h"
 #include "TimelineCanvas.h"
 #include "TimelineHeaderColumn.h"
 #include "Widgets/Common/TableWidget.h"
@@ -205,7 +206,7 @@ TimelineEditorPanel::TimelineEditorPanel(QWidget* parent,
     markerValue_->setAttribute(Qt::WA_ShowWithoutActivating);
     markerValue_->setAutoFillBackground(true);
     markerValue_->setFrameStyle(QFrame::Box | QFrame::Plain);
-    markerValue_->setContentsMargins(7, 4, 7, 4);
+    ThemeLayout::margins(markerValue_, ThemeLayout::Space::Small, ThemeLayout::Space::XSmall, ThemeLayout::Space::Small, ThemeLayout::Space::XSmall, *themeManager_);
     markerValue_->hide();
 
     auto* root = new QVBoxLayout(this);
@@ -241,8 +242,8 @@ TimelineEditorPanel::TimelineEditorPanel(QWidget* parent,
     timeControls_ = new QWidget(this);
     timeControls_->setObjectName(QStringLiteral("timelineSegmentControls"));
     auto* timeLayout = new QHBoxLayout(timeControls_);
-    timeLayout->setContentsMargins(0, 0, 0, metrics.spacingSmall);
-    timeLayout->setSpacing(metrics.spacingSmall);
+    ThemeLayout::margins(timeLayout, ThemeLayout::Space::None, ThemeLayout::Space::None, ThemeLayout::Space::None, ThemeLayout::Space::Small, *themeManager_);
+    ThemeLayout::spacing(timeLayout, ThemeLayout::Space::Small, *themeManager_);
     auto* tempoLabel = new QLabel(tr("Tempo"), timeControls_);
     timeLayout->addWidget(tempoLabel);
     tempoSpin_ = new DecimalSpinBox(timeControls_);
@@ -253,7 +254,7 @@ TimelineEditorPanel::TimelineEditorPanel(QWidget* parent,
     tempoSpin_->setAccessibleName(tr("Tempo"));
     tempoLabel->setBuddy(tempoSpin_);
     timeLayout->addWidget(tempoSpin_);
-    timeLayout->addSpacing(metrics.spacingMedium);
+    ThemeLayout::addSpacing(timeLayout, ThemeLayout::Space::Medium, *themeManager_);
     auto* timeSignatureLabel = new QLabel(tr("Time Signature"), timeControls_);
     timeLayout->addWidget(timeSignatureLabel);
     meterNumeratorSpin_ = new QSpinBox(timeControls_);
@@ -517,7 +518,7 @@ int TimelineEditorPanel::laneHeaderWidth() const
 {
     if (viewKind_ == ViewKind::Track) {
         const QFontMetrics metrics(FontManager::instance().getFont(FontRole::Caption));
-        return std::max(metrics.horizontalAdvance(QStringLiteral("-96.00")) + 8,
+        return std::max(metrics.horizontalAdvance(QStringLiteral("-96.00")) + themeManager_->metrics().spacingSmall,
             themeManager_->metrics().navigationChevronExtent);
     }
     const int desired = std::max(timelineMetrics().laneHeaderMinimumWidth,
@@ -656,7 +657,9 @@ void TimelineEditorPanel::refreshLaneSelectionChrome()
 void TimelineEditorPanel::applyThemeMetrics()
 {
     const auto& metrics = themeManager_->metrics();
-    toolbar_->setFixedHeight(metrics.timeline.rulerHeight);
+    applyPresentation();
+    breadcrumbLayout_->setSpacing(metrics.spacingXSmall);
+    toolbar_->setFixedHeight(std::max(metrics.timeline.rulerHeight, toolbar_->layout()->sizeHint().height()));
     const int extent = horizontalScrollBar_->sizeHint().height();
     for (auto* button : {zoomInButton_, zoomOutButton_,
                          verticalZoomInButton_, verticalZoomOutButton_}) {
@@ -694,7 +697,8 @@ void TimelineEditorPanel::refreshThemeIcons()
 
 void TimelineEditorPanel::applyPresentation()
 {
-    layout()->setContentsMargins(8, 8, 8, 8);
+    const int margin = themeManager_->metrics().spacingSmall;
+    layout()->setContentsMargins(margin, margin, margin, margin);
     laneHeaderResizeBar_->setVisible(viewKind_ == ViewKind::Segment);
     verticalTools_->setVisible(viewKind_ == ViewKind::Segment);
     scrollCorner_->setVisible(viewKind_ == ViewKind::Segment);
@@ -1406,8 +1410,8 @@ void TimelineEditorPanel::editCursorValue()
     dialog->setObjectName(QStringLiteral("timelineCursorValueEditor"));
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     auto* layout = new QHBoxLayout(dialog);
-    layout->setContentsMargins(8, 6, 8, 6);
-    layout->setSpacing(8);
+    ThemeLayout::margins(layout, ThemeLayout::Space::Small, *themeManager_);
+    ThemeLayout::spacing(layout, ThemeLayout::Space::Small, *themeManager_);
     auto* label = new QLabel(tr("Cursor"), dialog);
     label->setProperty("textRole", QStringLiteral("formLabel"));
     layout->addWidget(label);
@@ -1424,7 +1428,9 @@ void TimelineEditorPanel::editCursorValue()
     spin->setSuffix(musical ? tr(" beats") : QStringLiteral(" s"));
     spin->setValue(double(initial) / divisor);
     const double initialValue = spin->value();
-    spin->setMinimumWidth(158);
+    ThemeManager::instance().bindMetrics(spin, [spin](const ThemeMetrics& metrics) {
+        spin->setMinimumWidth(metrics.popup.minimumWidth);
+    });
     layout->addWidget(spin);
     for (int key : {Qt::Key_Return, Qt::Key_Enter}) {
         auto* shortcut = new QShortcut(QKeySequence(key), dialog);
@@ -1524,7 +1530,7 @@ void TimelineEditorPanel::restoreViewport(const QVariantMap& state)
         zoomPercent_ = std::max(100.0,
             NanosecondPosition{viewOriginCoordinate()}.distanceTo(contentEndCoordinate()) / span * 100.0);
         viewStart_ = NanosecondPosition{viewOriginCoordinate()}.shifted(
-            (state.value(QStringLiteral("horizontalScroll")).toDouble() - kTimelinePixelOrigin) / scale * unit);
+            (state.value(QStringLiteral("horizontalScroll")).toDouble() - 8) / scale * unit);
     }
     int64_t cursor = state.value(QStringLiteral("cursor")).toLongLong();
     const auto storedTime = SegmentTimeSpec::fromJson(
@@ -1934,8 +1940,8 @@ void TimelineEditorPanel::editMarkerValue(const QUuid& guid)
     dialog->setProperty("markerPosition", QVariant::fromValue(initial));
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     auto* layout = new QHBoxLayout(dialog);
-    layout->setContentsMargins(8, 6, 8, 6);
-    layout->setSpacing(8);
+    ThemeLayout::margins(layout, ThemeLayout::Space::Small, *themeManager_);
+    ThemeLayout::spacing(layout, ThemeLayout::Space::Small, *themeManager_);
     auto* label = new QLabel(markerCaption(guid), dialog);
     label->setProperty("textRole", QStringLiteral("formLabel"));
     layout->addWidget(label);
@@ -1953,7 +1959,9 @@ void TimelineEditorPanel::editMarkerValue(const QUuid& guid)
     spin->setSuffix(musical ? tr(" beats") : QStringLiteral(" s"));
     spin->setValue(double(initial) / divisor);
     const double initialValue = spin->value();
-    spin->setMinimumWidth(158);
+    ThemeManager::instance().bindMetrics(spin, [spin](const ThemeMetrics& metrics) {
+        spin->setMinimumWidth(metrics.popup.minimumWidth);
+    });
     layout->addWidget(spin);
     for (int key : {Qt::Key_Return, Qt::Key_Enter}) {
         auto* shortcut = new QShortcut(QKeySequence(key), dialog);

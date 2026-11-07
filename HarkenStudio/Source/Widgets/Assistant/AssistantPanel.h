@@ -55,6 +55,7 @@ protected:
 
 private:
     void setupUI(const QString& text, int fontSize);
+    void updateBubbleGeometry();
 
     QFrame* bubbleFrame_ = nullptr;
     QLabel* contentLabel_;
@@ -116,7 +117,6 @@ private:
     void scheduleMessageRelayout();
 
 private:
-    static constexpr int INPUT_MAX_WIDTH = 520;
 
     QListWidget* chatList_;
     QWidget* emptyState_;

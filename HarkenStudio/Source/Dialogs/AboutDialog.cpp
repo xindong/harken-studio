@@ -1,4 +1,5 @@
 #include "AboutDialog.h"
+#include "Core/ThemeLayout.h"
 
 #include "Core/ThemeAssetCatalog.h"
 #include "Core/ThemeManager.h"
@@ -16,10 +17,9 @@
 #include <QVBoxLayout>
 
 #include <string_view>
+#include <algorithm>
 
 namespace {
-
-constexpr int kDialogWidth = 500;
 
 QString buildInfoString(std::string_view value)
 {
@@ -69,47 +69,59 @@ AboutDialog::AboutDialog(QWidget* parent, bool showDeveloperInformation)
     setObjectName(QStringLiteral("aboutDialog"));
     setWindowTitle(tr("About Harken Studio"));
     setModal(true);
-    setMinimumWidth(kDialogWidth);
-    resize(kDialogWidth, showDeveloperInformation ? 560 : 330);
+    ThemeManager::instance().bindMetrics(this, [this](const ThemeMetrics& metrics) {
+        setMinimumWidth(metrics.dialog.minimumWidth);
+        if (compactGeometryApplied_) {
+            QMetaObject::invokeMethod(this, [this] {
+                layout()->activate();
+                setMinimumWidth(std::max(ThemeManager::instance().metrics().dialog.minimumWidth,
+                                         layout()->totalMinimumSize().width()));
+                setFixedHeight(layout()->totalSizeHint().height());
+            }, Qt::QueuedConnection);
+        }
+    });
+    const auto& metrics = ThemeManager::instance().metrics();
+    resize(metrics.dialog.preferredWidth, showDeveloperInformation ? metrics.dialog.wideHeight : metrics.dialog.compactHeight);
 
     const QString currentVersion = versionString();
 
     auto* root = new QVBoxLayout(this);
-    root->setContentsMargins(28, 22, 28, 18);
+    ThemeLayout::margins(root, ThemeLayout::Space::XLarge);
     root->setSpacing(0);
 
     auto* logo = new QLabel(this);
     logo->setObjectName(QStringLiteral("aboutLogo"));
     logo->setAccessibleName(QStringLiteral("Harken Studio"));
-    const QSize logoSize(400, 32);
-    logo->setFixedSize(logoSize);
-    logo->setAlignment(Qt::AlignCenter);
-    const auto resolvedLogo = ThemeManager::instance().resolveImage(
-        QString::fromLatin1(ThemeAssetIds::AppLogo));
-    if (resolvedLogo.resource) {
-        QPixmap pixmap = QPixmap::fromImage(resolvedLogo.resource->image).scaled(
-            logoSize * devicePixelRatioF(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
-        pixmap.setDevicePixelRatio(devicePixelRatioF());
-        logo->setPixmap(pixmap);
-    }
+    ThemeManager::instance().bindMetrics(logo, [logo](const ThemeMetrics& metrics) {
+        const QSize logoSize(metrics.dialog.compactWidth, metrics.control.largeHeight);
+        logo->setFixedSize(logoSize);
+        logo->setAlignment(Qt::AlignCenter);
+        const auto resolvedLogo = ThemeManager::instance().resolveImage(
+            QString::fromLatin1(ThemeAssetIds::AppLogo));
+        if (resolvedLogo.resource) {
+            QPixmap pixmap = QPixmap::fromImage(resolvedLogo.resource->image).scaled(
+                logoSize * logo->devicePixelRatioF(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+            pixmap.setDevicePixelRatio(logo->devicePixelRatioF());
+            logo->setPixmap(pixmap);
+        }
+    });
     root->addWidget(logo);
-    root->addSpacing(12);
+    ThemeLayout::addSpacing(root, ThemeLayout::Space::Medium);
 
     auto* tagline = new QLabel(
         tr("Professional Audio Middleware Editor"), this);
     tagline->setObjectName(QStringLiteral("aboutTagline"));
     tagline->setWordWrap(true);
     root->addWidget(tagline);
-    root->addSpacing(20);
+    ThemeLayout::addSpacing(root, ThemeLayout::Space::XLarge);
 
     auto* summary = new QFrame(this);
     summary->setObjectName(QStringLiteral("aboutSummary"));
     auto* summaryLayout = new QGridLayout(summary);
-    summaryLayout->setContentsMargins(16, 12, 16, 12);
-    summaryLayout->setHorizontalSpacing(24);
-    summaryLayout->setVerticalSpacing(8);
+    ThemeLayout::margins(summaryLayout, ThemeLayout::Space::Large, ThemeLayout::Space::Medium, ThemeLayout::Space::Large, ThemeLayout::Space::Medium);
+    ThemeLayout::horizontalSpacing(summaryLayout, ThemeLayout::Space::XLarge);
+    ThemeLayout::verticalSpacing(summaryLayout, ThemeLayout::Space::Small);
     summaryLayout->setColumnStretch(0, 1);
-    summaryLayout->setColumnMinimumWidth(1, 48);
     summaryLayout->setColumnStretch(3, 1);
     addSummaryRow(summaryLayout, 0, tr("Version"), currentVersion,
                   QStringLiteral("aboutVersionValue"), summary);
@@ -118,12 +130,12 @@ AboutDialog::AboutDialog(QWidget* parent, bool showDeveloperInformation)
     root->addWidget(summary);
 
     if (showDeveloperInformation) {
-        root->addSpacing(20);
+        ThemeLayout::addSpacing(root, ThemeLayout::Space::XLarge);
 
         auto* sectionTitle = new QLabel(tr("Developer Information"), this);
         sectionTitle->setObjectName(QStringLiteral("aboutDeveloperTitle"));
         root->addWidget(sectionTitle);
-        root->addSpacing(8);
+        ThemeLayout::addSpacing(root, ThemeLayout::Space::Small);
 
         QStringList diagnostics{
             tr("Build ID: %1").arg(buildInfoString(Harken::BuildInfo::BuildId)),
@@ -154,7 +166,9 @@ AboutDialog::AboutDialog(QWidget* parent, bool showDeveloperInformation)
         developerInfo->setObjectName(QStringLiteral("aboutDeveloperInformation"));
         developerInfo->setReadOnly(true);
         developerInfo->setLineWrapMode(QPlainTextEdit::NoWrap);
-        developerInfo->setMinimumHeight(210);
+        ThemeManager::instance().bindMetrics(developerInfo, [developerInfo](const ThemeMetrics& metrics) {
+            developerInfo->setMinimumHeight(metrics.panel.previewHeight);
+        });
         root->addWidget(developerInfo, 1);
     }
 }
@@ -167,9 +181,11 @@ void AboutDialog::showEvent(QShowEvent* event)
 
     compactGeometryApplied_ = true;
     layout()->activate();
-    const int compactHeight = layout()->sizeHint().height();
+    setMinimumWidth(std::max(ThemeManager::instance().metrics().dialog.minimumWidth,
+                             layout()->totalMinimumSize().width()));
+    const int compactHeight = layout()->totalSizeHint().height();
     setFixedHeight(compactHeight);
-    resize(kDialogWidth, compactHeight);
+    resize(ThemeManager::instance().metrics().dialog.preferredWidth, compactHeight);
 }
 
 }

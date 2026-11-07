@@ -1,5 +1,6 @@
 
 #include "SelectorWindow.h"
+#include "Core/ThemeLayout.h"
 
 #include "RefDomainAdapter.h"
 #include "Core/ItemTypeCatalog.h"
@@ -49,9 +50,9 @@ public:
 
     static QRect switchRect(const QRect& cell)
     {
-        return QRect(cell.left() + (cell.width() - SwitchIndicator::Width) / 2,
-                     cell.top() + (cell.height() - SwitchIndicator::Height) / 2,
-                     SwitchIndicator::Width, SwitchIndicator::Height);
+        return QRect(cell.left() + (cell.width() - SwitchIndicator::width()) / 2,
+                     cell.top() + (cell.height() - SwitchIndicator::height()) / 2,
+                     SwitchIndicator::width(), SwitchIndicator::height());
     }
 
     void paint(QPainter* painter, const QStyleOptionViewItem& option,
@@ -264,11 +265,12 @@ SelectorWindow::SelectorWindow()
     : BaseDialog(nullptr)
 {
     setWindowTitle(tr("Select"));
-    resize(320, 420);
+    const auto& metrics = ThemeManager::instance().metrics().panel;
+    resize(metrics.preferredWidth, metrics.preferredHeight);
 
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(8, 8, 8, 8);
-    layout->setSpacing(6);
+    ThemeLayout::margins(layout, ThemeLayout::Space::Small);
+    ThemeLayout::spacing(layout, ThemeLayout::Space::Small);
 
     searchBox_ = new SearchField(this);
     layout->addWidget(searchBox_);
@@ -292,6 +294,9 @@ SelectorWindow::SelectorWindow()
     const auto updateIconSize = [this]() {
         const int extent = ThemeManager::instance().metrics().objectIconExtent;
         tree_->setIconSize(QSize(extent, extent));
+        if (tree_->columnCount() > 1)
+            tree_->header()->resizeSection(1, SwitchIndicator::width()
+                + ThemeManager::instance().metrics().spacingSmall * 2);
     };
     updateIconSize();
     connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this, updateIconSize);
@@ -395,7 +400,8 @@ void SelectorWindow::applyRequest(const SelectorRequest& request)
     tree_->header()->setSectionResizeMode(0, QHeaderView::Stretch);
     if (request.onToggled) {
         tree_->header()->setSectionResizeMode(1, QHeaderView::Fixed);
-        tree_->header()->resizeSection(1, SwitchIndicator::Width + 16);
+        tree_->header()->resizeSection(1, SwitchIndicator::width()
+            + ThemeManager::instance().metrics().spacingSmall * 2);
     }
     searchBox_->clear();
     rebuildTree();

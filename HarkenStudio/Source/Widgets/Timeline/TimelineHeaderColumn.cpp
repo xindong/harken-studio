@@ -61,7 +61,7 @@ TimelineHeaderColumn::TimelineHeaderColumn(TimelineEditorPanel* panel, QWidget* 
     setContextMenuPolicy(Qt::DefaultContextMenu);
     setAttribute(Qt::WA_StyledBackground, true);
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(0, 0, 1, 0);
+    layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
     table_ = new TableWidget(this);
     table_->setColumns(QStringLiteral("timelineTracks"), {
@@ -154,7 +154,7 @@ void TimelineHeaderColumn::rebuildRows()
 
 void TimelineHeaderColumn::refreshRows()
 {
-    layout()->setContentsMargins(0, 0, panel_->laneHeaderResizeWidth() + 1, 0);
+    layout()->setContentsMargins(0, 0, panel_->laneHeaderResizeWidth() + ThemeManager::instance().metrics().borderWidth, 0);
     laneLayout_->setSpacing(0);
     table_->refreshLayout();
 }
@@ -181,7 +181,9 @@ void TimelineHeaderColumn::paintEvent(QPaintEvent*)
         if (tick.label.isEmpty())
             continue;
         painter.setPen(theme->ui.colors.borderTick);
-        painter.drawLine(width() - 5, tick.y, width() - 2, tick.y);
+        const auto& geometry = theme->ui.metrics;
+        painter.drawLine(width() - geometry.timeAxis.minorTickLength - geometry.borderWidth, tick.y,
+                         width() - geometry.borderWidth, tick.y);
         int labelTop = tick.y - metrics.height() / 2;
         if (tick.major) {
             const QRect viewport = panel_->trackWaveformRect();
@@ -189,7 +191,8 @@ void TimelineHeaderColumn::paintEvent(QPaintEvent*)
                 std::max(viewport.top(), viewport.bottom() - metrics.height() + 1));
         }
         painter.setPen(theme->ui.colors.textSecondary);
-        painter.drawText(QRect(1, labelTop, width() - 9, metrics.height()),
+        painter.drawText(QRect(geometry.borderWidth, labelTop,
+                              width() - geometry.timeAxis.minorTickLength - geometry.timeAxis.labelPadding - geometry.borderWidth, metrics.height()),
             Qt::AlignRight | Qt::AlignVCenter, tick.label);
     }
 }

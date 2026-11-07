@@ -1,4 +1,5 @@
 #include "ExplorerSection.h"
+#include "Core/ThemeLayout.h"
 
 #include "Core/ThemeAssetCatalog.h"
 #include "Core/ThemeManager.h"
@@ -59,7 +60,7 @@ ExplorerSection::ExplorerSection(const QString& title, QWidget* parent)
         emit headerContextMenuRequested(header_->mapToGlobal(position));
     });
     auto* headerLayout = new QHBoxLayout(header_);
-    headerLayout->setContentsMargins(0, 1, 0, 1);
+    ThemeLayout::margins(headerLayout, ThemeLayout::Space::None, ThemeLayout::Space::Compact, ThemeLayout::Space::None, ThemeLayout::Space::Compact);
     headerLayout->setSpacing(0);
     toggle_ = new ExplorerSectionToggle(header_);
     toggle_->setProperty("explorerRole", "sectionToggle");

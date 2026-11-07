@@ -1,4 +1,5 @@
 #include "TimelineCanvas.h"
+#include "Core/ThemeLayout.h"
 
 #include "TimelineEditorPanel.h"
 #include "Core/FontManager.h"
@@ -370,7 +371,7 @@ TimelineRenderData TimelineCanvas::buildRenderData(const QRect& exposed) const
     const QRect trackViewport = data.frameless ? panel_->trackWaveformRect() : QRect();
     const QRect trackWaveform = data.frameless
         ? waveformAmplitudeBounds(trackViewport,
-            trackViewport.height(), 0, QFontMetrics(FontManager::instance().getFont(FontRole::Caption)))
+            trackViewport.height(), 0, QFontMetrics(FontManager::instance().getFont(FontRole::Caption)), theme->ui.metrics.timeAxis.labelPadding)
         : QRect();
     struct ClipContent {
         QString label;
@@ -1410,8 +1411,8 @@ void TimelineCanvas::editClipStart(int laneIndex, const QUuid& guid)
     dialog->setObjectName(QStringLiteral("timelineClipStartEditor"));
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     auto* layout = new QHBoxLayout(dialog);
-    layout->setContentsMargins(8, 6, 8, 6);
-    layout->setSpacing(8);
+    ThemeLayout::margins(layout, ThemeLayout::Space::Small);
+    ThemeLayout::spacing(layout, ThemeLayout::Space::Small);
     auto* label = new QLabel(tr("Start"), dialog);
     label->setProperty("textRole", QStringLiteral("formLabel"));
     layout->addWidget(label);
@@ -1428,7 +1429,9 @@ void TimelineCanvas::editClipStart(int laneIndex, const QUuid& guid)
     spin->setSuffix(musical ? tr(" beats") : QStringLiteral(" s"));
     spin->setValue(double(initial) / divisor);
     const double initialValue = spin->value();
-    spin->setMinimumWidth(158);
+    ThemeManager::instance().bindMetrics(spin, [spin](const ThemeMetrics& metrics) {
+        spin->setMinimumWidth(metrics.popup.minimumWidth);
+    });
     layout->addWidget(spin);
     for (int key : {Qt::Key_Return, Qt::Key_Enter}) {
         auto* shortcut = new QShortcut(QKeySequence(key), dialog);

@@ -7,6 +7,7 @@
 #include "BlueprintEdgeKind.h"
 #include "BlueprintDetailLevel.h"
 #include "NodeItem.h"
+#include "Core/ThemeSnapshot.h"
 
 namespace VNX {
 
@@ -25,6 +26,7 @@ public:
     ~ConnectionPath() override;
 
     void updatePosition();
+    void refreshMetrics();
 
     NodePin* startPin() const { return startPin_; }
     NodePin* endPin() const { return endPin_; }
@@ -68,6 +70,7 @@ private:
     std::optional<BlueprintEdgeKind> blueprintKind_;
     CanvasFlowDirection blueprintFlowDir_ = CanvasFlowDirection::LR;
     qreal parallelOffset_ = 0.0;
+    ThemeSnapshotPtr theme_;
 
     void updatePins();
     void updateLabelToolTip();

@@ -1,5 +1,6 @@
 
 #include "Hierarchy.h"
+#include "Core/ThemeLayout.h"
 #include "Core/ItemTypeCatalog.h"
 
 #include <QVBoxLayout>
@@ -57,13 +58,13 @@ bool Hierarchy::eventFilter(QObject* watched, QEvent* event)
 void Hierarchy::setupPanelChrome()
 {
     QVBoxLayout* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(8, 8, 8, 8);
-    layout->setSpacing(6);
+    ThemeLayout::margins(layout, ThemeLayout::Space::Small);
+    ThemeLayout::spacing(layout, ThemeLayout::Space::Small);
 
     filterBar_ = new QWidget();
     QHBoxLayout* filterLayout = new QHBoxLayout(filterBar_);
     filterLayout->setContentsMargins(0, 0, 0, 0);
-    filterLayout->setSpacing(4);
+    ThemeLayout::spacing(filterLayout, ThemeLayout::Space::XSmall);
 
     filterCombo_ = new QComboBox();
     filterCombo_->setObjectName("projectFilterCombo");

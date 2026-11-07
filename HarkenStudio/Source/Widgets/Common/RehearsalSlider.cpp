@@ -120,10 +120,11 @@ void RehearsalSlider::paintAnchors(QSlider* slider, QPaintEvent*)
     if (!slider || labels_.isEmpty() || hi_ <= lo_) return;
     QPainter painter(slider);
     painter.setPen(ThemeManager::instance().colors().accent);
+    const auto& metrics = ThemeManager::instance().metrics();
     for (const VariableLabel& label : labels_) {
         const int x = anchorPosition(slider, static_cast<float>(label.anchor));
         if (x >= 0)
-            painter.drawLine(x, slider->height() - 5, x, slider->height() - 1);
+            painter.drawLine(x, slider->height() - metrics.spacingXSmall - metrics.borderWidth, x, slider->height() - metrics.borderWidth);
     }
 }
 
@@ -131,7 +132,7 @@ void RehearsalSlider::updateAnchorTooltip(QSlider* slider, QMouseEvent* event)
 {
     if (!slider || !event) return;
     int nearest = -1;
-    int distance = 7;
+    int distance = ThemeManager::instance().metrics().parameter.sliderHandleLength / 2;
     for (int index = 0; index < labels_.size(); ++index) {
         const VariableLabel& label = labels_.at(index);
         if (label.name.isEmpty()) continue;

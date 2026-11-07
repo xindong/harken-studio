@@ -1,5 +1,6 @@
 
 #include "Widgets/Inspector/Providers/DimensionsSectionProvider.h"
+#include "Core/ThemeLayout.h"
 #include "Widgets/Inspector/InspectorLayout.h"
 #include "Widgets/Inspector/AttenuationInspectorSchema.h"
 
@@ -110,12 +111,15 @@ protected:
         QPainter p(this);
         QtControlSkin::paintFieldFrame(p, this);
         p.setRenderHint(QPainter::Antialiasing);
-        const QRectF frame = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
+        const auto& metrics = ThemeManager::instance().metrics();
+        const qreal border = metrics.borderWidth / 2.0;
+        const QRectF frame = QRectF(rect()).adjusted(border, border, -border, -border);
 
         if (points_.size() < 2)
             return;
 
-        const QRectF r = frame.adjusted(2.0, 2.5, -2.0, -2.5);
+        const qreal padding = metrics.spacingCompact;
+        const QRectF r = frame.adjusted(padding, padding, -padding, -padding);
         // Same axis mapping as CurveCanvas::pointToScreen (shared
         // curveAxisNormalizedY), so the thumbnail silhouette matches the
         // editor for every dimension.
@@ -143,7 +147,7 @@ protected:
             }
             poly.append(mapPoint(right.x, right.value));
         }
-        p.setPen(QPen(color_, 1.2));
+        p.setPen(QPen(color_, ThemeManager::instance().snapshot()->domains.curve.metrics.curveLineWidth));
         p.drawPolyline(poly);
     }
 
@@ -166,7 +170,6 @@ public:
         setFocusPolicy(Qt::StrongFocus);
 
         auto* v = new QVBoxLayout(this);
-        v->setContentsMargins(0, 0, ThemeManager::instance().metrics().inspector.columnPadding, 0);
         v->setSpacing(0);
         reserveInspectorContentSlots(this);
 
@@ -434,7 +437,7 @@ QWidget* DimensionsSectionProvider::build(QWidget* parent)
     auto* content = new QWidget(parent);
     auto* cl = new QVBoxLayout(content);
     cl->setContentsMargins(0, 0, 0, 0);
-    cl->setSpacing(2);
+    ThemeLayout::spacing(cl, ThemeLayout::Space::Compact);
 
     auto* list = new DimensionsListWidget(content);
     list->setObjectName(QStringLiteral("dimensionsListWidget"));

@@ -33,22 +33,16 @@ VerticalFaderPresenter::VerticalFaderPresenter(ParameterBinding* binding,
     , slider_(new DirectJumpSlider(Qt::Vertical, this))
     , spinBox_(new DecimalSpinBox(this))
 {
-    const auto& metrics = themeManager_->metrics();
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(metrics.spacingXSmall, metrics.spacingXSmall,
-                               metrics.spacingXSmall, metrics.spacingXSmall);
-    layout->setSpacing(metrics.spacingSmall);
     layout->setAlignment(Qt::AlignHCenter);
 
     label_->setAlignment(Qt::AlignCenter);
     label_->setBuddy(spinBox_);
     layout->addWidget(label_);
 
-    slider_->setMinimumHeight(metrics.parameter.faderMinimumHeight);
     slider_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
     layout->addWidget(slider_, 1, Qt::AlignHCenter);
 
-    spinBox_->setMinimumWidth(metrics.parameter.valueMinimumWidth);
     spinBox_->setButtonSymbols(QAbstractSpinBox::NoButtons);
     spinBox_->setAlignment(Qt::AlignCenter);
     spinBox_->setKeyboardTracking(false);
@@ -70,6 +64,14 @@ VerticalFaderPresenter::VerticalFaderPresenter(ParameterBinding* binding,
     syncMetadata();
     syncValue(binding_->value());
     applyTheme();
+    themeManager_->bindMetrics(this, [this, layout](const ThemeMetrics& metrics) {
+        layout->setContentsMargins(metrics.spacingXSmall, metrics.spacingXSmall,
+                                  metrics.spacingXSmall, metrics.spacingXSmall);
+        layout->setSpacing(metrics.spacingSmall);
+        slider_->setMinimumHeight(metrics.parameter.faderMinimumHeight);
+        if (!compactValueColumn_)
+            spinBox_->setMinimumWidth(metrics.parameter.valueMinimumWidth);
+    });
 }
 
 QWidget* VerticalFaderPresenter::primaryEditor() const
@@ -84,6 +86,7 @@ bool VerticalFaderPresenter::isGestureActive() const
 
 void VerticalFaderPresenter::setCompactValueColumn(int width)
 {
+    compactValueColumn_ = true;
     label_->hide();
     spinBox_->setMinimumWidth(0);
     spinBox_->setFixedWidth(width);

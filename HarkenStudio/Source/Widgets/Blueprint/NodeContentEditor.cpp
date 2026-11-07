@@ -1,4 +1,5 @@
 #include "NodeContentEditor.h"
+#include "Core/ThemeLayout.h"
 
 #include "Core/ContextInfo.h"
 
@@ -135,7 +136,7 @@ NodeContentEditor::NodeContentEditor(const NodeContentInfo& info, NodeContentFie
     setAttribute(Qt::WA_TranslucentBackground);
     auto* grid = new QGridLayout(this);
     grid->setContentsMargins(0, 0, 0, 0);
-    grid->setHorizontalSpacing(8);
+    ThemeLayout::horizontalSpacing(grid, ThemeLayout::Space::Small);
     grid->setVerticalSpacing(0);
     for (auto field : kFields) {
         if (!info.fields().testFlag(field)) continue;
@@ -148,7 +149,7 @@ NodeContentEditor::NodeContentEditor(const NodeContentInfo& info, NodeContentFie
         row->label->setFixedWidth(columnWidth);
         row->label->setToolTip(row->label->text());
         row->valueStack = new QStackedWidget(this);
-        row->valueStack->setFixedWidth(kValueWidth);
+        row->valueStack->setFixedWidth(ThemeManager::instance().metrics().node.valueWidth);
         row->value = new QLabel(row->valueStack);
         row->value->setProperty("nodeContentRole", QStringLiteral("value"));
         row->value->setObjectName(QStringLiteral("nodeValue_") + row->property.field);
@@ -193,7 +194,7 @@ NodeContentEditor::NodeContentEditor(const NodeContentInfo& info, NodeContentFie
                 ParameterPresenterContext::InspectorFloat,
                 ParameterPresenterId::HorizontalSlider, this);
             row->slider->setObjectName(QStringLiteral("nodeSlider_") + row->property.field);
-            row->slider->setFixedWidth(kSliderWidth);
+            row->slider->setFixedWidth(ThemeManager::instance().metrics().node.sliderWidth);
             row->binding = row->slider->binding();
             row->binding->setRange(row->property.min.toDouble(), row->property.max.toDouble());
             row->binding->setDecimals(row->property.decimals);
@@ -244,7 +245,7 @@ NodeContentEditor::NodeContentEditor(const NodeContentInfo& info, NodeContentFie
         if (row->loopHost) grid->addWidget(row->loopHost, index, 1, 1, 2);
         rows_.push_back(std::move(row));
     }
-    grid->setColumnMinimumWidth(1, kSliderWidth);
+    grid->setColumnMinimumWidth(1, ThemeManager::instance().metrics().node.sliderWidth);
     setValues(info);
     connect(&ThemeManager::instance(), &ThemeManager::themeChanged,
         this, &NodeContentEditor::refreshFonts);
@@ -512,16 +513,16 @@ void NodeContentEditor::refreshValue(Row& row)
 void NodeContentEditor::updateMetrics()
 {
     if (metricsSuspended_) return;
-    int valueWidth = kValueWidth;
-    int rowHeight = 20;
+    int valueWidth = ThemeManager::instance().metrics().node.valueWidth;
+    int rowHeight = qRound(ThemeManager::instance().metrics().node.rowHeight);
     int visibleRows = 0;
     for (const auto& row : rows_) {
         if (!fields_.testFlag(row->field)) continue;
         ++visibleRows;
         row->label->ensurePolished();
         row->value->ensurePolished();
-        rowHeight = std::max(rowHeight, row->label->sizeHint().height() + 2);
-        valueWidth = std::max(valueWidth, row->value->sizeHint().width() + 8);
+        rowHeight = std::max(rowHeight, row->label->sizeHint().height() + ThemeManager::instance().metrics().spacingCompact);
+        valueWidth = std::max(valueWidth, row->value->sizeHint().width() + ThemeManager::instance().metrics().spacingSmall);
         if (row->editor) {
             row->editor->ensurePolished();
             const QString text = row->editingValue ? row->editor->text()
@@ -540,15 +541,15 @@ void NodeContentEditor::updateMetrics()
     if (isEditing()) valueWidth = std::max(valueWidth, valueColumnWidth_);
     valueColumnWidth_ = valueWidth;
     auto* grid = qobject_cast<QGridLayout*>(layout());
-    const int spacing = routeGainMode_ ? 6 : 8;
+    const int spacing = ThemeManager::instance().metrics().spacingSmall;
     const int columnWidth = routeGainMode_
         ? labelWidth(NodeContentField::Volume)
         : labelColumnWidth_;
     const int contentWidth = routeGainMode_
-        ? std::max(kRouteGainMinimumWidth, columnWidth + valueWidth + 2 * spacing)
-        : columnWidth + kSliderWidth + valueWidth + 2 * spacing;
-    const int sliderWidth = routeGainMode_ ? contentWidth : kSliderWidth;
-    const int sliderHeight = routeGainMode_ ? 12 : rowHeight;
+        ? std::max(ThemeManager::instance().metrics().node.sliderWidth, columnWidth + valueWidth + 2 * spacing)
+        : columnWidth + ThemeManager::instance().metrics().node.sliderWidth + valueWidth + 2 * spacing;
+    const int sliderWidth = routeGainMode_ ? contentWidth : ThemeManager::instance().metrics().node.sliderWidth;
+    const int sliderHeight = routeGainMode_ ? ThemeManager::instance().metrics().parameter.compactSliderHeight : rowHeight;
     grid->setHorizontalSpacing(spacing);
     grid->setColumnMinimumWidth(1, routeGainMode_ ? 0 : sliderWidth);
     grid->setColumnStretch(1, routeGainMode_ ? 1 : 0);

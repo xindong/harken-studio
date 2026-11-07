@@ -276,7 +276,8 @@ bool SourcesTreeWidget::importDroppedAudio(const QMimeData* mimeData, const QStr
     BaseDialog dialog(this);
     dialog.setObjectName(QStringLiteral("sourceImportConflictDialog"));
     dialog.setWindowTitle(tr("Import Audio Sources"));
-    dialog.resize(760, 400);
+    const auto& metrics = ThemeManager::instance().metrics().dialog;
+    dialog.resize(metrics.wideWidth, metrics.preferredHeight);
     auto* layout = new QVBoxLayout(&dialog);
     auto* summary = new QLabel(tr("Choose which files to replace. Uncheck a file to skip it.\n"
         "When several dropped files have the same name, choose one incoming version."), &dialog);
@@ -514,7 +515,7 @@ void SourcesTreeWidget::drawRow(QPainter* painter, const QStyleOptionViewItem& o
     if (index == dropFolder_) {
         painter->save();
         painter->fillRect(options.rect, ThemeManager::instance().colors().dropHighlight);
-        painter->fillRect(QRect(options.rect.left(), options.rect.top(), 3, options.rect.height()),
+        painter->fillRect(QRect(options.rect.left(), options.rect.top(), ThemeManager::instance().metrics().accentBorderWidth, options.rect.height()),
                           ThemeManager::instance().colors().dropAccent);
         painter->restore();
     }
