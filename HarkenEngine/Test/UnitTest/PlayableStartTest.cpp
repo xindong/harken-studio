@@ -21179,10 +21179,11 @@ TEST(PlayableStart, QueueTrackInitialStreamWaitHoldsResidentSiblingAndReclaims) 
     }
 }
 
-TEST(PlayableStart, QueueTrackInitialStreamWaitPreservesSubBlockFutureCohort) {
+static void CheckNativeTrackInitialStreamWaitPreservesSubBlockFutureCohort(bool variable) {
     for (const bool wrapped : {false, true}) for (const auto workers : {0u, 2u}) for (const auto lead : {1u, 4u}) for (const unsigned outcome : {0u, 1u}) {
+        if (variable && wrapped) continue;
         const bool cancel = outcome == 1u;
-        SCOPED_TRACE(::testing::Message() << "wrapped=" << wrapped << " workers=" << workers << " lead=" << lead << " outcome=" << outcome);
+        SCOPED_TRACE(::testing::Message() << "variable=" << variable << " wrapped=" << wrapped << " workers=" << workers << " lead=" << lead << " outcome=" << outcome);
         auto config = harkentest::MakeNullConfig(8, 64, 48000);
         config.renderWorkerCount = workers;
         config.maxStreams = 2;
@@ -21251,6 +21252,29 @@ TEST(PlayableStart, QueueTrackInitialStreamWaitPreservesSubBlockFutureCohort) {
             image.schedule.track.scheduleSemanticFingerprint);
         image.container.childCount = 1;
         ApplyQueueLoop(image.container, 1);
+        harken::GridAxisV1 axis{0, 0, harkentest::ObjectId(41)};
+        harken::DiscreteGridCellV1 cell{};
+        cell.kind = harken::DiscreteCellKindV1::Exact;
+        cell.exactValue = 7;
+        harken::DiscreteGridRowViewV1 selectedRow{};
+        selectedRow.stableRowOrdinal = 1;
+        selectedRow.childStableOrdinal = image.children[0].stableChildOrdinal;
+        selectedRow.cellCount = 1;
+        selectedRow.cells = &cell;
+        if (variable) {
+            image.container.mode = harken::ContainerModeV1::VariableControl;
+            image.container.memoryScope = harken::MemoryScopeV1::Emitter;
+            image.children[0].queueStopPolicy = harken::QueueStopPolicyV1::AbortOwningQueue;
+            image.children[0].timingHint = {};
+            image.container.discreteTiming = 1;
+            image.container.discreteAxisCount = 1;
+            image.container.discreteAxes = &axis;
+            image.container.discreteRowCount = 1;
+            image.container.discreteRows = &selectedRow;
+            image.container.evaluationPeriodFrames = 64;
+            image.world.identity.capabilityMask = harken::kWorldCapabilityPlayableProperties |
+                harken::kWorldCapabilityVariableDefinitions | harken::kWorldCapabilityVariableControl;
+        }
         std::vector<harken::PlayableOccurrencePropertyViewV1> occurrences(5);
         occurrences[0] = image.occurrences[0];
         for (std::size_t index = 0; index < placements.size(); ++index) {
@@ -21293,6 +21317,9 @@ TEST(PlayableStart, QueueTrackInitialStreamWaitPreservesSubBlockFutureCohort) {
         install.containerCount = containers.size();
         install.trackSchedules = &image.schedule.track;
         install.trackScheduleCount = 1;
+        const harken::VariableDefinitionV1 definition{
+            harkentest::ObjectId(41), harken::VariableKindV1::Step, 0.0f, 8.0f, 7.0f};
+        if (variable) { install.variables = &definition; install.variableCount = 1; }
         install.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(install);
         ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, install).status);
         engine.streams.SetThrottled(true);
@@ -21300,31 +21327,39 @@ TEST(PlayableStart, QueueTrackInitialStreamWaitPreservesSubBlockFutureCohort) {
         request.root = wrapped ? wrapper.Root() : image.Root();
         const auto started = harken::StartPlayable(engine, request);
         ASSERT_EQ(harken::PlayableStartStatus::Accepted, started.status);
-        harken::EnginePlayableServiceRow* queueOwner = nullptr;
+        harken::EnginePlayableServiceRow* controller = nullptr;
         for (auto& row : engine.playableServices)
-            if (row.queueMode && (row.rootInstance == started.instance ||
-                engine.playableInstances.Classify(row.ownerInstance).parent == started.instance)) queueOwner = &row;
-        ASSERT_NE(nullptr, queueOwner);
-        EXPECT_TRUE(queueOwner->queueInstance.Valid());
-        const auto queueIdentity = queueOwner->queueInstance;
-        auto* rootOwner = queueOwner;
-        if (wrapped) rootOwner = engine.ResolvePlayableService(queueOwner->parentService);
+            if ((variable ? row.variableControlInstance.Valid() : row.queueMode) && (row.rootInstance == started.instance ||
+                engine.playableInstances.Classify(row.ownerInstance).parent == started.instance)) controller = &row;
+        ASSERT_NE(nullptr, controller);
+        EXPECT_TRUE(variable ? controller->variableControlInstance.Valid() : controller->queueInstance.Valid());
+        const auto queueIdentity = controller->queueInstance;
+        const auto variableIdentity = controller->variableControlInstance;
+        auto* rootOwner = controller;
+        if (wrapped) rootOwner = engine.ResolvePlayableService(controller->parentService);
         ASSERT_NE(nullptr, rootOwner);
         ASSERT_EQ(started.instance, rootOwner->ownerInstance);
-        auto* trackOwner = engine.ResolvePlayableService(queueOwner->frontierChildService);
-        ASSERT_NE(nullptr, trackOwner);
-        ASSERT_NE(nullptr, trackOwner->scheduleAggregate);
+        auto* trackOwner = engine.ResolvePlayableService(controller->frontierChildService);
+        if (!variable) {
+            ASSERT_NE(nullptr, trackOwner);
+            ASSERT_NE(nullptr, trackOwner->scheduleAggregate);
+        }
         for (unsigned block = 0; block < 12; ++block) {
             ASSERT_EQ(VN_OK, Vn_Update());
             engine.nullBackend.Pump(1);
             ASSERT_TRUE(engine.playableInstances.Classify(started.instance).live) << OccupancyDump(engine);
-            EXPECT_EQ(queueIdentity.slot, queueOwner->queueInstance.slot);
-            EXPECT_EQ(queueIdentity.generation, queueOwner->queueInstance.generation);
-            EXPECT_TRUE(rootOwner->pendingDirectStartBinding);
-            EXPECT_TRUE(queueOwner->pendingDirectStartBinding);
-            EXPECT_TRUE(trackOwner->pendingDirectStartBinding);
-            EXPECT_EQ(rootOwner->startFrame, queueOwner->startFrame);
-            EXPECT_EQ(rootOwner->startFrame, trackOwner->startFrame);
+            if (variable) {
+                EXPECT_EQ(variableIdentity.slot, controller->variableControlInstance.slot);
+                EXPECT_EQ(variableIdentity.generation, controller->variableControlInstance.generation);
+            } else {
+                EXPECT_EQ(queueIdentity.slot, controller->queueInstance.slot);
+                EXPECT_EQ(queueIdentity.generation, controller->queueInstance.generation);
+                EXPECT_TRUE(rootOwner->pendingDirectStartBinding);
+                EXPECT_TRUE(controller->pendingDirectStartBinding);
+                EXPECT_TRUE(trackOwner->pendingDirectStartBinding);
+                EXPECT_EQ(rootOwner->startFrame, controller->startFrame);
+                EXPECT_EQ(rootOwner->startFrame, trackOwner->startFrame);
+            }
             for (unsigned sample = 0; sample < config.blockFrames * 2; ++sample)
                 EXPECT_FLOAT_EQ(0.0f, engine.nullBackend.LastBlock()[sample]);
         }
@@ -21342,12 +21377,12 @@ TEST(PlayableStart, QueueTrackInitialStreamWaitPreservesSubBlockFutureCohort) {
                 if (std::abs(sample) < 0.00001f) continue;
                 EXPECT_NEAR(-0.25f, sample, 0.00001f);
                 const auto absolute = (engine.mixer.BlocksRendered() - 1u) * config.blockFrames + frame;
-                if (firstHeard == UINT64_MAX) {
+                if (firstHeard == UINT64_MAX && !variable) {
                     EXPECT_FALSE(rootOwner->pendingDirectStartBinding);
-                    EXPECT_FALSE(queueOwner->pendingDirectStartBinding);
+                    EXPECT_FALSE(controller->pendingDirectStartBinding);
                     EXPECT_FALSE(trackOwner->pendingDirectStartBinding);
                     EXPECT_EQ(absolute, rootOwner->startFrame);
-                    EXPECT_EQ(absolute, queueOwner->startFrame);
+                    EXPECT_EQ(absolute, controller->startFrame);
                     EXPECT_EQ(absolute, trackOwner->startFrame);
                 }
                 firstHeard = std::min(firstHeard, absolute);
@@ -21370,6 +21405,14 @@ TEST(PlayableStart, QueueTrackInitialStreamWaitPreservesSubBlockFutureCohort) {
         EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(kSound));
         EXPECT_FALSE(engine.runtimeRecreateRequired);
     }
+}
+
+TEST(PlayableStart, QueueTrackInitialStreamWaitPreservesSubBlockFutureCohort) {
+    CheckNativeTrackInitialStreamWaitPreservesSubBlockFutureCohort(false);
+}
+
+TEST(PlayableStart, VariableTrackInitialStreamWaitPreservesSubBlockFutureCohort) {
+    CheckNativeTrackInitialStreamWaitPreservesSubBlockFutureCohort(true);
 }
 
 TEST(PlayableStart, DirectOrdinaryStreamRetainsSelectedInitialSourceWhileWaiting) {

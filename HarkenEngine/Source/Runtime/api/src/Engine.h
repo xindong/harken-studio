@@ -5322,6 +5322,7 @@ struct EngineActionPlayScratch {
     bool continuationExecution = false;
     bool initialNativePlacementPending = false;
     bool initialNativeSourcesPublished = false;
+    bool initialNativeSourcesRetired = false;
     bool initialForestPublication = false;
     bool initialForestCancellationSealed = false;
     bool nativeEntryDomain = false;
@@ -11872,9 +11873,13 @@ public:
     }
     void ServiceOriginalSingleSourcePreparations() noexcept {
         if (!originalSingleSourcePreparationSeen) return;
+        bool retained = false;
         for (auto& holder : originalSinglePreparationHolders)
-            if (holder.receiver_ == this && !holder.returned_)
+            if (holder.receiver_ == this && !holder.returned_) {
                 (void)ReturnOriginalSingleSourcePreparationAfterPhysicalRelease(holder.arm_);
+                retained = retained || !holder.returned_;
+            }
+        originalSingleSourcePreparationSeen = retained;
     }
 
     struct OriginalSingleCurrentHolder {
