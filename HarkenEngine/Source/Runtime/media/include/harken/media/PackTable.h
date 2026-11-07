@@ -458,6 +458,14 @@ public:
                                 VnSoundId soundId,
                                 const PCMRegistry& registry,
                                 PCMView* out, std::uint64_t* mediaChecksum = nullptr, bool* checksumKnown = nullptr) const noexcept;
+    // Typed forms: the exact registration whatever backs it. The PCMView
+    // forms return its resident view, which is invalid for range-only media.
+    VnResult LookupExactReference(PackResourceRevisionToken resourceToken,
+        VnSoundId soundId, const PCMRegistry& registry, PCMRegistry::PackReference* out,
+        std::uint64_t* mediaChecksum = nullptr, bool* checksumKnown = nullptr) const noexcept;
+    VnResult LookupExactClosureReference(PackResourceClosureToken closureToken,
+        VnSoundId soundId, const PCMRegistry& registry, PCMRegistry::PackReference* out,
+        std::uint64_t* mediaChecksum = nullptr, bool* checksumKnown = nullptr) const noexcept;
     VnResult SetResourceClosureGenerationForTests(
         std::size_t rowIndex, std::uint32_t generation) noexcept;
     VnResult SetSlotGenerationForTests(

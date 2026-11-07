@@ -42,6 +42,32 @@
 
 namespace harken {
 
+struct ContainerWorldInstallViewV1;
+struct PackCanonicalImage;
+
+// Decoded Sound definition streaming choices of one artifact, sorted by
+// id. Runtime-internal summary of the partition; not a wire structure.
+struct PackSoundStreamingRow {
+    VnObjectId soundId{};
+    bool streamed = false;
+};
+
+// Appends the Sound rows of a decoded definition view, then sorts by id.
+void CollectSoundStreaming(const ContainerWorldInstallViewV1& view,
+                           std::vector<PackSoundStreamingRow>* out);
+// True when rows define soundId; *streamed receives its mode.
+bool FindSoundStreaming(const std::vector<PackSoundStreamingRow>& rows,
+                        VnSoundId soundId, bool* streamed) noexcept;
+
+// Storage a media item needs in the candidate publication. Media with no
+// Sound definition anywhere keep resident capability.
+enum class PackMediaDemand : std::uint8_t { Resident, Stream };
+struct PackMediaDemandResolver {
+    void* ctx = nullptr;
+    PackMediaDemand (*resolve)(void* ctx, const PackCanonicalImage& image,
+                               VnSoundId soundId) = nullptr;
+};
+
 inline PcmLoopRegion CanonicalPcmLoop(const PackTocEntry& media) noexcept {
     if ((media.flags & kPackFlagLoopable) == 0) return {};
     // Pack permits EOF as zero; keep the default PCM region representation.
@@ -156,6 +182,7 @@ struct PackCanonicalImage {
     };
     std::vector<VariableRequirement> variableRequirements;
     bool hasVariableRequirements = false;
+    std::vector<PackSoundStreamingRow> soundStreaming;
     std::vector<PackTocEntry> media;
     std::vector<PackBusEntry> buses;
     std::vector<PackBusSendEntry> busSends;
@@ -334,6 +361,11 @@ VnResult ParsePackCanonicalImageWithBudget(const std::uint8_t* bytes,
 // Uses the same semantic parser, then verifies the cached metadata and all
 // physical bytes before returning immutable sample owners. Image and sample
 // outputs are unchanged on failure. Unsupported layouts request a byte-span retry.
+// One opened source serves metadata, validation and later range reads.
+// Media whose demand is Stream get a validated range owner instead of
+// resident samples; without a resolver only the artifact's own Sound
+// definitions decide. With metadataOnly no physical bytes are consumed and
+// no samples are produced.
 struct PackCanonicalReadHooksForTests {
     void (*beforeSequentialRead)(void*, std::uint64_t) = nullptr;
     void* userData = nullptr;
@@ -344,7 +376,8 @@ VnResult ReadPackCanonicalFile(const char* utf8Path, PCMRegistry& registry,
     std::span<const PCMRegistry::PreparedPackSamples* const> equalCandidates = {},
     bool* retryWithBytes = nullptr, const PackCanonicalReadHooksForTests* hooks = nullptr,
     const detail::PackDecodeBudget& budget = {},
-    detail::PackDecodeCharge* sampleStaging = nullptr);
+    detail::PackDecodeCharge* sampleStaging = nullptr,
+    const PackMediaDemandResolver* demand = nullptr, bool metadataOnly = false);
 
 // Already-loaded-state view for the closure check. Every callback
 // answers "does this id resolve outside the pack right now": playables

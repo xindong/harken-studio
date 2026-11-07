@@ -22,11 +22,14 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <chrono>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 #ifndef HARKEN_TEMP_DIR
@@ -122,7 +125,9 @@ TEST(CanonicalPackSetActivate, FileBudgetRefusalPrecedesWholeFileAllocationAndCa
                 pathText.c_str(), harkentest::packfoundation::kInitPackStableId, &handle);
             allocation_probe::enabled = false;
             const auto allocated = allocation_probe::bytes;
-            EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY, result);
+            // The bounded file path judges capacity by resident need after
+            // metadata validation, so this invalid file is refused as such.
+            EXPECT_EQ(trace ? VN_PACK_RESIDENT_CAPACITY : VN_BAD_PACK, result);
             EXPECT_LT(allocated, oversizedBytes);
             EXPECT_EQ(0u, handle);
             EXPECT_EQ(nullptr, session.Engine()->packComposition.Published());
@@ -3074,7 +3079,7 @@ TEST(CanonicalPackSetActivate, ReplaceCanonicalPackSwapsContentBindings) {
         const auto result = Vn_ReplacePack(contentHandle, reinterpret_cast<const VnPackDesc*>(&replace));
         allocation_probe::enabled = false;
         const auto allocated = allocation_probe::bytes;
-        EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY, result);
+        EXPECT_EQ(source == 0 && !trace ? VN_BAD_PACK : VN_PACK_RESIDENT_CAPACITY, result);
         EXPECT_LT(allocated, oversized.bytes.size());
         EXPECT_EQ(publication, session.Engine()->packComposition.Published());
         EXPECT_EQ(2u, session.Engine()->packs.LoadedCount());
@@ -3330,6 +3335,322 @@ TEST(CanonicalPackSetActivate, KeepContentManifestUnloadsAfterInitReplace) {
     ASSERT_EQ(VN_OK, Vn_UnloadPack(contentHandle));
     EXPECT_EQ(nullptr, session.Engine()->bindings.Find(kVoiceBindingId));
     EXPECT_NE(nullptr, session.Engine()->bindings.Find(kBusBindingId));
+}
+
+namespace packstream {
+
+using namespace companionfixture;
+
+constexpr VnObjectId kSound = harkentest::ObjectId(8300);
+constexpr std::uint64_t kFrames = 2 * harken::kPackMediaRangeChunkFrames + 123;
+
+// Stereo planar signal with both signed zeros; the length is not chunk aligned.
+std::vector<float> PlanarSignal(float scale) {
+    std::vector<float> samples(2 * kFrames);
+    for (std::uint64_t frame = 0; frame < kFrames; ++frame) {
+        const auto value = scale * static_cast<float>(static_cast<int>(frame % 199) - 99) / 128.0f;
+        samples[frame] = value;
+        samples[kFrames + frame] = -0.5f * value;
+    }
+    samples[99] = -0.0f;
+    samples[kFrames + 298] = 0.0f;
+    return samples;
+}
+
+// Content pack whose action plays one Sound backed by its own stereo media.
+std::vector<std::uint8_t> BuildSoundContent(std::uint64_t id, std::uint64_t revision,
+                                            bool streamed, const std::vector<float>& samples) {
+    using namespace harken;
+    using namespace harkentest::packfoundation;
+    const auto bus = DefaultRuntimeBusFixture();
+    const float* planes[] = {samples.data(), samples.data() + kFrames};
+    std::uint64_t mediaRevision = 0;
+    EXPECT_TRUE(ComputeMediaPcmContentRevisionV1(48000, 2, kFrames, planes, 1, &mediaRevision));
+    PlayablePropertyProgramViewV1 property{};
+    property.stableId = kSound;
+    property.contentPropertyKind = playableproperties::ContentPropertyKindV1::Sound;
+    property.contentRevision = mediaRevision;
+    property.routeStableId = VN_BUS_MASTER;
+    property.compatibilityFingerprint = 1;
+    property.payload.presentMask = kResolvedSectionGroupPropertyMaskV1 | 1u;
+    property.payload.values[3].bits = 1;
+    property.payload.values[6].objectId = VN_BUS_MASTER;
+    property.payload.values[11].bits = std::bit_cast<std::uint32_t>(1.0f);
+    property.payload.values[16].bits = std::bit_cast<std::uint32_t>(1.0f);
+    if (streamed) {
+        constexpr auto slot = static_cast<std::size_t>(playableproperties::PlayablePropertyIdV1::StreamingMode) - 1;
+        property.payload.presentMask |= UINT64_C(1) << slot;
+        property.payload.values[slot].bits = 1;
+    }
+    property.programSemanticFingerprint = ComputePlayablePropertyFingerprintV1(property);
+    ActionStepProgramViewV1 step{};
+    step.target.kind = ActionTargetKindV1::Sound;
+    step.target.stableId = kSound;
+    step.target.expectedProgramSemanticFingerprint = property.programSemanticFingerprint;
+    SetAbsoluteTime(&step.delay);
+    SetAbsoluteTime(&step.fade);
+    SetAbsoluteTime(&step.cooldown);
+    ActionProgramViewV1 program{};
+    program.actionStableId = action;
+    program.steps = &step;
+    program.stepCount = 1;
+    program.expandedStepOccurrenceCount = 1;
+    program.expandedFiringCount = 1;
+    program.programSemanticFingerprint = ComputeActionProgramFingerprintV1(program);
+    ContainerWorldInstallViewV1 world{};
+    world.identity.projectId = project;
+    world.identity.capabilityMask = kWorldCapabilityActionDefinitions | kWorldCapabilityPlayableProperties;
+    world.actions = &program;
+    world.actionCount = 1;
+    world.playableProperties = &property;
+    world.playablePropertyCount = 1;
+    world.identity.runtimeSemanticFingerprint = ComputeCurrentWorldFingerprintV4(world);
+    std::vector<std::uint8_t> body;
+    EXPECT_TRUE(EncodeCurrentWorldShippingBody(world, body));
+    PackCanonicalPartitionHeader header{};
+    header.headerBytes = kPackCanonicalPartitionHeaderBytes;
+    header.bodyVintage = kCanonicalDefinitionPartitionBodyVintage;
+    header.bodyBytes = body.size();
+    header.bodyChecksum = Fnv1a64(body.data(), body.size());
+    header.packStableId = id;
+    header.partitionRevision = revision;
+    header.ownedDefinitionCount = 2;
+    ApplyCanonicalBusTriple(&header, bus.triple);
+    std::vector<std::uint8_t> partition(header.headerBytes + body.size());
+    SerializePackCanonicalPartitionHeader(header, partition.data());
+    header.headerChecksum = Fnv1a64(partition.data(), kPackCanonicalPartitionHeaderHeaderChecksumOffset);
+    SerializePackCanonicalPartitionHeader(header, partition.data());
+    std::memcpy(partition.data() + header.headerBytes, body.data(), body.size());
+    ImageBuilder image(kPackKindCanonicalContent);
+    image.AddEntry(kPackEntryKindPackRequirementBlock, id,
+        RequirementPayload(id, revision, revision, header.ownedDefinitionCount, body.size(), bus.triple));
+    image.AddEntry(kPackEntryKindCanonicalDefinitionPartition, id, std::move(partition));
+    image.AddEntry(kPackEntryKindPackDependencyEdge, VnObjectId{},
+        DependencyPayload(PackId("Init"), 1, bus.triple), kPackPackDependencyEdgeVintage);
+    image.AddMedia(kSound, samples, {}, 2);
+    return image.Build();
+}
+
+struct PathSet {
+    std::filesystem::path directory;
+    std::string init;
+    std::string content;
+    VnPackNamesV1 initNames{sizeof(VnPackNamesV1), 0, project, {}, "", "", 0, 0, nullptr, nullptr};
+    VnPackNamesV1 names{sizeof(VnPackNamesV1), 0, project, action, "Play_A", "", 0, 0, nullptr, nullptr};
+    std::vector<VnCanonicalPackSetMemberV2> members;
+
+    explicit PathSet(const char* name)
+        : directory(std::filesystem::path(HARKEN_TEMP_DIR) / name) {
+        std::filesystem::create_directories(directory);
+        init = (directory / "Init.pack").string();
+        content = (directory / "Content.pack").string();
+        EXPECT_TRUE(harkentest::WriteBytes(init, Build(true, PackId("Init"))));
+        members = {Member(PackId("Init"), true, nullptr, &initNames),
+                   Member(ContentId(), false, nullptr, &names)};
+        members[0].source.utf8Path = init.c_str();
+        members[1].source.utf8Path = content.c_str();
+    }
+    static std::uint64_t ContentId() { return PackId("action_" + harken::ObjectIdString(action)); }
+};
+
+std::uint64_t Audible(const harkentest::Capture& capture) {
+    for (std::size_t i = 0; i < capture.left.size(); ++i)
+        if (capture.left[i] != 0.0f || capture.right[i] != 0.0f) return i;
+    return capture.left.size();
+}
+
+void PumpFiring(harken::Engine* engine, std::uint32_t blocks, harkentest::Capture& capture) {
+    for (std::uint32_t block = 0; block < blocks; ++block) {
+        engine->streams.SyncServe();
+        harkentest::PumpAndCapture(engine, 1, capture);
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+}
+
+harkentest::Capture PostAndCapture(harken::Engine* engine, std::uint32_t blocks) {
+    harkentest::Capture capture;
+    VnActionResolved resolved{};
+    EXPECT_EQ(VN_OK, Resolve("Play_A", &resolved));
+    VnActionFiringHandle firing = 0;
+    EXPECT_EQ(VN_OK, Vn_PostActionResolved(&resolved, 0, 0, &firing));
+    PumpFiring(engine, blocks, capture);
+    EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+    return capture;
+}
+
+VnConfig StreamConfig() {
+    auto config = CanonicalActivationConfig(8, 256, 48000);
+    config.prebufferMs = 1;
+    return config;
+}
+
+constexpr std::uint32_t kBlocks = static_cast<std::uint32_t>(kFrames / 256 + 8);
+
+// The audible sample sequence, aligned at its first non-silent frame.
+void ExpectSameAudible(const harkentest::Capture& expected, const harkentest::Capture& actual,
+                       std::uint64_t frames) {
+    const auto first = Audible(expected), second = Audible(actual);
+    ASSERT_LE(first + frames, expected.left.size());
+    ASSERT_LE(second + frames, actual.left.size());
+    for (std::uint64_t i = 0; i < frames; ++i) {
+        ASSERT_EQ(expected.left[first + i], actual.left[second + i]) << i;
+        ASSERT_EQ(expected.right[first + i], actual.right[second + i]) << i;
+    }
+}
+
+harkentest::Capture ResidentReference(const char* name, const std::vector<float>& samples) {
+    EngineSession session(StreamConfig());
+    EXPECT_EQ(VN_OK, session.InitResult());
+    PathSet set(name);
+    EXPECT_TRUE(harkentest::WriteBytes(set.content,
+        BuildSoundContent(PathSet::ContentId(), 1, false, samples)));
+    VnCanonicalPackSetActivationReportV1 report{};
+    EXPECT_EQ(VN_OK, Activate(set.members, report));
+    EXPECT_TRUE(session.Engine()->registry.Lookup(kSound).Valid());
+    return PostAndCapture(session.Engine(), kBlocks);
+}
+
+} // namespace packstream
+
+TEST(CanonicalPackSetActivate, StreamedPackMediaPlaysResidentSamplesWithoutResidentCopy) {
+    using namespace packstream;
+    const auto samples = PlanarSignal(1.0f);
+    const auto resident = ResidentReference("pack-stream-resident", samples);
+    const auto content = BuildSoundContent(PathSet::ContentId(), 1, true, samples);
+    auto config = StreamConfig();
+    // Streamed media is not resident, so it is not charged to decode staging.
+    config.maxPackDecodeStagingBytes = content.size() - 1024;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    PathSet set("pack-stream-streamed");
+    ASSERT_TRUE(harkentest::WriteBytes(set.content, content));
+    VnCanonicalPackSetActivationReportV1 report{};
+    ASSERT_EQ(VN_OK, Activate(set.members, report));
+    std::weak_ptr<const harken::StreamByteSource> source;
+    {
+        const auto reference = engine->registry.ReferenceOf(kSound, engine->registry.CookieOf(kSound));
+        ASSERT_TRUE(reference.Valid());
+        EXPECT_FALSE(reference.View().Valid());
+        const auto range = reference.Range();
+        ASSERT_NE(nullptr, range);
+        EXPECT_EQ(2u, range->channelCount);
+        EXPECT_EQ(kFrames, range->frameCount);
+        source = range->source;
+    }
+    const auto streamed = PostAndCapture(engine, kBlocks);
+    ExpectSameAudible(resident, streamed, kFrames);
+
+    VnCanonicalPackSetUnloadDescV1 unload{};
+    unload.structSize = sizeof(unload);
+    unload.expectedInitHandle = report.initHandle;
+    unload.baseSetRevision = report.resultSetRevision;
+    unload.unloadRevision = report.resultSetRevision + 1;
+    ASSERT_EQ(VN_OK, Vn_UnloadCanonicalPackSetV1(&unload));
+    for (int pass = 0; pass < 200 && !source.expired(); ++pass) {
+        engine->streams.SyncServe();
+        ASSERT_EQ(VN_OK, Vn_Update());
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    EXPECT_TRUE(source.expired());
+    EXPECT_EQ(0u, engine->registry.CookieOf(kSound));
+}
+
+TEST(CanonicalPackSetActivate, StreamedPackVoiceKeepsOriginalSourceAcrossNewRevision) {
+    using namespace packstream;
+    const auto first = PlanarSignal(1.0f), second = PlanarSignal(0.5f);
+    const auto firstReference = ResidentReference("pack-stream-replace-ref1", first);
+    const auto secondReference = ResidentReference("pack-stream-replace-ref2", second);
+    EngineSession session(StreamConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    PathSet set("pack-stream-replace");
+    ASSERT_TRUE(harkentest::WriteBytes(set.content,
+        BuildSoundContent(PathSet::ContentId(), 1, true, first)));
+    VnCanonicalPackSetActivationReportV1 report{};
+    ASSERT_EQ(VN_OK, Activate(set.members, report));
+
+    harkentest::Capture old;
+    VnActionResolved resolved{};
+    ASSERT_EQ(VN_OK, Resolve("Play_A", &resolved));
+    VnActionFiringHandle firing = 0;
+    ASSERT_EQ(VN_OK, Vn_PostActionResolved(&resolved, 0, 0, &firing));
+    PumpFiring(engine, 4, old);
+    // The next revision lives at another path and the original file is
+    // deleted; the running voice keeps reading its opened source.
+    const auto next = (set.directory / "ContentNext.pack").string();
+    ASSERT_TRUE(harkentest::WriteBytes(next,
+        BuildSoundContent(PathSet::ContentId(), 2, true, second)));
+    set.members[1].source.utf8Path = next.c_str();
+    ASSERT_EQ(VN_OK, Activate(set.members, report, 1));
+    ASSERT_TRUE(std::filesystem::remove(set.content));
+    PumpFiring(engine, kBlocks, old);
+    ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+    ExpectSameAudible(firstReference, old, kFrames);
+    ExpectSameAudible(secondReference, PostAndCapture(engine, kBlocks), kFrames);
+}
+
+TEST(CanonicalPackSetActivate, StreamedPackChangedBytesNeverReachOutput) {
+    using namespace packstream;
+    const auto samples = PlanarSignal(1.0f);
+    const auto reference = ResidentReference("pack-stream-corrupt-ref", samples);
+    auto config = StreamConfig();
+    // A ring shorter than one chunk keeps the changed final chunk outside the
+    // start preparation, so verified material is published first.
+    config.streamRingFrames = 1024;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    PathSet set("pack-stream-corrupt");
+    ASSERT_TRUE(harkentest::WriteBytes(set.content,
+        BuildSoundContent(PathSet::ContentId(), 1, true, samples)));
+    VnCanonicalPackSetActivationReportV1 report{};
+    ASSERT_EQ(VN_OK, Activate(set.members, report));
+    {
+        // The media blob is the file tail; change the last right-channel frame.
+        std::fstream file(set.content, std::ios::in | std::ios::out | std::ios::binary);
+        file.seekp(-static_cast<std::streamoff>(sizeof(float)), std::ios::end);
+        const float changed = 0.75f;
+        file.write(reinterpret_cast<const char*>(&changed), sizeof(changed));
+        ASSERT_TRUE(file.good());
+    }
+    const auto streamed = PostAndCapture(engine, kBlocks);
+    const auto second = Audible(streamed);
+    const std::uint64_t verified = 2 * harken::kPackMediaRangeChunkFrames;
+    ExpectSameAudible(reference, streamed, verified - 256);
+    for (std::uint64_t i = second + verified; i < streamed.left.size(); ++i) {
+        ASSERT_EQ(0.0f, streamed.left[i]) << i;
+        ASSERT_EQ(0.0f, streamed.right[i]) << i;
+    }
+}
+
+TEST(CanonicalPackSetActivate, StreamOnlyMediaGainsResidentWhenDefinitionTurnsResident) {
+    using namespace packstream;
+    const auto samples = PlanarSignal(1.0f);
+    const auto reference = ResidentReference("pack-stream-upgrade-ref", samples);
+    EngineSession session(StreamConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    PathSet set("pack-stream-upgrade");
+    ASSERT_TRUE(harkentest::WriteBytes(set.content,
+        BuildSoundContent(PathSet::ContentId(), 1, true, samples)));
+    VnCanonicalPackSetActivationReportV1 report{};
+    ASSERT_EQ(VN_OK, Activate(set.members, report));
+    const auto cookie = engine->registry.CookieOf(kSound);
+    EXPECT_FALSE(engine->registry.Lookup(kSound).Valid());
+
+    // The next revision defines the same bit-exact media as resident. The
+    // registered entry is reused and gains resident samples at commit.
+    const auto next = (set.directory / "ContentResident.pack").string();
+    ASSERT_TRUE(harkentest::WriteBytes(next, BuildSoundContent(PathSet::ContentId(), 2, false, samples)));
+    set.members[1].source.utf8Path = next.c_str();
+    ASSERT_EQ(VN_OK, Activate(set.members, report, 1));
+    EXPECT_EQ(cookie, engine->registry.CookieOf(kSound));
+    const auto upgraded = engine->registry.Lookup(kSound);
+    ASSERT_TRUE(upgraded.Valid());
+    EXPECT_EQ(2u, upgraded.channelCount);
+    EXPECT_EQ(kFrames, upgraded.frames);
+    ExpectSameAudible(reference, PostAndCapture(engine, kBlocks), kFrames);
 }
 
 } // namespace

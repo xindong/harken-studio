@@ -11,6 +11,7 @@
 #include "harken/core/MediaContentRevision.h"
 #include "harken/core/StableRowStorage.h"
 #include "harken/core/StreamRing.h"
+#include "harken/media/PackMediaRange.h"
 #include "harken/media/StreamFormat.h"
 #include "harken/media/StreamByteSource.h"
 
@@ -134,6 +135,16 @@ public:
     // retiring file (replaced, still draining) is not registered under any
     // id and never matches here.
     bool FindFile(VnSoundId soundId, StreamFacts* out) const;
+
+    // Pack media resolved through an exact closure: returns the private file
+    // record for this range identity, creating it on first use. Private
+    // records are never registered under a sound id and are invisible to the
+    // public registration queries. The caller's closure keeps the range alive
+    // until an active stream or pending reference pins the record; the record
+    // is reclaimed once the range has expired and both counts drained.
+    // Logic thread only.
+    VnResult ResolvePackSource(const std::shared_ptr<const PackMediaRange>& range,
+                               StreamFacts* out);
 
     // Facts by file index rather than id — the generation-pinned lookup a
     // deferred stream start uses so it begins on the file it was admitted
@@ -337,6 +348,12 @@ private:
         // drain and every bound slot has settled its last I/O job.
         bool retiring = false;
         VnSoundId retiredFromId{};
+        // Pack media read through an exact closure. The weak range is identity
+        // only; source, blob location and checksums are owned copies so
+        // in-flight reads outlive the Pack entry.
+        bool packPrivate = false;
+        std::weak_ptr<const PackMediaRange> packRange;
+        std::uint64_t packBlobOffset = 0;
         std::shared_ptr<const StreamByteSource> source;
         std::unique_ptr<StreamFile> nextCleanup;
         StreamTocEntry toc;

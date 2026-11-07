@@ -21361,7 +21361,7 @@ harken::PlayableStartStatus BuildScheduleLeafStart(
     const harken::PlayableRefV1& root,
     const MaterializedScheduleLeaf& materialized,
     const harken::PackPartitionLease& packLease,
-    PreparedScheduleLeafStart* out) noexcept;
+    PreparedScheduleLeafStart* out, bool allowRegisteredStream = false) noexcept;
 
 template <typename WorldView>
 harken::PlayableStartStatus BuildVariableControlScheduleLeafStart(
@@ -22611,20 +22611,34 @@ harken::PlayableStartStatus ResolveTimelineVoiceInstallSource(
         (cut.effectNodeCount != 0 && cut.effectNodes == nullptr) ||
         (cut.effectEdgeCount != 0 && cut.effectEdges == nullptr))
         return harken::PlayableStartStatus::InvalidInput;
-    const bool streamed = cut.streamingMode != 0;
+    bool streamed = cut.streamingMode != 0;
+    const bool leased = leaseOrNull != nullptr && leaseOrNull->leaseToken != 0;
     harken::PCMView media{};
     harken::StreamManager::StreamFacts streamFacts{};
-    if (streamed) {
-        if (!allowDirectActionStream || (leaseOrNull != nullptr && leaseOrNull->leaseToken != 0) ||
+    if (leased) {
+        // The exact closure decides the source. A Pack range streams through a
+        // private file record; resident-only media plays its resident samples.
+        harken::PCMRegistry::PackReference reference;
+        if (engine.packs.LookupExactClosureReference(
+                leaseOrNull->resourceClosureToken, cut.leaf.stableId,
+                engine.registry, &reference) != VN_OK) {
+            return harken::PlayableStartStatus::MediaMismatch;
+        }
+        const auto range = streamed ? reference.Range() : nullptr;
+        if (range != nullptr) {
+            if (!allowDirectActionStream) return harken::PlayableStartStatus::CapabilityUnavailable;
+            if (engine.streams.ResolvePackSource(range, &streamFacts) != VN_OK ||
+                streamFacts.contentRevision != cut.leaf.contentRevision)
+                return harken::PlayableStartStatus::MediaMismatch;
+        } else {
+            streamed = false;
+            media = reference.View();
+        }
+    } else if (streamed) {
+        if (!allowDirectActionStream ||
             !engine.streams.FindFile(cut.leaf.stableId, &streamFacts) ||
             streamFacts.contentRevision != cut.leaf.contentRevision) {
             return harken::PlayableStartStatus::CapabilityUnavailable;
-        }
-    } else if (leaseOrNull != nullptr && leaseOrNull->leaseToken != 0) {
-        if (engine.packs.LookupExactClosure(
-                leaseOrNull->resourceClosureToken, cut.leaf.stableId,
-                engine.registry, &media) != VN_OK) {
-            return harken::PlayableStartStatus::MediaMismatch;
         }
     } else {
         media = engine.registry.Lookup(cut.leaf.stableId);
@@ -22870,7 +22884,7 @@ harken::PlayableStartStatus CaptureScheduleLeafStart(
     const auto duration = materialized.endOffsetFrames == UINT64_MAX ? UINT64_MAX :
         materialized.endOffsetFrames - materialized.startOffsetFrames;
     return CaptureTimelineVoiceInstallFromCut(
-        engine, cut, leaseOrNull, leaseOrNull == nullptr, target, out, duration, materialized.sourceOutputOffsetFrames);
+        engine, cut, leaseOrNull, true, target, out, duration, materialized.sourceOutputOffsetFrames);
 }
 
 harken::PlayableStartStatus BuildScheduleLeafStart(
@@ -22919,7 +22933,7 @@ harken::PlayableStartStatus BuildScheduleLeafStart(
     const harken::PlayableRefV1& root,
     const MaterializedScheduleLeaf& materialized,
     const harken::PackPartitionLease& packLease,
-    PreparedScheduleLeafStart* out) noexcept {
+    PreparedScheduleLeafStart* out, bool allowRegisteredStream) noexcept {
     if (out == nullptr || materialized.selectionCount == 0 ||
         engine.playablePropertyCutScratch.Resolve(
             world, root, materialized.selectedOrdinals.data(),
@@ -22940,7 +22954,7 @@ harken::PlayableStartStatus BuildScheduleLeafStart(
         materialized.selectedOrdinals[materialized.selectionCount - 1u];
     const harken::PlayableStartStatus voiceStatus =
         BuildTimelineVoiceInstallFromCut(engine, cut, &candidate.voice,
-                                         &packLease);
+                                         &packLease, allowRegisteredStream);
     if (voiceStatus != harken::PlayableStartStatus::Accepted) {
         return voiceStatus;
     }
@@ -26556,7 +26570,7 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
             }
             status = BuildScheduleLeafStart(
                 engine, world, leafPropertyRoot, materialized, *packLease,
-                &source);
+                &source, true);
         } else {
             status = BuildScheduleLeafStart(
                 engine, world, leafPropertyRoot, materialized, &source, true);
@@ -93057,11 +93071,12 @@ struct ScheduleContainerPreparationOperations {
     harken::PlayableStartStatus BuildScheduleLeaf(harken::Engine& targetEngine,
         const harken::PackPlaybackView& world, const harken::PlayableRefV1&,
         const MaterializedScheduleLeaf& source, const harken::PackPartitionLease& lease,
-        PreparedScheduleLeafStart* out) noexcept {
+        PreparedScheduleLeafStart* out, bool allowRegisteredStream = false) noexcept {
         MaterializedScheduleLeaf leaf{};
         if (&targetEngine != &engine || !PrefixMaterializedLeaf(source, leaf))
             return harken::PlayableStartStatus::Capacity;
-        return BuildScheduleLeafStart(engine, world, context.propertyRoot, leaf, lease, out);
+        return BuildScheduleLeafStart(engine, world, context.propertyRoot, leaf, lease, out,
+                                      allowRegisteredStream);
     }
 };
 
@@ -93542,7 +93557,6 @@ bool PrepareContainerSingleLeaf(
         return false;
     }
     const auto& cut = engine.playablePropertyCutScratch.View();
-    const bool allowDirectActionStream = !(scratch->packLeaseOwned || scratch->packLeaseBorrowed);
     harken::TimelineSemanticTarget finalTarget{};
     finalTarget.programSemanticFingerprint = root.expectedProgramSemanticFingerprint;
     finalTarget.subjectId = cut.leaf.stableId;
@@ -93557,7 +93571,7 @@ bool PrepareContainerSingleLeaf(
             : (context.targetPackLease.leaseToken != 0 ? &context.targetPackLease
                                                     : nullptr);
     const harken::PlayableStartStatus voiceStatus = CaptureTimelineVoiceInstallFromCut(
-        engine, cut, voiceLease, allowDirectActionStream, finalTarget, &capturedVoice,
+        engine, cut, voiceLease, true, finalTarget, &capturedVoice,
         context.endFrame == UINT64_MAX ? UINT64_MAX :
             context.endFrame > context.startFrame ? context.endFrame - context.startFrame : 0,
         context.sourceOffsetFrames);
@@ -94390,7 +94404,7 @@ bool PrepareContainerCompositeQueueChild(
                 ? operations.BuildScheduleLeaf(
                       engine, scratch->packPlaybackView, root,
                       materialized.leaves[index], scratch->packLease,
-                      &leaves[index])
+                      &leaves[index], context.initialMediaWaitAllowed)
                 : operations.BuildScheduleLeaf(
                       engine, world, root, materialized.leaves[index],
                       &leaves[index], context.initialMediaWaitAllowed);
@@ -129352,6 +129366,7 @@ struct PreparedCanonicalPackSetV1 {
     bool preserveInit = false;
     std::vector<AcquiredCanonicalSetMember> members;
     PackTable::PreparedSetMutation storage;
+    std::vector<PCMRegistry::PreparedResidentUpgrade> residentUpgrades;
     Spatializer::PreparedProfileSet attenuation;
     PreparedCanonicalPublication publication;
     SlotPlanV1 slotPlan{};
@@ -129491,10 +129506,107 @@ VnResult ValidateCanonicalV2InitBusEntries(const PackCanonicalImage& init) {
     return VN_OK;
 }
 
+// Sound streaming choices of a candidate publication: incoming artifacts
+// first, then retained published owners. Composition refuses duplicate
+// definitions, so the first match is authoritative.
+struct CanonicalMediaDemand {
+    std::vector<const std::vector<PackSoundStreamingRow>*> incoming;
+    std::vector<PackSoundStreamingRow> retained;
+
+    void Retain(const PackComposition::PublishedOwner& owner) {
+        CollectSoundStreaming(owner.view, &retained);
+    }
+    bool Defined(VnSoundId soundId, bool* streamed) const {
+        for (const auto* rows : incoming)
+            if (rows != nullptr && FindSoundStreaming(*rows, soundId, streamed)) return true;
+        return FindSoundStreaming(retained, soundId, streamed);
+    }
+    static PackMediaDemand Resolve(void* ctx, const PackCanonicalImage& image, VnSoundId soundId) {
+        bool streamed = false;
+        const bool defined = FindSoundStreaming(image.soundStreaming, soundId, &streamed) ||
+            static_cast<const CanonicalMediaDemand*>(ctx)->Defined(soundId, &streamed);
+        return defined && streamed ? PackMediaDemand::Stream : PackMediaDemand::Resident;
+    }
+    PackMediaDemandResolver Resolver() const {
+        return {const_cast<CanonicalMediaDemand*>(this), &Resolve};
+    }
+};
+
+// A registered range-only entry that the candidate now defines as resident
+// gains resident storage at commit. Old closures keep the same entry.
+VnResult PrepareCanonicalResidentUpgrades(Engine& engine, const CanonicalMediaDemand& demand,
+    std::vector<PCMRegistry::PreparedResidentUpgrade>* out) {
+    const auto visit = [&](const std::vector<PackSoundStreamingRow>& rows) -> VnResult {
+        for (const auto& row : rows) {
+            if (row.streamed) continue;
+            const auto cookie = engine.registry.CookieOf(row.soundId);
+            const auto reference = engine.registry.ReferenceOf(row.soundId, cookie);
+            if (cookie == 0 || !reference.Valid() || reference.View().Valid() ||
+                reference.Range() == nullptr ||
+                std::any_of(out->begin(), out->end(),
+                    [&](const auto& upgrade) { return upgrade.SoundId() == row.soundId; }))
+                continue;
+            PCMRegistry::PreparedResidentUpgrade upgrade;
+            const auto prepared = engine.registry.PrepareResidentUpgrade(reference, &upgrade);
+            if (prepared != VN_OK) return prepared;
+            out->push_back(std::move(upgrade));
+        }
+        return VN_OK;
+    };
+    for (const auto* rows : demand.incoming) {
+        if (rows == nullptr) continue;
+        const auto visited = visit(*rows);
+        if (visited != VN_OK) return visited;
+    }
+    return visit(demand.retained);
+}
+
+void CommitCanonicalResidentUpgrades(Engine& engine,
+    std::vector<PCMRegistry::PreparedResidentUpgrade>& upgrades) noexcept {
+    for (auto& upgrade : upgrades) engine.registry.CommitResidentUpgrade(&upgrade);
+    upgrades.clear();
+}
+
+// Collects every member's definitions before any physical media pass, so a
+// provider's media storage follows definitions in later members. Members
+// that cannot be read through the bounded file path contribute later only.
+void CollectCanonicalSetDemand(Engine& engine, const VnCanonicalPackSetActivationDescV1& desc,
+    const std::vector<std::uint32_t>* operations, const PackComposition::PublishedView* previous,
+    const detail::PackDecodeBudget& budget, std::vector<std::vector<PackSoundStreamingRow>>* rows,
+    std::vector<std::uint8_t>* collected, CanonicalMediaDemand* out) {
+    rows->assign(desc.memberCount, {});
+    collected->assign(desc.memberCount, 0);
+    for (std::uint32_t i = 0; i < desc.memberCount; ++i) {
+        const auto operation = operations != nullptr ? (*operations)[i] : VN_PACK_MEMBER_CONTENT;
+        if (operation == VN_PACK_MEMBER_KEEP) {
+            if (const auto* owner = FindPublishedOwner(previous, desc.members[i].expectedHandle))
+                out->Retain(*owner);
+            continue;
+        }
+        const auto load = MemberToLoadDesc(desc.members[i]);
+        std::string path;
+        if ((load.flags & VN_PACK_LOAD_FLAG_PROVIDER) != 0 || engine.trace != nullptr ||
+            ResolveCanonicalFilePath(load, &path) != VN_OK)
+            continue;
+        PackCanonicalImage image;
+        std::vector<PCMRegistry::PreparedPackSamples> samples;
+        detail::PackDecodeCharge sampleStaging(budget);
+        std::uint64_t byteCount = 0, hash = 0;
+        if (ReadPackCanonicalFile(path.c_str(), engine.registry, &image, &samples, &byteCount,
+                &hash, UINT64_MAX, {}, nullptr, nullptr, budget, &sampleStaging, nullptr, true) == VN_OK) {
+            (*rows)[i] = std::move(image.soundStreaming);
+            (*collected)[i] = 1;
+        }
+    }
+    for (const auto& member : *rows) out->incoming.push_back(&member);
+}
+
 VnResult AcquireCanonicalSetMember(Engine& engine, const VnPackLoadDesc& load,
     const detail::PackDecodeBudget& budget,
     AcquiredCanonicalSetMember* out, std::uint64_t* traceResource = nullptr,
-    std::span<const AcquiredCanonicalSetMember> previous = {}) {
+    std::span<const AcquiredCanonicalSetMember> previous = {},
+    const PackMediaDemandResolver* demand = nullptr,
+    const std::vector<PackSoundStreamingRow>* expectedRows = nullptr) {
     if (!budget || budget->live > budget->limit) return VN_PACK_RESIDENT_CAPACITY;
     out->encodedStaging = detail::PackDecodeCharge(budget);
     out->sampleStaging = detail::PackDecodeCharge(budget);
@@ -129514,8 +129626,15 @@ VnResult AcquireCanonicalSetMember(Engine& engine, const VnPackLoadDesc& load,
         bool retry = false;
         parsed = ReadPackCanonicalFile(path.c_str(), engine.registry, &out->image, &out->samples,
             &out->byteCount, &out->hash, budget->limit - budget->live,
-            candidates, &retry, nullptr, budget, &out->sampleStaging);
+            candidates, &retry, nullptr, budget, &out->sampleStaging, demand);
         if (parsed == VN_OK) {
+            // Storage was chosen from definitions collected earlier; a changed
+            // artifact could have changed them.
+            if (expectedRows != nullptr &&
+                !std::equal(expectedRows->begin(), expectedRows->end(),
+                    out->image.soundStreaming.begin(), out->image.soundStreaming.end(),
+                    [](const auto& a, const auto& b) { return a.soundId == b.soundId && a.streamed == b.streamed; }))
+                return VN_BAD_PACK;
             out->boundedFile = true;
         } else if (!retry) {
             return parsed;
@@ -130282,6 +130401,7 @@ void CommitCanonicalPackSet(Engine& engine, PreparedCanonicalPackSetV1& prepared
     assert(engine.packComposition.CompositeGeneration() == prepared.baseGeneration);
     if (prepared.storage.IsPrepared())
         engine.packs.CommitPreparedSet(&prepared.storage, engine.registry);
+    CommitCanonicalResidentUpgrades(engine, prepared.residentUpgrades);
     CommitCanonicalOwners(engine, &prepared.publication);
     if (!prepared.preserveInit)
         engine.spatial.CommitPreparedSet(&prepared.attenuation);
@@ -130379,6 +130499,13 @@ VnResult PrepareCanonicalSetActivation(Engine& engine,
         detail::DecodeResize(out->members, desc.memberCount, out->staging);
     }
     detail::PackDecodeCharge scratch(budget);
+    std::vector<std::vector<PackSoundStreamingRow>> demandRows;
+    std::vector<std::uint8_t> demandCollected;
+    CanonicalMediaDemand demand;
+    if (capturedMembers == nullptr)
+        CollectCanonicalSetDemand(engine, desc, operations, previous, budget, &demandRows,
+                                  &demandCollected, &demand);
+    const auto resolver = demand.Resolver();
     std::vector<PackTable::CanonicalSetMember> inputs;
     detail::DecodeReserve(inputs, desc.memberCount, scratch);
     for (std::uint32_t i = 0; i < desc.memberCount; ++i) {
@@ -130402,7 +130529,8 @@ VnResult PrepareCanonicalSetActivation(Engine& engine,
             if (capturedMembers == nullptr) {
                 const auto loaded = AcquireCanonicalSetMember(engine, MemberToLoadDesc(desc.members[i]),
                     budget, &captured,
-                    nullptr, std::span<const AcquiredCanonicalSetMember>(out->members.data(), i));
+                    nullptr, std::span<const AcquiredCanonicalSetMember>(out->members.data(), i),
+                    &resolver, demandCollected[i] != 0 ? &demandRows[i] : nullptr);
                 if (loaded != VN_OK) return loaded;
             }
             if (operations != nullptr && old != nullptr && captured.hash == old->contentHash)
@@ -130453,6 +130581,15 @@ VnResult PrepareCanonicalSetActivation(Engine& engine,
         const auto stored = engine.packs.PrepareCanonicalSet(inputs, removed, engine.registry,
             &out->storage, retainedTokens);
         if (stored != VN_OK) return stored;
+    }
+    {
+        CanonicalMediaDemand final;
+        for (const auto& member : out->members) {
+            if (member.keptOwner != nullptr) final.Retain(*member.keptOwner);
+            else final.incoming.push_back(&member.image.soundStreaming);
+        }
+        const auto upgraded = PrepareCanonicalResidentUpgrades(engine, final, &out->residentUpgrades);
+        if (upgraded != VN_OK) return upgraded;
     }
     for (std::uint32_t i = 0; i < desc.memberCount; ++i) {
         auto& member = out->members[i];
@@ -130808,6 +130945,13 @@ VnResult ActivateCanonicalPackSetImpl(
                     previous->companionNames != companion) return VN_AUTHORITY_CONFLICT;
                 auto semanticKey = HashCanonicalPackSetSemanticKey(desc, !companion);
                 std::vector<AcquiredCanonicalSetMember> captured;
+                std::vector<std::vector<PackSoundStreamingRow>> demandRows;
+                std::vector<std::uint8_t> demandCollected;
+                CanonicalMediaDemand demand;
+                if (companion)
+                    CollectCanonicalSetDemand(engine, desc, operations, previous, prepared.budget,
+                                              &demandRows, &demandCollected, &demand);
+                const auto resolver = demand.Resolver();
                 if (companion) {
                     detail::DecodeResize(captured, desc.memberCount, prepared.staging);
                     for (std::uint32_t i = 0; i < desc.memberCount; ++i) {
@@ -130819,7 +130963,8 @@ VnResult ActivateCanonicalPackSetImpl(
                         const auto result = AcquireCanonicalSetMember(engine,
                             MemberToLoadDesc(desc.members[i]), prepared.budget, &captured[i],
                             traceResources != nullptr ? &(*traceResources)[i] : nullptr,
-                            std::span<const AcquiredCanonicalSetMember>(captured.data(), i));
+                            std::span<const AcquiredCanonicalSetMember>(captured.data(), i),
+                            &resolver, demandCollected[i] != 0 ? &demandRows[i] : nullptr);
                         if (result != VN_OK) {
                             if (traceInputMissing != nullptr && traceResources != nullptr)
                                 *traceInputMissing = (*traceResources)[i] == 0;
@@ -131568,13 +131713,19 @@ VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle,
     std::vector<PCMRegistry::PreparedPackSamples> samples;
     std::uint64_t byteCount = 0, artifactHash = 0;
     bool boundedFile = false;
+    CanonicalMediaDemand demand;
+    for (const auto& existing : published->owners)
+        if (existing.handle != handle && existing.readiness == PackOwnerReadiness::Active)
+            demand.Retain(existing);
+    const auto resolver = demand.Resolver();
     if ((desc->flags & VN_PACK_LOAD_FLAG_PROVIDER) == 0 && engine.trace == nullptr) {
         std::string path;
         const auto rooted = ResolveCanonicalFilePath(*desc, &path);
         if (rooted != VN_OK) return rooted;
         bool retry = false;
         const auto read = ReadPackCanonicalFile(path.c_str(), engine.registry, &image, &samples,
-            &byteCount, &artifactHash, engine.config.maxPackDecodeStagingBytes, {}, &retry, nullptr, budget, &sampleStaging);
+            &byteCount, &artifactHash, engine.config.maxPackDecodeStagingBytes, {}, &retry, nullptr, budget, &sampleStaging,
+            &resolver);
         if (read == VN_OK) boundedFile = true;
         else if (!retry) return read;
     }
@@ -131653,6 +131804,13 @@ VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle,
         ReportCanonicalMediaConflict(engine, image);
         return preparedMedia;
     }
+    std::vector<PCMRegistry::PreparedResidentUpgrade> residentUpgrades;
+    demand.incoming.push_back(&image.soundStreaming);
+    const VnResult upgraded = PrepareCanonicalResidentUpgrades(engine, demand, &residentUpgrades);
+    if (upgraded != VN_OK) {
+        engine.packs.CancelPreparedMutation(&media);
+        return upgraded;
+    }
     const PackResourceRevisionToken activeToken =
         media.SuccessorResourceToken();
     for (PackComposition::CandidateOwner& owner : owners) {
@@ -131699,6 +131857,7 @@ VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle,
     }
     engine.packs.CommitPreparedMutation(&media, engine.registry,
                                         &predecessor);
+    CommitCanonicalResidentUpgrades(engine, residentUpgrades);
     CommitCanonicalOwners(engine, &publication);
     CommitCanonicalBindingPlanStageA(engine, bindingPlan);
     CommitCanonicalBindingPlanStageC(engine, bindingPlan, false);

@@ -7,6 +7,10 @@
 #include "harken/core/detail/CurrentWorldValidation.h"
 #include "harken/dsp/GainRamp.h"
 #include "harken/media/generated/harken_pack_effect_schema.g.h"
+#include "harken/core/MediaContentRevision.h"
+#include "harken/core/generated/harken_playable_property_runtime.g.h"
+#include "harken/media/PackMediaRange.h"
+#include "harken/media/StreamByteSource.h"
 
 #include <algorithm>
 #include <exception>
@@ -14,6 +18,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <limits>
 #include <map>
@@ -1076,34 +1081,39 @@ struct SpanCanonicalSource {
     }
 };
 
-#if defined(_MSVC_STL_VERSION)
-constexpr std::size_t kCanonicalFileBufferBytes = 16 * 1024;
-// Keep complete buffer fills so invalidation does not discard read-ahead tails.
-constexpr std::size_t kCanonicalReadWindowBytes =
-    (63 * 1024 - kCanonicalFileBufferBytes) / kCanonicalFileBufferBytes *
-    kCanonicalFileBufferBytes;
-#else
 constexpr std::size_t kCanonicalReadWindowBytes = 63 * 1024;
-#endif
+
+PackMediaDemand ResolvePackMediaDemand(const PackMediaDemandResolver* demand,
+    const PackCanonicalImage& image, VnSoundId soundId) {
+    if (demand != nullptr && demand->resolve != nullptr)
+        return demand->resolve(demand->ctx, image, soundId);
+    bool streamed = false;
+    return FindSoundStreaming(image.soundStreaming, soundId, &streamed) && streamed
+        ? PackMediaDemand::Stream : PackMediaDemand::Resident;
+}
 
 struct FileCanonicalSource {
-    std::ifstream& file;
+    std::shared_ptr<const StreamByteSource> file;
     std::uint64_t fileBytes;
+    std::uint64_t maxResidentBytes;
     PCMRegistry& registry;
     std::span<const PCMRegistry::PreparedPackSamples* const> equalCandidates;
     std::vector<PCMRegistry::PreparedPackSamples>* output;
     const PackCanonicalReadHooksForTests* hooks;
+    const PackMediaDemandResolver* demand = nullptr;
+    bool metadataOnly = false;
+    std::filesystem::path path;
     std::uint64_t hash = kFnv1a64OffsetBasis;
     bool retryWithBytes = false;
     std::uint64_t cachedBytes = 0;
     detail::PackDecodeCharge scratch;
+    detail::PackDecodeCharge encoded;
     detail::PackDecodeCharge* outputStaging = nullptr;
     std::map<std::pair<std::uint64_t, std::uint64_t>, std::vector<std::uint8_t>> metadata;
 
     std::uint64_t ByteCount() const noexcept { return fileBytes; }
     const std::uint8_t* Data(std::uint64_t offset, std::uint64_t size) {
-        if (offset > fileBytes || size > fileBytes - offset || size > SIZE_MAX ||
-            size > static_cast<std::uint64_t>(std::numeric_limits<std::streamsize>::max()))
+        if (offset > fileBytes || size > fileBytes - offset || size > SIZE_MAX)
             return nullptr;
         const auto key = std::make_pair(offset, size);
         const auto found = metadata.find(key);
@@ -1117,17 +1127,73 @@ struct FileCanonicalSource {
         auto& bytes = metadata[key];
         bytes.resize(static_cast<std::size_t>(requested));
         cachedBytes += requested;
-        file.clear();
-        file.seekg(static_cast<std::streamoff>(offset));
-        if (!file) return nullptr;
-        file.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(size));
-        return file.gcount() == static_cast<std::streamsize>(size) ? bytes.data() : nullptr;
+        return ReadStreamBytes(*file, offset, bytes.data(), static_cast<std::size_t>(size), {}) ==
+                StreamReadStatus::Ok ? bytes.data() : nullptr;
     }
     bool VerifyMedia(const PackTocEntry&, std::uint32_t, const std::uint8_t*,
                      const PackFileHeader&, std::uint64_t) const noexcept {
         // The common parser must finish all metadata checks before physical
         // bytes are consumed into unpublished sample owners in Finish.
         return true;
+    }
+    // Second bounded pass over one streamed blob: proves each chunk equals the
+    // bytes checked by the sequential pass and computes the PCM revision in
+    // frame/channel order.
+    VnResult PrepareStreamRange(const PackTocEntry& media, std::vector<std::uint64_t>&& checksums,
+                                std::vector<float>& staging,
+                                PCMRegistry::PreparedPackSamples* out,
+                                detail::PackDecodeCharge& completedStaging) {
+        auto range = std::make_shared<PackMediaRange>();
+        range->source = file;
+        range->blobOffset = media.blobOffset;
+        range->sampleRate = media.sampleRate;
+        range->channelCount = media.channelCount;
+        range->frameCount = media.frameCount;
+        range->packFlags = media.flags;
+        range->loop = CanonicalPcmLoop(media);
+        range->chunkFrames = kPackMediaRangeChunkFrames;
+        range->chunkChecksums = std::move(checksums);
+        const MediaPcmContentRevisionInputV1 input{range->sampleRate, range->channelCount,
+            range->frameCount, nullptr, 1, range->loop.startFrame, range->loop.endFrame};
+        auto revision = detail::BeginMediaPcmRevisionV1(input);
+        VnResult status = VN_OK;
+        for (std::uint32_t chunk = 0; chunk < range->chunkChecksums.size(); ++chunk) {
+            if (ReadPlanarMediaChunk(*file, range->blobOffset, range->frameCount,
+                    range->channelCount, range->chunkFrames, chunk, staging.data(), {}) !=
+                    StreamReadStatus::Ok ||
+                Fnv1a64(staging.data(), static_cast<std::size_t>(range->ChunkBytes())) !=
+                    range->chunkChecksums[chunk])
+                return VN_BAD_PACK;
+            if (status != VN_OK) continue;
+            const std::uint64_t first = static_cast<std::uint64_t>(chunk) * range->chunkFrames;
+            const auto valid = std::min<std::uint64_t>(range->chunkFrames, range->frameCount - first);
+            for (std::uint64_t frame = 0; frame < valid && status == VN_OK; ++frame) {
+                for (std::uint32_t ch = 0; ch < range->channelCount; ++ch) {
+                    std::uint32_t bits = 0;
+                    if (!detail::ReadMediaPcmRevisionBitsV1(
+                            staging.data() + static_cast<std::size_t>(ch) * range->chunkFrames,
+                            frame, &bits)) {
+                        status = VN_INVALID_ARG;
+                        break;
+                    }
+                    revision.AddU32(bits);
+                }
+            }
+        }
+        if (status != VN_OK) return status;
+        range->contentRevision = detail::FinishMediaPcmRevisionV1(revision, input);
+        const PCMRegistry::PreparedPackSamples* equal = nullptr;
+        for (const auto* prior : equalCandidates) {
+            if (prior == nullptr || !prior->IsPrepared() || prior->SoundId() != media.soundId) continue;
+            const auto match = MatchMediaContent(prior->View(), prior->Range(), {}, range.get());
+            if (match == MediaContentMatch::Failed) return VN_BAD_PACK;
+            if (match == MediaContentMatch::Equal) equal = prior;
+            break;
+        }
+        if (equal == nullptr)
+            completedStaging.Add(sizeof(PackMediaRange) +
+                detail::DecodeBytes(range->chunkChecksums.size(), sizeof(std::uint64_t)));
+        return registry.PreparePackRangeSamples(media.soundId, std::move(range), out, equal);
     }
     VnResult Finish(PackCanonicalImage& image,
                    std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges) {
@@ -1142,9 +1208,26 @@ struct FileCanonicalSource {
             }
             previousEnd = range.first + range.second;
         }
+        if (metadataOnly) return VN_OK;
         detail::PackDecodeCharge scanScratch(scratch.Budget());
+        std::vector<std::uint8_t> streamed;
+        detail::DecodeResize(streamed, image.media.size(), scanScratch);
+        std::uint64_t residentBytes = fileBytes;
+        std::uint32_t maxStreamChannels = 0;
+        for (std::size_t i = 0; i < image.media.size(); ++i) {
+            streamed[i] = ResolvePackMediaDemand(demand, image, image.media[i].soundId) ==
+                PackMediaDemand::Stream;
+            if (streamed[i] != 0) {
+                residentBytes -= image.media[i].blobBytes;
+                maxStreamChannels = std::max<std::uint32_t>(maxStreamChannels, image.media[i].channelCount);
+            }
+        }
+        if (residentBytes > maxResidentBytes) return VN_PACK_RESIDENT_CAPACITY;
+        encoded.Add(residentBytes);
         std::vector<PCMRegistry::PackSampleBuilder> builders;
         detail::DecodeResize(builders, image.media.size(), scanScratch);
+        std::vector<PlanarChunkChecksumBuilder> chunkSums;
+        detail::DecodeResize(chunkSums, image.media.size(), scanScratch);
         detail::PackDecodeCharge completedStaging(scratch.Budget());
         std::vector<PCMRegistry::PreparedPackSamples> completed;
         detail::DecodeResize(completed, image.media.size(), completedStaging);
@@ -1162,30 +1245,18 @@ struct FileCanonicalSource {
         std::sort(physicalOrder.begin(), physicalOrder.end(), [&](auto a, auto b) {
             return image.media[a].blobOffset < image.media[b].blobOffset;
         });
-        // Physical input, file buffering and the builder's 1 KiB prefix
-        // workspace share the same 64 KiB budget, independent of media size.
+        // Physical input and the builder's 1 KiB prefix workspace share the
+        // same 64 KiB budget, independent of media size.
         std::array<float, kCanonicalReadWindowBytes / sizeof(float)> window;
         auto cached = metadata.begin();
         std::size_t currentMedia = 0;
-        file.clear();
-        file.seekg(0);
-        if (!file) return VN_BAD_PACK;
         for (std::uint64_t offset = 0; offset < fileBytes;) {
             const auto count = static_cast<std::size_t>(
                 std::min<std::uint64_t>(sizeof(window), fileBytes - offset));
             if (hooks != nullptr && hooks->beforeSequentialRead != nullptr)
                 hooks->beforeSequentialRead(hooks->userData, offset);
-#if defined(_MSVC_STL_VERSION)
-            // An absolute seek can reuse the CRT input buffer. SEEK_END
-            // discards it before returning to the requested position, so
-            // metadata comparisons never use bytes from an earlier read.
-            file.clear();
-            file.seekg(0, std::ios::end);
-            file.seekg(static_cast<std::streamoff>(offset));
-            if (!file) return VN_BAD_PACK;
-#endif
-            file.read(reinterpret_cast<char*>(window.data()), static_cast<std::streamsize>(count));
-            if (file.gcount() != static_cast<std::streamsize>(count)) return VN_BAD_PACK;
+            if (ReadStreamBytes(*file, offset, window.data(), count, {}) != StreamReadStatus::Ok)
+                return VN_BAD_PACK;
             const auto* bytes = reinterpret_cast<const std::uint8_t*>(window.data());
             const auto end = offset + count;
             while (cached != metadata.end()) {
@@ -1225,7 +1296,11 @@ struct FileCanonicalSource {
                 const auto step = static_cast<std::size_t>(std::min<std::uint64_t>(
                     count - cursor, media.blobOffset + media.blobBytes - position));
                 if (cursor % alignof(float) != 0 || step % sizeof(float) != 0) return VN_BAD_PACK;
-                if (position == media.blobOffset) {
+                if (position == media.blobOffset && streamed[index] != 0) {
+                    if (!chunkSums[index].Begin(media.frameCount, media.channelCount,
+                                                kPackMediaRangeChunkFrames))
+                        return VN_BAD_PACK;
+                } else if (position == media.blobOffset) {
                     VnPCMDesc shape{};
                     shape.structSize = sizeof(shape);
                     shape.sampleRate = media.sampleRate;
@@ -1236,14 +1311,15 @@ struct FileCanonicalSource {
                     const PCMRegistry::PreparedPackSamples* candidate = nullptr;
                     for (std::size_t priorOrder = 0; priorOrder < currentMedia; ++priorOrder) {
                         const auto prior = physicalOrder[priorOrder];
-                        if (image.media[prior].soundId != media.soundId) continue;
+                        if (image.media[prior].soundId != media.soundId || streamed[prior] != 0) continue;
                         if (!completed[prior].IsPrepared() && sampleStatus[prior] == VN_OK)
                             sampleStatus[prior] = builders[prior].Complete(&completed[prior]);
                         if (completed[prior].IsPrepared()) { candidate = &completed[prior]; break; }
                     }
                     if (candidate == nullptr) {
                         for (const auto* prior : equalCandidates) {
-                            if (prior != nullptr && prior->IsPrepared() && prior->SoundId() == media.soundId) {
+                            if (prior != nullptr && prior->IsPrepared() && prior->SoundId() == media.soundId &&
+                                prior->View().Valid()) {
                                 candidate = prior;
                                 break;
                             }
@@ -1260,7 +1336,9 @@ struct FileCanonicalSource {
                                                 hash, checksums[index]);
                 hash = hashes[0];
                 checksums[index] = hashes[1];
-                if (sampleStatus[index] == VN_OK) {
+                if (streamed[index] != 0) {
+                    chunkSums[index].Add(bytes + cursor, step);
+                } else if (sampleStatus[index] == VN_OK) {
                     const auto appended = builders[index].Append(window.data() + cursor / sizeof(float),
                                                                   step / sizeof(float));
                     if (appended != VN_OK && appended != VN_INVALID_ARG) {
@@ -1273,16 +1351,20 @@ struct FileCanonicalSource {
             }
             offset = end;
         }
-        if (file.get() != std::char_traits<char>::eof() || file.bad()) return VN_BAD_PACK;
+        // The artifact is exactly fileBytes; growth during validation refuses.
+        std::error_code sizeError;
+        if (std::filesystem::file_size(path, sizeError) != fileBytes || sizeError) return VN_BAD_PACK;
         for (std::size_t i = 0; i < image.media.size(); ++i) {
             if (checksums[i] != image.media[i].blobChecksum) return VN_BAD_PACK;
+            if (streamed[i] != 0 && !chunkSums[i].Complete()) return VN_BAD_PACK;
         }
         // Retain the existing independent revision chains across two final
         // owners. This never keeps another complete PCM representation.
         for (std::size_t order = 0; order < physicalOrder.size(); ++order) {
             const auto index = physicalOrder[order];
-            if (sampleStatus[index] != VN_OK || completed[index].IsPrepared()) continue;
-            if (order + 1 < physicalOrder.size()) {
+            if (streamed[index] != 0 || sampleStatus[index] != VN_OK || completed[index].IsPrepared())
+                continue;
+            if (order + 1 < physicalOrder.size() && streamed[physicalOrder[order + 1]] == 0) {
                 const auto following = physicalOrder[order + 1];
                 VnResult results[2]{};
                 if (builders[index].TryCompletePair(builders[following],
@@ -1294,6 +1376,18 @@ struct FileCanonicalSource {
                 }
             }
             sampleStatus[index] = builders[index].Complete(&completed[index]);
+        }
+        if (maxStreamChannels != 0) {
+            std::vector<float> staging;
+            detail::DecodeResize(staging,
+                static_cast<std::size_t>(kPackMediaRangeChunkFrames) * maxStreamChannels, scanScratch);
+            for (const auto index : physicalOrder) {
+                if (streamed[index] == 0) continue;
+                const auto prepared = PrepareStreamRange(image.media[index], chunkSums[index].Take(),
+                    staging, &completed[index], completedStaging);
+                if (prepared == VN_BAD_PACK) return prepared;
+                sampleStatus[index] = prepared;
+            }
         }
         for (std::size_t i = 0; i < image.media.size(); ++i) {
             if (sampleStatus[i] != VN_OK) return sampleStatus[i];
@@ -1428,6 +1522,8 @@ VnResult ParsePackCanonicalCore(Source& source, PackCanonicalImage* out,
                 payload + partitionHeader.headerBytes,
                 payload + partitionHeader.headerBytes +
                     static_cast<std::size_t>(partitionHeader.bodyBytes));
+            detail::DecodeReserve(image.soundStreaming, decodedView.playablePropertyCount, image.staging);
+            CollectSoundStreaming(decodedView, &image.soundStreaming);
             image.hasPartition = true;
             break;
         }
@@ -1765,45 +1861,24 @@ VnResult ReadPackCanonicalFile(const char* utf8Path, PCMRegistry& registry,
     std::uint64_t* byteCount, std::uint64_t* artifactHash, std::uint64_t maxBytes,
     std::span<const PCMRegistry::PreparedPackSamples* const> equalCandidates,
     bool* retryWithBytes, const PackCanonicalReadHooksForTests* hooks,
-    const detail::PackDecodeBudget& budget, detail::PackDecodeCharge* sampleStaging) try {
+    const detail::PackDecodeBudget& budget, detail::PackDecodeCharge* sampleStaging,
+    const PackMediaDemandResolver* demand, bool metadataOnly) try {
     if (budget != nullptr && sampleStaging == nullptr) return VN_INVALID_ARG;
     if (retryWithBytes != nullptr) *retryWithBytes = false;
     if (out == nullptr || samples == nullptr || byteCount == nullptr || artifactHash == nullptr)
         return VN_INVALID_ARG;
     std::filesystem::path path;
     if (!TryMakeUtf8Path(utf8Path, &path)) return VN_BAD_PACK;
-#if defined(_MSVC_STL_VERSION)
-    std::array<char, kCanonicalFileBufferBytes> fileBuffer;
-#endif
-    std::ifstream file;
-    // Metadata must be reread by the bounded pass, not served from a stale
-    // stream buffer populated while inspecting the directory.
-#if !defined(_MSVC_STL_VERSION)
-    if (file.rdbuf()->pubsetbuf(nullptr, 0) == nullptr) {
-        if (retryWithBytes != nullptr) *retryWithBytes = true;
-        return VN_BACKPRESSURE;
-    }
-#endif
-    file.open(path, std::ios::binary);
-    if (!file) return VN_BAD_PACK;
-#if defined(_MSVC_STL_VERSION)
-    // Reuse the existing larger-fill strategy before the first file read.
-    // The buffer outlives the stream and is included in the input budget.
-    if (file.rdbuf()->pubsetbuf(fileBuffer.data(), fileBuffer.size()) == nullptr) {
-        if (retryWithBytes != nullptr) *retryWithBytes = true;
-        return VN_BACKPRESSURE;
-    }
-#endif
-    file.seekg(0, std::ios::end);
-    const auto end = file.tellg();
-    if (end <= 0 || static_cast<std::uint64_t>(end) > SIZE_MAX) return VN_BAD_PACK;
-    const auto size = static_cast<std::uint64_t>(end);
-    if (size > maxBytes) return VN_PACK_RESIDENT_CAPACITY;
-    detail::PackDecodeCharge encoded(budget);
-    encoded.Add(size);
-    FileCanonicalSource source{file, size, registry, equalCandidates, samples, hooks};
+    auto file = OpenStreamByteSource(utf8Path);
+    if (file == nullptr) return VN_BAD_PACK;
+    const auto size = file->ByteCount();
+    if (size == 0 || size > SIZE_MAX) return VN_BAD_PACK;
+    FileCanonicalSource source{std::move(file), size, maxBytes, registry, equalCandidates,
+                               samples, hooks, demand, metadataOnly};
+    source.path = std::move(path);
     source.outputStaging = sampleStaging;
     source.scratch = detail::PackDecodeCharge(budget);
+    source.encoded = detail::PackDecodeCharge(budget);
     const auto result = ParsePackCanonicalCore(source, out, budget);
     if (retryWithBytes != nullptr) *retryWithBytes = source.retryWithBytes;
     if (result == VN_OK) {
@@ -1813,6 +1888,30 @@ VnResult ReadPackCanonicalFile(const char* utf8Path, PCMRegistry& registry,
     return result;
 } catch (const std::bad_alloc&) {
     return VN_PACK_RESIDENT_CAPACITY;
+}
+
+void CollectSoundStreaming(const ContainerWorldInstallViewV1& view,
+                           std::vector<PackSoundStreamingRow>* out) {
+    using PropertyId = playableproperties::PlayablePropertyIdV1;
+    constexpr auto slot = static_cast<std::size_t>(PropertyId::StreamingMode) - 1;
+    for (std::uint32_t i = 0; i < view.playablePropertyCount; ++i) {
+        const auto& row = view.playableProperties[i];
+        if (row.contentPropertyKind != playableproperties::ContentPropertyKindV1::Sound) continue;
+        const bool present = (row.payload.presentMask & (UINT64_C(1) << slot)) != 0;
+        out->push_back({row.stableId,
+            present && static_cast<std::uint32_t>(row.payload.values[slot].bits) != 0});
+    }
+    std::sort(out->begin(), out->end(),
+              [](const auto& a, const auto& b) { return a.soundId < b.soundId; });
+}
+
+bool FindSoundStreaming(const std::vector<PackSoundStreamingRow>& rows,
+                        VnSoundId soundId, bool* streamed) noexcept {
+    const auto found = std::lower_bound(rows.begin(), rows.end(), soundId,
+        [](const auto& row, VnSoundId id) { return row.soundId < id; });
+    if (found == rows.end() || found->soundId != soundId) return false;
+    if (streamed != nullptr) *streamed = found->streamed;
+    return true;
 }
 
 

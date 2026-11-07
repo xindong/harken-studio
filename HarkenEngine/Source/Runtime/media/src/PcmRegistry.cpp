@@ -472,6 +472,95 @@ VnResult PCMRegistry::PreparePackSamples(
     return result == VN_OK ? builder.Complete(out) : result;
 }
 
+PcmMediaFacts PCMRegistry::Entry::Facts() const noexcept {
+    if (view.Valid())
+        return {view.sampleRate, view.channelCount, view.frames, view.loop, view.contentRevision};
+    if (range != nullptr)
+        return {range->sampleRate, range->channelCount, range->frameCount, range->loop,
+                range->contentRevision};
+    return {};
+}
+
+VnResult PCMRegistry::PreparePackRangeSamples(VnSoundId soundId,
+    std::shared_ptr<const PackMediaRange> range, PreparedPackSamples* out,
+    const PreparedPackSamples* provenEqual) {
+    if (out == nullptr || out->IsPrepared() || range == nullptr || range->source == nullptr ||
+        range->channelCount == 0 || range->channelCount > kMaxChannels || range->frameCount == 0 ||
+        range->sampleRate == 0 ||
+        range->chunkChecksums.size() != PackMediaChunkCount(range->frameCount, range->chunkFrames))
+        return VN_INVALID_ARG;
+    if (provenEqual != nullptr) {
+        if (!provenEqual->IsPrepared() || provenEqual->m_soundId != soundId ||
+            provenEqual->m_entry->cookie != 0)
+            return VN_INVALID_ARG;
+        out->m_soundId = soundId;
+        out->m_entry = provenEqual->m_entry;
+        return VN_OK;
+    }
+    auto entry = std::make_shared<Entry>();
+    entry->view.useCount = &entry->uses;
+    entry->range = std::move(range);
+    out->m_soundId = soundId;
+    out->m_entry = std::move(entry);
+    return VN_OK;
+}
+
+VnResult PCMRegistry::PrepareResidentUpgrade(const PackReference& reference,
+                                             PreparedResidentUpgrade* out) {
+    if (out == nullptr || out->IsPrepared() || !reference.Valid()) return VN_INVALID_ARG;
+    std::shared_ptr<Entry> target;
+    for (const auto& [id, entry] : m_entries) {
+        if (entry == reference.entry_) {
+            target = entry;
+            out->m_soundId = id;
+            break;
+        }
+    }
+    if (target == nullptr) return VN_STALE_HANDLE;
+    const auto range = target->range;
+    if (target->view.Valid() || range == nullptr) return VN_INVALID_ARG;
+    const auto count = static_cast<std::size_t>(range->frameCount) * range->channelCount;
+    if (PcmRegisterFaultForTests() == PcmRegisterFault::SampleBacking) throw std::bad_alloc{};
+    detail::PcmSampleBuffer samples;
+    samples.get_deleter().format = PcmSampleFormat::Float32;
+    samples.reset(new float[count]);
+    std::vector<float> staging;
+    auto* destination = static_cast<float*>(samples.get());
+    for (std::uint32_t chunk = 0; chunk < range->chunkChecksums.size(); ++chunk) {
+        if (!ReadVerifiedPackMediaChunk(*range, chunk, staging)) return VN_BAD_PACK;
+        const std::uint64_t first = static_cast<std::uint64_t>(chunk) * range->chunkFrames;
+        const auto valid = static_cast<std::size_t>(
+            std::min<std::uint64_t>(range->chunkFrames, range->frameCount - first));
+        for (std::uint32_t ch = 0; ch < range->channelCount; ++ch)
+            std::memcpy(destination + static_cast<std::size_t>(ch) * range->frameCount + first,
+                        staging.data() + static_cast<std::size_t>(ch) * range->chunkFrames,
+                        valid * sizeof(float));
+    }
+    out->m_target = std::move(target);
+    out->m_samples = std::move(samples);
+    return VN_OK;
+}
+
+void PCMRegistry::CommitResidentUpgrade(PreparedResidentUpgrade* prepared) noexcept {
+    assert(prepared != nullptr && prepared->IsPrepared());
+    if (prepared == nullptr || !prepared->IsPrepared()) return;
+    Entry& entry = *prepared->m_target;
+    const PackMediaRange& range = *entry.range;
+    entry.ownedSamples = std::move(prepared->m_samples);
+    PCMView& view = entry.view;
+    view.channelCount = range.channelCount;
+    view.sampleRate = range.sampleRate;
+    view.frames = range.frameCount;
+    view.contentRevision = range.contentRevision;
+    view.loop = range.loop;
+    view.stride = 1;
+    view.sampleFormat = PcmSampleFormat::Float32;
+    for (std::uint32_t ch = 0; ch < range.channelCount; ++ch)
+        view.channels[ch] = static_cast<const float*>(entry.ownedSamples.get()) +
+                            static_cast<std::size_t>(ch) * range.frameCount;
+    *prepared = PreparedResidentUpgrade{};
+}
+
 VnResult PCMRegistry::BeginPackSamples(
     VnSoundId soundId, const VnPCMDesc* shape, PackSampleBuilder* out,
     PcmLoopRegion loop, const PreparedPackSamples* equalCandidate) {

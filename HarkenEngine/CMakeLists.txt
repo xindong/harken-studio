@@ -89,6 +89,7 @@ set(HARKEN_RUNTIME_SOURCES
     ${HARKEN_RUNTIME_DIR}/dsp/src/MonoStereoMixAvx.cpp
     ${HARKEN_RUNTIME_DIR}/dsp/src/Resampler.cpp
     ${HARKEN_RUNTIME_DIR}/dsp/src/ResamplerAvx2.cpp
+    ${HARKEN_RUNTIME_DIR}/media/src/PackMediaRange.cpp
     ${HARKEN_RUNTIME_DIR}/media/src/PcmRegistry.cpp
     ${HARKEN_RUNTIME_DIR}/media/src/ResolvedSlotTicket.cpp
     ${HARKEN_RUNTIME_DIR}/media/src/ResourceFacts.cpp

@@ -63,11 +63,12 @@ public:
         entries_[index].relationOrdinal = ordinal;
     }
 
+    // Samples are planar: channel 0's frames, then channel 1's, and so on.
     void AddMedia(VnObjectId id, std::vector<float> samples,
-                  harken::PcmLoopRegion loop = {}) {
+                  harken::PcmLoopRegion loop = {}, std::uint16_t channels = 1) {
         entries_.push_back({harken::kPackEntryKindMedia, id, 0,
                            std::vector<std::uint8_t>(harken::kPackMediaBytes),
-                           std::move(samples), 0, loop});
+                           std::move(samples), 0, loop, channels});
     }
 
     std::vector<std::uint8_t> Build() {
@@ -102,9 +103,9 @@ public:
                 harken::PackTocEntry media;
                 media.soundId = entries_[i].id;
                 media.sampleRate = 48000;
-                media.channelCount = 1;
+                media.channelCount = entries_[i].channels;
                 media.sampleFormat = harken::kPackSampleFormatF32Planar;
-                media.frameCount = entries_[i].samples.size();
+                media.frameCount = entries_[i].samples.size() / entries_[i].channels;
                 media.flags = entries_[i].loop.endFrame != 0 ||
                                       entries_[i].loop.startFrame != 0
                                   ? harken::kPackFlagLoopable : 0;
@@ -163,6 +164,7 @@ private:
         std::vector<float> samples;
         std::uint32_t vintage = 0;
         harken::PcmLoopRegion loop{};
+        std::uint16_t channels = 1;
     };
 
     std::uint32_t packKind_ = 0;
