@@ -72,6 +72,17 @@ namespace {
 using VariableRollbackSnapshotHook = void (*)(Engine&, EngineActionPlayScratch&, void*);
 thread_local VariableRollbackSnapshotHook variableRollbackSnapshotHookForTest = nullptr;
 thread_local void* variableRollbackSnapshotContextForTest = nullptr;
+thread_local void (*directStartPublicationHookForTest)(Engine&, EnginePlayableServiceRow&, void*) = nullptr;
+thread_local void* directStartPublicationContextForTest = nullptr;
+}
+void SetDirectStartPublicationHookForTest(
+    void (*hook)(Engine&, EnginePlayableServiceRow&, void*), void* context) noexcept {
+    directStartPublicationHookForTest = hook;
+    directStartPublicationContextForTest = context;
+}
+void ObserveDirectStartPublicationForTest(Engine& engine, EnginePlayableServiceRow& row) {
+    if (const auto hook = std::exchange(directStartPublicationHookForTest, nullptr))
+        hook(engine, row, directStartPublicationContextForTest);
 }
 void SetVariableRollbackSnapshotHookForTest(VariableRollbackSnapshotHook hook, void* context) noexcept {
     variableRollbackSnapshotHookForTest = hook;
@@ -55186,25 +55197,29 @@ DirectPendingStartResult BindAcknowledgedDirectStart(harken::Engine& engine,
         released = engine.immediateActionLane.PinArms(held->lane, engine.timelineArms) && released;
     for (std::uint32_t index = 0; index < count; ++index)
         released = readers[index].Release(engine.mixer.BlocksRendered()) && released;
+    if (released && aggregateAttempt != nullptr)
+        released = CommitInitialScheduleReadUses(engine, *aggregateAttempt);
     bool transferred = false;
     if (released && aggregateAttempt != nullptr && row.scheduleAggregate != nullptr &&
         !row.scheduleAggregate->sourceCohorts.empty()) {
         // The committed services own the final anchor before any initial Start
         // can reach audio. Near-future Sources can now use their fixed deadlines.
         aggregateAttempt->storage.phase = harken::EngineFrontierAttemptPhase::Published;
-        transferred = released = CommitInitialScheduleReadUses(engine, *aggregateAttempt) &&
-            PublishInitialScheduleFrontiers(engine, *aggregateAttempt) &&
+        transferred = released = PublishInitialScheduleFrontiers(engine, *aggregateAttempt) &&
             TransferFrontierAttempt(engine, *aggregateAttempt);
         if (released) (void)ServiceScheduleSourceCohorts(engine, row, false, nullptr);
     }
-    for (const auto& held : row.sourceStartLanes)
+    for (const auto& held : row.sourceStartLanes) {
         released = engine.immediateActionLane.Publish(held->lane) && released;
+#if defined(HARKEN_TEST_PACK_RESOURCE_OBSERVATION)
+        if (released) harken::detail::ObserveDirectStartPublicationForTest(engine, row);
+#endif
+    }
     if (transactions.Valid()) released = engine.timelinePool.ReleasePreparedTransactionPublication(&transactions) && released;
     if (!released) engine.runtimeRecreateRequired = true;
     if (released && aggregateAttempt != nullptr && !transferred) {
         aggregateAttempt->storage.phase = harken::EngineFrontierAttemptPhase::Published;
-        released = CommitInitialScheduleReadUses(engine, *aggregateAttempt) &&
-            PublishInitialScheduleFrontiers(engine, *aggregateAttempt) &&
+        released = PublishInitialScheduleFrontiers(engine, *aggregateAttempt) &&
             TransferFrontierAttempt(engine, *aggregateAttempt);
         if (!released) engine.runtimeRecreateRequired = true;
     }

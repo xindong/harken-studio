@@ -36,6 +36,9 @@
 
 namespace harken::detail {
 
+void SetDirectStartPublicationHookForTest(
+    void (*hook)(Engine&, EnginePlayableServiceRow&, void*), void* context) noexcept;
+
 struct PlayableCancellationTestAccess {
     static void ExhaustScheduleEpochs(PlayableInstanceTable& table) {
         table.m_nextScheduleEpoch = 0;
@@ -21800,8 +21803,8 @@ TEST(PlayableStart, InitialStreamAnchorKeepsSubBlockFutureStartsFixedAndContains
 }
 
 TEST(PlayableStart, RepeatedTrackMixedStreamWaitPreservesFutureClipAndCancellation) {
-    for (const auto workers : {0u, 2u}) for (const bool cancel : {false, true}) {
-        SCOPED_TRACE(::testing::Message() << "workers=" << workers << " cancel=" << cancel);
+    for (const auto workers : {0u, 2u}) for (const bool cancel : {false, true}) for (const bool boundInitial : {false, true}) {
+        SCOPED_TRACE(::testing::Message() << "workers=" << workers << " cancel=" << cancel << " bound=" << boundInitial);
         auto config = harkentest::MakeNullConfig(4, 64, 48000);
         config.renderWorkerCount = workers;
         config.maxStreams = 1;
@@ -21863,8 +21866,33 @@ TEST(PlayableStart, RepeatedTrackMixedStreamWaitPreservesFutureClipAndCancellati
         auto install = PlayableWorldInstall(image.world);
         install.trackSchedules = &image.track;
         install.trackScheduleCount = 1;
+        const harken::VariableDefinitionV1 variable{
+            harkentest::ObjectId(9141), harken::VariableKindV1::Smooth, 0.0f, 1.0f, 1.0f};
+        if (boundInitial) {
+            install.variables = &variable;
+            install.variableCount = 1;
+            install.identity.capabilityMask |= harken::kWorldCapabilityVariableDefinitions;
+        }
         install.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(install);
         ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, install).status);
+        if (boundInitial) {
+            VnBindingDesc binding{};
+            binding.structSize = sizeof(binding);
+            binding.variableId = variable.variableId;
+            binding.targetScopeKind = VN_TARGET_SCOPE_VOICE;
+            binding.targetId = harken::kTargetVoiceVolume;
+            binding.curve.structSize = sizeof(binding.curve);
+            binding.curve.pointCount = 2;
+            binding.curve.points[0] = {0.0f, 0.0f};
+            binding.curve.points[1] = {1.0f, -6.0206f};
+            binding.curve.handles[0] = {0.0f, 0.0f, 1.0f, -6.0206f};
+            ASSERT_EQ(VN_OK, Vn_RegisterBinding(harkentest::ObjectId(9142), &binding));
+            VnBindingAttachDesc attach{};
+            attach.structSize = sizeof(attach);
+            attach.scopeKind = VN_TARGET_SCOPE_VOICE;
+            attach.objectId = kSecondSound;
+            ASSERT_EQ(VN_OK, Vn_AttachBinding(harkentest::ObjectId(9142), &attach));
+        }
         const auto started = harken::StartPlayable(engine, request);
         ASSERT_EQ(harken::PlayableStartStatus::Accepted, started.status);
         const auto root = std::find_if(engine.playableServices.begin(), engine.playableServices.end(),
@@ -21882,6 +21910,26 @@ TEST(PlayableStart, RepeatedTrackMixedStreamWaitPreservesFutureClipAndCancellati
         if (cancel) ASSERT_EQ(harken::PlayableControlStatus::Ok, harken::StopPlayable(engine, started.instance, 0));
         engine.streams.SetThrottled(false);
         engine.streams.SyncServe();
+        struct PublicationObservation { unsigned calls = 0; unsigned uses = 0; } publication;
+        struct HookGuard {
+            ~HookGuard() { harken::detail::SetDirectStartPublicationHookForTest(nullptr, nullptr); }
+        } hookGuard;
+        if (boundInitial && !cancel) harken::detail::SetDirectStartPublicationHookForTest([](
+            harken::Engine& observed, harken::EnginePlayableServiceRow& published, void* opaque) {
+            auto& capture = *static_cast<PublicationObservation*>(opaque);
+            ++capture.calls;
+            ASSERT_NE(nullptr, published.scheduleAggregate);
+            EXPECT_TRUE(published.scheduleAggregate->sourceCohorts.empty());
+            for (const auto& identity : observed.timelineVoiceInstallIdentities) {
+                if (!identity.initialVariableReadUse.Valid() || identity.onsetFrame != published.startFrame) continue;
+                harken::TimelineArmObservation arm{};
+                ASSERT_TRUE(observed.timelineArms.Observe(identity.startArm, &arm));
+                EXPECT_EQ(harken::ArmState::Published, arm.state);
+                EXPECT_EQ(harken::VariableReadCutStatus::Applied, observed.variables.TimelineReadUseStartStatus(
+                    identity.initialVariableReadUse, identity.renderHandle));
+                ++capture.uses;
+            }
+        }, &publication);
         std::array<std::uint64_t, 2> first{UINT64_MAX, UINT64_MAX};
         std::array<std::vector<std::uint64_t>, 2> heardFrames;
         std::array<std::uint32_t, 2> audible{};
@@ -21898,9 +21946,11 @@ TEST(PlayableStart, RepeatedTrackMixedStreamWaitPreservesFutureClipAndCancellati
                     if (first[channel] == UINT64_MAX) first[channel] = at + frame;
                     heardFrames[channel].push_back(at + frame);
                     ++audible[channel];
-                    EXPECT_NEAR(channel == 0 ? 0.25f : 0.5f, sample, 0.00001f);
+                    EXPECT_NEAR(channel == 0 || boundInitial ? 0.25f : 0.5f, sample, 0.00001f);
                 }
         }
+        EXPECT_EQ(boundInitial && !cancel ? 1u : 0u, publication.calls);
+        EXPECT_EQ(boundInitial && !cancel ? 1u : 0u, publication.uses);
         if (cancel) {
             EXPECT_EQ(UINT64_MAX, first[0]);
             EXPECT_EQ(UINT64_MAX, first[1]);
