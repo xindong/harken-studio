@@ -21333,6 +21333,9 @@ TEST(PlayableStart, QueueInitialStreamWaitPreservesSignalOnlyResidentSuccessorOr
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
         auto& engine = *session.Engine();
+        // PCM checks require completed quanta, independent of host worker scheduling.
+        harken::detail::VoicePoolReleaseTestAccess::SetWorkerDeadline(
+            engine.voices, harken::CpuClockTicksPerSecond());
         const auto voicesBefore = engine.voices.AvailableSlotCount();
         const std::vector<float> resident(256, -0.5f);
         const auto pcm = harkentest::MonoDesc(resident, 48000);
@@ -21417,6 +21420,9 @@ TEST(PlayableStart, NativeInitialStreamWaitRetainsSourceAndCancelsBeforeReady) {
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
         auto& engine = *session.Engine();
+        // PCM checks require completed quanta, independent of host worker scheduling.
+        harken::detail::VoicePoolReleaseTestAccess::SetWorkerDeadline(
+            engine.voices, harken::CpuClockTicksPerSecond());
         const auto voicesBefore = engine.voices.AvailableSlotCount();
         harkentest::StreamSpec spec;
         spec.soundId = kSound;
@@ -21511,6 +21517,9 @@ TEST(PlayableStart, QueueTrackInitialStreamWaitHoldsResidentSiblingAndReclaims) 
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
         auto& engine = *session.Engine();
+        // PCM checks require completed quanta, independent of host worker scheduling.
+        harken::detail::VoicePoolReleaseTestAccess::SetWorkerDeadline(
+            engine.voices, harken::CpuClockTicksPerSecond());
         const auto voicesBefore = engine.voices.AvailableSlotCount();
         const std::vector<float> resident(512, -0.5f);
         const auto pcm = harkentest::MonoDesc(resident, 48000);
@@ -21628,6 +21637,9 @@ static void CheckNativeTrackInitialStreamWaitPreservesSubBlockFutureCohort(bool 
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
         auto& engine = *session.Engine();
+        // PCM checks require completed quanta, independent of host worker scheduling.
+        harken::detail::VoicePoolReleaseTestAccess::SetWorkerDeadline(
+            engine.voices, harken::CpuClockTicksPerSecond());
         harken::ScheduledTransactionPool::Config pool{};
         const auto& resolved = engine.config;
         pool.quantumFrames = resolved.blockFrames;
@@ -21960,6 +21972,9 @@ TEST(PlayableStart, DirectOrdinaryStreamRetainsSelectedInitialSourceWhileWaiting
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
         auto& engine = *session.Engine();
+        // PCM checks require completed quanta, independent of host worker scheduling.
+        harken::detail::VoicePoolReleaseTestAccess::SetWorkerDeadline(
+            engine.voices, harken::CpuClockTicksPerSecond());
         const auto voicesBefore = engine.voices.AvailableSlotCount();
         harkentest::StreamSpec spec;
         spec.soundId = kSound;
@@ -22046,6 +22061,9 @@ TEST(PlayableStart, DirectTrackMixedStreamWaitsStartsTogetherAndCancelsBeforeRea
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
         auto& engine = *session.Engine();
+        // PCM checks require completed quanta, independent of host worker scheduling.
+        harken::detail::VoicePoolReleaseTestAccess::SetWorkerDeadline(
+            engine.voices, harken::CpuClockTicksPerSecond());
         const auto armsBefore = engine.timelineArms.LiveCount();
         const auto voicesBefore = engine.voices.AvailableSlotCount();
         std::vector<float> resident(1024, 0.0f);
@@ -22195,6 +22213,9 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
         auto& engine = *session.Engine();
+        // PCM checks require completed quanta, independent of host worker scheduling.
+        harken::detail::VoicePoolReleaseTestAccess::SetWorkerDeadline(
+            engine.voices, harken::CpuClockTicksPerSecond());
         if (nativeChild) {
             harken::ScheduledTransactionPool::Config pool{};
             const auto& resolved = engine.config;
@@ -23157,6 +23178,9 @@ TEST(PlayableStart, FutureStreamCohortWaitsForIndependentProvidersWithinPreparat
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
         auto& engine = *session.Engine();
+        // PCM checks require completed quanta, independent of host worker scheduling.
+        harken::detail::VoicePoolReleaseTestAccess::SetWorkerDeadline(
+            engine.voices, harken::CpuClockTicksPerSecond());
         const auto voicesBefore = engine.voices.AvailableSlotCount();
         const std::array<VnObjectId, 2> sounds{kSound, kSecondSound};
         std::array<harken::StreamManager::StreamFacts, 2> original{};
@@ -23313,6 +23337,9 @@ TEST(PlayableStart, InitialStreamAnchorKeepsSubBlockFutureStartsFixedAndContains
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
         auto& engine = *session.Engine();
+        // PCM checks require completed quanta, independent of host worker scheduling.
+        harken::detail::VoicePoolReleaseTestAccess::SetWorkerDeadline(
+            engine.voices, harken::CpuClockTicksPerSecond());
         harken::ScheduledTransactionPool::Config pool{};
         const auto& resolved = engine.config;
         pool.quantumFrames = resolved.blockFrames;
@@ -23838,6 +23865,9 @@ TEST(PlayableStart, CroppedEmptyInitialStreamCompletesAndCancelsWithOrWithoutRes
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
         auto& engine = *session.Engine();
+        // PCM checks require completed quanta, independent of host worker scheduling.
+        harken::detail::VoicePoolReleaseTestAccess::SetWorkerDeadline(
+            engine.voices, harken::CpuClockTicksPerSecond());
         const auto voicesBefore = engine.voices.AvailableSlotCount();
         std::vector<float> resident(1024, 0.0f), streamed(16, 0.5f);
         for (std::size_t frame = 0; frame < 512; ++frame) resident[frame * 2] = 0.25f;
@@ -23950,6 +23980,9 @@ TEST(PlayableStart, RepeatedTrackMixedStreamWaitPreservesFutureClipAndCancellati
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
         auto& engine = *session.Engine();
+        // PCM checks require completed quanta, independent of host worker scheduling.
+        harken::detail::VoicePoolReleaseTestAccess::SetWorkerDeadline(
+            engine.voices, harken::CpuClockTicksPerSecond());
         const auto armsBefore = engine.timelineArms.LiveCount();
         const auto voicesBefore = engine.voices.AvailableSlotCount();
         std::vector<float> resident(1024, 0.0f);
