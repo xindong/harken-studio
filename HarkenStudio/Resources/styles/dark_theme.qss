@@ -61,6 +61,11 @@ QFrame#timelineHeaderResizeBar {
     border-right: @borderWidth@px solid @borderPrimary@;
 }
 
+QFrame#timelineHeaderRulerResizeBar {
+    background: transparent;
+    border: none;
+}
+
 QFrame#timelineLaneResizeBar {
     background: transparent;
     border: none;
@@ -477,7 +482,7 @@ QToolButton[explorerRole="sectionToggle"] {
 }
 
 QToolButton[explorerRole="sectionToggle"]:hover {
-    background-color: @bgHover@;
+    background-color: @bgTertiary@;
 }
 
 QToolButton[explorerRole="sectionToggle"]:disabled {

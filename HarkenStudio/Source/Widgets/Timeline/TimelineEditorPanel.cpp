@@ -407,6 +407,13 @@ TimelineEditorPanel::TimelineEditorPanel(QWidget* parent,
     laneHeaderResizeBar_->setCursor(Qt::SplitHCursor);
     laneHeaderResizeBar_->setFocusPolicy(Qt::ClickFocus);
     laneHeaderResizeBar_->setAccessibleName(tr("Resize track headers"));
+    laneHeaderRulerResizeBar_ = new QFrame(timelinePage_);
+    laneHeaderRulerResizeBar_->setObjectName(QStringLiteral("timelineHeaderRulerResizeBar"));
+    laneHeaderRulerResizeBar_->setCursor(Qt::SplitHCursor);
+    laneHeaderRulerResizeBar_->setFocusPolicy(Qt::ClickFocus);
+    laneHeaderRulerResizeBar_->setAccessibleName(tr("Resize track headers"));
+    laneHeaderRulerResizeBar_->setMouseTracking(true);
+    laneHeaderRulerResizeBar_->installEventFilter(this);
     stack_->addWidget(timelinePage_);
 
     connect(themeManager_, &ThemeManager::themeChanged, this, [this] {
@@ -624,6 +631,9 @@ void TimelineEditorPanel::applyLaneHeaderWidth()
         laneHeaderResizeBar_->setGeometry(contents.left() + width - gap,
             resizeTop, gap, contents.bottom() - resizeTop + 1);
         laneHeaderResizeBar_->raise();
+        laneHeaderRulerResizeBar_->setGeometry(contents.left() + width - gap,
+            ruler_->y(), gap, ruler_->height());
+        laneHeaderRulerResizeBar_->raise();
     }
     refreshHorizontalRange();
     refreshTimelinePaint();
@@ -710,6 +720,7 @@ void TimelineEditorPanel::applyPresentation()
     const int margin = themeManager_->metrics().spacingSmall;
     layout()->setContentsMargins(margin, margin, margin, margin);
     laneHeaderResizeBar_->setVisible(viewKind_ == ViewKind::Segment);
+    laneHeaderRulerResizeBar_->setVisible(viewKind_ == ViewKind::Segment);
     verticalTools_->setVisible(viewKind_ == ViewKind::Segment);
     scrollCorner_->setVisible(viewKind_ == ViewKind::Segment);
     scrollArea_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -3044,12 +3055,32 @@ bool TimelineEditorPanel::eventFilter(QObject* watched, QEvent* event)
         updateLaneResizeBars();
         canvas_->update();
     }
-    if (watched == laneHeaderResizeBar_) {
+    if (watched == laneHeaderRulerResizeBar_ && dynamic_cast<QMouseEvent*>(event)) {
+        const auto* mouse = static_cast<QMouseEvent*>(event);
+        const QPoint global = mouse->globalPosition().toPoint();
+        const bool onCursorHandle = ruler_->cursorHandleRect().contains(ruler_->mapFromGlobal(global));
+        if (event->type() == QEvent::MouseButtonPress && !headerResizeDrag_)
+            forwardingRulerPress_ = onCursorHandle;
+        if (forwardingRulerPress_) {
+            QMouseEvent mapped(mouse->type(), QPointF(ruler_->mapFromGlobal(global)), mouse->globalPosition(),
+                               mouse->button(), mouse->buttons(), mouse->modifiers());
+            QCoreApplication::sendEvent(ruler_, &mapped);
+            if (event->type() == QEvent::MouseButtonRelease)
+                forwardingRulerPress_ = false;
+            return true;
+        }
+        if (event->type() == QEvent::MouseMove && !headerResizeDrag_) {
+            laneHeaderRulerResizeBar_->setCursor(onCursorHandle ? ruler_->cursor() : QCursor(Qt::SplitHCursor));
+            setLaneHeaderResizeHighlighted(!onCursorHandle);
+        }
+    }
+    if (watched == laneHeaderResizeBar_ || watched == laneHeaderRulerResizeBar_) {
+        auto* bar = static_cast<QWidget*>(watched);
         switch (event->type()) {
         case QEvent::MouseButtonPress: {
             const auto* mouse = static_cast<QMouseEvent*>(event);
             if (mouse->button() == Qt::LeftButton) {
-                laneHeaderResizeBar_->setFocus(Qt::MouseFocusReason);
+                bar->setFocus(Qt::MouseFocusReason);
                 headerResizeDrag_ = HeaderResizeDrag{mouse->globalPosition().toPoint().x(), laneHeaderWidth()};
                 setLaneHeaderResizeHighlighted(true);
                 event->accept();
@@ -3067,8 +3098,8 @@ bool TimelineEditorPanel::eventFilter(QObject* watched, QEvent* event)
                     + mouse->globalPosition().toPoint().x() - headerResizeDrag_->pointerX);
                 if (released) {
                     headerResizeDrag_.reset();
-                    setLaneHeaderResizeHighlighted(laneHeaderResizeBar_->rect().contains(
-                        laneHeaderResizeBar_->mapFromGlobal(mouse->globalPosition().toPoint())));
+                    setLaneHeaderResizeHighlighted(bar->rect().contains(
+                        bar->mapFromGlobal(mouse->globalPosition().toPoint())));
                 }
                 event->accept();
                 return true;
@@ -3080,8 +3111,8 @@ bool TimelineEditorPanel::eventFilter(QObject* watched, QEvent* event)
             if (mouse->button() == Qt::LeftButton) {
                 headerResizeDrag_.reset();
                 resetLaneHeaderWidth();
-                setLaneHeaderResizeHighlighted(laneHeaderResizeBar_->rect().contains(
-                    laneHeaderResizeBar_->mapFromGlobal(mouse->globalPosition().toPoint())));
+                setLaneHeaderResizeHighlighted(bar->rect().contains(
+                    bar->mapFromGlobal(mouse->globalPosition().toPoint())));
                 event->accept();
                 return true;
             }

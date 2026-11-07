@@ -399,6 +399,8 @@ private:
     QLabel* stateLabel_ = nullptr;
     QFrame* timelinePage_ = nullptr;
     QFrame* laneHeaderResizeBar_ = nullptr;
+    QFrame* laneHeaderRulerResizeBar_ = nullptr;
+    bool forwardingRulerPress_ = false;
     bool laneHeaderResizeHighlighted_ = false;
     QWidget* toolbar_ = nullptr;
     QWidget* timeControls_ = nullptr;

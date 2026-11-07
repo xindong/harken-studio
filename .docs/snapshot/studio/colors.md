@@ -55,7 +55,7 @@
 | `sectionHeaderHeight` | 26 = 行高 + 2 | Explorer 的 Assets / Sources、Inspector 与其他折叠分节（各层级一致）、Inspector 分类 Tab、GroupBox 标题区 |
 | `indent` | 24 = 图标 + 控件间距 | 折叠分节内容的缩进；分节标题左侧不缩进，chevron 贴左，字段名与分节标题文字左对齐，嵌套分节逐层增加一列 |
 
-Inspector 与设置表单按“块”排列：字段行高等于字段高，行与行之间、分节内容的上下边距都是控件间距，因此字段行与表格等块状内容离分节标题的距离一致，行距与树和表格的行高同为 24。蓝图节点行、标题栏窗口按钮宽、Fader 最小高度和 Timeline 标尺高度不随字段高收缩，分别取行高或较大控件高度推导。重命名编辑框高度为字段高并在行内居中，横向起点退回边框与 `QLineEdit` 固有文字边距，编辑时文字位置不变。
+Explorer 的 Assets / Sources 与 Inspector 分节共用分区标题职责，悬停底色为 `background.tertiary`，鼠标为手形。Inspector 与设置表单按“块”排列：字段行高等于字段高，行与行之间、分节内容的上下边距都是控件间距，因此字段行与表格等块状内容离分节标题的距离一致，行距与树和表格的行高同为 24。蓝图节点行、标题栏窗口按钮宽、Fader 最小高度和 Timeline 标尺高度不随字段高收缩，分别取行高或较大控件高度推导。重命名编辑框高度为字段高并在行内居中，横向起点退回边框与 `QLineEdit` 固有文字边距，编辑时文字位置不变。
 
 `ThemeLayout::Space` 只剩 `None / Tight / Control / Section / Panel`，原 Medium / Large / XLarge 不再对业务开放；QSS 也不再提供 `@spacing*@`，改用 `@panelPadding@`、`@sectionGap@`、`@controlGap@`、`@tightGap@`、`@rowInset@`、`@fieldHeight@`、`@sectionHeaderHeight@` 与控件文字左右留白 `@textPadding@`。工具条类区域统一为左右面板内边距、上下紧凑间距；主工具栏高度为行高加上下行内留白（32），内容容器固定为一行高度，按钮上下各 4px 对称，HarkenStyle 不再给 `QToolBar` 追加条目边距和框架宽度。蓝图画布节点内部行保持世界坐标中的原有密度，不套用面板行高。
 
@@ -335,7 +335,7 @@ Studio Default 已保存的 `text.muted` 覆盖迁入同一色卡的 `text.secon
 
 2026-11-07 在 Windows、Qt 6.11.0、`build-nc` RelWithDebInfo 下，`harken_editor` 与 `harken_editor_tests` 构建通过；主题、样式、颜色、设置、表格、Timeline、Meter、曲线、蓝图、Inspector、缩放与字体相关的 231 项测试中 230 项通过、1 项符号链接用例跳过。完整编辑器测试 687 项中 684 项通过、1 项跳过，2 项失败：`EditorDockLayoutTest.ColorRefreshPreservesBlueprintEditorsAndStructureRefreshReplacesThem` 单独运行通过，属于前文记录的跨套件隔离问题；`EditorProjectPackExporterManifest.PartialPublicationCombinesScheduleAndEffectCapacity` 在运行时 `ActivateCanonicalMembersV1` 返回 -415，位于 Pack 导出与引擎激活路径，本次未改动相关代码。QSS 归属检查及其 6 项脚本测试通过，`--self-test` 返回 `ok: true`。2026-11-08 的布局职责收束使用离屏真实窗口探针，在 Dark / Light 下截取主窗口、Explorer、Inspector、Preferences、Project Settings、Log、Information、Blueprint 与 Timeline（Segment / Track），并导出各面板边距、控件高度与行高；与 main 基线对照确认 Explorer 搜索栏上边距、分区标题、行高与表格行高的统一，以及 Inspector Playback 分节在离屏截图中需等待展开动画结束才显示内容（main 同样存在）。
 
-Timeline 与 Source Editor 的时间轴刻度共用 `timeAxisTickColor`：主刻度使用 `border.tick` 完整 Alpha、长度 12，次刻度源 Alpha 乘 50%、长度 4；Timeline 标尺不再借用画布网格色。Clip 取消顶部 1px 留白，只保留底部给轨道分隔线的 1px（`clipBottomInset`）。Segment 视图的轨道头列与时间轴之间留出与面板内分割条相同宽度（`control.splitterExtent`，4）的缝隙，底色 `@window@`，两侧各一条首要边界线，与面板之间的缝隙观感一致；宽度调节条只接收标尺下方缝隙的鼠标，悬停与拖动时整条缝隙（含标尺段，由标尺在 cursor 手柄之前绘制）一起显示强调色，标尺内 cursor、entry marker 的交互不受影响。蓝图节点紧凑 Slider 恢复 `cb8e8359` 之前的槽高 6、滑块宽 5。
+Timeline 与 Source Editor 的时间轴刻度共用 `timeAxisTickColor`：主刻度使用 `border.tick` 完整 Alpha、长度 12，次刻度源 Alpha 乘 50%、长度 4；Timeline 标尺不再借用画布网格色。Clip 取消顶部 1px 留白，只保留底部给轨道分隔线的 1px（`clipBottomInset`）。Segment 视图的轨道头列与时间轴之间留出与面板内分割条相同宽度（`control.splitterExtent`，4）的缝隙，底色 `@window@`，两侧各一条首要边界线，与面板之间的缝隙观感一致；整条缝隙都可拖动调节：轨道区由调节条绘制并接收鼠标；标尺段由标尺在 cursor 手柄之前绘制缝隙，上方覆盖透明命中层，落在 cursor 手柄上的按下与拖动原样交给标尺，其余位置进入宽度调节；悬停与拖动时整条缝隙显示强调色。蓝图节点紧凑 Slider 恢复 `cb8e8359` 之前的槽高 6、滑块宽 5。
 
 ## Studio Default 的领域绑定
 

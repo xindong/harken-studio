@@ -69,6 +69,7 @@ ExplorerSection::ExplorerSection(const QString& title, QWidget* parent)
     toggle_->setAccessibleName(title);
     toggle_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     toggle_->setCheckable(true);
+    toggle_->setCursor(Qt::PointingHandCursor);
     toggle_->setChecked(true);
     toggle_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     headerLayout->addWidget(toggle_, 1);
