@@ -123,9 +123,13 @@ AIMessageWidget::AIMessageWidget(const QString& text, int fontSize, QWidget* par
     setObjectName("AIMessageWidget");
     setupUI(text, fontSize);
     connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged, this,
-        [this, text] {
-            const auto color = ThemeManager::instance().colors().borderSecondary;
-            const auto html = messageHtml(text, color);
+        [this, text, snapshot = ThemeManager::instance().snapshot()](ThemeSnapshotPtr next) mutable {
+            if (snapshot->ui.typography == next->ui.typography
+                && snapshot->uiScale == next->uiScale
+                && snapshot->ui.colors.borderSecondary == next->ui.colors.borderSecondary)
+                return;
+            snapshot = std::move(next);
+            const auto html = messageHtml(text, snapshot->ui.colors.borderSecondary);
             if (contentLabel_->text() == html) return;
             const int selectionStart = contentLabel_->selectionStart();
             const int selectionLength = contentLabel_->selectedText().size();
