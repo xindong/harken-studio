@@ -38,7 +38,7 @@
 | 间距 | `spacing.compact/xSmall/small/medium/large/xLarge` | 2 / 4 / 8 / 12 / 16 / 24 |
 | 圆角 | `radius.compact/small/medium/large` | 2 / 4 / 6 / 8 |
 | 线宽 | `border.width`、`border.accentWidth` | 1 / 2 |
-| 控件高度 | `control.compactHeight`、`control.height`、`control.largeHeight` | 20 / 24 / 32 |
+| 控件高度 | `control.compactHeight`、`control.height`、`control.largeHeight` | 20 / 20 / 32 |
 | 图标 | `icon.small`、`icon.regular`、`icon.large` | 16 / 20 / 24 |
 
 2026-11-08 在档位之上增加布局职责层 `ThemeMetrics::layout`，业务和 QSS 只能按职责取值，不能直接挑选间距档位：
@@ -49,11 +49,13 @@
 | `sectionGap` | 8 | 同一面板内区块之间 |
 | `controlGap` | 4 | 同一行内控件之间、控件内部组成部分之间、表单行之间 |
 | `tightGap` | 2 | 图标组、工具按钮组等紧凑排列 |
-| `fieldHeight` | 24（控件高度档位） | 下拉框、输入框、数值框、按钮等基本控件一律等高 |
+| `fieldHeight` | 20（控件高度档位） | 下拉框、输入框、数值框、按钮、行内重命名编辑框等基本控件一律等高；字段内的下拉箭头使用小图标 |
 | `rowInset` | 2 | 行内控件上下留白 |
-| `rowHeight` | 28 = 字段高 + 上下留白 | 树、列表、表格、表头、Inspector 字段、设置表单的行；Inspector 行间距为 0 |
-| `sectionHeaderHeight` | 30 = 行高 + 2 | Explorer 的 Assets / Sources、Inspector 与其他折叠分节（各层级一致）、Inspector 分类 Tab、GroupBox 标题区 |
+| `rowHeight` | 24 = 字段高 + 上下留白 | 树、列表、表格、表头的行；字体较高时取字体高加上下留白 |
+| `sectionHeaderHeight` | 26 = 行高 + 2 | Explorer 的 Assets / Sources、Inspector 与其他折叠分节（各层级一致）、Inspector 分类 Tab、GroupBox 标题区 |
 | `indent` | 24 = 图标 + 控件间距 | 折叠分节内容的缩进；分节标题左侧不缩进，chevron 贴左，字段名与分节标题文字左对齐，嵌套分节逐层增加一列 |
+
+Inspector 与设置表单按“块”排列：字段行高等于字段高，行与行之间、分节内容的上下边距都是控件间距，因此字段行与表格等块状内容离分节标题的距离一致，行距与树和表格的行高同为 24。蓝图节点行、标题栏窗口按钮宽、Fader 最小高度和 Timeline 标尺高度不随字段高收缩，分别取行高或较大控件高度推导。重命名编辑框高度为字段高并在行内居中，横向起点退回边框与 `QLineEdit` 固有文字边距，编辑时文字位置不变。
 
 `ThemeLayout::Space` 只剩 `None / Tight / Control / Section / Panel`，原 Medium / Large / XLarge 不再对业务开放；QSS 也不再提供 `@spacing*@`，改用 `@panelPadding@`、`@sectionGap@`、`@controlGap@`、`@tightGap@`、`@rowInset@`、`@fieldHeight@`、`@sectionHeaderHeight@` 与控件文字左右留白 `@textPadding@`。工具条类区域统一为左右面板内边距、上下紧凑间距；主工具栏高度为行高加上下行内留白（32），内容容器固定为一行高度，按钮上下各 4px 对称，HarkenStyle 不再给 `QToolBar` 追加条目边距和框架宽度。蓝图画布节点内部行保持世界坐标中的原有密度，不套用面板行高。
 

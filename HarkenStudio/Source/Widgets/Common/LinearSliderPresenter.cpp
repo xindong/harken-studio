@@ -40,13 +40,6 @@ LinearSliderPresenter::LinearSliderPresenter(ParameterBinding* binding,
 {
     auto& theme = *themeManager;
     auto* layout = new QHBoxLayout(this);
-    bool tableCell = false;
-    for (const QWidget* scope = parent; scope; scope = scope->parentWidget()) {
-        if (qobject_cast<const TableCell*>(scope)) {
-            tableCell = true;
-            break;
-        }
-    }
 
     label_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     layout->addWidget(label_);
@@ -84,9 +77,8 @@ LinearSliderPresenter::LinearSliderPresenter(ParameterBinding* binding,
     syncMetadata();
     syncValue(binding_->value());
     applyTheme();
-    theme.bindMetrics(this, [this, layout, tableCell](const ThemeMetrics& metrics) {
-        const int padding = tableCell ? 0 : metrics.layout.rowInset;
-        layout->setContentsMargins(0, padding, 0, padding);
+    theme.bindMetrics(this, [this, layout](const ThemeMetrics& metrics) {
+        layout->setContentsMargins(0, 0, 0, 0);
         layout->setSpacing(metrics.layout.controlGap);
         label_->setMinimumWidth(metrics.parameter.labelMinimumWidth);
         if (valueControl_ && automaticValueWidth_)

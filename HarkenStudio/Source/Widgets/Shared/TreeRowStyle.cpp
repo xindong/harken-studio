@@ -4,6 +4,7 @@
 #include "RenameClickHandler.h"
 
 #include "Core/ProjectManager.h"
+#include "Core/QtControlSkin.h"
 #include "Core/ThemeManager.h"
 #include "Core/ThemeAssetCatalog.h"
 #include "Widgets/Common/LayoutDebugTint.h"
@@ -19,11 +20,13 @@
 #include <QTreeWidgetItem>
 #include <QTreeWidget>
 
+#include <algorithm>
+
 namespace VNX::TreeRowStyle {
 
 namespace {
 
-int iconTextGap() { return ThemeManager::instance().metrics().spacingXSmall; }
+int iconTextGap() { return ThemeManager::instance().metrics().layout.controlGap; }
 
 // Painter-side tint for delegate-drawn tree rows, where the stylesheet-based
 // appliers never reach.
@@ -204,6 +207,14 @@ void ItemRowDelegate::setRenameEditorFactory(RenameEditorFactory factory)
     }, this);
 }
 
+QSize ItemRowDelegate::sizeHint(const QStyleOptionViewItem& option, const QModelIndex& index) const
+{
+    QSize size = QStyledItemDelegate::sizeHint(option, index);
+    const auto& layout = ThemeManager::instance().metrics().layout;
+    size.setHeight(std::max(layout.rowHeight, option.fontMetrics.height() + layout.rowInset * 2));
+    return size;
+}
+
 QWidget* ItemRowDelegate::createEditor(QWidget* parent, const QStyleOptionViewItem& option,
                                       const QModelIndex& index) const
 {
@@ -241,7 +252,12 @@ void ItemRowDelegate::updateEditorGeometry(QWidget* editor, const QStyleOptionVi
     }
     QStyleOptionViewItem opt = option;
     initStyleOption(&opt, index);
-    editor->setGeometry(opt.rect.adjusted(opt.decorationSize.width() + iconTextGap(), 0, 0, 0));
+    const auto& metrics = ThemeManager::instance().metrics();
+    const int height = QtControlSkin::current().fieldHeight();
+    const int textLeft = opt.rect.left() + opt.decorationSize.width() + iconTextGap();
+    const int left = textLeft - metrics.borderWidth - QtControlSkin::LineEditTextMargin;
+    editor->setGeometry(left, opt.rect.top() + (opt.rect.height() - height) / 2,
+                        opt.rect.right() + 1 - left, height);
 }
 
 bool ItemRowDelegate::eventFilter(QObject* watched, QEvent* event)

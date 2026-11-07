@@ -91,7 +91,7 @@ InspectorFormRow makeInspectorFormRow(QWidget* parent, const QString& key,
     const int slotCount = inspectorFormSlotCount(parent, occupiedSlots);
     ThemeManager::instance().bindMetrics(result.row, [=](const ThemeMetrics& metrics) {
         const auto& inspector = metrics.inspector;
-        result.row->setMinimumHeight(metrics.layout.rowHeight);
+        result.row->setMinimumHeight(metrics.layout.fieldHeight);
         result.label->setContentsMargins(0, 0, inspector.columnPadding, 0);
         valueLayout->setContentsMargins(inspector.columnPadding, 0, inspector.columnPadding, 0);
         layout->setStretchFactor(result.label, metrics.form.labelColumnShare);

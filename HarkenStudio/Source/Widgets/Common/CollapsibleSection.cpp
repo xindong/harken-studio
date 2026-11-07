@@ -233,8 +233,8 @@ void CollapsibleSection::applyTheme()
 
     if (innerContent_ && innerContent_->layout())
     {
-        innerContent_->layout()->setContentsMargins(layout.indent, layout.rowInset,
-                                                    0, layout.rowInset);
+        innerContent_->layout()->setContentsMargins(layout.indent, layout.controlGap,
+                                                    0, layout.controlGap);
     }
 
     const int chevronExtent = theme.metrics().iconExtent;

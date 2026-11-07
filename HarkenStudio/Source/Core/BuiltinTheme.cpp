@@ -70,7 +70,7 @@ ThemeSnapshot createBuiltinDarkTheme()
     metrics.borderWidth = 1;
     metrics.accentBorderWidth = 2;
     metrics.radiusCompact = 2;
-    metrics.controlHeight = 24;
+    metrics.controlHeight = 20;
     metrics.iconExtent = 20;
     metrics.control.compactHeight = 20;
     metrics.control.largeHeight = 32;

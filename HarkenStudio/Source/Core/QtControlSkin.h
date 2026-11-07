@@ -25,6 +25,8 @@ enum class PopupIconColumn { Reserved, Automatic };
 class QtControlSkin
 {
 public:
+    static constexpr int LineEditTextMargin = 2;
+
     struct TableHandleLayout {
         QRect handle;
         QRect content;

@@ -2243,3 +2243,7 @@ QDialog QLabel {
 QDialogButtonBox QPushButton {
     min-width: @buttonMinimumWidth@px;
 }
+
+QLineEdit#inlineRenameEdit {
+    padding: 0px;
+}

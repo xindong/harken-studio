@@ -81,7 +81,9 @@ QSize TableItemDelegate::sizeHint(const QStyleOptionViewItem& option, const QMod
         size.setHeight(TableGroupHeader::preferredHeight(themeManager_));
         return size;
     }
-    size.setHeight(std::max(themeManager_->metrics().table.rowHeight, size.height()));
+    const auto& layout = themeManager_->metrics().layout;
+    size.setHeight(std::max(themeManager_->metrics().table.rowHeight,
+                            option.fontMetrics.height() + layout.rowInset * 2));
     return size;
 }
 

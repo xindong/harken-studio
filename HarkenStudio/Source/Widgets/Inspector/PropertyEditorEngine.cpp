@@ -720,7 +720,7 @@ QWidget* PropertyEditorEngine::buildField(const PropertyDescriptor& d, QWidget* 
     QWidget* row = new QWidget(parent);
     if (d.type != PropType::List) {
         ThemeManager::instance().bindMetrics(row, [row](const ThemeMetrics& metrics) {
-            row->setMinimumHeight(metrics.layout.rowHeight);
+            row->setMinimumHeight(metrics.layout.fieldHeight);
         });
     }
     auto* h = new QHBoxLayout(row);
@@ -825,7 +825,7 @@ QWidget* PropertyEditorEngine::buildField(const PropertyDescriptor& d, QWidget* 
         auto* gl = new QHBoxLayout(gutter);
         ThemeManager::instance().bindMetrics(gutter, [gutter, gl, slotCount = inspectorFormSlotCount(parent)](const ThemeMetrics& metrics) {
             const auto& inspector = metrics.inspector;
-            gutter->setFixedSize(inspector.slotWidthFor(slotCount), metrics.layout.rowHeight);
+            gutter->setFixedSize(inspector.slotWidthFor(slotCount), metrics.layout.fieldHeight);
             const int leftPadding = inspector.slotSpacing / 2;
             gl->setContentsMargins(leftPadding, 0, inspector.slotSpacing - leftPadding, 0);
         });

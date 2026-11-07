@@ -32,7 +32,6 @@
 
 namespace {
 
-constexpr int LineEditHorizontalMargin = 2;
 int popupTextMargin(const QStyleOptionMenuItem& item, const QWidget* widget,
                     const VNX::ThemeMetrics& metrics)
 {
@@ -309,9 +308,9 @@ void QtControlSkin::paintPopupItem(QPainter& painter, const QStyleOptionMenuItem
 int QtControlSkin::fieldHeight() const
 {
     const QFont font = FontManager::instance().getFont(snapshot_, FontRole::Body);
-    return std::max({metrics().layout.fieldHeight, metrics().iconExtent + metrics().control.textPaddingY * 2,
-                     metrics().iconExtent + metrics().borderWidth * 2,
-                     QFontMetrics(font).height() + 2 * (metrics().control.textPaddingY + metrics().borderWidth)});
+    return std::max({metrics().layout.fieldHeight,
+                     metrics().control.smallIconExtent + metrics().borderWidth * 2,
+                     QFontMetrics(font).height() + metrics().borderWidth * 2});
 }
 
 QMargins QtControlSkin::fieldTextMargins() const
@@ -455,10 +454,10 @@ QString QtControlSkin::applicationStyleSheet() const
     };
     replace(QStringLiteral("@chevronDown@"),
             imagePath(ThemeAssetIds::NavigationChevronDown,
-                      metrics().iconExtent, colors().textPrimary));
+                      metrics().control.smallIconExtent, colors().textPrimary));
     replace(QStringLiteral("@chevronDownDisabled@"),
             imagePath(ThemeAssetIds::NavigationChevronDown,
-                      metrics().iconExtent, colors().textDisabled));
+                      metrics().control.smallIconExtent, colors().textDisabled));
     replace(QStringLiteral("@checkboxChecked@"),
             imagePath(ThemeAssetIds::CheckboxChecked, metrics().control.checkboxMarkExtent, colors().textPrimary));
     replace(QStringLiteral("@checkboxCheckedDisabled@"),
@@ -565,7 +564,7 @@ QString QtControlSkin::applicationStyleSheet() const
     replace(QStringLiteral("@fieldTextPaddingX@"), QString::number(fieldMargins.left()));
     replace(QStringLiteral("@fieldTextPaddingY@"), QString::number(fieldMargins.top()));
     replace(QStringLiteral("@lineEditPaddingX@"),
-            QString::number(std::max(0, fieldMargins.left() - LineEditHorizontalMargin)));
+            QString::number(std::max(0, fieldMargins.left() - VNX::QtControlSkin::LineEditTextMargin)));
     replace(QStringLiteral("@tableCellPaddingX@"), QString::number(metrics().table.cellPaddingX));
     replace(QStringLiteral("@tableCellPaddingY@"), QString::number(metrics().table.cellPaddingY));
     const auto& parameterMetrics = metrics().parameter;

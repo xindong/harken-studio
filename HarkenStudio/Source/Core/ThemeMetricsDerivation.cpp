@@ -85,7 +85,7 @@ void deriveUiMetrics(ThemeMetrics& m, const Scale& s)
 
     auto& chrome = m.chrome;
     chrome.titleBarHeight = largeHeight + xSmall;
-    chrome.windowButtonWidth = field * 2;
+    chrome.windowButtonWidth = largeHeight + large;
     chrome.windowMinimumWidth = 800;
     chrome.windowMinimumHeight = 600;
     chrome.progressWidth = s.px(160);
@@ -152,7 +152,7 @@ void deriveUiMetrics(ThemeMetrics& m, const Scale& s)
     auto& inspector = m.inspector;
     inspector.pageMargin = layout.panelPadding;
     inspector.sectionSpacing = layout.tightGap;
-    inspector.rowSpacing = 0;
+    inspector.rowSpacing = layout.controlGap;
     inspector.columnPadding = layout.controlGap;
     inspector.valueColumnWidth = s.px(80);
     inspector.linkSlotWidth = m.iconExtent;
@@ -162,7 +162,7 @@ void deriveUiMetrics(ThemeMetrics& m, const Scale& s)
     inspector.rangeSeparatorWidth = medium;
 
     auto& parameter = m.parameter;
-    parameter.faderMinimumHeight = field * 4;
+    parameter.faderMinimumHeight = layout.rowHeight * 4;
     parameter.labelMinimumWidth = s.px(100);
     parameter.valueMinimumWidth = s.px(72);
     parameter.compactValueMinimumWidth = s.px(80);
@@ -175,8 +175,8 @@ void deriveUiMetrics(ThemeMetrics& m, const Scale& s)
     timeline.laneHeaderWidth = s.px(200);
     timeline.laneHeaderMinimumWidth = s.px(140);
     timeline.laneHeight = s.px(112);
-    timeline.rulerHeight = field + xSmall;
-    timeline.minLabelSpacing = field * 2;
+    timeline.rulerHeight = layout.rowHeight + xSmall;
+    timeline.minLabelSpacing = layout.rowHeight * 2;
     timeline.minTickSpacing = small;
     timeline.clipBottomInset = m.borderWidth;
     timeline.clipMinimumWidth = medium + compact;
@@ -186,7 +186,7 @@ void deriveUiMetrics(ThemeMetrics& m, const Scale& s)
 void deriveNodeMetrics(ThemeMetrics::Node& node, const ThemeMetrics& w, const Scale& s)
 {
     const auto len = [&s](int value) { return static_cast<float>(s.len(value)); };
-    const int rowHeight = w.controlHeight;
+    const int rowHeight = w.controlHeight + w.spacingCompact * 2;
     const int largeHeight = w.control.largeHeight;
     node.minimumWidth = len(160);
     node.headerHeight = len(largeHeight);
