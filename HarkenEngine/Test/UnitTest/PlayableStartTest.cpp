@@ -21858,7 +21858,9 @@ static void CheckNativeTrackInitialStreamWaitPreservesSubBlockFutureCohort(bool 
         std::uint64_t actualOnset = UINT64_MAX;
         bool retargeted = false;
         for (unsigned block = 0; block < 96; ++block) {
-            if (blendProbe) engine.streams.SyncServe();
+            // Future streams are admitted after the initial anchor is bound.
+            // Serve them before the next fixed-deadline preparation pass.
+            engine.streams.SyncServe();
             if (blendProbe && !retargeted && actualOnset != UINT64_MAX &&
                 engine.mixer.BlocksRendered() * config.blockFrames >= actualOnset + 128u) {
                 ASSERT_EQ(128u, engine.mixer.BlocksRendered() * config.blockFrames - actualOnset);
