@@ -97445,8 +97445,9 @@ bool ServiceScheduleSourceCohorts(harken::Engine& engine, harken::EnginePlayable
     bool retired = true;
     const auto completed = engine.mixer.BlocksRendered();
     const auto block = static_cast<std::uint64_t>(engine.config.blockFrames);
-    const auto safeFirst = block == 0 || completed >= UINT64_MAX / block ? UINT64_MAX :
-        std::max(engine.timelinePool.PublishCutoffFrame(), (completed + 1u) * block);
+    const auto nextAudioFrame = block == 0 || completed >= UINT64_MAX / block ? UINT64_MAX :
+        (completed + 1u) * block;
+    const auto safeFirst = std::max(engine.timelinePool.PublishCutoffFrame(), nextAudioFrame);
     for (auto& owned : parent.scheduleAggregate->sourceCohorts) {
         auto& cohort = *owned;
         if (cohort.retired) continue;
@@ -97506,6 +97507,12 @@ bool ServiceScheduleSourceCohorts(harken::Engine& engine, harken::EnginePlayable
                     arm.armedCompletionSequence <= completed && media == harken::VariableReadCutStatus::Applied;
             }
             if (ready && cohort.onset < engine.timelinePool.WindowEndFrame()) (void)SealScheduleSourceCohort(engine, parent, cohort);
+            // A sub-block Source cannot hold back the whole Page once its next audio consumer is due.
+            if (!cohort.published && !cohort.cancelling &&
+                (block == 0 || cohort.onset / block * block <= nextAudioFrame)) {
+                cohort.cancelling = true;
+                cohort.failure = harken::PlayableControlReason::StartRefused;
+            }
             if (!cohort.published && !cohort.cancelling && blockingFrame != nullptr)
                 *blockingFrame = std::min(*blockingFrame, cohort.onset);
         }
