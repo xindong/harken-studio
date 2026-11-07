@@ -97122,10 +97122,10 @@ bool SealScheduleSourceCohort(harken::Engine& engine, harken::EnginePlayableServ
 }
 
 bool PrepareScheduleSourceCohortMetadata(ContainerPreparationContext& context,
-    harken::EnginePlayableServiceRow& row) noexcept {
+    harken::EnginePlayableServiceRow& row, bool pack) noexcept {
     auto& engine = *context.engine;
     if (row.scheduleAggregate == nullptr || !row.scheduleAggregate->sourceCohorts.empty()) return false;
-    if (row.Invocation().packLease.leaseToken != 0) return true;
+    if (pack) return true;
     auto& aggregate = *row.scheduleAggregate;
     bool needed = false;
     for (auto& child : aggregate.children) {
@@ -97399,7 +97399,7 @@ bool PrepareMixedScheduleExecution(ContainerPreparationContext& context,
     row->scheduleAggregate = std::move(scratch.storage.scheduleAggregatePlan);
     if (context.scheduleChild != nullptr) context.scheduleChild->service = PlayableServiceReference(*row);
     auto& aggregate = *row->scheduleAggregate;
-    if (!PrepareScheduleSourceCohortMetadata(context, *row)) return false;
+    if (!PrepareScheduleSourceCohortMetadata(context, *row, pack)) return false;
     if (!ReserveScheduleAttemptChildren(scratch, aggregate.children.size())) {
         context.result = VN_BACKPRESSURE;
         return false;
