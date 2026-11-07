@@ -9096,7 +9096,9 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
         bus.index, bus.generation, timelineSends,
         view.frames, view.loop.startFrame, view.LoopEndFrame(),
         installedExitMarkerSourceFrame, install.sourceStartFrame, install.sourcePhase,
-        install.loopCount, initialSourceRatio, preparedRender->hasExitMarker};
+        install.loopCount, initialSourceRatio, preparedRender->hasExitMarker,
+        {streamSlot, voicePreparation.streamRing, streamRingToken},
+        pendingImmediateStart ? install.authoredDurationFrames : UINT64_MAX, install.streamed};
     if (prepareOnly) {
         preparedOut->ledgerSlot = ledgerSlot;
         preparedOut->renderHandle = render;
@@ -15804,6 +15806,13 @@ PlayableStartResetResult ResetPlayableStartRow(
         row.quarantined = true;
     } else {
         ++row.identity.generation;
+    }
+    if (row.scheduleCohortSource != nullptr) {
+        auto& source = *row.scheduleCohortSource;
+        assert(!source.source.Valid() && !source.body.Valid());
+        source.arm = {};
+        source.release = {};
+        source.sourceIdentity = 0;
     }
     row.Reset();
     return PlayableStartResetResult::Released;
@@ -51506,8 +51515,7 @@ void ServiceOriginalPlainEntry(harken::Engine& engine,
             !engine.timelineArms.Observe(saved.original.event.armToken, &arm)) {
             fail(harken::ActionTerminalReason::RuntimeError); return;
         }
-        const auto media = engine.voices.TimelineStreamStartStatus(
-            saved.original.event.armToken.renderSlot, saved.original.event.armToken.renderGeneration);
+        const auto media = engine.CapturedTimelineStreamStartStatus(saved.installation);
         if (media == harken::VariableReadCutStatus::Failed) {
             fail(harken::ActionTerminalReason::RuntimeError); return;
         }
@@ -54935,7 +54943,7 @@ DirectPendingStartResult BindAcknowledgedDirectStart(harken::Engine& engine,
             installations[index].rootInstance != owners[index]->rootInstance ||
             engine.voices.TimelineVariableSourceRead(arm.renderSlot, arm.renderGeneration).Valid())
             return Result::Refused;
-        const auto media = engine.voices.TimelineStreamStartStatus(arm.renderSlot, arm.renderGeneration);
+        const auto media = engine.CapturedTimelineStreamStartStatus(installations[index]);
         if (media == harken::VariableReadCutStatus::Failed) return Result::Refused;
         waiting = waiting || media == harken::VariableReadCutStatus::Waiting;
         if (observed.state == harken::ArmState::PendingApply) waiting = true;
@@ -54974,14 +54982,13 @@ DirectPendingStartResult BindAcknowledgedDirectStart(harken::Engine& engine,
         const auto& program = *programs[index];
         const auto offset = static_cast<std::uint64_t>(program.events[0].frameOffsetFromEntry);
         const auto& installation = installations[index];
-        const auto* voice = engine.voices.Resolve(installation.renderHandle);
         const auto* member = members[index];
         if (!canShift(program.entryAnchorFrame) || !canShift(installation.onsetFrame) ||
             offset > UINT64_MAX - (program.entryAnchorFrame + shift) ||
-            installation.onsetFrame != program.entryAnchorFrame + offset || voice == nullptr ||
+            installation.onsetFrame != program.entryAnchorFrame + offset ||
             (member != nullptr && !canShift(member->startFrame)) ||
-            (voice->pendingAuthoredDurationFrames != UINT64_MAX &&
-             voice->pendingAuthoredDurationFrames > UINT64_MAX - (installation.onsetFrame + shift)))
+            (installation.pendingAuthoredDurationFrames != UINT64_MAX &&
+             installation.pendingAuthoredDurationFrames > UINT64_MAX - (installation.onsetFrame + shift)))
             return Result::Refused;
         const auto due = installation.onsetFrame + shift;
         armInputs[index] = {program.armToken, due, due / block * block, &readers[index], nullptr, nullptr};
@@ -55019,8 +55026,7 @@ DirectPendingStartResult BindAcknowledgedDirectStart(harken::Engine& engine,
     };
     for (std::uint32_t leader = 0; leader < count; ++leader) {
         if (laneOwned[leader]) continue;
-        const auto* voice = engine.voices.Resolve(installations[leader].renderHandle);
-        if (voice == nullptr || voice->streamRing == nullptr) continue;
+        if (!installations[leader].streamed) continue;
         const auto due = installations[leader].onsetFrame + shift;
         std::array<harken::ImmediateLaneEvent, capacity> cohort{};
         std::uint32_t cohortCount = 0;
@@ -55161,11 +55167,22 @@ DirectPendingStartResult BindAcknowledgedDirectStart(harken::Engine& engine,
         released = engine.immediateActionLane.PinArms(held->lane, engine.timelineArms) && released;
     for (std::uint32_t index = 0; index < count; ++index)
         released = readers[index].Release(engine.mixer.BlocksRendered()) && released;
+    bool transferred = false;
+    if (released && aggregateAttempt != nullptr && row.scheduleAggregate != nullptr &&
+        !row.scheduleAggregate->sourceCohorts.empty()) {
+        // The committed services own the final anchor before any initial Start
+        // can reach audio. Near-future Sources can now use their fixed deadlines.
+        aggregateAttempt->storage.phase = harken::EngineFrontierAttemptPhase::Published;
+        transferred = released = CommitInitialScheduleReadUses(engine, *aggregateAttempt) &&
+            PublishInitialScheduleFrontiers(engine, *aggregateAttempt) &&
+            TransferFrontierAttempt(engine, *aggregateAttempt);
+        if (released) (void)ServiceScheduleSourceCohorts(engine, row, false, nullptr);
+    }
     for (const auto& held : row.sourceStartLanes)
         released = engine.immediateActionLane.Publish(held->lane) && released;
     if (transactions.Valid()) released = engine.timelinePool.ReleasePreparedTransactionPublication(&transactions) && released;
     if (!released) engine.runtimeRecreateRequired = true;
-    if (released && aggregateAttempt != nullptr) {
+    if (released && aggregateAttempt != nullptr && !transferred) {
         aggregateAttempt->storage.phase = harken::EngineFrontierAttemptPhase::Published;
         released = CommitInitialScheduleReadUses(engine, *aggregateAttempt) &&
             PublishInitialScheduleFrontiers(engine, *aggregateAttempt) &&
@@ -90180,11 +90197,18 @@ bool ResolveContainerInitialAdmission(ContainerPreparationContext& context,
     // Admission belongs to the original arm factory, never a later rebind.
     // Controllers with their own native group require a separate domain.
     if (context.engine == nullptr || nativeGroup.Valid() || nativeMember != UINT16_MAX ||
-        *context.initialAdmissionMemberCursor >= UINT16_MAX ||
-        *context.initialAdmissionMemberCursor >= context.engine->config.maxArmsPerGroup)
+        ((context.fixedGroupSource == nullptr || context.fixedGroupSource->memberIndex == UINT16_MAX) &&
+         (*context.initialAdmissionMemberCursor >= UINT16_MAX ||
+          *context.initialAdmissionMemberCursor >= context.engine->config.maxArmsPerGroup)))
         return false;
     *outGroup = context.initialAdmissionGroup;
-    *outMember = static_cast<std::uint16_t>((*context.initialAdmissionMemberCursor)++);
+    if (context.fixedGroupSource != nullptr && context.fixedGroupSource->memberIndex != UINT16_MAX) {
+        if (context.fixedGroupSource->memberIndex >= *context.initialAdmissionMemberCursor) return false;
+        *outMember = context.fixedGroupSource->memberIndex;
+    } else {
+        *outMember = static_cast<std::uint16_t>((*context.initialAdmissionMemberCursor)++);
+        if (context.fixedGroupSource != nullptr) context.fixedGroupSource->memberIndex = *outMember;
+    }
     return true;
 }
 
@@ -91969,7 +91993,10 @@ bool PrepareContainerSingleLeaf(
         } else if (released && context.initialAdmissionGroup.Valid()) {
             released = context.initialAdmissionMemberCursor != nullptr &&
                 *context.initialAdmissionMemberCursor == admissionMember + 1u;
-            if (released) --*context.initialAdmissionMemberCursor;
+            if (released) {
+                --*context.initialAdmissionMemberCursor;
+                if (context.fixedGroupSource != nullptr) context.fixedGroupSource->memberIndex = UINT16_MAX;
+            }
         }
         if (released && memberService != nullptr) {
             const auto reference = engine.ReadPlayableMemberReference(memberLogicalSlot);
@@ -96430,7 +96457,9 @@ bool PrepareScheduleSourceCohortMetadata(ContainerPreparationContext& context,
     try {
         // The metadata census is complete before any Source owns a slot or reads payload.
         for (auto& child : aggregate.children) {
-            if (child.startOffsetFrames == 0) continue;
+            if (child.startOffsetFrames == 0 || !std::any_of(aggregate.children.begin(), aggregate.children.end(),
+                    [&](const auto& peer) { return peer.startOffsetFrames == child.startOffsetFrames && peer.registeredStream; }))
+                continue;
             auto found = std::find_if(aggregate.sourceCohorts.begin(), aggregate.sourceCohorts.end(),
                 [&](const auto& cohort) { return cohort->onsetOffset == child.startOffsetFrames; });
             if (found == aggregate.sourceCohorts.end()) {
@@ -97071,8 +97100,9 @@ PendingScheduleEntryStatus PreparePendingScheduleVariableEntry(harken::Engine& e
             return Status::Failed;
         return reachable && admitted == start ? Status::Published : Status::Waiting;
     };
-    if (start >= end || start >= engine.timelinePool.WindowEndFrame()) return Status::Failed;
-    if (musicEntry) {
+    if (start >= end || (start >= engine.timelinePool.WindowEndFrame() &&
+        (pending.sourceCohort == nullptr || pending.content.kind != harken::PlayableKindV1::Sound))) return Status::Failed;
+    if (musicEntry && pending.sourceCohort == nullptr) {
         const auto admission = musicAdmission();
         if (admission != Status::Published) return admission;
     } else if (start < earliest) return Status::Failed;
@@ -97235,7 +97265,8 @@ PendingScheduleEntryStatus PreparePendingScheduleVariableEntry(harken::Engine& e
             nullptr, 0, harken::PlayableKind::Sound, false, false);
     } else prepared = PrepareMixedScheduleExecution(context, *scratch);
     if (!prepared || scratch->row == nullptr)
-        return fail(failure == VN_BACKPRESSURE || failure == VN_NO_VOICE ? Status::Waiting : Status::Failed);
+        return fail(failure == VN_BACKPRESSURE || failure == VN_NO_VOICE ||
+            (pending.sourceCohort != nullptr && failure == VN_NO_STREAM) ? Status::Waiting : Status::Failed);
     auto& entry = *scratch->row;
     if (!PrepareInitialScheduleReadCuts(engine, *scratch, issue) ||
         (!scratch->initialNativeForestOwner.Valid() && !CanCommitInitialScheduleReadUses(engine, *scratch)) ||
@@ -97414,7 +97445,7 @@ bool ServiceScheduleSourceCohorts(harken::Engine& engine, harken::EnginePlayable
                     cohort.failure = harken::PlayableControlReason::StartRefused;
                     break;
                 }
-                const auto media = engine.voices.TimelineStreamStartStatus(source->arm.renderSlot, source->arm.renderGeneration);
+                const auto media = engine.CapturedTimelineStreamStartStatus(installation);
                 if (media == harken::VariableReadCutStatus::Failed ||
                     (arm.state != harken::ArmState::PendingApply && arm.state != harken::ArmState::Armed)) {
                     cohort.cancelling = true;

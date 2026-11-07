@@ -2079,6 +2079,7 @@ struct EngineScheduleAggregateState;
 struct EngineScheduleSourceCohort;
 struct EngineScheduleSourceRetention;
 struct EngineScheduleCohortSource {
+    std::uint16_t memberIndex = UINT16_MAX;
     OriginalSourceLifetimePin source;
     VoicePool::OriginalSourceBodyLifetimePin body;
     TimelineArmToken arm{};
@@ -3167,6 +3168,9 @@ struct EngineTimelineVoiceInstallIdentity {
     std::uint32_t sourceLoopCount = 1;
     double initialSourceRatio = 1.0;
     bool hasExitMarker = false;
+    StreamManager::PreparedStream stream{};
+    std::uint64_t pendingAuthoredDurationFrames = UINT64_MAX;
+    bool streamed = false;
 };
 
 struct EnginePlainImmediateSource {
@@ -7905,6 +7909,19 @@ public:
             timelineVoiceInstallIdentities[slot].renderHandle != render) return false;
         *out = timelineVoiceInstallIdentities[slot];
         return true;
+    }
+
+    VariableReadCutStatus CapturedTimelineStreamStartStatus(
+        const EngineTimelineVoiceInstallIdentity& installed) noexcept {
+        if (installed.renderHandle == 0 || !installed.startArm.Valid() ||
+            installed.renderHandle != ((static_cast<std::uint64_t>(installed.startArm.renderGeneration) << 32u) |
+                installed.startArm.renderSlot)) return VariableReadCutStatus::Failed;
+        if (!installed.streamed) return installed.stream.ring == nullptr && installed.stream.ringToken == 0
+            ? VariableReadCutStatus::Applied : VariableReadCutStatus::Failed;
+        const auto state = streams.PromoteTransferredStream(installed.stream);
+        return state == StreamManager::PreparationState::Ready ? VariableReadCutStatus::Applied :
+            state == StreamManager::PreparationState::Preparing ? VariableReadCutStatus::Waiting :
+                VariableReadCutStatus::Failed;
     }
 
     bool ClearTimelineVoiceInstallIdentity(VnVoiceHandle render) noexcept {
