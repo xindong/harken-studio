@@ -1,4 +1,5 @@
 #include "Dialogs/Settings/Pages/ProjectPublishPage.h"
+#include "Core/ThemeLayout.h"
 
 #include "Core/ActionManager.h"
 #include "Core/AssetPipeline/PathUtils.h"
@@ -31,7 +32,7 @@ ProjectPublishPage::ProjectPublishPage(QWidget* parent)
     auto* rowWidget = new QWidget();
     auto* row = new QHBoxLayout(rowWidget);
     row->setContentsMargins(0, 0, 0, 0);
-    row->setSpacing(8);
+    ThemeLayout::spacing(row, ThemeLayout::Space::Small);
 
     packBuildOutputDirEdit_ = new QLineEdit();
     packBuildOutputDirEdit_->setObjectName("packBuildOutputDirEdit");
@@ -94,7 +95,7 @@ ProjectPublishPage::ProjectPublishPage(QWidget* parent)
     waveformOutputRow_ = new QWidget();
     auto* waveformRow = new QHBoxLayout(waveformOutputRow_);
     waveformRow->setContentsMargins(0, 0, 0, 0);
-    waveformRow->setSpacing(8);
+    ThemeLayout::spacing(waveformRow, ThemeLayout::Space::Small);
     waveformOutputDirEdit_ = new QLineEdit();
     waveformOutputDirEdit_->setObjectName(QStringLiteral("buildWaveformOutputDirEdit"));
     waveformOutputDirEdit_->setPlaceholderText(PathUtils::buildPacksDirName() + QStringLiteral("/Waveforms/"));

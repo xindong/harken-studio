@@ -1,17 +1,31 @@
 #include "Core/ColorPalette.h"
+#include "Core/BuiltinTheme.h"
+#include "Core/AppSettings.h"
 #include "Core/FontManager.h"
 #include "Core/MemorySettingsStorage.h"
 #include "Core/QSettingsStorage.h"
 #include "Core/ThemeColorCatalog.h"
 #include "Core/ThemeColorResolver.h"
 #include "Core/ThemeManager.h"
+#include "Core/ThemeScale.h"
 #include "Core/WidgetAppearance.h"
 
 #include <QCoreApplication>
+#include <QApplication>
+#include <QCheckBox>
+#include <QComboBox>
 #include <QDir>
 #include <QEvent>
 #include <QFile>
+#include <QFontInfo>
+#include <QLabel>
+#include <QLineEdit>
+#include <QMenu>
+#include <QMenuBar>
+#include <QMessageBox>
+#include <QPushButton>
 #include <QSet>
+#include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QToolButton>
 #include <QWidget>
@@ -92,6 +106,158 @@ public:
 
 }
 
+TEST(ThemeManager, UserScaleIsDerivedFromTheThemeWithoutAccumulation)
+{
+    QTemporaryDir root;
+    VNX::ThemeManager manager(root.path(), memoryStorage());
+    manager.setUIScale(100);
+    const auto restore = qScopeGuard([&] { manager.setUIScale(100); });
+    const auto original = manager.snapshot();
+    const auto base = manager.unscaledSnapshot();
+    const auto appearance = manager.appearance();
+    const auto& fonts = VNX::FontManager::instance();
+    int publications = 0;
+    QObject::connect(&manager, &VNX::ThemeManager::themeChanged,
+                     &manager, [&] { ++publications; });
+    QLineEdit editor(QStringLiteral("unfinished input"));
+    editor.show();
+    QCoreApplication::processEvents();
+    editor.setSelection(2, 5);
+    const qreal minimum = VNX::AppSettings::uiScaleForZoomLevel(VNX::AppSettings::MIN_GLOBAL_ZOOM_LEVEL);
+    const qreal maximum = VNX::AppSettings::uiScaleForZoomLevel(VNX::AppSettings::MAX_GLOBAL_ZOOM_LEVEL);
+    const QList<qreal> percentages{minimum, 125, 150, maximum, 175, 100, minimum, maximum, 100};
+    QMap<qreal, VNX::ThemeSnapshot> snapshots;
+    for (qreal percent : percentages) {
+        manager.setUIScale(percent);
+        QCoreApplication::processEvents();
+        const auto active = manager.snapshot();
+        const qreal scale = percent / 100.0;
+        EXPECT_EQ(manager.unscaledSnapshot(), base);
+        EXPECT_EQ(manager.appearance(), appearance);
+        EXPECT_EQ(active->uiScale, scale);
+        EXPECT_EQ(active->ui.typography, base->ui.typography);
+        for (const auto role : {VNX::FontRole::Body, VNX::FontRole::Caption,
+                               VNX::FontRole::Title, VNX::FontRole::Mono}) {
+            EXPECT_EQ(fonts.getFont(active, role).pointSizeF(),
+                      fonts.getFont(base, role).pointSizeF() * scale);
+        }
+        for (int overrideSize : {6, 24})
+            EXPECT_EQ(fonts.getFont(VNX::FontRole::Body, overrideSize).pointSizeF(), overrideSize * scale);
+        EXPECT_EQ(editor.font().pointSizeF(), fonts.getFont(active, VNX::FontRole::Body).pointSizeF());
+        EXPECT_EQ(editor.selectedText(), QStringLiteral("finis"));
+        EXPECT_EQ(active->ui.metrics.controlHeight, qRound(base->ui.metrics.controlHeight * scale));
+        auto comparable = *active;
+        comparable.generation = 0;
+        if (snapshots.contains(percent)) EXPECT_EQ(comparable, snapshots.value(percent));
+        else snapshots.insert(percent, comparable);
+    }
+    EXPECT_EQ(publications, percentages.size());
+    EXPECT_EQ(original->uiScale, 1.0);
+    auto restored = *manager.snapshot();
+    restored.generation = original->generation;
+    EXPECT_EQ(restored, *original);
+    manager.setUIScale(100);
+    EXPECT_EQ(publications, percentages.size());
+}
+
+TEST(ThemeManager, ScalingPreservesNonSpatialThemeValuesAndAutomaticRecipeBounds)
+{
+    auto base = VNX::createBuiltinDarkTheme();
+    ASSERT_FALSE(base.ui.recipes.entries.isEmpty());
+    auto& recipe = base.ui.recipes.entries.first();
+    ASSERT_FALSE(recipe.items.isEmpty());
+    recipe.items.first().minimum = -1;
+    recipe.items.first().preferred = 17;
+    recipe.items.first().maximum = -1;
+    const auto scaled = VNX::scaledThemeSnapshot(base, 1.75);
+    EXPECT_EQ(scaled.ui.colors, base.ui.colors);
+    EXPECT_EQ(scaled.ui.typography, base.ui.typography);
+    EXPECT_EQ(scaled.ui.parameterPresenters, base.ui.parameterPresenters);
+    EXPECT_EQ(scaled.ui.metrics.form.labelColumnShare, base.ui.metrics.form.labelColumnShare);
+    EXPECT_EQ(scaled.ui.metrics.inspector.valueColumnShare, base.ui.metrics.inspector.valueColumnShare);
+    EXPECT_EQ(scaled.domains.curve.metrics.gridColumnCount, base.domains.curve.metrics.gridColumnCount);
+    EXPECT_EQ(scaled.domains.curve.metrics.crosshairDashLength, base.domains.curve.metrics.crosshairDashLength);
+    EXPECT_EQ(scaled.domains.curve.metrics.discreteGuideAlpha, base.domains.curve.metrics.discreteGuideAlpha);
+    EXPECT_EQ(scaled.domains.meter.peakMeter.metrics.gradientErrorStop,
+              base.domains.meter.peakMeter.metrics.gradientErrorStop);
+    EXPECT_EQ(scaled.domains.meter.peakMeter.metrics.rmsWidthRatio,
+              base.domains.meter.peakMeter.metrics.rmsWidthRatio);
+    EXPECT_EQ(scaled.domains.waveform.amplitudeScale, base.domains.waveform.amplitudeScale);
+    EXPECT_EQ(scaled.domains.waveform.multiBandMode, base.domains.waveform.multiBandMode);
+    EXPECT_EQ(scaled.thirdParty.qtAds.dropOverlayOpacity, base.thirdParty.qtAds.dropOverlayOpacity);
+    EXPECT_EQ(scaled.ui.recipes.entries.first().items.first().minimum, -1);
+    EXPECT_EQ(scaled.ui.recipes.entries.first().items.first().maximum, -1);
+    EXPECT_EQ(scaled.ui.recipes.entries.first().items.first().preferred, qRound(17 * 1.75));
+    EXPECT_EQ(VNX::scaledThemeSnapshot(base, 1.0), base);
+    base.ui.metrics.toggle.height = 5;
+    base.ui.metrics.toggle.thumbPadding = 2;
+    base.ui.metrics.toggle.compactHeight = 5;
+    base.ui.metrics.toggle.compactThumbPadding = 2;
+    base.ui.metrics.borderWidth = 1;
+    base.ui.metrics.spacingXSmall = 0;
+    auto boundedSlot = recipe.items.first();
+    boundedSlot.minimum = 1;
+    boundedSlot.preferred = 2;
+    boundedSlot.maximum = 3;
+    recipe.items.append(boundedSlot);
+    for (int level = VNX::AppSettings::MIN_GLOBAL_ZOOM_LEVEL;
+         level <= VNX::AppSettings::MAX_GLOBAL_ZOOM_LEVEL; ++level) {
+        SCOPED_TRACE(level);
+        const auto snapshot = VNX::scaledThemeSnapshot(base,
+            VNX::AppSettings::uiScaleForZoomLevel(level) / 100.0);
+        const auto& toggle = snapshot.ui.metrics.toggle;
+        EXPECT_GT(toggle.height, toggle.thumbPadding * 2);
+        EXPECT_GT(toggle.compactHeight, toggle.compactThumbPadding * 2);
+        EXPECT_GE(toggle.width, toggle.height);
+        EXPECT_GE(toggle.compactWidth, toggle.compactHeight);
+        EXPECT_GT(snapshot.ui.metrics.borderWidth, 0);
+        EXPECT_EQ(snapshot.ui.metrics.spacingXSmall, 0);
+        EXPECT_LE(snapshot.thirdParty.qtAds.metrics.tabClosePaddingRight, 0);
+        const auto& items = snapshot.ui.recipes.entries.first().items;
+        EXPECT_EQ(items.first().minimum, -1);
+        EXPECT_EQ(items.first().maximum, -1);
+        EXPECT_GT(items.last().minimum, 0);
+        EXPECT_GE(items.last().preferred, items.last().minimum);
+        EXPECT_GE(items.last().maximum, items.last().preferred);
+    }
+}
+
+TEST(ThemeManager, UserScaleSurvivesThemeReloadAndColorPreviewTransactions)
+{
+    QTemporaryDir root;
+    ASSERT_TRUE(writePackage(root.path(), QStringLiteral("scaled"),
+        QStringLiteral("theme.scaled"), QStringLiteral("#ff118899"), QStringLiteral("#ff118899")));
+    ASSERT_TRUE(writeFile(QDir(root.path()).filePath(QStringLiteral("scaled/tokens.json")),
+        R"json({"fonts":{"body":{"pointSize":13}},"metrics":{"table.rowHeight":48}})json"));
+    VNX::ThemeManager manager(root.path(), memoryStorage());
+    const auto restore = qScopeGuard([&] { manager.setUIScale(100); manager.selectTheme(VNX::builtinThemeId()); });
+    manager.setUIScale(150);
+    for (const auto& id : {QStringLiteral("theme.scaled"), VNX::builtinThemeId(), QStringLiteral("theme.scaled")}) {
+        ASSERT_TRUE(manager.selectTheme(id).ok());
+        EXPECT_EQ(manager.snapshot()->uiScale, 1.5);
+        EXPECT_EQ(manager.metrics().table.rowHeight, qRound(manager.unscaledSnapshot()->ui.metrics.table.rowHeight * 1.5));
+        EXPECT_EQ(VNX::FontManager::instance().getFont(manager.snapshot(), VNX::FontRole::Body).pointSizeF(),
+                  manager.unscaledSnapshot()->ui.typography.body.pointSize * 1.5);
+        const auto before = manager.snapshot();
+        ASSERT_TRUE(manager.reloadTheme().ok());
+        auto reloaded = *manager.snapshot();
+        reloaded.generation = before->generation;
+        EXPECT_EQ(reloaded, *before);
+    }
+    const auto committed = manager.appearance();
+    const QColor committedAccent = manager.snapshot()->ui.colors.accent;
+    auto preview = committed;
+    preview.colors[preview.themeId][preview.paletteId][QStringLiteral("accent.primary")] = QColor("#ff123456");
+    ASSERT_TRUE(manager.previewAppearance(preview).ok());
+    manager.setUIScale(175);
+    EXPECT_EQ(manager.snapshot()->ui.colors.accent, QColor("#ff123456"));
+    EXPECT_EQ(manager.appearance(), committed);
+    manager.cancelAppearancePreview();
+    EXPECT_EQ(manager.snapshot()->uiScale, 1.75);
+    EXPECT_EQ(manager.snapshot()->ui.colors.accent, committedAccent);
+    EXPECT_EQ(manager.metrics().table.rowHeight, qRound(manager.unscaledSnapshot()->ui.metrics.table.rowHeight * 1.75));
+}
+
 TEST(ThemeManager, ReloadDoesNotMutatePreviouslyPublishedSnapshot)
 {
     QTemporaryDir root;
@@ -129,6 +295,99 @@ TEST(ThemeManager, ReloadDoesNotMutatePreviouslyPublishedSnapshot)
     EXPECT_NE(oldSnapshot->ui.typography.body.pointSize, pointSize);
     EXPECT_EQ(fonts, 1);
     EXPECT_EQ(structures, 1);
+}
+
+TEST(ThemeManager, TypographyInheritsSharedFamilyWeightAndBodySize)
+{
+    auto theme = VNX::createBuiltinDarkTheme();
+    theme.ui.typography.body = {QStringLiteral("Arial"), 13, 450};
+    theme.ui.typography.title.weight = 650;
+    const auto snapshot = std::make_shared<const VNX::ThemeSnapshot>(theme);
+    const auto& fonts = VNX::FontManager::instance();
+    const auto body = fonts.getFont(snapshot, VNX::FontRole::Body);
+    for (const auto role : {VNX::FontRole::Body, VNX::FontRole::Caption, VNX::FontRole::Title}) {
+        const auto font = fonts.getFont(snapshot, role);
+        EXPECT_EQ(font.family(), body.family());
+        EXPECT_EQ(font.stretch(), QFont::Unstretched);
+        EXPECT_EQ(font.letterSpacing(), 0);
+        EXPECT_EQ(font.wordSpacing(), 0);
+        EXPECT_EQ(fonts.getFont(snapshot, role, VNX::FontEmphasis::Strong).weight(),
+                  theme.ui.typography.title.weight);
+    }
+    EXPECT_EQ(fonts.getFont(snapshot, VNX::FontRole::Caption).weight(), body.weight());
+    EXPECT_EQ(fonts.getFont(snapshot, VNX::FontRole::Mono).weight(), body.weight());
+    EXPECT_EQ(fonts.getFont(snapshot, VNX::FontRole::Mono).pointSizeF(), body.pointSizeF());
+}
+
+TEST(ThemeManager, ExistingWidgetsFollowThemeFontsAndKeepExplicitSizes)
+{
+    qobject_cast<QApplication*>(QCoreApplication::instance())->setStyleSheet({});
+    QTemporaryDir root;
+    ASSERT_TRUE(writePackage(root.path(), QStringLiteral("typography"),
+        QStringLiteral("theme.typography"), QStringLiteral("#ff118899"), QStringLiteral("#ff118899")));
+    ASSERT_TRUE(writeFile(QDir(root.path()).filePath(QStringLiteral("typography/tokens.json")),
+        R"json({"fonts":{"body":{"family":"Arial","pointSize":13}}})json"));
+    VNX::ThemeManager manager(root.path(), memoryStorage());
+    QWidget panel;
+    panel.setAttribute(Qt::WA_DontShowOnScreen);
+    QWidget section(&panel);
+    QLabel inherited(QStringLiteral("Inherited"), &section);
+    QMenu menu(&panel);
+    QMenuBar menuBar(&panel);
+    QCheckBox checkbox(&section);
+    QComboBox combo(&section);
+    QLineEdit editor(&section);
+    QPushButton button(&section);
+    QMessageBox dialog(&panel);
+    const QList<QWidget*> inheritedWidgets{
+        &inherited, &menu, &menuBar, &checkbox, &combo, &editor, &button, &dialog};
+    QLabel customized(QStringLiteral("Customized"), &section);
+    QFont explicitSize;
+    explicitSize.setPointSize(17);
+    customized.setFont(explicitSize);
+    panel.show();
+    for (const auto& id : {VNX::builtinThemeId(), QStringLiteral("theme.typography"),
+                          VNX::builtinThemeId(), QStringLiteral("theme.typography"),
+                          VNX::builtinThemeId()}) {
+        ASSERT_TRUE(manager.selectTheme(id).ok());
+        QCoreApplication::processEvents();
+        const auto expected = VNX::FontManager::instance().getFont(manager.snapshot(), VNX::FontRole::Body);
+        QMenu newMenu(&panel);
+        auto widgets = inheritedWidgets;
+        widgets.append(&newMenu);
+        for (auto* widget : widgets) {
+            SCOPED_TRACE(widget->metaObject()->className());
+            widget->ensurePolished();
+            EXPECT_EQ(QFontInfo(widget->font()).family(), QFontInfo(expected).family());
+            EXPECT_EQ(widget->font().pointSizeF(), expected.pointSizeF());
+            EXPECT_EQ(widget->font().weight(), expected.weight());
+        }
+        EXPECT_EQ(QFontInfo(customized.font()).family(), QFontInfo(expected).family());
+        EXPECT_EQ(customized.font().pointSizeF(), explicitSize.pointSizeF());
+    }
+}
+
+TEST(ThemeManager, StyleSheetsAndPaintedTextResolveTheSameTypography)
+{
+    auto theme = VNX::createBuiltinDarkTheme();
+    theme.ui.typography.body.family = QStringLiteral("Arial");
+    theme.ui.typography.body.pointSize = 13;
+    theme.ui.typography.caption.pointSize = 11;
+    const auto snapshot = std::make_shared<const VNX::ThemeSnapshot>(theme);
+    const auto& fonts = VNX::FontManager::instance();
+    for (const auto role : {VNX::FontRole::Body, VNX::FontRole::Caption,
+                            VNX::FontRole::Title, VNX::FontRole::Mono}) {
+        for (const auto emphasis : {VNX::FontEmphasis::Normal, VNX::FontEmphasis::Strong}) {
+            QLabel label(QStringLiteral("Text 0123456789"));
+            label.setStyleSheet(fonts.styleSheet(snapshot, role, emphasis));
+            label.ensurePolished();
+            const auto expected = fonts.getFont(snapshot, role, emphasis);
+            EXPECT_EQ(QFontInfo(label.font()).family(), QFontInfo(expected).family());
+            EXPECT_EQ(label.font().pointSizeF(), expected.pointSizeF());
+            EXPECT_EQ(label.font().weight(), expected.weight());
+            EXPECT_EQ(label.font().letterSpacing(), expected.letterSpacing());
+        }
+    }
 }
 
 TEST(ThemeManager, RejectsPublicationFromAnotherThread)

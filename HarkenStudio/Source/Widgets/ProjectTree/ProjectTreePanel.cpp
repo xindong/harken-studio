@@ -1,5 +1,6 @@
 
 #include "ProjectTreePanel.h"
+#include "Core/FontManager.h"
 #include "Widgets/Shared/ProjectObjectLabels.h"
 #include "Core/ThemeAssetCatalog.h"
 #include "Widgets/Shared/ProjectItemMenuController.h"
@@ -232,9 +233,11 @@ void ProjectTreePanel::initPanel()
                     treeWidget_->viewport()->update();
             });
 
+    connect(&FontManager::instance(), &FontManager::fontChanged, this, [this] {
+        onFontSettingsChanged(settingsPanelId_, AppSettings::instance().panelFontSize(settingsPanelId_));
+    });
     int fontSize = AppSettings::instance().panelFontSize(settingsPanelId_);
-    QFont font = treeWidget_->font();
-    font.setPointSize(fontSize);
+    QFont font = FontManager::instance().getFont(FontRole::Body, fontSize);
     treeWidget_->setFont(font);
 
     if (ProjectManager::instance().isProjectOpen())
@@ -2345,8 +2348,7 @@ void ProjectTreePanel::onFontSettingsChanged(PanelId panelId, int size)
 {
     if (panelId == settingsPanelId_)
     {
-        QFont font = treeWidget_->font();
-        font.setPointSize(size);
+        QFont font = FontManager::instance().getFont(FontRole::Body, size);
         treeWidget_->setFont(font);
     }
 }

@@ -2,8 +2,24 @@
 #include "AppSettings.h"
 #include "QSettingsStorage.h"
 #include <QDebug>
+#include <algorithm>
+#include <cmath>
 
 namespace VNX {
+namespace {
+
+int zoomLevelForScale(qreal percent)
+{
+    if (!qIsFinite(percent) || percent <= 0.0)
+        return 0;
+    const auto& presets = AppSettings::GLOBAL_SCALE_PRESETS;
+    const auto nearest = std::min_element(presets.begin(), presets.end(), [percent](int left, int right) {
+        return std::abs(left - percent) < std::abs(right - percent);
+    });
+    return int(nearest - presets.begin()) + AppSettings::MIN_GLOBAL_ZOOM_LEVEL;
+}
+
+}
 
 AppSettings& AppSettings::instance()
 {
@@ -16,7 +32,6 @@ AppSettings::AppSettings(QObject* parent)
     , storage_(SettingsStorageFactory::create(
           SettingsStorageFactory::StorageType::QSettings,
           "HarkenSound", "HarkenStudio"))
-    , globalUIScale_(DEFAULT_GLOBAL_SCALE)
 {
     panelFontSizes_.fill(DEFAULT_FONT_SIZE);
     load();
@@ -34,13 +49,23 @@ void AppSettings::load()
     
     storage_->beginGroup("Appearance");
     
-    globalUIScale_ = storage_->value("GlobalUIScale", DEFAULT_GLOBAL_SCALE).toInt();
+    globalUIZoomLevel_ = zoomLevelForScale(
+        storage_->value("GlobalUIScale", DEFAULT_GLOBAL_SCALE).toDouble());
     
     PanelRegistry::forEach([this](const PanelInfo& panel) {
-        QString key = QString("PanelFontSize_%1").arg(panel.key);
-        if (panel.id == PanelId::Assistant && !storage_->contains(key))
-            key = QStringLiteral("PanelFontSize_ai_assistant");
-        int fontSize = storage_->value(key, panel.defaultFontSize).toInt();
+        const QString key = QStringLiteral("PanelFontSizePt_%1").arg(panel.key);
+        int fontSize = storage_->value(key, 0).toInt();
+        if (!storage_->contains(key)) {
+            const std::array<int, PanelRegistry::PANEL_COUNT> previousDefaults{13, 12, 12, 11, 11, 12, 12};
+            QString previousKey = QStringLiteral("PanelFontSize_%1").arg(panel.key);
+            if (panel.id == PanelId::Assistant && !storage_->contains(previousKey))
+                previousKey = QStringLiteral("PanelFontSize_ai_assistant");
+            const int previousDefault = previousDefaults[static_cast<size_t>(panel.id)];
+            fontSize = storage_->value(previousKey, previousDefault).toInt();
+            if (fontSize == previousDefault) fontSize = 0;
+            else if (panel.id == PanelId::Assistant) fontSize = qRound(fontSize * 0.75);
+        }
+        if (fontSize != 0) fontSize = qBound(MIN_FONT_SIZE, fontSize, MAX_FONT_SIZE);
         panelFontSizes_[static_cast<size_t>(panel.id)] = fontSize;
     });
 
@@ -52,7 +77,7 @@ void AppSettings::load()
     developerMode_ = storage_->value("DeveloperMode", false).toBool();
     storage_->endGroup();
 
-    qDebug() << "[AppSettings] Loaded settings - UI Scale:" << globalUIScale_ << "%";
+    qDebug() << "[AppSettings] Loaded settings - UI Scale:" << globalUIScale() << "%";
 }
 
 void AppSettings::save()
@@ -61,10 +86,10 @@ void AppSettings::save()
     
     storage_->beginGroup("Appearance");
     
-    storage_->setValue("GlobalUIScale", globalUIScale_);
+    storage_->setValue("GlobalUIScale", globalUIScale());
     
     PanelRegistry::forEach([this](const PanelInfo& panel) {
-        QString key = QString("PanelFontSize_%1").arg(panel.key);
+        QString key = QStringLiteral("PanelFontSizePt_%1").arg(panel.key);
         int fontSize = panelFontSizes_[static_cast<size_t>(panel.id)];
         storage_->setValue(key, fontSize);
     });
@@ -82,21 +107,57 @@ void AppSettings::save()
     qDebug() << "[AppSettings] Settings saved";
 }
 
-int AppSettings::globalUIScale() const
+qreal AppSettings::globalUIScale() const
 {
-    return globalUIScale_;
+    return uiScaleForZoomLevel(globalUIZoomLevel_);
 }
 
-void AppSettings::setGlobalUIScale(int percent)
+qreal AppSettings::uiScaleForZoomLevel(int level)
 {
-    percent = qBound(100, percent, 200);
-    
-    if (globalUIScale_ != percent)
+    return GLOBAL_SCALE_PRESETS[qBound(MIN_GLOBAL_ZOOM_LEVEL, level, MAX_GLOBAL_ZOOM_LEVEL)
+                                - MIN_GLOBAL_ZOOM_LEVEL];
+}
+
+int AppSettings::globalUIZoomLevel() const
+{
+    return globalUIZoomLevel_;
+}
+
+void AppSettings::setGlobalUIScale(qreal percent)
+{
+    setGlobalUIZoomLevel(zoomLevelForScale(percent));
+}
+
+void AppSettings::setGlobalUIZoomLevel(int level)
+{
+    level = qBound(MIN_GLOBAL_ZOOM_LEVEL, level, MAX_GLOBAL_ZOOM_LEVEL);
+    if (globalUIZoomLevel_ != level)
     {
-        globalUIScale_ = percent;
-        emit globalUIScaleChanged(percent);
+        globalUIZoomLevel_ = level;
+        emit globalUIScaleChanged(globalUIScale());
         emit settingsChanged();
+        save();
     }
+}
+
+void AppSettings::increaseGlobalUIScale()
+{
+    setGlobalUIZoomLevel(globalUIZoomLevel_ + 1);
+}
+
+void AppSettings::decreaseGlobalUIScale()
+{
+    setGlobalUIZoomLevel(globalUIZoomLevel_ - 1);
+}
+
+bool AppSettings::canIncreaseGlobalUIScale() const
+{
+    return globalUIZoomLevel_ < MAX_GLOBAL_ZOOM_LEVEL;
+}
+
+bool AppSettings::canDecreaseGlobalUIScale() const
+{
+    return globalUIZoomLevel_ > MIN_GLOBAL_ZOOM_LEVEL;
 }
 
 bool AppSettings::developerMode() const
@@ -145,7 +206,7 @@ void AppSettings::setPanelFontSize(PanelId panelId, int size)
         return;
     }
     
-    size = qBound(MIN_FONT_SIZE, size, MAX_FONT_SIZE);
+    if (size != 0) size = qBound(MIN_FONT_SIZE, size, MAX_FONT_SIZE);
     
     size_t index = static_cast<size_t>(panelId);
     if (panelFontSizes_[index] != size)
@@ -160,13 +221,9 @@ void AppSettings::setPanelFontSize(PanelId panelId, int size)
 int AppSettings::effectiveFontSize(PanelId panelId) const
 {
     int baseSize = panelFontSize(panelId);
+    if (baseSize == 0) return 0;
     
-    if (globalUIScale_ != 100)
-    {
-        baseSize = static_cast<int>(baseSize * globalUIScale_ / 100.0);
-    }
-    
-    return qBound(MIN_FONT_SIZE, baseSize, MAX_FONT_SIZE);
+    return qRound(baseSize * globalUIScale() / 100.0);
 }
 
 int AppSettings::panelFontSize(const QString& panelKey) const
@@ -195,31 +252,27 @@ int AppSettings::effectiveFontSize(const QString& panelKey) const
     return effectiveFontSize(id);
 }
 
-int AppSettings::defaultFontSize(PanelId panelId)
+int AppSettings::defaultFontSize(PanelId)
 {
-    return PanelRegistry::defaultFontSize(panelId);
+    return DEFAULT_FONT_SIZE;
 }
 
-int AppSettings::defaultFontSize(const QString& panelKey)
+int AppSettings::defaultFontSize(const QString&)
 {
-    PanelId id = PanelRegistry::findByKey(panelKey);
-    if (id == PanelId::Count) {
-        return DEFAULT_FONT_SIZE;
-    }
-    return PanelRegistry::defaultFontSize(id);
+    return DEFAULT_FONT_SIZE;
 }
 
 void AppSettings::resetToDefaults()
 {
-    globalUIScale_ = DEFAULT_GLOBAL_SCALE;
+    globalUIZoomLevel_ = 0;
     developerMode_ = false;
     language_ = QStringLiteral("en");
 
     PanelRegistry::forEach([this](const PanelInfo& panel) {
-        panelFontSizes_[static_cast<size_t>(panel.id)] = panel.defaultFontSize;
+        panelFontSizes_[static_cast<size_t>(panel.id)] = DEFAULT_FONT_SIZE;
     });
 
-    emit globalUIScaleChanged(globalUIScale_);
+    emit globalUIScaleChanged(globalUIScale());
     emit developerModeChanged(developerMode_);
     emit languageChanged(language_);
     

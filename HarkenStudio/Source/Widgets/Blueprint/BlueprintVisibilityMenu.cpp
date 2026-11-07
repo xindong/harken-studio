@@ -1,6 +1,7 @@
 #include "BlueprintVisibilityMenu.h"
-
+#include "Core/ThemeManager.h"
 #include "Core/FontManager.h"
+
 #include "Core/QtControlSkin.h"
 
 #include <QCheckBox>
@@ -19,10 +20,6 @@
 namespace VNX {
 namespace {
 
-constexpr int TitleInset = 8;
-constexpr int FieldInset = 24;
-constexpr int CheckInset = 8;
-constexpr int MaximumHeight = 240;
 constexpr NodeContentFields PlaybackFields = NodeContentField::Volume | NodeContentField::Pitch
     | NodeContentField::OffsetOfStart | NodeContentField::Loop;
 
@@ -74,7 +71,6 @@ BlueprintVisibilityMenu::BlueprintVisibilityMenu(QWidget* parent)
         const QString id = QString::fromLatin1(definition.id);
         auto* row = new QWidget(contents_);
         auto* rowLayout = new QHBoxLayout(row);
-        rowLayout->setContentsMargins(definition.group ? TitleInset : FieldInset, 0, CheckInset, 0);
         auto* check = new QCheckBox(row);
         check->setObjectName(QStringLiteral("BlueprintVisibilityField_") + id);
         check->setAccessibleName(label);
@@ -88,9 +84,7 @@ BlueprintVisibilityMenu::BlueprintVisibilityMenu(QWidget* parent)
         labelView->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
         if (definition.group) {
             labelView->setProperty("textRole", "title");
-            QFont font;
-            font.setWeight(QFont::DemiBold);
-            labelView->setFont(font);
+            labelView->setProperty("fontEmphasis", "strong");
         }
         labels_[index] = labelView;
         rowLayout->addWidget(labelView, 1);
@@ -107,6 +101,7 @@ BlueprintVisibilityMenu::BlueprintVisibilityMenu(QWidget* parent)
     setFields(kAllNodeContentFields);
     relayout_();
     connect(this, &QMenu::aboutToShow, this, &BlueprintVisibilityMenu::relayout_);
+    connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this, &BlueprintVisibilityMenu::relayout_);
     connect(&FontManager::instance(), &FontManager::fontChanged, this, &BlueprintVisibilityMenu::relayout_);
 }
 
@@ -123,25 +118,28 @@ void BlueprintVisibilityMenu::setFields(NodeContentFields fields)
 
 void BlueprintVisibilityMenu::relayout_()
 {
-    int rowHeight = QtControlSkin::popupRowHeight(fontMetrics());
+    const auto& metrics = ThemeManager::instance().metrics();
+    int rowHeight = QtControlSkin::current().popupRowHeight(fontMetrics());
     int contentWidth = 0;
     for (size_t index = 0; index < Rows.size(); ++index) {
         auto* check = checks_[index];
         auto* label = labels_[index];
-        rowHeight = std::max({rowHeight, QtControlSkin::popupRowHeight(label->fontMetrics()),
+        rowHeight = std::max({rowHeight, QtControlSkin::current().popupRowHeight(label->fontMetrics()),
                              check->sizeHint().height()});
-        const int inset = Rows[index].group ? TitleInset : FieldInset;
+        const int inset = Rows[index].group ? metrics.popup.textPadding : metrics.popup.iconColumnWidth;
+        check->parentWidget()->layout()->setContentsMargins(inset, 0, metrics.popup.textPadding, 0);
+        check->parentWidget()->layout()->setSpacing(metrics.spacingSmall);
         contentWidth = std::max(contentWidth, label->fontMetrics().horizontalAdvance(label->text())
-            + inset + check->sizeHint().width() + CheckInset + 8);
+            + inset + check->sizeHint().width() + metrics.popup.textPadding + metrics.spacingSmall);
     }
     for (auto* check : checks_)
         check->parentWidget()->setFixedHeight(rowHeight);
     const int contentHeight = rowHeight * static_cast<int>(Rows.size());
-    const bool scrolls = contentHeight > MaximumHeight;
+    const bool scrolls = contentHeight > metrics.popup.maximumHeight;
     scroll_->setVerticalScrollBarPolicy(scrolls ? Qt::ScrollBarAlwaysOn : Qt::ScrollBarAlwaysOff);
     contents_->setFixedHeight(contentHeight);
     scroll_->setFixedSize(contentWidth + (scrolls ? style()->pixelMetric(QStyle::PM_ScrollBarExtent) : 0),
-        std::min(MaximumHeight, contentHeight));
+        std::min(metrics.popup.maximumHeight, contentHeight));
     updateGeometry();
     if (isVisible()) adjustSize();
 }

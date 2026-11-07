@@ -1,4 +1,5 @@
 #include "TitleBarWidget.h"
+#include "Core/ThemeLayout.h"
 #include "Core/ThemeAssetCatalog.h"
 #include "Core/ThemeManager.h"
 #include <QAction>
@@ -81,7 +82,7 @@ TitleBarWidget::TitleBarWidget(QWidget* parent) : QWidget(parent) {
 
     layout_ = new QHBoxLayout(this);
     layout_->setContentsMargins(0, 0, 0, 0);
-    layout_->setSpacing(6);
+    ThemeLayout::spacing(layout_, ThemeLayout::Space::Small);
 
     menuLayout_ = new QHBoxLayout;
     menuLayout_->setContentsMargins(0, 0, 0, 0);
@@ -119,6 +120,8 @@ TitleBarWidget::TitleBarWidget(QWidget* parent) : QWidget(parent) {
     setProjectTitle({}, false);
 
     trackWindow(parentWidget());
+    connect(&ThemeManager::instance(), &ThemeManager::themeChanged,
+            this, &TitleBarWidget::requestChromeMetricsSync);
     syncChromeMetrics();
 }
 
@@ -305,7 +308,7 @@ void TitleBarWidget::syncChromeMetrics() {
     int itemHeight = textHeight;
     int contentWidth = 0;
     if (menuBar_) {
-        const int targetHeight = qMax(36, textHeight);
+        const int targetHeight = qMax(ThemeManager::instance().metrics().chrome.titleBarHeight, textHeight);
         const int slack = targetHeight - textHeight;
         const QString itemPadding = QStringLiteral(
             "#titleBarMenuBar::item { padding-top: %1px; padding-bottom: %2px; }")
@@ -326,10 +329,11 @@ void TitleBarWidget::syncChromeMetrics() {
         itemHeight = qMax(textHeight, content.height());
         contentWidth = content.width();
     }
-    const int barHeight = qMax(36, itemHeight);
+    const int barHeight = qMax(ThemeManager::instance().metrics().chrome.titleBarHeight, itemHeight);
     setFixedHeight(barHeight);
     logoLabel_->setFixedSize(barHeight, barHeight);
-    const QSize logoSize(20, 20);
+    const int extent = ThemeManager::instance().metrics().objectIconExtent;
+    const QSize logoSize(extent, extent);
     const auto logo = ThemeManager::instance().resolveImage(
         QString::fromLatin1(ThemeAssetIds::AppIcon));
     if (logo.resource) {
@@ -343,11 +347,11 @@ void TitleBarWidget::syncChromeMetrics() {
         menuBar_->setFixedHeight(barHeight);
     }
     if (btnMin_)
-        btnMin_->setFixedSize(46, barHeight);
+        btnMin_->setFixedSize(ThemeManager::instance().metrics().chrome.windowButtonWidth, barHeight);
     if (btnMax_)
-        btnMax_->setFixedSize(46, barHeight);
+        btnMax_->setFixedSize(ThemeManager::instance().metrics().chrome.windowButtonWidth, barHeight);
     if (btnClose_)
-        btnClose_->setFixedSize(46, barHeight);
+        btnClose_->setFixedSize(ThemeManager::instance().metrics().chrome.windowButtonWidth, barHeight);
     layoutVersionLabel();
 }
 

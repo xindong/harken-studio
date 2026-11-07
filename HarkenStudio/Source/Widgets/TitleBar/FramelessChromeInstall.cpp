@@ -7,9 +7,7 @@
 #include "DialogTitleBar.h"
 #include <QWKWidgets/widgetwindowagent.h>
 #include <QDialog>
-#include <QEvent>
 #include <QLayout>
-#include <QMargins>
 #include <QPushButton>
 #include <QString>
 #endif
@@ -17,29 +15,6 @@
 namespace VNX {
 
 #if defined(HARKEN_HAS_QWINDOWKIT) && defined(Q_OS_WIN)
-
-namespace {
-
-class ChromeResizeFilter : public QObject {
-public:
-    ChromeResizeFilter(QWidget* bar, QObject* parent) : QObject(parent), bar_(bar) {}
-
-protected:
-    bool eventFilter(QObject* watched, QEvent* event) override {
-        if (event->type() == QEvent::Resize) {
-            if (auto* w = qobject_cast<QWidget*>(watched)) {
-                bar_->setGeometry(0, 0, w->width(), bar_->minimumHeight());
-                bar_->raise();
-            }
-        }
-        return QObject::eventFilter(watched, event);
-    }
-
-private:
-    QWidget* bar_;
-};
-
-}
 
 void installFramelessChrome()
 {
@@ -66,14 +41,8 @@ void installFramelessChrome()
                 window->close();
         }, Qt::QueuedConnection);
 
-        const int barH = bar->minimumHeight();
-        bar->setGeometry(0, 0, window->width(), barH);
-        bar->raise();
-        if (auto* lay = window->layout()) {
-            const QMargins m = lay->contentsMargins();
-            lay->setContentsMargins(m.left(), m.top() + barH, m.right(), m.bottom());
-        }
-        window->installEventFilter(new ChromeResizeFilter(bar, window));
+        if (auto* layout = window->layout())
+            layout->setMenuBar(bar);
     });
 }
 

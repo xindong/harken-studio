@@ -1,4 +1,5 @@
 #include "ReferenceImpactDialog.h"
+#include "Core/ThemeManager.h"
 
 #include "Core/BaseDialog.h"
 
@@ -23,7 +24,9 @@ public:
     {
         setObjectName(objectName);
         setWindowTitle(title);
-        setMinimumSize(620, 360);
+        ThemeManager::instance().bindMetrics(this, [this](const ThemeMetrics& metrics) {
+            setMinimumSize(metrics.dialog.preferredWidth, metrics.dialog.preferredHeight);
+        });
 
         auto* layout = new QVBoxLayout(this);
         auto* summaryLabel = new QLabel(summary, this);

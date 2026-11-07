@@ -231,24 +231,26 @@ void ShortcutsPage::commitShortcut(const QString& id, const QKeySequence& sequen
     if (sequence == manager.shortcut(id))
         return;
 
-    QString conflictId = manager.conflictingShortcut(id, sequence);
-    while (!conflictId.isEmpty())
+    QStringList conflicts = manager.conflictingShortcuts(id, sequence);
+    while (!conflicts.isEmpty())
     {
-        const ShortcutInfo conflictInfo = manager.info(conflictId);
+        QStringList names;
+        for (const auto& conflictId : conflicts)
+            names.append(manager.info(conflictId).displayName);
         const QMessageBox::StandardButton reply = QMessageBox::question(
             this, tr("Shortcut Conflict"),
-            tr("\"%1\" is already used by \"%2\".\n\n"
-               "Reassign it? \"%2\" will lose its shortcut.")
-                .arg(sequence.toString(QKeySequence::NativeText), conflictInfo.displayName),
+            tr("This shortcut conflicts with: %1.\n\n"
+               "Reassign it? These commands will lose their shortcuts.")
+                .arg(names.join(QStringLiteral(", "))),
             QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
         if (reply != QMessageBox::Yes)
             return;
-        if (manager.conflictingShortcut(id, sequence) == conflictId)
+        if (manager.conflictingShortcuts(id, sequence) == conflicts)
             break;
-        conflictId = manager.conflictingShortcut(id, sequence);
+        conflicts = manager.conflictingShortcuts(id, sequence);
     }
 
-    if (!conflictId.isEmpty())
+    for (const auto& conflictId : conflicts)
         manager.setShortcut(conflictId, QKeySequence());
     manager.setShortcut(id, sequence);
     manager.saveShortcuts();

@@ -1,5 +1,7 @@
 
 #include "ProjectExplorer.h"
+#include "Core/ThemeLayout.h"
+#include "Core/FontManager.h"
 #include "ExplorerSection.h"
 #include "SourcesTreeWidget.h"
 #include "Core/AppSettings.h"
@@ -105,13 +107,16 @@ ProjectExplorer::ProjectExplorer(QWidget* parent)
             [this](PanelId panelId, int size) {
                 if (panelId != PanelId::Explorer || !sourcesTree_)
                     return;
-                QFont font = sourcesTree_->font();
-                font.setPointSize(size);
+                QFont font = FontManager::instance().getFont(FontRole::Body, size);
                 sourcesTree_->setFont(font);
             });
+    connect(&FontManager::instance(), &FontManager::fontChanged, this, [this] {
+        sourcesTree_->setFont(FontManager::instance().getFont(
+            FontRole::Body, AppSettings::instance().panelFontSize(PanelId::Explorer)));
+    });
     if (sourcesTree_) {
-        QFont font = sourcesTree_->font();
-        font.setPointSize(AppSettings::instance().panelFontSize(PanelId::Explorer));
+        QFont font = FontManager::instance().getFont(
+            FontRole::Body, AppSettings::instance().panelFontSize(PanelId::Explorer));
         sourcesTree_->setFont(font);
     }
 
@@ -123,8 +128,8 @@ ProjectExplorer::~ProjectExplorer() = default;
 void ProjectExplorer::setupPanelChrome()
 {
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(8, 4, 8, 8);
-    layout->setSpacing(6);
+    ThemeLayout::margins(layout, ThemeLayout::Space::Small, ThemeLayout::Space::XSmall, ThemeLayout::Space::Small, ThemeLayout::Space::Small);
+    ThemeLayout::spacing(layout, ThemeLayout::Space::Small);
     layout->addWidget(searchBox_);
     connect(searchBox_, &QLineEdit::textChanged, this, [this]() {
         applySourcesVisibility();
@@ -302,8 +307,9 @@ QIcon ProjectExplorer::iconWithColorChip(const QIcon& base, uint32_t color) cons
     const qreal dpr = px.devicePixelRatio() > 0 ? px.devicePixelRatio() : 1.0;
     const int w = static_cast<int>(px.width() / dpr);
     const int h = static_cast<int>(px.height() / dpr);
-    const int chip = 7;
-    const int margin = 1;
+    const int chip = qRound(std::min(w, h) * 0.35);
+    const auto& metrics = ThemeManager::instance().metrics();
+    const int margin = metrics.borderWidth;
     QRectF chipRect(w - chip - margin, h - chip - margin, chip, chip);
 
     QPainter p(&px);
@@ -312,7 +318,7 @@ QIcon ProjectExplorer::iconWithColorChip(const QIcon& base, uint32_t color) cons
     outline.setAlphaF(outline.alphaF() * 160 / 255.0);
     p.setPen(outline);
     p.setBrush(QColor::fromRgba(color));
-    p.drawRoundedRect(chipRect, 1.5, 1.5);
+    p.drawRoundedRect(chipRect, metrics.radiusCompact, metrics.radiusCompact);
     p.end();
 
     return QIcon(px);

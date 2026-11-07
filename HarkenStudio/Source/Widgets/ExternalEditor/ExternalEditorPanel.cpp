@@ -1,4 +1,5 @@
 #include "ExternalEditorPanel.h"
+#include "Core/ThemeLayout.h"
 
 #include "Core/ActionManager.h"
 #include "Core/AssetPipeline/AssetRegistry.h"
@@ -26,12 +27,12 @@ ExternalEditorPanel::ExternalEditorPanel(QWidget* parent)
     setObjectName(QStringLiteral("ExternalEditorPanel"));
     setFocusPolicy(Qt::StrongFocus);
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(8, 8, 8, 8);
+    ThemeLayout::margins(layout, ThemeLayout::Space::Small);
     layout->setSpacing(0);
     curves_ = new QWidget(this);
     auto* curvesLayout = new QVBoxLayout(curves_);
     curvesLayout->setContentsMargins(0, 0, 0, 0);
-    curvesLayout->setSpacing(8);
+    ThemeLayout::spacing(curvesLayout, ThemeLayout::Space::Small);
     bindings_ = new BindingFieldEditor(curves_);
     curvesLayout->addWidget(bindings_);
     curve_ = new CurveEditorWidget(curves_);

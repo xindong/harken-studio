@@ -43,7 +43,7 @@ void BlueprintCanvasWidget::initializeNodeEditors_()
 
 void BlueprintCanvasWidget::updateDetailLevel_()
 {
-    const auto scale = transform().m11();
+    const auto scale = zoomFactor();
     const auto next = scale < 0.4 ? BlueprintDetailLevel::Overview : BlueprintDetailLevel::Full;
     if (next == detailLevel_) return;
     detailLevel_ = next;
@@ -107,6 +107,17 @@ void BlueprintCanvasWidget::refreshContentPresentations_()
         if (auto* editor = qobject_cast<NodeContentEditor*>(node->contentWidget()))
             editor->setLabelWidth(NodeContentEditor::labelWidth(node->contentFields()));
         node->refreshContentPresentation();
+    }
+    for (auto* edge : edges_)
+        edge->refreshMetrics();
+    for (auto* edge : gainOutputEdges_)
+        if (edge) edge->refreshMetrics();
+    if (tempPath_) updateConnectPreview_(connectPosition_);
+    if (activeSource_ == pathSource_.get()) {
+        for (size_t index = 0; index < pathNodeLayoutSizes_.size(); ++index) {
+            const auto* node = signalPathNode(index);
+            pathNodeLayoutSizes_[index] = node->sceneBodySize();
+        }
     }
 }
 

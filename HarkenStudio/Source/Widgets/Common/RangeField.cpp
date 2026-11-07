@@ -20,7 +20,7 @@ QDoubleSpinBox* makeBound(QWidget* parent, const QString& objectName)
     spin->setButtonSymbols(QAbstractSpinBox::NoButtons);
     spin->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     spin->setKeyboardTracking(false);
-    spin->setFont(FontManager::instance().getFont(FontRole::Mono));
+
     spin->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     return spin;
 }
@@ -41,8 +41,6 @@ RangeField::RangeField(QWidget* parent)
     separator_ = new QLabel(QStringLiteral("–"), this);
     separator_->setObjectName(QStringLiteral("rangeFieldSeparator"));
     separator_->setAlignment(Qt::AlignCenter);
-    separator_->setFixedWidth(
-        ThemeManager::instance().metrics().inspector.rangeSeparatorWidth);
     separator_->setProperty("textRole", QStringLiteral("muted"));
 
     layout->addWidget(low_, 1);
@@ -95,6 +93,8 @@ double RangeField::highValue() const
 
 void RangeField::applyTheme()
 {
+    separator_->setFixedWidth(
+        ThemeManager::instance().metrics().inspector.rangeSeparatorWidth);
     QtControlSkin::setSemanticProperty(low_, "fieldRole",
                                       QStringLiteral("inspectorValue"));
     QtControlSkin::setSemanticProperty(high_, "fieldRole",

@@ -83,7 +83,7 @@ TEST(ParameterControlHost, ValueEditorsCanConfirmClampedValuesWithoutChangingThe
     }
 }
 
-TEST(ParameterControlHost, ColorPreviewPreservesActiveEditingAndComponentStructure)
+TEST(ParameterControlHost, AppearanceChangesPreserveActiveEditingAndComponentStructure)
 {
     ensureApp();
     QTemporaryDir root;
@@ -120,6 +120,8 @@ TEST(ParameterControlHost, ColorPreviewPreservesActiveEditingAndComponentStructu
     VNX::ComponentRecipeHost recipe(VNX::ComponentRecipeHostId::TrackHeader, nullptr, &manager);
     auto* identity = new QWidget;
     ASSERT_TRUE(recipe.registerSlot(VNX::ComponentRecipeSlotId::Identity, identity));
+    auto* controls = new QWidget;
+    ASSERT_TRUE(recipe.registerSlot(VNX::ComponentRecipeSlotId::Controls, controls));
     QPointer<VNX::ParameterPresenter> presenter(parameter.presenter());
     QPointer<QLayout> layout(recipe.layout());
     ASSERT_NE(presenter, nullptr);
@@ -150,6 +152,17 @@ TEST(ParameterControlHost, ColorPreviewPreservesActiveEditingAndComponentStructu
     EXPECT_TRUE(slider->isSliderDown());
     EXPECT_DOUBLE_EQ(binding->value(), 0.75);
     EXPECT_EQ(ended, 0);
+
+    for (int percent : {50, 125, 200, 300, 100}) {
+        manager.setUIScale(percent);
+        QApplication::processEvents();
+        ASSERT_FALSE(presenter.isNull());
+        EXPECT_EQ(parameter.presenter(), presenter.data());
+        EXPECT_TRUE(binding->isEditing());
+        EXPECT_TRUE(slider->isSliderDown());
+        EXPECT_DOUBLE_EQ(binding->value(), 0.75);
+        EXPECT_EQ(ended, 0);
+    }
 
     manager.cancelAppearancePreview();
     QApplication::processEvents();

@@ -14,6 +14,7 @@
 #include <QString>
 
 #include <memory>
+#include <functional>
 #include <optional>
 
 class QPainter;
@@ -62,6 +63,8 @@ public:
     ThemeManager& operator=(const ThemeManager&) = delete;
 
     ThemeSnapshotPtr snapshot() const { return snapshot_; }
+    ThemeSnapshotPtr unscaledSnapshot() const { return publishedCandidate_.snapshot; }
+    void setUIScale(qreal percent);
     QString currentThemeId() const { return currentThemeId_; }
     QString currentPaletteId() const { return currentPaletteId_; }
     QString userThemesRoot() const { return userThemesRoot_; }
@@ -107,6 +110,7 @@ public:
     void cancelAppearancePreview();
     const ThemeColors& colors() const { return snapshot_->ui.colors; }
     const ThemeMetrics& metrics() const { return snapshot_->ui.metrics; }
+    QMetaObject::Connection bindMetrics(QObject* context, std::function<void(const ThemeMetrics&)> apply);
 
     QString accent() const { return colors().accent.name(QColor::HexArgb); }
     QString accentHover() const { return colors().accentHover.name(QColor::HexArgb); }
@@ -163,6 +167,8 @@ private:
     QString currentPaletteId_;
     QMap<QString, ColorPaletteCustomizations> customizations_;
     ThemePackageCandidate committedCandidate_;
+    ThemePackageCandidate publishedCandidate_;
+    qreal uiScalePercent_ = 100.0;
     QString publishedThemeId_;
     ThemeAssetMapDto publishedAssets_;
     QMap<QString, QString> publishedAssetRoots_;

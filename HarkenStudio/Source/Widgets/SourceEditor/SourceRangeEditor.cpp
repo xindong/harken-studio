@@ -1,4 +1,5 @@
 #include "SourceRangeEditor.h"
+#include "Core/ThemeLayout.h"
 
 #include "SourceEditorWaveformView.h"
 #include "Core/QtControlSkin.h"
@@ -19,7 +20,7 @@ SourceRangeEditor::SourceRangeEditor(const SoundSourceDef& source,
     setObjectName(QStringLiteral("sourceRangeEditor"));
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(4);
+    ThemeLayout::spacing(layout, ThemeLayout::Space::XSmall);
 
     waveform_ = new SourceEditorWaveformView(
         this, SourceEditorWaveformView::Presentation::TrimEditor);
@@ -30,7 +31,7 @@ SourceRangeEditor::SourceRangeEditor(const SoundSourceDef& source,
     integrity_ = new QLabel(this);
     integrity_->setObjectName(QStringLiteral("sourceIntegrityWarning"));
     QtControlSkin::setSemanticProperty(integrity_, "textRole", QStringLiteral("warning"));
-    integrity_->setContentsMargins(8, 0, 8, 4);
+    ThemeLayout::margins(integrity_, ThemeLayout::Space::Small, ThemeLayout::Space::None, ThemeLayout::Space::Small, ThemeLayout::Space::XSmall);
     integrity_->setWordWrap(true);
     layout->addWidget(integrity_);
     connect(waveform_, &SourceEditorWaveformView::previewChanged, this, [this]() {

@@ -1,4 +1,5 @@
 #include "PlaybackControls.h"
+#include "Core/ThemeLayout.h"
 
 #include "Core/ContextInfo.h"
 #include "Core/ItemTypeCatalog.h"
@@ -18,7 +19,7 @@ PlaybackControls::PlaybackControls(QWidget* parent)
     setObjectName(QStringLiteral("playbackControls"));
     auto* layout = new QHBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(6);
+    ThemeLayout::spacing(layout, ThemeLayout::Space::Small);
     layout->setSizeConstraint(QLayout::SetFixedSize);
 
     stopBtn_ = new QToolButton(this);
@@ -34,8 +35,12 @@ PlaybackControls::PlaybackControls(QWidget* parent)
     resetBtn_->setEnabled(false);
     for (auto* button : {stopBtn_, playBtn_, resetBtn_}) {
         button->setProperty("flatIconButton", true);
-        button->setFixedSize(32, 22);
-        button->setIconSize(QSize(20, 20));
+        ThemeManager::instance().bindMetrics(button, [button](const ThemeMetrics& metrics) {
+            button->setFixedSize(metrics.control.largeHeight, metrics.controlHeight);
+        });
+        ThemeManager::instance().bindMetrics(button, [button](const ThemeMetrics& metrics) {
+            button->setIconSize(QSize(metrics.objectIconExtent, metrics.objectIconExtent));
+        });
         button->setAutoRaise(true);
         button->setToolButtonStyle(Qt::ToolButtonIconOnly);
         button->setCursor(Qt::PointingHandCursor);

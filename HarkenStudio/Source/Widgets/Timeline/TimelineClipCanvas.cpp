@@ -315,7 +315,8 @@ int TimelineMarkerRuler::markerAt(const QPoint& point) const
     if (!rect().contains(point))
         return -1;
     int nearest = -1;
-    int nearestDistance = kTimeAxisHandleWidth + 1;
+    const auto& metrics = ThemeManager::instance().metrics();
+    int nearestDistance = metrics.timeAxis.handleWidth + metrics.timeAxis.handleHitRadius + 1;
     for (int index = panel_->markerCount() - 1; index >= 0; --index) {
         if (panel_->markerKind(index) == MarkerKind::Custom)
             continue;
@@ -323,10 +324,10 @@ int TimelineMarkerRuler::markerAt(const QPoint& point) const
         if (x < 0 || x >= width())
             continue;
         const QRect grip = TimelineRenderer::markerHandleRect(
-            x, height(), markerShapeForKind(panel_->markerKind(index)));
-        const bool overGrip = !grip.isEmpty() && grip.adjusted(-2, -2, 2, 2).contains(point);
+            x, height(), markerShapeForKind(panel_->markerKind(index)), metrics.timeAxis);
+        const bool overGrip = !grip.isEmpty() && grip.adjusted(-metrics.spacingCompact, -metrics.spacingCompact, metrics.spacingCompact, metrics.spacingCompact).contains(point);
         const int distance = std::abs(point.x() - (overGrip ? grip.center().x() : x));
-        const int radius = overGrip ? 10 : 5;
+        const int radius = overGrip ? grip.width() / 2 + metrics.spacingCompact : metrics.timeAxis.handleHitRadius;
         if (distance <= radius && distance < nearestDistance) {
             nearest = index;
             nearestDistance = distance;

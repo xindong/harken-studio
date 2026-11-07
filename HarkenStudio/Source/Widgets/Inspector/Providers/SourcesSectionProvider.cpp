@@ -1,4 +1,5 @@
 #include "Widgets/Inspector/Providers/SourcesSectionProvider.h"
+#include "Core/ThemeLayout.h"
 #include "Widgets/Inspector/InspectorLayout.h"
 #include "Widgets/Inspector/SoundInspectorSchema.h"
 
@@ -81,8 +82,7 @@ public:
         setObjectName(QStringLiteral("sourcesListWidget"));
 
         auto* v = new QVBoxLayout(this);
-        v->setContentsMargins(0, 0, ThemeManager::instance().metrics().inspector.columnPadding, 0);
-        v->setSpacing(2);
+        ThemeLayout::spacing(v, ThemeLayout::Space::Compact);
         reserveInspectorContentSlots(this);
 
         box_ = new TableWidget(this);
@@ -1062,7 +1062,7 @@ QWidget* SourcesSectionProvider::build(QWidget* parent)
     auto* content = new QWidget(parent);
     auto* cl = new QVBoxLayout(content);
     cl->setContentsMargins(0, 0, 0, 0);
-    cl->setSpacing(2);
+    ThemeLayout::spacing(cl, ThemeLayout::Space::Compact);
 
     auto* list = new SourcesListWidget(content);
     cl->addWidget(list);

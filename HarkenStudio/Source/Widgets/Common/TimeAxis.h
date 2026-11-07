@@ -14,9 +14,6 @@ class QPainter;
 
 namespace VNX {
 
-inline constexpr int kTimeAxisHandleBandHeight = 12;
-inline constexpr int kTimeAxisHandleWidth = 12;
-
 struct NanosecondPosition
 {
     int64_t nanoseconds = 0;
@@ -57,12 +54,14 @@ QString formatTimeNanoseconds(int64_t nanoseconds, int minimumDecimals = 0, int 
 QString formatTimeMinutesSecondsMilliseconds(int64_t nanoseconds,
     int minimumDecimals = 3, int maximumDecimals = 3);
 void drawTimeAxisRuler(QPainter& painter, const ThemeColors& colors,
-    const QRect& bounds, const TimeAxisTicks& ticks, FontRole role = FontRole::Axis,
+    const ThemeMetrics::TimeAxis& geometry,
+    const QRect& bounds, const TimeAxisTicks& ticks, FontRole role = FontRole::Caption,
     TimeAxisLabelAlignment alignment = TimeAxisLabelAlignment::Center, bool pairedLabels = false);
 void drawTimeAxisGrid(QPainter& painter, const QColor& majorColor,
     const QRect& bounds, const TimeAxisTicks& ticks, const QColor& minorColor = {},
     const QColor& beatColor = {});
 void drawTimeAxisHandle(QPainter& painter, const QColor& color,
     const QColor& grooveColor, const QRect& bounds);
+QRect timeAxisHandleRect(int x, int top, bool start, const ThemeMetrics::TimeAxis& geometry);
 
 }

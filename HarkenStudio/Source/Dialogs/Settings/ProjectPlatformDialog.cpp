@@ -1,7 +1,9 @@
 #include "ProjectPlatformDialog.h"
+#include "Core/ThemeManager.h"
 
 #include "ProjectPlatformEditor.h"
 #include "Core/QtControlSkin.h"
+#include "Widgets/Common/PanelScrollArea.h"
 #include "Widgets/Common/TableWidget.h"
 
 #include <QHBoxLayout>
@@ -15,13 +17,21 @@ ProjectPlatformDialog::ProjectPlatformDialog(QWidget* parent)
 {
     setObjectName("projectPlatformDialog");
     setWindowTitle(tr("Add Platform"));
-    resize(600, 360);
+    const auto& metrics = ThemeManager::instance().metrics().dialog;
+    resize(metrics.preferredWidth, metrics.preferredHeight);
     auto* layout = new QVBoxLayout(this);
-    auto* content = new QHBoxLayout();
+    auto* scroll = new PanelScrollArea(this);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    auto* body = new QWidget(scroll);
+    scroll->setWidget(body);
+    auto* content = new QHBoxLayout(body);
+    content->setContentsMargins(0, 0, 0, 0);
     content->setSpacing(0);
     auto* platformTabs = new TableWidget(
-        {TableKind::Config, TableBodySizing::Expanding}, this);
-    platformTabs->setFixedWidth(150);
+        {TableKind::Config, TableBodySizing::Expanding}, body);
+    ThemeManager::instance().bindMetrics(platformTabs, [platformTabs](const ThemeMetrics& metrics) {
+        platformTabs->setFixedWidth(metrics.panel.sidebarWidth);
+    });
     auto* platforms = platformTabs->createNavigationView(QStringLiteral("supportedPlatformList"));
     for (const auto base : {BasePlatform::Windows, BasePlatform::Android, BasePlatform::Linux,
                             BasePlatform::macOS, BasePlatform::iOS}) {
@@ -29,11 +39,11 @@ ProjectPlatformDialog::ProjectPlatformDialog(QWidget* parent)
         item->setData(Qt::UserRole, static_cast<int>(base));
     }
     content->addWidget(platformTabs);
-    auto* preview = new ProjectPlatformEditor(this);
+    auto* preview = new ProjectPlatformEditor(body);
     QtControlSkin::setSemanticProperty(preview, "joinedEdge", QStringLiteral("left"));
     preview->setReadOnly(true);
     content->addWidget(preview, 1);
-    layout->addLayout(content, 1);
+    layout->addWidget(scroll, 1);
     connect(platforms, &QListWidget::currentRowChanged, this, [this, platforms, preview](int row) {
         if (row < 0) return;
         platform_ = {};

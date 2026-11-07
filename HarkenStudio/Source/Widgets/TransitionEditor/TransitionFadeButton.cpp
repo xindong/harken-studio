@@ -1,4 +1,5 @@
 #include "TransitionFadeButton.h"
+#include "Core/ThemeLayout.h"
 
 #include "Core/CurveSemantics.h"
 #include "Core/NumericFormat.h"
@@ -23,9 +24,7 @@ namespace VNX {
 
 namespace {
 
-constexpr int kThumbWidth = 28;
 constexpr int kThumbSamples = 16;
-constexpr QSize kPopupSize(400, 280);
 
 QString formatSeconds(float value)
 {
@@ -58,7 +57,7 @@ void paintFadeCurve(QPainter& p, const QRectF& area,
         }
         poly.append(mapPoint(right.x, right.value));
     }
-    p.setPen(QPen(color, 1.2));
+    p.setPen(QPen(color, ThemeManager::instance().metrics().borderWidth));
     p.setBrush(Qt::NoBrush);
     p.drawPolyline(poly);
 }
@@ -100,7 +99,7 @@ void TransitionFadeButton::refresh()
 
 QSize TransitionFadeButton::sizeHint() const
 {
-    return QToolButton::sizeHint().expandedTo(QSize(kThumbWidth + 6, 0));
+    return QToolButton::sizeHint().expandedTo(QSize(ThemeManager::instance().metrics().control.largeHeight, 0));
 }
 
 void TransitionFadeButton::paintEvent(QPaintEvent*)
@@ -109,7 +108,8 @@ void TransitionFadeButton::paintEvent(QPaintEvent*)
     QtControlSkin::paintFieldFrame(painter, this);
     const auto& colors = ThemeManager::instance().colors();
     const QColor line = dimmed_ || !isEnabled() ? colors.textDisabled : colors.accent;
-    paintFadeCurve(painter, QRectF(rect()).adjusted(3.0, 3.0, -3.0, -3.0), fade_, line);
+    const qreal padding = ThemeManager::instance().metrics().spacingXSmall;
+    paintFadeCurve(painter, QRectF(rect()).adjusted(padding, padding, -padding, -padding), fade_, line);
 }
 
 TransitionFadePopup::TransitionFadePopup(const QString& title,
@@ -128,16 +128,17 @@ TransitionFadePopup::TransitionFadePopup(const QString& title,
     setObjectName(QStringLiteral("transitionFadePopup"));
     setAttribute(Qt::WA_DeleteOnClose);
     setAttribute(Qt::WA_StyledBackground);
-    resize(kPopupSize);
+    const auto& metrics = ThemeManager::instance().metrics().dialog;
+    resize(metrics.compactWidth, metrics.compactHeight);
 
     QtControlSkin::setSemanticProperty(this, "surfaceRole", QStringLiteral("secondary"));
 
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(8, 6, 8, 8);
-    layout->setSpacing(6);
+    ThemeLayout::margins(layout, ThemeLayout::Space::Small);
+    ThemeLayout::spacing(layout, ThemeLayout::Space::Small);
 
     auto* titleRow = new QHBoxLayout();
-    titleRow->setSpacing(6);
+    ThemeLayout::spacing(titleRow, ThemeLayout::Space::Small);
     auto* caption = new QLabel(title, this);
     caption->setObjectName(QStringLiteral("transitionFadeTitle"));
     QtControlSkin::setSemanticProperty(caption, "textRole", QStringLiteral("formLabel"));
@@ -149,7 +150,9 @@ TransitionFadePopup::TransitionFadePopup(const QString& title,
 
     auto* iconLabel = new QLabel(this);
     iconLabel->setObjectName(QStringLiteral("transitionFadeObjectIcon"));
-    iconLabel->setFixedSize(16, 16);
+    ThemeManager::instance().bindMetrics(iconLabel, [iconLabel](const ThemeMetrics& metrics) {
+        iconLabel->setFixedSize(metrics.control.smallIconExtent, metrics.control.smallIconExtent);
+    });
     iconLabel->setScaledContents(true);
     if (context.objectIcon.isNull()) {
         iconLabel->hide();
@@ -186,8 +189,12 @@ TransitionFadePopup::TransitionFadePopup(const QString& title,
     resetButton_ = new QToolButton(this);
     resetButton_->setObjectName(QStringLiteral("transitionFadeReset"));
     resetButton_->setToolTip(QObject::tr("Reset"));
-    resetButton_->setFixedSize(22, 22);
-    resetButton_->setIconSize(QSize(16, 16));
+    ThemeManager::instance().bindMetrics(resetButton_, [this](const ThemeMetrics& metrics) {
+        resetButton_->setFixedSize(metrics.controlHeight, metrics.controlHeight);
+    });
+    ThemeManager::instance().bindMetrics(resetButton_, [this](const ThemeMetrics& metrics) {
+        resetButton_->setIconSize(QSize(metrics.control.smallIconExtent, metrics.control.smallIconExtent));
+    });
     resetButton_->setAutoRaise(true);
     resetButton_->setCursor(Qt::PointingHandCursor);
     QtControlSkin::setSemanticProperty(resetButton_, "flatIconButton", true);

@@ -378,7 +378,7 @@ private:
     double amplitudeExponent_ = 1.0;
     NanosecondPosition viewStart_;
     std::optional<double> pendingHorizontalRatio_;
-    int laneHeaderWidth_ = 0;
+    qreal laneHeaderWidth_ = 0;
     QHash<QUuid, double> laneHeights_;
     std::optional<LaneResizeDrag> laneResizeDrag_;
     std::optional<HeaderResizeDrag> headerResizeDrag_;

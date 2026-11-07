@@ -1,4 +1,5 @@
 #include "RemoteConnectPanel.h"
+#include "Core/ThemeLayout.h"
 #include "Core/BaseDialog.h"
 
 #include "Core/QtControlSkin.h"
@@ -35,11 +36,13 @@ RemoteConnectPanel::RemoteConnectPanel(HarkenEditor::Bridge::RemoteConnection* c
 {
     setObjectName(QStringLiteral("RemoteConnectPanel"));
     setWindowTitle(tr("Remote Connect"));
-    setMinimumSize(420, 240);
+    ThemeManager::instance().bindMetrics(this, [this](const ThemeMetrics& metrics) {
+        setMinimumSize(metrics.dialog.minimumWidth, metrics.dialog.minimumHeight);
+    });
 
     auto* root = new QVBoxLayout(this);
-    root->setContentsMargins(16, 16, 16, 16);
-    root->setSpacing(12);
+    ThemeLayout::margins(root, ThemeLayout::Space::Large);
+    ThemeLayout::spacing(root, ThemeLayout::Space::Medium);
     auto* table = new TableWidget(TableOptions::display(), this);
     targets_ = table->createItemView(QStringLiteral("remoteTargets"),
         {tr("Application"), tr("Machine / PID"), tr("Address"),
@@ -47,7 +50,9 @@ RemoteConnectPanel::RemoteConnectPanel(HarkenEditor::Bridge::RemoteConnection* c
         {220, 180, 190, 120, 100, 140});
     targets_->setSelectionMode(QAbstractItemView::SingleSelection);
     targets_->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    table->setMinimumHeight(160);
+    ThemeManager::instance().bindMetrics(table, [table](const ThemeMetrics& metrics) {
+        table->setMinimumHeight(metrics.panel.minimumHeight);
+    });
     auto* footer = table->footer();
     footer->removeButton()->hide();
     manual_ = footer->addButton();
@@ -63,7 +68,7 @@ RemoteConnectPanel::RemoteConnectPanel(HarkenEditor::Bridge::RemoteConnection* c
     root->addWidget(table, 1);
 
     auto* connectionRow = new QHBoxLayout();
-    connectionRow->setSpacing(8);
+    ThemeLayout::spacing(connectionRow, ThemeLayout::Space::Small);
     status_ = new QLabel(this);
     status_->setObjectName(QStringLiteral("remoteConnectionStatus"));
     status_->setWordWrap(true);
@@ -108,7 +113,8 @@ RemoteConnectPanel::RemoteConnectPanel(HarkenEditor::Bridge::RemoteConnection* c
 
 QSize RemoteConnectPanel::sizeHint() const
 {
-    return QSize(860, 380);
+    const auto& metrics = ThemeManager::instance().metrics().dialog;
+    return QSize(metrics.wideWidth, metrics.preferredHeight);
 }
 
 void RemoteConnectPanel::refreshTargets()
@@ -166,10 +172,12 @@ void RemoteConnectPanel::openManualConnection()
     BaseDialog dialog(this);
     dialog.setObjectName(QStringLiteral("remoteManualConnectDialog"));
     dialog.setWindowTitle(manual_->toolTip());
-    dialog.setMinimumWidth(360);
+    ThemeManager::instance().bindMetrics(&dialog, [&dialog](const ThemeMetrics& metrics) {
+        dialog.setMinimumWidth(metrics.dialog.compactWidth);
+    });
     auto* layout = new QVBoxLayout(&dialog);
-    layout->setContentsMargins(16, 16, 16, 16);
-    layout->setSpacing(12);
+    ThemeLayout::margins(layout, ThemeLayout::Space::Large);
+    ThemeLayout::spacing(layout, ThemeLayout::Space::Medium);
     auto* form = new DialogFormLayout();
     auto* address = new QLineEdit(&dialog);
     address->setObjectName(QStringLiteral("remoteAddress"));

@@ -30,9 +30,6 @@ class NodeContentEditor : public QWidget
     Q_OBJECT
 
 public:
-    static constexpr int kSliderWidth = 100;
-    static constexpr int kRouteGainMinimumWidth = 100;
-    static constexpr int kValueWidth = 44;
 
     NodeContentEditor(const NodeContentInfo& info, NodeContentFields fields,
                       int labelWidth, QWidget* parent = nullptr);
@@ -77,7 +74,7 @@ private:
     std::vector<std::unique_ptr<Row>> rows_;
     NodeContentFields fields_;
     int labelColumnWidth_;
-    int valueColumnWidth_ = kValueWidth;
+    qreal valueColumnBaseWidth_ = 0;
     bool routeGainMode_ = false;
     bool metricsSuspended_ = false;
 };

@@ -242,6 +242,13 @@ bool paintsControlSurface(const QWidget* widget)
 
 void refreshPalette(QWidget* widget, ThemeManager& manager, QStyle::State state)
 {
+    QLineEdit* editor = nullptr;
+    if (auto* spin = qobject_cast<QAbstractSpinBox*>(widget))
+        editor = spin->findChild<QLineEdit*>(QString(), Qt::FindDirectChildrenOnly);
+    else if (auto* combo = qobject_cast<QComboBox*>(widget))
+        editor = combo->lineEdit();
+    if (editor && editor->font() != widget->font())
+        editor->setFont(widget->font());
     const QWidget* owner = widget;
     if (const auto* scrollArea = qobject_cast<const QAbstractScrollArea*>(widget->parentWidget()))
         if (scrollArea->viewport() == widget) owner = scrollArea;
@@ -425,6 +432,8 @@ void HarkenStyle::polish(QWidget* widget)
             });
     }
     refreshWidgetAppearance(widget, theme());
+    if (auto* view = qobject_cast<QAbstractItemView*>(widget))
+        QTimer::singleShot(0, view, &QAbstractItemView::doItemsLayout);
     auto* comboBox = qobject_cast<QComboBox*>(widget);
     if (comboBox)
         QtControlSkin::applyPopupStyle(comboBox);
@@ -506,6 +515,9 @@ bool HarkenStyle::eventFilter(QObject* watched, QEvent* event)
         case QEvent::Show:
             refresh = true;
             break;
+        case QEvent::FontChange:
+            refresh = qobject_cast<QAbstractSpinBox*>(widget) || qobject_cast<QComboBox*>(widget);
+            break;
         default:
             break;
         }
@@ -534,7 +546,7 @@ bool HarkenStyle::eventFilter(QObject* watched, QEvent* event)
             button->style()->drawPrimitive(PE_PanelButtonTool, &option, &painter, button);
             if (tabClose) {
                 const QRect rect = alignedRect(option.direction, Qt::AlignCenter,
-                                               QSize(20, 20), option.rect);
+                                               QSize(theme().metrics().objectIconExtent, theme().metrics().objectIconExtent), option.rect);
                 theme().resolveIcon(QString::fromLatin1(ThemeAssetIds::DockClose)).icon.paint(
                     &painter, rect, Qt::AlignCenter,
                     button->isEnabled() ? QIcon::Normal : QIcon::Disabled);
@@ -567,6 +579,17 @@ int HarkenStyle::pixelMetric(PixelMetric metric, const QStyleOption* option,
     }
     if (metric == PM_ButtonDefaultIndicator || metric == PM_ButtonShiftHorizontal || metric == PM_ButtonShiftVertical)
         return 0;
+    if (metric == PM_LayoutLeftMargin || metric == PM_LayoutTopMargin
+        || metric == PM_LayoutRightMargin || metric == PM_LayoutBottomMargin)
+        return theme().metrics().spacingSmall;
+    if (metric == PM_LayoutHorizontalSpacing || metric == PM_LayoutVerticalSpacing)
+        return theme().metrics().spacingXSmall;
+    if (metric == PM_ToolBarIconSize || metric == PM_ButtonIconSize)
+        return theme().metrics().objectIconExtent;
+    if (metric == PM_SplitterWidth)
+        return theme().metrics().control.splitterExtent;
+    if (metric == PM_ScrollBarExtent)
+        return theme().metrics().control.scrollbarExtent;
     if (metric == PM_TabBarTabHSpace || metric == PM_TabBarTabVSpace
         || metric == PM_TabBarTabShiftHorizontal || metric == PM_TabBarTabShiftVertical)
         return 0;
@@ -758,6 +781,17 @@ void HarkenStyle::drawPrimitive(PrimitiveElement element,
                                 const QStyleOption* option, QPainter* painter,
                                 const QWidget* widget) const
 {
+    if (element == PE_IndicatorMenuCheckMark) {
+        const auto group = option->state & State_Enabled ? QPalette::Active : QPalette::Disabled;
+        const auto role = option->state & State_Selected ? QPalette::HighlightedText : QPalette::Text;
+        const QColor tint = option->palette.color(group, role);
+        const int extent = qMin(theme().metrics().control.checkboxMarkExtent,
+            qMin(option->rect.width(), option->rect.height()));
+        theme().resolveIcon(QString::fromLatin1(ThemeAssetIds::CheckboxChecked),
+            ThemeAssetVariant{QSize(), 1.0, 0, tint}).icon.paint(painter,
+                alignedRect(option->direction, Qt::AlignCenter, QSize(extent, extent), option->rect));
+        return;
+    }
     if (widget) {
         QStringView part;
         bool surface = false;

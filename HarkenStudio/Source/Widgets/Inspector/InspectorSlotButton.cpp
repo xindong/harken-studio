@@ -11,8 +11,9 @@ InspectorSlotButton::InspectorSlotButton(InspectorSlotKind kind, QWidget* parent
     : QToolButton(parent)
     , kind_(kind)
 {
-    const auto& inspector = ThemeManager::instance().metrics().inspector;
-    setFixedSize(inspector.bindingSlotWidth, inspector.slotHeight);
+    ThemeManager::instance().bindMetrics(this, [this](const ThemeMetrics& metrics) {
+        setFixedSize(metrics.inspector.bindingSlotWidth, metrics.inspector.slotHeight);
+    });
     setAutoRaise(true);
     setToolButtonStyle(Qt::ToolButtonIconOnly);
     setProperty("flatIconButton", true);
@@ -37,7 +38,9 @@ void InspectorSlotButton::paintEvent(QPaintEvent* event)
     const QColor color = isEnabled() ? colors.textPrimary : colors.textDisabled;
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
-    painter.translate((width() - 14) / 2.0, (height() - 20) / 2.0);
+    const qreal scale = qMin(width() / 14.0, height() / 20.0);
+    painter.translate((width() - 14 * scale) / 2.0, (height() - 20 * scale) / 2.0);
+    painter.scale(scale, scale);
     painter.setPen(QPen(color, 1.2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
     painter.setBrush(bound_ ? QBrush(color) : Qt::NoBrush);
     if (kind_ == InspectorSlotKind::Binding) {

@@ -142,7 +142,7 @@ protected:
     {
         ensureApp();
         ASSERT_TRUE(root_.isValid());
-        AppSettings::instance().setStorage(std::make_unique<MemorySettingsStorage>());
+        replaceAppSettingsStorage(std::make_unique<MemorySettingsStorage>());
         AIAgentConfigStore::setStorageOverrideForTesting(std::make_shared<MemorySettingsStorage>());
         originalConfig_.baseUrl = QStringLiteral("https://original.example/v1");
         originalConfig_.model = QStringLiteral("original-model");
@@ -179,9 +179,16 @@ protected:
         };
     }
 
+    void replaceAppSettingsStorage(std::unique_ptr<MemorySettingsStorage> storage)
+    {
+        appStorage_ = storage.get();
+        AppSettings::instance().setStorage(std::move(storage));
+    }
+
     QTemporaryDir root_;
     std::unique_ptr<ThemeManager> theme_;
     MemorySettingsStorage* themeStorage_ = nullptr;
+    MemorySettingsStorage* appStorage_ = nullptr;
     AIAgentConfig originalConfig_;
     QString secret_ = QStringLiteral("original-key");
     bool failSecretWrite_ = false;
@@ -233,6 +240,133 @@ TEST_F(SettingsApplyContractTest, OpenPreferencesFollowExternalCommittedValues)
     AppSettings::instance().setLanguage(QStringLiteral("en"));
     EXPECT_FALSE(developer->isChecked());
     EXPECT_EQ(language->currentData().toString(), QStringLiteral("en"));
+}
+
+TEST_F(SettingsApplyContractTest, InterfaceScalePersistsIndependentlyAndRestoresBeforePageCreation)
+{
+    auto& settings = AppSettings::instance();
+    const int originalZoomLevel = settings.globalUIZoomLevel();
+    const int originalFontSize = settings.panelFontSize(PanelId::Inspector);
+    const auto restoreSettings = qScopeGuard([&] {
+        settings.setPanelFontSize(PanelId::Inspector, originalFontSize);
+        settings.setGlobalUIZoomLevel(originalZoomLevel);
+    });
+    const auto appearance = theme_->appearance();
+    const auto storedTheme = storedValues(*themeStorage_);
+    const auto base = theme_->unscaledSnapshot();
+    const int chosenZoomLevel = 3;
+    const qreal chosenPercent = AppSettings::uiScaleForZoomLevel(chosenZoomLevel);
+    settings.setPanelFontSize(PanelId::Inspector, 13);
+    {
+        AppearancePage page(*theme_);
+        page.load();
+        auto* scale = page.findChild<QComboBox*>(QStringLiteral("appearanceUIScaleCombo"));
+        ASSERT_NE(scale, nullptr);
+        EXPECT_FALSE(scale->isEditable());
+        EXPECT_EQ(scale->currentData().toInt(), originalZoomLevel);
+
+        const int chosenIndex = scale->findData(chosenZoomLevel);
+        ASSERT_GE(chosenIndex, 0);
+        scale->setCurrentIndex(chosenIndex);
+        EXPECT_EQ(settings.globalUIZoomLevel(), chosenZoomLevel);
+        EXPECT_DOUBLE_EQ(settings.globalUIScale(), chosenPercent);
+        EXPECT_DOUBLE_EQ(theme_->snapshot()->uiScale, chosenPercent / 100.0);
+        EXPECT_EQ(theme_->unscaledSnapshot(), base);
+        EXPECT_EQ(theme_->appearance(), appearance);
+        EXPECT_EQ(storedValues(*themeStorage_), storedTheme);
+        EXPECT_EQ(settings.panelFontSize(PanelId::Inspector), 13);
+        EXPECT_DOUBLE_EQ(appStorage_->value(QStringLiteral("Appearance/GlobalUIScale")).toDouble(), chosenPercent);
+        EXPECT_EQ(appStorage_->value(QStringLiteral("Appearance/PanelFontSizePt_inspector")).toInt(), 13);
+    }
+
+    auto persisted = std::make_unique<MemorySettingsStorage>(*appStorage_);
+    settings.setGlobalUIZoomLevel(originalZoomLevel);
+    replaceAppSettingsStorage(std::move(persisted));
+    ThemeManager restored(root_.path(), std::make_unique<MemorySettingsStorage>(*themeStorage_));
+    AppearancePage page(restored);
+    page.load();
+    auto* scale = page.findChild<QComboBox*>(QStringLiteral("appearanceUIScaleCombo"));
+    ASSERT_NE(scale, nullptr);
+    EXPECT_EQ(settings.globalUIZoomLevel(), chosenZoomLevel);
+    EXPECT_DOUBLE_EQ(settings.globalUIScale(), chosenPercent);
+    EXPECT_EQ(scale->currentData().toInt(), chosenZoomLevel);
+    EXPECT_EQ(settings.panelFontSize(PanelId::Inspector), 13);
+    EXPECT_DOUBLE_EQ(restored.snapshot()->uiScale, chosenPercent / 100.0);
+    EXPECT_EQ(restored.appearance(), appearance);
+}
+
+TEST_F(SettingsApplyContractTest, ScaleChangesPreservePalettePreviewAndFollowExternalReset)
+{
+    auto& settings = AppSettings::instance();
+    const int originalZoomLevel = settings.globalUIZoomLevel();
+    const auto restoreSettings = qScopeGuard([&] { settings.setGlobalUIZoomLevel(originalZoomLevel); });
+    AppearancePage page(*theme_);
+    page.load();
+    page.show();
+    auto* scale = page.findChild<QComboBox*>(QStringLiteral("appearanceUIScaleCombo"));
+    auto* presets = page.findChild<QComboBox*>(QStringLiteral("appearanceColorPresets"));
+    auto* colors = page.findChild<QTreeWidget*>(QStringLiteral("appearanceColorTree"));
+    ASSERT_NE(scale, nullptr);
+    ASSERT_NE(presets, nullptr);
+    ASSERT_NE(colors, nullptr);
+    const int chosenZoomLevel = 2;
+    const int externalZoomLevel = -2;
+    const qreal externalPercent = AppSettings::uiScaleForZoomLevel(externalZoomLevel);
+    const int chosenIndex = scale->findData(chosenZoomLevel);
+    ASSERT_GE(chosenIndex, 0);
+    scale->setCurrentIndex(chosenIndex);
+    ASSERT_TRUE(applyColorPreset(*presets, QStringLiteral("light")));
+    EXPECT_EQ(scale->currentData().toInt(), chosenZoomLevel);
+    EXPECT_DOUBLE_EQ(theme_->snapshot()->uiScale, AppSettings::uiScaleForZoomLevel(chosenZoomLevel) / 100.0);
+    const auto committed = theme_->appearance();
+    const QColor originalColor = theme_->snapshot()->ui.colors.textPrimary;
+    const auto storedTheme = storedValues(*themeStorage_);
+    ASSERT_TRUE(selectColor(*colors, QStringLiteral("text.primary")));
+    auto* selected = colors->currentItem();
+    auto* picker = openColorEditor(page, *colors);
+    ASSERT_NE(picker, nullptr);
+    const QColor previewColor(27, 81, 143, 176);
+    picker->setCurrentColor(previewColor);
+    ASSERT_TRUE(waitForPreview(*theme_, previewColor));
+    auto* alphaControl = picker->findChild<LinearSliderPresenter*>(QStringLiteral("colorAlphaControl"));
+    auto* alphaBinding = picker->findChild<ParameterBinding*>(QStringLiteral("colorAlphaBinding"));
+    ASSERT_NE(alphaControl, nullptr);
+    ASSERT_NE(alphaBinding, nullptr);
+    auto* alphaSlider = alphaControl->slider();
+    alphaSlider->setSliderDown(true);
+    alphaSlider->setValue(120);
+    ASSERT_TRUE(alphaBinding->isEditing());
+    ASSERT_TRUE(waitForPreview(*theme_, QColor(27, 81, 143, 120)));
+
+    settings.setGlobalUIZoomLevel(externalZoomLevel);
+    settlePreviewEvents();
+    EXPECT_EQ(scale->currentData().toInt(), externalZoomLevel);
+    EXPECT_DOUBLE_EQ(theme_->snapshot()->uiScale, externalPercent / 100.0);
+    EXPECT_EQ(page.findChild<ColorEditorDialog*>(QStringLiteral("appearanceColorDialog")), picker);
+    EXPECT_TRUE(picker->isVisible());
+    EXPECT_TRUE(alphaBinding->isEditing());
+    EXPECT_TRUE(alphaSlider->isSliderDown());
+    EXPECT_EQ(colors->currentItem(), selected);
+    EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, QColor(27, 81, 143, 120));
+    EXPECT_EQ(theme_->appearance(), committed);
+    EXPECT_EQ(storedValues(*themeStorage_), storedTheme);
+
+    alphaBinding->cancelEdit();
+    alphaSlider->setSliderDown(false);
+    picker->reject();
+    settlePreviewEvents();
+    EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, originalColor);
+    EXPECT_EQ(theme_->appearance(), committed);
+    EXPECT_EQ(storedValues(*themeStorage_), storedTheme);
+    EXPECT_EQ(settings.globalUIZoomLevel(), externalZoomLevel);
+    EXPECT_DOUBLE_EQ(appStorage_->value(QStringLiteral("Appearance/GlobalUIScale")).toDouble(), externalPercent);
+    EXPECT_DOUBLE_EQ(theme_->snapshot()->uiScale, externalPercent / 100.0);
+
+    settings.resetToDefaults();
+    EXPECT_EQ(scale->currentData().toInt(), settings.globalUIZoomLevel());
+    EXPECT_EQ(scale->currentData().toInt(), 0);
+    EXPECT_DOUBLE_EQ(theme_->snapshot()->uiScale, AppSettings::DEFAULT_GLOBAL_SCALE / 100.0);
+    EXPECT_EQ(theme_->appearance(), committed);
 }
 
 TEST_F(SettingsApplyContractTest, SearchNavigationPreservesDraftsAndCommittedSettings)

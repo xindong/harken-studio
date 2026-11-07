@@ -37,6 +37,7 @@ public:
     // Absolute zoom: sets the view scale to `factor` (1.0 == 100%) about the
     // current viewport centre and emits zoomChanged.
     void setZoomFactor(double factor);
+    double zoomFactor() const;
 
 signals:
     void zoomChanged(double factor);
@@ -56,7 +57,9 @@ protected:
 
 private:
     void updateInteractionCursor_();
+    void refreshUIScale_();
 
+    double uiScale_ = 1.0;
     QPixmap gridTile_;
     double gridTilePitch_ = 0.0;
     double gridTileDpr_ = 0.0;

@@ -154,9 +154,12 @@ public:
                 [this] {
                     setViewportMargins(QtControlSkin::current().fieldTextMargins());
                     const int nextHeight = QtControlSkin::current().fieldHeight();
-                    setFixedHeight(height() == fieldHeight_
-                        ? nextHeight : std::max(height(), nextHeight));
+                    setFixedHeight(requestedBaseHeight_ > 0
+                        ? std::max(qRound(requestedBaseHeight_
+                            * ThemeManager::instance().snapshot()->uiScale), nextHeight)
+                        : nextHeight);
                     fieldHeight_ = nextHeight;
+                    grip_->rebaseDrag();
                 });
     }
 
@@ -189,7 +192,9 @@ private:
         explicit ResizeGrip(ResizablePlainTextEdit* edit)
             : QWidget(edit), edit_(edit)
         {
-            setFixedSize(14, 14);
+            ThemeManager::instance().bindMetrics(this, [this](const ThemeMetrics& metrics) {
+                setFixedSize(metrics.control.smallIconExtent, metrics.control.smallIconExtent);
+            });
             setCursor(Qt::SizeFDiagCursor);
             setAttribute(Qt::WA_TranslucentBackground);
             connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged,
@@ -197,6 +202,13 @@ private:
         }
 
         bool isDragging() const { return dragging_; }
+
+        void rebaseDrag()
+        {
+            if (!dragging_) return;
+            startGlobalY_ = QCursor::pos().y();
+            startHeight_ = edit_->height();
+        }
 
     protected:
         void enterEvent(QEnterEvent*) override { update(); }
@@ -221,9 +233,9 @@ private:
                 return;
             }
             const int delta = qRound(event->globalPosition().y() - startGlobalY_);
-            edit_->setFixedHeight(std::max(
-                edit_->fieldHeight_,
-                startHeight_ + delta));
+            const int height = std::max(edit_->fieldHeight_, startHeight_ + delta);
+            edit_->requestedBaseHeight_ = height / ThemeManager::instance().snapshot()->uiScale;
+            edit_->setFixedHeight(height);
             event->accept();
         }
 
@@ -295,6 +307,7 @@ private:
 
     ResizeGrip* grip_ = nullptr;
     int fieldHeight_ = 0;
+    qreal requestedBaseHeight_ = 0;
 };
 
 bool objectReferenceRole(PlayablePropertyReferenceRoleV1 role)
@@ -678,7 +691,6 @@ QWidget* PropertyEditorEngine::buildField(const PropertyDescriptor& d, QWidget* 
     if (d.flags.readOnly && d.type != PropType::List && d.type != PropType::ObjectRef)
         control->setEnabled(false);
 
-    const auto& inspector = ThemeManager::instance().metrics().inspector;
     auto* strip = new InspectorSlotStrip(parent);
     if (BindingContractSemantics::isBindable(
             BindingContractSemantics::derive(d, itemType_))) {
@@ -706,8 +718,11 @@ QWidget* PropertyEditorEngine::buildField(const PropertyDescriptor& d, QWidget* 
     const bool isBool       = (type == QStringLiteral("checkbox"));
     const bool valueBearing = (type == QStringLiteral("int_spinbox"));
     QWidget* row = new QWidget(parent);
-    if (d.type != PropType::List)
-        row->setMinimumHeight(inspector.rowHeight);
+    if (d.type != PropType::List) {
+        ThemeManager::instance().bindMetrics(row, [row](const ThemeMetrics& metrics) {
+            row->setMinimumHeight(metrics.inspector.rowHeight);
+        });
+    }
     auto* h = new QHBoxLayout(row);
     h->setContentsMargins(0, 0, 0, 0);
     h->setSpacing(0);
@@ -727,8 +742,11 @@ QWidget* PropertyEditorEngine::buildField(const PropertyDescriptor& d, QWidget* 
         DebugTint::tintBare(labelW, DebugTint::Role::Label);
         labelW->setToolTip(labelW->text());
         labelW->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-        labelW->setContentsMargins(0, 0, inspector.columnPadding, 0);
-        h->addWidget(labelW, inspector.labelColumnShare);
+        h->addWidget(labelW);
+        ThemeManager::instance().bindMetrics(labelW, [labelW, h](const ThemeMetrics& metrics) {
+            labelW->setContentsMargins(0, 0, metrics.inspector.columnPadding, 0);
+            h->setStretchFactor(labelW, metrics.inspector.labelColumnShare);
+        });
     }
 
     // Every editor occupies one shared value column: label and value split the
@@ -747,9 +765,6 @@ QWidget* PropertyEditorEngine::buildField(const PropertyDescriptor& d, QWidget* 
         DebugTint::tintContainer(cell, DebugTint::Role::Flex);
         cell->setSizePolicy(QSizePolicy::Ignored, cell->sizePolicy().verticalPolicy());
         auto* cl = new QHBoxLayout(cell);
-        const int leftPad = d.type == PropType::List ? 0 : inspector.columnPadding;
-        cl->setContentsMargins(leftPad, 0, inspector.columnPadding, 0);
-        cl->setSpacing(inspector.columnPadding);
         if (align)
         {
             cl->addWidget(w, 0, align);
@@ -759,7 +774,13 @@ QWidget* PropertyEditorEngine::buildField(const PropertyDescriptor& d, QWidget* 
             w->setSizePolicy(QSizePolicy::Expanding, w->sizePolicy().verticalPolicy());
             cl->addWidget(w, 1);
         }
-        h->addWidget(cell, inspector.valueColumnShare);
+        h->addWidget(cell);
+        ThemeManager::instance().bindMetrics(cell, [cell, cl, h, list = d.type == PropType::List](const ThemeMetrics& metrics) {
+            const auto& inspector = metrics.inspector;
+            cl->setContentsMargins(list ? 0 : inspector.columnPadding, 0, inspector.columnPadding, 0);
+            cl->setSpacing(inspector.columnPadding);
+            h->setStretchFactor(cell, inspector.valueColumnShare);
+        });
     };
 
     if (isBool)
@@ -774,7 +795,7 @@ QWidget* PropertyEditorEngine::buildField(const PropertyDescriptor& d, QWidget* 
         {
             spin->setButtonSymbols(QAbstractSpinBox::NoButtons);
             spin->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-            spin->setFont(FontManager::instance().getFont(FontRole::Mono));
+
             QtControlSkin::setSemanticProperty(spin, "fieldRole",
                                               QStringLiteral("inspectorValue"));
         }
@@ -784,8 +805,10 @@ QWidget* PropertyEditorEngine::buildField(const PropertyDescriptor& d, QWidget* 
     {
         if (auto* ps = qobject_cast<ParameterSlider*>(control))
         {
-            ps->setCompactValueColumn(inspector.valueColumnWidth);
-            ps->setValueColumnStretch(7, 3);
+            ThemeManager::instance().bindMetrics(ps, [ps](const ThemeMetrics& metrics) {
+                ps->setCompactValueColumn(metrics.inspector.valueColumnWidth);
+                ps->setValueColumnStretch(7, 3);
+            });
         }
         fillValueColumn(control);
     }
@@ -799,12 +822,13 @@ QWidget* PropertyEditorEngine::buildField(const PropertyDescriptor& d, QWidget* 
         gutter->setObjectName(QStringLiteral("inspectorFieldGutter_") + d.field);
         gutter->setProperty("columnRole", QStringLiteral("gutter"));
         DebugTint::tintContainer(gutter, DebugTint::Role::Gutter);
-        const int fullWidth = inspector.slotWidthFor(inspectorFormSlotCount(parent));
-        gutter->setFixedWidth(fullWidth);
-        gutter->setFixedHeight(inspector.rowHeight);
         auto* gl = new QHBoxLayout(gutter);
-        const int leftPadding = inspector.slotSpacing / 2;
-        gl->setContentsMargins(leftPadding, 0, inspector.slotSpacing - leftPadding, 0);
+        ThemeManager::instance().bindMetrics(gutter, [gutter, gl, slotCount = inspectorFormSlotCount(parent)](const ThemeMetrics& metrics) {
+            const auto& inspector = metrics.inspector;
+            gutter->setFixedSize(inspector.slotWidthFor(slotCount), inspector.rowHeight);
+            const int leftPadding = inspector.slotSpacing / 2;
+            gl->setContentsMargins(leftPadding, 0, inspector.slotSpacing - leftPadding, 0);
+        });
         gl->setSpacing(0);
         if (decoratorWidget)
             gl->addWidget(decoratorWidget, 1, Qt::AlignRight | Qt::AlignVCenter);
@@ -937,15 +961,15 @@ QWidget* PropertyEditorEngine::buildPage(QWidget* parent)
     sectionBindings_.clear();
     groupBindings_.clear();
 
-    const auto& inspector = ThemeManager::instance().metrics().inspector;
     auto* page = new QWidget(parent);
     setInspectorFormSlotCount(page, 2);
-    page->setFont(FontManager::instance().getFont(FontRole::Caption));
     const bool tabbed = custom_ && custom_->tabbedLayout;
     auto* layout = new QVBoxLayout(page);
-    const int pageMargin = tabbed ? 0 : inspector.pageMargin;
-    layout->setContentsMargins(pageMargin, pageMargin, pageMargin, pageMargin);
-    layout->setSpacing(inspector.sectionSpacing);
+    ThemeManager::instance().bindMetrics(layout, [layout, tabbed](const ThemeMetrics& metrics) {
+        const int margin = tabbed ? 0 : metrics.inspector.pageMargin;
+        layout->setContentsMargins(margin, margin, margin, margin);
+        layout->setSpacing(metrics.inspector.sectionSpacing);
+    });
 
     struct TabBucket { QVBoxLayout* lay = nullptr; int n = 0; };
     std::array<TabBucket, kInspectorCategoryCount> buckets{};
@@ -955,7 +979,9 @@ QWidget* PropertyEditorEngine::buildPage(QWidget* parent)
         {
             b.lay = new QVBoxLayout();
             b.lay->setContentsMargins(0, 0, 0, 0);
-            b.lay->setSpacing(inspector.sectionSpacing);
+            ThemeManager::instance().bindMetrics(b.lay, [layout = b.lay](const ThemeMetrics& metrics) {
+                layout->setSpacing(metrics.inspector.sectionSpacing);
+            });
         }
         return b.lay;
     };
@@ -977,7 +1003,9 @@ QWidget* PropertyEditorEngine::buildPage(QWidget* parent)
             if (field.section == info.section) fieldNames << field.field << field.label;
         section->setProperty("inspectorFieldNames", fieldNames);
         auto* content = new QVBoxLayout();
-        content->setSpacing(inspector.rowSpacing);
+        ThemeManager::instance().bindMetrics(content, [content](const ThemeMetrics& metrics) {
+            content->setSpacing(metrics.inspector.rowSpacing);
+        });
         if (auto* provider = reg.sectionProvider(itemType_, info.key)) {
             auto* widget = provider->build(section);
             content->addWidget(widget);

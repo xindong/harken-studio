@@ -1,5 +1,6 @@
 
 #include "Widgets/Inspector/Providers/StepsSectionProvider.h"
+#include "Core/ThemeLayout.h"
 #include "Widgets/Inspector/InspectorLayout.h"
 #include "Widgets/Inspector/ActionInspectorSchema.h"
 
@@ -117,7 +118,6 @@ public:
         setFocusPolicy(Qt::StrongFocus);
 
         auto* v = new QVBoxLayout(this);
-        v->setContentsMargins(0, 0, ThemeManager::instance().metrics().inspector.columnPadding, 0);
         v->setSpacing(0);
         reserveInspectorContentSlots(this);
 
@@ -621,8 +621,10 @@ private:
         accordion->setObjectName(QStringLiteral("stepDetails_%1").arg(index));
         DebugTint::tintContainer(accordion, DebugTint::Role::Accordion);
         auto* av = new QVBoxLayout(accordion);
-        av->setContentsMargins(0, 4, 6, 6);
-        av->setSpacing(ThemeManager::instance().metrics().inspector.rowSpacing);
+        ThemeLayout::margins(av, ThemeLayout::Space::None, ThemeLayout::Space::XSmall, ThemeLayout::Space::Small, ThemeLayout::Space::Small);
+        ThemeManager::instance().bindMetrics(av, [av](const ThemeMetrics& metrics) {
+            av->setSpacing(metrics.inspector.rowSpacing);
+        });
         accordion->setVisible(false);
         buildStepDetail(accordion, av, index);
         toggleBtn->setVisible(av->count() > 0);
@@ -782,7 +784,7 @@ QWidget* StepsSectionProvider::build(QWidget* parent)
     auto* content = new QWidget(parent);
     auto* cl = new QVBoxLayout(content);
     cl->setContentsMargins(0, 0, 0, 0);
-    cl->setSpacing(2);
+    ThemeLayout::spacing(cl, ThemeLayout::Space::Compact);
 
     auto* list = new StepsListWidget(content);
     list->setObjectName(QStringLiteral("stepsListWidget"));

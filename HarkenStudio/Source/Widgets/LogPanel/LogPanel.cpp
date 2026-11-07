@@ -1,5 +1,6 @@
 
 #include "LogPanel.h"
+#include "Core/ThemeLayout.h"
 #include "Monitor/MonitorTypes.h"
 #include "../../Core/AppSettings.h"
 #include "../../Core/FontManager.h"
@@ -46,8 +47,11 @@ LogTextEdit::LogTextEdit(QWidget* parent)
     setLineWrapMode(QPlainTextEdit::NoWrap);
     setMaximumBlockCount(10000);
 
+    connect(&FontManager::instance(), &FontManager::fontChanged, this, [this] {
+        setFont(FontManager::instance().getFont(FontRole::Mono, AppSettings::instance().panelFontSize(PanelId::Log)));
+    });
     int fontSize = AppSettings::instance().panelFontSize(PanelId::Log);
-    setFont(FontManager::instance().getFont(FontRole::Body, fontSize));
+    setFont(FontManager::instance().getFont(FontRole::Mono, fontSize));
 }
 
 void LogTextEdit::appendEntry(const LogEntry& entry)
@@ -97,7 +101,7 @@ QTextCharFormat LogTextEdit::formatForLevel(LogEntry::Level level) const
     
     if (level >= LogEntry::Error)
     {
-        format.setFontWeight(QFont::Bold);
+        format.setFontWeight(FontManager::instance().getFont(FontRole::Mono, FontEmphasis::Strong).weight());
     }
     
     return format;
@@ -124,7 +128,7 @@ LogPanel::LogPanel(QWidget* parent)
             this, &LogPanel::onFontSettingsChanged);
     
     int fontSize = AppSettings::instance().panelFontSize(PanelId::Log);
-    logTextEdit_->setFont(FontManager::instance().getFont(FontRole::Body, fontSize));
+    logTextEdit_->setFont(FontManager::instance().getFont(FontRole::Mono, fontSize));
     
     flushTimer_->setInterval(50);
     connect(flushTimer_, &QTimer::timeout, this, &LogPanel::onFlushTimer);
@@ -159,12 +163,12 @@ void LogPanel::logError(const QString& category, const QString& message) { LogSe
 void LogPanel::setupUI()
 {
     QVBoxLayout* mainLayout = new QVBoxLayout(this);
-    mainLayout->setContentsMargins(8, 8, 8, 8);
-    mainLayout->setSpacing(6);
+    ThemeLayout::margins(mainLayout, ThemeLayout::Space::Small);
+    ThemeLayout::spacing(mainLayout, ThemeLayout::Space::Small);
 
     QHBoxLayout* toolbarLayout = new QHBoxLayout();
     toolbarLayout->setContentsMargins(0, 0, 0, 0);
-    toolbarLayout->setSpacing(4);
+    ThemeLayout::spacing(toolbarLayout, ThemeLayout::Space::XSmall);
 
     levelCombo_ = new QComboBox();
     levelCombo_->setObjectName("logLevelCombo");
@@ -190,7 +194,9 @@ void LogPanel::setupUI()
 
     searchEdit_ = new SearchField();
     searchEdit_->setObjectName("logSearchEdit");
-    searchEdit_->setMaximumWidth(240);
+    ThemeManager::instance().bindMetrics(searchEdit_, [this](const ThemeMetrics& metrics) {
+        searchEdit_->setMaximumWidth(metrics.control.searchMinimumWidth * 2);
+    });
     toolbarLayout->addWidget(searchEdit_, 1);
 
     toolbarLayout->addStretch();
@@ -204,8 +210,12 @@ void LogPanel::setupUI()
         btn->setObjectName(objName);
         btn->setProperty("flatIconButton", true);
         btn->setToolTip(tooltip);
-        btn->setIconSize(QSize(16, 16));
-        btn->setFixedSize(26, 26);
+        ThemeManager::instance().bindMetrics(btn, [btn](const ThemeMetrics& metrics) {
+            btn->setIconSize(QSize(metrics.control.smallIconExtent, metrics.control.smallIconExtent));
+        });
+        ThemeManager::instance().bindMetrics(btn, [btn](const ThemeMetrics& metrics) {
+            btn->setFixedSize(metrics.controlHeight, metrics.controlHeight);
+        });
         btn->setAutoRaise(true);
         btn->setFocusPolicy(Qt::NoFocus);
         btn->setAttribute(Qt::WA_Hover, true);
@@ -454,7 +464,7 @@ void LogPanel::onFontSettingsChanged(PanelId panelId, int size)
 {
     if (panelId == PanelId::Log)
     {
-        logTextEdit_->setFont(FontManager::instance().getFont(FontRole::Body, size));
+        logTextEdit_->setFont(FontManager::instance().getFont(FontRole::Mono, size));
     }
 }
 

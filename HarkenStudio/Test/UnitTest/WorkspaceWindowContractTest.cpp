@@ -1,11 +1,14 @@
 #include "WorkspaceWindowTypes.h"
 #include "Core/AI/AIAgentConfig.h"
 #include "Core/ActionManager.h"
+#include "Core/AppSettings.h"
 #include "Core/MemorySettingsStorage.h"
 #include "Core/NamedLayoutStore.h"
 #include "Core/ProjectDocument.h"
 #include "Core/ProjectManager.h"
 #include "Core/ShortcutManager.h"
+#include "Core/ThemeManager.h"
+#include "Core/WindowPlacement.h"
 #include "Core/UndoCommands.h"
 #include "Dialogs/Settings/PreferencesPanel.h"
 #include "Dialogs/Settings/ProjectSettingsPanel.h"
@@ -33,6 +36,7 @@
 #include <QSet>
 #include <QStatusBar>
 #include <QTemporaryDir>
+#include <QTimer>
 
 #include <memory>
 
@@ -51,6 +55,82 @@ TEST(EditorWorkspaceWindowContract, DescriptorsHaveUniqueIds)
         EXPECT_FALSE(dockObjectNames.contains(descriptor.dockObjectName));
         typeIds.insert(descriptor.typeId);
         dockObjectNames.insert(descriptor.dockObjectName);
+    }
+}
+
+TEST(EditorWorkspaceWindowContract, PresentationChangesPreserveWindowGeometryAcrossRecreation)
+{
+    TestSupport::ensureApp();
+    auto& appSettings = AppSettings::instance();
+    ThemeManager::instance();
+    const qreal originalScale = appSettings.globalUIScale();
+    QSettings settings;
+    settings.beginGroup(QStringLiteral("MainWindow"));
+    QVariantMap saved;
+    for (const auto& key : settings.allKeys()) saved.insert(key, settings.value(key));
+    std::unique_ptr<MainWindow> window;
+    const auto destroyWindow = [&] {
+        if (window)
+            QObject::disconnect(&UndoRedoManager::instance(), nullptr, window.get(), nullptr);
+        window.reset();
+        ActionManager::instance().setTransactionCallbacks({});
+        ActionManager::instance().clearAllForTesting();
+        UndoRedoManager::instance().clear();
+        QApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+        QApplication::processEvents();
+    };
+    const auto cleanup = qScopeGuard([&] {
+        destroyWindow();
+        settings.remove(QString());
+        for (auto it = saved.cbegin(); it != saved.cend(); ++it) settings.setValue(it.key(), it.value());
+        appSettings.setGlobalUIScale(originalScale);
+    });
+    const auto settle = [] {
+        QEventLoop loop;
+        QTimer::singleShot(80, &loop, &QEventLoop::quit);
+        loop.exec();
+    };
+    const auto openWindow = [&] {
+        ActionManager::instance().clearAllForTesting();
+        window = std::make_unique<MainWindow>();
+        bool presented = false;
+        const auto connection = QObject::connect(window.get(), &MainWindow::startupPresentationFinished,
+            window.get(), [&](bool shown) { presented = shown; });
+        window->prepareWindowForStartup(QGuiApplication::primaryScreen());
+        window->show();
+        const bool ready = TestSupport::spinUntil([&] { return presented; }, 3000);
+        QObject::disconnect(connection);
+        settle();
+        return ready;
+    };
+    QSize savedNormalSize;
+    for (const auto state : {Qt::WindowNoState, Qt::WindowMaximized}) {
+        SCOPED_TRACE(int(state));
+        appSettings.setGlobalUIScale(100);
+        settings.setValue(QStringLiteral("normalSize"), QSize(1100, 700));
+        settings.setValue(QStringLiteral("presentationState"), int(state));
+        ASSERT_TRUE(openWindow());
+        const QRect frame = window->frameGeometry();
+        const QSize normalSize = window->normalGeometry().size();
+        if (state == Qt::WindowNoState) savedNormalSize = window->size();
+        for (int percent : AppSettings::GLOBAL_SCALE_PRESETS) {
+            SCOPED_TRACE(percent);
+            appSettings.setGlobalUIScale(percent);
+            settle();
+            EXPECT_EQ(window->frameGeometry(), frame);
+            EXPECT_EQ(persistentWindowState(window->windowState()), state);
+            ASSERT_TRUE(window->closeFromShell(true));
+            ASSERT_TRUE(TestSupport::spinUntil([&] { return !ProjectManager::instance().isClosing(); }, 3000));
+            EXPECT_EQ(readWindowPresentation(settings).normalSize, savedNormalSize);
+            destroyWindow();
+            ASSERT_TRUE(openWindow());
+            EXPECT_EQ(window->frameGeometry(), frame);
+            EXPECT_EQ(persistentWindowState(window->windowState()), state);
+            EXPECT_EQ(window->normalGeometry().size(), normalSize);
+        }
+        ASSERT_TRUE(window->closeFromShell(true));
+        ASSERT_TRUE(TestSupport::spinUntil([&] { return !ProjectManager::instance().isClosing(); }, 3000));
+        destroyWindow();
     }
 }
 

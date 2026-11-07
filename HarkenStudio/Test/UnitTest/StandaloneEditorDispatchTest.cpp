@@ -1,4 +1,7 @@
 #include "Core/ActionManager.h"
+#include "Core/AppSettings.h"
+#include "Core/AudioEngine.h"
+#include "Core/HarkenStyle.h"
 #include "Core/AuditionManager.h"
 #include "Core/IPC/IPCServer.h"
 #include "Core/LayoutController.h"
@@ -6,16 +9,20 @@
 #include "Core/PackGenerationRecord.h"
 #include "Core/PlayablePropertyAuthoringV1.h"
 #include "Core/SelectionRouter.h"
+#include "Core/ShortcutManager.h"
 #include "Core/ThemeManager.h"
 #include "Core/UndoCommands.h"
 #include "Components/VTrack.h"
+#include "Dialogs/Settings/SettingsPanel.h"
 #include "MainWindow.h"
 #include "Monitor/EventCaptureController.h"
 #include "ProjectManager.h"
 #include "ProjectTypes.h"
 #include "Widgets/Blueprint/BlueprintCanvasWidget.h"
+#include "Widgets/Blueprint/ConnectionPath.h"
 #include "Widgets/Blueprint/NodeContentEditor.h"
 #include "Widgets/Common/ParameterBinding.h"
+#include "Widgets/Common/ParameterControlHost.h"
 #include "Widgets/GridEditor/GridEditorPanel.h"
 #include "Widgets/GridEditor/DiscreteGridWidget.h"
 #include "Widgets/GridEditor/SelectionListWidget.h"
@@ -37,6 +44,7 @@
 #include <QEventLoop>
 #include <QDateTime>
 #include <QDirIterator>
+#include <QDialog>
 #include <QFile>
 #include <QFileInfo>
 #include <QGraphicsScene>
@@ -44,15 +52,22 @@
 #include <QAbstractSocket>
 #include <QJsonDocument>
 #include <QKeyEvent>
+#include <QKeySequenceEdit>
+#include <QLineEdit>
+#include <QMenu>
 #include <QScopeGuard>
 #include <QSettings>
+#include <QSlider>
+#include <QStyleFactory>
 #include <QTemporaryDir>
 #include <QTableWidget>
 #include <QTcpSocket>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPainterPath>
 #include <QPointer>
 #include <QTimer>
+#include <QVBoxLayout>
 #include <memory>
 #include <cstdio>
 
@@ -74,14 +89,33 @@ void ensureApp()
     static QApplication app(argc, argv);
 }
 
+void sendShortcut(QWidget* target, Qt::Key key, Qt::KeyboardModifiers modifiers = Qt::ControlModifier)
+{
+    QApplication::setActiveWindow(target->window());
+    target->setFocus();
+    QApplication::processEvents();
+    QKeyEvent press(QEvent::KeyPress, key, modifiers);
+    QApplication::sendEvent(target, &press);
+    QKeyEvent release(QEvent::KeyRelease, key, modifiers);
+    QApplication::sendEvent(target, &release);
+    QApplication::processEvents();
+}
+
 class EditorDockLayoutTest : public ::testing::Test
 {
 protected:
     void SetUp() override
     {
         ensureApp();
+        auto& engine = VNX::AudioEngine::instance();
+        engine.shutdown();
         auto& pm = VNX::ProjectManager::instance();
         if (pm.isProjectOpen()) pm.closeProject();
+        HarkenEditor::Bridge::EngineSessionConfig engineConfig;
+        engineConfig.deviceMode = HarkenEditor::Bridge::EngineDeviceMode::Null;
+        ASSERT_TRUE(engine.initialize(engineConfig));
+        ASSERT_FALSE(engine.isSimulationMode());
+        ASSERT_TRUE(engine.startOutput());
         VNX::ActionManager::instance().clearAllForTesting();
         ASSERT_TRUE(directory_.isValid());
         window_ = std::make_unique<VNX::MainWindow>();
@@ -116,13 +150,13 @@ protected:
     void TearDown() override
     {
         VNX::UndoRedoManager::instance().clear();
-        auto& pm = VNX::ProjectManager::instance();
-        if (pm.isProjectOpen()) pm.closeProject();
         if (window_)
             QObject::disconnect(&VNX::UndoRedoManager::instance(), nullptr, window_.get(), nullptr);
         window_.reset();
         VNX::ActionManager::instance().setTransactionCallbacks({});
         VNX::ActionManager::instance().clearAllForTesting();
+        auto& pm = VNX::ProjectManager::instance();
+        if (pm.isProjectOpen()) pm.closeProject();
         drainEvents();
     }
 
@@ -417,6 +451,270 @@ TEST_F(EditorDockLayoutTest, BlueprintEditingKeepsTransactionsIsolatedAcrossNode
     EXPECT_TRUE(activeEditor.isNull());
     EXPECT_DOUBLE_EQ(firstState()->value.toDouble(), -6.0);
     EXPECT_DOUBLE_EQ(secondState()->value.toDouble(), -12.0);
+}
+
+TEST_F(EditorDockLayoutTest, InterfaceZoomShortcutsReachMainFloatingAndModalWindows)
+{
+    auto& settings = VNX::AppSettings::instance();
+    auto& shortcuts = VNX::ShortcutManager::instance();
+    const int originalLevel = settings.globalUIZoomLevel();
+    const auto originalIn = shortcuts.info(VNX::Shortcuts::ZoomIn);
+    const auto originalOut = shortcuts.info(VNX::Shortcuts::ZoomOut);
+    const auto restore = qScopeGuard([&] {
+        settings.setGlobalUIZoomLevel(originalLevel);
+        for (const auto& info : {originalIn, originalOut}) {
+            if (info.isCustom) shortcuts.setShortcut(info.id, info.currentShortcut);
+            else shortcuts.resetToDefault(info.id);
+        }
+    });
+    shortcuts.resetToDefault(VNX::Shortcuts::ZoomIn);
+    shortcuts.resetToDefault(VNX::Shortcuts::ZoomOut);
+    settings.setGlobalUIZoomLevel(0);
+    sendShortcut(window_.get(), Qt::Key_Equal);
+    EXPECT_EQ(settings.globalUIZoomLevel(), 1);
+    sendShortcut(window_.get(), Qt::Key_Plus);
+    EXPECT_EQ(settings.globalUIZoomLevel(), 2);
+    sendShortcut(window_.get(), Qt::Key_Minus);
+    EXPECT_EQ(settings.globalUIZoomLevel(), 1);
+    sendShortcut(window_.get(), Qt::Key_Plus, Qt::ControlModifier | Qt::KeypadModifier);
+    EXPECT_EQ(settings.globalUIZoomLevel(), 2);
+    sendShortcut(window_.get(), Qt::Key_Minus, Qt::ControlModifier | Qt::KeypadModifier);
+    EXPECT_EQ(settings.globalUIZoomLevel(), 1);
+    sendShortcut(window_.get(), Qt::Key_0);
+    EXPECT_EQ(settings.globalUIZoomLevel(), 1);
+
+    auto* viewMenu = window_->findChild<QMenu*>(QStringLiteral("viewsMenu"));
+    ASSERT_NE(viewMenu, nullptr);
+    for (int iteration = 0; iteration < 3; ++iteration) {
+        viewMenu->aboutToShow();
+        auto* appearance = viewMenu->actions().first()->menu();
+        ASSERT_NE(appearance, nullptr);
+        ASSERT_EQ(appearance->actions().size(), 2);
+        EXPECT_EQ(appearance->actions().first()->objectName(), VNX::Shortcuts::ZoomIn);
+        appearance->actions().first()->trigger();
+        EXPECT_EQ(settings.globalUIZoomLevel(), 2);
+        appearance->actions().last()->trigger();
+        EXPECT_EQ(settings.globalUIZoomLevel(), 1);
+    }
+
+    VNX::SettingsPanel floating;
+    floating.show();
+    drainEvents();
+    auto* search = floating.findChild<QLineEdit*>();
+    ASSERT_NE(search, nullptr);
+    search->setText(QStringLiteral("appearance"));
+    search->setSelection(2, 4);
+    sendShortcut(search, Qt::Key_Equal);
+    EXPECT_EQ(settings.globalUIZoomLevel(), 2);
+    EXPECT_EQ(search->text(), QStringLiteral("appearance"));
+    EXPECT_EQ(search->selectedText(), QStringLiteral("pear"));
+    sendShortcut(search, Qt::Key_Minus);
+    EXPECT_EQ(settings.globalUIZoomLevel(), 1);
+
+    QDialog modal(window_.get());
+    auto* layout = new QVBoxLayout(&modal);
+    auto* edit = new QLineEdit(QStringLiteral("unfinished value"), &modal);
+    auto* capture = new QKeySequenceEdit(&modal);
+    layout->addWidget(edit);
+    layout->addWidget(capture);
+    modal.setWindowModality(Qt::ApplicationModal);
+    modal.show();
+    drainEvents();
+    ASSERT_EQ(QApplication::activeModalWidget(), &modal);
+    edit->setSelection(2, 5);
+    sendShortcut(edit, Qt::Key_Plus);
+    EXPECT_EQ(settings.globalUIZoomLevel(), 2);
+    EXPECT_EQ(edit->text(), QStringLiteral("unfinished value"));
+    EXPECT_EQ(edit->selectedText(), QStringLiteral("finis"));
+    sendShortcut(edit, Qt::Key_Minus);
+    EXPECT_EQ(settings.globalUIZoomLevel(), 1);
+    sendShortcut(edit, Qt::Key_0);
+    EXPECT_EQ(settings.globalUIZoomLevel(), 1);
+    sendShortcut(capture, Qt::Key_Equal);
+    EXPECT_EQ(settings.globalUIZoomLevel(), 1);
+    EXPECT_EQ(capture->keySequence(), QKeySequence(QStringLiteral("Ctrl+=")));
+
+    edit->setFocus();
+    edit->setSelection(2, 5);
+    shortcuts.setShortcut(VNX::Shortcuts::ZoomIn, QKeySequence(QStringLiteral("Ctrl+Alt+=")));
+    sendShortcut(edit, Qt::Key_Equal);
+    sendShortcut(edit, Qt::Key_Plus);
+    EXPECT_EQ(settings.globalUIZoomLevel(), 1);
+    sendShortcut(edit, Qt::Key_Equal, Qt::ControlModifier | Qt::AltModifier);
+    EXPECT_EQ(settings.globalUIZoomLevel(), 2);
+    shortcuts.setShortcut(VNX::Shortcuts::ZoomIn, {});
+    sendShortcut(edit, Qt::Key_Equal, Qt::ControlModifier | Qt::AltModifier);
+    EXPECT_EQ(settings.globalUIZoomLevel(), 2);
+    shortcuts.resetToDefault(VNX::Shortcuts::ZoomIn);
+    sendShortcut(edit, Qt::Key_Plus);
+    EXPECT_EQ(settings.globalUIZoomLevel(), 3);
+    EXPECT_EQ(edit->text(), QStringLiteral("unfinished value"));
+    EXPECT_EQ(edit->selectedText(), QStringLiteral("finis"));
+    QObject observation;
+    int changes = 0;
+    QObject::connect(&settings, &VNX::AppSettings::globalUIScaleChanged,
+                     &observation, [&] { ++changes; });
+    settings.setGlobalUIZoomLevel(VNX::AppSettings::MAX_GLOBAL_ZOOM_LEVEL);
+    changes = 0;
+    sendShortcut(edit, Qt::Key_Equal);
+    EXPECT_EQ(settings.globalUIZoomLevel(), VNX::AppSettings::MAX_GLOBAL_ZOOM_LEVEL);
+    EXPECT_EQ(changes, 0);
+    settings.setGlobalUIZoomLevel(VNX::AppSettings::MIN_GLOBAL_ZOOM_LEVEL);
+    changes = 0;
+    sendShortcut(edit, Qt::Key_Minus);
+    EXPECT_EQ(settings.globalUIZoomLevel(), VNX::AppSettings::MIN_GLOBAL_ZOOM_LEVEL);
+    EXPECT_EQ(changes, 0);
+}
+
+TEST_F(EditorDockLayoutTest, UIScalePreservesBlueprintWorldCoordinatesZoomAndActiveEdits)
+{
+    qApp->setStyle(new VNX::HarkenStyle(QStyleFactory::create(QStringLiteral("Fusion"))));
+    const auto restoreStyle = qScopeGuard([] { qApp->setStyle(QStyleFactory::create(QStringLiteral("Fusion"))); });
+    auto& settings = VNX::AppSettings::instance();
+    const int previousLevel = settings.globalUIZoomLevel();
+    const auto restore = qScopeGuard([&] { settings.setGlobalUIZoomLevel(previousLevel); });
+    settings.setGlobalUIZoomLevel(0);
+    auto& project = VNX::ProjectManager::instance();
+    auto* sound = project.createItem(nullptr, QStringLiteral("ScaleNode"), VNX::ProjectItem::Type::Sound);
+    ASSERT_NE(sound, nullptr);
+    VNX::BlueprintCanvasWidget canvas;
+    canvas.resize(1000, 700);
+    canvas.setSoundsFiltered(false);
+    canvas.rebuildFromProject();
+    canvas.show();
+    canvas.setZoomFactor(0.75);
+    drainEvents();
+    VNX::NodeItem* node = nullptr;
+    for (auto* item : canvas.scene()->items()) {
+        auto* candidate = dynamic_cast<VNX::NodeItem*>(item);
+        if (candidate && candidate->objectID() == sound->objectID) node = candidate;
+    }
+    ASSERT_NE(node, nullptr);
+    auto* editor = qobject_cast<VNX::NodeContentEditor*>(node->ensureContentWidget());
+    ASSERT_NE(editor, nullptr);
+    auto* binding = editor->binding(VNX::NodeContentField::Volume);
+    ASSERT_NE(binding, nullptr);
+    node->setSelected(true);
+    const auto position = node->pos();
+    const qreal gridSpacing = canvas.gridSpacing();
+    auto* pin = node->outputPin();
+    ASSERT_NE(pin, nullptr);
+    const auto pinSize = pin->mapRectToScene(pin->boundingRect()).size();
+    auto* host = editor->findChild<VNX::ParameterControlHost*>(QStringLiteral("nodeSlider_volume"));
+    ASSERT_NE(host, nullptr);
+    const auto presenter = host->presenter();
+    QPointer<QSlider> slider = host->findChild<QSlider*>();
+    ASSERT_NE(slider, nullptr);
+    const QPoint sliderPressPosition = slider->rect().center();
+    QMouseEvent sliderPress(QEvent::MouseButtonPress, sliderPressPosition,
+        slider->mapToGlobal(sliderPressPosition), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(slider, &sliderPress);
+    ASSERT_TRUE(slider->isSliderDown());
+    ASSERT_TRUE(binding->isEditing());
+    binding->previewEdit(-6.0);
+    const auto body = node->mapRectToScene(node->shape().boundingRect());
+    const qreal displayedWidth = canvas.viewportTransform().mapRect(body).width();
+    for (int level : {1, 3, -1, 0}) {
+        SCOPED_TRACE(level);
+        const auto factor = VNX::AppSettings::uiScaleForZoomLevel(level) / 100.0;
+        settings.setGlobalUIZoomLevel(level);
+        drainEvents();
+        drainEvents();
+        EXPECT_EQ(node->pos(), position);
+        EXPECT_TRUE(node->isSelected());
+        EXPECT_EQ(node->contentWidget(), editor);
+        ASSERT_NE(slider, nullptr);
+        EXPECT_EQ(host->presenter(), presenter);
+        EXPECT_TRUE(slider->isSliderDown());
+        EXPECT_TRUE(binding->isEditing());
+        EXPECT_DOUBLE_EQ(binding->value(), -6.0);
+        EXPECT_DOUBLE_EQ(canvas.zoomFactor(), 0.75);
+        EXPECT_DOUBLE_EQ(canvas.gridSpacing(), gridSpacing);
+        const auto currentBody = node->mapRectToScene(node->shape().boundingRect());
+        EXPECT_NEAR(currentBody.width(), body.width(), 4.0);
+        EXPECT_NEAR(canvas.viewportTransform().mapRect(currentBody).width(),
+            displayedWidth * factor, 6.0);
+        EXPECT_NEAR(pin->mapRectToScene(pin->boundingRect()).width(), pinSize.width(), 0.01);
+        EXPECT_TRUE(canvas.scene()->items(pin->scenePos()).contains(pin));
+        for (auto* item : canvas.scene()->items()) {
+            auto* connection = dynamic_cast<VNX::ConnectionPath*>(item);
+            if (!connection || !connection->startPin() || !connection->endPin()) continue;
+            EXPECT_EQ(connection->path().pointAtPercent(0), connection->startPin()->scenePos());
+            EXPECT_EQ(connection->path().pointAtPercent(1), connection->endPin()->scenePos());
+        }
+        VNX::BlueprintCanvasView fresh;
+        EXPECT_DOUBLE_EQ(fresh.zoomFactor(), 1.0);
+        EXPECT_DOUBLE_EQ(fresh.transform().m11(), factor);
+    }
+    QKeyEvent scalePress(QEvent::KeyPress, Qt::Key_Equal, Qt::ControlModifier);
+    QApplication::sendEvent(slider, &scalePress);
+    QKeyEvent scaleRelease(QEvent::KeyRelease, Qt::Key_Equal, Qt::ControlModifier);
+    QApplication::sendEvent(slider, &scaleRelease);
+    drainEvents();
+    EXPECT_EQ(settings.globalUIZoomLevel(), 1);
+    ASSERT_NE(slider, nullptr);
+    EXPECT_EQ(host->presenter(), presenter);
+    EXPECT_TRUE(slider->isSliderDown());
+    EXPECT_TRUE(binding->isEditing());
+    const QPoint sliderReleasePosition = slider->rect().center();
+    QMouseEvent sliderRelease(QEvent::MouseButtonRelease, sliderReleasePosition,
+        slider->mapToGlobal(sliderReleasePosition), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(slider, &sliderRelease);
+    EXPECT_FALSE(slider->isSliderDown());
+    settings.setGlobalUIZoomLevel(0);
+    drainEvents();
+    editor->finishEditing(false);
+    node->beginTitleEditing();
+    auto* title = node->titleEditor();
+    ASSERT_NE(title, nullptr);
+    title->setText(QStringLiteral("unfinished title"));
+    title->setSelection(2, 5);
+    auto& shortcuts = VNX::ShortcutManager::instance();
+    const auto previousShortcut = shortcuts.info(VNX::Shortcuts::ZoomIn);
+    const auto restoreShortcut = qScopeGuard([&] {
+        if (previousShortcut.isCustom)
+            shortcuts.setShortcut(previousShortcut.id, previousShortcut.currentShortcut);
+        else shortcuts.resetToDefault(previousShortcut.id);
+    });
+    shortcuts.resetToDefault(VNX::Shortcuts::ZoomIn);
+    sendShortcut(title, Qt::Key_Equal);
+    drainEvents();
+    EXPECT_EQ(settings.globalUIZoomLevel(), 1);
+    EXPECT_DOUBLE_EQ(canvas.zoomFactor(), 0.75);
+    EXPECT_EQ(node->titleEditor(), title);
+    EXPECT_TRUE(node->isTitleEditing());
+    EXPECT_EQ(title->text(), QStringLiteral("unfinished title"));
+    EXPECT_EQ(title->selectedText(), QStringLiteral("finis"));
+    node->finishTitleEditing(false);
+    drainEvents();
+    QMap<VNX::NodeItem*, QPointF> positions;
+    for (auto* item : canvas.scene()->items())
+        if (auto* candidate = dynamic_cast<VNX::NodeItem*>(item)) positions.insert(candidate, candidate->pos());
+    emit project.itemPropertyChanged(sound, QStringLiteral("volume"));
+    drainEvents();
+    for (auto it = positions.cbegin(); it != positions.cend(); ++it)
+        EXPECT_EQ(it.key()->pos(), it.value());
+    canvas.centerOn(node);
+    const QPoint pinPosition = canvas.mapFromScene(pin->scenePos());
+    QMouseEvent connectionPress(QEvent::MouseButtonPress, pinPosition,
+        canvas.viewport()->mapToGlobal(pinPosition), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(canvas.viewport(), &connectionPress);
+    const QPoint connectionPosition = pinPosition + QPoint(100, 50);
+    QMouseEvent connectionMove(QEvent::MouseMove, connectionPosition,
+        canvas.viewport()->mapToGlobal(connectionPosition), Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(canvas.viewport(), &connectionMove);
+    QGraphicsPathItem* preview = nullptr;
+    for (auto* item : canvas.scene()->items())
+        if (item->zValue() == 1000.0) preview = dynamic_cast<QGraphicsPathItem*>(item);
+    ASSERT_NE(preview, nullptr);
+    for (int level : {3, -3, 0}) {
+        settings.setGlobalUIZoomLevel(level);
+        drainEvents();
+        EXPECT_EQ(preview->path().pointAtPercent(0), pin->scenePos());
+        EXPECT_EQ(preview->path().pointAtPercent(1), canvas.mapToScene(connectionPosition));
+    }
+    QKeyEvent cancelConnection(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    QApplication::sendEvent(&canvas, &cancelConnection);
 }
 
 TEST_F(EditorDockLayoutTest, LocalBlueprintLayoutPreservesProjectSavePointsAcrossUndoAndReopen)

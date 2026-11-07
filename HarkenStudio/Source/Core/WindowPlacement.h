@@ -85,6 +85,35 @@ inline QScreen* startupTargetScreen(QScreen* preferred)
     return QGuiApplication::primaryScreen();
 }
 
+inline QSize screenBoundedWindowSize(const QWidget* window, const QSize& requested)
+{
+    const QScreen* screen = window->screen();
+    if (!screen || !screen->availableGeometry().isValid())
+        return requested;
+    const QSize frameMargins = window->frameGeometry().size() - window->size();
+    const QSize available = (screen->availableGeometry().size() - frameMargins)
+        .expandedTo(QSize(1, 1));
+    return requested.boundedTo(available);
+}
+
+inline void fitWindowToScreen(QWidget* window)
+{
+    window->setMinimumSize(screenBoundedWindowSize(window, window->minimumSize()));
+    if (window->isMaximized() || window->isFullScreen() || window->isMinimized())
+        return;
+    const QSize bounded = screenBoundedWindowSize(window, window->size());
+    if (bounded == window->size())
+        return;
+    window->resize(bounded);
+    const QRect available = window->screen()->availableGeometry();
+    const QRect frame = window->frameGeometry();
+    const QPoint position(qBound(available.left(), frame.left(),
+                                 qMax(available.left(), available.right() - frame.width() + 1)),
+                          qBound(available.top(), frame.top(),
+                                 qMax(available.top(), available.bottom() - frame.height() + 1)));
+    window->move(window->pos() + position - frame.topLeft());
+}
+
 inline QSize centerWindowOnScreen(QWidget* window, QScreen* preferred)
 {
     if (!window || !window->isWindow() || window->isMaximized()

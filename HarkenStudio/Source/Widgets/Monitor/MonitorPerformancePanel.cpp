@@ -1,4 +1,5 @@
 #include "Monitor/MonitorPerformancePanel.h"
+#include "Core/ThemeLayout.h"
 #include "Monitor/MonitorCaptureControlStrip.h"
 #include "Monitor/MonitorRemoteStatusStrip.h"
 #include "Monitor/MonitorPanelKeys.h"
@@ -26,8 +27,8 @@ MonitorPerformancePanel::MonitorPerformancePanel(QWidget* parent)
     setObjectName(QStringLiteral("MonitorPerformancePanel"));
 
     auto* root = new QVBoxLayout(this);
-    root->setContentsMargins(8, 8, 8, 8);
-    root->setSpacing(6);
+    ThemeLayout::margins(root, ThemeLayout::Space::Small);
+    ThemeLayout::spacing(root, ThemeLayout::Space::Small);
 
     captureControlStrip_ = new MonitorCaptureControlStrip(this);
     root->addWidget(captureControlStrip_);

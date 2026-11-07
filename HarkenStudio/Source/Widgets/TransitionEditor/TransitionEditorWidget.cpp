@@ -1,4 +1,5 @@
 #include "TransitionEditorWidget.h"
+#include "Core/ThemeLayout.h"
 
 #include "Core/ActionManager.h"
 #include "Core/AuthoringPolicy.h"
@@ -53,7 +54,6 @@ namespace VNX {
 
 namespace {
 
-constexpr int kNarrowWidthThreshold = 480;
 constexpr int kSourceShare = 280;
 constexpr int kExitShare = 220;
 constexpr int kEntryShare = 220;
@@ -168,20 +168,13 @@ TransitionEditorWidget::TransitionEditorWidget(QWidget* parent)
     setObjectName(QStringLiteral("TransitionEditorWidget"));
     setFocusPolicy(Qt::StrongFocus);
 
-    const auto& inspector = ThemeManager::instance().metrics().inspector;
-
     auto* root = new QVBoxLayout(this);
-    root->setContentsMargins(inspector.pageMargin, inspector.pageMargin,
-                             inspector.pageMargin, inspector.pageMargin);
-    root->setSpacing(inspector.rowSpacing);
 
     auto* statusBarHost = new QWidget(this);
     statusBarHost->setObjectName(QStringLiteral("transitionStatusBar"));
-    statusBarHost->setFixedHeight(inspector.rowHeight);
     statusBarHost->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
     auto* statusBar = new QHBoxLayout(statusBarHost);
     statusBar->setContentsMargins(0, 0, 0, 0);
-    statusBar->setSpacing(inspector.columnPadding);
     mountBadge_ = new QLabel(this);
     mountBadge_->setObjectName(QStringLiteral("transitionMountBadge"));
     mountBadge_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
@@ -220,7 +213,6 @@ TransitionEditorWidget::TransitionEditorWidget(QWidget* parent)
     contentPage_->setObjectName(QStringLiteral("transitionContentPage"));
     auto* contentLayout = new QVBoxLayout(contentPage_);
     contentLayout->setContentsMargins(0, 0, 0, 0);
-    contentLayout->setSpacing(inspector.sectionSpacing);
 
     rulesSection_ = new CollapsibleSection(tr("RULES"), 150, contentPage_);
     rulesSection_->setObjectName(QStringLiteral("transitionRulesSection"));
@@ -228,7 +220,6 @@ TransitionEditorWidget::TransitionEditorWidget(QWidget* parent)
     mountNoteLabel_ = new QLabel(rulesSection_);
     mountNoteLabel_->setObjectName(QStringLiteral("transitionMountNote"));
     mountNoteLabel_->setWordWrap(true);
-    mountNoteLabel_->setContentsMargins(inspector.columnPadding, 0, inspector.columnPadding, inspector.rowSpacing);
     QtControlSkin::setSemanticProperty(mountNoteLabel_, "textRole", QStringLiteral("muted"));
     QtControlSkin::setSemanticProperty(mountNoteLabel_, "textScale", QStringLiteral("caption"));
     mountNoteLabel_->setVisible(false);
@@ -327,7 +318,6 @@ TransitionEditorWidget::TransitionEditorWidget(QWidget* parent)
     exitNoteLabel_ = new QLabel(sourceExitSection_);
     exitNoteLabel_->setObjectName(QStringLiteral("transitionExitTimingNote"));
     exitNoteLabel_->setWordWrap(true);
-    exitNoteLabel_->setContentsMargins(inspector.columnPadding, 0, inspector.columnPadding, 0);
     exitNoteLabel_->setVisible(false);
     sourceExitLayout->addWidget(exitNoteLabel_);
 
@@ -347,7 +337,7 @@ TransitionEditorWidget::TransitionEditorWidget(QWidget* parent)
     {
         auto* slotLayout = new QHBoxLayout(bridgeSlotAdd_);
         slotLayout->setContentsMargins(0, 0, 0, 0);
-        slotLayout->setSpacing(8);
+        ThemeLayout::spacing(slotLayout, ThemeLayout::Space::Small);
         bridgeInsertButton_ = new QToolButton(bridgeSlotAdd_);
         bridgeInsertButton_->setObjectName(QStringLiteral("transitionInsertBridge"));
         bridgeInsertButton_->setText(tr("+ Insert a bridge"));
@@ -669,9 +659,19 @@ TransitionEditorWidget::TransitionEditorWidget(QWidget* parent)
         rebuild();
     });
 
-    connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this, [this]() {
-        if (boundItem_)
-            rebuildRuleList();
+    ThemeManager::instance().bindMetrics(this,
+        [this, root, statusBarHost, statusBar, contentLayout](const ThemeMetrics& metrics) {
+        const auto& inspector = metrics.inspector;
+        root->setContentsMargins(inspector.pageMargin, inspector.pageMargin,
+                                 inspector.pageMargin, inspector.pageMargin);
+        root->setSpacing(inspector.rowSpacing);
+        statusBarHost->setFixedHeight(inspector.rowHeight);
+        statusBar->setSpacing(inspector.columnPadding);
+        contentLayout->setSpacing(inspector.sectionSpacing);
+        mountNoteLabel_->setContentsMargins(inspector.columnPadding, 0,
+            inspector.columnPadding, inspector.rowSpacing);
+        exitNoteLabel_->setContentsMargins(inspector.columnPadding, 0, inspector.columnPadding, 0);
+        listTable_->refreshLayout();
     });
     connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged,
             this, &TransitionEditorWidget::refreshStatusBar);
@@ -1225,7 +1225,7 @@ void TransitionEditorWidget::resizeEvent(QResizeEvent* event)
 
 bool TransitionEditorWidget::isNarrow() const
 {
-    return width() > 0 && width() < kNarrowWidthThreshold;
+    return width() > 0 && width() < ThemeManager::instance().metrics().dialog.minimumWidth;
 }
 
 void TransitionEditorWidget::refreshHeadTooltips()

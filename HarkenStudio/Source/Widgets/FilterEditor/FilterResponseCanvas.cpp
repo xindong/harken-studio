@@ -73,7 +73,7 @@ CurvePlotGeometry FilterResponseCanvas::geometry() const
 {
     return {rect(), profile_, 20.0f, 20000.0f,
         ThemeManager::instance().snapshot()->domains.curve,
-        FontManager::instance().getFont(FontRole::Axis), font()};
+        FontManager::instance().getFont(FontRole::Caption), font()};
 }
 
 QPointF FilterResponseCanvas::sectionPoint(int index, const CurvePlotGeometry& plot) const

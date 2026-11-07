@@ -33,7 +33,7 @@ void SpectrogramMeterRenderer::render(
     else
         painter.fillRect(frame.plotBounds, colors.emptyHistory);
 
-    painter.setFont(FontManager::instance().getFont(FontRole::Axis));
+    painter.setFont(FontManager::instance().getFont(FontRole::Caption));
     const QFontMetrics font(painter.font());
     const QStringList labels = meterTickLabels(frame.frequencyTicks);
     for (int i = 0; i < frame.frequencyTicks.size(); ++i)

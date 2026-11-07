@@ -27,7 +27,7 @@ public:
         setAttribute(Qt::WA_TranslucentBackground);
         setAttribute(Qt::WA_ShowWithoutActivating);
         setAttribute(Qt::WA_TransparentForMouseEvents);
-        setFixedSize(kIconExtent, kIconExtent);
+        setFixedSize(iconExtent(), iconExtent());
         setVisible(false);
 
         followTimer_.setInterval(16);
@@ -49,8 +49,8 @@ public:
         setFixedSize(layeredFeedback
             ? drag.dragCursor(Qt::CopyAction).deviceIndependentSize().toSize()
                   .expandedTo(drag.dragCursor(Qt::IgnoreAction).deviceIndependentSize().toSize())
-                  .expandedTo(QSize(kIconExtent + iconOffset_.x(), kIconExtent + iconOffset_.y()))
-            : QSize(kIconExtent, kIconExtent));
+                  .expandedTo(QSize(iconExtent() + iconOffset_.x(), iconExtent() + iconOffset_.y()))
+            : QSize(iconExtent(), iconExtent()));
         followCursor();
         setVisible(true);
         raise();
@@ -68,22 +68,20 @@ private slots:
     void followCursor()
     {
         const QPoint cursorPos = QCursor::pos();
-        move(cursorPos + QPoint(kOffsetX, kOffsetY) - iconOffset_);
+        move(cursorPos + QPoint(ThemeManager::instance().metrics().spacingMedium, ThemeManager::instance().metrics().spacingMedium) - iconOffset_);
     }
 
 protected:
     void paintEvent(QPaintEvent*) override
     {
         QPainter p(this);
-        icon_.paint(&p, QRect(iconOffset_, QSize(kIconExtent, kIconExtent)));
+        icon_.paint(&p, QRect(iconOffset_, QSize(iconExtent(), iconExtent())));
         if (!cursor_.isNull())
             p.drawPixmap(QPoint(), cursor_);
     }
 
 private:
-    static constexpr int kIconExtent = 20;
-    static constexpr int kOffsetX = 10;
-    static constexpr int kOffsetY = 10;
+    static int iconExtent() { return ThemeManager::instance().metrics().objectIconExtent; }
     QIcon icon_;
     QPixmap cursor_;
     QPoint iconOffset_;

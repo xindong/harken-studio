@@ -1,5 +1,6 @@
 
 #include "InspectorTabContainer.h"
+#include "Core/ThemeLayout.h"
 
 #include "Core/QtControlSkin.h"
 #include "Core/ThemeManager.h"
@@ -20,7 +21,7 @@ InspectorTabContainer::InspectorTabContainer(QWidget* parent)
     bar_->setAttribute(Qt::WA_StyledBackground, true);
     bar_->setProperty("sideBar", false);
     barLayout_ = new QBoxLayout(QBoxLayout::LeftToRight, bar_);
-    barLayout_->setContentsMargins(0, 0, 0, 1);
+    barLayout_->setContentsMargins(0, 0, 0, 0);
     barLayout_->setSpacing(0);
 
     buttons_ = new QButtonGroup(this);
@@ -38,13 +39,14 @@ InspectorTabContainer::InspectorTabContainer(QWidget* parent)
     rootLayout_->setContentsMargins(0, 0, 0, 0);
     rootLayout_->setSpacing(0);
     rootLayout_->addWidget(bar_);
-    const int pageMargin =
-        ThemeManager::instance().metrics().inspector.pageMargin;
     auto* stackMargin = new QVBoxLayout(content_);
-    stackMargin->setContentsMargins(pageMargin, pageMargin,
-                                    pageMargin, pageMargin);
     stackMargin->addWidget(stack_);
     rootLayout_->addWidget(content_, 1);
+    ThemeManager::instance().bindMetrics(this, [this, stackMargin](const ThemeMetrics& metrics) {
+        const int margin = metrics.inspector.pageMargin;
+        stackMargin->setContentsMargins(margin, margin, margin, margin);
+        applyOrientation(sideBar_);
+    });
 }
 
 void InspectorTabContainer::addTab(QWidget* contentWidget,
@@ -138,7 +140,8 @@ void InspectorTabContainer::applyOrientation(bool sideBar)
     sideBar_ = sideBar;
     rootLayout_->setDirection(sideBar ? QBoxLayout::LeftToRight : QBoxLayout::TopToBottom);
     barLayout_->setDirection(sideBar ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight);
-    barLayout_->setContentsMargins(0, 0, sideBar ? 1 : 0, sideBar ? 0 : 1);
+    const int border = ThemeManager::instance().metrics().borderWidth;
+    barLayout_->setContentsMargins(0, 0, sideBar ? border : 0, sideBar ? 0 : border);
     QtControlSkin::setSemanticProperty(bar_, "sideBar", sideBar);
     QtControlSkin::setSemanticProperty(content_, "sideBar", sideBar);
     for (auto* b : buttons_->buttons())

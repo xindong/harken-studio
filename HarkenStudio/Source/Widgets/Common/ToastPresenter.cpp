@@ -46,6 +46,7 @@ ToastPresenter::ToastPresenter(QWidget* host)
     connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged, this, [this]() {
         update();
     });
+    connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this, &ToastPresenter::updatePlacement);
     host->installEventFilter(this);
 }
 
@@ -108,8 +109,10 @@ void ToastPresenter::updatePlacement()
     if (message_.isEmpty())
         return;
 
+    const auto& geometry = ThemeManager::instance().metrics();
+    const int margin = geometry.spacingSmall;
     const QRect available = parentWidget()->rect()
-        .marginsRemoved(viewportMargins_).adjusted(8, 8, -8, -8);
+        .marginsRemoved(viewportMargins_).adjusted(margin, margin, -margin, -margin);
     if (available.isEmpty()) {
         dismiss();
         return;
@@ -117,10 +120,10 @@ void ToastPresenter::updatePlacement()
 
     const QFontMetrics metrics(font());
     const int width = qMin(available.width(),
-        qBound(200, metrics.horizontalAdvance(message_) + 32, 500));
+        qBound(geometry.toast.minimumWidth, metrics.horizontalAdvance(message_) + geometry.spacingLarge * 2, geometry.toast.maximumWidth));
     const QRect textBounds = metrics.boundingRect(
-        QRect(0, 0, qMax(1, width - 32), 0), Qt::TextWordWrap, message_);
-    const int height = qMin(available.height(), qMax(36, textBounds.height() + 20));
+        QRect(0, 0, qMax(1, width - geometry.spacingLarge * 2), 0), Qt::TextWordWrap, message_);
+    const int height = qMin(available.height(), qMax(geometry.control.largeHeight, textBounds.height() + geometry.spacingSmall * 2));
     setGeometry(available.x() + (available.width() - width) / 2,
                 available.y(), width, height);
 }
@@ -137,7 +140,7 @@ void ToastPresenter::paintEvent(QPaintEvent*)
     painter.fillPath(background, colors.bgSecondary);
     painter.setPen(colors.textPrimary);
     painter.setFont(font());
-    painter.drawText(rect().adjusted(16, 10, -16, -10),
+    painter.drawText(rect().adjusted(metrics.spacingLarge, metrics.spacingSmall, -metrics.spacingLarge, -metrics.spacingSmall),
                      Qt::AlignVCenter | Qt::TextWordWrap, message_);
 }
 

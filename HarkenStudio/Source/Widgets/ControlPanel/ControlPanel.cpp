@@ -1,4 +1,5 @@
 #include "ControlPanel.h"
+#include "Core/ThemeLayout.h"
 #include "RehearsalTable.h"
 #include "VariableBindingTable.h"
 #include "Core/PlatformContextService.h"
@@ -86,7 +87,8 @@ void ControlPanel::restoreState(const QVariantMap& state)
 
 QSize ControlPanel::sizeHint() const
 {
-    return QSize(std::max(880, minimumSizeHint().width()), 140);
+    const auto& metrics = VNX::ThemeManager::instance().metrics();
+    return minimumSizeHint().expandedTo(QSize(metrics.dialog.wideWidth, metrics.panel.minimumHeight));
 }
 
 QSize ControlPanel::minimumSizeHint() const
@@ -97,7 +99,10 @@ QSize ControlPanel::minimumSizeHint() const
     const int tableWidth = bodyWidth + scrollWidth + variableTable_->frameWidth() * 2;
     const int tableHeight = std::max(variableTable_->minimumSizeHint().height(),
                                      bindingTable_->minimumSizeHint().height());
-    return QSize(tableWidth * 2 + 32, tableHeight + 16);
+    const auto margins = layout()->contentsMargins();
+    return QSize(tableWidth * 2 + margins.left() + margins.right()
+                 + qobject_cast<QGridLayout*>(layout())->horizontalSpacing(),
+                 tableHeight + margins.top() + margins.bottom());
 }
 
 void ControlPanel::scheduleVariableRefresh()
@@ -137,8 +142,8 @@ void ControlPanel::setupUI()
     setAttribute(Qt::WA_StyledBackground);
 
     auto* root = new QGridLayout(this);
-    root->setContentsMargins(8, 8, 8, 8);
-    root->setHorizontalSpacing(16);
+    VNX::ThemeLayout::margins(root, VNX::ThemeLayout::Space::Small);
+    VNX::ThemeLayout::horizontalSpacing(root, VNX::ThemeLayout::Space::Large);
     root->setColumnStretch(0, 1);
     root->setColumnStretch(1, 1);
 

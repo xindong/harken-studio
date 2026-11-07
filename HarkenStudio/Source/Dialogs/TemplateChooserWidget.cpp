@@ -1,5 +1,6 @@
 
 #include "TemplateChooserWidget.h"
+#include "Core/ThemeLayout.h"
 #include "Core/FontManager.h"
 #include "Widgets/Common/DialogFormLayout.h"
 
@@ -30,8 +31,6 @@ QString pointPairText(const QPointF& p) {
 }
 
 constexpr int kCardsPerRow = 4;
-constexpr int kCardSlotHeight  = 100;
-constexpr int kCardsRowSpacing = 8;
 
 void renderBusNode(QTreeWidgetItem* parent, const TemplateBusNode& n) {
     auto* item = new QTreeWidgetItem(parent);
@@ -60,7 +59,7 @@ void TemplateChooserWidget::buildUi()
 {
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
-    root->setSpacing(14);
+    ThemeLayout::spacing(root, ThemeLayout::Space::Large);
 
     {
         auto* row = new DialogFormLayout();
@@ -83,8 +82,8 @@ void TemplateChooserWidget::buildUi()
 
         cardsGrid_ = new QGridLayout(cardsContainer_);
         cardsGrid_->setContentsMargins(0, 0, 0, 0);
-        cardsGrid_->setHorizontalSpacing(kCardsRowSpacing);
-        cardsGrid_->setVerticalSpacing(kCardsRowSpacing);
+        ThemeLayout::spacing(cardsGrid_, ThemeLayout::Space::Small);
+        cardsGrid_->setSizeConstraint(QLayout::SetMinimumSize);
 
         templateGroup_ = new QButtonGroup(this);
         templateGroup_->setExclusive(true);
@@ -108,12 +107,14 @@ void TemplateChooserWidget::buildUi()
 
     {
         previewStack_ = new QStackedWidget(this);
-        previewStack_->setMinimumHeight(280);
+        ThemeManager::instance().bindMetrics(previewStack_, [this](const ThemeMetrics& metrics) {
+            previewStack_->setMinimumHeight(metrics.panel.previewHeight);
+        });
 
         previewPage_ = new QWidget(previewStack_);
         auto* prevLayout = new QHBoxLayout(previewPage_);
         prevLayout->setContentsMargins(0, 0, 0, 0);
-        prevLayout->setSpacing(8);
+        ThemeLayout::spacing(prevLayout, ThemeLayout::Space::Small);
 
         auto makeColumn = [&](const QString& header) {
             auto* col = new QTreeWidget(previewPage_);
@@ -133,7 +134,7 @@ void TemplateChooserWidget::buildUi()
         errorPage_ = new QWidget(previewStack_);
         auto* errLayout = new QVBoxLayout(errorPage_);
         errLayout->setContentsMargins(0, 0, 0, 0);
-        errLayout->setSpacing(6);
+        ThemeLayout::spacing(errLayout, ThemeLayout::Space::Small);
         errorSummary_ = new QLabel(errorPage_);
         errorSummary_->setProperty("templateRole", QStringLiteral("error"));
         errorSummary_->setWordWrap(true);
@@ -180,8 +181,8 @@ QPushButton* TemplateChooserWidget::makeCard(const QString& text,
     btn->setCheckable(true);
 
     auto* layout = new QVBoxLayout(btn);
-    layout->setContentsMargins(10, 8, 10, 8);
-    layout->setSpacing(2);
+    ThemeLayout::margins(layout, ThemeLayout::Space::Medium, ThemeLayout::Space::Small, ThemeLayout::Space::Medium, ThemeLayout::Space::Small);
+    ThemeLayout::spacing(layout, ThemeLayout::Space::Compact);
 
     auto* nameLbl = new QLabel(text, btn);
     nameLbl->setAlignment(Qt::AlignCenter);
@@ -244,10 +245,6 @@ void TemplateChooserWidget::rebuildTemplateCards()
     for (int c = 0; c < kCardsPerRow; ++c)
         cardsGrid_->setColumnStretch(c, 1);
 
-    const int rows = (idx + kCardsPerRow - 1) / kCardsPerRow;
-    const int totalHeight = rows * kCardSlotHeight
-                          + (rows > 0 ? (rows - 1) : 0) * kCardsRowSpacing;
-    cardsContainer_->setFixedHeight(totalHeight);
 }
 
 

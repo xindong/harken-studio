@@ -48,7 +48,10 @@ protected:
 
 private:
     void centerOnScreen();
+    void updatePresentationGeometry();
 
+    QWidget* topography_ = nullptr;
+    QWidget* content_ = nullptr;
     QLabel* projectLabel_ = nullptr;
     QLabel* statusLabel_ = nullptr;
     QLabel* percentLabel_ = nullptr;

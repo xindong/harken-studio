@@ -39,22 +39,15 @@ LinearSliderPresenter::LinearSliderPresenter(ParameterBinding* binding,
     , showValue_(showValue)
 {
     auto& theme = *themeManager;
-    const auto& metrics = theme.metrics();
-
     auto* layout = new QHBoxLayout(this);
-    layout->setContentsMargins(0, metrics.spacingXSmall / 2, 0,
-                               metrics.spacingXSmall / 2);
-    layout->setSpacing(metrics.spacingSmall);
+    bool tableCell = false;
     for (const QWidget* scope = parent; scope; scope = scope->parentWidget()) {
         if (qobject_cast<const TableCell*>(scope)) {
-            layout->setContentsMargins(0, 0, 0, 0);
-            layout->setSpacing(metrics.table.cellPaddingX * 2);
+            tableCell = true;
             break;
         }
     }
 
-    label_->setMinimumWidth(metrics.parameter.labelMinimumWidth
-                            + metrics.spacingSmall);
     label_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     layout->addWidget(label_);
 
@@ -69,7 +62,6 @@ LinearSliderPresenter::LinearSliderPresenter(ParameterBinding* binding,
 
     if (valueControl_)
     {
-        valueControl_->setMinimumWidth(metrics.parameter.compactValueMinimumWidth);
         layout->addWidget(valueControl_);
     }
     else
@@ -92,6 +84,14 @@ LinearSliderPresenter::LinearSliderPresenter(ParameterBinding* binding,
     syncMetadata();
     syncValue(binding_->value());
     applyTheme();
+    theme.bindMetrics(this, [this, layout, tableCell](const ThemeMetrics& metrics) {
+        const int padding = tableCell ? 0 : metrics.spacingCompact;
+        layout->setContentsMargins(0, padding, 0, padding);
+        layout->setSpacing(tableCell ? metrics.table.cellPaddingX * 2 : metrics.spacingSmall);
+        label_->setMinimumWidth(metrics.parameter.labelMinimumWidth);
+        if (valueControl_ && automaticValueWidth_)
+            valueControl_->setMinimumWidth(metrics.parameter.compactValueMinimumWidth);
+    });
 }
 
 ParameterPresenterId LinearSliderPresenter::presenterId() const
@@ -132,6 +132,7 @@ bool LinearSliderPresenter::isGestureActive() const
 
 void LinearSliderPresenter::setCompactValueColumn(int width)
 {
+    automaticValueWidth_ = false;
     compactValueColumn_ = true;
     label_->hide();
     if (!valueControl_)
@@ -143,6 +144,7 @@ void LinearSliderPresenter::setCompactValueColumn(int width)
 
 void LinearSliderPresenter::setValueColumnStretch(int primaryStretch, int valueStretch)
 {
+    automaticValueWidth_ = false;
     if (!valueControl_)
         return;
     valueControl_->setMinimumWidth(0);

@@ -1,4 +1,5 @@
 #include "TimelineRuler.h"
+#include "Core/ThemeLayout.h"
 
 #include "TimelineEditorPanel.h"
 #include "TimelineClipCanvas.h"
@@ -77,7 +78,7 @@ TimelineRuler::TimelineRuler(TimelineEditorPanel* panel, QWidget* parent)
     cursorValue_->setAttribute(Qt::WA_ShowWithoutActivating);
     cursorValue_->setAutoFillBackground(true);
     cursorValue_->setFrameStyle(QFrame::Box | QFrame::Plain);
-    cursorValue_->setContentsMargins(7, 4, 7, 4);
+    ThemeLayout::margins(cursorValue_, ThemeLayout::Space::Small, ThemeLayout::Space::XSmall, ThemeLayout::Space::Small, ThemeLayout::Space::XSmall);
     cursorValue_->hide();
     refresh();
 }
@@ -141,10 +142,10 @@ int TimelineRuler::timeRulerHeight() const
     if (!panel_->hasTimeline())
         return panel_->timelineMetrics().rulerHeight;
     const QFontMetrics metrics(FontManager::instance().getFont(FontRole::Body), this);
-    const int primaryHeight = std::max(metrics.height() + 5,
+    const int primaryHeight = std::max(metrics.height() + ThemeManager::instance().metrics().timeAxis.majorTickLength,
         ThemeManager::instance().metrics().navigationChevronExtent);
     const int secondaryHeight = panel_->hasSecondaryAxis()
-        ? QFontMetrics(FontManager::instance().getFont(FontRole::Axis), this).height() : 0;
+        ? QFontMetrics(FontManager::instance().getFont(FontRole::Caption), this).height() : 0;
     const int markerHeight = panel_->viewKind() == TimelineEditorPanel::ViewKind::Segment
         ? panel_->timelineMetrics().markerLaneHeight : 0;
     return primaryHeight + secondaryHeight + markerHeight;
@@ -189,7 +190,7 @@ void TimelineRuler::paintEvent(QPaintEvent*)
     const int labelHeight = markerLane_->isVisible() ? markerLane_->y() : rulerHeight;
     auto primaryColors = theme->ui.colors;
     primaryColors.textSecondary = primaryColors.textPrimary;
-    drawTimeAxisRuler(painter, primaryColors,
+    drawTimeAxisRuler(painter, primaryColors, theme->ui.metrics.timeAxis,
         QRect(headerWidth, 0, canvasWidth, labelHeight),
         panel_->timeTicks(), FontRole::Body, TimeAxisLabelAlignment::AfterTick, dualAxis);
     painter.setPen(style.canvasBorder);
@@ -204,6 +205,12 @@ void TimelineRuler::paintEvent(QPaintEvent*)
         TimelineRenderer::drawCursorLine(painter, color, x, timeAxisRect());
         TimelineRenderer::drawCursorHandle(painter, color, grip);
     }
+}
+
+QSize TimelineRuler::cursorHandleSize()
+{
+    const auto& metrics = ThemeManager::instance().metrics().timeAxis;
+    return {metrics.cursorWidth, metrics.cursorHeight};
 }
 
 QRect TimelineRuler::cursorHandleRect() const
@@ -222,7 +229,8 @@ QRect TimelineRuler::cursorHandleRect() const
 bool TimelineRuler::hitsCursor(const QPoint& position) const
 {
     const QRect handle = cursorHandleRect();
-    return (!handle.isEmpty() && handle.adjusted(-3, 0, 3, 2).contains(position))
+    const int padding = ThemeManager::instance().metrics().spacingCompact;
+    return (!handle.isEmpty() && handle.adjusted(-padding, 0, padding, padding).contains(position))
         || (timeAxisRect().contains(position)
             && panel_->hitsEditCursor(position.x() - panel_->laneHeaderWidth()));
 }

@@ -69,7 +69,8 @@ void HeaderResizeHighlight::refresh()
         hide();
         return;
     }
-    setGeometry(edge - 1, 0, 1, header_->viewport()->height());
+    const int borderWidth = theme_->metrics().borderWidth;
+    setGeometry(edge - borderWidth, 0, borderWidth, header_->viewport()->height());
     raise();
     show();
 }

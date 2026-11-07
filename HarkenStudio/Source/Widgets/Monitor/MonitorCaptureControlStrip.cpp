@@ -1,4 +1,5 @@
 #include "Monitor/MonitorCaptureControlStrip.h"
+#include "Core/ThemeLayout.h"
 
 #include <QLabel>
 #include <QVBoxLayout>
@@ -11,7 +12,7 @@ MonitorCaptureControlStrip::MonitorCaptureControlStrip(QWidget* parent)
 {
     setObjectName(QStringLiteral("MonitorCapturePlanBar"));
     auto* root = new QVBoxLayout(this);
-    root->setContentsMargins(8, 4, 8, 4);
+    ThemeLayout::margins(root, ThemeLayout::Space::Small, ThemeLayout::Space::XSmall, ThemeLayout::Space::Small, ThemeLayout::Space::XSmall);
     statusLabel_ = new QLabel(this);
     statusLabel_->setObjectName(QStringLiteral("MonitorCaptureControlStatus"));
     statusLabel_->setWordWrap(true);

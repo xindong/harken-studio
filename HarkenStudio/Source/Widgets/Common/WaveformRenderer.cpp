@@ -351,7 +351,7 @@ void WaveformRenderer::renderSplitStereo(QPainter& painter,
     drawDbScale(painter, botRect, style, amplitudeExponent);
 
     QFont labelFont = FontManager::instance().getFont(
-        FontRole::Caption, style.splitStereo.labelPointSize, QFont::Bold);
+        FontRole::Caption, FontEmphasis::Strong);
     painter.setFont(labelFont);
     painter.setPen(style.splitStereo.label);
     painter.drawText(rect.x() + rect.width() - style.splitStereo.labelRightInset,
@@ -410,7 +410,7 @@ void WaveformRenderer::renderRawPeaks(QPainter& painter,
 void WaveformRenderer::drawDbScale(QPainter& painter, const QRect& rect,
                                    const WaveformStyle& style, double amplitudeExponent)
 {
-    painter.setFont(FontManager::instance().getFont(FontRole::Axis));
+    painter.setFont(FontManager::instance().getFont(FontRole::Caption));
     const QFontMetrics metrics(painter.font(), painter.device());
     const int half = rect.height() / 2;
     const auto ticks = buildAmplitudeAxisTicks(rect, rect.y() + half, half, metrics,

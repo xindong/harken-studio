@@ -1,4 +1,5 @@
 #include "FloatingTitleBar.h"
+#include "Core/ThemeLayout.h"
 #include <QEvent>
 #include <QHBoxLayout>
 #include <QShowEvent>
@@ -8,11 +9,13 @@ namespace VNX {
 
 FloatingTitleBar::FloatingTitleBar(QWidget* parent) : QWidget(parent) {
     setObjectName("TitleBarWidget");
-    setFixedHeight(36);
+    ThemeManager::instance().bindMetrics(this, [this](const ThemeMetrics& metrics) {
+        setFixedHeight(qMax(metrics.chrome.titleBarHeight, fontMetrics().height() + metrics.spacingSmall));
+    });
 
     layout_ = new QHBoxLayout(this);
-    layout_->setContentsMargins(8, 0, 0, 0);
-    layout_->setSpacing(6);
+    ThemeLayout::margins(layout_, ThemeLayout::Space::Small, ThemeLayout::Space::None, ThemeLayout::Space::None, ThemeLayout::Space::None);
+    ThemeLayout::spacing(layout_, ThemeLayout::Space::Small);
 
     layout_->addStretch();
 

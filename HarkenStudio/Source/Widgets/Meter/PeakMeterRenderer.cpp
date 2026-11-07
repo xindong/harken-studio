@@ -148,7 +148,7 @@ void PeakMeterRenderer::render(QPainter& painter,
     }
     painter.save();
     painter.setOpacity(painter.opacity() * annotationOpacity);
-    painter.setFont(FontManager::instance().getFont(FontRole::Axis));
+    painter.setFont(FontManager::instance().getFont(FontRole::Caption));
     const QFontMetrics font(painter.font());
     const QStringList labels = meterTickLabels(frame.ticks);
     for (int index = 0; index < frame.ticks.size(); ++index) {

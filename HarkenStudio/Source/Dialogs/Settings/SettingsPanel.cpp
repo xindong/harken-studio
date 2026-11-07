@@ -1,11 +1,13 @@
 
 #include "Dialogs/Settings/SettingsPanel.h"
+#include "Core/ThemeLayout.h"
 
 #include "Core/ContextInfo.h"
 #include "Widgets/Common/SearchField.h"
 
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QResizeEvent>
 #include <QSignalBlocker>
 #include <QVBoxLayout>
 
@@ -15,7 +17,6 @@ SettingsPanel::SettingsPanel(QWidget* parent)
     : QWidget(parent)
 {
     ContextInfo::tag(this, ContextTopic::forPanel(QStringLiteral("settings")));
-    setMinimumSize(420, 280);
 
     auto* mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(0, 0, 0, 0);
@@ -25,7 +26,7 @@ SettingsPanel::SettingsPanel(QWidget* parent)
     searchContainer->setObjectName(QStringLiteral("settingsSearchBar"));
     searchContainer->setAttribute(Qt::WA_StyledBackground, true);
     auto* searchLayout = new QHBoxLayout(searchContainer);
-    searchLayout->setContentsMargins(8, 8, 8, 9);
+    ThemeLayout::margins(searchLayout, ThemeLayout::Space::Small);
     searchField_ = new SearchField(searchContainer);
     searchField_->setObjectName(QStringLiteral("settingsSearchField"));
     searchField_->setPlaceholderText(tr("Search settings..."));
@@ -40,7 +41,11 @@ SettingsPanel::SettingsPanel(QWidget* parent)
 
     categoryList_ = new QListWidget();
     categoryList_->setObjectName(QStringLiteral("settingsCategoryList"));
-    categoryList_->setFixedWidth(150);
+    categoryList_->setTextElideMode(Qt::ElideNone);
+    categoryList_->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    ThemeManager::instance().bindMetrics(categoryList_, [this](const ThemeMetrics&) {
+        updateCategoryWidth();
+    });
     connect(categoryList_, &QListWidget::currentRowChanged,
             this, &SettingsPanel::onCategoryChanged);
     contentLayout->addWidget(categoryList_);
@@ -132,7 +137,20 @@ QString SettingsPanel::currentPageId() const
 
 QSize SettingsPanel::sizeHint() const
 {
-    return QSize(800, 550);
+    const auto& metrics = ThemeManager::instance().metrics().dialog;
+    return QSize(metrics.wideWidth, metrics.wideHeight);
+}
+
+void SettingsPanel::resizeEvent(QResizeEvent* event)
+{
+    QWidget::resizeEvent(event);
+    updateCategoryWidth();
+}
+
+void SettingsPanel::updateCategoryWidth()
+{
+    categoryList_->setFixedWidth(qMin(ThemeManager::instance().metrics().panel.sidebarWidth,
+                                     contentsRect().width() / 3));
 }
 
 }
