@@ -713,7 +713,9 @@ struct FrontierTimelineFinalizer::Impl {
         const FrontierGroupBinding& parent) const noexcept {
         if (child.role != FrontierGroupRole::Coordinator ||
             child.operation.order.executeFrame != parent.operation.order.executeFrame) return false;
-        if (child.prerequisite == parent.entry) return true;
+        if (child.prerequisite == parent.entry)
+            return child.prerequisiteKind != FrontierEntryPrerequisiteKind::SourceCohortChild ||
+                child.primary == child.prerequisiteMember;
         // A later native forest inherits an earlier signal receipt. Its real
         // root explicitly declares every coordinator in this same-frame batch.
         if (!parent.prerequisite.Valid() || !(child.prerequisite == parent.prerequisite) ||
@@ -765,8 +767,7 @@ struct FrontierTimelineFinalizer::Impl {
             const auto memberIndex = FindGroup(binding.prerequisiteMember);
             if (allowPrivateForest && child.pageEntryRoot != UINT32_MAX && parentIndex != UINT32_MAX &&
                 memberIndex != UINT32_MAX && groups[parentIndex].pageEntryRoot == child.pageEntryRoot &&
-                groups[memberIndex].pageEntryRoot == child.pageEntryRoot &&
-                SameFrameEntryChild(binding, *groups[parentIndex].view.frontier))
+                groups[memberIndex].pageEntryRoot == child.pageEntryRoot)
                 return VariableReadCutStatus::Applied;
             FrontierActivationReceipt receipt{};
             const auto read = activation->Read(binding.prerequisite, quantum + 1u, &receipt);
