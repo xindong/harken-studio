@@ -54825,11 +54825,19 @@ harken::EngineActionPlayScratch* FindPendingScheduleAnchorAttempt(harken::Engine
     return nullptr;
 }
 
+bool IsEmptyScheduleSourceMarker(const harken::EnginePlayableServiceRow& row) noexcept {
+    return row.zeroWorkMarker && !row.pendingDirectStartBinding && row.scheduleAggregate == nullptr &&
+        row.schedule.eventCount == 0 && !row.arm.Valid() && row.renderHandle == 0 &&
+        !row.queueMode && !row.variableControlInstance.Valid();
+}
+
 bool RetirePendingScheduleAnchorSources(harken::Engine& engine,
     harken::EngineActionPlayScratch& root) noexcept {
     bool settled = true;
     const bool valid = VisitInitialScheduleAttempts(engine, root, [&](auto& attempt) noexcept {
-        if (attempt.row == nullptr || !attempt.row->pendingDirectStartBinding) return false;
+        if (attempt.row == nullptr) return false;
+        if (IsEmptyScheduleSourceMarker(*attempt.row)) return attempt.voiceStartCount == 0;
+        if (!attempt.row->pendingDirectStartBinding) return false;
         for (std::uint32_t index = 0; index < attempt.voiceStartCount; ++index)
             settled = engine.RetireOriginalSinglePendingSource(attempt.voiceStarts[index]) && settled;
         return true;
@@ -54921,6 +54929,7 @@ DirectPendingStartResult BindAcknowledgedDirectStart(harken::Engine& engine,
     std::uint32_t count = 0;
     if (!visitRows([&](auto& owner) noexcept {
             if (owner.scheduleAggregate != nullptr) return !owner.scheduleAggregate->committed;
+            if (IsEmptyScheduleSourceMarker(owner)) return true;
             if (!owner.pendingDirectStartBinding || owner.queueMode || owner.variableControlInstance.Valid()) return false;
             auto* bank = owner.HasFeatureArrays() ? owner.QueuePayload().queueCurrentProgramBank : nullptr;
             const auto leaves = bank != nullptr ? owner.QueuePayload().queueCurrentPrograms.count : 1u;
@@ -54933,7 +54942,7 @@ DirectPendingStartResult BindAcknowledgedDirectStart(harken::Engine& engine,
                 ++count;
             }
             return true;
-        }) || count == 0) return Result::Refused;
+        }) || (count == 0 && aggregateAttempt == nullptr)) return Result::Refused;
     std::array<harken::EngineTimelineVoiceInstallIdentity, capacity> installations{};
     const auto completed = engine.mixer.BlocksRendered();
     bool waiting = false;
@@ -54976,7 +54985,7 @@ DirectPendingStartResult BindAcknowledgedDirectStart(harken::Engine& engine,
     }
     const auto lead = std::max(configuredLead, requiredRunway);
     if (completed > UINT64_MAX - lead || completed + lead > UINT64_MAX / block) return Result::Refused;
-    std::uint64_t originalFirst = UINT64_MAX;
+    std::uint64_t originalFirst = count == 0 ? row.pendingDirectEntryFrame : UINT64_MAX;
     for (std::uint32_t index = 0; index < count; ++index)
         originalFirst = std::min(originalFirst, installations[index].onsetFrame);
     const auto safeFirst = std::max(engine.timelinePool.PublishCutoffFrame(), (completed + requiredRunway) * block);
@@ -55020,7 +55029,7 @@ DirectPendingStartResult BindAcknowledgedDirectStart(harken::Engine& engine,
          !CanCommitInitialScheduleReadUses(engine, *aggregateAttempt) ||
          !CanPublishInitialScheduleFrontiers(engine, *aggregateAttempt))) return Result::Refused;
     harken::TimelineArmTable::PrivatePendingImmediateArmProof arms;
-    if (!engine.timelineArms.ProvePrivatePendingImmediateArmBatch(armInputs.data(), count,
+    if (count != 0 && !engine.timelineArms.ProvePrivatePendingImmediateArmBatch(armInputs.data(), count,
             reservedRows.data(), reservedRows.size(), &arms)) return Result::Waiting;
     for (std::uint32_t index = 0; index < count; ++index) {
         const auto use = installations[index].initialVariableReadUse;
@@ -55191,7 +55200,7 @@ DirectPendingStartResult BindAcknowledgedDirectStart(harken::Engine& engine,
         const auto use = installations[index].initialVariableReadUse;
         if (use.Valid()) engine.variables.ApplyFixedTimelineReadUseOnset(use, arms);
     }
-    engine.timelineArms.ApplyPrivatePendingImmediateArmBatch(arms);
+    if (count != 0) engine.timelineArms.ApplyPrivatePendingImmediateArmBatch(arms);
     bool released = true;
     for (const auto& held : row.sourceStartLanes)
         released = engine.immediateActionLane.PinArms(held->lane, engine.timelineArms) && released;
