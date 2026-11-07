@@ -36162,6 +36162,9 @@ TEST(PlayableStart, MusicQueueCropsAcrossEntriesAndRestoresEachBodyPass) {
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
         auto* engine = session.Engine();
+        // PCM equality requires completed quanta; deadline deferral is exercised separately.
+        harken::detail::VoicePoolReleaseTestAccess::SetWorkerDeadline(
+            engine->voices, harken::CpuClockTicksPerSecond());
         std::vector<float> first(400, 0.1f), second(shape >= 13 ? 400 : 1200);
         for (unsigned i = 0; i < second.size(); ++i) second[i] = 0.2f + (i % 31u) * 0.001f;
         if (shape >= 11)
@@ -36495,6 +36498,7 @@ TEST(PlayableStart, MusicQueueCropsAcrossEntriesAndRestoresEachBodyPass) {
             ASSERT_FALSE(engine->runtimeRecreateRequired) << OccupancyDump(*engine);
             const auto before = engine->mixer.BlocksRendered();
             engine->nullBackend.Pump(1);
+            ASSERT_EQ(before + 1u, engine->mixer.BlocksRendered()) << OccupancyDump(*engine);
             for (unsigned i = 0; i < 64; ++i) {
                 const auto frame = before * 64 + i;
                 const auto age = frame >= start ? frame - start : UINT64_MAX;
@@ -36569,15 +36573,46 @@ TEST(PlayableStart, MusicQueueCropsAcrossEntriesAndRestoresEachBodyPass) {
 }
 
 TEST(PlayableStart, DefaultMusicQueueRepeatsCompleteSegmentsWithoutGapsAndReclaims) {
-    for (const unsigned control : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u})
+    for (const unsigned scenario : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u})
     for (const unsigned workers : {0u, 2u}) {
-        SCOPED_TRACE(control);
+        if (scenario == 8 && workers == 0) continue;
+        const auto control = scenario == 8 ? 3u : scenario;
+        SCOPED_TRACE(scenario);
         SCOPED_TRACE(workers);
         auto config = harkentest::MakeNullConfig(32, 64, 48000);
         config.renderWorkerCount = workers;
+        if (scenario == 8) config.fxSlotsPerVoice = 1;
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
         auto* engine = session.Engine();
+        // PCM equality requires completed quanta; deadline deferral is exercised separately.
+        harken::detail::VoicePoolReleaseTestAccess::SetWorkerDeadline(
+            engine->voices, harken::CpuClockTicksPerSecond());
+        struct WorkerGate {
+            std::atomic<std::uint64_t> entered{0};
+            std::atomic<bool> release{false};
+            std::thread::id coordinator = std::this_thread::get_id();
+            static void Process(void* context, float* const*, std::uint32_t, std::uint32_t, std::uint32_t) {
+                auto& gate = *static_cast<WorkerGate*>(context);
+                if (gate.release.load(std::memory_order_acquire)) return;
+                if (std::this_thread::get_id() == gate.coordinator) {
+                    const auto until = harken::CpuClockTicks() + 2 * harken::CpuClockTicksPerSecond();
+                    while (gate.entered.load(std::memory_order_acquire) == 0 && harken::CpuClockTicks() < until)
+                        std::this_thread::yield();
+                } else {
+                    gate.entered.store(1, std::memory_order_release);
+                    while (!gate.release.load(std::memory_order_acquire)) std::this_thread::yield();
+                }
+            }
+        } gate;
+        struct ReleaseGate {
+            WorkerGate& gate;
+            harken::VoicePool& voices;
+            ~ReleaseGate() {
+                gate.release.store(true, std::memory_order_release);
+                harken::detail::VoicePoolReleaseTestAccess::JoinWorkers(voices);
+            }
+        };
         std::vector<float> pcm(1600, 0.02f);
         std::fill_n(pcm.begin(), 400, 0.01f);
         std::fill(pcm.begin() + 1200, pcm.end(), 0.03f);
@@ -36674,7 +36709,12 @@ TEST(PlayableStart, DefaultMusicQueueRepeatsCompleteSegmentsWithoutGapsAndReclai
         install.identity.capabilityMask = harken::detail::ComputeCurrentWorldLocalCapabilityMaskV1(install);
         install.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV6(install);
         ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(*engine, install).status);
+        ReleaseGate releaseGate{gate, engine->voices};
         for (unsigned cycle = 0; cycle < 2; ++cycle) {
+            SCOPED_TRACE(cycle);
+            bool deferredStopExercised = false;
+            gate.entered.store(0, std::memory_order_relaxed);
+            gate.release.store(false, std::memory_order_relaxed);
             harken::PlayableStartRequest request{};
             request.root = queue.Root();
             harken::PlayableInstanceHandle instance = 0;
@@ -36786,7 +36826,37 @@ TEST(PlayableStart, DefaultMusicQueueRepeatsCompleteSegmentsWithoutGapsAndReclai
                     }
                 }
                 const auto frame = engine->mixer.BlocksRendered() * 64;
+                harken::EngineAuthoredStopRoot* heldStop = nullptr;
+                if (scenario == 8 && stopFiring != 0) {
+                    for (unsigned index = 0; index < engine->authoredStopRootPrefixCount; ++index) {
+                        auto& stop = engine->authoredStopRoots[index];
+                        if (!stop.committed || !stop.operation || stop.operation->Identity().actionFiring != stopFiring) continue;
+                        const auto stopFrame = stop.operation->Identity().stopFrame;
+                        if (scenario == 8 && !deferredStopExercised && frame <= stopFrame && stopFrame < frame + 64) {
+                            heldStop = &stop;
+                            unsigned gatedVoices = 0;
+                            for (const auto& leaf : engine->playableServices) {
+                                auto* voice = engine->voices.Resolve(leaf.renderHandle);
+                                if (voice == nullptr) continue;
+                                voice->fxSlots[0].state = &gate;
+                                voice->fxSlots[0].process = &WorkerGate::Process;
+                                ++gatedVoices;
+                            }
+                            ASSERT_GE(gatedVoices, 2u);
+                            harken::detail::VoicePoolReleaseTestAccess::SetWorkerDeadline(
+                                engine->voices, harken::CpuClockTicksPerSecond() / 1000u);
+                        }
+
+                    }
+                }
                 engine->nullBackend.Pump(1);
+                if (heldStop != nullptr) {
+                    ASSERT_NE(0u, gate.entered.load(std::memory_order_acquire));
+                    ASSERT_EQ(frame / 64, engine->mixer.BlocksRendered());
+                    ASSERT_EQ(frame / 64 + 1u, heldStop->operation->AppliedAudioSequence());
+                } else {
+                    ASSERT_EQ(frame / 64 + 1u, engine->mixer.BlocksRendered()) << OccupancyDump(*engine);
+                }
                 for (unsigned sample = 0; sample < 64; ++sample) {
                     const auto age = frame + sample >= start ? frame + sample - start : UINT64_MAX;
                     // Preserve full natural Queue PCM checks; allow the existing stop declick.
@@ -36797,12 +36867,23 @@ TEST(PlayableStart, DefaultMusicQueueRepeatsCompleteSegmentsWithoutGapsAndReclai
                         << "age=" << age << " cycle=" << cycle << " workers=" << workers;
                 }
                 ASSERT_EQ(VN_OK, Vn_Update());
+                if (heldStop != nullptr) {
+                    EXPECT_NE(harken::PlayableControlReason::Deadline, service->controlReason);
+                    gate.release.store(true, std::memory_order_release);
+                    const auto until = harken::CpuClockTicks() + 2 * harken::CpuClockTicksPerSecond();
+                    while (!engine->voices.DeferredRenderReady() && harken::CpuClockTicks() < until)
+                        std::this_thread::yield();
+                    ASSERT_TRUE(engine->voices.DeferredRenderReady());
+                    harken::detail::VoicePoolReleaseTestAccess::SetWorkerDeadline(engine->voices, harken::CpuClockTicksPerSecond());
+                    deferredStopExercised = true;
+                }
                 if ((control == 4 || control == 5) && block >= 10 &&
                     resetStatus == harken::RuntimeTransportResetStatus::Backpressure)
                     resetStatus = harken::BeginRuntimeTransportReset(*engine, resetFrame);
                 if (control >= 6 && block >= 10 && replacementStatus == harken::WorldInstallStatus::Backpressure)
                     replacementStatus = harken::InstallContainerWorldV1(*engine, install).status;
             }
+            if (scenario == 8) EXPECT_TRUE(deferredStopExercised);
             if (control == 4 || control == 5) EXPECT_EQ(harken::RuntimeTransportResetStatus::Complete, resetStatus);
             if (control >= 6) EXPECT_EQ(harken::WorldInstallStatus::Ok, replacementStatus);
             if (stopFiring != 0) EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(stopFiring));

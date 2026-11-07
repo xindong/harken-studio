@@ -12302,6 +12302,25 @@ bool ClearQueueCompletionOwner(
         engine.timelineOccurrences.ClearCompletionOwnerExact(completion.occurrence, completion.owner);
 }
 
+void PrepareAuthoredStopQueueRetirement(
+    harken::Engine& engine, harken::EnginePlayableServiceRow& row) noexcept {
+    if (!row.queueMode) return;
+    if (row.HasFeatureArrays() && ClearQueueCompletionOwner(engine, row.renderHandle,
+            row.QueuePayload().queueCurrentCompletion)) {
+        row.QueuePayload().queueCurrentCompletion = {};
+    }
+    if (!row.HasFeatureArrays() ||
+        ClearQueueCompletionOwner(engine, row.QueuePayload().queueSuccessorRenderHandle,
+            row.QueueFiling().queueSuccessorCompletion)) {
+        if (row.HasFeatureArrays()) row.QueueFiling().queueSuccessorCompletion = {};
+        if (row.HasFeatureArrays()) row.QueueFiling().queueSuccessorSignalOnlyNoOverlap = false;
+        if (row.HasFeatureArrays()) row.QueuePayload().queueSuccessorOwner = {};
+    }
+    row.queueAbortRequested = true;
+    row.queueNaturalEnd = true;
+    row.queueSignalOnlyNoOverlap = false;
+}
+
 void ServiceAuthoredStops(
     harken::Engine& engine, std::uint64_t observed, std::uint64_t* blockingFrame,
     std::uint64_t* requiredPublicationFrame) noexcept {
@@ -12376,6 +12395,9 @@ void ServiceAuthoredStops(
             slot = resource.nextResource;
         }
         const auto applied = root.operation->AppliedAudioSequence();
+        // Stop execution precedes worker completion. An unfinished quantum can
+        // already tombstone its arms without publishing the completed block.
+        if (applied > observed) continue;
         if (!root.applied && root.operation->Active(identity) &&
             observedFrame > identity.stopFrame && applied != 0 && applied <= observed &&
             engine.playableInstances.ActivateDelayedCancellation(&root.cancellation,
@@ -12385,22 +12407,7 @@ void ServiceAuthoredStops(
             for (auto& row : engine.playableServices) {
                 if (AuthoredStopPublicRoot(engine, row.rootInstance) == identity.root) {
                     engine.SetPlayableServiceNeedsWork(row, true);
-                    if (row.queueMode) {
-                        if (row.HasFeatureArrays() && ClearQueueCompletionOwner(engine, row.renderHandle,
-                                row.QueuePayload().queueCurrentCompletion)) {
-                            row.QueuePayload().queueCurrentCompletion = {};
-                        }
-                        if (!row.HasFeatureArrays() ||
-                            ClearQueueCompletionOwner(engine, row.QueuePayload().queueSuccessorRenderHandle,
-                                row.QueueFiling().queueSuccessorCompletion)) {
-                            if (row.HasFeatureArrays()) row.QueueFiling().queueSuccessorCompletion = {};
-                            if (row.HasFeatureArrays()) row.QueueFiling().queueSuccessorSignalOnlyNoOverlap = false;
-                            if (row.HasFeatureArrays()) row.QueuePayload().queueSuccessorOwner = {};
-                        }
-                        row.queueAbortRequested = true;
-                        row.queueNaturalEnd = true;
-                        row.queueSignalOnlyNoOverlap = false;
-                    }
+                    PrepareAuthoredStopQueueRetirement(engine, row);
                     row.pendingControlCause = root.controlCause;
                     (void)engine.playableInstances.CaptureControlCause(row.rootInstance, &row.pendingControlCause);
                     row.controlReason = harken::PlayableControlReason::StopRequested;
@@ -12419,7 +12426,9 @@ engine.runtimeRecreateRequired = true;
                 CancelAuthoredStopOperation(engine, root);
                 for (auto& row : engine.playableServices) {
                     if (AuthoredStopPublicRoot(engine, row.rootInstance) == identity.root) {
-                    engine.SetPlayableServiceNeedsWork(row, true);
+                        engine.SetPlayableServiceNeedsWork(row, true);
+                        PrepareAuthoredStopQueueRetirement(engine, row);
+                        row.pendingFutureCount = 0;
                         row.controlReason = harken::PlayableControlReason::Deadline;
                         row.controlLifecycle = harken::PlayableControlLifecycle::Cancelling;
                         row.phase = harken::EnginePlayableStartPhase::Cancelling;
