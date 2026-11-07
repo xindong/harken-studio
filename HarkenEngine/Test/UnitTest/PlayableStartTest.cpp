@@ -12814,6 +12814,8 @@ TEST(PlayableStart, SequenceQueueSourceFadeUsesAuthoredCurve) {
 
 TEST(PlayableStart,
      VariableControlTransitionMixUsesAuthoredTargetCurve) {
+    for (int curveCase = 0; curveCase < 3; ++curveCase) {
+    SCOPED_TRACE(curveCase);
     VnConfig config = harkentest::MakeNullConfig(3, 64, 48000);
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -12838,6 +12840,14 @@ TEST(PlayableStart,
     image.transitionCurves[1].curve.handles[0] = {
         1.0f / 3.0f, 0.0f, 2.0f / 3.0f, 0.0f};
 
+    if (curveCase != 0) {
+        image.transitionCurves[0].curve = image.transitionCurves[1].curve;
+        if (curveCase == 2) image.transitionCurves[1].curve.points[0].y = -0.0f;
+    }
+    harken::CurveLUT expectedSource, expectedTarget;
+    expectedSource.Bake(image.transitionCurves[0].curve);
+    expectedTarget.Bake(image.transitionCurves[1].curve);
+
     harken::PlayableStartRequest request{};
     request.root = image.Root();
     const harken::PlayableStartResult started =
@@ -12861,6 +12871,10 @@ TEST(PlayableStart,
         }
     }
     ASSERT_TRUE(row->variableControlDiscreteRetargetPrepared);
+    EXPECT_EQ(0, std::memcmp(expectedSource.values, row->TransitionSourceFadeCurve().values,
+                            sizeof(expectedSource.values)));
+    EXPECT_EQ(0, std::memcmp(expectedTarget.values, row->TransitionTargetFadeCurve().values,
+                            sizeof(expectedTarget.values)));
     const std::uint64_t decisionFrame =
         row->VariablePayload().variableControlDiscreteRetargetFrame;
     while (engine->mixer.BlocksRendered() * engine->config.blockFrames <
@@ -12886,8 +12900,9 @@ TEST(PlayableStart,
 
     ASSERT_GT(beforeTransition, harkentest::kSilenceFloor);
     ASSERT_GT(completedTransitionLast, harkentest::kSilenceFloor);
-    EXPECT_LT(firstTransitionBlockLast,
-              completedTransitionLast * 0.75f);
+    if (curveCase == 0)
+        EXPECT_LT(firstTransitionBlockLast, completedTransitionLast * 0.75f);
+    }
 }
 
 TEST(PlayableStart,

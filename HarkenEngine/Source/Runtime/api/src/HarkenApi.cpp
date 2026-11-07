@@ -18184,6 +18184,23 @@ const harken::CurveV1* FindContainerCurve(
         : nullptr;
 }
 
+bool SameCurveDefinitionBits(const harken::Curve& a, const harken::Curve& b) noexcept {
+    if (a.pointCount != b.pointCount || a.pointCount > harken::kMaxCurvePoints) return false;
+    const auto same = [](float x, float y) noexcept {
+        return std::bit_cast<std::uint32_t>(x) == std::bit_cast<std::uint32_t>(y);
+    };
+    for (std::uint32_t i = 0; i < a.pointCount; ++i) {
+        if (!same(a.points[i].x, b.points[i].x) || !same(a.points[i].y, b.points[i].y)) return false;
+        if (i + 1u < a.pointCount) {
+            const auto& x = a.handles[i];
+            const auto& y = b.handles[i];
+            if (!same(x.h1x, y.h1x) || !same(x.h1y, y.h1y) ||
+                !same(x.h2x, y.h2x) || !same(x.h2y, y.h2y)) return false;
+        }
+    }
+    return true;
+}
+
 bool BakeTransitionFadeCurve(
     const harken::ContainerProgramViewV3& program,
     const harken::TransitionFadeV1& fade,
@@ -39640,7 +39657,12 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
         (targetFadeActive && targetCurve == nullptr)) return VariableRetargetPrepareStatus::Fatal;
     const auto bakeFades = [&]() noexcept {
         if (sourceCurve != nullptr) row.TransitionSourceFadeCurve().Bake(sourceCurve->curve);
-        if (targetCurve != nullptr) row.TransitionTargetFadeCurve().Bake(targetCurve->curve);
+        if (targetCurve != nullptr) {
+            // Reuse only this call's exact result; the two reader owners stay separate.
+            if (sourceCurve != nullptr && SameCurveDefinitionBits(sourceCurve->curve, targetCurve->curve))
+                row.TransitionTargetFadeCurve() = row.TransitionSourceFadeCurve();
+            else row.TransitionTargetFadeCurve().Bake(targetCurve->curve);
+        }
     };
     if (!nativeTargets) bakeFades();
     std::uint64_t audibleFrame = decisionFrame;
@@ -41383,16 +41405,21 @@ bool HasPlayableMemberSource(const harken::Engine& engine, std::size_t slot) noe
     return HasPlayableMemberSource(engine, engine.ReadPlayableMember(slot));
 }
 
-std::uint64_t PlayableMemberStartSequence(const harken::Engine& engine, std::size_t slot) noexcept {
-    if (!HasPlayableMemberSource(engine, slot)) return 0;
-    const auto arm = engine.ReadPlayableMember(slot).arm;
+std::uint64_t PlayableMemberStartSequence(const harken::Engine& engine,
+    const harken::EnginePlayableMemberRecord& record) noexcept {
+    if (!HasPlayableMemberSource(engine, record)) return 0;
+    const auto arm = record.arm;
     harken::TimelineArmObservation observed{};
     if (engine.timelineArms.Observe(arm, &observed)) return observed.startedBlockSequence;
-    const auto& member = engine.ReadPlayableMember(slot).completion;
-    return member.sourceRender == engine.ReadPlayableMember(slot).render &&
+    const auto& member = record.completion;
+    return member.sourceRender == record.render &&
         member.sourceStartArm.slot == arm.slot && member.sourceStartArm.generation == arm.generation &&
         member.sourceStartArm.renderSlot == arm.renderSlot && member.sourceStartArm.renderGeneration == arm.renderGeneration
         ? member.sourceStartedBlockSequence : 0;
+}
+
+std::uint64_t PlayableMemberStartSequence(const harken::Engine& engine, std::size_t slot) noexcept {
+    return PlayableMemberStartSequence(engine, engine.ReadPlayableMember(slot));
 }
 
 bool CaptureRetiredQueueSourceProof(const harken::Engine& engine,
@@ -58768,24 +58795,24 @@ engine.runtimeRecreateRequired = true;
             if (row.variableControlInstance.Valid()) WakePlayableServiceTree(engine, row);
             continue;
         }
-        bool hasDynamicVariableMember = false;
-        if (variableBase + memberStorageSpan <=
-            engine.playableStorage.memberCount) {
-            for (std::uint32_t index = 0;
-                 index < memberStorageSpan; ++index) {
-                hasDynamicVariableMember = hasDynamicVariableMember ||
-                    engine.ReadPlayableMember(
-                        observedMemberSlots[index]).dynamic != 0;
-            }
-        }
-        if (row.scheduleLeafCount > 1 ||
+        const bool requiresMemberObservation = row.scheduleLeafCount > 1 ||
             ((row.ordinaryLifecycleOwned || row.queueMode) &&
              row.hasZeroWorkCompletion && row.scheduleLeafCount != 0) ||
             (row.queueMode && row.HasFeatureArrays() && row.QueuePayload().queueCurrentCompositeOwner.Valid() && row.scheduleLeafCount != 0) ||
             (row.queueMode && (!row.HasFeatureArrays() || row.QueuePayload().queueCurrentScheduleLeafCount == 0) &&
              row.hasZeroWorkCompletion && !row.arm.Valid()) ||
-            row.variableControlInstance.Valid() ||
-            hasDynamicVariableMember) {
+            row.variableControlInstance.Valid();
+        bool hasDynamicVariableMember = false;
+        if (!requiresMemberObservation && variableBase + memberStorageSpan <=
+            engine.playableStorage.memberCount) {
+            for (std::uint32_t index = 0; index < memberStorageSpan; ++index) {
+                if (engine.ReadPlayableMember(observedMemberSlots[index]).dynamic != 0) {
+                    hasDynamicVariableMember = true;
+                    break;
+                }
+            }
+        }
+        if (requiresMemberObservation || hasDynamicVariableMember) {
             const std::size_t base = variableBase;
             if (memberStorageSpan > kMaxObservedMemberSpan ||
                 base + memberStorageSpan >
@@ -59346,16 +59373,16 @@ engine.runtimeRecreateRequired = true;
                  ++index) {
                 if (!memberPresent(index)) continue;
                 const std::size_t slot = observedMemberSlots[index];
-                if (engine.ReadPlayableMember(slot).dynamic != 0 || HasPlayableMemberSource(engine, slot)) {
-                    const VnVoiceHandle render =
-                        engine.ReadPlayableMember(slot).render;
+                const auto& record = engine.ReadPlayableMember(slot);
+                if (record.dynamic != 0 || HasPlayableMemberSource(engine, record)) {
+                    const VnVoiceHandle render = record.render;
                     const bool active =
                         engine.voices.IsAlive(render);
-                    const auto& member = engine.ReadPlayableMember(slot).completion;
+                    const auto& member = record.completion;
                     harken::SourceTerminalPayload sourceResult{};
                     const bool terminal = member.resourcesRetired || engine.sourceTerminals.Capture(
                         member.source, observedAudioSequence, &sourceResult);
-                    const auto started = PlayableMemberStartSequence(engine, slot);
+                    const auto started = PlayableMemberStartSequence(engine, record);
                     if (started != 0) {
                         anyStarted = true;
                         if (row.lastAppliedBlockSequence == 0 || started < row.lastAppliedBlockSequence)
