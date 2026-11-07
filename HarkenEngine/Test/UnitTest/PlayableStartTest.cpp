@@ -22152,13 +22152,20 @@ TEST(PlayableStart, DirectTrackMixedStreamWaitsStartsTogetherAndCancelsBeforeRea
 }
 
 TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFailure) {
-    for (const auto workers : {0u, 2u}) for (const auto scenario : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u, 10u, 11u, 12u, 13u, 14u, 15u, 16u, 17u, 18u, 19u, 20u, 21u, 22u, 23u, 24u, 25u, 26u, 27u, 28u, 29u, 30u}) {
-        const bool repeatNatural = scenario == 28u || scenario == 29u;
+    for (const auto workers : {0u, 2u}) for (const auto scenario : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u, 10u, 11u, 12u, 13u, 14u, 15u, 16u, 17u, 18u, 19u, 20u, 21u, 22u, 23u, 24u, 25u, 26u, 27u, 28u, 29u, 30u, 31u, 32u, 33u, 34u}) {
+        const bool deepOrdinary = scenario == 17u || scenario == 31u;
+        const bool futureEmpty = scenario == 31u;
+        const bool heldMutation = scenario >= 32u;
+        const bool replaceHeld = scenario == 32u;
+        const bool replaceWorldHeld = scenario == 33u;
+        const bool resetHeld = scenario == 34u;
+        const bool externalCancellation = replaceWorldHeld || resetHeld;
+        const bool repeatNatural = scenario == 28u || scenario == 29u || replaceHeld;
         const bool repeatInfinite = scenario == 29u;
         const bool nativeMixed = scenario == 30u;
-        const bool crossTrack = (scenario >= 14u && scenario <= 16u) || repeatNatural;
-        const bool repeatTrack = scenario == 16u || repeatNatural;
-        const bool ordinaryNative = (scenario >= 17u && scenario <= 19u) || (scenario >= 24u && scenario <= 27u);
+        const bool crossTrack = (scenario >= 14u && scenario <= 16u) || repeatNatural || heldMutation;
+        const bool repeatTrack = scenario == 16u || repeatNatural || heldMutation;
+        const bool ordinaryNative = (scenario >= 17u && scenario <= 19u) || (scenario >= 24u && scenario <= 27u) || deepOrdinary;
         const bool ordinaryVariable = scenario == 26u || scenario == 27u;
         const bool nativeChild = scenario >= 6u && !crossTrack;
         const bool noDirectStream = (scenario >= 20u && scenario <= 27u) || nativeMixed;
@@ -22176,7 +22183,7 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
         const bool temporaryVoicePressure = scenario == 3u;
         const bool cancelBeforeSeal = scenario == 4u;
         const bool cancelAfterSeal = scenario == 5u || scenario == 9u || scenario == 19u;
-        const bool cancel = cancelBeforeSeal || cancelAfterSeal;
+        const bool cancel = cancelBeforeSeal || cancelAfterSeal || externalCancellation;
         SCOPED_TRACE(::testing::Message() << "workers=" << workers << " scenario=" << scenario);
         auto config = harkentest::MakeNullConfig(8, 64, 48000);
         config.renderWorkerCount = workers;
@@ -22228,6 +22235,12 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
         VariableControlWorldImage native(engine.registry.Lookup(kSound).contentRevision, image.world.generation);
         PlayableWorldImage ordinary(engine.registry.Lookup(kSound).contentRevision,
             scenario == 18u ? harken::ContainerModeV1::Random : harken::ContainerModeV1::Sequence);
+        PlayableWorldImage deepSequence(engine.registry.Lookup(kSound).contentRevision, harken::ContainerModeV1::Sequence);
+        PlayableWorldImage emptySequence(facts.contentRevision, harken::ContainerModeV1::Sequence);
+        auto deepTrackProperty = image.properties[2];
+        auto deepTrack = image.track;
+        std::array<harken::ScheduleClipPlacementV1, 2> deepPlacements{};
+        std::array<harken::PlayableOccurrencePropertyViewV1, 2> deepOccurrences{};
         std::array<harken::ContainerChildProgramViewV2, 2> ordinaryChoices{ordinary.child, ordinary.child};
         harken::PlayableOccurrencePropertyViewV1 ordinarySecondOccurrence{};
         NestedQueueWorldImage nested(engine.registry.Lookup(kSound).contentRevision, false, scenario == 13u);
@@ -22241,7 +22254,7 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
             ordinary.container.programSemanticFingerprint = ordinary.properties[1].programSemanticFingerprint;
             ordinary.occurrence.parentProgramSemanticFingerprint = ordinary.properties[1].programSemanticFingerprint;
             ordinary.occurrence.occurrenceSemanticFingerprint = harken::ComputePlayableOccurrenceFingerprintV1(ordinary.occurrence);
-            if (scenario == 17u) {
+            if (deepOrdinary) {
                 ordinaryChoices[1].stableChildOrdinal = 8;
                 ordinaryChoices[1].authoredStableOrder = 1;
                 ordinary.container.children = ordinaryChoices.data();
@@ -22312,6 +22325,69 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
             ordinary.occurrence.childPlayable = ordinary.child.playable;
             ordinary.occurrence.occurrenceSemanticFingerprint = harken::ComputePlayableOccurrenceFingerprintV1(ordinary.occurrence);
         }
+        if (deepOrdinary) {
+            deepTrackProperty.stableId = harkentest::ObjectId(3002);
+            deepTrackProperty.authoredStableOrder = 5;
+            deepTrackProperty.programSemanticFingerprint = harken::ComputePlayablePropertyFingerprintV1(deepTrackProperty);
+            deepTrack.rootDefinition.stableId = deepTrackProperty.stableId;
+            deepTrack.rootDefinition.expectedProgramSemanticFingerprint = deepTrackProperty.programSemanticFingerprint;
+            deepPlacements[0] = image.placements[0];
+            deepPlacements[0].content = ordinary.Root();
+            deepPlacements[0].authoredStart = 0;
+            deepPlacements[0].authoredDuration = INT64_C(8000000);
+            if (futureEmpty) {
+                emptySequence.properties[1].stableId = harkentest::ObjectId(2501);
+                emptySequence.properties[1].authoredStableOrder = 6;
+                emptySequence.properties[1].programSemanticFingerprint =
+                    harken::ComputePlayablePropertyFingerprintV1(emptySequence.properties[1]);
+                emptySequence.container.containerStableId = emptySequence.properties[1].stableId;
+                emptySequence.container.authoredStableOrder = 2;
+                emptySequence.container.programSemanticFingerprint = emptySequence.properties[1].programSemanticFingerprint;
+                emptySequence.child.playable = image.placements[1].content;
+                emptySequence.occurrence.parentStableId = emptySequence.properties[1].stableId;
+                emptySequence.occurrence.parentProgramSemanticFingerprint = emptySequence.properties[1].programSemanticFingerprint;
+                emptySequence.occurrence.childPlayable = emptySequence.child.playable;
+                emptySequence.occurrence.occurrenceSemanticFingerprint =
+                    harken::ComputePlayableOccurrenceFingerprintV1(emptySequence.occurrence);
+                deepPlacements[1] = deepPlacements[0];
+                deepPlacements[0] = image.placements[1];
+                deepPlacements[0].content = emptySequence.Root();
+                deepPlacements[0].content.stableId = emptySequence.container.containerStableId;
+                deepPlacements[0].authoredStart = -INT64_C(12000000);
+                deepPlacements[0].authoredDuration = INT64_C(20000000);
+            }
+            deepTrack.placementCount = futureEmpty ? 2u : 1u;
+            for (std::uint32_t index = 0; index < deepTrack.placementCount; ++index) {
+                auto& placement = deepPlacements[index];
+                placement.stablePlacementOrdinal = index;
+                placement.stableOccurrenceOrdinal = 7u + index;
+                placement.clipId = harkentest::ObjectId(5200u + index);
+                placement.clipGuidHigh = 6200u + index;
+                placement.clipGuidLow = 7200u + index;
+                deepOccurrences[index] = image.occurrences[0];
+                deepOccurrences[index].parentStableId = deepTrackProperty.stableId;
+                deepOccurrences[index].parentProgramSemanticFingerprint = deepTrackProperty.programSemanticFingerprint;
+                deepOccurrences[index].stableOccurrenceOrdinal = placement.stableOccurrenceOrdinal;
+                deepOccurrences[index].childPlayable = placement.content;
+                deepOccurrences[index].occurrenceSemanticFingerprint =
+                    harken::ComputePlayableOccurrenceFingerprintV1(deepOccurrences[index]);
+            }
+            deepTrack.placements = deepPlacements.data();
+            deepTrack.scheduleSemanticFingerprint = harken::ComputeTrackScheduleFingerprintV1(deepTrack);
+            deepSequence.properties[1].stableId = harkentest::ObjectId(2401);
+            deepSequence.properties[1].authoredStableOrder = 4;
+            deepSequence.properties[1].programSemanticFingerprint =
+                harken::ComputePlayablePropertyFingerprintV1(deepSequence.properties[1]);
+            deepSequence.container.containerStableId = deepSequence.properties[1].stableId;
+            deepSequence.container.authoredStableOrder = 1;
+            deepSequence.container.programSemanticFingerprint = deepSequence.properties[1].programSemanticFingerprint;
+            deepSequence.child.playable = deepTrack.rootDefinition;
+            deepSequence.occurrence.parentStableId = deepSequence.properties[1].stableId;
+            deepSequence.occurrence.parentProgramSemanticFingerprint = deepSequence.properties[1].programSemanticFingerprint;
+            deepSequence.occurrence.childPlayable = deepSequence.child.playable;
+            deepSequence.occurrence.occurrenceSemanticFingerprint =
+                harken::ComputePlayableOccurrenceFingerprintV1(deepSequence.occurrence);
+        }
         std::array<harken::ScheduleClipPlacementV1, 4> placements{
             image.placements[0], image.placements[1], image.placements[0], image.placements[0]};
         const auto repeatCollisionOffset = 1536u + 384u +
@@ -22320,6 +22396,10 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
             : nativeChild ? INT64_C(33000000) : INT64_C(32000000);
         if (nativeChild) placements[0].content = native.Root();
         if (ordinaryNative) placements[0].content = ordinary.Root();
+        if (deepOrdinary) {
+            placements[0].content = deepSequence.Root();
+            placements[0].content.stableId = deepSequence.container.containerStableId;
+        }
         if (nestedNative) placements[0].content = nested.Root();
         if (multipleNative) placements[2].content = native.Root();
         if (nativeStreamLate || (hiddenNativeStream && !ordinaryVariable)) {
@@ -22362,9 +22442,21 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
                 containers.insert(containers.end(), nested.containers.begin(), nested.containers.end());
             } else if (ordinaryNative) {
                 occurrences.push_back(ordinary.occurrence);
-                if (scenario == 17u) occurrences.push_back(ordinarySecondOccurrence);
+                if (deepOrdinary) {
+                    occurrences.push_back(ordinarySecondOccurrence);
+                    occurrences.push_back(deepSequence.occurrence);
+                    occurrences.insert(occurrences.end(), deepOccurrences.begin(), deepOccurrences.begin() + deepTrack.placementCount);
+                    properties.push_back(deepSequence.properties[1]);
+                    properties.push_back(deepTrackProperty);
+                }
                 properties.push_back(ordinary.properties[1]);
                 containers.push_back(ordinary.container);
+                if (deepOrdinary) containers.push_back(deepSequence.container);
+                if (futureEmpty) {
+                    properties.push_back(emptySequence.properties[1]);
+                    occurrences.push_back(emptySequence.occurrence);
+                    containers.push_back(emptySequence.container);
+                }
             } else {
                 occurrences.push_back(native.occurrence);
                 properties.push_back(native.properties[1]);
@@ -22380,6 +22472,7 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
         std::array<harken::ScheduleClipPlacementV1, 2> firstTrackPlacements{placements[0], placements[3]};
         std::array<harken::ScheduleClipPlacementV1, 2> secondTrackPlacements{placements[1], placements[2]};
         std::array<harken::TrackScheduleProgramViewV1, 2> tracks{image.track, image.track};
+        if (deepOrdinary) tracks[1] = deepTrack;
         std::array<harken::ScheduleTrackRefV1, 2> trackRefs{};
         if (crossTrack) {
             auto trackProperty = image.properties[2];
@@ -22481,7 +22574,7 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
         }
         install.trackSchedules = &image.track;
         install.trackScheduleCount = 1;
-        if (nativeMixed) {
+        if (nativeMixed || deepOrdinary) {
             install.trackSchedules = tracks.data();
             install.trackScheduleCount = tracks.size();
         }
@@ -22494,6 +22587,18 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
         install.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(install);
         ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, install).status);
         engine.streams.SetThrottled(true);
+        harken::PlayableInstanceHandle reusedSlotInstance = 0;
+        std::uint32_t reusedSlot = UINT32_MAX;
+        if (scenario == 27u) {
+            harken::PlayableStartRequest reserveLowSlot;
+            reserveLowSlot.root = image.placements[0].content;
+            const auto reserved = harken::StartPlayable(engine, reserveLowSlot);
+            ASSERT_EQ(harken::PlayableStartStatus::Accepted, reserved.status);
+            const auto* reservedRow = FindPlayableRow(engine, reserved.instance);
+            ASSERT_NE(nullptr, reservedRow);
+            reusedSlotInstance = reserved.instance;
+            reusedSlot = reservedRow->identity.slot;
+        }
         harken::PlayableStartRequest request;
         request.root = crossTrack ? segment.Root() : image.Root();
         const auto started = harken::StartPlayable(engine, request);
@@ -22502,25 +22607,41 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
             [&](const auto& row) { return row.ownerInstance == started.instance; });
         ASSERT_NE(engine.playableServices.end(), root);
         ASSERT_NE(nullptr, root->scheduleAggregate);
+        if (scenario == 27u) {
+            EXPECT_LT(reusedSlot, root->identity.slot);
+            ASSERT_EQ(harken::PlayableControlStatus::Ok, harken::StopPlayable(engine, reusedSlotInstance, 0));
+        }
         if (!repeatTrack) ASSERT_EQ(1u, root->scheduleAggregate->sourceCohorts.size());
         if (nativeOnly) EXPECT_TRUE(root->scheduleAggregate->sourceCohorts[0]->sides.empty());
         const auto onset = root->startFrame + (largePrebuffer ? 96000u : nativeChild ? 1584u : 1536u);
         const auto later = root->startFrame + (largePrebuffer ? 115200u : scenario == 28u ? repeatCollisionOffset : 3072u);
         EXPECT_FALSE(root->pendingDirectStartBinding);
         EXPECT_EQ(config.maxStreams, engine.streams.FreeSlotCount());
+        const auto originalWorld = engine.variables.CurrentWorldGeneration();
+        const auto originalWorldFingerprint = engine.variables.CurrentWorldIdentity()->runtimeSemanticFingerprint;
+        const auto originalTransport = engine.variables.CurrentTransportEpoch();
+        PlayableWorldImage replacementWorld(engine.registry.Lookup(kSound).contentRevision, harken::ContainerModeV1::Random);
         harken::SelectionMemoryKeyV1 ordinaryKey{};
-        if (scenario == 17u) {
+        if (deepOrdinary) {
             ordinaryKey.world = root->Invocation().worldGeneration;
             ordinaryKey.containerStableId = ordinary.container.containerStableId;
             ordinaryKey.programSemanticFingerprint = ordinary.container.programSemanticFingerprint;
             ordinaryKey.memoryScope = harken::MemoryScopeV1::Global;
             const auto future = std::find_if(engine.playableServices.begin(), engine.playableServices.end(),
                 [&](const auto& row) { return row.ordinaryLifecycleOwned &&
-                    row.parentService.owner == started.instance &&
+                    row.root.stableId == ordinary.container.containerStableId &&
                     row.selectionCount != 0; });
             ASSERT_NE(engine.playableServices.end(), future);
+            const auto* trackParent = engine.ResolvePlayableService(future->parentService);
+            ASSERT_NE(nullptr, trackParent);
+            EXPECT_EQ(deepTrack.rootDefinition.stableId, trackParent->root.stableId);
+            const auto* sequenceParent = engine.ResolvePlayableService(trackParent->parentService);
+            ASSERT_NE(nullptr, sequenceParent);
+            EXPECT_EQ(deepSequence.container.containerStableId, sequenceParent->root.stableId);
+            EXPECT_EQ(started.instance, sequenceParent->parentService.owner);
             EXPECT_EQ(7u, future->selectedChildOrdinals[0]);
             EXPECT_EQ(1u, engine.selectionMemory.Snapshot(ordinaryKey).selectionOrdinal);
+            EXPECT_EQ(0u, engine.selectionMemory.Snapshot(ordinaryKey).pendingCount);
             harken::PlayableStartRequest immediate;
             immediate.root = ordinary.Root();
             const auto next = harken::StartPlayable(engine, immediate);
@@ -22554,6 +22675,15 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
         bool hiddenStreamWaiting = false;
         bool nativeMixedObserved = false;
         bool repeatCollisionObserved = false;
+        bool futureEmptyObserved = false;
+        bool earlyRetireOrderObserved = false;
+        bool earlyRetireTransitionObserved = false;
+        bool earlyRetireReceiptObserved = false;
+        harken::EnginePlayableServiceReference earlyRetireChild{};
+        bool heldMutationObserved = false;
+        std::uint64_t resetFrame = UINT64_MAX;
+        auto resetStatus = harken::RuntimeTransportResetStatus::Backpressure;
+        auto worldReplaceStatus = harken::WorldInstallStatus::Backpressure;
         std::array<std::vector<std::uint64_t>, 2> heard;
         std::vector<std::uint64_t> repeatOnsets{onset};
         for (unsigned pass = 0; pass < (later + (repeatInfinite ? 16384u : 2048u)) / config.blockFrames; ++pass) {
@@ -22591,14 +22721,89 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
                 engine.streams.SyncServe();
                 nativeSupplyBlocked = true;
             }
-            if ((!directStreamLate && !cancelBeforeSeal && !nativeSupplyBlocked) ||
+            if ((!directStreamLate && !cancelBeforeSeal && !nativeSupplyBlocked && (!heldMutation || heldMutationObserved)) ||
                 (!repeatTrack && at > onset + config.blockFrames))
                 engine.streams.SetThrottled(false);
             if (temporaryVoicePressure && at + 256u >= onset) {
                 for (const auto voice : pressure) ASSERT_TRUE(engine.voices.CancelPreparedVoice(voice));
                 pressure.clear();
             }
+            bool earlyRetireChildBeforeUpdate = false;
+            bool earlyRetireRecordBeforeUpdate = false;
+            bool earlyRetireLogicalBeforeUpdate = false;
+            auto earlyRetireReasonBeforeUpdate = harken::PlayableControlReason::None;
+            auto earlyRetireOutcomeBeforeUpdate = harken::PlayableTerminalKind::None;
+            harken::EnginePlayableServiceReference earlyRetireOwnerBeforeUpdate{};
+            if (scenario == 27u && earlyRetireChild.Valid()) {
+                const auto* child = engine.ResolvePlayableService(earlyRetireChild);
+                earlyRetireChildBeforeUpdate = child != nullptr;
+                const auto* parent = child == nullptr ? nullptr : engine.ResolvePlayableService(child->parentService);
+                if (parent != nullptr) {
+                    const auto captureRecord = [&](const auto& record) {
+                        if (harken::Engine::SameSelectionServiceReference(record.service, earlyRetireChild)) {
+                            earlyRetireRecordBeforeUpdate = true;
+                            earlyRetireLogicalBeforeUpdate = record.logicalComplete;
+                            earlyRetireReasonBeforeUpdate = record.reason;
+                            earlyRetireOutcomeBeforeUpdate = record.outcome.kind;
+                            earlyRetireOwnerBeforeUpdate = record.sourceCohortFailureOwner;
+                        }
+                        return true;
+                    };
+                    if (parent->scheduleAggregate != nullptr) ASSERT_TRUE(parent->scheduleAggregate->VisitChildren(captureRecord));
+                    if (parent->scheduleTerminalChild != nullptr) captureRecord(*parent->scheduleTerminalChild);
+                }
+            }
             ASSERT_EQ(VN_OK, Vn_Update()) << OccupancyDump(engine);
+            if (resetHeld && heldMutationObserved && resetStatus == harken::RuntimeTransportResetStatus::Backpressure)
+                resetStatus = harken::BeginRuntimeTransportReset(engine, resetFrame);
+            if (replaceWorldHeld && heldMutationObserved && worldReplaceStatus == harken::WorldInstallStatus::Backpressure) {
+                worldReplaceStatus = harken::InstallContainerWorldV1(engine, replacementWorld.world).status;
+                ASSERT_TRUE(worldReplaceStatus == harken::WorldInstallStatus::Ok ||
+                    worldReplaceStatus == harken::WorldInstallStatus::Backpressure);
+            }
+            if (externalCancellation && heldMutationObserved) {
+                harken::PlayableControlState state{};
+                if (harken::QueryPlayable(engine, started.instance, &state) == harken::PlayableControlStatus::Ok)
+                    EXPECT_EQ(replaceWorldHeld ? harken::PlayableControlReason::ContentRevision
+                        : harken::PlayableControlReason::None, state.reason);
+            }
+            if (scenario == 27u) {
+                for (const auto& service : engine.playableServices) {
+                    if (service.root.stableId != streamedNative.container.containerStableId) continue;
+                    const auto* parent = engine.ResolvePlayableService(service.parentService);
+                    ASSERT_NE(nullptr, parent);
+                    ASSERT_EQ(ordinary.container.containerStableId, parent->root.stableId);
+                    EXPECT_EQ(reusedSlot, service.identity.slot);
+                    EXPECT_LT(service.identity.slot, parent->identity.slot);
+                    earlyRetireOrderObserved = true;
+                    earlyRetireChild = {service.identity, service.ownerInstance, service.ownerEpoch, service.invocationGeneration};
+                }
+                if (earlyRetireChildBeforeUpdate && engine.ResolvePlayableService(earlyRetireChild) == nullptr) {
+                    EXPECT_TRUE(earlyRetireRecordBeforeUpdate);
+                    if (earlyRetireLogicalBeforeUpdate) {
+                        EXPECT_EQ(harken::PlayableControlReason::StartRefused, earlyRetireReasonBeforeUpdate);
+                        EXPECT_EQ(harken::PlayableTerminalKind::Failure, earlyRetireOutcomeBeforeUpdate);
+                        EXPECT_TRUE(earlyRetireOwnerBeforeUpdate.Valid());
+                    }
+                    earlyRetireTransitionObserved = true;
+                    ASSERT_NE(nullptr, root->scheduleAggregate);
+                    ASSERT_TRUE(root->scheduleAggregate->VisitChildren([&](const auto& child) {
+                        if (child.content.stableId != ordinary.container.containerStableId || !child.logicalComplete) return true;
+                        EXPECT_EQ(harken::PlayableControlReason::StartRefused, child.reason);
+                        EXPECT_EQ(harken::PlayableTerminalKind::Failure, child.outcome.kind);
+                        EXPECT_TRUE(child.sourceCohortFailureOwner.Valid());
+                        const harken::EnginePlayableServiceReference expectedOwner{
+                            root->identity, root->ownerInstance, root->ownerEpoch, root->invocationGeneration};
+                        EXPECT_TRUE(harken::Engine::SameSelectionServiceReference(expectedOwner, child.sourceCohortFailureOwner));
+                        if (earlyRetireOwnerBeforeUpdate.Valid())
+                            EXPECT_TRUE(harken::Engine::SameSelectionServiceReference(
+                                earlyRetireOwnerBeforeUpdate, child.sourceCohortFailureOwner));
+                        earlyRetireReceiptObserved = true;
+                        return true;
+                    }));
+                    EXPECT_TRUE(earlyRetireReceiptObserved);
+                }
+            }
             if (repeatNatural && !stopRequested) {
                 for (auto& service : engine.playableServices) {
                     if (service.scheduleAggregate == nullptr || service.scheduleAggregate->trackRepeat == nullptr) continue;
@@ -22640,6 +22845,90 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
                 }
             }
             if (root->scheduleAggregate != nullptr && !root->scheduleAggregate->sourceCohorts.empty()) {
+                if (heldMutation && !heldMutationObserved) {
+                    for (const auto& candidate : root->scheduleAggregate->sourceCohorts) {
+                        if (candidate->onset != onset || candidate->published) continue;
+                        const auto residentMember = std::find_if(candidate->children.begin(), candidate->children.end(),
+                            [&](const auto& member) { return member.child->content.stableId == kSound; });
+                        const auto streamMember = std::find_if(candidate->children.begin(), candidate->children.end(),
+                            [&](const auto& member) { return member.child->content.stableId == kSecondSound; });
+                        if (residentMember == candidate->children.end() || streamMember == candidate->children.end()) continue;
+                        EXPECT_FALSE(harken::Engine::SameSelectionServiceReference(residentMember->parent, streamMember->parent));
+                        for (const auto& side : candidate->sides) for (const auto& source : side->sources) {
+                            harken::EngineTimelineVoiceInstallIdentity installed{};
+                            if (!engine.CaptureTimelineVoiceInstallIdentity(source.sourceIdentity, &installed) || !installed.streamed ||
+                                engine.CapturedTimelineStreamStartStatus(installed) != harken::VariableReadCutStatus::Waiting) continue;
+                            ASSERT_LT(at, onset);
+                            ASSERT_TRUE(harken::Engine::SameOriginalSingleArm(installed.startArm, source.arm));
+                            ASSERT_TRUE(engine.originalSourceSubmissions.IsOriginalSourceLifetimePinFor(source.source, source.arm));
+                            ASSERT_TRUE(engine.voices.IsOriginalSourceBodyLifetimePinFor(source.body, source.arm, source.sourceIdentity));
+                            const auto* actualParent = engine.ResolvePlayableService(streamMember->parent);
+                            ASSERT_NE(nullptr, actualParent);
+                            ASSERT_NE(nullptr, actualParent->scheduleAggregate);
+                            ASSERT_NE(nullptr, actualParent->scheduleAggregate->trackRepeat);
+                            EXPECT_EQ(VN_IN_USE, Vn_UnregisterStreamFile(kSecondSound));
+                            if (replaceHeld) {
+                                ASSERT_EQ(VN_OK, Vn_ReplaceStreamFile(kSecondSound, path.c_str()));
+                                harken::StreamManager::StreamFacts current{}, pinned{};
+                                ASSERT_TRUE(engine.streams.FindFile(kSecondSound, &current));
+                                EXPECT_NE(facts.sourceGeneration, current.sourceGeneration);
+                                EXPECT_EQ(facts.contentRevision, current.contentRevision);
+                                ASSERT_TRUE(engine.streams.FactsForFileIndex(facts.fileIndex, &pinned));
+                                EXPECT_EQ(facts.sourceGeneration, pinned.sourceGeneration);
+                                EXPECT_EQ(facts.contentRevision, pinned.contentRevision);
+                                harken::EngineTimelineVoiceInstallIdentity after{};
+                                ASSERT_TRUE(engine.CaptureTimelineVoiceInstallIdentity(source.sourceIdentity, &after));
+                                EXPECT_TRUE(harken::Engine::SameOriginalSingleArm(installed.startArm, after.startArm));
+                                EXPECT_EQ(installed.renderHandle, after.renderHandle);
+                                EXPECT_EQ(harken::VariableReadCutStatus::Waiting, engine.CapturedTimelineStreamStartStatus(after));
+                            } else if (replaceWorldHeld) {
+                                worldReplaceStatus = harken::InstallContainerWorldV1(engine, replacementWorld.world).status;
+                                ASSERT_TRUE(worldReplaceStatus == harken::WorldInstallStatus::Ok ||
+                                    worldReplaceStatus == harken::WorldInstallStatus::Backpressure);
+                                const bool committed = worldReplaceStatus == harken::WorldInstallStatus::Ok;
+                                EXPECT_EQ(originalWorld + static_cast<unsigned>(committed), engine.variables.CurrentWorldGeneration());
+                                EXPECT_EQ(committed ? replacementWorld.world.identity.runtimeSemanticFingerprint : originalWorldFingerprint,
+                                    engine.variables.CurrentWorldIdentity()->runtimeSemanticFingerprint);
+                                stopRequested = true;
+                            } else {
+                                resetFrame = at;
+                                resetStatus = harken::BeginRuntimeTransportReset(engine, resetFrame);
+                                EXPECT_EQ(harken::RuntimeTransportResetStatus::Backpressure, resetStatus);
+                                EXPECT_EQ(originalTransport, engine.variables.CurrentTransportEpoch());
+                                EXPECT_EQ(originalWorld, engine.variables.CurrentWorldGeneration());
+                                harken::PlayableControlState state{};
+                                ASSERT_EQ(harken::PlayableControlStatus::Ok, harken::QueryPlayable(engine, started.instance, &state));
+                                EXPECT_EQ(harken::PlayableControlLifecycle::Cancelling, state.lifecycle);
+                                EXPECT_EQ(harken::PlayableControlReason::None, state.reason);
+                                stopRequested = true;
+                            }
+                            heldMutationObserved = true;
+                            break;
+                        }
+                        if (heldMutationObserved) break;
+                    }
+                }
+                if (futureEmpty && !futureEmptyObserved) for (const auto& candidate : root->scheduleAggregate->sourceCohorts) {
+                    if (candidate->onset != onset || !candidate->published) continue;
+                    for (const auto& member : candidate->children) {
+                        if (member.child->content.stableId != kSecondSound || member.child->sourceOffsetFrames < 512u) continue;
+                        const auto* parent = engine.ResolvePlayableService(member.parent);
+                        ASSERT_NE(nullptr, parent);
+                        EXPECT_EQ(emptySequence.container.containerStableId, parent->root.stableId);
+                        const auto* trackParent = engine.ResolvePlayableService(parent->parentService);
+                        ASSERT_NE(nullptr, trackParent);
+                        EXPECT_EQ(deepTrack.rootDefinition.stableId, trackParent->root.stableId);
+                        const auto* source = engine.ResolvePlayableService(member.child->service);
+                        ASSERT_NE(nullptr, source);
+                        EXPECT_TRUE(source->zeroWorkMarker);
+                        EXPECT_EQ(0u, source->renderHandle);
+                        EXPECT_FALSE(source->arm.Valid());
+                        EXPECT_EQ(nullptr, source->scheduleCohortSource);
+                        EXPECT_EQ(UINT32_MAX, member.child->sourceCohortSide);
+                        EXPECT_EQ(UINT16_MAX, member.child->sourceCohortMember);
+                        futureEmptyObserved = true;
+                    }
+                }
                 if (scenario == 28u) for (const auto& candidate : root->scheduleAggregate->sourceCohorts) {
                     if (candidate->onset != later || !candidate->published) continue;
                     const auto residentMember = std::find_if(candidate->children.begin(), candidate->children.end(),
@@ -22748,6 +23037,11 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
         EXPECT_EQ(noDirectStream && missDeadline, hiddenStreamWaiting);
         EXPECT_EQ(nativeMixed, nativeMixedObserved);
         EXPECT_EQ(scenario == 28u, repeatCollisionObserved);
+        EXPECT_EQ(futureEmpty, futureEmptyObserved);
+        EXPECT_EQ(scenario == 27u, earlyRetireOrderObserved);
+        EXPECT_EQ(scenario == 27u, earlyRetireTransitionObserved);
+        EXPECT_EQ(scenario == 27u, earlyRetireReceiptObserved);
+        EXPECT_EQ(heldMutation, heldMutationObserved);
         EXPECT_EQ(temporaryVoicePressure, observedCapacityRetry);
         EXPECT_EQ(temporaryVoicePressure, observedHeldSibling);
         EXPECT_EQ(largePrebuffer, preparedOutsidePageWindow);
@@ -22788,8 +23082,28 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
         EXPECT_EQ(voicesBefore, engine.voices.AvailableSlotCount());
         engine.streams.SyncServe();
         EXPECT_EQ(config.maxStreams, engine.streams.FreeSlotCount());
+        EXPECT_EQ(0u, engine.streams.RetiringFileCount());
         EXPECT_FALSE(engine.runtimeRecreateRequired);
-        if (scenario == 17u) {
+        if (replaceWorldHeld) {
+            if (worldReplaceStatus == harken::WorldInstallStatus::Backpressure)
+                worldReplaceStatus = harken::InstallContainerWorldV1(engine, replacementWorld.world).status;
+            ASSERT_EQ(harken::WorldInstallStatus::Ok, worldReplaceStatus);
+            EXPECT_EQ(originalWorld + 1u, engine.variables.CurrentWorldGeneration());
+            EXPECT_EQ(replacementWorld.world.identity.runtimeSemanticFingerprint,
+                engine.variables.CurrentWorldIdentity()->runtimeSemanticFingerprint);
+            EXPECT_EQ(originalTransport, engine.variables.CurrentTransportEpoch());
+            harken::PlayableControlState state{};
+            EXPECT_EQ(harken::PlayableControlStatus::StaleHandle, harken::QueryPlayable(engine, started.instance, &state));
+        }
+        if (resetHeld) {
+            EXPECT_EQ(harken::RuntimeTransportResetStatus::Complete, resetStatus);
+            EXPECT_EQ(originalTransport + 1u, engine.variables.CurrentTransportEpoch());
+            EXPECT_EQ(originalWorld, engine.variables.CurrentWorldGeneration());
+            EXPECT_EQ(originalWorldFingerprint, engine.variables.CurrentWorldIdentity()->runtimeSemanticFingerprint);
+            harken::PlayableControlState state{};
+            EXPECT_EQ(harken::PlayableControlStatus::StaleHandle, harken::QueryPlayable(engine, started.instance, &state));
+        }
+        if (deepOrdinary) {
             EXPECT_EQ(1u, engine.selectionMemory.Snapshot(ordinaryKey).selectionOrdinal);
             EXPECT_EQ(0u, engine.selectionMemory.Snapshot(ordinaryKey).pendingCount);
         }
