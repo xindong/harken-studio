@@ -10970,13 +10970,17 @@ void ServiceQueueProgramBanks(harken::Engine& engine) noexcept {
     for (const auto& scratch : engine.actionQueueReplacementScratch) {
         if (scratch.programBank != nullptr) scratch.programBank->heldByOwner = true;
     }
-    for (const auto& record : engine.decisionRetirements) {
+    for (std::uint32_t slot = 0, count = engine.decisions.ConstructedRowCount();
+         slot < count; ++slot) {
+        const auto& record = engine.decisionRetirements[slot];
         if (record.decision.Valid() && record.programBank != nullptr)
             record.programBank->heldByOwner = true;
     }
-    for (const auto& source : engine.ordinaryRetiringSources)
-        if (source.committed && source.queueCurrent != nullptr && source.queueCurrent->bank != nullptr)
-            source.queueCurrent->bank->heldByOwner = true;
+    if (engine.ordinaryRetiringSourceCount != 0) {
+        for (const auto& source : engine.ordinaryRetiringSources)
+            if (source.committed && source.queueCurrent != nullptr && source.queueCurrent->bank != nullptr)
+                source.queueCurrent->bank->heldByOwner = true;
+    }
     for (auto& bank : engine.queueProgramBanks) {
         if (bank.chain.retiringPredecessor.generation != 0 &&
             (bank.chain.retiringPredecessorOwner.kind == harken::CompletionOwnerKind::None ||
