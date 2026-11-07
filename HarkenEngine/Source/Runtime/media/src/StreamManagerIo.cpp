@@ -451,7 +451,7 @@ void StreamManager::ServeSlots() {
         // finite cursor so newly verified staging is published in this pass;
         // misses and exhausted byte budget retain the normal dispatch path.
         while (cursor.maxServeFrames != 0 && AdvanceSlot(cursor, &job)) {
-            if (!slot.supplied.load(std::memory_order_acquire) ||
+            if (!slot.ring.startPromoted.load(std::memory_order_acquire) ||
                 job.chunkBytes > cachedBytesRemaining ||
                 slot.ring.state.load(std::memory_order_acquire) != StreamSlotState::Active ||
                 slot.ring.generation.load(std::memory_order_relaxed) != generation ||
@@ -517,7 +517,7 @@ void StreamManager::DispatchIo() {
             auto& slot = m_slots[(m_slotCursor + n) % m_slots.size()];
             if (slot.ioLane >= 0 || slot.feedStopped ||
                 slot.ring.state.load(std::memory_order_acquire) != StreamSlotState::Active ||
-                slot.supplied.load(std::memory_order_acquire) != steady ||
+                slot.ring.startPromoted.load(std::memory_order_acquire) != steady ||
                 slot.passGoal <= slot.ring.writeIndex.load(std::memory_order_relaxed)) continue;
             const double time = static_cast<double>(slot.ring.ReadAvailable()) /
                                 m_files[slot.fileIndex]->toc.sampleRate;

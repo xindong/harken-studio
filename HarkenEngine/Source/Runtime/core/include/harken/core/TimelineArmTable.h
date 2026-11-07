@@ -17,6 +17,7 @@
 namespace harken {
 namespace detail { struct OriginalControlOriginTestAccess; struct OriginalGroupMemberTestAccess; }
 class ScheduledTransactionPool;
+class PreparedTransactionBatch;
 class DecisionTable;
 class ArmGroupTable;
 class AuthoredStopOperation;
@@ -847,6 +848,12 @@ public:
         PrivatePendingImmediateArmProof* out) noexcept;
     static void ApplyPrivatePendingImmediateArmBatch(
         PrivatePendingImmediateArmProof& proof) noexcept;
+    bool CapturePrivatePendingVariableReadOnset(const PrivatePendingImmediateArmProof& proof,
+        const VariableReadLifetime& lifetime, std::uint64_t* onsetFrame) const noexcept;
+    bool CapturePrivatePendingVariableReadOnset(const GroupedPublicationAfterInstallation& proof,
+        const VariableReadLifetime& lifetime, std::uint64_t* onsetFrame) const noexcept;
+    bool CapturePrivatePendingVariableReadOnset(const BoundArmPublicationProof& proof,
+        const VariableReadLifetime& lifetime, std::uint64_t* onsetFrame) const noexcept;
     bool ProveBoundArmPublicationBatch(const BoundArmPublicationInput* inputs,
         std::size_t inputCount, Row** reservedRows, std::size_t reservedCapacity,
         BoundArmPublicationProof* out) noexcept;
@@ -1057,6 +1064,15 @@ public:
 private:
     friend class OriginalSourceSubmissionRegistry;
     friend class MixerLoop;
+    bool DetachPrivateInstalledPageSource(const OriginalArmRowOwner& original,
+        const void* submission, std::uint64_t episode, TimelineArmReaderPin* reader,
+        const ScheduledTransactionPool& pool, const DecisionTable& decisions) noexcept;
+    bool BindPrivatePendingPageFrontierStart(const OriginalArmRowOwner& original,
+        const TimelineArmReaderPin& ownedReader,
+        const FrontierGroupBinding& binding, AudioSliceLease& lease,
+        const ScheduledTransactionPool& pool, const DecisionTable& decisions,
+        const PreparedTransactionBatch& batch, std::uint32_t requestIndex,
+        std::uint32_t eventOrdinal) noexcept;
     const Row* CapturePrivatePendingFrontierStart(const TimelineArmReaderPin& ownedReader,
         const FrontierGroupBinding& binding, AudioSliceLease& lease,
         const ScheduledTransactionPool& pool, const DecisionTable& decisions,

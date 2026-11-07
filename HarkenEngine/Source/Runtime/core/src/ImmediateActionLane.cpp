@@ -899,6 +899,7 @@ bool ImmediateActionLane::Reset(Config config) {
     groupPool_ = nullptr;
     valid_ = false;
     outstandingAttemptCount_.store(0, std::memory_order_relaxed);
+    reservedAttemptPrefix_.store(0, std::memory_order_relaxed);
     StableRowStorage<ImmediateLaneEvent> oldSingleEvents;
     singleEvents_.Swap(oldSingleEvents);
     StableRowStorage<SingleEventMetadata> oldSingleEventMetadata;
@@ -1309,6 +1310,8 @@ bool ImmediateActionLane::Reserve(std::uint64_t root,
         }
         attempt.nextBucket.store(0, std::memory_order_relaxed);
         // Count the identity before audio can observe its Reserved publication.
+        if (slot >= reservedAttemptPrefix_.load(std::memory_order_relaxed))
+            reservedAttemptPrefix_.store(slot + 1u, std::memory_order_release);
         outstandingAttemptCount_.fetch_add(1, std::memory_order_release);
         attempt.state.store(ImmediateLaneAttemptState::Reserved,
                             std::memory_order_release);

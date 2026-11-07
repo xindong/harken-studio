@@ -507,10 +507,14 @@ PreparedPlayableTreeStep& PreparedPlayableTreeStep::operator=(
 
 PreparedPlayableTreeStep::~PreparedPlayableTreeStep() { Cancel(); }
 
+bool PreparedPlayableTreeStep::CanResetForReuse(bool published) const noexcept {
+    return !ContainerCommitProofsHeld() && !InstanceCommitProofsHeld() && !ParentLinkProofHeld() &&
+        (published || (!committed_ && instances_.empty() && containers_.empty() &&
+            adoptedInstanceCount_ == 0 && adoptedContainerCount_ == 0));
+}
+
 bool PreparedPlayableTreeStep::ResetForReuse(bool published) noexcept {
-    if (ContainerCommitProofsHeld() || InstanceCommitProofsHeld() || ParentLinkProofHeld()) return false;
-    if (!published && (committed_ || !instances_.empty() || !containers_.empty() ||
-        adoptedInstanceCount_ != 0 || adoptedContainerCount_ != 0)) return false;
+    if (!CanResetForReuse(published)) return false;
     instances_.clear();
     containers_.clear();
     std::fill(adoptedInstances_.begin(), adoptedInstances_.end(), nullptr);

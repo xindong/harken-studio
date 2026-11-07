@@ -439,6 +439,17 @@ public:
         const Plan03GroupSliceIdentity& member, std::uint64_t completedAudioSequence) const noexcept;
     bool ProveAppliedSignalPrerequisite(const FrontierAppliedSignalDependency& original,
         const FrontierGroupBinding& child, std::uint64_t completedAudioSequence) const noexcept;
+    bool ValidateSourceCohortPrerequisite(const FrontierGroupBinding& child,
+        const FrontierGroupBinding& primary, const FrontierGroupBinding& member) const noexcept;
+    bool CaptureAppliedSourceCohortDependency(const DecisionFuturePin& original,
+        const Plan03GroupReaderPin& primary, const Plan03GroupReaderPin& member,
+        const ScheduledTransactionPool& pool, std::uint64_t completedAudioSequence,
+        FrontierAppliedSignalDependency* out) const noexcept;
+    bool IsAppliedSourceCohortDependencyFor(const FrontierAppliedSignalDependency& original,
+        const FrontierEntryReceiptRef& entry, const Plan03GroupSliceIdentity& primary,
+        const Plan03GroupSliceIdentity& member, std::uint64_t completedAudioSequence) const noexcept;
+    bool ProveAppliedSourceCohortPrerequisite(const FrontierAppliedSignalDependency& original,
+        const FrontierGroupBinding& child, std::uint64_t completedAudioSequence) const noexcept;
     DecisionDeadlineDisposition InvalidateForDeadline(
         DecisionToken token) noexcept;
     DecisionInvalidationDisposition Invalidate(
@@ -467,6 +478,10 @@ private:
     friend class OriginalDecisionLifetimePin;
     friend struct detail::DecisionOriginalLifetimeTestAccess;
     friend struct detail::QueueDecisionIssuerLimitTestAccess;
+    bool IsAppliedEntryDependencyFor(const FrontierAppliedSignalDependency& original,
+        FrontierEntryPrerequisiteKind kind, const FrontierEntryReceiptRef& entry,
+        const Plan03GroupSliceIdentity& primary, const Plan03GroupSliceIdentity& member,
+        std::uint64_t completedAudioSequence) const noexcept;
     OriginalDecisionLifetimePin* ResolveOriginalLifetimeBaseline(DecisionToken token,
         OriginalDecisionLifetimePin* explicitBaseline) noexcept;
     void* originalLifetimeBaselineContext_ = nullptr;

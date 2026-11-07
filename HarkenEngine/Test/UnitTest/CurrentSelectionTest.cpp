@@ -2131,8 +2131,13 @@ static void CheckStaleSelectionTransaction(unsigned kind) {
         PrepareMemoryBatchMember(table, program, MemoryKey(), 1, 0, 640, fresh));
     ASSERT_EQ(harken::SelectionMemoryStatusV1::Ok, table.CommitPreparedPlayTransactional(&fresh, 1));
     EXPECT_NE(harken::SelectionMemoryStatusV1::Ok, table.RollbackCommittedPlay(&stale));
+    EXPECT_NE(harken::SelectionMemoryStatusV1::Ok, table.CanFinalizeCommittedPlay(&stale));
     EXPECT_NE(harken::SelectionMemoryStatusV1::Ok, table.FinalizeCommittedPlay(&stale));
     EXPECT_EQ(1u, table.Snapshot(MemoryKey()).selectionOrdinal);
+    const auto freeBeforeProof = table.FreeDeltaCount();
+    EXPECT_EQ(harken::SelectionMemoryStatusV1::Ok, table.CanFinalizeCommittedPlay(&fresh));
+    EXPECT_EQ(harken::SelectionMemoryStatusV1::Ok, table.CanFinalizeCommittedPlay(&fresh));
+    EXPECT_EQ(freeBeforeProof, table.FreeDeltaCount());
     ASSERT_EQ(harken::SelectionMemoryStatusV1::Ok, table.FinalizeCommittedPlay(&fresh));
     EXPECT_EQ(8u, table.FreeDeltaCount());
 }

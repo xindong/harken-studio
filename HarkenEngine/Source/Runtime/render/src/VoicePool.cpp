@@ -2174,16 +2174,68 @@ VariableReadCutStatus VoicePool::TimelineVariableSourcesStatus(std::uint32_t ren
         slot.timelineVariableReadUse, nativeHandle);
 }
 
+VariableReadCutStatus VoicePool::TimelineStreamStartStatus(std::uint32_t renderSlot,
+    std::uint32_t renderGeneration) const noexcept {
+    if (renderSlot >= m_slots.size()) return VariableReadCutStatus::Failed;
+    const auto& slot = m_slots[renderSlot];
+    if (slot.generation.load(std::memory_order_acquire) != renderGeneration ||
+        slot.state.load(std::memory_order_acquire) == SlotState::Free) return VariableReadCutStatus::Failed;
+    const auto& render = slot.render;
+    if (render.streamRing == nullptr) return VariableReadCutStatus::Applied;
+    const auto token = slot.streamRingToken.load(std::memory_order_acquire);
+    const auto& ring = *render.streamRing;
+    if (token == 0 || token != render.streamRingToken ||
+        ring.generation.load(std::memory_order_acquire) != static_cast<std::uint32_t>(token >> 32u) ||
+        ring.state.load(std::memory_order_acquire) != StreamSlotState::Active) return VariableReadCutStatus::Failed;
+    const auto terminal = ring.TerminalReason();
+    if (terminal == StreamTerminalReason::IntegrityAbort ||
+        terminal == StreamTerminalReason::ProducerFailure) return VariableReadCutStatus::Failed;
+    return ring.startPromoted.load(std::memory_order_acquire) &&
+        (terminal == StreamTerminalReason::NaturalEnd ||
+         ring.ReadAvailable() >= render.prebufferTargetFrames)
+        ? VariableReadCutStatus::Applied : VariableReadCutStatus::Waiting;
+}
+
+bool VoicePool::TimelineStreamStartReady(std::uint32_t renderSlot,
+    std::uint32_t renderGeneration) const noexcept {
+    return TimelineStreamStartStatus(renderSlot, renderGeneration) == VariableReadCutStatus::Applied;
+}
+
+VariableReadCutStatus VoicePool::TimelineStartSourcesStatus(std::uint32_t renderSlot,
+    std::uint32_t renderGeneration) const noexcept {
+    if (!TimelineStreamStartReady(renderSlot, renderGeneration)) return VariableReadCutStatus::Failed;
+    return TimelineVariableSourcesStatus(renderSlot, renderGeneration);
+}
+
 VariableReadCutStatus VoicePool::TimelineStartSourcesStatus(const TimelineArmTable& arms,
     TimelineArmToken arm, bool* waitingPublication) const noexcept {
     if (waitingPublication != nullptr) *waitingPublication = false;
-    const auto variables = TimelineVariableSourcesStatus(arm.renderSlot, arm.renderGeneration);
+    const auto variables = TimelineStartSourcesStatus(arm.renderSlot, arm.renderGeneration);
     if (variables == VariableReadCutStatus::Failed) return variables;
     if (!arms.SourcePublicationAccepted(arm)) {
         if (waitingPublication != nullptr) *waitingPublication = true;
         return VariableReadCutStatus::Waiting;
     }
     return variables;
+}
+
+bool VoicePool::PendingTimelineSourceMatchesArm(TimelineArmToken arm) const noexcept {
+    if (!arm.Valid() || arm.renderSlot >= m_slots.size() || m_timelineArms == nullptr) return false;
+    const auto& slot = m_slots[arm.renderSlot];
+    const auto* binding = m_timelineArms->Resolve(arm);
+    const auto state = slot.state.load(std::memory_order_acquire);
+    if (binding == nullptr || binding->originalSourceSubmission == nullptr ||
+        slot.generation.load(std::memory_order_acquire) != arm.renderGeneration ||
+        (state != SlotState::Claimed && state != SlotState::CommandInstallHeld && !IsAudioRenderingState(state)) ||
+        slot.originalBodyMarker == 0 || slot.originalBodyReleaseTarget == 0 ||
+        slot.releaseSequence.load(std::memory_order_acquire) != slot.originalBodyReleaseTarget - 1u ||
+        (slot.originalBodyLifetime.load(std::memory_order_acquire) & kOriginalBodyDisposed) != 0 ||
+        !OriginalSourceSubmissionRegistry::SameToken(slot.originalBodyArm, arm)) return false;
+    const bool pending = slot.pendingOriginalSource.Matches(binding->originalSourceSubmission, arm,
+        slot.originalBodySourceIdentity);
+    const bool installed = slot.installedOriginalSource.Matches(binding->originalSourceSubmission, arm,
+        slot.originalBodySourceIdentity);
+    return pending != installed;
 }
 
 bool VoicePool::PendingTimelineVariableReadMatchesArm(TimelineArmToken arm) const noexcept {
