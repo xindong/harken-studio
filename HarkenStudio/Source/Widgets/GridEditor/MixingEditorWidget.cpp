@@ -298,7 +298,7 @@ void MixingEditorWidget::buildRow(int index)
     ThemeManager::instance().bindMetrics(layout, [layout](const ThemeMetrics& metrics) {
         layout->setContentsMargins(metrics.table.cellPaddingX, metrics.table.cellPaddingY,
                                    metrics.table.cellPaddingX, metrics.table.resizeHandleRadius * 2);
-        layout->setSpacing(metrics.spacingSmall);
+        layout->setSpacing(metrics.layout.controlGap);
     });
     auto* variable = new ObjectRefWidget(view.page);
     variable->setObjectName(QStringLiteral("mixingRowVariable"));

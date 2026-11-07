@@ -215,7 +215,8 @@ void CollapsibleSection::applyTheme()
     auto& theme = ThemeManager::instance();
     const auto& metrics = theme.metrics();
     const int lvl = level_ < 0 ? 0 : level_;
-    const int headerSpacing = theme.metrics().spacingSmall;
+    const auto& layout = metrics.layout;
+    const int headerSpacing = layout.sectionGap;
     headerLayout_->setColumnMinimumWidth(2, headerWidget_ ? headerSpacing : 0);
     headerLine_->setMaximumHeight(metrics.accentBorderWidth);
     if (railFrame_) {
@@ -226,14 +227,14 @@ void CollapsibleSection::applyTheme()
     if (contentArea_->layout())
     {
         QMargins rm = contentArea_->layout()->contentsMargins();
-        rm.setLeft(lvl >= 1 ? metrics.spacingSmall : 0);
+        rm.setLeft(lvl >= 1 ? layout.panelPadding : 0);
         contentArea_->layout()->setContentsMargins(rm);
     }
 
     if (innerContent_ && innerContent_->layout())
     {
-        innerContent_->layout()->setContentsMargins(lvl <= 0 ? metrics.spacingLarge : metrics.spacingSmall,
-                                                    metrics.spacingXSmall, 0, metrics.spacingXSmall);
+        innerContent_->layout()->setContentsMargins(layout.panelPadding, layout.rowInset,
+                                                    0, layout.rowInset);
     }
 
     const int chevronExtent = theme.metrics().iconExtent;
@@ -257,7 +258,7 @@ void CollapsibleSection::refreshAppearance()
         indicatorColor_, hasCustomIndicator_, lvl, hasTopSeparator_, headerTintColor_);
     if (headerWidget_)
         headerStyle += QStringLiteral("QToolButton { padding-right: %1px; }")
-            .arg(headerWidget_->sizeHint().width() + 2 * theme.metrics().spacingSmall);
+            .arg(headerWidget_->sizeHint().width() + 2 * theme.metrics().layout.sectionGap);
     applyStyle(toggleButton_, std::move(headerStyle));
     applyStyle(headerLine_, skin.collapsibleIndicatorStyle(indicatorColor_, 180, false));
     if (railFrame_ && lvl >= 1) {

@@ -60,8 +60,8 @@ MeterPanel::MeterPanel(QWidget* parent, Presentation presentation)
     setObjectName(QStringLiteral("MeterPanel"));
     auto* root = new QVBoxLayout(this);
     if (presentation_ == Presentation::Standalone) {
-        ThemeLayout::margins(root, ThemeLayout::Space::Small);
-        ThemeLayout::spacing(root, ThemeLayout::Space::Small);
+        ThemeLayout::margins(root, ThemeLayout::Space::Panel);
+        ThemeLayout::spacing(root, ThemeLayout::Space::Section);
     }
     busSelector_ = new ObjectRefWidget(this);
     busSelector_->setObjectName(QStringLiteral("meterBusSelector"));
@@ -77,14 +77,14 @@ MeterPanel::MeterPanel(QWidget* parent, Presentation presentation)
     modeSelector_->addItem(tr("Spectrogram"), static_cast<int>(Mode::Spectrogram));
     masterLabel_->setFixedHeight(modeSelector_->sizeHint().height());
     if (presentation_ == Presentation::Embedded) {
-        ThemeLayout::margins(root, ThemeLayout::Space::None, ThemeLayout::Space::None, ThemeLayout::Space::Compact, ThemeLayout::Space::None);
+        ThemeLayout::margins(root, ThemeLayout::Space::None, ThemeLayout::Space::None, ThemeLayout::Space::Tight, ThemeLayout::Space::None);
         root->setSpacing(0);
         header_ = new QWidget(this);
-        ThemeLayout::margins(header_, ThemeLayout::Space::None, ThemeLayout::Space::None, ThemeLayout::Space::None, ThemeLayout::Space::Compact);
+        ThemeLayout::margins(header_, ThemeLayout::Space::None, ThemeLayout::Space::None, ThemeLayout::Space::None, ThemeLayout::Space::Tight);
         header_->installEventFilter(this);
         auto* header = new QHBoxLayout(header_);
-        ThemeLayout::margins(header, ThemeLayout::Space::XSmall, ThemeLayout::Space::Compact, ThemeLayout::Space::XSmall, ThemeLayout::Space::Compact);
-        ThemeLayout::spacing(header, ThemeLayout::Space::XSmall);
+        ThemeLayout::margins(header, ThemeLayout::Space::Panel, ThemeLayout::Space::Tight, ThemeLayout::Space::Panel, ThemeLayout::Space::Tight);
+        ThemeLayout::spacing(header, ThemeLayout::Space::Control);
         expandButton_ = new QToolButton(this);
         expandButton_->setObjectName(QStringLiteral("meterExpandButton"));
         expandButton_->setCheckable(true);

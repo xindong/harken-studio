@@ -81,10 +81,7 @@ QSize TableItemDelegate::sizeHint(const QStyleOptionViewItem& option, const QMod
         size.setHeight(TableGroupHeader::preferredHeight(themeManager_));
         return size;
     }
-    const auto& metrics = themeManager_->metrics().table;
-    size.setHeight(std::max(metrics.rowHeight,
-        std::max(size.height(), QtControlSkin(themeManager_->snapshot()).fieldHeight())
-            + metrics.cellPaddingY * 2));
+    size.setHeight(std::max(themeManager_->metrics().table.rowHeight, size.height()));
     return size;
 }
 

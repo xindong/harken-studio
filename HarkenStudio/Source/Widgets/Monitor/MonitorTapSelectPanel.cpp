@@ -14,8 +14,8 @@ MonitorTapSelectPanel::MonitorTapSelectPanel(QWidget* parent)
     setObjectName(QStringLiteral("MonitorTapSelectPanel"));
 
     auto* root = new QVBoxLayout(this);
-    ThemeLayout::margins(root, ThemeLayout::Space::Small);
-    ThemeLayout::spacing(root, ThemeLayout::Space::Small);
+    ThemeLayout::margins(root, ThemeLayout::Space::Panel);
+    ThemeLayout::spacing(root, ThemeLayout::Space::Section);
 
     gapLabel_ = new QLabel(this);
     gapLabel_->setObjectName(QStringLiteral("MonitorTapSelectGap"));

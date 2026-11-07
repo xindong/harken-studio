@@ -1170,11 +1170,11 @@ TEST(ThemeMetricsMigration, ExistingLayoutsFollowMetricsWithoutReplacingEditorsO
     binding.setValue(0.25);
     QWidget panel;
     auto* layout = new QVBoxLayout(&panel);
-    VNX::ThemeLayout::margins(layout, VNX::ThemeLayout::Space::Medium, *manager);
-    VNX::ThemeLayout::spacing(layout, VNX::ThemeLayout::Space::Small, *manager);
+    VNX::ThemeLayout::margins(layout, VNX::ThemeLayout::Space::Panel, *manager);
+    VNX::ThemeLayout::spacing(layout, VNX::ThemeLayout::Space::Section, *manager);
     auto* editor = new QLineEdit(QStringLiteral("unfinished input"), &panel);
     layout->addWidget(editor);
-    VNX::ThemeLayout::addSpacing(layout, VNX::ThemeLayout::Space::Small, *manager);
+    VNX::ThemeLayout::addSpacing(layout, VNX::ThemeLayout::Space::Section, *manager);
     const int spacerIndex = layout->count() - 1;
     auto* slider = new VNX::LinearSliderPresenter(&binding, true, manager.get(), &panel);
     auto* fader = new VNX::VerticalFaderPresenter(&binding, manager.get(), &panel);
@@ -1205,7 +1205,7 @@ TEST(ThemeMetricsMigration, ExistingLayoutsFollowMetricsWithoutReplacingEditorsO
     for (int percent : {125, 150, 200, 100}) {
         manager->setUIScale(percent);
         QCoreApplication::processEvents();
-        EXPECT_EQ(layout->contentsMargins().left(), manager->metrics().spacingMedium);
+        EXPECT_EQ(layout->contentsMargins().left(), manager->metrics().layout.panelPadding);
         EXPECT_EQ(fader->slider()->minimumHeight(), manager->metrics().parameter.faderMinimumHeight);
         EXPECT_EQ(editor->selectedText(), QStringLiteral("finis"));
         EXPECT_TRUE(binding.isEditing());
@@ -1217,9 +1217,9 @@ TEST(ThemeMetricsMigration, ExistingLayoutsFollowMetricsWithoutReplacingEditorsO
 
     QWidget fresh;
     auto* freshLayout = new QVBoxLayout(&fresh);
-    VNX::ThemeLayout::margins(freshLayout, VNX::ThemeLayout::Space::Medium, *manager);
-    VNX::ThemeLayout::spacing(freshLayout, VNX::ThemeLayout::Space::Small, *manager);
-    VNX::ThemeLayout::addSpacing(freshLayout, VNX::ThemeLayout::Space::Small, *manager);
+    VNX::ThemeLayout::margins(freshLayout, VNX::ThemeLayout::Space::Panel, *manager);
+    VNX::ThemeLayout::spacing(freshLayout, VNX::ThemeLayout::Space::Section, *manager);
+    VNX::ThemeLayout::addSpacing(freshLayout, VNX::ThemeLayout::Space::Section, *manager);
     EXPECT_EQ(layout->contentsMargins(), freshLayout->contentsMargins());
     EXPECT_EQ(layout->spacing(), freshLayout->spacing());
     EXPECT_EQ(layout->itemAt(spacerIndex)->sizeHint(), freshLayout->itemAt(0)->sizeHint());

@@ -127,7 +127,7 @@ AxisRehearsalRow::AxisRehearsalRow(ProjectItem* item, const QString& table,
             }
             for (auto* widget : {headingGutter, gutter})
                 widget->setFixedWidth(inspector.slotWidthFor(occupiedSlots));
-            control->setMinimumHeight(metrics.controlHeight);
+            control->setMinimumHeight(metrics.layout.rowHeight);
         });
 
     connect(slider_->binding(), &ParameterBinding::valueUpdated, this,

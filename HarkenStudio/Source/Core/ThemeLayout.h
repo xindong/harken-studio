@@ -8,18 +8,16 @@
 
 namespace VNX::ThemeLayout {
 
-enum class Space { None, Compact, XSmall, Small, Medium, Large, XLarge };
+enum class Space { None, Tight, Control, Section, Panel };
 
 inline int spacing(const ThemeMetrics& metrics, Space space)
 {
     switch (space) {
     case Space::None: return 0;
-    case Space::Compact: return metrics.spacingCompact;
-    case Space::XSmall: return metrics.spacingXSmall;
-    case Space::Small: return metrics.spacingSmall;
-    case Space::Medium: return metrics.spacingMedium;
-    case Space::Large: return metrics.spacingLarge;
-    case Space::XLarge: return metrics.spacingXLarge;
+    case Space::Tight: return metrics.layout.tightGap;
+    case Space::Control: return metrics.layout.controlGap;
+    case Space::Section: return metrics.layout.sectionGap;
+    case Space::Panel: return metrics.layout.panelPadding;
     }
     Q_UNREACHABLE();
 }

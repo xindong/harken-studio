@@ -356,9 +356,9 @@ void GridEditorWidget::refreshChrome()
     layout()->setContentsMargins(margin, margin, margin, margin);
     layout()->setSpacing(margin);
     crumbBar_->setFixedHeight(metrics.timeline.rulerHeight);
-    crumbBar_->layout()->setContentsMargins(metrics.spacingSmall, 0, metrics.spacingSmall, 0);
-    crumbBar_->layout()->setSpacing(metrics.spacingSmall);
-    crumbLayout_->setSpacing(metrics.spacingXSmall);
+    crumbBar_->layout()->setContentsMargins(metrics.layout.panelPadding, 0, metrics.layout.panelPadding, 0);
+    crumbBar_->layout()->setSpacing(metrics.layout.controlGap);
+    crumbLayout_->setSpacing(metrics.layout.controlGap);
 }
 
 void GridEditorWidget::showEvent(QShowEvent* event)

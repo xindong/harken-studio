@@ -96,7 +96,7 @@ ProjectConfigPage::ProjectConfigPage(QWidget* parent)
     QtControlSkin::setSemanticProperty(languageEditor, "surfaceRole", QStringLiteral("panel"));
     QtControlSkin::setSemanticProperty(languageEditor, "joinedEdge", QStringLiteral("left"));
     auto* languageEditorLayout = new QVBoxLayout(languageEditor);
-    ThemeLayout::margins(languageEditorLayout, ThemeLayout::Space::Medium);
+    ThemeLayout::margins(languageEditorLayout, ThemeLayout::Space::Panel);
     targetLanguageFields_ = new QWidget(languageEditor);
     auto languageFieldsPolicy = targetLanguageFields_->sizePolicy();
     languageFieldsPolicy.setRetainSizeWhenHidden(true);

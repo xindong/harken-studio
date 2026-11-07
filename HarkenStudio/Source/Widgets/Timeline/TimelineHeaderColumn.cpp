@@ -82,7 +82,7 @@ TimelineHeaderColumn::TimelineHeaderColumn(TimelineEditorPanel* panel, QWidget* 
         const auto& metrics = ThemeManager::instance().metrics();
         const int height = panel_->laneHeight(laneIndexAt(panel_, row));
         const bool compact = height == TimelineRenderer::clipTitleHeight(metrics)
-            + metrics.timeline.clipVerticalInset * 2;
+            + metrics.timeline.clipBottomInset;
         row->setFont(FontManager::instance().getFont(compact ? FontRole::Caption : FontRole::Body));
         const auto margins = row->contentsMargins();
         const int innerHeight = height - margins.top() - margins.bottom();
@@ -154,7 +154,7 @@ void TimelineHeaderColumn::rebuildRows()
 
 void TimelineHeaderColumn::refreshRows()
 {
-    layout()->setContentsMargins(0, 0, panel_->laneHeaderResizeWidth() + ThemeManager::instance().metrics().borderWidth, 0);
+    layout()->setContentsMargins(0, 0, 0, 0);
     laneLayout_->setSpacing(0);
     table_->refreshLayout();
 }

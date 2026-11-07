@@ -82,7 +82,7 @@ TitleBarWidget::TitleBarWidget(QWidget* parent) : QWidget(parent) {
 
     layout_ = new QHBoxLayout(this);
     layout_->setContentsMargins(0, 0, 0, 0);
-    ThemeLayout::spacing(layout_, ThemeLayout::Space::Small);
+    ThemeLayout::spacing(layout_, ThemeLayout::Space::Section);
 
     menuLayout_ = new QHBoxLayout;
     menuLayout_->setContentsMargins(0, 0, 0, 0);

@@ -68,8 +68,8 @@ public:
     {
         setObjectName(QStringLiteral("aiConfirmationCard"));
         QVBoxLayout* layout = new QVBoxLayout(this);
-        ThemeLayout::margins(layout, ThemeLayout::Space::Small, ThemeLayout::Space::Medium, ThemeLayout::Space::Small, ThemeLayout::Space::Medium);
-        ThemeLayout::spacing(layout, ThemeLayout::Space::Small);
+        ThemeLayout::margins(layout, ThemeLayout::Space::Panel, ThemeLayout::Space::Panel, ThemeLayout::Space::Panel, ThemeLayout::Space::Panel);
+        ThemeLayout::spacing(layout, ThemeLayout::Space::Section);
 
         const QString cmd = command.value(QStringLiteral("cmd")).toString();
         const QString args = QString::fromUtf8(QJsonDocument(
@@ -142,8 +142,8 @@ AIMessageWidget::AIMessageWidget(const QString& text, int fontSize, QWidget* par
 void AIMessageWidget::setupUI(const QString& text, int fontSize)
 {
     QVBoxLayout* mainLayout = new QVBoxLayout(this);
-    ThemeLayout::margins(mainLayout, ThemeLayout::Space::Small, ThemeLayout::Space::Medium, ThemeLayout::Space::Small, ThemeLayout::Space::Medium);
-    ThemeLayout::spacing(mainLayout, ThemeLayout::Space::Medium);
+    ThemeLayout::margins(mainLayout, ThemeLayout::Space::Panel, ThemeLayout::Space::Panel, ThemeLayout::Space::Panel, ThemeLayout::Space::Panel);
+    ThemeLayout::spacing(mainLayout, ThemeLayout::Space::Section);
 
     contentLabel_ = new QLabel();
     contentLabel_->setTextFormat(Qt::RichText);
@@ -218,7 +218,7 @@ int userBubbleLabelWidth(int rowWidth)
 void UserMessageWidget::setupUI(const QString& text, int fontSize)
 {
     QHBoxLayout* mainLayout = new QHBoxLayout(this);
-    ThemeLayout::margins(mainLayout, ThemeLayout::Space::Small);
+    ThemeLayout::margins(mainLayout, ThemeLayout::Space::Panel);
     mainLayout->addStretch();
 
     bubbleFrame_ = new QFrame();
@@ -226,7 +226,7 @@ void UserMessageWidget::setupUI(const QString& text, int fontSize)
     QHBoxLayout* frameLayout = new QHBoxLayout(bubbleFrame_);
     // Padding as layout margins, not stylesheet padding, so it is included in
     // the measured height.
-    ThemeLayout::margins(frameLayout, ThemeLayout::Space::Medium, ThemeLayout::Space::Small, ThemeLayout::Space::Medium, ThemeLayout::Space::Small);
+    ThemeLayout::margins(frameLayout, ThemeLayout::Space::Panel, ThemeLayout::Space::Panel, ThemeLayout::Space::Panel, ThemeLayout::Space::Panel);
     frameLayout->setSpacing(0);
 
     contentLabel_ = new QLabel(text);
@@ -339,8 +339,8 @@ AssistantPanel::~AssistantPanel() = default;
 void AssistantPanel::setupUI()
 {
     QVBoxLayout* mainLayout = new QVBoxLayout(this);
-    ThemeLayout::margins(mainLayout, ThemeLayout::Space::Small);
-    ThemeLayout::spacing(mainLayout, ThemeLayout::Space::Small);
+    ThemeLayout::margins(mainLayout, ThemeLayout::Space::Panel);
+    ThemeLayout::spacing(mainLayout, ThemeLayout::Space::Section);
 
     auto* conversationActions = new QHBoxLayout();
     conversationActions->setContentsMargins(0, 0, 0, 0);
@@ -385,7 +385,7 @@ void AssistantPanel::setupUI()
     emptyState_ = new QWidget();
     QVBoxLayout* emptyLayout = new QVBoxLayout(emptyState_);
     emptyLayout->setContentsMargins(0, 0, 0, 0);
-    ThemeLayout::spacing(emptyLayout, ThemeLayout::Space::Medium);
+    ThemeLayout::spacing(emptyLayout, ThemeLayout::Space::Section);
     emptyLayout->addStretch();
 
     emptyIcon_ = new QLabel();
@@ -420,8 +420,8 @@ void AssistantPanel::setupUI()
     });
 
     QHBoxLayout* frameLayout = new QHBoxLayout(inputFrame_);
-    ThemeLayout::margins(frameLayout, ThemeLayout::Space::None, ThemeLayout::Space::XSmall, ThemeLayout::Space::Small, ThemeLayout::Space::XSmall);
-    ThemeLayout::spacing(frameLayout, ThemeLayout::Space::Small);
+    ThemeLayout::margins(frameLayout, ThemeLayout::Space::None, ThemeLayout::Space::Control, ThemeLayout::Space::Panel, ThemeLayout::Space::Control);
+    ThemeLayout::spacing(frameLayout, ThemeLayout::Space::Section);
 
     inputEdit_ = new QLineEdit();
     inputEdit_->setObjectName("assistantInput");

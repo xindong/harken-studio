@@ -65,8 +65,8 @@ PlatformBar::PlatformBar(PlatformContextService& service, QWidget* parent)
     host_ = new QWidget(this);
     host_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     auto* layout = new QGridLayout(host_);
-    ThemeLayout::margins(layout, ThemeLayout::Space::XSmall, ThemeLayout::Space::Compact, ThemeLayout::Space::XSmall, ThemeLayout::Space::None);
-    ThemeLayout::spacing(layout, ThemeLayout::Space::Small);
+    ThemeLayout::margins(layout, ThemeLayout::Space::Panel, ThemeLayout::Space::Tight, ThemeLayout::Space::Panel, ThemeLayout::Space::Tight);
+    ThemeLayout::spacing(layout, ThemeLayout::Space::Section);
     layout->setColumnStretch(0, 1);
     layout->setColumnStretch(2, 1);
     auto* leading = new QWidget(host_);

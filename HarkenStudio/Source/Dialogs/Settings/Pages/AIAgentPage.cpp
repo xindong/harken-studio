@@ -66,7 +66,7 @@ AIAgentPage::AIAgentPage(SecretStoreAccess secretStore, QWidget* parent)
     auto* connectionTestWidget = new QWidget();
     auto* connectionTestRow = new QHBoxLayout(connectionTestWidget);
     connectionTestRow->setContentsMargins(0, 0, 0, 0);
-    ThemeLayout::spacing(connectionTestRow, ThemeLayout::Space::Small);
+    ThemeLayout::spacing(connectionTestRow, ThemeLayout::Space::Section);
 
     aiConnectionTestButton_ = new QPushButton(tr("Test Connection"));
     aiConnectionTestButton_->setObjectName("aiConnectionTestButton");

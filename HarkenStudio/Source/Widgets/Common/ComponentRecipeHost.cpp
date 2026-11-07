@@ -283,7 +283,7 @@ void ComponentRecipeHost::applyRecipe()
             container->setBackgroundAsset(QString());
         }
     }
-    box->setSpacing(themeManager_->snapshot()->ui.metrics.spacingSmall);
+    box->setSpacing(themeManager_->snapshot()->ui.metrics.layout.controlGap);
     orderedSlotNames_ = slotNames;
     for (const ComponentRecipeSlot& slot : recipe->items)
     {

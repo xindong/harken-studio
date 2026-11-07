@@ -269,8 +269,8 @@ SelectorWindow::SelectorWindow()
     resize(metrics.preferredWidth, metrics.preferredHeight);
 
     auto* layout = new QVBoxLayout(this);
-    ThemeLayout::margins(layout, ThemeLayout::Space::Small);
-    ThemeLayout::spacing(layout, ThemeLayout::Space::Small);
+    ThemeLayout::margins(layout, ThemeLayout::Space::Panel);
+    ThemeLayout::spacing(layout, ThemeLayout::Space::Section);
 
     searchBox_ = new SearchField(this);
     layout->addWidget(searchBox_);

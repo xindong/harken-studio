@@ -15,7 +15,7 @@ MonitorPlaceholderPage::MonitorPlaceholderPage(const QString& title,
 {
     setObjectName(QStringLiteral("MonitorPlaceholderPage"));
     auto* layout = new QVBoxLayout(this);
-    ThemeLayout::margins(layout, ThemeLayout::Space::Medium);
+    ThemeLayout::margins(layout, ThemeLayout::Space::Panel);
     messageLabel_ = new QLabel(this);
     messageLabel_->setObjectName(QStringLiteral("MonitorPlaceholderMessage"));
     messageLabel_->setWordWrap(true);

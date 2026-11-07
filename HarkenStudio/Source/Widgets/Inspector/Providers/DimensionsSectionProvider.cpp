@@ -434,7 +434,7 @@ QWidget* DimensionsSectionProvider::build(QWidget* parent)
     auto* content = new QWidget(parent);
     auto* cl = new QVBoxLayout(content);
     cl->setContentsMargins(0, 0, 0, 0);
-    ThemeLayout::spacing(cl, ThemeLayout::Space::Compact);
+    ThemeLayout::spacing(cl, ThemeLayout::Space::Tight);
 
     auto* list = new DimensionsListWidget(content);
     list->setObjectName(QStringLiteral("dimensionsListWidget"));

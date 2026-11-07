@@ -225,14 +225,14 @@ TEST(ThemeManager, UserScaleSurvivesThemeReloadAndColorPreviewTransactions)
     ASSERT_TRUE(writePackage(root.path(), QStringLiteral("scaled"),
         QStringLiteral("theme.scaled"), QStringLiteral("#ff118899"), QStringLiteral("#ff118899")));
     ASSERT_TRUE(writeFile(QDir(root.path()).filePath(QStringLiteral("scaled/tokens.json")),
-        R"json({"fonts":{"body":{"pointSize":13}},"metrics":{"control.largeHeight":48}})json"));
+        R"json({"fonts":{"body":{"pointSize":13}},"metrics":{"control.height":48}})json"));
     VNX::ThemeManager manager(root.path(), memoryStorage());
     const auto restore = qScopeGuard([&] { manager.setUIScale(100); manager.selectTheme(VNX::builtinThemeId()); });
     manager.setUIScale(150);
     for (const auto& id : {QStringLiteral("theme.scaled"), VNX::builtinThemeId(), QStringLiteral("theme.scaled")}) {
         ASSERT_TRUE(manager.selectTheme(id).ok());
         EXPECT_EQ(manager.snapshot()->uiScale, 1.5);
-        EXPECT_EQ(manager.metrics().table.rowHeight, qRound(manager.unscaledSnapshot()->ui.metrics.table.rowHeight * 1.5));
+        EXPECT_EQ(manager.metrics().controlHeight, qRound(manager.unscaledSnapshot()->ui.metrics.controlHeight * 1.5));
         EXPECT_EQ(VNX::FontManager::instance().getFont(manager.snapshot(), VNX::FontRole::Body).pointSizeF(),
                   manager.unscaledSnapshot()->ui.typography.body.pointSize * 1.5);
         const auto before = manager.snapshot();
@@ -252,7 +252,7 @@ TEST(ThemeManager, UserScaleSurvivesThemeReloadAndColorPreviewTransactions)
     manager.cancelAppearancePreview();
     EXPECT_EQ(manager.snapshot()->uiScale, 1.75);
     EXPECT_EQ(manager.snapshot()->ui.colors.accent, committedAccent);
-    EXPECT_EQ(manager.metrics().table.rowHeight, qRound(manager.unscaledSnapshot()->ui.metrics.table.rowHeight * 1.75));
+    EXPECT_EQ(manager.metrics().controlHeight, qRound(manager.unscaledSnapshot()->ui.metrics.controlHeight * 1.75));
 }
 
 TEST(ThemeManager, ReloadDoesNotMutatePreviouslyPublishedSnapshot)

@@ -128,8 +128,8 @@ ProjectExplorer::~ProjectExplorer() = default;
 void ProjectExplorer::setupPanelChrome()
 {
     auto* layout = new QVBoxLayout(this);
-    ThemeLayout::margins(layout, ThemeLayout::Space::Small, ThemeLayout::Space::XSmall, ThemeLayout::Space::Small, ThemeLayout::Space::Small);
-    ThemeLayout::spacing(layout, ThemeLayout::Space::Small);
+    ThemeLayout::margins(layout, ThemeLayout::Space::Panel);
+    ThemeLayout::spacing(layout, ThemeLayout::Space::Section);
     layout->addWidget(searchBox_);
     connect(searchBox_, &QLineEdit::textChanged, this, [this]() {
         applySourcesVisibility();

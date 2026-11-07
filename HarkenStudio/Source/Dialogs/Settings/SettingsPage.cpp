@@ -123,8 +123,8 @@ QVBoxLayout* SettingsPage::makePageBody()
     scroll->setWidget(content);
     outer->addWidget(scroll);
     auto* layout = new QVBoxLayout(content);
-    ThemeLayout::margins(layout, ThemeLayout::Space::XLarge);
-    ThemeLayout::spacing(layout, ThemeLayout::Space::Large);
+    ThemeLayout::margins(layout, ThemeLayout::Space::Panel);
+    ThemeLayout::spacing(layout, ThemeLayout::Space::Section);
     return layout;
 }
 

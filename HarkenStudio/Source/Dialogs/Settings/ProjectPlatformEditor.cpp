@@ -178,7 +178,7 @@ ProjectPlatformEditor::ProjectPlatformEditor(QWidget* parent)
     setAttribute(Qt::WA_StyledBackground, true);
     QtControlSkin::setSemanticProperty(this, "surfaceRole", QStringLiteral("panel"));
     auto* layout = new QVBoxLayout(this);
-    ThemeLayout::margins(layout, ThemeLayout::Space::Medium);
+    ThemeLayout::margins(layout, ThemeLayout::Space::Panel);
     auto* form = new DialogFormLayout();
     name_ = new QLineEdit(this);
     name_->setObjectName("projectPlatformName");

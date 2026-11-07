@@ -147,7 +147,7 @@ void SourceEditorWaveformView::setupTimeline()
     handleValue_->setAttribute(Qt::WA_ShowWithoutActivating);
     handleValue_->setAutoFillBackground(true);
     handleValue_->setFrameStyle(QFrame::Box | QFrame::Plain);
-    ThemeLayout::margins(handleValue_, ThemeLayout::Space::Small, ThemeLayout::Space::XSmall, ThemeLayout::Space::Small, ThemeLayout::Space::XSmall);
+    ThemeLayout::margins(handleValue_, ThemeLayout::Space::Panel, ThemeLayout::Space::Control, ThemeLayout::Space::Panel, ThemeLayout::Space::Control);
     handleValue_->hide();
 
     detailTimer_.setSingleShot(true);
@@ -447,7 +447,7 @@ void SourceEditorWaveformView::paintTimeline(QPainter& painter)
                 continue;
             const bool highlighted = activeHandle_ == handle || hoveredHandle_ == handle;
             const QColor color = highlighted
-                ? colors.stateColor(waveStyle.trimHandle, ThemeStateLayer::Emphasis) : waveStyle.trimHandle;
+                ? colors.stateColor(waveStyle.trimHandle, ThemeStateLayer::Highlight) : waveStyle.trimHandle;
             painter.setPen(QPen(color, highlighted ? 2 : 1));
             painter.drawLine(x, plot.top(), x, plot.bottom());
             const QRect grip = trimGripRect(handle);
@@ -603,8 +603,8 @@ void SourceEditorWaveformView::editHandleValue(Handle handle, int fadeIndex)
                                        : QStringLiteral("sourceTrimValueEditor"));
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     auto* layout = new QHBoxLayout(dialog);
-    ThemeLayout::margins(layout, ThemeLayout::Space::Small);
-    ThemeLayout::spacing(layout, ThemeLayout::Space::Small);
+    ThemeLayout::margins(layout, ThemeLayout::Space::Panel);
+    ThemeLayout::spacing(layout, ThemeLayout::Space::Section);
     const QString caption = fadeIndex >= 0 ? (fadeIndex == 0 ? tr("Fade In") : tr("Fade Out"))
         : (handle == Handle::TrimStart ? tr("Trim In") : tr("Trim Out"));
     auto* label = new QLabel(caption, dialog);

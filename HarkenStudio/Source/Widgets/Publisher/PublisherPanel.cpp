@@ -447,8 +447,8 @@ void PublisherPanel::setupUI()
     auto* content = new QWidget();
     DebugTint::tintContainer(content);
     auto* contentLayout = new QVBoxLayout(content);
-    ThemeLayout::margins(contentLayout, ThemeLayout::Space::Small);
-    ThemeLayout::spacing(contentLayout, ThemeLayout::Space::Small);
+    ThemeLayout::margins(contentLayout, ThemeLayout::Space::Panel);
+    ThemeLayout::spacing(contentLayout, ThemeLayout::Space::Section);
 
     objectSendWarningLabel_ = new QLabel();
     objectSendWarningLabel_->setObjectName("objectSendWarningLabel");
@@ -515,7 +515,7 @@ QWidget* PublisherPanel::createToolbar()
     auto* row = new QHBoxLayout(toolbar);
     row->setSizeConstraint(QLayout::SetNoConstraint);
     row->setContentsMargins(0, 0, 0, 0);
-    ThemeLayout::spacing(row, ThemeLayout::Space::Small);
+    ThemeLayout::spacing(row, ThemeLayout::Space::Section);
 
     publishSettingsButton_ = new QToolButton(toolbar);
     publishSettingsButton_->setObjectName("packPublishSettingsButton");

@@ -288,7 +288,7 @@ void ProportionalTreeWidget::applyTheme()
     const int iconExtent = themeManager_->metrics().iconExtent;
     setIconSize(QSize(iconExtent, iconExtent));
     header()->setFont(font);
-    header()->setFixedHeight(std::max(themeManager_->metrics().controlHeight,
+    header()->setFixedHeight(std::max(themeManager_->metrics().layout.rowHeight,
         QFontMetrics(font).height() + metrics.cellPaddingY * 2));
     header()->setMinimumSectionSize(0);
     doItemsLayout();

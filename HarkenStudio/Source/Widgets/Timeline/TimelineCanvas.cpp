@@ -222,10 +222,9 @@ QRect TimelineCanvas::rangeRect(int laneIndex, int64_t start, int64_t duration) 
     const int minWidth = metrics.clipMinimumWidth;
     const int visibleLeft = std::max(-minWidth, left);
     const int visibleRight = std::min(width() + minWidth, right);
-    const int inset = metrics.clipVerticalInset;
-    return {visibleLeft, lane.top() + inset,
+    return {visibleLeft, lane.top(),
             std::max(minWidth, visibleRight - visibleLeft),
-            lane.height() - inset * 2};
+            lane.height() - metrics.clipBottomInset};
 }
 
 const WaveformPeakData* TimelineCanvas::waveformForPath(const QString& absolutePath) const
@@ -326,6 +325,7 @@ TimelineStyleView TimelineCanvas::styleView() const
     style.canvasBorder = snapshot->ui.colors.borderPrimary;
     style.placeholderText = snapshot->ui.colors.textSecondary;
     style.axisText = snapshot->ui.colors.textSecondary;
+    style.axisTick = snapshot->ui.colors.borderTick;
     style.trackBackground = snapshot->ui.colors.trackBackground;
     style.trackBackgroundAlt = snapshot->ui.colors.trackBackgroundAlt;
     style.timeline = snapshot->domains.timeline;
@@ -1411,8 +1411,8 @@ void TimelineCanvas::editClipStart(int laneIndex, const QUuid& guid)
     dialog->setObjectName(QStringLiteral("timelineClipStartEditor"));
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     auto* layout = new QHBoxLayout(dialog);
-    ThemeLayout::margins(layout, ThemeLayout::Space::Small);
-    ThemeLayout::spacing(layout, ThemeLayout::Space::Small);
+    ThemeLayout::margins(layout, ThemeLayout::Space::Panel);
+    ThemeLayout::spacing(layout, ThemeLayout::Space::Section);
     auto* label = new QLabel(tr("Start"), dialog);
     label->setProperty("textRole", QStringLiteral("formLabel"));
     layout->addWidget(label);

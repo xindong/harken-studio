@@ -140,8 +140,16 @@ void InspectorTabContainer::applyOrientation(bool sideBar)
     sideBar_ = sideBar;
     rootLayout_->setDirection(sideBar ? QBoxLayout::LeftToRight : QBoxLayout::TopToBottom);
     barLayout_->setDirection(sideBar ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight);
-    const int border = ThemeManager::instance().metrics().borderWidth;
+    const auto& metrics = ThemeManager::instance().metrics();
+    const int border = metrics.borderWidth;
+    const int headerHeight = metrics.layout.sectionHeaderHeight;
     barLayout_->setContentsMargins(0, 0, sideBar ? border : 0, sideBar ? 0 : border);
+    if (sideBar) {
+        bar_->setMinimumHeight(0);
+        bar_->setMaximumHeight(QWIDGETSIZE_MAX);
+    } else {
+        bar_->setFixedHeight(headerHeight);
+    }
     QtControlSkin::setSemanticProperty(bar_, "sideBar", sideBar);
     QtControlSkin::setSemanticProperty(content_, "sideBar", sideBar);
     for (auto* b : buttons_->buttons())
@@ -149,6 +157,7 @@ void InspectorTabContainer::applyOrientation(bool sideBar)
         QtControlSkin::setSemanticProperty(b, "sideBar", sideBar);
         b->setSizePolicy(sideBar ? QSizePolicy::Expanding : QSizePolicy::Ignored,
                          QSizePolicy::Expanding);
+        b->setMaximumHeight(sideBar ? headerHeight : QWIDGETSIZE_MAX);
     }
 }
 

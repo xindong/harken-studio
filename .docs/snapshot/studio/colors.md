@@ -41,6 +41,21 @@
 | 控件高度 | `control.compactHeight`、`control.height`、`control.largeHeight` | 20 / 24 / 32 |
 | 图标 | `icon.small`、`icon.regular`、`icon.large` | 16 / 20 / 24 |
 
+2026-11-08 在档位之上增加布局职责层 `ThemeMetrics::layout`，业务和 QSS 只能按职责取值，不能直接挑选间距档位：
+
+| 职责 | 取值（Studio Default） | 使用边界 |
+|---|---|---|
+| `panelPadding` | 8 | 所有 Dock 面板、设置页与内容页的内边距；搜索栏与内容块同样四边一致 |
+| `sectionGap` | 8 | 同一面板内区块之间 |
+| `controlGap` | 4 | 同一行内控件之间、控件内部组成部分之间、表单行之间 |
+| `tightGap` | 2 | 图标组、工具按钮组等紧凑排列 |
+| `fieldHeight` | 24（控件高度档位） | 下拉框、输入框、数值框、按钮等基本控件一律等高 |
+| `rowInset` | 2 | 行内控件上下留白 |
+| `rowHeight` | 28 = 字段高 + 上下留白 | 树、列表、表格、表头、Inspector 字段、设置表单的行；Inspector 行间距为 0 |
+| `sectionHeaderHeight` | 30 = 行高 + 2 | Explorer 的 Assets / Sources、Inspector 与其他折叠分节（各层级一致）、Inspector 分类 Tab、GroupBox 标题区 |
+
+`ThemeLayout::Space` 只剩 `None / Tight / Control / Section / Panel`，原 Medium / Large / XLarge 不再对业务开放；QSS 也不再提供 `@spacing*@`，改用 `@panelPadding@`、`@sectionGap@`、`@controlGap@`、`@tightGap@`、`@rowInset@`、`@fieldHeight@`、`@sectionHeaderHeight@` 与控件文字左右留白 `@textPadding@`。工具条类区域统一为左右面板内边距、上下紧凑间距，高度与内容行一致。蓝图画布节点内部行保持世界坐标中的原有密度，不套用面板行高。
+
 组件层字段（如 `timeAxis.labelPadding`、`table.footerHeight`）保留各自语义名称，值由档位推导，不再是主题键。跨组件语义相同的字段已合并：分节标题高度、Inspector 行高和表头高度统一使用 `controlHeight`；表格按钮与 Inspector 槽位高度使用紧凑控件高度；复选框尺寸使用小图标；对象图标与导航 chevron 合并为 `iconExtent`；弹出项文字边距与控件文字边距合并；Inspector 与表单的列比例合并为 `form` 的 3 : 7；参数与通用 Slider 槽厚合并；Timeline 与时间轴的刻度长度（4 / 8）和标记手柄带高合并。Qt-ADS 不再有独立尺寸结构，适配器直接读取档位，Dock 分隔条与通用分隔条同宽。
 
 窗口、对话框、面板、卡片和启动窗口的首选尺寸，以及 Curve / Meter / Waveform 的标签框与偏移，属于组件常量：写在推导代码中并随界面比例缩放，不进入主题合同；能对应档位的线宽、圆角、内边距直接取档位。主窗口最小宽高不随比例变化。列比例、网格数量、渐变色带位置和颜色映射参数不是界面长度。Waveform 的颜色映射、Meter 渐变色带位置和 Curve 离散引导线 Alpha 属于颜色表达，仍可在领域视觉文件中设置；其他领域尺寸键均按未知键拒绝。
@@ -311,11 +326,13 @@ Studio Default 已保存的 `text.muted` 覆盖迁入同一色卡的 `text.secon
 
 无消费者的渲染槽位一并删除：Scene3D、Spatial、Monitor、Feedback 整组，Meter 的基础色、Stereo、Layout、示波器色、clipBackground 与 Spectrogram timeText，Waveform 的 line / fill / cursor / regionMarker / selectionHighlight，Music 的 trackColors / loopRegion，以及若干节点、蓝图与 Timeline 的未用色。时间序列图的多条曲线改用分类色板区分。主题包中这些键，以及同义别名 `curve.line`、`meter.peakMeter.gradientGreen`、`meter.peakMeter.gradientGreenStop`，均按未知键拒绝。
 
-**状态层。** 业务侧不再用 `lighter()` / `darker()` 生成悬停、按下和高亮色，统一调用 `ThemeColors::stateColor`：职责色向首要文字色分别混合 8%（悬停）、12%（按下）、16%（强调），保留源 Alpha。比例属于交互规范，作为代码常量集中在 `ThemeSnapshot.h`。Dark 下状态变亮，Light 下变暗，两张色卡都可辨认。未选中的 Mixing 曲线改为源 Alpha 乘 50%。QSS 的柔和底色统一使用 `ThemeSoftTintAlpha`（36 / 255），悬停叠加使用首要文字 8%。业务侧按比例乘透明度的做法保持不变。
+**状态层。** 业务侧不再用 `lighter()` / `darker()` 生成悬停、按下和高亮色，统一调用 `ThemeColors::stateColor`：职责色向首要文字色分别混合 8%（悬停）、12%（按下）、16%（强调），保留源 Alpha。画布图形标记（Timeline marker、编辑游标、Source Editor 手柄）的悬停与选中使用 `Highlight`：保持色相，按首要文字相对底色的明暗方向调亮或调暗 35%，Dark 下与原 `lighter(130)` 观感一致，Light 下变深而不是变浅。比例属于交互规范，作为代码常量集中在 `ThemeSnapshot.h`。Dark 下状态变亮，Light 下变暗，两张色卡都可辨认。未选中的 Mixing 曲线改为源 Alpha 乘 50%。QSS 的柔和底色统一使用 `ThemeSoftTintAlpha`（36 / 255），悬停叠加使用首要文字 8%。业务侧按比例乘透明度的做法保持不变。
 
 **QSS 令牌。** 颜色令牌与 QSS 一一对应，删除了没有使用者的令牌，工具栏状态按钮改用 `@success@ / @warning@ / @error@` 及其 `Hover` 状态层令牌；尺寸令牌随布局收束合并为 `@iconExtent@`、`@smallIconExtent@` 等档位名称。未匹配任何控件的 `.TrackHeader`、`.ClipBlock`、`.NodeHeader`、`.NodeBody` 规则已删除。
 
-2026-11-07 在 Windows、Qt 6.11.0、`build-nc` RelWithDebInfo 下，`harken_editor` 与 `harken_editor_tests` 构建通过；主题、样式、颜色、设置、表格、Timeline、Meter、曲线、蓝图、Inspector、缩放与字体相关的 231 项测试中 230 项通过、1 项符号链接用例跳过。完整编辑器测试 687 项中 684 项通过、1 项跳过，2 项失败：`EditorDockLayoutTest.ColorRefreshPreservesBlueprintEditorsAndStructureRefreshReplacesThem` 单独运行通过，属于前文记录的跨套件隔离问题；`EditorProjectPackExporterManifest.PartialPublicationCombinesScheduleAndEffectCapacity` 在运行时 `ActivateCanonicalMembersV1` 返回 -415，位于 Pack 导出与引擎激活路径，本次未改动相关代码。QSS 归属检查及其 6 项脚本测试通过，`--self-test` 返回 `ok: true`。本次未做实际窗口截图对照，档位对齐造成的像素变化（如 Timeline 刻度 5 / 10 → 4 / 8、Dock 分隔条 3 → 4、Dock 标题按钮内边距 3 → 2）尚待界面复核。
+2026-11-07 在 Windows、Qt 6.11.0、`build-nc` RelWithDebInfo 下，`harken_editor` 与 `harken_editor_tests` 构建通过；主题、样式、颜色、设置、表格、Timeline、Meter、曲线、蓝图、Inspector、缩放与字体相关的 231 项测试中 230 项通过、1 项符号链接用例跳过。完整编辑器测试 687 项中 684 项通过、1 项跳过，2 项失败：`EditorDockLayoutTest.ColorRefreshPreservesBlueprintEditorsAndStructureRefreshReplacesThem` 单独运行通过，属于前文记录的跨套件隔离问题；`EditorProjectPackExporterManifest.PartialPublicationCombinesScheduleAndEffectCapacity` 在运行时 `ActivateCanonicalMembersV1` 返回 -415，位于 Pack 导出与引擎激活路径，本次未改动相关代码。QSS 归属检查及其 6 项脚本测试通过，`--self-test` 返回 `ok: true`。2026-11-08 的布局职责收束使用离屏真实窗口探针，在 Dark / Light 下截取主窗口、Explorer、Inspector、Preferences、Project Settings、Log、Information、Blueprint 与 Timeline（Segment / Track），并导出各面板边距、控件高度与行高；与 main 基线对照确认 Explorer 搜索栏上边距、分区标题、行高与表格行高的统一，以及 Inspector Playback 分节在离屏截图中需等待展开动画结束才显示内容（main 同样存在）。
+
+Timeline 与 Source Editor 的时间轴刻度共用 `timeAxisTickColor`：主刻度使用 `border.tick` 完整 Alpha、长度 12，次刻度源 Alpha 乘 50%、长度 4；Timeline 标尺不再借用画布网格色。Clip 取消顶部 1px 留白，只保留底部给轨道分隔线的 1px（`clipBottomInset`）。Segment 视图的轨道头列与时间轴之间留出与面板内分割条相同宽度（`control.splitterExtent`，4）的缝隙，底色 `@window@`，宽度调节条只位于标尺下方的缝隙中，不再与 cursor、entry marker 起始区重叠。蓝图节点紧凑 Slider 恢复 `cb8e8359` 之前的槽高 6、滑块宽 5。
 
 ## Studio Default 的领域绑定
 

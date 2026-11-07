@@ -25,8 +25,18 @@ void deriveUiMetrics(ThemeMetrics& m, const Scale& s)
     const int large = m.spacingLarge;
     const int smallIcon = m.control.smallIconExtent;
     const int largeIcon = m.control.largeIconExtent;
-    const int rowHeight = m.controlHeight;
+    const int field = m.controlHeight;
     const int largeHeight = m.control.largeHeight;
+
+    auto& layout = m.layout;
+    layout.panelPadding = small;
+    layout.sectionGap = small;
+    layout.controlGap = xSmall;
+    layout.tightGap = compact;
+    layout.fieldHeight = field;
+    layout.rowInset = compact;
+    layout.rowHeight = layout.fieldHeight + layout.rowInset * 2;
+    layout.sectionHeaderHeight = layout.rowHeight + compact;
 
     auto& control = m.control;
     control.textPaddingX = small;
@@ -34,7 +44,7 @@ void deriveUiMetrics(ThemeMetrics& m, const Scale& s)
     control.checkboxMarkExtent = smallIcon - xSmall;
     control.scrollbarExtent = small;
     control.canvasScrollbarExtent = smallIcon;
-    control.scrollbarMinimumLength = rowHeight;
+    control.scrollbarMinimumLength = field;
     control.sliderHandleExtent = medium;
     control.sliderGrooveThickness = xSmall;
     control.splitterExtent = xSmall;
@@ -67,14 +77,14 @@ void deriveUiMetrics(ThemeMetrics& m, const Scale& s)
     preview.markerRadius = xSmall;
 
     auto& form = m.form;
-    form.rowSpacing = medium;
-    form.columnSpacing = large;
+    form.rowSpacing = layout.rowInset * 2;
+    form.columnSpacing = layout.sectionGap;
     form.labelColumnShare = 3;
     form.valueColumnShare = 7;
 
     auto& chrome = m.chrome;
     chrome.titleBarHeight = largeHeight + xSmall;
-    chrome.windowButtonWidth = rowHeight * 2;
+    chrome.windowButtonWidth = field * 2;
     chrome.windowMinimumWidth = 800;
     chrome.windowMinimumHeight = 600;
     chrome.progressWidth = s.px(160);
@@ -90,8 +100,8 @@ void deriveUiMetrics(ThemeMetrics& m, const Scale& s)
     startup.progressHeight = xSmall;
 
     auto& toggle = m.toggle;
-    toggle.height = rowHeight;
-    toggle.width = rowHeight * 2 - xSmall;
+    toggle.height = field;
+    toggle.width = field * 2 - xSmall;
     toggle.thumbPadding = qMin(xSmall, (toggle.height - 1) / 2);
     toggle.compactHeight = smallIcon;
     toggle.compactWidth = smallIcon + small;
@@ -123,26 +133,26 @@ void deriveUiMetrics(ThemeMetrics& m, const Scale& s)
     axis.cursorHeight = medium;
     axis.labelPadding = xSmall;
     axis.minorTickLength = xSmall;
-    axis.majorTickLength = small;
+    axis.majorTickLength = medium;
     axis.waveformInset = small;
     axis.channelHeight = s.px(88);
 
     auto& table = m.table;
-    table.rowHeight = largeHeight;
-    table.footerHeight = rowHeight + xSmall;
-    table.cellPaddingX = xSmall;
-    table.cellPaddingY = compact;
-    table.buttonWidth = rowHeight + xSmall;
-    table.buttonSpacing = compact;
+    table.rowHeight = layout.rowHeight;
+    table.footerHeight = layout.rowHeight;
+    table.cellPaddingX = layout.controlGap;
+    table.cellPaddingY = layout.rowInset;
+    table.buttonWidth = field + xSmall;
+    table.buttonSpacing = layout.tightGap;
     table.compactColumnWidth = largeIcon;
     table.minimumColumnWidth = largeIcon + smallIcon;
     table.resizeHandleRadius = xSmall;
 
     auto& inspector = m.inspector;
-    inspector.pageMargin = small;
-    inspector.sectionSpacing = compact;
-    inspector.rowSpacing = small;
-    inspector.columnPadding = xSmall;
+    inspector.pageMargin = layout.panelPadding;
+    inspector.sectionSpacing = layout.tightGap;
+    inspector.rowSpacing = 0;
+    inspector.columnPadding = layout.controlGap;
     inspector.valueColumnWidth = s.px(80);
     inspector.linkSlotWidth = m.iconExtent;
     inspector.bindingSlotWidth = smallIcon;
@@ -151,23 +161,23 @@ void deriveUiMetrics(ThemeMetrics& m, const Scale& s)
     inspector.rangeSeparatorWidth = medium;
 
     auto& parameter = m.parameter;
-    parameter.faderMinimumHeight = rowHeight * 4;
+    parameter.faderMinimumHeight = field * 4;
     parameter.labelMinimumWidth = s.px(100);
     parameter.valueMinimumWidth = s.px(72);
     parameter.compactValueMinimumWidth = s.px(80);
     parameter.sliderHandleThickness = xSmall + compact;
     parameter.sliderHandleLength = medium + compact;
-    parameter.compactSliderHeight = small;
-    parameter.compactSliderHandleWidth = xSmall;
+    parameter.compactSliderHeight = xSmall + compact;
+    parameter.compactSliderHandleWidth = xSmall + m.borderWidth;
 
     auto& timeline = m.timeline;
     timeline.laneHeaderWidth = s.px(200);
     timeline.laneHeaderMinimumWidth = s.px(140);
     timeline.laneHeight = s.px(112);
-    timeline.rulerHeight = rowHeight + xSmall;
-    timeline.minLabelSpacing = rowHeight * 2;
+    timeline.rulerHeight = field + xSmall;
+    timeline.minLabelSpacing = field * 2;
     timeline.minTickSpacing = small;
-    timeline.clipVerticalInset = m.borderWidth;
+    timeline.clipBottomInset = m.borderWidth;
     timeline.clipMinimumWidth = medium + compact;
     timeline.resizeHandleWidth = small;
 }

@@ -325,7 +325,7 @@ void SourceEditorWaveformView::paintEvent(QPaintEvent*)
                     return;
                 QColor lineColor = color;
                 if (handle == hoveredHandle_ || handle == activeHandle_)
-                    lineColor = theme->ui.colors.stateColor(lineColor, ThemeStateLayer::Emphasis);
+                    lineColor = theme->ui.colors.stateColor(lineColor, ThemeStateLayer::Highlight);
                 painter.setPen(QPen(lineColor, handle == activeHandle_ ? theme->ui.metrics.accentBorderWidth : theme->ui.metrics.borderWidth));
                 painter.drawLine(x, waveformRect.top(), x, waveformRect.bottom());
                 painter.setPen(Qt::NoPen);

@@ -386,7 +386,7 @@ void ObjectRefWidget::refreshLayout()
 {
     auto* h = static_cast<QHBoxLayout*>(layout());
     const auto& metrics = ThemeManager::instance().metrics();
-    h->setSpacing(compact_ ? metrics.spacingXSmall : metrics.spacingSmall);
+    h->setSpacing(metrics.layout.controlGap);
     const int left = compact_ ? metrics.spacingXSmall : metrics.spacingSmall;
     const int right = compact_ ? metrics.spacingSmall : metrics.spacingXSmall;
     const int buttonWidth = pickButton_->isHidden() ? 0 : pickButton_->width();

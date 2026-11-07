@@ -91,7 +91,7 @@ void PropertyEditorEngine::buildGroupHeader(FieldGroupId group, CollapsibleSecti
         header->setObjectName(QStringLiteral("fieldGroupHeader_") + groupName(group));
         auto* layout = new QHBoxLayout(header);
         layout->setContentsMargins(0, 0, 0, 0);
-        ThemeLayout::spacing(layout, ThemeLayout::Space::Small);
+        ThemeLayout::spacing(layout, ThemeLayout::Space::Section);
         section->setHeaderWidget(header);
     }
     QString label = tr("Inherit");

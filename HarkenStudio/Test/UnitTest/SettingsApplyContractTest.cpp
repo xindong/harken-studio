@@ -496,7 +496,7 @@ TEST_F(SettingsApplyContractTest, ThemePalettesAndRolesKeepEditsIsolatedAcrossSw
             "entries":{"tokens":"tokens.json","colors":"colors.json","visuals":{"curve":"visuals/curve.json","meter":"visuals/meter.json","waveform":"visuals/waveform.json"},"assetMap":"assets.json"}
         })json"},
         {QStringLiteral("tokens.json"), R"json({
-            "colors":{},"metrics":{"control.largeHeight":49},"fonts":{"body":{"pointSize":15}}
+            "colors":{},"metrics":{"control.height":49},"fonts":{"body":{"pointSize":15}}
         })json"},
         {QStringLiteral("colors.json"), R"json({
             "defaultPalette":"dark",
@@ -556,7 +556,7 @@ TEST_F(SettingsApplyContractTest, ThemePalettesAndRolesKeepEditsIsolatedAcrossSw
     ASSERT_TRUE(finishColorEdit(panel, *colors, editedGrid));
     EXPECT_EQ(theme_->snapshot()->ui.colors.textPrimary, editedInk);
     EXPECT_EQ(theme_->snapshot()->domains.curve.colors.grid, editedGrid);
-    EXPECT_EQ(theme_->snapshot()->ui.metrics.table.rowHeight, 49);
+    EXPECT_EQ(theme_->snapshot()->ui.metrics.controlHeight, 49);
     EXPECT_EQ(theme_->snapshot()->ui.typography.body.pointSize, 15);
 
     ASSERT_TRUE(applyColorPreset(*presets, paperId));
@@ -593,7 +593,7 @@ TEST_F(SettingsApplyContractTest, ThemePalettesAndRolesKeepEditsIsolatedAcrossSw
     EXPECT_EQ(restored.currentThemeId(), customId);
     EXPECT_EQ(restored.currentPaletteId(), paperId);
     EXPECT_EQ(restored.snapshot()->ui.colors.textPrimary, QColor("#203040"));
-    EXPECT_EQ(restored.snapshot()->ui.metrics.table.rowHeight, 49);
+    EXPECT_EQ(restored.snapshot()->ui.metrics.controlHeight, 49);
     ASSERT_TRUE(restored.selectTheme(builtinId).ok());
     EXPECT_EQ(restored.snapshot()->ui.colors.textPrimary, builtinEdit);
 }

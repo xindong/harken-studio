@@ -26,7 +26,7 @@ SettingsPanel::SettingsPanel(QWidget* parent)
     searchContainer->setObjectName(QStringLiteral("settingsSearchBar"));
     searchContainer->setAttribute(Qt::WA_StyledBackground, true);
     auto* searchLayout = new QHBoxLayout(searchContainer);
-    ThemeLayout::margins(searchLayout, ThemeLayout::Space::Small);
+    ThemeLayout::margins(searchLayout, ThemeLayout::Space::Panel);
     searchField_ = new SearchField(searchContainer);
     searchField_->setObjectName(QStringLiteral("settingsSearchField"));
     searchField_->setPlaceholderText(tr("Search settings..."));

@@ -53,6 +53,7 @@ TimeAxisTicks buildNanosecondTimeAxisTicks(NanosecondPosition start, double span
 QString formatTimeNanoseconds(int64_t nanoseconds, int minimumDecimals = 0, int maximumDecimals = 9);
 QString formatTimeMinutesSecondsMilliseconds(int64_t nanoseconds,
     int minimumDecimals = 3, int maximumDecimals = 3);
+QColor timeAxisTickColor(const QColor& tick, bool major);
 void drawTimeAxisRuler(QPainter& painter, const ThemeColors& colors,
     const ThemeMetrics::TimeAxis& geometry,
     const QRect& bounds, const TimeAxisTicks& ticks, FontRole role = FontRole::Caption,

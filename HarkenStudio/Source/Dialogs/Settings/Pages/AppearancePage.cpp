@@ -209,8 +209,8 @@ AppearancePage::AppearancePage(ThemeManager& themeManager, QWidget* parent)
     , uiScale_(themeManager.snapshot()->uiScale)
 {
     auto* body = makePageBody();
-    ThemeLayout::margins(body, ThemeLayout::Space::XLarge, ThemeLayout::Space::Large, ThemeLayout::Space::XLarge, ThemeLayout::Space::Large, *themeManager_);
-    ThemeLayout::spacing(body, ThemeLayout::Space::Medium, *themeManager_);
+    ThemeLayout::margins(body, ThemeLayout::Space::Panel, ThemeLayout::Space::Panel, ThemeLayout::Space::Panel, ThemeLayout::Space::Panel, *themeManager_);
+    ThemeLayout::spacing(body, ThemeLayout::Space::Section, *themeManager_);
     auto* appearance = makeSection(tr("Appearance"));
     auto* appearanceForm = makeForm();
     auto* themeLabel = new QLabel(tr("Theme:"));
@@ -251,7 +251,7 @@ AppearancePage::AppearancePage(ThemeManager& themeManager, QWidget* parent)
     const auto colorsTopic = ContextTopic::forPanel(QStringLiteral("settings.appearance.colors"));
     ContextInfo::tag(colors, colorsTopic);
     auto* colorsLayout = static_cast<QVBoxLayout*>(colors->layout());
-    ThemeLayout::spacing(colorsLayout, ThemeLayout::Space::Small, *themeManager_);
+    ThemeLayout::spacing(colorsLayout, ThemeLayout::Space::Section, *themeManager_);
     auto* colorsForm = makeForm();
     auto* presetLabel = new QLabel(tr("Color Palette:"));
     colorPresets_ = new ColorPresetComboBox(colors, themeManager_);

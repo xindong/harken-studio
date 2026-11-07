@@ -151,7 +151,7 @@ CurveEditorWidget::~CurveEditorWidget()
 void CurveEditorWidget::setupUi()
 {
     auto* root = new QVBoxLayout(this);
-    ThemeLayout::margins(root, ThemeLayout::Space::Small);
+    ThemeLayout::margins(root, ThemeLayout::Space::Panel);
     root->setSpacing(0);
 
     stack_ = new QStackedWidget();

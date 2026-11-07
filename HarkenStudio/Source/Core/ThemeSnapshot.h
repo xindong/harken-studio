@@ -25,13 +25,16 @@ enum class ThemeStateLayer
 {
     Hover,
     Pressed,
-    Emphasis
+    Emphasis,
+    Highlight
 };
 
 inline constexpr int ThemeSoftTintAlpha = 36;
 
 inline QColor themeStateColor(const QColor& base, const QColor& overlay, ThemeStateLayer layer)
 {
+    if (layer == ThemeStateLayer::Highlight)
+        return overlay.lightnessF() > base.lightnessF() ? base.lighter(135) : base.darker(135);
     const qreal opacity = layer == ThemeStateLayer::Hover ? 0.08
         : layer == ThemeStateLayer::Pressed ? 0.12 : 0.16;
     const auto mix = [opacity](qreal from, qreal to) { return from + (to - from) * opacity; };
@@ -109,6 +112,18 @@ struct ThemeMetrics
 
     int controlHeight = 0;
     int iconExtent = 0;
+
+    struct Layout {
+        int panelPadding = 0;
+        int sectionGap = 0;
+        int controlGap = 0;
+        int tightGap = 0;
+        int fieldHeight = 0;
+        int rowInset = 0;
+        int rowHeight = 0;
+        int sectionHeaderHeight = 0;
+        bool operator==(const Layout&) const = default;
+    } layout;
 
     struct Control {
         int compactHeight = 0;
@@ -320,7 +335,7 @@ struct ThemeMetrics
         int rulerHeight = 0;
         int minLabelSpacing = 0;
         int minTickSpacing = 0;
-        int clipVerticalInset = 0;
+        int clipBottomInset = 0;
         int clipMinimumWidth = 0;
         int resizeHandleWidth = 0;
         bool operator==(const Timeline&) const = default;

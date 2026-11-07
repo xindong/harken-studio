@@ -361,7 +361,7 @@ void drawMarker(QPainter& painter, const TimelineMarker& marker, const QColor& c
 {
     painter.save();
     const QColor handleColor = marker.selected || marker.hovered
-        ? themeStateColor(color, stateOverlay, ThemeStateLayer::Emphasis) : color;
+        ? themeStateColor(color, stateOverlay, ThemeStateLayer::Highlight) : color;
     painter.setRenderHint(QPainter::Antialiasing, false);
     if (marker.kind == MarkerKind::Entry || marker.kind == MarkerKind::Exit) {
         painter.setPen(QPen(handleColor, marker.selected || marker.hovered ? 2 : 1));
@@ -505,7 +505,7 @@ void TimelineRenderer::render(QPainter& painter,
         painter.fillRect(data.nominalBar.rect, style.timeline.entry);
     if (data.editCursor.visible)
         drawCursorLine(painter, data.editCursor.highlighted
-            ? themeStateColor(style.music.cursor, style.textPrimary, ThemeStateLayer::Emphasis)
+            ? themeStateColor(style.music.cursor, style.textPrimary, ThemeStateLayer::Highlight)
             : style.music.cursor, data.editCursor.x, data.viewport);
     if (data.playhead.visible)
         drawCursorLine(painter, style.music.cursor, data.playhead.x, data.viewport);
@@ -561,8 +561,7 @@ void TimelineRenderer::drawTickSet(QPainter& painter,
         const int x = originX + tick.pixel;
         if (x < leftBound || x >= rightBound)
             continue;
-        painter.setPen(tick.major ? style.music.beatGridMajor
-                                  : style.music.beatGridMinor);
+        painter.setPen(timeAxisTickColor(style.axisTick, tick.major));
         const int length = tick.major ? style.metrics.timeAxis.majorTickLength
                                        : style.metrics.timeAxis.minorTickLength;
         painter.drawLine(x, height - length, x, height);

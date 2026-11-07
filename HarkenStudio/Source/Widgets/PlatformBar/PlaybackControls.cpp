@@ -19,7 +19,7 @@ PlaybackControls::PlaybackControls(QWidget* parent)
     setObjectName(QStringLiteral("playbackControls"));
     auto* layout = new QHBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
-    ThemeLayout::spacing(layout, ThemeLayout::Space::Small);
+    ThemeLayout::spacing(layout, ThemeLayout::Space::Section);
     layout->setSizeConstraint(QLayout::SetFixedSize);
 
     stopBtn_ = new QToolButton(this);

@@ -85,11 +85,11 @@ StartupLoadingWindow::StartupLoadingWindow()
     layout->addWidget(content);
 
     auto* contentLayout = new QVBoxLayout(content);
-    ThemeLayout::margins(contentLayout, ThemeLayout::Space::XLarge, ThemeLayout::Space::Small, ThemeLayout::Space::XLarge, ThemeLayout::Space::Small);
+    ThemeLayout::margins(contentLayout, ThemeLayout::Space::Panel, ThemeLayout::Space::Panel, ThemeLayout::Space::Panel, ThemeLayout::Space::Panel);
     contentLayout->setSpacing(0);
 
     auto* projectRow = new QHBoxLayout();
-    ThemeLayout::spacing(projectRow, ThemeLayout::Space::Medium);
+    ThemeLayout::spacing(projectRow, ThemeLayout::Space::Section);
     projectLabel_ = new ElidedLabel(tr("No project selected"), content);
     projectLabel_->setObjectName(QStringLiteral("startupLoadingProject"));
     projectLabel_->setTextInteractionFlags(Qt::NoTextInteraction);
@@ -102,16 +102,16 @@ StartupLoadingWindow::StartupLoadingWindow()
     percentLabel_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     projectRow->addWidget(percentLabel_);
     contentLayout->addLayout(projectRow);
-    ThemeLayout::addSpacing(contentLayout, ThemeLayout::Space::Compact);
+    ThemeLayout::addSpacing(contentLayout, ThemeLayout::Space::Tight);
 
     auto* statusRow = new QHBoxLayout();
-    ThemeLayout::spacing(statusRow, ThemeLayout::Space::Medium);
+    ThemeLayout::spacing(statusRow, ThemeLayout::Space::Section);
     statusLabel_ = new ElidedLabel(content);
     statusLabel_->setObjectName(QStringLiteral("startupLoadingStatus"));
     statusLabel_->setAccessibleName(tr("Startup status"));
     statusRow->addWidget(statusLabel_, 1);
     contentLayout->addLayout(statusRow);
-    ThemeLayout::addSpacing(contentLayout, ThemeLayout::Space::XSmall);
+    ThemeLayout::addSpacing(contentLayout, ThemeLayout::Space::Control);
 
     progressBar_ = new QProgressBar(content);
     progressBar_->setObjectName(QStringLiteral("startupLoadingProgress"));
@@ -120,7 +120,7 @@ StartupLoadingWindow::StartupLoadingWindow()
     progressBar_->setAccessibleName(tr("Startup progress"));
     contentLayout->addWidget(progressBar_);
 
-    ThemeLayout::addSpacing(contentLayout, ThemeLayout::Space::XSmall);
+    ThemeLayout::addSpacing(contentLayout, ThemeLayout::Space::Control);
     auto* version = new QLabel(versionString(), content);
     version->setObjectName(QStringLiteral("startupLoadingVersion"));
     version->setAlignment(Qt::AlignRight | Qt::AlignVCenter);

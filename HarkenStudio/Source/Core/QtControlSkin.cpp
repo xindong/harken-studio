@@ -309,7 +309,7 @@ void QtControlSkin::paintPopupItem(QPainter& painter, const QStyleOptionMenuItem
 int QtControlSkin::fieldHeight() const
 {
     const QFont font = FontManager::instance().getFont(snapshot_, FontRole::Body);
-    return std::max({metrics().controlHeight, metrics().iconExtent + metrics().control.textPaddingY * 2,
+    return std::max({metrics().layout.fieldHeight, metrics().iconExtent + metrics().control.textPaddingY * 2,
                      metrics().iconExtent + metrics().borderWidth * 2,
                      QFontMetrics(font).height() + 2 * (metrics().control.textPaddingY + metrics().borderWidth)});
 }
@@ -528,9 +528,6 @@ QString QtControlSkin::applicationStyleSheet() const
     replace(QStringLiteral("@borderWidth@"), QString::number(metrics().borderWidth));
     replace(QStringLiteral("@accentBorderWidth@"), QString::number(metrics().accentBorderWidth));
     replace(QStringLiteral("@radiusCompact@"), QString::number(metrics().radiusCompact));
-    replace(QStringLiteral("@spacingCompact@"), QString::number(metrics().spacingCompact));
-    replace(QStringLiteral("@spacingLarge@"), QString::number(metrics().spacingLarge));
-    replace(QStringLiteral("@spacingXLarge@"), QString::number(metrics().spacingXLarge));
     replace(QStringLiteral("@controlHeight@"), QString::number(metrics().controlHeight));
     replace(QStringLiteral("@compactControlHeight@"), QString::number(metrics().control.compactHeight));
     replace(QStringLiteral("@smallIconExtent@"), QString::number(metrics().control.smallIconExtent));
@@ -553,10 +550,16 @@ QString QtControlSkin::applicationStyleSheet() const
     replace(QStringLiteral("@radiusSmall@"), QString::number(metrics().radiusSmall));
     replace(QStringLiteral("@radiusMedium@"), QString::number(metrics().radiusMedium));
     replace(QStringLiteral("@radiusLarge@"), QString::number(metrics().radiusLarge));
-    replace(QStringLiteral("@spacingXSmall@"), QString::number(metrics().spacingXSmall));
-    replace(QStringLiteral("@spacingSmall@"), QString::number(metrics().spacingSmall));
-    replace(QStringLiteral("@spacingMedium@"), QString::number(metrics().spacingMedium));
     replace(QStringLiteral("@popupPaddingY@"), QString::number(metrics().popup.rowPadding));
+    replace(QStringLiteral("@fieldHeight@"), QString::number(fieldHeight()));
+    const auto& layout = metrics().layout;
+    replace(QStringLiteral("@panelPadding@"), QString::number(layout.panelPadding));
+    replace(QStringLiteral("@sectionGap@"), QString::number(layout.sectionGap));
+    replace(QStringLiteral("@tightGap@"), QString::number(layout.tightGap));
+    replace(QStringLiteral("@sectionHeaderHeight@"), QString::number(layout.sectionHeaderHeight));
+    replace(QStringLiteral("@textPadding@"), QString::number(metrics().control.textPaddingX));
+    replace(QStringLiteral("@rowInset@"), QString::number(metrics().layout.rowInset));
+    replace(QStringLiteral("@controlGap@"), QString::number(metrics().layout.controlGap));
     replace(QStringLiteral("@fieldContentHeight@"), QString::number(fieldHeight() - metrics().borderWidth * 2));
     replace(QStringLiteral("@singleLineContentHeight@"), QString::number(fieldHeight() - metrics().borderWidth * 3));
     const QMargins fieldMargins = fieldTextMargins();
@@ -605,31 +608,31 @@ QString QtControlSkin::collapsibleHeaderStyle(const QColor& indicator, bool cust
 
     const QString titleColor = colors().textTitle.name(QColor::HexArgb);
     const QString font = FontManager::instance().styleSheet(snapshot_, FontRole::Body, FontEmphasis::Strong);
-    QString bg, border, hoverBg, pad;
-    int minH;
+    QString bg, border, hoverBg;
+    int verticalBorder = 0;
     if (level <= 0)
     {
         bg       = bgSecondary();
         border   = QString("border: none; border-bottom: %1px solid %2;")
             .arg(metrics().borderWidth).arg(borderPrimary());
+        verticalBorder = metrics().borderWidth;
         if (custom)
             border += QString(" border-left: %1px solid %2;").arg(metrics().accentBorderWidth).arg(indicatorColor);
-        if (topSeparator)
+        if (topSeparator) {
             border += QStringLiteral(" border-top: %1px solid %2;").arg(metrics().borderWidth).arg(borderPrimary());
+            verticalBorder += metrics().borderWidth;
+        }
         hoverBg  = bgTertiary();
-        pad      = QString("padding: %1px %2px;").arg(metrics().spacingXSmall).arg(metrics().spacingSmall);
-        minH     = metrics().controlHeight;
     }
     else if (level == 1)
     {
         bg       = custom ? rgba(indicator, 20) : QStringLiteral("transparent");
         border   = QString("border: none; border-bottom: %1px solid %2;")
             .arg(metrics().borderWidth).arg(borderPrimary());
+        verticalBorder = metrics().borderWidth;
         if (custom)
             border += QString(" border-left: %1px solid %2;").arg(metrics().accentBorderWidth).arg(indicatorColor);
         hoverBg  = bgTertiary();
-        pad      = QString("padding: %1px %2px;").arg(metrics().spacingCompact).arg(metrics().spacingSmall);
-        minH     = metrics().control.compactHeight;
     }
     else
     {
@@ -637,9 +640,9 @@ QString QtControlSkin::collapsibleHeaderStyle(const QColor& indicator, bool cust
         border   = custom ? QString("border: none; border-left: %1px solid %2;").arg(metrics().accentBorderWidth).arg(indicatorColor)
                           : QStringLiteral("border: none;");
         hoverBg  = QStringLiteral("transparent");
-        pad      = QString("padding: %1px %2px;").arg(metrics().spacingCompact).arg(metrics().spacingSmall);
-        minH     = metrics().control.compactHeight;
     }
+    const QString pad = QString("padding: 0px %1px;").arg(metrics().layout.panelPadding);
+    const int contentHeight = metrics().layout.sectionHeaderHeight - verticalBorder;
 
     if (backgroundTint.isValid()) {
         bg = rgba(backgroundTint, level >= 2 ? 16 : 20);
@@ -654,6 +657,7 @@ QString QtControlSkin::collapsibleHeaderStyle(const QColor& indicator, bool cust
             color: %4;
             text-align: left;
             min-height: %5px;
+            max-height: %5px;
         }
         QToolButton:hover {
             background-color: %6;
@@ -667,7 +671,7 @@ QString QtControlSkin::collapsibleHeaderStyle(const QColor& indicator, bool cust
         .arg(border)
         .arg(font + pad)
         .arg(titleColor)
-        .arg(minH)
+        .arg(contentHeight)
         .arg(hoverBg)
         .arg(titleColor)
         .arg(textDisabled());

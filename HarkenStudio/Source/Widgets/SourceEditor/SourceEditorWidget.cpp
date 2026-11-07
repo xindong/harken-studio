@@ -132,14 +132,14 @@ SourceEditorWidget::SourceEditorWidget(QWidget* parent)
     setObjectName(QStringLiteral("SourceEditorWidget"));
 
     auto* layout = new QVBoxLayout(this);
-    ThemeLayout::margins(layout, ThemeLayout::Space::Small);
-    ThemeLayout::spacing(layout, ThemeLayout::Space::Small);
+    ThemeLayout::margins(layout, ThemeLayout::Space::Panel);
+    ThemeLayout::spacing(layout, ThemeLayout::Space::Section);
 
     sourceIdentityStrip_ = new QWidget(this);
     sourceIdentityStrip_->setObjectName(QStringLiteral("sourceEditorSourceIdentity"));
     auto* identityLayout = new QVBoxLayout(sourceIdentityStrip_);
-    ThemeLayout::margins(identityLayout, ThemeLayout::Space::Compact, ThemeLayout::Space::None, ThemeLayout::Space::Compact, ThemeLayout::Space::None);
-    ThemeLayout::spacing(identityLayout, ThemeLayout::Space::Compact);
+    ThemeLayout::margins(identityLayout, ThemeLayout::Space::Tight, ThemeLayout::Space::None, ThemeLayout::Space::Tight, ThemeLayout::Space::None);
+    ThemeLayout::spacing(identityLayout, ThemeLayout::Space::Tight);
     sourceTitle_ = new QLabel(sourceIdentityStrip_);
     sourceTitle_->setObjectName(QStringLiteral("sourceEditorSourceTitle"));
     sourceTitle_->setProperty("textRole", QStringLiteral("primary"));
@@ -159,9 +159,9 @@ SourceEditorWidget::SourceEditorWidget(QWidget* parent)
     metadataStrip_->setObjectName(QStringLiteral("sourceEditorMetadataStrip"));
     metadataStrip_->setProperty("surfaceRole", QStringLiteral("secondary"));
     metadataLayout_ = new QGridLayout(metadataStrip_);
-    ThemeLayout::margins(metadataLayout_, ThemeLayout::Space::Small);
-    ThemeLayout::horizontalSpacing(metadataLayout_, ThemeLayout::Space::Small);
-    ThemeLayout::verticalSpacing(metadataLayout_, ThemeLayout::Space::XSmall);
+    ThemeLayout::margins(metadataLayout_, ThemeLayout::Space::Panel);
+    ThemeLayout::horizontalSpacing(metadataLayout_, ThemeLayout::Space::Section);
+    ThemeLayout::verticalSpacing(metadataLayout_, ThemeLayout::Space::Control);
 
     const auto addField = [this](const QString& title, const QString& name) {
         const auto field = addMetadataValue(metadataStrip_, title, name);
@@ -183,8 +183,8 @@ SourceEditorWidget::SourceEditorWidget(QWidget* parent)
     rangePanel_->setObjectName(QStringLiteral("sourceEditorRangePanel"));
     rangePanel_->setProperty("surfaceRole", QStringLiteral("secondary"));
     auto* rangeLayout = new QVBoxLayout(rangePanel_);
-    ThemeLayout::margins(rangeLayout, ThemeLayout::Space::Small);
-    ThemeLayout::spacing(rangeLayout, ThemeLayout::Space::XSmall);
+    ThemeLayout::margins(rangeLayout, ThemeLayout::Space::Panel);
+    ThemeLayout::spacing(rangeLayout, ThemeLayout::Space::Control);
     auto* rangeHeader = new QHBoxLayout();
     rangeSourceValue_ = new QLabel(rangePanel_);
     rangeSourceValue_->setObjectName(QStringLiteral("sourceEditorRangeSource"));
@@ -197,8 +197,8 @@ SourceEditorWidget::SourceEditorWidget(QWidget* parent)
     rangeValues_ = new QWidget(rangePanel_);
     rangeValuesLayout_ = new QGridLayout(rangeValues_);
     rangeValuesLayout_->setContentsMargins(0, 0, 0, 0);
-    ThemeLayout::horizontalSpacing(rangeValuesLayout_, ThemeLayout::Space::Small);
-    ThemeLayout::verticalSpacing(rangeValuesLayout_, ThemeLayout::Space::Compact);
+    ThemeLayout::horizontalSpacing(rangeValuesLayout_, ThemeLayout::Space::Section);
+    ThemeLayout::verticalSpacing(rangeValuesLayout_, ThemeLayout::Space::Tight);
     trimStartValue_ = addRangeValue(rangeValuesLayout_, rangeValues_, 0, tr("Trim In"),
                                     QStringLiteral("sourceEditorTrimStart"), &rangeTitleLabels_);
     loopStartValue_ = addRangeValue(rangeValuesLayout_, rangeValues_, 1, tr("Loop In"),
@@ -221,7 +221,7 @@ SourceEditorWidget::SourceEditorWidget(QWidget* parent)
     auditionStrip_->setObjectName(QStringLiteral("sourceEditorAudition"));
     auto* auditionLayout = new QHBoxLayout(auditionStrip_);
     auditionLayout->setContentsMargins(0, 0, 0, 0);
-    ThemeLayout::spacing(auditionLayout, ThemeLayout::Space::Small);
+    ThemeLayout::spacing(auditionLayout, ThemeLayout::Space::Section);
     playButton_ = new QToolButton(auditionStrip_);
     playButton_->setObjectName(QStringLiteral("sourceEditorPlay"));
     playButton_->setAutoRaise(true);

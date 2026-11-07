@@ -32,7 +32,7 @@ ProjectPublishPage::ProjectPublishPage(QWidget* parent)
     auto* rowWidget = new QWidget();
     auto* row = new QHBoxLayout(rowWidget);
     row->setContentsMargins(0, 0, 0, 0);
-    ThemeLayout::spacing(row, ThemeLayout::Space::Small);
+    ThemeLayout::spacing(row, ThemeLayout::Space::Section);
 
     packBuildOutputDirEdit_ = new QLineEdit();
     packBuildOutputDirEdit_->setObjectName("packBuildOutputDirEdit");
@@ -95,7 +95,7 @@ ProjectPublishPage::ProjectPublishPage(QWidget* parent)
     waveformOutputRow_ = new QWidget();
     auto* waveformRow = new QHBoxLayout(waveformOutputRow_);
     waveformRow->setContentsMargins(0, 0, 0, 0);
-    ThemeLayout::spacing(waveformRow, ThemeLayout::Space::Small);
+    ThemeLayout::spacing(waveformRow, ThemeLayout::Space::Section);
     waveformOutputDirEdit_ = new QLineEdit();
     waveformOutputDirEdit_->setObjectName(QStringLiteral("buildWaveformOutputDirEdit"));
     waveformOutputDirEdit_->setPlaceholderText(PathUtils::buildPacksDirName() + QStringLiteral("/Waveforms/"));

@@ -128,7 +128,7 @@ void BlueprintVisibilityMenu::relayout_()
                              check->sizeHint().height()});
         const int inset = Rows[index].group ? metrics.control.textPaddingX : metrics.popup.iconColumnWidth;
         check->parentWidget()->layout()->setContentsMargins(inset, 0, metrics.control.textPaddingX, 0);
-        check->parentWidget()->layout()->setSpacing(metrics.spacingSmall);
+        check->parentWidget()->layout()->setSpacing(metrics.layout.controlGap);
         contentWidth = std::max(contentWidth, label->fontMetrics().horizontalAdvance(label->text())
             + inset + check->sizeHint().width() + metrics.control.textPaddingX + metrics.spacingSmall);
     }

@@ -52,7 +52,7 @@ ToggleSwitch::~ToggleSwitch() = default;
 void ToggleSwitch::applyTheme()
 {
     const auto& metrics = ThemeManager::instance().metrics();
-    layout()->setSpacing(metrics.spacingSmall);
+    layout()->setSpacing(metrics.layout.controlGap);
     switchSpace_->changeSize(metrics.toggle.width, metrics.toggle.height,
                             QSizePolicy::Fixed, QSizePolicy::Fixed);
     layout()->invalidate();

@@ -1235,7 +1235,7 @@ void TableWidget::applyTheme()
         }
         if (auto* header = viewHeader()) {
             header->setFont(font);
-            header->setFixedHeight(std::max(themeManager_->metrics().controlHeight, QFontMetrics(font).height() + metrics.cellPaddingY * 2));
+            header->setFixedHeight(std::max(themeManager_->metrics().layout.rowHeight, QFontMetrics(font).height() + metrics.cellPaddingY * 2));
         }
         view_->doItemsLayout();
         if (options_.bodySizing == TableBodySizing::Expanding)
@@ -1249,7 +1249,7 @@ void TableWidget::applyTheme()
         label->setFont(headerFont);
         updateCellMetrics(label);
     }
-    const int height = std::max(themeManager_->metrics().controlHeight,
+    const int height = std::max(themeManager_->metrics().layout.rowHeight,
         QFontMetrics(headerFont).height() + metrics.cellPaddingY * 2);
     headerClip_->setFixedHeight(height);
     if (options_.bodySizing == TableBodySizing::Expanding)

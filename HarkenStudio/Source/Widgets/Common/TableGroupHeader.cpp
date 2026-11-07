@@ -92,7 +92,7 @@ void TableGroupHeader::setExpanded(bool expanded)
 int TableGroupHeader::preferredHeight(ThemeManager* themeManager)
 {
     const auto& metrics = themeManager->metrics().table;
-    return std::max(themeManager->metrics().controlHeight,
+    return std::max(themeManager->metrics().layout.rowHeight,
         QFontMetrics(captionFont(themeManager)).height() + metrics.cellPaddingY * 2 + 1);
 }
 

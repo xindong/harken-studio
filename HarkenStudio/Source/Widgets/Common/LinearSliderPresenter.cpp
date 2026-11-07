@@ -85,9 +85,9 @@ LinearSliderPresenter::LinearSliderPresenter(ParameterBinding* binding,
     syncValue(binding_->value());
     applyTheme();
     theme.bindMetrics(this, [this, layout, tableCell](const ThemeMetrics& metrics) {
-        const int padding = tableCell ? 0 : metrics.spacingCompact;
+        const int padding = tableCell ? 0 : metrics.layout.rowInset;
         layout->setContentsMargins(0, padding, 0, padding);
-        layout->setSpacing(tableCell ? metrics.table.cellPaddingX * 2 : metrics.spacingSmall);
+        layout->setSpacing(metrics.layout.controlGap);
         label_->setMinimumWidth(metrics.parameter.labelMinimumWidth);
         if (valueControl_ && automaticValueWidth_)
             valueControl_->setMinimumWidth(metrics.parameter.compactValueMinimumWidth);

@@ -60,7 +60,7 @@ ExplorerSection::ExplorerSection(const QString& title, QWidget* parent)
         emit headerContextMenuRequested(header_->mapToGlobal(position));
     });
     auto* headerLayout = new QHBoxLayout(header_);
-    ThemeLayout::margins(headerLayout, ThemeLayout::Space::None, ThemeLayout::Space::Compact, ThemeLayout::Space::None, ThemeLayout::Space::Compact);
+    ThemeLayout::margins(headerLayout, ThemeLayout::Space::None, ThemeLayout::Space::Tight, ThemeLayout::Space::None, ThemeLayout::Space::Tight);
     headerLayout->setSpacing(0);
     toggle_ = new ExplorerSectionToggle(header_);
     toggle_->setProperty("explorerRole", "sectionToggle");
@@ -103,8 +103,7 @@ void ExplorerSection::setExpanded(bool expanded)
 void ExplorerSection::updateHeader()
 {
     auto& theme = ThemeManager::instance();
-    const int height = qMax(theme.metrics().controlHeight,
-                           toggle_->fontMetrics().height() + theme.metrics().spacingSmall);
+    const int height = theme.metrics().layout.sectionHeaderHeight;
     header_->setFixedHeight(height);
     const int extent = theme.metrics().iconExtent;
     toggle_->setIconSize(QSize(extent, extent));

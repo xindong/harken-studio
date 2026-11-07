@@ -12,7 +12,7 @@ MonitorRecordingPanel::MonitorRecordingPanel(QWidget* parent)
 {
     setObjectName(QStringLiteral("MonitorRecordingPanel"));
     auto* root = new QVBoxLayout(this);
-    ThemeLayout::margins(root, ThemeLayout::Space::Small);
+    ThemeLayout::margins(root, ThemeLayout::Space::Panel);
     faceLabel_ = new QLabel(this);
     faceLabel_->setObjectName(QStringLiteral("MonitorRecordingFace"));
     root->addWidget(faceLabel_);

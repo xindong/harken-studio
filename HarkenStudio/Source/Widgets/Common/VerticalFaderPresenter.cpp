@@ -65,9 +65,9 @@ VerticalFaderPresenter::VerticalFaderPresenter(ParameterBinding* binding,
     syncValue(binding_->value());
     applyTheme();
     themeManager_->bindMetrics(this, [this, layout](const ThemeMetrics& metrics) {
-        layout->setContentsMargins(metrics.spacingXSmall, metrics.spacingXSmall,
-                                  metrics.spacingXSmall, metrics.spacingXSmall);
-        layout->setSpacing(metrics.spacingSmall);
+        layout->setContentsMargins(metrics.layout.controlGap, metrics.layout.controlGap,
+                                  metrics.layout.controlGap, metrics.layout.controlGap);
+        layout->setSpacing(metrics.layout.controlGap);
         slider_->setMinimumHeight(metrics.parameter.faderMinimumHeight);
         if (!compactValueColumn_)
             spinBox_->setMinimumWidth(metrics.parameter.valueMinimumWidth);
