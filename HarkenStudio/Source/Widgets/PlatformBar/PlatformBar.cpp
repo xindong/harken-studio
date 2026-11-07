@@ -58,15 +58,21 @@ PlatformBar::PlatformBar(PlatformContextService& service, QWidget* parent)
     setFloatable(false);
     setContextMenuPolicy(Qt::PreventContextMenu);
     ThemeManager::instance().bindMetrics(this, [this](const ThemeMetrics& metrics) {
-        setIconSize(QSize(metrics.objectIconExtent, metrics.objectIconExtent));
+        setIconSize(QSize(metrics.iconExtent, metrics.iconExtent));
     });
     ensurePolished();
 
     host_ = new QWidget(this);
     host_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     auto* layout = new QGridLayout(host_);
-    ThemeLayout::margins(layout, ThemeLayout::Space::XSmall, ThemeLayout::Space::Compact, ThemeLayout::Space::XSmall, ThemeLayout::Space::None);
-    ThemeLayout::spacing(layout, ThemeLayout::Space::Small);
+    ThemeLayout::margins(layout, ThemeLayout::Space::Panel, ThemeLayout::Space::Tight, ThemeLayout::Space::Panel, ThemeLayout::Space::Tight);
+    ThemeManager::instance().bindMetrics(host_, [this](const ThemeMetrics& metrics) {
+        const int row = qMax(metrics.layout.rowHeight,
+                             QtControlSkin::current().fieldHeight() + metrics.layout.rowInset * 2);
+        host_->setFixedHeight(row);
+        setFixedHeight(row + metrics.layout.rowInset * 2);
+    });
+    ThemeLayout::spacing(layout, ThemeLayout::Space::Section);
     layout->setColumnStretch(0, 1);
     layout->setColumnStretch(2, 1);
     auto* leading = new QWidget(host_);

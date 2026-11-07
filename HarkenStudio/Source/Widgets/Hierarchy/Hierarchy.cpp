@@ -58,13 +58,13 @@ bool Hierarchy::eventFilter(QObject* watched, QEvent* event)
 void Hierarchy::setupPanelChrome()
 {
     QVBoxLayout* layout = new QVBoxLayout(this);
-    ThemeLayout::margins(layout, ThemeLayout::Space::Small);
-    ThemeLayout::spacing(layout, ThemeLayout::Space::Small);
+    ThemeLayout::margins(layout, ThemeLayout::Space::Panel);
+    ThemeLayout::spacing(layout, ThemeLayout::Space::Section);
 
     filterBar_ = new QWidget();
     QHBoxLayout* filterLayout = new QHBoxLayout(filterBar_);
     filterLayout->setContentsMargins(0, 0, 0, 0);
-    ThemeLayout::spacing(filterLayout, ThemeLayout::Space::XSmall);
+    ThemeLayout::spacing(filterLayout, ThemeLayout::Space::Control);
 
     filterCombo_ = new QComboBox();
     filterCombo_->setObjectName("projectFilterCombo");

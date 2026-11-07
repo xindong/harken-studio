@@ -337,7 +337,7 @@ TransitionEditorWidget::TransitionEditorWidget(QWidget* parent)
     {
         auto* slotLayout = new QHBoxLayout(bridgeSlotAdd_);
         slotLayout->setContentsMargins(0, 0, 0, 0);
-        ThemeLayout::spacing(slotLayout, ThemeLayout::Space::Small);
+        ThemeLayout::spacing(slotLayout, ThemeLayout::Space::Section);
         bridgeInsertButton_ = new QToolButton(bridgeSlotAdd_);
         bridgeInsertButton_->setObjectName(QStringLiteral("transitionInsertBridge"));
         bridgeInsertButton_->setText(tr("+ Insert a bridge"));
@@ -665,7 +665,7 @@ TransitionEditorWidget::TransitionEditorWidget(QWidget* parent)
         root->setContentsMargins(inspector.pageMargin, inspector.pageMargin,
                                  inspector.pageMargin, inspector.pageMargin);
         root->setSpacing(inspector.rowSpacing);
-        statusBarHost->setFixedHeight(inspector.rowHeight);
+        statusBarHost->setFixedHeight(metrics.layout.rowHeight);
         statusBar->setSpacing(inspector.columnPadding);
         contentLayout->setSpacing(inspector.sectionSpacing);
         mountNoteLabel_->setContentsMargins(inspector.columnPadding, 0,

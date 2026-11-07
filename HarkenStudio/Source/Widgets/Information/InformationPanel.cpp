@@ -71,8 +71,8 @@ InformationPanel::InformationPanel(QWidget* parent)
 void InformationPanel::setupUI()
 {
     QVBoxLayout* mainLayout = new QVBoxLayout(this);
-    ThemeLayout::margins(mainLayout, ThemeLayout::Space::Small);
-    ThemeLayout::spacing(mainLayout, ThemeLayout::Space::Small);
+    ThemeLayout::margins(mainLayout, ThemeLayout::Space::Panel);
+    ThemeLayout::spacing(mainLayout, ThemeLayout::Space::Section);
 
     headerLabel_ = new QLabel(this);
     headerLabel_->setObjectName(QStringLiteral("informationHeaderLabel"));

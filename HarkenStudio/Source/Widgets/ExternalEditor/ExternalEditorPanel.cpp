@@ -27,12 +27,12 @@ ExternalEditorPanel::ExternalEditorPanel(QWidget* parent)
     setObjectName(QStringLiteral("ExternalEditorPanel"));
     setFocusPolicy(Qt::StrongFocus);
     auto* layout = new QVBoxLayout(this);
-    ThemeLayout::margins(layout, ThemeLayout::Space::Small);
+    ThemeLayout::margins(layout, ThemeLayout::Space::Panel);
     layout->setSpacing(0);
     curves_ = new QWidget(this);
     auto* curvesLayout = new QVBoxLayout(curves_);
     curvesLayout->setContentsMargins(0, 0, 0, 0);
-    ThemeLayout::spacing(curvesLayout, ThemeLayout::Space::Small);
+    ThemeLayout::spacing(curvesLayout, ThemeLayout::Space::Section);
     bindings_ = new BindingFieldEditor(curves_);
     curvesLayout->addWidget(bindings_);
     curve_ = new CurveEditorWidget(curves_);

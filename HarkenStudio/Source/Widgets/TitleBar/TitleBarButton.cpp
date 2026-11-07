@@ -76,7 +76,7 @@ void TitleBarButton::paintEvent(QPaintEvent* event)
     QPainter painter(this);
     style()->drawControl(QStyle::CE_PushButton, &option, &painter, this);
 
-    const int extent = ThemeManager::instance().metrics().objectIconExtent;
+    const int extent = ThemeManager::instance().metrics().iconExtent;
     const QSize iconSize(extent, extent);
     const QRect iconRect(QPoint((width() - iconSize.width()) / 2,
                                 (height() - iconSize.height()) / 2),

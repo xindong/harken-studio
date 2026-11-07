@@ -17,7 +17,7 @@ inline void draw(QPainter* painter, const QRect& rect, Qt::CheckState state, boo
     const bool on = state == Qt::Checked;
     const bool partial = state == Qt::PartiallyChecked;
     const QColor activeColor = highlightedText.isValid() ? highlightedText : colors.accent;
-    const QColor inactiveColor = highlightedText.isValid() ? highlightedText : colors.textMuted;
+    const QColor inactiveColor = highlightedText.isValid() ? highlightedText : colors.textSecondary;
     QColor fill = highlightedText.isValid() ? QColor(Qt::transparent) : colors.bgPrimary;
     if (on) {
         fill = activeColor;

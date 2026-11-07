@@ -27,7 +27,7 @@ AxisRehearsalRow::AxisRehearsalRow(ProjectItem* item, const QString& table,
     setProperty("variableGuid", variableId_.toString(QUuid::WithoutBraces));
     setProperty("gridTable", table);
 
-    const auto& inspector = ThemeManager::instance().metrics().inspector;
+    const auto& form = ThemeManager::instance().metrics().form;
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
 
@@ -45,7 +45,7 @@ AxisRehearsalRow::AxisRehearsalRow(ProjectItem* item, const QString& table,
     kind_->setObjectName(QStringLiteral("axisRehearsalKind"));
     table_ = new QLabel(table, heading);
     table_->setObjectName(QStringLiteral("axisRehearsalTable"));
-    headingLayout->addWidget(name_, inspector.labelColumnShare);
+    headingLayout->addWidget(name_, form.labelColumnShare);
     auto* headingValue = new QWidget(heading);
     headingValue->setProperty("columnRole", QStringLiteral("value"));
     auto* headingValueLayout = new QHBoxLayout(headingValue);
@@ -73,7 +73,7 @@ AxisRehearsalRow::AxisRehearsalRow(ProjectItem* item, const QString& table,
         });
     headingValueLayout->addWidget(scope);
     headingValueLayout->addStretch(1);
-    headingLayout->addWidget(headingValue, inspector.valueColumnShare);
+    headingLayout->addWidget(headingValue, form.valueColumnShare);
     auto* headingGutter = new QWidget(heading);
     headingGutter->setProperty("columnRole", QStringLiteral("gutter"));
     headingLayout->addWidget(headingGutter);
@@ -90,7 +90,7 @@ AxisRehearsalRow::AxisRehearsalRow(ProjectItem* item, const QString& table,
     valueLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     QtControlSkin::setSemanticProperty(valueLabel, "textRole",
                                        QStringLiteral("formLabel"));
-    controlLayout->addWidget(valueLabel, inspector.labelColumnShare);
+    controlLayout->addWidget(valueLabel, form.labelColumnShare);
 
     auto* valueCell = new QWidget(control);
     valueCell->setObjectName(QStringLiteral("selectionFormValue_rehearsal"));
@@ -101,7 +101,7 @@ AxisRehearsalRow::AxisRehearsalRow(ProjectItem* item, const QString& table,
     reset->setObjectName(QStringLiteral("axisRehearsalReset"));
     valueLayout->addWidget(slider_, 1);
     valueLayout->addWidget(reset);
-    controlLayout->addWidget(valueCell, inspector.valueColumnShare);
+    controlLayout->addWidget(valueCell, form.valueColumnShare);
     auto* gutter = new QWidget(control);
     gutter->setObjectName(QStringLiteral("selectionFormGutter_rehearsal"));
     gutter->setProperty("columnRole", QStringLiteral("gutter"));
@@ -111,6 +111,7 @@ AxisRehearsalRow::AxisRehearsalRow(ProjectItem* item, const QString& table,
     ThemeManager::instance().bindMetrics(this,
         [=, this](const ThemeMetrics& metrics) {
             const auto& inspector = metrics.inspector;
+            const auto& form = metrics.form;
             root->setSpacing(inspector.rowSpacing);
             for (auto* label : {name_, valueLabel})
                 label->setContentsMargins(inspector.columnPadding, 0,
@@ -121,12 +122,12 @@ AxisRehearsalRow::AxisRehearsalRow(ProjectItem* item, const QString& table,
                 layout->setSpacing(inspector.columnPadding);
             }
             for (auto* layout : {headingLayout, controlLayout}) {
-                layout->setStretch(0, inspector.labelColumnShare);
-                layout->setStretch(1, inspector.valueColumnShare);
+                layout->setStretch(0, form.labelColumnShare);
+                layout->setStretch(1, form.valueColumnShare);
             }
             for (auto* widget : {headingGutter, gutter})
                 widget->setFixedWidth(inspector.slotWidthFor(occupiedSlots));
-            control->setMinimumHeight(inspector.rowHeight);
+            control->setMinimumHeight(metrics.layout.fieldHeight);
         });
 
     connect(slider_->binding(), &ParameterBinding::valueUpdated, this,

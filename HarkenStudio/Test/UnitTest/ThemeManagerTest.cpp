@@ -66,7 +66,7 @@ bool writePackage(const QString& themesRoot,
           "\"assetMap\":\"assets.json\"}}";
     const QByteArray tokens = QByteArray("{\"colors\":{\"accent.primary\":\"")
         + accent.toUtf8() + "\"}}";
-    const QByteArray curve = QByteArray("{\"colors\":{\"curve.line\":\"")
+    const QByteArray curve = QByteArray("{\"colors\":{\"curve.attenuationVolume\":\"")
         + curveLine.toUtf8() + "\"}}";
     return writeFile(QDir(packageRoot).filePath(QStringLiteral("manifest.json")),
                      manifest)
@@ -76,10 +76,10 @@ bool writePackage(const QString& themesRoot,
                          QStringLiteral("visuals/curve.json")), curve)
         && writeFile(QDir(packageRoot).filePath(
                          QStringLiteral("visuals/meter.json")),
-                     R"json({"colors":{"meter.green":"#ff22aa44"}})json")
+                     R"json({"colors":{"meter.spectrum.fillTop":"#ff22aa44"}})json")
         && writeFile(QDir(packageRoot).filePath(
                          QStringLiteral("visuals/waveform.json")),
-                     R"json({"colors":{"waveform.line":"#ff334455"}})json")
+                     R"json({"colors":{"waveform.rawPeaks.centerLine":"#ff334455"}})json")
         && writeFile(QDir(packageRoot).filePath(QStringLiteral("assets.json")),
                      R"json({"assets":{}})json");
 }
@@ -174,7 +174,7 @@ TEST(ThemeManager, ScalingPreservesNonSpatialThemeValuesAndAutomaticRecipeBounds
     EXPECT_EQ(scaled.ui.typography, base.ui.typography);
     EXPECT_EQ(scaled.ui.parameterPresenters, base.ui.parameterPresenters);
     EXPECT_EQ(scaled.ui.metrics.form.labelColumnShare, base.ui.metrics.form.labelColumnShare);
-    EXPECT_EQ(scaled.ui.metrics.inspector.valueColumnShare, base.ui.metrics.inspector.valueColumnShare);
+    EXPECT_EQ(scaled.ui.metrics.form.valueColumnShare, base.ui.metrics.form.valueColumnShare);
     EXPECT_EQ(scaled.domains.curve.metrics.gridColumnCount, base.domains.curve.metrics.gridColumnCount);
     EXPECT_EQ(scaled.domains.curve.metrics.crosshairDashLength, base.domains.curve.metrics.crosshairDashLength);
     EXPECT_EQ(scaled.domains.curve.metrics.discreteGuideAlpha, base.domains.curve.metrics.discreteGuideAlpha);
@@ -189,10 +189,8 @@ TEST(ThemeManager, ScalingPreservesNonSpatialThemeValuesAndAutomaticRecipeBounds
     EXPECT_EQ(scaled.ui.recipes.entries.first().items.first().maximum, -1);
     EXPECT_EQ(scaled.ui.recipes.entries.first().items.first().preferred, qRound(17 * 1.75));
     EXPECT_EQ(VNX::scaledThemeSnapshot(base, 1.0), base);
-    base.ui.metrics.toggle.height = 5;
-    base.ui.metrics.toggle.thumbPadding = 2;
-    base.ui.metrics.toggle.compactHeight = 5;
-    base.ui.metrics.toggle.compactThumbPadding = 2;
+    base.ui.metrics.controlHeight = 5;
+    base.ui.metrics.control.smallIconExtent = 5;
     base.ui.metrics.borderWidth = 1;
     base.ui.metrics.spacingXSmall = 0;
     auto boundedSlot = recipe.items.first();
@@ -212,7 +210,6 @@ TEST(ThemeManager, ScalingPreservesNonSpatialThemeValuesAndAutomaticRecipeBounds
         EXPECT_GE(toggle.compactWidth, toggle.compactHeight);
         EXPECT_GT(snapshot.ui.metrics.borderWidth, 0);
         EXPECT_EQ(snapshot.ui.metrics.spacingXSmall, 0);
-        EXPECT_LE(snapshot.thirdParty.qtAds.metrics.tabClosePaddingRight, 0);
         const auto& items = snapshot.ui.recipes.entries.first().items;
         EXPECT_EQ(items.first().minimum, -1);
         EXPECT_EQ(items.first().maximum, -1);
@@ -228,14 +225,14 @@ TEST(ThemeManager, UserScaleSurvivesThemeReloadAndColorPreviewTransactions)
     ASSERT_TRUE(writePackage(root.path(), QStringLiteral("scaled"),
         QStringLiteral("theme.scaled"), QStringLiteral("#ff118899"), QStringLiteral("#ff118899")));
     ASSERT_TRUE(writeFile(QDir(root.path()).filePath(QStringLiteral("scaled/tokens.json")),
-        R"json({"fonts":{"body":{"pointSize":13}},"metrics":{"table.rowHeight":48}})json"));
+        R"json({"fonts":{"body":{"pointSize":13}},"metrics":{"control.height":48}})json"));
     VNX::ThemeManager manager(root.path(), memoryStorage());
     const auto restore = qScopeGuard([&] { manager.setUIScale(100); manager.selectTheme(VNX::builtinThemeId()); });
     manager.setUIScale(150);
     for (const auto& id : {QStringLiteral("theme.scaled"), VNX::builtinThemeId(), QStringLiteral("theme.scaled")}) {
         ASSERT_TRUE(manager.selectTheme(id).ok());
         EXPECT_EQ(manager.snapshot()->uiScale, 1.5);
-        EXPECT_EQ(manager.metrics().table.rowHeight, qRound(manager.unscaledSnapshot()->ui.metrics.table.rowHeight * 1.5));
+        EXPECT_EQ(manager.metrics().controlHeight, qRound(manager.unscaledSnapshot()->ui.metrics.controlHeight * 1.5));
         EXPECT_EQ(VNX::FontManager::instance().getFont(manager.snapshot(), VNX::FontRole::Body).pointSizeF(),
                   manager.unscaledSnapshot()->ui.typography.body.pointSize * 1.5);
         const auto before = manager.snapshot();
@@ -255,7 +252,7 @@ TEST(ThemeManager, UserScaleSurvivesThemeReloadAndColorPreviewTransactions)
     manager.cancelAppearancePreview();
     EXPECT_EQ(manager.snapshot()->uiScale, 1.75);
     EXPECT_EQ(manager.snapshot()->ui.colors.accent, committedAccent);
-    EXPECT_EQ(manager.metrics().table.rowHeight, qRound(manager.unscaledSnapshot()->ui.metrics.table.rowHeight * 1.75));
+    EXPECT_EQ(manager.metrics().controlHeight, qRound(manager.unscaledSnapshot()->ui.metrics.controlHeight * 1.75));
 }
 
 TEST(ThemeManager, ReloadDoesNotMutatePreviouslyPublishedSnapshot)
@@ -735,7 +732,8 @@ TEST(ThemeManager, RetiredAndMalformedStoredColorsDoNotBlockValidEditsAcrossThem
     const QString tickKey = QStringLiteral("border.tick");
     const QStringList retiredKeys{QStringLiteral("meter.lufsMomentary"),
         QStringLiteral("meter.lufsShortTerm"), QStringLiteral("meter.lufsIntegrated"),
-        QStringLiteral("knob.indicator")};
+        QStringLiteral("knob.indicator"), QStringLiteral("bus.background"),
+        QStringLiteral("timeline.clipBorder"), QStringLiteral("timeline.clipSelectedBorder")};
     const QColor packageColor(QStringLiteral("#80123456"));
     const QColor builtinColor(QStringLiteral("#906789ab"));
     const QColor privateColor(QStringLiteral("#a0abcdef"));

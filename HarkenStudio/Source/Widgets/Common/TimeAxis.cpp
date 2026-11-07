@@ -214,7 +214,7 @@ void drawTimeAxisRuler(QPainter& painter, const ThemeColors& colors,
     int lastLabelRight = bounds.left();
     for (const auto& tick : ticks.ticks) {
         const int x = bounds.left() + tick.pixel;
-        painter.setPen(colors.borderTick);
+        painter.setPen(timeAxisTickColor(colors.borderTick, tick.major));
         const int tickHeight = tick.major ? geometry.majorTickLength : geometry.minorTickLength;
         painter.drawLine(x, bounds.bottom() + 1 - tickHeight, x, bounds.bottom());
         if (tick.label.isEmpty())
@@ -228,7 +228,7 @@ void drawTimeAxisRuler(QPainter& painter, const ThemeColors& colors,
         if (left >= lastLabelRight + padding && left + textWidth <= bounds.right() - padding) {
             if (pairedLabels && !tick.secondaryLabel.isEmpty()) {
                 painter.setFont(secondaryFont);
-                painter.setPen(colors.textMuted);
+                painter.setPen(colors.textSecondary);
                 painter.drawText(QRect(left, bounds.top(), textWidth, secondaryHeight),
                     Qt::AlignLeft | Qt::AlignVCenter, tick.secondaryLabel);
                 painter.setPen(colors.borderTick);
@@ -244,6 +244,14 @@ void drawTimeAxisRuler(QPainter& painter, const ThemeColors& colors,
         }
     }
     painter.restore();
+}
+
+QColor timeAxisTickColor(const QColor& tick, bool major)
+{
+    QColor color = tick;
+    if (!major)
+        color.setAlphaF(color.alphaF() * 0.5);
+    return color;
 }
 
 void drawTimeAxisGrid(QPainter& painter, const QColor& majorColor,

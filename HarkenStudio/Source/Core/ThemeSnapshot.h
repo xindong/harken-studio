@@ -21,6 +21,27 @@ enum class ThemeColorScheme
     Light
 };
 
+enum class ThemeStateLayer
+{
+    Hover,
+    Pressed,
+    Emphasis,
+    Highlight
+};
+
+inline constexpr int ThemeSoftTintAlpha = 36;
+
+inline QColor themeStateColor(const QColor& base, const QColor& overlay, ThemeStateLayer layer)
+{
+    if (layer == ThemeStateLayer::Highlight)
+        return overlay.lightnessF() > base.lightnessF() ? base.lighter(135) : base.darker(135);
+    const qreal opacity = layer == ThemeStateLayer::Hover ? 0.08
+        : layer == ThemeStateLayer::Pressed ? 0.12 : 0.16;
+    const auto mix = [opacity](qreal from, qreal to) { return from + (to - from) * opacity; };
+    return QColor::fromRgbF(mix(base.redF(), overlay.redF()), mix(base.greenF(), overlay.greenF()),
+                            mix(base.blueF(), overlay.blueF()), base.alphaF());
+}
+
 struct ThemeColors
 {
     QColor accent;
@@ -38,14 +59,10 @@ struct ThemeColors
     QColor borderPrimary;
     QColor borderSecondary;
     QColor borderTick;
-    QColor viewBorder;
-    QColor dropHighlight;
-    QColor dropAccent;
 
     QColor textPrimary;
     QColor textSecondary;
     QColor textTitle;
-    QColor textMuted;
     QColor textDisabled;
 
     QColor success;
@@ -55,23 +72,12 @@ struct ThemeColors
 
     QColor trackBackground;
     QColor trackBackgroundAlt;
-    QColor busBackground;
-    QColor busBackgroundActive;
 
     QColor sliderTrack;
 
     QColor panelBackground;
-    QColor sectionSeparator;
     QColor headerBackground;
 
-    QColor auditionBg;
-    QColor auditionPlayActive;
-    QColor auditionStopActive;
-
-    QColor shellMenuText;
-    QColor shellMenuHoverText;
-    QColor shellButtonText;
-    QColor shellButtonHoverText;
     QColor shellCloseHover;
     QColor shellClosePressed;
 
@@ -80,29 +86,45 @@ struct ThemeColors
         Q_ASSERT(index >= 0);
         return categoricalPalette[static_cast<size_t>(index) % categoricalPalette.size()];
     }
+    QColor stateColor(const QColor& base, ThemeStateLayer layer) const
+    {
+        return themeStateColor(base, textPrimary, layer);
+    }
     bool operator==(const ThemeColors&) const = default;
 };
 
 struct ThemeMetrics
 {
-    int radiusSmall = 0;
-    int radiusMedium = 0;
-    int radiusLarge = 0;
-
+    int spacingCompact = 0;
     int spacingXSmall = 0;
     int spacingSmall = 0;
     int spacingMedium = 0;
     int spacingLarge = 0;
-    int spacingCompact = 0;
     int spacingXLarge = 0;
+
+    int radiusCompact = 0;
+    int radiusSmall = 0;
+    int radiusMedium = 0;
+    int radiusLarge = 0;
+
     int borderWidth = 0;
     int accentBorderWidth = 0;
-    int radiusCompact = 0;
 
     int controlHeight = 0;
-    int sectionHeaderHeight = 0;
-    int navigationChevronExtent = 0;
-    int objectIconExtent = 0;
+    int iconExtent = 0;
+
+    struct Layout {
+        int panelPadding = 0;
+        int sectionGap = 0;
+        int controlGap = 0;
+        int tightGap = 0;
+        int fieldHeight = 0;
+        int rowInset = 0;
+        int rowHeight = 0;
+        int sectionHeaderHeight = 0;
+        int indent = 0;
+        bool operator==(const Layout&) const = default;
+    } layout;
 
     struct Control {
         int compactHeight = 0;
@@ -111,7 +133,6 @@ struct ThemeMetrics
         int largeIconExtent = 0;
         int textPaddingX = 0;
         int textPaddingY = 0;
-        int checkboxExtent = 0;
         int checkboxMarkExtent = 0;
         int scrollbarExtent = 0;
         int canvasScrollbarExtent = 0;
@@ -128,7 +149,6 @@ struct ThemeMetrics
     struct Popup {
         int minimumWidth = 0;
         int maximumHeight = 0;
-        int textPadding = 0;
         int rowPadding = 0;
         int iconColumnWidth = 0;
         int shortcutSpacing = 0;
@@ -262,13 +282,11 @@ struct ThemeMetrics
     } timeAxis;
 
     struct Table {
-        int headerHeight = 0;
         int rowHeight = 0;
         int footerHeight = 0;
         int cellPaddingX = 0;
         int cellPaddingY = 0;
         int buttonWidth = 0;
-        int buttonHeight = 0;
         int buttonSpacing = 0;
         int compactColumnWidth = 0;
         int minimumColumnWidth = 0;
@@ -281,16 +299,9 @@ struct ThemeMetrics
         int sectionSpacing = 0;
         int rowSpacing = 0;
         int columnPadding = 0;
-        int rowHeight = 0;
-        int labelColumnShare = 0;
-        int valueColumnShare = 0;
-        int formLabelWidth = 0;
         int valueColumnWidth = 0;
         int linkSlotWidth = 0;
-        int sourceSlotWidth = 0;
-        int platformSlotWidth = 0;
         int bindingSlotWidth = 0;
-        int slotHeight = 0;
         int slotSpacing = 0;
         int separatorHeight = 0;
         int rangeSeparatorWidth = 0;
@@ -311,7 +322,6 @@ struct ThemeMetrics
         int labelMinimumWidth = 0;
         int valueMinimumWidth = 0;
         int compactValueMinimumWidth = 0;
-        int sliderGrooveThickness = 0;
         int sliderHandleThickness = 0;
         int sliderHandleLength = 0;
         int compactSliderHeight = 0;
@@ -323,23 +333,12 @@ struct ThemeMetrics
         int laneHeaderWidth = 0;
         int laneHeaderMinimumWidth = 0;
         int laneHeight = 0;
-        int blankRowHeight = 0;
-        int laneSpacing = 0;
         int rulerHeight = 0;
-        int markerLaneHeight = 0;
-        int tickLength = 0;
-        int majorTickLength = 0;
         int minLabelSpacing = 0;
         int minTickSpacing = 0;
-        int clipVerticalInset = 0;
-        int clipRadius = 0;
+        int clipBottomInset = 0;
         int clipMinimumWidth = 0;
         int resizeHandleWidth = 0;
-        int markerHitRadius = 0;
-        int statusBarHeight = 0;
-        int compactHeaderWidth = 0;
-        int queueLaneLabelWidth = 0;
-        int headerGripWidth = 0;
         bool operator==(const Timeline&) const = default;
     } timeline;
     bool operator==(const ThemeMetrics&) const = default;
@@ -459,44 +458,10 @@ struct QtPaletteColors
 struct QtAdsStyle
 {
     QColor chromeBackground;
-    QColor inactiveTabText;
-    QColor closeButtonHover;
-    QColor closeButtonPressed;
-    QColor lightHoverOverlay;
 
     qreal activeTabAccentOpacity = 0.0;
     qreal dropOverlayOpacity = 0.0;
 
-    struct Metrics {
-        int borderWidth = 0;
-        int titleBarMinimumHeight = 0;
-        int titleBarButtonPadding = 0;
-        int titleBarButtonRadius = 0;
-        int titleBarIconSize = 0;
-        int closeButtonPadding = 0;
-        int closeButtonExtent = 0;
-        int closeButtonRadius = 0;
-        int tabBarMinimumHeight = 0;
-        int tabAccentBorderWidth = 0;
-        int tabGapWidth = 0;
-        int tabPaddingTop = 0;
-        int tabPaddingHorizontal = 0;
-        int tabPaddingBottom = 0;
-        int tabMinimumHeight = 0;
-        int tabIconSize = 0;
-        int tabCloseMarginTop = 0;
-        int tabClosePaddingRight = 0;
-        int overlayBorderWidth = 0;
-        int splitterHandleExtent = 0;
-        int autoHideTabIconSize = 0;
-        int autoHideTabPaddingLeft = 0;
-        int autoHideTabPaddingRight = 0;
-        int autoHideTabMinimumHeight = 0;
-        int autoHideSideBarSpacing = 0;
-        int autoHideTitleBorderWidth = 0;
-        int autoHideTitlePaddingLeft = 0;
-        bool operator==(const Metrics&) const = default;
-    } metrics;
     bool operator==(const QtAdsStyle&) const = default;
 };
 
@@ -508,11 +473,6 @@ struct ThirdPartyStyles
 
 struct WaveformStyle
 {
-    QColor line;
-    QColor fill;
-    QColor selectionHighlight;
-    QColor cursor;
-    QColor regionMarker;
     QColor trimHandle;
     QColor loopHandle;
 
@@ -671,43 +631,6 @@ struct CurveStyle
 
 struct MeterStyle
 {
-    QColor green;
-    QColor yellow;
-    QColor red;
-    QColor peak;
-    QColor rms;
-    QColor clipOn;
-    QColor clipOff;
-    QColor background;
-
-    QColor oscilloscopeGrid;
-    QColor oscilloscopeGlow;
-    QColor waveformFill;
-    QColor waveformGrid;
-
-    struct Stereo {
-        QColor trailOuter;
-        QColor trailMiddle;
-        QColor trailCore;
-        QColor gridPrimary;
-        QColor gridSecondary;
-        QColor liveGlowWide;
-        QColor liveGlowMedium;
-        QColor liveHighlight;
-        QColor correlationPositive;
-        QColor correlationNegative;
-        bool operator==(const Stereo&) const = default;
-    } stereo;
-
-    struct Layout {
-        QColor dividerHover;
-        QColor dividerDragging;
-        QColor dividerSnapped;
-        QColor dropBorder;
-        QColor dropFill;
-        bool operator==(const Layout&) const = default;
-    } layout;
-
     struct Interaction {
         struct Colors {
             QColor crosshair;
@@ -745,7 +668,6 @@ struct MeterStyle
             QColor holdLine;
             QColor grid;
             QColor tickText;
-            QColor clipBackground;
             QColor clipText;
             QColor label;
             bool operator==(const Colors&) const = default;
@@ -836,7 +758,6 @@ struct MeterStyle
             QColor emptyHistory;
             QColor grid;
             QColor axisText;
-            QColor timeText;
             bool operator==(const Colors&) const = default;
         } colors;
 
@@ -859,23 +780,9 @@ struct MeterStyle
     bool operator==(const MeterStyle&) const = default;
 };
 
-struct FeedbackStyle
-{
-    QColor success;
-    QColor warning;
-    QColor error;
-    QColor info;
-    QColor neutral;
-    QColor overlayBackground;
-    QColor overlayErrorBackground;
-    QColor overlayHighlight;
-    bool operator==(const FeedbackStyle&) const = default;
-};
-
 struct DomainColors
 {
     MeterStyle meter;
-    FeedbackStyle feedback;
     WaveformStyle waveform;
     CurveStyle curve;
 
@@ -900,7 +807,6 @@ struct DomainColors
         QColor bodySelected;
         QColor borderNormal;
         QColor borderHoverMix;
-        QColor dropTarget;
 
         QColor shadow;
 
@@ -911,7 +817,6 @@ struct DomainColors
         QColor sandboxBadgeBg;
         QColor sandboxBadgeText;
         QColor badgeOverride;
-        QColor badgeChild;
         QColor badgeReceive;
 
         QColor waveformBg;
@@ -928,9 +833,7 @@ struct DomainColors
         QColor placementChain;
         QColor organizationChain;
         QColor containment;
-        QColor busRoute;
         QColor send;
-        QColor overrideRoute;
         bool operator==(const Blueprint&) const = default;
     } blueprint;
 
@@ -940,10 +843,7 @@ struct DomainColors
         QColor transition;
         QColor clip;
         QColor clipSelected;
-        QColor clipBorder;
-        QColor clipSelectedBorder;
         QColor clipText;
-        QColor badge;
         QColor emergenceMarker;
         QColor unavailableOverlay;
         QColor unavailableText;
@@ -952,13 +852,9 @@ struct DomainColors
     } timeline;
 
     struct Music {
-        static constexpr int kTrackColorCount = 12;
-        std::array<QColor, kTrackColorCount> trackColors;
-
         QColor beatGridMajor;
         QColor beatGridMinor;
         QColor cursor;
-        QColor loopRegion;
         bool operator==(const Music&) const = default;
     } music;
 
@@ -971,91 +867,11 @@ struct DomainColors
         bool operator==(const Log&) const = default;
     } log;
 
-    struct Monitor {
-        QColor stateStolen;
-        QColor statePlaying;
-        QColor stateStarting;
-        QColor stateVirtual;
-        QColor stateReleasing;
-        QColor stateStopping;
-        QColor statePaused;
-        QColor stateDefault;
-
-        QColor virtualDim;
-        QColor mutedText;
-        QColor lowVolume;
-        QColor busIdText;
-
-        QColor peakClip;
-        QColor peakCaution;
-        QColor peakSafe;
-
-        QColor pitchHigh;
-        QColor pitchLow;
-
-        QColor cpuCritical;
-        QColor cpuWarning;
-        QColor cpuSafe;
-        QColor bufferWarning;
-        QColor bufferNormal;
-
-        QColor underrunFlash;
-        QColor underrunIdle;
-        QColor underrunNone;
-
-        QColor spatialGainHigh;
-        QColor spatialGainLow;
-        QColor spatialLpf;
-        QColor spatialWidth;
-        QColor spatialDistance;
-        QColor spatialReverb;
-        QColor spatialDopplerHi;
-        QColor spatialDopplerLo;
-        QColor spatialDot;
-        bool operator==(const Monitor&) const = default;
-    } monitor;
-
     struct AI {
         QColor brandAccent;
-        QColor userAccent;
         bool operator==(const AI&) const = default;
     } ai;
 
-    struct Scene3D {
-        QColor listener;
-        QColor listenerCone;
-        QColor room;
-        QColor emitterMin;
-        QColor emitterMax;
-        QColor hudBackground;
-        QColor hudTitle;
-        QColor hudLabel;
-        QColor hudGain;
-        QColor hudGainLow;
-        QColor hudLpf;
-        QColor hudWidth;
-        QColor dopplerIdle;
-        bool operator==(const Scene3D&) const = default;
-    } scene3d;
-
-    struct Spatial {
-        QColor background;
-        QColor grid;
-        QColor axis;
-        QColor axisLabel;
-        QColor tangentLine;
-        QColor tangentHover;
-        QColor tangentActive;
-        QColor pointSelected;
-        QColor previewMarker;
-        QColor infoText;
-        QColor legendBg;
-        QColor layerVolume;
-        QColor layerLpf;
-        QColor layerWidth;
-        QColor layerReverb;
-        bool operator==(const Spatial&) const = default;
-    } spatial;
     bool operator==(const DomainColors&) const = default;
 };
 

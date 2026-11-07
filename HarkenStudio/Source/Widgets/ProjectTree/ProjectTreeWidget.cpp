@@ -345,9 +345,9 @@ void ProjectTreeWidget::drawRow(QPainter* painter, const QStyleOptionViewItem& o
         painter->save();
         painter->setCompositionMode(QPainter::CompositionMode_SourceOver);
         const auto& colors = ThemeManager::instance().colors();
-        painter->fillRect(option.rect, colors.dropHighlight);
+        painter->fillRect(option.rect, colors.bgSelected);
         painter->fillRect(QRect(option.rect.left(), option.rect.top(), VNX::ThemeManager::instance().metrics().accentBorderWidth, option.rect.height()),
-                          colors.dropAccent);
+                          colors.accent);
         painter->restore();
     }
 }

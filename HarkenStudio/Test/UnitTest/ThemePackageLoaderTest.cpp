@@ -301,11 +301,11 @@ TEST(ThemePackageLoader, RejectsSymbolicLinkEscapeWhenSupported)
     ASSERT_TRUE(writeFile(QDir(packageRoot).filePath(QStringLiteral("tokens.json")),
         R"json({"colors":{"accent.primary":"#ff00f0ff"},"metrics":{"spacing.medium":12}})json"));
     ASSERT_TRUE(writeFile(QDir(packageRoot).filePath(QStringLiteral("visuals/curve.json")),
-        R"json({"colors":{"curve.line":"#ff112233"},"metrics":{"curve.lineWidth":2}})json"));
+        R"json({"colors":{"curve.attenuationVolume":"#ff112233"},"metrics":{"curve.discreteGuideAlpha":90}})json"));
     ASSERT_TRUE(writeFile(QDir(packageRoot).filePath(QStringLiteral("visuals/meter.json")),
-        R"json({"colors":{"meter.green":"#ff22aa44","meter.spectrogram.emptyHistory":"#ff102030"},"metrics":{"meter.spectrogram.plotInsetLeft":42}})json"));
+        R"json({"colors":{"meter.spectrum.fillTop":"#ff22aa44","meter.spectrogram.emptyHistory":"#ff102030"},"metrics":{"meter.spectrum.fillTopStop":0.1}})json"));
     ASSERT_TRUE(writeFile(QDir(packageRoot).filePath(QStringLiteral("visuals/waveform.json")),
-        R"json({"colors":{"waveform.line":"#ff334455"}})json"));
+        R"json({"colors":{"waveform.rawPeaks.centerLine":"#ff334455"}})json"));
     ASSERT_TRUE(writeFile(QDir(packageRoot).filePath(QStringLiteral("assets.json")),
         R"json({"assets":{}})json"));
     const QString outsideTokens = QDir(outside.path()).filePath(
@@ -404,11 +404,11 @@ TEST(ThemePackageLoader, InheritedPalettesReceiveRoleAndFixedColorOverridesIndep
     EXPECT_NE(parent.candidate->snapshot->ui.colors.textPrimary, QColor("#ddeeff"));
 }
 
-TEST(ThemePackageLoader, RejectsUnknownAndAliasedDuplicateBindingTargets)
+TEST(ThemePackageLoader, RejectsUnknownAndDuplicateBindingTargets)
 {
     const QList<QJsonArray> bindings{
         QJsonArray{QJsonObject{{QStringLiteral("target"), QStringLiteral("custom.missing")}}},
-        QJsonArray{QJsonObject{{QStringLiteral("target"), QStringLiteral("curve.line")}},
+        QJsonArray{QJsonObject{{QStringLiteral("target"), QStringLiteral("curve.attenuationVolume")}},
                    QJsonObject{{QStringLiteral("target"), QStringLiteral("curve.attenuationVolume")}}}};
     for (const auto& targets : bindings) {
         QTemporaryDir root;

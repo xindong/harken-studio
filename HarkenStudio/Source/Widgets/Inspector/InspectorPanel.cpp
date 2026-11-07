@@ -405,7 +405,7 @@ void InspectorPanelPrivate::setupUI()
 
     QWidget* searchContainer = new QWidget();
     QHBoxLayout* searchLayout = new QHBoxLayout(searchContainer);
-    ThemeLayout::margins(searchLayout, ThemeLayout::Space::Small);
+    ThemeLayout::margins(searchLayout, ThemeLayout::Space::Panel);
 
     searchBox_ = new SearchField();
     searchBox_->setPlaceholderText(q_ptr->tr("Search properties..."));

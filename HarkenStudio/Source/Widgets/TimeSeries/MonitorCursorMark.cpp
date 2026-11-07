@@ -45,17 +45,17 @@ MonitorCursorUncertaintyKind MonitorCursorMark::displayedUncertainty() const
 QColor MonitorCursorMark::uncertaintyColor() const
 {
     const auto snapshot = ThemeManager::instance().snapshot();
-    const auto& monitor = snapshot->domains.monitor;
+    const auto& colors = snapshot->ui.colors;
     switch (displayedUncertainty())
     {
     case MonitorCursorUncertaintyKind::Exact:
-        return monitor.cpuSafe;
+        return colors.success;
     case MonitorCursorUncertaintyKind::Estimate:
-        return monitor.cpuWarning;
+        return colors.warning;
     case MonitorCursorUncertaintyKind::Unknown:
-        return monitor.underrunNone;
+        return colors.textSecondary;
     }
-    return monitor.underrunNone;
+    return colors.textSecondary;
 }
 
 bool MonitorCursorMark::showsLine() const

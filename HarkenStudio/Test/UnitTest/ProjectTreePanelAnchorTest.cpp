@@ -165,7 +165,7 @@ TEST_F(ProjectTreePanelAnchorTest, RefreshedPresentationMatchesFreshRowsAcrossAu
                       fresh.font(0).resolve(explorer.treeWidget()->font()));
             EXPECT_EQ(row->toolTip(0), fresh.toolTip(0));
             EXPECT_EQ(row->data(0, Qt::ForegroundRole), fresh.data(0, Qt::ForegroundRole));
-            const int extent = theme.metrics().objectIconExtent;
+            const int extent = theme.metrics().iconExtent;
             for (const auto mode : {QIcon::Normal, QIcon::Disabled, QIcon::Selected}) {
                 for (const auto state : {QIcon::Off, QIcon::On}) {
                     for (const qreal scale : {1.0, 2.0}) {
@@ -448,7 +448,7 @@ TEST_F(ProjectTreePanelAnchorTest, CollapsedBucketsPreserveAccessibleChildAndSib
             } else {
                 tree->scrollToItem(bucket);
                 const QRect rect = tree->visualItemRect(bucket);
-                const int caretExtent = ThemeManager::instance().metrics().navigationChevronExtent;
+                const int caretExtent = ThemeManager::instance().metrics().iconExtent;
                 const QPoint local(input == 0 ? rect.right() - caretExtent / 2
                                                : rect.left() + rect.width() / 2,
                                    rect.center().y());

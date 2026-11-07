@@ -11,7 +11,7 @@ MonitorSessionComparePanel::MonitorSessionComparePanel(QWidget* parent)
 {
     setObjectName(QStringLiteral("MonitorSessionComparePanel"));
     auto* root = new QVBoxLayout(this);
-    ThemeLayout::margins(root, ThemeLayout::Space::Small);
+    ThemeLayout::margins(root, ThemeLayout::Space::Panel);
     pickerLabel_ = new QLabel(this);
     pickerLabel_->setObjectName(QStringLiteral("MonitorSessionComparePicker"));
     pickerLabel_->setWordWrap(true);

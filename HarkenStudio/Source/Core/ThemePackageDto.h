@@ -55,11 +55,7 @@ struct ThemeVisualEntriesDto
     std::optional<QString> timeline;
     std::optional<QString> music;
     std::optional<QString> log;
-    std::optional<QString> monitor;
     std::optional<QString> ai;
-    std::optional<QString> scene3d;
-    std::optional<QString> spatial;
-    std::optional<QString> feedback;
 };
 
 struct ThemePackageEntriesDto

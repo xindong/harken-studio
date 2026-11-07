@@ -193,8 +193,8 @@ ColorEditorDialog::ColorEditorDialog(const QColor& color, QWidget* parent)
     scroll->setWidget(content);
     outer->addWidget(scroll);
     auto* layout = new QVBoxLayout(content);
-    ThemeLayout::margins(layout, ThemeLayout::Space::Large);
-    ThemeLayout::spacing(layout, ThemeLayout::Space::Medium);
+    ThemeLayout::margins(layout, ThemeLayout::Space::Panel);
+    ThemeLayout::spacing(layout, ThemeLayout::Space::Section);
     picker_ = new ColorPicker(this);
     picker_->changed = [this](qreal hue, qreal saturation, qreal value) {
         hue_ = hue;
@@ -205,8 +205,8 @@ ColorEditorDialog::ColorEditorDialog(const QColor& color, QWidget* parent)
     layout->addWidget(picker_, 1);
 
     auto* values = new QGridLayout();
-    ThemeLayout::horizontalSpacing(values, ThemeLayout::Space::Small);
-    ThemeLayout::verticalSpacing(values, ThemeLayout::Space::Small);
+    ThemeLayout::horizontalSpacing(values, ThemeLayout::Space::Section);
+    ThemeLayout::verticalSpacing(values, ThemeLayout::Space::Section);
     const std::array<const char*, 6> labels{"H", "S", "V", "R", "G", "B"};
     const std::array<const char*, 6> names{"colorHue", "colorSaturation", "colorValue",
                                          "colorRed", "colorGreen", "colorBlue"};
@@ -271,7 +271,7 @@ ColorEditorDialog::ColorEditorDialog(const QColor& color, QWidget* parent)
     screenPick->setProperty("flatIconButton", true);
     screenPick->setProperty("iconButtonBackground", true);
     ThemeManager::instance().bindMetrics(screenPick, [screenPick](const ThemeMetrics& metrics) {
-        screenPick->setIconSize(QSize(metrics.objectIconExtent, metrics.objectIconExtent));
+        screenPick->setIconSize(QSize(metrics.iconExtent, metrics.iconExtent));
     });
     const auto refreshIcon = [screenPick] {
         auto& theme = ThemeManager::instance();

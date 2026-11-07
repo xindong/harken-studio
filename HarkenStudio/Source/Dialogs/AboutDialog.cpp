@@ -95,7 +95,7 @@ AboutDialog::AboutDialog(QWidget* parent, bool showDeveloperInformation)
     scroll->setWidget(content_);
     outer->addWidget(scroll);
     auto* root = new QVBoxLayout(content_);
-    ThemeLayout::margins(root, ThemeLayout::Space::XLarge);
+    ThemeLayout::margins(root, ThemeLayout::Space::Panel);
     root->setSpacing(0);
 
     auto* logo = new QLabel(this);
@@ -115,21 +115,21 @@ AboutDialog::AboutDialog(QWidget* parent, bool showDeveloperInformation)
         }
     });
     root->addWidget(logo);
-    ThemeLayout::addSpacing(root, ThemeLayout::Space::Medium);
+    ThemeLayout::addSpacing(root, ThemeLayout::Space::Section);
 
     auto* tagline = new QLabel(
         tr("Professional Audio Middleware Editor"), this);
     tagline->setObjectName(QStringLiteral("aboutTagline"));
     tagline->setWordWrap(true);
     root->addWidget(tagline);
-    ThemeLayout::addSpacing(root, ThemeLayout::Space::XLarge);
+    ThemeLayout::addSpacing(root, ThemeLayout::Space::Section);
 
     auto* summary = new QFrame(this);
     summary->setObjectName(QStringLiteral("aboutSummary"));
     auto* summaryLayout = new QGridLayout(summary);
-    ThemeLayout::margins(summaryLayout, ThemeLayout::Space::Large, ThemeLayout::Space::Medium, ThemeLayout::Space::Large, ThemeLayout::Space::Medium);
-    ThemeLayout::horizontalSpacing(summaryLayout, ThemeLayout::Space::XLarge);
-    ThemeLayout::verticalSpacing(summaryLayout, ThemeLayout::Space::Small);
+    ThemeLayout::margins(summaryLayout, ThemeLayout::Space::Panel, ThemeLayout::Space::Panel, ThemeLayout::Space::Panel, ThemeLayout::Space::Panel);
+    ThemeLayout::horizontalSpacing(summaryLayout, ThemeLayout::Space::Section);
+    ThemeLayout::verticalSpacing(summaryLayout, ThemeLayout::Space::Section);
     summaryLayout->setColumnStretch(0, 1);
     summaryLayout->setColumnStretch(3, 1);
     addSummaryRow(summaryLayout, 0, tr("Version"), currentVersion,
@@ -139,12 +139,12 @@ AboutDialog::AboutDialog(QWidget* parent, bool showDeveloperInformation)
     root->addWidget(summary);
 
     if (showDeveloperInformation) {
-        ThemeLayout::addSpacing(root, ThemeLayout::Space::XLarge);
+        ThemeLayout::addSpacing(root, ThemeLayout::Space::Section);
 
         auto* sectionTitle = new QLabel(tr("Developer Information"), this);
         sectionTitle->setObjectName(QStringLiteral("aboutDeveloperTitle"));
         root->addWidget(sectionTitle);
-        ThemeLayout::addSpacing(root, ThemeLayout::Space::Small);
+        ThemeLayout::addSpacing(root, ThemeLayout::Space::Section);
 
         QStringList diagnostics{
             tr("Build ID: %1").arg(buildInfoString(Harken::BuildInfo::BuildId)),

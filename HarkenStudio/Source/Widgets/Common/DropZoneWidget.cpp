@@ -35,7 +35,7 @@ DropZoneWidget::~DropZoneWidget() = default;
 void DropZoneWidget::setupUI()
 {
     QVBoxLayout* layout = new QVBoxLayout(this);
-    ThemeLayout::margins(layout, ThemeLayout::Space::Small);
+    ThemeLayout::margins(layout, ThemeLayout::Space::Panel);
 
     emptyLabel_ = new QLabel(emptyText_);
     emptyLabel_->setObjectName(QStringLiteral("dropZoneEmptyLabel"));

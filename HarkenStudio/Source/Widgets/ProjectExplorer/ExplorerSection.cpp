@@ -60,7 +60,7 @@ ExplorerSection::ExplorerSection(const QString& title, QWidget* parent)
         emit headerContextMenuRequested(header_->mapToGlobal(position));
     });
     auto* headerLayout = new QHBoxLayout(header_);
-    ThemeLayout::margins(headerLayout, ThemeLayout::Space::None, ThemeLayout::Space::Compact, ThemeLayout::Space::None, ThemeLayout::Space::Compact);
+    ThemeLayout::margins(headerLayout, ThemeLayout::Space::None, ThemeLayout::Space::Tight, ThemeLayout::Space::None, ThemeLayout::Space::Tight);
     headerLayout->setSpacing(0);
     toggle_ = new ExplorerSectionToggle(header_);
     toggle_->setProperty("explorerRole", "sectionToggle");
@@ -69,6 +69,7 @@ ExplorerSection::ExplorerSection(const QString& title, QWidget* parent)
     toggle_->setAccessibleName(title);
     toggle_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     toggle_->setCheckable(true);
+    toggle_->setCursor(Qt::PointingHandCursor);
     toggle_->setChecked(true);
     toggle_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     headerLayout->addWidget(toggle_, 1);
@@ -103,10 +104,10 @@ void ExplorerSection::setExpanded(bool expanded)
 void ExplorerSection::updateHeader()
 {
     auto& theme = ThemeManager::instance();
-    const int height = qMax(theme.metrics().sectionHeaderHeight,
-                           toggle_->fontMetrics().height() + theme.metrics().spacingSmall);
+    const auto& layout = theme.metrics().layout;
+    const int height = qMax(layout.sectionHeaderHeight, toggle_->fontMetrics().height() + layout.rowInset * 2);
     header_->setFixedHeight(height);
-    const int extent = theme.metrics().navigationChevronExtent;
+    const int extent = theme.metrics().iconExtent;
     toggle_->setIconSize(QSize(extent, extent));
     toggle_->setIcon(theme.resolveIcon(QString::fromLatin1(isExpanded()
         ? ThemeAssetIds::NavigationChevronDown : ThemeAssetIds::NavigationChevronRight)).icon);

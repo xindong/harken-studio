@@ -59,7 +59,7 @@ void TemplateChooserWidget::buildUi()
 {
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
-    ThemeLayout::spacing(root, ThemeLayout::Space::Large);
+    ThemeLayout::spacing(root, ThemeLayout::Space::Section);
 
     {
         auto* row = new DialogFormLayout();
@@ -82,7 +82,7 @@ void TemplateChooserWidget::buildUi()
 
         cardsGrid_ = new QGridLayout(cardsContainer_);
         cardsGrid_->setContentsMargins(0, 0, 0, 0);
-        ThemeLayout::spacing(cardsGrid_, ThemeLayout::Space::Small);
+        ThemeLayout::spacing(cardsGrid_, ThemeLayout::Space::Section);
         cardsGrid_->setSizeConstraint(QLayout::SetMinimumSize);
 
         templateGroup_ = new QButtonGroup(this);
@@ -114,7 +114,7 @@ void TemplateChooserWidget::buildUi()
         previewPage_ = new QWidget(previewStack_);
         auto* prevLayout = new QHBoxLayout(previewPage_);
         prevLayout->setContentsMargins(0, 0, 0, 0);
-        ThemeLayout::spacing(prevLayout, ThemeLayout::Space::Small);
+        ThemeLayout::spacing(prevLayout, ThemeLayout::Space::Section);
 
         auto makeColumn = [&](const QString& header) {
             auto* col = new QTreeWidget(previewPage_);
@@ -134,7 +134,7 @@ void TemplateChooserWidget::buildUi()
         errorPage_ = new QWidget(previewStack_);
         auto* errLayout = new QVBoxLayout(errorPage_);
         errLayout->setContentsMargins(0, 0, 0, 0);
-        ThemeLayout::spacing(errLayout, ThemeLayout::Space::Small);
+        ThemeLayout::spacing(errLayout, ThemeLayout::Space::Section);
         errorSummary_ = new QLabel(errorPage_);
         errorSummary_->setProperty("templateRole", QStringLiteral("error"));
         errorSummary_->setWordWrap(true);
@@ -181,8 +181,8 @@ QPushButton* TemplateChooserWidget::makeCard(const QString& text,
     btn->setCheckable(true);
 
     auto* layout = new QVBoxLayout(btn);
-    ThemeLayout::margins(layout, ThemeLayout::Space::Medium, ThemeLayout::Space::Small, ThemeLayout::Space::Medium, ThemeLayout::Space::Small);
-    ThemeLayout::spacing(layout, ThemeLayout::Space::Compact);
+    ThemeLayout::margins(layout, ThemeLayout::Space::Panel, ThemeLayout::Space::Panel, ThemeLayout::Space::Panel, ThemeLayout::Space::Panel);
+    ThemeLayout::spacing(layout, ThemeLayout::Space::Tight);
 
     auto* nameLbl = new QLabel(text, btn);
     nameLbl->setAlignment(Qt::AlignCenter);

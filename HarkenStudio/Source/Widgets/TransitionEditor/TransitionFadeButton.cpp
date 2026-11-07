@@ -134,11 +134,11 @@ TransitionFadePopup::TransitionFadePopup(const QString& title,
     QtControlSkin::setSemanticProperty(this, "surfaceRole", QStringLiteral("secondary"));
 
     auto* layout = new QVBoxLayout(this);
-    ThemeLayout::margins(layout, ThemeLayout::Space::Small);
-    ThemeLayout::spacing(layout, ThemeLayout::Space::Small);
+    ThemeLayout::margins(layout, ThemeLayout::Space::Panel);
+    ThemeLayout::spacing(layout, ThemeLayout::Space::Section);
 
     auto* titleRow = new QHBoxLayout();
-    ThemeLayout::spacing(titleRow, ThemeLayout::Space::Small);
+    ThemeLayout::spacing(titleRow, ThemeLayout::Space::Section);
     auto* caption = new QLabel(title, this);
     caption->setObjectName(QStringLiteral("transitionFadeTitle"));
     QtControlSkin::setSemanticProperty(caption, "textRole", QStringLiteral("formLabel"));

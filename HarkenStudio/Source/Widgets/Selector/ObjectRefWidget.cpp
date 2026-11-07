@@ -57,7 +57,7 @@ ObjectRefWidget::ObjectRefWidget(QWidget* parent)
     pickButton_->setIcon(theme.resolveIcon(
         QString::fromLatin1(ThemeAssetIds::SelectorTarget)).icon);
     ThemeManager::instance().bindMetrics(pickButton_, [this](const ThemeMetrics& metrics) {
-        pickButton_->setIconSize(QSize(metrics.objectIconExtent, metrics.objectIconExtent));
+        pickButton_->setIconSize(QSize(metrics.iconExtent, metrics.iconExtent));
     });
     pickButton_->setAutoRaise(true);
     ThemeManager::instance().bindMetrics(pickButton_, [this](const ThemeMetrics& metrics) {
@@ -372,7 +372,7 @@ void ObjectRefWidget::refreshToolTip()
 
 void ObjectRefWidget::refreshMetrics()
 {
-    const int extent = ThemeManager::instance().metrics().objectIconExtent;
+    const int extent = ThemeManager::instance().metrics().iconExtent;
     iconLabel_->setFixedSize(extent, extent);
     refreshLayout();
 }
@@ -386,7 +386,7 @@ void ObjectRefWidget::refreshLayout()
 {
     auto* h = static_cast<QHBoxLayout*>(layout());
     const auto& metrics = ThemeManager::instance().metrics();
-    h->setSpacing(compact_ ? metrics.spacingXSmall : metrics.spacingSmall);
+    h->setSpacing(metrics.layout.controlGap);
     const int left = compact_ ? metrics.spacingXSmall : metrics.spacingSmall;
     const int right = compact_ ? metrics.spacingSmall : metrics.spacingXSmall;
     const int buttonWidth = pickButton_->isHidden() ? 0 : pickButton_->width();

@@ -85,11 +85,11 @@ StartupLoadingWindow::StartupLoadingWindow()
     layout->addWidget(content);
 
     auto* contentLayout = new QVBoxLayout(content);
-    ThemeLayout::margins(contentLayout, ThemeLayout::Space::XLarge, ThemeLayout::Space::Small, ThemeLayout::Space::XLarge, ThemeLayout::Space::Small);
+    ThemeLayout::margins(contentLayout, ThemeLayout::Space::Panel, ThemeLayout::Space::Panel, ThemeLayout::Space::Panel, ThemeLayout::Space::Panel);
     contentLayout->setSpacing(0);
 
     auto* projectRow = new QHBoxLayout();
-    ThemeLayout::spacing(projectRow, ThemeLayout::Space::Medium);
+    ThemeLayout::spacing(projectRow, ThemeLayout::Space::Section);
     projectLabel_ = new ElidedLabel(tr("No project selected"), content);
     projectLabel_->setObjectName(QStringLiteral("startupLoadingProject"));
     projectLabel_->setTextInteractionFlags(Qt::NoTextInteraction);
@@ -102,16 +102,16 @@ StartupLoadingWindow::StartupLoadingWindow()
     percentLabel_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     projectRow->addWidget(percentLabel_);
     contentLayout->addLayout(projectRow);
-    ThemeLayout::addSpacing(contentLayout, ThemeLayout::Space::Compact);
+    ThemeLayout::addSpacing(contentLayout, ThemeLayout::Space::Tight);
 
     auto* statusRow = new QHBoxLayout();
-    ThemeLayout::spacing(statusRow, ThemeLayout::Space::Medium);
+    ThemeLayout::spacing(statusRow, ThemeLayout::Space::Section);
     statusLabel_ = new ElidedLabel(content);
     statusLabel_->setObjectName(QStringLiteral("startupLoadingStatus"));
     statusLabel_->setAccessibleName(tr("Startup status"));
     statusRow->addWidget(statusLabel_, 1);
     contentLayout->addLayout(statusRow);
-    ThemeLayout::addSpacing(contentLayout, ThemeLayout::Space::XSmall);
+    ThemeLayout::addSpacing(contentLayout, ThemeLayout::Space::Control);
 
     progressBar_ = new QProgressBar(content);
     progressBar_->setObjectName(QStringLiteral("startupLoadingProgress"));
@@ -120,28 +120,27 @@ StartupLoadingWindow::StartupLoadingWindow()
     progressBar_->setAccessibleName(tr("Startup progress"));
     contentLayout->addWidget(progressBar_);
 
-    ThemeLayout::addSpacing(contentLayout, ThemeLayout::Space::XSmall);
+    ThemeLayout::addSpacing(contentLayout, ThemeLayout::Space::Control);
     auto* version = new QLabel(versionString(), content);
     version->setObjectName(QStringLiteral("startupLoadingVersion"));
     version->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     contentLayout->addWidget(version);
 
     auto& theme = ThemeManager::instance();
-    const auto& metrics = theme.snapshot()->thirdParty.qtAds.metrics;
+    const auto& metrics = theme.snapshot()->ui.metrics;
     closeButton_ = new QToolButton(this);
     closeButton_->setAttribute(Qt::WA_NativeWindow);
     closeButton_->setObjectName(QStringLiteral("startupLoadingCloseButton"));
     closeButton_->setProperty("flatIconButton", true);
     closeButton_->setIcon(theme.resolveIcon(
         QString::fromLatin1(ThemeAssetIds::DockClose)).icon);
-    closeButton_->setIconSize(QSize(metrics.titleBarIconSize, metrics.titleBarIconSize));
-    const int buttonExtent = metrics.closeButtonExtent + metrics.closeButtonPadding * 2;
+    closeButton_->setIconSize(QSize(metrics.iconExtent, metrics.iconExtent));
+    const int buttonExtent = metrics.control.largeIconExtent;
     closeButton_->setFixedSize(buttonExtent, buttonExtent);
     closeButton_->setToolTip(tr("Close"));
     closeButton_->setAccessibleName(tr("Close Harken Studio"));
     closeButton_->setFocusPolicy(Qt::NoFocus);
-    closeButton_->move(width() - buttonExtent - metrics.titleBarButtonPadding,
-                       metrics.titleBarButtonPadding);
+    closeButton_->move(width() - buttonExtent - metrics.spacingCompact, metrics.spacingCompact);
     closeButton_->raise();
     connect(closeButton_, &QToolButton::clicked, this, &QWidget::close);
 
@@ -341,12 +340,11 @@ void StartupLoadingWindow::updatePresentationGeometry()
     topography_->setFixedHeight(qMax(0, bounded.height() - contentHeight));
     setFixedSize(bounded);
     layout()->activate();
-    const auto& chrome = theme.thirdParty.qtAds.metrics;
-    const int buttonExtent = chrome.closeButtonExtent + chrome.closeButtonPadding * 2;
+    const auto& chrome = theme.ui.metrics;
+    const int buttonExtent = chrome.control.largeIconExtent;
     closeButton_->setFixedSize(buttonExtent, buttonExtent);
-    closeButton_->setIconSize(QSize(chrome.titleBarIconSize, chrome.titleBarIconSize));
-    closeButton_->move(width() - buttonExtent - chrome.titleBarButtonPadding,
-                       chrome.titleBarButtonPadding);
+    closeButton_->setIconSize(QSize(chrome.iconExtent, chrome.iconExtent));
+    closeButton_->move(width() - buttonExtent - chrome.spacingCompact, chrome.spacingCompact);
 }
 
 }

@@ -41,8 +41,8 @@ RemoteConnectPanel::RemoteConnectPanel(HarkenEditor::Bridge::RemoteConnection* c
     });
 
     auto* root = new QVBoxLayout(this);
-    ThemeLayout::margins(root, ThemeLayout::Space::Large);
-    ThemeLayout::spacing(root, ThemeLayout::Space::Medium);
+    ThemeLayout::margins(root, ThemeLayout::Space::Panel);
+    ThemeLayout::spacing(root, ThemeLayout::Space::Section);
     auto* table = new TableWidget(TableOptions::display(), this);
     targets_ = table->createItemView(QStringLiteral("remoteTargets"),
         {tr("Application"), tr("Machine / PID"), tr("Address"),
@@ -68,7 +68,7 @@ RemoteConnectPanel::RemoteConnectPanel(HarkenEditor::Bridge::RemoteConnection* c
     root->addWidget(table, 1);
 
     auto* connectionRow = new QHBoxLayout();
-    ThemeLayout::spacing(connectionRow, ThemeLayout::Space::Small);
+    ThemeLayout::spacing(connectionRow, ThemeLayout::Space::Section);
     status_ = new QLabel(this);
     status_->setObjectName(QStringLiteral("remoteConnectionStatus"));
     status_->setWordWrap(true);
@@ -176,8 +176,8 @@ void RemoteConnectPanel::openManualConnection()
         dialog.setMinimumWidth(metrics.dialog.compactWidth);
     });
     auto* layout = new QVBoxLayout(&dialog);
-    ThemeLayout::margins(layout, ThemeLayout::Space::Large);
-    ThemeLayout::spacing(layout, ThemeLayout::Space::Medium);
+    ThemeLayout::margins(layout, ThemeLayout::Space::Panel);
+    ThemeLayout::spacing(layout, ThemeLayout::Space::Section);
     auto* form = new DialogFormLayout();
     auto* address = new QLineEdit(&dialog);
     address->setObjectName(QStringLiteral("remoteAddress"));

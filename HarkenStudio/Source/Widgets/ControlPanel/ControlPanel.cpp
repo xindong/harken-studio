@@ -142,8 +142,8 @@ void ControlPanel::setupUI()
     setAttribute(Qt::WA_StyledBackground);
 
     auto* root = new QGridLayout(this);
-    VNX::ThemeLayout::margins(root, VNX::ThemeLayout::Space::Small);
-    VNX::ThemeLayout::horizontalSpacing(root, VNX::ThemeLayout::Space::Large);
+    VNX::ThemeLayout::margins(root, VNX::ThemeLayout::Space::Panel);
+    VNX::ThemeLayout::horizontalSpacing(root, VNX::ThemeLayout::Space::Section);
     root->setColumnStretch(0, 1);
     root->setColumnStretch(1, 1);
 

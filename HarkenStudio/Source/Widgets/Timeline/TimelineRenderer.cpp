@@ -80,11 +80,9 @@ void drawLaneRects(QPainter& painter,
         QColor fill = lane.alternate ? style.trackBackgroundAlt
                                      : style.trackBackground;
         if (lane.selected)
-            fill = style.metrics.timeline.laneHeight > 0
-                ? (style.canvasBackground.isValid() ? fill.lighter(108) : fill)
-                : fill;
+            fill = themeStateColor(fill, style.textPrimary, ThemeStateLayer::Hover);
         if (lane.highlighted)
-            fill = fill.lighter(118);
+            fill = themeStateColor(fill, style.textPrimary, ThemeStateLayer::Emphasis);
         painter.fillRect(lane.rect, fill);
         if (lane.selected)
             painter.fillRect(lane.rect, withOpacity(style.accent.isValid()
@@ -131,8 +129,8 @@ void drawSemanticBands(QPainter& painter,
 {
     const auto& timeline = style.timeline;
     const QColor veil = timeline.outOfSpanVeil;
-    const QColor veilLabel = style.textMuted.isValid()
-        ? style.textMuted
+    const QColor veilLabel = style.placeholderText.isValid()
+        ? style.placeholderText
         : timeline.unavailableText;
     for (const TimelineSemanticBand& band : data.semanticBands) {
         switch (band.kind) {
@@ -359,10 +357,11 @@ void drawMarkerHandle(QPainter& painter, const TimelineMarker& marker, const QCo
 }
 
 void drawMarker(QPainter& painter, const TimelineMarker& marker, const QColor& color,
-                const QColor& grooveColor, const ThemeMetrics& metrics)
+                const QColor& grooveColor, const QColor& stateOverlay, const ThemeMetrics& metrics)
 {
     painter.save();
-    const QColor handleColor = marker.selected || marker.hovered ? color.lighter(130) : color;
+    const QColor handleColor = marker.selected || marker.hovered
+        ? themeStateColor(color, stateOverlay, ThemeStateLayer::Highlight) : color;
     painter.setRenderHint(QPainter::Antialiasing, false);
     if (marker.kind == MarkerKind::Entry || marker.kind == MarkerKind::Exit) {
         painter.setPen(QPen(handleColor, marker.selected || marker.hovered ? 2 : 1));
@@ -396,7 +395,8 @@ void drawMarkers(QPainter& painter,
               const TimelineRenderData& data)
 {
     for (const TimelineMarker& marker : data.markers)
-        drawMarker(painter, marker, markerColor(style, marker), style.canvasBackground, style.metrics);
+        drawMarker(painter, marker, markerColor(style, marker), style.canvasBackground, style.textPrimary,
+                   style.metrics);
 }
 
 void drawPlaceholder(QPainter& painter,
@@ -436,7 +436,8 @@ void TimelineRenderer::drawCursorLine(QPainter& painter, const QColor& color, in
     painter.restore();
 }
 
-void TimelineRenderer::drawCursorHandle(QPainter& painter, const QColor& color, const QRect& bounds)
+void TimelineRenderer::drawCursorHandle(QPainter& painter, const QColor& color, const QColor& outline,
+                                        const QRect& bounds)
 {
     if (!color.isValid() || bounds.isEmpty())
         return;
@@ -449,7 +450,7 @@ void TimelineRenderer::drawCursorHandle(QPainter& painter, const QColor& color, 
         - 0.5 - transform.dy()) / transform.m22();
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing, true);
-    painter.setPen(QPen(color.lighter(145), 0));
+    painter.setPen(QPen(outline, 0));
     painter.setBrush(color);
     painter.drawPolygon(QPolygonF{QPointF(stroke.center - halfWidth, top),
         QPointF(stroke.center + halfWidth, top), QPointF(stroke.center, bottom)});
@@ -503,7 +504,8 @@ void TimelineRenderer::render(QPainter& painter,
     if (data.nominalBar.visible)
         painter.fillRect(data.nominalBar.rect, style.timeline.entry);
     if (data.editCursor.visible)
-        drawCursorLine(painter, data.editCursor.highlighted ? style.music.cursor.lighter(130)
+        drawCursorLine(painter, data.editCursor.highlighted
+            ? themeStateColor(style.music.cursor, style.textPrimary, ThemeStateLayer::Highlight)
             : style.music.cursor, data.editCursor.x, data.viewport);
     if (data.playhead.visible)
         drawCursorLine(painter, style.music.cursor, data.playhead.x, data.viewport);
@@ -553,16 +555,15 @@ void TimelineRenderer::drawTickSet(QPainter& painter,
                                    int labelTop,
                                    int labelHeight)
 {
-    const auto& metrics = style.metrics.timeline;
     painter.save();
     painter.setFont(FontManager::instance().getFont(FontRole::Caption));
     for (const TimelineTick& tick : ticks.ticks) {
         const int x = originX + tick.pixel;
         if (x < leftBound || x >= rightBound)
             continue;
-        painter.setPen(tick.major ? style.music.beatGridMajor
-                                  : style.music.beatGridMinor);
-        const int length = tick.major ? metrics.majorTickLength : metrics.tickLength;
+        painter.setPen(timeAxisTickColor(style.axisTick, tick.major));
+        const int length = tick.major ? style.metrics.timeAxis.majorTickLength
+                                       : style.metrics.timeAxis.minorTickLength;
         painter.drawLine(x, height - length, x, height);
         if (!tick.labeled)
             continue;

@@ -1225,7 +1225,7 @@ void TableWidget::applyTheme()
         const auto& metrics = themeManager_->metrics().table;
         const auto font = FontManager::instance().getFont(themeManager_->snapshot(), FontRole::Body);
         view_->setFont(font);
-        const int iconExtent = themeManager_->metrics().objectIconExtent;
+        const int iconExtent = themeManager_->metrics().iconExtent;
         view_->setIconSize(QSize(iconExtent, iconExtent));
         if (auto* table = qobject_cast<QTableView*>(view_); table && !table->property("compositeTable").toBool()) {
             table->verticalHeader()->setMinimumSectionSize(0);
@@ -1235,7 +1235,7 @@ void TableWidget::applyTheme()
         }
         if (auto* header = viewHeader()) {
             header->setFont(font);
-            header->setFixedHeight(std::max(metrics.headerHeight, QFontMetrics(font).height() + metrics.cellPaddingY * 2));
+            header->setFixedHeight(std::max(themeManager_->metrics().layout.rowHeight, QFontMetrics(font).height() + metrics.cellPaddingY * 2));
         }
         view_->doItemsLayout();
         if (options_.bodySizing == TableBodySizing::Expanding)
@@ -1249,7 +1249,7 @@ void TableWidget::applyTheme()
         label->setFont(headerFont);
         updateCellMetrics(label);
     }
-    const int height = std::max(metrics.headerHeight,
+    const int height = std::max(themeManager_->metrics().layout.rowHeight,
         QFontMetrics(headerFont).height() + metrics.cellPaddingY * 2);
     headerClip_->setFixedHeight(height);
     if (options_.bodySizing == TableBodySizing::Expanding)

@@ -78,7 +78,7 @@ TimelineRuler::TimelineRuler(TimelineEditorPanel* panel, QWidget* parent)
     cursorValue_->setAttribute(Qt::WA_ShowWithoutActivating);
     cursorValue_->setAutoFillBackground(true);
     cursorValue_->setFrameStyle(QFrame::Box | QFrame::Plain);
-    ThemeLayout::margins(cursorValue_, ThemeLayout::Space::Small, ThemeLayout::Space::XSmall, ThemeLayout::Space::Small, ThemeLayout::Space::XSmall);
+    ThemeLayout::margins(cursorValue_, ThemeLayout::Space::Panel, ThemeLayout::Space::Control, ThemeLayout::Space::Panel, ThemeLayout::Space::Control);
     cursorValue_->hide();
     refresh();
 }
@@ -117,15 +117,15 @@ void TimelineRuler::refresh()
 void TimelineRuler::syncGeometry()
 {
     const bool segment = panel_->viewKind() == TimelineEditorPanel::ViewKind::Segment;
-    const int markerHeight = segment ? panel_->timelineMetrics().markerLaneHeight : 0;
+    const int markerHeight = segment ? ThemeManager::instance().metrics().timeAxis.handleBandHeight : 0;
     setFixedHeight(timeRulerHeight());
     markerLane_->setGeometry(panel_->laneHeaderWidth(), height() - markerHeight,
         panel_->timelineViewportWidth(), markerHeight);
     markerLane_->setVisible(segment);
     const auto& metrics = ThemeManager::instance().metrics();
-    const int extent = metrics.navigationChevronExtent;
+    const int extent = metrics.iconExtent;
     const int x = segment
-        ? panel_->laneHeaderWidth() - panel_->laneHeaderResizeWidth() - metrics.spacingXSmall - extent
+        ? panel_->laneHeaderWidth() - panel_->laneHeaderGap() - metrics.layout.controlGap - extent
         : (panel_->laneHeaderWidth() - extent) / 2;
     axisModeButton_->setGeometry(x, (timeRulerHeight() - extent) / 2, extent, extent);
     axisModeButton_->setIconSize(QSize(extent, extent));
@@ -143,11 +143,11 @@ int TimelineRuler::timeRulerHeight() const
         return panel_->timelineMetrics().rulerHeight;
     const QFontMetrics metrics(FontManager::instance().getFont(FontRole::Body), this);
     const int primaryHeight = std::max(metrics.height() + ThemeManager::instance().metrics().timeAxis.majorTickLength,
-        ThemeManager::instance().metrics().navigationChevronExtent);
+        ThemeManager::instance().metrics().iconExtent);
     const int secondaryHeight = panel_->hasSecondaryAxis()
         ? QFontMetrics(FontManager::instance().getFont(FontRole::Caption), this).height() : 0;
     const int markerHeight = panel_->viewKind() == TimelineEditorPanel::ViewKind::Segment
-        ? panel_->timelineMetrics().markerLaneHeight : 0;
+        ? ThemeManager::instance().metrics().timeAxis.handleBandHeight : 0;
     return primaryHeight + secondaryHeight + markerHeight;
 }
 
@@ -164,8 +164,10 @@ TimelineStyleView TimelineRuler::styleView() const
     const auto snapshot = ThemeManager::instance().snapshot();
     style.canvasBackground = snapshot->ui.colors.bgSecondary;
     style.canvasBorder = snapshot->ui.colors.borderPrimary;
-    style.placeholderText = snapshot->ui.colors.textMuted;
+    style.placeholderText = snapshot->ui.colors.textSecondary;
     style.axisText = snapshot->ui.colors.textSecondary;
+    style.axisTick = snapshot->ui.colors.borderTick;
+    style.textPrimary = snapshot->ui.colors.textPrimary;
     style.trackBackground = snapshot->ui.colors.trackBackground;
     style.trackBackgroundAlt = snapshot->ui.colors.trackBackgroundAlt;
     style.timeline = snapshot->domains.timeline;
@@ -195,15 +197,28 @@ void TimelineRuler::paintEvent(QPaintEvent*)
         panel_->timeTicks(), FontRole::Body, TimeAxisLabelAlignment::AfterTick, dualAxis);
     painter.setPen(style.canvasBorder);
     painter.drawLine(0, rulerHeight - 1, width(), rulerHeight - 1);
-    painter.drawLine(headerWidth - 1, 0, headerWidth - 1, rulerHeight - 1);
+    if (const int gap = panel_->laneHeaderGap(); gap > 0) {
+        const bool highlighted = panel_->laneHeaderResizeHighlighted();
+        const int border = theme->ui.metrics.borderWidth;
+        const QRect gapRect(headerWidth - gap, 0, gap, height());
+        painter.fillRect(gapRect, highlighted ? theme->ui.colors.accent : theme->qtPalette.window);
+        if (!highlighted) {
+            painter.fillRect(gapRect.left(), 0, border, height(), theme->ui.colors.borderPrimary);
+            painter.fillRect(gapRect.right() + 1 - border, 0, border, height(), theme->ui.colors.borderPrimary);
+        }
+    } else
+        painter.drawLine(headerWidth - 1, 0, headerWidth - 1, rulerHeight - 1);
     painter.drawLine(headerWidth + canvasWidth, 0, headerWidth + canvasWidth, height());
     const QRect grip = cursorHandleRect();
     if (!grip.isEmpty()) {
         const int x = headerWidth + panel_->viewportPixelAtCoordinate(0, panel_->editCursor());
         const bool highlighted = panel_->isCursorDragActive() || panel_->isCursorHovered();
-        const QColor color = highlighted ? style.music.cursor.lighter(130) : style.music.cursor;
+        const QColor color = highlighted
+            ? themeStateColor(style.music.cursor, style.textPrimary, ThemeStateLayer::Highlight)
+            : style.music.cursor;
         TimelineRenderer::drawCursorLine(painter, color, x, timeAxisRect());
-        TimelineRenderer::drawCursorHandle(painter, color, grip);
+        TimelineRenderer::drawCursorHandle(painter, color,
+            themeStateColor(color, style.textPrimary, ThemeStateLayer::Highlight), grip);
     }
 }
 

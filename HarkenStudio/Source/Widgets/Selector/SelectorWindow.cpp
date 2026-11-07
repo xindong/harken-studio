@@ -269,8 +269,8 @@ SelectorWindow::SelectorWindow()
     resize(metrics.preferredWidth, metrics.preferredHeight);
 
     auto* layout = new QVBoxLayout(this);
-    ThemeLayout::margins(layout, ThemeLayout::Space::Small);
-    ThemeLayout::spacing(layout, ThemeLayout::Space::Small);
+    ThemeLayout::margins(layout, ThemeLayout::Space::Panel);
+    ThemeLayout::spacing(layout, ThemeLayout::Space::Section);
 
     searchBox_ = new SearchField(this);
     layout->addWidget(searchBox_);
@@ -292,7 +292,7 @@ SelectorWindow::SelectorWindow()
     tree_->setSelectionMode(QAbstractItemView::SingleSelection);
     tree_->setUniformRowHeights(true);
     const auto updateIconSize = [this]() {
-        const int extent = ThemeManager::instance().metrics().objectIconExtent;
+        const int extent = ThemeManager::instance().metrics().iconExtent;
         tree_->setIconSize(QSize(extent, extent));
         if (tree_->columnCount() > 1)
             tree_->header()->resizeSection(1, SwitchIndicator::width()

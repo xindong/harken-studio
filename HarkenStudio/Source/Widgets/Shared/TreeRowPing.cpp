@@ -98,7 +98,7 @@ void ping(QTreeWidget* tree, QTreeWidgetItem* item)
     if (r.isEmpty()) return;
 
     const auto& metrics = ThemeManager::instance().metrics();
-    const int iconW = tree->iconSize().width() > 0 ? tree->iconSize().width() : metrics.objectIconExtent;
+    const int iconW = tree->iconSize().width() > 0 ? tree->iconSize().width() : metrics.iconExtent;
     const int textW = QFontMetrics(tree->font()).horizontalAdvance(item->text(0));
     const int padding = metrics.spacingSmall * 2 + metrics.spacingXSmall;
     const int visibleWidth = qMin(iconW + textW + padding, tree->viewport()->width());

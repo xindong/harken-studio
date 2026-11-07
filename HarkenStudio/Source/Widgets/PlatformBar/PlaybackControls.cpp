@@ -19,7 +19,7 @@ PlaybackControls::PlaybackControls(QWidget* parent)
     setObjectName(QStringLiteral("playbackControls"));
     auto* layout = new QHBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
-    ThemeLayout::spacing(layout, ThemeLayout::Space::Small);
+    ThemeLayout::spacing(layout, ThemeLayout::Space::Section);
     layout->setSizeConstraint(QLayout::SetFixedSize);
 
     stopBtn_ = new QToolButton(this);
@@ -39,7 +39,7 @@ PlaybackControls::PlaybackControls(QWidget* parent)
             button->setFixedSize(metrics.control.largeHeight, metrics.controlHeight);
         });
         ThemeManager::instance().bindMetrics(button, [button](const ThemeMetrics& metrics) {
-            button->setIconSize(QSize(metrics.objectIconExtent, metrics.objectIconExtent));
+            button->setIconSize(QSize(metrics.iconExtent, metrics.iconExtent));
         });
         button->setAutoRaise(true);
         button->setToolButtonStyle(Qt::ToolButtonIconOnly);
@@ -99,11 +99,11 @@ void PlaybackControls::applyTheme()
     const auto theme = manager.snapshot();
     const auto& colors = theme->ui.colors;
     const ThemeAssetVariant playVariant{
-        playBtn_->iconSize(), devicePixelRatioF(), 0, colors.auditionPlayActive};
+        playBtn_->iconSize(), devicePixelRatioF(), 0, colors.success};
     playBtn_->setIcon(manager.resolveIcon(
         QString::fromLatin1(ThemeAssetIds::AuditionPlay), playVariant).icon);
     const ThemeAssetVariant stopVariant{
-        stopBtn_->iconSize(), devicePixelRatioF(), 0, colors.auditionStopActive};
+        stopBtn_->iconSize(), devicePixelRatioF(), 0, colors.error};
     stopBtn_->setIcon(manager.resolveIcon(
         QString::fromLatin1(ThemeAssetIds::AuditionStop), stopVariant).icon);
     const ThemeAssetVariant resetVariant{

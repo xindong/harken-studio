@@ -22,8 +22,8 @@ NewProjectDialog::NewProjectDialog(QWidget* parent)
     });
 
     auto* root = new QVBoxLayout(this);
-    ThemeLayout::margins(root, ThemeLayout::Space::XLarge, ThemeLayout::Space::Large, ThemeLayout::Space::XLarge, ThemeLayout::Space::Large);
-    ThemeLayout::spacing(root, ThemeLayout::Space::Large);
+    ThemeLayout::margins(root, ThemeLayout::Space::Panel, ThemeLayout::Space::Panel, ThemeLayout::Space::Panel, ThemeLayout::Space::Panel);
+    ThemeLayout::spacing(root, ThemeLayout::Space::Section);
 
     chooser_ = new TemplateChooserWidget(this);
     auto* scroll = new PanelScrollArea(this);

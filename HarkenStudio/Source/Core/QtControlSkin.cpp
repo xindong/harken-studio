@@ -32,9 +32,8 @@
 
 namespace {
 
-constexpr int LineEditHorizontalMargin = 2;
 int popupTextMargin(const QStyleOptionMenuItem& item, const QWidget* widget,
-                    const VNX::ThemeMetrics::Popup& metrics)
+                    const VNX::ThemeMetrics& metrics)
 {
     QVariant mode;
     for (auto* owner = widget; owner && !mode.isValid(); owner = owner->parentWidget())
@@ -43,7 +42,7 @@ int popupTextMargin(const QStyleOptionMenuItem& item, const QWidget* widget,
         ? mode.toInt() == static_cast<int>(VNX::PopupIconColumn::Reserved)
         : qobject_cast<const QMenu*>(widget) != nullptr;
     return reserved || item.menuHasCheckableItems
-        ? qMax(metrics.iconColumnWidth, item.maxIconWidth) : metrics.textPadding;
+        ? qMax(metrics.popup.iconColumnWidth, item.maxIconWidth) : metrics.control.textPaddingX;
 }
 
 class PopupItemDelegate final : public QStyledItemDelegate
@@ -213,7 +212,7 @@ void QtControlSkin::applyPopupStyle(QComboBox* combo)
 
 int QtControlSkin::popupRowHeight(const QFontMetrics& fontMetrics) const
 {
-    return std::max({fontMetrics.height(), metrics().objectIconExtent, metrics().navigationChevronExtent})
+    return std::max({fontMetrics.height(), metrics().iconExtent, metrics().iconExtent})
         + 2 * metrics().popup.rowPadding;
 }
 
@@ -221,9 +220,9 @@ QSize QtControlSkin::popupItemSize(const QStyleOptionMenuItem& item,
                                  const QSize& contentsSize, const QWidget* widget) const
 {
     const int spacing = item.text.contains(QLatin1Char('\t')) ? metrics().popup.shortcutSpacing : 0;
-    const int margin = popupTextMargin(item, widget, metrics().popup);
+    const int margin = popupTextMargin(item, widget, metrics());
     const int trailingMargin = item.menuItemType == QStyleOptionMenuItem::SubMenu
-        ? qMax(margin, metrics().navigationChevronExtent + metrics().spacingXSmall) : margin;
+        ? qMax(margin, metrics().iconExtent + metrics().spacingXSmall) : margin;
     const int contentWidth = qobject_cast<const QMenu*>(widget)
         ? qMax(metrics().popup.minimumWidth, contentsSize.width() + spacing) : contentsSize.width() + spacing;
     return QSize(contentWidth + margin + trailingMargin, popupRowHeight(item.fontMetrics));
@@ -244,9 +243,9 @@ void QtControlSkin::paintPopupItem(QPainter& painter, const QStyleOptionMenuItem
     painter.setFont(item.font);
     painter.setPen(textColor);
 
-    const int margin = popupTextMargin(item, widget, metrics().popup);
+    const int margin = popupTextMargin(item, widget, metrics());
     const int trailingMargin = item.menuItemType == QStyleOptionMenuItem::SubMenu
-        ? qMax(margin, metrics().navigationChevronExtent + metrics().spacingXSmall) : margin;
+        ? qMax(margin, metrics().iconExtent + metrics().spacingXSmall) : margin;
     QRect textRect = item.rect.adjusted(margin, 0, -trailingMargin, 0);
     const QStringView text(item.text);
     const qsizetype tab = text.indexOf(QLatin1Char('\t'));
@@ -267,7 +266,7 @@ void QtControlSkin::paintPopupItem(QPainter& painter, const QStyleOptionMenuItem
                      text.left(tab >= 0 ? tab : text.size()).toString());
 
     if (margin >= metrics().popup.iconColumnWidth && !item.icon.isNull()) {
-        const int extent = qMin(metrics().objectIconExtent, item.rect.height());
+        const int extent = qMin(metrics().iconExtent, item.rect.height());
         const QRect iconRect(item.rect.left(), item.rect.top(), margin, item.rect.height());
         const auto state = item.checked ? QIcon::On : QIcon::Off;
         QPixmap glyph = item.icon.pixmap(QSize(extent, extent),
@@ -285,7 +284,7 @@ void QtControlSkin::paintPopupItem(QPainter& painter, const QStyleOptionMenuItem
                && item.checkType != QStyleOptionMenuItem::NotCheckable && item.checked) {
         QStyleOptionMenuItem check = item;
         check.rect = QStyle::visualRect(item.direction, item.rect,
-            QStyle::alignedRect(Qt::LeftToRight, Qt::AlignCenter, QSize(metrics().control.checkboxExtent, metrics().control.checkboxExtent),
+            QStyle::alignedRect(Qt::LeftToRight, Qt::AlignCenter, QSize(metrics().control.smallIconExtent, metrics().control.smallIconExtent),
                                 QRect(item.rect.topLeft(), QSize(margin, item.rect.height()))));
         check.state |= QStyle::State_On;
         check.palette.setColor(QPalette::Text, textColor);
@@ -294,7 +293,7 @@ void QtControlSkin::paintPopupItem(QPainter& painter, const QStyleOptionMenuItem
     }
 
     if (item.menuItemType == QStyleOptionMenuItem::SubMenu) {
-        const int extent = metrics().navigationChevronExtent;
+        const int extent = metrics().iconExtent;
         QStyleOptionMenuItem arrow = item;
         arrow.rect = QStyle::visualRect(item.direction, item.rect,
             QStyle::alignedRect(Qt::LeftToRight, Qt::AlignRight | Qt::AlignVCenter,
@@ -309,9 +308,9 @@ void QtControlSkin::paintPopupItem(QPainter& painter, const QStyleOptionMenuItem
 int QtControlSkin::fieldHeight() const
 {
     const QFont font = FontManager::instance().getFont(snapshot_, FontRole::Body);
-    return std::max({metrics().controlHeight, metrics().objectIconExtent + metrics().control.textPaddingY * 2,
-                     metrics().navigationChevronExtent + metrics().borderWidth * 2,
-                     QFontMetrics(font).height() + 2 * (metrics().control.textPaddingY + metrics().borderWidth)});
+    return std::max({metrics().layout.fieldHeight,
+                     metrics().control.smallIconExtent + metrics().borderWidth * 2,
+                     QFontMetrics(font).height() + metrics().borderWidth * 2});
 }
 
 QMargins QtControlSkin::fieldTextMargins() const
@@ -455,20 +454,25 @@ QString QtControlSkin::applicationStyleSheet() const
     };
     replace(QStringLiteral("@chevronDown@"),
             imagePath(ThemeAssetIds::NavigationChevronDown,
-                      metrics().navigationChevronExtent, colors().textPrimary));
+                      metrics().control.smallIconExtent, colors().textPrimary));
     replace(QStringLiteral("@chevronDownDisabled@"),
             imagePath(ThemeAssetIds::NavigationChevronDown,
-                      metrics().navigationChevronExtent, colors().textDisabled));
+                      metrics().control.smallIconExtent, colors().textDisabled));
     replace(QStringLiteral("@checkboxChecked@"),
             imagePath(ThemeAssetIds::CheckboxChecked, metrics().control.checkboxMarkExtent, colors().textPrimary));
     replace(QStringLiteral("@checkboxCheckedDisabled@"),
             imagePath(ThemeAssetIds::CheckboxChecked, metrics().control.checkboxMarkExtent, colors().textDisabled));
     replace(QStringLiteral("@checkboxIndeterminate@"),
-            imagePath(ThemeAssetIds::CheckboxIndeterminate, metrics().control.checkboxExtent, colors().textPrimary));
+            imagePath(ThemeAssetIds::CheckboxIndeterminate, metrics().control.smallIconExtent, colors().textPrimary));
     replace(QStringLiteral("@checkboxIndeterminateDisabled@"),
-            imagePath(ThemeAssetIds::CheckboxIndeterminate, metrics().control.checkboxExtent, colors().textDisabled));
+            imagePath(ThemeAssetIds::CheckboxIndeterminate, metrics().control.smallIconExtent, colors().textDisabled));
     const auto color = [](const QColor& value) {
         return value.name(QColor::HexArgb);
+    };
+
+    const auto soft = [](const QColor& value) { return rgba(value, ThemeSoftTintAlpha); };
+    const auto hover = [&](const QColor& value) {
+        return color(colors().stateColor(value, ThemeStateLayer::Hover));
     };
 
     replace(QStringLiteral("@accent@"), color(colors().accent));
@@ -480,48 +484,37 @@ QString QtControlSkin::applicationStyleSheet() const
     replace(QStringLiteral("@bgHover@"), color(colors().bgHover));
     replace(QStringLiteral("@bgSelected@"), color(colors().bgSelected));
     replace(QStringLiteral("@panelBackground@"), color(colors().panelBackground));
-    replace(QStringLiteral("@dropHighlight@"), color(colors().dropHighlight));
+    replace(QStringLiteral("@headerBackground@"), color(colors().headerBackground));
     replace(QStringLiteral("@borderPrimary@"), color(colors().borderPrimary));
     replace(QStringLiteral("@borderSecondary@"), color(colors().borderSecondary));
-    replace(QStringLiteral("@viewBorder@"), color(colors().viewBorder));
     replace(QStringLiteral("@textPrimary@"), color(colors().textPrimary));
     replace(QStringLiteral("@textSecondary@"), color(colors().textSecondary));
     replace(QStringLiteral("@textTitle@"), color(colors().textTitle));
-    replace(QStringLiteral("@textMuted@"), color(colors().textMuted));
     replace(QStringLiteral("@textDisabled@"), color(colors().textDisabled));
+    replace(QStringLiteral("@sliderTrack@"), color(colors().sliderTrack));
+    replace(QStringLiteral("@hoverOverlay@"),
+            rgba(colors().textPrimary, qRound(255 * 0.08)));
+    replace(QStringLiteral("@success@"), color(colors().success));
+    replace(QStringLiteral("@successHover@"), hover(colors().success));
+    replace(QStringLiteral("@successSoft@"), soft(colors().success));
+    replace(QStringLiteral("@warning@"), color(colors().warning));
+    replace(QStringLiteral("@warningHover@"), hover(colors().warning));
+    replace(QStringLiteral("@warningSoft@"), soft(colors().warning));
     replace(QStringLiteral("@error@"), color(colors().error));
+    replace(QStringLiteral("@errorHover@"), hover(colors().error));
     replace(QStringLiteral("@errorText@"), color(contrastTextColor(colors().error)));
+    replace(QStringLiteral("@info@"), color(colors().info));
+    replace(QStringLiteral("@compactSliderFill@"), rgba(colors().accent, 85));
+    replace(QStringLiteral("@shellCloseHover@"), color(colors().shellCloseHover));
+    replace(QStringLiteral("@shellClosePressed@"), color(colors().shellClosePressed));
+    replace(QStringLiteral("@shellCloseText@"),
+            color(contrastTextColor(colors().shellClosePressed)));
     replace(QStringLiteral("@window@"), color(palette.window));
     replace(QStringLiteral("@base@"), color(palette.base));
     replace(QStringLiteral("@alternateBase@"), color(palette.alternateBase));
     replace(QStringLiteral("@button@"), color(palette.button));
     replace(QStringLiteral("@brightText@"), color(palette.brightText));
-    replace(QStringLiteral("@mid@"), color(palette.mid));
     replace(QStringLiteral("@disabledHighlight@"), color(palette.disabledHighlight));
-    replace(QStringLiteral("@iconButtonHover@"), rgba(colors().textPrimary, 24));
-    replace(QStringLiteral("@auditionBg@"), color(colors().auditionBg));
-    replace(QStringLiteral("@auditionPlayOverlay@"), rgba(colors().auditionPlayActive, 40));
-    replace(QStringLiteral("@shellMenuText@"), color(colors().shellMenuText));
-    replace(QStringLiteral("@shellMenuHoverText@"), color(colors().shellMenuHoverText));
-    replace(QStringLiteral("@shellButtonText@"), color(colors().shellButtonText));
-    replace(QStringLiteral("@shellButtonHoverText@"), color(colors().shellButtonHoverText));
-    replace(QStringLiteral("@shellCloseHover@"), color(colors().shellCloseHover));
-    replace(QStringLiteral("@shellClosePressed@"), color(colors().shellClosePressed));
-    replace(QStringLiteral("@success@"), color(colors().success));
-    replace(QStringLiteral("@warning@"), color(colors().warning));
-    replace(QStringLiteral("@warningSoft@"), rgba(colors().warning, 36));
-    replace(QStringLiteral("@info@"), color(colors().info));
-    replace(QStringLiteral("@sectionSeparator@"), color(colors().sectionSeparator));
-    replace(QStringLiteral("@headerBackground@"), color(colors().headerBackground));
-    replace(QStringLiteral("@accentSoft@"), rgba(colors().accent, 38));
-    replace(QStringLiteral("@toolbarRemoteActive@"), color(colors().warning.lighter(125)));
-    replace(QStringLiteral("@toolbarRemoteHover@"), color(colors().warning.lighter(145)));
-    replace(QStringLiteral("@toolbarMonitorActive@"), color(colors().error));
-    replace(QStringLiteral("@toolbarMonitorHover@"), color(colors().error.lighter(115)));
-    replace(QStringLiteral("@toolbarAllPlatformsActive@"), color(colors().success));
-    replace(QStringLiteral("@toolbarAllPlatformsHover@"), color(colors().success.lighter(115)));
-    replace(QStringLiteral("@compactSliderFill@"), rgba(colors().accent, 85));
-    replace(QStringLiteral("@sliderTrack@"), color(colors().sliderTrack));
     replace(QStringLiteral("@nodeContentLabel@"), color(snapshot_->domains.nodeGraphNode.contentLabel));
     replace(QStringLiteral("@nodeContentValue@"), color(snapshot_->domains.nodeGraphNode.contentValue));
     replace(QStringLiteral("@logDebug@"), color(snapshot_->domains.log.debug));
@@ -530,28 +523,13 @@ QString QtControlSkin::applicationStyleSheet() const
     replace(QStringLiteral("@logError@"), color(snapshot_->domains.log.error));
     replace(QStringLiteral("@logCritical@"), color(snapshot_->domains.log.critical));
     replace(QStringLiteral("@aiBrandAccent@"), color(snapshot_->domains.ai.brandAccent));
-    replace(QStringLiteral("@aiBrandAccentSoft@"), rgba(snapshot_->domains.ai.brandAccent, 32));
-    replace(QStringLiteral("@aiMessageSeparator@"), color(colors().borderPrimary));
-    replace(QStringLiteral("@aiUserAccent@"), color(snapshot_->domains.ai.userAccent));
-    replace(QStringLiteral("@monitorCpuSafe@"), color(snapshot_->domains.monitor.cpuSafe));
-    replace(QStringLiteral("@monitorCpuWarning@"), color(snapshot_->domains.monitor.cpuWarning));
-    replace(QStringLiteral("@monitorCpuCritical@"), color(snapshot_->domains.monitor.cpuCritical));
-    replace(QStringLiteral("@monitorBufferNormal@"), color(snapshot_->domains.monitor.bufferNormal));
-    replace(QStringLiteral("@monitorBufferWarning@"), color(snapshot_->domains.monitor.bufferWarning));
+    replace(QStringLiteral("@aiBrandAccentSoft@"), soft(snapshot_->domains.ai.brandAccent));
     replace(QStringLiteral("@borderWidth@"), QString::number(metrics().borderWidth));
     replace(QStringLiteral("@accentBorderWidth@"), QString::number(metrics().accentBorderWidth));
     replace(QStringLiteral("@radiusCompact@"), QString::number(metrics().radiusCompact));
-    replace(QStringLiteral("@spacingCompact@"), QString::number(metrics().spacingCompact));
-    replace(QStringLiteral("@spacingLarge@"), QString::number(metrics().spacingLarge));
-    replace(QStringLiteral("@spacingXLarge@"), QString::number(metrics().spacingXLarge));
     replace(QStringLiteral("@controlHeight@"), QString::number(metrics().controlHeight));
-    replace(QStringLiteral("@compactControlHeight@"), QString::number(metrics().control.compactHeight));
-    replace(QStringLiteral("@largeControlHeight@"), QString::number(metrics().control.largeHeight));
     replace(QStringLiteral("@smallIconExtent@"), QString::number(metrics().control.smallIconExtent));
-    replace(QStringLiteral("@objectIconExtent@"), QString::number(metrics().objectIconExtent));
-    replace(QStringLiteral("@largeIconExtent@"), QString::number(metrics().control.largeIconExtent));
-    replace(QStringLiteral("@checkboxExtent@"), QString::number(metrics().control.checkboxExtent));
-    replace(QStringLiteral("@checkboxMarkExtent@"), QString::number(metrics().control.checkboxMarkExtent));
+    replace(QStringLiteral("@iconExtent@"), QString::number(metrics().iconExtent));
     replace(QStringLiteral("@scrollbarExtent@"), QString::number(metrics().control.scrollbarExtent));
     replace(QStringLiteral("@canvasScrollbarExtent@"), QString::number(metrics().control.canvasScrollbarExtent));
     replace(QStringLiteral("@sliderHandleExtent@"), QString::number(metrics().control.sliderHandleExtent));
@@ -570,31 +548,33 @@ QString QtControlSkin::applicationStyleSheet() const
     replace(QStringLiteral("@radiusSmall@"), QString::number(metrics().radiusSmall));
     replace(QStringLiteral("@radiusMedium@"), QString::number(metrics().radiusMedium));
     replace(QStringLiteral("@radiusLarge@"), QString::number(metrics().radiusLarge));
-    replace(QStringLiteral("@spacingXSmall@"), QString::number(metrics().spacingXSmall));
-    replace(QStringLiteral("@spacingSmall@"), QString::number(metrics().spacingSmall));
-    replace(QStringLiteral("@spacingMedium@"), QString::number(metrics().spacingMedium));
     replace(QStringLiteral("@popupPaddingY@"), QString::number(metrics().popup.rowPadding));
+    replace(QStringLiteral("@fieldHeight@"), QString::number(fieldHeight()));
+    const auto& layout = metrics().layout;
+    replace(QStringLiteral("@panelPadding@"), QString::number(layout.panelPadding));
+    replace(QStringLiteral("@sectionGap@"), QString::number(layout.sectionGap));
+    replace(QStringLiteral("@tightGap@"), QString::number(layout.tightGap));
+    replace(QStringLiteral("@sectionHeaderHeight@"), QString::number(layout.sectionHeaderHeight));
+    replace(QStringLiteral("@textPadding@"), QString::number(metrics().control.textPaddingX));
+    replace(QStringLiteral("@rowInset@"), QString::number(metrics().layout.rowInset));
+    replace(QStringLiteral("@controlGap@"), QString::number(metrics().layout.controlGap));
     replace(QStringLiteral("@fieldContentHeight@"), QString::number(fieldHeight() - metrics().borderWidth * 2));
     replace(QStringLiteral("@singleLineContentHeight@"), QString::number(fieldHeight() - metrics().borderWidth * 3));
     const QMargins fieldMargins = fieldTextMargins();
     replace(QStringLiteral("@fieldTextPaddingX@"), QString::number(fieldMargins.left()));
     replace(QStringLiteral("@fieldTextPaddingY@"), QString::number(fieldMargins.top()));
     replace(QStringLiteral("@lineEditPaddingX@"),
-            QString::number(std::max(0, fieldMargins.left() - LineEditHorizontalMargin)));
+            QString::number(std::max(0, fieldMargins.left() - VNX::QtControlSkin::LineEditTextMargin)));
     replace(QStringLiteral("@tableCellPaddingX@"), QString::number(metrics().table.cellPaddingX));
     replace(QStringLiteral("@tableCellPaddingY@"), QString::number(metrics().table.cellPaddingY));
-    replace(QStringLiteral("@chevronExtent@"),
-            QString::number(metrics().navigationChevronExtent));
     const auto& parameterMetrics = metrics().parameter;
-    replace(QStringLiteral("@parameterSliderGroove@"),
-            QString::number(parameterMetrics.sliderGrooveThickness));
     replace(QStringLiteral("@parameterSliderHandleThickness@"),
             QString::number(parameterMetrics.sliderHandleThickness));
     replace(QStringLiteral("@parameterSliderHandleLength@"),
             QString::number(parameterMetrics.sliderHandleLength));
     replace(QStringLiteral("@parameterSliderHandleOverhang@"),
             QString::number((parameterMetrics.sliderHandleLength
-                             - parameterMetrics.sliderGrooveThickness) / 2));
+                             - metrics().control.sliderGrooveThickness) / 2));
     const auto& fonts = FontManager::instance();
     replace(QStringLiteral("@bodyFont@"), fonts.styleSheet(snapshot_, FontRole::Body));
     replace(QStringLiteral("@captionFont@"), fonts.styleSheet(snapshot_, FontRole::Caption));
@@ -626,31 +606,31 @@ QString QtControlSkin::collapsibleHeaderStyle(const QColor& indicator, bool cust
 
     const QString titleColor = colors().textTitle.name(QColor::HexArgb);
     const QString font = FontManager::instance().styleSheet(snapshot_, FontRole::Body, FontEmphasis::Strong);
-    QString bg, border, hoverBg, pad;
-    int minH;
+    QString bg, border, hoverBg;
+    int verticalBorder = 0;
     if (level <= 0)
     {
         bg       = bgSecondary();
         border   = QString("border: none; border-bottom: %1px solid %2;")
             .arg(metrics().borderWidth).arg(borderPrimary());
+        verticalBorder = metrics().borderWidth;
         if (custom)
             border += QString(" border-left: %1px solid %2;").arg(metrics().accentBorderWidth).arg(indicatorColor);
-        if (topSeparator)
+        if (topSeparator) {
             border += QStringLiteral(" border-top: %1px solid %2;").arg(metrics().borderWidth).arg(borderPrimary());
+            verticalBorder += metrics().borderWidth;
+        }
         hoverBg  = bgTertiary();
-        pad      = QString("padding: %1px %2px;").arg(metrics().spacingXSmall).arg(metrics().spacingSmall);
-        minH     = metrics().sectionHeaderHeight;
     }
     else if (level == 1)
     {
         bg       = custom ? rgba(indicator, 20) : QStringLiteral("transparent");
         border   = QString("border: none; border-bottom: %1px solid %2;")
             .arg(metrics().borderWidth).arg(borderPrimary());
+        verticalBorder = metrics().borderWidth;
         if (custom)
             border += QString(" border-left: %1px solid %2;").arg(metrics().accentBorderWidth).arg(indicatorColor);
         hoverBg  = bgTertiary();
-        pad      = QString("padding: %1px %2px;").arg(metrics().spacingCompact).arg(metrics().spacingSmall);
-        minH     = metrics().control.compactHeight;
     }
     else
     {
@@ -658,9 +638,9 @@ QString QtControlSkin::collapsibleHeaderStyle(const QColor& indicator, bool cust
         border   = custom ? QString("border: none; border-left: %1px solid %2;").arg(metrics().accentBorderWidth).arg(indicatorColor)
                           : QStringLiteral("border: none;");
         hoverBg  = QStringLiteral("transparent");
-        pad      = QString("padding: %1px %2px;").arg(metrics().spacingCompact).arg(metrics().spacingSmall);
-        minH     = metrics().control.compactHeight;
     }
+    const QString pad = QString("padding: 0px %1px 0px 0px;").arg(metrics().layout.panelPadding);
+    const int contentHeight = metrics().layout.sectionHeaderHeight - verticalBorder;
 
     if (backgroundTint.isValid()) {
         bg = rgba(backgroundTint, level >= 2 ? 16 : 20);
@@ -675,6 +655,7 @@ QString QtControlSkin::collapsibleHeaderStyle(const QColor& indicator, bool cust
             color: %4;
             text-align: left;
             min-height: %5px;
+            max-height: %5px;
         }
         QToolButton:hover {
             background-color: %6;
@@ -688,7 +669,7 @@ QString QtControlSkin::collapsibleHeaderStyle(const QColor& indicator, bool cust
         .arg(border)
         .arg(font + pad)
         .arg(titleColor)
-        .arg(minH)
+        .arg(contentHeight)
         .arg(hoverBg)
         .arg(titleColor)
         .arg(textDisabled());

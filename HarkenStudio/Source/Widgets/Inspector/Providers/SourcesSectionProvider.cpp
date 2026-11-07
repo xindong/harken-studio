@@ -82,7 +82,7 @@ public:
         setObjectName(QStringLiteral("sourcesListWidget"));
 
         auto* v = new QVBoxLayout(this);
-        ThemeLayout::spacing(v, ThemeLayout::Space::Compact);
+        ThemeLayout::spacing(v, ThemeLayout::Space::Tight);
         reserveInspectorContentSlots(this);
 
         box_ = new TableWidget(this);
@@ -1062,7 +1062,7 @@ QWidget* SourcesSectionProvider::build(QWidget* parent)
     auto* content = new QWidget(parent);
     auto* cl = new QVBoxLayout(content);
     cl->setContentsMargins(0, 0, 0, 0);
-    ThemeLayout::spacing(cl, ThemeLayout::Space::Compact);
+    ThemeLayout::spacing(cl, ThemeLayout::Space::Tight);
 
     auto* list = new SourcesListWidget(content);
     cl->addWidget(list);

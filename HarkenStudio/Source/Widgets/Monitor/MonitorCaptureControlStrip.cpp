@@ -12,7 +12,7 @@ MonitorCaptureControlStrip::MonitorCaptureControlStrip(QWidget* parent)
 {
     setObjectName(QStringLiteral("MonitorCapturePlanBar"));
     auto* root = new QVBoxLayout(this);
-    ThemeLayout::margins(root, ThemeLayout::Space::Small, ThemeLayout::Space::XSmall, ThemeLayout::Space::Small, ThemeLayout::Space::XSmall);
+    ThemeLayout::margins(root, ThemeLayout::Space::Panel, ThemeLayout::Space::Tight, ThemeLayout::Space::Panel, ThemeLayout::Space::Tight);
     statusLabel_ = new QLabel(this);
     statusLabel_->setObjectName(QStringLiteral("MonitorCaptureControlStatus"));
     statusLabel_->setWordWrap(true);

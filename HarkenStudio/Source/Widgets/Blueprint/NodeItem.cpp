@@ -391,7 +391,7 @@ QRectF NodeItem::titleRect() const
     QFont font = FontManager::instance().getFont(FontRole::Body, FontEmphasis::Strong);
     font.setItalic(titleDirty_);
     const QFontMetricsF metrics(font);
-    const qreal x = nodeMetrics().bodyPadding + ThemeManager::instance().metrics().objectIconExtent + ThemeManager::instance().metrics().spacingSmall;
+    const qreal x = nodeMetrics().bodyPadding + ThemeManager::instance().metrics().iconExtent + ThemeManager::instance().metrics().spacingSmall;
     const qreal available = width_ - x - nodeMetrics().bodyPadding;
     const auto text = metrics.elidedText(displayTitle(), Qt::ElideMiddle, available);
     return {x, (nodeHeaderHeight() - metrics.height()) * 0.5,
@@ -400,7 +400,7 @@ QRectF NodeItem::titleRect() const
 
 QRectF NodeItem::titleEditorRect() const
 {
-    const qreal x = nodeMetrics().bodyPadding + ThemeManager::instance().metrics().objectIconExtent + ThemeManager::instance().metrics().spacingSmall;
+    const qreal x = nodeMetrics().bodyPadding + ThemeManager::instance().metrics().iconExtent + ThemeManager::instance().metrics().spacingSmall;
     const qreal padding = ThemeManager::instance().metrics().spacingXSmall;
     return {x - padding, padding, width_ - x - nodeMetrics().bodyPadding + padding * 2, nodeHeaderHeight() - padding * 2};
 }
@@ -948,7 +948,7 @@ void NodeItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, 
     }
 
     const float headPad  = nodeMetrics().bodyPadding;
-    const float iconSize = theme->ui.metrics.objectIconExtent;
+    const float iconSize = theme->ui.metrics.iconExtent;
     const QColor titleColor = titleColor_.isValid() ? titleColor_ : ngn.titleText;
     if (itemType_.has_value()) {
         const int iconY = static_cast<int>((nodeHeaderHeight() - iconSize) * 0.5f);

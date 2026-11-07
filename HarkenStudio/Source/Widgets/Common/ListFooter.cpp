@@ -88,9 +88,9 @@ void ListFooter::applyTheme()
     for (auto* button : findChildren<QToolButton*>(QString(), Qt::FindDirectChildrenOnly)) {
         button->ensurePolished();
         const bool compact = button->property("tableCompactAction").toBool();
-        if (compact) button->setIconSize(QSize(themeManager_->metrics().objectIconExtent,
-                                               themeManager_->metrics().objectIconExtent));
-        const int buttonHeight = std::max(metrics.buttonHeight,
+        if (compact) button->setIconSize(QSize(themeManager_->metrics().iconExtent,
+                                               themeManager_->metrics().iconExtent));
+        const int buttonHeight = std::max(themeManager_->metrics().control.compactHeight,
             compact ? button->iconSize().height()
                     : button->fontMetrics().height() + metrics.cellPaddingY * 2);
         button->setFixedHeight(buttonHeight);

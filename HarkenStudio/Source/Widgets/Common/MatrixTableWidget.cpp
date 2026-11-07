@@ -100,7 +100,7 @@ public:
     void applyTheme()
     {
         const auto& metrics = theme_->metrics().table;
-        int height = std::max(metrics.headerHeight,
+        int height = std::max(theme_->metrics().layout.rowHeight,
             QtControlSkin(theme_->snapshot()).fieldHeight() + metrics.cellPaddingY * 2 + 1);
         for (auto* cell : cells_) {
             cell->ensurePolished();

@@ -550,7 +550,7 @@ private:
         iconLabel->setObjectName(QStringLiteral("stepTypeIcon_%1").arg(index));
         const auto refreshIcon = [iconLabel, type = steps_[index].type] {
             auto& theme = ThemeManager::instance();
-            const int extent = theme.metrics().objectIconExtent;
+            const int extent = theme.metrics().iconExtent;
             iconLabel->setFixedSize(extent, extent);
             iconLabel->setPixmap(theme.resolveIcon(QString::fromLatin1(typeIconId(type)))
                 .icon.pixmap(iconLabel->size(), iconLabel->devicePixelRatioF()));
@@ -621,7 +621,7 @@ private:
         accordion->setObjectName(QStringLiteral("stepDetails_%1").arg(index));
         DebugTint::tintContainer(accordion, DebugTint::Role::Accordion);
         auto* av = new QVBoxLayout(accordion);
-        ThemeLayout::margins(av, ThemeLayout::Space::None, ThemeLayout::Space::XSmall, ThemeLayout::Space::Small, ThemeLayout::Space::Small);
+        ThemeLayout::margins(av, ThemeLayout::Space::None, ThemeLayout::Space::Control, ThemeLayout::Space::Panel, ThemeLayout::Space::Panel);
         ThemeManager::instance().bindMetrics(av, [av](const ThemeMetrics& metrics) {
             av->setSpacing(metrics.inspector.rowSpacing);
         });
@@ -784,7 +784,7 @@ QWidget* StepsSectionProvider::build(QWidget* parent)
     auto* content = new QWidget(parent);
     auto* cl = new QVBoxLayout(content);
     cl->setContentsMargins(0, 0, 0, 0);
-    ThemeLayout::spacing(cl, ThemeLayout::Space::Compact);
+    ThemeLayout::spacing(cl, ThemeLayout::Space::Tight);
 
     auto* list = new StepsListWidget(content);
     list->setObjectName(QStringLiteral("stepsListWidget"));

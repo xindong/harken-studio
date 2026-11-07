@@ -27,8 +27,8 @@ MonitorPerformancePanel::MonitorPerformancePanel(QWidget* parent)
     setObjectName(QStringLiteral("MonitorPerformancePanel"));
 
     auto* root = new QVBoxLayout(this);
-    ThemeLayout::margins(root, ThemeLayout::Space::Small);
-    ThemeLayout::spacing(root, ThemeLayout::Space::Small);
+    ThemeLayout::margins(root, ThemeLayout::Space::Panel);
+    ThemeLayout::spacing(root, ThemeLayout::Space::Section);
 
     captureControlStrip_ = new MonitorCaptureControlStrip(this);
     root->addWidget(captureControlStrip_);

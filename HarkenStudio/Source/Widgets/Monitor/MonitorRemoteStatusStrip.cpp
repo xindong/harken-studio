@@ -13,7 +13,7 @@ MonitorRemoteStatusStrip::MonitorRemoteStatusStrip(QWidget* parent)
 {
     setObjectName(QStringLiteral("MonitorRemoteStatus"));
     auto* root = new QVBoxLayout(this);
-    ThemeLayout::margins(root, ThemeLayout::Space::Small, ThemeLayout::Space::XSmall, ThemeLayout::Space::Small, ThemeLayout::Space::XSmall);
+    ThemeLayout::margins(root, ThemeLayout::Space::Panel, ThemeLayout::Space::Tight, ThemeLayout::Space::Panel, ThemeLayout::Space::Tight);
     faceLabel_ = new QLabel(this);
     faceLabel_->setObjectName(QStringLiteral("MonitorRemoteStatusFace"));
     faceLabel_->setWordWrap(true);

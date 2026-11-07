@@ -103,11 +103,11 @@ bool writeMetricsPackage(const QString& themesRoot, const QString& id, const QBy
                      manifest)
         && writeFile(QDir(root).filePath(QStringLiteral("tokens.json")), tokens)
         && writeFile(QDir(root).filePath(QStringLiteral("visuals/curve.json")),
-                     R"json({"metrics":{"curve.lineWidth":2}})json")
+                     R"json({"metrics":{"curve.discreteGuideAlpha":90}})json")
         && writeFile(QDir(root).filePath(QStringLiteral("visuals/meter.json")),
-                     R"json({"colors":{"meter.green":"#ff22aa44"}})json")
+                     R"json({"colors":{"meter.spectrum.fillTop":"#ff22aa44"}})json")
         && writeFile(QDir(root).filePath(QStringLiteral("visuals/waveform.json")),
-                     R"json({"colors":{"waveform.line":"#ff334455"}})json")
+                     R"json({"colors":{"waveform.rawPeaks.centerLine":"#ff334455"}})json")
         && writeFile(QDir(root).filePath(QStringLiteral("assets.json")),
                      R"json({"assets":{}})json");
 }
@@ -116,10 +116,10 @@ bool writeDenseMetricsPackage(const QString& themesRoot, const QString& id)
 {
     return writeMetricsPackage(themesRoot, id, R"json({
         "metrics": {
-            "table.headerHeight": 43,
-            "table.rowHeight": 49,
-            "table.cellPaddingX": 11,
-            "table.cellPaddingY": 5
+            "control.height": 43,
+            "control.largeHeight": 49,
+            "spacing.xSmall": 11,
+            "spacing.compact": 5
         }
     })json");
 }
@@ -589,7 +589,7 @@ TEST(ThemeMetricsMigration, DisabledAndDimmedLabelsFollowColorPreviewAndRestore)
     for (const auto* label : {plain, primary, readOnly, number, dimmed})
         EXPECT_EQ(label->palette().color(QPalette::WindowText), original->ui.colors.textPrimary);
     for (const auto* label : {decibels, cents})
-        EXPECT_EQ(label->palette().color(QPalette::WindowText), original->ui.colors.textMuted);
+        EXPECT_EQ(label->palette().color(QPalette::WindowText), original->ui.colors.textSecondary);
     EXPECT_EQ(header->palette().color(QPalette::WindowText), original->ui.colors.textSecondary);
 }
 
@@ -654,7 +654,7 @@ TEST(ThemeMetricsMigration, BorderPreviewRepaintsOpaqueDescendantsWithoutRepolis
         EXPECT_EQ(manager->appearance(), committed);
     };
     for (const QString role : {QStringLiteral("border.primary"), QStringLiteral("border.secondary"),
-                               QStringLiteral("timeline.clipBorder")}) {
+                               QStringLiteral("border.tick")}) {
         SCOPED_TRACE(role.toStdString());
         for (const QColor color : {QColor("#e74f31"), QColor("#358bd4")}) {
             events.paints.clear();
@@ -898,7 +898,7 @@ TEST(ThemeMetricsMigration, ToolbarSurfaceAndBorderSurviveNativeStyleWrapping)
         const auto image = renderWidget(toolbar);
         const int x = toolbar.width() - toolbar.contentsMargins().right() - 1;
         EXPECT_EQ(image.pixelColor(x, toolbar.height() / 2), manager->snapshot()->qtPalette.window);
-        EXPECT_EQ(image.pixelColor(x, 0), manager->colors().sectionSeparator);
+        EXPECT_EQ(image.pixelColor(x, 0), manager->colors().borderPrimary);
     }
 }
 
@@ -924,7 +924,7 @@ TEST(ThemeMetricsMigration, OwnedPanelSurfaceSurvivesVisibilityAndColorPreview)
         const auto image = renderWidget(window);
         const auto origin = panel.mapTo(&window, QPoint());
         EXPECT_EQ(image.pixelColor(origin + QPoint(1, panel.height() / 2)),
-                  manager->colors().auditionBg);
+                  manager->colors().panelBackground);
         EXPECT_EQ(image.pixelColor(origin + QPoint(panel.width() / 2, 0)),
                   manager->colors().borderPrimary);
         EXPECT_EQ(panel.geometry(), geometry);
@@ -1160,10 +1160,7 @@ TEST(ThemeMetricsMigration, ExistingLayoutsFollowMetricsWithoutReplacingEditorsO
             "spacing.small": 16,
             "spacing.medium": 24,
             "spacing.xSmall": 8,
-            "control.height": 40,
-            "parameter.labelMinimumWidth": 180,
-            "parameter.faderMinimumHeight": 180,
-            "parameter.valueMinimumWidth": 120
+            "control.height": 40
         }
     })json"));
     auto manager = makeManager(directory.path());
@@ -1173,11 +1170,11 @@ TEST(ThemeMetricsMigration, ExistingLayoutsFollowMetricsWithoutReplacingEditorsO
     binding.setValue(0.25);
     QWidget panel;
     auto* layout = new QVBoxLayout(&panel);
-    VNX::ThemeLayout::margins(layout, VNX::ThemeLayout::Space::Medium, *manager);
-    VNX::ThemeLayout::spacing(layout, VNX::ThemeLayout::Space::Small, *manager);
+    VNX::ThemeLayout::margins(layout, VNX::ThemeLayout::Space::Panel, *manager);
+    VNX::ThemeLayout::spacing(layout, VNX::ThemeLayout::Space::Section, *manager);
     auto* editor = new QLineEdit(QStringLiteral("unfinished input"), &panel);
     layout->addWidget(editor);
-    VNX::ThemeLayout::addSpacing(layout, VNX::ThemeLayout::Space::Small, *manager);
+    VNX::ThemeLayout::addSpacing(layout, VNX::ThemeLayout::Space::Section, *manager);
     const int spacerIndex = layout->count() - 1;
     auto* slider = new VNX::LinearSliderPresenter(&binding, true, manager.get(), &panel);
     auto* fader = new VNX::VerticalFaderPresenter(&binding, manager.get(), &panel);
@@ -1208,7 +1205,7 @@ TEST(ThemeMetricsMigration, ExistingLayoutsFollowMetricsWithoutReplacingEditorsO
     for (int percent : {125, 150, 200, 100}) {
         manager->setUIScale(percent);
         QCoreApplication::processEvents();
-        EXPECT_EQ(layout->contentsMargins().left(), manager->metrics().spacingMedium);
+        EXPECT_EQ(layout->contentsMargins().left(), manager->metrics().layout.panelPadding);
         EXPECT_EQ(fader->slider()->minimumHeight(), manager->metrics().parameter.faderMinimumHeight);
         EXPECT_EQ(editor->selectedText(), QStringLiteral("finis"));
         EXPECT_TRUE(binding.isEditing());
@@ -1220,9 +1217,9 @@ TEST(ThemeMetricsMigration, ExistingLayoutsFollowMetricsWithoutReplacingEditorsO
 
     QWidget fresh;
     auto* freshLayout = new QVBoxLayout(&fresh);
-    VNX::ThemeLayout::margins(freshLayout, VNX::ThemeLayout::Space::Medium, *manager);
-    VNX::ThemeLayout::spacing(freshLayout, VNX::ThemeLayout::Space::Small, *manager);
-    VNX::ThemeLayout::addSpacing(freshLayout, VNX::ThemeLayout::Space::Small, *manager);
+    VNX::ThemeLayout::margins(freshLayout, VNX::ThemeLayout::Space::Panel, *manager);
+    VNX::ThemeLayout::spacing(freshLayout, VNX::ThemeLayout::Space::Section, *manager);
+    VNX::ThemeLayout::addSpacing(freshLayout, VNX::ThemeLayout::Space::Section, *manager);
     EXPECT_EQ(layout->contentsMargins(), freshLayout->contentsMargins());
     EXPECT_EQ(layout->spacing(), freshLayout->spacing());
     EXPECT_EQ(layout->itemAt(spacerIndex)->sizeHint(), freshLayout->itemAt(0)->sizeHint());
@@ -1239,17 +1236,17 @@ TEST(ThemeMetricsMigration, ExistingLayoutsFollowMetricsWithoutReplacingEditorsO
     EXPECT_EQ(editor->selectedText(), QStringLiteral("finis"));
 }
 
-TEST(ThemeMetricsMigration, InconsistentGeometryCannotReplaceTheActiveTheme)
+TEST(ThemeMetricsMigration, InvalidTokenMetricsCannotReplaceTheActiveTheme)
 {
     ensureApp();
     QTemporaryDir directory;
     const QList<QByteArray> variants{
-        R"json({"metrics":{"toggle.height":8,"toggle.thumbPadding":4}})json",
-        R"json({"metrics":{"node.pinRadius":12,"node.pinHitRadius":4}})json",
-        R"json({"metrics":{"timeAxis.handleWidth":0}})json",
-        R"json({"metrics":{"toast.minimumWidth":400,"toast.maximumWidth":200}})json",
-        R"json({"metrics":{"connection.lineWidth":20,"connection.hitWidth":8}})json",
-        R"json({"metrics":{"form.labelColumnShare":0,"form.valueColumnShare":0}})json"
+        R"json({"metrics":{"control.height":0}})json",
+        R"json({"metrics":{"control.compactHeight":0}})json",
+        R"json({"metrics":{"icon.regular":0}})json",
+        R"json({"metrics":{"icon.small":0}})json",
+        R"json({"metrics":{"spacing.small":-4}})json",
+        R"json({"metrics":{"border.width":-1}})json"
     };
     for (int index = 0; index < variants.size(); ++index)
         ASSERT_TRUE(writeMetricsPackage(directory.path(), QStringLiteral("invalid-%1").arg(index), variants[index]));
@@ -1272,7 +1269,7 @@ TEST(ThemeMetricsMigration, TimeHandlePaintAndHitGeometryShareThemeDimensions)
     ensureApp();
     QTemporaryDir directory;
     ASSERT_TRUE(writeMetricsPackage(directory.path(), QStringLiteral("handles"), R"json({
-        "metrics": {"timeAxis.handleWidth": 28, "timeAxis.handleBandHeight": 24}
+        "metrics": {"spacing.medium": 28}
     })json"));
     auto manager = makeManager(directory.path());
     const auto restore = qScopeGuard([&] { manager->selectTheme(VNX::builtinThemeId()); });

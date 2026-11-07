@@ -170,7 +170,8 @@ public:
     std::vector<TimelineSpan> overlapRegions(int laneIndex) const;
     const ThemeMetrics::Timeline& timelineMetrics() const;
     int laneHeaderWidth() const;
-    int laneHeaderResizeWidth() const;
+    int laneHeaderGap() const;
+    bool laneHeaderResizeHighlighted() const { return laneHeaderResizeHighlighted_; }
     QRect laneRect(int index) const;
     int laneHeight(int index) const;
     void setLaneHeight(int index, int height);
@@ -398,7 +399,9 @@ private:
     QLabel* stateLabel_ = nullptr;
     QFrame* timelinePage_ = nullptr;
     QFrame* laneHeaderResizeBar_ = nullptr;
-    QFrame* laneHeaderDivider_ = nullptr;
+    QFrame* laneHeaderRulerResizeBar_ = nullptr;
+    bool forwardingRulerPress_ = false;
+    bool laneHeaderResizeHighlighted_ = false;
     QWidget* toolbar_ = nullptr;
     QWidget* timeControls_ = nullptr;
     QDoubleSpinBox* tempoSpin_ = nullptr;

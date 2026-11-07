@@ -28,20 +28,11 @@ void copyThemeColors(ThemeSnapshot& target, const ThemeSnapshot& source)
     target.ui.colors = source.ui.colors;
     target.qtPalette = source.qtPalette;
     target.thirdParty.qtAds.chromeBackground = source.thirdParty.qtAds.chromeBackground;
-    target.thirdParty.qtAds.inactiveTabText = source.thirdParty.qtAds.inactiveTabText;
-    target.thirdParty.qtAds.closeButtonHover = source.thirdParty.qtAds.closeButtonHover;
-    target.thirdParty.qtAds.closeButtonPressed = source.thirdParty.qtAds.closeButtonPressed;
-    target.thirdParty.qtAds.lightHoverOverlay = source.thirdParty.qtAds.lightHoverOverlay;
     target.thirdParty.qtAds.activeTabAccentOpacity = source.thirdParty.qtAds.activeTabAccentOpacity;
     target.thirdParty.qtAds.dropOverlayOpacity = source.thirdParty.qtAds.dropOverlayOpacity;
 
     auto& waveform = target.domains.waveform;
     const auto& sourceWaveform = source.domains.waveform;
-    waveform.line = sourceWaveform.line;
-    waveform.fill = sourceWaveform.fill;
-    waveform.selectionHighlight = sourceWaveform.selectionHighlight;
-    waveform.cursor = sourceWaveform.cursor;
-    waveform.regionMarker = sourceWaveform.regionMarker;
     waveform.trimHandle = sourceWaveform.trimHandle;
     waveform.loopHandle = sourceWaveform.loopHandle;
     waveform.staticMode = sourceWaveform.staticMode;
@@ -56,20 +47,6 @@ void copyThemeColors(ThemeSnapshot& target, const ThemeSnapshot& source)
 
     auto& meter = target.domains.meter;
     const auto& sourceMeter = source.domains.meter;
-    meter.green = sourceMeter.green;
-    meter.yellow = sourceMeter.yellow;
-    meter.red = sourceMeter.red;
-    meter.peak = sourceMeter.peak;
-    meter.rms = sourceMeter.rms;
-    meter.clipOn = sourceMeter.clipOn;
-    meter.clipOff = sourceMeter.clipOff;
-    meter.background = sourceMeter.background;
-    meter.oscilloscopeGrid = sourceMeter.oscilloscopeGrid;
-    meter.oscilloscopeGlow = sourceMeter.oscilloscopeGlow;
-    meter.waveformFill = sourceMeter.waveformFill;
-    meter.waveformGrid = sourceMeter.waveformGrid;
-    meter.stereo = sourceMeter.stereo;
-    meter.layout = sourceMeter.layout;
     meter.interaction.colors = sourceMeter.interaction.colors;
     meter.peakMeter.colors = sourceMeter.peakMeter.colors;
     meter.spectrumMeter.colors = sourceMeter.spectrumMeter.colors;
@@ -85,7 +62,6 @@ void copyThemeColors(ThemeSnapshot& target, const ThemeSnapshot& source)
 
     target.domains.curve.colors = source.domains.curve.colors;
     target.domains.curve.metrics.discreteGuideAlpha = source.domains.curve.metrics.discreteGuideAlpha;
-    target.domains.feedback = source.domains.feedback;
     target.domains.startup = source.domains.startup;
     target.domains.pinDomain = source.domains.pinDomain;
     target.domains.nodeGraphNode = source.domains.nodeGraphNode;
@@ -93,10 +69,7 @@ void copyThemeColors(ThemeSnapshot& target, const ThemeSnapshot& source)
     target.domains.timeline = source.domains.timeline;
     target.domains.music = source.domains.music;
     target.domains.log = source.domains.log;
-    target.domains.monitor = source.domains.monitor;
     target.domains.ai = source.domains.ai;
-    target.domains.scene3d = source.domains.scene3d;
-    target.domains.spatial = source.domains.spatial;
 }
 
 }

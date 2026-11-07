@@ -61,7 +61,7 @@ QColor mediaStatusColor(MediaStatus status)
     case MediaStatus::Outdated: return colors.warning;
     case MediaStatus::Missing:
     case MediaStatus::Error: return colors.error;
-    case MediaStatus::Orphaned: return colors.textMuted;
+    case MediaStatus::Orphaned: return colors.textSecondary;
     default: return {};
     }
 }
@@ -96,7 +96,7 @@ TreeRowIconKey treeRowIconKey(const QWidget& widget)
     key.themeGeneration = theme.snapshot()->generation;
     key.paletteKey = QApplication::palette().cacheKey();
     key.devicePixelRatio = widget.devicePixelRatioF();
-    key.extent = theme.metrics().objectIconExtent;
+    key.extent = theme.metrics().iconExtent;
     return key;
 }
 
@@ -200,7 +200,7 @@ void ProjectTreePanel::initPanel()
             this, &ProjectTreePanel::onFontSettingsChanged);
     connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this,
             [this]() {
-                const int extent = ThemeManager::instance().metrics().objectIconExtent;
+                const int extent = ThemeManager::instance().metrics().iconExtent;
                 treeWidget_->setIconSize(QSize(extent, extent));
             });
     connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged, this,
@@ -277,7 +277,7 @@ void ProjectTreePanel::setupTree()
     connect(treeWidget_, &ProjectTreeWidget::externalFilesDropped,
             this, &ProjectTreePanel::onExternalFilesDropped);
     treeWidget_->setAnimated(false);
-    const int iconExtent = ThemeManager::instance().metrics().objectIconExtent;
+    const int iconExtent = ThemeManager::instance().metrics().iconExtent;
     treeWidget_->setIconSize(QSize(iconExtent, iconExtent));
     auto* delegate = new TreeRowStyle::ItemRowDelegate(treeWidget_);
     delegate->setRenameEditorFactory([this](QWidget* parent, const QModelIndex& index) {

@@ -31,10 +31,11 @@ struct TimelineStyleView
     QColor placeholderText;
     QColor axisText;
     QColor uniformTimeAxisGrid;
+    QColor axisTick;
     QColor trackBackground;
     QColor trackBackgroundAlt;
     QColor accent;
-    QColor textMuted;
+    QColor textPrimary;
     DomainColors::Timeline timeline;
     DomainColors::Music music;
     WaveformStyle waveform;
@@ -203,7 +204,8 @@ public:
                        const TimelineRenderData& data);
     static void drawVerticalLine(QPainter& painter, const QColor& color, int x, const QRect& bounds);
     static void drawCursorLine(QPainter& painter, const QColor& color, int x, const QRect& bounds);
-    static void drawCursorHandle(QPainter& painter, const QColor& color, const QRect& bounds);
+    static void drawCursorHandle(QPainter& painter, const QColor& color, const QColor& outline,
+                                 const QRect& bounds);
     static void drawTickSet(QPainter& painter,
                             const TimelineStyleView& style,
                             const TimelineTickSet& ticks,

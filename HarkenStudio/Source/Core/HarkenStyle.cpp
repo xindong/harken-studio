@@ -546,7 +546,7 @@ bool HarkenStyle::eventFilter(QObject* watched, QEvent* event)
             button->style()->drawPrimitive(PE_PanelButtonTool, &option, &painter, button);
             if (tabClose) {
                 const QRect rect = alignedRect(option.direction, Qt::AlignCenter,
-                                               QSize(theme().metrics().objectIconExtent, theme().metrics().objectIconExtent), option.rect);
+                                               QSize(theme().metrics().iconExtent, theme().metrics().iconExtent), option.rect);
                 theme().resolveIcon(QString::fromLatin1(ThemeAssetIds::DockClose)).icon.paint(
                     &painter, rect, Qt::AlignCenter,
                     button->isEnabled() ? QIcon::Normal : QIcon::Disabled);
@@ -581,11 +581,13 @@ int HarkenStyle::pixelMetric(PixelMetric metric, const QStyleOption* option,
         return 0;
     if (metric == PM_LayoutLeftMargin || metric == PM_LayoutTopMargin
         || metric == PM_LayoutRightMargin || metric == PM_LayoutBottomMargin)
-        return theme().metrics().spacingSmall;
+        return theme().metrics().layout.panelPadding;
     if (metric == PM_LayoutHorizontalSpacing || metric == PM_LayoutVerticalSpacing)
-        return theme().metrics().spacingXSmall;
+        return theme().metrics().layout.controlGap;
+    if (metric == PM_ToolBarItemMargin || metric == PM_ToolBarFrameWidth)
+        return 0;
     if (metric == PM_ToolBarIconSize || metric == PM_ButtonIconSize)
-        return theme().metrics().objectIconExtent;
+        return theme().metrics().iconExtent;
     if (metric == PM_SplitterWidth)
         return theme().metrics().control.splitterExtent;
     if (metric == PM_ScrollBarExtent)
@@ -594,10 +596,10 @@ int HarkenStyle::pixelMetric(PixelMetric metric, const QStyleOption* option,
         || metric == PM_TabBarTabShiftHorizontal || metric == PM_TabBarTabShiftVertical)
         return 0;
     if (metric == PM_LineEditIconSize || metric == PM_SmallIconSize)
-        return theme().metrics().objectIconExtent;
+        return theme().metrics().iconExtent;
     if (metric == PM_MenuButtonIndicator || metric == PM_HeaderMarkSize
         || metric == PM_TreeViewIndentation || metric == PM_TabBarScrollButtonWidth)
-        return theme().metrics().navigationChevronExtent;
+        return theme().metrics().iconExtent;
     return QProxyStyle::pixelMetric(metric, option, widget);
 }
 
@@ -675,7 +677,7 @@ QRect HarkenStyle::subElementRect(SubElement element, const QStyleOption* option
     if (element == SE_HeaderArrow || element == SE_HeaderLabel) {
         const auto* header = qstyleoption_cast<const QStyleOptionHeader*>(option);
         if (header && header->sortIndicator != QStyleOptionHeader::None) {
-            const int extent = theme().metrics().navigationChevronExtent;
+            const int extent = theme().metrics().iconExtent;
             const int margin = pixelMetric(PM_HeaderMargin, option, widget);
             QRect rect = header->rect.adjusted(margin, margin, -margin, -margin);
             if (element == SE_HeaderArrow) {
@@ -748,7 +750,7 @@ QRect HarkenStyle::subControlRect(ComplexControl control,
             }
         }
         if (combo && (subControl == SC_ComboBoxArrow || subControl == SC_ComboBoxEditField)) {
-            const int extent = theme().metrics().navigationChevronExtent;
+            const int extent = theme().metrics().iconExtent;
             const int margin = combo->frame ? pixelMetric(PM_DefaultFrameWidth, option, widget) : 0;
             const QRect inner = combo->rect.adjusted(margin, margin, -margin, -margin);
             QRect rect(inner.right() - extent + 1, inner.top(), extent, inner.height());
@@ -915,7 +917,7 @@ void HarkenStyle::drawPrimitive(PrimitiveElement element,
 
     if (option->rect.isEmpty())
         return;
-    const int extent = theme().metrics().navigationChevronExtent;
+    const int extent = theme().metrics().iconExtent;
     const auto& colors = theme().colors();
     const QColor tint = !(option->state & State_Enabled) ? colors.textDisabled
         : (option->state & State_Selected)
@@ -968,7 +970,7 @@ void HarkenStyle::drawControl(ControlElement element, const QStyleOption* option
         if (const auto* button = qstyleoption_cast<const QStyleOptionButton*>(option)) {
             if (button->features & QStyleOptionButton::HasMenu) {
                 QStyleOption arrow = *option;
-                const int extent = theme().metrics().navigationChevronExtent;
+                const int extent = theme().metrics().iconExtent;
                 arrow.rect = QRect(option->rect.right() - extent, option->rect.center().y() - extent / 2, extent, extent);
                 drawPrimitive(PE_IndicatorArrowDown, &arrow, painter, widget);
             }

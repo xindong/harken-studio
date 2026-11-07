@@ -136,7 +136,7 @@ NodeContentEditor::NodeContentEditor(const NodeContentInfo& info, NodeContentFie
     setAttribute(Qt::WA_TranslucentBackground);
     auto* grid = new QGridLayout(this);
     grid->setContentsMargins(0, 0, 0, 0);
-    ThemeLayout::horizontalSpacing(grid, ThemeLayout::Space::Small);
+    ThemeLayout::horizontalSpacing(grid, ThemeLayout::Space::Section);
     grid->setVerticalSpacing(0);
     for (auto field : kFields) {
         if (!info.fields().testFlag(field)) continue;

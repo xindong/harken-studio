@@ -126,11 +126,11 @@ void BlueprintVisibilityMenu::relayout_()
         auto* label = labels_[index];
         rowHeight = std::max({rowHeight, QtControlSkin::current().popupRowHeight(label->fontMetrics()),
                              check->sizeHint().height()});
-        const int inset = Rows[index].group ? metrics.popup.textPadding : metrics.popup.iconColumnWidth;
-        check->parentWidget()->layout()->setContentsMargins(inset, 0, metrics.popup.textPadding, 0);
-        check->parentWidget()->layout()->setSpacing(metrics.spacingSmall);
+        const int inset = Rows[index].group ? metrics.control.textPaddingX : metrics.popup.iconColumnWidth;
+        check->parentWidget()->layout()->setContentsMargins(inset, 0, metrics.control.textPaddingX, 0);
+        check->parentWidget()->layout()->setSpacing(metrics.layout.controlGap);
         contentWidth = std::max(contentWidth, label->fontMetrics().horizontalAdvance(label->text())
-            + inset + check->sizeHint().width() + metrics.popup.textPadding + metrics.spacingSmall);
+            + inset + check->sizeHint().width() + metrics.control.textPaddingX + metrics.spacingSmall);
     }
     for (auto* check : checks_)
         check->parentWidget()->setFixedHeight(rowHeight);

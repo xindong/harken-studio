@@ -60,8 +60,8 @@ MeterPanel::MeterPanel(QWidget* parent, Presentation presentation)
     setObjectName(QStringLiteral("MeterPanel"));
     auto* root = new QVBoxLayout(this);
     if (presentation_ == Presentation::Standalone) {
-        ThemeLayout::margins(root, ThemeLayout::Space::Small);
-        ThemeLayout::spacing(root, ThemeLayout::Space::Small);
+        ThemeLayout::margins(root, ThemeLayout::Space::Panel);
+        ThemeLayout::spacing(root, ThemeLayout::Space::Section);
     }
     busSelector_ = new ObjectRefWidget(this);
     busSelector_->setObjectName(QStringLiteral("meterBusSelector"));
@@ -77,14 +77,14 @@ MeterPanel::MeterPanel(QWidget* parent, Presentation presentation)
     modeSelector_->addItem(tr("Spectrogram"), static_cast<int>(Mode::Spectrogram));
     masterLabel_->setFixedHeight(modeSelector_->sizeHint().height());
     if (presentation_ == Presentation::Embedded) {
-        ThemeLayout::margins(root, ThemeLayout::Space::None, ThemeLayout::Space::None, ThemeLayout::Space::Compact, ThemeLayout::Space::None);
+        ThemeLayout::margins(root, ThemeLayout::Space::None, ThemeLayout::Space::None, ThemeLayout::Space::Tight, ThemeLayout::Space::None);
         root->setSpacing(0);
         header_ = new QWidget(this);
-        ThemeLayout::margins(header_, ThemeLayout::Space::None, ThemeLayout::Space::None, ThemeLayout::Space::None, ThemeLayout::Space::Compact);
+        ThemeLayout::margins(header_, ThemeLayout::Space::None, ThemeLayout::Space::None, ThemeLayout::Space::None, ThemeLayout::Space::Tight);
         header_->installEventFilter(this);
         auto* header = new QHBoxLayout(header_);
-        ThemeLayout::margins(header, ThemeLayout::Space::XSmall, ThemeLayout::Space::Compact, ThemeLayout::Space::XSmall, ThemeLayout::Space::Compact);
-        ThemeLayout::spacing(header, ThemeLayout::Space::XSmall);
+        ThemeLayout::margins(header, ThemeLayout::Space::Panel, ThemeLayout::Space::Tight, ThemeLayout::Space::Panel, ThemeLayout::Space::Tight);
+        ThemeLayout::spacing(header, ThemeLayout::Space::Control);
         expandButton_ = new QToolButton(this);
         expandButton_->setObjectName(QStringLiteral("meterExpandButton"));
         expandButton_->setCheckable(true);
@@ -239,8 +239,8 @@ void MeterPanel::updatePresentation()
         const auto& metrics = theme.metrics();
         for (auto* button : {expandButton_, detachButton_})
             button->setFixedSize(metrics.controlHeight, metrics.controlHeight);
-        expandButton_->setIconSize(QSize(metrics.navigationChevronExtent, metrics.navigationChevronExtent));
-        detachButton_->setIconSize(QSize(metrics.objectIconExtent, metrics.objectIconExtent));
+        expandButton_->setIconSize(QSize(metrics.iconExtent, metrics.iconExtent));
+        detachButton_->setIconSize(QSize(metrics.iconExtent, metrics.iconExtent));
         detachButton_->setVisible(!compact);
         header_->layout()->setAlignment(expandButton_, compact ? Qt::AlignHCenter : Qt::AlignLeft);
         if (compact)
@@ -704,7 +704,7 @@ void MeterPanel::paintEvent(QPaintEvent* event)
     QWidget::paintEvent(event);
     if (presentation_ == Presentation::Embedded) {
         QPainter painter(this);
-        painter.setPen(ThemeManager::instance().snapshot()->ui.colors.viewBorder);
+        painter.setPen(ThemeManager::instance().snapshot()->ui.colors.borderPrimary);
         painter.drawLine(width() - 1, 0, width() - 1, height() - 1);
         painter.drawLine(0, header_->geometry().bottom(), width() - 1, header_->geometry().bottom());
     }
@@ -899,7 +899,7 @@ void MeterPanel::paintCanvas(QPainter& painter)
             QRectF(QPointF(plot.topLeft()), QPointF(plot.bottomRight())), crosshair());
     }
     painter.restore();
-    painter.setPen(snapshot->ui.colors.viewBorder);
+    painter.setPen(snapshot->ui.colors.borderPrimary);
     painter.setBrush(Qt::NoBrush);
     if (presentation_ == Presentation::Standalone)
         painter.drawRect(canvas_->rect().adjusted(0, 0, -1, -1));

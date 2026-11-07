@@ -14,8 +14,8 @@ FloatingTitleBar::FloatingTitleBar(QWidget* parent) : QWidget(parent) {
     });
 
     layout_ = new QHBoxLayout(this);
-    ThemeLayout::margins(layout_, ThemeLayout::Space::Small, ThemeLayout::Space::None, ThemeLayout::Space::None, ThemeLayout::Space::None);
-    ThemeLayout::spacing(layout_, ThemeLayout::Space::Small);
+    ThemeLayout::margins(layout_, ThemeLayout::Space::Panel, ThemeLayout::Space::None, ThemeLayout::Space::None, ThemeLayout::Space::None);
+    ThemeLayout::spacing(layout_, ThemeLayout::Space::Section);
 
     layout_->addStretch();
 

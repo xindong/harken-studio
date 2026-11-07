@@ -31,8 +31,8 @@ QAction* addAmplitudePowerLawAction(QMenu* menu, QWidget* owner, const QPoint& g
         QtControlSkin::setSemanticProperty(popup, "surfaceRole", QStringLiteral("popup"));
 
         auto* layout = new QVBoxLayout(popup);
-        ThemeLayout::margins(layout, ThemeLayout::Space::Medium, ThemeLayout::Space::Small, ThemeLayout::Space::Medium, ThemeLayout::Space::Small);
-        ThemeLayout::spacing(layout, ThemeLayout::Space::Small);
+        ThemeLayout::margins(layout, ThemeLayout::Space::Panel, ThemeLayout::Space::Panel, ThemeLayout::Space::Panel, ThemeLayout::Space::Panel);
+        ThemeLayout::spacing(layout, ThemeLayout::Space::Section);
         auto* decibels = new QLabel(QObject::tr("Linear\ndecibels"), popup);
         decibels->setAlignment(Qt::AlignCenter);
         QtControlSkin::setSemanticProperty(decibels, "textRole", QStringLiteral("secondary"));

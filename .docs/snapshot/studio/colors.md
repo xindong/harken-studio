@@ -1,6 +1,6 @@
 # Studio 主题色卡与颜色职责
 
-最近核对：2026-11-07（界面缩放）；字体与尺寸规范核对日期为 2026-11-06，颜色职责核对日期为 2026-11-04。
+最近核对：2026-11-07（主题参数收束、界面缩放）；字体与尺寸规范核对日期为 2026-11-06，颜色职责核对日期为 2026-11-04。
 
 主题拥有自己的颜色职责、职责到绘制位置的绑定和一个或多个色卡。色卡提供该主题各职责的颜色值及明暗模式，用户修改按主题和色卡隔离。不同主题可以使用不同的职责清单；一个主题可以让网格复用边界色，另一个主题可以提供独立网格色。Renderer 继续消费完整、不可变的样式快照。
 
@@ -23,7 +23,7 @@
 
 面板字号设置的 `0` 表示跟随主题，不再保存七组不同的面板默认字号。加载旧设置时，旧版默认值归零，非默认值保留；Assistant 的旧像素字号转换为 pt。新值保存为 `PanelFontSizePt_*`，优先于旧的 `PanelFontSize_*`。这一迁移无法区分“用户显式选择了恰好等于旧默认的值”和“从未修改默认值”，两者都会跟随主题。
 
-主题包仍使用版本 7。加载入口把旧 `heading`、`label`、`axis` 分别归并为 `title`、`body`、`caption`，同一文件同时提供新旧名称时采用新名称。旧 Curve 的 readout 字号与 Waveform 的标签字号归并到辅助文字；显式字体角色配置优先。运行时快照不再保留这些细分角色与领域字号。
+主题包仍使用版本 7，字体职责只接受 `title`、`body`、`caption`、`mono`。旧的 `heading`、`label`、`axis` 别名，以及 Curve readout、Waveform 标签等领域字号键已于 2026-11-07 移除，出现时按未知键拒绝加载。QSS 中字体统一由职责字体声明提供，不再在同一规则里重复声明常规字重或字距；单独的字重声明只能取主题的常规或强调字重。业务侧暂不提供百分比字号接口，出现真实的字号梯度需求时再引入“职责 + 档位偏移 + 主题比例”的方式。
 
 应用主题时，先发布正文默认字体供原生样式表解析继承值，再更新样式表和调色板，随后重新发布正文默认字体，清除 Qt 安装样式时重新载入的控件类别字体，最后设置辅助文字提示字体并通知显式字体消费者。主题应用入口负责菜单、菜单栏和普通控件的默认字体约束，控件显式选择的字体职责和用户字号继续生效。首次创建、已有控件和连续主题切换均须遵循同一规范。
 
@@ -31,26 +31,47 @@
 
 ## 布局与绘图尺寸
 
-主题提供基础尺寸，统一放在 `ThemeMetrics` 和已有领域样式中，由 `BuiltinTheme.cpp` 声明 Studio Default 的默认值。界面使用语义尺寸或内容测量结果，不按当前默认数字相同就借用其他组件的参数。Dark / Light 共用尺寸。
+2026-11-07 起布局采用“全局档位 → 组件推导”两层。主题只拥有 18 个全局档位，`tokens.metrics` 也只接受这些键；其他组件、图表与 Dock 尺寸由 `ThemeMetricsDerivation` 统一推导，Dark / Light 共用。
 
-| 类别 | 默认档位或职责 |
-|---|---|
-| 通用间距 | `compact / xSmall / small / medium / large / xLarge`：2 / 4 / 8 / 12 / 16 / 24 个 Qt 逻辑像素 |
-| 控件高度 | 紧凑 20、常规 24、较大 32；实际文字较高时由内容测量决定 |
-| 图标 | 小 16、常规 20、大 24 |
-| 边框与圆角 | 普通边框 1、强调边框 2；圆角按紧凑、小、中、大分别为 2 / 4 / 6 / 8 |
-| 布局职责 | `form`、`panel`、`dialog`、`chrome`、`popup`、`card`、`startup`、`toast` |
-| 编辑与绘图职责 | `inspector`、`table`、`parameter`、`toggle`、`node`、`connection`、`timeAxis`、`timeline`、`colorPreview`；曲线、Meter、Waveform 和 Dock 使用各自已有样式 |
+| 档位 | 主题键 | Studio Default |
+|---|---|---|
+| 间距 | `spacing.compact/xSmall/small/medium/large/xLarge` | 2 / 4 / 8 / 12 / 16 / 24 |
+| 圆角 | `radius.compact/small/medium/large` | 2 / 4 / 6 / 8 |
+| 线宽 | `border.width`、`border.accentWidth` | 1 / 2 |
+| 控件高度 | `control.compactHeight`、`control.height`、`control.largeHeight` | 20 / 20 / 32 |
+| 图标 | `icon.small`、`icon.regular`、`icon.large` | 16 / 20 / 24 |
 
-长度使用 Qt 逻辑像素，字体仍使用字体职责中的 pt。列比例、采样数量、动画时间、音量、时间轴业务坐标和已保存的画布位置不是界面长度；矢量图形可以保留参考坐标，但须映射到主题定义的实际范围。窗口首选大小用于首次布局，用户拖动后的窗口大小不在每次主题切换时强制恢复。
+2026-11-08 在档位之上增加布局职责层 `ThemeMetrics::layout`，业务和 QSS 只能按职责取值，不能直接挑选间距档位：
 
-`ThemeManager::bindMetrics` 先应用当前快照，再以目标 QObject 的生命周期订阅完整主题变化。`ThemeLayout` 为布局边距、间距和 spacer 提供相同入口，spacer 删除时同时断开绑定。绑定在创建布局或控件时建立一次；刷新函数直接设置尺寸，不重复注册绑定。具有显式主题管理器的消费者使用同一实例读取和订阅尺寸。纯颜色预览沿用 `appearanceChanged`，不执行尺寸绑定。
+| 职责 | 取值（Studio Default） | 使用边界 |
+|---|---|---|
+| `panelPadding` | 8 | 所有 Dock 面板、设置页与内容页的内边距；搜索栏与内容块同样四边一致 |
+| `sectionGap` | 8 | 同一面板内区块之间 |
+| `controlGap` | 4 | 同一行内控件之间、控件内部组成部分之间、表单行之间 |
+| `tightGap` | 2 | 图标组、工具按钮组等紧凑排列 |
+| `fieldHeight` | 20（控件高度档位） | 下拉框、输入框、数值框、按钮、行内重命名编辑框等基本控件一律等高；字段内的下拉箭头使用小图标 |
+| `rowInset` | 2 | 行内控件上下留白 |
+| `rowHeight` | 24 = 字段高 + 上下留白 | 树、列表、表格、表头的行；字体较高时取字体高加上下留白 |
+| `sectionHeaderHeight` | 26 = 行高 + 2 | Explorer 的 Assets / Sources、Inspector 与其他折叠分节（各层级一致）、Inspector 分类 Tab、GroupBox 标题区 |
+| `indent` | 24 = 图标 + 控件间距 | 折叠分节内容的缩进；分节标题左侧不缩进，chevron 贴左，字段名与分节标题文字左对齐，嵌套分节逐层增加一列 |
+
+Explorer 的 Assets / Sources 与 Inspector 分节共用分区标题职责，悬停底色为 `background.tertiary`，鼠标为手形。Inspector 与设置表单按“块”排列：字段行高等于字段高，行与行之间、分节内容的上下边距都是控件间距，因此字段行与表格等块状内容离分节标题的距离一致，行距与树和表格的行高同为 24。蓝图节点行、标题栏窗口按钮宽、Fader 最小高度和 Timeline 标尺高度不随字段高收缩，分别取行高或较大控件高度推导。重命名编辑框高度为字段高并在行内居中，横向起点退回边框与 `QLineEdit` 固有文字边距，编辑时文字位置不变。
+
+`ThemeLayout::Space` 只剩 `None / Tight / Control / Section / Panel`，原 Medium / Large / XLarge 不再对业务开放；QSS 也不再提供 `@spacing*@`，改用 `@panelPadding@`、`@sectionGap@`、`@controlGap@`、`@tightGap@`、`@rowInset@`、`@fieldHeight@`、`@sectionHeaderHeight@` 与控件文字左右留白 `@textPadding@`。工具条类区域统一为左右面板内边距、上下紧凑间距；主工具栏高度为行高加上下行内留白（32），内容容器固定为一行高度，按钮上下各 4px 对称，HarkenStyle 不再给 `QToolBar` 追加条目边距和框架宽度。蓝图画布节点内部行保持世界坐标中的原有密度，不套用面板行高。
+
+组件层字段（如 `timeAxis.labelPadding`、`table.footerHeight`）保留各自语义名称，值由档位推导，不再是主题键。跨组件语义相同的字段已合并：分节标题高度、Inspector 行高和表头高度统一使用 `controlHeight`；表格按钮与 Inspector 槽位高度使用紧凑控件高度；复选框尺寸使用小图标；对象图标与导航 chevron 合并为 `iconExtent`；弹出项文字边距与控件文字边距合并；Inspector 与表单的列比例合并为 `form` 的 3 : 7；参数与通用 Slider 槽厚合并；Timeline 与时间轴的刻度长度（4 / 8）和标记手柄带高合并。Qt-ADS 不再有独立尺寸结构，适配器直接读取档位，Dock 分隔条与通用分隔条同宽。
+
+窗口、对话框、面板、卡片和启动窗口的首选尺寸，以及 Curve / Meter / Waveform 的标签框与偏移，属于组件常量：写在推导代码中并随界面比例缩放，不进入主题合同；能对应档位的线宽、圆角、内边距直接取档位。主窗口最小宽高不随比例变化。列比例、网格数量、渐变色带位置和颜色映射参数不是界面长度。Waveform 的颜色映射、Meter 渐变色带位置和 Curve 离散引导线 Alpha 属于颜色表达，仍可在领域视觉文件中设置；其他领域尺寸键均按未知键拒绝。
+
+原来的几何一致性校验（开关内部空间、端口命中范围、提示宽度上下限等）随推导失去意义，加载时改为校验档位本身：间距、圆角与线宽不得为负，控件高度与图标尺寸至少为 1。
+
+`ThemeManager::bindMetrics` 先应用当前快照，再以目标 QObject 的生命周期订阅完整主题变化。`ThemeLayout` 为布局边距、间距和 spacer 提供相同入口，spacer 删除时同时断开绑定。绑定在创建布局或控件时建立一次；刷新函数直接设置尺寸，不重复注册绑定。纯颜色预览沿用 `appearanceChanged`，不执行尺寸绑定。
+
+长度使用 Qt 逻辑像素，字体仍使用字体职责中的 pt。窗口首选大小用于首次布局，用户拖动后的窗口大小不在每次主题切换时强制恢复。
 
 检查器表单、列比例、装饰槽、分节、设置、参数控件和窗口壳层在现有控件上更新几何。蓝图节点和连线先通知 Graphics Scene 几何变化，再更新测量与绘图缓存；端口绘制与命中区域共享尺寸。时间轴与 Source Editor 的手柄矩形共用计算入口，波形绘制与幅度刻度共用带显式留白的范围计算。Assistant 的换行宽度、高度测量和实际布局使用相同边距。菜单尺寸由字体、图标和 padding 共同决定。
 
-主题包继续使用 `schemaVersion: 7`，在 `tokens.metrics` 中按语义键覆盖新增尺寸，未提供的值继承基础主题。加载时检查开关内部空间、端口与连线命中范围、非零手柄、提示宽度上下限及表单列比例；不合法候选不会替换活动主题。
-
-2026-11-06 在 Windows、Qt 6.11.1、RelWithDebInfo 下，编辑器和测试目标构建通过，142 项相关合同测试通过，覆盖主题候选校验、输入与手势保留、布局与 spacer 生命周期、时间轴绘制和命中几何。QSS 归属检查通过，样式表的 113 个令牌均有解析入口。隔离工程分别在 offscreen 和原生 Windows 平台生成 42 张真实窗口截图，检查 Dark / Light、170 个基础尺寸增至约 1.5 倍，以及恢复默认值后的界面；覆盖主窗口、检查器、蓝图、时间轴、设置、选色器、About、Assistant、Meter、曲线、日志和菜单。动态切换保留输入选择与检查器控件，About 的标题栏与 Logo 均计入布局范围。证据位于 `.temp/metrics-review/`，测试结果位于 `.temp/metrics-tests.xml`。这是主题尺寸与生命周期验证，字体未随该探针放大，不等同于完整 UI 缩放验收；已有蓝图位置保持原坐标，较大的节点主题可能需要用户重新排列，自动布局的尺寸来源已经统一。
+以下为档位收束前的历史验收：2026-11-06 在 Windows、Qt 6.11.1、RelWithDebInfo 下，编辑器和测试目标构建通过，142 项相关合同测试通过，覆盖主题候选校验、输入与手势保留、布局与 spacer 生命周期、时间轴绘制和命中几何。QSS 归属检查通过，样式表的 113 个令牌均有解析入口。隔离工程分别在 offscreen 和原生 Windows 平台生成 42 张真实窗口截图，检查 Dark / Light、170 个基础尺寸增至约 1.5 倍，以及恢复默认值后的界面；覆盖主窗口、检查器、蓝图、时间轴、设置、选色器、About、Assistant、Meter、曲线、日志和菜单。动态切换保留输入选择与检查器控件，About 的标题栏与 Logo 均计入布局范围。证据位于 `.temp/metrics-review/`，测试结果位于 `.temp/metrics-tests.xml`。这是主题尺寸与生命周期验证，字体未随该探针放大，不等同于完整 UI 缩放验收；已有蓝图位置保持原坐标，较大的节点主题可能需要用户重新排列，自动布局的尺寸来源已经统一。
 
 ## 界面缩放
 
@@ -58,7 +79,7 @@
 
 **View → Appearance → Zoom In / Zoom Out** 与设置使用同一份状态。`Ctrl + =`、`Ctrl + +`（含数字键盘）放大一档，`Ctrl + -`（含数字键盘）缩小一档；macOS 使用 Command。快捷键可在 Shortcuts 中修改，到达上下限后停止；不绑定 `Ctrl + 0`。选择 100% 即可恢复默认大小。设置、菜单和快捷键立即应用并保存，不需要重启。该值继续保存在用户设置的 `Appearance/GlobalUIScale`，不属于主题或色卡；切换主题、切换色卡、接受或取消颜色预览都保留当前比例。
 
-主题继续提供基础尺寸和 pt 字号。`ThemeManager` 保留未缩放的候选快照，每次发布时从基础值生成当前比例下的显示尺寸，避免往返调整造成累积误差。`FontManager` 在解析字体时应用同一比例；主题字号和用户显式设置的面板字号仍保存基础值，不把放大后的字号写回设置，基础字号下限在缩放前应用。整数像素尺寸在显示边界取整，正尺寸至少保留 1px，浮点绘图长度保留精度；列比例、时间、计数、音量和未指定尺寸的哨兵值不随界面缩放变化。
+主题继续提供基础尺寸和 pt 字号。`ThemeManager` 保留未缩放的候选快照，每次发布时只按比例缩放 18 个全局档位，再重新推导全部组件尺寸，派生值之间始终保持一致，也不会因往返调整累积误差。蓝图节点使用世界坐标，节点尺寸从未取整的基础档位按比例做浮点缩放。`FontManager` 在解析字体时应用同一比例；主题字号和用户显式设置的面板字号仍保存基础值，不把放大后的字号写回设置，基础字号下限在缩放前应用。整数像素尺寸在显示边界取整，正尺寸至少保留 1px，浮点绘图长度保留精度；列比例、时间、计数、音量和未指定尺寸的哨兵值不随界面缩放变化。
 
 已有控件通过主题、尺寸和字体通知更新布局与绘制。缩放设置会同步反映外部修改和恢复默认值；打开的颜色编辑器保留预览及编辑状态。颜色预览取消只恢复配色，不回滚其间独立修改的缩放比例。
 
@@ -111,7 +132,7 @@ PR 审查后补充修复：Assistant 在原消息和待确认控件上更新字�
 | 次要边界 | `border.secondary` | 控件与按钮描边、表格完整外框、网格及行列分隔、控件内滚动条；禁用态控件描边仍属此类 |
 | 刻度线 | `border.tick` | 时间轴、曲线、波形与 Meter 的刻度短线和坐标网格；刻度文字仍使用次要文字 |
 | 面板与轨道表面 | `panel.background`、`header.background`、`track.background`、`track.backgroundAlternate`、`bus.background` | 保留既有较暗的工作区层次，不因 RGB 接近而合并为一个背景 |
-| 反馈 | `status.success/warning/error/info` | 操作反馈；领域 feedback 同义槽位由这里解析 |
+| 反馈 | `status.success/warning/error/info` | 操作反馈；时间序列图的状态标记、阈值线与 Monitor 游标精度也直接使用这些职责 |
 | 分类色板 | `palette.categorical0` 至 `palette.categorical6` | 区分多个条目，不承担固定对象类型或强度数值语义 |
 
 字段名统一声明 `textRole=formLabel`，使用首要文字。普通文本标签可声明 `textRole=primary/secondary/title`；节点内容保留 `nodeContentRole=label/value`，两个绘制位置均绑定首要文字，节点辅助副标题使用次要文字。`roValue` 静态展示值使用首要文字；继承等运行时只读状态下，列表标签与数值随编辑状态禁用。公共禁用文字规则覆盖普通 QLabel、表格序号与列头、单位及上述文字角色，原生 palette 同步设置 Disabled WindowText。仍需支持查看导航的文字可通过 `dimmed=true` 使用同一禁用色；FX Custom 名称采用此方式，保留双击打开 Effect Editor 的能力。
@@ -126,9 +147,9 @@ AI 空状态的气泡图标与提示文字使用首要色，输入占位提示�
 
 AI 空状态归入首要色后，追加 3 项现有预览与样式测试通过；实际 AssistantPanel 在 Dark / Light 连续预览及取消恢复中的图标和文字共 14 项检查通过，记录与更新图例位于 `.temp/ai-empty-role-review/`。
 
-Studio Default 不再开放 `text.muted` 作为独立编辑职责。既有 `text.muted` 渲染位置和 `textRole=muted` 消费者保留，统一由 `text.secondary` 提供颜色；其他主题仍可为这些位置定义自己的职责。Dark / Light 的标题默认色分别沿用各自首要文字的默认色，标题职责可独立编辑，没有另行指定新的 RGB 值。
+Studio Default 不再开放 `text.muted` 作为独立编辑职责。`textRole=muted` 消费者保留，直接使用 `text.secondary`；2026-11-07 起 `text.muted` 渲染位置已删除。Dark / Light 的标题默认色分别沿用各自首要文字的默认色，标题职责可独立编辑，没有另行指定新的 RGB 值。
 
-2026-11-01 将边界职责收束为首要、次要和刻度线。首要与次要默认值保持，刻度线沿用原 `border.view` 的 Dark `#272E3C` / Light `#B9C5D1`，保留已有网格与主次刻度的透明度层次。`border.view` 和 `section.separator` 渲染位置保留并绑定首要边界；Studio Default 的旧 `border.view` 覆盖值迁移到 `border.tick`，已有 `border.tick` 覆盖优先，其他主题的同名职责不迁移。表格属于控件，外框与内部表头、分组、行列分隔统一使用次要边界，覆盖原生表格、组合表格和矩阵表格。Dock、主窗口与 Inspector 内嵌分割器的缝隙使用原有背景色。
+2026-11-01 将边界职责收束为首要、次要和刻度线。首要与次要默认值保持，刻度线沿用原 `border.view` 的 Dark `#272E3C` / Light `#B9C5D1`，保留已有网格与主次刻度的透明度层次。`border.view` 和 `section.separator` 的绘制位置直接使用首要边界（2026-11-07 起不再作为独立渲染位置）；Studio Default 的旧 `border.view` 覆盖值迁移到 `border.tick`，已有 `border.tick` 覆盖优先，其他主题的同名职责不迁移。表格属于控件，外框与内部表头、分组、行列分隔统一使用次要边界，覆盖原生表格、组合表格和矩阵表格。Dock、主窗口与 Inspector 内嵌分割器的缝隙使用原有背景色。
 
 Filter 图表与字段共用首要边界外框；两者之间及 Explorer 的 Assets / Sources 之间保留 1px 分隔边界，常态使用首要边界色，启用时悬停使用强调色。拖动命中范围向两侧扩展，不增加可见线宽或布局间距。Explorer 任一分节收起后边界不可拖动，也不显示悬停强调色。
 
@@ -146,7 +167,7 @@ Blueprint 内嵌 Meter 的宽度边界及通用表格的列宽边界在悬停时
 
 旋钮没有实际业务页面入口，已删除 `RotaryKnobPresenter`、`RotaryKnobRenderer`、注册与构建项、`knob.indicator` 颜色职责和 `parameter.knobExtent` 尺寸配置。原 EffectParameter 默认展示器改用已有 `SliderWithValue`；恢复 Studio Default 已保存设置时移除旧旋钮职责覆盖，其他主题的同名职责保留。
 
-本轮范围为分割线、border 与刻度线，不将控制柄、十字参考线、播放头、连接线、定位网点和其他辅助图形重新收纳到三类边界职责。十字参考线退出原先共用的 `border.view` 绑定，保留其 Dark / Light 预设色及独立渲染位置，不新增编辑职责。2026-11-01 曾按用户决定保留 clip 完整描边；2026-11-03 按新的 Timeline 绘制要求取消。`timeline.clipBorder` 与 `timeline.clipSelectedBorder` 的主题合同字段和既有色卡值继续保留，当前不参与 clip 绘制。
+本轮范围为分割线、border 与刻度线，不将控制柄、十字参考线、播放头、连接线、定位网点和其他辅助图形重新收纳到三类边界职责。十字参考线退出原先共用的 `border.view` 绑定，保留其 Dark / Light 预设色及独立渲染位置，不新增编辑职责。2026-11-01 曾按用户决定保留 clip 完整描边；2026-11-03 按新的 Timeline 绘制要求取消。`timeline.clipBorder` 与 `timeline.clipSelectedBorder` 因不参与绘制，已于 2026-11-07 连同可编辑职责删除。
 
 补正后 `harken_editor` 与 `harken_editor_tests` 构建通过，64 项主题、设置、控件、表格和时间刻度相关测试通过。新增通用回归检查：已有不透明子控件在连续纯颜色预览和取消时收到重绘，保持布局、编辑内容、选区与原生样式不变。Dark / Light 的实际 Preferences 调色器、三种表格和 Dock 离屏核对共 166 项通过；直接读取窗口绘制缓冲区检查点击 OK 前的边界像素，没有调用强制重绘来掩盖刷新遗漏。较早的 112 项静态核对未覆盖这类连续预览问题，也沿用了错误的表格外框分类。此次核对未改写用户配色，不覆盖完整工程和原生输入。QSS 归属检查与 `git diff --check` 通过，记录和样张位于 `.temp/border-preview-fix/`。
 
@@ -214,19 +235,19 @@ PR 集成复验基于已含 #194 的主线 `9235952a`：编辑器与测试目标
 
 ## 用户颜色定制
 
-Studio Default 提供 72 个可编辑源颜色角色，共 11 类。每项包含职责名称、用途说明、主题职责键和绘制绑定。外部主题可声明自己的目录，Appearance 按当前主题生成分类与颜色行。窗口壳层按钮细节、Logo 扫光和声谱图固定热力色阶未加入 Studio Default 的用户定制目录；启动波浪的四档色阶单独表达动画配色，Logo 底板复用 `panel.background`。
+Studio Default 提供 70 个可编辑源颜色角色，共 11 类。每项包含职责名称、用途说明、主题职责键和绘制绑定。外部主题可声明自己的目录，Appearance 按当前主题生成分类与颜色行。窗口壳层按钮细节、Logo 扫光和声谱图固定热力色阶未加入 Studio Default 的用户定制目录；启动波浪的四档色阶单独表达动画配色，Logo 底板复用 `panel.background`。
 
 | 分类 | 数量 | 开放范围 |
 |---|---|---|
 | Text | 4 | 首要文字、次要文字、标题文字、禁用文字 |
-| Surfaces | 8 | 主背景、控件背景、抬升背景、面板、标题、轨道、交替轨道、Bus 背景 |
+| Surfaces | 7 | 主背景、控件背景、抬升背景、面板、标题、轨道、交替轨道 |
 | Interaction | 9 | 强调及悬停、强调底文字、悬停/选中背景、三类边界、滑条底轨 |
 | Feedback | 4 | 成功、警告、错误、信息 |
 | Categorical palette | 7 | 区分多个条目的七个分类色 |
 | Waveform | 7 | 静态波形低/高幅度、三段频率贡献、裁剪及循环标记 |
 | Curves | 4 | 音量衰减、音高衰减、参数绑定、Grid 淡变 |
 | Meters | 8 | Peak 四段渐变、RMS、峰值保持、频谱主线/峰值线 |
-| Timeline | 8 | Clip 背景、上下文范围高亮、Clip 文字及普通/选中边界、进入/退出/过渡标记 |
+| Timeline | 6 | Clip 背景、上下文范围高亮、Clip 文字、进入/退出/过渡标记 |
 | Blueprint | 9 | 画布、网格点、三类端口、三类关系连线、节点波形 |
 | Startup | 4 | 启动波浪的暗部、低色阶、高色阶和高光 |
 
@@ -302,6 +323,20 @@ Studio Default 已保存的 `text.muted` 覆盖迁入同一色卡的 `text.secon
 
 以上 10 个 UI 字段连同独立配置键均已删除，保留的消费者直接使用共同来源。表中的旋钮绑定是历史收束记录，旋钮实现与剩余的指示线职责已在 2026-11-01 清理。窗口关闭按钮、标题栏文字等仍保留其视觉职责。
 
+## 主题参数收束（2026-11-07）
+
+**颜色。** `ThemeColors` 不再保留同义槽位：`textMuted` 并入 `text.secondary`，`viewBorder` 与 `sectionSeparator` 并入 `border.primary`，菜单栏文字并入首要文字，窗口按钮文字使用次要文字、悬停使用首要文字，关闭按钮按下时的文字按背景计算对比色；Control Panel 背景使用 `panel.background`，播放与停止图标使用成功与错误色，拖放目标使用选中背景与强调色。Qt-ADS 的关闭按钮色复用窗口关闭按钮色，未激活标签文字使用次要文字；Dock 外框底色 `chromeBackground` 暂无对应职责，仍为色卡值。`bus.background`、`timeline.clipBorder`、`timeline.clipSelectedBorder` 没有绘制消费者，连同可编辑职责一起删除，已保存的覆盖在恢复设置时移除。
+
+无消费者的渲染槽位一并删除：Scene3D、Spatial、Monitor、Feedback 整组，Meter 的基础色、Stereo、Layout、示波器色、clipBackground 与 Spectrogram timeText，Waveform 的 line / fill / cursor / regionMarker / selectionHighlight，Music 的 trackColors / loopRegion，以及若干节点、蓝图与 Timeline 的未用色。时间序列图的多条曲线改用分类色板区分。主题包中这些键，以及同义别名 `curve.line`、`meter.peakMeter.gradientGreen`、`meter.peakMeter.gradientGreenStop`，均按未知键拒绝。
+
+**状态层。** 业务侧不再用 `lighter()` / `darker()` 生成悬停、按下和高亮色，统一调用 `ThemeColors::stateColor`：职责色向首要文字色分别混合 8%（悬停）、12%（按下）、16%（强调），保留源 Alpha。画布图形标记（Timeline marker、编辑游标、Source Editor 手柄）的悬停与选中使用 `Highlight`：保持色相，按首要文字相对底色的明暗方向调亮或调暗 35%，Dark 下与原 `lighter(130)` 观感一致，Light 下变深而不是变浅。比例属于交互规范，作为代码常量集中在 `ThemeSnapshot.h`。Dark 下状态变亮，Light 下变暗，两张色卡都可辨认。未选中的 Mixing 曲线改为源 Alpha 乘 50%。QSS 的柔和底色统一使用 `ThemeSoftTintAlpha`（36 / 255），悬停叠加使用首要文字 8%。业务侧按比例乘透明度的做法保持不变。
+
+**QSS 令牌。** 颜色令牌与 QSS 一一对应，删除了没有使用者的令牌，工具栏状态按钮改用 `@success@ / @warning@ / @error@` 及其 `Hover` 状态层令牌；尺寸令牌随布局收束合并为 `@iconExtent@`、`@smallIconExtent@` 等档位名称。未匹配任何控件的 `.TrackHeader`、`.ClipBlock`、`.NodeHeader`、`.NodeBody` 规则已删除。
+
+2026-11-07 在 Windows、Qt 6.11.0、`build-nc` RelWithDebInfo 下，`harken_editor` 与 `harken_editor_tests` 构建通过；主题、样式、颜色、设置、表格、Timeline、Meter、曲线、蓝图、Inspector、缩放与字体相关的 231 项测试中 230 项通过、1 项符号链接用例跳过。完整编辑器测试 687 项中 684 项通过、1 项跳过，2 项失败：`EditorDockLayoutTest.ColorRefreshPreservesBlueprintEditorsAndStructureRefreshReplacesThem` 单独运行通过，属于前文记录的跨套件隔离问题；`EditorProjectPackExporterManifest.PartialPublicationCombinesScheduleAndEffectCapacity` 在运行时 `ActivateCanonicalMembersV1` 返回 -415，位于 Pack 导出与引擎激活路径，本次未改动相关代码。QSS 归属检查及其 6 项脚本测试通过，`--self-test` 返回 `ok: true`。2026-11-08 的布局职责收束使用离屏真实窗口探针，在 Dark / Light 下截取主窗口、Explorer、Inspector、Preferences、Project Settings、Log、Information、Blueprint 与 Timeline（Segment / Track），并导出各面板边距、控件高度与行高；与 main 基线对照确认 Explorer 搜索栏上边距、分区标题、行高与表格行高的统一，以及 Inspector Playback 分节在离屏截图中需等待展开动画结束才显示内容（main 同样存在）。
+
+Timeline 与 Source Editor 的时间轴刻度共用 `timeAxisTickColor`：主刻度使用 `border.tick` 完整 Alpha、长度 12，次刻度源 Alpha 乘 50%、长度 4；Timeline 标尺不再借用画布网格色。Clip 取消顶部 1px 留白，只保留底部给轨道分隔线的 1px（`clipBottomInset`）。Segment 视图的轨道头列与时间轴之间留出与面板内分割条相同宽度（`control.splitterExtent`，4）的缝隙，底色 `@window@`，两侧各一条首要边界线，与面板之间的缝隙观感一致；整条缝隙都可拖动调节：轨道区由调节条绘制并接收鼠标；标尺段由标尺在 cursor 手柄之前绘制缝隙，上方覆盖透明命中层，落在 cursor 手柄上的按下与拖动原样交给标尺，其余位置进入宽度调节；悬停与拖动时整条缝隙显示强调色。蓝图节点紧凑 Slider 恢复 `cb8e8359` 之前的槽高 6、滑块宽 5。
+
 ## Studio Default 的领域绑定
 
 下表记录 Studio Default 的领域绘制位置与角色绑定。其他主题可以为这些位置声明不同的来源。未写透明度时保留源颜色；表中的 Alpha 数值均表示乘数的分子，实际系数为该值 / 255，不覆盖源颜色的 Alpha。
@@ -315,7 +350,7 @@ Studio Default 已保存的 `text.muted` 覆盖迁入同一色卡的 `text.secon
 | `curve.plotBorder` | `border.primary` |
 | `waveform.splitStereo.divider` | `border.primary` |
 | `music.beatGridMajor`、`music.beatGridMinor` | `border.tick`，Alpha 分别为 48、18 |
-| `curve.axisText`、`curve.handleBorder`、`waveform.dbScale.label` | `text.secondary` |
+| `curve.axisText`、`curve.handleBorder`、`waveform.dbScale.label`、`waveform.splitStereo.label` | `text.secondary` |
 | `curve.handleLine` | `text.secondary`，Alpha 110 |
 | `curve.handleActiveBorder`、`curve.handleActiveFill`、`curve.pointBorder`、`curve.pointSelectedFill` | `accent.primary` |
 | `curve.pointSelectedBorder`、`curve.readoutText` | `text.primary` |
@@ -333,7 +368,7 @@ Studio Default 已保存的 `text.muted` 覆盖迁入同一色卡的 `text.secon
 | `meter.interaction.readoutText` | `text.primary` |
 | `meter.peakMeter.canvasBackground`、`meter.peakMeter.trackBackground`、`meter.spectrum.canvasBackground`、`meter.spectrogram.canvasBackground` | `background.primary` |
 | `meter.peakMeter.grid`、`meter.spectrum.horizontalGrid`、`meter.spectrum.verticalGrid`、`meter.spectrogram.grid` | `border.tick` |
-| `meter.peakMeter.tickText`、`meter.spectrum.axisText`、`meter.spectrogram.axisText`、`meter.spectrogram.timeText` | `text.secondary` |
+| `meter.peakMeter.tickText`、`meter.spectrum.axisText`、`meter.spectrogram.axisText` | `text.secondary` |
 | `meter.peakMeter.label` | `text.primary` |
 
 2026-11-01 的 Meter 调整取消零刻度与普通刻度的网格强度差异。Peak 和 Loudness 共用的电平柱在展开时，刻度、读数与网格按源 RGBA 的 100% 绘制；收起时统一乘 50%。柱体与峰值保持标记保留原有绘制。Spectrum 和 Spectrogram 的网格按 100% 绘制。相关职责的 Dark / Light 默认 Alpha 均为 255，用户自定义 Alpha 仍与业务比例相乘。
@@ -348,16 +383,13 @@ VU 已退出产品入口。按用户要求删除遗留 `VUMeterRenderer`、专�
 
 此前 `.temp/palette-alpha-review/palette-alpha-comparison.png` 的 03 使用了该旧绘制器，02 的浮动读数使用了旧渲染帧入口，不能代表当前前端的对应画面。本轮改用当前 `MeterPanel` 和 `CurveCanvas` 的实际渲染入口与示例数据核对，更新图为 `.temp/meter-color-review/meter-color-comparison.png`，沿用当前保存的 Dark 配色。`harken_editor` 与 `harken_editor_tests` 构建通过，58 项主题、资产、样式、仪表数据及历史图像测试通过；Dark / Light Alpha、交错虚线像素及当前组件样本共 44 项临时检查通过。QSS 归属检查与 `git diff --check` 通过，未改写用户设置。
 
-| 节点与反馈绘制位置 | Studio Default 来源 |
+| 节点绘制位置 | Studio Default 来源 |
 |---|---|
 | `nodeGraph.node.bodyNormal` | `background.tertiary` |
 | `nodeGraph.node.bodySelected` | `background.hover` |
 | `nodeGraph.node.contentLabel`、`nodeGraph.node.contentValue` | `text.primary` |
 | `nodeGraph.node.titleText` | `text.primary` |
 | `blueprint.edgeLabelText` | `text.secondary` |
-| `feedback.success/warning/error/info` | 对应的 `status.success/warning/error/info` |
-| `feedback.neutral` | `text.secondary` |
-| `feedback.overlayHighlight` | `accent.primary` |
 
 ## 对象颜色职责
 

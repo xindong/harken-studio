@@ -13,17 +13,6 @@
 namespace VNX {
 namespace {
 
-QColor seriesColor(const DomainColors::Monitor& monitor, std::size_t index)
-{
-    const QColor palette[] = {
-        monitor.cpuSafe,
-        monitor.cpuWarning,
-        monitor.cpuCritical,
-        monitor.peakSafe,
-        monitor.bufferNormal,
-    };
-    return palette[index % (sizeof(palette) / sizeof(palette[0]))];
-}
 
 QString hitText(const TimeSeriesHit& hit)
 {
@@ -230,7 +219,6 @@ void TimeSeriesChart::rebuildBuffer()
     const auto snapshot = ThemeManager::instance().snapshot();
     const auto& ui = snapshot->ui.colors;
     const auto& themeMetrics = snapshot->ui.metrics;
-    const auto& monitor = snapshot->domains.monitor;
     painter.fillRect(QRectF(0, 0, width(), height()), ui.bgPrimary);
 
     std::size_t colorIndex = 0;
@@ -254,20 +242,14 @@ void TimeSeriesChart::rebuildBuffer()
             continue;
         }
 
-        const auto color = seriesColor(monitor, colorIndex++);
+        const auto color = ui.categoricalColor(static_cast<int>(colorIndex++));
         painter.setPen(QPen(color, 1.2));
         for (const auto& column : rendered.columns)
         {
             const qreal x = column.column + 0.5;
             if (column.hasState)
             {
-                QColor mark = monitor.underrunIdle;
-                if (column.state == TimeSeriesStateKind::Invalid)
-                    mark = monitor.cpuCritical;
-                else if (column.state == TimeSeriesStateKind::WarmUp)
-                    mark = monitor.cpuWarning;
-                else
-                    mark = monitor.bufferWarning;
+                QColor mark = column.state == TimeSeriesStateKind::Invalid ? ui.error : ui.warning;
                 mark.setAlphaF(mark.alphaF() * 96 / 255.0);
                 painter.fillRect(QRectF(column.column, 0, 1, height()), mark);
                 continue;
@@ -279,7 +261,7 @@ void TimeSeriesChart::rebuildBuffer()
             painter.drawLine(QPointF(x, y1), QPointF(x, y2));
         }
 
-        painter.setPen(QPen(monitor.peakCaution, 1.0, Qt::DashLine));
+        painter.setPen(QPen(ui.warning, 1.0, Qt::DashLine));
         for (const auto& threshold : source->thresholds)
         {
             if (threshold.value < yMin || threshold.value > yMax)

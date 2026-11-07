@@ -48,7 +48,7 @@ BlueprintPanel::BlueprintPanel(QWidget* parent)
     for (auto* button : {selectButton_, panButton_}) {
         button->setToolButtonStyle(Qt::ToolButtonIconOnly);
         ThemeManager::instance().bindMetrics(button, [button](const ThemeMetrics& metrics) {
-            button->setIconSize(QSize(metrics.objectIconExtent, metrics.objectIconExtent));
+            button->setIconSize(QSize(metrics.iconExtent, metrics.iconExtent));
         });
         ThemeManager::instance().bindMetrics(button, [button](const ThemeMetrics& metrics) {
             button->setFixedSize(metrics.controlHeight, metrics.controlHeight);
@@ -74,7 +74,7 @@ BlueprintPanel::BlueprintPanel(QWidget* parent)
     snapButton_->setText(tr("Snap to Grid"));
     snapButton_->setToolTip(tr("Snap to Grid"));
     ThemeManager::instance().bindMetrics(snapButton_, [this](const ThemeMetrics& metrics) {
-        snapButton_->setIconSize(QSize(metrics.objectIconExtent, metrics.objectIconExtent));
+        snapButton_->setIconSize(QSize(metrics.iconExtent, metrics.iconExtent));
     });
     ThemeManager::instance().bindMetrics(snapButton_, [this](const ThemeMetrics& metrics) {
         snapButton_->setFixedSize(metrics.controlHeight, metrics.controlHeight);
@@ -129,7 +129,7 @@ BlueprintPanel::BlueprintPanel(QWidget* parent)
         button->setToolTip(button->text());
         button->setToolButtonStyle(Qt::ToolButtonIconOnly);
         ThemeManager::instance().bindMetrics(button, [button](const ThemeMetrics& metrics) {
-            button->setIconSize(QSize(metrics.objectIconExtent, metrics.objectIconExtent));
+            button->setIconSize(QSize(metrics.iconExtent, metrics.iconExtent));
         });
         ThemeManager::instance().bindMetrics(button, [button](const ThemeMetrics& metrics) {
             button->setFixedSize(metrics.controlHeight, metrics.controlHeight);
@@ -147,13 +147,13 @@ BlueprintPanel::BlueprintPanel(QWidget* parent)
         separator->setFixedSize(metrics.borderWidth, metrics.control.smallIconExtent);
     });
     auto* toolLayout = new QHBoxLayout(toolbar);
-    ThemeLayout::margins(toolLayout, ThemeLayout::Space::Small, ThemeLayout::Space::Compact, ThemeLayout::Space::Small, ThemeLayout::Space::Compact);
-    ThemeLayout::spacing(toolLayout, ThemeLayout::Space::Compact);
+    ThemeLayout::margins(toolLayout, ThemeLayout::Space::Panel, ThemeLayout::Space::Tight, ThemeLayout::Space::Panel, ThemeLayout::Space::Tight);
+    ThemeLayout::spacing(toolLayout, ThemeLayout::Space::Tight);
     toolLayout->addWidget(selectButton_);
     toolLayout->addWidget(panButton_);
-    ThemeLayout::addSpacing(toolLayout, ThemeLayout::Space::XSmall);
+    ThemeLayout::addSpacing(toolLayout, ThemeLayout::Space::Control);
     toolLayout->addWidget(separator);
-    ThemeLayout::addSpacing(toolLayout, ThemeLayout::Space::XSmall);
+    ThemeLayout::addSpacing(toolLayout, ThemeLayout::Space::Control);
     toolLayout->addWidget(snapButton_);
     toolLayout->addStretch();
     toolLayout->addWidget(filterButton_);
@@ -213,7 +213,7 @@ BlueprintPanel::BlueprintPanel(QWidget* parent)
 
     auto* barLayout = new QHBoxLayout(statusBar);
     barLayout->setContentsMargins(0, 0, 0, 0);
-    ThemeLayout::spacing(barLayout, ThemeLayout::Space::Small);
+    ThemeLayout::spacing(barLayout, ThemeLayout::Space::Section);
     barLayout->addWidget(resetButton_);
     barLayout->addStretch(1);
     barLayout->addWidget(zoomButton_);

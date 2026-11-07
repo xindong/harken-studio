@@ -147,7 +147,7 @@ void SourceEditorWaveformView::setupTimeline()
     handleValue_->setAttribute(Qt::WA_ShowWithoutActivating);
     handleValue_->setAutoFillBackground(true);
     handleValue_->setFrameStyle(QFrame::Box | QFrame::Plain);
-    ThemeLayout::margins(handleValue_, ThemeLayout::Space::Small, ThemeLayout::Space::XSmall, ThemeLayout::Space::Small, ThemeLayout::Space::XSmall);
+    ThemeLayout::margins(handleValue_, ThemeLayout::Space::Panel, ThemeLayout::Space::Control, ThemeLayout::Space::Panel, ThemeLayout::Space::Control);
     handleValue_->hide();
 
     detailTimer_.setSingleShot(true);
@@ -180,7 +180,7 @@ QRect SourceEditorWaveformView::waveformRect() const
         return rect().adjusted(timeAxisMetrics().waveformInset, timeAxisMetrics().waveformInset,
                                -timeAxisMetrics().waveformInset, -timeAxisMetrics().waveformInset);
     const QFontMetrics metrics(FontManager::instance().getFont(FontRole::Caption), this);
-    const int chevronExtent = ThemeManager::instance().metrics().navigationChevronExtent;
+    const int chevronExtent = ThemeManager::instance().metrics().iconExtent;
     const int axisWidth = std::max(metrics.horizontalAdvance(QStringLiteral("-96.00")) + timeAxisMetrics().labelPadding * 2, chevronExtent);
     const int rulerHeight = std::max(metrics.height() + timeAxisMetrics().majorTickLength, chevronExtent);
     const int rightWidth = channelScroll_ ? channelScroll_->sizeHint().width() : 0;
@@ -292,7 +292,7 @@ void SourceEditorWaveformView::layoutTimeline()
     const int footerY = plot.bottom() + 1;
     const int horizontalExtent = scroll_->sizeHint().height();
     const int verticalExtent = channelScroll_->sizeHint().width();
-    const int chevronExtent = ThemeManager::instance().metrics().navigationChevronExtent;
+    const int chevronExtent = ThemeManager::instance().metrics().iconExtent;
     units_->setGeometry((plot.left() - chevronExtent) / 2,
         (plot.top() - chevronExtent) / 2, chevronExtent, chevronExtent);
     zoomIn_->setGeometry(plot.left(), footerY, horizontalExtent, horizontalExtent);
@@ -446,7 +446,8 @@ void SourceEditorWaveformView::paintTimeline(QPainter& painter)
             if (x < 0)
                 continue;
             const bool highlighted = activeHandle_ == handle || hoveredHandle_ == handle;
-            const QColor color = highlighted ? waveStyle.trimHandle.lighter(130) : waveStyle.trimHandle;
+            const QColor color = highlighted
+                ? colors.stateColor(waveStyle.trimHandle, ThemeStateLayer::Highlight) : waveStyle.trimHandle;
             painter.setPen(QPen(color, highlighted ? 2 : 1));
             painter.drawLine(x, plot.top(), x, plot.bottom());
             const QRect grip = trimGripRect(handle);
@@ -457,7 +458,7 @@ void SourceEditorWaveformView::paintTimeline(QPainter& painter)
     paintFades(painter);
     if (asset_ && state_ != State::Ready) {
         painter.setFont(FontManager::instance().getFont(FontRole::Caption));
-        painter.setPen(colors.textMuted);
+        painter.setPen(colors.textSecondary);
         painter.drawText(plot.adjusted(timeAxisMetrics().labelPadding, timeAxisMetrics().handleBandHeight, -timeAxisMetrics().labelPadding, 0), Qt::AlignCenter,
             state_ == State::Generating ? tr("Generating waveform...") : tr("Waveform unavailable"));
     }
@@ -602,8 +603,8 @@ void SourceEditorWaveformView::editHandleValue(Handle handle, int fadeIndex)
                                        : QStringLiteral("sourceTrimValueEditor"));
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     auto* layout = new QHBoxLayout(dialog);
-    ThemeLayout::margins(layout, ThemeLayout::Space::Small);
-    ThemeLayout::spacing(layout, ThemeLayout::Space::Small);
+    ThemeLayout::margins(layout, ThemeLayout::Space::Panel);
+    ThemeLayout::spacing(layout, ThemeLayout::Space::Section);
     const QString caption = fadeIndex >= 0 ? (fadeIndex == 0 ? tr("Fade In") : tr("Fade Out"))
         : (handle == Handle::TrimStart ? tr("Trim In") : tr("Trim Out"));
     auto* label = new QLabel(caption, dialog);

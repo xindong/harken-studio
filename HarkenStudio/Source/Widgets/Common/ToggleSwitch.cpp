@@ -52,7 +52,7 @@ ToggleSwitch::~ToggleSwitch() = default;
 void ToggleSwitch::applyTheme()
 {
     const auto& metrics = ThemeManager::instance().metrics();
-    layout()->setSpacing(metrics.spacingSmall);
+    layout()->setSpacing(metrics.layout.controlGap);
     switchSpace_->changeSize(metrics.toggle.width, metrics.toggle.height,
                             QSizePolicy::Fixed, QSizePolicy::Fixed);
     layout()->invalidate();
@@ -144,8 +144,8 @@ void ToggleSwitch::paintEvent(QPaintEvent*)
     
     QRadialGradient gradient(thumb.center(), thumbSize / 2);
     QColor thumbTop = theme.colors().textPrimary;
-    QColor thumbMid = theme.colors().bgTertiary.lighter(140);
-    QColor thumbBottom = theme.colors().bgSecondary.lighter(140);
+    QColor thumbMid = theme.colors().stateColor(theme.colors().bgTertiary, ThemeStateLayer::Emphasis);
+    QColor thumbBottom = theme.colors().stateColor(theme.colors().bgSecondary, ThemeStateLayer::Emphasis);
     const QColor thumbBorder = theme.colors().borderSecondary;
     if (!isEnabled()) {
         thumbTop = theme.colors().textDisabled;

@@ -57,7 +57,7 @@ void BlueprintCanvasWidget::refreshNodeTitles_()
                 case MediaStatus::Outdated: color = colors.warning; break;
                 case MediaStatus::Missing:
                 case MediaStatus::Error: color = colors.error; break;
-                case MediaStatus::Orphaned: color = colors.textMuted; break;
+                case MediaStatus::Orphaned: color = colors.textSecondary; break;
                 default: break;
                 }
             }

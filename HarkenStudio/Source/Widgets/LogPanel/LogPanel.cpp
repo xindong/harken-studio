@@ -163,12 +163,12 @@ void LogPanel::logError(const QString& category, const QString& message) { LogSe
 void LogPanel::setupUI()
 {
     QVBoxLayout* mainLayout = new QVBoxLayout(this);
-    ThemeLayout::margins(mainLayout, ThemeLayout::Space::Small);
-    ThemeLayout::spacing(mainLayout, ThemeLayout::Space::Small);
+    ThemeLayout::margins(mainLayout, ThemeLayout::Space::Panel);
+    ThemeLayout::spacing(mainLayout, ThemeLayout::Space::Section);
 
     QHBoxLayout* toolbarLayout = new QHBoxLayout();
     toolbarLayout->setContentsMargins(0, 0, 0, 0);
-    ThemeLayout::spacing(toolbarLayout, ThemeLayout::Space::XSmall);
+    ThemeLayout::spacing(toolbarLayout, ThemeLayout::Space::Control);
 
     levelCombo_ = new QComboBox();
     levelCombo_->setObjectName("logLevelCombo");

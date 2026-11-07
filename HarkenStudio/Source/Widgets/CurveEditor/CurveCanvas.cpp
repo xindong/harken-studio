@@ -1048,7 +1048,7 @@ void CurveCanvas::beginAxisBoundEdit(CurveAxisBound bound, const QRectF& labelRe
     auto* form = new QFormLayout(dialog);
     form->setSizeConstraint(QLayout::SetNoConstraint);
     form->setRowWrapPolicy(QFormLayout::WrapLongRows);
-    ThemeLayout::margins(form, ThemeLayout::Space::Small);
+    ThemeLayout::margins(form, ThemeLayout::Space::Panel);
     auto* spin = new DecimalSpinBox(dialog);
     spin->setObjectName(QStringLiteral("curveCanvasRangeInput"));
     spin->setButtonSymbols(QAbstractSpinBox::NoButtons);
@@ -1661,8 +1661,8 @@ void CurveCanvas::beginPointCoordinateEdit(int index)
     auto* form = new QFormLayout(dialog);
     form->setSizeConstraint(QLayout::SetNoConstraint);
     form->setRowWrapPolicy(QFormLayout::WrapLongRows);
-    ThemeLayout::margins(form, ThemeLayout::Space::Small);
-    ThemeLayout::spacing(form, ThemeLayout::Space::Small);
+    ThemeLayout::margins(form, ThemeLayout::Space::Panel);
+    ThemeLayout::spacing(form, ThemeLayout::Space::Section);
 
     auto* xSpin = new DecimalSpinBox(dialog);
     xSpin->setObjectName("curveCanvasCoordinateXSpin");
