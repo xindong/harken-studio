@@ -54814,14 +54814,25 @@ bool CanCommitInitialScheduleReadUses(harken::Engine& engine,
 bool CommitInitialScheduleReadUses(harken::Engine& engine,
     harken::EngineActionPlayScratch& root) noexcept;
 
+bool IsScheduleSourceAnchorWrapper(const harken::EnginePlayableServiceRow& row) noexcept {
+    return row.pendingDirectStartBinding && row.scheduleAggregate == nullptr &&
+        row.scheduleTerminalChild != nullptr && row.ordinaryLifecycleOwned &&
+        row.scheduleLeafCount == 0 && row.schedule.eventCount == 0 && !row.arm.Valid() &&
+        row.renderHandle == 0 && !row.variableControlInstance.Valid() && !row.frontierEntry.Valid();
+}
+
 harken::EngineActionPlayScratch* FindPendingScheduleAnchorAttempt(harken::Engine& engine,
     const harken::EnginePlayableServiceRow& row) noexcept {
-    if (!row.pendingDirectStartBinding || row.scheduleAggregate == nullptr || row.parentService.Valid()) return nullptr;
+    const bool wrapper = IsScheduleSourceAnchorWrapper(row);
+    if (!row.pendingDirectStartBinding || row.parentService.Valid() ||
+        (!wrapper && (row.scheduleAggregate == nullptr || row.scheduleAggregate->committed))) return nullptr;
     for (auto& attempt : engine.actionPlayScratch)
         if (attempt.row == &row && attempt.directExecution &&
             (attempt.storage.phase == harken::EngineFrontierAttemptPhase::PrivateCommitted ||
              attempt.storage.phase == harken::EngineFrontierAttemptPhase::CancelPending) &&
-            attempt.storage.scheduleChildren != nullptr && !row.scheduleAggregate->committed) return &attempt;
+            attempt.storage.scheduleChildren != nullptr &&
+            (!wrapper || (!attempt.initialNativeForestOwner.Valid() && !attempt.initialForestPublication &&
+                attempt.initialQueueEntryAdmissions.empty()))) return &attempt;
     return nullptr;
 }
 
@@ -54836,7 +54847,8 @@ bool RetirePendingScheduleAnchorSources(harken::Engine& engine,
     bool settled = true;
     const bool valid = VisitInitialScheduleAttempts(engine, root, [&](auto& attempt) noexcept {
         if (attempt.row == nullptr) return false;
-        if (IsEmptyScheduleSourceMarker(*attempt.row)) return attempt.voiceStartCount == 0;
+        if (IsEmptyScheduleSourceMarker(*attempt.row) || IsScheduleSourceAnchorWrapper(*attempt.row))
+            return attempt.voiceStartCount == 0;
         if (!attempt.row->pendingDirectStartBinding) return false;
         for (std::uint32_t index = 0; index < attempt.voiceStartCount; ++index)
             settled = engine.RetireOriginalSinglePendingSource(attempt.voiceStarts[index]) && settled;
@@ -54912,9 +54924,10 @@ DirectPendingStartResult BindAcknowledgedDirectStart(harken::Engine& engine,
     const bool ordinaryStream = row.ordinaryLifecycleOwned &&
         row.root.kind == harken::PlayableKindV1::Container && row.usesCapturedVoice &&
         row.capturedVoice.Facts().streamed && row.activeLeafInstance != 0 && row.selectionCount != 0;
+    const bool wrapper = aggregateAttempt != nullptr && IsScheduleSourceAnchorWrapper(row);
     if (!row.pendingDirectStartBinding || !row.InvocationValid() ||
         row.Invocation().actionFiring != 0 || row.parentService.Valid() ||
-        row.queueMode || (row.ordinaryLifecycleOwned && !ordinaryStream) || row.variableControlInstance.Valid() ||
+        (!wrapper && (row.queueMode || (row.ordinaryLifecycleOwned && !ordinaryStream))) || row.variableControlInstance.Valid() ||
         (aggregateAttempt == nullptr && row.phase != harken::EnginePlayableStartPhase::AwaitingArmAck) ||
         engine.config.blockFrames == 0) return Result::Refused;
     const auto visitRows = [&](auto&& visitor) noexcept {
@@ -54929,7 +54942,7 @@ DirectPendingStartResult BindAcknowledgedDirectStart(harken::Engine& engine,
     std::uint32_t count = 0;
     if (!visitRows([&](auto& owner) noexcept {
             if (owner.scheduleAggregate != nullptr) return !owner.scheduleAggregate->committed;
-            if (IsEmptyScheduleSourceMarker(owner)) return true;
+            if (IsEmptyScheduleSourceMarker(owner) || IsScheduleSourceAnchorWrapper(owner)) return true;
             if (!owner.pendingDirectStartBinding || owner.queueMode || owner.variableControlInstance.Valid()) return false;
             auto* bank = owner.HasFeatureArrays() ? owner.QueuePayload().queueCurrentProgramBank : nullptr;
             const auto leaves = bank != nullptr ? owner.QueuePayload().queueCurrentPrograms.count : 1u;
@@ -54977,11 +54990,15 @@ DirectPendingStartResult BindAcknowledgedDirectStart(harken::Engine& engine,
     if (aggregateAttempt != nullptr) {
         // Honor Source preparation admission and the normal installation runway, including a retained anchor.
         const auto sourceLead = std::max<std::uint64_t>(configuredLead, 3u);
-        for (const auto& cohort : row.scheduleAggregate->sourceCohorts) {
-            const auto offsetQuanta = cohort->onsetOffset / block;
-            if (!cohort->retired && !cohort->cancelling && offsetQuanta < sourceLead)
-                requiredRunway = std::max(requiredRunway, sourceLead - offsetQuanta);
-        }
+        if (!visitRows([&](const auto& owner) noexcept {
+                if (owner.scheduleAggregate == nullptr) return true;
+                for (const auto& cohort : owner.scheduleAggregate->sourceCohorts) {
+                    const auto offsetQuanta = cohort->onsetOffset / block;
+                    if (!cohort->retired && !cohort->cancelling && offsetQuanta < sourceLead)
+                        requiredRunway = std::max(requiredRunway, sourceLead - offsetQuanta);
+                }
+                return true;
+            })) return Result::Refused;
     }
     const auto lead = std::max(configuredLead, requiredRunway);
     if (completed > UINT64_MAX - lead || completed + lead > UINT64_MAX / block) return Result::Refused;
@@ -55002,6 +55019,8 @@ DirectPendingStartResult BindAcknowledgedDirectStart(harken::Engine& engine,
                 for (std::uint32_t index = 0; index < bank->aggregateCount; ++index)
                     if (!canShift(bank->aggregateSchedules[index].entryAnchorFrame)) return false;
             }
+            if (owner.scheduleTerminalChild != nullptr && !owner.scheduleTerminalChild->naturalClipDeadline.Empty() &&
+                !canShift(owner.scheduleTerminalChild->naturalClipDeadline.frame)) return false;
             return owner.scheduleAggregate == nullptr || owner.scheduleAggregate->VisitChildren([&](const auto& child) noexcept {
                 return child.naturalClipDeadline.Empty() || canShift(child.naturalClipDeadline.frame);
             });
@@ -55186,10 +55205,13 @@ DirectPendingStartResult BindAcknowledgedDirectStart(harken::Engine& engine,
                 if (!child.naturalClipDeadline.Empty()) child.naturalClipDeadline.frame += shift;
                 return true;
             });
+        if (owner.scheduleTerminalChild != nullptr && !owner.scheduleTerminalChild->naturalClipDeadline.Empty())
+            owner.scheduleTerminalChild->naturalClipDeadline.frame += shift;
+        const bool sourceWrapper = IsScheduleSourceAnchorWrapper(owner);
         PublishInitialQueuePrograms(owner);
         owner.pendingDirectStartBinding = false;
         owner.pendingDirectEntryFrame = 0;
-        if (owner.scheduleAggregate == nullptr) owner.phase = harken::EnginePlayableStartPhase::Filed;
+        if (owner.scheduleAggregate == nullptr && !sourceWrapper) owner.phase = harken::EnginePlayableStartPhase::Filed;
         return true;
     });
     for (std::uint32_t index = 0; index < count; ++index) {
@@ -55209,14 +55231,18 @@ DirectPendingStartResult BindAcknowledgedDirectStart(harken::Engine& engine,
     if (released && aggregateAttempt != nullptr)
         released = CommitInitialScheduleReadUses(engine, *aggregateAttempt);
     bool transferred = false;
-    if (released && aggregateAttempt != nullptr && row.scheduleAggregate != nullptr &&
-        !row.scheduleAggregate->sourceCohorts.empty()) {
+    if (released && aggregateAttempt != nullptr) {
         // The committed services own the final anchor before any initial Start
         // can reach audio. Near-future Sources can now use their fixed deadlines.
         aggregateAttempt->storage.phase = harken::EngineFrontierAttemptPhase::Published;
         transferred = released = PublishInitialScheduleFrontiers(engine, *aggregateAttempt) &&
             TransferFrontierAttempt(engine, *aggregateAttempt);
-        if (released) (void)ServiceScheduleSourceCohorts(engine, row, false, nullptr);
+        if (released) {
+            for (std::uint32_t cursor = 0; auto* service = engine.NextOccupiedPlayableService(&cursor);)
+                if (service->scheduleAggregate != nullptr &&
+                    (service == &row || IsPlayableServiceDescendant(engine, *service, row)))
+                    (void)ServiceScheduleSourceCohorts(engine, *service, false, nullptr);
+        }
     }
     for (const auto& held : row.sourceStartLanes) {
         released = engine.immediateActionLane.Publish(held->lane) && released;
@@ -91284,6 +91310,13 @@ ContainerMixedTerminalResult PrepareContainerMixedScheduleTerminal(ContainerPrep
             child->parentService, PlayableServiceReference(*terminalParent))) return fail(VN_REVISION_CONFLICT);
     terminalParent->frontierChildService = record.service;
     terminalParent->activeLeafInstance = child->ownerInstance;
+    if (child->pendingDirectStartBinding && !scratch.initialForestPublication &&
+        !context.initialNativeForestOwner.Valid() && context.actionFiring == 0) {
+        for (std::uint32_t index = 0; index < selected.count; ++index) {
+            services[index]->pendingDirectStartBinding = true;
+            services[index]->pendingDirectEntryFrame = context.startFrame;
+        }
+    }
     scratch.prepared = true;
     return ContainerMixedTerminalResult::Prepared;
 }
@@ -91313,9 +91346,24 @@ bool HasTransparentMusicSchedule(const harken::PlayableExecutionAuthority& autho
     });
 }
 
-bool UsesInitialScheduleTerminal(const harken::EngineActionPlayScratch& scratch,
+bool MaterializedHasFutureRegisteredStream(harken::Engine& engine, const harken::PlayableWorldViewV1& world,
+    const harken::PlayableRefV1& root, const MaterializedScheduleSet& schedule) noexcept {
+    for (std::uint32_t index = 0; index < schedule.leafCount; ++index) {
+        const auto& leaf = schedule.leaves[index];
+        if (leaf.startOffsetFrames == 0) continue;
+        if (engine.playablePropertyCutScratch.Resolve(world, root, leaf.selectedOrdinals.data(),
+                leaf.selectionCount, leaf.pathTrackIds.data()) == harken::ResolvedPlayablePropertyCutStatusV1::Ok &&
+            engine.playablePropertyCutScratch.View().streamingMode != 0) return true;
+    }
+    return false;
+}
+
+bool UsesInitialScheduleTerminal(ContainerPreparationContext& context,
+    const harken::EngineActionPlayScratch& scratch, const harken::PlayableRefV1& root,
     const SharedInitialFrontier& frontier) noexcept {
     return frontier.dynamicSchedule ||
+        (!(scratch.packLeaseOwned || scratch.packLeaseBorrowed) && context.engine != nullptr &&
+         MaterializedHasFutureRegisteredStream(*context.engine, context.world, root, frontier.schedule)) ||
         (scratch.initialForestPublication && frontier.hasSchedule &&
          (frontier.status == SharedInitialFrontierStatus::Ok ||
           frontier.status == SharedInitialFrontierStatus::ZeroWork));
@@ -91364,7 +91412,7 @@ ContainerMixedTerminalResult TryPrepareContainerMixedTerminal(ContainerPreparati
     const SharedInitialFrontier& frontier, const harken::SelectionPathNodeV1* path,
     std::uint32_t pathCount, const harken::ContainerProgramViewV3* parentProgram,
     const harken::ContainerChildProgramViewV2* authoredChild, bool delegateContainer = false) noexcept {
-    if ((!UsesInitialScheduleTerminal(scratch, frontier) && !delegateContainer) || context.prepareMixedTerminal == nullptr)
+    if ((!UsesInitialScheduleTerminal(context, scratch, root, frontier) && !delegateContainer) || context.prepareMixedTerminal == nullptr)
         return ContainerMixedTerminalResult::NotHandled;
     if ((frontier.current.kind != harken::PlayableKindV1::Track &&
          frontier.current.kind != harken::PlayableKindV1::Segment &&
@@ -93592,7 +93640,7 @@ engine.runtimeRecreateRequired = true;
             return scratch->row != nullptr && operations.RecordStep(*scratch->row);
         }
         const bool delegateContainer = DelegatesInitialQueueMusicWrapper(context, *scratch, queueFrontier, rootProgram);
-        if (UsesInitialScheduleTerminal(*scratch, queueFrontier) || delegateContainer) {
+        if (UsesInitialScheduleTerminal(context, *scratch, root, queueFrontier) || delegateContainer) {
             const auto mixed = TryPrepareContainerMixedTerminal(context, *scratch, root,
                 queueFrontier, nullptr, 0, rootProgram, queueFrontier.authoredChild, delegateContainer);
             if (mixed == ContainerMixedTerminalResult::Prepared) {
@@ -93774,7 +93822,7 @@ engine.runtimeRecreateRequired = true;
                               traversal.program, nullptr,
                               nestedFrontierRequest, &nestedQueueFrontier);
                 const bool delegateContainer = DelegatesInitialQueueMusicWrapper(context, *scratch, nestedQueueFrontier, traversal.program);
-                if (UsesInitialScheduleTerminal(*scratch, nestedQueueFrontier) || delegateContainer) {
+                if (UsesInitialScheduleTerminal(context, *scratch, root, nestedQueueFrontier) || delegateContainer) {
                     const auto mixed = TryPrepareContainerMixedTerminal(context, *scratch, root,
                         nestedQueueFrontier, nestedPath.data(), nestedCount, traversal.program,
                         nestedQueueFrontier.authoredChild, delegateContainer);
@@ -93900,7 +93948,7 @@ engine.runtimeRecreateRequired = true;
                                   engine, world, nestedCurrent, nullptr,
                                   nestedTerminalAuthoredChild,
                                   directFrontierRequest, &directFrontier);
-                    if (UsesInitialScheduleTerminal(*scratch, directFrontier)) {
+                    if (UsesInitialScheduleTerminal(context, *scratch, root, directFrontier)) {
                         const auto mixed = TryPrepareContainerMixedTerminal(context, *scratch, root,
                             directFrontier, nestedPath.data(), nestedCount, nullptr, nestedTerminalAuthoredChild);
                         if (mixed == ContainerMixedTerminalResult::Prepared) {
@@ -94404,7 +94452,7 @@ engine.runtimeRecreateRequired = true;
         // Preserve a real Queue child edge before selecting inside an ordinary
         // wrapper. Music SourceExit retires that same selected subtree.
         const bool delegateContainer = DelegatesInitialQueueMusicWrapper(context, *scratch, nestedQueueFrontier, traversal.program);
-        if (UsesInitialScheduleTerminal(*scratch, nestedQueueFrontier) || delegateContainer) {
+        if (UsesInitialScheduleTerminal(context, *scratch, root, nestedQueueFrontier) || delegateContainer) {
             const auto mixed = TryPrepareContainerMixedTerminal(context, *scratch, root,
                 nestedQueueFrontier, path.data(), selectionCount, traversal.program,
                 nestedQueueFrontier.authoredChild, delegateContainer);
@@ -96668,7 +96716,9 @@ bool PrepareMixedScheduleExecution(ContainerPreparationContext& context,
     }
     }
     const auto& plan = *scratch.storage.scheduleAggregatePlan;
-    if (context.directRoot && !pack && !context.pendingScheduleAnchor) {
+    if ((context.directRoot || (context.initialMediaWaitAllowed && context.actionFiring == 0 &&
+            !context.initialNativeForestOwner.Valid() && !context.initialAdmissionGroup.Valid())) &&
+        !pack && !context.pendingScheduleAnchor) {
         bool knownSounds = !plan.children.empty();
         bool initialStream = false;
         for (const auto& child : plan.children) {
@@ -99196,17 +99246,6 @@ bool PrepareStaticScheduleExecution(
     return true;
 }
 
-bool MaterializedHasFutureRegisteredStream(harken::Engine& engine, const harken::PlayableWorldViewV1& world,
-    const harken::PlayableRefV1& root, const MaterializedScheduleSet& schedule) noexcept {
-    for (std::uint32_t index = 0; index < schedule.leafCount; ++index) {
-        const auto& leaf = schedule.leaves[index];
-        if (leaf.startOffsetFrames == 0) continue;
-        if (engine.playablePropertyCutScratch.Resolve(world, root, leaf.selectedOrdinals.data(),
-                leaf.selectionCount, leaf.pathTrackIds.data()) == harken::ResolvedPlayablePropertyCutStatusV1::Ok &&
-            engine.playablePropertyCutScratch.View().streamingMode != 0) return true;
-    }
-    return false;
-}
 
 harken::PlayableStartResult PrepareDirectPlayableStart(
     harken::Engine& engine, const harken::PlayableWorldViewV1& world,
@@ -99396,8 +99435,8 @@ harken::PlayableStartResult PrepareDirectPlayableStart(
     if (!CommitInitialPlayableAttempt(engine, *scratch, ticket, 0, false, nullptr) ||
         !CanTransferScheduleChildResponsibilities(engine, *scratch) ||
         !CanPublishInitialScheduleFrontiers(engine, *scratch)) return fail(VN_DEVICE_ERROR, true);
-    const bool heldScheduleAnchor = scratch->row->scheduleAggregate != nullptr &&
-        scratch->row->pendingDirectStartBinding;
+    const bool heldScheduleAnchor = scratch->row->pendingDirectStartBinding &&
+        (scratch->row->scheduleAggregate != nullptr || IsScheduleSourceAnchorWrapper(*scratch->row));
     if (!heldScheduleAnchor) scratch->storage.phase = harken::EngineFrontierAttemptPhase::Published;
     if (!heldScheduleAnchor && (!CommitInitialScheduleReadUses(engine, *scratch) ||
         !PublishInitialScheduleFrontiers(engine, *scratch))) {
