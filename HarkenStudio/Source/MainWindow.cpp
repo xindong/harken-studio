@@ -4143,10 +4143,15 @@ void MainWindow::rebuildLayoutsMenu()
         layoutController_->rebuildLayoutsMenu();
 }
 
-bool MainWindow::closeWithDiscard()
+bool MainWindow::closeFromShell(bool discard)
 {
-    QScopedValueRollback<bool> discardGuard(discardChangesOnClose_, true);
-    return close();
+    QScopedValueRollback<bool> discardGuard(discardChangesOnClose_, discard);
+    QScopedValueRollback<bool> shellGuard(shellClosing_, true);
+    const bool quitOnClose = QApplication::quitOnLastWindowClosed();
+    QApplication::setQuitOnLastWindowClosed(false);
+    const bool closed = close();
+    QApplication::setQuitOnLastWindowClosed(quitOnClose);
+    return closed;
 }
 
 void MainWindow::closeEvent(QCloseEvent* event)
@@ -4168,7 +4173,8 @@ void MainWindow::closeEvent(QCloseEvent* event)
         event->accept();
         if (startupPresentationPrepared_)
             finishStartupPresentation(false);
-        QTimer::singleShot(0, qApp, &QCoreApplication::quit);
+        if (!shellClosing_)
+            QTimer::singleShot(0, qApp, &QCoreApplication::quit);
     }
     else
     {

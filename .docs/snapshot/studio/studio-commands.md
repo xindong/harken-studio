@@ -1,6 +1,6 @@
 # HarkenStudio 命令接口
 
-快照日期：2026-11-06。Studio 与独立 [HarkenStudioCLI](studioCLI-commands.md) 共享工程、创作、资源处理、撤销、保存及打包命令；Studio 额外提供窗口、选择、布局与控件命令。
+快照日期：2026-11-07。Studio 与独立 [HarkenStudioCLI](studioCLI-commands.md) 共享工程、创作、资源处理、撤销、保存及打包命令；Studio 额外提供窗口、选择、布局与控件命令。
 
 ## 产品边界
 
@@ -40,7 +40,11 @@ exit
 
 输入或输出重定向时自动输出逐行 UTF-8 JSON，也可用 `--json` 强制启用；响应包含 `protocolVersion`。每读完一行即执行并刷新 stdout，无需等待 EOF。提示符仅向交互终端的 stderr 输出。`--help`、`--shell --help` 和 `--version [--json]` 可在不打开 GUI 的情况下查询入口及版本。
 
+Studio `--shell` 在后台写出响应，单个待发送响应最多 64 MiB；控制端停止读取时，GUI 和实例命令仍可响应，后续 shell 命令等待输出排空后再执行。断管道、中断或 300 秒写出超时会结束 shell 并保留 GUI；成功退出时，最终响应最多等待写出 5 秒，随后完成退出。
+
 `exit` 请求退出当前 Studio 进程，GUI 同时关闭；有未保存修改时返回 `UNSAVED_CHANGES` 并继续接受输入，可先 `save_project`，或明确 `exit --discard` 放弃修改后退出。EOF（输入流结束）也请求退出 Studio，有未保存修改时使用正常 GUI 关闭确认，取消关闭会保留工程。关闭 GUI 与 shell 退出共用工程清理流程，放弃未提交的源文件变更并释放运行时和工程锁；即使 stdin 仍打开或只有未结束的一行，输入等待也会终止。
+
+GUI 因导出等状态拒绝退出时，返回关闭失败并继续原 shell 会话；同一次输入已经读入的后续命令会保留，不重新创建读取线程或丢弃输入缓冲。
 
 `--shell` 要求已有终端或有效的 stdin/stdout 重定向，并提供 `--project`、`--create-project` 或有效的 `--last`。不会额外分配终端黑框。Windows 的 PowerShell 和 CMD 直接启动 GUI 可执行文件会立即返回提示符，父 shell 与 Studio 会竞争终端输入；`--shell` 无法改变父进程的等待策略。PowerShell 使用上述 `Start-Process -NoNewWindow -Wait`；CMD 使用 `start "" /wait HarkenStudio.exe --project "GameAudio/GameAudio.hsp" --shell`。外部程序直接建立隐藏的 stdin/stdout 管道即可。
 
@@ -75,7 +79,7 @@ HarkenStudioCLI --instance <id> exec list_ui_windows --json
 
 完整目录受构建特性影响，例如禁用 LMDB 时不暴露全文检索命令；以运行产物的 `list_commands` 为准。共享项在两种宿主必须逐字段相同，此约束由通用回归检测保护。
 
-本轮 Windows 启用 LMDB 的实际产物包含 244 条命令：185 条共享命令、59 条桌面宿主命令，全部声明参数契约。真实桌面会话与独立 CLI 的 185 条共享描述逐字段相同。
+本轮新增共享 `audition_get_seek_status`，公开目录以运行产物为准，全部声明参数契约；真实桌面会话与独立 CLI 的共享描述逐字段相同。
 
 仓库 [PowerShell 客户端](../../../.scripts/studio/harken_ipc.ps1) 可调用：
 
@@ -98,11 +102,15 @@ HarkenStudioCLI --instance <id> exec list_ui_windows --json
 | 总线静音与独奏 | `set_bus_mute(bus_name, mute)`、`set_bus_solo(bus_name, solo)`；布尔参数须显式提供 |
 | 可播放定义输出 | 使用字段组 `outputBusRef`、`outputBusVolume`；Bus 层级使用 `move_bus` 与层级查询 |
 | 引擎与播放 | `init_engine`、`shutdown_engine`、`start_output`、`stop_output`、`post_action`；与 CLI 顶层创建工程的 `init` 区分 |
+| 播放就绪 | `post_action/post_action_3d/audition_play` 在共享分发器检查当前创作版本；未就绪返回 `RUNTIME_SYNC_PENDING`，尚未提交播放。三种 CLI 会话统一等待，工程改变时拒绝继续原请求 |
+| 试听定位 | `audition_set_position` 返回同一请求的异步完成协议；`audition_get_seek_status(audition_seek_request_id)` 查询最终 `applied/failed`。CLI 等待终态后才响应 |
 | 音频转码 | `transcode_asset`、`batch_convert_media` 共享转码作业、结果查询和取消协议；不以入队冒充完成 |
 | 保存与打包 | `save_project`、`export_pack`；与桌面使用相同工程格式、校验和 `ProjectPackBuildService` |
 | 文件比较 | `compare_files(reference_path, candidate_path)` 按字节比较，不解码音频；返回 `identical`、`compared_bytes`、`different_bytes`、`length_match` |
 | 执行错误 | `get_exec_errors` 只读；清空使用 `clear_exec_errors`，可指定 domain |
 | 衰减距离缩放 | `get_attenuation_distance_scaling` 默认读取 Shared，可用 `platform_id` 查询平台覆盖后的有效值 |
+
+试听定位查询保留全部进行中的请求和最近 128 条完成记录，超出保留范围返回 `NOT_FOUND`。引擎关闭或原生定位失败也生成可查询的失败终态。附加 CLI 超时/中断只停止等待，定位仍可能完成；应使用返回的请求身份查询结果，不能把 `accepted` 当作已应用或直接重发。
 
 `close_project` 成功表示关闭已被接受，`closing` 表示运行时退场是否仍在进行；IPC 可查询 `get_project_info`，CLI 在关闭完成并释放锁后才执行下一条。
 

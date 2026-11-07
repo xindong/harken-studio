@@ -5,6 +5,7 @@
 
 #include <QCoreApplication>
 #include <QCommandLineParser>
+#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -270,6 +271,111 @@ QJsonObject shellHelp(StudioSession& session, const QString& command, const QStr
     return response;
 }
 
+QByteArray shellResponseBytes(QJsonObject response, bool json)
+{
+    response.insert(QStringLiteral("protocolVersion"), 1);
+    QByteArray bytes;
+    const auto result = response.value(QStringLiteral("result")).toObject();
+    if (!json && succeeded(response)) {
+        if (result.value(QStringLiteral("help")).isString())
+            bytes.append(result.value(QStringLiteral("help")).toString().toUtf8());
+        if (result.contains(QStringLiteral("inputSchema")))
+            bytes.append(commandDescriptionText(result, true).toUtf8());
+        else if (result.contains(QStringLiteral("host")) && result.value(QStringLiteral("commands")).isArray())
+            bytes.append(commandDirectoryText(result.value(QStringLiteral("commands")).toArray(), true).toUtf8());
+    }
+    if (bytes.isEmpty()) {
+        bytes = QJsonDocument(response).toJson(json ? QJsonDocument::Compact : QJsonDocument::Indented);
+        if (json) bytes.append('\n');
+    }
+    return bytes;
+}
+
+bool writeDesktopOutput(const QByteArray& bytes, int timeoutMs)
+{
+    QEventLoop loop;
+    std::atomic_bool stopping = false;
+    std::atomic_bool finished = false;
+    bool succeeded = false;
+    QObject::connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit,
+        &loop, [&] { stopping.store(true); loop.quit(); });
+    std::thread writer([&] {
+        const auto write = [&]() {
+#ifdef Q_OS_WIN
+            const int descriptor = _fileno(stdout);
+            if (descriptor < 0) return false;
+            const HANDLE handle = reinterpret_cast<HANDLE>(_get_osfhandle(descriptor));
+            DWORD mode = 0;
+            if (GetConsoleMode(handle, &mode)) {
+                const QString text = QString::fromUtf8(bytes);
+                qsizetype offset = 0;
+                while (offset < text.size() && !stopping.load()) {
+                    DWORD written = 0;
+                    if (!WriteConsoleW(handle, text.utf16() + offset,
+                            static_cast<DWORD>(qMin<qsizetype>(4096, text.size() - offset)), &written, nullptr)
+                        || written == 0) return false;
+                    offset += written;
+                }
+                return offset == text.size();
+            }
+#else
+            const int descriptor = fileno(stdout);
+            const int flags = fcntl(descriptor, F_GETFL);
+            if (flags < 0 || fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) != 0) return false;
+            struct RestoreFlags {
+                int descriptor;
+                int flags;
+                ~RestoreFlags() { fcntl(descriptor, F_SETFL, flags); }
+            } restore{descriptor, flags};
+#endif
+            qsizetype offset = 0;
+            while (offset < bytes.size() && !stopping.load()) {
+#ifdef Q_OS_WIN
+                DWORD written = 0;
+                if (!WriteFile(handle, bytes.constData() + offset,
+                        static_cast<DWORD>(qMin<qsizetype>(4096, bytes.size() - offset)), &written, nullptr)
+                    || written == 0) return false;
+#else
+                pollfd output{descriptor, POLLOUT, 0};
+                const int ready = poll(&output, 1, 25);
+                if (ready < 0 && errno == EINTR) continue;
+                if (ready < 0 || (output.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) return false;
+                if (ready == 0) continue;
+                const auto written = ::write(descriptor, bytes.constData() + offset,
+                    static_cast<size_t>(qMin<qsizetype>(4096, bytes.size() - offset)));
+                if (written < 0 && (errno == EAGAIN || errno == EINTR)) continue;
+                if (written <= 0) return false;
+#endif
+                offset += static_cast<qsizetype>(written);
+            }
+            return offset == bytes.size();
+        };
+        succeeded = write();
+        finished.store(true);
+    });
+    QElapsedTimer elapsed;
+    elapsed.start();
+    QTimer poll;
+    QObject::connect(&poll, &QTimer::timeout, &loop, [&] {
+        if (desktopInterrupted || elapsed.elapsed() >= timeoutMs) stopping.store(true);
+#ifdef Q_OS_WIN
+        if (stopping.load()) CancelSynchronousIo(writer.native_handle());
+#endif
+        if (finished.load()) loop.quit();
+    });
+    poll.start(10);
+    if (!finished.load()) loop.exec();
+    stopping.store(true);
+#ifdef Q_OS_WIN
+    while (!finished.load()) {
+        CancelSynchronousIo(writer.native_handle());
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+#endif
+    writer.join();
+    return succeeded;
+}
+
 }
 
 bool prepareDesktopShellStdio(QString* error, bool requireInput)
@@ -333,21 +439,7 @@ void writeShellResponse(QJsonObject response, bool json)
 #else
     if (fileno(stdout) < 0 || fcntl(fileno(stdout), F_GETFL) < 0) return;
 #endif
-    response.insert(QStringLiteral("protocolVersion"), 1);
-    QByteArray bytes;
-    const auto result = response.value(QStringLiteral("result")).toObject();
-    if (!json && succeeded(response)) {
-        if (result.value(QStringLiteral("help")).isString())
-            bytes.append(result.value(QStringLiteral("help")).toString().toUtf8());
-        if (result.contains(QStringLiteral("inputSchema")))
-            bytes.append(commandDescriptionText(result, true).toUtf8());
-        else if (result.contains(QStringLiteral("host")) && result.value(QStringLiteral("commands")).isArray())
-            bytes.append(commandDirectoryText(result.value(QStringLiteral("commands")).toArray(), true).toUtf8());
-    }
-    if (bytes.isEmpty()) {
-        bytes = QJsonDocument(response).toJson(json ? QJsonDocument::Compact : QJsonDocument::Indented);
-        if (json) bytes.append('\n');
-    }
+    const auto bytes = shellResponseBytes(std::move(response), json);
 #ifdef Q_OS_WIN
     DWORD mode = 0;
     const HANDLE handle = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -368,16 +460,40 @@ void writeShellResponse(QJsonObject response, bool json)
 #endif
 }
 
-DesktopShellResult runDesktopShell(VNX::IPCServer& dispatcher, bool json)
+DesktopShellResult runDesktopShell(VNX::IPCServer& dispatcher, bool json,
+    const std::function<QJsonObject(ShellExitRequest)>& requestClose)
 {
     desktopInterrupted = 0;
     const auto previous = std::signal(SIGINT, interruptDesktopShell);
+#ifndef Q_OS_WIN
+    const auto previousPipe = std::signal(SIGPIPE, SIG_IGN);
+#endif
+    bool quitting = false;
+    QObject lifetime;
+    QObject::connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit,
+        &lifetime, [&] { quitting = true; });
     StudioSession session(dispatcher, 300000, [] { return desktopInterrupted != 0; });
     const bool jsonOutput = json || shellUsesJson();
+    bool outputFailed = false;
     DesktopShellResult result;
     result.exitCode = runShell(session, 300000, jsonOutput, desktopInterrupted,
-        [jsonOutput](QJsonObject response) { writeShellResponse(std::move(response), jsonOutput); },
-        &result.exitRequest);
+        [&](QJsonObject response) {
+            if (quitting) {
+                outputFailed = true;
+                return;
+            }
+            auto bytes = shellResponseBytes(response, jsonOutput);
+            if (bytes.size() > 64 * 1024 * 1024) {
+                auto error = failure(QStringLiteral("RESPONSE_TOO_LARGE"),
+                    QStringLiteral("Shell response exceeds 64 MiB. Narrow the query."));
+                error.insert(QStringLiteral("command"), response.value(QStringLiteral("command")));
+                bytes = shellResponseBytes(error, jsonOutput);
+            }
+            outputFailed = !writeDesktopOutput(bytes, result.exitRequest == ShellExitRequest::None ? 300000 : 5000);
+        }, &result.exitRequest, requestClose, [&] { return outputFailed; });
+#ifndef Q_OS_WIN
+    if (previousPipe != SIG_ERR) std::signal(SIGPIPE, previousPipe);
+#endif
     if (previous != SIG_ERR) std::signal(SIGINT, previous);
     return result;
 }
@@ -385,7 +501,9 @@ DesktopShellResult runDesktopShell(VNX::IPCServer& dispatcher, bool json)
 int runShell(StudioSession& session, int timeoutMs, bool json,
              volatile std::sig_atomic_t& interrupted,
              const std::function<void(QJsonObject)>& writeResponse,
-             ShellExitRequest* exitRequest)
+             ShellExitRequest* exitRequest,
+             const std::function<QJsonObject(ShellExitRequest)>& requestClose,
+             const std::function<bool()>& outputFailed)
 {
     if (exitRequest) *exitRequest = ShellExitRequest::None;
     QEventLoop loop;
@@ -448,7 +566,7 @@ int runShell(StudioSession& session, int timeoutMs, bool json,
         if (response.value(QStringLiteral("code")) == QStringLiteral("UNKNOWN_COMMAND"))
             response.insert(QStringLiteral("suggestion"), QStringLiteral("Use help to list commands, or help --search <text> to find one."));
         writeResponse(std::move(response));
-        if (std::ferror(stdout)) {
+        if (std::ferror(stdout) || (outputFailed && outputFailed())) {
             stopping.store(true);
             inputReady.notify_one();
             finish(1);
@@ -461,8 +579,13 @@ int runShell(StudioSession& session, int timeoutMs, bool json,
                 writeResponse(failure(QStringLiteral("INPUT_FAILED"), QStringLiteral("Cannot read standard input.")));
             else if (dirty() && !exitRequest)
                 writeResponse(unsaved());
-            if (input.state == InputState::End && exitRequest)
-                *exitRequest = ShellExitRequest::EndOfInput;
+            if (input.state == InputState::End && exitRequest) {
+                const auto response = requestClose(ShellExitRequest::EndOfInput);
+                if (succeeded(response))
+                    *exitRequest = ShellExitRequest::EndOfInput;
+                else
+                    respond(response, QStringLiteral("exit"));
+            }
             finish(input.state == InputState::Error || (!exitRequest && dirty()) ? 1 : 0);
             return;
         }
@@ -497,13 +620,24 @@ int runShell(StudioSession& session, int timeoutMs, bool json,
             } else if (arguments.isEmpty() && dirty()) {
                 response = unsaved();
             } else {
-                if (exitRequest)
-                    *exitRequest = arguments == QStringLiteral("--discard")
+                if (exitRequest) {
+                    const auto request = arguments == QStringLiteral("--discard")
                         ? ShellExitRequest::Discard : ShellExitRequest::Close;
-                if (!exitRequest)
+                    response = requestClose(request);
+                    if (!succeeded(response)) {
+                        respond(std::move(response), command);
+                        executing = false;
+                        interrupted = 0;
+                        requestInput();
+                        return;
+                    }
+                    *exitRequest = request;
+                    respond(std::move(response), command);
+                } else {
                     respond({{QStringLiteral("status"), QStringLiteral("ok")},
                         {QStringLiteral("result"), QJsonObject{{QStringLiteral("exited"), true},
                             {QStringLiteral("discarded"), dirty()}}}}, command);
+                }
                 executing = false;
                 finish(0);
                 return;

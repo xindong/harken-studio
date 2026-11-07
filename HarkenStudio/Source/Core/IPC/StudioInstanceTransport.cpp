@@ -223,6 +223,7 @@ StudioInstanceServer::StudioInstanceServer(IPCServer* dispatcher, QObject* paren
                         {"instance", QJsonObject{{"type", "string"}}},
                         {"cmd", QJsonObject{{"type", "string"}, {"minLength", 1}}},
                         {"args", QJsonObject{{"type", "object"}}},
+                        {"project_session_id", QJsonObject{{"type", "string"}, {"minLength", 1}}},
                         {"request_id", QJsonObject{{"type", "string"}, {"minLength", 1}}}
                     }}, {"required", QJsonArray{"protocolVersion", "version", "instance", "cmd", "args", "request_id"}},
                     {"additionalProperties", false}
@@ -251,6 +252,7 @@ StudioInstanceServer::StudioInstanceServer(IPCServer* dispatcher, QObject* paren
                     context.source = ActionSource::IPC;
                     context.origin = IPCServer::DispatchOrigin::CLI;
                     context.requestId = request.value(QStringLiteral("request_id")).toString();
+                    context.expectedProjectSession = request.value(QStringLiteral("project_session_id")).toString();
                     auto response = state_->dispatcher
                         ? state_->dispatcher->dispatchCommand(request.value(QStringLiteral("cmd")).toString(),
                             request.value(QStringLiteral("args")).toObject(), context)
@@ -378,7 +380,8 @@ QJsonObject StudioInstanceClient::discover(int timeoutMs, const std::function<bo
 }
 
 QJsonObject StudioInstanceClient::execute(const QString& name, const QJsonObject& args,
-                                         int timeoutMs, const std::function<bool()>& canceled)
+                                         int timeoutMs, const std::function<bool()>& canceled,
+                                         const QString& expectedProjectSession)
 {
     if (canceledNow(canceled)) return failure(QStringLiteral("CANCELED"), QStringLiteral("Interrupted."));
     QDeadlineTimer deadline(timeoutMs);
@@ -391,12 +394,14 @@ QJsonObject StudioInstanceClient::execute(const QString& name, const QJsonObject
         }
     }
     const auto requestId = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    const QJsonObject request{
+    QJsonObject request{
         {QStringLiteral("protocolVersion"), protocolVersion},
         {QStringLiteral("version"), version()}, {QStringLiteral("instance"), state_->id},
         {QStringLiteral("cmd"), name}, {QStringLiteral("args"), args},
         {QStringLiteral("request_id"), requestId}
     };
+    if (!expectedProjectSession.isEmpty())
+        request.insert(QStringLiteral("project_session_id"), expectedProjectSession);
     const auto bytes = QJsonDocument(request).toJson(QJsonDocument::Compact) + '\n';
     if (bytes.size() > maxRequestBytes)
         return failure(QStringLiteral("INVALID_ARGUMENTS"), QStringLiteral("Command request exceeds the size limit."));

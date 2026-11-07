@@ -324,28 +324,17 @@ void StartupCoordinator::finish()
         if (!instanceServer->start(&instanceError))
             qWarning().noquote() << "Studio instance commands unavailable:" << instanceError;
         if (startupArguments_.shell) {
-            while (true) {
-                const auto result = HarkenStudioCli::runDesktopShell(
-                    *mainWindow_->ipcServer(), startupArguments_.shellJson);
-                using Exit = HarkenStudioCli::ShellExitRequest;
-                if (result.exitRequest == Exit::None) break;
-                const bool discarded = result.exitRequest == Exit::Discard
-                    && ProjectManager::instance().hasUnsavedChanges();
-                const bool closed = result.exitRequest == Exit::Discard
-                    ? mainWindow_->closeWithDiscard() : mainWindow_->close();
-                if (closed) {
-                    if (result.exitRequest != Exit::EndOfInput)
-                        HarkenStudioCli::writeShellResponse({{"status", "ok"}, {"command", "exit"},
-                            {"result", QJsonObject{{"exiting", true}, {"discarded", discarded}}}});
-                    application_.quit();
-                    break;
-                }
-                auto error = HarkenStudioCli::failure(QStringLiteral("EXIT_NOT_COMPLETED"),
-                    QStringLiteral("Studio did not close. Resolve the active operation or canceled close request before retrying."));
-                error.insert(QStringLiteral("command"), QStringLiteral("exit"));
-                HarkenStudioCli::writeShellResponse(error);
-                if (result.exitRequest == Exit::EndOfInput) break;
-            }
+            using Exit = HarkenStudioCli::ShellExitRequest;
+            const auto result = HarkenStudioCli::runDesktopShell(
+                *mainWindow_->ipcServer(), startupArguments_.shellJson, [this](Exit request) -> QJsonObject {
+                    const bool discarded = request == Exit::Discard
+                        && ProjectManager::instance().hasUnsavedChanges();
+                    if (!mainWindow_->closeFromShell(request == Exit::Discard))
+                        return HarkenStudioCli::failure(QStringLiteral("EXIT_NOT_COMPLETED"),
+                            QStringLiteral("Studio did not close. Resolve the active operation or canceled close request before retrying."));
+                    return {{"status", "ok"}, {"result", QJsonObject{{"exiting", true}, {"discarded", discarded}}}};
+                });
+            if (result.exitRequest != Exit::None) application_.quit();
         }
     });
 }

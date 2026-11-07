@@ -355,6 +355,8 @@ const QMap<QString, Contract>& contracts()
         put({"audition_close"}, object({{"auditionID", uint32()}}, {"auditionID"}));
         put({"audition_reset"}, object({{"authoring_handle", uint32()}}, {"authoring_handle"}));
         put({"audition_set_position"}, object({{"auditionID", uint32()}, {"samplePosition", integer(0, 9007199254740991.0)}}, {"auditionID", "samplePosition"}));
+        put({"audition_get_seek_status"}, described(object({{"audition_seek_request_id", text()}}, {"audition_seek_request_id"}),
+            "Query a pending audition seek or one of the latest 128 completed requests."), true);
 
         auto importAudio = object({{"path", text()}, {"pack", text()}, {"target_parent_path", text()},
             {"target_parent_id", uint32()}, {"as_music_source", withDefault(boolean(), false)}}, {"path"});

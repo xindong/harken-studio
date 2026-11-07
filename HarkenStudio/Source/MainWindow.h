@@ -126,7 +126,7 @@ public:
                             std::function<void()> finished,
                             std::function<bool()> cancelled = {});
     ~MainWindow() override;
-    bool closeWithDiscard();
+    bool closeFromShell(bool discard);
     
     Q_INVOKABLE bool switchToView(const QString& viewName);
     Q_INVOKABLE bool revealPanel(const QString& objectName, bool visible);
@@ -383,6 +383,7 @@ private:
     QString currentProjectPath_;
     bool projectModified_ = false;
     bool discardChangesOnClose_ = false;
+    bool shellClosing_ = false;
     bool projectOpenInProgress_ = false;
     
     ads::CDockWidget* blueprintDock_ = nullptr;

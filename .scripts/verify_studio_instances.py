@@ -10,6 +10,7 @@ import tempfile
 import threading
 import time
 import uuid
+import wave
 from contextlib import contextmanager
 from pathlib import Path
 from verify_studio_cli import verify_shell_help
@@ -138,6 +139,57 @@ def live_version_fixture(descriptor: dict):
         assert not errors, errors
 
 
+def verify_playback_completion(execute, run, probe, source: Path):
+    with wave.open(str(source), "wb") as audio:
+        audio.setparams((1, 2, 48000, 0, "NONE", "not compressed"))
+        audio.writeframes(b"\0\0" * 48000 * 20)
+    execute("shutdown_engine", {})
+    execute("init_engine", {"device_mode": "real", "sample_rate": 48000})
+    execute("set_master_volume", {"volume": 0})
+    execute("start_output", {})
+    execute("import_audio_files", {"files": [str(source)]})
+    action = "RuntimeCompletionAction"
+    responses = run([
+        {"cmd": "create_action", "args": {"name": action}},
+        {"cmd": "set_item_property", "args": {"path": action, "property": "steps",
+            "value": [{"type": "Play", "targetName": source.stem}]}},
+        {"cmd": "post_action", "args": {"name": action}},
+        {"cmd": "post_action_3d", "args": {"name": action}},
+        {"cmd": "audition_play", "args": {"object_path": action}},
+    ])
+    for index in (2, 3):
+        assert responses[index]["result"]["action_handle"] != 0, responses
+    audition = responses[4]["result"]["auditionID"]
+    assert audition != 0, responses
+    deadline = time.monotonic() + 10
+    while True:
+        voices = execute("get_active_voices", {})
+        if voices["result"]["count"] >= 3:
+            break
+        assert time.monotonic() < deadline, voices
+        time.sleep(0.01)
+    deadline = time.monotonic() + 10
+    while True:
+        ready = probe("audition_set_position", {"auditionID": audition, "samplePosition": 4800})
+        if ready["status"] == "ok":
+            assert ready["result"]["state"] == "applied", ready
+            break
+        assert ready["code"] == "NOT_AVAILABLE" and ready["result"]["state"] == "rejected", ready
+        assert ready["result"]["audition_seek_request_id"] == "0" and time.monotonic() < deadline, ready
+        time.sleep(0.01)
+    first = execute("audition_set_position", {"auditionID": audition, "samplePosition": 9600})
+    second = execute("audition_set_position", {"auditionID": audition, "samplePosition": 14400})
+    for response in (first, second):
+        assert response["result"]["state"] == "applied" and not response["result"].get("async"), response
+        retained = execute("audition_get_seek_status", {
+            "audition_seek_request_id": response["result"]["audition_seek_request_id"]})
+        assert retained["result"]["in_progress"] is False, retained
+        assert retained["result"]["result"]["result"] == response["result"], retained
+    assert first["result"]["audition_seek_request_id"] != second["result"]["audition_seek_request_id"]
+    execute("audition_stop", {})
+    execute("stop_all", {})
+
+
 def verify(cli: Path, studio: Path, work: Path) -> None:
     environment = {**os.environ, "HARKEN_HUB_USER_ROOT": str(work / "hub")}
     if os.name == "nt":
@@ -147,7 +199,7 @@ def verify(cli: Path, studio: Path, work: Path) -> None:
     fixtures: list[Path] = []
     report = {"root": str(work), "checks": []}
 
-    def call(*arguments: str, data=None, success: bool = True):
+    def call(*arguments: str, data=None, success: bool | None = True):
         completed = subprocess.run(
             [str(cli), *arguments, "--json"],
             input=None if data is None else json.dumps(data).encode("utf-8"),
@@ -156,15 +208,18 @@ def verify(cli: Path, studio: Path, work: Path) -> None:
             response = json.loads(completed.stdout)
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
             raise AssertionError((arguments, completed.returncode, completed.stdout, completed.stderr)) from error
-        assert (completed.returncode == 0) == success, (arguments, response, completed.stderr)
-        assert response["status"] == ("ok" if success else "error"), (arguments, response)
+        if success is not None:
+            assert (completed.returncode == 0) == success, (arguments, response, completed.stderr)
+            assert response["status"] == ("ok" if success else "error"), (arguments, response)
+        else:
+            assert completed.returncode in (0, 1), (arguments, response, completed.stderr)
         assert response["protocolVersion"] == 1, response
         return response
 
     def instances():
         return call("instances")["result"]["instances"]
 
-    def execute(instance: str, command: str, arguments=None, success: bool = True):
+    def execute(instance: str, command: str, arguments=None, success: bool | None = True):
         return call("exec", command, "--instance", instance, "--input", "-",
                     data=arguments or {}, success=success)
 
@@ -275,6 +330,13 @@ def verify(cli: Path, studio: Path, work: Path) -> None:
         assert execute(first_id, "get_project_state")["result"]["is_dirty"] is True
         execute(second_id, "get_item_info", {"path": "AttachedEofAction"}, success=False)
         check("Attached shell EOF and exit detach while preserving the GUI session and its unsaved edits")
+
+        verify_playback_completion(
+            lambda command, args: execute(first_id, command, args),
+            lambda requests: call("run", "--instance", first_id, "--input", "-", data=requests)["results"],
+            lambda command, args: execute(first_id, command, args, success=None),
+            work / "RuntimeCompletionTone.wav")
+        check("Attached commands play newly authored revisions and consecutive audition seeks return retained terminal results")
 
         registry = registry_directory(environment)
         assert (registry / (first_id + ".json")).is_file(), registry

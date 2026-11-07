@@ -33,12 +33,15 @@ public:
     QJsonObject save();
 
 private:
+    QJsonObject executeOnce(const QString& name, const QJsonObject& args,
+                            int timeoutMs, const std::function<bool()>& canceled,
+                            const QString& expectedProjectSession);
     QJsonObject dispatchDesktop(const QString& name, const QJsonObject& args,
-                                int timeoutMs, const std::function<bool()>& canceled) const;
+                                int timeoutMs, const std::function<bool()>& canceled,
+                                const QString& expectedProjectSession = {}) const;
     QJsonObject finishOperation(QJsonObject response, int timeoutMs,
                                 const std::function<bool()>& canceled);
     QJsonObject waitForProjectClose(int timeoutMs, const std::function<bool()>& canceled);
-    QJsonObject waitForCurrentWorld(int timeoutMs, const std::function<bool()>& canceled);
     struct State;
     std::unique_ptr<State> state_;
     std::unique_ptr<StudioInstanceClient> instance_;

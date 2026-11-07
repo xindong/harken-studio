@@ -205,7 +205,7 @@ void registerAuditionActions(ActionManager& mgr,
                     == HarkenEditor::Bridge::kEngineOk
                 ? QStringLiteral("accepted")
                 : QStringLiteral("rejected");
-            return AdvancedActionDetail::fromEngineResult(
+            auto response = AdvancedActionDetail::fromEngineResult(
                 engine && engine->isInitialized(), result.result,
                 QJsonObject{{"auditionID", static_cast<int>(tid)},
                             {"samplePosition", static_cast<double>(samplePos)},
@@ -213,6 +213,51 @@ void registerAuditionActions(ActionManager& mgr,
                              QString::number(result.requestId)},
                             {"state", state}},
                 QStringLiteral("Set audition position"));
+            if (response.success) {
+                response.data.insert("async", true);
+                response.data.insert("operation_id", QString::number(result.requestId));
+                response.data.insert("operation", QJsonObject{
+                    {"status_command", "audition_get_seek_status"},
+                    {"status_args", QJsonObject{{"audition_seek_request_id", QString::number(result.requestId)}}}});
+            }
+            return response;
+        };
+        mgr.registerAction(def);
+    }
+
+    {
+        ActionDef def;
+        def.id = "audition_get_seek_status";
+        def.displayName = "Get Audition Seek Status";
+        def.category = "audition";
+        def.paramSchema = commandInputSchema(def.id);
+        def.undoable = false;
+        def.handler = [auditionManager](const QJsonObject& args) -> ActionResult {
+            if (!auditionManager) return auditionNotAvailable();
+            const QString id = args.value("audition_seek_request_id").toString();
+            bool valid = false;
+            const auto requestId = id.toULongLong(&valid);
+            if (!valid || requestId == 0 || QString::number(requestId) != id)
+                return {false, {}, "INVALID_PARAM", "audition_seek_request_id must be a positive decimal request ID"};
+            const auto status = auditionManager->seekStatus(requestId);
+            if (!status)
+                return {false, {}, "NOT_FOUND", "Audition seek request is unknown or its completed result has expired"};
+            QJsonObject progress{{"audition_seek_request_id", id}, {"in_progress", status->inProgress}};
+            if (!status->inProgress) {
+                QJsonObject completed{{"status", status->applied ? "ok" : "error"},
+                    {"result", QJsonObject{
+                        {"auditionID", static_cast<qint64>(status->playingId)},
+                        {"audition_seek_request_id", id},
+                        {"samplePosition", static_cast<qint64>(status->samplePosition)},
+                        {"engine_result", static_cast<int32_t>(status->result)},
+                        {"state", status->applied ? "applied" : "failed"}}}};
+                if (!status->applied) {
+                    completed.insert("code", "SEEK_FAILED");
+                    completed.insert("message", "The audition seek was not applied.");
+                }
+                progress.insert("result", completed);
+            }
+            return {true, progress};
         };
         mgr.registerAction(def);
     }

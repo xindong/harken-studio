@@ -54,6 +54,7 @@ public:
         ActionSource source = ActionSource::Internal;
         DispatchOrigin origin = DispatchOrigin::Internal;
         QString requestId;
+        QString expectedProjectSession;
         QString permissionProfile;
         QString grantId;
         bool preview = false;

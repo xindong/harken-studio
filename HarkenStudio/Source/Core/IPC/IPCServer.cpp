@@ -7,6 +7,7 @@
 #include "CommandArgumentValidator.h"
 #include "DesktopCommandSchemas.h"
 #include "PackGenerationRecord.h"
+#include "RuntimeSyncCoordinator.h"
 #include <QFileInfo>
 #include <QSet>
 #include <QThread>
@@ -484,6 +485,7 @@ QJsonObject IPCServer::dispatchCommand(const QString& cmd, const QJsonObject& ar
         && cmd != QLatin1String("get_command_schema")
         && cmd != QLatin1String("get_ui_operation")
         && cmd != QLatin1String("get_transcode_status")
+        && cmd != QLatin1String("audition_get_seek_status")
         && cmd != QLatin1String("cancel_transcode")
         && cmd != QLatin1String("create_project")
         && cmd != QLatin1String("open_project"))
@@ -546,6 +548,35 @@ QJsonObject IPCServer::dispatchCommand(const QString& cmd, const QJsonObject& ar
         previewArgs["label"] = QString("inline_preview:%1").arg(cmd);
         previewArgs["source"] = "inline_preview";
         return withRequestId(ActionManager::instance().preview(previewArgs));
+    }
+
+    if (!context.expectedProjectSession.isEmpty()
+        && (!projectManager_ || !projectManager_->isProjectOpen() || !engine_
+            || QString::number(engine_->runtimeSyncCoordinator().barrier(
+                engine_->runtimeSyncCoordinator().currentAuthoringRevision()).projectSessionId)
+                != context.expectedProjectSession))
+        return withRequestId(errorResponse("PROJECT_CHANGED", "The project changed while preparing playback."));
+
+    if ((cmd == QLatin1String("post_action") || cmd == QLatin1String("post_action_3d")
+         || cmd == QLatin1String("audition_play"))
+        && projectManager_ && projectManager_->isProjectOpen()
+        && engine_ && engine_->isInitialized() && !engine_->isSimulationMode()) {
+        if (cmd == QLatin1String("audition_play") && !engine_->isPlaying() && !engine_->startOutput())
+            return withRequestId(errorResponse("START_OUTPUT_FAILED", "Failed to start audio output."));
+        auto& coordinator = engine_->runtimeSyncCoordinator();
+        coordinator.flushPendingMutationNow();
+        const auto barrier = coordinator.barrier(coordinator.currentAuthoringRevision());
+        using Barrier = RuntimeSyncCoordinator::RevisionBarrierState;
+        if (barrier.state != Barrier::Ready) {
+            auto response = barrier.state == Barrier::Pending
+                ? errorResponse("RUNTIME_SYNC_PENDING", "The current project is still being prepared for playback. Playback has not started.")
+                : errorResponse("RUNTIME_SYNC_FAILED", "The current project could not be prepared for playback.");
+            response.insert("result", QJsonObject{
+                {"runtime_sync_status", static_cast<int>(barrier.failure)},
+                {"project_session_id", QString::number(barrier.projectSessionId)},
+                {"authoring_revision", QString::number(barrier.requiredRevision)}});
+            return withRequestId(response);
+        }
     }
 
     if (ActionManager::instance().hasAction(cmd))

@@ -21,11 +21,14 @@ struct DesktopShellResult {
 bool prepareDesktopShellStdio(QString* error, bool requireInput = true);
 bool shellUsesJson();
 void writeShellResponse(QJsonObject response, bool json = true);
-DesktopShellResult runDesktopShell(VNX::IPCServer& dispatcher, bool json = false);
+DesktopShellResult runDesktopShell(VNX::IPCServer& dispatcher, bool json,
+    const std::function<QJsonObject(ShellExitRequest)>& requestClose);
 
 int runShell(StudioSession& session, int timeoutMs, bool json,
              volatile std::sig_atomic_t& interrupted,
              const std::function<void(QJsonObject)>& writeResponse,
-             ShellExitRequest* exitRequest = nullptr);
+             ShellExitRequest* exitRequest = nullptr,
+             const std::function<QJsonObject(ShellExitRequest)>& requestClose = {},
+             const std::function<bool()>& outputFailed = {});
 
 }

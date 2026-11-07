@@ -1,6 +1,6 @@
 # HarkenStudioCLI 命令用法
 
-快照日期：2026-11-06。独立无窗口程序 `HarkenStudioCLI.exe`（macOS 为 `HarkenStudioCLI`）与 [Studio 本体](studio-commands.md) 共享工程核心命令、创作模型、资源处理和打包服务。
+快照日期：2026-11-07。独立无窗口程序 `HarkenStudioCLI.exe`（macOS 为 `HarkenStudioCLI`）与 [Studio 本体](studio-commands.md) 共享工程核心命令、创作模型、资源处理和打包服务。
 
 ## 入口组织
 
@@ -71,6 +71,8 @@ Studio 正常打开工程并就绪后自动发布实例，无需特殊启动选�
 
 Studio 本体也提供 `HarkenStudio --project <path> --shell`，复用相同逐行语法，在 GUI 进程内直接执行。`exit` 始终退出当前 shell 所属的进程：独立 CLI 退出 CLI，Studio `--shell` 退出 Studio（包含 GUI），实例模式退出 CLI 而保留另一个进程中的目标 Studio。Studio 的 `exit --discard` 明确放弃当前工程修改后退出；EOF 也请求关闭 Studio，未保存内容使用 GUI 确认。详见 [Studio 同进程 shell](studio-commands.md#studio-同进程-shell)。
 
+Studio 拒绝关闭时继续同一输入会话，保留已读入的后续命令。Studio `--shell` 的响应由后台写出，单响应最多 64 MiB，输出阻塞期间 GUI 和实例接口仍可操作；断管道、中断或 300 秒写出超时结束 shell 并保留 GUI。成功退出的最后响应最多等待写出 5 秒。
+
 ```text
 HarkenStudioCLI shell --project GameAudio/GameAudio.hsp
 harken> create_action {"name":"PlayFootstep"}
@@ -119,12 +121,17 @@ harken> help exit
 | 总线 | `set_bus_volume_db/get_bus_volume_db` 使用创作 dB；`set_output_bus_gain/get_output_bus_gain` 只读写 Bus 输出增益；路由目的地使用 Bus 层级或可播放定义字段组 |
 | Send | `set_send/set_send_level` 的 `level` 是非负线性增益，1 为单位增益；对象查询中的 `sendLevel` 使用 dB |
 | 播放 | 在同一会话调用 `init_engine`、所需输出启动及 `post_action/audition_play`；播放前等待当前工程运行时同步。`device_mode` 默认为 `real`；无物理设备的自动化会话可使用 `null` |
+| 试听定位 | `audition_set_position` 等待所返回请求的实际 `applied/failed` 结果；`audition_get_seek_status` 使用 `audition_seek_request_id` 查询相同请求 |
 | Voice 查询 | `get_active_voices.count` 是原生活跃 Voice 数，`reported_count` 是公开明细行数，二者可能不同 |
 | 电平 | `get_performance.master_peak_l/r` 是线性幅度；mixer/metering 快照使用 dB，测量位于主输出增益之前 |
 | 搜索 | `search_fulltext` 查询当前工程索引；不可用返回 `SEARCH_UNAVAILABLE`，不伪装为空结果 |
 | 文件比较 | `compare_files` 的 `reference_path/candidate_path` 为两个文件；结果 `identical/compared_bytes/different_bytes/length_match` 均按原始字节解释 |
 
 `init_engine` 返回实际的设备模式。运行时不可用时返回 `ENGINE_UNAVAILABLE`，不会把编辑器模拟模式当作初始化成功。已初始化后，无参数调用复用当前运行时；带配置再次调用会提示先 `shutdown_engine`，避免把未生效的设置当作已应用。
+
+独立 CLI、实例 CLI 与 Studio `--shell` 的播放均在共享分发器检查当前创作版本，再执行 `post_action/post_action_3d/audition_play`。只有明确尚未提交播放的 `RUNTIME_SYNC_PENDING` 会等待后重试；超时、中断、同步失败或等待期间切换工程都返回失败。不会因已有旧世界就跳过最新修改，也不会自动重试结果不确定的网络请求。
+
+试听定位复用共享异步作业协议，成功接收与实际应用区分。完成查询保留全部进行中的请求及最近 128 条完成记录；已过期的身份返回 `NOT_FOUND`，引擎关闭或原生定位失败返回可查询的失败终态。附加会话超时/中断只停止等待，应按返回的 `operation.status_command/status_args` 查询结果后再决定下一步。
 
 旧名称直接迁移，无兼容别名；完整映射见 [Studio 命令迁移表](studio-commands.md#命令迁移)。
 

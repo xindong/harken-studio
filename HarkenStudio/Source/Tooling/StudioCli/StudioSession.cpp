@@ -10,7 +10,6 @@
 #include "Core/ProjectInstance.h"
 #include "Core/ProjectLocator.h"
 #include "Core/ProjectManager.h"
-#include "Core/RuntimeSyncCoordinator.h"
 #include "Core/SchemaArchive.h"
 
 #include <QCoreApplication>
@@ -152,23 +151,47 @@ QJsonObject StudioSession::validate(const QString& name, const QJsonObject& args
 }
 
 QJsonObject StudioSession::dispatchDesktop(const QString& name, const QJsonObject& args,
-                                          int timeoutMs, const std::function<bool()>& canceled) const
+                                          int timeoutMs, const std::function<bool()>& canceled,
+                                          const QString& expectedProjectSession) const
 {
-    if (instance_) return instance_->execute(name, args, timeoutMs, canceled);
+    if (instance_) return instance_->execute(name, args, timeoutMs, canceled, expectedProjectSession);
     if (canceled && canceled()) return failure(QStringLiteral("CANCELED"), QStringLiteral("Interrupted."));
     if (!desktopDispatcher_)
         return failure(QStringLiteral("SESSION_CLOSED"), QStringLiteral("The Studio command session has ended."));
     VNX::IPCServer::IPCDispatchContext context;
     context.source = VNX::ActionSource::IPC;
     context.origin = VNX::IPCServer::DispatchOrigin::CLI;
+    context.expectedProjectSession = expectedProjectSession;
     return desktopDispatcher_->dispatchCommand(name, args, context);
 }
 
 QJsonObject StudioSession::execute(const QString& name, const QJsonObject& args,
                                   int timeoutMs, const std::function<bool()>& canceled)
 {
+    QElapsedTimer timer;
+    timer.start();
+    QString projectSession;
+    while (true) {
+        if (canceled && canceled())
+            return failure(QStringLiteral("CANCELED"), QStringLiteral("Interrupted before executing the command."));
+        auto response = executeOnce(name, args, qMax(1, timeoutMs - static_cast<int>(timer.elapsed())), canceled, projectSession);
+        if (response.value(QStringLiteral("code")) != QStringLiteral("RUNTIME_SYNC_PENDING")) return response;
+        projectSession = response.value(QStringLiteral("result")).toObject()
+            .value(QStringLiteral("project_session_id")).toString();
+        if (timer.elapsed() >= timeoutMs)
+            return failure(QStringLiteral("TIMEOUT"), QStringLiteral("The current project did not become ready for playback."));
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        if (state_) state_->engine.serviceRuntime();
+        QThread::msleep(10);
+    }
+}
+
+QJsonObject StudioSession::executeOnce(const QString& name, const QJsonObject& args,
+                                      int timeoutMs, const std::function<bool()>& canceled,
+                                      const QString& expectedProjectSession)
+{
     if (isAttached()) {
-        auto response = dispatchDesktop(name, args, timeoutMs, canceled);
+        auto response = dispatchDesktop(name, args, timeoutMs, canceled, expectedProjectSession);
         if (succeeded(response)
             && (name == QStringLiteral("close_project") || name == QStringLiteral("create_project"))) {
             const auto closed = waitForProjectClose(timeoutMs, canceled);
@@ -209,60 +232,10 @@ QJsonObject StudioSession::execute(const QString& name, const QJsonObject& args,
             return failure(QStringLiteral("PROJECT_IN_USE"), acquisition.error);
         creationInstance = std::move(acquisition.instance);
     }
-    if (name == QStringLiteral("post_action") || name == QStringLiteral("post_action_3d")
-        || name == QStringLiteral("audition_play")) {
-        if (name == QStringLiteral("audition_play") && state_->engine.isInitialized()
-            && !state_->engine.isPlaying() && !state_->engine.startOutput())
-            return failure(QStringLiteral("START_OUTPUT_FAILED"), QStringLiteral("Failed to start audio output."));
-        const auto ready = waitForCurrentWorld(timeoutMs, canceled);
-        if (!succeeded(ready)) return ready;
-    }
     VNX::IPCServer::IPCDispatchContext context;
     context.source = VNX::ActionSource::IPC;
     context.origin = VNX::IPCServer::DispatchOrigin::IPC;
-    if (name == QStringLiteral("audition_set_position")) {
-        QEventLoop loop;
-        QTimer deadline;
-        deadline.setSingleShot(true);
-        QTimer cancellation;
-        quint64 requestId = 0;
-        QJsonObject completed;
-        QObject::connect(&state_->audition,
-            &HarkenEditor::AuditionManager::auditionSeekFinished, &loop,
-            [&](uint32_t playingId, quint64 finishedId, int32_t engineResult, bool applied) {
-                if (finishedId != requestId || !completed.isEmpty()) return;
-                const QJsonObject result{
-                    {QStringLiteral("auditionID"), static_cast<qint64>(playingId)},
-                    {QStringLiteral("audition_seek_request_id"), QString::number(finishedId)},
-                    {QStringLiteral("samplePosition"), args.value(QStringLiteral("samplePosition"))},
-                    {QStringLiteral("engine_result"), engineResult},
-                    {QStringLiteral("state"), applied ? QStringLiteral("applied") : QStringLiteral("failed")}};
-                completed = applied
-                    ? QJsonObject{{QStringLiteral("status"), QStringLiteral("ok")}}
-                    : failure(QStringLiteral("SEEK_FAILED"), QStringLiteral("The audition seek was not applied."));
-                completed.insert(QStringLiteral("result"), result);
-                loop.quit();
-            });
-        const auto accepted = state_->dispatcher.dispatchCommand(name, args, context);
-        if (!succeeded(accepted)) return accepted;
-        requestId = accepted.value(QStringLiteral("result")).toObject()
-            .value(QStringLiteral("audition_seek_request_id")).toString().toULongLong();
-        if (requestId == 0)
-            return failure(QStringLiteral("SEEK_FAILED"), QStringLiteral("The audition seek has no completion request."));
-        QObject::connect(&deadline, &QTimer::timeout, &loop, [&] {
-            completed = failure(QStringLiteral("TIMEOUT"), QStringLiteral("The audition seek did not complete."));
-            loop.quit();
-        });
-        QObject::connect(&cancellation, &QTimer::timeout, &loop, [&] {
-            if (!canceled()) return;
-            completed = failure(QStringLiteral("CANCELED"), QStringLiteral("Interrupted while seeking."));
-            loop.quit();
-        });
-        deadline.start(timeoutMs);
-        cancellation.start(10);
-        loop.exec();
-        return completed;
-    }
+    context.expectedProjectSession = expectedProjectSession;
     auto response = state_->dispatcher.dispatchCommand(name, args, context);
     if (name == QStringLiteral("close_project") && succeeded(response)) {
         const auto closed = waitForProjectClose(timeoutMs, canceled);
@@ -402,53 +375,6 @@ QJsonObject StudioSession::waitForProjectClose(int timeoutMs, const std::functio
         if (isAttached() || state_->project.isClosing()) QThread::msleep(10);
     }
     return {{QStringLiteral("status"), QStringLiteral("ok")}};
-}
-
-QJsonObject StudioSession::waitForCurrentWorld(int timeoutMs, const std::function<bool()>& canceled)
-{
-    if (!state_->project.isProjectOpen() || !state_->engine.isInitialized()
-        || state_->engine.isSimulationMode())
-        return {{QStringLiteral("status"), QStringLiteral("ok")}};
-
-    auto& coordinator = state_->engine.runtimeSyncCoordinator();
-    QEventLoop loop;
-    QTimer deadline;
-    deadline.setSingleShot(true);
-    QTimer cancellation;
-    QJsonObject response;
-    const auto check = [&] {
-        if (!response.isEmpty()) return;
-        if (canceled()) {
-            response = failure(QStringLiteral("CANCELED"), QStringLiteral("Interrupted while preparing playback."));
-        } else {
-            using Barrier = VNX::RuntimeSyncCoordinator::RevisionBarrierState;
-            const auto barrier = coordinator.barrier(coordinator.currentAuthoringRevision());
-            if (barrier.state == Barrier::Ready) {
-                response = {{QStringLiteral("status"), QStringLiteral("ok")}};
-            } else if (barrier.state != Barrier::Pending) {
-                response = failure(QStringLiteral("RUNTIME_SYNC_FAILED"),
-                    QStringLiteral("The current project could not be prepared for playback."));
-                response.insert(QStringLiteral("result"), QJsonObject{
-                    {QStringLiteral("runtime_sync_status"), static_cast<int>(barrier.failure)}});
-            }
-        }
-        if (!response.isEmpty()) loop.quit();
-    };
-    QObject::connect(&coordinator, &VNX::RuntimeSyncCoordinator::barrierChanged, &loop, check);
-    QObject::connect(&cancellation, &QTimer::timeout, &loop, check);
-    QObject::connect(&deadline, &QTimer::timeout, &loop, [&] {
-        if (!response.isEmpty()) return;
-        response = failure(QStringLiteral("TIMEOUT"), QStringLiteral("The current project did not become ready for playback."));
-        loop.quit();
-    });
-    coordinator.flushPendingMutationNow();
-    check();
-    if (response.isEmpty()) {
-        deadline.start(timeoutMs);
-        cancellation.start(10);
-        loop.exec();
-    }
-    return response;
 }
 
 QJsonObject StudioSession::save()

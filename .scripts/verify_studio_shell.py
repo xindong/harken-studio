@@ -11,7 +11,7 @@ import time
 import wave
 from pathlib import Path
 
-from verify_studio_instances import process_options, registry_directory
+from verify_studio_instances import process_options, registry_directory, verify_playback_completion
 from verify_studio_cli import verify_shell_help
 
 
@@ -100,7 +100,7 @@ def verify(cli: Path, studio: Path, work: Path) -> None:
         registrations.append(registry_directory(environment) / (instance["id"] + ".json"))
         return process, responses, instance, project
 
-    def send(process, responses, line: str, error=None):
+    def send(process, responses, line: str, error=None, validate_status=True):
         assert process.poll() is None, process.returncode
         process.stdin.write((line + "\n").encode("utf-8"))
         process.stdin.flush()
@@ -110,7 +110,8 @@ def verify(cli: Path, studio: Path, work: Path) -> None:
             raise AssertionError(("No response before EOF", line, process.poll())) from timeout
         assert raw is not None, (line, process.poll())
         response = json.loads(raw)
-        assert response["status"] == ("error" if error else "ok"), (line, response)
+        if validate_status:
+            assert response["status"] == ("error" if error else "ok"), (line, response)
         assert response["protocolVersion"] == 1, response
         if error:
             assert response["code"] == error, response
@@ -220,6 +221,31 @@ def verify(cli: Path, studio: Path, work: Path) -> None:
         close_gui(process, instance_id)
         check("Dirty EOF requests normal GUI close; cancelling preserves edits and the application can still save and close")
 
+        process, responses, instance, _ = launch("DirectShellRuntimeCompletion")
+
+        def run_playback_commands(requests):
+            lines = [request["cmd"] + " " + json.dumps(request.get("args", {})) for request in requests]
+            process.stdin.write(("\n".join(lines) + "\n").encode("utf-8"))
+            process.stdin.flush()
+            completed = []
+            for request in requests:
+                raw = responses.get(timeout=30)
+                assert raw is not None, (request, process.poll())
+                response = json.loads(raw)
+                assert response["protocolVersion"] == 1 and response["status"] == "ok", response
+                assert response["command"] == request["cmd"], response
+                completed.append(response)
+            return completed
+
+        verify_playback_completion(
+            lambda name, arguments: send(process, responses, name + " " + json.dumps(arguments)),
+            run_playback_commands,
+            lambda name, arguments: send(process, responses, name + " " + json.dumps(arguments), validate_status=False),
+            work / "direct-shell-completion.wav")
+        send(process, responses, "exit --discard")
+        assert process.wait(timeout=20) == 0, process.returncode
+        check("Direct shell waits for newly authored playback and reports final results for consecutive audition seeks")
+
         process, responses, instance, exit_project = launch("DirectShellExit")
         send(process, responses, 'create_action {"name":"SavedBeforeExit"}')
         send(process, responses, "exit", error="UNSAVED_CHANGES")
@@ -270,6 +296,32 @@ def verify(cli: Path, studio: Path, work: Path) -> None:
         time.sleep(0.1)
         close_gui(process, instance["id"])
         check("Closing the GUI terminates the process while stdin remains open with an incomplete command")
+
+        process, _, instance, _ = launch("DirectShellOutputBackpressure", read_output=False)
+        process.stdin.write(b"help\nget_project_info\n")
+        process.stdin.flush()
+        time.sleep(0.2)
+        execute(instance["id"], "get_project_info")
+        drained = queue.Queue()
+
+        def drain_responses():
+            for _ in range(2):
+                drained.put(process.stdout.readline())
+
+        reader = threading.Thread(target=drain_responses, daemon=True)
+        reader.start()
+        readers.append(reader)
+        first = json.loads(drained.get(timeout=20))
+        second = json.loads(drained.get(timeout=20))
+        assert first["status"] == "ok" and first["command"] == "help", first
+        assert second["status"] == "ok" and second["command"] == "get_project_info", second
+        reader.join(timeout=5)
+        assert not reader.is_alive()
+        process.stdin.write(b"help\n")
+        process.stdin.flush()
+        time.sleep(0.2)
+        close_gui(process, instance["id"])
+        check("Unread shell output leaves GUI commands responsive, resumes ordered replies when drained and cannot block GUI close")
 
         process, _, instance, _ = launch("DirectShellOutputClosed", read_output=False)
         process.stdout.close()

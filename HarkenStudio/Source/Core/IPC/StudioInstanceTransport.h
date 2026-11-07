@@ -34,7 +34,8 @@ public:
     static QJsonObject discover(int timeoutMs = 1000,
                                const std::function<bool()>& canceled = {});
     QJsonObject execute(const QString& name, const QJsonObject& args,
-                        int timeoutMs, const std::function<bool()>& canceled);
+                        int timeoutMs, const std::function<bool()>& canceled,
+                        const QString& expectedProjectSession = {});
     QJsonObject commands(int timeoutMs, const std::function<bool()>& canceled);
     QJsonObject describe(const QString& name, int timeoutMs,
                          const std::function<bool()>& canceled);
