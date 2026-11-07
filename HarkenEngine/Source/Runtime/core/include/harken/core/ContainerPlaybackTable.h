@@ -274,6 +274,7 @@ public:
 
 private:
     friend class PlayableTreeExecutor;
+    bool CanResetForReuse(bool published) const noexcept;
     bool ResetForReuse(bool published) noexcept;
     bool HasSourceRetirementHolds() const noexcept;
     bool ValidateReservations() const noexcept;
@@ -727,12 +728,12 @@ public:
         return treeResolved && ownersResolved && committedOwnersResolved;
     }
 
+    bool CanResetAfterPublishedOwnershipTransfer() const noexcept {
+        return CanReleasePublishedOwnership() && CanResetCurrentTreeResources();
+    }
+
     bool ResetForReuse() noexcept {
-        if (InstanceCommitProofsHeld() || ParentLinkProofHeld() || ownerTokenCount_ != 0 ||
-            (published_ && !ownershipTransferred_) ||
-            (externalInstance_ != nullptr && (externalInstance_->Valid() ||
-                (!published_ && externalInstance_->Handle() != 0))) ||
-            (!published_ && (committedOwnerTokenCount_ != 0 || ExternalInstanceIsLive())) ||
+        if ((published_ && !ownershipTransferred_) || !CanResetCurrentTreeResources() ||
             !step_.ResetForReuse(published_)) return false;
         std::fill(ownerTokens_.begin(), ownerTokens_.end(), OwnerToken{});
         std::fill(committedOwnerTokens_.begin(), committedOwnerTokens_.end(), OwnerToken{});
@@ -744,6 +745,16 @@ public:
         return true;
     }
 
+private:
+    bool CanResetCurrentTreeResources() const noexcept {
+        return !InstanceCommitProofsHeld() && !ParentLinkProofHeld() && ownerTokenCount_ == 0 &&
+            (externalInstance_ == nullptr || (!externalInstance_->Valid() &&
+                (published_ || externalInstance_->Handle() == 0))) &&
+            (published_ || (committedOwnerTokenCount_ == 0 && !ExternalInstanceIsLive())) &&
+            step_.CanResetForReuse(published_);
+    }
+
+public:
     bool CanReleasePublishedOwnership() const noexcept {
         return published_ && ownerTokenCount_ == 0;
     }

@@ -2455,20 +2455,28 @@ SelectionMemoryTableV1::CommitPreparedPlayTransactional(
     return SelectionMemoryStatusV1::Ok;
 }
 
-SelectionMemoryStatusV1 SelectionMemoryTableV1::FinalizeCommittedPlay(
-    PreparedSelectionPlayV1* committed) noexcept {
+SelectionMemoryStatusV1 SelectionMemoryTableV1::CanFinalizeCommittedPlay(
+    const PreparedSelectionPlayV1* committed) const noexcept {
     if (committed == nullptr || committed->owner_ != this ||
         committed->lifetime_ != tableLifetime_ ||
         !committed->committed_ || committed->prepared_ ||
         committed->slot_ >= deltas_.size()) {
         return SelectionMemoryStatusV1::InvalidInput;
     }
-    DeltaRow& delta = deltas_[committed->slot_];
+    const DeltaRow& delta = deltas_[committed->slot_];
     if (!delta.used || delta.prepared || !delta.rollbackable ||
         delta.generation != committed->generation_ ||
         delta.row >= rows_.size()) {
         return SelectionMemoryStatusV1::NotFound;
     }
+    return SelectionMemoryStatusV1::Ok;
+}
+
+SelectionMemoryStatusV1 SelectionMemoryTableV1::FinalizeCommittedPlay(
+    PreparedSelectionPlayV1* committed) noexcept {
+    const auto ready = CanFinalizeCommittedPlay(committed);
+    if (ready != SelectionMemoryStatusV1::Ok) return ready;
+    DeltaRow& delta = deltas_[committed->slot_];
     Row& row = rows_[delta.row];
     const auto rowIndex = delta.row;
     RecycleDelta(committed->slot_);

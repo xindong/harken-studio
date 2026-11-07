@@ -2301,8 +2301,13 @@ TEST(PlayableTreeExecutor, ReusesReservationStorageWithoutRetiringPublishedTree)
     ASSERT_TRUE(executor.PrepareInstance(instances, PlayableKind::Sound));
     auto* const firstSlot = executor.PreparedInstanceToken(0);
     const auto first = executor.PreparedInstanceHandle(0);
+    EXPECT_FALSE(executor.CanResetAfterPublishedOwnershipTransfer());
     EXPECT_FALSE(executor.ResetForReuse());
     ASSERT_TRUE(executor.Commit());
+    EXPECT_TRUE(executor.CanResetAfterPublishedOwnershipTransfer());
+    EXPECT_TRUE(executor.CanResetAfterPublishedOwnershipTransfer());
+    EXPECT_FALSE(executor.PublishedOwnershipTransferred());
+    EXPECT_EQ(1u, instances.LiveCount());
     EXPECT_FALSE(executor.ResetForReuse());
     ASSERT_TRUE(executor.ReleasePublishedOwnership());
     ASSERT_TRUE(executor.ResetForReuse());
