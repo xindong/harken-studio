@@ -3839,6 +3839,7 @@ struct EngineAuthoredStopResource {
 enum class EngineDecisionOwnershipPhase : std::uint8_t {
     Retiring,
     ActiveArrival,
+    ActiveSource,
 };
 
 struct EngineDecisionRetirement {
@@ -5388,10 +5389,14 @@ struct EngineActionPlayScratch {
         std::vector<const TimelineArmTable::OriginalUnpublishedSourceDisposition*> sources;
     };
     std::unique_ptr<InitialQueueSignalAdmission> initialQueueSignalAdmission;
-    struct InitialQueueEntryAdmission {
-        explicit InitialQueueEntryAdmission(std::size_t capacity)
-            : members(capacity), cancellationArms(capacity), voices(capacity),
+    struct InitialSourceAdmission {
+        enum class Kind : std::uint8_t { QueueEntry, ScheduleSource };
+        explicit InitialSourceAdmission(std::size_t capacity, Kind admissionKind)
+            : kind(admissionKind), members(capacity),
+              participants(admissionKind == Kind::ScheduleSource ? capacity : 0u),
+              cancellationArms(capacity), voices(capacity),
               owners(capacity), sources(capacity) {}
+        Kind kind = Kind::QueueEntry;
         EnginePlayableServiceReference service{};
         std::uint64_t entryFrame = 0;
         DecisionToken decision{};
@@ -5404,13 +5409,14 @@ struct EngineActionPlayScratch {
         bool initialBound = false;
         std::uint32_t memberCount = 0;
         std::vector<TimelineArmToken> members;
+        std::vector<DecisionParticipantRef> participants;
         std::array<UnpublishedGroupCancellationHold, 1> cancellationGroups;
         std::vector<UnpublishedArmCancellationHold> cancellationArms;
         std::vector<EnginePreparedTimelineVoiceStart*> voices;
         std::vector<PreparedTimelineVoiceOwnerContext*> owners;
         std::vector<const TimelineArmTable::OriginalUnpublishedSourceDisposition*> sources;
     };
-    std::vector<std::unique_ptr<InitialQueueEntryAdmission>> initialQueueEntryAdmissions;
+    std::vector<std::unique_ptr<InitialSourceAdmission>> initialSourceAdmissions;
     TimelineArmReaderPin frontierArmPin{};
     EngineQueueProgramBank* frontierProgramBank = nullptr;
     using PreparedDecisionOwnerContext = EnginePreparedDecisionOwnerContext;
