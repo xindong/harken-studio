@@ -62,6 +62,8 @@
 
 已有控件通过主题、尺寸和字体通知更新布局与绘制。缩放设置会同步反映外部修改和恢复默认值；打开的颜色编辑器保留预览及编辑状态。颜色预览取消只恢复配色，不回滚其间独立修改的缩放比例。
 
+主窗口的最小宽高属于窗口外框约束，不参与 Editor Scale。实时缩放及重启均保留用户的普通窗口尺寸与最大化状态，沿用原有的选屏、屏幕边界限制和启动居中规则，避免内容缩放抬高窗口下限并污染保存的尺寸。
+
 蓝图的项目坐标与画布缩放比例保持独立。界面比例作用于视图变换，节点内的控件尺寸配合局部变换避免重复缩放；节点之间的世界坐标距离、已保存位置和网格吸附坐标不被改写。连线与命中测试使用同一世界几何，画布自身的滚轮缩放仍以独立比例计算。时间轴时间、曲线数据和其他项目业务坐标也不转换为放大后的显示像素。
 
 历史验收：调整为最初 10 档预设之前，2026-11-07 在 Windows、Qt 6.11.1、RelWithDebInfo 下，编辑器与测试目标构建通过，155 项相关回归通过，覆盖设置持久化、预览事务、字体与尺寸同步、输入选择、编辑手势、蓝图世界坐标，以及主窗口、浮动面板和模态弹窗的快捷键分发。默认快捷键别名随修改、清除和恢复同步，冲突检测包含别名；主键盘 Shift 加号另外通过向隔离窗口发送原生 Windows 按键消息验证。结果明细见 `.temp/scale-vscode-validation-summary.json`，原生键盘探针为 `.temp/zoom-native-keys.cpp`。
@@ -81,6 +83,12 @@
 PR 审查后补充修复：Assistant 在原消息和待确认控件上更新字体与富文本，保留文字选区、输入状态、当前可见消息及消息内的相对阅读位置；原本位于底部时继续跟随底部。富文本在字体、缩放或表格边框颜色变化时重新生成，无关颜色预览跳过 Markdown 解析。启动窗口按目标屏幕的可用区域限制尺寸，优先压缩插图高度，长项目名和状态文字省略显示，保持关闭按钮、进度和状态区域可见。Windows CI 中的颜色预览测试在初始布局完成前记录几何基线，现改为激活布局后记录，保留全部原有断言。
 
 本轮编辑器与测试目标构建通过，162 项相关回归全部通过（`.temp/scale-pr-review-regression.xml`）；另将 `ThemeMetricsMigration` 单独运行，18 项全部通过，覆盖 CI 的独立进程初始化路径（`.temp/scale-pr-review-focused.xml`）。两项新增的状态保留与窗口边界回归同时通过 Windows 原生运行，启动窗口覆盖全部 11 档比例及长项目名（`.temp/scale-pr-review-native.xml`）；QSS 归属检查及其 6 项脚本测试通过。原生运行采用隔离桌面，未覆盖跨显示器 DPI 切换。
+
+主窗口恢复检查先复现了大比例抬高最小高度、关闭后保存变大尺寸的问题，随后移除窗口最小宽高的内容缩放。普通窗口与最大化窗口在全部 11 档比例下的关闭重建检查通过离屏及 Windows 原生运行。另以真实 HarkenStyle、独立设置目录和 44 个原生进程完成 22 组“缩放并保存 → 退出进程 → 冷启动”检查，尺寸、窗口状态与启动居中位置全部一致；例如 1100×700 的普通窗口在 300% 下仍以相同尺寸和位置重开。结果位于 `.temp/scale-window-restart-native.xml` 与 `.temp/scale-window-probe/run-291964d89e754ef68b0753c790664a66/summary.json`。
+
+最终编辑器及测试目标构建通过，164 项相关回归全部通过（`.temp/scale-window-pr-regression-final.xml`），另有 5 项工作区生命周期测试独立通过（`.temp/scale-window-workspace-tests.xml`）。
+
+额外的跨套件同进程组合暴露了测试隔离问题：先运行 `WorkspaceToolLifecycleTest`，再运行 `EditorDockLayoutTest.ColorRefreshPreservesBlueprintEditorsAndStructureRefreshReplacesThem`，后者全局收集隐藏编辑器的断言失败；不运行本次新增用例也可复现。新增窗口回归与该蓝图用例一起运行通过，工作区的 5 项测试独立运行也通过。结果分别为 `.temp/scale-window-existing-isolation.log`、`.temp/scale-window-isolation.log` 和 `.temp/scale-window-workspace-tests.xml`，没有改动这些既有用例或对应业务代码。
 
 另外记录一项与缩放无关的既有布局问题：Transition 状态栏徽标和计数在 100% 下也会因 `QSizePolicy::Ignored` 与零 stretch 收缩为零宽。本次保持该部分原状；它不属于上述缩放修复的通过项。
 

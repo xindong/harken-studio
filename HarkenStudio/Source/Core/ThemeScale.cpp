@@ -60,7 +60,6 @@ void scaleMetrics(ThemeMetrics& metrics, qreal factor)
     auto& chrome = metrics.chrome;
     scalePixels(factor,
         chrome.titleBarHeight, chrome.windowButtonWidth,
-        chrome.windowMinimumWidth, chrome.windowMinimumHeight,
         chrome.progressWidth, chrome.progressHeight);
 
     auto& toggle = metrics.toggle;
