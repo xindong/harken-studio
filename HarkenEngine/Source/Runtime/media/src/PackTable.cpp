@@ -1300,7 +1300,8 @@ VnResult PackTable::PrepareCanonicalSet(
                 const auto [it, inserted] = mediaUnion.emplace(media.soundId, source);
                 if (!inserted) {
                     const auto match = sameMedia(it->second, source);
-                    if (match == MediaContentMatch::Failed) return VN_BAD_PACK;
+                    if (match == MediaContentMatch::LeftFailed ||
+                        match == MediaContentMatch::RightFailed) return VN_BAD_PACK;
                     if (match != MediaContentMatch::Equal) {
                         m_conflictingSoundId = media.soundId;
                         return VN_IN_USE;
@@ -1349,8 +1350,10 @@ VnResult PackTable::PrepareCanonicalSet(
                     old->loopStartFrame == media.loopStartFrame &&
                     old->loopEndFrame == media.loopEndFrame;
                 if (equal) {
+                    // A published range whose file changed in place no longer
+                    // proves equality; only the candidate's own failure refuses.
                     const auto match = MatchMediaContent(view, oldRange.get(), source.View(), source.Range());
-                    if (match == MediaContentMatch::Failed) return VN_BAD_PACK;
+                    if (match == MediaContentMatch::RightFailed) return VN_BAD_PACK;
                     equal = match == MediaContentMatch::Equal;
                 }
                 if (equal) {
@@ -1596,7 +1599,7 @@ VnResult PackTable::PrepareCanonicalMedia(
                 }
                 const auto match = MatchMediaContent(view, existingRange.get(), candidate,
                                                 prepared != nullptr ? prepared->Range() : nullptr);
-                if (match == MediaContentMatch::Failed) return VN_BAD_PACK;
+                if (match == MediaContentMatch::RightFailed) return VN_BAD_PACK;
                 equal = match == MediaContentMatch::Equal;
             }
             if (equal) {

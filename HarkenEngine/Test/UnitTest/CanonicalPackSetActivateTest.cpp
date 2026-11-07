@@ -3527,6 +3527,8 @@ TEST(CanonicalPackSetActivate, StreamedPackMediaPlaysResidentSamplesWithoutResid
     ASSERT_TRUE(harkentest::WriteBytes(set.content, content));
     VnCanonicalPackSetActivationReportV1 report{};
     ASSERT_EQ(VN_OK, Activate(set.members, report));
+    // The shared playable-ID space still sees the range-only registration.
+    EXPECT_EQ(VN_IN_USE, Vn_RegisterStreamFile(kSound, set.content.c_str()));
     std::weak_ptr<const harken::StreamByteSource> source;
     {
         const auto reference = engine->registry.ReferenceOf(kSound, engine->registry.CookieOf(kSound));
@@ -3651,6 +3653,29 @@ TEST(CanonicalPackSetActivate, StreamOnlyMediaGainsResidentWhenDefinitionTurnsRe
     EXPECT_EQ(2u, upgraded.channelCount);
     EXPECT_EQ(kFrames, upgraded.frames);
     ExpectSameAudible(reference, PostAndCapture(engine, kBlocks), kFrames);
+}
+
+TEST(CanonicalPackSetActivate, StreamedPackRebuiltInPlaceActivatesNextRevision) {
+    using namespace packstream;
+    const auto first = PlanarSignal(1.0f), second = PlanarSignal(0.5f);
+    const auto secondReference = ResidentReference("pack-stream-inplace-ref", second);
+    for (const bool nextStreamed : {true, false}) {
+        SCOPED_TRACE(nextStreamed);
+        EngineSession session(StreamConfig());
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto* engine = session.Engine();
+        PathSet set(nextStreamed ? "pack-stream-inplace-s" : "pack-stream-inplace-r");
+        ASSERT_TRUE(harkentest::WriteBytes(set.content,
+            BuildSoundContent(PathSet::ContentId(), 1, true, first)));
+        VnCanonicalPackSetActivationReportV1 report{};
+        ASSERT_EQ(VN_OK, Activate(set.members, report));
+        // The published range still reads this path through its open source.
+        ASSERT_TRUE(harkentest::WriteBytes(set.content,
+            BuildSoundContent(PathSet::ContentId(), 2, nextStreamed, second)));
+        ASSERT_EQ(VN_OK, Activate(set.members, report, 1));
+        EXPECT_EQ(!nextStreamed, engine->registry.Lookup(kSound).Valid());
+        ExpectSameAudible(secondReference, PostAndCapture(engine, kBlocks), kFrames);
+    }
 }
 
 } // namespace

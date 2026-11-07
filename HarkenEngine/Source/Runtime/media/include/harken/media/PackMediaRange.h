@@ -71,14 +71,15 @@ private:
 bool ReadVerifiedPackMediaChunk(const PackMediaRange& range, std::uint32_t chunk,
                                 std::vector<float>& staging);
 
-enum class MediaContentMatch { Equal, Different, Failed };
+enum class MediaContentMatch { Equal, Different, LeftFailed, RightFailed };
 
 // Bit-exact equality of two resident planar views, signed zero included.
 bool EqualResidentSamples(const PCMView& left, const PCMView& right) noexcept;
 
 // Bit-exact sample equality across resident planes and Pack ranges. Either
-// side may be a resident view, a range, or both. Failed reports an I/O or
-// integrity failure while reading a range.
+// side may be a resident view, a range, or both. LeftFailed / RightFailed
+// report an I/O or integrity failure while reading that side's range; an
+// already published range can fail because its file was rewritten in place.
 MediaContentMatch MatchMediaContent(const PCMView& leftView, const PackMediaRange* leftRange,
                                     const PCMView& rightView, const PackMediaRange* rightRange);
 

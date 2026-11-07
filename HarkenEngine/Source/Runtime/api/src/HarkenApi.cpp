@@ -5558,7 +5558,7 @@ VnResult AttachBinding(Engine& engine, BindingId id, std::uint32_t scopeKind,
             return VN_UNKNOWN_ID;
         }
     } else if (scopeKind == kTargetScopeVoice) {
-        if (!engine.registry.Lookup(objectId).Valid()) {
+        if (engine.registry.CookieOf(objectId) == 0) {
             StreamManager::StreamFacts facts;
             bool knownHost = engine.streams.FindFile(objectId, &facts);
             const auto world = engine.variables.CurrentPlayableWorld();
@@ -112275,7 +112275,7 @@ VnResult Vn_BeginStreamSource(VnSoundId soundId, std::uint32_t mode,
         auto* engine = harken::detail::g_engine;
         if (!engine || engine->callbackFatalSticky) return VN_NOT_INITIALIZED;
         TraceStateful(engine, harken::kTraceCallBeginStreamSource).MarkUnreplayable();
-        if (engine->registry.Lookup(soundId).Valid()) return VN_IN_USE;
+        if (engine->registry.CookieOf(soundId) != 0) return VN_IN_USE;
         harken::StreamManager::StreamFacts previous;
         if (mode == VN_STREAM_SOURCE_REPLACE && !engine->streams.FindFile(soundId, &previous))
             return engine->streams.WorkerState() == harken::StreamWorkerState::Ready ? VN_UNKNOWN_ID : VN_DEVICE_ERROR;
@@ -112331,7 +112331,7 @@ VnResult Vn_BeginStreamFile(VnSoundId soundId, std::uint32_t mode,
         auto* engine = harken::detail::g_engine;
         if (!engine || engine->callbackFatalSticky) return VN_NOT_INITIALIZED;
         TraceStateful(engine, harken::kTraceCallBeginStreamFile).MarkUnreplayable();
-        if (engine->registry.Lookup(soundId).Valid()) return VN_IN_USE;
+        if (engine->registry.CookieOf(soundId) != 0) return VN_IN_USE;
         harken::StreamManager::StreamFacts previous;
         if (mode == VN_STREAM_SOURCE_REPLACE && !engine->streams.FindFile(soundId, &previous))
             return engine->streams.WorkerState() == harken::StreamWorkerState::Ready ? VN_UNKNOWN_ID : VN_DEVICE_ERROR;
@@ -112381,7 +112381,7 @@ VnResult Vn_CommitStreamSource(VnStreamSourceRequest request) {
         const auto state = engine->streams.QuerySource({request}, nullptr, &id, &replace);
         if (state == harken::StreamManager::PreparationState::Invalid ||
             state == harken::StreamManager::PreparationState::Cancelled) return VN_STALE_HANDLE;
-        const auto authority = engine->registry.Lookup(id).Valid() ? VN_IN_USE : VN_OK;
+        const auto authority = engine->registry.CookieOf(id) != 0 ? VN_IN_USE : VN_OK;
         const auto result = engine->streams.TakeSource({request}, nullptr, authority);
         return replace ? NoteHotReload(*engine, result, harken::kHotReloadClassStream, id) : result;
     } catch (...) { return VN_DEVICE_ERROR; }
@@ -112408,7 +112408,7 @@ VnResult Vn_RegisterStreamFile(VnSoundId soundId, const char* utf8Path) {
         // that already names registered PCM or a container is taken. The stream
         // table's own duplicate check runs on the streaming thread inside
         // RegisterFile.
-        if (engine->registry.Lookup(soundId).Valid()) {
+        if (engine->registry.CookieOf(soundId) != 0) {
             return VN_IN_USE;
         }
         // Blocks until the streaming thread has opened and validated the file
@@ -129358,6 +129358,66 @@ void CommitCanonicalBindingPlanStageC(Engine& engine,
     plan.attachmentRemovalScopeKinds.clear();
 }
 
+// Sound streaming choices of a candidate publication: incoming artifacts
+// first, then retained published owners. Composition refuses duplicate
+// definitions, so the first match is authoritative.
+struct CanonicalMediaDemand {
+    std::vector<const std::vector<PackSoundStreamingRow>*> incoming;
+    std::vector<PackSoundStreamingRow> retained;
+
+    void Retain(const PackComposition::PublishedOwner& owner) {
+        CollectSoundStreaming(owner.view, &retained);
+    }
+    bool Defined(VnSoundId soundId, bool* streamed) const {
+        for (const auto* rows : incoming)
+            if (rows != nullptr && FindSoundStreaming(*rows, soundId, streamed)) return true;
+        return FindSoundStreaming(retained, soundId, streamed);
+    }
+    static PackMediaDemand Resolve(void* ctx, const PackCanonicalImage& image, VnSoundId soundId) {
+        bool streamed = false;
+        const bool defined = FindSoundStreaming(image.soundStreaming, soundId, &streamed) ||
+            static_cast<const CanonicalMediaDemand*>(ctx)->Defined(soundId, &streamed);
+        return defined && streamed ? PackMediaDemand::Stream : PackMediaDemand::Resident;
+    }
+    PackMediaDemandResolver Resolver() const {
+        return {const_cast<CanonicalMediaDemand*>(this), &Resolve};
+    }
+};
+
+// A registration the candidate publication uses, backed only by a range
+// while the candidate defines its Sound as resident, gains resident storage
+// at commit. The storage is charged to the activation's decode budget.
+struct CanonicalResidentUpgrades {
+    std::vector<PCMRegistry::PreparedResidentUpgrade> prepared;
+    detail::PackDecodeCharge charge;
+
+    VnResult Add(Engine& engine, const CanonicalMediaDemand& demand, VnSoundId soundId,
+                 const PCMRegistry::PackReference& reference) {
+        bool streamed = true;
+        if (!reference.Valid() || reference.View().Valid() || reference.Range() == nullptr ||
+            !demand.Defined(soundId, &streamed) || streamed ||
+            std::any_of(prepared.begin(), prepared.end(),
+                [&](const auto& upgrade) { return upgrade.SoundId() == soundId; }))
+            return VN_OK;
+        const auto facts = reference.Facts();
+        charge.Add(detail::DecodeBytes(facts.frames * facts.channelCount, sizeof(float)));
+        PCMRegistry::PreparedResidentUpgrade upgrade;
+        const auto result = engine.registry.PrepareResidentUpgrade(reference, &upgrade);
+        // A fresh staged registration is not registered yet; it already has
+        // the storage its demand selected.
+        if (result == VN_STALE_HANDLE) return VN_OK;
+        if (result != VN_OK) return result;
+        prepared.push_back(std::move(upgrade));
+        return VN_OK;
+    }
+};
+
+void CommitCanonicalResidentUpgrades(Engine& engine, CanonicalResidentUpgrades& upgrades) noexcept {
+    for (auto& upgrade : upgrades.prepared) engine.registry.CommitResidentUpgrade(&upgrade);
+    upgrades.prepared.clear();
+    upgrades.charge.Reset();
+}
+
 struct PreparedCanonicalPackSetV1 {
     detail::PackDecodeBudget budget;
     detail::PackDecodeCharge staging;
@@ -129366,7 +129426,7 @@ struct PreparedCanonicalPackSetV1 {
     bool preserveInit = false;
     std::vector<AcquiredCanonicalSetMember> members;
     PackTable::PreparedSetMutation storage;
-    std::vector<PCMRegistry::PreparedResidentUpgrade> residentUpgrades;
+    CanonicalResidentUpgrades residentUpgrades;
     Spatializer::PreparedProfileSet attenuation;
     PreparedCanonicalPublication publication;
     SlotPlanV1 slotPlan{};
@@ -129504,67 +129564,6 @@ VnResult ValidateCanonicalV2InitBusEntries(const PackCanonicalImage& init) {
         }
     }
     return VN_OK;
-}
-
-// Sound streaming choices of a candidate publication: incoming artifacts
-// first, then retained published owners. Composition refuses duplicate
-// definitions, so the first match is authoritative.
-struct CanonicalMediaDemand {
-    std::vector<const std::vector<PackSoundStreamingRow>*> incoming;
-    std::vector<PackSoundStreamingRow> retained;
-
-    void Retain(const PackComposition::PublishedOwner& owner) {
-        CollectSoundStreaming(owner.view, &retained);
-    }
-    bool Defined(VnSoundId soundId, bool* streamed) const {
-        for (const auto* rows : incoming)
-            if (rows != nullptr && FindSoundStreaming(*rows, soundId, streamed)) return true;
-        return FindSoundStreaming(retained, soundId, streamed);
-    }
-    static PackMediaDemand Resolve(void* ctx, const PackCanonicalImage& image, VnSoundId soundId) {
-        bool streamed = false;
-        const bool defined = FindSoundStreaming(image.soundStreaming, soundId, &streamed) ||
-            static_cast<const CanonicalMediaDemand*>(ctx)->Defined(soundId, &streamed);
-        return defined && streamed ? PackMediaDemand::Stream : PackMediaDemand::Resident;
-    }
-    PackMediaDemandResolver Resolver() const {
-        return {const_cast<CanonicalMediaDemand*>(this), &Resolve};
-    }
-};
-
-// A registered range-only entry that the candidate now defines as resident
-// gains resident storage at commit. Old closures keep the same entry.
-VnResult PrepareCanonicalResidentUpgrades(Engine& engine, const CanonicalMediaDemand& demand,
-    std::vector<PCMRegistry::PreparedResidentUpgrade>* out) {
-    const auto visit = [&](const std::vector<PackSoundStreamingRow>& rows) -> VnResult {
-        for (const auto& row : rows) {
-            if (row.streamed) continue;
-            const auto cookie = engine.registry.CookieOf(row.soundId);
-            const auto reference = engine.registry.ReferenceOf(row.soundId, cookie);
-            if (cookie == 0 || !reference.Valid() || reference.View().Valid() ||
-                reference.Range() == nullptr ||
-                std::any_of(out->begin(), out->end(),
-                    [&](const auto& upgrade) { return upgrade.SoundId() == row.soundId; }))
-                continue;
-            PCMRegistry::PreparedResidentUpgrade upgrade;
-            const auto prepared = engine.registry.PrepareResidentUpgrade(reference, &upgrade);
-            if (prepared != VN_OK) return prepared;
-            out->push_back(std::move(upgrade));
-        }
-        return VN_OK;
-    };
-    for (const auto* rows : demand.incoming) {
-        if (rows == nullptr) continue;
-        const auto visited = visit(*rows);
-        if (visited != VN_OK) return visited;
-    }
-    return visit(demand.retained);
-}
-
-void CommitCanonicalResidentUpgrades(Engine& engine,
-    std::vector<PCMRegistry::PreparedResidentUpgrade>& upgrades) noexcept {
-    for (auto& upgrade : upgrades) engine.registry.CommitResidentUpgrade(&upgrade);
-    upgrades.clear();
 }
 
 // Collects every member's definitions before any physical media pass, so a
@@ -130582,13 +130581,19 @@ VnResult PrepareCanonicalSetActivation(Engine& engine,
             &out->storage, retainedTokens);
         if (stored != VN_OK) return stored;
     }
-    {
+    if (contentChanged) {
         CanonicalMediaDemand final;
         for (const auto& member : out->members) {
             if (member.keptOwner != nullptr) final.Retain(*member.keptOwner);
             else final.incoming.push_back(&member.image.soundStreaming);
         }
-        const auto upgraded = PrepareCanonicalResidentUpgrades(engine, final, &out->residentUpgrades);
+        out->residentUpgrades.charge = detail::PackDecodeCharge(budget);
+        VnResult upgraded = VN_OK;
+        engine.packs.ForEachPreparedRegistration(out->storage,
+            [&](VnSoundId soundId, const PCMRegistry::PackReference& reference) {
+                if (upgraded == VN_OK)
+                    upgraded = out->residentUpgrades.Add(engine, final, soundId, reference);
+            });
         if (upgraded != VN_OK) return upgraded;
     }
     for (std::uint32_t i = 0; i < desc.memberCount; ++i) {
@@ -131804,9 +131809,18 @@ VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle,
         ReportCanonicalMediaConflict(engine, image);
         return preparedMedia;
     }
-    std::vector<PCMRegistry::PreparedResidentUpgrade> residentUpgrades;
+    CanonicalResidentUpgrades residentUpgrades;
+    residentUpgrades.charge = detail::PackDecodeCharge(budget);
     demand.incoming.push_back(&image.soundStreaming);
-    const VnResult upgraded = PrepareCanonicalResidentUpgrades(engine, demand, &residentUpgrades);
+    VnResult upgraded = VN_OK;
+    for (const PackEntry& entry : mediaEntries)
+        if (upgraded == VN_OK)
+            upgraded = residentUpgrades.Add(engine, demand, entry.soundId, entry.registration);
+    for (const auto& existing : published->owners) {
+        const auto* entries = existing.handle != handle ? engine.packs.Entries(existing.handle) : nullptr;
+        for (std::size_t i = 0; entries != nullptr && i < entries->size() && upgraded == VN_OK; ++i)
+            upgraded = residentUpgrades.Add(engine, demand, (*entries)[i].soundId, (*entries)[i].registration);
+    }
     if (upgraded != VN_OK) {
         engine.packs.CancelPreparedMutation(&media);
         return upgraded;

@@ -1124,6 +1124,7 @@ struct FileCanonicalSource {
             return nullptr;
         }
         scratch.AddRows<decltype(metadata)::value_type>(1);
+        scratch.Add(requested);
         auto& bytes = metadata[key];
         bytes.resize(static_cast<std::size_t>(requested));
         cachedBytes += requested;
@@ -1186,7 +1187,8 @@ struct FileCanonicalSource {
         for (const auto* prior : equalCandidates) {
             if (prior == nullptr || !prior->IsPrepared() || prior->SoundId() != media.soundId) continue;
             const auto match = MatchMediaContent(prior->View(), prior->Range(), {}, range.get());
-            if (match == MediaContentMatch::Failed) return VN_BAD_PACK;
+            if (match == MediaContentMatch::LeftFailed || match == MediaContentMatch::RightFailed)
+                return VN_BAD_PACK;
             if (match == MediaContentMatch::Equal) equal = prior;
             break;
         }

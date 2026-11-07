@@ -142,12 +142,14 @@ MediaContentMatch MatchMediaContent(const PCMView& leftView, const PackMediaRang
             return MediaContentMatch::Equal;
         if (other->chunkChecksums != range.chunkChecksums) return MediaContentMatch::Different;
     }
+    // Only a range-only side is read. When both are, `range` is the left one.
+    const auto rangeFailed = leftView.Valid() ? MediaContentMatch::RightFailed : MediaContentMatch::LeftFailed;
     std::vector<float> staging;
     std::vector<float> otherStaging;
     for (std::uint32_t chunk = 0; chunk < range.chunkChecksums.size(); ++chunk) {
-        if (!ReadVerifiedPackMediaChunk(range, chunk, staging)) return MediaContentMatch::Failed;
+        if (!ReadVerifiedPackMediaChunk(range, chunk, staging)) return rangeFailed;
         if (other != nullptr) {
-            if (!ReadVerifiedPackMediaChunk(*other, chunk, otherStaging)) return MediaContentMatch::Failed;
+            if (!ReadVerifiedPackMediaChunk(*other, chunk, otherStaging)) return MediaContentMatch::RightFailed;
             if (std::memcmp(staging.data(), otherStaging.data(), staging.size() * sizeof(float)) != 0)
                 return MediaContentMatch::Different;
             continue;
