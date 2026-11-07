@@ -3171,7 +3171,7 @@ struct EngineTimelineVoiceInstallIdentity {
     StreamManager::PreparedStream stream{};
     std::uint64_t pendingAuthoredDurationFrames = UINT64_MAX;
     bool streamed = false;
-    bool hasInitialVariableReadUse = false;
+    VariableTimelineReadUseRef initialVariableReadUse{};
 };
 
 struct EnginePlainImmediateSource {

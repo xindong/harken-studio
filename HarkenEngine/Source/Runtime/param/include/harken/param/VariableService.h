@@ -575,6 +575,7 @@ public:
                                            float* out) noexcept;
     VariableReadCutReader ReadCutReader(VariableReadCutRef cut) noexcept;
     bool ReadCutHasSources(VariableReadCutRef cut) const noexcept;
+    bool ReadCutHasFixedPlacement(VariableReadCutRef cut) const noexcept;
     bool TakeReadCutSourceChange(VariableReadCutRef cut) noexcept;
     std::uint32_t ReadCutSourceSubscriptionCount(VariableReadCutRef cut) const noexcept;
     VariableReadCutStatus PublishReadCut(VariableReadCutRef cut,
@@ -611,6 +612,10 @@ public:
         VariableTimelineReadUseRef* out, std::uint64_t authoredStartOffset = 0) noexcept;
     bool BindPreparedTimelineReadUseSource(VariableTimelineReadUseRef use,
         OriginalSourceSubmissionRegistry& sources, OriginalSourceLifetimePin&& original) noexcept;
+    bool CanBindFixedTimelineReadUseOnset(VariableTimelineReadUseRef use,
+        const TimelineArmTable::PrivatePendingImmediateArmProof& publication) const noexcept;
+    void ApplyFixedTimelineReadUseOnset(VariableTimelineReadUseRef use,
+        const TimelineArmTable::PrivatePendingImmediateArmProof& publication) noexcept;
     bool BeginPendingTimelineReadUsePlacement(VariableTimelineReadUseRef use,
         const ImmediateActionLane& lane, const PrivatePlainLayoutCommitProof& placement,
         VariableReadCutRef* cut) noexcept;
@@ -1323,6 +1328,9 @@ private:
         std::uint32_t initialCommandCount = 0;
         std::array<CommandRecord, kTimelineInitialCommandCapacity> initialCommands{};
     };
+    bool CaptureFixedTimelineReadUseOnset(VariableTimelineReadUseRef use,
+        const TimelineArmTable::PrivatePendingImmediateArmProof& publication,
+        std::uint64_t* onsetFrame) const noexcept;
     bool BeginPendingTimelineReadUsePlacement(TimelineReadUseRow& use,
         std::uint64_t logicalFrame, std::uint64_t onsetFrame, VariableReadCutRef* cut) noexcept;
     bool PreparedPendingVariableGroupUsesMatch(const EngineActionPlayScratch& child,

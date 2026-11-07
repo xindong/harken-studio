@@ -8269,9 +8269,10 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
     }
     harken::VariableTimelineReadUseRef initialVariableUse{};
     const bool capturedVariables = initialVariableCut != nullptr && initialVariableCut->Valid();
-    // A pending read cut can still be replaced before Start. Fixed captured
-    // music coordinates must not be relabelled after preparing their source.
-    if (pendingImmediateStart && capturedVariables && install.sourceOutputOffsetFrames != 0) {
+    const bool pendingVariablePlacement = capturedVariables &&
+        !engine.variables.ReadCutHasFixedPlacement(*initialVariableCut);
+    // Only a pending cut can replace the source geometry before Start.
+    if (pendingImmediateStart && pendingVariablePlacement && install.sourceOutputOffsetFrames != 0) {
         result.status = VN_CAPABILITY_UNAVAILABLE;
         return result;
     }
@@ -8977,14 +8978,14 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
     if (!engine.timelineArms.ProvePreparedCommit(originalArmInput, &originalArmProof))
         return rollback(VN_NO_VOICE);
     if (capturedVariables) {
-        const auto published = pendingImmediateStart || shareInitialVariableCut
+        const auto published = pendingVariablePlacement || shareInitialVariableCut
             ? harken::VariableReadCutStatus::Waiting
             : engine.variables.PublishReadCut(*initialVariableCut, initialVariableOrder.frame);
         const bool useReady = published != harken::VariableReadCutStatus::Failed &&
             engine.variables.PrepareTimelineReadUse(*initialVariableCut, render,
                 engine.timelineArms, originalArmProof, &initialVariableUse, initialVariableAuthoredOffset);
         const bool voiceReady = useReady && engine.voices.BindPreparedTimelineReadUse(
-            render, initialVariableUse, initialVariableOrder, pendingImmediateStart);
+            render, initialVariableUse, initialVariableOrder, pendingVariablePlacement);
         if (!voiceReady) return rollback(VN_BACKPRESSURE);
     }
     if (!engine.voices.ProvePreparedCommit(voicePreparation, &originalVoiceProof))
@@ -9008,7 +9009,7 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
         : engine.originalSourceSubmissions.CapturePreparedSource(playCommand, originalArmProof,
             originalVoiceProof, {originalEffectProofs.data(), acquiredEffectCount},
             retainPendingGroupSource || fixedGroupSource != nullptr ? &pendingGroupSource :
-                capturedVariables && pendingImmediateStart ? &pendingVariableSource : nullptr,
+                pendingVariablePlacement && pendingImmediateStart ? &pendingVariableSource : nullptr,
             retainPendingGroupSource || fixedGroupSource != nullptr ? &pendingGroupBody : nullptr);
     if (!originalCaptured) return rollback(VN_NO_VOICE);
     if (retainPendingGroupSource && retainOriginalQueueSource &&
@@ -9020,19 +9021,19 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
         if (source == nullptr || !source->OriginalSource().Borrow(&pendingGroupSource) ||
             !source->OriginalBody().Borrow(&pendingGroupBody)) return rollback(VN_NO_VOICE);
     }
-    if (retainPendingGroupSource && capturedVariables && !retainOriginalQueueSource && !retainOriginalSingleSource &&
+    if (retainPendingGroupSource && pendingVariablePlacement && !retainOriginalQueueSource && !retainOriginalSingleSource &&
         !pendingGroupSource.Borrow(&pendingVariableSource)) return rollback(VN_NO_VOICE);
-    if (capturedVariables && pendingImmediateStart && retainOriginalQueueSource &&
+    if (pendingVariablePlacement && pendingImmediateStart && retainOriginalQueueSource &&
         (preparedOut->originalQueueSource == nullptr ||
          !preparedOut->originalQueueSource->OriginalSource().Borrow(&pendingVariableSource)))
         return rollback(VN_NO_VOICE);
-    if (capturedVariables && pendingImmediateStart && retainOriginalSingleSource &&
+    if (pendingVariablePlacement && pendingImmediateStart && retainOriginalSingleSource &&
         !retainOriginalQueueSource) {
         const auto* source = engine.OriginalSinglePreparationForArm(arm);
         if (source == nullptr || !source->OriginalSource().Borrow(&pendingVariableSource))
             return rollback(VN_NO_VOICE);
     }
-    if (capturedVariables && pendingImmediateStart &&
+    if (pendingVariablePlacement && pendingImmediateStart &&
         !engine.variables.BindPreparedTimelineReadUseSource(initialVariableUse,
             engine.originalSourceSubmissions, std::move(pendingVariableSource))) return rollback(VN_NO_VOICE);
     if (retainPendingGroupSource && !engine.StagePendingVariableLeafSource(playCommand, originalArmProof,
@@ -9098,7 +9099,7 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
         installedExitMarkerSourceFrame, install.sourceStartFrame, install.sourcePhase,
         install.loopCount, initialSourceRatio, preparedRender->hasExitMarker,
         {streamSlot, voicePreparation.streamRing, streamRingToken},
-        pendingImmediateStart ? install.authoredDurationFrames : UINT64_MAX, install.streamed, initialVariableUse.Valid()};
+        pendingImmediateStart ? install.authoredDurationFrames : UINT64_MAX, install.streamed, initialVariableUse};
     if (prepareOnly) {
         preparedOut->ledgerSlot = ledgerSlot;
         preparedOut->renderHandle = render;
@@ -54940,8 +54941,7 @@ DirectPendingStartResult BindAcknowledgedDirectStart(harken::Engine& engine,
             !engine.timelineArms.Observe(arm, &observed) ||
             !engine.CaptureTimelineVoiceInstallIdentity(render, &installations[index]) ||
             !harken::OriginalSourceSubmissionRegistry::SameToken(installations[index].startArm, arm) ||
-            installations[index].rootInstance != owners[index]->rootInstance ||
-            installations[index].hasInitialVariableReadUse)
+            installations[index].rootInstance != owners[index]->rootInstance)
             return Result::Refused;
         const auto media = engine.CapturedTimelineStreamStartStatus(installations[index]);
         if (media == harken::VariableReadCutStatus::Failed) return Result::Refused;
@@ -55011,6 +55011,10 @@ DirectPendingStartResult BindAcknowledgedDirectStart(harken::Engine& engine,
     harken::TimelineArmTable::PrivatePendingImmediateArmProof arms;
     if (!engine.timelineArms.ProvePrivatePendingImmediateArmBatch(armInputs.data(), count,
             reservedRows.data(), reservedRows.size(), &arms)) return Result::Waiting;
+    for (std::uint32_t index = 0; index < count; ++index) {
+        const auto use = installations[index].initialVariableReadUse;
+        if (use.Valid() && !engine.variables.CanBindFixedTimelineReadUseOnset(use, arms)) return Result::Refused;
+    }
 
     // Only private placement changes. Original Source bodies and captured values remain fixed.
     for (std::uint32_t index = 0; index < count; ++index) programs[index]->entryAnchorFrame += shift;
@@ -55171,6 +55175,10 @@ DirectPendingStartResult BindAcknowledgedDirectStart(harken::Engine& engine,
     for (std::uint32_t index = 0; index < count; ++index) {
         if (members[index] != nullptr) members[index]->startFrame += shift;
         engine.timelineVoiceInstallIdentities[armInputs[index].arm.renderSlot].onsetFrame += shift;
+    }
+    for (std::uint32_t index = 0; index < count; ++index) {
+        const auto use = installations[index].initialVariableReadUse;
+        if (use.Valid()) engine.variables.ApplyFixedTimelineReadUseOnset(use, arms);
     }
     engine.timelineArms.ApplyPrivatePendingImmediateArmBatch(arms);
     bool released = true;

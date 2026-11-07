@@ -21543,12 +21543,15 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
 }
 
 TEST(PlayableStart, InitialStreamAnchorKeepsSubBlockFutureStartsFixedAndContainsFailures) {
-    for (const auto workers : {0u, 2u}) for (const auto lead : {1u, 2u, 4u}) for (const auto scenario : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u}) {
+    for (const auto workers : {0u, 2u}) for (const auto lead : {1u, 2u, 4u}) for (const auto scenario : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u, 10u}) {
         const bool mediaReadyImmediately = scenario == 8u;
         const bool sourceAckLate = scenario == 7u;
         const bool timedBinding = scenario == 6u;
         const bool boundFuture = scenario == 5u || timedBinding;
-        const bool cropInitial = scenario == 4u;
+        const bool boundInitial = scenario == 9u || scenario == 10u;
+        const bool cropInitial = scenario == 4u || scenario == 10u;
+        const auto initialFrames = boundInitial ? 96u : 24u;
+        const auto futureOffset = boundInitial ? 144u : 48u;
         const bool cancelNearInstall = scenario == 1u;
         const bool futureMediaLate = scenario == 2u;
         const bool futureCapacityRefusal = scenario == 3u;
@@ -21606,7 +21609,7 @@ TEST(PlayableStart, InitialStreamAnchorKeepsSubBlockFutureStartsFixedAndContains
         image.placements[1].content.expectedProgramSemanticFingerprint = image.properties[1].programSemanticFingerprint;
         std::array<harken::ScheduleClipPlacementV1, 3> placements{
             image.placements[0], image.placements[1], image.placements[1]};
-        placements[0].authoredStart = placements[1].authoredStart = INT64_C(1000000);
+        placements[0].authoredStart = placements[1].authoredStart = boundInitial ? INT64_C(3000000) : INT64_C(1000000);
         placements[2].authoredStart = cropInitial ? -INT64_C(250000) : 0;
         placements[2].stablePlacementOrdinal = 2;
         placements[2].stableOccurrenceOrdinal = 9;
@@ -21614,7 +21617,8 @@ TEST(PlayableStart, InitialStreamAnchorKeepsSubBlockFutureStartsFixedAndContains
         placements[2].clipGuidHigh = 6003;
         placements[2].clipGuidLow = 7003;
         for (auto& placement : placements) placement.authoredDuration = INT64_C(8000000);
-        placements[2].authoredDuration = cropInitial ? INT64_C(750000) : INT64_C(500000);
+        placements[2].authoredDuration = boundInitial ? cropInitial ? INT64_C(2250000) : INT64_C(2000000)
+            : cropInitial ? INT64_C(750000) : INT64_C(500000);
         std::swap(placements[0], placements[2]);
         for (std::size_t index = 0; index < placements.size(); ++index)
             placements[index].stablePlacementOrdinal = static_cast<std::uint32_t>(index);
@@ -21638,14 +21642,14 @@ TEST(PlayableStart, InitialStreamAnchorKeepsSubBlockFutureStartsFixedAndContains
         install.trackScheduleCount = 1;
         const harken::VariableDefinitionV1 variable{
             harkentest::ObjectId(9141), harken::VariableKindV1::Smooth, 0.0f, 1.0f, timedBinding ? 0.0f : 1.0f};
-        if (boundFuture) {
+        if (boundFuture || boundInitial) {
             install.variables = &variable;
             install.variableCount = 1;
             install.identity.capabilityMask |= harken::kWorldCapabilityVariableDefinitions;
         }
         install.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(install);
         ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, install).status);
-        if (boundFuture) {
+        if (boundFuture || boundInitial) {
             VnBindingDesc binding{};
             binding.structSize = sizeof(binding);
             binding.variableId = variable.variableId;
@@ -21660,7 +21664,7 @@ TEST(PlayableStart, InitialStreamAnchorKeepsSubBlockFutureStartsFixedAndContains
             VnBindingAttachDesc attach{};
             attach.structSize = sizeof(attach);
             attach.scopeKind = VN_TARGET_SCOPE_VOICE;
-            attach.objectId = kSound;
+            attach.objectId = boundInitial ? kSecondSound : kSound;
             ASSERT_EQ(VN_OK, Vn_AttachBinding(harkentest::ObjectId(9142), &attach));
         }
         engine.streams.SetThrottled(true);
@@ -21680,6 +21684,13 @@ TEST(PlayableStart, InitialStreamAnchorKeepsSubBlockFutureStartsFixedAndContains
             engine.streams.SyncServe();
         }
         for (unsigned pass = 0; pass < (mediaReadyImmediately ? 1u : 24u); ++pass) {
+            if (boundInitial && pass == 8u) {
+                const auto observed = harken::ObserveVariableCallAt(engine.variables.CurrentWorldGeneration(),
+                    engine.variables.CurrentTransportEpoch(), config.blockFrames,
+                    engine.timelinePool.WindowStartFrame(), engine.timelinePool.PublishCutoffFrame());
+                ASSERT_EQ(VN_OK, engine.variables.AcceptGlobal(variable.variableId, 0.5f, observed,
+                    engine.params, engine.bindings, engine.busTargets).result);
+            }
             ASSERT_EQ(VN_OK, Vn_Update());
             EXPECT_TRUE(root->pendingDirectStartBinding);
             EXPECT_EQ(config.maxStreams - 1u, engine.streams.FreeSlotCount());
@@ -21690,7 +21701,8 @@ TEST(PlayableStart, InitialStreamAnchorKeepsSubBlockFutureStartsFixedAndContains
         }
         if (mediaReadyImmediately)
             EXPECT_EQ(static_cast<std::uint64_t>(lead) * config.blockFrames, root->pendingDirectEntryFrame);
-        const auto expectedAnchor = (engine.mixer.BlocksRendered() + std::max(lead, 3u)) * config.blockFrames;
+        const auto expectedAnchor = (engine.mixer.BlocksRendered() +
+            std::max(lead, 3u - futureOffset / config.blockFrames)) * config.blockFrames;
         const auto variableFrame = expectedAnchor + 24u;
         if (timedBinding) {
             auto observed = harken::ObserveVariableCallAt(engine.variables.CurrentWorldGeneration(),
@@ -21748,8 +21760,12 @@ TEST(PlayableStart, InitialStreamAnchorKeepsSubBlockFutureStartsFixedAndContains
                 const auto sample = engine.nullBackend.LastBlock()[frame * 2 + channel];
                 if (std::abs(sample) < 0.00001f) continue;
                 heard[channel].push_back(at + frame);
-                const float expected = channel == 0 ? boundFuture ? 0.125f : 0.25f : cropInitial && at + frame >= anchor + 48u &&
-                    at + frame < anchor + 60u ? 0.125f : 0.5f;
+                const float streamValue = cropInitial && at + frame >= anchor + futureOffset &&
+                    at + frame < anchor + futureOffset + 12u ? 0.125f : 0.5f;
+                // Volume binding curves interpolate these negative-dB endpoints in amplitude.
+                const float streamGain = !boundInitial ? 1.0f : at + frame < anchor + config.blockFrames
+                    ? 0.5f : 0.75f;
+                const float expected = channel == 0 ? boundFuture ? 0.125f : 0.25f : streamValue * streamGain;
                 EXPECT_NEAR(expected, sample, 0.00001f);
             }
         }
@@ -21764,12 +21780,12 @@ TEST(PlayableStart, InitialStreamAnchorKeepsSubBlockFutureStartsFixedAndContains
             EXPECT_LT(variableFrame, anchor + 48u);
         }
         ASSERT_EQ(futureHeard ? 384u : 0u, heard[0].size()) << OccupancyDump(engine);
-        ASSERT_EQ(cancelNearInstall ? 0u : futureHeard ? 408u : 24u, heard[1].size());
-        for (std::size_t frame = 0; !cancelNearInstall && frame < 24; ++frame)
+        ASSERT_EQ(cancelNearInstall ? 0u : futureHeard ? initialFrames + 384u : initialFrames, heard[1].size());
+        for (std::size_t frame = 0; !cancelNearInstall && frame < initialFrames; ++frame)
             EXPECT_EQ(anchor + frame, heard[1][frame]);
         for (std::size_t frame = 0; futureHeard && frame < 384; ++frame) {
-            EXPECT_EQ(anchor + 48u + frame, heard[0][frame]);
-            EXPECT_EQ(anchor + 48u + frame, heard[1][24u + frame]);
+            EXPECT_EQ(anchor + futureOffset + frame, heard[0][frame]);
+            EXPECT_EQ(anchor + futureOffset + frame, heard[1][initialFrames + frame]);
         }
         EXPECT_FALSE(engine.playableInstances.Classify(started.instance).live) << OccupancyDump(engine);
         EXPECT_EQ(0u, engine.timelineArms.LiveCount());

@@ -4794,6 +4794,11 @@ bool VariableServiceV1::ReadCutHasSources(VariableReadCutRef ref) const noexcept
     return cut != nullptr && cut->sourceCount != 0;
 }
 
+bool VariableServiceV1::ReadCutHasFixedPlacement(VariableReadCutRef ref) const noexcept {
+    const auto* cut = ResolveReadCut(ref);
+    return cut != nullptr && !cut->pendingPlacement;
+}
+
 bool VariableServiceV1::TakeReadCutSourceChange(VariableReadCutRef ref) noexcept {
     if (memguard::IsAudioTagged()) return false;
     slices_.DispatchSourceChanges();
@@ -5312,6 +5317,39 @@ bool VariableServiceV1::PrepareTimelineReadUse(VariableReadCutRef ref, VnVoiceHa
     use.state.store(TimelineReadUseState::Prepared, std::memory_order_release);
     *out = {index, use.generation.load(std::memory_order_relaxed)};
     return true;
+}
+
+bool VariableServiceV1::CaptureFixedTimelineReadUseOnset(VariableTimelineReadUseRef ref,
+    const TimelineArmTable::PrivatePendingImmediateArmProof& publication,
+    std::uint64_t* onsetFrame) const noexcept {
+    const auto* use = ResolveTimelineReadUse(ref);
+    const auto* cut = use != nullptr ? ResolveReadCut(use->cut) : nullptr;
+    if (use == nullptr || cut == nullptr || onsetFrame == nullptr || !use->lifetime.Valid() ||
+        use->initializer.load(std::memory_order_acquire) != TimelineInitializerState::None ||
+        cut->pendingPlacement || cut->state.load(std::memory_order_acquire) != ReadCutState::Published ||
+        cut->world != worldGeneration_ || cut->transport != transport_.Current() ||
+        cut->preparationFailed.load(std::memory_order_acquire) ||
+        use->sourceOwner != nullptr || use->originalSource.Valid() ||
+        use->logicalFrame != cut->executeFrame || use->authoredStartOffset != 0) return false;
+    const auto arm = use->lifetime.Token();
+    return use->nativeHandle == ((static_cast<std::uint64_t>(arm.renderGeneration) << 32u) | arm.renderSlot) &&
+        use->lifetime.Owner()->CapturePrivatePendingVariableReadOnset(publication, use->lifetime, onsetFrame) &&
+        *onsetFrame >= use->logicalFrame;
+}
+
+bool VariableServiceV1::CanBindFixedTimelineReadUseOnset(VariableTimelineReadUseRef ref,
+    const TimelineArmTable::PrivatePendingImmediateArmProof& publication) const noexcept {
+    std::uint64_t onset = 0;
+    return CaptureFixedTimelineReadUseOnset(ref, publication, &onset);
+}
+
+void VariableServiceV1::ApplyFixedTimelineReadUseOnset(VariableTimelineReadUseRef ref,
+    const TimelineArmTable::PrivatePendingImmediateArmProof& publication) noexcept {
+    std::uint64_t onset = 0;
+    const bool valid = CaptureFixedTimelineReadUseOnset(ref, publication, &onset);
+    assert(valid);
+    (void)valid;
+    ResolveTimelineReadUse(ref)->onsetFrame = onset;
 }
 
 bool VariableServiceV1::BindPreparedTimelineReadUseSource(VariableTimelineReadUseRef ref,

@@ -2139,6 +2139,25 @@ bool TimelineArmTable::ProvePrivatePendingImmediateArmBatch(
     return true;
 }
 
+bool TimelineArmTable::CapturePrivatePendingVariableReadOnset(
+    const PrivatePendingImmediateArmProof& proof, const VariableReadLifetime& lifetime,
+    std::uint64_t* onsetFrame) const noexcept {
+    if (onsetFrame == nullptr || !proof.Valid() || proof.owner_ != this ||
+        !lifetime.Valid() || lifetime.owner_ != this) return false;
+    for (std::size_t index = 0; index < proof.count_; ++index) {
+        const auto& input = proof.inputs_[index];
+        const auto* row = proof.rows_[index];
+        if (row != lifetime.row_ || !SameArm(input.arm, lifetime.token_)) continue;
+        if (!IdentityMatches(*row, lifetime.token_) ||
+            row->renderSlot != lifetime.token_.renderSlot ||
+            row->renderGeneration != lifetime.token_.renderGeneration ||
+            row->variableReadPins.load(std::memory_order_acquire) == 0) return false;
+        *onsetFrame = input.startFrame;
+        return true;
+    }
+    return false;
+}
+
 void TimelineArmTable::ApplyPrivatePendingImmediateArmBatch(
     PrivatePendingImmediateArmProof& proof) noexcept {
     assert(proof.Valid());

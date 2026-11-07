@@ -847,6 +847,8 @@ public:
         PrivatePendingImmediateArmProof* out) noexcept;
     static void ApplyPrivatePendingImmediateArmBatch(
         PrivatePendingImmediateArmProof& proof) noexcept;
+    bool CapturePrivatePendingVariableReadOnset(const PrivatePendingImmediateArmProof& proof,
+        const VariableReadLifetime& lifetime, std::uint64_t* onsetFrame) const noexcept;
     bool ProveBoundArmPublicationBatch(const BoundArmPublicationInput* inputs,
         std::size_t inputCount, Row** reservedRows, std::size_t reservedCapacity,
         BoundArmPublicationProof* out) noexcept;
