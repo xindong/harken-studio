@@ -2990,7 +2990,7 @@ bool TimelineArmTable::DetachPrivateInstalledPageSource(const OriginalArmRowOwne
         !row->originalLifetimePinned.load(std::memory_order_acquire) ||
         !row->pendingImmediateStart || !row->startBound ||
         row->armedCompletionSequence.load(std::memory_order_acquire) == 0 ||
-        (state != ArmState::Armed && state != ArmState::CancelRequested && state != ArmState::Tombstoned) ||
+        state != ArmState::Armed ||
         row->startedBlockSequence.load(std::memory_order_acquire) != 0 ||
         row->logicalCompletionSequence.load(std::memory_order_acquire) != 0 ||
         row->frontierLastReadSequence.load(std::memory_order_acquire) != 0 ||
