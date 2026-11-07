@@ -21718,8 +21718,9 @@ TEST(PlayableStart, DirectTrackMixedStreamWaitsStartsTogetherAndCancelsBeforeRea
 }
 
 TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFailure) {
-    for (const auto workers : {0u, 2u}) for (const auto scenario : {0u, 1u, 2u, 3u, 4u, 5u}) {
-        const bool missDeadline = scenario == 1u;
+    for (const auto workers : {0u, 2u}) for (const auto scenario : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u}) {
+        const bool nativeChild = scenario >= 6u;
+        const bool missDeadline = scenario == 1u || scenario == 7u;
         const bool largePrebuffer = scenario == 2u;
         const bool temporaryVoicePressure = scenario == 3u;
         const bool cancelBeforeSeal = scenario == 4u;
@@ -21734,6 +21735,28 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
         auto& engine = *session.Engine();
+        if (nativeChild) {
+            harken::ScheduledTransactionPool::Config pool{};
+            const auto& resolved = engine.config;
+            pool.quantumFrames = resolved.blockFrames;
+            pool.scheduleHorizonFrames = resolved.scheduleHorizonFrames;
+            pool.publishLeadQuanta = 1;
+            pool.maxScheduledTransactions = resolved.maxScheduledTransactions;
+            pool.maxTransactionSpanFrames = resolved.maxTransactionSpanFrames;
+            pool.maxIngressTransactionsPerQuantum = resolved.maxIngressTransactionsPerQuantum;
+            pool.maxFrameBatchesPerQuantum = resolved.maxFrameBatchesPerQuantum;
+            pool.maxEventsPerQuantum = resolved.maxEventsPerQuantum;
+            pool.maxTransactionEvents = resolved.maxTransactionEvents;
+            pool.maxCurrentSlicesPerQuantum = resolved.maxEventsPerQuantum;
+            pool.maxNativeStartCalendarsPerQuantum = engine.variables.ReadCutCapacity();
+            pool.maxPlan03GroupHeadersPerPage = resolved.maxPlan03GroupHeadersPerPage;
+            pool.maxArmsPerGroup = resolved.maxArmsPerGroup;
+            pool.maxImmediateLaneGroupRows = (resolved.scheduleHorizonFrames / resolved.blockFrames +
+                resolved.maxDeferredIntents) * resolved.maxPlan03GroupHeadersPerPage;
+            pool.maxImmediateLaneOwnerGates = resolved.maxPlayableInstances;
+            pool.maxImmediateLaneDecisionGates = resolved.maxDecisionRows;
+            ASSERT_TRUE(engine.timelinePool.Reset(pool, 0, engine.transportEpochOwner.Current()));
+        }
         const auto voicesBefore = engine.voices.AvailableSlotCount();
         std::vector<float> resident(1024, 0.0f), streamed(1024, 0.0f);
         for (std::size_t frame = 0; frame < 512; ++frame) {
@@ -21751,6 +21774,15 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
         harken::StreamManager::StreamFacts facts;
         ASSERT_TRUE(engine.streams.FindFile(kSecondSound, &facts));
         DirectCompositeTrackWorldImage image(engine.registry.Lookup(kSound).contentRevision, facts.contentRevision);
+        VariableControlWorldImage native(engine.registry.Lookup(kSound).contentRevision, image.world.generation);
+        if (nativeChild) {
+            image.world.identity.capabilityMask |= native.world.identity.capabilityMask;
+            native.properties[1].authoredStableOrder = 3;
+            native.properties[1].programSemanticFingerprint = harken::ComputePlayablePropertyFingerprintV1(native.properties[1]);
+            native.container.programSemanticFingerprint = native.properties[1].programSemanticFingerprint;
+            native.occurrence.parentProgramSemanticFingerprint = native.properties[1].programSemanticFingerprint;
+            native.occurrence.occurrenceSemanticFingerprint = harken::ComputePlayableOccurrenceFingerprintV1(native.occurrence);
+        }
         constexpr auto streamingSlot = static_cast<std::size_t>(
             harken::playableproperties::PlayablePropertyIdV1::StreamingMode) - 1;
         image.properties[1].payload.presentMask |= UINT64_C(1) << streamingSlot;
@@ -21759,7 +21791,9 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
         image.placements[1].content.expectedProgramSemanticFingerprint = image.properties[1].programSemanticFingerprint;
         std::array<harken::ScheduleClipPlacementV1, 4> placements{
             image.placements[0], image.placements[1], image.placements[0], image.placements[0]};
-        placements[0].authoredStart = placements[1].authoredStart = largePrebuffer ? INT64_C(2000000000) : INT64_C(32000000);
+        placements[0].authoredStart = placements[1].authoredStart = largePrebuffer ? INT64_C(2000000000)
+            : nativeChild ? INT64_C(33000000) : INT64_C(32000000);
+        if (nativeChild) placements[0].content = native.Root();
         placements[2].authoredStart = placements[0].authoredStart;
         placements[3].authoredStart = largePrebuffer ? INT64_C(2400000000) : INT64_C(64000000);
         for (std::uint32_t index = 2; index < placements.size(); ++index) {
@@ -21771,7 +21805,7 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
         }
         for (auto& placement : placements) placement.authoredDuration = INT64_C(8000000);
         placements[2].authoredDuration = 1;
-        std::array<harken::PlayableOccurrencePropertyViewV1, 4> occurrences{
+        std::vector<harken::PlayableOccurrencePropertyViewV1> occurrences{
             image.occurrences[0], image.occurrences[1], image.occurrences[0], image.occurrences[0]};
         for (std::size_t index = 0; index < occurrences.size(); ++index) {
             occurrences[index].stableOccurrenceOrdinal = placements[index].stableOccurrenceOrdinal;
@@ -21781,9 +21815,30 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
         image.track.placements = placements.data();
         image.track.placementCount = placements.size();
         image.track.scheduleSemanticFingerprint = harken::ComputeTrackScheduleFingerprintV1(image.track);
+        std::vector<harken::PlayablePropertyProgramViewV1> properties(image.properties.begin(), image.properties.end());
+        if (nativeChild) {
+            occurrences.push_back(native.occurrence);
+            properties.push_back(native.properties[1]);
+            std::sort(properties.begin(), properties.end(), [](const auto& left, const auto& right) {
+                return std::pair{left.contentPropertyKind, left.stableId} < std::pair{right.contentPropertyKind, right.stableId};
+            });
+            std::sort(occurrences.begin(), occurrences.end(), [](const auto& left, const auto& right) {
+                return std::tuple{left.parentKind, left.parentStableId, left.stableOccurrenceOrdinal} <
+                    std::tuple{right.parentKind, right.parentStableId, right.stableOccurrenceOrdinal};
+            });
+        }
         image.world.occurrences = occurrences.data();
         image.world.occurrenceCount = occurrences.size();
         auto install = PlayableWorldInstall(image.world);
+        const harken::VariableDefinitionV1 variable{harkentest::ObjectId(41), harken::VariableKindV1::Step, 0.0f, 8.0f, 0.0f};
+        if (nativeChild) {
+            install.playableProperties = properties.data();
+            install.playablePropertyCount = properties.size();
+            install.containers = &native.container;
+            install.containerCount = 1;
+            install.variables = &variable;
+            install.variableCount = 1;
+        }
         install.trackSchedules = &image.track;
         install.trackScheduleCount = 1;
         install.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(install);
@@ -21798,7 +21853,7 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
         ASSERT_NE(engine.playableServices.end(), root);
         ASSERT_NE(nullptr, root->scheduleAggregate);
         ASSERT_EQ(1u, root->scheduleAggregate->sourceCohorts.size());
-        const auto onset = root->startFrame + (largePrebuffer ? 96000u : 1536u);
+        const auto onset = root->startFrame + (largePrebuffer ? 96000u : nativeChild ? 1584u : 1536u);
         const auto later = root->startFrame + (largePrebuffer ? 115200u : 3072u);
         EXPECT_FALSE(root->pendingDirectStartBinding);
         EXPECT_EQ(1u, engine.streams.FreeSlotCount());
@@ -21816,9 +21871,15 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
         bool observedCapacityRetry = false;
         bool preparedOutsidePageWindow = false;
         bool stopRequested = false;
+        bool variableChanged = false;
         std::array<std::vector<std::uint64_t>, 2> heard;
         for (unsigned pass = 0; pass < (later + 2048u) / config.blockFrames; ++pass) {
             const auto at = engine.mixer.BlocksRendered() * config.blockFrames;
+            if (nativeChild && !variableChanged && at + 128u >= onset) {
+                ASSERT_LT(at, onset);
+                ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(41), 3.0f));
+                variableChanged = true;
+            }
             if ((!missDeadline && !cancelBeforeSeal) || at > onset + config.blockFrames)
                 engine.streams.SetThrottled(false);
             if (temporaryVoicePressure && at + 256u >= onset) {
@@ -21852,11 +21913,20 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
             }
         }
         EXPECT_EQ(cancel, stopRequested);
+        EXPECT_EQ(nativeChild, variableChanged);
         EXPECT_EQ(temporaryVoicePressure, observedCapacityRetry);
         EXPECT_EQ(largePrebuffer, preparedOutsidePageWindow);
-        ASSERT_EQ(cancel ? 0u : missDeadline ? 384u : 768u, heard[0].size()) << OccupancyDump(engine);
-        ASSERT_EQ(cancel || missDeadline ? 0u : 384u, heard[1].size());
-        for (std::size_t frame = 0; !cancel && frame < 384; ++frame) {
+        const auto expectedLeft = cancel ? 0u : missDeadline ? 384u : 768u;
+        const auto expectedRight = cancel || missDeadline ? 0u : 384u;
+        EXPECT_EQ(expectedLeft, heard[0].size()) << OccupancyDump(engine)
+            << " onset=" << onset << " later=" << later
+            << " leftFirst=" << (heard[0].empty() ? UINT64_MAX : heard[0].front())
+            << " leftLast=" << (heard[0].empty() ? UINT64_MAX : heard[0].back());
+        EXPECT_EQ(expectedRight, heard[1].size())
+            << " rightFirst=" << (heard[1].empty() ? UINT64_MAX : heard[1].front())
+            << " rightLast=" << (heard[1].empty() ? UINT64_MAX : heard[1].back());
+        for (std::size_t frame = 0; !cancel && heard[0].size() == expectedLeft &&
+            heard[1].size() == expectedRight && frame < 384; ++frame) {
             EXPECT_EQ(later + frame, heard[0][(missDeadline ? 0u : 384u) + frame]);
             if (!missDeadline) {
                 EXPECT_EQ(onset + frame, heard[0][frame]);

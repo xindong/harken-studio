@@ -2218,6 +2218,12 @@ struct EngineScheduleSourceSide {
     std::vector<DecisionParticipantRef> participants;
 };
 
+struct EngineFrontierAttemptToken {
+    std::uint32_t slot = UINT32_MAX;
+    std::uint64_t generation = 0;
+    bool Valid() const noexcept { return slot != UINT32_MAX && generation != 0; }
+};
+
 struct EngineScheduleSourceCohort {
     EnginePlayableServiceReference owner{};
     EnginePlayablePartitionToken partition{};
@@ -2233,6 +2239,7 @@ struct EngineScheduleSourceCohort {
     FrontierActivationDescriptor descriptor{};
     std::vector<EngineScheduleAggregateChild*> children;
     std::vector<std::unique_ptr<EngineScheduleSourceSide>> sides;
+    std::vector<EngineFrontierAttemptToken> nativeAttempts;
     std::unique_ptr<EngineScheduleSourceRetention> retention;
     PlayableControlReason failure = PlayableControlReason::None;
     bool sealed = false;
@@ -2296,6 +2303,7 @@ struct EngineScheduleAggregateState {
 };
 
 struct EngineNativeEntryDependency {
+    FrontierEntryPrerequisiteKind kind = FrontierEntryPrerequisiteKind::QueueSignal;
     EnginePlayableServiceReference parentService{};
     EnginePlayablePartitionToken parentPartition{};
     std::uint64_t invocationGeneration = 0;
@@ -3141,12 +3149,6 @@ struct EnginePrivateInitialQueueVoice {
     bool armCancelRequested = false;
     bool rootReaderReleased = false;
     bool rootArmComplete = false;
-};
-
-struct EngineFrontierAttemptToken {
-    std::uint32_t slot = UINT32_MAX;
-    std::uint64_t generation = 0;
-    bool Valid() const noexcept { return slot != UINT32_MAX && generation != 0; }
 };
 
 struct EngineTimelineVoiceInstallIdentity {

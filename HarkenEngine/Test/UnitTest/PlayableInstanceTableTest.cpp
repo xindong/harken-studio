@@ -1097,6 +1097,8 @@ TEST(PreparedPlayableTreeStep, InstanceProofConsumesActualInternalRowsBeforeLega
 }
 
 TEST(PlayableTreeExecutor, InstanceProofExternalRootAndAdoptedChildFreezeBothWholeMoves) {
+    for (const unsigned publication : {0u, 1u, 2u}) {
+    SCOPED_TRACE(publication);
     PlayableInstanceTable instances(3);
     harken::PreparedPlayableInstance root, child;
     ASSERT_TRUE(instances.PrepareAcquire(PlayableKind::Container, 0, &root));
@@ -1108,6 +1110,7 @@ TEST(PlayableTreeExecutor, InstanceProofExternalRootAndAdoptedChildFreezeBothWho
     ASSERT_TRUE(other.PrepareInstance(instances, PlayableKind::Sound));
     const auto unrelated = other.PreparedInstanceHandle(0);
     ASSERT_TRUE(executor.ProveInstanceCommits(&instances, &root));
+    if (publication != 0) ASSERT_TRUE(executor.ProveParentLinks(instances, &root));
     EXPECT_TRUE(instances.PreparedCommitHeld(root));
     EXPECT_TRUE(instances.PreparedCommitHeld(child));
     EXPECT_FALSE(executor.SetPreparedRootMetadata(instances, {}));
@@ -1123,14 +1126,25 @@ TEST(PlayableTreeExecutor, InstanceProofExternalRootAndAdoptedChildFreezeBothWho
     executor = std::move(other);
     EXPECT_EQ(unrelated, other.PreparedInstanceHandle(0));
     EXPECT_TRUE(instances.PreparedCommitHeld(root));
-    ASSERT_TRUE(executor.Commit(instances, 17));
+    ASSERT_TRUE(executor.Commit(instances, 17, publication == 0));
     EXPECT_FALSE(executor.InstanceCommitProofsHeld());
-    EXPECT_EQ(child.Handle(), instances.FirstChild(root.Handle()));
+    if (publication != 0) {
+        EXPECT_EQ(0u, instances.FirstChild(root.Handle()));
+        EXPECT_FALSE(executor.CanReleasePublishedOwnership());
+        ASSERT_TRUE(executor.CanPublishCommittedLinks());
+        if (publication == 1) {
+            ASSERT_TRUE(executor.PublishCommittedLinks());
+            EXPECT_FALSE(executor.PublishCommittedLinks());
+        }
+    }
+    EXPECT_EQ(publication == 2 ? 0u : child.Handle(), instances.FirstChild(root.Handle()));
     EXPECT_FALSE(executor.RollbackCommitted(instances));
+    EXPECT_FALSE(executor.CanPublishCommittedLinks());
     ASSERT_TRUE(instances.ReleaseSourceRetirementHold(child.Handle()));
     ASSERT_TRUE(executor.RollbackCommitted(instances));
     other.Cancel();
     EXPECT_EQ(3u, instances.FreeCount());
+    }
 }
 
 TEST(PlayableTreeExecutor, OriginalInstanceLifetimeCensusIncludesExternalOwnedAndAdoptedPreparations) {

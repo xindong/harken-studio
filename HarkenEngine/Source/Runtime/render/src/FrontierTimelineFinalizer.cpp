@@ -742,12 +742,41 @@ struct FrontierTimelineFinalizer::Impl {
             !binding.prerequisiteMember.Exact() ||
             binding.prerequisiteMember.backing != Plan03GroupBacking::Page || pool == nullptr)
             return VariableReadCutStatus::Failed;
-        if (binding.appliedPrerequisite != nullptr)
-            return decisions != nullptr && decisions->ProveAppliedSignalPrerequisite(
-                *binding.appliedPrerequisite, binding, quantum + 1u)
-                ? VariableReadCutStatus::Applied : VariableReadCutStatus::Failed;
+        if (binding.appliedPrerequisite != nullptr) {
+            const bool applied = decisions != nullptr &&
+                (binding.prerequisiteKind == FrontierEntryPrerequisiteKind::SourceCohortChild
+                    ? decisions->ProveAppliedSourceCohortPrerequisite(*binding.appliedPrerequisite, binding, quantum + 1u)
+                    : decisions->ProveAppliedSignalPrerequisite(*binding.appliedPrerequisite, binding, quantum + 1u));
+            return applied ? VariableReadCutStatus::Applied : VariableReadCutStatus::Failed;
+        }
         const auto* activation = decisions->ResolveFrontierActivation(binding.prerequisite.coordinator);
         Plan03PageGroupView primary{}, signal{};
+        if (binding.prerequisiteKind == FrontierEntryPrerequisiteKind::SourceCohortChild) {
+            if (activation == nullptr || !activation->Descriptor().sourceCohort ||
+                !pool->ResolvePlan03GroupSliceRt(activation->Descriptor().primary, &primary) ||
+                !pool->ResolvePlan03GroupSliceRt(binding.prerequisiteMember, &signal) ||
+                !pool->NotePlan03GroupReadRt(primary.identity, quantum + 1u) ||
+                !pool->NotePlan03GroupReadRt(signal.identity, quantum + 1u) ||
+                primary.frontier == nullptr || signal.frontier == nullptr ||
+                primary.lease == nullptr || signal.lease == nullptr ||
+                !decisions->ValidateSourceCohortPrerequisite(binding, *primary.frontier, *signal.frontier))
+                return VariableReadCutStatus::Failed;
+            const auto parentIndex = FindEntry(binding.prerequisite);
+            const auto memberIndex = FindGroup(binding.prerequisiteMember);
+            if (allowPrivateForest && child.pageEntryRoot != UINT32_MAX && parentIndex != UINT32_MAX &&
+                memberIndex != UINT32_MAX && groups[parentIndex].pageEntryRoot == child.pageEntryRoot &&
+                groups[memberIndex].pageEntryRoot == child.pageEntryRoot &&
+                SameFrameEntryChild(binding, *groups[parentIndex].view.frontier))
+                return VariableReadCutStatus::Applied;
+            FrontierActivationReceipt receipt{};
+            const auto read = activation->Read(binding.prerequisite, quantum + 1u, &receipt);
+            if (read == FrontierReceiptRead::InFlight) return VariableReadCutStatus::Waiting;
+            return read == FrontierReceiptRead::Ready && receipt.outcome == FrontierReceiptOutcome::Applied &&
+                receipt.origin == FrontierReceiptOrigin::Audio && receipt.reason == FrontierReceiptReason::None &&
+                receipt.order == activation->Descriptor().order &&
+                signal.lease->Capture().state == AudioSliceState::SliceApplied
+                ? VariableReadCutStatus::Applied : VariableReadCutStatus::Failed;
+        }
         if (activation == nullptr || !(activation->Descriptor().entry == binding.prerequisite) ||
             !pool->ResolvePlan03GroupSliceRt(activation->Descriptor().primary, &primary) ||
             !pool->ResolvePlan03GroupSliceRt(binding.prerequisiteMember, &signal) ||

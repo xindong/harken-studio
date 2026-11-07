@@ -59,6 +59,7 @@ struct FrontierActivationDescriptor {
     std::uint64_t programGeneration = 0;
     VariableReadCutRef initialVariables{};
     bool initialMediaWaitAllowed = false;
+    bool sourceCohort = false;
 
     bool operator==(const FrontierActivationDescriptor&) const = default;
 
@@ -253,7 +254,9 @@ struct FrontierQueueSignalIdentity {
     bool operator==(const FrontierQueueSignalIdentity&) const = default;
 };
 
-// Issued only from an actual applied signal binding while both original pages are pinned.
+enum class FrontierEntryPrerequisiteKind : std::uint8_t { QueueSignal, SourceCohortChild };
+
+// Issued only from an actual applied entry binding while both original pages are pinned.
 // The holder separately retains the original coordinator Decision lifetime.
 class FrontierAppliedSignalDependency {
 public:
@@ -266,6 +269,8 @@ private:
     Plan03GroupSliceIdentity primary_{};
     Plan03GroupSliceIdentity member_{};
     TimelineExecutionOrder memberOrder_{};
+    FrontierEntryReceiptRef memberEntry_{};
+    FrontierEntryPrerequisiteKind kind_ = FrontierEntryPrerequisiteKind::QueueSignal;
     std::uint64_t audioSequence_ = 0;
 };
 
@@ -314,6 +319,7 @@ struct FrontierGroupBinding {
     FrontierEntryReceiptRef entry{};
     FrontierEntryReceiptRef prerequisite{};
     Plan03GroupSliceIdentity prerequisiteMember{};
+    FrontierEntryPrerequisiteKind prerequisiteKind = FrontierEntryPrerequisiteKind::QueueSignal;
     const FrontierAppliedSignalDependency* appliedPrerequisite = nullptr;
     FrontierDueOperationRef operation{};
     Plan03GroupSliceIdentity primary{};
@@ -334,6 +340,9 @@ struct FrontierGroupBinding {
         if (role == FrontierGroupRole::Legacy || !entry.Valid() || !operation.Valid() ||
             !operation.group.Exact()) return false;
         if (initialVariables.Valid() && role != FrontierGroupRole::Coordinator) return false;
+        if (prerequisiteKind == FrontierEntryPrerequisiteKind::SourceCohortChild &&
+            (role != FrontierGroupRole::Coordinator || !prerequisite.Valid() ||
+             !prerequisiteMember.Exact() || prerequisite == entry)) return false;
         if (sourceOnly && (role != FrontierGroupRole::EntryMember ||
             operation.kind != FrontierOperationKind::Entry || variableSide.Valid() ||
             !queueDescendant.Empty() || queueInitial.Valid() || queueSignal.Valid() ||

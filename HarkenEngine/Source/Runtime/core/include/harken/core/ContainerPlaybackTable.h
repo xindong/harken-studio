@@ -455,7 +455,9 @@ public:
         retainPreparedOwnerRollback_ = true;
         return true;
     }
-    bool Commit(std::uint64_t ticket) noexcept {
+    bool Commit(std::uint64_t ticket, bool publishLinks = true) noexcept {
+        if (!publishLinks && !ParentLinkProofHeld()) return false;
+        const CommitLinkPublicationScope publicationScope(currentCommitDefersLinks_, !publishLinks);
         if (step_.instanceCommitProofsRequired_ && externalInstance_ != nullptr) {
             ReleaseCommitProofs();
             return false;
@@ -485,7 +487,7 @@ public:
             (void)step_.RollbackCommitted();
             return false;
         }
-        if (!step_.PublishPreparedLinks()) {
+        if (publishLinks && !step_.PublishPreparedLinks()) {
             ReleaseCommitProofs();
             const bool cancelled = CancelOwnerTokens();
             if (retainPreparedOwnerRollback_ && !cancelled) return false;
@@ -493,6 +495,24 @@ public:
             return false;
         }
         RetainPreparedOwnersAfterCommit();
+        published_ = publishLinks;
+        return true;
+    }
+    bool CanPublishCommittedLinks() const noexcept {
+        if (published_ || ownershipTransferred_ || !Committed() || ownerTokenCount_ != 0 ||
+            InstanceCommitProofsHeld() || !ParentLinkProofHeld() || !step_.ValidateParentLinkScope()) return false;
+        for (std::size_t index = 0; index < PreparedInstanceCensusCount(); ++index) {
+            const auto* original = PreparedInstanceCensusToken(index);
+            if (original == nullptr || original->Handle() == 0) return false;
+            const auto actual = step_.parentLinkOwner_->Classify(original->Handle());
+            if (!actual.live || actual.parent != original->Parent() ||
+                actual.scheduleEpoch != original->ScheduleEpoch()) return false;
+        }
+        return true;
+    }
+    bool DefersCurrentCommitLinks() const noexcept { return currentCommitDefersLinks_; }
+    bool PublishCommittedLinks() noexcept {
+        if (!CanPublishCommittedLinks() || !step_.PublishPreparedLinks()) return false;
         published_ = true;
         return true;
     }
@@ -590,7 +610,8 @@ public:
         return Commit(table, 0);
     }
 
-    bool Commit(PlayableInstanceTable& table, std::uint64_t ticket) noexcept {
+    bool Commit(PlayableInstanceTable& table, std::uint64_t ticket, bool publishLinks = true) noexcept {
+        if (!publishLinks && !ParentLinkProofHeld()) return false;
         if (step_.instanceCommitProofsRequired_ && externalInstance_ != nullptr && instanceTable_ != &table) {
             ReleaseCommitProofs();
             return false;
@@ -600,8 +621,9 @@ public:
             return false;
         }
         if (instanceTable_ != &table || externalInstance_ == nullptr) {
-            return Commit(ticket);
+            return Commit(ticket, publishLinks);
         }
+        const CommitLinkPublicationScope publicationScope(currentCommitDefersLinks_, !publishLinks);
         if (!Validate()) {
             ReleaseCommitProofs();
             return false;
@@ -637,7 +659,7 @@ public:
                 return false;
             }
         }
-        if (!step_.PublishPreparedLinks()) {
+        if (publishLinks && !step_.PublishPreparedLinks()) {
             ReleaseCommitProofs();
             const bool cancelled = CancelOwnerTokens();
             if (retainPreparedOwnerRollback_ && !cancelled) return false;
@@ -650,7 +672,7 @@ public:
             return false;
         }
         RetainPreparedOwnersAfterCommit();
-        published_ = true;
+        published_ = publishLinks;
         return true;
     }
 
@@ -1026,6 +1048,12 @@ private:
         step_.SetExternalInstanceContext(nullptr, nullptr);
     }
 
+    struct CommitLinkPublicationScope {
+        bool& deferred;
+        CommitLinkPublicationScope(bool& state, bool value) noexcept : deferred(state) { deferred = value; }
+        ~CommitLinkPublicationScope() { deferred = false; }
+    };
+
     PreparedPlayableTreeStep step_;
     PlayableInstanceTable::PreparedCommitProof externalInstanceCommitProof_{};
     std::vector<OwnerToken> ownerTokens_;
@@ -1037,6 +1065,7 @@ private:
     bool published_ = false;
     bool ownershipTransferred_ = false;
     bool retainPreparedOwnerRollback_ = false;
+    bool currentCommitDefersLinks_ = false;
 };
 
 } // namespace harken

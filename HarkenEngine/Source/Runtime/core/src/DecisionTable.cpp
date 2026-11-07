@@ -1745,7 +1745,7 @@ bool DecisionTable::CaptureAppliedSignalDependency(const DecisionFuturePin& orig
     const auto& member = memberPin.Identity();
     FrontierActivationReceipt receipt{};
     Plan03PageGroupView primary{}, signal{};
-    if (!descriptor.Valid() || descriptor.primary.backing != Plan03GroupBacking::Page ||
+    if (!descriptor.Valid() || descriptor.sourceCohort || descriptor.primary.backing != Plan03GroupBacking::Page ||
         !pool.IsPlan03GroupReaderFor(primaryPin, descriptor.primary) ||
         !pool.IsPlan03GroupReaderFor(memberPin, member) || member.backing != Plan03GroupBacking::Page ||
         activation->Read(descriptor.entry, completedAudioSequence, &receipt) != FrontierReceiptRead::Ready ||
@@ -1790,13 +1790,32 @@ bool DecisionTable::CaptureAppliedSignalDependency(const DecisionFuturePin& orig
 bool DecisionTable::IsAppliedSignalDependencyFor(const FrontierAppliedSignalDependency& original,
     const FrontierEntryReceiptRef& entry, const Plan03GroupSliceIdentity& primary,
     const Plan03GroupSliceIdentity& member, std::uint64_t completedAudioSequence) const noexcept {
-    if (original.owner_ != this || !(original.entry_ == entry) || !(original.primary_ == primary) ||
+    return IsAppliedEntryDependencyFor(original, FrontierEntryPrerequisiteKind::QueueSignal,
+        entry, primary, member, completedAudioSequence);
+}
+
+bool DecisionTable::IsAppliedSourceCohortDependencyFor(const FrontierAppliedSignalDependency& original,
+    const FrontierEntryReceiptRef& entry, const Plan03GroupSliceIdentity& primary,
+    const Plan03GroupSliceIdentity& member, std::uint64_t completedAudioSequence) const noexcept {
+    return IsAppliedEntryDependencyFor(original, FrontierEntryPrerequisiteKind::SourceCohortChild,
+        entry, primary, member, completedAudioSequence);
+}
+
+bool DecisionTable::IsAppliedEntryDependencyFor(const FrontierAppliedSignalDependency& original,
+    FrontierEntryPrerequisiteKind kind, const FrontierEntryReceiptRef& entry,
+    const Plan03GroupSliceIdentity& primary, const Plan03GroupSliceIdentity& member,
+    std::uint64_t completedAudioSequence) const noexcept {
+    if (original.kind_ != kind || original.owner_ != this || !(original.entry_ == entry) || !(original.primary_ == primary) ||
         !(original.member_ == member) || !entry.Valid() || !primary.Exact() || !member.Exact() ||
         original.audioSequence_ == 0 || original.audioSequence_ > completedAudioSequence) return false;
     const auto* activation = ResolveFrontierActivation(entry.coordinator);
     DecisionCommittedSnapshot coordinator{};
     FrontierActivationReceipt receipt{};
-    if (activation == nullptr || !(activation->Descriptor().entry == entry) ||
+    if (activation == nullptr || (kind == FrontierEntryPrerequisiteKind::QueueSignal && activation->Descriptor().sourceCohort) ||
+        (kind == FrontierEntryPrerequisiteKind::SourceCohortChild &&
+            (!activation->Descriptor().sourceCohort || !original.memberEntry_.Valid() ||
+             original.memberEntry_ == entry || primary == member)) ||
+        !(activation->Descriptor().entry == entry) ||
         !(activation->Descriptor().primary == primary) ||
         !CaptureCommitted(entry.coordinator, &coordinator) || coordinator.futurePinCount == 0 ||
         coordinator.commit != DecisionCommitState::Committed ||
@@ -1818,7 +1837,8 @@ bool DecisionTable::IsAppliedSignalDependencyFor(const FrontierAppliedSignalDepe
 
 bool DecisionTable::ProveAppliedSignalPrerequisite(const FrontierAppliedSignalDependency& original,
     const FrontierGroupBinding& child, std::uint64_t completedAudioSequence) const noexcept {
-    if (!child.Valid() || child.role != FrontierGroupRole::Coordinator ||
+    if (child.prerequisiteKind != FrontierEntryPrerequisiteKind::QueueSignal ||
+        !child.Valid() || child.role != FrontierGroupRole::Coordinator ||
         child.operation.group.backing != Plan03GroupBacking::Page || child.appliedPrerequisite != &original ||
         !IsAppliedSignalDependencyFor(original, child.prerequisite, original.primary_,
             child.prerequisiteMember, completedAudioSequence)) return false;
@@ -1829,6 +1849,113 @@ bool DecisionTable::ProveAppliedSignalPrerequisite(const FrontierAppliedSignalDe
         child.operation.world == descriptor.worldGeneration &&
         child.operation.transport == descriptor.primary.transportEpoch &&
         descriptor.order < child.operation.order && original.memberOrder_ < child.operation.order;
+}
+
+bool DecisionTable::ValidateSourceCohortPrerequisite(const FrontierGroupBinding& child,
+    const FrontierGroupBinding& primary, const FrontierGroupBinding& member) const noexcept {
+    if (!child.Valid() || !primary.Valid() || !member.Valid() ||
+        child.prerequisiteKind != FrontierEntryPrerequisiteKind::SourceCohortChild ||
+        member.prerequisiteKind != FrontierEntryPrerequisiteKind::SourceCohortChild ||
+        child.role != FrontierGroupRole::Coordinator || primary.role != FrontierGroupRole::Coordinator ||
+        member.role != FrontierGroupRole::Coordinator ||
+        child.operation.kind != FrontierOperationKind::Entry || primary.operation.kind != FrontierOperationKind::Entry ||
+        member.operation.kind != FrontierOperationKind::Entry ||
+        child.primary.backing != Plan03GroupBacking::Page || primary.primary.backing != Plan03GroupBacking::Page ||
+        member.primary.backing != Plan03GroupBacking::Page ||
+        !(child.operation.group == child.primary) || !(primary.operation.group == primary.primary) ||
+        !(member.operation.group == member.primary) ||
+        !(child.prerequisite == primary.entry) || !(member.prerequisite == primary.entry) ||
+        !(child.prerequisiteMember == member.primary) || !(member.prerequisiteMember == member.primary) ||
+        primary.entry == child.entry || primary.entry == member.entry || primary.primary == member.primary ||
+        child.operation.owner.invocation != primary.entry.owner.invocation ||
+        child.operation.owner.invocationEpoch != primary.entry.owner.invocationEpoch ||
+        member.operation.owner.invocation != primary.entry.owner.invocation ||
+        member.operation.owner.invocationEpoch != primary.entry.owner.invocationEpoch ||
+        child.operation.world != primary.operation.world || member.operation.world != primary.operation.world ||
+        child.operation.transport != primary.operation.transport || member.operation.transport != primary.operation.transport ||
+        child.operation.order.executeFrame < member.operation.order.executeFrame ||
+        member.operation.order.executeFrame != primary.operation.order.executeFrame ||
+        member.operation.order.logicCommitSequence != primary.operation.order.logicCommitSequence ||
+        !(primary.operation.order < member.operation.order) || !(primary.operation.order < child.operation.order)) return false;
+    const bool direct = child.entry == member.entry && child.primary == member.primary;
+    if (direct ? child.operation.order != member.operation.order : !(member.operation.order < child.operation.order))
+        return false;
+    const auto* activation = ResolveFrontierActivation(primary.entry.coordinator);
+    DecisionCommittedSnapshot coordinator{};
+    if (activation == nullptr || !activation->Descriptor().sourceCohort ||
+        !(activation->Descriptor().entry == primary.entry) || !(activation->Descriptor().primary == primary.primary) ||
+        activation->Descriptor().order != primary.operation.order ||
+        !(primary.operation.owner == primary.entry.owner) || !(member.operation.owner == member.entry.owner) ||
+        !(child.operation.owner == child.entry.owner) ||
+        activation->Descriptor().worldGeneration != primary.operation.world ||
+        primary.primary.transportEpoch != primary.operation.transport ||
+        !CaptureCommitted(primary.entry.coordinator, &coordinator) ||
+        coordinator.commit != DecisionCommitState::Committed ||
+        coordinator.participantCount != activation->Descriptor().expectedMemberCount ||
+        coordinator.world != primary.operation.world || coordinator.transport != primary.operation.transport) return false;
+    std::uint32_t matches = 0;
+    for (std::uint32_t index = 0; index < coordinator.participantCount; ++index) {
+        DecisionParticipantRef participant{};
+        if (!CaptureCommittedParticipant(primary.entry.coordinator, index, &participant)) return false;
+        if (participant.kind == DecisionParticipantKind::Subdecision &&
+            participant.slot == member.entry.coordinator.slot &&
+            participant.generation == member.entry.coordinator.generation) ++matches;
+    }
+    return matches == 1u;
+}
+
+bool DecisionTable::CaptureAppliedSourceCohortDependency(const DecisionFuturePin& original,
+    const Plan03GroupReaderPin& primaryPin, const Plan03GroupReaderPin& memberPin,
+    const ScheduledTransactionPool& pool, std::uint64_t completedAudioSequence,
+    FrontierAppliedSignalDependency* out) const noexcept {
+    if (out == nullptr || out->Valid() || original.Owner() != this || !original.Valid()) return false;
+    const auto* activation = ResolveFrontierActivation(original.Token());
+    if (activation == nullptr) return false;
+    const auto& descriptor = activation->Descriptor();
+    const auto& memberIdentity = memberPin.Identity();
+    FrontierActivationReceipt receipt{};
+    Plan03PageGroupView primary{}, member{};
+    if (!descriptor.Valid() || !descriptor.sourceCohort ||
+        !pool.IsPlan03GroupReaderFor(primaryPin, descriptor.primary) ||
+        !pool.IsPlan03GroupReaderFor(memberPin, memberIdentity) ||
+        activation->Read(descriptor.entry, completedAudioSequence, &receipt) != FrontierReceiptRead::Ready ||
+        receipt.outcome != FrontierReceiptOutcome::Applied || receipt.origin != FrontierReceiptOrigin::Audio ||
+        receipt.reason != FrontierReceiptReason::None || receipt.audioSequence == 0 || receipt.order != descriptor.order ||
+        !pool.ResolvePlan03GroupSliceProducer(descriptor.primary, &primary) ||
+        !pool.ResolvePlan03GroupSliceProducer(memberIdentity, &member) ||
+        primary.frontier == nullptr || member.frontier == nullptr || primary.lease == nullptr || member.lease == nullptr ||
+        primary.lease->Capture().state != AudioSliceState::SliceApplied ||
+        member.lease->Capture().state != AudioSliceState::SliceApplied ||
+        !ValidateSourceCohortPrerequisite(*member.frontier, *primary.frontier, *member.frontier)) return false;
+    FrontierAppliedSignalDependency captured{};
+    captured.owner_ = this;
+    captured.entry_ = descriptor.entry;
+    captured.primary_ = descriptor.primary;
+    captured.member_ = memberIdentity;
+    captured.memberOrder_ = member.frontier->operation.order;
+    captured.memberEntry_ = member.frontier->entry;
+    captured.kind_ = FrontierEntryPrerequisiteKind::SourceCohortChild;
+    captured.audioSequence_ = receipt.audioSequence;
+    if (!IsAppliedSourceCohortDependencyFor(captured, descriptor.entry, descriptor.primary,
+            memberIdentity, completedAudioSequence)) return false;
+    *out = captured;
+    return true;
+}
+
+bool DecisionTable::ProveAppliedSourceCohortPrerequisite(const FrontierAppliedSignalDependency& original,
+    const FrontierGroupBinding& child, std::uint64_t completedAudioSequence) const noexcept {
+    if (!child.Valid() || child.prerequisiteKind != FrontierEntryPrerequisiteKind::SourceCohortChild ||
+        child.role != FrontierGroupRole::Coordinator || child.operation.group.backing != Plan03GroupBacking::Page ||
+        child.appliedPrerequisite != &original || child.entry == child.prerequisite ||
+        !IsAppliedSourceCohortDependencyFor(original, child.prerequisite, original.primary_,
+            child.prerequisiteMember, completedAudioSequence)) return false;
+    const auto& descriptor = ResolveFrontierActivation(child.prerequisite.coordinator)->Descriptor();
+    const bool direct = child.entry == original.memberEntry_ && child.primary == original.member_;
+    return child.operation.owner.invocation == descriptor.entry.owner.invocation &&
+        child.operation.owner.invocationEpoch == descriptor.entry.owner.invocationEpoch &&
+        child.operation.world == descriptor.worldGeneration && child.operation.transport == descriptor.primary.transportEpoch &&
+        descriptor.order < child.operation.order &&
+        (direct ? original.memberOrder_ == child.operation.order : original.memberOrder_ < child.operation.order);
 }
 
 bool DecisionTable::SetFuturePinCountForTests(DecisionToken token, std::uint32_t count) noexcept {
