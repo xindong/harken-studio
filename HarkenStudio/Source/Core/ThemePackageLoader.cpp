@@ -1087,10 +1087,6 @@ bool applyCurveColor(const QString& key, const QColor& value, ThemeSnapshot& the
 
 bool applyCurveMetric(const QString& key, double value, ThemeSnapshot& theme)
 {
-    if (key == QStringLiteral("curve.readoutFontPixelSize"))
-        return value >= 0.0 && value <= 96.0
-            && std::floor(value) == value
-            && assignNumber(theme.ui.typography.caption.pointSize, qRound(value * 0.75));
     auto& metrics = theme.domains.curve.metrics;
 #define CURVE_METRIC(name, field)                                               \
     if (key == QStringLiteral("curve." name))                                  \
@@ -1187,10 +1183,6 @@ bool applyWaveformMetric(const QString& key,
                          double value,
                          ThemeSnapshot& theme)
 {
-    if (key == QStringLiteral("waveform.splitStereo.labelPointSize")
-        || key == QStringLiteral("waveform.dbScale.labelPointSize"))
-        return value >= 0.0 && value <= 72.0
-            && assignNumber(theme.ui.typography.caption.pointSize, value);
     auto& waveform = theme.domains.waveform;
 #define WAVEFORM_METRIC(name, field)                                            \
     if (key == QStringLiteral("waveform." name))                               \
@@ -1894,12 +1886,7 @@ bool applySemantics(const SemanticDocuments& documents,
     for (auto it = documents.tokens.fonts.constBegin();
          it != documents.tokens.fonts.constEnd(); ++it)
     {
-        QString key = it.key();
-        if (key == QStringLiteral("heading")) key = QStringLiteral("title");
-        else if (key == QStringLiteral("label")) key = QStringLiteral("body");
-        else if (key == QStringLiteral("axis")) key = QStringLiteral("caption");
-        if (key != it.key() && documents.tokens.fonts.contains(key)) continue;
-        ThemeFontStyle* role = fontRole(key, theme);
+        ThemeFontStyle* role = fontRole(it.key(), theme);
         const QString path = QStringLiteral("$.fonts.") + it.key();
         if (!role)
         {

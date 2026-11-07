@@ -482,7 +482,6 @@ QToolButton[explorerRole="sectionToggle"] {
     text-align: left;
     @bodyFont@
     font-weight: @emphasisWeight@;
-    letter-spacing: 0;
 }
 
 QToolButton[explorerRole="sectionToggle"]:hover {
@@ -1018,9 +1017,7 @@ QHeaderView::section {
     border: none;
     border-bottom: @borderWidth@px solid @borderSecondary@;
     @bodyFont@
-    font-weight: @regularWeight@;
     text-transform: none;
-    letter-spacing: 0px;
 }
 
 QHeaderView::section:!last:!only-one {
@@ -1552,7 +1549,6 @@ QLabel[aboutRole="value"] {
     background-color: transparent;
     color: @textPrimary@;
     @titleFont@
-    font-weight: @emphasisWeight@;
 }
 
 #startupLoadingStatus {
@@ -2178,7 +2174,6 @@ QSizeGrip {
     background-color: transparent;
     color: @textPrimary@;
     @bodyFont@
-    font-weight: @regularWeight@;
 }
 
 #titleBarVersion {
