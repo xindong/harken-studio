@@ -38,6 +38,7 @@
 
 #include <QEvent>
 #include <QCoreApplication>
+#include <QCursor>
 #include <QJsonArray>
 #include <QKeyEvent>
 #include <QFocusEvent>
@@ -522,7 +523,8 @@ int TimelineEditorPanel::laneHeaderWidth() const
             themeManager_->metrics().navigationChevronExtent);
     }
     const int desired = std::max(timelineMetrics().laneHeaderMinimumWidth,
-        laneHeaderWidth_ > 0 ? laneHeaderWidth_ : timelineMetrics().laneHeaderWidth);
+        laneHeaderWidth_ > 0 ? qRound(laneHeaderWidth_ * themeManager_->snapshot()->uiScale)
+                             : timelineMetrics().laneHeaderWidth);
     const int available = scrollArea_ && scrollArea_->isVisible()
         ? scrollArea_->viewport()->width() : width();
     return std::min(desired, std::max(timelineMetrics().laneHeaderMinimumWidth, available / 2));
@@ -530,7 +532,7 @@ int TimelineEditorPanel::laneHeaderWidth() const
 
 int TimelineEditorPanel::laneHeaderResizeWidth() const
 {
-    return viewKind_ == ViewKind::Segment ? 2 : 0;
+    return viewKind_ == ViewKind::Segment ? themeManager_->metrics().spacingCompact : 0;
 }
 
 QRect TimelineEditorPanel::laneRect(int index) const
@@ -546,11 +548,13 @@ int TimelineEditorPanel::laneHeight(int index) const
     const auto& metrics = themeManager_->metrics();
     const int collapseHeight = std::max(metrics.table.rowHeight,
         headerColumn_->fontMetrics().height() + std::max(metrics.table.cellPaddingY,
-            metrics.timeline.clipVerticalInset) * 2 + 1);
+            metrics.timeline.clipVerticalInset) * 2 + metrics.borderWidth);
     const int minimum = TimelineRenderer::clipTitleHeight(metrics)
         + metrics.timeline.clipVerticalInset * 2;
+    const qreal scale = themeManager_->snapshot()->uiScale;
     const int height = int(std::lround(std::min(double(QWIDGETSIZE_MAX),
-        laneHeights_.value(laneGuid(index), metrics.timeline.laneHeight) * segmentVerticalZoom_)));
+        laneHeights_.value(laneGuid(index), metrics.timeline.laneHeight / scale)
+            * scale * segmentVerticalZoom_)));
     return height <= std::max(minimum, collapseHeight) ? minimum : height;
 }
 
@@ -559,7 +563,8 @@ void TimelineEditorPanel::setLaneHeight(int index, int height)
     if (viewKind_ != ViewKind::Segment || index < 0 || index >= laneCount())
         return;
     const auto guid = laneGuid(index);
-    const double baseHeight = height > 0 ? height / segmentVerticalZoom_ : 0.0;
+    const double baseHeight = height > 0
+        ? height / (segmentVerticalZoom_ * themeManager_->snapshot()->uiScale) : 0.0;
     if (laneHeights_.value(guid) == baseHeight)
         return;
     if (height == 0)
@@ -577,7 +582,8 @@ int TimelineEditorPanel::headerSelectedLane() const
 
 void TimelineEditorPanel::setLaneHeaderWidth(int width)
 {
-    const int clamped = std::max(timelineMetrics().laneHeaderMinimumWidth, width);
+    const qreal clamped = std::max(timelineMetrics().laneHeaderMinimumWidth, width)
+        / themeManager_->snapshot()->uiScale;
     if (laneHeaderWidth_ == clamped)
         return;
     laneHeaderWidth_ = clamped;
@@ -670,11 +676,19 @@ void TimelineEditorPanel::applyThemeMetrics()
     addTrackButton_->setFixedSize(addExtent, addExtent);
     addTrackButton_->setIconSize(QSize(addExtent, addExtent));
     refreshThemeIcons();
-    verticalTools_->setFixedWidth(extent + 1);
+    verticalTools_->setFixedWidth(extent + metrics.borderWidth);
     scrollCorner_->setFixedWidth(verticalTools_->width());
     headerColumn_->refreshRows();
     applyLaneHeaderWidth();
     syncLaneGeometry();
+    if (laneResizeDrag_) {
+        laneResizeDrag_->height = laneRect(laneResizeDrag_->lane).height();
+        laneResizeDrag_->pointerY = QCursor::pos().y();
+    }
+    if (headerResizeDrag_) {
+        headerResizeDrag_->width = laneHeaderWidth();
+        headerResizeDrag_->pointerX = QCursor::pos().x();
+    }
     refreshHorizontalRange();
     refreshTimelinePaint();
 }
@@ -1240,10 +1254,12 @@ double TimelineEditorPanel::minimumVerticalZoom() const
         + metrics.timeline.clipVerticalInset * 2;
     const int collapse = std::max({minimum, metrics.table.rowHeight,
         headerColumn_->fontMetrics().height() + std::max(metrics.table.cellPaddingY,
-            metrics.timeline.clipVerticalInset) * 2 + 1});
+            metrics.timeline.clipVerticalInset) * 2 + metrics.borderWidth});
+    const qreal scale = themeManager_->snapshot()->uiScale;
     double largest = 0.0;
     for (int lane = 0; lane < laneCount(); ++lane)
-        largest = std::max(largest, laneHeights_.value(laneGuid(lane), metrics.timeline.laneHeight));
+        largest = std::max(largest,
+            laneHeights_.value(laneGuid(lane), metrics.timeline.laneHeight / scale) * scale);
     return largest > 0.0 ? std::min(1.0, collapse / largest) : 1.0;
 }
 
@@ -1504,7 +1520,7 @@ void TimelineEditorPanel::restoreViewport(const QVariantMap& state)
     segmentVerticalZoom_ = viewKind_ == ViewKind::Segment && std::isfinite(zoom)
         ? std::clamp(zoom, minimumVerticalZoom(), 32.0) : 1.0;
     syncLaneGeometry();
-    laneHeaderWidth_ = std::max(0, state.value(QStringLiteral("laneHeaderWidth")).toInt());
+    laneHeaderWidth_ = std::max(0.0, state.value(QStringLiteral("laneHeaderWidth")).toDouble());
     applyLaneHeaderWidth();
     const auto viewport = state.value(QStringLiteral("timelineViewport"),
         state.value(QStringLiteral("trackViewport"))).toMap();
@@ -3355,10 +3371,12 @@ void TimelineEditorPanel::syncLaneGeometry()
 
 void TimelineEditorPanel::updateLaneResizeBars()
 {
+    const auto& metrics = themeManager_->metrics();
     for (int lane = 0; lane < static_cast<int>(laneResizeBars_.size()); ++lane) {
         auto* bar = laneResizeBars_[lane];
         const auto area = laneRect(lane);
-        bar->setGeometry(0, area.bottom() - 3, headerColumn_->width() - 1, 4);
+        bar->setGeometry(0, area.bottom() + 1 - metrics.spacingXSmall,
+            headerColumn_->width() - metrics.borderWidth, metrics.spacingXSmall);
         bar->setVisible(!area.isEmpty());
         bar->raise();
     }

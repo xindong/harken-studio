@@ -607,7 +607,10 @@ private:
                 value->setEnabled(editable);
                 value->setToolTip(level->toolTip());
                 levelCell->addWidget(value, 0);
-                table_->setColumnMinimumWidth(2, levelCell->minimumSizeHint().width());
+                ThemeManager::instance().bindMetrics(levelCell,
+                    [this, levelCell](const ThemeMetrics&) {
+                        table_->setColumnMinimumWidth(2, levelCell->minimumSizeHint().width());
+                    });
                 rowLayout->addWidget(levelCell);
 
                 auto* activeCell = table_->createCell(row);

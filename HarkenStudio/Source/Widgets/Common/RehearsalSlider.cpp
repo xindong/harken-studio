@@ -22,7 +22,9 @@ RehearsalSlider::RehearsalSlider(QWidget* parent)
     : ParameterSlider(QString(), parent)
 {
     setObjectName(QStringLiteral("variableRehearsalSliderHost"));
-    setCompactValueColumn(80);
+    ThemeManager::instance().bindMetrics(this, [this](const ThemeMetrics& metrics) {
+        setCompactValueColumn(metrics.parameter.compactValueMinimumWidth);
+    });
     setPresenterOverride(ParameterPresenterId::SliderWithValue);
 }
 

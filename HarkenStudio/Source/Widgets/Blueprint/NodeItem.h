@@ -198,6 +198,7 @@ public:
                              std::optional<SourceWaveformView> view = {});
 
     float contentHeight() const { return height_; }
+    QSizeF sceneBodySize() const;
 
     static float heightForContent(const NodeContentInfo& info, bool hasSubtitle,
                                   bool hasWaveform, bool blueprintWaveformMode,

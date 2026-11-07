@@ -265,20 +265,26 @@ void ComponentRecipeHost::applyRecipe()
     if (!recipe)
         return;
 
-    delete layout();
     const bool vertical = componentRecipeVariantIsVertical(recipe->variant);
-    auto* box = new QBoxLayout(vertical ? QBoxLayout::TopToBottom
-                                        : QBoxLayout::LeftToRight);
-    box->setContentsMargins(0, 0, 0, 0);
-    box->setSpacing(themeManager_->snapshot()->ui.metrics.spacingSmall);
-    setLayout(box);
-
-    for (auto* container : slots_)
-    {
-        container->hide();
-        container->setBackgroundAsset(QString());
+    const auto direction = vertical ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight;
+    QStringList slotNames;
+    for (const auto& slot : recipe->items)
+        if (slot.visible && slots_.contains(slot.id))
+            slotNames.append(componentRecipeSlotName(slot.id));
+    auto* box = qobject_cast<QBoxLayout*>(layout());
+    const bool rebuild = !box || box->direction() != direction || slotNames != orderedSlotNames_;
+    if (rebuild) {
+        delete layout();
+        box = new QBoxLayout(direction);
+        box->setContentsMargins(0, 0, 0, 0);
+        setLayout(box);
+        for (auto* container : slots_) {
+            container->hide();
+            container->setBackgroundAsset(QString());
+        }
     }
-    orderedSlotNames_.clear();
+    box->setSpacing(themeManager_->snapshot()->ui.metrics.spacingSmall);
+    orderedSlotNames_ = slotNames;
     for (const ComponentRecipeSlot& slot : recipe->items)
     {
         const auto containerIt = slots_.constFind(slot.id);
@@ -290,8 +296,8 @@ void ComponentRecipeHost::applyRecipe()
             continue;
         applySlotSize(container, slot, vertical);
         container->setContentAlignment(qtAlignment(slot.alignment, vertical));
-        box->addWidget(container);
-        orderedSlotNames_.append(componentRecipeSlotName(slot.id));
+        if (rebuild)
+            box->addWidget(container);
         container->setBackgroundAsset(slot.asset);
         if (auto* parameter = qobject_cast<ParameterControlHost*>(
                 slotWidget(slot.id)))

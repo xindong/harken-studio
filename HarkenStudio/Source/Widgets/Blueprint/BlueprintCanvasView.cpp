@@ -7,6 +7,7 @@
 #include <QBrush>
 #include <QColor>
 #include <QContextMenuEvent>
+#include <QCursor>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
@@ -30,6 +31,9 @@ BlueprintCanvasView::BlueprintCanvasView(QWidget* parent)
     setDragMode(QGraphicsView::RubberBandDrag);
     if (QSettings().value(QStringLiteral("Blueprint/InteractionMode")) == QLatin1String("Pan"))
         setInteractionMode(InteractionMode::Pan);
+    refreshUIScale_();
+    connect(&ThemeManager::instance(), &ThemeManager::themeChanged,
+        this, &BlueprintCanvasView::refreshUIScale_);
 }
 
 BlueprintCanvasView::~BlueprintCanvasView() = default;
@@ -64,7 +68,7 @@ void BlueprintCanvasView::updateInteractionCursor_()
 
 double BlueprintCanvasView::gridSpacing() const
 {
-    const double zoom = std::clamp(transform().m11(), kMinZoom, kMaxZoom);
+    const double zoom = std::clamp(zoomFactor(), kMinZoom, kMaxZoom);
     double pitch = kGridSpacing;
     while (pitch * zoom < 16.0) pitch *= 2.0;
     while (pitch * zoom >= 32.0) pitch *= 0.5;
@@ -94,7 +98,7 @@ void BlueprintCanvasView::drawBackground(QPainter* p, const QRectF& rect)
         tilePainter.setRenderHint(QPainter::Antialiasing);
         tilePainter.setPen(Qt::NoPen);
         tilePainter.setBrush(bp.gridDot);
-        const double radius = pixels / screenPitch;
+        const double radius = pixels / screenPitch * uiScale_;
         tilePainter.drawEllipse(QPointF(pixels / 2.0, pixels / 2.0), radius, radius);
         gridTilePitch_ = screenPitch;
         gridTileDpr_ = dpr;
@@ -116,7 +120,7 @@ void BlueprintCanvasView::wheelEvent(QWheelEvent* event)
     event->accept();
     if (event->angleDelta().y() == 0) return;
     const double stepFactor = event->angleDelta().y() > 0 ? 1.15 : 1.0 / 1.15;
-    const double current = transform().m11();
+    const double current = zoomFactor();
     const double target = std::clamp(current * stepFactor, kMinZoom, kMaxZoom);
     if (!qFuzzyCompare(target, current)) {
         const QPointF anchor = viewportTransform().inverted().map(event->position());
@@ -124,7 +128,7 @@ void BlueprintCanvasView::wheelEvent(QWheelEvent* event)
         const QPointF offset = viewportTransform().map(anchor) - event->position();
         horizontalScrollBar()->setValue(horizontalScrollBar()->value() + qRound(offset.x()));
         verticalScrollBar()->setValue(verticalScrollBar()->value() + qRound(offset.y()));
-        emit zoomChanged(transform().m11());
+        emit zoomChanged(zoomFactor());
     }
 }
 
@@ -133,9 +137,33 @@ void BlueprintCanvasView::setZoomFactor(double factor)
     if (factor <= 0.0) return;
     const double clamped = std::clamp(factor, kMinZoom, kMaxZoom);
     const QPointF center = mapToScene(viewport()->rect().center());
-    setTransform(QTransform::fromScale(clamped, clamped));
+    setTransform(QTransform::fromScale(clamped * uiScale_, clamped * uiScale_));
     centerOn(center);
-    emit zoomChanged(transform().m11());
+    emit zoomChanged(zoomFactor());
+}
+
+double BlueprintCanvasView::zoomFactor() const
+{
+    return transform().m11() / uiScale_;
+}
+
+void BlueprintCanvasView::refreshUIScale_()
+{
+    const double next = ThemeManager::instance().snapshot()->uiScale;
+    if (qFuzzyCompare(next, uiScale_)) return;
+    QPoint anchor = viewport()->rect().center();
+    const QPoint cursor = viewport()->mapFromGlobal(QCursor::pos());
+    if (QApplication::mouseButtons() != Qt::NoButton && viewport()->rect().contains(cursor))
+        anchor = cursor;
+    const QPointF sceneAnchor = mapToScene(anchor);
+    const double factor = next / uiScale_;
+    uiScale_ = next;
+    scale(factor, factor);
+    const QPointF offset = viewportTransform().map(sceneAnchor) - anchor;
+    horizontalScrollBar()->setValue(horizontalScrollBar()->value() + qRound(offset.x()));
+    verticalScrollBar()->setValue(verticalScrollBar()->value() + qRound(offset.y()));
+    gridTile_ = {};
+    viewport()->update();
 }
 
 void BlueprintCanvasView::mousePressEvent(QMouseEvent* event)

@@ -236,6 +236,8 @@ add_library(harken_editor_foundation STATIC
     WidgetAppearance.cpp
     WidgetAppearance.h
     ThemeSnapshot.h
+    ThemeScale.cpp
+    ThemeScale.h
     ThemeLayout.h
     ColorPalette.cpp
     ColorPalette.h
@@ -262,8 +264,6 @@ add_library(harken_editor_foundation STATIC
     BaseDialog.h
     FramelessChrome.cpp
     FramelessChrome.h
-    UIScaleManager.cpp
-    UIScaleManager.h
     DialogManager.cpp
     DialogManager.h
     EditorShellRegistry.cpp

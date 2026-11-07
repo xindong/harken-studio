@@ -132,9 +132,12 @@ public:
                 [this] {
                     setViewportMargins(QtControlSkin::current().fieldTextMargins());
                     const int nextHeight = QtControlSkin::current().fieldHeight();
-                    setFixedHeight(height() == fieldHeight_
-                        ? nextHeight : std::max(height(), nextHeight));
+                    setFixedHeight(requestedBaseHeight_ > 0
+                        ? std::max(qRound(requestedBaseHeight_
+                            * ThemeManager::instance().snapshot()->uiScale), nextHeight)
+                        : nextHeight);
                     fieldHeight_ = nextHeight;
+                    grip_->rebaseDrag();
                 });
     }
 
@@ -176,6 +179,13 @@ private:
 
         bool isDragging() const { return dragging_; }
 
+        void rebaseDrag()
+        {
+            if (!dragging_) return;
+            startGlobalY_ = QCursor::pos().y();
+            startHeight_ = edit_->height();
+        }
+
     protected:
         void mousePressEvent(QMouseEvent* event) override
         {
@@ -195,9 +205,9 @@ private:
                 return;
             }
             const int delta = qRound(event->globalPosition().y() - startGlobalY_);
-            edit_->setFixedHeight(std::max(
-                edit_->fieldHeight_,
-                startHeight_ + delta));
+            const int height = std::max(edit_->fieldHeight_, startHeight_ + delta);
+            edit_->requestedBaseHeight_ = height / ThemeManager::instance().snapshot()->uiScale;
+            edit_->setFixedHeight(height);
             event->accept();
         }
 
@@ -264,6 +274,7 @@ private:
 
     ResizeGrip* grip_ = nullptr;
     int fieldHeight_ = 0;
+    qreal requestedBaseHeight_ = 0;
 };
 
 bool objectReferenceRole(PlayablePropertyReferenceRoleV1 role)

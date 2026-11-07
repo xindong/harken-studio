@@ -476,11 +476,14 @@ private:
         edit->ensurePolished();
         const int digits = QString::number(static_cast<int>(
             std::clamp(std::floor(domain_->max), 0.0, 16777216.0))).size();
-        const auto margins = number->contentsMargins();
-        box_->setColumnMinimumWidth(0, edit->minimumSizeHint().width()
-            + edit->fontMetrics().horizontalAdvance(QString(digits, QLatin1Char('8')))
-            + margins.left() + margins.right());
-        box_->refreshLayout();
+        ThemeManager::instance().bindMetrics(edit,
+            [this, number, edit, digits](const ThemeMetrics&) {
+                const auto margins = number->contentsMargins();
+                box_->setColumnMinimumWidth(0, edit->minimumSizeHint().width()
+                    + edit->fontMetrics().horizontalAdvance(QString(digits, QLatin1Char('8')))
+                    + margins.left() + margins.right());
+                box_->refreshLayout();
+            });
         edit->setGeometry(number->contentsRect());
         edit->setValidator(new ListElementValidator([this, row](const QString& text) {
             return anchorError(row, text);

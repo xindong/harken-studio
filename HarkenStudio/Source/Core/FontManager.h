@@ -49,8 +49,7 @@ public:
     const QString& monoFamily() const { return monoFamily_; }
 
 
-    float scaleFactor() const { return scaleFactor_; }
-    void setScaleFactor(float factor);
+    qreal scaleFactor() const { return snapshot_ ? snapshot_->uiScale : 1.0; }
 
 signals:
     void fontChanged();
@@ -67,7 +66,6 @@ private:
     QString systemSansFamily_;
     QString systemMonoFamily_;
     ThemeSnapshotPtr snapshot_;
-    float scaleFactor_ = 1.0f;
 };
 
 }

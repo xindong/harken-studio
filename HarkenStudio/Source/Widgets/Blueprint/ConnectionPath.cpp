@@ -17,7 +17,7 @@ ConnectionPath::ConnectionPath(NodePin* startPin, NodePin* endPin, QGraphicsItem
     : QGraphicsPathItem(parent)
     , startPin_(startPin)
     , endPin_(endPin)
-    , theme_(ThemeManager::instance().snapshot())
+    , theme_(ThemeManager::instance().unscaledSnapshot())
 {
     setZValue(-1);
     setFlag(ItemIsSelectable);
@@ -179,7 +179,7 @@ QRectF ConnectionPath::labelRect() const
 
 void ConnectionPath::refreshMetrics()
 {
-    const auto current = ThemeManager::instance().snapshot();
+    const auto current = ThemeManager::instance().unscaledSnapshot();
     if (theme_ == current) return;
     prepareGeometryChange();
     theme_ = current;
@@ -206,7 +206,8 @@ void ConnectionPath::paint(QPainter* painter, const QStyleOptionGraphicsItem* op
     if (detailLevel_ != BlueprintDetailLevel::Full) {
         const auto transform = painter->worldTransform();
         const qreal scale = std::hypot(transform.m11(), transform.m12());
-        const qreal minimumWidth = geometry.connection.lineWidth * (playbackActive_ || isSelected() ? 0.6 : 0.4);
+        const qreal minimumWidth = geometry.connection.lineWidth * (playbackActive_ || isSelected() ? 0.6 : 0.4)
+            * ThemeManager::instance().snapshot()->uiScale;
         if (scale > 0.0) width = std::max(width, std::min(geometry.connection.maximumOverviewWidth, minimumWidth / scale));
     }
     if (blueprintKind_.has_value()) {
@@ -263,7 +264,7 @@ void ConnectionPath::paint(QPainter* painter, const QStyleOptionGraphicsItem* op
     }
 
     if (detailLevel_ == BlueprintDetailLevel::Full && !label_.isEmpty()) {
-        QFont labelFont = FontManager::instance().getFont(FontRole::Caption);
+        QFont labelFont = FontManager::instance().getFont(theme_, FontRole::Caption);
         painter->setFont(labelFont);
         const QRectF bg = labelRect();
         const auto theme = ThemeManager::instance().snapshot();

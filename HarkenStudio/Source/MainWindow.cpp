@@ -389,7 +389,11 @@ MainWindow::MainWindow(
 {
     setWindowTitle("Harken Studio");
     ThemeManager::instance().bindMetrics(this, [this](const ThemeMetrics& metrics) {
-        setMinimumSize(metrics.chrome.windowMinimumWidth, metrics.chrome.windowMinimumHeight);
+        setMinimumSize(screenBoundedWindowSize(this,
+            QSize(metrics.chrome.windowMinimumWidth, metrics.chrome.windowMinimumHeight)));
+        QMetaObject::invokeMethod(this, [this] {
+            if (isVisible()) fitWindowToScreen(this);
+        }, Qt::QueuedConnection);
     });
     resize(kDefaultStudioWindowSize);
     setObjectName(QStringLiteral("MainWindow"));
@@ -1245,8 +1249,28 @@ void MainWindow::setupMenuBar()
     QMenu* viewsMenu = menuBar->addMenu(tr("&View"));
     viewsMenu->setObjectName("viewsMenu");
 
-    connect(viewsMenu, &QMenu::aboutToShow, this, [this, viewsMenu]() {
+    auto* zoomInAction = shortcuts.applicationAction(Shortcuts::ZoomIn, [] {
+        AppSettings::instance().increaseGlobalUIScale();
+    });
+    auto* zoomOutAction = shortcuts.applicationAction(Shortcuts::ZoomOut, [] {
+        AppSettings::instance().decreaseGlobalUIScale();
+    });
+    const auto refreshZoomActions = [zoomInAction, zoomOutAction] {
+        zoomInAction->setEnabled(AppSettings::instance().canIncreaseGlobalUIScale());
+        zoomOutAction->setEnabled(AppSettings::instance().canDecreaseGlobalUIScale());
+    };
+    connect(&AppSettings::instance(), &AppSettings::globalUIScaleChanged,
+            this, refreshZoomActions);
+    refreshZoomActions();
+
+    connect(viewsMenu, &QMenu::aboutToShow, this, [this, viewsMenu, zoomInAction, zoomOutAction]() {
         viewsMenu->clear();
+
+        auto* appearanceMenu = viewsMenu->addMenu(tr("Appearance"));
+        appearanceMenu->setObjectName(QStringLiteral("viewsAppearanceMenu"));
+        appearanceMenu->addAction(zoomInAction);
+        appearanceMenu->addAction(zoomOutAction);
+        viewsMenu->addSeparator();
 
         QSet<QString> editorPanelTypes;
         for (const QString& t : standaloneEditorTypes_.keys())

@@ -74,7 +74,7 @@ private:
     std::vector<std::unique_ptr<Row>> rows_;
     NodeContentFields fields_;
     int labelColumnWidth_;
-    int valueColumnWidth_ = 0;
+    qreal valueColumnBaseWidth_ = 0;
     bool routeGainMode_ = false;
     bool metricsSuspended_ = false;
 };

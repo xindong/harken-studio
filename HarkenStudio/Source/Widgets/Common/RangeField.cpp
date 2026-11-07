@@ -41,8 +41,6 @@ RangeField::RangeField(QWidget* parent)
     separator_ = new QLabel(QStringLiteral("–"), this);
     separator_->setObjectName(QStringLiteral("rangeFieldSeparator"));
     separator_->setAlignment(Qt::AlignCenter);
-    separator_->setFixedWidth(
-        ThemeManager::instance().metrics().inspector.rangeSeparatorWidth);
     separator_->setProperty("textRole", QStringLiteral("muted"));
 
     layout->addWidget(low_, 1);
@@ -95,6 +93,8 @@ double RangeField::highValue() const
 
 void RangeField::applyTheme()
 {
+    separator_->setFixedWidth(
+        ThemeManager::instance().metrics().inspector.rangeSeparatorWidth);
     QtControlSkin::setSemanticProperty(low_, "fieldRole",
                                       QStringLiteral("inspectorValue"));
     QtControlSkin::setSemanticProperty(high_, "fieldRole",

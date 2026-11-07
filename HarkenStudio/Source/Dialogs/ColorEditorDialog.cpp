@@ -6,6 +6,7 @@
 #include "Core/ThemeManager.h"
 #include "Widgets/Common/LinearSliderPresenter.h"
 #include "Widgets/Common/ParameterBinding.h"
+#include "Widgets/Common/PanelScrollArea.h"
 
 #include <QCursor>
 #include <QDoubleSpinBox>
@@ -181,7 +182,17 @@ ColorEditorDialog::ColorEditorDialog(const QColor& color, QWidget* parent)
 {
     const auto& metrics = ThemeManager::instance().metrics().dialog;
     resize(metrics.compactWidth, metrics.preferredHeight);
-    auto* layout = new QVBoxLayout(this);
+    auto* outer = new QVBoxLayout(this);
+    outer->setContentsMargins(0, 0, 0, 0);
+    outer->setSpacing(0);
+    auto* scroll = new PanelScrollArea(this);
+    scroll->setObjectName(QStringLiteral("colorEditorScroll"));
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    auto* content = new QWidget(scroll);
+    scroll->setWidget(content);
+    outer->addWidget(scroll);
+    auto* layout = new QVBoxLayout(content);
     ThemeLayout::margins(layout, ThemeLayout::Space::Large);
     ThemeLayout::spacing(layout, ThemeLayout::Space::Medium);
     picker_ = new ColorPicker(this);
@@ -239,7 +250,9 @@ ColorEditorDialog::ColorEditorDialog(const QColor& color, QWidget* parent)
     auto* alpha = new LinearSliderPresenter(alpha_, true, &ThemeManager::instance(), this);
     alpha->setObjectName(QStringLiteral("colorAlphaControl"));
     alpha->setToolTip(tr("Alpha"));
-    alpha->setCompactValueColumn(ThemeManager::instance().metrics().parameter.compactValueMinimumWidth);
+    ThemeManager::instance().bindMetrics(alpha, [alpha](const ThemeMetrics& metrics) {
+        alpha->setCompactValueColumn(metrics.parameter.compactValueMinimumWidth);
+    });
     auto* alphaLabel = new QLabel(QStringLiteral("A"), this);
     alphaLabel->setBuddy(alpha->valueEditor());
     values->addWidget(alphaLabel, 2, 0);

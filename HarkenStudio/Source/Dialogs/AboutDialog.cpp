@@ -3,6 +3,8 @@
 
 #include "Core/ThemeAssetCatalog.h"
 #include "Core/ThemeManager.h"
+#include "Core/WindowPlacement.h"
+#include "Widgets/Common/PanelScrollArea.h"
 #include "harken_buildinfo.h"
 
 #include <QCoreApplication>
@@ -70,13 +72,11 @@ AboutDialog::AboutDialog(QWidget* parent, bool showDeveloperInformation)
     setWindowTitle(tr("About Harken Studio"));
     setModal(true);
     ThemeManager::instance().bindMetrics(this, [this](const ThemeMetrics& metrics) {
-        setMinimumWidth(metrics.dialog.minimumWidth);
+        setMinimumWidth(screenBoundedWindowSize(this,
+            QSize(metrics.dialog.minimumWidth, 0)).width());
         if (compactGeometryApplied_) {
             QMetaObject::invokeMethod(this, [this] {
-                layout()->activate();
-                setMinimumWidth(std::max(ThemeManager::instance().metrics().dialog.minimumWidth,
-                                         layout()->totalMinimumSize().width()));
-                setFixedHeight(layout()->totalSizeHint().height());
+                updateCompactGeometry();
             }, Qt::QueuedConnection);
         }
     });
@@ -85,7 +85,16 @@ AboutDialog::AboutDialog(QWidget* parent, bool showDeveloperInformation)
 
     const QString currentVersion = versionString();
 
-    auto* root = new QVBoxLayout(this);
+    auto* outer = new QVBoxLayout(this);
+    outer->setContentsMargins(0, 0, 0, 0);
+    outer->setSpacing(0);
+    auto* scroll = new PanelScrollArea(this);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    content_ = new QWidget(scroll);
+    scroll->setWidget(content_);
+    outer->addWidget(scroll);
+    auto* root = new QVBoxLayout(content_);
     ThemeLayout::margins(root, ThemeLayout::Space::XLarge);
     root->setSpacing(0);
 
@@ -180,12 +189,24 @@ void AboutDialog::showEvent(QShowEvent* event)
         return;
 
     compactGeometryApplied_ = true;
+    updateCompactGeometry();
+    resize(screenBoundedWindowSize(this,
+        QSize(ThemeManager::instance().metrics().dialog.preferredWidth, height())));
+}
+
+void AboutDialog::updateCompactGeometry()
+{
+    content_->layout()->activate();
     layout()->activate();
-    setMinimumWidth(std::max(ThemeManager::instance().metrics().dialog.minimumWidth,
-                             layout()->totalMinimumSize().width()));
-    const int compactHeight = layout()->totalSizeHint().height();
-    setFixedHeight(compactHeight);
-    resize(ThemeManager::instance().metrics().dialog.preferredWidth, compactHeight);
+    const int titleHeight = layout()->menuBar() ? layout()->menuBar()->sizeHint().height() : 0;
+    const QSize compactSize(
+        std::max(ThemeManager::instance().metrics().dialog.minimumWidth,
+                 content_->layout()->totalMinimumSize().width()),
+        content_->layout()->totalSizeHint().height() + titleHeight);
+    const QSize bounded = screenBoundedWindowSize(this, compactSize);
+    setMinimumWidth(bounded.width());
+    setFixedHeight(bounded.height());
+    fitWindowToScreen(this);
 }
 
 }

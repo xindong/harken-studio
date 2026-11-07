@@ -30,7 +30,6 @@ AxisRehearsalRow::AxisRehearsalRow(ProjectItem* item, const QString& table,
     const auto& inspector = ThemeManager::instance().metrics().inspector;
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
-    root->setSpacing(inspector.rowSpacing);
 
     auto* heading = new QWidget(this);
     heading->setObjectName(QStringLiteral("selectionFormRow_rehearsalHeading"));
@@ -40,7 +39,6 @@ AxisRehearsalRow::AxisRehearsalRow(ProjectItem* item, const QString& table,
     headingLayout->setSpacing(0);
     name_ = new QLabel(heading);
     name_->setObjectName(QStringLiteral("axisRehearsalName"));
-    name_->setContentsMargins(inspector.columnPadding, 0, inspector.columnPadding, 0);
     QtControlSkin::setSemanticProperty(name_, "textRole",
                                        QStringLiteral("formLabel"));
     kind_ = new QLabel(heading);
@@ -51,9 +49,6 @@ AxisRehearsalRow::AxisRehearsalRow(ProjectItem* item, const QString& table,
     auto* headingValue = new QWidget(heading);
     headingValue->setProperty("columnRole", QStringLiteral("value"));
     auto* headingValueLayout = new QHBoxLayout(headingValue);
-    headingValueLayout->setContentsMargins(inspector.columnPadding, 0,
-                                           inspector.columnPadding, 0);
-    headingValueLayout->setSpacing(inspector.columnPadding);
     headingValueLayout->addWidget(kind_);
     headingValueLayout->addWidget(table_);
     auto* scope = new QComboBox(headingValue);
@@ -81,22 +76,18 @@ AxisRehearsalRow::AxisRehearsalRow(ProjectItem* item, const QString& table,
     headingLayout->addWidget(headingValue, inspector.valueColumnShare);
     auto* headingGutter = new QWidget(heading);
     headingGutter->setProperty("columnRole", QStringLiteral("gutter"));
-    headingGutter->setFixedWidth(inspector.slotWidthFor(occupiedSlots));
     headingLayout->addWidget(headingGutter);
     root->addWidget(heading);
 
     auto* control = new QWidget(this);
     control->setObjectName(QStringLiteral("selectionFormRow_rehearsal"));
     control->setProperty("layoutRole", QStringLiteral("inspectorFormRow"));
-    control->setMinimumHeight(inspector.rowHeight);
     auto* controlLayout = new QHBoxLayout(control);
     controlLayout->setContentsMargins(0, 0, 0, 0);
     controlLayout->setSpacing(0);
     auto* valueLabel = new QLabel(tr("Value"), control);
     valueLabel->setObjectName(QStringLiteral("selectionFormLabel_rehearsal"));
     valueLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-    valueLabel->setContentsMargins(inspector.columnPadding, 0,
-                                   inspector.columnPadding, 0);
     QtControlSkin::setSemanticProperty(valueLabel, "textRole",
                                        QStringLiteral("formLabel"));
     controlLayout->addWidget(valueLabel, inspector.labelColumnShare);
@@ -105,9 +96,6 @@ AxisRehearsalRow::AxisRehearsalRow(ProjectItem* item, const QString& table,
     valueCell->setObjectName(QStringLiteral("selectionFormValue_rehearsal"));
     valueCell->setProperty("columnRole", QStringLiteral("value"));
     auto* valueLayout = new QHBoxLayout(valueCell);
-    valueLayout->setContentsMargins(inspector.columnPadding, 0,
-                                    inspector.columnPadding, 0);
-    valueLayout->setSpacing(inspector.columnPadding);
     slider_ = new RehearsalSlider(valueCell);
     auto* reset = new QPushButton(tr("Reset"), valueCell);
     reset->setObjectName(QStringLiteral("axisRehearsalReset"));
@@ -117,9 +105,29 @@ AxisRehearsalRow::AxisRehearsalRow(ProjectItem* item, const QString& table,
     auto* gutter = new QWidget(control);
     gutter->setObjectName(QStringLiteral("selectionFormGutter_rehearsal"));
     gutter->setProperty("columnRole", QStringLiteral("gutter"));
-    gutter->setFixedWidth(inspector.slotWidthFor(occupiedSlots));
     controlLayout->addWidget(gutter);
     root->addWidget(control);
+
+    ThemeManager::instance().bindMetrics(this,
+        [=, this](const ThemeMetrics& metrics) {
+            const auto& inspector = metrics.inspector;
+            root->setSpacing(inspector.rowSpacing);
+            for (auto* label : {name_, valueLabel})
+                label->setContentsMargins(inspector.columnPadding, 0,
+                                         inspector.columnPadding, 0);
+            for (auto* layout : {headingValueLayout, valueLayout}) {
+                layout->setContentsMargins(inspector.columnPadding, 0,
+                                          inspector.columnPadding, 0);
+                layout->setSpacing(inspector.columnPadding);
+            }
+            for (auto* layout : {headingLayout, controlLayout}) {
+                layout->setStretch(0, inspector.labelColumnShare);
+                layout->setStretch(1, inspector.valueColumnShare);
+            }
+            for (auto* widget : {headingGutter, gutter})
+                widget->setFixedWidth(inspector.slotWidthFor(occupiedSlots));
+            control->setMinimumHeight(inspector.rowHeight);
+        });
 
     connect(slider_->binding(), &ParameterBinding::valueUpdated, this,
             [this](double) {

@@ -29,7 +29,8 @@ protected:
         QStyleOptionButton option;
         initStyleOption(&option);
         const QRect textRect = style()->subElementRect(QStyle::SE_PushButtonContents, &option, this);
-        const int iconWidth = option.icon.isNull() ? 0 : option.iconSize.width() + 4;
+        const int iconWidth = option.icon.isNull() ? 0
+            : option.iconSize.width() + ThemeManager::instance().metrics().spacingXSmall;
         option.text = fontMetrics().elidedText(option.text, Qt::ElideRight,
                                                qMax(0, textRect.width() - iconWidth));
         painter.drawControl(QStyle::CE_PushButton, option);

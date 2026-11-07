@@ -242,6 +242,13 @@ bool paintsControlSurface(const QWidget* widget)
 
 void refreshPalette(QWidget* widget, ThemeManager& manager, QStyle::State state)
 {
+    QLineEdit* editor = nullptr;
+    if (auto* spin = qobject_cast<QAbstractSpinBox*>(widget))
+        editor = spin->findChild<QLineEdit*>(QString(), Qt::FindDirectChildrenOnly);
+    else if (auto* combo = qobject_cast<QComboBox*>(widget))
+        editor = combo->lineEdit();
+    if (editor && editor->font() != widget->font())
+        editor->setFont(widget->font());
     const QWidget* owner = widget;
     if (const auto* scrollArea = qobject_cast<const QAbstractScrollArea*>(widget->parentWidget()))
         if (scrollArea->viewport() == widget) owner = scrollArea;
@@ -425,6 +432,8 @@ void HarkenStyle::polish(QWidget* widget)
             });
     }
     refreshWidgetAppearance(widget, theme());
+    if (auto* view = qobject_cast<QAbstractItemView*>(widget))
+        QTimer::singleShot(0, view, &QAbstractItemView::doItemsLayout);
     auto* comboBox = qobject_cast<QComboBox*>(widget);
     if (comboBox)
         QtControlSkin::applyPopupStyle(comboBox);
@@ -505,6 +514,9 @@ bool HarkenStyle::eventFilter(QObject* watched, QEvent* event)
         case QEvent::EnabledChange:
         case QEvent::Show:
             refresh = true;
+            break;
+        case QEvent::FontChange:
+            refresh = qobject_cast<QAbstractSpinBox*>(widget) || qobject_cast<QComboBox*>(widget);
             break;
         default:
             break;
@@ -769,6 +781,17 @@ void HarkenStyle::drawPrimitive(PrimitiveElement element,
                                 const QStyleOption* option, QPainter* painter,
                                 const QWidget* widget) const
 {
+    if (element == PE_IndicatorMenuCheckMark) {
+        const auto group = option->state & State_Enabled ? QPalette::Active : QPalette::Disabled;
+        const auto role = option->state & State_Selected ? QPalette::HighlightedText : QPalette::Text;
+        const QColor tint = option->palette.color(group, role);
+        const int extent = qMin(theme().metrics().control.checkboxMarkExtent,
+            qMin(option->rect.width(), option->rect.height()));
+        theme().resolveIcon(QString::fromLatin1(ThemeAssetIds::CheckboxChecked),
+            ThemeAssetVariant{QSize(), 1.0, 0, tint}).icon.paint(painter,
+                alignedRect(option->direction, Qt::AlignCenter, QSize(extent, extent), option->rect));
+        return;
+    }
     if (widget) {
         QStringView part;
         bool surface = false;

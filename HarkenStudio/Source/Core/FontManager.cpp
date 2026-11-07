@@ -52,7 +52,7 @@ QFont FontManager::getFont(FontRole role, int sizePtOverride) const
 {
     QFont font = getFont(role);
     if (sizePtOverride > 0)
-        font.setPointSizeF(qMax(6.0, sizePtOverride * double(scaleFactor_)));
+        font.setPointSizeF(qMax(6, sizePtOverride) * scaleFactor());
     return font;
 }
 
@@ -74,7 +74,7 @@ QFont FontManager::getFont(const ThemeSnapshotPtr& snapshot, FontRole role,
         : !typography.body.family.isEmpty() ? typography.body.family : systemSansFamily_;
     QFont font(family);
     const int size = style->pointSize > 0 ? style->pointSize : typography.body.pointSize;
-    font.setPointSizeF(qMax(6.0, size * double(scaleFactor_)));
+    font.setPointSizeF(qMax(6, size) * (snapshot ? snapshot->uiScale : 1.0));
     font.setWeight(static_cast<QFont::Weight>(emphasis == FontEmphasis::Strong
         ? typography.title.weight : style->weight > 0 ? style->weight : typography.body.weight));
     font.setStyleHint(mono ? QFont::Monospace : QFont::SansSerif);
@@ -103,21 +103,13 @@ void FontManager::applyTheme(ThemeSnapshotPtr snapshot)
     if (snapshot_ == snapshot)
         return;
     const bool changed = !snapshot_ || !snapshot
-        || snapshot_->ui.typography != snapshot->ui.typography;
+        || snapshot_->ui.typography != snapshot->ui.typography
+        || snapshot_->uiScale != snapshot->uiScale;
     snapshot_ = std::move(snapshot);
     if (!changed)
         return;
     sansFamily_ = getFont(FontRole::Body).family();
     monoFamily_ = getFont(FontRole::Mono).family();
-    emit fontChanged();
-}
-
-void FontManager::setScaleFactor(float factor)
-{
-    factor = qBound(0.5f, factor, 3.0f);
-    if (qFuzzyCompare(scaleFactor_, factor))
-        return;
-    scaleFactor_ = factor;
     emit fontChanged();
 }
 

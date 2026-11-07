@@ -927,7 +927,8 @@ void BlueprintCanvasWidget::materializeFromSource_()
         }
         for (const auto& [endpoints, group] : parallel) {
             const bool vertical = flowDir_ == CanvasFlowDirection::TB || flowDir_ == CanvasFlowDirection::BT;
-            const QFontMetrics metrics(FontManager::instance().getFont(FontRole::Caption));
+            const QFontMetrics metrics(FontManager::instance().getFont(
+                ThemeManager::instance().unscaledSnapshot(), FontRole::Caption));
             qreal spacing = 12.0;
             for (const auto index : group) {
                 if (!edges[index].label.isEmpty())
@@ -1906,7 +1907,7 @@ void BlueprintCanvasWidget::zoomToFit()
         return;
     }
     fitInView(bounds.adjusted(-60.0, -60.0, 60.0, 60.0), Qt::KeepAspectRatio);
-    const double fitted = transform().m11();
+    const double fitted = zoomFactor();
     const double clamped = std::clamp(fitted, kMinZoom, 1.0);
     if (!qFuzzyCompare(fitted, clamped)) {
         setZoomFactor(clamped);
@@ -2496,13 +2497,14 @@ void BlueprintCanvasWidget::layoutPathNodes_()
     std::vector<std::optional<QPointF>> fixedGainPositions(gainNodes_.size());
     QSettings settings;
     for (size_t index = 0; index < pathPositionKeys_.size(); ++index) {
-        sizes.push_back(signalPathNode(index)->shape().boundingRect().size());
+        const auto* node = signalPathNode(index);
+        sizes.push_back(node->sceneBodySize());
         const auto stored = settings.value(pathPositionKeys_[index]);
         if (stored.canConvert<QPointF>()) fixedPositions[index] = stored.toPointF();
     }
     for (size_t index = 0; index < gainNodes_.size(); ++index) {
         if (!gainNodes_[index]) continue;
-        gainSizes[index] = gainNodes_[index]->shape().boundingRect().size();
+        gainSizes[index] = gainNodes_[index]->sceneBodySize();
         const auto stored = settings.value(gainPositionKeys_[index]);
         if (stored.canConvert<QPointF>()) fixedGainPositions[index] = stored.toPointF();
     }
@@ -2708,7 +2710,8 @@ void BlueprintCanvasWidget::updateConnectPreview_(const QPoint& position)
     auto* node = connectTargetAt_(position, target);
     if (target == dragSourcePin_) { target = nullptr; node = nullptr; }
     const auto end = target ? target->scenePos() : point;
-    QPen pen(ConnectionPath::defaultColor(), 2.0);
+    QPen pen(ConnectionPath::defaultColor(),
+        ThemeManager::instance().unscaledSnapshot()->ui.metrics.connection.lineWidth);
     if (dragAddsSend_) pen.setDashPattern({6, 3});
     tempPath_->setPen(pen);
     tempPath_->setPath(buildTempBezier(dragSourcePin_->scenePos(), end,
@@ -3089,10 +3092,11 @@ void BlueprintCanvasWidget::paintTransitionWatch_(QPainter* painter)
         painter->setRenderHint(QPainter::Antialiasing, true);
         painter->setBrush(Qt::NoBrush);
         const bool overview = detailLevel_ == BlueprintDetailLevel::Overview;
-        const auto& geometry = theme->ui.metrics;
-        QPen nodePen(accentColor, overview ? geometry.accentBorderWidth * 0.75 : geometry.accentBorderWidth, Qt::SolidLine, Qt::SquareCap, Qt::MiterJoin);
+        const auto sceneTheme = ThemeManager::instance().unscaledSnapshot();
+        const auto& geometry = sceneTheme->ui.metrics;
+        QPen nodePen(accentColor, overview ? geometry.accentBorderWidth * 0.75 * theme->uiScale : geometry.accentBorderWidth, Qt::SolidLine, Qt::SquareCap, Qt::MiterJoin);
         nodePen.setCosmetic(overview);
-        QPen edgePen(accentColor, overview ? geometry.accentBorderWidth * 0.75 : geometry.accentBorderWidth + geometry.borderWidth);
+        QPen edgePen(accentColor, overview ? geometry.accentBorderWidth * 0.75 * theme->uiScale : geometry.accentBorderWidth + geometry.borderWidth);
         edgePen.setCosmetic(overview);
 
         for (NodeItem* node : pathNodes) {
@@ -3125,7 +3129,7 @@ void BlueprintCanvasWidget::paintTransitionWatch_(QPainter* painter)
                 refNode && refNode->isVisible()) {
                 const QRectF r = refNode->sceneBoundingRect();
                 const QFont chipFont = FontManager::instance().getFont(
-                    FontRole::Caption, FontEmphasis::Strong);
+                    sceneTheme, FontRole::Caption, FontEmphasis::Strong);
                 const QFontMetrics chipMetrics(chipFont);
                 const QString chipLabel = tr("Timing reference");
                 const QRectF chipRect(
@@ -3388,7 +3392,7 @@ void BlueprintCanvasWidget::refreshPathContents_()
         auto* node = signalPathNode(index);
         node->setContentInfo(pathSource_->nodeContentInfo(index));
         layoutChanged = layoutChanged
-            || node->shape().boundingRect().size() != pathNodeLayoutSizes_[index];
+            || node->sceneBodySize() != pathNodeLayoutSizes_[index];
     }
     if (layoutChanged) layoutPathNodes_();
     refreshNodeTitles_();

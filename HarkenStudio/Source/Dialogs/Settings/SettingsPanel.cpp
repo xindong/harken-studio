@@ -7,6 +7,7 @@
 
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QResizeEvent>
 #include <QSignalBlocker>
 #include <QVBoxLayout>
 
@@ -16,9 +17,6 @@ SettingsPanel::SettingsPanel(QWidget* parent)
     : QWidget(parent)
 {
     ContextInfo::tag(this, ContextTopic::forPanel(QStringLiteral("settings")));
-    ThemeManager::instance().bindMetrics(this, [this](const ThemeMetrics& metrics) {
-        setMinimumSize(metrics.dialog.minimumWidth, metrics.dialog.minimumHeight);
-    });
 
     auto* mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(0, 0, 0, 0);
@@ -43,8 +41,10 @@ SettingsPanel::SettingsPanel(QWidget* parent)
 
     categoryList_ = new QListWidget();
     categoryList_->setObjectName(QStringLiteral("settingsCategoryList"));
-    ThemeManager::instance().bindMetrics(categoryList_, [this](const ThemeMetrics& metrics) {
-        categoryList_->setFixedWidth(metrics.panel.sidebarWidth);
+    categoryList_->setTextElideMode(Qt::ElideNone);
+    categoryList_->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    ThemeManager::instance().bindMetrics(categoryList_, [this](const ThemeMetrics&) {
+        updateCategoryWidth();
     });
     connect(categoryList_, &QListWidget::currentRowChanged,
             this, &SettingsPanel::onCategoryChanged);
@@ -139,6 +139,18 @@ QSize SettingsPanel::sizeHint() const
 {
     const auto& metrics = ThemeManager::instance().metrics().dialog;
     return QSize(metrics.wideWidth, metrics.wideHeight);
+}
+
+void SettingsPanel::resizeEvent(QResizeEvent* event)
+{
+    QWidget::resizeEvent(event);
+    updateCategoryWidth();
+}
+
+void SettingsPanel::updateCategoryWidth()
+{
+    categoryList_->setFixedWidth(qMin(ThemeManager::instance().metrics().panel.sidebarWidth,
+                                     contentsRect().width() / 3));
 }
 
 }

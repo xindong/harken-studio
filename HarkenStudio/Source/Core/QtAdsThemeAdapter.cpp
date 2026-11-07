@@ -105,7 +105,7 @@ ads--CTitleBarButton {
 }
 
 #dockPinButton {
-    qproperty-iconSize: 20px 20px;
+    qproperty-iconSize: @TITLE_ICON_SIZE@px @TITLE_ICON_SIZE@px;
 }
 
 #tabsMenuButton {

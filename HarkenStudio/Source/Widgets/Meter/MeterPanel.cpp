@@ -769,7 +769,8 @@ void MeterPanel::layoutSpectrogramSpeedControl()
     const QRect plot = plotBounds();
     const auto& metrics = ThemeManager::instance().snapshot()->domains.meter.spectrogramMeter.metrics;
     const int top = plot.bottom() + qRound(metrics.timeLabelTopOffset);
-    spectrogramSpeedControl_->setGeometry(plot.left(), top, plot.width(), canvas_->height() - top - 2);
+    spectrogramSpeedControl_->setGeometry(plot.left(), top, plot.width(),
+        canvas_->height() - top - ThemeManager::instance().metrics().spacingCompact);
 }
 
 void MeterPanel::updateDisplay()

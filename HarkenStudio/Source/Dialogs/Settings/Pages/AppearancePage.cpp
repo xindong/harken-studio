@@ -97,7 +97,7 @@ QString roleText(const QString& text)
 }
 
 QPixmap presetSwatch(const ColorPalette& palette, const QVector<ThemeColorRole>& roles,
-                     const ThemeColorOverrides& overrides)
+                     const ThemeColorOverrides& overrides, const ThemeMetrics& metrics)
 {
     ThemeSnapshot snapshot = *palette.snapshot;
     auto values = palette.colors;
@@ -108,7 +108,7 @@ QPixmap presetSwatch(const ColorPalette& palette, const QVector<ThemeColorRole>&
     const QColor samples[]{colors.bgPrimary, colors.bgSecondary, colors.bgSelected,
         colors.accent, colors.textPrimary, colors.textSecondary, colors.success,
         colors.warning, colors.error, colors.info};
-    QPixmap swatch(snapshot.ui.metrics.colorPreview.paletteWidth, snapshot.ui.metrics.colorPreview.paletteHeight);
+    QPixmap swatch(metrics.colorPreview.paletteWidth, metrics.colorPreview.paletteHeight);
     QColor background = colors.bgPrimary;
     background.setAlpha(255);
     swatch.fill(background);
@@ -206,6 +206,7 @@ private:
 AppearancePage::AppearancePage(ThemeManager& themeManager, QWidget* parent)
     : SettingsPage(parent)
     , themeManager_(&themeManager)
+    , uiScale_(themeManager.snapshot()->uiScale)
 {
     auto* body = makePageBody();
     ThemeLayout::margins(body, ThemeLayout::Space::XLarge, ThemeLayout::Space::Large, ThemeLayout::Space::XLarge, ThemeLayout::Space::Large, *themeManager_);
@@ -221,6 +222,18 @@ AppearancePage::AppearancePage(ThemeManager& themeManager, QWidget* parent)
     ContextInfo::tag(themeLabel, themeTopic);
     themeLabel->setBuddy(themeCombo_);
     appearanceForm->addRow(themeLabel, themeCombo_);
+    auto* scaleLabel = new QLabel(tr("Editor Scale:"));
+    uiScaleCombo_ = new QComboBox();
+    uiScaleCombo_->setObjectName(QStringLiteral("appearanceUIScaleCombo"));
+    uiScaleCombo_->setAccessibleName(tr("Editor scale"));
+    for (int level = AppSettings::MIN_GLOBAL_ZOOM_LEVEL; level <= AppSettings::MAX_GLOBAL_ZOOM_LEVEL; ++level) {
+        const int percent = qRound(AppSettings::uiScaleForZoomLevel(level));
+        uiScaleCombo_->addItem(level == 0 ? tr("%1% (Default)").arg(percent)
+                                        : tr("%1%").arg(percent), level);
+    }
+    uiScaleCombo_->setToolTip(tr("Adjust the size of the editor immediately. This setting is shared by all themes."));
+    scaleLabel->setBuddy(uiScaleCombo_);
+    appearanceForm->addRow(scaleLabel, uiScaleCombo_);
     auto* languageLabel = new QLabel(tr("Information Language:"));
     languageCombo_ = new QComboBox();
     languageCombo_->setObjectName(QStringLiteral("appearanceLanguageCombo"));
@@ -315,6 +328,9 @@ AppearancePage::AppearancePage(ThemeManager& themeManager, QWidget* parent)
             this, &AppearancePage::selectColorPreset);
     connect(languageCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &AppearancePage::applyLanguage);
+    connect(uiScaleCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
+        if (index >= 0) AppSettings::instance().setGlobalUIZoomLevel(uiScaleCombo_->itemData(index).toInt());
+    });
     connect(colorGroup_, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &AppearancePage::filterColors);
     connect(colorSearch_, &QLineEdit::textChanged, this, &AppearancePage::filterColors);
@@ -324,13 +340,22 @@ AppearancePage::AppearancePage(ThemeManager& themeManager, QWidget* parent)
             [this](QTreeWidgetItem*, int) { editSelectedColor(); });
     connect(colorReset_, &QPushButton::clicked, this, &AppearancePage::resetSelectedColor);
     connect(colorsReset_, &QPushButton::clicked, this, &AppearancePage::resetColors);
-    connect(themeManager_, &ThemeManager::appearanceChanged, this, [this] {
+    connect(themeManager_, &ThemeManager::appearanceChanged, this, [this](ThemeSnapshotPtr snapshot) {
+        const bool scaleChanged = uiScale_ != snapshot->uiScale;
+        uiScale_ = snapshot->uiScale;
         if (updatingAppearance_) return;
+        if (scaleChanged) {
+            refreshColors();
+            return;
+        }
         if (colorDialog_) colorDialog_->reject();
         load();
     });
     connect(&AppSettings::instance(), &AppSettings::languageChanged,
             this, &AppearancePage::refreshLanguage);
+    connect(&AppSettings::instance(), &AppSettings::globalUIScaleChanged,
+            this, &AppearancePage::refreshUIScale);
+    refreshUIScale();
 }
 
 AppearancePage::~AppearancePage()
@@ -383,6 +408,7 @@ void AppearancePage::load()
     }
     rebuildColorRoles();
     refreshLanguage();
+    refreshUIScale();
     loadBasePalette();
 }
 
@@ -436,6 +462,12 @@ void AppearancePage::refreshLanguage()
     const QSignalBlocker blocker(languageCombo_);
     const int index = languageCombo_->findData(AppSettings::instance().language());
     languageCombo_->setCurrentIndex(index < 0 ? 0 : index);
+}
+
+void AppearancePage::refreshUIScale()
+{
+    const QSignalBlocker blocker(uiScaleCombo_);
+    uiScaleCombo_->setCurrentIndex(uiScaleCombo_->findData(AppSettings::instance().globalUIZoomLevel()));
 }
 
 void AppearancePage::selectTheme()
@@ -492,7 +524,7 @@ void AppearancePage::refreshPresets()
         const auto base = palettes_.constFind(id);
         const bool available = base != palettes_.cend();
         const auto overrides = appearance_.colors.value(appearance_.themeId).value(id);
-        colorPresets_->setItemData(i, available ? presetSwatch(*base, colorRoles_, overrides) : QPixmap(), Qt::UserRole + 1);
+        colorPresets_->setItemData(i, available ? presetSwatch(*base, colorRoles_, overrides, themeManager_->metrics()) : QPixmap(), Qt::UserRole + 1);
         model->item(i)->setEnabled(available);
         colorPresets_->setItemData(i, available
             ? tr("Use the %1 palette of this theme. Edits are saved for this theme and palette.\nMain background · Controls · Selection · Accent · Primary text\nSecondary text · Success · Warning · Error · Information").arg(name)

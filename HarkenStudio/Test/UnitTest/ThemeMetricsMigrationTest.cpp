@@ -21,6 +21,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDir>
+#include <QDoubleSpinBox>
 #include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
@@ -41,6 +42,7 @@
 #include <QScopeGuard>
 #include <QStandardItemModel>
 #include <QStyleFactory>
+#include <QStyledItemDelegate>
 #include <QStyleOptionButton>
 #include <QStyleOptionMenuItem>
 #include <QStylePainter>
@@ -979,6 +981,63 @@ TEST(ThemeMetricsMigration, TableThemeChangesPreserveEditingStateAcrossBodies)
     }
 }
 
+TEST(ThemeMetricsMigration, ItemViewPaintedRowsRemainDisjointAfterPolishAndScaleChanges)
+{
+    class RecordingDelegate final : public QStyledItemDelegate
+    {
+    public:
+        using QStyledItemDelegate::QStyledItemDelegate;
+        mutable QVector<QRect> rectangles = QVector<QRect>(4);
+
+        void paint(QPainter* painter, const QStyleOptionViewItem& option,
+                   const QModelIndex& index) const override
+        {
+            rectangles[index.row()] = option.rect;
+            QStyledItemDelegate::paint(painter, option, index);
+        }
+    };
+    ensureApp();
+    QTemporaryDir directory;
+    auto manager = makeManager(directory.path());
+    qApp->setStyle(new VNX::HarkenStyle(QStyleFactory::create(QStringLiteral("Fusion")), manager.get()));
+    const auto restore = qScopeGuard([] { qApp->setStyle(QStyleFactory::create(QStringLiteral("Fusion"))); });
+    for (const auto& name : {QString(), QStringLiteral("settingsCategoryList")}) {
+        SCOPED_TRACE(name.toStdString());
+        QWidget window;
+        auto* layout = new QVBoxLayout(&window);
+        const auto createList = [&] {
+            auto* list = new QListWidget;
+            list->setObjectName(name);
+            list->setItemDelegate(new RecordingDelegate(list));
+            list->addItems({"First", "Second", "Third", "Fourth"});
+            list->setCurrentRow(2);
+            layout->addWidget(list);
+            return list;
+        };
+        auto* existing = createList();
+        window.resize(800, 1400);
+        window.show();
+        for (const int percent : {100, 300, 50, 125, 100}) {
+            SCOPED_TRACE(percent);
+            manager->setUIScale(percent);
+            auto* fresh = createList();
+            QCoreApplication::processEvents();
+            QCoreApplication::processEvents();
+            renderWidget(window);
+            for (auto* list : {existing, fresh}) {
+                const auto* delegate = static_cast<RecordingDelegate*>(list->itemDelegate());
+                for (int row = 0; row < list->count(); ++row) {
+                    const auto rect = delegate->rectangles[row];
+                    EXPECT_GE(rect.height(), list->fontMetrics().height());
+                    if (row > 0) EXPECT_GT(rect.top(), delegate->rectangles[row - 1].bottom());
+                }
+                EXPECT_EQ(list->currentRow(), 2);
+            }
+            delete fresh;
+        }
+    }
+}
+
 TEST(ThemeMetricsMigration, ExistingLayoutsFollowMetricsWithoutReplacingEditorsOrCommittingGestures)
 {
     ensureApp();
@@ -1014,6 +1073,10 @@ TEST(ThemeMetricsMigration, ExistingLayoutsFollowMetricsWithoutReplacingEditorsO
     panel.resize(700, 700);
     panel.show();
     QCoreApplication::processEvents();
+    auto* valueInput = slider->valueEditor()->findChild<QLineEdit*>();
+    auto* faderInput = fader->valueEditor()->findChild<QLineEdit*>();
+    ASSERT_NE(valueInput, nullptr);
+    ASSERT_NE(faderInput, nullptr);
     editor->setSelection(2, 5);
     const auto originalMargins = layout->contentsMargins();
     const int originalFaderHeight = fader->slider()->minimumHeight();
@@ -1026,6 +1089,21 @@ TEST(ThemeMetricsMigration, ExistingLayoutsFollowMetricsWithoutReplacingEditorsO
     EXPECT_EQ(editor->selectedText(), QStringLiteral("finis"));
     EXPECT_TRUE(binding.isEditing());
     EXPECT_DOUBLE_EQ(binding.value(), 0.75);
+
+    valueInput->selectAll();
+    const QString selectedValue = valueInput->selectedText();
+    for (int percent : {125, 150, 200, 100}) {
+        manager->setUIScale(percent);
+        QCoreApplication::processEvents();
+        EXPECT_EQ(layout->contentsMargins().left(), manager->metrics().spacingMedium);
+        EXPECT_EQ(fader->slider()->minimumHeight(), manager->metrics().parameter.faderMinimumHeight);
+        EXPECT_EQ(editor->selectedText(), QStringLiteral("finis"));
+        EXPECT_TRUE(binding.isEditing());
+        EXPECT_DOUBLE_EQ(binding.value(), 0.75);
+        EXPECT_EQ(valueInput->font(), slider->valueEditor()->font());
+        EXPECT_EQ(faderInput->font(), fader->valueEditor()->font());
+        EXPECT_EQ(valueInput->selectedText(), selectedValue);
+    }
 
     QWidget fresh;
     auto* freshLayout = new QVBoxLayout(&fresh);

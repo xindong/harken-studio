@@ -1,6 +1,8 @@
 
 #include "NewProjectDialog.h"
 #include "Core/ThemeLayout.h"
+#include "Core/WindowPlacement.h"
+#include "Widgets/Common/PanelScrollArea.h"
 
 #include <QFrame>
 #include <QHBoxLayout>
@@ -15,7 +17,8 @@ NewProjectDialog::NewProjectDialog(QWidget* parent)
     setWindowTitle(tr("New Project"));
     setModal(true);
     ThemeManager::instance().bindMetrics(this, [this](const ThemeMetrics& metrics) {
-        setMinimumSize(metrics.dialog.wideWidth, metrics.dialog.wideHeight);
+        setMinimumSize(screenBoundedWindowSize(this,
+            QSize(metrics.dialog.wideWidth, metrics.dialog.wideHeight)));
     });
 
     auto* root = new QVBoxLayout(this);
@@ -23,7 +26,11 @@ NewProjectDialog::NewProjectDialog(QWidget* parent)
     ThemeLayout::spacing(root, ThemeLayout::Space::Large);
 
     chooser_ = new TemplateChooserWidget(this);
-    root->addWidget(chooser_, 1);
+    auto* scroll = new PanelScrollArea(this);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    scroll->setWidget(chooser_);
+    root->addWidget(scroll, 1);
 
     auto* sep = new QFrame(this);
     sep->setFrameShape(QFrame::HLine);

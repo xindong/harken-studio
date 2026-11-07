@@ -356,6 +356,11 @@ float NodeItem::defaultWidth()
     return nodeMetrics().minimumWidth;
 }
 
+QSizeF NodeItem::sceneBodySize() const
+{
+    return shape().boundingRect().size() * scale();
+}
+
 NodeItem::NodeItem(const QString& title, QGraphicsItem* parent)
     : QGraphicsItem(parent)
     , title_(title)
@@ -366,6 +371,7 @@ NodeItem::NodeItem(const QString& title, QGraphicsItem* parent)
     setFlag(ItemIsSelectable);
     setFlag(ItemSendsGeometryChanges);
     setAcceptHoverEvents(true);
+    setScale(1.0 / ThemeManager::instance().snapshot()->uiScale);
     dropOverlay_ = new NodeDropOverlay(this);
     updateContentHeight();
 }
@@ -655,7 +661,10 @@ void NodeItem::retireContentProxy_()
 void NodeItem::refreshContentPresentation()
 {
     prepareGeometryChange();
+    setScale(1.0 / ThemeManager::instance().snapshot()->uiScale);
     paintMargin_ = nodePaintMargin();
+    if (auto* editor = titleEditor())
+        editor->setFont(FontManager::instance().getFont(FontRole::Body, FontEmphasis::Strong));
     for (auto* pin : inputs_) pin->refreshMetrics();
     for (auto* pin : outputs_) pin->refreshMetrics();
     if (contentPresentationFactory_) contentPresentation_ = contentPresentationFactory_();
@@ -1083,7 +1092,7 @@ void NodeItem::paintContentBody(QPainter* painter, float bodyTop) const
     auto drawParamRow = [&](const QString& label, const QString& value) {
         const qreal valueWidth = std::min(QFontMetricsF(valueFont).horizontalAdvance(value),
             static_cast<qreal>(width_ - padLeft - padRight));
-        const qreal labelWidth = std::max(0.0, valueX - valueWidth - padLeft - 8.0);
+        const qreal labelWidth = std::max(0.0, valueX - valueWidth - padLeft - theme->ui.metrics.spacingSmall);
         painter->setFont(labelFont);
         painter->setPen(labelColor);
         painter->drawText(QRectF(padLeft, y, labelWidth, nodeMetrics().rowHeight),
@@ -1159,7 +1168,7 @@ void NodeItem::paintWaveform(QPainter* painter, const QRectF& rect) const
         WaveformRenderer::render(*painter, intRect, *waveformPeakData_, theme->domains.waveform, options);
 
         float midY = rect.y() + rect.height() / 2.0f;
-        painter->setPen(QPen(ngnWf.waveformCenter, 0.5f));
+        painter->setPen(QPen(ngnWf.waveformCenter, theme->ui.metrics.borderWidth * 0.5));
         painter->drawLine(QPointF(rect.x(), midY), QPointF(rect.x() + rect.width(), midY));
         return;
     }

@@ -1,6 +1,5 @@
 
 #include "ObjectRefWidget.h"
-#include "Core/ThemeLayout.h"
 #include "ObjectRefNavigation.h"
 #include "Widgets/Common/ElidedLabel.h"
 
@@ -41,8 +40,6 @@ ObjectRefWidget::ObjectRefWidget(QWidget* parent)
 
     auto* h = new QHBoxLayout(this);
     h->setSizeConstraint(QLayout::SetNoConstraint);
-    ThemeLayout::margins(h, ThemeLayout::Space::Small, ThemeLayout::Space::None, ThemeLayout::Space::XSmall, ThemeLayout::Space::None);
-    ThemeLayout::spacing(h, ThemeLayout::Space::Small);
 
     iconLabel_ = new QLabel(this);
     iconLabel_->setAlignment(Qt::AlignCenter);
@@ -212,8 +209,6 @@ bool ObjectRefWidget::canEdit() const
 void ObjectRefWidget::setCompact(bool compact)
 {
     compact_ = compact;
-    auto* h = static_cast<QHBoxLayout*>(layout());
-    h->setSpacing(compact ? 5 : 6);
     updatePickVisibility();
     refreshDisplay();
 }
@@ -390,8 +385,10 @@ QSize ObjectRefWidget::minimumSizeHint() const
 void ObjectRefWidget::refreshLayout()
 {
     auto* h = static_cast<QHBoxLayout*>(layout());
-    const int left = compact_ ? 5 : 7;
-    const int right = compact_ ? 7 : 4;
+    const auto& metrics = ThemeManager::instance().metrics();
+    h->setSpacing(compact_ ? metrics.spacingXSmall : metrics.spacingSmall);
+    const int left = compact_ ? metrics.spacingXSmall : metrics.spacingSmall;
+    const int right = compact_ ? metrics.spacingSmall : metrics.spacingXSmall;
     const int buttonWidth = pickButton_->isHidden() ? 0 : pickButton_->width();
     const int padding = std::clamp(contentsRect().width() - buttonWidth, 0, left + right);
     const int leftPadding = std::min(left, padding);

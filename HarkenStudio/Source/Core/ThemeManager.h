@@ -63,6 +63,8 @@ public:
     ThemeManager& operator=(const ThemeManager&) = delete;
 
     ThemeSnapshotPtr snapshot() const { return snapshot_; }
+    ThemeSnapshotPtr unscaledSnapshot() const { return publishedCandidate_.snapshot; }
+    void setUIScale(qreal percent);
     QString currentThemeId() const { return currentThemeId_; }
     QString currentPaletteId() const { return currentPaletteId_; }
     QString userThemesRoot() const { return userThemesRoot_; }
@@ -165,6 +167,8 @@ private:
     QString currentPaletteId_;
     QMap<QString, ColorPaletteCustomizations> customizations_;
     ThemePackageCandidate committedCandidate_;
+    ThemePackageCandidate publishedCandidate_;
+    qreal uiScalePercent_ = 100.0;
     QString publishedThemeId_;
     ThemeAssetMapDto publishedAssets_;
     QMap<QString, QString> publishedAssetRoots_;

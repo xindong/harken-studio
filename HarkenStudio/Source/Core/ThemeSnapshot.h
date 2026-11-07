@@ -1062,6 +1062,7 @@ struct DomainColors
 struct ThemeSnapshot
 {
     quint64 generation = 0;
+    qreal uiScale = 1.0;
     ThemeColorScheme colorScheme = ThemeColorScheme::Dark;
     UiTokens ui;
     QtPaletteColors qtPalette;

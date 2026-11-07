@@ -538,8 +538,10 @@ void NodeContentEditor::updateMetrics()
                     textSize, row->editor).width());
         }
     }
-    if (isEditing()) valueWidth = std::max(valueWidth, valueColumnWidth_);
-    valueColumnWidth_ = valueWidth;
+    const qreal uiScale = ThemeManager::instance().snapshot()->uiScale;
+    const qreal baseValueWidth = valueWidth / uiScale;
+    valueColumnBaseWidth_ = isEditing() ? std::max(baseValueWidth, valueColumnBaseWidth_) : baseValueWidth;
+    valueWidth = qRound(valueColumnBaseWidth_ * uiScale);
     auto* grid = qobject_cast<QGridLayout*>(layout());
     const int spacing = ThemeManager::instance().metrics().spacingSmall;
     const int columnWidth = routeGainMode_
