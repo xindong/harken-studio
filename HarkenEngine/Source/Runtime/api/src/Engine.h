@@ -2231,6 +2231,13 @@ struct EngineScheduleSourceMember {
     std::unique_ptr<EngineScheduleSourceRetention> retention;
 };
 
+enum class EngineScheduleSourceServicePhase : std::uint8_t { Idle, Collecting, Settling, Publishing };
+
+struct EngineScheduleSourceServiceWork {
+    EnginePlayableServiceReference service{};
+    std::size_t depth = 0;
+};
+
 struct EngineScheduleSourceCohort {
     EnginePlayableServiceReference owner{};
     EnginePlayablePartitionToken partition{};
@@ -2270,6 +2277,7 @@ struct EngineScheduleAggregateState {
     bool committed = false;
     bool parentNotified = false;
     bool cancellationRequested = false;
+    bool sourceScopeMayAppend = false;
 
     template<class Visitor>
     bool VisitChildren(Visitor&& visitor) {
@@ -2354,6 +2362,7 @@ struct EnginePlayableServiceRow {
     EngineScheduleSourceCohort* scheduleSourceCohort = nullptr;
     EngineScheduleCohortSource* scheduleCohortSource = nullptr;
     EnginePlayableServiceReference sourceCohortFailureOwner{};
+    EnginePlayableServiceReference scheduleSourceSyncOwner{};
     std::unique_ptr<EngineScheduleAggregateChild> scheduleTerminalChild;
     std::unique_ptr<std::vector<EngineScheduleAggregateChild>> scheduleVariableChildren;
     std::uint32_t memberRelationHead = UINT32_MAX;
@@ -13980,6 +13989,10 @@ public:
     std::vector<EngineDecisionRetirement> decisionRetirements;
     std::vector<EnginePlayableStartRow> playableStarts;
     StableRowStorage<EnginePlayableServiceRow> playableServices;
+    std::vector<EngineScheduleSourceServiceWork> scheduleSourceSettlementWork;
+    std::vector<EnginePlayableServiceReference> scheduleSourcePublicationWork;
+    EngineScheduleSourceServicePhase scheduleSourceServicePhase = EngineScheduleSourceServicePhase::Idle;
+    std::uint64_t scheduleSourceObservedAudioSequence = 0;
     StableSlotStorage<EngineMemberProgramRecord> memberProgramRecords;
     std::uint32_t retiredMemberProgramCount = 0;
     StableSlotStorage<EnginePlayableMemberRecord> playableMemberRecords;
