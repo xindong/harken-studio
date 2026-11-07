@@ -21808,12 +21808,14 @@ TEST(PlayableStart, InitialStreamAnchorKeepsSubBlockFutureStartsFixedAndContains
     }
 }
 
-TEST(PlayableStart, LateFutureStreamDoesNotBlockIndependentNativeVariableOnSamePage) {
+static void CheckFutureStreamWithIndependentNativeVariable(bool earlyTerm, unsigned workers = 0) {
     for (const unsigned readiness : {0u, 1u, 2u}) {
+        if (earlyTerm && readiness == 2u) continue;
         const bool lateFuture = readiness == 1u;
         const bool readyBeforeDeadline = readiness == 2u;
-        SCOPED_TRACE(readiness);
+        SCOPED_TRACE(::testing::Message() << "readiness=" << readiness << " earlyTerm=" << earlyTerm << " workers=" << workers);
         auto config = harkentest::MakeNullConfig(8, 64, 48000);
+        config.renderWorkerCount = workers;
         config.maxStreams = 2;
         config.streamRingFrames = 1024;
         config.prebufferMs = 4;
@@ -21941,7 +21943,8 @@ TEST(PlayableStart, LateFutureStreamDoesNotBlockIndependentNativeVariableOnSameP
         ASSERT_NE(0u, actionStep.producedPlayableInstance);
         const auto controlInstance = actionStep.producedPlayableInstance;
         bool releasedBeforeDeadline = false;
-        for (; engine.mixer.BlocksRendered() * config.blockFrames < anchor;) {
+        const auto inspectAt = earlyTerm ? anchor - 2u * config.blockFrames : anchor;
+        for (; engine.mixer.BlocksRendered() * config.blockFrames < inspectAt;) {
             if (readyBeforeDeadline && engine.mixer.BlocksRendered() * config.blockFrames + 2u * config.blockFrames == anchor) {
                 EXPECT_GE(engine.timelinePool.PublishCutoffFrame(), anchor);
                 EXPECT_LT(engine.timelinePool.PublishCutoffFrame(), anchor + config.blockFrames);
@@ -21957,6 +21960,23 @@ TEST(PlayableStart, LateFutureStreamDoesNotBlockIndependentNativeVariableOnSameP
         EXPECT_EQ(readyBeforeDeadline, releasedBeforeDeadline);
         ASSERT_FALSE(root->pendingDirectStartBinding);
         ASSERT_EQ(anchor, root->startFrame);
+        if (earlyTerm) {
+            ASSERT_NE(nullptr, root->scheduleAggregate);
+            std::size_t originalPins = 0;
+            for (const auto& cohort : root->scheduleAggregate->sourceCohorts) {
+                EXPECT_FALSE(cohort->retired);
+                EXPECT_EQ(!lateFuture, cohort->published);
+                for (const auto& side : cohort->sides) for (const auto& source : side->sources) {
+                    EXPECT_TRUE(source.source.Valid());
+                    EXPECT_TRUE(source.body.Valid());
+                    originalPins += source.source.Valid() && source.body.Valid();
+                }
+            }
+            ASSERT_EQ(2u, originalPins);
+            ASSERT_EQ(VN_OK, Vn_Term());
+            session.Release();
+            continue;
+        }
         harken::TimelineArmToken controlArm{};
         for (const auto& identity : engine.timelineVoiceInstallIdentities) {
             if (identity.rootInstance != controlInstance) continue;
@@ -22050,6 +22070,14 @@ TEST(PlayableStart, LateFutureStreamDoesNotBlockIndependentNativeVariableOnSameP
     }
 }
 
+
+TEST(PlayableStart, LateFutureStreamDoesNotBlockIndependentNativeVariableOnSamePage) {
+    CheckFutureStreamWithIndependentNativeVariable(false);
+}
+
+TEST(PlayableStart, ActiveFutureStreamCohortTermReturnsOwnedPins) {
+    for (const auto workers : {0u, 2u}) CheckFutureStreamWithIndependentNativeVariable(true, workers);
+}
 
 TEST(PlayableStart, CroppedEmptyInitialStreamCompletesAndCancelsWithOrWithoutResidentSibling) {
     for (const auto workers : {0u, 2u}) for (const bool residentInitial : {false, true})

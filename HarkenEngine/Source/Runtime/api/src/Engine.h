@@ -9229,6 +9229,7 @@ public:
     }
 
     bool ReturnScheduleCohortSourceAfterPhysicalRelease(TimelineArmToken arm) noexcept;
+    void ReturnScheduleCohortSourceLoansAfterQuiescence() noexcept;
 
     void ReturnPendingVariableLeafSource(OriginalPendingVariableLeafSource& holder) noexcept {
         const bool retained = !holder.Empty();
@@ -10853,6 +10854,7 @@ public:
         voices.ShutdownOriginalSourceBodiesAfterQuiescence();
         variables.ShutdownReadCutsAfterQuiescence();
         originalSourceSubmissions.ShutdownAfterQuiescence();
+        ReturnScheduleCohortSourceLoansAfterQuiescence();
         mixer.FinishControlHeaderAckAfterQuiescence();
         for (auto& resource : authoredStopResources) {
             auto& range = resource.originalControlHeader;
@@ -15675,6 +15677,21 @@ private:
 struct EngineScheduleSourceRetention {
     Engine::OriginalPlayableServiceLifetimePin service;
 };
+
+inline void Engine::ReturnScheduleCohortSourceLoansAfterQuiescence() noexcept {
+    // Audio and render workers are joined; return our structural loans while their receivers still exist.
+    for (auto& row : playableServices) {
+        if (row.scheduleAggregate == nullptr) continue;
+        for (auto& cohort : row.scheduleAggregate->sourceCohorts) {
+            for (auto& side : cohort->sides) for (auto& source : side->sources) {
+                source.body.Release();
+                source.source.Release();
+                if (source.retention != nullptr) source.retention->service.Return();
+            }
+            if (cohort->retention != nullptr) cohort->retention->service.Return();
+        }
+    }
+}
 
 inline bool Engine::ReturnScheduleCohortSourceAfterPhysicalRelease(TimelineArmToken arm) noexcept {
         EngineScheduleCohortSource* source = nullptr;
