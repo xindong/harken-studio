@@ -5320,6 +5320,8 @@ struct EngineActionPlayScratch {
     bool directExecution = false;
     bool initialMediaWaitAllowed = false;
     bool continuationExecution = false;
+    bool initialNativePlacementPending = false;
+    bool initialNativeSourcesPublished = false;
     bool initialForestPublication = false;
     bool initialForestCancellationSealed = false;
     bool nativeEntryDomain = false;
@@ -10826,7 +10828,7 @@ public:
         for (auto& proof : originalSingleOccurrenceCommitProofs) proof.Release();
         compositeCompletionOwners.ReleaseOriginalPreparedLeafCommitProofsForQuiescentOwnerTeardown();
         for (auto& original : originalQueueSourcePreparationHolders) original.ReturnAfterJoinedTerm();
-        for (auto& original : originalSinglePreparationHolders) original.Return();
+        for (auto& original : originalSinglePreparationHolders) original.ReturnAfterJoinedTerm();
         for (auto& original : originalSingleOccurrenceBaselines) original.Release();
         for (auto& original : originalSingleDecisionBaselines) original.Release();
         // Actual callback/worker join permits own structural Return, never a
@@ -10962,6 +10964,7 @@ public:
         VnVoiceHandle sourceIdentity_ = 0;
         VoiceReleaseObserver physicalRelease_{};
         OriginalSourceSubmissionRegistry::PendingInstalledSourceRetirementReceipt retirement_;
+        OriginalSourceSubmissionRegistry::PrivateBoundSourceRetirementReceipt privateBoundRetirement_;
         PreparedSingleCurrentOriginBundle::SourcePin source_;
         PreparedSingleCurrentOriginBundle::BodyPin body_;
         PreparedSingleCurrentOriginBundle::LedgerPin ledgerOriginal_;
@@ -10972,6 +10975,10 @@ public:
         bool singleIssued_ = false;
         bool sourceStartLaneBorrowed_ = false;
         bool returned_ = false;
+        void ReturnAfterJoinedTerm() noexcept {
+            privateBoundRetirement_.Release();
+            Return();
+        }
         void Return() noexcept {
             ledgerCommit_.Release();
             ledgerOriginal_.Release();
@@ -11044,6 +11051,7 @@ public:
         // Both outputs and their observer now belong to this genuine factory.
         // There is no fallible operation after issuance and before registration.
         holder.retirement_.Release();
+        holder.privateBoundRetirement_.Release();
         holder.receiver_ = this;
         originalSingleSourcePreparationSeen = true;
         holder.arm_ = arm;
@@ -11054,6 +11062,24 @@ public:
         holder.originalOccurrence_ = {};
         holder.originalMutation_ = {};
         holder.originalLedgerInput_ = {};
+        return true;
+    }
+    bool BindPrivateInitialNativePageSourceStart(EnginePreparedTimelineVoiceStart& start,
+        const TimelineArmReaderPin& reader, const FrontierGroupBinding& binding, AudioSliceLease& lease,
+        const PreparedTransactionBatch& events, std::uint32_t requestIndex, std::uint32_t eventOrdinal,
+        ArmGroupToken group) noexcept {
+        auto* holder = OriginalSinglePreparationForArm(start.arm);
+        if (holder == nullptr || holder->singleIssued_ || start.prepared || start.commandCount == 0 ||
+            start.commands[0].opcode != kOpcodePlay ||
+            holder->sourceIdentity_ != start.commands[0].payload.play.sourceIdentity) return false;
+        const TimelineArmTable::GroupedPublicationAfterInstallation* publication = nullptr;
+        if (!originalSourceSubmissions.BindPrivatePageGroupSourceStart(holder->source_, holder->body_,
+                preparedVoiceCommandBatchProof, reader, binding, lease, timelinePool, decisions, events,
+                requestIndex, eventOrdinal, armGroups, group, &publication) || publication == nullptr ||
+            (start.initialVariableReadUse.Valid() &&
+             !variables.CanBindFixedTimelineReadUseOnset(start.initialVariableReadUse, *publication))) return false;
+        if (start.initialVariableReadUse.Valid())
+            variables.ApplyFixedTimelineReadUseOnset(start.initialVariableReadUse, *publication);
         return true;
     }
     bool BorrowOriginalSingleSourcePreparation(const OriginalSinglePreparationHolder& original,
@@ -11717,6 +11743,62 @@ public:
         if (outOriginal != nullptr) *outOriginal = current;
         return true;
     }
+    bool MatchesPrivateInitialNativeSourceOwner(const EngineActionPlayScratch& scratch,
+        const EnginePreparedTimelineVoiceStart& start) const noexcept {
+        const auto token = scratch.initialNativeForestOwner;
+        const auto slot = actionPlayStorage.IndexOf(scratch.storage);
+        if (!token.Valid() || !actionPlayScratch.IsConstructed(token.slot) ||
+            !actionPlayScratch.IsConstructed(slot) || &actionPlayScratch[slot] != &scratch ||
+            scratch.row == nullptr || !scratch.row->InvocationValid() ||
+            scratch.voiceStartCount > scratch.voiceStarts.size() ||
+            std::none_of(scratch.voiceStarts.begin(), scratch.voiceStarts.begin() + scratch.voiceStartCount,
+                [&](const auto& voice) noexcept { return &voice == &start; })) return false;
+        const auto& root = actionPlayScratch[token.slot];
+        return root.storage.generation == token.generation && root.initialNativePlacementPending &&
+            root.initialForestPublication && root.initialForestCancellationSealed &&
+            root.initialNativeForestOwner.slot == token.slot && root.initialNativeForestOwner.generation == token.generation &&
+            root.row != nullptr && root.row->InvocationValid() &&
+            root.row->invocation == scratch.row->invocation &&
+            root.row->invocationGeneration == scratch.row->invocationGeneration &&
+            (root.storage.phase == EngineFrontierAttemptPhase::PrivateCommitted ||
+             root.storage.phase == EngineFrontierAttemptPhase::CancelPending);
+    }
+    bool DetachPrivateInitialNativeSource(EngineActionPlayScratch& scratch,
+        EnginePreparedTimelineVoiceStart& start) noexcept {
+        if (!MatchesPrivateInitialNativeSourceOwner(scratch, start) ||
+            !originalSinglePreparationHolders.IsConstructed(start.arm.slot)) return false;
+        auto* holder = &originalSinglePreparationHolders[start.arm.slot];
+        if (holder->receiver_ != this || !SameOriginalSingleArm(holder->arm_, start.arm) ||
+            holder->singleIssued_ || start.prepared || start.arm.slot >= initialFrontierArmPins.size() ||
+            start.commandCount == 0 || start.commands[0].opcode != kOpcodePlay ||
+            holder->sourceIdentity_ != start.commands[0].payload.play.sourceIdentity) return false;
+        if (holder->privateBoundRetirement_.Valid() || holder->retirement_.Valid()) return true;
+        const auto* arm = timelineArms.Resolve(start.arm);
+        if (arm == nullptr || OriginalSinglePreparationForArm(start.arm) != holder ||
+            !originalSourceSubmissions.IsOriginalInstalledSourceCurrent(holder->source_, holder->sourceIdentity_))
+            return false;
+        // An unbound installed Source has no Page admission to detach. Its
+        // existing pending receipt is issued only after every Page has exited.
+        if (!arm->startBound) return arm->pendingImmediateStart && arm->frontierAdmission == nullptr &&
+            arm->frontierAdmissionLease == nullptr;
+        auto& owned = initialFrontierArmPins[start.arm.slot];
+        if (owned.pin.Valid() && !SameOriginalSingleArm(owned.arm, start.arm)) return false;
+        if (!originalSourceSubmissions.DetachPrivateInstalledPageSource(holder->source_, holder->body_,
+                &owned.pin, timelinePool, decisions, &holder->privateBoundRetirement_)) return false;
+        owned.arm = {};
+        owned.entry = {};
+        return true;
+    }
+    bool RetirePrivateInitialNativeSource(EngineActionPlayScratch& scratch,
+        EnginePreparedTimelineVoiceStart& start) noexcept {
+        if (!MatchesPrivateInitialNativeSourceOwner(scratch, start) ||
+            !start.arm.Valid() || !originalSinglePreparationHolders.IsConstructed(start.arm.slot)) return false;
+        auto& holder = originalSinglePreparationHolders[start.arm.slot];
+        if (holder.receiver_ != this || !SameOriginalSingleArm(holder.arm_, start.arm)) return false;
+        return holder.privateBoundRetirement_.Valid()
+            ? originalSourceSubmissions.RetirePrivateBoundSource(holder.privateBoundRetirement_, mixer.BlocksRendered())
+            : RetireOriginalSinglePendingSource(start);
+    }
     bool RetireOriginalSinglePendingSource(const EnginePreparedTimelineVoiceStart& start) noexcept {
         if (!start.arm.Valid() || !originalSinglePreparationHolders.IsConstructed(start.arm.slot)) return false;
         auto& holder = originalSinglePreparationHolders[start.arm.slot];
@@ -11738,9 +11820,11 @@ public:
             start.commandCount == 0 || start.commands[0].opcode != kOpcodePlay) return false;
         const auto& holder = originalSinglePreparationHolders[start.arm.slot];
         return holder.receiver_ == this && SameOriginalSingleArm(holder.arm_, start.arm) &&
-            holder.retirement_.StorageReturned() && originalSourceSubmissions.MatchesPendingInstalledSourceRetirementIdentity(
+            ((holder.retirement_.StorageReturned() && originalSourceSubmissions.MatchesPendingInstalledSourceRetirementIdentity(
                 holder.retirement_, start.arm, start.commands[0].payload.play.sourceIdentity,
-                start.releaseObserver, start.voicePreparation.sourceTerminalToken);
+                start.releaseObserver, start.voicePreparation.sourceTerminalToken)) ||
+             originalSourceSubmissions.MatchesPrivateBoundSourceRetirement(holder.privateBoundRetirement_, start.arm,
+                start.commands[0].payload.play.sourceIdentity, start.releaseObserver, start.voicePreparation.sourceTerminalToken));
     }
     bool OwnsPendingOriginalSingleSourceTerminal(SourceTerminalToken terminal, const SourceTerminalRecord& source) const noexcept {
         const auto slot = static_cast<std::uint32_t>(source.render);
@@ -11750,8 +11834,9 @@ public:
             !originalSinglePreparationHolders.IsConstructed(install.startArm.slot)) return false;
         const auto& holder = originalSinglePreparationHolders[install.startArm.slot];
         return holder.receiver_ == this && SameOriginalSingleArm(holder.arm_, install.startArm) &&
-            originalSourceSubmissions.OwnsPendingInstalledSourceRetirementTerminal(
-                holder.retirement_, install.startArm, terminal, source);
+            (originalSourceSubmissions.OwnsPendingInstalledSourceRetirementTerminal(
+                holder.retirement_, install.startArm, terminal, source) ||
+             originalSourceSubmissions.OwnsPrivateBoundSourceRetirementTerminal(holder.privateBoundRetirement_, terminal, source));
     }
 
     bool ReturnOriginalSingleSourcePreparationAfterPhysicalRelease(TimelineArmToken arm) noexcept {
@@ -11760,6 +11845,7 @@ public:
         if (holder.receiver_ == nullptr || !SameOriginalSingleArm(holder.arm_, arm)) return true;
         if (holder.receiver_ != this) return false;
         if (holder.returned_) return true;
+        if (holder.privateBoundRetirement_.Valid() && !holder.privateBoundRetirement_.Settled()) return false;
         if (!holder.physicalRelease_.Valid() || !voices.ReleaseObserved(holder.physicalRelease_) ||
             OriginalSinglePreparationForArm(arm) != &holder) return false;
         // This returns only the actual Engine-owned structural factory outputs.
