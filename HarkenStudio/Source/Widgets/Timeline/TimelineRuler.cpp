@@ -197,9 +197,16 @@ void TimelineRuler::paintEvent(QPaintEvent*)
         panel_->timeTicks(), FontRole::Body, TimeAxisLabelAlignment::AfterTick, dualAxis);
     painter.setPen(style.canvasBorder);
     painter.drawLine(0, rulerHeight - 1, width(), rulerHeight - 1);
-    if (const int gap = panel_->laneHeaderGap(); gap > 0)
-        painter.fillRect(headerWidth - gap, 0, gap, height(), theme->qtPalette.window);
-    else
+    if (const int gap = panel_->laneHeaderGap(); gap > 0) {
+        const bool highlighted = panel_->laneHeaderResizeHighlighted();
+        const int border = theme->ui.metrics.borderWidth;
+        const QRect gapRect(headerWidth - gap, 0, gap, height());
+        painter.fillRect(gapRect, highlighted ? theme->ui.colors.accent : theme->qtPalette.window);
+        if (!highlighted) {
+            painter.fillRect(gapRect.left(), 0, border, height(), theme->ui.colors.borderPrimary);
+            painter.fillRect(gapRect.right() + 1 - border, 0, border, height(), theme->ui.colors.borderPrimary);
+        }
+    } else
         painter.drawLine(headerWidth - 1, 0, headerWidth - 1, rulerHeight - 1);
     painter.drawLine(headerWidth + canvasWidth, 0, headerWidth + canvasWidth, height());
     const QRect grip = cursorHandleRect();

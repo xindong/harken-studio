@@ -233,7 +233,7 @@ void CollapsibleSection::applyTheme()
 
     if (innerContent_ && innerContent_->layout())
     {
-        innerContent_->layout()->setContentsMargins(layout.panelPadding, layout.rowInset,
+        innerContent_->layout()->setContentsMargins(layout.indent, layout.rowInset,
                                                     0, layout.rowInset);
     }
 

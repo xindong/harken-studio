@@ -37,6 +37,7 @@ void deriveUiMetrics(ThemeMetrics& m, const Scale& s)
     layout.rowInset = compact;
     layout.rowHeight = layout.fieldHeight + layout.rowInset * 2;
     layout.sectionHeaderHeight = layout.rowHeight + compact;
+    layout.indent = m.iconExtent + layout.controlGap;
 
     auto& control = m.control;
     control.textPaddingX = small;

@@ -581,9 +581,11 @@ int HarkenStyle::pixelMetric(PixelMetric metric, const QStyleOption* option,
         return 0;
     if (metric == PM_LayoutLeftMargin || metric == PM_LayoutTopMargin
         || metric == PM_LayoutRightMargin || metric == PM_LayoutBottomMargin)
-        return theme().metrics().spacingSmall;
+        return theme().metrics().layout.panelPadding;
     if (metric == PM_LayoutHorizontalSpacing || metric == PM_LayoutVerticalSpacing)
-        return theme().metrics().spacingXSmall;
+        return theme().metrics().layout.controlGap;
+    if (metric == PM_ToolBarItemMargin || metric == PM_ToolBarFrameWidth)
+        return 0;
     if (metric == PM_ToolBarIconSize || metric == PM_ButtonIconSize)
         return theme().metrics().iconExtent;
     if (metric == PM_SplitterWidth)

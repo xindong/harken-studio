@@ -55,8 +55,10 @@ QWidget#timelineHeaderColumn QFrame#listBox[cellSelection="true"] QWidget[tableR
 }
 
 QFrame#timelineHeaderResizeBar {
-    background: transparent;
+    background-color: @window@;
     border: none;
+    border-left: @borderWidth@px solid @borderPrimary@;
+    border-right: @borderWidth@px solid @borderPrimary@;
 }
 
 QFrame#timelineLaneResizeBar {
@@ -71,6 +73,7 @@ QFrame#timelineLaneResizeBar[highlighted="true"] {
 
 QFrame#timelineHeaderResizeBar[highlighted="true"] {
     background-color: @accent@;
+    border-color: @accent@;
 }
 
 QWidget#timelineLaneHost {
@@ -232,9 +235,7 @@ QToolBar {
     border: none;
     border-top: @borderWidth@px solid @borderPrimary@;
     spacing: @controlGap@px;
-    padding: @tightGap@px;
-    min-height: @controlHeight@px;
-    max-height: @controlHeight@px;
+    padding: 0px @tightGap@px;
 }
 
 QToolButton {
@@ -306,10 +307,6 @@ QToolBar#platformBar QToolButton[segmentedControl="true"] {
 }
 QToolBar#platformBar QToolButton#platformBarAll {
     padding: 0px @textPadding@px;
-}
-QToolBar#platformBar QComboBox {
-    min-height: @compactControlHeight@px;
-    max-height: @compactControlHeight@px;
 }
 QToolBar#platformBar QToolButton[segmentedControl="true"]:hover:enabled {
     background: @bgHover@;

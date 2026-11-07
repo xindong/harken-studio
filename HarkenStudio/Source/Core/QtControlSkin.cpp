@@ -529,7 +529,6 @@ QString QtControlSkin::applicationStyleSheet() const
     replace(QStringLiteral("@accentBorderWidth@"), QString::number(metrics().accentBorderWidth));
     replace(QStringLiteral("@radiusCompact@"), QString::number(metrics().radiusCompact));
     replace(QStringLiteral("@controlHeight@"), QString::number(metrics().controlHeight));
-    replace(QStringLiteral("@compactControlHeight@"), QString::number(metrics().control.compactHeight));
     replace(QStringLiteral("@smallIconExtent@"), QString::number(metrics().control.smallIconExtent));
     replace(QStringLiteral("@iconExtent@"), QString::number(metrics().iconExtent));
     replace(QStringLiteral("@scrollbarExtent@"), QString::number(metrics().control.scrollbarExtent));
@@ -641,7 +640,7 @@ QString QtControlSkin::collapsibleHeaderStyle(const QColor& indicator, bool cust
                           : QStringLiteral("border: none;");
         hoverBg  = QStringLiteral("transparent");
     }
-    const QString pad = QString("padding: 0px %1px;").arg(metrics().layout.panelPadding);
+    const QString pad = QString("padding: 0px %1px 0px 0px;").arg(metrics().layout.panelPadding);
     const int contentHeight = metrics().layout.sectionHeaderHeight - verticalBorder;
 
     if (backgroundTint.isValid()) {

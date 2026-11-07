@@ -596,7 +596,10 @@ void TimelineEditorPanel::resetLaneHeaderWidth()
 
 void TimelineEditorPanel::setLaneHeaderResizeHighlighted(bool highlighted)
 {
+    laneHeaderResizeHighlighted_ = highlighted;
     QtControlSkin::setSemanticProperty(laneHeaderResizeBar_, "highlighted", highlighted);
+    if (ruler_)
+        ruler_->update();
 }
 
 void TimelineEditorPanel::applyLaneHeaderWidth()

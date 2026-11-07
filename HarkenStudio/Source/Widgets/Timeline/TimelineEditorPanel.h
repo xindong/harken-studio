@@ -171,6 +171,7 @@ public:
     const ThemeMetrics::Timeline& timelineMetrics() const;
     int laneHeaderWidth() const;
     int laneHeaderGap() const;
+    bool laneHeaderResizeHighlighted() const { return laneHeaderResizeHighlighted_; }
     QRect laneRect(int index) const;
     int laneHeight(int index) const;
     void setLaneHeight(int index, int height);
@@ -398,6 +399,7 @@ private:
     QLabel* stateLabel_ = nullptr;
     QFrame* timelinePage_ = nullptr;
     QFrame* laneHeaderResizeBar_ = nullptr;
+    bool laneHeaderResizeHighlighted_ = false;
     QWidget* toolbar_ = nullptr;
     QWidget* timeControls_ = nullptr;
     QDoubleSpinBox* tempoSpin_ = nullptr;

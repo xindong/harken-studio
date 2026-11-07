@@ -122,6 +122,7 @@ struct ThemeMetrics
         int rowInset = 0;
         int rowHeight = 0;
         int sectionHeaderHeight = 0;
+        int indent = 0;
         bool operator==(const Layout&) const = default;
     } layout;
 
