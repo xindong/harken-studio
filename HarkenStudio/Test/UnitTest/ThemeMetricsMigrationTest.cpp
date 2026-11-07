@@ -3,6 +3,9 @@
 #include "Core/QtControlSkin.h"
 #include "Core/ThemeManager.h"
 #include "Core/ThemeLayout.h"
+#include "Core/FontManager.h"
+#include "Dialogs/StartupLoadingWindow.h"
+#include "Widgets/Assistant/AssistantPanel.h"
 #include "Widgets/Common/LinearSliderPresenter.h"
 #include "Widgets/Common/VerticalFaderPresenter.h"
 #include "Widgets/Common/ParameterBinding.h"
@@ -35,6 +38,11 @@
 #include <QMenuBar>
 #include <QImage>
 #include <QProgressBar>
+#include <QPointer>
+#include <QScreen>
+#include <QScrollBar>
+#include <QTextDocument>
+#include <QTextCursor>
 #include <QSlider>
 #include <QPainter>
 #include <QPushButton>
@@ -343,6 +351,7 @@ TEST(ThemeMetricsMigration, ColorPreviewPreservesMetricsAndSynchronizesNativePal
     panel.show();
     QCoreApplication::processEvents();
     editor->setSelection(2, 6);
+    layout->activate();
     const auto original = manager->snapshot();
     const auto originalPalette = qApp->palette();
     const auto geometry = editor->geometry();
@@ -400,6 +409,110 @@ TEST(ThemeMetricsMigration, ColorPreviewPreservesMetricsAndSynchronizesNativePal
     EXPECT_EQ(fixedCombo->minimumSize(), comboMinimum);
     EXPECT_EQ(fixedCombo->maximumSize(), comboMaximum);
     EXPECT_EQ(fixedCombo->currentText(), QStringLiteral("Second"));
+}
+
+TEST(ThemeMetricsMigration, MessagePresentationChangesPreserveReadingAndPendingInput)
+{
+    ensureApp();
+    auto& theme = VNX::ThemeManager::instance();
+    const qreal originalScale = theme.snapshot()->uiScale * 100.0;
+    const auto restore = qScopeGuard([&] { theme.setUIScale(originalScale); });
+    theme.setUIScale(100);
+    const auto settle = [] {
+        QEventLoop loop;
+        QTimer::singleShot(80, &loop, &QEventLoop::quit);
+        loop.exec();
+    };
+    VNX::AssistantPanel panel;
+    panel.resize(640, 640);
+    panel.show();
+    const QString message = QStringLiteral("Response **with emphasis** and `inline_code`. ").repeated(20);
+    QJsonArray history;
+    for (int index = 0; index < 24; ++index)
+        history.append(QJsonObject{
+            {QStringLiteral("role"), index % 2 != 0 ? QStringLiteral("user") : QStringLiteral("assistant")},
+            {QStringLiteral("content"), message}});
+    panel.onConversationRestored(history);
+    panel.onConfirmationRequired(QStringLiteral("pending"), QJsonObject{
+        {QStringLiteral("cmd"), QStringLiteral("inspect")},
+        {QStringLiteral("args"), QJsonObject{}}});
+    settle();
+    auto* list = panel.findChild<QListWidget*>(QStringLiteral("aiChatList"));
+    auto* input = panel.findChild<QLineEdit*>(QStringLiteral("assistantInput"));
+    ASSERT_NE(list, nullptr);
+    ASSERT_NE(input, nullptr);
+    input->setFocus();
+    QCoreApplication::processEvents();
+    auto* anchor = list->item(8);
+    QPointer<QWidget> messageWidget = list->itemWidget(anchor);
+    QPointer<QLabel> label = messageWidget->findChild<QLabel*>(QStringLiteral("aiMessageContent"));
+    QPointer<QWidget> confirmation = list->itemWidget(list->item(24));
+    ASSERT_NE(label, nullptr);
+    list->scrollToItem(anchor, QAbstractItemView::PositionAtTop);
+    label->setSelection(3, 11);
+    const QString selected = label->selectedText();
+    input->setText(QStringLiteral("unfinished input"));
+    input->setSelection(2, 6);
+    for (int percent : {150, 70, 300, 100}) {
+        SCOPED_TRACE(percent);
+        theme.setUIScale(percent);
+        settle();
+        ASSERT_FALSE(messageWidget.isNull());
+        ASSERT_FALSE(label.isNull());
+        EXPECT_EQ(list->itemWidget(anchor), messageWidget);
+        EXPECT_EQ(list->count(), 25);
+        EXPECT_EQ(list->itemWidget(list->item(24)), confirmation);
+        EXPECT_EQ(label->selectedText(), selected);
+        EXPECT_EQ(input->selectedText(), QStringLiteral("finish"));
+        EXPECT_LE(qAbs(list->visualItemRect(anchor).top()), 2);
+        QTextDocument document;
+        document.setDefaultFont(label->font());
+        document.setHtml(label->text());
+        const auto code = document.find(QStringLiteral("inline_code"));
+        ASSERT_FALSE(code.isNull());
+        EXPECT_NEAR(code.charFormat().fontPointSize(),
+            VNX::FontManager::instance().getFont(VNX::FontRole::Mono).pointSizeF(), 0.01);
+    }
+    list->verticalScrollBar()->setValue(list->verticalScrollBar()->value()
+        + list->visualItemRect(anchor).height() / 3);
+    const auto before = list->visualItemRect(anchor);
+    theme.setUIScale(150);
+    settle();
+    const auto after = list->visualItemRect(anchor);
+    EXPECT_NEAR(-qreal(after.top()) / after.height(), -qreal(before.top()) / before.height(), 0.02);
+    list->scrollToBottom();
+    theme.setUIScale(125);
+    settle();
+    EXPECT_EQ(list->verticalScrollBar()->value(), list->verticalScrollBar()->maximum());
+}
+
+TEST(ThemeMetricsMigration, StartupPresentationKeepsControlsInsideAvailableScreen)
+{
+    ensureApp();
+    auto& theme = VNX::ThemeManager::instance();
+    const qreal originalScale = theme.snapshot()->uiScale * 100.0;
+    const auto restore = qScopeGuard([&] { theme.setUIScale(originalScale); });
+    for (int percent : VNX::AppSettings::GLOBAL_SCALE_PRESETS) {
+        SCOPED_TRACE(percent);
+        theme.setUIScale(percent);
+        VNX::StartupLoadingWindow window;
+        window.setProjectName(QStringLiteral("A project with a long name ").repeated(12));
+        window.show();
+        QEventLoop loop;
+        QTimer::singleShot(30, &loop, &QEventLoop::quit);
+        loop.exec();
+        ASSERT_NE(window.screen(), nullptr);
+        EXPECT_TRUE(window.screen()->availableGeometry().contains(window.frameGeometry()));
+        for (const auto* name : {"startupLoadingProject", "startupLoadingStatus",
+                                "startupLoadingPercent", "startupLoadingProgress",
+                                "startupLoadingCloseButton"}) {
+            auto* control = window.findChild<QWidget*>(QLatin1String(name));
+            ASSERT_NE(control, nullptr);
+            EXPECT_TRUE(control->isVisible());
+            EXPECT_TRUE(window.rect().contains(QRect(control->mapTo(&window, QPoint()), control->size())));
+        }
+        window.dismiss();
+    }
 }
 
 TEST(ThemeMetricsMigration, DisabledAndDimmedLabelsFollowColorPreviewAndRestore)

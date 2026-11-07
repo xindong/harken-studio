@@ -4,6 +4,8 @@
 
 #include "Core/ThemeAssetCatalog.h"
 #include "Core/ThemeManager.h"
+#include "Core/WindowPlacement.h"
+#include "Widgets/Common/ElidedLabel.h"
 #include "harken_buildinfo.h"
 
 #include <QCloseEvent>
@@ -44,6 +46,8 @@ StartupLoadingWindow::StartupLoadingWindow()
     setAttribute(Qt::WA_DeleteOnClose, false);
     setAttribute(Qt::WA_QuitOnClose, false);
     setWindowTitle(tr("Harken Studio"));
+    if (auto* target = QGuiApplication::screenAt(QCursor::pos()))
+        setScreen(target);
 
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -65,7 +69,7 @@ StartupLoadingWindow::StartupLoadingWindow()
         waitingForInitialFrame_ = false;
         setWindowOpacity(1.0);
     }, Qt::QueuedConnection);
-    auto* topography = QWidget::createWindowContainer(renderer_->window(), this);
+    auto* topography = topography_ = QWidget::createWindowContainer(renderer_->window(), this);
     topography->setObjectName(QStringLiteral("startupLoadingTopography"));
     topography->setAttribute(Qt::WA_NativeWindow);
     topography->setAttribute(Qt::WA_TransparentForMouseEvents);
@@ -74,7 +78,7 @@ StartupLoadingWindow::StartupLoadingWindow()
     layout->addWidget(topography);
     renderer_->setViewport(topography->size(), topography->devicePixelRatioF());
 
-    auto* content = new QWidget(this);
+    auto* content = content_ = new QWidget(this);
     content->setObjectName(QStringLiteral("startupLoadingContent"));
     content->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     content->setAttribute(Qt::WA_TransparentForMouseEvents);
@@ -86,7 +90,7 @@ StartupLoadingWindow::StartupLoadingWindow()
 
     auto* projectRow = new QHBoxLayout();
     ThemeLayout::spacing(projectRow, ThemeLayout::Space::Medium);
-    projectLabel_ = new QLabel(tr("No project selected"), content);
+    projectLabel_ = new ElidedLabel(tr("No project selected"), content);
     projectLabel_->setObjectName(QStringLiteral("startupLoadingProject"));
     projectLabel_->setTextInteractionFlags(Qt::NoTextInteraction);
     projectLabel_->setAccessibleName(tr("Project name"));
@@ -102,7 +106,7 @@ StartupLoadingWindow::StartupLoadingWindow()
 
     auto* statusRow = new QHBoxLayout();
     ThemeLayout::spacing(statusRow, ThemeLayout::Space::Medium);
-    statusLabel_ = new QLabel(content);
+    statusLabel_ = new ElidedLabel(content);
     statusLabel_->setObjectName(QStringLiteral("startupLoadingStatus"));
     statusLabel_->setAccessibleName(tr("Startup status"));
     statusRow->addWidget(statusLabel_, 1);
@@ -141,13 +145,8 @@ StartupLoadingWindow::StartupLoadingWindow()
     closeButton_->raise();
     connect(closeButton_, &QToolButton::clicked, this, &QWidget::close);
 
-    theme.bindMetrics(this, [this, topography, content](const ThemeMetrics& metrics) {
-        topography->setFixedHeight(metrics.startup.artworkHeight);
-        setFixedSize(metrics.startup.width, metrics.startup.artworkHeight + content->sizeHint().height());
-        const auto& chrome = ThemeManager::instance().snapshot()->thirdParty.qtAds.metrics;
-        closeButton_->move(width() - closeButton_->width() - chrome.titleBarButtonPadding, chrome.titleBarButtonPadding);
-    });
     setPhase(StartupPhase::PreparingApplication);
+    theme.bindMetrics(this, [this](const ThemeMetrics&) { updatePresentationGeometry(); });
 }
 
 StartupLoadingWindow::~StartupLoadingWindow() = default;
@@ -291,6 +290,7 @@ void StartupLoadingWindow::closeEvent(QCloseEvent* event)
 void StartupLoadingWindow::showEvent(QShowEvent* event)
 {
     QWidget::showEvent(event);
+    updatePresentationGeometry();
     if (!initialPositionSet_) {
         centerOnScreen();
         initialPositionSet_ = true;
@@ -322,8 +322,31 @@ void StartupLoadingWindow::centerOnScreen()
         screen = QGuiApplication::primaryScreen();
     if (!screen)
         return;
+    if (this->screen() != screen)
+        setScreen(screen);
+    updatePresentationGeometry();
     const QRect available = screen->availableGeometry();
     move(available.center() - rect().center());
+}
+
+void StartupLoadingWindow::updatePresentationGeometry()
+{
+    ensurePolished();
+    content_->layout()->invalidate();
+    const auto& theme = *ThemeManager::instance().snapshot();
+    const auto& metrics = theme.ui.metrics.startup;
+    const int contentHeight = content_->sizeHint().height();
+    const QSize bounded = screenBoundedWindowSize(this,
+        QSize(metrics.width, metrics.artworkHeight + contentHeight));
+    topography_->setFixedHeight(qMax(0, bounded.height() - contentHeight));
+    setFixedSize(bounded);
+    layout()->activate();
+    const auto& chrome = theme.thirdParty.qtAds.metrics;
+    const int buttonExtent = chrome.closeButtonExtent + chrome.closeButtonPadding * 2;
+    closeButton_->setFixedSize(buttonExtent, buttonExtent);
+    closeButton_->setIconSize(QSize(chrome.titleBarIconSize, chrome.titleBarIconSize));
+    closeButton_->move(width() - buttonExtent - chrome.titleBarButtonPadding,
+                       chrome.titleBarButtonPadding);
 }
 
 }

@@ -48,10 +48,14 @@ QString messageHtml(const QString& text, const QColor& border)
 
 void applyMessageLabelStyle(QLabel* label, bool user, int fontSize)
 {
+    const int selectionStart = label->selectionStart();
+    const int selectionLength = label->selectedText().size();
     const QFont font = FontManager::instance().getFont(FontRole::Body, fontSize);
     label->setFont(font);
     label->setObjectName(user ? QStringLiteral("aiUserMessageContent")
                               : QStringLiteral("aiMessageContent"));
+    if (selectionStart >= 0)
+        label->setSelection(selectionStart, selectionLength);
 }
 
 class AIConfirmationWidget : public QWidget
@@ -70,15 +74,14 @@ public:
         const QString cmd = command.value(QStringLiteral("cmd")).toString();
         const QString args = QString::fromUtf8(QJsonDocument(
             command.value(QStringLiteral("args")).toObject()).toJson(QJsonDocument::Compact));
-        auto* label = new QLabel(QObject::tr("[Permission] %1\nArguments: %2")
+        label_ = new QLabel(QObject::tr("[Permission] %1\nArguments: %2")
                                      .arg(cmd, boundedStatus(args)), this);
-        label->setObjectName(QStringLiteral("aiConfirmationText"));
-        label->setTextFormat(Qt::PlainText);
-        label->setWordWrap(true);
-        label->setTextInteractionFlags(Qt::TextSelectableByMouse);
-        const QFont font = FontManager::instance().getFont(FontRole::Body, fontSize);
-        label->setFont(font);
-        layout->addWidget(label);
+        label_->setObjectName(QStringLiteral("aiConfirmationText"));
+        label_->setTextFormat(Qt::PlainText);
+        label_->setWordWrap(true);
+        label_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        setFontSize(fontSize);
+        layout->addWidget(label_);
 
         QHBoxLayout* buttons = new QHBoxLayout();
         auto* approve = new QPushButton(QObject::tr("Approve"), this);
@@ -102,6 +105,14 @@ public:
         connect(reject, &QPushButton::clicked, this,
                 [resolveOnce]() { resolveOnce(false); });
     }
+
+    void setFontSize(int fontSize)
+    {
+        label_->setFont(FontManager::instance().getFont(FontRole::Body, fontSize));
+    }
+
+private:
+    QLabel* label_ = nullptr;
 };
 
 }
@@ -112,10 +123,8 @@ AIMessageWidget::AIMessageWidget(const QString& text, int fontSize, QWidget* par
     setObjectName("AIMessageWidget");
     setupUI(text, fontSize);
     connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged, this,
-        [this, text, border = ThemeManager::instance().colors().borderSecondary]() mutable {
+        [this, text] {
             const auto color = ThemeManager::instance().colors().borderSecondary;
-            if (border == color) return;
-            border = color;
             const auto html = messageHtml(text, color);
             if (contentLabel_->text() == html) return;
             const int selectionStart = contentLabel_->selectionStart();
@@ -908,7 +917,16 @@ void AssistantPanel::applyFontSettings()
     inputEdit_->ensurePolished();
     inputEdit_->setFont(inputFont);
 
-    refreshMessages();
+    for (int index = 0; index < chatList_->count(); ++index) {
+        auto* widget = chatList_->itemWidget(chatList_->item(index));
+        if (auto* message = qobject_cast<AIMessageWidget*>(widget))
+            message->setFontSize(currentFontSize_);
+        else if (auto* message = qobject_cast<UserMessageWidget*>(widget))
+            message->setFontSize(currentFontSize_);
+        else if (auto* confirmation = dynamic_cast<AIConfirmationWidget*>(widget))
+            confirmation->setFontSize(currentFontSize_);
+    }
+    QTimer::singleShot(0, this, &AssistantPanel::relayoutMessages);
 }
 
 void AssistantPanel::applyAppearance()
@@ -970,11 +988,25 @@ bool AssistantPanel::eventFilter(QObject* watched, QEvent* event)
 
 void AssistantPanel::relayoutMessages()
 {
-    if (!chatList_)
+    if (!chatList_ || relayoutActive_)
         return;
     const int w = chatList_->viewport()->width();
     if (w <= 0)
         return;
+
+    const QScopedValueRollback<bool> guard(relayoutActive_, true);
+    auto* scrollbar = chatList_->verticalScrollBar();
+    const bool atBottom = scrollbar->value() == scrollbar->maximum();
+    QListWidgetItem* anchor = nullptr;
+    qreal offset = 0.0;
+    for (int index = 0; !atBottom && index < chatList_->count(); ++index) {
+        auto* item = chatList_->item(index);
+        const QRect rect = chatList_->visualItemRect(item);
+        if (rect.bottom() < 0 || rect.height() <= 0) continue;
+        anchor = item;
+        offset = qMax(0.0, -qreal(rect.top()) / rect.height());
+        break;
+    }
 
     for (int i = 0; i < chatList_->count(); ++i) {
         QListWidgetItem* item = chatList_->item(i);
@@ -990,6 +1022,13 @@ void AssistantPanel::relayoutMessages()
             h = mw->sizeHint().height();
         if (h > 0 && item->sizeHint() != QSize(w, h))
             item->setSizeHint(QSize(w, h));
+    }
+    chatList_->doItemsLayout();
+    if (atBottom)
+        scrollbar->setValue(scrollbar->maximum());
+    else if (anchor) {
+        const QRect rect = chatList_->visualItemRect(anchor);
+        scrollbar->setValue(scrollbar->value() + rect.top() + qRound(offset * rect.height()));
     }
 }
 

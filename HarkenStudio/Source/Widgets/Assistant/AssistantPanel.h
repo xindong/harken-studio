@@ -135,6 +135,7 @@ private:
     int currentFontSize_ = 0;
     bool turnActive_ = false;
     bool batchingMessages_ = false;
+    bool relayoutActive_ = false;
     bool failedStepSeen_ = false;
     bool inServiceCall_ = false;
     bool updatingConversationSelector_ = false;

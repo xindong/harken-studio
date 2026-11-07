@@ -78,6 +78,10 @@
 
 提交 PR 前同步 main，波形预览边距迁入共享 PreviewField，曲线字体与标签避让规则接入 CurvePlotGeometry；主线新增的拖动边框读取主题边框尺寸。合并后编辑器与测试目标构建通过，157 项相关回归全部通过，包含滤波器预览随平台切换及图形编辑手势，结果为 `.temp/scale-pr-tests.xml`。QSS 归属检查及其 6 项脚本测试、PR 模板和 DCO 检查通过。
 
+PR 审查后补充修复：Assistant 在原消息和待确认控件上更新字体与富文本，保留文字选区、输入状态、当前可见消息及消息内的相对阅读位置；原本位于底部时继续跟随底部。启动窗口按目标屏幕的可用区域限制尺寸，优先压缩插图高度，长项目名和状态文字省略显示，保持关闭按钮、进度和状态区域可见。Windows CI 中的颜色预览测试在初始布局完成前记录几何基线，现改为激活布局后记录，保留全部原有断言。
+
+本轮编辑器与测试目标构建通过，162 项相关回归全部通过（`.temp/scale-pr-review-regression.xml`）；另将 `ThemeMetricsMigration` 单独运行，18 项全部通过，覆盖 CI 的独立进程初始化路径（`.temp/scale-pr-review-focused.xml`）。两项新增的状态保留与窗口边界回归同时通过 Windows 原生运行，启动窗口覆盖全部 11 档比例及长项目名（`.temp/scale-pr-review-native.xml`）；QSS 归属检查及其 6 项脚本测试通过。原生运行采用隔离桌面，未覆盖跨显示器 DPI 切换。
+
 另外记录一项与缩放无关的既有布局问题：Transition 状态栏徽标和计数在 100% 下也会因 `QSizePolicy::Ignored` 与零 stretch 收缩为零宽。本次保持该部分原状；它不属于上述缩放修复的通过项。
 
 ## Studio Default 颜色职责
