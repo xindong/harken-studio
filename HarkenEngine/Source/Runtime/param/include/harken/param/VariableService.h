@@ -616,6 +616,10 @@ public:
         const TimelineArmTable::PrivatePendingImmediateArmProof& publication) const noexcept;
     void ApplyFixedTimelineReadUseOnset(VariableTimelineReadUseRef use,
         const TimelineArmTable::PrivatePendingImmediateArmProof& publication) noexcept;
+    bool CanBindFixedTimelineReadUseOnset(VariableTimelineReadUseRef use,
+        const TimelineArmTable::GroupedPublicationAfterInstallation& publication) const noexcept;
+    void ApplyFixedTimelineReadUseOnset(VariableTimelineReadUseRef use,
+        const TimelineArmTable::GroupedPublicationAfterInstallation& publication) noexcept;
     bool BeginPendingTimelineReadUsePlacement(VariableTimelineReadUseRef use,
         const ImmediateActionLane& lane, const PrivatePlainLayoutCommitProof& placement,
         VariableReadCutRef* cut) noexcept;
@@ -1328,8 +1332,9 @@ private:
         std::uint32_t initialCommandCount = 0;
         std::array<CommandRecord, kTimelineInitialCommandCapacity> initialCommands{};
     };
+    template <typename Publication>
     bool CaptureFixedTimelineReadUseOnset(VariableTimelineReadUseRef use,
-        const TimelineArmTable::PrivatePendingImmediateArmProof& publication,
+        const Publication& publication,
         std::uint64_t* onsetFrame) const noexcept;
     bool BeginPendingTimelineReadUsePlacement(TimelineReadUseRow& use,
         std::uint64_t logicalFrame, std::uint64_t onsetFrame, VariableReadCutRef* cut) noexcept;

@@ -5319,8 +5319,9 @@ bool VariableServiceV1::PrepareTimelineReadUse(VariableReadCutRef ref, VnVoiceHa
     return true;
 }
 
+template <typename Publication>
 bool VariableServiceV1::CaptureFixedTimelineReadUseOnset(VariableTimelineReadUseRef ref,
-    const TimelineArmTable::PrivatePendingImmediateArmProof& publication,
+    const Publication& publication,
     std::uint64_t* onsetFrame) const noexcept {
     const auto* use = ResolveTimelineReadUse(ref);
     const auto* cut = use != nullptr ? ResolveReadCut(use->cut) : nullptr;
@@ -5345,6 +5346,21 @@ bool VariableServiceV1::CanBindFixedTimelineReadUseOnset(VariableTimelineReadUse
 
 void VariableServiceV1::ApplyFixedTimelineReadUseOnset(VariableTimelineReadUseRef ref,
     const TimelineArmTable::PrivatePendingImmediateArmProof& publication) noexcept {
+    std::uint64_t onset = 0;
+    const bool valid = CaptureFixedTimelineReadUseOnset(ref, publication, &onset);
+    assert(valid);
+    (void)valid;
+    ResolveTimelineReadUse(ref)->onsetFrame = onset;
+}
+
+bool VariableServiceV1::CanBindFixedTimelineReadUseOnset(VariableTimelineReadUseRef ref,
+    const TimelineArmTable::GroupedPublicationAfterInstallation& publication) const noexcept {
+    std::uint64_t onset = 0;
+    return CaptureFixedTimelineReadUseOnset(ref, publication, &onset);
+}
+
+void VariableServiceV1::ApplyFixedTimelineReadUseOnset(VariableTimelineReadUseRef ref,
+    const TimelineArmTable::GroupedPublicationAfterInstallation& publication) noexcept {
     std::uint64_t onset = 0;
     const bool valid = CaptureFixedTimelineReadUseOnset(ref, publication, &onset);
     assert(valid);

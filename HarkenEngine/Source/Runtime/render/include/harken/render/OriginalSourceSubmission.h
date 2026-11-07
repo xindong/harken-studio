@@ -529,6 +529,26 @@ public:
     };
 private:
     friend struct Engine;
+    bool BindPrivatePageGroupSourceStart(const OriginalSourceLifetimePin& source,
+        const VoicePool::OriginalSourceBodyLifetimePin& body, const CommandQueue::PreparedBatchProof& batch,
+        const TimelineArmReaderPin& reader, const FrontierGroupBinding& binding, AudioSliceLease& lease,
+        const ScheduledTransactionPool& pages, const DecisionTable& decisions,
+        const PreparedTransactionBatch& events, std::uint32_t requestIndex, std::uint32_t eventOrdinal,
+        ArmGroupTable& groups, ArmGroupToken group,
+        const TimelineArmTable::GroupedPublicationAfterInstallation** publication) noexcept {
+        if (publication == nullptr || !MatchesOriginal(source)) return false;
+        auto& row = *static_cast<Record*>(source.row_);
+        if (!MatchesPrivateCommittedInitialGroupSourcePair(source, body, batch,
+                source.token_, row.originalSourceIdentity_) ||
+            !arms_.BindPrivatePendingPageFrontierStart(row.arm_, reader, binding, lease, pages, decisions,
+                events, requestIndex, eventOrdinal)) return false;
+        const auto* arm = arms_.Resolve(source.token_);
+        if (arm == nullptr || !PrepareEntryBoundGroupPublication(source, body, batch, groups, group,
+                arm->startFrame, binding, lease))
+            return false;
+        *publication = &row.groupInstallPublication_;
+        return true;
+    }
     bool PrepareEntryBoundGroupPublication(const OriginalSourceLifetimePin& source,
         const VoicePool::OriginalSourceBodyLifetimePin& body, const CommandQueue::PreparedBatchProof& batch,
         ArmGroupTable& groups, ArmGroupToken group, std::uint64_t frame,

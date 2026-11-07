@@ -6496,6 +6496,53 @@ bool ScheduledTransactionPool::CapturePreparedTransactionEvent(
     return false;
 }
 
+bool ScheduledTransactionPool::CapturePrivatePreparedTransactionStart(
+    const PreparedTransactionBatch& prepared,
+    std::uint32_t requestIndex, std::uint32_t eventOrdinal,
+    ConsumedEvent* out) const noexcept {
+    if (out == nullptr || prepared.owner_ != this || !prepared.prepared_ ||
+        prepared.claimSlot_ >= preparedTransactionClaims_.size()) return false;
+    const auto& claim = preparedTransactionClaims_[prepared.claimSlot_];
+    if (!claim.used || claim.committed || claim.generation != prepared.generation_ ||
+        claim.frozenSequence == 0 || requestIndex >= claim.transactionCount) return false;
+    ConsumedEvent event{};
+    if (!CapturePreparedTransactionEvent(prepared, requestIndex, eventOrdinal, &event) ||
+        event.txnSlot >= transactions_.size()) return false;
+    const auto& transaction = transactions_[event.txnSlot];
+    const auto* program = event.program.program;
+    if (!transaction.prepared || transaction.epoch != epoch_ ||
+        transaction.preparedClaimSlot != prepared.claimSlot_ ||
+        transaction.preparedClaimGeneration != prepared.generation_ ||
+        transaction.preparedRequestIndex != requestIndex ||
+        event.logicCommitSequence != claim.frozenSequence || event.transactionId != claim.frozenSequence ||
+        program == nullptr || program->generation != event.program.programGeneration ||
+        program->role != TimelineProgramRole::Voice || program->payloads == nullptr ||
+        event.payload >= program->payloadCount || program->payloads[event.payload].kind != TimelineEventKind::Start ||
+        !event.armToken.Valid() || !event.frontier.Valid()) return false;
+    std::uint32_t startCount = 0;
+    for (std::uint32_t ring = 0; ring < pageCount_; ++ring) {
+        const auto base = static_cast<std::size_t>(ring) * config_.maxEventsPerQuantum;
+        for (std::uint32_t index = 0;
+             index < pageEventCount_[ring] + pagePreparedEventCount_[ring]; ++index) {
+            const auto& row = PageEvent(base + index);
+            if (row.txnSlot >= transactions_.size()) return false;
+            const auto& record = transactions_[row.txnSlot];
+            if (record.preparedClaimSlot != prepared.claimSlot_ ||
+                record.preparedClaimGeneration != prepared.generation_) continue;
+            const auto arm = row.armToken.Valid() ? row.armToken : record.armToken;
+            if (!SameJointArm(arm, event.armToken)) continue;
+            const auto* rowProgram = record.program.program;
+            if (rowProgram == nullptr || rowProgram->generation != record.program.programGeneration ||
+                rowProgram->payloads == nullptr || row.payload >= rowProgram->payloadCount) return false;
+            if (rowProgram->payloads[row.payload].kind == TimelineEventKind::Start && ++startCount != 1)
+                return false;
+        }
+    }
+    if (startCount != 1) return false;
+    *out = event;
+    return true;
+}
+
 bool ScheduledTransactionPool::MatchesFrozenPreparedTransactionEvents(
     const PreparedTransactionBatch& prepared, LogicCommitSequence sequence,
     TransportEpoch transport, const ConsumedEvent* originals, std::size_t count,
