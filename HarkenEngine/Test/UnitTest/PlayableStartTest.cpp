@@ -21718,17 +21718,21 @@ TEST(PlayableStart, DirectTrackMixedStreamWaitsStartsTogetherAndCancelsBeforeRea
 }
 
 TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFailure) {
-    for (const auto workers : {0u, 2u}) for (const auto scenario : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u, 10u, 11u, 12u, 13u, 14u, 15u, 16u, 17u, 18u, 19u}) {
+    for (const auto workers : {0u, 2u}) for (const auto scenario : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u, 10u, 11u, 12u, 13u, 14u, 15u, 16u, 17u, 18u, 19u, 20u, 21u, 22u, 23u, 24u, 25u}) {
         const bool crossTrack = scenario >= 14u && scenario <= 16u;
         const bool repeatTrack = scenario == 16u;
-        const bool ordinaryNative = scenario >= 17u && scenario <= 19u;
-        const bool nativeChild = scenario >= 6u && scenario <= 19u && !crossTrack;
+        const bool ordinaryNative = (scenario >= 17u && scenario <= 19u) || scenario >= 24u;
+        const bool nativeChild = scenario >= 6u && !crossTrack;
+        const bool noDirectStream = scenario >= 20u;
+        const bool hiddenNativeStream = scenario >= 20u && scenario <= 23u;
+        const bool nativeOnly = scenario == 22u || scenario == 23u;
         const bool nestedNative = scenario == 12u || scenario == 13u;
         const bool variableNative = nativeChild && !nestedNative && !ordinaryNative;
         const bool multipleNative = scenario >= 8u && scenario <= 10u;
         const bool emptyNative = scenario == 11u;
         const bool nativeStreamLate = scenario == 10u;
-        const bool directStreamLate = scenario == 1u || scenario == 7u || scenario == 15u || scenario == 16u;
+        const bool directStreamLate = scenario == 1u || scenario == 7u || scenario == 15u || scenario == 16u ||
+            scenario == 21u || scenario == 23u || scenario == 25u;
         const bool missDeadline = directStreamLate || nativeStreamLate;
         const bool largePrebuffer = scenario == 2u;
         const bool temporaryVoicePressure = scenario == 3u;
@@ -21786,6 +21790,8 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
         VariableControlWorldImage native(engine.registry.Lookup(kSound).contentRevision, image.world.generation);
         PlayableWorldImage ordinary(engine.registry.Lookup(kSound).contentRevision,
             scenario == 18u ? harken::ContainerModeV1::Random : harken::ContainerModeV1::Sequence);
+        std::array<harken::ContainerChildProgramViewV2, 2> ordinaryChoices{ordinary.child, ordinary.child};
+        harken::PlayableOccurrencePropertyViewV1 ordinarySecondOccurrence{};
         NestedQueueWorldImage nested(engine.registry.Lookup(kSound).contentRevision, false, scenario == 13u);
         std::array<harken::ContainerChildProgramViewV2, 2> sameProgramChildren{
             nested.nestedChildren[0], nested.nestedChildren[0]};
@@ -21797,6 +21803,16 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
             ordinary.container.programSemanticFingerprint = ordinary.properties[1].programSemanticFingerprint;
             ordinary.occurrence.parentProgramSemanticFingerprint = ordinary.properties[1].programSemanticFingerprint;
             ordinary.occurrence.occurrenceSemanticFingerprint = harken::ComputePlayableOccurrenceFingerprintV1(ordinary.occurrence);
+            if (scenario == 17u) {
+                ordinaryChoices[1].stableChildOrdinal = 8;
+                ordinaryChoices[1].authoredStableOrder = 1;
+                ordinary.container.children = ordinaryChoices.data();
+                ordinary.container.childCount = ordinaryChoices.size();
+                ordinarySecondOccurrence = ordinary.occurrence;
+                ordinarySecondOccurrence.stableOccurrenceOrdinal = ordinaryChoices[1].stableChildOrdinal;
+                ordinarySecondOccurrence.occurrenceSemanticFingerprint =
+                    harken::ComputePlayableOccurrenceFingerprintV1(ordinarySecondOccurrence);
+            }
         }
         if (nestedNative) {
             image.world.identity.capabilityMask |= nested.world.identity.capabilityMask;
@@ -21837,7 +21853,7 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
         image.properties[1].programSemanticFingerprint = harken::ComputePlayablePropertyFingerprintV1(image.properties[1]);
         image.placements[1].content.expectedProgramSemanticFingerprint = image.properties[1].programSemanticFingerprint;
         VariableControlWorldImage streamedNative(facts.contentRevision, image.world.generation);
-        if (nativeStreamLate) {
+        if (nativeStreamLate || hiddenNativeStream) {
             streamedNative.properties[1].stableId = harkentest::ObjectId(2301);
             streamedNative.properties[1].authoredStableOrder = 4;
             streamedNative.properties[1].programSemanticFingerprint =
@@ -21852,6 +21868,11 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
             streamedNative.occurrence.occurrenceSemanticFingerprint =
                 harken::ComputePlayableOccurrenceFingerprintV1(streamedNative.occurrence);
         }
+        if (scenario >= 24u) {
+            ordinary.child.playable = image.placements[1].content;
+            ordinary.occurrence.childPlayable = ordinary.child.playable;
+            ordinary.occurrence.occurrenceSemanticFingerprint = harken::ComputePlayableOccurrenceFingerprintV1(ordinary.occurrence);
+        }
         std::array<harken::ScheduleClipPlacementV1, 4> placements{
             image.placements[0], image.placements[1], image.placements[0], image.placements[0]};
         placements[0].authoredStart = placements[1].authoredStart = largePrebuffer ? INT64_C(2000000000)
@@ -21860,10 +21881,11 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
         if (ordinaryNative) placements[0].content = ordinary.Root();
         if (nestedNative) placements[0].content = nested.Root();
         if (multipleNative) placements[2].content = native.Root();
-        if (nativeStreamLate) {
+        if (nativeStreamLate || hiddenNativeStream) {
             placements[0].content = streamedNative.Root();
             placements[0].content.stableId = streamedNative.properties[1].stableId;
         }
+        if (noDirectStream) placements[1].content = nativeOnly ? native.Root() : image.placements[0].content;
         placements[2].authoredStart = placements[0].authoredStart;
         placements[3].authoredStart = largePrebuffer ? INT64_C(2400000000) : INT64_C(64000000);
         for (std::uint32_t index = 2; index < placements.size(); ++index) {
@@ -21896,6 +21918,7 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
                 containers.insert(containers.end(), nested.containers.begin(), nested.containers.end());
             } else if (ordinaryNative) {
                 occurrences.push_back(ordinary.occurrence);
+                if (scenario == 17u) occurrences.push_back(ordinarySecondOccurrence);
                 properties.push_back(ordinary.properties[1]);
                 containers.push_back(ordinary.container);
             } else {
@@ -21903,7 +21926,7 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
                 properties.push_back(native.properties[1]);
                 containers.push_back(native.container);
             }
-            if (nativeStreamLate) {
+            if (nativeStreamLate || hiddenNativeStream) {
                 occurrences.push_back(streamedNative.occurrence);
                 properties.push_back(streamedNative.properties[1]);
                 containers.push_back(streamedNative.container);
@@ -21998,10 +22021,35 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
         ASSERT_NE(engine.playableServices.end(), root);
         ASSERT_NE(nullptr, root->scheduleAggregate);
         if (!repeatTrack) ASSERT_EQ(1u, root->scheduleAggregate->sourceCohorts.size());
+        if (nativeOnly) EXPECT_TRUE(root->scheduleAggregate->sourceCohorts[0]->sides.empty());
         const auto onset = root->startFrame + (largePrebuffer ? 96000u : nativeChild ? 1584u : 1536u);
         const auto later = root->startFrame + (largePrebuffer ? 115200u : 3072u);
         EXPECT_FALSE(root->pendingDirectStartBinding);
         EXPECT_EQ(config.maxStreams, engine.streams.FreeSlotCount());
+        harken::SelectionMemoryKeyV1 ordinaryKey{};
+        if (scenario == 17u) {
+            ordinaryKey.world = root->Invocation().worldGeneration;
+            ordinaryKey.containerStableId = ordinary.container.containerStableId;
+            ordinaryKey.programSemanticFingerprint = ordinary.container.programSemanticFingerprint;
+            ordinaryKey.memoryScope = harken::MemoryScopeV1::Global;
+            const auto future = std::find_if(engine.playableServices.begin(), engine.playableServices.end(),
+                [&](const auto& row) { return row.ordinaryLifecycleOwned &&
+                    row.parentService.owner == started.instance &&
+                    row.selectionCount != 0; });
+            ASSERT_NE(engine.playableServices.end(), future);
+            EXPECT_EQ(7u, future->selectedChildOrdinals[0]);
+            EXPECT_EQ(1u, engine.selectionMemory.Snapshot(ordinaryKey).selectionOrdinal);
+            harken::PlayableStartRequest immediate;
+            immediate.root = ordinary.Root();
+            const auto next = harken::StartPlayable(engine, immediate);
+            ASSERT_EQ(harken::PlayableStartStatus::Accepted, next.status);
+            const auto* nextRow = FindPlayableRow(engine, next.instance);
+            ASSERT_NE(nullptr, nextRow);
+            EXPECT_EQ(8u, nextRow->selectedChildOrdinals[0]);
+            EXPECT_EQ(1u, engine.selectionMemory.Snapshot(ordinaryKey).selectionOrdinal);
+            EXPECT_EQ(1u, engine.selectionMemory.Snapshot(ordinaryKey).pendingCount);
+            ASSERT_EQ(harken::PlayableControlStatus::Ok, harken::StopPlayable(engine, next.instance, 0));
+        }
         std::vector<VnVoiceHandle> pressure;
         if (temporaryVoicePressure) {
             while (engine.voices.AvailableSlotCount() != 0) {
@@ -22021,6 +22069,7 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
         bool nativeSourcesPublished = false;
         bool nativeSupplyBlocked = false;
         bool nativeStreamInstalled = false;
+        bool hiddenStreamWaiting = false;
         std::array<std::vector<std::uint64_t>, 2> heard;
         for (unsigned pass = 0; pass < (later + 2048u) / config.blockFrames; ++pass) {
             const auto at = engine.mixer.BlocksRendered() * config.blockFrames;
@@ -22058,13 +22107,25 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
                 pressure.clear();
             }
             ASSERT_EQ(VN_OK, Vn_Update()) << OccupancyDump(engine);
+            if (noDirectStream && missDeadline && at < onset) {
+                for (const auto& service : engine.playableServices) {
+                    harken::EngineTimelineVoiceInstallIdentity installed{};
+                    if (!engine.CaptureTimelineVoiceInstallIdentity(service.renderHandle, &installed) ||
+                        !installed.streamed || installed.onsetFrame != onset) continue;
+                    harken::TimelineArmObservation observed{};
+                    if (!engine.timelineArms.Observe(installed.startArm, &observed)) continue;
+                    EXPECT_EQ(UINT64_MAX, observed.actualStartFrame);
+                    hiddenStreamWaiting |= engine.CapturedTimelineStreamStartStatus(installed) ==
+                        harken::VariableReadCutStatus::Waiting;
+                }
+            }
             if (root->scheduleAggregate != nullptr && !root->scheduleAggregate->sourceCohorts.empty()) {
                 const auto& cohort = *root->scheduleAggregate->sourceCohorts[0];
                 if (nativeChild && cohort.published && !nativeSourcesPublished) {
                     ASSERT_LT(at, onset);
                     nativeSourcesPublished = true;
                     if (nestedNative) {
-                        const auto* service = engine.ResolvePlayableService(cohort.children[0]->service);
+                        const auto* service = engine.ResolvePlayableService(cohort.children[0].child->service);
                         ASSERT_NE(nullptr, service);
                         const auto inner = engine.playableInstances.FirstChild(service->ownerInstance);
                         ASSERT_NE(0u, inner);
@@ -22076,7 +22137,8 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
                     }
                 }
                 if (nativeStreamLate && nativeSourcesPublished && at < onset) {
-                    for (const auto* child : cohort.children) {
+                    for (const auto& member : cohort.children) {
+                        const auto* child = member.child;
                         if (child->content.kind == harken::PlayableKindV1::Sound) continue;
                         const auto* service = engine.ResolvePlayableService(child->service);
                         if (service == nullptr || !service->variableControlInstance.Valid()) continue;
@@ -22109,7 +22171,7 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
                     EXPECT_EQ(0u, engine.voices.AvailableSlotCount());
                     observedHeldSibling = true;
                 }
-                if (onset >= engine.timelinePool.WindowEndFrame())
+                if (largePrebuffer && onset >= engine.timelinePool.WindowEndFrame())
                     preparedOutsidePageWindow |= cohort.sides[0]->sources[1].arm.Valid();
                 if (!stopRequested && ((cancelBeforeSeal && at + 128u >= onset) ||
                     (cancelAfterSeal && cohort.published))) {
@@ -22134,9 +22196,10 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
         }
         EXPECT_EQ(cancel, stopRequested);
         EXPECT_EQ(variableNative && !emptyNative, variableChanged);
-        EXPECT_EQ(nativeChild && !directStreamLate, nativeSourcesPublished);
+        EXPECT_EQ(nativeChild && (!directStreamLate || hiddenNativeStream), nativeSourcesPublished);
         EXPECT_EQ(nativeStreamLate, nativeSupplyBlocked);
         EXPECT_EQ(nativeStreamLate, nativeStreamInstalled);
+        EXPECT_EQ(noDirectStream && missDeadline, hiddenStreamWaiting);
         EXPECT_EQ(temporaryVoicePressure, observedCapacityRetry);
         EXPECT_EQ(temporaryVoicePressure, observedHeldSibling);
         EXPECT_EQ(largePrebuffer, preparedOutsidePageWindow);
@@ -22169,6 +22232,10 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
         engine.streams.SyncServe();
         EXPECT_EQ(config.maxStreams, engine.streams.FreeSlotCount());
         EXPECT_FALSE(engine.runtimeRecreateRequired);
+        if (scenario == 17u) {
+            EXPECT_EQ(1u, engine.selectionMemory.Snapshot(ordinaryKey).selectionOrdinal);
+            EXPECT_EQ(0u, engine.selectionMemory.Snapshot(ordinaryKey).pendingCount);
+        }
         EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(kSecondSound));
     }
 }
@@ -22297,9 +22364,9 @@ TEST(PlayableStart, FutureStreamCohortWaitsForIndependentProvidersWithinPreparat
                 ASSERT_TRUE(waitFor([&] { return providers[first].payloadReads.load(std::memory_order_acquire) != 0u; }));
                 const auto media = [&](unsigned index) {
                     const auto child = std::find_if(cohort.children.begin(), cohort.children.end(),
-                        [&](const auto* candidate) { return candidate->content.stableId == sounds[index]; });
+                        [&](const auto& candidate) { return candidate.child->content.stableId == sounds[index]; });
                     if (child == cohort.children.end()) return harken::VariableReadCutStatus::Failed;
-                    const auto* service = engine.ResolvePlayableService((*child)->service);
+                    const auto* service = engine.ResolvePlayableService(child->child->service);
                     if (service == nullptr) return harken::VariableReadCutStatus::Failed;
                     harken::EngineTimelineVoiceInstallIdentity installed{};
                     if (!engine.CaptureTimelineVoiceInstallIdentity(service->renderHandle, &installed) || !installed.streamed)

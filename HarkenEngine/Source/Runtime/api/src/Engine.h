@@ -2125,6 +2125,7 @@ struct EngineScheduleAggregateChild {
     bool pendingEntry = false;
     bool musicFromEntry = false;
     EngineScheduleSourceCohort* sourceCohort = nullptr;
+    EnginePlayableServiceReference sourceCohortFailureOwner{};
     std::uint32_t sourceCohortSide = UINT32_MAX;
     std::uint16_t sourceCohortMember = UINT16_MAX;
     bool registeredStream = false;
@@ -2224,6 +2225,12 @@ struct EngineFrontierAttemptToken {
     bool Valid() const noexcept { return slot != UINT32_MAX && generation != 0; }
 };
 
+struct EngineScheduleSourceMember {
+    EngineScheduleAggregateChild* child = nullptr;
+    EnginePlayableServiceReference parent{};
+    std::unique_ptr<EngineScheduleSourceRetention> retention;
+};
+
 struct EngineScheduleSourceCohort {
     EnginePlayableServiceReference owner{};
     EnginePlayablePartitionToken partition{};
@@ -2237,7 +2244,7 @@ struct EngineScheduleSourceCohort {
     ArmGroupToken arms{};
     CommittedPlan03GroupSlice page;
     FrontierActivationDescriptor descriptor{};
-    std::vector<EngineScheduleAggregateChild*> children;
+    std::vector<EngineScheduleSourceMember> children;
     std::vector<std::unique_ptr<EngineScheduleSourceSide>> sides;
     std::vector<EngineFrontierAttemptToken> nativeAttempts;
     std::unique_ptr<EngineScheduleSourceRetention> retention;
@@ -2346,6 +2353,7 @@ struct EnginePlayableServiceRow {
     std::unique_ptr<EngineScheduleAggregateState> scheduleAggregate;
     EngineScheduleSourceCohort* scheduleSourceCohort = nullptr;
     EngineScheduleCohortSource* scheduleCohortSource = nullptr;
+    EnginePlayableServiceReference sourceCohortFailureOwner{};
     std::unique_ptr<EngineScheduleAggregateChild> scheduleTerminalChild;
     std::unique_ptr<std::vector<EngineScheduleAggregateChild>> scheduleVariableChildren;
     std::uint32_t memberRelationHead = UINT32_MAX;
@@ -15782,6 +15790,8 @@ inline void Engine::ReturnScheduleCohortSourceLoansAfterQuiescence() noexcept {
     for (auto& row : playableServices) {
         if (row.scheduleAggregate == nullptr) continue;
         for (auto& cohort : row.scheduleAggregate->sourceCohorts) {
+            for (auto& member : cohort->children)
+                if (member.retention != nullptr) member.retention->service.Return();
             for (auto& side : cohort->sides) for (auto& source : side->sources) {
                 source.body.Release();
                 source.source.Release();
