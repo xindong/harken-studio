@@ -21718,18 +21718,22 @@ TEST(PlayableStart, DirectTrackMixedStreamWaitsStartsTogetherAndCancelsBeforeRea
 }
 
 TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFailure) {
-    for (const auto workers : {0u, 2u}) for (const auto scenario : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u}) {
+    for (const auto workers : {0u, 2u}) for (const auto scenario : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u, 10u, 11u}) {
         const bool nativeChild = scenario >= 6u;
-        const bool missDeadline = scenario == 1u || scenario == 7u;
+        const bool multipleNative = scenario >= 8u && scenario <= 10u;
+        const bool emptyNative = scenario == 11u;
+        const bool nativeStreamLate = scenario == 10u;
+        const bool directStreamLate = scenario == 1u || scenario == 7u;
+        const bool missDeadline = directStreamLate || nativeStreamLate;
         const bool largePrebuffer = scenario == 2u;
         const bool temporaryVoicePressure = scenario == 3u;
         const bool cancelBeforeSeal = scenario == 4u;
-        const bool cancelAfterSeal = scenario == 5u;
+        const bool cancelAfterSeal = scenario == 5u || scenario == 9u;
         const bool cancel = cancelBeforeSeal || cancelAfterSeal;
         SCOPED_TRACE(::testing::Message() << "workers=" << workers << " scenario=" << scenario);
         auto config = harkentest::MakeNullConfig(8, 64, 48000);
         config.renderWorkerCount = workers;
-        config.maxStreams = 1;
+        config.maxStreams = nativeStreamLate ? 2u : 1u;
         config.streamRingFrames = 1024;
         config.prebufferMs = largePrebuffer ? 1000u : 4u;
         harkentest::EngineSession session(config);
@@ -21789,11 +21793,32 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
         image.properties[1].payload.values[streamingSlot].bits = 1;
         image.properties[1].programSemanticFingerprint = harken::ComputePlayablePropertyFingerprintV1(image.properties[1]);
         image.placements[1].content.expectedProgramSemanticFingerprint = image.properties[1].programSemanticFingerprint;
+        VariableControlWorldImage streamedNative(facts.contentRevision, image.world.generation);
+        if (nativeStreamLate) {
+            streamedNative.properties[1].stableId = harkentest::ObjectId(2301);
+            streamedNative.properties[1].authoredStableOrder = 4;
+            streamedNative.properties[1].programSemanticFingerprint =
+                harken::ComputePlayablePropertyFingerprintV1(streamedNative.properties[1]);
+            streamedNative.container.containerStableId = streamedNative.properties[1].stableId;
+            streamedNative.container.authoredStableOrder = 1;
+            streamedNative.container.programSemanticFingerprint = streamedNative.properties[1].programSemanticFingerprint;
+            streamedNative.child.playable = image.placements[1].content;
+            streamedNative.occurrence.parentStableId = streamedNative.properties[1].stableId;
+            streamedNative.occurrence.parentProgramSemanticFingerprint = streamedNative.properties[1].programSemanticFingerprint;
+            streamedNative.occurrence.childPlayable = streamedNative.child.playable;
+            streamedNative.occurrence.occurrenceSemanticFingerprint =
+                harken::ComputePlayableOccurrenceFingerprintV1(streamedNative.occurrence);
+        }
         std::array<harken::ScheduleClipPlacementV1, 4> placements{
             image.placements[0], image.placements[1], image.placements[0], image.placements[0]};
         placements[0].authoredStart = placements[1].authoredStart = largePrebuffer ? INT64_C(2000000000)
             : nativeChild ? INT64_C(33000000) : INT64_C(32000000);
         if (nativeChild) placements[0].content = native.Root();
+        if (multipleNative) placements[2].content = native.Root();
+        if (nativeStreamLate) {
+            placements[0].content = streamedNative.Root();
+            placements[0].content.stableId = streamedNative.properties[1].stableId;
+        }
         placements[2].authoredStart = placements[0].authoredStart;
         placements[3].authoredStart = largePrebuffer ? INT64_C(2400000000) : INT64_C(64000000);
         for (std::uint32_t index = 2; index < placements.size(); ++index) {
@@ -21804,7 +21829,7 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
             placements[index].clipGuidLow = 7001u + index;
         }
         for (auto& placement : placements) placement.authoredDuration = INT64_C(8000000);
-        placements[2].authoredDuration = 1;
+        if (!multipleNative) placements[2].authoredDuration = 1;
         std::vector<harken::PlayableOccurrencePropertyViewV1> occurrences{
             image.occurrences[0], image.occurrences[1], image.occurrences[0], image.occurrences[0]};
         for (std::size_t index = 0; index < occurrences.size(); ++index) {
@@ -21816,9 +21841,16 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
         image.track.placementCount = placements.size();
         image.track.scheduleSemanticFingerprint = harken::ComputeTrackScheduleFingerprintV1(image.track);
         std::vector<harken::PlayablePropertyProgramViewV1> properties(image.properties.begin(), image.properties.end());
+        std::vector<harken::ContainerProgramViewV3> containers;
         if (nativeChild) {
             occurrences.push_back(native.occurrence);
             properties.push_back(native.properties[1]);
+            containers.push_back(native.container);
+            if (nativeStreamLate) {
+                occurrences.push_back(streamedNative.occurrence);
+                properties.push_back(streamedNative.properties[1]);
+                containers.push_back(streamedNative.container);
+            }
             std::sort(properties.begin(), properties.end(), [](const auto& left, const auto& right) {
                 return std::pair{left.contentPropertyKind, left.stableId} < std::pair{right.contentPropertyKind, right.stableId};
             });
@@ -21834,8 +21866,8 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
         if (nativeChild) {
             install.playableProperties = properties.data();
             install.playablePropertyCount = properties.size();
-            install.containers = &native.container;
-            install.containerCount = 1;
+            install.containers = containers.data();
+            install.containerCount = containers.size();
             install.variables = &variable;
             install.variableCount = 1;
         }
@@ -21856,7 +21888,7 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
         const auto onset = root->startFrame + (largePrebuffer ? 96000u : nativeChild ? 1584u : 1536u);
         const auto later = root->startFrame + (largePrebuffer ? 115200u : 3072u);
         EXPECT_FALSE(root->pendingDirectStartBinding);
-        EXPECT_EQ(1u, engine.streams.FreeSlotCount());
+        EXPECT_EQ(config.maxStreams, engine.streams.FreeSlotCount());
         std::vector<VnVoiceHandle> pressure;
         if (temporaryVoicePressure) {
             while (engine.voices.AvailableSlotCount() != 0) {
@@ -21872,15 +21904,40 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
         bool preparedOutsidePageWindow = false;
         bool stopRequested = false;
         bool variableChanged = false;
+        bool nativeSourcesPublished = false;
+        bool nativeSupplyBlocked = false;
+        bool nativeStreamInstalled = false;
         std::array<std::vector<std::uint64_t>, 2> heard;
         for (unsigned pass = 0; pass < (later + 2048u) / config.blockFrames; ++pass) {
             const auto at = engine.mixer.BlocksRendered() * config.blockFrames;
-            if (nativeChild && !variableChanged && at + 128u >= onset) {
+            if (nativeChild && !emptyNative && !variableChanged && at + 128u >= onset) {
                 ASSERT_LT(at, onset);
                 ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(41), 3.0f));
                 variableChanged = true;
             }
-            if ((!missDeadline && !cancelBeforeSeal) || at > onset + config.blockFrames)
+            if (nativeStreamLate && !nativeSupplyBlocked && at + 128u >= onset) {
+                ASSERT_NE(nullptr, root->scheduleAggregate);
+                const auto& cohort = *root->scheduleAggregate->sourceCohorts[0];
+                ASSERT_FALSE(cohort.published);
+                bool directReady = false;
+                for (const auto& side : cohort.sides) for (const auto& source : side->sources) {
+                    harken::EngineTimelineVoiceInstallIdentity installed{};
+                    harken::TimelineArmObservation arm{};
+                    if (!engine.CaptureTimelineVoiceInstallIdentity(source.sourceIdentity, &installed) ||
+                        !installed.streamed) continue;
+                    ASSERT_TRUE(harken::Engine::SameOriginalSingleArm(installed.startArm, source.arm));
+                    ASSERT_TRUE(engine.timelineArms.Observe(source.arm, &arm));
+                    ASSERT_EQ(harken::ArmState::Armed, arm.state);
+                    ASSERT_EQ(harken::VariableReadCutStatus::Applied, engine.CapturedTimelineStreamStartStatus(installed));
+                    directReady = true;
+                }
+                ASSERT_TRUE(directReady);
+                engine.streams.SetThrottled(true);
+                engine.streams.SyncServe();
+                nativeSupplyBlocked = true;
+            }
+            if ((!directStreamLate && !cancelBeforeSeal && !nativeSupplyBlocked) ||
+                at > onset + config.blockFrames)
                 engine.streams.SetThrottled(false);
             if (temporaryVoicePressure && at + 256u >= onset) {
                 for (const auto voice : pressure) ASSERT_TRUE(engine.voices.CancelPreparedVoice(voice));
@@ -21889,6 +21946,27 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
             ASSERT_EQ(VN_OK, Vn_Update()) << OccupancyDump(engine);
             if (root->scheduleAggregate != nullptr && !root->scheduleAggregate->sourceCohorts.empty()) {
                 const auto& cohort = *root->scheduleAggregate->sourceCohorts[0];
+                if (nativeChild && cohort.published && !nativeSourcesPublished) {
+                    ASSERT_LT(at, onset);
+                    nativeSourcesPublished = true;
+                }
+                if (nativeStreamLate && nativeSourcesPublished && at < onset) {
+                    for (const auto* child : cohort.children) {
+                        if (child->content.kind == harken::PlayableKindV1::Sound) continue;
+                        const auto* service = engine.ResolvePlayableService(child->service);
+                        if (service == nullptr || !service->variableControlInstance.Valid()) continue;
+                        for (std::uint32_t member = 0; member < service->variableControlInitialDiscreteMemberCount; ++member) {
+                            const auto arm = service->variableControlInitialArms.Discrete()[member];
+                            harken::EngineTimelineVoiceInstallIdentity installed{};
+                            if (!engine.CaptureTimelineVoiceInstallIdentity(
+                                    (static_cast<std::uint64_t>(arm.renderGeneration) << 32u) | arm.renderSlot, &installed) ||
+                                !installed.streamed) continue;
+                            ASSERT_TRUE(harken::Engine::SameOriginalSingleArm(installed.startArm, arm));
+                            EXPECT_EQ(harken::VariableReadCutStatus::Waiting, engine.CapturedTimelineStreamStartStatus(installed));
+                            nativeStreamInstalled = true;
+                        }
+                    }
+                }
                 if (!pressure.empty()) observedCapacityRetry |= cohort.sides[0]->memberCount == 2u &&
                     !cohort.sides[0]->sources[1].arm.Valid();
                 if (onset >= engine.timelinePool.WindowEndFrame())
@@ -21903,20 +21981,25 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
             engine.streams.SyncServe();
             EXPECT_FALSE(engine.preparedVoiceCommandBatchProof.Valid());
             if (at + static_cast<std::uint64_t>(config.prebufferMs) * 48u + 320u < onset)
-                EXPECT_EQ(1u, engine.streams.FreeSlotCount());
+                EXPECT_EQ(config.maxStreams, engine.streams.FreeSlotCount());
             engine.nullBackend.Pump(1);
+            ASSERT_EQ(at + config.blockFrames, engine.mixer.BlocksRendered() * config.blockFrames);
             for (unsigned frame = 0; frame < config.blockFrames; ++frame) for (unsigned channel = 0; channel < 2; ++channel) {
                 const auto sample = engine.nullBackend.LastBlock()[frame * 2 + channel];
                 if (std::abs(sample) < 0.00001f) continue;
                 heard[channel].push_back(at + frame);
-                EXPECT_NEAR(channel == 0 ? 0.25f : 0.5f, sample, 0.00001f);
+                EXPECT_NEAR(channel == 0 ? (multipleNative && !nativeStreamLate && at + frame < later ? 0.5f : 0.25f)
+                    : 0.5f, sample, 0.00001f);
             }
         }
         EXPECT_EQ(cancel, stopRequested);
-        EXPECT_EQ(nativeChild, variableChanged);
+        EXPECT_EQ(nativeChild && !emptyNative, variableChanged);
+        EXPECT_EQ(nativeChild && !directStreamLate, nativeSourcesPublished);
+        EXPECT_EQ(nativeStreamLate, nativeSupplyBlocked);
+        EXPECT_EQ(nativeStreamLate, nativeStreamInstalled);
         EXPECT_EQ(temporaryVoicePressure, observedCapacityRetry);
         EXPECT_EQ(largePrebuffer, preparedOutsidePageWindow);
-        const auto expectedLeft = cancel ? 0u : missDeadline ? 384u : 768u;
+        const auto expectedLeft = cancel ? 0u : missDeadline || emptyNative ? 384u : 768u;
         const auto expectedRight = cancel || missDeadline ? 0u : 384u;
         EXPECT_EQ(expectedLeft, heard[0].size()) << OccupancyDump(engine)
             << " onset=" << onset << " later=" << later
@@ -21927,9 +22010,9 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
             << " rightLast=" << (heard[1].empty() ? UINT64_MAX : heard[1].back());
         for (std::size_t frame = 0; !cancel && heard[0].size() == expectedLeft &&
             heard[1].size() == expectedRight && frame < 384; ++frame) {
-            EXPECT_EQ(later + frame, heard[0][(missDeadline ? 0u : 384u) + frame]);
+            EXPECT_EQ(later + frame, heard[0][(missDeadline || emptyNative ? 0u : 384u) + frame]);
             if (!missDeadline) {
-                EXPECT_EQ(onset + frame, heard[0][frame]);
+                if (!emptyNative) EXPECT_EQ(onset + frame, heard[0][frame]);
                 EXPECT_EQ(onset + frame, heard[1][frame]);
             }
         }
@@ -21939,7 +22022,7 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
         EXPECT_EQ(0u, engine.armGroups.LiveCount());
         EXPECT_EQ(voicesBefore, engine.voices.AvailableSlotCount());
         engine.streams.SyncServe();
-        EXPECT_EQ(1u, engine.streams.FreeSlotCount());
+        EXPECT_EQ(config.maxStreams, engine.streams.FreeSlotCount());
         EXPECT_FALSE(engine.runtimeRecreateRequired);
         EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(kSecondSound));
     }

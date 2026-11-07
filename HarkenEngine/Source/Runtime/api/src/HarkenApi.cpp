@@ -2662,7 +2662,7 @@ bool ReleaseUnusedNativeEntrySeed(harken::EnginePlayableServiceRow& row,
         HasPendingNativeScheduleChildren(row) || ReleaseNativeEntryDependency(row, completedAudioSequence);
 }
 
-bool MatchesNativeEntryDependency(harken::Engine& engine,
+bool MatchesNativeEntryDependencyOwner(harken::Engine& engine,
     const harken::EngineNativeEntryDependency& owned,
     const harken::EnginePlayableServiceRow& child) noexcept {
     const auto* parent = engine.ResolvePlayableService(owned.parentService);
@@ -2674,15 +2674,6 @@ bool MatchesNativeEntryDependency(harken::Engine& engine,
         !owned.entry.Valid() || !owned.primary.Exact() || !owned.member.Exact() ||
         !owned.coordinatorPin.Valid() || owned.coordinatorPin.Owner() != &engine.decisions ||
         !SameCanonicalDecision(owned.coordinatorPin.Token(), owned.entry.coordinator)) return false;
-    if (owned.appliedSignal != nullptr) {
-        const bool matches = owned.kind == harken::FrontierEntryPrerequisiteKind::SourceCohortChild
-            ? engine.decisions.IsAppliedSourceCohortDependencyFor(*owned.appliedSignal,
-                owned.entry, owned.primary, owned.member, engine.mixer.BlocksRendered())
-            : engine.decisions.IsAppliedSignalDependencyFor(*owned.appliedSignal,
-                owned.entry, owned.primary, owned.member, engine.mixer.BlocksRendered());
-        if (!matches) return false;
-    } else if (!engine.timelinePool.IsPlan03GroupReaderFor(owned.primaryPin, owned.primary) ||
-        !engine.timelinePool.IsPlan03GroupReaderFor(owned.memberPin, owned.member)) return false;
     // Preserve every actual service edge. The outer signal is not the immediate parent.
     const auto* current = &child;
     for (std::size_t depth = 0; depth < engine.playableServices.size(); ++depth) {
@@ -2694,6 +2685,21 @@ bool MatchesNativeEntryDependency(harken::Engine& engine,
         current = next;
     }
     return false;
+}
+
+bool MatchesNativeEntryDependency(harken::Engine& engine,
+    const harken::EngineNativeEntryDependency& owned,
+    const harken::EnginePlayableServiceRow& child) noexcept {
+    if (!MatchesNativeEntryDependencyOwner(engine, owned, child)) return false;
+    if (owned.appliedSignal != nullptr) {
+        return owned.kind == harken::FrontierEntryPrerequisiteKind::SourceCohortChild
+            ? engine.decisions.IsAppliedSourceCohortDependencyFor(*owned.appliedSignal,
+                owned.entry, owned.primary, owned.member, engine.mixer.BlocksRendered())
+            : engine.decisions.IsAppliedSignalDependencyFor(*owned.appliedSignal,
+                owned.entry, owned.primary, owned.member, engine.mixer.BlocksRendered());
+    }
+    return engine.timelinePool.IsPlan03GroupReaderFor(owned.primaryPin, owned.primary) &&
+        engine.timelinePool.IsPlan03GroupReaderFor(owned.memberPin, owned.member);
 }
 
 bool CloneNativeEntryDependency(harken::Engine& engine,
@@ -4562,7 +4568,14 @@ bool ReleaseInitialFrontierBindings(harken::Engine& engine,
         if (engine.decisions.HasFrontierDecisionBinding(decision) &&
             !engine.decisions.ReleaseFrontierDecisionBinding(decision)) return false;
     }
-    if (originalActivation->State() != harken::FrontierReceiptState::Prepared) {
+    harken::Plan03PageGroupView sourceRoot{};
+    const bool directSourceRoot = engine.timelinePool.ResolvePlan03GroupSliceProducer(
+        originalActivation->Descriptor().primary, &sourceRoot) && sourceRoot.frontier != nullptr &&
+        sourceRoot.frontier->entry == entry &&
+        sourceRoot.frontier->primary == originalActivation->Descriptor().primary &&
+        sourceRoot.frontier->prerequisiteKind == harken::FrontierEntryPrerequisiteKind::SourceCohortChild &&
+        sourceRoot.frontier->primary == sourceRoot.frontier->prerequisiteMember;
+    if (directSourceRoot && originalActivation->State() != harken::FrontierReceiptState::Prepared) {
         // Every borrower of this direct Source root's Page must return its loan
         // before the root read-use can prove exclusive structural ownership.
         for (auto& service : engine.playableServices) {
@@ -4572,14 +4585,23 @@ bool ReleaseInitialFrontierBindings(harken::Engine& engine,
             if (!SourceCohortEntryBindingDetached(engine, service, completedAudioSequence)) return false;
             const auto retained = RetainAppliedNativeEntryDependency(engine, service);
             if (retained == NativeEntryRetentionStatus::Ready) continue;
+            // Cancellation may have returned one Page loan on an earlier pass.
+            // Authenticate the original owner and every remaining loan without
+            // treating that partial return as authority to start another child.
             if (retained == NativeEntryRetentionStatus::Waiting || dependency->appliedSignal != nullptr ||
-                !MatchesNativeEntryDependency(engine, *dependency, service) ||
+                !MatchesNativeEntryDependencyOwner(engine, *dependency, service) ||
+                dependency->entry != sourceRoot.frontier->prerequisite ||
+                (dependency->memberPin.Valid() &&
+                 !engine.timelinePool.IsPlan03GroupReaderFor(dependency->memberPin, dependency->member)) ||
+                (dependency->primaryPin.Valid() &&
+                 !engine.timelinePool.IsPlan03GroupReaderFor(dependency->primaryPin, dependency->primary)) ||
                 (HasPendingNativeScheduleChildren(service) &&
                  service.phase != harken::EnginePlayableStartPhase::Cancelling &&
                  service.pendingCancellationIntent == 0)) return false;
             const auto* parent = engine.decisions.ResolveFrontierActivation(dependency->entry.coordinator);
             harken::FrontierActivationReceipt receipt{};
-            if (parent == nullptr || parent->Read(dependency->entry, completedAudioSequence, &receipt) !=
+            if (parent == nullptr || parent->Descriptor().primary != dependency->primary ||
+                parent->Read(dependency->entry, completedAudioSequence, &receipt) !=
                     harken::FrontierReceiptRead::Ready ||
                 receipt.outcome != harken::FrontierReceiptOutcome::DefinitivelyNotApplied ||
                 !ReleaseNativeEntryDependency(service, completedAudioSequence)) return false;
