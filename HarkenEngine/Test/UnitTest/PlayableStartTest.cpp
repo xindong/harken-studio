@@ -21179,11 +21179,13 @@ TEST(PlayableStart, QueueTrackInitialStreamWaitHoldsResidentSiblingAndReclaims) 
     }
 }
 
-static void CheckNativeTrackInitialStreamWaitPreservesSubBlockFutureCohort(bool variable) {
-    for (const bool wrapped : {false, true}) for (const auto workers : {0u, 2u}) for (const auto lead : {1u, 4u}) for (const unsigned outcome : {0u, 1u}) {
-        if (variable && wrapped) continue;
+static void CheckNativeTrackInitialStreamWaitPreservesSubBlockFutureCohort(bool variable, bool blendProbe = false) {
+    std::array<std::vector<float>, 2> referenceSamples;
+    for (const bool wrapped : {false, true}) for (const auto workers : {0u, 2u}) for (const auto lead : {1u, 4u}) for (const unsigned outcome : {0u, 1u}) for (const unsigned waitBlocks : {0u, 12u}) {
+        if ((variable && wrapped) || (!blendProbe && waitBlocks == 0) ||
+            (blendProbe && (wrapped || lead != 1 || outcome != 0))) continue;
         const bool cancel = outcome == 1u;
-        SCOPED_TRACE(::testing::Message() << "variable=" << variable << " wrapped=" << wrapped << " workers=" << workers << " lead=" << lead << " outcome=" << outcome);
+        SCOPED_TRACE(::testing::Message() << "variable=" << variable << " wrapped=" << wrapped << " workers=" << workers << " lead=" << lead << " outcome=" << outcome << " blend=" << blendProbe << " wait=" << waitBlocks);
         auto config = harkentest::MakeNullConfig(8, 64, 48000);
         config.renderWorkerCount = workers;
         config.maxStreams = 2;
@@ -21213,13 +21215,13 @@ static void CheckNativeTrackInitialStreamWaitPreservesSubBlockFutureCohort(bool 
         pool.maxImmediateLaneDecisionGates = resolved.maxDecisionRows;
         ASSERT_TRUE(engine.timelinePool.Reset(pool, 0, engine.transportEpochOwner.Current()));
         const auto voicesBefore = engine.voices.AvailableSlotCount();
-        const std::vector<float> resident(512, -0.5f);
+        const std::vector<float> resident(blendProbe ? 4096 : 512, -0.5f);
         const auto pcm = harkentest::MonoDesc(resident, 48000);
         ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSecondSound, &pcm));
         harkentest::StreamSpec spec;
         spec.soundId = kSound;
         const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "compose_queue_track_subblock_future.stream").string();
-        harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, std::vector<float>(512, 0.25f)));
+        harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, std::vector<float>(blendProbe ? 4096 : 512, 0.25f)));
         ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSound, path.c_str()));
         harken::StreamManager::StreamFacts facts;
         ASSERT_TRUE(engine.streams.FindFile(kSound, &facts));
@@ -21237,7 +21239,7 @@ static void CheckNativeTrackInitialStreamWaitPreservesSubBlockFutureCohort(bool 
         for (std::size_t index = 0; index < placements.size(); ++index) {
             auto& placement = placements[index];
             placement.authoredStart = index < 2 ? 0 : INT64_C(1000000);
-            placement.authoredDuration = index < 2 ? INT64_C(500000) : INT64_C(8000000);
+            placement.authoredDuration = index < 2 ? (blendProbe ? 0 : INT64_C(500000)) : INT64_C(8000000);
             placement.stablePlacementOrdinal = static_cast<std::uint32_t>(index);
             placement.stableOccurrenceOrdinal = static_cast<std::uint32_t>(7u + index);
             placement.clipId = harkentest::ObjectId(5001u + index);
@@ -21261,6 +21263,9 @@ static void CheckNativeTrackInitialStreamWaitPreservesSubBlockFutureCohort(bool 
         selectedRow.childStableOrdinal = image.children[0].stableChildOrdinal;
         selectedRow.cellCount = 1;
         selectedRow.cells = &cell;
+        harken::ContinuousGridCellV1 blendCell{};
+        harken::ContinuousGridRowViewV1 blendRow{};
+        harken::CurveV1 blendCurve{};
         if (variable) {
             image.container.mode = harken::ContainerModeV1::VariableControl;
             image.container.memoryScope = harken::MemoryScopeV1::Emitter;
@@ -21272,12 +21277,39 @@ static void CheckNativeTrackInitialStreamWaitPreservesSubBlockFutureCohort(bool 
             image.container.discreteRowCount = 1;
             image.container.discreteRows = &selectedRow;
             image.container.evaluationPeriodFrames = 64;
+            if (blendProbe) {
+                image.container.discreteTiming = 0;
+                image.container.discreteAxisCount = image.container.discreteRowCount = 0;
+                image.container.discreteAxes = nullptr;
+                image.container.discreteRows = nullptr;
+                blendCurve.curveLocalId = 1;
+                blendCurve.curve.pointCount = 2;
+                blendCurve.curve.points[0] = {0.0f, 0.0f};
+                blendCurve.curve.points[1] = {8.0f, 1.0f};
+                blendCell.kind = harken::ContinuousCellKindV1::Interval;
+                blendCell.lower = 0.0f;
+                blendCell.upper = 8.0f;
+                blendCell.lowerInclusive = blendCell.upperInclusive = 1;
+                blendCell.leftCurveLocalId = 1;
+                blendRow.stableRowOrdinal = 1;
+                blendRow.childStableOrdinal = image.children[0].stableChildOrdinal;
+                blendRow.cellCount = 1;
+                blendRow.cells = &blendCell;
+                image.container.continuousTiming = 1;
+                image.container.continuousAxisCount = image.container.continuousRowCount = 1;
+                image.container.continuousAxes = &axis;
+                image.container.continuousRows = &blendRow;
+                image.container.curveCount = 1;
+                image.container.curves = &blendCurve;
+                image.container.envelopeFrames = 1024;
+                image.container.maxActiveRows = image.container.maxLiveRows = 1;
+            }
             image.world.identity.capabilityMask = harken::kWorldCapabilityPlayableProperties |
                 harken::kWorldCapabilityVariableDefinitions | harken::kWorldCapabilityVariableControl;
         }
-        std::vector<harken::PlayableOccurrencePropertyViewV1> occurrences(5);
+        std::vector<harken::PlayableOccurrencePropertyViewV1> occurrences(1u + image.schedule.track.placementCount);
         occurrences[0] = image.occurrences[0];
-        for (std::size_t index = 0; index < placements.size(); ++index) {
+        for (std::size_t index = 0; index < image.schedule.track.placementCount; ++index) {
             occurrences[index + 1] = image.occurrences[2];
             occurrences[index + 1].stableOccurrenceOrdinal = placements[index].stableOccurrenceOrdinal;
             occurrences[index + 1].childPlayable = placements[index].content;
@@ -21318,7 +21350,7 @@ static void CheckNativeTrackInitialStreamWaitPreservesSubBlockFutureCohort(bool 
         install.trackSchedules = &image.schedule.track;
         install.trackScheduleCount = 1;
         const harken::VariableDefinitionV1 definition{
-            harkentest::ObjectId(41), harken::VariableKindV1::Step, 0.0f, 8.0f, 7.0f};
+            harkentest::ObjectId(41), harken::VariableKindV1::Step, 0.0f, 8.0f, blendProbe ? 2.0f : 7.0f};
         if (variable) { install.variables = &definition; install.variableCount = 1; }
         install.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(install);
         ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, install).status);
@@ -21335,6 +21367,23 @@ static void CheckNativeTrackInitialStreamWaitPreservesSubBlockFutureCohort(bool 
         EXPECT_TRUE(variable ? controller->variableControlInstance.Valid() : controller->queueInstance.Valid());
         const auto queueIdentity = controller->queueInstance;
         const auto variableIdentity = controller->variableControlInstance;
+        std::vector<harken::TimelineArmToken> initialProbeArms;
+        if (blendProbe) {
+            ASSERT_NE(nullptr, controller->scheduleVariableChildren);
+            ASSERT_FALSE(controller->scheduleVariableChildren->empty());
+            const auto initial = std::find_if(engine.actionPlayScratch.begin(), engine.actionPlayScratch.end(),
+                [&](const auto& attempt) { return attempt.row == controller && attempt.initialNativePlacementPending; });
+            ASSERT_NE(engine.actionPlayScratch.end(), initial);
+            ASSERT_EQ(engine.actionPlayStorage.IndexOf(initial->storage), initial->initialNativeForestOwner.slot);
+            ASSERT_EQ(initial->storage.generation, initial->initialNativeForestOwner.generation);
+            for (const auto& attempt : engine.actionPlayScratch) {
+                if (attempt.initialNativeForestOwner.slot != initial->initialNativeForestOwner.slot ||
+                    attempt.initialNativeForestOwner.generation != initial->initialNativeForestOwner.generation) continue;
+                for (std::uint32_t index = 0; index < attempt.voiceStartCount; ++index)
+                    initialProbeArms.push_back(attempt.voiceStarts[index].arm);
+            }
+            ASSERT_FALSE(initialProbeArms.empty());
+        }
         auto* rootOwner = controller;
         if (wrapped) rootOwner = engine.ResolvePlayableService(controller->parentService);
         ASSERT_NE(nullptr, rootOwner);
@@ -21344,7 +21393,7 @@ static void CheckNativeTrackInitialStreamWaitPreservesSubBlockFutureCohort(bool 
             ASSERT_NE(nullptr, trackOwner);
             ASSERT_NE(nullptr, trackOwner->scheduleAggregate);
         }
-        for (unsigned block = 0; block < 12; ++block) {
+        for (unsigned block = 0; block < waitBlocks; ++block) {
             ASSERT_EQ(VN_OK, Vn_Update());
             engine.nullBackend.Pump(1);
             ASSERT_TRUE(engine.playableInstances.Classify(started.instance).live) << OccupancyDump(engine);
@@ -21369,14 +21418,35 @@ static void CheckNativeTrackInitialStreamWaitPreservesSubBlockFutureCohort(bool 
         unsigned heard = 0;
         std::vector<std::uint64_t> heardFrames;
         std::uint64_t firstHeard = UINT64_MAX, lastHeard = 0;
+        std::vector<float> relativeSamples(blendProbe ? 4096u : 0u);
+        const auto captureStart = engine.mixer.BlocksRendered() * config.blockFrames;
+        std::vector<float> capturedSamples;
+        std::uint64_t actualOnset = UINT64_MAX;
+        bool retargeted = false;
         for (unsigned block = 0; block < 96; ++block) {
+            if (blendProbe) engine.streams.SyncServe();
+            if (blendProbe && !retargeted && actualOnset != UINT64_MAX &&
+                engine.mixer.BlocksRendered() * config.blockFrames >= actualOnset + 128u) {
+                ASSERT_EQ(128u, engine.mixer.BlocksRendered() * config.blockFrames - actualOnset);
+                ASSERT_EQ(VN_OK, Vn_SetValue(harkentest::ObjectId(41), 6.0f));
+                retargeted = true;
+            }
             ASSERT_EQ(VN_OK, Vn_Update());
             engine.nullBackend.Pump(1);
+            if (blendProbe && actualOnset == UINT64_MAX) for (const auto token : initialProbeArms) {
+                harken::TimelineArmObservation observed{};
+                if (engine.timelineArms.Observe(token, &observed) && observed.startedBlockSequence != 0) {
+                    ASSERT_NE(UINT64_MAX, observed.actualStartFrame);
+                    ASSERT_EQ(observed.actualStartFrame / config.blockFrames + 1u, observed.startedBlockSequence);
+                    actualOnset = std::min(actualOnset, observed.actualStartFrame);
+                }
+            }
             for (unsigned frame = 0; frame < config.blockFrames; ++frame) {
                 const auto sample = engine.nullBackend.LastBlock()[frame * 2];
-                if (std::abs(sample) < 0.00001f) continue;
-                EXPECT_NEAR(-0.25f, sample, 0.00001f);
                 const auto absolute = (engine.mixer.BlocksRendered() - 1u) * config.blockFrames + frame;
+                if (blendProbe) capturedSamples.push_back(sample);
+                if (std::abs(sample) < 0.00001f) continue;
+                if (!blendProbe) EXPECT_NEAR(-0.25f, sample, 0.00001f);
                 if (firstHeard == UINT64_MAX && !variable) {
                     EXPECT_FALSE(rootOwner->pendingDirectStartBinding);
                     EXPECT_FALSE(controller->pendingDirectStartBinding);
@@ -21391,8 +21461,31 @@ static void CheckNativeTrackInitialStreamWaitPreservesSubBlockFutureCohort(bool 
                 ++heard;
             }
         }
-        EXPECT_EQ(cancel ? 0u : 408u, heard);
-        if (!cancel && heardFrames.size() == 408u) {
+        if (blendProbe) {
+            ASSERT_TRUE(retargeted);
+            ASSERT_NE(UINT64_MAX, actualOnset);
+            ASSERT_GE(actualOnset, captureStart);
+            ASSERT_GE(capturedSamples.size(), actualOnset - captureStart + relativeSamples.size());
+            std::copy_n(capturedSamples.begin() + (actualOnset - captureStart), relativeSamples.size(), relativeSamples.begin());
+            EXPECT_GT(heard, 2048u);
+            EXPECT_LT(relativeSamples[2048], -0.1f);
+            for (std::size_t frame = relativeSamples.size() - 64u; frame < relativeSamples.size(); ++frame)
+                EXPECT_NEAR(-0.1875f, relativeSamples[frame], 0.00001f) << "tailFrame=" << frame;
+            auto& reference = referenceSamples[workers == 0 ? 0 : 1];
+            if (waitBlocks == 0) reference = relativeSamples;
+            else {
+                ASSERT_EQ(reference.size(), relativeSamples.size());
+                float maximumDifference = 0.0f;
+                std::size_t worstFrame = 0;
+                for (std::size_t frame = 0; frame < reference.size(); ++frame) {
+                    const float difference = std::abs(reference[frame] - relativeSamples[frame]);
+                    if (difference > maximumDifference) { maximumDifference = difference; worstFrame = frame; }
+                }
+                EXPECT_LE(maximumDifference, 0.00001f) << "relativeFrame=" << worstFrame
+                    << " baseline=" << reference[worstFrame] << " delayed=" << relativeSamples[worstFrame];
+            }
+        } else EXPECT_EQ(cancel ? 0u : 408u, heard);
+        if (!blendProbe && !cancel && heardFrames.size() == 408u) {
             for (std::size_t index = 0; index < heardFrames.size(); ++index)
                 EXPECT_EQ(firstHeard + (index < 24u ? index : index + 24u), heardFrames[index]);
             EXPECT_EQ(432u, lastHeard - firstHeard + 1u);
@@ -21413,6 +21506,7 @@ TEST(PlayableStart, QueueTrackInitialStreamWaitPreservesSubBlockFutureCohort) {
 
 TEST(PlayableStart, VariableTrackInitialStreamWaitPreservesSubBlockFutureCohort) {
     CheckNativeTrackInitialStreamWaitPreservesSubBlockFutureCohort(true);
+    CheckNativeTrackInitialStreamWaitPreservesSubBlockFutureCohort(true, true);
 }
 
 TEST(PlayableStart, DirectOrdinaryStreamRetainsSelectedInitialSourceWhileWaiting) {

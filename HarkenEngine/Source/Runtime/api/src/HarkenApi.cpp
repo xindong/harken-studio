@@ -48771,6 +48771,48 @@ bool PreparePendingVariableQueueRootTiming(harken::Engine& engine,
     return true;
 }
 
+bool ShiftVariableControlDerivedTiming(harken::EnginePlayableServiceRow& service,
+    std::uint64_t shift, bool moveForward, bool apply) noexcept {
+    const auto canShiftRaw = [&](std::uint64_t value) {
+        return moveForward ? value <= UINT64_MAX - shift : value >= shift;
+    };
+    const auto canShift = [&](std::uint64_t value) { return value == 0 || canShiftRaw(value); };
+    const auto shiftRaw = [&](std::uint64_t& value) {
+        value = moveForward ? value + shift : value - shift;
+    };
+    const auto shiftFrame = [&](std::uint64_t& value) { if (value != 0) shiftRaw(value); };
+    if ((service.HasFeatureArrays() && !canShift(service.VariablePayload().variableControlNextEvaluationFrame)) ||
+        !canShift(service.variableControlDiscreteNextEvaluationFrame) ||
+        !canShift(service.variableControlDiscreteZeroWorkCompletionFrame) ||
+        service.variableControlContinuousLogicalCount > service.variableControlContinuousLogicalCompletionFrames.size()) return false;
+    for (std::uint32_t index = 0; index < service.variableControlContinuousLogicalCount; ++index)
+        if (!canShift(service.variableControlContinuousLogicalCompletionFrames[index])) return false;
+    if (service.variableControlContinuousMemberCount > (service.HasFeatureArrays()
+            ? service.VariablePayload().variableControlMemberWeights.size() : 0u) ||
+        service.variableControlChildWeightCount > (service.HasFeatureArrays()
+            ? service.VariablePayload().variableControlMemberWeights.Children().size() : 0u)) return false;
+    const auto shiftSegment = [&](harken::WeightSegmentV1& segment) {
+        if (segment.endFrame <= segment.startFrame) return true;
+        if (!canShiftRaw(segment.startFrame) || !canShiftRaw(segment.endFrame)) return false;
+        if (apply) { shiftRaw(segment.startFrame); shiftRaw(segment.endFrame); }
+        return true;
+    };
+    for (std::uint32_t index = 0; index < service.variableControlContinuousMemberCount; ++index)
+        if (!shiftSegment(service.VariablePayload().variableControlMemberWeights[index])) return false;
+    for (std::uint32_t index = 0; index < service.variableControlChildWeightCount; ++index) {
+        auto& weight = service.VariablePayload().variableControlMemberWeights.Children()[index];
+        if (!shiftSegment(weight.current) || !shiftSegment(weight.pending)) return false;
+    }
+    if (apply) {
+        if (service.HasFeatureArrays()) shiftFrame(service.VariablePayload().variableControlNextEvaluationFrame);
+        shiftFrame(service.variableControlDiscreteNextEvaluationFrame);
+        shiftFrame(service.variableControlDiscreteZeroWorkCompletionFrame);
+        for (std::uint32_t index = 0; index < service.variableControlContinuousLogicalCount; ++index)
+            shiftFrame(service.variableControlContinuousLogicalCompletionFrames[index]);
+    }
+    return true;
+}
+
 bool PreparePendingVariableControlLaneEntry(harken::Engine& engine,
     harken::EnginePlayableServiceRow& row,
     harken::EngineActionPlayScratch& scratch,
@@ -48898,60 +48940,17 @@ bool PreparePendingVariableControlLaneEntry(harken::Engine& engine,
     const auto canShift = [&](std::uint64_t value) {
         return value == 0 || canShiftRaw(value);
     };
-    const auto shiftRaw = [&](std::uint64_t& value) {
-        value = moveForward ? value + shift : value - shift;
-    };
     const auto shiftFrame = [&](std::uint64_t& value) {
         if (value != 0) value = moveForward ? value + shift : value - shift;
     };
     const auto shiftTiming = [&](harken::EnginePlayableServiceRow& service,
                                  bool apply) {
-        if (!canShift(service.startFrame) ||
-            (service.HasFeatureArrays() &&
-                !canShift(service.VariablePayload().variableControlNextEvaluationFrame)) ||
-            !canShift(service.variableControlDiscreteNextEvaluationFrame) ||
-            !canShift(service.zeroWorkCompletionFrame) ||
-            !canShift(service.variableControlDiscreteZeroWorkCompletionFrame))
+        if (!canShift(service.startFrame) || !canShift(service.zeroWorkCompletionFrame) ||
+            !ShiftVariableControlDerivedTiming(service, shift, moveForward, apply))
             return false;
-        for (std::uint32_t index = 0;
-             index < service.variableControlContinuousLogicalCount; ++index)
-            if (!canShift(service.variableControlContinuousLogicalCompletionFrames[index]))
-                return false;
-        if (service.variableControlContinuousMemberCount > (service.HasFeatureArrays()
-                ? service.VariablePayload().variableControlMemberWeights.size() : 0u)) return false;
-        for (std::uint32_t index = 0; index < service.variableControlContinuousMemberCount; ++index) {
-            auto& segment = service.VariablePayload().variableControlMemberWeights[index];
-            if (segment.endFrame <= segment.startFrame) continue;
-            if (!canShiftRaw(segment.startFrame) ||
-                !canShiftRaw(segment.endFrame)) return false;
-            if (apply) {
-                shiftRaw(segment.startFrame);
-                shiftRaw(segment.endFrame);
-            }
-        }
-        for (std::uint32_t index = 0;
-             index < service.variableControlChildWeightCount; ++index) {
-            auto& weight = service.VariablePayload().variableControlMemberWeights.Children()[index];
-            for (auto* segment : {&weight.current, &weight.pending}) {
-                if (segment->endFrame <= segment->startFrame) continue;
-                if (!canShiftRaw(segment->startFrame) ||
-                    !canShiftRaw(segment->endFrame)) return false;
-                if (apply) {
-                    shiftRaw(segment->startFrame);
-                    shiftRaw(segment->endFrame);
-                }
-            }
-        }
         if (apply) {
             shiftFrame(service.startFrame);
-            if (service.HasFeatureArrays())
-                shiftFrame(service.VariablePayload().variableControlNextEvaluationFrame);
-            shiftFrame(service.variableControlDiscreteNextEvaluationFrame);
             shiftFrame(service.zeroWorkCompletionFrame);
-            shiftFrame(service.variableControlDiscreteZeroWorkCompletionFrame);
-            for (std::uint32_t index = 0;
-                 index < service.variableControlContinuousLogicalCount; ++index)
-                shiftFrame(service.variableControlContinuousLogicalCompletionFrames[index]);
             service.schedule.entryAnchorFrame = anchor;
         }
         return true;
@@ -55293,8 +55292,9 @@ DirectPendingStartResult PreparePrivateInitialNativePlacement(harken::Engine& en
     for (const auto* program : programs) if (!canShift(program->entryAnchorFrame)) return Result::Refused;
     for (const auto* member : members) if (!canShift(member->startFrame)) return Result::Refused;
     for (const auto& source : sources) if (!canShift(source.installation.onsetFrame)) return Result::Refused;
-    for (const auto* row : rows) {
-        if (!canShift(row->startFrame) || (row->hasZeroWorkCompletion && !canShift(row->zeroWorkCompletionFrame)))
+    for (auto* row : rows) {
+        if (!canShift(row->startFrame) || (row->hasZeroWorkCompletion && !canShift(row->zeroWorkCompletionFrame)) ||
+            !ShiftVariableControlDerivedTiming(*row, shift, true, false))
             return Result::Refused;
         if (row->scheduleTerminalChild != nullptr && !row->scheduleTerminalChild->naturalClipDeadline.Empty() &&
             !canShift(row->scheduleTerminalChild->naturalClipDeadline.frame)) return Result::Refused;
@@ -55302,6 +55302,11 @@ DirectPendingStartResult PreparePrivateInitialNativePlacement(harken::Engine& en
                 return child.naturalClipDeadline.Empty() || canShift(child.naturalClipDeadline.frame);
             })) return Result::Refused;
     }
+    if (!VisitInitialScheduleAttempts(engine, root, [&](const auto& attempt) {
+            for (const auto& admission : attempt.initialQueueEntryAdmissions)
+                if (admission == nullptr || !canShift(admission->entryFrame)) return false;
+            return true;
+        })) return Result::Refused;
     // Only the physical placement moves; the original Source, selection and
     // Variable read cut remain the outputs captured by the one committed prefix.
     if (root.initialNativeSourcesPublished)
@@ -55315,6 +55320,7 @@ DirectPendingStartResult PreparePrivateInitialNativePlacement(harken::Engine& en
     for (const auto& source : sources)
         engine.timelineVoiceInstallIdentities[source.start->arm.renderSlot].onsetFrame += shift;
     for (auto* row : rows) {
+        (void)ShiftVariableControlDerivedTiming(*row, shift, true, true);
         row->startFrame += shift;
         if (row->pendingDirectStartBinding) row->pendingDirectEntryFrame += shift;
         if (row->hasZeroWorkCompletion) row->zeroWorkCompletionFrame += shift;
@@ -55327,10 +55333,8 @@ DirectPendingStartResult PreparePrivateInitialNativePlacement(harken::Engine& en
             });
     }
     if (!VisitInitialScheduleAttempts(engine, root, [&](auto& attempt) {
-            for (const auto& admission : attempt.initialQueueEntryAdmissions) {
-                if (admission == nullptr || !canShift(admission->entryFrame)) return false;
+            for (const auto& admission : attempt.initialQueueEntryAdmissions)
                 admission->entryFrame += shift;
-            }
             return true;
         }) || !CompletePrivateInitialNativePages(engine, root)) return Result::Refused;
     return Result::Filed;
@@ -55371,7 +55375,8 @@ bool CanTransferPrivateInitialNativeForest(harken::Engine& engine,
             !CanResetImmediateActionPlayScratchUnchangedResources(&attempt) ||
             attempt.pendingScheduleOccurrence.generation != 0 || attempt.pendingScheduleOccurrencePrepared ||
             (storage.initialSelection.attemptGeneration != 0 && !storage.initialSelection.BoundFor(storage.generation)) ||
-            (!storage.initialSelectionBatch.Empty() && !storage.musicSelection.enabled) ||
+            (!storage.initialSelectionBatch.Empty() &&
+             (!storage.musicSelection.enabled || storage.selectionProducer.Valid())) ||
             storage.musicSelection.HasPreparedTokens() || !storage.initialSelectionCensus.Empty() ||
             pending == nullptr || !pending->Empty() || !storage.originalPendingVariableProducer.ReclaimReady() ||
             !storage.ownerLedger.CanTransfer(storage.generation) ||
