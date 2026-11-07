@@ -11070,7 +11070,7 @@ public:
         const PreparedTransactionBatch& events, std::uint32_t requestIndex, std::uint32_t eventOrdinal,
         ArmGroupToken group) noexcept {
         auto* holder = OriginalSinglePreparationForArm(start.arm);
-        if (holder == nullptr || holder->singleIssued_ || start.prepared || start.commandCount == 0 ||
+        if (holder == nullptr || start.prepared || start.commandCount == 0 ||
             start.commands[0].opcode != kOpcodePlay ||
             holder->sourceIdentity_ != start.commands[0].payload.play.sourceIdentity) return false;
         const TimelineArmTable::GroupedPublicationAfterInstallation* publication = nullptr;
@@ -11770,7 +11770,7 @@ public:
             !originalSinglePreparationHolders.IsConstructed(start.arm.slot)) return false;
         auto* holder = &originalSinglePreparationHolders[start.arm.slot];
         if (holder->receiver_ != this || !SameOriginalSingleArm(holder->arm_, start.arm) ||
-            holder->singleIssued_ || start.prepared || start.arm.slot >= initialFrontierArmPins.size() ||
+            start.prepared || start.arm.slot >= initialFrontierArmPins.size() ||
             start.commandCount == 0 || start.commands[0].opcode != kOpcodePlay ||
             holder->sourceIdentity_ != start.commands[0].payload.play.sourceIdentity) return false;
         if (holder->privateBoundRetirement_.Valid() || holder->retirement_.Valid()) return true;

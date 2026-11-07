@@ -23362,7 +23362,7 @@ bool CancelScheduleChildSignalAdmission(harken::Engine& engine,
          root->storage.phase != harken::EngineFrontierAttemptPhase::CancelPending)) return false;
     auto* signal = root->initialQueueSignalAdmission.get();
     bool ownsContext = false;
-    if (!VisitInitialScheduleAttempts(engine, *root, [&](auto& attempt) noexcept {
+    if (!VisitPrivateInitialForest(engine, *root, [&](auto& attempt) noexcept {
             if (&attempt != parent || attempt.storage.scheduleChildren == nullptr) return true;
             const auto& children = *attempt.storage.scheduleChildren;
             if (children.count > children.owners.size()) return false;
@@ -55063,6 +55063,98 @@ bool ServiceStartedRootSoundWithoutPendingWork(harken::Engine& engine,
 
 enum class DirectPendingStartResult : std::uint8_t { Waiting, Filed, Refused };
 
+void ServiceInitialVariableControlSideArms(harken::Engine& engine,
+    harken::EnginePlayableServiceRow& row, harken::VariableControlSide side,
+    std::uint64_t observedAudioSequence, bool sourceWaiting,
+    const harken::FrontierEntryReceiptRef& entry, bool commitGroup, bool publishArms,
+    bool& ready, bool& failed) noexcept {
+    const bool discrete = side == harken::VariableControlSide::Discrete;
+    const auto decision = discrete ? row.variableControlDiscreteDecision : row.variableControlContinuousDecision;
+    const auto group = discrete ? row.variableControlDiscreteArmGroup : row.variableControlContinuousArmGroup;
+    const auto pages = discrete ? row.variableControlDiscretePages : row.variableControlContinuousPages;
+    const auto* members = discrete ? row.variableControlInitialArms.Discrete().data()
+        : row.variableControlInitialArms.Continuous().data();
+    const auto count = discrete ? row.variableControlInitialDiscreteMemberCount : row.variableControlInitialContinuousMemberCount;
+    auto& committed = discrete ? row.variableControlDiscreteDecisionCommitted : row.variableControlContinuousDecisionCommitted;
+    const auto blockFrames = engine.config.blockFrames;
+    if (count == 0) return;
+    harken::ArmGroupSnapshot groupSnapshot{};
+    const bool groupCaptured =
+        engine.armGroups.Capture(group, &groupSnapshot);
+    if (!groupCaptured ||
+        groupSnapshot.parent.slot != decision.slot ||
+        groupSnapshot.parent.generation != decision.generation ||
+        groupSnapshot.state != harken::ArmGroupState::AwaitingAcks ||
+        groupSnapshot.memberCount != count || groupSnapshot.ackedCount != 0 ||
+        groupSnapshot.tombstonedCount != 0) {
+        failed = true;
+        return;
+    }
+    bool acknowledged = true;
+    for (std::uint32_t index = 0; index < count; ++index) {
+        harken::TimelineArmObservation observation{};
+        harken::ArmGroupMemberSnapshot member{};
+        const bool memberCaptured = engine.armGroups.CaptureMember(
+            group, static_cast<std::uint16_t>(index), &member);
+        const bool armObserved =
+            engine.timelineArms.Observe(members[index], &observation);
+        harken::DecisionCommittedSnapshot actualDecision{};
+        const bool actualDecisionCaptured = observation.parentGroup.Valid() &&
+            engine.decisions.CaptureCommitted(
+                observation.parentGroup.decision, &actualDecision);
+        const auto* nativeArm = sourceWaiting ? engine.timelineArms.Resolve(members[index]) : nullptr;
+        if (!memberCaptured ||
+            member.token.slot != members[index].slot ||
+            member.token.generation != members[index].generation ||
+            member.token.renderGeneration != members[index].renderGeneration ||
+            member.acked || member.tombstoned || !armObserved ||
+            (sourceWaiting && (!actualDecisionCaptured || nativeArm == nullptr ||
+             observation.parentGroup.decision.slot != decision.slot ||
+             observation.parentGroup.decision.generation != decision.generation ||
+             observation.memberIndex != index || actualDecision.armGroup.slot != group.slot ||
+             actualDecision.armGroup.generation != group.generation ||
+             actualDecision.world != row.Invocation().worldGeneration ||
+             actualDecision.transport != engine.timelinePool.Epoch() ||
+             nativeArm->frontierAdmission == nullptr ||
+             !(nativeArm->frontierAdmission->entry == entry) ||
+             nativeArm->frontierAdmission->operation.owner.child != row.ownerInstance ||
+             nativeArm->frontierAdmission->operation.owner.childEpoch != row.ownerEpoch ||
+             nativeArm->frontierAdmissionLease == nullptr ||
+             nativeArm->frontierAdmissionLease->Capture().state != harken::AudioSliceState::Ready))) {
+            failed = true;
+            return;
+        }
+        if (!IsTimelyTimelineArmAck(observation.state, observation.armedCompletionSequence,
+                observedAudioSequence, sourceWaiting ? observedAudioSequence : row.startFrame / blockFrames)) {
+            ready = false;
+            // The due callback must adjudicate the original Entry
+            // before logic can require its source-wait record.
+            failed = failed || (!sourceWaiting && observedAudioSequence > row.startFrame / blockFrames) ||
+                (observation.state != harken::ArmState::PendingApply && observation.state != harken::ArmState::Armed);
+            return;
+        }
+        if (commitGroup) acknowledged = engine.armGroups.Acknowledge(group, members[index],
+            observation.armedCompletionSequence) && acknowledged;
+    }
+    if (!commitGroup) return;
+    if (!acknowledged) { failed = true; return; }
+    if (publishArms) for (std::uint32_t index = 0; index < count; ++index)
+        if (!engine.timelineArms.Publish(members[index])) { failed = true; return; }
+    if (!committed) {
+        harken::DecisionParticipantRef participant{};
+        participant.kind = harken::DecisionParticipantKind::Variable;
+        participant.slot = row.variableControlInstance.slot;
+        participant.generation = row.variableControlInstance.generation;
+        harken::DecisionCommitPayload payload{};
+        payload.participants = &participant;
+        payload.participantCount = 1;
+        payload.pages = pages;
+        payload.armGroup = group;
+        committed = engine.decisions.Commit(decision, payload);
+        failed = !committed || failed;
+    }
+}
+
 DirectPendingStartResult PreparePrivateInitialNativePlacement(harken::Engine& engine,
     harken::EngineActionPlayScratch& root) noexcept {
     using Result = DirectPendingStartResult;
@@ -55256,6 +55348,24 @@ bool PublishPrivateInitialNativePlacement(harken::Engine& engine,
             }
             return true;
         })) return false;
+    // The native group owns its ACK and Decision commit before its Sources publish.
+    // All-resident first calls retain their installation-time grouped publication.
+    if (root.initialNativeSourcesPublished) for (const bool commit : {false, true}) {
+        if (!VisitInitialScheduleAttempts(engine, root, [&](auto& attempt) noexcept {
+            return VisitInitialAttemptServices(engine, attempt, [&](auto& row) noexcept {
+                if (!row.variableControlInstance.Valid() || !row.variableControlIndependentFrontier ||
+                    row.phase != harken::EnginePlayableStartPhase::AwaitingArmAck) return true;
+                bool ready = true, failed = false;
+                const auto& entry = row.frontierLifetimeEntry.Valid() ? row.frontierLifetimeEntry : row.frontierEntry;
+                for (const auto side : {harken::VariableControlSide::Discrete, harken::VariableControlSide::Continuous}) {
+                    ServiceInitialVariableControlSideArms(engine, row, side, engine.mixer.BlocksRendered(),
+                        false, entry, commit, false, ready, failed);
+                    if (!ready || failed) return false;
+                }
+                return true;
+            });
+        })) return false;
+    }
     harken::TimelineArmTable::BoundArmPublicationProof arms;
     if (count != 0 && !engine.timelineArms.ProveBoundArmPublicationBatch(
             engine.initialRootArmPublicationInputs.data(), count,
@@ -55284,6 +55394,14 @@ bool PublishPrivateInitialNativePlacement(harken::Engine& engine,
             });
         })) return false;
     if (arms.Valid()) harken::TimelineArmTable::ApplyBoundArmPublicationBatch(arms);
+    if (!VisitInitialScheduleAttempts(engine, root, [&](auto& attempt) noexcept {
+        return VisitInitialAttemptServices(engine, attempt, [&](auto& row) noexcept {
+            if (row.variableControlInstance.Valid() && row.variableControlIndependentFrontier &&
+                row.phase == harken::EnginePlayableStartPhase::AwaitingArmAck)
+                row.phase = harken::EnginePlayableStartPhase::Filed;
+            return true;
+        });
+    })) return false;
     root.storage.phase = harken::EngineFrontierAttemptPhase::Published;
     if (!PublishInitialScheduleFrontiers(engine, root) ||
         (transferOwnership && !TransferFrontierAttempt(engine, root))) {
@@ -59520,101 +59638,15 @@ engine.runtimeRecreateRequired = true;
                     (!row.variableControlWorldUsesCurrentAuthority ||
                      engine.variables.CurrentPlayableWorld().generation == row.Invocation().worldGeneration) &&
                     activation->Read(entry, observedAudioSequence, &pendingReceipt) == harken::FrontierReceiptRead::InFlight;
-                const auto publishOwned = [&](harken::DecisionToken decision, harken::ArmGroupToken group,
-                    harken::PreparedGroupToken pages, const harken::TimelineArmToken* members,
-                    std::uint32_t count, bool& committed, bool publish) {
-                    if (count == 0) return;
-                    harken::ArmGroupSnapshot groupSnapshot{};
-                    const bool groupCaptured =
-                        engine.armGroups.Capture(group, &groupSnapshot);
-                    if (!groupCaptured ||
-                        groupSnapshot.parent.slot != decision.slot ||
-                        groupSnapshot.parent.generation != decision.generation ||
-                        groupSnapshot.state != harken::ArmGroupState::AwaitingAcks ||
-                        groupSnapshot.memberCount != count || groupSnapshot.ackedCount != 0 ||
-                        groupSnapshot.tombstonedCount != 0) {
-                        failed = true;
-                        return;
-                    }
-                    bool acknowledged = true;
-                    for (std::uint32_t index = 0; index < count; ++index) {
-                        harken::TimelineArmObservation observation{};
-                        harken::ArmGroupMemberSnapshot member{};
-                        const bool memberCaptured = engine.armGroups.CaptureMember(
-                            group, static_cast<std::uint16_t>(index), &member);
-                        const bool armObserved =
-                            engine.timelineArms.Observe(members[index], &observation);
-                        harken::DecisionCommittedSnapshot actualDecision{};
-                        const bool actualDecisionCaptured = observation.parentGroup.Valid() &&
-                            engine.decisions.CaptureCommitted(
-                                observation.parentGroup.decision, &actualDecision);
-                        const auto* nativeArm = sourceWaiting ? engine.timelineArms.Resolve(members[index]) : nullptr;
-                        if (!memberCaptured ||
-                            member.token.slot != members[index].slot ||
-                            member.token.generation != members[index].generation ||
-                            member.token.renderGeneration != members[index].renderGeneration ||
-                            member.acked || member.tombstoned || !armObserved ||
-                            (sourceWaiting && (!actualDecisionCaptured || nativeArm == nullptr ||
-                             observation.parentGroup.decision.slot != decision.slot ||
-                             observation.parentGroup.decision.generation != decision.generation ||
-                             observation.memberIndex != index || actualDecision.armGroup.slot != group.slot ||
-                             actualDecision.armGroup.generation != group.generation ||
-                             actualDecision.world != row.Invocation().worldGeneration ||
-                             actualDecision.transport != engine.timelinePool.Epoch() ||
-                             nativeArm->frontierAdmission == nullptr ||
-                             !(nativeArm->frontierAdmission->entry == entry) ||
-                             nativeArm->frontierAdmission->operation.owner.child != row.ownerInstance ||
-                             nativeArm->frontierAdmission->operation.owner.childEpoch != row.ownerEpoch ||
-                             nativeArm->frontierAdmissionLease == nullptr ||
-                             nativeArm->frontierAdmissionLease->Capture().state != harken::AudioSliceState::Ready))) {
-                            failed = true;
-                            return;
-                        }
-                        if (!IsTimelyTimelineArmAck(observation.state, observation.armedCompletionSequence,
-                                observedAudioSequence, sourceWaiting ? observedAudioSequence : row.startFrame / blockFrames)) {
-                            ready = false;
-                            // The due callback must adjudicate the original Entry
-                            // before logic can require its source-wait record.
-                            failed = failed || (!sourceWaiting && observedAudioSequence > row.startFrame / blockFrames) ||
-                                (observation.state != harken::ArmState::PendingApply && observation.state != harken::ArmState::Armed);
-                            return;
-                        }
-                        if (publish) acknowledged = engine.armGroups.Acknowledge(group, members[index],
-                            observation.armedCompletionSequence) && acknowledged;
-                    }
-                    if (!publish) return;
-                    if (!acknowledged) { failed = true; return; }
-                    for (std::uint32_t index = 0; index < count; ++index)
-                        if (!engine.timelineArms.Publish(members[index])) { failed = true; return; }
-                    if (!committed) {
-                        harken::DecisionParticipantRef participant{};
-                        participant.kind = harken::DecisionParticipantKind::Variable;
-                        participant.slot = row.variableControlInstance.slot;
-                        participant.generation = row.variableControlInstance.generation;
-                        harken::DecisionCommitPayload payload{};
-                        payload.participants = &participant;
-                        payload.participantCount = 1;
-                        payload.pages = pages;
-                        payload.armGroup = group;
-                        committed = engine.decisions.Commit(decision, payload);
-                        failed = !committed || failed;
-                    }
+                const auto publishOwned = [&](harken::VariableControlSide side, bool publish) {
+                    ServiceInitialVariableControlSideArms(engine, row, side, observedAudioSequence,
+                        sourceWaiting, entry, publish, true, ready, failed);
                 };
-                publishOwned(row.variableControlDiscreteDecision, row.variableControlDiscreteArmGroup,
-                    row.variableControlDiscretePages, row.variableControlInitialArms.Discrete().data(),
-                    row.variableControlInitialDiscreteMemberCount, row.variableControlDiscreteDecisionCommitted, false);
-                publishOwned(row.variableControlContinuousDecision, row.variableControlContinuousArmGroup,
-                    row.variableControlContinuousPages,
-                    row.variableControlInitialArms.Continuous().data(),
-                    row.variableControlInitialContinuousMemberCount, row.variableControlContinuousDecisionCommitted, false);
+                publishOwned(harken::VariableControlSide::Discrete, false);
+                publishOwned(harken::VariableControlSide::Continuous, false);
                 if (ready && !failed) {
-                    publishOwned(row.variableControlDiscreteDecision, row.variableControlDiscreteArmGroup,
-                        row.variableControlDiscretePages, row.variableControlInitialArms.Discrete().data(),
-                        row.variableControlInitialDiscreteMemberCount, row.variableControlDiscreteDecisionCommitted, true);
-                    if (!failed) publishOwned(row.variableControlContinuousDecision, row.variableControlContinuousArmGroup,
-                        row.variableControlContinuousPages,
-                        row.variableControlInitialArms.Continuous().data(),
-                        row.variableControlInitialContinuousMemberCount, row.variableControlContinuousDecisionCommitted, true);
+                    publishOwned(harken::VariableControlSide::Discrete, true);
+                    if (!failed) publishOwned(harken::VariableControlSide::Continuous, true);
                 }
                 if (failed) {
                     row.phase = harken::EnginePlayableStartPhase::Cancelling;
@@ -91365,7 +91397,8 @@ struct ScheduleContainerPreparationOperations {
             if (root == nullptr) return false;
             // A Queue signal owns its root admission. Only descendants (or an
             // independent entry seed) require a prerequisite from that root.
-            if (activeScratch != root || root->nativeEntryForestRoot) {
+            if (!IsInitialQueueRootForest(engine, *root) &&
+                (activeScratch != root || root->nativeEntryForestRoot)) {
                 activeScratch->nativeEntryDomain = true;
                 context.initialAdmissionGroup = {};
                 context.initialAdmissionMemberCursor = nullptr;
@@ -93668,6 +93701,8 @@ bool PrepareContainerNestedVariableControl(
             scratch->storage.initialVariableService != nullptr) return fail(VN_DEVICE_ERROR);
         scratch->storage.initialVariableService = &engine.variables;
         scratch->storage.initialVariableCut = std::exchange(initialVariables.ref, {});
+        if (scratch->initialNativeForestOwner.Valid())
+            scratch->initialReadCutOwner = {engine.actionPlayStorage.IndexOf(scratch->storage), scratch->storage.generation};
     }
     harken::PlayableStartResult prepared{};
     if constexpr (std::is_same_v<WorldView, harken::PackPlaybackView>) {
@@ -94061,6 +94096,8 @@ bool PrepareContainerExecution(
                 scratch->storage.initialVariableService != nullptr) return failVariableControl(VN_DEVICE_ERROR);
             scratch->storage.initialVariableService = &engine.variables;
             scratch->storage.initialVariableCut = std::exchange(initialVariables.ref, {});
+            if (scratch->initialNativeForestOwner.Valid())
+                scratch->initialReadCutOwner = {engine.actionPlayStorage.IndexOf(scratch->storage), scratch->storage.generation};
         }
         const harken::PlayableStartResult prepared = packVariableControl
             ? operations.PrepareVariableInitial(
@@ -95575,7 +95612,10 @@ bool CancelVariableScheduleChildren(harken::Engine& engine,
             if (native) ++nativeCount;
             else reachedOriginal = true;
         }
-        if (row.scheduleLeafCount < nativeCount || row.pendingFutureCount < nativeCount) return false;
+        // Cancellation consumes pending playback before private member aliases return.
+        const bool pendingCancelled = row.phase == harken::EnginePlayableStartPhase::Cancelling &&
+            row.pendingFutureCount == 0;
+        if (row.scheduleLeafCount < nativeCount || (!pendingCancelled && row.pendingFutureCount < nativeCount)) return false;
         // These private aliases never enter the parent's initial frontier: every
         // Source and native Start retains the descendant's exact resource owner.
         // Detach only this attempt's appended observations before its child owner
@@ -95584,7 +95624,7 @@ bool CancelVariableScheduleChildren(harken::Engine& engine,
             bases.member + offset + count - nativeCount, nativeCount);
         count -= nativeCount;
         row.scheduleLeafCount -= nativeCount;
-        row.pendingFutureCount -= nativeCount;
+        if (!pendingCancelled) row.pendingFutureCount -= nativeCount;
         return true;
     };
     if (!detach(0, row.variableControlDiscreteMemberCount) ||
@@ -103458,17 +103498,9 @@ bool PrepareInitialAttemptProducer(harken::Engine& engine,
     const auto* existingLinks =
         scratch->playableTreeExecutor.OriginalPreparedParentLinks(engine.playableInstances);
     if (existingLinks == nullptr) {
-        // Tree-only issuance uses the actual complete tree, including outer wrappers.
-        // Specialized Current producers retain their own VC service and Decision gates.
-        if (scratch->variableControl && hasOriginalLedger) {
-            if (!ProveInitialVariableControlDecisionCommits(engine, *scratch, sequence) ||
-                !ProveInitialVariableControlInstanceCommit(engine, *scratch) ||
-                !ProveInitialVariableControlContainerCommits(engine, *scratch) ||
-                !ProveInitialVariableControlPlayableInstanceCommits(engine, *scratch) ||
-                !ProveInitialVariableControlServicePartitionCommit(engine, *scratch)) return false;
-        } else if (scratch->variableControl && scratch->variableControlTreeTokensAdopted) {
-            // Tree-only Queue factories use the complete native VC tree.
-            // They do not acquire the two-side Source-specific VC proof.
+        // Queue Current issuance uses the complete native tree. The dedicated
+        // two-side VC Page producer proves its own service and Decision inputs.
+        if (scratch->variableControl && scratch->variableControlTreeTokensAdopted) {
             const auto& container = scratch->variableControlControllerRow;
             const auto& preparedRoot = scratch->storage.schedulePreparedRoot != nullptr
                 ? *scratch->storage.schedulePreparedRoot : scratch->instance;
@@ -103493,8 +103525,7 @@ bool PrepareInitialAttemptProducer(harken::Engine& engine,
             if (!scratch->playableTreeExecutor.ProveInstanceCommits(&engine.playableInstances, root) ||
                 !scratch->playableTreeExecutor.ProveParentLinks(engine.playableInstances, root)) return false;
         }
-    } else if (scratch->variableControl && hasOriginalLedger &&
-        !scratch->variableControlOwnerContext.ServiceCommitProofRequired()) return false;
+    }
     const auto* links = scratch->playableTreeExecutor.OriginalPreparedParentLinks(engine.playableInstances);
     if (links == nullptr || (scratch->voiceStartCount != 0 && !engine.preparedVoiceCommandBatchProof.Valid()))
         return false;
