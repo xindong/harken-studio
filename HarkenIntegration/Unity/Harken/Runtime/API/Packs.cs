@@ -34,7 +34,7 @@ namespace Harken
         }
     }
 
-    /// <summary>Ergonomic handle over a loaded .pack (an SDK-facing name).</summary>
+    /// <summary>Ergonomic handle over a loaded .pack (an API-facing name).</summary>
     public readonly struct Pack
     {
         public readonly ulong Handle;
@@ -74,13 +74,13 @@ namespace Harken
     }
 
     /// <summary>
-    /// Pack load/unload (the SDK-facing names <c>LoadPack</c> / <c>UnloadPack</c>).
+    /// Pack load/unload (the API-facing names <c>LoadPack</c> / <c>UnloadPack</c>).
     /// Loading marshals a UTF-8 path into a blittable <see cref="VnPackDesc"/>;
     /// this is a load-time call, not the hot path.
     /// </summary>
     public static class Packs
     {
-        /// <summary>SDK mutation stamp for cache invalidation, not native readiness or identity.</summary>
+        /// <summary>Managed mutation stamp for cache invalidation, not native readiness or identity.</summary>
         public static ulong ChangeVersion { get; private set; }
 
         internal static VnResult ObserveMutation(VnResult result)

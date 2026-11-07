@@ -16,7 +16,7 @@ inline constexpr char kVariableExecutionDomain[] = "HARKEN-VARIABLE-EXECUTION-V1
 inline constexpr char kVariableCatalogDomain[] = "HARKEN-VARIABLE-CATALOG-V1";
 inline constexpr char kVariableExecutionCatalogDomain[] =
     "HARKEN-VARIABLE-EXECUTION-CATALOG-V1";
-inline constexpr char kVariableSdkCatalogDomain[] =
+inline constexpr char kVariableApiCatalogDomain[] =
     "HARKEN-VARIABLE-SDK-CATALOG-V1";
 
 inline std::uint64_t ComputeVariableDefinitionFingerprintV1(
@@ -138,10 +138,10 @@ inline std::uint64_t ComputeVariableExecutionCatalogFingerprintV1(
     return hash.Finish();
 }
 
-inline std::uint64_t ComputeVariableSdkCatalogFingerprintV1(
+inline std::uint64_t ComputeVariableApiCatalogFingerprintV1(
     const std::uint64_t* catalogFingerprints, std::uint32_t count) noexcept {
-    MediaContentRevisionHasherV1 hash(kVariableSdkCatalogDomain,
-                                      sizeof(kVariableSdkCatalogDomain));
+    MediaContentRevisionHasherV1 hash(kVariableApiCatalogDomain,
+                                      sizeof(kVariableApiCatalogDomain));
     for (std::uint32_t i = 0; i < count; ++i) {
         hash.AddU64(catalogFingerprints[i]);
     }

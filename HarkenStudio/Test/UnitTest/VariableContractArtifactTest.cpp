@@ -113,10 +113,10 @@ TEST(VariableContractArtifact, ArtifactFingerprintMismatchIsRejected) {
     EXPECT_FALSE(DecodeVariableContractArtifactV1(
         executionMismatch.data(), executionMismatch.size(), &decoded));
 
-    auto sdkMismatch = bytes;
-    WriteU64(&sdkMismatch, 24, ReadU64(sdkMismatch, 24) ^ 1u);
+    auto catalogMismatch = bytes;
+    WriteU64(&catalogMismatch, 24, ReadU64(catalogMismatch, 24) ^ 1u);
     EXPECT_FALSE(DecodeVariableContractArtifactV1(
-        sdkMismatch.data(), sdkMismatch.size(), &decoded));
+        catalogMismatch.data(), catalogMismatch.size(), &decoded));
 }
 
 TEST(VariableContractArtifact, OversizedVariableCountIsRejected) {

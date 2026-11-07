@@ -24,7 +24,7 @@ namespace Harken
                     live.sdkCatalogFingerprint, HarkenVariables.CatalogFingerprint);
 #if UNITY_5_3_OR_NEWER
                 UnityEngine.Debug.LogWarning(
-                    "Harken Variable SDK catalog is stale; write still proceeds.");
+                    "Harken Variable API catalog is stale; write still proceeds.");
 #endif
             }
             return VnResult.VN_OK;

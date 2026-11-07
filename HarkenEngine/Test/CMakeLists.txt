@@ -598,9 +598,9 @@ add_test(NAME harken_rt_probe_worker
 set_tests_properties(harken_rt_probe_worker PROPERTIES TIMEOUT 120)
 
 if(TARGET harken_core_shared)
-    add_executable(harken_native_variable_sdk_smoke UnitTest/NativeVariableSdkSmoke.cpp)
-    target_link_libraries(harken_native_variable_sdk_smoke PRIVATE harken_core_shared)
-    add_test(NAME harken_native_variable_sdk_smoke COMMAND harken_native_variable_sdk_smoke)
+    add_executable(harken_native_variable_api_smoke UnitTest/NativeVariableApiSmoke.cpp)
+    target_link_libraries(harken_native_variable_api_smoke PRIVATE harken_core_shared)
+    add_test(NAME harken_native_variable_api_smoke COMMAND harken_native_variable_api_smoke)
 endif()
 
 if(WIN32 AND TARGET harken_core_shared)

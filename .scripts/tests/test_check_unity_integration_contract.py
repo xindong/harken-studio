@@ -55,7 +55,7 @@ class UnityIntegrationContractTest(unittest.TestCase):
     def test_csharp_source_without_meta_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             integration = self.copy_integration(directory)
-            source = integration / "Runtime/Sdk/Voice.cs"
+            source = integration / "Runtime/API/Voice.cs"
             source.with_name(source.name + ".meta").unlink()
             with self.assertRaises(SystemExit):
                 MODULE.verify(integration, False)
@@ -114,7 +114,7 @@ class UnityIntegrationContractTest(unittest.TestCase):
     def test_voice_wrapper_must_forward_to_the_matching_native_call(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             integration = self.copy_integration(directory)
-            source_path = integration / "Runtime/Sdk/Voice.cs"
+            source_path = integration / "Runtime/API/Voice.cs"
             source = source_path.read_text(encoding="utf-8")
             source_path.write_text(
                 source.replace(
@@ -129,7 +129,7 @@ class UnityIntegrationContractTest(unittest.TestCase):
     def test_voice_wrapper_ignores_a_correct_call_left_only_in_a_comment(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             integration = self.copy_integration(directory)
-            source_path = integration / "Runtime/Sdk/Voice.cs"
+            source_path = integration / "Runtime/API/Voice.cs"
             source = source_path.read_text(encoding="utf-8")
             correct = "HarkenNative.Vn_SetVoicePan(Handle, pan)"
             source_path.write_text(
@@ -143,7 +143,7 @@ class UnityIntegrationContractTest(unittest.TestCase):
     def test_voice_wrapper_contract_rejects_interpolated_strings(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             integration = self.copy_integration(directory)
-            source_path = integration / "Runtime/Sdk/Voice.cs"
+            source_path = integration / "Runtime/API/Voice.cs"
             source = source_path.read_text(encoding="utf-8")
             correct = (
                 "public VnResult SetPan(float pan) => "
@@ -166,7 +166,7 @@ class UnityIntegrationContractTest(unittest.TestCase):
     def test_voice_wrapper_contract_rejects_preprocessor_branches(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             integration = self.copy_integration(directory)
-            source_path = integration / "Runtime/Sdk/Voice.cs"
+            source_path = integration / "Runtime/API/Voice.cs"
             source = source_path.read_text(encoding="utf-8")
             correct = (
                 "public VnResult SetPan(float pan)\n"

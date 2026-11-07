@@ -229,7 +229,7 @@ bool ProjectSerializer::registerWriteItem(const ProjectItem& item,
         lastError_ = QStringLiteral("Project contains an invalid object name: %1").arg(item.name);
         return false;
     }
-    if (!registerSdkName(item.name, item.type, item.guid)) return false;
+    if (!registerCallableName(item.name, item.type, item.guid)) return false;
     if (item.guid.isNull() || item.objectID == 0) {
         lastError_ = QStringLiteral("Project contains an object without a valid identity");
         return false;
@@ -266,7 +266,7 @@ bool ProjectSerializer::prepareReferenceWrite(const ProjectData& project)
     referencesByObjectId_.clear();
     referencesByRuntimeStableId_.clear();
     referencesByGuid_.clear();
-    sdkNames_.clear();
+    callableNames_.clear();
     parentOverrides_.clear();
     nextTransientObjectId_ = 1;
 
@@ -315,22 +315,22 @@ bool ProjectSerializer::prepareReferenceWrite(const ProjectData& project)
     return true;
 }
 
-bool ProjectSerializer::registerSdkName(const QString& name, ProjectItem::Type type,
+bool ProjectSerializer::registerCallableName(const QString& name, ProjectItem::Type type,
                                          const QUuid& guid) const
 {
     if (type != ProjectItem::Type::Action && type != ProjectItem::Type::Variable) return true;
     if (!NameValidator::validateItemName(name, type)) {
-        lastError_ = QStringLiteral("Project contains an invalid SDK object name: %1").arg(name);
+        lastError_ = QStringLiteral("Project contains an invalid callable object name: %1").arg(name);
         return false;
     }
     const QString key = ItemTypeCatalog::canonicalName(type) + QChar('\0') + name;
-    const auto existing = sdkNames_.constFind(key);
-    if (existing != sdkNames_.cend() && existing.value() != guid) {
+    const auto existing = callableNames_.constFind(key);
+    if (existing != callableNames_.cend() && existing.value() != guid) {
         lastError_ = QStringLiteral("Project contains a duplicate %1 name: %2")
                          .arg(ItemTypeCatalog::canonicalName(type), name);
         return false;
     }
-    sdkNames_.insert(key, guid);
+    callableNames_.insert(key, guid);
     return true;
 }
 
@@ -339,7 +339,7 @@ bool ProjectSerializer::registerReadGuid(const QUuid& guid,
                                          const QUuid& documentId,
                                          const QString& name) const
 {
-    if (!registerSdkName(name, type, guid)) return false;
+    if (!registerCallableName(name, type, guid)) return false;
     if (guid.isNull()) {
         lastError_ = QStringLiteral("Project contains an object without a valid GUID");
         return false;
@@ -369,7 +369,7 @@ void ProjectSerializer::resetReferenceReadState()
     referencesByObjectId_.clear();
     referencesByRuntimeStableId_.clear();
     referencesByGuid_.clear();
-    sdkNames_.clear();
+    callableNames_.clear();
     parentOverrides_.clear();
     nextTransientObjectId_ = 1;
 }

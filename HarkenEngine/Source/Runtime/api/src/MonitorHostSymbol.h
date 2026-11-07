@@ -13,7 +13,7 @@ inline constexpr std::uint64_t kHostSymbolProducer = 7;
 inline constexpr std::uint64_t kHostSymbolStream = 205;
 
 struct MonitorHostSymbolBody {
-    std::uint64_t emitter = 0, sdkSession = 0, localSequence = 0, registrationRevision = 0;
+    std::uint64_t emitter = 0, hostSession = 0, localSequence = 0, registrationRevision = 0;
     std::uint16_t field = 0, factKind = 0, textBytes = 0, flags = 0;
     std::uint8_t text[256]{};
 };
@@ -47,7 +47,7 @@ inline MonitorHostSymbolSource HostSymbolField(const MonitorHostSymbolValue& hos
     source.boundaryRevision = revision;
     auto& value = source.value;
     value.emitter = host.origin.emitter;
-    value.sdkSession = host.origin.host.sdkSession;
+    value.hostSession = host.origin.host.hostSession;
     value.localSequence = host.origin.host.localSequence;
     value.registrationRevision = host.origin.registrationRevision;
     value.field = static_cast<std::uint16_t>(field);

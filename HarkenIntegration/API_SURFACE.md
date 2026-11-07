@@ -1,11 +1,11 @@
-# SDK API audience contract
+# Integration API audience contract
 
-The SDK API layer exposed by the engine integrations separates game intent and
-host integration from authoring and engine tooling. Here, SDK names the API layer;
-Integration Package names the complete deliverable for a game engine. The complete
-native ABI remains the implementation authority.
-`HarkenEngine/Source/Tooling/Binding/sdk_api_surface.json` classifies every observed
-SDK declaration; it does not redefine native signatures, layouts, exports, or
+The managed API layer exposed by the engine integrations separates game intent and
+host integration from authoring and engine tooling. Integration Package names the
+complete deliverable for a game engine, including its API bindings and host adapters.
+The complete native ABI remains the implementation authority.
+`HarkenEngine/Source/Tooling/Binding/api_surface.json` classifies every observed
+native and managed declaration; it does not redefine native signatures, layouts, exports, or
 wire opcodes. Unity now enforces this classification through managed visibility.
 The C projection has not been changed by the Unity visibility work.
 
@@ -54,7 +54,7 @@ until their public surface is explicitly supported.
 
 ## Current API contract and repository consumers
 
-The consumers referenced here are repository integrations, samples and SDK tests.
+The consumers referenced here are repository integrations, samples and API tests.
 They are not evidence of deployed production projects or a production migration
 requirement.
 
@@ -64,12 +64,12 @@ requirement.
 | Pack preparation and bytes | Preserve companion lifecycle, explicit file/byte sources and canonical set ownership. Legacy manifest/index readers and ID-to-path resolution are removed. `PackBootstrap.cs`, `Packs.cs`, `PackByteProvider.cs` and the engine integrations consume them. No implicit loading is added. |
 | Existing Bus gain/mute | Keep volume, output volume and mute as runtime controls of an existing mix. They cannot create or reroute a Bus. Unity's `HarkenAudioSystem.SetMasterVolume` uses output volume; it must remain functional. |
 | Existing Voice parameters | Preserve the implemented volume, pitch, filter, pan, width, spatial, output gain, Send level and stop contract. `.scripts/check_unity_integration_contract.py::VOICE_WRAPPER_CONTRACT` checks these wrappers. No equivalent Variable replacement is assumed. |
-| Voice SetSend/ClearSend | Both remain public and are classified as structural compatibility exceptions. They create/replace/remove a route, unlike `SetSendLevel`; their continued presence must not be described as a fully removed structural API surface. This classification records current SDK behavior, not a claim that production projects depend on these calls. |
-| Bus topology/solo/filter and Effect/Binding/raw media mutation | Internal in the Unity managed SDK. Complete native ABI support remains for Studio, Preview, Remote and tests; the C projection is unchanged. |
+| Voice SetSend/ClearSend | Both remain public and are classified as structural compatibility exceptions. They create/replace/remove a route, unlike `SetSendLevel`; their continued presence must not be described as a fully removed structural API surface. This classification records current managed API behavior, not a claim that production projects depend on these calls. |
+| Bus topology/solo/filter and Effect/Binding/raw media mutation | Internal in the Unity managed API. Complete native ABI support remains for Studio, Preview, Remote and tests; the C projection is unchanged. |
 | Remote communication | Preserve optional Player settings, status, retry and host lifecycle. The direct managed bridge is internal; public host methods and the Unity integration remain usable in Players. |
 | Unity Editor services | Current companion catalog, existing selection/binding, independent preview and optional published VKD waveforms are supported in the Editor assembly. Native-derived duration does not require VKD. Legacy manifest readers and symbol generation remain suspended. |
 | Generated types | Supported public signature dependencies and their transitive fields, callback parameters, and semantic enum vocabulary (for example device mode and Action outcomes) remain public. Tool-only Unity DTOs, including Snapshot/Monitor types, are internal. Numeric field types do not justify hiding their enum vocabulary. |
-| Helpers and probes | Full P/Invoke, generation helpers, callback pointer fields, mutable catalog/thread probes and byte-provider counters are implementation details. Existing internal consumers remain wired through precise SDK assembly access. |
+| Helpers and probes | Full P/Invoke, generation helpers, callback pointer fields, mutable catalog/thread probes and byte-provider counters are implementation details. Existing internal consumers remain wired through precise managed assembly access. |
 
 Old Pack formats have no read or migration compatibility. `PackManifest`,
 manifest-based ID loading and `Packs.SetGameplayCatalog` are removed. Public
@@ -110,11 +110,11 @@ usage sections for the available entry points and ownership rules.
 Generated symbol audiences live in `managed_generation`, including internal
 symbols absent from the public inventory. Generation rejects missing or stale
 entries. Native declarations and wire flags never determine managed visibility.
-Only the named Unity integration, Editor and two SDK test assemblies receive
+Only the named Unity runtime, Editor and two Unity test assemblies receive
 internal access. Imported game samples and external consumers have no friend grant.
 `HarkenLateActionService` keeps its script identity, filename and metadata GUID.
 
-Repository source checks, independent consumer compilation and SDK tests verify
+Repository source checks, independent consumer compilation and API tests verify
 this boundary. They establish which APIs are accessible and how supported calls
 behave; they do not establish compatibility with an installed production project.
 
@@ -144,8 +144,8 @@ Use Python 3.12 and the pinned source-parser requirements:
 
 ```text
 python -m pip install --only-binary=:all: -r HarkenEngine/Source/Tooling/Binding/surface-requirements.txt
-python HarkenEngine/Source/Tooling/Binding/sdk_surface.py
-python .scripts/tests/test_sdk_surface.py -v
+python HarkenEngine/Source/Tooling/Binding/api_surface.py
+python .scripts/tests/test_api_surface.py -v
 python HarkenEngine/Test/UnitTest/test_managed_generation_policy.py -v
 ```
 
@@ -154,20 +154,20 @@ numbers to a caller-selected file. It never assigns an audience or updates the
 approved policy:
 
 ```text
-python HarkenEngine/Source/Tooling/Binding/sdk_surface.py --inventory .temp/sdk-surface.json
+python HarkenEngine/Source/Tooling/Binding/api_surface.py --inventory .temp/api-surface.json
 ```
 
 For an intentional API change, review each added/changed/removed declaration,
 assign it to the justified group, and update the exact policy entry. A public
 type does not approve future members automatically. A member belongs to exactly
 one group. Compatibility groups require a retirement condition. Never change
-the wire table's `public`, opcode, or policy to express an SDK audience.
+the wire table's `public`, opcode, or policy to express a managed API audience.
 
 The source check complements compilation. Run
 `HarkenIntegration/Test/ExternalConsumer/check_boundary.py` separately to stage the
 Unity Integration Package, compile a separate library and non-friend consumer,
 check every generated symbol and test inaccessible APIs independently. Its
-`--sdk-root` option accepts an assembled Unity Integration Package; see
+`--integration-root` option accepts an assembled Unity Integration Package; see
 `HarkenIntegration/Test/ExternalConsumer/README.md` for native-host and Unity
 validation. The managed generation policy tests and
 external-consumer checks are standalone validations, not workflow steps.

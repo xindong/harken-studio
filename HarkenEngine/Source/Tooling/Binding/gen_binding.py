@@ -6,10 +6,10 @@ from — HarkenEngine/Source/Tooling/Remote/wire/harken_wire_table.json — and
 emits the C# P/Invoke projection plus its machine-verifiable ABI pins:
 
   <repo>/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs
-        blittable [StructLayout(Sequential)] mirrors of SDK structs,
+        blittable [StructLayout(Sequential)] mirrors of native structs,
         callback delegates, results, enums and constants.
   <repo>/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenNative.g.cs
-        internal [DllImport] declarations for the SDK projection,
+        internal [DllImport] declarations for the managed projection,
         with the native library name baked per platform at compile time
         (HarkenCore on macOS/Android/desktop, __Internal on iOS).
   <repo>/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenAbi.g.cs
@@ -22,9 +22,9 @@ emits the C# P/Invoke projection plus its machine-verifiable ABI pins:
         mis-transcription in the table is a compile error, never a silent
         binding bug. Compiled into harken_runtime_tests.
 
-Managed projection and visibility come from sdk_api_surface.json, independently
+Managed projection and visibility come from api_surface.json, independently
 of the native table's ABI and wire metadata. Monitor contracts remain native;
-new SDK symbols require an explicit audience before generation succeeds.
+new managed symbols require an explicit audience before generation succeeds.
 
 The single-source discipline mirrors the wire layer's: header <-> binding
 drift is structurally impossible because both are emitted from one table.
@@ -55,7 +55,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.normpath(os.path.join(SCRIPT_DIR, "..", "..", "..", ".."))
 WIRE_DIR = os.path.join(REPO_ROOT, "HarkenEngine", "Source", "Tooling", "Remote", "wire")
 TABLE_PATH = os.path.join(WIRE_DIR, "harken_wire_table.json")
-SDK_POLICY_PATH = os.path.join(SCRIPT_DIR, "sdk_api_surface.json")
+API_POLICY_PATH = os.path.join(SCRIPT_DIR, "api_surface.json")
 
 CS_GEN_DIR = os.path.join(REPO_ROOT, "HarkenIntegration", "Unity", "Harken", "Runtime", "Generated")
 CPP_GEN_DIR = os.path.join(SCRIPT_DIR, "generated")
@@ -162,7 +162,7 @@ def emit_field(struct_name, fname, spec, layouts):
         return ([
             "    // %s[%d]: %d x %s (%d bytes each). Raw %s buffer — reinterpret"
             % (fname, count, count, elem, sub.size, cs_elem),
-            "    // to a %s span to read (see the SDK snapshot reader)." % elem,
+            "    // to a %s span to read (see the managed snapshot reader)." % elem,
             "    public fixed %s %s[%d];"
             % (cs_elem, cs_identifier(csn), count * per),
         ], csn)
@@ -173,7 +173,7 @@ def emit_field(struct_name, fname, spec, layouts):
         return (["    public %s %s;" % (un, cs_identifier(csn))], csn)
     if "ptr" in spec:
         # Every C pointer (string, array, callback, void*, sample data) is a
-        # blittable IntPtr in the mirror; the caller/SDK fills it. Keeps the
+        # blittable IntPtr in the mirror; the caller/bindings fills it. Keeps the
         # struct blittable and the hot path allocation-free.
         return (["    public IntPtr %s;" % cs_identifier(csn)], csn)
     raise ValueError("unknown field spec: %r" % (spec,))
@@ -198,7 +198,7 @@ def managed_projection(table, policy):
 
     def require_type(name, owner):
         if isinstance(name, str) and name in excluded:
-            raise ValueError("SDK projection crosses excluded native type: %s -> %s" % (owner, name))
+            raise ValueError("managed projection crosses excluded native type: %s -> %s" % (owner, name))
 
     def require_field(spec, owner):
         if isinstance(spec, str):
@@ -226,7 +226,7 @@ def managed_projection(table, policy):
 
 def managed_policy(table):
     """Require an audience for every generated symbol, independent of native ABI."""
-    with open(SDK_POLICY_PATH, encoding="utf-8") as stream:
+    with open(API_POLICY_PATH, encoding="utf-8") as stream:
         policy = json.load(stream)
     table = managed_projection(table, policy)
     expected = {
@@ -301,7 +301,7 @@ def emit_types(table, policy):
     lines.append("")
 
     # Callback delegate types (AOT-safe: static handlers pass these; see the
-    # SDK callback registry). Cdecl to match the extern-C engine exports.
+    # managed callback registry). Cdecl to match the extern-C engine exports.
     types = table["types"]
     for cbname, cbdef in api["callbacks"].items():
         if cbname.startswith("_"):
@@ -511,7 +511,7 @@ def cs_param(param):
         return "ref %s %s" % (param["type"], name)
     if wire == "outrows":
         # Caller-provided row buffer: a raw pointer keeps the projection
-        # blittable and allocation-free (the SDK wraps it over a fixed or
+        # blittable and allocation-free (the managed API wraps it over a fixed or
         # pinned span), matching the C contract exactly.
         return "%s* %s" % (param["type"], name)
     if wire == "structref":
@@ -527,7 +527,7 @@ def emit_native(table, policy):
     lines.append("namespace %s" % NAMESPACE)
     lines.append("{")
     lines.append("    /// <summary>")
-    lines.append("    /// SDK P/Invoke projection of the Harken.h C ABI. Every method")
+    lines.append("    /// Managed P/Invoke projection of the Harken.h C ABI. Every method")
     lines.append("    /// maps to exactly one C function; the binding owns no engine")
     lines.append("    /// semantics (thin projection). AOT/IL2CPP-safe: no runtime code")
     lines.append("    /// generation, and the native library name is a compile-time constant")
@@ -698,7 +698,7 @@ def emit_monitor_reader(table):
     header = re.findall(r"Write(U32|U64|ObjectId)\(out \+ o, header\.([A-Za-z0-9_.]+)\);", writer)
     sizes = {"U32": 4, "U64": 8, "ObjectId": 16}
     if sum(sizes[kind] for kind, _ in header) != 316:
-        raise ValueError("Monitor envelope writer changed; review packed SDK decoder")
+        raise ValueError("Monitor envelope writer changed; review packed managed decoder")
     lines = [CS_HEADER, "using System;", "", "namespace Harken", "{", "    internal static class HarkenMonitorWire", "    {"]
     lines += [
         "        private static ulong Read(byte[] bytes, ref int at, int size, bool big = false)",

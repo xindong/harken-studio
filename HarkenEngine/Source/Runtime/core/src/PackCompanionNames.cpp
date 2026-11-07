@@ -69,7 +69,7 @@ VnResult CapturePackCompanionNames(const VnPackNamesV1& input,
         !Capture(input.utf8Language, byteBudget, names.language)) return VN_INVALID_ARG;
     if (names.rootActionId == VnObjectId{}) {
         if (!names.rootName.empty() || !names.language.empty()) return VN_INVALID_ARG;
-    } else if (!IsSdkCallableName(names.rootName) || input.variableCount != 0 || input.labelCount != 0) {
+    } else if (!IsCallableName(names.rootName) || input.variableCount != 0 || input.labelCount != 0) {
         return VN_INVALID_ARG;
     }
     if (names.language == "." || names.language == ".." ||
@@ -82,7 +82,7 @@ VnResult CapturePackCompanionNames(const VnPackNamesV1& input,
     for (std::uint32_t i = 0; i < input.variableCount; ++i) {
         PackCompanionNames::Variable row{input.variables[i].variableId, {}};
         if (row.id == VnObjectId{} || !Capture(input.variables[i].utf8Name, byteBudget, row.name) ||
-            !IsSdkCallableName(row.name) || !variableIds.insert(row.id).second) return VN_INVALID_ARG;
+            !IsCallableName(row.name) || !variableIds.insert(row.id).second) return VN_INVALID_ARG;
         names.variables.push_back(std::move(row));
     }
     std::set<std::pair<VnObjectId, VnObjectId>> labelIds;

@@ -359,7 +359,7 @@ QString unrestrictedSystemPrompt()
         "and punctuation, but not blank names, controls, line breaks, or path "
         "separators. Creation and copying avoid sibling conflicts; explicit "
         "renaming may create duplicate names. Action and Variable names are "
-        "bucket-unique SDK identifiers matching [A-Za-z][A-Za-z0-9_]*; conflicts "
+        "bucket-unique callable identifiers matching [A-Za-z][A-Za-z0-9_]*; conflicts "
         "automatically receive numeric suffixes. Always use the actual name "
         "returned by the command.\n\n"
 

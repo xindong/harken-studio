@@ -60,8 +60,8 @@ struct VariableImpactReport
     bool labelMappingChanged = false;
     bool liveBankResets = false;
     bool packMustRebuild = false;
-    bool sdkCatalogMustRebuild = false;
-    QString sdkSymbol;
+    bool apiCatalogMustRebuild = false;
+    QString apiSymbol;
 };
 
 namespace VariableImpactSemantics {

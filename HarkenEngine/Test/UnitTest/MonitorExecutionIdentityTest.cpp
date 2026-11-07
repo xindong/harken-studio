@@ -68,7 +68,7 @@ TEST(MonitorHostDescription, CaptureOffRetainsAtomicValuesAndInvalidUpdatesCanno
     MonitorHostDescription before{}, after{};
     ASSERT_TRUE(registry.CaptureDescriptionAt(static_cast<std::uint32_t>(emitter), origin, before));
     EXPECT_EQ(1u, origin.registrationRevision);
-    EXPECT_EQ(host.sdkSession, origin.host.sdkSession);
+    EXPECT_EQ(host.sdkSession, origin.host.hostSession);
     EXPECT_EQ(0u, IdentityRefreshesForTests());
     EXPECT_FALSE(ExecutionObservationEnabled());
     registration.name[63] = 0xff; // Bytes outside the declared text never become stored values.
@@ -166,7 +166,7 @@ TEST(MonitorHostDescription, DestroyReuseAndHostRestartNeverReuseOldDescriptions
     replacement.localSequence = 1;
     ASSERT_EQ(VN_OK, Vn_MonitorRegisterHostV2(&replacement));
     EXPECT_TRUE(engine.Engine()->monitorEmitters.CaptureDescriptionAt(0, origin, value));
-    EXPECT_EQ(later.sdkSession, origin.host.sdkSession);
+    EXPECT_EQ(later.sdkSession, origin.host.hostSession);
 }
 
 TEST(MonitorHostDescription, DefaultHostIsUniqueWithinSessionAndRetainsHistoricalOwnership) {

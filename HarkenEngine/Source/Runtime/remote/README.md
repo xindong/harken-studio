@@ -118,5 +118,5 @@ isolated Qt peers. `RemoteConnectionProcess.*` starts `harken_remote_test_game`,
 which links the actual shared library and calls only public Engine APIs. That
 acceptance test requires a working audio output device and exercises real Pack
 playback, multiple-instance discovery, capture, control, reconnect and shutdown.
-It does not use the historical host tool. The managed SDK contract harness runs
+It does not use the historical host tool. The managed API contract harness runs
 with `--require-native` so a missing DLL cannot turn into a passing skip.

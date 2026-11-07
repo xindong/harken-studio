@@ -49,7 +49,7 @@ struct IntegrationOperationResult
     QString installedPath;
 };
 
-struct SdkMigrationPlan
+struct IntegrationMigrationPlan
 {
     bool valid = false;
     bool recovering = false;
@@ -71,10 +71,10 @@ public:
     static bool locateUnrealInstallation(const EngineTargetRecord& target, QString* path, QString* error);
     static QString unrealMigrationJournalPath(const EngineTargetRecord& target);
     static bool hasPendingUnrealMigration(const EngineTargetRecord& target);
-    static SdkMigrationPlan planUnrealMigration(const EngineTargetRecord& target,
+    static IntegrationMigrationPlan planUnrealMigration(const EngineTargetRecord& target,
                                                const QString& destination, bool recover = false);
     static IntegrationOperationResult executeUnrealMigration(const EngineTargetRecord& target,
-                                                             const SdkMigrationPlan& plan, bool confirmed);
+                                                             const IntegrationMigrationPlan& plan, bool confirmed);
     static IntegrationPlan inspectUnreal(const EngineTargetRecord& target, bool verifyContent = true);
     static bool checkUnrealClosed(const EngineTargetRecord& target, QString* error, bool* isOpen = nullptr);
     static IntegrationPlan planUnreal(

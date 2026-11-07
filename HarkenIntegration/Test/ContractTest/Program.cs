@@ -46,7 +46,7 @@ namespace Harken.Test
                     Console.Error.WriteLine("--variables-only requires HARKEN_VARIABLE_INIT.");
                     return 2;
                 }
-                return RunAbiFidelity() && VariableSdkContract.Run() ? 0 : 1;
+                return RunAbiFidelity() && VariableApiContract.Run() ? 0 : 1;
             }
             if (args.Length == 1 && args[0] == "--state-only-unavailable")
             {
@@ -95,7 +95,7 @@ namespace Harken.Test
             Console.WriteLine("== Harken C# binding gates ==");
             Console.WriteLine("Native mode : " + (requireNative ? "REQUIRED" : "OPTIONAL"));
             bool abiOk = RunAbiFidelity();
-            bool variableSdkOk = VariableSdkContract.Run();
+            bool variableApiOk = VariableApiContract.Run();
             bool coordinatesOk = RunCoordinateConversions();
             bool bootstrapOk = RunPackBootstrapContract();
             int namePost = RunNamePostAndProvider();
@@ -130,7 +130,7 @@ namespace Harken.Test
                 }
             }
 
-            bool ok = companionNativeOk && repositoryNativeOk && variableSdkOk && abiOk && coordinatesOk && bootstrapOk &&
+            bool ok = companionNativeOk && repositoryNativeOk && variableApiOk && abiOk && coordinatesOk && bootstrapOk &&
                 (nativeBootstrap == 0 || nativeBootstrap == 3 ||
                  (!requireNative && nativeBootstrap == 2)) &&
                 (namePost == 0 || (!requireNative && namePost == 2)) &&

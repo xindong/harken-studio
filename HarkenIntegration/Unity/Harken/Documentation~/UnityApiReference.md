@@ -11,7 +11,7 @@ The main declarations are in
 [`HarkenAudioSystem.cs`](../Runtime/Unity/HarkenAudioSystem.cs),
 [`HarkenAction.cs`](../Runtime/Unity/HarkenAction.cs),
 [`HarkenEmitter.cs`](../Runtime/Unity/HarkenEmitter.cs), and
-[`Actions.cs`](../Runtime/Sdk/Actions.cs). Generated `VnResult` and firing
+[`Actions.cs`](../Runtime/API/Actions.cs). Generated `VnResult` and firing
 state definitions are in
 [`HarkenTypes.g.cs`](../Runtime/Generated/HarkenTypes.g.cs).
 
@@ -544,7 +544,7 @@ descriptors and curve construction remain internal tooling types. Use the
 Integration Package, native library and published content from a matching delivery. The managed ABI
 layout check does not detect native high-pass support. An older native library
 rejects the new attenuation descriptor with `VN_INVALID_ARG`, including when
-its high-pass curve is disabled; the SDK does not shorten it or discard the curve.
+its high-pass curve is disabled; the managed bindings do not shorten it or discard the curve.
 
 For pooled Transform sources, call `EndFollow()` before reassigning the object
 and create a new source for the new identity; existing tails keep the frozen

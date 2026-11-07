@@ -1,6 +1,6 @@
 # HarkenIntegration 现状快照
 
-本分册描述 Unity 宿主集成；SDK/API 绑定指其中的开发接口与原生投影，不代表完整集成包的职责。
+本分册描述 Unity 宿主集成；API 绑定指其中的开发接口与原生投影，不代表完整集成包的职责。
 
 ## 能力与边界
 
@@ -33,7 +33,7 @@
 
 | 项目 | 当前状态 |
 |---|---|
-| 产品范围 | 仅维护 Unity Integration，Unreal SDK 已移除 |
+| 产品范围 | 仅维护 Unity Integration，历史 Unreal 集成产品已移除 |
 | 产品版本 | Unity Integration 为 0.3.7，以 Unity 包清单为唯一版本维护源；独立制品与源码清单一致，Studio 随附版本以实际清单为准 |
 | 制品名称 | 内部制品为 `harken-integration-bundle`，独立下载为 `HarkenIntegrationBundle` |
 | 发布与门禁 | 集成包由 `Integration Artifact` 工作流组装交付，`PR Gate Integration` 执行质量门禁 |
@@ -42,3 +42,19 @@
 | Unity 身份 | 外层分发命名不改变 Unity 包标识、程序集、GUID 或工程安装位置 |
 | 运行库升级 | 游戏工程需更新集成包才能获得原生运行库修正，单独升级 Studio 不会替换游戏工程运行库 |
 | Schema 兼容 | Studio 0.9.2 的 Editor Schema 为 9、Pack Schema 为 4，与 0.9.1 一致；0.9.1 工程无需迁移，既有 Pack 不因升级而强制重打 |
+
+## 命名与兼容边界
+
+Harken 当前没有 SDK 产品。Unity Integration 是引擎集成产品，其托管 API、原生绑定和宿主适配是包内组成部分，不能因提供编程接口就将整个集成包称为 SDK。
+
+| 用途 | 当前命名或保留理由 |
+|---|---|
+| 当前源码与工具 | 手写托管 API 位于 `Runtime/API`，生成代码位于 `Runtime/Generated`，Unity 适配位于 `Runtime/Unity`；API 分类工具与策略使用 `api_surface` |
+| Hub 当前模型 | 代码成员、方法、类型和 UI 对象使用 Integration；SQL 列 `sdkSourcePath`、`sdkInstallPath` 保持既有拼写，代码正名不触发数据库迁移 |
+| 旧版本发现与维护 | 保留 `HarkenSDK` 分发兼容副本、旧环境变量、`Assets/HarkenSDK`、旧备份目录、迁移日志和操作锁名称；旧 `Runtime/Sdk` 仅用于识别旧安装内容 |
+| 公开接口与数据合同 | 保留公开字段 `sdkCatalogFingerprint`、`sdkSession`，以及既有 JSON 字段、操作步骤 ID 和报告字段；改名会涉及源码或数据消费者，不属于本次产品正名 |
+| 指纹 | 保留 `HARKEN-VARIABLE-SDK-CATALOG-V1` 的原始字节，内部标识符使用 API Catalog；改变域字符串会改变既有内容指纹 |
+| 工具兼容入口 | 当前参数使用 `--integration-root`、`HarkenIntegrationRoot`，继续接受旧参数与属性；已有资格证据的种类、字段和路径不重写 |
+| 测试与第三方 | 原生测试桥导出、测试开关、既有资源键、证据标记和任意输入样本不表示当前产品名称；第三方及平台 SDK 不在治理范围内 |
+
+源码目录移动保留每个 `.meta` 的 GUID、程序集名、命名空间和包标识。Hub 根据已安装清单清理旧的受管文件；用户自行加入的文件仍按所有权规则保留，不因目录含有旧名称而删除。

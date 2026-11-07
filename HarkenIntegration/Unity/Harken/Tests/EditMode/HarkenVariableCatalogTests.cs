@@ -169,7 +169,7 @@ namespace Harken.Unity.Tests
             };
             VariableCatalogGuard.DisplayMismatchHandler = (live, generated) =>
                 VariableGameplay.NotifySessionChanged();
-            LogAssert.Expect(LogType.Warning, "Harken Variable SDK catalog is stale; write still proceeds.");
+            LogAssert.Expect(LogType.Warning, "Harken Variable API catalog is stale; write still proceeds.");
             Assert.That(Values.SetValue(Typed("VehicleRPM"), 1), Is.EqualTo(VnResult.VN_NOT_INITIALIZED));
             Assert.That(VariableCatalogGuard.DisplayMismatchCount, Is.EqualTo(1));
         }

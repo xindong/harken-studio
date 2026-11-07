@@ -7349,7 +7349,7 @@ TEST(ActionFiringApi, DelayedNestedPostActionMaterializesImmediateChildTree) {
     EXPECT_EQ(0u, step.childFiring);
 
 
-    ASSERT_EQ(firstSession, rootIdentity.emitterOrigin.host.sdkSession);
+    ASSERT_EQ(firstSession, rootIdentity.emitterOrigin.host.hostSession);
     const auto nextSession = hosts.BeginSession();
     ASSERT_GT(nextSession, firstSession);
     ASSERT_TRUE(hosts.Register(hosts.EngineInstance(), nextSession, desc.emitter, 1,

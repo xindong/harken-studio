@@ -10,7 +10,7 @@ struct IntegrationRecord
     QString integrationId;
     QString harkenProjectPath;
     QString engineTargetId;
-    QString sdkSourcePath;
+    QString integrationSourcePath;
     QString createdAt;
     QString updatedAt;
     bool enabled = true;
@@ -28,8 +28,8 @@ public:
     bool open(const QString& databasePath);
     void close();
     bool add(const IntegrationRecord& record, bool replaceTarget);
-    bool updateSdkSourcePath(const QString& integrationId,
-                             const QString& sdkSourcePath);
+    bool updateIntegrationSourcePath(const QString& integrationId,
+                             const QString& integrationSourcePath);
     bool remove(const QString& integrationId);
     std::vector<IntegrationRecord> list() const;
     QString lastError() const { return lastError_; }

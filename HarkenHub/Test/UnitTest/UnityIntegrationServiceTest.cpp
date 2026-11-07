@@ -146,7 +146,7 @@ void makeUnreadable(const QString& path)
     ASSERT_TRUE(QDir().mkpath(path)) << path.toStdString();
 }
 
-QString makeCompleteSdk(const QString& root)
+QString makeCompleteIntegration(const QString& root)
 {
     const QByteArray package = QJsonDocument(QJsonObject{
         {QStringLiteral("name"), QStringLiteral("com.harken.core")},
@@ -184,21 +184,21 @@ QString makeCompleteSdk(const QString& root)
 
 } // namespace
 
-class UnitySdkMigrationTest : public testing::Test
+class UnityIntegrationMigrationTest : public testing::Test
 {
 protected:
     void SetUp() override
     {
         ASSERT_TRUE(dir.isValid());
         project = makeUnityProject(dir.filePath(QStringLiteral("Game")));
-        source = makeCompleteSdk(dir.filePath(QStringLiteral("SDK")));
+        source = makeCompleteIntegration(dir.filePath(QStringLiteral("SDK")));
         request.unityProjectPath = project;
-        request.sdkSourcePath = source;
+        request.integrationSourcePath = source;
         ASSERT_TRUE(service.run(request).success);
         original = QDir(project).filePath(QStringLiteral("Packages/com.harken.core"));
         destination = QDir(project).filePath(QStringLiteral("Assets/ThirdParty/HarkenSDK"));
-        request.sdkSourcePath.clear();
-        request.sdkInstallPath = QStringLiteral("Packages/com.harken.core");
+        request.integrationSourcePath.clear();
+        request.integrationInstallPath = QStringLiteral("Packages/com.harken.core");
         request.migrationTargetPath = QStringLiteral("Assets/ThirdParty/HarkenSDK");
         request.migrationBackupPath = dir.filePath(QStringLiteral("Backup"));
         request.migrateIntegration = true;
@@ -222,7 +222,7 @@ protected:
     QString destination;
 };
 
-TEST_F(UnitySdkMigrationTest, StaleUnityLockAndEmbeddedResolutionDoNotPreventMaintenanceAfterMoveOrRemoval)
+TEST_F(UnityIntegrationMigrationTest, StaleUnityLockAndEmbeddedResolutionDoNotPreventMaintenanceAfterMoveOrRemoval)
 {
     const QString unityLockPath = project + "/Temp/UnityLockfile";
     writeFile(unityLockPath, "stale");
@@ -235,22 +235,22 @@ TEST_F(UnitySdkMigrationTest, StaleUnityLockAndEmbeddedResolutionDoNotPreventMai
     EXPECT_EQ(readFile(lockPath), resolution);
     const auto discovery = VNX::UnityInstallation::discover(project);
     EXPECT_TRUE(discovery.errors.isEmpty());
-    EXPECT_TRUE(discovery.sdkReferences.isEmpty());
+    EXPECT_TRUE(discovery.integrationReferences.isEmpty());
     ASSERT_EQ(discovery.installations.size(), 1);
     EXPECT_TRUE(VNX::UnityInstallation::samePath(discovery.installations.front().path, destination));
     VNX::UnityIntegrationService::Request remove;
     remove.unityProjectPath = project;
-    remove.sdkInstallPath = request.migrationTargetPath;
+    remove.integrationInstallPath = request.migrationTargetPath;
     remove.removeIntegration = true;
     remove.confirmRemoval = true;
     remove.removalBackupPath = dir.filePath("RemovalBackup");
     ASSERT_TRUE(service.run(remove).success);
     EXPECT_EQ(readFile(unityLockPath), "stale");
     EXPECT_EQ(readFile(lockPath), resolution);
-    EXPECT_TRUE(VNX::UnityInstallation::discover(project).sdkReferences.isEmpty());
+    EXPECT_TRUE(VNX::UnityInstallation::discover(project).integrationReferences.isEmpty());
 }
 
-TEST_F(UnitySdkMigrationTest, UnsafeOrNonEmbeddedResolutionsStillBlockMaintenance)
+TEST_F(UnityIntegrationMigrationTest, UnsafeOrNonEmbeddedResolutionsStillBlockMaintenance)
 {
     const QString lockPath = project + "/Packages/packages-lock.json";
     for (const QJsonObject& resolution : {
@@ -266,7 +266,7 @@ TEST_F(UnitySdkMigrationTest, UnsafeOrNonEmbeddedResolutionsStillBlockMaintenanc
         const QByteArray bytes = QJsonDocument(QJsonObject{{"dependencies",
             QJsonObject{{"com.harken.core", resolution}}}}).toJson();
         writeFile(lockPath, bytes);
-        EXPECT_FALSE(VNX::UnityInstallation::discover(project).sdkReferences.isEmpty());
+        EXPECT_FALSE(VNX::UnityInstallation::discover(project).integrationReferences.isEmpty());
         const auto preview = service.run(request);
         EXPECT_FALSE(preview.success);
         EXPECT_FALSE(preview.requiresConfirmation);
@@ -276,7 +276,7 @@ TEST_F(UnitySdkMigrationTest, UnsafeOrNonEmbeddedResolutionsStillBlockMaintenanc
     }
 }
 
-TEST_F(UnitySdkMigrationTest, VerifiesInstalledFilesWithoutSourceAndNeverRewritesThem)
+TEST_F(UnityIntegrationMigrationTest, VerifiesInstalledFilesWithoutSourceAndNeverRewritesThem)
 {
     ASSERT_TRUE(QDir(source).removeRecursively());
     writeFile(original + "/Runtime.meta", "guid: preserve-unity-metadata");
@@ -286,15 +286,15 @@ TEST_F(UnitySdkMigrationTest, VerifiesInstalledFilesWithoutSourceAndNeverRewrite
     const auto installedAt = QFileInfo(statePath).lastModified();
     VNH::UnityIntegrationRequest verify;
     verify.unityProjectPath = project;
-    verify.sdkSourcePath = source;
+    verify.integrationSourcePath = source;
     verify.verifyInstalledOnly = true;
     auto result = VNH::HubUnityIntegrationService::run(verify);
     ASSERT_TRUE(result.success);
     EXPECT_FALSE(result.targetAlreadyCurrent);
-    EXPECT_EQ(result.sdkFilesCopied, 0);
-    EXPECT_TRUE(result.sdkSourcePath.isEmpty());
+    EXPECT_EQ(result.integrationFilesCopied, 0);
+    EXPECT_TRUE(result.integrationSourcePath.isEmpty());
     EXPECT_TRUE(result.textReportPath.isEmpty());
-    EXPECT_EQ(result.sdkInstallPath, "Packages/com.harken.core");
+    EXPECT_EQ(result.integrationInstallPath, "Packages/com.harken.core");
     ASSERT_EQ(result.steps.size(), 3);
     EXPECT_EQ(result.steps.back().status, VNH::UnityIntegrationStepStatus::Succeeded);
 
@@ -322,7 +322,7 @@ TEST_F(UnitySdkMigrationTest, VerifiesInstalledFilesWithoutSourceAndNeverRewrite
     EXPECT_EQ(QFileInfo(statePath).lastModified(), installedAt);
 }
 
-TEST_F(UnitySdkMigrationTest, VerificationRejectsIncompleteAndEscapingOwnershipRecords)
+TEST_F(UnityIntegrationMigrationTest, VerificationRejectsIncompleteAndEscapingOwnershipRecords)
 {
     const QString statePath = original + "/.harken-integration-state.json";
     const QJsonObject originalState = QJsonDocument::fromJson(readFile(statePath)).object();
@@ -355,7 +355,7 @@ TEST_F(UnitySdkMigrationTest, VerificationRejectsIncompleteAndEscapingOwnershipR
     EXPECT_FALSE(QFileInfo::exists(statePath));
 }
 
-TEST_F(UnitySdkMigrationTest, VerificationDiagnosesMissingUnmanagedAndDuplicateInstallations)
+TEST_F(UnityIntegrationMigrationTest, VerificationDiagnosesMissingUnmanagedAndDuplicateInstallations)
 {
     VNH::UnityIntegrationRequest verify;
     verify.unityProjectPath = makeUnityProject(dir.filePath("AnotherGame"));
@@ -369,9 +369,9 @@ TEST_F(UnitySdkMigrationTest, VerificationDiagnosesMissingUnmanagedAndDuplicateI
     result = VNH::HubUnityIntegrationService::run(verify);
     EXPECT_FALSE(result.success);
     EXPECT_TRUE(result.targetInstalled);
-    EXPECT_EQ(result.sdkInstallPath, "Packages/com.harken.core");
+    EXPECT_EQ(result.integrationInstallPath, "Packages/com.harken.core");
     EXPECT_TRUE(result.steps[1].summary.contains("ownership record"));
-    EXPECT_TRUE(result.sdkSourcePath.isEmpty());
+    EXPECT_TRUE(result.integrationSourcePath.isEmpty());
     EXPECT_FALSE(QDir(QDir(verify.unityProjectPath).filePath("Library")).exists());
     verify.unityProjectPath = project;
     writeFile(QDir(project).filePath("Assets/OtherSDK/package.json"), readFile(unmanaged));
@@ -381,7 +381,7 @@ TEST_F(UnitySdkMigrationTest, VerificationDiagnosesMissingUnmanagedAndDuplicateI
     EXPECT_EQ(result.steps[1].artifacts.size(), 2);
 }
 
-TEST_F(UnitySdkMigrationTest, PreservesModifiedFilesHiddenFilesEmptyDirectoriesMetadataAndOwnership)
+TEST_F(UnityIntegrationMigrationTest, PreservesModifiedFilesHiddenFilesEmptyDirectoriesMetadataAndOwnership)
 {
     const QString modified = QStringLiteral("Runtime/Generated/HarkenAbi.g.cs");
     const QString state = QStringLiteral(".harken-integration-state.json");
@@ -413,7 +413,7 @@ TEST_F(UnitySdkMigrationTest, PreservesModifiedFilesHiddenFilesEmptyDirectoriesM
     EXPECT_EQ(readFile(QDir(request.migrationBackupPath).filePath("SDK.meta")), "guid: sdk-root-guid");
     EXPECT_EQ(VNX::UnityInstallation::discover(project).installations.size(), 1);
     EXPECT_FALSE(VNX::UnityInstallation::hasPendingMigration(project));
-    request.sdkInstallPath = result.sdkInstallPath;
+    request.integrationInstallPath = result.integrationInstallPath;
     request.migrationTargetPath = QStringLiteral("Packages/com.harken.core");
     request.migrationBackupPath = dir.filePath("SecondBackup");
     approve();
@@ -422,7 +422,7 @@ TEST_F(UnitySdkMigrationTest, PreservesModifiedFilesHiddenFilesEmptyDirectoriesM
     EXPECT_EQ(readFile(original + ".meta"), "guid: sdk-root-guid");
 }
 
-TEST_F(UnitySdkMigrationTest, RejectsUnsafeDestinationsDependenciesAndUnsupportedInstalledSdk)
+TEST_F(UnityIntegrationMigrationTest, RejectsUnsafeDestinationsDependenciesAndUnsupportedInstalledIntegration)
 {
     for (const QString& path : {QStringLiteral("../Outside"), QStringLiteral("Assets/Editor/SDK"),
              QStringLiteral("Packages/com.harken.core"), QStringLiteral("Packages/com.harken.core/Nested")}) {
@@ -449,7 +449,7 @@ TEST_F(UnitySdkMigrationTest, RejectsUnsafeDestinationsDependenciesAndUnsupporte
     writeFile(QDir(original).filePath("harken-integration.json"), QJsonDocument(manifest).toJson());
     EXPECT_FALSE(service.run(request).requiresConfirmation);
     writeFile(QDir(original).filePath("harken-integration.json"), QJsonDocument(integrationManifest()).toJson());
-    const QString duplicate = makeCompleteSdk(QDir(project).filePath("Assets/Duplicate"));
+    const QString duplicate = makeCompleteIntegration(QDir(project).filePath("Assets/Duplicate"));
     EXPECT_FALSE(service.run(request).requiresConfirmation);
     ASSERT_TRUE(QDir(duplicate).removeRecursively());
     ASSERT_TRUE(QFile::remove(QDir(original).filePath(".harken-integration-state.json")));
@@ -458,7 +458,7 @@ TEST_F(UnitySdkMigrationTest, RejectsUnsafeDestinationsDependenciesAndUnsupporte
     EXPECT_FALSE(QFileInfo::exists(request.migrationBackupPath));
 }
 
-TEST_F(UnitySdkMigrationTest, BackupCannotCreateAnotherSdkInsideAReferencedLocalPackage)
+TEST_F(UnityIntegrationMigrationTest, BackupCannotCreateAnotherIntegrationInsideAReferencedLocalPackage)
 {
     const QString localPackage = dir.filePath("LocalPackage");
     writeFile(QDir(localPackage).filePath("package.json"), R"({"name":"com.test.local","version":"1.0.0"})");
@@ -471,7 +471,7 @@ TEST_F(UnitySdkMigrationTest, BackupCannotCreateAnotherSdkInsideAReferencedLocal
     EXPECT_TRUE(QDir(original).exists());
 }
 
-TEST_F(UnitySdkMigrationTest, RequiresReviewedUnchangedPlanClosedUnityAndProjectLock)
+TEST_F(UnityIntegrationMigrationTest, RequiresReviewedUnchangedPlanClosedUnityAndProjectLock)
 {
     request.confirmMigration = true;
     EXPECT_FALSE(service.run(request).success);
@@ -494,7 +494,7 @@ TEST_F(UnitySdkMigrationTest, RequiresReviewedUnchangedPlanClosedUnityAndProject
     EXPECT_FALSE(QDir(destination).exists());
 }
 
-TEST_F(UnitySdkMigrationTest, RechecksUnityAfterMigrationBackup)
+TEST_F(UnityIntegrationMigrationTest, RechecksUnityAfterMigrationBackup)
 {
     approve();
     HarkenHubTest::UnityProjectLock unityLock;
@@ -513,7 +513,7 @@ TEST_F(UnitySdkMigrationTest, RechecksUnityAfterMigrationBackup)
     EXPECT_FALSE(VNX::UnityInstallation::hasPendingMigration(project));
 }
 
-TEST_F(UnitySdkMigrationTest, RechecksAfterBackupAndRollsBackIfFinalProjectVerificationFails)
+TEST_F(UnityIntegrationMigrationTest, RechecksAfterBackupAndRollsBackIfFinalProjectVerificationFails)
 {
     writeFile(original + ".meta", "guid: sdk-root");
     approve();
@@ -531,7 +531,7 @@ TEST_F(UnitySdkMigrationTest, RechecksAfterBackupAndRollsBackIfFinalProjectVerif
     QObject::connect(&service, &VNX::UnityIntegrationService::stepUpdated,
         [&](int, const VNX::UnityIntegrationService::StepResult& step) {
             if (step.id == "verify_migration" && step.status == VNX::UnityIntegrationService::StepStatus::Running)
-                makeCompleteSdk(QDir(project).filePath("Assets/ExternalCopy"));
+                makeCompleteIntegration(QDir(project).filePath("Assets/ExternalCopy"));
         });
     EXPECT_FALSE(service.run(request).success);
     EXPECT_TRUE(QDir(original).exists());
@@ -541,7 +541,7 @@ TEST_F(UnitySdkMigrationTest, RechecksAfterBackupAndRollsBackIfFinalProjectVerif
     EXPECT_FALSE(VNX::UnityInstallation::hasPendingMigration(project));
 }
 
-TEST_F(UnitySdkMigrationTest, RecoversInterruptedMigrationAtEachRenameBoundaryAndBlocksOtherOperations)
+TEST_F(UnityIntegrationMigrationTest, RecoversInterruptedMigrationAtEachRenameBoundaryAndBlocksOtherOperations)
 {
     writeFile(QDir(project).filePath("Temp/UnityLockfile"), "stale");
     writeFile(original + ".meta", "guid: sdk-root");
@@ -555,7 +555,7 @@ TEST_F(UnitySdkMigrationTest, RecoversInterruptedMigrationAtEachRenameBoundaryAn
                   readFile(QDir(request.migrationBackupPath).filePath("migration.json")));
         VNX::UnityIntegrationService::Request other;
         other.unityProjectPath = project;
-        other.sdkSourcePath = source;
+        other.integrationSourcePath = source;
         other.checkOnly = true;
         EXPECT_FALSE(service.run(other).success);
         other.removeIntegration = true;
@@ -574,14 +574,14 @@ TEST_F(UnitySdkMigrationTest, RecoversInterruptedMigrationAtEachRenameBoundaryAn
         const auto result = service.run(recovery);
         ASSERT_TRUE(result.success) << result.steps.back().cause.toStdString();
         EXPECT_TRUE(result.migrationRecovered);
-        EXPECT_EQ(result.sdkInstallPath, "Packages/com.harken.core");
+        EXPECT_EQ(result.integrationInstallPath, "Packages/com.harken.core");
         EXPECT_EQ(readFile(original + ".meta"), "guid: sdk-root");
         EXPECT_FALSE(QDir(destination).exists());
         EXPECT_FALSE(VNX::UnityInstallation::hasPendingMigration(project));
     }
 }
 
-TEST_F(UnitySdkMigrationTest, RecoversIntoRecreatedEmptySourceButPreservesFilesAndMetadataConflicts)
+TEST_F(UnityIntegrationMigrationTest, RecoversIntoRecreatedEmptySourceButPreservesFilesAndMetadataConflicts)
 {
     writeFile(original + ".meta", "guid: sdk-root");
     writeFile(QDir(original).filePath("UserChange.txt"), "keep modified Integration Package");
@@ -621,7 +621,7 @@ TEST_F(UnitySdkMigrationTest, RecoversIntoRecreatedEmptySourceButPreservesFilesA
     EXPECT_FALSE(VNX::UnityInstallation::hasPendingMigration(project));
 }
 
-TEST_F(UnitySdkMigrationTest, RejectsLinkedSourceDestinationAndBackup)
+TEST_F(UnityIntegrationMigrationTest, RejectsLinkedSourceDestinationAndBackup)
 {
 #ifdef Q_OS_WIN
     const QString external = dir.filePath("External");
@@ -655,7 +655,7 @@ TEST_F(UnitySdkMigrationTest, RejectsLinkedSourceDestinationAndBackup)
 #endif
 }
 
-TEST_F(UnitySdkMigrationTest, RecoveryDoesNotOverwriteChangesOrTrustEscapingJournalPaths)
+TEST_F(UnityIntegrationMigrationTest, RecoveryDoesNotOverwriteChangesOrTrustEscapingJournalPaths)
 {
     approve();
     ASSERT_TRUE(service.run(request).success);
@@ -680,19 +680,19 @@ TEST(UnityIntegrationService, CustomLocationSupportsCheckInstallUpdateBackupAndR
     QTemporaryDir dir(QDir::current().filePath(QStringLiteral(".temp/custom-sdk-XXXXXX")));
     ASSERT_TRUE(dir.isValid());
     const QString project = makeUnityProject(dir.filePath(QStringLiteral("Game")));
-    const QString source = makeCompleteSdk(dir.filePath(QStringLiteral("SDK")));
+    const QString source = makeCompleteIntegration(dir.filePath(QStringLiteral("SDK")));
     const QString relative = QStringLiteral("Assets/ThirdParty/Audio/HarkenSDK");
     const QString target = QDir(project).filePath(relative);
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = project;
-    request.sdkSourcePath = source;
-    request.sdkInstallPath = target;
+    request.integrationSourcePath = source;
+    request.integrationInstallPath = target;
     request.checkOnly = true;
     auto result = service.run(request);
     ASSERT_TRUE(result.success) << result.steps.front().cause.toStdString();
     EXPECT_FALSE(QDir(target).exists());
-    EXPECT_EQ(result.sdkInstallPath, relative);
+    EXPECT_EQ(result.integrationInstallPath, relative);
     request.checkOnly = false;
     result = service.run(request);
     ASSERT_TRUE(result.success);
@@ -729,11 +729,11 @@ TEST(UnityIntegrationService, RejectsUnsafeCustomLocationsAndNonemptyDirectories
     QTemporaryDir dir(QDir::current().filePath(QStringLiteral(".temp/sdk-paths-XXXXXX")));
     ASSERT_TRUE(dir.isValid());
     const QString project = makeUnityProject(dir.filePath(QStringLiteral("Game")));
-    const QString source = makeCompleteSdk(dir.filePath(QStringLiteral("SDK")));
+    const QString source = makeCompleteIntegration(dir.filePath(QStringLiteral("SDK")));
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = project;
-    request.sdkSourcePath = source;
+    request.integrationSourcePath = source;
     const QStringList invalid = {
         QStringLiteral("../Outside"), QStringLiteral("Assets/../Other"),
         QStringLiteral("Assets"), QStringLiteral("Packages"), QStringLiteral("ProjectSettings/SDK"),
@@ -745,10 +745,10 @@ TEST(UnityIntegrationService, RejectsUnsafeCustomLocationsAndNonemptyDirectories
     };
     for (const QString& location : invalid) {
         SCOPED_TRACE(location.toStdString());
-        request.sdkInstallPath = location;
+        request.integrationInstallPath = location;
         EXPECT_FALSE(service.run(request).success);
     }
-    request.sdkInstallPath = QStringLiteral("Assets/ThirdParty");
+    request.integrationInstallPath = QStringLiteral("Assets/ThirdParty");
     const QString userFile = QDir(project).filePath(QStringLiteral("Assets/ThirdParty/User.txt"));
     writeFile(userFile, "keep");
     const auto result = service.run(request);
@@ -757,16 +757,16 @@ TEST(UnityIntegrationService, RejectsUnsafeCustomLocationsAndNonemptyDirectories
     EXPECT_EQ(readFile(userFile), "keep");
 }
 
-TEST(UnityIntegrationService, DiscoversMovedSdkAndBlocksSecondOrNestedInstallation)
+TEST(UnityIntegrationService, DiscoversMovedIntegrationAndBlocksSecondOrNestedInstallation)
 {
     QTemporaryDir dir(QDir::current().filePath(QStringLiteral(".temp/sdk-discovery-XXXXXX")));
     ASSERT_TRUE(dir.isValid());
     const QString project = makeUnityProject(dir.filePath(QStringLiteral("Game")));
-    const QString source = makeCompleteSdk(dir.filePath(QStringLiteral("SDK")));
+    const QString source = makeCompleteIntegration(dir.filePath(QStringLiteral("SDK")));
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = project;
-    request.sdkSourcePath = source;
+    request.integrationSourcePath = source;
     ASSERT_TRUE(service.run(request).success);
     const QString original = QDir(project).filePath(QStringLiteral("Packages/com.harken.core"));
     const QString moved = QDir(project).filePath(QStringLiteral("Assets/RenamedAudio"));
@@ -778,33 +778,33 @@ TEST(UnityIntegrationService, DiscoversMovedSdkAndBlocksSecondOrNestedInstallati
     EXPECT_TRUE(scan.installations.front().managed);
     EXPECT_FALSE(service.run(request).success);
     EXPECT_FALSE(QDir(original).exists());
-    request.sdkInstallPath = QStringLiteral("Assets/RenamedAudio");
+    request.integrationInstallPath = QStringLiteral("Assets/RenamedAudio");
     const auto relocated = service.run(request);
     QStringList diagnostics;
     for (const auto& step : relocated.steps)
         diagnostics << step.id + ": " + step.summary + "\n" + step.cause;
     EXPECT_TRUE(relocated.success) << diagnostics.join('\n').toStdString();
-    makeCompleteSdk(QDir(moved).filePath(QStringLiteral("Copy")));
+    makeCompleteIntegration(QDir(moved).filePath(QStringLiteral("Copy")));
     const auto result = service.run(request);
     EXPECT_FALSE(result.success);
     EXPECT_TRUE(result.steps.front().cause.contains(QStringLiteral("Multiple Integration Package")));
 }
 
-TEST(UnityIntegrationService, BlocksSdkPackageReferencesAndPartialCopiesButIgnoresCaches)
+TEST(UnityIntegrationService, BlocksIntegrationPackageReferencesAndPartialCopiesButIgnoresCaches)
 {
     QTemporaryDir dir(QDir::current().filePath(QStringLiteral(".temp/sdk-references-XXXXXX")));
     ASSERT_TRUE(dir.isValid());
     const QString project = makeUnityProject(dir.filePath(QStringLiteral("Game")));
-    const QString source = makeCompleteSdk(dir.filePath(QStringLiteral("SDK")));
-    makeCompleteSdk(QDir(project).filePath(QStringLiteral("Library/PackageCache/com.harken.core@unused")));
-    makeCompleteSdk(QDir(project).filePath(QStringLiteral("Backups/SDK")));
+    const QString source = makeCompleteIntegration(dir.filePath(QStringLiteral("SDK")));
+    makeCompleteIntegration(QDir(project).filePath(QStringLiteral("Library/PackageCache/com.harken.core@unused")));
+    makeCompleteIntegration(QDir(project).filePath(QStringLiteral("Backups/SDK")));
     EXPECT_TRUE(VNX::UnityInstallation::discover(project).installations.isEmpty());
     const QString manifest = QDir(project).filePath(QStringLiteral("Packages/manifest.json"));
     writeFile(manifest, R"({"dependencies":{"com.harken.core":"1.0.0"}})");
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = project;
-    request.sdkSourcePath = source;
+    request.integrationSourcePath = source;
     EXPECT_FALSE(service.run(request).success);
     writeFile(manifest, R"({"dependencies":{"com.harken.core":"file:../../SDK"}})");
     const auto referenced = service.run(request);
@@ -822,7 +822,7 @@ TEST(UnityIntegrationService, LargeProjectsStillDiscoverConflictsAndAllowKnownTa
     QTemporaryDir dir(QDir::current().filePath(".temp/sdk-discovery-large-XXXXXX"));
     ASSERT_TRUE(dir.isValid());
     const QString project = makeUnityProject(dir.filePath("Game"));
-    const QString installed = makeCompleteSdk(QDir(project).filePath("Packages/com.harken.core"));
+    const QString installed = makeCompleteIntegration(QDir(project).filePath("Packages/com.harken.core"));
     const QString assets = QDir(project).filePath("Assets/LargeContent");
     ASSERT_TRUE(QDir().mkpath(assets));
     for (int index = 0; index < 100010; ++index) {
@@ -834,7 +834,7 @@ TEST(UnityIntegrationService, LargeProjectsStillDiscoverConflictsAndAllowKnownTa
     ASSERT_EQ(discovery.installations.size(), 1);
     QString error;
     EXPECT_TRUE(VNX::UnityInstallation::validateTarget(project, installed, &error)) << error.toStdString();
-    makeCompleteSdk(QDir(assets).filePath("AnotherSDK"));
+    makeCompleteIntegration(QDir(assets).filePath("AnotherSDK"));
     EXPECT_FALSE(VNX::UnityInstallation::validateTarget(project, installed, &error));
     EXPECT_TRUE(error.contains("Multiple Integration Package installations")) << error.toStdString();
     const QString external = dir.filePath("External");
@@ -849,14 +849,14 @@ TEST(UnityIntegrationService, LargeProjectsStillDiscoverConflictsAndAllowKnownTa
     EXPECT_FALSE(VNX::UnityInstallation::validateTarget(project, installed, &error));
 }
 
-TEST(UnityIntegrationService, FailedPostInstallVerificationRestoresOldSdkAndProjectFiles)
+TEST(UnityIntegrationService, FailedPostInstallVerificationRestoresOldIntegrationAndProjectFiles)
 {
     QTemporaryDir dir(QDir::current().filePath(".temp/sdk-update-rollback-XXXXXX"));
     ASSERT_TRUE(dir.isValid());
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = makeUnityProject(dir.filePath("Game"));
-    request.sdkSourcePath = makeCompleteSdk(dir.filePath("Source"));
+    request.integrationSourcePath = makeCompleteIntegration(dir.filePath("Source"));
     ASSERT_TRUE(service.run(request).success);
     const QString installed = QDir(request.unityProjectPath).filePath("Packages/com.harken.core");
     const QString runtime = hostRuntimeRelativePath();
@@ -864,7 +864,7 @@ TEST(UnityIntegrationService, FailedPostInstallVerificationRestoresOldSdkAndProj
     const QByteArray receipt = readFile(installed + "/.harken-integration-state.json");
     writeFile(QDir(installed).filePath(runtime + ".meta"), "guid: keep-plugin-guid");
     writeFile(installed + "/Custom.txt", "project-specific");
-    writeFile(QDir(request.sdkSourcePath).filePath(runtime), "new-runtime");
+    writeFile(QDir(request.integrationSourcePath).filePath(runtime), "new-runtime");
     bool injected = false;
     QObject::connect(&service, &VNX::UnityIntegrationService::stepUpdated,
         [&](int, const VNX::UnityIntegrationService::StepResult& step) {
@@ -887,14 +887,75 @@ TEST(UnityIntegrationService, FailedPostInstallVerificationRestoresOldSdkAndProj
     EXPECT_TRUE(QDir(result.steps[4].artifacts.front()).exists());
 }
 
-TEST(UnityIntegrationService, FailedNewInstallationDoesNotLeaveAnActiveUnverifiedSdk)
+TEST(UnityIntegrationService, OwnedSourceRelocationPreservesIdentityAndRollsBackOnVerificationFailure)
+{
+    for (const QString& installPath : {QStringLiteral("Packages/com.harken.core"),
+                                      QStringLiteral("Assets/HarkenSDK")}) {
+        QTemporaryDir dir;
+        ASSERT_TRUE(dir.isValid());
+        VNX::UnityIntegrationService service;
+        VNX::UnityIntegrationService::Request request;
+        request.unityProjectPath = makeUnityProject(dir.filePath("Game"));
+        request.integrationSourcePath = makeCompleteIntegration(dir.filePath("Source"));
+        request.integrationInstallPath = installPath;
+        const QString oldPath = QStringLiteral("Runtime/Sdk/Actions.cs");
+        const QString newPath = QStringLiteral("Runtime/API/Actions.cs");
+        const QByteArray source = QByteArrayLiteral("namespace Harken { public class Actions {} }");
+        const QByteArray metadata = QByteArrayLiteral("guid: 66744ddb495183e44ac9e0bb5435e515\n");
+        writeFile(request.integrationSourcePath + "/" + oldPath, source);
+        writeFile(request.integrationSourcePath + "/" + oldPath + ".meta", metadata);
+        ASSERT_TRUE(service.run(request).success);
+        const QString installed = request.unityProjectPath + "/" + installPath;
+        const QByteArray receipt = readFile(installed + "/.harken-integration-state.json");
+        writeFile(installed + "/Runtime/Sdk/ProjectOnly.cs", "user code");
+        ASSERT_TRUE(QDir().mkpath(request.integrationSourcePath + "/Runtime/API"));
+        ASSERT_TRUE(QFile::rename(request.integrationSourcePath + "/" + oldPath,
+                                 request.integrationSourcePath + "/" + newPath));
+        ASSERT_TRUE(QFile::rename(request.integrationSourcePath + "/" + oldPath + ".meta",
+                                 request.integrationSourcePath + "/" + newPath + ".meta"));
+        request.checkOnly = true;
+        const auto preview = service.run(request);
+        ASSERT_TRUE(preview.success);
+        EXPECT_EQ(preview.staleFilesToRemove, 2);
+        EXPECT_EQ(readFile(installed + "/" + oldPath), source);
+        EXPECT_FALSE(QFileInfo::exists(installed + "/" + newPath));
+        const auto sabotage = QObject::connect(&service, &VNX::UnityIntegrationService::stepUpdated,
+            [&](int, const VNX::UnityIntegrationService::StepResult& step) {
+                if (step.id == "verify" && step.status == VNX::UnityIntegrationService::StepStatus::Running)
+                    writeFile(installed + "/" + newPath, "damaged after activation");
+            });
+        request.checkOnly = false;
+        request.confirmTargetChanges = true;
+        EXPECT_FALSE(service.run(request).success);
+        EXPECT_EQ(readFile(installed + "/.harken-integration-state.json"), receipt);
+        EXPECT_EQ(readFile(installed + "/" + oldPath), source);
+        EXPECT_EQ(readFile(installed + "/" + oldPath + ".meta"), metadata);
+        EXPECT_FALSE(QFileInfo::exists(installed + "/" + newPath));
+        QObject::disconnect(sabotage);
+        const auto updated = service.run(request);
+        ASSERT_TRUE(updated.success);
+        EXPECT_EQ(readFile(installed + "/" + newPath), source);
+        EXPECT_EQ(readFile(installed + "/" + newPath + ".meta"), metadata);
+        EXPECT_FALSE(QFileInfo::exists(installed + "/" + oldPath));
+        EXPECT_FALSE(QFileInfo::exists(installed + "/" + oldPath + ".meta"));
+        EXPECT_EQ(readFile(installed + "/Runtime/Sdk/ProjectOnly.cs"), "user code");
+        const auto managed = QJsonDocument::fromJson(readFile(installed + "/.harken-integration-state.json"))
+                                 .object().value("managed_files").toArray();
+        EXPECT_TRUE(managed.contains(newPath));
+        EXPECT_FALSE(managed.contains(oldPath));
+        request.checkOnly = true;
+        EXPECT_TRUE(service.run(request).targetAlreadyCurrent);
+    }
+}
+
+TEST(UnityIntegrationService, FailedNewInstallationDoesNotLeaveAnActiveUnverifiedIntegration)
 {
     QTemporaryDir dir(QDir::current().filePath(".temp/sdk-install-rollback-XXXXXX"));
     ASSERT_TRUE(dir.isValid());
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = makeUnityProject(dir.filePath("Game"));
-    request.sdkSourcePath = makeCompleteSdk(dir.filePath("Source"));
+    request.integrationSourcePath = makeCompleteIntegration(dir.filePath("Source"));
     const QString installed = QDir(request.unityProjectPath).filePath("Packages/com.harken.core");
     QObject::connect(&service, &VNX::UnityIntegrationService::stepUpdated,
         [&](int, const VNX::UnityIntegrationService::StepResult& step) {
@@ -948,13 +1009,13 @@ TEST(UnityIntegrationService, BoundsIdentityReadsWithoutAcceptingIncompleteDisco
         QDir(project).filePath("Packages/com.harken.core"), &error));
 }
 
-TEST(UnityIntegrationService, DetectsSdkInsideAliasedCyclicAndOverlappingLocalPackages)
+TEST(UnityIntegrationService, DetectsIntegrationInsideAliasedCyclicAndOverlappingLocalPackages)
 {
     QTemporaryDir dir(QDir::current().filePath(QStringLiteral(".temp/sdk-discovery-alias-XXXXXX")));
     ASSERT_TRUE(dir.isValid());
     const QString project = makeUnityProject(dir.filePath("Game"));
     const QString local = dir.filePath("Local");
-    const QString sdk = makeCompleteSdk(QDir(local).filePath("SDK"));
+    const QString integration = makeCompleteIntegration(QDir(local).filePath("SDK"));
     writeFile(QDir(local).filePath("package.json"),
               R"({"name":"unrelated","dependencies":{"self":"file:.","nested":"file:SDK"}})");
     writeFile(QDir(project).filePath("Packages/manifest.json"),
@@ -962,20 +1023,20 @@ TEST(UnityIntegrationService, DetectsSdkInsideAliasedCyclicAndOverlappingLocalPa
     const auto discovery = VNX::UnityInstallation::discover(project);
     EXPECT_TRUE(discovery.errors.isEmpty()) << discovery.errors.join('\n').toStdString();
     ASSERT_EQ(discovery.installations.size(), 1);
-    EXPECT_TRUE(VNX::UnityInstallation::samePath(discovery.installations.front().path, sdk));
+    EXPECT_TRUE(VNX::UnityInstallation::samePath(discovery.installations.front().path, integration));
     EXPECT_TRUE(discovery.localPackagePaths.contains(local));
-    EXPECT_TRUE(discovery.localPackagePaths.contains(sdk));
+    EXPECT_TRUE(discovery.localPackagePaths.contains(integration));
     QString error;
     EXPECT_FALSE(VNX::UnityInstallation::validateTarget(project,
         QDir(project).filePath("Packages/com.harken.core"), &error));
 }
 
-TEST(UnityIntegrationService, UnrelatedBrokenIdentitiesDoNotBlockButSdkRemnantsAndUpmManifestsDo)
+TEST(UnityIntegrationService, UnrelatedBrokenIdentitiesDoNotBlockButIntegrationRemnantsAndUpmManifestsDo)
 {
     QTemporaryDir dir(QDir::current().filePath(QStringLiteral(".temp/sdk-discovery-json-errors-XXXXXX")));
     ASSERT_TRUE(dir.isValid());
     const QString project = makeUnityProject(dir.filePath("Game"));
-    const QString source = makeCompleteSdk(dir.filePath("SDK"));
+    const QString source = makeCompleteIntegration(dir.filePath("SDK"));
     const QString manifest = QDir(project).filePath("Packages/manifest.json");
     writeFile(manifest, R"({"dependencies":{"unrelated":"file:../../Local"}})");
     writeFile(dir.filePath("Local/package.json"), "broken local package");
@@ -985,7 +1046,7 @@ TEST(UnityIntegrationService, UnrelatedBrokenIdentitiesDoNotBlockButSdkRemnantsA
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = project;
-    request.sdkSourcePath = source;
+    request.integrationSourcePath = source;
     const auto installed = service.run(request);
     ASSERT_TRUE(installed.success) << installed.steps.front().cause.toStdString();
     const QString remnant = QDir(project).filePath("Assets/Partial/Harken.Core.asmdef");
@@ -1004,13 +1065,13 @@ TEST(UnityIntegrationService, DamagedStandardPackageIdentitiesBlockAnotherInstal
     QTemporaryDir dir(QDir::current().filePath(QStringLiteral(".temp/sdk-standard-identity-XXXXXX")));
     ASSERT_TRUE(dir.isValid());
     const QString project = makeUnityProject(dir.filePath("Game"));
-    const QString source = makeCompleteSdk(dir.filePath("SDK"));
+    const QString source = makeCompleteIntegration(dir.filePath("SDK"));
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = project;
-    request.sdkSourcePath = source;
-    request.sdkInstallPath = QStringLiteral("Assets/ThirdParty/NewSDK");
-    const QString target = QDir(project).filePath(request.sdkInstallPath);
+    request.integrationSourcePath = source;
+    request.integrationInstallPath = QStringLiteral("Assets/ThirdParty/NewSDK");
+    const QString target = QDir(project).filePath(request.integrationInstallPath);
     for (const QString& location : {QStringLiteral("Packages/com.harken.core"),
                                     QStringLiteral("Assets/HarkenSDK")}) {
         SCOPED_TRACE(location.toStdString());
@@ -1039,16 +1100,16 @@ TEST(UnityIntegrationService, DamagedStandardPackageIdentitiesBlockAnotherInstal
     EXPECT_TRUE(installed.success) << installed.steps.front().cause.toStdString();
 }
 
-TEST(UnityIntegrationService, CanRepairManagedSdkWithDamagedPackageIdentity)
+TEST(UnityIntegrationService, CanRepairManagedIntegrationWithDamagedPackageIdentity)
 {
     QTemporaryDir dir(QDir::current().filePath(QStringLiteral(".temp/sdk-managed-identity-XXXXXX")));
     ASSERT_TRUE(dir.isValid());
     const QString project = makeUnityProject(dir.filePath("Game"));
-    const QString source = makeCompleteSdk(dir.filePath("SDK"));
+    const QString source = makeCompleteIntegration(dir.filePath("SDK"));
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = project;
-    request.sdkSourcePath = source;
+    request.integrationSourcePath = source;
     ASSERT_TRUE(service.run(request).success);
     const QString manifest = QDir(project).filePath("Packages/com.harken.core/package.json");
     writeFile(manifest, "broken Integration Package");
@@ -1056,10 +1117,10 @@ TEST(UnityIntegrationService, CanRepairManagedSdkWithDamagedPackageIdentity)
     ASSERT_EQ(discovery.installations.size(), 1);
     EXPECT_TRUE(discovery.installations.front().managed);
     EXPECT_TRUE(discovery.errors.isEmpty());
-    request.sdkInstallPath = QStringLiteral("Assets/OtherSDK");
+    request.integrationInstallPath = QStringLiteral("Assets/OtherSDK");
     EXPECT_FALSE(service.run(request).success);
-    EXPECT_FALSE(QDir(QDir(project).filePath(request.sdkInstallPath)).exists());
-    request.sdkInstallPath.clear();
+    EXPECT_FALSE(QDir(QDir(project).filePath(request.integrationInstallPath)).exists());
+    request.integrationInstallPath.clear();
     EXPECT_TRUE(service.run(request).requiresConfirmation);
     request.confirmTargetChanges = true;
     const auto repaired = service.run(request);
@@ -1085,24 +1146,24 @@ TEST(UnityIntegrationService, RejectsManifestTraversalAndOverlappingSource)
     QTemporaryDir dir(QDir::current().filePath(QStringLiteral(".temp/sdk-safety-XXXXXX")));
     ASSERT_TRUE(dir.isValid());
     const QString project = makeUnityProject(dir.filePath(QStringLiteral("Game")));
-    const QString source = makeCompleteSdk(dir.filePath(QStringLiteral("SDK")));
+    const QString source = makeCompleteIntegration(dir.filePath(QStringLiteral("SDK")));
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = project;
-    request.sdkSourcePath = source;
+    request.integrationSourcePath = source;
     auto manifest = integrationManifest();
     manifest[QStringLiteral("required_files")] = QJsonArray{QStringLiteral("../outside.txt")};
     writeFile(QDir(source).filePath(QStringLiteral("harken-integration.json")), QJsonDocument(manifest).toJson());
     auto result = service.run(request);
     EXPECT_FALSE(result.success);
     EXPECT_TRUE(result.steps[1].summary.contains(QStringLiteral("unsafe file path")));
-    makeCompleteSdk(source);
+    makeCompleteIntegration(source);
     ASSERT_TRUE(service.run(request).success);
-    request.sdkSourcePath = QDir(project).filePath(QStringLiteral("Packages/com.harken.core"));
+    request.integrationSourcePath = QDir(project).filePath(QStringLiteral("Packages/com.harken.core"));
     result = service.run(request);
     EXPECT_FALSE(result.success);
     EXPECT_TRUE(result.steps[1].cause.contains(QStringLiteral("containment")));
-    request.sdkSourcePath = source;
+    request.integrationSourcePath = source;
     const QString statePath = QDir(project).filePath(QStringLiteral("Packages/com.harken.core/.harken-integration-state.json"));
     auto state = QJsonDocument::fromJson(readFile(statePath)).object();
     state[QStringLiteral("managed_files")] = QJsonArray{QStringLiteral("../outside.txt")};
@@ -1117,19 +1178,19 @@ TEST(UnityIntegrationService, ChecksCapabilitiesAndSerializesProjectOperations)
     QTemporaryDir dir(QDir::current().filePath(QStringLiteral(".temp/sdk-lock-XXXXXX")));
     ASSERT_TRUE(dir.isValid());
     const QString project = makeUnityProject(dir.filePath(QStringLiteral("Game")));
-    const QString source = makeCompleteSdk(dir.filePath(QStringLiteral("SDK")));
+    const QString source = makeCompleteIntegration(dir.filePath(QStringLiteral("SDK")));
     auto manifest = integrationManifest();
     manifest.remove(QStringLiteral("supports_custom_install_path"));
     writeFile(QDir(source).filePath(QStringLiteral("harken-integration.json")), QJsonDocument(manifest).toJson());
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = project;
-    request.sdkSourcePath = source;
-    request.sdkInstallPath = QStringLiteral("Assets/ThirdParty/SDK");
+    request.integrationSourcePath = source;
+    request.integrationInstallPath = QStringLiteral("Assets/ThirdParty/SDK");
     auto result = service.run(request);
     EXPECT_FALSE(result.success);
     EXPECT_TRUE(result.steps[1].summary.contains(QStringLiteral("does not support")));
-    request.sdkInstallPath.clear();
+    request.integrationInstallPath.clear();
     const QString lockPath = QDir(project).filePath(QStringLiteral("Library/HarkenIntegration/integration.lock"));
     QLockFile lock(lockPath);
     ASSERT_TRUE(lock.tryLock());
@@ -1144,16 +1205,16 @@ TEST(UnityIntegrationService, ChecksCapabilitiesAndSerializesProjectOperations)
     EXPECT_TRUE(service.run(request).success);
 }
 
-TEST(HubUnityIntegrationService, BlocksAllSdkChangesWhileUnityIsOpenBeforeInspectingTheSdk)
+TEST(HubUnityIntegrationService, BlocksAllIntegrationChangesWhileUnityIsOpenBeforeInspectingTheIntegration)
 {
     QTemporaryDir dir(QDir::current().filePath(".temp/sdk-open-unity-XXXXXX"));
     ASSERT_TRUE(dir.isValid());
     const QString project = makeUnityProject(dir.filePath("Game"));
-    const QString source = makeCompleteSdk(dir.filePath("SDK"));
+    const QString source = makeCompleteIntegration(dir.filePath("SDK"));
     VNH::HubUnityIntegrationService service;
     VNH::UnityIntegrationRequest request;
     request.unityProjectPath = project;
-    request.sdkSourcePath = source;
+    request.integrationSourcePath = source;
     writeFile(QDir(project).filePath("Temp/UnityLockfile"), "stale");
     ASSERT_TRUE(service.run(request).success);
     const QString installed = QDir(project).filePath("Packages/com.harken.core");
@@ -1161,7 +1222,7 @@ TEST(HubUnityIntegrationService, BlocksAllSdkChangesWhileUnityIsOpenBeforeInspec
     writeFile(installed + ".meta", "guid: unchanged-sdk");
     HarkenHubTest::UnityProjectLock unityLock;
     ASSERT_TRUE(unityLock.lock(project));
-    request.sdkSourcePath = dir.filePath("missing-sdk");
+    request.integrationSourcePath = dir.filePath("missing-sdk");
     for (const bool confirmed : {false, true}) {
         for (const int operation : {0, 1, 2, 3}) {
             auto change = request;
@@ -1178,7 +1239,7 @@ TEST(HubUnityIntegrationService, BlocksAllSdkChangesWhileUnityIsOpenBeforeInspec
             const auto result = service.run(change);
             EXPECT_FALSE(result.success);
             EXPECT_FALSE(result.requiresConfirmation);
-            EXPECT_EQ(result.sdkFilesCopied, 0);
+            EXPECT_EQ(result.integrationFilesCopied, 0);
             ASSERT_FALSE(result.steps.isEmpty());
             EXPECT_TRUE((result.steps.front().summary + result.steps.front().cause)
                             .contains("This Unity project is open."));
@@ -1193,7 +1254,7 @@ TEST(HubUnityIntegrationService, BlocksAllSdkChangesWhileUnityIsOpenBeforeInspec
     EXPECT_TRUE(service.run(request).success);
     request.verifyInstalledOnly = false;
     request.checkOnly = true;
-    request.sdkSourcePath = source;
+    request.integrationSourcePath = source;
     ASSERT_TRUE(unityLock.unlock());
     const QString otherProject = makeUnityProject(dir.filePath("OtherGame"));
     ASSERT_TRUE(unityLock.lock(otherProject));
@@ -1207,11 +1268,11 @@ TEST(HubUnityIntegrationService, RechecksUnityAfterSafetyCheckBeforeInstallingUp
         QTemporaryDir dir(QDir::current().filePath(".temp/sdk-unity-recheck-XXXXXX"));
         ASSERT_TRUE(dir.isValid());
         const QString project = makeUnityProject(dir.filePath("Game"));
-        const QString source = makeCompleteSdk(dir.filePath("SDK"));
+        const QString source = makeCompleteIntegration(dir.filePath("SDK"));
         VNH::HubUnityIntegrationService service;
         VNH::UnityIntegrationRequest request;
         request.unityProjectPath = project;
-        request.sdkSourcePath = source;
+        request.integrationSourcePath = source;
         const QString installed = QDir(project).filePath("Packages/com.harken.core");
         QByteArray originalPackage;
         if (operation != 0) {
@@ -1234,7 +1295,7 @@ TEST(HubUnityIntegrationService, RechecksUnityAfterSafetyCheckBeforeInstallingUp
         const auto result = service.run(request);
         EXPECT_FALSE(result.success);
         EXPECT_FALSE(result.integrationRemoved);
-        EXPECT_EQ(result.sdkFilesCopied, 0);
+        EXPECT_EQ(result.integrationFilesCopied, 0);
         ASSERT_FALSE(result.steps.isEmpty());
         EXPECT_TRUE(result.steps.front().summary.contains("This Unity project is open."));
         EXPECT_FALSE(QFileInfo::exists(request.removalBackupPath));
@@ -1301,20 +1362,20 @@ TEST(UnityIntegrationService, RechecksForDuplicatesBeforeWriting)
     QTemporaryDir dir(QDir::current().filePath(QStringLiteral(".temp/sdk-recheck-XXXXXX")));
     ASSERT_TRUE(dir.isValid());
     const QString project = makeUnityProject(dir.filePath(QStringLiteral("Game")));
-    const QString source = makeCompleteSdk(dir.filePath(QStringLiteral("SDK")));
+    const QString source = makeCompleteIntegration(dir.filePath(QStringLiteral("SDK")));
     VNX::UnityIntegrationService service;
     QObject::connect(&service, &VNX::UnityIntegrationService::stepUpdated,
                      [&](int, const VNX::UnityIntegrationService::StepResult& step) {
         if (step.id == QStringLiteral("install_sdk")
             && step.status == VNX::UnityIntegrationService::StepStatus::Running)
-            makeCompleteSdk(QDir(project).filePath(QStringLiteral("Assets/ExternalCopy")));
+            makeCompleteIntegration(QDir(project).filePath(QStringLiteral("Assets/ExternalCopy")));
     });
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = project;
-    request.sdkSourcePath = source;
+    request.integrationSourcePath = source;
     const auto result = service.run(request);
     EXPECT_FALSE(result.success);
-    EXPECT_EQ(result.sdkFilesCopied, 0);
+    EXPECT_EQ(result.integrationFilesCopied, 0);
     EXPECT_FALSE(QDir(QDir(project).filePath(QStringLiteral("Packages/com.harken.core"))).exists());
 }
 
@@ -1326,7 +1387,7 @@ TEST(UnityIntegrationService, RemovalDoesNotReactivateAnOverriddenPackageDepende
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = project;
-    request.sdkSourcePath = makeCompleteSdk(dir.filePath(QStringLiteral("SDK")));
+    request.integrationSourcePath = makeCompleteIntegration(dir.filePath(QStringLiteral("SDK")));
     ASSERT_TRUE(service.run(request).success);
     writeFile(QDir(project).filePath(QStringLiteral("Packages/manifest.json")),
               R"({"dependencies":{"com.harken.core":"1.0.0"}})");
@@ -1347,7 +1408,7 @@ TEST(UnityIntegrationService, RejectsJunctionsInTargetsSourcesAndBackupParents)
     QTemporaryDir dir(QDir::current().filePath(QStringLiteral(".temp/sdk-junction-XXXXXX")));
     ASSERT_TRUE(dir.isValid());
     const QString project = makeUnityProject(dir.filePath(QStringLiteral("Game")));
-    const QString source = makeCompleteSdk(dir.filePath(QStringLiteral("SDK")));
+    const QString source = makeCompleteIntegration(dir.filePath(QStringLiteral("SDK")));
     const QString external = dir.filePath(QStringLiteral("External"));
     ASSERT_TRUE(QDir().mkpath(external));
     const QString link = QDir(project).filePath(QStringLiteral("Assets/Linked"));
@@ -1358,11 +1419,11 @@ TEST(UnityIntegrationService, RejectsJunctionsInTargetsSourcesAndBackupParents)
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = project;
-    request.sdkSourcePath = source;
-    request.sdkInstallPath = QStringLiteral("Assets/Linked/SDK");
+    request.integrationSourcePath = source;
+    request.integrationInstallPath = QStringLiteral("Assets/Linked/SDK");
     EXPECT_FALSE(service.run(request).success);
     EXPECT_FALSE(QDir(QDir(external).filePath(QStringLiteral("SDK"))).exists());
-    request.sdkInstallPath.clear();
+    request.integrationInstallPath.clear();
     EXPECT_FALSE(service.run(request).success);
     ASSERT_TRUE(QDir().rmdir(link));
     const QString sourceLink = QDir(source).filePath(QStringLiteral("Linked"));
@@ -1386,39 +1447,39 @@ TEST(UnityIntegrationService, RejectsJunctionsInTargetsSourcesAndBackupParents)
 }
 #endif
 
-TEST(UnityIntegrationService, RejectsInvalidExplicitSdkSourceWithoutFallback)
+TEST(UnityIntegrationService, RejectsInvalidExplicitIntegrationSourceWithoutFallback)
 {
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     const QString unityRoot = makeUnityProject(
         QDir(dir.path()).filePath(QStringLiteral("UnityGame")));
-    const QString invalidSdkRoot = QDir(dir.path()).filePath(
+    const QString invalidIntegrationRoot = QDir(dir.path()).filePath(
         QStringLiteral("NotHarkenSDK"));
-    ASSERT_TRUE(QDir().mkpath(invalidSdkRoot));
+    ASSERT_TRUE(QDir().mkpath(invalidIntegrationRoot));
 
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = unityRoot;
-    request.sdkSourcePath = invalidSdkRoot;
+    request.integrationSourcePath = invalidIntegrationRoot;
 
     const auto result = service.run(request);
 
     ASSERT_FALSE(result.success);
-    EXPECT_TRUE(result.sdkSourcePath.isEmpty());
+    EXPECT_TRUE(result.integrationSourcePath.isEmpty());
     EXPECT_EQ(result.steps[1].status,
               VNX::UnityIntegrationService::StepStatus::Failed);
-    EXPECT_TRUE(result.steps[1].cause.contains(invalidSdkRoot));
+    EXPECT_TRUE(result.steps[1].cause.contains(invalidIntegrationRoot));
 }
 
-TEST(UnityIntegrationService, ResolvesSdkTotalDirectoryToUnityPackageRoot)
+TEST(UnityIntegrationService, ResolvesIntegrationTotalDirectoryToUnityPackageRoot)
 {
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     for (const auto* name : {"HarkenIntegration", "HarkenSDK"}) {
         const QString totalRoot = QDir(dir.path()).filePath(QLatin1String(name));
         const QString packageRoot = QDir(totalRoot).filePath(QStringLiteral("Unity/Harken"));
-        makeCompleteSdk(packageRoot);
-        EXPECT_EQ(VNX::UnityIntegrationService::locateSdkSource(totalRoot),
+        makeCompleteIntegration(packageRoot);
+        EXPECT_EQ(VNX::UnityIntegrationService::locateIntegrationSource(totalRoot),
                   QDir(packageRoot).absolutePath());
     }
 }
@@ -1429,11 +1490,11 @@ TEST(UnityIntegrationService, ResolvesUnityClassificationDirectoryToPackageRoot)
     ASSERT_TRUE(dir.isValid());
     const QString unityRoot = QDir(dir.path()).filePath(QStringLiteral("Unity"));
     const QString packageRoot = QDir(unityRoot).filePath(QStringLiteral("Harken"));
-    makeCompleteSdk(packageRoot);
+    makeCompleteIntegration(packageRoot);
 
-    EXPECT_EQ(VNX::UnityIntegrationService::locateSdkSource(unityRoot),
+    EXPECT_EQ(VNX::UnityIntegrationService::locateIntegrationSource(unityRoot),
               QDir(packageRoot).absolutePath());
-    EXPECT_EQ(VNX::UnityIntegrationService::locateSdkSource(packageRoot),
+    EXPECT_EQ(VNX::UnityIntegrationService::locateIntegrationSource(packageRoot),
               QDir(packageRoot).absolutePath());
 }
 
@@ -1443,13 +1504,13 @@ TEST(UnityIntegrationService, InstallsTheSameSourceDirectlyUnderAssetsHarkenSdk)
     ASSERT_TRUE(dir.isValid());
     const QString unityRoot = makeUnityProject(
         QDir(dir.path()).filePath(QStringLiteral("UnityGame")));
-    const QString sdkRoot = makeCompleteSdk(
+    const QString integrationRoot = makeCompleteIntegration(
         QDir(dir.path()).filePath(QStringLiteral("ExternalUnityPackage")));
 
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = unityRoot;
-    request.sdkSourcePath = sdkRoot;
+    request.integrationSourcePath = integrationRoot;
     request.installToAssets = true;
 
     const auto result = service.run(request);
@@ -1461,7 +1522,7 @@ TEST(UnityIntegrationService, InstallsTheSameSourceDirectlyUnderAssetsHarkenSdk)
         QDir(unityRoot).filePath(QStringLiteral("Assets/HarkenSDK/Unity/Harken"))));
 }
 
-TEST(UnityIntegrationService, RejectsIncompleteBundledSdkAndWritesReport)
+TEST(UnityIntegrationService, RejectsIncompleteBundledIntegrationAndWritesReport)
 {
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
@@ -1474,14 +1535,14 @@ TEST(UnityIntegrationService, RejectsIncompleteBundledSdkAndWritesReport)
     });
     const QString unityRoot = makeUnityProject(
         QDir(dir.path()).filePath(QStringLiteral("UnityGame")));
-    const QString sdkRoot = makeCompleteSdk(
+    const QString integrationRoot = makeCompleteIntegration(
         QDir(dir.path()).filePath(QStringLiteral("HarkenSDK")));
-    ASSERT_TRUE(QFile::remove(QDir(sdkRoot).filePath(hostRuntimeRelativePath())));
+    ASSERT_TRUE(QFile::remove(QDir(integrationRoot).filePath(hostRuntimeRelativePath())));
 
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = unityRoot;
-    request.sdkSourcePath = sdkRoot;
+    request.integrationSourcePath = integrationRoot;
 
     const auto result = service.run(request);
 
@@ -1551,7 +1612,7 @@ TEST(UnityIntegrationService, ReportsResolveTrustedDataRootButRejectLinkedReport
     });
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = makeUnityProject(dir.filePath("Game"));
-    request.sdkSourcePath = makeCompleteSdk(dir.filePath("SDK"));
+    request.integrationSourcePath = makeCompleteIntegration(dir.filePath("SDK"));
     request.checkOnly = true;
     VNX::UnityIntegrationService service;
     const auto checked = service.run(request);
@@ -1585,7 +1646,7 @@ TEST(UnityIntegrationService, ReportsButDoesNotBlockTargetsRequiringAnotherHost)
     ASSERT_TRUE(dir.isValid());
     const QString unityRoot = makeUnityProject(
         QDir(dir.path()).filePath(QStringLiteral("UnityGame")));
-    const QString sdkRoot = makeCompleteSdk(
+    const QString integrationRoot = makeCompleteIntegration(
         QDir(dir.path()).filePath(QStringLiteral("HarkenSDK")));
     const QStringList runtimePaths = {
         QStringLiteral("Runtime/Plugins/x86_64/HarkenCore.dll"),
@@ -1597,13 +1658,13 @@ TEST(UnityIntegrationService, ReportsButDoesNotBlockTargetsRequiringAnotherHost)
     const QStringList requiredPaths = requiredRuntimeRelativePaths();
     for (const QString& path : runtimePaths) {
         if (!requiredPaths.contains(path))
-            ASSERT_TRUE(QFile::remove(QDir(sdkRoot).filePath(path)));
+            ASSERT_TRUE(QFile::remove(QDir(integrationRoot).filePath(path)));
     }
 
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = unityRoot;
-    request.sdkSourcePath = sdkRoot;
+    request.integrationSourcePath = integrationRoot;
 
     const auto result = service.run(request);
 
@@ -1621,15 +1682,15 @@ TEST(UnityIntegrationService, WarnsButDoesNotBlockMissingAndroidRuntime)
     ASSERT_TRUE(dir.isValid());
     const QString unityRoot = makeUnityProject(
         QDir(dir.path()).filePath(QStringLiteral("UnityGame")));
-    const QString sdkRoot = makeCompleteSdk(
+    const QString integrationRoot = makeCompleteIntegration(
         QDir(dir.path()).filePath(QStringLiteral("HarkenSDK")));
-    ASSERT_TRUE(QFile::remove(QDir(sdkRoot).filePath(
+    ASSERT_TRUE(QFile::remove(QDir(integrationRoot).filePath(
         QStringLiteral("Runtime/Plugins/Android/arm64-v8a/libHarkenCore.so"))));
 
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = unityRoot;
-    request.sdkSourcePath = sdkRoot;
+    request.integrationSourcePath = integrationRoot;
 
     const auto result = service.run(request);
 
@@ -1652,7 +1713,7 @@ TEST(UnityIntegrationService, IntegratesAvailableHostRuntimeWhenOtherTargetsAreM
     ASSERT_TRUE(dir.isValid());
     const QString unityRoot = makeUnityProject(
         QDir(dir.path()).filePath(QStringLiteral("UnityGame")));
-    const QString sdkRoot = makeCompleteSdk(
+    const QString integrationRoot = makeCompleteIntegration(
         QDir(dir.path()).filePath(QStringLiteral("HarkenSDK")));
     const QStringList runtimePaths = {
         QStringLiteral("Runtime/Plugins/x86_64/HarkenCore.dll"),
@@ -1663,13 +1724,13 @@ TEST(UnityIntegrationService, IntegratesAvailableHostRuntimeWhenOtherTargetsAreM
     };
     for (const QString& path : runtimePaths) {
         if (path != hostRuntimeRelativePath())
-            ASSERT_TRUE(QFile::remove(QDir(sdkRoot).filePath(path)));
+            ASSERT_TRUE(QFile::remove(QDir(integrationRoot).filePath(path)));
     }
 
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = unityRoot;
-    request.sdkSourcePath = sdkRoot;
+    request.integrationSourcePath = integrationRoot;
 
     const auto result = service.run(request);
 
@@ -1685,13 +1746,13 @@ TEST(UnityIntegrationService, IntegratesAvailableHostRuntimeWhenOtherTargetsAreM
         QStringLiteral("Packages/com.harken.core/") + hostRuntimeRelativePath())));
 }
 
-TEST(UnityIntegrationService, CheckOnlyNeverInstallsOrReplacesSdk)
+TEST(UnityIntegrationService, CheckOnlyNeverInstallsOrReplacesIntegration)
 {
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     const QString unityRoot = makeUnityProject(
         QDir(dir.path()).filePath(QStringLiteral("UnityGame")));
-    const QString sdkRoot = makeCompleteSdk(
+    const QString integrationRoot = makeCompleteIntegration(
         QDir(dir.path()).filePath(QStringLiteral("HarkenSDK")));
     const QString targetRoot = QDir(unityRoot).filePath(
         QStringLiteral("Packages/com.harken.core"));
@@ -1699,7 +1760,7 @@ TEST(UnityIntegrationService, CheckOnlyNeverInstallsOrReplacesSdk)
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = unityRoot;
-    request.sdkSourcePath = sdkRoot;
+    request.integrationSourcePath = integrationRoot;
     request.checkOnly = true;
 
     const auto missingPreview = service.run(request);
@@ -1732,13 +1793,13 @@ TEST(UnityIntegrationService, CheckOnlyNeverInstallsOrReplacesSdk)
     EXPECT_EQ(readFile(managedPath), QByteArrayLiteral("locally-modified"));
 }
 
-TEST(UnityIntegrationService, IgnoresSdkNamedDirectoriesWithoutSdkIdentity)
+TEST(UnityIntegrationService, IgnoresLegacyNamedDirectoriesWithoutIntegrationIdentity)
 {
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     const QString unityRoot = makeUnityProject(
         QDir(dir.path()).filePath(QStringLiteral("UnityGame")));
-    const QString sdkRoot = makeCompleteSdk(
+    const QString integrationRoot = makeCompleteIntegration(
         QDir(dir.path()).filePath(QStringLiteral("HarkenSDK")));
     ASSERT_TRUE(QDir().mkpath(QDir(unityRoot).filePath(
         QStringLiteral("Packages/com.harken.core"))));
@@ -1749,7 +1810,7 @@ TEST(UnityIntegrationService, IgnoresSdkNamedDirectoriesWithoutSdkIdentity)
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = unityRoot;
-    request.sdkSourcePath = sdkRoot;
+    request.integrationSourcePath = integrationRoot;
 
     const auto result = service.run(request);
 
@@ -1760,19 +1821,19 @@ TEST(UnityIntegrationService, IgnoresSdkNamedDirectoriesWithoutSdkIdentity)
         QStringLiteral("Packages/com.harken.core/package.json"))));
 }
 
-TEST(UnityIntegrationService, InstallsCompleteSdkWithoutBuildingPacks)
+TEST(UnityIntegrationService, InstallsCompleteIntegrationWithoutBuildingPacks)
 {
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     const QString unityRoot = makeUnityProject(
         QDir(dir.path()).filePath(QStringLiteral("UnityGame")));
-    const QString sdkRoot = makeCompleteSdk(
+    const QString integrationRoot = makeCompleteIntegration(
         QDir(dir.path()).filePath(QStringLiteral("HarkenSDK")));
 
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = unityRoot;
-    request.sdkSourcePath = sdkRoot;
+    request.integrationSourcePath = integrationRoot;
 
     const auto result = service.run(request);
 
@@ -1780,7 +1841,7 @@ TEST(UnityIntegrationService, InstallsCompleteSdkWithoutBuildingPacks)
     EXPECT_FALSE(result.requiresConfirmation);
     EXPECT_TRUE(result.targetCurrent);
     EXPECT_FALSE(result.targetAlreadyCurrent);
-    EXPECT_GT(result.sdkFilesCopied, 0);
+    EXPECT_GT(result.integrationFilesCopied, 0);
     EXPECT_TRUE(QFileInfo::exists(QDir(unityRoot).filePath(
         QStringLiteral("Packages/com.harken.core/Runtime/Plugins/x86_64/HarkenCore.dll"))));
     EXPECT_TRUE(QFileInfo::exists(QDir(unityRoot).filePath(
@@ -1800,7 +1861,7 @@ TEST(UnityIntegrationService, RemovesManagedIntegrationAndPreservesProjectFiles)
     ASSERT_TRUE(dir.isValid());
     const QString unityRoot = makeUnityProject(
         QDir(dir.path()).filePath(QStringLiteral("UnityGame")));
-    const QString sdkRoot = makeCompleteSdk(
+    const QString integrationRoot = makeCompleteIntegration(
         QDir(dir.path()).filePath(QStringLiteral("HarkenSDK")));
     const QString targetRoot = QDir(unityRoot).filePath(
         QStringLiteral("Packages/com.harken.core"));
@@ -1808,7 +1869,7 @@ TEST(UnityIntegrationService, RemovesManagedIntegrationAndPreservesProjectFiles)
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request installRequest;
     installRequest.unityProjectPath = unityRoot;
-    installRequest.sdkSourcePath = sdkRoot;
+    installRequest.integrationSourcePath = integrationRoot;
     ASSERT_TRUE(service.run(installRequest).success);
 
     const QString projectFile = QDir(targetRoot).filePath(
@@ -1864,7 +1925,7 @@ TEST(UnityIntegrationService, RemovesManagedIntegrationAndPreservesProjectFiles)
     target.canonicalRoot = unityRoot;
     const auto removed = VNH::EngineTargetProbe::observe(target);
     EXPECT_EQ(removed.health, VNH::EngineTargetHealth::NotInstalled);
-    EXPECT_TRUE(removed.canChangeSdk);
+    EXPECT_TRUE(removed.canChangeIntegration);
     EXPECT_FALSE(QFileInfo::exists(legacyRuntime));
     EXPECT_FALSE(QFileInfo::exists(legacyRuntimeMeta));
     EXPECT_FALSE(QFileInfo::exists(finderMetadata));
@@ -1875,7 +1936,7 @@ TEST(UnityIntegrationService, RemovesManagedIntegrationAndPreservesProjectFiles)
     const QDir backup(removeRequest.removalBackupPath);
     const QString snapshot = backup.filePath(
         QStringLiteral("UnityProject/Packages/com.harken.core"));
-    const QString reintegrationSdk = backup.filePath(
+    const QString reintegrationIntegration = backup.filePath(
         QStringLiteral("ReintegrationSDK"));
     EXPECT_TRUE(QFileInfo::exists(QDir(snapshot).filePath(
         QStringLiteral(".harken-integration-state.json"))));
@@ -1889,15 +1950,15 @@ TEST(UnityIntegrationService, RemovesManagedIntegrationAndPreservesProjectFiles)
     EXPECT_EQ(readFile(backup.filePath(
                   QStringLiteral("UnityProject/Packages/com.harken.core.meta"))),
               QByteArrayLiteral("package-meta"));
-    EXPECT_TRUE(QFileInfo::exists(QDir(reintegrationSdk).filePath(
+    EXPECT_TRUE(QFileInfo::exists(QDir(reintegrationIntegration).filePath(
         QStringLiteral("package.json"))));
-    EXPECT_TRUE(QFileInfo::exists(QDir(reintegrationSdk).filePath(
+    EXPECT_TRUE(QFileInfo::exists(QDir(reintegrationIntegration).filePath(
         QStringLiteral("Runtime/Plugins/x86_64/HarkenCore.dll"))));
-    EXPECT_FALSE(QFileInfo::exists(QDir(reintegrationSdk).filePath(
+    EXPECT_FALSE(QFileInfo::exists(QDir(reintegrationIntegration).filePath(
         QStringLiteral("Runtime/ProjectOnly.cs"))));
-    EXPECT_FALSE(QFileInfo::exists(QDir(reintegrationSdk).filePath(
+    EXPECT_FALSE(QFileInfo::exists(QDir(reintegrationIntegration).filePath(
         QStringLiteral("Runtime/Plugins/macOS/libharken_core.dylib"))));
-    EXPECT_FALSE(QFileInfo::exists(QDir(reintegrationSdk).filePath(
+    EXPECT_FALSE(QFileInfo::exists(QDir(reintegrationIntegration).filePath(
         QStringLiteral("Runtime/Plugins/.DS_Store"))));
     EXPECT_TRUE(QFileInfo::exists(backup.filePath(
         QStringLiteral("backup.json"))));
@@ -1908,7 +1969,7 @@ TEST(UnityIntegrationService, RemovesManagedIntegrationAndPreservesProjectFiles)
 
     VNX::UnityIntegrationService::Request reinstallRequest;
     reinstallRequest.unityProjectPath = unityRoot;
-    reinstallRequest.sdkSourcePath = reintegrationSdk;
+    reinstallRequest.integrationSourcePath = reintegrationIntegration;
     reinstallRequest.checkOnly = true;
     auto reinstallResult = service.run(reinstallRequest);
     ASSERT_TRUE(reinstallResult.success);
@@ -1967,13 +2028,13 @@ TEST(UnityIntegrationService, RemovalToleratesMissingOwnedFilesAndPreservesUnown
         QTemporaryDir dir;
         ASSERT_TRUE(dir.isValid());
         const QString project = makeUnityProject(dir.filePath("Game"));
-        const QString source = makeCompleteSdk(dir.filePath("Source"));
+        const QString source = makeCompleteIntegration(dir.filePath("Source"));
         writeFile(source + "/README.md", "documentation");
         const QString target = project + "/Packages/com.harken.core";
         VNX::UnityIntegrationService service;
         VNX::UnityIntegrationService::Request request;
         request.unityProjectPath = project;
-        request.sdkSourcePath = source;
+        request.integrationSourcePath = source;
         ASSERT_TRUE(service.run(request).success);
         ASSERT_TRUE(QFile::remove(target + "/" + damaged));
         writeFile(target + "/Project.txt", "project content");
@@ -1986,7 +2047,7 @@ TEST(UnityIntegrationService, RemovalToleratesMissingOwnedFilesAndPreservesUnown
         VNH::EngineTargetRecord record;
         record.engineKind = VNH::EngineKind::Unity;
         record.canonicalRoot = project;
-        EXPECT_TRUE(VNH::EngineTargetProbe::observe(record).canRemoveSdk);
+        EXPECT_TRUE(VNH::EngineTargetProbe::observe(record).canRemoveIntegration);
         request.removeIntegration = true;
         request.removalBackupPath = dir.filePath("Backup");
         const auto review = service.run(request);
@@ -2022,12 +2083,12 @@ TEST(UnityIntegrationService, RemovalRejectsStaleReviewsAndResumesWithoutLosingC
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     const QString project = makeUnityProject(dir.filePath("Game"));
-    const QString source = makeCompleteSdk(dir.filePath("Source"));
+    const QString source = makeCompleteIntegration(dir.filePath("Source"));
     const QString target = project + "/Packages/com.harken.core";
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = project;
-    request.sdkSourcePath = source;
+    request.integrationSourcePath = source;
     ASSERT_TRUE(service.run(request).success);
     request.removeIntegration = true;
     request.removalBackupPath = dir.filePath("Backup");
@@ -2069,9 +2130,9 @@ TEST(UnityIntegrationService, RemovalRejectsStaleReviewsAndResumesWithoutLosingC
     record.engineKind = VNH::EngineKind::Unity;
     record.canonicalRoot = project;
     const auto pending = VNH::EngineTargetProbe::observe(record);
-    EXPECT_TRUE(pending.canRemoveSdk);
-    EXPECT_FALSE(pending.canChangeSdk);
-    EXPECT_FALSE(pending.canMoveSdk);
+    EXPECT_TRUE(pending.canRemoveIntegration);
+    EXPECT_FALSE(pending.canChangeIntegration);
+    EXPECT_FALSE(pending.canMoveIntegration);
     request.approvedPlanHash.clear();
     EXPECT_FALSE(service.run(request).success);
     EXPECT_EQ(readFile(target + "/package.json"), "changed while removing");
@@ -2095,14 +2156,14 @@ TEST(UnityIntegrationService, InstallationIntoUnownedFilesRequiresAnUnchangedRev
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     const QString project = makeUnityProject(dir.filePath("Game"));
-    const QString source = makeCompleteSdk(dir.filePath("Source"));
+    const QString source = makeCompleteIntegration(dir.filePath("Source"));
     const QString target = project + "/Packages/com.harken.core";
     writeFile(target + "/Runtime/Generated/HarkenAbi.g.cs", "existing project implementation");
     writeFile(target + "/Project.txt", "project content");
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = project;
-    request.sdkSourcePath = source;
+    request.integrationSourcePath = source;
     EXPECT_FALSE(service.run(request).success);
     request.preserveUnownedTarget = true;
     request.confirmTargetChanges = true;
@@ -2131,12 +2192,12 @@ TEST(UnityIntegrationService, PreservedFilesDoNotMasqueradeAsAnActiveInstallatio
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     const QString project = makeUnityProject(dir.filePath("Game"));
-    const QString source = makeCompleteSdk(dir.filePath("Source"));
+    const QString source = makeCompleteIntegration(dir.filePath("Source"));
     const QString original = project + "/Packages/com.harken.core";
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = project;
-    request.sdkSourcePath = source;
+    request.integrationSourcePath = source;
     ASSERT_TRUE(service.run(request).success);
     writeFile(original + "/Project.txt", "keep in place");
     request.removeIntegration = true;
@@ -2145,7 +2206,7 @@ TEST(UnityIntegrationService, PreservedFilesDoNotMasqueradeAsAnActiveInstallatio
     ASSERT_TRUE(service.run(request).success);
     EXPECT_TRUE(VNX::UnityInstallation::discover(project).installations.isEmpty());
     request.removeIntegration = false;
-    request.sdkInstallPath = "Assets/Audio/Harken";
+    request.integrationInstallPath = "Assets/Audio/Harken";
     ASSERT_TRUE(service.run(request).success);
     const auto discovery = VNX::UnityInstallation::discover(project);
     EXPECT_EQ(discovery.installations.size(), 1);
@@ -2163,7 +2224,7 @@ TEST(UnityIntegrationService, RemovesAssetsIntegrationWithAssetsBackupPaths)
     ASSERT_TRUE(dir.isValid());
     const QString unityRoot = makeUnityProject(
         QDir(dir.path()).filePath(QStringLiteral("UnityGame")));
-    const QString sdkRoot = makeCompleteSdk(
+    const QString integrationRoot = makeCompleteIntegration(
         QDir(dir.path()).filePath(QStringLiteral("HarkenSDK")));
     const QString targetRoot = QDir(unityRoot).filePath(
         QStringLiteral("Assets/HarkenSDK"));
@@ -2171,7 +2232,7 @@ TEST(UnityIntegrationService, RemovesAssetsIntegrationWithAssetsBackupPaths)
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request installRequest;
     installRequest.unityProjectPath = unityRoot;
-    installRequest.sdkSourcePath = sdkRoot;
+    installRequest.integrationSourcePath = integrationRoot;
     installRequest.installToAssets = true;
     ASSERT_TRUE(service.run(installRequest).success);
     writeFile(targetRoot + QStringLiteral(".meta"),
@@ -2214,7 +2275,7 @@ TEST(UnityIntegrationService, RefusesRemovalWithUnsupportedOwnershipVersion)
     ASSERT_TRUE(dir.isValid());
     const QString unityRoot = makeUnityProject(
         QDir(dir.path()).filePath(QStringLiteral("UnityGame")));
-    const QString sdkRoot = makeCompleteSdk(
+    const QString integrationRoot = makeCompleteIntegration(
         QDir(dir.path()).filePath(QStringLiteral("HarkenSDK")));
     const QString targetRoot = QDir(unityRoot).filePath(
         QStringLiteral("Packages/com.harken.core"));
@@ -2222,7 +2283,7 @@ TEST(UnityIntegrationService, RefusesRemovalWithUnsupportedOwnershipVersion)
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request installRequest;
     installRequest.unityProjectPath = unityRoot;
-    installRequest.sdkSourcePath = sdkRoot;
+    installRequest.integrationSourcePath = integrationRoot;
     ASSERT_TRUE(service.run(installRequest).success);
 
     const QString statePath = QDir(targetRoot).filePath(
@@ -2255,7 +2316,7 @@ TEST(UnityIntegrationService, DoesNotRemoveAnythingWhenBackupCannotStart)
     ASSERT_TRUE(dir.isValid());
     const QString unityRoot = makeUnityProject(
         QDir(dir.path()).filePath(QStringLiteral("UnityGame")));
-    const QString sdkRoot = makeCompleteSdk(
+    const QString integrationRoot = makeCompleteIntegration(
         QDir(dir.path()).filePath(QStringLiteral("HarkenSDK")));
     const QString targetPackage = QDir(unityRoot).filePath(
         QStringLiteral("Packages/com.harken.core/package.json"));
@@ -2263,7 +2324,7 @@ TEST(UnityIntegrationService, DoesNotRemoveAnythingWhenBackupCannotStart)
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request installRequest;
     installRequest.unityProjectPath = unityRoot;
-    installRequest.sdkSourcePath = sdkRoot;
+    installRequest.integrationSourcePath = integrationRoot;
     ASSERT_TRUE(service.run(installRequest).success);
 
     const QString occupiedBackup = QDir(dir.path()).filePath(
@@ -2286,15 +2347,15 @@ TEST(UnityIntegrationService, DoesNotRemoveAnythingWhenBackupCannotStart)
 }
 
 #ifdef Q_OS_WIN
-TEST(UnityIntegrationService, BackupFailurePreservesSdkAndReportsSystemDiagnostics)
+TEST(UnityIntegrationService, BackupFailurePreservesIntegrationAndReportsSystemDiagnostics)
 {
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     const QString project = makeUnityProject(dir.filePath("Game"));
-    const QString source = makeCompleteSdk(dir.filePath("Source"));
+    const QString source = makeCompleteIntegration(dir.filePath("Source"));
     VNH::UnityIntegrationRequest request;
     request.unityProjectPath = project;
-    request.sdkSourcePath = source;
+    request.integrationSourcePath = source;
     ASSERT_TRUE(VNH::HubUnityIntegrationService::run(request).success);
     const QString installed = project + "/Packages/com.harken.core";
     const QByteArray original = readFile(installed + "/Runtime/Harken.Core.asmdef");
@@ -2322,13 +2383,13 @@ TEST(UnityIntegrationService, BackupFailurePreservesSdkAndReportsSystemDiagnosti
 }
 #endif
 
-TEST(UnityIntegrationService, RequiresApprovalBeforeReplacingExistingSdk)
+TEST(UnityIntegrationService, RequiresApprovalBeforeReplacingExistingIntegration)
 {
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     const QString unityRoot = makeUnityProject(
         QDir(dir.path()).filePath(QStringLiteral("UnityGame")));
-    const QString sdkRoot = makeCompleteSdk(
+    const QString integrationRoot = makeCompleteIntegration(
         QDir(dir.path()).filePath(QStringLiteral("HarkenSDK")));
     const QString targetRoot = QDir(unityRoot).filePath(
         QStringLiteral("Packages/com.harken.core"));
@@ -2336,7 +2397,7 @@ TEST(UnityIntegrationService, RequiresApprovalBeforeReplacingExistingSdk)
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = unityRoot;
-    request.sdkSourcePath = sdkRoot;
+    request.integrationSourcePath = integrationRoot;
     ASSERT_TRUE(service.run(request).success);
 
     const QString managedPath = QDir(targetRoot).filePath(
@@ -2379,7 +2440,7 @@ TEST(UnityIntegrationService, RequiresApprovalBeforeReplacingExistingSdk)
     ASSERT_FALSE(preview.planHash.isEmpty());
     request.approvedPlanHash = preview.planHash;
     for (const auto& path : {managedPath, customPath,
-                            QDir(sdkRoot).filePath(QStringLiteral("Runtime/Harken.Core.asmdef"))}) {
+                            QDir(integrationRoot).filePath(QStringLiteral("Runtime/Harken.Core.asmdef"))}) {
         const QByteArray before = readFile(path);
         writeFile(path, before + " changed after review");
         const auto stale = service.run(request);
@@ -2405,7 +2466,7 @@ TEST(UnityIntegrationService, RequiresApprovalBeforeReplacingExistingSdk)
     writeFile(customPath, "custom");
     const auto updated = service.run(request);
     ASSERT_TRUE(updated.success);
-    EXPECT_EQ(readFile(managedPath), readFile(QDir(sdkRoot).filePath(
+    EXPECT_EQ(readFile(managedPath), readFile(QDir(integrationRoot).filePath(
         QStringLiteral("Runtime/Harken.Core.asmdef"))));
     EXPECT_EQ(readFile(customPath), QByteArrayLiteral("custom"));
     EXPECT_FALSE(QFileInfo::exists(stalePath));
@@ -2417,12 +2478,12 @@ TEST(UnityIntegrationService, WriteProtectionBlocksMutationBeforeAndAfterReview)
         QTemporaryDir dir;
         ASSERT_TRUE(dir.isValid());
         const QString project = makeUnityProject(dir.filePath("Game"));
-        const QString source = makeCompleteSdk(dir.filePath("SDK"));
+        const QString source = makeCompleteIntegration(dir.filePath("SDK"));
         writeFile(source + "/Legacy.txt", "legacy");
         VNX::UnityIntegrationService service;
         VNX::UnityIntegrationService::Request request;
         request.unityProjectPath = project;
-        request.sdkSourcePath = source;
+        request.integrationSourcePath = source;
         ASSERT_TRUE(service.run(request).success);
         const QString installed = project + "/Packages/com.harken.core";
         const QString changed = installed + "/Runtime/Harken.Core.asmdef";
@@ -2494,7 +2555,7 @@ TEST(UnityIntegrationService, LineEndingConversionsPreserveIntegrityAndReadOnlyC
         QTemporaryDir dir;
         ASSERT_TRUE(dir.isValid());
         const QString project = makeUnityProject(dir.filePath("Game"));
-        const QString source = makeCompleteSdk(dir.filePath("SDK"));
+        const QString source = makeCompleteIntegration(dir.filePath("SDK"));
         const QString relative = "Runtime/Generated/HarkenAbi.g.cs";
         const QByteArray lf = QByteArray(1024 * 1024 - 1, ' ') + "\nclass Example {}\n";
         QByteArray crlf = lf;
@@ -2506,7 +2567,7 @@ TEST(UnityIntegrationService, LineEndingConversionsPreserveIntegrityAndReadOnlyC
         VNX::UnityIntegrationService service;
         VNX::UnityIntegrationService::Request request;
         request.unityProjectPath = project;
-        request.sdkSourcePath = source;
+        request.integrationSourcePath = source;
         ASSERT_TRUE(service.run(request).success);
         const QString installed = project + "/Packages/com.harken.core";
         if (installedEnding < 2) {
@@ -2606,7 +2667,7 @@ TEST(UnityIntegrationService, EncodingConversionsPreserveIntegrityAndReadOnlyCon
             QTemporaryDir dir;
             ASSERT_TRUE(dir.isValid());
             const QString project = makeUnityProject(dir.filePath("Game"));
-            const QString source = makeCompleteSdk(dir.filePath("SDK"));
+            const QString source = makeCompleteIntegration(dir.filePath("SDK"));
             const QString relative = "Runtime/Generated/HarkenAbi.g.cs";
             const auto& conversion = conversions[index];
             const QByteArray original = recordVariant < 2 ? conversion.first : conversion.second;
@@ -2615,7 +2676,7 @@ TEST(UnityIntegrationService, EncodingConversionsPreserveIntegrityAndReadOnlyCon
             VNX::UnityIntegrationService service;
             VNX::UnityIntegrationService::Request request;
             request.unityProjectPath = project;
-            request.sdkSourcePath = source;
+            request.integrationSourcePath = source;
             ASSERT_TRUE(service.run(request).success);
             const QString installed = project + "/Packages/com.harken.core";
             const QString statePath = installed + "/.harken-integration-state.json";
@@ -2697,7 +2758,7 @@ TEST(UnityIntegrationService, MissingDocumentationAndSamplesDoNotBlockVerificati
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     const QString project = makeUnityProject(dir.filePath("Game"));
-    const QString source = makeCompleteSdk(dir.filePath("SDK"));
+    const QString source = makeCompleteIntegration(dir.filePath("SDK"));
     const QStringList optional = {"Documentation~/Reference.md", "Samples~/Demo/Sample.cs"};
     auto manifest = integrationManifest();
     auto required = manifest["required_files"].toArray();
@@ -2710,7 +2771,7 @@ TEST(UnityIntegrationService, MissingDocumentationAndSamplesDoNotBlockVerificati
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = project;
-    request.sdkSourcePath = source;
+    request.integrationSourcePath = source;
     ASSERT_TRUE(service.run(request).success);
     const QString installed = project + "/Packages/com.harken.core";
     for (const auto& path : optional) ASSERT_TRUE(QFile::remove(installed + "/" + path));
@@ -2726,8 +2787,8 @@ TEST(UnityIntegrationService, MissingDocumentationAndSamplesDoNotBlockVerificati
     VNH::EngineTargetRecord target;
     ASSERT_TRUE(VNH::EngineTargetProbe::resolve(VNH::EngineKind::Unity, project, &target));
     const auto observation = VNH::EngineTargetProbe::observe(target, true);
-    EXPECT_EQ(observation.sdkContentState, VNH::SdkContentState::OptionalFilesMissing);
-    EXPECT_TRUE(observation.canChangeSdk);
+    EXPECT_EQ(observation.integrationContentState, VNH::IntegrationContentState::OptionalFilesMissing);
+    EXPECT_TRUE(observation.canChangeIntegration);
     request.checkOnly = true;
     const auto repair = service.run(request);
     ASSERT_TRUE(repair.success);
@@ -2769,7 +2830,7 @@ TEST(UnityIntegrationService, LineEndingToleranceDoesNotHideBinaryOrActualTextCh
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     const QString project = makeUnityProject(dir.filePath("Game"));
-    const QString source = makeCompleteSdk(dir.filePath("SDK"));
+    const QString source = makeCompleteIntegration(dir.filePath("SDK"));
     const QString binary = hostRuntimeRelativePath();
     const QString text = "Runtime/Generated/HarkenAbi.g.cs";
     const QString invalidText = "Runtime/Generated/HarkenTypes.g.cs";
@@ -2779,7 +2840,7 @@ TEST(UnityIntegrationService, LineEndingToleranceDoesNotHideBinaryOrActualTextCh
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = project;
-    request.sdkSourcePath = source;
+    request.integrationSourcePath = source;
     ASSERT_TRUE(service.run(request).success);
     const QString installed = project + "/Packages/com.harken.core";
     writeFile(installed + "/" + binary, "native\r\nbytes\r\n");
@@ -2804,16 +2865,16 @@ TEST(UnityIntegrationService, LineEndingToleranceDoesNotHideBinaryOrActualTextCh
     EXPECT_EQ(readFile(installed + "/" + binary), "native\r\nbytes\r\n");
 }
 
-TEST(UnityIntegrationService, ReadOnlyFilesOutsideTheChangeSetDoNotBlockSdkOperations)
+TEST(UnityIntegrationService, ReadOnlyFilesOutsideTheChangeSetDoNotBlockIntegrationOperations)
 {
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     const QString project = makeUnityProject(dir.filePath("Game"));
-    const QString source = makeCompleteSdk(dir.filePath("SDK"));
+    const QString source = makeCompleteIntegration(dir.filePath("SDK"));
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = project;
-    request.sdkSourcePath = source;
+    request.integrationSourcePath = source;
     ASSERT_TRUE(service.run(request).success);
     const QString installed = project + "/Packages/com.harken.core";
     const QString unchanged = installed + "/Runtime/Harken.Core.asmdef";
@@ -2848,7 +2909,7 @@ TEST(UnityIntegrationService, ReportsUnreadableManagedFileInsteadOfCountingItAsC
     ASSERT_TRUE(dir.isValid());
     const QString unityRoot = makeUnityProject(
         QDir(dir.path()).filePath(QStringLiteral("UnityGame")));
-    const QString sdkRoot = makeCompleteSdk(
+    const QString integrationRoot = makeCompleteIntegration(
         QDir(dir.path()).filePath(QStringLiteral("HarkenSDK")));
     const QString targetRoot = QDir(unityRoot).filePath(
         QStringLiteral("Packages/com.harken.core"));
@@ -2856,7 +2917,7 @@ TEST(UnityIntegrationService, ReportsUnreadableManagedFileInsteadOfCountingItAsC
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = unityRoot;
-    request.sdkSourcePath = sdkRoot;
+    request.integrationSourcePath = integrationRoot;
     ASSERT_TRUE(service.run(request).success);
 
     const QString changed = QStringLiteral("Runtime/Generated/HarkenAbi.g.cs");
@@ -2886,7 +2947,7 @@ TEST(UnityIntegrationService, ReportsUnreadableOwnershipRecordInsteadOfDiscardin
     ASSERT_TRUE(dir.isValid());
     const QString unityRoot = makeUnityProject(
         QDir(dir.path()).filePath(QStringLiteral("UnityGame")));
-    const QString sdkRoot = makeCompleteSdk(
+    const QString integrationRoot = makeCompleteIntegration(
         QDir(dir.path()).filePath(QStringLiteral("HarkenSDK")));
     const QString targetRoot = QDir(unityRoot).filePath(
         QStringLiteral("Packages/com.harken.core"));
@@ -2894,7 +2955,7 @@ TEST(UnityIntegrationService, ReportsUnreadableOwnershipRecordInsteadOfDiscardin
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = unityRoot;
-    request.sdkSourcePath = sdkRoot;
+    request.integrationSourcePath = integrationRoot;
     ASSERT_TRUE(service.run(request).success);
 
     makeUnreadable(QDir(targetRoot).filePath(
@@ -2912,19 +2973,19 @@ TEST(UnityIntegrationService, ReportsUnreadableOwnershipRecordInsteadOfDiscardin
     EXPECT_EQ(result.staleFilesToRemove, 0);
 }
 
-TEST(UnityIntegrationService, DetectsAlreadyCurrentSdkWithoutCopying)
+TEST(UnityIntegrationService, DetectsAlreadyCurrentIntegrationWithoutCopying)
 {
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     const QString unityRoot = makeUnityProject(
         QDir(dir.path()).filePath(QStringLiteral("UnityGame")));
-    const QString sdkRoot = makeCompleteSdk(
+    const QString integrationRoot = makeCompleteIntegration(
         QDir(dir.path()).filePath(QStringLiteral("HarkenSDK")));
 
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = unityRoot;
-    request.sdkSourcePath = sdkRoot;
+    request.integrationSourcePath = integrationRoot;
     ASSERT_TRUE(service.run(request).success);
     const QString targetOnly = QDir(unityRoot).filePath(
         QStringLiteral("Packages/com.harken.core/Runtime/ProjectOnly.cs"));
@@ -2938,7 +2999,7 @@ TEST(UnityIntegrationService, DetectsAlreadyCurrentSdkWithoutCopying)
     EXPECT_TRUE(result.targetCurrent);
     EXPECT_TRUE(result.hasWarnings);
     EXPECT_EQ(result.targetOnlyFilesPreserved, 1);
-    EXPECT_EQ(result.sdkFilesCopied, 0);
+    EXPECT_EQ(result.integrationFilesCopied, 0);
     EXPECT_EQ(readFile(targetOnly), QByteArrayLiteral("custom"));
     EXPECT_EQ(result.steps[3].status,
               VNX::UnityIntegrationService::StepStatus::Skipped);
@@ -2949,12 +3010,12 @@ TEST(UnityIntegrationService, RenamesRuntimeAndPreservesPluginMetadata)
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     const QString unityRoot = makeUnityProject(QDir(dir.path()).filePath(QStringLiteral("UnityGame")));
-    const QString sdkRoot = makeCompleteSdk(QDir(dir.path()).filePath(QStringLiteral("SDK")));
+    const QString integrationRoot = makeCompleteIntegration(QDir(dir.path()).filePath(QStringLiteral("SDK")));
     const QString targetRoot = QDir(unityRoot).filePath(QStringLiteral("Packages/com.harken.core"));
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = unityRoot;
-    request.sdkSourcePath = sdkRoot;
+    request.integrationSourcePath = integrationRoot;
     ASSERT_TRUE(service.run(request).success);
     for (const QString& runtime : {
              QStringLiteral("Runtime/Plugins/x86_64/HarkenCore.dll"),
@@ -3004,7 +3065,7 @@ TEST(UnityIntegrationService, RemovesObsoleteRuntimeNamesInsteadOfWarning)
     ASSERT_TRUE(dir.isValid());
     const QString unityRoot = makeUnityProject(
         QDir(dir.path()).filePath(QStringLiteral("UnityGame")));
-    const QString sdkRoot = makeCompleteSdk(
+    const QString integrationRoot = makeCompleteIntegration(
         QDir(dir.path()).filePath(QStringLiteral("HarkenSDK")));
     const QString targetRoot = QDir(unityRoot).filePath(
         QStringLiteral("Packages/com.harken.core"));
@@ -3018,7 +3079,7 @@ TEST(UnityIntegrationService, RemovesObsoleteRuntimeNamesInsteadOfWarning)
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = unityRoot;
-    request.sdkSourcePath = sdkRoot;
+    request.integrationSourcePath = integrationRoot;
     ASSERT_TRUE(service.run(request).success);
     for (const QString& relative : obsoleteRuntimes) {
         writeFile(QDir(targetRoot).filePath(relative),
@@ -3075,13 +3136,13 @@ TEST(UnityIntegrationService, TreatsUnityGeneratedMetadataAsExpected)
     ASSERT_TRUE(dir.isValid());
     const QString unityRoot = makeUnityProject(
         QDir(dir.path()).filePath(QStringLiteral("UnityGame")));
-    const QString sdkRoot = makeCompleteSdk(
+    const QString integrationRoot = makeCompleteIntegration(
         QDir(dir.path()).filePath(QStringLiteral("HarkenSDK")));
 
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = unityRoot;
-    request.sdkSourcePath = sdkRoot;
+    request.integrationSourcePath = integrationRoot;
     ASSERT_TRUE(service.run(request).success);
     const QString unityMetadata = QDir(unityRoot).filePath(
         QStringLiteral("Packages/com.harken.core/Runtime/Harken.Core.asmdef.meta"));
@@ -3105,15 +3166,15 @@ TEST(UnityIntegrationService, IgnoresMacOsFinderMetadata)
     ASSERT_TRUE(dir.isValid());
     const QString unityRoot = makeUnityProject(
         QDir(dir.path()).filePath(QStringLiteral("UnityGame")));
-    const QString sdkRoot = makeCompleteSdk(
+    const QString integrationRoot = makeCompleteIntegration(
         QDir(dir.path()).filePath(QStringLiteral("HarkenSDK")));
-    writeFile(QDir(sdkRoot).filePath(QStringLiteral(".DS_Store")),
+    writeFile(QDir(integrationRoot).filePath(QStringLiteral(".DS_Store")),
               QByteArrayLiteral("source-finder-metadata"));
 
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = unityRoot;
-    request.sdkSourcePath = sdkRoot;
+    request.integrationSourcePath = integrationRoot;
     ASSERT_TRUE(service.run(request).success);
     const QDir target(QDir(unityRoot).filePath(
         QStringLiteral("Packages/com.harken.core")));
@@ -3156,7 +3217,7 @@ TEST(UnityIntegrationService, TreatsDeclaredOptionalRuntimeAsExpected)
     ASSERT_TRUE(dir.isValid());
     const QString unityRoot = makeUnityProject(
         QDir(dir.path()).filePath(QStringLiteral("UnityGame")));
-    const QString sdkRoot = makeCompleteSdk(
+    const QString integrationRoot = makeCompleteIntegration(
         QDir(dir.path()).filePath(QStringLiteral("HarkenSDK")));
     const QStringList runtimePaths = {
         QStringLiteral("Runtime/Plugins/x86_64/HarkenCore.dll"),
@@ -3168,13 +3229,13 @@ TEST(UnityIntegrationService, TreatsDeclaredOptionalRuntimeAsExpected)
     const QStringList requiredPaths = requiredRuntimeRelativePaths();
     for (const QString& path : runtimePaths) {
         if (!requiredPaths.contains(path))
-            ASSERT_TRUE(QFile::remove(QDir(sdkRoot).filePath(path)));
+            ASSERT_TRUE(QFile::remove(QDir(integrationRoot).filePath(path)));
     }
 
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = unityRoot;
-    request.sdkSourcePath = sdkRoot;
+    request.integrationSourcePath = integrationRoot;
     ASSERT_TRUE(service.run(request).success);
 
     const QString optionalRuntime = QDir(unityRoot).filePath(
@@ -3194,23 +3255,23 @@ TEST(UnityIntegrationService, TreatsDeclaredOptionalRuntimeAsExpected)
         QStringLiteral("optional target runtime file(s) are retained as expected")));
 }
 
-TEST(UnityIntegrationService, RetriesAnSdkRenameThatIsBrieflyLocked)
+TEST(UnityIntegrationService, RetriesAnIntegrationRenameThatIsBrieflyLocked)
 {
     QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     const QString unityRoot = makeUnityProject(
         QDir(dir.path()).filePath(QStringLiteral("UnityGame")));
-    const QString sdkRoot = makeCompleteSdk(
+    const QString integrationRoot = makeCompleteIntegration(
         QDir(dir.path()).filePath(QStringLiteral("HarkenSDK")));
 
     VNX::UnityIntegrationService service;
     VNX::UnityIntegrationService::Request request;
     request.unityProjectPath = unityRoot;
-    request.sdkSourcePath = sdkRoot;
+    request.integrationSourcePath = integrationRoot;
     ASSERT_TRUE(service.run(request).success);
 
     const QByteArray updated = QByteArrayLiteral("{\"name\":\"Harken.Core.updated\"}");
-    writeFile(QDir(sdkRoot).filePath(QStringLiteral("Runtime/Harken.Core.asmdef")),
+    writeFile(QDir(integrationRoot).filePath(QStringLiteral("Runtime/Harken.Core.asmdef")),
               updated);
     request.confirmTargetChanges = true;
 
@@ -3258,10 +3319,10 @@ protected:
     {
         ASSERT_TRUE(dir.isValid());
         project = makeUnityProject(dir.filePath(QStringLiteral("Project")));
-        source = makeCompleteSdk(dir.filePath(QStringLiteral("Source")));
+        source = makeCompleteIntegration(dir.filePath(QStringLiteral("Source")));
         installed = QDir(project).filePath(QStringLiteral("Packages/com.harken.core"));
         request.unityProjectPath = project;
-        request.sdkSourcePath = source;
+        request.integrationSourcePath = source;
         ASSERT_TRUE(service.run(request).success);
         const auto receipt = QJsonDocument::fromJson(readFile(installed + "/.harken-integration-state.json")).object();
         const auto hashes = receipt.value(QStringLiteral("sha256")).toObject();
@@ -3413,7 +3474,7 @@ TEST_F(UnityRestorationTest, RecoversBothRenameBoundariesAndBlocksOtherMutations
         writeFile(VNX::UnityInstallation::restoreJournalPath(project), recordBytes);
         VNX::UnityIntegrationService::Request other;
         other.unityProjectPath = project;
-        other.sdkSourcePath = source;
+        other.integrationSourcePath = source;
         other.checkOnly = true;
         EXPECT_FALSE(service.run(other).success);
         other.removeIntegration = true;

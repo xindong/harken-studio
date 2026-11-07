@@ -13,7 +13,7 @@
 
 | 层 | 类型 | 成功 | 失败范围 | 输出形式 |
 |---|---|---|---|---|
-| Runtime / SDK / 桥接 | `VnResult` / `EngineResult` | `0` | `-1xx` 参数、`-2xx` 身份、`-3xx` 容量与状态、`-4xx` 系统与内容 | `engine result -301` |
+| Runtime / Integration / 桥接 | `VnResult` / `EngineResult` | `0` | `-1xx` 参数、`-2xx` 身份、`-3xx` 容量与状态、`-4xx` 系统与内容 | `engine result -301` |
 | Preview ABI | `VnPreviewResult` | `0` | `1`…`16` | Preview status `16`；Studio 日志会转换为引擎码 |
 | DirectWorld 预览装载 | `VnCurrentWorldLoadStatus` | `0` | 从 `1` 起的小正整数 | 预览直装报告；独立于前两类结果码 |
 

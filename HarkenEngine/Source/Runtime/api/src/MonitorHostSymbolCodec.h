@@ -74,7 +74,7 @@ inline std::uint32_t PackHostSymbol(std::uint8_t* out, std::uint32_t capacity,
     value.factKind = source.value.factKind;
     value.stateCutId = cut;
     value.cutRevision = source.boundaryRevision;
-    value.hostSession = source.value.sdkSession;
+    value.hostSession = source.value.hostSession;
     value.hostSequence = source.value.localSequence;
     value.registrationRevision = source.value.registrationRevision;
     value.field = source.value.field;

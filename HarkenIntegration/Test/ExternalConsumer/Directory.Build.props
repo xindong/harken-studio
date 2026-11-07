@@ -1,5 +1,5 @@
 <Project>
   <PropertyGroup>
-    <ArtifactsPath Condition="'$(ArtifactsPath)' == ''">$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)../../../.temp/sdk-external-consumer'))</ArtifactsPath>
+    <ArtifactsPath Condition="'$(ArtifactsPath)' == ''">$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)../../../.temp/integration-external-consumer'))</ArtifactsPath>
   </PropertyGroup>
 </Project>

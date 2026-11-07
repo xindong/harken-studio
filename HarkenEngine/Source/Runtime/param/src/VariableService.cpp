@@ -554,7 +554,7 @@ WorldInstallResult VariableServiceV1::InstallImpl(
     PreparedCurrentWorldImageV1 next;
     BuildCurrentWorldImageV1(install, next);
 
-    sdkCatalogFingerprint_ = 0;
+    apiCatalogFingerprint_ = 0;
     labelCatalog_.clear();
     CommitPreparedCurrentWorldImageV1(next);
     result.status = WorldInstallStatus::Ok;
@@ -3747,7 +3747,7 @@ VariableServiceV1::PreparedPackDefinitions::operator=(
         owner_ = std::exchange(other.owner_, nullptr);
         reason_ = other.reason_;
         labelCatalog_ = std::move(other.labelCatalog_);
-        sdkCatalogFingerprint_ = other.sdkCatalogFingerprint_;
+        apiCatalogFingerprint_ = other.apiCatalogFingerprint_;
         priorWorld_ = other.priorWorld_;
         priorTransport_ = other.priorTransport_;
         actualFrame_ = other.actualFrame_;
@@ -3911,8 +3911,8 @@ VnResult VariableServiceV1::PreparePackDefinitions(
         catalogFingerprints.push_back(catalog.fingerprint);
         prepared.labelCatalog_.push_back(std::move(catalog));
     }
-    prepared.sdkCatalogFingerprint_ = completeCatalog
-        ? ComputeVariableSdkCatalogFingerprintV1(catalogFingerprints.data(), count) : 0;
+    prepared.apiCatalogFingerprint_ = completeCatalog
+        ? ComputeVariableApiCatalogFingerprintV1(catalogFingerprints.data(), count) : 0;
 
     detail::CheckedGrow(prepared.emitterBanks_, emitterBanks_.size(), detail::LogicAllocSite::PackVariablePublication);
     prepared.emitterBanks_ = emitterBanks_;
@@ -3971,7 +3971,7 @@ void VariableServiceV1::CommitPreparedPackDefinitions(
     }
     definitions_.swap(prepared->definitions_);
     labelCatalog_.swap(prepared->labelCatalog_);
-    sdkCatalogFingerprint_ = prepared->sdkCatalogFingerprint_;
+    apiCatalogFingerprint_ = prepared->apiCatalogFingerprint_;
     definitionViews_.swap(prepared->definitionViews_);
     emitterBanks_.swap(prepared->emitterBanks_);
     worldGeneration_ = prepared->worldGeneration_;
@@ -6891,9 +6891,9 @@ VnResult VariableServiceV1::ResolveLabel(
 
 namespace test {
 
-void SetSdkCatalogFingerprint(VariableServiceV1& service,
+void SetApiCatalogFingerprint(VariableServiceV1& service,
                               std::uint64_t fingerprint) noexcept {
-    service.sdkCatalogFingerprint_ = fingerprint;
+    service.apiCatalogFingerprint_ = fingerprint;
 }
 
 bool SetDefinitionExecutionFingerprint(VariableServiceV1& service,

@@ -21,7 +21,7 @@ namespace Harken.Test
                     "Initialization must leave communication disabled.");
                 Expect(HarkenEngine.StartRemoteCommunication("Invalid\0Identity"), VnResult.VN_INVALID_ARG,
                     "Embedded NUL identity");
-                Expect(HarkenEngine.StartRemoteCommunication("SDK contract", port: 65536), VnResult.VN_INVALID_ARG,
+                Expect(HarkenEngine.StartRemoteCommunication("Integration contract", port: 65536), VnResult.VN_INVALID_ARG,
                     "Port overflow");
                 Expect(HarkenEngine.StartRemoteCommunication(new string('x', 128)), VnResult.VN_INVALID_ARG,
                     "Oversized application identity");
@@ -33,7 +33,7 @@ namespace Harken.Test
                     occupied.Bind(new IPEndPoint(IPAddress.Loopback, 0));
                     occupied.Listen(1);
                     port = ((IPEndPoint)occupied.LocalEndPoint).Port;
-                    VnResult refused = HarkenEngine.StartRemoteCommunication("SDK contract", "127.0.0.1", port, false);
+                    VnResult refused = HarkenEngine.StartRemoteCommunication("Integration contract", "127.0.0.1", port, false);
                     Require(refused != VnResult.VN_OK, "An occupied port must refuse communication startup.");
                     Expect(HarkenEngine.QueryRemoteCommunication(out status), VnResult.VN_OK, "Failed status");
                     Require(status.state == (uint)VnRemoteState.VN_REMOTE_FAILED && status.lastResult == (int)refused,
@@ -41,7 +41,7 @@ namespace Harken.Test
                     Expect(HarkenEngine.Update(), VnResult.VN_OK, "Audio pump after communication failure");
                 }
 
-                Expect(HarkenEngine.StartRemoteCommunication("SDK contract", "127.0.0.1", port, false),
+                Expect(HarkenEngine.StartRemoteCommunication("Integration contract", "127.0.0.1", port, false),
                     VnResult.VN_OK, "Retry after port release");
                 Expect(HarkenEngine.QueryRemoteCommunication(out status), VnResult.VN_OK, "Listening status");
                 Require(status.state == (uint)VnRemoteState.VN_REMOTE_LISTENING && status.tcpPort == (uint)port &&
@@ -51,7 +51,7 @@ namespace Harken.Test
                 using (var client = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp))
                 {
                     client.Connect(IPAddress.Loopback, port);
-                    Require(client.Connected, "The SDK must start an actual TCP listener.");
+                    Require(client.Connected, "The Integration must start an actual TCP listener.");
                 }
                 Expect(HarkenEngine.StopRemoteCommunication(), VnResult.VN_OK, "Stop");
                 Expect(HarkenEngine.QueryRemoteCommunication(out status), VnResult.VN_OK, "Stopped status");
@@ -59,7 +59,7 @@ namespace Harken.Test
                     "Stop must retire the listening endpoint.");
                 RequirePortClosed(port);
 
-                Expect(HarkenEngine.StartRemoteCommunication("SDK contract", "127.0.0.1", 0, false),
+                Expect(HarkenEngine.StartRemoteCommunication("Integration contract", "127.0.0.1", 0, false),
                     VnResult.VN_OK, "Restart with ephemeral port");
                 Expect(HarkenEngine.QueryRemoteCommunication(out status), VnResult.VN_OK, "Restart status");
                 Require(status.tcpPort != 0, "Ephemeral startup must report the actual port.");
@@ -70,7 +70,7 @@ namespace Harken.Test
                 Require(status.state == (uint)VnRemoteState.VN_REMOTE_STOPPED && status.tcpPort == 0,
                     "Engine termination must stop communication without a separate Stop call.");
                 RequirePortClosed(port);
-                Expect(HarkenEngine.StartRemoteCommunication("SDK contract", "127.0.0.1", 0, false),
+                Expect(HarkenEngine.StartRemoteCommunication("Integration contract", "127.0.0.1", 0, false),
                     VnResult.VN_NOT_INITIALIZED, "Startup without an engine");
                 Console.WriteLine("[Remote] default-off, bind refusal, preserved audio, retry, TCP, stop and termination PASS.");
                 return 0;

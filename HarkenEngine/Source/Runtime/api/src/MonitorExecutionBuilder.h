@@ -175,14 +175,14 @@ inline void CaptureFactEmitters(MonitorExecutionFact& fact, const MonitorEmitter
         SetSourceField(fact, VN_MONITOR_FACT_FIELD_ORIGIN_KIND);
     }
     if (origin.host.Valid() && origin.host.engineInstance == fact.engine) {
-        emitters.hostSession = origin.host.sdkSession;
+        emitters.hostSession = origin.host.hostSession;
         emitters.hostSequence = origin.host.localSequence;
         SetSourceField(fact, VN_MONITOR_FACT_FIELD_HOST_KEY);
         if (origin.registrationRevision != 0) {
             emitters.hostRevision = origin.registrationRevision;
             SetSourceField(fact, VN_MONITOR_FACT_FIELD_HOST_REVISION);
         }
-    } else if (origin.host.engineInstance != 0 || origin.host.sdkSession != 0 || origin.host.localSequence != 0)
+    } else if (origin.host.engineInstance != 0 || origin.host.hostSession != 0 || origin.host.localSequence != 0)
         fact.flags |= kMonitorFactIdentityIncomplete;
     if (origin.ownership != MonitorHostOwnership::Unknown && origin.ownership <= MonitorHostOwnership::StudioDefaultEmitter) {
         fact.hostOwnership = static_cast<std::uint8_t>(origin.ownership);

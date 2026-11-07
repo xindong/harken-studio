@@ -3,10 +3,9 @@
 `com.harken.core` is the Unity package for the Harken Core game-audio runtime.
 The package root contains Unity content only. The `version` field in this
 package's `package.json` is the sole source of the Integration Package version.
-The package combines a managed SDK (C# bindings and gameplay/host APIs) with
-Unity runtime components, Editor tools and native runtime libraries. In this
-manual, SDK refers to the managed API layer; Integration Package refers to the
-complete Unity deliverable.
+The package combines a managed API layer (C# bindings and gameplay/host APIs)
+with Unity runtime components, Editor tools and native runtime libraries.
+Integration Package refers to this complete Unity deliverable.
 
 Editor catalog binding, preview, waveform browsing and symbol generation are
 temporarily unavailable while they are adapted to current-schema Pack companions.
@@ -18,7 +17,7 @@ remain available. See the entry points below and the
 
 ## API reference manual
 
-The manual describes the public SDK APIs and Unity components, including their
+The manual describes the public managed APIs and Unity components, including their
 parameters, resource ownership, lifecycle and failure behavior.
 
 - [Startup, Actions, Emitters and listeners](Documentation~/UnityApiReference.md)
@@ -71,7 +70,7 @@ allocate and perform synchronous I/O.
 
 Check every `VnResult`. `VN_OK` means that a control request was accepted; audio
 application or stop completion may follow on a later block. Capacity refusals
-such as `VN_BACKPRESSURE` are not queued for an automatic SDK retry. Correct the
+such as `VN_BACKPRESSURE` are not retried automatically by the managed API layer. Correct the
 cause or wait for capacity, then explicitly retry when appropriate. Handle
 `IsValid` properties only check for a nonzero value; use the corresponding query
 to determine whether an object is still live.
@@ -280,7 +279,7 @@ Native `Actions.Post` remains a no-load primitive.
 distance scale, output volume, and send methods each forward once to the
 matching `Vn_*` operation and return that `VnResult` unchanged. Validation,
 ramping, rendering, pending/parked behavior, and failure semantics remain native;
-the managed SDK does not cache values or retry `VN_BACKPRESSURE`.
+the managed API layer does not cache values or retry `VN_BACKPRESSURE`.
 
 `ActionPreparation` owns shared Pack requests. Release unwinds the closure in
 reverse order and retains remaining ownership if an unload fails. Always retain
@@ -511,12 +510,12 @@ identifiers and are resolved from the current Init Pack. After a rename, callers
 must update the string or use the object's GUID. An Action publication can also
 contain explicit retired-name records, exposed by `GameplayPublication.RetiredActions`;
 those names return `VN_GAMEPLAY_NAME_RETIRED`. Variable lookup uses current names.
-Name lookup follows Pack replacement and unload without a separate SDK name-table
+Name lookup follows Pack replacement and unload without a separate managed name-table
 publication step. Old names are not automatically aliased to current names.
 
 ### Generate symbols and use code completion
 
-Symbol generation is temporarily unavailable. The **Harken > Generate SDK
+Symbol generation is temporarily unavailable. The **Harken > Generate API
 Symbols From Publication** menu is hidden; `GeneratePublication`, `Generate`
 and `ValidatePublication` return `VN_CAPABILITY_UNAVAILABLE` without reading or
 writing assets. Use authored Action and Variable names with the intended project

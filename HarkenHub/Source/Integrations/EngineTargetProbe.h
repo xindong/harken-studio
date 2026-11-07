@@ -16,7 +16,7 @@ enum class EngineTargetHealth
     Unreadable
 };
 
-enum class SdkContentState
+enum class IntegrationContentState
 {
     NotChecked,
     MatchesInstallation,
@@ -33,16 +33,16 @@ struct EngineTargetObservation
     EngineTargetHealth health = EngineTargetHealth::Unreadable;
     QString engineVersion;
     QString integrationVersion;
-    QString sdkInstallPath;
+    QString integrationInstallPath;
     QString error;
     QString status;
     QString remediation;
-    SdkContentState sdkContentState = SdkContentState::NotChecked;
-    QString sdkContentDetails;
+    IntegrationContentState integrationContentState = IntegrationContentState::NotChecked;
+    QString integrationContentDetails;
     bool dependencyRestricted = false;
-    bool canChangeSdk = false;
-    bool canMoveSdk = false;
-    bool canRemoveSdk = false;
+    bool canChangeIntegration = false;
+    bool canMoveIntegration = false;
+    bool canRemoveIntegration = false;
 };
 
 class EngineTargetProbe
