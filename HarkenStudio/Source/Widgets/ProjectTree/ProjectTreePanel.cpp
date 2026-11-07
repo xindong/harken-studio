@@ -61,7 +61,7 @@ QColor mediaStatusColor(MediaStatus status)
     case MediaStatus::Outdated: return colors.warning;
     case MediaStatus::Missing:
     case MediaStatus::Error: return colors.error;
-    case MediaStatus::Orphaned: return colors.textMuted;
+    case MediaStatus::Orphaned: return colors.textSecondary;
     default: return {};
     }
 }

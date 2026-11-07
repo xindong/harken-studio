@@ -446,7 +446,8 @@ void SourceEditorWaveformView::paintTimeline(QPainter& painter)
             if (x < 0)
                 continue;
             const bool highlighted = activeHandle_ == handle || hoveredHandle_ == handle;
-            const QColor color = highlighted ? waveStyle.trimHandle.lighter(130) : waveStyle.trimHandle;
+            const QColor color = highlighted
+                ? colors.stateColor(waveStyle.trimHandle, ThemeStateLayer::Emphasis) : waveStyle.trimHandle;
             painter.setPen(QPen(color, highlighted ? 2 : 1));
             painter.drawLine(x, plot.top(), x, plot.bottom());
             const QRect grip = trimGripRect(handle);
@@ -457,7 +458,7 @@ void SourceEditorWaveformView::paintTimeline(QPainter& painter)
     paintFades(painter);
     if (asset_ && state_ != State::Ready) {
         painter.setFont(FontManager::instance().getFont(FontRole::Caption));
-        painter.setPen(colors.textMuted);
+        painter.setPen(colors.textSecondary);
         painter.drawText(plot.adjusted(timeAxisMetrics().labelPadding, timeAxisMetrics().handleBandHeight, -timeAxisMetrics().labelPadding, 0), Qt::AlignCenter,
             state_ == State::Generating ? tr("Generating waveform...") : tr("Waveform unavailable"));
     }

@@ -66,7 +66,7 @@ bool writePackage(const QString& themesRoot,
           "\"assetMap\":\"assets.json\"}}";
     const QByteArray tokens = QByteArray("{\"colors\":{\"accent.primary\":\"")
         + accent.toUtf8() + "\"}}";
-    const QByteArray curve = QByteArray("{\"colors\":{\"curve.line\":\"")
+    const QByteArray curve = QByteArray("{\"colors\":{\"curve.attenuationVolume\":\"")
         + curveLine.toUtf8() + "\"}}";
     return writeFile(QDir(packageRoot).filePath(QStringLiteral("manifest.json")),
                      manifest)
@@ -76,10 +76,10 @@ bool writePackage(const QString& themesRoot,
                          QStringLiteral("visuals/curve.json")), curve)
         && writeFile(QDir(packageRoot).filePath(
                          QStringLiteral("visuals/meter.json")),
-                     R"json({"colors":{"meter.green":"#ff22aa44"}})json")
+                     R"json({"colors":{"meter.spectrum.fillTop":"#ff22aa44"}})json")
         && writeFile(QDir(packageRoot).filePath(
                          QStringLiteral("visuals/waveform.json")),
-                     R"json({"colors":{"waveform.line":"#ff334455"}})json")
+                     R"json({"colors":{"waveform.rawPeaks.centerLine":"#ff334455"}})json")
         && writeFile(QDir(packageRoot).filePath(QStringLiteral("assets.json")),
                      R"json({"assets":{}})json");
 }
@@ -735,7 +735,8 @@ TEST(ThemeManager, RetiredAndMalformedStoredColorsDoNotBlockValidEditsAcrossThem
     const QString tickKey = QStringLiteral("border.tick");
     const QStringList retiredKeys{QStringLiteral("meter.lufsMomentary"),
         QStringLiteral("meter.lufsShortTerm"), QStringLiteral("meter.lufsIntegrated"),
-        QStringLiteral("knob.indicator")};
+        QStringLiteral("knob.indicator"), QStringLiteral("bus.background"),
+        QStringLiteral("timeline.clipBorder"), QStringLiteral("timeline.clipSelectedBorder")};
     const QColor packageColor(QStringLiteral("#80123456"));
     const QColor builtinColor(QStringLiteral("#906789ab"));
     const QColor privateColor(QStringLiteral("#a0abcdef"));

@@ -66,7 +66,7 @@ void SourceRangeThumb::paintPreview(QPainter& painter, const QRectF& bounds)
     const QRect inner = bounds.toRect();
     if (!emptyText_.isEmpty()) {
         const auto& colors = ThemeManager::instance().colors();
-        painter.setPen(isEnabled() ? colors.textMuted : colors.textDisabled);
+        painter.setPen(isEnabled() ? colors.textSecondary : colors.textDisabled);
         painter.drawText(inner, Qt::AlignCenter, emptyText_);
         return;
     }
@@ -80,7 +80,7 @@ void SourceRangeThumb::paintPreview(QPainter& painter, const QRectF& bounds)
         options.sourceView = SourceWaveformView(source_, total);
         WaveformRenderer::render(painter, inner, *peaks_, style, options);
     } else {
-        painter.setPen(isEnabled() ? colors.textMuted : colors.textDisabled);
+        painter.setPen(isEnabled() ? colors.textSecondary : colors.textDisabled);
         painter.drawText(inner, Qt::AlignCenter,
                          tr("Waveform unavailable"));
         return;

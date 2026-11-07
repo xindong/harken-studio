@@ -101,7 +101,7 @@ void TableItemDelegate::initStyleOption(QStyleOptionViewItem* option, const QMod
         option->features |= QStyleOptionViewItem::Alternate;
     QColor text = colors.textPrimary;
     switch (static_cast<TableTextState>(index.data(TableTextRole).toInt())) {
-    case TableTextState::Muted: text = colors.textMuted; break;
+    case TableTextState::Muted: text = colors.textSecondary; break;
     case TableTextState::Disabled: text = colors.textDisabled; break;
     case TableTextState::Error: text = colors.error; break;
     case TableTextState::Modified: text = colors.accent; break;
@@ -153,7 +153,7 @@ void TableItemDelegate::paint(QPainter* painter, const QStyleOptionViewItem& opt
         if (progress.isValid() && !row.data(TableGroupRole).toBool()) {
             const auto state = static_cast<TableRowProgressState>(row.data(TableRowProgressStateRole).toInt());
             QColor fill = state == TableRowProgressState::Failed ? colors.error
-                : state == TableRowProgressState::Canceled ? colors.textMuted : colors.accent;
+                : state == TableRowProgressState::Canceled ? colors.textSecondary : colors.accent;
             fill.setAlphaF(fill.alphaF() * (state == TableRowProgressState::Complete ? 28 : 40) / 255.0);
             painter->fillRect(tree->rowProgressRect(option.rect, progress.toInt()).intersected(option.rect), fill);
         }

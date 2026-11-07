@@ -21,6 +21,24 @@ enum class ThemeColorScheme
     Light
 };
 
+enum class ThemeStateLayer
+{
+    Hover,
+    Pressed,
+    Emphasis
+};
+
+inline constexpr int ThemeSoftTintAlpha = 36;
+
+inline QColor themeStateColor(const QColor& base, const QColor& overlay, ThemeStateLayer layer)
+{
+    const qreal opacity = layer == ThemeStateLayer::Hover ? 0.08
+        : layer == ThemeStateLayer::Pressed ? 0.12 : 0.16;
+    const auto mix = [opacity](qreal from, qreal to) { return from + (to - from) * opacity; };
+    return QColor::fromRgbF(mix(base.redF(), overlay.redF()), mix(base.greenF(), overlay.greenF()),
+                            mix(base.blueF(), overlay.blueF()), base.alphaF());
+}
+
 struct ThemeColors
 {
     QColor accent;
@@ -38,14 +56,10 @@ struct ThemeColors
     QColor borderPrimary;
     QColor borderSecondary;
     QColor borderTick;
-    QColor viewBorder;
-    QColor dropHighlight;
-    QColor dropAccent;
 
     QColor textPrimary;
     QColor textSecondary;
     QColor textTitle;
-    QColor textMuted;
     QColor textDisabled;
 
     QColor success;
@@ -55,23 +69,12 @@ struct ThemeColors
 
     QColor trackBackground;
     QColor trackBackgroundAlt;
-    QColor busBackground;
-    QColor busBackgroundActive;
 
     QColor sliderTrack;
 
     QColor panelBackground;
-    QColor sectionSeparator;
     QColor headerBackground;
 
-    QColor auditionBg;
-    QColor auditionPlayActive;
-    QColor auditionStopActive;
-
-    QColor shellMenuText;
-    QColor shellMenuHoverText;
-    QColor shellButtonText;
-    QColor shellButtonHoverText;
     QColor shellCloseHover;
     QColor shellClosePressed;
 
@@ -79,6 +82,10 @@ struct ThemeColors
     {
         Q_ASSERT(index >= 0);
         return categoricalPalette[static_cast<size_t>(index) % categoricalPalette.size()];
+    }
+    QColor stateColor(const QColor& base, ThemeStateLayer layer) const
+    {
+        return themeStateColor(base, textPrimary, layer);
     }
     bool operator==(const ThemeColors&) const = default;
 };
@@ -459,10 +466,6 @@ struct QtPaletteColors
 struct QtAdsStyle
 {
     QColor chromeBackground;
-    QColor inactiveTabText;
-    QColor closeButtonHover;
-    QColor closeButtonPressed;
-    QColor lightHoverOverlay;
 
     qreal activeTabAccentOpacity = 0.0;
     qreal dropOverlayOpacity = 0.0;
@@ -508,11 +511,6 @@ struct ThirdPartyStyles
 
 struct WaveformStyle
 {
-    QColor line;
-    QColor fill;
-    QColor selectionHighlight;
-    QColor cursor;
-    QColor regionMarker;
     QColor trimHandle;
     QColor loopHandle;
 
@@ -671,43 +669,6 @@ struct CurveStyle
 
 struct MeterStyle
 {
-    QColor green;
-    QColor yellow;
-    QColor red;
-    QColor peak;
-    QColor rms;
-    QColor clipOn;
-    QColor clipOff;
-    QColor background;
-
-    QColor oscilloscopeGrid;
-    QColor oscilloscopeGlow;
-    QColor waveformFill;
-    QColor waveformGrid;
-
-    struct Stereo {
-        QColor trailOuter;
-        QColor trailMiddle;
-        QColor trailCore;
-        QColor gridPrimary;
-        QColor gridSecondary;
-        QColor liveGlowWide;
-        QColor liveGlowMedium;
-        QColor liveHighlight;
-        QColor correlationPositive;
-        QColor correlationNegative;
-        bool operator==(const Stereo&) const = default;
-    } stereo;
-
-    struct Layout {
-        QColor dividerHover;
-        QColor dividerDragging;
-        QColor dividerSnapped;
-        QColor dropBorder;
-        QColor dropFill;
-        bool operator==(const Layout&) const = default;
-    } layout;
-
     struct Interaction {
         struct Colors {
             QColor crosshair;
@@ -745,7 +706,6 @@ struct MeterStyle
             QColor holdLine;
             QColor grid;
             QColor tickText;
-            QColor clipBackground;
             QColor clipText;
             QColor label;
             bool operator==(const Colors&) const = default;
@@ -836,7 +796,6 @@ struct MeterStyle
             QColor emptyHistory;
             QColor grid;
             QColor axisText;
-            QColor timeText;
             bool operator==(const Colors&) const = default;
         } colors;
 
@@ -859,23 +818,9 @@ struct MeterStyle
     bool operator==(const MeterStyle&) const = default;
 };
 
-struct FeedbackStyle
-{
-    QColor success;
-    QColor warning;
-    QColor error;
-    QColor info;
-    QColor neutral;
-    QColor overlayBackground;
-    QColor overlayErrorBackground;
-    QColor overlayHighlight;
-    bool operator==(const FeedbackStyle&) const = default;
-};
-
 struct DomainColors
 {
     MeterStyle meter;
-    FeedbackStyle feedback;
     WaveformStyle waveform;
     CurveStyle curve;
 
@@ -900,7 +845,6 @@ struct DomainColors
         QColor bodySelected;
         QColor borderNormal;
         QColor borderHoverMix;
-        QColor dropTarget;
 
         QColor shadow;
 
@@ -911,7 +855,6 @@ struct DomainColors
         QColor sandboxBadgeBg;
         QColor sandboxBadgeText;
         QColor badgeOverride;
-        QColor badgeChild;
         QColor badgeReceive;
 
         QColor waveformBg;
@@ -928,9 +871,7 @@ struct DomainColors
         QColor placementChain;
         QColor organizationChain;
         QColor containment;
-        QColor busRoute;
         QColor send;
-        QColor overrideRoute;
         bool operator==(const Blueprint&) const = default;
     } blueprint;
 
@@ -940,10 +881,7 @@ struct DomainColors
         QColor transition;
         QColor clip;
         QColor clipSelected;
-        QColor clipBorder;
-        QColor clipSelectedBorder;
         QColor clipText;
-        QColor badge;
         QColor emergenceMarker;
         QColor unavailableOverlay;
         QColor unavailableText;
@@ -952,13 +890,9 @@ struct DomainColors
     } timeline;
 
     struct Music {
-        static constexpr int kTrackColorCount = 12;
-        std::array<QColor, kTrackColorCount> trackColors;
-
         QColor beatGridMajor;
         QColor beatGridMinor;
         QColor cursor;
-        QColor loopRegion;
         bool operator==(const Music&) const = default;
     } music;
 
@@ -971,91 +905,11 @@ struct DomainColors
         bool operator==(const Log&) const = default;
     } log;
 
-    struct Monitor {
-        QColor stateStolen;
-        QColor statePlaying;
-        QColor stateStarting;
-        QColor stateVirtual;
-        QColor stateReleasing;
-        QColor stateStopping;
-        QColor statePaused;
-        QColor stateDefault;
-
-        QColor virtualDim;
-        QColor mutedText;
-        QColor lowVolume;
-        QColor busIdText;
-
-        QColor peakClip;
-        QColor peakCaution;
-        QColor peakSafe;
-
-        QColor pitchHigh;
-        QColor pitchLow;
-
-        QColor cpuCritical;
-        QColor cpuWarning;
-        QColor cpuSafe;
-        QColor bufferWarning;
-        QColor bufferNormal;
-
-        QColor underrunFlash;
-        QColor underrunIdle;
-        QColor underrunNone;
-
-        QColor spatialGainHigh;
-        QColor spatialGainLow;
-        QColor spatialLpf;
-        QColor spatialWidth;
-        QColor spatialDistance;
-        QColor spatialReverb;
-        QColor spatialDopplerHi;
-        QColor spatialDopplerLo;
-        QColor spatialDot;
-        bool operator==(const Monitor&) const = default;
-    } monitor;
-
     struct AI {
         QColor brandAccent;
-        QColor userAccent;
         bool operator==(const AI&) const = default;
     } ai;
 
-    struct Scene3D {
-        QColor listener;
-        QColor listenerCone;
-        QColor room;
-        QColor emitterMin;
-        QColor emitterMax;
-        QColor hudBackground;
-        QColor hudTitle;
-        QColor hudLabel;
-        QColor hudGain;
-        QColor hudGainLow;
-        QColor hudLpf;
-        QColor hudWidth;
-        QColor dopplerIdle;
-        bool operator==(const Scene3D&) const = default;
-    } scene3d;
-
-    struct Spatial {
-        QColor background;
-        QColor grid;
-        QColor axis;
-        QColor axisLabel;
-        QColor tangentLine;
-        QColor tangentHover;
-        QColor tangentActive;
-        QColor pointSelected;
-        QColor previewMarker;
-        QColor infoText;
-        QColor legendBg;
-        QColor layerVolume;
-        QColor layerLpf;
-        QColor layerWidth;
-        QColor layerReverb;
-        bool operator==(const Spatial&) const = default;
-    } spatial;
     bool operator==(const DomainColors&) const = default;
 };
 

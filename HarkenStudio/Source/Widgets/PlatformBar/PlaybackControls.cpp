@@ -99,11 +99,11 @@ void PlaybackControls::applyTheme()
     const auto theme = manager.snapshot();
     const auto& colors = theme->ui.colors;
     const ThemeAssetVariant playVariant{
-        playBtn_->iconSize(), devicePixelRatioF(), 0, colors.auditionPlayActive};
+        playBtn_->iconSize(), devicePixelRatioF(), 0, colors.success};
     playBtn_->setIcon(manager.resolveIcon(
         QString::fromLatin1(ThemeAssetIds::AuditionPlay), playVariant).icon);
     const ThemeAssetVariant stopVariant{
-        stopBtn_->iconSize(), devicePixelRatioF(), 0, colors.auditionStopActive};
+        stopBtn_->iconSize(), devicePixelRatioF(), 0, colors.error};
     stopBtn_->setIcon(manager.resolveIcon(
         QString::fromLatin1(ThemeAssetIds::AuditionStop), stopVariant).icon);
     const ThemeAssetVariant resetVariant{

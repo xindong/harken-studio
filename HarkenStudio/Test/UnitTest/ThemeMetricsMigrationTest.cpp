@@ -105,9 +105,9 @@ bool writeMetricsPackage(const QString& themesRoot, const QString& id, const QBy
         && writeFile(QDir(root).filePath(QStringLiteral("visuals/curve.json")),
                      R"json({"metrics":{"curve.lineWidth":2}})json")
         && writeFile(QDir(root).filePath(QStringLiteral("visuals/meter.json")),
-                     R"json({"colors":{"meter.green":"#ff22aa44"}})json")
+                     R"json({"colors":{"meter.spectrum.fillTop":"#ff22aa44"}})json")
         && writeFile(QDir(root).filePath(QStringLiteral("visuals/waveform.json")),
-                     R"json({"colors":{"waveform.line":"#ff334455"}})json")
+                     R"json({"colors":{"waveform.rawPeaks.centerLine":"#ff334455"}})json")
         && writeFile(QDir(root).filePath(QStringLiteral("assets.json")),
                      R"json({"assets":{}})json");
 }
@@ -589,7 +589,7 @@ TEST(ThemeMetricsMigration, DisabledAndDimmedLabelsFollowColorPreviewAndRestore)
     for (const auto* label : {plain, primary, readOnly, number, dimmed})
         EXPECT_EQ(label->palette().color(QPalette::WindowText), original->ui.colors.textPrimary);
     for (const auto* label : {decibels, cents})
-        EXPECT_EQ(label->palette().color(QPalette::WindowText), original->ui.colors.textMuted);
+        EXPECT_EQ(label->palette().color(QPalette::WindowText), original->ui.colors.textSecondary);
     EXPECT_EQ(header->palette().color(QPalette::WindowText), original->ui.colors.textSecondary);
 }
 
@@ -654,7 +654,7 @@ TEST(ThemeMetricsMigration, BorderPreviewRepaintsOpaqueDescendantsWithoutRepolis
         EXPECT_EQ(manager->appearance(), committed);
     };
     for (const QString role : {QStringLiteral("border.primary"), QStringLiteral("border.secondary"),
-                               QStringLiteral("timeline.clipBorder")}) {
+                               QStringLiteral("border.tick")}) {
         SCOPED_TRACE(role.toStdString());
         for (const QColor color : {QColor("#e74f31"), QColor("#358bd4")}) {
             events.paints.clear();
@@ -898,7 +898,7 @@ TEST(ThemeMetricsMigration, ToolbarSurfaceAndBorderSurviveNativeStyleWrapping)
         const auto image = renderWidget(toolbar);
         const int x = toolbar.width() - toolbar.contentsMargins().right() - 1;
         EXPECT_EQ(image.pixelColor(x, toolbar.height() / 2), manager->snapshot()->qtPalette.window);
-        EXPECT_EQ(image.pixelColor(x, 0), manager->colors().sectionSeparator);
+        EXPECT_EQ(image.pixelColor(x, 0), manager->colors().borderPrimary);
     }
 }
 
@@ -924,7 +924,7 @@ TEST(ThemeMetricsMigration, OwnedPanelSurfaceSurvivesVisibilityAndColorPreview)
         const auto image = renderWidget(window);
         const auto origin = panel.mapTo(&window, QPoint());
         EXPECT_EQ(image.pixelColor(origin + QPoint(1, panel.height() / 2)),
-                  manager->colors().auditionBg);
+                  manager->colors().panelBackground);
         EXPECT_EQ(image.pixelColor(origin + QPoint(panel.width() / 2, 0)),
                   manager->colors().borderPrimary);
         EXPECT_EQ(panel.geometry(), geometry);

@@ -76,10 +76,8 @@ private:
     QString bgHover() const { return colors().bgHover.name(QColor::HexArgb); }
     QString borderPrimary() const { return colors().borderPrimary.name(QColor::HexArgb); }
     QString borderSecondary() const { return colors().borderSecondary.name(QColor::HexArgb); }
-    QString viewBorder() const { return colors().viewBorder.name(QColor::HexArgb); }
     QString textPrimary() const { return colors().textPrimary.name(QColor::HexArgb); }
     QString textSecondary() const { return colors().textSecondary.name(QColor::HexArgb); }
-    QString textMuted() const { return colors().textMuted.name(QColor::HexArgb); }
     QString textDisabled() const { return colors().textDisabled.name(QColor::HexArgb); }
 
     ThemeSnapshotPtr snapshot_;

@@ -73,7 +73,7 @@ QScrollArea#dockWidgetScrollArea {
 
 ads--CDockAreaWidget {
     background-color: @BG_PRIMARY@;
-    border: @BORDER_WIDTH@px solid @VIEW_BORDER@;
+    border: @BORDER_WIDTH@px solid @BORDER_PRIMARY@;
 }
 
 /* --- Title Bar ---------------------------------------------------------- */
@@ -256,17 +256,16 @@ ads--CResizeHandle {
 
     result.replace(QStringLiteral("@CHROME_BACKGROUND@"), colorValue(style.chromeBackground));
     result.replace(QStringLiteral("@BG_PRIMARY@"), colorValue(colors.bgPrimary));
-    result.replace(QStringLiteral("@VIEW_BORDER@"), colorValue(colors.viewBorder));
     result.replace(QStringLiteral("@BG_SECONDARY@"), colorValue(colors.bgSecondary));
     result.replace(QStringLiteral("@BORDER_PRIMARY@"), colorValue(colors.borderPrimary));
     result.replace(QStringLiteral("@BG_TERTIARY@"), colorValue(colors.bgTertiary));
     result.replace(QStringLiteral("@ACTIVE_TAB_ACCENT@"), rgba(colors.accent, style.activeTabAccentOpacity));
     result.replace(QStringLiteral("@BG_SELECTED@"), colorValue(colors.bgSelected));
     result.replace(QStringLiteral("@ACCENT@"), colorValue(colors.accent));
-    result.replace(QStringLiteral("@INACTIVE_TAB_TEXT@"), colorValue(style.inactiveTabText));
+    result.replace(QStringLiteral("@INACTIVE_TAB_TEXT@"), colorValue(colors.textSecondary));
     result.replace(QStringLiteral("@TEXT_PRIMARY@"), colorValue(colors.textPrimary));
-    result.replace(QStringLiteral("@CLOSE_BUTTON_HOVER@"), colorValue(style.closeButtonHover));
-    result.replace(QStringLiteral("@CLOSE_BUTTON_PRESSED@"), colorValue(style.closeButtonPressed));
+    result.replace(QStringLiteral("@CLOSE_BUTTON_HOVER@"), colorValue(colors.shellCloseHover));
+    result.replace(QStringLiteral("@CLOSE_BUTTON_PRESSED@"), colorValue(colors.shellClosePressed));
     result.replace(QStringLiteral("@DROP_OVERLAY@"), rgba(colors.accent, style.dropOverlayOpacity));
 
     result.replace(QStringLiteral("@BORDER_WIDTH@"), QString::number(metrics.borderWidth));

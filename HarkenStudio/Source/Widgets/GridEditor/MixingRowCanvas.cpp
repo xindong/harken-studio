@@ -14,6 +14,15 @@
 #include <algorithm>
 
 namespace VNX {
+namespace {
+
+QColor unselectedClipColor(QColor color)
+{
+    color.setAlphaF(color.alphaF() * 0.5);
+    return color;
+}
+
+}
 
 MixingRowCanvas::MixingRowCanvas(QWidget* parent) : CurveCanvas(parent)
 {
@@ -37,7 +46,7 @@ void MixingRowCanvas::setClips(const QVector<MixingCurveClip>& clips, int select
         else {
             overlayClips_.append(i);
             overlays.append({clips[i].points, clips[i].handles, CurveColorRole::GridFade,
-                             colors.categoricalColor(i).darker(150), true});
+                             unselectedClipColor(colors.categoricalColor(i)), true});
         }
     }
     setCurveVisible(profile().xAxisVisible && selected_ >= 0);
@@ -93,7 +102,7 @@ void MixingRowCanvas::paintEvent(QPaintEvent*)
     if (selected_ >= 0)
         data.curveColor = colors.categoricalColor(selected_);
     for (int i = 0; i < data.overlays.size(); ++i)
-        data.overlays[i].color = colors.categoricalColor(overlayClips_[i]).darker(150);
+        data.overlays[i].color = unselectedClipColor(colors.categoricalColor(overlayClips_[i]));
     if (!isEnabled()) {
         style.colors.plotBackground = colors.bgSecondary;
         style.colors.axisText = colors.textDisabled;
@@ -108,7 +117,7 @@ void MixingRowCanvas::paintEvent(QPaintEvent*)
     const auto drawClip = [&](int index, const QPainterPath& path) {
         const bool selected = index == selected_;
         const auto baseColor = colors.categoricalColor(index);
-        const QColor color = selected ? baseColor : baseColor.darker(150);
+        const QColor color = selected ? baseColor : unselectedClipColor(baseColor);
         const auto title = clipTitleRect(index);
         painter.save();
         painter.setClipRect(QRectF(data.graphRect.left(), title.top(), data.graphRect.width(),

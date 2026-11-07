@@ -276,13 +276,13 @@ void SourceEditorWaveformView::paintEvent(QPaintEvent*)
     if (presentation_ == Presentation::TrimEditor) {
         paintTimeline(painter);
         drawAxisCrosshair(painter, theme->domains.curve, crosshairRect(), crosshair());
-        painter.setPen(theme->ui.colors.viewBorder);
+        painter.setPen(theme->ui.colors.borderPrimary);
         painter.setBrush(Qt::NoBrush);
         painter.drawRect(rect().adjusted(0, 0, -1, -1));
         return;
     }
 
-    painter.setPen(theme->ui.colors.viewBorder);
+    painter.setPen(theme->ui.colors.borderPrimary);
     painter.drawRect(rect().adjusted(0, 0, -1, -1));
 
     if (state_ == State::Ready && peaks_.isValid()) {
@@ -325,7 +325,7 @@ void SourceEditorWaveformView::paintEvent(QPaintEvent*)
                     return;
                 QColor lineColor = color;
                 if (handle == hoveredHandle_ || handle == activeHandle_)
-                    lineColor = lineColor.lighter(135);
+                    lineColor = theme->ui.colors.stateColor(lineColor, ThemeStateLayer::Emphasis);
                 painter.setPen(QPen(lineColor, handle == activeHandle_ ? theme->ui.metrics.accentBorderWidth : theme->ui.metrics.borderWidth));
                 painter.drawLine(x, waveformRect.top(), x, waveformRect.bottom());
                 painter.setPen(Qt::NoPen);
@@ -369,7 +369,7 @@ void SourceEditorWaveformView::paintEvent(QPaintEvent*)
         message = tr("Waveform unavailable");
         break;
     }
-    painter.setPen(theme->ui.colors.textMuted);
+    painter.setPen(theme->ui.colors.textSecondary);
     painter.drawText(rect(), Qt::AlignCenter, message);
 }
 

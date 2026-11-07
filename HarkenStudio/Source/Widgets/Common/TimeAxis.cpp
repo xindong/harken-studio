@@ -228,7 +228,7 @@ void drawTimeAxisRuler(QPainter& painter, const ThemeColors& colors,
         if (left >= lastLabelRight + padding && left + textWidth <= bounds.right() - padding) {
             if (pairedLabels && !tick.secondaryLabel.isEmpty()) {
                 painter.setFont(secondaryFont);
-                painter.setPen(colors.textMuted);
+                painter.setPen(colors.textSecondary);
                 painter.drawText(QRect(left, bounds.top(), textWidth, secondaryHeight),
                     Qt::AlignLeft | Qt::AlignVCenter, tick.secondaryLabel);
                 painter.setPen(colors.borderTick);

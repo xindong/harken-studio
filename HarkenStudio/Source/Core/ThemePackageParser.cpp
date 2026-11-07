@@ -607,9 +607,7 @@ ThemePackageParseResult<ThemeManifestDto> parseThemeManifest(
              QStringLiteral("waveform"), QStringLiteral("nodeGraph"),
              QStringLiteral("blueprint"), QStringLiteral("timeline"),
              QStringLiteral("music"), QStringLiteral("log"),
-             QStringLiteral("monitor"),
-             QStringLiteral("ai"), QStringLiteral("scene3d"),
-             QStringLiteral("spatial"), QStringLiteral("feedback")},
+             QStringLiteral("ai")},
             file, QStringLiteral("$.entries.visuals"), result.diagnostics)
         || !readRequiredString(
             visuals, QStringLiteral("curve"), file,
@@ -644,24 +642,8 @@ ThemePackageParseResult<ThemeManifestDto> parseThemeManifest(
             QStringLiteral("$.entries.visuals"), dto.entries.visuals.log,
             result.diagnostics)
         || !readOptionalString(
-            visuals, QStringLiteral("monitor"), file,
-            QStringLiteral("$.entries.visuals"), dto.entries.visuals.monitor,
-            result.diagnostics)
-        || !readOptionalString(
             visuals, QStringLiteral("ai"), file,
             QStringLiteral("$.entries.visuals"), dto.entries.visuals.ai,
-            result.diagnostics)
-        || !readOptionalString(
-            visuals, QStringLiteral("scene3d"), file,
-            QStringLiteral("$.entries.visuals"), dto.entries.visuals.scene3d,
-            result.diagnostics)
-        || !readOptionalString(
-            visuals, QStringLiteral("spatial"), file,
-            QStringLiteral("$.entries.visuals"), dto.entries.visuals.spatial,
-            result.diagnostics)
-        || !readOptionalString(
-            visuals, QStringLiteral("feedback"), file,
-            QStringLiteral("$.entries.visuals"), dto.entries.visuals.feedback,
             result.diagnostics))
         return result;
 

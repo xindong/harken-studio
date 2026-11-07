@@ -324,7 +324,7 @@ TimelineStyleView TimelineCanvas::styleView() const
     const auto snapshot = ThemeManager::instance().snapshot();
     style.canvasBackground = snapshot->ui.colors.bgPrimary;
     style.canvasBorder = snapshot->ui.colors.borderPrimary;
-    style.placeholderText = snapshot->ui.colors.textMuted;
+    style.placeholderText = snapshot->ui.colors.textSecondary;
     style.axisText = snapshot->ui.colors.textSecondary;
     style.trackBackground = snapshot->ui.colors.trackBackground;
     style.trackBackgroundAlt = snapshot->ui.colors.trackBackgroundAlt;
@@ -336,7 +336,7 @@ TimelineStyleView TimelineCanvas::styleView() const
     style.curve = snapshot->domains.curve;
     style.metrics = snapshot->ui.metrics;
     style.accent = snapshot->ui.colors.accent;
-    style.textMuted = snapshot->ui.colors.textMuted;
+    style.textPrimary = snapshot->ui.colors.textPrimary;
     return style;
 }
 

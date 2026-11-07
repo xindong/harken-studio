@@ -499,6 +499,9 @@ ThemeAppearance ThemeManager::persistedAppearance() const
             colors.remove(QStringLiteral("meter.lufsMomentary"));
             colors.remove(QStringLiteral("meter.lufsShortTerm"));
             colors.remove(QStringLiteral("meter.lufsIntegrated"));
+            colors.remove(QStringLiteral("bus.background"));
+            colors.remove(QStringLiteral("timeline.clipBorder"));
+            colors.remove(QStringLiteral("timeline.clipSelectedBorder"));
             const auto view = colors.find(QStringLiteral("border.view"));
             if (view != colors.end())
             {

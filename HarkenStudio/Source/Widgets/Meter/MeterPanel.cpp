@@ -704,7 +704,7 @@ void MeterPanel::paintEvent(QPaintEvent* event)
     QWidget::paintEvent(event);
     if (presentation_ == Presentation::Embedded) {
         QPainter painter(this);
-        painter.setPen(ThemeManager::instance().snapshot()->ui.colors.viewBorder);
+        painter.setPen(ThemeManager::instance().snapshot()->ui.colors.borderPrimary);
         painter.drawLine(width() - 1, 0, width() - 1, height() - 1);
         painter.drawLine(0, header_->geometry().bottom(), width() - 1, header_->geometry().bottom());
     }
@@ -899,7 +899,7 @@ void MeterPanel::paintCanvas(QPainter& painter)
             QRectF(QPointF(plot.topLeft()), QPointF(plot.bottomRight())), crosshair());
     }
     painter.restore();
-    painter.setPen(snapshot->ui.colors.viewBorder);
+    painter.setPen(snapshot->ui.colors.borderPrimary);
     painter.setBrush(Qt::NoBrush);
     if (presentation_ == Presentation::Standalone)
         painter.drawRect(canvas_->rect().adjusted(0, 0, -1, -1));

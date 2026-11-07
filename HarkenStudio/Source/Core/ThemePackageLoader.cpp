@@ -364,11 +364,7 @@ struct SemanticDocuments
     ThemeVisualDto timeline;
     ThemeVisualDto music;
     ThemeVisualDto log;
-    ThemeVisualDto monitor;
     ThemeVisualDto ai;
-    ThemeVisualDto scene3d;
-    ThemeVisualDto spatial;
-    ThemeVisualDto feedback;
     ThemePresenterMapDto presenters;
     ThemeRecipeMapDto recipes;
     ThemeAssetMapDto assets;
@@ -419,11 +415,7 @@ void overlay(SemanticDocuments& destination, const SemanticDocuments& source)
     OVERLAY_VISUAL(timeline);
     OVERLAY_VISUAL(music);
     OVERLAY_VISUAL(log);
-    OVERLAY_VISUAL(monitor);
     OVERLAY_VISUAL(ai);
-    OVERLAY_VISUAL(scene3d);
-    OVERLAY_VISUAL(spatial);
-    OVERLAY_VISUAL(feedback);
 #undef OVERLAY_VISUAL
     overlayMap(destination.presenters.contexts, source.presenters.contexts);
     for (const ThemeComponentRecipeDto& sourceRecipe : source.recipes.recipes)
@@ -628,16 +620,8 @@ std::optional<SemanticDocuments> loadDocuments(
                             package.manifest.entries.visuals.music)
         && loadDomainVisual(QStringLiteral("log"),
                             package.manifest.entries.visuals.log)
-        && loadDomainVisual(QStringLiteral("monitor"),
-                            package.manifest.entries.visuals.monitor)
         && loadDomainVisual(QStringLiteral("ai"),
-                            package.manifest.entries.visuals.ai)
-        && loadDomainVisual(QStringLiteral("scene3d"),
-                            package.manifest.entries.visuals.scene3d)
-        && loadDomainVisual(QStringLiteral("spatial"),
-                            package.manifest.entries.visuals.spatial)
-        && loadDomainVisual(QStringLiteral("feedback"),
-                            package.manifest.entries.visuals.feedback);
+                            package.manifest.entries.visuals.ai);
     const auto assets = load(package.manifest.entries.assetMap,
                              QStringLiteral("$.entries.assetMap"));
     std::optional<QByteArray> presenters;
@@ -704,21 +688,9 @@ std::optional<SemanticDocuments> loadDocuments(
         || !parseDomainVisual(QStringLiteral("log"),
                               package.manifest.entries.visuals.log,
                               documents.log)
-        || !parseDomainVisual(QStringLiteral("monitor"),
-                              package.manifest.entries.visuals.monitor,
-                              documents.monitor)
         || !parseDomainVisual(QStringLiteral("ai"),
                               package.manifest.entries.visuals.ai,
                               documents.ai)
-        || !parseDomainVisual(QStringLiteral("scene3d"),
-                              package.manifest.entries.visuals.scene3d,
-                              documents.scene3d)
-        || !parseDomainVisual(QStringLiteral("spatial"),
-                              package.manifest.entries.visuals.spatial,
-                              documents.spatial)
-        || !parseDomainVisual(QStringLiteral("feedback"),
-                              package.manifest.entries.visuals.feedback,
-                              documents.feedback)
         || (presenters
             && !appendParsed(parseThemePresenters(
                                  *presenters, prefix
@@ -801,9 +773,6 @@ auto tokenColorSlot(const QString& key, Snapshot& theme)
     COLOR_SLOT("background.tertiary", ui.colors.bgTertiary);
     COLOR_SLOT("text.secondary", ui.colors.textSecondary);
     COLOR_SLOT("text.title", ui.colors.textTitle);
-    COLOR_SLOT("text.muted", ui.colors.textMuted);
-    COLOR_SLOT("drop.highlight", ui.colors.dropHighlight);
-    COLOR_SLOT("drop.accent", ui.colors.dropAccent);
     COLOR_SLOT("qtPalette.window", qtPalette.window);
     COLOR_SLOT("qtPalette.windowText", qtPalette.windowText);
     COLOR_SLOT("qtPalette.base", qtPalette.base);
@@ -825,10 +794,6 @@ auto tokenColorSlot(const QString& key, Snapshot& theme)
     COLOR_SLOT("qtPalette.disabledButtonText", qtPalette.disabledButtonText);
     COLOR_SLOT("qtPalette.disabledHighlight", qtPalette.disabledHighlight);
     COLOR_SLOT("qtAds.chromeBackground", thirdParty.qtAds.chromeBackground);
-    COLOR_SLOT("qtAds.inactiveTabText", thirdParty.qtAds.inactiveTabText);
-    COLOR_SLOT("qtAds.closeButtonHover", thirdParty.qtAds.closeButtonHover);
-    COLOR_SLOT("qtAds.closeButtonPressed", thirdParty.qtAds.closeButtonPressed);
-    COLOR_SLOT("qtAds.lightHoverOverlay", thirdParty.qtAds.lightHoverOverlay);
     COLOR_SLOT("accent.primary", ui.colors.accent);
     COLOR_SLOT("accent.hover", ui.colors.accentHover);
     COLOR_SLOT("accent.text", ui.colors.accentText);
@@ -846,26 +811,15 @@ auto tokenColorSlot(const QString& key, Snapshot& theme)
     COLOR_SLOT("border.primary", ui.colors.borderPrimary);
     COLOR_SLOT("border.secondary", ui.colors.borderSecondary);
     COLOR_SLOT("border.tick", ui.colors.borderTick);
-    COLOR_SLOT("border.view", ui.colors.viewBorder);
     COLOR_SLOT("status.success", ui.colors.success);
     COLOR_SLOT("status.warning", ui.colors.warning);
     COLOR_SLOT("status.error", ui.colors.error);
     COLOR_SLOT("status.info", ui.colors.info);
     COLOR_SLOT("track.background", ui.colors.trackBackground);
     COLOR_SLOT("track.backgroundAlternate", ui.colors.trackBackgroundAlt);
-    COLOR_SLOT("bus.background", ui.colors.busBackground);
-    COLOR_SLOT("bus.backgroundActive", ui.colors.busBackgroundActive);
     COLOR_SLOT("slider.track", ui.colors.sliderTrack);
     COLOR_SLOT("panel.background", ui.colors.panelBackground);
-    COLOR_SLOT("section.separator", ui.colors.sectionSeparator);
     COLOR_SLOT("header.background", ui.colors.headerBackground);
-    COLOR_SLOT("audition.background", ui.colors.auditionBg);
-    COLOR_SLOT("audition.playActive", ui.colors.auditionPlayActive);
-    COLOR_SLOT("audition.stopActive", ui.colors.auditionStopActive);
-    COLOR_SLOT("shell.menuText", ui.colors.shellMenuText);
-    COLOR_SLOT("shell.menuHoverText", ui.colors.shellMenuHoverText);
-    COLOR_SLOT("shell.buttonText", ui.colors.shellButtonText);
-    COLOR_SLOT("shell.buttonHoverText", ui.colors.shellButtonHoverText);
     COLOR_SLOT("shell.closeHover", ui.colors.shellCloseHover);
     COLOR_SLOT("shell.closePressed", ui.colors.shellClosePressed);
 #undef COLOR_SLOT
@@ -1108,7 +1062,6 @@ auto curveColorSlot(const QString& key, Snapshot& theme)
     COLOR_SLOT("curve.crosshairContrast", domains.curve.colors.crosshairContrast);
     COLOR_SLOT("curve.readoutBackground", domains.curve.colors.readoutBackground);
     COLOR_SLOT("curve.readoutText", domains.curve.colors.readoutText);
-    COLOR_SLOT("curve.line", domains.curve.colors.attenuationVolume);
     COLOR_SLOT("curve.attenuationVolume", domains.curve.colors.attenuationVolume);
     COLOR_SLOT("curve.attenuationPitch", domains.curve.colors.attenuationPitch);
     COLOR_SLOT("curve.parameterBinding", domains.curve.colors.parameterBinding);
@@ -1205,11 +1158,6 @@ auto waveformColorSlot(const QString& key, Snapshot& theme)
     if (key == QStringLiteral(name)) return &theme.field
     COLOR_SLOT("waveform.dbScale.grid", domains.waveform.dbScale.grid);
     COLOR_SLOT("waveform.dbScale.label", domains.waveform.dbScale.label);
-    COLOR_SLOT("waveform.line", domains.waveform.line);
-    COLOR_SLOT("waveform.fill", domains.waveform.fill);
-    COLOR_SLOT("waveform.selectionHighlight", domains.waveform.selectionHighlight);
-    COLOR_SLOT("waveform.cursor", domains.waveform.cursor);
-    COLOR_SLOT("waveform.regionMarker", domains.waveform.regionMarker);
     COLOR_SLOT("waveform.trimHandle", domains.waveform.trimHandle);
     COLOR_SLOT("waveform.loopHandle", domains.waveform.loopHandle);
     COLOR_SLOT("waveform.static.quiet", domains.waveform.staticMode.quiet);
@@ -1291,25 +1239,6 @@ auto meterColorSlot(const QString& key, Snapshot& theme)
 {
 #define COLOR_SLOT(name, field) \
     if (key == QStringLiteral(name)) return &theme.field
-    COLOR_SLOT("meter.oscilloscopeGrid", domains.meter.oscilloscopeGrid);
-    COLOR_SLOT("meter.oscilloscopeGlow", domains.meter.oscilloscopeGlow);
-    COLOR_SLOT("meter.waveformFill", domains.meter.waveformFill);
-    COLOR_SLOT("meter.waveformGrid", domains.meter.waveformGrid);
-    COLOR_SLOT("meter.stereo.trailOuter", domains.meter.stereo.trailOuter);
-    COLOR_SLOT("meter.stereo.trailMiddle", domains.meter.stereo.trailMiddle);
-    COLOR_SLOT("meter.stereo.trailCore", domains.meter.stereo.trailCore);
-    COLOR_SLOT("meter.stereo.gridPrimary", domains.meter.stereo.gridPrimary);
-    COLOR_SLOT("meter.stereo.gridSecondary", domains.meter.stereo.gridSecondary);
-    COLOR_SLOT("meter.stereo.liveGlowWide", domains.meter.stereo.liveGlowWide);
-    COLOR_SLOT("meter.stereo.liveGlowMedium", domains.meter.stereo.liveGlowMedium);
-    COLOR_SLOT("meter.stereo.liveHighlight", domains.meter.stereo.liveHighlight);
-    COLOR_SLOT("meter.stereo.correlationPositive", domains.meter.stereo.correlationPositive);
-    COLOR_SLOT("meter.stereo.correlationNegative", domains.meter.stereo.correlationNegative);
-    COLOR_SLOT("meter.layout.dividerHover", domains.meter.layout.dividerHover);
-    COLOR_SLOT("meter.layout.dividerDragging", domains.meter.layout.dividerDragging);
-    COLOR_SLOT("meter.layout.dividerSnapped", domains.meter.layout.dividerSnapped);
-    COLOR_SLOT("meter.layout.dropBorder", domains.meter.layout.dropBorder);
-    COLOR_SLOT("meter.layout.dropFill", domains.meter.layout.dropFill);
     COLOR_SLOT("meter.interaction.crosshair", domains.meter.interaction.colors.crosshair);
     COLOR_SLOT("meter.interaction.readoutBackground", domains.meter.interaction.colors.readoutBackground);
     COLOR_SLOT("meter.interaction.readoutText", domains.meter.interaction.colors.readoutText);
@@ -1325,25 +1254,14 @@ auto meterColorSlot(const QString& key, Snapshot& theme)
     COLOR_SLOT("meter.spectrogram.canvasBackground", domains.meter.spectrogramMeter.colors.canvasBackground);
     COLOR_SLOT("meter.spectrogram.grid", domains.meter.spectrogramMeter.colors.grid);
     COLOR_SLOT("meter.spectrogram.axisText", domains.meter.spectrogramMeter.colors.axisText);
-    COLOR_SLOT("meter.spectrogram.timeText", domains.meter.spectrogramMeter.colors.timeText);
-    COLOR_SLOT("meter.green", domains.meter.green);
-    COLOR_SLOT("meter.yellow", domains.meter.yellow);
-    COLOR_SLOT("meter.red", domains.meter.red);
-    COLOR_SLOT("meter.peak", domains.meter.peak);
-    COLOR_SLOT("meter.rms", domains.meter.rms);
-    COLOR_SLOT("meter.clipOn", domains.meter.clipOn);
-    COLOR_SLOT("meter.clipOff", domains.meter.clipOff);
-    COLOR_SLOT("meter.background", domains.meter.background);
     COLOR_SLOT("meter.interaction.accentGuide", domains.meter.interaction.colors.accentGuide);
     COLOR_SLOT("meter.peakMeter.gradientError", domains.meter.peakMeter.colors.gradientError);
     COLOR_SLOT("meter.peakMeter.gradientWarning", domains.meter.peakMeter.colors.gradientWarning);
     COLOR_SLOT("meter.peakMeter.gradientYellow", domains.meter.peakMeter.colors.gradientYellow);
     COLOR_SLOT("meter.peakMeter.gradientAccent", domains.meter.peakMeter.colors.gradientAccent);
-    COLOR_SLOT("meter.peakMeter.gradientGreen", domains.meter.peakMeter.colors.gradientAccent);
     COLOR_SLOT("meter.peakMeter.rmsOverlay", domains.meter.peakMeter.colors.rmsOverlay);
     COLOR_SLOT("meter.peakMeter.holdHalo", domains.meter.peakMeter.colors.holdHalo);
     COLOR_SLOT("meter.peakMeter.holdLine", domains.meter.peakMeter.colors.holdLine);
-    COLOR_SLOT("meter.peakMeter.clipBackground", domains.meter.peakMeter.colors.clipBackground);
     COLOR_SLOT("meter.peakMeter.clipText", domains.meter.peakMeter.colors.clipText);
     COLOR_SLOT("meter.spectrum.fillTop", domains.meter.spectrumMeter.colors.fillTop);
     COLOR_SLOT("meter.spectrum.fillUpperMiddle", domains.meter.spectrumMeter.colors.fillUpperMiddle);
@@ -1461,12 +1379,6 @@ auto domainColorSlot(const QString& key, Snapshot& theme)
     COLOR_SLOT("nodeGraph.node.contentLabel", domains.nodeGraphNode.contentLabel);
     COLOR_SLOT("nodeGraph.node.contentValue", domains.nodeGraphNode.contentValue);
     COLOR_SLOT("blueprint.edgeLabelText", domains.blueprint.edgeLabelText);
-    COLOR_SLOT("feedback.success", domains.feedback.success);
-    COLOR_SLOT("feedback.warning", domains.feedback.warning);
-    COLOR_SLOT("feedback.error", domains.feedback.error);
-    COLOR_SLOT("feedback.info", domains.feedback.info);
-    COLOR_SLOT("feedback.neutral", domains.feedback.neutral);
-    COLOR_SLOT("feedback.overlayHighlight", domains.feedback.overlayHighlight);
     COLOR_SLOT("startup.logo.base", domains.startup.logoPalette[0]);
     COLOR_SLOT("startup.logo.mid", domains.startup.logoPalette[1]);
     COLOR_SLOT("startup.logo.highlight", domains.startup.logoPalette[2]);
@@ -1474,8 +1386,6 @@ auto domainColorSlot(const QString& key, Snapshot& theme)
     COLOR_SLOT("startup.wave.low", domains.startup.wavePalette[1]);
     COLOR_SLOT("startup.wave.high", domains.startup.wavePalette[2]);
     COLOR_SLOT("startup.wave.highlight", domains.startup.wavePalette[3]);
-    COLOR_SLOT("feedback.overlayBackground", domains.feedback.overlayBackground);
-    COLOR_SLOT("feedback.overlayErrorBackground", domains.feedback.overlayErrorBackground);
     COLOR_SLOT("nodeGraph.pin.audio", domains.pinDomain.audio);
     COLOR_SLOT("nodeGraph.pin.control", domains.pinDomain.control);
     COLOR_SLOT("nodeGraph.pin.value", domains.pinDomain.value);
@@ -1484,12 +1394,10 @@ auto domainColorSlot(const QString& key, Snapshot& theme)
     COLOR_SLOT("nodeGraph.pin.targetBad", domains.pinDomain.targetBad);
     COLOR_SLOT("nodeGraph.node.borderNormal", domains.nodeGraphNode.borderNormal);
     COLOR_SLOT("nodeGraph.node.borderHoverMix", domains.nodeGraphNode.borderHoverMix);
-    COLOR_SLOT("nodeGraph.node.dropTarget", domains.nodeGraphNode.dropTarget);
     COLOR_SLOT("nodeGraph.node.shadow", domains.nodeGraphNode.shadow);
     COLOR_SLOT("nodeGraph.node.sandboxBadgeBg", domains.nodeGraphNode.sandboxBadgeBg);
     COLOR_SLOT("nodeGraph.node.sandboxBadgeText", domains.nodeGraphNode.sandboxBadgeText);
     COLOR_SLOT("nodeGraph.node.badgeOverride", domains.nodeGraphNode.badgeOverride);
-    COLOR_SLOT("nodeGraph.node.badgeChild", domains.nodeGraphNode.badgeChild);
     COLOR_SLOT("nodeGraph.node.badgeReceive", domains.nodeGraphNode.badgeReceive);
     COLOR_SLOT("nodeGraph.node.waveformBg", domains.nodeGraphNode.waveformBg);
     COLOR_SLOT("nodeGraph.node.waveformCenter", domains.nodeGraphNode.waveformCenter);
@@ -1500,18 +1408,13 @@ auto domainColorSlot(const QString& key, Snapshot& theme)
     COLOR_SLOT("blueprint.placementChain", domains.blueprint.placementChain);
     COLOR_SLOT("blueprint.organizationChain", domains.blueprint.organizationChain);
     COLOR_SLOT("blueprint.containment", domains.blueprint.containment);
-    COLOR_SLOT("blueprint.busRoute", domains.blueprint.busRoute);
     COLOR_SLOT("blueprint.send", domains.blueprint.send);
-    COLOR_SLOT("blueprint.overrideRoute", domains.blueprint.overrideRoute);
     COLOR_SLOT("timeline.entry", domains.timeline.entry);
     COLOR_SLOT("timeline.exit", domains.timeline.exit);
     COLOR_SLOT("timeline.transition", domains.timeline.transition);
     COLOR_SLOT("timeline.clip", domains.timeline.clip);
     COLOR_SLOT("timeline.clipSelected", domains.timeline.clipSelected);
-    COLOR_SLOT("timeline.clipBorder", domains.timeline.clipBorder);
-    COLOR_SLOT("timeline.clipSelectedBorder", domains.timeline.clipSelectedBorder);
     COLOR_SLOT("timeline.clipText", domains.timeline.clipText);
-    COLOR_SLOT("timeline.badge", domains.timeline.badge);
     COLOR_SLOT("timeline.emergenceMarker", domains.timeline.emergenceMarker);
     COLOR_SLOT("timeline.unavailableOverlay", domains.timeline.unavailableOverlay);
     COLOR_SLOT("timeline.unavailableText", domains.timeline.unavailableText);
@@ -1519,80 +1422,13 @@ auto domainColorSlot(const QString& key, Snapshot& theme)
     COLOR_SLOT("music.beatGridMajor", domains.music.beatGridMajor);
     COLOR_SLOT("music.beatGridMinor", domains.music.beatGridMinor);
     COLOR_SLOT("music.cursor", domains.music.cursor);
-    COLOR_SLOT("music.loopRegion", domains.music.loopRegion);
     COLOR_SLOT("log.debug", domains.log.debug);
     COLOR_SLOT("log.info", domains.log.info);
     COLOR_SLOT("log.warning", domains.log.warning);
     COLOR_SLOT("log.error", domains.log.error);
     COLOR_SLOT("log.critical", domains.log.critical);
-    COLOR_SLOT("monitor.stateStolen", domains.monitor.stateStolen);
-    COLOR_SLOT("monitor.statePlaying", domains.monitor.statePlaying);
-    COLOR_SLOT("monitor.stateStarting", domains.monitor.stateStarting);
-    COLOR_SLOT("monitor.stateVirtual", domains.monitor.stateVirtual);
-    COLOR_SLOT("monitor.stateReleasing", domains.monitor.stateReleasing);
-    COLOR_SLOT("monitor.stateStopping", domains.monitor.stateStopping);
-    COLOR_SLOT("monitor.statePaused", domains.monitor.statePaused);
-    COLOR_SLOT("monitor.stateDefault", domains.monitor.stateDefault);
-    COLOR_SLOT("monitor.virtualDim", domains.monitor.virtualDim);
-    COLOR_SLOT("monitor.mutedText", domains.monitor.mutedText);
-    COLOR_SLOT("monitor.lowVolume", domains.monitor.lowVolume);
-    COLOR_SLOT("monitor.busIdText", domains.monitor.busIdText);
-    COLOR_SLOT("monitor.peakClip", domains.monitor.peakClip);
-    COLOR_SLOT("monitor.peakCaution", domains.monitor.peakCaution);
-    COLOR_SLOT("monitor.peakSafe", domains.monitor.peakSafe);
-    COLOR_SLOT("monitor.pitchHigh", domains.monitor.pitchHigh);
-    COLOR_SLOT("monitor.pitchLow", domains.monitor.pitchLow);
-    COLOR_SLOT("monitor.cpuCritical", domains.monitor.cpuCritical);
-    COLOR_SLOT("monitor.cpuWarning", domains.monitor.cpuWarning);
-    COLOR_SLOT("monitor.cpuSafe", domains.monitor.cpuSafe);
-    COLOR_SLOT("monitor.bufferWarning", domains.monitor.bufferWarning);
-    COLOR_SLOT("monitor.bufferNormal", domains.monitor.bufferNormal);
-    COLOR_SLOT("monitor.underrunFlash", domains.monitor.underrunFlash);
-    COLOR_SLOT("monitor.underrunIdle", domains.monitor.underrunIdle);
-    COLOR_SLOT("monitor.underrunNone", domains.monitor.underrunNone);
-    COLOR_SLOT("monitor.spatialGainHigh", domains.monitor.spatialGainHigh);
-    COLOR_SLOT("monitor.spatialGainLow", domains.monitor.spatialGainLow);
-    COLOR_SLOT("monitor.spatialLpf", domains.monitor.spatialLpf);
-    COLOR_SLOT("monitor.spatialWidth", domains.monitor.spatialWidth);
-    COLOR_SLOT("monitor.spatialDistance", domains.monitor.spatialDistance);
-    COLOR_SLOT("monitor.spatialReverb", domains.monitor.spatialReverb);
-    COLOR_SLOT("monitor.spatialDopplerHi", domains.monitor.spatialDopplerHi);
-    COLOR_SLOT("monitor.spatialDopplerLo", domains.monitor.spatialDopplerLo);
-    COLOR_SLOT("monitor.spatialDot", domains.monitor.spatialDot);
     COLOR_SLOT("ai.brandAccent", domains.ai.brandAccent);
-    COLOR_SLOT("ai.userAccent", domains.ai.userAccent);
-    COLOR_SLOT("scene3d.listener", domains.scene3d.listener);
-    COLOR_SLOT("scene3d.listenerCone", domains.scene3d.listenerCone);
-    COLOR_SLOT("scene3d.room", domains.scene3d.room);
-    COLOR_SLOT("scene3d.emitterMin", domains.scene3d.emitterMin);
-    COLOR_SLOT("scene3d.emitterMax", domains.scene3d.emitterMax);
-    COLOR_SLOT("scene3d.hudBackground", domains.scene3d.hudBackground);
-    COLOR_SLOT("scene3d.hudTitle", domains.scene3d.hudTitle);
-    COLOR_SLOT("scene3d.hudLabel", domains.scene3d.hudLabel);
-    COLOR_SLOT("scene3d.hudGain", domains.scene3d.hudGain);
-    COLOR_SLOT("scene3d.hudGainLow", domains.scene3d.hudGainLow);
-    COLOR_SLOT("scene3d.hudLpf", domains.scene3d.hudLpf);
-    COLOR_SLOT("scene3d.hudWidth", domains.scene3d.hudWidth);
-    COLOR_SLOT("scene3d.dopplerIdle", domains.scene3d.dopplerIdle);
-    COLOR_SLOT("spatial.background", domains.spatial.background);
-    COLOR_SLOT("spatial.grid", domains.spatial.grid);
-    COLOR_SLOT("spatial.axis", domains.spatial.axis);
-    COLOR_SLOT("spatial.axisLabel", domains.spatial.axisLabel);
-    COLOR_SLOT("spatial.tangentLine", domains.spatial.tangentLine);
-    COLOR_SLOT("spatial.tangentHover", domains.spatial.tangentHover);
-    COLOR_SLOT("spatial.tangentActive", domains.spatial.tangentActive);
-    COLOR_SLOT("spatial.pointSelected", domains.spatial.pointSelected);
-    COLOR_SLOT("spatial.previewMarker", domains.spatial.previewMarker);
-    COLOR_SLOT("spatial.infoText", domains.spatial.infoText);
-    COLOR_SLOT("spatial.legendBg", domains.spatial.legendBg);
-    COLOR_SLOT("spatial.layerVolume", domains.spatial.layerVolume);
-    COLOR_SLOT("spatial.layerLpf", domains.spatial.layerLpf);
-    COLOR_SLOT("spatial.layerWidth", domains.spatial.layerWidth);
-    COLOR_SLOT("spatial.layerReverb", domains.spatial.layerReverb);
 #undef COLOR_SLOT
-    for (int index = 0; index < DomainColors::Music::kTrackColorCount; ++index)
-        if (key == QStringLiteral("music.trackColor%1").arg(index))
-            return &theme.domains.music.trackColors[static_cast<size_t>(index)];
     return nullptr;
 }
 
@@ -1647,11 +1483,7 @@ DOMAIN_COLOR_APPLIER(blueprint, Blueprint)
 DOMAIN_COLOR_APPLIER(timeline, Timeline)
 DOMAIN_COLOR_APPLIER(music, Music)
 DOMAIN_COLOR_APPLIER(log, Log)
-DOMAIN_COLOR_APPLIER(monitor, Monitor)
 DOMAIN_COLOR_APPLIER(ai, Ai)
-DOMAIN_COLOR_APPLIER(scene3d, Scene3d)
-DOMAIN_COLOR_APPLIER(spatial, Spatial)
-DOMAIN_COLOR_APPLIER(feedback, Feedback)
 #undef DOMAIN_COLOR_APPLIER
 
 bool metricValueWithinBounds(const QString& key, double value)
@@ -2050,21 +1882,9 @@ bool applySemantics(const SemanticDocuments& documents,
         || !applyDomainVisual(documents.log,
                               package.manifest.entries.visuals.log,
                               applyLogColor)
-        || !applyDomainVisual(documents.monitor,
-                              package.manifest.entries.visuals.monitor,
-                              applyMonitorColor)
         || !applyDomainVisual(documents.ai,
                               package.manifest.entries.visuals.ai,
                               applyAiColor)
-        || !applyDomainVisual(documents.scene3d,
-                              package.manifest.entries.visuals.scene3d,
-                              applyScene3dColor)
-        || !applyDomainVisual(documents.spatial,
-                              package.manifest.entries.visuals.spatial,
-                              applySpatialColor)
-        || !applyDomainVisual(documents.feedback,
-                              package.manifest.entries.visuals.feedback,
-                              applyFeedbackColor)
         || !applyPresenterSelections(documents.presenters, package, theme,
                                      diagnostics)
         || !applyRecipeSelections(documents.recipes, package, mergedAssets,
@@ -2234,11 +2054,7 @@ bool collectRoleOverrides(const SemanticDocuments& documents,
     COLLECT_VISUAL(timeline);
     COLLECT_VISUAL(music);
     COLLECT_VISUAL(log);
-    COLLECT_VISUAL(monitor);
     COLLECT_VISUAL(ai);
-    COLLECT_VISUAL(scene3d);
-    COLLECT_VISUAL(spatial);
-    COLLECT_VISUAL(feedback);
 #undef COLLECT_VISUAL
     return true;
 }

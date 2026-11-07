@@ -84,7 +84,7 @@ QFrame#timelineHeaderDivider[highlighted="true"] {
 
 QFrame#timelineViewportPage {
     background-color: @bgPrimary@;
-    border: @borderWidth@px solid @viewBorder@;
+    border: @borderWidth@px solid @borderPrimary@;
     border-radius: 0;
 }
 
@@ -170,12 +170,12 @@ QMenuBar::item {
     background-color: transparent;
     padding: @spacingSmall@px @spacingMedium@px;
     border-radius: @radiusSmall@px;
-    color: @shellMenuText@;
+    color: @textPrimary@;
 }
 
 QMenuBar::item:selected {
     background-color: @bgHover@;
-    color: @shellMenuHoverText@;
+    color: @textPrimary@;
 }
 
 QMenuBar::item:pressed {
@@ -235,7 +235,7 @@ QMenu::separator {
 QToolBar {
     background-color: @window@;
     border: none;
-    border-top: @borderWidth@px solid @sectionSeparator@;
+    border-top: @borderWidth@px solid @borderPrimary@;
     spacing: @spacingXSmall@px;
     padding: @spacingCompact@px;
     min-height: @controlHeight@px;
@@ -331,28 +331,28 @@ QToolBar#platformBar QToolButton[segmentedControl="true"]:disabled {
     color: @textDisabled@;
 }
 QToolBar#platformBar QToolButton#remoteConnectButton:checked:enabled {
-    background: @toolbarRemoteActive@;
+    background: @warning@;
     color: @accentText@;
 }
 QToolBar#platformBar QToolButton#remoteConnectButton:checked:hover:enabled {
-    background: @toolbarRemoteHover@;
+    background: @warningHover@;
 }
 QToolBar#platformBar QToolButton#captureButton:checked:enabled {
-    background: @toolbarMonitorActive@;
+    background: @error@;
     color: @accentText@;
 }
 QToolBar#platformBar QToolButton#captureButton:checked:hover:enabled {
-    background: @toolbarMonitorHover@;
+    background: @errorHover@;
 }
 QToolBar#platformBar QToolButton#platformBarAll:checked:enabled {
-    background: @toolbarAllPlatformsActive@;
+    background: @success@;
     color: @accentText@;
 }
 QToolBar#platformBar QToolButton#platformBarAll:checked:hover:enabled {
-    background: @toolbarAllPlatformsHover@;
+    background: @successHover@;
 }
 QToolBar#platformBar #playbackControls QToolButton#playBtn[playing="true"] {
-    background: @auditionPlayOverlay@;
+    background: @successSoft@;
 }
 
 /* Inline editor of a numeric segment: it sits inside the segment button, so it
@@ -386,7 +386,7 @@ QAbstractButton[flatIconButton="true"][iconButtonBackground="true"] {
 
 QAbstractButton[flatIconButton="true"]:hover:enabled,
 QAbstractButton[flatIconButton="true"]:pressed:enabled {
-    background-color: @iconButtonHover@;
+    background-color: @hoverOverlay@;
 }
 
 QAbstractButton[flatIconButton="true"]:disabled {
@@ -430,7 +430,7 @@ QTabWidget::pane {
 
 QTabBar::tab {
     background-color: @bgSecondary@;
-    color: @textMuted@;
+    color: @textSecondary@;
     padding: @spacingSmall@px @spacingXLarge@px;
     margin-right: @spacingCompact@px;
     border-top-left-radius: @radiusSmall@px;
@@ -452,7 +452,7 @@ QTabBar::tab:hover:!selected {
 
 QFrame[explorerRole="content"] {
     background-color: @bgPrimary@;
-    border: @borderWidth@px solid @viewBorder@;
+    border: @borderWidth@px solid @borderPrimary@;
     border-radius: 0;
 }
 
@@ -469,7 +469,7 @@ QWidget#projectSourcesSection QWidget[explorerRole="sectionHeader"] {
 
 QWidget[explorerRole="sectionHeader"][sourceDropTarget="true"],
 QWidget[sourceDropTarget="true"] QToolButton[explorerRole="sectionToggle"] {
-    background-color: @dropHighlight@;
+    background-color: @bgSelected@;
 }
 
 QToolButton[explorerRole="sectionToggle"] {
@@ -581,7 +581,7 @@ QPushButton[danger="true"]:hover {
 #btnQuit {
     background-color: transparent;
     border: none;
-    color: @textMuted@;
+    color: @textSecondary@;
     @bodyFont@
 }
 
@@ -843,7 +843,7 @@ QAbstractSpinBox[fieldRole="compact"]:disabled {
    ========================================================================== */
 
 #logCountLabel {
-    color: @textMuted@;
+    color: @textSecondary@;
 }
 
 #logAutoScrollBtn:checked {
@@ -944,7 +944,7 @@ QCheckBox[fieldRole="inspector"] {
 }
 
 QDoubleSpinBox[mixedAcrossPlatforms="true"] {
-    color: @textMuted@;
+    color: @textSecondary@;
 }
 
 QSlider[mixedAcrossPlatforms="true"]::handle:horizontal {
@@ -960,7 +960,7 @@ QSlider[mixedAcrossPlatforms="true"]::handle:horizontal {
    ::item:selected background or selected rows render two-toned. */
 QTreeView, QListView, QTableView, QTableWidget, QTreeWidget, QListWidget {
     background-color: @bgPrimary@;
-    border: @borderWidth@px solid @viewBorder@;
+    border: @borderWidth@px solid @borderPrimary@;
     alternate-background-color: @alternateBase@;
     outline: none;
     selection-background-color: @bgSelected@;
@@ -1337,33 +1337,6 @@ QGroupBox::title:disabled {
    Custom Classes
    ========================================================================== */
 
-/* Timeline Track */
-.TrackHeader {
-    background-color: @bgSecondary@;
-    border-bottom: @borderWidth@px solid @accentText@;
-}
-
-.ClipBlock {
-    background-color: @auditionPlayOverlay@;
-    border: @borderWidth@px solid @accent@;
-    border-radius: @radiusSmall@px;
-}
-
-.ClipBlock:selected {
-    background-color: @auditionPlayOverlay@;
-    border: @borderWidth@px solid @brightText@;
-}
-
-/* Node Graph */
-.NodeHeader {
-    background-color: @bgSecondary@;
-    border-bottom: @borderWidth@px solid @borderPrimary@;
-}
-
-.NodeBody {
-    background-color: @bgPrimary@;
-}
-
 #BlueprintToolBar {
     background-color: @bgSecondary@;
     border-bottom: @borderWidth@px solid @borderPrimary@;
@@ -1450,7 +1423,7 @@ QWidget#embeddedEditorTitleBar QLabel { background: transparent; color: @textSec
    ========================================================================== */
 
 #ControlPanel {
-    background-color: @auditionBg@;
+    background-color: @panelBackground@;
     border-top: @borderWidth@px solid @borderPrimary@;
 }
 
@@ -1505,7 +1478,7 @@ QLabel[settingsRole="subtitle"] {
 }
 
 *[settingsRole="hint"] {
-    color: @textMuted@;
+    color: @textSecondary@;
     @captionFont@
 }
 
@@ -1568,7 +1541,7 @@ QLabel[aboutRole="value"] {
 #startupLoadingPercent,
 #startupLoadingVersion {
     background-color: transparent;
-    color: @textMuted@;
+    color: @textSecondary@;
 }
 
 #startupLoadingVersion {
@@ -1624,7 +1597,7 @@ QLabel[templateRole="cardTitle"] {
 QLabel[templateRole="cardDescription"] {
     background-color: transparent;
     border: none;
-    color: @textMuted@;
+    color: @textSecondary@;
     @captionFont@
     font-weight: @regularWeight@;
 }
@@ -1670,7 +1643,7 @@ QPushButton[templateRole="card"]:disabled {
 }
 
 #dropZoneEmptyLabel {
-    color: @textMuted@;
+    color: @textSecondary@;
     @captionFont@
     padding: @spacingXLarge@px;
 }
@@ -1701,7 +1674,7 @@ QPushButton[templateRole="card"]:disabled {
    Text and surface semantic roles
    ========================================================================== */
 
-QLabel[textRole="muted"] { color: @textMuted@; }
+QLabel[textRole="muted"] { color: @textSecondary@; }
 QLabel[textRole="secondary"] { color: @textSecondary@; }
 QLabel[textRole="primary"] { color: @textPrimary@; }
 QLabel[textRole="title"] { color: @textTitle@; }
@@ -1876,7 +1849,7 @@ VNX--ObjectRefWidget[inputInvalid="true"][dimmed="false"]:enabled {
     border: none;
 }
 #AssistantPanel QLabel#aiEmptyState { color: @textPrimary@; }
-#AssistantPanel QLabel#aiStepStatus { color: @textMuted@; }
+#AssistantPanel QLabel#aiStepStatus { color: @textSecondary@; }
 #AssistantPanel QLabel#aiStepStatus { padding: 0 @spacingSmall@px; }
 #AssistantPanel QFrame#aiInputFrame {
     background-color: @bgSecondary@;
@@ -1894,7 +1867,7 @@ VNX--ObjectRefWidget[inputInvalid="true"][dimmed="false"]:enabled {
 #AssistantPanel QPushButton#assistantSend[turnActive="true"] { background-color: @error@; }
 #AssistantPanel QPushButton#assistantSend[turnActive="true"]:pressed { background-color: @error@; }
 #inspectorSectionSeparator,
-#informationSeparator { background-color: @sectionSeparator@; border: none; }
+#informationSeparator { background-color: @borderPrimary@; border: none; }
 QWidget#inspectorTabBar {
     background-color: @bgSecondary@;
     border-bottom: @borderWidth@px solid @borderPrimary@;
@@ -1933,9 +1906,9 @@ QWidget#inspectorTabBar QToolButton[sideBar="true"]:checked {
 QWidget#inspectorTabContent[sideBar="true"] {
     border-top: @borderWidth@px solid @borderPrimary@;
 }
-QScrollArea[inspectorTabPage="true"] { border: @borderWidth@px solid @viewBorder@; }
+QScrollArea[inspectorTabPage="true"] { border: @borderWidth@px solid @borderPrimary@; }
 QLabel[bindingUnit="dB"],
-QLabel[bindingUnit="cent"] { color: @textMuted@; }
+QLabel[bindingUnit="cent"] { color: @textSecondary@; }
 
 QWidget[surfaceRole="secondary"],
 QWidget[surfaceRole="popup"] { background-color: @bgSecondary@; }
@@ -1996,7 +1969,7 @@ QLabel#meterPeakLabelL,
 QLabel#meterPeakLabelR { color: @accent@; @captionFont@ }
 QLabel#meterClipIndicator {
     background: @bgTertiary@;
-    color: @textMuted@;
+    color: @textSecondary@;
     @captionFont@
     font-weight: @emphasisWeight@;
     border-radius: @radiusSmall@px;
@@ -2118,7 +2091,7 @@ QLabel#MonitorWaveformGap,
 QLabel#MonitorScopeGap,
 QLabel#MonitorSpectrumGap,
 QLabel#MonitorPlaceholderMessage {
-    color: @textMuted@;
+    color: @textSecondary@;
 }
 QLabel#MonitorPerformanceCursor {
     color: @textSecondary@;
@@ -2152,7 +2125,7 @@ QSplitter[splitterRole="border"]::handle:enabled:hover {
 QStatusBar {
     background-color: @window@;
     border: none;
-    color: @textMuted@;
+    color: @textSecondary@;
 }
 
 QStatusBar::item {
@@ -2163,7 +2136,7 @@ QStatusBar::item {
    which shows as stray blocks on the raised bar — neutralize both. */
 QStatusBar QLabel {
     background-color: transparent;
-    color: @textMuted@;
+    color: @textSecondary@;
 }
 
 QPushButton#statusLogButton {
@@ -2224,7 +2197,7 @@ QDialog QLabel {
 #titleBarMin,
 #titleBarMax,
 #titleBarClose {
-    color: @shellButtonText@;
+    color: @textSecondary@;
     font-weight: @regularWeight@;
     margin: 0;
     padding: 0;
@@ -2244,7 +2217,7 @@ QDialog QLabel {
 
 #titleBarClose:pressed:enabled {
     background-color: @shellClosePressed@;
-    color: @shellButtonHoverText@;
+    color: @shellCloseText@;
 }
 
 #titleBarMenuBar {
@@ -2260,12 +2233,12 @@ QDialog QLabel {
     padding-right: @spacingMedium@px;
     margin: 0;
     border-radius: 0;
-    color: @shellMenuText@;
+    color: @textPrimary@;
 }
 
 #titleBarMenuBar::item:selected {
     background-color: @bgHover@;
-    color: @shellMenuHoverText@;
+    color: @textPrimary@;
 }
 
 #titleBarMenuBar::item:pressed {

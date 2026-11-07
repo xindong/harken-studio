@@ -514,9 +514,9 @@ void SourcesTreeWidget::drawRow(QPainter* painter, const QStyleOptionViewItem& o
         TreeRowStyle::paintRowAccent(painter, options.rect);
     if (index == dropFolder_) {
         painter->save();
-        painter->fillRect(options.rect, ThemeManager::instance().colors().dropHighlight);
+        painter->fillRect(options.rect, ThemeManager::instance().colors().bgSelected);
         painter->fillRect(QRect(options.rect.left(), options.rect.top(), ThemeManager::instance().metrics().accentBorderWidth, options.rect.height()),
-                          ThemeManager::instance().colors().dropAccent);
+                          ThemeManager::instance().colors().accent);
         painter->restore();
     }
 }

@@ -68,8 +68,9 @@ TimelineStyleView TimelineMarkerRuler::styleView() const
     const auto snapshot = ThemeManager::instance().snapshot();
     style.canvasBackground = snapshot->ui.colors.bgSecondary;
     style.canvasBorder = snapshot->ui.colors.borderPrimary;
-    style.placeholderText = snapshot->ui.colors.textMuted;
+    style.placeholderText = snapshot->ui.colors.textSecondary;
     style.axisText = snapshot->ui.colors.textSecondary;
+    style.textPrimary = snapshot->ui.colors.textPrimary;
     style.uniformTimeAxisGrid = snapshot->ui.colors.borderTick;
     style.trackBackground = snapshot->ui.colors.trackBackground;
     style.trackBackgroundAlt = snapshot->ui.colors.trackBackgroundAlt;

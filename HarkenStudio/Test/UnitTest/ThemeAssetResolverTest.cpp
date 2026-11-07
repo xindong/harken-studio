@@ -57,13 +57,13 @@ bool writePackage(const QString& themesRoot,
                      R"json({"colors":{"accent.primary":"#ff00f0ff"}})json")
         && writeFile(QDir(packageRoot).filePath(
                          QStringLiteral("visuals/curve.json")),
-                     R"json({"colors":{"curve.line":"#ff112233"}})json")
+                     R"json({"colors":{"curve.attenuationVolume":"#ff112233"}})json")
         && writeFile(QDir(packageRoot).filePath(
                          QStringLiteral("visuals/meter.json")),
-                     R"json({"colors":{"meter.green":"#ff22aa44"}})json")
+                     R"json({"colors":{"meter.spectrum.fillTop":"#ff22aa44"}})json")
         && writeFile(QDir(packageRoot).filePath(
                          QStringLiteral("visuals/waveform.json")),
-                     R"json({"colors":{"waveform.line":"#ff334455"}})json")
+                     R"json({"colors":{"waveform.rawPeaks.centerLine":"#ff334455"}})json")
         && writeFile(QDir(packageRoot).filePath(QStringLiteral("assets.json")),
                      assets);
 }

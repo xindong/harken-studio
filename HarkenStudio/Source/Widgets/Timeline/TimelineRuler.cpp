@@ -164,8 +164,9 @@ TimelineStyleView TimelineRuler::styleView() const
     const auto snapshot = ThemeManager::instance().snapshot();
     style.canvasBackground = snapshot->ui.colors.bgSecondary;
     style.canvasBorder = snapshot->ui.colors.borderPrimary;
-    style.placeholderText = snapshot->ui.colors.textMuted;
+    style.placeholderText = snapshot->ui.colors.textSecondary;
     style.axisText = snapshot->ui.colors.textSecondary;
+    style.textPrimary = snapshot->ui.colors.textPrimary;
     style.trackBackground = snapshot->ui.colors.trackBackground;
     style.trackBackgroundAlt = snapshot->ui.colors.trackBackgroundAlt;
     style.timeline = snapshot->domains.timeline;
@@ -201,9 +202,12 @@ void TimelineRuler::paintEvent(QPaintEvent*)
     if (!grip.isEmpty()) {
         const int x = headerWidth + panel_->viewportPixelAtCoordinate(0, panel_->editCursor());
         const bool highlighted = panel_->isCursorDragActive() || panel_->isCursorHovered();
-        const QColor color = highlighted ? style.music.cursor.lighter(130) : style.music.cursor;
+        const QColor color = highlighted
+            ? themeStateColor(style.music.cursor, style.textPrimary, ThemeStateLayer::Emphasis)
+            : style.music.cursor;
         TimelineRenderer::drawCursorLine(painter, color, x, timeAxisRect());
-        TimelineRenderer::drawCursorHandle(painter, color, grip);
+        TimelineRenderer::drawCursorHandle(painter, color,
+            themeStateColor(color, style.textPrimary, ThemeStateLayer::Emphasis), grip);
     }
 }
 
