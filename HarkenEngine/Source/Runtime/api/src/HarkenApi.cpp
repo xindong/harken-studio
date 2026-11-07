@@ -697,7 +697,7 @@ bool EnsurePlayableTimelineWindowAtFrame(harken::Engine& engine,
 bool ServiceScheduleSourceCohorts(harken::Engine& engine, harken::EnginePlayableServiceRow& row,
     bool cancel, std::uint64_t* blockingFrame) noexcept;
 bool RegisterSharedScheduleSourceCensus(harken::Engine& engine,
-    harken::EnginePlayableServiceRow& row) noexcept;
+    harken::EnginePlayableServiceRow& row, std::uint64_t nativeEntryFrame = 0) noexcept;
 
 bool EnsureImmediatePlayableTimelineWindow(harken::Engine& engine,
     std::uint64_t* admittedFrame, bool actionRecheck) noexcept;
@@ -12596,8 +12596,8 @@ struct PlayableStorageBases {
 };
 
 bool RegisterScheduleSourcePublicationWork(harken::Engine& engine,
-    const harken::EnginePlayableServiceRow& row) noexcept {
-    if (!row.scheduleSourceSyncOwner.Valid() ||
+    const harken::EnginePlayableServiceRow& row, bool anchor = false) noexcept {
+    if ((!row.scheduleSourceSyncOwner.Valid() && !anchor) ||
         engine.scheduleSourceServicePhase == harken::EngineScheduleSourceServicePhase::Idle) return true;
     const auto reference = PlayableServiceReference(row);
     if (std::any_of(engine.scheduleSourcePublicationWork.begin(), engine.scheduleSourcePublicationWork.end(),
@@ -32757,7 +32757,9 @@ QueueContinuationPrepareStatus ValidateQueueSuccessorTarget(
 
 bool ValidateRetiredQueueSingleCurrent(harken::Engine& engine,
     harken::EnginePlayableServiceRow& row, const harken::RetiredQueueSourceProof& retired) noexcept {
-    const auto observed = engine.mixer.BlocksRendered();
+    const auto observed = row.scheduleSourceSyncOwner.Valid() &&
+        engine.scheduleSourceServicePhase == harken::EngineScheduleSourceServicePhase::Settling
+        ? engine.scheduleSourceObservedAudioSequence : engine.mixer.BlocksRendered();
     if (row.scheduleLeafCount != 0 || row.QueuePayload().queueCurrentScheduleLeafCount > 1u ||
         row.QueuePayload().queueCurrentCompositeOwner.Valid() || row.memberRelationCount != 0 ||
         engine.FindLogicalPlayableMember(row.scheduleStorageBase) != nullptr ||
@@ -41966,7 +41968,9 @@ bool CaptureRetiredQueueSourceProof(const harken::Engine& engine,
         !harken::Engine::SameOriginalSingleArm(record.arm, row.arm)) return false;
     harken::SourceTerminalPayload terminal{};
     std::uint64_t completedSequence = 0;
-    const auto observed = engine.mixer.BlocksRendered();
+    const auto observed = row.scheduleSourceSyncOwner.Valid() &&
+        engine.scheduleSourceServicePhase == harken::EngineScheduleSourceServicePhase::Settling
+        ? engine.scheduleSourceObservedAudioSequence : engine.mixer.BlocksRendered();
     const auto* source = engine.sourceTerminals.Resolve(member.source);
     if (source != nullptr) {
         if (!engine.voices.ReleaseObserved(source->release) ||
@@ -55690,6 +55694,8 @@ DirectPendingStartResult PreparePrivateInitialNativePlacement(harken::Engine& en
                 return true;
             });
     }
+    for (auto* row : rows)
+        if (!RegisterSharedScheduleSourceCensus(engine, *row)) return Result::Refused;
     if (!VisitInitialScheduleAttempts(engine, root, [&](auto& attempt) {
             for (const auto& admission : attempt.initialSourceAdmissions)
                 admission->entryFrame += shift;
@@ -56323,6 +56329,8 @@ DirectPendingStartResult BindAcknowledgedDirectStart(harken::Engine& engine,
         if (members[index] != nullptr) members[index]->startFrame += shift;
         engine.timelineVoiceInstallIdentities[armInputs[index].arm.renderSlot].onsetFrame += shift;
     }
+    if (!visitRows([&](auto& owner) noexcept { return RegisterSharedScheduleSourceCensus(engine, owner); }))
+        return Result::Refused;
     for (std::uint32_t index = 0; index < count; ++index) {
         const auto use = installations[index].initialVariableReadUse;
         if (use.Valid()) engine.variables.ApplyFixedTimelineReadUseOnset(use, arms);
@@ -56345,6 +56353,7 @@ DirectPendingStartResult BindAcknowledgedDirectStart(harken::Engine& engine,
         if (released) {
             for (std::uint32_t cursor = 0; auto* service = engine.NextOccupiedPlayableService(&cursor);)
                 if (service->scheduleAggregate != nullptr &&
+                    !service->scheduleSourceSyncOwner.Valid() &&
                     (service == &row || IsPlayableServiceDescendant(engine, *service, row)))
                     (void)ServiceScheduleSourceCohorts(engine, *service, false, nullptr);
         }
@@ -56387,13 +56396,24 @@ bool SharedScheduleSourceCompletionPending(const harken::Engine& engine,
 }
 
 void PublishSharedScheduleSources(harken::Engine& engine, std::uint64_t* blockingFrame) noexcept {
+    const auto ownerCancelling = [&](const auto& row) noexcept {
+        const auto* owner = engine.ResolvePlayableService(row.scheduleSourceSyncOwner);
+        return owner != nullptr && (owner->phase == harken::EnginePlayableStartPhase::Cancelling ||
+            owner->pendingCancellationIntent != 0 ||
+            owner->controlLifecycle == harken::PlayableControlLifecycle::FailingSourceActive ||
+            owner->controlLifecycle == harken::PlayableControlLifecycle::FailingAudibleRetiring);
+    };
     // Census every existing aggregate before any member can seal its onset.
     for (std::size_t index = 0; index < engine.scheduleSourcePublicationWork.size(); ++index) {
         const auto reference = engine.scheduleSourcePublicationWork[index];
         auto* row = engine.ResolvePlayableService(reference);
         if (row != nullptr && row->phase != harken::EnginePlayableStartPhase::Cancelling &&
+            row->pendingCancellationIntent == 0 &&
+            !ownerCancelling(*row) &&
             !RegisterSharedScheduleSourceCensus(engine, *row)) {
-            row->controlReason = harken::PlayableControlReason::ContentRevision;
+            row->controlReason = engine.variables.CurrentPlayableWorld().generation != row->Invocation().worldGeneration
+                ? harken::PlayableControlReason::ContentRevision : harken::PlayableControlReason::StartRefused;
+            row->controlLifecycle = harken::PlayableControlLifecycle::FailingSourceActive;
             row->sourceCohortFailureOwner = {};
             (void)harken::StopPlayable(engine, row->rootInstance, 0);
         }
@@ -56402,7 +56422,7 @@ void PublishSharedScheduleSources(harken::Engine& engine, std::uint64_t* blockin
         const auto reference = engine.scheduleSourcePublicationWork[index];
         auto* row = engine.ResolvePlayableService(reference);
         if (row == nullptr || row->phase == harken::EnginePlayableStartPhase::Cancelling ||
-            row->pendingCancellationIntent != 0) continue;
+            row->pendingCancellationIntent != 0 || ownerCancelling(*row)) continue;
         if (auto* native = FindPendingPrivateInitialNativeRoot(engine, *row); native != nullptr) {
             if (native->row != row) continue;
             const auto placement = PreparePrivateInitialNativePlacement(engine, *native);
@@ -56487,6 +56507,12 @@ void ServicePlayableStarts(harken::Engine& engine,
         if (!collectionComplete) {
             while (auto* row = engine.NextOccupiedPlayableService(&serviceCursor)) {
                 if (!HasSharedScheduleSourceSettlement(engine, *row)) return row;
+                const auto reference = PlayableServiceReference(*row);
+                // A factory already queued this new generation for publication.
+                // It has no old audio completion to settle in this invocation.
+                if (std::any_of(engine.scheduleSourcePublicationWork.begin(), engine.scheduleSourcePublicationWork.end(),
+                        [&](const auto& existing) { return harken::Engine::SameSelectionServiceReference(existing, reference); }))
+                    continue;
                 std::size_t depth = 0;
                 for (auto parent = row->parentService; parent.Valid() && depth < engine.playableServices.size(); ++depth) {
                     const auto* actual = engine.ResolvePlayableService(parent);
@@ -56494,11 +56520,8 @@ void ServicePlayableStarts(harken::Engine& engine,
                     parent = actual->parentService;
                 }
                 try {
-                    engine.scheduleSourceSettlementWork.push_back({PlayableServiceReference(*row), depth});
-                    const auto reference = PlayableServiceReference(*row);
-                    if (std::none_of(engine.scheduleSourcePublicationWork.begin(), engine.scheduleSourcePublicationWork.end(),
-                            [&](const auto& existing) { return harken::Engine::SameSelectionServiceReference(existing, reference); }))
-                        engine.scheduleSourcePublicationWork.push_back(reference);
+                    engine.scheduleSourceSettlementWork.push_back({reference, depth});
+                    engine.scheduleSourcePublicationWork.push_back(reference);
                 } catch (const std::bad_alloc&) {
                     if (blockingFrame != nullptr) *blockingFrame = std::min(*blockingFrame, row->startFrame);
                     return nullptr;
@@ -61470,6 +61493,7 @@ engine.runtimeRecreateRequired = true;
                     observedAudioSequence > UINT64_MAX / blockFrames
                         ? UINT64_MAX
                         : observedAudioSequence * blockFrames;
+                if (SharedScheduleSourceCompletionPending(engine, row, arm.logicalCompletionSequence)) continue;
                 const bool waitingForZeroWorkCompletion =
                     row.hasZeroWorkCompletion &&
                     (row.controlLifecycle ==
@@ -61650,7 +61674,6 @@ engine.runtimeRecreateRequired = true;
                         }
                     }
                 }
-                if (SharedScheduleSourceCompletionPending(engine, row, arm.logicalCompletionSequence)) continue;
                 if (arm.logicalCompletionSequence != 0 &&
                     !waitingForZeroWorkCompletion) {
                     if (row.queueMode && (row.variableControlInstance.Valid() || row.parentService.Valid()) &&
@@ -91624,7 +91647,8 @@ bool CaptureScheduleTargetFade(harken::EngineScheduleAggregateChild& record,
 }
 
 bool RegisterSharedScheduleSourceMember(harken::Engine& engine, const harken::PlayableWorldViewV1& world,
-    harken::EnginePlayableServiceRow& parent, harken::EngineScheduleAggregateChild& child) noexcept {
+    harken::EnginePlayableServiceRow& parent, harken::EngineScheduleAggregateChild& child,
+    std::uint64_t nativeEntryFrame) noexcept {
     auto* owner = engine.ResolvePlayableService(parent.scheduleSourceSyncOwner);
     if (owner == nullptr || owner->scheduleAggregate == nullptr ||
         !IsPlayableServiceDescendant(engine, parent, *owner) ||
@@ -91633,6 +91657,10 @@ bool RegisterSharedScheduleSourceMember(harken::Engine& engine, const harken::Pl
     std::uint64_t onset = 0, end = UINT64_MAX;
     if (!ResolveScheduleAggregateChildFrames(child, parent.startFrame, &onset, &end)) return false;
     if (onset <= owner->startFrame || child.logicalComplete || child.resourcesReleased) return true;
+    if (nativeEntryFrame != 0) {
+        if (onset < nativeEntryFrame) return false;
+        if (onset == nativeEntryFrame) return true;
+    }
     if (child.sourceCohort != nullptr)
         return engine.ResolvePlayableService(child.sourceCohort->owner) == owner &&
             std::count_if(child.sourceCohort->children.begin(), child.sourceCohort->children.end(),
@@ -91732,7 +91760,7 @@ bool RegisterSharedScheduleSourceMember(harken::Engine& engine, const harken::Pl
 }
 
 bool RegisterSharedScheduleSourceCensus(harken::Engine& engine,
-    harken::EnginePlayableServiceRow& row) noexcept {
+    harken::EnginePlayableServiceRow& row, std::uint64_t nativeEntryFrame) noexcept {
     if (!row.scheduleSourceSyncOwner.Valid() || row.scheduleAggregate == nullptr) return true;
     const auto world = engine.variables.CurrentPlayableWorld();
     if (world.generation != row.Invocation().worldGeneration) return false;
@@ -91747,8 +91775,26 @@ bool RegisterSharedScheduleSourceCensus(harken::Engine& engine,
             return true;
         })) return false;
     return row.scheduleAggregate->VisitChildren([&](auto& child) noexcept {
-        return RegisterSharedScheduleSourceMember(engine, world, row, child);
+        return RegisterSharedScheduleSourceMember(engine, world, row, child, nativeEntryFrame);
     });
+}
+
+bool ResolveSharedScheduleInitialBoundary(harken::Engine& engine,
+    harken::EngineFrontierAttemptToken forest, const harken::EnginePlayableServiceRow& row,
+    std::uint64_t* initialFrame) noexcept {
+    const auto* owner = engine.ResolvePlayableService(row.scheduleSourceSyncOwner);
+    if (owner == nullptr || initialFrame == nullptr) return false;
+    *initialFrame = owner->startFrame;
+    const auto* native = FindFrontierAttempt(engine, forest);
+    if (native == nullptr || !IsScheduleSourceNativeForest(engine, *native)) return true;
+    const auto* cohort = native->pendingScheduleChild->sourceCohort;
+    if (cohort == nullptr || engine.ResolvePlayableService(cohort->owner) != owner ||
+        native->row == nullptr || !IsPlayableServiceDescendant(engine, row, *native->row) ||
+        native->continuationOrder.executeFrame != cohort->onset) return false;
+    // The original native entry still owns its simultaneous Sources. Only its
+    // later records participate in the surrounding future-source census.
+    *initialFrame = native->continuationOrder.executeFrame;
+    return true;
 }
 
 bool ReplaceScheduleSourceMember(ContainerPreparationContext& context,
@@ -98293,6 +98339,13 @@ bool PrepareScheduleSourceCohortMetadata(ContainerPreparationContext& context,
         row.scheduleSourceSyncOwner = PlayableServiceReference(row);
     if (row.scheduleSourceSyncOwner.Valid()) {
         if (!RegisterScheduleSourcePublicationWork(engine, row)) return false;
+        std::size_t depth = 0;
+        for (auto parent = row.parentService; parent.Valid(); ++depth) {
+            if (depth >= engine.playableServices.size()) return false;
+            const auto* ancestor = engine.ResolvePlayableService(parent);
+            if (ancestor == nullptr || !RegisterScheduleSourcePublicationWork(engine, *ancestor, true)) return false;
+            parent = ancestor->parentService;
+        }
         auto* syncOwner = engine.ResolvePlayableService(row.scheduleSourceSyncOwner);
         if (syncOwner == nullptr || syncOwner->scheduleAggregate == nullptr) return false;
         syncOwner->scheduleAggregate->sourceScopeMayAppend |= retainedSchedulePeer || repeatedStream ||
@@ -98309,7 +98362,10 @@ bool PrepareScheduleSourceCohortMetadata(ContainerPreparationContext& context,
             cohort.children.erase(member);
             context.scheduleChild->sourceCohort = nullptr;
         }
-        return RegisterSharedScheduleSourceCensus(engine, row);
+        std::uint64_t initialFrame = 0;
+        if (!ResolveSharedScheduleInitialBoundary(engine, context.initialNativeForestOwner, row, &initialFrame)) return false;
+        return RegisterSharedScheduleSourceCensus(engine, row,
+            initialFrame != syncOwner->startFrame ? initialFrame : 0);
     }
     if (!needed) return true;
     const auto capacity = std::min<std::uint32_t>(engine.config.maxArmsPerGroup,
@@ -98599,9 +98655,9 @@ bool PrepareMixedScheduleExecution(ContainerPreparationContext& context,
                 &childContext.startFrame, &childContext.endFrame)) return false;
         childContext.endFrame = std::min(childContext.endFrame, context.endFrame);
         if (record.content.kind == harken::PlayableKindV1::Sound && row->scheduleSourceSyncOwner.Valid()) {
-            const auto* syncOwner = engine.ResolvePlayableService(row->scheduleSourceSyncOwner);
-            if (syncOwner == nullptr) return false;
-            if (childContext.startFrame > syncOwner->startFrame) {
+            std::uint64_t initialFrame = 0;
+            if (!ResolveSharedScheduleInitialBoundary(engine, scratch.initialNativeForestOwner, *row, &initialFrame)) return false;
+            if (childContext.startFrame > initialFrame) {
                 record.pendingEntry = true;
                 continue;
             }
