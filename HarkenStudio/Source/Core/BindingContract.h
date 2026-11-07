@@ -28,6 +28,7 @@ enum class BindingOutputUnit : uint8_t
     Normalized = 3,
     Percent = 4,
     Dimensionless = 5,
+    Hertz = 6,
 };
 
 enum class BindingCombine : uint8_t
@@ -43,6 +44,12 @@ enum class BindingHostClass : uint8_t
     Bus = 1,
     SendElement = 2,
     EffectParam = 3,
+};
+
+enum class BindingTargetFamily : uint8_t
+{
+    Playable = 0,
+    Filter = 1,
 };
 
 struct BindingOutputRange
@@ -61,10 +68,12 @@ struct BindingAddress
     BindingHostClass hostClass = BindingHostClass::Voice;
     uint8_t slotId = 0;
     std::optional<BindingPath> path;
+    BindingTargetFamily family = BindingTargetFamily::Playable;
 
     bool operator==(const BindingAddress& other) const
     {
         return hostClass == other.hostClass
+            && family == other.family
             && slotId == other.slotId
             && path.has_value() == other.path.has_value()
             && (!path || path->index == other.path->index);
@@ -99,6 +108,7 @@ std::optional<uint8_t> slotIdFromDescriptor(const PropertyDescriptor& descriptor
 BindingHostClass hostClassOf(ProjectItemType type) noexcept;
 
 BindingContract derive(uint8_t slotId, ProjectItemType hostType);
+BindingContract derive(const BindingAddress& address);
 BindingContract derive(const PropertyDescriptor& descriptor,
                        ProjectItemType hostType);
 
@@ -109,10 +119,12 @@ inline bool isBindable(const BindingContract& contract)
 
 inline bool previewAudible(const BindingContract& contract)
 {
-    return isBindable(contract) && contract.hostClass == BindingHostClass::Bus;
+    return isBindable(contract) && !contract.runtimeUnimplemented
+        && contract.hostClass == BindingHostClass::Bus;
 }
 
 BindingAddress addressOf(uint8_t slotId, ProjectItemType hostType);
+BindingAddress filterAddress(uint8_t slotId, ProjectItemType hostType);
 std::optional<BindingAddress> addressFromDescriptor(
     const PropertyDescriptor& descriptor, ProjectItemType hostType);
 

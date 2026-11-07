@@ -9,6 +9,8 @@ StartupArguments StartupArguments::parse(const QStringList& args)
 {
     StartupArguments arguments;
     arguments.createProject = args.contains(QStringLiteral("--create-project"));
+    arguments.shell = args.contains(QStringLiteral("--shell"));
+    arguments.shellJson = args.contains(QStringLiteral("--json"));
     for (int i = 1; i + 1 < args.size(); ++i) {
         const QString& key = args.at(i);
         const QString& value = args.at(i + 1);

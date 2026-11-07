@@ -539,6 +539,9 @@ void MainWindow::initializeStructure(
             connect(ed, &ExternalEditorPanel::panelFocused, this, [this](int panelId) {
                 panelRegistry_->setLastFocusedPanelId(QStringLiteral("ExternalEditor"), panelId);
             });
+            connect(ed, &ExternalEditorPanel::externalEditorRequested, this,
+                [this](const ExternalEditorSelection& selection) { openExternalEditor(selection); },
+                Qt::QueuedConnection);
             connect(ed, &ExternalEditorPanel::navigateRequested, this, [this](const QUuid& guid) {
                 if (auto* item = ProjectManager::instance().findItemByGuid(guid))
                     selectionRouter_->selectItem(item, true);
@@ -4143,6 +4146,17 @@ void MainWindow::rebuildLayoutsMenu()
         layoutController_->rebuildLayoutsMenu();
 }
 
+bool MainWindow::closeFromShell(bool discard)
+{
+    QScopedValueRollback<bool> discardGuard(discardChangesOnClose_, discard);
+    QScopedValueRollback<bool> shellGuard(shellClosing_, true);
+    const bool quitOnClose = QApplication::quitOnLastWindowClosed();
+    QApplication::setQuitOnLastWindowClosed(false);
+    const bool closed = close();
+    QApplication::setQuitOnLastWindowClosed(quitOnClose);
+    return closed;
+}
+
 void MainWindow::closeEvent(QCloseEvent* event)
 {
     if (PackGenerationRecordStore::instance().isExporting()) {
@@ -4150,13 +4164,20 @@ void MainWindow::closeEvent(QCloseEvent* event)
         event->ignore();
         return;
     }
-    if (maybeSave())
+    if (discardChangesOnClose_ || maybeSave())
     {
         saveProjectLayout();
         saveSettings();
+        auto& projectManager = ProjectManager::instance();
+        if (projectManager.isProjectOpen() && !projectManager.closeProject()) {
+            event->ignore();
+            return;
+        }
         event->accept();
         if (startupPresentationPrepared_)
             finishStartupPresentation(false);
+        if (!shellClosing_)
+            QTimer::singleShot(0, qApp, &QCoreApplication::quit);
     }
     else
     {
@@ -4208,7 +4229,9 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event)
 bool MainWindow::maybeSave()
 {
     finishProjectSettingsEditing();
-    if (!projectModified_)
+    PropertyEditSession::finishAllActive(true);
+    auto& projectManager = ProjectManager::instance();
+    if (!projectManager.hasUnsavedChanges())
         return true;
     
     QMessageBox::StandardButton ret = QMessageBox::warning(this, tr("Harken Studio"),
@@ -4218,7 +4241,7 @@ bool MainWindow::maybeSave()
     if (ret == QMessageBox::Save)
     {
         onSaveProject();
-        return !projectModified_;
+        return !projectManager.hasUnsavedChanges();
     }
     else if (ret == QMessageBox::Cancel)
     {

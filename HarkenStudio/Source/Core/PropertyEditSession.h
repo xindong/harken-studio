@@ -44,6 +44,7 @@ public:
     static void cancelActiveFor(ProjectItem* owner,
                                 const PlayablePropertyLocatorV1& locator,
                                 uint8_t propertyId);
+    static void cancelActiveFor(ProjectItem* owner, const QString& field);
 
     bool isActive() const { return state_ == State::Active; }
     const QVariant& startValue() const { return startValue_; }
@@ -58,6 +59,10 @@ private:
     void restorePlayableStart();
     bool previewPlayable(const QJsonValue& json);
     bool playableStateChanged() const;
+    void captureFilterStart();
+    void restoreFilterStart();
+    bool previewFilter(const QJsonValue& value);
+    bool filterStateChanged() const;
 
     ProjectItem* item_;
     QString propertyName_;
@@ -66,6 +71,7 @@ private:
     const QObject* originator_ = nullptr;
     std::optional<PlayablePropertyLocatorV1> playableLocator_;
     std::optional<PlayableStartSnapshot> playableStartState_;
+    std::optional<PlayableStartSnapshot> filterStartState_;
     std::optional<QVector<ProjectPlatformId>> platforms_;
     uint8_t playablePropertyId_ = 0;
     enum class State { Active, Committed, Cancelled } state_ = State::Active;

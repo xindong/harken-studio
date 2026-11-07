@@ -7321,8 +7321,9 @@ public:
             !playableMemberRecords.Reserve(static_cast<std::uint32_t>(playableMemberCapacity)) ||
             !memberRelations.Reserve(static_cast<std::uint32_t>(playableStorage.memberCount)) ||
             !variableControlRetargetPrograms.Reserve(resolved.maxScheduledTransactions) ||
-            !memberOnsets.Reserve(static_cast<std::uint32_t>(playableStorage.memberCount)) ||
+            !memberOnsets.Reserve(static_cast<std::uint32_t>(playableMemberCapacity)) ||
             !playableServiceWork.Reserve(resolved.maxPlayableInstances) ||
+            !scheduleAggregateDue.Reserve(resolved.maxPlayableInstances) ||
             !originalSinglePreparationHolders.Reserve(timelineArms.Capacity()) ||
             !originalQueueSourcePreparationHolders.Reserve(timelineArms.Capacity()))
             throw std::bad_alloc{};
@@ -8465,8 +8466,7 @@ public:
         PlayableInstanceHandle owner, std::uint64_t epoch, EnginePlayableStartRow& invocation,
         bool rootService, EngineActionPlayScratch::PreparedVariableControlOwnerContext* context,
         EngineActionPlayStorage* preparingStorage = nullptr,
-        const EnginePlayableServiceRow* preparingParent = nullptr,
-        bool requireMemberOnsets = true) noexcept {
+        const EnginePlayableServiceRow* preparingParent = nullptr) noexcept {
         if (owner == 0 || epoch == 0 || row.phase != EnginePlayableStartPhase::Free ||
             row.actionPrepared || row.partition.Valid() || row.quarantined || invocation.quarantined ||
             invocation.generation == 0 || invocation.serviceCount == UINT32_MAX ||
@@ -8524,22 +8524,6 @@ public:
         if (!partition.Valid()) {
             if (playablePartitions.OriginalStorageIssuerExhausted()) runtimeRecreateRequired = true;
             return false;
-        }
-        // Inline root Sounds have no member rows. Nested Sounds can still own
-        // member state through a variable-control ancestor.
-        if (requireMemberOnsets || !rootService) {
-            const auto memberBase = playableStorage.MemberBase(partition.slot);
-            const auto memberEnd = memberBase + playableStorage.memberStride;
-            for (auto slot = memberBase; slot < memberEnd;
-                 slot = (slot / 256u + 1u) * 256u) {
-                if (memberOnsets.Prepare({epoch, static_cast<std::uint32_t>(slot), 0})) continue;
-                original.baseline_.Return();
-                const bool cancelled = playablePartitions.Cancel(partition, row.identity);
-                assert(cancelled);
-                (void)cancelled;
-                if (context != nullptr) context->DiscardUnassociatedServiceReservation();
-                return false;
-            }
         }
         row.invocation = &invocation;
         row.invocationGeneration = invocation.generation;
@@ -12032,7 +12016,9 @@ public:
         auto* rootOriginal = ResolveOriginalPlayableBaseline(this, playableInstances, root);
         auto* arrangingOriginal = ResolveOriginalPlayableBaseline(this, playableInstances, arranging);
         const auto slot = static_cast<std::uint32_t>(arranging);
-        if (rootOriginal == nullptr || arrangingOriginal == nullptr || slot >= originalSingleCurrentHolders.size()) return false;
+        if (rootOriginal == nullptr || arrangingOriginal == nullptr ||
+            slot >= originalSingleCurrentHolders.Capacity() ||
+            !PrepareOriginalSingleCurrentStorage(slot + 1u)) return false;
         auto& holder = originalSingleCurrentHolders[slot];
         if (holder.state == OriginalSingleCurrentHolder::State::Ending && !holder.ResetAfterNativeRetirement(*this)) return false;
         if (holder.state != OriginalSingleCurrentHolder::State::Empty || holder.bundle.Valid()) return false;
@@ -14168,8 +14154,6 @@ public:
     }
 
     bool PreparePlayableMemberDirectory(EnginePlayableServiceRow& row) noexcept {
-        if (!row.HasFeatureArrays() &&
-            (playableServices.PreparedUseActive() || !row.PrepareFeatureArrays())) return false;
         if (row.members.size() == playableStorage.memberStride) return true;
         if (memguard::IsAudioTagged() || playableMemberRecords.PreparedUseActive()) return false;
         try { row.members.resize(playableStorage.memberStride); }
@@ -14179,10 +14163,15 @@ public:
     static bool PlayableMemberReusable(const EnginePlayableMemberRecord& record) noexcept {
         return !record.occupied && record.generation != UINT64_MAX;
     }
+    bool PreparePlayableMemberRecord(std::uint32_t slot) noexcept {
+        // Prepare the observation page before constructing a reusable record.
+        // A failed page preparation must not leave a falsely ready record.
+        return memberOnsets.Prepare({1, slot, 0}) && playableMemberRecords.Emplace(slot);
+    }
     bool PreparePlayableMemberBacking(std::uint32_t count,
         StableSlotStorage<EnginePlayableMemberRecord>::Preparation* out) noexcept {
         return playableMemberRecords.PrepareBacking(count, 0, PlayableMemberReusable,
-            [this](std::uint32_t slot) noexcept { return playableMemberRecords.Emplace(slot); }, out);
+            [this](std::uint32_t slot) noexcept { return PreparePlayableMemberRecord(slot); }, out);
     }
     EnginePlayableMemberRecord* FindPlayableMember(EnginePlayableMemberToken token) noexcept {
         if (!token.Valid() || !playableMemberRecords.IsConstructed(token.slot)) return nullptr;
@@ -14260,12 +14249,12 @@ public:
         for (std::uint32_t slot = 0; slot < playableMemberRecords.size(); ++slot) {
             if (!playableMemberRecords.IsConstructed(slot)) {
                 if (playableMemberRecords.PreparedUseActive()) continue;
-                if (!playableMemberRecords.Emplace(slot)) return {};
+                if (!PreparePlayableMemberRecord(slot)) return {};
             }
             auto& record = playableMemberRecords[slot];
             if (!PlayableMemberReusable(record)) continue;
             if (!playableMemberRecords.ProtectBackingForAcquire(slot, PlayableMemberReusable,
-                    [this](std::uint32_t next) noexcept { return playableMemberRecords.Emplace(next); })) return {};
+                    [this](std::uint32_t next) noexcept { return PreparePlayableMemberRecord(next); })) return {};
             record.occupied = true;
             ++record.generation;
             return {slot, record.generation};
@@ -14579,10 +14568,14 @@ public:
              scratch.extraCommands.ConstructThrough(scratch.extraCommands.Capacity()) &&
              scratch.queueEvents.ConstructThrough(scratch.queueEvents.Capacity())));
     }
-    bool PrepareOriginalSingleCurrentStorage() noexcept {
-        if (originalSingleCurrentHolders.size() == originalSingleCurrentHolders.Capacity()) return true;
+    bool PrepareOriginalSingleCurrentStorage(std::size_t count) noexcept {
+        if (count > originalSingleCurrentHolders.Capacity()) return false;
+        if (originalSingleCurrentHolders.size() >= count) return true;
         if (memguard::IsAudioTagged() || playableServices.PreparedUseActive()) return false;
-        return originalSingleCurrentHolders.ConstructThrough(originalSingleCurrentHolders.Capacity());
+        return originalSingleCurrentHolders.ConstructThrough(count);
+    }
+    bool PrepareOriginalSingleCurrentStorage() noexcept {
+        return PrepareOriginalSingleCurrentStorage(originalSingleCurrentHolders.Capacity());
     }
     bool PreparePlayableFeatureBacking() noexcept {
         if (!PrepareOriginalSingleCurrentStorage() || !PreparePlayablePublicationStorage() ||
@@ -14593,12 +14586,11 @@ public:
         }
         return true;
     }
-    bool PrepareOriginalPlayableStorage(bool needsCurrentHolders = true,
+    bool PrepareOriginalPlayableStorage(bool needsCompleteInstanceStorage = true,
         std::uint32_t independentRoots = 1u) noexcept {
-        return (needsCurrentHolders ? playableInstances.PrepareStorage()
+        return (needsCompleteInstanceStorage ? playableInstances.PrepareStorage()
                 : playableInstances.PrepareStorageForAcquire(independentRoots)) &&
-            originalPlayableLifetimeHolders.ConstructThrough(playableInstances.ConstructedEntryCount()) &&
-            (!needsCurrentHolders || PrepareOriginalSingleCurrentStorage());
+            originalPlayableLifetimeHolders.ConstructThrough(playableInstances.ConstructedEntryCount());
     }
     bool PreparePlayablePublicationStorage(bool needsContainerState = true,
         std::uint32_t independentRoots = 1u) noexcept {
@@ -14626,9 +14618,10 @@ public:
         return true;
     }
     bool PreparePlayableStateStorage(bool needsContainerState = true,
-        std::uint32_t independentRoots = 1u) noexcept {
+        std::uint32_t independentRoots = 1u, bool needsCurrentHolders = true) noexcept {
         return PrepareTimelineStartStorage(needsContainerState, independentRoots) &&
             PrepareOriginalPlayableStorage(needsContainerState, independentRoots) &&
+            (!needsContainerState || !needsCurrentHolders || PrepareOriginalSingleCurrentStorage()) &&
             (!needsContainerState ||
                 (initialFrontierEvents.ConstructThrough(initialFrontierEvents.Capacity()) &&
                  initialFrontierRequests.ConstructThrough(initialFrontierRequests.Capacity()) &&
@@ -14688,6 +14681,14 @@ public:
     struct PlayableServiceWorkFamily {};
     using PlayableServiceWorkIdentity = RuntimeIndexIdentity<PlayableServiceWorkFamily>;
     RuntimeActivityIndex<PlayableServiceWorkFamily> playableServiceWork;
+    RuntimeDueIndex<PlayableServiceWorkFamily, RuntimeFrameClock> scheduleAggregateDue;
+
+    void ForgetScheduleAggregateDue(EnginePlayableServiceRow& row) noexcept {
+        const auto identity = CapturePlayableServiceWorkIdentity(row.identity.slot);
+        if (!scheduleAggregateDue.Prepared(identity)) return;
+        if (scheduleAggregateDue.Contains(identity)) (void)scheduleAggregateDue.Erase(identity);
+        (void)scheduleAggregateDue.ReleaseOwner(identity);
+    }
 
     PlayableServiceWorkIdentity CapturePlayableServiceWorkIdentity(std::uint32_t slot) const noexcept {
         if (slot >= playableServices.size()) return {};
@@ -14700,6 +14701,11 @@ public:
         assert(row.identity.slot < playableServices.size() &&
             &playableServices[row.identity.slot] == &row);
         const auto identity = CapturePlayableServiceWorkIdentity(row.identity.slot);
+        if (!occupied) {
+            ForgetScheduleAggregateDue(row);
+            SetPlayableServiceSourceExits(row, false);
+        }
+        SetPlayableServiceNeedsWork(row, occupied);
         const bool recorded = playableServiceWork.SetMembership(identity, RuntimeActivitySet::Active,
             occupied, [&](PlayableServiceWorkIdentity current) noexcept {
                 return current == CapturePlayableServiceWorkIdentity(current.slot);
@@ -14714,6 +14720,58 @@ public:
     }
     EnginePlayableServiceRow* NextOccupiedPlayableService(std::uint32_t* cursor) noexcept {
         const auto identity = playableServiceWork.Next(RuntimeActivitySet::Active, cursor,
+            [&](std::uint32_t slot) noexcept { return CapturePlayableServiceWorkIdentity(slot); });
+        return identity.Valid() ? &playableServices[identity.slot] : nullptr;
+    }
+    void SetPlayableServiceNeedsWork(EnginePlayableServiceRow& row, bool pending) noexcept {
+        const auto identity = CapturePlayableServiceWorkIdentity(row.identity.slot);
+        const bool recorded = playableServiceWork.SetMembership(identity, RuntimeActivitySet::Dirty,
+            pending, [&](PlayableServiceWorkIdentity current) noexcept {
+                return current == CapturePlayableServiceWorkIdentity(current.slot);
+            });
+        assert(recorded);
+        if (!recorded) runtimeRecreateRequired = true;
+        if (pending) {
+            // Source receipts wake the exact registered parent before the child
+            // can retire. Keep its deadline until service actually handles it.
+            auto* parent = ResolvePlayableService(row.parentService);
+            if (parent != nullptr && scheduleAggregateDue.Prepared(
+                    CapturePlayableServiceWorkIdentity(parent->identity.slot))) {
+                const auto parentIdentity = CapturePlayableServiceWorkIdentity(parent->identity.slot);
+                if (!playableServiceWork.MarkDirty(parentIdentity,
+                        [&](PlayableServiceWorkIdentity current) noexcept {
+                            return current == CapturePlayableServiceWorkIdentity(current.slot);
+                        })) runtimeRecreateRequired = true;
+            }
+            // Shared source groups can span several real parent services.
+            // Their exact synchronization owner must observe the same wake.
+            auto* sourceOwner = ResolvePlayableService(row.scheduleSourceSyncOwner);
+            if (sourceOwner != nullptr && sourceOwner != &row) {
+                const auto ownerIdentity = CapturePlayableServiceWorkIdentity(sourceOwner->identity.slot);
+                if (!playableServiceWork.MarkDirty(ownerIdentity,
+                        [&](PlayableServiceWorkIdentity current) noexcept {
+                            return current == CapturePlayableServiceWorkIdentity(current.slot);
+                        })) runtimeRecreateRequired = true;
+            }
+        }
+    }
+    EnginePlayableServiceRow* NextPlayableServiceWork(std::uint32_t* cursor) noexcept {
+        const auto identity = playableServiceWork.Next(RuntimeActivitySet::Dirty, cursor,
+            [&](std::uint32_t slot) noexcept { return CapturePlayableServiceWorkIdentity(slot); });
+        return identity.Valid() ? &playableServices[identity.slot] : nullptr;
+    }
+    void SetPlayableServiceSourceExits(EnginePlayableServiceRow& row, bool present) noexcept {
+        // NextBlock navigates source-exit owners; the child descriptors own the work.
+        const auto identity = CapturePlayableServiceWorkIdentity(row.identity.slot);
+        const bool recorded = playableServiceWork.SetMembership(identity, RuntimeActivitySet::NextBlock,
+            present, [&](PlayableServiceWorkIdentity current) noexcept {
+                return current == CapturePlayableServiceWorkIdentity(current.slot);
+            });
+        assert(recorded);
+        if (!recorded) runtimeRecreateRequired = true;
+    }
+    EnginePlayableServiceRow* NextPlayableServiceSourceExit(std::uint32_t* cursor) noexcept {
+        const auto identity = playableServiceWork.Next(RuntimeActivitySet::NextBlock, cursor,
             [&](std::uint32_t slot) noexcept { return CapturePlayableServiceWorkIdentity(slot); });
         return identity.Valid() ? &playableServices[identity.slot] : nullptr;
     }
@@ -15034,16 +15092,37 @@ public:
     using MemberOnsetIdentity = RuntimeIndexIdentity<MemberOnsetFamily>;
     RuntimeActivityIndex<MemberOnsetFamily> memberOnsets;
 
-    MemberOnsetIdentity PlayableMemberOnsetIdentity(std::uint32_t slot) const noexcept {
-        const auto& member = ReadPlayableMember(slot).completion;
-        return member.leafInstance != 0
-            ? MemberOnsetIdentity{member.leafEpoch, slot, member.source.generation}
+    EnginePlayableMemberRecord* FindPlayableMemberOnset(std::uint32_t recordSlot) noexcept {
+        if (!playableMemberRecords.IsConstructed(recordSlot)) return nullptr;
+        auto& record = playableMemberRecords[recordSlot];
+        if (!record.occupied || !record.primaryOwned || !record.service.Valid() ||
+            record.service.slot >= playableServices.size() ||
+            record.physicalSlot >= playableStorage.memberCount) return nullptr;
+        auto& row = playableServices[record.service.slot];
+        const auto base = playableStorage.MemberBase(row.partition.slot);
+        if (record.physicalSlot < base) return nullptr;
+        const auto offset = record.physicalSlot - base;
+        if (offset >= playableStorage.memberStride) return nullptr;
+        return FindPlayableMember(row, static_cast<std::uint32_t>(offset)) == &record ? &record : nullptr;
+    }
+    static MemberOnsetIdentity PlayableMemberOnsetIdentity(std::uint32_t recordSlot,
+        const EnginePlayableMemberRecord& record) noexcept {
+        const auto& member = record.completion;
+        return member.leafInstance != 0 && member.leafEpoch != 0
+            ? MemberOnsetIdentity{record.generation, recordSlot, member.source.generation}
             : MemberOnsetIdentity{};
     }
+    MemberOnsetIdentity PlayableMemberOnsetIdentity(std::uint32_t recordSlot) noexcept {
+        const auto* record = FindPlayableMemberOnset(recordSlot);
+        return record != nullptr ? PlayableMemberOnsetIdentity(recordSlot, *record) : MemberOnsetIdentity{};
+    }
     void RefreshPlayableMemberOnset(std::size_t slot) noexcept {
-        const auto identity = PlayableMemberOnsetIdentity(static_cast<std::uint32_t>(slot));
+        const auto* record = FindPlayableMember(slot);
+        if (record == nullptr) return;
+        const auto recordSlot = playableMemberRecords.IndexOf(*record);
+        const auto identity = PlayableMemberOnsetIdentity(recordSlot, *record);
         if (!identity.Valid()) return;
-        const auto& member = ReadPlayableMember(slot).completion;
+        const auto& member = record->completion;
         const bool pending = (member.source.Valid() || member.resourcesRetired) &&
             member.sourceArmTombstoneSequence == 0;
         const bool recorded = memberOnsets.SetMembership(identity, RuntimeActivitySet::Active,
@@ -15054,7 +15133,9 @@ public:
         if (!recorded) runtimeRecreateRequired = true;
     }
     void RemovePlayableMemberOnset(std::size_t slot) noexcept {
-        const auto previous = PlayableMemberOnsetIdentity(static_cast<std::uint32_t>(slot));
+        const auto* record = FindPlayableMember(slot);
+        if (record == nullptr) return;
+        const auto previous = PlayableMemberOnsetIdentity(playableMemberRecords.IndexOf(*record), *record);
         if (previous.Valid()) {
             const bool removed = memberOnsets.SetMembership(previous, RuntimeActivitySet::Active,
                 false, [&](MemberOnsetIdentity current) noexcept {

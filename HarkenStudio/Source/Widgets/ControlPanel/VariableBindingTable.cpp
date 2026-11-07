@@ -83,8 +83,11 @@ public:
         const auto& ref = entry_.consumer;
         if (ref.kind == VariableConsumerKind::Binding) {
             for (const auto& descriptor : VMixNode::schema())
-                if (BindingContractSemantics::slotIdFromDescriptor(descriptor) == ref.address.slotId) {
-                    setText(property_, descriptor.label);
+                if (BindingContractSemantics::addressFromDescriptor(descriptor,
+                        ref.address.hostClass == BindingHostClass::Bus ? ProjectItem::Type::Bus : ProjectItem::Type::Sound)
+                    == std::optional<BindingAddress>(ref.address)) {
+                    setText(property_, ref.address.family == BindingTargetFamily::Filter
+                        ? BindingSemantics::slotName(ref.address) : descriptor.label);
                     break;
                 }
         } else {

@@ -1,6 +1,7 @@
 
 #include "ActionManager.h"
-#include "../ProjectPlatformCommandSchema.h"
+#include "../CommandSchemas.h"
+#include "../IPC/DesktopCommandSchemas.h"
 #include "../IPC/IPCServer.h"
 #include <QDebug>
 
@@ -118,18 +119,13 @@ void registerReadonlyActions(ActionManager& mgr, IPCServer* ipcServer)
         if (mgr.hasAction(name))
             continue;
 
-        if (!name.startsWith(QLatin1String("get_")) &&
-            !name.startsWith(QLatin1String("list_")) &&
-            !name.startsWith(QLatin1String("can_")) &&
-            !name.startsWith(QLatin1String("query_")) &&
-            !name.startsWith(QLatin1String("find_")) &&
-            name != QLatin1String("ping"))
+        if (!commandIsReadOnly(name) && !desktopCommandIsReadOnly(name))
             continue;
 
         ActionDef def;
         def.id = name;
         def.requiresDesktop = ipcServer->commandRequiresDesktop(name);
-        def.paramSchema = projectPlatformCommandSchema(name);
+        def.paramSchema = def.requiresDesktop ? desktopCommandInputSchema(name) : commandInputSchema(name);
         def.displayName = humanizeCommandName(name);
         def.category = inferCategory(name);
         def.undoable = false;
@@ -139,7 +135,7 @@ void registerReadonlyActions(ActionManager& mgr, IPCServer* ipcServer)
                             == QLatin1String("ok");
             return ActionResult{
                 ok,
-                ok ? response.value(QLatin1String("result")).toObject() : QJsonObject{},
+                response.value(QLatin1String("result")).toObject(),
                 ok ? QString{} : response.value(QLatin1String("code")).toString(),
                 ok ? QString{} : response.value(QLatin1String("message")).toString()
             };

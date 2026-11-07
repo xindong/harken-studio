@@ -18,7 +18,7 @@ inline QJsonObject projectPlatformCommandSchema(const QString& command)
     };
     const QJsonObject text{{"type", "string"}};
     const QJsonObject source{{"type", "integer"}, {"minimum", 1}, {"maximum", double(UINT32_MAX)}};
-    const QJsonObject ids{{"type", "array"}, {"items", projectPlatformIdSchema()}};
+    const QJsonObject ids{{"type", "array"}, {"uniqueItems", true}, {"items", projectPlatformIdSchema()}};
     QJsonObject configProperties;
     const auto defaults = ConversionParameters{}.toJson();
     for (auto it = defaults.begin(); it != defaults.end(); ++it)
@@ -55,13 +55,15 @@ inline QJsonObject projectPlatformCommandSchema(const QString& command)
     if (command == "delete_project_platform" || command == "get_platform_profile"
         || command == "rescan_media_sources")
         return object({{"platform_id", projectPlatformIdSchema()}}, {"platform_id"});
-    if (command == "transcode_asset" || command == "get_transcode_status")
+    if (command == "get_transcode_status" || command == "cancel_transcode")
+        return object({{"operation_id", QJsonObject{{"type", "string"}, {"minLength", 1}}}}, {"operation_id"});
+    if (command == "transcode_asset")
         return object({{"platform_id", projectPlatformIdSchema()}, {"source_id", source}}, {"platform_id", "source_id"});
     if (command == "batch_convert_media" || command == "get_media_status")
-        return object({{"platform_id", projectPlatformIdSchema()}, {"source_ids", QJsonObject{{"type", "array"}, {"minItems", 1}, {"items", source}}}},
+        return object({{"platform_id", projectPlatformIdSchema()}, {"source_ids", QJsonObject{{"type", "array"}, {"minItems", 1}, {"uniqueItems", command == "batch_convert_media"}, {"items", source}}}},
                       {"platform_id", "source_ids"});
-    if (command == "export_pack")
-        return object({
+    if (command == "export_pack") {
+        auto schema = object({
             {"platform_id", projectPlatformIdSchema()},
             {"platform_ids", QJsonObject{{"type", "array"}, {"minItems", 1}, {"uniqueItems", true},
                 {"items", projectPlatformIdSchema()},
@@ -73,9 +75,18 @@ inline QJsonObject projectPlatformCommandSchema(const QString& command)
                 {"description", "Force re-export even when pack inputs are unchanged."}}},
             {"self_clean", QJsonObject{{"type", "boolean"}, {"default", false},
                 {"description", "Remove outputs outside this export after all requested platforms succeed. Cannot be true with action_name."}}}});
+        schema.insert("allOf", QJsonArray{
+            QJsonObject{{"not", QJsonObject{{"required", QJsonArray{"platform_id", "platform_ids"}}}}},
+            QJsonObject{{"not", QJsonObject{{"required", QJsonArray{"action_name", "all"}},
+                {"properties", QJsonObject{{"action_name", QJsonObject{{"minLength", 1}}}, {"all", QJsonObject{{"const", true}}}}}}}},
+            QJsonObject{{"not", QJsonObject{{"required", QJsonArray{"action_name", "self_clean"}},
+                {"properties", QJsonObject{{"action_name", QJsonObject{{"minLength", 1}}}, {"self_clean", QJsonObject{{"const", true}}}}}}}}});
+        return schema;
+    }
     if (command == "get_action_pack_plan")
-        return object({{"actionStableId", QJsonObject{{"type", "integer"}, {"minimum", 1}}},
-                       {"platform_ids", ids}, {"languages", QJsonObject{{"type", "array"}, {"items", text}}}}, {"actionStableId"});
+        return object({{"actionStableId", QJsonObject{{"type", "string"}, {"format", "uuid"},
+            {"description", "Action runtime UUID returned by get_item_info or list_actions."}}},
+                       {"platform_ids", ids}, {"languages", QJsonObject{{"type", "array"}, {"uniqueItems", true}, {"items", text}}}}, {"actionStableId"});
     if (command == "apply_project_platforms") {
         const auto fields = QJsonObject{{"id", projectPlatformIdSchema()}, {"name", text},
             {"basePlatform", QJsonObject{{"type", "string"}, {"enum", QJsonArray{"Windows", "macOS", "Linux", "Android", "iOS"}}}},

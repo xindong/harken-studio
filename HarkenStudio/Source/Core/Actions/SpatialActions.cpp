@@ -1,4 +1,6 @@
 
+#include "../CommandSchemas.h"
+#include "../IPC/DesktopCommandSchemas.h"
 #include "../ActionManager.h"
 #include "../AttenuationStore.h"
 #include "../AudioEngine.h"
@@ -459,7 +461,7 @@ void registerSpatialActions(ActionManager& mgr,
         def.id = "create_attenuation";
         def.displayName = "Create Attenuation";
         def.category = "spatial";
-        def.paramSchema = QJsonObject{{"name", "string"}, {"max_distance", "float"}, {"definition", "object"}, {"guid", "string"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = true;
         def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
             auto* project = currentProjectFrom(projectManager);
@@ -522,7 +524,7 @@ void registerSpatialActions(ActionManager& mgr,
         def.id = "rename_attenuation";
         def.displayName = "Rename Attenuation";
         def.category = "spatial";
-        def.paramSchema = QJsonObject{{"old_name", "string"}, {"new_name", "string"}, {"guid", "string"}, {"path", "string"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
             auto* project = currentProjectFrom(projectManager);
@@ -569,7 +571,7 @@ void registerSpatialActions(ActionManager& mgr,
         def.id = "delete_attenuation";
         def.displayName = "Delete Attenuation";
         def.category = "spatial";
-        def.paramSchema = QJsonObject{{"name", "string"}, {"guid", "string"}, {"path", "string"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
             auto* project = currentProjectFrom(projectManager);
@@ -606,6 +608,7 @@ void registerSpatialActions(ActionManager& mgr,
     {
         ActionDef def;
         def.id = "list_attenuations";
+        def.paramSchema = commandInputSchema(def.id);
         def.displayName = "List Attenuations";
         def.category = "spatial";
         def.undoable = false;
@@ -626,7 +629,7 @@ void registerSpatialActions(ActionManager& mgr,
         def.id = "get_attenuation";
         def.displayName = "Get Attenuation";
         def.category = "spatial";
-        def.paramSchema = QJsonObject{{"name", "string"}, {"guid", "string"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
             auto* project = currentProjectFrom(projectManager);
@@ -651,7 +654,7 @@ void registerSpatialActions(ActionManager& mgr,
         def.id = "set_attenuation_curve";
         def.displayName = "Set Attenuation Curve";
         def.category = "spatial";
-        def.paramSchema = QJsonObject{{"name", "string"}, {"guid", "string"}, {"curve", "string"}, {"points", "array"}, {"handles", "array"}, {"create_if_missing", "bool"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = true;
         def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
             auto* project = currentProjectFrom(projectManager);
@@ -748,6 +751,7 @@ void registerSpatialActions(ActionManager& mgr,
     {
         ActionDef def;
         def.id = "add_attenuation_dimension";
+        def.paramSchema = commandInputSchema(def.id);
         def.displayName = "Add Attenuation Dimension";
         def.category = "spatial";
         def.undoable = true;
@@ -794,6 +798,7 @@ void registerSpatialActions(ActionManager& mgr,
     {
         ActionDef def;
         def.id = "remove_attenuation_dimension";
+        def.paramSchema = commandInputSchema(def.id);
         def.displayName = "Remove Attenuation Dimension";
         def.category = "spatial";
         def.undoable = true;

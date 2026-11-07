@@ -3,7 +3,11 @@
 #include "IPCBinaryMixerLevels.h"
 #include "IPCBinaryVoiceSnapshot.h"
 #include "ActionManager.h"
+#include "CommandSchemas.h"
+#include "CommandArgumentValidator.h"
+#include "DesktopCommandSchemas.h"
 #include "PackGenerationRecord.h"
+#include "RuntimeSyncCoordinator.h"
 #include <QFileInfo>
 #include <QSet>
 #include <QThread>
@@ -120,6 +124,7 @@ IPCServer::~IPCServer()
 
 void IPCServer::waitForPendingOperations()
 {
+    if (transcodeCancel_) transcodeCancel_->store(true);
     if (transcodeThread_) transcodeThread_->wait();
     if (packBuildThread_) {
         packBuildThread_->wait();
@@ -260,6 +265,22 @@ void IPCServer::onClientReadyRead()
             }
 
             QJsonObject request = doc.object();
+            const QJsonObject envelopeSchema{
+                {"type", "object"}, {"properties", QJsonObject{
+                    {"cmd", QJsonObject{{"type", "string"}, {"minLength", 1}}},
+                    {"args", QJsonObject{{"type", "object"}}},
+                    {"request_id", QJsonObject{{"type", QJsonArray{"string", "integer"}}}}
+                }}, {"required", QJsonArray{"cmd"}}, {"additionalProperties", false}
+            };
+            QString envelopeError;
+            if (!doc.isObject() || !validateCommandArguments(request, envelopeSchema, &envelopeError)) {
+                auto response = errorResponse("INVALID_ARGUMENTS", doc.isObject()
+                    ? envelopeError : "Request must be a JSON object with cmd and optional args and request_id.");
+                const auto id = request.value("request_id");
+                if (id.isString() || id.isDouble()) response.insert("request_id", id);
+                sendResponse(client, response);
+                continue;
+            }
             QString cmd = request["cmd"].toString();
             QJsonObject args = request["args"].toObject();
 
@@ -267,6 +288,18 @@ void IPCServer::onClientReadyRead()
 
             if (cmd == QLatin1String("set_channel_role"))
             {
+                const QJsonObject roleSchema{
+                    {"type", "object"}, {"properties", QJsonObject{
+                        {"role", QJsonObject{{"enum", QJsonArray{"command", "events"}}}}
+                    }}, {"required", QJsonArray{"role"}}, {"additionalProperties", false}
+                };
+                QString roleError;
+                if (!validateCommandArguments(args, roleSchema, &roleError)) {
+                    auto response = errorResponse("INVALID_ARGUMENTS", roleError);
+                    if (!requestId.isUndefined()) response.insert("request_id", requestId);
+                    sendResponse(client, response);
+                    continue;
+                }
                 const QString role = args.value("role").toString();
                 if (role == QLatin1String("command"))
                     commandOnlyClients_.insert(client);
@@ -375,10 +408,23 @@ QJsonObject IPCServer::dispatchCommand(const QString& cmd, const QJsonObject& ar
     TransactionContextGuard transactionContextGuard(
         actionManager, transactionContextFor(context));
     const auto withRequestId = [&](QJsonObject response) {
+        if (response.value("status") == "error") {
+            const auto details = response.value("result").toObject();
+            if (response.value("code").toString().isEmpty())
+                response.insert("code", details.value("code").toString("COMMAND_FAILED"));
+            if (response.value("message").toString().isEmpty())
+                response.insert("message", details.value("message").toString(
+                    QString("Command '%1' failed.").arg(cmd)));
+        }
         if (!context.requestId.isEmpty())
             response[QStringLiteral("request_id")] = context.requestId;
         return response;
     };
+
+    if (!commandSupportedByHost(commandHost_, cmd, commandRequiresDesktop(cmd))
+        || (!actionManager.hasAction(cmd) && !hasCommandHandler(cmd)))
+        return withRequestId(errorResponse("UNKNOWN_COMMAND", QString("Unknown command: %1").arg(cmd),
+            "Use list_commands to discover commands available in this host."));
 
     if (context.origin == DispatchOrigin::AI)
     {
@@ -386,17 +432,43 @@ QJsonObject IPCServer::dispatchCommand(const QString& cmd, const QJsonObject& ar
             return withRequestId(*gateError);
     }
 
+    auto schema = commandInputSchema(cmd);
+    if (schema.isEmpty()) schema = desktopCommandInputSchema(cmd);
+    if (schema.isEmpty()) {
+        const auto* action = actionManager.findAction(cmd);
+        if (action && action->paramSchema.value("type") == "object") schema = action->paramSchema;
+    }
+    if (schema.isEmpty())
+        return withRequestId(errorResponse("COMMAND_CONTRACT_MISSING",
+            QString("Command '%1' has no declared argument contract.").arg(cmd)));
+    QString argumentError;
+    if (!validateCommandArguments(args, schema, &argumentError))
+        return withRequestId(errorResponse("INVALID_ARGUMENTS", argumentError,
+            QString("Use get_command_schema with command '%1' to inspect accepted arguments.").arg(cmd)));
+
     if (!isJsonCommandAvailableInCurrentState(cmd))
         return withRequestId(commandUnavailableInCurrentStateResponse(cmd));
+
+    if (context.origin == DispatchOrigin::CLI && commandHost_ == CommandHost::Desktop
+        && projectManager_ && projectManager_->hasUnsavedChanges()
+        && (cmd == QLatin1String("open_project") || cmd == QLatin1String("create_project")
+            || cmd == QLatin1String("close_project")))
+        return withRequestId(errorResponse("UNSAVED_CHANGES",
+            "Save with save_project before switching or closing the Studio project."));
 
     if (commandRequiresDesktop(cmd)
         && !mainWindow_)
         return withRequestId(errorResponse("DESKTOP_REQUIRED",
             "This command requires the desktop editor. Use the corresponding project operation for headless authoring."));
 
+    if (transcodeInProgress_ && !isReadOnlyCommand(cmd) && cmd != QLatin1String("cancel_transcode"))
+        return withRequestId(errorResponse("TRANSCODE_IN_PROGRESS",
+            "The project is read-only while media is being converted. Wait for completion or cancel_transcode."));
+
     if (PackGenerationRecordStore::instance().isExporting()
         && !isReadOnlyCommand(cmd)
         && cmd != QLatin1String("cancel_pack_build")
+        && cmd != QLatin1String("cancel_transcode")
         && cmd != QLatin1String("batch")
         && cmd != QLatin1String("query")
         && cmd != QLatin1String("find_widget")
@@ -408,6 +480,13 @@ QJsonObject IPCServer::dispatchCommand(const QString& cmd, const QJsonObject& ar
 
     if (projectManager_ && projectManager_->isClosing()
         && cmd != QLatin1String("get_app_state")
+        && cmd != QLatin1String("get_project_info")
+        && cmd != QLatin1String("list_commands")
+        && cmd != QLatin1String("get_command_schema")
+        && cmd != QLatin1String("get_ui_operation")
+        && cmd != QLatin1String("get_transcode_status")
+        && cmd != QLatin1String("audition_get_seek_status")
+        && cmd != QLatin1String("cancel_transcode")
         && cmd != QLatin1String("create_project")
         && cmd != QLatin1String("open_project"))
     {
@@ -469,6 +548,35 @@ QJsonObject IPCServer::dispatchCommand(const QString& cmd, const QJsonObject& ar
         previewArgs["label"] = QString("inline_preview:%1").arg(cmd);
         previewArgs["source"] = "inline_preview";
         return withRequestId(ActionManager::instance().preview(previewArgs));
+    }
+
+    if (!context.expectedProjectSession.isEmpty()
+        && (!projectManager_ || !projectManager_->isProjectOpen() || !engine_
+            || QString::number(engine_->runtimeSyncCoordinator().barrier(
+                engine_->runtimeSyncCoordinator().currentAuthoringRevision()).projectSessionId)
+                != context.expectedProjectSession))
+        return withRequestId(errorResponse("PROJECT_CHANGED", "The project changed while preparing playback."));
+
+    if ((cmd == QLatin1String("post_action") || cmd == QLatin1String("post_action_3d")
+         || cmd == QLatin1String("audition_play"))
+        && projectManager_ && projectManager_->isProjectOpen()
+        && engine_ && engine_->isInitialized() && !engine_->isSimulationMode()) {
+        if (cmd == QLatin1String("audition_play") && !engine_->isPlaying() && !engine_->startOutput())
+            return withRequestId(errorResponse("START_OUTPUT_FAILED", "Failed to start audio output."));
+        auto& coordinator = engine_->runtimeSyncCoordinator();
+        coordinator.flushPendingMutationNow();
+        const auto barrier = coordinator.barrier(coordinator.currentAuthoringRevision());
+        using Barrier = RuntimeSyncCoordinator::RevisionBarrierState;
+        if (barrier.state != Barrier::Ready) {
+            auto response = barrier.state == Barrier::Pending
+                ? errorResponse("RUNTIME_SYNC_PENDING", "The current project is still being prepared for playback. Playback has not started.")
+                : errorResponse("RUNTIME_SYNC_FAILED", "The current project could not be prepared for playback.");
+            response.insert("result", QJsonObject{
+                {"runtime_sync_status", static_cast<int>(barrier.failure)},
+                {"project_session_id", QString::number(barrier.projectSessionId)},
+                {"authoring_revision", QString::number(barrier.requiredRevision)}});
+            return withRequestId(response);
+        }
     }
 
     if (ActionManager::instance().hasAction(cmd))
@@ -627,9 +735,11 @@ QStringList IPCServer::allCommandNames() const
 {
     QSet<QString> names;
     for (const QString& name : ActionManager::instance().actionNames())
-        names.insert(name);
+        if (commandSupportedByHost(commandHost_, name, commandRequiresDesktop(name)))
+            names.insert(name);
     for (auto it = commandHandlers_.constBegin(); it != commandHandlers_.constEnd(); ++it)
-        names.insert(it.key());
+        if (commandSupportedByHost(commandHost_, it.key(), commandRequiresDesktop(it.key())))
+            names.insert(it.key());
     QStringList sorted(names.constBegin(), names.constEnd());
     sorted.sort();
     return sorted;
@@ -645,6 +755,12 @@ bool IPCServer::isJsonCommandAvailableInCurrentState(const QString& cmd) const
         QStringLiteral("get_version"),
         QStringLiteral("get_status"),
         QStringLiteral("get_app_state"),
+        QStringLiteral("get_project_info"),
+        QStringLiteral("list_commands"),
+        QStringLiteral("get_command_schema"),
+        QStringLiteral("get_ui_operation"),
+        QStringLiteral("get_transcode_status"),
+        QStringLiteral("cancel_transcode"),
         QStringLiteral("open_project"),
         QStringLiteral("create_project"),
     };
@@ -665,12 +781,7 @@ QJsonObject IPCServer::commandUnavailableInCurrentStateResponse(const QString& c
 
 bool IPCServer::isReadOnlyCommand(const QString& cmd) const
 {
-    return cmd == QLatin1String("ping") ||
-           cmd.startsWith(QLatin1String("get_")) ||
-           cmd.startsWith(QLatin1String("list_")) ||
-           cmd.startsWith(QLatin1String("can_")) ||
-           cmd.startsWith(QLatin1String("audition_get_")) ||
-           cmd.startsWith(QLatin1String("link_get_"));
+    return commandIsReadOnly(cmd) || desktopCommandIsReadOnly(cmd);
 }
 
 bool IPCServer::isPreviewSupportedCommand(const QString& cmd) const

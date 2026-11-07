@@ -8,6 +8,7 @@
 #include <QJsonObject>
 #include <QTimer>
 #include <cstdint>
+#include <optional>
 
 #include "RuntimeBridge/PlaybackBridge.h"
 
@@ -80,6 +81,15 @@ struct AuditionSeekStartResult
         HarkenEditor::Bridge::kEngineOk;
 };
 
+struct AuditionSeekStatus
+{
+    uint32_t playingId = 0;
+    int64_t samplePosition = 0;
+    HarkenEditor::Bridge::EngineResult result = HarkenEditor::Bridge::kEngineOk;
+    bool inProgress = true;
+    bool applied = false;
+};
+
 class AuditionManager : public QObject
 {
     Q_OBJECT
@@ -121,6 +131,7 @@ public:
     AuditionPosition getPositionSamples(uint32_t playingId) const;
     AuditionSeekStartResult setPositionSamples(
         uint32_t playingId, int64_t samplePos);
+    std::optional<AuditionSeekStatus> seekStatus(uint64_t requestId) const;
 
     void  setPlaybackSpeed(uint32_t playingId, float speed);
     float getPlaybackSpeed(uint32_t playingId) const;
@@ -171,10 +182,13 @@ private:
         uint32_t playingId = 0;
         uint64_t requestId = 0;
         double requestedPositionMs = 0.0;
+        int64_t samplePosition = 0;
     };
 
     void pollPendingActionSeeks();
     uint64_t allocateSeekRequestId();
+    void finishActionSeek(const PendingActionSeek& pending,
+                          HarkenEditor::Bridge::EngineResult result, bool applied);
 
     VNX::AudioEngine* engine_ = nullptr;
     QTimer pollTimer_;
@@ -184,6 +198,7 @@ private:
     uint64_t nextPreviewIntentGeneration_ = 1;
     uint64_t nextSeekRequestId_ = 1;
     QMap<uint64_t, PendingActionSeek> pendingActionSeeks_;
+    QMap<uint64_t, AuditionSeekStatus> completedActionSeeks_;
 
     int idleZeroPolls_ = 0;
 

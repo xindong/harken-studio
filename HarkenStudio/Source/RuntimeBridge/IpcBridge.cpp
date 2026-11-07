@@ -250,43 +250,31 @@ IpcQueryStatus multiPackCollisions(std::vector<PackCollisionEntry>& out)
 // Replay verification.
 //==============================================================================
 
-bool replayCompare(const QString& referencePath, const QString& replayPath,
-                   ReplayCompareResult& out)
+bool compareFiles(const QString& referencePath, const QString& candidatePath,
+                  FileCompareResult& out)
 {
     out = {};
 
     QFile ref(referencePath);
-    QFile rep(replayPath);
+    QFile rep(candidatePath);
     if (!ref.open(QIODevice::ReadOnly) || !rep.open(QIODevice::ReadOnly))
         return false;
 
-    const QByteArray refBytes = ref.readAll();
-    const QByteArray repBytes = rep.readAll();
-    out.lengthMatch = refBytes.size() == repBytes.size();
-    out.totalSamples = static_cast<uint64_t>(std::max(refBytes.size(), repBytes.size()));
-
-    const qsizetype common = std::min(refBytes.size(), repBytes.size());
-    uint64_t diffCount = out.lengthMatch ? 0u
-        : static_cast<uint64_t>(std::max(refBytes.size(), repBytes.size()) - common);
-    int maxDiff = 0;
-    double mse = 0.0;
-    for (qsizetype i = 0; i < common; ++i)
-    {
-        const int diff = std::abs(static_cast<unsigned char>(refBytes[i]) -
-                                  static_cast<unsigned char>(repBytes[i]));
-        if (diff != 0)
-            ++diffCount;
-        maxDiff = std::max(maxDiff, diff);
-        mse += static_cast<double>(diff * diff);
-    }
-
-    out.diffSamples = diffCount;
-    out.maxDiff = static_cast<float>(maxDiff);
-    out.isBitExact = out.lengthMatch && diffCount == 0;
-    if (out.totalSamples == 0 || mse == 0.0)
-        out.psnrDb = out.isBitExact ? 999.0 : 0.0;
-    else
-        out.psnrDb = 20.0 * std::log10(255.0 / std::sqrt(mse / common));
+    out.lengthMatch = true;
+    do {
+        const QByteArray refBytes = ref.read(64 * 1024);
+        const QByteArray repBytes = rep.read(64 * 1024);
+        if (ref.error() != QFileDevice::NoError || rep.error() != QFileDevice::NoError)
+            return false;
+        const auto common = std::min(refBytes.size(), repBytes.size());
+        const auto count = std::max(refBytes.size(), repBytes.size());
+        out.comparedBytes += static_cast<uint64_t>(count);
+        out.differentBytes += static_cast<uint64_t>(count - common);
+        out.lengthMatch = out.lengthMatch && refBytes.size() == repBytes.size();
+        for (qsizetype i = 0; i < common; ++i)
+            if (refBytes[i] != repBytes[i]) ++out.differentBytes;
+    } while (!ref.atEnd() || !rep.atEnd());
+    out.identical = out.differentBytes == 0;
     return true;
 }
 

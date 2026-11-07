@@ -7,9 +7,9 @@
 // compiler 128-bit type. MSVC has no __int128, so a portable kernel that must
 // give bit-identical results under clang-cl, Apple clang and MSVC cannot depend
 // on one; a single hand-rolled path means every toolchain runs the same code and
-// the property tests prove the same thing everywhere. The cost -- a 128-bit long
-// division per conversion -- is irrelevant because this kernel runs on the
-// planning thread, never in the audio callback.
+// the property tests prove the same thing everywhere. Common single-word
+// magnitudes use native integer division; wide products retain exact long
+// division without adding platform-specific arithmetic.
 
 namespace harken {
 namespace {
@@ -106,16 +106,21 @@ std::int64_t FloorDivClamp(Wide value, std::uint64_t den,
     std::uint64_t qHi = 0;
     std::uint64_t qLo = 0;
     std::uint64_t rem = 0;
-    for (int i = 127; i >= 0; --i) {
-        const std::uint64_t bit = (i >= 64) ? ((value.hi >> (i - 64)) & 1u)
-                                            : ((value.lo >> i) & 1u);
-        rem = (rem << 1) | bit;
-        if (rem >= den) {
-            rem -= den;
-            if (i >= 64) {
-                qHi |= (std::uint64_t{1} << (i - 64));
-            } else {
-                qLo |= (std::uint64_t{1} << i);
+    if (value.hi == 0) {
+        qLo = value.lo / den;
+        rem = value.lo % den;
+    } else {
+        for (int i = 127; i >= 0; --i) {
+            const std::uint64_t bit = (i >= 64) ? ((value.hi >> (i - 64)) & 1u)
+                                                : ((value.lo >> i) & 1u);
+            rem = (rem << 1) | bit;
+            if (rem >= den) {
+                rem -= den;
+                if (i >= 64) {
+                    qHi |= (std::uint64_t{1} << (i - 64));
+                } else {
+                    qLo |= (std::uint64_t{1} << i);
+                }
             }
         }
     }

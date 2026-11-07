@@ -11,5 +11,6 @@ enum class CommandHost { Desktop, Cli };
 
 bool commandSupportedByHost(CommandHost host, const QString& name, bool requiresDesktop = false);
 QJsonObject describeEditorCommand(const QString& name, const IPCServer* dispatcher);
+QJsonObject listEditorCommands(const IPCServer* dispatcher);
 
 }

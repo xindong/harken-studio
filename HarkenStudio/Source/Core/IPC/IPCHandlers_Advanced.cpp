@@ -1,6 +1,8 @@
 #include "IPCServerInternal.h"
 #include "PackGenerationRecord.h"
 #include <QDateTime>
+#include <optional>
+#include <climits>
 
 namespace VNX {
 
@@ -8,24 +10,23 @@ namespace Bridge = HarkenEditor::Bridge;
 
 void IPCServer::registerAdvancedHandlers()
 {
-    commandHandlers_["ai_response"] = [this](const QJsonObject& args) { return handleAIResponse(args); };
-    commandHandlers_["ai_event"] = [this](const QJsonObject& args) { return handleAIEvent(args); };
+    registerDesktopHandler("get_ui_operation");
+    registerDesktopHandler("open_context_menu");
+    registerDesktopHandler("list_ui_windows");
 
-    commandHandlers_["replay_verify"] = [this](const QJsonObject& args) {
+    commandHandlers_["compare_files"] = [this](const QJsonObject& args) {
         QString refPath = args["reference_path"].toString();
-        QString repPath = args["replay_path"].toString();
-        if (refPath.isEmpty() || repPath.isEmpty())
-            return errorResponse("INVALID_PARAM", "reference_path and replay_path required");
+        QString repPath = args["candidate_path"].toString();
+        if (args.size() != 2 || refPath.isEmpty() || repPath.isEmpty())
+            return errorResponse("INVALID_PARAM", "reference_path and candidate_path are required file paths");
 
-        Bridge::ReplayCompareResult result;
-        if (!Bridge::replayCompare(refPath, repPath, result))
-            return errorResponse("COMPARE_FAILED", "Cannot read the reference or replay file");
+        Bridge::FileCompareResult result;
+        if (!Bridge::compareFiles(refPath, repPath, result))
+            return errorResponse("COMPARE_FAILED", "Cannot read the reference or candidate file");
         QJsonObject r;
-        r["max_diff"] = static_cast<double>(result.maxDiff);
-        r["psnr_db"] = result.psnrDb;
-        r["is_bitexact"] = result.isBitExact;
-        r["total_samples"] = static_cast<qint64>(result.totalSamples);
-        r["diff_samples"] = static_cast<qint64>(result.diffSamples);
+        r["identical"] = result.identical;
+        r["compared_bytes"] = static_cast<qint64>(result.comparedBytes);
+        r["different_bytes"] = static_cast<qint64>(result.differentBytes);
         r["length_match"] = result.lengthMatch;
         return successResponse(r);
     };
@@ -93,57 +94,49 @@ void IPCServer::registerAdvancedHandlers()
         return unavailable("HarkenLink capture is retired");
     };
 
-    commandHandlers_["get_exec_errors"] = [this](const QJsonObject& args) {
+    const auto execErrorDomain = [](const QJsonObject& args) -> std::optional<int> {
+        if (!args.contains("domain")) return -1;
+        const QStringList domains{"Music", "Stop", "Lifecycle", "Dispatch", "Gate"};
+        const int index = domains.indexOf(args.value("domain").toString());
+        if (index < 0) return std::nullopt;
+        return index;
+    };
+    commandHandlers_["get_exec_errors"] = [this, execErrorDomain](const QJsonObject& args) {
+        if (args.contains("clear"))
+            return errorResponse("INVALID_ARGS", "Use clear_exec_errors to clear execution errors");
         if (!engine_) return errorResponse("NOT_INIT", "Audio engine not initialized");
-
-        int domainFilter = -1;
-        if (args.contains("domain")) {
-            const QString domain = args["domain"].toString();
-            if (domain == QLatin1String("Music"))
-                domainFilter = static_cast<int>(AudioEngine::ExecErrorDomain::Music);
-            else if (domain == QLatin1String("Stop"))
-                domainFilter = static_cast<int>(AudioEngine::ExecErrorDomain::Stop);
-            else if (domain == QLatin1String("Lifecycle"))
-                domainFilter = static_cast<int>(AudioEngine::ExecErrorDomain::Lifecycle);
-            else if (domain == QLatin1String("Dispatch"))
-                domainFilter = static_cast<int>(AudioEngine::ExecErrorDomain::Dispatch);
-            else if (domain == QLatin1String("Gate"))
-                domainFilter = static_cast<int>(AudioEngine::ExecErrorDomain::Gate);
-            else
-                return errorResponse("INVALID_ARGS",
-                    QString("Unknown domain '%1' (expected Music/Stop/"
-                            "Lifecycle/Dispatch/Gate)").arg(domain));
-        }
-
-        int maxCount = args["max_count"].toInt(50);
-        bool clearAfter = args["clear"].toBool(false);
-
-        static const char* const kDomainNames[] =
-            { "Music", "Stop", "Lifecycle", "Dispatch", "Gate" };
-
-        auto errors = engine_->recentExecErrors(maxCount, domainFilter);
-        QJsonArray errArray;
-        for (const auto& err : errors) {
-            errArray.append(QJsonObject{
-                {"domain", kDomainNames[static_cast<int>(err.domain)]},
-                {"severity", static_cast<int>(err.severity)},
-                {"object_id", static_cast<qint64>(err.objectID)},
-                {"playing_id", static_cast<qint64>(err.playingID)},
-                {"object_name", err.objectName},
-                {"error_type", err.errorType},
-                {"message", err.message},
-                {"timestamp_ms", static_cast<double>(err.timestampMs)}
+        const auto domain = execErrorDomain(args);
+        if (!domain)
+            return errorResponse("INVALID_ARGS", "domain must be Music, Stop, Lifecycle, Dispatch or Gate");
+        const auto countValue = args.value("max_count");
+        const qint64 count = args.contains("max_count") ? countValue.toInteger(-1) : 50;
+        if (count < 0 || count > INT_MAX
+            || (args.contains("max_count") && (!countValue.isDouble() || countValue.toDouble() != count)))
+            return errorResponse("INVALID_ARGS", "max_count must be a non-negative integer");
+        static const char* const names[] = {"Music", "Stop", "Lifecycle", "Dispatch", "Gate"};
+        const auto errors = engine_->recentExecErrors(static_cast<int>(count), *domain);
+        QJsonArray entries;
+        for (const auto& error : errors) {
+            entries.append(QJsonObject{
+                {"domain", names[static_cast<int>(error.domain)]},
+                {"severity", static_cast<int>(error.severity)},
+                {"object_id", static_cast<qint64>(error.objectID)},
+                {"playing_id", static_cast<qint64>(error.playingID)},
+                {"object_name", error.objectName}, {"error_type", error.errorType},
+                {"message", error.message}, {"timestamp_ms", static_cast<double>(error.timestampMs)}
             });
         }
-
-        if (clearAfter)
-            engine_->clearExecErrors(domainFilter);
-
-        return successResponse(QJsonObject{
-            {"errors", errArray},
-            {"count", errArray.size()},
-            {"cleared", clearAfter}
-        });
+        return successResponse(QJsonObject{{"errors", entries}, {"count", entries.size()}});
+    };
+    commandHandlers_["clear_exec_errors"] = [this, execErrorDomain](const QJsonObject& args) {
+        if (!engine_) return errorResponse("NOT_INIT", "Audio engine not initialized");
+        if (args.size() != args.contains("domain"))
+            return errorResponse("INVALID_ARGS", "Only the optional domain argument is supported");
+        const auto domain = execErrorDomain(args);
+        if (!domain)
+            return errorResponse("INVALID_ARGS", "domain must be Music, Stop, Lifecycle, Dispatch or Gate");
+        engine_->clearExecErrors(*domain);
+        return successResponse(QJsonObject{{"cleared", true}});
     };
 
     commandHandlers_["get_format_version"] = [this](const QJsonObject&) {

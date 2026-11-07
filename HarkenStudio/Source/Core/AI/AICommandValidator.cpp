@@ -1,9 +1,9 @@
 #include "AICommandValidator.h"
+#include "../CommandArgumentValidator.h"
 
 #include <QJsonArray>
 #include <QJsonValue>
 #include <QStringList>
-#include <cmath>
 
 namespace VNX {
 namespace {
@@ -48,99 +48,6 @@ bool containsCredentialKey(const QJsonValue& value)
     return false;
 }
 
-bool valueMatchesType(const QJsonValue& value, const QString& type)
-{
-    if (type == QLatin1String("object")) return value.isObject();
-    if (type == QLatin1String("array")) return value.isArray();
-    if (type == QLatin1String("string")) return value.isString();
-    if (type == QLatin1String("boolean")) return value.isBool();
-    if (type == QLatin1String("number")) return value.isDouble();
-    if (type == QLatin1String("integer"))
-        return value.isDouble() && std::floor(value.toDouble()) == value.toDouble();
-    return false;
-}
-
-bool hasRequiredFields(const QJsonObject& value, const QJsonArray& required)
-{
-    for (const auto& field : required)
-    {
-        if (!field.isString() || !value.contains(field.toString()))
-            return false;
-    }
-    return true;
-}
-
-bool validateObjectSchema(const QJsonObject& value, const QJsonObject& schema,
-                          QString* message)
-{
-    if (!hasRequiredFields(value, schema.value(QStringLiteral("required")).toArray()))
-    {
-        if (message) *message = QStringLiteral("Command arguments are missing a required property.");
-        return false;
-    }
-    const QJsonArray anyOf = schema.value(QStringLiteral("anyOf")).toArray();
-    if (!anyOf.isEmpty())
-    {
-        bool matched = false;
-        for (const auto& option : anyOf)
-        {
-            if (option.isObject() && hasRequiredFields(value, option.toObject().value(QStringLiteral("required")).toArray()))
-            {
-                matched = true;
-                break;
-            }
-        }
-        if (!matched)
-        {
-            if (message) *message = QStringLiteral("Command arguments do not satisfy any allowed shape.");
-            return false;
-        }
-    }
-    const QJsonObject properties = schema.value(QStringLiteral("properties")).toObject();
-    if (schema.value(QStringLiteral("additionalProperties")).isBool()
-        && !schema.value(QStringLiteral("additionalProperties")).toBool())
-    {
-        for (auto it = value.constBegin(); it != value.constEnd(); ++it)
-        {
-            if (!properties.contains(it.key()))
-            {
-                if (message) *message = QStringLiteral("Command arguments contain an unsupported property.");
-                return false;
-            }
-        }
-    }
-    for (auto it = properties.constBegin(); it != properties.constEnd(); ++it)
-    {
-        if (!value.contains(it.key())) continue;
-        const QJsonObject propertySchema = it.value().toObject();
-        const QJsonValue propertyValue = value.value(it.key());
-        const QString type = propertySchema.value(QStringLiteral("type")).toString();
-        if (!type.isEmpty() && !valueMatchesType(propertyValue, type))
-        {
-            if (message) *message = QStringLiteral("Command argument '%1' has the wrong type.").arg(it.key());
-            return false;
-        }
-        if (propertySchema.contains(QStringLiteral("enum"))
-            && !propertySchema.value(QStringLiteral("enum")).toArray().contains(propertyValue))
-        {
-            if (message) *message = QStringLiteral("Command argument '%1' is not an allowed value.").arg(it.key());
-            return false;
-        }
-        if (propertySchema.contains(QStringLiteral("minimum"))
-            && propertyValue.toDouble() < propertySchema.value(QStringLiteral("minimum")).toDouble())
-        {
-            if (message) *message = QStringLiteral("Command argument '%1' is below its minimum.").arg(it.key());
-            return false;
-        }
-        if (propertySchema.contains(QStringLiteral("minLength"))
-            && propertyValue.toString().size() < propertySchema.value(QStringLiteral("minLength")).toInt())
-        {
-            if (message) *message = QStringLiteral("Command argument '%1' is too short.").arg(it.key());
-            return false;
-        }
-    }
-    return true;
-}
 
 }
 
@@ -165,7 +72,7 @@ bool AICommandValidator::validateArguments(const QJsonObject& arguments,
                                            const QJsonObject& schema,
                                            QString* errorMessage)
 {
-    return validateObjectSchema(arguments, schema, errorMessage);
+    return validateCommandArguments(arguments, schema, errorMessage);
 }
 
 std::optional<QJsonObject> AICommandValidator::normalizeAndValidate(

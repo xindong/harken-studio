@@ -1,4 +1,6 @@
 
+#include "../CommandSchemas.h"
+#include "../IPC/DesktopCommandSchemas.h"
 #include "../ActionManager.h"
 #include "../AudioEngine.h"
 #include "AdvancedActionResult.h"
@@ -61,7 +63,7 @@ void registerAuditionActions(ActionManager& mgr,
         def.id = "audition_get_state";
         def.displayName = "Get Audition State";
         def.category = "audition";
-        def.paramSchema = QJsonObject{{"type", "object"}, {"properties", QJsonObject{}}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [auditionManager](const QJsonObject&) -> ActionResult {
             if (!auditionManager) return auditionNotAvailable();
@@ -126,7 +128,7 @@ void registerAuditionActions(ActionManager& mgr,
         def.id = "audition_play";
         def.displayName = "Audition Play";
         def.category = "audition";
-        def.paramSchema = QJsonObject{{"object_path", "string"}, {"game_object_id", "uint64"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [auditionManager](const QJsonObject& args) -> ActionResult {
             if (!auditionManager) return auditionNotAvailable();
@@ -158,11 +160,11 @@ void registerAuditionActions(ActionManager& mgr,
         def.id = "audition_stop";
         def.displayName = "Audition Stop";
         def.category = "audition";
-        def.paramSchema = QJsonObject{{"auditionID", "uint32"}, {"fade_ms", "float"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [auditionManager](const QJsonObject& args) -> ActionResult {
             if (!auditionManager) return auditionNotAvailable();
-            uint32_t tid = static_cast<uint32_t>(args["auditionID"].toInt(0));
+            uint32_t tid = static_cast<uint32_t>(args["auditionID"].toInteger(0));
             float fadeMs = static_cast<float>(args["fade_ms"].toDouble(0));
             if (tid == 0) {
                 auditionManager->stopAll(fadeMs);
@@ -179,7 +181,7 @@ void registerAuditionActions(ActionManager& mgr,
         def.id = "audition_set_position";
         def.displayName = "Audition Set Position";
         def.category = "audition";
-        def.paramSchema = QJsonObject{{"auditionID", "uint32"}, {"samplePosition", "int64"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [auditionManager, engine](const QJsonObject& args) -> ActionResult {
             if (!auditionManager) return auditionNotAvailable();
@@ -203,7 +205,7 @@ void registerAuditionActions(ActionManager& mgr,
                     == HarkenEditor::Bridge::kEngineOk
                 ? QStringLiteral("accepted")
                 : QStringLiteral("rejected");
-            return AdvancedActionDetail::fromEngineResult(
+            auto response = AdvancedActionDetail::fromEngineResult(
                 engine && engine->isInitialized(), result.result,
                 QJsonObject{{"auditionID", static_cast<int>(tid)},
                             {"samplePosition", static_cast<double>(samplePos)},
@@ -211,6 +213,51 @@ void registerAuditionActions(ActionManager& mgr,
                              QString::number(result.requestId)},
                             {"state", state}},
                 QStringLiteral("Set audition position"));
+            if (response.success) {
+                response.data.insert("async", true);
+                response.data.insert("operation_id", QString::number(result.requestId));
+                response.data.insert("operation", QJsonObject{
+                    {"status_command", "audition_get_seek_status"},
+                    {"status_args", QJsonObject{{"audition_seek_request_id", QString::number(result.requestId)}}}});
+            }
+            return response;
+        };
+        mgr.registerAction(def);
+    }
+
+    {
+        ActionDef def;
+        def.id = "audition_get_seek_status";
+        def.displayName = "Get Audition Seek Status";
+        def.category = "audition";
+        def.paramSchema = commandInputSchema(def.id);
+        def.undoable = false;
+        def.handler = [auditionManager](const QJsonObject& args) -> ActionResult {
+            if (!auditionManager) return auditionNotAvailable();
+            const QString id = args.value("audition_seek_request_id").toString();
+            bool valid = false;
+            const auto requestId = id.toULongLong(&valid);
+            if (!valid || requestId == 0 || QString::number(requestId) != id)
+                return {false, {}, "INVALID_PARAM", "audition_seek_request_id must be a positive decimal request ID"};
+            const auto status = auditionManager->seekStatus(requestId);
+            if (!status)
+                return {false, {}, "NOT_FOUND", "Audition seek request is unknown or its completed result has expired"};
+            QJsonObject progress{{"audition_seek_request_id", id}, {"in_progress", status->inProgress}};
+            if (!status->inProgress) {
+                QJsonObject completed{{"status", status->applied ? "ok" : "error"},
+                    {"result", QJsonObject{
+                        {"auditionID", static_cast<qint64>(status->playingId)},
+                        {"audition_seek_request_id", id},
+                        {"samplePosition", static_cast<qint64>(status->samplePosition)},
+                        {"engine_result", static_cast<int32_t>(status->result)},
+                        {"state", status->applied ? "applied" : "failed"}}}};
+                if (!status->applied) {
+                    completed.insert("code", "SEEK_FAILED");
+                    completed.insert("message", "The audition seek was not applied.");
+                }
+                progress.insert("result", completed);
+            }
+            return {true, progress};
         };
         mgr.registerAction(def);
     }
@@ -224,7 +271,7 @@ void registerAuditionActions(ActionManager& mgr,
         def.undoable = false;
         def.handler = [auditionManager](const QJsonObject& args) -> ActionResult {
             if (!auditionManager) return auditionNotAvailable();
-            uint32_t tid = static_cast<uint32_t>(args["auditionID"].toInt(0));
+            uint32_t tid = static_cast<uint32_t>(args["auditionID"].toInteger(0));
             float speed = static_cast<float>(args["speed"].toDouble(1.0));
             if (tid == 0)
                 return {false, {}, "INVALID_PARAM", "auditionID required"};
@@ -239,11 +286,11 @@ void registerAuditionActions(ActionManager& mgr,
         def.id = "audition_close";
         def.displayName = "Audition Close";
         def.category = "audition";
-        def.paramSchema = QJsonObject{{"auditionID", "uint32"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [auditionManager](const QJsonObject& args) -> ActionResult {
             if (!auditionManager) return auditionNotAvailable();
-            uint32_t tid = static_cast<uint32_t>(args["auditionID"].toInt(0));
+            uint32_t tid = static_cast<uint32_t>(args["auditionID"].toInteger(0));
             if (tid == 0)
                 return {false, {}, "INVALID_PARAM", "auditionID required"};
             auditionManager->closeAudition(tid);
@@ -257,7 +304,7 @@ void registerAuditionActions(ActionManager& mgr,
         def.id = "audition_reset";
         def.displayName = "Audition Reset";
         def.category = "audition";
-        def.paramSchema = QJsonObject{{"authoring_handle", "int64"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [auditionManager, engine](const QJsonObject& args) -> ActionResult {
             if (!auditionManager) return auditionNotAvailable();

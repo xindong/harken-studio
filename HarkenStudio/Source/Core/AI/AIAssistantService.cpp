@@ -382,7 +382,7 @@ QString unrestrictedSystemPrompt()
         "permission-gated convenience command. Runtime side-effect categories (these "
         "actually make sound or change engine state - use only when the designer "
         "explicitly asks to audition, trigger, or load): audition "
-        "(audition_play/stop), system runtime (post_action, trigger_action, "
+        "(audition_play/stop), system runtime (post_action, "
         "stop_action, start_output, load_pack/unload_pack), advanced "
         "(set_master_volume, set_game_object_volume).\n\n"
 

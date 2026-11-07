@@ -1,89 +1,194 @@
-# HarkenStudio 本体命令接口总览
+# HarkenStudio 命令接口
 
-快照日期：2026-11-05。本文记录 `HarkenStudio.exe` 桌面宿主的启动参数、IPC 命令入口及注册边界。独立无窗口程序 `HarkenStudioCLI.exe` 的终端语法、构建方式与使用示例见 [StudioCLI 命令用法](studioCLI-commands.md)。
+快照日期：2026-11-07。Studio 与独立 [HarkenStudioCLI](studioCLI-commands.md) 共享工程、创作、资源处理、撤销、保存及打包命令；Studio 额外提供窗口、选择、布局与控件命令。
 
-Studio 与 StudioCLI 使用同一套工程模型、编辑命令、校验、撤销、保存、资源处理和打包服务。桌面宿主增加窗口、面板、当前选择和画布交互适配；两端不维护不同的工程模型或打包实现。
+## 产品边界
 
-## 调用入口
-
-| 入口 | 当前用途 | 会话归属 |
+| 层次 | Studio | StudioCLI |
 |---|---|---|
-| `HarkenStudio.exe --project <path>` | 启动桌面程序并打开工程 | Studio 桌面进程 |
-| `HarkenStudio.exe --create-project <directory>` | 通过桌面启动流程创建工程；也可使用 `--project-name`、`--project-location` 和模板参数 | Studio 桌面进程 |
-| 本地 TCP IPC | 向运行中的 Studio 发送业务命令或桌面上下文命令 | 当前 Studio 工程、运行时和界面 |
-| `--self-test` 等诊断参数 | 程序身份、Schema 校验及工程打开诊断 | 独立诊断流程，不计入业务命令目录 |
-| `HarkenStudioCLI.exe` | 独立执行无窗口工程自动化与打包 | CLI 自己的进程和会话 |
+| 共享业务 | 通过 `--shell` 同进程输入、StudioCLI 实例模式或本地 TCP IPC 调用 | 通过 `exec`、`run`、`shell` 独立执行或操作指定实例 |
+| 桌面状态 | 当前窗口、面板、选择、画布及桌面会话 | `--instance <id>` 使用目标 Studio 的 GUI 上下文 |
+| 工程归属 | 当前桌面会话 | 独立会话，或通过 `--instance` 操作已有桌面会话 |
+| 运行入口 | `HarkenStudio.exe --project <path>` | `HarkenStudioCLI.exe`，macOS 为 `HarkenStudioCLI` |
+| 打包 | `export_pack` 使用当前内存工程 | 同一 `export_pack`，另有读取已保存工程的 `build` |
 
-Studio 本体的业务命令由 IPC 接收。`commands`、`exec`、`run`、`shell`、`build`、`list-targets` 是 `HarkenStudioCLI.exe` 的子命令，`HarkenStudio.exe` 没有对应的终端子命令解析入口。
+终端入口由 HarkenStudioCLI 提供：`instances` 列出存活 Studio 的版本与可用性，`--instance <id>` 将 `commands/exec/run/shell` 交给同软件版本的目标实例。Studio 正常启动即可接受实例命令，无需附带终端窗口。共享命令的名称、参数描述与业务实现相同；CLI 等待共享异步作业完成，GUI 事件保留排队结果与状态查询语义。
 
-Studio 主窗口就绪后启动 IPC 服务，默认监听 `127.0.0.1:9527`。命令使用换行分隔的 UTF-8 JSON：
+## Studio 同进程 shell
 
-```json
-{"cmd":"get_project_info","args":{},"request_id":"project-info-1"}
-```
-
-响应包含 `status`，成功数据位于 `result`；错误提供错误码与消息。请求提供 `request_id` 时，服务会将它带回响应。长连接客户端可先发送 `set_channel_role`，参数为 `{"role":"command"}`，使该连接只接收命令响应。通道设置属于传输控制，不计入下文注册目录。
-
-仓库提供 [PowerShell IPC 客户端](../../../.scripts/studio/harken_ipc.ps1)。Studio 已运行且 IPC 启动成功时，可在仓库根目录调用：
+PowerShell 中先让父终端等待 GUI 程序：
 
 ```powershell
-& .\.scripts\studio\harken_ipc.ps1 -Command ping
-& .\.scripts\studio\harken_ipc.ps1 -Command get_project_info
-& .\.scripts\studio\harken_ipc.ps1 -Command get_inspector_schema -ArgsJson '{"schema_id":"Sound"}'
+Start-Process .\HarkenStudio.exe -NoNewWindow -Wait -ArgumentList '--project "GameAudio/GameAudio.hsp" --shell'
 ```
 
-IPC 编辑作用于当前桌面会话；断开连接不会结束工程会话。保存由 `save_project` 或桌面保存操作完成。异步操作须继续查询完成状态，例如 `export_pack` 返回构建已启动后，使用 `get_pack_build_status` 查询结果；具体状态与取消入口也由响应的 `operation` 字段提供。
+出现 `harken>` 后输入：
 
-## 注册目录统计
+```text
+help
+help --search widget --read-only
+commands list_ui_windows
+create_action {"name":"PlayFootstep"}
+list_ui_windows
+save_project
+exit
+```
 
-统计口径为 `IPCServer::allCommandNames()` 合并并去重的 ActionManager 与 IPC handler 名称。启动参数、传输控制、二进制监控协议和 CLI 顶层子命令不计入此数。
+`--shell` 在 GUI 就绪后持续读取标准输入，使用现有 shell 语法、命令目录、参数验证和分发器。命令在 GUI 线程操作同一个内存工程、撤销栈和界面，不连接本地命名管道或 TCP 服务。共享异步作业等待完成，GUI 事件返回排队身份供后续查询。普通 GUI 启动不读取 stdin，也不创建终端窗口。
 
-| 当前注册范围 | 数量 | 含义 |
-|---|---:|---|
-| Studio 桌面宿主总目录 | 348 | 包含共享业务、桌面上下文及保留的旧接口声明 |
-| 同时进入 StudioCLI 的共享命令 | 184 | 具备无窗口实现；CLI 注册项的 `requiresDesktop` 均为 `false` |
-| 要求桌面上下文的命令 | 58 | 依赖当前窗口、画布、选择或桌面会话；其中部分会查询或修改工程数据 |
-| 其余未进入 StudioCLI 的声明 | 106 | 包含当前运行时桥的空实现、废弃入口和其他不适合 CLI 会话的接口 |
+`help` 显示会话指南和按分类整理的实际命令目录，包含当前 GUI 扩展；`help <name>`、`commands <name>`、`<name> --help` 显示完整参数说明，不执行操作。`help` 与 `commands` 支持组合 `--search <text>`、`--category <name>`、`--read-only`，无需离开 shell；`help exit` 解释当前会话的退出行为。帮助文本与独立 CLI 共用格式，执行示例使用当前 shell 的直接命令语法。
 
-目录核对关系为 `348 = 184 + 58 + 106`，对应启用 LMDB 的构建；禁用 LMDB 时，CLI 不注册全文搜索、搜索状态和搜索 benchmark 三条命令，目录为 181 条。这是注册统计，不代表 348 条桌面接口均已实现完整行为。184 条 CLI 保留命令已在 Windows 下逐项验证至少一个有效场景，所有合法参数组合仍未穷举；工程、运行时状态及参数须满足对应前提。
+输入或输出重定向时自动输出逐行 UTF-8 JSON，也可用 `--json` 强制启用；响应包含 `protocolVersion`。每读完一行即执行并刷新 stdout，无需等待 EOF。提示符仅向交互终端的 stderr 输出。`--help`、`--shell --help` 和 `--version [--json]` 可在不打开 GUI 的情况下查询入口及版本。
 
-桌面上下文与工程能力按实际行为区分。命令名称带有 canvas 或 Inspector，不足以判定它必须依赖 GUI：`import_audio_to_canvas` 是共享批量导入，`get_inspector_schema` 是共享静态属性 Schema 查询，`audition_get_state` 读取共享试听状态。`audition_get_position`、`audition_get_speed` 和 `audition_set_speed` 没有可靠的当前运行时实现，已从 CLI 目录排除。运行时桥尚未实现的声明也不能统称为 GUI 能力。
+Studio `--shell` 在后台写出响应，单个待发送响应最多 64 MiB；控制端停止读取时，GUI 和实例命令仍可响应，后续 shell 命令等待输出排空后再执行。断管道、中断或 300 秒写出超时会结束 shell 并保留 GUI；成功退出时，最终响应最多等待写出 5 秒，随后完成退出。
 
-## 桌面上下文命令
+`exit` 请求退出当前 Studio 进程，GUI 同时关闭；有未保存修改时返回 `UNSAVED_CHANGES` 并继续接受输入，可先 `save_project`，或明确 `exit --discard` 放弃修改后退出。EOF（输入流结束）也请求退出 Studio，有未保存修改时使用正常 GUI 关闭确认，取消关闭会保留工程。关闭 GUI 与 shell 退出共用工程清理流程，放弃未提交的源文件变更并释放运行时和工程锁；即使 stdin 仍打开或只有未结束的一行，输入等待也会终止。
 
-| 范围 | 代表命令 | 依赖的桌面状态 |
-|---|---|---|
-| 当前对象选择 | `select_item`、`select_project_item`、`select_bus`、`select_folder` | Project Explorer、总线或面板当前选中项 |
-| 画布操作与视图 | `connect_nodes`、`disconnect_nodes`、`get_blueprint`、`get_node_graph`、`set_canvas_flow` | 当前画布、节点类型、视图位置和交互解析 |
-| Inspector 与编辑器面板 | `get_inspector_context`、`create_inspector_panel`、`set_inspector_pinned`、`create_editor` | 面板实例、当前展示对象及固定状态 |
-| 布局与外观 | `get_current_layout`、`get_layout_state`、`set_theme`、`get_theme` | 工作区布局与桌面主题 |
-| 控件与对话框 | `get_ui_tree`、`click_widget`、`set_widget_value`、`list_open_dialogs`、`answer_dialog` | 实际窗口、控件树和打开的对话框 |
-| 桌面会话信息 | `get_recent_logs`、`get_remote_connection_status` | Studio 控制台缓冲与当前远程连接面板 |
+GUI 因导出等状态拒绝退出时，返回关闭失败并继续原 shell 会话；同一次输入已经读入的后续命令会保留，不重新创建读取线程或丢弃输入缓冲。
 
-58 条命令并非全部只操作控件。例如画布连线可能修改对象关系，图查询同时返回业务结构和画布坐标。共享业务能力通过显式对象、容器、路由及字段组命令提供；桌面入口负责将当前交互上下文转换为这些业务操作。
+`--shell` 要求已有终端或有效的 stdin/stdout 重定向，并提供 `--project`、`--create-project` 或有效的 `--last`。不会额外分配终端黑框。Windows 的 PowerShell 和 CMD 直接启动 GUI 可执行文件会立即返回提示符，父 shell 与 Studio 会竞争终端输入；`--shell` 无法改变父进程的等待策略。PowerShell 使用上述 `Start-Process -NoNewWindow -Wait`；CMD 使用 `start "" /wait HarkenStudio.exe --project "GameAudio/GameAudio.hsp" --shell`。外部程序直接建立隐藏的 stdin/stdout 管道即可。
 
-## GUI 操作与共享业务入口
+Studio 在交互会话期间启用逐行输入与回显，退出后恢复原终端模式。关闭 GUI 会退出 Studio 并归还父终端；PowerShell 的 Ctrl+C 也可能取消 `Start-Process` 的等待，使父 shell 提前恢复读取，因此不要把它当作只取消 Studio 命令的快捷键。需要持续操作已经运行的 Studio 时，可使用 `HarkenStudioCLI shell --instance <id>`；该会话的 `exit` 退出 StudioCLI 自己，目标 Studio 属于另一个进程。
 
-| Studio 操作 | 两端共享的业务入口 | 适用边界 |
-|---|---|---|
-| 画布拖入、连线与断线 | `move_item`、`add_child_to_container`、`remove_child_from_container`；总线用 `move_bus`；输出和发送用字段组、`set_send`、`remove_send` | 共享入口直接表达对象关系或路由，无需画布节点坐标 |
-| 查询工程关系与信号链 | `get_item_info`、`get_container_info`、`get_signal_chain`、`get_bus_hierarchy` | `get_blueprint`／`get_node_graph` 保留桌面视图信息；与共享查询的 JSON 字段不逐项相同 |
-| 一次导入多个音频文件 | `import_audio_to_canvas` | 历史名称保留；接收 `files` 与可选 `target_container_id`，不要求窗口或画布坐标 |
-| 输出覆盖与继承 | `set_field_group_mode`、`set_field_group_field`；Bus 属性用 `set_item_property` | 现代可播放定义的 Output 使用字段组；旧 `set_node_override` 布尔值不能代替字段组模式 |
-| 输出路由与增益 | 字段组 `outputBusRef`／`outputBusVolume`；支持对象上的 `set_output_bus_routing` | `set_output_bus_routing` 调整输出增益，不负责更换目的总线；字段组定义使用字段组命令 |
-| 试听状态与定位 | `audition_get_state`、`audition_set_position` | 状态读取和有效播放中的定位无需试听控件；CLI 当前不提供位置、速度查询或速度修改入口 |
-| 属性发现与编辑 | `get_inspector_schema`、`get_item_info`、属性及字段组命令 | Schema 来自同一共享实现；业务命令显式指定对象，面板选择由 Studio 管理 |
-| 保存与打包 | `save_project`、`export_pack`、平台与导出选择命令 | 使用同一工程格式、校验与 `ProjectPackBuildService`；打包产物契约见 [打包输出](pack-output.md) |
+工程已被其他实例打开时，`--shell` 返回错误，不把输入悄悄转发到已有实例；这种场景使用 `HarkenStudioCLI --instance <id>`。启动失败通过结构化错误返回；需要格式升级的工程先正常打开并完成升级，再启动 shell。
 
-## 实现与核对位置
+## 发现与调用
 
-| 内容 | 源码或工具 |
+推荐终端用法：
+
+```text
+HarkenStudioCLI instances --json
+HarkenStudioCLI --instance <id> commands
+HarkenStudioCLI --instance <id> exec list_ui_windows --json
+```
+
+实例连接使用当前用户的独立本地端点，执行握手检查版本，不依赖固定 TCP 端口。旧 TCP 接口继续默认监听 `127.0.0.1:9527`。请求为换行分隔的 UTF-8 JSON：
+
+```json
+{"cmd":"list_commands","args":{},"request_id":"catalog"}
+{"cmd":"get_command_schema","args":{"command":"import_audio_files"}}
+```
+
+`list_commands` 返回当前宿主实际支持的目录，`get_command_schema` 查询单条契约；工程选择器状态下也可调用。成功响应为 `status: "ok"` 与 `result`，错误为 `status: "error"`、`code`、`message`。提供 `request_id` 时会原样回传。连接可先发送 `set_channel_role`，参数 `{"role":"command"}`，避免接收广播事件。
+
+目录项包含 `command`、`description`、`category`、`scope`、`readOnly`、`requiresDesktop`、`parameters`、`inputSchema` 和 `schemaSource`。`scope` 区分共享与桌面宿主能力；`requiresDesktop` 进一步表明是否需要实际窗口。所有公开命令的 `schemaSource` 均为 `declared`。无参数命令也明确声明空对象，并拒绝多余参数。
+
+未实现、废弃的运行时桥接口在两端一致不注册，描述及执行均返回 `UNKNOWN_COMMAND`。不再把这些接口算作 Studio 的 GUI 扩展。内置 AI 工具开放策略仍是独立约束，不能据此推断底层业务能力。
+
+参数契约由共享 `CommandSchemas` 与桌面 `DesktopCommandSchemas` 定义，发现接口、普通 IPC、CLI 和 AI 使用同一份规则。执行前递归检查必填项、类型、枚举、范围、互斥形状及嵌套对象/数组；不把字符串、布尔值或小数静默转成默认数值。错误返回 `INVALID_ARGUMENTS`，消息定位参数路径。对象存在性、工程状态和业务语义继续由相应处理器检查。只读属性显式声明，不按命令名前缀猜测。
+
+完整目录受构建特性影响，例如禁用 LMDB 时不暴露全文检索命令；以运行产物的 `list_commands` 为准。共享项在两种宿主必须逐字段相同，此约束由通用回归检测保护。
+
+本轮新增共享 `audition_get_seek_status`，公开目录以运行产物为准，全部声明参数契约；真实桌面会话与独立 CLI 的共享描述逐字段相同。
+
+仓库 [PowerShell 客户端](../../../.scripts/studio/harken_ipc.ps1) 可调用：
+
+```powershell
+& .\.scripts\studio\harken_ipc.ps1 -Command list_commands
+& .\.scripts\studio\harken_ipc.ps1 -Command get_command_schema -ArgsJson '{"command":"set_bus_volume_db"}'
+```
+
+## 共享业务组织
+
+沿用 `动词_对象` 的命令标识，按目录 `category` 浏览；工程身份、运行时身份与 GUI 选择显式区分。
+
+| 任务 | 共享入口与语义 |
 |---|---|
-| 本体启动参数 | [StartupArguments.cpp](../../../HarkenStudio/Source/Core/StartupArguments.cpp)、[Main.cpp](../../../HarkenStudio/Source/Main.cpp) |
-| 桌面 IPC 启动 | [MainWindow.cpp](../../../HarkenStudio/Source/MainWindow.cpp) |
-| JSON 协议、注册目录合并与分派 | [IPCServer.cpp](../../../HarkenStudio/Source/Core/IPC/IPCServer.cpp) |
-| 共享命令注册 | [EditorCommandRegistration.cpp](../../../HarkenStudio/Source/Core/EditorCommandRegistration.cpp) |
-| 桌面动作适配 | [DesktopActions.cpp](../../../HarkenStudio/Source/Core/Actions/DesktopActions.cpp)、[IPCHandlers_DesktopEditor.cpp](../../../HarkenStudio/Source/Core/IPC/IPCHandlers_DesktopEditor.cpp) |
-| CLI 宿主过滤与参数描述 | [EditorCommandCatalog.cpp](../../../HarkenStudio/Source/Core/EditorCommandCatalog.cpp) |
+| 工程生命周期 | `create_project`、`open_project`、`save_project`、`close_project`；创建要求目标目录不存在，不覆盖现有工程 |
+| 工程状态 | `get_project_info`；包含 `project_open`、`closing`，打开成功返回相同工程信息 |
+| 内容创作 | 对象、容器、Action、字段组、平台、语言命令共用工程模型与校验 |
+| 批量音频导入 | `import_audio_files`；接收 `files` 和可选 `target_container_id`，不接收画布坐标；部分失败返回错误并保留成功项和计数 |
+| 总线增益 | `set_bus_volume_db(bus_name, db)` 修改总线增益；`set_output_bus_gain(bus_name, db)` 修改总线输出增益，`get_output_bus_gain` 读回；不更换目的地 |
+| 总线静音与独奏 | `set_bus_mute(bus_name, mute)`、`set_bus_solo(bus_name, solo)`；布尔参数须显式提供 |
+| 可播放定义输出 | 使用字段组 `outputBusRef`、`outputBusVolume`；Bus 层级使用 `move_bus` 与层级查询 |
+| 引擎与播放 | `init_engine`、`shutdown_engine`、`start_output`、`stop_output`、`post_action`；与 CLI 顶层创建工程的 `init` 区分 |
+| 播放就绪 | `post_action/post_action_3d/audition_play` 在共享分发器检查当前创作版本；未就绪返回 `RUNTIME_SYNC_PENDING`，尚未提交播放。三种 CLI 会话统一等待，工程改变时拒绝继续原请求 |
+| 试听定位 | `audition_set_position` 返回同一请求的异步完成协议；`audition_get_seek_status(audition_seek_request_id)` 查询最终 `applied/failed`。CLI 等待终态后才响应 |
+| 音频转码 | `transcode_asset`、`batch_convert_media` 共享转码作业、结果查询和取消协议；不以入队冒充完成 |
+| 保存与打包 | `save_project`、`export_pack`；与桌面使用相同工程格式、校验和 `ProjectPackBuildService` |
+| 文件比较 | `compare_files(reference_path, candidate_path)` 按字节比较，不解码音频；返回 `identical`、`compared_bytes`、`different_bytes`、`length_match` |
+| 执行错误 | `get_exec_errors` 只读；清空使用 `clear_exec_errors`，可指定 domain |
+| 衰减距离缩放 | `get_attenuation_distance_scaling` 默认读取 Shared，可用 `platform_id` 查询平台覆盖后的有效值 |
 
-Studio 桌面 IPC 目录、StudioCLI 实际注册目录与内置 AI 可用工具集是不同统计范围。AI 的开放策略不决定某个 IPC 业务命令是否已实现；独立 CLI 的参数发现与执行方式以 [StudioCLI 命令用法](studioCLI-commands.md) 为准。
+试听定位查询保留全部进行中的请求和最近 128 条完成记录，超出保留范围返回 `NOT_FOUND`。引擎关闭或原生定位失败也生成可查询的失败终态。附加 CLI 超时/中断只停止等待，定位仍可能完成；应使用返回的请求身份查询结果，不能把 `accepted` 当作已应用或直接重发。
+
+`close_project` 成功表示关闭已被接受，`closing` 表示运行时退场是否仍在进行；IPC 可查询 `get_project_info`，CLI 在关闭完成并释放锁后才执行下一条。
+
+## 桌面扩展
+
+| 范围 | 命令及完成语义 |
+|---|---|
+| 当前选择 | `select_item`、`select_project_item`、`select_bus`、`get_selected_bus`、`select_folder`；总线选择同步完成，查询返回实际选中状态 |
+| 画布 | `get_blueprint`、`set_blueprint_layer`、`get_blueprint_layers`、`connect_nodes`、`disconnect_nodes`；画布数据和手势归桌面，内容关系使用共享业务入口 |
+| 布局 | `switch_layout`、`get_current_layout`、`reset_layout`；统一使用 `layout` 参数；命名布局使用 `list_named_layouts` 等命令 |
+| 面板几何 | `get_panel_rect` 读取真实可见面板；名称由 `list_panels` 提供，可用 name/typeId/title；多义名称返回 `AMBIGUOUS_PANEL`，隐藏面板返回 `PANEL_NOT_VISIBLE` |
+| 控件发现 | `list_ui_windows` 枚举实际顶层窗口，包括独立窗口与对话框；`find_widget` 支持名称、文字、类型、作用域及数量上限，返回总量与截断标志 |
+| 控件写入 | `set_widget_value` 校验控件类型、数值范围、可见/启用/只读状态，并返回真实 `state`；支持 ToggleSwitch |
+| 事件投递 | `click_widget`、`key_press`、`open_context_menu`、`trigger_menu_action` 返回作业身份；用 `get_ui_operation` 查询执行状态 |
+| 对话框 | `answer_dialog` 只接受当前对话框支持的响应；非法响应报错并保持对话框，不默认接受或关闭 |
+| 曲线编辑 | `open_curve_editor` 校验真实对象和打开结果，不再无条件报告成功 |
+
+控件命令统一接收以下目标参数：
+
+- `widget_id`：发现接口返回的会话内不透明身份，适用于匿名控件、同名行控件及多实例面板。控件销毁后身份失效，绝不重新匹配同名替代控件。
+- `name`：精确匹配唯一 `objectName`。与 `widget_id` 二选一；多义名称返回 `AMBIGUOUS_WIDGET` 和包含身份的 `result.candidates`。
+- `scope_widget_id`：可选，将名称查找限定到指定控件及其子控件。可直接使用面板创建响应、`list_panels` 或窗口树返回的身份。
+
+`get_widget_value`、`get_widget_children`、表格/列表/树读取及截图使用相同解析规则。查询可以检查隐藏或禁用控件；交互要求目标可见、启用且不被模态对话框阻塞。`path` 仅供阅读，不是稳定选择器。`get_ui_tree` 未指定目标时默认主窗口；`key_press` 未指定目标时默认当前焦点控件，无焦点时使用主窗口。
+
+```json
+{"cmd":"find_widget","args":{"name":"sourceActive","visible_only":true}}
+{"cmd":"get_widget_value","args":{"widget_id":"<discovered-widget-id>"}}
+{"cmd":"click_widget","args":{"widget_id":"<discovered-widget-id>"}}
+{"cmd":"get_ui_operation","args":{"operation_id":"<returned-operation-id>"}}
+```
+
+队列响应的 `queued: true` 只表示已接受。作业依次处于 `queued`、`running`，最终为 `succeeded` 或 `failed`；失败保留错误原因。投递前再次检查目标存活、界面状态及导出互斥，目标销毁、隐藏或出现模态阻塞均不会被静默跳过。`succeeded` 表示 UI 操作已返回，不表示由该事件触发的业务作业已完成；打开阻塞式对话框的操作可持续为 `running`，直到对话框处理结束。会话保留最近 256 个已完成作业，过期或不存在的身份返回 `UI_OPERATION_NOT_FOUND`。
+
+`open_context_menu` 发送真正的上下文菜单事件，滚动控件使用其 viewport 的坐标；可省略 `x/y` 使用中心，也可同时指定两者。禁止上下文菜单的控件会报错。`trigger_menu_action` 只负责触发菜单项，参数为 `action_text` 和可选统一控件目标；省略目标时使用当前弹出菜单。重复菜单文字或重复表格匹配行会明确报错，不猜测第一项。
+
+`batch` 在任何子命令执行前校验所有子命令名称及参数；不支持嵌套批次。`stop_on_error` 默认 `true`，遇到业务错误后停止；设为 `false` 可继续其余命令。任一子命令失败时父响应为 `BATCH_FAILED`，并保留逐项结果、成功/失败/跳过计数。批次不会回滚已成功的操作，需要可回滚流程时使用 `preview_actions` 等事务命令。
+
+## 命令迁移
+
+本轮直接统一命名，不保留旧别名。
+
+| 移除的名称 | 当前入口或替代 |
+|---|---|
+| `init` / `shutdown`（业务命令） | `init_engine` / `shutdown_engine`；CLI 顶层 `init <directory>` 保留 |
+| `trigger_action` | `post_action` |
+| `import_audio_to_canvas` | `import_audio_files`；删除 `drop_x/drop_y` |
+| `set_mixer_volume` | `set_bus_volume_db`；参数 `bus/volume_db` → `bus_name/db` |
+| `set_mixer_mute` / `set_mixer_solo` | `set_bus_mute` / `set_bus_solo`；参数 `bus` → `bus_name` |
+| `set_output_bus_routing` / `get_output_bus_routing` | `set_output_bus_gain` / `get_output_bus_gain`，仅 Bus；参数 `path/volume_db` → `bus_name/db` |
+| `replay_verify` | `compare_files`；`replay_path` → `candidate_path`，样本数与伪音频指标改为字节结果 |
+| `get_node_graph` / `set_nodegraph_layer` / `get_nodegraph_layers` | `get_blueprint` / `set_blueprint_layer` / `get_blueprint_layers` |
+| `switch_view` / `get_current_view` | `switch_layout` / `get_current_layout`；`view` → `layout`，包括 `reset_layout` |
+| `get_exec_errors(clear:true)` | `clear_exec_errors`；查询不再携带清空副作用 |
+| `get_transcode_status(platform_id,source_id)` | 使用转码响应的 `operation_id`，取消同样按作业身份执行 |
+| `batch_convert_media(sourceIDs)` | 使用 `source_ids`，重复及非法身份在开始前统一拒绝 |
+| `batch_replace_media(items[].sourceID/new_path)` | 使用 `source_id/path`；无效、溢出及重复身份在替换前拒绝 |
+| `set_container_property` 的空间属性、`string_value/object_value` | 标量入口只接受 `volume/pitch` 和 `value`；空间属性使用字段组命令 |
+| `set_conversion_settings` 的未知 codec | 明确接受 `PCM_Float/ADPCM/Vorbis`，不再静默落到默认编码 |
+| `key_press(widget)` / `get_ui_tree(root)` | 使用统一的 `name` 或 `widget_id`；可用 `scope_widget_id` 限定作用域 |
+| `trigger_menu_action(emit_context)` | 使用 `open_context_menu`；原 `pos_x/pos_y` 改为 `x/y` |
+| `trigger_menu_action(button)` | 使用统一控件目标 `name` 或 `widget_id` |
+| `batch(atomic)` | 使用 `stop_on_error`，明确停止后续而非原子回滚 |
+| `open_curve_editor(attenuation/attenuation_guid)` | 使用 `name/guid`，二选一 |
+| `observe` / `unobserve` | 删除未投递观测结果的空接口；需要当前结果时使用 `query` |
+| `ai_event` / `ai_response` | 删除没有接收端的旧注入入口 |
+| `apply_template_from_data` | 删除仅完成部分行为的旧入口；创建时使用 `create_project`，成对传入 `template_id` 和 `template_data` |
+
+废弃 Pack 手动管理、旧平台配置、未实现的运行时观测/空间/调制/流式/旧 HarkenLink 等接口不再公开。当前可用能力以运行产物的 `list_commands` 为准；工程平台使用 UUID 命令，空间衰减使用字段组，运行观测使用已实现的性能、Voice 与快照查询。
+
+## 实现与验证
+
+[EditorCommandCatalog.cpp](../../../HarkenStudio/Source/Core/EditorCommandCatalog.cpp) 定义宿主边界与统一描述；[CommandSchemas.cpp](../../../HarkenStudio/Source/Core/CommandSchemas.cpp) 与 [DesktopCommandSchemas.cpp](../../../HarkenStudio/Source/Core/IPC/DesktopCommandSchemas.cpp) 定义参数合同；[CommandArgumentValidator.cpp](../../../HarkenStudio/Source/Core/CommandArgumentValidator.cpp) 递归校验。[IPCServer.cpp](../../../HarkenStudio/Source/Core/IPC/IPCServer.cpp) 统一分派与状态限制。[DesktopWidgetTargets.cpp](../../../HarkenStudio/Source/Core/IPC/DesktopWidgetTargets.cpp) 统一桌面目标身份、交互限制和队列状态。
+
+通用回归覆盖公开目录的完整声明、两宿主合同相等、所有命令拒绝未知参数、嵌套约束与精确身份规则。桌面生命周期回归覆盖重复名称、作用域、失效身份、隐藏/禁用/模态阻塞、入队后目标变化、作业状态及历史容量。CLI 本地流程验证位于 [verify_studio_cli.py](../../../.scripts/verify_studio_cli.py)。
+
+本轮真实 Windows 桌面会话验证通过：请求外层结构及参数类型拒绝并保留 request_id、完整合同对齐、顶层窗口身份、隐藏控件读取与交互限制、同名候选身份、面板生命周期、队列完成查询、批次参数预检无先行副作用，以及真实未保存确认框阻塞背景交互、取消后原队列操作完成。最终临时报告为 `harken-desktop-contracts-t4kxs3y0/report.json`，仓库本地日志为 `.temp/desktop-contracts-release-smoke.log`。
+
+最终相关原生回归 128/128 通过，结果保存在 `.temp/cli-contracts-release-tests.xml`。其中事务回归覆盖 27 组总线与容器属性的单独/组合修改，验证预览不修改数据、执行确实修改数据，以及回滚完整恢复 Shared 缺省、显式值、平台覆盖和试听状态。总线音高/输出增益及容器音量/音高的事务支持已与实际执行对齐；不会仅恢复当前数值而遗失原有覆盖关系。真实音频与无声设备两套 CLI 流程分别保存在 `.temp/cli-contracts-release-real.log` 和 `.temp/cli-contracts-release-null.log`。
+
+本地验证环境为 Windows。联合构建、禁用 Qt 图形模块的独立 CLI 构建、原生测试和 CLI 流程分别执行；macOS 和其他音频硬件组合尚未验证。

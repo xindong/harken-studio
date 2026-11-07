@@ -142,14 +142,28 @@ endif()
 # Source Files — explicit list (no GLOB_RECURSE)
 # When adding new files, add them here and re-run cmake configure.
 set(HARKEN_STUDIO_COMMAND_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Tooling/StudioCli/CommandHelp.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Tooling/StudioCli/CommandHelp.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Tooling/StudioCli/Shell.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Tooling/StudioCli/Shell.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Tooling/StudioCli/StudioSession.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Tooling/StudioCli/StudioSession.h
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/HubClient/HubIntake.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/HubClient/HubIntake.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/CommandSchemas.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/CommandSchemas.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/CommandArgumentValidator.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/CommandArgumentValidator.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/IPC/DesktopCommandSchemas.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/IPC/DesktopCommandSchemas.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/EditorCommandCatalog.h
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/EditorCommandCatalog.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/EditorCommandRegistration.h
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/EditorCommandRegistration.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/IPC/IPCServer.h
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/IPC/IPCServer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/IPC/StudioInstanceTransport.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/IPC/StudioInstanceTransport.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/AI/AICommandCatalog.h
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/AI/AICommandCatalog.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/AI/AIPermissionModel.h
@@ -203,6 +217,8 @@ set(HARKEN_EDITOR_LIB_SOURCES
     Source/Core/Actions/DesktopActions.cpp
     Source/Core/IPC/IPCDesktopHost.cpp
     Source/Core/IPC/IPCDesktopInternal.h
+    Source/Core/IPC/DesktopWidgetTargets.h
+    Source/Core/IPC/DesktopWidgetTargets.cpp
     Source/Core/IPC/IPCHandlers_DesktopSystem.cpp
     Source/Core/IPC/IPCHandlers_DesktopEditor.cpp
     Source/Core/IPC/IPCHandlers_DesktopAdvanced.cpp
@@ -493,14 +509,10 @@ endif()
 if(HARKEN_BUILD_STUDIO_CLI)
 add_executable(harken_studio_cli
     Source/Tooling/StudioCli/Main.cpp
-    Source/Tooling/StudioCli/Shell.cpp
-    Source/Tooling/StudioCli/Shell.h
     Source/Tooling/StudioCli/SavedProjectBuild.cpp
     Source/Tooling/StudioCli/SavedProjectBuild.h
     Source/Tooling/StudioCli/ResourceWorker.cpp
-    Source/Tooling/StudioCli/ResourceWorker.h
-    Source/Tooling/StudioCli/StudioSession.cpp
-    Source/Tooling/StudioCli/StudioSession.h)
+    Source/Tooling/StudioCli/ResourceWorker.h)
 set_target_properties(harken_studio_cli PROPERTIES OUTPUT_NAME "HarkenStudioCLI")
 target_link_libraries(harken_studio_cli PRIVATE harken_studio_core)
 harken_attach_version_resource(harken_studio_cli "Harken Studio CLI" "HarkenStudioCLI.exe")
