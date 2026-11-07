@@ -67,7 +67,7 @@ that distinction matters.
 Storage remains bounded. Different requested times, retained playback reads,
 and genuinely exhausted local-value slots can prevent replacement or admission.
 A refused write preserves already accepted work. Keep checking the exact
-`VnResult`; no extra Update, SDK retry queue, or audio-thread call is required.
+`VnResult`; no extra Update, managed retry queue, or audio-thread call is required.
 
 ## `Harken.Values` signatures
 
@@ -143,7 +143,7 @@ runtime registration operation.
 
 ## Generated symbols and catalog pairing
 
-Editor symbol generation is suspended, and the **Generate SDK Symbols From
+Editor symbol generation is suspended, and the **Generate API Symbols From
 Publication** menu is hidden. Existing generated
 `Harken.Generated.HarkenVariables` fields are raw `VnObjectId` GUIDs, not typed
 Variable references. `Values.SetValue(HarkenVariables.Speed, ...)` therefore
@@ -157,7 +157,7 @@ VnResult result = Values.SetValue(speed, 0.5f, emitter);
 ```
 
 Generated typed references require a catalog matching the loaded content.
-The SDK's internal guard blocks a typed write with
+The managed API's internal guard blocks a typed write with
 `VN_VARIABLE_CATALOG_MISMATCH` when the execution fingerprint differs. A
 display-only catalog fingerprint difference warns and records a mismatch but
 allows the write. Raw ID and current-name calls use the loaded publication.

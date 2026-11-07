@@ -90,7 +90,7 @@ TEST(VariableCatalog, DisplayMismatchWarnsAndStillWrites) {
     ASSERT_TRUE(harken::test::SetDefinitionExecutionFingerprint(
         engine->variables, harken::generated::kVariable_VehicleRPM,
         VehicleRpmExecutionFingerprint()));
-    harken::test::SetSdkCatalogFingerprint(engine->variables, 1);
+    harken::test::SetApiCatalogFingerprint(engine->variables, 1);
 
     VnVariableWriteV1 write{};
     const VnVariableBatchDescV1 desc =
@@ -119,7 +119,7 @@ TEST(VariableCatalog, QueryMatchesInstalledRows) {
     ASSERT_TRUE(harken::test::SetDefinitionExecutionFingerprint(
         engine->variables, harken::generated::kVariable_VehicleRPM,
         VehicleRpmExecutionFingerprint()));
-    harken::test::SetSdkCatalogFingerprint(engine->variables, 99);
+    harken::test::SetApiCatalogFingerprint(engine->variables, 99);
 
     VnVariableCatalogInfoV1 info{};
     info.structSize = sizeof(info);
@@ -127,7 +127,7 @@ TEST(VariableCatalog, QueryMatchesInstalledRows) {
     EXPECT_EQ(harken::generated::kVariableExecutionCatalogFingerprint,
               info.executionCatalogFingerprint);
     EXPECT_EQ(99u, info.sdkCatalogFingerprint);
-    EXPECT_EQ(engine->variables.SdkCatalogFingerprint(),
+    EXPECT_EQ(engine->variables.ApiCatalogFingerprint(),
               info.sdkCatalogFingerprint);
 }
 

@@ -149,7 +149,7 @@ enum {
     VN_VARIABLE_EMITTER_SLOT_EXHAUSTED = -1202, /* per-emitter override slots full */
     VN_VARIABLE_TRANSACTION_EXHAUSTED = -1203, /* pending table full */
     VN_VARIABLE_POLICY_INCOMPLETE = -1204, /* overlay missing/extra vs Init rows */
-    VN_VARIABLE_CATALOG_MISMATCH = -1205, /* typed SDK execution catalog mismatch */
+    VN_VARIABLE_CATALOG_MISMATCH = -1205, /* typed API execution catalog mismatch */
     VN_NO_VARIABLE_LABEL = -1206,
 
     /* Gameplay catalog checked-name results. Values are ABI-fixed. */
@@ -1135,7 +1135,7 @@ VnResult Vn_QueryVariableTicket(const VnVariableTicketQueryDescV1* desc,
 VnResult Vn_QueryVariable(const VnVariableQueryDescV1* desc,
                           VnVariableQueryResultV1* out);
 
-/* Live execution and SDK catalog fingerprints. Logic thread only. Not a
+/* Live execution and API catalog fingerprints. Logic thread only. Not a
  * remote-wire command. */
 VnResult Vn_QueryVariableCatalog(VnVariableCatalogInfoV1* out);
 
@@ -5031,7 +5031,7 @@ typedef struct VnMonitorRemoteFrameCounter {
     uint64_t messageCounter;
 } VnMonitorRemoteFrameCounter;
 
-/* Optional SDK diagnostics. No registration transfers emitter ownership or
+/* Optional host diagnostics. No registration transfers emitter ownership or
  * grants observation permissions. Call on the engine logic thread. */
 typedef struct VnMonitorHostSessionV1 {
     uint32_t structSize;

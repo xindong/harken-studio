@@ -11,7 +11,7 @@
 
 using VNH::HubLocalization;
 
-TEST(HubLocalizationTest, CustomSdkSafetyMessagesTranslateWithoutChangingPaths)
+TEST(HubLocalizationTest, CustomIntegrationSafetyMessagesTranslateWithoutChangingPaths)
 {
     const QString path = QStringLiteral("D:/Game %2/Assets/ThirdParty/Harken SDK");
     const QStringList messages = {

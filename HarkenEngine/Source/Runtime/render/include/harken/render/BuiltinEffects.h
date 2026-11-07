@@ -193,7 +193,7 @@ struct GainState {
 // Internal, most-recent processing segment only; not a block aggregate or
 // history. Linear double gains preserve finite extreme attenuation under FTZ.
 // Convert a copied numeric value to dB off the render thread if needed.
-// No Monitor, SDK, or cross-thread publication contract is implied.
+// No Monitor, managed API, or cross-thread publication contract is implied.
 enum class LimiterGainReductionStatus : std::uint8_t {
     Unavailable, Numeric, Bypassed, BypassTransition, NonFinite, OutputClipped
 };

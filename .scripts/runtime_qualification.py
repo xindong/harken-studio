@@ -2263,24 +2263,24 @@ def validate_record_scope(
                     }
                 )
 
-    sdk_project = (
+    integration_project = (
         source_root
         / "HarkenIntegration"
         / "Test"
         / "ContractTest"
         / "AbiFidelity.csproj"
     ).resolve()
-    sdk_artifacts = (run_root / "build" / "sdk").resolve()
+    integration_artifacts = (run_root / "build" / "sdk").resolve()
     for kind in ("sdk-contract-managed", "sdk-contract-native"):
         record = by_kind.get(kind)
         if record:
             argv = [str(item) for item in record.get("argv", [])]
-            if not has_exact_path(argv, sdk_project):
+            if not has_exact_path(argv, integration_project):
                 violations.append(
                     {
                         "kind": kind,
                         "rule": "qualified_sdk_project",
-                        "expected": str(sdk_project),
+                        "expected": str(integration_project),
                         "actual": argv,
                     }
                 )
@@ -2488,20 +2488,20 @@ def validate_record_scope(
         "sdk-contract-managed": [
             "run",
             "--project",
-            str(sdk_project),
+            str(integration_project),
             "--configuration",
             "Release",
             "--artifacts-path",
-            str(sdk_artifacts),
+            str(integration_artifacts),
         ],
         "sdk-contract-native": [
             "run",
             "--project",
-            str(sdk_project),
+            str(integration_project),
             "--configuration",
             "Release",
             "--artifacts-path",
-            str(sdk_artifacts),
+            str(integration_artifacts),
             "--",
             "--require-native",
         ],

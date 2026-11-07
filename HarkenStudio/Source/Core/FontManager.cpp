@@ -1,5 +1,5 @@
-
 #include "FontManager.h"
+
 #include <QFontDatabase>
 
 #include <utility>
@@ -20,97 +20,82 @@ FontManager::FontManager(QObject* parent)
 
 void FontManager::resolveFontFamilies()
 {
-    const QStringList sansCandidates = { "Inter", "Segoe UI" };
+    const QStringList sansCandidates = { QStringLiteral("Inter"), QStringLiteral("Segoe UI") };
     const QStringList availableFamilies = QFontDatabase::families();
-
-    sansFamily_.clear();
+    systemSansFamily_.clear();
     for (const auto& candidate : sansCandidates) {
         if (availableFamilies.contains(candidate)) {
-            sansFamily_ = candidate;
+            systemSansFamily_ = candidate;
             break;
         }
     }
-    if (sansFamily_.isEmpty()) {
+    if (systemSansFamily_.isEmpty()) {
         QFont defaultFont;
         defaultFont.setStyleHint(QFont::SansSerif);
-        sansFamily_ = defaultFont.defaultFamily();
+        systemSansFamily_ = defaultFont.defaultFamily();
     }
-    systemSansFamily_ = sansFamily_;
-
-    const QStringList monoCandidates = { "JetBrains Mono", "Consolas" };
-
-    monoFamily_.clear();
-    for (const auto& candidate : monoCandidates) {
-        if (availableFamilies.contains(candidate)) {
-            monoFamily_ = candidate;
-            break;
-        }
-    }
-    if (monoFamily_.isEmpty()) {
-        QFont monoFont;
-        monoFont.setStyleHint(QFont::Monospace);
-        monoFamily_ = monoFont.defaultFamily();
-    }
-    systemMonoFamily_ = monoFamily_;
+#ifdef Q_OS_WIN
+    systemMonoFamily_ = QStringLiteral("Consolas");
+#else
+    systemMonoFamily_ = QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
+#endif
+    sansFamily_ = systemSansFamily_;
+    monoFamily_ = systemMonoFamily_;
 }
 
-QFont FontManager::getFont(FontRole role) const
+QFont FontManager::getFont(FontRole role, FontEmphasis emphasis) const
 {
-    const ThemeFontStyle* style = themeStyle(role);
-    return getFont(
-        role,
-        style && style->pointSize > 0 ? style->pointSize : defaultSize(role),
-        style && style->weight > 0
-            ? static_cast<QFont::Weight>(style->weight)
-            : defaultWeight(role));
+    return getFont(snapshot_, role, emphasis);
 }
 
 QFont FontManager::getFont(FontRole role, int sizePtOverride) const
 {
-    const ThemeFontStyle* style = themeStyle(role);
-    return getFont(
-        role, sizePtOverride,
-        style && style->weight > 0
-            ? static_cast<QFont::Weight>(style->weight)
-            : defaultWeight(role));
+    QFont font = getFont(role);
+    if (sizePtOverride > 0)
+        font.setPointSizeF(qMax(6, sizePtOverride) * scaleFactor());
+    return font;
 }
 
-QFont FontManager::getFont(FontRole role, int sizePtOverride, QFont::Weight weightOverride) const
+QFont FontManager::getFont(const ThemeSnapshotPtr& snapshot, FontRole role,
+                         FontEmphasis emphasis) const
 {
-    const ThemeFontStyle* style = themeStyle(role);
-    const bool isMono = role == FontRole::Mono;
-    const QString family = style && !style->family.isEmpty()
-        ? style->family
-        : (isMono ? monoFamily_ : sansFamily_);
-
-    QFont font(family);
-    font.setPointSize(scaledSize(sizePtOverride));
-    font.setWeight(weightOverride);
-
-    if (isMono) {
-        font.setStyleHint(QFont::Monospace);
-    } else {
-        font.setStyleHint(QFont::SansSerif);
+    const ThemeTypography defaults;
+    const auto& typography = snapshot ? snapshot->ui.typography : defaults;
+    const ThemeFontStyle* style = &typography.body;
+    switch (role) {
+        case FontRole::Title: style = &typography.title; break;
+        case FontRole::Body: break;
+        case FontRole::Caption: style = &typography.caption; break;
+        case FontRole::Mono: style = &typography.mono; break;
     }
-
+    const bool mono = role == FontRole::Mono;
+    const QString family = !style->family.isEmpty() ? style->family
+        : mono ? systemMonoFamily_
+        : !typography.body.family.isEmpty() ? typography.body.family : systemSansFamily_;
+    QFont font(family);
+    const int size = style->pointSize > 0 ? style->pointSize : typography.body.pointSize;
+    font.setPointSizeF(qMax(6, size) * (snapshot ? snapshot->uiScale : 1.0));
+    font.setWeight(static_cast<QFont::Weight>(emphasis == FontEmphasis::Strong
+        ? typography.title.weight : style->weight > 0 ? style->weight : typography.body.weight));
+    font.setStyleHint(mono ? QFont::Monospace : QFont::SansSerif);
+    font.setStretch(QFont::Unstretched);
+    font.setLetterSpacing(QFont::AbsoluteSpacing, 0);
+    font.setWordSpacing(0);
+    font.setStyle(QFont::StyleNormal);
+    font.setCapitalization(QFont::MixedCase);
+    font.setKerning(true);
     return font;
 }
 
-QFont FontManager::getFont(const ThemeSnapshotPtr& snapshot, FontRole role) const
+QString FontManager::styleSheet(const ThemeSnapshotPtr& snapshot, FontRole role,
+                               FontEmphasis emphasis) const
 {
-    const ThemeFontStyle* style = themeStyle(snapshot, role);
-    const bool isMono = role == FontRole::Mono;
-    const QString family = style && !style->family.isEmpty()
-        ? style->family
-        : (isMono ? systemMonoFamily_ : systemSansFamily_);
-    QFont font(family);
-    font.setPointSize(scaledSize(
-        style && style->pointSize > 0 ? style->pointSize : defaultSize(role)));
-    font.setWeight(style && style->weight > 0
-        ? static_cast<QFont::Weight>(style->weight)
-        : defaultWeight(role));
-    font.setStyleHint(isMono ? QFont::Monospace : QFont::SansSerif);
-    return font;
+    const QFont font = getFont(snapshot, role, emphasis);
+    QString family = font.family();
+    family.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
+    family.replace(QLatin1Char('\''), QStringLiteral("\\'"));
+    return QStringLiteral("font-family: '%1'; font-size: %2pt; font-weight: %3; letter-spacing: 0;")
+        .arg(family).arg(font.pointSizeF()).arg(int(font.weight()));
 }
 
 void FontManager::applyTheme(ThemeSnapshotPtr snapshot)
@@ -118,87 +103,14 @@ void FontManager::applyTheme(ThemeSnapshotPtr snapshot)
     if (snapshot_ == snapshot)
         return;
     const bool changed = !snapshot_ || !snapshot
-        || snapshot_->ui.typography != snapshot->ui.typography;
+        || snapshot_->ui.typography != snapshot->ui.typography
+        || snapshot_->uiScale != snapshot->uiScale;
     snapshot_ = std::move(snapshot);
     if (!changed)
         return;
-    sansFamily_ = snapshot_ && !snapshot_->ui.typography.body.family.isEmpty()
-        ? snapshot_->ui.typography.body.family
-        : systemSansFamily_;
-    monoFamily_ = snapshot_ && !snapshot_->ui.typography.mono.family.isEmpty()
-        ? snapshot_->ui.typography.mono.family
-        : systemMonoFamily_;
+    sansFamily_ = getFont(FontRole::Body).family();
+    monoFamily_ = getFont(FontRole::Mono).family();
     emit fontChanged();
-}
-
-void FontManager::setScaleFactor(float factor)
-{
-    if (factor < 0.5f) factor = 0.5f;
-    if (factor > 3.0f) factor = 3.0f;
-
-    if (qFuzzyCompare(scaleFactor_, factor))
-        return;
-
-    scaleFactor_ = factor;
-    emit fontChanged();
-}
-
-int FontManager::scaledSize(int basePt) const
-{
-    int scaled = static_cast<int>(basePt * scaleFactor_ + 0.5f);
-    return qMax(scaled, 6);
-}
-
-int FontManager::defaultSize(FontRole role)
-{
-    switch (role) {
-        case FontRole::Heading: return 14;
-        case FontRole::Title:   return 12;
-        case FontRole::Body:    return 10;
-        case FontRole::Caption: return 9;
-        case FontRole::Axis:    return 8;
-        case FontRole::Mono:    return 10;
-        case FontRole::Label:   return 9;
-    }
-    return 10;
-}
-
-const ThemeFontStyle* FontManager::themeStyle(FontRole role) const
-{
-    return themeStyle(snapshot_, role);
-}
-
-const ThemeFontStyle* FontManager::themeStyle(
-    const ThemeSnapshotPtr& snapshot,
-    FontRole role)
-{
-    if (!snapshot)
-        return nullptr;
-    const auto& typography = snapshot->ui.typography;
-    switch (role) {
-        case FontRole::Heading: return &typography.heading;
-        case FontRole::Title:   return &typography.title;
-        case FontRole::Body:    return &typography.body;
-        case FontRole::Caption: return &typography.caption;
-        case FontRole::Axis:    return &typography.axis;
-        case FontRole::Mono:    return &typography.mono;
-        case FontRole::Label:   return &typography.label;
-    }
-    return nullptr;
-}
-
-QFont::Weight FontManager::defaultWeight(FontRole role)
-{
-    switch (role) {
-        case FontRole::Heading: return QFont::Bold;
-        case FontRole::Title:   return QFont::DemiBold;
-        case FontRole::Body:    return QFont::Normal;
-        case FontRole::Caption: return QFont::Normal;
-        case FontRole::Axis:    return QFont::Normal;
-        case FontRole::Mono:    return QFont::Normal;
-        case FontRole::Label:   return QFont::Medium;
-    }
-    return QFont::Normal;
 }
 
 }

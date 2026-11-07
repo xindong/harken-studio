@@ -27,7 +27,8 @@ void PreviewField::paintEvent(QPaintEvent*)
 {
     QPainter painter(this);
     QtControlSkin::paintFieldFrame(painter, this);
-    paintPreview(painter, QRectF(rect()).adjusted(2, 2, -2, -2));
+    const int padding = ThemeManager::instance().metrics().spacingCompact;
+    paintPreview(painter, QRectF(rect()).adjusted(padding, padding, -padding, -padding));
 }
 
 void PreviewField::mousePressEvent(QMouseEvent* event)

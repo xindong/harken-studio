@@ -35,7 +35,7 @@ namespace Harken
                 }
                 var text = new StringBuilder("namespace Harken.Generated\n{\n    public static class HarkenActions\n    {\n");
                 foreach (var row in rows)
-                    text.Append("        public static readonly VnObjectId ").Append(SdkSymbols.Name(row.Key, "A_"))
+                    text.Append("        public static readonly VnObjectId ").Append(CatalogSymbols.Name(row.Key, "A_"))
                         .Append(" = new VnObjectId(0x").Append(row.Value.high.ToString("x16"))
                         .Append("UL, 0x").Append(row.Value.low.ToString("x16")).Append("UL);\n");
                 text.Append("    }\n}\n");

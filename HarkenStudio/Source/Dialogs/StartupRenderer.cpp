@@ -22,7 +22,6 @@
 namespace {
 
 constexpr int kPixelSize = 1;
-constexpr int kLogoWidth = 268;
 
 const char* kVertexShader = R"glsl(
 #version 330 core
@@ -299,7 +298,7 @@ void StartupRenderer::renderLoop()
             const int width = pixelWidth_.load(std::memory_order_acquire);
             const int height = pixelHeight_.load(std::memory_order_acquire);
             const qreal dpr = devicePixelRatio_.load(std::memory_order_acquire);
-            const int logoPixelWidth = qRound(kLogoWidth * dpr);
+            const int logoPixelWidth = qRound(theme_->ui.metrics.startup.logoWidth * dpr);
             if (logo.width() != logoPixelWidth || logo.devicePixelRatio() != dpr) {
                 logo = logoSource.scaledToWidth(logoPixelWidth, Qt::SmoothTransformation);
                 logo.setDevicePixelRatio(dpr);

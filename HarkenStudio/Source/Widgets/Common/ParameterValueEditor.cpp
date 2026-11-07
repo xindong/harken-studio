@@ -160,8 +160,7 @@ void ParameterValueEditor::setCompact(bool compact)
     compact_ = compact;
     spinBox_->setButtonSymbols(compact ? QAbstractSpinBox::NoButtons : QAbstractSpinBox::UpDownArrows);
     spinBox_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-    spinBox_->setFont(compact
-        ? FontManager::instance().getFont(themeManager_->snapshot(), FontRole::Mono) : font());
+    spinBox_->setFont(FontManager::instance().getFont(themeManager_->snapshot(), FontRole::Body));
     const QString role = compact ? QStringLiteral("inspectorValue") : QStringLiteral("compact");
     QtControlSkin::setSemanticProperty(spinBox_, "fieldRole", role);
     QtControlSkin::setSemanticProperty(comboBox_, "fieldRole", role);

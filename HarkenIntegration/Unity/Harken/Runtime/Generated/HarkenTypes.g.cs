@@ -964,7 +964,7 @@ namespace Harken
     public uint activeVoiceCount;
     public ulong blockIndex;
     // voices[64]: 64 x VnVoiceSnapshot (24 bytes each). Raw uint buffer — reinterpret
-    // to a VnVoiceSnapshot span to read (see the SDK snapshot reader).
+    // to a VnVoiceSnapshot span to read (see the managed snapshot reader).
     public fixed uint voicesRaw[384];
     public uint busCount;
     public fixed float busPeaks[32];
@@ -1051,7 +1051,7 @@ namespace Harken
     public uint effectTypeStatCount;
     public uint reserved4;
     // effectTypeStats[16]: 16 x VnEffectTypeStats (24 bytes each). Raw uint buffer — reinterpret
-    // to a VnEffectTypeStats span to read (see the SDK snapshot reader).
+    // to a VnEffectTypeStats span to read (see the managed snapshot reader).
     public fixed uint effectTypeStatsRaw[96];
     public uint busMuteMask;
     public uint busSoloEffectiveMask;
@@ -1089,7 +1089,7 @@ namespace Harken
     public ulong topologyPlanByteBudget;
     public ulong topologyPlanPoolBytes;
     // busIds[32]: 32 x VnObjectId (16 bytes each). Raw ulong buffer — reinterpret
-    // to a VnObjectId span to read (see the SDK snapshot reader).
+    // to a VnObjectId span to read (see the managed snapshot reader).
     public fixed ulong busIdsRaw[64];
     public fixed uint busGenerations[32];
     public int lastTopologyRefusalResult;
@@ -1726,10 +1726,10 @@ namespace Harken
     public uint enabled;
     public uint pointCount;
     // points[8]: 8 x VnAttenuationCurvePoint (8 bytes each). Raw uint buffer — reinterpret
-    // to a VnAttenuationCurvePoint span to read (see the SDK snapshot reader).
+    // to a VnAttenuationCurvePoint span to read (see the managed snapshot reader).
     public fixed uint pointsRaw[16];
     // handles[7]: 7 x VnCurveHandlePair (16 bytes each). Raw uint buffer — reinterpret
-    // to a VnCurveHandlePair span to read (see the SDK snapshot reader).
+    // to a VnCurveHandlePair span to read (see the managed snapshot reader).
     public fixed uint handlesRaw[28];
     }
 
@@ -1848,10 +1848,10 @@ namespace Harken
     public uint structSize;
     public uint pointCount;
     // points[8]: 8 x VnCurvePoint (8 bytes each). Raw uint buffer — reinterpret
-    // to a VnCurvePoint span to read (see the SDK snapshot reader).
+    // to a VnCurvePoint span to read (see the managed snapshot reader).
     public fixed uint pointsRaw[16];
     // handles[7]: 7 x VnCurveHandlePair (16 bytes each). Raw uint buffer — reinterpret
-    // to a VnCurveHandlePair span to read (see the SDK snapshot reader).
+    // to a VnCurveHandlePair span to read (see the managed snapshot reader).
     public fixed uint handlesRaw[28];
     }
 

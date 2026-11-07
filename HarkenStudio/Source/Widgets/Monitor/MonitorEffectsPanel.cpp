@@ -1,4 +1,5 @@
 #include "Monitor/MonitorEffectsPanel.h"
+#include "Core/ThemeLayout.h"
 #include "Monitor/MonitorTypes.h"
 #include "Widgets/Common/TableWidget.h"
 #include "Monitor/MonitorPanelKeys.h"
@@ -19,8 +20,8 @@ MonitorEffectsPanel::MonitorEffectsPanel(QWidget* parent)
     setObjectName(QStringLiteral("MonitorEffectsPanel"));
 
     auto* root = new QVBoxLayout(this);
-    root->setContentsMargins(8, 8, 8, 8);
-    root->setSpacing(6);
+    ThemeLayout::margins(root, ThemeLayout::Space::Small);
+    ThemeLayout::spacing(root, ThemeLayout::Space::Small);
 
     gapLabel_ = new QLabel(this);
     gapLabel_->setObjectName(QStringLiteral("MonitorEffectsGap"));

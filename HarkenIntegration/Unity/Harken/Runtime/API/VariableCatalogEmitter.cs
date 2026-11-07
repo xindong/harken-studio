@@ -13,7 +13,7 @@ namespace Harken
         private const ulong FnvOffset = 14695981039346656037UL;
         private const ulong FnvPrime = 1099511628211UL;
 
-        public static string SymbolName(string name) => SdkSymbols.Name(name, "V_");
+        public static string SymbolName(string name) => CatalogSymbols.Name(name, "V_");
         public static string AuthoredName(string symbol)
             => symbol.StartsWith("V_", StringComparison.Ordinal) ? symbol.Substring(2) : symbol;
 
@@ -35,8 +35,8 @@ namespace Harken
             }
             if (!TryReadVariables(root, out List<Variable> variables, out error))
                 return VnResult.VN_BAD_PACK;
-            HashCatalog(variables, out ulong execution, out ulong sdk);
-            csharp = EmitCSharp(variables, execution, sdk, sourceLabel ?? "variable catalog");
+            HashCatalog(variables, out ulong execution, out ulong catalog);
+            csharp = EmitCSharp(variables, execution, catalog, sourceLabel ?? "variable catalog");
             error = null;
             return VnResult.VN_OK;
         }
@@ -209,21 +209,21 @@ namespace Harken
             return hash.Finish();
         }
 
-        private static void HashCatalog(List<Variable> variables, out ulong execution, out ulong sdk)
+        private static void HashCatalog(List<Variable> variables, out ulong execution, out ulong catalog)
         {
             var executionHash = new Hasher("HARKEN-VARIABLE-EXECUTION-CATALOG-V1\0");
-            var sdkHash = new Hasher("HARKEN-VARIABLE-SDK-CATALOG-V1\0");
+            var catalogHash = new Hasher("HARKEN-VARIABLE-SDK-CATALOG-V1\0");
             foreach (Variable variable in variables)
             {
                 executionHash.AddObjectId(variable.Id);
                 executionHash.AddU64(variable.ExecutionFingerprint);
-                sdkHash.AddU64(variable.CatalogFingerprint);
+                catalogHash.AddU64(variable.CatalogFingerprint);
             }
             execution = executionHash.Finish();
-            sdk = sdkHash.Finish();
+            catalog = catalogHash.Finish();
         }
 
-        private static string EmitCSharp(List<Variable> variables, ulong execution, ulong sdk, string source)
+        private static string EmitCSharp(List<Variable> variables, ulong execution, ulong catalog, string source)
         {
             var text = new StringBuilder();
             text.AppendLine("// generated, do not edit.");
@@ -235,7 +235,7 @@ namespace Harken
             text.AppendLine("    public static class HarkenVariables");
             text.AppendLine("    {");
             text.Append("        public const ulong ExecutionCatalogFingerprint = ").Append(execution.ToString(CultureInfo.InvariantCulture)).AppendLine("UL;");
-            text.Append("        public const ulong CatalogFingerprint = ").Append(sdk.ToString(CultureInfo.InvariantCulture)).AppendLine("UL;");
+            text.Append("        public const ulong CatalogFingerprint = ").Append(catalog.ToString(CultureInfo.InvariantCulture)).AppendLine("UL;");
             foreach (Variable variable in variables)
             {
                 text.Append("        public static readonly VnObjectId ").Append(SymbolName(variable.CodeName))

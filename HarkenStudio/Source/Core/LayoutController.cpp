@@ -1,3 +1,4 @@
+#include "ThemeManager.h"
 
 #include "LayoutController.h"
 
@@ -45,7 +46,7 @@
 namespace VNX {
 
 namespace {
-constexpr int kSidebarWidth = 320;
+int sidebarWidth() { return ThemeManager::instance().metrics().panel.preferredWidth; }
 constexpr double kInformationZoneShare = 0.3;
 
 const QList<QPair<QByteArray, QByteArray>> kDockRenames = {
@@ -287,8 +288,8 @@ void LayoutController::revealDock(ads::CDockWidget* dock)
                 dock->setFloating();
                 if (auto* fc = dock->floatingDockContainer()) {
                     const QSize hint = dock->widget() ? dock->widget()->sizeHint() : QSize();
-                    const int w = std::max(hint.width(),  900);
-                    const int h = std::max(hint.height(), 600);
+                    const int w = std::max(hint.width(), ThemeManager::instance().metrics().dialog.wideWidth);
+                    const int h = std::max(hint.height(), ThemeManager::instance().metrics().dialog.wideHeight);
                     fc->resize(w, h);
                 }
             }
@@ -460,14 +461,14 @@ int LayoutController::fixedZoneExtent(QWidget* child, bool horizontal, int total
         name = area->dockWidgets().first()->objectName();
     if (!horizontal) {
         if (name == QLatin1String("InformationDock"))
-            return qMax(60, qRound(total * kInformationZoneShare));
+            return qMax(ThemeManager::instance().metrics().panel.minimumHeight, qRound(total * kInformationZoneShare));
         if (name == QLatin1String("ExplorerDock"))
-            return qMax(60, total - qRound(total * kInformationZoneShare));
+            return qMax(ThemeManager::instance().metrics().panel.minimumHeight, total - qRound(total * kInformationZoneShare));
         if (name == QLatin1String("ControlDock"))
             return qMax(1, child->minimumSizeHint().height());
-        return qMax(60, child->sizeHint().height());
+        return qMax(ThemeManager::instance().metrics().panel.minimumHeight, child->sizeHint().height());
     }
-    return kSidebarWidth;
+    return sidebarWidth();
 }
 
 ads::CDockWidget* LayoutController::createEditorDock(WorkspaceDockCreateSpec spec,

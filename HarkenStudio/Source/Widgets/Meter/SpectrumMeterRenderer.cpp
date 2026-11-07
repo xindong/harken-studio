@@ -68,7 +68,7 @@ void SpectrumMeterRenderer::render(QPainter& painter,
     if (!frame.hasPlot)
         return;
 
-    painter.setFont(FontManager::instance().getFont(FontRole::Axis));
+    painter.setFont(FontManager::instance().getFont(FontRole::Caption));
     const QFontMetrics font(painter.font());
     const QStringList dbLabels = meterTickLabels(frame.dbTicks);
     for (int i = 0; i < frame.dbTicks.size(); ++i) {

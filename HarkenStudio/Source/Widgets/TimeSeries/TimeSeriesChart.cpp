@@ -53,7 +53,9 @@ TimeSeriesChart::TimeSeriesChart(QWidget* parent)
     : QWidget(parent)
 {
     setMouseTracking(true);
-    setMinimumSize(80, 48);
+    ThemeManager::instance().bindMetrics(this, [this](const ThemeMetrics& metrics) {
+        setMinimumSize(metrics.panel.minimumWidth, metrics.panel.minimumHeight);
+    });
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged, this, [this] {
         buffer_ = {};
@@ -223,9 +225,11 @@ void TimeSeriesChart::rebuildBuffer()
     buffer_.fill(Qt::transparent);
 
     QPainter painter(&buffer_);
+    painter.setFont(font());
     painter.setRenderHint(QPainter::Antialiasing, true);
     const auto snapshot = ThemeManager::instance().snapshot();
     const auto& ui = snapshot->ui.colors;
+    const auto& themeMetrics = snapshot->ui.metrics;
     const auto& monitor = snapshot->domains.monitor;
     painter.fillRect(QRectF(0, 0, width(), height()), ui.bgPrimary);
 
@@ -307,14 +311,14 @@ void TimeSeriesChart::rebuildBuffer()
             painter.drawLine(hover_->x(), 0, hover_->x(), height());
 
             const QFontMetrics metrics(painter.font());
-            const auto textWidth = metrics.horizontalAdvance(text) + 12;
-            const auto textHeight = metrics.height() + 8;
-            auto boxX = hover_->x() + 8;
-            auto boxY = hover_->y() - textHeight - 8;
+            const auto textWidth = metrics.horizontalAdvance(text) + themeMetrics.spacingMedium;
+            const auto textHeight = metrics.height() + themeMetrics.spacingSmall;
+            auto boxX = hover_->x() + themeMetrics.spacingSmall;
+            auto boxY = hover_->y() - textHeight - themeMetrics.spacingSmall;
             if (boxX + textWidth > width())
-                boxX = hover_->x() - textWidth - 8;
+                boxX = hover_->x() - textWidth - themeMetrics.spacingSmall;
             if (boxY < 0)
-                boxY = hover_->y() + 8;
+                boxY = hover_->y() + themeMetrics.spacingSmall;
             painter.fillRect(QRectF(boxX, boxY, textWidth, textHeight), ui.bgSecondary);
             painter.setPen(ui.textPrimary);
             painter.drawText(QRectF(boxX, boxY, textWidth, textHeight), Qt::AlignCenter, text);

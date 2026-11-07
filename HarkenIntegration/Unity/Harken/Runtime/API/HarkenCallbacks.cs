@@ -85,7 +85,7 @@ namespace Harken
         /// <summary>
         /// Installs a notification handler into <paramref name="config"/> before
         /// <c>Vn_Init</c>: sets <c>onNotification</c> to the cached static thunk
-        /// pointer and <c>notificationUserData</c> to a registry key. Keep the SDK
+        /// pointer and <c>notificationUserData</c> to a registry key. Keep the managed assembly
         /// loaded for the engine's lifetime.
         /// </summary>
         public static Registration InstallNotification(ref VnConfig config, NotificationHandler handler, object state = null)

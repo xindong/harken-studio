@@ -1,7 +1,7 @@
 # Development Preview ABI allocation
 
 The preview ABI is development-only and physically isolated from the production
-runtime export, SDK, and ordinary Remote surfaces. Status values are append-only.
+runtime export, managed API, and ordinary Remote surfaces. Status values are append-only.
 
 ## Entry points
 

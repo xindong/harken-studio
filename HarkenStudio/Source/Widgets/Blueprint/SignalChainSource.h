@@ -74,9 +74,6 @@ public:
     static std::vector<BlueprintEdgeDesc>
     edgesFromView(const SignalChainView& view, const std::array<bool, 3>& layers);
 
-    static constexpr float kColumnSpacing = 56.0f;
-    static constexpr float kNodeWidth     = NodeItem::kDefaultWidth;
-    static constexpr float kRowSpacing    = 16.0f;
 
 private:
     BlueprintConnectResult doConnect(uint32_t fromId, uint32_t toId,

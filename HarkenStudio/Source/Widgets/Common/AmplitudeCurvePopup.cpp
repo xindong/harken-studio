@@ -1,4 +1,5 @@
 #include "AmplitudeCurvePopup.h"
+#include "Core/ThemeLayout.h"
 
 #include "DecimalSpinBox.h"
 #include "DirectJumpSlider.h"
@@ -30,8 +31,8 @@ QAction* addAmplitudePowerLawAction(QMenu* menu, QWidget* owner, const QPoint& g
         QtControlSkin::setSemanticProperty(popup, "surfaceRole", QStringLiteral("popup"));
 
         auto* layout = new QVBoxLayout(popup);
-        layout->setContentsMargins(10, 8, 10, 8);
-        layout->setSpacing(6);
+        ThemeLayout::margins(layout, ThemeLayout::Space::Medium, ThemeLayout::Space::Small, ThemeLayout::Space::Medium, ThemeLayout::Space::Small);
+        ThemeLayout::spacing(layout, ThemeLayout::Space::Small);
         auto* decibels = new QLabel(QObject::tr("Linear\ndecibels"), popup);
         decibels->setAlignment(Qt::AlignCenter);
         QtControlSkin::setSemanticProperty(decibels, "textRole", QStringLiteral("secondary"));
@@ -46,7 +47,9 @@ QAction* addAmplitudePowerLawAction(QMenu* menu, QWidget* owner, const QPoint& g
         slider->setInvertedAppearance(true);
         slider->setInvertedControls(true);
         slider->setValue(int(std::lround(std::clamp(exponent, 0.0, 1.0) * 100.0)));
-        slider->setMinimumHeight(120);
+        ThemeManager::instance().bindMetrics(slider, [slider](const ThemeMetrics& metrics) {
+            slider->setMinimumHeight(metrics.parameter.faderMinimumHeight);
+        });
         QtControlSkin::setSemanticProperty(slider, "sliderRole", QStringLiteral("parameter"));
         layout->addWidget(slider, 1, Qt::AlignHCenter);
 

@@ -1,4 +1,5 @@
 #include "ColorFieldDrawer.h"
+#include "Core/ThemeManager.h"
 
 #include "Core/QtControlSkin.h"
 #include "Widgets/Common/LayoutDebugTint.h"
@@ -36,7 +37,9 @@ QWidget* ColorFieldDrawer::build(const PropertyDescriptor& d, QWidget* parent)
     layout->setContentsMargins(0, 0, 0, 0);
 
     auto* swatch = new QPushButton(container);
-    swatch->setFixedWidth(72);
+    ThemeManager::instance().bindMetrics(swatch, [swatch](const ThemeMetrics& metrics) {
+        swatch->setFixedWidth(metrics.parameter.valueMinimumWidth);
+    });
     swatch->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     swatch->setObjectName(QStringLiteral("prop_") + d.field);
     container->setObjectName(QStringLiteral("prop_") + d.field + QStringLiteral("_container"));

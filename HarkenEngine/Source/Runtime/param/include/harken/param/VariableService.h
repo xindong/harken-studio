@@ -202,7 +202,7 @@ private:
 class VariableServiceV1;
 
 namespace test {
-void SetSdkCatalogFingerprint(VariableServiceV1& service,
+void SetApiCatalogFingerprint(VariableServiceV1& service,
                               std::uint64_t fingerprint) noexcept;
 bool SetDefinitionExecutionFingerprint(VariableServiceV1& service,
                                        VnVariableId id,
@@ -273,7 +273,7 @@ class VariableServiceV1 {
 public:
     using ReadCutBackingPreparation = StableSlotStorage<ReadCutRow>::Preparation;
     using ReadCutBackingUse = StableSlotStorage<ReadCutRow>::PreparedUse;
-    friend void test::SetSdkCatalogFingerprint(VariableServiceV1&,
+    friend void test::SetApiCatalogFingerprint(VariableServiceV1&,
                                                std::uint64_t) noexcept;
     friend bool test::SetDefinitionExecutionFingerprint(VariableServiceV1&,
                                                         VnVariableId,
@@ -841,8 +841,8 @@ public:
     std::uint64_t ExecutionCatalogFingerprint() const noexcept;
     VnResult ResolveLabel(VnVariableId variable, VnObjectId label, float* value) const noexcept;
     VnResult ResolveLabel(VnVariableId variable, std::string_view name, float* value) const noexcept;
-    std::uint64_t SdkCatalogFingerprint() const noexcept {
-        return sdkCatalogFingerprint_;
+    std::uint64_t ApiCatalogFingerprint() const noexcept {
+        return apiCatalogFingerprint_;
     }
     VariableSliceRef SliceForTicketForTests(
         std::uint64_t ticket) const noexcept;
@@ -1084,7 +1084,7 @@ public:
         const VariableServiceV1* owner_ = nullptr;
         PackVariablePublicationReason reason_ = PackVariablePublicationReason::ContentMutation;
         std::vector<VariableLabelCatalogV1> labelCatalog_;
-        std::uint64_t sdkCatalogFingerprint_ = 0;
+        std::uint64_t apiCatalogFingerprint_ = 0;
         WorldGeneration priorWorld_ = 0;
         TransportEpoch priorTransport_ = 0;
         std::uint64_t actualFrame_ = 0;
@@ -1585,7 +1585,7 @@ private:
     std::uint64_t terminationCount_ = 0;
     std::uint64_t historyHighWater_ = 0;
     std::uint64_t refusalCount_ = 0;
-    std::uint64_t sdkCatalogFingerprint_ = 0;
+    std::uint64_t apiCatalogFingerprint_ = 0;
     std::vector<VariableLabelCatalogV1> labelCatalog_;
 };
 

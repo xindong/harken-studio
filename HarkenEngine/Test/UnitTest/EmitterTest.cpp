@@ -44,11 +44,11 @@ TEST(MonitorEmitterIdentity, CaptureOffPreservesOriginAcrossDestroyAndSlotReuse)
     auto& engine = *session.Engine();
     auto& registry = engine.monitorEmitters;
     EXPECT_EQ(engine.config.maxEmitters, registry.Capacity());
-    const auto sdk = registry.BeginSession();
-    ASSERT_NE(0u, sdk);
+    const auto hostSession = registry.BeginSession();
+    ASSERT_NE(0u, hostSession);
     VnEmitterHandle emitter = 0;
     ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
-    ASSERT_TRUE(registry.Register(registry.EngineInstance(), sdk, emitter, 1,
+    ASSERT_TRUE(registry.Register(registry.EngineInstance(), hostSession, emitter, 1,
         harken::MonitorHostOwnership::UnityEmitter, 1));
     const auto origin = registry.CaptureOrigin(emitter);
     ASSERT_TRUE(origin.host.Valid());
@@ -71,12 +71,12 @@ TEST(MonitorEmitterIdentity, CaptureOffPreservesOriginAcrossDestroyAndSlotReuse)
     ASSERT_EQ(static_cast<std::uint32_t>(emitter), static_cast<std::uint32_t>(reused));
     ASSERT_NE(emitter, reused);
     EXPECT_FALSE(registry.CaptureOrigin(reused).host.Valid());
-    EXPECT_FALSE(registry.Register(registry.EngineInstance(), sdk, reused, 1,
+    EXPECT_FALSE(registry.Register(registry.EngineInstance(), hostSession, reused, 1,
         harken::MonitorHostOwnership::UnityEmitter, 1));
-    ASSERT_TRUE(registry.Register(registry.EngineInstance(), sdk, reused, 2,
+    ASSERT_TRUE(registry.Register(registry.EngineInstance(), hostSession, reused, 2,
         harken::MonitorHostOwnership::UnityEmitter, 1));
     registry.NoteDestroyed(emitter);
-    EXPECT_FALSE(registry.Unregister(registry.EngineInstance(), sdk, emitter, 1));
+    EXPECT_FALSE(registry.Unregister(registry.EngineInstance(), hostSession, emitter, 1));
     EXPECT_EQ(2u, registry.CaptureOrigin(reused).host.localSequence);
     EXPECT_EQ(1u, origin.host.localSequence);
 }
@@ -134,8 +134,8 @@ TEST(MonitorEmitterIdentity, ReconnectRejectsOldSessionWithoutChangingEmitterLif
     EXPECT_FALSE(registry.Unregister(registry.EngineInstance(), first, emitter, 7));
     EXPECT_FALSE(registry.Register(registry.EngineInstance(), first, emitter, 9,
         harken::MonitorHostOwnership::UnityEmitter, 4));
-    EXPECT_EQ(second, registry.CaptureOrigin(emitter).host.sdkSession);
-    EXPECT_EQ(first, original.host.sdkSession);
+    EXPECT_EQ(second, registry.CaptureOrigin(emitter).host.hostSession);
+    EXPECT_EQ(first, original.host.hostSession);
     EXPECT_EQ(3u, original.registrationRevision);
     EXPECT_TRUE(registry.EndSession(registry.EngineInstance(), second));
     EXPECT_TRUE(engine.emitters.IsPublicLive(emitter));
@@ -1564,10 +1564,10 @@ TEST(MonitorEmitterIdentity, RawVoiceRetainsAcceptedOriginAcrossEmitterReuse) {
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
     auto& hosts = engine.monitorEmitters;
-    const auto sdk = hosts.BeginSession();
+    const auto hostSession = hosts.BeginSession();
     VnEmitterHandle first = 0;
     ASSERT_EQ(VN_OK, Vn_CreateEmitter(&first));
-    ASSERT_TRUE(hosts.Register(hosts.EngineInstance(), sdk, first, 1,
+    ASSERT_TRUE(hosts.Register(hosts.EngineInstance(), hostSession, first, 1,
         harken::MonitorHostOwnership::UnityEmitter, 2));
     const auto samples = MakeDC(kRate, 0.25f);
     const auto pcm = MonoDesc(samples, kRate);
@@ -1585,7 +1585,7 @@ TEST(MonitorEmitterIdentity, RawVoiceRetainsAcceptedOriginAcrossEmitterReuse) {
     ASSERT_EQ(VN_OK, Vn_CreateEmitter(&next));
     ASSERT_NE(first, next);
     ASSERT_EQ(static_cast<std::uint32_t>(first), static_cast<std::uint32_t>(next));
-    ASSERT_TRUE(hosts.Register(hosts.EngineInstance(), sdk, next, 2,
+    ASSERT_TRUE(hosts.Register(hosts.EngineInstance(), hostSession, next, 2,
         harken::MonitorHostOwnership::UnitySpatialSource, 1));
     engine.nullBackend.Pump(1);
     ASSERT_EQ(VN_OK, Vn_Update());

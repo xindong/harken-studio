@@ -654,13 +654,13 @@ TEST(MonitorHostSymbolState, SilentSeedAndImmutableCopyPreserveCaptureWindowsAnd
     ASSERT_EQ(3u, changes.size());
     EXPECT_EQ(14u, frozen[0].origin.registrationRevision);
     EXPECT_NE(current.description.name[0], frozen[0].description.name[0]);
-    ++current.origin.host.sdkSession;
+    ++current.origin.host.hostSession;
     ASSERT_TRUE(mirror.Refresh(capture, publish));
     ASSERT_EQ(9u, changes.size());
     EXPECT_EQ(VN_MONITOR_SYMBOL_TOMBSTONE, changes[3].value.factKind);
-    EXPECT_EQ(12u, changes[3].value.sdkSession);
+    EXPECT_EQ(12u, changes[3].value.hostSession);
     EXPECT_EQ(VN_MONITOR_SYMBOL_UPSERT, changes[6].value.factKind);
-    EXPECT_EQ(13u, changes[6].value.sdkSession);
+    EXPECT_EQ(13u, changes[6].value.hostSession);
     EXPECT_FALSE(mirror.Copy({}, copied, count));
     EXPECT_EQ(3u, count);
     EXPECT_EQ(0u, copied);

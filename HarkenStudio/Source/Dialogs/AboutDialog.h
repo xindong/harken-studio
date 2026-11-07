@@ -20,7 +20,9 @@ public:
 
 private:
     void showEvent(QShowEvent* event) override;
+    void updateCompactGeometry();
 
+    QWidget* content_ = nullptr;
     bool showDeveloperInformation_ = false;
     bool compactGeometryApplied_ = false;
     QString diagnosticsText_;

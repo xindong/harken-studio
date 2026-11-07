@@ -311,7 +311,7 @@ bool writeJournal(const QString& path, const QJsonObject& object)
     return file.open(QIODevice::WriteOnly) && file.write(bytes) == bytes.size() && file.commit();
 }
 
-QByteArray migrationFingerprint(const EngineTargetRecord& target, const SdkMigrationPlan& plan,
+QByteArray migrationFingerprint(const EngineTargetRecord& target, const IntegrationMigrationPlan& plan,
                                 const QJsonObject& journal = {})
 {
     const QJsonObject value{
@@ -470,10 +470,10 @@ bool ProjectIntegrationExecutor::hasPendingUnrealMigration(const EngineTargetRec
     return journal.exists() || journal.isSymLink() || journal.isJunction();
 }
 
-SdkMigrationPlan ProjectIntegrationExecutor::planUnrealMigration(const EngineTargetRecord& target,
+IntegrationMigrationPlan ProjectIntegrationExecutor::planUnrealMigration(const EngineTargetRecord& target,
     const QString& destination, bool recover)
 {
-    SdkMigrationPlan plan;
+    IntegrationMigrationPlan plan;
     plan.recovering = recover;
     bool projectOk = false;
     readObject(target.descriptorPath, &projectOk);
@@ -560,7 +560,7 @@ SdkMigrationPlan ProjectIntegrationExecutor::planUnrealMigration(const EngineTar
 }
 
 IntegrationOperationResult ProjectIntegrationExecutor::executeUnrealMigration(
-    const EngineTargetRecord& target, const SdkMigrationPlan& plan, bool confirmed)
+    const EngineTargetRecord& target, const IntegrationMigrationPlan& plan, bool confirmed)
 {
     IntegrationOperationResult result;
     if (!plan.valid || !confirmed) {
@@ -711,7 +711,7 @@ IntegrationPlan ProjectIntegrationExecutor::planUnreal(
     }
     if (!locateUnrealInstallation(target, &plan.targetRoot, &plan.error)) return plan;
     if (plan.targetRoot.isEmpty() && !resolveUnrealLocation(target,
-            target.sdkInstallPath.isEmpty() ? QStringLiteral("Plugins/Harken") : target.sdkInstallPath,
+            target.integrationInstallPath.isEmpty() ? QStringLiteral("Plugins/Harken") : target.integrationInstallPath,
             &plan.targetRoot, &plan.error)) return plan;
     if (operation != IntegrationOperation::Remove && plan.sourceRoot.isEmpty()) {
         plan.error = hubTranslate(QStringLiteral("The Unreal Integration Package source is incomplete"));

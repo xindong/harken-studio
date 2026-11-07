@@ -520,7 +520,7 @@ namespace Harken.Unity.Tests
         }
 
 #if HARKEN_SDK_TEST_NULL_PUMP
-        // These exports exist only in the isolated SDK fixture DLL.
+        // These exports exist only in the isolated Integration fixture DLL.
         [DllImport(HarkenNative.LibraryName, CallingConvention = CallingConvention.Cdecl)]
         private static extern VnResult HarkenSdkTest_PumpNull(uint blocks);
 

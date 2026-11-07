@@ -1,3 +1,4 @@
+#include "Core/ThemeManager.h"
 #include "VariableRangeDialog.h"
 
 #include "Core/BaseDialog.h"
@@ -14,7 +15,9 @@ std::optional<QString> chooseVariableRangePolicy(QWidget* parent, const QJsonObj
     BaseDialog dialog(parent);
     dialog.setObjectName(QStringLiteral("variableRangePolicyDialog"));
     dialog.setWindowTitle(QObject::tr("Change Variable Range"));
-    dialog.setMinimumWidth(560);
+    ThemeManager::instance().bindMetrics(&dialog, [&dialog](const ThemeMetrics& metrics) {
+        dialog.setMinimumWidth(metrics.dialog.preferredWidth);
+    });
     auto* layout = new QVBoxLayout(&dialog);
     const auto label = [&](const QString& text) {
         auto* widget = new QLabel(text, &dialog);

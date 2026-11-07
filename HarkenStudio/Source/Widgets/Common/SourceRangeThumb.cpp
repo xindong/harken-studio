@@ -62,6 +62,7 @@ void SourceRangeThumb::clearSource(const QString& text)
 
 void SourceRangeThumb::paintPreview(QPainter& painter, const QRectF& bounds)
 {
+    const auto& metrics = ThemeManager::instance().metrics();
     const QRect inner = bounds.toRect();
     if (!emptyText_.isEmpty()) {
         const auto& colors = ThemeManager::instance().colors();
@@ -108,12 +109,12 @@ void SourceRangeThumb::paintPreview(QPainter& painter, const QRectF& bounds)
         painter.fillRect(QRect(loopStartX, inner.top(),
                                std::max(1, loopEndX - loopStartX), inner.height()),
                          loopFill);
-        painter.setPen(QPen(style.loopHandle, 1));
+        painter.setPen(QPen(style.loopHandle, metrics.borderWidth));
         painter.drawLine(loopStartX, inner.top(), loopStartX, inner.bottom());
         painter.drawLine(loopEndX, inner.top(), loopEndX, inner.bottom());
     }
 
-    painter.setPen(QPen(style.trimHandle, 1));
+    painter.setPen(QPen(style.trimHandle, metrics.borderWidth));
     painter.drawLine(trimStartX, inner.top(), trimStartX, inner.bottom());
     painter.drawLine(trimEndX, inner.top(), trimEndX, inner.bottom());
 }

@@ -196,7 +196,8 @@ class TimelineRenderer
 {
 public:
     static int clipTitleHeight(const ThemeMetrics& metrics);
-    static QRect markerHandleRect(int x, int height, TimelineMarkerShape shape);
+    static QRect markerHandleRect(int x, int height, TimelineMarkerShape shape,
+                                  const ThemeMetrics::TimeAxis& geometry);
     static void render(QPainter& painter,
                        const TimelineStyleView& style,
                        const TimelineRenderData& data);

@@ -5,7 +5,7 @@
 #include <cstring>
 #include <type_traits>
 
-struct HarkenSdkTestSpatialSnapshot {
+struct HarkenIntegrationTestSpatialSnapshot {
     std::uint64_t firing = 0;
     std::uint64_t instance = 0;
     std::uint64_t emitter = 0;
@@ -15,11 +15,11 @@ struct HarkenSdkTestSpatialSnapshot {
     VnVec3 listenerPosition{};
     VnVec3 listenerRight{};
 };
-static_assert(std::is_trivially_copyable_v<HarkenSdkTestSpatialSnapshot>);
-static_assert(sizeof(HarkenSdkTestSpatialSnapshot) == 80);
+static_assert(std::is_trivially_copyable_v<HarkenIntegrationTestSpatialSnapshot>);
+static_assert(sizeof(HarkenIntegrationTestSpatialSnapshot) == 80);
 
 extern "C" __declspec(dllexport) VnResult HarkenSdkTest_CaptureAcceptedSpatial(
-    VnActionFiringHandle firing, HarkenSdkTestSpatialSnapshot* output) noexcept {
+    VnActionFiringHandle firing, HarkenIntegrationTestSpatialSnapshot* output) noexcept {
     if (output == nullptr) return VN_INVALID_ARG;
     *output = {};
     auto* engine = harken::detail::ActiveEngine();
@@ -32,7 +32,7 @@ extern "C" __declspec(dllexport) VnResult HarkenSdkTest_CaptureAcceptedSpatial(
     if (step.producedPlayableInstance == 0 ||
         !engine->playableInstances.CaptureRootMetadata(step.producedPlayableInstance, &metadata) ||
         metadata.actionFiring != firing) return VN_STALE_HANDLE;
-    HarkenSdkTestSpatialSnapshot captured{};
+    HarkenIntegrationTestSpatialSnapshot captured{};
     captured.firing = firing;
     captured.instance = step.producedPlayableInstance;
     captured.emitter = metadata.invocationEmitter;

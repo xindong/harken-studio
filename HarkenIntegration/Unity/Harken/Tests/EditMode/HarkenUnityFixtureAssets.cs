@@ -10,7 +10,7 @@ namespace Harken.Unity.Tests
     {
         private const string Root = "Assets/HarkenSdkFixtureAssets";
 
-        [MenuItem("Harken/SDK Tests/Prepare Player TextAssets")]
+        [MenuItem("Harken/Integration Tests/Prepare Player TextAssets")]
         public static void Prepare()
         {
             if (EditorApplication.isPlayingOrWillChangePlaymode)

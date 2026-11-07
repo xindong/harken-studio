@@ -47,7 +47,7 @@ Reader arrays are copied when returned; keep each array stable until then.
 Without `revision`, the source must remain immutable for its whole lifetime.
 A mutable source supplies a monotonic, never-reused `Func<ulong>`: advance it
 **before** changing bytes, throw while an update is in progress, and make the
-new value readable only after the complete publication is available. The SDK
+new value readable only after the complete publication is available. The managed API
 checks before and after capture and again before committing. This callback is
 not a file watcher or an automatic refresh service. Use `RefreshAction` /
 `RefreshActionAsync` for an intentional change to a discovered Action.
@@ -104,7 +104,7 @@ component Disable also cancels a pending startup. Late completions cannot
 initialize or publish into a later session. Configure auto-start with
 `ConfigureCompanionSourceBeforeStartup(source)` before the component's Awake.
 
-SDK requests finish cancellation even when a reader ignores its token. Such a
+Managed API requests finish cancellation even when a reader ignores its token. Such a
 reader still owns its underlying I/O and should cooperate with cancellation.
 A reader and its asynchronous continuations cannot prepare on the same session
 (`VN_IN_USE`); unrelated callers can still share the pending read.
@@ -151,7 +151,7 @@ participant hooks.
 
 `Pack` is a readonly native handle (`Handle`, `IsValid`, `Unload()`). Calling
 `Unload()` directly is for a caller-owned raw Pack, not a handle owned by a
-session or component. `Packs.ChangeVersion` is an SDK cache invalidation
+session or component. `Packs.ChangeVersion` is a managed cache invalidation
 stamp; it is not a readiness or publication identity check.
 
 Current canonical Init/Content exports must be activated as a complete Pack
@@ -192,7 +192,7 @@ state, out InitPackInspection inspection)` inspects bytes without loading a
 session and remains usable for current Init Packs. The adapter pins
 bytes until the native release callback. Provider pin/call counters are
 internal diagnostics, not public lifetime controls. Do not throw from a provider or
-retain a native pointer to its temporary byte span. The SDK translates
+retain a native pointer to its temporary byte span. The managed API translates
 provider failures into `VnResult` values.
 
 ## Common failures

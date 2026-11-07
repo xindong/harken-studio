@@ -1,4 +1,5 @@
 #include "Dialogs/Settings/Pages/ProjectConfigPage.h"
+#include "Core/ThemeLayout.h"
 
 #include "Core/ActionManager.h"
 #include "Core/BaseDialog.h"
@@ -42,8 +43,12 @@ ProjectConfigPage::ProjectConfigPage(QWidget* parent)
     platformsLayout->setSpacing(0);
     auto* platformTabs = new TableWidget(
         {TableKind::Config, TableBodySizing::Expanding}, platformsGroup);
-    platformTabs->setFixedWidth(150);
-    platformTabs->setMinimumHeight(200);
+    ThemeManager::instance().bindMetrics(platformTabs, [platformTabs](const ThemeMetrics& metrics) {
+        platformTabs->setFixedWidth(metrics.panel.sidebarWidth);
+    });
+    ThemeManager::instance().bindMetrics(platformTabs, [platformTabs](const ThemeMetrics& metrics) {
+        platformTabs->setMinimumHeight(metrics.panel.minimumHeight);
+    });
     platformList_ = platformTabs->createNavigationView(QStringLiteral("projectPlatformList"));
     auto* platformFooter = platformTabs->footer();
     platformAddButton_ = platformFooter->addButton();
@@ -73,7 +78,9 @@ ProjectConfigPage::ProjectConfigPage(QWidget* parent)
     languagesLayout->setSpacing(0);
     auto* languageTabs = new TableWidget(
         {TableKind::Config, TableBodySizing::Expanding}, languagesGroup);
-    languageTabs->setFixedWidth(150);
+    ThemeManager::instance().bindMetrics(languageTabs, [languageTabs](const ThemeMetrics& metrics) {
+        languageTabs->setFixedWidth(metrics.panel.sidebarWidth);
+    });
     targetLanguagesList_ = languageTabs->createNavigationView(QStringLiteral("targetLanguagesList"));
     targetLanguagesList_->setSizeAdjustPolicy(QAbstractScrollArea::AdjustToContents);
     targetLanguagesList_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Minimum);
@@ -89,7 +96,7 @@ ProjectConfigPage::ProjectConfigPage(QWidget* parent)
     QtControlSkin::setSemanticProperty(languageEditor, "surfaceRole", QStringLiteral("panel"));
     QtControlSkin::setSemanticProperty(languageEditor, "joinedEdge", QStringLiteral("left"));
     auto* languageEditorLayout = new QVBoxLayout(languageEditor);
-    languageEditorLayout->setContentsMargins(12, 12, 12, 12);
+    ThemeLayout::margins(languageEditorLayout, ThemeLayout::Space::Medium);
     targetLanguageFields_ = new QWidget(languageEditor);
     auto languageFieldsPolicy = targetLanguageFields_->sizePolicy();
     languageFieldsPolicy.setRetainSizeWhenHidden(true);
@@ -409,7 +416,8 @@ void ProjectConfigPage::addTargetLanguage()
     BaseDialog dialog(this);
     dialog.setWindowTitle(tr("Add Language"));
     dialog.setObjectName(QStringLiteral("targetLanguageDialog"));
-    dialog.resize(340, 120);
+    const auto& metrics = ThemeManager::instance().metrics().dialog;
+    dialog.resize(metrics.compactWidth, metrics.compactHeight);
     auto* layout = new QVBoxLayout(&dialog);
     auto* form = new DialogFormLayout();
     auto* edit = new QLineEdit(&dialog);

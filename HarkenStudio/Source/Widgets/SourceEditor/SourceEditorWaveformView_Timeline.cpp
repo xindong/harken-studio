@@ -1,4 +1,5 @@
 #include "SourceEditorWaveformView.h"
+#include "Core/ThemeLayout.h"
 
 #include "Core/FontManager.h"
 #include "Core/NumericFormat.h"
@@ -39,7 +40,10 @@
 namespace VNX {
 namespace {
 
-constexpr int kChannelHeight = 88;
+const ThemeMetrics::TimeAxis& timeAxisMetrics()
+{
+    return ThemeManager::instance().metrics().timeAxis;
+}
 constexpr int kScrollSteps = 1000000;
 constexpr double kMaximumVerticalZoom = 32.0;
 
@@ -59,7 +63,9 @@ void placeAbove(QWidget* popup, const QPoint& anchor)
 
 void SourceEditorWaveformView::setupTimeline()
 {
-    setMinimumSize(240, 160);
+    ThemeManager::instance().bindMetrics(this, [this](const ThemeMetrics& metrics) {
+        setMinimumSize(metrics.panel.minimumWidth, metrics.panel.minimumHeight);
+    });
     connect(&FontManager::instance(), &FontManager::fontChanged,
         this, [this] { refreshTimelineControls(); update(); });
     units_ = new QToolButton(this);
@@ -141,7 +147,7 @@ void SourceEditorWaveformView::setupTimeline()
     handleValue_->setAttribute(Qt::WA_ShowWithoutActivating);
     handleValue_->setAutoFillBackground(true);
     handleValue_->setFrameStyle(QFrame::Box | QFrame::Plain);
-    handleValue_->setContentsMargins(7, 4, 7, 4);
+    ThemeLayout::margins(handleValue_, ThemeLayout::Space::Small, ThemeLayout::Space::XSmall, ThemeLayout::Space::Small, ThemeLayout::Space::XSmall);
     handleValue_->hide();
 
     detailTimer_.setSingleShot(true);
@@ -171,11 +177,12 @@ void SourceEditorWaveformView::setupTimeline()
 QRect SourceEditorWaveformView::waveformRect() const
 {
     if (presentation_ == Presentation::Preview)
-        return rect().adjusted(8, 8, -8, -8);
-    const QFontMetrics metrics(FontManager::instance().getFont(FontRole::Axis), this);
+        return rect().adjusted(timeAxisMetrics().waveformInset, timeAxisMetrics().waveformInset,
+                               -timeAxisMetrics().waveformInset, -timeAxisMetrics().waveformInset);
+    const QFontMetrics metrics(FontManager::instance().getFont(FontRole::Caption), this);
     const int chevronExtent = ThemeManager::instance().metrics().navigationChevronExtent;
-    const int axisWidth = std::max(metrics.horizontalAdvance(QStringLiteral("-96.00")) + 8, chevronExtent);
-    const int rulerHeight = std::max(metrics.height() + 5, chevronExtent);
+    const int axisWidth = std::max(metrics.horizontalAdvance(QStringLiteral("-96.00")) + timeAxisMetrics().labelPadding * 2, chevronExtent);
+    const int rulerHeight = std::max(metrics.height() + timeAxisMetrics().majorTickLength, chevronExtent);
     const int rightWidth = channelScroll_ ? channelScroll_->sizeHint().width() : 0;
     const int footerHeight = scroll_ ? scroll_->sizeHint().height() : 0;
     return QRect(axisWidth, rulerHeight,
@@ -186,23 +193,23 @@ QRect SourceEditorWaveformView::waveformRect() const
 QRect SourceEditorWaveformView::channelViewportRect() const
 {
     const QRect plot = waveformRect();
-    return QRect(1, plot.top() + kTimeAxisHandleBandHeight, plot.right(),
-        std::max(1, plot.height() - kTimeAxisHandleBandHeight));
+    return QRect(1, plot.top() + timeAxisMetrics().handleBandHeight, plot.right(),
+        std::max(1, plot.height() - timeAxisMetrics().handleBandHeight));
 }
 
 int SourceEditorWaveformView::channelContentHeight() const
 {
-    const QFontMetrics metrics(FontManager::instance().getFont(FontRole::Axis), this);
-    const int minimumHeight = std::max(kChannelHeight, metrics.height() * 4 + 16);
+    const QFontMetrics metrics(FontManager::instance().getFont(FontRole::Caption), this);
+    const int minimumHeight = std::max(timeAxisMetrics().channelHeight, metrics.height() * 4 + timeAxisMetrics().labelPadding * 4);
     return int(std::lround(std::max(minimumHeight, channelViewportRect().height()) * verticalZoom_));
 }
 
 QRect SourceEditorWaveformView::channelWaveformRect() const
 {
-    const QFontMetrics metrics(FontManager::instance().getFont(FontRole::Axis), this);
+    const QFontMetrics metrics(FontManager::instance().getFont(FontRole::Caption), this);
     QRect viewport = channelViewportRect();
     viewport.setLeft(waveformRect().left());
-    return waveformAmplitudeBounds(viewport, channelContentHeight(), channelScroll_->value(), metrics);
+    return waveformAmplitudeBounds(viewport, channelContentHeight(), channelScroll_->value(), metrics, timeAxisMetrics().labelPadding);
 }
 
 double SourceEditorWaveformView::viewFrameCount() const
@@ -266,8 +273,7 @@ QRect SourceEditorWaveformView::trimGripRect(Handle handle) const
     const int x = handlePosition(static_cast<int>(handle));
     if (x < 0)
         return {};
-    return QRect(handle == Handle::TrimStart ? x : x - kTimeAxisHandleWidth + 1,
-        waveformRect().top(), kTimeAxisHandleWidth, kTimeAxisHandleBandHeight - 2);
+    return timeAxisHandleRect(x, waveformRect().top(), handle == Handle::TrimStart, timeAxisMetrics());
 }
 
 int SourceEditorWaveformView::positionAt(double frame) const
@@ -359,13 +365,13 @@ void SourceEditorWaveformView::paintTimeline(QPainter& painter)
     const QRect plot = waveformRect();
     const int rulerHeight = plot.top();
     const int axisWidth = plot.left();
-    painter.setFont(FontManager::instance().getFont(FontRole::Axis));
+    painter.setFont(FontManager::instance().getFont(FontRole::Caption));
     const QFontMetrics metrics(painter.font(), painter.device());
     painter.fillRect(QRect(0, 0, width(), rulerHeight), colors.bgSecondary);
     painter.fillRect(QRect(0, rulerHeight, axisWidth, plot.height()), colors.bgSecondary);
 
     const auto timeTicks = timeAxisTicks();
-    drawTimeAxisRuler(painter, colors, QRect(plot.left(), 0, plot.width(), rulerHeight), timeTicks);
+    drawTimeAxisRuler(painter, colors, timeAxisMetrics(), QRect(plot.left(), 0, plot.width(), rulerHeight), timeTicks);
     drawTimeAxisGrid(painter, theme->domains.curve.colors.grid, plot, timeTicks);
 
     const QRect channelArea = channelViewportRect();
@@ -379,7 +385,7 @@ void SourceEditorWaveformView::paintTimeline(QPainter& painter)
     const int center = wave.top() + wave.height() / 2;
     const int half = wave.height() / 2;
     const auto labelRect = [&](int y) {
-        return QRect(1, y - metrics.height() / 2, axisWidth - 8, metrics.height());
+        return QRect(1, y - metrics.height() / 2, axisWidth - timeAxisMetrics().labelPadding * 2, metrics.height());
     };
     const auto ticks = buildAmplitudeAxisTicks(channelArea, center, half,
         metrics, theme->domains.curve.metrics.amplitudeGridTargetRowSpacing,
@@ -393,7 +399,7 @@ void SourceEditorWaveformView::paintTimeline(QPainter& painter)
                 std::max(channelArea.top(), channelArea.bottom() - metrics.height() + 1)));
         if (channelArea.contains(bounds)) {
             painter.setPen(colors.borderTick);
-            painter.drawLine(axisWidth - 4, tick.y, axisWidth - 1, tick.y);
+            painter.drawLine(axisWidth - timeAxisMetrics().minorTickLength, tick.y, axisWidth - 1, tick.y);
             painter.setPen(colors.textSecondary);
             painter.drawText(bounds, Qt::AlignRight | Qt::AlignVCenter, tick.label);
         }
@@ -434,7 +440,7 @@ void SourceEditorWaveformView::paintTimeline(QPainter& painter)
         painter.fillRect(QRect(right, plot.top(), plot.right() - right + 1, plot.height()), muted);
         QColor selection = waveStyle.trimHandle;
         selection.setAlphaF(selection.alphaF() * 35 / 255.0);
-        painter.fillRect(QRect(left, plot.top(), std::max(0, right - left), kTimeAxisHandleBandHeight), selection);
+        painter.fillRect(QRect(left, plot.top(), std::max(0, right - left), timeAxisMetrics().handleBandHeight), selection);
         for (Handle handle : {Handle::TrimStart, Handle::TrimEnd}) {
             const int x = handlePosition(static_cast<int>(handle));
             if (x < 0)
@@ -452,7 +458,7 @@ void SourceEditorWaveformView::paintTimeline(QPainter& painter)
     if (asset_ && state_ != State::Ready) {
         painter.setFont(FontManager::instance().getFont(FontRole::Caption));
         painter.setPen(colors.textMuted);
-        painter.drawText(plot.adjusted(4, kTimeAxisHandleBandHeight, -4, 0), Qt::AlignCenter,
+        painter.drawText(plot.adjusted(timeAxisMetrics().labelPadding, timeAxisMetrics().handleBandHeight, -timeAxisMetrics().labelPadding, 0), Qt::AlignCenter,
             state_ == State::Generating ? tr("Generating waveform...") : tr("Waveform unavailable"));
     }
 }
@@ -514,7 +520,7 @@ TimeAxisTicks SourceEditorWaveformView::timeAxisTicks() const
     const double unit = frameDisplay_ ? 1.0 : rate;
     return buildTimeAxisTicks(viewStart_ / unit, viewFrameCount() / unit, waveformRect().width(),
         frameDisplay_ ? 1.0 : 1.0 / rate, frameDisplay_ ? 0 : secondsDecimals(),
-        QFontMetrics(FontManager::instance().getFont(FontRole::Axis), this));
+        QFontMetrics(FontManager::instance().getFont(FontRole::Caption), this));
 }
 
 QString SourceEditorWaveformView::formatFrame(uint64_t frame) const
@@ -596,8 +602,8 @@ void SourceEditorWaveformView::editHandleValue(Handle handle, int fadeIndex)
                                        : QStringLiteral("sourceTrimValueEditor"));
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     auto* layout = new QHBoxLayout(dialog);
-    layout->setContentsMargins(8, 6, 8, 6);
-    layout->setSpacing(8);
+    ThemeLayout::margins(layout, ThemeLayout::Space::Small);
+    ThemeLayout::spacing(layout, ThemeLayout::Space::Small);
     const QString caption = fadeIndex >= 0 ? (fadeIndex == 0 ? tr("Fade In") : tr("Fade Out"))
         : (handle == Handle::TrimStart ? tr("Trim In") : tr("Trim Out"));
     auto* label = new QLabel(caption, dialog);
@@ -617,7 +623,9 @@ void SourceEditorWaveformView::editHandleValue(Handle handle, int fadeIndex)
     spin->setToolTip(frameDisplay_ ? tr("frames") : QStringLiteral("s"));
     spin->setValue(double(initial) / divisor);
     const double initialValue = spin->value();
-    spin->setMinimumWidth(158);
+    ThemeManager::instance().bindMetrics(spin, [spin](const ThemeMetrics& metrics) {
+        spin->setMinimumWidth(metrics.popup.minimumWidth);
+    });
     layout->addWidget(spin);
     for (int key : {Qt::Key_Return, Qt::Key_Enter}) {
         auto* shortcut = new QShortcut(QKeySequence(key), dialog);
@@ -735,10 +743,10 @@ void SourceEditorWaveformView::mouseDoubleClickEvent(QMouseEvent* event)
 void SourceEditorWaveformView::contextMenuEvent(QContextMenuEvent* event)
 {
     const QRect plot = waveformRect();
-    const QFontMetrics metrics(FontManager::instance().getFont(FontRole::Axis), this);
+    const QFontMetrics metrics(FontManager::instance().getFont(FontRole::Caption), this);
     const QRect axis = units_
         ? QRect(1, plot.top(), plot.left() - 1, plot.height())
-        : QRect(plot.left(), plot.top(), metrics.horizontalAdvance(QStringLiteral("-96.00")) + 8,
+        : QRect(plot.left(), plot.top(), metrics.horizontalAdvance(QStringLiteral("-96.00")) + timeAxisMetrics().labelPadding * 2,
             plot.height());
     if (axis.contains(event->pos())) {
         cancelGesture();

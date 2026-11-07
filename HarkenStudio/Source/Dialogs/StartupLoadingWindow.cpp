@@ -1,8 +1,11 @@
 #include "StartupLoadingWindow.h"
+#include "Core/ThemeLayout.h"
 #include "StartupRenderer.h"
 
 #include "Core/ThemeAssetCatalog.h"
 #include "Core/ThemeManager.h"
+#include "Core/WindowPlacement.h"
+#include "Widgets/Common/ElidedLabel.h"
 #include "harken_buildinfo.h"
 
 #include <QCloseEvent>
@@ -23,11 +26,6 @@
 
 namespace {
 
-constexpr int kWindowWidth = 760;
-constexpr int kWindowHeight = 520;
-constexpr int kTopographyHeight = 416;
-constexpr int kContentHeight = kWindowHeight - kTopographyHeight;
-
 QString versionString()
 {
     return QCoreApplication::applicationVersion().isEmpty()
@@ -47,8 +45,9 @@ StartupLoadingWindow::StartupLoadingWindow()
     setObjectName(QStringLiteral("startupLoadingWindow"));
     setAttribute(Qt::WA_DeleteOnClose, false);
     setAttribute(Qt::WA_QuitOnClose, false);
-    setFixedSize(kWindowWidth, kWindowHeight);
     setWindowTitle(tr("Harken Studio"));
+    if (auto* target = QGuiApplication::screenAt(QCursor::pos()))
+        setScreen(target);
 
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -70,29 +69,28 @@ StartupLoadingWindow::StartupLoadingWindow()
         waitingForInitialFrame_ = false;
         setWindowOpacity(1.0);
     }, Qt::QueuedConnection);
-    auto* topography = QWidget::createWindowContainer(renderer_->window(), this);
+    auto* topography = topography_ = QWidget::createWindowContainer(renderer_->window(), this);
     topography->setObjectName(QStringLiteral("startupLoadingTopography"));
     topography->setAttribute(Qt::WA_NativeWindow);
     topography->setAttribute(Qt::WA_TransparentForMouseEvents);
     topography->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    topography->setFixedHeight(kTopographyHeight);
+    topography->setFixedHeight(ThemeManager::instance().metrics().startup.artworkHeight);
     layout->addWidget(topography);
     renderer_->setViewport(topography->size(), topography->devicePixelRatioF());
 
-    auto* content = new QWidget(this);
+    auto* content = content_ = new QWidget(this);
     content->setObjectName(QStringLiteral("startupLoadingContent"));
     content->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    content->setFixedHeight(kContentHeight);
     content->setAttribute(Qt::WA_TransparentForMouseEvents);
     layout->addWidget(content);
 
     auto* contentLayout = new QVBoxLayout(content);
-    contentLayout->setContentsMargins(42, 8, 42, 8);
+    ThemeLayout::margins(contentLayout, ThemeLayout::Space::XLarge, ThemeLayout::Space::Small, ThemeLayout::Space::XLarge, ThemeLayout::Space::Small);
     contentLayout->setSpacing(0);
 
     auto* projectRow = new QHBoxLayout();
-    projectRow->setSpacing(12);
-    projectLabel_ = new QLabel(tr("No project selected"), content);
+    ThemeLayout::spacing(projectRow, ThemeLayout::Space::Medium);
+    projectLabel_ = new ElidedLabel(tr("No project selected"), content);
     projectLabel_->setObjectName(QStringLiteral("startupLoadingProject"));
     projectLabel_->setTextInteractionFlags(Qt::NoTextInteraction);
     projectLabel_->setAccessibleName(tr("Project name"));
@@ -104,16 +102,16 @@ StartupLoadingWindow::StartupLoadingWindow()
     percentLabel_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     projectRow->addWidget(percentLabel_);
     contentLayout->addLayout(projectRow);
-    contentLayout->addSpacing(2);
+    ThemeLayout::addSpacing(contentLayout, ThemeLayout::Space::Compact);
 
     auto* statusRow = new QHBoxLayout();
-    statusRow->setSpacing(12);
-    statusLabel_ = new QLabel(content);
+    ThemeLayout::spacing(statusRow, ThemeLayout::Space::Medium);
+    statusLabel_ = new ElidedLabel(content);
     statusLabel_->setObjectName(QStringLiteral("startupLoadingStatus"));
     statusLabel_->setAccessibleName(tr("Startup status"));
     statusRow->addWidget(statusLabel_, 1);
     contentLayout->addLayout(statusRow);
-    contentLayout->addSpacing(3);
+    ThemeLayout::addSpacing(contentLayout, ThemeLayout::Space::XSmall);
 
     progressBar_ = new QProgressBar(content);
     progressBar_->setObjectName(QStringLiteral("startupLoadingProgress"));
@@ -122,7 +120,7 @@ StartupLoadingWindow::StartupLoadingWindow()
     progressBar_->setAccessibleName(tr("Startup progress"));
     contentLayout->addWidget(progressBar_);
 
-    contentLayout->addSpacing(4);
+    ThemeLayout::addSpacing(contentLayout, ThemeLayout::Space::XSmall);
     auto* version = new QLabel(versionString(), content);
     version->setObjectName(QStringLiteral("startupLoadingVersion"));
     version->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
@@ -148,6 +146,7 @@ StartupLoadingWindow::StartupLoadingWindow()
     connect(closeButton_, &QToolButton::clicked, this, &QWidget::close);
 
     setPhase(StartupPhase::PreparingApplication);
+    theme.bindMetrics(this, [this](const ThemeMetrics&) { updatePresentationGeometry(); });
 }
 
 StartupLoadingWindow::~StartupLoadingWindow() = default;
@@ -291,6 +290,7 @@ void StartupLoadingWindow::closeEvent(QCloseEvent* event)
 void StartupLoadingWindow::showEvent(QShowEvent* event)
 {
     QWidget::showEvent(event);
+    updatePresentationGeometry();
     if (!initialPositionSet_) {
         centerOnScreen();
         initialPositionSet_ = true;
@@ -322,8 +322,31 @@ void StartupLoadingWindow::centerOnScreen()
         screen = QGuiApplication::primaryScreen();
     if (!screen)
         return;
+    if (this->screen() != screen)
+        setScreen(screen);
+    updatePresentationGeometry();
     const QRect available = screen->availableGeometry();
     move(available.center() - rect().center());
+}
+
+void StartupLoadingWindow::updatePresentationGeometry()
+{
+    ensurePolished();
+    content_->layout()->invalidate();
+    const auto& theme = *ThemeManager::instance().snapshot();
+    const auto& metrics = theme.ui.metrics.startup;
+    const int contentHeight = content_->sizeHint().height();
+    const QSize bounded = screenBoundedWindowSize(this,
+        QSize(metrics.width, metrics.artworkHeight + contentHeight));
+    topography_->setFixedHeight(qMax(0, bounded.height() - contentHeight));
+    setFixedSize(bounded);
+    layout()->activate();
+    const auto& chrome = theme.thirdParty.qtAds.metrics;
+    const int buttonExtent = chrome.closeButtonExtent + chrome.closeButtonPadding * 2;
+    closeButton_->setFixedSize(buttonExtent, buttonExtent);
+    closeButton_->setIconSize(QSize(chrome.titleBarIconSize, chrome.titleBarIconSize));
+    closeButton_->move(width() - buttonExtent - chrome.titleBarButtonPadding,
+                       chrome.titleBarButtonPadding);
 }
 
 }

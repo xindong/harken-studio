@@ -16,6 +16,7 @@ inline constexpr float kMinFrequency = 20.0f;
 float dbToPosition(float db, float maximumDb = kPeakMaxDb);
 float positionToDb(float position, float maximumDb = kPeakMaxDb);
 QString frequencyLabel(float frequency);
+int labelPadding(const QFontMetrics& font);
 QRect plotBounds(const QRect& canvas, const QMargins& insets, bool horizontalAxis);
 QVector<SpectrumMeterFrequencyTick> frequencyTicks(float maximum, int extent,
                                                   const QFontMetrics& font, bool vertical);

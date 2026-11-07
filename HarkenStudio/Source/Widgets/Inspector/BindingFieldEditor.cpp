@@ -90,9 +90,11 @@ protected:
         QtControlSkin::paintFieldFrame(painter, this);
         painter.setRenderHint(QPainter::Antialiasing);
         auto& theme = ThemeManager::instance();
-        const QRectF frame = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
+        const qreal border = theme.metrics().borderWidth / 2.0;
+        const QRectF frame = QRectF(rect()).adjusted(border, border, -border, -border);
         if (binding_.curve.size() < 2) return;
-        const QRectF area = frame.adjusted(2.0, 2.5, -2.0, -2.5);
+        const qreal padding = theme.metrics().spacingCompact;
+        const QRectF area = frame.adjusted(padding, padding, -padding, -padding);
         QPolygonF points;
         float lowest = std::numeric_limits<float>::max();
         float highest = std::numeric_limits<float>::lowest();
@@ -116,7 +118,7 @@ protected:
             painter.setClipRect(area);
         }
         painter.setPen(QPen(
-            theme.snapshot()->domains.curve.colors.parameterBinding, 1.2));
+            theme.snapshot()->domains.curve.colors.parameterBinding, theme.snapshot()->domains.curve.metrics.curveLineWidth));
         painter.drawPolyline(points);
     }
 

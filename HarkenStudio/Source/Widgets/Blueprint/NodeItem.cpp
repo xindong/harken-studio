@@ -24,23 +24,33 @@
 
 namespace VNX {
 
-static constexpr float kHeaderHeight = 34.0f;
-static constexpr float kBodyPadTop = 10.0f;
-static constexpr float kBodyPadBot = 12.0f;
-static constexpr float kBodyPadX = 12.0f;
-static constexpr float kRowHeight = 21.0f;
-static constexpr float kWaveformHeight = 22.0f;
-static constexpr float kSubtitleRowHeight = 14.0f;
-static constexpr float kBlueprintWaveformHeight = 26.0f;
-static constexpr float kWaveformGap = 8.0f;
-static constexpr float kRouteGainPadY = 6.0f;
-static constexpr float kRouteGainMinimumHeight = 32.0f;
 
-static constexpr float kPinHeadRowY = kHeaderHeight * 0.5f;
-static constexpr float kPinColumnPad = 29.0f;
-static constexpr float kPortPairSpacing = 32.0f;
 
 namespace {
+
+const ThemeMetrics::Node& nodeMetrics()
+{
+    return ThemeManager::instance().metrics().node;
+}
+
+float nodeHeaderHeight()
+{
+    const auto& metrics = ThemeManager::instance().metrics();
+    const QFontMetricsF font(FontManager::instance().getFont(FontRole::Body, FontEmphasis::Strong));
+    return std::max(nodeMetrics().headerHeight, float(font.height() + metrics.spacingSmall));
+}
+
+float nodePaintMargin()
+{
+    const auto& metrics = ThemeManager::instance().metrics();
+    return std::max(nodeMetrics().badgeExtent / 2 + metrics.accentBorderWidth,
+                    float(metrics.spacingCompact * 4 + metrics.spacingXSmall));
+}
+
+float subtitleRowHeight()
+{
+    return QFontMetricsF(FontManager::instance().getFont(FontRole::Caption)).height() + ThemeManager::instance().metrics().spacingXSmall;
+}
 
 class NodeContentProxy final : public QGraphicsProxyWidget
 {
@@ -86,8 +96,9 @@ public:
         QColor tint = accent;
         tint.setAlphaF(tint.alphaF() * 20 / 255.0);
         painter->setBrush(tint);
-        painter->setPen(QPen(accent, 1.0, Qt::DashLine, Qt::SquareCap, Qt::MiterJoin));
-        const auto zone = rect().adjusted(2.0, 2.0, -2.0, -2.0);
+        painter->setPen(QPen(accent, theme->ui.metrics.borderWidth, Qt::DashLine, Qt::SquareCap, Qt::MiterJoin));
+        const qreal inset = theme->ui.metrics.spacingCompact;
+        const auto zone = rect().adjusted(inset, inset, -inset, -inset);
         painter->drawRect(zone);
     }
 
@@ -105,6 +116,7 @@ NodePin::NodePin(Type type, QGraphicsItem* parent)
     setAcceptHoverEvents(true);
     setZValue(3.0);
     setDomain(Domain::Audio);
+    refreshMetrics();
 }
 
 NodePin::~NodePin()
@@ -129,7 +141,15 @@ void NodePin::removeConnection(ConnectionPath* conn)
 
 QPointF NodePin::scenePos() const
 {
-    return mapToScene(QPointF(6.0, 6.0));
+    return mapToScene(QPointF());
+}
+
+void NodePin::refreshMetrics()
+{
+    prepareGeometryChange();
+    radius_ = nodeMetrics().pinRadius;
+    hitRadius_ = nodeMetrics().pinHitRadius;
+    update();
 }
 
 namespace {
@@ -213,13 +233,14 @@ void NodePin::hoverLeaveEvent(QGraphicsSceneHoverEvent* event)
 
 QRectF NodePin::boundingRect() const
 {
-    return QRectF(-8, -8, 28, 28);
+    const qreal radius = std::max(hitRadius_, radius_ * 2.5);
+    return QRectF(-radius, -radius, radius * 2, radius * 2);
 }
 
 QPainterPath NodePin::shape() const
 {
     QPainterPath p;
-    p.addRect(QRectF(-2.0, -2.0, 16.0, 16.0));
+    p.addRect(QRectF(-hitRadius_, -hitRadius_, hitRadius_ * 2, hitRadius_ * 2));
     return p;
 }
 
@@ -228,6 +249,9 @@ void NodePin::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, Q
     Q_UNUSED(option)
     Q_UNUSED(widget)
 
+    painter->save();
+    const qreal unit = radius_ / 4.0;
+    painter->scale(unit, unit);
     painter->setRenderHint(QPainter::Antialiasing, true);
 
     const auto theme = ThemeManager::instance().snapshot();
@@ -252,7 +276,6 @@ void NodePin::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, Q
     }
 
     painter->save();
-    painter->translate(6.0, 6.0);
     painter->rotate(angle);
     painter->translate(-2.0, 0.0);
     if (chainVisibility_ && (*chainVisibility_ != Qt::Checked || (hovered_ && chainToggleEnabled_))
@@ -275,6 +298,7 @@ void NodePin::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, Q
             painter->setPen(QPen(fill, 1.0));
             painter->drawRect(QRectF(-4.5, -4.5, 9.0, 9.0));
         }
+        painter->restore();
         painter->restore();
         return;
     }
@@ -312,6 +336,7 @@ void NodePin::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, Q
         painter->drawRect(QRectF(-6.5, -6.5, 13.0, 13.0));
     }
     painter->restore();
+    painter->restore();
 }
 
 QVariant NodePin::itemChange(GraphicsItemChange change, const QVariant& value)
@@ -326,14 +351,27 @@ QVariant NodePin::itemChange(GraphicsItemChange change, const QVariant& value)
     return QGraphicsItem::itemChange(change, value);
 }
 
+float NodeItem::defaultWidth()
+{
+    return nodeMetrics().minimumWidth;
+}
+
+QSizeF NodeItem::sceneBodySize() const
+{
+    return shape().boundingRect().size() * scale();
+}
+
 NodeItem::NodeItem(const QString& title, QGraphicsItem* parent)
     : QGraphicsItem(parent)
     , title_(title)
+    , width_(defaultWidth())
+    , paintMargin_(nodePaintMargin())
 {
     setFlag(ItemIsMovable);
     setFlag(ItemIsSelectable);
     setFlag(ItemSendsGeometryChanges);
     setAcceptHoverEvents(true);
+    setScale(1.0 / ThemeManager::instance().snapshot()->uiScale);
     dropOverlay_ = new NodeDropOverlay(this);
     updateContentHeight();
 }
@@ -350,20 +388,21 @@ NodeItem::~NodeItem()
 QRectF NodeItem::titleRect() const
 {
     if (routeGainMode_ || (effectiveDetailLevel() == BlueprintDetailLevel::Overview && !titleEditing_)) return {};
-    QFont font = FontManager::instance().getFont(FontRole::Caption, 10, QFont::Normal);
+    QFont font = FontManager::instance().getFont(FontRole::Body, FontEmphasis::Strong);
     font.setItalic(titleDirty_);
     const QFontMetricsF metrics(font);
-    const qreal x = kBodyPadX + 20.0 + 9.0;
-    const qreal available = width_ - x - kBodyPadX;
+    const qreal x = nodeMetrics().bodyPadding + ThemeManager::instance().metrics().objectIconExtent + ThemeManager::instance().metrics().spacingSmall;
+    const qreal available = width_ - x - nodeMetrics().bodyPadding;
     const auto text = metrics.elidedText(displayTitle(), Qt::ElideMiddle, available);
-    return {x, (kHeaderHeight - metrics.height()) * 0.5,
+    return {x, (nodeHeaderHeight() - metrics.height()) * 0.5,
         metrics.horizontalAdvance(text), metrics.height()};
 }
 
 QRectF NodeItem::titleEditorRect() const
 {
-    const qreal x = kBodyPadX + 20.0 + 9.0;
-    return {x - 3.0, 3.0, width_ - x - kBodyPadX + 6.0, kHeaderHeight - 6.0};
+    const qreal x = nodeMetrics().bodyPadding + ThemeManager::instance().metrics().objectIconExtent + ThemeManager::instance().metrics().spacingSmall;
+    const qreal padding = ThemeManager::instance().metrics().spacingXSmall;
+    return {x - padding, padding, width_ - x - nodeMetrics().bodyPadding + padding * 2, nodeHeaderHeight() - padding * 2};
 }
 
 QLineEdit* NodeItem::titleEditor() const
@@ -387,7 +426,7 @@ void NodeItem::beginTitleEditing()
     if (!titleProxy_) {
         auto* editor = new InlineRenameEdit(title_, titleRenameHandler_);
         editor->setObjectName(QStringLiteral("nodeTitleEditor"));
-        editor->setFont(FontManager::instance().getFont(FontRole::Caption, 10, QFont::Normal));
+        editor->setFont(FontManager::instance().getFont(FontRole::Body, FontEmphasis::Strong));
         editor->setProperty("fieldRole", QStringLiteral("inspectorValue"));
         QObject::connect(editor, &InlineRenameEdit::finished, editor, [this, editor](bool committed) {
             titleEditing_ = false;
@@ -466,9 +505,9 @@ QPointF NodeItem::pinCenter(NodePin::Type type, int index, int portPairCount,
 {
     const bool isInput = (type == NodePin::Input);
     const qreal rowY = routeGainMode ? size.height() * 0.5
-        : kPinHeadRowY + index * kPortPairSpacing;
-    const qreal columnX = (size.width() - (portPairCount - 1) * kPortPairSpacing) / 2.0
-        + index * kPortPairSpacing;
+        : (nodeHeaderHeight() * 0.5f) + index * nodeMetrics().pinSpacing;
+    const qreal columnX = (size.width() - (portPairCount - 1) * nodeMetrics().pinSpacing) / 2.0
+        + index * nodeMetrics().pinSpacing;
     switch (direction) {
     case CanvasFlowDirection::LR:
         return QPointF(isInput ? 0.0 : size.width(), rowY);
@@ -488,9 +527,9 @@ void NodeItem::repositionAllPins_()
     const int count = std::max(inputs_.size(), outputs_.size());
     const QSizeF size(width_, height_);
     for (int index = 0; index < inputs_.size(); ++index)
-        inputs_[index]->setPos(pinCenter(NodePin::Input, index, count, size, flowDir_, routeGainMode_) - QPointF(6, 6));
+        inputs_[index]->setPos(pinCenter(NodePin::Input, index, count, size, flowDir_, routeGainMode_));
     for (int index = 0; index < outputs_.size(); ++index)
-        outputs_[index]->setPos(pinCenter(NodePin::Output, index, count, size, flowDir_, routeGainMode_) - QPointF(6, 6));
+        outputs_[index]->setPos(pinCenter(NodePin::Output, index, count, size, flowDir_, routeGainMode_));
 }
 
 void NodeItem::setCanvasFlowDirection(CanvasFlowDirection dir)
@@ -621,6 +660,13 @@ void NodeItem::retireContentProxy_()
 
 void NodeItem::refreshContentPresentation()
 {
+    prepareGeometryChange();
+    setScale(1.0 / ThemeManager::instance().snapshot()->uiScale);
+    paintMargin_ = nodePaintMargin();
+    if (auto* editor = titleEditor())
+        editor->setFont(FontManager::instance().getFont(FontRole::Body, FontEmphasis::Strong));
+    for (auto* pin : inputs_) pin->refreshMetrics();
+    for (auto* pin : outputs_) pin->refreshMetrics();
     if (contentPresentationFactory_) contentPresentation_ = contentPresentationFactory_();
     updateContentHeight();
     repositionAllPins_();
@@ -672,39 +718,40 @@ void NodeItem::updateContentHeight()
     if (routeGainMode_) {
         const auto* widget = contentWidget();
         const float contentWidth = widget ? widget->width() : contentPresentation_
-            ? contentPresentation_->size.width() : kDefaultWidth - 2 * kBodyPadX;
+            ? contentPresentation_->size.width() : defaultWidth() - 2 * nodeMetrics().bodyPadding;
         const float contentHeight = widget ? widget->height() : contentPresentation_
-            ? contentPresentation_->size.height() : 20.0f;
-        const float width = contentWidth + 2 * kBodyPadX;
-        const float height = std::max(kRouteGainMinimumHeight, contentHeight + 2 * kRouteGainPadY);
+            ? contentPresentation_->size.height() : nodeMetrics().rowHeight;
+        const float width = contentWidth + 2 * nodeMetrics().bodyPadding;
+        const float height = std::max(nodeMetrics().routeMinimumHeight, contentHeight + 2 * nodeMetrics().routePadding);
         if (width_ != width || height_ != height) {
             prepareGeometryChange();
             width_ = width;
             height_ = height;
         }
         if (contentProxy_) {
-            contentProxy_->setPos(kBodyPadX, (height_ - contentHeight) * 0.5f);
+            contentProxy_->setPos(nodeMetrics().bodyPadding, (height_ - contentHeight) * 0.5f);
             contentProxy_->resize(contentWidth, contentHeight);
         }
         refreshContentVisibility_();
-        dropOverlay_->setRect(QRectF(6.0, 6.0, width_ - 12.0, height_ - 12.0));
+        const qreal inset = nodeMetrics().bodyPadding / 2;
+        dropOverlay_->setRect(QRectF(inset, inset, width_ - inset * 2, height_ - inset * 2));
         return;
     }
     const int count = std::max(inputs_.size(), outputs_.size());
     const bool vertical = flowDir_ == CanvasFlowDirection::TB || flowDir_ == CanvasFlowDirection::BT;
-    float width = vertical ? std::max(kDefaultWidth, 2 * kPinColumnPad + (count - 1) * kPortPairSpacing) : kDefaultWidth;
+    float width = vertical ? std::max(defaultWidth(), 2 * nodeMetrics().pinColumnWidth + (count - 1) * nodeMetrics().pinSpacing) : defaultWidth();
     float height = heightForContent(contentInfo_, !subtitle_.isEmpty(),
                                   blueprintWaveformMode_ || (waveformPeakData_ && waveformPeakData_->isValid()) || !waveformPeaks_.empty(),
                                   blueprintWaveformMode_, count, contentFields_);
     if (contentWidget() || contentPresentation_) {
         const QSize size = contentWidget() ? contentWidget()->size() : contentPresentation_->size;
         if (size.height() > 0)
-            width = std::max(width, static_cast<float>(size.width()) + 2 * kBodyPadX);
+            width = std::max(width, static_cast<float>(size.width()) + 2 * nodeMetrics().bodyPadding);
         const auto rows = std::popcount(static_cast<unsigned int>(
             (contentInfo_.fields() & contentFields_).toInt()));
-        height += size.height() - rows * kRowHeight;
-        contentProxy_->setPos(kBodyPadX, kHeaderHeight + kBodyPadTop
-            + (subtitle_.isEmpty() ? 0.0f : kSubtitleRowHeight));
+        height += size.height() - rows * nodeMetrics().rowHeight;
+        contentProxy_->setPos(nodeMetrics().bodyPadding, nodeHeaderHeight() + nodeMetrics().bodyPadding
+            + (subtitle_.isEmpty() ? 0.0f : subtitleRowHeight()));
         contentProxy_->resize(size);
     }
     if (width_ != width || height_ != height) {
@@ -713,23 +760,24 @@ void NodeItem::updateContentHeight()
         height_ = height;
     }
     refreshContentVisibility_();
-    dropOverlay_->setRect(QRectF(6.0, 6.0, width_ - 12.0, height_ - 12.0));
+    const qreal inset = nodeMetrics().bodyPadding / 2;
+    dropOverlay_->setRect(QRectF(inset, inset, width_ - inset * 2, height_ - inset * 2));
 }
 
 float NodeItem::heightForContent(const NodeContentInfo& info, bool hasSubtitle,
                                  bool hasWaveform, bool blueprintWaveformMode, int portPairCount,
                                  NodeContentFields fields)
 {
-    const float subtitleRow = hasSubtitle ? kSubtitleRowHeight : 0.0f;
-    const float portRows = std::max(0, portPairCount - 1) * kPortPairSpacing;
-    float body = kBodyPadTop + subtitleRow
-        + std::popcount(static_cast<unsigned int>((info.fields() & fields).toInt())) * kRowHeight;
+    const float subtitleRow = hasSubtitle ? subtitleRowHeight() : 0.0f;
+    const float portRows = std::max(0, portPairCount - 1) * nodeMetrics().pinSpacing;
+    float body = nodeMetrics().bodyPadding + subtitleRow
+        + std::popcount(static_cast<unsigned int>((info.fields() & fields).toInt())) * nodeMetrics().rowHeight;
     if (hasWaveform && fields.testFlag(NodeContentField::Waveform)) {
-        const float waveRow = blueprintWaveformMode ? kBlueprintWaveformHeight : kWaveformHeight;
-        body += waveRow + kWaveformGap;
+        const float waveRow = blueprintWaveformMode ? nodeMetrics().expandedWaveformHeight : nodeMetrics().waveformHeight;
+        body += waveRow + nodeMetrics().waveformSpacing;
     }
-    body += kBodyPadBot;
-    return std::max(60.0f + subtitleRow, kHeaderHeight + body) + portRows;
+    body += nodeMetrics().bodyPadding;
+    return std::max(nodeHeaderHeight() + 2 * nodeMetrics().bodyPadding + subtitleRow, nodeHeaderHeight() + body) + portRows;
 }
 
 void NodeItem::setBlueprintWaveformMode(bool on)
@@ -763,8 +811,7 @@ void NodeItem::setSubtitle(const QString& s)
 
 QRectF NodeItem::boundingRect() const
 {
-    constexpr float kBadgeHalo = 13.0f;
-    return QRectF(-kBadgeHalo, -kBadgeHalo, width_ + 2 * kBadgeHalo, height_ + 2 * kBadgeHalo);
+    return QRectF(-paintMargin_, -paintMargin_, width_ + 2 * paintMargin_, height_ + 2 * paintMargin_);
 }
 
 QPainterPath NodeItem::shape() const
@@ -797,9 +844,12 @@ void NodeItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, 
 
     const auto theme = ThemeManager::instance().snapshot();
     const auto& ngn = theme->domains.nodeGraphNode;
+    const auto& metrics = theme->ui.metrics;
+    const qreal inset = metrics.spacingXSmall;
+    const qreal badgeRadius = nodeMetrics().badgeExtent / 2;
     if (effectiveDetailLevel() == BlueprintDetailLevel::Overview) {
         const qreal scale = QStyleOptionGraphicsItem::levelOfDetailFromTransform(painter->worldTransform());
-        const qreal lineWidth = std::clamp(1.0 / scale, 1.0, 10.0);
+        const qreal lineWidth = std::clamp(metrics.borderWidth / scale, qreal(metrics.borderWidth), qreal(metrics.borderWidth * 10));
         QColor borderColor = ngn.borderNormal;
         if (isSelected()) borderColor = theme->ui.colors.accent;
         else if (hovered_) borderColor = blendColors(ngn.borderNormal, ngn.borderHoverMix, 0.35f);
@@ -811,10 +861,11 @@ void NodeItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, 
             painter->setBrush(Qt::NoBrush);
             painter->setPen(QPen(theme->ui.colors.success, lineWidth * 2.0,
                 Qt::SolidLine, Qt::SquareCap, Qt::MiterJoin));
-            painter->drawRect(QRectF(3, 3, width_ - 6, height_ - 6));
+            painter->drawRect(QRectF(inset, inset, width_ - inset * 2, height_ - inset * 2));
         }
         if (itemType_) {
-            const qreal side = std::min({48.0, width_ - 24.0, height_ - 12.0});
+            const qreal side = std::min<qreal>({metrics.control.largeIconExtent * 2.0,
+                width_ - nodeMetrics().bodyPadding * 2.0, height_ - nodeMetrics().bodyPadding});
             const QRectF iconRect((width_ - side) * 0.5, (height_ - side) * 0.5, side, side);
             const QColor color = titleColor_.isValid() ? titleColor_ : ngn.titleText;
             const qreal dpr = painter->device() ? painter->device()->devicePixelRatioF() : 1.0;
@@ -825,18 +876,18 @@ void NodeItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, 
             painter->drawPixmap(iconRect, icon, QRectF(icon.rect()));
             painter->setRenderHint(QPainter::SmoothPixmapTransform, smooth);
         }
-        painter->setPen(QPen(theme->domains.blueprint.canvasBackground, 2.0));
+        painter->setPen(QPen(theme->domains.blueprint.canvasBackground, metrics.accentBorderWidth));
         if (sandboxBypassed_) {
             painter->setBrush(ngn.sandboxBadgeBg);
-            painter->drawEllipse(QPointF(width_ - 12.0, 12.0), 6.0, 6.0);
+            painter->drawEllipse(QPointF(width_ - badgeRadius, badgeRadius), badgeRadius / 2, badgeRadius / 2);
         }
         if (overrideBadge_) {
             painter->setBrush(ngn.badgeOverride);
-            painter->drawEllipse(QPointF(width_, 0.0), 11.0, 11.0);
+            painter->drawEllipse(QPointF(width_, 0.0), badgeRadius, badgeRadius);
         }
         if (receiveBadge_ > 0) {
             painter->setBrush(ngn.badgeReceive);
-            painter->drawEllipse(QPointF(0.0, 0.0), 11.0, 11.0);
+            painter->drawEllipse(QPointF(0.0, 0.0), badgeRadius, badgeRadius);
         }
         return;
     }
@@ -846,16 +897,16 @@ void NodeItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, 
         if (isSelected()) borderColor = theme->ui.colors.accent;
         else if (hovered_) borderColor = blendColors(ngn.borderNormal, ngn.borderHoverMix, 0.35f);
         painter->setBrush(isSelected() ? ngn.bodySelected : ngn.bodyNormal);
-        painter->setPen(QPen(borderColor, isSelected() ? 2.0 : 1.0,
+        painter->setPen(QPen(borderColor, isSelected() ? metrics.accentBorderWidth : metrics.borderWidth,
             Qt::SolidLine, Qt::SquareCap, Qt::MiterJoin));
         painter->drawPath(routeGainShape(0.0));
         if (playbackActive_) {
             painter->setBrush(Qt::NoBrush);
-            painter->setPen(QPen(theme->ui.colors.success, 2.0,
+            painter->setPen(QPen(theme->ui.colors.success, metrics.accentBorderWidth,
                 Qt::SolidLine, Qt::SquareCap, Qt::MiterJoin));
-            painter->drawPath(routeGainShape(3.0));
+            painter->drawPath(routeGainShape(inset));
         }
-        paintContentBody(painter, kRouteGainPadY - kBodyPadTop);
+        paintContentBody(painter, nodeMetrics().routePadding - nodeMetrics().bodyPadding);
         return;
     }
 
@@ -863,10 +914,10 @@ void NodeItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, 
     for (int i = 3; i >= 1; --i) {
         QColor layer = shadowBase;
         layer.setAlpha(shadowBase.alpha() / (i + 1));
-        const qreal pad = i * 2.0;
+        const qreal pad = i * metrics.spacingCompact;
         painter->setPen(Qt::NoPen);
         painter->setBrush(layer);
-        painter->drawRect(QRectF(2.0 - pad, 3.0 - pad,
+        painter->drawRect(QRectF(metrics.spacingCompact - pad, metrics.spacingXSmall - pad,
                                  width_ + pad * 2.0, height_ + pad * 2.0));
     }
 
@@ -874,10 +925,10 @@ void NodeItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, 
     painter->setBrush(bodyColor);
 
     QColor borderColor = ngn.borderNormal;
-    qreal  borderWidth = 1.0;
+    qreal  borderWidth = metrics.borderWidth;
     if (isSelected()) {
         borderColor = theme->ui.colors.accent;
-        borderWidth = 2.0;
+        borderWidth = metrics.accentBorderWidth;
     } else if (hovered_) {
         borderColor = blendColors(ngn.borderNormal, ngn.borderHoverMix, 0.35f);
     }
@@ -889,18 +940,18 @@ void NodeItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, 
 
     painter->setBrush(theme->ui.colors.headerBackground);
     painter->setPen(Qt::NoPen);
-    painter->drawRect(QRectF(1, 1, width_ - 2, kHeaderHeight));
+    painter->drawRect(QRectF(metrics.borderWidth, metrics.borderWidth, width_ - metrics.borderWidth * 2, nodeHeaderHeight()));
     if (playbackActive_) {
         painter->setBrush(Qt::NoBrush);
-        painter->setPen(QPen(theme->ui.colors.success, 2.0, Qt::SolidLine, Qt::SquareCap, Qt::MiterJoin));
-        painter->drawRect(QRectF(3, 3, width_ - 6, height_ - 6));
+        painter->setPen(QPen(theme->ui.colors.success, metrics.accentBorderWidth, Qt::SolidLine, Qt::SquareCap, Qt::MiterJoin));
+        painter->drawRect(QRectF(inset, inset, width_ - inset * 2, height_ - inset * 2));
     }
 
-    const float headPad  = kBodyPadX;
-    const float iconSize = 20.0f;
+    const float headPad  = nodeMetrics().bodyPadding;
+    const float iconSize = theme->ui.metrics.objectIconExtent;
     const QColor titleColor = titleColor_.isValid() ? titleColor_ : ngn.titleText;
     if (itemType_.has_value()) {
-        const int iconY = static_cast<int>((kHeaderHeight - iconSize) * 0.5f) + 1;
+        const int iconY = static_cast<int>((nodeHeaderHeight() - iconSize) * 0.5f);
         const QRect iconRect(static_cast<int>(headPad), iconY,
                              static_cast<int>(iconSize), static_cast<int>(iconSize));
         const qreal dpr = painter->device() ? painter->device()->devicePixelRatioF() : 1.0;
@@ -915,30 +966,30 @@ void NodeItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, 
         }
     }
 
-    const float textX = headPad + iconSize + 9.0f;
+    const float textX = headPad + iconSize + theme->ui.metrics.spacingSmall;
     const float textW = width_ - textX - headPad;
 
     painter->setPen(titleColor);
-    QFont nameFont = FontManager::instance().getFont(FontRole::Caption, 10, QFont::Normal);
+    QFont nameFont = FontManager::instance().getFont(FontRole::Body, FontEmphasis::Strong);
     nameFont.setItalic(titleDirty_);
     painter->setFont(nameFont);
     QFontMetricsF nameFm(nameFont);
     const QString elidedName = nameFm.elidedText(displayTitle(), Qt::ElideMiddle, textW);
     if (!titleEditing_)
-        painter->drawText(QRectF(textX, 0, textW, kHeaderHeight),
+        painter->drawText(QRectF(textX, 0, textW, nodeHeaderHeight()),
                           Qt::AlignVCenter | Qt::AlignLeft, elidedName);
 
-    float bodyTop = kHeaderHeight;
+    float bodyTop = nodeHeaderHeight();
     if (!subtitle_.isEmpty()) {
-        const float padX = 8.0f;
-        QFont subFont = FontManager::instance().getFont(FontRole::Caption, 7);
+        const float padX = nodeMetrics().bodyPadding;
+        QFont subFont = FontManager::instance().getFont(FontRole::Caption);
         painter->setFont(subFont);
         QFontMetricsF subFm(subFont);
         QString elided = subFm.elidedText(subtitle_, Qt::ElideMiddle, width_ - padX * 2);
         painter->setPen(theme->ui.colors.textSecondary);
-        painter->drawText(QRectF(padX, bodyTop, width_ - padX * 2, kSubtitleRowHeight),
+        painter->drawText(QRectF(padX, bodyTop, width_ - padX * 2, subtitleRowHeight()),
                           Qt::AlignVCenter | Qt::AlignLeft, elided);
-        bodyTop += kSubtitleRowHeight;
+        bodyTop += subtitleRowHeight();
     }
 
     paintContentBody(painter, bodyTop);
@@ -946,20 +997,22 @@ void NodeItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, 
     if (sandboxBypassed_) {
         painter->setPen(Qt::NoPen);
         painter->setBrush(ngn.sandboxBadgeBg);
-        painter->drawEllipse(QPointF(width_ - 12, 12), 6, 6);
+        const QRectF badge(width_ - nodeMetrics().badgeExtent + inset, inset,
+                           nodeMetrics().badgeExtent - inset * 2, nodeMetrics().badgeExtent - inset * 2);
+        painter->drawEllipse(badge);
 
         painter->setPen(ngn.sandboxBadgeText);
-        painter->setFont(FontManager::instance().getFont(FontRole::Caption, 7, QFont::Bold));
-        painter->drawText(QRectF(width_ - 18, 6, 12, 12), Qt::AlignCenter, QStringLiteral("!"));
+        painter->setFont(FontManager::instance().getFont(FontRole::Caption, FontEmphasis::Strong));
+        painter->drawText(badge, Qt::AlignCenter, QStringLiteral("!"));
     }
 
     {
-        QFont badgeFont = FontManager::instance().getFont(FontRole::Caption, 9, QFont::Bold);
+        QFont badgeFont = FontManager::instance().getFont(FontRole::Caption, FontEmphasis::Strong);
         const QColor badgeText = ngn.sandboxBadgeText;
-        const QPen badgeRim(theme->domains.blueprint.canvasBackground, 2.0);
+        const QPen badgeRim(theme->domains.blueprint.canvasBackground, metrics.accentBorderWidth);
 
         if (overrideBadge_) {
-            const QRectF rect(width_ - 11.0, -11.0, 22.0, 22.0);
+            const QRectF rect(width_ - badgeRadius, -badgeRadius, badgeRadius * 2, badgeRadius * 2);
             painter->setPen(badgeRim);
             painter->setBrush(ngn.badgeOverride);
             painter->drawEllipse(rect);
@@ -971,7 +1024,7 @@ void NodeItem::paint(QPainter* painter, const QStyleOptionGraphicsItem* option, 
         const bool hasReceives = (receiveBadge_    > 0);
 
         if (hasReceives) {
-            const QRectF rect(-11.0, -11.0, 22.0, 22.0);
+            const QRectF rect(-badgeRadius, -badgeRadius, badgeRadius * 2, badgeRadius * 2);
             painter->setPen(badgeRim);
             painter->setBrush(ngn.badgeReceive);
             painter->drawEllipse(rect);
@@ -999,10 +1052,10 @@ std::optional<NodeContentField> NodeItem::contentFieldAt(const QPointF& localPos
         return std::nullopt;
     }
 
-    float bodyTop = routeGainMode_ ? (kRouteGainPadY - kBodyPadTop) : kHeaderHeight;
+    float bodyTop = routeGainMode_ ? (nodeMetrics().routePadding - nodeMetrics().bodyPadding) : nodeHeaderHeight();
     if (!routeGainMode_ && !subtitle_.isEmpty())
-        bodyTop += kSubtitleRowHeight;
-    float y = bodyTop + kBodyPadTop;
+        bodyTop += subtitleRowHeight();
+    float y = bodyTop + nodeMetrics().bodyPadding;
     const auto fields = contentFields_ & contentInfo_.fields();
     const NodeContentField order[] = {
         NodeContentField::Volume,
@@ -1015,22 +1068,22 @@ std::optional<NodeContentField> NodeItem::contentFieldAt(const QPointF& localPos
     for (const NodeContentField field : order) {
         if (!fields.testFlag(field))
             continue;
-        if (localPos.y() >= y && localPos.y() < y + kRowHeight)
+        if (localPos.y() >= y && localPos.y() < y + nodeMetrics().rowHeight)
             return field;
-        y += kRowHeight;
+        y += nodeMetrics().rowHeight;
     }
     return std::nullopt;
 }
 
 void NodeItem::paintContentBody(QPainter* painter, float bodyTop) const
 {
-    const float padLeft = kBodyPadX;
-    const float padRight = kBodyPadX;
+    const float padLeft = nodeMetrics().bodyPadding;
+    const float padRight = nodeMetrics().bodyPadding;
     const float valueX = width_ - padRight;
-    float y = bodyTop + kBodyPadTop;
+    float y = bodyTop + nodeMetrics().bodyPadding;
 
-    QFont labelFont = FontManager::instance().getFont(FontRole::Label, 9);
-    QFont valueFont = FontManager::instance().getFont(FontRole::Label, 9, QFont::DemiBold);
+    QFont labelFont = FontManager::instance().getFont(FontRole::Body);
+    QFont valueFont = FontManager::instance().getFont(FontRole::Body);
     const auto theme = ThemeManager::instance().snapshot();
     const auto& ngnContent = theme->domains.nodeGraphNode;
     const QColor labelColor = ngnContent.contentLabel;
@@ -1039,19 +1092,19 @@ void NodeItem::paintContentBody(QPainter* painter, float bodyTop) const
     auto drawParamRow = [&](const QString& label, const QString& value) {
         const qreal valueWidth = std::min(QFontMetricsF(valueFont).horizontalAdvance(value),
             static_cast<qreal>(width_ - padLeft - padRight));
-        const qreal labelWidth = std::max(0.0, valueX - valueWidth - padLeft - 8.0);
+        const qreal labelWidth = std::max(0.0, valueX - valueWidth - padLeft - theme->ui.metrics.spacingSmall);
         painter->setFont(labelFont);
         painter->setPen(labelColor);
-        painter->drawText(QRectF(padLeft, y, labelWidth, kRowHeight),
+        painter->drawText(QRectF(padLeft, y, labelWidth, nodeMetrics().rowHeight),
                           Qt::AlignLeft | Qt::AlignVCenter,
                           QFontMetricsF(labelFont).elidedText(label, Qt::ElideRight, labelWidth));
 
         painter->setFont(valueFont);
         painter->setPen(valueColor);
-        painter->drawText(QRectF(valueX - valueWidth, y, valueWidth, kRowHeight),
+        painter->drawText(QRectF(valueX - valueWidth, y, valueWidth, nodeMetrics().rowHeight),
                           Qt::AlignRight | Qt::AlignVCenter,
                           QFontMetricsF(valueFont).elidedText(value, Qt::ElideRight, valueWidth));
-        y += kRowHeight;
+        y += nodeMetrics().rowHeight;
     };
 
     const auto fields = contentFields_ & contentInfo_.fields();
@@ -1086,8 +1139,8 @@ void NodeItem::paintContentBody(QPainter* painter, float bodyTop) const
 
     if (contentFields_.testFlag(NodeContentField::Waveform)
         && (blueprintWaveformMode_ || (waveformPeakData_ && waveformPeakData_->isValid()) || !waveformPeaks_.empty())) {
-        y += kWaveformGap;
-        const float waveH = blueprintWaveformMode_ ? kBlueprintWaveformHeight : kWaveformHeight;
+        y += nodeMetrics().waveformSpacing;
+        const float waveH = blueprintWaveformMode_ ? nodeMetrics().expandedWaveformHeight : nodeMetrics().waveformHeight;
         QRectF waveRect(padLeft, y, width_ - padLeft - padRight, waveH);
         paintWaveform(painter, waveRect);
     }
@@ -1099,7 +1152,8 @@ void NodeItem::paintWaveform(QPainter* painter, const QRectF& rect) const
     const auto& ngnWf = theme->domains.nodeGraphNode;
     painter->setPen(Qt::NoPen);
     painter->setBrush(ngnWf.waveformBg);
-    painter->drawRoundedRect(rect, 2, 2);
+    const int radius = ThemeManager::instance().metrics().radiusCompact;
+    painter->drawRoundedRect(rect, radius, radius);
     QColor waveColor = ngnWf.blueprintWaveform;
     if (!blueprintWaveformMode_)
         waveColor.setAlphaF(waveColor.alphaF() * (isSelected() ? 1.0 : 140 / 255.0));
@@ -1114,7 +1168,7 @@ void NodeItem::paintWaveform(QPainter* painter, const QRectF& rect) const
         WaveformRenderer::render(*painter, intRect, *waveformPeakData_, theme->domains.waveform, options);
 
         float midY = rect.y() + rect.height() / 2.0f;
-        painter->setPen(QPen(ngnWf.waveformCenter, 0.5f));
+        painter->setPen(QPen(ngnWf.waveformCenter, theme->ui.metrics.borderWidth * 0.5));
         painter->drawLine(QPointF(rect.x(), midY), QPointF(rect.x() + rect.width(), midY));
         return;
     }

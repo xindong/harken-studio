@@ -57,6 +57,7 @@ public:
     void addConnection(ConnectionPath* conn);
     void removeConnection(ConnectionPath* conn);
     QPointF scenePos() const;
+    void refreshMetrics();
 
     void    setDomain(Domain domain);
     Domain  domain() const { return domain_; }
@@ -80,6 +81,8 @@ protected:
 
 private:
     Type type_;
+    qreal radius_ = 0;
+    qreal hitRadius_ = 0;
     QList<ConnectionPath*> connections_;
     Domain       domain_       = Domain::Audio;
     ConnectState connectState_ = ConnectState::None;
@@ -95,7 +98,7 @@ private:
 class NodeItem : public QGraphicsItem
 {
 public:
-    static constexpr float kDefaultWidth = 160.0f;
+    static float defaultWidth();
     enum class DropFeedback { None, Valid, Invalid };
 
     using PositionChangedCallback = std::function<void(const QPointF&)>;
@@ -195,6 +198,7 @@ public:
                              std::optional<SourceWaveformView> view = {});
 
     float contentHeight() const { return height_; }
+    QSizeF sceneBodySize() const;
 
     static float heightForContent(const NodeContentInfo& info, bool hasSubtitle,
                                   bool hasWaveform, bool blueprintWaveformMode,
@@ -233,7 +237,8 @@ private:
     InlineRenameEdit::RenameHandler titleRenameHandler_;
     bool titleEditing_ = false;
     QGraphicsProxyWidget* titleProxy_ = nullptr;
-    float width_ = kDefaultWidth;
+    float width_;
+    float paintMargin_ = 0;
     float height_ = 100.0f;
     bool sandboxBypassed_ = false;
     QPointF pressPos_;

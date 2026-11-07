@@ -22,7 +22,7 @@ struct PackVariableNameCatalog {
     std::vector<PackVariableNameRow> rows;
 };
 
-inline bool IsSdkCallableName(std::string_view name) {
+inline bool IsCallableName(std::string_view name) {
     if (name.empty() || name.size() > 128) return false;
     const auto letter = [](unsigned char c) {
         return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
@@ -45,7 +45,7 @@ inline bool ValidateVariableNameCatalog(const PackVariableNameCatalog& catalog,
     std::set<VnObjectId> active;
     std::string_view prior;
     for (const auto& row : catalog.rows) {
-        if (row.variableId == VnObjectId{} || !IsSdkCallableName(row.name) ||
+        if (row.variableId == VnObjectId{} || !IsCallableName(row.name) ||
             (!prior.empty() && prior >= row.name)) return false;
         if (!active.insert(row.variableId).second) return false;
         prior = row.name;

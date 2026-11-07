@@ -3,7 +3,7 @@ using System;
 
 namespace AOT
 {
-    // Compile-time shim so the SDK callback thunks build outside Unity (the
+    // Compile-time shim so the managed callback thunks build outside Unity (the
     // dotnet ABI / zero-GC harness). In a Unity build UnityEngine provides the
     // real AOT.MonoPInvokeCallbackAttribute and this shim is compiled out. The
     // attribute is advisory to the IL2CPP AOT compiler and a no-op at runtime,

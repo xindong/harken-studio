@@ -1,5 +1,6 @@
 
 #include "InspectorPanel.h"
+#include "Core/ThemeLayout.h"
 #include "InspectorPanel_p.h"
 #include "VariableRangeDialog.h"
 #include "Core/ActionManager.h"
@@ -98,6 +99,9 @@ InspectorPanel::InspectorPanel(QWidget* parent)
     connect(&AppSettings::instance(), &AppSettings::fontSizeChanged,
             this, &InspectorPanel::onFontSettingsChanged);
 
+    connect(&FontManager::instance(), &FontManager::fontChanged, this, [this] {
+        onFontSettingsChanged(PanelId::Inspector, AppSettings::instance().panelFontSize(PanelId::Inspector));
+    });
     int fontSize = AppSettings::instance().panelFontSize(PanelId::Inspector);
     QFont font = FontManager::instance().getFont(FontRole::Body, fontSize);
     setFont(font);
@@ -401,7 +405,7 @@ void InspectorPanelPrivate::setupUI()
 
     QWidget* searchContainer = new QWidget();
     QHBoxLayout* searchLayout = new QHBoxLayout(searchContainer);
-    searchLayout->setContentsMargins(8, 8, 8, 8);
+    ThemeLayout::margins(searchLayout, ThemeLayout::Space::Small);
 
     searchBox_ = new SearchField();
     searchBox_->setPlaceholderText(q_ptr->tr("Search properties..."));

@@ -160,10 +160,10 @@ EngineTargetObservation observeLayout(const EngineTargetRecord& record)
             result.health = EngineTargetHealth::Incomplete;
             result.status = hubTranslate(QStringLiteral("Integration Package removal unfinished"));
             result.remediation = hubTranslate(QStringLiteral("Resolve the reported file access or content changes, then use Uninstall Integration Package to retry."));
-            result.canRemoveSdk = true;
+            result.canRemoveIntegration = true;
             bool pendingOk = false;
             const auto pending = jsonObject(VNX::UnityInstallation::removalJournalPath(record.canonicalRoot), &pendingOk);
-            result.sdkInstallPath = pending.value(QStringLiteral("install_path")).toString();
+            result.integrationInstallPath = pending.value(QStringLiteral("install_path")).toString();
             return result;
         }
         if (VNX::UnityInstallation::hasPendingRestore(record.canonicalRoot)) {
@@ -178,13 +178,13 @@ EngineTargetObservation observeLayout(const EngineTargetRecord& record)
             result.status = hubTranslate(QStringLiteral("Migration unfinished"));
             result.error = hubTranslate(QStringLiteral("An unfinished Integration Package migration must be recovered before continuing."));
             result.remediation = hubTranslate(QStringLiteral("Use Recover Integration Package Migration to restore a consistent installation before changing, moving or uninstalling the Integration Package."));
-            result.canMoveSdk = true;
+            result.canMoveIntegration = true;
             return result;
         }
         auto discovery = VNX::UnityInstallation::discover(record.canonicalRoot);
         if (discovery.installations.isEmpty()) {
-            const QString expected = root.filePath(record.sdkInstallPath.isEmpty()
-                ? VNX::UnityInstallation::defaultRelativePath() : record.sdkInstallPath);
+            const QString expected = root.filePath(record.integrationInstallPath.isEmpty()
+                ? VNX::UnityInstallation::defaultRelativePath() : record.integrationInstallPath);
             for (const auto& retained : discovery.preservedInstallations) {
                 if (VNX::UnityInstallation::samePath(retained.path, expected) || discovery.preservedInstallations.size() == 1) {
                     discovery.installations << retained;
@@ -193,7 +193,7 @@ EngineTargetObservation observeLayout(const EngineTargetRecord& record)
             }
         }
         if (discovery.installations.size() == 1)
-            result.sdkInstallPath = root.relativeFilePath(discovery.installations.front().path);
+            result.integrationInstallPath = root.relativeFilePath(discovery.installations.front().path);
         if (!discovery.errors.isEmpty() || discovery.installations.size() > 1) {
             result.health = EngineTargetHealth::Incomplete;
             result.error = discovery.errors.join(QLatin1Char('\n'));
@@ -204,7 +204,7 @@ EngineTargetObservation observeLayout(const EngineTargetRecord& record)
                 result.error += hubTranslate(QStringLiteral("Multiple Integration Package installations were found:"));
                 for (const auto& installation : discovery.installations)
                     result.error += QLatin1Char('\n') + installation.path;
-            } else if (!discovery.sdkReferences.isEmpty()) {
+            } else if (!discovery.integrationReferences.isEmpty()) {
                 result.status = hubTranslate(QStringLiteral("Package Manager dependency"));
                 result.remediation = hubTranslate(QStringLiteral("Manage this Integration Package dependency in Unity Package Manager. Before switching to a Hub installation, back up the project and remove the existing Integration Package dependency there, then check again."));
             } else {
@@ -215,15 +215,15 @@ EngineTargetObservation observeLayout(const EngineTargetRecord& record)
         }
         if (discovery.installations.isEmpty()) {
             result.health = EngineTargetHealth::NotInstalled;
-            result.canChangeSdk = true;
+            result.canChangeIntegration = true;
             result.remediation = hubTranslate(QStringLiteral("No Integration Package is installed. Use Install Integration Package and select a complete Integration Package source. Moving and uninstalling require an existing installation."));
-            const QString candidate = record.sdkInstallPath.isEmpty()
-                ? VNX::UnityInstallation::defaultRelativePath() : record.sdkInstallPath;
+            const QString candidate = record.integrationInstallPath.isEmpty()
+                ? VNX::UnityInstallation::defaultRelativePath() : record.integrationInstallPath;
             QString path;
             QString error;
             if (VNX::UnityInstallation::resolveTarget(record.canonicalRoot, candidate, &path, &error)
                 && QDir(path).exists() && !QDir(path).isEmpty(QDir::AllEntries | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot)) {
-                result.sdkInstallPath = candidate;
+                result.integrationInstallPath = candidate;
                 result.status = hubTranslate(QStringLiteral("No Integration Package identified; existing files need review"));
                 result.remediation = hubTranslate(QStringLiteral("Select a complete Integration Package source to review installation. Existing files will be preserved; conflicting files require approval and a backup."));
             }
@@ -236,8 +236,8 @@ EngineTargetObservation observeLayout(const EngineTargetRecord& record)
             QDir(packageRoot).filePath(QStringLiteral("package.json")), &packageOk);
         result.integrationVersion = package.value(QStringLiteral("version")).toString();
         QString validatedPath;
-        result.sdkInstallPath = root.relativeFilePath(packageRoot);
-        if (!VNX::UnityInstallation::resolveTarget(record.canonicalRoot, result.sdkInstallPath,
+        result.integrationInstallPath = root.relativeFilePath(packageRoot);
+        if (!VNX::UnityInstallation::resolveTarget(record.canonicalRoot, result.integrationInstallPath,
                                                   &validatedPath, &result.error)
             || !VNX::UnityInstallation::validateTree(packageRoot, &result.error)) {
             result.health = EngineTargetHealth::Incomplete;
@@ -248,7 +248,7 @@ EngineTargetObservation observeLayout(const EngineTargetRecord& record)
         if (installation.removed) {
             result.health = EngineTargetHealth::NotInstalled;
             result.integrationVersion.clear();
-            result.canChangeSdk = true;
+            result.canChangeIntegration = true;
             result.status = hubTranslate(QStringLiteral("Integration Package removed; project files preserved"));
             result.remediation = hubTranslate(QStringLiteral("The Integration Package is removed. Remaining project files are preserved and can be used with a new installation."));
             return result;
@@ -264,8 +264,8 @@ EngineTargetObservation observeLayout(const EngineTargetRecord& record)
         }
         bool manifestOk = false;
         const auto manifest = jsonObject(QDir(packageRoot).filePath(QStringLiteral("harken-integration.json")), &manifestOk);
-        result.canChangeSdk = true;
-        result.canRemoveSdk = discovery.sdkReferences.isEmpty();
+        result.canChangeIntegration = true;
+        result.canRemoveIntegration = discovery.integrationReferences.isEmpty();
         if (!packageOk || package.value(QStringLiteral("name")).toString() != QStringLiteral("com.harken.core")
             || !manifestOk || manifest.value(QStringLiteral("schema_version")).toInt() != 3
             || manifest.value(QStringLiteral("package_name")).toString() != QStringLiteral("com.harken.core")) {
@@ -276,12 +276,12 @@ EngineTargetObservation observeLayout(const EngineTargetRecord& record)
             return result;
         }
         result.health = EngineTargetHealth::Managed;
-        result.canRemoveSdk = discovery.sdkReferences.isEmpty();
-        result.canMoveSdk = result.canRemoveSdk;
-        if (!result.canRemoveSdk) {
+        result.canRemoveIntegration = discovery.integrationReferences.isEmpty();
+        result.canMoveIntegration = result.canRemoveIntegration;
+        if (!result.canRemoveIntegration) {
             result.dependencyRestricted = true;
             result.status = hubTranslate(QStringLiteral("Installed; move and uninstall restricted by dependencies"));
-            result.error = discovery.sdkReferences.join(QLatin1Char('\n'));
+            result.error = discovery.integrationReferences.join(QLatin1Char('\n'));
             result.remediation = hubTranslate(QStringLiteral("The Integration Package is installed. Change Integration Package remains available. Before moving or uninstalling, resolve the Integration Package dependencies in Unity Package Manager and package manifests so Unity cannot load another referenced copy or lose a package reference."));
         } else {
             const auto dependencies = package.value(QStringLiteral("dependencies")).toObject();
@@ -292,7 +292,7 @@ EngineTargetObservation observeLayout(const EngineTargetRecord& record)
                 localDependency |= VNX::UnityInstallation::containsPath(packageRoot, reference)
                     || VNX::UnityInstallation::containsPath(reference, packageRoot);
             if (localDependency) {
-                result.canMoveSdk = false;
+                result.canMoveIntegration = false;
                 result.dependencyRestricted = true;
                 result.status = hubTranslate(QStringLiteral("Installed; move restricted by local dependencies"));
                 result.remediation = hubTranslate(QStringLiteral("Change and uninstall remain available. Before moving the Integration Package, resolve local file: dependencies that belong to or reference this installation, then check again."));
@@ -326,7 +326,7 @@ EngineTargetObservation observeLayout(const EngineTargetRecord& record)
         result.status = hubTranslate(QStringLiteral("Migration unfinished"));
         result.error = hubTranslate(QStringLiteral("An unfinished Integration Package migration must be recovered before continuing."));
         result.remediation = hubTranslate(QStringLiteral("Use Recover Integration Package Migration to restore a consistent installation before changing, moving or uninstalling the Integration Package."));
-        result.canMoveSdk = true;
+        result.canMoveIntegration = true;
         return result;
     }
     QString pluginRoot;
@@ -338,11 +338,11 @@ EngineTargetObservation observeLayout(const EngineTargetRecord& record)
     }
     if (pluginRoot.isEmpty()) {
         result.health = EngineTargetHealth::NotInstalled;
-        result.canChangeSdk = true;
+        result.canChangeIntegration = true;
         result.remediation = hubTranslate(QStringLiteral("No Integration Package is installed. Use Install Integration Package and select a complete Integration Package source. Moving and uninstalling require an existing installation."));
         return result;
     }
-    result.sdkInstallPath = root.relativeFilePath(pluginRoot);
+    result.integrationInstallPath = root.relativeFilePath(pluginRoot);
     bool pluginOk = false;
     const QJsonObject plugin = jsonObject(
         QDir(pluginRoot).filePath(QStringLiteral("Harken.uplugin")), &pluginOk);
@@ -351,9 +351,9 @@ EngineTargetObservation observeLayout(const EngineTargetRecord& record)
     const auto installed = ProjectIntegrationExecutor::inspectUnreal(record, false);
     result.health = installed.valid ? EngineTargetHealth::Managed : EngineTargetHealth::Unmanaged;
     result.error = installed.error;
-    result.canChangeSdk = installed.valid;
-    result.canRemoveSdk = installed.valid;
-    result.canMoveSdk = installed.valid && pluginOk;
+    result.canChangeIntegration = installed.valid;
+    result.canRemoveIntegration = installed.valid;
+    result.canMoveIntegration = installed.valid && pluginOk;
     if (!installed.valid) {
         result.status = hubTranslate(QFileInfo::exists(QDir(pluginRoot).filePath(QStringLiteral(".harken-integration-state.json")))
             ? QStringLiteral("Installation record or path invalid") : QStringLiteral("Installation record missing"));
@@ -372,10 +372,10 @@ EngineTargetObservation observeLayout(const EngineTargetRecord& record)
 EngineTargetObservation EngineTargetProbe::observe(const EngineTargetRecord& record, bool verifyContent)
 {
     auto result = observeLayout(record);
-    if (!verifyContent || result.sdkInstallPath.isEmpty() || result.health == EngineTargetHealth::NotInstalled) return result;
-    result.sdkContentState = SdkContentState::Unverified;
-    if (result.health != EngineTargetHealth::Managed && !result.canChangeSdk) {
-        result.sdkContentDetails = result.error;
+    if (!verifyContent || result.integrationInstallPath.isEmpty() || result.health == EngineTargetHealth::NotInstalled) return result;
+    result.integrationContentState = IntegrationContentState::Unverified;
+    if (result.health != EngineTargetHealth::Managed && !result.canChangeIntegration) {
+        result.integrationContentDetails = result.error;
         return result;
     }
     bool modified = false;
@@ -385,10 +385,10 @@ EngineTargetObservation EngineTargetProbe::observe(const EngineTargetRecord& rec
         request.unityProjectPath = record.canonicalRoot;
         request.verifyInstalledOnly = true;
         const auto inspection = HubUnityIntegrationService::run(request);
-        result.sdkContentState = inspection.success ? SdkContentState::MatchesInstallation
-                                                   : SdkContentState::Unverified;
+        result.integrationContentState = inspection.success ? IntegrationContentState::MatchesInstallation
+                                                   : IntegrationContentState::Unverified;
         if (inspection.success && !inspection.missingOptionalFiles.isEmpty())
-            result.sdkContentState = SdkContentState::OptionalFilesMissing;
+            result.integrationContentState = IntegrationContentState::OptionalFilesMissing;
         modified = !inspection.modifiedFiles.isEmpty();
         missing = !inspection.missingFiles.isEmpty();
         QStringList details;
@@ -399,11 +399,11 @@ EngineTargetObservation EngineTargetProbe::observe(const EngineTargetRecord& rec
             if (!step.cause.isEmpty()) details << step.cause;
             details << step.details;
         }
-        result.sdkContentDetails = details.join(QLatin1Char('\n'));
+        result.integrationContentDetails = details.join(QLatin1Char('\n'));
     } else {
         const auto inspection = ProjectIntegrationExecutor::inspectUnreal(record);
-        result.sdkContentState = inspection.valid && inspection.unreadableManagedFiles.isEmpty()
-            ? SdkContentState::MatchesInstallation : SdkContentState::Unverified;
+        result.integrationContentState = inspection.valid && inspection.unreadableManagedFiles.isEmpty()
+            ? IntegrationContentState::MatchesInstallation : IntegrationContentState::Unverified;
         QStringList modifiedFiles = inspection.modifiedManagedFiles;
         for (const auto& path : inspection.missingManagedFiles) modifiedFiles.removeAll(path);
         for (const auto& path : inspection.unreadableManagedFiles) modifiedFiles.removeAll(path);
@@ -420,11 +420,11 @@ EngineTargetObservation EngineTargetProbe::observe(const EngineTargetRecord& rec
             details << hubTranslate(QStringLiteral("Unreadable Integration Package files:"))
                     << inspection.unreadableManagedFiles.join(QLatin1Char('\n'));
         if (!inspection.error.isEmpty()) details << inspection.error;
-        result.sdkContentDetails = details.join(QLatin1Char('\n'));
+        result.integrationContentDetails = details.join(QLatin1Char('\n'));
     }
-    if (modified && missing) result.sdkContentState = SdkContentState::ModifiedAndMissing;
-    else if (modified) result.sdkContentState = SdkContentState::Modified;
-    else if (missing) result.sdkContentState = SdkContentState::Missing;
+    if (modified && missing) result.integrationContentState = IntegrationContentState::ModifiedAndMissing;
+    else if (modified) result.integrationContentState = IntegrationContentState::Modified;
+    else if (missing) result.integrationContentState = IntegrationContentState::Missing;
     return result;
 }
 

@@ -128,7 +128,7 @@ namespace Harken
 
         private static async Task ObserveLateRead(Task<byte[]> pending)
         {
-            // A provider may ignore cancellation or fail after the SDK request has ended.
+            // A provider may ignore cancellation or fail after the managed request has ended.
             try { await pending.ConfigureAwait(false); } catch { }
         }
 

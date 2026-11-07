@@ -8,9 +8,6 @@
 
 namespace VNX {
 
-static constexpr int SWITCH_LABEL_GAP = 16;
-static constexpr int SWITCH_NO_LABEL_OFFSET = 8;
-static constexpr int THUMB_PADDING = 3;
 static constexpr int ANIMATION_DURATION_MS = 150;
 
 ToggleSwitch::ToggleSwitch(const QString& labelText, QWidget* parent)
@@ -18,16 +15,13 @@ ToggleSwitch::ToggleSwitch(const QString& labelText, QWidget* parent)
 {
     setObjectName("ToggleSwitch");
     auto& theme = ThemeManager::instance();
-    const auto& metrics = theme.metrics();
 
     auto* layout = new QHBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(metrics.spacingSmall);
     
     if (!labelText.isEmpty())
     {
         label_ = new QLabel(labelText, this);
-        label_->setMinimumWidth(100 + metrics.spacingSmall);
         label_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         layout->addWidget(label_);
     }
@@ -36,7 +30,8 @@ ToggleSwitch::ToggleSwitch(const QString& labelText, QWidget* parent)
         label_ = nullptr;
     }
     
-    layout->addSpacing(switchWidth_ + metrics.spacingSmall);
+    switchSpace_ = new QSpacerItem(0, 0, QSizePolicy::Fixed, QSizePolicy::Fixed);
+    layout->addSpacerItem(switchSpace_);
     layout->addStretch();
     
     animation_ = new QPropertyAnimation(this, "position", this);
@@ -46,6 +41,7 @@ ToggleSwitch::ToggleSwitch(const QString& labelText, QWidget* parent)
     setCursor(Qt::PointingHandCursor);
 
     applyTheme();
+    connect(&theme, &ThemeManager::themeChanged, this, &ToggleSwitch::applyTheme);
     connect(&theme, &ThemeManager::appearanceChanged, this, [this]() {
         update();
     });
@@ -55,10 +51,28 @@ ToggleSwitch::~ToggleSwitch() = default;
 
 void ToggleSwitch::applyTheme()
 {
+    const auto& metrics = ThemeManager::instance().metrics();
+    layout()->setSpacing(metrics.spacingSmall);
+    switchSpace_->changeSize(metrics.toggle.width, metrics.toggle.height,
+                            QSizePolicy::Fixed, QSizePolicy::Fixed);
+    layout()->invalidate();
     if (label_) {
+        label_->setMinimumWidth(metrics.parameter.labelMinimumWidth);
         QtControlSkin::setSemanticProperty(label_, "textRole",
                                           QStringLiteral("formLabel"));
     }
+    updateGeometry();
+    update();
+}
+
+QSize ToggleSwitch::sizeHint() const
+{
+    return layout()->sizeHint();
+}
+
+QSize ToggleSwitch::minimumSizeHint() const
+{
+    return layout()->minimumSize();
 }
 
 void ToggleSwitch::setChecked(bool checked)
@@ -96,10 +110,14 @@ void ToggleSwitch::paintEvent(QPaintEvent*)
     painter.setRenderHint(QPainter::Antialiasing);
     const auto& theme = ThemeManager::instance();
     
-    int switchX = label_ ? label_->width() + SWITCH_LABEL_GAP : SWITCH_NO_LABEL_OFFSET;
-    int switchY = (height() - switchHeight_) / 2;
+    const auto& metrics = theme.metrics();
+    const auto& toggle = metrics.toggle;
+    const int switchX = switchSpace_->geometry().x();
+    const int switchY = (height() - toggle.height) / 2;
     
-    QRectF track(switchX, switchY, switchWidth_, switchHeight_);
+    const qreal inset = metrics.borderWidth / 2.0;
+    const QRectF track = QRectF(switchX, switchY, toggle.width, toggle.height)
+        .adjusted(inset, inset, -inset, -inset);
     
     QColor offColor = theme.colors().borderPrimary;
     QColor onColor = theme.colors().accent;
@@ -114,13 +132,13 @@ void ToggleSwitch::paintEvent(QPaintEvent*)
     
     const int a = qRound(offColor.alpha() + position_ * (onColor.alpha() - offColor.alpha()));
     QColor trackColor(r, g, b, a);
-    painter.setPen(QPen(theme.colors().borderSecondary, 1));
+    painter.setPen(QPen(theme.colors().borderSecondary, metrics.borderWidth));
     painter.setBrush(trackColor);
-    painter.drawRoundedRect(track, switchHeight_ / 2, switchHeight_ / 2);
+    painter.drawRoundedRect(track, track.height() / 2, track.height() / 2);
     
-    float thumbX = switchX + THUMB_PADDING + position_ * (switchWidth_ - switchHeight_);
-    float thumbY = switchY + THUMB_PADDING;
-    float thumbSize = switchHeight_ - THUMB_PADDING * 2;
+    const qreal thumbX = switchX + toggle.thumbPadding + position_ * (toggle.width - toggle.height);
+    const qreal thumbY = switchY + toggle.thumbPadding;
+    const qreal thumbSize = toggle.height - toggle.thumbPadding * 2;
     
     QRectF thumb(thumbX, thumbY, thumbSize, thumbSize);
     
@@ -140,7 +158,7 @@ void ToggleSwitch::paintEvent(QPaintEvent*)
     gradient.setColorAt(1.0, thumbBottom);
     
     painter.setBrush(gradient);
-    painter.setPen(QPen(thumbBorder, 1));
+    painter.setPen(QPen(thumbBorder, metrics.borderWidth));
     painter.drawEllipse(thumb);
 }
 

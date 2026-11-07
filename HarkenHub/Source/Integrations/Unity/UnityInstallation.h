@@ -19,7 +19,7 @@ struct Discovery
     QVector<Installation> installations;
     QVector<Installation> preservedInstallations;
     QStringList errors;
-    QStringList sdkReferences;
+    QStringList integrationReferences;
     QStringList localPackagePaths;
 };
 

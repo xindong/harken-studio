@@ -1,4 +1,5 @@
 #include "Monitor/MonitorPanel.h"
+#include "Core/ThemeLayout.h"
 #include "Monitor/MonitorTypes.h"
 #include "Common/TableWidget.h"
 #include "Common/TableItemDelegate.h"
@@ -150,8 +151,8 @@ MonitorPanel::MonitorPanel(QWidget* parent)
     setObjectName(QStringLiteral("MonitorPanel"));
 
     auto* root = new QVBoxLayout(this);
-    root->setContentsMargins(8, 8, 8, 8);
-    root->setSpacing(6);
+    ThemeLayout::margins(root, ThemeLayout::Space::Small);
+    ThemeLayout::spacing(root, ThemeLayout::Space::Small);
 
     gapLabel_ = new QLabel(this);
     gapLabel_->setObjectName(QStringLiteral("MonitorGap"));
@@ -198,8 +199,12 @@ MonitorPanel::MonitorPanel(QWidget* parent)
 
     details_ = new QTextBrowser(this);
     details_->setObjectName(QStringLiteral("MonitorDetails"));
-    details_->setMaximumHeight(170);
-    details_->setMinimumHeight(70);
+    ThemeManager::instance().bindMetrics(details_, [this](const ThemeMetrics& metrics) {
+        details_->setMaximumHeight(metrics.panel.minimumHeight);
+    });
+    ThemeManager::instance().bindMetrics(details_, [this](const ThemeMetrics& metrics) {
+        details_->setMinimumHeight(metrics.controlHeight * 3);
+    });
     details_->setOpenLinks(false);
     details_->hide();
     root->addWidget(details_);
@@ -335,7 +340,9 @@ void MonitorPanel::setCaptureController(Monitor::EventCaptureController* capture
         {QStringLiteral("gameObjectId"), {}, 17}
     });
     jumpButton_->setText({});
-    jumpButton_->setFixedSize(26, 22);
+    ThemeManager::instance().bindMetrics(jumpButton_, [this](const ThemeMetrics& metrics) {
+        jumpButton_->setFixedSize(metrics.controlHeight, metrics.controlHeight);
+    });
     jumpButton_->setAccessibleName(tr("Show object in project"));
     const auto refreshJumpIcon = [this] {
         jumpButton_->setIcon(ThemeManager::instance().resolveIcon(QString::fromLatin1(ThemeAssetIds::SelectorTarget)).icon);

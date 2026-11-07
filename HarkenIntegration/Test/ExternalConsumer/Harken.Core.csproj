@@ -5,9 +5,10 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <AssemblyName>Harken.Core</AssemblyName>
+    <HarkenIntegrationRoot Condition="'$(HarkenIntegrationRoot)' == ''">$(HarkenSdkRoot)</HarkenIntegrationRoot>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="$(HarkenSdkRoot)/Runtime/Generated/**/*.cs" />
-    <Compile Include="$(HarkenSdkRoot)/Runtime/Sdk/**/*.cs" />
+    <Compile Include="$(HarkenIntegrationRoot)/Runtime/Generated/**/*.cs" />
+    <Compile Include="$(HarkenIntegrationRoot)/Runtime/API/**/*.cs" />
   </ItemGroup>
 </Project>

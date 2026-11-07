@@ -236,7 +236,9 @@ public:
         setWindowTitle(MainWindow::tr("Export Packs"));
         setWindowModality(Qt::ApplicationModal);
         setAttribute(Qt::WA_DeleteOnClose);
-        setMinimumWidth(460);
+        ThemeManager::instance().bindMetrics(this, [this](const ThemeMetrics& metrics) {
+            setMinimumWidth(metrics.dialog.minimumWidth);
+        });
         auto* layout = new QVBoxLayout(this);
         stage_ = new QLabel(MainWindow::tr("Starting pack build..."), this);
         stage_->setObjectName(QStringLiteral("packExportStage"));
@@ -386,7 +388,13 @@ MainWindow::MainWindow(
     : QMainWindow(parent)
 {
     setWindowTitle("Harken Studio");
-    setMinimumSize(800, 600);
+    ThemeManager::instance().bindMetrics(this, [this](const ThemeMetrics& metrics) {
+        setMinimumSize(screenBoundedWindowSize(this,
+            QSize(metrics.chrome.windowMinimumWidth, metrics.chrome.windowMinimumHeight)));
+        QMetaObject::invokeMethod(this, [this] {
+            if (isVisible()) fitWindowToScreen(this);
+        }, Qt::QueuedConnection);
+    });
     resize(kDefaultStudioWindowSize);
     setObjectName(QStringLiteral("MainWindow"));
     setAcceptDrops(true);
@@ -1244,8 +1252,28 @@ void MainWindow::setupMenuBar()
     QMenu* viewsMenu = menuBar->addMenu(tr("&View"));
     viewsMenu->setObjectName("viewsMenu");
 
-    connect(viewsMenu, &QMenu::aboutToShow, this, [this, viewsMenu]() {
+    auto* zoomInAction = shortcuts.applicationAction(Shortcuts::ZoomIn, [] {
+        AppSettings::instance().increaseGlobalUIScale();
+    });
+    auto* zoomOutAction = shortcuts.applicationAction(Shortcuts::ZoomOut, [] {
+        AppSettings::instance().decreaseGlobalUIScale();
+    });
+    const auto refreshZoomActions = [zoomInAction, zoomOutAction] {
+        zoomInAction->setEnabled(AppSettings::instance().canIncreaseGlobalUIScale());
+        zoomOutAction->setEnabled(AppSettings::instance().canDecreaseGlobalUIScale());
+    };
+    connect(&AppSettings::instance(), &AppSettings::globalUIScaleChanged,
+            this, refreshZoomActions);
+    refreshZoomActions();
+
+    connect(viewsMenu, &QMenu::aboutToShow, this, [this, viewsMenu, zoomInAction, zoomOutAction]() {
         viewsMenu->clear();
+
+        auto* appearanceMenu = viewsMenu->addMenu(tr("Appearance"));
+        appearanceMenu->setObjectName(QStringLiteral("viewsAppearanceMenu"));
+        appearanceMenu->addAction(zoomInAction);
+        appearanceMenu->addAction(zoomOutAction);
+        viewsMenu->addSeparator();
 
         QSet<QString> editorPanelTypes;
         for (const QString& t : standaloneEditorTypes_.keys())
@@ -1469,7 +1497,9 @@ void MainWindow::setupTitleBarToggles()
         btn->setToolTip(tooltip);
         btn->setIcon(ThemeManager::instance().resolveToggleIcon(
             onAssetId, offAssetId).icon);
-        btn->setIconSize(QSize(20, 20));
+        ThemeManager::instance().bindMetrics(btn, [btn](const ThemeMetrics& metrics) {
+            btn->setIconSize(QSize(metrics.objectIconExtent, metrics.objectIconExtent));
+        });
         btn->setAutoRaise(true);
         btn->setFocusPolicy(Qt::NoFocus);
         btn->setAttribute(Qt::WA_Hover, true);
@@ -1554,8 +1584,9 @@ void MainWindow::setupStatusBar()
     progressBar_ = new QProgressBar();
     progressBar_->setObjectName(QStringLiteral("statusProgressBar"));
     progressBar_->setRange(0, 100);
-    progressBar_->setFixedWidth(180);
-    progressBar_->setFixedHeight(16);
+    ThemeManager::instance().bindMetrics(progressBar_, [this](const ThemeMetrics& metrics) {
+        progressBar_->setFixedSize(metrics.chrome.progressWidth, metrics.chrome.progressHeight);
+    });
     progressBar_->hide();
     progressBar_->setProperty("shellRole", QStringLiteral("statusProgress"));
     status->addPermanentWidget(progressBar_);
@@ -2022,7 +2053,8 @@ void MainWindow::ensureWorkspaceSingletonShells()
                              QStringLiteral("RemoteConnect")}) {
         auto* floating = workspaceWindowManager_->singletonDock(type)->floatingDockContainer();
         const QRect available = screen()->availableGeometry();
-        const QSize size = type == QLatin1String("RemoteConnect") ? QSize(860, 380) : QSize(800, 550);
+        const auto& metrics = ThemeManager::instance().metrics().dialog;
+        const QSize size(metrics.wideWidth, type == QLatin1String("RemoteConnect") ? metrics.preferredHeight : metrics.wideHeight);
         floating->resize(size.boundedTo(available.size()));
         floating->move(available.center() - floating->rect().center());
     }

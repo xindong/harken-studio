@@ -896,6 +896,114 @@ bool applyTokenMetric(const QString& key, double value, ThemeSnapshot& theme)
     TOKEN_METRIC("spacing.medium", spacingMedium);
     TOKEN_METRIC("spacing.large", spacingLarge);
     TOKEN_METRIC("control.height", controlHeight);
+    TOKEN_METRIC("spacing.compact", spacingCompact);
+    TOKEN_METRIC("spacing.xLarge", spacingXLarge);
+    TOKEN_METRIC("border.width", borderWidth);
+    TOKEN_METRIC("border.accentWidth", accentBorderWidth);
+    TOKEN_METRIC("radius.compact", radiusCompact);
+    TOKEN_METRIC("parameter.compactSliderHeight", parameter.compactSliderHeight);
+    TOKEN_METRIC("parameter.compactSliderHandleWidth", parameter.compactSliderHandleWidth);
+    TOKEN_METRIC("control.compactHeight", control.compactHeight);
+    TOKEN_METRIC("control.largeHeight", control.largeHeight);
+    TOKEN_METRIC("control.smallIconExtent", control.smallIconExtent);
+    TOKEN_METRIC("control.largeIconExtent", control.largeIconExtent);
+    TOKEN_METRIC("control.textPaddingX", control.textPaddingX);
+    TOKEN_METRIC("control.textPaddingY", control.textPaddingY);
+    TOKEN_METRIC("control.checkboxExtent", control.checkboxExtent);
+    TOKEN_METRIC("control.checkboxMarkExtent", control.checkboxMarkExtent);
+    TOKEN_METRIC("control.scrollbarExtent", control.scrollbarExtent);
+    TOKEN_METRIC("control.canvasScrollbarExtent", control.canvasScrollbarExtent);
+    TOKEN_METRIC("control.sliderHandleExtent", control.sliderHandleExtent);
+    TOKEN_METRIC("control.sliderGrooveThickness", control.sliderGrooveThickness);
+    TOKEN_METRIC("control.scrollbarMinimumLength", control.scrollbarMinimumLength);
+    TOKEN_METRIC("control.splitterExtent", control.splitterExtent);
+    TOKEN_METRIC("control.buttonMinimumWidth", control.buttonMinimumWidth);
+    TOKEN_METRIC("control.fieldMinimumWidth", control.fieldMinimumWidth);
+    TOKEN_METRIC("control.searchMinimumWidth", control.searchMinimumWidth);
+    TOKEN_METRIC("popup.minimumWidth", popup.minimumWidth);
+    TOKEN_METRIC("popup.maximumHeight", popup.maximumHeight);
+    TOKEN_METRIC("popup.textPadding", popup.textPadding);
+    TOKEN_METRIC("popup.rowPadding", popup.rowPadding);
+    TOKEN_METRIC("popup.iconColumnWidth", popup.iconColumnWidth);
+    TOKEN_METRIC("popup.shortcutSpacing", popup.shortcutSpacing);
+    TOKEN_METRIC("toast.minimumWidth", toast.minimumWidth);
+    TOKEN_METRIC("toast.maximumWidth", toast.maximumWidth);
+    TOKEN_METRIC("connection.lineWidth", connection.lineWidth);
+    TOKEN_METRIC("connection.hitWidth", connection.hitWidth);
+    TOKEN_METRIC("connection.maximumOverviewWidth", connection.maximumOverviewWidth);
+    TOKEN_METRIC("colorPreview.swatchWidth", colorPreview.swatchWidth);
+    TOKEN_METRIC("colorPreview.swatchHeight", colorPreview.swatchHeight);
+    TOKEN_METRIC("colorPreview.alphaHeight", colorPreview.alphaHeight);
+    TOKEN_METRIC("colorPreview.paletteWidth", colorPreview.paletteWidth);
+    TOKEN_METRIC("colorPreview.paletteHeight", colorPreview.paletteHeight);
+    TOKEN_METRIC("colorPreview.hueWidth", colorPreview.hueWidth);
+    TOKEN_METRIC("colorPreview.markerRadius", colorPreview.markerRadius);
+    TOKEN_METRIC("form.rowSpacing", form.rowSpacing);
+    TOKEN_METRIC("form.columnSpacing", form.columnSpacing);
+    TOKEN_METRIC("form.labelColumnShare", form.labelColumnShare);
+    TOKEN_METRIC("form.valueColumnShare", form.valueColumnShare);
+    TOKEN_METRIC("chrome.titleBarHeight", chrome.titleBarHeight);
+    TOKEN_METRIC("chrome.windowButtonWidth", chrome.windowButtonWidth);
+    TOKEN_METRIC("chrome.windowMinimumWidth", chrome.windowMinimumWidth);
+    TOKEN_METRIC("chrome.windowMinimumHeight", chrome.windowMinimumHeight);
+    TOKEN_METRIC("chrome.progressWidth", chrome.progressWidth);
+    TOKEN_METRIC("chrome.progressHeight", chrome.progressHeight);
+    TOKEN_METRIC("card.minimumWidth", card.minimumWidth);
+    TOKEN_METRIC("card.minimumHeight", card.minimumHeight);
+    TOKEN_METRIC("startup.width", startup.width);
+    TOKEN_METRIC("startup.artworkHeight", startup.artworkHeight);
+    TOKEN_METRIC("startup.logoWidth", startup.logoWidth);
+    TOKEN_METRIC("startup.progressHeight", startup.progressHeight);
+    TOKEN_METRIC("toggle.width", toggle.width);
+    TOKEN_METRIC("toggle.height", toggle.height);
+    TOKEN_METRIC("toggle.thumbPadding", toggle.thumbPadding);
+    TOKEN_METRIC("toggle.compactWidth", toggle.compactWidth);
+    TOKEN_METRIC("toggle.compactHeight", toggle.compactHeight);
+    TOKEN_METRIC("toggle.compactThumbPadding", toggle.compactThumbPadding);
+    TOKEN_METRIC("panel.minimumWidth", panel.minimumWidth);
+    TOKEN_METRIC("panel.minimumHeight", panel.minimumHeight);
+    TOKEN_METRIC("panel.preferredWidth", panel.preferredWidth);
+    TOKEN_METRIC("panel.preferredHeight", panel.preferredHeight);
+    TOKEN_METRIC("panel.sidebarWidth", panel.sidebarWidth);
+    TOKEN_METRIC("panel.previewHeight", panel.previewHeight);
+    TOKEN_METRIC("dialog.minimumWidth", dialog.minimumWidth);
+    TOKEN_METRIC("dialog.minimumHeight", dialog.minimumHeight);
+    TOKEN_METRIC("dialog.compactWidth", dialog.compactWidth);
+    TOKEN_METRIC("dialog.compactHeight", dialog.compactHeight);
+    TOKEN_METRIC("dialog.preferredWidth", dialog.preferredWidth);
+    TOKEN_METRIC("dialog.preferredHeight", dialog.preferredHeight);
+    TOKEN_METRIC("dialog.wideWidth", dialog.wideWidth);
+    TOKEN_METRIC("dialog.wideHeight", dialog.wideHeight);
+    TOKEN_METRIC("node.minimumWidth", node.minimumWidth);
+    TOKEN_METRIC("node.headerHeight", node.headerHeight);
+    TOKEN_METRIC("node.bodyPadding", node.bodyPadding);
+    TOKEN_METRIC("node.rowHeight", node.rowHeight);
+    TOKEN_METRIC("node.waveformHeight", node.waveformHeight);
+    TOKEN_METRIC("node.expandedWaveformHeight", node.expandedWaveformHeight);
+    TOKEN_METRIC("node.waveformSpacing", node.waveformSpacing);
+    TOKEN_METRIC("node.routePadding", node.routePadding);
+    TOKEN_METRIC("node.routeMinimumHeight", node.routeMinimumHeight);
+    TOKEN_METRIC("node.pinColumnWidth", node.pinColumnWidth);
+    TOKEN_METRIC("node.pinSpacing", node.pinSpacing);
+    TOKEN_METRIC("node.pinRadius", node.pinRadius);
+    TOKEN_METRIC("node.pinHitRadius", node.pinHitRadius);
+    TOKEN_METRIC("node.badgeExtent", node.badgeExtent);
+    TOKEN_METRIC("node.columnSpacing", node.columnSpacing);
+    TOKEN_METRIC("node.rowSpacing", node.rowSpacing);
+    TOKEN_METRIC("node.pathColumnSpacing", node.pathColumnSpacing);
+    TOKEN_METRIC("node.pathRowSpacing", node.pathRowSpacing);
+    TOKEN_METRIC("node.sliderWidth", node.sliderWidth);
+    TOKEN_METRIC("node.valueWidth", node.valueWidth);
+    TOKEN_METRIC("timeAxis.handleBandHeight", timeAxis.handleBandHeight);
+    TOKEN_METRIC("timeAxis.handleWidth", timeAxis.handleWidth);
+    TOKEN_METRIC("timeAxis.handleHitRadius", timeAxis.handleHitRadius);
+    TOKEN_METRIC("timeAxis.cursorWidth", timeAxis.cursorWidth);
+    TOKEN_METRIC("timeAxis.cursorHeight", timeAxis.cursorHeight);
+    TOKEN_METRIC("timeAxis.labelPadding", timeAxis.labelPadding);
+    TOKEN_METRIC("timeAxis.minorTickLength", timeAxis.minorTickLength);
+    TOKEN_METRIC("timeAxis.majorTickLength", timeAxis.majorTickLength);
+    TOKEN_METRIC("timeAxis.waveformInset", timeAxis.waveformInset);
+    TOKEN_METRIC("timeAxis.channelHeight", timeAxis.channelHeight);
     TOKEN_METRIC("section.headerHeight", sectionHeaderHeight);
     if (key == QStringLiteral("navigation.chevronExtent"))
         return value >= 1.0 && assignNumber(metrics.navigationChevronExtent, value);
@@ -966,20 +1074,14 @@ bool applyTokenMetric(const QString& key, double value, ThemeSnapshot& theme)
 ThemeFontStyle* fontRole(const QString& key, ThemeSnapshot& theme)
 {
     auto& typography = theme.ui.typography;
-    if (key == QStringLiteral("heading"))
-        return &typography.heading;
     if (key == QStringLiteral("title"))
         return &typography.title;
     if (key == QStringLiteral("body"))
         return &typography.body;
     if (key == QStringLiteral("caption"))
         return &typography.caption;
-    if (key == QStringLiteral("axis"))
-        return &typography.axis;
     if (key == QStringLiteral("mono"))
         return &typography.mono;
-    if (key == QStringLiteral("label"))
-        return &typography.label;
     return nullptr;
 }
 
@@ -1032,6 +1134,10 @@ bool applyCurveColor(const QString& key, const QColor& value, ThemeSnapshot& the
 
 bool applyCurveMetric(const QString& key, double value, ThemeSnapshot& theme)
 {
+    if (key == QStringLiteral("curve.readoutFontPixelSize"))
+        return value >= 0.0 && value <= 96.0
+            && std::floor(value) == value
+            && assignNumber(theme.ui.typography.caption.pointSize, qRound(value * 0.75));
     auto& metrics = theme.domains.curve.metrics;
 #define CURVE_METRIC(name, field)                                               \
     if (key == QStringLiteral("curve." name))                                  \
@@ -1081,7 +1187,6 @@ bool applyCurveMetric(const QString& key, double value, ThemeSnapshot& theme)
     CURVE_METRIC("xMaxLabelTopOffset", xMaxLabelTopOffset);
     CURVE_METRIC("xMaxLabelHeight", xMaxLabelHeight);
     CURVE_METRIC("xMaxEditorVerticalExpansion", xMaxEditorVerticalExpansion);
-    CURVE_METRIC("readoutFontPixelSize", readoutFontPixelSize);
     CURVE_METRIC("readoutHorizontalPadding", readoutHorizontalPadding);
     CURVE_METRIC("readoutHeight", readoutHeight);
     CURVE_METRIC("readoutHorizontalOffset", readoutHorizontalOffset);
@@ -1134,6 +1239,10 @@ bool applyWaveformMetric(const QString& key,
                          double value,
                          ThemeSnapshot& theme)
 {
+    if (key == QStringLiteral("waveform.splitStereo.labelPointSize")
+        || key == QStringLiteral("waveform.dbScale.labelPointSize"))
+        return value >= 0.0 && value <= 72.0
+            && assignNumber(theme.ui.typography.caption.pointSize, value);
     auto& waveform = theme.domains.waveform;
 #define WAVEFORM_METRIC(name, field)                                            \
     if (key == QStringLiteral("waveform." name))                               \
@@ -1142,13 +1251,11 @@ bool applyWaveformMetric(const QString& key,
     WAVEFORM_METRIC("static.accentPeakAlpha", staticMode.accentPeakAlpha);
     WAVEFORM_METRIC("multiBand.alpha", multiBandMode.alpha);
     WAVEFORM_METRIC("splitStereo.dividerWidth", splitStereo.dividerWidth);
-    WAVEFORM_METRIC("splitStereo.labelPointSize", splitStereo.labelPointSize);
     WAVEFORM_METRIC("splitStereo.labelRightInset", splitStereo.labelRightInset);
     WAVEFORM_METRIC("splitStereo.labelBaselineOffset", splitStereo.labelBaselineOffset);
     WAVEFORM_METRIC("rawPeaks.cornerRadius", rawPeaks.cornerRadius);
     WAVEFORM_METRIC("rawPeaks.centerLineWidth", rawPeaks.centerLineWidth);
     WAVEFORM_METRIC("dbScale.gridWidth", dbScale.gridWidth);
-    WAVEFORM_METRIC("dbScale.labelPointSize", dbScale.labelPointSize);
     WAVEFORM_METRIC("dbScale.amplitudeScale", dbScale.amplitudeScale);
     WAVEFORM_METRIC("dbScale.labelLeftInset", dbScale.labelLeftInset);
     WAVEFORM_METRIC("dbScale.labelBaselineOffset", dbScale.labelBaselineOffset);
@@ -1883,54 +1990,28 @@ bool applySemantics(const SemanticDocuments& documents,
             return false;
         }
     }
-    for (auto it = documents.tokens.fonts.constBegin();
-         it != documents.tokens.fonts.constEnd(); ++it)
-    {
-        ThemeFontStyle* role = fontRole(it.key(), theme);
-        const QString path = QStringLiteral("$.fonts.") + it.key();
-        if (!role)
-        {
-            diagnostics.append(diagnostic(
-                ThemePackageErrorCode::UnknownSemanticKey, tokenFile, path,
-                QStringLiteral("Unknown font role.")));
-            return false;
-        }
-        if (it->family)
-        {
-            if (it->family->size() > 128)
-            {
-                diagnostics.append(diagnostic(
-                    ThemePackageErrorCode::InvalidValue, tokenFile,
-                    path + QStringLiteral(".family"),
-                    QStringLiteral("Font family is too long.")));
-                return false;
-            }
-            role->family = *it->family;
-        }
-        if (it->pointSize)
-        {
-            if (*it->pointSize < 6 || *it->pointSize > 72)
-            {
-                diagnostics.append(diagnostic(
-                    ThemePackageErrorCode::MetricOutOfRange, tokenFile,
-                    path + QStringLiteral(".pointSize"),
-                    QStringLiteral("Font point size is out of range.")));
-                return false;
-            }
-            role->pointSize = *it->pointSize;
-        }
-        if (it->weight)
-        {
-            if (*it->weight < 1 || *it->weight > 1000)
-            {
-                diagnostics.append(diagnostic(
-                    ThemePackageErrorCode::MetricOutOfRange, tokenFile,
-                    path + QStringLiteral(".weight"),
-                    QStringLiteral("Font weight is out of range.")));
-                return false;
-            }
-            role->weight = *it->weight;
-        }
+
+    const auto& metrics = theme.ui.metrics;
+    const auto& toggle = metrics.toggle;
+    const bool validGeometry = toggle.width >= toggle.height
+        && toggle.height > 2 * toggle.thumbPadding
+        && toggle.compactWidth >= toggle.compactHeight
+        && toggle.compactHeight > 2 * toggle.compactThumbPadding
+        && metrics.node.minimumWidth > 0 && metrics.node.rowHeight > 0
+        && metrics.node.pinRadius > 0 && metrics.node.pinHitRadius >= metrics.node.pinRadius
+        && metrics.timeAxis.handleWidth > 0 && metrics.timeAxis.handleBandHeight > 0
+        && metrics.timeAxis.cursorWidth > 0 && metrics.timeAxis.cursorHeight > 0
+        && metrics.timeAxis.channelHeight > 0
+        && metrics.control.sliderHandleExtent >= metrics.control.sliderGrooveThickness
+        && metrics.toast.maximumWidth >= metrics.toast.minimumWidth
+        && metrics.connection.hitWidth >= metrics.connection.lineWidth
+        && metrics.connection.maximumOverviewWidth >= metrics.connection.lineWidth
+        && metrics.form.labelColumnShare + metrics.form.valueColumnShare > 0;
+    if (!validGeometry) {
+        diagnostics.append(diagnostic(ThemePackageErrorCode::MetricOutOfRange, tokenFile,
+            QStringLiteral("$.metrics"),
+            QStringLiteral("Invalid dimensions: minimum extents, containment constraints, or column shares are inconsistent.")));
+        return false;
     }
 
     ThemeVisualDto curve = documents.curve;
@@ -1989,6 +2070,62 @@ bool applySemantics(const SemanticDocuments& documents,
         || !applyRecipeSelections(documents.recipes, package, mergedAssets,
                                   theme, diagnostics))
         return false;
+
+    for (auto it = documents.tokens.fonts.constBegin();
+         it != documents.tokens.fonts.constEnd(); ++it)
+    {
+        QString key = it.key();
+        if (key == QStringLiteral("heading")) key = QStringLiteral("title");
+        else if (key == QStringLiteral("label")) key = QStringLiteral("body");
+        else if (key == QStringLiteral("axis")) key = QStringLiteral("caption");
+        if (key != it.key() && documents.tokens.fonts.contains(key)) continue;
+        ThemeFontStyle* role = fontRole(key, theme);
+        const QString path = QStringLiteral("$.fonts.") + it.key();
+        if (!role)
+        {
+            diagnostics.append(diagnostic(
+                ThemePackageErrorCode::UnknownSemanticKey, tokenFile, path,
+                QStringLiteral("Unknown font role.")));
+            return false;
+        }
+        if (it->family)
+        {
+            if (it->family->size() > 128)
+            {
+                diagnostics.append(diagnostic(
+                    ThemePackageErrorCode::InvalidValue, tokenFile,
+                    path + QStringLiteral(".family"),
+                    QStringLiteral("Font family is too long.")));
+                return false;
+            }
+            role->family = *it->family;
+        }
+        if (it->pointSize)
+        {
+            if (*it->pointSize < 6 || *it->pointSize > 72)
+            {
+                diagnostics.append(diagnostic(
+                    ThemePackageErrorCode::MetricOutOfRange, tokenFile,
+                    path + QStringLiteral(".pointSize"),
+                    QStringLiteral("Font point size is out of range.")));
+                return false;
+            }
+            role->pointSize = *it->pointSize;
+        }
+        if (it->weight)
+        {
+            if (*it->weight < 1 || *it->weight > 1000)
+            {
+                diagnostics.append(diagnostic(
+                    ThemePackageErrorCode::MetricOutOfRange, tokenFile,
+                    path + QStringLiteral(".weight"),
+                    QStringLiteral("Font weight is out of range.")));
+                return false;
+            }
+            role->weight = *it->weight;
+        }
+    }
+
 
     const auto& curveMetrics = theme.domains.curve.metrics;
     if (curveMetrics.gridColumnCount <= 0 || curveMetrics.linearGridRowCount <= 0

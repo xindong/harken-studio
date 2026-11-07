@@ -17,7 +17,8 @@ struct InspectorFormRow
 
 void setInspectorFormSlotCount(QWidget* parent, int occupiedSlots);
 int inspectorFormSlotCount(const QWidget* parent, int standaloneSlots = 2);
-void reserveInspectorContentSlots(QWidget* content);
+enum class InspectorContentInset { Column, Page };
+void reserveInspectorContentSlots(QWidget* content, InspectorContentInset inset = InspectorContentInset::Column);
 
 InspectorFormRow makeInspectorFormRow(QWidget* parent, const QString& key,
                                       const QString& text, QWidget* control,

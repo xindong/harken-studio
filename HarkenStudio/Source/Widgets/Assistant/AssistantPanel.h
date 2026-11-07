@@ -25,7 +25,7 @@ class AIMessageWidget : public QWidget
 {
     Q_OBJECT
 public:
-    explicit AIMessageWidget(const QString& text, int fontSize = 13, QWidget* parent = nullptr);
+    explicit AIMessageWidget(const QString& text, int fontSize = 0, QWidget* parent = nullptr);
 
     QSize sizeHint() const override;
     int heightForContentWidth(int width) const;
@@ -36,14 +36,14 @@ private:
     void setupUI(const QString& text, int fontSize);
 
     QLabel* contentLabel_;
-    int fontSize_ = 13;
+    int fontSize_ = 0;
 };
 
 class UserMessageWidget : public QWidget
 {
     Q_OBJECT
 public:
-    explicit UserMessageWidget(const QString& text, int fontSize = 13, QWidget* parent = nullptr);
+    explicit UserMessageWidget(const QString& text, int fontSize = 0, QWidget* parent = nullptr);
 
     QSize sizeHint() const override;
     int heightForContentWidth(int width) const;
@@ -55,10 +55,11 @@ protected:
 
 private:
     void setupUI(const QString& text, int fontSize);
+    void updateBubbleGeometry();
 
     QFrame* bubbleFrame_ = nullptr;
     QLabel* contentLabel_;
-    int fontSize_ = 13;
+    int fontSize_ = 0;
 };
 
 class AssistantPanel : public QWidget
@@ -116,7 +117,6 @@ private:
     void scheduleMessageRelayout();
 
 private:
-    static constexpr int INPUT_MAX_WIDTH = 520;
 
     QListWidget* chatList_;
     QWidget* emptyState_;
@@ -132,9 +132,10 @@ private:
     QList<QMetaObject::Connection> serviceConnections_;
     QTimer* statusClearTimer_ = nullptr;
     QString trackedRequestId_;
-    int currentFontSize_ = 13;
+    int currentFontSize_ = 0;
     bool turnActive_ = false;
     bool batchingMessages_ = false;
+    bool relayoutActive_ = false;
     bool failedStepSeen_ = false;
     bool inServiceCall_ = false;
     bool updatingConversationSelector_ = false;

@@ -17,6 +17,7 @@ ConnectionPath::ConnectionPath(NodePin* startPin, NodePin* endPin, QGraphicsItem
     : QGraphicsPathItem(parent)
     , startPin_(startPin)
     , endPin_(endPin)
+    , theme_(ThemeManager::instance().unscaledSnapshot())
 {
     setZValue(-1);
     setFlag(ItemIsSelectable);
@@ -95,6 +96,7 @@ QVariant ConnectionPath::itemChange(GraphicsItemChange change, const QVariant& v
 
 void ConnectionPath::updatePosition()
 {
+    refreshMetrics();
     if (!startPin_ || !endPin_) return;
 
     const QPointF p1 = startPin_->scenePos();
@@ -157,7 +159,9 @@ void ConnectionPath::setBlueprintFlowDirection(CanvasFlowDirection dir)
 
 QRectF ConnectionPath::boundingRect() const
 {
-    constexpr qreal halo = 6.0;
+    const auto& metrics = theme_->ui.metrics;
+    const qreal halo = std::max({metrics.connection.hitWidth, metrics.connection.maximumOverviewWidth,
+        metrics.connection.lineWidth + 2 * metrics.borderWidth}) / 2;
     QRectF base = QGraphicsPathItem::boundingRect().adjusted(-halo, -halo, halo, halo);
     if (!label_.isEmpty()) base = base.united(labelRect().adjusted(-halo, -halo, halo, halo));
     return base;
@@ -166,16 +170,26 @@ QRectF ConnectionPath::boundingRect() const
 QRectF ConnectionPath::labelRect() const
 {
     const QPointF mid = path().pointAtPercent(0.5);
-    const QFontMetricsF metrics(FontManager::instance().getFont(FontRole::Label, 8));
+    const QFontMetricsF metrics(FontManager::instance().getFont(theme_, FontRole::Caption));
     const qreal width = metrics.horizontalAdvance(label_);
-    return QRectF(mid.x() - width / 2 - 4, mid.y() - metrics.height() - 2,
-                  width + 8, metrics.height() + 2);
+    const auto& geometry = theme_->ui.metrics;
+    return QRectF(mid.x() - width / 2 - geometry.spacingXSmall, mid.y() - metrics.height() - geometry.spacingCompact,
+                  width + geometry.spacingXSmall * 2, metrics.height() + geometry.spacingCompact * 2);
+}
+
+void ConnectionPath::refreshMetrics()
+{
+    const auto current = ThemeManager::instance().unscaledSnapshot();
+    if (theme_ == current) return;
+    prepareGeometryChange();
+    theme_ = current;
+    update();
 }
 
 QPainterPath ConnectionPath::shape() const
 {
     QPainterPathStroker stroker;
-    stroker.setWidth(10.0);
+    stroker.setWidth(theme_->ui.metrics.connection.hitWidth);
     auto hit = stroker.createStroke(path());
     if (detailLevel_ == BlueprintDetailLevel::Full && !label_.isEmpty()) hit.addRect(labelRect());
     return hit;
@@ -186,12 +200,15 @@ void ConnectionPath::paint(QPainter* painter, const QStyleOptionGraphicsItem* op
     Q_UNUSED(option)
     Q_UNUSED(widget)
 
-    qreal width = 2.0 + (playbackActive_ ? 1.0 : 0.0) + (isSelected() ? 1.0 : 0.0);
+    const auto& geometry = theme_->ui.metrics;
+    qreal width = geometry.connection.lineWidth
+        + (playbackActive_ ? geometry.borderWidth : 0) + (isSelected() ? geometry.borderWidth : 0);
     if (detailLevel_ != BlueprintDetailLevel::Full) {
         const auto transform = painter->worldTransform();
         const qreal scale = std::hypot(transform.m11(), transform.m12());
-        const qreal minimumWidth = playbackActive_ || isSelected() ? 1.2 : 0.8;
-        if (scale > 0.0) width = std::max(width, std::min(qreal(12.0), minimumWidth / scale));
+        const qreal minimumWidth = geometry.connection.lineWidth * (playbackActive_ || isSelected() ? 0.6 : 0.4)
+            * ThemeManager::instance().snapshot()->uiScale;
+        if (scale > 0.0) width = std::max(width, std::min(geometry.connection.maximumOverviewWidth, minimumWidth / scale));
     }
     if (blueprintKind_.has_value()) {
         Qt::PenStyle penStyle = Qt::SolidLine;
@@ -247,14 +264,14 @@ void ConnectionPath::paint(QPainter* painter, const QStyleOptionGraphicsItem* op
     }
 
     if (detailLevel_ == BlueprintDetailLevel::Full && !label_.isEmpty()) {
-        QFont labelFont = FontManager::instance().getFont(FontRole::Label, 8);
+        QFont labelFont = FontManager::instance().getFont(theme_, FontRole::Caption);
         painter->setFont(labelFont);
         const QRectF bg = labelRect();
         const auto theme = ThemeManager::instance().snapshot();
         const auto& bp = theme->domains.blueprint;
         painter->setPen(Qt::NoPen);
         painter->setBrush(bp.edgeLabelBg);
-        painter->drawRoundedRect(bg, 3, 3);
+        painter->drawRoundedRect(bg, geometry.radiusSmall, geometry.radiusSmall);
         painter->setPen(bp.edgeLabelText);
         painter->drawText(bg, Qt::AlignCenter, label_);
     }

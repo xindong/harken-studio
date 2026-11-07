@@ -34,11 +34,11 @@ InspectorLaunchEntry::InspectorLaunchEntry(const QString& slot, QWidget* parent,
 {
     setObjectName(QStringLiteral("launchEntry_") + slot_);
 
-    const auto& inspector = ThemeManager::instance().metrics().inspector;
     auto* h = new QHBoxLayout(this);
-    h->setContentsMargins(inspector.pageMargin, 0, inspector.pageMargin, 0);
-    h->setSpacing(inspector.sectionSpacing);
-    reserveInspectorContentSlots(this);
+    ThemeManager::instance().bindMetrics(h, [h](const ThemeMetrics& metrics) {
+        h->setSpacing(metrics.inspector.sectionSpacing);
+    });
+    reserveInspectorContentSlots(this, InspectorContentInset::Page);
 
     label_ = new QLabel(placeholder_, this);
     label_->setObjectName(QStringLiteral("launchEntryLabel_") + slot_);

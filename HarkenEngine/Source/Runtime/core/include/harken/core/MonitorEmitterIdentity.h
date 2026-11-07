@@ -23,16 +23,16 @@ enum class MonitorHostOwnership : std::uint32_t {
 
 struct MonitorHostKey {
     std::uint64_t engineInstance = 0;
-    std::uint64_t sdkSession = 0;
+    std::uint64_t hostSession = 0;
     std::uint64_t localSequence = 0;
 
     bool Valid() const noexcept {
-        return engineInstance != 0 && sdkSession != 0 && localSequence != 0;
+        return engineInstance != 0 && hostSession != 0 && localSequence != 0;
     }
 };
 
 inline bool operator==(const MonitorHostKey& a, const MonitorHostKey& b) noexcept {
-    return a.engineInstance == b.engineInstance && a.sdkSession == b.sdkSession &&
+    return a.engineInstance == b.engineInstance && a.hostSession == b.hostSession &&
         a.localSequence == b.localSequence;
 }
 

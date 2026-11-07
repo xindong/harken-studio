@@ -148,7 +148,7 @@ VariableImpactReport analyzeChange(const ProjectData* project,
         !item->comp<VVariable>())
         return report;
 
-    report.sdkSymbol = item->name;
+    report.apiSymbol = item->name;
     report.consumers =
         VariableConsumerSemantics::consumersOf(project, variableId);
 
@@ -186,7 +186,7 @@ VariableImpactReport analyzeChange(const ProjectData* project,
 
     report.liveBankResets = report.executionFingerprintChanged;
     report.packMustRebuild = report.executionFingerprintChanged || report.catalogFingerprintChanged;
-    report.sdkCatalogMustRebuild =
+    report.apiCatalogMustRebuild =
         report.executionFingerprintChanged || report.catalogFingerprintChanged;
 
     if (valueInvalidForProposed(proposed.defaultValue, proposed)) {

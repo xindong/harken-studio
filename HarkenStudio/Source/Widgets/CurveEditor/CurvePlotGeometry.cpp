@@ -101,7 +101,7 @@ CurvePlotData CurvePlotGeometry::renderData() const
             || rect.top() < 0.0 || rect.bottom() > bounds_.height())
             return;
         for (const auto& existing : data.textTicks) {
-            if (existing.rect.adjusted(-gap / 2.0, -2.0, gap / 2.0, 2.0).intersects(rect))
+            if (existing.rect.adjusted(-gap / 2.0, -gap / 2.0, gap / 2.0, gap / 2.0).intersects(rect))
                 return;
         }
         CurveRenderTextTick tick;

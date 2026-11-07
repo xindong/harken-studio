@@ -1,4 +1,5 @@
 #include "Monitor/MonitorRecordingPanel.h"
+#include "Core/ThemeLayout.h"
 
 #include <QLabel>
 #include <QPushButton>
@@ -11,7 +12,7 @@ MonitorRecordingPanel::MonitorRecordingPanel(QWidget* parent)
 {
     setObjectName(QStringLiteral("MonitorRecordingPanel"));
     auto* root = new QVBoxLayout(this);
-    root->setContentsMargins(8, 8, 8, 8);
+    ThemeLayout::margins(root, ThemeLayout::Space::Small);
     faceLabel_ = new QLabel(this);
     faceLabel_->setObjectName(QStringLiteral("MonitorRecordingFace"));
     root->addWidget(faceLabel_);

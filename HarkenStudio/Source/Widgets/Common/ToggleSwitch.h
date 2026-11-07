@@ -5,6 +5,8 @@
 #include <QPropertyAnimation>
 #include <QLabel>
 
+class QSpacerItem;
+
 namespace VNX {
 
 class ToggleSwitch : public QWidget
@@ -31,8 +33,8 @@ protected:
     void paintEvent(QPaintEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
-    QSize sizeHint() const override { return QSize(160, 24); }
-    QSize minimumSizeHint() const override { return QSize(100, 20); }
+    QSize sizeHint() const override;
+    QSize minimumSizeHint() const override;
 
 private:
     void applyTheme();
@@ -45,9 +47,7 @@ private:
     
     QPropertyAnimation* animation_;
     
-    static constexpr int switchWidth_ = 44;
-    static constexpr int switchHeight_ = 22;
-    static constexpr int thumbRadius_ = 8;
+    QSpacerItem* switchSpace_ = nullptr;
 };
 
 }

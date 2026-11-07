@@ -46,8 +46,8 @@ public:
     struct Request
     {
         QString unityProjectPath;
-        QString sdkSourcePath;
-        QString sdkInstallPath;
+        QString integrationSourcePath;
+        QString integrationInstallPath;
         bool installToAssets = false;
         bool checkOnly = false;
         bool confirmTargetChanges = false;
@@ -98,13 +98,13 @@ public:
         QVector<StepResult> steps;
         QVector<FileChange> fileChanges;
         QString unityProjectPath;
-        QString sdkSourcePath;
-        QString sdkInstallPath;
+        QString integrationSourcePath;
+        QString integrationInstallPath;
         QString removalBackupPath;
         QString restorationBackupPath;
         QString jsonReportPath;
         QString textReportPath;
-        int sdkFilesCopied = 0;
+        int integrationFilesCopied = 0;
         int filesAdded = 0;
         int filesChanged = 0;
         int staleFilesToRemove = 0;
@@ -116,7 +116,7 @@ public:
 
     Result run(const Request& request);
 
-    static QString locateSdkSource(const QString& preferredPath = QString());
+    static QString locateIntegrationSource(const QString& preferredPath = QString());
     static QString statusName(StepStatus status);
 
 signals:

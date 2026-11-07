@@ -2,6 +2,8 @@
 
 #include "harken_buildinfo.h"
 #include "BuiltinTheme.h"
+#include "AppSettings.h"
+#include "ThemeScale.h"
 #include "ThemeColorResolver.h"
 #include "FontManager.h"
 #include "HarkenStyle.h"
@@ -16,6 +18,7 @@
 #include <QStandardPaths>
 #include <QStyleHints>
 #include <QThread>
+#include <QToolTip>
 #include <QWidget>
 
 #include <utility>
@@ -82,7 +85,21 @@ ThemeManager::ThemeManager(QString userThemesRoot,
         currentPaletteId_ = restored.paletteId;
         committedCandidate_ = *loaded.candidate;
     }
+    uiScalePercent_ = AppSettings::instance().globalUIScale();
     publishCandidate(committedCandidate_, false);
+    connect(&AppSettings::instance(), &AppSettings::globalUIScaleChanged,
+            this, &ThemeManager::setUIScale);
+}
+
+void ThemeManager::setUIScale(qreal percent)
+{
+    Q_ASSERT(QThread::currentThread() == thread());
+    percent = qBound(AppSettings::uiScaleForZoomLevel(AppSettings::MIN_GLOBAL_ZOOM_LEVEL),
+        percent, AppSettings::uiScaleForZoomLevel(AppSettings::MAX_GLOBAL_ZOOM_LEVEL));
+    if (uiScalePercent_ == percent)
+        return;
+    uiScalePercent_ = percent;
+    publishCandidate(publishedCandidate_, true);
 }
 
 ThemePackageDiscoveryResult ThemeManager::refreshThemes()
@@ -92,6 +109,15 @@ ThemePackageDiscoveryResult ThemeManager::refreshThemes()
     themes_ = result.themes;
     lastDiagnostics_ = result.diagnostics;
     return result;
+}
+
+QMetaObject::Connection ThemeManager::bindMetrics(QObject* context, std::function<void(const ThemeMetrics&)> apply)
+{
+    apply(metrics());
+    return connect(this, &ThemeManager::themeChanged, context,
+            [apply = std::move(apply)](const ThemeSnapshotPtr& snapshot) {
+                apply(snapshot->ui.metrics);
+            });
 }
 
 ThemeManagerOperationResult ThemeManager::selectTheme(const QString& themeId)
@@ -310,13 +336,14 @@ void ThemeManager::publishCandidate(const ThemePackageCandidate& candidate,
     const auto previous = snapshot_;
     const bool assetsChanged = reloadAssets || publishedThemeId_ != candidate.manifest.id
         || publishedAssets_ != candidate.assets || publishedAssetRoots_ != candidate.assetRoots;
-    ThemeSnapshot structure = *candidate.snapshot;
+    ThemeSnapshot published = scaledThemeSnapshot(*candidate.snapshot, uiScalePercent_ / 100.0);
+    ThemeSnapshot structure = published;
     copyThemeColors(structure, *previous);
     structure.generation = previous->generation;
     const bool structureChanged = assetsChanged || structure != *previous;
-    ThemeSnapshot published = *candidate.snapshot;
     published.generation = ++generation_;
     snapshot_ = std::make_shared<const ThemeSnapshot>(std::move(published));
+    publishedCandidate_ = candidate;
     assetResolver_.registerSnapshot(snapshot_, candidate.assets,
                                     candidate.assetRoots, assetsChanged ? ThemeSnapshotPtr{} : previous);
     publishedThemeId_ = candidate.manifest.id;
@@ -336,6 +363,8 @@ void ThemeManager::applyApplicationTheme(bool structureChanged)
         return;
     auto& fontManager = FontManager::instance();
     const QtControlSkin skin(snapshot_, &assetResolver_);
+    const auto font = fontManager.getFont(snapshot_, FontRole::Body);
+    if (application->font() != font) application->setFont(font);
     application->styleHints()->setColorScheme(
         snapshot_->colorScheme == ThemeColorScheme::Light
             ? Qt::ColorScheme::Light
@@ -357,8 +386,8 @@ void ThemeManager::applyApplicationTheme(bool structureChanged)
         application->setPalette(palette);
         refreshWidgetPalettes = true;
     }
-    const auto font = fontManager.getFont(snapshot_, FontRole::Body);
-    if (application->font() != font) application->setFont(font);
+    application->setFont(font);
+    QToolTip::setFont(fontManager.getFont(snapshot_, FontRole::Caption));
     if (structureChanged) QtAdsThemeAdapter::applyIcons(assetResolver_, snapshot_);
     fontManager.applyTheme(snapshot_);
     for (auto* widget : application->allWidgets()) {
@@ -494,6 +523,7 @@ void ThemeManager::paintBindAffordance(QPainter& p, const QRect& rect, BindGlyph
     p.setRenderHint(QPainter::Antialiasing, true);
 
     const auto& themeColors = colors();
+    const auto& geometry = metrics();
     QColor fg = !enabled ? themeColors.textDisabled
                          : (active ? themeColors.accent : themeColors.textPrimary);
     if (hover && enabled)
@@ -504,34 +534,37 @@ void ThemeManager::paintBindAffordance(QPainter& p, const QRect& rect, BindGlyph
         bg.setAlphaF(bg.alphaF() * (active ? 46 : 30) / 255.0);
         p.setPen(Qt::NoPen);
         p.setBrush(bg);
-        p.drawRoundedRect(QRectF(rect).adjusted(1.0, 1.0, -1.0, -1.0), 4.0, 4.0);
+        const qreal inset = geometry.borderWidth;
+        p.drawRoundedRect(QRectF(rect).adjusted(inset, inset, -inset, -inset),
+                          geometry.radiusSmall, geometry.radiusSmall);
     }
 
     const QRectF r(rect);
-    const double s = 7.0;
-    const double off = 2.0;
+    const double s = geometry.control.smallIconExtent * 7.0 / 16.0;
+    const double off = geometry.control.smallIconExtent / 8.0;
+    const double radius = geometry.control.smallIconExtent / 10.0;
     const QPointF c = r.center();
     const QRectF back (c.x() - s / 2 - off, c.y() - s / 2 - off, s, s);
     const QRectF front(c.x() - s / 2 + off, c.y() - s / 2 + off, s, s);
-    QPen pen(fg, 1.3);
+    QPen pen(fg, 1.3 * snapshot_->uiScale);
     pen.setJoinStyle(Qt::RoundJoin);
 
     p.setPen(pen);
     p.setBrush(Qt::NoBrush);
-    p.drawRoundedRect(back, 1.6, 1.6);
+    p.drawRoundedRect(back, radius, radius);
 
     p.setPen(Qt::NoPen);
     p.setBrush(themeColors.bgPrimary);
-    p.drawRoundedRect(front, 1.6, 1.6);
+    p.drawRoundedRect(front, radius, radius);
     if (active) {
         QColor fill = themeColors.accent;
         fill.setAlphaF(fill.alphaF() * (hover ? 235 : 200) / 255.0);
         p.setBrush(fill);
-        p.drawRoundedRect(front, 1.6, 1.6);
+        p.drawRoundedRect(front, radius, radius);
     }
     p.setPen(pen);
     p.setBrush(Qt::NoBrush);
-    p.drawRoundedRect(front, 1.6, 1.6);
+    p.drawRoundedRect(front, radius, radius);
 }
 
 }

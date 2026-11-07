@@ -62,7 +62,7 @@ bool IntegrationStore::open(const QString& databasePath)
         close();
         return false;
     }
-    bool hasSdkSourcePath = false;
+    bool hasIntegrationSourcePath = false;
     if (!query.exec(QStringLiteral("PRAGMA table_info(integrations)"))) {
         lastError_ = query.lastError().text();
         close();
@@ -70,11 +70,11 @@ bool IntegrationStore::open(const QString& databasePath)
     }
     while (query.next()) {
         if (query.value(1).toString() == QStringLiteral("sdkSourcePath")) {
-            hasSdkSourcePath = true;
+            hasIntegrationSourcePath = true;
             break;
         }
     }
-    if (!hasSdkSourcePath
+    if (!hasIntegrationSourcePath
         && !query.exec(QStringLiteral(
             "ALTER TABLE integrations ADD COLUMN "
             "sdkSourcePath TEXT NOT NULL DEFAULT ''"))) {
@@ -145,9 +145,9 @@ bool IntegrationStore::add(const IntegrationRecord& record, bool replaceTarget)
     query.addBindValue(record.integrationId);
     query.addBindValue(record.harkenProjectPath);
     query.addBindValue(record.engineTargetId);
-    query.addBindValue(record.sdkSourcePath.isNull()
+    query.addBindValue(record.integrationSourcePath.isNull()
                            ? QStringLiteral("")
-                           : record.sdkSourcePath);
+                           : record.integrationSourcePath);
     query.addBindValue(record.createdAt);
     query.addBindValue(record.updatedAt);
     query.addBindValue(record.enabled ? 1 : 0);
@@ -160,8 +160,8 @@ bool IntegrationStore::add(const IntegrationRecord& record, bool replaceTarget)
     return true;
 }
 
-bool IntegrationStore::updateSdkSourcePath(
-    const QString& integrationId, const QString& sdkSourcePath)
+bool IntegrationStore::updateIntegrationSourcePath(
+    const QString& integrationId, const QString& integrationSourcePath)
 {
     if (connectionName_.isEmpty() || integrationId.isEmpty()) {
         lastError_ = hubTranslate(QStringLiteral("Integration is unavailable"));
@@ -171,7 +171,7 @@ bool IntegrationStore::updateSdkSourcePath(
     query.prepare(QStringLiteral(
         "UPDATE integrations SET sdkSourcePath = ?, updatedAt = ? "
         "WHERE integrationId = ?"));
-    query.addBindValue(sdkSourcePath);
+    query.addBindValue(integrationSourcePath);
     query.addBindValue(QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
     query.addBindValue(integrationId);
     if (!query.exec() || query.numRowsAffected() != 1) {

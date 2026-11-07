@@ -118784,7 +118784,7 @@ VnResult Vn_QueryVariableCatalog(VnVariableCatalogInfoV1* out) {
     }
     out->executionCatalogFingerprint =
         engine->variables.ExecutionCatalogFingerprint();
-    out->sdkCatalogFingerprint = engine->variables.SdkCatalogFingerprint();
+    out->sdkCatalogFingerprint = engine->variables.ApiCatalogFingerprint();
     return VN_OK;
 
     } catch (const std::bad_alloc&) {
@@ -120407,7 +120407,7 @@ bool GuidIsZero(const std::uint8_t* guid) {
 }
 
 VnResult ValidateAuthoredActionName(const char* utf8Name) {
-    return utf8Name != nullptr && harken::IsSdkCallableName(utf8Name) ? VN_OK : VN_INVALID_ARG;
+    return utf8Name != nullptr && harken::IsCallableName(utf8Name) ? VN_OK : VN_INVALID_ARG;
 }
 
 std::string_view GameplayCatalogName(

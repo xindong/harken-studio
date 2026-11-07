@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compile a staged SDK separately from a non-friend consumer and access probes."""
+"""Compile a staged Integration separately from a non-friend consumer and access probes."""
 from __future__ import annotations
 
 import argparse
@@ -45,22 +45,22 @@ def run(command, log, *, expect_success=True, env=None):
     return result.returncode, output
 
 
-def verify(sdk, work, native_dir=None, publication=None):
-    staged = work / "sdk"
-    shutil.copytree(sdk, staged)
+def verify(integration, work, native_dir=None, publication=None):
+    staged = work / "integration"
+    shutil.copytree(integration, staged)
     shutil.copytree(FIXTURE, work / "fixture", ignore=shutil.ignore_patterns("bin", "obj"))
     fixture = work / "fixture"
     shutil.copy2(ROOT / "HarkenIntegration/Test/ContractTest/RemoteCommunicationContract.cs", fixture)
-    # The consumer references only the compiled DLL, never SDK source items.
+    # The consumer references only the compiled DLL, never Integration source items.
     run(["dotnet", "build", str(fixture / "Harken.Core.csproj"), "-c", "Release",
-         f"-p:HarkenSdkRoot={staged}", "--artifacts-path", str(work / "artifacts"),
+         f"-p:HarkenIntegrationRoot={staged}", "--artifacts-path", str(work / "artifacts"),
          "-o", str(work / "library"), "--nologo"], work / "library.log")
     library = work / "library/Harken.Core.dll"
     common = ["dotnet", "build", str(fixture / "Consumer.csproj"), "-c", "Release",
               f"-p:HarkenCoreAssembly={library}", "--artifacts-path", str(work / "artifacts"), "--nologo"]
     positive = work / "positive"
     run(common + [f"-p:ConsumerSource={fixture / 'Program.cs'}", f"-p:RemoteContractSource={fixture / 'RemoteCommunicationContract.cs'}", "-o", str(positive)], work / "positive.log")
-    policy = ROOT / "HarkenEngine/Source/Tooling/Binding/sdk_api_surface.json"
+    policy = ROOT / "HarkenEngine/Source/Tooling/Binding/api_surface.json"
     # Reflection checks every generated symbol's effective public visibility.
     run(["dotnet", str(positive / "Harken.ExternalConsumer.dll"), "--surface", str(policy)],
         work / "surface.log")
@@ -81,16 +81,16 @@ def verify(sdk, work, native_dir=None, publication=None):
         environment = dict(os.environ, HARKEN_NATIVE_DIR=str(native_dir))
         run(["dotnet", str(positive / "Harken.ExternalConsumer.dll"), "--host", str(publication)],
             work / "host.log", env=environment)
-    report = {"sdk_source": str(sdk), "staged_sdk": str(staged),
+    report = {"sdk_source": str(integration), "staged_sdk": str(staged),
               "assembly": "Harken.ExternalConsumer", "negative_probes": list(NEGATIVE),
               "public_surface": "passed", "host_execution": "passed" if native_dir else "not requested"}
     (work / "result.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    print(f"External SDK boundary passed: positive consumer and {len(NEGATIVE)} independent access probes. Evidence: {work}")
+    print(f"External Integration boundary passed: positive consumer and {len(NEGATIVE)} independent access probes. Evidence: {work}")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--sdk-root", type=Path, default=ROOT / "HarkenIntegration/Unity/Harken")
+    parser.add_argument("--integration-root", "--sdk-root", dest="integration_root", type=Path, default=ROOT / "HarkenIntegration/Unity/Harken")
     parser.add_argument("--work-dir", type=Path)
     parser.add_argument("--native-dir", type=Path)
     parser.add_argument("--publication", type=Path)
@@ -101,8 +101,8 @@ def main():
     else:
         scratch = ROOT / ".temp"
         scratch.mkdir(exist_ok=True)
-        work = Path(tempfile.mkdtemp(prefix="sdk-boundary-", dir=scratch))
-    verify(args.sdk_root.resolve(), work,
+        work = Path(tempfile.mkdtemp(prefix="integration-boundary-", dir=scratch))
+    verify(args.integration_root.resolve(), work,
            args.native_dir.resolve() if args.native_dir else None,
            args.publication.resolve() if args.publication else None)
 

@@ -1,5 +1,6 @@
 
 #include "DropZoneWidget.h"
+#include "Core/ThemeLayout.h"
 
 #include "Core/AssetPipeline/AudioImportGate.h"
 #include "Core/ThemeManager.h"
@@ -22,7 +23,9 @@ DropZoneWidget::DropZoneWidget(QWidget* parent)
     acceptedExtensions_ = AudioImportGate::acceptedExtensions();
 
     setAcceptDrops(true);
-    setMinimumHeight(100);
+    ThemeManager::instance().bindMetrics(this, [this](const ThemeMetrics& metrics) {
+        setMinimumHeight(metrics.panel.minimumHeight);
+    });
 
     setupUI();
 }
@@ -32,7 +35,7 @@ DropZoneWidget::~DropZoneWidget() = default;
 void DropZoneWidget::setupUI()
 {
     QVBoxLayout* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(8, 8, 8, 8);
+    ThemeLayout::margins(layout, ThemeLayout::Space::Small);
 
     emptyLabel_ = new QLabel(emptyText_);
     emptyLabel_->setObjectName(QStringLiteral("dropZoneEmptyLabel"));
@@ -197,9 +200,11 @@ void DropZoneWidget::paintEvent(QPaintEvent* event)
 
     const auto colors = ThemeManager::instance().colors();
     QColor borderColor = isDragging_ ? colors.info : colors.borderPrimary;
-    QPen pen(borderColor, 2, Qt::DashLine);
+    const auto& metrics = ThemeManager::instance().metrics();
+    QPen pen(borderColor, metrics.accentBorderWidth, Qt::DashLine);
     painter.setPen(pen);
-    painter.drawRoundedRect(rect().adjusted(1, 1, -1, -1), 8, 8);
+    const qreal inset = metrics.accentBorderWidth / 2.0;
+    painter.drawRoundedRect(QRectF(rect()).adjusted(inset, inset, -inset, -inset), metrics.radiusLarge, metrics.radiusLarge);
 
     if (isDragging_)
     {
