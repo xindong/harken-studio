@@ -2994,7 +2994,7 @@ bool IsScheduleSourceNativeForest(harken::Engine& engine,
     return owner != nullptr && (owner == parent || IsPlayableServiceDescendant(engine, *parent, *owner)) &&
         owner->invocation == parent->invocation &&
         owner->invocationGeneration == parent->invocationGeneration &&
-        cohort.partition.slot == parent->partition.slot && cohort.partition.generation == parent->partition.generation &&
+        cohort.partition.slot == owner->partition.slot && cohort.partition.generation == owner->partition.generation &&
         std::count_if(cohort.children.begin(), cohort.children.end(), [&](const auto& member) {
             return member.child == pending && engine.ResolvePlayableService(member.parent) == parent;
         }) == 1;
@@ -15721,6 +15721,20 @@ enum class PlayableStartResetResult : std::uint8_t {
     Fault,
 };
 
+bool CaptureScheduleSourceFailureOwner(harken::Engine& engine,
+    const harken::EnginePlayableServiceRow& source,
+    harken::EngineScheduleAggregateChild& child) noexcept {
+    if (!source.sourceCohortFailureOwner.Valid() || source.controlReason != harken::PlayableControlReason::StartRefused)
+        return true;
+    const auto* owner = engine.ResolvePlayableService(source.sourceCohortFailureOwner);
+    if (!harken::Engine::SameSelectionServiceReference(child.service, PlayableServiceReference(source)) ||
+        owner == nullptr || owner->invocation != source.invocation ||
+        owner->invocationGeneration != source.invocationGeneration ||
+        !IsPlayableServiceDescendant(engine, source, *owner)) return false;
+    child.sourceCohortFailureOwner = source.sourceCohortFailureOwner;
+    return true;
+}
+
 bool ObserveScheduleAggregateChildBeforeRetire(
     harken::Engine& engine, const harken::EnginePlayableServiceRow& row,
     const harken::EngineActionPlayScratch* privateScheduleOwner = nullptr) noexcept;
@@ -17490,7 +17504,8 @@ bool ObserveScheduleAggregateChildBeforeRetire(
         MatchesPrivateScheduleSuccessorCancellation(engine, row, *parent, privateScheduleOwner);
     if (!harken::Engine::SameSelectionServiceReference(child->service, PlayableServiceReference(row))) return false;
     if (!aggregateOwns && !child->lifecycleOwned) return true;
-    if (child->logicalComplete) return true;
+    if (child->logicalComplete) return child->outcome.kind == harken::PlayableTerminalKind::NaturalCompletion ||
+        CaptureScheduleSourceFailureOwner(engine, row, *child);
     const auto view = engine.playableInstances.Classify(row.ownerInstance);
     if (view.live && view.parent != parent->ownerInstance) return false;
     if (!view.live && row.phase != harken::EnginePlayableStartPhase::Cancelling) return false;
@@ -17512,7 +17527,9 @@ bool ObserveScheduleAggregateChildBeforeRetire(
         row.phase != harken::EnginePlayableStartPhase::Cancelling) return false;
     const auto reason = outcome.kind == harken::PlayableTerminalKind::NaturalCompletion
         ? harken::PlayableControlReason::Natural : row.controlReason;
-    return RecordScheduleAggregateOutcome(*child, outcome, reason);
+    return (reason != harken::PlayableControlReason::StartRefused ||
+            CaptureScheduleSourceFailureOwner(engine, row, *child)) &&
+        RecordScheduleAggregateOutcome(*child, outcome, reason);
 }
 
 
@@ -36900,7 +36917,10 @@ bool ServiceScheduleChildRecord(
         if (!child.logicalComplete && source->controlReason != harken::PlayableControlReason::None &&
             source->controlReason != harken::PlayableControlReason::Natural) {
             child.reason = source->controlReason;
-            child.sourceCohortFailureOwner = source->sourceCohortFailureOwner;
+            if (!CaptureScheduleSourceFailureOwner(engine, *source, child)) {
+                engine.runtimeRecreateRequired = true;
+                return false;
+            }
         }
     } else if (!child.resourcesReleased) {
         // A missing lookup alone is not a release receipt. A slot generation
@@ -93193,6 +93213,17 @@ bool PrepareContainerSingleLeaf(
             (void)operations.Release(scratch);
             context.result = VN_BACKPRESSURE;
             return false;
+        }
+        if (row->scheduleCohortSource != nullptr) {
+            auto& source = *row->scheduleCohortSource;
+            if (source.source.Valid() || source.body.Valid() || source.arm.Valid() || source.sourceIdentity != 0) {
+                (void)operations.Release(scratch);
+                context.result = VN_BACKPRESSURE;
+                return false;
+            }
+            if (source.retention != nullptr) source.retention->service.Return();
+            row->scheduleCohortSource = nullptr;
+            row->scheduleSourceCohort = nullptr;
         }
         scratch->voiceStartCount = 0;
         row->scheduleLeafCount = 0;

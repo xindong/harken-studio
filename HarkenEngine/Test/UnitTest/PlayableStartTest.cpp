@@ -21718,21 +21718,22 @@ TEST(PlayableStart, DirectTrackMixedStreamWaitsStartsTogetherAndCancelsBeforeRea
 }
 
 TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFailure) {
-    for (const auto workers : {0u, 2u}) for (const auto scenario : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u, 10u, 11u, 12u, 13u, 14u, 15u, 16u, 17u, 18u, 19u, 20u, 21u, 22u, 23u, 24u, 25u}) {
+    for (const auto workers : {0u, 2u}) for (const auto scenario : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u, 10u, 11u, 12u, 13u, 14u, 15u, 16u, 17u, 18u, 19u, 20u, 21u, 22u, 23u, 24u, 25u, 26u, 27u}) {
         const bool crossTrack = scenario >= 14u && scenario <= 16u;
         const bool repeatTrack = scenario == 16u;
         const bool ordinaryNative = (scenario >= 17u && scenario <= 19u) || scenario >= 24u;
+        const bool ordinaryVariable = scenario >= 26u;
         const bool nativeChild = scenario >= 6u && !crossTrack;
         const bool noDirectStream = scenario >= 20u;
-        const bool hiddenNativeStream = scenario >= 20u && scenario <= 23u;
+        const bool hiddenNativeStream = (scenario >= 20u && scenario <= 23u) || ordinaryVariable;
         const bool nativeOnly = scenario == 22u || scenario == 23u;
         const bool nestedNative = scenario == 12u || scenario == 13u;
-        const bool variableNative = nativeChild && !nestedNative && !ordinaryNative;
+        const bool variableNative = nativeChild && !nestedNative && (!ordinaryNative || ordinaryVariable);
         const bool multipleNative = scenario >= 8u && scenario <= 10u;
         const bool emptyNative = scenario == 11u;
         const bool nativeStreamLate = scenario == 10u;
         const bool directStreamLate = scenario == 1u || scenario == 7u || scenario == 15u || scenario == 16u ||
-            scenario == 21u || scenario == 23u || scenario == 25u;
+            scenario == 21u || scenario == 23u || scenario == 25u || scenario == 27u;
         const bool missDeadline = directStreamLate || nativeStreamLate;
         const bool largePrebuffer = scenario == 2u;
         const bool temporaryVoicePressure = scenario == 3u;
@@ -21869,7 +21870,8 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
                 harken::ComputePlayableOccurrenceFingerprintV1(streamedNative.occurrence);
         }
         if (scenario >= 24u) {
-            ordinary.child.playable = image.placements[1].content;
+            ordinary.child.playable = ordinaryVariable ? streamedNative.Root() : image.placements[1].content;
+            if (ordinaryVariable) ordinary.child.playable.stableId = streamedNative.properties[1].stableId;
             ordinary.occurrence.childPlayable = ordinary.child.playable;
             ordinary.occurrence.occurrenceSemanticFingerprint = harken::ComputePlayableOccurrenceFingerprintV1(ordinary.occurrence);
         }
@@ -21881,7 +21883,7 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
         if (ordinaryNative) placements[0].content = ordinary.Root();
         if (nestedNative) placements[0].content = nested.Root();
         if (multipleNative) placements[2].content = native.Root();
-        if (nativeStreamLate || hiddenNativeStream) {
+        if (nativeStreamLate || (hiddenNativeStream && !ordinaryVariable)) {
             placements[0].content = streamedNative.Root();
             placements[0].content.stableId = streamedNative.properties[1].stableId;
         }
