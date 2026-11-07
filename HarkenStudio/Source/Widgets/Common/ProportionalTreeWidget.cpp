@@ -4,6 +4,7 @@
 #include "Core/FontManager.h"
 #include "Core/ThemeManager.h"
 #include "ReorderHeaderView.h"
+#include "HeaderResizeHighlight.h"
 #include "TableGroupHeader.h"
 #include "TableItemDelegate.h"
 
@@ -39,6 +40,7 @@ ProportionalTreeWidget::ProportionalTreeWidget(const QList<int>& columnWeights, 
     header()->setSectionResizeMode(QHeaderView::Interactive);
     setItemDelegate(new TableItemDelegate(this, themeManager_));
     header()->viewport()->installEventFilter(this);
+    new HeaderResizeHighlight(header(), themeManager_);
     QtControlSkin::setSemanticProperty(this, "tableRole", QStringLiteral("data"));
     viewport()->installEventFilter(this);
     connect(header(), &QHeaderView::sectionResized, this, [this](int column, int, int newSize) {

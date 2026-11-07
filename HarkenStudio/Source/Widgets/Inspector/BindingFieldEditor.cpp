@@ -32,7 +32,7 @@ namespace {
 
 QString addressLabel(const BindingAddress& address)
 {
-    QString label = BindingSemantics::slotName(address.slotId);
+    QString label = BindingSemantics::slotName(address);
     if (!label.isEmpty())
         label[0] = label[0].toUpper();
     return label;
@@ -67,10 +67,9 @@ public:
         inputMax_ = variable ? variable->rangeMax : 1.0f;
         yMin_ = std::min(binding.outputMin, binding.outputMax);
         yMax_ = std::max(binding.outputMin, binding.outputMax);
-        const ProjectItemType hostType = binding.address.hostClass == BindingHostClass::Bus
-            ? ProjectItemType::Bus : ProjectItemType::Sound;
-        const auto contract = BindingContractSemantics::derive(binding.address.slotId, hostType);
-        clipToPlot_ = contract.outputUnit == BindingOutputUnit::Cent;
+        const auto contract = BindingContractSemantics::derive(binding.address);
+        clipToPlot_ = binding.address.family == BindingTargetFamily::Filter
+            || contract.outputUnit == BindingOutputUnit::Cent;
         volume_ = contract.outputUnit
             == BindingOutputUnit::Decibel;
         if (volume_ || clipToPlot_) {
@@ -217,7 +216,7 @@ void BindingFieldEditor::bind(ProjectItem* item, const BindingAddress& address)
     address_ = address;
     addMenu_->bind(item, address);
     setObjectName(QStringLiteral("bindingFieldEditor_")
-                  + BindingSemantics::slotName(address.slotId));
+                  + BindingSemantics::slotName(address));
     setProperty("bindingAddress", BindingSemantics::addressKey(address));
     reload();
 }
