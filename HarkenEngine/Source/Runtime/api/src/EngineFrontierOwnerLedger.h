@@ -88,6 +88,11 @@ public:
         return true;
     }
 
+    bool PrepareNextOwner(std::uint64_t generation) noexcept {
+        return Matches(generation) && phase_ == Phase::Preparing && count_ < capacity_ &&
+            PrepareStorage(count_ + 1u);
+    }
+
     bool Add(std::uint64_t generation, FrontierOwnerRef identity, void* context,
              FrontierOwnerCommitPhase commitPhase,
              FrontierOwnerCancelPhase cancelPhase,

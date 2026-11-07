@@ -114,6 +114,28 @@ struct Mapping {
     MusicTimelineStatus ExitAtOrAfter(std::uint64_t lower, std::uint64_t& iteration,
                                      std::uint64_t& frame) const noexcept {
         if (status != MusicTimelineStatus::Ok) return status;
+        // Invert the single-tempo mapping, then prove the candidate brackets
+        // lower. Extremal or unrepresentable coordinates retain the full search.
+        std::int64_t absolute = 0;
+        if (AddUnsigned(originFrame, lower, absolute) && absolute != kMin && absolute != kMax) {
+            auto required = timeline.timeType == SegmentTimeType::Musical
+                ? clock.FrameToTick({absolute - 1}).value : clock.FrameToTime({absolute}).value;
+            if (required != kMin && required != kMax) {
+                if (timeline.timeType == SegmentTimeType::Musical) ++required;
+                const auto delta = required > timeline.exit
+                    ? static_cast<std::uint64_t>(required) - static_cast<std::uint64_t>(timeline.exit) : 0u;
+                const auto width = static_cast<std::uint64_t>(span);
+                const auto candidate = delta / width + (delta % width != 0);
+                std::uint64_t at = 0, before = 0;
+                if (candidate <= LastIteration() &&
+                    Frame(timeline.exit, candidate, at) == MusicTimelineStatus::Ok && at >= lower &&
+                    (candidate == 0 || (Frame(timeline.exit, candidate - 1u, before) == MusicTimelineStatus::Ok && before < lower))) {
+                    iteration = candidate;
+                    frame = at;
+                    return MusicTimelineStatus::Ok;
+                }
+            }
+        }
         std::uint64_t lo = 0, hi = LastIteration();
         while (lo < hi) {
             const auto mid = lo + (hi - lo) / 2;

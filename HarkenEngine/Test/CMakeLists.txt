@@ -123,6 +123,7 @@ add_executable(harken_runtime_tests
     UnitTest/CommandBudgetTest.cpp
     UnitTest/OriginalSourceSubmissionTest.cpp
     UnitTest/CapacityContractTest.cpp
+    UnitTest/StableSlotStorageTest.cpp
     UnitTest/VoiceSetterTest.cpp
     UnitTest/StagedVoiceStartTest.cpp
     UnitTest/SpatialApiTest.cpp
@@ -301,6 +302,7 @@ add_executable(harken_runtime_tests
     UnitTest/LogicCommitBundleTest.cpp
     UnitTest/ActionFiringTableTest.cpp
     UnitTest/RuntimeWorkIndexTest.cpp
+    UnitTest/SourceTerminalRecordTest.cpp
     UnitTest/MonitorRequestTest.cpp
     UnitTest/ActionSeekTableTest.cpp
     UnitTest/ActionCooldownTableTest.cpp
