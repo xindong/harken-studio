@@ -41,20 +41,20 @@ protected:
     }
 };
 
-TEST_F(AdvancedActionResultTest, DecimalStringPreservesFullWidthGameObjectId)
+TEST_F(AdvancedActionResultTest, DecimalStringPreservesFullWidthRuntimeIdentity)
 {
     VNX::registerAdvancedActions(
         VNX::ActionManager::instance(), &VNX::AudioEngine::instance());
     const QJsonObject args{
-        {QStringLiteral("game_object_id"),
+        {QStringLiteral("action_handle"),
          QStringLiteral("18446744073709551615")},
-        {QStringLiteral("volume"), 0.5},
+        {QStringLiteral("position"), 0.5},
     };
 
     const auto result = VNX::ActionManager::instance().execute(
-        QStringLiteral("set_game_object_volume"), args, VNX::ActionSource::IPC);
+        QStringLiteral("seek_action"), args, VNX::ActionSource::IPC);
 
-    EXPECT_EQ(result.data.value(QStringLiteral("game_object_id")).toString(),
+    EXPECT_EQ(result.data.value(QStringLiteral("action_handle")).toString(),
               QStringLiteral("18446744073709551615"));
 }
 

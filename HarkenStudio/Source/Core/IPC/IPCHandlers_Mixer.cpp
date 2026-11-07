@@ -70,33 +70,31 @@ void IPCServer::registerMixerHandlers()
     };
 
 
-    commandHandlers_["get_output_bus_routing"] = [this](const QJsonObject& args) {
+    commandHandlers_["get_output_bus_gain"] = [this](const QJsonObject& args) {
+        for (auto it = args.begin(); it != args.end(); ++it)
+            if (it.key() != QLatin1String("bus_name"))
+                return errorResponse("INVALID_ARGS", QString("Unknown parameter: %1").arg(it.key()));
         if (!projectManager_ || !projectManager_->isProjectOpen())
             return errorResponse("NO_PROJECT_OPEN", "No project is currently open");
 
-        const QString path = args.value("path").toString().trimmed();
-        if (path.isEmpty())
-            return errorResponse("INVALID_ARGS", "path is required (sound object path)");
+        const QString busName = args.value("bus_name").toString().trimmed();
+        if (busName.isEmpty())
+            return errorResponse("INVALID_ARGS", "bus_name is required (bus GUID, path, or name)");
 
         ProjectData* project = projectManager_->currentProject();
-        ProjectItem* item = findItemByPathInProject(project, path);
-        if (!item)
-            return errorResponse("ITEM_NOT_FOUND", QString("Item '%1' not found").arg(path));
+        const auto selected = resolveProjectSelector(project, busName, ProjectItem::Type::Bus);
+        if (!selected.ok)
+            return errorResponse(selected.errorCode, selected.errorMessage);
+        const auto* item = selected.item;
 
-        auto* mcomp = item->comp<VMixNode>();
+        const auto* mcomp = item->comp<VMixNode>();
         if (!mcomp)
             return errorResponse("NO_AUDIO_COMPONENT", "Item has no VMixNode");
 
-        const uint32_t outputBusObjectId = mcomp->outputBusId;
-        const auto* outputBus = projectManager_->findBusItem(outputBusObjectId);
-        const harkenstudio::ObjectId outputBusRef = outputBus
-            ? outputBus->runtimeId() : harkenstudio::ObjectId{};
         QJsonObject result;
-        result["path"] = path;
-        result["output_bus_id"] = static_cast<qint64>(outputBusObjectId);
-        result["output_bus_ref"] =
-            objectIdString(outputBusRef);
-        result["volume_db"] = mcomp->outputBusVolume;
+        result["bus_name"] = item->name;
+        result["bus_guid"] = item->guid.toString(QUuid::WithoutBraces);
+        result["db"] = mcomp->outputBusVolume;
         return successResponse(result);
     };
 
@@ -246,20 +244,6 @@ void IPCServer::registerMixerHandlers()
         return result;
     };
 
-    commandHandlers_["get_selected_bus"] = [](const QJsonObject& args) {
-        Q_UNUSED(args);
-        QJsonObject result;
-        auto* project = ProjectManager::instance().currentProject();
-        if (!project) {
-            result["status"] = "error";
-            result["result"] = QJsonObject{{"code", "NO_PROJECT"}, {"message", "No project open"}};
-            return result;
-        }
-
-        result["status"] = "ok";
-        result["result"] = QJsonObject{{"message", "Use get_bus_hierarchy for full tree, or list_buses for flat list"}};
-        return result;
-    };
 
 }
 

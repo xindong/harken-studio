@@ -6,8 +6,8 @@
 #include "ItemTypeCatalog.h"
 #include "Components/VMixNode.h"
 #include "Components/VSelection.h"
-#include "Components/VSpatial.h"
 #include "Components/VTrack.h"
+#include "PlayablePropertyAuthoringV1.h"
 
 #include <algorithm>
 #include <limits>
@@ -64,7 +64,7 @@ bool IPCServer::prepareRollbackStepForAction(const QString& cmd,
 
         const uint32_t busID = static_cast<uint32_t>(args.value("bus_id").toInteger());
         auto& pm = ProjectManager::instance();
-        const auto* item = pm.findBusItem(busID);
+        auto* item = pm.findBusItem(busID);
         const auto* bc   = item ? item->comp<VBus>() : nullptr;
         const auto* mix  = item ? item->comp<VMixNode>() : nullptr;
         if (!bc || !mix || !item)
@@ -73,45 +73,45 @@ bool IPCServer::prepareRollbackStepForAction(const QString& cmd,
             return false;
         }
 
-        const bool hasAnyProperty =
-            args.contains("volume") || args.contains("pan") || args.contains("mute") || args.contains("solo");
-        if (!hasAnyProperty)
-        {
-            if (error) *error = "set_bus_properties requires at least one of volume/pan/mute/solo.";
-            return false;
-        }
-
         const auto& overlay = pm.auditionOverlay();
-        QJsonObject rollbackArgs{
-            {"bus_id", static_cast<qint64>(busID)},
-            {"volume", mix->volume},
-            {"pan", bc->pan},
-            {"mute", overlay.isMuted(item->runtimeId())},
-            {"solo", overlay.isSoloed(item->runtimeId())}
-        };
-        *rollbackStep = QJsonObject{
-            {"kind", "command"},
-            {"cmd", "set_bus_properties"},
-            {"args", rollbackArgs}
-        };
-
         QJsonObject before{
-            {"volume", mix->volume},
-            {"pan", bc->pan},
+            {"volume", mix->volume}, {"pitch", mix->pitch},
+            {"outputBusVolume", mix->outputBusVolume}, {"pan", bc->pan},
             {"mute", overlay.isMuted(item->runtimeId())},
             {"solo", overlay.isSoloed(item->runtimeId())}
         };
         QJsonObject after = before;
-        if (args.contains("volume")) after["volume"] = args.value("volume");
-        if (args.contains("pan")) after["pan"] = args.value("pan");
-        if (args.contains("mute")) after["mute"] = args.value("mute");
-        if (args.contains("solo")) after["solo"] = args.value("solo");
-
+        QJsonObject playable;
         QJsonArray changed;
-        if (args.contains("volume")) changed.append("volume");
-        if (args.contains("pan")) changed.append("pan");
-        if (args.contains("mute")) changed.append("mute");
-        if (args.contains("solo")) changed.append("solo");
+        *rollbackStep = QJsonObject{
+            {"kind", "restore_playable_properties"},
+            {"item_guid", item->guid.toString(QUuid::WithoutBraces)}
+        };
+        const auto locator = PlayablePropertyAuthoringV1::definitionLocator(*item);
+        for (const auto* name : {"volume", "pitch", "outputBusVolume", "pan", "mute", "solo"}) {
+            const QString key = QLatin1String(name);
+            if (!args.contains(key)) continue;
+            changed.append(key);
+            after.insert(key, args.value(key));
+            if (key == "pan" || key == "mute" || key == "solo") {
+                rollbackStep->insert(key, before.value(key));
+                continue;
+            }
+            const auto* field = PlayablePropertyAuthoringV1::fieldByName(key);
+            const auto state = locator && field
+                ? PlayablePropertyAuthoringV1::readProperty(*item, *locator, field->id, std::nullopt)
+                : std::nullopt;
+            if (!state) {
+                if (error) *error = "Unable to capture authored bus property: " + key;
+                return false;
+            }
+            playable.insert(key, QJsonArray{QJsonObject{{"present", state->present}, {"value", state->value}}});
+        }
+        if (changed.isEmpty()) {
+            if (error) *error = "set_bus_properties requires at least one supported property.";
+            return false;
+        }
+        rollbackStep->insert("playable", playable);
 
         (*previewEntry)["bus_id"] = static_cast<qint64>(busID);
         (*previewEntry)["bus_name"] = item->name;
@@ -232,7 +232,7 @@ bool IPCServer::prepareRollbackStepForAction(const QString& cmd,
 
     if (cmd == QLatin1String("create_bus"))
     {
-        const QString name = args.value("name").toString().trimmed();
+        const QString name = args.value("name").toString("New Bus").trimmed();
         if (name.isEmpty())
         {
             if (error) *error = "create_bus requires name.";
@@ -373,7 +373,6 @@ bool IPCServer::prepareRollbackStepForAction(const QString& cmd,
         const QString containerPath = args.value("container_path").toString().trimmed();
         const uint32_t containerID = static_cast<uint32_t>(args.value("container_id").toInteger(0));
         const QString propertyName = args.value("property").toString().trimmed();
-        const double value = args.value("value").toDouble(0.0);
 
         if ((containerPath.isEmpty() && containerID == 0) || propertyName.isEmpty())
         {
@@ -389,48 +388,36 @@ bool IPCServer::prepareRollbackStepForAction(const QString& cmd,
             return false;
         }
 
-        QJsonObject rollbackArgs{
-            {"container_id", static_cast<qint64>(itemShortID(container))},
-            {"property", propertyName}
-        };
-        QJsonObject before;
-        QJsonObject after;
-
-        bool isCommonSpatialProp = false;
-        auto* cSpatial = container->comp<VSpatial>();
-        if (propertyName == QLatin1String("spatializationMix") && cSpatial)
-        {
-            rollbackArgs = QJsonObject{
-                {"authoring_handle", static_cast<qint64>(container->objectID)},
-                {"property", "spatializationMix"},
-                {"override_operation", cSpatial->spatializationMixPresent
-                    ? "set_override" : "clear_override"},
-                {"value", cSpatial->spatializationMix}};
-            before["value"] = cSpatial->spatializationMix;
-            before["present"] = cSpatial->spatializationMixPresent;
-            after["value"] = static_cast<float>(value);
-            after["present"] = true;
-            isCommonSpatialProp = true;
-        }
-        else if (propertyName == QLatin1String("is3DEnabled") && cSpatial)
-        {
-            rollbackArgs["value"] = cSpatial->is3DEnabled ? 1.0 : 0.0;
-            before["value"] = cSpatial->is3DEnabled;
-            after["value"] = (value != 0.0);
-            isCommonSpatialProp = true;
-        }
-
-        if (!isCommonSpatialProp)
-        {
-            if (error) *error = "Container type is not supported for transactional property updates.";
+        if (propertyName != QLatin1String("volume") && propertyName != QLatin1String("pitch")) {
+            if (error) *error = "Use field group commands to edit Output, Send, or Spatial Rating";
             return false;
         }
-
+        const auto* field = PlayablePropertyAuthoringV1::fieldByName(propertyName);
+        const auto locator = PlayablePropertyAuthoringV1::definitionLocator(*container);
+        const auto state = locator && field
+            ? PlayablePropertyAuthoringV1::readProperty(*container, *locator, field->id, std::nullopt)
+            : std::nullopt;
+        if (!state) {
+            if (error) *error = "Unable to capture authored container property: " + propertyName;
+            return false;
+        }
+        QJsonArray snapshots{QJsonObject{{"present", state->present}, {"value", state->value}}};
+        for (const auto& platform : project->platforms) {
+            const auto overlay = PlayablePropertyAuthoringV1::readPlatformOverlay(
+                *container, *locator, field->id, platform.id);
+            if (!overlay) {
+                if (error) *error = "Unable to capture platform container property: " + propertyName;
+                return false;
+            }
+            snapshots.append(QJsonObject{{"platform_id", platform.id.toString(QUuid::WithoutBraces)},
+                {"present", overlay->present}, {"value", overlay->value}});
+        }
+        const QJsonObject before{{"value", state->value}, {"present", state->present}};
+        const QJsonObject after{{"value", args.value("value")}, {"present", true}};
         *rollbackStep = QJsonObject{
-            {"kind", "command"},
-            {"cmd", propertyName == QLatin1String("spatializationMix")
-                ? "set_item_property" : "set_container_property"},
-            {"args", rollbackArgs}
+            {"kind", "restore_playable_properties"},
+            {"item_guid", container->guid.toString(QUuid::WithoutBraces)},
+            {"playable", QJsonObject{{propertyName, snapshots}}}
         };
 
         (*previewEntry)["container_id"] = static_cast<qint64>(itemShortID(container));
@@ -571,6 +558,46 @@ bool IPCServer::prepareRollbackStepForAction(const QString& cmd,
 bool IPCServer::executeRollbackStep(const QJsonObject& step, QString* error)
 {
     const QString kind = step.value("kind").toString();
+
+    if (kind == QLatin1String("restore_playable_properties")) {
+        auto& manager = ProjectManager::instance();
+        auto* item = manager.findItemByGuid(QUuid(step.value("item_guid").toString()));
+        const auto locator = item ? PlayablePropertyAuthoringV1::definitionLocator(*item) : std::nullopt;
+        if (!item || !locator) {
+            if (error) *error = "Unable to find the item for property rollback.";
+            return false;
+        }
+        const auto playable = step.value("playable").toObject();
+        for (auto it = playable.begin(); it != playable.end(); ++it) {
+            const auto* field = PlayablePropertyAuthoringV1::fieldByName(it.key());
+            for (const auto& snapshot : it.value().toArray()) {
+                const auto value = snapshot.toObject();
+                const PlayablePropertyStateV1 state{value.value("present").toBool(), value.value("value")};
+                const PlatformScope scope = value.contains("platform_id")
+                    ? PlatformScope{QUuid(value.value("platform_id").toString())} : std::nullopt;
+                if (!field || !PlayablePropertyAuthoringV1::restoreProperty(
+                        *item, *locator, field->id, state, scope)) {
+                    if (error) *error = "Unable to restore authored property: " + it.key();
+                    return false;
+                }
+            }
+            item->markDirty();
+            if (item->type == ProjectItem::Type::Bus) {
+                manager.pushBusPropertyLive(item, it.key());
+                emit manager.busChanged(item->objectID, it.key());
+            } else {
+                ProjectManager::syncPlayablePropertyToRuntime(item, field->id);
+                emit manager.itemPropertyChanged(item, it.key());
+            }
+        }
+        if ((step.contains("pan") && !manager.setBusPanInternal(item->objectID, step.value("pan").toDouble()))
+            || (step.contains("mute") && !manager.setBusMuteInternal(item->objectID, step.value("mute").toBool()))
+            || (step.contains("solo") && !manager.setBusSoloInternal(item->objectID, step.value("solo").toBool()))) {
+            if (error) *error = "Unable to restore bus pan or audition state.";
+            return false;
+        }
+        return true;
+    }
 
     if (kind == QLatin1String("restore_sends")) {
         auto& manager = ProjectManager::instance();

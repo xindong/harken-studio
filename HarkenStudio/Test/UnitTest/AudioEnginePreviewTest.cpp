@@ -1314,9 +1314,18 @@ TEST_F(StudioActionSeekTest, EngineShutdownCompletesPendingAuditionSeekAsFailure
     const auto started = audition.setPositionSamples(playingId, 1024);
     ASSERT_EQ(started.result, HarkenEditor::Bridge::kEngineOk);
 
+    const auto pending = audition.seekStatus(started.requestId);
+    ASSERT_TRUE(pending.has_value());
+    EXPECT_TRUE(pending->inProgress);
     engine.shutdown();
     EXPECT_EQ(finishedSignals, 1);
     EXPECT_FALSE(applied);
+    const auto completed = audition.seekStatus(started.requestId);
+    ASSERT_TRUE(completed.has_value());
+    EXPECT_FALSE(completed->inProgress);
+    EXPECT_FALSE(completed->applied);
+    EXPECT_EQ(completed->result, HarkenEditor::Bridge::kEngineNotInit);
+    EXPECT_EQ(completed->samplePosition, 1024);
 }
 
 TEST_F(StudioActionSeekTest, NativeQueryFailureCompletesPendingAuditionSeek)
@@ -1340,6 +1349,10 @@ TEST_F(StudioActionSeekTest, NativeQueryFailureCompletesPendingAuditionSeek)
                 ++finishedSignals;
                 finishedRequestId = requestId;
                 applied = didApply;
+                const auto status = audition.seekStatus(requestId);
+                ASSERT_TRUE(status.has_value());
+                EXPECT_FALSE(status->inProgress);
+                EXPECT_EQ(status->applied, didApply);
             }
         });
 
@@ -1356,10 +1369,49 @@ TEST_F(StudioActionSeekTest, NativeQueryFailureCompletesPendingAuditionSeek)
     EXPECT_EQ(finishedSignals, 1);
     EXPECT_EQ(finishedRequestId, started.requestId);
     EXPECT_FALSE(applied);
+    const auto completed = audition.seekStatus(started.requestId);
+    ASSERT_TRUE(completed.has_value());
+    EXPECT_FALSE(completed->inProgress);
+    EXPECT_FALSE(completed->applied);
+    EXPECT_NE(completed->result, HarkenEditor::Bridge::kEngineOk);
 
     ASSERT_TRUE(QMetaObject::invokeMethod(
         &audition, "pollAuditionStates", Qt::DirectConnection));
     EXPECT_EQ(finishedSignals, 1);
+}
+
+TEST_F(StudioActionSeekTest, CommandDispatchRequiresCurrentWorldAndMatchingProjectSession)
+{
+    int executions = 0;
+    VNX::ActionDef command;
+    command.id = QStringLiteral("post_action");
+    command.handler = [&](const QJsonObject&) -> VNX::ActionResult {
+        ++executions;
+        return {true, {}};
+    };
+    VNX::ActionManager::instance().registerAction(command);
+    VNX::IPCServer dispatcher(&engine);
+    dispatcher.setProjectManager(&projects);
+    dispatcher.setAppState(VNX::IPCServer::AppState::Ready);
+    auto& coordinator = engine.runtimeSyncCoordinator();
+    coordinator.beginSubmissionBatch();
+    coordinator.markCurrentWorldMutation();
+    const QJsonObject args{{QStringLiteral("name"), action->name}};
+    const auto pending = dispatcher.dispatchCommand(QStringLiteral("post_action"), args);
+    coordinator.endSubmissionBatch();
+    EXPECT_EQ(pending.value(QStringLiteral("code")).toString(), QStringLiteral("RUNTIME_SYNC_PENDING"));
+    EXPECT_EQ(executions, 0);
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    VNX::IPCServer::IPCDispatchContext context;
+    context.expectedProjectSession = QStringLiteral("different-session");
+    const auto changed = dispatcher.dispatchCommand(QStringLiteral("post_action"), args, context);
+    EXPECT_EQ(changed.value(QStringLiteral("code")).toString(), QStringLiteral("PROJECT_CHANGED"));
+    EXPECT_EQ(executions, 0);
+    context.expectedProjectSession = pending.value(QStringLiteral("result")).toObject()
+        .value(QStringLiteral("project_session_id")).toString();
+    const auto ready = dispatcher.dispatchCommand(QStringLiteral("post_action"), args, context);
+    EXPECT_EQ(ready.value(QStringLiteral("status")).toString(), QStringLiteral("ok"));
+    EXPECT_EQ(executions, 1);
 }
 
 }

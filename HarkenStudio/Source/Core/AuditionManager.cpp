@@ -178,11 +178,7 @@ AuditionManager::AuditionManager(VNX::AudioEngine* engine, QObject* parent)
                 return;
             for (auto pending = pendingActionSeeks_.cbegin();
                  pending != pendingActionSeeks_.cend(); ++pending) {
-                emit auditionSeekFinished(
-                    pending->playingId, pending->requestId,
-                    static_cast<int32_t>(
-                        HarkenEditor::Bridge::kEngineNotInit),
-                    false);
+                finishActionSeek(*pending, HarkenEditor::Bridge::kEngineNotInit, false);
             }
             pendingActionSeeks_.clear();
             if (auditions_.isEmpty())
@@ -805,7 +801,7 @@ AuditionManager::setPositionSamples(uint32_t playingId, int64_t samplePos)
         const uint64_t requestId = allocateSeekRequestId();
         pendingActionSeeks_.insert(
             result.operationId,
-            PendingActionSeek{playingId, requestId, positionMs});
+            PendingActionSeek{playingId, requestId, positionMs, samplePos});
         return {requestId, result.result};
     }
     return {0, result.result};
@@ -820,6 +816,27 @@ uint64_t AuditionManager::allocateSeekRequestId()
         if (id != 0)
             return id;
     }
+}
+
+std::optional<AuditionSeekStatus> AuditionManager::seekStatus(uint64_t requestId) const
+{
+    const auto completed = completedActionSeeks_.constFind(requestId);
+    if (completed != completedActionSeeks_.cend()) return *completed;
+    for (const auto& pending : pendingActionSeeks_) {
+        if (pending.requestId == requestId)
+            return AuditionSeekStatus{pending.playingId, pending.samplePosition};
+    }
+    return std::nullopt;
+}
+
+void AuditionManager::finishActionSeek(const PendingActionSeek& pending,
+                                       HarkenEditor::Bridge::EngineResult result, bool applied)
+{
+    completedActionSeeks_.insert(pending.requestId,
+        AuditionSeekStatus{pending.playingId, pending.samplePosition, result, false, applied});
+    while (completedActionSeeks_.size() > 128)
+        completedActionSeeks_.erase(completedActionSeeks_.begin());
+    emit auditionSeekFinished(pending.playingId, pending.requestId, static_cast<int32_t>(result), applied);
 }
 
 
@@ -1478,9 +1495,7 @@ void AuditionManager::pollPendingActionSeeks()
         HarkenEditor::Bridge::ActionSeekInfo info;
         const auto queryResult = engine_->queryActionSeek(pending.key(), info);
         if (queryResult != HarkenEditor::Bridge::kEngineOk) {
-            emit auditionSeekFinished(
-                pending->playingId, pending->requestId,
-                static_cast<int32_t>(queryResult), false);
+            finishActionSeek(*pending, queryResult, false);
             completed.push_back(pending.key());
             continue;
         }
@@ -1507,9 +1522,7 @@ void AuditionManager::pollPendingActionSeeks()
             && info.serviceResult == HarkenEditor::Bridge::kEngineOk) {
             continue;
         }
-        emit auditionSeekFinished(
-            pending->playingId, pending->requestId,
-            static_cast<int32_t>(info.result), applied);
+        finishActionSeek(*pending, info.result, applied);
         completed.push_back(pending.key());
     }
     for (uint64_t operationId : completed)

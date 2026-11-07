@@ -1,4 +1,6 @@
 
+#include "../CommandSchemas.h"
+#include "../IPC/DesktopCommandSchemas.h"
 #include "../ActionManager.h"
 #include "../AudioEngine.h"
 #include "../ProjectManager.h"
@@ -161,7 +163,7 @@ void registerAdvancedActions(ActionManager& mgr,
         def.id = "set_master_volume";
         def.displayName = "Set Master Volume";
         def.category = "advanced";
-        def.paramSchema = QJsonObject{{"volume", "float"}, {"fade_ms", "int"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [engine](const QJsonObject& args) -> ActionResult {
             if (!engine) return engineNotAvailable();
@@ -227,7 +229,7 @@ void registerAdvancedActions(ActionManager& mgr,
         def.id = "seek_action";
         def.displayName = "Seek Action";
         def.category = "advanced";
-        def.paramSchema = QJsonObject{{"action_handle", "uint64"}, {"name", "string"}, {"position", "float"}, {"is_relative", "bool"}, {"snap_to_marker", "bool"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [engine](const QJsonObject& args) -> ActionResult {
             if (!engine) return engineNotAvailable();
@@ -281,7 +283,7 @@ void registerAdvancedActions(ActionManager& mgr,
         def.id = "query_seek_action";
         def.displayName = "Query Seek Action";
         def.category = "advanced";
-        def.paramSchema = QJsonObject{{"seek_operation_id", "uint64"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [engine](const QJsonObject& args) -> ActionResult {
             if (!engine) return engineNotAvailable();
@@ -315,7 +317,7 @@ void registerAdvancedActions(ActionManager& mgr,
         def.id = "release_seek_action";
         def.displayName = "Release Seek Action";
         def.category = "advanced";
-        def.paramSchema = QJsonObject{{"seek_operation_id", "uint64"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [engine](const QJsonObject& args) -> ActionResult {
             if (!engine) return engineNotAvailable();

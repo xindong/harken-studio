@@ -106,6 +106,7 @@ add_executable(harken_editor_tests
     UnitTest/ItemTypeIconAssetTest.cpp
     UnitTest/NewObjectNamingTest.cpp
     UnitTest/AICommandCatalogTest.cpp
+    UnitTest/DesktopWidgetTargetsTest.cpp
     UnitTest/AIDispatchPolicyTest.cpp
     UnitTest/AIDurableMemoryStoreTest.cpp
     UnitTest/AIConversationStoreTest.cpp
@@ -249,7 +250,7 @@ add_dependencies(harken_editor_tests harken_studio_cli)
 add_test(NAME studio_cli_contract
     COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/.scripts/verify_studio_cli.py"
         --cli "$<TARGET_FILE:harken_studio_cli>"
-        --work-dir "${CMAKE_BINARY_DIR}/cli-contract")
+        --work-dir "${CMAKE_BINARY_DIR}/cli-contract" --skip-audio-output)
 set_tests_properties(studio_cli_contract PROPERTIES TIMEOUT 300)
 
 add_executable(harken_timeline_benchmark EXCLUDE_FROM_ALL

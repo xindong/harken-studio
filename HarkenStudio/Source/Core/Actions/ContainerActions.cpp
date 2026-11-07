@@ -1,4 +1,6 @@
 
+#include "../CommandSchemas.h"
+#include "../IPC/DesktopCommandSchemas.h"
 #include "../ActionManager.h"
 #include "../AuthoringPolicy.h"
 #include "../ContainerBehaviorSemantics.h"
@@ -36,7 +38,7 @@ void registerContainerActions(ActionManager& mgr,
         def.id = "add_child_to_container";
         def.displayName = "Add Child to Container";
         def.category = "container";
-        def.paramSchema = QJsonObject{{"container_path", "string"}, {"container_id", "uint32"}, {"child_path", "string"}, {"child_id", "uint32"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
             if (!projectManager || !projectManager->isProjectOpen())
@@ -130,7 +132,7 @@ void registerContainerActions(ActionManager& mgr,
         def.id = "remove_child_from_container";
         def.displayName = "Remove Child from Container";
         def.category = "container";
-        def.paramSchema = QJsonObject{{"container_path", "string"}, {"container_id", "uint32"}, {"child_path", "string"}, {"child_id", "uint32"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
             if (!projectManager || !projectManager->isProjectOpen())
@@ -242,7 +244,7 @@ void registerContainerActions(ActionManager& mgr,
         def.id = "reorder_container_children";
         def.displayName = "Reorder Container Children";
         def.category = "container";
-        def.paramSchema = QJsonObject{{"container_path", "string"}, {"container_id", "uint32"}, {"child_order", "array"}, {"child_order_ids", "array"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = false;
         def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
             if (!projectManager || !projectManager->isProjectOpen())
@@ -355,7 +357,7 @@ void registerContainerActions(ActionManager& mgr,
         def.id = "set_container_property";
         def.displayName = "Set Container Property";
         def.category = "container";
-        def.paramSchema = QJsonObject{{"container_path", "string"}, {"container_id", "uint32"}, {"property", "string"}, {"value", "float"}};
+        def.paramSchema = commandInputSchema(def.id);
         def.undoable = true;
         def.handler = [projectManager](const QJsonObject& args) -> ActionResult {
             if (!projectManager || !projectManager->isProjectOpen())
@@ -402,9 +404,6 @@ void registerContainerActions(ActionManager& mgr,
                             "Use field group commands to edit Output, Send, or Spatial Rating"};
             }
 
-            QString stringValue = args["string_value"].toString();
-            QJsonObject objectValue = args["object_value"].toObject();
-
             static const QSet<QString> properties = {
                 QStringLiteral("volume"), QStringLiteral("pitch"),
                 QStringLiteral("spatializationMix"),
@@ -421,8 +420,6 @@ void registerContainerActions(ActionManager& mgr,
             result.data.insert(QStringLiteral("container_id"), static_cast<qint64>(itemShortID(container)));
             result.data.insert(QStringLiteral("container_authoring_handle"), static_cast<qint64>(container->objectID));
             result.data.insert(QStringLiteral("container_path"), buildItemFullPath(project, container));
-            result.data.insert(QStringLiteral("string_value"), stringValue);
-            result.data.insert(QStringLiteral("object_value"), objectValue);
             return result;
         };
         mgr.registerAction(def);

@@ -29,8 +29,8 @@ inline QJsonObject setItemPropertySchema()
         {QStringLiteral("type"), QStringLiteral("object")},
         {QStringLiteral("properties"), QJsonObject{
             {QStringLiteral("path"), QJsonObject{{QStringLiteral("type"), QStringLiteral("string")}, {QStringLiteral("minLength"), 1}}},
-            {QStringLiteral("object_id"), QJsonObject{{QStringLiteral("type"), QStringLiteral("integer")}, {QStringLiteral("minimum"), 1}}},
-            {QStringLiteral("authoring_handle"), QJsonObject{{QStringLiteral("type"), QStringLiteral("integer")}, {QStringLiteral("minimum"), 1}}},
+            {QStringLiteral("object_id"), QJsonObject{{QStringLiteral("type"), QStringLiteral("integer")}, {QStringLiteral("minimum"), 1}, {QStringLiteral("maximum"), 4294967295.0}}},
+            {QStringLiteral("authoring_handle"), QJsonObject{{QStringLiteral("type"), QStringLiteral("integer")}, {QStringLiteral("minimum"), 1}, {QStringLiteral("maximum"), 4294967295.0}}},
             {QStringLiteral("property"), QJsonObject{
                 {QStringLiteral("type"), QStringLiteral("string")},
                 {QStringLiteral("enum"), propertyNames}}},
@@ -62,7 +62,7 @@ inline QJsonObject setItemPropertySchema()
                 {QStringLiteral("type"), QStringLiteral("string")}}},
             {QStringLiteral("occurrence_ordinal"), QJsonObject{
                 {QStringLiteral("type"), QStringLiteral("integer")},
-                {QStringLiteral("minimum"), 0}}},
+                {QStringLiteral("minimum"), 0}, {QStringLiteral("maximum"), 4294967295.0}}},
             {QStringLiteral("value"), QJsonObject{}}
         }},
         {QStringLiteral("required"), QJsonArray{QStringLiteral("property")}},

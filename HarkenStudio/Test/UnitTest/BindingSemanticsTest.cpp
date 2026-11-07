@@ -1,5 +1,7 @@
 #include "UnitTest/StudioObjectIdTestSupport.h"
 #include "BindingSemantics.h"
+#include "CommandArgumentValidator.h"
+#include "CommandSchemas.h"
 
 #include <gtest/gtest.h>
 
@@ -34,6 +36,11 @@ TEST(BindingSemantics, TypedLedgerRoundtripsCurveAndExtensions)
     EXPECT_EQ(loaded.toJson().first().toObject()[QStringLiteral("curve")]
                   .toObject()[QStringLiteral("interpolation")].toString(),
               QStringLiteral("future"));
+    QString error;
+    EXPECT_TRUE(VNX::validateCommandArguments({{"path", "Sound"}, {"binding", saved.first()}},
+        VNX::commandInputSchema("set_binding"), &error)) << error.toStdString();
+    EXPECT_TRUE(VNX::validateCommandArguments({{"path", "Sound"}, {"bindings", saved}},
+        VNX::commandInputSchema("set_modulator_binding"), &error)) << error.toStdString();
 }
 
 TEST(BindingSemantics, FixedAuthoringRangePreservesAbsoluteCurveValues)

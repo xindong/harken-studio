@@ -281,14 +281,12 @@ IpcQueryStatus multiPackCollisions(std::vector<PackCollisionEntry>& out);
 // Replay verification (sessionless file utility).
 //==============================================================================
 
-struct ReplayCompareResult {
-    float    maxDiff = 0;
-    double   psnrDb = 0;
-    bool     isBitExact = false, lengthMatch = false;
-    uint64_t totalSamples = 0, diffSamples = 0;
+struct FileCompareResult {
+    bool identical = false, lengthMatch = false;
+    uint64_t comparedBytes = 0, differentBytes = 0;
 };
-bool replayCompare(const QString& referencePath, const QString& replayPath,
-                   ReplayCompareResult& out);
+bool compareFiles(const QString& referencePath, const QString& candidatePath,
+                  FileCompareResult& out);
 
 } // namespace Bridge
 } // namespace HarkenEditor
