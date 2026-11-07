@@ -21542,22 +21542,49 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
     }
 }
 
-TEST(PlayableStart, InitialStreamAnchorPreparesSubBlockFutureCohortBeforePublication) {
-    for (const auto workers : {0u, 2u}) {
-        SCOPED_TRACE(::testing::Message() << "workers=" << workers);
+TEST(PlayableStart, InitialStreamAnchorKeepsSubBlockFutureStartsFixedAndContainsFailures) {
+    for (const auto workers : {0u, 2u}) for (const auto lead : {1u, 4u}) for (const auto scenario : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u}) {
+        const bool sourceAckLate = scenario == 7u;
+        const bool timedBinding = scenario == 6u;
+        const bool boundFuture = scenario == 5u || timedBinding;
+        const bool cropInitial = scenario == 4u;
+        const bool cancelNearInstall = scenario == 1u;
+        const bool futureMediaLate = scenario == 2u;
+        const bool futureCapacityRefusal = scenario == 3u;
+        SCOPED_TRACE(::testing::Message() << "workers=" << workers << " lead=" << lead << " scenario=" << scenario);
         auto config = harkentest::MakeNullConfig(8, 64, 48000);
         config.renderWorkerCount = workers;
-        config.maxStreams = 2;
+        config.maxStreams = futureCapacityRefusal ? 1u : 2u;
         config.streamRingFrames = 1024;
         config.prebufferMs = 4;
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
         auto& engine = *session.Engine();
+        harken::ScheduledTransactionPool::Config pool{};
+        const auto& resolved = engine.config;
+        pool.quantumFrames = resolved.blockFrames;
+        pool.scheduleHorizonFrames = resolved.scheduleHorizonFrames;
+        pool.publishLeadQuanta = lead;
+        pool.maxScheduledTransactions = resolved.maxScheduledTransactions;
+        pool.maxTransactionSpanFrames = resolved.maxTransactionSpanFrames;
+        pool.maxIngressTransactionsPerQuantum = resolved.maxIngressTransactionsPerQuantum;
+        pool.maxFrameBatchesPerQuantum = resolved.maxFrameBatchesPerQuantum;
+        pool.maxEventsPerQuantum = resolved.maxEventsPerQuantum;
+        pool.maxTransactionEvents = resolved.maxTransactionEvents;
+        pool.maxCurrentSlicesPerQuantum = resolved.maxEventsPerQuantum;
+        pool.maxNativeStartCalendarsPerQuantum = engine.variables.ReadCutCapacity();
+        pool.maxPlan03GroupHeadersPerPage = resolved.maxPlan03GroupHeadersPerPage;
+        pool.maxArmsPerGroup = resolved.maxArmsPerGroup;
+        pool.maxImmediateLaneGroupRows = (resolved.scheduleHorizonFrames / resolved.blockFrames +
+            resolved.maxDeferredIntents) * resolved.maxPlan03GroupHeadersPerPage;
+        pool.maxImmediateLaneOwnerGates = resolved.maxPlayableInstances;
+        pool.maxImmediateLaneDecisionGates = resolved.maxDecisionRows;
+        ASSERT_TRUE(engine.timelinePool.Reset(pool, 0, engine.transportEpochOwner.Current()));
         const auto voicesBefore = engine.voices.AvailableSlotCount();
         std::vector<float> resident(1024, 0.0f), streamed(1024, 0.0f);
         for (std::size_t frame = 0; frame < 512; ++frame) {
             resident[frame * 2] = 0.25f;
-            streamed[512 + frame] = 0.5f;
+            streamed[512 + frame] = cropInitial && frame < 12u ? 0.125f : 0.5f;
         }
         const auto pcm = harkentest::InterleavedDesc(resident, 2, 48000);
         ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &pcm));
@@ -21579,14 +21606,14 @@ TEST(PlayableStart, InitialStreamAnchorPreparesSubBlockFutureCohortBeforePublica
         std::array<harken::ScheduleClipPlacementV1, 3> placements{
             image.placements[0], image.placements[1], image.placements[1]};
         placements[0].authoredStart = placements[1].authoredStart = INT64_C(1000000);
-        placements[2].authoredStart = 0;
+        placements[2].authoredStart = cropInitial ? -INT64_C(250000) : 0;
         placements[2].stablePlacementOrdinal = 2;
         placements[2].stableOccurrenceOrdinal = 9;
         placements[2].clipId = harkentest::ObjectId(5003);
         placements[2].clipGuidHigh = 6003;
         placements[2].clipGuidLow = 7003;
         for (auto& placement : placements) placement.authoredDuration = INT64_C(8000000);
-        placements[2].authoredDuration = INT64_C(500000);
+        placements[2].authoredDuration = cropInitial ? INT64_C(750000) : INT64_C(500000);
         std::swap(placements[0], placements[2]);
         for (std::size_t index = 0; index < placements.size(); ++index)
             placements[index].stablePlacementOrdinal = static_cast<std::uint32_t>(index);
@@ -21608,8 +21635,33 @@ TEST(PlayableStart, InitialStreamAnchorPreparesSubBlockFutureCohortBeforePublica
         auto install = PlayableWorldInstall(image.world);
         install.trackSchedules = &image.track;
         install.trackScheduleCount = 1;
+        const harken::VariableDefinitionV1 variable{
+            harkentest::ObjectId(9141), harken::VariableKindV1::Smooth, 0.0f, 1.0f, timedBinding ? 0.0f : 1.0f};
+        if (boundFuture) {
+            install.variables = &variable;
+            install.variableCount = 1;
+            install.identity.capabilityMask |= harken::kWorldCapabilityVariableDefinitions;
+        }
         install.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(install);
         ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, install).status);
+        if (boundFuture) {
+            VnBindingDesc binding{};
+            binding.structSize = sizeof(binding);
+            binding.variableId = variable.variableId;
+            binding.targetScopeKind = VN_TARGET_SCOPE_VOICE;
+            binding.targetId = harken::kTargetVoiceVolume;
+            binding.curve.structSize = sizeof(binding.curve);
+            binding.curve.pointCount = 2;
+            binding.curve.points[0] = {0.0f, 0.0f};
+            binding.curve.points[1] = {1.0f, -6.0206f};
+            binding.curve.handles[0] = {0.0f, 0.0f, 1.0f, -6.0206f};
+            ASSERT_EQ(VN_OK, Vn_RegisterBinding(harkentest::ObjectId(9142), &binding));
+            VnBindingAttachDesc attach{};
+            attach.structSize = sizeof(attach);
+            attach.scopeKind = VN_TARGET_SCOPE_VOICE;
+            attach.objectId = kSound;
+            ASSERT_EQ(VN_OK, Vn_AttachBinding(harkentest::ObjectId(9142), &attach));
+        }
         engine.streams.SetThrottled(true);
         harken::PlayableStartRequest request;
         request.root = image.Root();
@@ -21621,24 +21673,67 @@ TEST(PlayableStart, InitialStreamAnchorPreparesSubBlockFutureCohortBeforePublica
         ASSERT_NE(nullptr, root->scheduleAggregate);
         ASSERT_EQ(1u, root->scheduleAggregate->sourceCohorts.size());
         ASSERT_TRUE(root->pendingDirectStartBinding);
-        EXPECT_EQ(1u, engine.streams.FreeSlotCount());
+        EXPECT_EQ(config.maxStreams - 1u, engine.streams.FreeSlotCount());
         for (unsigned pass = 0; pass < 24; ++pass) {
             ASSERT_EQ(VN_OK, Vn_Update());
             EXPECT_TRUE(root->pendingDirectStartBinding);
-            EXPECT_EQ(1u, engine.streams.FreeSlotCount());
+            EXPECT_EQ(config.maxStreams - 1u, engine.streams.FreeSlotCount());
             EXPECT_FALSE(engine.preparedVoiceCommandBatchProof.Valid());
             engine.nullBackend.Pump(1);
             for (unsigned sample = 0; sample < config.blockFrames * 2; ++sample)
                 EXPECT_FLOAT_EQ(0.0f, engine.nullBackend.LastBlock()[sample]);
         }
+        const auto expectedAnchor = (engine.mixer.BlocksRendered() + std::max(lead, 3u)) * config.blockFrames;
+        const auto variableFrame = expectedAnchor + 24u;
+        if (timedBinding) {
+            auto observed = harken::ObserveVariableCallAt(engine.variables.CurrentWorldGeneration(),
+                engine.variables.CurrentTransportEpoch(), config.blockFrames,
+                engine.timelinePool.WindowStartFrame(), engine.timelinePool.PublishCutoffFrame());
+            observed.requestedEffectiveFrame = variableFrame;
+            ASSERT_EQ(VN_OK, engine.variables.AcceptGlobal(variable.variableId, 1.0f, observed,
+                engine.params, engine.bindings, engine.busTargets).result);
+        }
         engine.streams.SetThrottled(false);
         engine.streams.SyncServe();
+        if (futureMediaLate) engine.streams.SetThrottled(true);
+        bool sourceBudgetBlocked = false;
+        bool lateSourceObserved = false;
+        bool stopRequested = false;
         std::uint64_t anchor = UINT64_MAX;
         std::array<std::vector<std::uint64_t>, 2> heard;
         for (unsigned pass = 0; pass < 48; ++pass) {
             const auto at = engine.mixer.BlocksRendered() * config.blockFrames;
             ASSERT_EQ(VN_OK, Vn_Update()) << OccupancyDump(engine);
             if (anchor == UINT64_MAX && !root->pendingDirectStartBinding) anchor = root->startFrame;
+            bool allFutureSourcesInstalled = root->scheduleAggregate != nullptr &&
+                !root->scheduleAggregate->sourceCohorts.empty();
+            bool anyFutureSource = false;
+            if (root->scheduleAggregate != nullptr)
+            for (const auto& cohort : root->scheduleAggregate->sourceCohorts) for (const auto& side : cohort->sides)
+                for (const auto& source : side->sources) {
+                    harken::TimelineArmObservation observed{};
+                    const bool installed = source.arm.Valid() && engine.timelineArms.Observe(source.arm, &observed);
+                    anyFutureSource |= installed;
+                    allFutureSourcesInstalled &= installed &&
+                        (observed.state == harken::ArmState::Armed || observed.state == harken::ArmState::Published) &&
+                        observed.startedBlockSequence == 0 && observed.armedCompletionSequence != 0 &&
+                        observed.armedCompletionSequence <= engine.mixer.BlocksRendered();
+                    lateSourceObserved |= sourceAckLate && sourceBudgetBlocked && installed &&
+                        anchor != UINT64_MAX && at + config.blockFrames >= anchor &&
+                        observed.state == harken::ArmState::PendingApply;
+                }
+            if (sourceAckLate && !sourceBudgetBlocked && anyFutureSource) {
+                engine.mixer.SetMaxCommandsPerQuantumForTest(0);
+                sourceBudgetBlocked = true;
+            }
+            if (cancelNearInstall && !stopRequested && anyFutureSource && allFutureSourcesInstalled) {
+                ASSERT_EQ(harken::PlayableControlStatus::Ok, harken::StopPlayable(engine, started.instance, 0));
+                stopRequested = true;
+                EXPECT_LT(at, anchor);
+            }
+            if (futureMediaLate && anchor != UINT64_MAX && at > anchor + 128u) engine.streams.SetThrottled(false);
+            if (sourceAckLate && anchor != UINT64_MAX && at > anchor + 128u)
+                engine.mixer.SetMaxCommandsPerQuantumForTest(engine.config.maxControlCommandsPerQuantum);
             engine.streams.SyncServe();
             EXPECT_FALSE(engine.preparedVoiceCommandBatchProof.Valid());
             engine.nullBackend.Pump(1);
@@ -21646,14 +21741,26 @@ TEST(PlayableStart, InitialStreamAnchorPreparesSubBlockFutureCohortBeforePublica
                 const auto sample = engine.nullBackend.LastBlock()[frame * 2 + channel];
                 if (std::abs(sample) < 0.00001f) continue;
                 heard[channel].push_back(at + frame);
-                EXPECT_NEAR(channel == 0 ? 0.25f : 0.5f, sample, 0.00001f);
+                const float expected = channel == 0 ? boundFuture ? 0.125f : 0.25f : cropInitial && at + frame >= anchor + 48u &&
+                    at + frame < anchor + 60u ? 0.125f : 0.5f;
+                EXPECT_NEAR(expected, sample, 0.00001f);
             }
         }
-        ASSERT_NE(UINT64_MAX, anchor);
-        ASSERT_EQ(384u, heard[0].size()) << OccupancyDump(engine);
-        ASSERT_EQ(408u, heard[1].size());
-        for (std::size_t frame = 0; frame < 24; ++frame) EXPECT_EQ(anchor + frame, heard[1][frame]);
-        for (std::size_t frame = 0; frame < 384; ++frame) {
+        EXPECT_EQ(cancelNearInstall, stopRequested);
+        EXPECT_EQ(sourceAckLate, sourceBudgetBlocked);
+        EXPECT_EQ(sourceAckLate, lateSourceObserved);
+        const bool futureHeard = !cancelNearInstall && !futureMediaLate && !futureCapacityRefusal && !sourceAckLate;
+        if (!cancelNearInstall) ASSERT_NE(UINT64_MAX, anchor);
+        if (timedBinding) {
+            ASSERT_EQ(expectedAnchor, anchor);
+            EXPECT_GT(variableFrame, anchor);
+            EXPECT_LT(variableFrame, anchor + 48u);
+        }
+        ASSERT_EQ(futureHeard ? 384u : 0u, heard[0].size()) << OccupancyDump(engine);
+        ASSERT_EQ(cancelNearInstall ? 0u : futureHeard ? 408u : 24u, heard[1].size());
+        for (std::size_t frame = 0; !cancelNearInstall && frame < 24; ++frame)
+            EXPECT_EQ(anchor + frame, heard[1][frame]);
+        for (std::size_t frame = 0; futureHeard && frame < 384; ++frame) {
             EXPECT_EQ(anchor + 48u + frame, heard[0][frame]);
             EXPECT_EQ(anchor + 48u + frame, heard[1][24u + frame]);
         }
@@ -21663,7 +21770,7 @@ TEST(PlayableStart, InitialStreamAnchorPreparesSubBlockFutureCohortBeforePublica
         EXPECT_EQ(0u, engine.armGroups.LiveCount());
         EXPECT_EQ(voicesBefore, engine.voices.AvailableSlotCount());
         engine.streams.SyncServe();
-        EXPECT_EQ(2u, engine.streams.FreeSlotCount());
+        EXPECT_EQ(config.maxStreams, engine.streams.FreeSlotCount());
         EXPECT_FALSE(engine.runtimeRecreateRequired);
         EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(kSecondSound));
     }

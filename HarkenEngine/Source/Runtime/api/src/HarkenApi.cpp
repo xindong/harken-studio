@@ -8278,7 +8278,7 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
     const auto variableReader = capturedVariables
         ? engine.variables.ReadCutReader(*initialVariableCut) : harken::VariableReadCutReader{};
     const auto* initialReader = capturedVariables ? &variableReader : nullptr;
-    if (capturedVariables && (!prepareOnly || (parentGroup.Valid() && !shareInitialVariableCut) ||
+    if (capturedVariables && (!prepareOnly || (parentGroup.Valid() && !shareInitialVariableCut && fixedGroupSource == nullptr) ||
         ((retainOriginalSingleSource || retainOriginalQueueSource) && !pendingImmediateStart) ||
         initialVariableOrder.frame > startFrame || initialVariableOrder.sequence == 0)) {
         result.status = VN_INVALID_ARG;
@@ -54952,7 +54952,15 @@ DirectPendingStartResult BindAcknowledgedDirectStart(harken::Engine& engine,
     }
     if (waiting) return Result::Waiting;
     const auto block = engine.config.blockFrames;
-    const auto lead = std::max<std::uint64_t>(1u, engine.timelinePool.PublishLeadQuanta());
+    auto lead = std::max<std::uint64_t>(1u, engine.timelinePool.PublishLeadQuanta());
+    if (aggregateAttempt != nullptr) {
+        // Reserve the normal Source submission/installation runway without waiting for future ACKs.
+        for (const auto& cohort : row.scheduleAggregate->sourceCohorts) {
+            const auto offsetQuanta = cohort->onsetOffset / block;
+            if (!cohort->retired && !cohort->cancelling && offsetQuanta < 3u)
+                lead = std::max(lead, 3u - offsetQuanta);
+        }
+    }
     if (completed > UINT64_MAX - lead || completed + lead > UINT64_MAX / block) return Result::Refused;
     std::uint64_t originalFirst = UINT64_MAX;
     for (std::uint32_t index = 0; index < count; ++index)
@@ -79106,6 +79114,14 @@ engine.runtimeRecreateRequired = true;
         }
         return acceptCancellation();
     }
+    if (auto* anchor = FindPendingScheduleAnchorAttempt(engine, *row); anchor != nullptr &&
+        !RetirePendingScheduleAnchorSources(engine, *anchor)) {
+        // Capture the real pending Source receipt before a generic Stop can release its voice.
+        row->pendingControlCause = cause;
+        row->pendingCancellationIntent = static_cast<std::uint8_t>(intent) + 1u;
+        row->pendingCancellationFadeMs = fadeMs;
+        return acceptCancellation();
+    }
     const auto cancelGuard = DropLivePlan03GroupMemberArms(engine, engine.mixer.BlocksRendered(),
         true, row, false, sliceReason, true);
     if (cancelGuard == QueueCancellationLeaseStatus::Failed) {
@@ -96631,7 +96647,6 @@ bool PrepareMixedScheduleExecution(ContainerPreparationContext& context,
                 break;
             }
             initialStream |= context.initialMediaWaitAllowed && child.startOffsetFrames == 0 &&
-                child.sourceOffsetFrames == 0 &&
                 engine.playablePropertyCutScratch.View().streamingMode != 0;
         }
         context.pendingScheduleAnchor = knownSounds && initialStream;
