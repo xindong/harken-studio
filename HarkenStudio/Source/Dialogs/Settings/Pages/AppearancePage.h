@@ -42,6 +42,7 @@ private:
     void selectColorPreset();
     void applyLanguage();
     void refreshLanguage();
+    void refreshUIScale();
     bool commitAppearance(const ThemeAppearance& appearance);
     void refreshPresets();
     void rebuildColorRoles();
@@ -64,6 +65,7 @@ private:
     QComboBox* themeCombo_ = nullptr;
     QComboBox* colorPresets_ = nullptr;
     QComboBox* languageCombo_ = nullptr;
+    QComboBox* uiScaleCombo_ = nullptr;
     QComboBox* colorGroup_ = nullptr;
     SearchField* colorSearch_ = nullptr;
     ProportionalTreeWidget* colorTree_ = nullptr;
@@ -80,6 +82,7 @@ private:
     std::optional<ColorPalette> basePalette_;
     QMap<QString, ColorPalette> palettes_;
     ThemeAppearance appearance_;
+    qreal uiScale_ = 1.0;
     bool updatingAppearance_ = false;
     bool previewActive_ = false;
 };

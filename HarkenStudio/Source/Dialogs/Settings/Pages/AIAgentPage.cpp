@@ -1,5 +1,6 @@
 
 #include "Dialogs/Settings/Pages/AIAgentPage.h"
+#include "Core/ThemeLayout.h"
 
 #include "Core/AI/AIAgentConfig.h"
 #include "Core/AI/AIEndpointValidation.h"
@@ -65,7 +66,7 @@ AIAgentPage::AIAgentPage(SecretStoreAccess secretStore, QWidget* parent)
     auto* connectionTestWidget = new QWidget();
     auto* connectionTestRow = new QHBoxLayout(connectionTestWidget);
     connectionTestRow->setContentsMargins(0, 0, 0, 0);
-    connectionTestRow->setSpacing(8);
+    ThemeLayout::spacing(connectionTestRow, ThemeLayout::Space::Small);
 
     aiConnectionTestButton_ = new QPushButton(tr("Test Connection"));
     aiConnectionTestButton_->setObjectName("aiConnectionTestButton");

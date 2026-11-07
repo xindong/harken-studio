@@ -1,9 +1,11 @@
 #include "ProjectPlatformEditor.h"
+#include "Core/ThemeLayout.h"
 
 #include "Core/BaseDialog.h"
 #include "Core/QtControlSkin.h"
 #include "Widgets/Common/DialogFormLayout.h"
 #include "Widgets/Common/ListFooter.h"
+#include "Widgets/Common/PanelScrollArea.h"
 #include "Widgets/Common/TableWidget.h"
 #include "Widgets/Common/ProportionalTreeWidget.h"
 
@@ -85,10 +87,17 @@ bool editPolicy(SizePolicy& policy, bool create, const std::vector<SizePolicy>& 
     BaseDialog dialog(parent);
     dialog.setWindowTitle(create ? QObject::tr("Add Range") : QObject::tr("Edit Range"));
     dialog.setObjectName("platformSizePolicyDialog");
-    dialog.resize(340, 160);
+    const auto& metrics = ThemeManager::instance().metrics().dialog;
+    dialog.resize(metrics.compactWidth, metrics.compactHeight);
     auto* layout = new QVBoxLayout(&dialog);
+    auto* scroll = new PanelScrollArea(&dialog);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    auto* body = new QWidget(scroll);
+    scroll->setWidget(body);
+    auto* bodyLayout = new QVBoxLayout(body);
+    bodyLayout->setContentsMargins(0, 0, 0, 0);
     auto* form = new DialogFormLayout();
-    auto* limit = new QWidget(&dialog);
+    auto* limit = new QWidget(body);
     auto* limitLayout = new QHBoxLayout(limit);
     limitLayout->setContentsMargins(0, 0, 0, 0);
     QLineEdit* value = nullptr;
@@ -117,7 +126,7 @@ bool editPolicy(SizePolicy& policy, bool create, const std::vector<SizePolicy>& 
         limitLayout->addWidget(infinite);
     }
     form->addRow(QObject::tr("Upper limit:"), limit);
-    auto* rate = new DecimalSpinBox(&dialog);
+    auto* rate = new DecimalSpinBox(body);
     rate->setObjectName("platformSampleRate");
     rate->setDecimals(0);
     rate->setRange(1, UINT32_MAX);
@@ -125,12 +134,14 @@ bool editPolicy(SizePolicy& policy, bool create, const std::vector<SizePolicy>& 
     rate->setToolTip(QStringLiteral("Hz"));
     rate->setKeyboardTracking(false);
     form->addRow(QObject::tr("Sample rate:"), rate);
-    layout->addLayout(form);
-    auto* error = new QLabel(&dialog);
+    bodyLayout->addLayout(form);
+    auto* error = new QLabel(body);
     error->setObjectName("platformPolicyError");
     error->setWordWrap(true);
     error->hide();
-    layout->addWidget(error);
+    bodyLayout->addWidget(error);
+    bodyLayout->addStretch();
+    layout->addWidget(scroll, 1);
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
     layout->addWidget(buttons);
     QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
@@ -167,7 +178,7 @@ ProjectPlatformEditor::ProjectPlatformEditor(QWidget* parent)
     setAttribute(Qt::WA_StyledBackground, true);
     QtControlSkin::setSemanticProperty(this, "surfaceRole", QStringLiteral("panel"));
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(12, 12, 12, 12);
+    ThemeLayout::margins(layout, ThemeLayout::Space::Medium);
     auto* form = new DialogFormLayout();
     name_ = new QLineEdit(this);
     name_->setObjectName("projectPlatformName");

@@ -27,9 +27,10 @@ namespace VNX {
 
 namespace {
 
-constexpr int kWaveformInset = 8;
-constexpr int kHandleHitRadius = 8;
-constexpr int kHandleBandHeight = 18;
+const ThemeMetrics::TimeAxis& timeAxisMetrics()
+{
+    return ThemeManager::instance().metrics().timeAxis;
+}
 
 bool isTrimHandle(int handle)
 {
@@ -43,7 +44,9 @@ SourceEditorWaveformView::SourceEditorWaveformView(QWidget* parent, Presentation
     , presentation_(presentation)
 {
     setObjectName(QStringLiteral("sourceEditorWaveform"));
-    setMinimumHeight(160);
+    ThemeManager::instance().bindMetrics(this, [this](const ThemeMetrics& metrics) {
+        setMinimumHeight(metrics.panel.minimumHeight);
+    });
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
@@ -219,8 +222,8 @@ int SourceEditorWaveformView::playheadPosition() const
         return -1;
     if (presentation_ == Presentation::TrimEditor)
         return positionAt(double(*frame));
-    const QRect waveformRect = rect().adjusted(kWaveformInset, kWaveformInset,
-                                               -kWaveformInset, -kWaveformInset);
+    const QRect waveformRect = rect().adjusted(timeAxisMetrics().waveformInset, timeAxisMetrics().waveformInset,
+                                               -timeAxisMetrics().waveformInset, -timeAxisMetrics().waveformInset);
     const double ratio = std::clamp(
         static_cast<double>(*frame) / static_cast<double>(total),
         0.0, 1.0);
@@ -239,8 +242,8 @@ int SourceEditorWaveformView::handlePosition(int handle) const
             return -1;
         return positionAt(double(std::min(handleFrame(typedHandle), total)));
     }
-    const QRect waveformRect = rect().adjusted(kWaveformInset, kWaveformInset,
-                                               -kWaveformInset, -kWaveformInset);
+    const QRect waveformRect = rect().adjusted(timeAxisMetrics().waveformInset, timeAxisMetrics().waveformInset,
+                                               -timeAxisMetrics().waveformInset, -timeAxisMetrics().waveformInset);
     const double ratio = std::clamp(
         static_cast<double>(handleFrame(typedHandle)) / static_cast<double>(total),
         0.0, 1.0);
@@ -255,12 +258,13 @@ QPoint SourceEditorWaveformView::handleHitPoint(int handle) const
         return {-1, -1};
     if (presentation_ == Presentation::TrimEditor)
         return trimGripRect(static_cast<Handle>(handle)).center();
-    return {x, isTrimHandle(handle) ? kWaveformInset + 6 : height() - kWaveformInset - 7};
+    return {x, isTrimHandle(handle) ? timeAxisMetrics().waveformInset + timeAxisMetrics().handleBandHeight / 2 : height() - timeAxisMetrics().waveformInset - timeAxisMetrics().handleBandHeight / 2 - 1};
 }
 
 QSize SourceEditorWaveformView::sizeHint() const
 {
-    return {640, 240};
+    const auto& metrics = ThemeManager::instance().metrics();
+    return {metrics.dialog.preferredWidth, metrics.panel.previewHeight};
 }
 
 void SourceEditorWaveformView::paintEvent(QPaintEvent*)
@@ -282,8 +286,8 @@ void SourceEditorWaveformView::paintEvent(QPaintEvent*)
     painter.drawRect(rect().adjusted(0, 0, -1, -1));
 
     if (state_ == State::Ready && peaks_.isValid()) {
-        const QRect waveformRect = rect().adjusted(kWaveformInset, kWaveformInset,
-                                                   -kWaveformInset, -kWaveformInset);
+        const QRect waveformRect = rect().adjusted(timeAxisMetrics().waveformInset, timeAxisMetrics().waveformInset,
+                                                   -timeAxisMetrics().waveformInset, -timeAxisMetrics().waveformInset);
         WaveformRenderOptions options;
         options.colorMode = WaveColorMode::MultiBand;
         options.amplitudeExponent = amplitudeExponent_;
@@ -322,16 +326,16 @@ void SourceEditorWaveformView::paintEvent(QPaintEvent*)
                 QColor lineColor = color;
                 if (handle == hoveredHandle_ || handle == activeHandle_)
                     lineColor = lineColor.lighter(135);
-                painter.setPen(QPen(lineColor, handle == activeHandle_ ? 3 : 2));
+                painter.setPen(QPen(lineColor, handle == activeHandle_ ? theme->ui.metrics.accentBorderWidth : theme->ui.metrics.borderWidth));
                 painter.drawLine(x, waveformRect.top(), x, waveformRect.bottom());
                 painter.setPen(Qt::NoPen);
                 painter.setBrush(lineColor);
                 const bool trim = isTrimHandle(rawHandle);
                 const QPolygon marker = trim
-                    ? QPolygon{{x - 5, waveformRect.top()}, {x + 5, waveformRect.top()},
-                               {x, waveformRect.top() + 7}}
-                    : QPolygon{{x - 5, waveformRect.bottom()}, {x + 5, waveformRect.bottom()},
-                               {x, waveformRect.bottom() - 7}};
+                    ? QPolygon{{x - timeAxisMetrics().handleWidth / 2, waveformRect.top()}, {x + timeAxisMetrics().handleWidth / 2, waveformRect.top()},
+                               {x, waveformRect.top() + timeAxisMetrics().handleBandHeight}}
+                    : QPolygon{{x - timeAxisMetrics().handleWidth / 2, waveformRect.bottom()}, {x + timeAxisMetrics().handleWidth / 2, waveformRect.bottom()},
+                               {x, waveformRect.bottom() - timeAxisMetrics().handleBandHeight}};
                 painter.drawPolygon(marker);
             };
             drawHandle(Handle::TrimStart, theme->domains.waveform.trimHandle);
@@ -571,8 +575,8 @@ uint64_t SourceEditorWaveformView::frameAt(double x) const
         return static_cast<uint64_t>(std::llround(std::clamp(
             viewStart_ + ratio * viewFrameCount(), 0.0, double(total))));
     }
-    const QRect waveformRect = rect().adjusted(kWaveformInset, kWaveformInset,
-                                               -kWaveformInset, -kWaveformInset);
+    const QRect waveformRect = rect().adjusted(timeAxisMetrics().waveformInset, timeAxisMetrics().waveformInset,
+                                               -timeAxisMetrics().waveformInset, -timeAxisMetrics().waveformInset);
     const double ratio = std::clamp(
         static_cast<double>(x - waveformRect.left())
             / std::max(1, waveformRect.width() - 1),
@@ -611,24 +615,25 @@ SourceEditorWaveformView::Handle SourceEditorWaveformView::hitTestHandle(
         if (position.y() < plot.top() || position.y() > plot.bottom())
             return Handle::None;
         Handle nearest = Handle::None;
-        int nearestDistance = 13;
+        int nearestDistance = timeAxisMetrics().handleWidth + timeAxisMetrics().handleHitRadius + 1;
         for (Handle handle : {Handle::TrimStart, Handle::TrimEnd}) {
             const int x = handlePosition(static_cast<int>(handle));
             if (x < 0)
                 continue;
             const QRect bounds = trimGripRect(handle);
             const int center = bounds.center().x();
-            const bool grip = position.y() <= bounds.bottom() + 2;
+            const int padding = ThemeManager::instance().metrics().spacingCompact;
+            const bool grip = bounds.adjusted(-padding, -padding, padding, padding).contains(position);
             const int distance = std::abs(position.x() - (grip ? center : x));
-            if (distance <= (grip ? 10 : 5) && distance < nearestDistance) {
+            if (distance <= (grip ? bounds.width() / 2 + padding : timeAxisMetrics().handleHitRadius) && distance < nearestDistance) {
                 nearest = handle;
                 nearestDistance = distance;
             }
         }
         return nearest;
     }
-    const bool trimBand = position.y() <= kWaveformInset + kHandleBandHeight;
-    const bool loopBand = position.y() >= height() - kWaveformInset - kHandleBandHeight;
+    const bool trimBand = position.y() <= timeAxisMetrics().waveformInset + timeAxisMetrics().handleBandHeight;
+    const bool loopBand = position.y() >= height() - timeAxisMetrics().waveformInset - timeAxisMetrics().handleBandHeight;
     if (!trimBand && !loopBand)
         return Handle::None;
 
@@ -638,10 +643,10 @@ SourceEditorWaveformView::Handle SourceEditorWaveformView::hitTestHandle(
             ? std::vector<Handle>{Handle::LoopStart, Handle::LoopEnd}
             : std::vector<Handle>{};
     Handle nearest = Handle::None;
-    int nearestDistance = kHandleHitRadius + 1;
+    int nearestDistance = timeAxisMetrics().handleHitRadius + 1;
     for (const Handle handle : candidates) {
         const int distance = std::abs(handlePosition(static_cast<int>(handle)) - position.x());
-        if (distance <= kHandleHitRadius && distance < nearestDistance) {
+        if (distance <= timeAxisMetrics().handleHitRadius && distance < nearestDistance) {
             nearest = handle;
             nearestDistance = distance;
         }

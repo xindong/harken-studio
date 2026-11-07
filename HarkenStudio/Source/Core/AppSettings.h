@@ -30,7 +30,6 @@ struct PanelInfo {
     PanelId id;
     const char* key;
     const char* displayName;
-    int defaultFontSize;
 };
 
 class PanelRegistry {
@@ -38,13 +37,13 @@ public:
     static constexpr size_t PANEL_COUNT = static_cast<size_t>(PanelId::Count);
     
     static constexpr std::array<PanelInfo, PANEL_COUNT> panels = {{
-        { PanelId::Assistant,       "assistant",         "Assistant",         13 },
-        { PanelId::Explorer,        "explorer",          "Explorer",          12 },
-        { PanelId::Inspector,       "inspector",         "Inspector",         12 },
-        { PanelId::Log,             "log",               "Log Panel",         11 },
-        { PanelId::NodeGraph,       "node_graph",        "Node Graph",        11 },
-        { PanelId::Hierarchy,       "hierarchy",         "Hierarchy",         12 },
-        { PanelId::Information,     "information",       "Information",       12 },
+        { PanelId::Assistant,       "assistant",         "Assistant" },
+        { PanelId::Explorer,        "explorer",          "Explorer" },
+        { PanelId::Inspector,       "inspector",         "Inspector" },
+        { PanelId::Log,             "log",               "Log Panel" },
+        { PanelId::NodeGraph,       "node_graph",        "Node Graph" },
+        { PanelId::Hierarchy,       "hierarchy",         "Hierarchy" },
+        { PanelId::Information,     "information",       "Information" },
     }};
     
     static const PanelInfo& get(PanelId id) {
@@ -53,10 +52,6 @@ public:
     
     static const char* key(PanelId id) {
         return get(id).key;
-    }
-    
-    static int defaultFontSize(PanelId id) {
-        return get(id).defaultFontSize;
     }
     
     static const char* displayName(PanelId id) {
@@ -90,8 +85,15 @@ public:
     AppSettings(const AppSettings&) = delete;
     AppSettings& operator=(const AppSettings&) = delete;
 
-    int globalUIScale() const;
-    void setGlobalUIScale(int percent);
+    qreal globalUIScale() const;
+    void setGlobalUIScale(qreal percent);
+    int globalUIZoomLevel() const;
+    void setGlobalUIZoomLevel(int level);
+    void increaseGlobalUIScale();
+    void decreaseGlobalUIScale();
+    bool canIncreaseGlobalUIScale() const;
+    bool canDecreaseGlobalUIScale() const;
+    static qreal uiScaleForZoomLevel(int level);
 
     int panelFontSize(PanelId panelId) const;
     void setPanelFontSize(PanelId panelId, int size);
@@ -123,7 +125,11 @@ public:
     static constexpr const char* PANEL_NODE_GRAPH = "node_graph";
 
     static constexpr int DEFAULT_GLOBAL_SCALE = 100;
-    static constexpr int DEFAULT_FONT_SIZE = 12;
+    static constexpr std::array<int, 11> GLOBAL_SCALE_PRESETS{
+        50, 60, 70, 80, 100, 125, 150, 175, 200, 250, 300};
+    static constexpr int MIN_GLOBAL_ZOOM_LEVEL = -4;
+    static constexpr int MAX_GLOBAL_ZOOM_LEVEL = MIN_GLOBAL_ZOOM_LEVEL + int(GLOBAL_SCALE_PRESETS.size()) - 1;
+    static constexpr int DEFAULT_FONT_SIZE = 0;
     static constexpr int MIN_FONT_SIZE = 8;
     static constexpr int MAX_FONT_SIZE = 24;
 
@@ -137,7 +143,7 @@ public:
 
 signals:
     void settingsChanged();
-    void globalUIScaleChanged(int percent);
+    void globalUIScaleChanged(qreal percent);
     void fontSizeChanged(PanelId panelId, int newSize);
     void developerModeChanged(bool enabled);
     void languageChanged(const QString& code);
@@ -154,7 +160,7 @@ private:
 
 private:
     std::unique_ptr<ISettingsStorage> storage_;
-    int globalUIScale_;
+    int globalUIZoomLevel_ = 0;
     bool developerMode_ = false;
     QString language_ = QStringLiteral("en");
     std::array<int, PanelRegistry::PANEL_COUNT> panelFontSizes_;

@@ -1,4 +1,5 @@
 #include "Monitor/MonitorPlayablesPanel.h"
+#include "Core/ThemeLayout.h"
 #include "Monitor/MonitorPanelKeys.h"
 #include "Monitor/PlayableLifecycleProjection.h"
 
@@ -22,8 +23,8 @@ MonitorPlayablesPanel::MonitorPlayablesPanel(QWidget* parent)
     setObjectName(QStringLiteral("MonitorPlayablesPanel"));
 
     auto* root = new QVBoxLayout(this);
-    root->setContentsMargins(8, 8, 8, 8);
-    root->setSpacing(6);
+    ThemeLayout::margins(root, ThemeLayout::Space::Small);
+    ThemeLayout::spacing(root, ThemeLayout::Space::Small);
 
     kindFilter_ = new QComboBox(this);
     kindFilter_->setObjectName(QStringLiteral("MonitorPlayablesKindFilter"));

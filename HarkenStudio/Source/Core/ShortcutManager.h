@@ -37,6 +37,7 @@ struct ShortcutInfo
     QString description;
     ShortcutCategory category;
     QKeySequence defaultShortcut;
+    QList<QKeySequence> defaultAliases;
     QKeySequence currentShortcut;
     bool isCustom = false;
     QList<QAction*> actions;
@@ -53,7 +54,8 @@ public:
                          const QString& displayName,
                          const QString& description,
                          ShortcutCategory category,
-                         const QKeySequence& defaultShortcut);
+                         const QKeySequence& defaultShortcut,
+                         const QList<QKeySequence>& defaultAliases = {});
     
     void bindAction(const QString& id, QAction* action);
     QAction* bindWidgetAction(const QString& id,
@@ -61,6 +63,7 @@ public:
                               std::function<void()> handler,
                               Qt::ShortcutContext context = Qt::WidgetShortcut);
     QAction* createMenuAction(const QString& id, QMenu* menu);
+    QAction* applicationAction(const QString& id, std::function<void()> handler);
     void unbindAction(const QString& id, QAction* action);
 
     QKeySequence shortcut(const QString& id) const;
@@ -74,6 +77,7 @@ public:
     
     bool hasConflict(const QString& id, const QKeySequence& sequence) const;
     QString conflictingShortcut(const QString& id, const QKeySequence& sequence) const;
+    QStringList conflictingShortcuts(const QString& id, const QKeySequence& sequence) const;
 
     void saveShortcuts();
     void loadShortcuts();
@@ -88,6 +92,10 @@ signals:
     void shortcutsReset();
 
 private:
+    bool eventFilter(QObject* watched, QEvent* event) override;
+    void attachApplicationActions(QWidget* window);
+    static QList<QKeySequence> shortcutSequences(const ShortcutInfo& info, const QKeySequence& sequence);
+
     struct MenuCommand
     {
         std::function<void()> handler;
@@ -107,6 +115,7 @@ private:
     QMap<QString, ShortcutInfo> shortcuts_;
     QPointer<QWidget> focusedWidget_;
     QPointer<QWidget> menuTarget_;
+    QMap<QString, QAction*> applicationActions_;
 };
 
 namespace Shortcuts {
@@ -121,6 +130,9 @@ inline const QString Paste = "edit.paste";
 inline const QString Delete = "edit.delete";
 inline const QString SelectAll = "edit.selectAll";
 inline const QString Duplicate = "edit.duplicate";
+
+inline const QString ZoomIn = "view.zoomIn";
+inline const QString ZoomOut = "view.zoomOut";
 
 inline const QString PlayStop = "playback.playStop";
 inline const QString PlaybackReset = "playback.reset";

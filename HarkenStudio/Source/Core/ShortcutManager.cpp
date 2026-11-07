@@ -4,6 +4,7 @@
 #include <QAbstractItemView>
 #include <QApplication>
 #include <QClipboard>
+#include <QEvent>
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -56,6 +57,7 @@ ShortcutManager::ShortcutManager()
 {
     setupDefaultShortcuts();
     loadShortcuts();
+    qApp->installEventFilter(this);
     focusedWidget_ = QApplication::focusWidget();
     connect(qApp, &QApplication::focusChanged, this, [this](QWidget*, QWidget* focus) {
         if (focus && !qobject_cast<QMenu*>(focus) && !qobject_cast<QMenuBar*>(focus))
@@ -66,6 +68,8 @@ ShortcutManager::ShortcutManager()
 ShortcutManager::~ShortcutManager()
 {
     saveShortcuts();
+    qDeleteAll(applicationActions_);
+    applicationActions_.clear();
 }
 
 void ShortcutManager::setupDefaultShortcuts()
@@ -90,6 +94,13 @@ void ShortcutManager::setupDefaultShortcuts()
     registerShortcut(Shortcuts::Duplicate, tr("Duplicate"), 
         tr("Duplicate selection"), ShortcutCategory::Edit, QKeySequence("Ctrl+D"));
 
+    registerShortcut(Shortcuts::ZoomIn, tr("Zoom In"),
+        tr("Increase the size of the entire interface"), ShortcutCategory::View,
+        QKeySequence(QStringLiteral("Ctrl+=")), {QKeySequence(QStringLiteral("Ctrl++"))});
+    registerShortcut(Shortcuts::ZoomOut, tr("Zoom Out"),
+        tr("Decrease the size of the entire interface"), ShortcutCategory::View,
+        QKeySequence(QStringLiteral("Ctrl+-")));
+
     registerShortcut(Shortcuts::PlayStop, tr("Play/Stop"),
         tr("Toggle playback"), ShortcutCategory::Playback, QKeySequence("Space"));
     registerShortcut(Shortcuts::PlaybackReset, tr("Reset Container"),
@@ -105,7 +116,8 @@ void ShortcutManager::registerShortcut(const QString& id,
                                         const QString& displayName,
                                         const QString& description,
                                         ShortcutCategory category,
-                                        const QKeySequence& defaultShortcut)
+                                        const QKeySequence& defaultShortcut,
+                                        const QList<QKeySequence>& defaultAliases)
 {
     ShortcutInfo info;
     info.id = id;
@@ -113,6 +125,7 @@ void ShortcutManager::registerShortcut(const QString& id,
     info.description = description;
     info.category = category;
     info.defaultShortcut = defaultShortcut;
+    info.defaultAliases = defaultAliases;
     info.currentShortcut = defaultShortcut;
     info.isCustom = false;
     
@@ -128,7 +141,7 @@ void ShortcutManager::bindAction(const QString& id, QAction* action)
     if (!info.actions.contains(action))
     {
         info.actions.append(action);
-        action->setShortcut(info.currentShortcut);
+        action->setShortcuts(shortcutSequences(info, info.currentShortcut));
         connect(action, &QObject::destroyed, this, [this, id, action]() {
             unbindAction(id, action);
         });
@@ -184,6 +197,44 @@ QAction* ShortcutManager::createMenuAction(const QString& id, QMenu* menu)
             command.handler();
     });
     return action;
+}
+
+QAction* ShortcutManager::applicationAction(const QString& id, std::function<void()> handler)
+{
+    if (!shortcuts_.contains(id)) return nullptr;
+    if (auto* existing = applicationActions_.value(id)) return existing;
+    auto* action = new QAction(shortcuts_[id].displayName, this);
+    action->setObjectName(id);
+    action->setMenuRole(QAction::NoRole);
+    action->setShortcutContext(Qt::ApplicationShortcut);
+    connect(action, &QAction::triggered, this, [handler = std::move(handler)] { handler(); });
+    applicationActions_.insert(id, action);
+    bindAction(id, action);
+    for (auto* window : QApplication::topLevelWidgets()) attachApplicationActions(window);
+    return action;
+}
+
+void ShortcutManager::attachApplicationActions(QWidget* window)
+{
+    if (!window->isWindow() || window->windowType() == Qt::Popup || window->windowType() == Qt::ToolTip)
+        return;
+    for (auto* action : applicationActions_)
+        if (!window->actions().contains(action)) window->addAction(action);
+}
+
+bool ShortcutManager::eventFilter(QObject* watched, QEvent* event)
+{
+    if (event->type() == QEvent::Show)
+        if (auto* window = qobject_cast<QWidget*>(watched)) attachApplicationActions(window);
+    return QObject::eventFilter(watched, event);
+}
+
+QList<QKeySequence> ShortcutManager::shortcutSequences(const ShortcutInfo& info, const QKeySequence& sequence)
+{
+    if (sequence.isEmpty()) return {};
+    QList<QKeySequence> sequences{sequence};
+    if (sequence == info.defaultShortcut) sequences.append(info.defaultAliases);
+    return sequences;
 }
 
 ShortcutManager::MenuCommand ShortcutManager::menuCommand(const QString& id, QWidget* focus) const
@@ -319,28 +370,32 @@ QList<ShortcutInfo> ShortcutManager::shortcutsInCategory(ShortcutCategory catego
 
 bool ShortcutManager::hasConflict(const QString& id, const QKeySequence& sequence) const
 {
-    if (sequence.isEmpty())
-        return false;
-
-    for (auto it = shortcuts_.begin(); it != shortcuts_.end(); ++it)
-    {
-        if (it.key() != id && it.value().currentShortcut == sequence)
-            return true;
-    }
-    return false;
+    return !conflictingShortcut(id, sequence).isEmpty();
 }
 
 QString ShortcutManager::conflictingShortcut(const QString& id, const QKeySequence& sequence) const
 {
-    if (sequence.isEmpty())
-        return QString();
+    return conflictingShortcuts(id, sequence).value(0);
+}
 
+QStringList ShortcutManager::conflictingShortcuts(const QString& id, const QKeySequence& sequence) const
+{
+    if (sequence.isEmpty())
+        return {};
+
+    QStringList conflicts;
+    const auto candidates = shortcutSequences(shortcuts_.value(id), sequence);
     for (auto it = shortcuts_.begin(); it != shortcuts_.end(); ++it)
     {
-        if (it.key() != id && it.value().currentShortcut == sequence)
-            return it.key();
+        if (it.key() == id) continue;
+        const auto existing = shortcutSequences(it.value(), it.value().currentShortcut);
+        for (const auto& candidate : candidates)
+            if (existing.contains(candidate)) {
+                conflicts.append(it.key());
+                break;
+            }
     }
-    return QString();
+    return conflicts;
 }
 
 void ShortcutManager::saveShortcuts()
@@ -488,7 +543,7 @@ void ShortcutManager::applyShortcut(const QString& id)
     for (QAction* action : info.actions)
     {
         if (action)
-            action->setShortcut(info.currentShortcut);
+            action->setShortcuts(shortcutSequences(info, info.currentShortcut));
     }
 }
 

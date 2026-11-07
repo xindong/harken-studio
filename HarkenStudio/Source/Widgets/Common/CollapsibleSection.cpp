@@ -14,12 +14,6 @@
 
 namespace VNX {
 
-static constexpr int HEADER_LINE_HEIGHT = 2;
-static constexpr int RAIL_CARET_OFFSET     = 10;
-static constexpr int CONTENT_INDENT_TOP    = 14;
-static constexpr int CONTENT_INDENT_NESTED = 10;
-static constexpr int CONTENT_PAD_V         = 4;
-
 CollapsibleSection::CollapsibleSection(const QString& title,
                                        int animationDuration,
                                        QWidget* parent)
@@ -41,7 +35,6 @@ CollapsibleSection::CollapsibleSection(const QString& title,
     headerLine_ = new QFrame(this);
     headerLine_->setFrameShape(QFrame::HLine);
     headerLine_->setFrameShadow(QFrame::Sunken);
-    headerLine_->setMaximumHeight(HEADER_LINE_HEIGHT);
     headerLine_->hide();
 
     contentArea_ = new QWidget(this);
@@ -111,17 +104,16 @@ void CollapsibleSection::setContentLayout(QLayout* contentLayout)
     row->setSpacing(0);
 
     railFrame_ = new QFrame(contentArea_);
-    railFrame_->setFixedWidth(2);
     railFrame_->setVisible(false);
     row->addWidget(railFrame_);
 
     innerContent_ = new QWidget(contentArea_);
-    contentLayout->setContentsMargins(CONTENT_INDENT_NESTED, CONTENT_PAD_V, 0, CONTENT_PAD_V);
     innerContent_->setLayout(contentLayout);
     DebugTint::tintContainer(innerContent_, DebugTint::Role::Section);
     row->addWidget(innerContent_, 1);
 
     contentArea_->setLayout(row);
+    applyTheme();
 }
 
 void CollapsibleSection::setDynamicContent(bool dynamic)
@@ -221,24 +213,27 @@ void CollapsibleSection::moveEvent(QMoveEvent* event)
 void CollapsibleSection::applyTheme()
 {
     auto& theme = ThemeManager::instance();
+    const auto& metrics = theme.metrics();
     const int lvl = level_ < 0 ? 0 : level_;
     const int headerSpacing = theme.metrics().spacingSmall;
     headerLayout_->setColumnMinimumWidth(2, headerWidget_ ? headerSpacing : 0);
-    if (railFrame_)
+    headerLine_->setMaximumHeight(metrics.accentBorderWidth);
+    if (railFrame_) {
+        railFrame_->setFixedWidth(metrics.accentBorderWidth);
         railFrame_->setVisible(lvl >= 1);
+    }
 
     if (contentArea_->layout())
     {
         QMargins rm = contentArea_->layout()->contentsMargins();
-        rm.setLeft(lvl >= 1 ? RAIL_CARET_OFFSET : 0);
+        rm.setLeft(lvl >= 1 ? metrics.spacingSmall : 0);
         contentArea_->layout()->setContentsMargins(rm);
     }
 
     if (innerContent_ && innerContent_->layout())
     {
-        QMargins m = innerContent_->layout()->contentsMargins();
-        m.setLeft(lvl <= 0 ? CONTENT_INDENT_TOP : CONTENT_INDENT_NESTED);
-        innerContent_->layout()->setContentsMargins(m);
+        innerContent_->layout()->setContentsMargins(lvl <= 0 ? metrics.spacingLarge : metrics.spacingSmall,
+                                                    metrics.spacingXSmall, 0, metrics.spacingXSmall);
     }
 
     const int chevronExtent = theme.metrics().navigationChevronExtent;

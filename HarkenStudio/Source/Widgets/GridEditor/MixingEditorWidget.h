@@ -89,7 +89,7 @@ private:
     TableWidget* table_ = nullptr;
     ResizableTableView* view_ = nullptr;
     QStandardItemModel* model_ = nullptr;
-    QHash<QUuid, int> rowHeights_;
+    QHash<QUuid, qreal> rowBaseHeights_;
     std::optional<QUuid> selectedRow_;
     QToolButton* addRow_ = nullptr;
     QToolButton* removeRow_ = nullptr;

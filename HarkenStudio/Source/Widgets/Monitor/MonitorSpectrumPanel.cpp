@@ -1,4 +1,5 @@
 #include "Monitor/MonitorSpectrumPanel.h"
+#include "Core/ThemeLayout.h"
 #include "Monitor/MonitorPanelKeys.h"
 #include "Monitor/SpectrumDisplayProjection.h"
 
@@ -13,8 +14,8 @@ MonitorSpectrumPanel::MonitorSpectrumPanel(QWidget* parent)
     setObjectName(QStringLiteral("MonitorSpectrumPanel"));
 
     auto* root = new QVBoxLayout(this);
-    root->setContentsMargins(8, 8, 8, 8);
-    root->setSpacing(6);
+    ThemeLayout::margins(root, ThemeLayout::Space::Small);
+    ThemeLayout::spacing(root, ThemeLayout::Space::Small);
 
     gapLabel_ = new QLabel(this);
     gapLabel_->setObjectName(QStringLiteral("MonitorSpectrumGap"));

@@ -1,5 +1,6 @@
 
 #include "Dialogs/Settings/SettingsPage.h"
+#include "Core/ThemeLayout.h"
 
 #include "Core/QtControlSkin.h"
 #include "Core/ContextInfo.h"
@@ -122,8 +123,8 @@ QVBoxLayout* SettingsPage::makePageBody()
     scroll->setWidget(content);
     outer->addWidget(scroll);
     auto* layout = new QVBoxLayout(content);
-    layout->setContentsMargins(24, 24, 24, 24);
-    layout->setSpacing(16);
+    ThemeLayout::margins(layout, ThemeLayout::Space::XLarge);
+    ThemeLayout::spacing(layout, ThemeLayout::Space::Large);
     return layout;
 }
 
@@ -132,7 +133,9 @@ QWidget* SettingsPage::makeSection(const QString& title)
     auto* section = new QWidget();
     auto* inner = new QVBoxLayout(section);
     inner->setContentsMargins(0, 0, 0, 0);
-    inner->setSpacing(DialogFormLayout::RowSpacing);
+    ThemeManager::instance().bindMetrics(inner, [inner](const ThemeMetrics& metrics) {
+        inner->setSpacing(metrics.form.rowSpacing);
+    });
     if (!title.isEmpty()) {
         auto* label = new QLabel(title, section);
         QtControlSkin::setSemanticProperty(label, "settingsRole",

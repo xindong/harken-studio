@@ -1,4 +1,5 @@
 #include "ExplorerSection.h"
+#include "Core/ThemeLayout.h"
 
 #include "Core/ThemeAssetCatalog.h"
 #include "Core/ThemeManager.h"
@@ -29,7 +30,7 @@ protected:
         painter.drawComplexControl(QStyle::CC_ToolButton, option);
 
         const int extent = iconSize().width();
-        const int padding = 4;
+        const int padding = ThemeManager::instance().metrics().spacingXSmall;
         icon().paint(&painter, QRect(padding, (height() - extent) / 2, extent, extent),
                      Qt::AlignCenter, isEnabled() ? QIcon::Normal : QIcon::Disabled,
                      isChecked() ? QIcon::On : QIcon::Off);
@@ -59,7 +60,7 @@ ExplorerSection::ExplorerSection(const QString& title, QWidget* parent)
         emit headerContextMenuRequested(header_->mapToGlobal(position));
     });
     auto* headerLayout = new QHBoxLayout(header_);
-    headerLayout->setContentsMargins(0, 1, 0, 1);
+    ThemeLayout::margins(headerLayout, ThemeLayout::Space::None, ThemeLayout::Space::Compact, ThemeLayout::Space::None, ThemeLayout::Space::Compact);
     headerLayout->setSpacing(0);
     toggle_ = new ExplorerSectionToggle(header_);
     toggle_->setProperty("explorerRole", "sectionToggle");
@@ -103,13 +104,13 @@ void ExplorerSection::updateHeader()
 {
     auto& theme = ThemeManager::instance();
     const int height = qMax(theme.metrics().sectionHeaderHeight,
-                           toggle_->fontMetrics().height() + 8);
+                           toggle_->fontMetrics().height() + theme.metrics().spacingSmall);
     header_->setFixedHeight(height);
     const int extent = theme.metrics().navigationChevronExtent;
     toggle_->setIconSize(QSize(extent, extent));
     toggle_->setIcon(theme.resolveIcon(QString::fromLatin1(isExpanded()
         ? ThemeAssetIds::NavigationChevronDown : ThemeAssetIds::NavigationChevronRight)).icon);
-    setMinimumHeight(isExpanded() ? height + 32 : height);
+    setMinimumHeight(isExpanded() ? height + theme.metrics().control.largeHeight : height);
     setMaximumHeight(isExpanded() ? QWIDGETSIZE_MAX : height);
     setSizePolicy(QSizePolicy::Expanding, isExpanded() ? QSizePolicy::Expanding : QSizePolicy::Fixed);
     updateGeometry();

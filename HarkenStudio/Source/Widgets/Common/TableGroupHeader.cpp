@@ -30,9 +30,7 @@ protected:
 
 QFont captionFont(ThemeManager* themeManager)
 {
-    auto font = FontManager::instance().getFont(themeManager->snapshot(), FontRole::Body);
-    font.setWeight(QFont::DemiBold);
-    return font;
+    return FontManager::instance().getFont(themeManager->snapshot(), FontRole::Body, FontEmphasis::Strong);
 }
 
 }

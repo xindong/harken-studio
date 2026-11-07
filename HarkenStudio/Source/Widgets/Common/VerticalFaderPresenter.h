@@ -43,6 +43,7 @@ private:
     QSlider* slider_;
     QDoubleSpinBox* spinBox_;
     bool updating_ = false;
+    bool compactValueColumn_ = false;
 };
 
 }

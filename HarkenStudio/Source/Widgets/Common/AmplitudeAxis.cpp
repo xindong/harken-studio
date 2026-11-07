@@ -55,10 +55,10 @@ double amplitudeToDb(double amplitude)
 }
 
 QRect waveformAmplitudeBounds(const QRect& viewport, int contentHeight, int scroll,
-    const QFontMetrics& font)
+    const QFontMetrics& font, int padding)
 {
-    return QRect(viewport.left(), viewport.top() - scroll + font.height() / 2 + 4,
-        viewport.width(), std::max(1, contentHeight - font.height() - 8));
+    return QRect(viewport.left(), viewport.top() - scroll + font.height() / 2 + padding,
+        viewport.width(), std::max(1, contentHeight - font.height() - padding * 2));
 }
 
 QVector<AmplitudeAxisTick> buildAmplitudeAxisTicks(const QRect& viewport, double zeroY,
@@ -68,7 +68,7 @@ QVector<AmplitudeAxisTick> buildAmplitudeAxisTicks(const QRect& viewport, double
     QVector<AmplitudeAxisTick> ticks;
     if (!viewport.isValid() || amplitudeHeight <= 0.0 || scale.maximumDb <= scale.minimumDb)
         return ticks;
-    const double target = std::max(targetSpacing, double(font.height() + 4));
+    const double target = std::max(targetSpacing, font.height() * 1.25);
     const auto labelCenter = [&](int y, bool major) {
         return major ? std::clamp(y, viewport.top() + font.height() / 2,
             std::max(viewport.top() + font.height() / 2, viewport.bottom() - font.height() / 2)) : y;

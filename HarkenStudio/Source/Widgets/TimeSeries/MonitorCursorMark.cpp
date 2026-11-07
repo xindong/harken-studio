@@ -9,7 +9,9 @@ namespace VNX {
 MonitorCursorMark::MonitorCursorMark(QWidget* parent)
     : QWidget(parent)
 {
-    setMinimumSize(80, 24);
+    ThemeManager::instance().bindMetrics(this, [this](const ThemeMetrics& metrics) {
+        setMinimumSize(metrics.control.fieldMinimumWidth, metrics.controlHeight);
+    });
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 }
 
@@ -69,13 +71,14 @@ void MonitorCursorMark::paintEvent(QPaintEvent*)
     painter.fillRect(rect(), ui.bgPrimary);
     if (showsLine())
     {
-        painter.setPen(QPen(uncertaintyColor(), 2));
+        painter.setPen(QPen(uncertaintyColor(), snapshot->ui.metrics.accentBorderWidth));
         const int x = width() / 2;
         painter.drawLine(x, 0, x, height());
     }
     painter.setPen(ui.textPrimary);
     const auto text = statusText() + QStringLiteral("  ") + uncertaintyLabel();
-    painter.drawText(rect().adjusted(8, 0, -8, 0), Qt::AlignVCenter | Qt::AlignLeft, text);
+    const int padding = snapshot->ui.metrics.spacingSmall;
+    painter.drawText(rect().adjusted(padding, 0, -padding, 0), Qt::AlignVCenter | Qt::AlignLeft, text);
 }
 
 } // namespace VNX

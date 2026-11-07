@@ -58,7 +58,10 @@ ParameterControlHost::ParameterControlHost(
     connect(binding_, &ParameterBinding::valueUpdated, this,
             &ParameterControlHost::syncToolTips);
     connect(themeManager_, &ThemeManager::themeChanged, this,
-            [this]() { rebuildPresenter(); });
+            [this]() {
+                if (!presenter_ || presenter_->presenterId() != selectedPresenterId())
+                    rebuildPresenter();
+            });
 }
 
 ParameterControlHost::~ParameterControlHost()

@@ -103,8 +103,8 @@ TimeAxisTicks buildTimeAxisTicks(double start, double span, int width,
     if (span <= 0.0 || !std::isfinite(start) || !std::isfinite(span) || width <= 0)
         return result;
     const int estimatedDecimals = std::clamp(int(std::ceil(-std::log10(span))) + 2, 0, maximumDecimals);
-    const int labelWidth = std::max(48,
-        metrics.horizontalAdvance(QString::number(start + span, 'f', estimatedDecimals)) + 12);
+    const int labelWidth = std::max(metrics.horizontalAdvance(QStringLiteral("000000")),
+        metrics.horizontalAdvance(QString::number(start + span, 'f', estimatedDecimals)) + metrics.horizontalAdvance(QStringLiteral("  ")));
     result.majorStep = tickStep(std::max(minimumStep, span * labelWidth / width));
     result.minorStep = result.majorStep / 5.0 >= minimumStep ? result.majorStep / 5.0 : result.majorStep;
     const int decimals = axisDecimalsForStep(result.majorStep, maximumDecimals);
@@ -139,14 +139,14 @@ TimeAxisTicks buildNanosecondTimeAxisTicks(NanosecondPosition start, double span
     const auto labelWidthAt = [&](int64_t coordinate, int decimals) {
         if (format == TimeAxisLabelFormat::MinutesSecondsMilliseconds)
             return metrics.horizontalAdvance(
-                formatTimeMinutesSecondsMilliseconds(coordinate, decimals, decimals)) + 12;
+                formatTimeMinutesSecondsMilliseconds(coordinate, decimals, decimals)) + metrics.horizontalAdvance(QStringLiteral("  "));
         QString label = formatTimeNanoseconds(coordinate).section(QLatin1Char('.'), 0, 0);
         if (estimatedDecimals > 0)
             label += QLatin1Char('.') + QString(estimatedDecimals, QLatin1Char('0'));
-        return metrics.horizontalAdvance(label) + 12;
+        return metrics.horizontalAdvance(label) + metrics.horizontalAdvance(QStringLiteral("  "));
     };
     const auto stepForDecimals = [&](int decimals) {
-        const int labelWidth = std::max({48, labelWidthAt(start.rounded(), decimals),
+        const int labelWidth = std::max({metrics.horizontalAdvance(QStringLiteral("000000")), labelWidthAt(start.rounded(), decimals),
             labelWidthAt(start.shifted(span).rounded(), decimals)});
         return static_cast<int64_t>(std::clamp(
             tickStep(std::max(double(std::max<int64_t>(1, minimumStep)), span * labelWidth / width)), 1.0, 5e18));
@@ -199,6 +199,7 @@ TimeAxisTicks buildNanosecondTimeAxisTicks(NanosecondPosition start, double span
 }
 
 void drawTimeAxisRuler(QPainter& painter, const ThemeColors& colors,
+    const ThemeMetrics::TimeAxis& geometry,
     const QRect& bounds, const TimeAxisTicks& ticks, FontRole role,
     TimeAxisLabelAlignment alignment, bool pairedLabels)
 {
@@ -206,7 +207,7 @@ void drawTimeAxisRuler(QPainter& painter, const ThemeColors& colors,
     painter.setClipRect(bounds, Qt::IntersectClip);
     painter.setRenderHint(QPainter::Antialiasing, false);
     const QFont primaryFont = FontManager::instance().getFont(role);
-    const QFont secondaryFont = FontManager::instance().getFont(FontRole::Axis);
+    const QFont secondaryFont = FontManager::instance().getFont(FontRole::Caption);
     const QFontMetrics metrics(primaryFont, painter.device());
     const QFontMetrics secondaryMetrics(secondaryFont, painter.device());
     const int secondaryHeight = pairedLabels ? secondaryMetrics.height() : 0;
@@ -214,16 +215,17 @@ void drawTimeAxisRuler(QPainter& painter, const ThemeColors& colors,
     for (const auto& tick : ticks.ticks) {
         const int x = bounds.left() + tick.pixel;
         painter.setPen(colors.borderTick);
-        const int tickHeight = tick.beat ? (tick.major ? 6 : 4) : (tick.major ? 4 : 2);
+        const int tickHeight = tick.major ? geometry.majorTickLength : geometry.minorTickLength;
         painter.drawLine(x, bounds.bottom() + 1 - tickHeight, x, bounds.bottom());
         if (tick.label.isEmpty())
             continue;
         const int textWidth = std::max(metrics.horizontalAdvance(tick.label),
             pairedLabels ? secondaryMetrics.horizontalAdvance(tick.secondaryLabel) : 0);
-        const int left = alignment == TimeAxisLabelAlignment::AfterTick ? x + 4
-            : std::clamp(x - textWidth / 2, bounds.left() + 4,
-                std::max(bounds.left() + 4, bounds.right() - 4 - textWidth));
-        if (left >= lastLabelRight + 4 && left + textWidth <= bounds.right() - 4) {
+        const int padding = geometry.labelPadding;
+        const int left = alignment == TimeAxisLabelAlignment::AfterTick ? x + padding
+            : std::clamp(x - textWidth / 2, bounds.left() + padding,
+                std::max(bounds.left() + padding, bounds.right() - padding - textWidth));
+        if (left >= lastLabelRight + padding && left + textWidth <= bounds.right() - padding) {
             if (pairedLabels && !tick.secondaryLabel.isEmpty()) {
                 painter.setFont(secondaryFont);
                 painter.setPen(colors.textMuted);
@@ -236,7 +238,7 @@ void drawTimeAxisRuler(QPainter& painter, const ThemeColors& colors,
             painter.setFont(primaryFont);
             painter.setPen(colors.textSecondary);
             painter.drawText(QRect(left, bounds.top() + secondaryHeight, textWidth,
-                    bounds.height() - secondaryHeight - 5),
+                    bounds.height() - secondaryHeight - geometry.majorTickLength),
                 Qt::AlignLeft | Qt::AlignVCenter, tick.label);
             lastLabelRight = left + textWidth;
         }
@@ -268,10 +270,16 @@ void drawTimeAxisHandle(QPainter& painter, const QColor& color,
     painter.save();
     painter.fillRect(bounds, color);
     painter.setPen(grooveColor);
-    for (int dx : {-2, 1})
-        painter.drawLine(bounds.center().x() + dx, bounds.top() + 2,
-            bounds.center().x() + dx, bounds.bottom() - 2);
+    const int inset = bounds.height() / 6;
+    for (int x : {bounds.left() + bounds.width() / 3, bounds.right() - bounds.width() / 3})
+        painter.drawLine(x, bounds.top() + inset, x, bounds.bottom() - inset);
     painter.restore();
+}
+
+QRect timeAxisHandleRect(int x, int top, bool start, const ThemeMetrics::TimeAxis& geometry)
+{
+    return {start ? x : x - geometry.handleWidth + 1, top,
+            geometry.handleWidth, geometry.handleBandHeight};
 }
 
 }

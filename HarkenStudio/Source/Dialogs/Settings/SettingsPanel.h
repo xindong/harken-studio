@@ -9,6 +9,7 @@
 #include <QString>
 
 class QLabel;
+class QResizeEvent;
 
 namespace VNX {
 
@@ -28,10 +29,12 @@ public:
 protected:
     void addPage(SettingsPage* page);
     void loadPages();
+    void resizeEvent(QResizeEvent* event) override;
 
 private:
     void onCategoryChanged(int index);
     void applySearchFilter(const QString& text);
+    void updateCategoryWidth();
 
     SearchField* searchField_ = nullptr;
     QListWidget* categoryList_ = nullptr;

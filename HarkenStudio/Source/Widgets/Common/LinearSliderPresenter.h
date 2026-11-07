@@ -52,6 +52,7 @@ private:
     bool showValue_ = true;
     bool updating_ = false;
     bool compactValueColumn_ = false;
+    bool automaticValueWidth_ = true;
 };
 
 }

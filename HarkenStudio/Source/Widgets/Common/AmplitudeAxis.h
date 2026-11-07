@@ -32,7 +32,7 @@ struct AmplitudeAxisTick
 
 double amplitudeToDb(double amplitude);
 QRect waveformAmplitudeBounds(const QRect& viewport, int contentHeight, int scroll,
-    const QFontMetrics& font);
+    const QFontMetrics& font, int padding);
 QVector<AmplitudeAxisTick> buildAmplitudeAxisTicks(const QRect& viewport, double zeroY,
     double amplitudeHeight, const QFontMetrics& font, double targetSpacing,
     const AmplitudeScale& scale = {}, bool bipolar = true);

@@ -1,5 +1,6 @@
 
 #include "AssistantPanel.h"
+#include "Core/ThemeLayout.h"
 #include "../../Core/AI/AIAssistantService.h"
 #include "../../Core/AI/AIMarkdownRenderer.h"
 #include "../../Core/AppSettings.h"
@@ -27,17 +28,27 @@ namespace VNX {
 namespace {
 
 constexpr int kMaximumStatusCharacters = 4096;
-constexpr int kViewportFallbackWidth = 300;
+int viewportFallbackWidth() { return ThemeManager::instance().metrics().panel.preferredWidth; }
 
 QString boundedStatus(const QString& text)
 {
     return text.left(kMaximumStatusCharacters);
 }
 
+QString messageHtml(const QString& text, const QColor& border)
+{
+    const auto& fonts = FontManager::instance();
+    const auto theme = ThemeManager::instance().snapshot();
+    return QStringLiteral("<style>code, pre { %1 } b, strong { font-weight: %2; } "
+                          "h1, h2, h3, h4, h5, h6 { %3 }</style>%4")
+        .arg(fonts.styleSheet(theme, FontRole::Mono))
+        .arg(int(fonts.getFont(theme, FontRole::Body, FontEmphasis::Strong).weight()))
+        .arg(fonts.styleSheet(theme, FontRole::Title), AIMarkdownRenderer::renderToHtml(text, border));
+}
+
 void applyMessageLabelStyle(QLabel* label, bool user, int fontSize)
 {
-    QFont font(FontManager::instance().sansFamily());
-    font.setPixelSize(fontSize);
+    const QFont font = FontManager::instance().getFont(FontRole::Body, fontSize);
     label->setFont(font);
     label->setObjectName(user ? QStringLiteral("aiUserMessageContent")
                               : QStringLiteral("aiMessageContent"));
@@ -53,8 +64,8 @@ public:
     {
         setObjectName(QStringLiteral("aiConfirmationCard"));
         QVBoxLayout* layout = new QVBoxLayout(this);
-        layout->setContentsMargins(8, 10, 8, 10);
-        layout->setSpacing(8);
+        ThemeLayout::margins(layout, ThemeLayout::Space::Small, ThemeLayout::Space::Medium, ThemeLayout::Space::Small, ThemeLayout::Space::Medium);
+        ThemeLayout::spacing(layout, ThemeLayout::Space::Small);
 
         const QString cmd = command.value(QStringLiteral("cmd")).toString();
         const QString args = QString::fromUtf8(QJsonDocument(
@@ -65,8 +76,7 @@ public:
         label->setTextFormat(Qt::PlainText);
         label->setWordWrap(true);
         label->setTextInteractionFlags(Qt::TextSelectableByMouse);
-        QFont font(FontManager::instance().sansFamily());
-        font.setPixelSize(fontSize);
+        const QFont font = FontManager::instance().getFont(FontRole::Body, fontSize);
         label->setFont(font);
         layout->addWidget(label);
 
@@ -106,7 +116,7 @@ AIMessageWidget::AIMessageWidget(const QString& text, int fontSize, QWidget* par
             const auto color = ThemeManager::instance().colors().borderSecondary;
             if (border == color) return;
             border = color;
-            const auto html = AIMarkdownRenderer::renderToHtml(text, color);
+            const auto html = messageHtml(text, color);
             if (contentLabel_->text() == html) return;
             const int selectionStart = contentLabel_->selectionStart();
             const int selectionLength = contentLabel_->selectedText().size();
@@ -119,12 +129,12 @@ AIMessageWidget::AIMessageWidget(const QString& text, int fontSize, QWidget* par
 void AIMessageWidget::setupUI(const QString& text, int fontSize)
 {
     QVBoxLayout* mainLayout = new QVBoxLayout(this);
-    mainLayout->setContentsMargins(8, 10, 8, 10);
-    mainLayout->setSpacing(10);
+    ThemeLayout::margins(mainLayout, ThemeLayout::Space::Small, ThemeLayout::Space::Medium, ThemeLayout::Space::Small, ThemeLayout::Space::Medium);
+    ThemeLayout::spacing(mainLayout, ThemeLayout::Space::Medium);
 
     contentLabel_ = new QLabel();
     contentLabel_->setTextFormat(Qt::RichText);
-    contentLabel_->setText(AIMarkdownRenderer::renderToHtml(
+    contentLabel_->setText(messageHtml(
         text, ThemeManager::instance().colors().borderSecondary));
     contentLabel_->setWordWrap(true);
     contentLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
@@ -142,23 +152,21 @@ int AIMessageWidget::heightForContentWidth(int width) const
 {
     QTextDocument doc;
     doc.setDocumentMargin(0);
-    // Match the label stylesheet, which sizes the font in pixels; the
-    // FontManager point-size path would diverge from it under DPI scaling.
-    QFont font(FontManager::instance().sansFamily());
-    font.setPixelSize(fontSize_);
+    const QFont font = contentLabel_->font();
     doc.setDefaultFont(font);
     doc.setHtml(contentLabel_->text());
-    doc.setTextWidth(qMax(100, width - 16));
+    const auto margins = layout()->contentsMargins();
+    doc.setTextWidth(qMax(1, width - margins.left() - margins.right()));
     const int textHeight = qCeil(doc.size().height());
 
-    int height = 10 + textHeight + 10 + 1 + 10 + 8;
-    return qMax(40, height);
+    const auto& metrics = ThemeManager::instance().metrics();
+    return textHeight + margins.top() + margins.bottom() + layout()->spacing() + metrics.borderWidth;
 }
 
 QSize AIMessageWidget::sizeHint() const
 {
     int w = width() > 1 ? width()
-                        : (parentWidget() ? parentWidget()->width() : kViewportFallbackWidth);
+                        : (parentWidget() ? parentWidget()->width() : viewportFallbackWidth());
     return QSize(w, heightForContentWidth(w));
 }
 
@@ -181,26 +189,23 @@ namespace {
 // margins (measurable) instead of the label's stylesheet padding, which the
 // height measurement could not see and which caused the bubble to crop wrapped
 // or CJK text. The label itself has no padding, so its heightForWidth is exact.
-constexpr int kUserBubbleOuterMargin = 8;   // gap around the bubble in the row
-constexpr int kUserBubblePadH = 12;         // frame inner horizontal padding
-constexpr int kUserBubblePadV = 8;          // frame inner vertical padding
 constexpr double kUserBubbleWidthRatio = 0.78;
 
 int userBubbleFrameMaxWidth(int rowWidth)
 {
-    return qMax(80, int(rowWidth * kUserBubbleWidthRatio));
+    const int available = rowWidth - ThemeManager::instance().metrics().spacingSmall * 2;
+    return qMax(1, int(available * kUserBubbleWidthRatio));
 }
 int userBubbleLabelWidth(int rowWidth)
 {
-    return qMax(40, userBubbleFrameMaxWidth(rowWidth) - kUserBubblePadH * 2);
+    return qMax(1, userBubbleFrameMaxWidth(rowWidth) - ThemeManager::instance().metrics().spacingMedium * 2);
 }
 } // namespace
 
 void UserMessageWidget::setupUI(const QString& text, int fontSize)
 {
     QHBoxLayout* mainLayout = new QHBoxLayout(this);
-    mainLayout->setContentsMargins(kUserBubbleOuterMargin, kUserBubbleOuterMargin,
-                                   kUserBubbleOuterMargin, kUserBubbleOuterMargin);
+    ThemeLayout::margins(mainLayout, ThemeLayout::Space::Small);
     mainLayout->addStretch();
 
     bubbleFrame_ = new QFrame();
@@ -208,21 +213,13 @@ void UserMessageWidget::setupUI(const QString& text, int fontSize)
     QHBoxLayout* frameLayout = new QHBoxLayout(bubbleFrame_);
     // Padding as layout margins, not stylesheet padding, so it is included in
     // the measured height.
-    frameLayout->setContentsMargins(kUserBubblePadH, kUserBubblePadV,
-                                    kUserBubblePadH, kUserBubblePadV);
+    ThemeLayout::margins(frameLayout, ThemeLayout::Space::Medium, ThemeLayout::Space::Small, ThemeLayout::Space::Medium, ThemeLayout::Space::Small);
     frameLayout->setSpacing(0);
 
     contentLabel_ = new QLabel(text);
     contentLabel_->setTextFormat(Qt::PlainText);
     contentLabel_->setWordWrap(true);
     contentLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    // Set the font on the widget (not only via stylesheet px) so the height
-    // measurement below uses the exact same metrics the label paints with.
-    {
-        QFont labelFont(FontManager::instance().sansFamily());
-        labelFont.setPixelSize(fontSize);
-        contentLabel_->setFont(labelFont);
-    }
     QSizePolicy labelPolicy = contentLabel_->sizePolicy();
     labelPolicy.setHeightForWidth(true);
     contentLabel_->setSizePolicy(labelPolicy);
@@ -231,11 +228,20 @@ void UserMessageWidget::setupUI(const QString& text, int fontSize)
 
     frameLayout->addWidget(contentLabel_);
     mainLayout->addWidget(bubbleFrame_);
+    ThemeManager::instance().bindMetrics(this, [this](const ThemeMetrics&) {
+        updateBubbleGeometry();
+        updateGeometry();
+    });
 }
 
 void UserMessageWidget::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
+    updateBubbleGeometry();
+}
+
+void UserMessageWidget::updateBubbleGeometry()
+{
     if (bubbleFrame_)
         bubbleFrame_->setMaximumWidth(userBubbleFrameMaxWidth(width()));
     // Pin the label to the exact width the height measurement assumes. Left to
@@ -256,8 +262,7 @@ int UserMessageWidget::heightForContentWidth(int width) const
     // time. All padding is layout margin (frame + row), so the inner text width
     // is exactly frameMaxWidth minus the frame's horizontal margins, and the
     // measured text height is bracketed by those same margins below.
-    QFont font(FontManager::instance().sansFamily());
-    font.setPixelSize(fontSize_);
+    const QFont font = contentLabel_->font();
 
     QTextDocument doc;
     doc.setDocumentMargin(0);
@@ -270,14 +275,15 @@ int UserMessageWidget::heightForContentWidth(int width) const
     // line short and crop. A little bottom whitespace is invisible; a cropped
     // line is the bug we keep hitting. Always err on the side of too tall.
     const int slack = QFontMetrics(font).lineSpacing();
-    const int chrome = kUserBubblePadV * 2 + kUserBubbleOuterMargin * 2;
-    return qMax(44, textHeight + slack + chrome);
+    const auto margins = layout()->contentsMargins();
+    const auto padding = bubbleFrame_->layout()->contentsMargins();
+    return textHeight + slack + margins.top() + margins.bottom() + padding.top() + padding.bottom();
 }
 
 QSize UserMessageWidget::sizeHint() const
 {
     int w = width() > 1 ? width()
-                        : (parentWidget() ? parentWidget()->width() : kViewportFallbackWidth);
+                        : (parentWidget() ? parentWidget()->width() : viewportFallbackWidth());
     return QSize(w, heightForContentWidth(w));
 }
 
@@ -305,11 +311,14 @@ AssistantPanel::AssistantPanel(QWidget* parent)
 
     connect(&FontManager::instance(), &FontManager::fontChanged,
             this, [this]() {
+                currentFontSize_ = AppSettings::instance().panelFontSize(PanelId::Assistant);
                 applyFontSettings();
                 update();
             });
     connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged,
             this, &AssistantPanel::applyAppearance);
+    connect(&ThemeManager::instance(), &ThemeManager::themeChanged,
+            this, [this] { QTimer::singleShot(0, this, &AssistantPanel::relayoutMessages); });
 }
 
 AssistantPanel::~AssistantPanel() = default;
@@ -317,8 +326,8 @@ AssistantPanel::~AssistantPanel() = default;
 void AssistantPanel::setupUI()
 {
     QVBoxLayout* mainLayout = new QVBoxLayout(this);
-    mainLayout->setContentsMargins(8, 8, 8, 8);
-    mainLayout->setSpacing(8);
+    ThemeLayout::margins(mainLayout, ThemeLayout::Space::Small);
+    ThemeLayout::spacing(mainLayout, ThemeLayout::Space::Small);
 
     auto* conversationActions = new QHBoxLayout();
     conversationActions->setContentsMargins(0, 0, 0, 0);
@@ -337,8 +346,12 @@ void AssistantPanel::setupUI()
     conversationActions->addWidget(conversationSelector_, 1);
     newConversationBtn_ = new QPushButton();
     newConversationBtn_->setObjectName(QStringLiteral("assistantNewConversation"));
-    newConversationBtn_->setFixedSize(28, 28);
-    newConversationBtn_->setIconSize(QSize(20, 20));
+    ThemeManager::instance().bindMetrics(newConversationBtn_, [this](const ThemeMetrics& metrics) {
+        newConversationBtn_->setFixedSize(metrics.control.largeHeight, metrics.control.largeHeight);
+    });
+    ThemeManager::instance().bindMetrics(newConversationBtn_, [this](const ThemeMetrics& metrics) {
+        newConversationBtn_->setIconSize(QSize(metrics.objectIconExtent, metrics.objectIconExtent));
+    });
     newConversationBtn_->setProperty("flatIconButton", true);
     newConversationBtn_->setCursor(Qt::PointingHandCursor);
     newConversationBtn_->setToolTip(tr("Start a new conversation"));
@@ -359,7 +372,7 @@ void AssistantPanel::setupUI()
     emptyState_ = new QWidget();
     QVBoxLayout* emptyLayout = new QVBoxLayout(emptyState_);
     emptyLayout->setContentsMargins(0, 0, 0, 0);
-    emptyLayout->setSpacing(12);
+    ThemeLayout::spacing(emptyLayout, ThemeLayout::Space::Medium);
     emptyLayout->addStretch();
 
     emptyIcon_ = new QLabel();
@@ -386,12 +399,16 @@ void AssistantPanel::setupUI()
 
     inputFrame_ = new QFrame();
     inputFrame_->setObjectName("aiInputFrame");
-    inputFrame_->setFixedHeight(44);
-    inputFrame_->setMaximumWidth(INPUT_MAX_WIDTH);
+    ThemeManager::instance().bindMetrics(inputFrame_, [this](const ThemeMetrics& metrics) {
+        inputFrame_->setFixedHeight(metrics.control.largeHeight + metrics.spacingLarge);
+    });
+    ThemeManager::instance().bindMetrics(inputFrame_, [this](const ThemeMetrics& metrics) {
+        inputFrame_->setMaximumWidth(metrics.dialog.preferredWidth);
+    });
 
     QHBoxLayout* frameLayout = new QHBoxLayout(inputFrame_);
-    frameLayout->setContentsMargins(0, 5, 6, 5);
-    frameLayout->setSpacing(6);
+    ThemeLayout::margins(frameLayout, ThemeLayout::Space::None, ThemeLayout::Space::XSmall, ThemeLayout::Space::Small, ThemeLayout::Space::XSmall);
+    ThemeLayout::spacing(frameLayout, ThemeLayout::Space::Small);
 
     inputEdit_ = new QLineEdit();
     inputEdit_->setObjectName("assistantInput");
@@ -403,8 +420,12 @@ void AssistantPanel::setupUI()
     sendBtn_ = new QPushButton();
     sendBtn_->setObjectName("assistantSend");
     sendBtn_->setProperty("flatIconButton", true);
-    sendBtn_->setFixedSize(32, 32);
-    sendBtn_->setIconSize(QSize(20, 20));
+    ThemeManager::instance().bindMetrics(sendBtn_, [this](const ThemeMetrics& metrics) {
+        sendBtn_->setFixedSize(metrics.control.largeHeight, metrics.control.largeHeight);
+    });
+    ThemeManager::instance().bindMetrics(sendBtn_, [this](const ThemeMetrics& metrics) {
+        sendBtn_->setIconSize(QSize(metrics.objectIconExtent, metrics.objectIconExtent));
+    });
     sendBtn_->setCursor(Qt::PointingHandCursor);
     connect(sendBtn_, &QPushButton::clicked, this, &AssistantPanel::onSendClicked);
     frameLayout->addWidget(sendBtn_);
@@ -478,9 +499,10 @@ void AssistantPanel::updateEmptyState()
 void AssistantPanel::applyEmptyLabelStyle()
 {
     const auto& tc = ThemeManager::instance().colors();
+    const int extent = ThemeManager::instance().metrics().control.largeIconExtent;
     emptyIcon_->setPixmap(ThemeManager::instance().resolveIcon(
         QString::fromLatin1(ThemeAssetIds::AssistantEmpty),
-        ThemeAssetVariant{QSize(), 1.0, 0, tc.textPrimary}).icon.pixmap(30, 30));
+        ThemeAssetVariant{QSize(), 1.0, 0, tc.textPrimary}).icon.pixmap(extent, extent));
     emptyLabel_->setProperty("textScale", QStringLiteral("body"));
     emptyLabel_->setText(tr("Chat with Harken AI..."));
 }
@@ -499,7 +521,7 @@ void AssistantPanel::addMessage(const QString& text, bool isUser)
 
     int viewportWidth = chatList_->viewport()->width();
     if (viewportWidth < 150)
-        viewportWidth = kViewportFallbackWidth;
+        viewportWidth = viewportFallbackWidth();
 
     QWidget* messageWidget = nullptr;
     int widgetHeight = 60;
@@ -882,8 +904,8 @@ void AssistantPanel::onFontSettingsChanged(PanelId panelId, int size)
 
 void AssistantPanel::applyFontSettings()
 {
-    QFont inputFont(FontManager::instance().sansFamily());
-    inputFont.setPixelSize(currentFontSize_);
+    const QFont inputFont = FontManager::instance().getFont(FontRole::Body, currentFontSize_);
+    inputEdit_->ensurePolished();
     inputEdit_->setFont(inputFont);
 
     refreshMessages();

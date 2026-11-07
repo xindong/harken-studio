@@ -36,7 +36,9 @@ TitleBarButton::TitleBarButton(TitleBarButtonKind kind, QWidget* parent)
 {
     setText(QString());
     setProperty("flatIconButton", true);
-    setFixedSize(46, 36);
+    ThemeManager::instance().bindMetrics(this, [this](const ThemeMetrics& metrics) {
+        setFixedSize(metrics.chrome.windowButtonWidth, metrics.chrome.titleBarHeight);
+    });
     setFlat(true);
     setFocusPolicy(Qt::NoFocus);
     setCursor(Qt::ArrowCursor);
@@ -74,7 +76,8 @@ void TitleBarButton::paintEvent(QPaintEvent* event)
     QPainter painter(this);
     style()->drawControl(QStyle::CE_PushButton, &option, &painter, this);
 
-    const QSize iconSize(20, 20);
+    const int extent = ThemeManager::instance().metrics().objectIconExtent;
+    const QSize iconSize(extent, extent);
     const QRect iconRect(QPoint((width() - iconSize.width()) / 2,
                                 (height() - iconSize.height()) / 2),
                          iconSize);

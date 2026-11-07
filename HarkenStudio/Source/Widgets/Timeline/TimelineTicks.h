@@ -10,8 +10,6 @@
 
 namespace VNX {
 
-inline constexpr int kTimelinePixelOrigin = 8;
-
 struct TimelineTick
 {
     int64_t coordinate = 0;
@@ -39,6 +37,6 @@ TimelineTickSet buildTimelineTicks(const SegmentTimeSpec& spec,
                                    double pixelsPerUnit,
                                    int width,
                                    const ThemeMetrics::Timeline& metrics,
-                                   int pixelOrigin = kTimelinePixelOrigin);
+                                   int pixelOrigin = 0);
 
 }

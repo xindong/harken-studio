@@ -1,4 +1,5 @@
 #include "TableItemDelegate.h"
+#include "Core/FontManager.h"
 #include "TableGroupHeader.h"
 #include "ProportionalTreeWidget.h"
 
@@ -111,7 +112,9 @@ void TableItemDelegate::initStyleOption(QStyleOptionViewItem* option, const QMod
     }
     option->palette.setColor(QPalette::Text, text);
     option->palette.setColor(QPalette::HighlightedText, text);
-    option->font.setBold(index.data(TableTextRole).toInt() == static_cast<int>(TableTextState::Modified));
+    option->font.setWeight(FontManager::instance().getFont(themeManager_->snapshot(), FontRole::Body,
+        index.data(TableTextRole).toInt() == static_cast<int>(TableTextState::Modified)
+            ? FontEmphasis::Strong : FontEmphasis::Normal).weight());
     if (option->widget && option->features.testFlag(QStyleOptionViewItem::HasCheckIndicator)) {
         const auto rect = option->widget->style()->subElementRect(
             QStyle::SE_ItemViewItemCheckIndicator, option, option->widget);
@@ -167,7 +170,7 @@ void TableItemDelegate::paint(QPainter* painter, const QStyleOptionViewItem& opt
     if (!table || !table->showGrid())
         painter->drawLine(option.rect.bottomLeft(), option.rect.bottomRight());
     if (styled.state.testFlag(QStyle::State_Selected) && option.rect.left() == 0)
-        painter->fillRect(QRect(option.rect.left(), option.rect.top(), 2, option.rect.height()), colors.accent);
+        painter->fillRect(QRect(option.rect.left(), option.rect.top(), themeManager_->metrics().accentBorderWidth, option.rect.height()), colors.accent);
     if (index.siblingAtColumn(0).data(TableDropTargetRole).toBool()) {
         painter->setPen(colors.accent);
         painter->drawLine(option.rect.topLeft(), option.rect.topRight());

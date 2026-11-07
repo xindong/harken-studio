@@ -29,7 +29,8 @@ protected:
         QStyleOptionButton option;
         initStyleOption(&option);
         const QRect textRect = style()->subElementRect(QStyle::SE_PushButtonContents, &option, this);
-        const int iconWidth = option.icon.isNull() ? 0 : option.iconSize.width() + 4;
+        const int iconWidth = option.icon.isNull() ? 0
+            : option.iconSize.width() + ThemeManager::instance().metrics().spacingXSmall;
         option.text = fontMetrics().elidedText(option.text, Qt::ElideRight,
                                                qMax(0, textRect.width() - iconWidth));
         painter.drawControl(QStyle::CE_PushButton, option);
@@ -65,7 +66,9 @@ MenuActionButton::MenuActionButton(QWidget* parent)
     dropdownButton_->installEventFilter(this);
 
     divider_->setProperty("menuActionButtonPart", QStringLiteral("divider"));
-    divider_->setFixedWidth(1);
+    ThemeManager::instance().bindMetrics(divider_, [this](const ThemeMetrics& metrics) {
+        divider_->setFixedWidth(metrics.borderWidth);
+    });
     divider_->setAttribute(Qt::WA_TransparentForMouseEvents);
 
     auto* row = new QHBoxLayout(this);

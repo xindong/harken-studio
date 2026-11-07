@@ -1542,8 +1542,10 @@ bool TableWidget::eventFilter(QObject* watched, QEvent* event)
                     rowMoveIndicator_->setObjectName(QStringLiteral("tableRowInsertion"));
                     rowMoveIndicator_->setAttribute(Qt::WA_TransparentForMouseEvents);
                 }
-                rowMoveIndicator_->setGeometry(0, std::clamp(indicatorY, 0, body->height() - 2),
-                                               body->width(), 2);
+                const int thickness = themeManager_->metrics().accentBorderWidth;
+                rowMoveIndicator_->setGeometry(0,
+                    std::clamp(indicatorY, 0, std::max(0, body->height() - thickness)),
+                    body->width(), thickness);
                 rowMoveIndicator_->show();
                 rowMoveIndicator_->raise();
             } else if (rowMoveIndicator_) {

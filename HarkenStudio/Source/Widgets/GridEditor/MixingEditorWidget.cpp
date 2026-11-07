@@ -132,7 +132,8 @@ MixingEditorWidget::MixingEditorWidget(QWidget* parent) : QWidget(parent)
         refreshRowSelection();
     });
     connect(view_, &ResizableTableView::rowHeightAdjusted, this, [this](int row, int height) {
-        if (validRow(row)) rowHeights_[mixing_.rows[row].guid] = height;
+        if (validRow(row)) rowBaseHeights_[mixing_.rows[row].guid] =
+            height / ThemeManager::instance().snapshot()->uiScale;
     });
     auto* navigation = new ObjectRefNavigation(this);
     connect(navigation, &ObjectRefNavigation::locateRequested, this,
@@ -173,7 +174,15 @@ MixingEditorWidget::MixingEditorWidget(QWidget* parent) : QWidget(parent)
         });
     connect(&manager.variableRehearsal(), &VariableRehearsal::rehearsalChanged,
         this, [this] { if (!reloadPending_) refreshDerived(); });
-    connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this, [this] { scheduleReload(); });
+    ThemeManager::instance().bindMetrics(this, [this](const ThemeMetrics& metrics) {
+        const int minimumHeight = metrics.controlHeight * 6;
+        const qreal scale = ThemeManager::instance().snapshot()->uiScale;
+        view_->setMinimumRowHeight(minimumHeight);
+        for (int row = 0; row < static_cast<int>(views_.size()); ++row)
+            view_->setRowHeight(row, std::max(minimumHeight,
+                qRound(rowBaseHeights_.value(mixing_.rows[row].guid) * scale)));
+        table_->refreshLayout();
+    });
     reload();
 }
 
@@ -186,7 +195,7 @@ MixingEditorWidget::~MixingEditorWidget()
 void MixingEditorWidget::setBoundItem(ProjectItem* item)
 {
     cancelEdits();
-    if (boundItem_ != item) { selectedChildren_.clear(); rowHeights_.clear(); selectedRow_.reset(); }
+    if (boundItem_ != item) { selectedChildren_.clear(); rowBaseHeights_.clear(); selectedRow_.reset(); }
     boundItem_ = item;
     reload();
 }
@@ -278,7 +287,6 @@ void MixingEditorWidget::buildRow(int index)
     auto& view = views_[index];
     const auto& row = mixing_.rows[index];
     const auto generation = generation_;
-    const auto& metrics = ThemeManager::instance().metrics();
     auto* number = new QStandardItem(QString::number(index + 1));
     number->setTextAlignment(Qt::AlignCenter);
     number->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
@@ -287,9 +295,11 @@ void MixingEditorWidget::buildRow(int index)
     view.page->setObjectName(QStringLiteral("mixingRow"));
     view.page->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
     auto* layout = new QVBoxLayout(view.page);
-    layout->setContentsMargins(metrics.table.cellPaddingX, metrics.table.cellPaddingY,
-                               metrics.table.cellPaddingX, metrics.table.resizeHandleRadius * 2);
-    layout->setSpacing(metrics.spacingSmall);
+    ThemeManager::instance().bindMetrics(layout, [layout](const ThemeMetrics& metrics) {
+        layout->setContentsMargins(metrics.table.cellPaddingX, metrics.table.cellPaddingY,
+                                   metrics.table.cellPaddingX, metrics.table.resizeHandleRadius * 2);
+        layout->setSpacing(metrics.spacingSmall);
+    });
     auto* variable = new ObjectRefWidget(view.page);
     variable->setObjectName(QStringLiteral("mixingRowVariable"));
     variable->setFilterType(ProjectItem::Type::Variable);
@@ -390,7 +400,8 @@ void MixingEditorWidget::buildRow(int index)
     view.canvas->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
     view_->setIndexWidget(model_->index(index, 1), view.page);
     view_->setIndexWidget(model_->index(index, 2), view.canvas);
-    view_->setRowHeight(index, rowHeights_.value(row.guid, view_->verticalHeader()->minimumSectionSize()));
+    view_->setRowHeight(index, std::max(view_->verticalHeader()->minimumSectionSize(),
+        qRound(rowBaseHeights_.value(row.guid) * ThemeManager::instance().snapshot()->uiScale)));
     connect(view.canvas, &MixingRowCanvas::clipSelected, this, [this, index, generation](int child) {
         if (isCurrent(generation)) selectChild(index, child);
     });

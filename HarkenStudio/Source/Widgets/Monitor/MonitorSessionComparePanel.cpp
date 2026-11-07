@@ -1,4 +1,5 @@
 #include "Monitor/MonitorSessionComparePanel.h"
+#include "Core/ThemeLayout.h"
 
 #include <QLabel>
 #include <QVBoxLayout>
@@ -10,7 +11,7 @@ MonitorSessionComparePanel::MonitorSessionComparePanel(QWidget* parent)
 {
     setObjectName(QStringLiteral("MonitorSessionComparePanel"));
     auto* root = new QVBoxLayout(this);
-    root->setContentsMargins(8, 8, 8, 8);
+    ThemeLayout::margins(root, ThemeLayout::Space::Small);
     pickerLabel_ = new QLabel(this);
     pickerLabel_->setObjectName(QStringLiteral("MonitorSessionComparePicker"));
     pickerLabel_->setWordWrap(true);

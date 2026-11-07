@@ -1,3 +1,4 @@
+#include "Core/ThemeManager.h"
 #include "SignalPathSource.h"
 
 #include "BlueprintEdgeKind.h"
@@ -197,8 +198,8 @@ SignalPathLayout layoutGraph(const SignalPathGraph& graph_, const std::vector<QS
     const bool reverse = direction == CanvasFlowDirection::RL || direction == CanvasFlowDirection::BT;
     const auto along = [vertical](const QSizeF& size) { return vertical ? size.height() : size.width(); };
     const auto across = [vertical](const QSizeF& size) { return vertical ? size.width() : size.height(); };
-    constexpr qreal columnGap = 96.0;
-    constexpr qreal rowGap = 40.0;
+    const qreal columnGap = ThemeManager::instance().unscaledSnapshot()->ui.metrics.node.pathColumnSpacing;
+    const qreal rowGap = ThemeManager::instance().unscaledSnapshot()->ui.metrics.node.pathRowSpacing;
 
     std::vector<std::vector<size_t>> predecessors(count);
     std::vector<size_t> remaining(count), distance(count), order;

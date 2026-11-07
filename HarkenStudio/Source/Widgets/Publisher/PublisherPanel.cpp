@@ -1,5 +1,6 @@
 
 #include "PublisherPanel.h"
+#include "Core/ThemeLayout.h"
 #include "RuntimeBridge/PackagingBridge.h"
 #include "../../Core/ActionManager.h"
 #include "../../Core/AppSettings.h"
@@ -446,8 +447,8 @@ void PublisherPanel::setupUI()
     auto* content = new QWidget();
     DebugTint::tintContainer(content);
     auto* contentLayout = new QVBoxLayout(content);
-    contentLayout->setContentsMargins(8, 8, 8, 8);
-    contentLayout->setSpacing(6);
+    ThemeLayout::margins(contentLayout, ThemeLayout::Space::Small);
+    ThemeLayout::spacing(contentLayout, ThemeLayout::Space::Small);
 
     objectSendWarningLabel_ = new QLabel();
     objectSendWarningLabel_->setObjectName("objectSendWarningLabel");
@@ -514,7 +515,7 @@ QWidget* PublisherPanel::createToolbar()
     auto* row = new QHBoxLayout(toolbar);
     row->setSizeConstraint(QLayout::SetNoConstraint);
     row->setContentsMargins(0, 0, 0, 0);
-    row->setSpacing(8);
+    ThemeLayout::spacing(row, ThemeLayout::Space::Small);
 
     publishSettingsButton_ = new QToolButton(toolbar);
     publishSettingsButton_->setObjectName("packPublishSettingsButton");

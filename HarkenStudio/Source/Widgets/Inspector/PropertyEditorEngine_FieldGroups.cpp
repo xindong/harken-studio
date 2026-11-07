@@ -1,4 +1,5 @@
 #include "PropertyEditorEngine.h"
+#include "Core/ThemeLayout.h"
 
 #include "Core/ActionManager.h"
 #include "Core/PlatformContextService.h"
@@ -90,7 +91,7 @@ void PropertyEditorEngine::buildGroupHeader(FieldGroupId group, CollapsibleSecti
         header->setObjectName(QStringLiteral("fieldGroupHeader_") + groupName(group));
         auto* layout = new QHBoxLayout(header);
         layout->setContentsMargins(0, 0, 0, 0);
-        layout->setSpacing(6);
+        ThemeLayout::spacing(layout, ThemeLayout::Space::Small);
         section->setHeaderWidget(header);
     }
     QString label = tr("Inherit");

@@ -66,10 +66,12 @@ protected:
         fill.setAlphaF(fill.alphaF() * 0.22 * fade * pop);
         QColor edge = accent;
         edge.setAlphaF(edge.alphaF() * fade);
-        p.setPen(QPen(edge, 2));
+        const auto& metrics = ThemeManager::instance().metrics();
+        p.setPen(QPen(edge, metrics.accentBorderWidth));
         p.setBrush(fill);
         const qreal radius = r.height() / 2.0;
-        p.drawRoundedRect(r.adjusted(1, 1, -1, -1), radius, radius);
+        const qreal inset = metrics.accentBorderWidth / 2.0;
+        p.drawRoundedRect(r.adjusted(inset, inset, -inset, -inset), radius, radius);
     }
 
 private:
@@ -95,16 +97,18 @@ void ping(QTreeWidget* tree, QTreeWidgetItem* item)
     QRect r = tree->visualItemRect(item);
     if (r.isEmpty()) return;
 
-    const int iconW = tree->iconSize().width() > 0 ? tree->iconSize().width() : 20;
+    const auto& metrics = ThemeManager::instance().metrics();
+    const int iconW = tree->iconSize().width() > 0 ? tree->iconSize().width() : metrics.objectIconExtent;
     const int textW = QFontMetrics(tree->font()).horizontalAdvance(item->text(0));
-    const int visibleWidth = qMin(iconW + textW + 22, tree->viewport()->width());
+    const int padding = metrics.spacingSmall * 2 + metrics.spacingXSmall;
+    const int visibleWidth = qMin(iconW + textW + padding, tree->viewport()->width());
     auto* scrollBar = tree->horizontalScrollBar();
     if (r.left() < 0)
         scrollBar->setValue(scrollBar->value() + r.left());
     else if (r.left() + visibleWidth > tree->viewport()->width())
         scrollBar->setValue(scrollBar->value() + r.left() + visibleWidth - tree->viewport()->width());
     r = tree->visualItemRect(item);
-    const int w = qMin(iconW + textW + 22, tree->viewport()->width() - r.left());
+    const int w = qMin(iconW + textW + padding, tree->viewport()->width() - r.left());
     if (w <= 0) return;
 
     new PingOverlay(tree, QRect(r.left(), r.top(), w, r.height()));

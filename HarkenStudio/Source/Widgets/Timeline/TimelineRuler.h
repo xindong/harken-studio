@@ -23,7 +23,7 @@ public:
     void refresh();
     int timeRulerHeight() const;
     QRect timeAxisRect() const;
-    static QSize cursorHandleSize() { return {15, 12}; }
+    static QSize cursorHandleSize();
     QRect cursorHandleRect() const;
     TimelineMarkerRuler* markerLane() const { return markerLane_; }
 

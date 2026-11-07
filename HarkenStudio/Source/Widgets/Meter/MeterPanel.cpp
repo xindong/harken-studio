@@ -1,4 +1,5 @@
 #include "MeterPanel.h"
+#include "Core/ThemeLayout.h"
 
 #include "Core/AudioEngine.h"
 #include "Core/FontManager.h"
@@ -45,8 +46,7 @@ constexpr double kSpectrogramMaxSpeed = 10.0;
 
 QFont peakValueFont()
 {
-    return FontManager::instance().getFont(FontRole::Mono,
-        ThemeManager::instance().snapshot()->ui.typography.label.pointSize + 2, QFont::Bold);
+    return FontManager::instance().getFont(FontRole::Body, FontEmphasis::Strong);
 }
 
 }
@@ -59,8 +59,10 @@ MeterPanel::MeterPanel(QWidget* parent, Presentation presentation)
     elapsed_.start();
     setObjectName(QStringLiteral("MeterPanel"));
     auto* root = new QVBoxLayout(this);
-    root->setContentsMargins(8, 8, 8, 8);
-    root->setSpacing(8);
+    if (presentation_ == Presentation::Standalone) {
+        ThemeLayout::margins(root, ThemeLayout::Space::Small);
+        ThemeLayout::spacing(root, ThemeLayout::Space::Small);
+    }
     busSelector_ = new ObjectRefWidget(this);
     busSelector_->setObjectName(QStringLiteral("meterBusSelector"));
     busSelector_->setFilterType(ProjectItem::Type::Bus);
@@ -75,14 +77,14 @@ MeterPanel::MeterPanel(QWidget* parent, Presentation presentation)
     modeSelector_->addItem(tr("Spectrogram"), static_cast<int>(Mode::Spectrogram));
     masterLabel_->setFixedHeight(modeSelector_->sizeHint().height());
     if (presentation_ == Presentation::Embedded) {
-        root->setContentsMargins(0, 0, 1, 0);
+        ThemeLayout::margins(root, ThemeLayout::Space::None, ThemeLayout::Space::None, ThemeLayout::Space::Compact, ThemeLayout::Space::None);
         root->setSpacing(0);
         header_ = new QWidget(this);
-        header_->setContentsMargins(0, 0, 0, 1);
+        ThemeLayout::margins(header_, ThemeLayout::Space::None, ThemeLayout::Space::None, ThemeLayout::Space::None, ThemeLayout::Space::Compact);
         header_->installEventFilter(this);
         auto* header = new QHBoxLayout(header_);
-        header->setContentsMargins(4, 2, 4, 2);
-        header->setSpacing(4);
+        ThemeLayout::margins(header, ThemeLayout::Space::XSmall, ThemeLayout::Space::Compact, ThemeLayout::Space::XSmall, ThemeLayout::Space::Compact);
+        ThemeLayout::spacing(header, ThemeLayout::Space::XSmall);
         expandButton_ = new QToolButton(this);
         expandButton_->setObjectName(QStringLiteral("meterExpandButton"));
         expandButton_->setCheckable(true);
@@ -177,12 +179,13 @@ MeterPanel::MeterPanel(QWidget* parent, Presentation presentation)
 
 QSize MeterPanel::sizeHint() const
 {
+    const auto& metrics = ThemeManager::instance().metrics();
     if (presentation_ == Presentation::Embedded) {
-        const int preferredWidth = expandedWidth_ > 0 ? expandedWidth_ : std::max(208, fullPeakWidth() + 8);
+        const int preferredWidth = expandedWidth_ > 0 ? expandedWidth_ : std::max(metrics.panel.minimumWidth, fullPeakWidth() + metrics.spacingSmall);
         return {expandButton_->isChecked() ? std::max(minimumSizeHint().width(), preferredWidth)
-            : minimumSizeHint().width(), 320};
+            : minimumSizeHint().width(), metrics.panel.preferredHeight};
     }
-    return {240, 320};
+    return {metrics.panel.preferredWidth, metrics.panel.preferredHeight};
 }
 
 void MeterPanel::setEmbeddedPreferredWidth(int width)
@@ -193,33 +196,35 @@ void MeterPanel::setEmbeddedPreferredWidth(int width)
 
 QSize MeterPanel::minimumSizeHint() const
 {
+    const auto& metrics = ThemeManager::instance().metrics();
     if (presentation_ == Presentation::Standalone)
-        return {160, 220};
+        return {metrics.panel.minimumWidth, metrics.panel.minimumHeight};
     if (expandButton_->isChecked())
-        return {100, 220};
-    const int readoutWidth = QFontMetrics(FontManager::instance().getFont(FontRole::Axis))
+        return {fullPeakWidth(), metrics.panel.minimumHeight};
+    const int readoutWidth = QFontMetrics(FontManager::instance().getFont(FontRole::Caption))
         .horizontalAdvance(QStringLiteral("-96.0"));
     const auto margins = layout()->contentsMargins();
     return {std::max(header_->minimumSizeHint().width(), readoutWidth)
-        + margins.left() + margins.right(), 220};
+        + margins.left() + margins.right(), metrics.panel.minimumHeight};
 }
 
 int MeterPanel::fullPeakWidth() const
 {
     const auto& style = ThemeManager::instance().snapshot()->domains.meter.peakMeter;
-    const QFontMetrics axis(FontManager::instance().getFont(FontRole::Axis));
-    const int scaleWidth = std::max({30, style.metrics.outerInsetLeft,
-        axis.horizontalAdvance(QStringLiteral("-96.0")) + 10});
-    const int barWidth = QFontMetrics(peakValueFont()).horizontalAdvance(QStringLiteral("-96.0")) + 8;
+    const QFontMetrics axis(FontManager::instance().getFont(FontRole::Caption));
+    const int padding = MeterScale::labelPadding(axis);
+    const int scaleWidth = std::max(style.metrics.outerInsetLeft,
+        axis.horizontalAdvance(QStringLiteral("-96.0")) + padding);
+    const int barWidth = QFontMetrics(peakValueFont()).horizontalAdvance(QStringLiteral("-96.0")) + padding;
     return scaleWidth + 2 * barWidth + style.metrics.reservedWidth
-        + std::max(10, style.metrics.outerInsetRight) + 2;
+        + std::max(padding, style.metrics.outerInsetRight) + ThemeManager::instance().metrics().borderWidth * 2;
 }
 
 PeakMeterLayoutMode MeterPanel::peakLayoutMode() const
 {
     if (presentation_ == Presentation::Embedded && (!expandButton_ || !expandButton_->isChecked()))
         return PeakMeterLayoutMode::Inline;
-    return isLevelMode() && canvas_ && canvas_->width() < 60
+    return isLevelMode() && canvas_ && canvas_->width() < fullPeakWidth()
         ? PeakMeterLayoutMode::Inline : PeakMeterLayoutMode::Axis;
 }
 
@@ -764,7 +769,8 @@ void MeterPanel::layoutSpectrogramSpeedControl()
     const QRect plot = plotBounds();
     const auto& metrics = ThemeManager::instance().snapshot()->domains.meter.spectrogramMeter.metrics;
     const int top = plot.bottom() + qRound(metrics.timeLabelTopOffset);
-    spectrogramSpeedControl_->setGeometry(plot.left(), top, plot.width(), canvas_->height() - top - 2);
+    spectrogramSpeedControl_->setGeometry(plot.left(), top, plot.width(),
+        canvas_->height() - top - ThemeManager::instance().metrics().spacingCompact);
 }
 
 void MeterPanel::updateDisplay()
@@ -806,7 +812,7 @@ void MeterPanel::paintCanvas(QPainter& painter)
     const auto& curve = snapshot->domains.curve;
     const QRect canvas = canvasBounds();
     const QRect plot = plotBounds();
-    const QFont axisFont = FontManager::instance().getFont(FontRole::Axis);
+    const QFont axisFont = FontManager::instance().getFont(FontRole::Caption);
     const QFontMetrics font(axisFont);
     painter.save();
     painter.setClipRect(canvas);
@@ -819,7 +825,7 @@ void MeterPanel::paintCanvas(QPainter& painter)
         frame.canvasBounds = canvas;
         frame.scaleBounds = scale;
         frame.barCount = plot.isValid() ? (mode_ == Mode::Loudness ? 1 : 2) : 0;
-        frame.labelFont = FontManager::instance().getFont(FontRole::Label);
+        frame.labelFont = FontManager::instance().getFont(FontRole::Caption);
         frame.peakCap = theme.resolveImage(QString::fromLatin1(ThemeAssetIds::MeterPeakCap),
             {{}, devicePixelRatioF(), 0, {}}).resource;
         for (const auto& tick : buildAmplitudeAxisTicks(plot, plot.bottom(), plot.height() - 1,
@@ -846,7 +852,7 @@ void MeterPanel::paintCanvas(QPainter& painter)
                 QRectF(QPointF(plot.topLeft()), QPointF(plot.bottomRight())),
                 cursor.position, Qt::Horizontal);
             const qreal labelHeight = std::min(qreal(canvas.height()),
-                std::max(curve.metrics.readoutHeight, qreal(font.height() + 4)));
+                std::max(curve.metrics.readoutHeight, qreal(font.height() + MeterScale::labelPadding(font))));
             const qreal labelWidth = compact
                 ? std::min(qreal(plot.width()), font.horizontalAdvance(cursor.label) + curve.metrics.readoutHorizontalPadding)
                 : scale.width();
@@ -861,7 +867,7 @@ void MeterPanel::paintCanvas(QPainter& painter)
             painter.drawRoundedRect(readout, curve.metrics.readoutRadius, curve.metrics.readoutRadius);
             painter.setFont(axisFont);
             painter.setPen(curve.colors.readoutText);
-            painter.drawText(compact ? readout : readout.adjusted(0, 0, -6, 0),
+            painter.drawText(compact ? readout : readout.adjusted(0, 0, -MeterScale::labelPadding(font), 0),
                 compact ? Qt::AlignCenter : Qt::AlignRight | Qt::AlignVCenter, cursor.label);
         }
         const QFont valueFont = peakValueFont();
@@ -904,7 +910,7 @@ void MeterPanel::paintMeasurement(QPainter& painter, const QRect& canvas)
     const auto& display = displayState();
     const auto snapshot = ThemeManager::instance().snapshot();
     const auto& style = snapshot->domains.meter;
-    const QFontMetrics font(FontManager::instance().getFont(FontRole::Axis));
+    const QFontMetrics font(FontManager::instance().getFont(FontRole::Caption));
     const QRect plot = plotBounds();
     const float maximum = std::min(20000.0f, display.spectrumSampleRate * 0.5f);
     if (mode_ == Mode::Spectrum) {

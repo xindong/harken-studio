@@ -277,7 +277,7 @@ QWidget* SelectionListWidget::buildRow(int index, const SelectionEntry& occurren
     weight->setKeyboardTracking(false);
     weight->setButtonSymbols(QAbstractSpinBox::NoButtons);
     weight->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-    weight->setFont(FontManager::instance().getFont(FontRole::Mono));
+
     QtControlSkin::setSemanticProperty(weight, "fieldRole",
                                        QStringLiteral("inspectorValue"));
     const auto* selection = boundItem_->comp<VSelection>();

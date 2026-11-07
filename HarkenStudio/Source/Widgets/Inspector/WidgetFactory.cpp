@@ -1,5 +1,6 @@
 
 #include "WidgetFactory.h"
+#include "Core/ThemeManager.h"
 #include "ObjectReferencePicker.h"
 #include "Core/QtControlSkin.h"
 #include "Widgets/Common/LayoutDebugTint.h"
@@ -98,7 +99,9 @@ void WidgetFactory::registerBuiltins()
         auto labelText = cfg["label"].toString();
         if (!labelText.isEmpty()) {
             auto* label = new QLabel(labelText, container);
-            label->setMinimumWidth(80);
+            ThemeManager::instance().bindMetrics(label, [label](const ThemeMetrics& metrics) {
+                label->setMinimumWidth(metrics.parameter.labelMinimumWidth);
+            });
             layout->addWidget(label);
         }
 
@@ -128,7 +131,9 @@ void WidgetFactory::registerBuiltins()
         auto labelText = cfg["label"].toString();
         if (!labelText.isEmpty()) {
             auto* label = new QLabel(labelText, container);
-            label->setMinimumWidth(80);
+            ThemeManager::instance().bindMetrics(label, [label](const ThemeMetrics& metrics) {
+                label->setMinimumWidth(metrics.parameter.labelMinimumWidth);
+            });
             layout->addWidget(label);
         }
 
@@ -200,7 +205,9 @@ void WidgetFactory::registerBuiltins()
         auto labelText = cfg["label"].toString();
         if (!labelText.isEmpty()) {
             auto* label = new QLabel(labelText, container);
-            label->setMinimumWidth(80);
+            ThemeManager::instance().bindMetrics(label, [label](const ThemeMetrics& metrics) {
+                label->setMinimumWidth(metrics.parameter.labelMinimumWidth);
+            });
             layout->addWidget(label);
         }
 
@@ -244,12 +251,16 @@ void WidgetFactory::registerBuiltins()
         auto labelText = cfg["label"].toString();
         if (!labelText.isEmpty()) {
             auto* label = new QLabel(labelText, container);
-            label->setMinimumWidth(80);
+            ThemeManager::instance().bindMetrics(label, [label](const ThemeMetrics& metrics) {
+                label->setMinimumWidth(metrics.parameter.labelMinimumWidth);
+            });
             layout->addWidget(label);
         }
 
         auto* swatch = new QPushButton(container);
-        swatch->setFixedWidth(120);
+        ThemeManager::instance().bindMetrics(swatch, [swatch](const ThemeMetrics& metrics) {
+            swatch->setFixedWidth(metrics.parameter.valueMinimumWidth);
+        });
         const QString objName = cfg["objectName"].toString();
         if (!objName.isEmpty()) {
             swatch->setObjectName(objName);

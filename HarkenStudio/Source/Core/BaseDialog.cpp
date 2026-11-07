@@ -2,6 +2,7 @@
 #include "BaseDialog.h"
 #include "FramelessChrome.h"
 #include "ThemeManager.h"
+#include "WindowPlacement.h"
 #include <QShowEvent>
 
 namespace VNX {
@@ -11,6 +12,11 @@ BaseDialog::BaseDialog(QWidget* parent, Qt::WindowFlags flags)
 {
     connect(&ThemeManager::instance(), &ThemeManager::themeChanged,
             this, &BaseDialog::applyTheme);
+    connect(&ThemeManager::instance(), &ThemeManager::themeChanged, this, [this] {
+        QMetaObject::invokeMethod(this, [this] {
+            if (isVisible()) fitWindowToScreen(this);
+        }, Qt::QueuedConnection);
+    });
     applyTheme();
 }
 
@@ -50,6 +56,7 @@ void BaseDialog::showEvent(QShowEvent* event)
     }
 
     QDialog::showEvent(event);
+    fitWindowToScreen(this);
 }
 
 }

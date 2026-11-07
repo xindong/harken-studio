@@ -24,7 +24,7 @@ InspectorSlotStrip::InspectorSlotStrip(QWidget* parent)
     setFixedHeight(inspector.slotHeight);
     for (auto& slot : slots_) {
         if (slot.kind == InspectorSlotKind::Attenuation)
-            layout_->addSpacing(inspector.slotSpacing);
+            layout_->addSpacing(0);
         slot.cell = new QWidget(this);
         slot.cell->setFixedSize(inspector.bindingSlotWidth, inspector.slotHeight);
         auto* cellLayout = new QHBoxLayout(slot.cell);
@@ -32,6 +32,16 @@ InspectorSlotStrip::InspectorSlotStrip(QWidget* parent)
         cellLayout->setSpacing(0);
         layout_->addWidget(slot.cell);
     }
+    ThemeManager::instance().bindMetrics(this, [this](const ThemeMetrics& metrics) {
+        const auto& inspector = metrics.inspector;
+        setFixedHeight(inspector.slotHeight);
+        for (auto& slot : slots_)
+            slot.cell->setFixedSize(inspector.bindingSlotWidth, inspector.slotHeight);
+        for (int index = 0; index < layout_->count(); ++index)
+            if (auto* spacer = layout_->itemAt(index)->spacerItem())
+                spacer->changeSize(inspector.slotSpacing, 0, QSizePolicy::Fixed, QSizePolicy::Fixed);
+        layout_->invalidate();
+    });
     connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged,
             this, [this] { update(); });
 }
@@ -121,10 +131,11 @@ void InspectorSlotStrip::paintEvent(QPaintEvent* event)
     const QRect left = slots_.front().cell->geometry();
     const QRect right = slots_.back().cell->geometry();
     const int x = (left.x() + left.width() + right.x()) / 2;
-    const int separatorHeight = 14;
+    const auto& metrics = ThemeManager::instance().metrics();
+    const int separatorHeight = height() - metrics.spacingXSmall * 2;
     const int inset = (height() - separatorHeight) / 2;
     QPainter painter(this);
-    painter.fillRect(x, inset, 1, separatorHeight,
+    painter.fillRect(x, inset, metrics.borderWidth, separatorHeight,
                      ThemeManager::instance().colors().borderPrimary);
 }
 
