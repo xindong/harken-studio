@@ -3686,6 +3686,19 @@ TEST(CanonicalPackSetActivate, StreamOnlyMediaGainsResidentWhenDefinitionTurnsRe
     EXPECT_EQ(2u, upgraded.channelCount);
     EXPECT_EQ(kFrames, upgraded.frames);
     ExpectSameAudible(reference, PostAndCapture(engine, kBlocks), kFrames);
+
+    // The entry now has resident samples and its original range. After the
+    // original file changes in place, a streamed revision of the same samples
+    // from another file must not reuse that stale range.
+    ASSERT_TRUE(harkentest::WriteBytes(set.content,
+        BuildSoundContent(PathSet::ContentId(), 1, true, samples, 0, true)));
+    const auto streamedAgain = (set.directory / "ContentStreamedAgain.pack").string();
+    ASSERT_TRUE(harkentest::WriteBytes(streamedAgain,
+        BuildSoundContent(PathSet::ContentId(), 3, true, samples)));
+    set.members[1].source.utf8Path = streamedAgain.c_str();
+    ASSERT_EQ(VN_OK, Activate(set.members, report, 2));
+    EXPECT_NE(cookie, engine->registry.CookieOf(kSound));
+    ExpectSameAudible(reference, PostAndCapture(engine, kBlocks), kFrames);
 }
 
 TEST(CanonicalPackSetActivate, StreamedPackRebuiltInPlaceActivatesNextRevision) {

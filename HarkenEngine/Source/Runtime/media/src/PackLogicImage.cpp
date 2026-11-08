@@ -1192,9 +1192,10 @@ struct FileCanonicalSource {
             if (match == MediaContentMatch::Equal) equal = prior;
             break;
         }
-        if (equal == nullptr)
-            completedStaging.Add(sizeof(PackMediaRange) +
-                detail::DecodeBytes(range->chunkChecksums.size(), sizeof(std::uint64_t)));
+        // The checksum table was charged before it was built; a shared entry
+        // drops this table and its charge.
+        if (equal == nullptr) completedStaging.Add(sizeof(PackMediaRange));
+        else completedStaging.Release(detail::DecodeBytes(range->chunkChecksums.size(), sizeof(std::uint64_t)));
         return registry.PreparePackRangeSamples(media.soundId, std::move(range), out, equal);
     }
     VnResult Finish(PackCanonicalImage& image,
@@ -1299,6 +1300,9 @@ struct FileCanonicalSource {
                     count - cursor, media.blobOffset + media.blobBytes - position));
                 if (cursor % alignof(float) != 0 || step % sizeof(float) != 0) return VN_BAD_PACK;
                 if (position == media.blobOffset && streamed[index] != 0) {
+                    completedStaging.Add(detail::DecodeBytes(
+                        PackMediaChunkCount(media.frameCount, kPackMediaRangeChunkFrames),
+                        sizeof(std::uint64_t)));
                     if (!chunkSums[index].Begin(media.frameCount, media.channelCount,
                                                 kPackMediaRangeChunkFrames))
                         return VN_BAD_PACK;

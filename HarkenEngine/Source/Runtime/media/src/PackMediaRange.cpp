@@ -117,8 +117,14 @@ bool EqualResidentSamples(const PCMView& left, const PCMView& right) noexcept {
 
 // Bit-exact sample equality across resident planes and Pack ranges, signed
 // zero included. Facts, revisions and chunk checksums only reject.
-MediaContentMatch MatchMediaContent(const PCMView& leftView, const PackMediaRange* leftRange,
-                          const PCMView& rightView, const PackMediaRange* rightRange) {
+MediaContentMatch MatchMediaContent(const PCMView& leftResident, const PackMediaRange* leftRange,
+                          const PCMView& rightResident, const PackMediaRange* rightRange) {
+    // When both sides carry a range, either may be streamed later, so compare
+    // the ranges themselves; resident samples must not vouch for a range whose
+    // file changed in place.
+    const bool bothRanges = leftRange != nullptr && rightRange != nullptr;
+    const PCMView leftView = bothRanges ? PCMView{} : leftResident;
+    const PCMView rightView = bothRanges ? PCMView{} : rightResident;
     if (leftView.Valid() && rightView.Valid())
         return EqualResidentSamples(leftView, rightView) ? MediaContentMatch::Equal : MediaContentMatch::Different;
     if (!leftView.Valid() && leftRange == nullptr) return MediaContentMatch::Different;
