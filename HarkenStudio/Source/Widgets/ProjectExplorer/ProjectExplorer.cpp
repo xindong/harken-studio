@@ -2,7 +2,8 @@
 #include "ProjectExplorer.h"
 #include "Core/ThemeLayout.h"
 #include "Core/FontManager.h"
-#include "ExplorerSection.h"
+#include "Widgets/Common/PaneSection.h"
+#include "Widgets/Common/PaneSectionStack.h"
 #include "SourcesTreeWidget.h"
 #include "Core/AppSettings.h"
 #include "Core/AssetPipeline/AssetRegistry.h"
@@ -19,13 +20,11 @@
 #include "Widgets/Shared/TreeRowStyle.h"
 
 #include <QDirIterator>
-#include <QFrame>
 #include <QPainter>
 #include <QPixmap>
 #include <QScrollBar>
-#include <QSettings>
-#include <QSignalBlocker>
 #include <QSplitter>
+#include <QSignalBlocker>
 #include <QTreeWidget>
 #include <QTreeWidgetItemIterator>
 #include <QVBoxLayout>
@@ -135,20 +134,12 @@ void ProjectExplorer::setupPanelChrome()
         applySourcesVisibility();
     });
 
-    auto* content = new QFrame(this);
-    content->setObjectName(QStringLiteral("projectExplorerContent"));
-    content->setProperty("explorerRole", "content");
-    auto* contentLayout = new QVBoxLayout(content);
-    contentLayout->setContentsMargins(0, 0, 0, 0);
-    contentLayout->setSpacing(0);
-    layout->addWidget(content, 1);
+    auto* sections = new PaneSectionStack(QStringLiteral("Explorer"), this);
+    sections->setObjectName(QStringLiteral("projectExplorerContent"));
+    sections->splitter()->setObjectName(QStringLiteral("projectExplorerSplitter"));
+    layout->addWidget(sections, 1);
 
-    sectionsSplitter_ = new QSplitter(Qt::Vertical, content);
-    sectionsSplitter_->setObjectName(QStringLiteral("projectExplorerSplitter"));
-    sectionsSplitter_->setProperty("splitterRole", QStringLiteral("border"));
-    sectionsSplitter_->setHandleWidth(1);
-    sectionsSplitter_->setChildrenCollapsible(false);
-    assetsSection_ = new ExplorerSection(tr("Assets"), sectionsSplitter_);
+    assetsSection_ = sections->addSection(tr("Assets"), QStringLiteral("assets"), 300);
     assetsSection_->setObjectName(QStringLiteral("projectAssetsSection"));
     auto* assetsLayout = new QVBoxLayout(assetsSection_->content());
     assetsLayout->setContentsMargins(0, 0, 0, 0);
@@ -156,7 +147,7 @@ void ProjectExplorer::setupPanelChrome()
     assetsLayout->addWidget(treeWidget_, 1);
     treeWidget_->setMinimumSize(0, 0);
 
-    sourcesSection_ = new ExplorerSection(tr("Sources"), sectionsSplitter_);
+    sourcesSection_ = sections->addSection(tr("Sources"), QStringLiteral("sources"), 200);
     sourcesSection_->setObjectName(QStringLiteral("projectSourcesSection"));
     auto* sourcesLayout = new QVBoxLayout(sourcesSection_->content());
     sourcesLayout->setContentsMargins(0, 0, 0, 0);
@@ -198,7 +189,7 @@ void ProjectExplorer::setupPanelChrome()
             });
     sourcesLayout->addWidget(sourcesTree_, 1);
 
-    connect(sourcesSection_, &ExplorerSection::headerContextMenuRequested,
+    connect(sourcesSection_, &PaneSection::headerContextMenuRequested,
             sourcesTree, &SourcesTreeWidget::showRootContextMenu);
     connect(sourcesTree, &SourcesTreeWidget::contentRevealRequested, this, [this]() {
         sourcesSection_->setExpanded(true);
@@ -209,58 +200,6 @@ void ProjectExplorer::setupPanelChrome()
             }
         }
     });
-
-    contentLayout->addWidget(sectionsSplitter_, 1);
-    collapsedSpace_ = new QWidget(content);
-    collapsedSpace_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    contentLayout->addWidget(collapsedSpace_, 1);
-
-    QSettings settings;
-    const auto sizes = settings.value(QStringLiteral("Explorer/sectionSizes")).toList();
-    if (sizes.size() == 2 && sizes[0].toInt() > 0 && sizes[1].toInt() > 0)
-        expandedSizes_ = {sizes[0].toInt(), sizes[1].toInt()};
-    assetsSection_->setExpanded(settings.value(QStringLiteral("Explorer/assetsExpanded"), true).toBool());
-    sourcesSection_->setExpanded(settings.value(QStringLiteral("Explorer/sourcesExpanded"), true).toBool());
-    connect(assetsSection_, &ExplorerSection::expandedChanged, this, [this]() {
-        updateSectionLayout();
-        saveSectionLayout();
-    });
-    connect(sourcesSection_, &ExplorerSection::expandedChanged, this, [this]() {
-        updateSectionLayout();
-        saveSectionLayout();
-    });
-    connect(sectionsSplitter_, &QSplitter::splitterMoved, this, [this]() {
-        if (assetsSection_->isExpanded() && sourcesSection_->isExpanded()) {
-            expandedSizes_ = sectionsSplitter_->sizes();
-            saveSectionLayout();
-        }
-    });
-    updateSectionLayout();
-}
-
-void ProjectExplorer::updateSectionLayout()
-{
-    const bool assets = assetsSection_->isExpanded();
-    const bool sources = sourcesSection_->isExpanded();
-    collapsedSpace_->setVisible(!assets && !sources);
-    layout()->activate();
-    sectionsSplitter_->parentWidget()->layout()->activate();
-    sectionsSplitter_->refresh();
-    sectionsSplitter_->handle(1)->setEnabled(assets && sources);
-    if (assets && sources)
-        sectionsSplitter_->setSizes(expandedSizes_);
-    else if (assets || sources)
-        sectionsSplitter_->setSizes({assets ? 10000 : assetsSection_->minimumHeight(),
-                                     sources ? 10000 : sourcesSection_->minimumHeight()});
-}
-
-void ProjectExplorer::saveSectionLayout()
-{
-    QSettings settings;
-    settings.setValue(QStringLiteral("Explorer/assetsExpanded"), assetsSection_->isExpanded());
-    settings.setValue(QStringLiteral("Explorer/sourcesExpanded"), sourcesSection_->isExpanded());
-    settings.setValue(QStringLiteral("Explorer/sectionSizes"),
-        QVariantList{expandedSizes_[0], expandedSizes_[1]});
 }
 
 void ProjectExplorer::addAction(const QString& packName, const QString& actionName)

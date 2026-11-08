@@ -90,7 +90,7 @@ TransitionTableWidget::TransitionTableWidget(QWidget* parent)
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
 
-    table_ = new TableWidget(TableOptions{TableKind::Config, TableBodySizing::Content}, this);
+    table_ = new TableWidget(TableOptions{TableKind::Config, TableBodySizing::Expanding}, this);
     table_->setAccessibleName(tr("Transitions"));
     table_->setColumns(QStringLiteral("Transition"), {
         {QStringLiteral("Number"), QStringLiteral("#"), 0},
@@ -106,7 +106,7 @@ TransitionTableWidget::TransitionTableWidget(QWidget* parent)
     table_->setRowSelectionHandler([this](QWidget* row) {
         selectRow(row->property("rowIndex").toInt());
     });
-    root->addWidget(table_);
+    root->addWidget(table_, 1);
 
     auto* footer = table_->footer();
     addButton_ = footer->addButton();

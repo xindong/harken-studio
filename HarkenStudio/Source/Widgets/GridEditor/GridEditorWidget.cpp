@@ -12,9 +12,9 @@
 #include "Core/QtControlSkin.h"
 #include "Core/ThemeManager.h"
 #include "Core/TransitionSemantics.h"
-#include "Widgets/Common/CollapsibleSection.h"
+#include "Widgets/Common/PaneSection.h"
+#include "Widgets/Common/PaneSectionStack.h"
 
-#include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QSet>
@@ -101,51 +101,26 @@ GridEditorWidget::GridEditorWidget(QWidget* parent)
     emptyLabel_->setWordWrap(true);
     stack_->addWidget(emptyLabel_);
 
-    gridPage_ = new QFrame(stack_);
+    gridPage_ = new PaneSectionStack(QStringLiteral("SelectionEditor"), stack_);
     gridPage_->setObjectName(QStringLiteral("selectionEditorPage"));
-    QtControlSkin::setSemanticProperty(gridPage_, "surfaceRole", QStringLiteral("panel"));
-    auto* pageLayout = new QVBoxLayout(gridPage_);
-    pageLayout->setContentsMargins(0, 0, 0, 0);
-
-    pageLayout->setSpacing(0);
-    const auto insetContent = [this](CollapsibleSection* section, QWidget* content, int stretch) {
-        auto* holder = new QWidget(section);
-        auto* holderLayout = new QVBoxLayout(holder);
-        holderLayout->setSpacing(0);
-        holderLayout->addWidget(content, stretch);
-        ThemeManager::instance().bindMetrics(holder, [holderLayout](const ThemeMetrics& metrics) {
-            holderLayout->setContentsMargins(0, 0, metrics.layout.panelPadding, 0);
+    const auto fill = [](PaneSection* section, QWidget* content) {
+        auto* layout = new QVBoxLayout(section->content());
+        layout->setSpacing(0);
+        layout->addWidget(content, 1);
+        ThemeManager::instance().bindMetrics(content, [layout](const ThemeMetrics& metrics) {
+            const int padding = metrics.layout.panelPadding;
+            layout->setContentsMargins(padding, padding, padding, padding);
         });
-        auto* sectionLayout = new QVBoxLayout();
-        sectionLayout->addWidget(holder, stretch);
-        section->setContentLayout(sectionLayout);
     };
-    contentSection_ = new CollapsibleSection(tr("Content"), 150, gridPage_);
+    contentSection_ = gridPage_->addSection(tr("Content"), QStringLiteral("content"), 300);
     contentSection_->setObjectName(QStringLiteral("selectionContentSection"));
-    contentSection_->setDynamicContent(true);
-    contentSection_->setFillsHeight(true);
-    editorStack_ = new QStackedWidget(contentSection_);
+    editorStack_ = new QStackedWidget(contentSection_->content());
     editorStack_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
-    insetContent(contentSection_, editorStack_, 1);
-    contentSection_->setExpanded(true);
-    pageLayout->addWidget(contentSection_, 1);
-
-    transitionSection_ = new CollapsibleSection(tr("Transition"), 150, gridPage_);
+    fill(contentSection_, editorStack_);
+    transitionSection_ = gridPage_->addSection(tr("Transition"), QStringLiteral("transition"), 200);
     transitionSection_->setObjectName(QStringLiteral("selectionTransitionSection"));
-    transitionSection_->setDynamicContent(true);
-    transitionTable_ = new TransitionTableWidget(transitionSection_);
-    insetContent(transitionSection_, transitionTable_, 0);
-    transitionSection_->setExpanded(true);
-    pageLayout->addWidget(transitionSection_);
-    pageLayout->addStretch(0);
-    ThemeManager::instance().bindMetrics(this, [this](const ThemeMetrics& metrics) {
-        editorStack_->setContentsMargins(0, 0, metrics.layout.panelPadding, 0);
-        transitionTable_->setContentsMargins(0, 0, metrics.layout.panelPadding, 0);
-    });
-    connect(contentSection_, &CollapsibleSection::expandedChanged, this, [pageLayout](bool expanded) {
-        pageLayout->setStretch(0, expanded ? 1 : 0);
-        pageLayout->setStretch(2, expanded ? 0 : 1);
-    });
+    transitionTable_ = new TransitionTableWidget(transitionSection_->content());
+    fill(transitionSection_, transitionTable_);
 
     discreteGrid_ = new DiscreteGridWidget(editorStack_);
     editorStack_->addWidget(discreteGrid_);
@@ -374,7 +349,7 @@ void GridEditorWidget::refreshFromModel()
 
 void GridEditorWidget::refreshTransitionSection()
 {
-    transitionSection_->setVisible(displayItem_
+    gridPage_->setSectionVisible(transitionSection_, displayItem_
         && TransitionSemantics::transitionMountState(*displayItem_,
                currentWorldPlatformScope(PlatformContextService::instance().context()))
             == TransitionMountState::Editable);

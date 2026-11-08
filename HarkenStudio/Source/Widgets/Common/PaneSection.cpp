@@ -1,5 +1,4 @@
-#include "ExplorerSection.h"
-#include "Core/ThemeLayout.h"
+#include "PaneSection.h"
 
 #include "Core/ThemeAssetCatalog.h"
 #include "Core/ThemeManager.h"
@@ -14,7 +13,7 @@ namespace VNX {
 
 namespace {
 
-class ExplorerSectionToggle final : public QToolButton
+class PaneSectionToggle final : public QToolButton
 {
 public:
     using QToolButton::QToolButton;
@@ -46,25 +45,25 @@ protected:
 
 }
 
-ExplorerSection::ExplorerSection(const QString& title, QWidget* parent)
+PaneSection::PaneSection(const QString& title, const QString& settingsId, QWidget* parent)
     : QWidget(parent)
+    , settingsId_(settingsId)
 {
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
     header_ = new QWidget(this);
-    header_->setProperty("explorerRole", "sectionHeader");
+    header_->setProperty("paneRole", "sectionHeader");
     header_->setAttribute(Qt::WA_StyledBackground);
     header_->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(header_, &QWidget::customContextMenuRequested, this, [this](const QPoint& position) {
         emit headerContextMenuRequested(header_->mapToGlobal(position));
     });
     auto* headerLayout = new QHBoxLayout(header_);
-    ThemeLayout::margins(headerLayout, ThemeLayout::Space::None, ThemeLayout::Space::Tight, ThemeLayout::Space::None, ThemeLayout::Space::Tight);
     headerLayout->setSpacing(0);
-    toggle_ = new ExplorerSectionToggle(header_);
-    toggle_->setProperty("explorerRole", "sectionToggle");
-    toggle_->setObjectName(QStringLiteral("explorerSectionToggle"));
+    toggle_ = new PaneSectionToggle(header_);
+    toggle_->setProperty("paneRole", "sectionToggle");
+    toggle_->setObjectName(QStringLiteral("paneSectionToggle"));
     toggle_->setText(title);
     toggle_->setAccessibleName(title);
     toggle_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
@@ -91,27 +90,30 @@ ExplorerSection::ExplorerSection(const QString& title, QWidget* parent)
     updateHeader();
 }
 
-bool ExplorerSection::isExpanded() const
+bool PaneSection::isExpanded() const
 {
     return toggle_->isChecked();
 }
 
-void ExplorerSection::setExpanded(bool expanded)
+void PaneSection::setExpanded(bool expanded)
 {
     toggle_->setChecked(expanded);
 }
 
-void ExplorerSection::updateHeader()
+void PaneSection::updateHeader()
 {
     auto& theme = ThemeManager::instance();
-    const auto& layout = theme.metrics().layout;
-    const int height = qMax(layout.sectionHeaderHeight, toggle_->fontMetrics().height() + layout.rowInset * 2);
+    const auto& metrics = theme.metrics();
+    const auto& layout = metrics.layout;
+    const int height = qMax(layout.sectionHeaderHeight,
+                            toggle_->fontMetrics().height() + layout.rowInset * 2 + metrics.borderWidth);
     header_->setFixedHeight(height);
-    const int extent = theme.metrics().iconExtent;
+    header_->layout()->setContentsMargins(0, 0, 0, metrics.borderWidth);
+    const int extent = metrics.iconExtent;
     toggle_->setIconSize(QSize(extent, extent));
     toggle_->setIcon(theme.resolveIcon(QString::fromLatin1(isExpanded()
         ? ThemeAssetIds::NavigationChevronDown : ThemeAssetIds::NavigationChevronRight)).icon);
-    setMinimumHeight(isExpanded() ? height + theme.metrics().control.largeHeight : height);
+    setMinimumHeight(isExpanded() ? height + metrics.control.largeHeight : height);
     setMaximumHeight(isExpanded() ? QWIDGETSIZE_MAX : height);
     setSizePolicy(QSizePolicy::Expanding, isExpanded() ? QSizePolicy::Expanding : QSizePolicy::Fixed);
     updateGeometry();

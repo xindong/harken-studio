@@ -16,7 +16,8 @@ class QStackedWidget;
 
 namespace VNX {
 
-class CollapsibleSection;
+class PaneSection;
+class PaneSectionStack;
 class MixingEditorWidget;
 class TransitionTableWidget;
 class DiscreteGridWidget;
@@ -82,13 +83,13 @@ private:
     QHBoxLayout* crumbLayout_ = nullptr;
     QStackedWidget* stack_ = nullptr;
     QLabel* emptyLabel_ = nullptr;
-    QWidget* gridPage_ = nullptr;
+    PaneSectionStack* gridPage_ = nullptr;
     QStackedWidget* editorStack_ = nullptr;
     DiscreteGridWidget* discreteGrid_ = nullptr;
     MixingEditorWidget* mixingEditor_ = nullptr;
     SelectionListWidget* selectionList_ = nullptr;
-    CollapsibleSection* contentSection_ = nullptr;
-    CollapsibleSection* transitionSection_ = nullptr;
+    PaneSection* contentSection_ = nullptr;
+    PaneSection* transitionSection_ = nullptr;
     TransitionTableWidget* transitionTable_ = nullptr;
 };
 

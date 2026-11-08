@@ -30,7 +30,6 @@ public:
     bool isExpanded() const { return expanded_; }
 
     void setDynamicContent(bool dynamic);
-    void setFillsHeight(bool fills);
     QString title() const { return toggleButton_->text(); }
 
     void setIndicatorColor(const QColor& color);
@@ -51,7 +50,6 @@ protected:
 private:
     void applyTheme();
     void refreshAppearance();
-    void refreshFill();
     int detectNestingLevel() const;
 
     QToolButton* toggleButton_;
@@ -69,7 +67,6 @@ private:
     int animationDuration_;
     bool expanded_ = false;
     bool dynamicContent_ = false;
-    bool fillsHeight_ = false;
     bool hasCustomIndicator_ = false;
     bool hasTopSeparator_ = false;
     int level_ = -1;

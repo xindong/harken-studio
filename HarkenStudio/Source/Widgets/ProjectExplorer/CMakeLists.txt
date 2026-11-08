@@ -15,8 +15,6 @@
 #       CMakeLists.txt. SourceEditor may follow or precede this directory.
 
 add_library(harken_editor_explorer STATIC
-    ExplorerSection.cpp
-    ExplorerSection.h
     ProjectExplorer.cpp
     ProjectExplorer.h
     SourcesTreeWidget.cpp

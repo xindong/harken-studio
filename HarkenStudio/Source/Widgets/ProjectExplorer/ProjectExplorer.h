@@ -6,14 +6,13 @@
 
 #include "Widgets/ProjectTree/ProjectTreePanel.h"
 
-class QSplitter;
 class QTreeWidget;
 class QTreeWidgetItem;
 
 namespace VNX {
 
 struct AssetInfo;
-class ExplorerSection;
+class PaneSection;
 
 class ProjectExplorer : public ProjectTreePanel
 {
@@ -27,8 +26,8 @@ public:
     bool pingSource(uint32_t sourceId);
 
     QTreeWidget* sourcesTree() const { return sourcesTree_; }
-    ExplorerSection* assetsSection() const { return assetsSection_; }
-    ExplorerSection* sourcesSection() const { return sourcesSection_; }
+    PaneSection* assetsSection() const { return assetsSection_; }
+    PaneSection* sourcesSection() const { return sourcesSection_; }
 
 signals:
     void sourceEditorRequested(uint32_t sourceId);
@@ -44,14 +43,8 @@ private:
     void applySourcesVisibility();
     void updateSourceRow(QTreeWidgetItem* row, const AssetInfo& asset);
     QTreeWidgetItem* ensureSourcesFolder(const QString& path);
-    void updateSectionLayout();
-    void saveSectionLayout();
-
-    QSplitter* sectionsSplitter_ = nullptr;
-    ExplorerSection* assetsSection_ = nullptr;
-    ExplorerSection* sourcesSection_ = nullptr;
-    QWidget* collapsedSpace_ = nullptr;
-    QList<int> expandedSizes_ = {300, 200};
+    PaneSection* assetsSection_ = nullptr;
+    PaneSection* sourcesSection_ = nullptr;
     QTreeWidget* sourcesTree_ = nullptr;
     QHash<uint32_t, QTreeWidgetItem*> sourceRows_;
     QHash<QString, QTreeWidgetItem*> sourceFolders_;
