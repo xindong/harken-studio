@@ -3360,7 +3360,7 @@ std::vector<float> PlanarSignal(float scale) {
 // Content pack whose action plays one Sound backed by its own stereo media.
 std::vector<std::uint8_t> BuildSoundContent(std::uint64_t id, std::uint64_t revision,
                                             bool streamed, const std::vector<float>& samples,
-                                            std::uint64_t providerId = 0) {
+                                            std::uint64_t providerId = 0, bool leadingMedia = false) {
     using namespace harken;
     using namespace harkentest::packfoundation;
     const auto bus = DefaultRuntimeBusFixture();
@@ -3428,6 +3428,8 @@ std::vector<std::uint8_t> BuildSoundContent(std::uint64_t id, std::uint64_t revi
     image.AddEntry(kPackEntryKindCanonicalDefinitionPartition, id, std::move(partition));
     image.AddEntry(kPackEntryKindPackDependencyEdge, VnObjectId{},
         DependencyPayload(PackId("Init"), 1, bus.triple), kPackPackDependencyEdgeVintage);
+    // An unrelated media blob ahead of the Sound's moves its file offset.
+    if (leadingMedia) image.AddMedia(harkentest::ObjectId(8399), std::vector<float>(4096, 0.125f));
     if (providerId == 0) {
         image.AddMedia(kSound, samples, {}, 2);
         return image.Build();
@@ -3690,22 +3692,30 @@ TEST(CanonicalPackSetActivate, StreamedPackRebuiltInPlaceActivatesNextRevision) 
     using namespace packstream;
     const auto first = PlanarSignal(1.0f), second = PlanarSignal(0.5f);
     const auto secondReference = ResidentReference("pack-stream-inplace-ref", second);
-    for (const bool nextStreamed : {true, false}) {
-        SCOPED_TRACE(nextStreamed);
+    const auto firstReference = ResidentReference("pack-stream-inplace-ref1", first);
+    struct Case { bool nextStreamed; bool sameSamplesMoved; };
+    for (const auto rebuilt : {Case{true, false}, Case{false, false}, Case{true, true}}) {
+        SCOPED_TRACE(rebuilt.nextStreamed);
+        SCOPED_TRACE(rebuilt.sameSamplesMoved);
         EngineSession session(StreamConfig());
         ASSERT_EQ(VN_OK, session.InitResult());
         auto* engine = session.Engine();
-        PathSet set(nextStreamed ? "pack-stream-inplace-s" : "pack-stream-inplace-r");
+        PathSet set("pack-stream-inplace");
         ASSERT_TRUE(harkentest::WriteBytes(set.content,
             BuildSoundContent(PathSet::ContentId(), 1, true, first)));
         VnCanonicalPackSetActivationReportV1 report{};
         ASSERT_EQ(VN_OK, Activate(set.members, report));
         // The published range still reads this path through its open source.
+        // With the same samples at a new offset, comparing against it must
+        // read the rewritten bytes, which no longer match its checksums.
+        const auto& next = rebuilt.sameSamplesMoved ? first : second;
         ASSERT_TRUE(harkentest::WriteBytes(set.content,
-            BuildSoundContent(PathSet::ContentId(), 2, nextStreamed, second)));
+            BuildSoundContent(PathSet::ContentId(), 2, rebuilt.nextStreamed, next, 0,
+                              rebuilt.sameSamplesMoved)));
         ASSERT_EQ(VN_OK, Activate(set.members, report, 1));
-        EXPECT_EQ(!nextStreamed, engine->registry.Lookup(kSound).Valid());
-        ExpectSameAudible(secondReference, PostAndCapture(engine, kBlocks), kFrames);
+        EXPECT_EQ(!rebuilt.nextStreamed, engine->registry.Lookup(kSound).Valid());
+        ExpectSameAudible(rebuilt.sameSamplesMoved ? firstReference : secondReference,
+                          PostAndCapture(engine, kBlocks), kFrames);
     }
 }
 
