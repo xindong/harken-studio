@@ -3359,7 +3359,8 @@ std::vector<float> PlanarSignal(float scale) {
 
 // Content pack whose action plays one Sound backed by its own stereo media.
 std::vector<std::uint8_t> BuildSoundContent(std::uint64_t id, std::uint64_t revision,
-                                            bool streamed, const std::vector<float>& samples) {
+                                            bool streamed, const std::vector<float>& samples,
+                                            std::uint64_t providerId = 0) {
     using namespace harken;
     using namespace harkentest::packfoundation;
     const auto bus = DefaultRuntimeBusFixture();
@@ -3427,6 +3428,35 @@ std::vector<std::uint8_t> BuildSoundContent(std::uint64_t id, std::uint64_t revi
     image.AddEntry(kPackEntryKindCanonicalDefinitionPartition, id, std::move(partition));
     image.AddEntry(kPackEntryKindPackDependencyEdge, VnObjectId{},
         DependencyPayload(PackId("Init"), 1, bus.triple), kPackPackDependencyEdgeVintage);
+    if (providerId == 0) {
+        image.AddMedia(kSound, samples, {}, 2);
+        return image.Build();
+    }
+    PackDependencyEdge edge;
+    edge.prerequisitePackStableId = providerId;
+    edge.edgeKind = kPackDependencyEdgeKindContent;
+    edge.required01 = 1;
+    std::vector<std::uint8_t> payload(kPackDependencyEdgeBytes, 0);
+    SerializePackDependencyEdge(edge, payload.data());
+    const auto index = image.AddEntry(kPackEntryKindPackDependencyEdge, VnObjectId{},
+                                      std::move(payload), kPackPackDependencyEdgeVintage);
+    image.SetRelationOrdinal(index, 1);
+    return image.Build();
+}
+
+// Content pack carrying only the stereo media; its Sound is defined by a
+// member that declares a required content edge to this pack.
+std::vector<std::uint8_t> BuildMediaProvider(std::uint64_t id, const std::vector<float>& samples) {
+    using namespace harkentest::packfoundation;
+    const auto bus = DefaultRuntimeBusFixture();
+    std::uint64_t size = 0;
+    auto partition = PartitionPayload(id, 1, 0, 0, &size, 64, project, bus.triple);
+    ImageBuilder image(harken::kPackKindCanonicalContent);
+    image.AddEntry(harken::kPackEntryKindPackRequirementBlock, id,
+        RequirementPayload(id, 1, 1, 0, size, bus.triple));
+    image.AddEntry(harken::kPackEntryKindCanonicalDefinitionPartition, id, std::move(partition));
+    image.AddEntry(harken::kPackEntryKindPackDependencyEdge, VnObjectId{},
+        DependencyPayload(PackId("Init"), 1, bus.triple), harken::kPackPackDependencyEdgeVintage);
     image.AddMedia(kSound, samples, {}, 2);
     return image.Build();
 }
@@ -3469,10 +3499,11 @@ void PumpFiring(harken::Engine* engine, std::uint32_t blocks, harkentest::Captur
 
 harkentest::Capture PostAndCapture(harken::Engine* engine, std::uint32_t blocks) {
     harkentest::Capture capture;
-    VnActionResolved resolved{};
-    EXPECT_EQ(VN_OK, Resolve("Play_A", &resolved));
+    VnPostActionDesc desc{};
+    desc.structSize = sizeof(desc);
+    desc.actionId = action;
     VnActionFiringHandle firing = 0;
-    EXPECT_EQ(VN_OK, Vn_PostActionResolved(&resolved, 0, 0, &firing));
+    EXPECT_EQ(VN_OK, Vn_PostAction(&desc, &firing));
     PumpFiring(engine, blocks, capture);
     EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
     return capture;
@@ -3676,6 +3707,51 @@ TEST(CanonicalPackSetActivate, StreamedPackRebuiltInPlaceActivatesNextRevision) 
         EXPECT_EQ(!nextStreamed, engine->registry.Lookup(kSound).Valid());
         ExpectSameAudible(secondReference, PostAndCapture(engine, kBlocks), kFrames);
     }
+}
+
+TEST(CanonicalPackSetActivate, ProviderMediaStreamsForAnotherMembersDefinitionAndGainsResident) {
+    using namespace packstream;
+    const auto samples = PlanarSignal(1.0f);
+    const auto reference = ResidentReference("pack-stream-provider-ref", samples);
+    EngineSession session(StreamConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    PathSet set("pack-stream-provider");
+    const auto providerId = PackId("zzz_media_provider");
+    ASSERT_LT(PathSet::ContentId(), providerId);
+    const std::string provider = (set.directory / "Provider.pack").string();
+    const std::string next = (set.directory / "ContentResident.pack").string();
+    ASSERT_TRUE(harkentest::WriteBytes(provider, BuildMediaProvider(providerId, samples)));
+    ASSERT_TRUE(harkentest::WriteBytes(set.content,
+        BuildSoundContent(PathSet::ContentId(), 1, true, samples, providerId)));
+    ASSERT_TRUE(harkentest::WriteBytes(next,
+        BuildSoundContent(PathSet::ContentId(), 2, false, samples, providerId)));
+    std::array<VnCanonicalPackSetMemberV1, 3> members{set.members[0].source, set.members[1].source, {}};
+    members[2] = members[1];
+    members[2].packStableId = providerId;
+    members[2].utf8Path = provider.c_str();
+    std::array<VnCanonicalPackSetMemberResultV1, 3> rows{};
+    for (auto& row : rows) row.structSize = sizeof(row);
+    VnCanonicalPackSetActivationReportV1 report{};
+    ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(members.data(), 3, rows.data(), report));
+    // The provider has no Sound definition of its own; the other member's
+    // streaming choice still keeps its media out of resident memory.
+    {
+        const auto streamed = engine->registry.ReferenceOf(kSound, engine->registry.CookieOf(kSound));
+        EXPECT_FALSE(streamed.View().Valid());
+        EXPECT_NE(nullptr, streamed.Range());
+    }
+    ExpectSameAudible(reference, PostAndCapture(engine, kBlocks), kFrames);
+
+    // The next revision defines the provider's unchanged media as resident.
+    for (std::size_t i = 0; i < members.size(); ++i) members[i].expectedHandle = rows[i].handle;
+    members[1].utf8Path = next.c_str();
+    ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(members.data(), 3, rows.data(), report,
+                                                          report.initHandle, report.resultSetRevision));
+    const auto upgraded = engine->registry.Lookup(kSound);
+    ASSERT_TRUE(upgraded.Valid());
+    EXPECT_EQ(kFrames, upgraded.frames);
+    ExpectSameAudible(reference, PostAndCapture(engine, kBlocks), kFrames);
 }
 
 } // namespace
