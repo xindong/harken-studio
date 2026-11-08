@@ -242,11 +242,13 @@ bool paintsControlSurface(const QWidget* widget)
 
 void refreshPalette(QWidget* widget, ThemeManager& manager, QStyle::State state)
 {
-    QLineEdit* editor = nullptr;
+    QWidget* editor = nullptr;
     if (auto* spin = qobject_cast<QAbstractSpinBox*>(widget))
         editor = spin->findChild<QLineEdit*>(QString(), Qt::FindDirectChildrenOnly);
     else if (auto* combo = qobject_cast<QComboBox*>(widget))
         editor = combo->lineEdit();
+    else if (auto* area = qobject_cast<QAbstractScrollArea*>(widget))
+        editor = area->viewport();
     if (editor && editor->font() != widget->font())
         editor->setFont(widget->font());
     const QWidget* owner = widget;
@@ -516,7 +518,8 @@ bool HarkenStyle::eventFilter(QObject* watched, QEvent* event)
             refresh = true;
             break;
         case QEvent::FontChange:
-            refresh = qobject_cast<QAbstractSpinBox*>(widget) || qobject_cast<QComboBox*>(widget);
+            refresh = qobject_cast<QAbstractSpinBox*>(widget) || qobject_cast<QComboBox*>(widget)
+                || qobject_cast<QAbstractScrollArea*>(widget);
             break;
         default:
             break;
