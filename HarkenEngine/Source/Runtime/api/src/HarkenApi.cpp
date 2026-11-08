@@ -35562,14 +35562,25 @@ void ClearOrdinaryCurrentProgram(harken::EnginePlayableServiceRow& row) noexcept
 
 bool ScheduleSourcePreparationHorizon(harken::Engine& engine, std::uint64_t* horizon) noexcept;
 
+// Leaves a streamed start its preparation lead. The lead is bounded to half of
+// the remaining timeline window so a boundary at or after it stays publishable;
+// a stream that is still not ready there is refused without moving the source.
+std::uint64_t StreamPreparationFloor(harken::Engine& engine, std::uint64_t floor) noexcept {
+    std::uint64_t horizon = 0;
+    if (!ScheduleSourcePreparationHorizon(engine, &horizon) || horizon <= floor) return floor;
+    const auto windowEnd = engine.timelinePool.WindowEndFrame();
+    const auto reachable = windowEnd > floor ? floor + (windowEnd - floor) / 2u : floor;
+    return std::max(floor, std::min(horizon, reachable));
+}
+
 // A loop successor has no authored boundary, so a streamed one starts after its
 // preparation lead instead of being refused at the earliest frame.
 bool DeferContainerLoopSuccessorForStream(harken::Engine& engine, bool streamed,
     std::uint64_t continuationFrame, std::uint64_t* retryFrame) noexcept {
-    std::uint64_t horizon = 0;
-    if (!streamed || !ScheduleSourcePreparationHorizon(engine, &horizon) || continuationFrame >= horizon)
-        return false;
-    *retryFrame = horizon;
+    if (!streamed) return false;
+    const auto floor = StreamPreparationFloor(engine, continuationFrame);
+    if (floor <= continuationFrame) return false;
+    *retryFrame = floor;
     return true;
 }
 
@@ -35578,8 +35589,9 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
     harken::EnginePlayableServiceRow& row,
     const OrdinaryContainerNavigationNode& frame,
     std::uint64_t continuationFrame,
-    std::uint64_t* retryFrame) noexcept {
-    if (retryFrame == nullptr) {
+    std::uint64_t* retryFrame,
+    harken::LogicCommitSequence* deferredTicket) noexcept {
+    if (retryFrame == nullptr || deferredTicket == nullptr) {
         return ContainerLoopSuccessorStatus::Refused;
     }
     *retryFrame = 0;
@@ -35679,8 +35691,10 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
         row.selectionCommitted = false;
     }
     CatchUpTimelineWindow(engine, continuationFrame, &row);
-    harken::LogicCommitSequence ticket = 0;
-    if (engine.logicCommits.TryIssue(&ticket) !=
+    // A stream deferral retries the same rolled-back selection, so it keeps the
+    // ticket that seeds it.
+    harken::LogicCommitSequence ticket = std::exchange(*deferredTicket, 0);
+    if (ticket == 0 && engine.logicCommits.TryIssue(&ticket) !=
         harken::LogicCommitCoordinator::IssueStatus::Issued) {
         return ContainerLoopSuccessorStatus::Refused;
     }
@@ -36182,6 +36196,7 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
         streamedSchedule = streamedSchedule || preparedScheduleLeaves[index].voice.streamed;
     if (DeferContainerLoopSuccessorForStream(engine, streamedSchedule, continuationFrame, retryFrame)) {
         rollbackCreated();
+        *deferredTicket = ticket;
         return ContainerLoopSuccessorStatus::RetryAtFrame;
     }
     if (leafInstance == 0) {
@@ -36835,6 +36850,7 @@ engine.runtimeRecreateRequired = true;
     }
     if (DeferContainerLoopSuccessorForStream(engine, voice.streamed, continuationFrame, retryFrame)) {
         rollbackCommitted();
+        *deferredTicket = ticket;
         return ContainerLoopSuccessorStatus::RetryAtFrame;
     }
     voice.target.programSemanticFingerprint =
@@ -37046,11 +37062,12 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessor(
     harken::EnginePlayableServiceRow& row,
     const OrdinaryContainerNavigationNode& frame) noexcept {
     std::uint64_t continuationFrame = QueueEarliestContinuationFrame(engine);
+    harken::LogicCommitSequence deferredTicket = 0;
     for (std::uint32_t attempt = 0;
          attempt <= engine.playableInstances.Capacity(); ++attempt) {
         std::uint64_t retryFrame = 0;
         const auto status = StartContainerLoopSuccessorAttempt(
-            engine, row, frame, continuationFrame, &retryFrame);
+            engine, row, frame, continuationFrame, &retryFrame, &deferredTicket);
         if (status != ContainerLoopSuccessorStatus::RetryAtFrame) {
             return status;
         }
@@ -37499,9 +37516,7 @@ std::uint64_t VariableControlTargetFirstOpen(harken::Engine& engine,
         ? VariableControlScheduleHasStream(row.Invocation().packPlaybackView, schedule)
         : VariableControlScheduleHasStream(row.variableControlWorldUsesCurrentAuthority
             ? engine.variables.CurrentPlayableWorld() : row.VariableControlWorld(), schedule);
-    std::uint64_t horizon = 0;
-    if (!streamed) return firstOpen;
-    return ScheduleSourcePreparationHorizon(engine, &horizon) ? std::max(firstOpen, horizon) : UINT64_MAX;
+    return streamed ? StreamPreparationFloor(engine, firstOpen) : firstOpen;
 }
 
 bool ServiceScheduleSourceCohorts(harken::Engine& engine, harken::EnginePlayableServiceRow& row,
