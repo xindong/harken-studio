@@ -1169,9 +1169,26 @@ private:
         bool applied = false;
     };
 
+    // A target Start that is not ready would be refused when its event applies,
+    // after the slice already moved the source and the instance; refuse the
+    // whole slice instead so the current playback stays untouched.
+    bool TargetStreamsReady(const TimelineArmToken* members,
+                            std::uint16_t sourceControlCount,
+                            std::uint16_t memberCount) const noexcept {
+        for (std::uint16_t index = sourceControlCount; index < memberCount; ++index) {
+            if (members == nullptr ||
+                !voices_.TimelineStreamStartReady(members[index].renderSlot,
+                    members[index].renderGeneration)) return false;
+        }
+        return true;
+    }
+
     static bool ValidateVariableControlSlice(void* opaque) noexcept {
         auto& context =
             *static_cast<VariableControlSliceContext*>(opaque);
+        if (!context.naturalEndPrelude &&
+            !context.sink->TargetStreamsReady(context.members, context.sourceControlCount,
+                context.memberCount)) return false;
         if (context.naturalEndCompletion) {
             TransitionInstanceSnapshot transition{};
             if (context.members == nullptr ||
@@ -1326,10 +1343,10 @@ private:
                 context.sink->transitions_->CanLockFromAudioClaim(
                     context.transition);
         }
-        for (std::uint16_t index = context.sourceControlCount; index < context.memberCount; ++index) {
-            if (context.members == nullptr ||
-                !context.sink->voices_.TimelineStreamStartReady(context.members[index].renderSlot,
-                    context.members[index].renderGeneration)) return false;
+        if (!context.sink->TargetStreamsReady(context.members, context.sourceControlCount,
+                context.memberCount)) {
+            context.proofStatus = QueueConditionalProofStatus::MissedDeadline;
+            return false;
         }
         context.proofStatus = context.sink->composites_ == nullptr
             ? context.sink->queues_->ProveConditionalForQuantum(
