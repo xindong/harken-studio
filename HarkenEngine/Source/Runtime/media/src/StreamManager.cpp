@@ -309,7 +309,8 @@ bool StreamManager::FindFile(VnSoundId soundId, StreamFacts* out) const {
     std::lock_guard<std::mutex> lock(m_mutex);
     for (std::size_t i = 0; i < m_files.size(); ++i) {
         const StreamFile* file = m_files[i].get();
-        if (file == nullptr || file->retiring || file->soundId != soundId) {
+        if (file == nullptr || file->retiring || file->packPrivate ||
+            file->soundId != soundId) {
             continue;
         }
         out->fileIndex = static_cast<std::uint32_t>(i);
@@ -324,6 +325,68 @@ bool StreamManager::FindFile(VnSoundId soundId, StreamFacts* out) const {
         return true;
     }
     return false;
+}
+
+VnResult StreamManager::ResolvePackSource(
+    const std::shared_ptr<const PackMediaRange>& range, StreamFacts* out) {
+    if (out == nullptr || range == nullptr || range->source == nullptr ||
+        range->channelCount == 0 || range->channelCount > kMaxChannels ||
+        range->chunkFrames == 0 || range->chunkFrames > kMaxStreamChunkFrames ||
+        range->chunkChecksums.size() != PackMediaChunkCount(range->frameCount, range->chunkFrames))
+        return VN_INVALID_ARG;
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (m_shutdown || WorkerState() != StreamWorkerState::Ready) return VN_DEVICE_ERROR;
+    const auto fill = [&](std::size_t index, const StreamFile& file) {
+        out->fileIndex = static_cast<std::uint32_t>(index);
+        out->sampleRate = file.toc.sampleRate;
+        out->channelCount = file.toc.channelCount;
+        out->frameCount = file.toc.frameCount;
+        out->contentRevision = file.contentRevision;
+        out->sourceGeneration = file.sourceGeneration;
+        out->flags = file.toc.flags;
+        out->loopStartFrame = file.toc.loopStartFrame;
+        out->loopEndFrame = file.toc.loopEndFrame;
+    };
+    for (std::size_t i = 0; i < m_files.size(); ++i) {
+        const StreamFile* file = m_files[i].get();
+        if (file != nullptr && file->packPrivate && !file->packRange.expired() &&
+            !file->packRange.owner_before(range) && !range.owner_before(file->packRange)) {
+            fill(i, *file);
+            return VN_OK;
+        }
+    }
+    if (m_lastSourceGeneration == UINT64_MAX) return VN_BACKPRESSURE;
+    try {
+        auto record = std::make_unique<StreamFile>();
+        record->packPrivate = true;
+        record->packRange = range;
+        record->packBlobOffset = range->blobOffset;
+        record->source = range->source;
+        record->toc.sampleRate = range->sampleRate;
+        record->toc.channelCount = static_cast<std::uint16_t>(range->channelCount);
+        record->toc.sampleFormat = kStreamSampleFormatF32Planar;
+        record->toc.frameCount = range->frameCount;
+        record->toc.chunkCount = static_cast<std::uint32_t>(range->chunkChecksums.size());
+        record->toc.flags = range->packFlags & kStreamKnownFlagsMask;
+        record->toc.loopStartFrame = range->loop.startFrame;
+        record->toc.loopEndFrame = range->loop.endFrame;
+        record->chunkFrames = range->chunkFrames;
+        record->chunkChecksums = range->chunkChecksums;
+        record->contentRevision = range->contentRevision;
+        auto empty = std::find_if(m_files.begin(), m_files.end(), [](const auto& file) { return !file; });
+        if (empty == m_files.end()) {
+            if (m_files.size() == UINT32_MAX) return VN_BACKPRESSURE;
+            m_files.emplace_back();
+            empty = m_files.end() - 1;
+        }
+        record->sourceGeneration = ++m_lastSourceGeneration;
+        const auto index = static_cast<std::size_t>(empty - m_files.begin());
+        fill(index, *record);
+        *empty = std::move(record);
+        return VN_OK;
+    } catch (const std::bad_alloc&) {
+        return VN_BACKPRESSURE;
+    }
 }
 
 bool StreamManager::FactsForFileIndex(std::uint32_t fileIndex,
@@ -961,7 +1024,7 @@ void StreamManager::ValidateSourceSlice(SourceRequest& request) {
 
 void StreamManager::CloseDrainedRetiringFiles() {
     for (std::unique_ptr<StreamFile>& file : m_files) {
-        if (file != nullptr && file->retiring &&
+        if (file != nullptr && (file->retiring || (file->packPrivate && file->packRange.expired())) &&
             file->activeStreams.load(std::memory_order_relaxed) == 0 &&
             file->pendingRefs.load(std::memory_order_relaxed) == 0) {
             QueueCleanup(std::move(file));
@@ -971,7 +1034,7 @@ void StreamManager::CloseDrainedRetiringFiles() {
 
 void StreamManager::HandleUnregister(Request& request) {
     for (std::unique_ptr<StreamFile>& file : m_files) {
-        if (file == nullptr || file->retiring ||
+        if (file == nullptr || file->retiring || file->packPrivate ||
             file->soundId != request.soundId) {
             continue;
         }
@@ -1033,7 +1096,7 @@ std::uint64_t StreamManager::ReadWindowBytes() const noexcept {
 
 bool StreamManager::TryCopyReadWindow(const ChunkJob& job, std::vector<float>& staging,
                                       const ReadWindow& window) noexcept {
-    if (job.chunkBytes == 0 || job.chunkBytes / sizeof(float) > staging.size() ||
+    if (job.file->packPrivate || job.chunkBytes == 0 || job.chunkBytes / sizeof(float) > staging.size() ||
         window.validBytes > window.bytes.size()) return false;
     const auto offset = StreamChunkFileOffset(job.file->toc.payloadOffset, job.chunkIndex, job.chunkBytes);
     if (offset < window.offset || offset - window.offset > window.validBytes ||
@@ -1047,6 +1110,13 @@ bool StreamManager::ReadChunk(const ChunkJob& job, std::vector<float>& staging,
                               ReadWindow& window) {
     staging.resize(static_cast<std::size_t>(job.chunkFrames) * job.channels);
     const auto& source = *job.file->source;
+    if (job.file->packPrivate) {
+        // Pack blobs are whole-media planar; each channel is a separate range.
+        return ReadPlanarMediaChunk(source, job.file->packBlobOffset, job.file->toc.frameCount,
+                   job.channels, job.chunkFrames, job.chunkIndex, staging.data(),
+                   job.cancellation) == StreamReadStatus::Ok &&
+               !job.cancellation.IsCancelled();
+    }
     const auto offset = StreamChunkFileOffset(job.file->toc.payloadOffset, job.chunkIndex, job.chunkBytes);
     const auto required = static_cast<std::size_t>(job.chunkBytes);
     const auto direct = [&] {

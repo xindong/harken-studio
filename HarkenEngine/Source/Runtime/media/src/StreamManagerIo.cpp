@@ -43,7 +43,7 @@ VnResult StreamManager::BeginSourceImpl(VnSoundId id,
         if (pending && !pending->discard && pending->soundId == id) return VN_IN_USE;
     StreamFile* current = nullptr;
     for (const auto& file : m_files) {
-        if (!file) continue;
+        if (!file || file->packPrivate) continue;
         if (!file->retiring && file->soundId == id) current = file.get();
         if (replace && file->retiring && file->retiredFromId == id) return VN_IN_USE;
     }
@@ -137,7 +137,7 @@ VnResult StreamManager::TakeSource(SourceToken token, StreamFacts* out, VnResult
         bool retryable = false;
         StreamFile* previous = nullptr;
         for (auto& file : m_files) {
-            if (!file) continue;
+            if (!file || file->packPrivate) continue;
             if (!file->retiring && file->soundId == request->soundId) previous = file.get();
             if (request->replace && file->retiring && file->retiredFromId == request->soundId) {
                 refusal = VN_IN_USE;

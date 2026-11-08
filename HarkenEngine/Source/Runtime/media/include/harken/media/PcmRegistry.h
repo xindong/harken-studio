@@ -14,6 +14,7 @@
 
 #include "harken/core/PcmView.h"
 #include "harken/core/StableRowStorage.h"
+#include "harken/media/PackMediaRange.h"
 
 #include <atomic>
 #include <cstdint>
@@ -51,15 +52,32 @@ enum class PcmRegisterFault : std::uint32_t {
 void SetPcmRegisterFaultForTests(PcmRegisterFault fault);
 PcmRegisterFault PcmRegisterFaultForTests();
 
+// Semantic facts of a registered sound, independent of which storage
+// representations (resident planes, Pack range) back it.
+struct PcmMediaFacts {
+    std::uint32_t sampleRate = 0;
+    std::uint32_t channelCount = 0;
+    std::uint64_t frames = 0;
+    PcmLoopRegion loop;
+    std::uint64_t contentRevision = 0;
+    bool Valid() const noexcept { return channelCount > 0 && frames > 0; }
+};
+
 class PCMRegistry {
 private:
     struct Entry {
-        PCMView view;                     // useCount wired to `uses` below
+        PCMView view;                     // useCount wired to `uses` below;
+                                          // invalid when only a range backs it
         detail::PcmSampleBuffer ownedSamples; // copy policy backing; null for
                                                 // reference policy
+        // Optional immutable Pack range. Resident storage may be added once,
+        // at a transaction commit, to an entry backed only by this range.
+        std::shared_ptr<const PackMediaRange> range;
         std::atomic<std::uint32_t> uses{0};
         std::uint64_t cookie = 0;         // provenance stamp of this
                                           // registration (see RegisterPCM)
+
+        PcmMediaFacts Facts() const noexcept;
     };
     using Map = std::unordered_map<VnSoundId, std::shared_ptr<Entry>>;
 
@@ -67,10 +85,18 @@ public:
     class PackReference {
     public:
         bool Valid() const noexcept { return entry_ != nullptr; }
+        // True when the backing does not borrow a Pack byte buffer.
         bool OwnsSamples() const noexcept {
-            return entry_ != nullptr && entry_->ownedSamples != nullptr;
+            return entry_ != nullptr &&
+                   (entry_->ownedSamples != nullptr || entry_->range != nullptr);
         }
         PCMView View() const noexcept { return entry_ != nullptr ? entry_->view : PCMView{}; }
+        PcmMediaFacts Facts() const noexcept {
+            return entry_ != nullptr ? entry_->Facts() : PcmMediaFacts{};
+        }
+        std::shared_ptr<const PackMediaRange> Range() const noexcept {
+            return entry_ != nullptr ? entry_->range : nullptr;
+        }
         std::uint64_t Cookie() const noexcept { return entry_ != nullptr ? entry_->cookie : 0; }
 
     private:
@@ -93,6 +119,15 @@ public:
         bool IsPrepared() const noexcept { return m_entry != nullptr; }
         VnSoundId SoundId() const noexcept { return m_soundId; }
         PCMView View() const noexcept { return m_entry != nullptr ? m_entry->view : PCMView{}; }
+        PcmMediaFacts Facts() const noexcept {
+            return m_entry != nullptr ? m_entry->Facts() : PcmMediaFacts{};
+        }
+        const PackMediaRange* Range() const noexcept {
+            return m_entry != nullptr ? m_entry->range.get() : nullptr;
+        }
+        bool SharesEntry(const PreparedPackSamples& other) const noexcept {
+            return m_entry != nullptr && m_entry == other.m_entry;
+        }
 
     private:
         friend class PCMRegistry;
@@ -135,6 +170,25 @@ public:
         std::size_t m_written = 0;
         VnResult m_status = VN_OK;
         bool m_reservationUnavailable = false;
+    };
+
+    // Resident storage built privately from a range-only entry's own range.
+    // Commit installs it into that entry; dropping it changes nothing.
+    class PreparedResidentUpgrade {
+    public:
+        PreparedResidentUpgrade() = default;
+        PreparedResidentUpgrade(const PreparedResidentUpgrade&) = delete;
+        PreparedResidentUpgrade& operator=(const PreparedResidentUpgrade&) = delete;
+        PreparedResidentUpgrade(PreparedResidentUpgrade&&) noexcept = default;
+        PreparedResidentUpgrade& operator=(PreparedResidentUpgrade&&) noexcept = default;
+        bool IsPrepared() const noexcept { return m_target != nullptr; }
+        VnSoundId SoundId() const noexcept { return m_soundId; }
+
+    private:
+        friend class PCMRegistry;
+        VnSoundId m_soundId{};
+        std::shared_ptr<Entry> m_target;
+        detail::PcmSampleBuffer m_samples;
     };
 
     struct PackReferenceRegistration {
@@ -195,6 +249,7 @@ public:
         // The id this generation was registered under before it retired.
         VnSoundId SoundId() const { return m_node.key(); }
         PCMView View() const { return m_node.mapped()->view; }
+        PackReference Reference() const { return MakeReference(m_node.mapped()); }
         std::uint64_t Cookie() const { return m_node.mapped()->cookie; }
 
         // True once no logical voice reads the generation: the shared use
@@ -261,6 +316,20 @@ public:
                              PackSampleBuilder* out, PcmLoopRegion loop = {},
                              const PreparedPackSamples* equalCandidate = nullptr);
 
+    // Range-only record. A caller that has proven bit-exact equality with an
+    // earlier prepared record of the same id passes it to share that entry.
+    VnResult PreparePackRangeSamples(VnSoundId soundId,
+        std::shared_ptr<const PackMediaRange> range, PreparedPackSamples* out,
+        const PreparedPackSamples* provenEqual = nullptr);
+
+    // Reads and verifies a range-only entry into private resident storage.
+    // Refuses an entry that already has resident samples or has no range.
+    VnResult PrepareResidentUpgrade(const PackReference& reference,
+                                    PreparedResidentUpgrade* out);
+    // Logic thread. Render readers capture PCMView by value, so publishing
+    // the planes here cannot race a reader of the entry.
+    void CommitResidentUpgrade(PreparedResidentUpgrade* prepared) noexcept;
+
     // A completed record is consumed when its staged map entry is inserted.
     // Later refusal destroys consumed entries; unconsumed records stay owned
     // by the caller. Publication and cookie advancement occur only at commit.
@@ -304,6 +373,11 @@ public:
     std::size_t Count() const { return m_entries.size(); }
 
 private:
+    static PackReference MakeReference(std::shared_ptr<const Entry> entry) noexcept {
+        PackReference reference;
+        reference.entry_ = std::move(entry);
+        return reference;
+    }
     VnResult CommitPCM(VnSoundId soundId, const VnPCMDesc* desc,
                        detail::PcmSampleBuffer&& stagedSamples,
                        std::uint64_t contentRevision,

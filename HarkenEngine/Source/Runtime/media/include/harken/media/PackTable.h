@@ -256,6 +256,17 @@ public:
         PCMRegistry::PreparedPackMutation m_pcm;
     };
 
+    // Visits every media registration the prepared publication will use:
+    // successor entries of changed members and the entries of kept members.
+    template <class Fn>
+    void ForEachPreparedRegistration(const PreparedSetMutation& prepared, Fn&& fn) const {
+        for (const auto index : prepared.m_members) {
+            const auto& change = prepared.m_changes[index];
+            for (const PackEntry& entry : change.touched ? change.entries : m_slots[index].entries)
+                fn(entry.soundId, entry.registration);
+        }
+    }
+
     VnResult PrepareCanonicalSet(
         const std::vector<CanonicalSetMember>& members,
         const std::vector<VnPackHandle>& removed, PCMRegistry& registry,
@@ -458,6 +469,14 @@ public:
                                 VnSoundId soundId,
                                 const PCMRegistry& registry,
                                 PCMView* out, std::uint64_t* mediaChecksum = nullptr, bool* checksumKnown = nullptr) const noexcept;
+    // Typed forms: the exact registration whatever backs it. The PCMView
+    // forms return its resident view, which is invalid for range-only media.
+    VnResult LookupExactReference(PackResourceRevisionToken resourceToken,
+        VnSoundId soundId, const PCMRegistry& registry, PCMRegistry::PackReference* out,
+        std::uint64_t* mediaChecksum = nullptr, bool* checksumKnown = nullptr) const noexcept;
+    VnResult LookupExactClosureReference(PackResourceClosureToken closureToken,
+        VnSoundId soundId, const PCMRegistry& registry, PCMRegistry::PackReference* out,
+        std::uint64_t* mediaChecksum = nullptr, bool* checksumKnown = nullptr) const noexcept;
     VnResult SetResourceClosureGenerationForTests(
         std::size_t rowIndex, std::uint32_t generation) noexcept;
     VnResult SetSlotGenerationForTests(

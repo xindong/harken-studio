@@ -5,6 +5,7 @@
 #include "harken/media/PackFormat.h"
 #include "harken/media/PackFormatV2.h"
 #include "harken/media/PackLogicImage.h"
+#include "harken/media/PackMediaRange.h"
 
 #include <algorithm>
 #include <map>
@@ -23,40 +24,13 @@ namespace harken {
 
 namespace {
 
-bool EqualSamples(const PCMView& left, const PCMView& right) noexcept {
-    assert(left.stride == 1 && right.stride == 1);
-    if (right.sampleFormat == PcmSampleFormat::Float32) {
-        for (std::uint32_t ch = 0; ch < left.channelCount; ++ch) {
-            if (left.sampleFormat == PcmSampleFormat::Float32) {
-                if (std::memcmp(left.channels[ch], right.channels[ch],
-                                static_cast<std::size_t>(left.frames) * sizeof(float)) != 0)
-                    return false;
-            } else {
-                for (std::uint64_t frame = 0; frame < left.frames; ++frame) {
-                    const float sample = left.ReadSample(ch, frame);
-                    if (std::memcmp(&sample, right.SamplePtr(ch, frame), sizeof(float)) != 0)
-                        return false;
-                }
-            }
-        }
-        return true;
-    }
-    if (left.sampleFormat == PcmSampleFormat::Float32) return EqualSamples(right, left);
-    for (std::uint32_t ch = 0; ch < left.channelCount; ++ch) {
-        if (std::memcmp(left.channels[ch], right.channels[ch],
-                        static_cast<std::size_t>(left.frames) * sizeof(std::int16_t)) != 0)
-            return false;
-    }
-    return true;
-}
-
 bool EqualPlanarSamples(const PCMView& view, const float* samples) noexcept {
     PCMView source = view;
     source.sampleFormat = PcmSampleFormat::Float32;
     for (std::uint32_t ch = 0; ch < view.channelCount; ++ch)
         source.channels[ch] = samples + static_cast<std::size_t>(ch) * view.frames;
     // Sample sharing preserves signed zero, unlike semantic revisions.
-    return EqualSamples(view, source);
+    return EqualResidentSamples(view, source);
 }
 
 VnPackHandle MakePackHandle(std::uint32_t slot,
@@ -1275,6 +1249,9 @@ VnResult PackTable::PrepareCanonicalSet(
             PCMRegistry::PreparedPackSamples* prepared = nullptr;
             PCMRegistry::PackReference reference;
 
+            const PackMediaRange* Range() const noexcept {
+                return prepared != nullptr ? prepared->Range() : nullptr;
+            }
             PCMView View() const noexcept {
                 if (prepared != nullptr) return prepared->View();
                 PCMView view;
@@ -1294,9 +1271,12 @@ VnResult PackTable::PrepareCanonicalSet(
             if (a.sampleRate != b.sampleRate || a.channelCount != b.channelCount ||
                 a.frameCount != b.frameCount || a.flags != b.flags ||
                 a.loopStartFrame != b.loopStartFrame || a.loopEndFrame != b.loopEndFrame) {
-                return false;
+                return MediaContentMatch::Different;
             }
-            return EqualSamples(left.View(), right.View());
+            if (left.prepared != nullptr && right.prepared != nullptr &&
+                left.prepared->SharesEntry(*right.prepared))
+                return MediaContentMatch::Equal;
+            return MatchMediaContent(left.View(), left.Range(), right.View(), right.Range());
         };
         for (const auto& member : members) {
             if (member.keep) continue;
@@ -1307,19 +1287,25 @@ VnResult PackTable::PrepareCanonicalSet(
                 if (member.samples != nullptr) {
                     source.prepared = &(*member.samples)[entry];
                     const auto view = source.prepared->View();
+                    const auto facts = source.prepared->Facts();
                     const auto loop = CanonicalPcmLoop(media);
                     if (!source.prepared->IsPrepared() || source.prepared->SoundId() != media.soundId ||
-                        view.sampleRate != media.sampleRate || view.channelCount != media.channelCount ||
-                        view.frames != media.frameCount || view.stride != 1 ||
-                        view.loop.startFrame != loop.startFrame || view.loop.endFrame != loop.endFrame)
+                        facts.sampleRate != media.sampleRate || facts.channelCount != media.channelCount ||
+                        facts.frames != media.frameCount || (view.Valid() && view.stride != 1) ||
+                        facts.loop.startFrame != loop.startFrame || facts.loop.endFrame != loop.endFrame)
                         return VN_INVALID_ARG;
                 } else {
                     source.samples = reinterpret_cast<const float*>(member.bytes->get() + media.blobOffset);
                 }
                 const auto [it, inserted] = mediaUnion.emplace(media.soundId, source);
-                if (!inserted && !sameMedia(it->second, source)) {
-                    m_conflictingSoundId = media.soundId;
-                    return VN_IN_USE;
+                if (!inserted) {
+                    const auto match = sameMedia(it->second, source);
+                    if (match == MediaContentMatch::LeftFailed ||
+                        match == MediaContentMatch::RightFailed) return VN_BAD_PACK;
+                    if (match != MediaContentMatch::Equal) {
+                        m_conflictingSoundId = media.soundId;
+                        return VN_IN_USE;
+                    }
                 }
             }
         }
@@ -1353,15 +1339,23 @@ VnResult PackTable::PrepareCanonicalSet(
                     return VN_IN_USE;
                 }
                 const PCMView view = old->registration.View();
-                bool equal = view.sampleRate == media.sampleRate &&
-                    view.channelCount == media.channelCount && view.frames == media.frameCount &&
-                    view.stride == 1 &&
-                    view.loop.startFrame == loop.startFrame &&
-                    view.loop.endFrame == loop.endFrame &&
+                const auto facts = old->registration.Facts();
+                const auto oldRange = old->registration.Range();
+                bool equal = facts.sampleRate == media.sampleRate &&
+                    facts.channelCount == media.channelCount && facts.frames == media.frameCount &&
+                    (!view.Valid() || view.stride == 1) &&
+                    facts.loop.startFrame == loop.startFrame &&
+                    facts.loop.endFrame == loop.endFrame &&
                     old->flags == media.flags &&
                     old->loopStartFrame == media.loopStartFrame &&
                     old->loopEndFrame == media.loopEndFrame;
-                equal = equal && EqualSamples(view, source.View());
+                if (equal) {
+                    // A published range whose file changed in place no longer
+                    // proves equality; only the candidate's own failure refuses.
+                    const auto match = MatchMediaContent(view, oldRange.get(), source.View(), source.Range());
+                    if (match == MediaContentMatch::RightFailed) return VN_BAD_PACK;
+                    equal = match == MediaContentMatch::Equal;
+                }
                 if (equal) {
                     source.reference = old->registration;
                     continue;
@@ -1561,12 +1555,14 @@ VnResult PackTable::PrepareCanonicalMedia(
         const PcmLoopRegion loop = CanonicalPcmLoop(media);
         auto* prepared = samples != nullptr ? &(*samples)[i] : nullptr;
         const auto preparedView = prepared != nullptr ? prepared->View() : PCMView{};
+        const auto preparedFacts = prepared != nullptr ? prepared->Facts() : PcmMediaFacts{};
         if (prepared != nullptr &&
             (!prepared->IsPrepared() || prepared->SoundId() != media.soundId ||
-             preparedView.sampleRate != media.sampleRate ||
-             preparedView.channelCount != media.channelCount || preparedView.frames != media.frameCount ||
-             preparedView.stride != 1 || preparedView.loop.startFrame != loop.startFrame ||
-             preparedView.loop.endFrame != loop.endFrame))
+             preparedFacts.sampleRate != media.sampleRate ||
+             preparedFacts.channelCount != media.channelCount || preparedFacts.frames != media.frameCount ||
+             (preparedView.Valid() && preparedView.stride != 1) ||
+             preparedFacts.loop.startFrame != loop.startFrame ||
+             preparedFacts.loop.endFrame != loop.endFrame))
             return VN_INVALID_ARG;
         const float* blob = prepared == nullptr
             ? reinterpret_cast<const float*>(bytes.get() + media.blobOffset) : nullptr;
@@ -1577,16 +1573,35 @@ VnResult PackTable::PrepareCanonicalMedia(
                 return VN_IN_USE;
             }
             const PCMView view = existing->registration.View();
-            bool equal = view.sampleRate == media.sampleRate &&
-                view.channelCount == media.channelCount && view.frames == media.frameCount &&
-                view.stride == 1 &&
-                view.loop.startFrame == loop.startFrame &&
-                view.loop.endFrame == loop.endFrame &&
+            const auto facts = existing->registration.Facts();
+            const auto existingRange = existing->registration.Range();
+            bool equal = facts.sampleRate == media.sampleRate &&
+                facts.channelCount == media.channelCount && facts.frames == media.frameCount &&
+                (!view.Valid() || view.stride == 1) &&
+                facts.loop.startFrame == loop.startFrame &&
+                facts.loop.endFrame == loop.endFrame &&
                 existing->flags == media.flags &&
                 existing->loopStartFrame == media.loopStartFrame &&
                 existing->loopEndFrame == media.loopEndFrame;
-            equal = equal && (prepared != nullptr
-                ? EqualSamples(view, preparedView) : EqualPlanarSamples(view, blob));
+            if (equal) {
+                PCMView candidate = preparedView;
+                if (prepared == nullptr) {
+                    candidate = view;
+                    candidate.sampleFormat = PcmSampleFormat::Float32;
+                    candidate.contentRevision = 0;
+                    for (std::uint32_t ch = 0; ch < media.channelCount; ++ch)
+                        candidate.channels[ch] = blob + static_cast<std::size_t>(ch) * media.frameCount;
+                    candidate.sampleRate = media.sampleRate;
+                    candidate.channelCount = media.channelCount;
+                    candidate.frames = media.frameCount;
+                    candidate.stride = 1;
+                    candidate.loop = loop;
+                }
+                const auto match = MatchMediaContent(view, existingRange.get(), candidate,
+                                                prepared != nullptr ? prepared->Range() : nullptr);
+                if (match == MediaContentMatch::RightFailed) return VN_BAD_PACK;
+                equal = match == MediaContentMatch::Equal;
+            }
             if (equal) {
                 entries[i].registration = existing->registration;
                 entries[i].registrationCookie = cookie;
@@ -2289,6 +2304,19 @@ bool PackTable::ActiveRevisionIdentity(
 VnResult PackTable::LookupExact(
     PackResourceRevisionToken resourceToken, VnSoundId soundId,
     const PCMRegistry& registry, PCMView* out, std::uint64_t* mediaChecksum, bool* checksumKnown) const noexcept {
+    if (out == nullptr) return VN_INVALID_ARG;
+    *out = {};
+    PCMRegistry::PackReference reference;
+    const VnResult result = LookupExactReference(
+        resourceToken, soundId, registry, &reference, mediaChecksum, checksumKnown);
+    if (result == VN_OK) *out = reference.View();
+    return result;
+}
+
+VnResult PackTable::LookupExactReference(
+    PackResourceRevisionToken resourceToken, VnSoundId soundId,
+    const PCMRegistry& registry, PCMRegistry::PackReference* out,
+    std::uint64_t* mediaChecksum, bool* checksumKnown) const noexcept {
     if (checksumKnown != nullptr) *checksumKnown = false;
     if (mediaChecksum != nullptr) *mediaChecksum = 0;
     if (resourceToken == 0 || out == nullptr) {
@@ -2302,20 +2330,19 @@ VnResult PackTable::LookupExact(
         }
         for (const PCMRegistry::RetiredGeneration& entry : row.entries) {
             if (entry.SoundId() == soundId) {
-                *out = entry.View();
-                if (out->Valid())
-                    for (const auto& metadata : row.packEntries)
-                        if (metadata.soundId == soundId) {
-                            if (mediaChecksum != nullptr) *mediaChecksum = metadata.mediaChecksum;
-                            if (checksumKnown != nullptr) *checksumKnown = metadata.mediaChecksumKnown;
-                            break;
-                        }
-                return out->Valid() ? VN_OK : VN_CONTENT_NOT_LOADED;
+                *out = entry.Reference();
+                for (const auto& metadata : row.packEntries)
+                    if (metadata.soundId == soundId) {
+                        if (mediaChecksum != nullptr) *mediaChecksum = metadata.mediaChecksum;
+                        if (checksumKnown != nullptr) *checksumKnown = metadata.mediaChecksumKnown;
+                        break;
+                    }
+                return VN_OK;
             }
         }
         for (const PackEntry& entry : row.packEntries) {
             if (entry.soundId == soundId && entry.registration.Valid()) {
-                *out = entry.registration.View();
+                *out = entry.registration;
                 if (mediaChecksum != nullptr) *mediaChecksum = entry.mediaChecksum;
                 if (checksumKnown != nullptr) *checksumKnown = entry.mediaChecksumKnown;
                 return VN_OK;
@@ -2329,7 +2356,7 @@ VnResult PackTable::LookupExact(
         }
         for (const PackEntry& entry : slot.entries) {
             if (entry.soundId == soundId && entry.registration.Valid()) {
-                *out = entry.registration.View();
+                *out = entry.registration;
                 if (mediaChecksum != nullptr) *mediaChecksum = entry.mediaChecksum;
                 if (checksumKnown != nullptr) *checksumKnown = entry.mediaChecksumKnown;
                 return VN_OK;
@@ -2338,9 +2365,9 @@ VnResult PackTable::LookupExact(
                 registry.CookieOf(soundId) != entry.registrationCookie) {
                 continue;
             }
-            const PCMView view = registry.Lookup(soundId);
-            if (view.Valid()) {
-                *out = view;
+            const auto reference = registry.ReferenceOf(soundId, entry.registrationCookie);
+            if (reference.Valid()) {
+                *out = reference;
                 if (mediaChecksum != nullptr) *mediaChecksum = entry.mediaChecksum;
                 if (checksumKnown != nullptr) *checksumKnown = entry.mediaChecksumKnown;
                 return VN_OK;
@@ -2354,6 +2381,19 @@ VnResult PackTable::LookupExact(
 VnResult PackTable::LookupExactClosure(
     PackResourceClosureToken closureToken, VnSoundId soundId,
     const PCMRegistry& registry, PCMView* out, std::uint64_t* mediaChecksum, bool* checksumKnown) const noexcept {
+    if (out == nullptr) return VN_INVALID_ARG;
+    *out = {};
+    PCMRegistry::PackReference reference;
+    const VnResult result = LookupExactClosureReference(
+        closureToken, soundId, registry, &reference, mediaChecksum, checksumKnown);
+    if (result == VN_OK) *out = reference.View();
+    return result;
+}
+
+VnResult PackTable::LookupExactClosureReference(
+    PackResourceClosureToken closureToken, VnSoundId soundId,
+    const PCMRegistry& registry, PCMRegistry::PackReference* out,
+    std::uint64_t* mediaChecksum, bool* checksumKnown) const noexcept {
     if (checksumKnown != nullptr) *checksumKnown = false;
     if (mediaChecksum != nullptr) *mediaChecksum = 0;
     if (out == nullptr || closureToken == 0) {
@@ -2369,7 +2409,8 @@ VnResult PackTable::LookupExactClosure(
     const PackResourceRevisionToken* stored =
         ResourceClosureTokens(rowIndex);
     for (std::size_t i = 0; i < row->resourceCount; ++i) {
-        const VnResult result = LookupExact(stored[i], soundId, registry, out, mediaChecksum, checksumKnown);
+        const VnResult result = LookupExactReference(stored[i], soundId, registry, out,
+                                                     mediaChecksum, checksumKnown);
         if (result == VN_OK) {
             return VN_OK;
         }
