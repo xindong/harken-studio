@@ -123,6 +123,19 @@ void CollapsibleSection::setDynamicContent(bool dynamic)
         contentArea_->setMaximumHeight(QWIDGETSIZE_MAX);
 }
 
+void CollapsibleSection::setFillsHeight(bool fills)
+{
+    fillsHeight_ = fills;
+    refreshFill();
+}
+
+void CollapsibleSection::refreshFill()
+{
+    const bool fill = fillsHeight_ && expanded_;
+    contentArea_->setSizePolicy(QSizePolicy::Expanding, fill ? QSizePolicy::Expanding : QSizePolicy::Fixed);
+    setSizePolicy(sizePolicy().horizontalPolicy(), fill ? QSizePolicy::Expanding : QSizePolicy::Preferred);
+}
+
 void CollapsibleSection::setIndicatorColor(const QColor& color)
 {
     indicatorColor_ = color;
@@ -159,6 +172,7 @@ void CollapsibleSection::setExpanded(bool expanded)
     }
 
     headerLine_->setVisible(expanded && hasCustomIndicator_);
+    refreshFill();
     applyTheme();
 
     emit expandedChanged(expanded_);

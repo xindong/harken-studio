@@ -162,16 +162,6 @@ QVector<WorkspaceWindowDescriptor> defaultWorkspaceWindowDescriptors()
             AvailabilityPolicy::FeatureDisabled
         },
         {
-            QStringLiteral("TransitionEditor"),
-            QStringLiteral("Transition Editor"),
-            QStringLiteral("TransitionEditorDock"),
-            WindowKind::MultiInstance,
-            {DefaultDockArea::Floating, QString(), false},
-            MaterializationPolicy::OnDemand,
-            ClosePolicy::Destroy,
-            AvailabilityPolicy::Always
-        },
-        {
             QStringLiteral("MonitorPerformance"),
             QStringLiteral("Performance Monitor"),
             QStringLiteral("MonitorPerformanceDock"),
@@ -493,7 +483,8 @@ QList<WorkspaceWindowInstanceSpec> workspaceWindowInstanceSpecsFromJson(const QJ
     for (const QJsonValue& value : arr) {
         const WorkspaceWindowInstanceSpec spec =
             workspaceWindowInstanceSpecFromJson(value.toObject());
-        if (spec.instanceId > 0 && !spec.typeId.isEmpty())
+        if (spec.instanceId > 0 && !spec.typeId.isEmpty()
+            && spec.typeId != QLatin1String("TransitionEditor"))
             specs.append(spec);
     }
     return specs;

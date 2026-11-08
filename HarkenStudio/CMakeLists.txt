@@ -331,7 +331,6 @@ add_subdirectory(Source/Widgets/EffectEditor)
 # Phase2 WP3: Grid Editor panel (leaf lib, Foundation only).
 add_subdirectory(Source/Widgets/GridEditor)
 add_subdirectory(Source/Widgets/Timeline)
-add_subdirectory(Source/Widgets/TransitionEditor)
 # Phase0 WP3 batch C: shared project-tree skeleton (ProjectTreePanel +
 # ProjectTreeWidget); must come AFTER Common + Shared, BEFORE ProjectExplorer /
 # Hierarchy since both link it.
@@ -372,7 +371,6 @@ target_link_libraries(harken_editor_lib PUBLIC harken_editor_external_editor)
 target_link_libraries(harken_editor_lib PUBLIC harken_editor_effect_editor)
 target_link_libraries(harken_editor_lib PUBLIC harken_editor_grid_editor)
 target_link_libraries(harken_editor_lib PUBLIC harken_editor_timeline)
-target_link_libraries(harken_editor_lib PUBLIC harken_editor_transition_editor)
 target_link_libraries(harken_editor_lib PUBLIC harken_editor_explorer)
 target_link_libraries(harken_editor_lib PUBLIC harken_editor_hierarchy)
 target_link_libraries(harken_editor_lib PUBLIC harken_editor_inspector)

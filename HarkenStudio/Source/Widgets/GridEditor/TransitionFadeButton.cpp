@@ -107,9 +107,20 @@ void TransitionFadeButton::paintEvent(QPaintEvent*)
     QPainter painter(this);
     QtControlSkin::paintFieldFrame(painter, this);
     const auto& colors = ThemeManager::instance().colors();
-    const QColor line = dimmed_ || !isEnabled() ? colors.textDisabled : colors.accent;
-    const qreal padding = ThemeManager::instance().metrics().spacingXSmall;
-    paintFadeCurve(painter, QRectF(rect()).adjusted(padding, padding, -padding, -padding), fade_, line);
+    const bool inactive = dimmed_ || !isEnabled();
+    const QColor line = inactive ? colors.textDisabled : colors.accent;
+    const auto& metrics = ThemeManager::instance().metrics();
+    const int padding = metrics.spacingXSmall;
+    const QRect content = rect().adjusted(padding, padding, -padding, -padding);
+    const QRect curve(content.topLeft(), QSize(qMin(content.width(), metrics.control.largeHeight), content.height()));
+    paintFadeCurve(painter, QRectF(curve), fade_, line);
+    const QRect text = content.adjusted(curve.width() + metrics.layout.controlGap, 0, 0, 0);
+    if (text.width() <= 0)
+        return;
+    painter.setPen(inactive ? colors.textDisabled : colors.textPrimary);
+    painter.drawText(text, Qt::AlignLeft | Qt::AlignVCenter,
+                     fontMetrics().elidedText(tr("%1 s").arg(formatSeconds(fade_.durationSeconds)),
+                                              Qt::ElideRight, text.width()));
 }
 
 TransitionFadePopup::TransitionFadePopup(const QString& title,

@@ -65,7 +65,6 @@ namespace VNX {
     class ExternalEditorPanel;
     class EffectEditorPanel;
     class TimelineEditorPanel;
-    class TransitionEditorPanel;
     class GridEditorPanel;
     class MeterPanel;
     class LogPanel;
@@ -218,7 +217,6 @@ public:
     void closeInspectorPanel(int panelId);
     QList<InspectorPanel*> allInspectorPanels() const;
     InspectorPanel* findInspectorPanel(int panelId) const;
-    QList<TransitionEditorPanel*> allTransitionEditorPanels() const;
     QList<GridEditorPanel*> allGridEditorPanels() const;
     QList<TimelineEditorPanel*> allTimelineEditorPanels() const;
 
@@ -438,7 +436,6 @@ private:
     void refreshBoundEditorDockTitles(
         const QString& base, const QList<QWidget*>& panels,
         const std::function<ProjectItem*(QWidget*)>& boundItem);
-    void refreshTransitionEditorDockTitles();
     void refreshGridEditorDockTitles();
     void refreshTimelineEditorDockTitles();
 

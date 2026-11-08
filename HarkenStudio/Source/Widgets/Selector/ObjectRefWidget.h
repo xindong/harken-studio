@@ -39,6 +39,7 @@ public:
     void setRequired(bool required);
     void setValidationError(const QString& error);
     void setSupplementalToolTip(const QString& text);
+    void setEmptyText(const QString& text);
     bool isReadOnly() const noexcept { return readOnly_; }
     QSize minimumSizeHint() const override;
     void setCompact(bool compact);
@@ -100,6 +101,7 @@ private:
     QString unresolvedReference_;
     QString validationError_;
     QString supplementalToolTip_;
+    QString emptyText_;
     bool mixedValue_ = false;
     uint32_t objectID_ = 0;
     bool readOnly_ = false;

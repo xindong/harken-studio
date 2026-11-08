@@ -53,18 +53,6 @@ const PropertySchema& containerInspectorSchema()
             return selection ? ContainerBehaviorSemantics::toJson(selection->behavior).toVariantMap() : QVariant();
         };
         rows.push_back(std::move(behavior));
-        PropertyDescriptor transitions;
-        transitions.field = QStringLiteral("transitions");
-        transitions.ownerComponent = ComponentType::Selection;
-        transitions.type = PropType::Struct;
-        transitions.label = QStringLiteral("Transitions");
-        transitions.section = PropertySection::Selection;
-        transitions.flags.serialize = false;
-        transitions.getItem = [](const ProjectItem* item) -> QVariant {
-            const auto* selection = item ? item->comp<VSelection>() : nullptr;
-            return selection ? selection->transitions.toJson().toVariantMap() : QVariant();
-        };
-        rows.push_back(std::move(transitions));
         return rows;
     }();
     return s;

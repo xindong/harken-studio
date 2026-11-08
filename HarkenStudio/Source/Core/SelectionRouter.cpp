@@ -22,7 +22,6 @@
 #include "../Widgets/Blueprint/BlueprintCanvasWidget.h"
 #include "../Widgets/GridEditor/GridEditorPanel.h"
 #include "../Widgets/Timeline/TimelineEditorPanel.h"
-#include "../Widgets/TransitionEditor/TransitionEditorPanel.h"
 
 #include <DockWidget.h>
 
@@ -181,7 +180,7 @@ void SelectionRouter::routeSelection(ProjectItem* item, bool reveal,
                 else ip->showItemInspector(item);
             }
 
-            for (TransitionEditorPanel* panel : host_->allTransitionEditorPanels()) {
+            for (GridEditorPanel* panel : host_->allGridEditorPanels()) {
                 if (panel && !panel->isPinned() && panel->boundItem() == item)
                     panel->setPlacementContext(placement ? std::optional<PlacementContext>(*placement)
                                                            : std::nullopt);

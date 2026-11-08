@@ -2068,19 +2068,6 @@
           "items": {
             "additionalProperties": false,
             "properties": {
-              "bridge": {
-                "format": "uuid",
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "bridgeFadeIn": {
-                "$ref": "#/$defs/transitionFade"
-              },
-              "bridgeFadeOut": {
-                "$ref": "#/$defs/transitionFade"
-              },
               "entryMode": {
                 "enum": [
                   "EntryMarker",
@@ -2125,9 +2112,6 @@
               "target",
               "exitTiming",
               "sourceFadeOut",
-              "bridge",
-              "bridgeFadeIn",
-              "bridgeFadeOut",
               "entryMode",
               "targetFadeIn"
             ],

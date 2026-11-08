@@ -57,7 +57,6 @@ struct ChildWatchScan
     bool anyExitMarker = false;
     bool allExitMarker = true;
     bool anyChild = false;
-    bool anyReference = false;
 };
 
 ChildWatchScan scanChildren(const ProjectItem& container,
@@ -75,7 +74,6 @@ ChildWatchScan scanChildren(const ProjectItem& container,
             scan.allExitMarker = false;
             continue;
         }
-        scan.anyReference = scan.anyReference || watch.found();
         const SegmentTraits traits = traitsOf(watch.referenceSegment);
         scan.anyClock = scan.anyClock || traits.clock;
         scan.allClock = scan.allClock && traits.clock;
@@ -134,18 +132,6 @@ QString uncertainExitMarkerReason()
         "Exit marker depends on which child is the incumbent; when missing, this exit resolves to the tail.");
 }
 
-QString noWatchReferenceNote()
-{
-    return trText(
-        "No watch reference; musical and marker timing cannot resolve from this source.");
-}
-
-QString barrenReferenceNote()
-{
-    return trText(
-        "The watch reference has no musical clock or markers. Immediate and natural-end exits remain available.");
-}
-
 QString unresolvedSourceReason()
 {
     return trText(
@@ -157,11 +143,6 @@ QString unresolvedSourceNote()
     return trText(
         "This rule points at a deleted source; repoint it before its exit timing "
         "can resolve.");
-}
-
-QString idleBridgeFadeReason()
-{
-    return trText("No bridge - this fade slot is idle.");
 }
 
 QString currentExitTimingUnavailableNote()
@@ -202,7 +183,6 @@ TransitionWatchAvailability watchAvailabilityFor(
         const TransitionWatchResult watch = resolveWatchReference(
             sourceItem, container, placement, resolve);
         const SegmentTraits traits = traitsOf(watch.referenceSegment);
-        availability.referencePresent = watch.found();
         availability.clock = lift(traits.clock);
         availability.anyMarker = lift(traits.anyMarker);
         availability.exitMarker = lift(traits.exitMarker);
@@ -213,7 +193,6 @@ TransitionWatchAvailability watchAvailabilityFor(
         nullptr, container, placement, resolve);
     const SegmentTraits upTraits = traitsOf(upward.referenceSegment);
     const ChildWatchScan scan = scanChildren(container, resolve);
-    availability.referencePresent = upward.found() || scan.anyReference;
     availability.clock = combineUpThenChildren(
         upTraits.clock, scan.anyClock, scan.allClock);
     availability.anyMarker = combineUpThenChildren(
@@ -230,9 +209,6 @@ TransitionFieldGating gatingFor(const ProjectItem& container,
     TransitionFieldGating gating;
     gating.sourceEndpointEditable = !rule.isDefault();
     gating.targetEndpointEditable = !rule.isDefault();
-    gating.bridgeFadesLive = rule.bridge.has_value();
-    gating.samePositionReadoutVisible =
-        rule.entryMode == TransitionEntryMode::SamePosition;
 
     gating.exit.immediate = FieldAvail::Available;
     gating.exit.naturalEnd = FieldAvail::Available;
@@ -263,48 +239,10 @@ TransitionFieldGating gatingFor(const ProjectItem& container,
         gating.exit.reasonExitMarker = uncertainExitMarkerReason();
     }
 
-    if (!gating.bridgeFadesLive)
-        gating.reasonBridgeFades = idleBridgeFadeReason();
-
-    if (rule.entryMode == TransitionEntryMode::SamePosition) {
-        gating.bridge = FieldAvail::Unavailable;
-        gating.reasonBridge = trText(
-            "Same Position is selected - a bridge removes the position correspondence between source and target.");
-    }
-
-    if (rule.bridge) {
-        gating.samePosition = FieldAvail::Unavailable;
-        gating.reasonSamePosition = trText(
-            "A bridge is set - the target would have to align to the bridge, which shares no timeline with the source.");
-    }
-
-    QString primaryNote;
-    if (exitTimingAvail(gating.exit, rule.exitTiming) == FieldAvail::Unavailable) {
-        primaryNote = currentExitTimingUnavailableNote();
-        gating.exit.noteIsWarning = true;
-    } else if (!watch.sourceResolved) {
-        primaryNote = unresolvedSourceNote();
-        gating.exit.noteIsWarning = true;
-    } else if (!watch.referencePresent) {
-        primaryNote = noWatchReferenceNote();
-    } else if (watch.clock == FieldAvail::Unavailable && watch.anyMarker == FieldAvail::Unavailable) {
-        primaryNote = barrenReferenceNote();
-    }
-
-    QString secondaryNote;
-    if (watch.clock == FieldAvail::Uncertain)
-        secondaryNote = gating.exit.reasonNextBeat;
-    else if (watch.anyMarker == FieldAvail::Uncertain)
-        secondaryNote = gating.exit.reasonNextMarker;
-    else if (!gating.exit.reasonExitMarker.isEmpty())
-        secondaryNote = gating.exit.reasonExitMarker;
-
-    if (primaryNote.isEmpty())
-        gating.exit.note = secondaryNote;
-    else if (secondaryNote.isEmpty())
-        gating.exit.note = primaryNote;
-    else
-        gating.exit.note = primaryNote + QStringLiteral(" ") + secondaryNote;
+    if (exitTimingAvail(gating.exit, rule.exitTiming) == FieldAvail::Unavailable)
+        gating.exit.warning = currentExitTimingUnavailableNote();
+    else if (!watch.sourceResolved)
+        gating.exit.warning = unresolvedSourceNote();
 
     (void)container;
     return gating;

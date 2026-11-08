@@ -79,7 +79,6 @@
 #include "Widgets/GridEditor/GridEditorPanel.h"
 #include "Widgets/GridEditor/GridEditorWidget.h"
 #include "Widgets/Timeline/TimelineEditorPanel.h"
-#include "Widgets/TransitionEditor/TransitionEditorPanel.h"
 #include "Widgets/Information/InformationPanel.h"
 #include "Widgets/LogPanel/LogPanel.h"
 #include "Widgets/Blueprint/BlueprintCanvasWidget.h"
@@ -771,57 +770,6 @@ void MainWindow::initializeStructure(
                 editor->restoreState(params);
         };
         registerStandaloneEditorType(QStringLiteral("TimelineEditor"), std::move(info));
-    }
-    {
-        StandaloneEditorTypeInfo info;
-        info.label = tr("Transition Editor");
-        info.dockObjectPrefix = QStringLiteral("TransitionEditorDock");
-        info.createConfigured = [this](int id) -> QWidget* {
-            auto* editor = new TransitionEditorPanel(this);
-            editor->setPanelId(id);
-            connect(editor, &TransitionEditorPanel::panelFocused, this, [this](int panelId) {
-                panelRegistry_->setLastFocusedPanelId(QStringLiteral("TransitionEditor"), panelId);
-            });
-            connect(editor, &TransitionEditorPanel::watchViewChanged, this,
-                    [this, editor](const TransitionSemantics::TransitionWatchView& view) {
-                if (blueprintCanvas_ && editor->isVisible())
-                    blueprintCanvas_->setTransitionWatch(view);
-            });
-            wireStandaloneEditorPin(editor);
-            return editor;
-        };
-        info.bind = [](QWidget* widget, ProjectItem* item) {
-            if (auto* editor = qobject_cast<TransitionEditorPanel*>(widget))
-                editor->bindItem(item);
-        };
-        info.boundItem = [](QWidget* widget) -> ProjectItem* {
-            auto* editor = qobject_cast<TransitionEditorPanel*>(widget);
-            return editor ? editor->boundItem() : nullptr;
-        };
-        info.isPinned = [](QWidget* widget) {
-            auto* editor = qobject_cast<TransitionEditorPanel*>(widget);
-            return editor && editor->isPinned();
-        };
-        info.setPinned = [](QWidget* widget, bool pinned) {
-            if (auto* editor = qobject_cast<TransitionEditorPanel*>(widget))
-                editor->setPinned(pinned);
-        };
-        info.accepts = [](const ProjectItem* item) {
-            return TransitionEditorPanel::acceptsItem(item);
-        };
-        info.clear = [](QWidget* widget) {
-            if (auto* editor = qobject_cast<TransitionEditorPanel*>(widget))
-                editor->clearEditor();
-        };
-        info.snapshotParams = [](QWidget* widget) -> QVariantMap {
-            auto* editor = qobject_cast<TransitionEditorPanel*>(widget);
-            return editor ? editor->snapshotState() : QVariantMap{};
-        };
-        info.restoreParams = [](QWidget* widget, const QVariantMap& params) {
-            if (auto* editor = qobject_cast<TransitionEditorPanel*>(widget))
-                editor->restoreState(params);
-        };
-        registerStandaloneEditorType(QStringLiteral("TransitionEditor"), std::move(info));
     }
     applyDarkPalette();
     
@@ -2877,9 +2825,7 @@ bool MainWindow::applyWorkspacePanelRestoreSpec(const DockInstanceSpec& spec)
         }
         if (info.setPinned)
             info.setPinned(widget, spec.params.value("pinned").toBool());
-        if (spec.typeId == QLatin1String("TransitionEditor"))
-            refreshTransitionEditorDockTitles();
-        else if (spec.typeId == QLatin1String("GridEditor"))
+        if (spec.typeId == QLatin1String("GridEditor"))
             refreshGridEditorDockTitles();
         else if (spec.typeId == QLatin1String("TimelineEditor"))
             refreshTimelineEditorDockTitles();
@@ -3119,7 +3065,6 @@ void MainWindow::pushSelectionToStandaloneEditors(ProjectItem* item,
                 collapseUnrelatedStandaloneEditor(type, w, reason);
         }
     }
-    refreshTransitionEditorDockTitles();
     refreshGridEditorDockTitles();
     refreshTimelineEditorDockTitles();
 }
@@ -3328,8 +3273,8 @@ void MainWindow::openEditorForSlot(const QString& slot, ProjectItem* item,
     const std::optional<PlacementContext> context = placement
         ? std::optional<PlacementContext>(*placement) : std::nullopt;
     QWidget* editor = openStandaloneEditor(type, item);
-    if (auto* transition = qobject_cast<TransitionEditorPanel*>(editor))
-        transition->setPlacementContext(context);
+    if (auto* grid = qobject_cast<GridEditorPanel*>(editor))
+        grid->setPlacementContext(context);
 }
 
 void MainWindow::showInspectorForItem(InspectorPanel* panel, ProjectItem* item)
@@ -3354,17 +3299,6 @@ QList<InspectorPanel*> MainWindow::allInspectorPanels() const
     {
         if (auto* ip = qobject_cast<InspectorPanel*>(w))
             panels.append(ip);
-    }
-    return panels;
-}
-
-QList<TransitionEditorPanel*> MainWindow::allTransitionEditorPanels() const
-{
-    QList<TransitionEditorPanel*> panels;
-    for (QWidget* w : panelRegistry_->allPanels(QStringLiteral("TransitionEditor")))
-    {
-        if (auto* editor = qobject_cast<TransitionEditorPanel*>(w))
-            panels.append(editor);
     }
     return panels;
 }
@@ -3570,8 +3504,6 @@ void MainWindow::wireStandaloneEditorPin(QWidget* editor)
         connect(grid, &GridEditorPanel::pinToggled, this, onPinToggled);
     else if (auto* timeline = qobject_cast<TimelineEditorPanel*>(editor))
         connect(timeline, &TimelineEditorPanel::pinToggled, this, onPinToggled);
-    else if (auto* transition = qobject_cast<TransitionEditorPanel*>(editor))
-        connect(transition, &TransitionEditorPanel::pinToggled, this, onPinToggled);
 }
 
 ProjectItem* MainWindow::currentStandaloneEditorSelection() const
@@ -3719,18 +3651,6 @@ void MainWindow::refreshBoundEditorDockTitles(
         if (docks[i]->windowTitle() != titles[i])
             docks[i]->setWindowTitle(titles[i]);
     }
-}
-
-void MainWindow::refreshTransitionEditorDockTitles()
-{
-    QList<QWidget*> panels;
-    for (TransitionEditorPanel* p : allTransitionEditorPanels())
-        panels << p;
-    refreshBoundEditorDockTitles(tr("Transition Editor"), panels,
-        [](QWidget* w) -> ProjectItem* {
-            auto* p = qobject_cast<TransitionEditorPanel*>(w);
-            return p ? p->boundItem() : nullptr;
-        });
 }
 
 void MainWindow::refreshGridEditorDockTitles()

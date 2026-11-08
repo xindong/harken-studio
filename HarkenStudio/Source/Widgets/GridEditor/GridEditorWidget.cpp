@@ -4,11 +4,15 @@
 #include "MixingEditorWidget.h"
 #include "DiscreteGridWidget.h"
 #include "SelectionListWidget.h"
+#include "TransitionTableWidget.h"
 #include "Core/Components/VSelection.h"
+#include "Core/PlatformContextService.h"
 #include "Core/ProjectManager.h"
 #include "Core/ProjectTypes.h"
 #include "Core/QtControlSkin.h"
 #include "Core/ThemeManager.h"
+#include "Core/TransitionSemantics.h"
+#include "Widgets/Common/CollapsibleSection.h"
 
 #include <QHBoxLayout>
 #include <QLabel>
@@ -101,9 +105,33 @@ GridEditorWidget::GridEditorWidget(QWidget* parent)
     pageLayout->setContentsMargins(0, 0, 0, 0);
 
     pageLayout->setSpacing(0);
-    editorStack_ = new QStackedWidget(gridPage_);
+    contentSection_ = new CollapsibleSection(tr("Content"), 150, gridPage_);
+    contentSection_->setObjectName(QStringLiteral("selectionContentSection"));
+    contentSection_->setDynamicContent(true);
+    contentSection_->setFillsHeight(true);
+    editorStack_ = new QStackedWidget(contentSection_);
     editorStack_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
-    pageLayout->addWidget(editorStack_, 1);
+    auto* contentLayout = new QVBoxLayout();
+    contentLayout->addWidget(editorStack_, 1);
+    contentSection_->setContentLayout(contentLayout);
+    contentSection_->setExpanded(true);
+    pageLayout->addWidget(contentSection_, 1);
+
+    transitionSection_ = new CollapsibleSection(tr("Transition"), 150, gridPage_);
+    transitionSection_->setObjectName(QStringLiteral("selectionTransitionSection"));
+    transitionSection_->setDynamicContent(true);
+    transitionTable_ = new TransitionTableWidget(transitionSection_);
+    auto* transitionLayout = new QVBoxLayout();
+    transitionLayout->addWidget(transitionTable_);
+    transitionSection_->setContentLayout(transitionLayout);
+    transitionSection_->setExpanded(true);
+    pageLayout->addWidget(transitionSection_);
+    pageLayout->addStretch(0);
+    connect(contentSection_, &CollapsibleSection::expandedChanged, this, [pageLayout](bool expanded) {
+        pageLayout->setStretch(0, expanded ? 1 : 0);
+        pageLayout->setStretch(2, expanded ? 0 : 1);
+    });
+
     discreteGrid_ = new DiscreteGridWidget(editorStack_);
     editorStack_->addWidget(discreteGrid_);
     mixingEditor_ = new MixingEditorWidget(editorStack_);
@@ -158,8 +186,14 @@ GridEditorWidget::GridEditorWidget(QWidget* parent)
             refreshFromModel();
             return;
         }
+        if (item == displayItem_ && (prop == QStringLiteral("playType")
+                                     || prop == QStringLiteral("variableResponse"))) {
+            refreshTransitionSection();
+            return;
+        }
         if (item == displayItem_ && prop == QStringLiteral("selections")) {
             discreteGrid_->reload();
+            refreshTransitionSection();
             return;
         }
         static const QSet<QString> kDeclarationProps = {
@@ -191,6 +225,8 @@ GridEditorWidget::GridEditorWidget(QWidget* parent)
             refreshFromModel();
     });
     connect(&pm, &ProjectManager::projectClosed, this, [this]() { clearEditor(); });
+    connect(&PlatformContextService::instance(), &PlatformContextService::contextChanged,
+            this, [this](const PlatformContext&) { refreshTransitionSection(); });
 
     clearEditor();
 }
@@ -239,10 +275,18 @@ void GridEditorWidget::setPinned(bool pinned)
 
 void GridEditorWidget::bindItem(ProjectItem* item)
 {
-    if (item != boundItem_)
+    if (item != boundItem_) {
         drillPath_.clear();
+        placement_.reset();
+    }
     boundItem_ = item;
     refreshFromModel();
+}
+
+void GridEditorWidget::setPlacementContext(const std::optional<PlacementContext>& placement)
+{
+    placement_ = placement;
+    transitionTable_->setPlacementContext(displayItem_ == boundItem_ ? placement_ : std::nullopt);
 }
 
 void GridEditorWidget::clearEditor()
@@ -278,6 +322,7 @@ void GridEditorWidget::refreshFromModel()
         discreteGrid_->setBoundItem(nullptr);
         mixingEditor_->setBoundItem(nullptr);
         selectionList_->setBoundItem(nullptr);
+        transitionTable_->setBoundItem(nullptr);
         rebuildCrumbs({});
         showEmptyState({});
         return;
@@ -305,8 +350,19 @@ void GridEditorWidget::refreshFromModel()
     editorStack_->setCurrentWidget(match ? static_cast<QWidget*>(discreteGrid_)
                                  : blend ? static_cast<QWidget*>(mixingEditor_)
                                          : static_cast<QWidget*>(selectionList_));
+    transitionTable_->setBoundItem(displayItem_);
+    transitionTable_->setPlacementContext(displayItem_ == boundItem_ ? placement_ : std::nullopt);
+    refreshTransitionSection();
     stack_->setCurrentWidget(gridPage_);
     refreshChrome();
+}
+
+void GridEditorWidget::refreshTransitionSection()
+{
+    transitionSection_->setVisible(displayItem_
+        && TransitionSemantics::transitionMountState(*displayItem_,
+               currentWorldPlatformScope(PlatformContextService::instance().context()))
+            == TransitionMountState::Editable);
 }
 
 void GridEditorWidget::rebuildCrumbs(const std::vector<ProjectItem*>& chain)
@@ -352,7 +408,7 @@ void GridEditorWidget::refreshChrome()
 {
     const auto& metrics = ThemeManager::instance().metrics();
     const auto* selection = displayItem_ ? displayItem_->comp<VSelection>() : nullptr;
-    const int margin = selection ? metrics.spacingMedium : 0;
+    const int margin = selection ? metrics.layout.panelPadding : 0;
     layout()->setContentsMargins(margin, margin, margin, margin);
     layout()->setSpacing(margin);
     crumbBar_->setFixedHeight(metrics.timeline.rulerHeight);

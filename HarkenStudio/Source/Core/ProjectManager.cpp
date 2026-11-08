@@ -4295,7 +4295,7 @@ std::shared_ptr<ProjectItem> ProjectManager::cloneSubtreeDetached(
                     for (auto& curve : entry.curves) curve.rowGuid = rowGuids.value(curve.rowGuid);
             }
             for (TransitionRuleDef& rule : selection->transitions.rules) {
-                for (auto* reference : {&rule.source, &rule.target, &rule.bridge}) {
+                for (auto* reference : {&rule.source, &rule.target}) {
                     if (!*reference) continue;
                     const auto mapped = guidMap.constFind(**reference);
                     if (mapped != guidMap.cend())

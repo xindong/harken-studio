@@ -1559,7 +1559,7 @@ ActionResult handleSelectionTransitionsProperty(
             [&](const auto& old) { return old.source == rule.source && old.target == rule.target; });
         const bool retained = previous != oldTransitions.rules.end() && *previous == rule;
         if (!retained)
-            for (const auto* reference : {&rule.source, &rule.target, &rule.bridge}) {
+            for (const auto* reference : {&rule.source, &rule.target}) {
                 if (!*reference) continue;
                 const auto validity = validateAuthoredReference(
                     projectManager, projectManager->findItemByGuid(**reference));
@@ -1577,14 +1577,6 @@ ActionResult handleSelectionTransitionsProperty(
                             .arg(index).arg((**endpoint).toString(QUuid::WithoutBraces),
                                 candidate ? QStringLiteral("target is not a legal direct child")
                                           : QStringLiteral("target does not exist"))};
-            }
-        }
-        if (rule.bridge) {
-            const ProjectItem* bridge = projectManager->findItemByGuid(*rule.bridge);
-            if (bridge && !TransitionSemantics::isBridgeCandidate(*bridge)) {
-                return {false, {}, "INVALID_TARGET",
-                        QStringLiteral("Transition rule %1 bridge is not a content object")
-                            .arg(index)};
             }
         }
     }

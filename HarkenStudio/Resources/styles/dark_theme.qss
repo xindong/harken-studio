@@ -1814,6 +1814,7 @@ VNX--ObjectRefWidget[dropActive="true"] { border-color: @accent@; }
 VNX--ObjectRefWidget QLabel { background: transparent; border: none; }
 VNX--ObjectRefWidget QLabel#refName { color: @textPrimary@; }
 VNX--ObjectRefWidget QLabel#refName[inherited="true"] { color: @textSecondary@; }
+VNX--ObjectRefWidget QLabel#refName[emptyValue="true"] { color: @textSecondary@; }
 VNX--ObjectRefWidget QLabel#refName[inputInvalid="true"] { color: @error@; }
 VNX--ObjectRefWidget QLabel#refName:disabled { color: @textDisabled@; }
 

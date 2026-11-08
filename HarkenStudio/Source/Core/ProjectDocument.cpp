@@ -320,6 +320,23 @@ bool ProjectDocument::normalizeContent(QJsonObject* content, QString* error)
             }
             components.insert(QStringLiteral("tracktimeline"), timeline);
         }
+        if (components.value(QStringLiteral("selection")).isObject()) {
+            auto selection = components.value(QStringLiteral("selection")).toObject();
+            auto transitions = selection.value(QStringLiteral("transitions")).toObject();
+            if (transitions.value(QStringLiteral("rules")).isArray()) {
+                auto rules = transitions.value(QStringLiteral("rules")).toArray();
+                for (qsizetype index = 0; index < rules.size(); ++index) {
+                    if (!rules[index].isObject()) continue;
+                    auto rule = rules[index].toObject();
+                    for (const auto* key : {"bridge", "bridgeFadeIn", "bridgeFadeOut"})
+                        rule.remove(QLatin1String(key));
+                    rules[index] = rule;
+                }
+                transitions.insert(QStringLiteral("rules"), rules);
+                selection.insert(QStringLiteral("transitions"), transitions);
+                components.insert(QStringLiteral("selection"), selection);
+            }
+        }
         if (!moveField(components, QStringLiteral("piecetimeline"),
                         QStringLiteral("segmenttimeline"))) return false;
         if (components.value(QStringLiteral("segmenttimeline")).isObject()) {

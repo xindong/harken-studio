@@ -144,6 +144,14 @@ void ObjectRefWidget::setValidationError(const QString& error)
     refreshDisplay();
 }
 
+void ObjectRefWidget::setEmptyText(const QString& text)
+{
+    if (emptyText_ == text)
+        return;
+    emptyText_ = text;
+    refreshDisplay();
+}
+
 void ObjectRefWidget::setSupplementalToolTip(const QString& text)
 {
     if (supplementalToolTip_ == text)
@@ -335,7 +343,7 @@ void ObjectRefWidget::refreshDisplay()
     else if (!unresolvedReference_.isEmpty() || objectID_ != 0)
         nameLabel_->setText(tr("Missing"));
     else
-        nameLabel_->clear();
+        nameLabel_->setText(emptyText_);
     refreshToolTip();
     pickButton_->setIcon(ThemeManager::instance().resolveIcon(
         QString::fromLatin1(ThemeAssetIds::SelectorTarget)).icon);
@@ -424,6 +432,8 @@ void ObjectRefWidget::refreshStyle()
     QtControlSkin::setSemanticProperty(this, "inputInvalid", invalid);
     QtControlSkin::setSemanticProperty(this, "dimmed", dim);
     QtControlSkin::setSemanticProperty(nameLabel_, "inherited", inherited_);
+    QtControlSkin::setSemanticProperty(nameLabel_, "emptyValue",
+        !hasItem_ && !mixedValue_ && objectID_ == 0 && unresolvedReference_.isEmpty());
     QtControlSkin::setSemanticProperty(nameLabel_, "inputInvalid", invalid);
 }
 
