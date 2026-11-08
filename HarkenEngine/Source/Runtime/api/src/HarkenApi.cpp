@@ -21384,8 +21384,40 @@ harken::PlayableStartStatus BuildVariableControlScheduleLeafStart(
     }
     const auto& root = inherited ? row.VariableControlPropertyRoot() : row.root;
     if constexpr (std::is_same_v<WorldView, harken::PackPlaybackView>)
-        return BuildScheduleLeafStart(engine, world, root, materialized, row.Invocation().packLease, out);
-    else return BuildScheduleLeafStart(engine, world, root, materialized, out);
+        return BuildScheduleLeafStart(engine, world, root, materialized, row.Invocation().packLease, out, true);
+    else return BuildScheduleLeafStart(engine, world, root, materialized, out, true);
+}
+
+// Streaming is a property of the Sound definition itself, so it can be read
+// without resolving the leaf's full property cut.
+bool SoundDefinitionStreams(const harken::PlayableWorldViewV1& world, VnObjectId stableId) noexcept {
+    const std::size_t slot = static_cast<std::size_t>(
+        harken::playableproperties::PlayablePropertyIdV1::StreamingMode) - 1u;
+    for (std::uint32_t index = 0; index < world.propertyCount; ++index) {
+        const auto& row = world.properties[index];
+        if (row.contentPropertyKind == harken::playableproperties::ContentPropertyKindV1::Sound &&
+            row.stableId == stableId)
+            return (row.payload.presentMask & (UINT64_C(1) << slot)) != 0 && row.payload.values[slot].bits != 0;
+    }
+    return false;
+}
+
+bool SoundDefinitionStreams(const harken::PackPlaybackView& world, VnObjectId stableId) noexcept {
+    const std::size_t slot = static_cast<std::size_t>(
+        harken::playableproperties::PlayablePropertyIdV1::StreamingMode) - 1u;
+    const auto* row = world.ResolveProperty(harken::playableproperties::ContentPropertyKindV1::Sound, stableId);
+    return row != nullptr && (row->payload.presentMask & (UINT64_C(1) << slot)) != 0 &&
+        row->payload.values[slot].bits != 0;
+}
+
+template <typename WorldView>
+bool VariableControlScheduleHasStream(const WorldView& world, const MaterializedScheduleSet& schedule) noexcept {
+    if (schedule.leafCount > schedule.leaves.size()) return false;
+    for (std::uint32_t index = 0; index < schedule.leafCount; ++index) {
+        const auto& leaf = schedule.leaves[index].leaf;
+        if (leaf.kind == harken::PlayableKindV1::Sound && SoundDefinitionStreams(world, leaf.stableId)) return true;
+    }
+    return false;
 }
 
 bool SetNestedVariableControlPropertyPath(harken::EnginePlayableServiceRow& service,
@@ -30609,9 +30641,9 @@ QueueContinuationPrepareStatus PrepareCompositeQueueContinuation(
             packQueue
                 ? BuildScheduleLeafStart(
                       engine, row.Invocation().packPlaybackView, row.root, rooted,
-                      row.Invocation().packLease, &prepared[index])
+                      row.Invocation().packLease, &prepared[index], true)
                 : BuildScheduleLeafStart(
-                      engine, world, row.root, rooted, &prepared[index]);
+                      engine, world, row.root, rooted, &prepared[index], true);
         if (status != harken::PlayableStartStatus::Accepted) return QueueContinuationPrepareStatus::Failed;
         prepared[index].voice.target.programSemanticFingerprint =
             program.programSemanticFingerprint;
@@ -32096,7 +32128,7 @@ QueueContinuationPrepareStatus PrepareQueueContinuationReady(
     }
     harken::TimelineVoiceInstallDesc voice{};
     if (BuildTimelineVoiceInstallFromCut(engine, cut, &voice,
-            packQueue ? &row.Invocation().packLease : nullptr) != harken::PlayableStartStatus::Accepted) {
+            packQueue ? &row.Invocation().packLease : nullptr, true) != harken::PlayableStartStatus::Accepted) {
         return QueueContinuationPrepareStatus::Failed;
     }
     voice.authoredDurationFrames = scheduleAuthoredDuration;
@@ -32942,7 +32974,7 @@ QueueContinuationPrepareStatus ValidateQueueSuccessorTarget(
         return QueueContinuationPrepareStatus::Deferred;
     }
     harken::TimelineVoiceInstallDesc voice{};
-    if (BuildTimelineVoiceInstallFromCut(engine, cut, &voice) !=
+    if (BuildTimelineVoiceInstallFromCut(engine, cut, &voice, nullptr, true) !=
         harken::PlayableStartStatus::Accepted) {
         return QueueContinuationPrepareStatus::Failed;
     }
@@ -34953,7 +34985,7 @@ QueueContinuationPrepareStatus StartSignalOnlyNoOverlapSuccessor(
         engine.playablePropertyCutScratch.View();
     harken::TimelineVoiceInstallDesc voice{};
     if (BuildTimelineVoiceInstallFromCut(engine, cut, &voice,
-            packQueue ? &row.Invocation().packLease : nullptr) != harken::PlayableStartStatus::Accepted) {
+            packQueue ? &row.Invocation().packLease : nullptr, true) != harken::PlayableStartStatus::Accepted) {
         return QueueContinuationPrepareStatus::Failed;
     }
     voice.target.programSemanticFingerprint =
@@ -35502,7 +35534,7 @@ enum class ContainerLoopSuccessorStatus : std::uint8_t {
     Deferred,
     Invalidated,
     Refused,
-    RetryAtMarkerBoundary,
+    RetryAtFrame,
     NaturalEnd,
 };
 
@@ -35528,13 +35560,38 @@ void ClearOrdinaryCurrentProgram(harken::EnginePlayableServiceRow& row) noexcept
     row.schedule = {};
 }
 
+bool ScheduleSourcePreparationHorizon(harken::Engine& engine, std::uint64_t* horizon) noexcept;
+
+// Leaves a streamed start its preparation lead. The lead is bounded to half of
+// the remaining timeline window so a boundary at or after it stays publishable;
+// a stream that is still not ready there is refused without moving the source.
+std::uint64_t StreamPreparationFloor(harken::Engine& engine, std::uint64_t floor) noexcept {
+    std::uint64_t horizon = 0;
+    if (!ScheduleSourcePreparationHorizon(engine, &horizon) || horizon <= floor) return floor;
+    const auto windowEnd = engine.timelinePool.WindowEndFrame();
+    const auto reachable = windowEnd > floor ? floor + (windowEnd - floor) / 2u : floor;
+    return std::max(floor, std::min(horizon, reachable));
+}
+
+// A loop successor has no authored boundary, so a streamed one starts after its
+// preparation lead instead of being refused at the earliest frame.
+bool DeferContainerLoopSuccessorForStream(harken::Engine& engine, bool streamed,
+    std::uint64_t continuationFrame, std::uint64_t* retryFrame) noexcept {
+    if (!streamed) return false;
+    const auto floor = StreamPreparationFloor(engine, continuationFrame);
+    if (floor <= continuationFrame) return false;
+    *retryFrame = floor;
+    return true;
+}
+
 ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
     harken::Engine& engine,
     harken::EnginePlayableServiceRow& row,
     const OrdinaryContainerNavigationNode& frame,
     std::uint64_t continuationFrame,
-    std::uint64_t* retryFrame) noexcept {
-    if (retryFrame == nullptr) {
+    std::uint64_t* retryFrame,
+    harken::LogicCommitSequence* deferredTicket) noexcept {
+    if (retryFrame == nullptr || deferredTicket == nullptr) {
         return ContainerLoopSuccessorStatus::Refused;
     }
     *retryFrame = 0;
@@ -35634,8 +35691,11 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
         row.selectionCommitted = false;
     }
     CatchUpTimelineWindow(engine, continuationFrame, &row);
-    harken::LogicCommitSequence ticket = 0;
-    if (engine.logicCommits.TryIssue(&ticket) !=
+    // A stream deferral retries the same rolled-back selection once, at the floor
+    // it chose, so it keeps the ticket that seeds it and does not defer again.
+    const bool streamRetry = *deferredTicket != 0;
+    harken::LogicCommitSequence ticket = std::exchange(*deferredTicket, 0);
+    if (ticket == 0 && engine.logicCommits.TryIssue(&ticket) !=
         harken::LogicCommitCoordinator::IssueStatus::Issued) {
         return ContainerLoopSuccessorStatus::Refused;
     }
@@ -36108,10 +36168,10 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
             const auto leafStatus = packAuthority
                 ? BuildScheduleLeafStart(
                       engine, row.Invocation().packPlaybackView, property.root, scheduleLeaf,
-                      row.Invocation().packLease, &preparedScheduleLeaves[index])
+                      row.Invocation().packLease, &preparedScheduleLeaves[index], true)
                 : BuildScheduleLeafStart(
                       engine, *world, property.root, scheduleLeaf,
-                      &preparedScheduleLeaves[index]);
+                      &preparedScheduleLeaves[index], true);
             if (leafStatus != harken::PlayableStartStatus::Accepted ||
                 !treeStep.PrepareInstance(
                     engine.playableInstances, harken::PlayableKind::Sound,
@@ -36131,6 +36191,14 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
                 : MonitorContentFor(*world, scheduleLeaf.leaf));
             if (index == 0) leafInstance = scheduleLeafInstances[index];
         }
+    }
+    bool streamedSchedule = false;
+    for (std::uint32_t index = 0; index < scheduleLeafCount; ++index)
+        streamedSchedule = streamedSchedule || preparedScheduleLeaves[index].voice.streamed;
+    if (!streamRetry && DeferContainerLoopSuccessorForStream(engine, streamedSchedule, continuationFrame, retryFrame)) {
+        rollbackCreated();
+        *deferredTicket = ticket;
+        return ContainerLoopSuccessorStatus::RetryAtFrame;
     }
     if (leafInstance == 0) {
         cancelPreparedSelections();
@@ -36161,7 +36229,7 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
             nextSelectedChildOrdinals[frame.pathPrefixCount]) {
             *retryFrame = zeroWorkCompletionFrame;
             rollbackCreated();
-            return ContainerLoopSuccessorStatus::RetryAtMarkerBoundary;
+            return ContainerLoopSuccessorStatus::RetryAtFrame;
         }
         std::uint32_t appendedChildOrdinal = 0;
         if (!appendDirectSelection(
@@ -36773,13 +36841,18 @@ engine.runtimeRecreateRequired = true;
         engine.playablePropertyCutScratch.View();
     harken::TimelineVoiceInstallDesc voice{};
     const auto voiceStatus = BuildTimelineVoiceInstallFromCut(
-        engine, cut, &voice, packAuthority ? &row.Invocation().packLease : nullptr);
+        engine, cut, &voice, packAuthority ? &row.Invocation().packLease : nullptr, true);
     if (voiceStatus != harken::PlayableStartStatus::Accepted) {
         rollbackCommitted();
         return voiceStatus == harken::PlayableStartStatus::MediaMismatch ||
                        cut.streamingMode != 0
                    ? ContainerLoopSuccessorStatus::Invalidated
                    : ContainerLoopSuccessorStatus::Refused;
+    }
+    if (!streamRetry && DeferContainerLoopSuccessorForStream(engine, voice.streamed, continuationFrame, retryFrame)) {
+        rollbackCommitted();
+        *deferredTicket = ticket;
+        return ContainerLoopSuccessorStatus::RetryAtFrame;
     }
     voice.target.programSemanticFingerprint =
         program->programSemanticFingerprint;
@@ -36990,12 +37063,13 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessor(
     harken::EnginePlayableServiceRow& row,
     const OrdinaryContainerNavigationNode& frame) noexcept {
     std::uint64_t continuationFrame = QueueEarliestContinuationFrame(engine);
+    harken::LogicCommitSequence deferredTicket = 0;
     for (std::uint32_t attempt = 0;
          attempt <= engine.playableInstances.Capacity(); ++attempt) {
         std::uint64_t retryFrame = 0;
         const auto status = StartContainerLoopSuccessorAttempt(
-            engine, row, frame, continuationFrame, &retryFrame);
-        if (status != ContainerLoopSuccessorStatus::RetryAtMarkerBoundary) {
+            engine, row, frame, continuationFrame, &retryFrame, &deferredTicket);
+        if (status != ContainerLoopSuccessorStatus::RetryAtFrame) {
             return status;
         }
         if (retryFrame <= continuationFrame) {
@@ -37431,6 +37505,19 @@ bool ScheduleSourcePreparationHorizon(harken::Engine& engine, std::uint64_t* hor
     if (lead > UINT64_MAX - floor || floor + lead > UINT64_MAX - (block - 1u)) return false;
     *horizon = ((floor + lead + block - 1u) / block) * block;
     return true;
+}
+
+// A selectable switch boundary leaves a streamed target the same preparation
+// lead as any other future stream start.
+std::uint64_t VariableControlTargetFirstOpen(harken::Engine& engine,
+    const harken::EnginePlayableServiceRow& row, const MaterializedScheduleSet& schedule,
+    std::uint64_t firstOpen) noexcept {
+    const bool pack = row.Invocation().packLease.leaseToken != 0 && !row.variableControlWorldUsesCurrentAuthority;
+    const bool streamed = pack
+        ? VariableControlScheduleHasStream(row.Invocation().packPlaybackView, schedule)
+        : VariableControlScheduleHasStream(row.variableControlWorldUsesCurrentAuthority
+            ? engine.variables.CurrentPlayableWorld() : row.VariableControlWorld(), schedule);
+    return streamed ? StreamPreparationFloor(engine, firstOpen) : firstOpen;
 }
 
 bool ServiceScheduleSourceCohorts(harken::Engine& engine, harken::EnginePlayableServiceRow& row,
@@ -39515,11 +39602,13 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteEntry(
         leadQuanta > UINT64_MAX / blockFrames
             ? UINT64_MAX
             : leadQuanta * blockFrames;
-    const std::uint64_t firstOpen =
+    const std::uint64_t publishFirstOpen =
         observedFrame > UINT64_MAX - leadFrames
             ? UINT64_MAX
             : std::max(engine.timelinePool.PublishCutoffFrame(),
                        observedFrame + leadFrames);
+    const std::uint64_t firstOpen = targetReady
+        ? VariableControlTargetFirstOpen(engine, row, targetSchedule, publishFirstOpen) : publishFirstOpen;
     const std::uint64_t cadenceFloor = std::max(
         firstOpen, row.variableControlDiscreteNextEvaluationFrame);
     std::uint64_t decisionFrame = 0;
@@ -40472,11 +40561,13 @@ VariableRetargetPrepareStatus PrepareVariableControlDiscreteReplacement(
         leadQuanta > UINT64_MAX / blockFrames
             ? UINT64_MAX
             : leadQuanta * blockFrames;
-    const std::uint64_t firstOpen =
+    const std::uint64_t publishFirstOpen =
         observedFrame > UINT64_MAX - leadFrames
             ? UINT64_MAX
             : std::max(engine.timelinePool.PublishCutoffFrame(),
                        observedFrame + leadFrames);
+    const std::uint64_t firstOpen = targetReady
+        ? VariableControlTargetFirstOpen(engine, row, *scheduleStorage, publishFirstOpen) : publishFirstOpen;
     const std::uint64_t cadenceFloor = std::max(
         firstOpen, row.variableControlDiscreteNextEvaluationFrame);
     std::uint64_t decisionFrame = 0;
