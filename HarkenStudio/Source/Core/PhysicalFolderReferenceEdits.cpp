@@ -328,10 +328,6 @@ QJsonObject PhysicalFolderReferenceEdits::removeReferences(QJsonObject content,
                     return deleted(rule.value(QStringLiteral("source")), guids)
                         || deleted(rule.value(QStringLiteral("target")), guids);
                 }));
-                editArray(transitions, QStringLiteral("rules"), [&](QJsonObject& rule) {
-                    if (deleted(rule.value(QStringLiteral("bridge")), guids))
-                        rule.insert(QStringLiteral("bridge"), QJsonValue::Null);
-                });
             });
         });
     });

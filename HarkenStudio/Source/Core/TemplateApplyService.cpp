@@ -155,7 +155,7 @@ void remapTree(ProjectItem* item, const TemplateIdentityMap& identities)
             }
         }
         for (auto& rule : selection->transitions.rules)
-            for (auto* reference : {&rule.source, &rule.target, &rule.bridge})
+            for (auto* reference : {&rule.source, &rule.target})
                 if (*reference)
                     *reference = identities.guids.value(**reference, **reference);
     }

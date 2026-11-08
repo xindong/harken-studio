@@ -3,7 +3,6 @@
 #include "Components/VSegment.h"
 #include "Components/VSelection.h"
 #include "Components/VTrack.h"
-#include "ItemTypeCatalog.h"
 #include "PlacementContext.h"
 #include "ProjectTypes.h"
 #include "PlaybackReferenceValidation.h"
@@ -244,9 +243,6 @@ QJsonObject ruleToJson(const TransitionRuleDef& rule)
         {QStringLiteral("target"), identityToJson(rule.target)},
         {QStringLiteral("exitTiming"), exitTimingName(rule.exitTiming)},
         {QStringLiteral("sourceFadeOut"), fadeToJson(rule.sourceFadeOut)},
-        {QStringLiteral("bridge"), identityToJson(rule.bridge)},
-        {QStringLiteral("bridgeFadeIn"), fadeToJson(rule.bridgeFadeIn)},
-        {QStringLiteral("bridgeFadeOut"), fadeToJson(rule.bridgeFadeOut)},
         {QStringLiteral("entryMode"), entryModeName(rule.entryMode)},
         {QStringLiteral("targetFadeIn"), fadeToJson(rule.targetFadeIn)}
     };
@@ -258,23 +254,17 @@ std::optional<TransitionRuleDef> ruleFromJson(const QJsonValue& value)
     const QJsonObject json = value.toObject();
     TransitionRuleDef rule;
     if (!parseIdentity(json.value(QStringLiteral("source")), &rule.source)
-        || !parseIdentity(json.value(QStringLiteral("target")), &rule.target)
-        || !parseIdentity(json.value(QStringLiteral("bridge")), &rule.bridge))
+        || !parseIdentity(json.value(QStringLiteral("target")), &rule.target))
         return std::nullopt;
     const auto exitTiming = parseExitTiming(json.value(QStringLiteral("exitTiming")));
     const auto entryMode = parseEntryMode(json.value(QStringLiteral("entryMode")));
     const auto sourceFade = fadeFromJson(json.value(QStringLiteral("sourceFadeOut")));
-    const auto bridgeIn = fadeFromJson(json.value(QStringLiteral("bridgeFadeIn")));
-    const auto bridgeOut = fadeFromJson(json.value(QStringLiteral("bridgeFadeOut")));
     const auto targetFade = fadeFromJson(json.value(QStringLiteral("targetFadeIn")));
-    if (!exitTiming || !entryMode || !sourceFade || !bridgeIn || !bridgeOut
-        || !targetFade)
+    if (!exitTiming || !entryMode || !sourceFade || !targetFade)
         return std::nullopt;
     rule.exitTiming = *exitTiming;
     rule.entryMode = *entryMode;
     rule.sourceFadeOut = *sourceFade;
-    rule.bridgeFadeIn = *bridgeIn;
-    rule.bridgeFadeOut = *bridgeOut;
     rule.targetFadeIn = *targetFade;
     return rule;
 }
@@ -283,30 +273,6 @@ bool sameEndpoints(const TransitionRuleDef& left,
                    const TransitionRuleDef& right)
 {
     return left.source == right.source && left.target == right.target;
-}
-
-bool checkedSubtract(int64_t left, int64_t right, int64_t* out)
-{
-    if ((right > 0 && left < std::numeric_limits<int64_t>::min() + right)
-        || (right < 0 && left > std::numeric_limits<int64_t>::max() + right))
-        return false;
-    *out = left - right;
-    return true;
-}
-
-bool checkedAdd(int64_t left, int64_t right, int64_t* out)
-{
-    if ((right > 0 && left > std::numeric_limits<int64_t>::max() - right)
-        || (right < 0 && left < std::numeric_limits<int64_t>::min() - right))
-        return false;
-    *out = left + right;
-    return true;
-}
-
-int64_t positiveModulo(int64_t value, int64_t modulus)
-{
-    const int64_t remainder = value % modulus;
-    return remainder < 0 ? remainder + modulus : remainder;
 }
 
 class VisitSet
@@ -422,8 +388,6 @@ TransitionRuleDef canonicalTransitionRule()
 {
     TransitionRuleDef rule;
     rule.sourceFadeOut = canonicalTransitionFade();
-    rule.bridgeFadeIn = canonicalTransitionFade();
-    rule.bridgeFadeOut = canonicalTransitionFade();
     rule.targetFadeIn = canonicalTransitionFade();
     return rule;
 }
@@ -481,21 +445,8 @@ TransitionValidation TransitionTableDef::validate() const
                 TransitionError::EmptyIdentity,
                 QStringLiteral("Transition target identity is empty"),
                 static_cast<int>(i));
-        if (rule.bridge && rule.bridge->isNull())
-            return TransitionValidation::failure(
-                TransitionError::EmptyIdentity,
-                QStringLiteral("Transition bridge identity is empty"),
-                static_cast<int>(i));
         if (rule.isDefault()) ++defaults;
-        if (rule.bridge && rule.entryMode == TransitionEntryMode::SamePosition)
-            return TransitionValidation::failure(
-                TransitionError::BridgeSamePosition,
-                QStringLiteral("Bridge and SamePosition cannot coexist"),
-                static_cast<int>(i));
-        const TransitionFadeDef* fades[] = {
-            &rule.sourceFadeOut, &rule.bridgeFadeIn,
-            &rule.bridgeFadeOut, &rule.targetFadeIn
-        };
+        const TransitionFadeDef* fades[] = {&rule.sourceFadeOut, &rule.targetFadeIn};
         for (const TransitionFadeDef* fade : fades) {
             const TransitionValidation validation = validateFade(
                 *fade, static_cast<int>(i));
@@ -590,11 +541,6 @@ bool isEndpointCandidate(const ProjectItem& container,
         && validateDirectPlaybackTarget(container, candidate.guid, &candidate);
 }
 
-bool isBridgeCandidate(const ProjectItem& candidate)
-{
-    return ItemTypeCatalog::isContentObject(candidate.type);
-}
-
 int ruleSpecificity(const TransitionRuleDef& rule)
 {
     return (rule.source ? 2 : 0) + (rule.target ? 1 : 0);
@@ -626,127 +572,6 @@ const TransitionRuleDef* matchRule(const TransitionTableDef& table,
     }
     if (index) *index = -1;
     return nullptr;
-}
-
-SamePositionResult samePositionMap(int64_t sourcePosition,
-                                   const ProjectItem& source,
-                                   const ProjectItem& target,
-                                   const TimelineItemResolver& resolve,
-                                   const TimelineNaturalDurationResolver& naturalDuration)
-{
-    SamePositionResult result;
-    const TimelineSemanticsResult sourceSpan = TimelineSemantics::nominalSpanOf(
-        source, resolve, naturalDuration);
-    const TimelineSemanticsResult targetSpan = TimelineSemantics::nominalSpanOf(
-        target, resolve, naturalDuration);
-    if (!sourceSpan || !targetSpan) {
-        const TimelineValidation& failure = !sourceSpan
-            ? sourceSpan.validation : targetSpan.validation;
-        result.validation = TransitionValidation::failure(
-            failure.error == TimelineError::CoordinateOverflow
-                ? TransitionError::CoordinateOverflow
-                : TransitionError::UnknownTimeline,
-            failure.message);
-        return result;
-    }
-    result.targetTime = targetSpan.time;
-    if (sourceSpan.time.domain == TimelineDomain::Musical
-        && targetSpan.time.domain == TimelineDomain::Musical) {
-        int64_t sourceOffset = 0;
-        if (!checkedSubtract(sourcePosition, sourceSpan.nominal.start, &sourceOffset)
-            || !checkedSubtract(targetSpan.nominal.end, targetSpan.nominal.start,
-                                &result.targetNominalLength)) {
-            result.validation = TransitionValidation::failure(
-                TransitionError::CoordinateOverflow,
-                QStringLiteral("Same-position musical coordinate overflows"));
-            return result;
-        }
-        if (result.targetNominalLength <= 0) {
-            result.validation = TransitionValidation::failure(
-                TransitionError::UnknownTimeline,
-                QStringLiteral("Target nominal length must be positive"));
-            return result;
-        }
-        result.targetOffset = positiveModulo(
-            sourceOffset, result.targetNominalLength);
-        if (!checkedAdd(targetSpan.nominal.start, result.targetOffset,
-                        &result.targetPosition)) {
-            result.validation = TransitionValidation::failure(
-                TransitionError::CoordinateOverflow,
-                QStringLiteral("Same-position musical result overflows"));
-            return result;
-        }
-        result.validation = TransitionValidation::success();
-        return result;
-    }
-
-    const CoordinateResult sourceAt = TimelineCoordinates::toNanoseconds(
-        sourcePosition, sourceSpan.time);
-    const CoordinateResult sourceOrigin = TimelineCoordinates::toNanoseconds(
-        sourceSpan.nominal.start, sourceSpan.time);
-    const CoordinateResult targetStart = TimelineCoordinates::toNanoseconds(
-        targetSpan.nominal.start, targetSpan.time);
-    const CoordinateResult targetEnd = TimelineCoordinates::toNanoseconds(
-        targetSpan.nominal.end, targetSpan.time);
-    const CoordinateResult* coordinates[] = {
-        &sourceAt, &sourceOrigin, &targetStart, &targetEnd
-    };
-    for (const CoordinateResult* coordinate : coordinates) {
-        if (!*coordinate) {
-            result.validation = TransitionValidation::failure(
-                coordinate->validation.error == TimelineError::CoordinateOverflow
-                    ? TransitionError::CoordinateOverflow
-                    : TransitionError::UnknownTimeline,
-                coordinate->validation.message);
-            return result;
-        }
-    }
-    int64_t sourceOffsetNanoseconds = 0;
-    int64_t targetLengthNanoseconds = 0;
-    if (!checkedSubtract(sourceAt.value, sourceOrigin.value,
-                         &sourceOffsetNanoseconds)
-        || !checkedSubtract(targetEnd.value, targetStart.value,
-                            &targetLengthNanoseconds)) {
-        result.validation = TransitionValidation::failure(
-            TransitionError::CoordinateOverflow,
-            QStringLiteral("Same-position absolute coordinate overflows"));
-        return result;
-    }
-    if (targetLengthNanoseconds <= 0) {
-        result.validation = TransitionValidation::failure(
-            TransitionError::UnknownTimeline,
-            QStringLiteral("Target nominal length must be positive"));
-        return result;
-    }
-    const int64_t offsetNanoseconds = positiveModulo(
-        sourceOffsetNanoseconds, targetLengthNanoseconds);
-    int64_t targetNanoseconds = 0;
-    if (!checkedAdd(targetStart.value, offsetNanoseconds, &targetNanoseconds)) {
-        result.validation = TransitionValidation::failure(
-            TransitionError::CoordinateOverflow,
-            QStringLiteral("Same-position absolute result overflows"));
-        return result;
-    }
-    const CoordinateResult position = TimelineCoordinates::fromNanoseconds(
-        targetNanoseconds, targetSpan.time);
-    const CoordinateResult offset = TimelineCoordinates::fromNanoseconds(
-        offsetNanoseconds, targetSpan.time);
-    const CoordinateResult length = TimelineCoordinates::fromNanoseconds(
-        targetLengthNanoseconds, targetSpan.time);
-    if (!position || !offset || !length) {
-        const CoordinateResult& failure = !position ? position : (!offset ? offset : length);
-        result.validation = TransitionValidation::failure(
-            failure.validation.error == TimelineError::CoordinateOverflow
-                ? TransitionError::CoordinateOverflow
-                : TransitionError::UnknownTimeline,
-            failure.validation.message);
-        return result;
-    }
-    result.targetPosition = position.value;
-    result.targetOffset = offset.value;
-    result.targetNominalLength = length.value;
-    result.validation = TransitionValidation::success();
-    return result;
 }
 
 TransitionWatchResult resolveWatchReference(
@@ -887,7 +712,6 @@ HandoverResult deriveHandover(const TransitionTableDef& table,
     result.kind = target ? HandoverKind::Transition : HandoverKind::SourceExit;
     result.ruleChain.push_back(*source);
     result.referenceChain.push_back(*source);
-    if (rule->bridge) result.referenceChain.push_back(*rule->bridge);
     if (target) {
         result.ruleChain.push_back(*target);
         result.referenceChain.push_back(*target);

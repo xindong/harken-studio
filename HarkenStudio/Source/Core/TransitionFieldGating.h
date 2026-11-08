@@ -20,7 +20,6 @@ struct TransitionWatchAvailability
     FieldAvail clock = FieldAvail::Unavailable;
     FieldAvail anyMarker = FieldAvail::Unavailable;
     FieldAvail exitMarker = FieldAvail::Unavailable;
-    bool referencePresent = false;
     bool sourceResolved = true;
 };
 
@@ -36,8 +35,7 @@ struct ExitTimingAvail
     QString reasonNextBar;
     QString reasonNextMarker;
     QString reasonExitMarker;
-    QString note;
-    bool noteIsWarning = false;
+    QString warning;
 };
 
 struct TransitionFieldGating
@@ -45,13 +43,6 @@ struct TransitionFieldGating
     bool sourceEndpointEditable = true;
     bool targetEndpointEditable = true;
     ExitTimingAvail exit;
-    FieldAvail bridge = FieldAvail::Available;
-    QString reasonBridge;
-    FieldAvail samePosition = FieldAvail::Available;
-    QString reasonSamePosition;
-    bool bridgeFadesLive = false;
-    QString reasonBridgeFades;
-    bool samePositionReadoutVisible = false;
 };
 
 struct TransitionLedgerGating

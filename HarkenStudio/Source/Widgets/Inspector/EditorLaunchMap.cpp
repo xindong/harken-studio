@@ -19,7 +19,6 @@ QString editorPanelTypeForSlot(const QString& slot)
         { QStringLiteral("attenuation"), QStringLiteral("ExternalEditor") },
         { QStringLiteral("timeline"), QStringLiteral("TimelineEditor") },
         { QStringLiteral("selections"), QStringLiteral("GridEditor") },
-        { QStringLiteral("transitions"), QStringLiteral("TransitionEditor") },
     };
     auto it = map.find(slot);
     return it != map.end() ? it.value() : QString();

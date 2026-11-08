@@ -24,7 +24,6 @@ enum class ActionClosureEdgeReason : uint8_t
     OwnedChild,
     TrackClip,
     GridRow,
-    TransitionBridge,
     EffectiveOutputBus,
     EffectiveAttenuation,
     BindingDependency,

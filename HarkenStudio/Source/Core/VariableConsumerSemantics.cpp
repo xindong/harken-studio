@@ -275,12 +275,6 @@ AuditionVariableDependencies dependenciesForAudition(
                     collectAxes(variables, VariableConsumerKind::ContinuousGridAxis);
                 }
             }
-            if (selection->isQueue()
-                || (selection->mode == SelectionMode::Match
-                    && selection->variableResponse() == VariableResponse::Live))
-                for (const auto& rule : selection->transitions.rules)
-                    if (rule.bridge)
-                        self(byGuid.value(*rule.bridge), self);
         }
     };
     visit(root, visit);

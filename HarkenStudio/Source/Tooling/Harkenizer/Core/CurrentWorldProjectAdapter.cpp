@@ -739,13 +739,6 @@ bool appendBasicTransitionProgram(
                 .arg(transitionExitTimingName(source.exitTiming)));
             return false;
         }
-        if (source.bridge) {
-            setStatus(status,
-                      CurrentWorldBuildStatus::CapabilityUnavailable);
-            setError(error,
-                     QStringLiteral("Current World Transition does not support a Bridge"));
-            return false;
-        }
         if (source.entryMode != TransitionEntryMode::EntryMarker) {
             setStatus(status,
                       CurrentWorldBuildStatus::CapabilityUnavailable);
@@ -1304,11 +1297,6 @@ ActionBuildClosure actionBuildClosure(
                 for (const auto& mixingRow : selection->mixing(scope).rows)
                     if (!mixingRow.variable.isNull()) self(byGuid(mixingRow.variable), true, self);
             }
-            if (selection->isQueue() || (selection->mode == SelectionMode::Match
-                    && selection->variableResponse() == VariableResponse::Live))
-                for (const auto& rule : selection->transitions.rules)
-                    if (rule.bridge)
-                        self(byGuid(*rule.bridge), true, self);
         }
     };
     visit(&root, true, visit);

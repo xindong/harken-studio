@@ -13,6 +13,10 @@ add_library(harken_editor_grid_editor STATIC
     SelectionListWidget.h
     SelectionWaveform.cpp
     SelectionWaveform.h
+    TransitionFadeButton.cpp
+    TransitionFadeButton.h
+    TransitionTableWidget.cpp
+    TransitionTableWidget.h
     GridHeaderRef.h
     GridValueFormatting.h
 )

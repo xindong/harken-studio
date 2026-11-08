@@ -6,14 +6,15 @@ class QToolButton;
 
 namespace VNX {
 
-class ExplorerSection : public QWidget
+class PaneSection : public QWidget
 {
     Q_OBJECT
 
 public:
-    explicit ExplorerSection(const QString& title, QWidget* parent = nullptr);
+    PaneSection(const QString& title, const QString& settingsId, QWidget* parent = nullptr);
     QWidget* content() const { return content_; }
     QWidget* header() const { return header_; }
+    QString settingsId() const { return settingsId_; }
     bool isExpanded() const;
     void setExpanded(bool expanded);
 
@@ -24,6 +25,7 @@ signals:
 private:
     void updateHeader();
 
+    QString settingsId_;
     QWidget* header_ = nullptr;
     QToolButton* toggle_ = nullptr;
     QWidget* content_ = nullptr;

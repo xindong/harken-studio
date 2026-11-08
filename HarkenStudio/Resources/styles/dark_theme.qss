@@ -447,29 +447,24 @@ QTabBar::tab:hover:!selected {
     color: @textPrimary@;
 }
 
-QFrame[explorerRole="content"] {
+QFrame[paneRole="stack"] {
     background-color: @bgPrimary@;
     border: @borderWidth@px solid @borderPrimary@;
     border-radius: 0;
 }
 
-QWidget[explorerRole="sectionHeader"] {
+QWidget[paneRole="sectionHeader"] {
     background-color: @bgSecondary@;
-    border-top: @borderWidth@px solid @borderPrimary@;
+    border: none;
     border-bottom: @borderWidth@px solid @borderPrimary@;
 }
 
-QWidget#projectAssetsSection QWidget[explorerRole="sectionHeader"],
-QWidget#projectSourcesSection QWidget[explorerRole="sectionHeader"] {
-    border-top: none;
-}
-
-QWidget[explorerRole="sectionHeader"][sourceDropTarget="true"],
-QWidget[sourceDropTarget="true"] QToolButton[explorerRole="sectionToggle"] {
+QWidget[paneRole="sectionHeader"][sourceDropTarget="true"],
+QWidget[sourceDropTarget="true"] QToolButton[paneRole="sectionToggle"] {
     background-color: @bgSelected@;
 }
 
-QToolButton[explorerRole="sectionToggle"] {
+QToolButton[paneRole="sectionToggle"] {
     background: transparent;
     color: @textTitle@;
     border: none;
@@ -481,11 +476,11 @@ QToolButton[explorerRole="sectionToggle"] {
     font-weight: @emphasisWeight@;
 }
 
-QToolButton[explorerRole="sectionToggle"]:hover {
+QToolButton[paneRole="sectionToggle"]:hover {
     background-color: @bgTertiary@;
 }
 
-QToolButton[explorerRole="sectionToggle"]:disabled {
+QToolButton[paneRole="sectionToggle"]:disabled {
     color: @textDisabled@;
 }
 
@@ -1814,6 +1809,7 @@ VNX--ObjectRefWidget[dropActive="true"] { border-color: @accent@; }
 VNX--ObjectRefWidget QLabel { background: transparent; border: none; }
 VNX--ObjectRefWidget QLabel#refName { color: @textPrimary@; }
 VNX--ObjectRefWidget QLabel#refName[inherited="true"] { color: @textSecondary@; }
+VNX--ObjectRefWidget QLabel#refName[emptyValue="true"] { color: @textSecondary@; }
 VNX--ObjectRefWidget QLabel#refName[inputInvalid="true"] { color: @error@; }
 VNX--ObjectRefWidget QLabel#refName:disabled { color: @textDisabled@; }
 

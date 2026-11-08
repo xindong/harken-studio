@@ -102,7 +102,6 @@ add_executable(harken_editor_tests
     UnitTest/SourceEditorPcmSliceTest.cpp
     UnitTest/StandaloneEditorDispatchTest.cpp
     UnitTest/TimelineEditorPanelTest.cpp
-    UnitTest/TransitionEditorPanelTest.cpp
     UnitTest/ItemTypeIconAssetTest.cpp
     UnitTest/NewObjectNamingTest.cpp
     UnitTest/AICommandCatalogTest.cpp

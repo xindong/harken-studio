@@ -450,27 +450,6 @@ struct Builder
             capability(RuntimeCapabilityFeature::ShuffleMemory,
                        RuntimeCapabilityState::UnavailableEngineContract,
                        container.runtimeId(), QStringLiteral("behavior.discipline"));
-        const bool transitionsActive = selection->isQueue()
-            || (selection->mode == SelectionMode::Match
-                && selection->variableResponse() == VariableResponse::Live);
-        for (size_t i = 0; transitionsActive && i < selection->transitions.rules.size(); ++i) {
-            const auto& rule = selection->transitions.rules[i];
-            if (!rule.bridge)
-                continue;
-            const ProjectItem* bridge = byGuid(*rule.bridge, container.runtimeId(),
-                                               QStringLiteral("transitions.bridge"), path);
-            if (!bridge)
-                continue;
-            std::vector<harkenstudio::ObjectId> bridgePath = path;
-            bridgePath.push_back(bridge->runtimeId());
-            edge(container.runtimeId(), bridge->runtimeId(),
-                 ActionClosureEdgeReason::TransitionBridge,
-                 QStringLiteral("transitions.rules[%1].bridge").arg(i), bridgePath);
-            visitContent(*bridge, bridgePath, control);
-            capability(RuntimeCapabilityFeature::Transition,
-                       RuntimeCapabilityState::UnavailableEngineContract,
-                       container.runtimeId(), QStringLiteral("transitions"));
-        }
     }
 
     void visitContent(const ProjectItem& item, const std::vector<harkenstudio::ObjectId>& path,
@@ -852,7 +831,6 @@ QString edgeReasonName(ActionClosureEdgeReason reason)
     case ActionClosureEdgeReason::OwnedChild: return QStringLiteral("OwnedChild");
     case ActionClosureEdgeReason::TrackClip: return QStringLiteral("TrackClip");
     case ActionClosureEdgeReason::GridRow: return QStringLiteral("GridRow");
-    case ActionClosureEdgeReason::TransitionBridge: return QStringLiteral("TransitionBridge");
     case ActionClosureEdgeReason::EffectiveOutputBus: return QStringLiteral("EffectiveOutputBus");
     case ActionClosureEdgeReason::EffectiveAttenuation: return QStringLiteral("EffectiveAttenuation");
     case ActionClosureEdgeReason::EffectiveSend: return QStringLiteral("EffectiveSend");

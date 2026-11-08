@@ -54,7 +54,7 @@ TimelineValidation validateDependencies(const ProjectItem& item,
             }
             if (resolve)
                 for (const TransitionRuleDef& rule : selection->transitions.rules)
-                    for (const auto* reference : {&rule.source, &rule.target, &rule.bridge})
+                    for (const auto* reference : {&rule.source, &rule.target})
                         if (*reference) pending.push_back(resolve(**reference));
         }
         if (const auto* action = current->comp<VAction>()) {

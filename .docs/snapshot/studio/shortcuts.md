@@ -69,7 +69,7 @@
 
 | 界面／场景 | 按键 | 当前行为 |
 |---|---|---|
-| Transition Editor | Delete | 删除所选规则；默认规则等限制仍生效 |
+| Selection Editor / Transition | Delete | 删除所选规则；默认规则等限制仍生效 |
 | Timeline，编辑游标可见 | Home | 游标移至视图起点 |
 | Timeline，编辑游标可见 | End | 游标移至最末片段结束处，不早于视图起点 |
 

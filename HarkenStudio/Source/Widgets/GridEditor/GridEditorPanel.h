@@ -38,6 +38,10 @@ public:
     MixingEditorWidget* mixingEditor() const { return editor_->mixingEditor(); }
     QString statusText() const { return editor_->statusText(); }
 
+    void setPlacementContext(const std::optional<PlacementContext>& placement)
+    {
+        editor_->setPlacementContext(placement);
+    }
     void drillInto(const QUuid& target) { editor_->drillInto(target); }
     void drillBackTo(int depth) { editor_->drillBackTo(depth); }
 

@@ -12,8 +12,6 @@
 #include "Core/QtControlSkin.h"
 #include "Core/ThemeManager.h"
 #include "Widgets/Inspector/InspectorPanel.h"
-#include "Widgets/Inspector/InspectorLaunchEntry.h"
-#include "Widgets/Inspector/EditorLaunchMap.h"
 #include "Widgets/Shared/InspectorFormRow.h"
 #include "Widgets/Shared/SchemaFieldPick.h"
 
@@ -152,20 +150,6 @@ public:
         behaviorLayout->addWidget(memoryScopeRow_);
         layout->addWidget(behavior_);
 
-        transitions_ = new InspectorLaunchEntry(QStringLiteral("transitions"), this,
-                                               tr("Transition"));
-        transitions_->setProperty("inspectorField", QStringLiteral("transitions"));
-        layout->addWidget(transitions_);
-        connect(transitions_, &InspectorLaunchEntry::launchRequested, this,
-                [this](const QString& slot) {
-            for (QWidget* current = parentWidget(); current; current = current->parentWidget()) {
-                if (auto* panel = qobject_cast<InspectorPanel*>(current)) {
-                    panel->requestEditorLaunch(slot);
-                    return;
-                }
-            }
-        });
-
         connect(mode_, qOverload<int>(&QComboBox::currentIndexChanged),
                 this, [this] { commitMode(); });
         connect(playType_, qOverload<int>(&QComboBox::currentIndexChanged),
@@ -210,7 +194,6 @@ public:
                     || property == QStringLiteral("variableResponse")
                     || property == QStringLiteral("behavior")
                     || property == QStringLiteral("selections")
-                    || property == QStringLiteral("transitions")
                     || property == QStringLiteral("spliceByMarker")
                     || property == QStringLiteral("childOrder"))) {
                 if (property == QStringLiteral("behavior") || property == QStringLiteral("selections"))
@@ -412,9 +395,6 @@ private:
             QSignalBlocker blocker(spliceByMarker_);
             spliceByMarker_->setChecked(selection && selection->spliceByMarker);
         }
-        transitions_->setVisible(selection != nullptr);
-        transitions_->setLaunchEnabled(selection && !EditorLaunchMap::isSlotDisabled(
-            QStringLiteral("transitions")), EditorLaunchMap::slotDisabledReason(QStringLiteral("transitions")));
         placeholder_->setVisible(!selection);
         if (behavior) refreshBehavior();
     }
@@ -426,7 +406,6 @@ private:
     QComboBox* playType_ = nullptr;
     QWidget* spliceByMarkerRow_ = nullptr;
     QCheckBox* spliceByMarker_ = nullptr;
-    InspectorLaunchEntry* transitions_ = nullptr;
     QWidget* variableResponseRow_ = nullptr;
     QComboBox* variableResponse_ = nullptr;
     QWidget* behavior_ = nullptr;

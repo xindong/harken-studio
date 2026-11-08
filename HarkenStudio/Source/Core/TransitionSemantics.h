@@ -48,9 +48,6 @@ struct TransitionRuleDef
     std::optional<QUuid> target;
     TransitionExitTiming exitTiming = TransitionExitTiming::NextBar;
     TransitionFadeDef sourceFadeOut;
-    std::optional<QUuid> bridge;
-    TransitionFadeDef bridgeFadeIn;
-    TransitionFadeDef bridgeFadeOut;
     TransitionEntryMode entryMode = TransitionEntryMode::EntryMarker;
     TransitionFadeDef targetFadeIn;
 
@@ -68,7 +65,6 @@ enum class TransitionError : uint8_t
     MultipleDefaults,
     DuplicateEndpoints,
     DefaultEndpoints,
-    BridgeSamePosition,
     RuleNotFound,
     DefaultRuleRemoval,
     InvalidContainer,
@@ -120,31 +116,12 @@ namespace TransitionSemantics {
 TransitionMountState transitionMountState(const ProjectItem& item, PlatformScope scope = std::nullopt);
 bool isEndpointCandidate(const ProjectItem& container,
                          const ProjectItem& candidate);
-bool isBridgeCandidate(const ProjectItem& candidate);
 int ruleSpecificity(const TransitionRuleDef& rule);
 std::vector<int> rulesForDisplay(const TransitionTableDef& table);
 const TransitionRuleDef* matchRule(const TransitionTableDef& table,
                                    const QUuid& source,
                                    const QUuid& target,
                                    int* index = nullptr);
-
-struct SamePositionResult
-{
-    TransitionValidation validation;
-    SegmentTimeSpec targetTime;
-    int64_t targetPosition = 0;
-    int64_t targetOffset = 0;
-    int64_t targetNominalLength = 0;
-
-    bool known() const { return validation.ok(); }
-    explicit operator bool() const { return known(); }
-};
-
-SamePositionResult samePositionMap(int64_t sourcePosition,
-                                   const ProjectItem& source,
-                                   const ProjectItem& target,
-                                   const TimelineItemResolver& resolve,
-                                   const TimelineNaturalDurationResolver& naturalDuration = {});
 
 enum class TransitionWatchDirection : uint8_t
 {

@@ -13,6 +13,10 @@ add_library(harken_editor_common STATIC
     TimeAxis.h
     CollapsibleSection.cpp
     CollapsibleSection.h
+    PaneSection.cpp
+    PaneSection.h
+    PaneSectionStack.cpp
+    PaneSectionStack.h
     DialogFormLayout.cpp
     DialogFormLayout.h
     DropZoneWidget.cpp

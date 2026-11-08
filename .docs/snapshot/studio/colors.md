@@ -55,7 +55,7 @@
 | `sectionHeaderHeight` | 26 = 行高 + 2 | Explorer 的 Assets / Sources、Inspector 与其他折叠分节（各层级一致）、Inspector 分类 Tab、GroupBox 标题区 |
 | `indent` | 24 = 图标 + 控件间距 | 折叠分节内容的缩进；分节标题左侧不缩进，chevron 贴左，字段名与分节标题文字左对齐，嵌套分节逐层增加一列 |
 
-Explorer 的 Assets / Sources 与 Inspector 分节共用分区标题职责，悬停底色为 `background.tertiary`，鼠标为手形。Inspector 与设置表单按“块”排列：字段行高等于字段高，行与行之间、分节内容的上下边距都是控件间距，因此字段行与表格等块状内容离分节标题的距离一致，行距与树和表格的行高同为 24。蓝图节点行、标题栏窗口按钮宽、Fader 最小高度和 Timeline 标尺高度不随字段高收缩，分别取行高或较大控件高度推导。重命名编辑框高度为字段高并在行内居中，横向起点退回边框与 `QLineEdit` 固有文字边距，编辑时文字位置不变。
+Explorer 的 Assets / Sources 与 Selection Editor 的 Content / Transition 共用面板分区（`PaneSection` / `PaneSectionStack`）：带首要边界外框，标题居中，分区间 1px 边界可拖动调高，收起后让出空间并记住尺寸；标题只有底边线，首个分区上方由外框、其余由分隔边界提供上边线，切换按钮铺满标题栏，悬停底色 `background.tertiary` 上下贴边，鼠标为手形。Inspector 与设置表单按“块”排列：字段行高等于字段高，行与行之间、分节内容的上下边距都是控件间距，因此字段行与表格等块状内容离分节标题的距离一致，行距与树和表格的行高同为 24。蓝图节点行、标题栏窗口按钮宽、Fader 最小高度和 Timeline 标尺高度不随字段高收缩，分别取行高或较大控件高度推导。重命名编辑框高度为字段高并在行内居中，横向起点退回边框与 `QLineEdit` 固有文字边距，编辑时文字位置不变。
 
 `ThemeLayout::Space` 只剩 `None / Tight / Control / Section / Panel`，原 Medium / Large / XLarge 不再对业务开放；QSS 也不再提供 `@spacing*@`，改用 `@panelPadding@`、`@sectionGap@`、`@controlGap@`、`@tightGap@`、`@rowInset@`、`@fieldHeight@`、`@sectionHeaderHeight@` 与控件文字左右留白 `@textPadding@`。工具条类区域统一为左右面板内边距、上下紧凑间距；主工具栏高度为行高加上下行内留白（32），内容容器固定为一行高度，按钮上下各 4px 对称，HarkenStyle 不再给 `QToolBar` 追加条目边距和框架宽度。蓝图画布节点内部行保持世界坐标中的原有密度，不套用面板行高。
 
@@ -151,7 +151,7 @@ Studio Default 不再开放 `text.muted` 作为独立编辑职责。`textRole=mu
 
 2026-11-01 将边界职责收束为首要、次要和刻度线。首要与次要默认值保持，刻度线沿用原 `border.view` 的 Dark `#272E3C` / Light `#B9C5D1`，保留已有网格与主次刻度的透明度层次。`border.view` 和 `section.separator` 的绘制位置直接使用首要边界（2026-11-07 起不再作为独立渲染位置）；Studio Default 的旧 `border.view` 覆盖值迁移到 `border.tick`，已有 `border.tick` 覆盖优先，其他主题的同名职责不迁移。表格属于控件，外框与内部表头、分组、行列分隔统一使用次要边界，覆盖原生表格、组合表格和矩阵表格。Dock、主窗口与 Inspector 内嵌分割器的缝隙使用原有背景色。
 
-Filter 图表与字段共用首要边界外框；两者之间及 Explorer 的 Assets / Sources 之间保留 1px 分隔边界，常态使用首要边界色，启用时悬停使用强调色。拖动命中范围向两侧扩展，不增加可见线宽或布局间距。Explorer 任一分节收起后边界不可拖动，也不显示悬停强调色。
+Filter 图表与字段共用首要边界外框；两者之间及面板分区之间保留 1px 分隔边界，常态使用首要边界色，启用时悬停使用强调色。拖动命中范围向两侧扩展，不增加可见线宽或布局间距。面板分区任一相邻分节收起后边界不可拖动，也不显示悬停强调色。
 
 Blueprint 内嵌 Meter 的宽度边界及通用表格的列宽边界在悬停时使用强调色，沿用原有 1px 线宽和拖动命中范围；表格覆盖组合表头、原生表头、树表和矩阵表头，固定列和禁用状态不高亮。Notes 右下角调节柄在悬停及拖动时使用强调色，保持原有形状、尺寸和线宽，移开后恢复原色。
 

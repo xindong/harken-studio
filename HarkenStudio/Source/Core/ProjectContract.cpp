@@ -310,7 +310,7 @@ QSet<QString> referencedDocumentPaths(const QJsonObject& document, int schemaVer
     for (const auto& rule : selection.value(QStringLiteral("transitions")).toObject()
              .value(QStringLiteral("rules")).toArray()) {
         const QJsonObject transition = rule.toObject();
-        for (const auto* field : {"source", "target", "bridge"})
+        for (const auto* field : {"source", "target"})
             addReference(transition.value(QLatin1String(field)));
     }
     for (const auto& binding : components.value(QStringLiteral("mixnode")).toObject()

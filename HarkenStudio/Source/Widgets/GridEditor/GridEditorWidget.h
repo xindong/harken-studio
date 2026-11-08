@@ -1,10 +1,12 @@
 #pragma once
 
+#include "Core/PlacementContext.h"
 #include "Core/ProjectTypes.h"
 
 #include <QUuid>
 #include <QWidget>
 
+#include <optional>
 #include <vector>
 
 class QHBoxLayout;
@@ -14,7 +16,10 @@ class QStackedWidget;
 
 namespace VNX {
 
+class PaneSection;
+class PaneSectionStack;
 class MixingEditorWidget;
+class TransitionTableWidget;
 class DiscreteGridWidget;
 class SelectionListWidget;
 struct ProjectItem;
@@ -42,6 +47,7 @@ public:
     SelectionListWidget* selectionList() const { return selectionList_; }
     QString statusText() const;
 
+    void setPlacementContext(const std::optional<PlacementContext>& placement);
     void drillInto(const QUuid& target);
     void drillBackTo(int depth);
 
@@ -64,22 +70,27 @@ private:
     void showEmptyState(const QString& message);
     void rebuildCrumbs(const std::vector<ProjectItem*>& chain);
     void refreshChrome();
+    void refreshTransitionSection();
 
     bool pinned_ = false;
     ProjectItem* boundItem_ = nullptr;
     ProjectItem* displayItem_ = nullptr;
     std::vector<QUuid> drillPath_;
+    std::optional<PlacementContext> placement_;
 
     QWidget* crumbBar_ = nullptr;
     QWidget* crumbsHost_ = nullptr;
     QHBoxLayout* crumbLayout_ = nullptr;
     QStackedWidget* stack_ = nullptr;
     QLabel* emptyLabel_ = nullptr;
-    QWidget* gridPage_ = nullptr;
+    PaneSectionStack* gridPage_ = nullptr;
     QStackedWidget* editorStack_ = nullptr;
     DiscreteGridWidget* discreteGrid_ = nullptr;
     MixingEditorWidget* mixingEditor_ = nullptr;
     SelectionListWidget* selectionList_ = nullptr;
+    PaneSection* contentSection_ = nullptr;
+    PaneSection* transitionSection_ = nullptr;
+    TransitionTableWidget* transitionTable_ = nullptr;
 };
 
 }
