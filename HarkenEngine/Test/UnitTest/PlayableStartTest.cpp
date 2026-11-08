@@ -21679,10 +21679,13 @@ TEST(PlayableStart, ContainerLoopStreamedSuccessorPlaysWholeAfterPreparationOrIs
 }
 
 TEST(PlayableStart, ContainerLoopStreamedChildKeepsTheRandomSelection) {
+    struct Buffering { std::uint32_t prebufferMs; std::uint32_t ringFrames; };
+    for (const auto buffering : {Buffering{4, 1024}, Buffering{500, 32768}}) {
+    SCOPED_TRACE(::testing::Message() << "prebuffer=" << buffering.prebufferMs);
     auto config = harkentest::MakeNullConfig(4, 64, 48000);
     config.maxStreams = 2;
-    config.streamRingFrames = 1024;
-    config.prebufferMs = 4;
+    config.streamRingFrames = buffering.ringFrames;
+    config.prebufferMs = buffering.prebufferMs;
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
@@ -21735,7 +21738,7 @@ TEST(PlayableStart, ContainerLoopStreamedChildKeepsTheRandomSelection) {
     unsigned played = 0;
     unsigned run = 0;
     float current = 0.0f;
-    for (unsigned block = 0; block < 512; ++block) {
+    for (unsigned block = 0; block < (buffering.prebufferMs > 100 ? 2048u : 512u); ++block) {
         ASSERT_EQ(VN_OK, Vn_Update());
         engine.streams.SyncServe();
         engine.nullBackend.Pump(1);
@@ -21762,10 +21765,13 @@ TEST(PlayableStart, ContainerLoopStreamedChildKeepsTheRandomSelection) {
         deferred = true;
         EXPECT_EQ(inputs[index - 1].accepted, inputs[index].accepted) << index;
         EXPECT_EQ(inputs[index - 1].seed, inputs[index].seed) << index;
+        // One deferral per iteration: the retry starts at the floor it chose.
+        if (index >= 2) EXPECT_NE(inputs[index - 2].iteration, inputs[index].iteration) << index;
     }
     EXPECT_TRUE(deferred);
     EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(kSecondSound));
     EXPECT_FALSE(engine.runtimeRecreateRequired);
+    }
 }
 
 TEST(PlayableStart, NativeInitialStreamWaitRetainsSourceAndCancelsBeforeReady) {

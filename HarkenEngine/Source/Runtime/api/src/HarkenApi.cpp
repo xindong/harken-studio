@@ -35691,8 +35691,9 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
         row.selectionCommitted = false;
     }
     CatchUpTimelineWindow(engine, continuationFrame, &row);
-    // A stream deferral retries the same rolled-back selection, so it keeps the
-    // ticket that seeds it.
+    // A stream deferral retries the same rolled-back selection once, at the floor
+    // it chose, so it keeps the ticket that seeds it and does not defer again.
+    const bool streamRetry = *deferredTicket != 0;
     harken::LogicCommitSequence ticket = std::exchange(*deferredTicket, 0);
     if (ticket == 0 && engine.logicCommits.TryIssue(&ticket) !=
         harken::LogicCommitCoordinator::IssueStatus::Issued) {
@@ -36194,7 +36195,7 @@ ContainerLoopSuccessorStatus StartContainerLoopSuccessorAttempt(
     bool streamedSchedule = false;
     for (std::uint32_t index = 0; index < scheduleLeafCount; ++index)
         streamedSchedule = streamedSchedule || preparedScheduleLeaves[index].voice.streamed;
-    if (DeferContainerLoopSuccessorForStream(engine, streamedSchedule, continuationFrame, retryFrame)) {
+    if (!streamRetry && DeferContainerLoopSuccessorForStream(engine, streamedSchedule, continuationFrame, retryFrame)) {
         rollbackCreated();
         *deferredTicket = ticket;
         return ContainerLoopSuccessorStatus::RetryAtFrame;
@@ -36848,7 +36849,7 @@ engine.runtimeRecreateRequired = true;
                    ? ContainerLoopSuccessorStatus::Invalidated
                    : ContainerLoopSuccessorStatus::Refused;
     }
-    if (DeferContainerLoopSuccessorForStream(engine, voice.streamed, continuationFrame, retryFrame)) {
+    if (!streamRetry && DeferContainerLoopSuccessorForStream(engine, voice.streamed, continuationFrame, retryFrame)) {
         rollbackCommitted();
         *deferredTicket = ticket;
         return ContainerLoopSuccessorStatus::RetryAtFrame;
