@@ -459,9 +459,8 @@ QWidget[paneRole="sectionHeader"] {
     border-bottom: @borderWidth@px solid @borderPrimary@;
 }
 
-QWidget[paneRole="sectionHeader"][sourceDropTarget="true"],
 QWidget[sourceDropTarget="true"] QToolButton[paneRole="sectionToggle"] {
-    background-color: @bgSelected@;
+    background-color: @bgDropTarget@;
 }
 
 QToolButton[paneRole="sectionToggle"] {

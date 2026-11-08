@@ -341,15 +341,7 @@ void ProjectTreeWidget::drawRow(QPainter* painter, const QStyleOptionViewItem& o
     }
 
     if (highlightedItem_ && itemFromIndex(index) == highlightedItem_)
-    {
-        painter->save();
-        painter->setCompositionMode(QPainter::CompositionMode_SourceOver);
-        const auto& colors = ThemeManager::instance().colors();
-        painter->fillRect(option.rect, colors.bgSelected);
-        painter->fillRect(QRect(option.rect.left(), option.rect.top(), VNX::ThemeManager::instance().metrics().accentBorderWidth, option.rect.height()),
-                          colors.accent);
-        painter->restore();
-    }
+        TreeRowStyle::paintDropHighlight(painter, option.rect);
 }
 
 void ProjectTreeWidget::drawBranches(QPainter* painter, const QRect& rect,

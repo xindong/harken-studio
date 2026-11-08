@@ -55,6 +55,7 @@ struct ThemeColors
     QColor bgTertiary;
     QColor bgHover;
     QColor bgSelected;
+    QColor bgDropTarget;
 
     QColor borderPrimary;
     QColor borderSecondary;

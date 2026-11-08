@@ -512,13 +512,8 @@ void SourcesTreeWidget::drawRow(QPainter* painter, const QStyleOptionViewItem& o
     QTreeWidget::drawRow(painter, options, index);
     if (selectionModel()->isSelected(index))
         TreeRowStyle::paintRowAccent(painter, options.rect);
-    if (index == dropFolder_) {
-        painter->save();
-        painter->fillRect(options.rect, ThemeManager::instance().colors().bgSelected);
-        painter->fillRect(QRect(options.rect.left(), options.rect.top(), ThemeManager::instance().metrics().accentBorderWidth, options.rect.height()),
-                          ThemeManager::instance().colors().accent);
-        painter->restore();
-    }
+    if (index == dropFolder_)
+        TreeRowStyle::paintDropHighlight(painter, options.rect);
 }
 
 void SourcesTreeWidget::showError(const QString& message)

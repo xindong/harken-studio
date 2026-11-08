@@ -150,6 +150,12 @@ const QVector<ThemeColorRole>& studioDefaultColorRoles()
          {
              {QStringLiteral("background.selected"), std::nullopt},
          }},
+        {QStringLiteral("background.dropTarget"), QStringLiteral("Interaction"),
+         QStringLiteral("Drop target"),
+         QStringLiteral("Tint over tree rows, section headers and graph nodes that accept a drop."),
+         {
+             {QStringLiteral("background.dropTarget"), std::nullopt},
+         }},
         {QStringLiteral("border.primary"), QStringLiteral("Interaction"),
          QStringLiteral("Primary border"),
          QStringLiteral("Interface layout dividers, panel boundaries, content separators and panel scrollbars."),

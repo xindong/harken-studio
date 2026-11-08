@@ -73,6 +73,11 @@ QTreeWidgetItem* makeBucketRow(const QString& folderKey)
     return makeFolderRow(ProjectManager::bucketDisplayName(folderKey));
 }
 
+void paintDropHighlight(QPainter* p, const QRect& rowRect)
+{
+    p->fillRect(rowRect, ThemeManager::instance().colors().bgDropTarget);
+}
+
 void paintRowAccent(QPainter* p, const QRect& rowRect)
 {
     p->fillRect(QRect(rowRect.left(), rowRect.top(), ThemeManager::instance().metrics().accentBorderWidth, rowRect.height()),

@@ -31,6 +31,7 @@ ThemeSnapshot createBuiltinDarkTheme()
     colors.bgTertiary = QColor("#222836");
     colors.bgHover = QColor("#2A3140");
     colors.bgSelected = QColor("#143C48");
+    colors.bgDropTarget = QColor("#2400F0FF");
 
     colors.borderPrimary = QColor("#313848");
     colors.borderSecondary = QColor("#3D4554");
@@ -299,6 +300,7 @@ ThemeSnapshot createBuiltinLightTheme()
     colors.bgTertiary = QColor("#E8EDF3");
     colors.bgHover = QColor("#DCE5EE");
     colors.bgSelected = QColor("#D0E8EE");
+    colors.bgDropTarget = QColor("#24007B8B");
     colors.borderPrimary = QColor("#BCC7D3");
     colors.borderSecondary = QColor("#8D9EAF");
     colors.borderTick = QColor("#B9C5D1");

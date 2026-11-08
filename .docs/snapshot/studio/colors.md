@@ -128,6 +128,7 @@ PR 审查后补充修复：Assistant 在原消息和待确认控件上更新字�
 | 强调底上的文字 | `accent.text` | 高亮菜单和选择背景上的文字，不能直接用普通字段文字替代 |
 | 基础表面 | `background.primary/secondary/tertiary` | 保留既有表面层级，节点普通主体使用 tertiary |
 | 交互表面 | `background.hover/selected` | 悬停与选中；节点选中主体沿用 hover 的既有视觉 |
+| 拖放目标 | `background.dropTarget` | 可接收拖放的树行、Sources 分节标题和蓝图节点上叠加的半透明底色；行内文字与图标保持可见，不画左侧强调条 |
 | 首要边界 | `border.primary` | 界面框架排布分割、面板边界和内容分隔线；包括 Dock 面板、画布外框、声道分隔及面板滚动条 |
 | 次要边界 | `border.secondary` | 控件与按钮描边、表格完整外框、网格及行列分隔、控件内滚动条；禁用态控件描边仍属此类 |
 | 刻度线 | `border.tick` | 时间轴、曲线、波形与 Meter 的刻度短线和坐标网格；刻度文字仍使用次要文字 |
@@ -235,13 +236,13 @@ PR 集成复验基于已含 #194 的主线 `9235952a`：编辑器与测试目标
 
 ## 用户颜色定制
 
-Studio Default 提供 70 个可编辑源颜色角色，共 11 类。每项包含职责名称、用途说明、主题职责键和绘制绑定。外部主题可声明自己的目录，Appearance 按当前主题生成分类与颜色行。窗口壳层按钮细节、Logo 扫光和声谱图固定热力色阶未加入 Studio Default 的用户定制目录；启动波浪的四档色阶单独表达动画配色，Logo 底板复用 `panel.background`。
+Studio Default 提供 71 个可编辑源颜色角色，共 11 类。每项包含职责名称、用途说明、主题职责键和绘制绑定。外部主题可声明自己的目录，Appearance 按当前主题生成分类与颜色行。窗口壳层按钮细节、Logo 扫光和声谱图固定热力色阶未加入 Studio Default 的用户定制目录；启动波浪的四档色阶单独表达动画配色，Logo 底板复用 `panel.background`。
 
 | 分类 | 数量 | 开放范围 |
 |---|---|---|
 | Text | 4 | 首要文字、次要文字、标题文字、禁用文字 |
 | Surfaces | 7 | 主背景、控件背景、抬升背景、面板、标题、轨道、交替轨道 |
-| Interaction | 9 | 强调及悬停、强调底文字、悬停/选中背景、三类边界、滑条底轨 |
+| Interaction | 10 | 强调及悬停、强调底文字、悬停/选中背景、拖放目标、三类边界、滑条底轨 |
 | Feedback | 4 | 成功、警告、错误、信息 |
 | Categorical palette | 7 | 区分多个条目的七个分类色 |
 | Waveform | 7 | 静态波形低/高幅度、三段频率贡献、裁剪及循环标记 |
@@ -325,7 +326,7 @@ Studio Default 已保存的 `text.muted` 覆盖迁入同一色卡的 `text.secon
 
 ## 主题参数收束（2026-11-07）
 
-**颜色。** `ThemeColors` 不再保留同义槽位：`textMuted` 并入 `text.secondary`，`viewBorder` 与 `sectionSeparator` 并入 `border.primary`，菜单栏文字并入首要文字，窗口按钮文字使用次要文字、悬停使用首要文字，关闭按钮按下时的文字按背景计算对比色；Control Panel 背景使用 `panel.background`，播放与停止图标使用成功与错误色，拖放目标使用选中背景与强调色。Qt-ADS 的关闭按钮色复用窗口关闭按钮色，未激活标签文字使用次要文字；Dock 外框底色 `chromeBackground` 暂无对应职责，仍为色卡值。`bus.background`、`timeline.clipBorder`、`timeline.clipSelectedBorder` 没有绘制消费者，连同可编辑职责一起删除，已保存的覆盖在恢复设置时移除。
+**颜色。** `ThemeColors` 不再保留同义槽位：`textMuted` 并入 `text.secondary`，`viewBorder` 与 `sectionSeparator` 并入 `border.primary`，菜单栏文字并入首要文字，窗口按钮文字使用次要文字、悬停使用首要文字，关闭按钮按下时的文字按背景计算对比色；Control Panel 背景使用 `panel.background`，播放与停止图标使用成功与错误色，拖放目标在 2026-11-08 改由独立的 `background.dropTarget` 职责承担（见上文职责表）。Qt-ADS 的关闭按钮色复用窗口关闭按钮色，未激活标签文字使用次要文字；Dock 外框底色 `chromeBackground` 暂无对应职责，仍为色卡值。`bus.background`、`timeline.clipBorder`、`timeline.clipSelectedBorder` 没有绘制消费者，连同可编辑职责一起删除，已保存的覆盖在恢复设置时移除。
 
 无消费者的渲染槽位一并删除：Scene3D、Spatial、Monitor、Feedback 整组，Meter 的基础色、Stereo、Layout、示波器色、clipBackground 与 Spectrogram timeText，Waveform 的 line / fill / cursor / regionMarker / selectionHighlight，Music 的 trackColors / loopRegion，以及若干节点、蓝图与 Timeline 的未用色。时间序列图的多条曲线改用分类色板区分。主题包中这些键，以及同义别名 `curve.line`、`meter.peakMeter.gradientGreen`、`meter.peakMeter.gradientGreenStop`，均按未知键拒绝。
 
