@@ -16,7 +16,7 @@
 | Cursor | 默认显示绿色；15×12px 对称倒三角带亮色轮廓，与贯穿刻度轴及轨道的竖线共用物理像素中心；零点处完整显示手柄；支持定位、拖动、吸附、精确输入、边缘滚动、取消拖动和视图状态恢复 |
 | 时钟域转换 | 同时转换 Track 片段边界与 Marker；尽量保持实际秒数，音乐坐标按整数 tick 舍入；一次撤销恢复原数据 |
 | Queue Container | Splice by Marker；仅 Random／Sequence 的 Queue 显示此选项 |
-| Transition | Selection Editor 的 Transition 分区，仅在过渡表生效时显示（Queue，或 Live 响应的 Match）；一行一条规则，单元格内编辑 Source／Target、六类退出时机、淡出／淡入曲线及时长、Entry Marker／Same Position；Bridge 已停用，Studio 不再存储或打包 |
+| Transition | Selection Editor 的 Transition 分区（与 Content 分区同在一个带边框的内容页内，分区样式同 Inspector），仅在过渡表生效时显示（Queue，或 Live 响应的 Match）；一行一条规则，单元格内编辑 Source／Target（任意端与 Match 网格一致，显示弱化的 `*`）、六类退出时机、淡出／淡入曲线及时长、Entry Marker／Same Position；Bridge 已停用，Studio 不再存储或打包 |
 | Transition 时钟引用 | 按 source、组织层级与 Clip placement 查找时钟和标记；Blueprint 显示引用路径，适配概览缩放 |
 | 自动化入口 | `set_item_property` 支持 `segmentTime`、`markers`、`clips`、`spliceByMarker`、`transitions`，与 GUI 共用校验及撤销 |
 

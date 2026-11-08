@@ -14,6 +14,7 @@
 #include "Core/TransitionSemantics.h"
 #include "Widgets/Common/CollapsibleSection.h"
 
+#include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QSet>
@@ -100,20 +101,32 @@ GridEditorWidget::GridEditorWidget(QWidget* parent)
     emptyLabel_->setWordWrap(true);
     stack_->addWidget(emptyLabel_);
 
-    gridPage_ = new QWidget(stack_);
+    gridPage_ = new QFrame(stack_);
+    gridPage_->setObjectName(QStringLiteral("selectionEditorPage"));
+    QtControlSkin::setSemanticProperty(gridPage_, "surfaceRole", QStringLiteral("panel"));
     auto* pageLayout = new QVBoxLayout(gridPage_);
     pageLayout->setContentsMargins(0, 0, 0, 0);
 
     pageLayout->setSpacing(0);
+    const auto insetContent = [this](CollapsibleSection* section, QWidget* content, int stretch) {
+        auto* holder = new QWidget(section);
+        auto* holderLayout = new QVBoxLayout(holder);
+        holderLayout->setSpacing(0);
+        holderLayout->addWidget(content, stretch);
+        ThemeManager::instance().bindMetrics(holder, [holderLayout](const ThemeMetrics& metrics) {
+            holderLayout->setContentsMargins(0, 0, metrics.layout.panelPadding, 0);
+        });
+        auto* sectionLayout = new QVBoxLayout();
+        sectionLayout->addWidget(holder, stretch);
+        section->setContentLayout(sectionLayout);
+    };
     contentSection_ = new CollapsibleSection(tr("Content"), 150, gridPage_);
     contentSection_->setObjectName(QStringLiteral("selectionContentSection"));
     contentSection_->setDynamicContent(true);
     contentSection_->setFillsHeight(true);
     editorStack_ = new QStackedWidget(contentSection_);
     editorStack_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
-    auto* contentLayout = new QVBoxLayout();
-    contentLayout->addWidget(editorStack_, 1);
-    contentSection_->setContentLayout(contentLayout);
+    insetContent(contentSection_, editorStack_, 1);
     contentSection_->setExpanded(true);
     pageLayout->addWidget(contentSection_, 1);
 
@@ -121,12 +134,14 @@ GridEditorWidget::GridEditorWidget(QWidget* parent)
     transitionSection_->setObjectName(QStringLiteral("selectionTransitionSection"));
     transitionSection_->setDynamicContent(true);
     transitionTable_ = new TransitionTableWidget(transitionSection_);
-    auto* transitionLayout = new QVBoxLayout();
-    transitionLayout->addWidget(transitionTable_);
-    transitionSection_->setContentLayout(transitionLayout);
+    insetContent(transitionSection_, transitionTable_, 0);
     transitionSection_->setExpanded(true);
     pageLayout->addWidget(transitionSection_);
     pageLayout->addStretch(0);
+    ThemeManager::instance().bindMetrics(this, [this](const ThemeMetrics& metrics) {
+        editorStack_->setContentsMargins(0, 0, metrics.layout.panelPadding, 0);
+        transitionTable_->setContentsMargins(0, 0, metrics.layout.panelPadding, 0);
+    });
     connect(contentSection_, &CollapsibleSection::expandedChanged, this, [pageLayout](bool expanded) {
         pageLayout->setStretch(0, expanded ? 1 : 0);
         pageLayout->setStretch(2, expanded ? 0 : 1);

@@ -249,9 +249,9 @@ QWidget* TransitionTableWidget::buildEndpointCell(QWidget* row, const Transition
     auto* cell = table_->createCell(row);
     cell->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     if (rule.isDefault()) {
-        auto* any = new QLabel(tr("Any"), cell);
+        auto* any = new QLabel(QStringLiteral("*"), cell);
         any->setToolTip(TransitionSemantics::defaultRuleEndpointReason());
-        QtControlSkin::setSemanticProperty(any, "textRole", QStringLiteral("secondary"));
+        QtControlSkin::setSemanticProperty(any, "textRole", QStringLiteral("muted"));
         cell->addWidget(any);
         return cell;
     }
@@ -265,7 +265,8 @@ QWidget* TransitionTableWidget::buildEndpointCell(QWidget* row, const Transition
     reference->setCompactPickable(true);
     reference->setRequired(false);
     reference->setClearSupport(true);
-    reference->setEmptyText(tr("Any"));
+    reference->setEmptyText(QStringLiteral("*"));
+    reference->setSupplementalToolTip(endpoint ? QString() : tr("* (Any)"));
     reference->setSelectorTitle(source ? tr("Select Source") : tr("Select Target"));
     reference->setFilterTypes(EditorUtils::userFacingActionStepTargetTypes(VActionStep::Type::Play));
     reference->setDirectChildParentGuid(boundItem_->guid);
@@ -493,7 +494,7 @@ void TransitionTableWidget::openFadePopup(const Endpoints& endpoints, FadeSlot s
         context.objectName = item->name;
         context.objectIcon = iconForItem(*item);
     } else {
-        context.objectName = tr("Any");
+        context.objectName = tr("* (Any)");
         context.dimmed = true;
     }
     auto* popup = new TransitionFadePopup(

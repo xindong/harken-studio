@@ -14,6 +14,7 @@
 #include <QLabel>
 #include <QPainter>
 #include <QStyle>
+#include <QStyleOptionToolButton>
 #include <QScreen>
 #include <QVBoxLayout>
 
@@ -68,7 +69,6 @@ TransitionFadeButton::TransitionFadeButton(QWidget* parent)
     : QToolButton(parent)
 {
     setToolButtonStyle(Qt::ToolButtonIconOnly);
-    setAutoRaise(true);
     setCursor(Qt::PointingHandCursor);
     QtControlSkin::setSemanticProperty(this, "fieldRole", QStringLiteral("preview"));
     connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged,
@@ -105,7 +105,9 @@ QSize TransitionFadeButton::sizeHint() const
 void TransitionFadeButton::paintEvent(QPaintEvent*)
 {
     QPainter painter(this);
-    QtControlSkin::paintFieldFrame(painter, this);
+    QStyleOptionToolButton option;
+    initStyleOption(&option);
+    style()->drawPrimitive(QStyle::PE_PanelButtonTool, &option, &painter, this);
     const auto& colors = ThemeManager::instance().colors();
     const bool inactive = dimmed_ || !isEnabled();
     const QColor line = inactive ? colors.textDisabled : colors.accent;
