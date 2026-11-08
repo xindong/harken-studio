@@ -88,13 +88,16 @@ public:
     void paint(QPainter* painter, const QStyleOptionGraphicsItem*, QWidget*) override
     {
         const auto theme = ThemeManager::instance().snapshot();
-        const QColor accent = node_->dropFeedback() == NodeItem::DropFeedback::Invalid
-            ? theme->ui.colors.error : theme->ui.colors.accent;
+        const bool invalid = node_->dropFeedback() == NodeItem::DropFeedback::Invalid;
+        const QColor accent = invalid ? theme->ui.colors.error : theme->ui.colors.accent;
         QColor veil = theme->domains.nodeGraphNode.bodyNormal;
         veil.setAlphaF(veil.alphaF() * 230 / 255.0);
         painter->fillRect(rect(), veil);
-        QColor tint = accent;
-        tint.setAlphaF(tint.alphaF() * 20 / 255.0);
+        QColor tint = theme->ui.colors.bgDropTarget;
+        if (invalid) {
+            tint = accent;
+            tint.setAlphaF(tint.alphaF() * 20 / 255.0);
+        }
         painter->setBrush(tint);
         painter->setPen(QPen(accent, theme->ui.metrics.borderWidth, Qt::DashLine, Qt::SquareCap, Qt::MiterJoin));
         const qreal inset = theme->ui.metrics.spacingCompact;

@@ -809,6 +809,7 @@ auto tokenColorSlot(const QString& key, Snapshot& theme)
     COLOR_SLOT("palette.categorical6", ui.colors.categoricalPalette[6]);
     COLOR_SLOT("background.hover", ui.colors.bgHover);
     COLOR_SLOT("background.selected", ui.colors.bgSelected);
+    COLOR_SLOT("background.dropTarget", ui.colors.bgDropTarget);
     COLOR_SLOT("border.primary", ui.colors.borderPrimary);
     COLOR_SLOT("border.secondary", ui.colors.borderSecondary);
     COLOR_SLOT("border.tick", ui.colors.borderTick);

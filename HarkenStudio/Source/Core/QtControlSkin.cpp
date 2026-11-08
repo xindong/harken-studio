@@ -483,6 +483,7 @@ QString QtControlSkin::applicationStyleSheet() const
     replace(QStringLiteral("@bgTertiary@"), color(colors().bgTertiary));
     replace(QStringLiteral("@bgHover@"), color(colors().bgHover));
     replace(QStringLiteral("@bgSelected@"), color(colors().bgSelected));
+    replace(QStringLiteral("@bgDropTarget@"), color(colors().bgDropTarget));
     replace(QStringLiteral("@panelBackground@"), color(colors().panelBackground));
     replace(QStringLiteral("@headerBackground@"), color(colors().headerBackground));
     replace(QStringLiteral("@borderPrimary@"), color(colors().borderPrimary));
