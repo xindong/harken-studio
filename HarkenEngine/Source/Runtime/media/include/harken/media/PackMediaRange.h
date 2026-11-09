@@ -27,6 +27,8 @@ struct PackExternalStream {
     Codec codec = Codec::Vorbis;
     std::shared_ptr<const StreamByteLocator> locator;
     std::uint64_t fileBytes = 0;
+    // Immutable media-relative PCM metadata and optional payload prefix.
+    std::vector<std::uint8_t> pcmPrefix;
 };
 
 struct PackMediaRange {

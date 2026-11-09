@@ -42,20 +42,7 @@ StreamManager::PreparationState StreamManager::PreparePackSource(std::uint32_t i
         if (request->state == PreparationState::Ready) {
             try {
                 if (file.external->codec == PackExternalStream::Codec::Pcm) {
-                    const auto& candidate = *request->candidate;
-                    const auto& facts = candidate.toc;
-                    const auto loopEnd = (facts.flags & kStreamFlagLoopable) != 0
-                        ? (facts.loopEndFrame ? facts.loopEndFrame : facts.frameCount) : 0;
-                    const auto expectedLoopEnd = (file.toc.flags & kStreamFlagLoopable) != 0
-                        ? (file.toc.loopEndFrame ? file.toc.loopEndFrame : file.toc.frameCount) : 0;
-                    if (facts.sampleRate == file.toc.sampleRate && facts.channelCount == file.toc.channelCount &&
-                        facts.frameCount == file.toc.frameCount && candidate.contentRevision == file.contentRevision &&
-                        facts.loopStartFrame == file.toc.loopStartFrame && loopEnd == expectedLoopEnd &&
-                        facts.flags == file.toc.flags) {
-                        file.chunkChecksums = std::move(request->candidate->chunkChecksums);
-                        file.toc = facts;
-                        file.chunkFrames = candidate.chunkFrames;
-                        file.pcmHeader = request->header;
+                    if (AdoptPcmMetadata(file, *request)) {
                         file.source = std::move(request->candidate->source);
                         result = VN_OK;
                     } else result = VN_BAD_STREAM_FILE;

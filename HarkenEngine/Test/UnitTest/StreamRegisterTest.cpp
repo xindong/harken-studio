@@ -3091,6 +3091,110 @@ TEST(StreamRegister, ExternalPcmMetadataUsesBoundedMediaCoordinatesAndPreservesL
     }
 }
 
+TEST(StreamRegister, PcmPrefetchStartsBeforeOpenAndJoinsInsideAChecksummedChunk) {
+    harkentest::StreamSpec spec;
+    spec.soundId = harkentest::ObjectId(906); spec.channelCount = 6;
+    spec.chunkFrames = 4096;
+    spec.loopable = true; spec.loopStartFrame = 257; spec.loopEndFrame = 4097;
+    constexpr unsigned frames = 20000;
+    std::vector<float> samples(frames * spec.channelCount);
+    for (unsigned ch = 0; ch < spec.channelCount; ++ch)
+        for (unsigned i = 0; i < frames; ++i) samples[ch * frames + i] = (ch * frames + i) / 200000.0f;
+    const auto pcm = harkentest::BuildStreamBytes(spec, samples);
+    harken::StreamHeader header;
+    ASSERT_TRUE(harken::ParseStreamHeader(pcm.data(), &header));
+    const auto toc = harken::ParseStreamTocEntry(pcm.data() + header.tocOffset);
+    std::vector<std::uint64_t> checksums(toc.chunkCount);
+    for (unsigned i = 0; i < toc.chunkCount; ++i)
+        checksums[i] = harken::LoadLE64(pcm.data() + toc.chunkChecksumOffset + i * 8);
+    harken::MediaStreamSemanticHeaderV1 semantic{toc.sampleRate, toc.channelCount, toc.frameCount,
+        toc.sampleFormat, header.formatVersion, header.chunkFrames, toc.chunkCount, 257, 4097};
+    std::uint64_t revision = 0;
+    ASSERT_TRUE(harken::ComputeMediaStreamContentRevisionV1(semantic, checksums.data(), &revision));
+    auto image = harken::test::WrapVorbisStream(pcm);
+    harken::StoreLE16(image.data() + 6, 0);
+    const auto chunkBytes = harken::StreamChunkBytes(header.chunkFrames, toc.channelCount);
+    const auto cut = toc.payloadOffset + chunkBytes + 17;
+    harken::EngineConfig config;
+    config.maxStreams = 2; config.streamRingBytes = 262144;
+    harken::StreamManager streams(config);
+    using State = harken::StreamManager::PreparationState;
+    for (unsigned scenario = 0; scenario < 6; ++scenario) {
+        SCOPED_TRACE(scenario);
+        auto locator = std::make_shared<ExternalVorbisLocator>();
+        locator->bytes = std::make_shared<const std::vector<std::uint8_t>>(image);
+        locator->payloadOffset = harken::vorbis_test_wire::kStreamHeaderBytes + toc.payloadOffset;
+        locator->blockNextOpen.store(true);
+        auto external = std::make_shared<harken::PackExternalStream>();
+        external->codec = harken::PackExternalStream::Codec::Pcm;
+        external->locator = locator; external->fileBytes = image.size();
+        external->pcmPrefix.assign(pcm.begin(), pcm.begin() + cut);
+        if (scenario == 2) external->pcmPrefix[toc.payloadOffset] ^= 1;
+        if (scenario == 3) external->pcmPrefix.resize(toc.chunkChecksumOffset + 1);
+        if (scenario == 4) external->pcmPrefix.back() ^= 1;
+        auto range = std::make_shared<harken::PackMediaRange>();
+        range->external = external; range->blobOffset = harken::vorbis_test_wire::kStreamHeaderBytes;
+        range->sampleRate = toc.sampleRate; range->channelCount = toc.channelCount;
+        range->frameCount = toc.frameCount; range->contentRevision = revision;
+        range->packFlags = toc.flags; range->loop = {257, 4097};
+        harken::StreamManager::StreamFacts facts;
+        if (scenario == 2 || scenario == 3) {
+            EXPECT_EQ(VN_BAD_STREAM_FILE, streams.ResolvePackSource(range, &facts));
+            EXPECT_EQ(0u, locator->counts->opens.load());
+            continue;
+        }
+        ASSERT_EQ(VN_OK, streams.ResolvePackSource(range, &facts));
+        EXPECT_EQ(0u, locator->counts->opens.load());
+        const std::uint64_t first = scenario == 5 ? 15000 : 713;
+        auto request = ReplacementAt(facts, first);
+        if (scenario == 1) { request.loopStartFrame = 257; request.loopEndFrame = 4097; request.loopCount = 3; }
+        request.prebufferTargetFrames = 48000;
+        harken::StreamManager::PreparedToken token;
+        ASSERT_EQ(VN_OK, streams.BeginReplacement(request, &token));
+        EXPECT_EQ(scenario == 5 ? State::Preparing : State::Ready, streams.QueryReplacement(token));
+        harken::StreamManager::PreparedStream owned;
+        ASSERT_EQ(VN_OK, streams.TransferReplacement(token, &owned));
+        std::uint64_t position = first, delivered = 0;
+        unsigned passes = scenario == 1 ? 3 : 1;
+        const auto verify = [&](unsigned count) {
+            for (unsigned i = 0; i < count; ++i) {
+                if (passes > 1 && position == 4097) { --passes; position = 257; }
+                for (unsigned ch = 0; ch < spec.channelCount; ++ch)
+                    ASSERT_FLOAT_EQ(samples[ch * frames + position], harkentest::PeekPcmSample(*owned.ring, i, ch));
+                ++position;
+            }
+            harkentest::ConsumePcmFrames(*owned.ring, count);
+            delivered += count;
+        };
+        if (scenario != 5) {
+            ASSERT_TRUE(owned.ring->startPromoted.load());
+            ASSERT_GE(owned.ring->BufferedFrames(), 256u);
+            verify(256);
+            EXPECT_EQ(UINT64_MAX, locator->counts->firstPayloadRead.load());
+        }
+        locator->releaseOpen.store(true);
+        if (scenario == 4) {
+            ASSERT_TRUE(WaitUntil([&] { return owned.ring->TerminalReason() == harken::StreamTerminalReason::IntegrityAbort; }));
+        } else {
+            const auto total = frames - first + (scenario == 1 ? 2 * (4097 - 257) : 0);
+            while (delivered < total) {
+                ASSERT_TRUE(WaitUntil([&] { return owned.ring->BufferedFrames() != 0 || owned.ring->SourceEnded(); }));
+                const auto count = std::min(owned.ring->BufferedFrames(), 257u);
+                ASSERT_GT(count, 0u);
+                verify(count);
+            }
+            EXPECT_EQ(total, delivered);
+            EXPECT_EQ(harken::StreamTerminalReason::NaturalEnd, owned.ring->TerminalReason());
+        }
+        const auto firstRead = scenario == 5 ? toc.payloadOffset + (first / header.chunkFrames) * chunkBytes : cut;
+        EXPECT_EQ(range->blobOffset + firstRead, locator->counts->firstPayloadRead.load());
+        EXPECT_TRUE(streams.RetirePreparedSlot(owned.ring, owned.ringToken));
+        streams.SyncServe();
+        ASSERT_TRUE(WaitUntil([&] { return locator->counts->closes.load() == 1; }));
+        EXPECT_EQ(0u, locator->counts->wrongThread.load());
+    }
+}
+
 TEST(StreamRegister, ByteRangeRejectsOverflowAndEscapesAndPreservesShortReadsAndCancellation) {
     auto source = std::make_shared<ControlledSource>();
     source->maxRead = 3;

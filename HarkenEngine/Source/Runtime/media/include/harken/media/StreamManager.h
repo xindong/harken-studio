@@ -629,6 +629,8 @@ private:
     bool AdvanceSlot(ServiceCursor& cursor, ChunkJob* job);
     bool AdvancePacketSlot(ServiceCursor& cursor, ChunkJob* job);
     static void ResetPacketCursor(StreamSlot& slot, const StreamFile& file);
+    static bool AdoptPcmMetadata(StreamFile& file, SourceRequest& request);
+    static VnResult PreparePcmPrefix(StreamFile& file);
 
     std::uint32_t m_ringBytes = 0; // per-slot byte capacity, power of two
     const std::uint32_t m_prebufferMs;

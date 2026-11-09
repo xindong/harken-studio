@@ -47,6 +47,24 @@ constexpr std::chrono::milliseconds kServiceInterval{2};
 // math (prebuffer spans, resample ratios) inside 64-bit headroom.
 constexpr std::uint32_t kMaxSaneSampleRate = 1'000'000;
 
+class PcmPrefixSource final : public StreamByteSource {
+public:
+    PcmPrefixSource(const std::vector<std::uint8_t>& bytes, std::uint64_t length)
+        : bytes_(bytes), length_(length) {}
+    std::uint64_t ByteCount() const noexcept override { return length_; }
+    StreamReadResult ReadAt(std::uint64_t offset, void* destination, std::size_t count,
+        StreamReadCancellation cancel) const override {
+        if (cancel.IsCancelled()) return {StreamReadStatus::Cancelled, 0};
+        if (offset > bytes_.size() || count > bytes_.size() - offset)
+            return {StreamReadStatus::IoError, 0};
+        std::memcpy(destination, bytes_.data() + offset, count);
+        return {StreamReadStatus::Ok, count};
+    }
+private:
+    const std::vector<std::uint8_t>& bytes_;
+    const std::uint64_t length_;
+};
+
 
 std::uint64_t RoundUpPow2(std::uint64_t v) {
     std::uint64_t p = 1;
@@ -383,6 +401,10 @@ VnResult StreamManager::ResolvePackSource(
         record->chunkFrames = range->chunkFrames;
         record->chunkChecksums = range->vorbis ? range->vorbis->Media().segmentChecksums : range->chunkChecksums;
         record->contentRevision = range->contentRevision;
+        if (record->external && !record->external->pcmPrefix.empty()) {
+            const auto result = PreparePcmPrefix(*record);
+            if (result != VN_OK) return result;
+        }
         auto empty = std::find_if(m_files.begin(), m_files.end(), [](const auto& file) { return !file; });
         if (empty == m_files.end()) {
             if (m_files.size() == UINT32_MAX) return VN_BACKPRESSURE;
@@ -614,10 +636,11 @@ std::uint64_t StreamManager::InitializeSlot(
         m_streamHighWater = nowActive;
     }
     s.prefetchedStart = false;
-    if (file.external && file.vorbis && !file.vorbis->Prefetch().empty()) {
+    if (file.external && ((file.vorbis && !file.vorbis->Prefetch().empty()) ||
+            (file.pcmHeader && !file.external->pcmPrefix.empty()))) {
         auto cursor = BeginSlotService(s);
         ChunkJob continuation;
-        (void)AdvancePacketSlot(cursor, &continuation);
+        (void)AdvanceSlot(cursor, &continuation);
         const auto supplied = s.ring.BufferedFrames();
         if (supplied != 0) {
             s.ring.filledFrameLimit.store(supplied, std::memory_order_release);
@@ -1111,6 +1134,51 @@ void StreamManager::ValidatePcmSourceSlice(SourceRequest& request) {
     }
 }
 
+bool StreamManager::AdoptPcmMetadata(StreamFile& file, SourceRequest& request) {
+    const auto& candidate = *request.candidate;
+    const auto& facts = candidate.toc;
+    const auto loopEnd = (facts.flags & kStreamFlagLoopable) != 0
+        ? (facts.loopEndFrame ? facts.loopEndFrame : facts.frameCount) : 0;
+    const auto expectedLoopEnd = (file.toc.flags & kStreamFlagLoopable) != 0
+        ? (file.toc.loopEndFrame ? file.toc.loopEndFrame : file.toc.frameCount) : 0;
+    if (facts.sampleRate != file.toc.sampleRate || facts.channelCount != file.toc.channelCount ||
+        facts.frameCount != file.toc.frameCount || candidate.contentRevision != file.contentRevision ||
+        facts.loopStartFrame != file.toc.loopStartFrame || loopEnd != expectedLoopEnd ||
+        facts.flags != file.toc.flags) return false;
+    file.chunkChecksums = std::move(request.candidate->chunkChecksums);
+    file.toc = facts;
+    file.chunkFrames = candidate.chunkFrames;
+    file.pcmHeader = request.header;
+    return true;
+}
+
+VnResult StreamManager::PreparePcmPrefix(StreamFile& file) {
+    const auto& prefix = file.external->pcmPrefix;
+    if (prefix.size() > SIZE_MAX - sizeof(StreamFile)) return VN_BACKPRESSURE;
+    SourceRequest request;
+    request.metadataFile = &file;
+    // The retained prefix already bounds the table bytes available to parse.
+    request.metadataBudget = prefix.size() + sizeof(StreamFile);
+    request.candidate = std::make_unique<StreamFile>();
+    request.candidate->source = std::make_shared<PcmPrefixSource>(prefix,
+        file.external->fileBytes - file.packBlobOffset);
+    while (request.phase != 3 && request.result == VN_OK) ValidatePcmSourceSlice(request);
+    if (request.result != VN_OK) return request.result;
+    if (!AdoptPcmMetadata(file, request)) return VN_BAD_STREAM_FILE;
+    const auto chunkBytes = StreamChunkBytes(file.chunkFrames, file.toc.channelCount);
+    std::vector<float> staging;
+    for (std::uint32_t chunk = 0; chunk < file.toc.chunkCount; ++chunk) {
+        const auto offset = StreamChunkFileOffset(file.toc.payloadOffset, chunk, chunkBytes);
+        if (offset > prefix.size() || chunkBytes > prefix.size() - offset) break;
+        staging.resize(static_cast<std::size_t>(chunkBytes / sizeof(float)));
+        std::memcpy(staging.data(), prefix.data() + offset, static_cast<std::size_t>(chunkBytes));
+        const ChunkJob job{&file, chunk, file.chunkFrames, file.toc.channelCount, chunkBytes};
+        if (!ValidateChunk(job, staging, Fnv1a64(prefix.data() + offset, static_cast<std::size_t>(chunkBytes))))
+            return VN_BAD_STREAM_FILE;
+    }
+    return VN_OK;
+}
+
 void StreamManager::CloseDrainedRetiringFiles() {
     for (std::unique_ptr<StreamFile>& file : m_files) {
         if (!file || file->activeStreams.load(std::memory_order_relaxed) != 0 ||
@@ -1407,6 +1475,18 @@ bool StreamManager::ReadChunk(const ChunkJob& job, std::vector<float>& staging,
     }
     const auto offset = StreamChunkFileOffset(job.file->toc.payloadOffset, job.chunkIndex, job.chunkBytes);
     const auto required = static_cast<std::size_t>(job.chunkBytes);
+    if (job.file->external && offset < job.file->external->pcmPrefix.size()) {
+        const auto& prefix = job.file->external->pcmPrefix;
+        const auto copied = std::min<std::size_t>(required, prefix.size() - static_cast<std::size_t>(offset));
+        std::memcpy(staging.data(), prefix.data() + offset, copied);
+        for (std::size_t at = copied; at < required;) {
+            const auto count = std::min(ReadWindow::kCapacityBytes, required - at);
+            if (ReadStreamBytes(source, offset + at, reinterpret_cast<std::uint8_t*>(staging.data()) + at,
+                    count, job.cancellation) != StreamReadStatus::Ok) return false;
+            at += count;
+        }
+        return !job.cancellation.IsCancelled();
+    }
     const auto direct = [&] {
         return ReadStreamBytes(source, offset, staging.data(), required, job.cancellation) == StreamReadStatus::Ok;
     };
@@ -1638,7 +1718,10 @@ bool StreamManager::AdvanceSlot(ServiceCursor& cursor, ChunkJob* job) {
         if (cursor.framesServed >= cursor.maxServeFrames) return false;
         const StreamSeek seek =
             StreamSeekToFrame(slot.nextFrame, chunkFrames);
-        if (slot.stagedChunk != seek.chunkIndex) {
+        const auto offset = StreamChunkFileOffset(file.toc.payloadOffset, seek.chunkIndex, chunkBytes);
+        const auto* prefix = file.external ? &file.external->pcmPrefix : nullptr;
+        const bool prefetched = prefix && offset <= prefix->size() && chunkBytes <= prefix->size() - offset;
+        if (!prefetched && slot.stagedChunk != seek.chunkIndex) {
             // Stage and verify the whole chunk before any of it becomes
             // eligible for the ring: frames the audio thread can see have
             // always passed their checksum and finite-sample validation.
@@ -1655,12 +1738,14 @@ bool StreamManager::AdvanceSlot(ServiceCursor& cursor, ChunkJob* job) {
         const auto n = std::min({span, cursor.maxServeFrames - cursor.framesServed,
                                  remainInChunk, remainToLimit});
         const auto at = ring.writeIndex.load(std::memory_order_relaxed);
+        const auto* data = prefetched ? prefix->data() + offset
+            : reinterpret_cast<const std::uint8_t*>(slot.staging.data());
         // Adapt legacy planar source layout by copying sample words verbatim.
         // The ring carries interleaved bytes; sample conversion runs on render.
         for (std::uint32_t frame = 0; frame < n; ++frame)
             for (std::uint32_t ch = 0; ch < channels; ++ch)
                 ring.CopyIn(at + (static_cast<std::uint64_t>(frame) * channels + ch) * sizeof(float),
-                    slot.staging.data() + static_cast<std::size_t>(ch) * chunkFrames + seek.frameInChunk + frame,
+                    data + (static_cast<std::size_t>(ch) * chunkFrames + seek.frameInChunk + frame) * sizeof(float),
                     sizeof(float));
         ring.PublishBytes(n * ring.bytesPerFrame, n);
         slot.nextFrame += n;

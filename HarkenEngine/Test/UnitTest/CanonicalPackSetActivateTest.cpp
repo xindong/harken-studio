@@ -18,6 +18,7 @@
 #include "harken/param/EffectParamLocator.h"
 #include "harken/core/PackCompanionNames.h"
 #include "harken/core/MediaContentRevision.h"
+#include "Common/StreamBuilder.h"
 #include "harken/core/VariableExecutionFingerprint.h"
 
 #include <gtest/gtest.h>
@@ -3576,9 +3577,24 @@ TEST(CanonicalPackSetActivate, TypedVorbisExternalAndResidentUseCanonicalActionC
         planar[media.frames + i] = fixture.reference[2 * i + 1];
     }
     const auto externalBytes = harken::test::WrapVorbisStream(fixture.media);
+    harkentest::StreamSpec pcmSpec;
+    pcmSpec.soundId = kSound; pcmSpec.channelCount = 2; pcmSpec.chunkFrames = 4096;
+    const auto pcmBytes = harkentest::BuildStreamBytes(pcmSpec, planar);
+    harken::StreamHeader pcmHeader;
+    ASSERT_TRUE(harken::ParseStreamHeader(pcmBytes.data(), &pcmHeader));
+    const auto pcmToc = harken::ParseStreamTocEntry(pcmBytes.data() + pcmHeader.tocOffset);
+    std::vector<std::uint64_t> pcmChecksums(pcmToc.chunkCount);
+    for (unsigned i = 0; i < pcmToc.chunkCount; ++i)
+        pcmChecksums[i] = harken::LoadLE64(pcmBytes.data() + pcmToc.chunkChecksumOffset + 8 * i);
+    harken::MediaStreamSemanticHeaderV1 pcmSemantic{pcmToc.sampleRate, pcmToc.channelCount, pcmToc.frameCount,
+        pcmToc.sampleFormat, pcmHeader.formatVersion, pcmHeader.chunkFrames, pcmToc.chunkCount, 0, 0};
+    std::uint64_t pcmRevision = 0;
+    ASSERT_TRUE(harken::ComputeMediaStreamContentRevisionV1(pcmSemantic, pcmChecksums.data(), &pcmRevision));
+    auto pcmExternalBytes = harken::test::WrapVorbisStream(pcmBytes);
+    harken::StoreLE16(pcmExternalBytes.data() + 6, 0);
     for (const auto workers : {0u, 2u}) {
         harkentest::Capture resident;
-        for (unsigned mode = 0; mode < 3; ++mode) {
+        for (unsigned mode = 0; mode < 4; ++mode) {
             SCOPED_TRACE(::testing::Message() << workers << '/' << mode);
             auto config = StreamConfig();
             config.renderWorkerCount = workers;
@@ -3589,23 +3605,30 @@ TEST(CanonicalPackSetActivate, TypedVorbisExternalAndResidentUseCanonicalActionC
             VnPackHandle init = 0;
             ASSERT_EQ(VN_OK, harkentest::ActivateExistingInitPackV1(set.init.c_str(), PackId("Init"), &init));
             const auto content = BuildSoundContent(PathSet::ContentId(), 1, mode != 0, planar,
-                0, false, media.revision);
+                0, false, mode == 3 ? pcmRevision : media.revision);
             ASSERT_TRUE(harkentest::WriteBytes(set.content, content));
             std::vector<harken::PCMRegistry::PreparedPackSamples> prepared(1);
             auto locator = std::make_shared<Locator>();
             locator->path = (set.directory / "Media.stream").string();
-            ASSERT_TRUE(harkentest::WriteBytes(locator->path, externalBytes));
+            ASSERT_TRUE(harkentest::WriteBytes(locator->path, mode == 3 ? pcmExternalBytes : externalBytes));
             if (mode == 0) {
                 ASSERT_EQ(VN_OK, engine.registry.PrepareVorbisSamples(kSound, engine.vorbis,
                     fixture.media, 4 * 1024 * 1024, &prepared[0]));
             } else {
                 auto external = std::make_shared<harken::PackExternalStream>();
-                external->locator = locator; external->fileBytes = externalBytes.size();
+                external->locator = locator;
+                external->fileBytes = mode == 3 ? pcmExternalBytes.size() : externalBytes.size();
+                if (mode == 3) {
+                    external->codec = harken::PackExternalStream::Codec::Pcm;
+                    external->pcmPrefix.assign(pcmBytes.begin(), pcmBytes.begin() + pcmToc.payloadOffset +
+                        2 * harken::StreamChunkBytes(pcmHeader.chunkFrames, pcmToc.channelCount));
+                }
                 auto range = std::make_shared<harken::PackMediaRange>();
                 range->external = external;
                 range->blobOffset = harken::vorbis_test_wire::kStreamHeaderBytes;
                 range->sampleRate = media.sampleRate; range->channelCount = media.channels;
-                range->frameCount = media.frames; range->contentRevision = media.revision;
+                range->frameCount = media.frames;
+                range->contentRevision = mode == 3 ? pcmRevision : media.revision;
                 if (mode == 1) {
                     ASSERT_GT(media.seek.size(), 2u);
                     const auto end = media.packetDataOffset + media.seek[2].packetOffset;
@@ -3632,7 +3655,8 @@ TEST(CanonicalPackSetActivate, TypedVorbisExternalAndResidentUseCanonicalActionC
             unsigned supplyTerminal = 0;
             const auto pump = [&](unsigned blocks) {
                 for (unsigned block = 0; block < blocks; ++block) {
-                    if (mode != 0 && locator->enabled.load() && engine.vorbis.states.ActiveBytes() != 0)
+                    if (mode != 0 && locator->enabled.load() &&
+                        (mode == 3 || engine.vorbis.states.ActiveBytes() != 0))
                         engine.streams.SyncServe();
                     const auto before = engine.mixer.BlocksRendered();
                     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
@@ -3678,7 +3702,7 @@ TEST(CanonicalPackSetActivate, TypedVorbisExternalAndResidentUseCanonicalActionC
             ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
             if (mode == 0) resident = std::move(captured);
             else {
-                if (mode == 1) EXPECT_EQ(Audible(resident), Audible(captured));
+                if (mode != 2) EXPECT_EQ(Audible(resident), Audible(captured));
                 ExpectSameAudible(resident, captured, media.frames);
                 EXPECT_GE(locator->opens.load(), 1u);
             }
