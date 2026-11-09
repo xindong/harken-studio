@@ -22545,8 +22545,9 @@ TEST(PlayableStart, NativeInitialStreamWaitRetainsSourceAndCancelsBeforeReady) {
     }
 }
 
-static void CheckContainerTrackStreamWaitAndRecovery(harken::ContainerModeV1 mode) {
+static void CheckContainerTrackStreamWaitAndRecovery(harken::ContainerModeV1 mode, bool viaAction = false) {
     for (const auto workers : {0u, 2u}) for (const unsigned outcome : {0u, 1u, 2u, 3u, 4u}) {
+        if (viaAction && outcome == 3u) continue;
         const bool noSpare = outcome == 3u;
         const bool starve = outcome == 4u;
         const bool cancel = outcome == 1u;
@@ -22610,12 +22611,39 @@ static void CheckContainerTrackStreamWaitAndRecovery(harken::ContainerModeV1 mod
         install.playableProperties = installProperties.data();
         install.trackSchedules = &image.schedule.track;
         install.trackScheduleCount = 1;
+        harken::ActionStepProgramViewV1 step{};
+        harken::ActionProgramViewV1 action{};
+        if (viaAction) {
+            step.delay = {harken::AuthoredTimeDomainV1::AbsoluteNanoseconds, 0, 1};
+            step.fade = step.cooldown = step.delay;
+            const auto root = image.Root();
+            step.target = {harken::ActionTargetKindV1::Container, 0, root.stableId, root.expectedProgramSemanticFingerprint};
+            action.actionStableId = harkentest::ObjectId(10004);
+            action.steps = &step;
+            action.stepCount = action.expandedStepOccurrenceCount = action.expandedFiringCount = 1;
+            action.programSemanticFingerprint = harken::ComputeActionProgramFingerprintV1(action);
+            install.actions = &action;
+            install.actionCount = 1;
+            install.identity.capabilityMask |= harken::kWorldCapabilityActionDefinitions;
+        }
         install.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(install);
         ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, install).status);
         engine.streams.SetThrottled(true);
         harken::PlayableStartRequest request;
         request.root = image.Root();
-        const auto started = harken::StartPlayable(engine, request);
+        harken::PlayableStartResult started{};
+        VnActionFiringHandle firing = 0;
+        if (viaAction) {
+            VnPostActionDesc post{};
+            post.structSize = sizeof(post);
+            post.actionId = action.actionStableId;
+            ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
+            VnActionStepResult result{};
+            result.structSize = sizeof(result);
+            ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, 0, &result));
+            started.instance = result.producedPlayableInstance;
+            started.status = harken::PlayableStartStatus::Accepted;
+        } else started = harken::StartPlayable(engine, request);
         if (noSpare) {
             EXPECT_EQ(harken::PlayableStartStatus::Capacity, started.status);
             engine.streams.SetThrottled(false);
@@ -22702,6 +22730,13 @@ TEST(PlayableStart, OrdinaryTrackStreamWaitHoldsResidentSiblingAndReclaims) {
     for (const auto mode : {harken::ContainerModeV1::Sequence, harken::ContainerModeV1::Random}) {
         SCOPED_TRACE(static_cast<unsigned>(mode));
         CheckContainerTrackStreamWaitAndRecovery(mode);
+    }
+}
+
+TEST(PlayableStart, ActionOrdinaryTrackStreamWaitHoldsResidentSiblingAndReclaims) {
+    for (const auto mode : {harken::ContainerModeV1::Sequence, harken::ContainerModeV1::Random}) {
+        SCOPED_TRACE(static_cast<unsigned>(mode));
+        CheckContainerTrackStreamWaitAndRecovery(mode, true);
     }
 }
 

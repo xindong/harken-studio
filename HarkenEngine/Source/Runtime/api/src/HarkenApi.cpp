@@ -53582,8 +53582,7 @@ void ServicePendingImmediateEntries(
                     invalidArm = true;
                 } else if (arm.state == harken::ArmState::PendingApply) {
                     awaitingApply = true;
-                } else if (member.root.kind == harken::PlayableKindV1::Sound &&
-                           member.leaf.kind == harken::PlayableKindV1::Sound) {
+                } else {
                     harken::EngineTimelineVoiceInstallIdentity installed{};
                     const auto render = (std::uint64_t(program->armToken.renderGeneration) << 32u) |
                         program->armToken.renderSlot;
@@ -53605,6 +53604,12 @@ void ServicePendingImmediateEntries(
                 auto& member = *occupiedService;
                 if (member.phase != harken::EnginePlayableStartPhase::PendingImmediateEntry ||
                     member.PendingImmediateCohortRoot() != root) continue;
+                // Media failure can precede Start while every arm is still
+                // valid. Retire all installed siblings through their arm owners.
+                for (std::uint32_t leaf = 0; leaf < leafCount(member); ++leaf) {
+                    if (const auto* program = leafProgram(member, leaf))
+                        (void)AbortTimelineArm(engine, program->armToken);
+                }
                 member.pendingImmediateEntry = false;
                 member.phase = harken::EnginePlayableStartPhase::Cancelling;
                 member.controlLifecycle =
@@ -93660,7 +93665,7 @@ bool UsesInitialScheduleTerminal(ContainerPreparationContext& context,
     return frontier.dynamicSchedule ||
         (!(scratch.packLeaseOwned || scratch.packLeaseBorrowed) && context.engine != nullptr &&
          MaterializedHasRegisteredStream(*context.engine, context.world, root, frontier.schedule, {}, {},
-             context.initialMediaWaitAllowed && !frontier.queueSelected)) ||
+             context.initialMediaWaitAllowed && context.actionFiring == 0 && !frontier.queueSelected)) ||
         (scratch.initialForestPublication && frontier.hasSchedule &&
          (frontier.status == SharedInitialFrontierStatus::Ok ||
           frontier.status == SharedInitialFrontierStatus::ZeroWork));
