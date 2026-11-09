@@ -22,7 +22,13 @@ class VorbisStreamMedia;
 // well below kMaxStreamChunkFrames.
 inline constexpr std::uint32_t kPackMediaRangeChunkFrames = 4096;
 
+struct PackExternalStream {
+    std::shared_ptr<const StreamByteLocator> locator;
+    std::uint64_t fileBytes = 0;
+};
+
 struct PackMediaRange {
+    std::shared_ptr<const PackExternalStream> external;
     std::shared_ptr<const VorbisStreamMedia> vorbis;
     std::shared_ptr<const StreamByteSource> source;
     std::uint64_t blobOffset = 0;

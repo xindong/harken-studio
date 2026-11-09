@@ -325,18 +325,22 @@ bool StreamManager::FindFile(VnSoundId soundId, StreamFacts* out) const {
 
 VnResult StreamManager::ResolvePackSource(
     const std::shared_ptr<const PackMediaRange>& range, StreamFacts* out) {
-    if (out == nullptr || range == nullptr || range->source == nullptr ||
+    if (out == nullptr || range == nullptr || (!range->source && !range->external) ||
         range->channelCount == 0 || range->channelCount > kMaxChannels ||
         (!range->vorbis && (range->chunkFrames == 0 || range->chunkFrames > kMaxStreamChunkFrames ||
         range->chunkChecksums.size() != PackMediaChunkCount(range->frameCount, range->chunkFrames))))
         return VN_INVALID_ARG;
+    if (range->external && (range->source || !range->external->locator || !range->vorbis ||
+        range->blobOffset != vorbis_test_wire::kStreamHeaderBytes)) return VN_INVALID_ARG;
     if (range->vorbis) {
         const auto& media = range->vorbis->Media();
+        const auto fileBytes = range->external ? range->external->fileBytes : range->source->ByteCount();
         if (media.sampleRate != range->sampleRate || media.channels != range->channelCount ||
             media.frames != range->frameCount || media.revision != range->contentRevision ||
             media.loopStart != range->loop.startFrame || media.loopEnd != range->loop.endFrame ||
-            range->blobOffset > range->source->ByteCount() ||
-            media.packetDataOffset + media.packetBytes > range->source->ByteCount() - range->blobOffset)
+            range->blobOffset > fileBytes ||
+            media.packetDataOffset + media.packetBytes > fileBytes - range->blobOffset ||
+            (range->external && media.packetDataOffset + media.packetBytes != fileBytes - range->blobOffset))
             return VN_INVALID_ARG;
         for (std::size_t i = 0; i < media.seek.size(); ++i) {
             const auto end = i + 1 < media.seek.size() ? media.seek[i + 1].packetOffset : media.packetBytes;
@@ -372,6 +376,7 @@ VnResult StreamManager::ResolvePackSource(
         record->packPrivate = true;
         record->vorbis = range->vorbis;
         record->packRange = range;
+        record->external = range->external;
         record->packBlobOffset = range->blobOffset;
         record->source = range->source;
         record->toc.sampleRate = range->sampleRate;
@@ -1089,10 +1094,17 @@ void StreamManager::ValidateSourceSlice(SourceRequest& request) {
 
 void StreamManager::CloseDrainedRetiringFiles() {
     for (std::unique_ptr<StreamFile>& file : m_files) {
-        if (file != nullptr && (file->retiring || (file->packPrivate && file->packRange.expired())) &&
-            file->activeStreams.load(std::memory_order_relaxed) == 0 &&
-            file->pendingRefs.load(std::memory_order_relaxed) == 0) {
+        if (!file || file->activeStreams.load(std::memory_order_relaxed) != 0 ||
+            file->pendingRefs.load(std::memory_order_relaxed) != 0) continue;
+        if (file->retiring || (file->packPrivate && file->packRange.expired())) {
             QueueCleanup(std::move(file));
+        } else if (file->external && file->source) {
+            // DetachRetiredSlots waits for physical I/O completion before
+            // releasing the last active reference. Keep the locator and index,
+            // but destroy the opened handle on the existing cleanup executor.
+            auto cleanup = std::make_unique<StreamFile>();
+            cleanup->source = std::move(file->source);
+            QueueCleanup(std::move(cleanup));
         }
     }
 }
@@ -1183,10 +1195,50 @@ private:
 };
 } // namespace
 
+std::shared_ptr<const StreamByteSource> StreamManager::AcquireReadSource(
+    const ChunkJob& job, VnMonitorStreamFactV1& facts) {
+    auto& file = *job.file;
+    if (!file.external) return file.source;
+    std::lock_guard<std::mutex> lock(file.openMutex);
+    if (job.cancellation.IsCancelled()) return {};
+    if (file.source) return file.source;
+    auto source = file.external->locator->Open(job.cancellation);
+    if (!source || job.cancellation.IsCancelled() || source->ByteCount() != file.external->fileBytes)
+        return {};
+    ObservedStreamRead observed(*source, facts);
+    std::array<std::uint8_t, ReadWindow::kCapacityBytes> scratch{};
+    if (ReadStreamBytes(observed, 0, scratch.data(), vorbis_test_wire::kStreamHeaderBytes, job.cancellation)
+            != StreamReadStatus::Ok ||
+        !ValidateVorbisTestStreamHeader(scratch.data(), vorbis_test_wire::kStreamHeaderBytes,
+            file.external->fileBytes)) {
+        facts.readStatus = 3;
+        return {};
+    }
+    const auto expected = file.vorbis->Prefix().first(static_cast<std::size_t>(file.vorbis->Media().packetDataOffset));
+    for (std::size_t at = 0; at < expected.size();) {
+        const auto count = std::min(scratch.size(), expected.size() - at);
+        if (ReadStreamBytes(observed, file.packBlobOffset + at, scratch.data(), count, job.cancellation)
+                != StreamReadStatus::Ok || std::memcmp(scratch.data(), expected.data() + at, count) != 0) {
+            facts.readStatus = 3;
+            return {};
+        }
+        at += count;
+    }
+    if (job.cancellation.IsCancelled()) return {};
+    file.source = std::move(source);
+    return file.source;
+}
+
 bool StreamManager::RunChunkJob(const ChunkJob& job, std::vector<float>& staging,
     ReadWindow& window, VnMonitorStreamFactV1& facts) {
     facts = {};
-    ObservedStreamRead source(*job.file->source, facts);
+    const auto opened = AcquireReadSource(job, facts);
+    if (!opened) {
+        if (job.cancellation.IsCancelled()) facts.readStatus = 5;
+        else if (facts.readStatus == 0) facts.readStatus = 2;
+        return false;
+    }
+    ObservedStreamRead source(*opened, facts);
     if (!ReadChunk(job, staging, window, source)) {
         if (job.cancellation.IsCancelled()) facts.readStatus = 5;
         else if (facts.readStatus == 0 || facts.readStatus == 1) facts.readStatus = 2;

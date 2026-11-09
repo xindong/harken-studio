@@ -133,6 +133,7 @@ MediaContentMatch MatchMediaContent(const PCMView& leftResident, const PackMedia
         // Only an identical immutable resource and byte source prove equality
         // without interpreting an encoded range as planar samples.
         return leftRange->vorbis == rightRange->vorbis && leftRange->source == rightRange->source &&
+            leftRange->external == rightRange->external &&
             leftRange->blobOffset == rightRange->blobOffset ? MediaContentMatch::Equal : MediaContentMatch::Different;
     }
     // When both sides carry a range, either may be streamed later, so compare

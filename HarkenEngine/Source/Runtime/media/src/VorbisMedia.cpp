@@ -48,13 +48,19 @@ bool VorbisMedia::VerifySegment(std::size_t index) const noexcept {
     return Fnv1a64(packets + begin, static_cast<std::size_t>(end - begin), segmentChecksumSeed) == segmentChecksums[index];
 }
 
-bool ParseVorbisTestStream(const void* data, std::size_t bytes, VorbisMedia& output) {
-    if (!data || bytes < vorbis_test_wire::kStreamHeaderBytes) return false;
+bool ValidateVorbisTestStreamHeader(const void* data, std::size_t bytes, std::uint64_t fileBytes) noexcept {
+    if (!data || bytes < vorbis_test_wire::kStreamHeaderBytes || fileBytes < vorbis_test_wire::kStreamHeaderBytes)
+        return false;
     Reader r{static_cast<const std::uint8_t*>(data), bytes};
-    if (r.Read(4) != vorbis_test_wire::kStreamMagic || r.Read(2) != vorbis_test_wire::kVersion ||
-        r.Read(2) != 1 || r.Read(8) != vorbis_test_wire::kStreamHeaderBytes ||
-        r.Read(8) != bytes - vorbis_test_wire::kStreamHeaderBytes) return false;
-    return ParseVorbisTestMedia(r.p, r.remaining, output);
+    return r.Read(4) == vorbis_test_wire::kStreamMagic && r.Read(2) == vorbis_test_wire::kVersion &&
+        r.Read(2) == 1 && r.Read(8) == vorbis_test_wire::kStreamHeaderBytes &&
+        r.Read(8) == fileBytes - vorbis_test_wire::kStreamHeaderBytes;
+}
+
+bool ParseVorbisTestStream(const void* data, std::size_t bytes, VorbisMedia& output) {
+    if (!ValidateVorbisTestStreamHeader(data, bytes, bytes)) return false;
+    return ParseVorbisTestMedia(static_cast<const std::uint8_t*>(data) + vorbis_test_wire::kStreamHeaderBytes,
+        bytes - vorbis_test_wire::kStreamHeaderBytes, output);
 }
 
 std::uint64_t VorbisTestMetadataBytes(const void* header, std::size_t bytes) noexcept {

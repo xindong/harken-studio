@@ -2494,3 +2494,141 @@ TEST(StreamRegister, FullVorbisByteRingDoesNotBlockAnotherStreamAndTinyRingFails
     EXPECT_EQ(harken::MediaContentMatch::Different, harken::MatchMediaContent({}, range.get(), {}, &changed));
     EXPECT_EQ(0u, changedSource->reads.load());
 }
+
+TEST(StreamRegister, ExternalVorbisOpensOnDemandClosesAfterReferencesAndValidatesEveryReopen) {
+    struct Counts {
+        std::atomic<unsigned> opens{0}, closes{0}, wrongThread{0}, reads{0};
+        std::atomic<std::uint64_t> furthestRead{0}, largestRead{0};
+    };
+    struct Locator final : harken::StreamByteLocator {
+        struct Source final : harken::StreamByteSource {
+            std::shared_ptr<Counts> counts;
+            std::shared_ptr<const std::vector<std::uint8_t>> bytes;
+            std::thread::id caller;
+            ~Source() override {
+                if (std::this_thread::get_id() == caller) ++counts->wrongThread;
+                ++counts->closes;
+            }
+            std::uint64_t ByteCount() const noexcept override { return bytes->size(); }
+            harken::StreamReadResult ReadAt(std::uint64_t offset, void* data, std::size_t count,
+                harken::StreamReadCancellation cancel) const override {
+                if (std::this_thread::get_id() == caller) ++counts->wrongThread;
+                ++counts->reads;
+                const auto recordMax = [](auto& value, std::uint64_t next) {
+                    auto prior = value.load();
+                    while (prior < next && !value.compare_exchange_weak(prior, next)) {}
+                };
+                recordMax(counts->largestRead, count);
+                recordMax(counts->furthestRead, offset + count);
+                if (cancel.IsCancelled()) return {harken::StreamReadStatus::Cancelled, 0};
+                if (offset > bytes->size() || count > bytes->size() - offset) return {};
+                std::memcpy(data, bytes->data() + offset, count);
+                return {harken::StreamReadStatus::Ok, count};
+            }
+        };
+        std::shared_ptr<Counts> counts = std::make_shared<Counts>();
+        std::shared_ptr<const std::vector<std::uint8_t>> bytes;
+        std::thread::id caller = std::this_thread::get_id();
+        mutable std::atomic<bool> blockNextOpen{false}, enteredOpen{false};
+        std::shared_ptr<const harken::StreamByteSource> Open(harken::StreamReadCancellation cancel) const override {
+            if (std::this_thread::get_id() == caller) ++counts->wrongThread;
+            ++counts->opens;
+            if (blockNextOpen.exchange(false)) {
+                enteredOpen.store(true, std::memory_order_release);
+                while (!cancel.IsCancelled()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            if (!bytes || cancel.IsCancelled()) return {};
+            auto source = std::make_shared<Source>();
+            source->counts = counts; source->bytes = bytes; source->caller = caller;
+            return source;
+        }
+    };
+    const auto fixture = harken::test::MakeVorbisFixture(2, true, 257, 1023);
+    const auto image = harken::test::WrapVorbisStream(fixture.media);
+    harken::VorbisMedia media;
+    ASSERT_TRUE(harken::ParseVorbisTestMedia(fixture.media.data(), fixture.media.size(), media));
+    harken::VorbisCodec codec(2 * 1024 * 1024, 0);
+    harken::VorbisPrepareResult prepared;
+    std::vector<std::uint8_t> prefix(fixture.media.begin(), fixture.media.begin() + media.packetDataOffset);
+    auto encoded = harken::VorbisStreamMedia::Prepare(codec, std::move(prefix), fixture.media.size(),
+        4 * 1024 * 1024, prepared);
+    ASSERT_NE(encoded, nullptr);
+    auto locator = std::make_shared<Locator>();
+    locator->bytes = std::make_shared<const std::vector<std::uint8_t>>(image);
+    auto external = std::make_shared<harken::PackExternalStream>();
+    external->locator = locator; external->fileBytes = image.size();
+    auto range = std::make_shared<harken::PackMediaRange>();
+    range->external = external; range->vorbis = encoded;
+    range->blobOffset = harken::vorbis_test_wire::kStreamHeaderBytes;
+    range->sampleRate = media.sampleRate; range->channelCount = media.channels;
+    range->frameCount = media.frames; range->contentRevision = media.revision;
+    range->loop = {media.loopStart, media.loopEnd};
+    harken::EngineConfig config;
+    config.maxStreams = 2; config.streamRingBytes = 1024;
+    harken::StreamManager streams(config);
+    harken::StreamManager::StreamFacts facts;
+    ASSERT_EQ(VN_OK, streams.ResolvePackSource(range, &facts));
+    EXPECT_EQ(0u, locator->counts->opens.load());
+    EXPECT_EQ(0u, locator->counts->reads.load());
+    ASSERT_TRUE(streams.AcquirePendingRef(facts.fileIndex));
+    for (unsigned slot = 0; slot < 2; ++slot) {
+        ASSERT_TRUE(streams.PrepareSlotWorkingSet(slot, media.channels));
+        ASSERT_EQ(VN_OK, streams.ActivateSlot(slot, facts.fileIndex, 0, 0, media.frames, 1));
+        ASSERT_GT(streams.RingOf(slot)->BufferedFrames(), 0u);
+    }
+    EXPECT_EQ(1u, locator->counts->opens.load());
+    EXPECT_LT(locator->counts->furthestRead.load(), image.size());
+    EXPECT_LE(locator->counts->largestRead.load(), 16384u);
+    for (unsigned slot = 0; slot < 2; ++slot)
+        streams.RingOf(slot)->state.store(harken::StreamSlotState::Retired, std::memory_order_release);
+    streams.SyncServe();
+    EXPECT_EQ(2u, streams.FreeSlotCount());
+    EXPECT_EQ(0u, locator->counts->closes.load());
+    streams.ReleasePendingRef(facts.fileIndex);
+    ASSERT_TRUE(WaitUntil([&] { return locator->counts->closes.load() == 1; }));
+    for (unsigned variant = 0; variant < 5; ++variant) {
+        SCOPED_TRACE(variant);
+        auto changed = image;
+        if (variant == 2) changed.pop_back();
+        if (variant == 3) changed[range->blobOffset + 92] ^= 1;
+        if (variant == 4) changed[range->blobOffset + media.packetDataOffset + 2] ^= 1;
+        locator->bytes = variant == 1 ? nullptr : std::make_shared<const std::vector<std::uint8_t>>(std::move(changed));
+        harken::StreamManager::StreamFacts again;
+        ASSERT_EQ(VN_OK, streams.ResolvePackSource(range, &again));
+        EXPECT_EQ(facts.fileIndex, again.fileIndex);
+        EXPECT_EQ(facts.sourceGeneration, again.sourceGeneration);
+        const auto closedBefore = locator->counts->closes.load();
+        ASSERT_TRUE(streams.PrepareSlotWorkingSet(0, media.channels));
+        ASSERT_EQ(VN_OK, streams.ActivateSlot(0, facts.fileIndex, 0, 0, media.frames, 1));
+        auto* ring = streams.RingOf(0);
+        EXPECT_EQ(variant == 0 ? harken::StreamTerminalReason::None :
+            harken::StreamTerminalReason::IntegrityAbort, ring->TerminalReason());
+        if (variant == 0) EXPECT_GT(ring->BufferedFrames(), 0u);
+        else EXPECT_EQ(0u, ring->BufferedFrames());
+        ring->state.store(harken::StreamSlotState::Retired, std::memory_order_release);
+        streams.SyncServe();
+        ASSERT_TRUE(WaitUntil([&] { return locator->counts->closes.load() == closedBefore + (variant != 1); }));
+    }
+    EXPECT_EQ(6u, locator->counts->opens.load());
+    locator->bytes = std::make_shared<const std::vector<std::uint8_t>>(image);
+    locator->blockNextOpen.store(true);
+    harken::StreamManager::PreparedToken cancelled, survivor;
+    auto request = ReplacementAt(facts);
+    request.prebufferTargetFrames = 2;
+    ASSERT_EQ(VN_OK, streams.BeginReplacement(request, &cancelled));
+    ASSERT_TRUE(WaitUntil([&] { return locator->enteredOpen.load(std::memory_order_acquire); }));
+    ASSERT_EQ(VN_OK, streams.BeginReplacement(request, &survivor));
+    ASSERT_TRUE(streams.CancelReplacement(cancelled));
+    ASSERT_TRUE(WaitUntil([&] { return streams.QueryReplacement(survivor) ==
+        harken::StreamManager::PreparationState::Ready; }));
+    const auto closedBefore = locator->counts->closes.load();
+    harken::StreamManager::PreparedStream owned;
+    ASSERT_EQ(VN_OK, streams.TakeReplacement(survivor, &owned));
+    EXPECT_GT(owned.ring->BufferedFrames(), 0u);
+    ASSERT_TRUE(streams.RetirePreparedSlot(owned.ring, owned.ringToken));
+    streams.SyncServe();
+    ASSERT_TRUE(WaitUntil([&] { return locator->counts->closes.load() == closedBefore + 1; }));
+    EXPECT_EQ(8u, locator->counts->opens.load());
+    EXPECT_EQ(2u, streams.FreeSlotCount());
+    EXPECT_EQ(0u, locator->counts->wrongThread.load());
+}

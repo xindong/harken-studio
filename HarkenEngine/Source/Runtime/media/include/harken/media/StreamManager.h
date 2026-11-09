@@ -379,6 +379,10 @@ private:
         std::weak_ptr<const PackMediaRange> packRange;
         std::uint64_t packBlobOffset = 0;
         std::shared_ptr<const StreamByteSource> source;
+        std::shared_ptr<const PackExternalStream> external;
+        // Multiple slots may prepare the same unopened resource concurrently.
+        // Only I/O executors take this mutex; active references exclude close.
+        std::mutex openMutex;
         std::unique_ptr<StreamFile> nextCleanup;
         StreamTocEntry toc;
         std::uint32_t chunkFrames = 0;
@@ -578,6 +582,8 @@ private:
                           const StreamByteSource& source);
     static bool TryCopyReadWindow(const ChunkJob& job, std::vector<float>& staging,
                                   const ReadWindow& window) noexcept;
+    static std::shared_ptr<const StreamByteSource> AcquireReadSource(
+        const ChunkJob& job, VnMonitorStreamFactV1& facts);
     static bool ValidateChunk(const ChunkJob& job,
                               const std::vector<float>& staging,
                               std::uint64_t checksum);
