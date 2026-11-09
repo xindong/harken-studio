@@ -3065,6 +3065,18 @@ void VoicePool::ApplyPlay(VnVoiceHandle handle, VnVoiceHandle sourceIdentity,
     }
 }
 
+bool VoicePool::BindStreamRecoveryGroup(VnVoiceHandle handle, StreamRecoveryGroup* group) noexcept {
+    auto* slot = SlotFor(handle);
+    if (slot == nullptr || group == nullptr || slot->render.streamRecoveryGroup != nullptr) return false;
+    const auto state = slot->state.load(std::memory_order_acquire);
+    if (state != SlotState::Prepared && state != SlotState::Claimed) return false;
+    slot->render.streamRecoveryGroup = group;
+    slot->render.resyncOnStarve = false;
+    if (slot->render.streamRing != nullptr)
+        group->hasStreams.store(true, std::memory_order_release);
+    return true;
+}
+
 void VoicePool::FillSourceCursor(const Slot& slot, SlotState state,
     SourceCursorMirror::Row& row, std::uint64_t serial, bool captureParking) noexcept {
     if (!IsAudioRenderingState(state)) return;
@@ -4699,6 +4711,19 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
     std::uint64_t jobDeadlineAt, std::uint64_t sourceFrameBegin, SignalRenderPlan* signals, BusTree* signalBuses) {
     RenderAllResult outcome;
     const bool collective = signals != nullptr && (signals->HasContent() || signals->UsesActualRouting());
+    bool grouped = false;
+    if (m_deferredJobCount == 0) {
+        for (auto& slot : m_slots) {
+            if (!IsAudioRenderingState(slot.state.load(std::memory_order_relaxed))) continue;
+            auto& render = slot.render;
+            auto* group = render.streamRecoveryGroup;
+            render.groupSilentThisBlock = group != nullptr && group->recovering;
+            render.groupStarvedThisBlock = false;
+            if (group == nullptr || !group->hasStreams.load(std::memory_order_acquire)) continue;
+            grouped = true;
+            if (render.streamRing != nullptr) render.streamRing->CaptureConsumerSnapshot();
+        }
+    }
     if (m_deferredJobCount == 0) {
         std::size_t pathRows = 0;
         std::uint32_t members = 0;
@@ -4832,7 +4857,7 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
             }
         };
     const bool workerReserved = m_deferredJobCount != 0 || m_workers.TryReserveBatch();
-    if (m_deferredJobCount == 0 && !workerReserved && !collective) {
+    if (m_deferredJobCount == 0 && !workerReserved && !collective && !grouped) {
         // Clear prior signal membership while visiting the actual render work.
         // Ordinary rendering needs no separate full-slot preparation pass.
         for (std::uint32_t i = 0; i < m_slots.size(); ++i) {
@@ -4961,6 +4986,30 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
         return outcome;
     }
     m_deferredJobCount = 0;
+
+    // Detect all shortages before exposing any member image. This also runs
+    // after a deferred worker join, with the original supply cuts intact.
+    for (std::uint32_t j = 0; j < jobCount; ++j) {
+        auto& render = m_slots[m_jobSlots[j]].render;
+        auto* group = render.streamRecoveryGroup;
+        if (group == nullptr) continue;
+        const auto terminal = render.streamRing != nullptr
+            ? render.streamRing->ConsumerTerminalReason() : StreamTerminalReason::None;
+        const bool failed = render.mediaDecodeFailed ||
+            terminal == StreamTerminalReason::IntegrityAbort || terminal == StreamTerminalReason::ProducerFailure;
+        if (render.groupStarvedThisBlock || failed) {
+            group->failed |= failed;
+            if (!group->recovering) {
+                group->recovering = true;
+                group->recoverySerial.fetch_add(1, std::memory_order_release);
+            }
+        }
+    }
+    for (std::uint32_t j = 0; j < jobCount; ++j) {
+        auto& render = m_slots[m_jobSlots[j]].render;
+        if (render.streamRecoveryGroup != nullptr && render.streamRecoveryGroup->recovering)
+            SilenceVoiceCascade(render);
+    }
 
     if (collective) {
         std::uint32_t members = 0;

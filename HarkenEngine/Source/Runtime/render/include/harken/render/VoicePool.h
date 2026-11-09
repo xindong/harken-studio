@@ -737,6 +737,7 @@ public:
         std::uint64_t endFrame = 0;
     };
     bool EnableStreamResync(VnVoiceHandle handle) noexcept;
+    bool BindStreamRecoveryGroup(VnVoiceHandle handle, StreamRecoveryGroup* group) noexcept;
     bool ReadStreamResync(VnVoiceHandle handle, StreamResyncView* out) const noexcept;
     bool PostStreamResync(VnVoiceHandle handle, std::uint64_t serial,
                           std::uint64_t ticket, std::uint64_t token,

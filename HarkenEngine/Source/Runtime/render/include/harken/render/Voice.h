@@ -241,6 +241,16 @@ struct VoiceEventSpan {
     VoiceTimelineEvent events[kTimelineMaxCombinedEventsPerVoiceQuantum]{};
 };
 
+// The service generation owns this storage until all member voices and
+// recovery handoffs physically release it. Only the main audio thread writes
+// recovery state; workers report shortage through their own voice context.
+struct StreamRecoveryGroup {
+    std::atomic<bool> hasStreams{false};
+    std::atomic<std::uint64_t> recoverySerial{0};
+    bool recovering = false;
+    bool failed = false;
+};
+
 struct VoiceRenderContext {
     // Keep authoritative block eligibility state together; all owners and checks remain unchanged.
     StreamRing* streamRing = nullptr;
@@ -354,6 +364,11 @@ struct VoiceRenderContext {
     // not fill the block); the cooldown spaces STARVED notifications exactly
     // starvationCooldownBlocks apart under continuous starvation.
     bool starvedThisBlock = false;
+    StreamRecoveryGroup* streamRecoveryGroup = nullptr;
+    bool groupSilentThisBlock = false;
+    bool groupStarvedThisBlock = false;
+    bool groupVirtualInput = false;
+    std::uint64_t groupVirtualFramesFed = 0;
     std::uint32_t starveCooldownRemaining = 0;
 
     // Timeline resync for a streamed clip on a track. A starvation fades the
@@ -766,6 +781,10 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
 // Records the produced frame count in ctx.cascade and the protocol facts in
 // ctx.lastResult. Call only when PrepareVoiceCascade returned true.
 void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames);
+
+// Suppress an already-rendered image without changing time, lifecycle or
+// gain progress. Borrowed resident samples are materialized before clearing.
+void SilenceVoiceCascade(VoiceRenderContext& ctx) noexcept;
 
 // Phase 3 (serial, fixed slot order): fold the completed cascade's scratch into
 // the voice's bus accumulator and scatter its sends into the tap reserved by

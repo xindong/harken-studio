@@ -650,6 +650,86 @@ TEST(VoicePool, FrozenStreamSupplyDefersLaterPcmAndEndUntilNextSnapshot) {
     }
 }
 
+TEST(VoicePool, CompositeShortageSilencesEarlierMembersAndKeepsActualClocksAndGainMoving) {
+    for (const auto workers : {0u, 2u}) for (const auto profile : {
+             harken::ResampleProfile::LegacyCompatibility, harken::ResampleProfile::Professional44148}) {
+        SCOPED_TRACE(::testing::Message() << workers << '/' << static_cast<unsigned>(profile));
+        auto config = VoicePoolConfig(3, kBlockFrames, kSampleRate);
+        config.renderWorkerCount = workers;
+        harken::StreamRecoveryGroup group;
+        std::array<float, 2048> storage{};
+        storage.fill(0.5f);
+        float* planes[harken::kMaxChannels] = {storage.data()};
+        harkentest::PcmStreamFixture ring;
+        ring.Wire(planes, static_cast<std::uint32_t>(storage.size()));
+        ring.ResetForUse(1);
+        ring.PublishFrames(64);
+        ring.state.store(harken::StreamSlotState::Active);
+        EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        const auto resident = harkentest::MakeDC(8192, .25f);
+        const auto independent = harkentest::MakeDC(8192, .125f);
+        auto desc = MonoDesc(resident, kSampleRate);
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &desc));
+        desc = MonoDesc(independent, kSampleRate);
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(2), &desc));
+        const auto pan = harken::ResolvePanGains(engine.config.mixChannelLayout, 0);
+        VnVoiceHandle first = 0, stream = 0, separate = 0;
+        ASSERT_EQ(VN_OK, engine.voices.Play(engine.registry.Lookup(harkentest::ObjectId(1)),
+            0, 1, 0, false, 0, 0, 0, pan, 0, 8192, 1, profile, &first));
+        ASSERT_EQ(VN_OK, engine.voices.PlayStream(&ring, 1, kSampleRate, 0, 0, 1,
+            0, false, 0, 0, 0, pan, 0, 8192, 0, 8192, 1, profile, &stream));
+        ASSERT_EQ(VN_OK, engine.voices.Play(engine.registry.Lookup(harkentest::ObjectId(2)),
+            0, 1, 0, false, 0, 0, 0, pan, 0, 8192, 0,
+            harken::ResampleProfile::LegacyCompatibility, &separate));
+        ASSERT_TRUE(engine.voices.BindStreamRecoveryGroup(first, &group));
+        ASSERT_TRUE(engine.voices.BindStreamRecoveryGroup(stream, &group));
+        HeldSource firstSource{}, streamSource{};
+        ASSERT_TRUE(BindHeldSource(engine, first, &firstSource));
+        ASSERT_TRUE(BindHeldSource(engine, stream, &streamSource));
+        engine.voices.Resolve(first)->outputGain.Set(.5f, 512);
+        for (auto voice : {first, stream, separate}) engine.voices.ApplyPlay(voice, voice, 0, 0);
+        for (unsigned block = 0; block != 6; ++block) {
+            if (block == 1) {
+                engine.voices.ApplySetPitch(first, 2.5, 20);
+                engine.voices.ApplySetPitch(stream, 2.5, 20);
+            }
+            const auto before = engine.mixer.BlocksRendered();
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+            do { engine.nullBackend.Pump(1); }
+            while (engine.mixer.BlocksRendered() == before && std::chrono::steady_clock::now() < deadline);
+            ASSERT_EQ(before + 1, engine.mixer.BlocksRendered());
+            ASSERT_TRUE(group.recovering);
+            EXPECT_FALSE(group.failed);
+            EXPECT_EQ(1u, group.recoverySerial.load());
+            for (unsigned sample = 0; sample != kBlockFrames; ++sample) {
+                EXPECT_FLOAT_EQ(.125f, engine.nullBackend.LastBlock()[sample * 2]);
+                EXPECT_FLOAT_EQ(.125f, engine.nullBackend.LastBlock()[sample * 2 + 1]);
+            }
+            const auto* a = engine.voices.Resolve(first);
+            const auto* b = engine.voices.Resolve(stream);
+            ASSERT_NE(nullptr, a);
+            ASSERT_NE(nullptr, b);
+            EXPECT_EQ(a->resampler.SourceFrame(), b->resampler.SourceFrame());
+            EXPECT_EQ(a->resampler.SourceFraction(), b->resampler.SourceFraction());
+            EXPECT_EQ(a->resampler.CurrentRatio(), b->resampler.CurrentRatio());
+            EXPECT_EQ(a->resampler.RampFramesRemaining(), b->resampler.RampFramesRemaining());
+            if (block >= 1) EXPECT_EQ(0u, a->outputGain.remainingFrames);
+        }
+        EXPECT_EQ(64u, ring.readFrames.load());
+        for (unsigned block = 0; block != 128 && !engine.voices.ReleaseObserved(streamSource.release); ++block)
+            engine.nullBackend.Pump(1);
+        EXPECT_TRUE(engine.voices.ReleaseObserved(streamSource.release));
+        EXPECT_TRUE(engine.voices.ReleaseObserved(firstSource.release));
+        harken::SourceTerminalPayload result{};
+        ASSERT_TRUE(engine.sourceTerminals.Capture(streamSource.token, engine.mixer.BlocksRendered(), &result));
+        EXPECT_EQ(harken::SourceTerminalKind::Natural, result.kind);
+        EXPECT_TRUE(std::all_of(resident.begin(), resident.end(), [](float sample) { return sample == .25f; }));
+    }
+}
+
+
 TEST(VoicePool, SourceTerminalStreamQueuedEndFailureAndStarvationRemainDistinct) {
     for (const auto workers : {0u, 2u}) {
         for (const auto reason : {harken::StreamTerminalReason::None,
