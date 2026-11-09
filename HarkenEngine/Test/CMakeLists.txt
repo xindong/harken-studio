@@ -8,6 +8,22 @@ if(NOT TARGET vorbisfile)
     add_subdirectory(${CMAKE_SOURCE_DIR}/HarkenStudio/ThirdParty/libvorbis ${CMAKE_CURRENT_BINARY_DIR}/reference-vorbis)
 endif()
 
+# Reuse the decoder cases for Debug CRT qualification without rebuilding the
+# unrelated full-engine tests. This target is explicitly invoked when needed.
+add_executable(harken_vorbis_qualification_tests EXCLUDE_FROM_ALL
+    Common/VorbisFixture.cpp Common/VorbisFixtureSupport.c
+    UnitTest/VorbisDecoderTest.cpp UnitTest/AllocationProbe.cpp
+    ${HARKEN_RUNTIME_DIR}/media/src/VorbisMedia.cpp
+    ${HARKEN_RUNTIME_DIR}/media/src/VorbisDecoder.cpp
+    ${HARKEN_RUNTIME_DIR}/core/src/AllocGuard.cpp)
+target_include_directories(harken_vorbis_qualification_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${HARKEN_RUNTIME_DIR}/api/include
+    ${HARKEN_RUNTIME_DIR}/core/include
+    ${HARKEN_RUNTIME_DIR}/media/include)
+target_link_libraries(harken_vorbis_qualification_tests PRIVATE
+    harken_vorbis_decoder vorbisfile harken_buildinfo GTest::gtest_main)
+
 add_subdirectory(UnitTest/ProgramRegistration ProgramRegistration)
 
 add_executable(harken_object_identity_tests
@@ -109,6 +125,7 @@ add_executable(harken_runtime_tests
     Common/VorbisFixture.cpp
     Common/VorbisFixtureSupport.c
     UnitTest/VorbisMediaTest.cpp
+    UnitTest/VorbisDecoderTest.cpp
     UnitTest/AllocationProbe.cpp
     UnitTest/AbiExceptionFirewallSweepTest.cpp
     UnitTest/AbiVintageContractTest.cpp
@@ -345,7 +362,7 @@ add_executable(harken_runtime_tests
 # the engine-free harken/media/ResourceFactsValue.h from a separate include root.
 # The interface target carries that root (and no linked code), so the test can
 # resolve it without this target learning the whole media include layout.
-target_link_libraries(harken_runtime_tests PRIVATE vorbisfile harken_core harken_buildinfo harken_remote
+target_link_libraries(harken_runtime_tests PRIVATE harken_vorbis_decoder vorbisfile harken_core harken_buildinfo harken_remote
                       harken_reference_slots harken_resource_facts_contract
                       harken_program_registration harken_current_world_compiler
                       harken_preview harkenizer_resource_compiler harken_studio_pack_build

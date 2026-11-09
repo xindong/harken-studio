@@ -13,6 +13,8 @@ VorbisFixture MakeVorbisFixture(unsigned channels, bool streaming = false,
     std::uint64_t loopStart = 0, std::uint64_t loopEnd = 0,
     std::uint32_t granularity = 4096);
 std::vector<std::uint8_t> WrapVorbisStream(const std::vector<std::uint8_t>& media);
+void ValidateVorbisFixtureSetup(const std::uint8_t* ident, std::size_t identBytes,
+                               const std::uint8_t* setup, std::size_t setupBytes);
 // Reference packet decoding tests the converter's seek metadata before it is
 // consumed by the private decoder. Returned samples remain in Vorbis order.
 std::vector<float> DecodeReferencePackets(const VorbisMedia& media,

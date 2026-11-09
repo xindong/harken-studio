@@ -25,6 +25,8 @@ struct Headers {
     ~Headers() { vorbis_comment_clear(&comment); vorbis_info_clear(&info); }
     void Read(const std::vector<std::uint8_t>& data, bool first = false) {
         auto p = Packet(data, first); Require(vorbis_synthesis_headerin(&info, &comment, &p) == 0);
+        if (data[0] == 5 && !harken_test_vorbis_floor_supported(&info))
+            throw std::runtime_error("Unsupported Vorbis floor type");
     }
 };
 struct OggReader {
@@ -99,8 +101,6 @@ VorbisFixture MakeVorbisFixture(unsigned channels, bool streaming,
     Require(pageResult == 0 && ended && packets.size() > 4);
     Headers headers;
     for (std::size_t i = 0; i < 3; ++i) headers.Read(packets[i], i == 0);
-    if (!harken_test_vorbis_floor_supported(&headers.info))
-        throw std::runtime_error("Unsupported Vorbis floor type");
     Require(static_cast<unsigned>(headers.info.channels) == channels);
     std::vector<std::uint64_t> offsets, starts, ends;
     std::vector<std::uint8_t> data;
@@ -155,6 +155,14 @@ std::vector<std::uint8_t> WrapVorbisStream(const std::vector<std::uint8_t>& medi
     Put(result, vorbis_test_wire::kStreamMagic, 4); Put(result, vorbis_test_wire::kVersion, 2);
     Put(result, 1, 2); Put(result, vorbis_test_wire::kStreamHeaderBytes, 8); Put(result, media.size(), 8);
     result.insert(result.end(), media.begin(), media.end()); return result;
+}
+
+void ValidateVorbisFixtureSetup(const std::uint8_t* ident, std::size_t identBytes,
+                               const std::uint8_t* setup, std::size_t setupBytes) {
+    Headers headers;
+    headers.Read({ident, ident + identBytes}, true);
+    headers.Read({3, 'v', 'o', 'r', 'b', 'i', 's', 0, 0, 0, 0, 0, 0, 0, 0, 1});
+    headers.Read({setup, setup + setupBytes});
 }
 
 std::vector<float> DecodeReferencePackets(const VorbisMedia& media, std::uint64_t frame, std::uint64_t count) {
