@@ -684,7 +684,8 @@ bool VoicePool::CaptureStreamRingToken(
 
 bool VoicePool::CanClaimSlot(const Slot& slot) noexcept {
     if (slot.state.load(std::memory_order_acquire) != SlotState::Free ||
-        slot.releaseSequence.load(std::memory_order_acquire) == UINT64_MAX) return false;
+        slot.releaseSequence.load(std::memory_order_acquire) == UINT64_MAX ||
+        slot.groupRequestPhase.load(std::memory_order_acquire) != GroupRequestPhase::Empty) return false;
     const auto lifetime = slot.originalBodyLifetime.load(std::memory_order_acquire);
     return (lifetime & (kOriginalBodyPinMask | kOriginalBodyCallbackReader)) == 0 &&
         (slot.originalBodyMarker == 0 || (lifetime & kOriginalBodyLoanReturned) != 0);
@@ -1844,6 +1845,12 @@ void VoicePool::ShutdownOriginalSourceBodiesAfterQuiescence() noexcept {
     // Unbind can return without joining an offline thread set. Stop is the
     // actual thread join, and the lifecycle owner has already stopped callback.
     m_workers.Stop();
+    for (auto& slot : m_slots) {
+        if (slot.groupRequestPhase.load(std::memory_order_acquire) == GroupRequestPhase::Published) {
+            slot.groupRequest->result = StreamRecoveryResult::Cancelled;
+            slot.groupRequestPhase.store(GroupRequestPhase::Done, std::memory_order_release);
+        }
+    }
     m_originalBodyShutdown = true;
     for (auto& slot : m_slots) CompleteOriginalSourceBodyDisposition(slot);
     EndAudioBlock();
@@ -3077,6 +3084,181 @@ bool VoicePool::BindStreamRecoveryGroup(VnVoiceHandle handle, StreamRecoveryGrou
     return true;
 }
 
+bool VoicePool::PostGroupRecovery(VnVoiceHandle representative, StreamRecoveryAttempt* attempt,
+                                  std::uint64_t* ticket) noexcept {
+    auto* slot = SlotFor(representative);
+    if (!slot || !attempt || !attempt->group || !ticket ||
+        slot->groupRequestSerial == UINT32_MAX ||
+        slot->groupRequestPhase.load(std::memory_order_acquire) != GroupRequestPhase::Empty) return false;
+    attempt->result = StreamRecoveryResult::Waiting;
+    slot->groupRequest = attempt;
+    *ticket = (static_cast<std::uint64_t>(++slot->groupRequestSerial) << 32u) |
+        static_cast<std::uint32_t>(representative);
+    slot->groupRequestPhase.store(GroupRequestPhase::Published, std::memory_order_release);
+    return true;
+}
+
+bool VoicePool::CollectGroupRecovery(std::uint64_t ticket, StreamRecoveryAttempt* attempt) noexcept {
+    const auto index = static_cast<std::uint32_t>(ticket);
+    if (!attempt || index >= m_slots.ConstructedCount()) return false;
+    auto& slot = m_slots[index];
+    if (slot.groupRequestPhase.load(std::memory_order_acquire) != GroupRequestPhase::Done ||
+        slot.groupRequestSerial != static_cast<std::uint32_t>(ticket >> 32u) ||
+        slot.groupRequest != attempt) return false;
+    slot.groupRequest = nullptr;
+    slot.groupRequestPhase.store(GroupRequestPhase::Empty, std::memory_order_release);
+    return true;
+}
+
+void VoicePool::ProcessGroupRecoveries(std::uint32_t blockFrames) noexcept {
+    for (auto& slot : m_slots) {
+        // The stable phase, rather than a flag inside the request, protects
+        // later audio blocks from dereferencing an already collected attempt.
+        if (slot.groupRequestPhase.load(std::memory_order_acquire) != GroupRequestPhase::Published) continue;
+        auto& attempt = *slot.groupRequest;
+        const auto result = ApplyGroupRecovery(attempt, blockFrames);
+        if (result == StreamRecoveryResult::Waiting) continue;
+        attempt.result = result;
+        slot.groupRequestPhase.store(GroupRequestPhase::Done, std::memory_order_release);
+    }
+}
+
+StreamRecoveryResult VoicePool::ApplyGroupRecovery(StreamRecoveryAttempt& attempt,
+                                                   std::uint32_t blockFrames) noexcept {
+    auto& group = *attempt.group;
+    if (attempt.cancelRequested.load(std::memory_order_acquire) || !group.recovering ||
+        group.recoverySerial.load(std::memory_order_relaxed) != attempt.serial)
+        return StreamRecoveryResult::Cancelled;
+    if (group.failed) return StreamRecoveryResult::Failed;
+    std::size_t eligible = 0;
+    for (const auto& slot : m_slots) {
+        if (!IsAudioRenderingState(slot.state.load(std::memory_order_acquire))) continue;
+        const auto& render = slot.render;
+        if (render.streamRecoveryGroup != &group || render.phase != SourcePhase::Active || !render.streamRing) continue;
+        if (render.timelineGated) {
+            for (std::uint32_t i = 0; i < render.timelineEvents.eventCount; ++i)
+                if (render.timelineEvents.events[i].Kind() == TimelineEventKind::Start &&
+                    TimelineEventPrecedesRootStop(render, i, blockFrames))
+                    return StreamRecoveryResult::Retry;
+            continue;
+        }
+        ++eligible;
+    }
+    if (eligible != attempt.members.size()) return StreamRecoveryResult::Retry;
+    bool waiting = false;
+    for (std::size_t i = 0; i < attempt.members.size(); ++i) {
+        const auto& member = attempt.members[i];
+        auto* slot = SlotFor(member.render);
+        if (!slot || !IsAudioRenderingState(slot->state.load(std::memory_order_acquire))) return StreamRecoveryResult::Retry;
+        const auto& render = slot->render;
+        if (render.streamRecoveryGroup != &group || render.phase != SourcePhase::Active ||
+            render.timelineGated || !render.streamRing || render.streamRingToken != member.oldRingToken ||
+            render.resampler.Profile() != ResampleProfile::LegacyCompatibility ||
+            render.resampler.quality != ResampleQuality::Linear || !member.ring ||
+            member.ring == render.streamRing || member.ring->ConsumedFrames() != 0 ||
+            member.ring->generation.load(std::memory_order_acquire) != static_cast<std::uint32_t>(member.ringToken >> 32u) ||
+            member.ring->state.load(std::memory_order_acquire) != StreamSlotState::Active ||
+            member.ring->channelCount != render.pcm.channelCount ||
+            member.ring->packetEncoded != render.streamRing->packetEncoded) return StreamRecoveryResult::Retry;
+        for (std::size_t j = 0; j < i; ++j)
+            if (attempt.members[j].render == member.render || attempt.members[j].ring == member.ring)
+                return StreamRecoveryResult::Retry;
+        render.streamRing->CaptureConsumerSnapshot();
+        const auto oldTerminal = render.streamRing->ConsumerTerminalReason();
+        if (render.streamRing->ConsumerPreparationResult() != VN_OK ||
+            oldTerminal == StreamTerminalReason::IntegrityAbort || oldTerminal == StreamTerminalReason::ProducerFailure) {
+            group.failed = true;
+            return StreamRecoveryResult::Failed;
+        }
+        member.ring->CaptureConsumerSnapshot();
+        const auto terminal = member.ring->ConsumerTerminalReason();
+        if (member.ring->ConsumerPreparationResult() != VN_OK || terminal == StreamTerminalReason::IntegrityAbort ||
+            terminal == StreamTerminalReason::ProducerFailure) {
+            group.failed = true;
+            return StreamRecoveryResult::Failed;
+        }
+        const auto actual = render.resampler.SourceFrame();
+        if (actual < member.sourceReadFrame) { waiting = true; continue; }
+        const auto skip = actual - member.sourceReadFrame;
+        const auto coverage = member.ring->ConsumerBufferedFrames();
+        const bool full = member.ring->WriteAvailableBytes() == 0 ||
+            coverage >= member.ring->ConsumerPrebufferTarget(UINT32_MAX);
+        if (skip >= coverage || skip > UINT32_MAX) {
+            if (member.ring->ConsumerSourceEnded() || full)
+                return StreamRecoveryResult::Retry;
+            waiting = true;
+            continue;
+        }
+        std::uint64_t mapped = 0, current = 0;
+        std::uint32_t mappedLoops = 0, currentLoops = 0;
+        MapLoopedSourceFrame(member.sourceFrame, member.loopsRemaining, skip, render.streamFrameCount,
+            render.streamLoopStartFrame, render.streamLoopEndFrame, &mapped, &mappedLoops);
+        MapLoopedSourceFrame(render.streamActivationStartFrame, render.streamActivationLoopsRemaining,
+            actual > kResampleHistoryPad ? actual - kResampleHistoryPad : 0,
+            render.streamFrameCount, render.streamLoopStartFrame, render.streamLoopEndFrame, &current, &currentLoops);
+        if (mapped != current || mappedLoops != currentLoops) return StreamRecoveryResult::Retry;
+        const auto need = std::ceil(std::max(render.resampler.CurrentRatio(), render.resampler.TargetRatio()) * blockFrames) + 2.0;
+        if (!member.ring->ConsumerSourceEnded() && need > coverage - skip) {
+            if (full) return StreamRecoveryResult::Retry;
+            waiting = true;
+        }
+        if (member.ring->packetEncoded && !render.mediaDecoder) return StreamRecoveryResult::Retry;
+    }
+    if (waiting) return StreamRecoveryResult::Waiting;
+    // No voice changes until every member has compatible coverage. Corrupt
+    // verified input discovered during decode fails the whole silent group.
+    for (const auto& member : attempt.members) {
+        auto& render = SlotFor(member.render)->render;
+        const auto skip = static_cast<std::uint32_t>(render.resampler.SourceFrame() - member.sourceReadFrame);
+        if (member.ring->packetEncoded) {
+            if (render.mediaDecoder->CropStream(*member.ring, skip, 0) != StreamDecodeResult::Ready) {
+                group.failed = true;
+                return StreamRecoveryResult::Failed;
+            }
+        } else {
+            member.ring->DiscardFrames(skip);
+            member.ring->ConsumeBytes(skip * member.ring->bytesPerFrame);
+        }
+    }
+    for (const auto& member : attempt.members) {
+        auto& slot = *SlotFor(member.render);
+        auto& render = slot.render;
+        const auto skip = render.resampler.SourceFrame() - member.sourceReadFrame;
+        std::uint64_t mapped = 0;
+        std::uint32_t loops = 0;
+        MapLoopedSourceFrame(member.sourceFrame, member.loopsRemaining, skip, render.streamFrameCount,
+            render.streamLoopStartFrame, render.streamLoopEndFrame, &mapped, &loops);
+        const ExactSourcePhase phase{render.resampler.phaseHigh, render.resampler.phaseLow};
+        const auto current = render.resampler.CurrentRatio(), target = render.resampler.TargetRatio();
+        const auto step = render.resampler.RampStep();
+        const auto remaining = render.resampler.RampFramesRemaining();
+        const auto index = static_cast<std::uint32_t>(member.render);
+        float* rings[kMaxChannels]{};
+        for (std::uint32_t ch = 0; ch < render.pcm.channelCount; ++ch) rings[ch] = m_ringStorage[ch][index].data();
+        render.resampler.Reset(rings, render.pcm.channelCount, ResampleQuality::Linear, current, m_tables);
+        InitializeFreshSourcePhase(render.resampler, phase);
+        render.resampler.targetRatio = target;
+        render.resampler.rampStep = step;
+        render.resampler.rampRemaining = remaining;
+        auto* old = render.streamRing;
+        render.streamRing = member.ring;
+        render.streamRingToken = member.ringToken;
+        render.streamActivationStartFrame = render.streamFeedActivationStartFrame = mapped;
+        render.streamActivationLoopsRemaining = render.streamFeedActivationLoopsRemaining = loops;
+        render.streamGateOpen = true;
+        render.groupVirtualInput = false;
+        render.groupVirtualFramesFed = 0;
+        render.starvedThisBlock = false;
+        render.starveCooldownRemaining = 0;
+        render.sourceTerminalStreamGeneration = static_cast<std::uint32_t>(member.ringToken >> 32u);
+        member.ring->observationRender.store(member.render, std::memory_order_release);
+        slot.streamRingToken.store(member.ringToken, std::memory_order_release);
+        old->state.store(StreamSlotState::Retired, std::memory_order_release);
+    }
+    group.recovering = false;
+    return StreamRecoveryResult::Applied;
+}
+
 void VoicePool::FillSourceCursor(const Slot& slot, SlotState state,
     SourceCursorMirror::Row& row, std::uint64_t serial, bool captureParking) noexcept {
     if (!IsAudioRenderingState(state)) return;
@@ -3094,7 +3276,8 @@ void VoicePool::FillSourceCursor(const Slot& slot, SlotState state,
     row.groupTimingValid = render.streamRecoveryGroup != nullptr &&
         render.resampler.Profile() == ResampleProfile::LegacyCompatibility;
     row.awaitingStart = render.timelineGated;
-    row.loopInfinite = render.loopInfinite;
+    row.loopInfinite = render.streamRing != nullptr
+        ? render.streamActivationLoopsRemaining == 0 : render.loopInfinite;
     row.hasExitMarker = render.hasExitMarker;
     if (row.exactTimingValid || row.groupTimingValid) {
         auto& progress = row.progress;
@@ -4716,6 +4899,7 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
     RenderAllResult outcome;
     const bool collective = signals != nullptr && (signals->HasContent() || signals->UsesActualRouting());
     bool grouped = false;
+    if (m_deferredJobCount == 0) ProcessGroupRecoveries(blockFrames);
     if (m_deferredJobCount == 0) {
         for (auto& slot : m_slots) {
             if (!IsAudioRenderingState(slot.state.load(std::memory_order_relaxed))) continue;

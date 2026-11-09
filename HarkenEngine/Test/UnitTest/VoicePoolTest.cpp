@@ -792,6 +792,155 @@ TEST(VoicePool, GroupVirtualInputAfterParkUsesRemainingFeedPasses) {
     }
 }
 
+TEST(VoicePool, GroupRecoveryWaitsForCoverageAndCommitsAllMembersWithLiveRamp) {
+    for (const auto workers : {0u, 2u}) {
+        SCOPED_TRACE(workers);
+        harken::StreamRecoveryGroup group;
+        std::array<float, 4096> samples{};
+        samples.fill(.25f);
+        float* planes[harken::kMaxChannels] = {samples.data()};
+        std::array<harkentest::PcmStreamFixture, 4> rings;
+        for (auto& ring : rings) {
+            ring.Wire(planes, static_cast<std::uint32_t>(samples.size()));
+            ring.ResetForUse(1);
+            ring.state.store(harken::StreamSlotState::Active);
+        }
+        rings[0].PublishFrames(64); rings[1].PublishFrames(64);
+        rings[2].PublishFrames(4096); rings[3].PublishFrames(4096);
+        const auto token = [&](unsigned index) {
+            return (static_cast<std::uint64_t>(rings[index].generation.load()) << 32u) | (index + 1u);
+        };
+        std::array<harken::StreamRecoveryMember, 2> members{};
+        harken::StreamRecoveryAttempt attempt;
+        auto config = VoicePoolConfig(3, kBlockFrames, kSampleRate);
+        config.renderWorkerCount = workers;
+        EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        const auto pump = [&] {
+            const auto before = engine.mixer.BlocksRendered();
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+            do { engine.nullBackend.Pump(1); }
+            while (engine.mixer.BlocksRendered() == before && std::chrono::steady_clock::now() < deadline);
+            ASSERT_EQ(before + 1, engine.mixer.BlocksRendered());
+        };
+        const auto pcm = harkentest::MakeDC(16384, .125f);
+        auto desc = MonoDesc(pcm, kSampleRate);
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &desc));
+        const auto pan = harken::ResolvePanGains(engine.config.mixChannelLayout, 0);
+        VnVoiceHandle resident = 0;
+        ASSERT_EQ(VN_OK, engine.voices.Play(engine.registry.Lookup(harkentest::ObjectId(1)),
+            0, 1, 0, false, 0, 0, 0, pan, 0, 16384, 1,
+            harken::ResampleProfile::LegacyCompatibility, &resident));
+        ASSERT_TRUE(engine.voices.BindStreamRecoveryGroup(resident, &group));
+        std::array<VnVoiceHandle, 2> streams{};
+        for (unsigned i = 0; i < streams.size(); ++i) {
+            ASSERT_EQ(VN_OK, engine.voices.PlayStream(&rings[i], 1, kSampleRate,
+                0, 0, 1, 0, false, 0, 0, 0, pan, 0, 16384, 0, 16384, 1,
+                harken::ResampleProfile::LegacyCompatibility, &streams[i]));
+            ASSERT_TRUE(engine.voices.BindStreamRecoveryGroup(streams[i], &group));
+            ASSERT_TRUE(engine.voices.BindStreamRingToken(streams[i], &rings[i], token(i)));
+            engine.voices.ApplyPlay(streams[i], streams[i], 0, 0);
+        }
+        engine.voices.ApplyPlay(resident, resident, 0, 0);
+        pump();
+        ASSERT_TRUE(group.recovering);
+        for (auto voice : {resident, streams[0], streams[1]}) engine.voices.ApplySetPitch(voice, 2.137, 100);
+        attempt.group = &group;
+        attempt.serial = group.recoverySerial.load();
+        attempt.members = members;
+        for (unsigned i = 0; i < streams.size(); ++i) {
+            const auto& rs = engine.voices.Resolve(streams[i])->resampler;
+            members[i] = {streams[i], token(i), &rings[i + 2], token(i + 2),
+                rs.SourceFrame(), rs.SourceFrame() - harken::kResampleHistoryPad, 1};
+        }
+        ++members[1].oldRingToken;
+        std::uint64_t ticket = 0;
+        ASSERT_TRUE(engine.voices.PostGroupRecovery(streams[0], &attempt, &ticket));
+        pump();
+        ASSERT_TRUE(engine.voices.CollectGroupRecovery(ticket, &attempt));
+        EXPECT_EQ(harken::StreamRecoveryResult::Retry, attempt.result);
+        EXPECT_EQ(&rings[0], engine.voices.Resolve(streams[0])->streamRing);
+        EXPECT_EQ(&rings[1], engine.voices.Resolve(streams[1])->streamRing);
+        EXPECT_EQ(0u, rings[2].ConsumedFrames());
+        const auto oldTicket = ticket;
+        for (unsigned i = 0; i < streams.size(); ++i) {
+            const auto& rs = engine.voices.Resolve(streams[i])->resampler;
+            harken::ResamplerAdvanceState future;
+            future.sourceIntegerFrame = rs.SourceFrame() - harken::kResampleHistoryPad;
+            future.sourcePhase = {rs.phaseHigh, rs.phaseLow};
+            future.currentRatio = rs.CurrentRatio(); future.targetRatio = rs.TargetRatio();
+            future.rampStep = rs.RampStep(); future.rampRemaining = rs.RampFramesRemaining();
+            future.pcmFrameCount = future.loopEndFrame = 16384;
+            ASSERT_TRUE(harken::AdvanceResamplerPosition(&future, kBlockFrames * 2));
+            members[i] = {streams[i], token(i), &rings[i + 2], token(i + 2),
+                future.sourceIntegerFrame + harken::kResampleHistoryPad, future.sourceIntegerFrame, 1};
+        }
+        ASSERT_TRUE(engine.voices.PostGroupRecovery(streams[0], &attempt, &ticket));
+        EXPECT_NE(oldTicket, ticket);
+        EXPECT_FALSE(engine.voices.CollectGroupRecovery(oldTicket, &attempt));
+        for (unsigned block = 0; block != 2; ++block) {
+            pump();
+            EXPECT_FALSE(engine.voices.CollectGroupRecovery(ticket, &attempt));
+            EXPECT_TRUE(group.recovering);
+            for (unsigned i = 0; i < kBlockFrames * 2; ++i) EXPECT_EQ(0, engine.nullBackend.LastBlock()[i]);
+            if (block == 0) for (auto voice : {resident, streams[0], streams[1]})
+                engine.voices.ApplySetPitch(voice, 3.5, 100);
+        }
+        pump();
+        ASSERT_TRUE(engine.voices.CollectGroupRecovery(ticket, &attempt));
+        EXPECT_EQ(harken::StreamRecoveryResult::Applied, attempt.result);
+        EXPECT_FALSE(group.recovering);
+        for (unsigned i = 0; i < kBlockFrames * 2; ++i) EXPECT_FLOAT_EQ(.625f, engine.nullBackend.LastBlock()[i]);
+        const auto& reference = engine.voices.Resolve(resident)->resampler;
+        for (unsigned i = 0; i < streams.size(); ++i) {
+            const auto& voice = *engine.voices.Resolve(streams[i]);
+            EXPECT_EQ(&rings[i + 2], voice.streamRing);
+            EXPECT_GT(rings[i + 2].discardedFrames.load(), 0u);
+            EXPECT_EQ(harken::StreamSlotState::Retired, rings[i].state.load());
+            EXPECT_EQ(reference.SourceFrame() - harken::kResampleHistoryPad,
+                voice.streamActivationStartFrame + voice.resampler.SourceFrame() - harken::kResampleHistoryPad);
+            EXPECT_EQ(reference.phaseHigh, voice.resampler.phaseHigh);
+            EXPECT_EQ(reference.phaseLow, voice.resampler.phaseLow);
+            EXPECT_DOUBLE_EQ(reference.RampStep(), voice.resampler.RampStep());
+            EXPECT_DOUBLE_EQ(reference.CurrentRatio(), voice.resampler.CurrentRatio());
+            EXPECT_EQ(reference.RampFramesRemaining(), voice.resampler.RampFramesRemaining());
+        }
+        for (unsigned block = 0; block != 32 && !group.recovering; ++block) pump();
+        ASSERT_TRUE(group.recovering);
+        attempt.serial = group.recoverySerial.load();
+        for (unsigned i = 0; i < streams.size(); ++i) {
+            const auto* voice = engine.voices.Resolve(streams[i]);
+            ASSERT_NE(nullptr, voice);
+            rings[i].ResetForUse(1);
+            rings[i].state.store(harken::StreamSlotState::Active);
+            rings[i].PublishFrames(4096);
+            members[i] = {streams[i], token(i + 2), &rings[i], token(i),
+                voice->resampler.SourceFrame(), voice->streamActivationStartFrame +
+                    voice->resampler.SourceFrame() - harken::kResampleHistoryPad, 1};
+        }
+        ASSERT_TRUE(rings[3].MarkEndOfData(harken::StreamTerminalReason::IntegrityAbort));
+        ASSERT_TRUE(engine.voices.PostGroupRecovery(streams[0], &attempt, &ticket));
+        pump();
+        ASSERT_TRUE(engine.voices.CollectGroupRecovery(ticket, &attempt));
+        EXPECT_EQ(harken::StreamRecoveryResult::Failed, attempt.result);
+        EXPECT_TRUE(group.failed);
+        EXPECT_EQ(0u, rings[0].ConsumedFrames());
+        EXPECT_EQ(0u, rings[1].ConsumedFrames());
+        attempt.cancelRequested.store(true);
+        ASSERT_TRUE(engine.voices.PostGroupRecovery(resident, &attempt, &ticket));
+        for (auto voice : {resident, streams[0], streams[1]}) engine.voices.ApplyStop(voice, 0, 0, engine.notifications, engine.mixer.BlocksRendered());
+        EXPECT_EQ(2u, engine.voices.AvailableSlotCount());
+        pump();
+        EXPECT_EQ(2u, engine.voices.AvailableSlotCount());
+        ASSERT_TRUE(engine.voices.CollectGroupRecovery(ticket, &attempt));
+        EXPECT_EQ(harken::StreamRecoveryResult::Cancelled, attempt.result);
+        EXPECT_EQ(3u, engine.voices.AvailableSlotCount());
+        EXPECT_FALSE(engine.voices.CollectGroupRecovery(ticket, &attempt));
+        pump();
+    }
+}
+
 TEST(VoicePool, SourceTerminalStreamQueuedEndFailureAndStarvationRemainDistinct) {
     for (const auto workers : {0u, 2u}) {
         for (const auto reason : {harken::StreamTerminalReason::None,

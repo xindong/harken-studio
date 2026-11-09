@@ -251,6 +251,26 @@ struct StreamRecoveryGroup {
     bool failed = false;
 };
 
+enum class StreamRecoveryResult : std::uint8_t { Waiting, Applied, Retry, Cancelled, Failed };
+struct StreamRecoveryMember {
+    VnVoiceHandle render = 0;
+    std::uint64_t oldRingToken = 0;
+    StreamRing* ring = nullptr;
+    std::uint64_t ringToken = 0;
+    std::uint64_t sourceReadFrame = 0;
+    std::uint64_t sourceFrame = 0;
+    std::uint32_t loopsRemaining = 1;
+};
+// Logic retains immutable members, rings and the service until the stable
+// VoicePool mailbox acknowledges this attempt. Only cancellation is mutable.
+struct StreamRecoveryAttempt {
+    StreamRecoveryGroup* group = nullptr;
+    std::uint64_t serial = 0;
+    std::span<const StreamRecoveryMember> members;
+    std::atomic<bool> cancelRequested{false};
+    StreamRecoveryResult result = StreamRecoveryResult::Waiting;
+};
+
 struct VoiceRenderContext {
     // Keep authoritative block eligibility state together; all owners and checks remain unchanged.
     StreamRing* streamRing = nullptr;
