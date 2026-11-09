@@ -438,13 +438,33 @@ TEST(VorbisDecoder, ByteRingWrapSeekAndGenerationReplacementMatchReference) {
                 at += 2u + bytes;
             }
             ASSERT_GE(supplied, 4096u);
+            ASSERT_EQ(records.front().header.frames, 0u);
+            const auto initialAt = ring.writeIndex.load();
+            ring.CopyIn(initialAt, &records.front().header, sizeof(harken::StreamPacketHeader));
+            ring.CopyIn(initialAt + sizeof(harken::StreamPacketHeader), records.front().packet,
+                        records.front().header.packetBytes);
+            ring.PublishBytes(static_cast<std::uint32_t>(sizeof(harken::StreamPacketHeader)) +
+                              records.front().header.packetBytes, 0);
             std::vector<float> actual(1001 * channels);
-            std::size_t next = 0;
+            std::size_t next = 1;
             unsigned copied = 0;
             bool valid = true;
             allocation_probe::count = 0; allocation_probe::enabled = true;
             {
                 harken::memguard::AudioThreadScope audio;
+                harken::PCMView preroll;
+                if (decoder->ReadStream(ring, 37, 0, preroll) != harken::StreamDecodeResult::Dry ||
+                    ring.ReadAvailableBytes() != 0) valid = false;
+                const auto& pending = records[next++];
+                const auto pendingAt = ring.writeIndex.load();
+                const auto pendingBytes = static_cast<std::uint32_t>(sizeof(pending.header)) + pending.header.packetBytes;
+                ring.CopyIn(pendingAt, &pending.header, sizeof(pending.header));
+                ring.CopyIn(pendingAt + sizeof(pending.header), pending.packet, pending.header.packetBytes);
+                ring.PublishBytes(pendingBytes, 0);
+                if (!pending.header.frames ||
+                    decoder->ReadStream(ring, 37, 0, preroll) != harken::StreamDecodeResult::Dry ||
+                    ring.readIndex.load() != pendingAt) valid = false;
+                ring.PublishBytes(0, pending.header.frames);
                 for (unsigned attempt = 0; copied < 1001 && attempt < 1000; ++attempt) {
                     while (next < records.size()) {
                         const auto& r = records[next];
@@ -461,7 +481,8 @@ TEST(VorbisDecoder, ByteRingWrapSeekAndGenerationReplacementMatchReference) {
                             harken::StreamDecodeResult::Ready || !output.frames) { valid = false; break; }
                     for (unsigned frame = 0; frame < output.frames; ++frame)
                         for (unsigned ch = 0; ch < channels; ++ch)
-                            actual[(copied + frame) * channels + ch] = output.channels[ch][frame];
+                            actual[(copied + frame) * channels + ch] =
+                                static_cast<const float*>(output.channels[ch])[frame];
                     copied += static_cast<unsigned>(output.frames);
                     ring.DeliverFrames(static_cast<std::uint32_t>(output.frames));
                 }

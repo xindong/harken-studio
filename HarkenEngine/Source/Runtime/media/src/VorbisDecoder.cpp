@@ -229,19 +229,21 @@ StreamDecodeResult VorbisStatePool::State::ReadStream(StreamRing& ring,
         Restart();
         streamRing = &ring; streamGeneration = generation;
     }
-    // Bytes precede frame publication. Do not decode ahead of committed supply.
+    // Positive output needs committed frame coverage. Zero-output preroll can
+    // consume published bytes alone, allowing a small ring to make progress.
     const auto coverage = ring.BufferedFrames();
-    if (!coverage) return StreamDecodeResult::Dry;
     auto& workspace = *codec->workspaces[thread];
     while (decodedOffset == decodedFrames) {
         const auto available = ring.ReadAvailableBytes();
+        if (!available) return coverage ? StreamDecodeResult::Invalid : StreamDecodeResult::Dry;
         if (available < sizeof(StreamPacketHeader)) return StreamDecodeResult::Invalid;
         const auto at = ring.readIndex.load(std::memory_order_relaxed);
         StreamPacketHeader header;
         ring.CopyOut(at, &header, sizeof(header));
         if (!header.packetBytes || header.packetBytes > workspace.packet_.size() ||
-            header.restart > 1 || header.packetBytes > available - sizeof(header) ||
-            header.frames > coverage) return StreamDecodeResult::Invalid;
+            header.restart > 1 || header.packetBytes > available - sizeof(header))
+            return StreamDecodeResult::Invalid;
+        if (header.frames > coverage) return StreamDecodeResult::Dry;
         if (header.restart) Restart();
         ring.CopyOut(at + sizeof(header), workspace.packet_.data(), header.packetBytes);
         unsigned decoded = 0;
@@ -252,6 +254,7 @@ StreamDecodeResult VorbisStatePool::State::ReadStream(StreamRing& ring,
         decodedFrames = decodedOffset + header.frames;
         ring.ConsumeBytes(static_cast<std::uint32_t>(sizeof(header)) + header.packetBytes);
     }
+    if (!coverage) return StreamDecodeResult::Dry;
     const auto count = std::min({requested, coverage, decodedFrames - decodedOffset});
     output.channelCount = settings->Channels(); output.frames = count;
     for (unsigned ch = 0; ch < output.channelCount; ++ch)

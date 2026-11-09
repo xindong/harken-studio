@@ -39,8 +39,8 @@ std::uint32_t NativeConfigSizeForVintage(
 // Encodes the declared native config into the fixed v4 schema. Fields absent
 // from an older caller vintage become zero, matching Vn_Init's defaulting
 // contract. The four process-local pointer fields are never inspected or
-// serialized. Decode always produces a current-native VnConfig with null
-// pointers; semanticVintage reports the caller vocabulary recorded on wire.
+// serialized. Decode preserves the declared vocabulary and field units with
+// null pointers; semanticVintage reports the caller vocabulary recorded on wire.
 bool EncodeTraceConfig(const VnConfig& config,
                        std::vector<std::uint8_t>& out) noexcept;
 bool EncodeTraceConfig(const TraceSessionOrigin& origin,
@@ -50,6 +50,12 @@ bool DecodeTraceConfig(const std::uint8_t* bytes, std::size_t byteCount,
                        std::uint32_t* semanticVintage,
                        std::uint32_t* resolvedSampleRate = nullptr,
                        std::uint32_t* resolvedDeviceLayout = nullptr) noexcept;
+
+// Projects a decoded journal onto a null device with its recorded format.
+// Early vocabularies are widened only enough to express device layout;
+// historical stream frame units and defaults remain intact.
+bool ProjectTraceReplayConfig(VnConfig& config, std::uint32_t sampleRate,
+                              std::uint32_t deviceLayout) noexcept;
 
 bool EncodeTraceCurrentWorldBody(
     const ContainerWorldInstallViewV1& world,
