@@ -617,20 +617,24 @@ TEST(VoicePool, FrozenStreamSupplyDefersLaterPcmAndEndUntilNextSnapshot) {
         ring.PublishFrames(256);
         ring.state.store(harken::StreamSlotState::Active);
         ring.CaptureConsumerSnapshot();
-        ring.PublishFrames(768);
-        ASSERT_TRUE(ring.MarkEndOfData(harken::StreamTerminalReason::NaturalEnd));
+        ring.filledFrameLimit.store(256, std::memory_order_release);
         EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
         auto& engine = *session.Engine();
         VnVoiceHandle voice = 0;
         ASSERT_EQ(VN_OK, engine.voices.PlayStream(&ring, 1, kSampleRate,
-            0, 0.0f, 1.0, 0, false, 0.0f, 0.0f, 0.0f,
+            512, 0.0f, 1.0, 0, false, 0.0f, 0.0f, 0.0f,
             harken::ResolvePanGains(engine.config.mixChannelLayout, 0.0f),
             0, 1024, 0, 1024, 1,
             harken::SelectResampleProfile(kSampleRate, kSampleRate), &voice));
         HeldSource source{};
         ASSERT_TRUE(BindHeldSource(engine, voice, &source));
         engine.voices.ApplyPlay(voice, voice, 0, 0);
+        engine.nullBackend.Pump(1);
+        EXPECT_EQ(0u, ring.readFrames.load());
+        ring.CaptureConsumerSnapshot();
+        ring.PublishFrames(768);
+        ASSERT_TRUE(ring.MarkEndOfData(harken::StreamTerminalReason::NaturalEnd));
         for (unsigned block = 0; block < 4; ++block) engine.nullBackend.Pump(1);
         EXPECT_EQ(256u, ring.readFrames.load());
         EXPECT_EQ(768u, ring.BufferedFrames());

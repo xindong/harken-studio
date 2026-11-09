@@ -887,7 +887,7 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
     const bool decoderWaiting = ctx.streamRing != nullptr && ctx.streamRing->packetEncoded &&
         ctx.mediaDecoder == nullptr && !ctx.streamRing->ConsumerDecoderReady();
     const bool prebufferWaiting = ctx.streamRing != nullptr && !ctx.streamGateOpen &&
-        (decoderWaiting || ctx.streamRing->ConsumerBufferedFrames() < ctx.streamRing->PrebufferTarget(ctx.prebufferTargetFrames)) &&
+        (decoderWaiting || ctx.streamRing->ConsumerBufferedFrames() < ctx.streamRing->ConsumerPrebufferTarget(ctx.prebufferTargetFrames)) &&
         !ctx.streamRing->ConsumerSourceEnded();
     if (rootStopArrived && (prebufferWaiting ||
         (ctx.timelineGated && ctx.authoredRootStopFrame <= quantumStart + earliestStart))) {
@@ -916,7 +916,7 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
     // gate opens. Underruns after the gate opens are starvation, never a
     // return to Preparing.
     if (ctx.streamRing != nullptr && !ctx.streamGateOpen) {
-        if ((!decoderWaiting && (ctx.streamRing->ConsumerBufferedFrames() >= ctx.streamRing->PrebufferTarget(ctx.prebufferTargetFrames) ||
+        if ((!decoderWaiting && (ctx.streamRing->ConsumerBufferedFrames() >= ctx.streamRing->ConsumerPrebufferTarget(ctx.prebufferTargetFrames) ||
                 ctx.streamRing->ConsumerSourceEnded())) ||
             ctx.streamRing->ConsumerPreparationResult() != VN_OK ||
             ctx.streamRing->ConsumerTerminalReason() == StreamTerminalReason::ProducerFailure || authoredDeadlineArrives) {

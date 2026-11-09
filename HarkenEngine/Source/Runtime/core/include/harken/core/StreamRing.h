@@ -142,6 +142,7 @@ struct StreamRing {
     struct ConsumerSnapshot {
         std::uint64_t bytes = 0, frames = 0;
         std::uint32_t generation = 0;
+        std::uint32_t filledFrameLimit = UINT32_MAX;
         StreamTerminalReason terminal = StreamTerminalReason::None;
         VnResult preparation = VN_OK;
         bool decoderReady = false;
@@ -153,6 +154,7 @@ struct StreamRing {
         captured.terminal = TerminalReason();
         captured.preparation = preparationResult.load(std::memory_order_acquire);
         captured.decoderReady = pendingDecoder.load(std::memory_order_acquire) != nullptr;
+        captured.filledFrameLimit = filledFrameLimit.load(std::memory_order_acquire);
         // Frame publication follows byte publication. Capturing in this order
         // guarantees the byte cut contains every covered output frame.
         captured.frames = writeFrames.load(std::memory_order_acquire);
@@ -191,6 +193,10 @@ struct StreamRing {
     bool ConsumerDecoderReady() const noexcept {
         if (!consumerSnapshot.generation) return pendingDecoder.load(std::memory_order_acquire) != nullptr;
         return ConsumerGenerationMatches() && consumerSnapshot.decoderReady;
+    }
+    std::uint32_t ConsumerPrebufferTarget(std::uint32_t requested) const noexcept {
+        if (!consumerSnapshot.generation) return PrebufferTarget(requested);
+        return std::min(requested, consumerSnapshot.filledFrameLimit);
     }
 
     void Wire(std::uint8_t* storage, std::uint32_t byteCapacity,
