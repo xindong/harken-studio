@@ -1043,6 +1043,72 @@ TEST(StreamRegister, ReplacementWaitsForPrebufferAndTransfersOwnershipOnce) {
     EXPECT_EQ(VN_OK, streams.UnregisterFile(spec.soundId));
 }
 
+TEST(StreamRegister, RecoverySpareCannotBeTakenByOrdinaryStartsAndRotatesAfterDetach) {
+    using Manager = harken::StreamManager;
+    harken::EngineConfig config{};
+    config.maxStreams = 3;
+    config.streamRingBytes = 256;
+    Manager streams(config);
+    streams.SetThrottled(true);
+    const auto id = harkentest::ObjectId(17210);
+    const auto path = TempPath("stream_recovery_spare.stream");
+    WriteFileBytes(path, MakeValidImage(id));
+    ASSERT_EQ(VN_OK, streams.RegisterFile(id, path.c_str()));
+    Manager::StreamFacts facts{};
+    ASSERT_TRUE(streams.FindFile(id, &facts));
+    auto request = ReplacementAt(facts);
+    Manager::PreparedToken initial{}, other{}, next{};
+    ASSERT_EQ(VN_OK, streams.BeginReplacement(request, &initial));
+    Manager::PreparedStream current{};
+    ASSERT_EQ(VN_OK, streams.TransferReplacement(initial, &current));
+    std::uint64_t reservation = 0;
+    EXPECT_EQ(VN_BACKPRESSURE, streams.ReserveRecoverySlot(current.ringToken, 2, &reservation));
+    EXPECT_EQ(0u, reservation);
+    EXPECT_EQ(2u, streams.FreeSlotCount());
+    ASSERT_EQ(VN_OK, streams.ReserveRecoverySlot(current.ringToken, 1, &reservation));
+    ASSERT_NE(0u, reservation);
+    std::uint64_t duplicate = 1;
+    EXPECT_EQ(VN_IN_USE, streams.ReserveRecoverySlot(current.ringToken, 0, &duplicate));
+    EXPECT_EQ(0u, duplicate);
+    EXPECT_EQ(1u, streams.FreeSlotCount());
+    ASSERT_EQ(VN_OK, streams.BeginReplacement(request, &other));
+    EXPECT_EQ(VN_BACKPRESSURE, streams.BeginReplacement(request, &next));
+    EXPECT_EQ(0u, streams.FreeSlotCount());
+    auto recovery = request;
+    recovery.recoveryReservation = reservation;
+    recovery.pendingSlotReservations = config.maxStreams;
+    for (unsigned iteration = 0; iteration != 8; ++iteration) {
+        SCOPED_TRACE(iteration);
+        ASSERT_EQ(VN_OK, streams.BeginReplacement(recovery, &next));
+        EXPECT_EQ(VN_BACKPRESSURE, streams.BeginReplacement(recovery, &initial));
+        Manager::PreparedStream replacement{};
+        ASSERT_EQ(VN_OK, streams.TransferReplacement(next, &replacement));
+        EXPECT_NE(current.ring, replacement.ring);
+        ASSERT_TRUE(streams.RetirePreparedSlot(current.ring, current.ringToken));
+        streams.SyncServe();
+        std::uint64_t rejected = 0;
+        EXPECT_EQ(VN_BACKPRESSURE, streams.ActivateSlot(current.slot, facts.fileIndex,
+            0, 0, facts.frameCount, 1, &rejected));
+        EXPECT_EQ(0u, rejected);
+        EXPECT_EQ(0u, streams.FreeSlotCount());
+        current = replacement;
+    }
+    ASSERT_EQ(VN_OK, streams.BeginReplacement(recovery, &next));
+    ASSERT_TRUE(streams.CancelReplacement(next));
+    streams.SyncServe();
+    EXPECT_EQ(0u, streams.FreeSlotCount());
+    streams.ReleaseRecoverySlot(reservation);
+    EXPECT_EQ(1u, streams.FreeSlotCount());
+    EXPECT_EQ(VN_STALE_HANDLE, streams.BeginReplacement(recovery, &next));
+    streams.ReleaseRecoverySlot(reservation);
+    EXPECT_EQ(1u, streams.FreeSlotCount());
+    ASSERT_TRUE(streams.RetirePreparedSlot(current.ring, current.ringToken));
+    ASSERT_TRUE(streams.CancelReplacement(other));
+    streams.SyncServe();
+    EXPECT_EQ(3u, streams.FreeSlotCount());
+    EXPECT_EQ(VN_OK, streams.UnregisterFile(id));
+}
+
 TEST(StreamRegister, PrivateTransferKeepsMediaPendingAndRejectsOldOwnershipAfterReuse) {
     using Manager = harken::StreamManager;
     using State = Manager::PreparationState;

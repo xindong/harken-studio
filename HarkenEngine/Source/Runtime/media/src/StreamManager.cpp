@@ -492,7 +492,8 @@ void StreamManager::ReleasePendingRef(std::uint32_t fileIndex) {
 
 bool StreamManager::PeekFreeSlot(std::uint32_t* outSlot) const {
     for (std::uint32_t s = 0; s < m_slots.size(); ++s) {
-        if (m_slots[s].ring.state.load(std::memory_order_acquire) ==
+        if (m_slots[s].recoveryReservation.load(std::memory_order_acquire) == 0 &&
+            m_slots[s].ring.state.load(std::memory_order_acquire) ==
             StreamSlotState::Free) {
             *outSlot = s;
             return true;
@@ -504,12 +505,46 @@ bool StreamManager::PeekFreeSlot(std::uint32_t* outSlot) const {
 std::uint32_t StreamManager::FreeSlotCount() const {
     std::uint32_t count = 0;
     for (const StreamSlot& slot : m_slots) {
-        if (slot.ring.state.load(std::memory_order_acquire) ==
+        if (slot.recoveryReservation.load(std::memory_order_acquire) == 0 &&
+            slot.ring.state.load(std::memory_order_acquire) ==
             StreamSlotState::Free) {
             ++count;
         }
     }
     return count;
+}
+
+VnResult StreamManager::ReserveRecoverySlot(std::uint64_t activeRingToken,
+    std::uint32_t pendingSlotReservations, std::uint64_t* outReservation) {
+    if (outReservation == nullptr) return VN_INVALID_ARG;
+    *outReservation = 0;
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (WorkerState() != StreamWorkerState::Ready || m_shutdown) return VN_DEVICE_ERROR;
+    const auto active = static_cast<std::uint32_t>(activeRingToken);
+    if (active >= m_slots.size() || activeRingToken == 0) return VN_STALE_HANDLE;
+    auto& current = m_slots[active];
+    if (current.ring.state.load(std::memory_order_acquire) != StreamSlotState::Active ||
+        current.ring.generation.load(std::memory_order_relaxed) != activeRingToken >> 32u)
+        return VN_STALE_HANDLE;
+    if (current.recoveryReservation.load(std::memory_order_relaxed) != 0) return VN_IN_USE;
+    std::uint32_t spare = 0;
+    if (m_lastRecoveryReservation == UINT64_MAX ||
+        FreeSlotCount() <= pendingSlotReservations || !PeekFreeSlot(&spare) ||
+        !PrepareSlotWorkingSet(spare, current.ring.channelCount)) return VN_BACKPRESSURE;
+    const auto reservation = ++m_lastRecoveryReservation;
+    current.recoveryReservation.store(reservation, std::memory_order_release);
+    m_slots[spare].recoveryReservation.store(reservation, std::memory_order_release);
+    *outReservation = reservation;
+    return VN_OK;
+}
+
+void StreamManager::ReleaseRecoverySlot(std::uint64_t reservation) noexcept {
+    if (reservation == 0) return;
+    std::lock_guard<std::mutex> lock(m_mutex);
+    for (auto& slot : m_slots) {
+        if (slot.recoveryReservation.load(std::memory_order_relaxed) == reservation)
+            slot.recoveryReservation.store(0, std::memory_order_release);
+    }
 }
 
 StreamRing* StreamManager::RingOf(std::uint32_t slot) {
@@ -558,6 +593,8 @@ VnResult StreamManager::ActivateSlot(std::uint32_t slot,
                 StreamSlotState::Free) {
             return VN_DEVICE_ERROR;
         }
+        if (m_slots[slot].recoveryReservation.load(std::memory_order_relaxed) != 0)
+            return VN_BACKPRESSURE;
         StreamFile& file = *m_files[fileIndex];
         if (!file.MetadataReady()) return VN_BACKPRESSURE;
         file.activeStreams.fetch_add(1, std::memory_order_relaxed);
@@ -672,9 +709,23 @@ VnResult StreamManager::BeginReplacement(
              (request.loopStartFrame == request.loopEndFrame ||
               request.targetFrame >= request.loopEndFrame))) return VN_INVALID_ARG;
         std::uint32_t slot = 0;
-        if (m_lastPreparationGeneration == UINT64_MAX ||
-            FreeSlotCount() <= request.pendingSlotReservations ||
-            !PeekFreeSlot(&slot)) return VN_BACKPRESSURE;
+        if (m_lastPreparationGeneration == UINT64_MAX) return VN_BACKPRESSURE;
+        if (request.recoveryReservation != 0) {
+            bool owned = false;
+            slot = UINT32_MAX;
+            for (std::uint32_t index = 0; index < m_slots.size(); ++index) {
+                const auto& candidate = m_slots[index];
+                if (candidate.recoveryReservation.load(std::memory_order_relaxed) !=
+                    request.recoveryReservation) continue;
+                owned = true;
+                if (candidate.ring.state.load(std::memory_order_acquire) == StreamSlotState::Free)
+                    slot = index;
+            }
+            if (!owned) return VN_STALE_HANDLE;
+            if (slot == UINT32_MAX) return VN_BACKPRESSURE;
+        } else if (FreeSlotCount() <= request.pendingSlotReservations || !PeekFreeSlot(&slot)) {
+            return VN_BACKPRESSURE;
+        }
 
         // Pin before private storage preparation. Both failure and publication
         // happen under the same lock that protects retiring file destruction.
@@ -1029,7 +1080,8 @@ void StreamManager::ThreadMain() {
 
 std::uint32_t StreamManager::OccupiedSlotPrefix() const noexcept {
     auto count = static_cast<std::uint32_t>(m_slots.size());
-    while (count != 0 && m_slots[count - 1u].ring.state.load(
+    while (count != 0 && m_slots[count - 1u].recoveryReservation.load(
+               std::memory_order_acquire) == 0 && m_slots[count - 1u].ring.state.load(
                std::memory_order_acquire) == StreamSlotState::Free) --count;
     return count;
 }
