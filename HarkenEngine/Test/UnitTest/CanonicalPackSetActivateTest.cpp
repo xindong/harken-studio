@@ -3648,7 +3648,7 @@ TEST(CanonicalPackSetActivate, TypedVorbisExternalAndResidentUseCanonicalActionC
                         captured.right.push_back(output[2 * i + 1]);
                     }
                     ASSERT_EQ(VN_OK, Vn_Update());
-                    for (unsigned slot = 0; slot < config.maxStreams; ++slot) {
+                    for (unsigned slot = 0; slot < engine.config.maxStreams; ++slot) {
                         const auto* ring = engine.streams.RingOf(slot);
                         if (ring->preparationResult.load() != VN_OK) supplyFailure = ring->preparationResult.load();
                         if (static_cast<unsigned>(ring->TerminalReason()) > supplyTerminal)

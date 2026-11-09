@@ -53551,6 +53551,7 @@ void ServicePendingImmediateEntries(
             continue;
         }
         bool awaitingApply = false;
+        bool awaitingMedia = false;
         bool invalidArm = false;
         for (harken::Engine::PlayableCohortCursor occupiedCursor{};
              auto* occupiedService = engine.NextOccupiedPlayableCohortService(root, &occupiedCursor);) {
@@ -53568,6 +53569,19 @@ void ServicePendingImmediateEntries(
                     invalidArm = true;
                 } else if (arm.state == harken::ArmState::PendingApply) {
                     awaitingApply = true;
+                } else if (member.root.kind == harken::PlayableKindV1::Sound &&
+                           member.leaf.kind == harken::PlayableKindV1::Sound) {
+                    harken::EngineTimelineVoiceInstallIdentity installed{};
+                    const auto render = (std::uint64_t(program->armToken.renderGeneration) << 32u) |
+                        program->armToken.renderSlot;
+                    if (!engine.CaptureTimelineVoiceInstallIdentity(render, &installed) ||
+                        !harken::Engine::SameOriginalSingleArm(installed.startArm, program->armToken)) {
+                        invalidArm = true;
+                    } else {
+                        const auto media = engine.CapturedTimelineStreamStartStatus(installed);
+                        invalidArm |= media == harken::VariableReadCutStatus::Failed;
+                        awaitingMedia |= media == harken::VariableReadCutStatus::Waiting;
+                    }
                 }
             }
         }
@@ -53640,6 +53654,9 @@ void ServicePendingImmediateEntries(
         };
         bool filingFailed = !validateCohortTiming(startFrame);
         if (filingFailed && !fixedSoundCohort) continue;
+        // Choose movable onset geometry only after every initial Sound can
+        // start. Fixed members still expire through the timing check above.
+        if (!filingFailed && awaitingMedia) continue;
         bool privatePinGroupsFailed = false;
         bool privateInitialCleanupOwned = false;
         std::uint32_t eventCount = 0;
