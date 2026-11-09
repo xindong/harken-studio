@@ -24842,11 +24842,12 @@
         "kTraceConfigImageCurrentBytes": 280,
         "kTraceConfigImageLegacyBytes": 264,
         "kTraceConfigSchemaVersion": 1,
-        "kTraceConfigVintageCount": 16,
-        "kTraceConfigWireBytes": 280,
+        "kTraceConfigVintageCount": 17,
+        "kTraceConfigWireBytes": 288,
         "kTraceConfigWireBytesV13": 220,
         "kTraceConfigWireBytesV14": 224,
         "kTraceConfigWireBytesV15": 276,
+        "kTraceConfigWireBytesV16": 280,
         "kTraceCurrentWorldInstallPairedTailBytes": 52,
         "kTraceFixedHeaderBytes": 32,
         "kTraceFlagArgsUnreplayable": 1,
@@ -24886,7 +24887,7 @@
       "formatVersion": 7
     }
   },
-  "contractSha256": "4a83dba16ab14cd75cd7ecc5050224cfbb8b8f327d4749c129526a96b4cd85fc",
+  "contractSha256": "f6a666ffd3c2a653acc27285765d2fd18bc3e144e4be88b28f37d1f0f4578f3d",
   "generatedFiles": {
     "HarkenEngine/Source/Tooling/Binding/generated/harken_binding_abi_pin.g.h": {
       "sha256": "a4d2ea7bd65d15b9951ba0cb70d4e3e94fca369b7ce77a0b2891caf205dd7c3a",
@@ -24930,7 +24931,7 @@
   "sectionSha256": {
     "nativeAbiSha256": "caba4ca88a8ea3865a08389d28c23eb279c08dda2f1939176fcacfcfa1ad8e57",
     "remoteWireSha256": "d99304d71d24436e14a34fd990b3ded5e6ddd7bca6c13dc2065a9709d53577d3",
-    "traceFormatSha256": "5a48f4b2591eb3c9ade95bc3621d6002cd999290816aede8436b8a4cfdf8e3fd"
+    "traceFormatSha256": "c43ada4c2f8b42c3ce2a66b0cf1af258b5c6e3d338fc00ce480954afdfa78ecc"
   },
   "sourceFiles": {
     "HarkenEngine/Source/Runtime/api/include/harken/Harken.h": {
@@ -24942,8 +24943,8 @@
       "size": 4323
     },
     "HarkenEngine/Source/Runtime/api/src/TraceFormat.h": {
-      "sha256": "8d2d412c4919c4230a8fefe07ec77be7c673d5a2c62015ea01558e10686b7a9d",
-      "size": 19843
+      "sha256": "590feeeb652acc53ebe6ea5dbfba89dbd3af547a0bd86cbd6c67e6d266449509",
+      "size": 19988
     },
     "HarkenEngine/Source/Tooling/Abi/gen_abi_manifest.py": {
       "sha256": "6b232dd009d7bbbacf38c502d82f016b4f11a8dcc69e257f01bac2a87a05d8cc",

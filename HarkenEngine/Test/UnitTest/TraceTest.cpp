@@ -1838,6 +1838,7 @@ TEST(TraceCodec, ConfigWireImageRoundTripsWithoutNativePointers) {
     config.maxTopologyPlanBytes = 17u * 1024u * 1024u;
     config.maxActionFirings = 777;
     config.maxActionCooldownRows = 333;
+    config.compressedDecoderBytes = 3456789;
     config.onNotification = reinterpret_cast<VnNotificationCallback>(
         static_cast<std::uintptr_t>(0x1234u));
     config.notificationUserData = reinterpret_cast<void*>(
@@ -1863,6 +1864,7 @@ TEST(TraceCodec, ConfigWireImageRoundTripsWithoutNativePointers) {
     EXPECT_EQ(config.randomSeed, decoded.randomSeed);
     EXPECT_EQ(config.maxTopologyPlanBytes, decoded.maxTopologyPlanBytes);
     EXPECT_EQ(config.maxActionFirings, decoded.maxActionFirings);
+    EXPECT_EQ(config.compressedDecoderBytes, decoded.compressedDecoderBytes);
     EXPECT_EQ(config.maxActionCooldownRows,
               decoded.maxActionCooldownRows);
     EXPECT_EQ(nullptr, decoded.onNotification);
@@ -1876,6 +1878,7 @@ TEST(TraceCodec, VintageFifteenOmitsCooldownCapacity) {
     config.structSize =
         static_cast<std::uint32_t>(offsetof(VnConfig, maxActionCooldownRows));
     config.maxActionCooldownRows = 333;
+    config.compressedDecoderBytes = 3456789;
     config.reserved12 = 1;
 
     std::vector<std::uint8_t> wire;
@@ -1892,7 +1895,25 @@ TEST(TraceCodec, VintageFifteenOmitsCooldownCapacity) {
     EXPECT_EQ(0u, decoded.reserved12);
 }
 
-TEST(TraceCodec, VintageSixteenRejectsNonZeroReserved12) {
+TEST(TraceCodec, VintageSixteenOmitsDecoderBudget) {
+    VnConfig config = MakeNullConfig(7, kBlockFrames, 44100);
+    config.structSize = offsetof(VnConfig, compressedDecoderBytes);
+    config.maxActionCooldownRows = 333;
+    config.compressedDecoderBytes = 3456789;
+    std::vector<std::uint8_t> wire;
+    ASSERT_TRUE(harken::EncodeTraceConfig(config, wire));
+    EXPECT_EQ(harken::kTraceConfigWireBytesV16, wire.size());
+    VnConfig decoded{};
+    std::uint32_t vintage = 0;
+    ASSERT_TRUE(harken::DecodeTraceConfig(wire.data(), wire.size(), &decoded, &vintage));
+    EXPECT_EQ(16u, vintage);
+    EXPECT_EQ(333u, decoded.maxActionCooldownRows);
+    EXPECT_EQ(0u, decoded.compressedDecoderBytes);
+    config.reserved12 = 1;
+    EXPECT_FALSE(harken::EncodeTraceConfig(config, wire));
+}
+
+TEST(TraceCodec, CurrentRejectsNonZeroReserved12) {
     VnConfig config = MakeNullConfig(7, kBlockFrames, 44100);
     config.reserved12 = 1;
     std::vector<std::uint8_t> wire;

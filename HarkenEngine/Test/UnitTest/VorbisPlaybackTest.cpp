@@ -2,6 +2,7 @@
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/VorbisFixture.h"
 #include "harken/media/VorbisDecoder.h"
+#include "harken/media/PackMediaRange.h"
 #include <chrono>
 #include <thread>
 
@@ -180,4 +181,49 @@ TEST(VorbisPlayback, AudibilityParkReleasesDecoderAndReturnUsesAdvancedPosition)
     ASSERT_EQ(Vn_Update(), VN_OK); EXPECT_EQ(engine.vorbis.states.ActiveBytes(), 0u);
     EXPECT_EQ(Vn_UnregisterPCM(sound), VN_OK);
 }
+TEST(VorbisPlayback, EncodedStorageNeverAliasesRawPcmComparisons) {
+    const auto fixture = harken::test::MakeVorbisFixture(1);
+    harken::VorbisCodec codec(2 * 1024 * 1024, 0);
+    harken::PCMRegistry registry;
+    const auto sound = harkentest::ObjectId(714);
+    harken::PCMRegistry::PreparedPackSamples encoded;
+    ASSERT_EQ(registry.PrepareVorbisSamples(sound, codec, fixture.media,
+        4 * 1024 * 1024, &encoded), VN_OK);
+    VnPCMDesc shape{};
+    shape.structSize = sizeof(shape); shape.sampleRate = 48000;
+    shape.channels = 1; shape.frames = fixture.reference.size();
+    shape.layout = VN_PCM_LAYOUT_PLANAR; shape.policy = VN_PCM_POLICY_COPY;
+    harken::PCMRegistry::PackSampleBuilder builder;
+    ASSERT_EQ(registry.BeginPackSamples(sound, &shape, &builder, encoded.View().loop, &encoded), VN_OK);
+    ASSERT_EQ(builder.Append(fixture.reference.data(), fixture.reference.size()), VN_OK);
+    harken::PCMRegistry::PreparedPackSamples pcm;
+    ASSERT_EQ(builder.Complete(&pcm), VN_OK);
+    EXPECT_EQ(pcm.View().encoded, nullptr);
+    EXPECT_FLOAT_EQ(pcm.View().ReadSample(0, 517), fixture.reference[517]);
+    EXPECT_FALSE(harken::EqualResidentSamples(encoded.View(), pcm.View()));
+    EXPECT_FALSE(harken::EqualResidentSamples(pcm.View(), encoded.View()));
+    EXPECT_EQ(harken::MatchMediaContent(encoded.View(), nullptr, pcm.View(), nullptr),
+              harken::MediaContentMatch::Different);
+    EXPECT_EQ(harken::MatchMediaContent(pcm.View(), nullptr, encoded.View(), nullptr),
+              harken::MediaContentMatch::Different);
+    harken::PackMediaRange range{};
+    EXPECT_EQ(harken::MatchMediaContent(encoded.View(), nullptr, {}, &range),
+              harken::MediaContentMatch::Different);
+    EXPECT_EQ(harken::MatchMediaContent({}, &range, encoded.View(), nullptr),
+              harken::MediaContentMatch::Different);
+    harken::PCMRegistry::PackReferenceRegistration registration;
+    registration.soundId = sound; registration.samples = &encoded;
+    harken::PCMRegistry::PreparedPackMutation first;
+    ASSERT_EQ(registry.PreparePackMutation(&registration, 1, 0, &first), VN_OK);
+    registry.CommitPreparedPackMutation(&first);
+    registration.samples = &pcm;
+    harken::PCMRegistry::PreparedPackMutation replacement;
+    ASSERT_EQ(registry.PreparePackMutation(&registration, 1, 0, &replacement), VN_OK);
+    harken::PCMRegistry::RetiredGeneration retired;
+    ASSERT_TRUE(registry.ExtractRetiring(sound, registry.CookieOf(sound), &retired));
+    registry.CommitPreparedPackMutation(&replacement);
+    EXPECT_EQ(registry.Lookup(sound).encoded, nullptr);
+    EXPECT_FLOAT_EQ(registry.Lookup(sound).ReadSample(0, 517), fixture.reference[517]);
+}
+
 }

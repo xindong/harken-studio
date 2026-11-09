@@ -600,7 +600,7 @@ VnResult PCMRegistry::BeginPackSamples(
         equalCandidate->m_soundId == soundId && equalCandidate->m_entry->cookie == 0) {
         const auto& candidate = equalCandidate->m_entry->view;
         const auto& target = builder.m_entry->view;
-        if (candidate.sampleRate == target.sampleRate &&
+        if (candidate.encoded == nullptr && candidate.sampleRate == target.sampleRate &&
             candidate.channelCount == target.channelCount &&
             candidate.frames == target.frames && candidate.stride == target.stride &&
             candidate.loop.startFrame == loop.startFrame && candidate.loop.endFrame == loop.endFrame)

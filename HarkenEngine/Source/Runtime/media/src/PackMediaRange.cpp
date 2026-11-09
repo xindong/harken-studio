@@ -89,6 +89,8 @@ bool ReadVerifiedPackMediaChunk(const PackMediaRange& range, std::uint32_t chunk
 
 
 bool EqualResidentSamples(const PCMView& left, const PCMView& right) noexcept {
+    if (left.encoded != nullptr || right.encoded != nullptr)
+        return left.encoded != nullptr && left.encoded == right.encoded;
     assert(left.stride == 1 && right.stride == 1);
     if (right.sampleFormat == PcmSampleFormat::Float32) {
         for (std::uint32_t ch = 0; ch < left.channelCount; ++ch) {
@@ -127,6 +129,8 @@ MediaContentMatch MatchMediaContent(const PCMView& leftResident, const PackMedia
     const PCMView rightView = bothRanges ? PCMView{} : rightResident;
     if (leftView.Valid() && rightView.Valid())
         return EqualResidentSamples(leftView, rightView) ? MediaContentMatch::Equal : MediaContentMatch::Different;
+    if (leftView.encoded != nullptr || rightView.encoded != nullptr)
+        return MediaContentMatch::Different;
     if (!leftView.Valid() && leftRange == nullptr) return MediaContentMatch::Different;
     if (!rightView.Valid() && rightRange == nullptr) return MediaContentMatch::Different;
     const PCMView* view = leftView.Valid() ? &leftView : rightView.Valid() ? &rightView : nullptr;

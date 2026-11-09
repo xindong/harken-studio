@@ -50,10 +50,11 @@ inline constexpr std::uint32_t kTraceFormatVersion = 7;
 //   u64      cpuTicksPerSecond    recorder QPC rate; analysis aid only
 inline constexpr std::uint32_t kTraceFixedHeaderBytes = 4 + 4 + 4 + 4 + 8 + 8;
 inline constexpr std::uint32_t kTraceConfigSchemaVersion = 1;
-inline constexpr std::uint32_t kTraceConfigVintageCount = 16;
+inline constexpr std::uint32_t kTraceConfigVintageCount = 17;
 // Vintage 14 appends one 32-bit firing-capacity field to the unchanged
 // vintage-13 image. Vintage 15 appends the Pack catalog/resident budgets.
 // Vintage 16 appends the Action cooldown capacity.
+// Vintage 17 appends the compressed decoder budget.
 // Reserved native fields are never serialized.
 inline constexpr std::uint32_t kTraceConfigWireBytesV13 =
     4 + 4 + 2 * 4 + 49 * 4 + 8;
@@ -61,8 +62,10 @@ inline constexpr std::uint32_t kTraceConfigWireBytesV14 =
     kTraceConfigWireBytesV13 + 4;
 inline constexpr std::uint32_t kTraceConfigWireBytesV15 =
     kTraceConfigWireBytesV14 + 4 + 6 * 8;
-inline constexpr std::uint32_t kTraceConfigWireBytes =
+inline constexpr std::uint32_t kTraceConfigWireBytesV16 =
     kTraceConfigWireBytesV15 + 4;
+inline constexpr std::uint32_t kTraceConfigWireBytes =
+    kTraceConfigWireBytesV16 + 8;
 // Repository history emitted VTRC v2 before and after the append-only
 // Bus-topology VnConfig tail. These are the only full config-image sizes a v2
 // reader may accept. A future VnConfig append requires VTRC v3.
