@@ -110,7 +110,8 @@
           "maxBusTopologyOwners",
           "maxActionFirings",
           "maxCatalogEntries",
-          "maxActionCooldownRows"
+          "maxActionCooldownRows",
+          "compressedDecoderBytes"
         ],
         "missingFields": "engine-defaults",
         "unknownSize": "reject"
@@ -685,6 +686,10 @@
         [
           "reserved12",
           "u32"
+        ],
+        [
+          "compressedDecoderBytes",
+          "u64"
         ]
       ]
     },

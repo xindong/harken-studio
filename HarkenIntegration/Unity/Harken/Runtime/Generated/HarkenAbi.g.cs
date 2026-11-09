@@ -61,7 +61,7 @@ namespace Harken
             Off(f, "VnRemoteStatus", "engineVersion", Marshal.OffsetOf<VnRemoteStatus>("engineVersion"), 408);
             Off(f, "VnRemoteStatus", "buildId", Marshal.OffsetOf<VnRemoteStatus>("buildId"), 440);
             Off(f, "VnRemoteStatus", "platform", Marshal.OffsetOf<VnRemoteStatus>("platform"), 568);
-            Size(f, "VnConfig", Marshal.SizeOf<VnConfig>(), 352);
+            Size(f, "VnConfig", Marshal.SizeOf<VnConfig>(), 360);
             Off(f, "VnConfig", "structSize", Marshal.OffsetOf<VnConfig>("structSize"), 0);
             Off(f, "VnConfig", "sampleRate", Marshal.OffsetOf<VnConfig>("sampleRate"), 4);
             Off(f, "VnConfig", "blockFrames", Marshal.OffsetOf<VnConfig>("blockFrames"), 8);
@@ -139,6 +139,7 @@ namespace Harken
             Off(f, "VnConfig", "maxPackReplacementPeakBytes", Marshal.OffsetOf<VnConfig>("maxPackReplacementPeakBytes"), 336);
             Off(f, "VnConfig", "maxActionCooldownRows", Marshal.OffsetOf<VnConfig>("maxActionCooldownRows"), 344);
             Off(f, "VnConfig", "reserved12", Marshal.OffsetOf<VnConfig>("reserved12"), 348);
+            Off(f, "VnConfig", "compressedDecoderBytes", Marshal.OffsetOf<VnConfig>("compressedDecoderBytes"), 352);
             Size(f, "VnPCMDesc", Marshal.SizeOf<VnPCMDesc>(), 48);
             Off(f, "VnPCMDesc", "structSize", Marshal.OffsetOf<VnPCMDesc>("structSize"), 0);
             Off(f, "VnPCMDesc", "sampleRate", Marshal.OffsetOf<VnPCMDesc>("sampleRate"), 4);

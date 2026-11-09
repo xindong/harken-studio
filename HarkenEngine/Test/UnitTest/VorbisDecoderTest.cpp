@@ -339,6 +339,40 @@ TEST(VorbisDecoder, PreparationFailureReleasesEveryAllocationAndRejectsUnsupport
     }
 }
 
+TEST(VorbisDecoder, ResidentCodecSeekAndRetirementUseNoAudioThreadAllocation) {
+    const auto fixture = harken::test::MakeVorbisFixture(6, false, 257, 1023);
+    harken::VorbisCodec codec(2 * 1024 * 1024, 0);
+    harken::VorbisPrepareResult result;
+    auto source = harken::VorbisResident::Prepare(codec, fixture.media, kSetupBudget, result);
+    ASSERT_NE(source, nullptr);
+    auto* decoder = source->Acquire(); ASSERT_NE(decoder, nullptr);
+    const bool armed = harken::memguard::IsArmed(); harken::memguard::Install();
+    harken::memguard::AllocationObservation observed{};
+    bool ok = true;
+    allocation_probe::count = 0; allocation_probe::enabled = true;
+    {
+        harken::memguard::AllocationObservationScope observation(observed);
+        harken::memguard::AudioThreadScope audio;
+        for (std::uint64_t start : {0u, 517u, 257u, 9001u, 0u}) {
+            auto at = start;
+            while (at < start + 1024) {
+                harken::PCMView output;
+                if (!decoder->Read(at, 64, 0, output) || !output.frames) { ok = false; break; }
+                at += output.frames;
+            }
+        }
+        decoder->Retire();
+    }
+    allocation_probe::enabled = false;
+    if (!armed) harken::memguard::Uninstall();
+    EXPECT_TRUE(ok); EXPECT_EQ(allocation_probe::count, 0u);
+    EXPECT_EQ(observed.audio.allocations + observed.audio.reallocations, 0u);
+#if defined(_DEBUG) && defined(_MSC_VER)
+    EXPECT_TRUE(observed.available);
+#endif
+    codec.states.Collect(); EXPECT_EQ(codec.states.ActiveBytes(), 0u);
+}
+
 TEST(VorbisDecoder, RejectsSeekLoopAndDurationMetadataThatDisagreesWithPackets) {
     const auto fixture = harken::test::MakeVorbisFixture(2, true, 48713, 95019);
     harken::VorbisMedia media;

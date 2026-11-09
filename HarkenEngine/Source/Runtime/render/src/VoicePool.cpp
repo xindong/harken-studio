@@ -353,6 +353,8 @@ VnResult VoicePool::Play(const PCMView& view, float volumeDb,
         return VN_NO_VOICE;
     }
 
+    MediaDecoder* decoder = view.encoded ? view.encoded->Acquire() : nullptr;
+    if (view.encoded && !decoder) { ++m_noVoiceRefusals; return VN_NO_VOICE; }
     Slot& slot = m_slots[slotIndex];
     ResetOriginalSourceBodyForReuse(slot);
     // Relaxed is enough for the claim: the audio thread acts on this slot
@@ -375,6 +377,7 @@ VnResult VoicePool::Play(const PCMView& view, float volumeDb,
     slot.render.biquadTrig = m_biquadTrig;
     slot.render.engineSampleRate = m_sampleRate;
     slot.render.pcm = view;
+    slot.render.mediaDecoder = decoder;
     BindMonitorPreChainBacking(slotIndex);
     slot.render.busIndex = busIndex;
     slot.render.busGeneration = busGeneration;
@@ -2778,6 +2781,10 @@ bool VoicePool::CancelPreparedVoice(VnVoiceHandle handle) noexcept {
         slot->state.load(std::memory_order_acquire) != SlotState::Prepared) {
         return false;
     }
+    if (slot->render.mediaDecoder != nullptr) {
+        slot->render.mediaDecoder->Retire();
+        slot->render.mediaDecoder = nullptr;
+    }
     if (slot->render.pcm.useCount != nullptr) {
         slot->render.pcm.useCount->fetch_sub(1, std::memory_order_release);
     }
@@ -2817,6 +2824,10 @@ bool VoicePool::CancelOriginalPreparedVoice(const OriginalVoiceOwner& owner) noe
         slot->releaseSequence.load(std::memory_order_acquire) != owner.releaseTarget_ - 1u) {
         slot->state.store(SlotState::Prepared, std::memory_order_release);
         return OriginalVoiceReleased(owner);
+    }
+    if (slot->render.mediaDecoder != nullptr) {
+        slot->render.mediaDecoder->Retire();
+        slot->render.mediaDecoder = nullptr;
     }
     if (slot->render.pcm.useCount != nullptr) {
         slot->render.pcm.useCount->fetch_sub(1, std::memory_order_release);
@@ -5109,6 +5120,7 @@ void VoicePool::RunCascadeJob(std::uint32_t jobIndex) {
         return;
     }
     VoiceRenderContext& ctx = slot.render;
+    ctx.mediaRenderThread = RenderWorkerPool::CurrentRenderThread();
     if (ctx.timelineEvents.eventCount != 0 &&
         (ctx.timelineEvents.renderGeneration != m_jobGenerations[jobIndex] ||
          ctx.timelineEvents.quantumIndex != m_jobQuantumIndex)) {
@@ -5648,6 +5660,10 @@ void VoicePool::ReleaseSlot(Slot& slot, ReleaseThread thread) {
     slot.render.sourceTerminal = nullptr;
     slot.render.sourceTerminalToken = {};
     slot.monitorPublicHandle.store(0, std::memory_order_relaxed);
+    if (slot.render.mediaDecoder != nullptr) {
+        slot.render.mediaDecoder->Retire();
+        slot.render.mediaDecoder = nullptr;
+    }
     if (slot.render.pcm.useCount != nullptr) {
         slot.render.pcm.useCount->fetch_sub(1, std::memory_order_release);
     }

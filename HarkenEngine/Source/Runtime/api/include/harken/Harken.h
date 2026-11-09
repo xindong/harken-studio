@@ -430,6 +430,7 @@ typedef struct VnConfig {
     uint32_t maxActionCooldownRows;         /* committed Action cooldown rows;
                                             * 0 = 256 */
     uint32_t reserved12;                    /* must be 0 */
+    uint64_t compressedDecoderBytes;        /* live and cached decoder state; 0 = 2 MiB */
 } VnConfig;
 
 /* Create the engine and preallocate every pool. All capacity is fixed here;

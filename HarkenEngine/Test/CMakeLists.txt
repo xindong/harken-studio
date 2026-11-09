@@ -125,6 +125,7 @@ add_executable(harken_runtime_tests
     Common/VorbisFixture.cpp
     Common/VorbisFixtureSupport.c
     UnitTest/VorbisMediaTest.cpp
+    UnitTest/VorbisPlaybackTest.cpp
     UnitTest/VorbisDecoderTest.cpp
     UnitTest/AllocationProbe.cpp
     UnitTest/AbiExceptionFirewallSweepTest.cpp

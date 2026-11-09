@@ -1,6 +1,8 @@
 #ifndef HARKEN_MEDIA_VORBIS_DECODER_H
 #define HARKEN_MEDIA_VORBIS_DECODER_H
 #include "harken/media/VorbisMedia.h"
+#include "harken/core/MediaCodec.h"
+#include "harken/core/PcmView.h"
 #include <array>
 #include <atomic>
 #include <memory>
@@ -12,6 +14,8 @@ struct HvState;
 struct HvWorkspace;
 
 namespace harken {
+class VorbisResident;
+class VorbisCodec;
 enum class VorbisPrepareResult { Ok, Invalid, Unsupported, OutOfMemory };
 
 class VorbisSettings {
@@ -63,13 +67,21 @@ private:
 // retirement only publishes a flag; logic reclaims settings and cached memory.
 class VorbisStatePool {
 public:
-    struct State {
+    struct State : MediaDecoder {
+        bool Read(std::uint64_t frame, std::uint32_t frames,
+                  std::uint32_t renderThread, PCMView& output) noexcept override;
         void Restart() noexcept;
         bool Decode(VorbisWorkspace& workspace, const std::uint8_t* packet, std::size_t bytes,
                     const float* (&pcm)[8], unsigned& frames) noexcept;
-        void Retire() noexcept { retired.store(true, std::memory_order_release); }
+        void Retire() noexcept override { retired.store(true, std::memory_order_release); }
     private:
         friend class VorbisStatePool;
+        friend class VorbisResident;
+        const VorbisResident* resident = nullptr;
+        std::uint64_t packetOffset = 0;
+        std::uint64_t nextFrame = UINT64_MAX;
+        std::uint32_t discard = 0, decodedFrames = 0, decodedOffset = 0;
+        const float* planes[8]{};
         State* next = nullptr;
         State* nextFree = nullptr;
         std::unique_ptr<std::max_align_t[]> storage;
@@ -96,6 +108,31 @@ private:
     // Legal channel counts and power-of-two blocks determine the key domain.
     std::array<State*, 64> free_{};
     std::size_t budget_ = 0, bytes_ = 0, activeBytes_ = 0, highWater_ = 0;
+};
+
+// Engine lifetime owns tables, bounded reusable state and one workspace for
+// each render thread. Resources own only compressed bytes and shared setup.
+class VorbisCodec {
+public:
+    VorbisCodec(std::size_t stateBudget, unsigned renderWorkers);
+    VorbisSettingsCache settings;
+    VorbisStatePool states;
+    std::vector<std::unique_ptr<VorbisWorkspace>> workspaces;
+};
+
+class VorbisResident final : public EncodedMedia {
+public:
+    static std::shared_ptr<VorbisResident> Prepare(VorbisCodec& codec,
+        std::vector<std::uint8_t> bytes, std::size_t budget, VorbisPrepareResult& result);
+    MediaDecoder* Acquire() const noexcept override;
+    std::size_t ResidentBytes() const noexcept override;
+    PCMView View() const noexcept;
+private:
+    friend struct VorbisStatePool::State;
+    VorbisCodec* codec_ = nullptr;
+    std::vector<std::uint8_t> bytes_;
+    VorbisMedia media_;
+    std::shared_ptr<const VorbisSettings> settings_;
 };
 }
 #endif

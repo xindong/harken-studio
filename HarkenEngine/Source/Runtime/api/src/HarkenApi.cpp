@@ -76627,6 +76627,7 @@ void ObservePinnedGenerationHighWater(harken::Engine& engine) noexcept {
 // I/O), which is nudged only when a retiring file actually exists so the
 // common update path pays no cross-thread round trip.
 void SweepRetiredGenerations(harken::Engine& engine) {
+    engine.vorbis.states.Collect();
     engine.registry.SweepRetired();
     const auto retainResourceToken = [](void* ctx,
                                         harken::PackResourceRevisionToken token) {

@@ -20019,6 +20019,19 @@ TEST(PlayableStart, MusicTransitionEntryAndNaturalEndUseActualBodyCount) {
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
         auto* engine = session.Engine();
+        // A deferred worker batch has no output quantum yet. Keep the same
+        // logic state until that quantum completes, including silent blocks.
+        const auto pumpQuantum = [&] {
+            const auto before = engine->mixer.BlocksRendered();
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+            do {
+                engine->nullBackend.Pump(1);
+                if (engine->mixer.BlocksRendered() != before)
+                    return engine->mixer.BlocksRendered() == before + 1;
+                std::this_thread::yield();
+            } while (std::chrono::steady_clock::now() < deadline);
+            return false;
+        };
         std::vector<float> samples(musicSource ? 4u * introFrames : 16384, 0.4f);
         std::fill_n(samples.begin(), introFrames, 0.1f);
         std::fill(samples.begin() + introFrames, samples.begin() + 3u * introFrames, 0.2f);
@@ -20337,7 +20350,7 @@ TEST(PlayableStart, MusicTransitionEntryAndNaturalEndUseActualBodyCount) {
         for (unsigned block = 0; block < (immediate ? (mode == 27 || mode == 28 || mode == 30 ? 4u : 32u) : early ? 4u : musicSource && count != 1 && (!musicFade || mode == 10) ? 32u : musicFade ? 4u : 12u); ++block) {
             ASSERT_EQ(VN_OK, Vn_Update());
             observeSourceStarts();
-            engine->nullBackend.Pump(1);
+            ASSERT_TRUE(pumpQuantum());
         }
         harken::EnginePlayableServiceReference sleepingSourceService{};
         harken::SourceTerminalToken sleepingSourceToken{};
@@ -20420,7 +20433,7 @@ TEST(PlayableStart, MusicTransitionEntryAndNaturalEndUseActualBodyCount) {
                     if (service.root.stableId == entryRoot.stableId && service.parentService.owner == started.instance)
                         targetStart = service.startFrame;
             }
-            if (targetStart == UINT64_MAX) engine->nullBackend.Pump(1);
+            if (targetStart == UINT64_MAX) ASSERT_TRUE(pumpQuantum());
         }
         if (count == 0 && !early && !immediate) EXPECT_EQ(UINT64_MAX, targetStart);
         else ASSERT_NE(UINT64_MAX, targetStart) << OccupancyDump(*engine);
@@ -20539,7 +20552,7 @@ TEST(PlayableStart, MusicTransitionEntryAndNaturalEndUseActualBodyCount) {
             ASSERT_EQ(VN_OK, Vn_Update()) << OccupancyDump(*engine);
             ASSERT_FALSE(engine->runtimeRecreateRequired);
             const auto before = engine->mixer.BlocksRendered();
-            engine->nullBackend.Pump(1);
+            ASSERT_TRUE(pumpQuantum());
             observeRejectedTarget();
             if (lifecycleCase == 2 && resetStatus == harken::RuntimeTransportResetStatus::Backpressure)
                 resetStatus = harken::BeginRuntimeTransportReset(*engine, resetFrame);
@@ -20588,7 +20601,7 @@ TEST(PlayableStart, MusicTransitionEntryAndNaturalEndUseActualBodyCount) {
             ASSERT_EQ(harken::PlayableControlStatus::Ok, harken::StopPlayable(*engine, started.instance, 0));
             for (unsigned block = 0; block < 128; ++block) {
                 ASSERT_EQ(VN_OK, Vn_Update());
-                engine->nullBackend.Pump(1);
+                ASSERT_TRUE(pumpQuantum());
             }
         }
         if (lifecycleCase == 2) EXPECT_EQ(harken::RuntimeTransportResetStatus::Complete, resetStatus);

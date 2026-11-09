@@ -6,6 +6,90 @@
 #include <new>
 
 namespace harken {
+VorbisCodec::VorbisCodec(std::size_t budget, unsigned workers) : states(budget) {
+    if (!settings.Initialize(256 * 1024)) throw std::bad_alloc{};
+    for (unsigned i = 0; i <= workers; ++i) {
+        auto workspace = std::make_unique<VorbisWorkspace>();
+        if (!workspace->Initialize()) throw std::bad_alloc{};
+        workspaces.push_back(std::move(workspace));
+    }
+}
+
+std::shared_ptr<VorbisResident> VorbisResident::Prepare(VorbisCodec& codec,
+    std::vector<std::uint8_t> bytes, std::size_t budget, VorbisPrepareResult& result) {
+    result = VorbisPrepareResult::OutOfMemory;
+    if (bytes.size() > budget) return {};
+    auto source = std::make_shared<VorbisResident>();
+    source->bytes_ = std::move(bytes);
+    result = VorbisPrepareResult::Invalid;
+    if (!ParseVorbisTestMedia(source->bytes_.data(), source->bytes_.size(), source->media_)) return {};
+    const auto overhead = source->ResidentBytes();
+    result = VorbisPrepareResult::OutOfMemory;
+    if (overhead > budget) return {};
+    source->settings_ = codec.settings.Prepare(source->media_, budget - overhead, result);
+    if (!source->settings_) return {};
+    result = VorbisPrepareResult::Invalid;
+    if (!source->settings_->ValidateResident(source->media_)) return {};
+    source->codec_ = &codec;
+    result = VorbisPrepareResult::Ok;
+    return source;
+}
+std::size_t VorbisResident::ResidentBytes() const noexcept {
+    return sizeof(*this) + bytes_.capacity() + media_.seek.capacity() * sizeof(VorbisSeekPoint) +
+        media_.segmentChecksums.capacity() * sizeof(std::uint64_t) + (settings_ ? settings_->Bytes() : 0);
+}
+PCMView VorbisResident::View() const noexcept {
+    PCMView view;
+    view.encoded = this; view.frames = media_.frames; view.channelCount = media_.channels;
+    view.sampleRate = media_.sampleRate; view.contentRevision = media_.revision;
+    view.loop = {media_.loopStart, media_.loopEnd};
+    return view;
+}
+MediaDecoder* VorbisResident::Acquire() const noexcept {
+    auto* state = codec_->states.Acquire(settings_);
+    if (state) {
+        state->resident = this; state->nextFrame = UINT64_MAX;
+        state->decodedFrames = state->decodedOffset = state->discard = 0;
+    }
+    return state;
+}
+bool VorbisStatePool::State::Read(std::uint64_t frame, std::uint32_t requested,
+    std::uint32_t thread, PCMView& output) noexcept {
+    if (!resident || thread >= resident->codec_->workspaces.size() || !requested) return false;
+    const auto& media = resident->media_;
+    if (frame >= media.frames) return false;
+    if (frame != nextFrame) {
+        const auto* point = media.Seek(frame);
+        if (!point) return false;
+        Restart(); decodedFrames = decodedOffset = 0;
+        packetOffset = point->packetOffset;
+        const auto skip = frame - point->frame + point->discardFrames;
+        if (skip > UINT32_MAX) return false;
+        discard = static_cast<std::uint32_t>(skip);
+        if (frame == media.loopStart) {
+            packetOffset = media.loopStartPacket; discard = media.loopDiscard;
+        }
+        nextFrame = frame;
+    }
+    auto& workspace = *resident->codec_->workspaces[thread];
+    while (decodedOffset == decodedFrames) {
+        const std::uint8_t* packet = nullptr;
+        std::uint16_t bytes = 0;
+        if (!media.Packet(packetOffset, packet, bytes) || !Decode(workspace, packet, bytes, planes, decodedFrames))
+            return false;
+        packetOffset += 2u + bytes;
+        decodedOffset = std::min(discard, decodedFrames);
+        discard -= decodedOffset;
+    }
+    const auto count = static_cast<std::uint32_t>(std::min<std::uint64_t>(
+        std::min(requested, decodedFrames - decodedOffset), media.frames - frame));
+    output = {};
+    output.channelCount = media.channels; output.sampleRate = media.sampleRate; output.frames = count;
+    for (unsigned ch = 0; ch < media.channels; ++ch) output.channels[ch] = planes[ch] + decodedOffset;
+    decodedOffset += count; nextFrame += count;
+    return true;
+}
+
 namespace {
 HvMemory Memory() noexcept {
     return {nullptr, [](void*, std::size_t bytes) -> void* { return ::operator new(bytes, std::nothrow); },
@@ -88,6 +172,7 @@ std::shared_ptr<const VorbisSettings> VorbisSettingsCache::Prepare(const VorbisM
         if (existing && existing->headers_.size() == headerBytes &&
             std::memcmp(existing->headers_.data(), media.ident, media.identBytes) == 0 &&
             std::memcmp(existing->headers_.data() + media.identBytes, media.setup, media.setupBytes) == 0) {
+            if (existing->Bytes() > budget) { result = VorbisPrepareResult::OutOfMemory; return {}; }
             result = VorbisPrepareResult::Ok; return existing;
         }
     }

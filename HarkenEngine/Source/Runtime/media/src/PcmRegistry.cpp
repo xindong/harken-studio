@@ -1,4 +1,5 @@
 #include "harken/media/PcmRegistry.h"
+#include "harken/media/VorbisDecoder.h"
 
 #include "harken/core/MediaContentRevision.h"
 
@@ -479,6 +480,20 @@ PcmMediaFacts PCMRegistry::Entry::Facts() const noexcept {
         return {range->sampleRate, range->channelCount, range->frameCount, range->loop,
                 range->contentRevision};
     return {};
+}
+
+VnResult PCMRegistry::PrepareVorbisSamples(VnSoundId soundId, VorbisCodec& codec,
+    std::vector<std::uint8_t> bytes, std::size_t budget, PreparedPackSamples* out) {
+    if (!out || out->IsPrepared()) return VN_INVALID_ARG;
+    VorbisPrepareResult result;
+    auto source = VorbisResident::Prepare(codec, std::move(bytes), budget, result);
+    if (!source) return result == VorbisPrepareResult::OutOfMemory ? VN_PACK_RESIDENT_CAPACITY :
+        result == VorbisPrepareResult::Unsupported ? VN_CAPABILITY_UNAVAILABLE : VN_BAD_PACK;
+    auto entry = std::make_shared<Entry>();
+    entry->view = source->View(); entry->view.useCount = &entry->uses;
+    entry->encoded = std::move(source);
+    out->m_soundId = soundId; out->m_entry = std::move(entry);
+    return VN_OK;
 }
 
 VnResult PCMRegistry::PreparePackRangeSamples(VnSoundId soundId,

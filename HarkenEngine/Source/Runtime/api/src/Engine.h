@@ -91,6 +91,7 @@
 #include "harken/render/NullBackend.h"
 #include "harken/render/TopologyPlan.h"
 #include "harken/render/VoicePool.h"
+#include "harken/media/VorbisDecoder.h"
 #include "harken/render/VoiceTimelineSink.h"
 
 #include <algorithm>
@@ -7064,6 +7065,7 @@ public:
                     const EngineHandleGenerationFloors& handleFloors = {})
         : config(resolved),
           playableStorage(resolved),
+          vorbis(resolved.compressedDecoderBytes, resolved.renderWorkerCount),
           logicPacks(resolved.maxPacks),
           packComposition(PackIdentityLeaseCapacity(resolved) -
                               resolved.maxPlayableInstances,
@@ -13794,6 +13796,7 @@ public:
     ResampleTables tables;
     MultirateResampleTables multirateTables;
     BiquadTrigTable biquadTrig;
+    VorbisCodec vorbis;
     PCMRegistry registry;
     // Logic-pack ledger (section 19): applied entries + dependency edges
     // per loaded v2 pack, keyed by the pack handle. Declared before

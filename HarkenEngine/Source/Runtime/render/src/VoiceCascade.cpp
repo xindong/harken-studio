@@ -241,13 +241,25 @@ bool FeedResampler(VoiceRenderContext& ctx) {
         const std::uint64_t limit =
             wrapAtLimit ? ctx.loopEndFrame : ctx.pcm.frames;
         const std::uint64_t remaining = limit - ctx.srcCursor;
-        const std::uint32_t chunk = static_cast<std::uint32_t>(
+        std::uint32_t chunk = static_cast<std::uint32_t>(
             std::min<std::uint64_t>(kResampleChunkFrames,
                 std::min<std::uint64_t>(remaining, rs.FreeFrames())));
         if (chunk == 0) {
             return false;
         }
-        rs.PushPCM(ctx.pcm, ctx.srcCursor, chunk);
+        if (ctx.mediaDecoder) {
+            PCMView decoded;
+            if (!ctx.mediaDecoder->Read(ctx.srcCursor, chunk, ctx.mediaRenderThread, decoded) ||
+                decoded.frames == 0 || decoded.frames > chunk) {
+                ctx.srcCursor = ctx.pcm.frames;
+                rs.MarkInputEnd();
+                return true;
+            }
+            chunk = static_cast<std::uint32_t>(decoded.frames);
+            rs.PushPCM(decoded, 0, chunk);
+        } else {
+            rs.PushPCM(ctx.pcm, ctx.srcCursor, chunk);
+        }
         ctx.srcCursor += chunk;
         if (ctx.srcCursor == limit) {
             if (wrapAtLimit) {
@@ -575,7 +587,7 @@ bool PreparePlainPcm(const VoiceRenderContext& ctx, std::uint32_t blockFrames,
     const auto& rs = ctx.resampler;
     if (offset >= blockFrames || ctx.pcm.channelCount == 0 ||
         ctx.pcm.channelCount > kMaxChannels || ctx.phase != SourcePhase::Active ||
-        ctx.streamParkActive ||
+        ctx.streamParkActive || ctx.mediaDecoder != nullptr ||
         ctx.voiceSendActiveCount != 0 || ctx.dynamicVoiceTapActive ||
         ctx.tailStarted || ctx.tailRemaining != 0 ||
         ctx.tailRearmPosition != kNoTailRearmPosition ||

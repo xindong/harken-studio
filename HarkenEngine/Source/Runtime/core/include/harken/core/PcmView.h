@@ -17,6 +17,8 @@
 
 namespace harken {
 
+class EncodedMedia;
+
 struct PcmLoopRegion {
     std::uint64_t startFrame = 0;
     std::uint64_t endFrame = 0;
@@ -28,6 +30,7 @@ enum class PcmSampleFormat : std::uint32_t {
 };
 
 struct PCMView {
+    const EncodedMedia* encoded = nullptr;
     const void* channels[kMaxChannels] = {};
     std::uint32_t channelCount = 0;
     std::uint32_t stride = 1;      // stored elements between consecutive frames

@@ -816,7 +816,7 @@ static_assert(offsetof(VnRemoteStatus, projectName) == 280, "binding offset drif
 static_assert(offsetof(VnRemoteStatus, engineVersion) == 408, "binding offset drift: VnRemoteStatus.engineVersion");
 static_assert(offsetof(VnRemoteStatus, buildId) == 440, "binding offset drift: VnRemoteStatus.buildId");
 static_assert(offsetof(VnRemoteStatus, platform) == 568, "binding offset drift: VnRemoteStatus.platform");
-static_assert(sizeof(VnConfig) == 352, "binding size drift: VnConfig");
+static_assert(sizeof(VnConfig) == 360, "binding size drift: VnConfig");
 static_assert(offsetof(VnConfig, structSize) == 0, "binding offset drift: VnConfig.structSize");
 static_assert(offsetof(VnConfig, sampleRate) == 4, "binding offset drift: VnConfig.sampleRate");
 static_assert(offsetof(VnConfig, blockFrames) == 8, "binding offset drift: VnConfig.blockFrames");
@@ -894,6 +894,7 @@ static_assert(offsetof(VnConfig, maxPackResourceBytes) == 328, "binding offset d
 static_assert(offsetof(VnConfig, maxPackReplacementPeakBytes) == 336, "binding offset drift: VnConfig.maxPackReplacementPeakBytes");
 static_assert(offsetof(VnConfig, maxActionCooldownRows) == 344, "binding offset drift: VnConfig.maxActionCooldownRows");
 static_assert(offsetof(VnConfig, reserved12) == 348, "binding offset drift: VnConfig.reserved12");
+static_assert(offsetof(VnConfig, compressedDecoderBytes) == 352, "binding offset drift: VnConfig.compressedDecoderBytes");
 static_assert(sizeof(VnPCMDesc) == 48, "binding size drift: VnPCMDesc");
 static_assert(offsetof(VnPCMDesc, structSize) == 0, "binding offset drift: VnPCMDesc.structSize");
 static_assert(offsetof(VnPCMDesc, sampleRate) == 4, "binding offset drift: VnPCMDesc.sampleRate");

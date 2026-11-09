@@ -22,6 +22,8 @@
 #endif
 
 namespace harken {
+namespace { thread_local std::uint32_t g_renderThread = 0; }
+std::uint32_t RenderWorkerPool::CurrentRenderThread() noexcept { return g_renderThread; }
 
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
 namespace {
@@ -1086,6 +1088,11 @@ void RenderWorkerPool::WorkerMain(std::uint32_t id) {
 }
 
 void RenderWorkerPool::RunBatch(std::uint32_t id, std::uint64_t generation) {
+    struct ThreadIndexScope {
+        std::uint32_t previous = g_renderThread;
+        explicit ThreadIndexScope(std::uint32_t value) { g_renderThread = value; }
+        ~ThreadIndexScope() { g_renderThread = previous; }
+    } threadIndex(id + 1);
     // Tagged for the batch: the allocation guard is armed on this thread while
     // it runs cascades, so any heap touch inside a job aborts (base spec §4).
     memguard::AudioThreadScope scope;

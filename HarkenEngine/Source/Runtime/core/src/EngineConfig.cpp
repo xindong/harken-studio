@@ -314,6 +314,11 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
     }
 
     EngineConfig resolved;
+    if (config->structSize >= offsetof(VnConfig, compressedDecoderBytes) + sizeof(config->compressedDecoderBytes) &&
+        config->compressedDecoderBytes != 0)
+        resolved.compressedDecoderBytes = config->compressedDecoderBytes;
+    if (resolved.compressedDecoderBytes > SIZE_MAX) return VN_INVALID_CONFIG;
+
     std::uint32_t renderVoiceCapacity = resolved.voiceCapacity.Render();
     std::uint32_t virtualVoiceCapacity = resolved.voiceCapacity.Virtual();
     resolved.nullDevice = (config->deviceMode == VN_DEVICE_NULL);

@@ -95,7 +95,7 @@ static_assert(offsetof(VnRemoteStatus, buildId) == 440,
 static_assert(offsetof(VnRemoteStatus, platform) == 568,
               "wire table offset drift: VnRemoteStatus.platform");
 
-static_assert(sizeof(VnConfig) == 352,
+static_assert(sizeof(VnConfig) == 360,
               "wire table size drift: VnConfig");
 static_assert(offsetof(VnConfig, structSize) == 0,
               "wire table offset drift: VnConfig.structSize");
@@ -251,6 +251,8 @@ static_assert(offsetof(VnConfig, maxActionCooldownRows) == 344,
               "wire table offset drift: VnConfig.maxActionCooldownRows");
 static_assert(offsetof(VnConfig, reserved12) == 348,
               "wire table offset drift: VnConfig.reserved12");
+static_assert(offsetof(VnConfig, compressedDecoderBytes) == 352,
+              "wire table offset drift: VnConfig.compressedDecoderBytes");
 
 static_assert(sizeof(VnPCMDesc) == 48,
               "wire table size drift: VnPCMDesc");

@@ -1,0 +1,183 @@
+#include "Common/TestUtil.h"
+#include "Common/ObjectIdTestSupport.h"
+#include "Common/VorbisFixture.h"
+#include "harken/media/VorbisDecoder.h"
+#include <chrono>
+#include <thread>
+
+namespace {
+bool PumpQuantum(harken::Engine& engine) {
+    const auto before = engine.mixer.BlocksRendered();
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    do {
+        engine.nullBackend.Pump(1);
+        if (engine.mixer.BlocksRendered() != before) return engine.mixer.BlocksRendered() == before + 1;
+        std::this_thread::yield();
+    } while (std::chrono::steady_clock::now() < deadline);
+    return false;
+}
+VnResult Start(harken::Engine& engine, const harken::PCMView& view, double pitch,
+               unsigned loops, std::uint64_t first, VnVoiceHandle& voice, bool prepared = false) {
+    const auto result = engine.voices.Play(view, -12.0f, pitch, 0, false, 0, 0, 0,
+        harken::ResolvePanGains(engine.config.mixChannelLayout, 0.0f),
+        view.loop.startFrame, view.LoopEndFrame(), loops,
+        harken::ResampleProfile::LegacyCompatibility, &voice, 1, UINT32_MAX, 0, prepared);
+    if (result == VN_OK && !prepared)
+        engine.voices.ApplyPlay(voice, voice, first, engine.mixer.BlocksRendered());
+    return result;
+}
+void Stop(harken::Engine& engine, VnVoiceHandle voice) {
+    engine.voices.ApplyStop(voice, 0, 0, engine.notifications, engine.mixer.BlocksRendered());
+    engine.vorbis.states.Collect();
+}
+
+TEST(VorbisPlayback, ResidentMatchesPcmThroughRenderPitchLoopSeekAndWorkers) {
+    auto fixture = harken::test::MakeVorbisFixture(2, false, 257, 1023);
+    for (unsigned workers : {0u, 2u}) {
+        auto config = harkentest::MakeNullConfig(4, 64, 48000);
+        config.renderWorkerCount = workers;
+        harkentest::EngineSession session(config);
+        ASSERT_EQ(session.InitResult(), VN_OK);
+        auto& engine = *session.Engine();
+        harken::VorbisPrepareResult status;
+        auto source = harken::VorbisResident::Prepare(engine.vorbis, fixture.media, 4 * 1024 * 1024, status);
+        ASSERT_NE(source, nullptr);
+        auto encoded = source->View();
+        auto pcm = encoded; pcm.encoded = nullptr; pcm.stride = 2;
+        pcm.channels[0] = fixture.reference.data(); pcm.channels[1] = fixture.reference.data() + 1;
+        for (double pitch : {0.75, 1.0, 1.25, 8.0}) {
+            SCOPED_TRACE(::testing::Message() << workers << '/' << pitch);
+            std::vector<float> expected;
+            for (bool compressed : {false, true}) {
+                VnVoiceHandle voices[2]{};
+                const auto& view = compressed ? encoded : pcm;
+                for (auto& voice : voices) ASSERT_EQ(Start(engine, view, pitch, 3, 149, voice), VN_OK);
+                for (unsigned block = 0; block < 96; ++block) {
+                    if (block == 48) for (auto voice : voices) engine.voices.CommitSeek(voice, 503);
+                    ASSERT_TRUE(PumpQuantum(engine));
+                    const auto* output = engine.nullBackend.LastBlock();
+                    for (unsigned i = 0; i < 128; ++i) {
+                        if (!compressed) expected.push_back(output[i]);
+                        else ASSERT_NEAR(output[i], expected[block * 128 + i], 2e-7f) << block << '/' << i;
+                    }
+                }
+                for (auto voice : voices) Stop(engine, voice);
+                EXPECT_EQ(engine.vorbis.states.ActiveBytes(), 0u);
+            }
+            EXPECT_GT(*std::max_element(expected.begin(), expected.end()), 0.001f);
+        }
+    }
+}
+
+TEST(VorbisPlayback, PreparedCancellationAndRapidStopsRecycleDecoderState) {
+    auto config = harkentest::MakeNullConfig(2, 64, 48000);
+    harkentest::EngineSession session(config);
+    ASSERT_EQ(session.InitResult(), VN_OK);
+    auto& engine = *session.Engine();
+    const auto fixture = harken::test::MakeVorbisFixture(2);
+    harken::VorbisPrepareResult status;
+    auto source = harken::VorbisResident::Prepare(engine.vorbis, fixture.media, 4 * 1024 * 1024, status);
+    ASSERT_NE(source, nullptr);
+    const auto view = source->View();
+    std::size_t backing = 0;
+    for (unsigned i = 0; i < 200; ++i) {
+        VnVoiceHandle voice = 0;
+        ASSERT_EQ(Start(engine, view, 1.0, 1, i, voice, i % 2 == 0), VN_OK);
+        if (i % 2 == 0) ASSERT_TRUE(engine.voices.CancelPreparedVoice(voice));
+        else { ASSERT_TRUE(PumpQuantum(engine)); Stop(engine, voice); }
+        engine.vorbis.states.Collect();
+        EXPECT_EQ(engine.vorbis.states.ActiveBytes(), 0u);
+        if (!i) backing = engine.vorbis.states.Bytes();
+        EXPECT_EQ(engine.vorbis.states.Bytes(), backing);
+    }
+}
+
+TEST(VorbisPlayback, DecoderBudgetRefusalPublishesNoVoiceOrResourcePin) {
+    auto config = harkentest::MakeNullConfig(2, 64, 48000);
+    config.compressedDecoderBytes = 1;
+    harkentest::EngineSession session(config);
+    ASSERT_EQ(session.InitResult(), VN_OK);
+    auto& engine = *session.Engine();
+    EXPECT_EQ(engine.config.compressedDecoderBytes, 1u);
+    const auto fixture = harken::test::MakeVorbisFixture(2);
+    harken::VorbisPrepareResult status;
+    auto source = harken::VorbisResident::Prepare(engine.vorbis, fixture.media, 4 * 1024 * 1024, status);
+    ASSERT_NE(source, nullptr);
+    auto view = source->View();
+    std::atomic<std::uint32_t> pins{0}; view.useCount = &pins;
+    VnVoiceHandle voice = 123;
+    EXPECT_EQ(Start(engine, view, 1.0, 1, 0, voice), VN_NO_VOICE);
+    EXPECT_EQ(voice, 123u); EXPECT_EQ(pins.load(), 0u);
+    EXPECT_EQ(engine.voices.ActiveCount(), 0u); EXPECT_EQ(engine.vorbis.states.Bytes(), 0u);
+}
+
+TEST(VorbisPlayback, RegistryOwnsCompressedBytesAndRetiresPinnedGenerations) {
+    const auto fixture = harken::test::MakeVorbisFixture(2);
+    harken::VorbisCodec codec(2 * 1024 * 1024, 0);
+    harken::PCMRegistry registry;
+    const auto sound = harkentest::ObjectId(712);
+    harken::PCMRegistry::PreparedPackSamples samples;
+    EXPECT_EQ(registry.PrepareVorbisSamples(sound, codec, fixture.media, 1, &samples), VN_PACK_RESIDENT_CAPACITY);
+    EXPECT_FALSE(samples.IsPrepared());
+    ASSERT_EQ(registry.PrepareVorbisSamples(sound, codec, fixture.media, 4 * 1024 * 1024, &samples), VN_OK);
+    EXPECT_LT(samples.View().encoded->ResidentBytes(), fixture.reference.size() * sizeof(float));
+    harken::PCMRegistry::PackReferenceRegistration registration;
+    registration.soundId = sound; registration.samples = &samples;
+    harken::PCMRegistry::PreparedPackMutation mutation;
+    ASSERT_EQ(registry.PreparePackMutation(&registration, 1, 0, &mutation), VN_OK);
+    registry.CommitPreparedPackMutation(&mutation);
+    auto old = registry.Lookup(sound);
+    old.useCount->fetch_add(1);
+    auto* decoder = old.encoded->Acquire(); ASSERT_NE(decoder, nullptr);
+    harken::PCMRegistry::RetiredGeneration retired;
+    ASSERT_TRUE(registry.ExtractRetiring(sound, registry.CookieOf(sound), &retired));
+    EXPECT_FALSE(retired.Drained());
+    EXPECT_FALSE(registry.Lookup(sound).Valid());
+    harken::PCMView output;
+    ASSERT_TRUE(decoder->Read(517, 64, 0, output));
+    EXPECT_FLOAT_EQ(output.ReadSample(0, 0), fixture.reference[517 * 2]);
+    decoder->Retire(); old.useCount->fetch_sub(1);
+    EXPECT_TRUE(retired.Drained());
+    codec.states.Collect(); EXPECT_EQ(codec.states.ActiveBytes(), 0u);
+}
+
+TEST(VorbisPlayback, AudibilityParkReleasesDecoderAndReturnUsesAdvancedPosition) {
+    auto config = harkentest::MakeNullConfig(2, 64, 48000);
+    config.maxTriggerDepth = 2; config.audibilityParkEnabled = 1;
+    config.parkThresholdDb = -40.0f; config.maxParkedVoices = 2;
+    harkentest::EngineSession session(config);
+    ASSERT_EQ(session.InitResult(), VN_OK);
+    auto& engine = *session.Engine();
+    const auto sound = harkentest::ObjectId(713);
+    const auto fixture = harken::test::MakeVorbisFixture(1);
+    harken::PCMRegistry::PreparedPackSamples samples;
+    ASSERT_EQ(engine.registry.PrepareVorbisSamples(sound, engine.vorbis, fixture.media,
+        4 * 1024 * 1024, &samples), VN_OK);
+    harken::PCMRegistry::PackReferenceRegistration registration;
+    registration.soundId = sound; registration.samples = &samples;
+    harken::PCMRegistry::PreparedPackMutation mutation;
+    ASSERT_EQ(engine.registry.PreparePackMutation(&registration, 1, 0, &mutation), VN_OK);
+    engine.registry.CommitPreparedPackMutation(&mutation);
+    auto play = harkentest::MakePlayDesc(sound);
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(harkentest::PlayRaw(&play, &voice), VN_OK);
+    ASSERT_TRUE(PumpQuantum(engine));
+    EXPECT_GT(engine.vorbis.states.ActiveBytes(), 0u);
+    ASSERT_EQ(Vn_SetVoiceVolume(voice, -80.0f, 0), VN_OK);
+    for (unsigned i = 0; i < 8; ++i) { ASSERT_EQ(Vn_Update(), VN_OK); ASSERT_TRUE(PumpQuantum(engine)); }
+    ASSERT_EQ(engine.ledger.Classify(voice).kind, harken::VoiceLedger::HandleKind::Parked);
+    ASSERT_EQ(Vn_Update(), VN_OK);
+    EXPECT_EQ(engine.vorbis.states.ActiveBytes(), 0u);
+    EXPECT_EQ(Vn_UnregisterPCM(sound), VN_IN_USE);
+    for (unsigned i = 0; i < 4; ++i) { ASSERT_TRUE(PumpQuantum(engine)); ASSERT_EQ(Vn_Update(), VN_OK); }
+    ASSERT_EQ(Vn_SetVoiceVolume(voice, 0.0f, 0), VN_OK);
+    ASSERT_EQ(Vn_Update(), VN_OK); ASSERT_TRUE(PumpQuantum(engine));
+    auto* render = engine.voices.Resolve(harkentest::RenderHandle(&engine, voice));
+    ASSERT_NE(render, nullptr); EXPECT_NE(render->mediaDecoder, nullptr);
+    EXPECT_GT(render->srcCursor, 64u);
+    EXPECT_GT(engine.vorbis.states.ActiveBytes(), 0u);
+    ASSERT_EQ(Vn_Stop(voice, 0), VN_OK); ASSERT_TRUE(PumpQuantum(engine));
+    ASSERT_EQ(Vn_Update(), VN_OK); EXPECT_EQ(engine.vorbis.states.ActiveBytes(), 0u);
+    EXPECT_EQ(Vn_UnregisterPCM(sound), VN_OK);
+}
+}

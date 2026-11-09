@@ -128,8 +128,8 @@ static_assert(offsetof(VnConfig, reserved10) ==
                       sizeof(std::uint32_t),
               "reserved10 follows maxActionFirings");
 static_assert(sizeof(VnConfig) ==
-                  offsetof(VnConfig, reserved12) + sizeof(std::uint32_t),
-              "no VnConfig tail padding beyond Action cooldown fields");
+                  offsetof(VnConfig, compressedDecoderBytes) + sizeof(std::uint64_t),
+              "no VnConfig tail padding beyond decoder budget");
 
 // --- helpers ---
 

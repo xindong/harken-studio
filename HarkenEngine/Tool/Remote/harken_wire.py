@@ -123,7 +123,8 @@ TABLE_JSON = r'''
           "maxBusTopologyOwners",
           "maxActionFirings",
           "maxCatalogEntries",
-          "maxActionCooldownRows"
+          "maxActionCooldownRows",
+          "compressedDecoderBytes"
         ],
         "missingFields": "engine-defaults",
         "unknownSize": "reject"
@@ -698,6 +699,10 @@ TABLE_JSON = r'''
         [
           "reserved12",
           "u32"
+        ],
+        [
+          "compressedDecoderBytes",
+          "u64"
         ]
       ]
     },
