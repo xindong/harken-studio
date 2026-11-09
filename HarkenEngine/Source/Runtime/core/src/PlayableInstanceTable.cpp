@@ -2054,6 +2054,15 @@ bool PlayableInstanceTable::IsPrepared(
            m_entries[slot].generation == GenerationOf(handle);
 }
 
+bool PlayableInstanceTable::CapturePreparedKind(const PreparedPlayableInstance& prepared,
+    PlayableKind* kind) const noexcept {
+    if (kind == nullptr || !OwnsPrepared(prepared)) return false;
+    const auto& entry = m_entries[SlotOf(prepared.Handle())];
+    if (entry.parent != prepared.Parent() || entry.preparationInput.kind != entry.kind) return false;
+    *kind = entry.kind;
+    return true;
+}
+
 bool PlayableInstanceTable::OwnsPrepared(
     const PreparedPlayableInstance& prepared) const noexcept {
     if (prepared.owner_ != this || prepared.handle_ == 0 ||

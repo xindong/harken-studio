@@ -21584,14 +21584,14 @@ TEST(PlayableStart, MusicSegmentStreamedClipRepeatsEveryPassOnTheTimeline) {
     }
 }
 
-TEST(PlayableStart, MusicSegmentStarvedStreamedStemRejoinsItsTimelinePosition) {
-    enum class Supply { Restored, Never, StopWhileSilent, SuspendWhileSilent, PitchWhileSilent };
+TEST(PlayableStart, MusicSegmentStarvedGroupRejoinsItsTimelinePosition) {
+    enum class Supply { Restored, Never, StopWhileSilent, SuspendWhileSilent, PitchWhileSilent, NoSpare };
     for (const auto workers : {0u, 2u})
-    for (const auto supply : {Supply::Restored, Supply::Never, Supply::StopWhileSilent, Supply::SuspendWhileSilent, Supply::PitchWhileSilent}) {
+    for (const auto supply : {Supply::Restored, Supply::Never, Supply::StopWhileSilent, Supply::SuspendWhileSilent, Supply::PitchWhileSilent, Supply::NoSpare}) {
         SCOPED_TRACE(::testing::Message() << "workers=" << workers << " supply=" << static_cast<int>(supply));
         auto config = harkentest::MakeNullConfig(4, 64, 48000);
         config.renderWorkerCount = workers;
-        config.maxStreams = 3;
+        config.maxStreams = supply == Supply::NoSpare ? 1u : 3u;
         config.streamRingBytes = (2048) * sizeof(float);
         config.prebufferMs = 20;
         harkentest::EngineSession session(config);
@@ -21671,6 +21671,20 @@ TEST(PlayableStart, MusicSegmentStarvedStreamedStemRejoinsItsTimelinePosition) {
             request.root = image.Root();
             started = harken::StartPlayable(engine, request);
         }
+        if (supply == Supply::NoSpare) {
+            EXPECT_EQ(harken::PlayableStartStatus::Capacity, started.status);
+            for (unsigned block = 0; block < 8; ++block) {
+                ASSERT_EQ(VN_OK, Vn_Update());
+                engine.streams.SyncServe();
+                engine.nullBackend.Pump(1);
+                for (unsigned frame = 0; frame < config.blockFrames * 2; ++frame)
+                    ASSERT_EQ(0.0f, engine.nullBackend.LastBlock()[frame]);
+            }
+            EXPECT_EQ(config.maxStreams, engine.streams.FreeSlotCount());
+            EXPECT_EQ(config.maxVoices, engine.voices.AvailableSlotCount());
+            EXPECT_FALSE(engine.runtimeRecreateRequired);
+            continue;
+        }
         ASSERT_EQ(harken::PlayableStartStatus::Accepted, started.status);
         std::uint64_t initialRing = 0;
         bool sawReplacement = false, sawRejoined = false, sawStarvedAudio = false;
@@ -21683,32 +21697,32 @@ TEST(PlayableStart, MusicSegmentStarvedStreamedStemRejoinsItsTimelinePosition) {
                 ASSERT_EQ(VN_OK, Vn_Suspend());
                 const auto frozen = engine.mixer.BlocksRendered();
                 const auto row = std::find_if(engine.streamResyncs.begin(), engine.streamResyncs.end(),
-                    [](const auto& entry) { return entry.handle != 0; });
+                    [](const auto& entry) { return entry.handle != 0 && entry.frameCount != 0; });
                 ASSERT_NE(engine.streamResyncs.end(), row);
-                harken::VoicePool::StreamResyncView before{};
-                ASSERT_TRUE(engine.voices.ReadStreamResync(row->handle, &before));
-                ASSERT_TRUE(before.latched);
+                VnPlaybackReadinessMemberV1 before{};
+                ASSERT_TRUE(engine.CaptureGroupRecovery(row->handle, before));
+                ASSERT_EQ(VN_PLAYBACK_READINESS_PREPARING, before.state);
                 engine.streams.SetThrottled(false);
                 for (unsigned paused = 0; paused < 64; ++paused) {
                     ASSERT_EQ(VN_OK, Vn_Update());
                     engine.streams.SyncServe();
                     engine.nullBackend.Pump(1);
                     ASSERT_EQ(frozen, engine.mixer.BlocksRendered());
-                    harken::VoicePool::StreamResyncView after{};
-                    ASSERT_TRUE(engine.voices.ReadStreamResync(row->handle, &after));
-                    ASSERT_TRUE(after.latched);
-                    ASSERT_EQ(before.serial, after.serial);
-                    ASSERT_EQ(before.timelineAnchor, after.timelineAnchor);
+                    VnPlaybackReadinessMemberV1 after{};
+                    ASSERT_TRUE(engine.CaptureGroupRecovery(row->handle, after));
+                    ASSERT_EQ(before.replacementSerial, after.replacementSerial);
+                    ASSERT_EQ(before.scheduledFrame, after.scheduledFrame);
+                    ASSERT_EQ(0u, after.appliedAudioBlock);
                 }
                 ASSERT_EQ(VN_OK, Vn_Resume());
             }
             if (supply == Supply::PitchWhileSilent && block == 200) {
                 const auto row = std::find_if(engine.streamResyncs.begin(), engine.streamResyncs.end(),
-                    [](const auto& entry) { return entry.handle != 0; });
+                    [](const auto& entry) { return entry.handle != 0 && entry.frameCount != 0; });
                 ASSERT_NE(engine.streamResyncs.end(), row);
-                harken::VoicePool::StreamResyncView view{};
-                ASSERT_TRUE(engine.voices.ReadStreamResync(row->handle, &view));
-                ASSERT_TRUE(view.latched);
+                VnPlaybackReadinessMemberV1 view{};
+                ASSERT_TRUE(engine.CaptureGroupRecovery(row->handle, view));
+                ASSERT_EQ(VN_PLAYBACK_READINESS_PREPARING, view.state);
                 engine.voices.ApplySetPitch(row->handle, 0.5, 0);
             }
             engine.streams.SetThrottled(!served);
@@ -21716,7 +21730,11 @@ TEST(PlayableStart, MusicSegmentStarvedStreamedStemRejoinsItsTimelinePosition) {
                 ASSERT_EQ(harken::PlayableControlStatus::Ok, harken::StopPlayable(engine, started.instance, 0));
             ASSERT_EQ(VN_OK, Vn_Update());
             if (served) engine.streams.SyncServe();
-            engine.nullBackend.Pump(1);
+            const auto rendered = engine.mixer.BlocksRendered();
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+            do { engine.nullBackend.Pump(1); }
+            while (engine.mixer.BlocksRendered() == rendered && std::chrono::steady_clock::now() < deadline);
+            ASSERT_EQ(rendered + 1, engine.mixer.BlocksRendered());
             if (observe) {
                 VnActionPlaybackReadinessV1 info{};
                 info.structSize = sizeof(info);
@@ -21767,13 +21785,13 @@ TEST(PlayableStart, MusicSegmentStarvedStreamedStemRejoinsItsTimelinePosition) {
         ASSERT_NE(output.end(), first) << OccupancyDump(engine);
         const auto offset = static_cast<std::size_t>(first - output.begin());
         ASSERT_LE(offset + kFrames, output.size());
-        if (supply == Supply::Never || supply == Supply::StopWhileSilent || supply == Supply::PitchWhileSilent) {
+        if (supply == Supply::Never || supply == Supply::StopWhileSilent) {
             const std::size_t stop = supply == Supply::StopWhileSilent ? 260u * 64u - offset : kFrames;
             const auto silent = std::find_if(output.begin() + offset, output.begin() + offset + stop,
-                [](float value) { return std::abs(value - 0.25f) < 0.000001f; });
+                [](float value) { return std::abs(value) < 0.000001f; });
             ASSERT_NE(output.begin() + offset + stop, silent) << "the stem never starved";
             for (auto at = silent; at != output.begin() + offset + stop; ++at)
-                ASSERT_NEAR(0.25f, *at, 0.000001f) << "late data at=" << (at - output.begin());
+                ASSERT_NEAR(0.0f, *at, 0.000001f) << "late data at=" << (at - output.begin());
             if (supply != Supply::StopWhileSilent)
                 for (std::size_t frame = offset + kFrames; frame < output.size(); ++frame)
                     ASSERT_NEAR(0.0f, output[frame], 0.000001f) << frame;
@@ -21792,41 +21810,24 @@ TEST(PlayableStart, MusicSegmentStarvedStreamedStemRejoinsItsTimelinePosition) {
             EXPECT_FALSE(engine.runtimeRecreateRequired);
             continue;
         }
-        // The resident stem never changes; the streamed stem is either at its
-        // timeline position, inside a fade toward or from silence, or silent.
-        std::vector<float> gain(kFrames);
-        std::vector<std::pair<std::size_t, std::size_t>> silences;
+        // A supply loss suppresses the entire group at a block boundary.
+        // Every audible sample after recovery must match the live source clock.
+        bool silent = false, rejoined = false;
+        const auto pitchAt = 200u * config.blockFrames - offset;
         for (std::size_t at = 0; at < kFrames; ++at) {
-            const float stem = output[offset + at] - 0.25f;
-            gain[at] = stem / ramp(at);
-            ASSERT_GE(gain[at], -0.0001f) << "at=" << at;
-            ASSERT_LE(gain[at], 1.0001f) << "at=" << at;
-            if (std::abs(stem) < 0.000001f) {
-                if (silences.empty() || silences.back().second + 1 != at) silences.emplace_back(at, at);
-                else silences.back().second = at;
+            const auto value = output[offset + at];
+            if (std::abs(value) < 0.000001f) {
+                silent = true;
+                continue;
             }
+            rejoined |= silent;
+            const double source = supply == Supply::PitchWhileSilent && at >= pitchAt
+                ? pitchAt + static_cast<double>(at - pitchAt) * 0.5 : static_cast<double>(at);
+            const float expected = 0.25f - 0.5f + static_cast<float>(source) * (0.4f / kFrames);
+            ASSERT_NEAR(expected, value, 0.000001f) << "off timeline at=" << at;
         }
-        ASSERT_FALSE(silences.empty()) << "the stem never starved";
-        const std::size_t fade = 240;
-        for (const auto& [firstSilent, lastSilent] : silences) {
-            ASSERT_GE(firstSilent, fade);
-            ASSERT_LT(lastSilent + fade, kFrames) << "the stem never rejoined";
-            // Both edges remain 5 ms ramps for each starvation episode.
-            std::size_t fadeOut = 0;
-            while (fadeOut < fade && gain[firstSilent - 1u - fadeOut] < 0.999f) ++fadeOut;
-            EXPECT_GE(fadeOut, fade - 16u);
-            EXPECT_NEAR(1.0f / static_cast<float>(fade), gain[lastSilent + 1u], 0.0002f);
-        }
-        for (std::size_t at = 0; at < kFrames; ++at) {
-            bool gap = false, fading = false;
-            for (const auto& [firstSilent, lastSilent] : silences) {
-                gap |= at >= firstSilent && at <= lastSilent;
-                fading |= (at + fade >= firstSilent && at < firstSilent) ||
-                    (at > lastSilent && at <= lastSilent + fade);
-            }
-            if (gap) ASSERT_NEAR(0.0f, gain[at], 0.000001f) << "late data at=" << at;
-            else if (!fading) ASSERT_NEAR(1.0f, gain[at], 0.0002f) << "off timeline at=" << at;
-        }
+        EXPECT_TRUE(silent);
+        EXPECT_TRUE(rejoined);
         for (std::size_t frame = offset + kFrames; frame < output.size(); ++frame)
             ASSERT_NEAR(0.0f, output[frame], 0.000001f) << frame;
         EXPECT_FALSE(engine.playableInstances.Classify(started.instance).live) << OccupancyDump(engine);

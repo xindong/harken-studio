@@ -1205,9 +1205,9 @@ private:
     static void CompleteOriginalSourceBodyDisposition(Slot& slot) noexcept;
     static void ResetOriginalSourceBodyForReuse(Slot& slot) noexcept;
     static bool CanClaimSlot(const Slot& slot) noexcept;
-    void ProcessGroupRecoveries(std::uint32_t blockFrames) noexcept;
+    void ProcessGroupRecoveries(std::uint32_t blockFrames, std::uint64_t blockIndex) noexcept;
     StreamRecoveryResult ApplyGroupRecovery(StreamRecoveryAttempt& attempt,
-                                            std::uint32_t blockFrames) noexcept;
+                                            std::uint32_t blockFrames, std::uint64_t blockIndex) noexcept;
     static void PublishRelease(Slot& slot) noexcept;
 
     enum class StreamParkTokenState : std::uint8_t {
@@ -1301,6 +1301,7 @@ private:
     StreamSeekHandoffTable* m_streamSeekHandoffs = nullptr;
     const SourceCommandInstallProof* m_commandMetadataProof = nullptr;
     std::atomic<std::uint64_t> m_liveOriginalVoiceOwners{0};
+    std::atomic<std::uint32_t> m_groupRequestCount{0};
     std::uint64_t m_nextOriginalBodyMarker = 1;
     bool m_originalBodyMarkerExhausted = false;
     bool m_originalBodyShutdown = false;

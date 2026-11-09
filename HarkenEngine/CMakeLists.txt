@@ -24,6 +24,7 @@ set(HARKEN_RUNTIME_SOURCES
     ${HARKEN_RUNTIME_DIR}/api/src/MonitorMeterHandler.cpp
     ${HARKEN_RUNTIME_DIR}/api/src/HarkenApi.cpp
     ${HARKEN_RUNTIME_DIR}/api/src/PlaybackReadiness.cpp
+    ${HARKEN_RUNTIME_DIR}/api/src/StreamRecovery.cpp
     ${HARKEN_RUNTIME_DIR}/api/src/PackInspection.cpp
     ${HARKEN_RUNTIME_DIR}/api/src/ProjectGenerationTransaction.cpp
     ${HARKEN_RUNTIME_DIR}/api/src/SignalPublication.cpp

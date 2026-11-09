@@ -2948,7 +2948,8 @@ void VoicePool::PublishStreamObservation(Slot& slot, std::uint64_t blockIndex) n
         ? render.streamGateOpen : value.appliedFrame != UINT64_MAX ||
             render.streamRingToken != slot.streamObservation.ringToken;
     value.state = value.result != VN_OK ? VN_PLAYBACK_READINESS_FAILED :
-        applied && !slot.resyncLatched.load(std::memory_order_relaxed)
+        applied && !slot.resyncLatched.load(std::memory_order_relaxed) &&
+            (render.streamRecoveryGroup == nullptr || !render.streamRecoveryGroup->recovering)
         ? VN_PLAYBACK_READINESS_APPLIED : VN_PLAYBACK_READINESS_PREPARING;
     (void)monitor::PublishStreamFact(value, true);
 }
@@ -3095,6 +3096,7 @@ bool VoicePool::PostGroupRecovery(VnVoiceHandle representative, StreamRecoveryAt
     *ticket = (static_cast<std::uint64_t>(++slot->groupRequestSerial) << 32u) |
         static_cast<std::uint32_t>(representative);
     slot->groupRequestPhase.store(GroupRequestPhase::Published, std::memory_order_release);
+    m_groupRequestCount.fetch_add(1, std::memory_order_release);
     return true;
 }
 
@@ -3107,16 +3109,18 @@ bool VoicePool::CollectGroupRecovery(std::uint64_t ticket, StreamRecoveryAttempt
         slot.groupRequest != attempt) return false;
     slot.groupRequest = nullptr;
     slot.groupRequestPhase.store(GroupRequestPhase::Empty, std::memory_order_release);
+    m_groupRequestCount.fetch_sub(1, std::memory_order_release);
     return true;
 }
 
-void VoicePool::ProcessGroupRecoveries(std::uint32_t blockFrames) noexcept {
+void VoicePool::ProcessGroupRecoveries(std::uint32_t blockFrames, std::uint64_t blockIndex) noexcept {
+    if (m_groupRequestCount.load(std::memory_order_acquire) == 0) return;
     for (auto& slot : m_slots) {
         // The stable phase, rather than a flag inside the request, protects
         // later audio blocks from dereferencing an already collected attempt.
         if (slot.groupRequestPhase.load(std::memory_order_acquire) != GroupRequestPhase::Published) continue;
         auto& attempt = *slot.groupRequest;
-        const auto result = ApplyGroupRecovery(attempt, blockFrames);
+        const auto result = ApplyGroupRecovery(attempt, blockFrames, blockIndex);
         if (result == StreamRecoveryResult::Waiting) continue;
         attempt.result = result;
         slot.groupRequestPhase.store(GroupRequestPhase::Done, std::memory_order_release);
@@ -3124,7 +3128,7 @@ void VoicePool::ProcessGroupRecoveries(std::uint32_t blockFrames) noexcept {
 }
 
 StreamRecoveryResult VoicePool::ApplyGroupRecovery(StreamRecoveryAttempt& attempt,
-                                                   std::uint32_t blockFrames) noexcept {
+                                                   std::uint32_t blockFrames, std::uint64_t blockIndex) noexcept {
     auto& group = *attempt.group;
     if (attempt.cancelRequested.load(std::memory_order_acquire) || !group.recovering ||
         group.recoverySerial.load(std::memory_order_relaxed) != attempt.serial)
@@ -3167,16 +3171,21 @@ StreamRecoveryResult VoicePool::ApplyGroupRecovery(StreamRecoveryAttempt& attemp
         const auto oldTerminal = render.streamRing->ConsumerTerminalReason();
         if (render.streamRing->ConsumerPreparationResult() != VN_OK ||
             oldTerminal == StreamTerminalReason::IntegrityAbort || oldTerminal == StreamTerminalReason::ProducerFailure) {
-            group.failed = true;
+            group.Fail(oldTerminal == StreamTerminalReason::IntegrityAbort ||
+                render.streamRing->ConsumerPreparationResult() == VN_BAD_STREAM_FILE
+                ? SourceTerminalKind::IntegrityAbort : SourceTerminalKind::ProducerFailure);
             return StreamRecoveryResult::Failed;
         }
         member.ring->CaptureConsumerSnapshot();
         const auto terminal = member.ring->ConsumerTerminalReason();
         if (member.ring->ConsumerPreparationResult() != VN_OK || terminal == StreamTerminalReason::IntegrityAbort ||
             terminal == StreamTerminalReason::ProducerFailure) {
-            group.failed = true;
+            group.Fail(terminal == StreamTerminalReason::IntegrityAbort ||
+                member.ring->ConsumerPreparationResult() == VN_BAD_STREAM_FILE
+                ? SourceTerminalKind::IntegrityAbort : SourceTerminalKind::ProducerFailure);
             return StreamRecoveryResult::Failed;
         }
+        if (!member.ring->startPromoted.load(std::memory_order_acquire)) { waiting = true; continue; }
         const auto actual = render.resampler.SourceFrame();
         if (actual < member.sourceReadFrame) { waiting = true; continue; }
         const auto skip = actual - member.sourceReadFrame;
@@ -3214,7 +3223,7 @@ StreamRecoveryResult VoicePool::ApplyGroupRecovery(StreamRecoveryAttempt& attemp
         const auto skip = static_cast<std::uint32_t>(render.resampler.SourceFrame() - member.sourceReadFrame);
         if (member.ring->packetEncoded) {
             if (render.mediaDecoder->CropStream(*member.ring, skip, 0) != StreamDecodeResult::Ready) {
-                group.failed = true;
+                group.Fail(SourceTerminalKind::IntegrityAbort);
                 return StreamRecoveryResult::Failed;
             }
         } else {
@@ -3253,6 +3262,9 @@ StreamRecoveryResult VoicePool::ApplyGroupRecovery(StreamRecoveryAttempt& attemp
         render.starvedThisBlock = false;
         render.starveCooldownRemaining = 0;
         render.sourceTerminalStreamGeneration = static_cast<std::uint32_t>(member.ringToken >> 32u);
+        member.ring->appliedReplacementSerial.store(attempt.serial, std::memory_order_relaxed);
+        member.ring->appliedFrame.store(blockIndex * blockFrames, std::memory_order_relaxed);
+        member.ring->appliedAudioBlock.store(blockIndex + 1u, std::memory_order_release);
         member.ring->observationRender.store(member.render, std::memory_order_release);
         slot.streamRingToken.store(member.ringToken, std::memory_order_release);
         old->state.store(StreamSlotState::Retired, std::memory_order_release);
@@ -4901,7 +4913,7 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
     RenderAllResult outcome;
     const bool collective = signals != nullptr && (signals->HasContent() || signals->UsesActualRouting());
     bool grouped = false;
-    if (m_deferredJobCount == 0) ProcessGroupRecoveries(blockFrames);
+    if (m_deferredJobCount == 0) ProcessGroupRecoveries(blockFrames, blockIndex);
     if (m_deferredJobCount == 0) {
         for (auto& slot : m_slots) {
             if (!IsAudioRenderingState(slot.state.load(std::memory_order_relaxed))) continue;
@@ -5188,7 +5200,12 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
         const bool failed = render.mediaDecodeFailed ||
             terminal == StreamTerminalReason::IntegrityAbort || terminal == StreamTerminalReason::ProducerFailure;
         if (render.groupStarvedThisBlock || failed) {
-            group->failed |= failed;
+            if (failed) {
+                const auto error = render.streamRing ? render.streamRing->ConsumerPreparationResult() : VN_OK;
+                group->Fail(terminal == StreamTerminalReason::ProducerFailure ||
+                    (error != VN_OK && error != VN_BAD_STREAM_FILE)
+                    ? SourceTerminalKind::ProducerFailure : SourceTerminalKind::IntegrityAbort);
+            }
             if (!group->recovering) {
                 group->recovering = true;
                 group->recoverySerial.fetch_add(1, std::memory_order_release);

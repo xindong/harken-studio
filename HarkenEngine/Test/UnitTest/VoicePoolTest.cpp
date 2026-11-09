@@ -804,6 +804,7 @@ TEST(VoicePool, GroupRecoveryWaitsForCoverageAndCommitsAllMembersWithLiveRamp) {
             ring.Wire(planes, static_cast<std::uint32_t>(samples.size()));
             ring.ResetForUse(1);
             ring.state.store(harken::StreamSlotState::Active);
+            ring.startPromoted.store(true);
         }
         rings[0].PublishFrames(64); rings[1].PublishFrames(64);
         rings[2].PublishFrames(4096); rings[3].PublishFrames(4096);
@@ -914,6 +915,7 @@ TEST(VoicePool, GroupRecoveryWaitsForCoverageAndCommitsAllMembersWithLiveRamp) {
             ASSERT_NE(nullptr, voice);
             rings[i].ResetForUse(1);
             rings[i].state.store(harken::StreamSlotState::Active);
+            rings[i].startPromoted.store(true);
             rings[i].PublishFrames(4096);
             members[i] = {streams[i], token(i + 2), &rings[i], token(i),
                 voice->resampler.SourceFrame(), voice->streamActivationStartFrame +
@@ -954,6 +956,7 @@ TEST(VoicePool, GroupRecoveryRetriesFullMultichannelCoverageInsteadOfWaiting) {
         ring.Wire(planes, static_cast<std::uint32_t>(samples.size()));
         ring.ResetForUse(6);
         ring.state.store(harken::StreamSlotState::Active);
+            ring.startPromoted.store(true);
     }
     rings[0].PublishFrames(1);
     rings[1].PublishFrames(rings[1].FrameCapacity());

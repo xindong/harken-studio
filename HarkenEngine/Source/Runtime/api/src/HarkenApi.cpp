@@ -9022,6 +9022,7 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
             engine.ledger.Release(ledgerSlot);
             engine.commands.CancelReservedBatch(&engine.timelineBatchReservation);
         }
+        engine.ReleaseGroupRecoverySource(render);
         result.status = status;
         return result;
     };
@@ -9323,6 +9324,9 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
         auto* controller = engine.ResolvePlayableService(resourceService->identity,
             resourceService->ownerInstance, resourceService->ownerEpoch);
         if (controller == nullptr) return rollback(VN_RUNTIME_RECREATE_REQUIRED);
+        const auto groupBound = engine.BindGroupRecoverySource(*controller, render, releaseObserver,
+            install, streamFacts, streamLoopStart, streamLoopEnd);
+        if (groupBound != VN_OK) return rollback(groupBound);
         if (!PrepareInheritedSourceExits(engine, *controller, render, releaseObserver, privateScheduleOwner))
             return rollback(VN_NO_VOICE);
         const auto epoch = engine.playableInstances.SourceRetirementEpoch(programGeneration);
@@ -37568,10 +37572,13 @@ bool ScheduleSourcePreparationHorizon(harken::Engine& engine, std::uint64_t* hor
 // Answers each new resync serial with one replacement ring prepared at the
 // source frame the voice's timeline reaches at the first preparable boundary.
 // A boundary past the clip end leaves the voice silent until it ends.
-void ServiceStreamResyncs(harken::Engine& engine) noexcept {
+void ServiceStreamResyncs(harken::Engine& engine) {
+    std::uint64_t preparationHorizon = UINT64_MAX;
+    (void)ScheduleSourcePreparationHorizon(engine, &preparationHorizon);
+    engine.ServiceGroupRecoveries(preparationHorizon);
     constexpr std::uint64_t kResyncTicketBit = UINT64_C(1) << 63;
     for (auto& row : engine.streamResyncs) {
-        if (row.handle == 0) continue;
+        if (row.handle == 0 || row.group) continue;
         harken::VoicePool::StreamResyncView view;
         if (!engine.voices.ReadStreamResync(row.handle, &view)) {
             if (row.token != 0) (void)engine.streamSeekHandoffs.Abandon(row.token);

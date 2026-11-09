@@ -249,6 +249,12 @@ struct StreamRecoveryGroup {
     std::atomic<std::uint64_t> recoverySerial{0};
     bool recovering = false;
     bool failed = false;
+    std::atomic<SourceTerminalKind> failure{SourceTerminalKind::None};
+    void Fail(SourceTerminalKind reason) noexcept {
+        if (failed) return;
+        failed = true;
+        failure.store(reason, std::memory_order_release);
+    }
 };
 
 enum class StreamRecoveryResult : std::uint8_t { Waiting, Applied, Retry, Cancelled, Failed };
