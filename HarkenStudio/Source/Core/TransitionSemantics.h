@@ -22,20 +22,20 @@ enum class TransitionExitTiming : uint8_t
     Immediate = 0,
     NaturalEnd,
     NextBeat,
-    NextBar,
-    NextMarker,
+    NextMeasure,
     ExitMarker
 };
 
 enum class TransitionEntryMode : uint8_t
 {
-    EntryMarker = 0,
-    SamePosition
+    InitialPosition = 0,
+    EntryMarker
 };
 
 struct TransitionFadeDef
 {
-    float durationSeconds = 0.5f;
+    float durationSeconds = 0.0f;
+    float offsetSeconds = 0.0f;
     QVector<CurvePointDef> curve{{0.0f, 0.0f}, {1.0f, 1.0f}};
     QVector<CurveHandlePairDef> handles{{0.45f, 0.0f, 0.55f, 1.0f}};
 
@@ -46,12 +46,15 @@ struct TransitionRuleDef
 {
     std::optional<QUuid> source;
     std::optional<QUuid> target;
-    TransitionExitTiming exitTiming = TransitionExitTiming::NextBar;
+    TransitionExitTiming exitTiming = TransitionExitTiming::ExitMarker;
     TransitionFadeDef sourceFadeOut;
     TransitionEntryMode entryMode = TransitionEntryMode::EntryMarker;
     TransitionFadeDef targetFadeIn;
+    bool sourceTail = true;
+    bool targetLeadIn = true;
 
     bool isDefault() const { return !source && !target; }
+    bool hasFade() const;
     bool operator==(const TransitionRuleDef&) const = default;
 };
 
@@ -105,7 +108,7 @@ struct TransitionTableDef
     bool operator==(const TransitionTableDef&) const = default;
 };
 
-TransitionFadeDef canonicalTransitionFade(float durationSeconds = 0.5f);
+TransitionFadeDef canonicalTransitionFade(float durationSeconds = 0.0f);
 TransitionRuleDef canonicalTransitionRule();
 TransitionTableDef canonicalTransitionTable();
 

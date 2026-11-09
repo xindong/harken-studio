@@ -29,6 +29,8 @@ GridEditorPanel::GridEditorPanel(QWidget* parent)
             this, &GridEditorPanel::locateItem);
     connect(editor_, &GridEditorWidget::sourceEditorRequested,
             this, &GridEditorPanel::sourceEditorRequested);
+    connect(editor_, &GridEditorWidget::externalEditorRequested,
+            this, &GridEditorPanel::externalEditorRequested);
 
     installFocusFilterRecursively(this);
 }

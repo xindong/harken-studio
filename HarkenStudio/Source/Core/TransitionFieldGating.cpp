@@ -1,6 +1,7 @@
 #include "TransitionFieldGating.h"
 
 #include "AuthoringPolicy.h"
+#include "Components/VAudio.h"
 #include "PlacementContext.h"
 #include "ProjectTypes.h"
 #include "Timeline/TimelineSemantics.h"
@@ -11,6 +12,24 @@
 #include <vector>
 
 namespace VNX {
+
+const TransitionOptionEffect& TransitionFieldGating::exit(TransitionExitTiming timing) const
+{
+    switch (timing) {
+        case TransitionExitTiming::Immediate:   return immediate;
+        case TransitionExitTiming::NaturalEnd:  return naturalEnd;
+        case TransitionExitTiming::NextBeat:    return nextBeat;
+        case TransitionExitTiming::NextMeasure: return nextMeasure;
+        case TransitionExitTiming::ExitMarker:  return exitMarker;
+    }
+    return immediate;
+}
+
+const TransitionOptionEffect& TransitionFieldGating::entry(TransitionEntryMode mode) const
+{
+    return mode == TransitionEntryMode::EntryMarker ? entryMarker : initialPosition;
+}
+
 namespace TransitionSemantics {
 namespace {
 
@@ -24,23 +43,6 @@ FieldAvail lift(bool present)
     return present ? FieldAvail::Available : FieldAvail::Unavailable;
 }
 
-struct SegmentTraits
-{
-    bool clock = false;
-    bool anyMarker = false;
-    bool exitMarker = false;
-};
-
-SegmentTraits traitsOf(const ProjectItem* segment)
-{
-    SegmentTraits traits;
-    if (!segment) return traits;
-    traits.clock = TimelineSemantics::hasMusicalClock(*segment);
-    traits.anyMarker = TimelineSemantics::hasAnyMarker(*segment);
-    traits.exitMarker = TimelineSemantics::hasMarkerKind(*segment, MarkerKind::Exit);
-    return traits;
-}
-
 FieldAvail mergeUncertain(bool any, bool all)
 {
     if (all) return FieldAvail::Available;
@@ -48,203 +50,173 @@ FieldAvail mergeUncertain(bool any, bool all)
     return FieldAvail::Unavailable;
 }
 
-struct ChildWatchScan
+struct SegmentTraits
 {
-    bool anyClock = false;
-    bool allClock = true;
-    bool anyMarker = false;
-    bool allMarker = true;
-    bool anyExitMarker = false;
-    bool allExitMarker = true;
-    bool anyChild = false;
+    bool clock = false;
+    bool exitMarker = false;
+    bool entryMarker = false;
 };
 
-ChildWatchScan scanChildren(const ProjectItem& container,
-                            const TimelineItemResolver& resolve)
+SegmentTraits traitsOf(const ProjectItem* segment)
 {
-    ChildWatchScan scan;
+    SegmentTraits traits;
+    if (!segment) return traits;
+    traits.clock = TimelineSemantics::hasMusicalClock(*segment);
+    traits.exitMarker = TimelineSemantics::hasMarkerKind(*segment, MarkerKind::Exit);
+    traits.entryMarker = TimelineSemantics::hasMarkerKind(*segment, MarkerKind::Entry);
+    return traits;
+}
+
+bool loopsForever(const ProjectItem& item)
+{
+    const auto* audio = item.comp<VAudio>();
+    return audio && audio->loopCount == 0;
+}
+
+struct EndpointTraits
+{
+    bool resolved = true;
+    FieldAvail clock = FieldAvail::Unavailable;
+    FieldAvail exitMarker = FieldAvail::Unavailable;
+    FieldAvail entryMarker = FieldAvail::Unavailable;
+    FieldAvail finiteEnd = FieldAvail::Available;
+};
+
+struct ChildScan
+{
+    bool anyChild = false;
+    bool anyClock = false, allClock = true;
+    bool anyExit = false, allExit = true;
+    bool anyEntry = false, allEntry = true;
+    bool anyFinite = false, allFinite = true;
+};
+
+ChildScan scanChildren(const ProjectItem& container, const TimelineItemResolver& resolve)
+{
+    ChildScan scan;
     for (const auto& child : container.children) {
         if (!child) continue;
         scan.anyChild = true;
-        const TransitionWatchResult watch = resolveWatchReference(
-            child.get(), container, nullptr, resolve);
-        if (watch.direction != TransitionWatchDirection::Down) {
-            scan.allClock = false;
-            scan.allMarker = false;
-            scan.allExitMarker = false;
-            continue;
-        }
-        const SegmentTraits traits = traitsOf(watch.referenceSegment);
+        const bool finite = !loopsForever(*child);
+        scan.anyFinite = scan.anyFinite || finite;
+        scan.allFinite = scan.allFinite && finite;
+        const TransitionWatchResult watch = resolveWatchReference(child.get(), container, nullptr, resolve);
+        const SegmentTraits traits = watch.direction == TransitionWatchDirection::Down
+            ? traitsOf(watch.referenceSegment) : SegmentTraits{};
         scan.anyClock = scan.anyClock || traits.clock;
         scan.allClock = scan.allClock && traits.clock;
-        scan.anyMarker = scan.anyMarker || traits.anyMarker;
-        scan.allMarker = scan.allMarker && traits.anyMarker;
-        scan.anyExitMarker = scan.anyExitMarker || traits.exitMarker;
-        scan.allExitMarker = scan.allExitMarker && traits.exitMarker;
+        scan.anyExit = scan.anyExit || traits.exitMarker;
+        scan.allExit = scan.allExit && traits.exitMarker;
+        scan.anyEntry = scan.anyEntry || traits.entryMarker;
+        scan.allEntry = scan.allEntry && traits.entryMarker;
     }
-    if (!scan.anyChild) {
-        scan.allClock = false;
-        scan.allMarker = false;
-        scan.allExitMarker = false;
-    }
+    if (!scan.anyChild)
+        scan.allClock = scan.allExit = scan.allEntry = scan.allFinite = false;
     return scan;
 }
 
-FieldAvail combineUpThenChildren(bool upwardHas, bool anyChild, bool allChild)
+EndpointTraits sourceTraits(const ProjectItem& container, const std::optional<QUuid>& source,
+                            const PlacementContext* placement, const TimelineItemResolver& resolve)
 {
-    if (upwardHas) return FieldAvail::Available;
-    return mergeUncertain(anyChild, allChild);
-}
-
-
-QString noMarkerReason()
-{
-    return trText(
-        "No marker in reach - no markers resolve from this source.");
-}
-
-QString noClockReason()
-{
-    return trText("No musical clock in reach - choose a source with access to a musical clock.");
-}
-
-QString uncertainClockReason()
-{
-    return trText("Musical timing depends on which child is the incumbent - some reach a musical clock, some do not.");
-}
-
-QString exitMarkerNote()
-{
-    return trText(
-        "The reference has no exit marker; this exit resolves to the tail, same as Natural End.");
-}
-
-
-QString uncertainMarkerReason()
-{
-    return trText(
-        "Markers depend on which child is the incumbent - some reach markers, some do not.");
-}
-
-QString uncertainExitMarkerReason()
-{
-    return trText(
-        "Exit marker depends on which child is the incumbent; when missing, this exit resolves to the tail.");
-}
-
-QString unresolvedSourceReason()
-{
-    return trText(
-        "The source reference is unresolved, so nothing can be reached from it.");
-}
-
-QString unresolvedSourceNote()
-{
-    return trText(
-        "This rule points at a deleted source; repoint it before its exit timing "
-        "can resolve.");
-}
-
-QString currentExitTimingUnavailableNote()
-{
-    return trText(
-        "The current exit timing is unavailable in this context. Choose a supported exit timing.");
-}
-
-FieldAvail exitTimingAvail(const ExitTimingAvail& exit, TransitionExitTiming timing)
-{
-    switch (timing) {
-        case TransitionExitTiming::Immediate:  return exit.immediate;
-        case TransitionExitTiming::NaturalEnd: return exit.naturalEnd;
-        case TransitionExitTiming::NextBeat:   return exit.nextBeat;
-        case TransitionExitTiming::NextBar:    return exit.nextBar;
-        case TransitionExitTiming::NextMarker:    return exit.nextMarker;
-        case TransitionExitTiming::ExitMarker:    return exit.exitMarker;
-    }
-    return FieldAvail::Available;
-}
-
-}
-
-TransitionWatchAvailability watchAvailabilityFor(
-    const ProjectItem& container,
-    const std::optional<QUuid>& source,
-    const PlacementContext* placement,
-    const TimelineItemResolver& resolve)
-{
-    TransitionWatchAvailability availability;
-
+    EndpointTraits traits;
     if (source) {
-        const ProjectItem* sourceItem = resolve ? resolve(*source) : nullptr;
-        if (!sourceItem) {
-            availability.sourceResolved = false;
-            return availability;
+        const ProjectItem* item = resolve ? resolve(*source) : nullptr;
+        if (!item) {
+            traits.resolved = false;
+            return traits;
         }
-        const TransitionWatchResult watch = resolveWatchReference(
-            sourceItem, container, placement, resolve);
-        const SegmentTraits traits = traitsOf(watch.referenceSegment);
-        availability.clock = lift(traits.clock);
-        availability.anyMarker = lift(traits.anyMarker);
-        availability.exitMarker = lift(traits.exitMarker);
-        return availability;
+        const SegmentTraits segment = traitsOf(
+            resolveWatchReference(item, container, placement, resolve).referenceSegment);
+        traits.clock = lift(segment.clock);
+        traits.exitMarker = lift(segment.exitMarker);
+        traits.finiteEnd = lift(!loopsForever(*item));
+        return traits;
     }
+    const SegmentTraits upward = traitsOf(
+        resolveWatchReference(nullptr, container, placement, resolve).referenceSegment);
+    const ChildScan scan = scanChildren(container, resolve);
+    traits.clock = upward.clock ? FieldAvail::Available : mergeUncertain(scan.anyClock, scan.allClock);
+    traits.exitMarker = upward.exitMarker ? FieldAvail::Available : mergeUncertain(scan.anyExit, scan.allExit);
+    traits.finiteEnd = mergeUncertain(scan.anyFinite, scan.allFinite);
+    return traits;
+}
 
-    const TransitionWatchResult upward = resolveWatchReference(
-        nullptr, container, placement, resolve);
-    const SegmentTraits upTraits = traitsOf(upward.referenceSegment);
-    const ChildWatchScan scan = scanChildren(container, resolve);
-    availability.clock = combineUpThenChildren(
-        upTraits.clock, scan.anyClock, scan.allClock);
-    availability.anyMarker = combineUpThenChildren(
-        upTraits.anyMarker, scan.anyMarker, scan.allMarker);
-    availability.exitMarker = combineUpThenChildren(
-        upTraits.exitMarker, scan.anyExitMarker, scan.allExitMarker);
-    return availability;
+EndpointTraits targetTraits(const ProjectItem& container, const std::optional<QUuid>& target,
+                            const TimelineItemResolver& resolve)
+{
+    EndpointTraits traits;
+    if (target) {
+        const ProjectItem* item = resolve ? resolve(*target) : nullptr;
+        if (!item) {
+            traits.resolved = false;
+            return traits;
+        }
+        const TransitionWatchResult watch = resolveWatchReference(item, container, nullptr, resolve);
+        traits.entryMarker = lift(watch.direction == TransitionWatchDirection::Down
+                                  && traitsOf(watch.referenceSegment).entryMarker);
+        return traits;
+    }
+    const ChildScan scan = scanChildren(container, resolve);
+    traits.entryMarker = mergeUncertain(scan.anyEntry, scan.allEntry);
+    return traits;
+}
+
+TransitionOptionEffect option(FieldAvail effect, const QString& unavailable, const QString& uncertain)
+{
+    if (effect == FieldAvail::Unavailable) return {effect, unavailable};
+    if (effect == FieldAvail::Uncertain) return {effect, uncertain};
+    return {};
+}
+
 }
 
 TransitionFieldGating gatingFor(const ProjectItem& container,
                                 const TransitionRuleDef& rule,
-                                const TransitionWatchAvailability& watch)
+                                const PlacementContext* placement,
+                                const TimelineItemResolver& resolve)
 {
+    const EndpointTraits source = sourceTraits(container, rule.source, placement, resolve);
+    const EndpointTraits target = targetTraits(container, rule.target, resolve);
     TransitionFieldGating gating;
-    gating.sourceEndpointEditable = !rule.isDefault();
-    gating.targetEndpointEditable = !rule.isDefault();
 
-    gating.exit.immediate = FieldAvail::Available;
-    gating.exit.naturalEnd = FieldAvail::Available;
-    gating.exit.nextBeat = watch.clock;
-    gating.exit.nextBar = watch.clock;
-    gating.exit.nextMarker = watch.anyMarker;
-    gating.exit.exitMarker = FieldAvail::Available;
+    gating.naturalEnd = option(source.finiteEnd,
+        trText("The source loops forever and never reaches its end, so this transition never happens."),
+        trText("Depends on the playing child: for a child that loops forever, this transition never happens."));
+    const TransitionOptionEffect musical = source.resolved
+        ? option(source.clock,
+                 trText("No musical clock in reach of the source; acts as Immediate."),
+                 trText("Depends on the playing child: without a musical clock it acts as Immediate."))
+        : TransitionOptionEffect{FieldAvail::Unavailable,
+                                 trText("The source reference is missing; acts as Immediate.")};
+    gating.nextBeat = musical;
+    gating.nextMeasure = musical;
+    gating.exitMarker = source.resolved
+        ? option(source.exitMarker,
+                 trText("The source has no exit marker; acts as Natural End."),
+                 trText("Depends on the playing child: without an exit marker it acts as Natural End."))
+        : TransitionOptionEffect{FieldAvail::Unavailable,
+                                 trText("The source reference is missing; acts as Natural End.")};
+    gating.entryMarker = target.resolved
+        ? option(target.entryMarker,
+                 trText("The target has no entry marker; acts as Initial Position."),
+                 trText("Depends on the chosen child: without an entry marker it acts as Initial Position."))
+        : TransitionOptionEffect{FieldAvail::Unavailable,
+                                 trText("The target reference is missing; acts as Initial Position.")};
 
-    if (watch.clock == FieldAvail::Unavailable) {
-        gating.exit.reasonNextBeat = watch.sourceResolved ? noClockReason() : unresolvedSourceReason();
-        gating.exit.reasonNextBar = gating.exit.reasonNextBeat;
-    } else if (watch.clock == FieldAvail::Uncertain) {
-        gating.exit.reasonNextBeat = uncertainClockReason();
-        gating.exit.reasonNextBar = gating.exit.reasonNextBeat;
-    }
-    const QString markerUnavailableReason =
-        watch.sourceResolved ? noMarkerReason() : unresolvedSourceReason();
-
-    if (watch.anyMarker == FieldAvail::Unavailable) {
-        gating.exit.reasonNextMarker = markerUnavailableReason;
-    } else if (watch.anyMarker == FieldAvail::Uncertain) {
-        gating.exit.reasonNextMarker = uncertainMarkerReason();
-    }
-
-    if (watch.exitMarker == FieldAvail::Unavailable) {
-        gating.exit.reasonExitMarker = exitMarkerNote();
-    } else if (watch.exitMarker == FieldAvail::Uncertain) {
-        gating.exit.reasonExitMarker = uncertainExitMarkerReason();
-    }
-
-    if (exitTimingAvail(gating.exit, rule.exitTiming) == FieldAvail::Unavailable)
-        gating.exit.warning = currentExitTimingUnavailableNote();
-    else if (!watch.sourceResolved)
-        gating.exit.warning = unresolvedSourceNote();
-
-    (void)container;
+    if (rule.exitTiming != TransitionExitTiming::ExitMarker)
+        gating.sourceTail = {FieldAvail::Unavailable,
+            trText("Source Tail only plays with the Exit Marker exit; here it counts as 0 seconds.")};
+    else
+        gating.sourceTail = option(gating.exitMarker.effect,
+            trText("The source has no exit marker, so its tail counts as 0 seconds."),
+            trText("Depends on the playing child: without an exit marker the tail counts as 0 seconds."));
+    if (rule.entryMode != TransitionEntryMode::EntryMarker)
+        gating.targetLeadIn = {FieldAvail::Unavailable,
+            trText("Target Lead-In only plays with the Entry Marker entry; here it counts as 0 seconds.")};
+    else
+        gating.targetLeadIn = option(gating.entryMarker.effect,
+            trText("The target has no entry marker, so its lead-in counts as 0 seconds."),
+            trText("Depends on the chosen child: without an entry marker the lead-in counts as 0 seconds."));
     return gating;
 }
 

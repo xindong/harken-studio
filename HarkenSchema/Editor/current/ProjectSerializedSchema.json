@@ -2052,10 +2052,14 @@
             "type": "object"
           },
           "type": "array"
+        },
+        "offsetSeconds": {
+          "type": "number"
         }
       },
       "required": [
         "durationSeconds",
+        "offsetSeconds",
         "curve",
         "handles"
       ],
@@ -2070,8 +2074,8 @@
             "properties": {
               "entryMode": {
                 "enum": [
-                  "EntryMarker",
-                  "SamePosition"
+                  "InitialPosition",
+                  "EntryMarker"
                 ],
                 "type": "string"
               },
@@ -2080,8 +2084,7 @@
                   "Immediate",
                   "NaturalEnd",
                   "NextBeat",
-                  "NextBar",
-                  "NextMarker",
+                  "NextMeasure",
                   "ExitMarker"
                 ],
                 "type": "string"
@@ -2096,6 +2099,9 @@
               "sourceFadeOut": {
                 "$ref": "#/$defs/transitionFade"
               },
+              "sourceTail": {
+                "type": "boolean"
+              },
               "target": {
                 "format": "uuid",
                 "type": [
@@ -2105,6 +2111,9 @@
               },
               "targetFadeIn": {
                 "$ref": "#/$defs/transitionFade"
+              },
+              "targetLeadIn": {
+                "type": "boolean"
               }
             },
             "required": [
@@ -2113,7 +2122,9 @@
               "exitTiming",
               "sourceFadeOut",
               "entryMode",
-              "targetFadeIn"
+              "targetFadeIn",
+              "sourceTail",
+              "targetLeadIn"
             ],
             "type": "object"
           },

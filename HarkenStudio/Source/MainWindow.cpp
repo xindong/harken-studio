@@ -658,6 +658,8 @@ void MainWindow::initializeStructure(
                     [this](const QUuid& soundGuid, const QUuid& entryId) {
                 openExternalEditor(ExternalEditorSelection::source(soundGuid, entryId));
             });
+            connect(ed, &GridEditorPanel::externalEditorRequested, this,
+                    [this](const ExternalEditorSelection& selection) { openExternalEditor(selection); });
             wireStandaloneEditorPin(ed);
             return ed;
         };

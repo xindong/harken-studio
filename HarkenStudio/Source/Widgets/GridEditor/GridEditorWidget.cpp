@@ -161,6 +161,8 @@ GridEditorWidget::GridEditorWidget(QWidget* parent)
             this, &GridEditorWidget::sourceEditorRequested);
     connect(mixingEditor_, &MixingEditorWidget::sourceEditorRequested,
             this, &GridEditorWidget::sourceEditorRequested);
+    connect(transitionTable_, &TransitionTableWidget::externalEditorRequested,
+            this, &GridEditorWidget::externalEditorRequested);
     connect(&ThemeManager::instance(), &ThemeManager::themeChanged,
             this, [this]() { refreshChrome(); });
 

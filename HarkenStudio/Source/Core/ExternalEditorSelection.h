@@ -9,13 +9,15 @@ namespace VNX {
 
 struct ExternalEditorSelection
 {
-    enum class Kind { None, Attenuation, Binding, Source, Filter };
+    enum class Kind { None, Attenuation, Binding, Source, Filter, Transition };
 
     Kind kind = Kind::None;
     QUuid ownerGuid;
     CurveSelection curve;
     BindingAddress bindingAddress;
     QUuid sourceEntryId;
+    std::optional<QUuid> transitionSource;
+    std::optional<QUuid> transitionTarget;
     bool attenuationSlot = false;
     std::optional<PlacementContext> placement;
 
@@ -61,6 +63,18 @@ struct ExternalEditorSelection
         return selection;
     }
 
+    static ExternalEditorSelection transition(const QUuid& container,
+                                              const std::optional<QUuid>& source,
+                                              const std::optional<QUuid>& target)
+    {
+        ExternalEditorSelection selection;
+        selection.kind = Kind::Transition;
+        selection.ownerGuid = container;
+        selection.transitionSource = source;
+        selection.transitionTarget = target;
+        return selection;
+    }
+
     bool sameContext(const ExternalEditorSelection& other) const
     {
         if (kind != other.kind || ownerGuid != other.ownerGuid || placement != other.placement)
@@ -75,6 +89,9 @@ struct ExternalEditorSelection
             return sourceEntryId == other.sourceEntryId;
         case Kind::Filter:
             return true;
+        case Kind::Transition:
+            return transitionSource == other.transitionSource
+                && transitionTarget == other.transitionTarget;
         case Kind::None:
             return false;
         }

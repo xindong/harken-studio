@@ -12,8 +12,6 @@ bool supportsObjectColorEditing();
 bool supportsMusicalTime();
 const std::vector<TransitionExitTiming>& allowedTransitionExitTimings();
 bool allowsTransitionExitTiming(TransitionExitTiming timing);
-TransitionRuleDef defaultTransitionRule();
-TransitionTableDef defaultTransitionTable();
 TimelineValidation validateSegmentTime(const SegmentTimeSpec& time);
 TimelineValidation validateSegmentTime(const QJsonObject& time);
 TimelineValidation validateTemplate(const QJsonObject& templateData);

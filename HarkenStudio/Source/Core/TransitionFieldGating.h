@@ -15,34 +15,28 @@ struct ProjectItem;
 
 enum class FieldAvail : uint8_t { Available, Uncertain, Unavailable };
 
-struct TransitionWatchAvailability
+struct TransitionOptionEffect
 {
-    FieldAvail clock = FieldAvail::Unavailable;
-    FieldAvail anyMarker = FieldAvail::Unavailable;
-    FieldAvail exitMarker = FieldAvail::Unavailable;
-    bool sourceResolved = true;
-};
+    FieldAvail effect = FieldAvail::Available;
+    QString note;
 
-struct ExitTimingAvail
-{
-    FieldAvail immediate = FieldAvail::Available;
-    FieldAvail naturalEnd = FieldAvail::Available;
-    FieldAvail nextBeat = FieldAvail::Unavailable;
-    FieldAvail nextBar = FieldAvail::Unavailable;
-    FieldAvail nextMarker = FieldAvail::Unavailable;
-    FieldAvail exitMarker = FieldAvail::Available;
-    QString reasonNextBeat;
-    QString reasonNextBar;
-    QString reasonNextMarker;
-    QString reasonExitMarker;
-    QString warning;
+    bool effective() const { return effect == FieldAvail::Available; }
 };
 
 struct TransitionFieldGating
 {
-    bool sourceEndpointEditable = true;
-    bool targetEndpointEditable = true;
-    ExitTimingAvail exit;
+    TransitionOptionEffect immediate;
+    TransitionOptionEffect naturalEnd;
+    TransitionOptionEffect nextBeat;
+    TransitionOptionEffect nextMeasure;
+    TransitionOptionEffect exitMarker;
+    TransitionOptionEffect initialPosition;
+    TransitionOptionEffect entryMarker;
+    TransitionOptionEffect sourceTail;
+    TransitionOptionEffect targetLeadIn;
+
+    const TransitionOptionEffect& exit(TransitionExitTiming timing) const;
+    const TransitionOptionEffect& entry(TransitionEntryMode mode) const;
 };
 
 struct TransitionLedgerGating
@@ -55,15 +49,10 @@ struct TransitionLedgerGating
 
 namespace TransitionSemantics {
 
-TransitionWatchAvailability watchAvailabilityFor(
-    const ProjectItem& container,
-    const std::optional<QUuid>& source,
-    const PlacementContext* placement,
-    const TimelineItemResolver& resolve);
-
 TransitionFieldGating gatingFor(const ProjectItem& container,
                                 const TransitionRuleDef& rule,
-                                const TransitionWatchAvailability& watch);
+                                const PlacementContext* placement,
+                                const TimelineItemResolver& resolve);
 
 using TransitionEndpoints = std::pair<std::optional<QUuid>, std::optional<QUuid>>;
 

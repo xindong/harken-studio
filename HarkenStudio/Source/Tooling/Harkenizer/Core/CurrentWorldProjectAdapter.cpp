@@ -626,10 +626,8 @@ QString transitionExitTimingName(TransitionExitTiming timing)
             return QStringLiteral("NaturalEnd");
         case TransitionExitTiming::NextBeat:
             return QStringLiteral("NextBeat");
-        case TransitionExitTiming::NextBar:
-            return QStringLiteral("NextBar");
-        case TransitionExitTiming::NextMarker:
-            return QStringLiteral("NextMarker");
+        case TransitionExitTiming::NextMeasure:
+            return QStringLiteral("NextMeasure");
         case TransitionExitTiming::ExitMarker:
             return QStringLiteral("ExitMarker");
     }
@@ -649,9 +647,7 @@ bool appendBasicTransitionProgram(
         && (selection.mode != SelectionMode::Match
             || selection.variableResponse() != VariableResponse::Live))
         return true;
-    auto absoluteDefault = canonicalTransitionTable();
-    absoluteDefault.rules.front().exitTiming = TransitionExitTiming::Immediate;
-    if (selection.transitions == absoluteDefault) return true;
+    if (selection.transitions == canonicalTransitionTable()) return true;
     const TransitionValidation validation = selection.transitions.validate();
     if (!validation) {
         setError(error, validation.message);
@@ -744,7 +740,7 @@ bool appendBasicTransitionProgram(
                       CurrentWorldBuildStatus::CapabilityUnavailable);
             setError(error,
                      QStringLiteral(
-                         "Current World Transition does not support SamePosition target entry"));
+                         "Current World Transition does not support InitialPosition target entry"));
             return false;
         }
 

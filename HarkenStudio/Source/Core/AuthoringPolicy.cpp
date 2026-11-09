@@ -111,8 +111,7 @@ const std::vector<TransitionExitTiming>& allowedTransitionExitTimings()
         TransitionExitTiming::Immediate,
         TransitionExitTiming::NaturalEnd,
         TransitionExitTiming::NextBeat,
-        TransitionExitTiming::NextBar,
-        TransitionExitTiming::NextMarker,
+        TransitionExitTiming::NextMeasure,
         TransitionExitTiming::ExitMarker};
     return timings;
 }
@@ -121,18 +120,6 @@ bool allowsTransitionExitTiming(TransitionExitTiming timing)
 {
     const auto& timings = allowedTransitionExitTimings();
     return std::find(timings.begin(), timings.end(), timing) != timings.end();
-}
-
-TransitionRuleDef defaultTransitionRule()
-{
-    auto rule = canonicalTransitionRule();
-    rule.exitTiming = TransitionExitTiming::Immediate;
-    return rule;
-}
-
-TransitionTableDef defaultTransitionTable()
-{
-    return {{defaultTransitionRule()}};
 }
 
 TimelineValidation validateSegmentTime(const SegmentTimeSpec& time)

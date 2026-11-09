@@ -384,6 +384,26 @@
     "audition.reset": {
       "title": "Reset Container Selection",
       "body": "Clear the selected Random or Sequence Container's preview selection memory, including queue progress."
+    },
+    "transition.exit": {
+      "title": "Exit",
+      "body": "When the playing source hands over to the target. Immediate leaves at once; Natural End waits for the source to finish; Next Beat and Next Measure wait for the source's musical grid; Exit Marker leaves at the source's exit marker.\n\nEvery option can be chosen. When the source cannot honor it, the field shows a warning and the rule falls back: Next Beat and Next Measure without a reachable musical clock act as Immediate; Exit Marker without an exit marker acts as Natural End; Natural End on a source that loops forever never happens. With * (Any), the result depends on which child is playing."
+    },
+    "transition.entry": {
+      "title": "Entry",
+      "body": "Where the target starts relative to the transition point. Initial Position starts the target from its beginning; Entry Marker places the target's entry marker on the transition point.\n\nWhen the target has no entry marker, Entry Marker shows a warning and acts as Initial Position. With * (Any), the result depends on which child is chosen."
+    },
+    "transition.sourceTail": {
+      "title": "Source Tail",
+      "body": "Keeps playing the source content after its exit marker, overlapping the target. It only applies with the Exit Marker exit on a source that has an exit marker; otherwise it is shown with a warning and counts as 0 seconds."
+    },
+    "transition.targetLeadIn": {
+      "title": "Target Lead-In",
+      "body": "Plays the target content before its entry marker ahead of the transition point. It only applies with the Entry Marker entry on a target that has an entry marker; otherwise it is shown with a warning and counts as 0 seconds."
+    },
+    "transition.fade": {
+      "title": "Fade",
+      "body": "Fade-out of the source and fade-in of the target around the transition point. Off by default; any change from the default turns it on. Click to edit both curves on the transition timeline in the External Editor, where the center line is the transition point."
     }
   }
 }

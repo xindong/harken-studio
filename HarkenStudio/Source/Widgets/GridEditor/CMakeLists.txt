@@ -13,8 +13,6 @@ add_library(harken_editor_grid_editor STATIC
     SelectionListWidget.h
     SelectionWaveform.cpp
     SelectionWaveform.h
-    TransitionFadeButton.cpp
-    TransitionFadeButton.h
     TransitionTableWidget.cpp
     TransitionTableWidget.h
     GridHeaderRef.h
@@ -34,6 +32,7 @@ target_link_libraries(harken_editor_grid_editor PUBLIC
     harken_editor_foundation
     harken_editor_curve_editor
     harken_editor_selector
+    harken_editor_transition_fade
 )
 
 if(MSVC)

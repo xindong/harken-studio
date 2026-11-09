@@ -612,11 +612,8 @@ void TableWidget::refreshRowState(const Row& row)
     QtControlSkin::setSemanticProperty(row.selectionCell, "selected", selected);
     QtControlSkin::setSemanticProperty(row.widget, "rowDetailsVisible",
         row.details && !row.details->isHidden());
-    if (row.details) {
-        QtControlSkin::setSemanticProperty(row.details, "selected", selected);
+    if (row.details)
         QtControlSkin::setSemanticProperty(row.details, "lastRow", row.widget->property("lastRow"));
-        QtControlSkin::setSemanticProperty(row.detailsNumber, "selected", selected);
-    }
 }
 
 void TableWidget::refreshRowDetails(const Row& row)

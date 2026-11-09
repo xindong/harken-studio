@@ -13,6 +13,7 @@
 #include "Widgets/Inspector/FieldGroupInspectorView.h"
 #include "Widgets/SourceEditor/SourceRangeEditor.h"
 #include "Widgets/FilterEditor/FilterEditorWidget.h"
+#include "Widgets/TransitionFade/TransitionFadeEditor.h"
 
 #include <QChildEvent>
 #include <QFocusEvent>
@@ -49,6 +50,8 @@ ExternalEditorPanel::ExternalEditorPanel(QWidget* parent)
     layout->addWidget(source_, 1);
     filter_ = new FilterEditorWidget(this);
     layout->addWidget(filter_, 1);
+    transition_ = new TransitionFadeEditor(this);
+    layout->addWidget(transition_, 1);
     connect(filter_, &FilterEditorWidget::externalEditorRequested,
             this, &ExternalEditorPanel::externalEditorRequested);
     showContent(nullptr);
@@ -132,6 +135,8 @@ void ExternalEditorPanel::bindSelection(const ExternalEditorSelection& selection
         source_->setSource({}, nullptr);
     if (selection_.kind != Kind::Filter)
         filter_->bindItem(nullptr);
+    if (selection_.kind != Kind::Transition)
+        transition_->clear();
     bindings_->setVisible(selection_.kind == Kind::Binding);
     switch (selection_.kind) {
     case Kind::Binding: {
@@ -157,6 +162,12 @@ void ExternalEditorPanel::bindSelection(const ExternalEditorSelection& selection
         filter_->bindItem(boundItem());
         showContent(filter_);
         break;
+    case Kind::Transition:
+        curve_->clear();
+        transition_->bindRule(selection_.ownerGuid,
+                              {selection_.transitionSource, selection_.transitionTarget});
+        showContent(transition_);
+        break;
     case Kind::None:
         clearEditor();
         break;
@@ -170,6 +181,7 @@ void ExternalEditorPanel::clearEditor()
     curve_->clear();
     source_->setSource({}, nullptr);
     filter_->bindItem(nullptr);
+    transition_->clear();
     showContent(nullptr);
 }
 
@@ -179,6 +191,7 @@ void ExternalEditorPanel::showContent(QWidget* content)
     curvesScroll_->setVisible(content == curves_);
     source_->setVisible(content == source_);
     filter_->setVisible(content == filter_);
+    transition_->setVisible(content == transition_);
     updateGeometry();
 }
 
@@ -257,6 +270,12 @@ QVariantMap ExternalEditorPanel::snapshotState() const
         state[QStringLiteral("sourceEntryId")] = selection_.sourceEntryId.toString(QUuid::WithoutBraces);
     } else if (selection_.kind == ExternalEditorSelection::Kind::Filter) {
         state[QStringLiteral("filter")] = true;
+    } else if (selection_.kind == ExternalEditorSelection::Kind::Transition) {
+        state[QStringLiteral("transition")] = true;
+        if (selection_.transitionSource)
+            state[QStringLiteral("transitionSource")] = selection_.transitionSource->toString(QUuid::WithoutBraces);
+        if (selection_.transitionTarget)
+            state[QStringLiteral("transitionTarget")] = selection_.transitionTarget->toString(QUuid::WithoutBraces);
     } else if (selection_.kind == ExternalEditorSelection::Kind::Binding) {
         state[QStringLiteral("bindingHostGuid")] = selection_.curve.hostGuid.toString(QUuid::WithoutBraces);
         state[QStringLiteral("bindingHostClass")] = BindingContractSemantics::hostClassName(selection_.bindingAddress.hostClass);
@@ -291,6 +310,12 @@ void ExternalEditorPanel::restoreState(const QVariantMap& state)
         selection = ExternalEditorSelection::source(owner, state.value(QStringLiteral("sourceEntryId")).toUuid());
     } else if (state.value(QStringLiteral("filter")).toBool()) {
         selection = ExternalEditorSelection::filter(owner);
+    } else if (state.value(QStringLiteral("transition")).toBool()) {
+        const auto endpoint = [&state](const QString& key) {
+            return state.contains(key) ? std::make_optional(state.value(key).toUuid()) : std::nullopt;
+        };
+        selection = ExternalEditorSelection::transition(owner,
+            endpoint(QStringLiteral("transitionSource")), endpoint(QStringLiteral("transitionTarget")));
     } else if (state.contains(QStringLiteral("bindingHostGuid"))) {
         BindingAddress address;
         address.hostClass = BindingContractSemantics::parseHostClass(

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Core/ExternalEditorSelection.h"
 #include "Core/PlacementContext.h"
 #include "Core/ProjectTypes.h"
 
@@ -61,6 +62,7 @@ signals:
     void navigateToItem(uint32_t objectID);
     void locateItem(uint32_t objectID);
     void sourceEditorRequested(const QUuid& soundGuid, const QUuid& entryId);
+    void externalEditorRequested(const ExternalEditorSelection& selection);
 
 protected:
     void showEvent(QShowEvent* event) override;

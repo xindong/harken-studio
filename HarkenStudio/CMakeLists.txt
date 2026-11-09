@@ -331,6 +331,7 @@ add_subdirectory(Source/Widgets/EffectEditor)
 # Phase2 WP3: Grid Editor panel (leaf lib, Foundation only).
 add_subdirectory(Source/Widgets/GridEditor)
 add_subdirectory(Source/Widgets/Timeline)
+add_subdirectory(Source/Widgets/TransitionFade)
 # Phase0 WP3 batch C: shared project-tree skeleton (ProjectTreePanel +
 # ProjectTreeWidget); must come AFTER Common + Shared, BEFORE ProjectExplorer /
 # Hierarchy since both link it.

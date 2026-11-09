@@ -121,7 +121,7 @@ inline QJsonObject setItemPropertySchema()
                 {QStringLiteral("type"), QStringLiteral("boolean")}}},
             {QStringLiteral("transitions"), QJsonObject{
                 {QStringLiteral("type"), QStringLiteral("object")},
-                {QStringLiteral("description"), QStringLiteral("Container transition table. Exit timings: Immediate, NaturalEnd, NextBeat, NextBar, NextMarker, ExitMarker. Beat and bar timing require a reachable musical clock; marker timing follows the watch reference. Runtime support is assessed separately for each operation and target.")}}},
+                {QStringLiteral("description"), QStringLiteral("Container transition table. Exit timings: Immediate, NaturalEnd, NextBeat, NextMeasure, ExitMarker; entry modes: InitialPosition, EntryMarker. Every option is accepted; when an endpoint cannot honor it the rule falls back: NextBeat and NextMeasure without a reachable musical clock act as Immediate, ExitMarker without an exit marker acts as NaturalEnd, EntryMarker without an entry marker acts as InitialPosition. sourceTail plays source content after its exit marker and targetLeadIn plays target content before its entry marker; otherwise they count as zero length. Runtime support is assessed separately for each operation and target.")}}},
             {QStringLiteral("volume"), QJsonObject{{QStringLiteral("type"), QStringLiteral("number")}}},
             {QStringLiteral("loopCount"), QJsonObject{{QStringLiteral("type"), QStringLiteral("integer")}, {QStringLiteral("minimum"), 0}}},
             {QStringLiteral("scheduleOffsetSec"), QJsonObject{{QStringLiteral("type"), QStringLiteral("number")}, {QStringLiteral("minimum"), 0}}},

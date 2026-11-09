@@ -13,6 +13,7 @@ class BindingFieldEditor;
 class CurveEditorWidget;
 class SourceRangeEditor;
 class FilterEditorWidget;
+class TransitionFadeEditor;
 
 class ExternalEditorPanel final : public QWidget
 {
@@ -63,6 +64,7 @@ private:
     CurveEditorWidget* curve_ = nullptr;
     SourceRangeEditor* source_ = nullptr;
     FilterEditorWidget* filter_ = nullptr;
+    TransitionFadeEditor* transition_ = nullptr;
 };
 
 }

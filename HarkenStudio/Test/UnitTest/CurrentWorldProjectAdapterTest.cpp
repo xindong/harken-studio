@@ -354,8 +354,7 @@ TEST(CurrentWorldProjectAdapter, UnsupportedTransitionTimingIsNeverSilentlyDisca
         << error.toStdString();
     ASSERT_EQ(status, CurrentWorldBuildStatus::Ready);
 
-    for (const auto timing : {TransitionExitTiming::NextBeat, TransitionExitTiming::NextBar,
-                              TransitionExitTiming::NextMarker, TransitionExitTiming::ExitMarker}) {
+    for (const auto timing : {TransitionExitTiming::NextBeat, TransitionExitTiming::NextMeasure}) {
         SCOPED_TRACE(static_cast<int>(timing));
         selection->transitions.rules.front().exitTiming = timing;
         error.clear();

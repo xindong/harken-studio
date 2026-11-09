@@ -2865,8 +2865,6 @@ ProjectItem* ProjectManager::createItemImpl(ProjectItem* parent, const QString& 
     newItem->attachDefaultComponents();
     if (auto* variable = newItem->comp<VVariable>())
         VariableSemantics::initializeNewVariable(*variable, variableKind);
-    if (auto* selection = newItem->comp<VSelection>())
-        selection->transitions = AuthoringPolicy::defaultTransitionTable();
     if (auto* segment = newItem->comp<VSegment>()) {
         segment->segmentTime = SegmentTimeSpec::musical();
         const auto end = TimelineCoordinates::fromSeconds(

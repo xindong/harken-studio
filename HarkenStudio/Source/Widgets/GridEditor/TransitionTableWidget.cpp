@@ -1,26 +1,28 @@
 #include "TransitionTableWidget.h"
-#include "TransitionFadeButton.h"
 
-#include "Core/ActionManager.h"
 #include "Core/ActionStepUtils.h"
 #include "Core/AuthoringPolicy.h"
-#include "Core/Components/VSelection.h"
+#include "Core/ContextInfo.h"
 #include "Core/ItemTypeCatalog.h"
-#include "Core/ItemTypeIcons.h"
 #include "Core/PlatformContextService.h"
 #include "Core/ProjectManager.h"
 #include "Core/QtControlSkin.h"
+#include "Core/ThemeLayout.h"
+#include "Core/ThemeManager.h"
 #include "Core/TransitionFieldGating.h"
 #include "Widgets/Common/LayoutDebugTint.h"
 #include "Widgets/Common/ListFooter.h"
 #include "Widgets/Common/TableWidget.h"
 #include "Widgets/Selector/ObjectRefWidget.h"
+#include "Widgets/Shared/InspectorFormRow.h"
+#include "Widgets/TransitionFade/TransitionFadePreviewField.h"
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QHBoxLayout>
-#include <QJsonObject>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QStandardItemModel>
 #include <QStyle>
@@ -46,36 +48,62 @@ TimelineItemResolver itemResolver()
 QString exitTimingText(TransitionExitTiming timing)
 {
     switch (timing) {
-        case TransitionExitTiming::Immediate:  return TransitionTableWidget::tr("Immediate");
-        case TransitionExitTiming::NaturalEnd: return TransitionTableWidget::tr("Natural End");
-        case TransitionExitTiming::NextBeat:   return TransitionTableWidget::tr("Next Beat");
-        case TransitionExitTiming::NextBar:    return TransitionTableWidget::tr("Next Bar");
-        case TransitionExitTiming::NextMarker: return TransitionTableWidget::tr("Next Marker");
-        case TransitionExitTiming::ExitMarker: return TransitionTableWidget::tr("Exit Marker");
+        case TransitionExitTiming::Immediate:   return TransitionTableWidget::tr("Immediate");
+        case TransitionExitTiming::NaturalEnd:  return TransitionTableWidget::tr("Natural End");
+        case TransitionExitTiming::NextBeat:    return TransitionTableWidget::tr("Next Beat");
+        case TransitionExitTiming::NextMeasure: return TransitionTableWidget::tr("Next Measure");
+        case TransitionExitTiming::ExitMarker:  return TransitionTableWidget::tr("Exit Marker");
+    }
+    return QString();
+}
+
+QString exitTimingDescription(TransitionExitTiming timing)
+{
+    switch (timing) {
+        case TransitionExitTiming::Immediate:   return TransitionTableWidget::tr("Leave the source as soon as the transition is requested.");
+        case TransitionExitTiming::NaturalEnd:  return TransitionTableWidget::tr("Leave the source when it finishes playing.");
+        case TransitionExitTiming::NextBeat:    return TransitionTableWidget::tr("Leave the source on its next beat.");
+        case TransitionExitTiming::NextMeasure: return TransitionTableWidget::tr("Leave the source at the start of its next measure.");
+        case TransitionExitTiming::ExitMarker:  return TransitionTableWidget::tr("Leave the source at its exit marker.");
     }
     return QString();
 }
 
 QString entryModeText(TransitionEntryMode mode)
 {
-    switch (mode) {
-        case TransitionEntryMode::EntryMarker:  return TransitionTableWidget::tr("Entry Marker");
-        case TransitionEntryMode::SamePosition: return TransitionTableWidget::tr("Same Position");
-    }
-    return QString();
+    return mode == TransitionEntryMode::InitialPosition ? TransitionTableWidget::tr("Initial Position")
+                                                        : TransitionTableWidget::tr("Entry Marker");
 }
 
-FieldAvail exitAvailability(const ExitTimingAvail& exit, TransitionExitTiming timing, QString* reason)
+QString entryModeDescription(TransitionEntryMode mode)
 {
-    switch (timing) {
-        case TransitionExitTiming::Immediate:  return exit.immediate;
-        case TransitionExitTiming::NaturalEnd: return exit.naturalEnd;
-        case TransitionExitTiming::NextBeat:   *reason = exit.reasonNextBeat; return exit.nextBeat;
-        case TransitionExitTiming::NextBar:    *reason = exit.reasonNextBar; return exit.nextBar;
-        case TransitionExitTiming::NextMarker: *reason = exit.reasonNextMarker; return exit.nextMarker;
-        case TransitionExitTiming::ExitMarker: *reason = exit.reasonExitMarker; return exit.exitMarker;
-    }
-    return FieldAvail::Available;
+    return mode == TransitionEntryMode::InitialPosition
+        ? TransitionTableWidget::tr("Start the target from its beginning at the transition point.")
+        : TransitionTableWidget::tr("Start the target so its entry marker lands on the transition point.");
+}
+
+QString effectToolTip(const QString& description, const TransitionOptionEffect& effect)
+{
+    return effect.note.isEmpty() ? description : description + QStringLiteral("\n\n") + effect.note;
+}
+
+void showEffect(QWidget* widget, const QString& description, const TransitionOptionEffect& effect, bool active)
+{
+    widget->setToolTip(active ? effectToolTip(description, effect) : description);
+    QtControlSkin::setSemanticProperty(widget, "inputInvalid", active && !effect.effective());
+}
+
+QToolButton* createChevron(QWidget* parent, const QString& name, const QString& toolTip)
+{
+    auto* chevron = new QToolButton(parent);
+    chevron->setObjectName(name);
+    chevron->setAutoRaise(true);
+    chevron->setArrowType(Qt::DownArrow);
+    chevron->setAccessibleName(toolTip);
+    chevron->setToolTip(toolTip);
+    QtControlSkin::setSemanticProperty(chevron, "flatIconButton", true);
+    QtControlSkin::setSemanticProperty(chevron, "navigationRole", QStringLiteral("chevron"));
+    return chevron;
 }
 
 }
@@ -94,12 +122,11 @@ TransitionTableWidget::TransitionTableWidget(QWidget* parent)
     table_->setAccessibleName(tr("Transitions"));
     table_->setColumns(QStringLiteral("Transition"), {
         {QStringLiteral("Number"), QStringLiteral("#"), 0},
-        {QStringLiteral("Source"), tr("Source"), 230},
-        {QStringLiteral("Exit"), tr("Exit"), 150},
-        {QStringLiteral("FadeOut"), tr("Fade Out"), 120},
-        {QStringLiteral("Target"), tr("Target"), 230},
-        {QStringLiteral("Entry"), tr("Entry"), 150},
-        {QStringLiteral("FadeIn"), tr("Fade In"), 120}
+        {QStringLiteral("Source"), tr("Source"), 300},
+        {QStringLiteral("Exit"), tr("Exit"), 200},
+        {QStringLiteral("Target"), tr("Target"), 300},
+        {QStringLiteral("Entry"), tr("Entry"), 200},
+        {QStringLiteral("Toggle"), QString(), 0}
     });
     table_->headerCell(0)->setToolTip(tr("Match order. More specific rules win; the default rule is always last."));
     table_->setSelectionClearHandler([this] { selectRow(-1); });
@@ -155,6 +182,7 @@ void TransitionTableWidget::setBoundItem(ProjectItem* item)
     if (boundItem_ != item) {
         selected_.reset();
         placement_.reset();
+        expanded_.clear();
     }
     boundItem_ = item;
     rebuildRows();
@@ -168,8 +196,7 @@ void TransitionTableWidget::setPlacementContext(const std::optional<PlacementCon
 
 const TransitionTableDef* TransitionTableWidget::table() const
 {
-    const auto* selection = boundItem_ ? boundItem_->comp<VSelection>() : nullptr;
-    return selection ? &selection->transitions : nullptr;
+    return TransitionRuleEditing::table(boundItem_);
 }
 
 void TransitionTableWidget::rebuildRows()
@@ -187,6 +214,7 @@ void TransitionTableWidget::rebuildRows()
         delete entry;
     }
     rows_.clear();
+    details_.clear();
     rowEndpoints_.clear();
 
     if (const TransitionTableDef* rules = table()) {
@@ -194,6 +222,7 @@ void TransitionTableWidget::rebuildRows()
         for (size_t display = 0; display < order.size(); ++display) {
             const TransitionRuleDef& rule = rules->rules[static_cast<size_t>(order[display])];
             layout->addWidget(buildRow(static_cast<int>(display), rule));
+            layout->addWidget(details_.back());
             rowEndpoints_.push_back({rule.source, rule.target});
         }
     }
@@ -220,27 +249,54 @@ QWidget* TransitionTableWidget::buildRow(int displayIndex, const TransitionRuleD
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
 
-    auto* number = new QLabel(QString::number(displayIndex + 1), row);
+    auto* number = table_->createRowNumber(row, displayIndex);
     number->setObjectName(QStringLiteral("transitionRuleNumber"));
-    number->setAlignment(Qt::AlignCenter);
-    QtControlSkin::setSemanticProperty(number, "textRole", QStringLiteral("muted"));
+
+    const Endpoints endpoints{rule.source, rule.target};
+    const TransitionFieldGating gating = TransitionSemantics::gatingFor(
+        *boundItem_, rule, placement_ ? &*placement_ : nullptr, itemResolver());
+    auto* details = buildDetails(rule, gating);
+    auto* toggleCell = table_->createCell(row);
+    toggleCell->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
+    DebugTint::tintContainer(toggleCell, DebugTint::Role::ColToggle);
+    auto* toggle = new QToolButton(toggleCell);
+    toggle->setObjectName(QStringLiteral("transitionExpander"));
+    toggle->setProperty("flatIconButton", true);
+    toggle->setProperty("navigationRole", QStringLiteral("chevron"));
+    toggle->setCheckable(true);
+    toggle->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    toggle->setAutoRaise(true);
+    const bool expanded = std::find(expanded_.begin(), expanded_.end(), endpoints) != expanded_.end();
+    toggle->setChecked(expanded);
+    toggle->setArrowType(expanded ? Qt::DownArrow : Qt::RightArrow);
+    details->setVisible(expanded);
+    toggleCell->addWidget(toggle, 0);
+    connect(toggle, &QToolButton::toggled, this, [this, toggle, details, endpoints](bool on) {
+        details->setVisible(on);
+        toggle->setArrowType(on ? Qt::DownArrow : Qt::RightArrow);
+        expanded_.erase(std::remove(expanded_.begin(), expanded_.end(), endpoints), expanded_.end());
+        if (on)
+            expanded_.push_back(endpoints);
+    });
 
     const QList<QWidget*> cells{
         number,
         buildEndpointCell(row, rule, true),
-        buildExitCell(row, rule),
-        buildFadeCell(row, rule, FadeSlot::SourceOut),
+        buildExitCell(row, rule, gating),
         buildEndpointCell(row, rule, false),
-        buildEntryCell(row, rule),
-        buildFadeCell(row, rule, FadeSlot::TargetIn)};
+        buildEntryCell(row, rule, gating),
+        toggleCell};
     for (QWidget* cell : cells)
         layout->addWidget(cell);
-    table_->registerRow(row, cells);
+    table_->registerRow(row, cells, details);
 
-    row->installEventFilter(this);
-    for (QWidget* child : row->findChildren<QWidget*>())
-        child->installEventFilter(this);
+    for (QWidget* widget : {row, details}) {
+        widget->installEventFilter(this);
+        for (QWidget* child : widget->findChildren<QWidget*>())
+            child->installEventFilter(this);
+    }
     rows_.push_back(row);
+    details_.push_back(details);
     return row;
 }
 
@@ -248,8 +304,14 @@ QWidget* TransitionTableWidget::buildEndpointCell(QWidget* row, const Transition
 {
     auto* cell = table_->createCell(row);
     cell->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    auto* chevron = createChevron(cell, source ? QStringLiteral("transitionSourceChevron")
+                                               : QStringLiteral("transitionTargetChevron"),
+                                  source ? tr("Source options") : tr("Target options"));
+    cell->addWidget(chevron, 0);
     if (rule.isDefault()) {
+        chevron->setEnabled(false);
         auto* any = new QLabel(QStringLiteral("*"), cell);
+        any->setAlignment(Qt::AlignCenter);
         any->setToolTip(TransitionSemantics::defaultRuleEndpointReason());
         QtControlSkin::setSemanticProperty(any, "textRole", QStringLiteral("muted"));
         cell->addWidget(any);
@@ -285,39 +347,54 @@ QWidget* TransitionTableWidget::buildEndpointCell(QWidget* row, const Transition
         if (generation != generation_)
             return;
         const ProjectItem* item = id ? ProjectManager::instance().findItemByObjectID(id) : nullptr;
-        const std::optional<QUuid> guid = item ? std::make_optional(item->guid) : std::nullopt;
-        if (updateRule(endpoints, [&](TransitionRuleDef& rule) {
-                (source ? rule.source : rule.target) = guid;
-            }, tr("Set Transition Endpoints")))
-            selected_ = source ? Endpoints{guid, endpoints.second} : Endpoints{endpoints.first, guid};
-        rebuildRows();
+        setEndpoint(endpoints, source, item ? std::make_optional(item->guid) : std::nullopt);
     });
     cell->addWidget(reference);
+
+    auto* menu = new QMenu(chevron);
+    menu->setObjectName(QStringLiteral("transitionEndpointMenu"));
+    menu->setToolTipsVisible(true);
+    const Endpoints anyEndpoints = source ? Endpoints{std::nullopt, rule.target}
+                                          : Endpoints{rule.source, std::nullopt};
+    auto* any = menu->addAction(tr("* (Any)"), this, [this, endpoints, source, generation = generation_] {
+        if (generation == generation_)
+            setEndpoint(endpoints, source, std::nullopt);
+    });
+    any->setObjectName(QStringLiteral("transitionEndpointAny"));
+    any->setCheckable(true);
+    any->setChecked(!endpoint);
+    const bool anyTaken = endpoint && TransitionRuleEditing::find(boundItem_, anyEndpoints);
+    any->setEnabled(endpoint && !anyTaken);
+    if (anyTaken)
+        any->setToolTip(tr("A rule for this combination already exists"));
+    auto* select = menu->addAction(tr("Select Child..."), this, [reference, chevron] {
+        reference->openSelector(chevron);
+    });
+    select->setObjectName(QStringLiteral("transitionEndpointSelectChild"));
+    connect(chevron, &QToolButton::clicked, this, [chevron, menu] {
+        if (menu->isVisible())
+            menu->close();
+        else
+            menu->popup(chevron->mapToGlobal(QPoint(0, chevron->height())));
+    });
     return cell;
 }
 
-QWidget* TransitionTableWidget::buildExitCell(QWidget* row, const TransitionRuleDef& rule)
+QWidget* TransitionTableWidget::buildExitCell(QWidget* row, const TransitionRuleDef& rule,
+                                              const TransitionFieldGating& gating)
 {
     auto* cell = table_->createCell(row);
     cell->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     auto* combo = new QComboBox(cell);
     combo->setObjectName(QStringLiteral("transitionExitTiming"));
-    const TransitionFieldGating gating = TransitionSemantics::gatingFor(
-        *boundItem_, rule, TransitionSemantics::watchAvailabilityFor(
-            *boundItem_, rule.source, placement_ ? &*placement_ : nullptr, itemResolver()));
-    auto* model = qobject_cast<QStandardItemModel*>(combo->model());
+    ContextInfo::tag(combo, ContextTopic::forPanel(QStringLiteral("transition.exit")));
     for (TransitionExitTiming timing : AuthoringPolicy::allowedTransitionExitTimings()) {
         combo->addItem(exitTimingText(timing), static_cast<int>(timing));
-        QString reason;
-        const bool enabled = exitAvailability(gating.exit, timing, &reason) != FieldAvail::Unavailable;
-        if (auto* item = model ? model->item(combo->count() - 1) : nullptr) {
-            item->setEnabled(enabled || timing == rule.exitTiming);
-            item->setData(reason.isEmpty() ? QVariant() : QVariant(reason), Qt::ToolTipRole);
-        }
+        combo->setItemData(combo->count() - 1,
+                           effectToolTip(exitTimingDescription(timing), gating.exit(timing)), Qt::ToolTipRole);
     }
     combo->setCurrentIndex(combo->findData(static_cast<int>(rule.exitTiming)));
-    combo->setToolTip(gating.exit.warning);
-    QtControlSkin::setSemanticProperty(combo, "inputInvalid", !gating.exit.warning.isEmpty());
+    showEffect(combo, exitTimingDescription(rule.exitTiming), gating.exit(rule.exitTiming), true);
     connect(combo, qOverload<int>(&QComboBox::currentIndexChanged), this,
             [this, combo, endpoints = Endpoints{rule.source, rule.target}, generation = generation_] {
         if (generation != generation_)
@@ -331,15 +408,21 @@ QWidget* TransitionTableWidget::buildExitCell(QWidget* row, const TransitionRule
     return cell;
 }
 
-QWidget* TransitionTableWidget::buildEntryCell(QWidget* row, const TransitionRuleDef& rule)
+QWidget* TransitionTableWidget::buildEntryCell(QWidget* row, const TransitionRuleDef& rule,
+                                               const TransitionFieldGating& gating)
 {
     auto* cell = table_->createCell(row);
     cell->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     auto* combo = new QComboBox(cell);
     combo->setObjectName(QStringLiteral("transitionEntryMode"));
-    for (TransitionEntryMode mode : {TransitionEntryMode::EntryMarker, TransitionEntryMode::SamePosition})
+    ContextInfo::tag(combo, ContextTopic::forPanel(QStringLiteral("transition.entry")));
+    for (TransitionEntryMode mode : {TransitionEntryMode::InitialPosition, TransitionEntryMode::EntryMarker}) {
         combo->addItem(entryModeText(mode), static_cast<int>(mode));
+        combo->setItemData(combo->count() - 1,
+                           effectToolTip(entryModeDescription(mode), gating.entry(mode)), Qt::ToolTipRole);
+    }
     combo->setCurrentIndex(combo->findData(static_cast<int>(rule.entryMode)));
+    showEffect(combo, entryModeDescription(rule.entryMode), gating.entry(rule.entryMode), true);
     connect(combo, qOverload<int>(&QComboBox::currentIndexChanged), this,
             [this, combo, endpoints = Endpoints{rule.source, rule.target}, generation = generation_] {
         if (generation != generation_)
@@ -353,20 +436,56 @@ QWidget* TransitionTableWidget::buildEntryCell(QWidget* row, const TransitionRul
     return cell;
 }
 
-QWidget* TransitionTableWidget::buildFadeCell(QWidget* row, const TransitionRuleDef& rule, FadeSlot slot)
+QWidget* TransitionTableWidget::buildDetails(const TransitionRuleDef& rule, const TransitionFieldGating& gating)
 {
-    auto* cell = table_->createCell(row);
-    cell->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-    auto* button = new TransitionFadeButton(cell);
-    button->setObjectName(slot == FadeSlot::SourceOut ? QStringLiteral("transitionFadeSourceOut")
-                                                      : QStringLiteral("transitionFadeTargetIn"));
-    button->setFade(slot == FadeSlot::SourceOut ? rule.sourceFadeOut : rule.targetFadeIn);
-    connect(button, &QToolButton::clicked, this,
-            [this, button, slot, endpoints = Endpoints{rule.source, rule.target}] {
-        openFadePopup(endpoints, slot, button);
+    auto* details = new QWidget(table_->rowsWidget());
+    details->setObjectName(QStringLiteral("transitionDetails"));
+    DebugTint::tintContainer(details, DebugTint::Role::Accordion);
+    auto* layout = new QVBoxLayout(details);
+    ThemeLayout::margins(layout, ThemeLayout::Space::None, ThemeLayout::Space::Control,
+                         ThemeLayout::Space::Panel, ThemeLayout::Space::Panel);
+    ThemeManager::instance().bindMetrics(layout, [layout](const ThemeMetrics& metrics) {
+        layout->setSpacing(metrics.inspector.rowSpacing);
     });
-    cell->addWidget(button);
-    return cell;
+    const Endpoints endpoints{rule.source, rule.target};
+    const auto addRow = [details, layout](const QString& label, QWidget* control) {
+        layout->addWidget(makeInspectorFormRow(details, control->objectName(), label, control, {}, 0).row);
+    };
+    const auto addSwitch = [&](const QString& name, const QString& topic, const QString& label,
+                               const QString& description, const TransitionOptionEffect& effect,
+                               const QString& undoText, bool TransitionRuleDef::* field) {
+        auto* box = new QCheckBox(details);
+        box->setObjectName(name);
+        box->setChecked(rule.*field);
+        showEffect(box, description, effect, rule.*field);
+        ContextInfo::tag(box, ContextTopic::forPanel(topic));
+        addRow(label, box);
+        connect(box, &QCheckBox::toggled, this,
+                [this, endpoints, field, undoText, generation = generation_](bool on) {
+            if (generation != generation_)
+                return;
+            updateRule(endpoints, [&](TransitionRuleDef& rule) { rule.*field = on; }, undoText);
+            rebuildRows();
+        });
+    };
+    addSwitch(QStringLiteral("transitionSourceTail"), QStringLiteral("transition.sourceTail"),
+              tr("Source Tail"), tr("Keep playing the source content after its exit marker."),
+              gating.sourceTail, tr("Set Transition Source Tail"), &TransitionRuleDef::sourceTail);
+    addSwitch(QStringLiteral("transitionTargetLeadIn"), QStringLiteral("transition.targetLeadIn"),
+              tr("Target Lead-In"), tr("Play the target content before its entry marker ahead of the transition point."),
+              gating.targetLeadIn, tr("Set Transition Target Lead-In"), &TransitionRuleDef::targetLeadIn);
+
+    auto* fade = new TransitionFadePreviewField(details);
+    fade->setObjectName(QStringLiteral("transitionFade"));
+    fade->setPreview(buildTransitionPreview(*boundItem_, rule), rule.hasFade());
+    ContextInfo::tag(fade, ContextTopic::forPanel(QStringLiteral("transition.fade")));
+    addRow(tr("Fade"), fade);
+    connect(fade, &PreviewField::clicked, this, [this, endpoints] {
+        if (boundItem_)
+            emit externalEditorRequested(
+                ExternalEditorSelection::transition(boundItem_->guid, endpoints.first, endpoints.second));
+    });
+    return details;
 }
 
 void TransitionTableWidget::selectRow(int displayIndex)
@@ -390,10 +509,8 @@ void TransitionTableWidget::refreshFooter()
         removeButton_->setEnabled(false);
         return;
     }
-    const TransitionRuleDef* selectedRule = nullptr;
-    for (const TransitionRuleDef& rule : rules->rules)
-        if (selected_ && rule.source == selected_->first && rule.target == selected_->second)
-            selectedRule = &rule;
+    const TransitionRuleDef* selectedRule = selected_ ? TransitionRuleEditing::find(boundItem_, *selected_)
+                                                      : nullptr;
     const TransitionLedgerGating ledger = TransitionSemantics::ledgerGatingFor(
         *boundItem_, *rules, selectedRule, itemResolver());
     const bool canAdd = ledger.addRule == FieldAvail::Available;
@@ -412,7 +529,7 @@ void TransitionTableWidget::addRule()
     const auto combo = TransitionSemantics::firstUnusedCombination(*boundItem_, *rules, itemResolver());
     if (!combo)
         return;
-    TransitionRuleDef rule = AuthoringPolicy::defaultTransitionRule();
+    TransitionRuleDef rule = canonicalTransitionRule();
     rule.source = combo->first;
     rule.target = combo->second;
     TransitionTableDef candidate = *rules;
@@ -448,73 +565,53 @@ bool TransitionTableWidget::updateRule(const Endpoints& endpoints,
                                        const std::function<void(TransitionRuleDef&)>& edit,
                                        const QString& undoText)
 {
-    const TransitionTableDef* rules = table();
-    if (!rules)
-        return false;
-    for (size_t index = 0; index < rules->rules.size(); ++index) {
-        TransitionRuleDef rule = rules->rules[index];
-        if (rule.source != endpoints.first || rule.target != endpoints.second)
-            continue;
-        edit(rule);
-        TransitionTableDef candidate = *rules;
-        return candidate.updateRule(static_cast<int>(index), rule) && commit(candidate, undoText);
-    }
-    return false;
+    selfWriting_ = true;
+    const bool updated = TransitionRuleEditing::update(boundItem_, endpoints, edit, undoText, this);
+    selfWriting_ = false;
+    return updated;
 }
 
 bool TransitionTableWidget::commit(const TransitionTableDef& candidate, const QString& undoText)
 {
-    if (!boundItem_)
-        return false;
     selfWriting_ = true;
-    const ActionResult result = ActionManager::instance().execute(
-        QStringLiteral("set_item_property"),
-        QJsonObject{
-            {QStringLiteral("authoring_handle"), static_cast<qint64>(boundItem_->objectID)},
-            {QStringLiteral("property"), QStringLiteral("transitions")},
-            {QStringLiteral("value"), candidate.toJson()},
-            {QStringLiteral("undo_text"), undoText}},
-        ActionSource::GUI, this);
+    const bool committed = TransitionRuleEditing::commit(boundItem_, candidate, undoText, this);
     selfWriting_ = false;
-    return result.success;
+    return committed;
 }
 
-void TransitionTableWidget::openFadePopup(const Endpoints& endpoints, FadeSlot slot, QWidget* anchor)
+void TransitionTableWidget::setEndpoint(const Endpoints& endpoints, bool source,
+                                        const std::optional<QUuid>& guid)
 {
-    const auto currentFade = [this, endpoints, slot]() -> TransitionFadeDef {
-        if (const TransitionTableDef* rules = table())
-            for (const TransitionRuleDef& rule : rules->rules)
-                if (rule.source == endpoints.first && rule.target == endpoints.second)
-                    return slot == FadeSlot::SourceOut ? rule.sourceFadeOut : rule.targetFadeIn;
-        return {};
-    };
-    const std::optional<QUuid>& owner = slot == FadeSlot::SourceOut ? endpoints.first : endpoints.second;
-    TransitionFadePopupContext context;
-    if (const ProjectItem* item = findItem(owner)) {
-        context.objectName = item->name;
-        context.objectIcon = iconForItem(*item);
-    } else {
-        context.objectName = tr("* (Any)");
-        context.dimmed = true;
+    const Endpoints replaced = source ? Endpoints{guid, endpoints.second} : Endpoints{endpoints.first, guid};
+    if (updateRule(endpoints, [&](TransitionRuleDef& rule) {
+            (source ? rule.source : rule.target) = guid;
+        }, tr("Set Transition Endpoints"))) {
+        selected_ = replaced;
+        if (std::find(expanded_.begin(), expanded_.end(), endpoints) != expanded_.end())
+            expanded_.push_back(replaced);
     }
-    auto* popup = new TransitionFadePopup(
-        slot == FadeSlot::SourceOut ? tr("Fade Out") : tr("Fade In"), context, currentFade(), this,
-        [this, endpoints, slot](const TransitionFadeDef& fade) {
-            updateRule(endpoints, [&](TransitionRuleDef& rule) {
-                (slot == FadeSlot::SourceOut ? rule.sourceFadeOut : rule.targetFadeIn) = fade;
-            }, tr("Set Transition Fade"));
-            rebuildRows();
-        },
-        currentFade);
-    popup->showAt(anchor->mapToGlobal(anchor->rect().bottomLeft()));
+    rebuildRows();
 }
 
 bool TransitionTableWidget::eventFilter(QObject* watched, QEvent* event)
 {
+    if (auto* menu = qobject_cast<QMenu*>(watched);
+        menu && menu->objectName() == QStringLiteral("transitionEndpointMenu")
+        && event->type() == QEvent::MouseButtonPress) {
+        const auto* mouse = static_cast<QMouseEvent*>(event);
+        auto* chevron = menu->parentWidget();
+        if (!menu->rect().contains(mouse->position().toPoint()))
+            menu->setAttribute(Qt::WA_NoMouseReplay, chevron->rect().contains(
+                chevron->mapFromGlobal(mouse->globalPosition().toPoint())));
+        return QWidget::eventFilter(watched, event);
+    }
     if (event->type() == QEvent::MouseButtonPress
         && static_cast<QMouseEvent*>(event)->button() == Qt::LeftButton) {
         for (QWidget* widget = qobject_cast<QWidget*>(watched); widget; widget = widget->parentWidget()) {
-            const auto row = std::find(rows_.begin(), rows_.end(), widget);
+            auto row = std::find(rows_.begin(), rows_.end(), widget);
+            if (row == rows_.end())
+                row = rows_.begin() + std::distance(details_.begin(),
+                                                    std::find(details_.begin(), details_.end(), widget));
             if (row != rows_.end()) {
                 selectRow(static_cast<int>(std::distance(rows_.begin(), row)));
                 break;

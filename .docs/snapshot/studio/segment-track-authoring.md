@@ -1,5 +1,9 @@
 # Segment、Track 与 Transition 创作现状
 
+## 分支状态
+
+2026-11-09，Container Transition 开发成果固定到独立分支 `dev/feat/container-transition`，承接 `feat/transition-fade-timeline` 的提交 `4543ee97a8693cfef629b40b170d74958b113450` 及当时全部未提交改动。当前阶段单独保留，暂不合并 `main`；本分支的 Transition 创作能力与执行边界以本文为准。
+
 ## 恢复来源与命名
 
 当前仓库首个提交 `f543365` 已包含音乐创作限制，因此恢复依据来自旧仓 `venus-studio`：`321c4045b` 限制音乐时钟，`f0db0af41` 隐藏标记、调度时机及 Transition 入口。
@@ -16,7 +20,7 @@
 | Cursor | 默认显示绿色；15×12px 对称倒三角带亮色轮廓，与贯穿刻度轴及轨道的竖线共用物理像素中心；零点处完整显示手柄；支持定位、拖动、吸附、精确输入、边缘滚动、取消拖动和视图状态恢复 |
 | 时钟域转换 | 同时转换 Track 片段边界与 Marker；尽量保持实际秒数，音乐坐标按整数 tick 舍入；一次撤销恢复原数据 |
 | Queue Container | Splice by Marker；仅 Random／Sequence 的 Queue 显示此选项 |
-| Transition | Selection Editor 的 Transition 分区（与 Content 分区采用 Explorer 的面板分区方案：标题居中、分区间可拖动调高、可收起，两张表均铺满分区并预留滚动条区域），仅在过渡表生效时显示（Queue，或 Live 响应的 Match）；一行一条规则，单元格内编辑 Source／Target（任意端与 Match 网格一致，显示弱化的 `*`）、六类退出时机、淡出／淡入曲线及时长、Entry Marker／Same Position；Bridge 已停用，Studio 不再存储或打包 |
+| Transition | Selection Editor 的 Transition 分区（与 Content 分区采用 Explorer 的面板分区方案：标题居中、分区间可拖动调高、可收起，两张表均铺满分区并预留滚动条区域），仅在过渡表生效时显示（Queue，或 Live 响应的 Match）；一行一条规则，列为 # / Source / Exit / Target / Entry / 展开；Source／Target 左侧 chevron 菜单可选 `* (Any)` 或 Select Child...（任意端显示弱化的 `*`），默认规则两端固定为 `*`；Exit 为 Immediate／Natural End／Next Beat／Next Measure／Exit Marker，Entry 为 Initial Position／Entry Marker，新建与默认规则均为 Exit Marker + Entry Marker；所有选项与开关始终可选，端点无法满足时显示警告样式，tooltip 与 Information 说明兜底（无音乐时钟按 Immediate、无 Exit Marker 按 Natural End、无 Entry Marker 按 Initial Position、无限循环时 Natural End 不会发生，Any 端取决于实际子对象）；展开后编辑 Source Tail、Target Lead-In（默认开启，仅在 Exit Marker／Entry Marker 实际生效时播放，否则视为 0 秒并警告）及 Fade 预览（锚点居中，宽度取淡变最远端的两倍、无淡变时左右各 1 秒，并以颜色标出 Tail／Lead-In 覆盖段）；点击 Fade 在 External Editor 打开过渡时间轴：外框与滚动缩放条沿用 Timeline，中央锚点为交接点，上轨 Source、下轨 Target，Sound 显示波形，可拖动淡出／淡入的起点、时长与曲线，未播放部分以灰幕表示；Fade 默认关闭，非默认即视为开启；Tail／Lead-In 与淡变偏移目前仅 Studio 存储，打包与引擎尚未消费；Bridge 已停用，Studio 不再存储或打包 |
 | Transition 时钟引用 | 按 source、组织层级与 Clip placement 查找时钟和标记；Blueprint 显示引用路径，适配概览缩放 |
 | 自动化入口 | `set_item_property` 支持 `segmentTime`、`markers`、`clips`、`spliceByMarker`、`transitions`，与 GUI 共用校验及撤销 |
 
@@ -26,7 +30,7 @@ Marker 与 Cursor 的交互对齐 Source Editor：整根可见竖杆使用水平
 
 Measure-Beats 刻度及网格区分小节、拍、拍内细分三档。细分只能从单拍长度二分，最小为十六分音符（960 PPQ 下为 240 tick），继续放大也不再细分。Measure-Beats 的刻度间距阈值为原阈值的两倍，默认从 8px 提到 16px；Seconds 主轴保持原来的生成规则。缩小至无法辨认单拍时使用完整小节倍数，不二分整个小节，避免奇数拍号生成偏离拍点的网格；拍长短于十六分音符时同样使用满足下限的小节倍数。标尺、画布网格和吸附使用同一组音乐坐标。
 
-新建 Segment 使用 Tempo 120、Time Signature 4/4，初始时间轴恢复原来的 0–10 秒，因此 Entry 为 0、Exit 为 19200 tick。初始范围按秒换算到音乐坐标，不再误用 10 拍。音乐时间使用 960 PPQ 整数 tick，目前仅支持 tick=0 的一个速度点和一个拍号点；Tempo／Time Signature 变化不重写音乐坐标。新建 Transition 规则维持 Immediate 默认值，Next Beat／Next Bar 可选且需可达的音乐时钟。旧项目迁移不属于本轮范围。
+新建 Segment 使用 Tempo 120、Time Signature 4/4，初始时间轴恢复原来的 0–10 秒，因此 Entry 为 0、Exit 为 19200 tick。初始范围按秒换算到音乐坐标，不再误用 10 拍。音乐时间使用 960 PPQ 整数 tick，目前仅支持 tick=0 的一个速度点和一个拍号点；Tempo／Time Signature 变化不重写音乐坐标。新建 Transition 规则默认 Exit Marker + Entry Marker，Next Beat／Next Measure 需可达的音乐时钟才生效，否则按 Immediate 执行。旧项目迁移不属于本轮范围。
 
 Action 调度继续隐藏，Timing、Reference、Absent Behavior 不对外提供编辑入口，不属于本次恢复及后续开发范围。
 
@@ -43,8 +47,8 @@ Seconds 主轴按实际主刻度精度统一显示 0–3 位小数：整秒显�
 | 固定 BPM／拍号的 Musical Segment | 已有编译支持 |
 | Queue 的 Marker 拼接 | 已有 MarkerAligned 下沉 |
 | Transition Immediate／Natural End | 已有基本转场支持，仍需满足目标与模式约束 |
-| Transition Next Beat／Next Bar／Next Marker／Exit Marker | 可编辑，当前编译链拒绝执行 |
-| Transition Bridge／Same Position | 可编辑，当前编译链拒绝执行 |
+| Transition Next Beat／Next Measure／Exit Marker | 可编辑，当前编译链拒绝执行（未改动的默认表不进入打包） |
+| Transition Initial Position | 可编辑，当前编译链拒绝执行 |
 
 此次恢复不扩展引擎合同，也不恢复旧版轨头布局或废弃对象名称。
 

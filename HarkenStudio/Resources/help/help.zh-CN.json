@@ -384,6 +384,26 @@
     "audition.reset": {
       "title": "Reset Container Selection",
       "body": "清除选中 Random 或 Sequence Container 的试听选择记忆，包括队列进度。"
+    },
+    "transition.exit": {
+      "title": "Exit",
+      "body": "正在播放的 Source 何时交接给 Target。Immediate 立即离开；Natural End 等 Source 播完；Next Beat 与 Next Measure 等待 Source 的下一拍或下一小节；Exit Marker 在 Source 的 Exit Marker 处离开。\n\n所有选项都可选。Source 无法满足所选项时，字段显示警告并按以下方式兜底：没有可用音乐时钟时，Next Beat 与 Next Measure 按 Immediate 执行；没有 Exit Marker 时，Exit Marker 按 Natural End 执行；Source 无限循环时，Natural End 永远不会发生。选择 * (Any) 时，结果取决于当前播放的子对象。"
+    },
+    "transition.entry": {
+      "title": "Entry",
+      "body": "Target 相对交接点从哪里开始。Initial Position 从 Target 开头播放；Entry Marker 让 Target 的 Entry Marker 对齐交接点。\n\nTarget 没有 Entry Marker 时，Entry Marker 显示警告并按 Initial Position 执行。选择 * (Any) 时，结果取决于被选中的子对象。"
+    },
+    "transition.sourceTail": {
+      "title": "Source Tail",
+      "body": "在 Exit Marker 之后继续播放 Source 的内容，与 Target 重叠。仅在 Exit 为 Exit Marker 且 Source 有 Exit Marker 时生效；否则显示警告，并视为 0 秒。"
+    },
+    "transition.targetLeadIn": {
+      "title": "Target Lead-In",
+      "body": "在交接点之前提前播放 Target 位于 Entry Marker 之前的内容。仅在 Entry 为 Entry Marker 且 Target 有 Entry Marker 时生效；否则显示警告，并视为 0 秒。"
+    },
+    "transition.fade": {
+      "title": "Fade",
+      "body": "交接点附近 Source 的淡出与 Target 的淡入。默认关闭，偏离默认值即视为开启。点击后在 External Editor 的过渡时间轴上编辑两条曲线，中央竖线即交接点。"
     }
   }
 }

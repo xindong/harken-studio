@@ -85,13 +85,15 @@ QWidget#timelineLaneHost {
     background-color: @window@;
 }
 
-QFrame#timelineViewportPage {
+QFrame#timelineViewportPage,
+QFrame#transitionFadeViewport {
     background-color: @bgPrimary@;
     border: @borderWidth@px solid @borderPrimary@;
     border-radius: 0;
 }
 
-QFrame#timelineScrollControls {
+QFrame#timelineScrollControls,
+QFrame#transitionFadeScrollControls {
     background: transparent;
     border: none;
     border-top: @borderWidth@px solid @borderPrimary@;
@@ -1817,6 +1819,7 @@ QPlainTextEdit[inputInvalid="true"]:enabled,
 QTextEdit[inputInvalid="true"]:enabled,
 QAbstractSpinBox[inputInvalid="true"]:enabled,
 QComboBox[inputInvalid="true"]:enabled,
+QCheckBox[inputInvalid="true"]::indicator:enabled,
 QWidget[fieldRole="preview"][inputInvalid="true"]:enabled,
 VNX--ObjectRefWidget[inputInvalid="true"][dimmed="false"]:enabled {
     border-color: @error@;

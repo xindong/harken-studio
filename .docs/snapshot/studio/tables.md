@@ -23,7 +23,7 @@
 | C06 | 配置 | Variable Inspector / Labels | 序号为真实索引；移动后名称与身份进入原索引位置，范围外条目不参与 |
 | C07 | 配置 | Sound、Container、Layer、Track、Segment、Bus / Sends | 六类对象的发送配置 |
 | C08 | 配置 | External Editor / Binding | 仅编辑本地贡献 |
-| C09 | 配置 | Container Selection Editor / Transition | # / Source / Exit / Fade Out / Target / Entry / Fade In；按匹配具体程度排序，默认规则最后 |
+| C09 | 配置 | Container Selection Editor / Transition | # / Source / Exit / Target / Entry / (展开)；按匹配具体程度排序，默认规则最后 |
 | C12 | 配置 | Project Platform / Resample Policies | 按阈值排序，保留 Infinite 行 |
 | C13 | 配置 | Sound、Container、Layer、Track、Segment、Bus / FXs | Basic > FX；# / Effect / Level / Active；本地效果器链配置 |
 | D01 | 展示 | Bus Inspector / Inputs | 路由反向查询，无序号列 |

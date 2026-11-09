@@ -56,8 +56,7 @@ QString exitTimingName(TransitionExitTiming timing)
     case TransitionExitTiming::Immediate: return QStringLiteral("Immediate");
     case TransitionExitTiming::NaturalEnd: return QStringLiteral("NaturalEnd");
     case TransitionExitTiming::NextBeat: return QStringLiteral("NextBeat");
-    case TransitionExitTiming::NextBar: return QStringLiteral("NextBar");
-    case TransitionExitTiming::NextMarker: return QStringLiteral("NextMarker");
+    case TransitionExitTiming::NextMeasure: return QStringLiteral("NextMeasure");
     case TransitionExitTiming::ExitMarker: return QStringLiteral("ExitMarker");
     }
     return {};
@@ -70,16 +69,15 @@ std::optional<TransitionExitTiming> parseExitTiming(const QJsonValue& value)
     if (text == QStringLiteral("Immediate")) return TransitionExitTiming::Immediate;
     if (text == QStringLiteral("NaturalEnd")) return TransitionExitTiming::NaturalEnd;
     if (text == QStringLiteral("NextBeat")) return TransitionExitTiming::NextBeat;
-    if (text == QStringLiteral("NextBar")) return TransitionExitTiming::NextBar;
-    if (text == QStringLiteral("NextMarker")) return TransitionExitTiming::NextMarker;
+    if (text == QStringLiteral("NextMeasure")) return TransitionExitTiming::NextMeasure;
     if (text == QStringLiteral("ExitMarker")) return TransitionExitTiming::ExitMarker;
     return std::nullopt;
 }
 
 QString entryModeName(TransitionEntryMode mode)
 {
-    return mode == TransitionEntryMode::SamePosition
-        ? QStringLiteral("SamePosition") : QStringLiteral("EntryMarker");
+    return mode == TransitionEntryMode::InitialPosition
+        ? QStringLiteral("InitialPosition") : QStringLiteral("EntryMarker");
 }
 
 std::optional<TransitionEntryMode> parseEntryMode(const QJsonValue& value)
@@ -87,8 +85,8 @@ std::optional<TransitionEntryMode> parseEntryMode(const QJsonValue& value)
     if (!value.isString()) return std::nullopt;
     if (value.toString() == QStringLiteral("EntryMarker"))
         return TransitionEntryMode::EntryMarker;
-    if (value.toString() == QStringLiteral("SamePosition"))
-        return TransitionEntryMode::SamePosition;
+    if (value.toString() == QStringLiteral("InitialPosition"))
+        return TransitionEntryMode::InitialPosition;
     return std::nullopt;
 }
 
@@ -150,8 +148,9 @@ void normalizeFade(TransitionFadeDef* fade)
 {
     if (!fade) return;
     if (fade->curve.isEmpty()) {
-        const float duration = fade->durationSeconds;
-        *fade = canonicalTransitionFade(duration);
+        const float offset = fade->offsetSeconds;
+        *fade = canonicalTransitionFade(fade->durationSeconds);
+        fade->offsetSeconds = offset;
         return;
     }
     for (CurvePointDef& point : fade->curve)
@@ -163,6 +162,7 @@ QJsonObject fadeToJson(const TransitionFadeDef& fade)
 {
     return QJsonObject{
         {QStringLiteral("durationSeconds"), fade.durationSeconds},
+        {QStringLiteral("offsetSeconds"), fade.offsetSeconds},
         {QStringLiteral("curve"), pointsToJson(fade.curve)},
         {QStringLiteral("handles"), handlesToJson(fade.handles)}
     };
@@ -178,6 +178,7 @@ std::optional<TransitionFadeDef> fadeFromJson(const QJsonValue& value)
     if (!finiteNumber(json.value(QStringLiteral("durationSeconds")),
                       &fade.durationSeconds)
         || fade.durationSeconds < 0.0f
+        || !finiteNumber(json.value(QStringLiteral("offsetSeconds")), &fade.offsetSeconds)
         || !json.value(QStringLiteral("curve")).isArray()
         || !json.value(QStringLiteral("handles")).isArray())
         return std::nullopt;
@@ -212,7 +213,7 @@ std::optional<TransitionFadeDef> fadeFromJson(const QJsonValue& value)
 TransitionValidation validateFade(const TransitionFadeDef& fade, int index)
 {
     if (!std::isfinite(fade.durationSeconds) || fade.durationSeconds < 0.0f
-        || fade.curve.size() > kCurveMaxPoints)
+        || !std::isfinite(fade.offsetSeconds) || fade.curve.size() > kCurveMaxPoints)
         return TransitionValidation::failure(
             TransitionError::InvalidFade,
             QStringLiteral("Transition fade is invalid"), index);
@@ -244,7 +245,9 @@ QJsonObject ruleToJson(const TransitionRuleDef& rule)
         {QStringLiteral("exitTiming"), exitTimingName(rule.exitTiming)},
         {QStringLiteral("sourceFadeOut"), fadeToJson(rule.sourceFadeOut)},
         {QStringLiteral("entryMode"), entryModeName(rule.entryMode)},
-        {QStringLiteral("targetFadeIn"), fadeToJson(rule.targetFadeIn)}
+        {QStringLiteral("targetFadeIn"), fadeToJson(rule.targetFadeIn)},
+        {QStringLiteral("sourceTail"), rule.sourceTail},
+        {QStringLiteral("targetLeadIn"), rule.targetLeadIn}
     };
 }
 
@@ -260,12 +263,17 @@ std::optional<TransitionRuleDef> ruleFromJson(const QJsonValue& value)
     const auto entryMode = parseEntryMode(json.value(QStringLiteral("entryMode")));
     const auto sourceFade = fadeFromJson(json.value(QStringLiteral("sourceFadeOut")));
     const auto targetFade = fadeFromJson(json.value(QStringLiteral("targetFadeIn")));
-    if (!exitTiming || !entryMode || !sourceFade || !targetFade)
+    const QJsonValue sourceTail = json.value(QStringLiteral("sourceTail"));
+    const QJsonValue targetLeadIn = json.value(QStringLiteral("targetLeadIn"));
+    if (!exitTiming || !entryMode || !sourceFade || !targetFade
+        || !sourceTail.isBool() || !targetLeadIn.isBool())
         return std::nullopt;
     rule.exitTiming = *exitTiming;
     rule.entryMode = *entryMode;
     rule.sourceFadeOut = *sourceFade;
     rule.targetFadeIn = *targetFade;
+    rule.sourceTail = sourceTail.toBool();
+    rule.targetLeadIn = targetLeadIn.toBool();
     return rule;
 }
 
@@ -359,8 +367,15 @@ QString watchPathNames(const std::vector<QUuid>& path, const TimelineItemResolve
 bool TransitionFadeDef::operator==(const TransitionFadeDef& other) const
 {
     return durationSeconds == other.durationSeconds
+        && offsetSeconds == other.offsetSeconds
         && equalCurve(curve, other.curve)
         && equalHandles(handles, other.handles);
+}
+
+bool TransitionRuleDef::hasFade() const
+{
+    const TransitionFadeDef canonical = canonicalTransitionFade();
+    return !(sourceFadeOut == canonical) || !(targetFadeIn == canonical);
 }
 
 TransitionValidation TransitionValidation::success()

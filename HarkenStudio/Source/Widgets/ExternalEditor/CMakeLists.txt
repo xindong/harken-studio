@@ -15,6 +15,7 @@ target_link_libraries(harken_editor_external_editor PUBLIC
     harken_editor_curve_editor
     harken_editor_inspector
     harken_editor_source_editor
+    harken_editor_transition_fade
 )
 
 if(MSVC)
