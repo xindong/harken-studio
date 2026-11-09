@@ -1,3 +1,4 @@
+#include "Common/PcmStreamFixture.h"
 #include "../Common/MonitorExecutionTestSupport.h"
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
@@ -28765,10 +28766,10 @@ TEST(ActionFiringApi, VariableControlSourceFailurePreservesOriginalStreamReason)
         std::array<float, 512> storage{};
         storage.fill(0.25f);
         float* planes[harken::kMaxChannels] = {storage.data()};
-        harken::StreamRing ring;
+        harkentest::PcmStreamFixture ring;
         ring.Wire(planes, storage.size());
         ring.ResetForUse(1);
-        ring.PublishWrite(256);
+        ring.PublishFrames(256);
         ring.state.store(harken::StreamSlotState::Active);
         ASSERT_TRUE(ring.MarkEndOfData(reason));
         harkentest::EngineSession session(harkentest::MakeNullConfig(4, 64, 48000));
@@ -33956,7 +33957,7 @@ TEST(ActionFiringContract, SeekPreservesResamplingOfNonUnityPitch) {
         SCOPED_TRACE(streamed);
         VnConfig config = harkentest::MakeNullConfig(1, 64, 48000);
         config.maxStreams = 2;
-        config.streamRingFrames = 4096;
+        config.streamRingBytes = (4096) * sizeof(float);
         config.prebufferMs = 1;
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
@@ -34660,7 +34661,7 @@ TEST(ActionFiringApi, StreamLocalStopPreservesMissingBoundaryPolicy) {
             (void)Vn_Term();
             auto config = harkentest::MakeNullConfig(1, 64, 48000);
             config.maxStreams = 2;
-            config.streamRingFrames = 256;
+            config.streamRingBytes = (256) * sizeof(float);
             config.prebufferMs = 1;
             harkentest::EngineSession session(config);
             ASSERT_EQ(VN_OK, session.InitResult());
@@ -34723,7 +34724,7 @@ TEST(ActionFiringApi, StreamLocalStopPreservesMissingBoundaryPolicy) {
 TEST(ActionFiringApi, StreamLoopReplacementRefusesOldWorldAndAcceptsNewRevision) {
     auto config = harkentest::MakeNullConfig(1, 64, 48000);
     config.maxStreams = 2;
-    config.streamRingFrames = 256;
+    config.streamRingBytes = (256) * sizeof(float);
     config.prebufferMs = 1;
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -34789,7 +34790,7 @@ TEST(ActionFiringApi, StreamSeekSwapsExactRingAndRendersRequestedSourceFrames) {
     (void)Vn_Term();
     VnConfig config = harkentest::MakeNullConfig(1, 64, 48000);
     config.maxStreams = 2;
-    config.streamRingFrames = 256;
+    config.streamRingBytes = (256) * sizeof(float);
     config.prebufferMs = 1;
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -35065,7 +35066,7 @@ TEST(ActionFiringApi, StreamSeekNaturalEndCompletesAndReclaimsTheFiring) {
     (void)Vn_Term();
     VnConfig config = harkentest::MakeNullConfig(1, 64, 48000);
     config.maxStreams = 2;
-    config.streamRingFrames = 256;
+    config.streamRingBytes = (256) * sizeof(float);
     config.prebufferMs = 1;
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -35192,7 +35193,7 @@ TEST(ActionFiringApi, MixedResidentAndStreamSeekBackpressureIsAtomic) {
     (void)Vn_Term();
     VnConfig config = harkentest::MakeNullConfig(2, 64, 48000);
     config.maxStreams = 1;
-    config.streamRingFrames = 256;
+    config.streamRingBytes = (256) * sizeof(float);
     config.prebufferMs = 1;
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -35328,7 +35329,7 @@ TEST(ActionFiringApi, StreamSeekPreparationFailurePreservesThePlayingRing) {
         (void)Vn_Term();
         VnConfig config = harkentest::MakeNullConfig(1, 64, 48000);
         config.maxStreams = throttleReplacement ? 2 : 1;
-        config.streamRingFrames = 256;
+        config.streamRingBytes = (256) * sizeof(float);
         config.prebufferMs = 1;
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
@@ -35422,7 +35423,7 @@ TEST(ActionFiringApi, StreamSeekWorkerFailurePublishesNoTicketOrCommand) {
     (void)Vn_Term();
     VnConfig config = harkentest::MakeNullConfig(1, 64, 48000);
     config.maxStreams = 2;
-    config.streamRingFrames = 256;
+    config.streamRingBytes = (256) * sizeof(float);
     config.prebufferMs = 1;
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -35519,7 +35520,7 @@ TEST(ActionFiringApi, StreamSeekRefusalsLeavePlaybackAndRingOwnershipUnchanged) 
         (void)Vn_Term();
         VnConfig config = harkentest::MakeNullConfig(1, 64, 48000);
         config.maxStreams = 2;
-        config.streamRingFrames = 256;
+        config.streamRingBytes = (256) * sizeof(float);
         config.prebufferMs = 1;
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
@@ -35624,7 +35625,7 @@ TEST(ActionFiringApi, StreamSeekTargetsOnlyTheSelectedConcurrentFiring) {
     (void)Vn_Term();
     VnConfig config = harkentest::MakeNullConfig(2, 64, 48000);
     config.maxStreams = 3;
-    config.streamRingFrames = 256;
+    config.streamRingBytes = (256) * sizeof(float);
     config.prebufferMs = 1;
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());

@@ -1899,6 +1899,7 @@ TEST(TraceCodec, VintageSixteenOmitsDecoderBudget) {
     VnConfig config = MakeNullConfig(7, kBlockFrames, 44100);
     config.structSize = offsetof(VnConfig, compressedDecoderBytes);
     config.maxActionCooldownRows = 333;
+    config.streamRingBytes = 2048;
     config.compressedDecoderBytes = 3456789;
     std::vector<std::uint8_t> wire;
     ASSERT_TRUE(harken::EncodeTraceConfig(config, wire));
@@ -1909,6 +1910,7 @@ TEST(TraceCodec, VintageSixteenOmitsDecoderBudget) {
     EXPECT_EQ(16u, vintage);
     EXPECT_EQ(333u, decoded.maxActionCooldownRows);
     EXPECT_EQ(0u, decoded.compressedDecoderBytes);
+    EXPECT_EQ(2048u * harken::kMaxChannels * sizeof(float), decoded.streamRingBytes);
     config.reserved12 = 1;
     EXPECT_FALSE(harken::EncodeTraceConfig(config, wire));
 }

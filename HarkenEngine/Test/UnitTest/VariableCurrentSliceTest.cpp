@@ -1,3 +1,4 @@
+#include "Common/PcmStreamFixture.h"
 #include "Common/ObjectIdTestSupport.h"
 #include <harken/Harken.h>
 
@@ -890,7 +891,7 @@ TEST(VariableCurrentSlice, DirectStreamStarvationKeepsFirstValueThroughUpdateAnd
         auto config = CurrentSliceConfig(2, kBlockFrames, kSampleRate);
         config.renderWorkerCount = workers;
         config.prebufferMs = 1;
-        config.streamRingFrames = 512;
+        config.streamRingBytes = (512) * sizeof(float);
         EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
         auto& e = *session.Engine();
@@ -948,7 +949,7 @@ TEST(VariableCurrentSlice, DirectSettersSupersedeAcknowledgedVariableWhileStream
         auto config = CurrentSliceConfig(2, kBlockFrames, kSampleRate);
         config.renderWorkerCount = workers;
         config.prebufferMs = 1;
-        config.streamRingFrames = 512;
+        config.streamRingBytes = (512) * sizeof(float);
         EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
         auto& e = *session.Engine();
@@ -1157,7 +1158,7 @@ TEST(VariableCurrentSlice, LatePendingStartPublishesSourcesAndCalendarInSameUpda
         auto config = CurrentSliceConfig(1, kBlockFrames, kSampleRate);
         config.voiceStealPolicy = 1;
         config.prebufferMs = 1;
-        config.streamRingFrames = 512;
+        config.streamRingBytes = (512) * sizeof(float);
         EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
         auto& e = *session.Engine();
@@ -1551,7 +1552,7 @@ TEST(VariableCurrentSlice, StreamPressureReturnKeepsCapturedFirstPcmThroughArena
         config.audibilityParkEnabled = 1;
         config.voiceStealPolicy = 2;
         config.prebufferMs = 1;
-        config.streamRingFrames = 512;
+        config.streamRingBytes = (512) * sizeof(float);
         config.renderWorkerCount = workers;
         EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
@@ -9270,7 +9271,7 @@ TEST(VariableCurrentSlice, FirstOutputSurvivesStreamStarvationUntilRealPcm) {
         std::array<float, capacity> storage{};
         storage.fill(0.05f);
         float* planes[harken::kMaxChannels] = {storage.data()};
-        harken::StreamRing ring;
+        harkentest::PcmStreamFixture ring;
         ring.Wire(planes, capacity);
         ring.ResetForUse(1);
         auto config = CurrentSliceConfig(1, kBlockFrames, kSampleRate);
@@ -9298,7 +9299,7 @@ TEST(VariableCurrentSlice, FirstOutputSurvivesStreamStarvationUntilRealPcm) {
         EXPECT_FLOAT_EQ(DbToLinear(-12), e.voices.Resolve(voice)->gain.target);
         for (std::uint32_t i = 0; i < 2 * kBlockFrames; ++i)
             EXPECT_FLOAT_EQ(0, e.nullBackend.LastBlock()[i]);
-        ring.PublishWrite(capacity);
+        ring.PublishFrames(capacity);
         e.nullBackend.Pump(1);
         for (std::uint32_t i = kBlockFrames / 2; i < kBlockFrames; ++i)
             EXPECT_NEAR(0.05f * DbToLinear(-12) * std::sqrt(2.0f), e.nullBackend.LastBlock()[2 * i], 1e-6f);

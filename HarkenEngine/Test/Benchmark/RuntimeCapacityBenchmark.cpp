@@ -1070,7 +1070,7 @@ StreamingRunResult RunStreamingOnce(
     config.deviceMode = VN_DEVICE_NULL;
     config.commandQueueDepth = 2048;
     config.notificationQueueDepth = 2048;
-    config.streamRingFrames = kRingFrames;
+    config.streamRingBytes = (kRingFrames) * sizeof(float);
     config.maxStreams = 16;
     config.prebufferMs = 1;
     config.mixChannelLayout = VN_CHANNEL_LAYOUT_STEREO;
@@ -1404,7 +1404,7 @@ int RunResourceScenario(const ResourceEntry& scenario) {
     config.deviceMode = VN_DEVICE_NULL;
     config.commandQueueDepth = 2048;
     config.notificationQueueDepth = 2048;
-    config.streamRingFrames = 16384;
+    config.streamRingBytes = (16384) * sizeof(float);
     config.maxStreams = 16;
     config.audibilityParkEnabled = 1;
     config.parkThresholdDb = -70.0f;

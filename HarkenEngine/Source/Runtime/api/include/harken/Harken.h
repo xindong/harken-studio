@@ -221,8 +221,8 @@ typedef struct VnConfig {
                                        * all voice chains; 0 = 8 */
     uint32_t toneEffectPoolCapacity;  /* three-band-tone instances shared across
                                        * all voice chains; 0 = 16 */
-    uint32_t streamRingFrames;   /* per-stream ring capacity in frames;
-                                  * 0 = 16384; rounded up to a power of two */
+    uint32_t streamRingBytes;   /* per-stream ring capacity in bytes;
+                                  * 0 = 262144; rounded up to a power of two */
     uint32_t maxStreams;         /* stream slot capacity; 0 = 16. A streamed
                                   * Render Voice also consumes one such slot. */
     uint32_t prebufferMs;        /* ring fill required before a streamed

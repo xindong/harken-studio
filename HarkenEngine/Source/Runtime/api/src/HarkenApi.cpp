@@ -8751,7 +8751,9 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
         install.loopCount = loops;
         install.sourceOutputOffsetFrames = 0;
     }
-    if (install.streamed && engine.config.streamRingFrames < 2u &&
+    const auto* capacityRing = install.streamed ? engine.streams.RingOf(0) : nullptr;
+    if (install.streamed &&
+        (capacityRing == nullptr || capacityRing->FrameCapacity(streamFacts.channelCount) < 2u) &&
         (install.loopCount != 1u || streamFacts.frameCount - install.sourceStartFrame > 1u)) {
         result.status = VN_NO_STREAM;
         return result;
@@ -37612,7 +37614,7 @@ void ServiceStreamResyncs(harken::Engine& engine) noexcept {
         std::uint64_t token = 0;
         if (!engine.streamSeekHandoffs.Prepare(ticket, row.handle, oldRingToken, ring, ringToken,
                 row.fileIndex, row.contentRevision, target, row.frameCount, row.sampleRate,
-                std::min(row.prebufferFrames, ring->capacity), &token)) {
+                std::min(row.prebufferFrames, ring->FrameCapacity()), &token)) {
             (void)engine.streams.RetirePreparedSlot(ring, ringToken);
             continue;
         }
@@ -76274,7 +76276,7 @@ PendingStartOutcome StartDeferredVoice(
             1000;
         const std::uint32_t prebufferFrames =
             static_cast<std::uint32_t>(std::min<std::uint64_t>(
-                prebufferFrames64, engine.streams.RingOf(streamSlot)->capacity));
+                prebufferFrames64, engine.streams.RingOf(streamSlot)->FrameCapacity(facts.channelCount)));
         const VnResult played = engine.voices.PlayStream(
             engine.streams.RingOf(streamSlot), facts.channelCount,
             facts.sampleRate, prebufferFrames, rec.baseVolumeDb, rec.ratio,
@@ -78027,7 +78029,7 @@ bool TryReturnParked(harken::Engine& engine, std::uint32_t ledgerSlot,
         const std::uint32_t prebufferFrames =
             static_cast<std::uint32_t>(std::min<std::uint64_t>(
                 prebufferFrames64,
-                engine.streams.RingOf(resumeStreamSlot)->capacity));
+                engine.streams.RingOf(resumeStreamSlot)->FrameCapacity(resumeStreamFacts.channelCount)));
         r = engine.voices.PlayStream(
             engine.streams.RingOf(resumeStreamSlot),
             resumeStreamFacts.channelCount,
@@ -113610,7 +113612,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
         const std::uint32_t prebufferFrames =
             static_cast<std::uint32_t>(std::min<std::uint64_t>(
                 prebufferFrames64,
-                engine->streams.RingOf(streamSlot)->capacity));
+                engine->streams.RingOf(streamSlot)->FrameCapacity(streamFacts.channelCount)));
         const VnResult played = engine->voices.PlayStream(
             engine->streams.RingOf(streamSlot), streamFacts.channelCount,
             streamFacts.sampleRate, prebufferFrames, desc->volumeDb, ratio,
@@ -121944,7 +121946,7 @@ VnResult Vn_SeekActionFiring(const VnActionSeekDescV1* desc,
                     static_cast<std::uint64_t>(seek.frameValue),
                     preparation.sourceFrameCount,
                     preparation.sourceSampleRate,
-                    std::min(prebufferFrames, replacementRing->capacity),
+                    std::min(prebufferFrames, replacementRing->FrameCapacity()),
                     &handoffToken)) {
                 (void)engine->streams.RetirePreparedSlot(
                     replacementRing, replacementRingToken);

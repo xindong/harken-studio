@@ -835,7 +835,7 @@ static_assert(offsetof(VnConfig, logCallback) == 64, "binding offset drift: VnCo
 static_assert(offsetof(VnConfig, logUserData) == 72, "binding offset drift: VnConfig.logUserData");
 static_assert(offsetof(VnConfig, delayEffectPoolCapacity) == 80, "binding offset drift: VnConfig.delayEffectPoolCapacity");
 static_assert(offsetof(VnConfig, toneEffectPoolCapacity) == 84, "binding offset drift: VnConfig.toneEffectPoolCapacity");
-static_assert(offsetof(VnConfig, streamRingFrames) == 88, "binding offset drift: VnConfig.streamRingFrames");
+static_assert(offsetof(VnConfig, streamRingBytes) == 88, "binding offset drift: VnConfig.streamRingBytes");
 static_assert(offsetof(VnConfig, maxStreams) == 92, "binding offset drift: VnConfig.maxStreams");
 static_assert(offsetof(VnConfig, prebufferMs) == 96, "binding offset drift: VnConfig.prebufferMs");
 static_assert(offsetof(VnConfig, starvationCooldownBlocks) == 100, "binding offset drift: VnConfig.starvationCooldownBlocks");

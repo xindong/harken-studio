@@ -310,34 +310,33 @@ bool FeedResamplerFromStream(VoiceRenderContext& ctx) {
     ResamplerView& rs = ctx.resampler;
     StreamRing& ring = *ctx.streamRing;
     // Sample end-of-data BEFORE reading the write index. The producer
-    // release-publishes the terminal winner after the final PublishWrite, so
+    // release-publishes the terminal winner after the final byte/frame publication, so
     // an acquire load that observes it happens-after that publish and the
     // span read below must then see the final frames — a dry ring observed
     // after ended==true is genuinely drained. Reading in the opposite
     // order could pair a stale (empty) span with a fresh ended flag and
     // truncate the tail.
     const bool ended = ring.SourceEnded();
-    const float* planes[kMaxChannels] = {};
-    const std::uint32_t span = ring.ContiguousRead(planes);
+    const std::uint32_t span = ring.BufferedFrames();
     if (span > 0) {
         const std::uint32_t chunk = std::min(kResampleChunkFrames,
             std::min(span, rs.FreeFrames()));
-        if (chunk == 0) {
-            return false; // resampler FIFO full; output emission is due
-        }
-        // A transient view over the ring segment: planar, stride 1, no
-        // registry coupling. PushPCM copies out of it before return, so
-        // the view's lifetime ends with this call.
+        if (chunk == 0) return false;
+        // Copy complete interleaved frames, including a physical byte wrap.
+        // The FIFO owns the samples before their source bytes are released.
+        float samples[kResampleChunkFrames * kMaxChannels];
+        const auto count = chunk * ring.bytesPerFrame;
+        ring.CopyOut(ring.readIndex.load(std::memory_order_relaxed), samples, count);
         PCMView view;
-        for (std::uint32_t ch = 0; ch < ring.channelCount; ++ch) {
-            view.channels[ch] = planes[ch];
-        }
+        for (std::uint32_t ch = 0; ch < ring.channelCount; ++ch)
+            view.channels[ch] = samples + ch;
         view.channelCount = ring.channelCount;
-        view.stride = 1;
+        view.stride = ring.channelCount;
         view.sampleRate = ctx.pcm.sampleRate;
-        view.frames = span;
+        view.frames = chunk;
         rs.PushPCM(view, 0, chunk);
-        ring.AdvanceRead(chunk);
+        ring.ConsumeBytes(count);
+        ring.DeliverFrames(chunk);
         return true;
     }
     if (!ended) {
@@ -626,14 +625,12 @@ bool PreparePlainPcm(const VoiceRenderContext& ctx, std::uint32_t blockFrames,
         ((needed + kResampleChunkFrames - 1) / kResampleChunkFrames) * kResampleChunkFrames;
     if (ctx.streamRing != nullptr) {
         // Keep the producer's unread prefix intact until the existing feed
-        // helper copies it into the voice-owned FIFO. Partial spans and wrap
-        // boundaries use the generic interleaved feed/produce path.
+        // helper copies it into the voice-owned FIFO, including byte wraps.
         if (rs.phaseHigh != 0 || rs.phaseLow != 0 ||
             frames > UINT64_MAX - rs.readIndex || extra > rs.FreeFrames() ||
             extra > UINT64_MAX - rs.writeIndex || ctx.streamRing->SourceEnded())
             return false;
-        const float* planes[kMaxChannels] = {};
-        if (ctx.streamRing->ContiguousRead(planes) < extra) return false;
+        if (ctx.streamRing->BufferedFrames() < extra) return false;
         feedFrames = static_cast<std::uint32_t>(extra);
         return true;
     }
@@ -866,7 +863,7 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
         ctx.authoredSourceDeadlineFrame < quantumStart + blockFrames;
     const bool rootStopArrived = ctx.authoredRootStopFrame < quantumStart + blockFrames;
     const bool prebufferWaiting = ctx.streamRing != nullptr && !ctx.streamGateOpen &&
-        ctx.streamRing->ReadAvailable() < ctx.prebufferTargetFrames &&
+        ctx.streamRing->BufferedFrames() < ctx.prebufferTargetFrames &&
         !ctx.streamRing->SourceEnded();
     if (rootStopArrived && (prebufferWaiting ||
         (ctx.timelineGated && ctx.authoredRootStopFrame <= quantumStart + earliestStart))) {
@@ -895,7 +892,7 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
     // gate opens. Underruns after the gate opens are starvation, never a
     // return to Preparing.
     if (ctx.streamRing != nullptr && !ctx.streamGateOpen) {
-        if (ctx.streamRing->ReadAvailable() >= ctx.prebufferTargetFrames ||
+        if (ctx.streamRing->BufferedFrames() >= ctx.prebufferTargetFrames ||
             ctx.streamRing->SourceEnded() || authoredDeadlineArrives) {
             ctx.streamGateOpen = true;
         } else {
@@ -1012,7 +1009,7 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
     if (ctx.resyncOnStarve && !ctx.resyncLatched && ctx.resyncFadeOutTotal == 0 &&
         ctx.streamRing != nullptr && ctx.streamGateOpen && !ctx.streamRing->SourceEnded()) {
         const double ratio = ctx.resampler.CurrentRatio();
-        const double buffered = static_cast<double>(ctx.streamRing->ReadAvailable()) +
+        const double buffered = static_cast<double>(ctx.streamRing->BufferedFrames()) +
             static_cast<double>(ctx.resampler.writeIndex - ctx.resampler.readIndex);
         const double available = ratio > 0.0 ? buffered / ratio : 0.0;
         // A just-opened prebuffer gate must not read as an imminent underrun.

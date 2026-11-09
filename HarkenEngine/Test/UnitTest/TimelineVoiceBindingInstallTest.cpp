@@ -885,7 +885,7 @@ TEST(TimelineVoiceInstall, OutputCropUsesBoundPitchAndPreservesLoopOutroSamples)
                 auto config = TimelineInstallConfig(8, kBlock, kRate);
                 config.renderWorkerCount = workers;
                 config.maxStreams = 1;
-                config.streamRingFrames = 4096;
+                config.streamRingBytes = (4096) * sizeof(float);
                 config.prebufferMs = 4;
                 EngineSession session(config);
                 ASSERT_EQ(VN_OK, session.InitResult());
@@ -990,7 +990,7 @@ TEST(TimelineVoiceInstall, OneFrameStreamRingRejectsMissingNeighborButAcceptsNat
         auto config = TimelineInstallConfig(2, kBlock, kRate);
         config.renderWorkerCount = workers;
         config.maxStreams = 1;
-        config.streamRingFrames = 1;
+        config.streamRingBytes = (1) * sizeof(float);
         EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
         auto& engine = *session.Engine();

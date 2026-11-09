@@ -99,7 +99,7 @@
           "onNotification",
           "logCallback",
           "delayEffectPoolCapacity",
-          "streamRingFrames",
+          "streamRingBytes",
           "maxActions",
           "maxTriggerDepth",
           "mixChannelLayout",
@@ -452,7 +452,7 @@
           "u32"
         ],
         [
-          "streamRingFrames",
+          "streamRingBytes",
           "u32"
         ],
         [

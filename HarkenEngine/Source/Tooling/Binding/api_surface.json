@@ -1433,7 +1433,7 @@
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConfig::public uint reserved9",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConfig::public uint sampleRate",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConfig::public uint starvationCooldownBlocks",
-        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConfig::public uint streamRingFrames",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConfig::public uint streamRingBytes",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConfig::public uint structSize",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConfig::public uint toneEffectPoolCapacity",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConfig::public uint topologyPlanPoolCapacity",

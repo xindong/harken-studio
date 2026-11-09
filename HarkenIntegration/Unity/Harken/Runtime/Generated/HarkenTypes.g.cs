@@ -808,7 +808,7 @@ namespace Harken
     public IntPtr logUserData;
     public uint delayEffectPoolCapacity;
     public uint toneEffectPoolCapacity;
-    public uint streamRingFrames;
+    public uint streamRingBytes;
     public uint maxStreams;
     public uint prebufferMs;
     public uint starvationCooldownBlocks;

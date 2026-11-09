@@ -606,7 +606,7 @@ TEST(HotReload, PackReplaceFailuresLeaveOldPackUntouched) {
 
 TEST(HotReload, StreamOldVoiceServesOldFileNewPlaySoundsNewFile) {
     VnConfig config = ReloadConfig(/*maxVoices=*/4);
-    config.streamRingFrames = 1024; // small ring: prefill exhausts quickly
+    config.streamRingBytes = (1024) * sizeof(float); // small ring: prefill exhausts quickly
     config.maxStreams = 4;
     config.prebufferMs = 1;
     EngineSession session(config);

@@ -1,3 +1,4 @@
+#include "Common/PcmStreamFixture.h"
 // Streamed playback mechanics on the null backend: prebuffer gating and
 // the PREPARING snapshot state, stream slot exhaustion and refusal
 // ordering, starvation survival with exact notification cooldown spacing and
@@ -67,7 +68,7 @@ void RecordNotification(const VnNotification* notification, void* userData) {
 }
 
 VnConfig MakeStreamConfig(NotificationLog* log, std::uint32_t maxVoices = 0,
-                          std::uint32_t streamRingFrames = 0,
+                          std::uint32_t ringFrames = 0,
                           std::uint32_t maxStreams = 0,
                           std::uint32_t prebufferMs = 0,
                           std::uint32_t starvationCooldownBlocks = 0) {
@@ -76,7 +77,7 @@ VnConfig MakeStreamConfig(NotificationLog* log, std::uint32_t maxVoices = 0,
     config.maxTriggerDepth = 2;
     config.onNotification = log != nullptr ? &RecordNotification : nullptr;
     config.notificationUserData = log;
-    config.streamRingFrames = streamRingFrames;
+    config.streamRingBytes = (ringFrames) * sizeof(float);
     config.maxStreams = maxStreams;
     config.prebufferMs = prebufferMs;
     config.starvationCooldownBlocks = starvationCooldownBlocks;
@@ -364,9 +365,9 @@ TEST(StreamPlayback, PlaysToEndReleasesSlotAndRecycles) {
 
     auto* ring = engine->streams.RingOf(0);
     ASSERT_TRUE(ring->SourceEnded());
-    const auto* originalPlane = ring->planes[0];
-    const std::vector<float> buffered(originalPlane,
-                                       originalPlane + ring->capacity);
+    const auto* originalBytes = ring->bytes;
+    const std::vector<std::uint8_t> buffered(originalBytes,
+                                       originalBytes + ring->capacity);
     StreamSpec wider;
     wider.soundId = harkentest::ObjectId(7199);
     wider.sampleRate = kRate;
@@ -375,8 +376,8 @@ TEST(StreamPlayback, PlaysToEndReleasesSlotAndRecycles) {
     const auto widerPath = TempPath("stream_toend_wider.stream");
     WriteFileBytes(widerPath, BuildStreamBytes(wider, {0.25f, -0.25f}));
     ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(wider.soundId, widerPath.c_str()));
-    EXPECT_EQ(originalPlane, ring->planes[0]);
-    EXPECT_TRUE(std::equal(buffered.begin(), buffered.end(), ring->planes[0]));
+    EXPECT_EQ(originalBytes, ring->bytes);
+    EXPECT_TRUE(std::equal(buffered.begin(), buffered.end(), ring->bytes));
 
     Capture capture;
     harkentest::PumpAndCapture(engine, 2000 / kBlockFrames + 3, capture);
@@ -401,7 +402,7 @@ TEST(StreamPlayback, PlaysToEndReleasesSlotAndRecycles) {
 TEST(StreamPlayback, NoStreamRefusalIsSideEffectFreeAndOrdered) {
     NotificationLog log;
     EngineSession session(MakeStreamConfig(&log, /*maxVoices=*/4,
-                                           /*streamRingFrames=*/0,
+                                           /*ringFrames=*/0,
                                            /*maxStreams=*/1));
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -639,7 +640,7 @@ TEST(StreamPlayback, ChecksummedNonFiniteSamplesNeverReachBusFilters) {
                               : harken::StreamTerminalReason::IntegrityAbort,
                       ring->TerminalReason());
             EXPECT_EQ(padding ? kFrames : chunkIndex * spec.chunkFrames,
-                      ring->ReadAvailable());
+                      ring->BufferedFrames());
 
             Capture verified;
             harkentest::PumpAndCapture(engine, 12, verified);
@@ -873,7 +874,7 @@ TEST(StreamPlayback, InfiniteStreamLoopSoakStaysAliveAndFed) {
 TEST(StreamPlayback, HealthyStreamLoopsDoNotStarveOrReprepare) {
     NotificationLog log;
     EngineSession session(MakeStreamConfig(&log, /*maxVoices=*/0,
-                                           /*streamRingFrames=*/384,
+                                           /*ringFrames=*/384,
                                            /*maxStreams=*/0,
                                            /*prebufferMs=*/1,
                                            /*starvationCooldownBlocks=*/4));
@@ -925,7 +926,7 @@ TEST(StreamPlayback, HealthyStreamLoopsDoNotStarveOrReprepare) {
 TEST(StreamPlayback, InfiniteStreamLoopImmediateStopDoesNotResurrect) {
     NotificationLog log;
     EngineSession session(MakeStreamConfig(&log, /*maxVoices=*/0,
-                                           /*streamRingFrames=*/384,
+                                           /*ringFrames=*/384,
                                            /*maxStreams=*/0,
                                            /*prebufferMs=*/1));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -960,7 +961,7 @@ TEST(StreamPlayback, InfiniteStreamLoopImmediateStopDoesNotResurrect) {
 TEST(StreamPlayback, InfiniteStreamLoopFadeStopDoesNotResurrect) {
     NotificationLog log;
     EngineSession session(MakeStreamConfig(&log, /*maxVoices=*/0,
-                                           /*streamRingFrames=*/512,
+                                           /*ringFrames=*/512,
                                            /*maxStreams=*/0,
                                            /*prebufferMs=*/1));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -996,7 +997,7 @@ TEST(StreamPlayback, InfiniteStreamLoopFadeStopDoesNotResurrect) {
 TEST(StreamPlayback, FiniteStreamLoopImmediateStopDoesNotFinishLater) {
     NotificationLog log;
     EngineSession session(MakeStreamConfig(&log, /*maxVoices=*/0,
-                                           /*streamRingFrames=*/384,
+                                           /*ringFrames=*/384,
                                            /*maxStreams=*/0,
                                            /*prebufferMs=*/1));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -1035,7 +1036,7 @@ TEST(StreamPlayback, StreamStealRefusedWhenVictimIsNotStream) {
     // (whose release frees no stream slot), the steal is refused VN_NO_STREAM
     // before any side effect — no victim marked, no pending entry, no counter.
     VnConfig config = MakeStreamConfig(nullptr, /*maxVoices=*/2,
-                                       /*streamRingFrames=*/0,
+                                       /*ringFrames=*/0,
                                        /*maxStreams=*/1);
     config.voiceStealPolicy = 2; // steal-oldest
     EngineSession session(config);
@@ -1072,7 +1073,7 @@ TEST(StreamPlayback, StreamStealSucceedsWhenVictimIsStream) {
     // a stream slot: the steal is admitted and the deferred start lands within
     // a bounded number of updates.
     VnConfig config = MakeStreamConfig(nullptr, /*maxVoices=*/1,
-                                       /*streamRingFrames=*/0,
+                                       /*ringFrames=*/0,
                                        /*maxStreams=*/1);
     config.voiceStealPolicy = 2; // steal-oldest
     EngineSession session(config);
@@ -1114,7 +1115,7 @@ TEST(StreamPlayback, PendingStreamStealPinsItsRegistration) {
     // to a different asset under the same id (swapping the source) while
     // pending. Cancelling releases the pin.
     VnConfig config = MakeStreamConfig(nullptr, /*maxVoices=*/1,
-                                       /*streamRingFrames=*/0,
+                                       /*ringFrames=*/0,
                                        /*maxStreams=*/1);
     config.voiceStealPolicy = 2; // steal-oldest
     EngineSession session(config);
@@ -1156,7 +1157,7 @@ TEST(StreamPlayback, StreamStealReservationPreventsOverbooking) {
     // stream slot) -> refused VN_NO_STREAM, side-effect-free. Without the
     // reservation both would observe the same free slot and overbook it.
     VnConfig config = MakeStreamConfig(nullptr, /*maxVoices=*/2,
-                                       /*streamRingFrames=*/0,
+                                       /*ringFrames=*/0,
                                        /*maxStreams=*/1);
     config.voiceStealPolicy = 2; // steal-oldest
     EngineSession session(config);
@@ -1193,7 +1194,7 @@ TEST(StreamPlayback, TwoStreamVictimsBothStealsAdmittedAndStart) {
     // slot is reserved for its stealer (each victim stolen at most once), both
     // steals are admitted, and both deferred starts land within bound.
     VnConfig config = MakeStreamConfig(nullptr, /*maxVoices=*/2,
-                                       /*streamRingFrames=*/0,
+                                       /*ringFrames=*/0,
                                        /*maxStreams=*/2);
     config.voiceStealPolicy = 2; // steal-oldest
     EngineSession session(config);
@@ -1239,7 +1240,7 @@ TEST(StreamPlayback, ReservedStreamSlotIsNotConsumedByNormalPlay) {
     // remains) even though a stream slot is physically free — so the pending
     // start keeps its promised slot and lands within bound.
     VnConfig config = MakeStreamConfig(nullptr, /*maxVoices=*/2,
-                                       /*streamRingFrames=*/0,
+                                       /*ringFrames=*/0,
                                        /*maxStreams=*/1);
     config.voiceStealPolicy = 2; // steal-oldest
     EngineSession session(config);
@@ -1305,7 +1306,7 @@ Capture RenderStreamAtStart(const std::string& name, VnSoundId soundId,
     WriteFileBytes(path, BuildStreamBytes(spec, source));
 
     EngineSession session(MakeStreamConfig(nullptr, /*maxVoices=*/0,
-                                           /*streamRingFrames=*/384,
+                                           /*ringFrames=*/384,
                                            /*maxStreams=*/0,
                                            /*prebufferMs=*/1,
                                            /*starvationCooldownBlocks=*/4));
@@ -1553,7 +1554,7 @@ VnConfig MakeStreamWaitConfig(NotificationLog* log,
                               std::uint32_t maxStreams = 1,
                               std::uint32_t maxParked = 1) {
     VnConfig config = MakeStreamConfig(
-        log, maxVoices, /*streamRingFrames=*/512, maxStreams,
+        log, maxVoices, /*ringFrames=*/512, maxStreams,
         /*prebufferMs=*/1, /*starvationCooldownBlocks=*/2);
     config.maxParkedVoices = maxParked;
     config.audibilityParkEnabled = 1;
@@ -1961,7 +1962,7 @@ TEST(StreamPlayback,
 TEST(StreamPlayback,
      ParkTokenKeepsFiniteLoopAudibleAndFeedFrontiersOrdered) {
     VnConfig config = MakeStreamWaitConfig(nullptr);
-    config.streamRingFrames = 1024;
+    config.streamRingBytes = (1024) * sizeof(float);
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
@@ -2072,15 +2073,13 @@ TEST(StreamPlayback,
                      restored->resampler.SourceFraction());
 
     engine->streams.SyncServe();
-    const float* planes[harken::kMaxChannels] = {};
-    const std::uint32_t span =
-        restored->streamRing->ContiguousRead(planes);
+    const std::uint32_t span = restored->streamRing->BufferedFrames();
     ASSERT_GT(span, 0u);
     std::uint64_t expectedFrame = saved.feedFrame;
     std::uint32_t expectedLoops = saved.feedLoopsRemaining;
     const std::uint32_t inspected = std::min(32u, span);
     for (std::uint32_t i = 0; i < inspected; ++i) {
-        EXPECT_FLOAT_EQ(source[expectedFrame], planes[0][i])
+        EXPECT_FLOAT_EQ(source[expectedFrame], harkentest::PeekPcmSample(*restored->streamRing, i))
             << "reread frame " << i;
         AdvanceFiniteLoopCoordinate(
             &expectedFrame, &expectedLoops, kLoopStart, kLoopEnd);
@@ -3427,7 +3426,7 @@ TEST(StreamPlayback, DirectPlayDrainsPublishedMailboxBeforeNextAdmission) {
 }
 
 TEST(StreamPlayback, StreamTerminalReasonDoesNotCrossGeneration) {
-    harken::StreamRing ring;
+    harkentest::PcmStreamFixture ring;
     float storage[harken::kMaxChannels][16] = {};
     float* planes[harken::kMaxChannels] = {};
     for (std::uint32_t ch = 0; ch < harken::kMaxChannels; ++ch) {
@@ -3450,7 +3449,7 @@ TEST(StreamPlayback, StreamTerminalReasonDoesNotCrossGeneration) {
 }
 
 TEST(StreamPlayback, StreamParkAndProducerTerminalHaveOneAtomicWinner) {
-    harken::StreamRing ring;
+    harkentest::PcmStreamFixture ring;
     float storage[harken::kMaxChannels][16] = {};
     float* planes[harken::kMaxChannels] = {};
     for (std::uint32_t ch = 0; ch < harken::kMaxChannels; ++ch) {

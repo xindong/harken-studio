@@ -691,7 +691,7 @@ void RenderStarveScene(std::uint32_t workerCount, std::uint32_t arenaBytes,
     config.voiceSendSlots = 2;
     config.renderWorkerCount = workerCount;
     config.arenaBytes = arenaBytes;
-    config.streamRingFrames = 512;       // two blocks of ring
+    config.streamRingBytes = (512) * sizeof(float);       // two blocks of ring
     config.prebufferMs = 1;              // tiny gate, opens on the activation fill
     config.starvationCooldownBlocks = 1; // emit STARVED every starved block
     config.maxStreams = 2;

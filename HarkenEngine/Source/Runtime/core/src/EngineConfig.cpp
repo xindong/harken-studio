@@ -66,9 +66,9 @@ constexpr std::uint32_t kMaxDynamicRouteCapacityCeiling = 1 << 14;
 constexpr std::uint32_t kMaxDynamicRoutePlanPoolCeiling = 1 << 12;
 constexpr std::uint32_t kMaxDynamicTapCapacityCeiling = 1 << 12;
 
-// Stream capacity ceilings. Ring frames is bounded per ring; the byte
+// Stream capacity ceilings. Ring bytes are bounded per ring; the byte
 // ceiling below bounds the whole preallocation.
-constexpr std::uint32_t kMaxStreamRingFramesCeiling = 1 << 22;
+constexpr std::uint32_t kMaxStreamRingBytesCeiling = 1 << 27;
 constexpr std::uint32_t kMaxStreamsCeiling = 1 << 12;
 // Prebuffer is a start-latency knob, not a capacity; a minute of prebuffer
 // is already far past any sane figure, so anything above is a typo.
@@ -227,7 +227,7 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
     const std::uint32_t vintage3Size =
         static_cast<std::uint32_t>(offsetof(VnConfig, delayEffectPoolCapacity));
     const std::uint32_t vintage4Size =
-        static_cast<std::uint32_t>(offsetof(VnConfig, streamRingFrames));
+        static_cast<std::uint32_t>(offsetof(VnConfig, streamRingBytes));
     const std::uint32_t vintage5Size =
         static_cast<std::uint32_t>(offsetof(VnConfig, maxActions));
     const std::uint32_t vintage6Size =
@@ -361,8 +361,15 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
             resolved.toneEffectPoolCapacity = config->toneEffectPoolCapacity;
     }
     if (hasStreamFields) {
-        if (config->streamRingFrames != 0)
-            resolved.streamRingFrames = config->streamRingFrames;
+        if (config->streamRingBytes != 0) {
+            // Historical callers budgeted planar storage for every supported
+            // channel. Preserve that storage budget when translating units.
+            const std::uint64_t bytes = config->structSize < sizeof(VnConfig)
+                ? static_cast<std::uint64_t>(config->streamRingBytes) * kMaxChannels * sizeof(float)
+                : config->streamRingBytes;
+            if (bytes > kMaxStreamRingBytesCeiling) return VN_INVALID_CONFIG;
+            resolved.streamRingBytes = static_cast<std::uint32_t>(bytes);
+        }
         if (config->maxStreams != 0) resolved.maxStreams = config->maxStreams;
         if (config->prebufferMs != 0) resolved.prebufferMs = config->prebufferMs;
         if (config->starvationCooldownBlocks != 0)
@@ -605,7 +612,7 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
         resolved.dynamicRoutePlanPoolCapacity < 2 ||
         resolved.dynamicBusTapCapacity > kMaxDynamicTapCapacityCeiling ||
         resolved.dynamicVoiceTapCapacity > kMaxDynamicTapCapacityCeiling ||
-        resolved.streamRingFrames > kMaxStreamRingFramesCeiling ||
+        resolved.streamRingBytes > kMaxStreamRingBytesCeiling ||
         resolved.maxStreams > kMaxStreamsCeiling ||
         resolved.prebufferMs > kMaxPrebufferMsCeiling ||
         resolved.starvationCooldownBlocks > kMaxStarvationCooldownCeiling ||
@@ -888,11 +895,9 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
     // Each stream slot owns a power-of-two ring and may stage one whole chunk.
     // Budget both at their allocated/worst accepted capacities. Comparing the
     // per-slot sum against ceiling / slot count avoids multiplication wrap.
-    const std::uint64_t ringFramesPow2 = RoundUpPow2(resolved.streamRingFrames);
+    const std::uint64_t ringBytesPerStream = RoundUpPow2(resolved.streamRingBytes);
     const std::uint64_t bytesPerStreamFrame =
         static_cast<std::uint64_t>(kMaxChannels) * sizeof(float);
-    const std::uint64_t ringBytesPerStream =
-        ringFramesPow2 * bytesPerStreamFrame;
     const std::uint64_t stagingBytesPerStream =
         static_cast<std::uint64_t>(kMaxStreamChunkFrames) *
         bytesPerStreamFrame;

@@ -409,7 +409,7 @@ void StreamManager::ServiceRequests() {
                     const auto frames = (!m_throttled.load(std::memory_order_relaxed) || request.forceServe)
                         ? BeginSlotService(slot).maxServeFrames : 0u;
                     request.targets.push_back({i, slot.ring.generation.load(std::memory_order_relaxed),
-                        slot.ring.writeIndex.load(std::memory_order_relaxed) + frames, slot.exceptionSerial});
+                        slot.ring.writeFrames.load(std::memory_order_relaxed) + frames, slot.exceptionSerial});
                 }
                 request.started = true;
             }
@@ -420,7 +420,7 @@ void StreamManager::ServiceRequests() {
                     slot.ring.state.load(std::memory_order_acquire) != StreamSlotState::Active) continue;
                 if (slot.exceptionSerial != target.exceptionSerial) request.result = VN_BAD_STREAM_FILE;
                 else if (slot.ioLane >= 0 || (!slot.feedStopped &&
-                         slot.ring.writeIndex.load(std::memory_order_relaxed) < target.writeIndex)) request.done = false;
+                         slot.ring.writeFrames.load(std::memory_order_relaxed) < target.writeIndex)) request.done = false;
             }
             if (request.result != VN_OK) request.done = true;
         }
@@ -435,7 +435,7 @@ void StreamManager::ServeSlots() {
         if (slot.ioLane >= 0 || slot.ring.state.load(std::memory_order_acquire) != StreamSlotState::Active) continue;
         const auto generation = slot.ring.generation.load(std::memory_order_relaxed);
         auto cursor = BeginSlotService(slot);
-        const auto written = slot.ring.writeIndex.load(std::memory_order_relaxed);
+        const auto written = slot.ring.writeFrames.load(std::memory_order_relaxed);
         if (slot.passGoal <= written) {
             std::uint64_t target = written;
             if (!m_throttled.load(std::memory_order_relaxed)) target += cursor.maxServeFrames;
@@ -522,8 +522,8 @@ void StreamManager::DispatchIo() {
             if (slot.ioLane >= 0 || slot.feedStopped ||
                 slot.ring.state.load(std::memory_order_acquire) != StreamSlotState::Active ||
                 slot.ring.startPromoted.load(std::memory_order_acquire) != steady ||
-                slot.passGoal <= slot.ring.writeIndex.load(std::memory_order_relaxed)) continue;
-            const double time = static_cast<double>(slot.ring.ReadAvailable()) /
+                slot.passGoal <= slot.ring.writeFrames.load(std::memory_order_relaxed)) continue;
+            const double time = static_cast<double>(slot.ring.BufferedFrames()) /
                                 m_files[slot.fileIndex]->toc.sampleRate;
             if (time < leastTime) { selected = &slot; leastTime = time; }
         }
@@ -536,7 +536,7 @@ void StreamManager::DispatchIo() {
         auto& slot = *selected;
         auto cursor = BeginSlotService(slot);
         cursor.maxServeFrames = static_cast<std::uint32_t>(std::min<std::uint64_t>(
-            cursor.maxServeFrames, slot.passGoal - slot.ring.writeIndex.load(std::memory_order_relaxed)));
+            cursor.maxServeFrames, slot.passGoal - slot.ring.writeFrames.load(std::memory_order_relaxed)));
         ChunkJob job;
         if (!AdvanceSlot(cursor, &job)) continue;
         slot.stagedChunk = kNoChunk;

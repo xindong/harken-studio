@@ -570,8 +570,8 @@ VnResult VoicePool::PlayStream(StreamRing* ring, std::uint32_t channelCount,
     // A target above the ring's capacity could never be reached — a full
     // ring is as prebuffered as it can get, so the gate clamps there.
     slot.render.prebufferTargetFrames =
-        prebufferTargetFrames < ring->capacity ? prebufferTargetFrames
-                                               : ring->capacity;
+        prebufferTargetFrames < ring->FrameCapacity(channelCount) ? prebufferTargetFrames
+                                               : ring->FrameCapacity(channelCount);
     slot.render.streamGateOpen =
         saved != nullptr && saved->gateOpen;
     slot.render.gain.Set(linearGain, 0);
@@ -2200,7 +2200,7 @@ VariableReadCutStatus VoicePool::TimelineStreamStartStatus(std::uint32_t renderS
         terminal == StreamTerminalReason::ProducerFailure) return VariableReadCutStatus::Failed;
     return ring.startPromoted.load(std::memory_order_acquire) &&
         (terminal == StreamTerminalReason::NaturalEnd ||
-         ring.ReadAvailable() >= render.prebufferTargetFrames)
+         ring.BufferedFrames() >= render.prebufferTargetFrames)
         ? VariableReadCutStatus::Applied : VariableReadCutStatus::Waiting;
 }
 
@@ -2902,8 +2902,8 @@ void VoicePool::PublishStreamObservation(Slot& slot, std::uint64_t blockIndex) n
     value.sourceGeneration = ring.sourceGeneration;
     value.contentRevision = ring.contentRevision;
     value.ringToken = render.streamRingToken;
-    value.ringReadIndex = ring.readIndex.load(std::memory_order_relaxed);
-    value.ringWriteIndex = ring.writeIndex.load(std::memory_order_acquire);
+    value.ringReadIndex = ring.readFrames.load(std::memory_order_relaxed);
+    value.ringWriteIndex = ring.writeFrames.load(std::memory_order_acquire);
     value.bufferedFrames = static_cast<std::uint32_t>(value.ringWriteIndex - value.ringReadIndex);
     value.prebufferTargetFrames = render.prebufferTargetFrames;
     value.audioBlock = blockIndex + 1;
@@ -3137,7 +3137,7 @@ VnResult VoicePool::CanApplySeek(
             stream->replacementRing->TerminalReason();
         if ((terminal == StreamTerminalReason::IntegrityAbort ||
              terminal == StreamTerminalReason::ProducerFailure) ||
-            (stream->replacementRing->ReadAvailable() <
+            (stream->replacementRing->BufferedFrames() <
                  stream->prebufferTargetFrames &&
              terminal == StreamTerminalReason::None)) {
             return VN_DEVICE_ERROR;
@@ -3383,7 +3383,7 @@ void VoicePool::ServiceStreamResync(std::uint32_t slotIndex, Slot& slot,
         const StreamTerminalReason terminal = stream.replacementRing->TerminalReason();
         ready = terminal == StreamTerminalReason::NaturalEnd ||
             (terminal == StreamTerminalReason::None &&
-             stream.replacementRing->ReadAvailable() >= stream.prebufferTargetFrames);
+             stream.replacementRing->BufferedFrames() >= stream.prebufferTargetFrames);
     }
     if (ready) {
         stream.replacementRing->appliedReplacementSerial.store(serial, std::memory_order_relaxed);
@@ -5309,7 +5309,7 @@ void VoicePool::FinishStreamPark(std::uint32_t slotIndex, Slot* slot,
                     &token.audibleFrame,
                     &token.audibleLoopsRemaining);
                 const std::uint64_t feedAdvance =
-                    slot->render.streamRing->readIndex.load(
+                    slot->render.streamRing->readFrames.load(
                         std::memory_order_relaxed);
                 MapLoopedSourceFrame(
                     slot->render.streamFeedActivationStartFrame,

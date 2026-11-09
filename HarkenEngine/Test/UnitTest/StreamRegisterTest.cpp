@@ -1,3 +1,4 @@
+#include "Common/PcmStreamFixture.h"
 // Vn_RegisterStreamFile / Vn_UnregisterStreamFile validation: the
 // streaming thread performs the open and the header/TOC/checksum-table
 // verification during the (blocking) call, so every refusal here is
@@ -42,12 +43,10 @@
 namespace harken::detail {
 struct StreamManagerTestAccess {
     static void SetCommitPageLimit(StreamManager& manager, std::size_t pages) {
-        for (auto& column : manager.m_ringStorage) column.SetCommitPageLimitForTests(pages);
+        manager.m_ringStorage.SetCommitPageLimitForTests(pages);
     }
     static std::size_t CommittedBytes(const StreamManager& manager) {
-        std::size_t bytes = 0;
-        for (const auto& column : manager.m_ringStorage) bytes += column.CommittedBytes();
-        return bytes;
+        return manager.m_ringStorage.CommittedBytes();
     }
     static std::shared_ptr<const StreamByteSource>& Input(StreamManager& manager, std::uint32_t file) {
         return manager.m_files[file]->source;
@@ -192,14 +191,13 @@ std::vector<float> ServiceSamples(std::size_t frames, unsigned bias) {
 void ExpectAndConsume(harken::StreamRing& ring, const std::vector<float>& expected,
                        std::size_t& position, std::uint32_t count) {
     ASSERT_LE(position + count, expected.size());
-    ASSERT_GE(ring.ReadAvailable(), count);
+    ASSERT_GE(ring.BufferedFrames(), count);
     while (count != 0) {
-        const float* planes[harken::kMaxChannels]{};
-        const auto span = std::min(count, ring.ContiguousRead(planes));
+        const auto span = std::min(count, ring.BufferedFrames());
         ASSERT_GT(span, 0u);
         for (std::uint32_t i = 0; i < span; ++i)
-            EXPECT_EQ(expected[position + i], planes[0][i]) << position + i;
-        ring.AdvanceRead(span);
+            EXPECT_EQ(expected[position + i], harkentest::PeekPcmSample(ring, i)) << position + i;
+        harkentest::ConsumePcmFrames(ring, span);
         position += span;
         count -= span;
     }
@@ -258,6 +256,78 @@ public:
         return {harken::StreamReadStatus::Ok, count};
     }
 };
+
+TEST(StreamRegister, DefaultByteRingSurvivesBoundedMultichannelIoJitter) {
+    class JitterSource final : public ControlledSource {
+    public:
+        std::atomic<bool> enabled{false};
+        mutable std::atomic<unsigned> delayedReads{0};
+        mutable std::atomic<std::uint64_t> maxDelayUs{0};
+        harken::StreamReadResult ReadAt(std::uint64_t offset, void* destination, std::size_t count,
+                                        harken::StreamReadCancellation cancel) const override {
+            if (enabled.load(std::memory_order_acquire)) {
+                constexpr unsigned delays[] = {10, 35, 75, 90};
+                const auto index = delayedReads.fetch_add(1);
+                const auto begin = std::chrono::steady_clock::now();
+                std::this_thread::sleep_for(std::chrono::milliseconds(delays[index % 4]));
+                const auto us = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - begin).count());
+                auto maximum = maxDelayUs.load();
+                while (maximum < us && !maxDelayUs.compare_exchange_weak(maximum, us)) {}
+            }
+            return ControlledSource::ReadAt(offset, destination, count, cancel);
+        }
+    };
+    constexpr unsigned blockFrames = 256, channels = 6, totalFrames = 48000 * 3;
+    auto config = harkentest::MakeNullConfigLayout(2, blockFrames, kRate,
+        VN_CHANNEL_LAYOUT_5_1, VN_CHANNEL_LAYOUT_5_1);
+    config.maxStreams = 1;
+    config.renderWorkerCount = 0;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    auto source = std::make_shared<JitterSource>();
+    StreamSpec spec;
+    spec.soundId = harkentest::ObjectId(17501);
+    spec.sampleRate = kRate; spec.channelCount = channels; spec.chunkFrames = 4096;
+    std::vector<float> planar(totalFrames * channels);
+    for (unsigned ch = 0; ch < channels; ++ch)
+        std::fill_n(planar.data() + ch * totalFrames, totalFrames, .04f * (ch + 1));
+    source->bytes = BuildStreamBytes(spec, planar);
+    harken::StreamManager::SourceToken token;
+    ASSERT_EQ(VN_OK, engine->streams.BeginSource(spec.soundId, source, false, 0, &token));
+    ASSERT_TRUE(WaitUntil([&] { return engine->streams.QuerySource(token) == harken::StreamManager::PreparationState::Ready; }));
+    ASSERT_EQ(VN_OK, engine->streams.TakeSource(token));
+    auto play = harkentest::MakePlayDesc(spec.soundId);
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+    auto* ring = engine->streams.RingOf(0);
+    ASSERT_EQ(256u * 1024, ring->capacity);
+    ASSERT_EQ(10922u, ring->FrameCapacity());
+    auto* render = engine->voices.Resolve(harkentest::RenderHandle(engine, voice));
+    ASSERT_NE(nullptr, render);
+    source->enabled.store(true, std::memory_order_release);
+    const auto begin = std::chrono::steady_clock::now();
+    unsigned starved = 0;
+    for (unsigned block = 0; block < 375; ++block) {
+        std::this_thread::sleep_until(begin + std::chrono::microseconds(
+            static_cast<std::uint64_t>(block) * blockFrames * 1000000 / kRate));
+        engine->nullBackend.Pump(1);
+        if (render->starvedThisBlock) ++starved;
+        const auto* output = engine->nullBackend.LastBlock();
+        for (unsigned ch = 0; ch < channels; ++ch)
+            EXPECT_NEAR(.04f * (ch + 1), output[(blockFrames - 1) * channels + ch], 1e-6f)
+                << "block=" << block << " channel=" << ch;
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    EXPECT_EQ(0u, starved);
+    EXPECT_GE(source->delayedReads.load(), 8u);
+    RecordProperty("ring_bytes", ring->capacity);
+    RecordProperty("ring_frames", ring->FrameCapacity());
+    RecordProperty("delayed_reads", source->delayedReads.load());
+    RecordProperty("max_io_delay_us", std::to_string(source->maxDelayUs.load()));
+    RecordProperty("starved_blocks", starved);
+}
 
 struct NativeSourceState {
     std::vector<std::uint8_t> bytes;
@@ -437,7 +507,7 @@ TEST(StreamRegister, SourceShortReadsAndIndependentReadyResults) {
     using Manager = harken::StreamManager;
     harken::EngineConfig config{};
     config.maxStreams = 2;
-    config.streamRingFrames = 64;
+    config.streamRingBytes = (64) * sizeof(float);
     Manager streams(config);
     auto first = std::make_shared<ControlledSource>();
     auto second = std::make_shared<ControlledSource>();
@@ -465,7 +535,7 @@ TEST(StreamRegister, SourceShortReadsAndIndependentReadyResults) {
     EXPECT_TRUE(streams.PrepareSlotWorkingSet(0, 1));
     std::uint64_t ringToken;
     ASSERT_EQ(VN_OK, streams.ActivateSlot(0, facts.fileIndex, 0, 0, facts.frameCount, 1, &ringToken));
-    EXPECT_EQ(64u, streams.RingOf(0)->ReadAvailable());
+    EXPECT_EQ(64u, streams.RingOf(0)->BufferedFrames());
     EXPECT_TRUE(streams.RetirePreparedSlot(streams.RingOf(0), ringToken));
     streams.SyncServe();
     EXPECT_EQ(VN_OK, streams.UnregisterFile(id));
@@ -487,7 +557,7 @@ TEST(StreamRegister, SourceReadAndReleaseDoNotBlockRegisteredSlotActivation) {
         SCOPED_TRACE(blockRelease);
         harken::EngineConfig config{};
         config.maxStreams = 2;
-        config.streamRingFrames = 64;
+        config.streamRingBytes = (64) * sizeof(float);
         Manager streams(config);
         auto healthy = std::make_shared<ControlledSource>();
         StreamSpec spec;
@@ -531,8 +601,8 @@ TEST(StreamRegister, SourceReadAndReleaseDoNotBlockRegisteredSlotActivation) {
             result = streams.ActivateSlot(1, facts.fileIndex, 1024, 0, 4096, 1, &tokens[1]);
             activated.store(true, std::memory_order_release);
         });
-        streams.RingOf(0)->AdvanceRead(64);
-        const bool refill = WaitUntil([&] { return streams.RingOf(0)->ReadAvailable() == 64; });
+        harkentest::ConsumePcmFrames(*streams.RingOf(0), 64);
+        const bool refill = WaitUntil([&] { return streams.RingOf(0)->BufferedFrames() == 64; });
         const bool independent = WaitUntil([&] { return activated.load(std::memory_order_acquire); });
         // Release the deliberately blocked callback before joining on failure.
         if (!independent) gate->release.store(true, std::memory_order_release);
@@ -558,7 +628,7 @@ TEST(StreamRegister, SlowSameSourceActiveReadDoesNotBlockHealthyInstanceOrReleas
     SCOPED_TRACE(failWorker);
     harken::EngineConfig config{};
     config.maxStreams = 3;
-    config.streamRingFrames = 64;
+    config.streamRingBytes = (64) * sizeof(float);
     Manager streams(config);
     auto source = std::make_shared<ControlledSource>();
     StreamSpec spec;
@@ -580,7 +650,7 @@ TEST(StreamRegister, SlowSameSourceActiveReadDoesNotBlockHealthyInstanceOrReleas
     }
     source->gate->offset.store(toc.payloadOffset + 1088 * sizeof(float));
     ReleaseReadGate release{*source->gate};
-    streams.RingOf(1)->AdvanceRead(64);
+    harkentest::ConsumePcmFrames(*streams.RingOf(1), 64);
     ASSERT_TRUE(WaitUntil([&] { return source->gate->entered.load(); }));
     ASSERT_TRUE(streams.PrepareSlotWorkingSet(2, 1));
     std::atomic<bool> activated{false};
@@ -598,7 +668,7 @@ TEST(StreamRegister, SlowSameSourceActiveReadDoesNotBlockHealthyInstanceOrReleas
     ExpectAndConsume(*streams.RingOf(2), samples, newPosition, 64);
     std::size_t consumed = 0;
     for (unsigned pass = 0; pass < 4; ++pass) {
-        ASSERT_TRUE(WaitUntil([&] { return streams.RingOf(0)->ReadAvailable() == 64; }));
+        ASSERT_TRUE(WaitUntil([&] { return streams.RingOf(0)->BufferedFrames() == 64; }));
         ExpectAndConsume(*streams.RingOf(0), samples, consumed, 64);
     }
     if (failWorker) {
@@ -626,7 +696,7 @@ TEST(StreamRegister, PrivateReadWindowsReduceReadsAndDiscardReboundSourceBytes) 
     const auto totalFrames = std::max(8192u, ringFrames * 8);
     harken::EngineConfig config{};
     config.maxStreams = 2;
-    config.streamRingFrames = ringFrames;
+    config.streamRingBytes = (ringFrames) * sizeof(float);
     Manager streams(config);
     EXPECT_EQ(0u, streams.ReadWindowBytes());
     std::array<std::shared_ptr<ControlledSource>, 2> sources;
@@ -707,7 +777,7 @@ TEST(StreamRegister, OptionalReadAheadNeverRequiresFutureBytesOrRetriesCancellat
         SCOPED_TRACE(static_cast<unsigned>(behavior));
         harken::EngineConfig config{};
         config.maxStreams = 1;
-        config.streamRingFrames = 64;
+        config.streamRingBytes = (64) * sizeof(float);
         harken::StreamManager streams(config);
         auto source = std::make_shared<OptionalSource>();
         StreamSpec spec;
@@ -728,7 +798,7 @@ TEST(StreamRegister, OptionalReadAheadNeverRequiresFutureBytesOrRetriesCancellat
         EXPECT_EQ(behavior == Behavior::Short || behavior == Behavior::Cancel ? 1u : 2u,
                   source->payloadCalls.load());
         if (behavior == Behavior::Cancel || behavior == Behavior::RequiredFailure) {
-            EXPECT_EQ(0u, streams.RingOf(0)->ReadAvailable());
+            EXPECT_EQ(0u, streams.RingOf(0)->BufferedFrames());
             EXPECT_EQ(harken::StreamTerminalReason::IntegrityAbort, streams.RingOf(0)->TerminalReason());
         } else {
             std::size_t position = 0;
@@ -743,7 +813,7 @@ TEST(StreamRegister, CancelledSourceValidationRetainsLeaseUntilReadReturns) {
     using Manager = harken::StreamManager;
     harken::EngineConfig config{};
     config.maxStreams = 1;
-    config.streamRingFrames = 64;
+    config.streamRingBytes = (64) * sizeof(float);
     Manager streams(config);
     const auto healthyId = harkentest::ObjectId(17305);
     const auto healthyPath = TempPath("stream_source_metadata_neighbor.stream");
@@ -765,8 +835,8 @@ TEST(StreamRegister, CancelledSourceValidationRetainsLeaseUntilReadReturns) {
     ASSERT_EQ(VN_OK, streams.BeginSource(id, source, false, 0, &token));
     source.reset();
     ASSERT_TRUE(WaitUntil([&] { return gate->entered.load(); }));
-    streams.RingOf(0)->AdvanceRead(64);
-    EXPECT_TRUE(WaitUntil([&] { return streams.RingOf(0)->ReadAvailable() == 64; }));
+    harkentest::ConsumePcmFrames(*streams.RingOf(0), 64);
+    EXPECT_TRUE(WaitUntil([&] { return streams.RingOf(0)->BufferedFrames() == 64; }));
     EXPECT_TRUE(streams.CancelSource(token));
     EXPECT_FALSE(streams.CancelSource(token));
     EXPECT_EQ(Manager::PreparationState::Cancelled, streams.QuerySource(token));
@@ -806,7 +876,7 @@ TEST(StreamRegister, SourceFailureAndTermBalanceOwnershipAndNeverReuseRequestIde
     using Manager = harken::StreamManager;
     harken::EngineConfig config{};
     config.maxStreams = 1;
-    config.streamRingFrames = 64;
+    config.streamRingBytes = (64) * sizeof(float);
     const auto id = harkentest::ObjectId(17306);
     Manager::SourceToken cancelled;
     auto source = std::make_shared<ControlledSource>();
@@ -899,7 +969,7 @@ TEST(StreamRegister, ReplacementWaitsForPrebufferAndTransfersOwnershipOnce) {
     using Access = harken::detail::StreamManagerTestAccess;
     harken::EngineConfig config{};
     config.maxStreams = 2;
-    config.streamRingFrames = 16;
+    config.streamRingBytes = (16) * sizeof(float);
     Manager streams(config);
     streams.SetThrottled(true);
     StreamSpec spec;
@@ -964,7 +1034,7 @@ TEST(StreamRegister, PrivateTransferKeepsMediaPendingAndRejectsOldOwnershipAfter
     using Access = harken::detail::StreamManagerTestAccess;
     harken::EngineConfig config{};
     config.maxStreams = 1;
-    config.streamRingFrames = 16;
+    config.streamRingBytes = (16) * sizeof(float);
     Manager streams(config);
     streams.SetThrottled(true);
     StreamSpec spec;
@@ -1021,7 +1091,7 @@ TEST(StreamRegister, ReplacementPreservesSourcePositionLoopCountAndOutro) {
     using Access = harken::detail::StreamManagerTestAccess;
     harken::EngineConfig config{};
     config.maxStreams = 1;
-    config.streamRingFrames = 64;
+    config.streamRingBytes = (64) * sizeof(float);
     Manager streams(config);
     streams.SetThrottled(true);
     StreamSpec spec;
@@ -1050,7 +1120,7 @@ TEST(StreamRegister, ReplacementPreservesSourcePositionLoopCountAndOutro) {
         std::vector<float> expected;
         std::uint64_t frame = 3;
         auto remaining = count;
-        while (expected.size() < taken.ring->capacity) {
+        while (expected.size() < taken.ring->FrameCapacity()) {
             const bool loop = remaining == 0 || remaining > 1;
             if (frame == (loop ? 7u : samples.size())) {
                 if (!loop) break;
@@ -1104,7 +1174,7 @@ TEST(StreamRegister, ReplacementPinsRetiringSourceAndRejectsSourceAndRingReuse) 
     using Manager = harken::StreamManager;
     harken::EngineConfig config{};
     config.maxStreams = 2;
-    config.streamRingFrames = 64;
+    config.streamRingBytes = (64) * sizeof(float);
     Manager streams(config);
     streams.SetThrottled(true);
     const auto id = harkentest::ObjectId(17202);
@@ -1153,7 +1223,7 @@ TEST(StreamRegister, ReplacementIntegrityFailureWinsOverBufferedFrames) {
     using Access = harken::detail::StreamManagerTestAccess;
     harken::EngineConfig config{};
     config.maxStreams = 1;
-    config.streamRingFrames = 64;
+    config.streamRingBytes = (64) * sizeof(float);
     Manager streams(config);
     streams.SetThrottled(true);
     StreamSpec spec;
@@ -1173,7 +1243,7 @@ TEST(StreamRegister, ReplacementIntegrityFailureWinsOverBufferedFrames) {
     ASSERT_EQ(VN_OK, streams.BeginReplacement(request, &token));
     streams.SyncServe();
     Access::ServeSlots(streams);
-    EXPECT_EQ(8u, streams.RingOf(token.slot)->ReadAvailable());
+    EXPECT_EQ(8u, streams.RingOf(token.slot)->BufferedFrames());
     EXPECT_EQ(Manager::PreparationState::Failed, streams.QueryReplacement(token));
     Manager::PreparedStream taken{};
     EXPECT_EQ(VN_DEVICE_ERROR, streams.TakeReplacement(token, &taken));
@@ -1187,7 +1257,7 @@ TEST(StreamRegister, ReplacementPrivateFailureRollsBackSourcePin) {
     using Access = harken::detail::StreamManagerTestAccess;
     harken::EngineConfig config{};
     config.maxStreams = 1;
-    config.streamRingFrames = 1024;
+    config.streamRingBytes = (1024) * sizeof(float);
     Manager streams(config);
     const auto id = harkentest::ObjectId(17204);
     const auto path = TempPath("stream_replacement_capacity.stream");
@@ -1213,7 +1283,7 @@ TEST(StreamRegister, ReplacementPrivateFailureRollsBackSourcePin) {
 TEST(StreamRegister, ContinuousConsumptionDoesNotStarveAnotherStream) {
     auto config = MakeNullConfig(2, 64, kRate);
     config.maxStreams = 2;
-    config.streamRingFrames = 8;
+    config.streamRingBytes = (8) * sizeof(float);
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& streams = session.Engine()->streams;
@@ -1244,7 +1314,7 @@ TEST(StreamRegister, ContinuousConsumptionDoesNotStarveAnotherStream) {
         ReadObserver first(Access::Input(streams, files[0]), [&] {
             if (firstReads.fetch_add(1) + 1 < 64) {
                 auto* ring = streams.RingOf(0);
-                ring->AdvanceRead(ring->ReadAvailable());
+                harkentest::ConsumePcmFrames(*ring, ring->BufferedFrames());
             }
         }, nullptr, false, sizeof(float));
         ReadObserver second(Access::Input(streams, files[1]), [&] {
@@ -1256,9 +1326,8 @@ TEST(StreamRegister, ContinuousConsumptionDoesNotStarveAnotherStream) {
     EXPECT_LT(firstReadsWhenSecondServed, 64u);
     for (std::uint32_t i = 0; i < 2; ++i) {
         auto* ring = streams.RingOf(i);
-        const float* planes[harken::kMaxChannels]{};
-        ASSERT_GT(ring->ContiguousRead(planes), 0u);
-        EXPECT_EQ(0.25f, planes[0][0]);
+        ASSERT_GT(ring->BufferedFrames(), 0u);
+        EXPECT_EQ(0.25f, harkentest::PeekPcmSample(*ring, 0));
         ASSERT_TRUE(streams.RetirePreparedSlot(ring, tokens[i]));
     }
     streams.SyncServe();
@@ -1274,7 +1343,7 @@ TEST(StreamRegister, AdjacentStreamServicePreservesSamplesAcrossTailAndLoop) {
         SCOPED_TRACE(sharedFile);
         auto config = MakeNullConfig(3, 64, kRate);
         config.maxStreams = 3;
-        config.streamRingFrames = 128;
+        config.streamRingBytes = (128) * sizeof(float);
         config.prebufferMs = 1;
         EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
@@ -1323,7 +1392,7 @@ TEST(StreamRegister, AdjacentStreamServicePreservesSamplesAcrossTailAndLoop) {
         }
         Access::ServeSlots(streams);
         for (unsigned slot = 0; slot < 3; ++slot)
-            ASSERT_EQ(128u, streams.RingOf(slot)->ReadAvailable());
+            ASSERT_EQ(128u, streams.RingOf(slot)->BufferedFrames());
         std::size_t positions[3]{};
         for (unsigned round = 0; round < 16; ++round) {
             bool remaining = false;
@@ -1331,7 +1400,7 @@ TEST(StreamRegister, AdjacentStreamServicePreservesSamplesAcrossTailAndLoop) {
                 if (positions[slot] == expected[slot].size()) continue;
                 remaining = true;
                 auto& ring = *streams.RingOf(slot);
-                const auto count = std::min(64u, ring.ReadAvailable());
+                const auto count = std::min(64u, ring.BufferedFrames());
                 ASSERT_GT(count, 0u);
                 ExpectAndConsume(ring, expected[slot], positions[slot], count);
                 ASSERT_FALSE(::testing::Test::HasFatalFailure());
@@ -1341,7 +1410,7 @@ TEST(StreamRegister, AdjacentStreamServicePreservesSamplesAcrossTailAndLoop) {
         }
         for (unsigned slot = 0; slot < 3; ++slot) {
             EXPECT_EQ(expected[slot].size(), positions[slot]);
-            EXPECT_EQ(0u, streams.RingOf(slot)->ReadAvailable());
+            EXPECT_EQ(0u, streams.RingOf(slot)->BufferedFrames());
             EXPECT_EQ(harken::StreamTerminalReason::NaturalEnd,
                       streams.RingOf(slot)->TerminalReason());
             ASSERT_TRUE(streams.RetirePreparedSlot(streams.RingOf(slot), tokens[slot]));
@@ -1361,7 +1430,7 @@ TEST(StreamRegister, AdjacentStreamIntegrityFailureDoesNotStopHealthyNeighbor) {
         SCOPED_TRACE(static_cast<unsigned>(fault));
         auto config = MakeNullConfig(2, 64, kRate);
         config.maxStreams = 2;
-        config.streamRingFrames = 128;
+        config.streamRingBytes = (128) * sizeof(float);
         config.prebufferMs = 1;
         EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
@@ -1411,7 +1480,7 @@ TEST(StreamRegister, AdjacentStreamIntegrityFailureDoesNotStopHealthyNeighbor) {
         Access::ServeSlots(streams);
         std::size_t positions[2]{};
         for (unsigned slot = 0; slot < 2; ++slot) {
-            ASSERT_EQ(128u, streams.RingOf(slot)->ReadAvailable());
+            ASSERT_EQ(128u, streams.RingOf(slot)->BufferedFrames());
             ExpectAndConsume(*streams.RingOf(slot), sources[slot], positions[slot], 64);
             ASSERT_FALSE(::testing::Test::HasFatalFailure());
         }
@@ -1424,13 +1493,13 @@ TEST(StreamRegister, AdjacentStreamIntegrityFailureDoesNotStopHealthyNeighbor) {
             const bool bad = slot == badSlot;
             EXPECT_EQ(bad ? harken::StreamTerminalReason::IntegrityAbort
                           : harken::StreamTerminalReason::None, ring.TerminalReason());
-            EXPECT_EQ(bad ? 128u : 192u, ring.writeIndex.load(std::memory_order_acquire));
+            EXPECT_EQ(bad ? 128u : 192u, ring.writeFrames.load(std::memory_order_acquire));
             ExpectAndConsume(ring, sources[slot], positions[slot], bad ? 64 : 128);
             ASSERT_FALSE(::testing::Test::HasFatalFailure());
         }
         Access::ServeSlots(streams);
         if (fault != Fault::ShortRead) EXPECT_EQ(0u, reads);
-        EXPECT_EQ(0u, streams.RingOf(badSlot)->ReadAvailable());
+        EXPECT_EQ(0u, streams.RingOf(badSlot)->BufferedFrames());
         const unsigned healthy = 1 - badSlot;
         ExpectAndConsume(*streams.RingOf(healthy), sources[healthy], positions[healthy], 128);
         ASSERT_FALSE(::testing::Test::HasFatalFailure());
@@ -1448,7 +1517,7 @@ TEST(StreamRegister, StreamReadExceptionFailsServeAndRetriesVerifiedData) {
     using Access = harken::detail::StreamManagerTestAccess;
     auto config = MakeNullConfig(2, 64, kRate);
     config.maxStreams = 2;
-    config.streamRingFrames = 128;
+    config.streamRingBytes = (128) * sizeof(float);
     config.prebufferMs = 1;
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -1479,7 +1548,7 @@ TEST(StreamRegister, StreamReadExceptionFailsServeAndRetriesVerifiedData) {
     Access::ServeSlots(streams);
     std::size_t positions[2]{};
     for (unsigned slot = 0; slot < 2; ++slot) {
-        ASSERT_EQ(128u, streams.RingOf(slot)->ReadAvailable());
+        ASSERT_EQ(128u, streams.RingOf(slot)->BufferedFrames());
         ExpectAndConsume(*streams.RingOf(slot), sources[slot], positions[slot], 64);
         ASSERT_FALSE(::testing::Test::HasFatalFailure());
     }
@@ -1498,7 +1567,7 @@ TEST(StreamRegister, StreamReadExceptionFailsServeAndRetriesVerifiedData) {
             EXPECT_EQ(harken::StreamTerminalReason::None, streams.RingOf(slot)->TerminalReason());
             EXPECT_TRUE(Access::StagedDataMatchesVerifiedChunk(streams, slot));
         }
-        EXPECT_EQ(128u, streams.RingOf(1)->writeIndex.load(std::memory_order_acquire));
+        EXPECT_EQ(128u, streams.RingOf(1)->writeFrames.load(std::memory_order_acquire));
     }
     throwReads = false;
     Access::ServeSlots(streams);
@@ -1524,7 +1593,7 @@ TEST(StreamRegister, ConsumptionDuringReadKeepsServiceBudgetBounded) {
     using Access = harken::detail::StreamManagerTestAccess;
     auto config = MakeNullConfig(2, 64, kRate);
     config.maxStreams = 2;
-    config.streamRingFrames = 128;
+    config.streamRingBytes = (128) * sizeof(float);
     config.prebufferMs = 1;
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -1553,7 +1622,7 @@ TEST(StreamRegister, ConsumptionDuringReadKeepsServiceBudgetBounded) {
     ReadObserver observer(Access::Input(streams, files[0]), [&] {
         if (consumeOnRead) {
             auto& ring = *streams.RingOf(0);
-            ExpectAndConsume(ring, sources[0], positions[0], ring.ReadAvailable());
+            ExpectAndConsume(ring, sources[0], positions[0], ring.BufferedFrames());
         }
     }, nullptr, false, 16 * sizeof(float));
     Access::ServeSlots(streams);
@@ -1561,11 +1630,11 @@ TEST(StreamRegister, ConsumptionDuringReadKeepsServiceBudgetBounded) {
     std::uint32_t budgets[2]{};
     for (unsigned slot = 0; slot < 2; ++slot) {
         auto& ring = *streams.RingOf(slot);
-        ASSERT_EQ(128u, ring.ReadAvailable());
+        ASSERT_EQ(128u, ring.BufferedFrames());
         ExpectAndConsume(ring, sources[slot], positions[slot], 64);
         ASSERT_FALSE(::testing::Test::HasFatalFailure());
-        beforeWrite[slot] = ring.writeIndex.load(std::memory_order_acquire);
-        budgets[slot] = ring.WriteAvailable();
+        beforeWrite[slot] = ring.writeFrames.load(std::memory_order_acquire);
+        budgets[slot] = ring.WriteAvailableBytes() / ring.bytesPerFrame;
     }
     consumeOnRead = true;
     Access::ServeSlots(streams);
@@ -1573,11 +1642,11 @@ TEST(StreamRegister, ConsumptionDuringReadKeepsServiceBudgetBounded) {
     ASSERT_FALSE(::testing::Test::HasFatalFailure());
     for (unsigned slot = 0; slot < 2; ++slot) {
         auto& ring = *streams.RingOf(slot);
-        const auto published = ring.writeIndex.load(std::memory_order_acquire) - beforeWrite[slot];
+        const auto published = ring.writeFrames.load(std::memory_order_acquire) - beforeWrite[slot];
         EXPECT_GT(published, 0u);
         EXPECT_LE(published, budgets[slot]);
         EXPECT_EQ(harken::StreamTerminalReason::None, ring.TerminalReason());
-        ExpectAndConsume(ring, sources[slot], positions[slot], ring.ReadAvailable());
+        ExpectAndConsume(ring, sources[slot], positions[slot], ring.BufferedFrames());
         ASSERT_FALSE(::testing::Test::HasFatalFailure());
         EXPECT_EQ(beforeWrite[slot] + published, positions[slot]);
         ASSERT_TRUE(streams.RetirePreparedSlot(streams.RingOf(slot), tokens[slot]));
@@ -1655,7 +1724,7 @@ TEST(StreamRegister, RegisterExposesTocFactsThroughFindFile) {
 TEST(StreamRegister, PendingReferencePreservesWideBackingThroughNarrowStartsAndRollback) {
     auto config = MakeNullConfig(4, 256, kRate);
     config.maxStreams = 4;
-    config.streamRingFrames = 1024;
+    config.streamRingBytes = (1024) * sizeof(float);
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& streams = session.Engine()->streams;
@@ -1702,7 +1771,7 @@ TEST(StreamRegister, PendingReferencePreservesWideBackingThroughNarrowStartsAndR
     ASSERT_EQ(VN_OK, streams.ActivateSlot(rollbackSlot, wide.fileIndex, 0, 0, 4096, 1, &rollbackToken));
     monoSource->gate->offset.store(monoToc.payloadOffset + 1024 * sizeof(float));
     ReleaseReadGate release{*monoSource->gate};
-    streams.RingOf(0)->AdvanceRead(1024);
+    harkentest::ConsumePcmFrames(*streams.RingOf(0), 1024);
     ASSERT_TRUE(WaitUntil([&] { return monoSource->gate->entered.load(); }));
     harken::SetStreamWorkerStallReleaseForTests(false);
     const auto stalls = harken::StreamWorkerStallEntriesForTests();
@@ -2147,7 +2216,7 @@ TEST(StreamRegister, StreamObservationsMeasureProviderCallsCacheFailuresAndReuse
         SCOPED_TRACE(failure);
         auto config = harkentest::MakeNullConfig(1, 64, 48000);
         config.maxStreams = 1;
-        config.streamRingFrames = 64;
+        config.streamRingBytes = (64) * sizeof(float);
         config.prebufferMs = 1;
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
@@ -2202,7 +2271,7 @@ TEST(StreamRegister, StreamObservationsMeasureProviderCallsCacheFailuresAndReuse
         if (!failure) {
             auto* ring = streams.RingOf(0);
             const auto before = fact.totalReadCalls;
-            ring->readIndex.store(ring->writeIndex.load(), std::memory_order_release);
+            harkentest::ConsumePcmFrames(*ring, ring->BufferedFrames());
             streams.SetThrottled(false);
             streams.SyncServe();
             streams.SetThrottled(true);

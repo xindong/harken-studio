@@ -154,24 +154,15 @@ std::size_t StreamManager::PendingRequestCountForTest() const {
 }
 
 StreamManager::StreamManager(const EngineConfig& config)
-    : m_ringFrames(static_cast<std::uint32_t>(
-          RoundUpPow2(config.streamRingFrames))),
+    : m_ringBytes(static_cast<std::uint32_t>(
+          RoundUpPow2(config.streamRingBytes))),
       m_prebufferMs(config.prebufferMs),
       m_slots(config.maxStreams) {
-    const auto channelSamples = static_cast<std::uint64_t>(config.maxStreams) * m_ringFrames;
-    if (channelSamples > UINT32_MAX) throw std::bad_alloc();
-    for (auto& column : m_ringStorage) {
-        if (!column.Reserve(static_cast<std::uint32_t>(channelSamples)))
-            throw std::bad_alloc();
-    }
-    for (std::uint32_t s = 0; s < config.maxStreams; ++s) {
-        float* planes[kMaxChannels];
-        for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch) {
-            planes[ch] = m_ringStorage[ch].data() +
-                static_cast<std::size_t>(s) * m_ringFrames;
-        }
-        m_slots[s].ring.Wire(planes, m_ringFrames);
-    }
+    const auto storageBytes = static_cast<std::uint64_t>(config.maxStreams) * m_ringBytes;
+    if (storageBytes > UINT32_MAX || !m_ringStorage.Reserve(static_cast<std::uint32_t>(storageBytes)))
+        throw std::bad_alloc();
+    for (std::uint32_t slot = 0; slot < config.maxStreams; ++slot)
+        m_slots[slot].ring.Wire(m_ringStorage.data() + static_cast<std::size_t>(slot) * m_ringBytes, m_ringBytes);
     try {
         // Source validation/cleanup cannot occupy slot prebuffer execution,
         // and neither preparation domain borrows a steady refill worker.
@@ -438,11 +429,9 @@ bool StreamManager::AcquirePendingRef(std::uint32_t fileIndex) {
         return false;
     }
     const auto channels = m_files[fileIndex]->toc.channelCount;
-    for (std::uint32_t ch = 0; ch < channels; ++ch) {
-        if (m_pendingRingSlots[ch] == UINT32_MAX) return false;
-    }
+    if (m_pendingRingSlots == UINT32_MAX) return false;
     if (!PrepareRingStorage(OccupiedSlotPrefix(), channels, true)) return false;
-    for (std::uint32_t ch = 0; ch < channels; ++ch) ++m_pendingRingSlots[ch];
+    ++m_pendingRingSlots;
     m_files[fileIndex]->pendingRefs.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
@@ -453,10 +442,8 @@ void StreamManager::ReleasePendingRef(std::uint32_t fileIndex) {
         return;
     }
     assert(m_files[fileIndex]->pendingRefs.load(std::memory_order_relaxed) != 0);
-    for (std::uint32_t ch = 0; ch < m_files[fileIndex]->toc.channelCount; ++ch) {
-        assert(m_pendingRingSlots[ch] != 0);
-        --m_pendingRingSlots[ch];
-    }
+    assert(m_pendingRingSlots != 0);
+    --m_pendingRingSlots;
     m_files[fileIndex]->pendingRefs.fetch_sub(1, std::memory_order_relaxed);
 }
 
@@ -583,7 +570,7 @@ std::uint64_t StreamManager::InitializeSlot(
     s.ring.ResetForUse(file.toc.channelCount);
     s.ring.sourceGeneration = file.sourceGeneration;
     s.ring.contentRevision = file.contentRevision;
-    s.prebufferTargetFrames = static_cast<std::uint32_t>(std::min<std::uint64_t>(s.ring.capacity,
+    s.prebufferTargetFrames = static_cast<std::uint32_t>(std::min<std::uint64_t>(s.ring.FrameCapacity(),
         std::max<std::uint64_t>(1, (static_cast<std::uint64_t>(m_prebufferMs) * file.toc.sampleRate + 999) / 1000)));
     s.observation = {};
     s.observation.structSize = sizeof(s.observation);
@@ -645,7 +632,7 @@ VnResult StreamManager::BeginReplacement(
         prepared.preparationOwner = StreamSlot::PreparationOwner::Prepared;
         prepared.preparedRingToken = ringToken;
         prepared.prebufferTargetFrames = std::min(
-            std::max(1u, request.prebufferTargetFrames), prepared.ring.capacity);
+            std::max(1u, request.prebufferTargetFrames), prepared.ring.FrameCapacity());
         *out = {slot, prepared.preparationGeneration};
         m_serviceRequested = true;
     }
@@ -672,7 +659,7 @@ StreamManager::PreparationState StreamManager::QueryReplacement(
     if (terminal == StreamTerminalReason::IntegrityAbort ||
         terminal == StreamTerminalReason::ProducerFailure) return PreparationState::Failed;
     if (terminal == StreamTerminalReason::NaturalEnd ||
-        slot.ring.ReadAvailable() >= slot.prebufferTargetFrames)
+        slot.ring.BufferedFrames() >= slot.prebufferTargetFrames)
         return PreparationState::Ready;
     return PreparationState::Preparing;
 }
@@ -711,8 +698,8 @@ bool StreamManager::CapturePlayback(std::uint64_t token, PlaybackObservation* ou
     }
     // With the manager excluded, the write cursor is fixed and the audio
     // consumer can only reduce occupancy. This read is one real sample.
-    const auto read = slot.ring.readIndex.load(std::memory_order_acquire);
-    const auto written = slot.ring.writeIndex.load(std::memory_order_acquire);
+    const auto read = slot.ring.readFrames.load(std::memory_order_acquire);
+    const auto written = slot.ring.writeFrames.load(std::memory_order_acquire);
     value.bufferedFrames = static_cast<std::uint32_t>(written - read);
     value.prebufferTargetFrames = slot.prebufferTargetFrames;
     value.terminal = slot.ring.TerminalReason();
@@ -778,7 +765,7 @@ StreamManager::PreparationState StreamManager::PromoteTransferredStream(
     if (terminal == StreamTerminalReason::IntegrityAbort ||
         terminal == StreamTerminalReason::ProducerFailure) return PreparationState::Failed;
     if (terminal != StreamTerminalReason::NaturalEnd &&
-        slot.ring.ReadAvailable() < slot.prebufferTargetFrames)
+        slot.ring.BufferedFrames() < slot.prebufferTargetFrames)
         return PreparationState::Preparing;
     slot.ring.startPromoted.store(true, std::memory_order_release);
     if (slot.promotionPending) {
@@ -838,11 +825,11 @@ VnResult StreamManager::PrepareSeekSlot(
 
     StreamRing* ring = RingOf(slot);
     const std::uint32_t required =
-        std::min(prebufferTargetFrames, ring->capacity);
+        std::min(prebufferTargetFrames, ring->FrameCapacity());
     const StreamTerminalReason terminal = ring->TerminalReason();
     if ((terminal == StreamTerminalReason::IntegrityAbort ||
          terminal == StreamTerminalReason::ProducerFailure) ||
-        (ring->ReadAvailable() < required &&
+        (ring->BufferedFrames() < required &&
          terminal == StreamTerminalReason::None)) {
         ring->state.store(StreamSlotState::Retired,
                           std::memory_order_release);
@@ -985,25 +972,16 @@ bool StreamManager::PrepareRingStorage(
     std::uint32_t slotPrefix, std::uint32_t channels, bool pending) noexcept {
     if (memguard::IsAudioTagged() || slotPrefix > m_slots.size() ||
         channels == 0 || channels > kMaxChannels) return false;
-    for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch) {
-        if (ch >= channels && m_pendingRingSlots[ch] == 0) continue;
-        const auto required = std::min<std::uint64_t>(m_slots.size(),
-            static_cast<std::uint64_t>(slotPrefix) + m_pendingRingSlots[ch] +
-                (pending && ch < channels ? 1u : 0u));
-        if (!m_ringStorage[ch].ConstructThrough(
-                static_cast<std::uint32_t>(required * m_ringFrames))) return false;
-    }
-    return true;
+    if (m_ringBytes < channels * sizeof(float)) return false;
+    const auto required = std::min<std::uint64_t>(m_slots.size(),
+        static_cast<std::uint64_t>(slotPrefix) + m_pendingRingSlots + (pending ? 1u : 0u));
+    return m_ringStorage.ConstructThrough(static_cast<std::uint32_t>(required * m_ringBytes));
 }
 
-bool StreamManager::RingStorageReady(
-    std::uint32_t slot, std::uint32_t channels) const noexcept {
-    if (slot >= m_slots.size() || channels == 0 || channels > kMaxChannels) return false;
-    const auto samples = (static_cast<std::uint64_t>(slot) + 1u) * m_ringFrames;
-    for (std::uint32_t ch = 0; ch < channels; ++ch) {
-        if (m_ringStorage[ch].ConstructedCount() < samples) return false;
-    }
-    return true;
+bool StreamManager::RingStorageReady(std::uint32_t slot, std::uint32_t channels) const noexcept {
+    if (slot >= m_slots.size() || channels == 0 || channels > kMaxChannels ||
+        m_ringBytes < channels * sizeof(float)) return false;
+    return m_ringStorage.ConstructedCount() >= (static_cast<std::uint64_t>(slot) + 1u) * m_ringBytes;
 }
 
 void StreamManager::ValidateSourceSlice(SourceRequest& request) {
@@ -1219,8 +1197,8 @@ void StreamManager::PublishPlaybackObservation(StreamSlot& slot) {
     const auto state = slot.ring.state.load(std::memory_order_acquire);
     value.preparationGeneration = slot.preparationGeneration;
     value.renderActivation = slot.ring.observationRender.load(std::memory_order_acquire);
-    value.ringReadIndex = slot.ring.readIndex.load(std::memory_order_acquire);
-    value.ringWriteIndex = slot.ring.writeIndex.load(std::memory_order_acquire);
+    value.ringReadIndex = slot.ring.readFrames.load(std::memory_order_acquire);
+    value.ringWriteIndex = slot.ring.writeFrames.load(std::memory_order_acquire);
     value.bufferedFrames = static_cast<std::uint32_t>(value.ringWriteIndex - value.ringReadIndex);
     value.prebufferTargetFrames = slot.prebufferTargetFrames;
     value.terminalReason = static_cast<std::uint32_t>(slot.ring.TerminalReason());
@@ -1335,7 +1313,7 @@ bool StreamManager::ValidateChunk(const ChunkJob& job,
 
 StreamManager::ServiceCursor StreamManager::BeginSlotService(StreamSlot& slot) const {
     const auto limit = m_maxServeFramesForTest.load(std::memory_order_relaxed);
-    const auto available = slot.ring.WriteAvailable();
+    const auto available = slot.ring.WriteAvailableBytes() / slot.ring.bytesPerFrame;
     return {&slot, limit == 0 ? available : std::min(available, limit), 0, false};
 }
 
@@ -1401,29 +1379,25 @@ bool StreamManager::AdvanceSlot(ServiceCursor& cursor, ChunkJob* job) {
         const std::uint32_t remainInChunk = valid - seek.frameInChunk;
         const std::uint32_t remainToLimit = static_cast<std::uint32_t>(
             std::min<std::uint64_t>(limit - slot.nextFrame, remainInChunk));
-        float* dst[kMaxChannels];
-        const std::uint32_t span = ring.ContiguousWrite(dst);
-        if (span == 0) {
-            return false; // ring full; the next pass resumes here
-        }
-        const std::uint32_t serveBudget =
-            std::min(span, cursor.maxServeFrames - cursor.framesServed);
-        const std::uint32_t n =
-            std::min({serveBudget, remainInChunk, remainToLimit});
-        for (std::uint32_t ch = 0; ch < channels; ++ch) {
-            std::memcpy(dst[ch],
-                        slot.staging.data() +
-                            static_cast<std::size_t>(ch) * chunkFrames +
-                            seek.frameInChunk,
-                        static_cast<std::size_t>(n) * sizeof(float));
-        }
-        ring.PublishWrite(n);
+        const auto span = ring.WriteAvailableBytes() / ring.bytesPerFrame;
+        if (span == 0) return false;
+        const auto n = std::min({span, cursor.maxServeFrames - cursor.framesServed,
+                                 remainInChunk, remainToLimit});
+        const auto at = ring.writeIndex.load(std::memory_order_relaxed);
+        // Adapt legacy planar source layout by copying sample words verbatim.
+        // The ring carries interleaved bytes; sample conversion runs on render.
+        for (std::uint32_t frame = 0; frame < n; ++frame)
+            for (std::uint32_t ch = 0; ch < channels; ++ch)
+                ring.CopyIn(at + (static_cast<std::uint64_t>(frame) * channels + ch) * sizeof(float),
+                    slot.staging.data() + static_cast<std::size_t>(ch) * chunkFrames + seek.frameInChunk + frame,
+                    sizeof(float));
+        ring.PublishBytes(n * ring.bytesPerFrame, n);
         slot.nextFrame += n;
         cursor.framesServed += n;
 
         const std::uint64_t occupancy =
-            ring.writeIndex.load(std::memory_order_relaxed) -
-            ring.readIndex.load(std::memory_order_relaxed);
+            ring.writeFrames.load(std::memory_order_relaxed) -
+            ring.readFrames.load(std::memory_order_relaxed);
         std::uint64_t seen =
             m_ringHighWaterFrames.load(std::memory_order_relaxed);
         while (occupancy > seen &&

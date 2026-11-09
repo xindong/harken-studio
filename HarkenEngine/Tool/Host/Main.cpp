@@ -1206,13 +1206,13 @@ int RunStreamEndurance(const Options& options, char** argv) {
     }
 
     HostNotificationLog notifications;
-    constexpr std::uint32_t kStreamRingFrames = 16384;
+    constexpr std::uint32_t kStreamRingBytes = 16384;
     constexpr std::uint32_t kMaxStreams = 1;
     VnConfig config{};
     config.structSize = sizeof(VnConfig);
     config.deviceMode =
         options.nullMode ? VN_DEVICE_NULL : VN_DEVICE_REAL;
-    config.streamRingFrames = kStreamRingFrames;
+    config.streamRingBytes = kStreamRingBytes;
     config.maxStreams = kMaxStreams;
     config.onNotification = &RecordHostNotification;
     config.notificationUserData = &notifications;
@@ -1287,7 +1287,7 @@ int RunStreamEndurance(const Options& options, char** argv) {
     Vn_Term();
 
     const std::uint64_t roundedRingFrames =
-        RoundUpPow2Host(kStreamRingFrames);
+        RoundUpPow2Host(kStreamRingBytes);
     // Null mode is driven by DemoClock, so tick time is exact audio time.
     // Real-device mode advances on the device/wall clock; sleep_for(10 ms)
     // can overshoot, so tick counting would under-report healthy runs.
@@ -2191,7 +2191,7 @@ int RunM2Scene(const Options& options, char** argv) {
     }
 
     SceneNotificationLog notifications;
-    constexpr std::uint32_t kStreamRingFrames = 16384;
+    constexpr std::uint32_t kStreamRingBytes = 16384;
     constexpr std::uint32_t kMaxStreams = 1;
     VnConfig config{};
     config.structSize = sizeof(VnConfig);
@@ -2199,7 +2199,7 @@ int RunM2Scene(const Options& options, char** argv) {
         options.nullMode ? VN_DEVICE_NULL : VN_DEVICE_REAL;
     config.fxSlotsPerVoice = 1;
     config.delayEffectPoolCapacity = 2;
-    config.streamRingFrames = kStreamRingFrames;
+    config.streamRingBytes = kStreamRingBytes;
     config.maxStreams = kMaxStreams;
     config.onNotification = &RecordSceneNotification;
     config.notificationUserData = &notifications;
@@ -2396,7 +2396,7 @@ int RunM2Scene(const Options& options, char** argv) {
     Vn_Term();
 
     const std::uint64_t roundedRingFrames =
-        RoundUpPow2Host(kStreamRingFrames);
+        RoundUpPow2Host(kStreamRingBytes);
     std::printf("m2-scene summary: musicEnded=%s oneShotEnded=%s "
                 "ambienceFadeDone=%s fadeStarted=%s "
                 "musicEndTick=%d musicEndElapsed=%.2f "

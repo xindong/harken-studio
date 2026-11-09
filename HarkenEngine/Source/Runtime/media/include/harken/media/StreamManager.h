@@ -588,7 +588,7 @@ private:
     ServiceCursor BeginSlotService(StreamSlot& slot) const;
     bool AdvanceSlot(ServiceCursor& cursor, ChunkJob* job);
 
-    std::uint32_t m_ringFrames = 0; // per-slot capacity, power of two
+    std::uint32_t m_ringBytes = 0; // per-slot byte capacity, power of two
     const std::uint32_t m_prebufferMs;
 
     // Registered files. Publication and retirement share m_mutex with logic.
@@ -611,9 +611,9 @@ private:
     std::unique_ptr<StreamFile> m_cleanup;
     std::size_t m_sourceCursor = 0, m_slotCursor = 0;
     friend struct detail::StreamManagerTestAccess;
-    std::array<StableRowStorage<float>, kMaxChannels> m_ringStorage;
+    StableRowStorage<std::uint8_t> m_ringStorage;
     // Logic-owned backing demand follows the existing file pending references.
-    std::array<std::uint32_t, kMaxChannels> m_pendingRingSlots{};
+    std::uint32_t m_pendingRingSlots = 0;
 
     // Request transport between the logic and streaming threads. The
     // audio thread never touches any of this.

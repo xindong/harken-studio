@@ -3632,7 +3632,7 @@ TEST(CanonicalPackSetActivate, StreamedPackChangedBytesNeverReachOutput) {
     auto config = StreamConfig();
     // A ring shorter than one chunk keeps the changed final chunk outside the
     // start preparation, so verified material is published first.
-    config.streamRingFrames = 1024;
+    config.streamRingBytes = (1024) * sizeof(float);
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     auto* engine = session.Engine();

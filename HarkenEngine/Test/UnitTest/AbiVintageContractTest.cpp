@@ -24,7 +24,7 @@ constexpr std::array<std::uint32_t, 18> kSnapshotVintages = {
 static_assert(offsetof(VnConfig, onNotification) == 32);
 static_assert(offsetof(VnConfig, logCallback) == 64);
 static_assert(offsetof(VnConfig, delayEffectPoolCapacity) == 80);
-static_assert(offsetof(VnConfig, streamRingFrames) == 88);
+static_assert(offsetof(VnConfig, streamRingBytes) == 88);
 static_assert(offsetof(VnConfig, maxActions) == 112);
 static_assert(offsetof(VnConfig, maxTriggerDepth) == 184);
 static_assert(offsetof(VnConfig, mixChannelLayout) == 192);

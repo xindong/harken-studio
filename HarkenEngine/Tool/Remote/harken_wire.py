@@ -112,7 +112,7 @@ TABLE_JSON = r'''
           "onNotification",
           "logCallback",
           "delayEffectPoolCapacity",
-          "streamRingFrames",
+          "streamRingBytes",
           "maxActions",
           "maxTriggerDepth",
           "mixChannelLayout",
@@ -465,7 +465,7 @@ TABLE_JSON = r'''
           "u32"
         ],
         [
-          "streamRingFrames",
+          "streamRingBytes",
           "u32"
         ],
         [

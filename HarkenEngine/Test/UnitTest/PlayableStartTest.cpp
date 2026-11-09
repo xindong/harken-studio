@@ -21343,7 +21343,7 @@ TEST(PlayableStart, QueueInitialStreamWaitPreservesSignalOnlyResidentSuccessorOr
         auto config = harkentest::MakeNullConfig(4, 64, 48000);
         config.renderWorkerCount = workers;
         config.maxStreams = 1;
-        config.streamRingFrames = 1024;
+        config.streamRingBytes = (1024) * sizeof(float);
         config.prebufferMs = 4;
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
@@ -21592,7 +21592,7 @@ TEST(PlayableStart, MusicSegmentStarvedStreamedStemRejoinsItsTimelinePosition) {
         auto config = harkentest::MakeNullConfig(4, 64, 48000);
         config.renderWorkerCount = workers;
         config.maxStreams = 3;
-        config.streamRingFrames = 2048;
+        config.streamRingBytes = (2048) * sizeof(float);
         config.prebufferMs = 20;
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
@@ -22001,7 +22001,7 @@ TEST(PlayableStart, QueueStreamedSuccessorStartsAtPredecessorEndOrIsRefused) {
         auto config = harkentest::MakeNullConfig(viaAction ? 32 : 4, 64, 48000);
         config.renderWorkerCount = workers;
         config.maxStreams = 1;
-        config.streamRingFrames = 1024;
+        config.streamRingBytes = (1024) * sizeof(float);
         config.prebufferMs = 4;
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
@@ -22127,7 +22127,7 @@ TEST(PlayableStart, VariableControlStreamedTargetSwitchesOnPreparedBoundaryOrKee
         config.renderWorkerCount = workers;
         config.maxStreams = 1;
         config.prebufferMs = buffering.prebufferMs;
-        config.streamRingFrames = buffering.ringFrames;
+        config.streamRingBytes = (buffering.ringFrames) * sizeof(float);
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
         auto& engine = *session.Engine();
@@ -22233,7 +22233,7 @@ TEST(PlayableStart, ContainerLoopStreamedSuccessorPlaysWholeAfterPreparationOrIs
         auto config = harkentest::MakeNullConfig(4, 64, 48000);
         config.renderWorkerCount = workers;
         config.maxStreams = 1;
-        config.streamRingFrames = 1024;
+        config.streamRingBytes = (1024) * sizeof(float);
         config.prebufferMs = 4;
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
@@ -22322,7 +22322,7 @@ TEST(PlayableStart, ContainerLoopStreamedChildKeepsTheRandomSelection) {
     SCOPED_TRACE(::testing::Message() << "prebuffer=" << buffering.prebufferMs);
     auto config = harkentest::MakeNullConfig(4, 64, 48000);
     config.maxStreams = 2;
-    config.streamRingFrames = buffering.ringFrames;
+    config.streamRingBytes = (buffering.ringFrames) * sizeof(float);
     config.prebufferMs = buffering.prebufferMs;
     harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -22420,7 +22420,7 @@ TEST(PlayableStart, NativeInitialStreamWaitRetainsSourceAndCancelsBeforeReady) {
         auto config = harkentest::MakeNullConfig(4, 64, 48000);
         config.renderWorkerCount = workers;
         config.maxStreams = 1;
-        config.streamRingFrames = 1024;
+        config.streamRingBytes = (1024) * sizeof(float);
         config.prebufferMs = 4;
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
@@ -22517,7 +22517,7 @@ TEST(PlayableStart, QueueTrackInitialStreamWaitHoldsResidentSiblingAndReclaims) 
         auto config = harkentest::MakeNullConfig(8, 64, 48000);
         config.renderWorkerCount = workers;
         config.maxStreams = 1;
-        config.streamRingFrames = 1024;
+        config.streamRingBytes = (1024) * sizeof(float);
         config.prebufferMs = 4;
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
@@ -22637,7 +22637,7 @@ static void CheckNativeTrackInitialStreamWaitPreservesSubBlockFutureCohort(bool 
         auto config = harkentest::MakeNullConfig(8, 64, 48000);
         config.renderWorkerCount = workers;
         config.maxStreams = 2;
-        config.streamRingFrames = 1024;
+        config.streamRingBytes = (1024) * sizeof(float);
         config.prebufferMs = 4;
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
@@ -22972,7 +22972,7 @@ TEST(PlayableStart, DirectOrdinaryStreamRetainsSelectedInitialSourceWhileWaiting
         auto config = harkentest::MakeNullConfig(4, 64, 48000);
         config.renderWorkerCount = workers;
         config.maxStreams = 1;
-        config.streamRingFrames = 1024;
+        config.streamRingBytes = (1024) * sizeof(float);
         config.prebufferMs = 4;
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
@@ -23071,7 +23071,7 @@ TEST(PlayableStart, ActionPlaybackReadinessMatchesMixedOutputAndStreamObservatio
         auto config = harkentest::MakeNullConfig(32, 64, 48000);
         config.renderWorkerCount = workers;
         config.maxStreams = 1;
-        config.streamRingFrames = 1024;
+        config.streamRingBytes = (1024) * sizeof(float);
         config.prebufferMs = 4;
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
@@ -23279,7 +23279,7 @@ TEST(PlayableStart, DirectTrackMixedStreamWaitsStartsTogetherAndCancelsBeforeRea
         auto config = harkentest::MakeNullConfig(4, 64, 48000);
         config.renderWorkerCount = workers;
         config.maxStreams = 1;
-        config.streamRingFrames = 1024;
+        config.streamRingBytes = (1024) * sizeof(float);
         config.prebufferMs = 4;
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
@@ -23431,7 +23431,7 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
         auto config = harkentest::MakeNullConfig(8, 64, 48000);
         config.renderWorkerCount = workers;
         config.maxStreams = nativeStreamLate ? 2u : 1u;
-        config.streamRingFrames = 1024;
+        config.streamRingBytes = (1024) * sizeof(float);
         config.prebufferMs = largePrebuffer ? 1000u : 4u;
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
@@ -24397,7 +24397,7 @@ TEST(PlayableStart, FutureStreamCohortWaitsForIndependentProvidersWithinPreparat
         config.renderWorkerCount = workers;
         config.maxStreams = 2;
         config.prebufferMs = 4;
-        config.streamRingFrames = 1024;
+        config.streamRingBytes = (1024) * sizeof(float);
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
         auto& engine = *session.Engine();
@@ -24555,7 +24555,7 @@ TEST(PlayableStart, InitialStreamAnchorKeepsSubBlockFutureStartsFixedAndContains
         auto config = harkentest::MakeNullConfig(8, 64, 48000);
         config.renderWorkerCount = workers;
         config.maxStreams = futureCapacityRefusal ? 1u : 2u;
-        config.streamRingFrames = 1024;
+        config.streamRingBytes = (1024) * sizeof(float);
         config.prebufferMs = 4;
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
@@ -24813,7 +24813,7 @@ static void CheckFutureStreamWithIndependentNativeVariable(bool earlyTerm, unsig
         auto config = harkentest::MakeNullConfig(8, 64, 48000);
         config.renderWorkerCount = workers;
         config.maxStreams = 2;
-        config.streamRingFrames = 1024;
+        config.streamRingBytes = (1024) * sizeof(float);
         config.prebufferMs = 4;
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
@@ -25083,7 +25083,7 @@ TEST(PlayableStart, CroppedEmptyInitialStreamCompletesAndCancelsWithOrWithoutRes
         auto config = harkentest::MakeNullConfig(8, 64, 48000);
         config.renderWorkerCount = workers;
         config.maxStreams = 1;
-        config.streamRingFrames = 1024;
+        config.streamRingBytes = (1024) * sizeof(float);
         config.prebufferMs = 4;
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
@@ -25198,7 +25198,7 @@ TEST(PlayableStart, RepeatedTrackMixedStreamWaitPreservesFutureClipAndCancellati
         auto config = harkentest::MakeNullConfig(4, 64, 48000);
         config.renderWorkerCount = workers;
         config.maxStreams = 1;
-        config.streamRingFrames = 1024;
+        config.streamRingBytes = (1024) * sizeof(float);
         config.prebufferMs = 4;
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());

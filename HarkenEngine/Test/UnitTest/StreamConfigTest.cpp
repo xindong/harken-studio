@@ -20,7 +20,7 @@ using harkentest::MakeNullConfig;
 // The stream fields were appended in one segment, so the previous vintage
 // ends exactly where the first of them begins.
 const std::uint32_t kPreStreamVintageSize =
-    static_cast<std::uint32_t>(offsetof(VnConfig, streamRingFrames));
+    static_cast<std::uint32_t>(offsetof(VnConfig, streamRingBytes));
 
 TEST(StreamConfig, OldVintageIgnoresStreamFieldGarbage) {
     VnConfig config = MakeNullConfig();
@@ -28,7 +28,7 @@ TEST(StreamConfig, OldVintageIgnoresStreamFieldGarbage) {
     // Deliberately poison every appended field with values a full-vintage
     // caller would be refused for: if the engine wrongly read past the
     // declared struct end, Init would fail instead of defaulting.
-    config.streamRingFrames = 0xffffffffu;
+    config.streamRingBytes = 0xffffffffu;
     config.maxStreams = 0xffffffffu;
     config.prebufferMs = 0xffffffffu;
     config.starvationCooldownBlocks = 0xffffffffu;
@@ -37,7 +37,7 @@ TEST(StreamConfig, OldVintageIgnoresStreamFieldGarbage) {
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     const harken::EngineConfig& resolved = session.Engine()->config;
-    EXPECT_EQ(16384u, resolved.streamRingFrames);
+    EXPECT_EQ(262144u, resolved.streamRingBytes);
     EXPECT_EQ(16u, resolved.maxStreams);
     EXPECT_EQ(100u, resolved.prebufferMs);
     EXPECT_EQ(32u, resolved.starvationCooldownBlocks);
@@ -46,7 +46,7 @@ TEST(StreamConfig, OldVintageIgnoresStreamFieldGarbage) {
 
 TEST(StreamConfig, FullVintageStreamFieldsResolve) {
     VnConfig config = MakeNullConfig();
-    config.streamRingFrames = 2048;
+    config.streamRingBytes = 2048;
     config.maxStreams = 8;
     config.prebufferMs = 50;
     config.starvationCooldownBlocks = 16;
@@ -55,7 +55,7 @@ TEST(StreamConfig, FullVintageStreamFieldsResolve) {
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     const harken::EngineConfig& resolved = session.Engine()->config;
-    EXPECT_EQ(2048u, resolved.streamRingFrames);
+    EXPECT_EQ(2048u, resolved.streamRingBytes);
     EXPECT_EQ(8u, resolved.maxStreams);
     EXPECT_EQ(50u, resolved.prebufferMs);
     EXPECT_EQ(16u, resolved.starvationCooldownBlocks);
@@ -68,11 +68,22 @@ TEST(StreamConfig, ZeroStreamFieldsSelectDefaults) {
     EngineSession session(MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const harken::EngineConfig& resolved = session.Engine()->config;
-    EXPECT_EQ(16384u, resolved.streamRingFrames);
+    EXPECT_EQ(262144u, resolved.streamRingBytes);
     EXPECT_EQ(16u, resolved.maxStreams);
     EXPECT_EQ(100u, resolved.prebufferMs);
     EXPECT_EQ(32u, resolved.starvationCooldownBlocks);
     EXPECT_EQ(256u, resolved.maxPacks);
+}
+
+TEST(StreamConfig, HistoricalExplicitFrameCapacityPreservesItsByteBudget) {
+    VnConfig config = MakeNullConfig();
+    config.structSize = offsetof(VnConfig, compressedDecoderBytes);
+    config.streamRingBytes = 2048;
+    harken::EngineConfig resolved;
+    ASSERT_EQ(VN_OK, harken::ResolveConfig(&config, &resolved));
+    EXPECT_EQ(2048u * harken::kMaxChannels * sizeof(float), resolved.streamRingBytes);
+    config.streamRingBytes = UINT32_MAX;
+    EXPECT_EQ(VN_INVALID_CONFIG, harken::ResolveConfig(&config, &resolved));
 }
 
 TEST(StreamConfig, PerFieldCeilingsRefused) {
@@ -81,8 +92,8 @@ TEST(StreamConfig, PerFieldCeilingsRefused) {
         void (*mutate)(VnConfig*);
     };
     const OverCeiling cases[] = {
-        {"streamRingFrames above 1<<22",
-         [](VnConfig* c) { c->streamRingFrames = (1u << 22) + 1u; }},
+        {"streamRingBytes above 1<<27",
+         [](VnConfig* c) { c->streamRingBytes = (1u << 27) + 1u; }},
         {"maxStreams above 1<<12",
          [](VnConfig* c) { c->maxStreams = (1u << 12) + 1u; }},
         {"prebufferMs above one minute",
@@ -103,12 +114,12 @@ TEST(StreamConfig, PerFieldCeilingsRefused) {
 
 TEST(StreamConfig, StreamMemoryCeilingUsesRoundedRingCapacity) {
     // Each factor here clears its own ceiling, so only the combined byte
-    // ceiling can refuse the combination. 2^19+1 frames round up to 2^20
+    // ceiling can refuse the combination. 2^24+1 bytes round up to 2^25
     // for the power-of-two ring. Across 9 streams the rounded rings plus
     // staging require 360 MiB, while raw rings plus staging require about
     // 216 MiB. A refusal therefore proves the budget sees ring capacity.
     VnConfig config = MakeNullConfig();
-    config.streamRingFrames = (1u << 19) + 1u;
+    config.streamRingBytes = (1u << 24) + 1u;
     config.maxStreams = 9;
     EXPECT_EQ(VN_INVALID_CONFIG, Vn_Init(&config));
 
@@ -116,7 +127,7 @@ TEST(StreamConfig, StreamMemoryCeilingUsesRoundedRingCapacity) {
     // own, so the refusal above isolates the product, not either field.
     {
         VnConfig control = MakeNullConfig();
-        control.streamRingFrames = (1u << 19) + 1u;
+        control.streamRingBytes = (1u << 24) + 1u;
         control.maxStreams = 1;
         EngineSession session(control);
         EXPECT_EQ(VN_OK, session.InitResult());
@@ -130,18 +141,18 @@ TEST(StreamConfig, StreamMemoryCeilingUsesRoundedRingCapacity) {
 }
 
 TEST(StreamConfig, StreamMemoryCeilingIncludesPerSlotStaging) {
-    // At default ring depth each slot reserves 0.5 MiB of ring storage and
+    // At default ring depth each slot reserves 0.25 MiB of ring storage and
     // can grow an 8 MiB whole-chunk staging buffer. The default 256 Virtual
-    // Voices add 8 MiB of stream-park token storage. Twenty-nine stream slots
-    // therefore fit while thirty cross the 256 MiB aggregate ceiling.
+    // Voices add 8 MiB of stream-park token storage. Thirty stream slots
+    // therefore fit while thirty-one cross the 256 MiB aggregate ceiling.
     // ResolveConfig isolates the budget arithmetic without allocating pools.
     VnConfig accepted = MakeNullConfig();
-    accepted.maxStreams = 29;
+    accepted.maxStreams = 30;
     harken::EngineConfig resolved;
     EXPECT_EQ(VN_OK, harken::ResolveConfig(&accepted, &resolved));
 
     VnConfig refused = MakeNullConfig();
-    refused.maxStreams = 30;
+    refused.maxStreams = 31;
     EXPECT_EQ(VN_INVALID_CONFIG,
               harken::ResolveConfig(&refused, &resolved));
 }
@@ -149,13 +160,13 @@ TEST(StreamConfig, StreamMemoryCeilingIncludesPerSlotStaging) {
 TEST(StreamConfig, StreamParkTokenPoolSharesStreamingMemoryCeiling) {
     VnConfig boundary = MakeNullConfig();
     boundary.maxStreams = 30;
-    boundary.maxParkedVoices = 32;
+    boundary.maxParkedVoices = 272;
     harken::EngineConfig resolved;
     EXPECT_EQ(VN_OK, harken::ResolveConfig(&boundary, &resolved));
-    EXPECT_EQ(32u, resolved.voiceCapacity.Virtual());
+    EXPECT_EQ(272u, resolved.voiceCapacity.Virtual());
 
     VnConfig overBudget = boundary;
-    overBudget.maxParkedVoices = 33;
+    overBudget.maxParkedVoices = 273;
     harken::EngineConfig unchanged;
     unchanged.maxStreams = 7;
     EXPECT_EQ(VN_INVALID_CONFIG,

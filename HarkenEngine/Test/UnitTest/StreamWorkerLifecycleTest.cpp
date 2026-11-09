@@ -223,7 +223,7 @@ TEST(StreamWorkerLifecycle, WorkerDeathReleasesWaitersInsteadOfBlocking) {
 TEST(StreamWorkerLifecycle, PlayAfterWorkerDeathIsRefusedAndClaimsNoSlot) {
     VnConfig config = MakeNullConfig(4, 256, 48000);
     config.maxStreams = 1;
-    config.streamRingFrames = 1024;
+    config.streamRingBytes = (1024) * sizeof(float);
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
 
@@ -275,7 +275,7 @@ TEST(StreamWorkerLifecycle, PlayAfterWorkerDeathIsRefusedAndClaimsNoSlot) {
 TEST(StreamWorkerLifecycle, WorkerDeathEndsActiveStreamVoices) {
     VnConfig config = MakeNullConfig(4, 256, 48000);
     config.maxStreams = 1;
-    config.streamRingFrames = 1024;
+    config.streamRingBytes = (1024) * sizeof(float);
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
 
@@ -335,7 +335,7 @@ TEST(StreamWorkerLifecycle, WorkerDeathEndsActiveStreamVoices) {
 TEST(StreamWorkerLifecycle, ShutdownCompletesRequestsStillQueued) {
     harken::EngineConfig config{};
     config.maxStreams = 2;
-    config.streamRingFrames = 1024;
+    config.streamRingBytes = (1024) * sizeof(float);
 
     const std::string path = WriteStream("swl_shutdown.stream", harkentest::ObjectId(9105));
 
@@ -406,7 +406,7 @@ TEST(StreamWorkerLifecycle, ShutdownCompletesRequestsStillQueued) {
 TEST(StreamWorkerLifecycle, ReclamationClosesASlotActivatedAfterTheFailure) {
     harken::EngineConfig config{};
     config.maxStreams = 1;
-    config.streamRingFrames = 1024;
+    config.streamRingBytes = (1024) * sizeof(float);
 
     const std::string path = WriteStream("swl_race_slot.stream", harkentest::ObjectId(9108));
 
@@ -453,7 +453,7 @@ TEST(StreamWorkerLifecycle, ReclamationClosesASlotActivatedAfterTheFailure) {
 TEST(StreamWorkerLifecycle, WorkerDeathStillClosesDrainedRetiringFiles) {
     VnConfig config = MakeNullConfig(4, 256, 48000);
     config.maxStreams = 2;
-    config.streamRingFrames = 1024;
+    config.streamRingBytes = (1024) * sizeof(float);
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
 
@@ -499,7 +499,7 @@ TEST(StreamWorkerLifecycle, ReplacementControlDoesNotWaitForStalledWorker) {
     using Manager = harken::StreamManager;
     harken::EngineConfig config{};
     config.maxStreams = 1;
-    config.streamRingFrames = 1024;
+    config.streamRingBytes = (1024) * sizeof(float);
     Manager streams(config);
     const auto id = harkentest::ObjectId(9110);
     const auto path = WriteStream("swl_prepare_stall.stream", id);
@@ -553,7 +553,7 @@ TEST(StreamWorkerLifecycle, FailedReplacementCancellationDrainsRetiringSource) {
     using Manager = harken::StreamManager;
     harken::EngineConfig config{};
     config.maxStreams = 1;
-    config.streamRingFrames = 1024;
+    config.streamRingBytes = (1024) * sizeof(float);
     Manager streams(config);
     const auto id = harkentest::ObjectId(9111);
     const auto path = WriteStream("swl_prepare_failure.stream", id);

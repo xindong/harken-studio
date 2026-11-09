@@ -1,3 +1,4 @@
+#include "Common/PcmStreamFixture.h"
 // Voice Render Cascade protocol behavior: sample-accurate start, the
 // framesProduced/SourcePhase result facts, insert-effect tail drain, and
 // fade-stop. Most cases drive RenderVoiceBlock directly for per-block
@@ -180,7 +181,7 @@ TEST(CascadeProtocol, PlainLinearStreamPreservesSamplesAndStateThroughRecovery) 
             generic.ctx.fxSlots[0].process =
                 [](void*, float* const*, std::uint32_t, std::uint32_t, std::uint32_t) {};
             std::array<CascadeHarness*, 2> harnesses{&plain, &generic};
-            std::array<harken::StreamRing, 2> streams;
+            std::array<harkentest::PcmStreamFixture, 2> streams;
             std::array<std::vector<float>, 2> storage;
             for (std::size_t i = 0; i < harnesses.size(); ++i) {
                 auto& ctx = harnesses[i]->ctx;
@@ -191,8 +192,10 @@ TEST(CascadeProtocol, PlainLinearStreamPreservesSamplesAndStateThroughRecovery) 
                 streams[i].Wire(planes, capacity);
                 streams[i].ResetForUse(ctx.pcm.channelCount);
                 // The first feed crosses the stream ring's physical wrap.
-                streams[i].readIndex.store(capacity - 64);
-                streams[i].writeIndex.store(capacity - 64);
+                streams[i].readIndex.store((capacity - 64) * streams[i].bytesPerFrame);
+                streams[i].readFrames.store(capacity - 64);
+                streams[i].writeIndex.store((capacity - 64) * streams[i].bytesPerFrame);
+                streams[i].writeFrames.store(capacity - 64);
                 ctx.streamRing = &streams[i];
                 ctx.prebufferTargetFrames = 512;
                 ctx.engineSampleRate = 48000;
@@ -206,14 +209,14 @@ TEST(CascadeProtocol, PlainLinearStreamPreservesSamplesAndStateThroughRecovery) 
             auto publish = [&](std::uint32_t frames) {
                 ASSERT_LE(published + frames, source.size());
                 for (auto& stream : streams) {
-                    ASSERT_LE(frames, stream.WriteAvailable());
-                    const auto write = stream.writeIndex.load();
+                    ASSERT_LE(frames, stream.WritableFrames());
+                    const auto write = stream.writeFrames.load();
                     for (std::uint32_t frame = 0; frame < frames; ++frame) {
-                        const auto pos = static_cast<std::uint32_t>(write + frame) & stream.mask;
+                        const auto pos = static_cast<std::uint32_t>(write + frame) % stream.frameCapacity;
                         stream.planes[0][pos] = source[published + frame];
                         if (stereo) stream.planes[1][pos] = right[published + frame];
                     }
-                    stream.PublishWrite(frames);
+                    stream.PublishFrames(frames);
                 }
                 published += frames;
             };
@@ -222,9 +225,9 @@ TEST(CascadeProtocol, PlainLinearStreamPreservesSamplesAndStateThroughRecovery) 
                 if (block == 0) publish(768);
                 if (block == 5) publish(1024);
                 if (block >= 7 && block <= 18)
-                    publish(std::min(512u, streams[0].WriteAvailable()));
+                    publish(std::min(512u, streams[0].WritableFrames()));
                 if (block == 18) {
-                    ASSERT_GT(streams[0].ReadAvailable(), 0u);
+                    ASSERT_GT(streams[0].BufferedFrames(), 0u);
                     for (auto& stream : streams) ASSERT_TRUE(stream.MarkEndOfData(terminal));
                 }
                 for (auto* harness : harnesses) {
@@ -493,7 +496,7 @@ TEST(CascadeProtocol, AuthoredDeadlineExpiresBeforeStreamPrebufferOpens) {
     std::vector<float> streamStorage(kBlock, 0.0f);
     float* streamPlanes[harken::kMaxChannels] = {};
     streamPlanes[0] = streamStorage.data();
-    harken::StreamRing stream;
+    harkentest::PcmStreamFixture stream;
     stream.Wire(streamPlanes, kBlock);
     stream.ResetForUse(1);
     harness.ctx.streamRing = &stream;
@@ -973,7 +976,7 @@ TEST(CascadeProtocol, StarvedFadeBeyondUint32LimitCompletesWithoutWrap) {
     std::vector<float> streamStorage(kBlock, 0.0f);
     float* streamPlanes[harken::kMaxChannels] = {};
     streamPlanes[0] = streamStorage.data();
-    harken::StreamRing stream;
+    harkentest::PcmStreamFixture stream;
     stream.Wire(streamPlanes, kBlock);
     stream.ResetForUse(1);
 
@@ -1036,10 +1039,10 @@ TEST(CascadeProtocol, StarvedTailControlsSurviveUntilSourceRecovers) {
             CascadeHarness harness(dc, 1.0, ResampleQuality::Linear);
             std::vector<float> storage(1024, 1.0f);
             float* planes[harken::kMaxChannels] = {storage.data()};
-            harken::StreamRing stream;
+            harkentest::PcmStreamFixture stream;
             stream.Wire(planes, 1024);
             stream.ResetForUse(1);
-            stream.PublishWrite(available);
+            stream.PublishFrames(available);
             auto& ctx = harness.ctx;
             ctx.streamRing = &stream;
             ctx.streamGateOpen = true;
@@ -1070,7 +1073,7 @@ TEST(CascadeProtocol, StarvedTailControlsSurviveUntilSourceRecovers) {
                 EXPECT_FLOAT_EQ(1.0f, harness.masterL[frame]);
             ctx.timelineEvents.eventCount = 0;
             ctx.timelineEvents.quantumIndex = 1;
-            stream.PublishWrite(512);
+            stream.PublishFrames(512);
             ASSERT_EQ(kBlock, harness.RenderBlock().framesProduced);
             EXPECT_NEAR(1.0f - (256.0f - 64.0f) / 447.0f, harness.masterL[0], 1e-6f);
         }
@@ -1083,10 +1086,10 @@ TEST(CascadeProtocol, StarvedTailStopKeepsItsExactFadeClock) {
         CascadeHarness harness(dc, 1.0, ResampleQuality::Linear);
         std::vector<float> storage(1024, 1.0f);
         float* planes[harken::kMaxChannels] = {storage.data()};
-        harken::StreamRing stream;
+        harkentest::PcmStreamFixture stream;
         stream.Wire(planes, 1024);
         stream.ResetForUse(1);
-        stream.PublishWrite(available);
+        stream.PublishFrames(available);
         auto& ctx = harness.ctx;
         ctx.engineSampleRate = 48000;
         ctx.streamRing = &stream;
@@ -1110,7 +1113,7 @@ TEST(CascadeProtocol, StarvedParkDoesNotAdoptControlsAfterItsEnd) {
     CascadeHarness harness(dc);
     std::vector<float> storage(kBlock, 0.0f);
     float* planes[harken::kMaxChannels] = {storage.data()};
-    harken::StreamRing stream;
+    harkentest::PcmStreamFixture stream;
     stream.Wire(planes, kBlock);
     stream.ResetForUse(1);
     auto& ctx = harness.ctx;

@@ -133,8 +133,8 @@ static_assert(offsetof(VnConfig, delayEffectPoolCapacity) == 80,
               "wire table offset drift: VnConfig.delayEffectPoolCapacity");
 static_assert(offsetof(VnConfig, toneEffectPoolCapacity) == 84,
               "wire table offset drift: VnConfig.toneEffectPoolCapacity");
-static_assert(offsetof(VnConfig, streamRingFrames) == 88,
-              "wire table offset drift: VnConfig.streamRingFrames");
+static_assert(offsetof(VnConfig, streamRingBytes) == 88,
+              "wire table offset drift: VnConfig.streamRingBytes");
 static_assert(offsetof(VnConfig, maxStreams) == 92,
               "wire table offset drift: VnConfig.maxStreams");
 static_assert(offsetof(VnConfig, prebufferMs) == 96,

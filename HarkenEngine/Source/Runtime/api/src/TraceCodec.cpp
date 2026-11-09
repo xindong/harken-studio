@@ -20,7 +20,7 @@ NativeConfigVintages() noexcept {
         static_cast<std::uint32_t>(offsetof(VnConfig, logCallback)),
         static_cast<std::uint32_t>(
             offsetof(VnConfig, delayEffectPoolCapacity)),
-        static_cast<std::uint32_t>(offsetof(VnConfig, streamRingFrames)),
+        static_cast<std::uint32_t>(offsetof(VnConfig, streamRingBytes)),
         static_cast<std::uint32_t>(offsetof(VnConfig, maxActions)),
         static_cast<std::uint32_t>(offsetof(VnConfig, maxTriggerDepth)),
         static_cast<std::uint32_t>(offsetof(VnConfig, mixChannelLayout)),
@@ -165,7 +165,7 @@ struct PrefixDecodeVisitor {
     X(notificationQueueDepth)                                               \
     X(delayEffectPoolCapacity)                                              \
     X(toneEffectPoolCapacity)                                               \
-    X(streamRingFrames)                                                     \
+    X(streamRingBytes)                                                     \
     X(maxStreams)                                                           \
     X(prebufferMs)                                                          \
     X(starvationCooldownBlocks)                                             \
@@ -366,6 +366,11 @@ bool DecodeTraceConfig(const std::uint8_t* bytes, std::size_t byteCount,
     }
     if (vintage >= 17) {
         decoded.compressedDecoderBytes = reader.U64();
+    }
+    if (vintage < 17) {
+        const std::uint64_t bytes = static_cast<std::uint64_t>(decoded.streamRingBytes) * 8u * sizeof(float);
+        if (bytes > UINT32_MAX) return false;
+        decoded.streamRingBytes = static_cast<std::uint32_t>(bytes);
     }
     const std::uint32_t historicalPendingCapacity =
         decoded.pendingActionCapacity;

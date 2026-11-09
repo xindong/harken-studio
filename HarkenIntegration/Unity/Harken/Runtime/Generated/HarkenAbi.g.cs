@@ -80,7 +80,7 @@ namespace Harken
             Off(f, "VnConfig", "logUserData", Marshal.OffsetOf<VnConfig>("logUserData"), 72);
             Off(f, "VnConfig", "delayEffectPoolCapacity", Marshal.OffsetOf<VnConfig>("delayEffectPoolCapacity"), 80);
             Off(f, "VnConfig", "toneEffectPoolCapacity", Marshal.OffsetOf<VnConfig>("toneEffectPoolCapacity"), 84);
-            Off(f, "VnConfig", "streamRingFrames", Marshal.OffsetOf<VnConfig>("streamRingFrames"), 88);
+            Off(f, "VnConfig", "streamRingBytes", Marshal.OffsetOf<VnConfig>("streamRingBytes"), 88);
             Off(f, "VnConfig", "maxStreams", Marshal.OffsetOf<VnConfig>("maxStreams"), 92);
             Off(f, "VnConfig", "prebufferMs", Marshal.OffsetOf<VnConfig>("prebufferMs"), 96);
             Off(f, "VnConfig", "starvationCooldownBlocks", Marshal.OffsetOf<VnConfig>("starvationCooldownBlocks"), 100);

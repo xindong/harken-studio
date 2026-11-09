@@ -7027,7 +7027,7 @@
             },
             {
               "alignment": 4,
-              "name": "streamRingFrames",
+              "name": "streamRingBytes",
               "offset": 88,
               "shape": {
                 "kind": "scalar",
@@ -21804,7 +21804,7 @@
                 "size": 80
               },
               {
-                "field": "streamRingFrames",
+                "field": "streamRingBytes",
                 "size": 88
               },
               {
@@ -21860,7 +21860,7 @@
               "onNotification",
               "logCallback",
               "delayEffectPoolCapacity",
-              "streamRingFrames",
+              "streamRingBytes",
               "maxActions",
               "maxTriggerDepth",
               "mixChannelLayout",
@@ -24887,11 +24887,11 @@
       "formatVersion": 7
     }
   },
-  "contractSha256": "f6a666ffd3c2a653acc27285765d2fd18bc3e144e4be88b28f37d1f0f4578f3d",
+  "contractSha256": "5d7f1e11d7a0a709f11ef754762f0ba689f4deafdc2ee234979c4416454f7d1f",
   "generatedFiles": {
     "HarkenEngine/Source/Tooling/Binding/generated/harken_binding_abi_pin.g.h": {
-      "sha256": "a4d2ea7bd65d15b9951ba0cb70d4e3e94fca369b7ce77a0b2891caf205dd7c3a",
-      "size": 340146
+      "sha256": "58b10aad9f33ff2027ed366be655a076615de86133ddee61836c1788953828be",
+      "size": 340144
     },
     "HarkenEngine/Tool/Remote/generated/harken_wire_desc_meta.h": {
       "sha256": "d02bee48f10bd551a2887f963fd26ee9e0ba21e66108f186d7e6af6941ee0567",
@@ -24906,37 +24906,37 @@
       "size": 5406
     },
     "HarkenEngine/Tool/Remote/generated/harken_wire_layout_asserts.h": {
-      "sha256": "11cef11a06b96f38f7c626fa953c5bb57831894ba623f7176e5ee2cb563360b5",
-      "size": 252858
+      "sha256": "7d4d42554d85b44e3590ed010070f2fa9268360476462240d24c82c6986a9c28",
+      "size": 252856
     },
     "HarkenEngine/Tool/Remote/harken_wire.py": {
-      "sha256": "af1ec13bc3f2f09493a7024bdae0a2157115505dc71fc38f7d9850bf21140fc4",
-      "size": 264218
+      "sha256": "891c97c5c480b08e8a2079265bbcbbae400b490f0e68317da3728f81eee2e8ef",
+      "size": 264216
     },
     "HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenAbi.g.cs": {
-      "sha256": "1eb28ab11237e28d29c44fce21141595dba8d6a121911ec9edbb4367875948de",
-      "size": 132504
+      "sha256": "ab7c6f3b21c992c47d1e957b1bbb154993f27f909993b2b4c7413c5f4e9d4433",
+      "size": 132502
     },
     "HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenNative.g.cs": {
       "sha256": "29ab6e4eea4101fa5d4d5e131ac02931ec7bf423f30afa626c570f4c7cdb1188",
       "size": 31334
     },
     "HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs": {
-      "sha256": "c90915695b6849f2bd48c869b2a829fe779f5b74018b3083b424425e14578acc",
-      "size": 70533
+      "sha256": "7d4eb31ef69a6a26e9d8057e95533f5066062ac22aaa6dc36433e16f17812197",
+      "size": 70532
     }
   },
   "kind": "harken-contract-suite-manifest",
   "schemaVersion": 1,
   "sectionSha256": {
-    "nativeAbiSha256": "caba4ca88a8ea3865a08389d28c23eb279c08dda2f1939176fcacfcfa1ad8e57",
+    "nativeAbiSha256": "6d392ba5623420b3f0786bd692f389892b3f1d86f172d7ea604cfb218a569ee4",
     "remoteWireSha256": "d99304d71d24436e14a34fd990b3ded5e6ddd7bca6c13dc2065a9709d53577d3",
     "traceFormatSha256": "c43ada4c2f8b42c3ce2a66b0cf1af258b5c6e3d338fc00ce480954afdfa78ecc"
   },
   "sourceFiles": {
     "HarkenEngine/Source/Runtime/api/include/harken/Harken.h": {
-      "sha256": "b103b8b09189af3b2a9865d8d52e9b4e1a997ff18a98dd5b9e8906009fa6e243",
-      "size": 251147
+      "sha256": "03a5b695aa7c1871afb0e688b3170d99d5b6f5bd9545e5f792f9dbc83bf54ecc",
+      "size": 245795
     },
     "HarkenEngine/Source/Runtime/api/include/harken/ObjectId.h": {
       "sha256": "90b6f66ad515c5e411564f1e5981b65bec2e461fabbdee6c57aa86b26b9a300d",
@@ -24959,8 +24959,8 @@
       "size": 30778
     },
     "HarkenEngine/Source/Tooling/Remote/wire/harken_wire_table.json": {
-      "sha256": "316665a3b0a83cc5a44ff961bb700d9244c8a98d8893b723e79f9e34ba1724a8",
-      "size": 275636
+      "sha256": "d76d0be3288d3c81f44dca07ae9c2458033ca24930bbc21c6d1c06d1ce88929d",
+      "size": 262971
     }
   }
 }
