@@ -1,6 +1,7 @@
 #include "harken/media/PackMediaRange.h"
 
 #include "harken/media/PackFormat.h"
+#include "harken/core/MediaCodec.h"
 
 #include <algorithm>
 #include <cassert>
@@ -89,8 +90,13 @@ bool ReadVerifiedPackMediaChunk(const PackMediaRange& range, std::uint32_t chunk
 
 
 bool EqualResidentSamples(const PCMView& left, const PCMView& right) noexcept {
-    if (left.encoded != nullptr || right.encoded != nullptr)
-        return left.encoded != nullptr && left.encoded == right.encoded;
+    if (left.encoded != nullptr || right.encoded != nullptr) {
+        if (left.encoded == nullptr || right.encoded == nullptr) return false;
+        if (left.encoded == right.encoded) return true;
+        const auto a = left.encoded->ContentBytes();
+        const auto b = right.encoded->ContentBytes();
+        return a.size() == b.size() && !a.empty() && std::memcmp(a.data(), b.data(), a.size()) == 0;
+    }
     assert(left.stride == 1 && right.stride == 1);
     if (right.sampleFormat == PcmSampleFormat::Float32) {
         for (std::uint32_t ch = 0; ch < left.channelCount; ++ch) {

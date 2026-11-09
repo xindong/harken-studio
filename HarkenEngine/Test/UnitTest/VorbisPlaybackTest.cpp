@@ -189,6 +189,18 @@ TEST(VorbisPlayback, EncodedStorageNeverAliasesRawPcmComparisons) {
     harken::PCMRegistry::PreparedPackSamples encoded;
     ASSERT_EQ(registry.PrepareVorbisSamples(sound, codec, fixture.media,
         4 * 1024 * 1024, &encoded), VN_OK);
+    harken::PCMRegistry::PreparedPackSamples identical;
+    ASSERT_EQ(registry.PrepareVorbisSamples(sound, codec, fixture.media,
+        4 * 1024 * 1024, &identical), VN_OK);
+    ASSERT_NE(encoded.View().encoded, identical.View().encoded);
+    EXPECT_TRUE(harken::EqualResidentSamples(encoded.View(), identical.View()));
+    EXPECT_EQ(harken::MatchMediaContent(encoded.View(), nullptr, identical.View(), nullptr),
+              harken::MediaContentMatch::Equal);
+    const auto changedFixture = harken::test::MakeVorbisFixture(1, false, 257, 1023);
+    harken::PCMRegistry::PreparedPackSamples different;
+    ASSERT_EQ(registry.PrepareVorbisSamples(sound, codec, changedFixture.media,
+        4 * 1024 * 1024, &different), VN_OK);
+    EXPECT_FALSE(harken::EqualResidentSamples(encoded.View(), different.View()));
     VnPCMDesc shape{};
     shape.structSize = sizeof(shape); shape.sampleRate = 48000;
     shape.channels = 1; shape.frames = fixture.reference.size();
@@ -218,7 +230,7 @@ TEST(VorbisPlayback, EncodedStorageNeverAliasesRawPcmComparisons) {
     registry.CommitPreparedPackMutation(&first);
     registration.samples = &pcm;
     harken::PCMRegistry::PreparedPackMutation replacement;
-    ASSERT_EQ(registry.PreparePackMutation(&registration, 1, 0, &replacement), VN_OK);
+    ASSERT_EQ(registry.PreparePackMutation(&registration, 1, 1, &replacement), VN_OK);
     harken::PCMRegistry::RetiredGeneration retired;
     ASSERT_TRUE(registry.ExtractRetiring(sound, registry.CookieOf(sound), &retired));
     registry.CommitPreparedPackMutation(&replacement);

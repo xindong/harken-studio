@@ -2,6 +2,7 @@
 #define HARKEN_CORE_MEDIA_CODEC_H
 #include <cstddef>
 #include <cstdint>
+#include <span>
 
 namespace harken {
 struct PCMView;
@@ -24,6 +25,8 @@ public:
     virtual ~EncodedMedia() = default;
     virtual MediaDecoder* Acquire() const noexcept = 0;
     virtual std::size_t ResidentBytes() const noexcept = 0;
+    // Complete self-describing bytes prove exact content identity on logic.
+    virtual std::span<const std::uint8_t> ContentBytes() const noexcept = 0;
 };
 }
 #endif

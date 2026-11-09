@@ -26,6 +26,7 @@ namespace {
 
 bool EqualPlanarSamples(const PCMView& view, const float* samples) noexcept {
     PCMView source = view;
+    source.encoded = nullptr;
     source.sampleFormat = PcmSampleFormat::Float32;
     for (std::uint32_t ch = 0; ch < view.channelCount; ++ch)
         source.channels[ch] = samples + static_cast<std::size_t>(ch) * view.frames;

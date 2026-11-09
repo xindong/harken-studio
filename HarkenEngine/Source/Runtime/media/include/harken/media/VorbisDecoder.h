@@ -126,6 +126,7 @@ public:
         std::vector<std::uint8_t> bytes, std::size_t budget, VorbisPrepareResult& result);
     MediaDecoder* Acquire() const noexcept override;
     std::size_t ResidentBytes() const noexcept override;
+    std::span<const std::uint8_t> ContentBytes() const noexcept override { return bytes_; }
     PCMView View() const noexcept;
 private:
     friend struct VorbisStatePool::State;
