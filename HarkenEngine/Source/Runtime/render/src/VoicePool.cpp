@@ -3287,7 +3287,7 @@ void VoicePool::FillSourceCursor(const Slot& slot, SlotState state,
     row.exactTimingValid = timelineSource && render.streamRing == nullptr &&
         render.pcm.Valid() &&
         render.resampler.Profile() == ResampleProfile::LegacyCompatibility;
-    row.groupTimingValid = render.streamRecoveryGroup != nullptr &&
+    row.groupTimingValid = render.streamRecoveryGroup != nullptr && render.phase == SourcePhase::Active &&
         render.resampler.Profile() == ResampleProfile::LegacyCompatibility;
     row.awaitingStart = render.timelineGated;
     row.loopInfinite = render.streamRing != nullptr

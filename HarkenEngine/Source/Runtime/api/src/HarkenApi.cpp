@@ -4818,6 +4818,7 @@ bool WithdrawUnpublishedSourceLoansBeforeExposure(harken::Engine& engine,
         if (source->State() == harken::OriginalSourceSubmissionRegistry::Phase::Disposed) {
             // Installation also disposes the command range. Only a real physical
             // release permits returning the new storage loans here.
+            engine.ReleaseGroupRecoverySource(start.renderHandle);
             (void)engine.ReturnPendingVariableLeafSourceAfterPhysicalRelease(start.arm);
             return true;
         }
@@ -4842,6 +4843,7 @@ bool WithdrawUnpublishedSourceLoansBeforeExposure(harken::Engine& engine,
         // Transfer the actual completed physical disposition to the stable owner before
         // Exposure can retire the Arm and another issuance can reuse the registry row.
         start.voiceOwnershipHeld = false;
+        engine.ReleaseGroupRecoverySource(start.renderHandle);
         if (!engine.ReturnPendingVariableLeafSourceAfterPhysicalRelease(start.arm)) return false;
         return engine.originalSourceSubmissions.WithdrawUnpublished(start.arm);
     };
@@ -8994,6 +8996,7 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
             (void)engine.originalSourceSubmissions.DisposeUnpublishedVoice(arm);
         else if (!engine.voices.CancelPreparedVoice(render))
             (void)engine.voices.AbortClaimedVoice(render);
+        engine.ReleaseGroupRecoverySource(render);
         const bool queueReturned = engine.ReturnOriginalQueueSourcePreparationAfterPhysicalRelease(arm);
         const bool singleReturned = engine.ReturnOriginalSingleSourcePreparationAfterPhysicalRelease(arm);
         const bool pendingReturned = engine.ReturnPendingVariableLeafSourceAfterPhysicalRelease(arm);
@@ -9022,7 +9025,6 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
             engine.ledger.Release(ledgerSlot);
             engine.commands.CancelReservedBatch(&engine.timelineBatchReservation);
         }
-        engine.ReleaseGroupRecoverySource(render);
         result.status = status;
         return result;
     };
@@ -9324,7 +9326,7 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
         auto* controller = engine.ResolvePlayableService(resourceService->identity,
             resourceService->ownerInstance, resourceService->ownerEpoch);
         if (controller == nullptr) return rollback(VN_RUNTIME_RECREATE_REQUIRED);
-        const auto groupBound = engine.BindGroupRecoverySource(*controller, render, releaseObserver,
+        const auto groupBound = engine.BindGroupRecoverySource(*controller, programGeneration, render, releaseObserver,
             install, streamFacts, streamLoopStart, streamLoopEnd);
         if (groupBound != VN_OK) return rollback(groupBound);
         if (!PrepareInheritedSourceExits(engine, *controller, render, releaseObserver, privateScheduleOwner))
@@ -9707,6 +9709,7 @@ bool CancelPreparedTimelineVoiceStart(
         }
     }
     if (!prepared->voiceOwnershipHeld) {
+        engine.ReleaseGroupRecoverySource(prepared->renderHandle);
         if (!engine.ReturnOriginalQueueSourcePreparationAfterPhysicalRelease(prepared->arm)) return false;
         if (!engine.ReturnOriginalSingleSourcePreparationAfterPhysicalRelease(prepared->arm)) return false;
         if (!engine.ReturnPendingVariableLeafSourceAfterPhysicalRelease(prepared->arm)) return false;
@@ -9741,6 +9744,7 @@ bool CancelPreparedTimelineVoiceStart(
             }
         }
     }
+    engine.ReleaseGroupRecoverySource(prepared->renderHandle);
     if (prepared->ledgerOwnershipHeld) {
         if (engine.ledger.CancelPreparedPlayableOwned(
                 prepared->ledgerSlot)) {
@@ -9919,6 +9923,7 @@ bool RollbackCommittedTimelineVoiceStart(
         }
         prepared->ledgerOwnershipHeld = false;
         prepared->voiceOwnershipHeld = false;
+        engine.ReleaseGroupRecoverySource(prepared->renderHandle);
         // Physical Voice retirement owns the published effects' retire queue.
         prepared->effectOwnershipHeld = {};
         if (prepared->armOwnershipHeld) {
@@ -9989,6 +9994,7 @@ bool RollbackCommittedTimelineVoiceStart(
             return false;
         }
         prepared->voiceOwnershipHeld = false;
+        engine.ReleaseGroupRecoverySource(prepared->renderHandle);
     }
     if (prepared->ledgerOwnershipHeld) {
         engine.ledger.Release(prepared->ledgerSlot);
@@ -102061,7 +102067,7 @@ harken::PlayableStartResult PrepareDirectPlayableStart(
         result.status = engine.runtimeRecreateRequired ? Status::RuntimeRecreateRequired
             : directFailure != Status::Accepted ? directFailure
             : reason == VN_BACKPRESSURE ? Status::Backpressure
-            : reason == VN_NO_VOICE ? Status::Capacity
+            : reason == VN_NO_VOICE || reason == VN_NO_STREAM ? Status::Capacity
             : reason == VN_CAPABILITY_UNAVAILABLE ? Status::CapabilityUnavailable
             : reason == VN_REVISION_CONFLICT ? Status::GenerationConflict : Status::InvalidInput;
         return result;

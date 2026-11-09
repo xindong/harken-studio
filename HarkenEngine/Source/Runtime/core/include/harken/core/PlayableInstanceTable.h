@@ -556,8 +556,9 @@ public:
     bool ValidateStamp(PlayableInstanceHandle handle,
                        std::uint64_t scheduleEpoch) const;
     bool IsPrepared(PlayableInstanceHandle handle) const noexcept;
-    // Read-only classification of an exact unpublished preparation token.
-    bool CapturePreparedKind(const PreparedPlayableInstance& prepared, PlayableKind* kind) const noexcept;
+    // Includes unpublished owners without granting mutation or publication authority.
+    bool CaptureOwnerAncestry(PlayableInstanceHandle owner, std::uint64_t epoch, PlayableKind* kind,
+        PlayableInstanceHandle* parent, std::uint64_t* parentEpoch) const noexcept;
 
     bool OwnsPrepared(
         const PreparedPlayableInstance& prepared) const noexcept;

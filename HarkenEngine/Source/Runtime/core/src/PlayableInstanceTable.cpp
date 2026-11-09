@@ -2054,12 +2054,16 @@ bool PlayableInstanceTable::IsPrepared(
            m_entries[slot].generation == GenerationOf(handle);
 }
 
-bool PlayableInstanceTable::CapturePreparedKind(const PreparedPlayableInstance& prepared,
-    PlayableKind* kind) const noexcept {
-    if (kind == nullptr || !OwnsPrepared(prepared)) return false;
-    const auto& entry = m_entries[SlotOf(prepared.Handle())];
-    if (entry.parent != prepared.Parent() || entry.preparationInput.kind != entry.kind) return false;
-    *kind = entry.kind;
+bool PlayableInstanceTable::CaptureOwnerAncestry(PlayableInstanceHandle owner, std::uint64_t epoch,
+    PlayableKind* kind, PlayableInstanceHandle* parent, std::uint64_t* parentEpoch) const noexcept {
+    const auto* entry = FindAny(owner);
+    if (kind == nullptr || parent == nullptr || parentEpoch == nullptr || epoch == 0 ||
+        entry == nullptr || entry->scheduleEpoch != epoch) return false;
+    const auto* ancestor = entry->parent == 0 ? nullptr : FindAny(entry->parent);
+    if (entry->parent != 0 && ancestor == nullptr) return false;
+    *kind = entry->kind;
+    *parent = entry->parent;
+    *parentEpoch = ancestor == nullptr ? 0 : ancestor->scheduleEpoch;
     return true;
 }
 

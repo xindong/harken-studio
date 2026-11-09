@@ -10,7 +10,7 @@ namespace harken {
 
 struct EngineStreamRecoveryBinding {
     Engine* engine = nullptr;
-    EngineStreamRecoveryState* group = nullptr;
+    std::shared_ptr<EngineStreamRecoveryState> group;
     Engine::OriginalPlayableServiceLifetimePin owner;
     VnVoiceHandle render = 0;
     VoiceReleaseObserver release{};
@@ -41,48 +41,66 @@ struct EngineStreamRecoveryBatch {
 };
 
 struct EngineStreamRecoveryState {
+    PlayableInstanceHandle instance = 0;
+    std::uint64_t epoch = 0;
     StreamRecoveryGroup render;
     std::unique_ptr<EngineStreamRecoveryBatch> pending;
     std::uint64_t servedSerial = 0;
     std::uint64_t leadFrames = 0;
 };
 
-VnResult Engine::BindGroupRecoverySource(EnginePlayableServiceRow& service, VnVoiceHandle render,
+VnResult Engine::BindGroupRecoverySource(EnginePlayableServiceRow& service, PlayableInstanceHandle leaf, VnVoiceHandle render,
     VoiceReleaseObserver release, const TimelineVoiceInstallFacts& install,
     const StreamManager::StreamFacts& facts, std::uint64_t loopStart, std::uint64_t loopEnd) {
     EnginePlayableServiceRow* groupOwner = nullptr;
-    auto* ancestor = &service;
-    for (std::size_t depth = 0; ancestor && depth <= playableServices.size(); ++depth) {
-        const auto actual = playableInstances.Classify(ancestor->ownerInstance);
-        auto kind = actual.kind;
-        bool classified = actual.live;
-        if (!classified) for (const auto& scratch : actionPlayScratch) {
-            const auto& tree = scratch.playableTreeExecutor;
-            for (std::size_t node = 0; node < tree.PreparedInstanceCensusCount(); ++node) {
-                const auto* token = tree.PreparedInstanceCensusToken(node);
-                if (token && token->Handle() == ancestor->ownerInstance &&
-                    token->ScheduleEpoch() == ancestor->ownerEpoch &&
-                    playableInstances.CapturePreparedKind(*token, &kind)) {
-                    classified = true;
-                    break;
-                }
+    PlayableInstanceHandle groupInstance = 0;
+    std::uint64_t groupEpoch = 0;
+    auto ancestor = leaf;
+    auto epoch = playableInstances.SourceRetirementEpoch(leaf);
+    for (std::size_t depth = 0; ancestor; ++depth) {
+        if (depth >= playableInstances.Capacity()) return VN_NO_VOICE;
+        PlayableKind kind{};
+        PlayableInstanceHandle parent = 0;
+        std::uint64_t parentEpoch = 0;
+        if (!playableInstances.CaptureOwnerAncestry(ancestor, epoch, &kind, &parent, &parentEpoch))
+            return VN_NO_VOICE;
+        EnginePlayableServiceRow* owner = nullptr;
+        for (auto& candidate : playableServices)
+            if (candidate.ownerInstance == ancestor && candidate.ownerEpoch == epoch) {
+                if (candidate.invocation != service.invocation ||
+                    candidate.invocationGeneration != service.invocationGeneration) return VN_NO_VOICE;
+                owner = &candidate;
+                break;
             }
-            if (classified) break;
-        }
-        if (!classified) return VN_NO_VOICE;
         if (kind == PlayableKind::Track || kind == PlayableKind::Segment ||
-                (kind == PlayableKind::Container && ancestor->variableControlInstance.Valid()))
-            groupOwner = ancestor;
-        ancestor = ResolvePlayableService(ancestor->parentService);
+                (kind == PlayableKind::Container && owner && owner->variableControlInstance.Valid())) {
+            groupInstance = ancestor;
+            groupEpoch = epoch;
+            groupOwner = owner;
+        }
+        if (groupInstance && !groupOwner && owner) groupOwner = owner;
+        ancestor = parent;
+        epoch = parentEpoch;
     }
-    if (!groupOwner) return VN_OK;
+    if (!groupInstance) return VN_OK;
+    if (!groupOwner) return VN_NO_VOICE;
     const auto index = static_cast<std::uint32_t>(render);
     if (index >= streamResyncs.size() || groupOwner->identity.slot >= originalPlayableServiceLifetimeHolders.size())
         return VN_NO_VOICE;
-    if (!groupOwner->streamRecovery) groupOwner->streamRecovery = std::make_shared<EngineStreamRecoveryState>();
+    // One service can own several Track occurrences, including overlapping
+    // Queue predecessor and successor trees. Their recovery clocks stay separate.
+    auto found = std::find_if(groupOwner->streamRecoveries.begin(), groupOwner->streamRecoveries.end(),
+        [=](const auto& group) { return group->instance == groupInstance && group->epoch == groupEpoch; });
+    if (found == groupOwner->streamRecoveries.end()) {
+        auto group = std::make_shared<EngineStreamRecoveryState>();
+        group->instance = groupInstance;
+        group->epoch = groupEpoch;
+        groupOwner->streamRecoveries.push_back(std::move(group));
+        found = std::prev(groupOwner->streamRecoveries.end());
+    }
     auto binding = std::make_shared<EngineStreamRecoveryBinding>();
     binding->engine = this;
-    binding->group = groupOwner->streamRecovery.get();
+    binding->group = *found;
     binding->render = render;
     binding->release = release;
     if (!originalPlayableServiceLifetimeHolders[groupOwner->identity.slot].Borrow(&binding->owner))
@@ -128,133 +146,140 @@ void Engine::ServiceGroupRecoveries(std::uint64_t preparationHorizon) {
     for (auto& row : streamResyncs)
         if (row.group && voices.ReleaseObserved(row.group->release)) row = {};
     for (auto& service : playableServices) {
-        if (!service.streamRecovery) continue;
-        auto& group = *service.streamRecovery;
-        const auto failure = group.render.failure.load(std::memory_order_acquire);
-        if (failure != SourceTerminalKind::None && service.controlReason != PlayableControlReason::StopRequested &&
-            service.controlLifecycle != PlayableControlLifecycle::Cancelling &&
-            service.phase != EnginePlayableStartPhase::Cancelling) {
-            service.sourceCohortFailureOwner = {};
-            service.controlReason = PlayableControlReason::StartRefused;
-            service.controlLifecycle = PlayableControlLifecycle::FailingSourceActive;
-            if (service.Invocation().actionTerminalReason == ActionTerminalReason::None) {
-                service.Invocation().actionTerminalResult = failure == SourceTerminalKind::IntegrityAbort
-                    ? VN_BAD_STREAM_FILE : VN_RUNTIME_RECREATE_REQUIRED;
-                service.Invocation().actionTerminalReason = failure == SourceTerminalKind::IntegrityAbort
-                    ? ActionTerminalReason::MediaNotReady : ActionTerminalReason::RuntimeError;
+        bool stopOwner = false;
+        std::erase_if(service.streamRecoveries, [](const auto& group) {
+            return group.use_count() == 1 && !group->pending;
+        });
+        for (const auto& retainedGroup : service.streamRecoveries) {
+            auto& group = *retainedGroup;
+            const auto failure = group.render.failure.load(std::memory_order_acquire);
+            if (failure != SourceTerminalKind::None && service.controlReason != PlayableControlReason::StopRequested &&
+                service.controlLifecycle != PlayableControlLifecycle::Cancelling &&
+                service.phase != EnginePlayableStartPhase::Cancelling) {
+                service.sourceCohortFailureOwner = {};
+                service.controlReason = PlayableControlReason::StartRefused;
+                service.controlLifecycle = PlayableControlLifecycle::FailingSourceActive;
+                if (service.Invocation().actionTerminalReason == ActionTerminalReason::None) {
+                    service.Invocation().actionTerminalResult = failure == SourceTerminalKind::IntegrityAbort
+                        ? VN_BAD_STREAM_FILE : VN_RUNTIME_RECREATE_REQUIRED;
+                    service.Invocation().actionTerminalReason = failure == SourceTerminalKind::IntegrityAbort
+                        ? ActionTerminalReason::MediaNotReady : ActionTerminalReason::RuntimeError;
+                }
+                stopOwner = true;
             }
-            (void)StopPlayable(*this, service.rootInstance, 0);
-        }
-        if (group.pending) {
-            auto& batch = *group.pending;
-            if (service.controlLifecycle == PlayableControlLifecycle::Cancelling ||
-                service.phase == EnginePlayableStartPhase::Cancelling)
-                batch.render.cancelRequested.store(true, std::memory_order_release);
-            if (!voices.CollectGroupRecovery(batch.ticket, &batch.render)) continue;
-            batch.ticket = 0;
-            if (batch.render.result == StreamRecoveryResult::Applied || batch.render.result == StreamRecoveryResult::Failed)
-                group.servedSerial = batch.render.serial;
-            if (batch.render.result == StreamRecoveryResult::Retry) {
-                const auto now = mixer.BlocksRendered() * config.blockFrames;
-                const auto elapsed = now >= batch.capturedFrame ? now - batch.capturedFrame : 0;
-                if (elapsed <= UINT64_MAX - 2ull * config.blockFrames)
-                    group.leadFrames = std::max(group.leadFrames, elapsed + 2ull * config.blockFrames);
+            if (group.pending) {
+                auto& batch = *group.pending;
+                if (stopOwner || service.controlLifecycle == PlayableControlLifecycle::Cancelling ||
+                    service.phase == EnginePlayableStartPhase::Cancelling)
+                    batch.render.cancelRequested.store(true, std::memory_order_release);
+                if (!voices.CollectGroupRecovery(batch.ticket, &batch.render)) continue;
+                batch.ticket = 0;
+                if (batch.render.result == StreamRecoveryResult::Applied || batch.render.result == StreamRecoveryResult::Failed)
+                    group.servedSerial = batch.render.serial;
+                if (batch.render.result == StreamRecoveryResult::Retry) {
+                    const auto now = mixer.BlocksRendered() * config.blockFrames;
+                    const auto elapsed = now >= batch.capturedFrame ? now - batch.capturedFrame : 0;
+                    if (elapsed <= UINT64_MAX - 2ull * config.blockFrames)
+                        group.leadFrames = std::max(group.leadFrames, elapsed + 2ull * config.blockFrames);
+                }
+                group.pending.reset();
             }
-            group.pending.reset();
-        }
-        const auto serial = group.render.recoverySerial.load(std::memory_order_acquire);
-        if (failure != SourceTerminalKind::None || !serial || serial == group.servedSerial || preparationHorizon == UINT64_MAX ||
-            service.controlLifecycle == PlayableControlLifecycle::Cancelling ||
-            service.phase == EnginePlayableStartPhase::Cancelling) continue;
-        std::vector<std::shared_ptr<EngineStreamRecoveryBinding>> bindings;
-        std::vector<std::uint32_t> indices;
-        for (const auto& row : streamResyncs) if (row.group && row.group->group == &group) {
-            bindings.push_back(row.group);
-            indices.push_back(static_cast<std::uint32_t>(row.handle));
-        }
-        if (bindings.empty()) continue;
-        std::vector<SourceCursorMirror::Row> cursors(indices.size());
-        SourceCursorMirror::Publication publication{};
-        if (!sourceCursors.CaptureRows(indices, cursors, &publication)) continue;
-        if (publication.outputFrame > UINT64_MAX - group.leadFrames) continue;
-        auto horizon = std::max(preparationHorizon, publication.outputFrame + group.leadFrames);
-        const auto block = static_cast<std::uint64_t>(config.blockFrames);
-        if (horizon > UINT64_MAX - (block - 1u)) continue;
-        horizon = ((horizon + block - 1u) / block) * block;
-        if (horizon < publication.outputFrame) continue;
-        auto batch = std::make_unique<EngineStreamRecoveryBatch>();
-        batch->engine = this;
-        batch->capturedFrame = publication.outputFrame;
-        batch->plannedFrame = horizon;
-        batch->render.group = &group.render;
-        batch->render.serial = serial;
-        batch->retained = bindings;
-        batch->members.reserve(bindings.size());
-        batch->streams.reserve(bindings.size());
-        if (!bindings.front()->owner.Borrow(&batch->owner)) continue;
-        VnVoiceHandle representative = 0;
-        bool prepared = true;
-        for (std::size_t i = 0; i < bindings.size(); ++i) {
-            const auto& binding = *bindings[i];
-            const auto& cursor = cursors[i];
-            if (!cursor.active || cursor.awaitingStart || !cursor.groupTimingValid ||
-                cursor.renderGeneration != binding.render >> 32u) continue;
-            if (!representative) representative = binding.render;
-            if (!binding.streamed) continue;
-            const auto& progress = cursor.progress;
-            ResamplerAdvanceState position;
-            position.pcmFrameCount = binding.frameCount;
-            position.loopStartFrame = binding.source.loopStartFrame;
-            position.loopEndFrame = binding.source.loopEndFrame;
-            position.loopInfinite = progress.activationLoopsRemaining == 0;
-            SetResamplerConsumedPosition(&position, progress.sourceStartFrame, progress.activationLoopsRemaining,
-                progress.sourceReadFrame > kResampleHistoryPad ? progress.sourceReadFrame - kResampleHistoryPad : 0);
-            position.sourcePhase = progress.sourcePhase;
-            position.currentRatio = progress.currentRatio;
-            position.targetRatio = progress.targetRatio;
-            position.rampStep = progress.rampStep;
-            position.rampRemaining = progress.rampRemaining;
-            const auto before = position;
-            if (!AdvanceResamplerPosition(&position, horizon - publication.outputFrame) ||
-                position.sourceIntegerFrame >= binding.frameCount) { prepared = false; break; }
-            const auto passes = position.completedLoopPasses - before.completedLoopPasses;
-            const auto span = position.loopEndFrame - position.loopStartFrame;
-            if (passes && span > UINT64_MAX / passes) { prepared = false; break; }
-            auto delta = passes * span;
-            if (position.sourceIntegerFrame >= before.sourceIntegerFrame) {
-                const auto extra = position.sourceIntegerFrame - before.sourceIntegerFrame;
-                if (delta > UINT64_MAX - extra) { prepared = false; break; }
-                delta += extra;
-            } else {
-                const auto wrapped = before.sourceIntegerFrame - position.sourceIntegerFrame;
-                if (delta < wrapped) { prepared = false; break; }
-                delta -= wrapped;
+            const auto serial = group.render.recoverySerial.load(std::memory_order_acquire);
+            if (stopOwner || failure != SourceTerminalKind::None || !serial || serial == group.servedSerial || preparationHorizon == UINT64_MAX ||
+                service.controlLifecycle == PlayableControlLifecycle::Cancelling ||
+                service.phase == EnginePlayableStartPhase::Cancelling) continue;
+            std::vector<std::shared_ptr<EngineStreamRecoveryBinding>> bindings;
+            std::vector<std::uint32_t> indices;
+            for (const auto& row : streamResyncs) if (row.group && row.group->group.get() == &group) {
+                bindings.push_back(row.group);
+                indices.push_back(static_cast<std::uint32_t>(row.handle));
             }
-            if (delta > UINT64_MAX - progress.sourceReadFrame) { prepared = false; break; }
-            std::uint64_t old = 0;
-            if (!voices.CaptureStreamRingToken(binding.render, &old)) { prepared = false; break; }
-            auto request = binding.source;
-            request.targetFrame = position.sourceIntegerFrame;
-            request.loopCount = position.loopInfinite ? 0 : position.loopsRemaining;
-            const auto demand = std::ceil(std::max(position.currentRatio, position.targetRatio) * block) + 2.0;
-            if (demand > UINT32_MAX) { prepared = false; break; }
-            request.prebufferTargetFrames = std::max(request.prebufferTargetFrames, static_cast<std::uint32_t>(demand));
-            StreamManager::PreparedToken token;
-            StreamManager::PreparedStream owned;
-            if (streams.BeginReplacement(request, &token) != VN_OK) { prepared = false; break; }
-            if (streams.TransferReplacement(token, &owned) != VN_OK) {
-                (void)streams.CancelReplacement(token);
-                prepared = false;
-                break;
+            if (bindings.empty()) continue;
+            std::vector<SourceCursorMirror::Row> cursors(indices.size());
+            SourceCursorMirror::Publication publication{};
+            if (!sourceCursors.CaptureRows(indices, cursors, &publication)) continue;
+            if (publication.outputFrame > UINT64_MAX - group.leadFrames) continue;
+            auto horizon = std::max(preparationHorizon, publication.outputFrame + group.leadFrames);
+            const auto block = static_cast<std::uint64_t>(config.blockFrames);
+            if (horizon > UINT64_MAX - (block - 1u)) continue;
+            horizon = ((horizon + block - 1u) / block) * block;
+            if (horizon < publication.outputFrame) continue;
+            auto batch = std::make_unique<EngineStreamRecoveryBatch>();
+            batch->engine = this;
+            batch->capturedFrame = publication.outputFrame;
+            batch->plannedFrame = horizon;
+            batch->render.group = &group.render;
+            batch->render.serial = serial;
+            batch->retained = bindings;
+            batch->members.reserve(bindings.size());
+            batch->streams.reserve(bindings.size());
+            if (!bindings.front()->owner.Borrow(&batch->owner)) continue;
+            VnVoiceHandle representative = 0;
+            bool prepared = true;
+            for (std::size_t i = 0; i < bindings.size(); ++i) {
+                const auto& binding = *bindings[i];
+                const auto& cursor = cursors[i];
+                if (!cursor.active || cursor.awaitingStart || !cursor.groupTimingValid ||
+                    cursor.renderGeneration != binding.render >> 32u) continue;
+                if (!representative) representative = binding.render;
+                if (!binding.streamed) continue;
+                const auto& progress = cursor.progress;
+                ResamplerAdvanceState position;
+                position.pcmFrameCount = binding.frameCount;
+                position.loopStartFrame = binding.source.loopStartFrame;
+                position.loopEndFrame = binding.source.loopEndFrame;
+                position.loopInfinite = progress.activationLoopsRemaining == 0;
+                SetResamplerConsumedPosition(&position, progress.sourceStartFrame, progress.activationLoopsRemaining,
+                    progress.sourceReadFrame > kResampleHistoryPad ? progress.sourceReadFrame - kResampleHistoryPad : 0);
+                position.sourcePhase = progress.sourcePhase;
+                position.currentRatio = progress.currentRatio;
+                position.targetRatio = progress.targetRatio;
+                position.rampStep = progress.rampStep;
+                position.rampRemaining = progress.rampRemaining;
+                const auto before = position;
+                if (!AdvanceResamplerPosition(&position, horizon - publication.outputFrame) ||
+                    position.sourceIntegerFrame >= binding.frameCount) { prepared = false; break; }
+                const auto passes = position.completedLoopPasses - before.completedLoopPasses;
+                const auto span = position.loopEndFrame - position.loopStartFrame;
+                if (passes && span > UINT64_MAX / passes) { prepared = false; break; }
+                auto delta = passes * span;
+                if (position.sourceIntegerFrame >= before.sourceIntegerFrame) {
+                    const auto extra = position.sourceIntegerFrame - before.sourceIntegerFrame;
+                    if (delta > UINT64_MAX - extra) { prepared = false; break; }
+                    delta += extra;
+                } else {
+                    const auto wrapped = before.sourceIntegerFrame - position.sourceIntegerFrame;
+                    if (delta < wrapped) { prepared = false; break; }
+                    delta -= wrapped;
+                }
+                if (delta > UINT64_MAX - progress.sourceReadFrame) { prepared = false; break; }
+                std::uint64_t old = 0;
+                if (!voices.CaptureStreamRingToken(binding.render, &old)) { prepared = false; break; }
+                auto request = binding.source;
+                request.targetFrame = position.sourceIntegerFrame;
+                request.loopCount = position.loopInfinite ? 0 : position.loopsRemaining;
+                const auto demand = std::ceil(std::max(position.currentRatio, position.targetRatio) * block) + 2.0;
+                if (demand > UINT32_MAX) { prepared = false; break; }
+                request.prebufferTargetFrames = std::max(request.prebufferTargetFrames, static_cast<std::uint32_t>(demand));
+                StreamManager::PreparedToken token;
+                StreamManager::PreparedStream owned;
+                if (streams.BeginReplacement(request, &token) != VN_OK) { prepared = false; break; }
+                if (streams.TransferReplacement(token, &owned) != VN_OK) {
+                    (void)streams.CancelReplacement(token);
+                    prepared = false;
+                    break;
+                }
+                batch->streams.push_back(owned);
+                batch->members.push_back({binding.render, old, owned.ring, owned.ringToken,
+                    progress.sourceReadFrame + delta, position.sourceIntegerFrame, request.loopCount});
             }
-            batch->streams.push_back(owned);
-            batch->members.push_back({binding.render, old, owned.ring, owned.ringToken,
-                progress.sourceReadFrame + delta, position.sourceIntegerFrame, request.loopCount});
+            if (!prepared || !representative) continue;
+            batch->render.members = batch->members;
+            if (!voices.PostGroupRecovery(representative, &batch->render, &batch->ticket)) continue;
+            group.pending = std::move(batch);
         }
-        if (!prepared || !representative) continue;
-        batch->render.members = batch->members;
-        if (!voices.PostGroupRecovery(representative, &batch->render, &batch->ticket)) continue;
-        group.pending = std::move(batch);
+        // Cancellation may synchronously retire bindings and their host storage.
+        if (stopOwner) (void)StopPlayable(*this, service.rootInstance, 0);
     }
 }
 
@@ -304,13 +329,13 @@ bool Engine::CaptureGroupRecovery(VnVoiceHandle render, VnPlaybackReadinessMembe
 }
 
 void Engine::ShutdownGroupRecoveriesAfterQuiescence() noexcept {
-    for (auto& service : playableServices) if (service.streamRecovery && service.streamRecovery->pending) {
-        auto& batch = *service.streamRecovery->pending;
+    for (auto& service : playableServices) for (auto& group : service.streamRecoveries) if (group->pending) {
+        auto& batch = *group->pending;
         const bool joined = voices.CollectGroupRecovery(batch.ticket, &batch.render);
         assert(joined);
         (void)joined;
         batch.ticket = 0;
-        service.streamRecovery->pending.reset();
+        group->pending.reset();
     }
     for (auto& row : streamResyncs) if (row.group) row = {};
 }

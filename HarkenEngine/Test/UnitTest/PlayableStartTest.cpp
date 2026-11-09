@@ -21585,9 +21585,9 @@ TEST(PlayableStart, MusicSegmentStreamedClipRepeatsEveryPassOnTheTimeline) {
 }
 
 TEST(PlayableStart, MusicSegmentStarvedGroupRejoinsItsTimelinePosition) {
-    enum class Supply { Restored, Never, StopWhileSilent, SuspendWhileSilent, PitchWhileSilent, NoSpare };
+    enum class Supply { Restored, Never, StopWhileSilent, SuspendWhileSilent, PitchWhileSilent, NoSpare, IntegrityFailure, ProducerFailure };
     for (const auto workers : {0u, 2u})
-    for (const auto supply : {Supply::Restored, Supply::Never, Supply::StopWhileSilent, Supply::SuspendWhileSilent, Supply::PitchWhileSilent, Supply::NoSpare}) {
+    for (const auto supply : {Supply::Restored, Supply::Never, Supply::StopWhileSilent, Supply::SuspendWhileSilent, Supply::PitchWhileSilent, Supply::NoSpare, Supply::IntegrityFailure, Supply::ProducerFailure}) {
         SCOPED_TRACE(::testing::Message() << "workers=" << workers << " supply=" << static_cast<int>(supply));
         auto config = harkentest::MakeNullConfig(4, 64, 48000);
         config.renderWorkerCount = workers;
@@ -21637,7 +21637,8 @@ TEST(PlayableStart, MusicSegmentStarvedGroupRejoinsItsTimelinePosition) {
         install.segmentScheduleCount = 1;
         harken::ActionStepProgramViewV1 step{};
         harken::ActionProgramViewV1 action{};
-        const bool observe = supply == Supply::Restored;
+        const bool failing = supply == Supply::IntegrityFailure || supply == Supply::ProducerFailure;
+        const bool observe = supply == Supply::Restored || failing;
         if (observe) {
             step.delay = {harken::AuthoredTimeDomainV1::AbsoluteNanoseconds, 0, 1};
             step.fade = step.cooldown = step.delay;
@@ -21690,7 +21691,7 @@ TEST(PlayableStart, MusicSegmentStarvedGroupRejoinsItsTimelinePosition) {
         bool sawReplacement = false, sawRejoined = false, sawStarvedAudio = false;
         std::vector<VnPlaybackReadinessMemberV1> appliedRings;
         std::vector<float> output;
-        for (unsigned block = 0; block < 900; ++block) {
+        for (unsigned block = 0; block < (supply == Supply::PitchWhileSilent ? 1400u : 900u); ++block) {
             const bool served = (block < 100 || ((supply == Supply::Restored || supply == Supply::SuspendWhileSilent || supply == Supply::PitchWhileSilent) && block >= 220)) &&
                 !(observe && workers == 2 && block >= 400 && block < 500);
             if (supply == Supply::SuspendWhileSilent && block == 200) {
@@ -21724,6 +21725,21 @@ TEST(PlayableStart, MusicSegmentStarvedGroupRejoinsItsTimelinePosition) {
                 ASSERT_TRUE(engine.CaptureGroupRecovery(row->handle, view));
                 ASSERT_EQ(VN_PLAYBACK_READINESS_PREPARING, view.state);
                 engine.voices.ApplySetPitch(row->handle, 0.5, 0);
+            }
+            if (failing && block == 200) {
+                const auto row = std::find_if(engine.streamResyncs.begin(), engine.streamResyncs.end(),
+                    [](const auto& entry) { return entry.group && entry.frameCount != 0; });
+                ASSERT_NE(engine.streamResyncs.end(), row);
+                VnPlaybackReadinessMemberV1 replacement{};
+                ASSERT_TRUE(engine.CaptureGroupRecovery(row->handle, replacement));
+                ASSERT_NE(0u, replacement.ringToken);
+                std::uint64_t token = replacement.ringToken;
+                if (supply == Supply::IntegrityFailure)
+                    ASSERT_TRUE(engine.voices.CaptureStreamRingToken(row->handle, &token));
+                auto* ring = engine.streams.RingOf(static_cast<std::uint32_t>(token));
+                ASSERT_EQ(static_cast<std::uint32_t>(token >> 32u), ring->generation.load());
+                ASSERT_TRUE(ring->MarkEndOfData(supply == Supply::IntegrityFailure
+                    ? harken::StreamTerminalReason::IntegrityAbort : harken::StreamTerminalReason::ProducerFailure));
             }
             engine.streams.SetThrottled(!served);
             if (supply == Supply::StopWhileSilent && block == 260)
@@ -21774,7 +21790,20 @@ TEST(PlayableStart, MusicSegmentStarvedGroupRejoinsItsTimelinePosition) {
             for (unsigned frame = 0; frame < config.blockFrames; ++frame)
                 output.push_back(engine.nullBackend.LastBlock()[frame * 2]);
         }
-        if (observe) {
+        if (failing) {
+            VnActionFiringInfo info{};
+            info.structSize = sizeof(info);
+            ASSERT_EQ(VN_OK, Vn_QueryActionFiring(firing, &info));
+            EXPECT_EQ(VN_ACTION_OUTCOME_FAILED, info.outcome);
+            EXPECT_EQ(supply == Supply::IntegrityFailure ? VN_ACTION_TERMINAL_MEDIA_NOT_READY
+                : VN_ACTION_TERMINAL_RUNTIME_ERROR, info.terminalReason);
+            VnActionStepResult stepResult{};
+            stepResult.structSize = sizeof(stepResult);
+            ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, 0, &stepResult));
+            EXPECT_EQ(supply == Supply::IntegrityFailure ? VN_BAD_STREAM_FILE
+                : VN_RUNTIME_RECREATE_REQUIRED, stepResult.result);
+            EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(monitor));
+        } else if (observe) {
             EXPECT_TRUE(sawReplacement);
             EXPECT_TRUE(sawRejoined);
             EXPECT_EQ(workers == 2 ? 2u : 1u, appliedRings.size());
@@ -21785,7 +21814,7 @@ TEST(PlayableStart, MusicSegmentStarvedGroupRejoinsItsTimelinePosition) {
         ASSERT_NE(output.end(), first) << OccupancyDump(engine);
         const auto offset = static_cast<std::size_t>(first - output.begin());
         ASSERT_LE(offset + kFrames, output.size());
-        if (supply == Supply::Never || supply == Supply::StopWhileSilent) {
+        if (supply == Supply::Never || supply == Supply::StopWhileSilent || failing) {
             const std::size_t stop = supply == Supply::StopWhileSilent ? 260u * 64u - offset : kFrames;
             const auto silent = std::find_if(output.begin() + offset, output.begin() + offset + stop,
                 [](float value) { return std::abs(value) < 0.000001f; });
@@ -21814,7 +21843,9 @@ TEST(PlayableStart, MusicSegmentStarvedGroupRejoinsItsTimelinePosition) {
         // Every audible sample after recovery must match the live source clock.
         bool silent = false, rejoined = false;
         const auto pitchAt = 200u * config.blockFrames - offset;
-        for (std::size_t at = 0; at < kFrames; ++at) {
+        const auto expectedFrames = supply == Supply::PitchWhileSilent ? pitchAt + 2u * (kFrames - pitchAt) : kFrames;
+        ASSERT_LE(offset + expectedFrames, output.size());
+        for (std::size_t at = 0; at < expectedFrames; ++at) {
             const auto value = output[offset + at];
             if (std::abs(value) < 0.000001f) {
                 silent = true;
@@ -21823,12 +21854,16 @@ TEST(PlayableStart, MusicSegmentStarvedGroupRejoinsItsTimelinePosition) {
             rejoined |= silent;
             const double source = supply == Supply::PitchWhileSilent && at >= pitchAt
                 ? pitchAt + static_cast<double>(at - pitchAt) * 0.5 : static_cast<double>(at);
-            const float expected = 0.25f - 0.5f + static_cast<float>(source) * (0.4f / kFrames);
+            const auto integer = static_cast<std::size_t>(source);
+            const auto phase = static_cast<float>(source - integer);
+            const float low = integer < kFrames ? ramp(integer) : 0.0f;
+            const float high = integer + 1u < kFrames ? ramp(integer + 1u) : 0.0f;
+            const float expected = (at < kFrames ? 0.25f : 0.0f) + low + phase * (high - low);
             ASSERT_NEAR(expected, value, 0.000001f) << "off timeline at=" << at;
         }
         EXPECT_TRUE(silent);
         EXPECT_TRUE(rejoined);
-        for (std::size_t frame = offset + kFrames; frame < output.size(); ++frame)
+        for (std::size_t frame = offset + expectedFrames; frame < output.size(); ++frame)
             ASSERT_NEAR(0.0f, output[frame], 0.000001f) << frame;
         EXPECT_FALSE(engine.playableInstances.Classify(started.instance).live) << OccupancyDump(engine);
         engine.streams.SyncServe();
@@ -22126,7 +22161,7 @@ TEST(PlayableStart, VariableControlStreamedTargetSwitchesOnPreparedBoundaryOrKee
             << " starve=" << starve);
         auto config = harkentest::MakeNullConfig(4, 64, 48000);
         config.renderWorkerCount = workers;
-        config.maxStreams = 1;
+        config.maxStreams = 2;
         config.prebufferMs = buffering.prebufferMs;
         config.streamRingBytes = (buffering.ringFrames) * sizeof(float);
         harkentest::EngineSession session(config);
@@ -22222,7 +22257,7 @@ TEST(PlayableStart, VariableControlStreamedTargetSwitchesOnPreparedBoundaryOrKee
         EXPECT_EQ(voicesBefore, engine.voices.AvailableSlotCount());
         engine.streams.SetThrottled(false);
         engine.streams.SyncServe();
-        EXPECT_EQ(1u, engine.streams.FreeSlotCount());
+        EXPECT_EQ(config.maxStreams, engine.streams.FreeSlotCount());
         EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(kSecondSound));
         EXPECT_FALSE(engine.runtimeRecreateRequired);
     }
@@ -22420,7 +22455,7 @@ TEST(PlayableStart, NativeInitialStreamWaitRetainsSourceAndCancelsBeforeReady) {
             << " workers=" << workers << " cancel=" << cancel);
         auto config = harkentest::MakeNullConfig(4, 64, 48000);
         config.renderWorkerCount = workers;
-        config.maxStreams = 1;
+        config.maxStreams = variableControl ? 2u : 1u;
         config.streamRingBytes = (1024) * sizeof(float);
         config.prebufferMs = 4;
         harkentest::EngineSession session(config);
@@ -22496,7 +22531,7 @@ TEST(PlayableStart, NativeInitialStreamWaitRetainsSourceAndCancelsBeforeReady) {
             EXPECT_EQ(0u, engine.timelineArms.LiveCount());
             EXPECT_EQ(voicesBefore, engine.voices.AvailableSlotCount());
             engine.streams.SyncServe();
-            EXPECT_EQ(1u, engine.streams.FreeSlotCount());
+            EXPECT_EQ(config.maxStreams, engine.streams.FreeSlotCount());
             EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(kSound));
             EXPECT_FALSE(engine.runtimeRecreateRequired);
         };
@@ -22511,15 +22546,17 @@ TEST(PlayableStart, NativeInitialStreamWaitRetainsSourceAndCancelsBeforeReady) {
 }
 
 TEST(PlayableStart, QueueTrackInitialStreamWaitHoldsResidentSiblingAndReclaims) {
-    for (const auto workers : {0u, 2u}) for (const unsigned outcome : {0u, 1u, 2u}) {
+    for (const auto workers : {0u, 2u}) for (const unsigned outcome : {0u, 1u, 2u, 3u, 4u}) {
+        const bool noSpare = outcome == 3u;
+        const bool starve = outcome == 4u;
         const bool cancel = outcome == 1u;
         const bool failMedia = outcome == 2u;
         SCOPED_TRACE(::testing::Message() << "workers=" << workers << " outcome=" << outcome);
         auto config = harkentest::MakeNullConfig(8, 64, 48000);
         config.renderWorkerCount = workers;
-        config.maxStreams = 1;
-        config.streamRingBytes = (1024) * sizeof(float);
-        config.prebufferMs = 4;
+        config.maxStreams = noSpare ? 1u : 2u;
+        config.streamRingBytes = (starve ? 256u : 1024u) * sizeof(float);
+        config.prebufferMs = starve ? 1u : 4u;
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
         auto& engine = *session.Engine();
@@ -22569,6 +22606,23 @@ TEST(PlayableStart, QueueTrackInitialStreamWaitHoldsResidentSiblingAndReclaims) 
         harken::PlayableStartRequest request;
         request.root = image.Root();
         const auto started = harken::StartPlayable(engine, request);
+        if (noSpare) {
+            EXPECT_EQ(harken::PlayableStartStatus::Capacity, started.status);
+            engine.streams.SetThrottled(false);
+            for (unsigned block = 0; block < 8; ++block) {
+                ASSERT_EQ(VN_OK, Vn_Update());
+                engine.streams.SyncServe();
+                engine.nullBackend.Pump(1);
+                for (unsigned sample = 0; sample < config.blockFrames * 2; ++sample)
+                    EXPECT_FLOAT_EQ(0.0f, engine.nullBackend.LastBlock()[sample]);
+            }
+            EXPECT_EQ(config.maxStreams, engine.streams.FreeSlotCount());
+            EXPECT_EQ(voicesBefore, engine.voices.AvailableSlotCount());
+            EXPECT_EQ(0u, engine.timelineArms.LiveCount());
+            EXPECT_FALSE(engine.runtimeRecreateRequired);
+            EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(kSound));
+            continue;
+        }
         ASSERT_EQ(harken::PlayableStartStatus::Accepted, started.status);
         for (unsigned block = 0; block < 12; ++block) {
             ASSERT_EQ(VN_OK, Vn_Update());
@@ -22601,6 +22655,7 @@ TEST(PlayableStart, QueueTrackInitialStreamWaitHoldsResidentSiblingAndReclaims) 
         }
         engine.streams.SetThrottled(false);
         engine.streams.SyncServe();
+        if (starve) engine.streams.SetThrottled(true);
         unsigned heard = 0;
         std::uint64_t firstHeard = UINT64_MAX, lastHeard = 0;
         for (unsigned block = 0; block < 96; ++block) {
@@ -22616,13 +22671,20 @@ TEST(PlayableStart, QueueTrackInitialStreamWaitHoldsResidentSiblingAndReclaims) 
                 ++heard;
             }
         }
-        EXPECT_EQ(cancel || failMedia ? 0u : 512u, heard);
-        if (heard != 0) EXPECT_EQ(512u, lastHeard - firstHeard + 1u);
+        if (starve) {
+            EXPECT_GT(heard, 0u);
+            EXPECT_LT(heard, 512u);
+            EXPECT_EQ(0u, heard % config.blockFrames);
+        } else {
+            EXPECT_EQ(cancel || failMedia ? 0u : 512u, heard);
+        }
+        if (heard != 0) EXPECT_EQ(heard, lastHeard - firstHeard + 1u);
         EXPECT_FALSE(engine.playableInstances.Classify(started.instance).live) << OccupancyDump(engine);
         EXPECT_EQ(0u, engine.timelineArms.LiveCount());
         EXPECT_EQ(voicesBefore, engine.voices.AvailableSlotCount());
+        engine.streams.SetThrottled(false);
         engine.streams.SyncServe();
-        EXPECT_EQ(1u, engine.streams.FreeSlotCount());
+        EXPECT_EQ(config.maxStreams, engine.streams.FreeSlotCount());
         EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(kSound));
         EXPECT_FALSE(engine.runtimeRecreateRequired);
     }
@@ -22637,7 +22699,7 @@ static void CheckNativeTrackInitialStreamWaitPreservesSubBlockFutureCohort(bool 
         SCOPED_TRACE(::testing::Message() << "variable=" << variable << " wrapped=" << wrapped << " workers=" << workers << " lead=" << lead << " outcome=" << outcome << " blend=" << blendProbe << " wait=" << waitBlocks);
         auto config = harkentest::MakeNullConfig(8, 64, 48000);
         config.renderWorkerCount = workers;
-        config.maxStreams = 2;
+        config.maxStreams = 4;
         config.streamRingBytes = (1024) * sizeof(float);
         config.prebufferMs = 4;
         harkentest::EngineSession session(config);
@@ -22948,7 +23010,7 @@ static void CheckNativeTrackInitialStreamWaitPreservesSubBlockFutureCohort(bool 
         EXPECT_EQ(0u, engine.timelineArms.LiveCount());
         EXPECT_EQ(voicesBefore, engine.voices.AvailableSlotCount());
         engine.streams.SyncServe();
-        EXPECT_EQ(2u, engine.streams.FreeSlotCount());
+        EXPECT_EQ(config.maxStreams, engine.streams.FreeSlotCount());
         EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(kSound));
         EXPECT_FALSE(engine.runtimeRecreateRequired);
     }
@@ -23071,7 +23133,7 @@ TEST(PlayableStart, ActionPlaybackReadinessMatchesMixedOutputAndStreamObservatio
         SCOPED_TRACE(::testing::Message() << workers << ":" << monitorVersion << ":" << cancel);
         auto config = harkentest::MakeNullConfig(32, 64, 48000);
         config.renderWorkerCount = workers;
-        config.maxStreams = 1;
+        config.maxStreams = 2;
         config.streamRingBytes = (1024) * sizeof(float);
         config.prebufferMs = 4;
         harkentest::EngineSession session(config);
@@ -23279,7 +23341,7 @@ TEST(PlayableStart, DirectTrackMixedStreamWaitsStartsTogetherAndCancelsBeforeRea
         SCOPED_TRACE(::testing::Message() << "workers=" << workers << " mode=" << mode);
         auto config = harkentest::MakeNullConfig(4, 64, 48000);
         config.renderWorkerCount = workers;
-        config.maxStreams = 1;
+        config.maxStreams = 2;
         config.streamRingBytes = (1024) * sizeof(float);
         config.prebufferMs = 4;
         harkentest::EngineSession session(config);
@@ -23390,7 +23452,7 @@ TEST(PlayableStart, DirectTrackMixedStreamWaitsStartsTogetherAndCancelsBeforeRea
         EXPECT_EQ(armsBefore, engine.timelineArms.LiveCount());
         EXPECT_EQ(voicesBefore, engine.voices.AvailableSlotCount());
         engine.streams.SyncServe();
-        EXPECT_EQ(1u, engine.streams.FreeSlotCount());
+        EXPECT_EQ(config.maxStreams, engine.streams.FreeSlotCount());
         EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(kSecondSound));
     }
 }
@@ -23431,7 +23493,7 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
         SCOPED_TRACE(::testing::Message() << "workers=" << workers << " scenario=" << scenario);
         auto config = harkentest::MakeNullConfig(8, 64, 48000);
         config.renderWorkerCount = workers;
-        config.maxStreams = nativeStreamLate ? 2u : 1u;
+        config.maxStreams = nativeStreamLate ? 4u : 2u;
         config.streamRingBytes = (1024) * sizeof(float);
         config.prebufferMs = largePrebuffer ? 1000u : 4u;
         harkentest::EngineSession session(config);
@@ -24396,7 +24458,7 @@ TEST(PlayableStart, FutureStreamCohortWaitsForIndependentProvidersWithinPreparat
         std::array<Provider, 2> providers;
         auto config = harkentest::MakeNullConfig(8, 64, 48000);
         config.renderWorkerCount = workers;
-        config.maxStreams = 2;
+        config.maxStreams = 4;
         config.prebufferMs = 4;
         config.streamRingBytes = (1024) * sizeof(float);
         harkentest::EngineSession session(config);
@@ -24530,7 +24592,7 @@ TEST(PlayableStart, FutureStreamCohortWaitsForIndependentProvidersWithinPreparat
         EXPECT_EQ(0u, engine.decisions.LiveCount());
         EXPECT_EQ(0u, engine.armGroups.LiveCount());
         EXPECT_EQ(voicesBefore, engine.voices.AvailableSlotCount());
-        EXPECT_TRUE(waitFor([&] { engine.streams.SyncServe(); return engine.streams.FreeSlotCount() == 2u; }));
+        EXPECT_TRUE(waitFor([&] { engine.streams.SyncServe(); return engine.streams.FreeSlotCount() == config.maxStreams; }));
         EXPECT_FALSE(engine.runtimeRecreateRequired);
         for (std::size_t index = 0; index < providers.size(); ++index) {
             EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(sounds[index]));
@@ -24555,7 +24617,7 @@ TEST(PlayableStart, InitialStreamAnchorKeepsSubBlockFutureStartsFixedAndContains
         SCOPED_TRACE(::testing::Message() << "workers=" << workers << " lead=" << lead << " scenario=" << scenario);
         auto config = harkentest::MakeNullConfig(8, 64, 48000);
         config.renderWorkerCount = workers;
-        config.maxStreams = futureCapacityRefusal ? 1u : 2u;
+        config.maxStreams = futureCapacityRefusal ? 2u : 4u;
         config.streamRingBytes = (1024) * sizeof(float);
         config.prebufferMs = 4;
         harkentest::EngineSession session(config);
@@ -24813,7 +24875,7 @@ static void CheckFutureStreamWithIndependentNativeVariable(bool earlyTerm, unsig
         SCOPED_TRACE(::testing::Message() << "readiness=" << readiness << " earlyTerm=" << earlyTerm << " workers=" << workers);
         auto config = harkentest::MakeNullConfig(8, 64, 48000);
         config.renderWorkerCount = workers;
-        config.maxStreams = 2;
+        config.maxStreams = 4;
         config.streamRingBytes = (1024) * sizeof(float);
         config.prebufferMs = 4;
         harkentest::EngineSession session(config);
@@ -25062,7 +25124,7 @@ static void CheckFutureStreamWithIndependentNativeVariable(bool earlyTerm, unsig
         EXPECT_EQ(0u, engine.armGroups.LiveCount());
         EXPECT_FALSE(engine.runtimeRecreateRequired);
         engine.streams.SyncServe();
-        EXPECT_EQ(2u, engine.streams.FreeSlotCount());
+        EXPECT_EQ(config.maxStreams, engine.streams.FreeSlotCount());
         EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(kSecondSound));
     }
 }
@@ -25198,7 +25260,7 @@ TEST(PlayableStart, RepeatedTrackMixedStreamWaitPreservesFutureClipAndCancellati
         SCOPED_TRACE(::testing::Message() << "workers=" << workers << " cancel=" << cancel << " bound=" << boundInitial);
         auto config = harkentest::MakeNullConfig(4, 64, 48000);
         config.renderWorkerCount = workers;
-        config.maxStreams = 1;
+        config.maxStreams = 2;
         config.streamRingBytes = (1024) * sizeof(float);
         config.prebufferMs = 4;
         harkentest::EngineSession session(config);
@@ -25376,7 +25438,7 @@ TEST(PlayableStart, RepeatedTrackMixedStreamWaitPreservesFutureClipAndCancellati
         EXPECT_EQ(armsBefore, engine.timelineArms.LiveCount());
         EXPECT_EQ(voicesBefore, engine.voices.AvailableSlotCount());
         engine.streams.SyncServe();
-        EXPECT_EQ(1u, engine.streams.FreeSlotCount());
+        EXPECT_EQ(config.maxStreams, engine.streams.FreeSlotCount());
         EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(kSecondSound));
     }
 }
