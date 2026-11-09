@@ -352,6 +352,33 @@ struct VoiceRenderContext {
     bool starvedThisBlock = false;
     std::uint32_t starveCooldownRemaining = 0;
 
+    // Timeline resync for a streamed clip on a track. A starvation fades the
+    // voice out and latches it: it then renders silence while its timeline
+    // keeps moving, so it can rejoin at the source frame that timeline frame
+    // maps to. The anchors pin that mapping at the latch point; the voice ends
+    // naturally at resyncEndFrame when it never rejoins. A prepared
+    // replacement ring switches in at resyncSwitchFrame and fades in from
+    // there; a switch whose frame has already passed is requested again.
+    static constexpr std::uint32_t kStreamResyncFadeMs = 5;
+    bool resyncOnStarve = false;
+    bool resyncLatched = false;
+    bool resyncMappable = false;
+    bool resyncLatchedThisBlock = false;
+    double resyncRatio = 1.0;
+    std::uint64_t resyncTimelineAnchor = 0;
+    std::uint64_t resyncSourceAnchor = 0;
+    std::uint64_t resyncEndFrame = UINT64_MAX;
+    std::uint64_t resyncSwitchFrame = UINT64_MAX;
+    std::uint32_t resyncFadeFrames = 0;
+    std::uint32_t resyncFadeInDone = 0;
+    // A fade-out starts once the buffered source cannot outlast this block
+    // plus the fade, so it completes before the ring runs dry.
+    std::uint32_t resyncFadeOutTotal = 0;
+    std::uint32_t resyncFadeOutDone = 0;
+    std::uint64_t resyncPendingToken = 0;
+    std::uint64_t resyncPendingTicket = 0;
+    std::uint64_t resyncPendingFrame = 0;
+
     // Dense index of the bus this voice mixes into (0 = master). Resolved on
     // the logic side at play time and migrated to the surviving parent when a
     // bus-destroy cascade tombstones its current route.

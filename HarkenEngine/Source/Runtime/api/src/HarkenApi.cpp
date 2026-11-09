@@ -8071,6 +8071,7 @@ Destination CopyTimelineVoiceInstallFacts(const Source& source) noexcept {
     facts.streamSourceGeneration = source.streamSourceGeneration;
     facts.streamLoopStartFrame = source.streamLoopStartFrame;
     facts.streamLoopEndFrame = source.streamLoopEndFrame;
+    facts.timelineResync = source.timelineResync;
     facts.soundId = source.soundId;
     facts.outputBusId = source.outputBusId;
     facts.sourceStartFrame = source.sourceStartFrame;
@@ -8534,6 +8535,24 @@ enum class TimelineVoiceInstallPublication : std::uint8_t {
     OnInstallation
 };
 
+void TrackStreamResync(harken::Engine& engine, VnVoiceHandle handle,
+    const harken::TimelineVoiceInstallFacts& install, std::uint32_t sampleRate,
+    std::uint32_t prebufferFrames) noexcept {
+    const auto index = static_cast<std::uint32_t>(handle);
+    if (index >= engine.streamResyncs.size()) return;
+    auto& row = engine.streamResyncs[index];
+    // A reused slot cannot still be rendering the previous voice.
+    if (row.token != 0) (void)engine.streamSeekHandoffs.Abandon(row.token);
+    if (row.ticket != 0) engine.streamSeekHandoffs.ReleaseTicket(row.ticket);
+    row = {};
+    row.handle = handle;
+    row.fileIndex = install.streamFileIndex;
+    row.sampleRate = sampleRate;
+    row.prebufferFrames = prebufferFrames;
+    row.contentRevision = install.streamContentRevision;
+    row.frameCount = install.streamFrameCount;
+}
+
 TimelineVoiceInstallResult InstallTimelineVoiceStart(
     harken::Engine& engine, const harken::TimelineVoiceInstallInput& input,
     harken::ProgramGeneration programGeneration, std::uint64_t startFrame,
@@ -8835,6 +8854,8 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
             } else if (!engine.voices.BindStreamRingToken(render, owned.ring, owned.ringToken)) {
                 // PlayStream transferred retirement responsibility to the voice.
                 play = VN_DEVICE_ERROR;
+            } else if (install.timelineResync && engine.voices.EnableStreamResync(render)) {
+                TrackStreamResync(engine, render, install, streamFacts.sampleRate, prebufferFrames);
             }
         }
     } else {
@@ -21410,6 +21431,31 @@ bool SoundDefinitionStreams(const harken::PackPlaybackView& world, VnObjectId st
         row->payload.values[slot].bits != 0;
 }
 
+// Boundary selection precedes target preparation. Inspect definitions without
+// consuming a Queue/Variable selection; a dynamic target reserves the lead if
+// any of its possible leaves streams, even if this turn selects a resident one.
+template <typename WorldView>
+bool MusicTransitionTargetMayStream(const WorldView& world,
+    const harken::PlayableRefV1& target, std::uint32_t depth = 0) noexcept {
+    if (depth >= harken::kSelectionPathNodeCapacity) return false;
+    if (target.kind == harken::PlayableKindV1::Sound)
+        return SoundDefinitionStreams(world, target.stableId);
+    if (target.kind == harken::PlayableKindV1::Segment) {
+        const auto segment = FindSegmentSchedule(world, target);
+        if (segment != nullptr) for (std::uint32_t i = 0; i < segment->trackRefCount; ++i)
+            if (MusicTransitionTargetMayStream(world, segment->trackRefs[i].trackDefinition, depth + 1u)) return true;
+    } else if (target.kind == harken::PlayableKindV1::Track) {
+        const auto track = FindTrackSchedule(world, target);
+        if (track != nullptr) for (std::uint32_t i = 0; i < track->placementCount; ++i)
+            if (MusicTransitionTargetMayStream(world, track->placements[i].content, depth + 1u)) return true;
+    } else if (target.kind == harken::PlayableKindV1::Container) {
+        const auto* container = FindVariableControlNestedContainer(world, target);
+        if (container != nullptr) for (std::uint32_t i = 0; i < container->childCount; ++i)
+            if (MusicTransitionTargetMayStream(world, container->children[i].playable, depth + 1u)) return true;
+    }
+    return false;
+}
+
 template <typename WorldView>
 bool VariableControlScheduleHasStream(const WorldView& world, const MaterializedScheduleSet& schedule) noexcept {
     if (schedule.leafCount > schedule.leaves.size()) return false;
@@ -22872,7 +22918,7 @@ harken::PlayableStartStatus CaptureTimelineVoiceInstallFromCut(
     harken::TimelineSemanticTarget finalTarget,
     harken::CapturedTimelineVoiceInstall* out,
     std::uint64_t authoredDurationFrames = UINT64_MAX,
-    std::uint64_t sourceOutputOffsetFrames = 0) noexcept {
+    std::uint64_t sourceOutputOffsetFrames = 0, bool timelineClip = false) noexcept {
     if (out == nullptr || harken::memguard::IsAudioTagged())
         return harken::PlayableStartStatus::InvalidInput;
     ResolvedTimelineVoiceInstallSource source;
@@ -22886,6 +22932,7 @@ harken::PlayableStartStatus CaptureTimelineVoiceInstallFromCut(
             facts.target = finalTarget;
             facts.authoredDurationFrames = authoredDurationFrames;
             facts.sourceOutputOffsetFrames = sourceOutputOffsetFrames;
+            facts.timelineResync = timelineClip && facts.streamed && facts.loopCount == 1u;
             return PopulateTimelineVoiceInstallColumns(
                 engine, cut, source, bindings, path, sends, effects);
         }, out);
@@ -22916,7 +22963,8 @@ harken::PlayableStartStatus CaptureScheduleLeafStart(
     const auto duration = materialized.endOffsetFrames == UINT64_MAX ? UINT64_MAX :
         materialized.endOffsetFrames - materialized.startOffsetFrames;
     return CaptureTimelineVoiceInstallFromCut(
-        engine, cut, leaseOrNull, true, target, out, duration, materialized.sourceOutputOffsetFrames);
+        engine, cut, leaseOrNull, true, target, out, duration, materialized.sourceOutputOffsetFrames,
+        materialized.pathTrackIds[materialized.selectionCount - 1u] != VnObjectId{});
 }
 
 harken::PlayableStartStatus BuildScheduleLeafStart(
@@ -37505,6 +37553,71 @@ bool ScheduleSourcePreparationHorizon(harken::Engine& engine, std::uint64_t* hor
     if (lead > UINT64_MAX - floor || floor + lead > UINT64_MAX - (block - 1u)) return false;
     *horizon = ((floor + lead + block - 1u) / block) * block;
     return true;
+}
+
+// Answers each new resync serial with one replacement ring prepared at the
+// source frame the voice's timeline reaches at the first preparable boundary.
+// A boundary past the clip end leaves the voice silent until it ends.
+void ServiceStreamResyncs(harken::Engine& engine) noexcept {
+    constexpr std::uint64_t kResyncTicketBit = UINT64_C(1) << 63;
+    for (auto& row : engine.streamResyncs) {
+        if (row.handle == 0) continue;
+        harken::VoicePool::StreamResyncView view;
+        if (!engine.voices.ReadStreamResync(row.handle, &view)) {
+            if (row.token != 0) (void)engine.streamSeekHandoffs.Abandon(row.token);
+            if (row.ticket != 0) engine.streamSeekHandoffs.ReleaseTicket(row.ticket);
+            row = {};
+            continue;
+        }
+        if (row.ticket != 0 && (!view.latched || view.serial != row.servedSerial)) {
+            engine.streamSeekHandoffs.ReleaseTicket(row.ticket);
+            row.ticket = 0;
+            row.token = 0;
+        }
+        if (!view.latched || view.serial == row.servedSerial) continue;
+        std::uint64_t frame = 0;
+        if (!view.mappable || !ScheduleSourcePreparationHorizon(engine, &frame) ||
+            frame < view.timelineAnchor || frame >= view.endFrame) {
+            row.servedSerial = view.serial;
+            continue;
+        }
+        const auto target = view.sourceAnchor + static_cast<std::uint64_t>(
+            std::llround(static_cast<double>(frame - view.timelineAnchor) * view.ratio));
+        std::uint64_t oldRingToken = 0;
+        if (target >= row.frameCount) {
+            row.servedSerial = view.serial;
+            continue;
+        }
+        if (!engine.voices.CaptureStreamRingToken(row.handle, &oldRingToken) ||
+            engine.streams.FreeSlotCount() <= engine.pendingStreamReservations) continue;
+        std::uint32_t slot = UINT32_MAX;
+        harken::StreamRing* ring = nullptr;
+        std::uint64_t ringToken = 0;
+        VnResult prepared = VN_DEVICE_ERROR;
+        try {
+            prepared = engine.streams.PrepareSeekSlot(row.fileIndex, row.contentRevision, target,
+                row.prebufferFrames, &slot, &ring, &ringToken);
+        } catch (...) {
+            prepared = VN_DEVICE_ERROR;
+        }
+        if (prepared != VN_OK) continue;
+        const std::uint64_t ticket = kResyncTicketBit | ++engine.streamResyncTickets;
+        std::uint64_t token = 0;
+        if (!engine.streamSeekHandoffs.Prepare(ticket, row.handle, oldRingToken, ring, ringToken,
+                row.fileIndex, row.contentRevision, target, row.frameCount, row.sampleRate,
+                std::min(row.prebufferFrames, ring->capacity), &token)) {
+            (void)engine.streams.RetirePreparedSlot(ring, ringToken);
+            continue;
+        }
+        if (!engine.voices.PostStreamResync(row.handle, view.serial, ticket, token, frame)) {
+            (void)engine.streamSeekHandoffs.Abandon(token);
+            engine.streamSeekHandoffs.ReleaseTicket(ticket);
+            continue;
+        }
+        row.servedSerial = view.serial;
+        row.ticket = ticket;
+        row.token = token;
+    }
 }
 
 // A selectable switch boundary leaves a streamed target the same preparation
@@ -100854,6 +100967,12 @@ bool PrepareNativeQueueMusicCandidate(harken::Engine& engine,
     if (soundSource && rule->sourceExit != harken::TransitionSourceExitV1::NaturalEnd) return false;
     const auto* music = musicSource == nullptr ? nullptr : musicSource->scheduleAggregate->music.get();
     const bool early = rule->sourceExit > harken::TransitionSourceExitV1::NaturalEnd;
+    const bool selectable = rule->sourceExit == harken::TransitionSourceExitV1::NextBeat ||
+                            rule->sourceExit == harken::TransitionSourceExitV1::NextBar;
+    const bool streamedTarget = selectable && (pack
+        ? MusicTransitionTargetMayStream(row.Invocation().packPlaybackView, desired->playable)
+        : MusicTransitionTargetMayStream(world, desired->playable));
+    const auto preparationFloor = streamedTarget ? StreamPreparationFloor(engine, floor) : floor;
     const auto sourceFadeFrames = rule->sourceFade.active != 0 ? rule->sourceFade.durationFrames : 0u;
     auto kind = harken::MusicBoundaryKind::NaturalEnd;
     std::uint64_t currentFrame = music == nullptr ? 0 : music->sourceOffsetFrames, boundaryFloor = currentFrame;
@@ -100868,7 +100987,7 @@ bool PrepareNativeQueueMusicCandidate(harken::Engine& engine,
         if (engine.config.blockFrames == 0 || sequence > UINT64_MAX / engine.config.blockFrames) return false;
         const auto observed = sequence * engine.config.blockFrames;
         const auto age = observed > musicSource->startFrame ? observed - musicSource->startFrame : 0;
-        const auto lead = floor > musicSource->startFrame ? floor - musicSource->startFrame : 0;
+        const auto lead = preparationFloor > musicSource->startFrame ? preparationFloor - musicSource->startFrame : 0;
         if (age > UINT64_MAX - currentFrame || lead > UINT64_MAX - boundaryFloor ||
             sourceFadeFrames > UINT64_MAX - boundaryFloor - lead) return false;
         currentFrame += age;
@@ -110989,6 +111108,7 @@ VnResult Vn_Update(void) {
      * integrator with nothing but sound that stopped. */
     engine->streams.ReclaimAfterWorkerFailure();
     engine->streams.ServiceTransferredPreparations();
+    ServiceStreamResyncs(*engine);
     if (engine->streams.ConsumeWorkerFailureForLog()) {
         harken::LogRecord record{};
         record.level = VN_LOG_ERROR;

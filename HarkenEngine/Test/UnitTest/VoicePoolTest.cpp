@@ -606,6 +606,172 @@ TEST(VoicePool, SourceTerminalStreamQueuedEndFailureAndStarvationRemainDistinct)
     }
 }
 
+TEST(VoicePool, StreamResyncRetryWaitsForNewTokenPublication) {
+    std::array<float, 2048> storage{};
+    storage.fill(0.25f);
+    float* planes[harken::kMaxChannels] = {storage.data()};
+    std::array<harken::StreamRing, 3> rings;
+    for (auto& ring : rings) {
+        ring.Wire(planes, static_cast<std::uint32_t>(storage.size()));
+        ring.ResetForUse(1);
+        ring.state.store(harken::StreamSlotState::Active);
+    }
+    rings[0].PublishWrite(1024);
+    rings[2].PublishWrite(2048);
+    EngineSession session(VoicePoolConfig(1, kBlockFrames));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const auto tokenFor = [](const harken::StreamRing& ring, std::uint32_t slot) {
+        return (static_cast<std::uint64_t>(ring.generation.load()) << 32u) | slot;
+    };
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, engine.voices.PlayStream(&rings[0], 1, kSampleRate,
+        0, 0.0f, 1.0, 0, false, 0, 0, 0,
+        harken::ResolvePanGains(engine.config.mixChannelLayout, 0),
+        0, 48000, 0, 48000, 1,
+        harken::SelectResampleProfile(kSampleRate, kSampleRate), &voice));
+    ASSERT_TRUE(engine.voices.BindStreamRingToken(voice, &rings[0], tokenFor(rings[0], 1)));
+    ASSERT_TRUE(engine.voices.EnableStreamResync(voice));
+    engine.voices.ApplyPlay(voice, voice, 0, 0);
+    engine.nullBackend.Pump(12);
+    harken::VoicePool::StreamResyncView view{};
+    ASSERT_TRUE(engine.voices.ReadStreamResync(voice, &view));
+    ASSERT_TRUE(view.latched);
+    const auto firstSerial = view.serial;
+    const auto frame = engine.mixer.BlocksRendered() * kBlockFrames;
+    std::uint64_t token = 0;
+    ASSERT_TRUE(engine.streamSeekHandoffs.Prepare(1, voice, tokenFor(rings[0], 1),
+        &rings[1], tokenFor(rings[1], 2), 0, 1, frame, 48000, kSampleRate, 256, &token));
+    ASSERT_TRUE(engine.voices.PostStreamResync(voice, view.serial, 1, token, frame));
+    engine.nullBackend.Pump(1);
+    ASSERT_TRUE(engine.voices.ReadStreamResync(voice, &view));
+    ASSERT_EQ(firstSerial + 1, view.serial);
+    ASSERT_EQ(harken::StreamSlotState::Retired, rings[1].state.load());
+    engine.streamSeekHandoffs.ReleaseTicket(1);
+    const auto retrySerial = view.serial;
+    const auto retryFrame = engine.mixer.BlocksRendered() * kBlockFrames;
+    ASSERT_TRUE(engine.streamSeekHandoffs.Prepare(2, voice, tokenFor(rings[0], 1),
+        &rings[2], tokenFor(rings[2], 3), 0, 1, retryFrame, 48000, kSampleRate, 256, &token));
+    harken::detail::VoicePoolReleaseTestAccess::WriteResyncRequestMetadata(
+        engine.voices, voice, retrySerial, 2, retryFrame);
+    engine.nullBackend.Pump(1);
+    ASSERT_TRUE(engine.voices.ReadStreamResync(voice, &view));
+    EXPECT_EQ(retrySerial, view.serial);
+    // Finish the post at a future boundary after exercising the unpublished window.
+    ASSERT_TRUE(engine.voices.PostStreamResync(voice, retrySerial, 2, token,
+        engine.mixer.BlocksRendered() * kBlockFrames));
+    engine.nullBackend.Pump(1);
+    ASSERT_TRUE(engine.voices.ReadStreamResync(voice, &view));
+    EXPECT_FALSE(view.latched);
+    EXPECT_EQ(&rings[2], engine.voices.Resolve(voice)->streamRing);
+    EXPECT_EQ(harken::StreamSlotState::Retired, rings[0].state.load());
+    engine.streamSeekHandoffs.ReleaseTicket(2);
+    // Reclaim the applied row without retiring its now-playing ring.
+    EXPECT_FALSE(engine.streamSeekHandoffs.Abandon(token));
+    EXPECT_EQ(harken::StreamSlotState::Active, rings[2].state.load());
+    engine.voices.ApplyStop(voice, 0, 0, engine.notifications, engine.mixer.BlocksRendered());
+}
+
+TEST(VoicePool, StreamNaturalEndDuringPreventiveFadePreservesBufferedTail) {
+    constexpr std::uint32_t block = 64;
+    std::array<float, 2048> storage{};
+    storage.fill(0.25f);
+    float* planes[harken::kMaxChannels] = {storage.data()};
+    harken::StreamRing ring;
+    ring.Wire(planes, static_cast<std::uint32_t>(storage.size()));
+    ring.ResetForUse(1);
+    ring.PublishWrite(1024);
+    ring.state.store(harken::StreamSlotState::Active);
+    EngineSession session(VoicePoolConfig(1, block));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, engine.voices.PlayStream(&ring, 1, kSampleRate,
+        480, 0.0f, 1.0, 0, false, 0, 0, 0,
+        harken::ResolvePanGains(engine.config.mixChannelLayout, 0),
+        0, storage.size(), 0, storage.size(), 1,
+        harken::SelectResampleProfile(kSampleRate, kSampleRate), &voice));
+    ASSERT_TRUE(engine.voices.EnableStreamResync(voice));
+    engine.voices.ApplyPlay(voice, voice, 0, 0);
+    harkentest::Capture output;
+    bool fading = false;
+    for (unsigned i = 0; i < 24; ++i) {
+        harkentest::PumpAndCapture(&engine, 1, output);
+        const auto* ctx = engine.voices.Resolve(voice);
+        ASSERT_NE(nullptr, ctx);
+        if (ctx->resyncFadeOutTotal != 0) {
+            ASSERT_LT(ctx->resyncFadeOutDone, ctx->resyncFadeOutTotal);
+            fading = true;
+            break;
+        }
+    }
+    ASSERT_TRUE(fading);
+    const auto resumedAt = output.left.size();
+    const float unity = output.left[512];
+    ASSERT_GT(unity, 0.1f);
+    const float lastGain = output.left.back() / unity;
+    ring.PublishWrite(1024);
+    ASSERT_TRUE(ring.MarkEndOfData(harken::StreamTerminalReason::NaturalEnd));
+    harkentest::PumpAndCapture(&engine, 40, output);
+    float previous = lastGain;
+    for (auto i = resumedAt; i < storage.size(); ++i) {
+        const float gain = output.left[i] / unity;
+        ASSERT_GE(gain + 1e-5f, previous) << i;
+        ASSERT_LE(gain - previous, 1.0f / 240.0f + 1e-5f) << i;
+        if (i >= resumedAt + 240) ASSERT_NEAR(1.0f, gain, 1e-5f) << i;
+        previous = gain;
+    }
+    for (auto i = storage.size(); i < output.left.size(); ++i)
+        ASSERT_EQ(0.0f, output.left[i]) << i;
+    EXPECT_EQ(nullptr, engine.voices.Resolve(voice));
+}
+
+TEST(VoicePool, LatchedStreamResyncPreservesProducerFailure) {
+    for (const auto workers : {0u, 2u})
+    for (const auto reason : {harken::StreamTerminalReason::ProducerFailure,
+                             harken::StreamTerminalReason::IntegrityAbort}) {
+        SCOPED_TRACE(workers);
+        SCOPED_TRACE(static_cast<int>(reason));
+        auto config = VoicePoolConfig(1, kBlockFrames);
+        config.renderWorkerCount = workers;
+        std::array<float, 2048> storage{};
+        storage.fill(0.25f);
+        float* planes[harken::kMaxChannels] = {storage.data()};
+        harken::StreamRing ring;
+        ring.Wire(planes, static_cast<std::uint32_t>(storage.size()));
+        ring.ResetForUse(1);
+        ring.PublishWrite(1024);
+        ring.state.store(harken::StreamSlotState::Active);
+        EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        harken::detail::VoicePoolReleaseTestAccess::SetWorkerDeadline(engine.voices, harken::CpuClockTicksPerSecond());
+        VnVoiceHandle voice = 0;
+        const auto pan = harken::ResolvePanGains(engine.config.mixChannelLayout, 0.0f);
+        ASSERT_EQ(VN_OK, engine.voices.PlayStream(&ring, 1, kSampleRate,
+            0, 0.0f, 1.0, 0, false, 0.0f, 0.0f, 0.0f, pan,
+            0, 48000, 0, 48000, 1,
+            harken::SelectResampleProfile(kSampleRate, kSampleRate), &voice));
+        ASSERT_TRUE(engine.voices.EnableStreamResync(voice));
+        HeldSource source{};
+        ASSERT_TRUE(BindHeldSource(engine, voice, &source));
+        engine.voices.ApplyPlay(voice, voice, 0, 0);
+        engine.nullBackend.Pump(12);
+        harken::VoicePool::StreamResyncView view{};
+        ASSERT_TRUE(engine.voices.ReadStreamResync(voice, &view));
+        ASSERT_TRUE(view.latched);
+        const auto failureFrame = engine.mixer.BlocksRendered() * kBlockFrames;
+        ASSERT_TRUE(ring.MarkEndOfData(reason));
+        engine.nullBackend.Pump(1);
+        harken::SourceTerminalPayload result{};
+        ASSERT_TRUE(engine.sourceTerminals.Capture(source.token, engine.mixer.BlocksRendered(), &result));
+        EXPECT_EQ(reason == harken::StreamTerminalReason::ProducerFailure ? harken::SourceTerminalKind::ProducerFailure
+            : harken::SourceTerminalKind::IntegrityAbort, result.kind);
+        EXPECT_EQ(failureFrame, result.frame);
+        EXPECT_TRUE(engine.voices.ReleaseObserved(source.release));
+    }
+}
+
 TEST(VoicePool, SourceTerminalNaturalSurvivesLaterDspTailStop) {
     for (const auto workers : {0u, 2u}) {
         auto config = VoicePoolConfig(1, kBlockFrames);
