@@ -17,6 +17,10 @@ public:
                       std::uint32_t renderThread, PCMView& output) noexcept = 0;
     virtual StreamDecodeResult ReadStream(StreamRing&, std::uint32_t,
         std::uint32_t, PCMView&) noexcept { return StreamDecodeResult::Invalid; }
+    // Crop a fresh replacement stream without decoding its entire prefix.
+    // Ready preserves the target packet's remaining samples for ReadStream.
+    virtual StreamDecodeResult CropStream(StreamRing&, std::uint32_t,
+        std::uint32_t) noexcept { return StreamDecodeResult::Invalid; }
     virtual void Retire() noexcept = 0;
 protected:
     ~MediaDecoder() = default;

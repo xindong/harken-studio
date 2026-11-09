@@ -74,6 +74,8 @@ public:
                   std::uint32_t renderThread, PCMView& output) noexcept override;
         StreamDecodeResult ReadStream(StreamRing& ring, std::uint32_t frames,
             std::uint32_t renderThread, PCMView& output) noexcept override;
+        StreamDecodeResult CropStream(StreamRing& ring, std::uint32_t frames,
+            std::uint32_t renderThread) noexcept override;
         void Restart() noexcept;
         bool Decode(VorbisWorkspace& workspace, const std::uint8_t* packet, std::size_t bytes,
                     const float* (&pcm)[8], unsigned& frames) noexcept;

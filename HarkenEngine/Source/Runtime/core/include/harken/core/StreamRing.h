@@ -114,6 +114,9 @@ struct StreamRing {
     std::atomic<std::uint64_t> readIndex{0};
     std::atomic<std::uint64_t> writeFrames{0};
     std::atomic<std::uint64_t> readFrames{0};
+    // Cropped replacement coverage is consumed without being fed to the FIFO.
+    // Keep it separate so park and virtual input retain their feed coordinates.
+    std::atomic<std::uint64_t> discardedFrames{0};
 
     // The producer and audio thread compete on one generation-bound winner.
     // Producer terminal publication is release-ordered after the final write;
@@ -175,7 +178,7 @@ struct StreamRing {
     std::uint32_t ConsumerBufferedFrames() const noexcept {
         if (!consumerSnapshot.generation) return BufferedFrames();
         if (!ConsumerGenerationMatches()) return 0;
-        const auto read = readFrames.load(std::memory_order_relaxed);
+        const auto read = ConsumedFrames();
         return read < consumerSnapshot.frames
             ? static_cast<std::uint32_t>(std::min<std::uint64_t>(consumerSnapshot.frames - read, UINT32_MAX)) : 0;
     }
@@ -231,6 +234,7 @@ struct StreamRing {
         bytesPerFrame = channels * sizeof(float);
         writeFrames.store(0, std::memory_order_relaxed);
         readFrames.store(0, std::memory_order_relaxed);
+        discardedFrames.store(0, std::memory_order_relaxed);
         writeIndex.store(0, std::memory_order_relaxed);
         readIndex.store(0, std::memory_order_relaxed);
         winnerGeneration.store(next, std::memory_order_relaxed);
@@ -305,12 +309,19 @@ struct StreamRing {
         return static_cast<std::uint32_t>(w - r);
     }
     std::uint32_t BufferedFrames() const {
-        const auto r = readFrames.load(std::memory_order_acquire);
+        const auto r = ConsumedFrames();
         const auto w = writeFrames.load(std::memory_order_acquire);
         return w > r ? static_cast<std::uint32_t>(std::min<std::uint64_t>(w - r, UINT32_MAX)) : 0;
     }
     void ConsumeBytes(std::uint32_t count) {
         readIndex.store(readIndex.load(std::memory_order_relaxed) + count, std::memory_order_release);
+    }
+    std::uint64_t ConsumedFrames() const noexcept {
+        return discardedFrames.load(std::memory_order_acquire) + readFrames.load(std::memory_order_acquire);
+    }
+    void DiscardFrames(std::uint32_t frames) noexcept {
+        discardedFrames.store(discardedFrames.load(std::memory_order_relaxed) + frames,
+                              std::memory_order_release);
     }
     void DeliverFrames(std::uint32_t frames) {
         readFrames.store(readFrames.load(std::memory_order_relaxed) + frames, std::memory_order_release);

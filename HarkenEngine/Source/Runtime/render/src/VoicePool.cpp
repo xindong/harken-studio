@@ -2909,7 +2909,7 @@ void VoicePool::PublishStreamObservation(Slot& slot, std::uint64_t blockIndex) n
     value.sourceGeneration = ring.sourceGeneration;
     value.contentRevision = ring.contentRevision;
     value.ringToken = render.streamRingToken;
-    value.ringReadIndex = ring.readFrames.load(std::memory_order_relaxed);
+    value.ringReadIndex = ring.ConsumedFrames();
     value.ringWriteIndex = ring.writeFrames.load(std::memory_order_acquire);
     value.bufferedFrames = static_cast<std::uint32_t>(value.ringWriteIndex - value.ringReadIndex);
     value.prebufferTargetFrames = ring.PrebufferTarget(render.prebufferTargetFrames);

@@ -509,6 +509,72 @@ TEST(VorbisDecoder, ByteRingWrapSeekAndGenerationReplacementMatchReference) {
                 for (unsigned ch = 0; ch < channels; ++ch)
                     ASSERT_EQ(actual[frame * channels + ch], fixture.reference[(target + frame) * channels +
                         (channels == 6 ? map6[ch] : channels == 8 ? map8[ch] : ch)]);
+            // Crop across packet boundaries and a repeated stream pass. The
+            // restart record has zero coverage but remains the predecessor.
+            std::vector<std::uint8_t> cropStorage(65536);
+            harken::StreamRing cropped;
+            cropped.Wire(cropStorage.data(), static_cast<std::uint32_t>(cropStorage.size()));
+            for (const auto crop : {0u, 1u, 63u, 127u, 1024u, 2047u, 3071u,
+                    static_cast<unsigned>(supplied - 1), static_cast<unsigned>(supplied),
+                    static_cast<unsigned>(supplied + 1)}) {
+                SCOPED_TRACE(crop);
+                cropped.ResetForUse(channels);
+                cropped.readIndex.store(cropStorage.size() - 7);
+                cropped.writeIndex.store(cropStorage.size() - 7);
+                for (unsigned pass = 0; pass != 2; ++pass) for (const auto& r : records) {
+                    const auto bytes = static_cast<std::uint32_t>(sizeof(r.header)) + r.header.packetBytes;
+                    ASSERT_LE(bytes, cropped.WriteAvailableBytes());
+                    const auto at = cropped.writeIndex.load();
+                    cropped.CopyIn(at, &r.header, sizeof(r.header));
+                    cropped.CopyIn(at + sizeof(r.header), r.packet, r.header.packetBytes);
+                    cropped.PublishBytes(bytes, 0);
+                }
+                cropped.CaptureConsumerSnapshot();
+                cropped.PublishBytes(0, static_cast<unsigned>(supplied * 2));
+                EXPECT_EQ(harken::StreamDecodeResult::Dry, decoder->CropStream(cropped, crop, 0));
+                EXPECT_EQ(0u, cropped.ConsumedFrames());
+                cropped.ClearConsumerSnapshot();
+                std::fill(actual.begin(), actual.end(), 0);
+                copied = 0;
+                valid = true;
+                const bool cropArmed = harken::memguard::IsArmed(); harken::memguard::Install();
+                harken::memguard::AllocationObservation cropObserved{};
+                allocation_probe::count = 0; allocation_probe::enabled = true;
+                {
+                    harken::memguard::AllocationObservationScope observation(cropObserved);
+                    harken::memguard::AudioThreadScope audio;
+                    cropped.CaptureConsumerSnapshot();
+                    valid = decoder->CropStream(cropped, crop, 0) == harken::StreamDecodeResult::Ready;
+                    while (valid && copied != 1001) {
+                        harken::PCMView output;
+                        if (decoder->ReadStream(cropped, std::min(37u, 1001 - copied), 0, output) !=
+                                harken::StreamDecodeResult::Ready || !output.frames) { valid = false; break; }
+                        for (unsigned frame = 0; frame < output.frames; ++frame)
+                            for (unsigned ch = 0; ch < channels; ++ch)
+                                actual[(copied + frame) * channels + ch] =
+                                    static_cast<const float*>(output.channels[ch])[frame];
+                        copied += static_cast<unsigned>(output.frames);
+                        cropped.DeliverFrames(static_cast<unsigned>(output.frames));
+                    }
+                }
+                allocation_probe::enabled = false;
+                if (!cropArmed) harken::memguard::Uninstall();
+                EXPECT_EQ(0u, allocation_probe::count);
+                EXPECT_EQ(0u, cropObserved.audio.allocations + cropObserved.audio.reallocations);
+#if defined(_DEBUG) && defined(_MSC_VER)
+                EXPECT_TRUE(cropObserved.available);
+#endif
+                ASSERT_TRUE(valid);
+                EXPECT_EQ(1001u, cropped.readFrames.load());
+                EXPECT_EQ(crop, cropped.discardedFrames.load());
+                EXPECT_EQ(supplied * 2 - crop - copied, cropped.BufferedFrames());
+                EXPECT_EQ(cropped.BufferedFrames(), cropped.ConsumerBufferedFrames());
+                for (unsigned frame = 0; frame < copied; ++frame)
+                    for (unsigned ch = 0; ch < channels; ++ch)
+                        ASSERT_EQ(actual[frame * channels + ch], fixture.reference[
+                            (target + (crop + frame) % supplied) * channels +
+                            (channels == 6 ? map6[ch] : channels == 8 ? map8[ch] : ch)]);
+            }
         }
         decoder->Retire(); codec.states.Collect();
         EXPECT_EQ(codec.states.ActiveBytes(), 0u);

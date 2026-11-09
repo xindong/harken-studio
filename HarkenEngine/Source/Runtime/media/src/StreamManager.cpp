@@ -809,7 +809,7 @@ bool StreamManager::CapturePlayback(std::uint64_t token, PlaybackObservation* ou
     }
     // With the manager excluded, the write cursor is fixed and the audio
     // consumer can only reduce occupancy. This read is one real sample.
-    const auto read = slot.ring.readFrames.load(std::memory_order_acquire);
+    const auto read = slot.ring.ConsumedFrames();
     const auto written = slot.ring.writeFrames.load(std::memory_order_acquire);
     value.bufferedFrames = static_cast<std::uint32_t>(written - read);
     value.prebufferTargetFrames = slot.ring.PrebufferTarget(slot.prebufferTargetFrames);
@@ -1454,7 +1454,7 @@ void StreamManager::PublishPlaybackObservation(StreamSlot& slot) {
     const auto state = slot.ring.state.load(std::memory_order_acquire);
     value.preparationGeneration = slot.preparationGeneration;
     value.renderActivation = slot.ring.observationRender.load(std::memory_order_acquire);
-    value.ringReadIndex = slot.ring.readFrames.load(std::memory_order_acquire);
+    value.ringReadIndex = slot.ring.ConsumedFrames();
     value.ringWriteIndex = slot.ring.writeFrames.load(std::memory_order_acquire);
     value.bufferedFrames = static_cast<std::uint32_t>(value.ringWriteIndex - value.ringReadIndex);
     value.prebufferTargetFrames = slot.ring.PrebufferTarget(slot.prebufferTargetFrames);
@@ -1805,7 +1805,7 @@ bool StreamManager::AdvanceSlot(ServiceCursor& cursor, ChunkJob* job) {
 
         const std::uint64_t occupancy =
             ring.writeFrames.load(std::memory_order_relaxed) -
-            ring.readFrames.load(std::memory_order_relaxed);
+            ring.ConsumedFrames();
         std::uint64_t seen =
             m_ringHighWaterFrames.load(std::memory_order_relaxed);
         while (occupancy > seen &&
