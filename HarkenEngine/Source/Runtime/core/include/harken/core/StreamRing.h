@@ -101,6 +101,7 @@ struct StreamRing {
     std::uint32_t mask = 0;
     std::uint32_t channelCount = 0;
     std::uint32_t bytesPerFrame = 0;
+    std::uint32_t legacyFrameLimit = 0;
     std::atomic<std::uint64_t> writeIndex{0};
     std::atomic<std::uint64_t> readIndex{0};
     std::atomic<std::uint64_t> writeFrames{0};
@@ -128,9 +129,11 @@ struct StreamRing {
     std::uint64_t sourceGeneration = 0;
     std::uint64_t contentRevision = 0;
 
-    void Wire(std::uint8_t* storage, std::uint32_t byteCapacity) {
+    void Wire(std::uint8_t* storage, std::uint32_t byteCapacity,
+              std::uint32_t frameLimit = 0) {
         assert(byteCapacity != 0 && (byteCapacity & (byteCapacity - 1)) == 0);
         bytes = storage; capacity = byteCapacity; mask = byteCapacity - 1;
+        legacyFrameLimit = frameLimit;
     }
 
     // Claim-time reset, logic thread only, while state is Free — neither
@@ -163,7 +166,10 @@ struct StreamRing {
     std::uint32_t WriteAvailableBytes() const {
         const auto w = writeIndex.load(std::memory_order_relaxed);
         const auto r = readIndex.load(std::memory_order_acquire);
-        return capacity - static_cast<std::uint32_t>(w - r);
+        const auto limit = legacyFrameLimit
+            ? std::min<std::uint64_t>(capacity, std::uint64_t(legacyFrameLimit) * bytesPerFrame)
+            : capacity;
+        return static_cast<std::uint32_t>(limit - (w - r));
     }
 
     // Copying and publication are separate so a complete packet or PCM frame
@@ -189,7 +195,8 @@ struct StreamRing {
     // Admission can query a free slot before its next generation is reset.
     std::uint32_t FrameCapacity(std::uint32_t channels = 0) const {
         const auto stride = channels ? channels * sizeof(float) : bytesPerFrame;
-        return stride ? static_cast<std::uint32_t>(capacity / stride) : 0;
+        const auto frames = stride ? static_cast<std::uint32_t>(capacity / stride) : 0;
+        return legacyFrameLimit ? std::min(frames, legacyFrameLimit) : frames;
     }
 
     bool MarkEndOfData(StreamTerminalReason reason) {
@@ -218,8 +225,8 @@ struct StreamRing {
         return static_cast<std::uint32_t>(w - r);
     }
     std::uint32_t BufferedFrames() const {
-        const auto w = writeFrames.load(std::memory_order_acquire);
         const auto r = readFrames.load(std::memory_order_acquire);
+        const auto w = writeFrames.load(std::memory_order_acquire);
         return w > r ? static_cast<std::uint32_t>(std::min<std::uint64_t>(w - r, UINT32_MAX)) : 0;
     }
     void ConsumeBytes(std::uint32_t count) {

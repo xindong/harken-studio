@@ -368,9 +368,8 @@ bool DecodeTraceConfig(const std::uint8_t* bytes, std::size_t byteCount,
         decoded.compressedDecoderBytes = reader.U64();
     }
     if (vintage < 17) {
-        const std::uint64_t bytes = static_cast<std::uint64_t>(decoded.streamRingBytes) * 8u * sizeof(float);
-        if (bytes > UINT32_MAX) return false;
-        decoded.streamRingBytes = static_cast<std::uint32_t>(bytes);
+        // Preserve the original field units and default selection on replay.
+        decoded.structSize = NativeConfigVintages()[vintage - 1];
     }
     const std::uint32_t historicalPendingCapacity =
         decoded.pendingActionCapacity;

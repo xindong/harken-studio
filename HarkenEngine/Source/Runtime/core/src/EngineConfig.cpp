@@ -360,15 +360,20 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
         if (config->toneEffectPoolCapacity != 0)
             resolved.toneEffectPoolCapacity = config->toneEffectPoolCapacity;
     }
+    if (config->structSize < sizeof(VnConfig)) {
+        resolved.legacyStreamFrameLimit = 16384;
+        resolved.streamRingBytes = 16384 * kMaxChannels * sizeof(float);
+    }
     if (hasStreamFields) {
         if (config->streamRingBytes != 0) {
-            // Historical callers budgeted planar storage for every supported
-            // channel. Preserve that storage budget when translating units.
+            // Historical callers selected a frame depth independent of layout.
             const std::uint64_t bytes = config->structSize < sizeof(VnConfig)
                 ? static_cast<std::uint64_t>(config->streamRingBytes) * kMaxChannels * sizeof(float)
                 : config->streamRingBytes;
             if (bytes > kMaxStreamRingBytesCeiling) return VN_INVALID_CONFIG;
             resolved.streamRingBytes = static_cast<std::uint32_t>(bytes);
+            if (config->structSize < sizeof(VnConfig))
+                resolved.legacyStreamFrameLimit = RoundUpPow2(config->streamRingBytes);
         }
         if (config->maxStreams != 0) resolved.maxStreams = config->maxStreams;
         if (config->prebufferMs != 0) resolved.prebufferMs = config->prebufferMs;

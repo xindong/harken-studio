@@ -335,8 +335,8 @@ bool FeedResamplerFromStream(VoiceRenderContext& ctx) {
         view.sampleRate = ctx.pcm.sampleRate;
         view.frames = chunk;
         rs.PushPCM(view, 0, chunk);
-        ring.ConsumeBytes(count);
         ring.DeliverFrames(chunk);
+        ring.ConsumeBytes(count);
         return true;
     }
     if (!ended) {

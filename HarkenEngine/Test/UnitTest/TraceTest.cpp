@@ -1910,7 +1910,11 @@ TEST(TraceCodec, VintageSixteenOmitsDecoderBudget) {
     EXPECT_EQ(16u, vintage);
     EXPECT_EQ(333u, decoded.maxActionCooldownRows);
     EXPECT_EQ(0u, decoded.compressedDecoderBytes);
-    EXPECT_EQ(2048u * harken::kMaxChannels * sizeof(float), decoded.streamRingBytes);
+    EXPECT_EQ(config.structSize, decoded.structSize);
+    EXPECT_EQ(2048u, decoded.streamRingBytes);
+    harken::EngineConfig resolved;
+    ASSERT_EQ(VN_OK, harken::ResolveConfig(&decoded, &resolved));
+    EXPECT_EQ(2048u, resolved.legacyStreamFrameLimit);
     config.reserved12 = 1;
     EXPECT_FALSE(harken::EncodeTraceConfig(config, wire));
 }

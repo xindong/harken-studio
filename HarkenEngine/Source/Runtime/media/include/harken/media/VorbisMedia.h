@@ -38,6 +38,7 @@ struct VorbisMedia {
     const std::uint8_t* packets = nullptr;
     std::uint32_t identBytes = 0, setupBytes = 0;
     std::uint64_t packetBytes = 0;
+    std::uint64_t packetDataOffset = 0, packetChecksum = 0;
     std::vector<VorbisSeekPoint> seek;
     std::vector<std::uint64_t> segmentChecksums;
 
@@ -49,6 +50,11 @@ struct VorbisMedia {
 
 // Failure leaves output unchanged. Full packet integrity is checked for a
 // resident blob; streaming consumers can validate segments as they arrive.
+// Header inspection never reads packet payload. A stream must independently
+// verify each segment before exposing its packets to the renderer.
+std::uint64_t VorbisTestMetadataBytes(const void* header, std::size_t bytes) noexcept;
+bool ParseVorbisTestMediaHeaders(const void* prefix, std::size_t prefixBytes,
+                                std::uint64_t mediaBytes, VorbisMedia& output);
 bool ParseVorbisTestMedia(const void* data, std::size_t bytes, VorbisMedia& output);
 bool ParseVorbisTestStream(const void* data, std::size_t bytes, VorbisMedia& output);
 

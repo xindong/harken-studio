@@ -6,8 +6,8 @@
 namespace harkentest {
 
 inline void ConsumePcmFrames(harken::StreamRing& ring, std::uint32_t frames) {
-    ring.ConsumeBytes(frames * ring.bytesPerFrame);
     ring.DeliverFrames(frames);
+    ring.ConsumeBytes(frames * ring.bytesPerFrame);
 }
 
 inline float PeekPcmSample(const harken::StreamRing& ring,

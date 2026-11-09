@@ -3,9 +3,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include "harken/core/StreamPacket.h"
 
 namespace harken {
 struct PCMView;
+struct StreamRing;
 
 // A prepared voice owns one decoder. Read returns a borrowed planar span,
 // valid until the next read; retirement never frees memory on render.
@@ -13,6 +15,8 @@ class MediaDecoder {
 public:
     virtual bool Read(std::uint64_t frame, std::uint32_t frames,
                       std::uint32_t renderThread, PCMView& output) noexcept = 0;
+    virtual StreamDecodeResult ReadStream(StreamRing&, std::uint32_t,
+        std::uint32_t, PCMView&) noexcept { return StreamDecodeResult::Invalid; }
     virtual void Retire() noexcept = 0;
 protected:
     ~MediaDecoder() = default;

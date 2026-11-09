@@ -1,6 +1,7 @@
 #include "Common/VorbisFixture.h"
 #include "../../ThirdParty/vorbis-decoder/decoder.h"
 #include "harken/core/AllocGuard.h"
+#include "harken/core/StreamRing.h"
 #include "harken/media/VorbisDecoder.h"
 #include "AllocationProbe.h"
 #include <gtest/gtest.h>
@@ -391,4 +392,93 @@ TEST(VorbisDecoder, RejectsSeekLoopAndDurationMetadataThatDisagreesWithPackets) 
     EXPECT_FALSE(valid->ValidateResident(bad));
     EXPECT_EQ(cache.Prepare(media, kSetupBudget, result), valid);
 }
+
+TEST(VorbisDecoder, ByteRingWrapSeekAndGenerationReplacementMatchReference) {
+    harken::VorbisCodec codec(2 * 1024 * 1024, 0);
+    for (const unsigned channels : {1u, 2u, 4u, 6u, 8u}) {
+        SCOPED_TRACE(channels);
+        const auto fixture = harken::test::MakeVorbisFixture(channels, true);
+        harken::VorbisMedia media;
+        ASSERT_TRUE(harken::ParseVorbisTestMedia(fixture.media.data(), fixture.media.size(), media));
+        harken::VorbisPrepareResult result;
+        auto setup = codec.settings.Prepare(media, kSetupBudget, result);
+        ASSERT_NE(setup, nullptr);
+        auto* decoder = codec.AcquireStream(setup);
+        ASSERT_NE(decoder, nullptr);
+        std::vector<std::uint8_t> storage(8192);
+        harken::StreamRing ring;
+        ring.Wire(storage.data(), static_cast<std::uint32_t>(storage.size()));
+        // Reusing the same physical ring must discard the previous generation's
+        // partially consumed decoded packet as well as its overlap history.
+        for (const std::uint64_t target : {0u, 713u, 4097u}) {
+            SCOPED_TRACE(target);
+            ring.ResetForUse(channels);
+            ring.readIndex.store(storage.size() - 7);
+            ring.writeIndex.store(storage.size() - 7);
+            struct Record { harken::StreamPacketHeader header; const std::uint8_t* packet; };
+            std::vector<Record> records;
+            const auto* seek = media.Seek(target);
+            ASSERT_NE(seek, nullptr);
+            auto skip = target - seek->frame + seek->discardFrames;
+            std::uint64_t supplied = 0;
+            long previousBlock = 0;
+            for (auto at = seek->packetOffset; at < media.packetBytes && supplied < 4096;) {
+                const std::uint8_t* packet = nullptr; std::uint16_t bytes = 0;
+                ASSERT_TRUE(media.Packet(at, packet, bytes));
+                const auto block = setup->PacketBlock(packet, bytes);
+                ASSERT_GT(block, 0);
+                const auto decoded = previousBlock ? (previousBlock + block) / 4 : 0;
+                const auto discard = std::min<std::uint64_t>(skip, decoded);
+                skip -= discard;
+                const auto frames = std::min<std::uint64_t>(decoded - discard, media.frames - target - supplied);
+                records.push_back({{bytes, static_cast<std::uint32_t>(frames),
+                    static_cast<std::uint32_t>(discard), previousBlock ? 0u : 1u}, packet});
+                supplied += frames;
+                previousBlock = block;
+                at += 2u + bytes;
+            }
+            ASSERT_GE(supplied, 4096u);
+            std::vector<float> actual(1001 * channels);
+            std::size_t next = 0;
+            unsigned copied = 0;
+            bool valid = true;
+            allocation_probe::count = 0; allocation_probe::enabled = true;
+            {
+                harken::memguard::AudioThreadScope audio;
+                for (unsigned attempt = 0; copied < 1001 && attempt < 1000; ++attempt) {
+                    while (next < records.size()) {
+                        const auto& r = records[next];
+                        const auto bytes = static_cast<std::uint32_t>(sizeof(r.header)) + r.header.packetBytes;
+                        if (bytes > ring.WriteAvailableBytes()) break;
+                        const auto at = ring.writeIndex.load();
+                        ring.CopyIn(at, &r.header, sizeof(r.header));
+                        ring.CopyIn(at + sizeof(r.header), r.packet, r.header.packetBytes);
+                        ring.PublishBytes(bytes, r.header.frames);
+                        ++next;
+                    }
+                    harken::PCMView output;
+                    if (decoder->ReadStream(ring, std::min(37u, 1001 - copied), 0, output) !=
+                            harken::StreamDecodeResult::Ready || !output.frames) { valid = false; break; }
+                    for (unsigned frame = 0; frame < output.frames; ++frame)
+                        for (unsigned ch = 0; ch < channels; ++ch)
+                            actual[(copied + frame) * channels + ch] = output.channels[ch][frame];
+                    copied += static_cast<unsigned>(output.frames);
+                    ring.DeliverFrames(static_cast<std::uint32_t>(output.frames));
+                }
+            }
+            allocation_probe::enabled = false;
+            EXPECT_EQ(allocation_probe::count, 0u);
+            ASSERT_TRUE(valid); ASSERT_EQ(copied, 1001u);
+            static constexpr unsigned map6[] = {0, 2, 1, 5, 3, 4};
+            static constexpr unsigned map8[] = {0, 2, 1, 7, 5, 6, 3, 4};
+            for (unsigned frame = 0; frame < copied; ++frame)
+                for (unsigned ch = 0; ch < channels; ++ch)
+                    ASSERT_EQ(actual[frame * channels + ch], fixture.reference[(target + frame) * channels +
+                        (channels == 6 ? map6[ch] : channels == 8 ? map8[ch] : ch)]);
+        }
+        decoder->Retire(); codec.states.Collect();
+        EXPECT_EQ(codec.states.ActiveBytes(), 0u);
+    }
+}
+
 }
