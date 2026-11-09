@@ -113,6 +113,8 @@ static_codebook *vorbis_staticbook_unpack(HvAllocator *allocator, oggpack_buffer
     /* no mapping */
     break;
   case 1: case 2:
+    /* A mapped vector must have a dimension before its lookup is built. */
+    if(s->dim==0)goto _eofout;
     /* implicitly populated value mapping */
     /* explicitly populated value mapping */
 

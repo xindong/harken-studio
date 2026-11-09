@@ -66,6 +66,47 @@ TEST(VorbisDecoder, FloorZeroIsExplicitlyUnsupportedInResourceAndFixturePreparat
     EXPECT_EQ(rejected, nullptr); EXPECT_EQ(result, HV_UNSUPPORTED);
 }
 
+TEST(VorbisDecoder, RejectsZeroDimensionalMappedCodebooksBeforeLookupConstruction) {
+    const auto fixture = harken::test::MakeVorbisFixture(1);
+    harken::VorbisMedia media;
+    ASSERT_TRUE(harken::ParseVorbisTestMedia(fixture.media.data(), fixture.media.size(), media));
+    Memory memory;
+    Tables tables(hv_tables_create(memory.Callbacks(), kSetupBudget), hv_tables_destroy);
+    ASSERT_NE(tables, nullptr);
+    const auto tableAllocations = memory.live;
+    for (unsigned map : {1u, 2u}) for (unsigned dimension : {1u, 0u}) {
+        std::vector<std::uint8_t> setup{5, 'v', 'o', 'r', 'b', 'i', 's'};
+        unsigned bit = 0;
+        auto put = [&](std::uint32_t value, unsigned n) {
+            for (unsigned i = 0; i < n; ++i, ++bit) {
+                if ((bit & 7) == 0) setup.push_back(0);
+                setup.back() |= ((value >> i) & 1) << (bit & 7);
+            }
+        };
+        put(1,8);
+        // The first mapped book is deliberately unused by floor and residue.
+        put(0x564342,24); put(dimension,16); put(1,24);
+        put(0,1); put(0,1); put(0,5); put(map,4);
+        put(0,32); put(0,32); put(0,4); put(0,1);
+        if (dimension) put(0,1);
+        put(0x564342,24); put(1,16); put(1,24);
+        put(0,1); put(0,1); put(0,5); put(0,4);
+        put(0,6); put(0,16);
+        put(0,6); put(1,16); put(0,5); put(0,2); put(6,4);
+        put(0,6); put(1,16); put(0,24); put(0,24); put(0,24);
+        put(0,6); put(1,8); put(0,3); put(0,1);
+        put(0,6); put(0,16); put(0,1); put(0,1); put(0,2); put(0,8); put(0,8); put(0,8);
+        put(0,6); put(0,1); put(0,16); put(0,16); put(0,8); put(1,1);
+        HvResult result;
+        DecoderSetup decoded(hv_setup_create(memory.Callbacks(), kSetupBudget, tables.get(), media.ident,
+            media.identBytes, setup.data(), setup.size(), &result), hv_setup_destroy);
+        EXPECT_EQ(result, dimension ? HV_OK : HV_INVALID) << map;
+        EXPECT_EQ(decoded != nullptr, dimension != 0) << map;
+        decoded.reset();
+        EXPECT_EQ(memory.live, tableAllocations);
+    }
+}
+
 TEST(VorbisDecoder, PoolBudgetReuseRetirementAndSharedSetupIdentity) {
     const auto fixture = harken::test::MakeVorbisFixture(2);
     harken::VorbisMedia media;
