@@ -429,7 +429,8 @@ namespace Harken.Unity.Tests
                 Assert.That(Actions.Post(in resolved, Emitter.None, 0, out ActionFiring retained), Is.EqualTo(VnResult.VN_OK));
                 using (var refused = new HarkenEditorPreview())
                 {
-                    Assert.That(refused.Prepare(Root(), null, Array.Empty<ulong>(), true), Is.EqualTo(VnResult.VN_CAPABILITY_UNAVAILABLE));
+                    // Companion preview is available; the external engine owns the singleton.
+                    Assert.That(refused.Prepare(Root(), null, Array.Empty<ulong>(), true), Is.EqualTo(VnResult.VN_ALREADY_INITIALIZED));
                     Assert.That(refused.Shutdown(), Is.EqualTo(VnResult.VN_OK));
                 }
                 Assert.That(external.IsActive, Is.True);
