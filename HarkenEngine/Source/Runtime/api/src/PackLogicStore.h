@@ -420,6 +420,10 @@ VnResult LoadCanonicalPack(Engine& engine, const VnPackLoadDesc* desc,
 VnResult LoadProvisionalCanonicalContentForTests(
     Engine& engine, const VnPackLoadDesc* desc, VnPackHandle* outHandle,
     std::vector<PCMRegistry::PreparedPackSamples>* samples = nullptr);
+VnResult ActivateCanonicalPackSetV3(Engine& engine,
+    const VnCanonicalPackSetActivationDescV3* desc,
+    VnCanonicalPackSetActivationReportV1* outReport,
+    const std::vector<std::vector<PackExternalMediaReference>>* mediaForTests = nullptr);
 VnResult UnloadCanonicalPack(Engine& engine, VnPackHandle handle,
                              std::uint32_t flags);
 VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle,

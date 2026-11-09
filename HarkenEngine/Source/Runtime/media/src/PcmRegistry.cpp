@@ -847,8 +847,17 @@ VnResult PCMRegistry::PreparePackMutation(
             auto [it, inserted] = prepared.m_staged.try_emplace(registration.soundId);
             if (!inserted) return VN_IN_USE;
             it->second = std::move(samples.m_entry);
-            if (nextCookie == 0) nextCookie = 1;
-            it->second->cookie = nextCookie++;
+            if (registration.identity.Valid()) it->second->cookie = registration.identity.Cookie();
+            else {
+                if (nextCookie == 0) nextCookie = 1;
+                it->second->cookie = nextCookie++;
+            }
+            continue;
+        }
+        if (registration.identity.Valid()) {
+            const auto [it, inserted] = prepared.m_staged.emplace(
+                registration.soundId, std::const_pointer_cast<Entry>(registration.identity.entry_));
+            if (!inserted) return VN_IN_USE;
             continue;
         }
         const VnResult valid = ValidateDesc(&registration.desc);
@@ -929,6 +938,16 @@ VnResult PCMRegistry::PreparePackMutation(
     prepared.m_nextCookie = nextCookie;
     *out = std::move(prepared);
     return VN_OK;
+}
+
+PCMRegistry::PackReference PCMRegistry::PreparedPackMutation::AdoptExternalAlias(
+    PreparedPackSamples& samples, const PackReference& identity) noexcept {
+    PackReference result;
+    if (!samples.IsPrepared() || !samples.Range() || !samples.Range()->external ||
+        !identity.Valid()) return result;
+    samples.m_entry->cookie = identity.Cookie();
+    result.entry_ = std::move(samples.m_entry);
+    return result;
 }
 
 void PCMRegistry::CommitPreparedPackMutation(

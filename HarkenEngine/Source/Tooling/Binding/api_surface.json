@@ -347,7 +347,7 @@
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrap.cs/Harken.PackBootstrapSession::public VnResult StartupResult { get ; private set ; } = VnResult . VN_NOT_INITIALIZED",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrap.cs/Harken.PackBootstrapSession::public bool IsActive",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrap.cs/Harken.PackBootstrapSession::public bool IsStartupComplete { get }",
-        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrap.cs/Harken.PackBootstrapSession::public sealed partial class PackBootstrapSession : IDisposable [ordered-members:22c013200f41b1a10db8ef553bb65e70550dd0e7c01fa44220d38dbf014a7c36]",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrap.cs/Harken.PackBootstrapSession::public sealed partial class PackBootstrapSession : IDisposable [ordered-members:f3df29f546de87d9ecca111118ed24e31dd618ccf1bb4e3c61e88312ac29d430]",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrap.cs/Harken.PackBootstrapSession::public string ContainmentRoot { get ; }",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrap.cs/Harken.PackBootstrapSession::public string Language { get ; }",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrap.cs/Harken.PackBootstrapSession::public string ProjectId { get ; private set ; }",
@@ -460,7 +460,8 @@
         "native:Vn_UnloadPackEx",
         "native:Vn_UnregisterStreamFile",
         "native:Vn_Update",
-        "native:Vn_QueryActionPlaybackReadiness"
+        "native:Vn_QueryActionPlaybackReadiness",
+        "native:Vn_ActivateCanonicalPackSetV3"
       ]
     },
     "runtime-mix": {
@@ -1369,7 +1370,7 @@
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnChannelLayout::VN_CHANNEL_LAYOUT_QUAD = 3",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnChannelLayout::VN_CHANNEL_LAYOUT_STEREO = 2",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnChannelLayout::public enum VnChannelLayout : uint [ordered-members:f665f2ad22bbca8806d6d16ae8559f421be5293691d05cf52ba0be3affcff056]",
-        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConfig::[ StructLayout ( LayoutKind . Sequential ) ] public struct VnConfig [ordered-members:398e0e2e55d0a1b84bb7ea0835b0ba251b0cb0773440dc3f73edc57200661dba]",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConfig::[ StructLayout ( LayoutKind . Sequential ) ] public struct VnConfig [ordered-members:8e12826ebe2d774905ebe8d28efe0e4d36ceed053817ffab095ee89e789e979e]",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConfig::public IntPtr logCallback",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConfig::public IntPtr logUserData",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConfig::public IntPtr notificationUserData",
@@ -1440,6 +1441,7 @@
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConfig::public uint voiceBindingInstanceSlots",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConfig::public uint voiceSendSlots",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConfig::public uint voiceStealPolicy",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConfig::public ulong compressedDecoderBytes",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConfig::public ulong maxCatalogBytes",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConfig::public ulong maxCompositeIndexBytes",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConfig::public ulong maxPackDecodeStagingBytes",
@@ -1994,7 +1996,13 @@
       "VnStreamSourceInfoV1": "required-types",
       "VnReadIsCancelledFn": "required-types",
       "VnByteSourceReadAtFn": "required-types",
-      "VnByteSourceReleaseFn": "required-types"
+      "VnByteSourceReleaseFn": "required-types",
+      "VnCanonicalPackSetMemberV3": "tool-types",
+      "VnCanonicalPackSetActivationDescV3": "tool-types",
+      "VnPackStreamResolverV1": "tool-types",
+      "VnPackStreamRetainFn": "tool-types",
+      "VnPackStreamPathFn": "tool-types",
+      "VnPackStreamOpenFn": "tool-types"
     },
     "constants": {
       "VN_ATTENUATION_MAX_CURVE_POINTS": "tool-types",

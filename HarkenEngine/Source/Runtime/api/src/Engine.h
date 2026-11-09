@@ -8521,7 +8521,11 @@ public:
         }
         const bool inheritPackDuty = parentOriginal != nullptr && parentOriginal->packDutyOwner_ != nullptr &&
             (preparingStorage == nullptr || OriginalPreparingPackOwner(*preparingStorage) == nullptr);
-        if (inheritPackDuty && !MatchesOriginalPlayableServicePackDuty(*parentOriginal)) return false;
+        const bool inheritWorldDuty = parentOriginal != nullptr && parentOriginal->HasOriginalWorldNoPackDuty() &&
+            (preparingStorage == nullptr || (!HasOriginalWorldNoPackPreparation(*preparingStorage) &&
+                OriginalPreparingPackOwner(*preparingStorage) == nullptr));
+        if ((inheritPackDuty || inheritWorldDuty) &&
+            !MatchesOriginalPlayableServicePackDuty(*parentOriginal)) return false;
         auto& original = originalPlayableServiceLifetimeHolders[row.identity.slot];
         if (original.engine_ != nullptr || original.baseline_.Valid()) return false;
         if (!playableServiceWork.Prepare({row.identity.generation, row.identity.slot, 0}))
@@ -8597,7 +8601,9 @@ public:
             original.worldNoPackProject_ = duty.project_;
             original.worldNoPackFingerprint_ = duty.worldFingerprint_;
             original.worldNoPackTarget_ = duty.target_;
-        } else if (preparingStorage == nullptr && parentOriginal != nullptr && parentOriginal->HasOriginalWorldNoPackDuty()) {
+        } else if (inheritWorldDuty) {
+            // Continuation scratch may have no new authority. It inherits the
+            // parent's frozen world, just as a child inherits a Pack lease.
             original.packDuty_ = OriginalPlayableServicePackDuty::WorldNoPack;
             original.worldNoPackGeneration_ = parentOriginal->worldNoPackGeneration_;
             original.worldNoPackProject_ = parentOriginal->worldNoPackProject_;

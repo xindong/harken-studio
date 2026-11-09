@@ -24,6 +24,18 @@ namespace harken {
 
 namespace {
 
+// External artifacts remain unopened at activation. Their declared identity
+// permits coexistence, but never permits sharing an owning Pack's locator.
+bool SameExternalDeclaration(const PackMediaRange* a, const PackMediaRange* b) noexcept {
+    return a && b && a->external && b->external &&
+        a->external->codec == b->external->codec &&
+        a->external->fileBytes == b->external->fileBytes &&
+        a->contentRevision != 0 && a->contentRevision == b->contentRevision &&
+        a->sampleRate == b->sampleRate && a->channelCount == b->channelCount &&
+        a->frameCount == b->frameCount && a->loop.startFrame == b->loop.startFrame &&
+        a->loop.endFrame == b->loop.endFrame;
+}
+
 bool EqualPlanarSamples(const PCMView& view, const float* samples) noexcept {
     PCMView source = view;
     source.encoded = nullptr;
@@ -936,7 +948,9 @@ const PackEntry* PackTable::FindEntryBySound(
             // Serve metadata only while the registration under the id is
             // still the pack's own: after the caller re-registers the id
             // with other content, pack loop facts would be lies about it.
-            if (currentCookie != entry.registrationCookie) {
+            if (currentCookie != entry.registrationCookie ||
+                (entry.registration.Valid() && !entry.registration.SharesEntry(
+                    registry.ReferenceOf(soundId, currentCookie)))) {
                 continue;
             }
             if (outOwner != nullptr) {
@@ -1249,6 +1263,7 @@ VnResult PackTable::PrepareCanonicalSet(
             const float* samples = nullptr;
             PCMRegistry::PreparedPackSamples* prepared = nullptr;
             PCMRegistry::PackReference reference;
+            PCMRegistry::PackReference identity;
 
             const PackMediaRange* Range() const noexcept {
                 return prepared != nullptr ? prepared->Range() : nullptr;
@@ -1277,6 +1292,7 @@ VnResult PackTable::PrepareCanonicalSet(
             if (left.prepared != nullptr && right.prepared != nullptr &&
                 left.prepared->SharesEntry(*right.prepared))
                 return MediaContentMatch::Equal;
+            if (SameExternalDeclaration(left.Range(), right.Range())) return MediaContentMatch::Equal;
             return MatchMediaContent(left.View(), left.Range(), right.View(), right.Range());
         };
         for (const auto& member : members) {
@@ -1325,6 +1341,19 @@ VnResult PackTable::PrepareCanonicalSet(
             }
             return false;
         };
+        const auto unaffectedReference = [&](VnSoundId id, const PCMRegistry::PackReference& current) {
+            PCMRegistry::PackReference result;
+            for (std::size_t index = 0; index < m_slots.size(); ++index) {
+                const auto& slot = m_slots[index];
+                if (!slot.loaded || prepared.m_changes[index].touched) continue;
+                for (const auto& entry : slot.entries) {
+                    if (entry.soundId != id || entry.registrationCookie != current.Cookie()) continue;
+                    if (entry.registration.SharesEntry(current)) return current;
+                    if (!result.Valid()) result = entry.registration;
+                }
+            }
+            return result;
+        };
         std::vector<PCMRegistry::PackReferenceRegistration> registrations;
         registrations.reserve(mediaUnion.size());
         std::vector<std::array<const float*, kMaxChannels>> planes(mediaUnion.size());
@@ -1353,21 +1382,29 @@ VnResult PackTable::PrepareCanonicalSet(
                 if (equal) {
                     // A published range whose file changed in place no longer
                     // proves equality; only the candidate's own failure refuses.
-                    const auto match = MatchMediaContent(view, oldRange.get(), source.View(), source.Range());
+                    const auto match = SameExternalDeclaration(oldRange.get(), source.Range())
+                        ? MediaContentMatch::Equal
+                        : MatchMediaContent(view, oldRange.get(), source.View(), source.Range());
                     if (match == MediaContentMatch::RightFailed) return VN_BAD_PACK;
                     equal = match == MediaContentMatch::Equal;
                 }
                 if (equal) {
-                    source.reference = old->registration;
-                    continue;
+                    const auto current = registry.ReferenceOf(id, cookie);
+                    if (!source.Range() || !source.Range()->external ||
+                        unaffectedReference(id, current).SharesEntry(current)) {
+                        source.reference = current;
+                        continue;
+                    }
+                    source.identity = current;
                 }
-                if (unaffectedOwns(id, cookie)) {
+                if (!equal && unaffectedOwns(id, cookie)) {
                     m_conflictingSoundId = id;
                     return VN_IN_USE;
                 }
             }
             PCMRegistry::PackReferenceRegistration registration{};
             registration.soundId = id;
+            registration.identity = source.identity;
             if (source.prepared != nullptr) {
                 registration.samples = source.prepared;
                 registrations.push_back(registration);
@@ -1393,14 +1430,24 @@ VnResult PackTable::PrepareCanonicalSet(
                 continue;
             }
             for (const auto& entry : m_slots[index].entries) {
-                if (registry.CookieOf(entry.soundId) != entry.registrationCookie ||
-                    unaffectedOwns(entry.soundId, entry.registrationCookie)) {
+                const auto current = registry.ReferenceOf(entry.soundId, entry.registrationCookie);
+                if (!current.Valid() || !current.SharesEntry(entry.registration)) {
                     continue;
                 }
                 const auto next = mediaUnion.find(entry.soundId);
                 if (next != mediaUnion.end() &&
-                    next->second.reference.Cookie() == entry.registrationCookie) {
+                    next->second.reference.SharesEntry(current)) {
                     continue;
+                }
+                if (next == mediaUnion.end()) {
+                    const auto remaining = unaffectedReference(entry.soundId, current);
+                    if (remaining.SharesEntry(current)) continue;
+                    if (remaining.Valid() && !retiring.contains(entry.soundId)) {
+                        PCMRegistry::PackReferenceRegistration promotion{};
+                        promotion.soundId = entry.soundId;
+                        promotion.identity = remaining;
+                        registrations.push_back(std::move(promotion));
+                    }
                 }
                 retiring.emplace(entry.soundId, PreparedSetMutation::RetiringMedia{
                     entry.soundId, entry.registrationCookie, index});
@@ -1420,9 +1467,16 @@ VnResult PackTable::PrepareCanonicalSet(
                 source.reference = prepared.m_pcm.ReferenceOf(id);
             }
         }
-        for (const auto index : prepared.m_members) {
-            for (auto& entry : prepared.m_changes[index].entries) {
-                entry.registration = mediaUnion.at(entry.soundId).reference;
+        for (std::size_t memberIndex = 0; memberIndex < members.size(); ++memberIndex) {
+            const auto index = prepared.m_members[memberIndex];
+            auto& entries = prepared.m_changes[index].entries;
+            for (std::size_t entryIndex = 0; entryIndex < entries.size(); ++entryIndex) {
+                auto& entry = entries[entryIndex];
+                const auto& identity = mediaUnion.at(entry.soundId).reference;
+                auto* samples = members[memberIndex].samples;
+                auto* own = samples ? &(*samples)[entryIndex] : nullptr;
+                entry.registration = own && own->Range() && own->Range()->external
+                    ? PCMRegistry::PreparedPackMutation::AdoptExternalAlias(*own, identity) : identity;
                 entry.registrationCookie = entry.registration.Cookie();
             }
         }
@@ -2329,6 +2383,16 @@ VnResult PackTable::LookupExactReference(
             row.resourceToken != resourceToken) {
             continue;
         }
+        // The extracted registry node is only a representative. An owner may
+        // carry a distinct external source with the same content cookie.
+        for (const PackEntry& entry : row.packEntries) {
+            if (entry.soundId == soundId && entry.registration.Valid()) {
+                *out = entry.registration;
+                if (mediaChecksum != nullptr) *mediaChecksum = entry.mediaChecksum;
+                if (checksumKnown != nullptr) *checksumKnown = entry.mediaChecksumKnown;
+                return VN_OK;
+            }
+        }
         for (const PCMRegistry::RetiredGeneration& entry : row.entries) {
             if (entry.SoundId() == soundId) {
                 *out = entry.Reference();
@@ -2338,14 +2402,6 @@ VnResult PackTable::LookupExactReference(
                         if (checksumKnown != nullptr) *checksumKnown = metadata.mediaChecksumKnown;
                         break;
                     }
-                return VN_OK;
-            }
-        }
-        for (const PackEntry& entry : row.packEntries) {
-            if (entry.soundId == soundId && entry.registration.Valid()) {
-                *out = entry.registration;
-                if (mediaChecksum != nullptr) *mediaChecksum = entry.mediaChecksum;
-                if (checksumKnown != nullptr) *checksumKnown = entry.mediaChecksumKnown;
                 return VN_OK;
             }
         }

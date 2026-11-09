@@ -29,6 +29,9 @@ namespace Harken
         [DllImport(LibraryName, EntryPoint = "Vn_ActivateCanonicalPackSetV2", CallingConvention = CallingConvention.Cdecl)]
         public static extern VnResult Vn_ActivateCanonicalPackSetV2(in VnCanonicalPackSetActivationDescV2 desc, ref VnCanonicalPackSetActivationReportV1 outReport);
 
+        [DllImport(LibraryName, EntryPoint = "Vn_ActivateCanonicalPackSetV3", CallingConvention = CallingConvention.Cdecl)]
+        public static extern VnResult Vn_ActivateCanonicalPackSetV3(in VnCanonicalPackSetActivationDescV3 desc, ref VnCanonicalPackSetActivationReportV1 outReport);
+
         [DllImport(LibraryName, EntryPoint = "Vn_InspectCanonicalPackV1", CallingConvention = CallingConvention.Cdecl)]
         public static extern VnResult Vn_InspectCanonicalPackV1(in VnPackInspectDescV1 desc, ref VnPackInspectReportV1 outReport);
 

@@ -1816,6 +1816,37 @@ VnResult Vn_ActivateCanonicalPackSetV2(
     const VnCanonicalPackSetActivationDescV2* desc,
     VnCanonicalPackSetActivationReportV1* outReport);
 
+typedef struct VnPackStreamResolverV1 VnPackStreamResolverV1;
+
+typedef struct VnCanonicalPackSetMemberV3 {
+    uint32_t structSize;
+    uint32_t reserved0;
+    VnCanonicalPackSetMemberV2 member;
+    const VnPackStreamResolverV1* streams;
+} VnCanonicalPackSetMemberV3;
+
+/* External stream resolution belongs to each Content member's generation.
+ * Keep and NameOnly retain the existing source and require streams == NULL.
+ * Path members resolve relative to their own Pack directory when streams is
+ * NULL. Provider members with external media require a resolver. */
+typedef struct VnCanonicalPackSetActivationDescV3 {
+    uint32_t structSize;
+    uint32_t flags;
+    VnPackHandle expectedCurrentInitHandle;
+    uint64_t baseSetRevision;
+    uint64_t setRevision;
+    uint32_t memberCount;
+    uint32_t memberStructSize;
+    const VnCanonicalPackSetMemberV3* members;
+    uint32_t outputMemberCapacity;
+    uint32_t outputMemberStructSize;
+    VnCanonicalPackSetMemberResultV1* outputMembers;
+} VnCanonicalPackSetActivationDescV3;
+
+VnResult Vn_ActivateCanonicalPackSetV3(
+    const VnCanonicalPackSetActivationDescV3* desc,
+    VnCanonicalPackSetActivationReportV1* outReport);
+
 typedef struct VnInitPackInspectReport {
     uint32_t structSize;
     uint32_t status;
@@ -2533,6 +2564,35 @@ typedef struct VnByteSourceDescV1 {
     VnByteSourceReadAtFn readAt;
     VnByteSourceReleaseFn release;
 } VnByteSourceDescV1;
+
+typedef VnResult (*VnPackStreamRetainFn)(void* userData);
+typedef VnResult (*VnPackStreamPathFn)(void* userData, uint64_t packStableId,
+    const char* relativeLocatorUtf8, uint64_t expectedContentRevision,
+    uint64_t expectedByteLength, const char** outPathUtf8);
+typedef VnResult (*VnPackStreamOpenFn)(void* userData, uint64_t packStableId,
+    const char* relativeLocatorUtf8, uint64_t expectedContentRevision,
+    uint64_t expectedByteLength, const VnReadCancellationViewV1* cancellation,
+    VnByteSourceDescV1* outSource);
+
+/* Immutable context, copied and retained during activation. Each successful
+ * retain has exactly one release, including rollback; release can run on a
+ * control or I/O thread after all generation owners drain. Never reenter
+ * Runtime or throw across callbacks. Exactly one of path/open is required.
+ * path runs on the control thread without opening or reading media. Its UTF-8
+ * result is copied immediately and must remain valid until the next path call
+ * or context release. open runs only on an I/O executor and may overlap with
+ * other opens/reads. VN_OK transfers outSource's lease, including on subsequent
+ * validation failure; other results transfer nothing. Term drains all reads.
+ * The context and its returned identities must not change after retention. */
+struct VnPackStreamResolverV1 {
+    uint32_t structSize;
+    uint32_t flags;
+    void* userData;
+    VnPackStreamRetainFn retain;
+    VnByteSourceReleaseFn release;
+    VnPackStreamPathFn path;
+    VnPackStreamOpenFn open;
+};
 typedef struct VnStreamSourceInfoV1 {
     uint32_t structSize;
     uint32_t state;

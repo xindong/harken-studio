@@ -736,6 +736,15 @@ namespace Harken
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     public delegate void VnByteSourceReleaseFn(IntPtr userData);
 
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    internal delegate VnResult VnPackStreamRetainFn(IntPtr userData);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    internal delegate VnResult VnPackStreamPathFn(IntPtr userData, ulong packStableId, IntPtr relativeLocatorUtf8, ulong expectedContentRevision, ulong expectedByteLength, IntPtr outPathUtf8);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    internal delegate VnResult VnPackStreamOpenFn(IntPtr userData, ulong packStableId, IntPtr relativeLocatorUtf8, ulong expectedContentRevision, ulong expectedByteLength, IntPtr cancellation, IntPtr outSource);
+
     [Serializable]
     [StructLayout(LayoutKind.Sequential)]
     public partial struct VnObjectId
@@ -2258,6 +2267,43 @@ namespace Harken
     public uint state;
     public int result;
     public uint reserved0;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct VnCanonicalPackSetMemberV3
+    {
+    public uint structSize;
+    public uint reserved0;
+    public VnCanonicalPackSetMemberV2 member;
+    public IntPtr streams;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct VnCanonicalPackSetActivationDescV3
+    {
+    public uint structSize;
+    public uint flags;
+    public ulong expectedCurrentInitHandle;
+    public ulong baseSetRevision;
+    public ulong setRevision;
+    public uint memberCount;
+    public uint memberStructSize;
+    public IntPtr members;
+    public uint outputMemberCapacity;
+    public uint outputMemberStructSize;
+    public IntPtr outputMembers;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct VnPackStreamResolverV1
+    {
+    public uint structSize;
+    public uint flags;
+    public IntPtr userData;
+    public IntPtr retain;
+    public IntPtr release;
+    public IntPtr path;
+    public IntPtr open;
     }
 
 }

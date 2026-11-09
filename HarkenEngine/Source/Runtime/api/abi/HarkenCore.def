@@ -8,6 +8,7 @@
 EXPORTS
     Vn_ActivateCanonicalPackSetV1
     Vn_ActivateCanonicalPackSetV2
+    Vn_ActivateCanonicalPackSetV3
     Vn_ApplyBusTopology
     Vn_ApplyVoiceBinding
     Vn_AttachBinding

@@ -3679,6 +3679,59 @@ static_assert(offsetof(VnMonitorStreamFactV1, readStatus) == 288,
 static_assert(offsetof(VnMonitorStreamFactV1, reserved0) == 292,
               "wire table offset drift: VnMonitorStreamFactV1.reserved0");
 
+static_assert(sizeof(VnCanonicalPackSetMemberV3) == 104,
+              "wire table size drift: VnCanonicalPackSetMemberV3");
+static_assert(offsetof(VnCanonicalPackSetMemberV3, structSize) == 0,
+              "wire table offset drift: VnCanonicalPackSetMemberV3.structSize");
+static_assert(offsetof(VnCanonicalPackSetMemberV3, reserved0) == 4,
+              "wire table offset drift: VnCanonicalPackSetMemberV3.reserved0");
+static_assert(offsetof(VnCanonicalPackSetMemberV3, member) == 8,
+              "wire table offset drift: VnCanonicalPackSetMemberV3.member");
+static_assert(offsetof(VnCanonicalPackSetMemberV3, streams) == 96,
+              "wire table offset drift: VnCanonicalPackSetMemberV3.streams");
+
+static_assert(sizeof(VnCanonicalPackSetActivationDescV3) == 64,
+              "wire table size drift: VnCanonicalPackSetActivationDescV3");
+static_assert(offsetof(VnCanonicalPackSetActivationDescV3, structSize) == 0,
+              "wire table offset drift: VnCanonicalPackSetActivationDescV3.structSize");
+static_assert(offsetof(VnCanonicalPackSetActivationDescV3, flags) == 4,
+              "wire table offset drift: VnCanonicalPackSetActivationDescV3.flags");
+static_assert(offsetof(VnCanonicalPackSetActivationDescV3, expectedCurrentInitHandle) == 8,
+              "wire table offset drift: VnCanonicalPackSetActivationDescV3.expectedCurrentInitHandle");
+static_assert(offsetof(VnCanonicalPackSetActivationDescV3, baseSetRevision) == 16,
+              "wire table offset drift: VnCanonicalPackSetActivationDescV3.baseSetRevision");
+static_assert(offsetof(VnCanonicalPackSetActivationDescV3, setRevision) == 24,
+              "wire table offset drift: VnCanonicalPackSetActivationDescV3.setRevision");
+static_assert(offsetof(VnCanonicalPackSetActivationDescV3, memberCount) == 32,
+              "wire table offset drift: VnCanonicalPackSetActivationDescV3.memberCount");
+static_assert(offsetof(VnCanonicalPackSetActivationDescV3, memberStructSize) == 36,
+              "wire table offset drift: VnCanonicalPackSetActivationDescV3.memberStructSize");
+static_assert(offsetof(VnCanonicalPackSetActivationDescV3, members) == 40,
+              "wire table offset drift: VnCanonicalPackSetActivationDescV3.members");
+static_assert(offsetof(VnCanonicalPackSetActivationDescV3, outputMemberCapacity) == 48,
+              "wire table offset drift: VnCanonicalPackSetActivationDescV3.outputMemberCapacity");
+static_assert(offsetof(VnCanonicalPackSetActivationDescV3, outputMemberStructSize) == 52,
+              "wire table offset drift: VnCanonicalPackSetActivationDescV3.outputMemberStructSize");
+static_assert(offsetof(VnCanonicalPackSetActivationDescV3, outputMembers) == 56,
+              "wire table offset drift: VnCanonicalPackSetActivationDescV3.outputMembers");
+
+static_assert(sizeof(VnPackStreamResolverV1) == 48,
+              "wire table size drift: VnPackStreamResolverV1");
+static_assert(offsetof(VnPackStreamResolverV1, structSize) == 0,
+              "wire table offset drift: VnPackStreamResolverV1.structSize");
+static_assert(offsetof(VnPackStreamResolverV1, flags) == 4,
+              "wire table offset drift: VnPackStreamResolverV1.flags");
+static_assert(offsetof(VnPackStreamResolverV1, userData) == 8,
+              "wire table offset drift: VnPackStreamResolverV1.userData");
+static_assert(offsetof(VnPackStreamResolverV1, retain) == 16,
+              "wire table offset drift: VnPackStreamResolverV1.retain");
+static_assert(offsetof(VnPackStreamResolverV1, release) == 24,
+              "wire table offset drift: VnPackStreamResolverV1.release");
+static_assert(offsetof(VnPackStreamResolverV1, path) == 32,
+              "wire table offset drift: VnPackStreamResolverV1.path");
+static_assert(offsetof(VnPackStreamResolverV1, open) == 40,
+              "wire table offset drift: VnPackStreamResolverV1.open");
+
 } // namespace harkenremote
 
 #endif // HARKEN_REMOTE_WIRE_LAYOUT_ASSERTS_H

@@ -2537,6 +2537,31 @@ static_assert(offsetof(VnMonitorStreamFactV1, producedFrames) == 280, "binding o
 static_assert(offsetof(VnMonitorStreamFactV1, starved) == 284, "binding offset drift: VnMonitorStreamFactV1.starved");
 static_assert(offsetof(VnMonitorStreamFactV1, readStatus) == 288, "binding offset drift: VnMonitorStreamFactV1.readStatus");
 static_assert(offsetof(VnMonitorStreamFactV1, reserved0) == 292, "binding offset drift: VnMonitorStreamFactV1.reserved0");
+static_assert(sizeof(VnCanonicalPackSetMemberV3) == 104, "binding size drift: VnCanonicalPackSetMemberV3");
+static_assert(offsetof(VnCanonicalPackSetMemberV3, structSize) == 0, "binding offset drift: VnCanonicalPackSetMemberV3.structSize");
+static_assert(offsetof(VnCanonicalPackSetMemberV3, reserved0) == 4, "binding offset drift: VnCanonicalPackSetMemberV3.reserved0");
+static_assert(offsetof(VnCanonicalPackSetMemberV3, member) == 8, "binding offset drift: VnCanonicalPackSetMemberV3.member");
+static_assert(offsetof(VnCanonicalPackSetMemberV3, streams) == 96, "binding offset drift: VnCanonicalPackSetMemberV3.streams");
+static_assert(sizeof(VnCanonicalPackSetActivationDescV3) == 64, "binding size drift: VnCanonicalPackSetActivationDescV3");
+static_assert(offsetof(VnCanonicalPackSetActivationDescV3, structSize) == 0, "binding offset drift: VnCanonicalPackSetActivationDescV3.structSize");
+static_assert(offsetof(VnCanonicalPackSetActivationDescV3, flags) == 4, "binding offset drift: VnCanonicalPackSetActivationDescV3.flags");
+static_assert(offsetof(VnCanonicalPackSetActivationDescV3, expectedCurrentInitHandle) == 8, "binding offset drift: VnCanonicalPackSetActivationDescV3.expectedCurrentInitHandle");
+static_assert(offsetof(VnCanonicalPackSetActivationDescV3, baseSetRevision) == 16, "binding offset drift: VnCanonicalPackSetActivationDescV3.baseSetRevision");
+static_assert(offsetof(VnCanonicalPackSetActivationDescV3, setRevision) == 24, "binding offset drift: VnCanonicalPackSetActivationDescV3.setRevision");
+static_assert(offsetof(VnCanonicalPackSetActivationDescV3, memberCount) == 32, "binding offset drift: VnCanonicalPackSetActivationDescV3.memberCount");
+static_assert(offsetof(VnCanonicalPackSetActivationDescV3, memberStructSize) == 36, "binding offset drift: VnCanonicalPackSetActivationDescV3.memberStructSize");
+static_assert(offsetof(VnCanonicalPackSetActivationDescV3, members) == 40, "binding offset drift: VnCanonicalPackSetActivationDescV3.members");
+static_assert(offsetof(VnCanonicalPackSetActivationDescV3, outputMemberCapacity) == 48, "binding offset drift: VnCanonicalPackSetActivationDescV3.outputMemberCapacity");
+static_assert(offsetof(VnCanonicalPackSetActivationDescV3, outputMemberStructSize) == 52, "binding offset drift: VnCanonicalPackSetActivationDescV3.outputMemberStructSize");
+static_assert(offsetof(VnCanonicalPackSetActivationDescV3, outputMembers) == 56, "binding offset drift: VnCanonicalPackSetActivationDescV3.outputMembers");
+static_assert(sizeof(VnPackStreamResolverV1) == 48, "binding size drift: VnPackStreamResolverV1");
+static_assert(offsetof(VnPackStreamResolverV1, structSize) == 0, "binding offset drift: VnPackStreamResolverV1.structSize");
+static_assert(offsetof(VnPackStreamResolverV1, flags) == 4, "binding offset drift: VnPackStreamResolverV1.flags");
+static_assert(offsetof(VnPackStreamResolverV1, userData) == 8, "binding offset drift: VnPackStreamResolverV1.userData");
+static_assert(offsetof(VnPackStreamResolverV1, retain) == 16, "binding offset drift: VnPackStreamResolverV1.retain");
+static_assert(offsetof(VnPackStreamResolverV1, release) == 24, "binding offset drift: VnPackStreamResolverV1.release");
+static_assert(offsetof(VnPackStreamResolverV1, path) == 32, "binding offset drift: VnPackStreamResolverV1.path");
+static_assert(offsetof(VnPackStreamResolverV1, open) == 40, "binding offset drift: VnPackStreamResolverV1.open");
 
 // C function-signature pins for the whole API. Taking the address of each
 // function into a pointer of the table-declared signature makes ANY
@@ -2550,6 +2575,7 @@ static_assert(offsetof(VnMonitorStreamFactV1, reserved0) == 292, "binding offset
 // linkage; static gives each an internal, unused-safe definition.
 extern "C" {
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_ActivateCanonicalPackSetV2)(const VnCanonicalPackSetActivationDescV2*, VnCanonicalPackSetActivationReportV1*) = &Vn_ActivateCanonicalPackSetV2;
+[[maybe_unused]] static VnResult (*const binding_sig_Vn_ActivateCanonicalPackSetV3)(const VnCanonicalPackSetActivationDescV3*, VnCanonicalPackSetActivationReportV1*) = &Vn_ActivateCanonicalPackSetV3;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_InspectCanonicalPackV1)(const VnPackInspectDescV1*, VnPackInspectReportV1*) = &Vn_InspectCanonicalPackV1;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_Init)(const VnConfig*) = &Vn_Init;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_Term)(void) = &Vn_Term;

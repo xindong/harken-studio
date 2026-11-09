@@ -1,6 +1,7 @@
 #include <harken/Harken.h>
 
 #include "Engine.h"
+#include "harken/media/PackStreamResolver.h"
 #include "BusBindingSourceStamp.h"
 #include "EngineNativeBackingEnvelope.h"
 #include "RealDeviceInitStage.h"
@@ -53582,7 +53583,8 @@ void ServicePendingImmediateEntries(
                     invalidArm = true;
                 } else if (arm.state == harken::ArmState::PendingApply) {
                     awaitingApply = true;
-                } else {
+                } else if (program->runtimeProgram.program != nullptr &&
+                           program->runtimeProgram.program->role == harken::TimelineProgramRole::Voice) {
                     harken::EngineTimelineVoiceInstallIdentity installed{};
                     const auto render = (std::uint64_t(program->armToken.renderGeneration) << 32u) |
                         program->armToken.renderSlot;
@@ -110692,7 +110694,9 @@ VnResult SetGameplayCatalog(Engine& engine, VnPackHandle expectedInitHandle,
                             const VnPackByteSpan* catalog);
 VnResult ActivateCanonicalPackSetV2(Engine& engine,
     const VnCanonicalPackSetActivationDescV2* desc,
-    VnCanonicalPackSetActivationReportV1* outReport);
+    VnCanonicalPackSetActivationReportV1* outReport,
+    const std::vector<const VnPackStreamResolverV1*>* streams = nullptr,
+    const std::vector<std::vector<PackExternalMediaReference>>* externalMedia = nullptr);
 VnResult ActivateCanonicalPackSetV1(
     Engine& engine, const VnCanonicalPackSetActivationDescV1* descriptor,
     VnCanonicalPackSetActivationReportV1* outReport);
@@ -112528,6 +112532,18 @@ VnResult Vn_ActivateCanonicalPackSetV2(
     }
 }
 
+VnResult Vn_ActivateCanonicalPackSetV3(
+    const VnCanonicalPackSetActivationDescV3* desc,
+    VnCanonicalPackSetActivationReportV1* outReport) {
+    if (harken::detail::CanonicalSetMutationBlocked()) return VN_IN_USE;
+    try {
+        auto* engine = harken::detail::g_engine;
+        if (engine == nullptr || engine->callbackFatalSticky) return VN_NOT_INITIALIZED;
+        return harken::ActivateCanonicalPackSetV3(*engine, desc, outReport);
+    } catch (const std::length_error&) { return VN_PACK_RESIDENT_CAPACITY; }
+      catch (...) { return VN_DEVICE_ERROR; }
+}
+
 VnResult Vn_BeginStreamSource(VnSoundId soundId, std::uint32_t mode,
     const VnByteSourceDescV1* source, VnStreamSourceRequest* outRequest) {
     if (outRequest) *outRequest = 0;
@@ -112542,36 +112558,7 @@ VnResult Vn_BeginStreamSource(VnSoundId soundId, std::uint32_t mode,
         harken::StreamManager::StreamFacts previous;
         if (mode == VN_STREAM_SOURCE_REPLACE && !engine->streams.FindFile(soundId, &previous))
             return engine->streams.WorkerState() == harken::StreamWorkerState::Ready ? VN_UNKNOWN_ID : VN_DEVICE_ERROR;
-        class CallbackSource final : public harken::StreamByteSource {
-        public:
-            VnByteSourceDescV1 desc;
-            std::atomic<bool> armed{false};
-            explicit CallbackSource(const VnByteSourceDescV1& input) : desc(input) {}
-            ~CallbackSource() override {
-                if (armed.load(std::memory_order_acquire)) {
-                    try { desc.release(desc.userData); } catch (...) {}
-                }
-            }
-            std::uint64_t ByteCount() const noexcept override { return desc.byteLength; }
-            static std::uint32_t IsCancelled(const void* context) {
-                return static_cast<const harken::StreamReadCancellation*>(context)->IsCancelled() ? 1u : 0u;
-            }
-            harken::StreamReadResult ReadAt(std::uint64_t offset, void* destination, std::size_t count,
-                harken::StreamReadCancellation cancellation) const override {
-                if (cancellation.IsCancelled()) return {harken::StreamReadStatus::Cancelled, 0};
-                VnReadCancellationViewV1 view{sizeof(view), 0, &cancellation, &IsCancelled};
-                std::uint32_t read = 0;
-                try {
-                    const auto requested = static_cast<std::uint32_t>(std::min<std::size_t>(count, UINT32_MAX));
-                    const auto result = desc.readAt(desc.userData, offset, destination, requested, &read, &view);
-                    if (cancellation.IsCancelled() || result == VN_BYTE_READ_CANCELLED)
-                        return {harken::StreamReadStatus::Cancelled, 0};
-                    if (result != VN_BYTE_READ_OK || read > requested) return {};
-                    return {harken::StreamReadStatus::Ok, read};
-                } catch (...) { return {}; }
-            }
-        };
-        auto adapter = std::make_shared<CallbackSource>(*source);
+        auto adapter = std::make_shared<harken::HostStreamByteSource>(*source);
         harken::StreamManager::SourceToken token;
         const auto result = engine->streams.BeginSource(soundId, adapter, mode == VN_STREAM_SOURCE_REPLACE,
                                                         previous.sourceGeneration, &token);
@@ -112579,7 +112566,7 @@ VnResult Vn_BeginStreamSource(VnSoundId soundId, std::uint32_t mode,
         // Accepted requests retain their candidate through Ready/Failed until a
         // later control-thread Cancel/Commit/Term. No cleanup can overtake this
         // nonthrowing arm; refused adapters never invoke the provider Release.
-        adapter->armed.store(true, std::memory_order_release);
+        adapter->Adopt();
         *outRequest = token.value;
         return VN_OK;
     } catch (...) { return VN_DEVICE_ERROR; }
@@ -128753,6 +128740,109 @@ struct AcquiredCanonicalSetMember {
     const PackComposition::PublishedOwner* keptOwner = nullptr;
 };
 
+VnResult BindCanonicalExternalMedia(Engine& engine, const VnCanonicalPackSetMemberV1& member,
+    const VnPackStreamResolverV1* host, AcquiredCanonicalSetMember& captured,
+    std::uint64_t* semanticKey) {
+    if (captured.image.externalMedia.empty()) return VN_OK;
+    std::shared_ptr<const PackStreamResolver> context;
+    if (host) {
+        const auto result = PackStreamResolver::Capture(*host, &context);
+        if (result != VN_OK) return result;
+    } else if (member.flags & VN_CANONICAL_PACK_SET_MEMBER_PROVIDER) return VN_PACK_PROVIDER_FAILED;
+    const auto& media = captured.image.media;
+    if (captured.samples.empty()) captured.samples.resize(media.size());
+    if (captured.samples.size() != media.size()) return VN_BAD_PACK;
+    std::vector<bool> bound(media.size(), false);
+    for (const auto& reference : captured.image.externalMedia) {
+        if (!CatalogLocatorLegal(reference.relativeLocator.c_str()) ||
+            !reference.range || !reference.range->external || reference.range->external->locator)
+            return VN_BAD_PACK;
+        const auto found = std::find_if(media.begin(), media.end(),
+            [&](const auto& row) { return row.soundId == reference.soundId; });
+        if (found == media.end()) return VN_BAD_PACK;
+        const auto index = static_cast<std::size_t>(found - media.begin());
+        if (bound[index]) return VN_BAD_PACK;
+        bound[index] = true;
+        auto range = std::make_shared<PackMediaRange>(*reference.range);
+        auto external = std::make_shared<PackExternalStream>(*range->external);
+        range->external = external;
+        const auto& locator = reference.relativeLocator;
+        *semanticKey = Fnv1a64(locator.data(), locator.size(), *semanticKey);
+        if (context && context->Descriptor().open) {
+            const auto& descriptor = context->Descriptor();
+            external->locator = MakePackHostStreamLocator(context, member.packStableId, locator,
+                range->contentRevision, external->fileBytes);
+            // Opaque callbacks are process-local identities and cannot be
+            // serialized as a self-contained replayable activation.
+            *semanticKey = Fnv1a64(&descriptor.userData, sizeof(descriptor.userData), *semanticKey);
+            *semanticKey = Fnv1a64(&descriptor.open, sizeof(descriptor.open), *semanticKey);
+        } else {
+            std::string path;
+            if (context) {
+                const char* borrowed = nullptr;
+                const auto& descriptor = context->Descriptor();
+                VnResult result;
+                try { result = descriptor.path(descriptor.userData, member.packStableId, locator.c_str(),
+                    range->contentRevision, external->fileBytes, &borrowed); }
+                catch (...) { return VN_PACK_PROVIDER_FAILED; }
+                if (result != VN_OK) return result;
+                if (!borrowed || !CanonicalPackSetUtf8Legal(borrowed)) return VN_PACK_PROVIDER_FAILED;
+                path = borrowed;
+            } else {
+                std::filesystem::path pack;
+                if (!TryMakeUtf8Path(member.utf8Path, &pack)) return VN_PACK_PATH_ESCAPE;
+                if (!pack.is_absolute()) {
+                    std::filesystem::path root;
+                    if (!TryMakeUtf8Path(member.utf8ContainmentRoot, &root)) return VN_PACK_PATH_ESCAPE;
+                    pack = root / pack;
+                }
+                std::filesystem::path relative;
+                if (!TryMakeUtf8Path(locator.c_str(), &relative)) return VN_PACK_PATH_ESCAPE;
+                path = Utf8PathString(pack.parent_path() / relative);
+                // Validate the lexical path before canonicalization can erase a
+                // redirect. The generation keeps this exact path for reopening.
+                if (!MakePackFileStreamLocator(path)) return VN_PACK_PATH_ESCAPE;
+                if (member.utf8ContainmentRoot) {
+                    auto load = MemberToLoadDesc(member);
+                    load.utf8Path = path.c_str();
+                    std::string contained;
+                    const auto checked = ResolveRootUtf8Path(load, &contained);
+                    if (checked != VN_OK) return checked;
+                }
+            }
+            *semanticKey = Fnv1a64(path.data(), path.size(), *semanticKey);
+            external->locator = MakePackFileStreamLocator(std::move(path), context);
+            if (!external->locator) return VN_PACK_PATH_ESCAPE;
+        }
+        PCMRegistry::PreparedPackSamples prepared;
+        const auto result = engine.registry.PreparePackRangeSamples(reference.soundId, range, &prepared);
+        if (result != VN_OK) return result;
+        captured.samples[index] = std::move(prepared);
+    }
+    // Byte-loaded mixed Packs still use the existing PCM preparation owner.
+    for (std::size_t index = 0; index < media.size(); ++index) {
+        if (captured.samples[index].IsPrepared()) continue;
+        const auto& row = media[index];
+        if (!captured.bytes) return VN_BAD_PACK;
+        const auto* base = reinterpret_cast<const float*>(captured.bytes.get() + row.blobOffset);
+        std::array<const float*, kMaxChannels> planes{};
+        for (std::uint32_t channel = 0; channel < row.channelCount; ++channel)
+            planes[channel] = base + channel * row.frameCount;
+        VnPCMDesc pcm{};
+        pcm.structSize = sizeof(pcm);
+        pcm.channels = row.channelCount;
+        pcm.sampleRate = row.sampleRate;
+        pcm.frames = row.frameCount;
+        pcm.samplesPlanar = planes.data();
+        pcm.layout = VN_PCM_LAYOUT_PLANAR;
+        pcm.policy = VN_PCM_POLICY_COPY;
+        const auto result = engine.registry.PreparePackSamples(row.soundId, &pcm,
+            &captured.samples[index], CanonicalPcmLoop(row));
+        if (result != VN_OK) return result;
+    }
+    return VN_OK;
+}
+
 VnResult ValidateCanonicalSetClosure(
     const std::vector<AcquiredCanonicalSetMember>& members) {
     detail::PackDecodeCharge scratch(members.empty() ? detail::PackDecodeBudget{} : members.front().image.staging.Budget());
@@ -130795,7 +130885,8 @@ VnResult PrepareCanonicalSetActivation(Engine& engine,
                     &resolver, demandCollected[i] != 0 ? &demandRows[i] : nullptr);
                 if (loaded != VN_OK) return loaded;
             }
-            if (operations != nullptr && old != nullptr && captured.hash == old->contentHash)
+            if (operations != nullptr && old != nullptr && captured.hash == old->contentHash &&
+                (operation == VN_PACK_MEMBER_NAME_ONLY || captured.image.externalMedia.empty()))
                 captured.keptOwner = old;
             if (operation == VN_PACK_MEMBER_NAME_ONLY && captured.keptOwner == nullptr)
                 return VN_PACK_STALE_REVISION;
@@ -130809,10 +130900,10 @@ VnResult PrepareCanonicalSetActivation(Engine& engine,
         }
         inputs.push_back({desc.members[i].expectedHandle,
             MakeCanonicalRevisionKey(desc.members[i].expectedHandle, image),
-            captured.keptOwner == nullptr && !captured.boundedFile ? &captured.bytes : nullptr,
+            captured.keptOwner == nullptr && !captured.boundedFile && image.externalMedia.empty() ? &captured.bytes : nullptr,
             captured.keptOwner == nullptr ? &image.media : nullptr,
             captured.keptOwner != nullptr,
-            captured.keptOwner == nullptr && captured.boundedFile ? &captured.samples : nullptr});
+            captured.keptOwner == nullptr && (captured.boundedFile || !image.externalMedia.empty()) ? &captured.samples : nullptr});
     }
     const auto closure = ValidateCanonicalSetClosure(out->members);
     if (closure != VN_OK) { return closure; }
@@ -131126,7 +131217,10 @@ VnResult ActivateCanonicalPackSetImpl(
     const std::vector<std::shared_ptr<const PackCompanionNames>>* names = nullptr,
     std::uint64_t capturedNameBytes = 0,
     std::vector<std::uint64_t>* traceResources = nullptr,
-    bool* traceInputMissing = nullptr) {
+    bool* traceInputMissing = nullptr,
+    const std::vector<const VnPackStreamResolverV1*>* streams = nullptr,
+    const std::vector<std::vector<PackExternalMediaReference>>* externalMedia = nullptr,
+    bool* externalInputUsed = nullptr) {
     VariableOperationScope variableOperation(&engine);
     if (descriptor == nullptr || outReport == nullptr ||
         descriptor->structSize != sizeof(VnCanonicalPackSetActivationDescV1) ||
@@ -131238,6 +131332,14 @@ VnResult ActivateCanonicalPackSetImpl(
                                 *traceInputMissing = (*traceResources)[i] == 0;
                             return result;
                         }
+                        if (externalMedia != nullptr) captured[i].image.externalMedia = (*externalMedia)[i];
+                        if (externalInputUsed && !captured[i].image.externalMedia.empty())
+                            *externalInputUsed = true;
+                        if (operation == VN_PACK_MEMBER_CONTENT) {
+                            const auto bound = BindCanonicalExternalMedia(engine, desc.members[i],
+                                streams != nullptr ? (*streams)[i] : nullptr, captured[i], &semanticKey);
+                            if (bound != VN_OK) return bound;
+                        }
                         semanticKey = Fnv1a64(&captured[i].hash, sizeof(captured[i].hash), semanticKey);
                     }
                 }
@@ -131348,9 +131450,52 @@ VnResult ActivateCanonicalPackSetV1(
     return ActivateCanonicalPackSetImpl(engine, desc, outReport);
 }
 
+VnResult ActivateCanonicalPackSetV3(Engine& engine,
+    const VnCanonicalPackSetActivationDescV3* input,
+    VnCanonicalPackSetActivationReportV1* report,
+    const std::vector<std::vector<PackExternalMediaReference>>* mediaForTests) {
+    if (!input || input->structSize != sizeof(*input) || input->flags ||
+        input->memberStructSize != sizeof(VnCanonicalPackSetMemberV3) ||
+        !input->members || !input->memberCount || input->memberCount > engine.config.maxPacks ||
+        (mediaForTests && mediaForTests->size() != input->memberCount)) return VN_INVALID_ARG;
+    std::vector<VnCanonicalPackSetMemberV2> members(input->memberCount);
+    std::vector<VnPackStreamResolverV1> copied(input->memberCount);
+    std::vector<const VnPackStreamResolverV1*> streams(input->memberCount);
+    for (std::uint32_t i = 0; i < input->memberCount; ++i) {
+        const auto& row = input->members[i];
+        if (row.structSize != sizeof(row) || row.reserved0) return VN_INVALID_ARG;
+        members[i] = row.member;
+        if (row.streams) {
+            if (i == 0 || row.member.operation != VN_PACK_MEMBER_CONTENT) return VN_INVALID_ARG;
+            copied[i] = *row.streams;
+            const auto& resolver = copied[i];
+            if (resolver.structSize != sizeof(resolver) || resolver.flags || !resolver.retain ||
+                !resolver.release || (resolver.path == nullptr) == (resolver.open == nullptr))
+                return VN_INVALID_ARG;
+            streams[i] = &copied[i];
+        }
+        if (mediaForTests && !(*mediaForTests)[i].empty() &&
+            (i == 0 || row.member.operation == VN_PACK_MEMBER_KEEP)) return VN_INVALID_ARG;
+    }
+    VnCanonicalPackSetActivationDescV2 desc{};
+    desc.structSize = sizeof(desc);
+    desc.expectedCurrentInitHandle = input->expectedCurrentInitHandle;
+    desc.baseSetRevision = input->baseSetRevision;
+    desc.setRevision = input->setRevision;
+    desc.memberCount = input->memberCount;
+    desc.memberStructSize = sizeof(VnCanonicalPackSetMemberV2);
+    desc.members = members.data();
+    desc.outputMemberCapacity = input->outputMemberCapacity;
+    desc.outputMemberStructSize = input->outputMemberStructSize;
+    desc.outputMembers = input->outputMembers;
+    return ActivateCanonicalPackSetV2(engine, &desc, report, &streams, mediaForTests);
+}
+
 VnResult ActivateCanonicalPackSetV2(
     Engine& engine, const VnCanonicalPackSetActivationDescV2* input,
-    VnCanonicalPackSetActivationReportV1* outReport) {
+    VnCanonicalPackSetActivationReportV1* outReport,
+    const std::vector<const VnPackStreamResolverV1*>* streams,
+    const std::vector<std::vector<PackExternalMediaReference>>* externalMedia) {
     VariableOperationScope variableOperation(&engine);
     const auto refuse = [&](VnResult result) {
         auto trace = ::TraceStateful(&engine, kTraceCallActivateCanonicalPackSetV2);
@@ -131400,10 +131545,16 @@ VnResult ActivateCanonicalPackSetV2(
     const auto* before = engine.packComposition.Published();
     const auto priorRevision = before != nullptr ? before->ledger.setRevision : 0;
     bool missingInput = false;
+    bool externalInputUsed = false;
     const auto result = ActivateCanonicalPackSetImpl(engine, &desc, outReport, &operations, &names,
         engine.config.maxPackDecodeStagingBytes - nameBudget, recording ? &resources : nullptr,
-        recording ? &missingInput : nullptr);
+        recording ? &missingInput : nullptr, streams, externalMedia, &externalInputUsed);
     if (!recording) return result;
+    if (externalInputUsed) {
+        auto trace = ::TraceStateful(&engine, kTraceCallActivateCanonicalPackSetV2);
+        trace.MarkUnreplayable();
+        return result;
+    }
     auto trace = ::TraceStateful(&engine, kTraceCallActivateCanonicalPackSetV2);
     if (result == VN_INVALID_ARG) {
         trace.MarkUnreplayable();

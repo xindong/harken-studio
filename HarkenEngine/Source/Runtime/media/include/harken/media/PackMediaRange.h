@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace harken {
@@ -48,6 +49,14 @@ struct PackMediaRange {
     std::uint64_t ChunkBytes() const noexcept {
         return static_cast<std::uint64_t>(chunkFrames) * channelCount * sizeof(float);
     }
+};
+
+// Typed metadata consumed before any external source is opened. The locator
+// in range.external is supplied by the owning Pack's host binding.
+struct PackExternalMediaReference {
+    VnSoundId soundId{};
+    std::string relativeLocator;
+    std::shared_ptr<const PackMediaRange> range;
 };
 
 // Chunk count for a planar blob, or zero when the shape cannot be chunked.

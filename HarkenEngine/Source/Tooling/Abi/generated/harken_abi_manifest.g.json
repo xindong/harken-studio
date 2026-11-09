@@ -148,6 +148,94 @@
           ],
           "returnType": "void"
         },
+        "VnPackStreamOpenFn": {
+          "callingConvention": "cdecl",
+          "params": [
+            {
+              "ctype": "void*",
+              "kind": "ptr",
+              "name": "userData"
+            },
+            {
+              "ctype": "uint64_t",
+              "kind": "u64",
+              "name": "packStableId"
+            },
+            {
+              "ctype": "const char*",
+              "kind": "ptr",
+              "name": "relativeLocatorUtf8"
+            },
+            {
+              "ctype": "uint64_t",
+              "kind": "u64",
+              "name": "expectedContentRevision"
+            },
+            {
+              "ctype": "uint64_t",
+              "kind": "u64",
+              "name": "expectedByteLength"
+            },
+            {
+              "ctype": "const VnReadCancellationViewV1*",
+              "kind": "ptr",
+              "name": "cancellation"
+            },
+            {
+              "ctype": "VnByteSourceDescV1*",
+              "kind": "ptr",
+              "name": "outSource"
+            }
+          ],
+          "returnType": "VnResult"
+        },
+        "VnPackStreamPathFn": {
+          "callingConvention": "cdecl",
+          "params": [
+            {
+              "ctype": "void*",
+              "kind": "ptr",
+              "name": "userData"
+            },
+            {
+              "ctype": "uint64_t",
+              "kind": "u64",
+              "name": "packStableId"
+            },
+            {
+              "ctype": "const char*",
+              "kind": "ptr",
+              "name": "relativeLocatorUtf8"
+            },
+            {
+              "ctype": "uint64_t",
+              "kind": "u64",
+              "name": "expectedContentRevision"
+            },
+            {
+              "ctype": "uint64_t",
+              "kind": "u64",
+              "name": "expectedByteLength"
+            },
+            {
+              "ctype": "const char**",
+              "kind": "ptr",
+              "name": "outPathUtf8"
+            }
+          ],
+          "returnType": "VnResult"
+        },
+        "VnPackStreamRetainFn": {
+          "callingConvention": "cdecl",
+          "params": [
+            {
+              "ctype": "void*",
+              "kind": "ptr",
+              "name": "userData"
+            }
+          ],
+          "returnType": "VnResult"
+        },
         "VnReadIsCancelledFn": {
           "callingConvention": "cdecl",
           "params": [
@@ -1548,6 +1636,21 @@
           "parameters": [
             {
               "ctype": "const VnCanonicalPackSetActivationDescV2*",
+              "name": "desc"
+            },
+            {
+              "ctype": "VnCanonicalPackSetActivationReportV1*",
+              "name": "outReport"
+            }
+          ],
+          "returnType": "VnResult"
+        },
+        {
+          "callingConvention": "cdecl",
+          "name": "Vn_ActivateCanonicalPackSetV3",
+          "parameters": [
+            {
+              "ctype": "const VnCanonicalPackSetActivationDescV3*",
               "name": "desc"
             },
             {
@@ -4071,6 +4174,7 @@
       "publicExports": [
         "Vn_ActivateCanonicalPackSetV1",
         "Vn_ActivateCanonicalPackSetV2",
+        "Vn_ActivateCanonicalPackSetV3",
         "Vn_ApplyBusTopology",
         "Vn_ApplyVoiceBinding",
         "Vn_AttachBinding",
@@ -6160,6 +6264,132 @@
           ],
           "size": 64
         },
+        "VnCanonicalPackSetActivationDescV3": {
+          "alignment": 8,
+          "fields": [
+            {
+              "alignment": 4,
+              "name": "structSize",
+              "offset": 0,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "flags",
+              "offset": 4,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 8,
+              "name": "expectedCurrentInitHandle",
+              "offset": 8,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "baseSetRevision",
+              "offset": 16,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "setRevision",
+              "offset": 24,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 4,
+              "name": "memberCount",
+              "offset": 32,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "memberStructSize",
+              "offset": 36,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 8,
+              "name": "members",
+              "offset": 40,
+              "shape": {
+                "ctype": "const VnCanonicalPackSetMemberV3*",
+                "kind": "pointer",
+                "storage": {
+                  "count": "memberCount",
+                  "kind": "array",
+                  "stride": "VnCanonicalPackSetMemberV3"
+                }
+              },
+              "size": 8
+            },
+            {
+              "alignment": 4,
+              "name": "outputMemberCapacity",
+              "offset": 48,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "outputMemberStructSize",
+              "offset": 52,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 8,
+              "name": "outputMembers",
+              "offset": 56,
+              "shape": {
+                "ctype": "VnCanonicalPackSetMemberResultV1*",
+                "kind": "pointer",
+                "storage": {
+                  "count": "outputMemberCapacity",
+                  "kind": "array",
+                  "stride": "VnCanonicalPackSetMemberResultV1"
+                }
+              },
+              "size": 8
+            }
+          ],
+          "size": 64
+        },
         "VnCanonicalPackSetActivationReportV1": {
           "alignment": 8,
           "fields": [
@@ -6499,6 +6729,53 @@
             }
           ],
           "size": 88
+        },
+        "VnCanonicalPackSetMemberV3": {
+          "alignment": 8,
+          "fields": [
+            {
+              "alignment": 4,
+              "name": "structSize",
+              "offset": 0,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "reserved0",
+              "offset": 4,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 8,
+              "name": "member",
+              "offset": 8,
+              "shape": {
+                "kind": "struct",
+                "type": "VnCanonicalPackSetMemberV2"
+              },
+              "size": 88
+            },
+            {
+              "alignment": 8,
+              "name": "streams",
+              "offset": 96,
+              "shape": {
+                "ctype": "const VnPackStreamResolverV1*",
+                "kind": "pointer",
+                "storage": "opaque"
+              },
+              "size": 8
+            }
+          ],
+          "size": 104
         },
         "VnCanonicalPackSetUnloadDescV1": {
           "alignment": 8,
@@ -18022,6 +18299,87 @@
           ],
           "size": 112
         },
+        "VnPackStreamResolverV1": {
+          "alignment": 8,
+          "fields": [
+            {
+              "alignment": 4,
+              "name": "structSize",
+              "offset": 0,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "flags",
+              "offset": 4,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 8,
+              "name": "userData",
+              "offset": 8,
+              "shape": {
+                "ctype": "void*",
+                "kind": "pointer",
+                "storage": "opaque"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "retain",
+              "offset": 16,
+              "shape": {
+                "ctype": "VnPackStreamRetainFn",
+                "kind": "pointer",
+                "storage": "opaque"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "release",
+              "offset": 24,
+              "shape": {
+                "ctype": "VnByteSourceReleaseFn",
+                "kind": "pointer",
+                "storage": "opaque"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "path",
+              "offset": 32,
+              "shape": {
+                "ctype": "VnPackStreamPathFn",
+                "kind": "pointer",
+                "storage": "opaque"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "open",
+              "offset": 40,
+              "shape": {
+                "ctype": "VnPackStreamOpenFn",
+                "kind": "pointer",
+                "storage": "opaque"
+              },
+              "size": 8
+            }
+          ],
+          "size": 48
+        },
         "VnPackVariableFactV1": {
           "alignment": 8,
           "fields": [
@@ -21707,6 +22065,15 @@
             "source": "default",
             "unknownSize": "reject"
           },
+          "VnCanonicalPackSetActivationDescV3": {
+            "acceptedSizes": [
+              64
+            ],
+            "currentSize": 64,
+            "mode": "exact-current",
+            "source": "default",
+            "unknownSize": "reject"
+          },
           "VnCanonicalPackSetActivationReportV1": {
             "acceptedSizes": [
               72
@@ -21739,6 +22106,15 @@
               88
             ],
             "currentSize": 88,
+            "mode": "exact-current",
+            "source": "default",
+            "unknownSize": "reject"
+          },
+          "VnCanonicalPackSetMemberV3": {
+            "acceptedSizes": [
+              104
+            ],
+            "currentSize": 104,
             "mode": "exact-current",
             "source": "default",
             "unknownSize": "reject"
@@ -22581,6 +22957,15 @@
               80
             ],
             "currentSize": 80,
+            "mode": "exact-current",
+            "source": "default",
+            "unknownSize": "reject"
+          },
+          "VnPackStreamResolverV1": {
+            "acceptedSizes": [
+              48
+            ],
+            "currentSize": 48,
             "mode": "exact-current",
             "source": "default",
             "unknownSize": "reject"
@@ -24887,15 +25272,15 @@
       "formatVersion": 7
     }
   },
-  "contractSha256": "5d7f1e11d7a0a709f11ef754762f0ba689f4deafdc2ee234979c4416454f7d1f",
+  "contractSha256": "49ff10efa16b35bf7b4cbafd5563565851bfc60be2499cec57ecc5c72b75d3eb",
   "generatedFiles": {
     "HarkenEngine/Source/Tooling/Binding/generated/harken_binding_abi_pin.g.h": {
-      "sha256": "58b10aad9f33ff2027ed366be655a076615de86133ddee61836c1788953828be",
-      "size": 340144
+      "sha256": "01120dcc214cc747bf5573c39525afbfdedb18bd453924a8d97ff3d3c73c034b",
+      "size": 343755
     },
     "HarkenEngine/Tool/Remote/generated/harken_wire_desc_meta.h": {
-      "sha256": "d02bee48f10bd551a2887f963fd26ee9e0ba21e66108f186d7e6af6941ee0567",
-      "size": 11037
+      "sha256": "a9c83b934aa8432149490791fa9b53392c4b4479c828ad7d08c354e202ad6edb",
+      "size": 11714
     },
     "HarkenEngine/Tool/Remote/generated/harken_wire_dispatch.inl": {
       "sha256": "91efb7d65858ad58aa79c2cbda0d211e71993d0e34d855dfc8cd48e02df947b2",
@@ -24906,37 +25291,37 @@
       "size": 5406
     },
     "HarkenEngine/Tool/Remote/generated/harken_wire_layout_asserts.h": {
-      "sha256": "7d4d42554d85b44e3590ed010070f2fa9268360476462240d24c82c6986a9c28",
-      "size": 252856
+      "sha256": "cc2d6a16bfd6aeaf64720ba3907d1e2d17e000c1e9c27e6d8723ef537de98e18",
+      "size": 256695
     },
     "HarkenEngine/Tool/Remote/harken_wire.py": {
-      "sha256": "891c97c5c480b08e8a2079265bbcbbae400b490f0e68317da3728f81eee2e8ef",
-      "size": 264216
+      "sha256": "48c340604f1430a120101a6a35836aecb5990c88c12606f37275e0e09049f3a6",
+      "size": 269557
     },
     "HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenAbi.g.cs": {
-      "sha256": "ab7c6f3b21c992c47d1e957b1bbb154993f27f909993b2b4c7413c5f4e9d4433",
-      "size": 132502
+      "sha256": "0c24ff0973789cf5d44f8ea997329bb2c43565c4be4454ea5ada2e569bf34aec",
+      "size": 135763
     },
     "HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenNative.g.cs": {
-      "sha256": "29ab6e4eea4101fa5d4d5e131ac02931ec7bf423f30afa626c570f4c7cdb1188",
-      "size": 31334
+      "sha256": "df7e0443bb2d5c189ef5a112c2e00dd4d1346dafcddb48051030791e5bd36e5a",
+      "size": 31624
     },
     "HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs": {
-      "sha256": "7d4eb31ef69a6a26e9d8057e95533f5066062ac22aaa6dc36433e16f17812197",
-      "size": 70532
+      "sha256": "b61aea0788894b9cfaff77175f6719bab32777b8feaaeb5b8fd39fc4ef8f077f",
+      "size": 72156
     }
   },
   "kind": "harken-contract-suite-manifest",
   "schemaVersion": 1,
   "sectionSha256": {
-    "nativeAbiSha256": "6d392ba5623420b3f0786bd692f389892b3f1d86f172d7ea604cfb218a569ee4",
+    "nativeAbiSha256": "02e87a26a7158f9def00f4c20769404f3ab3143705fefd5b25d7d0611f795bc7",
     "remoteWireSha256": "d99304d71d24436e14a34fd990b3ded5e6ddd7bca6c13dc2065a9709d53577d3",
     "traceFormatSha256": "c43ada4c2f8b42c3ce2a66b0cf1af258b5c6e3d338fc00ce480954afdfa78ecc"
   },
   "sourceFiles": {
     "HarkenEngine/Source/Runtime/api/include/harken/Harken.h": {
-      "sha256": "03a5b695aa7c1871afb0e688b3170d99d5b6f5bd9545e5f792f9dbc83bf54ecc",
-      "size": 245795
+      "sha256": "7478276e84b1b6633d0a6979aa235203e18a5bf510f69f731a9eeffaa8afae75",
+      "size": 248510
     },
     "HarkenEngine/Source/Runtime/api/include/harken/ObjectId.h": {
       "sha256": "90b6f66ad515c5e411564f1e5981b65bec2e461fabbdee6c57aa86b26b9a300d",
@@ -24959,8 +25344,8 @@
       "size": 30778
     },
     "HarkenEngine/Source/Tooling/Remote/wire/harken_wire_table.json": {
-      "sha256": "d76d0be3288d3c81f44dca07ae9c2458033ca24930bbc21c6d1c06d1ce88929d",
-      "size": 262971
+      "sha256": "5220b32690e926ff80fcd6ea571948e02aaf4cbe3ad70c2ce857522b4b01f553",
+      "size": 281215
     }
   }
 }

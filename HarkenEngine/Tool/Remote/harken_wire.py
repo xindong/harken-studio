@@ -7812,6 +7812,140 @@ TABLE_JSON = r'''
           "u32"
         ]
       ]
+    },
+    "VnCanonicalPackSetMemberV3": {
+      "fields": [
+        [
+          "structSize",
+          "u32"
+        ],
+        [
+          "reserved0",
+          "u32"
+        ],
+        [
+          "member",
+          {
+            "struct": "VnCanonicalPackSetMemberV2"
+          }
+        ],
+        [
+          "streams",
+          {
+            "ptr": "opaque",
+            "ctype": "const VnPackStreamResolverV1*"
+          }
+        ]
+      ]
+    },
+    "VnCanonicalPackSetActivationDescV3": {
+      "fields": [
+        [
+          "structSize",
+          "u32"
+        ],
+        [
+          "flags",
+          "u32"
+        ],
+        [
+          "expectedCurrentInitHandle",
+          "u64"
+        ],
+        [
+          "baseSetRevision",
+          "u64"
+        ],
+        [
+          "setRevision",
+          "u64"
+        ],
+        [
+          "memberCount",
+          "u32"
+        ],
+        [
+          "memberStructSize",
+          "u32"
+        ],
+        [
+          "members",
+          {
+            "ptr": {
+              "kind": "array",
+              "count": "memberCount",
+              "stride": "VnCanonicalPackSetMemberV3"
+            },
+            "ctype": "const VnCanonicalPackSetMemberV3*"
+          }
+        ],
+        [
+          "outputMemberCapacity",
+          "u32"
+        ],
+        [
+          "outputMemberStructSize",
+          "u32"
+        ],
+        [
+          "outputMembers",
+          {
+            "ptr": {
+              "kind": "array",
+              "count": "outputMemberCapacity",
+              "stride": "VnCanonicalPackSetMemberResultV1"
+            },
+            "ctype": "VnCanonicalPackSetMemberResultV1*"
+          }
+        ]
+      ]
+    },
+    "VnPackStreamResolverV1": {
+      "fields": [
+        [
+          "structSize",
+          "u32"
+        ],
+        [
+          "flags",
+          "u32"
+        ],
+        [
+          "userData",
+          {
+            "ptr": "opaque",
+            "ctype": "void*"
+          }
+        ],
+        [
+          "retain",
+          {
+            "ptr": "opaque",
+            "ctype": "VnPackStreamRetainFn"
+          }
+        ],
+        [
+          "release",
+          {
+            "ptr": "opaque",
+            "ctype": "VnByteSourceReleaseFn"
+          }
+        ],
+        [
+          "path",
+          {
+            "ptr": "opaque",
+            "ctype": "VnPackStreamPathFn"
+          }
+        ],
+        [
+          "open",
+          {
+            "ptr": "opaque",
+            "ctype": "VnPackStreamOpenFn"
+          }
+        ]
+      ]
     }
   },
   "functions": [
@@ -7824,6 +7958,24 @@ TABLE_JSON = r'''
           "ctype": "const VnCanonicalPackSetActivationDescV2*",
           "wire": "desc",
           "type": "VnCanonicalPackSetActivationDescV2"
+        },
+        {
+          "name": "outReport",
+          "ctype": "VnCanonicalPackSetActivationReportV1*",
+          "wire": "outstruct",
+          "type": "VnCanonicalPackSetActivationReportV1"
+        }
+      ]
+    },
+    {
+      "name": "Vn_ActivateCanonicalPackSetV3",
+      "note": "Atomic companion activation with generation-owned external stream resolvers. Process-local callbacks, no remote opcode.",
+      "params": [
+        {
+          "name": "desc",
+          "ctype": "const VnCanonicalPackSetActivationDescV3*",
+          "wire": "desc",
+          "type": "VnCanonicalPackSetActivationDescV3"
         },
         {
           "name": "outReport",
@@ -12660,6 +12812,94 @@ TABLE_JSON = r'''
             "name": "userData",
             "kind": "ptr",
             "ctype": "void*"
+          }
+        ]
+      },
+      "VnPackStreamRetainFn": {
+        "returnType": "VnResult",
+        "callingConvention": "cdecl",
+        "params": [
+          {
+            "name": "userData",
+            "kind": "ptr",
+            "ctype": "void*"
+          }
+        ]
+      },
+      "VnPackStreamPathFn": {
+        "returnType": "VnResult",
+        "callingConvention": "cdecl",
+        "params": [
+          {
+            "name": "userData",
+            "kind": "ptr",
+            "ctype": "void*"
+          },
+          {
+            "name": "packStableId",
+            "kind": "u64",
+            "ctype": "uint64_t"
+          },
+          {
+            "name": "relativeLocatorUtf8",
+            "kind": "ptr",
+            "ctype": "const char*"
+          },
+          {
+            "name": "expectedContentRevision",
+            "kind": "u64",
+            "ctype": "uint64_t"
+          },
+          {
+            "name": "expectedByteLength",
+            "kind": "u64",
+            "ctype": "uint64_t"
+          },
+          {
+            "name": "outPathUtf8",
+            "kind": "ptr",
+            "ctype": "const char**"
+          }
+        ]
+      },
+      "VnPackStreamOpenFn": {
+        "returnType": "VnResult",
+        "callingConvention": "cdecl",
+        "params": [
+          {
+            "name": "userData",
+            "kind": "ptr",
+            "ctype": "void*"
+          },
+          {
+            "name": "packStableId",
+            "kind": "u64",
+            "ctype": "uint64_t"
+          },
+          {
+            "name": "relativeLocatorUtf8",
+            "kind": "ptr",
+            "ctype": "const char*"
+          },
+          {
+            "name": "expectedContentRevision",
+            "kind": "u64",
+            "ctype": "uint64_t"
+          },
+          {
+            "name": "expectedByteLength",
+            "kind": "u64",
+            "ctype": "uint64_t"
+          },
+          {
+            "name": "cancellation",
+            "kind": "ptr",
+            "ctype": "const VnReadCancellationViewV1*"
+          },
+          {
+            "name": "outSource",
+            "kind": "ptr",
+            "ctype": "VnByteSourceDescV1*"
           }
         ]
       }

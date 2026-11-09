@@ -33,6 +33,7 @@
 #include "harken/media/PackFormatV2.h"
 #include "harken/media/GameplayCatalogFormat.h"
 #include "harken/media/PcmRegistry.h"
+#include "harken/media/PackMediaRange.h"
 
 #include <cstdint>
 #include "harken/media/PackVariableNameCatalog.h"
@@ -155,6 +156,7 @@ struct PackCanonicalImage {
         return *this;
     }
     detail::PackDecodeCharge staging;
+    std::vector<PackExternalMediaReference> externalMedia;
     std::uint32_t packKind = 0;
     std::uint64_t packStableId = 0;
     PackRequirementBlock requirement{};
