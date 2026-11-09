@@ -47,9 +47,10 @@ struct EngineStreamRecoveryState {
     std::unique_ptr<EngineStreamRecoveryBatch> pending;
     std::uint64_t servedSerial = 0;
     std::uint64_t leadFrames = 0;
+    bool failureDelivered = false;
 };
 
-VnResult Engine::BindGroupRecoverySource(EnginePlayableServiceRow& service, PlayableInstanceHandle leaf, VnVoiceHandle render,
+VnResult Engine::BindGroupRecoverySource(PlayableInstanceHandle leaf, VnVoiceHandle render,
     VoiceReleaseObserver release, const TimelineVoiceInstallFacts& install,
     const StreamManager::StreamFacts& facts, std::uint64_t loopStart, std::uint64_t loopEnd) {
     EnginePlayableServiceRow* groupOwner = nullptr;
@@ -57,6 +58,7 @@ VnResult Engine::BindGroupRecoverySource(EnginePlayableServiceRow& service, Play
     std::uint64_t groupEpoch = 0;
     auto ancestor = leaf;
     auto epoch = playableInstances.SourceRetirementEpoch(leaf);
+    if (!epoch) return VN_OK;
     for (std::size_t depth = 0; ancestor; ++depth) {
         if (depth >= playableInstances.Capacity()) return VN_NO_VOICE;
         PlayableKind kind{};
@@ -67,8 +69,6 @@ VnResult Engine::BindGroupRecoverySource(EnginePlayableServiceRow& service, Play
         EnginePlayableServiceRow* owner = nullptr;
         for (auto& candidate : playableServices)
             if (candidate.ownerInstance == ancestor && candidate.ownerEpoch == epoch) {
-                if (candidate.invocation != service.invocation ||
-                    candidate.invocationGeneration != service.invocationGeneration) return VN_NO_VOICE;
                 owner = &candidate;
                 break;
             }
@@ -148,12 +148,13 @@ void Engine::ServiceGroupRecoveries(std::uint64_t preparationHorizon) {
     for (auto& service : playableServices) {
         bool stopOwner = false;
         std::erase_if(service.streamRecoveries, [](const auto& group) {
-            return group.use_count() == 1 && !group->pending;
+            return group.use_count() == 1 && !group->pending &&
+                (group->failureDelivered || group->render.failure.load(std::memory_order_acquire) == SourceTerminalKind::None);
         });
         for (const auto& retainedGroup : service.streamRecoveries) {
             auto& group = *retainedGroup;
             const auto failure = group.render.failure.load(std::memory_order_acquire);
-            if (failure != SourceTerminalKind::None && service.controlReason != PlayableControlReason::StopRequested &&
+            if (failure != SourceTerminalKind::None && !group.failureDelivered && service.controlReason != PlayableControlReason::StopRequested &&
                 service.controlLifecycle != PlayableControlLifecycle::Cancelling &&
                 service.phase != EnginePlayableStartPhase::Cancelling) {
                 service.sourceCohortFailureOwner = {};
@@ -165,6 +166,7 @@ void Engine::ServiceGroupRecoveries(std::uint64_t preparationHorizon) {
                     service.Invocation().actionTerminalReason = failure == SourceTerminalKind::IntegrityAbort
                         ? ActionTerminalReason::MediaNotReady : ActionTerminalReason::RuntimeError;
                 }
+                group.failureDelivered = true;
                 stopOwner = true;
             }
             if (group.pending) {

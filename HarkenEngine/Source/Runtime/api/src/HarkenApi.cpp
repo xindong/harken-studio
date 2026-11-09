@@ -9322,13 +9322,13 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
             });
         if (controller != engine.playableServices.end()) resourceService = &*controller;
     }
+    const auto groupBound = engine.BindGroupRecoverySource(programGeneration, render, releaseObserver,
+        install, streamFacts, streamLoopStart, streamLoopEnd);
+    if (groupBound != VN_OK) return rollback(groupBound);
     if (resourceService != nullptr) {
         auto* controller = engine.ResolvePlayableService(resourceService->identity,
             resourceService->ownerInstance, resourceService->ownerEpoch);
         if (controller == nullptr) return rollback(VN_RUNTIME_RECREATE_REQUIRED);
-        const auto groupBound = engine.BindGroupRecoverySource(*controller, programGeneration, render, releaseObserver,
-            install, streamFacts, streamLoopStart, streamLoopEnd);
-        if (groupBound != VN_OK) return rollback(groupBound);
         if (!PrepareInheritedSourceExits(engine, *controller, render, releaseObserver, privateScheduleOwner))
             return rollback(VN_NO_VOICE);
         const auto epoch = engine.playableInstances.SourceRetirementEpoch(programGeneration);
@@ -18992,9 +18992,9 @@ struct MaterializedScheduleSet : MaterializedScheduleCompletion {
     std::uint32_t leafCount = 0;
 };
 
-bool MaterializedHasFutureRegisteredStream(harken::Engine&, const harken::PlayableWorldViewV1&,
+bool MaterializedHasRegisteredStream(harken::Engine&, const harken::PlayableWorldViewV1&,
     const harken::PlayableRefV1&, const MaterializedScheduleSet&,
-    std::span<const std::uint32_t> = {}, std::span<const VnObjectId> = {}) noexcept;
+    std::span<const std::uint32_t> = {}, std::span<const VnObjectId> = {}, bool includeInitial = false) noexcept;
 
 bool CanContinueSameProgramQueueSource(
     const MaterializedScheduleSet& materialized) noexcept {
@@ -26403,7 +26403,7 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
             if (propertyPrefixCount != 0)
                 std::copy_n(propertyPrefix, propertyPrefixCount, ordinals.begin() + schedulePrefix);
             const auto prefixCount = schedulePrefix + propertyPrefixCount;
-            return MaterializedHasFutureRegisteredStream(engine, world,
+            return MaterializedHasRegisteredStream(engine, world,
                 schedule == nullptr ? propertyRoot : schedule->propertyRoot, materialized,
                 {ordinals.data(), prefixCount}, {tracks.data(), prefixCount});
         }
@@ -93631,13 +93631,14 @@ ContainerMixedTerminalResult PrepareContainerMixedScheduleTerminal(ContainerPrep
 }
 
 
-bool MaterializedHasFutureRegisteredStream(harken::Engine& engine, const harken::PlayableWorldViewV1& world,
+bool MaterializedHasRegisteredStream(harken::Engine& engine, const harken::PlayableWorldViewV1& world,
     const harken::PlayableRefV1& root, const MaterializedScheduleSet& schedule,
-    std::span<const std::uint32_t> prefixOrdinals, std::span<const VnObjectId> prefixTrackIds) noexcept {
+    std::span<const std::uint32_t> prefixOrdinals, std::span<const VnObjectId> prefixTrackIds,
+    bool includeInitial) noexcept {
     if (prefixOrdinals.size() != prefixTrackIds.size()) return false;
     for (std::uint32_t index = 0; index < schedule.leafCount; ++index) {
         const auto& leaf = schedule.leaves[index];
-        if (leaf.startOffsetFrames == 0) continue;
+        if (!includeInitial && leaf.startOffsetFrames == 0) continue;
         std::array<std::uint32_t, harken::kSelectionPathNodeCapacity> ordinals{};
         std::array<VnObjectId, harken::kSelectionPathNodeCapacity> tracks{};
         const auto prefixCount = prefixOrdinals.size();
@@ -93658,7 +93659,8 @@ bool UsesInitialScheduleTerminal(ContainerPreparationContext& context,
     const SharedInitialFrontier& frontier) noexcept {
     return frontier.dynamicSchedule ||
         (!(scratch.packLeaseOwned || scratch.packLeaseBorrowed) && context.engine != nullptr &&
-         MaterializedHasFutureRegisteredStream(*context.engine, context.world, root, frontier.schedule)) ||
+         MaterializedHasRegisteredStream(*context.engine, context.world, root, frontier.schedule, {}, {},
+             context.initialMediaWaitAllowed && !frontier.queueSelected)) ||
         (scratch.initialForestPublication && frontier.hasSchedule &&
          (frontier.status == SharedInitialFrontierStatus::Ok ||
           frontier.status == SharedInitialFrontierStatus::ZeroWork));
@@ -97041,7 +97043,7 @@ engine.runtimeRecreateRequired = true;
                       engine, world, current, nullptr,
                       terminalAuthoredChild, frontierRequest,
                       &terminalFrontier);
-        if (terminalFrontier.dynamicSchedule) {
+        if (UsesInitialScheduleTerminal(context, *scratch, root, terminalFrontier)) {
             const auto mixed = TryPrepareContainerMixedTerminal(context, *scratch, root,
                 terminalFrontier, path.data(), selectionCount, terminalParentProgram, terminalAuthoredChild);
             if (mixed == ContainerMixedTerminalResult::Prepared) {
@@ -102132,7 +102134,7 @@ harken::PlayableStartResult PrepareDirectPlayableStart(
         const auto status = PrepareSharedInitialFrontier(engine, world, request.root,
             nullptr, nullptr, frontierRequest, &materialization);
         if (materialization.dynamicSchedule ||
-            MaterializedHasFutureRegisteredStream(engine, world, request.root, materialization.schedule)) {
+            MaterializedHasRegisteredStream(engine, world, request.root, materialization.schedule)) {
             prepared = PrepareMixedScheduleExecution(context, *scratch);
         } else {
             // Static trees retain their original full preparation. Native
@@ -102338,7 +102340,7 @@ bool PrepareImmediateActionCompositePlay(
               engine, world, root, nullptr, nullptr, frontierRequest,
               &materialization);
     if (materialization.dynamicSchedule || (!scratch->packLeaseOwned &&
-        MaterializedHasFutureRegisteredStream(engine, world, root, materialization.schedule))) {
+        MaterializedHasRegisteredStream(engine, world, root, materialization.schedule))) {
         if (!PrepareImmediateActionVariablePrefix(plan, planned.executionOrdinal)) return false;
         auto context = MakeActionContainerPreparationContext(plan, plannedStepIndex);
         context.root = root;

@@ -22545,7 +22545,7 @@ TEST(PlayableStart, NativeInitialStreamWaitRetainsSourceAndCancelsBeforeReady) {
     }
 }
 
-TEST(PlayableStart, QueueTrackInitialStreamWaitHoldsResidentSiblingAndReclaims) {
+static void CheckContainerTrackStreamWaitAndRecovery(harken::ContainerModeV1 mode) {
     for (const auto workers : {0u, 2u}) for (const unsigned outcome : {0u, 1u, 2u, 3u, 4u}) {
         const bool noSpare = outcome == 3u;
         const bool starve = outcome == 4u;
@@ -22588,6 +22588,16 @@ TEST(PlayableStart, QueueTrackInitialStreamWaitHoldsResidentSiblingAndReclaims) 
             harken::PlayableKindV1::Track, image.schedule.track.rootDefinition.stableId,
             image.schedule.track.scheduleSemanticFingerprint);
         image.container.childCount = 1;
+        if (mode != harken::ContainerModeV1::SequenceQueue) {
+            image.container.mode = mode;
+            image.container.randomDiscipline = harken::RandomDisciplineV1::Draw;
+            image.children[0].queueStopPolicy = harken::QueueStopPolicyV1::AbortOwningQueue;
+            image.children[0].timingHint = {};
+            image.children[0].frequencyWeight = mode == harken::ContainerModeV1::Random ? 1u : 0u;
+            image.world.identity.capabilityMask = harken::kWorldCapabilityPlayableProperties |
+                (mode == harken::ContainerModeV1::Random ? harken::kWorldCapabilityRandomDraw
+                                                       : harken::kWorldCapabilitySequence);
+        }
         std::array<harken::PlayableOccurrencePropertyViewV1, 3> occurrences{
             image.occurrences[0], image.occurrences[2], image.occurrences[3]};
         occurrences[1].childPlayable = image.schedule.placements[0].content;
@@ -22634,22 +22644,16 @@ TEST(PlayableStart, QueueTrackInitialStreamWaitHoldsResidentSiblingAndReclaims) 
         if (cancel) ASSERT_EQ(harken::PlayableControlStatus::Ok, harken::StopPlayable(engine, started.instance, 0));
         if (failMedia) {
             bool injected = false;
-            for (const auto& row : engine.playableServices) {
-                if (row.rootInstance != started.instance) continue;
-                const auto injectFailure = [&](harken::TimelineArmToken token) {
-                    if (injected || !token.Valid()) return;
-                    const auto render = (static_cast<std::uint64_t>(token.renderGeneration) << 32) | token.renderSlot;
-                    const auto* voice = engine.voices.Resolve(render);
-                    if (voice == nullptr || voice->streamRing == nullptr) return;
-                    ASSERT_TRUE(voice->streamRing->MarkEndOfData(harken::StreamTerminalReason::ProducerFailure));
-                    injected = true;
-                };
-                injectFailure(row.arm);
-                for (std::uint32_t index = 0; index < row.scheduleLeafCount; ++index) {
-                    std::size_t slot = 0;
-                    if (engine.ResolvePlayableMemberSlot(row.scheduleStorageBase + index, &slot))
-                        injectFailure(engine.ReadPlayableMember(slot).arm);
-                }
+            for (std::uint32_t slot = 0; slot < config.maxStreams; ++slot) {
+                auto* ring = engine.streams.RingOf(slot);
+                if (ring == nullptr || ring->state.load() != harken::StreamSlotState::Active) continue;
+                const auto token = (static_cast<std::uint64_t>(ring->generation.load()) << 32u) | slot;
+                harken::StreamManager::PlaybackObservation observation{};
+                if (!engine.streams.CapturePlayback(token, &observation) || observation.soundId != kSound) continue;
+                ASSERT_EQ(facts.contentRevision, observation.contentRevision);
+                ASSERT_TRUE(ring->MarkEndOfData(harken::StreamTerminalReason::ProducerFailure));
+                injected = true;
+                break;
             }
             ASSERT_TRUE(injected);
         }
@@ -22687,6 +22691,17 @@ TEST(PlayableStart, QueueTrackInitialStreamWaitHoldsResidentSiblingAndReclaims) 
         EXPECT_EQ(config.maxStreams, engine.streams.FreeSlotCount());
         EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(kSound));
         EXPECT_FALSE(engine.runtimeRecreateRequired);
+    }
+}
+
+TEST(PlayableStart, QueueTrackInitialStreamWaitHoldsResidentSiblingAndReclaims) {
+    CheckContainerTrackStreamWaitAndRecovery(harken::ContainerModeV1::SequenceQueue);
+}
+
+TEST(PlayableStart, OrdinaryTrackStreamWaitHoldsResidentSiblingAndReclaims) {
+    for (const auto mode : {harken::ContainerModeV1::Sequence, harken::ContainerModeV1::Random}) {
+        SCOPED_TRACE(static_cast<unsigned>(mode));
+        CheckContainerTrackStreamWaitAndRecovery(mode);
     }
 }
 
@@ -24740,7 +24755,7 @@ TEST(PlayableStart, InitialStreamAnchorKeepsSubBlockFutureStartsFixedAndContains
         ASSERT_NE(nullptr, root->scheduleAggregate);
         ASSERT_EQ(1u, root->scheduleAggregate->sourceCohorts.size());
         ASSERT_TRUE(root->pendingDirectStartBinding);
-        EXPECT_EQ(config.maxStreams - 1u, engine.streams.FreeSlotCount());
+        EXPECT_EQ(config.maxStreams - 2u, engine.streams.FreeSlotCount());
         if (mediaReadyImmediately) {
             engine.streams.SetThrottled(false);
             engine.streams.SyncServe();
@@ -24755,7 +24770,7 @@ TEST(PlayableStart, InitialStreamAnchorKeepsSubBlockFutureStartsFixedAndContains
             }
             ASSERT_EQ(VN_OK, Vn_Update());
             EXPECT_TRUE(root->pendingDirectStartBinding);
-            EXPECT_EQ(config.maxStreams - 1u, engine.streams.FreeSlotCount());
+            EXPECT_EQ(config.maxStreams - 2u, engine.streams.FreeSlotCount());
             EXPECT_FALSE(engine.preparedVoiceCommandBatchProof.Valid());
             engine.nullBackend.Pump(1);
             for (unsigned sample = 0; sample < config.blockFrames * 2; ++sample)

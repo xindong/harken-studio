@@ -15265,7 +15265,7 @@ public:
     };
     std::vector<StreamResyncRow> streamResyncs;
     std::uint64_t streamResyncTickets = 0;
-    VnResult BindGroupRecoverySource(EnginePlayableServiceRow& service, PlayableInstanceHandle leaf, VnVoiceHandle render,
+    VnResult BindGroupRecoverySource(PlayableInstanceHandle leaf, VnVoiceHandle render,
         VoiceReleaseObserver release, const TimelineVoiceInstallFacts& install,
         const StreamManager::StreamFacts& facts, std::uint64_t loopStart, std::uint64_t loopEnd);
     void ReleaseGroupRecoverySource(VnVoiceHandle render) noexcept;
