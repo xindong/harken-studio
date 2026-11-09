@@ -34884,8 +34884,25 @@ TEST(ActionFiringApi, StreamSeekSwapsExactRingAndRendersRequestedSourceFrames) {
         service->renderHandle, &ringAfterReservationRefusal));
     EXPECT_EQ(originalRingToken, ringAfterReservationRefusal);
 
+    const auto expectReadinessReceipt = [&](std::uint64_t token, std::uint64_t block) {
+        VnActionPlaybackReadinessV1 readiness{};
+        readiness.structSize = sizeof(readiness);
+        VnPlaybackReadinessMemberV1 members[4]{};
+        ASSERT_EQ(VN_OK, Vn_QueryActionPlaybackReadiness(firing, &readiness, members, 4));
+        auto* const end = members + readiness.memberCount;
+        const auto* member = std::find_if(members, end, [&](const auto& value) {
+            return value.ringToken == token;
+        });
+        ASSERT_NE(end, member);
+        EXPECT_EQ(VN_PLAYBACK_READINESS_APPLIED, member->state);
+        EXPECT_EQ(block, member->appliedAudioBlock);
+        EXPECT_EQ((block - 1u) * config.blockFrames, member->appliedFrame);
+        EXPECT_EQ(member->appliedFrame, member->scheduledFrame);
+        EXPECT_EQ(0u, member->replacementSerial);
+    };
     ASSERT_EQ(VN_OK, Vn_SeekActionFiring(&seek, &ticket));
     EXPECT_EQ(0u, engine->streams.FreeSlotCount());
+    const auto firstSeekBlock = engine->mixer.BlocksRendered() + 1u;
     engine->nullBackend.Pump(1);
 
     VnActionSeekInfoV1 info{};
@@ -34899,6 +34916,7 @@ TEST(ActionFiringApi, StreamSeekSwapsExactRingAndRendersRequestedSourceFrames) {
     ASSERT_TRUE(engine->voices.CaptureStreamRingToken(
         service->renderHandle, &replacementRingToken));
     EXPECT_NE(originalRingToken, replacementRingToken);
+    expectReadinessReceipt(replacementRingToken, firstSeekBlock);
     const harken::VoiceRenderContext* render =
         engine->voices.Resolve(service->renderHandle);
     ASSERT_NE(nullptr, render);
@@ -34920,6 +34938,7 @@ TEST(ActionFiringApi, StreamSeekSwapsExactRingAndRendersRequestedSourceFrames) {
     seek.positionMs = 0.0;
     ticket = 0;
     ASSERT_EQ(VN_OK, Vn_SeekActionFiring(&seek, &ticket));
+    const auto secondSeekBlock = engine->mixer.BlocksRendered() + 1u;
     engine->nullBackend.Pump(1);
     info = {};
     info.structSize = sizeof(info);
@@ -34933,6 +34952,7 @@ TEST(ActionFiringApi, StreamSeekSwapsExactRingAndRendersRequestedSourceFrames) {
               static_cast<std::uint32_t>(recycledRingToken));
     EXPECT_GT(static_cast<std::uint32_t>(recycledRingToken >> 32u),
               static_cast<std::uint32_t>(originalRingToken >> 32u));
+    expectReadinessReceipt(recycledRingToken, secondSeekBlock);
     output = engine->nullBackend.LastBlock();
     ASSERT_NE(nullptr, output);
     EXPECT_LT(output[(engine->nullBackend.BlockFrames() - 1u) *

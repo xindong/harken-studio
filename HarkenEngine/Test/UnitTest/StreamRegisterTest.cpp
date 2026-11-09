@@ -2153,7 +2153,6 @@ TEST(StreamRegister, StreamObservationsMeasureProviderCallsCacheFailuresAndReuse
         ASSERT_EQ(VN_OK, session.InitResult());
         auto& streams = session.Engine()->streams;
         streams.SetThrottled(true);
-        const auto monitor = harkentest::monitor::OpenIdentityEvents(4);
         auto source = std::make_shared<ObservedSource>();
         StreamSpec spec;
         spec.soundId = harkentest::ObjectId(17901);
@@ -2178,6 +2177,9 @@ TEST(StreamRegister, StreamObservationsMeasureProviderCallsCacheFailuresAndReuse
         streams.SyncServe();
         streams.SetThrottled(true);
         streams.SyncServe();
+        // Late subscribers receive the completed job and whole-generation
+        // totals, including provider work performed while no session existed.
+        const auto monitor = harkentest::monitor::OpenIdentityEvents(4);
         streams.PublishPlaybackObservations();
         auto rows = harkentest::monitor::ReadExecutionEvents<VnMonitorStreamFactV1>(monitor);
         ASSERT_FALSE(rows.empty());
