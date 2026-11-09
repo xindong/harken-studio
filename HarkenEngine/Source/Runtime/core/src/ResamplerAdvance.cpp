@@ -179,6 +179,44 @@ void SetResamplerConsumedPosition(ResamplerAdvanceState* state,
     state->completedLoopPasses = static_cast<std::uint32_t>(std::min<std::uint64_t>(UINT32_MAX, passes));
 }
 
+bool AdvanceResamplerPosition(ResamplerAdvanceState* state, std::uint64_t outputFrames) noexcept {
+    if (state == nullptr) return false;
+    auto next = *state;
+    SourcePhaseStep step{};
+    if (next.sourceIntegerFrame > next.pcmFrameCount ||
+        next.loopStartFrame > next.loopEndFrame || next.loopEndFrame > next.pcmFrameCount ||
+        (next.loopInfinite && next.loopEndFrame == next.loopStartFrame) ||
+        (!next.loopInfinite && next.loopsRemaining == 0) ||
+        !DecodeSourcePhaseStep(next.currentRatio, &step) ||
+        !DecodeSourcePhaseStep(next.targetRatio, &step) || !std::isfinite(next.rampStep)) return false;
+    while (outputFrames != 0 && next.rampRemaining != 0 &&
+           (next.loopInfinite || next.sourceIntegerFrame < next.pcmFrameCount)) {
+        std::uint64_t whole = 0;
+        if (!AdvanceOneOutput(&next, &whole) ||
+            !AddU64(next.logicalOutputFramesProduced, 1, &next.logicalOutputFramesProduced)) return false;
+        --outputFrames;
+    }
+    if (outputFrames != 0 && (next.loopInfinite || next.sourceIntegerFrame < next.pcmFrameCount)) {
+        if (!next.loopInfinite) {
+            std::uint64_t distance = 0, available = 0;
+            if (!NaturalDistance(next, &distance) ||
+                !FixedSourceOutputFrames(distance, next.currentRatio, &available, next.sourcePhase)) return false;
+            outputFrames = std::min(outputFrames, available);
+        }
+        std::uint64_t whole = 0;
+        if (!DecodeSourcePhaseStep(next.currentRatio, &step) ||
+            !TryJumpSourcePhase(step, next.sourcePhase, outputFrames, &whole, &next.sourcePhase) ||
+            !AddU64(next.logicalOutputFramesProduced, outputFrames, &next.logicalOutputFramesProduced)) return false;
+        const auto completed = next.completedLoopPasses;
+        SetResamplerConsumedPosition(&next, next.sourceIntegerFrame,
+            next.loopInfinite ? 0u : next.loopsRemaining, whole);
+        next.completedLoopPasses = static_cast<std::uint32_t>(std::min<std::uint64_t>(
+            UINT32_MAX, static_cast<std::uint64_t>(completed) + next.completedLoopPasses));
+    }
+    *state = next;
+    return true;
+}
+
 bool ResolveResamplerBoundary(ResamplerAdvanceState state,
                               ResamplerBoundaryKind kind,
                               std::uint64_t delayedFrame,

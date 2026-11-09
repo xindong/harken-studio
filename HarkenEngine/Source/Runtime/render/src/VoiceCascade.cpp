@@ -398,10 +398,10 @@ bool FeedGroupVirtualInput(VoiceRenderContext& ctx) noexcept {
         return true;
     }
     std::uint64_t remaining = UINT64_MAX;
-    if (ctx.streamActivationLoopsRemaining != 0) {
+    if (ctx.streamFeedActivationLoopsRemaining != 0) {
         const auto span = ctx.streamLoopEndFrame - ctx.streamLoopStartFrame;
-        const auto passes = ctx.streamActivationLoopsRemaining - 1u;
-        const auto first = ctx.streamFrameCount - ctx.streamActivationStartFrame;
+        const auto passes = ctx.streamFeedActivationLoopsRemaining - 1u;
+        const auto first = ctx.streamFrameCount - ctx.streamFeedActivationStartFrame;
         const auto total = passes != 0 && span > (UINT64_MAX - first) / passes
             ? UINT64_MAX : first + span * passes;
         remaining = total - std::min(total, ctx.groupVirtualFramesFed);

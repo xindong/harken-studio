@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -135,6 +136,17 @@ TEST(SourceCursorMirror, ConcurrentPublicationNeverTearsBatch) {
             if (batch.availableCount != kRows ||
                 !AreCursorRowsConsistent(rows, batch.blockIndex)) {
                 ++tears;
+            }
+        }
+        const std::array<std::uint32_t, 3> indices{0, 17, kRows - 1};
+        std::array<harken::SourceCursorMirror::Row, 3> selected{};
+        harken::SourceCursorMirror::Publication shared{};
+        if (mirror.CaptureRows(indices, selected, &shared)) {
+            for (std::size_t member = 0; member < indices.size(); ++member) {
+                const auto& row = selected[member];
+                if (row.publicationSerial != shared.serial || !row.exactTimingValid ||
+                    row.progress.sourceReadFrame != shared.blockIndex + indices[member] ||
+                    row.progress.sourceStartFrame != shared.blockIndex * 7u + indices[member]) ++tears;
             }
         }
         const auto index = static_cast<std::uint32_t>(captured % kRows);

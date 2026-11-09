@@ -210,6 +210,7 @@ TEST(ResamplerAdvance, FixedNaturalEndMatchesActualRenderExactly) {
                                 state.currentRatio, &tables);
                             std::array<float, 257> output{};
                             float* outputs[] = {output.data()};
+                            auto advanced = state;
                             std::uint64_t produced = 0;
                             std::uint64_t cursor = start;
                             auto remainingPasses = passes;
@@ -218,6 +219,16 @@ TEST(ResamplerAdvance, FixedNaturalEndMatchesActualRenderExactly) {
                             while (!resampler.Exhausted() && produced < limit) {
                                 const auto count = resampler.Produce(outputs, 0, block);
                                 produced += count;
+                                ASSERT_TRUE(harken::AdvanceResamplerPosition(&advanced, count));
+                                auto observed = state;
+                                harken::SetResamplerConsumedPosition(&observed, start, passes,
+                                    resampler.SourceFrame() - harken::kResampleHistoryPad);
+                                EXPECT_EQ(observed.sourceIntegerFrame, advanced.sourceIntegerFrame);
+                                EXPECT_EQ(observed.loopsRemaining, advanced.loopsRemaining);
+                                EXPECT_EQ(observed.completedLoopPasses, advanced.completedLoopPasses);
+                                EXPECT_EQ(resampler.phaseHigh, advanced.sourcePhase.high);
+                                EXPECT_EQ(resampler.phaseLow, advanced.sourcePhase.low);
+                                EXPECT_EQ(produced, advanced.logicalOutputFramesProduced);
                                 if (!resampler.Exhausted()) {
                                     auto live = state;
                                     live.sourcePhase = {resampler.phaseHigh, resampler.phaseLow};
@@ -265,6 +276,74 @@ TEST(ResamplerAdvance, FixedNaturalEndMatchesActualRenderExactly) {
             }
         }
     }
+}
+
+TEST(ResamplerAdvance, AdvanceMatchesLiveRampAndFiniteOutro) {
+    harken::ResampleTables tables;
+    tables.Init();
+    for (const auto passes : {0u, 1u, 3u}) {
+        std::array<float, harken::kResampleFifoFrames> storage{};
+        float* rings[] = {storage.data()};
+        harken::Resampler resampler;
+        resampler.Reset(rings, 1, harken::ResampleQuality::Linear, 0.91875, &tables);
+        auto state = UnityPass(1024);
+        state.sourceIntegerFrame = state.sourceStartFrame = 123;
+        state.loopStartFrame = 200;
+        state.loopEndFrame = 700;
+        state.loopsRemaining = passes;
+        state.loopInfinite = passes == 0;
+        state.currentRatio = state.targetRatio = 0.91875;
+        const auto initial = state;
+        const auto total = passes == 0 ? UINT64_MAX : 1024u - 123u + (passes - 1u) * 500u;
+        std::uint64_t fed = 0;
+        std::array<float, 73> output{};
+        float* outputs[] = {output.data()};
+        for (unsigned block = 0; block < 100 && !resampler.Exhausted(); ++block) {
+            if (block == 1 || block == 3) {
+                resampler.UpdateRatio(block == 1 ? 2.137 : .7, 251);
+                state.targetRatio = resampler.targetRatio;
+                state.rampStep = resampler.rampStep;
+                state.rampRemaining = resampler.rampRemaining;
+            }
+            const auto feed = static_cast<std::uint32_t>(std::min<std::uint64_t>(
+                std::min(resampler.FreeFrames(), 512u), total - fed));
+            resampler.PushSilence(feed);
+            fed += feed;
+            if (fed == total) {
+                if (!resampler.InputEnded()) resampler.MarkInputEnd();
+                resampler.PushSilence(std::min(resampler.FreeFrames(), 128u));
+            }
+            const auto count = resampler.Produce(outputs, 0, 73);
+            ASSERT_TRUE(harken::AdvanceResamplerPosition(&state, count));
+            auto observed = initial;
+            harken::SetResamplerConsumedPosition(&observed, 123, passes,
+                resampler.SourceFrame() - harken::kResampleHistoryPad);
+            EXPECT_EQ(observed.sourceIntegerFrame, state.sourceIntegerFrame);
+            EXPECT_EQ(observed.loopsRemaining, state.loopsRemaining);
+            EXPECT_EQ(observed.completedLoopPasses, state.completedLoopPasses);
+            EXPECT_EQ(resampler.phaseHigh, state.sourcePhase.high);
+            EXPECT_EQ(resampler.phaseLow, state.sourcePhase.low);
+            EXPECT_DOUBLE_EQ(resampler.ratio, state.currentRatio);
+            EXPECT_EQ(resampler.rampRemaining, state.rampRemaining);
+        }
+        if (passes != 0) {
+            ASSERT_TRUE(resampler.Exhausted());
+            const auto ended = state;
+            ASSERT_TRUE(harken::AdvanceResamplerPosition(&state, 10000));
+            EXPECT_EQ(ended.logicalOutputFramesProduced, state.logicalOutputFramesProduced);
+            EXPECT_EQ(ended.sourcePhase.high, state.sourcePhase.high);
+            EXPECT_EQ(ended.sourcePhase.low, state.sourcePhase.low);
+        }
+    }
+    auto invalid = UnityPass(100);
+    invalid.loopInfinite = true;
+    invalid.loopEndFrame = 0;
+    EXPECT_FALSE(harken::AdvanceResamplerPosition(&invalid, 1));
+    EXPECT_EQ(0u, invalid.logicalOutputFramesProduced);
+    auto overflow = UnityPass(100);
+    overflow.logicalOutputFramesProduced = UINT64_MAX;
+    EXPECT_FALSE(harken::AdvanceResamplerPosition(&overflow, 1));
+    EXPECT_EQ(0u, overflow.sourceIntegerFrame);
 }
 
 TEST(ResamplerAdvance, FixedBoundarySupportsLongSourcesWithoutScanning) {

@@ -3083,7 +3083,7 @@ void VoicePool::FillSourceCursor(const Slot& slot, SlotState state,
     const auto& render = slot.render;
     const bool timelineSource = render.timelineArmSlot != UINT32_MAX &&
         render.timelineArmGeneration != 0;
-    if (!captureParking && !timelineSource) return;
+    if (!captureParking && !timelineSource && render.streamRecoveryGroup == nullptr) return;
     row.sourceFrame = render.srcCursor;
     row.renderGeneration = slot.generation.load(std::memory_order_relaxed);
     row.loopPassesRemaining = render.loopPassesRemaining;
@@ -3091,19 +3091,23 @@ void VoicePool::FillSourceCursor(const Slot& slot, SlotState state,
     row.exactTimingValid = timelineSource && render.streamRing == nullptr &&
         render.pcm.Valid() &&
         render.resampler.Profile() == ResampleProfile::LegacyCompatibility;
+    row.groupTimingValid = render.streamRecoveryGroup != nullptr &&
+        render.resampler.Profile() == ResampleProfile::LegacyCompatibility;
     row.awaitingStart = render.timelineGated;
     row.loopInfinite = render.loopInfinite;
     row.hasExitMarker = render.hasExitMarker;
-    if (row.exactTimingValid) {
+    if (row.exactTimingValid || row.groupTimingValid) {
         auto& progress = row.progress;
         progress.sourceReadFrame = render.resampler.SourceFrame();
-        progress.sourceStartFrame = render.sourceActivationStartFrame;
+        progress.sourceStartFrame = render.streamRing != nullptr
+            ? render.streamActivationStartFrame : render.sourceActivationStartFrame;
         progress.sourcePhase = {render.resampler.phaseHigh, render.resampler.phaseLow};
         progress.currentRatio = render.resampler.CurrentRatio();
         progress.targetRatio = render.resampler.TargetRatio();
         progress.rampStep = render.resampler.RampStep();
         progress.rampRemaining = render.resampler.RampFramesRemaining();
-        progress.activationLoopsRemaining = render.sourceActivationLoopsRemaining;
+        progress.activationLoopsRemaining = render.streamRing != nullptr
+            ? render.streamActivationLoopsRemaining : render.sourceActivationLoopsRemaining;
     }
     row.publicationSerial = serial;
 }
