@@ -20,6 +20,124 @@ std::uint64_t NextSourceRequestIdentity() noexcept {
 constexpr auto kIoPoll = std::chrono::milliseconds(2);
 }
 
+StreamManager::PreparationState StreamManager::PreparePackSource(std::uint32_t index, std::uint64_t generation,
+    VorbisCodec& codec, std::size_t budget, VnResult* error) {
+    if (error) *error = VN_OK;
+    const auto failed = [&](VnResult result) {
+        if (error) *error = result;
+        return PreparationState::Failed;
+    };
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (m_shutdown || WorkerState() != StreamWorkerState::Ready) return failed(VN_DEVICE_ERROR);
+    if (index >= m_files.size() || !m_files[index] ||
+        m_files[index]->sourceGeneration != generation) return failed(VN_STALE_HANDLE);
+    auto& file = *m_files[index];
+    if (!file.external || file.vorbis) return PreparationState::Ready;
+    if (file.metadataResult != VN_OK) return failed(file.metadataResult);
+    for (auto& request : m_sourceRequests) {
+        if (!request || request->metadataFile != &file) continue;
+        if (request->discard || request->ioLane >= 0 ||
+            request->state == PreparationState::Preparing) return PreparationState::Preparing;
+        VnResult result = request->result;
+        if (request->state == PreparationState::Ready) {
+            try {
+                VorbisPrepareResult prepared;
+                auto media = VorbisStreamMedia::Prepare(codec, std::move(request->metadataPrefix),
+                    file.external->fileBytes - file.packBlobOffset, request->metadataBudget, prepared);
+                result = prepared == VorbisPrepareResult::Unsupported ? VN_CAPABILITY_UNAVAILABLE :
+                    prepared == VorbisPrepareResult::OutOfMemory ? VN_BACKPRESSURE : VN_BAD_STREAM_FILE;
+                if (media) {
+                    const auto& facts = media->Media();
+                    bool valid = facts.sampleRate == file.toc.sampleRate && facts.channels == file.toc.channelCount &&
+                        facts.frames == file.toc.frameCount && facts.revision == file.contentRevision &&
+                        facts.loopStart == file.toc.loopStartFrame && facts.loopEnd == file.toc.loopEndFrame;
+                    for (std::size_t i = 0; valid && i < facts.seek.size(); ++i) {
+                        const auto end = i + 1 < facts.seek.size() ? facts.seek[i + 1].packetOffset : facts.packetBytes;
+                        valid = end - facts.seek[i].packetOffset <=
+                            std::uint64_t(kMaxStreamChunkFrames) * facts.channels * sizeof(float);
+                    }
+                    if (valid) {
+                        // No slot can start before metadata is published. The
+                        // source request's pin excludes idle close throughout.
+                        file.chunkChecksums = facts.segmentChecksums;
+                        file.vorbis = std::move(media);
+                        file.source = std::move(request->candidate->source);
+                        result = VN_OK;
+                    }
+                }
+            } catch (const std::bad_alloc&) { result = VN_BACKPRESSURE; }
+        }
+        file.metadataResult = result;
+        file.pendingRefs.fetch_sub(1, std::memory_order_relaxed);
+        QueueCleanup(std::move(request->candidate));
+        request.reset();
+        m_serviceRequested = true;
+        m_wake.notify_all();
+        return result == VN_OK ? PreparationState::Ready : failed(result);
+    }
+    if (file.pendingRefs.load(std::memory_order_relaxed) == 0 &&
+        file.activeStreams.load(std::memory_order_relaxed) == 0) return failed(VN_INVALID_ARG);
+    try {
+        auto request = std::make_unique<SourceRequest>();
+        request->candidate = std::make_unique<StreamFile>();
+        request->metadataFile = &file;
+        request->metadataBudget = budget;
+        auto empty = std::find_if(m_sourceRequests.begin(), m_sourceRequests.end(),
+            [](const auto& item) { return !item; });
+        if (empty == m_sourceRequests.end()) {
+            m_sourceRequests.emplace_back();
+            empty = m_sourceRequests.end() - 1;
+        }
+        file.pendingRefs.fetch_add(1, std::memory_order_relaxed);
+        *empty = std::move(request);
+        m_serviceRequested = true;
+        m_wake.notify_all();
+        return PreparationState::Preparing;
+    } catch (const std::bad_alloc&) { return failed(VN_BACKPRESSURE); }
+}
+
+void StreamManager::ReadExternalMetadataSlice(SourceRequest& request) {
+    const auto& file = *request.metadataFile;
+    auto& source = request.candidate->source;
+    const StreamReadCancellation cancel{&request.cancelled};
+    if (cancel.IsCancelled()) return;
+    if (request.phase == 0) {
+        source = file.external->locator->Open(cancel);
+        std::array<std::uint8_t, vorbis_test_wire::kStreamHeaderBytes> header{};
+        if (!source || source->ByteCount() != file.external->fileBytes ||
+            ReadStreamBytes(*source, 0, header.data(), header.size(), cancel) != StreamReadStatus::Ok ||
+            !ValidateVorbisTestStreamHeader(header.data(), header.size(), file.external->fileBytes)) {
+            request.result = VN_BAD_STREAM_FILE; return;
+        }
+        request.phase = 1;
+        return;
+    }
+    if (request.phase == 1) {
+        std::array<std::uint8_t, vorbis_test_wire::kHeaderBytes> header{};
+        if (ReadStreamBytes(*source, file.packBlobOffset, header.data(), header.size(), cancel) != StreamReadStatus::Ok) {
+            request.result = VN_BAD_STREAM_FILE; return;
+        }
+        const auto bytes = VorbisTestMetadataBytes(header.data(), header.size());
+        if (bytes < header.size() || bytes > file.external->fileBytes - file.packBlobOffset || bytes > SIZE_MAX) {
+            request.result = VN_BAD_STREAM_FILE; return;
+        }
+        if (bytes > request.metadataBudget) { request.result = VN_BACKPRESSURE; return; }
+        request.metadataPrefix.resize(static_cast<std::size_t>(bytes));
+        std::copy(header.begin(), header.end(), request.metadataPrefix.begin());
+        request.metadataRead = header.size();
+        request.metadataBytes.store(sizeof(StreamFile) + request.metadataPrefix.capacity(), std::memory_order_release);
+        request.phase = 2;
+        return;
+    }
+    const auto count = std::min(ReadWindow::kCapacityBytes, request.metadataPrefix.size() - request.metadataRead);
+    if (count && ReadStreamBytes(*source, file.packBlobOffset + request.metadataRead,
+            request.metadataPrefix.data() + request.metadataRead, count, cancel) != StreamReadStatus::Ok) {
+        request.result = VN_BAD_STREAM_FILE; return;
+    }
+    request.metadataRead += count;
+    if (request.metadataRead == request.metadataPrefix.size()) request.phase = 3;
+}
+
 VnResult StreamManager::BeginSource(VnSoundId id,
     std::shared_ptr<const StreamByteSource> source, bool replace,
     std::uint64_t expected, SourceToken* out) {
@@ -41,7 +159,7 @@ VnResult StreamManager::BeginSourceImpl(VnSoundId id,
     std::lock_guard<std::mutex> lock(m_mutex);
     if (m_shutdown || WorkerState() != StreamWorkerState::Ready) return VN_DEVICE_ERROR;
     for (const auto& pending : m_sourceRequests)
-        if (pending && !pending->discard && pending->soundId == id) return VN_IN_USE;
+        if (pending && !pending->metadataFile && !pending->discard && pending->soundId == id) return VN_IN_USE;
     StreamFile* current = nullptr;
     for (const auto& file : m_files) {
         if (!file || file->packPrivate) continue;
@@ -83,7 +201,7 @@ StreamManager::PreparationState StreamManager::QuerySource(SourceToken token, Vn
     std::lock_guard<std::mutex> lock(m_mutex);
     if (error) *error = VN_STALE_HANDLE;
     for (const auto& request : m_sourceRequests) {
-        if (!request || request->generation != token.value) continue;
+        if (!request || request->metadataFile || request->generation != token.value) continue;
         if (soundId) *soundId = request->soundId;
         if (replace) *replace = request->replace;
         if (error) *error = WorkerState() == StreamWorkerState::Failed ? VN_DEVICE_ERROR
@@ -96,7 +214,7 @@ StreamManager::PreparationState StreamManager::QuerySource(SourceToken token, Vn
 bool StreamManager::HasPendingSource(VnSoundId id) const {
     std::lock_guard<std::mutex> lock(m_mutex);
     return std::any_of(m_sourceRequests.begin(), m_sourceRequests.end(), [&](const auto& request) {
-        return request && !request->discard && request->soundId == id;
+        return request && !request->metadataFile && !request->discard && request->soundId == id;
     });
 }
 
@@ -114,7 +232,7 @@ std::uint64_t StreamManager::SourcePreparationBytes() const {
 bool StreamManager::CancelSource(SourceToken token) {
     std::lock_guard<std::mutex> lock(m_mutex);
     for (auto& request : m_sourceRequests) {
-        if (!request || request->generation != token.value || request->discard) continue;
+        if (!request || request->metadataFile || request->generation != token.value || request->discard) continue;
         request->discard = true;
         request->state = PreparationState::Cancelled;
         request->cancelled.store(true, std::memory_order_release);
@@ -130,7 +248,7 @@ VnResult StreamManager::TakeSource(SourceToken token, StreamFacts* out, VnResult
     std::lock_guard<std::mutex> lock(m_mutex);
     if (WorkerState() != StreamWorkerState::Ready || m_shutdown) return VN_DEVICE_ERROR;
     for (auto& request : m_sourceRequests) {
-        if (!request || request->generation != token.value) continue;
+        if (!request || request->metadataFile || request->generation != token.value) continue;
         if (request->state == PreparationState::Preparing) return VN_BACKPRESSURE;
         if (request->state == PreparationState::Failed) return request->result;
         if (request->state != PreparationState::Ready) return VN_STALE_HANDLE;
@@ -382,7 +500,15 @@ void StreamManager::SettleIo() {
         slot.io.state.store(0, std::memory_order_release);
     }
     for (auto& request : m_sourceRequests) {
+        if (request && request->metadataFile && !request->discard &&
+            request->metadataFile->pendingRefs.load(std::memory_order_relaxed) == 1 &&
+            request->metadataFile->activeStreams.load(std::memory_order_relaxed) == 0) {
+            request->discard = true;
+            request->cancelled.store(true, std::memory_order_release);
+        }
         if (request && request->discard && request->ioLane < 0) {
+            if (request->metadataFile)
+                request->metadataFile->pendingRefs.fetch_sub(1, std::memory_order_relaxed);
             QueueCleanup(std::move(request->candidate));
             request.reset();
         }

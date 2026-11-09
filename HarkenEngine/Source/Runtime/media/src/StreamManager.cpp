@@ -309,6 +309,7 @@ bool StreamManager::FindFile(VnSoundId soundId, StreamFacts* out) const {
             continue;
         }
         out->encoded = file->vorbis.get();
+    out->encodedPending = file->external && !file->vorbis;
         out->fileIndex = static_cast<std::uint32_t>(i);
         out->sampleRate = file->toc.sampleRate;
         out->channelCount = file->toc.channelCount;
@@ -339,6 +340,7 @@ VnResult StreamManager::ResolvePackSource(
     if (m_shutdown || WorkerState() != StreamWorkerState::Ready) return VN_DEVICE_ERROR;
     const auto fill = [&](std::size_t index, const StreamFile& file) {
         out->encoded = file.vorbis.get();
+        out->encodedPending = file.external && !file.vorbis;
         out->fileIndex = static_cast<std::uint32_t>(index);
         out->sampleRate = file.toc.sampleRate;
         out->channelCount = file.toc.channelCount;
@@ -401,6 +403,7 @@ bool StreamManager::FactsForFileIndex(std::uint32_t fileIndex,
     }
     const StreamFile* file = m_files[fileIndex].get();
     out->encoded = file->vorbis.get();
+    out->encodedPending = file->external && !file->vorbis;
     out->fileIndex = fileIndex;
     out->sampleRate = file->toc.sampleRate;
     out->channelCount = file->toc.channelCount;
@@ -528,6 +531,7 @@ VnResult StreamManager::ActivateSlot(std::uint32_t slot,
             return VN_DEVICE_ERROR;
         }
         StreamFile& file = *m_files[fileIndex];
+        if (file.external && !file.vorbis) return VN_BACKPRESSURE;
         file.activeStreams.fetch_add(1, std::memory_order_relaxed);
         const auto token = InitializeSlot(slot, fileIndex, file, startFrame,
                                          loopStartFrame, loopEndFrame, loopCount);
@@ -626,6 +630,7 @@ VnResult StreamManager::BeginReplacement(
             (request.loopCount != 1 &&
              (request.loopStartFrame == request.loopEndFrame ||
               request.targetFrame >= request.loopEndFrame))) return VN_INVALID_ARG;
+        if (file.external && !file.vorbis) return VN_BACKPRESSURE;
         std::uint32_t slot = 0;
         if (m_lastPreparationGeneration == UINT64_MAX ||
             FreeSlotCount() <= request.pendingSlotReservations ||
@@ -1005,6 +1010,7 @@ bool StreamManager::RingStorageReady(std::uint32_t slot, std::uint32_t channels)
 }
 
 void StreamManager::ValidateSourceSlice(SourceRequest& request) {
+    if (request.metadataFile) { ReadExternalMetadataSlice(request); return; }
     auto& record = *request.candidate;
     const StreamReadCancellation cancel{&request.cancelled};
     if (cancel.IsCancelled()) return;
@@ -1083,6 +1089,7 @@ void StreamManager::CloseDrainedRetiringFiles() {
     for (std::unique_ptr<StreamFile>& file : m_files) {
         if (!file || file->activeStreams.load(std::memory_order_relaxed) != 0 ||
             file->pendingRefs.load(std::memory_order_relaxed) != 0) continue;
+        file->metadataResult = VN_OK;
         if (file->retiring || (file->packPrivate && file->packRange.expired())) {
             QueueCleanup(std::move(file));
         } else if (file->external && file->source) {

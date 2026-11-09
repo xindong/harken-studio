@@ -33,6 +33,7 @@
 #endif
 
 namespace harken {
+class VorbisCodec;
 
 namespace detail { struct StreamManagerTestAccess; }
 
@@ -82,6 +83,8 @@ enum class StreamWorkerState : std::uint32_t {
 
 class StreamManager {
 public:
+    enum class PreparationState { Invalid, Preparing, Ready, Cancelled, Failed };
+
     explicit StreamManager(const EngineConfig& config);
     ~StreamManager();
 
@@ -121,6 +124,7 @@ public:
     // anything up.
     struct StreamFacts {
         const EncodedMedia* encoded = nullptr;
+        bool encodedPending = false;
         std::uint32_t fileIndex = 0;
         std::uint32_t sampleRate = 0;
         std::uint32_t channelCount = 0;
@@ -146,6 +150,13 @@ public:
     // Logic thread only.
     VnResult ResolvePackSource(const std::shared_ptr<const PackMediaRange>& range,
                                StreamFacts* out);
+
+    // Logic thread, with an existing pending or active reference. Metadata I/O
+    // uses the source lane; setup construction stays on logic. Failure and
+    // pending are distinct even on budget exhaustion. The caller retains its reference
+    // until success, failure or cancellation.
+    PreparationState PreparePackSource(std::uint32_t fileIndex, std::uint64_t sourceGeneration,
+        VorbisCodec& codec, std::size_t resourceBudget, VnResult* error);
 
     // Facts by file index rather than id — the generation-pinned lookup a
     // deferred stream start uses so it begins on the file it was admitted
@@ -241,7 +252,7 @@ public:
         std::uint64_t generation = 0;
     };
 
-    enum class PreparationState { Invalid, Preparing, Ready, Cancelled, Failed };
+
 
     struct PreparedStream {
         std::uint32_t slot = UINT32_MAX;
@@ -380,6 +391,7 @@ private:
         std::uint64_t packBlobOffset = 0;
         std::shared_ptr<const StreamByteSource> source;
         std::shared_ptr<const PackExternalStream> external;
+        VnResult metadataResult = VN_OK;
         // Multiple slots may prepare the same unopened resource concurrently.
         // Only I/O executors take this mutex; active references exclude close.
         std::mutex openMutex;
@@ -474,6 +486,11 @@ private:
     };
 
     struct SourceRequest {
+        // A metadata request pins an existing private file until physical I/O
+        // completion. Its candidate owns the opened handle until publication.
+        StreamFile* metadataFile = nullptr;
+        std::vector<std::uint8_t> metadataPrefix;
+        std::size_t metadataBudget = 0, metadataRead = 0;
         std::uint64_t generation = 0;
         VnSoundId soundId{};
         bool replace = false;
@@ -522,6 +539,7 @@ private:
         const char* path, bool replace, std::uint64_t expected, SourceToken* out);
     VnResult RegisterSourceAndWait(VnSoundId soundId, const char* path, bool replace);
     static void ValidateSourceSlice(SourceRequest& request);
+    static void ReadExternalMetadataSlice(SourceRequest& request);
     void SettleIo();
     void CompleteReadObservation(StreamSlot& slot, const ChunkJob& job,
         const VnMonitorStreamFactV1& facts, bool valid, bool exception) noexcept;

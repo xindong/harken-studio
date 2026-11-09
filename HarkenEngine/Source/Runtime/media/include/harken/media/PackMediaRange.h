@@ -23,6 +23,8 @@ class VorbisStreamMedia;
 inline constexpr std::uint32_t kPackMediaRangeChunkFrames = 4096;
 
 struct PackExternalStream {
+    enum class Codec { Pcm, Vorbis };
+    Codec codec = Codec::Vorbis;
     std::shared_ptr<const StreamByteLocator> locator;
     std::uint64_t fileBytes = 0;
 };

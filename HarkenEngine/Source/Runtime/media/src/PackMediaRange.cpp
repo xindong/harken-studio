@@ -15,13 +15,17 @@ namespace harken {
 bool ValidPackMediaRange(const PackMediaRange& range) noexcept {
     if (!range.sampleRate || !range.frameCount || !range.channelCount || range.channelCount > kMaxChannels)
         return false;
-    if (!range.vorbis) return range.source && !range.external && range.chunkFrames &&
+    if (!range.vorbis && !range.external) return range.source && range.chunkFrames &&
         range.chunkFrames <= kMaxStreamChunkFrames &&
         range.chunkChecksums.size() == PackMediaChunkCount(range.frameCount, range.chunkFrames);
     if (range.external) {
-        if (range.source || !range.external->locator || range.blobOffset != vorbis_test_wire::kStreamHeaderBytes)
+        if (range.source || !range.external->locator || range.blobOffset != vorbis_test_wire::kStreamHeaderBytes ||
+            range.external->codec != PackExternalStream::Codec::Vorbis ||
+            range.external->fileBytes < range.blobOffset + vorbis_test_wire::kHeaderBytes)
             return false;
     } else if (!range.source) return false;
+    if (!range.vorbis) return range.channelCount == 1 || range.channelCount == 2 ||
+        range.channelCount == 4 || range.channelCount == 6 || range.channelCount == 8;
     const auto& media = range.vorbis->Media();
     const auto bytes = range.external ? range.external->fileBytes : range.source->ByteCount();
     return media.sampleRate == range.sampleRate && media.channels == range.channelCount &&
@@ -149,8 +153,12 @@ bool EqualResidentSamples(const PCMView& left, const PCMView& right) noexcept {
 // zero included. Facts, revisions and chunk checksums only reject.
 MediaContentMatch MatchMediaContent(const PCMView& leftResident, const PackMediaRange* leftRange,
                           const PCMView& rightResident, const PackMediaRange* rightRange) {
-    if ((leftRange && leftRange->vorbis) || (rightRange && rightRange->vorbis)) {
-        if (!leftRange || !rightRange || !leftRange->vorbis || !rightRange->vorbis)
+    if ((leftRange && (leftRange->vorbis || leftRange->external)) ||
+        (rightRange && (rightRange->vorbis || rightRange->external))) {
+        if (!leftRange || !rightRange || leftRange->sampleRate != rightRange->sampleRate ||
+            leftRange->channelCount != rightRange->channelCount || leftRange->frameCount != rightRange->frameCount ||
+            leftRange->contentRevision != rightRange->contentRevision ||
+            leftRange->loop.startFrame != rightRange->loop.startFrame || leftRange->loop.endFrame != rightRange->loop.endFrame)
             return MediaContentMatch::Different;
         // Only an identical immutable resource and byte source prove equality
         // without interpreting an encoded range as planar samples.
