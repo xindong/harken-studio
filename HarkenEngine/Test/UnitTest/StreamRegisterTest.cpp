@@ -49,6 +49,10 @@ struct StreamManagerTestAccess {
         return std::count_if(manager.m_sourceRequests.begin(), manager.m_sourceRequests.end(),
             [](const auto& request) { return request && request->metadataFile; });
     }
+    static VnResult MetadataResult(StreamManager& manager, std::uint32_t index) {
+        std::lock_guard<std::mutex> lock(manager.m_mutex);
+        return manager.m_files[index]->metadataResult;
+    }
     static VnMonitorStreamFactV1 Observation(StreamManager& manager, std::uint32_t slot) {
         std::lock_guard<std::mutex> lock(manager.m_mutex);
         return manager.m_slots[slot].observation;
@@ -2754,8 +2758,111 @@ TEST(StreamRegister, ExternalVorbisDiscoversOnlyMetadataAndSharesPendingPreparat
             ring->state.store(harken::StreamSlotState::Retired, std::memory_order_release);
             streams.SyncServe();
         }
-        streams.ReleasePendingRef(facts.fileIndex);
-        ASSERT_TRUE(WaitUntil([&] { return locator->counts->closes.load() == 1; }));
+        if (variant == 1) {
+            const auto entries = harken::StreamWorkerStallEntriesForTests();
+            harken::SetStreamWorkerStallReleaseForTests(false);
+            harken::SetStreamRequestFaultForTests(harken::StreamRequestFault::WorkerStall);
+            const bool stalled = WaitUntil([&] { return harken::StreamWorkerStallEntriesForTests() > entries; });
+            streams.ReleasePendingRef(facts.fileIndex);
+            ASSERT_TRUE(streams.AcquirePendingRef(facts.fileIndex));
+            EXPECT_EQ(VN_OK, harken::detail::StreamManagerTestAccess::MetadataResult(streams, facts.fileIndex));
+            harken::SetStreamRequestFaultForTests(harken::StreamRequestFault::None);
+            harken::SetStreamWorkerStallReleaseForTests(true);
+            ASSERT_TRUE(stalled);
+            State retry = State::Preparing;
+            ASSERT_TRUE(WaitUntil([&] {
+                retry = streams.PreparePackSource(facts.fileIndex, facts.sourceGeneration, codec, 4 * 1024 * 1024, &error);
+                return retry != State::Preparing;
+            }));
+            EXPECT_EQ(State::Ready, retry);
+            EXPECT_EQ(VN_OK, error);
+            streams.ReleasePendingRef(facts.fileIndex);
+        } else streams.ReleasePendingRef(facts.fileIndex);
+        ASSERT_TRUE(WaitUntil([&] { return locator->counts->closes.load() == (variant == 1 ? 2u : 1u); }));
         EXPECT_EQ(0u, locator->counts->wrongThread.load());
+    }
+}
+
+TEST(StreamRegister, LazyVorbisDecoderTransfersOnceAndRetiresAcrossCancellationAndReuse) {
+    const auto fixture = harken::test::MakeVorbisFixture(1, true);
+    const auto image = harken::test::WrapVorbisStream(fixture.media);
+    harken::VorbisMedia media;
+    ASSERT_TRUE(harken::ParseVorbisTestMedia(fixture.media.data(), fixture.media.size(), media));
+    auto config = harkentest::MakeNullConfig(2, 256, 48000);
+    config.maxTriggerDepth = 2; config.maxStreams = 2; config.renderWorkerCount = 0;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    using State = harken::StreamManager::PreparationState;
+    for (unsigned variant = 0; variant < 4; ++variant) {
+        SCOPED_TRACE(variant);
+        auto locator = std::make_shared<ExternalVorbisLocator>();
+        locator->bytes = std::make_shared<const std::vector<std::uint8_t>>(image);
+        auto external = std::make_shared<harken::PackExternalStream>();
+        external->locator = locator; external->fileBytes = image.size();
+        auto range = std::make_shared<harken::PackMediaRange>();
+        range->external = external; range->blobOffset = harken::vorbis_test_wire::kStreamHeaderBytes;
+        range->sampleRate = media.sampleRate; range->channelCount = media.channels;
+        range->frameCount = media.frames; range->contentRevision = media.revision;
+        harken::StreamManager::StreamFacts facts;
+        ASSERT_EQ(VN_OK, engine.streams.ResolvePackSource(range, &facts));
+        auto request = ReplacementAt(facts);
+        request.prebufferTargetFrames = 256;
+        harken::StreamManager::PreparedToken token;
+        ASSERT_EQ(VN_OK, engine.streams.BeginReplacement(request, &token));
+        harken::StreamManager::PreparedStream owned;
+        ASSERT_EQ(VN_OK, engine.streams.TransferReplacement(token, &owned));
+        ASSERT_TRUE(owned.ring->packetEncoded);
+        VnVoiceHandle voice = 0;
+        ASSERT_EQ(VN_OK, engine.voices.PlayStream(owned.ring, 1, 48000, 256, 0, 1,
+            0, false, 0, 0, 0, harken::ResolvePanGains(config.mixChannelLayout, 0),
+            0, media.frames, 0, media.frames, 1, harken::SelectResampleProfile(48000, 48000), &voice));
+        ASSERT_TRUE(engine.voices.BindStreamRingToken(voice, owned.ring, owned.ringToken));
+        engine.voices.ApplyPlay(voice, voice, 0, engine.mixer.BlocksRendered());
+        engine.nullBackend.Pump(1);
+        ASSERT_NE(nullptr, engine.voices.Resolve(voice));
+        EXPECT_EQ(0u, owned.ring->readFrames.load());
+        EXPECT_EQ(harken::VariableReadCutStatus::Waiting, engine.voices.TimelineStreamStartStatus(
+            static_cast<std::uint32_t>(voice), static_cast<std::uint32_t>(voice >> 32)));
+        if (variant == 1) {
+            locator->blockNextOpen.store(true);
+            engine.streams.ServicePackSources(engine.vorbis, 4 * 1024 * 1024);
+            ASSERT_TRUE(WaitUntil([&] { return locator->enteredOpen.load(std::memory_order_acquire); }));
+        } else {
+            ASSERT_TRUE(WaitUntil([&] {
+                engine.streams.ServicePackSources(engine.vorbis, variant == 3 ? 1 : 4 * 1024 * 1024);
+                engine.streams.ServiceTransferredPreparations();
+                const auto status = engine.voices.TimelineStreamStartStatus(
+                    static_cast<std::uint32_t>(voice), static_cast<std::uint32_t>(voice >> 32));
+                return status != harken::VariableReadCutStatus::Waiting;
+            }));
+            if (variant == 3) EXPECT_EQ(VN_BACKPRESSURE, owned.ring->preparationResult.load());
+            else {
+                ASSERT_NE(nullptr, owned.ring->pendingDecoder.load());
+                EXPECT_GT(engine.vorbis.states.ActiveBytes(), 0u);
+                const auto preparedBytes = engine.vorbis.states.ActiveBytes();
+                for (unsigned i = 0; i < 3; ++i) engine.streams.ServicePackSources(engine.vorbis, 4 * 1024 * 1024);
+                EXPECT_EQ(preparedBytes, engine.vorbis.states.ActiveBytes());
+            }
+        }
+        if (variant == 0) {
+            engine.nullBackend.Pump(1);
+            auto* rendered = engine.voices.Resolve(voice);
+            ASSERT_NE(nullptr, rendered);
+            EXPECT_NE(nullptr, rendered->mediaDecoder);
+            EXPECT_EQ(nullptr, owned.ring->pendingDecoder.load());
+            EXPECT_GT(owned.ring->readFrames.load(), 0u);
+        }
+        engine.voices.ApplyStop(voice, 0, 0, engine.notifications, engine.mixer.BlocksRendered());
+        engine.nullBackend.Pump(1);
+        ASSERT_TRUE(WaitUntil([&] {
+            engine.streams.ReclaimAfterWorkerFailure();
+            engine.vorbis.states.Collect();
+            return engine.streams.FreeSlotCount() == 2 && engine.vorbis.states.ActiveBytes() == 0 &&
+                harken::detail::StreamManagerTestAccess::MetadataRequests(engine.streams) == 0;
+        }));
+        EXPECT_EQ(nullptr, owned.ring->pendingDecoder.load());
+        if (variant != 0) EXPECT_EQ(0u, owned.ring->readFrames.load());
+        EXPECT_EQ(0u, harken::memguard::HitCount());
     }
 }

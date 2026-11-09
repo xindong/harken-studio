@@ -14,6 +14,7 @@
 #include <cassert>
 
 namespace harken {
+class MediaDecoder;
 
 enum class StreamSlotState : std::uint32_t {
     Free = 0,    // unclaimed; invisible to both real-time threads
@@ -103,6 +104,10 @@ struct StreamRing {
     std::uint32_t bytesPerFrame = 0;
     std::uint32_t legacyFrameLimit = 0;
     bool packetEncoded = false;
+    // Logic publishes once for an initially unprepared encoded source. Only
+    // its renderer takes ownership while Active; detach retires an unclaimed
+    // value before publishing Free. A consumed nullptr is never republished.
+    std::atomic<MediaDecoder*> pendingDecoder{nullptr};
     std::atomic<std::uint32_t> filledFrameLimit{UINT32_MAX};
     std::atomic<VnResult> preparationResult{VN_OK};
     std::atomic<std::uint64_t> writeIndex{0};
@@ -144,6 +149,7 @@ struct StreamRing {
     // the Active publication (a release store by the caller) makes the
     // whole wiring visible.
     void ResetForUse(std::uint32_t channels, bool encoded = false) {
+        assert(pendingDecoder.load(std::memory_order_relaxed) == nullptr);
         std::uint32_t next =
             generation.load(std::memory_order_relaxed) + 1u;
         if (next == 0) {

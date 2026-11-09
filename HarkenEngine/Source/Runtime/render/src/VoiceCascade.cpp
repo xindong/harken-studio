@@ -314,6 +314,10 @@ bool FeedResamplerFromStream(VoiceRenderContext& ctx) {
         ctx.mediaDecodeFailed = true;
         return false;
     }
+    if (ring.packetEncoded && ctx.mediaDecoder == nullptr) {
+        ctx.mediaDecoder = ring.pendingDecoder.exchange(nullptr, std::memory_order_acq_rel);
+        if (ctx.mediaDecoder == nullptr) return false;
+    }
     // Sample end-of-data BEFORE reading the write index. The producer
     // release-publishes the terminal winner after the final byte/frame publication, so
     // an acquire load that observes it happens-after that publish and the
@@ -879,8 +883,10 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
         ctx.authoredSourceDeadlineFrame != UINT64_MAX &&
         ctx.authoredSourceDeadlineFrame < quantumStart + blockFrames;
     const bool rootStopArrived = ctx.authoredRootStopFrame < quantumStart + blockFrames;
+    const bool decoderWaiting = ctx.streamRing != nullptr && ctx.streamRing->packetEncoded &&
+        ctx.mediaDecoder == nullptr && ctx.streamRing->pendingDecoder.load(std::memory_order_acquire) == nullptr;
     const bool prebufferWaiting = ctx.streamRing != nullptr && !ctx.streamGateOpen &&
-        ctx.streamRing->BufferedFrames() < ctx.streamRing->PrebufferTarget(ctx.prebufferTargetFrames) &&
+        (decoderWaiting || ctx.streamRing->BufferedFrames() < ctx.streamRing->PrebufferTarget(ctx.prebufferTargetFrames)) &&
         !ctx.streamRing->SourceEnded();
     if (rootStopArrived && (prebufferWaiting ||
         (ctx.timelineGated && ctx.authoredRootStopFrame <= quantumStart + earliestStart))) {
@@ -909,8 +915,10 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
     // gate opens. Underruns after the gate opens are starvation, never a
     // return to Preparing.
     if (ctx.streamRing != nullptr && !ctx.streamGateOpen) {
-        if (ctx.streamRing->BufferedFrames() >= ctx.streamRing->PrebufferTarget(ctx.prebufferTargetFrames) ||
-            ctx.streamRing->SourceEnded() || authoredDeadlineArrives) {
+        if ((!decoderWaiting && (ctx.streamRing->BufferedFrames() >= ctx.streamRing->PrebufferTarget(ctx.prebufferTargetFrames) ||
+                ctx.streamRing->SourceEnded())) ||
+            ctx.streamRing->preparationResult.load(std::memory_order_acquire) != VN_OK ||
+            ctx.streamRing->TerminalReason() == StreamTerminalReason::ProducerFailure || authoredDeadlineArrives) {
             ctx.streamGateOpen = true;
         } else {
             ctx.starvedThisBlock = false;
@@ -1352,9 +1360,11 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
             }
         }
     }
-    if (ctx.mediaDecodeFailed) sourceResult = ctx.streamRing != nullptr &&
-        ctx.streamRing->preparationResult.load(std::memory_order_acquire) != VN_OK
-        ? SourceTerminalKind::ProducerFailure : SourceTerminalKind::IntegrityAbort;
+    if (ctx.mediaDecodeFailed) {
+        const auto error = ctx.streamRing ? ctx.streamRing->preparationResult.load(std::memory_order_acquire) : VN_OK;
+        sourceResult = error != VN_OK && error != VN_BAD_STREAM_FILE
+            ? SourceTerminalKind::ProducerFailure : SourceTerminalKind::IntegrityAbort;
+    }
     std::uint32_t stopCutoff = UINT32_MAX;
 
 #if HARKEN_STAGE_TAPS_ACTIVE

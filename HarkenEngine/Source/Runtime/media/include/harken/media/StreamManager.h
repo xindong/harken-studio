@@ -298,6 +298,9 @@ public:
     VnResult TransferReplacement(PreparedToken token, PreparedStream* out) noexcept;
     PreparationState PromoteTransferredStream(const PreparedStream& stream) noexcept;
     void ServiceTransferredPreparations() noexcept;
+    // Logic prepares lazy metadata and decoder state before the existing
+    // prebuffer/promotion gate can make that stream ready.
+    void ServicePackSources(VorbisCodec& codec, std::size_t resourceBudget);
 
     struct SourceToken { std::uint64_t value = 0; };
     // Ready sources are validated but unpublished. Take installs exactly once.
@@ -452,6 +455,7 @@ private:
 
     struct StreamSlot {
         StreamRing ring;
+        bool metadataWaiting = false; // Protected by the manager mutex.
         bool promotionPending = false; // Logic-owned; not ring ownership.
         int ioLane = -1; // -1 idle, kPreparationIoLane or kSteadyIoOwner
         SlotIoJob io;

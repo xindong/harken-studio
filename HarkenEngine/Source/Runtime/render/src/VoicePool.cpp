@@ -574,8 +574,8 @@ VnResult VoicePool::PlayStream(StreamRing* ring, std::uint32_t channelCount,
     // A target above the ring's capacity could never be reached — a full
     // ring is as prebuffered as it can get, so the gate clamps there.
     slot.render.prebufferTargetFrames =
-        prebufferTargetFrames < ring->FrameCapacity(channelCount, encoded != nullptr) ? prebufferTargetFrames
-                                               : ring->FrameCapacity(channelCount, encoded != nullptr);
+        prebufferTargetFrames < ring->FrameCapacity(channelCount, ring->packetEncoded) ? prebufferTargetFrames
+                                               : ring->FrameCapacity(channelCount, ring->packetEncoded);
     slot.render.streamGateOpen =
         saved != nullptr && saved->gateOpen;
     slot.render.gain.Set(linearGain, 0);
@@ -2203,6 +2203,8 @@ VariableReadCutStatus VoicePool::TimelineStreamStartStatus(std::uint32_t renderS
     if (terminal == StreamTerminalReason::IntegrityAbort ||
         terminal == StreamTerminalReason::ProducerFailure ||
         ring.preparationResult.load(std::memory_order_acquire) != VN_OK) return VariableReadCutStatus::Failed;
+    if (ring.packetEncoded && render.mediaDecoder == nullptr &&
+        ring.pendingDecoder.load(std::memory_order_acquire) == nullptr) return VariableReadCutStatus::Waiting;
     return ring.startPromoted.load(std::memory_order_acquire) &&
         (terminal == StreamTerminalReason::NaturalEnd ||
          ring.BufferedFrames() >= ring.PrebufferTarget(render.prebufferTargetFrames))

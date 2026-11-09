@@ -8753,7 +8753,8 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
     }
     const auto* capacityRing = install.streamed ? engine.streams.RingOf(0) : nullptr;
     if (install.streamed &&
-        (capacityRing == nullptr || capacityRing->FrameCapacity(streamFacts.channelCount, streamFacts.encoded != nullptr) < 2u) &&
+        (capacityRing == nullptr || capacityRing->FrameCapacity(streamFacts.channelCount,
+            streamFacts.encoded != nullptr || streamFacts.encodedPending) < 2u) &&
         (install.loopCount != 1u || streamFacts.frameCount - install.sourceStartFrame > 1u)) {
         result.status = VN_NO_STREAM;
         return result;
@@ -111120,6 +111121,7 @@ VnResult Vn_Update(void) {
      * integrator with nothing but sound that stopped. */
     engine->streams.PublishPlaybackObservations();
     engine->streams.ReclaimAfterWorkerFailure();
+    engine->streams.ServicePackSources(engine->vorbis, static_cast<std::size_t>(engine->config.maxPackDecodeStagingBytes));
     engine->streams.ServiceTransferredPreparations();
     ServiceStreamResyncs(*engine);
     if (engine->streams.ConsumeWorkerFailureForLog()) {

@@ -207,6 +207,8 @@ StreamManager::~StreamManager() {
     m_wake.notify_all();
     m_thread.join();
     StopIo();
+    for (auto& slot : m_slots)
+        if (auto* decoder = slot.ring.pendingDecoder.exchange(nullptr, std::memory_order_acq_rel)) decoder->Retire();
     // The streaming thread is gone for good, so nothing can serve a request
     // that raced the shutdown in. Releasing them here keeps the destructor from
     // leaving a caller blocked on a completion that can never be posted.
@@ -236,6 +238,8 @@ void StreamManager::EndActiveStreamsOnFailure() noexcept {
     for (StreamSlot& slot : m_slots) {
         if (slot.ring.state.load(std::memory_order_acquire) ==
             StreamSlotState::Active) {
+            if (slot.metadataWaiting)
+                slot.ring.preparationResult.store(VN_DEVICE_ERROR, std::memory_order_release);
             // Terminal publication goes through the ring's own arbitration, so a
             // park the audio thread already claimed still wins and the reason is
             // recorded as producer failure rather than a content outcome.
@@ -459,7 +463,9 @@ void StreamManager::ReleasePendingRef(std::uint32_t fileIndex) {
     assert(m_files[fileIndex]->pendingRefs.load(std::memory_order_relaxed) != 0);
     assert(m_pendingRingSlots != 0);
     --m_pendingRingSlots;
-    m_files[fileIndex]->pendingRefs.fetch_sub(1, std::memory_order_relaxed);
+    auto& file = *m_files[fileIndex];
+    if (file.pendingRefs.fetch_sub(1, std::memory_order_relaxed) == 1 &&
+        file.activeStreams.load(std::memory_order_relaxed) == 0) file.metadataResult = VN_OK;
 }
 
 bool StreamManager::PeekFreeSlot(std::uint32_t* outSlot) const {
@@ -583,7 +589,8 @@ std::uint64_t StreamManager::InitializeSlot(
     assert((loopCount == 1) || loopStartFrame < loopEndFrame);
     s.stagedChunk = kNoChunk;
     s.feedStopped = false;
-    s.ring.ResetForUse(file.toc.channelCount, file.vorbis != nullptr);
+    s.metadataWaiting = file.external && !file.vorbis;
+    s.ring.ResetForUse(file.toc.channelCount, file.vorbis != nullptr || s.metadataWaiting);
     s.packetCapacityLimited = false;
     if (file.vorbis) ResetPacketCursor(s, file);
     s.ring.sourceGeneration = file.sourceGeneration;
@@ -630,7 +637,6 @@ VnResult StreamManager::BeginReplacement(
             (request.loopCount != 1 &&
              (request.loopStartFrame == request.loopEndFrame ||
               request.targetFrame >= request.loopEndFrame))) return VN_INVALID_ARG;
-        if (file.external && !file.vorbis) return VN_BACKPRESSURE;
         std::uint32_t slot = 0;
         if (m_lastPreparationGeneration == UINT64_MAX ||
             FreeSlotCount() <= request.pendingSlotReservations ||
@@ -1133,8 +1139,11 @@ void StreamManager::DetachRetiredSlots() {
             else slot.io.cancelled.store(true, std::memory_order_release);
             continue;
         }
-        m_files[slot.fileIndex]->activeStreams.fetch_sub(
-            1, std::memory_order_relaxed);
+        auto& file = *m_files[slot.fileIndex];
+        if (file.activeStreams.fetch_sub(1, std::memory_order_relaxed) == 1 &&
+            file.pendingRefs.load(std::memory_order_relaxed) == 0) file.metadataResult = VN_OK;
+        if (auto* decoder = slot.ring.pendingDecoder.exchange(nullptr, std::memory_order_acq_rel)) decoder->Retire();
+        slot.metadataWaiting = false;
         slot.window.validBytes = 0;
         std::vector<std::uint8_t>().swap(slot.window.bytes);
         slot.window.capacityBytes.store(0, std::memory_order_release);

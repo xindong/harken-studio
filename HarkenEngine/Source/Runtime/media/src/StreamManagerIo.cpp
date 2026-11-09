@@ -138,6 +138,47 @@ void StreamManager::ReadExternalMetadataSlice(SourceRequest& request) {
     if (request.metadataRead == request.metadataPrefix.size()) request.phase = 3;
 }
 
+void StreamManager::ServicePackSources(VorbisCodec& codec, std::size_t budget) {
+    for (std::uint32_t index = 0; index < m_slots.size(); ++index) {
+        std::uint32_t fileIndex = 0, ringGeneration = 0;
+        std::uint64_t sourceGeneration = 0;
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            const auto& slot = m_slots[index];
+            if (!slot.metadataWaiting || slot.ring.state.load(std::memory_order_acquire) != StreamSlotState::Active)
+                continue;
+            fileIndex = slot.fileIndex;
+            ringGeneration = slot.ring.generation.load(std::memory_order_relaxed);
+            sourceGeneration = slot.ring.sourceGeneration;
+        }
+        VnResult error = VN_OK;
+        const auto state = PreparePackSource(fileIndex, sourceGeneration, codec, budget, &error);
+        if (state == PreparationState::Preparing) continue;
+        std::lock_guard<std::mutex> lock(m_mutex);
+        auto& slot = m_slots[index];
+        if (!slot.metadataWaiting || slot.ring.state.load(std::memory_order_acquire) != StreamSlotState::Active ||
+            slot.ring.generation.load(std::memory_order_relaxed) != ringGeneration ||
+            slot.ring.sourceGeneration != sourceGeneration) continue;
+        if (state == PreparationState::Ready) {
+            auto& file = *m_files[fileIndex];
+            MediaDecoder* decoder = file.vorbis ? file.vorbis->Acquire() : nullptr;
+            if (decoder) {
+                ResetPacketCursor(slot, file);
+                slot.ring.pendingDecoder.store(decoder, std::memory_order_release);
+            } else error = VN_NO_VOICE;
+        }
+        slot.metadataWaiting = false;
+        if (error != VN_OK) {
+            slot.feedStopped = true;
+            slot.ring.preparationResult.store(error, std::memory_order_release);
+            slot.ring.MarkEndOfData(error == VN_BAD_STREAM_FILE ? StreamTerminalReason::IntegrityAbort :
+                StreamTerminalReason::ProducerFailure);
+        }
+        m_serviceRequested = true;
+        m_wake.notify_all();
+    }
+}
+
 VnResult StreamManager::BeginSource(VnSoundId id,
     std::shared_ptr<const StreamByteSource> source, bool replace,
     std::uint64_t expected, SourceToken* out) {
@@ -561,7 +602,8 @@ void StreamManager::ServiceRequests() {
 void StreamManager::ServeSlots() {
     std::size_t cachedBytesRemaining = ReadWindow::kCapacityBytes;
     for (auto& slot : m_slots) {
-        if (slot.ioLane >= 0 || slot.ring.state.load(std::memory_order_acquire) != StreamSlotState::Active) continue;
+        if (slot.ioLane >= 0 || slot.metadataWaiting ||
+            slot.ring.state.load(std::memory_order_acquire) != StreamSlotState::Active) continue;
         const auto generation = slot.ring.generation.load(std::memory_order_relaxed);
         auto cursor = BeginSlotService(slot);
         const auto written = slot.ring.writeFrames.load(std::memory_order_relaxed);
@@ -649,7 +691,7 @@ void StreamManager::DispatchIo() {
         double leastTime = std::numeric_limits<double>::infinity();
         for (std::size_t n = 0; n < m_slots.size(); ++n) {
             auto& slot = m_slots[(m_slotCursor + n) % m_slots.size()];
-            if (slot.ioLane >= 0 || slot.feedStopped || slot.packetCapacityLimited ||
+            if (slot.ioLane >= 0 || slot.metadataWaiting || slot.feedStopped || slot.packetCapacityLimited ||
                 slot.ring.state.load(std::memory_order_acquire) != StreamSlotState::Active ||
                 slot.ring.startPromoted.load(std::memory_order_acquire) != steady ||
                 slot.passGoal <= slot.ring.writeFrames.load(std::memory_order_relaxed)) continue;
