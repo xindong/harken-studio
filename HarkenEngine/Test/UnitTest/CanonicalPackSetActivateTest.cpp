@@ -2,6 +2,9 @@
 #include "AllocationProbe.h"
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
+#include "Common/VorbisFixture.h"
+#include "harken/media/VorbisDecoder.h"
+#include "harken/media/PackMediaRange.h"
 
 #include "Engine.h"
 #include "PackLogicStore.h"
@@ -3360,13 +3363,16 @@ std::vector<float> PlanarSignal(float scale) {
 // Content pack whose action plays one Sound backed by its own stereo media.
 std::vector<std::uint8_t> BuildSoundContent(std::uint64_t id, std::uint64_t revision,
                                             bool streamed, const std::vector<float>& samples,
-                                            std::uint64_t providerId = 0, bool leadingMedia = false) {
+                                            std::uint64_t providerId = 0, bool leadingMedia = false,
+                                            std::uint64_t encodedRevision = 0) {
     using namespace harken;
     using namespace harkentest::packfoundation;
     const auto bus = DefaultRuntimeBusFixture();
-    const float* planes[] = {samples.data(), samples.data() + kFrames};
+    const auto frames = samples.size() / 2;
+    const float* planes[] = {samples.data(), samples.data() + frames};
     std::uint64_t mediaRevision = 0;
-    EXPECT_TRUE(ComputeMediaPcmContentRevisionV1(48000, 2, kFrames, planes, 1, &mediaRevision));
+    EXPECT_TRUE(ComputeMediaPcmContentRevisionV1(48000, 2, frames, planes, 1, &mediaRevision));
+    if (encodedRevision) mediaRevision = encodedRevision;
     PlayablePropertyProgramViewV1 property{};
     property.stableId = kSound;
     property.contentPropertyKind = playableproperties::ContentPropertyKindV1::Sound;
@@ -3544,6 +3550,141 @@ harkentest::Capture ResidentReference(const char* name, const std::vector<float>
 }
 
 } // namespace packstream
+
+TEST(CanonicalPackSetActivate, TypedVorbisExternalAndResidentUseCanonicalActionClosure) {
+    using namespace packstream;
+    struct Locator final : harken::StreamByteLocator {
+        std::string path;
+        std::atomic<bool> enabled{false};
+        mutable std::atomic<unsigned> attempts{0}, cancellations{0};
+        mutable std::atomic<unsigned> opens{0};
+        std::shared_ptr<const harken::StreamByteSource> Open(harken::StreamReadCancellation cancel) const override {
+            attempts.fetch_add(1);
+            while (!enabled.load() && !cancel.IsCancelled())
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            if (cancel.IsCancelled()) { cancellations.fetch_add(1); return {}; }
+            opens.fetch_add(1);
+            return harken::OpenStreamByteSource(path.c_str());
+        }
+    };
+    const auto fixture = harken::test::MakeVorbisFixture(2, true);
+    harken::VorbisMedia media;
+    ASSERT_TRUE(harken::ParseVorbisTestMedia(fixture.media.data(), fixture.media.size(), media));
+    std::vector<float> planar(fixture.reference.size());
+    for (std::size_t i = 0; i < media.frames; ++i) {
+        planar[i] = fixture.reference[2 * i];
+        planar[media.frames + i] = fixture.reference[2 * i + 1];
+    }
+    const auto externalBytes = harken::test::WrapVorbisStream(fixture.media);
+    for (const auto workers : {0u, 2u}) {
+        harkentest::Capture resident;
+        for (unsigned mode = 0; mode < 3; ++mode) {
+            SCOPED_TRACE(::testing::Message() << workers << '/' << mode);
+            auto config = StreamConfig();
+            config.renderWorkerCount = workers;
+            EngineSession session(config);
+            ASSERT_EQ(VN_OK, session.InitResult());
+            auto& engine = *session.Engine();
+            PathSet set("pack-vorbis-typed");
+            VnPackHandle init = 0;
+            ASSERT_EQ(VN_OK, harkentest::ActivateExistingInitPackV1(set.init.c_str(), PackId("Init"), &init));
+            const auto content = BuildSoundContent(PathSet::ContentId(), 1, mode != 0, planar,
+                0, false, media.revision);
+            ASSERT_TRUE(harkentest::WriteBytes(set.content, content));
+            std::vector<harken::PCMRegistry::PreparedPackSamples> prepared(1);
+            auto locator = std::make_shared<Locator>();
+            locator->path = (set.directory / "Media.stream").string();
+            ASSERT_TRUE(harkentest::WriteBytes(locator->path, externalBytes));
+            if (mode == 0) {
+                ASSERT_EQ(VN_OK, engine.registry.PrepareVorbisSamples(kSound, engine.vorbis,
+                    fixture.media, 4 * 1024 * 1024, &prepared[0]));
+            } else {
+                auto external = std::make_shared<harken::PackExternalStream>();
+                external->locator = locator; external->fileBytes = externalBytes.size();
+                auto range = std::make_shared<harken::PackMediaRange>();
+                range->external = external;
+                range->blobOffset = harken::vorbis_test_wire::kStreamHeaderBytes;
+                range->sampleRate = media.sampleRate; range->channelCount = media.channels;
+                range->frameCount = media.frames; range->contentRevision = media.revision;
+                if (mode == 1) {
+                    ASSERT_GT(media.seek.size(), 2u);
+                    const auto end = media.packetDataOffset + media.seek[2].packetOffset;
+                    std::vector<std::uint8_t> prefix(fixture.media.begin(), fixture.media.begin() + end);
+                    harken::VorbisPrepareResult result;
+                    range->vorbis = harken::VorbisStreamMedia::Prepare(engine.vorbis, std::move(prefix),
+                        fixture.media.size(), 4 * 1024 * 1024, result, true);
+                    ASSERT_NE(nullptr, range->vorbis);
+                }
+                ASSERT_EQ(VN_OK, engine.registry.PreparePackRangeSamples(kSound, range, &prepared[0]));
+            }
+            VnPackLoadDesc load{};
+            load.structSize = sizeof(load); load.utf8Path = set.content.c_str();
+            VnPackHandle handle = 0;
+            ASSERT_EQ(VN_OK, harken::LoadProvisionalCanonicalContentForTests(engine, &load, &handle, &prepared));
+            EXPECT_EQ(0u, locator->opens.load());
+            engine.streams.SetThrottled(true);
+            VnPostActionDesc post{};
+            post.structSize = sizeof(post); post.actionId = action;
+            VnActionFiringHandle firing = 0;
+            ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
+            harkentest::Capture captured;
+            VnResult supplyFailure = VN_OK;
+            unsigned supplyTerminal = 0;
+            const auto pump = [&](unsigned blocks) {
+                for (unsigned block = 0; block < blocks; ++block) {
+                    if (mode != 0 && locator->enabled.load() && engine.vorbis.states.ActiveBytes() != 0)
+                        engine.streams.SyncServe();
+                    const auto before = engine.mixer.BlocksRendered();
+                    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+                    do {
+                        engine.nullBackend.Pump(1);
+                        if (engine.mixer.BlocksRendered() != before) break;
+                        std::this_thread::yield();
+                    } while (std::chrono::steady_clock::now() < deadline);
+                    ASSERT_EQ(before + 1, engine.mixer.BlocksRendered());
+                    const auto* output = engine.nullBackend.LastBlock();
+                    for (unsigned i = 0; i < 256; ++i) {
+                        captured.left.push_back(output[2 * i]);
+                        captured.right.push_back(output[2 * i + 1]);
+                    }
+                    ASSERT_EQ(VN_OK, Vn_Update());
+                    for (unsigned slot = 0; slot < config.maxStreams; ++slot) {
+                        const auto* ring = engine.streams.RingOf(slot);
+                        if (ring->preparationResult.load() != VN_OK) supplyFailure = ring->preparationResult.load();
+                        if (static_cast<unsigned>(ring->TerminalReason()) > supplyTerminal)
+                            supplyTerminal = static_cast<unsigned>(ring->TerminalReason());
+                    }
+                    if (mode == 2 && locator->enabled.load() && engine.vorbis.states.ActiveBytes() == 0)
+                        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
+            };
+            pump(16);
+            EXPECT_EQ(0u, locator->opens.load());
+            if (mode == 2) EXPECT_EQ(captured.left.size(), Audible(captured));
+            else EXPECT_LT(Audible(captured), captured.left.size());
+            locator->enabled.store(true);
+            engine.streams.SetThrottled(false);
+            pump(static_cast<std::uint32_t>(media.frames / 256 + 64));
+            VnActionFiringInfo info{};
+            info.structSize = sizeof(info);
+            ASSERT_EQ(VN_OK, Vn_QueryActionFiring(firing, &info));
+            VnActionStepResult step{};
+            step.structSize = sizeof(step);
+            ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, 0, &step));
+            SCOPED_TRACE(::testing::Message() << "state=" << info.state << " outcome=" << info.outcome
+                << " reason=" << info.terminalReason << " attempts=" << locator->attempts.load()
+                << " cancelled=" << locator->cancellations.load() << " slots=" << engine.streams.FreeSlotCount()
+                << " step=" << step.result << " supply=" << supplyFailure << " terminal=" << supplyTerminal);
+            ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+            if (mode == 0) resident = std::move(captured);
+            else {
+                if (mode == 1) EXPECT_EQ(Audible(resident), Audible(captured));
+                ExpectSameAudible(resident, captured, media.frames);
+                EXPECT_GE(locator->opens.load(), 1u);
+            }
+        }
+    }
+}
 
 TEST(CanonicalPackSetActivate, StreamedPackMediaPlaysResidentSamplesWithoutResidentCopy) {
     using namespace packstream;

@@ -131570,7 +131570,10 @@ namespace {
 enum class CanonicalLoadMode { Public, ProvisionalContent };
 
 VnResult LoadCanonicalPackImpl(Engine& engine, const VnPackLoadDesc* desc,
-                               VnPackHandle* outHandle, CanonicalLoadMode mode) try {
+                               VnPackHandle* outHandle, CanonicalLoadMode mode,
+                               std::vector<PCMRegistry::PreparedPackSamples>* samples = nullptr) try {
+    if (samples != nullptr && mode != CanonicalLoadMode::ProvisionalContent)
+        return VN_INVALID_ARG;
     if (desc == nullptr || outHandle == nullptr ||
         desc->structSize != sizeof(VnPackLoadDesc) ||
         (desc->flags & ~(VN_PACK_LOAD_FLAG_PROVIDER | VN_PACK_LOAD_FLAG_ROOT)) !=
@@ -131687,9 +131690,10 @@ VnResult LoadCanonicalPackImpl(Engine& engine, const VnPackLoadDesc* desc,
     std::vector<PackEntry> mediaEntries = MakeCanonicalMediaEntries(image.media);
     const PackRevisionKey revisionKey =
         MakeCanonicalRevisionKey(token.Handle(), image);
+    PackTable::AlignedBuffer noMediaBytes;
     const VnResult loaded = engine.packs.LoadPrepared(
-        &token, owned, std::move(mediaEntries), image.media, engine.registry,
-        &handle, &revisionKey);
+        &token, samples ? noMediaBytes : owned, std::move(mediaEntries), image.media, engine.registry,
+        &handle, &revisionKey, samples);
     if (loaded != VN_OK) {
         ReportCanonicalMediaConflict(engine, image);
         return loaded;
@@ -131774,9 +131778,10 @@ VnResult LoadCanonicalPack(Engine& engine, const VnPackLoadDesc* desc,
 }
 
 VnResult LoadProvisionalCanonicalContentForTests(
-    Engine& engine, const VnPackLoadDesc* desc, VnPackHandle* outHandle) {
+    Engine& engine, const VnPackLoadDesc* desc, VnPackHandle* outHandle,
+    std::vector<PCMRegistry::PreparedPackSamples>* samples) {
     return LoadCanonicalPackImpl(engine, desc, outHandle,
-                                 CanonicalLoadMode::ProvisionalContent);
+                                 CanonicalLoadMode::ProvisionalContent, samples);
 }
 
 VnResult UnloadCanonicalPack(Engine& engine, VnPackHandle handle,
