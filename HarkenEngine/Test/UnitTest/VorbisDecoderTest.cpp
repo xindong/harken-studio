@@ -439,22 +439,26 @@ TEST(VorbisDecoder, ByteRingWrapSeekAndGenerationReplacementMatchReference) {
             }
             ASSERT_GE(supplied, 4096u);
             ASSERT_EQ(records.front().header.frames, 0u);
-            const auto initialAt = ring.writeIndex.load();
-            ring.CopyIn(initialAt, &records.front().header, sizeof(harken::StreamPacketHeader));
-            ring.CopyIn(initialAt + sizeof(harken::StreamPacketHeader), records.front().packet,
-                        records.front().header.packetBytes);
-            ring.PublishBytes(static_cast<std::uint32_t>(sizeof(harken::StreamPacketHeader)) +
-                              records.front().header.packetBytes, 0);
             std::vector<float> actual(1001 * channels);
-            std::size_t next = 1;
+            std::size_t next = 0;
             unsigned copied = 0;
             bool valid = true;
+            const bool armed = harken::memguard::IsArmed(); harken::memguard::Install();
+            harken::memguard::AllocationObservation observed{};
             allocation_probe::count = 0; allocation_probe::enabled = true;
             {
+                harken::memguard::AllocationObservationScope observation(observed);
                 harken::memguard::AudioThreadScope audio;
                 harken::PCMView preroll;
-                if (decoder->ReadStream(ring, 37, 0, preroll) != harken::StreamDecodeResult::Dry ||
-                    ring.ReadAvailableBytes() != 0) valid = false;
+                while (next < records.size() && !records[next].header.frames) {
+                    const auto& zero = records[next++];
+                    const auto at = ring.writeIndex.load();
+                    ring.CopyIn(at, &zero.header, sizeof(zero.header));
+                    ring.CopyIn(at + sizeof(zero.header), zero.packet, zero.header.packetBytes);
+                    ring.PublishBytes(static_cast<std::uint32_t>(sizeof(zero.header)) + zero.header.packetBytes, 0);
+                    if (decoder->ReadStream(ring, 37, 0, preroll) != harken::StreamDecodeResult::Dry ||
+                        ring.ReadAvailableBytes() != 0) valid = false;
+                }
                 const auto& pending = records[next++];
                 const auto pendingAt = ring.writeIndex.load();
                 const auto pendingBytes = static_cast<std::uint32_t>(sizeof(pending.header)) + pending.header.packetBytes;
@@ -488,7 +492,12 @@ TEST(VorbisDecoder, ByteRingWrapSeekAndGenerationReplacementMatchReference) {
                 }
             }
             allocation_probe::enabled = false;
+            if (!armed) harken::memguard::Uninstall();
             EXPECT_EQ(allocation_probe::count, 0u);
+            EXPECT_EQ(observed.audio.allocations + observed.audio.reallocations, 0u);
+#if defined(_DEBUG) && defined(_MSC_VER)
+            EXPECT_TRUE(observed.available);
+#endif
             ASSERT_TRUE(valid); ASSERT_EQ(copied, 1001u);
             static constexpr unsigned map6[] = {0, 2, 1, 5, 3, 4};
             static constexpr unsigned map8[] = {0, 2, 1, 7, 5, 6, 3, 4};
