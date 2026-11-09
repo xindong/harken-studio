@@ -456,6 +456,7 @@ private:
     struct StreamSlot {
         StreamRing ring;
         bool metadataWaiting = false; // Protected by the manager mutex.
+        bool prefetchedStart = false; // Immutable during the Active generation.
         bool promotionPending = false; // Logic-owned; not ring ownership.
         int ioLane = -1; // -1 idle, kPreparationIoLane or kSteadyIoOwner
         SlotIoJob io;

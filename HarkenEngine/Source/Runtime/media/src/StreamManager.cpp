@@ -613,6 +613,17 @@ std::uint64_t StreamManager::InitializeSlot(
     if (nowActive > m_streamHighWater) {
         m_streamHighWater = nowActive;
     }
+    s.prefetchedStart = false;
+    if (file.external && file.vorbis && !file.vorbis->Prefetch().empty()) {
+        auto cursor = BeginSlotService(s);
+        ChunkJob continuation;
+        (void)AdvancePacketSlot(cursor, &continuation);
+        const auto supplied = s.ring.BufferedFrames();
+        if (supplied != 0) {
+            s.ring.filledFrameLimit.store(supplied, std::memory_order_release);
+            s.prefetchedStart = true;
+        }
+    }
     s.ring.state.store(StreamSlotState::Active, std::memory_order_release);
     return RingToken(slot, ringGeneration);
 }
@@ -776,6 +787,7 @@ VnResult StreamManager::TransferReplacement(
     assert(!slot.promotionPending);
     slot.promotionPending = true;
     ++m_pendingPromotionCount;
+    if (slot.prefetchedStart) (void)PromoteTransferredStream(*out);
     return VN_OK;
 }
 
@@ -1332,8 +1344,12 @@ bool StreamManager::ReadChunk(const ChunkJob& job, std::vector<float>& staging,
     if (job.file->vorbis) {
         const auto& media = job.file->vorbis->Media();
         staging.resize(static_cast<std::size_t>((job.chunkBytes + sizeof(float) - 1) / sizeof(float)));
-        const auto begin = job.file->packBlobOffset + media.packetDataOffset + media.seek[job.chunkIndex].packetOffset;
-        for (std::uint64_t at = 0; at < job.chunkBytes;) {
+        const auto segment = media.seek[job.chunkIndex].packetOffset;
+        const auto prefix = job.file->external ? job.file->vorbis->Prefetch() : std::span<const std::uint8_t>{};
+        const auto copied = segment < prefix.size() ? std::min<std::uint64_t>(job.chunkBytes, prefix.size() - segment) : 0;
+        if (copied) std::memcpy(staging.data(), prefix.data() + segment, static_cast<std::size_t>(copied));
+        const auto begin = job.file->packBlobOffset + media.packetDataOffset + segment;
+        for (std::uint64_t at = copied; at < job.chunkBytes;) {
             const auto count = static_cast<std::size_t>(std::min<std::uint64_t>(ReadWindow::kCapacityBytes, job.chunkBytes - at));
             if (ReadStreamBytes(source, begin + at, reinterpret_cast<std::uint8_t*>(staging.data()) + at,
                     count, job.cancellation) != StreamReadStatus::Ok) return false;
@@ -1489,15 +1505,19 @@ bool StreamManager::AdvancePacketSlot(ServiceCursor& cursor, ChunkJob* job) {
         const auto index = static_cast<std::uint32_t>(point - media.seek.begin() - 1);
         const auto begin = media.seek[index].packetOffset;
         const auto end = point == media.seek.end() ? media.packetBytes : point->packetOffset;
-        if (slot.stagedChunk != index) {
+        const auto prefix = file.external ? file.vorbis->Prefetch() : std::span<const std::uint8_t>{};
+        const bool prefetched = slot.packetOffset < prefix.size();
+        if (!prefetched && slot.stagedChunk != index) {
             *job = {&file, index, media.seekGranularity, media.channels, end - begin};
             return true;
         }
-        const auto offset = slot.packetOffset - begin;
-        const auto* data = reinterpret_cast<const std::uint8_t*>(slot.staging.data());
-        if (end - slot.packetOffset < 2) return fail(VN_BAD_STREAM_FILE);
+        const auto offset = prefetched ? slot.packetOffset : slot.packetOffset - begin;
+        const auto* data = prefetched ? prefix.data() : reinterpret_cast<const std::uint8_t*>(slot.staging.data());
+        const auto available = prefetched ? std::min<std::uint64_t>(end - slot.packetOffset, prefix.size() - slot.packetOffset)
+                                         : end - slot.packetOffset;
+        if (available < 2) return fail(VN_BAD_STREAM_FILE);
         const auto bytes = std::uint32_t(data[offset]) | (std::uint32_t(data[offset + 1]) << 8);
-        if (!bytes || bytes > end - slot.packetOffset - 2) return fail(VN_BAD_STREAM_FILE);
+        if (!bytes || bytes > available - 2) return fail(VN_BAD_STREAM_FILE);
         const auto block = file.vorbis->Settings().PacketBlock(data + offset + 2, bytes);
         if (block <= 0) return fail(VN_BAD_STREAM_FILE);
         const auto decoded = slot.packetPreviousBlock ? (slot.packetPreviousBlock + block) / 4 : 0;

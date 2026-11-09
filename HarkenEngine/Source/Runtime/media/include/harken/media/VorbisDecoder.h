@@ -149,9 +149,11 @@ private:
 // manager owns external byte supply; the voice owns the acquired decoder.
 class VorbisStreamMedia final : public EncodedMedia {
 public:
+    // Packet bytes are accepted only from a prefix already covered by Pack
+    // integrity validation. Metadata-only I/O never grants that authority.
     static std::shared_ptr<VorbisStreamMedia> Prepare(VorbisCodec& codec,
         std::vector<std::uint8_t> prefix, std::uint64_t mediaBytes,
-        std::size_t budget, VorbisPrepareResult& result);
+        std::size_t budget, VorbisPrepareResult& result, bool validatedPackPrefix = false);
     MediaDecoder* Acquire() const noexcept override;
     std::size_t ResidentBytes() const noexcept override;
     // A prefix alone cannot prove complete media content equality.
@@ -159,6 +161,9 @@ public:
     const VorbisMedia& Media() const noexcept { return media_; }
     const VorbisSettings& Settings() const noexcept { return *settings_; }
     std::span<const std::uint8_t> Prefix() const noexcept { return prefix_; }
+    std::span<const std::uint8_t> Prefetch() const noexcept {
+        return std::span<const std::uint8_t>(prefix_).subspan(static_cast<std::size_t>(media_.packetDataOffset));
+    }
 private:
     VorbisCodec* codec_ = nullptr;
     std::vector<std::uint8_t> prefix_;

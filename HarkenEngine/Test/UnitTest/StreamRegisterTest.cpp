@@ -2512,6 +2512,7 @@ namespace {
     struct ExternalVorbisCounts {
         std::atomic<unsigned> opens{0}, closes{0}, wrongThread{0}, reads{0};
         std::atomic<std::uint64_t> furthestRead{0}, largestRead{0};
+        std::atomic<std::uint64_t> firstPayloadRead{UINT64_MAX};
     };
     struct ExternalVorbisLocator final : harken::StreamByteLocator {
         struct Source final : harken::StreamByteSource {
@@ -2519,6 +2520,7 @@ namespace {
             std::shared_ptr<const std::vector<std::uint8_t>> bytes;
             std::thread::id caller;
             std::uint64_t failOffset = UINT64_MAX;
+            std::uint64_t payloadOffset = UINT64_MAX;
             ~Source() override {
                 if (std::this_thread::get_id() == caller) ++counts->wrongThread;
                 ++counts->closes;
@@ -2528,6 +2530,10 @@ namespace {
                 harken::StreamReadCancellation cancel) const override {
                 if (std::this_thread::get_id() == caller) ++counts->wrongThread;
                 ++counts->reads;
+                if (offset >= payloadOffset) {
+                    auto unset = UINT64_MAX;
+                    counts->firstPayloadRead.compare_exchange_strong(unset, offset);
+                }
                 const auto recordMax = [](auto& value, std::uint64_t next) {
                     auto prior = value.load();
                     while (prior < next && !value.compare_exchange_weak(prior, next)) {}
@@ -2545,6 +2551,7 @@ namespace {
         std::shared_ptr<const std::vector<std::uint8_t>> bytes;
         std::thread::id caller = std::this_thread::get_id();
         std::uint64_t failOffset = UINT64_MAX;
+        std::uint64_t payloadOffset = UINT64_MAX;
         mutable std::atomic<bool> blockNextOpen{false}, enteredOpen{false}, releaseOpen{false};
         std::shared_ptr<const harken::StreamByteSource> Open(harken::StreamReadCancellation cancel) const override {
             if (std::this_thread::get_id() == caller) ++counts->wrongThread;
@@ -2557,6 +2564,7 @@ namespace {
             auto source = std::make_shared<Source>();
             source->counts = counts; source->bytes = bytes; source->caller = caller;
             source->failOffset = failOffset;
+            source->payloadOffset = payloadOffset;
             return source;
         }
     };
@@ -2864,5 +2872,95 @@ TEST(StreamRegister, LazyVorbisDecoderTransfersOnceAndRetiresAcrossCancellationA
         EXPECT_EQ(nullptr, owned.ring->pendingDecoder.load());
         if (variant != 0) EXPECT_EQ(0u, owned.ring->readFrames.load());
         EXPECT_EQ(0u, harken::memguard::HitCount());
+    }
+}
+
+TEST(StreamRegister, VorbisPrefetchStartsBeforeOpenAndVerifiesAcrossItsPacketBoundary) {
+    const auto fixture = harken::test::MakeVorbisFixture(1, true, 257, 8191);
+    const auto image = harken::test::WrapVorbisStream(fixture.media);
+    harken::VorbisMedia media;
+    ASSERT_TRUE(harken::ParseVorbisTestMedia(fixture.media.data(), fixture.media.size(), media));
+    ASSERT_GT(media.seek.size(), 2u);
+    const std::uint8_t* packet = nullptr;
+    std::uint16_t count = 0;
+    ASSERT_TRUE(media.Packet(media.seek[1].packetOffset, packet, count));
+    const auto cut = media.seek[1].packetOffset + count + 2;
+    ASSERT_LT(cut, media.seek[2].packetOffset);
+    const auto prefixBytes = media.packetDataOffset + cut;
+    const std::vector<std::uint8_t> prefix(fixture.media.begin(), fixture.media.begin() + prefixBytes);
+    harken::VorbisCodec codec(2 * 1024 * 1024, 0);
+    harken::VorbisPrepareResult prepared;
+    EXPECT_EQ(nullptr, harken::VorbisStreamMedia::Prepare(codec, prefix, fixture.media.size(),
+        4 * 1024 * 1024, prepared));
+    EXPECT_EQ(harken::VorbisPrepareResult::Invalid, prepared);
+    auto incomplete = prefix;
+    incomplete.pop_back();
+    EXPECT_EQ(nullptr, harken::VorbisStreamMedia::Prepare(codec, incomplete, fixture.media.size(),
+        4 * 1024 * 1024, prepared, true));
+    auto encoded = harken::VorbisStreamMedia::Prepare(codec, prefix, fixture.media.size(),
+        4 * 1024 * 1024, prepared, true);
+    ASSERT_NE(nullptr, encoded);
+    EXPECT_GE(encoded->ResidentBytes(), prefixBytes);
+    harken::EngineConfig config;
+    config.maxStreams = 2; config.streamRingBytes = 32768;
+    harken::StreamManager streams(config);
+    for (bool corrupt : {false, true}) {
+        SCOPED_TRACE(corrupt);
+        auto locator = std::make_shared<ExternalVorbisLocator>();
+        auto bytes = image;
+        if (corrupt) bytes[harken::vorbis_test_wire::kStreamHeaderBytes + prefixBytes + 2] ^= 1;
+        locator->bytes = std::make_shared<const std::vector<std::uint8_t>>(std::move(bytes));
+        locator->payloadOffset = harken::vorbis_test_wire::kStreamHeaderBytes + media.packetDataOffset;
+        locator->blockNextOpen.store(true);
+        auto external = std::make_shared<harken::PackExternalStream>();
+        external->locator = locator; external->fileBytes = image.size();
+        auto range = std::make_shared<harken::PackMediaRange>();
+        range->external = external; range->vorbis = encoded;
+        range->blobOffset = harken::vorbis_test_wire::kStreamHeaderBytes;
+        range->sampleRate = media.sampleRate; range->channelCount = media.channels;
+        range->frameCount = media.frames; range->contentRevision = media.revision;
+        range->loop = {media.loopStart, media.loopEnd};
+        harken::StreamManager::StreamFacts facts;
+        ASSERT_EQ(VN_OK, streams.ResolvePackSource(range, &facts));
+        EXPECT_EQ(0u, locator->counts->opens.load());
+        auto request = ReplacementAt(facts);
+        request.prebufferTargetFrames = 48000;
+        harken::StreamManager::PreparedToken token;
+        ASSERT_EQ(VN_OK, streams.BeginReplacement(request, &token));
+        EXPECT_EQ(harken::StreamManager::PreparationState::Ready, streams.QueryReplacement(token));
+        harken::StreamManager::PreparedStream owned;
+        ASSERT_EQ(VN_OK, streams.TransferReplacement(token, &owned));
+        ASSERT_TRUE(owned.ring->startPromoted.load());
+        auto* decoder = encoded->Acquire();
+        ASSERT_NE(nullptr, decoder);
+        harken::PCMView output;
+        ASSERT_EQ(harken::StreamDecodeResult::Ready, decoder->ReadStream(*owned.ring, 256, 0, output));
+        ASSERT_GT(output.frames, 0u);
+        std::uint64_t delivered = 0;
+        const auto verify = [&] {
+            for (unsigned i = 0; i < output.frames; ++i)
+                EXPECT_FLOAT_EQ(fixture.reference[delivered + i], static_cast<const float*>(output.channels[0])[i]);
+            owned.ring->DeliverFrames(static_cast<std::uint32_t>(output.frames));
+            delivered += output.frames;
+        };
+        verify();
+        EXPECT_EQ(UINT64_MAX, locator->counts->firstPayloadRead.load());
+        locator->releaseOpen.store(true, std::memory_order_release);
+        if (corrupt) {
+            ASSERT_TRUE(WaitUntil([&] { return owned.ring->TerminalReason() == harken::StreamTerminalReason::IntegrityAbort; }));
+        } else {
+            while (delivered < 16000) {
+                ASSERT_TRUE(WaitUntil([&] { return owned.ring->BufferedFrames() > 0 || owned.ring->SourceEnded(); }));
+                ASSERT_EQ(harken::StreamDecodeResult::Ready, decoder->ReadStream(*owned.ring, 256, 0, output));
+                ASSERT_GT(output.frames, 0u);
+                verify();
+            }
+        }
+        EXPECT_EQ(range->blobOffset + prefixBytes, locator->counts->firstPayloadRead.load());
+        decoder->Retire(); codec.states.Collect();
+        ASSERT_TRUE(streams.RetirePreparedSlot(owned.ring, owned.ringToken));
+        streams.SyncServe();
+        ASSERT_TRUE(WaitUntil([&] { return locator->counts->closes.load() == 1; }));
+        EXPECT_EQ(0u, locator->counts->wrongThread.load());
     }
 }

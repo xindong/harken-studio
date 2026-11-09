@@ -41,7 +41,7 @@ std::size_t VorbisResident::ResidentBytes() const noexcept {
 }
 std::shared_ptr<VorbisStreamMedia> VorbisStreamMedia::Prepare(VorbisCodec& codec,
     std::vector<std::uint8_t> prefix, std::uint64_t mediaBytes,
-    std::size_t budget, VorbisPrepareResult& result) {
+    std::size_t budget, VorbisPrepareResult& result, bool validatedPackPrefix) {
     result = VorbisPrepareResult::OutOfMemory;
     if (prefix.size() > budget) return {};
     auto source = std::make_shared<VorbisStreamMedia>();
@@ -54,6 +54,25 @@ std::shared_ptr<VorbisStreamMedia> VorbisStreamMedia::Prepare(VorbisCodec& codec
     if (overhead > budget) return {};
     source->settings_ = codec.settings.Prepare(source->media_, budget - overhead, result);
     if (!source->settings_) return {};
+    result = VorbisPrepareResult::Invalid;
+    const auto packets = source->Prefetch();
+    if (!packets.empty() && !validatedPackPrefix) return {};
+    for (std::size_t at = 0; at < packets.size();) {
+        if (packets.size() - at < 2) return {};
+        const auto count = std::uint32_t(packets[at]) | (std::uint32_t(packets[at + 1]) << 8);
+        if (!count || count > packets.size() - at - 2 ||
+            source->settings_->PacketBlock(packets.data() + at + 2, count) <= 0) return {};
+        at += count + 2;
+    }
+    const auto& media = source->media_;
+    for (std::size_t i = 0; i < media.seek.size(); ++i) {
+        if (packets.empty()) break;
+        const auto end = i + 1 < media.seek.size() ? media.seek[i + 1].packetOffset : media.packetBytes;
+        if (end > packets.size()) break;
+        if (Fnv1a64(packets.data() + media.seek[i].packetOffset,
+                static_cast<std::size_t>(end - media.seek[i].packetOffset), media.segmentChecksumSeed) !=
+            media.segmentChecksums[i]) return {};
+    }
     source->codec_ = &codec;
     result = VorbisPrepareResult::Ok;
     return source;
