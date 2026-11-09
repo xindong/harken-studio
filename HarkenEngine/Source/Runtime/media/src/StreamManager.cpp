@@ -313,7 +313,7 @@ bool StreamManager::FindFile(VnSoundId soundId, StreamFacts* out) const {
             continue;
         }
         out->encoded = file->vorbis.get();
-    out->encodedPending = file->external && !file->vorbis;
+        out->encodedPending = file->PacketEncoded() && !file->vorbis;
         out->fileIndex = static_cast<std::uint32_t>(i);
         out->sampleRate = file->toc.sampleRate;
         out->channelCount = file->toc.channelCount;
@@ -344,7 +344,7 @@ VnResult StreamManager::ResolvePackSource(
     if (m_shutdown || WorkerState() != StreamWorkerState::Ready) return VN_DEVICE_ERROR;
     const auto fill = [&](std::size_t index, const StreamFile& file) {
         out->encoded = file.vorbis.get();
-        out->encodedPending = file.external && !file.vorbis;
+        out->encodedPending = file.PacketEncoded() && !file.vorbis;
         out->fileIndex = static_cast<std::uint32_t>(index);
         out->sampleRate = file.toc.sampleRate;
         out->channelCount = file.toc.channelCount;
@@ -407,7 +407,7 @@ bool StreamManager::FactsForFileIndex(std::uint32_t fileIndex,
     }
     const StreamFile* file = m_files[fileIndex].get();
     out->encoded = file->vorbis.get();
-    out->encodedPending = file->external && !file->vorbis;
+    out->encodedPending = file->PacketEncoded() && !file->vorbis;
     out->fileIndex = fileIndex;
     out->sampleRate = file->toc.sampleRate;
     out->channelCount = file->toc.channelCount;
@@ -537,7 +537,7 @@ VnResult StreamManager::ActivateSlot(std::uint32_t slot,
             return VN_DEVICE_ERROR;
         }
         StreamFile& file = *m_files[fileIndex];
-        if (file.external && !file.vorbis) return VN_BACKPRESSURE;
+        if (!file.MetadataReady()) return VN_BACKPRESSURE;
         file.activeStreams.fetch_add(1, std::memory_order_relaxed);
         const auto token = InitializeSlot(slot, fileIndex, file, startFrame,
                                          loopStartFrame, loopEndFrame, loopCount);
@@ -589,8 +589,8 @@ std::uint64_t StreamManager::InitializeSlot(
     assert((loopCount == 1) || loopStartFrame < loopEndFrame);
     s.stagedChunk = kNoChunk;
     s.feedStopped = false;
-    s.metadataWaiting = file.external && !file.vorbis;
-    s.ring.ResetForUse(file.toc.channelCount, file.vorbis != nullptr || s.metadataWaiting);
+    s.metadataWaiting = !file.MetadataReady();
+    s.ring.ResetForUse(file.toc.channelCount, file.PacketEncoded());
     s.packetCapacityLimited = false;
     if (file.vorbis) ResetPacketCursor(s, file);
     s.ring.sourceGeneration = file.sourceGeneration;
@@ -1029,6 +1029,10 @@ bool StreamManager::RingStorageReady(std::uint32_t slot, std::uint32_t channels)
 
 void StreamManager::ValidateSourceSlice(SourceRequest& request) {
     if (request.metadataFile) { ReadExternalMetadataSlice(request); return; }
+    ValidatePcmSourceSlice(request);
+}
+
+void StreamManager::ValidatePcmSourceSlice(SourceRequest& request) {
     auto& record = *request.candidate;
     const StreamReadCancellation cancel{&request.cancelled};
     if (cancel.IsCancelled()) return;
@@ -1060,8 +1064,12 @@ void StreamManager::ValidateSourceSlice(SourceRequest& request) {
         const auto& entry = record.toc;
         const std::uint64_t checksumBytes = static_cast<std::uint64_t>(entry.chunkCount) * sizeof(std::uint64_t);
         if (!ValidateStreamEntry(request.header, entry, record.source->ByteCount()) ||
-            entry.soundId != request.soundId || checksumBytes > SIZE_MAX) {
+            (!request.metadataFile && entry.soundId != request.soundId) || checksumBytes > SIZE_MAX) {
             request.result = VN_BAD_STREAM_FILE; return;
+        }
+        if (request.metadataFile && (request.metadataBudget < sizeof(StreamFile) ||
+                checksumBytes > request.metadataBudget - sizeof(StreamFile))) {
+            request.result = VN_BACKPRESSURE; return;
         }
         record.chunkFrames = request.header.chunkFrames;
         record.chunkChecksums.resize(entry.chunkCount);
@@ -1080,7 +1088,7 @@ void StreamManager::ValidateSourceSlice(SourceRequest& request) {
     }
     // Only scratch is bounded by the work quantum; the final table is charged
     // to the actual source metadata and may contain any validated chunk count.
-    std::array<std::uint8_t, 64 * 1024> bytes{};
+    std::array<std::uint8_t, ReadWindow::kCapacityBytes> bytes{};
     const auto count = std::min<std::uint32_t>(record.toc.chunkCount - request.checksumsRead,
         static_cast<std::uint32_t>(bytes.size() / kStreamChunkChecksumBytes));
     const auto size = static_cast<std::size_t>(count) * kStreamChunkChecksumBytes;
@@ -1224,10 +1232,42 @@ std::shared_ptr<const StreamByteSource> StreamManager::AcquireReadSource(
     std::array<std::uint8_t, ReadWindow::kCapacityBytes> scratch{};
     if (ReadStreamBytes(observed, 0, scratch.data(), vorbis_test_wire::kStreamHeaderBytes, job.cancellation)
             != StreamReadStatus::Ok) return {};
-    if (!ValidateVorbisTestStreamHeader(scratch.data(), vorbis_test_wire::kStreamHeaderBytes,
-            file.external->fileBytes)) {
+    if (!ValidateTestStreamHeader(scratch.data(), vorbis_test_wire::kStreamHeaderBytes,
+            file.external->fileBytes, file.PacketEncoded() ? 1 : 0)) {
         facts.readStatus = 3;
         return {};
+    }
+    if (file.pcmHeader) {
+        source = StreamByteRange(std::move(source), file.packBlobOffset,
+            file.external->fileBytes - file.packBlobOffset);
+        ObservedStreamRead mediaSource(*source, facts);
+        std::array<std::uint8_t, kStreamTocEntryBytes> expected{};
+        const auto matches = [&](std::uint64_t offset, std::size_t count) {
+            if (ReadStreamBytes(mediaSource, offset, scratch.data(), count, job.cancellation)
+                    != StreamReadStatus::Ok) return false;
+            if (std::memcmp(scratch.data(), expected.data(), count) == 0) return true;
+            facts.readStatus = 3;
+            return false;
+        };
+        SerializeStreamHeader(*file.pcmHeader, expected.data());
+        if (!matches(0, kStreamHeaderBytes)) return {};
+        SerializeStreamTocEntry(file.toc, expected.data());
+        if (!matches(file.pcmHeader->tocOffset, kStreamTocEntryBytes)) return {};
+        for (std::size_t at = 0; at < file.chunkChecksums.size();) {
+            const auto count = std::min(scratch.size() / sizeof(std::uint64_t), file.chunkChecksums.size() - at);
+            if (ReadStreamBytes(mediaSource, file.toc.chunkChecksumOffset + at * sizeof(std::uint64_t),
+                    scratch.data(), count * sizeof(std::uint64_t), job.cancellation) != StreamReadStatus::Ok) return {};
+            for (std::size_t i = 0; i < count; ++i) {
+                if (LoadLE64(scratch.data() + i * sizeof(std::uint64_t)) != file.chunkChecksums[at + i]) {
+                    facts.readStatus = 3;
+                    return {};
+                }
+            }
+            at += count;
+        }
+        if (job.cancellation.IsCancelled()) return {};
+        file.source = std::move(source);
+        return file.source;
     }
     const auto expected = file.vorbis->Prefix().first(static_cast<std::size_t>(file.vorbis->Media().packetDataOffset));
     for (std::size_t at = 0; at < expected.size();) {
@@ -1329,7 +1369,7 @@ std::uint64_t StreamManager::ReadWindowBytes() const noexcept {
 
 bool StreamManager::TryCopyReadWindow(const ChunkJob& job, std::vector<float>& staging,
                                       const ReadWindow& window) noexcept {
-    if (job.file->packPrivate || job.chunkBytes == 0 || job.chunkBytes / sizeof(float) > staging.size() ||
+    if ((job.file->packPrivate && !job.file->external) || job.chunkBytes == 0 || job.chunkBytes / sizeof(float) > staging.size() ||
         window.validBytes > window.bytes.size()) return false;
     const auto offset = StreamChunkFileOffset(job.file->toc.payloadOffset, job.chunkIndex, job.chunkBytes);
     if (offset < window.offset || offset - window.offset > window.validBytes ||
@@ -1358,7 +1398,7 @@ bool StreamManager::ReadChunk(const ChunkJob& job, std::vector<float>& staging,
         return true;
     }
     staging.resize(static_cast<std::size_t>(job.chunkFrames) * job.channels);
-    if (job.file->packPrivate) {
+    if (job.file->packPrivate && !job.file->external) {
         // Pack blobs are whole-media planar; each channel is a separate range.
         return ReadPlanarMediaChunk(source, job.file->packBlobOffset, job.file->toc.frameCount,
                    job.channels, job.chunkFrames, job.chunkIndex, staging.data(),

@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <limits>
+#include <utility>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -25,6 +26,30 @@ static_assert(sizeof(off_t) >= 8, "Stream sources require 64-bit file offsets");
 #endif
 
 namespace harken {
+
+namespace {
+class ByteRangeSource final : public StreamByteSource {
+public:
+    ByteRangeSource(std::shared_ptr<const StreamByteSource> source, std::uint64_t offset, std::uint64_t bytes)
+        : source_(std::move(source)), offset_(offset), bytes_(bytes) {}
+    std::uint64_t ByteCount() const noexcept override { return bytes_; }
+    StreamReadResult ReadAt(std::uint64_t offset, void* destination, std::size_t bytes,
+        StreamReadCancellation cancellation) const override {
+        if (cancellation.IsCancelled()) return {StreamReadStatus::Cancelled, 0};
+        if (offset > bytes_ || bytes > bytes_ - offset || (bytes != 0 && !destination)) return {};
+        return source_->ReadAt(offset_ + offset, destination, bytes, cancellation);
+    }
+private:
+    std::shared_ptr<const StreamByteSource> source_;
+    std::uint64_t offset_, bytes_;
+};
+}
+
+std::shared_ptr<const StreamByteSource> StreamByteRange(
+    std::shared_ptr<const StreamByteSource> source, std::uint64_t offset, std::uint64_t bytes) {
+    if (!source || offset > source->ByteCount() || bytes > source->ByteCount() - offset) return {};
+    return std::make_shared<ByteRangeSource>(std::move(source), offset, bytes);
+}
 
 StreamReadStatus ReadStreamBytes(const StreamByteSource& source,
     std::uint64_t offset, void* destination, std::size_t bytes,

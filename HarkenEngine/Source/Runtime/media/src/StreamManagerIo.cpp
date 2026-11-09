@@ -32,7 +32,7 @@ StreamManager::PreparationState StreamManager::PreparePackSource(std::uint32_t i
     if (index >= m_files.size() || !m_files[index] ||
         m_files[index]->sourceGeneration != generation) return failed(VN_STALE_HANDLE);
     auto& file = *m_files[index];
-    if (!file.external || file.vorbis) return PreparationState::Ready;
+    if (file.MetadataReady()) return PreparationState::Ready;
     if (file.metadataResult != VN_OK) return failed(file.metadataResult);
     for (auto& request : m_sourceRequests) {
         if (!request || request->metadataFile != &file) continue;
@@ -41,28 +41,48 @@ StreamManager::PreparationState StreamManager::PreparePackSource(std::uint32_t i
         VnResult result = request->result;
         if (request->state == PreparationState::Ready) {
             try {
-                VorbisPrepareResult prepared;
-                auto media = VorbisStreamMedia::Prepare(codec, std::move(request->metadataPrefix),
-                    file.external->fileBytes - file.packBlobOffset, request->metadataBudget, prepared);
-                result = prepared == VorbisPrepareResult::Unsupported ? VN_CAPABILITY_UNAVAILABLE :
-                    prepared == VorbisPrepareResult::OutOfMemory ? VN_BACKPRESSURE : VN_BAD_STREAM_FILE;
-                if (media) {
-                    const auto& facts = media->Media();
-                    bool valid = facts.sampleRate == file.toc.sampleRate && facts.channels == file.toc.channelCount &&
-                        facts.frames == file.toc.frameCount && facts.revision == file.contentRevision &&
-                        facts.loopStart == file.toc.loopStartFrame && facts.loopEnd == file.toc.loopEndFrame;
-                    for (std::size_t i = 0; valid && i < facts.seek.size(); ++i) {
-                        const auto end = i + 1 < facts.seek.size() ? facts.seek[i + 1].packetOffset : facts.packetBytes;
-                        valid = end - facts.seek[i].packetOffset <=
-                            std::uint64_t(kMaxStreamChunkFrames) * facts.channels * sizeof(float);
-                    }
-                    if (valid) {
-                        // No slot can start before metadata is published. The
-                        // source request's pin excludes idle close throughout.
-                        file.chunkChecksums = facts.segmentChecksums;
-                        file.vorbis = std::move(media);
+                if (file.external->codec == PackExternalStream::Codec::Pcm) {
+                    const auto& candidate = *request->candidate;
+                    const auto& facts = candidate.toc;
+                    const auto loopEnd = (facts.flags & kStreamFlagLoopable) != 0
+                        ? (facts.loopEndFrame ? facts.loopEndFrame : facts.frameCount) : 0;
+                    const auto expectedLoopEnd = (file.toc.flags & kStreamFlagLoopable) != 0
+                        ? (file.toc.loopEndFrame ? file.toc.loopEndFrame : file.toc.frameCount) : 0;
+                    if (facts.sampleRate == file.toc.sampleRate && facts.channelCount == file.toc.channelCount &&
+                        facts.frameCount == file.toc.frameCount && candidate.contentRevision == file.contentRevision &&
+                        facts.loopStartFrame == file.toc.loopStartFrame && loopEnd == expectedLoopEnd &&
+                        facts.flags == file.toc.flags) {
+                        file.chunkChecksums = std::move(request->candidate->chunkChecksums);
+                        file.toc = facts;
+                        file.chunkFrames = candidate.chunkFrames;
+                        file.pcmHeader = request->header;
                         file.source = std::move(request->candidate->source);
                         result = VN_OK;
+                    } else result = VN_BAD_STREAM_FILE;
+                } else {
+                    VorbisPrepareResult prepared;
+                    auto media = VorbisStreamMedia::Prepare(codec, std::move(request->metadataPrefix),
+                        file.external->fileBytes - file.packBlobOffset, request->metadataBudget, prepared);
+                    result = prepared == VorbisPrepareResult::Unsupported ? VN_CAPABILITY_UNAVAILABLE :
+                        prepared == VorbisPrepareResult::OutOfMemory ? VN_BACKPRESSURE : VN_BAD_STREAM_FILE;
+                    if (media) {
+                        const auto& facts = media->Media();
+                        bool valid = facts.sampleRate == file.toc.sampleRate && facts.channels == file.toc.channelCount &&
+                            facts.frames == file.toc.frameCount && facts.revision == file.contentRevision &&
+                            facts.loopStart == file.toc.loopStartFrame && facts.loopEnd == file.toc.loopEndFrame;
+                        for (std::size_t i = 0; valid && i < facts.seek.size(); ++i) {
+                            const auto end = i + 1 < facts.seek.size() ? facts.seek[i + 1].packetOffset : facts.packetBytes;
+                            valid = end - facts.seek[i].packetOffset <=
+                                std::uint64_t(kMaxStreamChunkFrames) * facts.channels * sizeof(float);
+                        }
+                        if (valid) {
+                            // No slot can start before metadata is published. The
+                            // source request's pin excludes idle close throughout.
+                            file.chunkChecksums = facts.segmentChecksums;
+                            file.vorbis = std::move(media);
+                            file.source = std::move(request->candidate->source);
+                            result = VN_OK;
+                        }
                     }
                 }
             } catch (const std::bad_alloc&) { result = VN_BACKPRESSURE; }
@@ -101,12 +121,28 @@ void StreamManager::ReadExternalMetadataSlice(SourceRequest& request) {
     auto& source = request.candidate->source;
     const StreamReadCancellation cancel{&request.cancelled};
     if (cancel.IsCancelled()) return;
+    if (file.external->codec == PackExternalStream::Codec::Pcm) {
+        if (!source) {
+            auto opened = file.external->locator->Open(cancel);
+            std::array<std::uint8_t, vorbis_test_wire::kStreamHeaderBytes> header{};
+            if (!opened || opened->ByteCount() != file.external->fileBytes ||
+                ReadStreamBytes(*opened, 0, header.data(), header.size(), cancel) != StreamReadStatus::Ok ||
+                !ValidateTestStreamHeader(header.data(), header.size(), file.external->fileBytes, 0)) {
+                request.result = VN_BAD_STREAM_FILE; return;
+            }
+            source = StreamByteRange(std::move(opened), file.packBlobOffset,
+                file.external->fileBytes - file.packBlobOffset);
+            return;
+        }
+        ValidatePcmSourceSlice(request);
+        return;
+    }
     if (request.phase == 0) {
         source = file.external->locator->Open(cancel);
         std::array<std::uint8_t, vorbis_test_wire::kStreamHeaderBytes> header{};
         if (!source || source->ByteCount() != file.external->fileBytes ||
             ReadStreamBytes(*source, 0, header.data(), header.size(), cancel) != StreamReadStatus::Ok ||
-            !ValidateVorbisTestStreamHeader(header.data(), header.size(), file.external->fileBytes)) {
+            !ValidateTestStreamHeader(header.data(), header.size(), file.external->fileBytes)) {
             request.result = VN_BAD_STREAM_FILE; return;
         }
         request.phase = 1;
@@ -161,11 +197,13 @@ void StreamManager::ServicePackSources(VorbisCodec& codec, std::size_t budget) {
             slot.ring.sourceGeneration != sourceGeneration) continue;
         if (state == PreparationState::Ready) {
             auto& file = *m_files[fileIndex];
-            MediaDecoder* decoder = file.vorbis ? file.vorbis->Acquire() : nullptr;
-            if (decoder) {
-                ResetPacketCursor(slot, file);
-                slot.ring.pendingDecoder.store(decoder, std::memory_order_release);
-            } else error = VN_NO_VOICE;
+            if (file.PacketEncoded()) {
+                MediaDecoder* decoder = file.vorbis ? file.vorbis->Acquire() : nullptr;
+                if (decoder) {
+                    ResetPacketCursor(slot, file);
+                    slot.ring.pendingDecoder.store(decoder, std::memory_order_release);
+                } else error = VN_NO_VOICE;
+            }
         }
         slot.metadataWaiting = false;
         if (error != VN_OK) {

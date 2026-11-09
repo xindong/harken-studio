@@ -55,8 +55,8 @@ struct VorbisMedia {
 // Header inspection never reads packet payload. A stream must independently
 // verify each segment before exposing its packets to the renderer.
 std::uint64_t VorbisTestMetadataBytes(const void* header, std::size_t bytes) noexcept;
-bool ValidateVorbisTestStreamHeader(const void* header, std::size_t bytes,
-                                   std::uint64_t fileBytes) noexcept;
+bool ValidateTestStreamHeader(const void* header, std::size_t bytes,
+                                   std::uint64_t fileBytes, std::uint16_t expectedCodec = 1) noexcept;
 bool ParseVorbisTestMediaHeaders(const void* prefix, std::size_t prefixBytes,
                                 std::uint64_t mediaBytes, VorbisMedia& output);
 bool ParseVorbisTestMedia(const void* data, std::size_t bytes, VorbisMedia& output);

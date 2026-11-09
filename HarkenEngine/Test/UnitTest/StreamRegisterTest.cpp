@@ -2980,3 +2980,133 @@ TEST(StreamRegister, VorbisPrefetchStartsBeforeOpenAndVerifiesAcrossItsPacketBou
         EXPECT_EQ(0u, locator->counts->wrongThread.load());
     }
 }
+
+
+TEST(StreamRegister, ExternalPcmMetadataUsesBoundedMediaCoordinatesAndPreservesLoopSamples) {
+    harkentest::StreamSpec spec;
+    spec.soundId = harkentest::ObjectId(905); spec.channelCount = 6;
+    spec.loopable = true; spec.loopStartFrame = 257; spec.loopEndFrame = 4097;
+    constexpr unsigned frames = 20000;
+    std::vector<float> samples(frames * spec.channelCount);
+    for (unsigned ch = 0; ch < spec.channelCount; ++ch)
+        for (unsigned i = 0; i < frames; ++i) samples[ch * frames + i] = (ch * frames + i) / 200000.0f;
+    const auto pcm = harkentest::BuildStreamBytes(spec, samples);
+    harken::StreamHeader header;
+    ASSERT_TRUE(harken::ParseStreamHeader(pcm.data(), &header));
+    const auto toc = harken::ParseStreamTocEntry(pcm.data() + header.tocOffset);
+    std::vector<std::uint64_t> checksums(toc.chunkCount);
+    for (unsigned i = 0; i < toc.chunkCount; ++i)
+        checksums[i] = harken::LoadLE64(pcm.data() + toc.chunkChecksumOffset + i * 8);
+    harken::MediaStreamSemanticHeaderV1 semantic{toc.sampleRate, toc.channelCount, toc.frameCount,
+        toc.sampleFormat, header.formatVersion, header.chunkFrames, toc.chunkCount, 257, 4097};
+    std::uint64_t revision = 0;
+    ASSERT_TRUE(harken::ComputeMediaStreamContentRevisionV1(semantic, checksums.data(), &revision));
+    auto image = harken::test::WrapVorbisStream(pcm);
+    harken::StoreLE16(image.data() + 6, 0);
+    harken::VorbisCodec codec(2 * 1024 * 1024, 0);
+    harken::EngineConfig config;
+    config.maxStreams = 2; config.streamRingBytes = 262144;
+    harken::StreamManager streams(config);
+    using State = harken::StreamManager::PreparationState;
+    for (unsigned scenario = 0; scenario < 5; ++scenario) {
+        SCOPED_TRACE(scenario);
+        auto locator = std::make_shared<ExternalVorbisLocator>();
+        auto bytes = image;
+        if (scenario == 2) harken::StoreLE16(bytes.data() + 6, 1);
+        if (scenario == 3) bytes[harken::vorbis_test_wire::kStreamHeaderBytes + toc.chunkChecksumOffset] ^= 1;
+        locator->bytes = std::make_shared<const std::vector<std::uint8_t>>(std::move(bytes));
+        locator->payloadOffset = harken::vorbis_test_wire::kStreamHeaderBytes + toc.payloadOffset;
+        auto external = std::make_shared<harken::PackExternalStream>();
+        external->codec = harken::PackExternalStream::Codec::Pcm;
+        external->locator = locator; external->fileBytes = image.size();
+        auto range = std::make_shared<harken::PackMediaRange>();
+        range->external = external; range->blobOffset = harken::vorbis_test_wire::kStreamHeaderBytes;
+        range->sampleRate = toc.sampleRate; range->channelCount = toc.channelCount;
+        range->frameCount = toc.frameCount; range->contentRevision = revision + (scenario == 4);
+        range->packFlags = toc.flags; range->loop = {257, 4097};
+        harken::StreamManager::StreamFacts facts;
+        ASSERT_EQ(VN_OK, streams.ResolvePackSource(range, &facts));
+        EXPECT_FALSE(facts.encodedPending);
+        EXPECT_EQ(nullptr, facts.encoded);
+        EXPECT_EQ(0u, locator->counts->opens.load());
+        ASSERT_TRUE(streams.AcquirePendingRef(facts.fileIndex));
+        VnResult error = VN_OK;
+        State state = State::Preparing;
+        ASSERT_TRUE(WaitUntil([&] {
+            state = streams.PreparePackSource(facts.fileIndex, facts.sourceGeneration, codec,
+                scenario == 1 ? 1 : 1024 * 1024, &error);
+            return state != State::Preparing;
+        }));
+        ASSERT_EQ(scenario == 0 ? State::Ready : State::Failed, state);
+        EXPECT_EQ(scenario == 0 ? VN_OK : scenario == 1 ? VN_BACKPRESSURE : VN_BAD_STREAM_FILE, error);
+        EXPECT_LE(locator->counts->largestRead.load(), 16384u);
+        EXPECT_LE(locator->counts->furthestRead.load(), locator->payloadOffset);
+        EXPECT_EQ(UINT64_MAX, locator->counts->firstPayloadRead.load());
+        if (scenario == 0) {
+            auto request = ReplacementAt(facts, 713);
+            request.loopStartFrame = 257; request.loopEndFrame = 4097; request.loopCount = 3;
+            harken::StreamManager::PreparedToken token;
+            ASSERT_EQ(VN_OK, streams.BeginReplacement(request, &token));
+            ASSERT_TRUE(WaitUntil([&] { return streams.QueryReplacement(token) == State::Ready; }));
+            harken::StreamManager::PreparedStream stream;
+            ASSERT_EQ(VN_OK, streams.TakeReplacement(token, &stream));
+            EXPECT_FALSE(stream.ring->packetEncoded);
+            EXPECT_EQ(10922u, stream.ring->FrameCapacity());
+            EXPECT_EQ(nullptr, stream.ring->pendingDecoder.load());
+            std::uint64_t position = 713, delivered = 0;
+            unsigned passes = 3;
+            const auto total = frames - 713 + 2 * (4097 - 257);
+            while (delivered < total) {
+                ASSERT_TRUE(WaitUntil([&] { return stream.ring->BufferedFrames() != 0 || stream.ring->SourceEnded(); }));
+                const auto count = std::min<std::uint32_t>(stream.ring->BufferedFrames(), 257);
+                ASSERT_GT(count, 0u);
+                for (unsigned i = 0; i < count; ++i) {
+                    if (passes > 1 && position == 4097) { --passes; position = 257; }
+                    for (unsigned ch = 0; ch < spec.channelCount; ++ch)
+                        ASSERT_FLOAT_EQ(samples[ch * frames + position], harkentest::PeekPcmSample(*stream.ring, i, ch));
+                    ++position;
+                }
+                harkentest::ConsumePcmFrames(*stream.ring, count);
+                delivered += count;
+            }
+            EXPECT_EQ(total, delivered);
+            EXPECT_EQ(harken::StreamTerminalReason::NaturalEnd, stream.ring->TerminalReason());
+            EXPECT_TRUE(streams.RetirePreparedSlot(stream.ring, stream.ringToken));
+            streams.SyncServe();
+        }
+        streams.ReleasePendingRef(facts.fileIndex);
+        ASSERT_TRUE(WaitUntil([&] { return locator->counts->closes.load() == 1; }));
+        if (scenario == 0) {
+            auto changed = image;
+            changed[harken::vorbis_test_wire::kStreamHeaderBytes + 12] ^= 1;
+            locator->bytes = std::make_shared<const std::vector<std::uint8_t>>(std::move(changed));
+            harken::StreamManager::PreparedToken token;
+            ASSERT_EQ(VN_OK, streams.BeginReplacement(ReplacementAt(facts), &token));
+            ASSERT_TRUE(WaitUntil([&] { return streams.QueryReplacement(token) == State::Failed; }));
+            EXPECT_TRUE(streams.CancelReplacement(token));
+            ASSERT_TRUE(WaitUntil([&] { return locator->counts->closes.load() == 2; }));
+        }
+        EXPECT_EQ(0u, locator->counts->wrongThread.load());
+        EXPECT_EQ(0u, codec.states.ActiveBytes());
+    }
+}
+
+TEST(StreamRegister, ByteRangeRejectsOverflowAndEscapesAndPreservesShortReadsAndCancellation) {
+    auto source = std::make_shared<ControlledSource>();
+    source->maxRead = 3;
+    source->bytes.resize(32);
+    for (unsigned i = 0; i < 32; ++i) source->bytes[i] = static_cast<std::uint8_t>(i);
+    EXPECT_EQ(nullptr, harken::StreamByteRange(source, UINT64_MAX, 1));
+    EXPECT_EQ(nullptr, harken::StreamByteRange(source, 1, UINT64_MAX));
+    auto range = harken::StreamByteRange(source, 7, 13);
+    ASSERT_NE(nullptr, range);
+    EXPECT_EQ(13u, range->ByteCount());
+    std::array<std::uint8_t, 13> output{};
+    ASSERT_EQ(harken::StreamReadStatus::Ok, harken::ReadStreamBytes(*range, 0, output.data(), output.size(), {}));
+    for (unsigned i = 0; i < output.size(); ++i) EXPECT_EQ(i + 7, output[i]);
+    EXPECT_EQ(5u, source->reads.load());
+    EXPECT_EQ(harken::StreamReadStatus::IoError, range->ReadAt(13, output.data(), 1, {}).status);
+    EXPECT_EQ(harken::StreamReadStatus::IoError, range->ReadAt(UINT64_MAX, output.data(), 1, {}).status);
+    std::atomic<bool> cancelled{true};
+    EXPECT_EQ(harken::StreamReadStatus::Cancelled, range->ReadAt(0, output.data(), 1, {&cancelled}).status);
+}

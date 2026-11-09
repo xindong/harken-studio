@@ -20,10 +20,15 @@ bool ValidPackMediaRange(const PackMediaRange& range) noexcept {
         range.chunkChecksums.size() == PackMediaChunkCount(range.frameCount, range.chunkFrames);
     if (range.external) {
         if (range.source || !range.external->locator || range.blobOffset != vorbis_test_wire::kStreamHeaderBytes ||
-            range.external->codec != PackExternalStream::Codec::Vorbis ||
-            range.external->fileBytes < range.blobOffset + vorbis_test_wire::kHeaderBytes)
+            (range.external->codec != PackExternalStream::Codec::Vorbis &&
+             range.external->codec != PackExternalStream::Codec::Pcm) ||
+            range.external->fileBytes < range.blobOffset + (range.external->codec == PackExternalStream::Codec::Vorbis
+                ? vorbis_test_wire::kHeaderBytes : kStreamHeaderBytes + kStreamTocEntryBytes))
             return false;
     } else if (!range.source) return false;
+    if (range.external && range.external->codec == PackExternalStream::Codec::Pcm)
+        return !range.vorbis && (range.loop.endFrame == 0 ? range.loop.startFrame == 0 :
+            range.loop.startFrame < range.loop.endFrame && range.loop.endFrame <= range.frameCount);
     if (!range.vorbis) return range.channelCount == 1 || range.channelCount == 2 ||
         range.channelCount == 4 || range.channelCount == 6 || range.channelCount == 8;
     const auto& media = range.vorbis->Media();

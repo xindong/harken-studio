@@ -395,6 +395,11 @@ private:
         std::shared_ptr<const StreamByteSource> source;
         std::shared_ptr<const PackExternalStream> external;
         VnResult metadataResult = VN_OK;
+        std::optional<StreamHeader> pcmHeader;
+        bool MetadataReady() const noexcept { return !external || vorbis || pcmHeader.has_value(); }
+        bool PacketEncoded() const noexcept {
+            return vorbis || (external && external->codec == PackExternalStream::Codec::Vorbis);
+        }
         // Multiple slots may prepare the same unopened resource concurrently.
         // Only I/O executors take this mutex; active references exclude close.
         std::mutex openMutex;
@@ -544,6 +549,7 @@ private:
         const char* path, bool replace, std::uint64_t expected, SourceToken* out);
     VnResult RegisterSourceAndWait(VnSoundId soundId, const char* path, bool replace);
     static void ValidateSourceSlice(SourceRequest& request);
+    static void ValidatePcmSourceSlice(SourceRequest& request);
     static void ReadExternalMetadataSlice(SourceRequest& request);
     void SettleIo();
     void CompleteReadObservation(StreamSlot& slot, const ChunkJob& job,
