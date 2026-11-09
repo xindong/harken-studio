@@ -1,3 +1,4 @@
+#include "Common/StreamFixtureRegistration.h"
 // Streaming-thread lifecycle: the startup handshake, and what happens to
 // everyone waiting on the streaming thread when it dies.
 //
@@ -135,8 +136,8 @@ TEST(StreamWorkerLifecycle, HandshakePublishesReadyAndServesRequests) {
               session.Engine()->streams.WorkerState());
 
     const std::string path = WriteStream("swl_ready.stream", harkentest::ObjectId(9101));
-    EXPECT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9101), path.c_str()));
-    EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(harkentest::ObjectId(9101)));
+    EXPECT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9101), path.c_str()));
+    EXPECT_EQ(VN_OK, harkentest::UnregisterFixtureStream(harkentest::ObjectId(9101)));
 }
 
 // The streaming thread cannot start: initialization must fail outright
@@ -180,7 +181,7 @@ TEST(StreamWorkerLifecycle, WorkerDeathReleasesWaitersInsteadOfBlocking) {
     BoundedCall first;
     const std::string firstPath = path;
     first.Start([firstPath] {
-        return Vn_RegisterStreamFile(harkentest::ObjectId(9102), firstPath.c_str());
+        return harkentest::RegisterFixtureStream(harkentest::ObjectId(9102), firstPath.c_str());
     });
 
     VnResult firstResult = VN_OK;
@@ -196,7 +197,7 @@ TEST(StreamWorkerLifecycle, WorkerDeathReleasesWaitersInsteadOfBlocking) {
         << "the streaming thread never published Failed within the budget";
     BoundedCall later;
     later.Start([firstPath] {
-        return Vn_RegisterStreamFile(harkentest::ObjectId(9103), firstPath.c_str());
+        return harkentest::RegisterFixtureStream(harkentest::ObjectId(9103), firstPath.c_str());
     });
     VnResult laterResult = VN_OK;
     ASSERT_TRUE(later.Wait(&laterResult))
@@ -228,7 +229,7 @@ TEST(StreamWorkerLifecycle, PlayAfterWorkerDeathIsRefusedAndClaimsNoSlot) {
     ASSERT_EQ(VN_OK, session.InitResult());
 
     const std::string path = WriteStream("swl_play_after_death.stream", harkentest::ObjectId(9107));
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9107), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9107), path.c_str()));
 
     const std::uint32_t freeSlotsBefore =
         session.Engine()->streams.FreeSlotCount();
@@ -280,7 +281,7 @@ TEST(StreamWorkerLifecycle, WorkerDeathEndsActiveStreamVoices) {
     ASSERT_EQ(VN_OK, session.InitResult());
 
     const std::string path = WriteStream("swl_active.stream", harkentest::ObjectId(9104));
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9104), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9104), path.c_str()));
     harken::StreamManager::StreamFacts probe;
     ASSERT_TRUE(session.Engine()->streams.FindFile(harkentest::ObjectId(9104), &probe))
         << "registration reported success but the id does not resolve";
@@ -459,7 +460,7 @@ TEST(StreamWorkerLifecycle, WorkerDeathStillClosesDrainedRetiringFiles) {
 
     const std::string first = WriteStream("swl_retire_a.stream", harkentest::ObjectId(9109));
     const std::string second = WriteStream("swl_retire_b.stream", harkentest::ObjectId(9109));
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9109), first.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9109), first.c_str()));
 
     // Play, then replace while it plays: the old generation retires with a
     // consumer still on it.
@@ -467,7 +468,7 @@ TEST(StreamWorkerLifecycle, WorkerDeathStillClosesDrainedRetiringFiles) {
     VnVoiceHandle handle = 0;
     ASSERT_EQ(VN_OK, harkentest::PlayRaw(&desc, &handle));
     ASSERT_EQ(VN_OK, Vn_Update());
-    ASSERT_EQ(VN_OK, Vn_ReplaceStreamFile(harkentest::ObjectId(9109), second.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::ReplaceFixtureStream(harkentest::ObjectId(9109), second.c_str()));
     ASSERT_EQ(1u, session.Engine()->streams.RetiringFileCount());
 
     {

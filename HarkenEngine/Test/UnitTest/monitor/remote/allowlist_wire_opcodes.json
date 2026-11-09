@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "producingPackage": "m0-5",
   "kind": "wire-opcodes",
-  "count": 116,
+  "count": 113,
   "entries": [
     {
       "name": "Vn_Init",
@@ -99,14 +99,6 @@
     {
       "name": "Vn_SetVoiceEffectParam",
       "opcode": 24
-    },
-    {
-      "name": "Vn_RegisterStreamFile",
-      "opcode": 25
-    },
-    {
-      "name": "Vn_UnregisterStreamFile",
-      "opcode": 26
     },
     {
       "name": "Vn_CreateEmitter",
@@ -211,10 +203,6 @@
     {
       "name": "Vn_ReplacePCM",
       "opcode": 52
-    },
-    {
-      "name": "Vn_ReplaceStreamFile",
-      "opcode": 53
     },
     {
       "name": "Vn_ReplacePack",

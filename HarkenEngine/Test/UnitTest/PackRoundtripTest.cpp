@@ -1,3 +1,4 @@
+#include "Common/StreamFixtureRegistration.h"
 // Pack round-trip fidelity, driven through the real compiler tool: the
 // test synthesizes sources, writes them as IEEE float32 wav files, runs
 // packc as a subprocess to build a .pack, and then renders every
@@ -480,7 +481,7 @@ TEST(PackRoundtrip, LoadRefusedWhenEntryShadowsStream) {
 
     EngineSession session(MakeNullConfig(0, kBlockFrames, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(8100), streamPath.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(8100), streamPath.c_str()));
 
     VnPackDesc desc{};
     desc.structSize = sizeof(VnPackDesc);
@@ -493,7 +494,7 @@ TEST(PackRoundtrip, LoadRefusedWhenEntryShadowsStream) {
     VnVoiceHandle voice = 0;
     EXPECT_EQ(VN_UNKNOWN_ID, harkentest::PlayRaw(&play, &voice));
     // The stream is untouched — still registered, so unregister succeeds.
-    EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(harkentest::ObjectId(8100)));
+    EXPECT_EQ(VN_OK, harkentest::UnregisterFixtureStream(harkentest::ObjectId(8100)));
 
     // With the stream gone, the same pack loads and 8101 becomes playable.
     ASSERT_EQ(VN_OK, Vn_LoadPack(&desc, &pack));

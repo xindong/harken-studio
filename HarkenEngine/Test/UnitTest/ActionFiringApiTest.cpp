@@ -1,3 +1,4 @@
+#include "Common/StreamFixtureRegistration.h"
 #include "Common/PcmStreamFixture.h"
 #include "../Common/MonitorExecutionTestSupport.h"
 #include "Common/ObjectIdTestSupport.h"
@@ -33971,7 +33972,7 @@ TEST(ActionFiringContract, SeekPreservesResamplingOfNonUnityPitch) {
             const auto path = WriteActionStream(
                 "action_stream_seek_resampling.stream",
                 CanonicalActionWorld::kFirstSound, samples);
-            ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(
+            ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(
                 CanonicalActionWorld::kFirstSound, path.c_str()));
             harken::StreamManager::StreamFacts facts{};
             ASSERT_TRUE(engine->streams.FindFile(
@@ -34670,7 +34671,7 @@ TEST(ActionFiringApi, StreamLocalStopPreservesMissingBoundaryPolicy) {
             const std::vector<float> samples(4096, 0.25f);
             const auto path = WriteActionStream("action_stream_local_stop.stream",
                 CanonicalActionWorld::kFirstSound, samples);
-            ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(
+            ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(
                 CanonicalActionWorld::kFirstSound, path.c_str()));
             harken::StreamManager::StreamFacts facts{};
             ASSERT_TRUE(engine.streams.FindFile(CanonicalActionWorld::kFirstSound, &facts));
@@ -34716,7 +34717,7 @@ TEST(ActionFiringApi, StreamLocalStopPreservesMissingBoundaryPolicy) {
             EXPECT_EQ(config.maxStreams, engine.streams.FreeSlotCount());
             EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(stop));
             EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(play));
-            EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(CanonicalActionWorld::kFirstSound));
+            EXPECT_EQ(VN_OK, harkentest::UnregisterFixtureStream(CanonicalActionWorld::kFirstSound));
         }
     }
 }
@@ -34734,7 +34735,7 @@ TEST(ActionFiringApi, StreamLoopReplacementRefusesOldWorldAndAcceptsNewRevision)
         CanonicalActionWorld::kFirstSound, samples);
     const auto replacement = WriteActionStream("action_loop_revision_new.stream",
         CanonicalActionWorld::kFirstSound, samples, true);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(
         CanonicalActionWorld::kFirstSound, original.c_str()));
     harken::StreamManager::StreamFacts facts{};
     ASSERT_TRUE(engine->streams.FindFile(CanonicalActionWorld::kFirstSound, &facts));
@@ -34748,7 +34749,7 @@ TEST(ActionFiringApi, StreamLoopReplacementRefusesOldWorldAndAcceptsNewRevision)
     prepare(oldWorld);
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
               harken::InstallContainerWorldV1(*engine, oldWorld.world).status);
-    ASSERT_EQ(VN_OK, Vn_ReplaceStreamFile(
+    ASSERT_EQ(VN_OK, harkentest::ReplaceFixtureStream(
         CanonicalActionWorld::kFirstSound, replacement.c_str()));
     const auto head = engine->commands.PublishedHead();
     auto post = ValidPostDesc();
@@ -34783,7 +34784,7 @@ TEST(ActionFiringApi, StreamLoopReplacementRefusesOldWorldAndAcceptsNewRevision)
     EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
     engine->streams.SyncServe();
     EXPECT_EQ(config.maxStreams, engine->streams.FreeSlotCount());
-    EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(CanonicalActionWorld::kFirstSound));
+    EXPECT_EQ(VN_OK, harkentest::UnregisterFixtureStream(CanonicalActionWorld::kFirstSound));
 }
 
 TEST(ActionFiringApi, StreamSeekSwapsExactRingAndRendersRequestedSourceFrames) {
@@ -34802,7 +34803,7 @@ TEST(ActionFiringApi, StreamSeekSwapsExactRingAndRendersRequestedSourceFrames) {
     const std::string path = WriteActionStream(
         "action_stream_seek_exact.stream", CanonicalActionWorld::kFirstSound,
         samples);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(
                          CanonicalActionWorld::kFirstSound, path.c_str()));
     harken::StreamManager::StreamFacts facts{};
     ASSERT_TRUE(engine->streams.FindFile(CanonicalActionWorld::kFirstSound,
@@ -35077,7 +35078,7 @@ TEST(ActionFiringApi, StreamSeekNaturalEndCompletesAndReclaimsTheFiring) {
     const std::string path = WriteActionStream(
         "action_stream_seek_natural_end.stream",
         CanonicalActionWorld::kFirstSound, samples);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(
                          CanonicalActionWorld::kFirstSound, path.c_str()));
     harken::StreamManager::StreamFacts facts{};
     ASSERT_TRUE(engine->streams.FindFile(CanonicalActionWorld::kFirstSound,
@@ -35186,7 +35187,7 @@ TEST(ActionFiringApi, StreamSeekNaturalEndCompletesAndReclaimsTheFiring) {
     EXPECT_EQ(config.maxStreams, engine->streams.FreeSlotCount());
     EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
     EXPECT_EQ(VN_OK,
-              Vn_UnregisterStreamFile(CanonicalActionWorld::kFirstSound));
+              harkentest::UnregisterFixtureStream(CanonicalActionWorld::kFirstSound));
 }
 
 TEST(ActionFiringApi, MixedResidentAndStreamSeekBackpressureIsAtomic) {
@@ -35204,7 +35205,7 @@ TEST(ActionFiringApi, MixedResidentAndStreamSeekBackpressureIsAtomic) {
     const std::string path = WriteActionStream(
         "action_mixed_seek_atomic.stream",
         CanonicalActionWorld::kFirstSound, streamSamples);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(
                          CanonicalActionWorld::kFirstSound, path.c_str()));
     harken::StreamManager::StreamFacts streamFacts{};
     ASSERT_TRUE(engine->streams.FindFile(CanonicalActionWorld::kFirstSound,
@@ -35341,7 +35342,7 @@ TEST(ActionFiringApi, StreamSeekPreparationFailurePreservesThePlayingRing) {
             throttleReplacement ? "action_stream_seek_throttled.stream"
                                 : "action_stream_seek_no_slot.stream",
             CanonicalActionWorld::kFirstSound, samples);
-        ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(
+        ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(
                              CanonicalActionWorld::kFirstSound, path.c_str()));
         harken::StreamManager::StreamFacts facts{};
         ASSERT_TRUE(engine->streams.FindFile(
@@ -35434,7 +35435,7 @@ TEST(ActionFiringApi, StreamSeekWorkerFailurePublishesNoTicketOrCommand) {
     const std::string path = WriteActionStream(
         "action_stream_seek_worker_failure.stream",
         CanonicalActionWorld::kFirstSound, samples);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(
                          CanonicalActionWorld::kFirstSound, path.c_str()));
     harken::StreamManager::StreamFacts facts{};
     ASSERT_TRUE(engine->streams.FindFile(CanonicalActionWorld::kFirstSound,
@@ -35532,7 +35533,7 @@ TEST(ActionFiringApi, StreamSeekRefusalsLeavePlaybackAndRingOwnershipUnchanged) 
             looped ? "action_stream_seek_loop_refusal.stream"
                    : "action_stream_seek_relative_refusal.stream",
             CanonicalActionWorld::kFirstSound, samples, looped);
-        ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(
+        ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(
                              CanonicalActionWorld::kFirstSound, path.c_str()));
         harken::StreamManager::StreamFacts facts{};
         ASSERT_TRUE(engine->streams.FindFile(
@@ -35637,7 +35638,7 @@ TEST(ActionFiringApi, StreamSeekTargetsOnlyTheSelectedConcurrentFiring) {
     const std::string path = WriteActionStream(
         "action_stream_seek_isolation.stream",
         CanonicalActionWorld::kFirstSound, samples);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(
                          CanonicalActionWorld::kFirstSound, path.c_str()));
     harken::StreamManager::StreamFacts facts{};
     ASSERT_TRUE(engine->streams.FindFile(CanonicalActionWorld::kFirstSound,

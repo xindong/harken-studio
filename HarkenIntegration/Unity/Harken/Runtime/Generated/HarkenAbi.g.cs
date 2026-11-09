@@ -1143,11 +1143,6 @@ namespace Harken
             Off(f, "VnByteSourceDescV1", "userData", Marshal.OffsetOf<VnByteSourceDescV1>("userData"), 16);
             Off(f, "VnByteSourceDescV1", "readAt", Marshal.OffsetOf<VnByteSourceDescV1>("readAt"), 24);
             Off(f, "VnByteSourceDescV1", "release", Marshal.OffsetOf<VnByteSourceDescV1>("release"), 32);
-            Size(f, "VnStreamSourceInfoV1", Marshal.SizeOf<VnStreamSourceInfoV1>(), 16);
-            Off(f, "VnStreamSourceInfoV1", "structSize", Marshal.OffsetOf<VnStreamSourceInfoV1>("structSize"), 0);
-            Off(f, "VnStreamSourceInfoV1", "state", Marshal.OffsetOf<VnStreamSourceInfoV1>("state"), 4);
-            Off(f, "VnStreamSourceInfoV1", "result", Marshal.OffsetOf<VnStreamSourceInfoV1>("result"), 8);
-            Off(f, "VnStreamSourceInfoV1", "reserved0", Marshal.OffsetOf<VnStreamSourceInfoV1>("reserved0"), 12);
             Size(f, "VnCanonicalPackSetMemberV3", Marshal.SizeOf<VnCanonicalPackSetMemberV3>(), 104);
             Off(f, "VnCanonicalPackSetMemberV3", "structSize", Marshal.OffsetOf<VnCanonicalPackSetMemberV3>("structSize"), 0);
             Off(f, "VnCanonicalPackSetMemberV3", "reserved0", Marshal.OffsetOf<VnCanonicalPackSetMemberV3>("reserved0"), 4);

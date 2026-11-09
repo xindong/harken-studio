@@ -705,11 +705,6 @@ namespace Harken
         public const uint VN_CANONICAL_PACK_SET_MEMBER_RESULT_INIT = 4u;
         internal const uint VN_MONITOR_RECORD_ENVELOPE_PACKED_BYTES = 316u;
         internal const uint VN_MONITOR_PLAYABLE_PROVENANCE_KNOWN = 1u;
-        public const uint VN_STREAM_SOURCE_REGISTER = 0u;
-        public const uint VN_STREAM_SOURCE_REPLACE = 1u;
-        public const uint VN_STREAM_SOURCE_PREPARING = 1u;
-        public const uint VN_STREAM_SOURCE_READY = 2u;
-        public const uint VN_STREAM_SOURCE_FAILED = 3u;
         public const int VN_BYTE_READ_OK = 0;
         public const int VN_BYTE_READ_CANCELLED = 1;
         public const int VN_BYTE_READ_IO_ERROR = 2;
@@ -2258,15 +2253,6 @@ namespace Harken
     public IntPtr userData;
     public IntPtr readAt;
     public IntPtr release;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    public struct VnStreamSourceInfoV1
-    {
-    public uint structSize;
-    public uint state;
-    public int result;
-    public uint reserved0;
     }
 
     [StructLayout(LayoutKind.Sequential)]

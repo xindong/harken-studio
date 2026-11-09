@@ -1,7 +1,8 @@
+#include "Common/StreamFixtureRegistration.h"
 #include "Common/VorbisFixture.h"
 #include "harken/media/VorbisDecoder.h"
 #include "Common/PcmStreamFixture.h"
-// Vn_RegisterStreamFile / Vn_UnregisterStreamFile validation: the
+// harkentest::RegisterFixtureStream / harkentest::UnregisterFixtureStream validation: the
 // streaming thread performs the open and the header/TOC/checksum-table
 // verification during the (blocking) call, so every refusal here is
 // observable synchronously and must leave no trace behind. Also covers
@@ -342,180 +343,6 @@ TEST(StreamRegister, DefaultByteRingSurvivesBoundedMultichannelIoJitter) {
     RecordProperty("delayed_reads", source->delayedReads.load());
     RecordProperty("max_io_delay_us", std::to_string(source->maxDelayUs.load()));
     RecordProperty("starved_blocks", starved);
-}
-
-struct NativeSourceState {
-    std::vector<std::uint8_t> bytes;
-    ReadGate gate;
-    std::atomic<unsigned> reads{0}, releases{0};
-    bool cooperate = true;
-    std::size_t maxRead = SIZE_MAX;
-    std::thread::id releaseThread;
-    static std::int32_t Read(void* context, std::uint64_t offset, void* destination,
-        std::uint32_t count, std::uint32_t* outRead, const VnReadCancellationViewV1* cancel) {
-        auto& self = *static_cast<NativeSourceState*>(context);
-        self.reads.fetch_add(1);
-        *outRead = 0;
-        if (offset == self.gate.offset.load()) {
-            self.gate.entered.store(true);
-            while (!self.gate.release.load()) {
-                if (self.cooperate && cancel->isCancelled(cancel->context)) return VN_BYTE_READ_CANCELLED;
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            }
-        }
-        if (cancel->isCancelled(cancel->context)) return VN_BYTE_READ_CANCELLED;
-        if (offset > self.bytes.size() || count > self.bytes.size() - offset) return VN_BYTE_READ_IO_ERROR;
-        *outRead = static_cast<std::uint32_t>(std::min<std::size_t>(count, self.maxRead));
-        std::memcpy(destination, self.bytes.data() + offset, *outRead);
-        return VN_BYTE_READ_OK;
-    }
-    static void Release(void* context) {
-        auto& self = *static_cast<NativeSourceState*>(context);
-        self.releaseThread = std::this_thread::get_id();
-        self.releases.fetch_add(1, std::memory_order_release);
-    }
-    VnByteSourceDescV1 Descriptor() {
-        return {sizeof(VnByteSourceDescV1), 0, bytes.size(), this, &Read, &Release};
-    }
-};
-
-TEST(StreamRegister, PublicSourceAdmissionCancelAndNamespaceStayResponsive) {
-    NativeSourceState blocked, refused;
-    const auto id = harkentest::ObjectId(17330);
-    blocked.bytes = MakeValidImage(id);
-    refused.bytes = blocked.bytes;
-    blocked.gate.offset.store(0);
-    blocked.cooperate = false;
-    EngineSession session(MakeNullConfig());
-    ASSERT_EQ(VN_OK, session.InitResult());
-    ReleaseReadGate release{blocked.gate};
-    const auto healthyId = harkentest::ObjectId(17331);
-    const auto path = TempPath("stream_sdk_source.stream");
-    WriteFileBytes(path, MakeValidImage(healthyId));
-    VnStreamSourceRequest healthy = 0;
-    ASSERT_EQ(VN_OK, Vn_BeginStreamFile(healthyId, VN_STREAM_SOURCE_REGISTER, path.c_str(), &healthy));
-    VnStreamSourceInfoV1 info{sizeof(info)};
-    ASSERT_TRUE(WaitUntil([&] { return Vn_QueryStreamSource(healthy, &info) == VN_OK && info.state == VN_STREAM_SOURCE_READY; }));
-    ASSERT_EQ(VN_OK, Vn_CommitStreamSource(healthy));
-    VnPlayDesc play = harkentest::MakePlayDesc(healthyId);
-    VnVoiceHandle voice = 0;
-    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
-    auto desc = blocked.Descriptor();
-    VnStreamSourceRequest pending = 0;
-    ASSERT_EQ(VN_OK, Vn_BeginStreamSource(id, VN_STREAM_SOURCE_REGISTER, &desc, &pending));
-    ASSERT_TRUE(WaitUntil([&] { return blocked.gate.entered.load(); }));
-    EXPECT_EQ(VN_OK, Vn_Update());
-    session.Engine()->nullBackend.Pump(1);
-    EXPECT_EQ(VN_BACKPRESSURE, Vn_CommitStreamSource(pending));
-    auto other = refused.Descriptor();
-    VnStreamSourceRequest rejected = 99;
-    EXPECT_EQ(VN_IN_USE, Vn_BeginStreamSource(id, VN_STREAM_SOURCE_REGISTER, &other, &rejected));
-    EXPECT_EQ(0u, rejected);
-    EXPECT_EQ(0u, refused.reads.load());
-    EXPECT_EQ(0u, refused.releases.load());
-    const std::vector<float> tone(64, 0.25f);
-    auto pcm = harkentest::MonoDesc(tone, kRate);
-    EXPECT_EQ(VN_IN_USE, Vn_RegisterPCM(id, &pcm));
-    EXPECT_EQ(VN_OK, Vn_CancelStreamSource(pending));
-    EXPECT_EQ(VN_STALE_HANDLE, Vn_QueryStreamSource(pending, &info));
-    EXPECT_EQ(VN_STALE_HANDLE, Vn_CancelStreamSource(pending));
-    EXPECT_EQ(VN_STALE_HANDLE, Vn_CommitStreamSource(pending));
-    EXPECT_EQ(0u, blocked.releases.load());
-    EXPECT_EQ(VN_OK, Vn_RegisterPCM(id, &pcm));
-    blocked.gate.release.store(true);
-    ASSERT_TRUE(WaitUntil([&] { return blocked.releases.load(std::memory_order_acquire) == 1; }));
-    EXPECT_NE(std::this_thread::get_id(), blocked.releaseThread);
-    other.flags = 1;
-    rejected = 99;
-    EXPECT_EQ(VN_INVALID_ARG, Vn_BeginStreamSource(harkentest::ObjectId(17332), 0, &other, &rejected));
-    EXPECT_EQ(0u, rejected);
-    EXPECT_EQ(0u, refused.reads.load());
-    EXPECT_EQ(0u, refused.releases.load());
-}
-
-TEST(StreamRegister, PublicReadyFailureAndReplacementKeepIndependentOwnership) {
-    NativeSourceState first, second, failed, stale;
-    const auto a = harkentest::ObjectId(17333), b = harkentest::ObjectId(17334);
-    first.bytes = MakeValidImage(a); first.maxRead = 7;
-    second.bytes = MakeValidImage(b);
-    failed.bytes = {0, 1, 2, 3};
-    stale.bytes = first.bytes;
-    EngineSession session(MakeNullConfig());
-    ASSERT_EQ(VN_OK, session.InitResult());
-    auto d1 = first.Descriptor(), d2 = second.Descriptor(), bad = failed.Descriptor();
-    VnStreamSourceRequest one = 0, two = 0, replacement = 0;
-    ASSERT_EQ(VN_OK, Vn_BeginStreamSource(a, 0, &d1, &one));
-    ASSERT_EQ(VN_OK, Vn_BeginStreamSource(b, 0, &d2, &two));
-    VnStreamSourceInfoV1 i1{sizeof(i1)}, i2{sizeof(i2)};
-    ASSERT_TRUE(WaitUntil([&] { return Vn_QueryStreamSource(one, &i1) == VN_OK &&
-        Vn_QueryStreamSource(two, &i2) == VN_OK && i1.state == VN_STREAM_SOURCE_READY && i2.state == VN_STREAM_SOURCE_READY; }));
-    ASSERT_EQ(VN_OK, Vn_CommitStreamSource(one));
-    EXPECT_EQ(VN_STALE_HANDLE, Vn_CommitStreamSource(one));
-    ASSERT_EQ(VN_OK, Vn_BeginStreamSource(a, VN_STREAM_SOURCE_REPLACE, &bad, &replacement));
-    ASSERT_TRUE(WaitUntil([&] { return Vn_QueryStreamSource(replacement, &i1) == VN_OK && i1.state == VN_STREAM_SOURCE_FAILED; }));
-    EXPECT_EQ(VN_BAD_STREAM_FILE, Vn_CommitStreamSource(replacement));
-    EXPECT_EQ(0u, failed.releases.load());
-    harken::StreamManager::StreamFacts facts;
-    EXPECT_TRUE(session.Engine()->streams.FindFile(a, &facts));
-    EXPECT_EQ(1000u, facts.frameCount);
-    EXPECT_EQ(VN_OK, Vn_CancelStreamSource(replacement));
-    EXPECT_EQ(VN_OK, Vn_CancelStreamSource(two));
-    ASSERT_TRUE(WaitUntil([&] { return failed.releases.load() == 1 && second.releases.load() == 1; }));
-    EXPECT_EQ(0u, first.releases.load());
-    auto staleDesc = stale.Descriptor();
-    ASSERT_EQ(VN_OK, Vn_BeginStreamSource(a, VN_STREAM_SOURCE_REPLACE, &staleDesc, &replacement));
-    ASSERT_TRUE(WaitUntil([&] { return Vn_QueryStreamSource(replacement, &i1) == VN_OK && i1.state == VN_STREAM_SOURCE_READY; }));
-    EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(a));
-    ASSERT_TRUE(WaitUntil([&] { return first.releases.load() == 1; }));
-    EXPECT_EQ(VN_STALE_HANDLE, Vn_CommitStreamSource(replacement));
-    EXPECT_EQ(VN_OK, Vn_QueryStreamSource(replacement, &i1));
-    EXPECT_EQ(VN_STREAM_SOURCE_FAILED, i1.state);
-    EXPECT_EQ(VN_STALE_HANDLE, i1.result);
-    EXPECT_EQ(0u, stale.releases.load());
-    EXPECT_EQ(VN_OK, Vn_CancelStreamSource(replacement));
-    ASSERT_TRUE(WaitUntil([&] { return stale.releases.load() == 1; }));
-}
-
-TEST(StreamRegister, PublicFailedWorkerAndTermDiscardWithoutTokenReuse) {
-    NativeSourceState old, current;
-    const auto id = harkentest::ObjectId(17335);
-    old.bytes = MakeValidImage(id); current.bytes = old.bytes;
-    VnStreamSourceRequest oldToken = 0;
-    {
-        EngineSession session(MakeNullConfig());
-        ASSERT_EQ(VN_OK, session.InitResult());
-        auto desc = old.Descriptor();
-        old.gate.offset.store(0);
-        ReleaseReadGate release{old.gate};
-        ASSERT_EQ(VN_OK, Vn_BeginStreamSource(id, 0, &desc, &oldToken));
-        ASSERT_TRUE(WaitUntil([&] { return old.gate.entered.load(); }));
-        harken::SetStreamRequestFaultForTests(harken::StreamRequestFault::WorkerLoop);
-        const bool failed = WaitUntil([&] { return session.Engine()->streams.WorkerState() == harken::StreamWorkerState::Failed; });
-        harken::SetStreamRequestFaultForTests(harken::StreamRequestFault::None);
-        ASSERT_TRUE(failed);
-        VnStreamSourceInfoV1 info{sizeof(info)};
-        EXPECT_EQ(VN_OK, Vn_QueryStreamSource(oldToken, &info));
-        EXPECT_EQ(VN_STREAM_SOURCE_FAILED, info.state);
-        EXPECT_EQ(VN_DEVICE_ERROR, info.result);
-        EXPECT_EQ(VN_OK, Vn_CancelStreamSource(oldToken));
-        EXPECT_EQ(VN_STALE_HANDLE, Vn_QueryStreamSource(oldToken, &info));
-    }
-    EXPECT_EQ(1u, old.releases.load());
-    {
-        EngineSession session(MakeNullConfig());
-        ASSERT_EQ(VN_OK, session.InitResult());
-        auto desc = current.Descriptor();
-        current.gate.offset.store(0);
-        ReleaseReadGate release{current.gate};
-        VnStreamSourceRequest token = 0;
-        ASSERT_EQ(VN_OK, Vn_BeginStreamSource(id, 0, &desc, &token));
-        EXPECT_NE(oldToken, token);
-        EXPECT_EQ(VN_STALE_HANDLE, Vn_CancelStreamSource(oldToken));
-        ASSERT_TRUE(WaitUntil([&] { return current.gate.entered.load(); }));
-        // Term owns the accepted request even when the caller never cancels.
-        EXPECT_EQ(VN_OK, Vn_Term());
-        EXPECT_EQ(1u, current.releases.load());
-    }
 }
 
 TEST(StreamRegister, SourceShortReadsAndIndependentReadyResults) {
@@ -1766,7 +1593,7 @@ TEST(StreamRegister, RegisterExposesTocFactsThroughFindFile) {
 
     harken::StreamManager::StreamFacts facts;
     RingAccess::SetCommitPageLimit(streams, 1);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(spec.soundId, path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(spec.soundId, path.c_str()));
     EXPECT_EQ(0u, RingAccess::CommittedBytes(streams));
     auto play = harkentest::MakePlayDesc(spec.soundId);
     VnVoiceHandle voice = 0;
@@ -1795,7 +1622,7 @@ TEST(StreamRegister, RegisterExposesTocFactsThroughFindFile) {
     WriteFileBytes(widerPath, BuildStreamBytes(spec, planar));
     const auto ringBytes = RingAccess::CommittedBytes(streams);
     RingAccess::SetCommitPageLimit(streams, 0);
-    ASSERT_EQ(VN_OK, Vn_ReplaceStreamFile(spec.soundId, widerPath.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::ReplaceFixtureStream(spec.soundId, widerPath.c_str()));
     ASSERT_TRUE(streams.FindFile(spec.soundId, &facts));
     EXPECT_EQ(3u, facts.channelCount);
     EXPECT_NE(originalRevision, facts.contentRevision);
@@ -1902,7 +1729,7 @@ TEST(StreamRegister, ContentRevisionUsesSemanticHeaderAndChunkChecksums) {
     const std::string firstPath =
         TempPath("stream_content_revision_first.stream");
     WriteFileBytes(firstPath, BuildStreamBytes(spec, samples));
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(spec.soundId, firstPath.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(spec.soundId, firstPath.c_str()));
     harken::StreamManager::StreamFacts first;
     ASSERT_TRUE(session.Engine()->streams.FindFile(spec.soundId, &first));
     ASSERT_NE(0u, first.contentRevision);
@@ -1911,7 +1738,7 @@ TEST(StreamRegister, ContentRevisionUsesSemanticHeaderAndChunkChecksums) {
     const std::string samePath =
         TempPath("stream_content_revision_same.stream");
     WriteFileBytes(samePath, BuildStreamBytes(spec, samples));
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(spec.soundId, samePath.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(spec.soundId, samePath.c_str()));
     harken::StreamManager::StreamFacts same;
     ASSERT_TRUE(session.Engine()->streams.FindFile(spec.soundId, &same));
     EXPECT_EQ(first.contentRevision, same.contentRevision);
@@ -1922,7 +1749,7 @@ TEST(StreamRegister, ContentRevisionUsesSemanticHeaderAndChunkChecksums) {
         TempPath("stream_content_revision_changed.stream");
     WriteFileBytes(changedPath, BuildStreamBytes(spec, samples));
     ASSERT_EQ(VN_OK,
-              Vn_RegisterStreamFile(spec.soundId, changedPath.c_str()));
+              harkentest::RegisterFixtureStream(spec.soundId, changedPath.c_str()));
     harken::StreamManager::StreamFacts changed;
     ASSERT_TRUE(session.Engine()->streams.FindFile(spec.soundId, &changed));
     EXPECT_NE(first.contentRevision, changed.contentRevision);
@@ -1933,7 +1760,7 @@ TEST(StreamRegister, ContentRevisionUsesSemanticHeaderAndChunkChecksums) {
         TempPath("stream_content_revision_rechunked.stream");
     WriteFileBytes(rechunkedPath, BuildStreamBytes(spec, samples));
     ASSERT_EQ(VN_OK,
-              Vn_RegisterStreamFile(spec.soundId, rechunkedPath.c_str()));
+              harkentest::RegisterFixtureStream(spec.soundId, rechunkedPath.c_str()));
     harken::StreamManager::StreamFacts rechunked;
     ASSERT_TRUE(session.Engine()->streams.FindFile(spec.soundId, &rechunked));
     EXPECT_NE(changed.contentRevision, rechunked.contentRevision);
@@ -1951,7 +1778,7 @@ TEST(StreamRegister, LoopReplacementChangesRevisionAndPreservesPinnedGeneration)
     const auto samples = harkentest::MakeSine(600, 500.0, kRate, 0.5f);
     const auto firstPath = TempPath("stream_loop_revision_first.stream");
     WriteFileBytes(firstPath, BuildStreamBytes(spec, samples));
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(spec.soundId, firstPath.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(spec.soundId, firstPath.c_str()));
     harken::StreamManager::StreamFacts original{};
     ASSERT_TRUE(streams.FindFile(spec.soundId, &original));
     ASSERT_TRUE(streams.AcquirePendingRef(original.fileIndex));
@@ -1961,7 +1788,7 @@ TEST(StreamRegister, LoopReplacementChangesRevisionAndPreservesPinnedGeneration)
     spec.loopEndFrame = 512;
     const auto replacementPath = TempPath("stream_loop_revision_next.stream");
     WriteFileBytes(replacementPath, BuildStreamBytes(spec, samples));
-    ASSERT_EQ(VN_OK, Vn_ReplaceStreamFile(spec.soundId, replacementPath.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::ReplaceFixtureStream(spec.soundId, replacementPath.c_str()));
     harken::StreamManager::StreamFacts current{}, pinned{};
     ASSERT_TRUE(streams.FindFile(spec.soundId, &current));
     EXPECT_NE(original.contentRevision, current.contentRevision);
@@ -1982,7 +1809,7 @@ TEST(StreamRegister, LoopReplacementChangesRevisionAndPreservesPinnedGeneration)
         const auto path = TempPath("stream_loop_revision_" +
             std::to_string(region.first) + "_" + std::to_string(region.second) + ".stream");
         WriteFileBytes(path, BuildStreamBytes(spec, samples));
-        ASSERT_EQ(VN_OK, Vn_ReplaceStreamFile(spec.soundId, path.c_str()));
+        ASSERT_EQ(VN_OK, harkentest::ReplaceFixtureStream(spec.soundId, path.c_str()));
         ASSERT_TRUE(streams.FindFile(spec.soundId, &current));
         if (region.second == 0) EXPECT_EQ(previousRevision, current.contentRevision);
         else EXPECT_NE(previousRevision, current.contentRevision);
@@ -1990,10 +1817,10 @@ TEST(StreamRegister, LoopReplacementChangesRevisionAndPreservesPinnedGeneration)
         streams.SyncServe();
     }
     EXPECT_EQ(VN_BAD_STREAM_FILE,
-              Vn_ReplaceStreamFile(spec.soundId, "missing_loop_revision.stream"));
+              harkentest::ReplaceFixtureStream(spec.soundId, "missing_loop_revision.stream"));
     ASSERT_TRUE(streams.FindFile(spec.soundId, &current));
     EXPECT_EQ(previousRevision, current.contentRevision);
-    EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(spec.soundId));
+    EXPECT_EQ(VN_OK, harkentest::UnregisterFixtureStream(spec.soundId));
     EXPECT_EQ(0u, streams.RetiringFileCount());
 }
 
@@ -2007,13 +1834,13 @@ TEST(StreamRegister, EnqueueFailureReturnsBadFileAndCanRetry) {
     {
         StreamRequestFaultGuard fault(harken::StreamRequestFault::Enqueue);
         EXPECT_EQ(VN_BAD_STREAM_FILE,
-                  Vn_RegisterStreamFile(harkentest::ObjectId(7001), path.c_str()));
+                  harkentest::RegisterFixtureStream(harkentest::ObjectId(7001), path.c_str()));
     }
 
     harken::StreamManager::StreamFacts facts;
     EXPECT_FALSE(session.Engine()->streams.FindFile(harkentest::ObjectId(7001), &facts));
-    EXPECT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(7001), path.c_str()));
-    EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(harkentest::ObjectId(7001)));
+    EXPECT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(7001), path.c_str()));
+    EXPECT_EQ(VN_OK, harkentest::UnregisterFixtureStream(harkentest::ObjectId(7001)));
 }
 
 TEST(StreamRegister, ChunkFramesAcceptanceMatchesSharedCeiling) {
@@ -2030,7 +1857,7 @@ TEST(StreamRegister, ChunkFramesAcceptanceMatchesSharedCeiling) {
         TempPath("stream_reg_chunk_ceiling.stream");
     WriteFileBytes(acceptedPath, BuildStreamBytes(spec, oneFrame));
     EXPECT_EQ(VN_OK,
-              Vn_RegisterStreamFile(spec.soundId, acceptedPath.c_str()));
+              harkentest::RegisterFixtureStream(spec.soundId, acceptedPath.c_str()));
 
     spec.soundId = harkentest::ObjectId(7011);
     spec.chunkFrames = harken::kMaxStreamChunkFrames + 1;
@@ -2038,28 +1865,28 @@ TEST(StreamRegister, ChunkFramesAcceptanceMatchesSharedCeiling) {
         TempPath("stream_reg_chunk_over_ceiling.stream");
     WriteFileBytes(refusedPath, BuildStreamBytes(spec, oneFrame));
     EXPECT_EQ(VN_BAD_STREAM_FILE,
-              Vn_RegisterStreamFile(spec.soundId, refusedPath.c_str()));
+              harkentest::RegisterFixtureStream(spec.soundId, refusedPath.c_str()));
 }
 
 TEST(StreamRegister, ArgumentAndLifecycleRefusals) {
     // No engine: shape checks cannot even run.
     EXPECT_EQ(VN_NOT_INITIALIZED,
-              Vn_RegisterStreamFile(harkentest::ObjectId(7002), "irrelevant"));
-    EXPECT_EQ(VN_NOT_INITIALIZED, Vn_UnregisterStreamFile(harkentest::ObjectId(7002)));
+              harkentest::RegisterFixtureStream(harkentest::ObjectId(7002), "irrelevant"));
+    EXPECT_EQ(VN_NOT_INITIALIZED, harkentest::UnregisterFixtureStream(harkentest::ObjectId(7002)));
 
     EngineSession session(MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
 
-    EXPECT_EQ(VN_INVALID_ARG, Vn_RegisterStreamFile(harkentest::ObjectId(7002), nullptr));
+    EXPECT_EQ(VN_INVALID_ARG, harkentest::RegisterFixtureStream(harkentest::ObjectId(7002), nullptr));
 
     // A missing file is a bad stream file, not a bad argument.
     const std::string missing = TempPath("stream_reg_missing.stream");
     std::filesystem::remove(missing);
     EXPECT_EQ(VN_BAD_STREAM_FILE,
-              Vn_RegisterStreamFile(harkentest::ObjectId(7002), missing.c_str()));
+              harkentest::RegisterFixtureStream(harkentest::ObjectId(7002), missing.c_str()));
 
     // Unregistering an id that names no stream.
-    EXPECT_EQ(VN_UNKNOWN_ID, Vn_UnregisterStreamFile(harkentest::ObjectId(7002)));
+    EXPECT_EQ(VN_UNKNOWN_ID, harkentest::UnregisterFixtureStream(harkentest::ObjectId(7002)));
 }
 
 TEST(StreamRegister, CorruptContainersRefusedWithoutSideEffects) {
@@ -2121,7 +1948,7 @@ TEST(StreamRegister, CorruptContainersRefusedWithoutSideEffects) {
         corruption.mutate(&bytes);
         WriteFileBytes(path, bytes);
         EXPECT_EQ(VN_BAD_STREAM_FILE,
-                  Vn_RegisterStreamFile(harkentest::ObjectId(7003), path.c_str()))
+                  harkentest::RegisterFixtureStream(harkentest::ObjectId(7003), path.c_str()))
             << corruption.name;
         harken::StreamManager::StreamFacts facts;
         EXPECT_FALSE(session.Engine()->streams.FindFile(harkentest::ObjectId(7003), &facts))
@@ -2131,7 +1958,7 @@ TEST(StreamRegister, CorruptContainersRefusedWithoutSideEffects) {
     // The untouched image proves the fixture itself is valid — the
     // refusals above measured the corruption, not the builder.
     WriteFileBytes(path, valid);
-    EXPECT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(7003), path.c_str()));
+    EXPECT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(7003), path.c_str()));
 }
 
 TEST(StreamRegister, TocSoundIdMustMatchRegisteredId) {
@@ -2144,13 +1971,13 @@ TEST(StreamRegister, TocSoundIdMustMatchRegisteredId) {
     const std::string path = TempPath("stream_reg_id_mismatch.stream");
     WriteFileBytes(path, MakeValidImage(harkentest::ObjectId(7006)));
 
-    EXPECT_EQ(VN_BAD_STREAM_FILE, Vn_RegisterStreamFile(harkentest::ObjectId(7007), path.c_str()));
+    EXPECT_EQ(VN_BAD_STREAM_FILE, harkentest::RegisterFixtureStream(harkentest::ObjectId(7007), path.c_str()));
     harken::StreamManager::StreamFacts facts;
     EXPECT_FALSE(session.Engine()->streams.FindFile(harkentest::ObjectId(7007), &facts));
 
     // The identical file under its own id registers normally, proving the
     // refusal measured the mismatch and not the fixture.
-    EXPECT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(7006), path.c_str()));
+    EXPECT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(7006), path.c_str()));
 }
 
 TEST(StreamRegister, SoundIdNamespaceIsSharedWithPCM) {
@@ -2160,9 +1987,9 @@ TEST(StreamRegister, SoundIdNamespaceIsSharedWithPCM) {
     const std::string path = TempPath("stream_reg_shared.stream");
     WriteFileBytes(path, MakeValidImage(harkentest::ObjectId(7004)));
 
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(7004), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(7004), path.c_str()));
     // Same id again as a stream: taken.
-    EXPECT_EQ(VN_IN_USE, Vn_RegisterStreamFile(harkentest::ObjectId(7004), path.c_str()));
+    EXPECT_EQ(VN_IN_USE, harkentest::RegisterFixtureStream(harkentest::ObjectId(7004), path.c_str()));
     // Same id as resident PCM: also taken — one namespace.
     const std::vector<float> tone = harkentest::MakeSine(64, 500.0, kRate,
                                                         0.5f);
@@ -2172,10 +1999,10 @@ TEST(StreamRegister, SoundIdNamespaceIsSharedWithPCM) {
     // And the mirror image: a PCM-registered id refuses stream
     // registration.
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(7005), &desc));
-    EXPECT_EQ(VN_IN_USE, Vn_RegisterStreamFile(harkentest::ObjectId(7005), path.c_str()));
+    EXPECT_EQ(VN_IN_USE, harkentest::RegisterFixtureStream(harkentest::ObjectId(7005), path.c_str()));
 
     // Unregistration frees the name for either namespace.
-    ASSERT_EQ(VN_OK, Vn_UnregisterStreamFile(harkentest::ObjectId(7004)));
+    ASSERT_EQ(VN_OK, harkentest::UnregisterFixtureStream(harkentest::ObjectId(7004)));
     harken::StreamManager::StreamFacts facts;
     EXPECT_FALSE(session.Engine()->streams.FindFile(harkentest::ObjectId(7004), &facts));
     EXPECT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(7004), &desc));
@@ -2199,7 +2026,7 @@ TEST(StreamRegister, IllegalUtf8PathRefusedAndStreamThreadSurvives) {
 
     for (const char* illegal : kIllegalUtf8Paths) {
         EXPECT_EQ(VN_BAD_STREAM_FILE,
-                  Vn_RegisterStreamFile(harkentest::ObjectId(7101), illegal)) << illegal;
+                  harkentest::RegisterFixtureStream(harkentest::ObjectId(7101), illegal)) << illegal;
         harken::StreamManager::StreamFacts facts;
         EXPECT_FALSE(session.Engine()->streams.FindFile(harkentest::ObjectId(7101), &facts))
             << illegal << ": refusal must leave no registration";
@@ -2210,7 +2037,7 @@ TEST(StreamRegister, IllegalUtf8PathRefusedAndStreamThreadSurvives) {
     // session and the update pump completes.
     const std::string path = TempPath("stream_reg_after_illegal.stream");
     WriteFileBytes(path, MakeValidImage(harkentest::ObjectId(7101)));
-    EXPECT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(7101), path.c_str()));
+    EXPECT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(7101), path.c_str()));
     EXPECT_EQ(VN_OK, Vn_Update());
 }
 
@@ -2220,12 +2047,12 @@ TEST(StreamRegister, IllegalUtf8ReplacePathRefusedOldFileKept) {
 
     const std::string path = TempPath("stream_reg_replace_base.stream");
     WriteFileBytes(path, MakeValidImage(harkentest::ObjectId(7102)));
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(7102), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(7102), path.c_str()));
 
     // An illegal-UTF-8 replacement path is a bad stream file with the old
     // registration untouched, never an escaping conversion.
     EXPECT_EQ(VN_BAD_STREAM_FILE,
-              Vn_ReplaceStreamFile(harkentest::ObjectId(7102), kIllegalUtf8Paths[0]));
+              harkentest::ReplaceFixtureStream(harkentest::ObjectId(7102), kIllegalUtf8Paths[0]));
 
     // The original file is still registered and serving its own facts.
     harken::StreamManager::StreamFacts facts;
@@ -2264,12 +2091,12 @@ TEST(StreamRegister, LegalUtf8PathRegistersEndToEnd) {
         ASSERT_TRUE(out.good());
     }
 
-    EXPECT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(7103), utf8Path.c_str()));
+    EXPECT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(7103), utf8Path.c_str()));
     harken::StreamManager::StreamFacts facts;
     EXPECT_TRUE(session.Engine()->streams.FindFile(harkentest::ObjectId(7103), &facts));
 
     // Leave nothing behind: drop the registration, then the file.
-    EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(harkentest::ObjectId(7103)));
+    EXPECT_EQ(VN_OK, harkentest::UnregisterFixtureStream(harkentest::ObjectId(7103)));
     std::error_code ec;
     std::filesystem::remove(filePath, ec);
 }

@@ -1,3 +1,4 @@
+#include "Common/StreamFixtureRegistration.h"
 #include "Common/PcmStreamFixture.h"
 #include "Common/ObjectIdTestSupport.h"
 #include <harken/Harken.h>
@@ -905,7 +906,7 @@ TEST(VariableCurrentSlice, DirectStreamStarvationKeepsFirstValueThroughUpdateAnd
         const std::string path = std::string(HARKEN_TEMP_DIR) + "/r03_direct_starvation.stream";
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(
             spec, std::vector<float>(kSampleRate, 0.05f)));
-        ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(sound, path.c_str()));
+        ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(sound, path.c_str()));
         RegisterVoiceAttachment(harkentest::ObjectId(7242), sound);
         ASSERT_EQ(VN_OK, Vn_Update());
         e.nullBackend.Pump(2);
@@ -963,7 +964,7 @@ TEST(VariableCurrentSlice, DirectSettersSupersedeAcknowledgedVariableWhileStream
         const std::string path = std::string(HARKEN_TEMP_DIR) + "/r03_direct_setter_starvation.stream";
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(
             spec, std::vector<float>(kSampleRate, 0.05f)));
-        ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(sound, path.c_str()));
+        ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(sound, path.c_str()));
         RegisterVoiceAttachment(harkentest::ObjectId(7244), sound);
         const auto pitchBinding = harkentest::ObjectId(7245);
         RegisterLinearBinding(pitchBinding, kVariable, VN_TARGET_SCOPE_VOICE,
@@ -1174,7 +1175,7 @@ TEST(VariableCurrentSlice, LatePendingStartPublishesSourcesAndCalendarInSameUpda
             spec.chunkFrames = 256;
             const std::string path = std::string(HARKEN_TEMP_DIR) + "/r03_pending.stream";
             harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, samples));
-            ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(sound, path.c_str()));
+            ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(sound, path.c_str()));
         } else {
             ASSERT_EQ(VN_OK, Vn_RegisterPCM(sound, &pcm));
         }
@@ -1567,7 +1568,7 @@ TEST(VariableCurrentSlice, StreamPressureReturnKeepsCapturedFirstPcmThroughArena
         spec.chunkFrames = 256;
         const std::string path = std::string(HARKEN_TEMP_DIR) + "/r03_pressure_return.stream";
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, samples));
-        ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(sound, path.c_str()));
+        ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(sound, path.c_str()));
         RegisterVoiceAttachment(harkentest::ObjectId(7372), sound);
         ASSERT_EQ(VN_OK, Vn_Update());
         e.nullBackend.Pump(2);

@@ -765,11 +765,6 @@ static_assert(static_cast<std::uint64_t>(VN_MONITOR_STUDIO_DEFAULT_GAME_OBJECT_I
 static_assert(static_cast<std::uint64_t>(VN_MONITOR_RECORD_ENVELOPE_PACKED_BYTES) == 316ull, "binding define drift: VN_MONITOR_RECORD_ENVELOPE_PACKED_BYTES");
 static_assert(static_cast<std::uint64_t>(VN_MONITOR_STATE_ENTITY_SLOTS) == 16ull, "binding define drift: VN_MONITOR_STATE_ENTITY_SLOTS");
 static_assert(static_cast<std::uint64_t>(VN_MONITOR_PLAYABLE_PROVENANCE_KNOWN) == 1ull, "binding define drift: VN_MONITOR_PLAYABLE_PROVENANCE_KNOWN");
-static_assert(static_cast<std::uint64_t>(VN_STREAM_SOURCE_REGISTER) == 0ull, "binding define drift: VN_STREAM_SOURCE_REGISTER");
-static_assert(static_cast<std::uint64_t>(VN_STREAM_SOURCE_REPLACE) == 1ull, "binding define drift: VN_STREAM_SOURCE_REPLACE");
-static_assert(static_cast<std::uint64_t>(VN_STREAM_SOURCE_PREPARING) == 1ull, "binding define drift: VN_STREAM_SOURCE_PREPARING");
-static_assert(static_cast<std::uint64_t>(VN_STREAM_SOURCE_READY) == 2ull, "binding define drift: VN_STREAM_SOURCE_READY");
-static_assert(static_cast<std::uint64_t>(VN_STREAM_SOURCE_FAILED) == 3ull, "binding define drift: VN_STREAM_SOURCE_FAILED");
 static_assert(static_cast<std::uint64_t>(VN_BYTE_READ_OK) == 0ull, "binding define drift: VN_BYTE_READ_OK");
 static_assert(static_cast<std::uint64_t>(VN_BYTE_READ_CANCELLED) == 1ull, "binding define drift: VN_BYTE_READ_CANCELLED");
 static_assert(static_cast<std::uint64_t>(VN_BYTE_READ_IO_ERROR) == 2ull, "binding define drift: VN_BYTE_READ_IO_ERROR");
@@ -2448,11 +2443,6 @@ static_assert(offsetof(VnByteSourceDescV1, byteLength) == 8, "binding offset dri
 static_assert(offsetof(VnByteSourceDescV1, userData) == 16, "binding offset drift: VnByteSourceDescV1.userData");
 static_assert(offsetof(VnByteSourceDescV1, readAt) == 24, "binding offset drift: VnByteSourceDescV1.readAt");
 static_assert(offsetof(VnByteSourceDescV1, release) == 32, "binding offset drift: VnByteSourceDescV1.release");
-static_assert(sizeof(VnStreamSourceInfoV1) == 16, "binding size drift: VnStreamSourceInfoV1");
-static_assert(offsetof(VnStreamSourceInfoV1, structSize) == 0, "binding offset drift: VnStreamSourceInfoV1.structSize");
-static_assert(offsetof(VnStreamSourceInfoV1, state) == 4, "binding offset drift: VnStreamSourceInfoV1.state");
-static_assert(offsetof(VnStreamSourceInfoV1, result) == 8, "binding offset drift: VnStreamSourceInfoV1.result");
-static_assert(offsetof(VnStreamSourceInfoV1, reserved0) == 12, "binding offset drift: VnStreamSourceInfoV1.reserved0");
 static_assert(sizeof(VnPlaybackReadinessMemberV1) == 160, "binding size drift: VnPlaybackReadinessMemberV1");
 static_assert(offsetof(VnPlaybackReadinessMemberV1, structSize) == 0, "binding offset drift: VnPlaybackReadinessMemberV1.structSize");
 static_assert(offsetof(VnPlaybackReadinessMemberV1, state) == 4, "binding offset drift: VnPlaybackReadinessMemberV1.state");
@@ -2611,8 +2601,6 @@ extern "C" {
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_SetVoiceEffect)(VnVoiceHandle, uint32_t, VnEffectType, const VnEffectDesc*) = &Vn_SetVoiceEffect;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_ClearVoiceEffect)(VnVoiceHandle, uint32_t) = &Vn_ClearVoiceEffect;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_SetVoiceEffectParam)(VnVoiceHandle, uint32_t, uint32_t, float) = &Vn_SetVoiceEffectParam;
-[[maybe_unused]] static VnResult (*const binding_sig_Vn_RegisterStreamFile)(VnSoundId, const char*) = &Vn_RegisterStreamFile;
-[[maybe_unused]] static VnResult (*const binding_sig_Vn_UnregisterStreamFile)(VnSoundId) = &Vn_UnregisterStreamFile;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_CreateEmitter)(VnEmitterHandle*) = &Vn_CreateEmitter;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_DestroyEmitter)(VnEmitterHandle) = &Vn_DestroyEmitter;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_SetEmitterPosition)(VnEmitterHandle, VnVec3) = &Vn_SetEmitterPosition;
@@ -2631,7 +2619,6 @@ extern "C" {
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_SetBusEffectBypass)(VnBusId, uint32_t, uint32_t) = &Vn_SetBusEffectBypass;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_SetBusFaderPoint)(VnBusId, uint32_t) = &Vn_SetBusFaderPoint;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_ReplacePCM)(VnSoundId, const VnPCMDesc*) = &Vn_ReplacePCM;
-[[maybe_unused]] static VnResult (*const binding_sig_Vn_ReplaceStreamFile)(VnSoundId, const char*) = &Vn_ReplaceStreamFile;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_ReplacePack)(VnPackHandle, const VnPackDesc*) = &Vn_ReplacePack;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_ReplaceAttenuation)(VnAttenuationId, const VnAttenuationDesc*) = &Vn_ReplaceAttenuation;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_SetBusOutputLayout)(VnBusId, uint32_t) = &Vn_SetBusOutputLayout;
@@ -2727,11 +2714,6 @@ extern "C" {
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_MonitorEndHostSession)(uint64_t, uint64_t) = &Vn_MonitorEndHostSession;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_MonitorRegisterHost)(const VnMonitorHostRegistrationV1*) = &Vn_MonitorRegisterHost;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_MonitorRegisterHostV2)(const VnMonitorHostRegistrationV2*) = &Vn_MonitorRegisterHostV2;
-[[maybe_unused]] static VnResult (*const binding_sig_Vn_BeginStreamSource)(VnSoundId, uint32_t, const VnByteSourceDescV1*, VnStreamSourceRequest*) = &Vn_BeginStreamSource;
-[[maybe_unused]] static VnResult (*const binding_sig_Vn_BeginStreamFile)(VnSoundId, uint32_t, const char*, VnStreamSourceRequest*) = &Vn_BeginStreamFile;
-[[maybe_unused]] static VnResult (*const binding_sig_Vn_QueryStreamSource)(VnStreamSourceRequest, VnStreamSourceInfoV1*) = &Vn_QueryStreamSource;
-[[maybe_unused]] static VnResult (*const binding_sig_Vn_CancelStreamSource)(VnStreamSourceRequest) = &Vn_CancelStreamSource;
-[[maybe_unused]] static VnResult (*const binding_sig_Vn_CommitStreamSource)(VnStreamSourceRequest) = &Vn_CommitStreamSource;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_QueryActionPlaybackReadiness)(VnActionFiringHandle, VnActionPlaybackReadinessV1*, VnPlaybackReadinessMemberV1*, uint32_t) = &Vn_QueryActionPlaybackReadiness;
 }
 

@@ -1,3 +1,4 @@
+#include "Common/StreamFixtureRegistration.h"
 // Hot reload: the replace verbs — the media/registry verbs under the
 // retire-old / new-plays-new migration contract, and the live-logic-map
 // verbs (attenuation, binding) that swap in place at a tick boundary; all
@@ -624,7 +625,7 @@ TEST(HotReload, StreamOldVoiceServesOldFileNewPlaySoundsNewFile) {
     WriteFileBytes(pathX, BuildStreamBytes(spec, MakeDC(kRate, 0.25f)));
     WriteFileBytes(pathY, BuildStreamBytes(spec, MakeDC(kRate / 2, 0.5f)));
     WriteFileBytes(pathZ, BuildStreamBytes(spec, MakeDC(kRate / 4, 0.5f)));
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(7301), pathX.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(7301), pathX.c_str()));
     harken::StreamManager::StreamFacts oldFacts;
     ASSERT_TRUE(engine->streams.FindFile(harkentest::ObjectId(7301), &oldFacts));
     ASSERT_NE(0u, oldFacts.contentRevision);
@@ -638,7 +639,7 @@ TEST(HotReload, StreamOldVoiceServesOldFileNewPlaySoundsNewFile) {
     HARKENTEST_ASSERT_NON_SILENT(before.left);
     const float oldLevel = before.left[kBlock + kBlock / 2];
 
-    ASSERT_EQ(VN_OK, Vn_ReplaceStreamFile(harkentest::ObjectId(7301), pathY.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::ReplaceFixtureStream(harkentest::ObjectId(7301), pathY.c_str()));
     // The id resolves to the new file immediately (the new frame count),
     // while the live voice keeps streaming the old one.
     harken::StreamManager::StreamFacts facts;
@@ -661,7 +662,7 @@ TEST(HotReload, StreamOldVoiceServesOldFileNewPlaySoundsNewFile) {
     EXPECT_EQ(oldLevel, after.left[7 * kBlock + kBlock / 2]);
 
     // One retiring generation per asset while the old file drains.
-    EXPECT_EQ(VN_IN_USE, Vn_ReplaceStreamFile(harkentest::ObjectId(7301), pathZ.c_str()));
+    EXPECT_EQ(VN_IN_USE, harkentest::ReplaceFixtureStream(harkentest::ObjectId(7301), pathZ.c_str()));
 
     // Drain: stop the voice, let the slot retire and the old file close.
     ASSERT_EQ(VN_OK, Vn_Stop(voice, 0));
@@ -669,7 +670,7 @@ TEST(HotReload, StreamOldVoiceServesOldFileNewPlaySoundsNewFile) {
     engine->streams.SyncServe(); // detach pass + drained-file close
     ASSERT_EQ(VN_OK, Vn_Update());
     EXPECT_EQ(0u, Snap().pinnedGenerationCount);
-    EXPECT_EQ(VN_OK, Vn_ReplaceStreamFile(harkentest::ObjectId(7301), pathZ.c_str()));
+    EXPECT_EQ(VN_OK, harkentest::ReplaceFixtureStream(harkentest::ObjectId(7301), pathZ.c_str()));
 
     // A fresh play sounds the newest file's data (DC 0.5 doubles the value).
     VnVoiceHandle fresh = 0;
@@ -695,7 +696,7 @@ TEST(HotReload, StreamReplaceRefusalsLeaveRegistrationUntouched) {
     spec.channelCount = 1;
     spec.chunkFrames = kBlock;
     WriteFileBytes(pathX, BuildStreamBytes(spec, MakeDC(kRate, 0.25f)));
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(7302), pathX.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(7302), pathX.c_str()));
 
     // A truncated file fails validation; the old registration survives.
     const std::string pathBad = TempPath("hot_reload_bad.stream");
@@ -704,15 +705,15 @@ TEST(HotReload, StreamReplaceRefusalsLeaveRegistrationUntouched) {
     bytes.resize(bytes.size() / 2);
     WriteFileBytes(pathBad, bytes);
     EXPECT_EQ(VN_BAD_STREAM_FILE,
-              Vn_ReplaceStreamFile(harkentest::ObjectId(7302), pathBad.c_str()));
+              harkentest::ReplaceFixtureStream(harkentest::ObjectId(7302), pathBad.c_str()));
     harken::StreamManager::StreamFacts facts;
     ASSERT_TRUE(engine->streams.FindFile(harkentest::ObjectId(7302), &facts));
     EXPECT_EQ(kRate, facts.frameCount);
 
     // Class discipline + never-register: a PCM id is not a stream.
     RegisterDc(harkentest::ObjectId(103), 0.25f, kBlock);
-    EXPECT_EQ(VN_UNKNOWN_ID, Vn_ReplaceStreamFile(harkentest::ObjectId(103), pathX.c_str()));
-    EXPECT_EQ(VN_UNKNOWN_ID, Vn_ReplaceStreamFile(harkentest::ObjectId(7999), pathX.c_str()));
+    EXPECT_EQ(VN_UNKNOWN_ID, harkentest::ReplaceFixtureStream(harkentest::ObjectId(103), pathX.c_str()));
+    EXPECT_EQ(VN_UNKNOWN_ID, harkentest::ReplaceFixtureStream(harkentest::ObjectId(7999), pathX.c_str()));
 }
 
 // --- attenuation: live voice re-curves on the next tick (golden) ---

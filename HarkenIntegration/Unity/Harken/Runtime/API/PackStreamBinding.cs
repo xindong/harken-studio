@@ -144,11 +144,12 @@ namespace Harken
                     if (!claimed) return VnResult.VN_INVALID_ARG;
                     if (view.IsCancellationRequested || source.ByteLength != bytes) return VnResult.VN_PACK_PROVIDER_FAILED;
                     sourceRoot = GCHandle.Alloc(source);
-                    *(VnByteSourceDescV1*)output = new VnByteSourceDescV1
+                    var destination = (VnByteSourceDescV1*)output.ToPointer();
+                    destination[0] = new VnByteSourceDescV1
                     {
                         structSize = (uint)sizeof(VnByteSourceDescV1), byteLength = bytes,
                         userData = GCHandle.ToIntPtr(sourceRoot),
-                        readAt = StreamSources.ReadPointer, release = StreamSources.ReleasePointer
+                        readAt = StreamByteSourceCallbacks.ReadPointer, release = StreamByteSourceCallbacks.ReleasePointer
                     };
                     transferred = true;
                     return VnResult.VN_OK;

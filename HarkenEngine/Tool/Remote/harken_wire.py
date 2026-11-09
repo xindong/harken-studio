@@ -7453,26 +7453,6 @@ TABLE_JSON = r'''
         ]
       ]
     },
-    "VnStreamSourceInfoV1": {
-      "fields": [
-        [
-          "structSize",
-          "u32"
-        ],
-        [
-          "state",
-          "u32"
-        ],
-        [
-          "result",
-          "i32"
-        ],
-        [
-          "reserved0",
-          "u32"
-        ]
-      ]
-    },
     "VnPlaybackReadinessMemberV1": {
       "fields": [
         [
@@ -8578,35 +8558,6 @@ TABLE_JSON = r'''
       ]
     },
     {
-      "opcode": 25,
-      "name": "Vn_RegisterStreamFile",
-      "policy": "mirror",
-      "params": [
-        {
-          "name": "soundId",
-          "ctype": "VnSoundId",
-          "wire": "objectid"
-        },
-        {
-          "name": "utf8Path",
-          "ctype": "const char*",
-          "wire": "string"
-        }
-      ]
-    },
-    {
-      "opcode": 26,
-      "name": "Vn_UnregisterStreamFile",
-      "policy": "mirror",
-      "params": [
-        {
-          "name": "soundId",
-          "ctype": "VnSoundId",
-          "wire": "objectid"
-        }
-      ]
-    },
-    {
       "opcode": 27,
       "name": "Vn_CreateEmitter",
       "policy": "mirror",
@@ -9030,23 +8981,6 @@ TABLE_JSON = r'''
           "ctype": "const VnPCMDesc*",
           "wire": "desc",
           "type": "VnPCMDesc"
-        }
-      ]
-    },
-    {
-      "opcode": 53,
-      "name": "Vn_ReplaceStreamFile",
-      "policy": "mirror",
-      "params": [
-        {
-          "name": "soundId",
-          "ctype": "VnSoundId",
-          "wire": "objectid"
-        },
-        {
-          "name": "utf8Path",
-          "ctype": "const char*",
-          "wire": "string"
         }
       ]
     },
@@ -10897,98 +10831,6 @@ TABLE_JSON = r'''
       "note": "Optional atomic host identity and description; local C ABI only, no remote mutation opcode."
     },
     {
-      "name": "Vn_BeginStreamSource",
-      "params": [
-        {
-          "name": "soundId",
-          "ctype": "VnSoundId",
-          "wire": "objectid"
-        },
-        {
-          "name": "mode",
-          "ctype": "uint32_t",
-          "wire": "u32"
-        },
-        {
-          "name": "source",
-          "ctype": "const VnByteSourceDescV1*",
-          "wire": "desc",
-          "type": "VnByteSourceDescV1"
-        },
-        {
-          "name": "outRequest",
-          "ctype": "VnStreamSourceRequest*",
-          "wire": "out"
-        }
-      ],
-      "note": "Local native host API; process-local source/request lifetime. No remote opcode."
-    },
-    {
-      "name": "Vn_BeginStreamFile",
-      "params": [
-        {
-          "name": "soundId",
-          "ctype": "VnSoundId",
-          "wire": "objectid"
-        },
-        {
-          "name": "mode",
-          "ctype": "uint32_t",
-          "wire": "u32"
-        },
-        {
-          "name": "utf8Path",
-          "ctype": "const char*",
-          "wire": "string"
-        },
-        {
-          "name": "outRequest",
-          "ctype": "VnStreamSourceRequest*",
-          "wire": "out"
-        }
-      ],
-      "note": "Local native host API; process-local source/request lifetime. No remote opcode."
-    },
-    {
-      "name": "Vn_QueryStreamSource",
-      "params": [
-        {
-          "name": "request",
-          "ctype": "VnStreamSourceRequest",
-          "wire": "u64"
-        },
-        {
-          "name": "outInfo",
-          "ctype": "VnStreamSourceInfoV1*",
-          "wire": "outstruct",
-          "type": "VnStreamSourceInfoV1"
-        }
-      ],
-      "note": "Local native host API; process-local source/request lifetime. No remote opcode."
-    },
-    {
-      "name": "Vn_CancelStreamSource",
-      "params": [
-        {
-          "name": "request",
-          "ctype": "VnStreamSourceRequest",
-          "wire": "u64"
-        }
-      ],
-      "note": "Local native host API; process-local source/request lifetime. No remote opcode."
-    },
-    {
-      "name": "Vn_CommitStreamSource",
-      "params": [
-        {
-          "name": "request",
-          "ctype": "VnStreamSourceRequest",
-          "wire": "u64"
-        }
-      ],
-      "note": "Local native host API; process-local source/request lifetime. No remote opcode."
-    },
-    {
       "name": "Vn_QueryActionPlaybackReadiness",
       "params": [
         {
@@ -11187,7 +11029,6 @@ TABLE_JSON = r'''
       "VnMonitorChannelMode": "u32",
       "VnMonitorChunkKind": "u32",
       "VnMonitorChunkFlags": "u32",
-      "VnStreamSourceRequest": "u64",
       "VnPlaybackReadinessState": "u32"
     },
     "results": {
@@ -12614,26 +12455,6 @@ TABLE_JSON = r'''
       "VN_MONITOR_PLAYABLE_PROVENANCE_KNOWN": {
         "type": "u32",
         "value": 1
-      },
-      "VN_STREAM_SOURCE_REGISTER": {
-        "type": "u32",
-        "value": 0
-      },
-      "VN_STREAM_SOURCE_REPLACE": {
-        "type": "u32",
-        "value": 1
-      },
-      "VN_STREAM_SOURCE_PREPARING": {
-        "type": "u32",
-        "value": 1
-      },
-      "VN_STREAM_SOURCE_READY": {
-        "type": "u32",
-        "value": 2
-      },
-      "VN_STREAM_SOURCE_FAILED": {
-        "type": "u32",
-        "value": 3
       },
       "VN_BYTE_READ_OK": {
         "type": "i32",

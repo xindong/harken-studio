@@ -1,3 +1,4 @@
+#include "Common/StreamFixtureRegistration.h"
 // .stream round-trip fidelity through the real compiler tool: the
 // test synthesizes sources, writes IEEE float32 wav files, runs packc in
 // --stream mode as a subprocess, registers the container as a stream,
@@ -258,7 +259,7 @@ TEST(StreamRoundtrip, StreamPlaybackBitIdenticalToResident) {
         EngineSession session(MakeNullConfig(0, kBlockFrames, kRate));
         ASSERT_EQ(VN_OK, session.InitResult());
         for (std::size_t i = 0; i < sources.size(); ++i) {
-            ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(sources[i].id,
+            ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(sources[i].id,
                                                    containers[i].c_str()));
         }
         for (std::size_t i = 0; i < sources.size(); ++i) {
@@ -351,7 +352,7 @@ TEST(StreamRoundtrip, SpatialMonoAndStereoPreserveChannelsAndMatchResident) {
         auto& captures = path == 0 ? fromStream : fromResident;
         for (std::size_t i = 0; i < sources.size(); ++i) {
             if (path == 0) {
-                ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(sources[i].id, containers[i].c_str()));
+                ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(sources[i].id, containers[i].c_str()));
             } else {
                 const auto desc = harkentest::InterleavedDesc(
                     sources[i].interleaved, sources[i].channels, kRate);

@@ -1,3 +1,4 @@
+#include "Common/StreamFixtureRegistration.h"
 #include "Common/PcmStreamFixture.h"
 // Streamed playback mechanics on the null backend: prebuffer gating and
 // the PREPARING snapshot state, stream slot exhaustion and refusal
@@ -185,7 +186,7 @@ Capture RenderStreamSound(const std::string& name, VnSoundId soundId,
     EXPECT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
     engine->streams.SetMaxServeFramesForTest(maxServeFrames);
-    EXPECT_EQ(VN_OK, Vn_RegisterStreamFile(soundId, path.c_str()));
+    EXPECT_EQ(VN_OK, harkentest::RegisterFixtureStream(soundId, path.c_str()));
 
     VnPlayDesc play = MakePlayDesc(soundId);
     play.loopCount = loopCount;
@@ -253,7 +254,7 @@ TEST(StreamPlayback, PreparingHoldsSilentUntilPrebufferThreshold) {
 
     const std::string path =
         WriteSineStream("stream_prepare.stream", harkentest::ObjectId(7101), 48000);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(7101), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(7101), path.c_str()));
 
     // Throttled before play: the activation-time serve pushes nothing,
     // so the ring is verifiably empty when the first block renders.
@@ -308,7 +309,7 @@ TEST(StreamPlayback, SpatialRecipeAndCommitApplyBeforeFirstPrebufferedOutput) {
         spec.chunkFrames = kBlockFrames;
         const auto path = TempPath("stream_spatial_initial.stream");
         WriteFileBytes(path, BuildStreamBytes(spec, harkentest::MakeDC(4096, 0.25f)));
-        ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(sound, path.c_str()));
+        ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(sound, path.c_str()));
         if (!staged) {
             harken::PackLogicStore::PreparedClaimToken token;
             ASSERT_EQ(VN_OK, engine->logicPacks.PrepareClaim(1, &token));
@@ -357,7 +358,7 @@ TEST(StreamPlayback, PlaysToEndReleasesSlotAndRecycles) {
     // opens through end-of-data, below the frame threshold).
     const std::string path =
         WriteSineStream("stream_toend.stream", harkentest::ObjectId(7102), 2000);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(7102), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(7102), path.c_str()));
 
     const VnPlayDesc play = MakePlayDesc(harkentest::ObjectId(7102));
     VnVoiceHandle voice = 0;
@@ -375,7 +376,7 @@ TEST(StreamPlayback, PlaysToEndReleasesSlotAndRecycles) {
     wider.chunkFrames = 256;
     const auto widerPath = TempPath("stream_toend_wider.stream");
     WriteFileBytes(widerPath, BuildStreamBytes(wider, {0.25f, -0.25f}));
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(wider.soundId, widerPath.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(wider.soundId, widerPath.c_str()));
     EXPECT_EQ(originalBytes, ring->bytes);
     EXPECT_TRUE(std::equal(buffered.begin(), buffered.end(), ring->bytes));
 
@@ -409,7 +410,7 @@ TEST(StreamPlayback, NoStreamRefusalIsSideEffectFreeAndOrdered) {
 
     const std::string path =
         WriteSineStream("stream_nostream.stream", harkentest::ObjectId(7103), 48000);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(7103), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(7103), path.c_str()));
     const std::vector<float> tone =
         harkentest::MakeSine(48000, 500.0, kRate, 0.5f);
     VnPCMDesc pcm = harkentest::MonoDesc(tone, kRate);
@@ -467,7 +468,7 @@ TEST(StreamPlayback, StarvationSurvivesWithExactCooldownAndRecovers) {
 
     const std::string path =
         WriteSineStream("stream_starve.stream", harkentest::ObjectId(7105), 48000);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(7105), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(7105), path.c_str()));
 
     const VnPlayDesc play = MakePlayDesc(harkentest::ObjectId(7105));
     VnVoiceHandle voice = 0;
@@ -559,7 +560,7 @@ TEST(StreamPlayback, CorruptChunkEndsVoiceAfterVerifiedMaterial) {
     const std::string path = TempPath("stream_corrupt_chunk.stream");
     WriteFileBytes(path, bytes);
 
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(7106), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(7106), path.c_str()));
     const VnPlayDesc play = MakePlayDesc(harkentest::ObjectId(7106));
     VnVoiceHandle voice = 0;
     ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
@@ -629,7 +630,7 @@ TEST(StreamPlayback, ChecksummedNonFiniteSamplesNeverReachBusFilters) {
             harken::SerializeStreamHeader(header, bytes.data());
             const auto path = TempPath("stream_nonfinite_checksummed.stream");
             WriteFileBytes(path, bytes);
-            ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(spec.soundId, path.c_str()));
+            ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(spec.soundId, path.c_str()));
             const auto play = MakePlayDesc(spec.soundId);
             VnVoiceHandle voice = 0;
             ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
@@ -702,7 +703,7 @@ TEST(StreamPlayback, CorruptOutroChunkIsReachedOnlyOnFinalLoopPass) {
     const std::string path = TempPath("stream_corrupt_outro.stream");
     WriteFileBytes(path, bytes);
 
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(7109), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(7109), path.c_str()));
     VnPlayDesc play = MakePlayDesc(harkentest::ObjectId(7109));
     play.loopCount = 3;
     VnVoiceHandle voice = 0;
@@ -731,19 +732,19 @@ TEST(StreamPlayback, UnregisterRefusedWhilePlaying) {
 
     const std::string path =
         WriteSineStream("stream_unreg_busy.stream", harkentest::ObjectId(7107), 48000);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(7107), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(7107), path.c_str()));
 
     const VnPlayDesc play = MakePlayDesc(harkentest::ObjectId(7107));
     VnVoiceHandle voice = 0;
     ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
-    EXPECT_EQ(VN_IN_USE, Vn_UnregisterStreamFile(harkentest::ObjectId(7107)));
+    EXPECT_EQ(VN_IN_USE, harkentest::UnregisterFixtureStream(harkentest::ObjectId(7107)));
 
     // After the voice stops and the retired slot detaches, the file is
     // free to go.
     ASSERT_EQ(VN_OK, Vn_Stop(voice, 0));
     engine->nullBackend.Pump(2);
     engine->streams.SyncServe();
-    EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(harkentest::ObjectId(7107)));
+    EXPECT_EQ(VN_OK, harkentest::UnregisterFixtureStream(harkentest::ObjectId(7107)));
 }
 
 TEST(StreamPlayback, StreamingThreadRunsOutsideAudioGuard) {
@@ -764,7 +765,7 @@ TEST(StreamPlayback, StreamingThreadRunsOutsideAudioGuard) {
 
     const std::string path =
         WriteSineStream("stream_guard.stream", harkentest::ObjectId(7108), 20000);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(7108), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(7108), path.c_str()));
 
     const VnPlayDesc play = MakePlayDesc(harkentest::ObjectId(7108));
     VnVoiceHandle voice = 0;
@@ -843,7 +844,7 @@ TEST(StreamPlayback, InfiniteStreamLoopSoakStaysAliveAndFed) {
     const std::vector<float> source(96, 0.125f);
     const std::string path = TempPath("stream_infinite_soak.stream");
     WriteFileBytes(path, BuildStreamBytes(spec, source));
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(7301), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(7301), path.c_str()));
 
     VnPlayDesc play = MakePlayDesc(harkentest::ObjectId(7301));
     play.loopCount = 0;
@@ -893,7 +894,7 @@ TEST(StreamPlayback, HealthyStreamLoopsDoNotStarveOrReprepare) {
     const std::vector<float> source = MakeDistinctSignal(180);
     const std::string path = TempPath("stream_no_starve_loop.stream");
     WriteFileBytes(path, BuildStreamBytes(spec, source));
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(7302), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(7302), path.c_str()));
 
     VnPlayDesc play = MakePlayDesc(harkentest::ObjectId(7302));
     play.loopCount = 40;
@@ -934,7 +935,7 @@ TEST(StreamPlayback, InfiniteStreamLoopImmediateStopDoesNotResurrect) {
 
     const std::string path =
         WriteSineStream("stream_stop_infinite.stream", harkentest::ObjectId(7303), 256, 64);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(7303), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(7303), path.c_str()));
     VnPlayDesc play = MakePlayDesc(harkentest::ObjectId(7303));
     play.loopCount = 0;
     VnVoiceHandle voice = 0;
@@ -969,7 +970,7 @@ TEST(StreamPlayback, InfiniteStreamLoopFadeStopDoesNotResurrect) {
 
     const std::string path =
         WriteSineStream("stream_fadestop_infinite.stream", harkentest::ObjectId(7304), 512, 64);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(7304), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(7304), path.c_str()));
     VnPlayDesc play = MakePlayDesc(harkentest::ObjectId(7304));
     play.loopCount = 0;
     VnVoiceHandle voice = 0;
@@ -1005,7 +1006,7 @@ TEST(StreamPlayback, FiniteStreamLoopImmediateStopDoesNotFinishLater) {
 
     const std::string path =
         WriteSineStream("stream_stop_finite.stream", harkentest::ObjectId(7305), 300, 64);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(7305), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(7305), path.c_str()));
     VnPlayDesc play = MakePlayDesc(harkentest::ObjectId(7305));
     play.loopCount = 8;
     VnVoiceHandle voice = 0;
@@ -1049,7 +1050,7 @@ TEST(StreamPlayback, StreamStealRefusedWhenVictimIsNotStream) {
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9001), &pcm));
     const std::string path =
         WriteSineStream("stream_steal_pcmvictim.stream", harkentest::ObjectId(9002), 48000);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9002), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9002), path.c_str()));
 
     VnVoiceHandle pcmVoice = 0;
     VnVoiceHandle streamVoice = 0;
@@ -1082,7 +1083,7 @@ TEST(StreamPlayback, StreamStealSucceedsWhenVictimIsStream) {
 
     const std::string path =
         WriteSineStream("stream_steal_victim.stream", harkentest::ObjectId(9101), 48000);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9101), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9101), path.c_str()));
 
     VnVoiceHandle first = 0;
     VnPlayDesc playStream = MakePlayDesc(harkentest::ObjectId(9101));
@@ -1126,8 +1127,8 @@ TEST(StreamPlayback, PendingStreamStealPinsItsRegistration) {
         WriteSineStream("stream_pin_a.stream", harkentest::ObjectId(9201), 48000);
     const std::string pathB =
         WriteSineStream("stream_pin_b.stream", harkentest::ObjectId(9202), 48000);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9201), pathA.c_str()));
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9202), pathB.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9201), pathA.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9202), pathB.c_str()));
 
     // The victim (id 9201) holds the only stream slot; the incoming (id 9202)
     // steals it and becomes pending, pinning 9202's registration.
@@ -1142,12 +1143,12 @@ TEST(StreamPlayback, PendingStreamStealPinsItsRegistration) {
 
     // Pinned: unregister is refused, and the id cannot be re-registered to a
     // different asset (RegisterFile refuses an already-registered id).
-    EXPECT_EQ(VN_IN_USE, Vn_UnregisterStreamFile(harkentest::ObjectId(9202)));
-    EXPECT_EQ(VN_IN_USE, Vn_RegisterStreamFile(harkentest::ObjectId(9202), pathA.c_str()));
+    EXPECT_EQ(VN_IN_USE, harkentest::UnregisterFixtureStream(harkentest::ObjectId(9202)));
+    EXPECT_EQ(VN_IN_USE, harkentest::RegisterFixtureStream(harkentest::ObjectId(9202), pathA.c_str()));
 
     // Cancelling the pending start releases the pin; unregister then succeeds.
     ASSERT_EQ(VN_OK, Vn_Stop(incoming, 0));
-    EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(harkentest::ObjectId(9202)));
+    EXPECT_EQ(VN_OK, harkentest::UnregisterFixtureStream(harkentest::ObjectId(9202)));
 }
 
 TEST(StreamPlayback, StreamStealReservationPreventsOverbooking) {
@@ -1170,7 +1171,7 @@ TEST(StreamPlayback, StreamStealReservationPreventsOverbooking) {
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9301), &pcm));
     const std::string path =
         WriteSineStream("stream_overbook.stream", harkentest::ObjectId(9302), 48000);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9302), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9302), path.c_str()));
 
     VnVoiceHandle p1 = 0;
     VnVoiceHandle p2 = 0;
@@ -1203,7 +1204,7 @@ TEST(StreamPlayback, TwoStreamVictimsBothStealsAdmittedAndStart) {
 
     const std::string path =
         WriteSineStream("stream_two_victims.stream", harkentest::ObjectId(9501), 48000);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9501), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9501), path.c_str()));
     VnPlayDesc playStream = MakePlayDesc(harkentest::ObjectId(9501));
 
     VnVoiceHandle s1 = 0;
@@ -1253,7 +1254,7 @@ TEST(StreamPlayback, ReservedStreamSlotIsNotConsumedByNormalPlay) {
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9401), &pcm));
     const std::string path =
         WriteSineStream("stream_reserved.stream", harkentest::ObjectId(9402), 48000);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9402), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9402), path.c_str()));
 
     VnVoiceHandle p1 = 0;
     VnVoiceHandle p2 = 0;
@@ -1313,7 +1314,7 @@ Capture RenderStreamAtStart(const std::string& name, VnSoundId soundId,
     EXPECT_EQ(VN_OK, session.InitResult());
     harken::Engine* engine = session.Engine();
     engine->streams.SetMaxServeFramesForTest(512);
-    EXPECT_EQ(VN_OK, Vn_RegisterStreamFile(soundId, path.c_str()));
+    EXPECT_EQ(VN_OK, harkentest::RegisterFixtureStream(soundId, path.c_str()));
     if (startFrame != 0) {
         engine->streams.SetActivationStartFrameForTest(startFrame);
     }
@@ -1392,7 +1393,7 @@ void RenderFreshSourceCoordinates(bool streamed, std::uint32_t workers,
         spec.loopEndFrame = 256;
         const auto path = TempPath("stream_fresh_coordinates.stream");
         WriteFileBytes(path, BuildStreamBytes(spec, samples));
-        ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(id, path.c_str()));
+        ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(id, path.c_str()));
         ASSERT_TRUE(engine.streams.FindFile(id, &facts));
         request.fileIndex = facts.fileIndex;
         request.sourceGeneration = facts.sourceGeneration;
@@ -1449,7 +1450,7 @@ void RenderFreshSourceCoordinates(bool streamed, std::uint32_t workers,
             changed.sampleRate = 44100;
             const auto replacementPath = TempPath("stream_park_changed_generation.stream");
             WriteFileBytes(replacementPath, BuildStreamBytes(changed, std::vector<float>(1024, -0.4f)));
-            ASSERT_EQ(VN_OK, Vn_ReplaceStreamFile(id, replacementPath.c_str()));
+            ASSERT_EQ(VN_OK, harkentest::ReplaceFixtureStream(id, replacementPath.c_str()));
             harken::StreamManager::StreamFacts current;
             ASSERT_TRUE(engine.streams.FindFile(id, &current));
             ASSERT_NE(facts.sourceGeneration, current.sourceGeneration);
@@ -1474,7 +1475,7 @@ void RenderFreshSourceCoordinates(bool streamed, std::uint32_t workers,
     if (streamed) {
         engine.streams.SyncServe();
         EXPECT_EQ(2u, engine.streams.FreeSlotCount());
-        EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(id));
+        EXPECT_EQ(VN_OK, harkentest::UnregisterFixtureStream(id));
     }
 }
 
@@ -1610,7 +1611,7 @@ ParkCheckpoint CaptureFiniteParkCheckpoint(std::uint32_t renderedBlocks) {
     spec.loopEndFrame = 1024;
     const std::string path = TempPath("stream_wait_checkpoint_phase.stream");
     WriteFileBytes(path, BuildStreamBytes(spec, MakeDistinctSignal(4096)));
-    EXPECT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9691), path.c_str()));
+    EXPECT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9691), path.c_str()));
     const std::vector<float> pcmData(48000, 0.2f);
     VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
     EXPECT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9692), &pcm));
@@ -1646,7 +1647,7 @@ TEST(StreamPlayback, PressureWaitKeepsHandleAndReturnsAtAcknowledgedFrame) {
 
     const std::string path =
         WriteSineStream("stream_wait_resume.stream", harkentest::ObjectId(9701), 48000);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9701), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9701), path.c_str()));
     const std::vector<float> pcmData =
         harkentest::MakeSine(48000, 700.0, kRate, 0.25f);
     VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
@@ -1731,7 +1732,7 @@ TEST(StreamPlayback,
     const std::string path =
         WriteSineStream("stream_wait_attenuation_generation.stream", streamId,
                         48000);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(streamId, path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(streamId, path.c_str()));
     const std::vector<float> pcmData(48000, 0.2f);
     const VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(claimantId, &pcm));
@@ -1805,7 +1806,7 @@ TEST(StreamPlayback, PressureWaitUsesAppliedDistanceBeforeUnpublishedGeometryCha
         const auto claimantId = harkentest::ObjectId(9707);
         const auto attenuationId = harkentest::ObjectId(9708);
         const auto path = WriteSineStream("stream_wait_distance_reference.stream", streamId, 48000);
-        ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(streamId, path.c_str()));
+        ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(streamId, path.c_str()));
         const std::vector<float> pcmData(48000, 0.2f);
         const auto pcm = harkentest::MonoDesc(pcmData, kRate);
         ASSERT_EQ(VN_OK, Vn_RegisterPCM(claimantId, &pcm));
@@ -1900,7 +1901,7 @@ TEST(StreamPlayback,
 
     const std::string path =
         WriteSineStream("stream_wait_completion_owned.stream", harkentest::ObjectId(9791), 48000);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9791), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9791), path.c_str()));
     const std::vector<float> pcmData(48000, 0.2f);
     const VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9792), &pcm));
@@ -1983,7 +1984,7 @@ TEST(StreamPlayback,
     const std::string path =
         TempPath("stream_wait_frontiers.stream");
     WriteFileBytes(path, BuildStreamBytes(spec, source));
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9703), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9703), path.c_str()));
 
     const std::vector<float> pcmData(48000, 0.2f);
     VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
@@ -2128,7 +2129,7 @@ TEST(StreamPlayback, StopDuringAckPendingCannotResurrect) {
 
     const std::string path =
         WriteSineStream("stream_wait_cancel.stream", harkentest::ObjectId(9711), 48000);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9711), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9711), path.c_str()));
     const std::vector<float> pcmData =
         harkentest::MakeSine(48000, 800.0, kRate, 0.25f);
     VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
@@ -2165,7 +2166,7 @@ TEST(StreamPlayback,
     harken::Engine* engine = session.Engine();
     const std::string path =
         WriteSineStream("stream_wait_cancelled_token.stream", harkentest::ObjectId(9713), 48000);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9713), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9713), path.c_str()));
 
     VnVoiceHandle first = 0;
     VnVoiceHandle second = 0;
@@ -2228,7 +2229,7 @@ TEST(StreamPlayback, PreparingVictimAcknowledgesActivationOrigin) {
     harken::Engine* engine = session.Engine();
     const std::string path =
         WriteSineStream("stream_wait_preparing.stream", harkentest::ObjectId(9721), 48000);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9721), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9721), path.c_str()));
     const std::vector<float> pcmData(48000, 0.25f);
     VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9722), &pcm));
@@ -2258,7 +2259,7 @@ TEST(StreamPlayback, StreamResumeFrameAboveDoublePrecisionStaysExact) {
     harken::Engine* engine = session.Engine();
     const std::string path =
         WriteSineStream("stream_wait_uint64_frame.stream", harkentest::ObjectId(9723), 48000);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9723), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9723), path.c_str()));
     const std::vector<float> pcmData(48000, 0.2f);
     VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9724), &pcm));
@@ -2313,7 +2314,7 @@ TEST(StreamPlayback, StreamConsumedOffsetAboveDoublePrecisionStaysExact) {
     harken::Engine* engine = session.Engine();
     const std::string path =
         WriteSineStream("stream_wait_uint64_consumed.stream", harkentest::ObjectId(9725), 48000);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9725), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9725), path.c_str()));
     const std::vector<float> pcmData(48000, 0.2f);
     VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9726), &pcm));
@@ -2385,7 +2386,7 @@ TEST(StreamPlayback, OneVirtualSeatRefusesSecondSameTickPressureAdmission) {
     harken::Engine* engine = session.Engine();
     const std::string path =
         WriteSineStream("stream_wait_one_virtual.stream", harkentest::ObjectId(9731), 48000);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9731), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9731), path.c_str()));
     const std::vector<float> pcmData(48000, 0.2f);
     VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9732), &pcm));
@@ -2430,7 +2431,7 @@ TEST(StreamPlayback, VirtualAndLogicalFullKeepsLegacyRefusal) {
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9741), &pcm));
     const std::string path =
         WriteSineStream("stream_wait_vfull.stream", harkentest::ObjectId(9742), 48000);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9742), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9742), path.c_str()));
 
     VnPlayDesc quiet = MakePlayDesc(harkentest::ObjectId(9741));
     quiet.volumeDb = -100.0f;
@@ -2465,7 +2466,7 @@ TEST(StreamPlayback, DisabledWaitingKeepsLegacyTerminalSteal) {
 
     const std::string path =
         WriteSineStream("stream_wait_disabled.stream", harkentest::ObjectId(9743), 48000);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9743), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9743), path.c_str()));
     const std::vector<float> pcmData(48000, 0.2f);
     VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9744), &pcm));
@@ -2499,8 +2500,8 @@ TEST(StreamPlayback, MaxStreamsOneClaimantCancellationBalancesReservation) {
         WriteSineStream("stream_wait_one_slot_victim.stream", harkentest::ObjectId(9754), 48000);
     const std::string claimantPath =
         WriteSineStream("stream_wait_one_slot_claimant.stream", harkentest::ObjectId(9755), 48000);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9754), victimPath.c_str()));
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9755), claimantPath.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9754), victimPath.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9755), claimantPath.c_str()));
 
     VnVoiceHandle victim = 0;
     ASSERT_EQ(VN_OK, PlayDefault(harkentest::ObjectId(9754), &victim));
@@ -2540,7 +2541,7 @@ TEST(StreamPlayback, ParkedPcmReturnUsesStreamWaitTransaction) {
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9761), &pcm));
     const std::string path =
         WriteSineStream("stream_wait_pcm_return.stream", harkentest::ObjectId(9762), 48000);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9762), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9762), path.c_str()));
 
     VnPlayDesc quiet = MakePlayDesc(harkentest::ObjectId(9761));
     quiet.volumeDb = -100.0f;
@@ -2567,7 +2568,7 @@ TEST(StreamPlayback, AckPendingControlsMutateWaiterWithoutRenderCommands) {
     harken::Engine* engine = session.Engine();
     const std::string path =
         WriteSineStream("stream_wait_controls.stream", harkentest::ObjectId(9763), 48000);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9763), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9763), path.c_str()));
     const std::vector<float> pcmData(48000, 0.2f);
     VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9764), &pcm));
@@ -2641,7 +2642,7 @@ TEST(StreamPlayback, StopAfterPublishedAckDrainsWinnerBeforeEnding) {
     harken::Engine* engine = session.Engine();
     const std::string path =
         WriteSineStream("stream_wait_published_cancel.stream", harkentest::ObjectId(9767), 48000);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9767), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9767), path.c_str()));
     const std::vector<float> pcmData(48000, 0.2f);
     VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9768), &pcm));
@@ -2689,7 +2690,7 @@ TEST(StreamPlayback, PublishedNaturalEndWinsOverLaterFadedStop) {
     const std::string path =
         WriteSineStream("stream_wait_published_natural.stream", harkentest::ObjectId(9821), 384,
                         /*chunkFrames=*/128);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9821), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9821), path.c_str()));
     const std::vector<float> pcmData(48000, 0.2f);
     VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9822), &pcm));
@@ -2721,7 +2722,7 @@ TEST(StreamPlayback, LateAckCannotMutateReusedLogicalSlot) {
     harken::Engine* engine = session.Engine();
     const std::string path =
         WriteSineStream("stream_wait_late_identity.stream", harkentest::ObjectId(9769), 48000);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9769), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9769), path.c_str()));
     const std::vector<float> pcmData(48000, 0.2f);
     VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9770), &pcm));
@@ -2792,7 +2793,7 @@ TEST(StreamPlayback, FiniteLoopCheckpointKeepsRemainingPasses) {
     const std::vector<float> source = MakeDistinctSignal(4096);
     const std::string path = TempPath("stream_wait_finite_loop.stream");
     WriteFileBytes(path, BuildStreamBytes(spec, source));
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9771), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9771), path.c_str()));
     const std::vector<float> pcmData(48000, 0.2f);
     VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9772), &pcm));
@@ -2835,7 +2836,7 @@ TEST(StreamPlayback, InfiniteLoopCheckpointRemainsInfinite) {
     spec.loopEndFrame = 768;
     const std::string path = TempPath("stream_wait_infinite_loop.stream");
     WriteFileBytes(path, BuildStreamBytes(spec, MakeDistinctSignal(4096)));
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9773), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9773), path.c_str()));
     const std::vector<float> pcmData(48000, 0.2f);
     VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9774), &pcm));
@@ -2868,7 +2869,7 @@ TEST(StreamPlayback, StarvationAndArenaSilenceBoundParkWithoutAdvancing) {
     harken::Engine* engine = session.Engine();
     const std::string path =
         WriteSineStream("stream_wait_arena_silent.stream", harkentest::ObjectId(9775), 48000);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9775), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9775), path.c_str()));
     const std::vector<float> pcmData(48000, 0.2f);
     VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9776), &pcm));
@@ -2900,7 +2901,7 @@ TEST(StreamPlayback, DrainingArenaSilenceStillReleasesWithinParkDeadline) {
     harken::Engine* engine = session.Engine();
     const std::string path =
         WriteSineStream("stream_wait_draining_arena.stream", harkentest::ObjectId(9783), 48000);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9783), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9783), path.c_str()));
     const std::vector<float> pcmData(48000, 0.2f);
     VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9784), &pcm));
@@ -2943,7 +2944,7 @@ TEST(StreamPlayback, NaturalEndRacingParkHasOneTerminalWinner) {
     const std::string path =
         WriteSineStream("stream_wait_natural_race.stream", harkentest::ObjectId(9785), 384,
                         /*chunkFrames=*/128);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9785), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9785), path.c_str()));
     const std::vector<float> pcmData(48000, 0.2f);
     VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9786), &pcm));
@@ -2987,7 +2988,7 @@ TEST(StreamPlayback, IntegrityAbortRacingParkHasOneTerminalWinner) {
         toc.payloadOffset, 1, chunkBytes))] ^= 0x01;
     const std::string path = TempPath("stream_wait_integrity_race.stream");
     WriteFileBytes(path, bytes);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9777), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9777), path.c_str()));
     const std::vector<float> pcmData(48000, 0.2f);
     VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9778), &pcm));
@@ -3016,7 +3017,7 @@ TEST(StreamPlayback, PublishedAckDrainsWhileSuspendedAndReturnsAfterResume) {
     harken::Engine* engine = session.Engine();
     const std::string path =
         WriteSineStream("stream_wait_suspend.stream", harkentest::ObjectId(9779), 48000);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9779), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9779), path.c_str()));
     const std::vector<float> pcmData(48000, 0.2f);
     VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9780), &pcm));
@@ -3053,7 +3054,7 @@ TEST(StreamPlayback, HotReplacementKeepsParkedGenerationFacts) {
         WriteSineStream("stream_wait_hot_old.stream", harkentest::ObjectId(9781), 48000);
     const std::string newPath =
         WriteSineStream("stream_wait_hot_new.stream", harkentest::ObjectId(9781), 12000);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9781), oldPath.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9781), oldPath.c_str()));
     const std::vector<float> pcmData(48000, 0.2f);
     VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9782), &pcm));
@@ -3062,7 +3063,7 @@ TEST(StreamPlayback, HotReplacementKeepsParkedGenerationFacts) {
     ASSERT_EQ(VN_OK, PlayDefault(harkentest::ObjectId(9781), &stream));
     engine->streams.SyncServe();
     engine->nullBackend.Pump(2);
-    ASSERT_EQ(VN_OK, Vn_ReplaceStreamFile(harkentest::ObjectId(9781), newPath.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::ReplaceFixtureStream(harkentest::ObjectId(9781), newPath.c_str()));
     harken::StreamManager::StreamFacts current;
     ASSERT_TRUE(engine->streams.FindFile(harkentest::ObjectId(9781), &current));
     ASSERT_EQ(12000u, current.frameCount);
@@ -3091,7 +3092,7 @@ TEST(StreamPlayback, StreamParkCommandBackpressureIsAtomic) {
     harken::Engine* engine = session.Engine();
     const std::string path =
         WriteSineStream("stream_wait_backpressure.stream", harkentest::ObjectId(9790), 48000);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9790), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9790), path.c_str()));
     const std::vector<float> pcmData(48000, 0.2f);
     VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9791), &pcm));
@@ -3115,7 +3116,7 @@ TEST(StreamPlayback, StreamParkFilePinRefusalIsAtomic) {
     harken::Engine* engine = session.Engine();
     const std::string path =
         WriteSineStream("stream_wait_pin_refusal.stream", harkentest::ObjectId(97910), 48000);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(97910), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(97910), path.c_str()));
     const std::vector<float> pcmData(48000, 0.2f);
     VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(97911), &pcm));
@@ -3150,7 +3151,7 @@ TEST(StreamPlayback, ParkCaptureAllocationFailureIsAtomic) {
     harken::Engine* engine = session.Engine();
     const std::string path =
         WriteSineStream("stream_wait_alloc_refusal.stream", harkentest::ObjectId(9783), 48000);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9783), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9783), path.c_str()));
     const std::vector<float> pcmData(48000, 0.2f);
     VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9784), &pcm));
@@ -3194,7 +3195,7 @@ TEST(StreamPlayback, ReturnSeedFailureLeavesWaiterAndExactPinIntact) {
     harken::Engine* engine = session.Engine();
     const std::string path =
         WriteSineStream("stream_wait_seed_refusal.stream", harkentest::ObjectId(9792), 48000);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9792), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9792), path.c_str()));
     const std::vector<float> pcmData(48000, 0.2f);
     VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9793), &pcm));
@@ -3251,7 +3252,7 @@ TEST(StreamPlayback, NotificationOverflowDoesNotOwnAckEligibility) {
     harken::Engine* engine = session.Engine();
     const std::string path =
         WriteSineStream("stream_wait_notify_overflow.stream", harkentest::ObjectId(9794), 48000);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9794), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9794), path.c_str()));
     const std::vector<float> pcmData(48000, 0.2f);
     VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9795), &pcm));
@@ -3291,7 +3292,7 @@ TEST(StreamPlayback, SerialAndWorkerParkPublishSameCheckpoint) {
         harken::Engine* engine = session.Engine();
         const std::string path =
             WriteSineStream("stream_wait_worker.stream", harkentest::ObjectId(9796), 48000);
-        EXPECT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9796), path.c_str()));
+        EXPECT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9796), path.c_str()));
         const std::vector<float> pcmData(48000, 0.2f);
         VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
         EXPECT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9797), &pcm));
@@ -3325,7 +3326,7 @@ TEST(StreamPlayback, TermWithReservedAndPublishedAcksAllowsCleanReinit) {
         harken::Engine* engine = session.Engine();
         const std::string path =
             WriteSineStream("stream_wait_term_reserved.stream", harkentest::ObjectId(9798), 48000);
-        ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9798), path.c_str()));
+        ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9798), path.c_str()));
         const std::vector<float> pcmData(48000, 0.2f);
         VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
         ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9799), &pcm));
@@ -3348,7 +3349,7 @@ TEST(StreamPlayback, IntegrityDiscoveredDuringParkFadeWinsBeforeAck) {
     const std::string path =
         WriteSineStream("stream_wait_integrity_during_fade.stream", harkentest::ObjectId(9801),
                         48000);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9801), path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9801), path.c_str()));
 
     VnVoiceHandle stream = 0;
     ASSERT_EQ(VN_OK, PlayDefault(harkentest::ObjectId(9801), &stream));
@@ -3392,8 +3393,8 @@ TEST(StreamPlayback, DirectPlayDrainsPublishedMailboxBeforeNextAdmission) {
         WriteSineStream("stream_wait_mailbox_first.stream", harkentest::ObjectId(9802), 48000);
     const std::string secondPath =
         WriteSineStream("stream_wait_mailbox_second.stream", harkentest::ObjectId(9803), 48000);
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9802), firstPath.c_str()));
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(harkentest::ObjectId(9803), secondPath.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9802), firstPath.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9803), secondPath.c_str()));
     const std::vector<float> pcmData(48000, 0.2f);
     VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9804), &pcm));

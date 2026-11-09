@@ -2566,33 +2566,6 @@ TEST(Trace, IllegalUtf8PathRefusedAndEngineStaysHealthy) {
     ASSERT_NO_FATAL_FAILURE(AssertEngineStillSounds(session.Engine(), harkentest::ObjectId(7)));
 }
 
-TEST(Trace, IllegalUtf8StreamPathDuringActiveTraceRefusedAndSurvives) {
-    EngineSession session(MakeNullConfig(4, kBlockFrames));
-    ASSERT_EQ(VN_OK, session.InitResult());
-
-    const std::string path = TracePath("trace_illegal_cross.vtrc");
-    ASSERT_EQ(VN_OK, Vn_TraceStart(path.c_str()));
-
-    // With a trace active, the recorder hashes each referenced content file
-    // on the logic thread (the file-reference record). A stream
-    // registration whose path is illegal UTF-8 must refuse with
-    // VN_BAD_STREAM_FILE without the content-hash conversion escaping the
-    // C ABI, on the same logic-thread path that would otherwise throw.
-    EXPECT_EQ(VN_BAD_STREAM_FILE,
-              Vn_RegisterStreamFile(harkentest::ObjectId(1), "\xFF\xFE\x80" "stream"));
-
-    // The trace layer itself did not fail — a content-file hash failure is
-    // not a journal write failure — and the engine keeps rendering.
-    const VnSnapshot snapshot = Capture();
-    EXPECT_EQ(1u, snapshot.traceActive);
-    EXPECT_EQ(0u, snapshot.traceFailed);
-    ASSERT_NO_FATAL_FAILURE(AssertEngineStillSounds(session.Engine(), harkentest::ObjectId(7)));
-
-    // The trace finalizes normally after the refusal.
-    EXPECT_EQ(VN_OK, Vn_TraceStop());
-    EXPECT_EQ(0u, Capture().traceActive);
-}
-
 TEST(Trace, ProjectGenerationInstallAckRecordIsFortyByteLayout) {
     EXPECT_EQ(harken::kTraceRecordProjectGenerationInstallAck, 14);
     EXPECT_EQ(harken::kTraceRecordPreparedTopologyPlan, 15);

@@ -1,3 +1,4 @@
+#include "Common/StreamFixtureRegistration.h"
 // Recorded-baseline regression cases: deterministic null-backend
 // coverage spans the original acceptance flows plus stream, effect-chain,
 // and combined-scene paths.
@@ -746,7 +747,7 @@ TEST(BaselineRegression, StreamedSubregionLoop) {
     const std::string path = TempPath("baseline_streamed_subregion.stream");
     harkentest::WriteFileBytes(path,
                               harkentest::BuildStreamBytes(spec, source));
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(spec.soundId, path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(spec.soundId, path.c_str()));
 
     VnPlayDesc play = MakePlayDesc(spec.soundId);
     play.loopCount = 5;
@@ -816,7 +817,7 @@ TEST(BaselineRegression, CombinedM2Scene) {
     const std::string musicPath = TempPath("baseline_m2_music.stream");
     harkentest::WriteFileBytes(
         musicPath, harkentest::BuildStreamBytes(musicSpec, music));
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(musicSpec.soundId,
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(musicSpec.soundId,
                                            musicPath.c_str()));
 
     const std::vector<float> ambience =

@@ -1,3 +1,4 @@
+#include "Common/StreamFixtureRegistration.h"
 // Release-only NullBackend laboratory characterization for the M11 Runtime
 // capacity matrix. Wall-clock results describe this binary and host only.
 // They are not a supported-voice-count promise or real-device qualification.
@@ -1086,9 +1087,9 @@ StreamingRunResult RunStreamingOnce(
         result.error = "active engine missing";
         return result;
     }
-    if (Vn_RegisterStreamFile(kStreamSoundId,
+    if (harkentest::RegisterFixtureStream(kStreamSoundId,
                               streamPath.c_str()) != VN_OK) {
-        result.error = "Vn_RegisterStreamFile failed";
+        result.error = "harkentest::RegisterFixtureStream failed";
         return result;
     }
 

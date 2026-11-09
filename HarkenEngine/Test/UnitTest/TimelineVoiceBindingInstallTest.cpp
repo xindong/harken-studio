@@ -1,3 +1,4 @@
+#include "Common/StreamFixtureRegistration.h"
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/StreamBuilder.h"
 #include "Engine.h"
@@ -907,7 +908,7 @@ TEST(TimelineVoiceInstall, OutputCropUsesBoundPitchAndPreservesLoopOutroSamples)
                     spec.loopEndFrame = 256;
                     const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "compose_crop.stream").string();
                     harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, pcm));
-                    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSound, path.c_str()));
+                    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(kSound, path.c_str()));
                     harken::StreamManager::StreamFacts source;
                     ASSERT_TRUE(engine.streams.FindFile(kSound, &source));
                     facts.streamed = true;
@@ -1002,7 +1003,7 @@ TEST(TimelineVoiceInstall, OneFrameStreamRingRejectsMissingNeighborButAcceptsNat
         spec.soundId = kSound;
         const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "compose_ring_one.stream").string();
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, std::vector<float>(sourceFrames, 0.25f)));
-        ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSound, path.c_str()));
+        ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(kSound, path.c_str()));
         harken::StreamManager::StreamFacts source;
         ASSERT_TRUE(engine.streams.FindFile(kSound, &source));
         harken::TimelineVoiceInstallFacts facts{};

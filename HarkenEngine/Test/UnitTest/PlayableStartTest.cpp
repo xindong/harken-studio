@@ -1,3 +1,5 @@
+#include "harken/media/PackStreamResolver.h"
+#include "Common/StreamFixtureRegistration.h"
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
 #include "Common/StreamBuilder.h"
@@ -21359,7 +21361,7 @@ TEST(PlayableStart, QueueInitialStreamWaitPreservesSignalOnlyResidentSuccessorOr
         spec.soundId = kSound;
         const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "compose_queue_boundary.stream").string();
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, std::vector<float>(sourceFrames, 0.25f)));
-        ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSound, path.c_str()));
+        ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(kSound, path.c_str()));
         harken::StreamManager::StreamFacts facts;
         ASSERT_TRUE(engine.streams.FindFile(kSound, &facts));
         SequenceQueueWorldImage image(facts.contentRevision, engine.registry.Lookup(kSecondSound).contentRevision);
@@ -21417,7 +21419,7 @@ TEST(PlayableStart, QueueInitialStreamWaitPreservesSignalOnlyResidentSuccessorOr
         EXPECT_EQ(voicesBefore, engine.voices.AvailableSlotCount());
         engine.streams.SyncServe();
         EXPECT_EQ(1u, engine.streams.FreeSlotCount());
-        EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(kSound));
+        EXPECT_EQ(VN_OK, harkentest::UnregisterFixtureStream(kSound));
         EXPECT_FALSE(engine.runtimeRecreateRequired);
     }
 }
@@ -21441,7 +21443,7 @@ TEST(PlayableStart, MusicSegmentStreamedAndResidentStemsStartSampleAligned) {
         spec.soundId = kSecondSound;
         const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "music_streamed_stem.stream").string();
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, std::vector<float>(kFrames, -0.5f)));
-        ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSecondSound, path.c_str()));
+        ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(kSecondSound, path.c_str()));
         harken::StreamManager::StreamFacts facts;
         ASSERT_TRUE(engine.streams.FindFile(kSecondSound, &facts));
         DirectCompositeSegmentWorldImage image(engine.registry.Lookup(kSound).contentRevision, facts.contentRevision);
@@ -21491,7 +21493,7 @@ TEST(PlayableStart, MusicSegmentStreamedAndResidentStemsStartSampleAligned) {
         EXPECT_FALSE(engine.playableInstances.Classify(started.instance).live) << OccupancyDump(engine);
         engine.streams.SyncServe();
         EXPECT_EQ(2u, engine.streams.FreeSlotCount());
-        EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(kSecondSound));
+        EXPECT_EQ(VN_OK, harkentest::UnregisterFixtureStream(kSecondSound));
         EXPECT_FALSE(engine.runtimeRecreateRequired);
     }
 }
@@ -21514,7 +21516,7 @@ TEST(PlayableStart, MusicSegmentStreamedClipRepeatsEveryPassOnTheTimeline) {
         spec.soundId = kSound;
         const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "music_streamed_repeat.stream").string();
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, samples));
-        ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSound, path.c_str()));
+        ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(kSound, path.c_str()));
         harken::StreamManager::StreamFacts facts;
         ASSERT_TRUE(engine.streams.FindFile(kSound, &facts));
         DirectSegmentWorldImage image(facts.contentRevision, harken::ScheduleTimeKindV1::MusicalTicks, 0, 16);
@@ -21579,7 +21581,7 @@ TEST(PlayableStart, MusicSegmentStreamedClipRepeatsEveryPassOnTheTimeline) {
         EXPECT_FALSE(engine.playableInstances.Classify(started.instance).live) << OccupancyDump(engine);
         engine.streams.SyncServe();
         EXPECT_EQ(config.maxStreams, engine.streams.FreeSlotCount());
-        EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(kSound));
+        EXPECT_EQ(VN_OK, harkentest::UnregisterFixtureStream(kSound));
         EXPECT_FALSE(engine.runtimeRecreateRequired);
     }
 }
@@ -21613,7 +21615,7 @@ TEST(PlayableStart, MusicSegmentStarvedGroupRejoinsItsTimelinePosition) {
         spec.soundId = kSecondSound;
         const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "music_starved_stem.stream").string();
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, streamed));
-        ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSecondSound, path.c_str()));
+        ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(kSecondSound, path.c_str()));
         harken::StreamManager::StreamFacts facts;
         ASSERT_TRUE(engine.streams.FindFile(kSecondSound, &facts));
         DirectCompositeSegmentWorldImage image(engine.registry.Lookup(kSound).contentRevision, facts.contentRevision);
@@ -21835,7 +21837,7 @@ TEST(PlayableStart, MusicSegmentStarvedGroupRejoinsItsTimelinePosition) {
             }
             EXPECT_FALSE(engine.playableInstances.Classify(started.instance).live) << OccupancyDump(engine);
             EXPECT_EQ(config.maxStreams, engine.streams.FreeSlotCount());
-            EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(kSecondSound));
+            EXPECT_EQ(VN_OK, harkentest::UnregisterFixtureStream(kSecondSound));
             EXPECT_FALSE(engine.runtimeRecreateRequired);
             continue;
         }
@@ -21868,7 +21870,7 @@ TEST(PlayableStart, MusicSegmentStarvedGroupRejoinsItsTimelinePosition) {
         EXPECT_FALSE(engine.playableInstances.Classify(started.instance).live) << OccupancyDump(engine);
         engine.streams.SyncServe();
         EXPECT_EQ(config.maxStreams, engine.streams.FreeSlotCount());
-        EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(kSecondSound));
+        EXPECT_EQ(VN_OK, harkentest::UnregisterFixtureStream(kSecondSound));
         EXPECT_FALSE(engine.runtimeRecreateRequired);
     }
 }
@@ -21899,7 +21901,7 @@ TEST(PlayableStart, StreamedMusicTransitionPreparesSelectableBoundariesAndRefuse
         spec.soundId = kSecondSound;
         const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "music_transition_target.stream").string();
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, std::vector<float>(6400, -0.5f)));
-        ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSecondSound, path.c_str()));
+        ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(kSecondSound, path.c_str()));
         harken::StreamManager::StreamFacts facts;
         ASSERT_TRUE(engine.streams.FindFile(kSecondSound, &facts));
         DirectSegmentWorldImage source(engine.registry.Lookup(kSound).contentRevision,
@@ -22053,7 +22055,7 @@ TEST(PlayableStart, QueueStreamedSuccessorStartsAtPredecessorEndOrIsRefused) {
         spec.soundId = kSecondSound;
         const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "queue_streamed_successor.stream").string();
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, std::vector<float>(kStreamFrames, 0.25f)));
-        ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSecondSound, path.c_str()));
+        ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(kSecondSound, path.c_str()));
         harken::StreamManager::StreamFacts facts;
         ASSERT_TRUE(engine.streams.FindFile(kSecondSound, &facts));
         SequenceQueueWorldImage image(engine.registry.Lookup(kSound).contentRevision, facts.contentRevision);
@@ -22148,7 +22150,7 @@ TEST(PlayableStart, QueueStreamedSuccessorStartsAtPredecessorEndOrIsRefused) {
         engine.streams.SetThrottled(false);
         engine.streams.SyncServe();
         EXPECT_EQ(1u, engine.streams.FreeSlotCount());
-        EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(kSecondSound));
+        EXPECT_EQ(VN_OK, harkentest::UnregisterFixtureStream(kSecondSound));
         EXPECT_FALSE(engine.runtimeRecreateRequired);
     }
 }
@@ -22176,7 +22178,7 @@ TEST(PlayableStart, VariableControlStreamedTargetSwitchesOnPreparedBoundaryOrKee
         spec.soundId = kSecondSound;
         const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "variable_streamed_target.stream").string();
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, std::vector<float>(16384, 0.25f)));
-        ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSecondSound, path.c_str()));
+        ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(kSecondSound, path.c_str()));
         harken::StreamManager::StreamFacts facts;
         ASSERT_TRUE(engine.streams.FindFile(kSecondSound, &facts));
         const harken::VariableDefinitionV1 variable = {
@@ -22258,7 +22260,7 @@ TEST(PlayableStart, VariableControlStreamedTargetSwitchesOnPreparedBoundaryOrKee
         engine.streams.SetThrottled(false);
         engine.streams.SyncServe();
         EXPECT_EQ(config.maxStreams, engine.streams.FreeSlotCount());
-        EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(kSecondSound));
+        EXPECT_EQ(VN_OK, harkentest::UnregisterFixtureStream(kSecondSound));
         EXPECT_FALSE(engine.runtimeRecreateRequired);
     }
 }
@@ -22285,7 +22287,7 @@ TEST(PlayableStart, ContainerLoopStreamedSuccessorPlaysWholeAfterPreparationOrIs
         spec.soundId = kSecondSound;
         const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "loop_streamed_successor.stream").string();
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, std::vector<float>(kStreamFrames, -0.5f)));
-        ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSecondSound, path.c_str()));
+        ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(kSecondSound, path.c_str()));
         harken::StreamManager::StreamFacts facts;
         ASSERT_TRUE(engine.streams.FindFile(kSecondSound, &facts));
         TwoChildPlayableWorldImage image(engine.registry.Lookup(kSound).contentRevision, facts.contentRevision,
@@ -22347,7 +22349,7 @@ TEST(PlayableStart, ContainerLoopStreamedSuccessorPlaysWholeAfterPreparationOrIs
         engine.streams.SetThrottled(false);
         engine.streams.SyncServe();
         EXPECT_EQ(1u, engine.streams.FreeSlotCount());
-        EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(kSecondSound));
+        EXPECT_EQ(VN_OK, harkentest::UnregisterFixtureStream(kSecondSound));
         EXPECT_FALSE(engine.runtimeRecreateRequired);
     }
 }
@@ -22373,7 +22375,7 @@ TEST(PlayableStart, ContainerLoopStreamedChildKeepsTheRandomSelection) {
     spec.soundId = kSecondSound;
     const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "loop_random_streamed.stream").string();
     harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, std::vector<float>(kFrames, -0.5f)));
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSecondSound, path.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(kSecondSound, path.c_str()));
     harken::StreamManager::StreamFacts facts;
     ASSERT_TRUE(engine.streams.FindFile(kSecondSound, &facts));
     TwoChildPlayableWorldImage image(engine.registry.Lookup(kSound).contentRevision, facts.contentRevision,
@@ -22443,7 +22445,7 @@ TEST(PlayableStart, ContainerLoopStreamedChildKeepsTheRandomSelection) {
         if (index >= 2) EXPECT_NE(inputs[index - 2].iteration, inputs[index].iteration) << index;
     }
     EXPECT_TRUE(deferred);
-    EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(kSecondSound));
+    EXPECT_EQ(VN_OK, harkentest::UnregisterFixtureStream(kSecondSound));
     EXPECT_FALSE(engine.runtimeRecreateRequired);
     }
 }
@@ -22469,7 +22471,7 @@ TEST(PlayableStart, NativeInitialStreamWaitRetainsSourceAndCancelsBeforeReady) {
         spec.soundId = kSound;
         const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "compose_native_initial.stream").string();
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, std::vector<float>(512, 0.25f)));
-        ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSound, path.c_str()));
+        ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(kSound, path.c_str()));
         harken::StreamManager::StreamFacts facts;
         ASSERT_TRUE(engine.streams.FindFile(kSound, &facts));
         const auto run = [&](auto& image) {
@@ -22532,7 +22534,7 @@ TEST(PlayableStart, NativeInitialStreamWaitRetainsSourceAndCancelsBeforeReady) {
             EXPECT_EQ(voicesBefore, engine.voices.AvailableSlotCount());
             engine.streams.SyncServe();
             EXPECT_EQ(config.maxStreams, engine.streams.FreeSlotCount());
-            EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(kSound));
+            EXPECT_EQ(VN_OK, harkentest::UnregisterFixtureStream(kSound));
             EXPECT_FALSE(engine.runtimeRecreateRequired);
         };
         if (variableControl) {
@@ -22572,7 +22574,7 @@ static void CheckContainerTrackStreamWaitAndRecovery(harken::ContainerModeV1 mod
         spec.soundId = kSound;
         const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "compose_queue_track.stream").string();
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, std::vector<float>(512, 0.25f)));
-        ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSound, path.c_str()));
+        ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(kSound, path.c_str()));
         harken::StreamManager::StreamFacts facts;
         ASSERT_TRUE(engine.streams.FindFile(kSound, &facts));
         SequenceQueueCompositeTrackWorldImage image(facts.contentRevision,
@@ -22658,7 +22660,7 @@ static void CheckContainerTrackStreamWaitAndRecovery(harken::ContainerModeV1 mod
             EXPECT_EQ(voicesBefore, engine.voices.AvailableSlotCount());
             EXPECT_EQ(0u, engine.timelineArms.LiveCount());
             EXPECT_FALSE(engine.runtimeRecreateRequired);
-            EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(kSound));
+            EXPECT_EQ(VN_OK, harkentest::UnregisterFixtureStream(kSound));
             continue;
         }
         ASSERT_EQ(harken::PlayableStartStatus::Accepted, started.status);
@@ -22717,7 +22719,7 @@ static void CheckContainerTrackStreamWaitAndRecovery(harken::ContainerModeV1 mod
         engine.streams.SetThrottled(false);
         engine.streams.SyncServe();
         EXPECT_EQ(config.maxStreams, engine.streams.FreeSlotCount());
-        EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(kSound));
+        EXPECT_EQ(VN_OK, harkentest::UnregisterFixtureStream(kSound));
         EXPECT_FALSE(engine.runtimeRecreateRequired);
     }
 }
@@ -22786,7 +22788,7 @@ static void CheckNativeTrackInitialStreamWaitPreservesSubBlockFutureCohort(bool 
         spec.soundId = kSound;
         const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "compose_queue_track_subblock_future.stream").string();
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, std::vector<float>(blendProbe ? 4096 : 512, 0.25f)));
-        ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSound, path.c_str()));
+        ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(kSound, path.c_str()));
         harken::StreamManager::StreamFacts facts;
         ASSERT_TRUE(engine.streams.FindFile(kSound, &facts));
         SequenceQueueCompositeTrackWorldImage image(facts.contentRevision,
@@ -23061,7 +23063,7 @@ static void CheckNativeTrackInitialStreamWaitPreservesSubBlockFutureCohort(bool 
         EXPECT_EQ(voicesBefore, engine.voices.AvailableSlotCount());
         engine.streams.SyncServe();
         EXPECT_EQ(config.maxStreams, engine.streams.FreeSlotCount());
-        EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(kSound));
+        EXPECT_EQ(VN_OK, harkentest::UnregisterFixtureStream(kSound));
         EXPECT_FALSE(engine.runtimeRecreateRequired);
     }
 }
@@ -23098,7 +23100,7 @@ TEST(PlayableStart, DirectOrdinaryStreamRetainsSelectedInitialSourceWhileWaiting
         spec.soundId = kSound;
         const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "compose_ordinary.stream").string();
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, std::vector<float>(512, 0.25f)));
-        ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSound, path.c_str()));
+        ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(kSound, path.c_str()));
         harken::StreamManager::StreamFacts facts;
         ASSERT_TRUE(engine.streams.FindFile(kSound, &facts));
         PlayableWorldImage image(facts.contentRevision, mode);
@@ -23161,7 +23163,7 @@ TEST(PlayableStart, DirectOrdinaryStreamRetainsSelectedInitialSourceWhileWaiting
         EXPECT_EQ(voicesBefore, engine.voices.AvailableSlotCount());
         engine.streams.SyncServe();
         EXPECT_EQ(1u, engine.streams.FreeSlotCount());
-        EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(kSound));
+        EXPECT_EQ(VN_OK, harkentest::UnregisterFixtureStream(kSound));
         EXPECT_FALSE(engine.runtimeRecreateRequired);
     }
 }
@@ -23203,7 +23205,7 @@ TEST(PlayableStart, ActionPlaybackReadinessMatchesMixedOutputAndStreamObservatio
         spec.channelCount = 2;
         const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "readiness_mixed.stream").string();
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, streamed));
-        ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSecondSound, path.c_str()));
+        ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(kSecondSound, path.c_str()));
         harken::StreamManager::StreamFacts source;
         ASSERT_TRUE(engine.streams.FindFile(kSecondSound, &source));
         DirectCompositeTrackWorldImage image(engine.registry.Lookup(kSound).contentRevision, source.contentRevision);
@@ -23416,7 +23418,7 @@ TEST(PlayableStart, DirectTrackMixedStreamWaitsStartsTogetherAndCancelsBeforeRea
         spec.channelCount = 2;
         const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "compose_direct_track.stream").string();
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, streamed));
-        ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSecondSound, path.c_str()));
+        ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(kSecondSound, path.c_str()));
         harken::StreamManager::StreamFacts facts;
         ASSERT_TRUE(engine.streams.FindFile(kSecondSound, &facts));
         DirectCompositeTrackWorldImage image(engine.registry.Lookup(kSound).contentRevision, facts.contentRevision);
@@ -23503,7 +23505,7 @@ TEST(PlayableStart, DirectTrackMixedStreamWaitsStartsTogetherAndCancelsBeforeRea
         EXPECT_EQ(voicesBefore, engine.voices.AvailableSlotCount());
         engine.streams.SyncServe();
         EXPECT_EQ(config.maxStreams, engine.streams.FreeSlotCount());
-        EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(kSecondSound));
+        EXPECT_EQ(VN_OK, harkentest::UnregisterFixtureStream(kSecondSound));
     }
 }
 
@@ -23587,7 +23589,7 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
         spec.channelCount = 2;
         const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "compose_future_mixed.stream").string();
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, streamed));
-        ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSecondSound, path.c_str()));
+        ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(kSecondSound, path.c_str()));
         harken::StreamManager::StreamFacts facts;
         ASSERT_TRUE(engine.streams.FindFile(kSecondSound, &facts));
         DirectCompositeTrackWorldImage image(engine.registry.Lookup(kSound).contentRevision, facts.contentRevision);
@@ -24225,9 +24227,9 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
                             ASSERT_NE(nullptr, actualParent);
                             ASSERT_NE(nullptr, actualParent->scheduleAggregate);
                             ASSERT_NE(nullptr, actualParent->scheduleAggregate->trackRepeat);
-                            EXPECT_EQ(VN_IN_USE, Vn_UnregisterStreamFile(kSecondSound));
+                            EXPECT_EQ(VN_IN_USE, harkentest::UnregisterFixtureStream(kSecondSound));
                             if (replaceHeld) {
-                                ASSERT_EQ(VN_OK, Vn_ReplaceStreamFile(kSecondSound, path.c_str()));
+                                ASSERT_EQ(VN_OK, harkentest::ReplaceFixtureStream(kSecondSound, path.c_str()));
                                 harken::StreamManager::StreamFacts current{}, pinned{};
                                 ASSERT_TRUE(engine.streams.FindFile(kSecondSound, &current));
                                 EXPECT_NE(facts.sourceGeneration, current.sourceGeneration);
@@ -24466,7 +24468,7 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
             EXPECT_EQ(1u, engine.selectionMemory.Snapshot(ordinaryKey).selectionOrdinal);
             EXPECT_EQ(0u, engine.selectionMemory.Snapshot(ordinaryKey).pendingCount);
         }
-        EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(kSecondSound));
+        EXPECT_EQ(VN_OK, harkentest::UnregisterFixtureStream(kSecondSound));
     }
 }
 
@@ -24533,11 +24535,12 @@ TEST(PlayableStart, FutureStreamCohortWaitsForIndependentProvidersWithinPreparat
             provider.payloadOffset = harken::ParseStreamTocEntry(provider.bytes.data() + header.tocOffset).payloadOffset;
             const VnByteSourceDescV1 descriptor{sizeof(VnByteSourceDescV1), 0, provider.bytes.size(),
                 &provider, &Provider::Read, &Provider::Release};
-            VnStreamSourceRequest request = 0;
-            ASSERT_EQ(VN_OK, Vn_BeginStreamSource(sounds[index], VN_STREAM_SOURCE_REGISTER, &descriptor, &request));
-            VnStreamSourceInfoV1 info{sizeof(info)};
-            ASSERT_TRUE(waitFor([&] { return Vn_QueryStreamSource(request, &info) == VN_OK && info.state == VN_STREAM_SOURCE_READY; }));
-            ASSERT_EQ(VN_OK, Vn_CommitStreamSource(request));
+            auto source = std::make_shared<harken::HostStreamByteSource>(descriptor);
+            harken::StreamManager::SourceToken request;
+            ASSERT_EQ(VN_OK, engine.streams.BeginSource(sounds[index], source, false, 0, &request));
+            source->Adopt();
+            ASSERT_TRUE(waitFor([&] { return engine.streams.QuerySource(request) == harken::StreamManager::PreparationState::Ready; }));
+            ASSERT_EQ(VN_OK, engine.streams.TakeSource(request));
             ASSERT_TRUE(engine.streams.FindFile(sounds[index], &original[index]));
             EXPECT_EQ(0u, provider.payloadReads.load(std::memory_order_acquire));
         }
@@ -24645,7 +24648,7 @@ TEST(PlayableStart, FutureStreamCohortWaitsForIndependentProvidersWithinPreparat
         EXPECT_TRUE(waitFor([&] { engine.streams.SyncServe(); return engine.streams.FreeSlotCount() == config.maxStreams; }));
         EXPECT_FALSE(engine.runtimeRecreateRequired);
         for (std::size_t index = 0; index < providers.size(); ++index) {
-            EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(sounds[index]));
+            EXPECT_EQ(VN_OK, harkentest::UnregisterFixtureStream(sounds[index]));
             EXPECT_TRUE(waitFor([&] { return providers[index].releases.load(std::memory_order_acquire) == 1u; }));
         }
     }
@@ -24709,7 +24712,7 @@ TEST(PlayableStart, InitialStreamAnchorKeepsSubBlockFutureStartsFixedAndContains
         spec.channelCount = 2;
         const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "compose_initial_subblock_future.stream").string();
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, streamed));
-        ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSecondSound, path.c_str()));
+        ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(kSecondSound, path.c_str()));
         harken::StreamManager::StreamFacts facts;
         ASSERT_TRUE(engine.streams.FindFile(kSecondSound, &facts));
         DirectCompositeTrackWorldImage image(engine.registry.Lookup(kSound).contentRevision, facts.contentRevision);
@@ -24913,7 +24916,7 @@ TEST(PlayableStart, InitialStreamAnchorKeepsSubBlockFutureStartsFixedAndContains
         engine.streams.SyncServe();
         EXPECT_EQ(config.maxStreams, engine.streams.FreeSlotCount());
         EXPECT_FALSE(engine.runtimeRecreateRequired);
-        EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(kSecondSound));
+        EXPECT_EQ(VN_OK, harkentest::UnregisterFixtureStream(kSecondSound));
     }
 }
 
@@ -24944,7 +24947,7 @@ static void CheckFutureStreamWithIndependentNativeVariable(bool earlyTerm, unsig
         spec.channelCount = 2;
         const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "compose_independent_native_page.stream").string();
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, streamed));
-        ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSecondSound, path.c_str()));
+        ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(kSecondSound, path.c_str()));
         harken::StreamManager::StreamFacts facts;
         ASSERT_TRUE(engine.streams.FindFile(kSecondSound, &facts));
         DirectCompositeTrackWorldImage image(engine.registry.Lookup(kSound).contentRevision, facts.contentRevision);
@@ -25175,7 +25178,7 @@ static void CheckFutureStreamWithIndependentNativeVariable(bool earlyTerm, unsig
         EXPECT_FALSE(engine.runtimeRecreateRequired);
         engine.streams.SyncServe();
         EXPECT_EQ(config.maxStreams, engine.streams.FreeSlotCount());
-        EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(kSecondSound));
+        EXPECT_EQ(VN_OK, harkentest::UnregisterFixtureStream(kSecondSound));
     }
 }
 
@@ -25214,7 +25217,7 @@ TEST(PlayableStart, CroppedEmptyInitialStreamCompletesAndCancelsWithOrWithoutRes
         spec.channelCount = 2;
         const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "compose_initial_empty_crop.stream").string();
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, streamed));
-        ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSecondSound, path.c_str()));
+        ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(kSecondSound, path.c_str()));
         harken::StreamManager::StreamFacts facts;
         ASSERT_TRUE(engine.streams.FindFile(kSecondSound, &facts));
         DirectCompositeTrackWorldImage image(engine.registry.Lookup(kSound).contentRevision, facts.contentRevision);
@@ -25301,7 +25304,7 @@ TEST(PlayableStart, CroppedEmptyInitialStreamCompletesAndCancelsWithOrWithoutRes
         engine.streams.SyncServe();
         EXPECT_EQ(1u, engine.streams.FreeSlotCount());
         EXPECT_FALSE(engine.runtimeRecreateRequired);
-        EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(kSecondSound));
+        EXPECT_EQ(VN_OK, harkentest::UnregisterFixtureStream(kSecondSound));
     }
 }
 
@@ -25334,7 +25337,7 @@ TEST(PlayableStart, RepeatedTrackMixedStreamWaitPreservesFutureClipAndCancellati
         spec.channelCount = 2;
         const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "compose_repeated_track.stream").string();
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, streamed));
-        ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSecondSound, path.c_str()));
+        ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(kSecondSound, path.c_str()));
         harken::StreamManager::StreamFacts facts;
         ASSERT_TRUE(engine.streams.FindFile(kSecondSound, &facts));
         DirectCompositeTrackWorldImage image(engine.registry.Lookup(kSound).contentRevision, facts.contentRevision);
@@ -25489,7 +25492,7 @@ TEST(PlayableStart, RepeatedTrackMixedStreamWaitPreservesFutureClipAndCancellati
         EXPECT_EQ(voicesBefore, engine.voices.AvailableSlotCount());
         engine.streams.SyncServe();
         EXPECT_EQ(config.maxStreams, engine.streams.FreeSlotCount());
-        EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(kSecondSound));
+        EXPECT_EQ(VN_OK, harkentest::UnregisterFixtureStream(kSecondSound));
     }
 }
 

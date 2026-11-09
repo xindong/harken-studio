@@ -1,3 +1,4 @@
+#include "Common/StreamFixtureRegistration.h"
 // Job-parallel voice rendering (M5 §8 / acceptance §11.4). Four things are
 // proven here:
 //   1. Determinism: serial (renderWorkerCount = 0) and parallel (N in {1,2,4})
@@ -717,7 +718,7 @@ void RenderStarveScene(std::uint32_t workerCount, std::uint32_t arenaBytes,
                                    ".stream";
     harkentest::WriteFileBytes(streamPath,
                               harkentest::BuildStreamBytes(spec, streamSine));
-    ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kStarveStream, streamPath.c_str()));
+    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(kStarveStream, streamPath.c_str()));
 
     // The streamed voice takes slot 0 (first Free), so its scratch + tap are
     // reserved before the PCM voices — the tap participates in the sequence

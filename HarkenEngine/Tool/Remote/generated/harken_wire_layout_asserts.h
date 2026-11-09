@@ -3497,17 +3497,6 @@ static_assert(offsetof(VnByteSourceDescV1, readAt) == 24,
 static_assert(offsetof(VnByteSourceDescV1, release) == 32,
               "wire table offset drift: VnByteSourceDescV1.release");
 
-static_assert(sizeof(VnStreamSourceInfoV1) == 16,
-              "wire table size drift: VnStreamSourceInfoV1");
-static_assert(offsetof(VnStreamSourceInfoV1, structSize) == 0,
-              "wire table offset drift: VnStreamSourceInfoV1.structSize");
-static_assert(offsetof(VnStreamSourceInfoV1, state) == 4,
-              "wire table offset drift: VnStreamSourceInfoV1.state");
-static_assert(offsetof(VnStreamSourceInfoV1, result) == 8,
-              "wire table offset drift: VnStreamSourceInfoV1.result");
-static_assert(offsetof(VnStreamSourceInfoV1, reserved0) == 12,
-              "wire table offset drift: VnStreamSourceInfoV1.reserved0");
-
 static_assert(sizeof(VnPlaybackReadinessMemberV1) == 160,
               "wire table size drift: VnPlaybackReadinessMemberV1");
 static_assert(offsetof(VnPlaybackReadinessMemberV1, structSize) == 0,
