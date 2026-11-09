@@ -21570,8 +21570,10 @@ TEST(PlayableStart, MusicSegmentStreamedClipRepeatsEveryPassOnTheTimeline) {
 }
 
 TEST(PlayableStart, MusicSegmentStarvedStreamedStemRejoinsItsTimelinePosition) {
-    for (const auto workers : {0u, 2u}) {
-        SCOPED_TRACE(workers);
+    enum class Supply { Restored, Never, StopWhileSilent };
+    for (const auto workers : {0u, 2u})
+    for (const auto supply : {Supply::Restored, Supply::Never, Supply::StopWhileSilent}) {
+        SCOPED_TRACE(::testing::Message() << "workers=" << workers << " supply=" << static_cast<int>(supply));
         auto config = harkentest::MakeNullConfig(4, 64, 48000);
         config.renderWorkerCount = workers;
         config.maxStreams = 3;
@@ -21626,10 +21628,12 @@ TEST(PlayableStart, MusicSegmentStarvedStreamedStemRejoinsItsTimelinePosition) {
         ASSERT_EQ(harken::PlayableStartStatus::Accepted, started.status);
         std::vector<float> output;
         for (unsigned block = 0; block < 900; ++block) {
-            if (block == 100) engine.streams.SetThrottled(true);
-            if (block == 220) engine.streams.SetThrottled(false);
+            const bool served = block < 100 || (supply == Supply::Restored && block >= 220);
+            engine.streams.SetThrottled(!served);
+            if (supply == Supply::StopWhileSilent && block == 260)
+                ASSERT_EQ(harken::PlayableControlStatus::Ok, harken::StopPlayable(engine, started.instance, 0));
             ASSERT_EQ(VN_OK, Vn_Update());
-            if (block < 100 || block >= 220) engine.streams.SyncServe();
+            if (served) engine.streams.SyncServe();
             engine.nullBackend.Pump(1);
             for (unsigned frame = 0; frame < config.blockFrames; ++frame)
                 output.push_back(engine.nullBackend.LastBlock()[frame * 2]);
@@ -21638,6 +21642,31 @@ TEST(PlayableStart, MusicSegmentStarvedStreamedStemRejoinsItsTimelinePosition) {
         ASSERT_NE(output.end(), first) << OccupancyDump(engine);
         const auto offset = static_cast<std::size_t>(first - output.begin());
         ASSERT_LE(offset + kFrames, output.size());
+        if (supply != Supply::Restored) {
+            const std::size_t stop = supply == Supply::Never ? kFrames : 260u * 64u - offset;
+            const auto silent = std::find_if(output.begin() + offset, output.begin() + offset + stop,
+                [](float value) { return std::abs(value - 0.25f) < 0.000001f; });
+            ASSERT_NE(output.begin() + offset + stop, silent) << "the stem never starved";
+            for (auto at = silent; at != output.begin() + offset + stop; ++at)
+                ASSERT_NEAR(0.25f, *at, 0.000001f) << "late data at=" << (at - output.begin());
+            if (supply == Supply::Never)
+                for (std::size_t frame = offset + kFrames; frame < output.size(); ++frame)
+                    ASSERT_NEAR(0.0f, output[frame], 0.000001f) << frame;
+            else
+                for (std::size_t frame = offset + stop + 1024u; frame < output.size(); ++frame)
+                    ASSERT_NEAR(0.0f, output[frame], 0.000001f) << frame;
+            engine.streams.SetThrottled(false);
+            for (unsigned block = 0; block < 4; ++block) {
+                ASSERT_EQ(VN_OK, Vn_Update());
+                engine.streams.SyncServe();
+                engine.nullBackend.Pump(1);
+            }
+            EXPECT_FALSE(engine.playableInstances.Classify(started.instance).live) << OccupancyDump(engine);
+            EXPECT_EQ(config.maxStreams, engine.streams.FreeSlotCount());
+            EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(kSecondSound));
+            EXPECT_FALSE(engine.runtimeRecreateRequired);
+            continue;
+        }
         // The resident stem never changes; the streamed stem is either at its
         // timeline position, inside a fade toward or from silence, or silent.
         std::vector<float> gain(kFrames);
