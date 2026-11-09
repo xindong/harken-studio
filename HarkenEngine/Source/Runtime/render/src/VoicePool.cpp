@@ -3322,12 +3322,16 @@ void VoicePool::ServiceStreamResync(std::uint32_t slotIndex, Slot& slot,
         (void)applied;
         render.resyncSwitchFrame = frame;
         render.resyncPendingToken = 0;
+        // Clear the consumed token before acknowledging: logic may then write
+        // the next request's metadata while its new token is still unpublished.
+        slot.resyncRequestToken.store(0, std::memory_order_relaxed);
         slot.resyncLatched.store(false, std::memory_order_release);
         return;
     }
     // Missed: the ring is released and the logic side is asked again.
     (void)m_streamSeekHandoffs->CancelFromAudio(token, render.resyncPendingTicket);
     render.resyncPendingToken = 0;
+    slot.resyncRequestToken.store(0, std::memory_order_relaxed);
     slot.resyncMappable.store(render.resyncMappable, std::memory_order_relaxed);
     slot.resyncSerial.store(serial + 1u, std::memory_order_release);
 }

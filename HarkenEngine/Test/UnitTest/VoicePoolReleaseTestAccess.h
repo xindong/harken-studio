@@ -7,6 +7,15 @@
 namespace harken::detail {
 
 struct VoicePoolReleaseTestAccess {
+    // Pause a logic-side post before its token publication, between audio blocks.
+    static void WriteResyncRequestMetadata(VoicePool& pool, VnVoiceHandle voice,
+        std::uint64_t serial, std::uint64_t ticket, std::uint64_t frame) {
+        auto* slot = pool.SlotFor(voice);
+        assert(slot != nullptr);
+        slot->resyncRequestSerial.store(serial, std::memory_order_relaxed);
+        slot->resyncRequestTicket.store(ticket, std::memory_order_relaxed);
+        slot->resyncRequestFrame.store(frame, std::memory_order_relaxed);
+    }
     static void SetRingCommitPageLimit(VoicePool& pool, std::uint32_t channel, std::size_t pages) {
         pool.m_ringStorage[channel].SetCommitPageLimitForTests(pages);
     }

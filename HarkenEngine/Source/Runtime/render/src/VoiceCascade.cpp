@@ -1215,6 +1215,20 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
         }
     }
     ctx.logicalSourceOutputFramesThisBlock = produced;
+    if (ctx.resyncFadeOutTotal != 0 && !ctx.resyncLatched &&
+        ctx.streamRing != nullptr &&
+        ctx.streamRing->TerminalReason() == StreamTerminalReason::NaturalEnd) {
+        // The producer finished filling the ring, not playing its buffered tail.
+        // Reverse a preventive fade from its last gain using the existing ramp.
+        if (ctx.resyncFadeOutDone != 0) {
+            const auto numerator = ctx.resyncFadeOutTotal -
+                std::min(ctx.resyncFadeOutDone - 1u, ctx.resyncFadeOutTotal);
+            ctx.resyncFadeInDone = static_cast<std::uint32_t>(
+                static_cast<std::uint64_t>(numerator) * ctx.resyncFadeInDone /
+                (static_cast<std::uint64_t>(ctx.resyncFadeOutTotal) + 1u));
+        }
+        ctx.resyncFadeOutTotal = 0;
+    }
     if (ctx.resyncFadeInDone < ctx.resyncFadeFrames && !ctx.resyncLatched) {
         const std::uint32_t begin = resyncSwitchAt == UINT32_MAX ? 0u : resyncSwitchAt;
         const std::uint32_t count = std::min(produced - std::min(produced, begin),
