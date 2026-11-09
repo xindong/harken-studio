@@ -39,6 +39,8 @@ struct VorbisMedia {
     std::uint32_t identBytes = 0, setupBytes = 0;
     std::uint64_t packetBytes = 0;
     std::uint64_t packetDataOffset = 0, packetChecksum = 0;
+    // Segment checksums bind the complete metadata prefix as well as payload.
+    std::uint64_t segmentChecksumSeed = 0;
     std::vector<VorbisSeekPoint> seek;
     std::vector<std::uint64_t> segmentChecksums;
 

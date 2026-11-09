@@ -1193,7 +1193,8 @@ bool StreamManager::RunChunkJob(const ChunkJob& job, std::vector<float>& staging
         return false;
     }
     const bool valid = ValidateChunk(job, staging,
-        Fnv1a64(staging.data(), static_cast<std::size_t>(job.chunkBytes)));
+        Fnv1a64(staging.data(), static_cast<std::size_t>(job.chunkBytes),
+            job.file->vorbis ? job.file->vorbis->Media().segmentChecksumSeed : kFnv1a64OffsetBasis));
     if (!valid) facts.readStatus = 3;
     return valid;
 }
@@ -1450,7 +1451,14 @@ bool StreamManager::AdvancePacketSlot(ServiceCursor& cursor, ChunkJob* job) {
         const auto buffered = ring.BufferedFrames();
         const auto frameSpace = ring.FrameCapacity() - std::min(ring.FrameCapacity(), buffered);
         if (recordBytes > ring.WriteAvailableBytes() || frames > frameSpace) {
-            if (!buffered) return fail(VN_NO_STREAM);
+            if (!buffered) {
+                if (ring.startPromoted.load(std::memory_order_acquire) &&
+                    recordBytes <= ring.capacity && frames <= ring.FrameCapacity()) {
+                    slot.packetCapacityLimited = true;
+                    return false;
+                }
+                return fail(VN_NO_STREAM);
+            }
             ring.filledFrameLimit.store(buffered, std::memory_order_release);
             slot.packetCapacityLimited = true;
             return false;

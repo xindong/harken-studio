@@ -1,4 +1,5 @@
 #include "harken/media/StreamManager.h"
+#include "harken/media/VorbisDecoder.h"
 
 #include <algorithm>
 #include <chrono>
@@ -464,7 +465,8 @@ void StreamManager::ServeSlots() {
             cachedBytesRemaining -= static_cast<std::size_t>(job.chunkBytes);
             slot.stagedChunk = kNoChunk;
             const bool valid = ValidateChunk(job, slot.staging,
-                Fnv1a64(slot.staging.data(), static_cast<std::size_t>(job.chunkBytes)));
+                Fnv1a64(slot.staging.data(), static_cast<std::size_t>(job.chunkBytes),
+                    job.file->vorbis ? job.file->vorbis->Media().segmentChecksumSeed : kFnv1a64OffsetBasis));
             if (slot.ring.state.load(std::memory_order_acquire) != StreamSlotState::Active ||
                 slot.ring.generation.load(std::memory_order_relaxed) != generation) break;
             CompleteReadObservation(slot, job, {}, valid, false);
@@ -521,7 +523,7 @@ void StreamManager::DispatchIo() {
         double leastTime = std::numeric_limits<double>::infinity();
         for (std::size_t n = 0; n < m_slots.size(); ++n) {
             auto& slot = m_slots[(m_slotCursor + n) % m_slots.size()];
-            if (slot.ioLane >= 0 || slot.feedStopped ||
+            if (slot.ioLane >= 0 || slot.feedStopped || slot.packetCapacityLimited ||
                 slot.ring.state.load(std::memory_order_acquire) != StreamSlotState::Active ||
                 slot.ring.startPromoted.load(std::memory_order_acquire) != steady ||
                 slot.passGoal <= slot.ring.writeFrames.load(std::memory_order_relaxed)) continue;

@@ -310,6 +310,10 @@ bool FeedResamplerFromStream(VoiceRenderContext& ctx) {
     if (ctx.mediaDecodeFailed) return false;
     ResamplerView& rs = ctx.resampler;
     StreamRing& ring = *ctx.streamRing;
+    if (ring.preparationResult.load(std::memory_order_acquire) != VN_OK) {
+        ctx.mediaDecodeFailed = true;
+        return false;
+    }
     // Sample end-of-data BEFORE reading the write index. The producer
     // release-publishes the terminal winner after the final byte/frame publication, so
     // an acquire load that observes it happens-after that publish and the
@@ -319,9 +323,9 @@ bool FeedResamplerFromStream(VoiceRenderContext& ctx) {
     // truncate the tail.
     const bool ended = ring.SourceEnded();
     const std::uint32_t span = ring.BufferedFrames();
-    if (span > 0) {
+    if (span > 0 || (ctx.mediaDecoder != nullptr && ring.ReadAvailableBytes() != 0)) {
         const std::uint32_t chunk = std::min(kResampleChunkFrames,
-            std::min(span, rs.FreeFrames()));
+            ctx.mediaDecoder != nullptr ? rs.FreeFrames() : std::min(span, rs.FreeFrames()));
         if (chunk == 0) return false;
         if (ctx.mediaDecoder != nullptr) {
             PCMView decoded;
@@ -1348,7 +1352,9 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
             }
         }
     }
-    if (ctx.mediaDecodeFailed) sourceResult = SourceTerminalKind::IntegrityAbort;
+    if (ctx.mediaDecodeFailed) sourceResult = ctx.streamRing != nullptr &&
+        ctx.streamRing->preparationResult.load(std::memory_order_acquire) != VN_OK
+        ? SourceTerminalKind::ProducerFailure : SourceTerminalKind::IntegrityAbort;
     std::uint32_t stopCutoff = UINT32_MAX;
 
 #if HARKEN_STAGE_TAPS_ACTIVE

@@ -141,9 +141,10 @@ VorbisFixture MakeVorbisFixture(unsigned channels, bool streaming,
     out.insert(out.end(), packets[0].begin(), packets[0].end());
     out.insert(out.end(), packets[2].begin(), packets[2].end());
     for (const auto& s : seek) { Put(out, s.frame, 8); Put(out, s.packetOffset, 8); Put(out, s.discardFrames, 4); }
+    const auto metadataChecksum = Fnv1a64(out.data(), out.size());
     if (streaming) for (std::size_t i = 0; i < seek.size(); ++i) {
         const auto end = i + 1 < seek.size() ? seek[i + 1].packetOffset : data.size();
-        Put(out, Fnv1a64(data.data() + seek[i].packetOffset, end - seek[i].packetOffset), 8);
+        Put(out, Fnv1a64(data.data() + seek[i].packetOffset, end - seek[i].packetOffset, metadataChecksum), 8);
     }
     out.insert(out.end(), data.begin(), data.end());
     result.reference = Linear(ogg); Require(result.reference.size() == frames * channels);

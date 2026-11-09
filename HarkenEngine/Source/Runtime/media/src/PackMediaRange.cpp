@@ -127,6 +127,14 @@ bool EqualResidentSamples(const PCMView& left, const PCMView& right) noexcept {
 // zero included. Facts, revisions and chunk checksums only reject.
 MediaContentMatch MatchMediaContent(const PCMView& leftResident, const PackMediaRange* leftRange,
                           const PCMView& rightResident, const PackMediaRange* rightRange) {
+    if ((leftRange && leftRange->vorbis) || (rightRange && rightRange->vorbis)) {
+        if (!leftRange || !rightRange || !leftRange->vorbis || !rightRange->vorbis)
+            return MediaContentMatch::Different;
+        // Only an identical immutable resource and byte source prove equality
+        // without interpreting an encoded range as planar samples.
+        return leftRange->vorbis == rightRange->vorbis && leftRange->source == rightRange->source &&
+            leftRange->blobOffset == rightRange->blobOffset ? MediaContentMatch::Equal : MediaContentMatch::Different;
+    }
     // When both sides carry a range, either may be streamed later, so compare
     // the ranges themselves; resident samples must not vouch for a range whose
     // file changed in place.

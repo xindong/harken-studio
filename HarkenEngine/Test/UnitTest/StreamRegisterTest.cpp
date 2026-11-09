@@ -2377,3 +2377,120 @@ TEST(StreamRegister, VorbisPackRangeFeedsVerifiedPacketsAcrossSeekAndLoop) {
         EXPECT_EQ(codec.states.ActiveBytes(), 0u);
     }
 }
+
+TEST(StreamRegister, VorbisStreamRejectsChangedPositionMetadataBeforePublishingFrames) {
+    for (unsigned mutation = 0; mutation < 4; ++mutation) {
+        SCOPED_TRACE(mutation);
+        harken::EngineConfig config;
+        config.maxStreams = 1;
+        config.streamRingBytes = 8192;
+        harken::VorbisCodec codec(2 * 1024 * 1024, 0);
+        harken::StreamManager streams(config);
+        auto fixture = harken::test::MakeVorbisFixture(1, true, 257, 1023);
+        harken::VorbisMedia media;
+        ASSERT_TRUE(harken::ParseVorbisTestMedia(fixture.media.data(), fixture.media.size(), media));
+        ASSERT_GT(media.seek.size(), 1u);
+        const auto discardOffset = harken::vorbis_test_wire::kHeaderBytes + media.identBytes + media.setupBytes +
+            harken::vorbis_test_wire::kSeekBytes + 16;
+        const auto offset = mutation == 0 ? discardOffset : mutation == 1 ? 68u : mutation == 2 ? 80u : 16u;
+        const auto changed = mutation == 0 ? media.seek[1].discardFrames + 1 : mutation == 1 ? media.loopDiscard + 1 :
+            mutation == 2 ? media.loopTrim + 1 : media.frames - 1;
+        for (unsigned byte = 0; byte < 4; ++byte)
+            fixture.media[offset + byte] = static_cast<std::uint8_t>(changed >> (8 * byte));
+        std::vector<std::uint8_t> prefix(fixture.media.begin(), fixture.media.begin() + media.packetDataOffset);
+        harken::VorbisPrepareResult result;
+        auto encoded = harken::VorbisStreamMedia::Prepare(codec, std::move(prefix), fixture.media.size(),
+            4 * 1024 * 1024, result);
+        if (!encoded) { EXPECT_EQ(harken::VorbisPrepareResult::Invalid, result); continue; }
+        auto source = std::make_shared<ControlledSource>();
+        source->bytes = std::move(fixture.media);
+        auto range = std::make_shared<harken::PackMediaRange>();
+        range->source = source; range->vorbis = encoded;
+        range->sampleRate = media.sampleRate; range->channelCount = 1;
+        range->frameCount = encoded->Media().frames; range->contentRevision = media.revision;
+        range->loop = {media.loopStart, media.loopEnd};
+        harken::StreamManager::StreamFacts facts;
+        ASSERT_EQ(VN_OK, streams.ResolvePackSource(range, &facts));
+        ASSERT_TRUE(streams.PrepareSlotWorkingSet(0, 1));
+        ASSERT_EQ(VN_OK, streams.ActivateSlot(0, facts.fileIndex, 4096, 0, range->frameCount, 1));
+        streams.SyncServe();
+        auto* ring = streams.RingOf(0);
+        EXPECT_EQ(0u, ring->BufferedFrames());
+        EXPECT_EQ(harken::StreamTerminalReason::IntegrityAbort, ring->TerminalReason());
+        ring->state.store(harken::StreamSlotState::Retired, std::memory_order_release);
+        streams.SyncServe();
+    }
+}
+
+TEST(StreamRegister, FullVorbisByteRingDoesNotBlockAnotherStreamAndTinyRingFails) {
+    auto fixture = harken::test::MakeVorbisFixture(1, true);
+    harken::VorbisMedia media;
+    ASSERT_TRUE(harken::ParseVorbisTestMedia(fixture.media.data(), fixture.media.size(), media));
+    harken::VorbisCodec codec(2 * 1024 * 1024, 0);
+    harken::VorbisPrepareResult prepared;
+    std::vector<std::uint8_t> prefix(fixture.media.begin(), fixture.media.begin() + media.packetDataOffset);
+    auto encoded = harken::VorbisStreamMedia::Prepare(codec, std::move(prefix), fixture.media.size(),
+        4 * 1024 * 1024, prepared);
+    ASSERT_NE(encoded, nullptr);
+    auto source = std::make_shared<ControlledSource>();
+    source->bytes = fixture.media;
+    auto range = std::make_shared<harken::PackMediaRange>();
+    range->source = source; range->vorbis = encoded;
+    range->sampleRate = media.sampleRate; range->channelCount = 1;
+    range->frameCount = media.frames; range->contentRevision = media.revision;
+    for (unsigned capacity : {64u, 1024u}) {
+        SCOPED_TRACE(capacity);
+        harken::EngineConfig config;
+        config.maxStreams = 2; config.streamRingBytes = capacity;
+        harken::StreamManager streams(config);
+        harken::StreamManager::StreamFacts facts;
+        ASSERT_EQ(VN_OK, streams.ResolvePackSource(range, &facts));
+        ASSERT_TRUE(streams.PrepareSlotWorkingSet(0, 1));
+        const auto start = streams.ActivateSlot(0, facts.fileIndex, 0, 0, media.frames, 1);
+        auto* paused = streams.RingOf(0);
+        if (capacity == 64) {
+            EXPECT_EQ(VN_NO_STREAM, start);
+            EXPECT_EQ(VN_NO_STREAM, paused->preparationResult.load());
+            EXPECT_EQ(0u, paused->BufferedFrames());
+        } else {
+            ASSERT_EQ(VN_OK, start);
+            const auto initialPausedBytes = paused->ReadAvailableBytes();
+            ASSERT_GT(paused->BufferedFrames(), 0u);
+            ASSERT_TRUE(streams.PrepareSlotWorkingSet(1, 1));
+            ASSERT_EQ(VN_OK, streams.ActivateSlot(1, facts.fileIndex, 0, 0, media.frames, 1));
+            auto* playing = streams.RingOf(1);
+            auto* decoder = encoded->Acquire();
+            ASSERT_NE(decoder, nullptr);
+            const auto initialReads = source->reads.load();
+            std::uint64_t delivered = 0;
+            for (unsigned attempt = 0; delivered < 48000 && attempt < 1000; ++attempt) {
+                ASSERT_TRUE(WaitUntil([&] { return playing->BufferedFrames() != 0 || playing->SourceEnded(); }));
+                harken::PCMView output;
+                ASSERT_EQ(harken::StreamDecodeResult::Ready, decoder->ReadStream(*playing, 512, 0, output));
+                ASSERT_GT(output.frames, 0u);
+                for (unsigned i = 0; i < output.frames; ++i)
+                    ASSERT_FLOAT_EQ(fixture.reference[delivered + i], static_cast<const float*>(output.channels[0])[i]);
+                playing->DeliverFrames(static_cast<std::uint32_t>(output.frames));
+                delivered += output.frames;
+            }
+            EXPECT_GE(delivered, 48000u);
+            EXPECT_GT(source->reads.load(), initialReads);
+            EXPECT_EQ(0u, paused->readFrames.load());
+            EXPECT_EQ(initialPausedBytes, paused->ReadAvailableBytes());
+            EXPECT_EQ(VN_OK, paused->preparationResult.load());
+            decoder->Retire(); codec.states.Collect();
+            playing->state.store(harken::StreamSlotState::Retired, std::memory_order_release);
+        }
+        paused->state.store(harken::StreamSlotState::Retired, std::memory_order_release);
+        streams.SyncServe();
+        EXPECT_EQ(2u, streams.FreeSlotCount());
+    }
+    auto changedSource = std::make_shared<ControlledSource>();
+    changedSource->bytes = source->bytes;
+    changedSource->bytes.back() ^= 1;
+    harken::PackMediaRange changed = *range;
+    changed.source = changedSource;
+    EXPECT_EQ(harken::MediaContentMatch::Equal, harken::MatchMediaContent({}, range.get(), {}, range.get()));
+    EXPECT_EQ(harken::MediaContentMatch::Different, harken::MatchMediaContent({}, range.get(), {}, &changed));
+    EXPECT_EQ(0u, changedSource->reads.load());
+}

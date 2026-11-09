@@ -2919,6 +2919,12 @@ void VoicePool::PublishStreamObservation(Slot& slot, std::uint64_t blockIndex) n
     value.terminalReason = static_cast<std::uint32_t>(ring.TerminalReason());
     value.result = ring.TerminalReason() == StreamTerminalReason::IntegrityAbort ? VN_BAD_STREAM_FILE :
         ring.TerminalReason() == StreamTerminalReason::ProducerFailure ? VN_DEVICE_ERROR : VN_OK;
+    const auto preparationResult = ring.preparationResult.load(std::memory_order_acquire);
+    if (preparationResult != VN_OK || render.mediaDecodeFailed) {
+        value.terminalReason = static_cast<std::uint32_t>(preparationResult != VN_OK
+            ? StreamTerminalReason::ProducerFailure : StreamTerminalReason::IntegrityAbort);
+        value.result = preparationResult != VN_OK ? preparationResult : VN_BAD_STREAM_FILE;
+    }
     value.replacementSerial = ring.appliedReplacementSerial.load(std::memory_order_relaxed);
     value.appliedFrame = ring.appliedFrame.load(std::memory_order_relaxed);
     if (value.appliedFrame == UINT64_MAX && render.streamRingToken == slot.streamObservation.ringToken &&

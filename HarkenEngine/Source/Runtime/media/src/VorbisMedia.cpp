@@ -45,7 +45,7 @@ bool VorbisMedia::VerifySegment(std::size_t index) const noexcept {
     if (!packets || index >= segmentChecksums.size()) return false;
     const auto begin = seek[index].packetOffset;
     const auto end = index + 1 < seek.size() ? seek[index + 1].packetOffset : packetBytes;
-    return Fnv1a64(packets + begin, static_cast<std::size_t>(end - begin)) == segmentChecksums[index];
+    return Fnv1a64(packets + begin, static_cast<std::size_t>(end - begin), segmentChecksumSeed) == segmentChecksums[index];
 }
 
 bool ParseVorbisTestStream(const void* data, std::size_t bytes, VorbisMedia& output) {
@@ -130,6 +130,9 @@ bool ParseVorbisTestMediaHeaders(const void* data, std::size_t bytes,
             return false;
         m.seek.push_back(s);
     }
+    // Exclude the checksum table itself to avoid a circular digest. Every
+    // independently read segment must vouch for its positioning metadata.
+    m.segmentChecksumSeed = Fnv1a64(data, static_cast<std::size_t>(metadataBytes - segmentCount * 8));
     for (std::uint64_t i = 0; i < segmentCount; ++i) m.segmentChecksums.push_back(r.Read(8));
     if (m.loopEnd && (m.loopStartPacket >= m.packetBytes || m.loopEndPacket >= m.packetBytes ||
         m.loopDiscard > m.blockLong / 2 || m.loopTrim > m.blockLong / 2)) return false;

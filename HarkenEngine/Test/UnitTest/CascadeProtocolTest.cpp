@@ -9,6 +9,8 @@
 #include "harken/render/Voice.h"
 
 #include "Common/TestUtil.h"
+#include "Common/VorbisFixture.h"
+#include "harken/media/VorbisDecoder.h"
 
 #include <limits>
 
@@ -93,6 +95,103 @@ struct CascadeHarness {
     std::vector<float> masterL;
     std::vector<float> masterR;
 };
+
+TEST(CascadeProtocol, VorbisStreamDrainsZeroCoveragePrerollBeforeMoreSupply) {
+    const auto fixture = harken::test::MakeVorbisFixture(1, true);
+    harken::VorbisMedia media;
+    ASSERT_TRUE(harken::ParseVorbisTestMedia(fixture.media.data(), fixture.media.size(), media));
+    harken::VorbisCodec codec(2 * 1024 * 1024, 0);
+    harken::VorbisPrepareResult result;
+    auto settings = codec.settings.Prepare(media, 1024 * 1024, result);
+    ASSERT_NE(settings, nullptr);
+    auto* decoder = codec.AcquireStream(settings);
+    ASSERT_NE(decoder, nullptr);
+    std::vector<std::uint8_t> storage(16384);
+    harken::StreamRing stream;
+    stream.Wire(storage.data(), static_cast<std::uint32_t>(storage.size()));
+    stream.ResetForUse(1, true);
+    std::uint64_t offset = 0;
+    std::uint32_t previousBlock = 0, discarded = 0;
+    const auto publish = [&](bool discard) {
+        const std::uint8_t* packet = nullptr;
+        std::uint16_t bytes = 0;
+        ASSERT_TRUE(media.Packet(offset, packet, bytes));
+        const auto block = static_cast<std::uint32_t>(settings->PacketBlock(packet, bytes));
+        const auto frames = previousBlock ? (previousBlock + block) / 4 : 0;
+        const harken::StreamPacketHeader header{bytes, discard ? 0u : frames,
+            discard ? frames : 0u, previousBlock ? 0u : 1u};
+        const auto at = stream.writeIndex.load();
+        stream.CopyIn(at, &header, sizeof(header));
+        stream.CopyIn(at + sizeof(header), packet, bytes);
+        stream.PublishBytes(sizeof(header) + bytes, header.frames);
+        if (discard) discarded += frames;
+        previousBlock = block;
+        offset += bytes + 2;
+    };
+    ASSERT_NO_FATAL_FAILURE(publish(true));
+    ASSERT_NO_FATAL_FAILURE(publish(true));
+    ASSERT_GT(discarded, 0u);
+    const std::vector<float> expected(fixture.reference.begin() + discarded, fixture.reference.end());
+    CascadeHarness actual(expected), reference(expected);
+    actual.ctx.mediaDecoder = decoder;
+    actual.ctx.streamRing = &stream;
+    actual.ctx.streamFrameCount = media.frames;
+    actual.ctx.streamGateOpen = true;
+    ASSERT_EQ(0u, stream.BufferedFrames());
+    ASSERT_GT(stream.ReadAvailableBytes(), 0u);
+    EXPECT_EQ(0u, actual.RenderBlock().framesProduced);
+    EXPECT_EQ(0u, stream.ReadAvailableBytes());
+    EXPECT_FALSE(actual.ctx.mediaDecodeFailed);
+    while (stream.BufferedFrames() < 2 * kBlock) ASSERT_NO_FATAL_FAILURE(publish(false));
+    EXPECT_EQ(kBlock, actual.RenderBlock().framesProduced);
+    EXPECT_EQ(kBlock, reference.RenderBlock().framesProduced);
+    for (unsigned i = 0; i < kBlock; ++i)
+        EXPECT_FLOAT_EQ(actual.masterL[i], reference.masterL[i]) << i;
+    decoder->Retire();
+    actual.ctx.mediaDecoder = nullptr;
+    codec.states.Collect();
+    EXPECT_EQ(0u, codec.states.ActiveBytes());
+}
+
+TEST(CascadeProtocol, VorbisStreamFailureOverridesProducerNaturalEnd) {
+    const auto fixture = harken::test::MakeVorbisFixture(1, true);
+    harken::VorbisMedia media;
+    ASSERT_TRUE(harken::ParseVorbisTestMedia(fixture.media.data(), fixture.media.size(), media));
+    harken::VorbisCodec codec(2 * 1024 * 1024, 0);
+    harken::VorbisPrepareResult result;
+    auto settings = codec.settings.Prepare(media, 1024 * 1024, result);
+    ASSERT_NE(settings, nullptr);
+    for (bool capacityFailure : {false, true}) {
+        SCOPED_TRACE(capacityFailure);
+        std::array<std::uint8_t, 256> storage{};
+        harken::StreamRing stream;
+        stream.Wire(storage.data(), static_cast<std::uint32_t>(storage.size()));
+        stream.ResetForUse(1, true);
+        const harken::StreamPacketHeader header{1, 1, 0, 1};
+        const std::uint8_t invalidPacket = 0xff;
+        stream.CopyIn(0, &header, sizeof(header));
+        stream.CopyIn(sizeof(header), &invalidPacket, 1);
+        stream.PublishBytes(sizeof(header) + 1, 1);
+        ASSERT_TRUE(stream.MarkEndOfData(harken::StreamTerminalReason::NaturalEnd));
+        if (capacityFailure) stream.preparationResult.store(VN_NO_STREAM);
+        CascadeHarness harness(fixture.reference);
+        auto* decoder = codec.AcquireStream(settings);
+        ASSERT_NE(decoder, nullptr);
+        harness.ctx.mediaDecoder = decoder;
+        harness.ctx.streamRing = &stream;
+        harness.ctx.streamGateOpen = true;
+        const auto rendered = harness.RenderBlock();
+        EXPECT_EQ(0u, rendered.framesProduced);
+        EXPECT_TRUE(harness.ctx.mediaDecodeFailed);
+        EXPECT_EQ(capacityFailure ? harken::SourceTerminalKind::ProducerFailure :
+            harken::SourceTerminalKind::IntegrityAbort, harness.ctx.stagedSourceTerminal);
+        EXPECT_EQ(harken::StreamTerminalReason::NaturalEnd, stream.TerminalReason());
+        for (float sample : harness.masterL) EXPECT_EQ(0.0f, sample);
+        decoder->Retire();
+        harness.ctx.mediaDecoder = nullptr;
+        codec.states.Collect();
+    }
+}
 
 TEST(CascadeProtocol, PlainLinearPcmPreservesSamplesAndStateThroughReconfiguration) {
     const auto source = harkentest::MakeSine(8192, 997.0, 48000.0, 0.73f);

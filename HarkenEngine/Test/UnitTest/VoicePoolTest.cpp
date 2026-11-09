@@ -6,6 +6,8 @@
 // multi-voice render run.
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
+#include "Common/VorbisFixture.h"
+#include "Common/MonitorExecutionTestSupport.h"
 
 #include "Engine.h"
 #include "VoicePoolReleaseTestAccess.h"
@@ -33,6 +35,69 @@ using harkentest::MonoDesc;
 
 constexpr std::uint32_t kBlockFrames = 256;
 constexpr std::uint32_t kSampleRate = 48000;
+
+TEST(VoicePool, StreamAudioObservationReportsCurrentDecoderFailureAfterProducerEnd) {
+    auto config = harkentest::MakeNullConfig(1, kBlockFrames, kSampleRate);
+    config.maxTriggerDepth = 2;
+    config.renderWorkerCount = 0;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const auto fixture = harken::test::MakeVorbisFixture(1, true);
+    harken::VorbisMedia media;
+    ASSERT_TRUE(harken::ParseVorbisTestMedia(fixture.media.data(), fixture.media.size(), media));
+    const std::vector<std::uint8_t> prefix(fixture.media.begin(), fixture.media.begin() + media.packetDataOffset);
+    harken::VorbisPrepareResult result;
+    auto encoded = harken::VorbisStreamMedia::Prepare(engine.vorbis, prefix, fixture.media.size(),
+        1024 * 1024, result);
+    ASSERT_NE(encoded, nullptr);
+    const auto monitor = harkentest::monitor::OpenIdentityEvents(4);
+    ASSERT_NE(0u, monitor);
+    std::array<std::uint8_t, 256> bytes{};
+    harken::StreamRing ring;
+    ring.Wire(bytes.data(), static_cast<std::uint32_t>(bytes.size()));
+    for (bool capacityFailure : {false, true}) {
+        SCOPED_TRACE(capacityFailure);
+        ring.ResetForUse(1, true);
+        ring.state.store(harken::StreamSlotState::Active);
+        ring.sourceGeneration = capacityFailure ? 42 : 41;
+        const auto token = (std::uint64_t(ring.generation.load()) << 32) | 1;
+        const harken::StreamPacketHeader header{1, 1, 0, 1};
+        const std::uint8_t invalidPacket = 0xff;
+        ring.CopyIn(0, &header, sizeof(header));
+        ring.CopyIn(sizeof(header), &invalidPacket, 1);
+        ring.PublishBytes(sizeof(header) + 1, 1);
+        ASSERT_TRUE(ring.MarkEndOfData(harken::StreamTerminalReason::NaturalEnd));
+        VnVoiceHandle voice = 0;
+        ASSERT_EQ(VN_OK, engine.voices.PlayStream(&ring, 1, kSampleRate, 0, 0, 1,
+            0, false, 0, 0, 0, harken::ResolvePanGains(config.mixChannelLayout, 0),
+            0, media.frames, 0, media.frames, 1,
+            harken::SelectResampleProfile(kSampleRate, kSampleRate), &voice,
+            1, UINT32_MAX, 0, nullptr, 0, false, 1, {}, encoded.get()));
+        ASSERT_TRUE(engine.voices.BindStreamRingToken(voice, &ring, token));
+        engine.voices.ApplyPlay(voice, voice, 0, engine.mixer.BlocksRendered());
+        const auto baseline = engine.mixer.BlocksRendered();
+        if (capacityFailure) ring.preparationResult.store(VN_NO_STREAM);
+        engine.nullBackend.Pump(1);
+        const auto records = harkentest::monitor::ReadExecutionEvents<VnMonitorStreamFactV1>(monitor);
+        const auto row = std::find_if(records.begin(), records.end(), [&](const auto& entry) {
+            return entry.fact.flags == VN_MONITOR_STREAM_FACT_AUDIO && entry.fact.ringToken == token &&
+                entry.fact.renderActivation == voice && entry.fact.audioBlock == baseline + 1;
+        });
+        ASSERT_NE(records.end(), row);
+        EXPECT_EQ(ring.sourceGeneration, row->fact.sourceGeneration);
+        EXPECT_EQ(VN_PLAYBACK_READINESS_FAILED, row->fact.state);
+        EXPECT_EQ(capacityFailure ? VN_NO_STREAM : VN_BAD_STREAM_FILE, row->fact.result);
+        EXPECT_EQ(static_cast<std::uint32_t>(capacityFailure ? harken::StreamTerminalReason::ProducerFailure :
+            harken::StreamTerminalReason::IntegrityAbort), row->fact.terminalReason);
+        EXPECT_EQ(0u, row->fact.producedFrames);
+        EXPECT_EQ(harken::StreamTerminalReason::NaturalEnd, ring.TerminalReason());
+        EXPECT_EQ(nullptr, engine.voices.Resolve(voice));
+        engine.vorbis.states.Collect();
+        EXPECT_EQ(0u, engine.vorbis.states.ActiveBytes());
+    }
+    EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(monitor));
+}
 
 TEST(VoicePool, CroppedResidentStartMatchesUninterruptedSamplesAndRemainingLoops) {
     for (const auto workers : {0u, 2u}) {
