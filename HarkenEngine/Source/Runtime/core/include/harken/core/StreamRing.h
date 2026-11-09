@@ -137,6 +137,62 @@ struct StreamRing {
     std::uint64_t sourceGeneration = 0;
     std::uint64_t contentRevision = 0;
 
+    // Main audio captures before dispatch; its unique consumer reads until
+    // join. Producer and logic observations always use the live counters.
+    struct ConsumerSnapshot {
+        std::uint64_t bytes = 0, frames = 0;
+        std::uint32_t generation = 0;
+        StreamTerminalReason terminal = StreamTerminalReason::None;
+        VnResult preparation = VN_OK;
+        bool decoderReady = false;
+    } consumerSnapshot;
+
+    void CaptureConsumerSnapshot() noexcept {
+        ConsumerSnapshot captured;
+        captured.generation = generation.load(std::memory_order_relaxed);
+        captured.terminal = TerminalReason();
+        captured.preparation = preparationResult.load(std::memory_order_acquire);
+        captured.decoderReady = pendingDecoder.load(std::memory_order_acquire) != nullptr;
+        // Frame publication follows byte publication. Capturing in this order
+        // guarantees the byte cut contains every covered output frame.
+        captured.frames = writeFrames.load(std::memory_order_acquire);
+        captured.bytes = writeIndex.load(std::memory_order_acquire);
+        consumerSnapshot = captured;
+    }
+    void ClearConsumerSnapshot() noexcept { consumerSnapshot = {}; }
+    bool ConsumerGenerationMatches() const noexcept {
+        return consumerSnapshot.generation == generation.load(std::memory_order_relaxed);
+    }
+    std::uint32_t ConsumerAvailableBytes() const noexcept {
+        if (!consumerSnapshot.generation) return ReadAvailableBytes();
+        if (!ConsumerGenerationMatches()) return 0;
+        const auto read = readIndex.load(std::memory_order_relaxed);
+        return read < consumerSnapshot.bytes
+            ? static_cast<std::uint32_t>(std::min<std::uint64_t>(consumerSnapshot.bytes - read, capacity)) : 0;
+    }
+    std::uint32_t ConsumerBufferedFrames() const noexcept {
+        if (!consumerSnapshot.generation) return BufferedFrames();
+        if (!ConsumerGenerationMatches()) return 0;
+        const auto read = readFrames.load(std::memory_order_relaxed);
+        return read < consumerSnapshot.frames
+            ? static_cast<std::uint32_t>(std::min<std::uint64_t>(consumerSnapshot.frames - read, UINT32_MAX)) : 0;
+    }
+    StreamTerminalReason ConsumerTerminalReason() const noexcept {
+        if (!consumerSnapshot.generation) return TerminalReason();
+        return ConsumerGenerationMatches() ? consumerSnapshot.terminal : StreamTerminalReason::ProducerFailure;
+    }
+    bool ConsumerSourceEnded() const noexcept {
+        return ConsumerTerminalReason() != StreamTerminalReason::None;
+    }
+    VnResult ConsumerPreparationResult() const noexcept {
+        if (!consumerSnapshot.generation) return preparationResult.load(std::memory_order_acquire);
+        return ConsumerGenerationMatches() ? consumerSnapshot.preparation : VN_STALE_HANDLE;
+    }
+    bool ConsumerDecoderReady() const noexcept {
+        if (!consumerSnapshot.generation) return pendingDecoder.load(std::memory_order_acquire) != nullptr;
+        return ConsumerGenerationMatches() && consumerSnapshot.decoderReady;
+    }
+
     void Wire(std::uint8_t* storage, std::uint32_t byteCapacity,
               std::uint32_t frameLimit = 0) {
         assert(byteCapacity != 0 && (byteCapacity & (byteCapacity - 1)) == 0);
@@ -150,6 +206,7 @@ struct StreamRing {
     // whole wiring visible.
     void ResetForUse(std::uint32_t channels, bool encoded = false) {
         assert(pendingDecoder.load(std::memory_order_relaxed) == nullptr);
+        ClearConsumerSnapshot();
         std::uint32_t next =
             generation.load(std::memory_order_relaxed) + 1u;
         if (next == 0) {

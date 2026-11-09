@@ -2832,6 +2832,7 @@ TEST(StreamRegister, LazyVorbisDecoderTransfersOnceAndRetiresAcrossCancellationA
         EXPECT_EQ(0u, owned.ring->readFrames.load());
         EXPECT_EQ(harken::VariableReadCutStatus::Waiting, engine.voices.TimelineStreamStartStatus(
             static_cast<std::uint32_t>(voice), static_cast<std::uint32_t>(voice >> 32)));
+        if (variant == 0) owned.ring->CaptureConsumerSnapshot();
         if (variant == 1) {
             locator->blockNextOpen.store(true);
             engine.streams.ServicePackSources(engine.vorbis, 4 * 1024 * 1024);
@@ -2854,6 +2855,12 @@ TEST(StreamRegister, LazyVorbisDecoderTransfersOnceAndRetiresAcrossCancellationA
             }
         }
         if (variant == 0) {
+            engine.nullBackend.Pump(1);
+            ASSERT_NE(nullptr, engine.voices.Resolve(voice));
+            EXPECT_EQ(nullptr, engine.voices.Resolve(voice)->mediaDecoder);
+            EXPECT_EQ(0u, owned.ring->readFrames.load());
+            EXPECT_NE(nullptr, owned.ring->pendingDecoder.load());
+            owned.ring->ClearConsumerSnapshot();
             engine.nullBackend.Pump(1);
             auto* rendered = engine.voices.Resolve(voice);
             ASSERT_NE(nullptr, rendered);

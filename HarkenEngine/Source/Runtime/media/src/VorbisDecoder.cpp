@@ -276,10 +276,10 @@ StreamDecodeResult VorbisStatePool::State::ReadStream(StreamRing& ring,
     }
     // Positive output needs committed frame coverage. Zero-output preroll can
     // consume published bytes alone, allowing a small ring to make progress.
-    const auto coverage = ring.BufferedFrames();
+    const auto coverage = ring.ConsumerBufferedFrames();
     auto& workspace = *codec->workspaces[thread];
     while (decodedOffset == decodedFrames) {
-        const auto available = ring.ReadAvailableBytes();
+        const auto available = ring.ConsumerAvailableBytes();
         if (!available) return coverage ? StreamDecodeResult::Invalid : StreamDecodeResult::Dry;
         if (available < sizeof(StreamPacketHeader)) return StreamDecodeResult::Invalid;
         const auto at = ring.readIndex.load(std::memory_order_relaxed);

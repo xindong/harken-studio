@@ -310,11 +310,12 @@ bool FeedResamplerFromStream(VoiceRenderContext& ctx) {
     if (ctx.mediaDecodeFailed) return false;
     ResamplerView& rs = ctx.resampler;
     StreamRing& ring = *ctx.streamRing;
-    if (ring.preparationResult.load(std::memory_order_acquire) != VN_OK) {
+    if (ring.ConsumerPreparationResult() != VN_OK) {
         ctx.mediaDecodeFailed = true;
         return false;
     }
     if (ring.packetEncoded && ctx.mediaDecoder == nullptr) {
+        if (!ring.ConsumerDecoderReady()) return false;
         ctx.mediaDecoder = ring.pendingDecoder.exchange(nullptr, std::memory_order_acq_rel);
         if (ctx.mediaDecoder == nullptr) return false;
     }
@@ -325,9 +326,9 @@ bool FeedResamplerFromStream(VoiceRenderContext& ctx) {
     // after ended==true is genuinely drained. Reading in the opposite
     // order could pair a stale (empty) span with a fresh ended flag and
     // truncate the tail.
-    const bool ended = ring.SourceEnded();
-    const std::uint32_t span = ring.BufferedFrames();
-    if (span > 0 || (ctx.mediaDecoder != nullptr && ring.ReadAvailableBytes() != 0)) {
+    const bool ended = ring.ConsumerSourceEnded();
+    const std::uint32_t span = ring.ConsumerBufferedFrames();
+    if (span > 0 || (ctx.mediaDecoder != nullptr && ring.ConsumerAvailableBytes() != 0)) {
         const std::uint32_t chunk = std::min(kResampleChunkFrames,
             ctx.mediaDecoder != nullptr ? rs.FreeFrames() : std::min(span, rs.FreeFrames()));
         if (chunk == 0) return false;
@@ -649,9 +650,9 @@ bool PreparePlainPcm(const VoiceRenderContext& ctx, std::uint32_t blockFrames,
         // helper copies it into the voice-owned FIFO, including byte wraps.
         if (rs.phaseHigh != 0 || rs.phaseLow != 0 ||
             frames > UINT64_MAX - rs.readIndex || extra > rs.FreeFrames() ||
-            extra > UINT64_MAX - rs.writeIndex || ctx.streamRing->SourceEnded())
+            extra > UINT64_MAX - rs.writeIndex || ctx.streamRing->ConsumerSourceEnded())
             return false;
-        if (ctx.streamRing->BufferedFrames() < extra) return false;
+        if (ctx.streamRing->ConsumerBufferedFrames() < extra) return false;
         feedFrames = static_cast<std::uint32_t>(extra);
         return true;
     }
@@ -884,10 +885,10 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
         ctx.authoredSourceDeadlineFrame < quantumStart + blockFrames;
     const bool rootStopArrived = ctx.authoredRootStopFrame < quantumStart + blockFrames;
     const bool decoderWaiting = ctx.streamRing != nullptr && ctx.streamRing->packetEncoded &&
-        ctx.mediaDecoder == nullptr && ctx.streamRing->pendingDecoder.load(std::memory_order_acquire) == nullptr;
+        ctx.mediaDecoder == nullptr && !ctx.streamRing->ConsumerDecoderReady();
     const bool prebufferWaiting = ctx.streamRing != nullptr && !ctx.streamGateOpen &&
-        (decoderWaiting || ctx.streamRing->BufferedFrames() < ctx.streamRing->PrebufferTarget(ctx.prebufferTargetFrames)) &&
-        !ctx.streamRing->SourceEnded();
+        (decoderWaiting || ctx.streamRing->ConsumerBufferedFrames() < ctx.streamRing->PrebufferTarget(ctx.prebufferTargetFrames)) &&
+        !ctx.streamRing->ConsumerSourceEnded();
     if (rootStopArrived && (prebufferWaiting ||
         (ctx.timelineGated && ctx.authoredRootStopFrame <= quantumStart + earliestStart))) {
         ctx.authoredRootStopApplied = true;
@@ -915,10 +916,10 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
     // gate opens. Underruns after the gate opens are starvation, never a
     // return to Preparing.
     if (ctx.streamRing != nullptr && !ctx.streamGateOpen) {
-        if ((!decoderWaiting && (ctx.streamRing->BufferedFrames() >= ctx.streamRing->PrebufferTarget(ctx.prebufferTargetFrames) ||
-                ctx.streamRing->SourceEnded())) ||
-            ctx.streamRing->preparationResult.load(std::memory_order_acquire) != VN_OK ||
-            ctx.streamRing->TerminalReason() == StreamTerminalReason::ProducerFailure || authoredDeadlineArrives) {
+        if ((!decoderWaiting && (ctx.streamRing->ConsumerBufferedFrames() >= ctx.streamRing->PrebufferTarget(ctx.prebufferTargetFrames) ||
+                ctx.streamRing->ConsumerSourceEnded())) ||
+            ctx.streamRing->ConsumerPreparationResult() != VN_OK ||
+            ctx.streamRing->ConsumerTerminalReason() == StreamTerminalReason::ProducerFailure || authoredDeadlineArrives) {
             ctx.streamGateOpen = true;
         } else {
             ctx.starvedThisBlock = false;
@@ -1032,9 +1033,9 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
     // only the observational taps update, to report the silence. The
     // arena's overflow counter records the event.
     if (ctx.resyncOnStarve && !ctx.resyncLatched && ctx.resyncFadeOutTotal == 0 &&
-        ctx.streamRing != nullptr && ctx.streamGateOpen && !ctx.streamRing->SourceEnded()) {
+        ctx.streamRing != nullptr && ctx.streamGateOpen && !ctx.streamRing->ConsumerSourceEnded()) {
         const double ratio = ctx.resampler.CurrentRatio();
-        const double buffered = static_cast<double>(ctx.streamRing->BufferedFrames()) +
+        const double buffered = static_cast<double>(ctx.streamRing->ConsumerBufferedFrames()) +
             static_cast<double>(ctx.resampler.writeIndex - ctx.resampler.readIndex);
         const double available = ratio > 0.0 ? buffered / ratio : 0.0;
         // A just-opened prebuffer gate must not read as an imminent underrun.
@@ -1209,7 +1210,7 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
     std::uint32_t resyncSwitchAt = UINT32_MAX;
     bool resyncEnded = false;
     const auto resyncTerminal = ctx.resyncLatched && ctx.streamRing != nullptr
-        ? ctx.streamRing->TerminalReason() : StreamTerminalReason::None;
+        ? ctx.streamRing->ConsumerTerminalReason() : StreamTerminalReason::None;
     const bool resyncFailed = resyncTerminal == StreamTerminalReason::ProducerFailure ||
                               resyncTerminal == StreamTerminalReason::IntegrityAbort;
     if (ctx.resyncLatched) {
@@ -1256,7 +1257,7 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
     ctx.logicalSourceOutputFramesThisBlock = produced;
     if (ctx.resyncFadeOutTotal != 0 && !ctx.resyncLatched &&
         ctx.streamRing != nullptr &&
-        ctx.streamRing->TerminalReason() == StreamTerminalReason::NaturalEnd) {
+        ctx.streamRing->ConsumerTerminalReason() == StreamTerminalReason::NaturalEnd) {
         // The producer finished filling the ring, not playing its buffered tail.
         // Reverse a preventive fade from its last gain using the existing ramp.
         if (ctx.resyncFadeOutDone != 0) {
@@ -1293,7 +1294,7 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
         ctx.resyncFadeOutDone >= ctx.resyncFadeOutTotal;
     if (ctx.resyncOnStarve && !ctx.resyncLatched && ctx.streamRing != nullptr &&
         ctx.streamGateOpen && (produced < sourceTarget || resyncFadedOut) &&
-        !ctx.streamRing->SourceEnded() && !ctx.resampler.Exhausted()) {
+        !ctx.streamRing->ConsumerSourceEnded() && !ctx.resampler.Exhausted()) {
         // The source is still live but the ring cannot keep up: fade out,
         // latch, and pin where the timeline would find the source.
         if (ctx.resyncFadeOutTotal == 0) {
@@ -1346,7 +1347,7 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
     if (sourceEnded) {
         sourceResult = SourceTerminalKind::Natural;
         if ((!authoredDeadlineReached || resyncFailed) && !resyncEnded && ctx.streamRing != nullptr) {
-            switch (ctx.streamRing->TerminalReason()) {
+            switch (ctx.streamRing->ConsumerTerminalReason()) {
             case StreamTerminalReason::NaturalEnd:
                 if (ctx.sourceTerminal != nullptr && ctx.sourceTerminalStreamGeneration !=
                         ctx.streamRing->generation.load(std::memory_order_acquire))
@@ -1361,7 +1362,7 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
         }
     }
     if (ctx.mediaDecodeFailed) {
-        const auto error = ctx.streamRing ? ctx.streamRing->preparationResult.load(std::memory_order_acquire) : VN_OK;
+        const auto error = ctx.streamRing ? ctx.streamRing->ConsumerPreparationResult() : VN_OK;
         sourceResult = error != VN_OK && error != VN_BAD_STREAM_FILE
             ? SourceTerminalKind::ProducerFailure : SourceTerminalKind::IntegrityAbort;
     }

@@ -603,6 +603,49 @@ TEST(VoicePool, SourceTerminalCancelAndQuarantineNeverPublishNatural) {
     }
 }
 
+TEST(VoicePool, FrozenStreamSupplyDefersLaterPcmAndEndUntilNextSnapshot) {
+    for (const auto workers : {0u, 2u}) {
+        SCOPED_TRACE(workers);
+        auto config = VoicePoolConfig(1, kBlockFrames);
+        config.renderWorkerCount = workers;
+        std::array<float, 2048> storage{};
+        storage.fill(0.25f);
+        float* planes[harken::kMaxChannels] = {storage.data()};
+        harkentest::PcmStreamFixture ring;
+        ring.Wire(planes, static_cast<std::uint32_t>(storage.size()));
+        ring.ResetForUse(1);
+        ring.PublishFrames(256);
+        ring.state.store(harken::StreamSlotState::Active);
+        ring.CaptureConsumerSnapshot();
+        ring.PublishFrames(768);
+        ASSERT_TRUE(ring.MarkEndOfData(harken::StreamTerminalReason::NaturalEnd));
+        EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        VnVoiceHandle voice = 0;
+        ASSERT_EQ(VN_OK, engine.voices.PlayStream(&ring, 1, kSampleRate,
+            0, 0.0f, 1.0, 0, false, 0.0f, 0.0f, 0.0f,
+            harken::ResolvePanGains(engine.config.mixChannelLayout, 0.0f),
+            0, 1024, 0, 1024, 1,
+            harken::SelectResampleProfile(kSampleRate, kSampleRate), &voice));
+        HeldSource source{};
+        ASSERT_TRUE(BindHeldSource(engine, voice, &source));
+        engine.voices.ApplyPlay(voice, voice, 0, 0);
+        for (unsigned block = 0; block < 4; ++block) engine.nullBackend.Pump(1);
+        EXPECT_EQ(256u, ring.readFrames.load());
+        EXPECT_EQ(768u, ring.BufferedFrames());
+        harken::SourceTerminalPayload result{};
+        EXPECT_FALSE(engine.sourceTerminals.Capture(source.token, engine.mixer.BlocksRendered(), &result));
+        EXPECT_FALSE(engine.voices.ReleaseObserved(source.release));
+        ring.CaptureConsumerSnapshot();
+        for (unsigned block = 0; block < 12; ++block) engine.nullBackend.Pump(1);
+        EXPECT_EQ(1024u, ring.readFrames.load());
+        ASSERT_TRUE(engine.sourceTerminals.Capture(source.token, engine.mixer.BlocksRendered(), &result));
+        EXPECT_EQ(harken::SourceTerminalKind::Natural, result.kind);
+        EXPECT_TRUE(engine.voices.ReleaseObserved(source.release));
+    }
+}
+
 TEST(VoicePool, SourceTerminalStreamQueuedEndFailureAndStarvationRemainDistinct) {
     for (const auto workers : {0u, 2u}) {
         for (const auto reason : {harken::StreamTerminalReason::None,

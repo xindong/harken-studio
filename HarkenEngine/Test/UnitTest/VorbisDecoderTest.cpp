@@ -468,7 +468,11 @@ TEST(VorbisDecoder, ByteRingWrapSeekAndGenerationReplacementMatchReference) {
                 if (!pending.header.frames ||
                     decoder->ReadStream(ring, 37, 0, preroll) != harken::StreamDecodeResult::Dry ||
                     ring.readIndex.load() != pendingAt) valid = false;
+                ring.CaptureConsumerSnapshot();
                 ring.PublishBytes(0, pending.header.frames);
+                if (decoder->ReadStream(ring, 37, 0, preroll) != harken::StreamDecodeResult::Dry ||
+                    ring.readIndex.load() != pendingAt) valid = false;
+                ring.ClearConsumerSnapshot();
                 for (unsigned attempt = 0; copied < 1001 && attempt < 1000; ++attempt) {
                     while (next < records.size()) {
                         const auto& r = records[next];
