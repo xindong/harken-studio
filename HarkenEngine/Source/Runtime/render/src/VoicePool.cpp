@@ -3181,8 +3181,10 @@ StreamRecoveryResult VoicePool::ApplyGroupRecovery(StreamRecoveryAttempt& attemp
         if (actual < member.sourceReadFrame) { waiting = true; continue; }
         const auto skip = actual - member.sourceReadFrame;
         const auto coverage = member.ring->ConsumerBufferedFrames();
-        const bool full = member.ring->WriteAvailableBytes() == 0 ||
-            coverage >= member.ring->ConsumerPrebufferTarget(UINT32_MAX);
+        const bool full = member.ring->packetEncoded
+            ? member.ring->ConsumerAvailableBytes() == member.ring->capacity ||
+                coverage >= member.ring->ConsumerPrebufferTarget(UINT32_MAX)
+            : coverage >= member.ring->FrameCapacity();
         if (skip >= coverage || skip > UINT32_MAX) {
             if (member.ring->ConsumerSourceEnded() || full)
                 return StreamRecoveryResult::Retry;

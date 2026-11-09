@@ -941,6 +941,60 @@ TEST(VoicePool, GroupRecoveryWaitsForCoverageAndCommitsAllMembersWithLiveRamp) {
     }
 }
 
+TEST(VoicePool, GroupRecoveryRetriesFullMultichannelCoverageInsteadOfWaiting) {
+    harken::StreamRecoveryGroup group;
+    harken::StreamRecoveryAttempt attempt;
+    std::array<harken::StreamRecoveryMember, 1> members{};
+    std::array<float, 64> samples{};
+    samples.fill(.125f);
+    float* planes[harken::kMaxChannels]{};
+    for (unsigned ch = 0; ch != 6; ++ch) planes[ch] = samples.data();
+    std::array<harkentest::PcmStreamFixture, 2> rings;
+    for (auto& ring : rings) {
+        ring.Wire(planes, static_cast<std::uint32_t>(samples.size()));
+        ring.ResetForUse(6);
+        ring.state.store(harken::StreamSlotState::Active);
+    }
+    rings[0].PublishFrames(1);
+    rings[1].PublishFrames(rings[1].FrameCapacity());
+    ASSERT_GT(rings[1].WriteAvailableBytes(), 0u);
+    ASSERT_LT(rings[1].WriteAvailableBytes(), rings[1].bytesPerFrame);
+    const auto token = [&](unsigned index) {
+        return (static_cast<std::uint64_t>(rings[index].generation.load()) << 32u) | (index + 1u);
+    };
+    EngineSession session(VoicePoolConfig(1, kBlockFrames, kSampleRate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, engine.voices.PlayStream(&rings[0], 6, kSampleRate,
+        0, 0, 1, 0, false, 0, 0, 0, harken::ResolvePanGains(engine.config.mixChannelLayout, 0),
+        0, 8192, 0, 8192, 0, harken::ResampleProfile::LegacyCompatibility, &voice));
+    ASSERT_TRUE(engine.voices.BindStreamRingToken(voice, &rings[0], token(0)));
+    ASSERT_TRUE(engine.voices.BindStreamRecoveryGroup(voice, &group));
+    engine.voices.ApplyPlay(voice, voice, 0, 0);
+    engine.nullBackend.Pump(1);
+    ASSERT_TRUE(group.recovering);
+    attempt.group = &group;
+    attempt.serial = group.recoverySerial.load();
+    attempt.members = members;
+    for (const bool expired : {true, false}) {
+        SCOPED_TRACE(expired);
+        const auto read = engine.voices.Resolve(voice)->resampler.SourceFrame();
+        members[0] = {voice, token(0), &rings[1], token(1),
+            expired ? harken::kResampleHistoryPad : read,
+            expired ? 0 : read - harken::kResampleHistoryPad, 0};
+        std::uint64_t ticket = 0;
+        ASSERT_TRUE(engine.voices.PostGroupRecovery(voice, &attempt, &ticket));
+        engine.nullBackend.Pump(1);
+        ASSERT_TRUE(engine.voices.CollectGroupRecovery(ticket, &attempt));
+        EXPECT_EQ(harken::StreamRecoveryResult::Retry, attempt.result);
+        EXPECT_TRUE(group.recovering);
+        EXPECT_EQ(0u, rings[1].ConsumedFrames());
+        EXPECT_EQ(&rings[0], engine.voices.Resolve(voice)->streamRing);
+    }
+    engine.voices.ApplyStop(voice, 0, 0, engine.notifications, engine.mixer.BlocksRendered());
+}
+
 TEST(VoicePool, SourceTerminalStreamQueuedEndFailureAndStarvationRemainDistinct) {
     for (const auto workers : {0u, 2u}) {
         for (const auto reason : {harken::StreamTerminalReason::None,
