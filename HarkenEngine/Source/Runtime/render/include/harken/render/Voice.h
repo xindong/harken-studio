@@ -357,8 +357,8 @@ struct VoiceRenderContext {
     // keeps moving, so it can rejoin at the source frame that timeline frame
     // maps to. The anchors pin that mapping at the latch point; the voice ends
     // naturally at resyncEndFrame when it never rejoins. A prepared
-    // replacement ring switches in at resyncSwitchOffset of the block that
-    // contains its frame and fades in from there.
+    // replacement ring switches in at resyncSwitchFrame and fades in from
+    // there; a switch whose frame has already passed is requested again.
     static constexpr std::uint32_t kStreamResyncFadeMs = 5;
     bool resyncOnStarve = false;
     bool resyncLatched = false;
@@ -368,7 +368,7 @@ struct VoiceRenderContext {
     std::uint64_t resyncTimelineAnchor = 0;
     std::uint64_t resyncSourceAnchor = 0;
     std::uint64_t resyncEndFrame = UINT64_MAX;
-    std::uint32_t resyncSwitchOffset = UINT32_MAX;
+    std::uint64_t resyncSwitchFrame = UINT64_MAX;
     std::uint32_t resyncFadeFrames = 0;
     std::uint32_t resyncFadeInDone = 0;
     // A fade-out starts once the buffered source cannot outlast this block

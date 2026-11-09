@@ -3247,7 +3247,9 @@ bool VoicePool::ReadStreamResync(VnVoiceHandle handle,
     }
     out->handle = handle;
     out->serial = slot.resyncSerial.load(std::memory_order_acquire);
-    out->latched = slot.resyncLatched.load(std::memory_order_relaxed);
+    // A cleared latch acknowledges the handoff's final audio-side use.
+    // Pair with its release before logic may recycle the applied ticket.
+    out->latched = slot.resyncLatched.load(std::memory_order_acquire);
     out->mappable = slot.resyncMappable.load(std::memory_order_relaxed);
     out->ratio = std::bit_cast<double>(slot.resyncRatioBits.load(std::memory_order_relaxed));
     out->timelineAnchor = slot.resyncTimelineAnchor.load(std::memory_order_relaxed);
@@ -3278,6 +3280,14 @@ void VoicePool::ServiceStreamResync(std::uint32_t slotIndex, Slot& slot,
                                     std::uint32_t blockFrames) noexcept {
     VoiceRenderContext& render = slot.render;
     if (!render.resyncLatched || m_streamSeekHandoffs == nullptr) return;
+    const auto terminal = render.streamRing->TerminalReason();
+    if (terminal == StreamTerminalReason::ProducerFailure || terminal == StreamTerminalReason::IntegrityAbort) return;
+    // The anchor is only valid while its rate stays fixed. A later pitch
+    // change cannot be integrated from a single source/timeline anchor.
+    render.resyncMappable = render.resyncMappable &&
+        render.resampler.CurrentRatio() == render.resyncRatio &&
+        render.resampler.TargetRatio() == render.resyncRatio &&
+        render.resampler.RampFramesRemaining() == 0;
     const std::uint64_t serial = slot.resyncSerial.load(std::memory_order_relaxed);
     const std::uint64_t token = slot.resyncRequestToken.load(std::memory_order_acquire);
     if (token != 0 && token != render.resyncPendingToken &&
@@ -3293,7 +3303,7 @@ void VoicePool::ServiceStreamResync(std::uint32_t slotIndex, Slot& slot,
     const VnVoiceHandle handle =
         MakeHandle(slotIndex, slot.generation.load(std::memory_order_relaxed));
     StreamSeekHandoffSnapshot stream{};
-    bool ready = frame >= blockStart && render.phase == SourcePhase::Active &&
+    bool ready = render.resyncMappable && frame >= blockStart && render.phase == SourcePhase::Active &&
         m_streamSeekHandoffs->CanApply(token, render.resyncPendingTicket, handle, &stream) &&
         stream.replacementRing != render.streamRing &&
         render.streamRingToken == stream.expectedOldRingToken &&
@@ -3310,7 +3320,7 @@ void VoicePool::ServiceStreamResync(std::uint32_t slotIndex, Slot& slot,
         const bool applied = m_streamSeekHandoffs->MarkApplied(token, render.resyncPendingTicket);
         assert(applied);
         (void)applied;
-        render.resyncSwitchOffset = static_cast<std::uint32_t>(frame - blockStart);
+        render.resyncSwitchFrame = frame;
         render.resyncPendingToken = 0;
         slot.resyncLatched.store(false, std::memory_order_release);
         return;
@@ -3318,6 +3328,7 @@ void VoicePool::ServiceStreamResync(std::uint32_t slotIndex, Slot& slot,
     // Missed: the ring is released and the logic side is asked again.
     (void)m_streamSeekHandoffs->CancelFromAudio(token, render.resyncPendingTicket);
     render.resyncPendingToken = 0;
+    slot.resyncMappable.store(render.resyncMappable, std::memory_order_relaxed);
     slot.resyncSerial.store(serial + 1u, std::memory_order_release);
 }
 

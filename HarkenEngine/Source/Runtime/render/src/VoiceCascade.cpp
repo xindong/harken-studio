@@ -1174,13 +1174,22 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
     // prepared ring switches in, or until its clip would have ended.
     std::uint32_t resyncSwitchAt = UINT32_MAX;
     bool resyncEnded = false;
+    const auto resyncTerminal = ctx.resyncLatched && ctx.streamRing != nullptr
+        ? ctx.streamRing->TerminalReason() : StreamTerminalReason::None;
+    const bool resyncFailed = resyncTerminal == StreamTerminalReason::ProducerFailure ||
+                              resyncTerminal == StreamTerminalReason::IntegrityAbort;
     if (ctx.resyncLatched) {
         std::uint32_t silent = sourceTarget;
-        if (ctx.resyncSwitchOffset != UINT32_MAX) {
-            silent = std::min(sourceTarget, ctx.resyncSwitchOffset > offset
-                ? ctx.resyncSwitchOffset - offset : 0u);
+        if (resyncFailed) {
+            silent = 0;
+        } else if (ctx.resyncSwitchFrame != UINT64_MAX && ctx.resyncSwitchFrame < sourceBlockStart) {
+            ctx.resyncSwitchFrame = UINT64_MAX;
+            ctx.resyncLatchedThisBlock = true;
+        } else if (ctx.resyncSwitchFrame != UINT64_MAX &&
+                   ctx.resyncSwitchFrame - sourceBlockStart < sourceTarget) {
+            silent = static_cast<std::uint32_t>(ctx.resyncSwitchFrame - sourceBlockStart);
             resyncSwitchAt = silent;
-            ctx.resyncSwitchOffset = UINT32_MAX;
+            ctx.resyncSwitchFrame = UINT64_MAX;
             ctx.resyncLatched = false;
             ctx.resyncFadeInDone = 0;
         } else if (ctx.resyncEndFrame < sourceBlockStart + sourceTarget) {
@@ -1259,6 +1268,8 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
         for (std::uint32_t ch = 0; ch < channels; ++ch)
             std::fill_n(scratch[ch] + offset + produced, sourceTarget - produced, 0.0f);
         produced = sourceTarget;
+        // The silence stands in for source time, so progress follows the timeline.
+        ctx.logicalSourceOutputFramesThisBlock = produced;
         ctx.resyncLatched = true;
         ctx.resyncLatchedThisBlock = true;
     }
@@ -1277,11 +1288,11 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
         produced = sourceTarget;
     }
     const auto sourceBoundary = offset + produced;
-    const bool sourceEnded = sourceExhausted || authoredDeadlineReached || resyncEnded;
+    const bool sourceEnded = sourceExhausted || authoredDeadlineReached || resyncEnded || resyncFailed;
     auto sourceResult = SourceTerminalKind::None;
     if (sourceEnded) {
         sourceResult = SourceTerminalKind::Natural;
-        if (!authoredDeadlineReached && !resyncEnded && ctx.streamRing != nullptr) {
+        if ((!authoredDeadlineReached || resyncFailed) && !resyncEnded && ctx.streamRing != nullptr) {
             switch (ctx.streamRing->TerminalReason()) {
             case StreamTerminalReason::NaturalEnd:
                 if (ctx.sourceTerminal != nullptr && ctx.sourceTerminalStreamGeneration !=
@@ -1382,7 +1393,7 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
     if (ctx.streamRing != nullptr) {
         ctx.starvedThisBlock =
             (phase == SourcePhase::Active) &&
-            (ctx.logicalSourceOutputFramesThisBlock < sourceTarget);
+            (ctx.logicalSourceOutputFramesThisBlock < sourceTarget || ctx.resyncLatchedThisBlock);
     }
 
     // --- insert-effect chain ---

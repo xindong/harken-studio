@@ -21431,6 +21431,31 @@ bool SoundDefinitionStreams(const harken::PackPlaybackView& world, VnObjectId st
         row->payload.values[slot].bits != 0;
 }
 
+// Boundary selection precedes target preparation. Inspect definitions without
+// consuming a Queue/Variable selection; a dynamic target reserves the lead if
+// any of its possible leaves streams, even if this turn selects a resident one.
+template <typename WorldView>
+bool MusicTransitionTargetMayStream(const WorldView& world,
+    const harken::PlayableRefV1& target, std::uint32_t depth = 0) noexcept {
+    if (depth >= harken::kSelectionPathNodeCapacity) return false;
+    if (target.kind == harken::PlayableKindV1::Sound)
+        return SoundDefinitionStreams(world, target.stableId);
+    if (target.kind == harken::PlayableKindV1::Segment) {
+        const auto segment = FindSegmentSchedule(world, target);
+        if (segment != nullptr) for (std::uint32_t i = 0; i < segment->trackRefCount; ++i)
+            if (MusicTransitionTargetMayStream(world, segment->trackRefs[i].trackDefinition, depth + 1u)) return true;
+    } else if (target.kind == harken::PlayableKindV1::Track) {
+        const auto track = FindTrackSchedule(world, target);
+        if (track != nullptr) for (std::uint32_t i = 0; i < track->placementCount; ++i)
+            if (MusicTransitionTargetMayStream(world, track->placements[i].content, depth + 1u)) return true;
+    } else if (target.kind == harken::PlayableKindV1::Container) {
+        const auto* container = FindVariableControlNestedContainer(world, target);
+        if (container != nullptr) for (std::uint32_t i = 0; i < container->childCount; ++i)
+            if (MusicTransitionTargetMayStream(world, container->children[i].playable, depth + 1u)) return true;
+    }
+    return false;
+}
+
 template <typename WorldView>
 bool VariableControlScheduleHasStream(const WorldView& world, const MaterializedScheduleSet& schedule) noexcept {
     if (schedule.leafCount > schedule.leaves.size()) return false;
@@ -100942,6 +100967,12 @@ bool PrepareNativeQueueMusicCandidate(harken::Engine& engine,
     if (soundSource && rule->sourceExit != harken::TransitionSourceExitV1::NaturalEnd) return false;
     const auto* music = musicSource == nullptr ? nullptr : musicSource->scheduleAggregate->music.get();
     const bool early = rule->sourceExit > harken::TransitionSourceExitV1::NaturalEnd;
+    const bool selectable = rule->sourceExit == harken::TransitionSourceExitV1::NextBeat ||
+                            rule->sourceExit == harken::TransitionSourceExitV1::NextBar;
+    const bool streamedTarget = selectable && (pack
+        ? MusicTransitionTargetMayStream(row.Invocation().packPlaybackView, desired->playable)
+        : MusicTransitionTargetMayStream(world, desired->playable));
+    const auto preparationFloor = streamedTarget ? StreamPreparationFloor(engine, floor) : floor;
     const auto sourceFadeFrames = rule->sourceFade.active != 0 ? rule->sourceFade.durationFrames : 0u;
     auto kind = harken::MusicBoundaryKind::NaturalEnd;
     std::uint64_t currentFrame = music == nullptr ? 0 : music->sourceOffsetFrames, boundaryFloor = currentFrame;
@@ -100956,7 +100987,7 @@ bool PrepareNativeQueueMusicCandidate(harken::Engine& engine,
         if (engine.config.blockFrames == 0 || sequence > UINT64_MAX / engine.config.blockFrames) return false;
         const auto observed = sequence * engine.config.blockFrames;
         const auto age = observed > musicSource->startFrame ? observed - musicSource->startFrame : 0;
-        const auto lead = floor > musicSource->startFrame ? floor - musicSource->startFrame : 0;
+        const auto lead = preparationFloor > musicSource->startFrame ? preparationFloor - musicSource->startFrame : 0;
         if (age > UINT64_MAX - currentFrame || lead > UINT64_MAX - boundaryFloor ||
             sourceFadeFrames > UINT64_MAX - boundaryFloor - lead) return false;
         currentFrame += age;
