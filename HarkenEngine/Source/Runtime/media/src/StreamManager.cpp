@@ -1,6 +1,8 @@
 #include "harken/media/StreamManager.h"
 
 #include "harken/core/MediaContentRevision.h"
+#include "harken/core/MonitorLifecycleSink.h"
+#include "harken/core/LogRing.h"
 #include "harken/core/Utf8Path.h"
 
 #include <algorithm>
@@ -543,6 +545,7 @@ std::uint64_t StreamManager::InitializeSlot(
     std::uint64_t startFrame, std::uint64_t loopStartFrame,
     std::uint64_t loopEndFrame, std::uint32_t loopCount) {
     StreamSlot& s = m_slots[slot];
+    PublishPlaybackObservation(s);
     // The slot is Free: neither real-time thread observes it, so these
     // writes are private until Active publishes them. The source reference
     // was acquired under m_mutex, so retirement cannot close it in between.
@@ -578,6 +581,19 @@ std::uint64_t StreamManager::InitializeSlot(
     s.stagedChunk = kNoChunk;
     s.feedStopped = false;
     s.ring.ResetForUse(file.toc.channelCount);
+    s.ring.sourceGeneration = file.sourceGeneration;
+    s.ring.contentRevision = file.contentRevision;
+    s.prebufferTargetFrames = static_cast<std::uint32_t>(std::min<std::uint64_t>(s.ring.capacity,
+        std::max<std::uint64_t>(1, (static_cast<std::uint64_t>(m_prebufferMs) * file.toc.sampleRate + 999) / 1000)));
+    s.observation = {};
+    s.observation.structSize = sizeof(s.observation);
+    s.observation.factKind = VN_MONITOR_FACT_STREAM_OBSERVATION;
+    s.observation.sourceGeneration = file.sourceGeneration;
+    s.observation.contentRevision = file.contentRevision;
+    s.observation.ringToken = RingToken(slot, s.ring.generation.load(std::memory_order_relaxed));
+    s.observation.sourceFrameBegin = s.observation.sourceFrameEnd = effectiveStart;
+    s.observation.appliedFrame = UINT64_MAX;
+    s.observation.flags = VN_MONITOR_STREAM_FACT_SUPPLY;
     const std::uint32_t ringGeneration =
         s.ring.generation.load(std::memory_order_relaxed);
     const std::uint32_t nowActive =
@@ -668,6 +684,49 @@ bool StreamManager::CancelReplacement(PreparedToken token) noexcept {
     auto& slot = m_slots[token.slot];
     if (!RetirePreparedSlot(&slot.ring, slot.preparedRingToken)) return false;
     slot.preparationOwner = StreamSlot::PreparationOwner::Cancelled;
+    return true;
+}
+
+bool StreamManager::CapturePlayback(std::uint64_t token, PlaybackObservation* out) const {
+    if (out == nullptr || token == 0) return false;
+    std::lock_guard<std::mutex> lock(m_mutex);
+    const auto index = static_cast<std::uint32_t>(token);
+    if (index >= m_slots.size()) return false;
+    const auto& slot = m_slots[index];
+    if (slot.ring.generation.load(std::memory_order_acquire) != static_cast<std::uint32_t>(token >> 32) ||
+        slot.ring.state.load(std::memory_order_acquire) != StreamSlotState::Active ||
+        slot.fileIndex >= m_files.size() || !m_files[slot.fileIndex]) return false;
+    const auto& file = *m_files[slot.fileIndex];
+    PlaybackObservation value{};
+    value.ringToken = token;
+    value.preparationGeneration = slot.preparationGeneration;
+    value.sourceGeneration = file.sourceGeneration;
+    value.contentRevision = file.contentRevision;
+    value.soundId = file.toc.soundId;
+    value.sourceFrame = slot.nextFrame;
+    value.appliedAudioBlock = slot.ring.appliedAudioBlock.load(std::memory_order_acquire);
+    if (value.appliedAudioBlock != 0) {
+        value.appliedFrame = slot.ring.appliedFrame.load(std::memory_order_relaxed);
+        value.replacementSerial = slot.ring.appliedReplacementSerial.load(std::memory_order_relaxed);
+    }
+    // With the manager excluded, the write cursor is fixed and the audio
+    // consumer can only reduce occupancy. This read is one real sample.
+    const auto read = slot.ring.readIndex.load(std::memory_order_acquire);
+    const auto written = slot.ring.writeIndex.load(std::memory_order_acquire);
+    value.bufferedFrames = static_cast<std::uint32_t>(written - read);
+    value.prebufferTargetFrames = slot.prebufferTargetFrames;
+    value.terminal = slot.ring.TerminalReason();
+    if (value.terminal == StreamTerminalReason::IntegrityAbort ||
+        value.terminal == StreamTerminalReason::ProducerFailure || WorkerState() == StreamWorkerState::Failed) {
+        value.state = PreparationState::Failed;
+        value.result = value.terminal == StreamTerminalReason::IntegrityAbort ? VN_BAD_STREAM_FILE : VN_DEVICE_ERROR;
+    } else if (slot.preparationOwner == StreamSlot::PreparationOwner::Cancelled) {
+        value.state = PreparationState::Cancelled;
+    } else {
+        value.state = value.terminal == StreamTerminalReason::NaturalEnd ||
+            value.bufferedFrames >= value.prebufferTargetFrames ? PreparationState::Ready : PreparationState::Preparing;
+    }
+    *out = value;
     return true;
 }
 
@@ -1080,11 +1139,108 @@ void StreamManager::DetachRetiredSlots() {
     }
 }
 
-bool StreamManager::RunChunkJob(const ChunkJob& job,
-                                std::vector<float>& staging, ReadWindow& window) {
-    return ReadChunk(job, staging, window) &&
-        ValidateChunk(job, staging,
-            Fnv1a64(staging.data(), static_cast<std::size_t>(job.chunkBytes)));
+namespace {
+// A stack adapter measures the actual provider boundary, including planar and
+// short-read retries. It owns no source and changes neither bytes nor outcomes.
+class ObservedStreamRead final : public StreamByteSource {
+public:
+    ObservedStreamRead(const StreamByteSource& source, VnMonitorStreamFactV1& facts)
+        : source_(source), facts_(facts) {}
+    std::uint64_t ByteCount() const noexcept override { return source_.ByteCount(); }
+    StreamReadResult ReadAt(std::uint64_t offset, void* destination, std::size_t bytes,
+        StreamReadCancellation cancellation) const override {
+        const auto begin = LogTimestampNs();
+        if (facts_.readCalls == 0) facts_.readBeginNs = begin;
+        ++facts_.readCalls;
+        facts_.readOffset = offset;
+        facts_.readRequestedBytes = bytes;
+        facts_.lastReadBytes = 0;
+        try {
+            const auto result = source_.ReadAt(offset, destination, bytes, cancellation);
+            facts_.readEndNs = LogTimestampNs();
+            facts_.readCostNs += facts_.readEndNs - begin;
+            facts_.lastReadBytes = result.bytes;
+            facts_.readBytes += result.bytes;
+            facts_.readStatus = result.status == StreamReadStatus::Cancelled ? 5u :
+                result.status != StreamReadStatus::Ok || result.bytes == 0 || result.bytes > bytes ? 2u : 1u;
+            return result;
+        } catch (...) {
+            facts_.readEndNs = LogTimestampNs();
+            facts_.readCostNs += facts_.readEndNs - begin;
+            facts_.readStatus = 4;
+            throw;
+        }
+    }
+private:
+    const StreamByteSource& source_;
+    VnMonitorStreamFactV1& facts_;
+};
+} // namespace
+
+bool StreamManager::RunChunkJob(const ChunkJob& job, std::vector<float>& staging,
+    ReadWindow& window, VnMonitorStreamFactV1& facts) {
+    facts = {};
+    ObservedStreamRead source(*job.file->source, facts);
+    if (!ReadChunk(job, staging, window, source)) {
+        if (job.cancellation.IsCancelled()) facts.readStatus = 5;
+        else if (facts.readStatus == 0 || facts.readStatus == 1) facts.readStatus = 2;
+        return false;
+    }
+    const bool valid = ValidateChunk(job, staging,
+        Fnv1a64(staging.data(), static_cast<std::size_t>(job.chunkBytes)));
+    if (!valid) facts.readStatus = 3;
+    return valid;
+}
+
+void StreamManager::CompleteReadObservation(StreamSlot& slot, const ChunkJob& job,
+    const VnMonitorStreamFactV1& facts, bool valid, bool exception) noexcept {
+    auto& value = slot.observation;
+    ++value.readSequence;
+    value.sourceFrameBegin = static_cast<std::uint64_t>(job.chunkIndex) * job.chunkFrames;
+    value.sourceFrameEnd = std::min(value.sourceFrameBegin + job.chunkFrames, job.file->toc.frameCount);
+    value.readOffset = facts.readOffset;
+    value.readRequestedBytes = facts.readRequestedBytes;
+    value.lastReadBytes = facts.lastReadBytes;
+    value.readCalls = facts.readCalls;
+    value.readBytes = facts.readBytes;
+    value.readCostNs = facts.readCostNs;
+    value.readBeginNs = facts.readBeginNs;
+    value.readEndNs = facts.readEndNs;
+    value.readStatus = exception ? 4u : !valid && facts.readStatus == 0
+        ? (job.cancellation.IsCancelled() ? 5u : 3u) : facts.readStatus;
+    value.totalReadCalls += facts.readCalls;
+    value.totalReadBytes += facts.readBytes;
+    value.totalReadCostNs += facts.readCostNs;
+}
+
+void StreamManager::PublishPlaybackObservation(StreamSlot& slot) {
+    auto& value = slot.observation;
+    if (value.ringToken == 0 || !MonitorStreamObservationEnabled()) return;
+    const auto state = slot.ring.state.load(std::memory_order_acquire);
+    value.preparationGeneration = slot.preparationGeneration;
+    value.renderActivation = slot.ring.observationRender.load(std::memory_order_acquire);
+    value.ringReadIndex = slot.ring.readIndex.load(std::memory_order_acquire);
+    value.ringWriteIndex = slot.ring.writeIndex.load(std::memory_order_acquire);
+    value.bufferedFrames = static_cast<std::uint32_t>(value.ringWriteIndex - value.ringReadIndex);
+    value.prebufferTargetFrames = slot.prebufferTargetFrames;
+    value.terminalReason = static_cast<std::uint32_t>(slot.ring.TerminalReason());
+    const bool failed = value.terminalReason == static_cast<std::uint32_t>(StreamTerminalReason::IntegrityAbort) ||
+        value.terminalReason == static_cast<std::uint32_t>(StreamTerminalReason::ProducerFailure);
+    value.state = failed ? VN_PLAYBACK_READINESS_FAILED : state != StreamSlotState::Active ? VN_PLAYBACK_READINESS_TERMINAL :
+        value.terminalReason == static_cast<std::uint32_t>(StreamTerminalReason::NaturalEnd) ||
+        value.bufferedFrames >= value.prebufferTargetFrames ? VN_PLAYBACK_READINESS_READY : VN_PLAYBACK_READINESS_PREPARING;
+    value.result = !failed ? VN_OK : value.terminalReason == static_cast<std::uint32_t>(StreamTerminalReason::IntegrityAbort)
+        ? VN_BAD_STREAM_FILE : VN_DEVICE_ERROR;
+    ObserveMonitorStream(value);
+    // A Free slot has settled its I/O and returned source ownership. Do not
+    // keep replaying a completed generation on every later logic update.
+    if (state == StreamSlotState::Free) value.ringToken = 0;
+}
+
+void StreamManager::PublishPlaybackObservations() {
+    if (!MonitorStreamObservationEnabled()) return;
+    std::lock_guard<std::mutex> lock(m_mutex);
+    for (auto& slot : m_slots) PublishPlaybackObservation(slot);
 }
 
 std::uint64_t StreamManager::ReadWindowBytes() const noexcept {
@@ -1107,9 +1263,8 @@ bool StreamManager::TryCopyReadWindow(const ChunkJob& job, std::vector<float>& s
 }
 
 bool StreamManager::ReadChunk(const ChunkJob& job, std::vector<float>& staging,
-                              ReadWindow& window) {
+                              ReadWindow& window, const StreamByteSource& source) {
     staging.resize(static_cast<std::size_t>(job.chunkFrames) * job.channels);
-    const auto& source = *job.file->source;
     if (job.file->packPrivate) {
         // Pack blobs are whole-media planar; each channel is a separate range.
         return ReadPlanarMediaChunk(source, job.file->packBlobOffset, job.file->toc.frameCount,

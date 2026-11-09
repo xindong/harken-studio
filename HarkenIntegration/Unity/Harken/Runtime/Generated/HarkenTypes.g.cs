@@ -120,6 +120,7 @@ namespace Harken
         VN_MONITOR_FACT_STEP_EXECUTED = 41,
         VN_MONITOR_FACT_VARIABLE_RESULT = 42,
         VN_MONITOR_FACT_PLAYABLE_FINISHED = 43,
+        VN_MONITOR_FACT_STREAM_OBSERVATION = 44,
     }
 
     internal enum VnMonitorExecutionField : uint

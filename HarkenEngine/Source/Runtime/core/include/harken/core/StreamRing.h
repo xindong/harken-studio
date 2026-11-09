@@ -133,6 +133,14 @@ struct StreamRing {
     // Logic publishes steady-I/O admission separately from ring ownership.
     // Initial timeline starts observe this exact generation's promotion.
     std::atomic<bool> startPromoted{false};
+    // One exact replacement application's audio receipt, reset with this ring.
+    std::atomic<std::uint64_t> appliedFrame{UINT64_MAX};
+    std::atomic<std::uint64_t> appliedAudioBlock{0};
+    std::atomic<std::uint64_t> appliedReplacementSerial{0};
+    std::atomic<std::uint64_t> observationRender{0};
+    // Immutable for the Active generation; never reused before audio retirement.
+    std::uint64_t sourceGeneration = 0;
+    std::uint64_t contentRevision = 0;
 
     // Init-time wiring; both real-time threads exist only after this.
     void Wire(float* const* storage, std::uint32_t cap) {
@@ -155,6 +163,10 @@ struct StreamRing {
         }
         generation.store(next, std::memory_order_relaxed);
         startPromoted.store(false, std::memory_order_relaxed);
+        appliedFrame.store(UINT64_MAX, std::memory_order_relaxed);
+        appliedAudioBlock.store(0, std::memory_order_relaxed);
+        appliedReplacementSerial.store(0, std::memory_order_relaxed);
+        observationRender.store(0, std::memory_order_relaxed);
         channelCount = channels;
         writeIndex.store(0, std::memory_order_relaxed);
         readIndex.store(0, std::memory_order_relaxed);

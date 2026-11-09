@@ -50,6 +50,8 @@ struct PlayableCancellationTestAccess {
 
 namespace {
 
+std::vector<VnMonitorStreamFactV1> ReadStreamObservations(VnMonitorSessionHandle session);
+
 TEST(PlayableServicePartition, IndependentOwnersKeepOneStableLeaseEach) {
     harken::EnginePlayablePartitionPool pool(2);
     const harken::EnginePlayableServiceToken first{9, 3};
@@ -21620,15 +21622,50 @@ TEST(PlayableStart, MusicSegmentStarvedStreamedStemRejoinsItsTimelinePosition) {
         install.trackScheduleCount = 1;
         install.segmentSchedules = &image.segment;
         install.segmentScheduleCount = 1;
+        harken::ActionStepProgramViewV1 step{};
+        harken::ActionProgramViewV1 action{};
+        const bool observe = supply == Supply::Restored;
+        if (observe) {
+            step.delay = {harken::AuthoredTimeDomainV1::AbsoluteNanoseconds, 0, 1};
+            step.fade = step.cooldown = step.delay;
+            const auto root = image.Root();
+            step.target = {harken::ActionTargetKindV1::Segment, 0, root.stableId, root.expectedProgramSemanticFingerprint};
+            action.actionStableId = harkentest::ObjectId(10004);
+            action.steps = &step;
+            action.stepCount = action.expandedStepOccurrenceCount = action.expandedFiringCount = 1;
+            action.programSemanticFingerprint = harken::ComputeActionProgramFingerprintV1(action);
+            install.actions = &action;
+            install.actionCount = 1;
+            install.identity.capabilityMask |= harken::kWorldCapabilityActionDefinitions;
+        }
         install.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(install);
         ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, install).status);
-        harken::PlayableStartRequest request{};
-        request.root = image.Root();
-        const auto started = harken::StartPlayable(engine, request);
+        const auto monitor = observe ? harkentest::monitor::OpenIdentityEvents(4) : 0;
+        VnActionFiringHandle firing = 0;
+        harken::PlayableStartResult started{};
+        if (observe) {
+            VnPostActionDesc post{};
+            post.structSize = sizeof(post);
+            post.actionId = action.actionStableId;
+            ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
+            VnActionStepResult result{};
+            result.structSize = sizeof(result);
+            ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, 0, &result));
+            started.instance = result.producedPlayableInstance;
+            started.status = harken::PlayableStartStatus::Accepted;
+        } else {
+            harken::PlayableStartRequest request{};
+            request.root = image.Root();
+            started = harken::StartPlayable(engine, request);
+        }
         ASSERT_EQ(harken::PlayableStartStatus::Accepted, started.status);
+        std::uint64_t initialRing = 0;
+        bool sawReplacement = false, sawRejoined = false, sawStarvedAudio = false;
+        std::vector<VnPlaybackReadinessMemberV1> appliedRings;
         std::vector<float> output;
         for (unsigned block = 0; block < 900; ++block) {
-            const bool served = block < 100 || ((supply == Supply::Restored || supply == Supply::SuspendWhileSilent || supply == Supply::PitchWhileSilent) && block >= 220);
+            const bool served = (block < 100 || ((supply == Supply::Restored || supply == Supply::SuspendWhileSilent || supply == Supply::PitchWhileSilent) && block >= 220)) &&
+                !(observe && workers == 2 && block >= 400 && block < 500);
             if (supply == Supply::SuspendWhileSilent && block == 200) {
                 ASSERT_EQ(VN_OK, Vn_Suspend());
                 const auto frozen = engine.mixer.BlocksRendered();
@@ -21667,8 +21704,51 @@ TEST(PlayableStart, MusicSegmentStarvedStreamedStemRejoinsItsTimelinePosition) {
             ASSERT_EQ(VN_OK, Vn_Update());
             if (served) engine.streams.SyncServe();
             engine.nullBackend.Pump(1);
+            if (observe) {
+                VnActionPlaybackReadinessV1 info{};
+                info.structSize = sizeof(info);
+                std::array<VnPlaybackReadinessMemberV1, 8> members{};
+                ASSERT_EQ(VN_OK, Vn_QueryActionPlaybackReadiness(firing, &info, members.data(), members.size()));
+                for (unsigned i = 0; i < info.memberCount; ++i) {
+                    const auto& member = members[i];
+                    if (member.ringToken == 0) continue;
+                    if (initialRing == 0) initialRing = member.ringToken;
+                    if (member.ringToken == initialRing) continue;
+                    EXPECT_NE(0u, member.replacementSerial);
+                    EXPECT_NE(0u, member.sourceGeneration);
+                    if (member.state == VN_PLAYBACK_READINESS_PREPARING || member.state == VN_PLAYBACK_READINESS_READY) {
+                        sawReplacement = true;
+                        EXPECT_EQ(UINT64_MAX, member.appliedFrame);
+                        EXPECT_NE(UINT64_MAX, member.scheduledFrame);
+                    } else if (member.state == VN_PLAYBACK_READINESS_APPLIED) {
+                        sawRejoined = true;
+                        EXPECT_NE(UINT64_MAX, member.appliedFrame);
+                        EXPECT_NE(0u, member.appliedAudioBlock);
+                        EXPECT_EQ(member.appliedFrame, member.scheduledFrame);
+                        const auto prior = std::find_if(appliedRings.begin(), appliedRings.end(),
+                            [&](const auto& value) { return value.ringToken == member.ringToken; });
+                        if (prior == appliedRings.end()) appliedRings.push_back(member);
+                        else {
+                            EXPECT_EQ(prior->replacementSerial, member.replacementSerial);
+                            EXPECT_EQ(prior->appliedFrame, member.appliedFrame);
+                        }
+                    }
+                }
+                for (const auto& value : ReadStreamObservations(monitor)) {
+                    if (value.flags != VN_MONITOR_STREAM_FACT_AUDIO) continue;
+                    EXPECT_EQ(firing, value.actionFiring);
+                    if (value.starved) sawStarvedAudio = true;
+                }
+            }
             for (unsigned frame = 0; frame < config.blockFrames; ++frame)
                 output.push_back(engine.nullBackend.LastBlock()[frame * 2]);
+        }
+        if (observe) {
+            EXPECT_TRUE(sawReplacement);
+            EXPECT_TRUE(sawRejoined);
+            EXPECT_EQ(workers == 2 ? 2u : 1u, appliedRings.size());
+            EXPECT_TRUE(sawStarvedAudio);
+            EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(monitor));
         }
         const auto first = std::find_if(output.begin(), output.end(), [](float value) { return std::abs(value) > 0.00001f; });
         ASSERT_NE(output.end(), first) << OccupancyDump(engine);
@@ -21702,29 +21782,35 @@ TEST(PlayableStart, MusicSegmentStarvedStreamedStemRejoinsItsTimelinePosition) {
         // The resident stem never changes; the streamed stem is either at its
         // timeline position, inside a fade toward or from silence, or silent.
         std::vector<float> gain(kFrames);
-        std::size_t firstSilent = SIZE_MAX, lastSilent = 0;
+        std::vector<std::pair<std::size_t, std::size_t>> silences;
         for (std::size_t at = 0; at < kFrames; ++at) {
             const float stem = output[offset + at] - 0.25f;
             gain[at] = stem / ramp(at);
             ASSERT_GE(gain[at], -0.0001f) << "at=" << at;
             ASSERT_LE(gain[at], 1.0001f) << "at=" << at;
             if (std::abs(stem) < 0.000001f) {
-                firstSilent = std::min(firstSilent, at);
-                lastSilent = at;
+                if (silences.empty() || silences.back().second + 1 != at) silences.emplace_back(at, at);
+                else silences.back().second = at;
             }
         }
-        ASSERT_NE(SIZE_MAX, firstSilent) << "the stem never starved";
+        ASSERT_FALSE(silences.empty()) << "the stem never starved";
         const std::size_t fade = 240;
-        // Both edges are 5 ms ramps, not cuts.
-        std::size_t fadeOut = 0;
-        while (fadeOut < fade && gain[firstSilent - 1u - fadeOut] < 0.999f) ++fadeOut;
-        EXPECT_GE(fadeOut, fade - 16u);
-        EXPECT_NEAR(1.0f / static_cast<float>(fade), gain[lastSilent + 1u], 0.0002f);
-        ASSERT_LT(lastSilent + fade, kFrames) << "the stem never rejoined";
+        for (const auto& [firstSilent, lastSilent] : silences) {
+            ASSERT_GE(firstSilent, fade);
+            ASSERT_LT(lastSilent + fade, kFrames) << "the stem never rejoined";
+            // Both edges remain 5 ms ramps for each starvation episode.
+            std::size_t fadeOut = 0;
+            while (fadeOut < fade && gain[firstSilent - 1u - fadeOut] < 0.999f) ++fadeOut;
+            EXPECT_GE(fadeOut, fade - 16u);
+            EXPECT_NEAR(1.0f / static_cast<float>(fade), gain[lastSilent + 1u], 0.0002f);
+        }
         for (std::size_t at = 0; at < kFrames; ++at) {
-            const bool gap = at >= firstSilent && at <= lastSilent;
-            const bool fading = (at + fade >= firstSilent && at < firstSilent) ||
-                (at > lastSilent && at <= lastSilent + fade);
+            bool gap = false, fading = false;
+            for (const auto& [firstSilent, lastSilent] : silences) {
+                gap |= at >= firstSilent && at <= lastSilent;
+                fading |= (at + fade >= firstSilent && at < firstSilent) ||
+                    (at > lastSilent && at <= lastSilent + fade);
+            }
             if (gap) ASSERT_NEAR(0.0f, gain[at], 0.000001f) << "late data at=" << at;
             else if (!fading) ASSERT_NEAR(1.0f, gain[at], 0.0002f) << "off timeline at=" << at;
         }
@@ -21897,9 +21983,9 @@ TEST(PlayableStart, StreamedMusicTransitionPreparesSelectableBoundariesAndRefuse
 }
 
 TEST(PlayableStart, QueueStreamedSuccessorStartsAtPredecessorEndOrIsRefused) {
-    for (const auto workers : {0u, 2u}) for (const bool starve : {false, true}) {
+    for (const auto workers : {0u, 2u}) for (const bool starve : {false, true}) for (const bool viaAction : {false, true}) {
         SCOPED_TRACE(::testing::Message() << "workers=" << workers << " starve=" << starve);
-        auto config = harkentest::MakeNullConfig(4, 64, 48000);
+        auto config = harkentest::MakeNullConfig(viaAction ? 32 : 4, 64, 48000);
         config.renderWorkerCount = workers;
         config.maxStreams = 1;
         config.streamRingFrames = 1024;
@@ -21933,22 +22019,72 @@ TEST(PlayableStart, QueueStreamedSuccessorStartsAtPredecessorEndOrIsRefused) {
         image.occurrences[1].childPlayable = image.children[1].playable;
         image.occurrences[1].occurrenceSemanticFingerprint = harken::ComputePlayableOccurrenceFingerprintV1(image.occurrences[1]);
         auto install = PlayableWorldInstall(image.world);
+        harken::ActionStepProgramViewV1 step{};
+        harken::ActionProgramViewV1 action{};
+        if (viaAction) {
+            step.delay = {harken::AuthoredTimeDomainV1::AbsoluteNanoseconds, 0, 1};
+            step.fade = step.cooldown = step.delay;
+            const auto root = image.Root();
+            step.target = {harken::ActionTargetKindV1::Container, 0, root.stableId, root.expectedProgramSemanticFingerprint};
+            action.actionStableId = harkentest::ObjectId(10004);
+            action.steps = &step;
+            action.stepCount = action.expandedStepOccurrenceCount = action.expandedFiringCount = 1;
+            action.programSemanticFingerprint = harken::ComputeActionProgramFingerprintV1(action);
+            install.actions = &action;
+            install.actionCount = 1;
+            install.identity.capabilityMask |= harken::kWorldCapabilityActionDefinitions;
+            install.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(install);
+        }
         ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, install).status);
         if (starve) engine.streams.SetThrottled(true);
         harken::PlayableStartRequest request;
         request.root = image.Root();
-        const auto started = harken::StartPlayable(engine, request);
+        VnActionFiringHandle firing = 0;
+        harken::PlayableStartResult started{};
+        if (viaAction) {
+            VnPostActionDesc post{};
+            post.structSize = sizeof(post);
+            post.actionId = action.actionStableId;
+            ASSERT_EQ(VN_OK, Vn_CreateEmitter(&post.emitter));
+            ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
+            VnActionStepResult result{};
+            result.structSize = sizeof(result);
+            ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, 0, &result));
+            started.instance = result.producedPlayableInstance;
+            started.status = harken::PlayableStartStatus::Accepted;
+        } else started = harken::StartPlayable(engine, request);
         ASSERT_EQ(harken::PlayableStartStatus::Accepted, started.status);
+        std::uint64_t successorApplied = UINT64_MAX;
+        bool sawFuture = false;
         std::vector<float> output;
         for (unsigned block = 0; block < 96; ++block) {
             ASSERT_EQ(VN_OK, Vn_Update());
             engine.nullBackend.Pump(1);
+            if (viaAction) {
+                VnActionPlaybackReadinessV1 info{};
+                info.structSize = sizeof(info);
+                std::array<VnPlaybackReadinessMemberV1, 8> members{};
+                ASSERT_EQ(VN_OK, Vn_QueryActionPlaybackReadiness(firing, &info, members.data(), members.size()));
+                for (unsigned i = 0; i < info.memberCount; ++i) {
+                    const auto& member = members[i];
+                    if (member.soundId != kSecondSound) continue;
+                    EXPECT_EQ(firing, member.firing);
+                    EXPECT_NE(0u, member.renderActivation);
+                    if (member.state == VN_PLAYBACK_READINESS_APPLIED) successorApplied = member.appliedFrame;
+                    else if (member.scheduledFrame > engine.mixer.BlocksRendered() * config.blockFrames) sawFuture = true;
+                    if (starve) EXPECT_NE(VN_PLAYBACK_READINESS_READY, member.state);
+                }
+            }
             for (unsigned frame = 0; frame < config.blockFrames; ++frame)
                 output.push_back(engine.nullBackend.LastBlock()[frame * 2]);
         }
         const auto first = std::find_if(output.begin(), output.end(), [](float value) { return std::abs(value) > 0.00001f; });
         ASSERT_NE(output.end(), first) << OccupancyDump(engine);
         const auto offset = static_cast<std::size_t>(first - output.begin());
+        if (viaAction) {
+            EXPECT_TRUE(sawFuture);
+            EXPECT_EQ(starve ? UINT64_MAX : offset + resident.size(), successorApplied);
+        }
         const std::size_t streamed = starve ? 0u : kStreamFrames;
         ASSERT_LE(offset + resident.size() + streamed, output.size());
         // The successor either continues on the predecessor's last frame or never starts.
@@ -22901,6 +23037,224 @@ TEST(PlayableStart, DirectOrdinaryStreamRetainsSelectedInitialSourceWhileWaiting
         EXPECT_EQ(1u, engine.streams.FreeSlotCount());
         EXPECT_EQ(VN_OK, Vn_UnregisterStreamFile(kSound));
         EXPECT_FALSE(engine.runtimeRecreateRequired);
+    }
+}
+
+
+std::vector<VnMonitorStreamFactV1> ReadStreamObservations(VnMonitorSessionHandle session) {
+    std::vector<VnMonitorStreamFactV1> result;
+    for (const auto& row : harkentest::monitor::ReadExecutionEvents<VnMonitorStreamFactV1>(session))
+        result.push_back(row.fact);
+    return result;
+}
+
+TEST(PlayableStart, ActionPlaybackReadinessMatchesMixedOutputAndStreamObservations) {
+    std::vector<float> reference;
+    std::uint64_t previousEngine = 0;
+    VnActionFiringHandle previousFiring = 0;
+    for (const auto workers : {0u, 2u}) for (const auto monitorVersion : {0u, 3u, 4u})
+    for (const bool cancel : {false, true}) {
+        SCOPED_TRACE(::testing::Message() << workers << ":" << monitorVersion << ":" << cancel);
+        auto config = harkentest::MakeNullConfig(32, 64, 48000);
+        config.renderWorkerCount = workers;
+        config.maxStreams = 1;
+        config.streamRingFrames = 1024;
+        config.prebufferMs = 4;
+        harkentest::EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        harken::detail::VoicePoolReleaseTestAccess::SetWorkerDeadline(engine.voices, harken::CpuClockTicksPerSecond());
+        VnMonitorSessionHandle monitor = monitorVersion && !(workers == 2 && monitorVersion == 4) ? harkentest::monitor::OpenIdentityEvents(monitorVersion) : 0;
+        std::vector<float> resident(1024, 0.0f), streamed(1024, 0.0f);
+        for (std::size_t frame = 0; frame < 512; ++frame) {
+            resident[frame * 2] = 0.25f;
+            streamed[512 + frame] = 0.5f;
+        }
+        const auto pcm = harkentest::InterleavedDesc(resident, 2, 48000);
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &pcm));
+        harkentest::StreamSpec spec;
+        spec.soundId = kSecondSound;
+        spec.channelCount = 2;
+        const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "readiness_mixed.stream").string();
+        harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, streamed));
+        ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSecondSound, path.c_str()));
+        harken::StreamManager::StreamFacts source;
+        ASSERT_TRUE(engine.streams.FindFile(kSecondSound, &source));
+        DirectCompositeTrackWorldImage image(engine.registry.Lookup(kSound).contentRevision, source.contentRevision);
+        constexpr auto streaming = static_cast<std::size_t>(harken::playableproperties::PlayablePropertyIdV1::StreamingMode) - 1;
+        image.properties[1].payload.presentMask |= UINT64_C(1) << streaming;
+        image.properties[1].payload.values[streaming].bits = 1;
+        image.properties[1].programSemanticFingerprint = harken::ComputePlayablePropertyFingerprintV1(image.properties[1]);
+        image.placements[1].content.expectedProgramSemanticFingerprint = image.properties[1].programSemanticFingerprint;
+        image.occurrences[1].childPlayable = image.placements[1].content;
+        image.occurrences[1].occurrenceSemanticFingerprint = harken::ComputePlayableOccurrenceFingerprintV1(image.occurrences[1]);
+        image.placements[1].authoredStart = 0;
+        for (auto& placement : image.placements) placement.authoredDuration = INT64_C(8000000);
+        image.track.scheduleSemanticFingerprint = harken::ComputeTrackScheduleFingerprintV1(image.track);
+        auto install = PlayableWorldInstall(image.world);
+        install.trackSchedules = &image.track;
+        install.trackScheduleCount = 1;
+        harken::ActionStepProgramViewV1 step{};
+        step.delay = {harken::AuthoredTimeDomainV1::AbsoluteNanoseconds, 0, 1};
+        step.fade = step.cooldown = step.delay;
+        const auto root = image.Root();
+        step.target = {harken::ActionTargetKindV1::Track, 0, root.stableId, root.expectedProgramSemanticFingerprint};
+        harken::ActionProgramViewV1 action{};
+        action.actionStableId = harkentest::ObjectId(10004);
+        action.steps = &step;
+        action.stepCount = action.expandedStepOccurrenceCount = action.expandedFiringCount = 1;
+        action.programSemanticFingerprint = harken::ComputeActionProgramFingerprintV1(action);
+        install.actions = &action;
+        install.actionCount = 1;
+        install.identity.capabilityMask |= harken::kWorldCapabilityActionDefinitions;
+        install.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(install);
+        ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, install).status);
+        VnActionPlaybackReadinessV1 stale{};
+        stale.structSize = sizeof(stale);
+        if (previousFiring != 0) EXPECT_EQ(VN_STALE_HANDLE, Vn_QueryActionPlaybackReadiness(previousFiring, &stale, nullptr, 0));
+        engine.streams.SetThrottled(true);
+        VnPostActionDesc post{};
+        post.structSize = sizeof(post);
+        post.actionId = action.actionStableId;
+        ASSERT_EQ(VN_OK, Vn_CreateEmitter(&post.emitter));
+        VnActionFiringHandle firing = 0;
+        ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
+        VnActionStepResult postedStep{};
+        postedStep.structSize = sizeof(postedStep);
+        ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, 0, &postedStep));
+        ASSERT_NE(0u, postedStep.producedPlayableInstance) << postedStep.result;
+        std::array<VnPlaybackReadinessMemberV1, 8> members{};
+        VnActionPlaybackReadinessV1 info{};
+        const auto query = [&] {
+            info.structSize = sizeof(info);
+            EXPECT_EQ(VN_OK, Vn_QueryActionPlaybackReadiness(firing, &info, members.data(), members.size()));
+            EXPECT_EQ(info.memberCount, info.pendingCount + info.readyCount + info.appliedCount +
+                info.failedCount + info.cancelledCount + info.unknownCount);
+        };
+        query();
+        EXPECT_NE(previousEngine, info.engineInstance);
+        previousEngine = info.engineInstance;
+        previousFiring = firing;
+        std::vector<VnMonitorStreamFactV1> observations;
+        const auto collect = [&] {
+            if (!monitor) return;
+            const auto rows = ReadStreamObservations(monitor);
+            observations.insert(observations.end(), rows.begin(), rows.end());
+        };
+        for (unsigned block = 0; block < 6; ++block) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            query();
+            EXPECT_NE(VN_PLAYBACK_READINESS_READY, info.state);
+            EXPECT_NE(VN_PLAYBACK_READINESS_APPLIED, info.state);
+            EXPECT_EQ(0u, info.appliedCount);
+            if (cancel) engine.nullBackend.Pump(1);
+            for (unsigned i = 0; i < 128; ++i) EXPECT_FLOAT_EQ(0.0f, engine.nullBackend.LastBlock()[i]);
+            collect();
+        }
+        if (cancel) ASSERT_EQ(VN_OK, Vn_StopActionFiring(firing, 0));
+        engine.streams.SetThrottled(false);
+        engine.streams.SyncServe();
+        if (workers == 2 && monitorVersion == 4) monitor = harkentest::monitor::OpenIdentityEvents(4);
+        std::uint64_t first = UINT64_MAX, applied = UINT64_MAX;
+        bool sawReady = false, sawApplied = false;
+        std::vector<float> output;
+        for (unsigned block = 0; block < 20; ++block) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            query();
+            if (!cancel && info.state == VN_PLAYBACK_READINESS_READY) {
+                sawReady = true;
+                EXPECT_EQ(2u, info.memberCount);
+                auto shortInfo = info;
+                VnPlaybackReadinessMemberV1 sentinel{};
+                sentinel.ringToken = UINT64_MAX;
+                EXPECT_EQ(VN_INVALID_ARG, Vn_QueryActionPlaybackReadiness(firing, &shortInfo, &sentinel, 1));
+                EXPECT_EQ(2u, shortInfo.memberCount);
+                EXPECT_EQ(UINT64_MAX, sentinel.ringToken);
+                EXPECT_EQ(0u, info.appliedCount);
+                for (unsigned i = 0; i < info.memberCount; ++i) EXPECT_EQ(UINT64_MAX, members[i].appliedFrame);
+            }
+            const auto at = engine.mixer.BlocksRendered() * config.blockFrames;
+            if (monitorVersion == 4) { std::thread audio([&] { engine.nullBackend.Pump(1); }); audio.join(); }
+            else engine.nullBackend.Pump(1);
+            for (unsigned frame = 0; frame < 64; ++frame) {
+                const auto* sample = engine.nullBackend.LastBlock() + frame * 2;
+                output.insert(output.end(), sample, sample + 2);
+                if (sample[0] != 0.0f) {
+                    if (first == UINT64_MAX) first = at + frame;
+                    EXPECT_FLOAT_EQ(0.25f, sample[0]);
+                    EXPECT_FLOAT_EQ(0.5f, sample[1]);
+                }
+            }
+            query();
+            if (!cancel && info.appliedCount == 2) {
+                sawApplied = true;
+                applied = members[0].appliedFrame;
+                EXPECT_EQ(applied, members[1].appliedFrame);
+                EXPECT_NE(0u, members[0].appliedAudioBlock);
+            }
+            collect();
+        }
+        if (cancel) {
+            EXPECT_EQ(UINT64_MAX, first);
+            EXPECT_EQ(VN_PLAYBACK_READINESS_CANCELLED, info.state);
+        } else {
+            EXPECT_TRUE(sawReady);
+            EXPECT_TRUE(sawApplied);
+            EXPECT_NE(UINT64_MAX, first);
+            EXPECT_EQ(first, applied);
+            if (reference.empty()) reference = output;
+            else EXPECT_EQ(reference, output);
+            EXPECT_EQ(VN_PLAYBACK_READINESS_TERMINAL, info.state);
+        }
+        if (monitorVersion < 4) EXPECT_TRUE(observations.empty());
+        if (monitorVersion == 4 && !cancel) {
+            bool supply = false, audio = false;
+            for (const auto& value : observations) {
+                EXPECT_NE(0u, value.sourceGeneration);
+                EXPECT_NE(0u, value.ringToken);
+                if (value.flags == VN_MONITOR_STREAM_FACT_SUPPLY && value.totalReadCalls != 0) {
+                    supply = true;
+                    EXPECT_GT(value.totalReadBytes, 0u);
+                    if (value.readCalls != 0) EXPECT_GT(value.readRequestedBytes, 0u);
+                    EXPECT_GE(value.totalReadBytes, value.readBytes);
+                    EXPECT_GE(value.readEndNs, value.readBeginNs);
+                    EXPECT_EQ(0u, value.audioBlock);
+                }
+                if (value.flags == VN_MONITOR_STREAM_FACT_AUDIO && value.producedFrames != 0) {
+                    audio = true;
+                    EXPECT_EQ(firing, value.actionFiring);
+                    EXPECT_NE(0u, value.logicalVoice);
+                    EXPECT_EQ((value.audioBlock - 1) * config.blockFrames, value.frameBegin);
+                    EXPECT_GE(value.frameBegin, first - first % config.blockFrames);
+                    EXPECT_EQ(0u, value.readCalls);
+                }
+            }
+            EXPECT_TRUE(supply);
+            EXPECT_TRUE(audio);
+        }
+        ASSERT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+        info.structSize = sizeof(info);
+        EXPECT_EQ(VN_STALE_HANDLE, Vn_QueryActionPlaybackReadiness(firing, &info, nullptr, 0));
+        if (!cancel && workers == 0 && monitorVersion == 4) {
+            step.delay = {harken::AuthoredTimeDomainV1::AbsoluteNanoseconds, static_cast<std::int64_t>(engine.timelinePool.WindowEndFrame() * UINT64_C(1000000000) / 48000 + 1000000000), 1};
+            action.directFeatureMask = action.transitiveFeatureMask = 1;
+            action.programSemanticFingerprint = harken::ComputeActionProgramFingerprintV1(action);
+            install.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(install);
+            ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, install).status);
+            engine.streams.SyncServe();
+            ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
+            query();
+            EXPECT_GT(info.deferredCount, 0u);
+            EXPECT_NE(VN_PLAYBACK_READINESS_READY, info.state);
+            EXPECT_NE(VN_PLAYBACK_READINESS_APPLIED, info.state);
+            EXPECT_EQ(VN_OK, Vn_StopActionFiring(firing, 0));
+            for (unsigned i = 0; i < 4; ++i) { EXPECT_EQ(VN_OK, Vn_Update()); engine.nullBackend.Pump(1); }
+            query();
+            EXPECT_EQ(VN_PLAYBACK_READINESS_CANCELLED, info.state);
+            EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
+        }
+        if (monitor) EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(monitor));
+        EXPECT_FALSE(harken::MonitorStreamObservationEnabled());
     }
 }
 

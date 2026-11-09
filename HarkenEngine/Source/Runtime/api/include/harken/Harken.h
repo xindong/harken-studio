@@ -2880,6 +2880,83 @@ VnResult Vn_PostActionResolved(const VnActionResolved* resolved,
 VnResult Vn_StopActionFiring(VnActionFiringHandle firing, uint32_t fadeMs);
 VnResult Vn_QueryActionFiring(VnActionFiringHandle firing,
                               VnActionFiringInfo* outInfo);
+
+typedef uint32_t VnPlaybackReadinessState;
+enum {
+    VN_PLAYBACK_READINESS_UNKNOWN = 0,
+    VN_PLAYBACK_READINESS_PREPARING = 1,
+    VN_PLAYBACK_READINESS_READY = 2,
+    VN_PLAYBACK_READINESS_APPLIED = 3,
+    VN_PLAYBACK_READINESS_FAILED = 4,
+    VN_PLAYBACK_READINESS_CANCELLED = 5,
+    VN_PLAYBACK_READINESS_TERMINAL = 6
+};
+
+/* One currently materialized source occurrence or replacement, never a possible
+ * future selection. A nonzero replacementSerial identifies a recovery request.
+ * UINT64_MAX means no audio application or no scheduled frame is known.
+ * Ready means this member's playback buffer is prepared, not audible output.
+ * Applied means the audio thread installed this occurrence/ring, not that gain,
+ * routing, pause or source samples necessarily make it audible. */
+typedef struct VnPlaybackReadinessMemberV1 {
+    uint32_t structSize;
+    uint32_t state;
+    VnActionFiringHandle firing;
+    uint64_t playableInstance;
+    uint64_t renderActivation;
+    uint64_t preparationGeneration;
+    uint64_t sourceGeneration;
+    uint64_t contentRevision;
+    uint64_t ringToken;
+    uint64_t replacementSerial;
+    uint64_t logicCommitSequence;
+    uint64_t scheduledFrame;
+    uint64_t appliedFrame;
+    uint64_t appliedAudioBlock;
+    VnObjectId soundId;
+    VnObjectId clipId;
+    uint32_t occurrenceOrdinal;
+    uint32_t loopIteration;
+    uint32_t bufferedFrames;
+    uint32_t prebufferTargetFrames;
+    VnResult result;
+    uint32_t terminalReason;
+} VnPlaybackReadinessMemberV1;
+
+typedef struct VnActionPlaybackReadinessV1 {
+    uint32_t structSize;
+    uint32_t state;
+    uint64_t engineInstance;
+    uint64_t worldGeneration;
+    uint64_t cancellationEpoch;
+    uint64_t acceptedLogicSequence;
+    uint32_t memberCount;
+    uint32_t pendingCount;
+    uint32_t readyCount;
+    uint32_t appliedCount;
+    uint32_t failedCount;
+    uint32_t cancelledCount;
+    uint32_t unknownCount;
+    uint32_t deferredCount;
+    uint32_t firingOutcome;
+    uint32_t terminalReason;
+} VnActionPlaybackReadinessV1;
+
+/* Logic-thread, read-only projection of the firing tree's existing preparation.
+ * Does not choose branches, open sources, promote rings or advance scheduling.
+ * Includes selected future occurrences and outstanding recovery requests as
+ * separate members. Member counts are disjoint. deferredCount counts accepted
+ * Action steps not yet materialized; these prevent Ready/Applied summaries.
+ * Unmaterialized work is unknown, never Ready. firingOutcome and terminalReason
+ * use VnActionFiringOutcome and VnActionTerminalReason respectively.
+ * History ends with the existing firing/occurrence lifetime. Terminal firings
+ * report Terminal/Failed/Cancelled, not a remembered readiness result.
+ * capacity=0 and members=NULL returns counts. Otherwise capacity must cover
+ * memberCount (VN_INVALID_ARG); no partial member array is returned.
+ * Initialize outInfo.structSize; output member structSize values are written. */
+VnResult Vn_QueryActionPlaybackReadiness(VnActionFiringHandle firing,
+    VnActionPlaybackReadinessV1* outInfo, VnPlaybackReadinessMemberV1* members,
+    uint32_t capacity);
 VnResult Vn_QueryActionStep(VnActionFiringHandle firing,
                             uint32_t authoredEventIndex,
                             VnActionStepResult* outResult);
@@ -4109,7 +4186,8 @@ enum {
     VN_MONITOR_FACT_PLAYABLE_STARTED = 40,
     VN_MONITOR_FACT_STEP_EXECUTED = 41,
     VN_MONITOR_FACT_VARIABLE_RESULT = 42,
-    VN_MONITOR_FACT_PLAYABLE_FINISHED = 43
+    VN_MONITOR_FACT_PLAYABLE_FINISHED = 43,
+    VN_MONITOR_FACT_STREAM_OBSERVATION = 44
 };
 
 enum {
@@ -4349,6 +4427,72 @@ typedef struct VnMonitorExecutionFactV3 {
     VnMonitorFactActivity activity;
     VnMonitorPlayableProvenance playable;
 } VnMonitorExecutionFactV3;
+
+#define VN_MONITOR_STREAM_FACT_SUPPLY 1
+#define VN_MONITOR_STREAM_FACT_AUDIO 2
+
+/* readStatus: 0 cache/no call, 1 success, 2 I/O/short read, 3 corrupt
+ * content, 4 provider exception, 5 cancellation. TerminalReason retains the
+ * playback contract: 0 none, 1 natural EOF, 2 integrity abort, 3 producer failure. */
+
+/* EXECUTION_FACT recordVersion=4, enabled by requestedExecutionFactVersion=4.
+ * Other execution facts retain their V1/V2/V3 payloads. The envelope carries
+ * the existing engine/session/source sequence and playback associations.
+ * Supply records coalesce completed jobs; readSequence and read timestamps
+ * identify the last job, while totals cover the whole ring generation. The
+ * byte range is the LAST actual provider call (not a contiguous union of
+ * planar reads); readCalls/readBytes/readCostNs describe the complete job.
+ * Cache-only verification has zero readCalls and cost. Cost is elapsed provider
+ * time, including waits, not CPU usage. Source frames name the job's source chunk.
+ * Audio records describe exactly [frameBegin,frameEnd) of audioBlock. Their
+ * supply-only fields are zero; supply records never invent an audio block.
+ * Both sides use the same sourceGeneration/ringToken/renderActivation keys.
+ * Observation does not retain a source or alter playback/recovery. */
+typedef struct VnMonitorStreamFactV1 {
+    uint32_t structSize;
+    uint32_t factKind;
+    uint64_t sourceGeneration;
+    uint64_t contentRevision;
+    uint64_t ringToken;
+    uint64_t preparationGeneration;
+    uint64_t renderActivation;
+    uint64_t logicalVoice;
+    uint64_t readSequence;
+    uint64_t sourceFrameBegin;
+    uint64_t sourceFrameEnd;
+    uint64_t readOffset;
+    uint64_t readRequestedBytes;
+    uint64_t lastReadBytes;
+    uint64_t readCalls;
+    uint64_t readBytes;
+    uint64_t readCostNs;
+    uint64_t totalReadCalls;
+    uint64_t totalReadBytes;
+    uint64_t totalReadCostNs;
+    uint64_t ringReadIndex;
+    uint64_t ringWriteIndex;
+    uint64_t readBeginNs;
+    uint64_t readEndNs;
+    uint64_t audioBlock;
+    uint64_t frameBegin;
+    uint64_t frameEnd;
+    uint64_t appliedFrame;
+    uint64_t replacementSerial;
+    uint64_t actionFiring;
+    uint64_t playableInstance;
+    uint64_t worldGeneration;
+    uint64_t transportGeneration;
+    uint32_t bufferedFrames;
+    uint32_t prebufferTargetFrames;
+    uint32_t state;
+    uint32_t terminalReason;
+    VnResult result;
+    uint32_t flags;
+    uint32_t producedFrames;
+    uint32_t starved;
+    uint32_t readStatus;
+    uint32_t reserved0;
+} VnMonitorStreamFactV1;
 
 /* STATE identity revision is independent of native ReadCut and EVENT sequences. */
 typedef struct VnMonitorIdentityFactV1 {

@@ -1136,6 +1136,15 @@ std::uint32_t MixerLoop::DrainRawCommands(std::uint64_t blockIndex,
                     const std::uint64_t frame = m_seekResolvedFrames[i];
                     const auto token =
                         item.payload.seekVoice.streamHandoffToken;
+                    if (token != 0) {
+                        // Seek applies at this block boundary. Bind its receipt
+                        // to the replacement generation before publishing it.
+                        auto* ring = m_seekStreamHandoffs[i].replacementRing;
+                        ring->appliedFrame.store(blockIndex * m_blockFrames,
+                                                 std::memory_order_relaxed);
+                        ring->appliedAudioBlock.store(blockIndex + 1u,
+                                                      std::memory_order_release);
+                    }
                     m_voices.CommitSeek(
                         item.payload.seekVoice.handle, frame,
                         token == 0 ? nullptr : &m_seekStreamHandoffs[i]);

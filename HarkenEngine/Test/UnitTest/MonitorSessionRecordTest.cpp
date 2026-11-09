@@ -406,7 +406,7 @@ TEST(MonitorSession, RecordStopCaptureDoesNotStopFile) {
 namespace {
 using namespace harken::monitor;
 
-VnMonitorSessionHandle OpenTypedRecordingOwner(std::uint32_t streams, bool symbols = false) {
+VnMonitorSessionHandle OpenTypedRecordingOwner(std::uint32_t streams, bool symbols = false, std::uint32_t version = 1) {
     VnMonitorSessionDescV2 desc{};
     desc.structSize = sizeof(desc);
     desc.requestedStreamKindMask = streams;
@@ -420,7 +420,7 @@ VnMonitorSessionHandle OpenTypedRecordingOwner(std::uint32_t streams, bool symbo
     desc.requestSymbols = symbols ? 1u : 0u;
     desc.requestRawAudio = (streams & VN_MONITOR_STREAM_OPTIONAL_AUDIO) != 0 ? 1u : 0u;
     desc.consumerQueueBytes = 65536;
-    desc.requestedExecutionFactVersion = 1;
+    desc.requestedExecutionFactVersion = version;
     VnMonitorSessionHandle handle = 0;
     EXPECT_EQ(VN_OK, Vn_MonitorOpenSession(reinterpret_cast<const VnMonitorSessionDesc*>(&desc), &handle));
     StopDrainForTests();
@@ -1616,4 +1616,59 @@ TEST(MonitorSession, RecordingStartAllocationFailuresAreRetryableWithoutCapacity
         EXPECT_GE(failures, 3u);
         EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(owner));
     }
+}
+
+
+TEST(MonitorTypedRecording, StreamV4FactsPreserveProducerAndReadIdentity) {
+    harkentest::EngineSession engine(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, engine.InitResult());
+    const auto owner = OpenTypedRecordingOwner(VN_MONITOR_STREAM_EVENT, false, 4);
+    VnMonitorCaptureControlStatus lease{};
+    ASSERT_EQ(VN_OK, Acquire(owner, &lease));
+    const auto path = TempSessionPath("typed-stream-v4.vnmon");
+    auto desc = MakeRecordingDesc(path.c_str(), 1024 * 1024);
+    ASSERT_EQ(VN_OK, Vn_MonitorStartRecording(owner, lease.leaseGeneration, &desc));
+    VnMonitorStreamFactV1 value{};
+    value.sourceGeneration = 27;
+    value.contentRevision = 91;
+    value.ringToken = UINT64_C(7) << 32;
+    value.flags = VN_MONITOR_STREAM_FACT_SUPPLY;
+    value.readSequence = 4;
+    value.readCalls = value.totalReadCalls = 2;
+    value.readBytes = value.totalReadBytes = 1024;
+    value.readCostNs = value.totalReadCostNs = 200;
+    value.readBeginNs = 1000;
+    value.readEndNs = 1500;
+    value.readOffset = 4096;
+    value.readRequestedBytes = value.lastReadBytes = 512;
+    value.readStatus = 1;
+    ASSERT_TRUE(PublishStreamFact(value));
+    ASSERT_EQ(VN_OK, Vn_MonitorStopRecording(owner, lease.leaseGeneration));
+    ASSERT_EQ(VN_MONITOR_RECORDING_STATE_STOPPED, PumpTypedRecording(owner).state);
+    const auto file = ReadTypedFile(path);
+    EXPECT_EQ(4u, file.descriptor.schema);
+    const auto bytes = ReadAll(path);
+    const auto scan = ScanSessionBytes(bytes.data(), bytes.size());
+    bool found = false;
+    for (const auto& chunk : scan.commits) {
+        if (chunk.kind != VN_MONITOR_CHUNK_EXECUTION_RECORD) continue;
+        VnMonitorRecordHeader header{};
+        ASSERT_TRUE(ReadIdentityHeader(chunk.payload.data() + kRecordingPositionBytes,
+            chunk.payload.size() - kRecordingPositionBytes, header));
+        if (header.recordKind != VN_MONITOR_RECORD_EXECUTION_FACT || header.recordVersion != 4) continue;
+        VnMonitorStreamFactV1 decoded{};
+        const auto* payload = chunk.payload.data() + kRecordingPositionBytes + kPackedEnvelopeBytes;
+        ASSERT_TRUE(DecodeStreamFact(header, payload, header.payloadBytes, decoded));
+        EXPECT_EQ(value.ringToken, decoded.ringToken);
+        EXPECT_EQ(value.readSequence, decoded.readSequence);
+        EXPECT_EQ(value.readOffset, decoded.readOffset);
+        EXPECT_EQ(value.readCostNs, decoded.readCostNs);
+        EXPECT_EQ(0u, decoded.audioBlock);
+        header.flags = VN_MONITOR_RECORD_FLAG_REQUIRED;
+        EXPECT_FALSE(DecodeStreamFact(header, payload, header.payloadBytes, decoded));
+        found = true;
+    }
+    EXPECT_TRUE(found);
+    EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(owner));
+    RemoveIfExists(path);
 }

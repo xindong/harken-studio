@@ -70,9 +70,17 @@ inline std::vector<ExecutionRecord<Fact>> ReadExecutionEvents(VnMonitorSessionHa
             << "Identity assertions require a capture without dropped records";
         if (record.header.recordKind == VN_MONITOR_RECORD_EXECUTION_FACT) {
             ExecutionRecord<Fact> row{record.header};
-            if (!DecodeExecutionFact(record.header, buffer.data() + offset + kPackedEnvelopeBytes,
-                record.header.payloadBytes, row.fact)) { ADD_FAILURE(); return {}; }
-            records.push_back(row);
+            if constexpr (std::is_same_v<Fact, VnMonitorStreamFactV1>) {
+                if (record.header.recordVersion == 4) {
+                    if (!DecodeStreamFact(record.header, buffer.data() + offset + kPackedEnvelopeBytes,
+                        record.header.payloadBytes, row.fact)) { ADD_FAILURE(); return {}; }
+                    records.push_back(row);
+                }
+            } else {
+                if (!DecodeExecutionFact(record.header, buffer.data() + offset + kPackedEnvelopeBytes,
+                    record.header.payloadBytes, row.fact)) { ADD_FAILURE(); return {}; }
+                records.push_back(row);
+            }
         }
         if (operations && record.header.recordKind == VN_MONITOR_RECORD_EVENT_DETAIL) {
             ExecutionPayloadReader detail{buffer.data() + offset + kPackedEnvelopeBytes + 4};

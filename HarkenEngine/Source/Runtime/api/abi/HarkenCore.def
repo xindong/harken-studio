@@ -76,6 +76,7 @@ EXPORTS
     Vn_PostActionPinned
     Vn_PostActionResolved
     Vn_QueryActionFiring
+    Vn_QueryActionPlaybackReadiness
     Vn_QueryActionSeek
     Vn_QueryActionStep
     Vn_QueryStreamSource

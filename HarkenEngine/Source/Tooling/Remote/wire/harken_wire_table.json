@@ -7454,6 +7454,346 @@
           "u32"
         ]
       ]
+    },
+    "VnPlaybackReadinessMemberV1": {
+      "fields": [
+        [
+          "structSize",
+          "u32"
+        ],
+        [
+          "state",
+          "u32"
+        ],
+        [
+          "firing",
+          "u64"
+        ],
+        [
+          "playableInstance",
+          "u64"
+        ],
+        [
+          "renderActivation",
+          "u64"
+        ],
+        [
+          "preparationGeneration",
+          "u64"
+        ],
+        [
+          "sourceGeneration",
+          "u64"
+        ],
+        [
+          "contentRevision",
+          "u64"
+        ],
+        [
+          "ringToken",
+          "u64"
+        ],
+        [
+          "replacementSerial",
+          "u64"
+        ],
+        [
+          "logicCommitSequence",
+          "u64"
+        ],
+        [
+          "scheduledFrame",
+          "u64"
+        ],
+        [
+          "appliedFrame",
+          "u64"
+        ],
+        [
+          "appliedAudioBlock",
+          "u64"
+        ],
+        [
+          "soundId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "clipId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "occurrenceOrdinal",
+          "u32"
+        ],
+        [
+          "loopIteration",
+          "u32"
+        ],
+        [
+          "bufferedFrames",
+          "u32"
+        ],
+        [
+          "prebufferTargetFrames",
+          "u32"
+        ],
+        [
+          "result",
+          "i32"
+        ],
+        [
+          "terminalReason",
+          "u32"
+        ]
+      ]
+    },
+    "VnActionPlaybackReadinessV1": {
+      "fields": [
+        [
+          "structSize",
+          "u32"
+        ],
+        [
+          "state",
+          "u32"
+        ],
+        [
+          "engineInstance",
+          "u64"
+        ],
+        [
+          "worldGeneration",
+          "u64"
+        ],
+        [
+          "cancellationEpoch",
+          "u64"
+        ],
+        [
+          "acceptedLogicSequence",
+          "u64"
+        ],
+        [
+          "memberCount",
+          "u32"
+        ],
+        [
+          "pendingCount",
+          "u32"
+        ],
+        [
+          "readyCount",
+          "u32"
+        ],
+        [
+          "appliedCount",
+          "u32"
+        ],
+        [
+          "failedCount",
+          "u32"
+        ],
+        [
+          "cancelledCount",
+          "u32"
+        ],
+        [
+          "unknownCount",
+          "u32"
+        ],
+        [
+          "deferredCount",
+          "u32"
+        ],
+        [
+          "firingOutcome",
+          "u32"
+        ],
+        [
+          "terminalReason",
+          "u32"
+        ]
+      ]
+    },
+    "VnMonitorStreamFactV1": {
+      "fields": [
+        [
+          "structSize",
+          "u32"
+        ],
+        [
+          "factKind",
+          "u32"
+        ],
+        [
+          "sourceGeneration",
+          "u64"
+        ],
+        [
+          "contentRevision",
+          "u64"
+        ],
+        [
+          "ringToken",
+          "u64"
+        ],
+        [
+          "preparationGeneration",
+          "u64"
+        ],
+        [
+          "renderActivation",
+          "u64"
+        ],
+        [
+          "logicalVoice",
+          "u64"
+        ],
+        [
+          "readSequence",
+          "u64"
+        ],
+        [
+          "sourceFrameBegin",
+          "u64"
+        ],
+        [
+          "sourceFrameEnd",
+          "u64"
+        ],
+        [
+          "readOffset",
+          "u64"
+        ],
+        [
+          "readRequestedBytes",
+          "u64"
+        ],
+        [
+          "lastReadBytes",
+          "u64"
+        ],
+        [
+          "readCalls",
+          "u64"
+        ],
+        [
+          "readBytes",
+          "u64"
+        ],
+        [
+          "readCostNs",
+          "u64"
+        ],
+        [
+          "totalReadCalls",
+          "u64"
+        ],
+        [
+          "totalReadBytes",
+          "u64"
+        ],
+        [
+          "totalReadCostNs",
+          "u64"
+        ],
+        [
+          "ringReadIndex",
+          "u64"
+        ],
+        [
+          "ringWriteIndex",
+          "u64"
+        ],
+        [
+          "readBeginNs",
+          "u64"
+        ],
+        [
+          "readEndNs",
+          "u64"
+        ],
+        [
+          "audioBlock",
+          "u64"
+        ],
+        [
+          "frameBegin",
+          "u64"
+        ],
+        [
+          "frameEnd",
+          "u64"
+        ],
+        [
+          "appliedFrame",
+          "u64"
+        ],
+        [
+          "replacementSerial",
+          "u64"
+        ],
+        [
+          "actionFiring",
+          "u64"
+        ],
+        [
+          "playableInstance",
+          "u64"
+        ],
+        [
+          "worldGeneration",
+          "u64"
+        ],
+        [
+          "transportGeneration",
+          "u64"
+        ],
+        [
+          "bufferedFrames",
+          "u32"
+        ],
+        [
+          "prebufferTargetFrames",
+          "u32"
+        ],
+        [
+          "state",
+          "u32"
+        ],
+        [
+          "terminalReason",
+          "u32"
+        ],
+        [
+          "result",
+          "i32"
+        ],
+        [
+          "flags",
+          "u32"
+        ],
+        [
+          "producedFrames",
+          "u32"
+        ],
+        [
+          "starved",
+          "u32"
+        ],
+        [
+          "readStatus",
+          "u32"
+        ],
+        [
+          "reserved0",
+          "u32"
+        ]
+      ]
     }
   },
   "functions": [
@@ -10477,6 +10817,35 @@
         }
       ],
       "note": "Local native host API; process-local source/request lifetime. No remote opcode."
+    },
+    {
+      "name": "Vn_QueryActionPlaybackReadiness",
+      "params": [
+        {
+          "name": "firing",
+          "ctype": "VnActionFiringHandle",
+          "wire": "u64"
+        },
+        {
+          "name": "outInfo",
+          "ctype": "VnActionPlaybackReadinessV1*",
+          "wire": "outstruct",
+          "type": "VnActionPlaybackReadinessV1"
+        },
+        {
+          "name": "members",
+          "ctype": "VnPlaybackReadinessMemberV1*",
+          "wire": "outrows",
+          "type": "VnPlaybackReadinessMemberV1",
+          "capacityParam": "capacity"
+        },
+        {
+          "name": "capacity",
+          "ctype": "uint32_t",
+          "wire": "u32"
+        }
+      ],
+      "note": "Logic-thread native observation; no remote opcode. Required member count is returned in outInfo.memberCount."
     }
   ],
   "binding_overloads": [
@@ -10648,7 +11017,8 @@
       "VnMonitorChannelMode": "u32",
       "VnMonitorChunkKind": "u32",
       "VnMonitorChunkFlags": "u32",
-      "VnStreamSourceRequest": "u64"
+      "VnStreamSourceRequest": "u64",
+      "VnPlaybackReadinessState": "u32"
     },
     "results": {
       "backing": "i32",
@@ -10790,7 +11160,8 @@
           "VN_MONITOR_FACT_PLAYABLE_STARTED": 40,
           "VN_MONITOR_FACT_STEP_EXECUTED": 41,
           "VN_MONITOR_FACT_VARIABLE_RESULT": 42,
-          "VN_MONITOR_FACT_PLAYABLE_FINISHED": 43
+          "VN_MONITOR_FACT_PLAYABLE_FINISHED": 43,
+          "VN_MONITOR_FACT_STREAM_OBSERVATION": 44
         }
       },
       "VnMonitorExecutionField": {
@@ -11716,6 +12087,18 @@
           "VN_MONITOR_SYMBOL_UPSERT": 1,
           "VN_MONITOR_SYMBOL_TOMBSTONE": 2
         }
+      },
+      "VnPlaybackReadinessState": {
+        "backing": "u32",
+        "values": {
+          "VN_PLAYBACK_READINESS_UNKNOWN": 0,
+          "VN_PLAYBACK_READINESS_PREPARING": 1,
+          "VN_PLAYBACK_READINESS_READY": 2,
+          "VN_PLAYBACK_READINESS_APPLIED": 3,
+          "VN_PLAYBACK_READINESS_FAILED": 4,
+          "VN_PLAYBACK_READINESS_CANCELLED": 5,
+          "VN_PLAYBACK_READINESS_TERMINAL": 6
+        }
       }
     },
     "defines": {
@@ -12092,6 +12475,14 @@
       },
       "VN_BYTE_READ_IO_ERROR": {
         "type": "i32",
+        "value": 2
+      },
+      "VN_MONITOR_STREAM_FACT_SUPPLY": {
+        "type": "u32",
+        "value": 1
+      },
+      "VN_MONITOR_STREAM_FACT_AUDIO": {
+        "type": "u32",
         "value": 2
       }
     },

@@ -3,6 +3,7 @@
 #include <new>
 
 namespace harken {
+
 namespace {
 
 std::atomic<std::uint64_t> g_nextStreamSeekHandoffGeneration{1};
@@ -142,6 +143,16 @@ bool StreamSeekHandoffTable::CanApply(
     *out = {row->replacementRing, row->expectedOldRingToken,
             row->replacementRingToken, row->targetFrame, row->frameCount,
             row->sourceSampleRate, row->prebufferTargetFrames};
+    return true;
+}
+
+bool StreamSeekHandoffTable::Capture(std::uint64_t token, VnActionSeekTicket ticket,
+    StreamSeekHandoffSnapshot* out, StreamSeekHandoffLifecycle* state) const noexcept {
+    const auto* row = Resolve(token);
+    if (row == nullptr || row->ticket != ticket || out == nullptr || state == nullptr) return false;
+    *state = static_cast<StreamSeekHandoffLifecycle>(row->lifecycle.load(std::memory_order_acquire));
+    *out = {row->replacementRing, row->expectedOldRingToken, row->replacementRingToken,
+        row->targetFrame, row->frameCount, row->sourceSampleRate, row->prebufferTargetFrames};
     return true;
 }
 

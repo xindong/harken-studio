@@ -146,6 +146,7 @@ static_assert(static_cast<int>(VN_MONITOR_FACT_PLAYABLE_STARTED) == 40, "binding
 static_assert(static_cast<int>(VN_MONITOR_FACT_STEP_EXECUTED) == 41, "binding enum drift: VN_MONITOR_FACT_STEP_EXECUTED");
 static_assert(static_cast<int>(VN_MONITOR_FACT_VARIABLE_RESULT) == 42, "binding enum drift: VN_MONITOR_FACT_VARIABLE_RESULT");
 static_assert(static_cast<int>(VN_MONITOR_FACT_PLAYABLE_FINISHED) == 43, "binding enum drift: VN_MONITOR_FACT_PLAYABLE_FINISHED");
+static_assert(static_cast<int>(VN_MONITOR_FACT_STREAM_OBSERVATION) == 44, "binding enum drift: VN_MONITOR_FACT_STREAM_OBSERVATION");
 static_assert(static_cast<int>(VN_MONITOR_FACT_FIELD_SUBJECT) == 0, "binding enum drift: VN_MONITOR_FACT_FIELD_SUBJECT");
 static_assert(static_cast<int>(VN_MONITOR_FACT_FIELD_PROJECT) == 1, "binding enum drift: VN_MONITOR_FACT_FIELD_PROJECT");
 static_assert(static_cast<int>(VN_MONITOR_FACT_FIELD_CONTENT_OBJECT) == 2, "binding enum drift: VN_MONITOR_FACT_FIELD_CONTENT_OBJECT");
@@ -670,6 +671,13 @@ static_assert(static_cast<int>(VN_MONITOR_HOST_SYMBOL_PATH) == 2, "binding enum 
 static_assert(static_cast<int>(VN_MONITOR_HOST_SYMBOL_SCENE) == 3, "binding enum drift: VN_MONITOR_HOST_SYMBOL_SCENE");
 static_assert(static_cast<int>(VN_MONITOR_SYMBOL_UPSERT) == 1, "binding enum drift: VN_MONITOR_SYMBOL_UPSERT");
 static_assert(static_cast<int>(VN_MONITOR_SYMBOL_TOMBSTONE) == 2, "binding enum drift: VN_MONITOR_SYMBOL_TOMBSTONE");
+static_assert(static_cast<int>(VN_PLAYBACK_READINESS_UNKNOWN) == 0, "binding enum drift: VN_PLAYBACK_READINESS_UNKNOWN");
+static_assert(static_cast<int>(VN_PLAYBACK_READINESS_PREPARING) == 1, "binding enum drift: VN_PLAYBACK_READINESS_PREPARING");
+static_assert(static_cast<int>(VN_PLAYBACK_READINESS_READY) == 2, "binding enum drift: VN_PLAYBACK_READINESS_READY");
+static_assert(static_cast<int>(VN_PLAYBACK_READINESS_APPLIED) == 3, "binding enum drift: VN_PLAYBACK_READINESS_APPLIED");
+static_assert(static_cast<int>(VN_PLAYBACK_READINESS_FAILED) == 4, "binding enum drift: VN_PLAYBACK_READINESS_FAILED");
+static_assert(static_cast<int>(VN_PLAYBACK_READINESS_CANCELLED) == 5, "binding enum drift: VN_PLAYBACK_READINESS_CANCELLED");
+static_assert(static_cast<int>(VN_PLAYBACK_READINESS_TERMINAL) == 6, "binding enum drift: VN_PLAYBACK_READINESS_TERMINAL");
 
 // #define constants.
 static_assert(static_cast<std::uint64_t>(VN_EMITTER_CREATE_STATE_ONLY) == 1ull, "binding define drift: VN_EMITTER_CREATE_STATE_ONLY");
@@ -765,6 +773,8 @@ static_assert(static_cast<std::uint64_t>(VN_STREAM_SOURCE_FAILED) == 3ull, "bind
 static_assert(static_cast<std::uint64_t>(VN_BYTE_READ_OK) == 0ull, "binding define drift: VN_BYTE_READ_OK");
 static_assert(static_cast<std::uint64_t>(VN_BYTE_READ_CANCELLED) == 1ull, "binding define drift: VN_BYTE_READ_CANCELLED");
 static_assert(static_cast<std::uint64_t>(VN_BYTE_READ_IO_ERROR) == 2ull, "binding define drift: VN_BYTE_READ_IO_ERROR");
+static_assert(static_cast<std::uint64_t>(VN_MONITOR_STREAM_FACT_SUPPLY) == 1ull, "binding define drift: VN_MONITOR_STREAM_FACT_SUPPLY");
+static_assert(static_cast<std::uint64_t>(VN_MONITOR_STREAM_FACT_AUDIO) == 2ull, "binding define drift: VN_MONITOR_STREAM_FACT_AUDIO");
 
 // Mirrored struct sizes and field offsets (the values the C# ABI test
 // asserts its managed layout against).
@@ -2442,6 +2452,90 @@ static_assert(offsetof(VnStreamSourceInfoV1, structSize) == 0, "binding offset d
 static_assert(offsetof(VnStreamSourceInfoV1, state) == 4, "binding offset drift: VnStreamSourceInfoV1.state");
 static_assert(offsetof(VnStreamSourceInfoV1, result) == 8, "binding offset drift: VnStreamSourceInfoV1.result");
 static_assert(offsetof(VnStreamSourceInfoV1, reserved0) == 12, "binding offset drift: VnStreamSourceInfoV1.reserved0");
+static_assert(sizeof(VnPlaybackReadinessMemberV1) == 160, "binding size drift: VnPlaybackReadinessMemberV1");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, structSize) == 0, "binding offset drift: VnPlaybackReadinessMemberV1.structSize");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, state) == 4, "binding offset drift: VnPlaybackReadinessMemberV1.state");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, firing) == 8, "binding offset drift: VnPlaybackReadinessMemberV1.firing");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, playableInstance) == 16, "binding offset drift: VnPlaybackReadinessMemberV1.playableInstance");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, renderActivation) == 24, "binding offset drift: VnPlaybackReadinessMemberV1.renderActivation");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, preparationGeneration) == 32, "binding offset drift: VnPlaybackReadinessMemberV1.preparationGeneration");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, sourceGeneration) == 40, "binding offset drift: VnPlaybackReadinessMemberV1.sourceGeneration");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, contentRevision) == 48, "binding offset drift: VnPlaybackReadinessMemberV1.contentRevision");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, ringToken) == 56, "binding offset drift: VnPlaybackReadinessMemberV1.ringToken");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, replacementSerial) == 64, "binding offset drift: VnPlaybackReadinessMemberV1.replacementSerial");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, logicCommitSequence) == 72, "binding offset drift: VnPlaybackReadinessMemberV1.logicCommitSequence");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, scheduledFrame) == 80, "binding offset drift: VnPlaybackReadinessMemberV1.scheduledFrame");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, appliedFrame) == 88, "binding offset drift: VnPlaybackReadinessMemberV1.appliedFrame");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, appliedAudioBlock) == 96, "binding offset drift: VnPlaybackReadinessMemberV1.appliedAudioBlock");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, soundId) == 104, "binding offset drift: VnPlaybackReadinessMemberV1.soundId");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, clipId) == 120, "binding offset drift: VnPlaybackReadinessMemberV1.clipId");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, occurrenceOrdinal) == 136, "binding offset drift: VnPlaybackReadinessMemberV1.occurrenceOrdinal");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, loopIteration) == 140, "binding offset drift: VnPlaybackReadinessMemberV1.loopIteration");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, bufferedFrames) == 144, "binding offset drift: VnPlaybackReadinessMemberV1.bufferedFrames");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, prebufferTargetFrames) == 148, "binding offset drift: VnPlaybackReadinessMemberV1.prebufferTargetFrames");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, result) == 152, "binding offset drift: VnPlaybackReadinessMemberV1.result");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, terminalReason) == 156, "binding offset drift: VnPlaybackReadinessMemberV1.terminalReason");
+static_assert(sizeof(VnActionPlaybackReadinessV1) == 80, "binding size drift: VnActionPlaybackReadinessV1");
+static_assert(offsetof(VnActionPlaybackReadinessV1, structSize) == 0, "binding offset drift: VnActionPlaybackReadinessV1.structSize");
+static_assert(offsetof(VnActionPlaybackReadinessV1, state) == 4, "binding offset drift: VnActionPlaybackReadinessV1.state");
+static_assert(offsetof(VnActionPlaybackReadinessV1, engineInstance) == 8, "binding offset drift: VnActionPlaybackReadinessV1.engineInstance");
+static_assert(offsetof(VnActionPlaybackReadinessV1, worldGeneration) == 16, "binding offset drift: VnActionPlaybackReadinessV1.worldGeneration");
+static_assert(offsetof(VnActionPlaybackReadinessV1, cancellationEpoch) == 24, "binding offset drift: VnActionPlaybackReadinessV1.cancellationEpoch");
+static_assert(offsetof(VnActionPlaybackReadinessV1, acceptedLogicSequence) == 32, "binding offset drift: VnActionPlaybackReadinessV1.acceptedLogicSequence");
+static_assert(offsetof(VnActionPlaybackReadinessV1, memberCount) == 40, "binding offset drift: VnActionPlaybackReadinessV1.memberCount");
+static_assert(offsetof(VnActionPlaybackReadinessV1, pendingCount) == 44, "binding offset drift: VnActionPlaybackReadinessV1.pendingCount");
+static_assert(offsetof(VnActionPlaybackReadinessV1, readyCount) == 48, "binding offset drift: VnActionPlaybackReadinessV1.readyCount");
+static_assert(offsetof(VnActionPlaybackReadinessV1, appliedCount) == 52, "binding offset drift: VnActionPlaybackReadinessV1.appliedCount");
+static_assert(offsetof(VnActionPlaybackReadinessV1, failedCount) == 56, "binding offset drift: VnActionPlaybackReadinessV1.failedCount");
+static_assert(offsetof(VnActionPlaybackReadinessV1, cancelledCount) == 60, "binding offset drift: VnActionPlaybackReadinessV1.cancelledCount");
+static_assert(offsetof(VnActionPlaybackReadinessV1, unknownCount) == 64, "binding offset drift: VnActionPlaybackReadinessV1.unknownCount");
+static_assert(offsetof(VnActionPlaybackReadinessV1, deferredCount) == 68, "binding offset drift: VnActionPlaybackReadinessV1.deferredCount");
+static_assert(offsetof(VnActionPlaybackReadinessV1, firingOutcome) == 72, "binding offset drift: VnActionPlaybackReadinessV1.firingOutcome");
+static_assert(offsetof(VnActionPlaybackReadinessV1, terminalReason) == 76, "binding offset drift: VnActionPlaybackReadinessV1.terminalReason");
+static_assert(sizeof(VnMonitorStreamFactV1) == 296, "binding size drift: VnMonitorStreamFactV1");
+static_assert(offsetof(VnMonitorStreamFactV1, structSize) == 0, "binding offset drift: VnMonitorStreamFactV1.structSize");
+static_assert(offsetof(VnMonitorStreamFactV1, factKind) == 4, "binding offset drift: VnMonitorStreamFactV1.factKind");
+static_assert(offsetof(VnMonitorStreamFactV1, sourceGeneration) == 8, "binding offset drift: VnMonitorStreamFactV1.sourceGeneration");
+static_assert(offsetof(VnMonitorStreamFactV1, contentRevision) == 16, "binding offset drift: VnMonitorStreamFactV1.contentRevision");
+static_assert(offsetof(VnMonitorStreamFactV1, ringToken) == 24, "binding offset drift: VnMonitorStreamFactV1.ringToken");
+static_assert(offsetof(VnMonitorStreamFactV1, preparationGeneration) == 32, "binding offset drift: VnMonitorStreamFactV1.preparationGeneration");
+static_assert(offsetof(VnMonitorStreamFactV1, renderActivation) == 40, "binding offset drift: VnMonitorStreamFactV1.renderActivation");
+static_assert(offsetof(VnMonitorStreamFactV1, logicalVoice) == 48, "binding offset drift: VnMonitorStreamFactV1.logicalVoice");
+static_assert(offsetof(VnMonitorStreamFactV1, readSequence) == 56, "binding offset drift: VnMonitorStreamFactV1.readSequence");
+static_assert(offsetof(VnMonitorStreamFactV1, sourceFrameBegin) == 64, "binding offset drift: VnMonitorStreamFactV1.sourceFrameBegin");
+static_assert(offsetof(VnMonitorStreamFactV1, sourceFrameEnd) == 72, "binding offset drift: VnMonitorStreamFactV1.sourceFrameEnd");
+static_assert(offsetof(VnMonitorStreamFactV1, readOffset) == 80, "binding offset drift: VnMonitorStreamFactV1.readOffset");
+static_assert(offsetof(VnMonitorStreamFactV1, readRequestedBytes) == 88, "binding offset drift: VnMonitorStreamFactV1.readRequestedBytes");
+static_assert(offsetof(VnMonitorStreamFactV1, lastReadBytes) == 96, "binding offset drift: VnMonitorStreamFactV1.lastReadBytes");
+static_assert(offsetof(VnMonitorStreamFactV1, readCalls) == 104, "binding offset drift: VnMonitorStreamFactV1.readCalls");
+static_assert(offsetof(VnMonitorStreamFactV1, readBytes) == 112, "binding offset drift: VnMonitorStreamFactV1.readBytes");
+static_assert(offsetof(VnMonitorStreamFactV1, readCostNs) == 120, "binding offset drift: VnMonitorStreamFactV1.readCostNs");
+static_assert(offsetof(VnMonitorStreamFactV1, totalReadCalls) == 128, "binding offset drift: VnMonitorStreamFactV1.totalReadCalls");
+static_assert(offsetof(VnMonitorStreamFactV1, totalReadBytes) == 136, "binding offset drift: VnMonitorStreamFactV1.totalReadBytes");
+static_assert(offsetof(VnMonitorStreamFactV1, totalReadCostNs) == 144, "binding offset drift: VnMonitorStreamFactV1.totalReadCostNs");
+static_assert(offsetof(VnMonitorStreamFactV1, ringReadIndex) == 152, "binding offset drift: VnMonitorStreamFactV1.ringReadIndex");
+static_assert(offsetof(VnMonitorStreamFactV1, ringWriteIndex) == 160, "binding offset drift: VnMonitorStreamFactV1.ringWriteIndex");
+static_assert(offsetof(VnMonitorStreamFactV1, readBeginNs) == 168, "binding offset drift: VnMonitorStreamFactV1.readBeginNs");
+static_assert(offsetof(VnMonitorStreamFactV1, readEndNs) == 176, "binding offset drift: VnMonitorStreamFactV1.readEndNs");
+static_assert(offsetof(VnMonitorStreamFactV1, audioBlock) == 184, "binding offset drift: VnMonitorStreamFactV1.audioBlock");
+static_assert(offsetof(VnMonitorStreamFactV1, frameBegin) == 192, "binding offset drift: VnMonitorStreamFactV1.frameBegin");
+static_assert(offsetof(VnMonitorStreamFactV1, frameEnd) == 200, "binding offset drift: VnMonitorStreamFactV1.frameEnd");
+static_assert(offsetof(VnMonitorStreamFactV1, appliedFrame) == 208, "binding offset drift: VnMonitorStreamFactV1.appliedFrame");
+static_assert(offsetof(VnMonitorStreamFactV1, replacementSerial) == 216, "binding offset drift: VnMonitorStreamFactV1.replacementSerial");
+static_assert(offsetof(VnMonitorStreamFactV1, actionFiring) == 224, "binding offset drift: VnMonitorStreamFactV1.actionFiring");
+static_assert(offsetof(VnMonitorStreamFactV1, playableInstance) == 232, "binding offset drift: VnMonitorStreamFactV1.playableInstance");
+static_assert(offsetof(VnMonitorStreamFactV1, worldGeneration) == 240, "binding offset drift: VnMonitorStreamFactV1.worldGeneration");
+static_assert(offsetof(VnMonitorStreamFactV1, transportGeneration) == 248, "binding offset drift: VnMonitorStreamFactV1.transportGeneration");
+static_assert(offsetof(VnMonitorStreamFactV1, bufferedFrames) == 256, "binding offset drift: VnMonitorStreamFactV1.bufferedFrames");
+static_assert(offsetof(VnMonitorStreamFactV1, prebufferTargetFrames) == 260, "binding offset drift: VnMonitorStreamFactV1.prebufferTargetFrames");
+static_assert(offsetof(VnMonitorStreamFactV1, state) == 264, "binding offset drift: VnMonitorStreamFactV1.state");
+static_assert(offsetof(VnMonitorStreamFactV1, terminalReason) == 268, "binding offset drift: VnMonitorStreamFactV1.terminalReason");
+static_assert(offsetof(VnMonitorStreamFactV1, result) == 272, "binding offset drift: VnMonitorStreamFactV1.result");
+static_assert(offsetof(VnMonitorStreamFactV1, flags) == 276, "binding offset drift: VnMonitorStreamFactV1.flags");
+static_assert(offsetof(VnMonitorStreamFactV1, producedFrames) == 280, "binding offset drift: VnMonitorStreamFactV1.producedFrames");
+static_assert(offsetof(VnMonitorStreamFactV1, starved) == 284, "binding offset drift: VnMonitorStreamFactV1.starved");
+static_assert(offsetof(VnMonitorStreamFactV1, readStatus) == 288, "binding offset drift: VnMonitorStreamFactV1.readStatus");
+static_assert(offsetof(VnMonitorStreamFactV1, reserved0) == 292, "binding offset drift: VnMonitorStreamFactV1.reserved0");
 
 // C function-signature pins for the whole API. Taking the address of each
 // function into a pointer of the table-declared signature makes ANY
@@ -2611,6 +2705,7 @@ extern "C" {
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_QueryStreamSource)(VnStreamSourceRequest, VnStreamSourceInfoV1*) = &Vn_QueryStreamSource;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_CancelStreamSource)(VnStreamSourceRequest) = &Vn_CancelStreamSource;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_CommitStreamSource)(VnStreamSourceRequest) = &Vn_CommitStreamSource;
+[[maybe_unused]] static VnResult (*const binding_sig_Vn_QueryActionPlaybackReadiness)(VnActionFiringHandle, VnActionPlaybackReadinessV1*, VnPlaybackReadinessMemberV1*, uint32_t) = &Vn_QueryActionPlaybackReadiness;
 }
 
 #endif // HARKEN_BINDING_ABI_PIN_H

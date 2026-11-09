@@ -448,6 +448,14 @@
           "type": "u32",
           "value": 16
         },
+        "VN_MONITOR_STREAM_FACT_AUDIO": {
+          "type": "u32",
+          "value": 2
+        },
+        "VN_MONITOR_STREAM_FACT_SUPPLY": {
+          "type": "u32",
+          "value": 1
+        },
         "VN_MONITOR_STUDIO_DEFAULT_GAME_OBJECT_ID": {
           "type": "u64",
           "value": 1
@@ -1003,6 +1011,7 @@
             "VN_MONITOR_FACT_SOURCE_APPLIED": 37,
             "VN_MONITOR_FACT_SOURCE_ENDED": 32,
             "VN_MONITOR_FACT_STEP_EXECUTED": 41,
+            "VN_MONITOR_FACT_STREAM_OBSERVATION": 44,
             "VN_MONITOR_FACT_TRANSITION_REJECTED": 18,
             "VN_MONITOR_FACT_TRANSITION_STARTED": 16,
             "VN_MONITOR_FACT_TRANSITION_STOPPED": 17,
@@ -1428,6 +1437,18 @@
           "values": {
             "VN_PCM_POLICY_COPY": 0,
             "VN_PCM_POLICY_REFERENCE": 1
+          }
+        },
+        "VnPlaybackReadinessState": {
+          "backing": "u32",
+          "values": {
+            "VN_PLAYBACK_READINESS_APPLIED": 3,
+            "VN_PLAYBACK_READINESS_CANCELLED": 5,
+            "VN_PLAYBACK_READINESS_FAILED": 4,
+            "VN_PLAYBACK_READINESS_PREPARING": 1,
+            "VN_PLAYBACK_READINESS_READY": 2,
+            "VN_PLAYBACK_READINESS_TERMINAL": 6,
+            "VN_PLAYBACK_READINESS_UNKNOWN": 0
           }
         },
         "VnPropertyBindingFlags": {
@@ -4013,6 +4034,29 @@
             }
           ],
           "returnType": "VnResult"
+        },
+        {
+          "callingConvention": "cdecl",
+          "name": "Vn_QueryActionPlaybackReadiness",
+          "parameters": [
+            {
+              "ctype": "VnActionFiringHandle",
+              "name": "firing"
+            },
+            {
+              "ctype": "VnActionPlaybackReadinessV1*",
+              "name": "outInfo"
+            },
+            {
+              "ctype": "VnPlaybackReadinessMemberV1*",
+              "name": "members"
+            },
+            {
+              "ctype": "uint32_t",
+              "name": "capacity"
+            }
+          ],
+          "returnType": "VnResult"
         }
       ],
       "platform": {
@@ -4095,6 +4139,7 @@
         "Vn_PostActionPinned",
         "Vn_PostActionResolved",
         "Vn_QueryActionFiring",
+        "Vn_QueryActionPlaybackReadiness",
         "Vn_QueryActionSeek",
         "Vn_QueryActionStep",
         "Vn_QueryStreamSource",
@@ -4321,6 +4366,7 @@
         "VnMonitorTapSelectorMode": "u32",
         "VnMonitorValidityFlags": "u32",
         "VnPackHandle": "u64",
+        "VnPlaybackReadinessState": "u32",
         "VnResult": "i32",
         "VnStreamSourceRequest": "u64",
         "VnVoiceHandle": "u64"
@@ -4567,6 +4613,172 @@
             }
           ],
           "size": 88
+        },
+        "VnActionPlaybackReadinessV1": {
+          "alignment": 8,
+          "fields": [
+            {
+              "alignment": 4,
+              "name": "structSize",
+              "offset": 0,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "state",
+              "offset": 4,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 8,
+              "name": "engineInstance",
+              "offset": 8,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "worldGeneration",
+              "offset": 16,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "cancellationEpoch",
+              "offset": 24,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "acceptedLogicSequence",
+              "offset": 32,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 4,
+              "name": "memberCount",
+              "offset": 40,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "pendingCount",
+              "offset": 44,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "readyCount",
+              "offset": 48,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "appliedCount",
+              "offset": 52,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "failedCount",
+              "offset": 56,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "cancelledCount",
+              "offset": 60,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "unknownCount",
+              "offset": 64,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "deferredCount",
+              "offset": 68,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "firingOutcome",
+              "offset": 72,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "terminalReason",
+              "offset": 76,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            }
+          ],
+          "size": 80
         },
         "VnActionResolved": {
           "alignment": 8,
@@ -15374,6 +15586,442 @@
           ],
           "size": 32
         },
+        "VnMonitorStreamFactV1": {
+          "alignment": 8,
+          "fields": [
+            {
+              "alignment": 4,
+              "name": "structSize",
+              "offset": 0,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "factKind",
+              "offset": 4,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 8,
+              "name": "sourceGeneration",
+              "offset": 8,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "contentRevision",
+              "offset": 16,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "ringToken",
+              "offset": 24,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "preparationGeneration",
+              "offset": 32,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "renderActivation",
+              "offset": 40,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "logicalVoice",
+              "offset": 48,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "readSequence",
+              "offset": 56,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "sourceFrameBegin",
+              "offset": 64,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "sourceFrameEnd",
+              "offset": 72,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "readOffset",
+              "offset": 80,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "readRequestedBytes",
+              "offset": 88,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "lastReadBytes",
+              "offset": 96,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "readCalls",
+              "offset": 104,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "readBytes",
+              "offset": 112,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "readCostNs",
+              "offset": 120,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "totalReadCalls",
+              "offset": 128,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "totalReadBytes",
+              "offset": 136,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "totalReadCostNs",
+              "offset": 144,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "ringReadIndex",
+              "offset": 152,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "ringWriteIndex",
+              "offset": 160,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "readBeginNs",
+              "offset": 168,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "readEndNs",
+              "offset": 176,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "audioBlock",
+              "offset": 184,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "frameBegin",
+              "offset": 192,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "frameEnd",
+              "offset": 200,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "appliedFrame",
+              "offset": 208,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "replacementSerial",
+              "offset": 216,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "actionFiring",
+              "offset": 224,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "playableInstance",
+              "offset": 232,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "worldGeneration",
+              "offset": 240,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "transportGeneration",
+              "offset": 248,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 4,
+              "name": "bufferedFrames",
+              "offset": 256,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "prebufferTargetFrames",
+              "offset": 260,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "state",
+              "offset": 264,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "terminalReason",
+              "offset": 268,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "result",
+              "offset": 272,
+              "shape": {
+                "kind": "scalar",
+                "type": "i32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "flags",
+              "offset": 276,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "producedFrames",
+              "offset": 280,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "starved",
+              "offset": 284,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "readStatus",
+              "offset": 288,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "reserved0",
+              "offset": 292,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            }
+          ],
+          "size": 296
+        },
         "VnMonitorSubscriptionStatus": {
           "alignment": 8,
           "fields": [
@@ -17642,6 +18290,232 @@
             }
           ],
           "size": 88
+        },
+        "VnPlaybackReadinessMemberV1": {
+          "alignment": 8,
+          "fields": [
+            {
+              "alignment": 4,
+              "name": "structSize",
+              "offset": 0,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "state",
+              "offset": 4,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 8,
+              "name": "firing",
+              "offset": 8,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "playableInstance",
+              "offset": 16,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "renderActivation",
+              "offset": 24,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "preparationGeneration",
+              "offset": 32,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "sourceGeneration",
+              "offset": 40,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "contentRevision",
+              "offset": 48,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "ringToken",
+              "offset": 56,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "replacementSerial",
+              "offset": 64,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "logicCommitSequence",
+              "offset": 72,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "scheduledFrame",
+              "offset": 80,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "appliedFrame",
+              "offset": 88,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "appliedAudioBlock",
+              "offset": 96,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "soundId",
+              "offset": 104,
+              "shape": {
+                "kind": "struct",
+                "type": "VnObjectId"
+              },
+              "size": 16
+            },
+            {
+              "alignment": 8,
+              "name": "clipId",
+              "offset": 120,
+              "shape": {
+                "kind": "struct",
+                "type": "VnObjectId"
+              },
+              "size": 16
+            },
+            {
+              "alignment": 4,
+              "name": "occurrenceOrdinal",
+              "offset": 136,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "loopIteration",
+              "offset": 140,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "bufferedFrames",
+              "offset": 144,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "prebufferTargetFrames",
+              "offset": 148,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "result",
+              "offset": 152,
+              "shape": {
+                "kind": "scalar",
+                "type": "i32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "terminalReason",
+              "offset": 156,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            }
+          ],
+          "size": 160
         },
         "VnPostActionByNameDesc": {
           "alignment": 8,
@@ -20680,6 +21554,15 @@
             "source": "default",
             "unknownSize": "reject"
           },
+          "VnActionPlaybackReadinessV1": {
+            "acceptedSizes": [
+              80
+            ],
+            "currentSize": 80,
+            "mode": "exact-current",
+            "source": "default",
+            "unknownSize": "reject"
+          },
           "VnActionResolved": {
             "acceptedSizes": [
               64
@@ -21560,6 +22443,15 @@
             "source": "default",
             "unknownSize": "reject"
           },
+          "VnMonitorStreamFactV1": {
+            "acceptedSizes": [
+              296
+            ],
+            "currentSize": 296,
+            "mode": "exact-current",
+            "source": "default",
+            "unknownSize": "reject"
+          },
           "VnMonitorSubscriptionStatus": {
             "acceptedSizes": [
               64
@@ -21701,6 +22593,15 @@
             "missingFields": "documented-play-defaults",
             "mode": "exact-discrete-prefix",
             "source": "explicit",
+            "unknownSize": "reject"
+          },
+          "VnPlaybackReadinessMemberV1": {
+            "acceptedSizes": [
+              160
+            ],
+            "currentSize": 160,
+            "mode": "exact-current",
+            "source": "default",
             "unknownSize": "reject"
           },
           "VnPostActionByNameDesc": {
@@ -23969,11 +24870,11 @@
       "formatVersion": 7
     }
   },
-  "contractSha256": "8a0e326b235ba37827269eb02d826fcde5da49492b18927669d294bdf252f02c",
+  "contractSha256": "9df7036c6ebb1598fc95fa5ec3519453dcc0d91fac2a6ef899480e70f7d62e2d",
   "generatedFiles": {
     "HarkenEngine/Source/Tooling/Binding/generated/harken_binding_abi_pin.g.h": {
-      "sha256": "4b0af7ddf7c966241b99c2e3664a380db6e733e7717d384f13a09fe32370dd4b",
-      "size": 327267
+      "sha256": "48d025ca8f6163875612607196241e94fa73ea74290fb21d0c16c2cffceba5e5",
+      "size": 340023
     },
     "HarkenEngine/Tool/Remote/generated/harken_wire_desc_meta.h": {
       "sha256": "d02bee48f10bd551a2887f963fd26ee9e0ba21e66108f186d7e6af6941ee0567",
@@ -23988,12 +24889,12 @@
       "size": 5406
     },
     "HarkenEngine/Tool/Remote/generated/harken_wire_layout_asserts.h": {
-      "sha256": "7c1fab2cd19d2744a5643ce119946a048281c8602b248b6a761aca51bfb14df2",
-      "size": 240008
+      "sha256": "0d01219b97af77e6a1be12ecd68583f0781cb62d14ea053a6a575f6c198cf481",
+      "size": 252718
     },
     "HarkenEngine/Tool/Remote/harken_wire.py": {
-      "sha256": "bf11ebe26f43ad769374e99666f4147c8432acbdf2179095beaf97ee253bbd8f",
-      "size": 257132
+      "sha256": "3924d6d430a1c480dd7c865ac0396d4e3873ecf39565ec86beb856f07fba5394",
+      "size": 264109
     },
     "HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenAbi.g.cs": {
       "sha256": "78f29dd8e1d509d11409cd0bac940f6a97d01b2963ca2328238253eeb63c5575",
@@ -24004,21 +24905,21 @@
       "size": 31334
     },
     "HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs": {
-      "sha256": "39b5c078f4c9a04343675de8650dbe5d5cc9872786ea090968acaf58d1bb5fdf",
-      "size": 70443
+      "sha256": "4dd86c1fe2bf20ddf287d632f97c6cd09ea0e072a16ac9724d94975a7a516704",
+      "size": 70492
     }
   },
   "kind": "harken-contract-suite-manifest",
   "schemaVersion": 1,
   "sectionSha256": {
-    "nativeAbiSha256": "43d4e8fa8e21fe536ff8de83995a34f4ba7517cf237f4064a6bc39512400128c",
+    "nativeAbiSha256": "4d45abb203256b9e32256c06bdaccf9d95f7e4745a33ee6964227169ab239cad",
     "remoteWireSha256": "d99304d71d24436e14a34fd990b3ded5e6ddd7bca6c13dc2065a9709d53577d3",
     "traceFormatSha256": "5a48f4b2591eb3c9ade95bc3621d6002cd999290816aede8436b8a4cfdf8e3fd"
   },
   "sourceFiles": {
     "HarkenEngine/Source/Runtime/api/include/harken/Harken.h": {
-      "sha256": "a8ca2bc8f1608cb6b4687ee2fa6c740fc090c7891418dab9b277362b871d560f",
-      "size": 239979
+      "sha256": "947d04fec152f547f13c6b4c55ab498fc0c74ab0fff387f3d0136d57bc074a8b",
+      "size": 245705
     },
     "HarkenEngine/Source/Runtime/api/include/harken/ObjectId.h": {
       "sha256": "90b6f66ad515c5e411564f1e5981b65bec2e461fabbdee6c57aa86b26b9a300d",
@@ -24041,8 +24942,8 @@
       "size": 30778
     },
     "HarkenEngine/Source/Tooling/Remote/wire/harken_wire_table.json": {
-      "sha256": "0247c9a9c0ee5dddecbc7ce383cfc8a99c852b27f5e8d3b01e1a2c2f1baf8d80",
-      "size": 255887
+      "sha256": "347be947f54ad58b40c53a44ebec4511b26ffbeb744fe83c08bbf2bacceb3fb6",
+      "size": 262864
     }
   }
 }

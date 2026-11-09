@@ -555,6 +555,7 @@ struct ProcessOwner {
     std::atomic<std::uint32_t> observerCount{0};
     std::atomic<std::uint32_t> eventObservers{0};
     std::atomic<std::uint32_t> executionObservers{0};
+    std::atomic<std::uint32_t> streamObservers{0};
     std::array<std::atomic<std::uint64_t>, 2> ringProjectionCompleted{}, logProjectionCompleted{};
     std::array<std::uint64_t, 2> pendingRingTickets{};
     std::array<std::uint64_t, 2> logTranscriptLast{};
@@ -2147,7 +2148,7 @@ void FanoutOne(ProcessOwner& owner, const std::uint8_t* bytes, std::uint32_t siz
         (recordKind >= VN_MONITOR_RECORD_INVALID &&
          recordKind != VN_MONITOR_RECORD_EVENT_DETAIL && recordKind != VN_MONITOR_RECORD_EXECUTION_FACT && !IsIdentityRecord(recordKind));
     const bool unknownVersion = recordVersion != 1u &&
-        !(recordKind == VN_MONITOR_RECORD_EXECUTION_FACT && (recordVersion == 2u || recordVersion == 3u));
+        !(recordKind == VN_MONITOR_RECORD_EXECUTION_FACT && (recordVersion == 2u || recordVersion == 3u || recordVersion == 4u));
     const bool unknownRecord = unknownKind || unknownVersion;
     const bool requiredUnknown =
         unknownRecord && (recordFlags & VN_MONITOR_RECORD_FLAG_REQUIRED) != 0;
@@ -2731,6 +2732,14 @@ bool DrainOneFrom(ProcessOwner& owner, MonitorProducerRing& ring,
     };
     const auto dispatch = [&] {
         const bool progressed = execution.DispatchPending([&](const MonitorExecutionFact& fact) {
+            if ((fact.flags & kMonitorFactStreamBody) != 0) {
+                const auto bytes = PackStreamFact(scratch, scratchBytes, fact,
+                    producerIndex == 0 ? kExecutionLogicProducer : kExecutionAudioProducer,
+                    producerIndex == 0 ? kExecutionLogicStream : kExecutionAudioStream);
+                if (bytes == 0) return false;
+                FanoutOne(owner, scratch, bytes, {}, 4);
+                return true;
+            }
             const auto size = PackExecutionFact(scratch, scratchBytes, fact,
                 producerIndex == 0 ? kExecutionLogicProducer : kExecutionAudioProducer,
                 producerIndex == 0 ? kExecutionLogicStream : kExecutionAudioStream);
@@ -3394,6 +3403,8 @@ Session* FindLive(ProcessOwner& owner, VnMonitorSessionHandle handle, bool allow
 void RetireSessionLocked(ProcessOwner& owner, Session& session) {
     if (session.sealRequested) --owner.pendingIdentitySeals;
     if (session.eventCatalog) owner.eventObservers.fetch_sub(1, std::memory_order_release);
+    if (session.executionFactVersion >= 4 && (session.acceptedStreamKindMask & VN_MONITOR_STREAM_EVENT) != 0)
+        owner.streamObservers.fetch_sub(1, std::memory_order_release);
     if (session.executionFactVersion != 0) {
         if ((session.acceptedStreamKindMask & VN_MONITOR_STREAM_EVENT) != 0)
             owner.executionObservers.fetch_sub(1, std::memory_order_release);
@@ -3511,6 +3522,7 @@ VnResult OnEngineInit(Engine* engine) {
         owner.observerCount.store(0, std::memory_order_release);
         owner.eventObservers.store(0, std::memory_order_release);
         owner.executionObservers.store(0, std::memory_order_release);
+        owner.streamObservers.store(0, std::memory_order_release);
         for (auto& producer : owner.executionProducers) producer.Reset();
         for (auto& completed : owner.ringProjectionCompleted) completed.store(0, std::memory_order_relaxed);
         for (auto& completed : owner.logProjectionCompleted) completed.store(0, std::memory_order_relaxed);
@@ -3575,6 +3587,7 @@ void OnEngineTeardown(Engine* engine) {
     owner.observerCount.store(0, std::memory_order_release);
     owner.eventObservers.store(0, std::memory_order_release);
     owner.executionObservers.store(0, std::memory_order_release);
+    owner.streamObservers.store(0, std::memory_order_release);
     owner.identityObservers = 0;
     owner.symbolObservers = 0;
     owner.pendingIdentitySeals = 0;
@@ -3720,7 +3733,7 @@ VnResult ReadExecutionVersion(const VnMonitorSessionDesc* desc, std::uint32_t& v
         std::memcpy(extension, reinterpret_cast<const std::uint8_t*>(desc) +
             sizeof(VnMonitorSessionDesc), sizeof(extension));
         if (extension[1] != 0) return VN_INVALID_ARG;
-        if (extension[0] > 3) return VN_MONITOR_UNSUPPORTED;
+        if (extension[0] > 4) return VN_MONITOR_UNSUPPORTED;
         version = extension[0];
     }
     return VN_OK;
@@ -4171,8 +4184,10 @@ VnResult OpenSessionWithPermissions(const VnMonitorSessionDesc* desc,
     }
     slot->executionFactVersion = executionVersion;
     slot->supportedFactKinds = {};
+    if (executionVersion >= 4)
+        slot->supportedFactKinds[0] |= UINT64_C(1) << VN_MONITOR_FACT_STREAM_OBSERVATION;
     if (executionVersion != 0) {
-        slot->supportedFactKinds[0] = (UINT64_C(1) << VN_MONITOR_FACT_REQUEST_SUBMITTED) |
+        slot->supportedFactKinds[0] |= (UINT64_C(1) << VN_MONITOR_FACT_REQUEST_SUBMITTED) |
             (UINT64_C(1) << VN_MONITOR_FACT_REQUEST_RETURNED) |
             (UINT64_C(1) << VN_MONITOR_FACT_EMITTER_CREATED) |
             (UINT64_C(1) << VN_MONITOR_FACT_EMITTER_DESTROYED) |
@@ -4277,6 +4292,8 @@ VnResult OpenSessionWithPermissions(const VnMonitorSessionDesc* desc,
     }
     if (slot->executionFactVersion != 0 && (acceptedMask & VN_MONITOR_STREAM_EVENT) != 0)
         owner.executionObservers.fetch_add(1, std::memory_order_release);
+    if (slot->executionFactVersion >= 4 && (acceptedMask & VN_MONITOR_STREAM_EVENT) != 0)
+        owner.streamObservers.fetch_add(1, std::memory_order_release);
     if (identityRequested) ++owner.identityObservers;
     if (symbolsRequested) ++owner.symbolObservers;
     if (owner.observerCount.fetch_add(1, std::memory_order_release) == 0) {
@@ -4446,6 +4463,37 @@ bool ExecutionObservationEnabled() noexcept {
 
 std::uint64_t ExecutionEngineInstance() noexcept {
     return LogicThreadReady() ? Owner().engine->monitorRequests.EngineInstance() : 0;
+}
+
+void CaptureStreamIdentity(std::uint32_t ledgerSlot, std::uint64_t render, VnMonitorStreamFactV1& value) noexcept {
+    auto* engine = detail::ActiveEngine();
+    if (engine == nullptr) return;
+    VoiceLedger::MonitorIdentity identity{};
+    if (!engine->ledger.CaptureMonitorIdentity(ledgerSlot, &identity) ||
+        (identity.renderHandle != 0 && identity.renderHandle != render)) return;
+    value.renderActivation = render;
+    value.logicalVoice = identity.logicalHandle;
+    value.actionFiring = identity.content.action;
+    value.playableInstance = identity.content.leaf != 0 ? identity.content.leaf : identity.parent.internalToken;
+    value.worldGeneration = identity.content.content.worldGeneration;
+    value.transportGeneration = engine->transportEpochOwner.Current();
+}
+
+bool StreamObservationEnabled() noexcept {
+    return Owner().streamObservers.load(std::memory_order_acquire) != 0;
+}
+
+bool PublishStreamFact(VnMonitorStreamFactV1 value, bool audioProducer) noexcept {
+    if (!StreamObservationEnabled()) return false;
+    MonitorExecutionFact fact{};
+    fact.engine = Owner().engine->monitorRequests.EngineInstance();
+    fact.timestamp = LogTimestampNs();
+    fact.kind = VN_MONITOR_FACT_STREAM_OBSERVATION;
+    fact.flags = kMonitorFactStreamBody;
+    value.structSize = sizeof(value);
+    value.factKind = VN_MONITOR_FACT_STREAM_OBSERVATION;
+    fact.body.stream = value;
+    return PublishExecutionFact(fact, audioProducer);
 }
 
 bool PublishExecutionFact(MonitorExecutionFact fact, bool audioProducer) noexcept {
@@ -5534,7 +5582,7 @@ VnResult StartRecording(VnMonitorSessionHandle handle, uint64_t leaseGeneration,
         descriptor.leaseGeneration = leaseGeneration;
         descriptor.engine = owner.engine->monitorRequests.EngineInstance();
         descriptor.recordingEpoch = owner.nextEpoch++;
-        descriptor.schema = session->executionFactVersion >= 3 ? 3 : 2;
+        descriptor.schema = std::max(2u, session->executionFactVersion);
         descriptor.streams = session->acceptedStreamKindMask;
         descriptor.permissions = session->acceptedPermissionMask;
         descriptor.requestSymbols = session->requestSymbols;
@@ -6976,6 +7024,16 @@ bool LifecycleNeedsTombstone(MonitorLifecyclePhase phase) noexcept {
 }
 
 } // namespace
+
+bool MonitorStreamObservationEnabled() noexcept { return monitor::StreamObservationEnabled(); }
+
+void ObserveMonitorStream(VnMonitorStreamFactV1& value) noexcept {
+    auto* engine = detail::ActiveEngine();
+    if (engine == nullptr) return;
+    const auto owner = engine->ledger.OwnerForRender(value.renderActivation);
+    if (owner.live) monitor::CaptureStreamIdentity(owner.ledgerSlot, value.renderActivation, value);
+    (void)monitor::PublishStreamFact(value);
+}
 
 void ObserveMonitorCurrentWorld(std::uint64_t worldGeneration) noexcept {
 #if defined(HARKEN_MONITOR_HUB_ABSENT)

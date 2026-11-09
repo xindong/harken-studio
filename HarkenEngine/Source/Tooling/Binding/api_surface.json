@@ -459,7 +459,8 @@
         "native:Vn_UnloadPack",
         "native:Vn_UnloadPackEx",
         "native:Vn_UnregisterStreamFile",
-        "native:Vn_Update"
+        "native:Vn_Update",
+        "native:Vn_QueryActionPlaybackReadiness"
       ]
     },
     "runtime-mix": {
@@ -2040,13 +2041,16 @@
   "managed_projection": {
     "excluded_prefixes": {
       "types": [
-        "VnMonitor"
+        "VnMonitor",
+        "VnPlaybackReadiness",
+        "VnActionPlaybackReadiness"
       ],
       "constants": [
         "VN_MONITOR_"
       ],
       "functions": [
-        "Vn_Monitor"
+        "Vn_Monitor",
+        "Vn_QueryActionPlaybackReadiness"
       ],
       "results": [
         "VN_MONITOR_"
