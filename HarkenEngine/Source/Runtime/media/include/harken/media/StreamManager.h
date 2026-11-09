@@ -255,6 +255,28 @@ public:
     // existing RetirePreparedSlot/render retirement obligation.
     VnResult BeginReplacement(const ReplacementRequest& request, PreparedToken* out);
     PreparationState QueryReplacement(PreparedToken token) const noexcept;
+
+    // A coherent manager-owned identity/readiness projection. Logic thread only;
+    // takes the existing manager lock and never promotes or prepares a stream.
+    struct PlaybackObservation {
+        std::uint64_t ringToken = 0;
+        std::uint64_t preparationGeneration = 0;
+        std::uint64_t sourceGeneration = 0;
+        std::uint64_t contentRevision = 0;
+        VnSoundId soundId{};
+        std::uint64_t sourceFrame = 0;
+        std::uint64_t appliedFrame = UINT64_MAX;
+        std::uint64_t appliedAudioBlock = 0;
+        std::uint64_t replacementSerial = 0;
+        std::uint32_t bufferedFrames = 0;
+        std::uint32_t prebufferTargetFrames = 0;
+        PreparationState state = PreparationState::Invalid;
+        StreamTerminalReason terminal = StreamTerminalReason::None;
+        VnResult result = VN_OK;
+    };
+    bool CapturePlayback(std::uint64_t ringToken, PlaybackObservation* out) const;
+    // Logic thread: emits current supply snapshots; readSequence identifies the completed job.
+    void PublishPlaybackObservations();
     bool CancelReplacement(PreparedToken token) noexcept;
     VnResult TakeReplacement(PreparedToken token, PreparedStream* out) noexcept;
 
@@ -395,6 +417,7 @@ private:
         std::atomic<unsigned> state{0}; // idle, queued, running, completed
         std::atomic<bool> cancelled{false};
         bool valid = false, exception = false;
+        VnMonitorStreamFactV1 readFacts{};
     };
 
     struct ReadWindow {
@@ -417,6 +440,7 @@ private:
         ReadWindow window;
         std::uint64_t passGoal = 0;
         std::uint64_t exceptionSerial = 0;
+        VnMonitorStreamFactV1 observation{};
 
         // Logic-owned preparation metadata. The worker never touches it,
         // including while returning a retired ring to Free.
@@ -490,6 +514,9 @@ private:
     VnResult RegisterSourceAndWait(VnSoundId soundId, const char* path, bool replace);
     static void ValidateSourceSlice(SourceRequest& request);
     void SettleIo();
+    void CompleteReadObservation(StreamSlot& slot, const ChunkJob& job,
+        const VnMonitorStreamFactV1& facts, bool valid, bool exception) noexcept;
+    void PublishPlaybackObservation(StreamSlot& slot);
     void DispatchIo();
     void ServiceRequests();
     void IoMain(std::size_t laneIndex);
@@ -533,14 +560,17 @@ private:
         SourceRequest* request = nullptr;
         std::unique_ptr<StreamFile> cleanup;
         bool valid = false, exception = false;
+        VnMonitorStreamFactV1 readFacts{};
         std::thread thread;
     };
     // Stages one whole verified chunk into `staging`. False on a short read or a
     // checksum mismatch; the caller decides what that means for the slot, since
     // only the caller knows the slot. Static: the job depends on nothing but its
     // arguments, which is what makes it relocatable.
-    static bool RunChunkJob(const ChunkJob& job, std::vector<float>& staging, ReadWindow& window);
-    static bool ReadChunk(const ChunkJob& job, std::vector<float>& staging, ReadWindow& window);
+    static bool RunChunkJob(const ChunkJob& job, std::vector<float>& staging, ReadWindow& window,
+                            VnMonitorStreamFactV1& readFacts);
+    static bool ReadChunk(const ChunkJob& job, std::vector<float>& staging, ReadWindow& window,
+                          const StreamByteSource& source);
     static bool TryCopyReadWindow(const ChunkJob& job, std::vector<float>& staging,
                                   const ReadWindow& window) noexcept;
     static bool ValidateChunk(const ChunkJob& job,

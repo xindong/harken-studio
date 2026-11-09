@@ -3506,6 +3506,177 @@ static_assert(offsetof(VnStreamSourceInfoV1, result) == 8,
 static_assert(offsetof(VnStreamSourceInfoV1, reserved0) == 12,
               "wire table offset drift: VnStreamSourceInfoV1.reserved0");
 
+static_assert(sizeof(VnPlaybackReadinessMemberV1) == 160,
+              "wire table size drift: VnPlaybackReadinessMemberV1");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, structSize) == 0,
+              "wire table offset drift: VnPlaybackReadinessMemberV1.structSize");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, state) == 4,
+              "wire table offset drift: VnPlaybackReadinessMemberV1.state");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, firing) == 8,
+              "wire table offset drift: VnPlaybackReadinessMemberV1.firing");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, playableInstance) == 16,
+              "wire table offset drift: VnPlaybackReadinessMemberV1.playableInstance");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, renderActivation) == 24,
+              "wire table offset drift: VnPlaybackReadinessMemberV1.renderActivation");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, preparationGeneration) == 32,
+              "wire table offset drift: VnPlaybackReadinessMemberV1.preparationGeneration");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, sourceGeneration) == 40,
+              "wire table offset drift: VnPlaybackReadinessMemberV1.sourceGeneration");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, contentRevision) == 48,
+              "wire table offset drift: VnPlaybackReadinessMemberV1.contentRevision");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, ringToken) == 56,
+              "wire table offset drift: VnPlaybackReadinessMemberV1.ringToken");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, replacementSerial) == 64,
+              "wire table offset drift: VnPlaybackReadinessMemberV1.replacementSerial");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, logicCommitSequence) == 72,
+              "wire table offset drift: VnPlaybackReadinessMemberV1.logicCommitSequence");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, scheduledFrame) == 80,
+              "wire table offset drift: VnPlaybackReadinessMemberV1.scheduledFrame");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, appliedFrame) == 88,
+              "wire table offset drift: VnPlaybackReadinessMemberV1.appliedFrame");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, appliedAudioBlock) == 96,
+              "wire table offset drift: VnPlaybackReadinessMemberV1.appliedAudioBlock");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, soundId) == 104,
+              "wire table offset drift: VnPlaybackReadinessMemberV1.soundId");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, clipId) == 120,
+              "wire table offset drift: VnPlaybackReadinessMemberV1.clipId");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, occurrenceOrdinal) == 136,
+              "wire table offset drift: VnPlaybackReadinessMemberV1.occurrenceOrdinal");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, loopIteration) == 140,
+              "wire table offset drift: VnPlaybackReadinessMemberV1.loopIteration");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, bufferedFrames) == 144,
+              "wire table offset drift: VnPlaybackReadinessMemberV1.bufferedFrames");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, prebufferTargetFrames) == 148,
+              "wire table offset drift: VnPlaybackReadinessMemberV1.prebufferTargetFrames");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, result) == 152,
+              "wire table offset drift: VnPlaybackReadinessMemberV1.result");
+static_assert(offsetof(VnPlaybackReadinessMemberV1, terminalReason) == 156,
+              "wire table offset drift: VnPlaybackReadinessMemberV1.terminalReason");
+
+static_assert(sizeof(VnActionPlaybackReadinessV1) == 80,
+              "wire table size drift: VnActionPlaybackReadinessV1");
+static_assert(offsetof(VnActionPlaybackReadinessV1, structSize) == 0,
+              "wire table offset drift: VnActionPlaybackReadinessV1.structSize");
+static_assert(offsetof(VnActionPlaybackReadinessV1, state) == 4,
+              "wire table offset drift: VnActionPlaybackReadinessV1.state");
+static_assert(offsetof(VnActionPlaybackReadinessV1, engineInstance) == 8,
+              "wire table offset drift: VnActionPlaybackReadinessV1.engineInstance");
+static_assert(offsetof(VnActionPlaybackReadinessV1, worldGeneration) == 16,
+              "wire table offset drift: VnActionPlaybackReadinessV1.worldGeneration");
+static_assert(offsetof(VnActionPlaybackReadinessV1, cancellationEpoch) == 24,
+              "wire table offset drift: VnActionPlaybackReadinessV1.cancellationEpoch");
+static_assert(offsetof(VnActionPlaybackReadinessV1, acceptedLogicSequence) == 32,
+              "wire table offset drift: VnActionPlaybackReadinessV1.acceptedLogicSequence");
+static_assert(offsetof(VnActionPlaybackReadinessV1, memberCount) == 40,
+              "wire table offset drift: VnActionPlaybackReadinessV1.memberCount");
+static_assert(offsetof(VnActionPlaybackReadinessV1, pendingCount) == 44,
+              "wire table offset drift: VnActionPlaybackReadinessV1.pendingCount");
+static_assert(offsetof(VnActionPlaybackReadinessV1, readyCount) == 48,
+              "wire table offset drift: VnActionPlaybackReadinessV1.readyCount");
+static_assert(offsetof(VnActionPlaybackReadinessV1, appliedCount) == 52,
+              "wire table offset drift: VnActionPlaybackReadinessV1.appliedCount");
+static_assert(offsetof(VnActionPlaybackReadinessV1, failedCount) == 56,
+              "wire table offset drift: VnActionPlaybackReadinessV1.failedCount");
+static_assert(offsetof(VnActionPlaybackReadinessV1, cancelledCount) == 60,
+              "wire table offset drift: VnActionPlaybackReadinessV1.cancelledCount");
+static_assert(offsetof(VnActionPlaybackReadinessV1, unknownCount) == 64,
+              "wire table offset drift: VnActionPlaybackReadinessV1.unknownCount");
+static_assert(offsetof(VnActionPlaybackReadinessV1, deferredCount) == 68,
+              "wire table offset drift: VnActionPlaybackReadinessV1.deferredCount");
+static_assert(offsetof(VnActionPlaybackReadinessV1, firingOutcome) == 72,
+              "wire table offset drift: VnActionPlaybackReadinessV1.firingOutcome");
+static_assert(offsetof(VnActionPlaybackReadinessV1, terminalReason) == 76,
+              "wire table offset drift: VnActionPlaybackReadinessV1.terminalReason");
+
+static_assert(sizeof(VnMonitorStreamFactV1) == 296,
+              "wire table size drift: VnMonitorStreamFactV1");
+static_assert(offsetof(VnMonitorStreamFactV1, structSize) == 0,
+              "wire table offset drift: VnMonitorStreamFactV1.structSize");
+static_assert(offsetof(VnMonitorStreamFactV1, factKind) == 4,
+              "wire table offset drift: VnMonitorStreamFactV1.factKind");
+static_assert(offsetof(VnMonitorStreamFactV1, sourceGeneration) == 8,
+              "wire table offset drift: VnMonitorStreamFactV1.sourceGeneration");
+static_assert(offsetof(VnMonitorStreamFactV1, contentRevision) == 16,
+              "wire table offset drift: VnMonitorStreamFactV1.contentRevision");
+static_assert(offsetof(VnMonitorStreamFactV1, ringToken) == 24,
+              "wire table offset drift: VnMonitorStreamFactV1.ringToken");
+static_assert(offsetof(VnMonitorStreamFactV1, preparationGeneration) == 32,
+              "wire table offset drift: VnMonitorStreamFactV1.preparationGeneration");
+static_assert(offsetof(VnMonitorStreamFactV1, renderActivation) == 40,
+              "wire table offset drift: VnMonitorStreamFactV1.renderActivation");
+static_assert(offsetof(VnMonitorStreamFactV1, logicalVoice) == 48,
+              "wire table offset drift: VnMonitorStreamFactV1.logicalVoice");
+static_assert(offsetof(VnMonitorStreamFactV1, readSequence) == 56,
+              "wire table offset drift: VnMonitorStreamFactV1.readSequence");
+static_assert(offsetof(VnMonitorStreamFactV1, sourceFrameBegin) == 64,
+              "wire table offset drift: VnMonitorStreamFactV1.sourceFrameBegin");
+static_assert(offsetof(VnMonitorStreamFactV1, sourceFrameEnd) == 72,
+              "wire table offset drift: VnMonitorStreamFactV1.sourceFrameEnd");
+static_assert(offsetof(VnMonitorStreamFactV1, readOffset) == 80,
+              "wire table offset drift: VnMonitorStreamFactV1.readOffset");
+static_assert(offsetof(VnMonitorStreamFactV1, readRequestedBytes) == 88,
+              "wire table offset drift: VnMonitorStreamFactV1.readRequestedBytes");
+static_assert(offsetof(VnMonitorStreamFactV1, lastReadBytes) == 96,
+              "wire table offset drift: VnMonitorStreamFactV1.lastReadBytes");
+static_assert(offsetof(VnMonitorStreamFactV1, readCalls) == 104,
+              "wire table offset drift: VnMonitorStreamFactV1.readCalls");
+static_assert(offsetof(VnMonitorStreamFactV1, readBytes) == 112,
+              "wire table offset drift: VnMonitorStreamFactV1.readBytes");
+static_assert(offsetof(VnMonitorStreamFactV1, readCostNs) == 120,
+              "wire table offset drift: VnMonitorStreamFactV1.readCostNs");
+static_assert(offsetof(VnMonitorStreamFactV1, totalReadCalls) == 128,
+              "wire table offset drift: VnMonitorStreamFactV1.totalReadCalls");
+static_assert(offsetof(VnMonitorStreamFactV1, totalReadBytes) == 136,
+              "wire table offset drift: VnMonitorStreamFactV1.totalReadBytes");
+static_assert(offsetof(VnMonitorStreamFactV1, totalReadCostNs) == 144,
+              "wire table offset drift: VnMonitorStreamFactV1.totalReadCostNs");
+static_assert(offsetof(VnMonitorStreamFactV1, ringReadIndex) == 152,
+              "wire table offset drift: VnMonitorStreamFactV1.ringReadIndex");
+static_assert(offsetof(VnMonitorStreamFactV1, ringWriteIndex) == 160,
+              "wire table offset drift: VnMonitorStreamFactV1.ringWriteIndex");
+static_assert(offsetof(VnMonitorStreamFactV1, readBeginNs) == 168,
+              "wire table offset drift: VnMonitorStreamFactV1.readBeginNs");
+static_assert(offsetof(VnMonitorStreamFactV1, readEndNs) == 176,
+              "wire table offset drift: VnMonitorStreamFactV1.readEndNs");
+static_assert(offsetof(VnMonitorStreamFactV1, audioBlock) == 184,
+              "wire table offset drift: VnMonitorStreamFactV1.audioBlock");
+static_assert(offsetof(VnMonitorStreamFactV1, frameBegin) == 192,
+              "wire table offset drift: VnMonitorStreamFactV1.frameBegin");
+static_assert(offsetof(VnMonitorStreamFactV1, frameEnd) == 200,
+              "wire table offset drift: VnMonitorStreamFactV1.frameEnd");
+static_assert(offsetof(VnMonitorStreamFactV1, appliedFrame) == 208,
+              "wire table offset drift: VnMonitorStreamFactV1.appliedFrame");
+static_assert(offsetof(VnMonitorStreamFactV1, replacementSerial) == 216,
+              "wire table offset drift: VnMonitorStreamFactV1.replacementSerial");
+static_assert(offsetof(VnMonitorStreamFactV1, actionFiring) == 224,
+              "wire table offset drift: VnMonitorStreamFactV1.actionFiring");
+static_assert(offsetof(VnMonitorStreamFactV1, playableInstance) == 232,
+              "wire table offset drift: VnMonitorStreamFactV1.playableInstance");
+static_assert(offsetof(VnMonitorStreamFactV1, worldGeneration) == 240,
+              "wire table offset drift: VnMonitorStreamFactV1.worldGeneration");
+static_assert(offsetof(VnMonitorStreamFactV1, transportGeneration) == 248,
+              "wire table offset drift: VnMonitorStreamFactV1.transportGeneration");
+static_assert(offsetof(VnMonitorStreamFactV1, bufferedFrames) == 256,
+              "wire table offset drift: VnMonitorStreamFactV1.bufferedFrames");
+static_assert(offsetof(VnMonitorStreamFactV1, prebufferTargetFrames) == 260,
+              "wire table offset drift: VnMonitorStreamFactV1.prebufferTargetFrames");
+static_assert(offsetof(VnMonitorStreamFactV1, state) == 264,
+              "wire table offset drift: VnMonitorStreamFactV1.state");
+static_assert(offsetof(VnMonitorStreamFactV1, terminalReason) == 268,
+              "wire table offset drift: VnMonitorStreamFactV1.terminalReason");
+static_assert(offsetof(VnMonitorStreamFactV1, result) == 272,
+              "wire table offset drift: VnMonitorStreamFactV1.result");
+static_assert(offsetof(VnMonitorStreamFactV1, flags) == 276,
+              "wire table offset drift: VnMonitorStreamFactV1.flags");
+static_assert(offsetof(VnMonitorStreamFactV1, producedFrames) == 280,
+              "wire table offset drift: VnMonitorStreamFactV1.producedFrames");
+static_assert(offsetof(VnMonitorStreamFactV1, starved) == 284,
+              "wire table offset drift: VnMonitorStreamFactV1.starved");
+static_assert(offsetof(VnMonitorStreamFactV1, readStatus) == 288,
+              "wire table offset drift: VnMonitorStreamFactV1.readStatus");
+static_assert(offsetof(VnMonitorStreamFactV1, reserved0) == 292,
+              "wire table offset drift: VnMonitorStreamFactV1.reserved0");
+
 } // namespace harkenremote
 
 #endif // HARKEN_REMOTE_WIRE_LAYOUT_ASSERTS_H

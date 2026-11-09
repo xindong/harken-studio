@@ -9434,6 +9434,12 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
         monitorOwner.contentObject == monitorContent.content.stableId)
         monitorContent.leaf = monitorInstance;
     monitorContent.action = monitorOwner.relatedAction;
+    // Prepared playable metadata may not be committed yet. The source's
+    // captured selection cause already identifies the accepting Action.
+    if (monitorContent.action == 0 && selectionCause != nullptr)
+        monitorContent.action = selectionCause->actionFiring;
+    if (monitorContent.action == 0 && resourceService != nullptr && resourceService->InvocationValid())
+        monitorContent.action = resourceService->Invocation().actionFiring;
     monitorContent.incomplete = !monitorOwnerKnown || monitorOwner.identityObservationIncomplete;
     if (resourceService != nullptr) {
         monitorContent.resourceOwner = resourceService->ownerInstance;
@@ -9457,6 +9463,7 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
         } else monitorContent.incomplete = true;
     }
     engine.ledger.RecordMonitorContent(ledgerSlot, monitorContent);
+    engine.voices.RefreshStreamObservationIdentity(render, ledgerSlot);
     (void)engine.ledger.CaptureMonitorSelection(ledgerSlot, render, &result.monitorSelection.observation, selectionCause);
     result.monitorSelection.arm = arm;
     engine.timelineVoiceInstallIdentities[renderSlot] = {
@@ -37614,7 +37621,9 @@ void ServiceStreamResyncs(harken::Engine& engine) noexcept {
             engine.streamSeekHandoffs.ReleaseTicket(ticket);
             continue;
         }
+        ring->observationRender.store(row.handle, std::memory_order_release);
         row.servedSerial = view.serial;
+        row.scheduledFrame = frame;
         row.ticket = ticket;
         row.token = token;
     }
@@ -89799,8 +89808,8 @@ private:
         if (index >= leafCount || out == nullptr) return harken::PlayableStartStatus::InvalidInput;
         const auto status = packQueue
             ? BuildScheduleLeafStart(*engine_, scratch_->packPlaybackView, row_->root,
-                materialized.leaves[index], scratch_->packLease, out)
-            : BuildScheduleLeafStart(*engine_, world, row_->root, materialized.leaves[index], out);
+                materialized.leaves[index], scratch_->packLease, out, true)
+            : BuildScheduleLeafStart(*engine_, world, row_->root, materialized.leaves[index], out, true);
         if (status != harken::PlayableStartStatus::Accepted) return status;
         out->voice.target.programSemanticFingerprint = program_->programSemanticFingerprint;
         out->voice.target.subjectId = out->leaf.stableId;
@@ -111106,6 +111115,7 @@ VnResult Vn_Update(void) {
      * the audio thread retires, so the logic thread takes that over; and it
      * reports itself once, because a subsystem that dies silently leaves the
      * integrator with nothing but sound that stopped. */
+    engine->streams.PublishPlaybackObservations();
     engine->streams.ReclaimAfterWorkerFailure();
     engine->streams.ServiceTransferredPreparations();
     ServiceStreamResyncs(*engine);

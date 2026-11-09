@@ -275,7 +275,7 @@ void StreamManager::IoMain(std::size_t index) {
         try {
             switch (lane.kind) {
             case IoLane::Kind::Chunk:
-                lane.valid = RunChunkJob(lane.chunk, lane.slot->staging, lane.slot->window);
+                lane.valid = RunChunkJob(lane.chunk, lane.slot->staging, lane.slot->window, lane.readFacts);
                 break;
             case IoLane::Kind::Source:
                 ValidateSourceSlice(*lane.request);
@@ -322,9 +322,10 @@ void StreamManager::SteadyIoMain() {
         job.state.store(2, std::memory_order_relaxed);
         job.exception = false;
         job.valid = false;
+        job.readFacts = {};
         try {
             if (!job.cancelled.load(std::memory_order_acquire))
-                job.valid = RunChunkJob(job.input, slot->staging, slot->window);
+                job.valid = RunChunkJob(job.input, slot->staging, slot->window, job.readFacts);
         } catch (...) { job.exception = true; }
         job.state.store(3, std::memory_order_release);
         {
@@ -343,6 +344,7 @@ void StreamManager::SettleIo() {
         if (lane.state.load(std::memory_order_acquire) != 3) continue;
         if (lane.kind == IoLane::Kind::Chunk) {
             auto& slot = *lane.slot;
+            CompleteReadObservation(slot, lane.chunk, lane.readFacts, lane.valid, lane.exception);
             if (slot.ring.state.load(std::memory_order_acquire) == StreamSlotState::Active &&
                 !lane.cancelled.load(std::memory_order_acquire)) {
                 if (lane.exception) {
@@ -367,6 +369,7 @@ void StreamManager::SettleIo() {
     }
     for (auto& slot : m_slots) {
         if (slot.io.state.load(std::memory_order_acquire) != 3) continue;
+        CompleteReadObservation(slot, slot.io.input, slot.io.readFacts, slot.io.valid, slot.io.exception);
         if (slot.ring.state.load(std::memory_order_acquire) == StreamSlotState::Active &&
             !slot.io.cancelled.load(std::memory_order_acquire)) {
             if (slot.io.exception) {
@@ -462,6 +465,7 @@ void StreamManager::ServeSlots() {
                 Fnv1a64(slot.staging.data(), static_cast<std::size_t>(job.chunkBytes)));
             if (slot.ring.state.load(std::memory_order_acquire) != StreamSlotState::Active ||
                 slot.ring.generation.load(std::memory_order_relaxed) != generation) break;
+            CompleteReadObservation(slot, job, {}, valid, false);
             CompleteChunk(slot, job, valid);
             if (!valid) break;
         }

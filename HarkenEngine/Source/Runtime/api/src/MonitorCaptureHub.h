@@ -51,6 +51,9 @@ bool EventCatalogEnabled();
 bool ExecutionObservationEnabled() noexcept;
 std::uint64_t ExecutionEngineInstance() noexcept;
 bool PublishExecutionFact(MonitorExecutionFact fact, bool audioProducer = false) noexcept;
+bool StreamObservationEnabled() noexcept;
+bool PublishStreamFact(VnMonitorStreamFactV1 value, bool audioProducer = false) noexcept;
+void CaptureStreamIdentity(std::uint32_t ledgerSlot, std::uint64_t render, VnMonitorStreamFactV1& value) noexcept;
 bool PublishEventDetail(const VnMonitorEventDetail& detail,
                          std::uint32_t entityKind, VnObjectId stableId,
                          VnObjectId projectId,

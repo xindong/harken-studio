@@ -366,6 +366,7 @@ VnResult VoicePool::Play(const PCMView& view, float volumeDb,
     slot.completionProgressTerminal = false;
     slot.monitorControl = {};
     slot.monitorSourceTerminalPublished = false;
+    slot.streamObservation = {};
     slot.render = VoiceRenderContext{};
     BindHighRatioBacking(slotIndex);
     BindVariableWeightBacking(slotIndex);
@@ -533,6 +534,7 @@ VnResult VoicePool::PlayStream(StreamRing* ring, std::uint32_t channelCount,
     slot.resyncEnabled.store(false, std::memory_order_relaxed);
     slot.monitorControl = {};
     slot.monitorSourceTerminalPublished = false;
+    slot.streamObservation = {};
     slot.render = VoiceRenderContext{};
     BindHighRatioBacking(slotIndex);
     BindVariableWeightBacking(slotIndex);
@@ -644,6 +646,8 @@ bool VoicePool::BindStreamRingToken(VnVoiceHandle handle, StreamRing* ring,
         return false;
     }
     slot->render.streamRingToken = ringToken;
+    slot->streamObservation.ringToken = ringToken;
+    ring->observationRender.store(handle, std::memory_order_release);
     slot->streamRingToken.store(ringToken, std::memory_order_release);
     return true;
 }
@@ -2839,6 +2843,15 @@ bool VoicePool::CancelOriginalPreparedVoice(const OriginalVoiceOwner& owner) noe
     return true;
 }
 
+void VoicePool::RefreshStreamObservationIdentity(VnVoiceHandle handle, std::uint32_t ledgerSlot) noexcept {
+    auto* slot = SlotFor(handle);
+    if (slot == nullptr) return;
+    const auto state = slot->state.load(std::memory_order_acquire);
+    if (state != SlotState::Claimed && state != SlotState::Prepared &&
+        state != SlotState::PreparedCommitHeld) return;
+    monitor::CaptureStreamIdentity(ledgerSlot, handle, slot->streamObservation);
+}
+
 bool VoicePool::BindMonitorControl(VnVoiceHandle handle,
     const MonitorVoiceControlBinding& binding) noexcept {
     Slot* slot = SlotFor(handle);
@@ -2846,6 +2859,7 @@ bool VoicePool::BindMonitorControl(VnVoiceHandle handle,
     const auto state = slot->state.load(std::memory_order_acquire);
     if (state != SlotState::Claimed && state != SlotState::Prepared) return false;
     slot->monitorControl = binding;
+    RefreshStreamObservationIdentity(handle, binding.ledgerSlot);
     return true;
 }
 
@@ -2863,6 +2877,49 @@ bool VoicePool::BindSourceTerminal(VnVoiceHandle handle,
     slot->render.sourceTerminalStreamGeneration = slot->render.streamRing != nullptr
         ? slot->render.streamRing->generation.load(std::memory_order_acquire) : 0;
     return true;
+}
+
+void VoicePool::PublishStreamObservation(Slot& slot, std::uint64_t blockIndex) noexcept {
+    const auto& render = slot.render;
+    if (render.streamRing == nullptr || !monitor::StreamObservationEnabled() ||
+        blockIndex == UINT64_MAX || blockIndex > (UINT64_MAX - m_blockFrames) / m_blockFrames) return;
+    const auto& ring = *render.streamRing;
+    auto value = slot.streamObservation;
+    value.flags = VN_MONITOR_STREAM_FACT_AUDIO;
+    value.renderActivation = MakeHandle(static_cast<std::uint32_t>(&slot - m_slots.data()),
+        slot.generation.load(std::memory_order_relaxed));
+    value.sourceGeneration = ring.sourceGeneration;
+    value.contentRevision = ring.contentRevision;
+    value.ringToken = render.streamRingToken;
+    value.ringReadIndex = ring.readIndex.load(std::memory_order_relaxed);
+    value.ringWriteIndex = ring.writeIndex.load(std::memory_order_acquire);
+    value.bufferedFrames = static_cast<std::uint32_t>(value.ringWriteIndex - value.ringReadIndex);
+    value.prebufferTargetFrames = render.prebufferTargetFrames;
+    value.audioBlock = blockIndex + 1;
+    value.frameBegin = blockIndex * m_blockFrames;
+    value.frameEnd = value.frameBegin + m_blockFrames;
+    value.producedFrames = render.cascade.produced;
+    value.starved = render.starvedThisBlock ? 1u : 0u;
+    value.terminalReason = static_cast<std::uint32_t>(ring.TerminalReason());
+    value.result = ring.TerminalReason() == StreamTerminalReason::IntegrityAbort ? VN_BAD_STREAM_FILE :
+        ring.TerminalReason() == StreamTerminalReason::ProducerFailure ? VN_DEVICE_ERROR : VN_OK;
+    value.replacementSerial = ring.appliedReplacementSerial.load(std::memory_order_relaxed);
+    value.appliedFrame = ring.appliedFrame.load(std::memory_order_relaxed);
+    if (value.appliedFrame == UINT64_MAX && render.streamRingToken == slot.streamObservation.ringToken &&
+        m_timelineArms != nullptr && render.timelineArmGeneration != 0) {
+        TimelineArmObservation arm{};
+        const TimelineArmToken token{render.timelineArmSlot, render.timelineArmGeneration,
+            static_cast<std::uint32_t>(value.renderActivation), static_cast<std::uint32_t>(value.renderActivation >> 32)};
+        if (m_timelineArms->Observe(token, &arm) && arm.startedBlockSequence != 0)
+            value.appliedFrame = arm.actualStartFrame;
+    }
+    const bool applied = render.timelineArmGeneration == 0
+        ? render.streamGateOpen : value.appliedFrame != UINT64_MAX ||
+            render.streamRingToken != slot.streamObservation.ringToken;
+    value.state = value.result != VN_OK ? VN_PLAYBACK_READINESS_FAILED :
+        applied && !slot.resyncLatched.load(std::memory_order_relaxed)
+        ? VN_PLAYBACK_READINESS_APPLIED : VN_PLAYBACK_READINESS_PREPARING;
+    (void)monitor::PublishStreamFact(value, true);
 }
 
 void VoicePool::PublishSourceTerminal(Slot& slot, std::uint64_t blockIndex) noexcept {
@@ -3210,6 +3267,8 @@ void VoicePool::SwitchStreamRing(std::uint32_t slotIndex, Slot& slot,
     render.starveCooldownRemaining = 0;
     render.sourceTerminalStreamGeneration =
         static_cast<std::uint32_t>(stream.replacementRingToken >> 32u);
+    stream.replacementRing->observationRender.store(
+        MakeHandle(slotIndex, slot.generation.load(std::memory_order_relaxed)), std::memory_order_release);
     slot.streamRingToken.store(stream.replacementRingToken,
                                std::memory_order_release);
     oldRing->state.store(StreamSlotState::Retired, std::memory_order_release);
@@ -3316,6 +3375,10 @@ void VoicePool::ServiceStreamResync(std::uint32_t slotIndex, Slot& slot,
              stream.replacementRing->ReadAvailable() >= stream.prebufferTargetFrames);
     }
     if (ready) {
+        stream.replacementRing->appliedReplacementSerial.store(serial, std::memory_order_relaxed);
+        stream.replacementRing->appliedFrame.store(frame, std::memory_order_relaxed);
+        stream.replacementRing->appliedAudioBlock.store(render.timelineEvents.quantumIndex + 1,
+            std::memory_order_release);
         SwitchStreamRing(slotIndex, slot, stream.targetFrame, stream);
         const bool applied = m_streamSeekHandoffs->MarkApplied(token, render.resyncPendingTicket);
         assert(applied);
@@ -4793,6 +4856,7 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
             }
             finishLimiters(slot.render);
             publishCompressors(i, slot);
+            PublishStreamObservation(slot, blockIndex);
             (void)StageCompletionProgress(
                 slot, blockIndex,
                 slot.render.logicalSourceOutputFramesThisBlock);
@@ -4978,6 +5042,7 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
         }
         finishLimiters(slot.render);
         publishCompressors(i, slot);
+        PublishStreamObservation(slot, m_jobQuantumIndex);
         (void)StageCompletionProgress(
             slot, blockIndex,
             slot.render.logicalSourceOutputFramesThisBlock);

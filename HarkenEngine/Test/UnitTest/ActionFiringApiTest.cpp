@@ -7422,6 +7422,14 @@ TEST(ActionFiringApi, ImmediateParentRetainsDelayedGrandchildUntilMaterializatio
     ASSERT_EQ(VN_OK, Vn_QueryActionStep(child, 0, &step));
     EXPECT_EQ(VN_ACTION_STEP_AWAITING_MATERIALIZATION, step.state);
     EXPECT_EQ(0u, step.childFiring);
+    for (const auto firing : {root, child}) {
+        VnActionPlaybackReadinessV1 readiness{};
+        readiness.structSize = sizeof(readiness);
+        ASSERT_EQ(VN_OK, Vn_QueryActionPlaybackReadiness(firing, &readiness, nullptr, 0));
+        EXPECT_EQ(VN_PLAYBACK_READINESS_PREPARING, readiness.state);
+        EXPECT_EQ(1u, readiness.deferredCount);
+        EXPECT_EQ(0u, readiness.memberCount);
+    }
     DrainActionDeferred(engine);
     ASSERT_EQ(VN_OK, Vn_QueryActionStep(child, 0, &step));
     ASSERT_NE(0u, step.childFiring);

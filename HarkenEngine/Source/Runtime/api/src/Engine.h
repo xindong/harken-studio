@@ -15250,6 +15250,7 @@ public:
         std::uint64_t contentRevision = 0;
         std::uint64_t frameCount = 0;
         std::uint64_t servedSerial = 0;
+        std::uint64_t scheduledFrame = UINT64_MAX;
         std::uint64_t ticket = 0;
         std::uint64_t token = 0;
     };

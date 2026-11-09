@@ -280,6 +280,7 @@ public:
     bool CaptureReleaseObserver(VnVoiceHandle handle,
                                 VoiceReleaseObserver* out) const noexcept;
     bool ReleaseObserved(const VoiceReleaseObserver& observer) const noexcept;
+    void RefreshStreamObservationIdentity(VnVoiceHandle handle, std::uint32_t ledgerSlot) noexcept;
     bool BindMonitorControl(VnVoiceHandle handle, const MonitorVoiceControlBinding& binding) noexcept;
     bool BindSourceTerminal(VnVoiceHandle handle, SourceTerminalRecord* record,
                             SourceTerminalToken token) noexcept;
@@ -1069,6 +1070,7 @@ private:
         std::atomic<VnVoiceHandle> monitorPublicHandle{0};
         MonitorVoiceControlBinding monitorControl{};
         bool monitorSourceTerminalPublished = false;
+        VnMonitorStreamFactV1 streamObservation{};
         std::atomic<std::uint64_t> streamRingToken{0};
         std::atomic<bool> resyncEnabled{false};
         std::atomic<std::uint64_t> resyncSerial{0};
@@ -1228,6 +1230,7 @@ private:
     OriginalVoiceDisposal TryDisposeOriginalTimelineVoiceImpl(
         const OriginalVoiceOwner& owner, ReleaseThread thread) noexcept;
     void ReleaseSlot(Slot& slot, ReleaseThread thread);
+    void PublishStreamObservation(Slot& slot, std::uint64_t blockIndex) noexcept;
     void PublishSourceTerminal(Slot& slot, std::uint64_t blockIndex) noexcept;
     void PublishPlaybackEnd(Slot& slot, std::uint64_t blockIndex) noexcept;
     bool StageCompletionProgress(Slot& slot,

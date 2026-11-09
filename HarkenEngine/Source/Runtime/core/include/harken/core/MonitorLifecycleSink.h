@@ -2,6 +2,7 @@
 #define HARKEN_CORE_MONITOR_LIFECYCLE_SINK_H
 
 #include <harken/ObjectId.h>
+#include <harken/Harken.h>
 #include "harken/core/MonitorRequest.h"
 #include "harken/core/MonitorEmitterIdentity.h"
 #include "harken/core/MonitorIdentity.h"
@@ -153,6 +154,10 @@ void ObserveMonitorEffectRelease(std::uint64_t instanceHandle,
                                  std::uint32_t reason) noexcept;
 
 void ObserveMonitorDspGap() noexcept;
+// Logic-owned supply snapshot. The sink may fill known playback associations;
+// those values remain attached to this ring after the ledger row retires.
+bool MonitorStreamObservationEnabled() noexcept;
+void ObserveMonitorStream(VnMonitorStreamFactV1& fact) noexcept;
 void ObserveMonitorSelectionUnavailable() noexcept;
 
 } // namespace harken

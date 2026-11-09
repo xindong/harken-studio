@@ -7,6 +7,7 @@
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/StreamBuilder.h"
 #include "Common/TestUtil.h"
+#include "Common/MonitorExecutionTestSupport.h"
 
 #include "harken/media/StreamFormat.h"
 #include "harken/media/StreamManager.h"
@@ -2124,3 +2125,116 @@ TEST(StreamRegister, LegalUtf8PathRegistersEndToEnd) {
 }
 
 } // namespace
+
+
+TEST(StreamRegister, StreamObservationsMeasureProviderCallsCacheFailuresAndReuse) {
+    using Manager = harken::StreamManager;
+    class ObservedSource final : public ControlledSource {
+    public:
+        unsigned failure = 0;
+        mutable std::atomic<std::uint64_t> lastOffset{0}, lastRequest{0}, lastBytes{0}, totalBytes{0};
+        harken::StreamReadResult ReadAt(std::uint64_t offset, void* data, std::size_t count,
+            harken::StreamReadCancellation cancel) const override {
+            lastOffset = offset; lastRequest = count; lastBytes = 0;
+            if (failure == 2) { ++reads; return {}; }
+            if (failure == 4) { ++reads; throw std::runtime_error("provider failed"); }
+            const auto result = ControlledSource::ReadAt(offset, data, count, cancel);
+            lastBytes = result.bytes; totalBytes += result.bytes;
+            return result;
+        }
+    };
+    for (const unsigned failure : {0u, 2u, 3u, 4u}) {
+        SCOPED_TRACE(failure);
+        auto config = harkentest::MakeNullConfig(1, 64, 48000);
+        config.maxStreams = 1;
+        config.streamRingFrames = 64;
+        config.prebufferMs = 1;
+        harkentest::EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& streams = session.Engine()->streams;
+        streams.SetThrottled(true);
+        const auto monitor = harkentest::monitor::OpenIdentityEvents(4);
+        auto source = std::make_shared<ObservedSource>();
+        StreamSpec spec;
+        spec.soundId = harkentest::ObjectId(17901);
+        spec.chunkFrames = 64;
+        source->bytes = BuildStreamBytes(spec, ServiceSamples(8192, 0));
+        source->maxRead = failure == 0 ? SIZE_MAX : 17;
+        Manager::SourceToken request;
+        ASSERT_EQ(VN_OK, streams.BeginSource(spec.soundId, source, false, 0, &request));
+        ASSERT_TRUE(WaitUntil([&] { return streams.QuerySource(request) == Manager::PreparationState::Ready; }));
+        Manager::StreamFacts facts{};
+        ASSERT_EQ(VN_OK, streams.TakeSource(request, &facts));
+        source->reads = 0; source->totalBytes = 0; source->failure = failure;
+        if (failure == 3) {
+            const auto toc = harken::ParseStreamTocEntry(source->bytes.data() + harken::kStreamHeaderBytes);
+            source->bytes[static_cast<std::size_t>(toc.payloadOffset)] ^= 1;
+        }
+        ASSERT_TRUE(streams.PrepareSlotWorkingSet(0, 1));
+        std::uint64_t token = 0;
+        streams.SetThrottled(false);
+        EXPECT_EQ(failure == 4 ? VN_BAD_STREAM_FILE : VN_OK,
+            streams.ActivateSlot(0, facts.fileIndex, 0, 0, facts.frameCount, 1, &token));
+        streams.SyncServe();
+        streams.SetThrottled(true);
+        streams.SyncServe();
+        streams.PublishPlaybackObservations();
+        auto rows = harkentest::monitor::ReadExecutionEvents<VnMonitorStreamFactV1>(monitor);
+        ASSERT_FALSE(rows.empty());
+        const auto fact = rows.back().fact;
+        EXPECT_EQ(token, fact.ringToken);
+        EXPECT_EQ(facts.sourceGeneration, fact.sourceGeneration);
+        EXPECT_EQ(source->reads.load(), fact.totalReadCalls);
+        EXPECT_EQ(source->totalBytes.load(), fact.totalReadBytes);
+        EXPECT_EQ(source->lastOffset.load(), fact.readOffset);
+        EXPECT_EQ(source->lastRequest.load(), fact.readRequestedBytes);
+        EXPECT_EQ(source->lastBytes.load(), fact.lastReadBytes);
+        EXPECT_GT(fact.readCalls, 0u);
+        EXPECT_GE(fact.readEndNs - fact.readBeginNs, fact.readCostNs);
+        EXPECT_EQ(failure ? failure : 1u, fact.readStatus);
+        EXPECT_EQ(0u, fact.audioBlock);
+        Manager::PlaybackObservation state{};
+        ASSERT_TRUE(streams.CapturePlayback(token, &state));
+        EXPECT_EQ(failure == 4 ? Manager::PreparationState::Preparing :
+            failure ? Manager::PreparationState::Failed : Manager::PreparationState::Ready, state.state);
+        if (!failure) {
+            auto* ring = streams.RingOf(0);
+            const auto before = fact.totalReadCalls;
+            ring->readIndex.store(ring->writeIndex.load(), std::memory_order_release);
+            streams.SetThrottled(false);
+            streams.SyncServe();
+            streams.SetThrottled(true);
+            streams.PublishPlaybackObservations();
+            rows = harkentest::monitor::ReadExecutionEvents<VnMonitorStreamFactV1>(monitor);
+            ASSERT_FALSE(rows.empty());
+            EXPECT_GT(rows.back().fact.readSequence, fact.readSequence);
+            EXPECT_EQ(0u, rows.back().fact.readCalls);
+            EXPECT_EQ(0u, rows.back().fact.readCostNs);
+            EXPECT_EQ(0u, rows.back().fact.readStatus);
+            EXPECT_EQ(before, rows.back().fact.totalReadCalls);
+            ASSERT_TRUE(ring->MarkEndOfData(harken::StreamTerminalReason::ProducerFailure));
+            ASSERT_TRUE(streams.CapturePlayback(token, &state));
+            EXPECT_EQ(Manager::PreparationState::Failed, state.state);
+            EXPECT_EQ(harken::StreamTerminalReason::ProducerFailure, state.terminal);
+        }
+        ASSERT_TRUE(streams.RetirePreparedSlot(streams.RingOf(0), token));
+        streams.SyncServe();
+        EXPECT_FALSE(streams.CapturePlayback(token, &state));
+        if (!failure) {
+            std::uint64_t replacement = 0;
+            ASSERT_EQ(VN_OK, streams.ActivateSlot(0, facts.fileIndex, 0, 0, facts.frameCount, 1, &replacement));
+            EXPECT_NE(token, replacement);
+            EXPECT_FALSE(streams.CapturePlayback(token, &state));
+            ASSERT_TRUE(streams.CapturePlayback(replacement, &state));
+            streams.PublishPlaybackObservations();
+            rows = harkentest::monitor::ReadExecutionEvents<VnMonitorStreamFactV1>(monitor);
+            ASSERT_FALSE(rows.empty());
+            EXPECT_EQ(replacement, rows.back().fact.ringToken);
+            EXPECT_EQ(0u, rows.back().fact.totalReadCalls);
+            EXPECT_EQ(0u, rows.back().fact.readSequence);
+            ASSERT_TRUE(streams.RetirePreparedSlot(streams.RingOf(0), replacement));
+            streams.SyncServe();
+        }
+        EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(monitor));
+    }
+}

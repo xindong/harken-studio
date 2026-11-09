@@ -2,6 +2,7 @@
 #define HARKEN_CORE_MONITOR_EXECUTION_FACT_H
 
 #include <harken/ObjectId.h>
+#include <harken/Harken.h>
 #include "harken/core/MonitorIdentity.h"
 #include <cstddef>
 #include <cstdint>
@@ -14,6 +15,7 @@ namespace harken {
 enum class MonitorFactBody : std::uint8_t { Execution = 0, Call = 1 };
 inline constexpr std::uint8_t kMonitorFactCallBody = 0x80;
 inline constexpr std::uint8_t kMonitorFactPlayableBody = 0x40;
+inline constexpr std::uint8_t kMonitorFactStreamBody = 0x20;
 inline constexpr std::uint8_t kMonitorFactIdentityIncomplete = 1;
 inline constexpr std::uint8_t kMonitorFactControlIncomplete = 2;
 
@@ -164,6 +166,7 @@ struct MonitorExecutionFact {
     union {
         MonitorExecutionBody execution;
         MonitorCallBody call;
+        VnMonitorStreamFactV1 stream;
     } body;
 
     MonitorFactBody BodyKind() const noexcept {

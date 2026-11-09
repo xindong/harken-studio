@@ -58,6 +58,9 @@ public:
     bool CanApply(std::uint64_t token, VnActionSeekTicket ticket,
                   VnVoiceHandle expectedVoice,
                   StreamSeekHandoffSnapshot* out) const noexcept;
+    // Logic-thread observation, including already applied/cancelled requests.
+    bool Capture(std::uint64_t token, VnActionSeekTicket ticket,
+                 StreamSeekHandoffSnapshot* out, StreamSeekHandoffLifecycle* state) const noexcept;
     bool MarkApplied(std::uint64_t token,
                      VnActionSeekTicket ticket) noexcept;
     bool CancelFromAudio(std::uint64_t token,

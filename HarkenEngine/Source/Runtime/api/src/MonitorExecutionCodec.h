@@ -527,6 +527,122 @@ inline bool ProjectExecutionFact(const MonitorExecutionFact& source, std::uint64
     return true;
 }
 
+inline constexpr std::uint32_t kStreamFactPayloadBytes = sizeof(VnMonitorStreamFactV1);
+inline constexpr std::uint32_t kStreamFactRecordBytes = PackedRecordBytes(kStreamFactPayloadBytes);
+static_assert(sizeof(VnMonitorStreamFactV1) <= sizeof(MonitorExecutionBody));
+
+template<class Visitor, class Value>
+inline void VisitStreamPayload(Visitor& visit, Value& value) noexcept {
+    visit(value.structSize);
+    visit(value.factKind);
+    visit(value.sourceGeneration);
+    visit(value.contentRevision);
+    visit(value.ringToken);
+    visit(value.preparationGeneration);
+    visit(value.renderActivation);
+    visit(value.logicalVoice);
+    visit(value.readSequence);
+    visit(value.sourceFrameBegin);
+    visit(value.sourceFrameEnd);
+    visit(value.readOffset);
+    visit(value.readRequestedBytes);
+    visit(value.lastReadBytes);
+    visit(value.readCalls);
+    visit(value.readBytes);
+    visit(value.readCostNs);
+    visit(value.totalReadCalls);
+    visit(value.totalReadBytes);
+    visit(value.totalReadCostNs);
+    visit(value.ringReadIndex);
+    visit(value.ringWriteIndex);
+    visit(value.readBeginNs);
+    visit(value.readEndNs);
+    visit(value.audioBlock);
+    visit(value.frameBegin);
+    visit(value.frameEnd);
+    visit(value.appliedFrame);
+    visit(value.replacementSerial);
+    visit(value.actionFiring);
+    visit(value.playableInstance);
+    visit(value.worldGeneration);
+    visit(value.transportGeneration);
+    visit(value.bufferedFrames);
+    visit(value.prebufferTargetFrames);
+    visit(value.state);
+    visit(value.terminalReason);
+    visit(value.result);
+    visit(value.flags);
+    visit(value.producedFrames);
+    visit(value.starved);
+    visit(value.readStatus);
+    visit(value.reserved0);
+}
+
+inline bool ValidateStreamFact(const VnMonitorRecordHeader& header,
+    const VnMonitorStreamFactV1& value) noexcept {
+    return header.recordKind == VN_MONITOR_RECORD_EXECUTION_FACT && header.recordVersion == 4 &&
+        header.flags == VN_MONITOR_RECORD_FLAG_OPTIONAL &&
+        header.payloadBytes == kStreamFactPayloadBytes && header.recordBytes == kStreamFactRecordBytes &&
+        header.engineMonitorInstanceId != 0 && header.sourceSequence != 0 &&
+        header.streamKind == VN_MONITOR_STREAM_EVENT &&
+        ((value.flags == VN_MONITOR_STREAM_FACT_SUPPLY && header.producerId == 3 && header.streamId == 201) ||
+         (value.flags == VN_MONITOR_STREAM_FACT_AUDIO && header.producerId == 4 && header.streamId == 202)) &&
+        value.structSize == sizeof(value) && value.factKind == VN_MONITOR_FACT_STREAM_OBSERVATION &&
+        value.ringToken != 0 && value.sourceGeneration != 0 && value.reserved0 == 0 &&
+        (value.flags == VN_MONITOR_STREAM_FACT_SUPPLY || value.flags == VN_MONITOR_STREAM_FACT_AUDIO) &&
+        value.state <= VN_PLAYBACK_READINESS_TERMINAL && value.readStatus <= 5 && value.starved <= 1 &&
+        value.sourceFrameEnd >= value.sourceFrameBegin && value.readEndNs >= value.readBeginNs &&
+        value.frameEnd >= value.frameBegin &&
+        (value.flags != VN_MONITOR_STREAM_FACT_AUDIO || value.audioBlock != 0) &&
+        (value.flags != VN_MONITOR_STREAM_FACT_SUPPLY || value.audioBlock == 0);
+}
+
+inline std::uint32_t PackStreamFact(std::uint8_t* out, std::uint32_t capacity,
+    const MonitorExecutionFact& source, std::uint64_t producer, std::uint64_t stream) noexcept {
+    if (out == nullptr || capacity < kStreamFactRecordBytes || source.flags != kMonitorFactStreamBody ||
+        source.kind != VN_MONITOR_FACT_STREAM_OBSERVATION) return 0;
+    const auto& value = source.body.stream;
+    VnMonitorRecordHeader header{};
+    header.structSize = sizeof(header);
+    header.recordKind = VN_MONITOR_RECORD_EXECUTION_FACT;
+    header.recordVersion = 4;
+    header.flags = VN_MONITOR_RECORD_FLAG_OPTIONAL;
+    header.streamKind = VN_MONITOR_STREAM_EVENT;
+    header.recordBytes = kStreamFactRecordBytes;
+    header.payloadBytes = kStreamFactPayloadBytes;
+    header.engineMonitorInstanceId = source.engine;
+    header.sourceSequence = source.sourceSequence;
+    header.producerId = producer;
+    header.streamId = stream;
+    header.worldGeneration = value.worldGeneration;
+    header.transportEpoch = value.transportGeneration;
+    header.actionInstanceHandle = value.actionFiring;
+    header.playableInstanceHandle = value.playableInstance;
+    header.instanceHandle = value.renderActivation;
+    header.instanceGeneration = value.renderActivation >> 32;
+    header.entityKind = VN_MONITOR_ENTITY_VOICE;
+    header.executeFrame = value.frameBegin;
+    header.telemetry.structSize = sizeof(header.telemetry);
+    if (!ValidateStreamFact(header, value)) return 0;
+    std::memset(out, 0, kStreamFactRecordBytes);
+    PackHeader(out, header);
+    ExecutionPayloadWriter writer{out + kPackedEnvelopeBytes};
+    auto copy = value;
+    VisitStreamPayload(writer, copy);
+    return writer.offset == kStreamFactPayloadBytes ? kStreamFactRecordBytes : 0;
+}
+
+inline bool DecodeStreamFact(const VnMonitorRecordHeader& header, const std::uint8_t* bytes,
+    std::uint64_t size, VnMonitorStreamFactV1& out) noexcept {
+    if (bytes == nullptr || size != kStreamFactPayloadBytes) return false;
+    VnMonitorStreamFactV1 value{};
+    ExecutionPayloadReader reader{bytes};
+    VisitStreamPayload(reader, value);
+    if (reader.offset != size || !ValidateStreamFact(header, value)) return false;
+    out = value;
+    return true;
+}
+
 inline std::uint32_t PackExecutionFact(std::uint8_t* out, std::uint32_t capacity,
     const MonitorExecutionFact& source, std::uint64_t producer, std::uint64_t stream, std::uint32_t version = 2) noexcept {
     const auto recordBytes = version == 3 ? kPlayableRecordBytes :
