@@ -474,7 +474,8 @@ VnResult VoicePool::PlayStream(StreamRing* ring, std::uint32_t channelCount,
                                float outputBusVolumeDb,
                                bool prepared,
                                float spatializationMix,
-                               ExactSourcePhase sourcePhase) {
+                               ExactSourcePhase sourcePhase,
+                               const EncodedMedia* encoded) {
     if ((sourcePhase.high != 0 || sourcePhase.low != 0) &&
         (resumeToken != nullptr || resampleProfile != ResampleProfile::LegacyCompatibility))
         return VN_INVALID_ARG;
@@ -529,6 +530,8 @@ VnResult VoicePool::PlayStream(StreamRing* ring, std::uint32_t channelCount,
         return VN_NO_VOICE;
     }
 
+    MediaDecoder* decoder = encoded ? encoded->Acquire() : nullptr;
+    if (encoded && !decoder) { ++m_noVoiceRefusals; return VN_NO_VOICE; }
     Slot& slot = m_slots[slotIndex];
     ResetOriginalSourceBodyForReuse(slot);
     slot.state.store(prepared ? SlotState::Prepared : SlotState::Claimed,
@@ -549,6 +552,7 @@ VnResult VoicePool::PlayStream(StreamRing* ring, std::uint32_t channelCount,
     // two facts; the data planes stay null because the stream feed path
     // never dereferences pcm (frames == 0 keeps every pcm read unreachable).
     slot.render.pcm.channelCount = channelCount;
+    slot.render.mediaDecoder = decoder;
     BindMonitorPreChainBacking(slotIndex);
     slot.render.pcm.sampleRate = sourceSampleRate;
     slot.render.busIndex = busIndex;
@@ -570,8 +574,8 @@ VnResult VoicePool::PlayStream(StreamRing* ring, std::uint32_t channelCount,
     // A target above the ring's capacity could never be reached — a full
     // ring is as prebuffered as it can get, so the gate clamps there.
     slot.render.prebufferTargetFrames =
-        prebufferTargetFrames < ring->FrameCapacity(channelCount) ? prebufferTargetFrames
-                                               : ring->FrameCapacity(channelCount);
+        prebufferTargetFrames < ring->FrameCapacity(channelCount, encoded != nullptr) ? prebufferTargetFrames
+                                               : ring->FrameCapacity(channelCount, encoded != nullptr);
     slot.render.streamGateOpen =
         saved != nullptr && saved->gateOpen;
     slot.render.gain.Set(linearGain, 0);
@@ -2197,10 +2201,11 @@ VariableReadCutStatus VoicePool::TimelineStreamStartStatus(std::uint32_t renderS
         ring.state.load(std::memory_order_acquire) != StreamSlotState::Active) return VariableReadCutStatus::Failed;
     const auto terminal = ring.TerminalReason();
     if (terminal == StreamTerminalReason::IntegrityAbort ||
-        terminal == StreamTerminalReason::ProducerFailure) return VariableReadCutStatus::Failed;
+        terminal == StreamTerminalReason::ProducerFailure ||
+        ring.preparationResult.load(std::memory_order_acquire) != VN_OK) return VariableReadCutStatus::Failed;
     return ring.startPromoted.load(std::memory_order_acquire) &&
         (terminal == StreamTerminalReason::NaturalEnd ||
-         ring.BufferedFrames() >= render.prebufferTargetFrames)
+         ring.BufferedFrames() >= ring.PrebufferTarget(render.prebufferTargetFrames))
         ? VariableReadCutStatus::Applied : VariableReadCutStatus::Waiting;
 }
 
@@ -2905,7 +2910,7 @@ void VoicePool::PublishStreamObservation(Slot& slot, std::uint64_t blockIndex) n
     value.ringReadIndex = ring.readFrames.load(std::memory_order_relaxed);
     value.ringWriteIndex = ring.writeFrames.load(std::memory_order_acquire);
     value.bufferedFrames = static_cast<std::uint32_t>(value.ringWriteIndex - value.ringReadIndex);
-    value.prebufferTargetFrames = render.prebufferTargetFrames;
+    value.prebufferTargetFrames = ring.PrebufferTarget(render.prebufferTargetFrames);
     value.audioBlock = blockIndex + 1;
     value.frameBegin = blockIndex * m_blockFrames;
     value.frameEnd = value.frameBegin + m_blockFrames;
@@ -3138,7 +3143,7 @@ VnResult VoicePool::CanApplySeek(
         if ((terminal == StreamTerminalReason::IntegrityAbort ||
              terminal == StreamTerminalReason::ProducerFailure) ||
             (stream->replacementRing->BufferedFrames() <
-                 stream->prebufferTargetFrames &&
+                 stream->replacementRing->PrebufferTarget(stream->prebufferTargetFrames) &&
              terminal == StreamTerminalReason::None)) {
             return VN_DEVICE_ERROR;
         }
@@ -3383,7 +3388,7 @@ void VoicePool::ServiceStreamResync(std::uint32_t slotIndex, Slot& slot,
         const StreamTerminalReason terminal = stream.replacementRing->TerminalReason();
         ready = terminal == StreamTerminalReason::NaturalEnd ||
             (terminal == StreamTerminalReason::None &&
-             stream.replacementRing->BufferedFrames() >= stream.prebufferTargetFrames);
+             stream.replacementRing->BufferedFrames() >= stream.replacementRing->PrebufferTarget(stream.prebufferTargetFrames));
     }
     if (ready) {
         stream.replacementRing->appliedReplacementSerial.store(serial, std::memory_order_relaxed);

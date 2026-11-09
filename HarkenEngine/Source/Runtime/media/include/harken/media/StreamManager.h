@@ -120,6 +120,7 @@ public:
     // exactly like pack loop metadata — the audio thread never looks
     // anything up.
     struct StreamFacts {
+        const EncodedMedia* encoded = nullptr;
         std::uint32_t fileIndex = 0;
         std::uint32_t sampleRate = 0;
         std::uint32_t channelCount = 0;
@@ -374,6 +375,7 @@ private:
         // only; source, blob location and checksums are owned copies so
         // in-flight reads outlive the Pack entry.
         bool packPrivate = false;
+        std::shared_ptr<const VorbisStreamMedia> vorbis;
         std::weak_ptr<const PackMediaRange> packRange;
         std::uint64_t packBlobOffset = 0;
         std::shared_ptr<const StreamByteSource> source;
@@ -460,6 +462,9 @@ private:
         bool loopInfinite = false;
         std::uint32_t loopPassesRemaining = 1;
         std::uint32_t stagedChunk = kNoChunk;
+        std::uint64_t packetOffset = 0, packetDiscard = 0;
+        std::uint32_t packetPreviousBlock = 0;
+        bool packetCapacityLimited = false;
         bool feedStopped = false;        // end reached or integrity abort
         std::vector<float> staging;      // one verified chunk, planar
     };
@@ -587,6 +592,8 @@ private:
     };
     ServiceCursor BeginSlotService(StreamSlot& slot) const;
     bool AdvanceSlot(ServiceCursor& cursor, ChunkJob* job);
+    bool AdvancePacketSlot(ServiceCursor& cursor, ChunkJob* job);
+    static void ResetPacketCursor(StreamSlot& slot, const StreamFile& file);
 
     std::uint32_t m_ringBytes = 0; // per-slot byte capacity, power of two
     const std::uint32_t m_prebufferMs;

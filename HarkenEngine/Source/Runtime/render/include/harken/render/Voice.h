@@ -290,6 +290,7 @@ struct VoiceRenderContext {
     // Source: immutable registered PCM plus the read cursor.
     PCMView pcm;
     MediaDecoder* mediaDecoder = nullptr;
+    bool mediaDecodeFailed = false;
     std::uint32_t mediaRenderThread = 0;
     std::uint64_t srcCursor = 0;
     std::uint64_t sourceActivationStartFrame = 0;

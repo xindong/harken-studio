@@ -16,12 +16,14 @@
 #include <vector>
 
 namespace harken {
+class VorbisStreamMedia;
 
 // The streaming compiler's default chunk length. It bounds per-slot staging
 // well below kMaxStreamChunkFrames.
 inline constexpr std::uint32_t kPackMediaRangeChunkFrames = 4096;
 
 struct PackMediaRange {
+    std::shared_ptr<const VorbisStreamMedia> vorbis;
     std::shared_ptr<const StreamByteSource> source;
     std::uint64_t blobOffset = 0;
     std::uint32_t sampleRate = 0;

@@ -102,6 +102,9 @@ struct StreamRing {
     std::uint32_t channelCount = 0;
     std::uint32_t bytesPerFrame = 0;
     std::uint32_t legacyFrameLimit = 0;
+    bool packetEncoded = false;
+    std::atomic<std::uint32_t> filledFrameLimit{UINT32_MAX};
+    std::atomic<VnResult> preparationResult{VN_OK};
     std::atomic<std::uint64_t> writeIndex{0};
     std::atomic<std::uint64_t> readIndex{0};
     std::atomic<std::uint64_t> writeFrames{0};
@@ -140,7 +143,7 @@ struct StreamRing {
     // real-time thread observes a Free slot, so plain stores suffice until
     // the Active publication (a release store by the caller) makes the
     // whole wiring visible.
-    void ResetForUse(std::uint32_t channels) {
+    void ResetForUse(std::uint32_t channels, bool encoded = false) {
         std::uint32_t next =
             generation.load(std::memory_order_relaxed) + 1u;
         if (next == 0) {
@@ -153,6 +156,9 @@ struct StreamRing {
         appliedReplacementSerial.store(0, std::memory_order_relaxed);
         observationRender.store(0, std::memory_order_relaxed);
         channelCount = channels;
+        packetEncoded = encoded;
+        filledFrameLimit.store(UINT32_MAX, std::memory_order_relaxed);
+        preparationResult.store(VN_OK, std::memory_order_relaxed);
         bytesPerFrame = channels * sizeof(float);
         writeFrames.store(0, std::memory_order_relaxed);
         readFrames.store(0, std::memory_order_relaxed);
@@ -166,7 +172,7 @@ struct StreamRing {
     std::uint32_t WriteAvailableBytes() const {
         const auto w = writeIndex.load(std::memory_order_relaxed);
         const auto r = readIndex.load(std::memory_order_acquire);
-        const auto limit = legacyFrameLimit
+        const auto limit = legacyFrameLimit && !packetEncoded
             ? std::min<std::uint64_t>(capacity, std::uint64_t(legacyFrameLimit) * bytesPerFrame)
             : capacity;
         return static_cast<std::uint32_t>(limit - (w - r));
@@ -193,10 +199,15 @@ struct StreamRing {
         writeFrames.store(writeFrames.load(std::memory_order_relaxed) + frames, std::memory_order_release);
     }
     // Admission can query a free slot before its next generation is reset.
-    std::uint32_t FrameCapacity(std::uint32_t channels = 0) const {
+    std::uint32_t FrameCapacity(std::uint32_t channels = 0, bool encoded = false) const {
+        if (encoded || (!channels && packetEncoded))
+            return legacyFrameLimit ? legacyFrameLimit : UINT32_MAX;
         const auto stride = channels ? channels * sizeof(float) : bytesPerFrame;
         const auto frames = stride ? static_cast<std::uint32_t>(capacity / stride) : 0;
         return legacyFrameLimit ? std::min(frames, legacyFrameLimit) : frames;
+    }
+    std::uint32_t PrebufferTarget(std::uint32_t requested) const noexcept {
+        return std::min(requested, filledFrameLimit.load(std::memory_order_acquire));
     }
 
     bool MarkEndOfData(StreamTerminalReason reason) {

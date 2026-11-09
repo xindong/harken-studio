@@ -418,8 +418,10 @@ void StreamManager::ServiceRequests() {
                 const auto& slot = m_slots[target.slot];
                 if (slot.ring.generation.load(std::memory_order_relaxed) != target.generation ||
                     slot.ring.state.load(std::memory_order_acquire) != StreamSlotState::Active) continue;
-                if (slot.exceptionSerial != target.exceptionSerial) request.result = VN_BAD_STREAM_FILE;
-                else if (slot.ioLane >= 0 || (!slot.feedStopped &&
+                if (slot.ring.preparationResult.load(std::memory_order_acquire) != VN_OK)
+                    request.result = slot.ring.preparationResult.load(std::memory_order_relaxed);
+                else if (slot.exceptionSerial != target.exceptionSerial) request.result = VN_BAD_STREAM_FILE;
+                else if (slot.ioLane >= 0 || (!slot.feedStopped && !slot.packetCapacityLimited &&
                          slot.ring.writeFrames.load(std::memory_order_relaxed) < target.writeIndex)) request.done = false;
             }
             if (request.result != VN_OK) request.done = true;

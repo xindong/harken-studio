@@ -1,3 +1,5 @@
+#include "Common/VorbisFixture.h"
+#include "harken/media/VorbisDecoder.h"
 #include "Common/PcmStreamFixture.h"
 // Vn_RegisterStreamFile / Vn_UnregisterStreamFile validation: the
 // streaming thread performs the open and the header/TOC/checksum-table
@@ -2307,5 +2309,71 @@ TEST(StreamRegister, StreamObservationsMeasureProviderCallsCacheFailuresAndReuse
             streams.SyncServe();
         }
         EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(monitor));
+    }
+}
+
+TEST(StreamRegister, VorbisPackRangeFeedsVerifiedPacketsAcrossSeekAndLoop) {
+    for (const unsigned channels : {1u, 2u, 4u, 6u, 8u}) {
+        SCOPED_TRACE(channels);
+        harken::EngineConfig config;
+        config.maxStreams = 2;
+        config.streamRingBytes = 8192;
+        harken::VorbisCodec codec(2 * 1024 * 1024, 0);
+        harken::StreamManager streams(config);
+        auto fixture = harken::test::MakeVorbisFixture(channels, true, 257, 1023);
+        harken::VorbisMedia media;
+        ASSERT_TRUE(harken::ParseVorbisTestMedia(fixture.media.data(), fixture.media.size(), media));
+        std::vector<std::uint8_t> prefix(fixture.media.begin(), fixture.media.begin() + media.packetDataOffset);
+        harken::VorbisPrepareResult result;
+        auto encoded = harken::VorbisStreamMedia::Prepare(codec, std::move(prefix), fixture.media.size(),
+                                                          4 * 1024 * 1024, result);
+        ASSERT_NE(encoded, nullptr);
+        auto source = std::make_shared<ControlledSource>();
+        source->bytes = std::move(fixture.media);
+        auto range = std::make_shared<harken::PackMediaRange>();
+        range->source = source; range->vorbis = encoded;
+        range->sampleRate = media.sampleRate; range->channelCount = channels;
+        range->frameCount = media.frames; range->contentRevision = media.revision;
+        range->loop = {media.loopStart, media.loopEnd};
+        harken::StreamManager::StreamFacts facts;
+        ASSERT_EQ(VN_OK, streams.ResolvePackSource(range, &facts));
+        EXPECT_EQ(source->reads.load(), 0u);
+        ASSERT_EQ(facts.encoded, encoded.get());
+        ASSERT_TRUE(streams.PrepareSlotWorkingSet(0, channels));
+        ASSERT_EQ(VN_OK, streams.ActivateSlot(0, facts.fileIndex, 713, 257, 1023, 3));
+        auto* ring = streams.RingOf(0);
+        auto* decoder = facts.encoded->Acquire();
+        ASSERT_NE(decoder, nullptr);
+        std::uint64_t expectedFrame = 713;
+        unsigned passes = 3;
+        const auto total = (1023 - 713) + (1023 - 257) + media.frames - 257;
+        std::uint64_t read = 0;
+        static constexpr unsigned map6[] = {0, 2, 1, 5, 3, 4};
+        static constexpr unsigned map8[] = {0, 2, 1, 7, 5, 6, 3, 4};
+        for (unsigned attempt = 0; read < total && attempt < 10000; ++attempt) {
+            if (!ring->BufferedFrames()) streams.SyncServe();
+            harken::PCMView output;
+            ASSERT_EQ(harken::StreamDecodeResult::Ready, decoder->ReadStream(*ring, 257, 0, output));
+            ASSERT_GT(output.frames, 0u);
+            for (unsigned frame = 0; frame < output.frames; ++frame) {
+                if (passes > 1 && expectedFrame == 1023) { --passes; expectedFrame = 257; }
+                for (unsigned ch = 0; ch < channels; ++ch) {
+                    const auto referenceChannel = channels == 6 ? map6[ch] : channels == 8 ? map8[ch] : ch;
+                    ASSERT_FLOAT_EQ(static_cast<const float*>(output.channels[ch])[frame],
+                        fixture.reference[expectedFrame * channels + referenceChannel]);
+                }
+                ++expectedFrame;
+            }
+            ring->DeliverFrames(static_cast<std::uint32_t>(output.frames));
+            read += output.frames;
+        }
+        EXPECT_EQ(read, total);
+        streams.SyncServe();
+        EXPECT_EQ(ring->TerminalReason(), harken::StreamTerminalReason::NaturalEnd);
+        decoder->Retire(); codec.states.Collect();
+        ring->state.store(harken::StreamSlotState::Retired, std::memory_order_release);
+        streams.SyncServe();
+        EXPECT_EQ(streams.FreeSlotCount(), 2u);
+        EXPECT_EQ(codec.states.ActiveBytes(), 0u);
     }
 }

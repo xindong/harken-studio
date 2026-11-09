@@ -307,6 +307,7 @@ bool FeedResampler(VoiceRenderContext& ctx) {
 // (natural end of file and mid-stream integrity abort look identical)
 // converts a drained ring into MarkInputEnd and the normal look-ahead flush.
 bool FeedResamplerFromStream(VoiceRenderContext& ctx) {
+    if (ctx.mediaDecodeFailed) return false;
     ResamplerView& rs = ctx.resampler;
     StreamRing& ring = *ctx.streamRing;
     // Sample end-of-data BEFORE reading the write index. The producer
@@ -322,6 +323,18 @@ bool FeedResamplerFromStream(VoiceRenderContext& ctx) {
         const std::uint32_t chunk = std::min(kResampleChunkFrames,
             std::min(span, rs.FreeFrames()));
         if (chunk == 0) return false;
+        if (ctx.mediaDecoder != nullptr) {
+            PCMView decoded;
+            const auto result = ctx.mediaDecoder->ReadStream(ring, chunk, ctx.mediaRenderThread, decoded);
+            if (result == StreamDecodeResult::Dry) return false;
+            if (result != StreamDecodeResult::Ready || !decoded.frames || decoded.frames > chunk) {
+                ctx.mediaDecodeFailed = true;
+                return false;
+            }
+            rs.PushPCM(decoded, 0, static_cast<std::uint32_t>(decoded.frames));
+            ring.DeliverFrames(static_cast<std::uint32_t>(decoded.frames));
+            return true;
+        }
         // Copy complete interleaved frames, including a physical byte wrap.
         // The FIFO owns the samples before their source bytes are released.
         float samples[kResampleChunkFrames * kMaxChannels];
@@ -863,7 +876,7 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
         ctx.authoredSourceDeadlineFrame < quantumStart + blockFrames;
     const bool rootStopArrived = ctx.authoredRootStopFrame < quantumStart + blockFrames;
     const bool prebufferWaiting = ctx.streamRing != nullptr && !ctx.streamGateOpen &&
-        ctx.streamRing->BufferedFrames() < ctx.prebufferTargetFrames &&
+        ctx.streamRing->BufferedFrames() < ctx.streamRing->PrebufferTarget(ctx.prebufferTargetFrames) &&
         !ctx.streamRing->SourceEnded();
     if (rootStopArrived && (prebufferWaiting ||
         (ctx.timelineGated && ctx.authoredRootStopFrame <= quantumStart + earliestStart))) {
@@ -892,7 +905,7 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
     // gate opens. Underruns after the gate opens are starvation, never a
     // return to Preparing.
     if (ctx.streamRing != nullptr && !ctx.streamGateOpen) {
-        if (ctx.streamRing->BufferedFrames() >= ctx.prebufferTargetFrames ||
+        if (ctx.streamRing->BufferedFrames() >= ctx.streamRing->PrebufferTarget(ctx.prebufferTargetFrames) ||
             ctx.streamRing->SourceEnded() || authoredDeadlineArrives) {
             ctx.streamGateOpen = true;
         } else {
@@ -1223,6 +1236,11 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
             break;
         }
     }
+    if (ctx.mediaDecodeFailed) {
+        for (std::uint32_t channel = 0; channel < channels; ++channel)
+            std::fill_n(scratch[channel] + offset, sourceTarget, 0.0f);
+        produced = 0;
+    }
     ctx.logicalSourceOutputFramesThisBlock = produced;
     if (ctx.resyncFadeOutTotal != 0 && !ctx.resyncLatched &&
         ctx.streamRing != nullptr &&
@@ -1311,7 +1329,7 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
         produced = sourceTarget;
     }
     const auto sourceBoundary = offset + produced;
-    const bool sourceEnded = sourceExhausted || authoredDeadlineReached || resyncEnded || resyncFailed;
+    const bool sourceEnded = sourceExhausted || authoredDeadlineReached || resyncEnded || resyncFailed || ctx.mediaDecodeFailed;
     auto sourceResult = SourceTerminalKind::None;
     if (sourceEnded) {
         sourceResult = SourceTerminalKind::Natural;
@@ -1330,6 +1348,7 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
             }
         }
     }
+    if (ctx.mediaDecodeFailed) sourceResult = SourceTerminalKind::IntegrityAbort;
     std::uint32_t stopCutoff = UINT32_MAX;
 
 #if HARKEN_STAGE_TAPS_ACTIVE

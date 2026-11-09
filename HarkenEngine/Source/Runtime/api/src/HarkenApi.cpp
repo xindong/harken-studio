@@ -8753,7 +8753,7 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
     }
     const auto* capacityRing = install.streamed ? engine.streams.RingOf(0) : nullptr;
     if (install.streamed &&
-        (capacityRing == nullptr || capacityRing->FrameCapacity(streamFacts.channelCount) < 2u) &&
+        (capacityRing == nullptr || capacityRing->FrameCapacity(streamFacts.channelCount, streamFacts.encoded != nullptr) < 2u) &&
         (install.loopCount != 1u || streamFacts.frameCount - install.sourceStartFrame > 1u)) {
         result.status = VN_NO_STREAM;
         return result;
@@ -8850,7 +8850,7 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
                 install.loopCount, harken::SelectResampleProfile(streamFacts.sampleRate,
                     engine.config.mixRate.SampleRate()), &render, bus.generation,
                 ~std::uint32_t{0}, 0, nullptr, install.outputBusVolumeDb, true,
-                install.spatializationMix, install.sourcePhase);
+                install.spatializationMix, install.sourcePhase, streamFacts.encoded);
             if (play != VN_OK) {
                 (void)engine.streams.RetirePreparedSlot(owned.ring, owned.ringToken);
             } else if (!engine.voices.BindStreamRingToken(render, owned.ring, owned.ringToken)) {
@@ -76276,7 +76276,7 @@ PendingStartOutcome StartDeferredVoice(
             1000;
         const std::uint32_t prebufferFrames =
             static_cast<std::uint32_t>(std::min<std::uint64_t>(
-                prebufferFrames64, engine.streams.RingOf(streamSlot)->FrameCapacity(facts.channelCount)));
+                prebufferFrames64, engine.streams.RingOf(streamSlot)->FrameCapacity(facts.channelCount, facts.encoded != nullptr)));
         const VnResult played = engine.voices.PlayStream(
             engine.streams.RingOf(streamSlot), facts.channelCount,
             facts.sampleRate, prebufferFrames, rec.baseVolumeDb, rec.ratio,
@@ -76285,7 +76285,7 @@ PendingStartOutcome StartDeferredVoice(
             /*activationStartFrame=*/0, facts.frameCount,
             rec.loopStartFrame, rec.loopEndFrame, rec.loopCount,
             rec.resampleProfile, &render, rec.busGeneration, target.slot,
-            target.generation, nullptr, rec.outputBusVolumeDb, true);
+            target.generation, nullptr, rec.outputBusVolumeDb, true, 1.0f, {}, facts.encoded);
         if (played != VN_OK) {
             CancelPendingEffectSeeds(engine, rec);
             return PendingStartOutcome::Unavailable; // slot taken between checks
@@ -78029,7 +78029,7 @@ bool TryReturnParked(harken::Engine& engine, std::uint32_t ledgerSlot,
         const std::uint32_t prebufferFrames =
             static_cast<std::uint32_t>(std::min<std::uint64_t>(
                 prebufferFrames64,
-                engine.streams.RingOf(resumeStreamSlot)->FrameCapacity(resumeStreamFacts.channelCount)));
+                engine.streams.RingOf(resumeStreamSlot)->FrameCapacity(resumeStreamFacts.channelCount, resumeStreamFacts.encoded != nullptr)));
         r = engine.voices.PlayStream(
             engine.streams.RingOf(resumeStreamSlot),
             resumeStreamFacts.channelCount,
@@ -78051,7 +78051,7 @@ bool TryReturnParked(harken::Engine& engine, std::uint32_t ledgerSlot,
             target.slot, target.generation,
             rec.streamParkToken.IsValid()
                 ? &rec.streamParkToken
-                : nullptr, rec.facts.outputBusVolumeDb, true);
+                : nullptr, rec.facts.outputBusVolumeDb, true, 1.0f, {}, resumeStreamFacts.encoded);
     } else {
         r = engine.voices.Play(
             rec.facts.view, static_cast<float>(rec.facts.baseVolumeDb),
@@ -113612,7 +113612,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
         const std::uint32_t prebufferFrames =
             static_cast<std::uint32_t>(std::min<std::uint64_t>(
                 prebufferFrames64,
-                engine->streams.RingOf(streamSlot)->FrameCapacity(streamFacts.channelCount)));
+                engine->streams.RingOf(streamSlot)->FrameCapacity(streamFacts.channelCount, streamFacts.encoded != nullptr)));
         const VnResult played = engine->voices.PlayStream(
             engine->streams.RingOf(streamSlot), streamFacts.channelCount,
             streamFacts.sampleRate, prebufferFrames, desc->volumeDb, ratio,
@@ -113625,7 +113625,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
             engine->buses.GenerationAt(busIndex),
             freeRender.slot, freeRender.generation,
             /*resumeToken=*/nullptr, /*outputBusVolumeDb=*/0.0f,
-            /*prepared=*/true);
+            /*prepared=*/true, 1.0f, {}, streamFacts.encoded);
         if (played != VN_OK) {
             return played; // unreachable after the probe; defensive
         }

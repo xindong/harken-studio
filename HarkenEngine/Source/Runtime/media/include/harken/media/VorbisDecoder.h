@@ -144,5 +144,26 @@ private:
     VorbisMedia media_;
     std::shared_ptr<const VorbisSettings> settings_;
 };
+
+// A stream retains only its immutable prefix, index and shared setup. The
+// manager owns external byte supply; the voice owns the acquired decoder.
+class VorbisStreamMedia final : public EncodedMedia {
+public:
+    static std::shared_ptr<VorbisStreamMedia> Prepare(VorbisCodec& codec,
+        std::vector<std::uint8_t> prefix, std::uint64_t mediaBytes,
+        std::size_t budget, VorbisPrepareResult& result);
+    MediaDecoder* Acquire() const noexcept override;
+    std::size_t ResidentBytes() const noexcept override;
+    // A prefix alone cannot prove complete media content equality.
+    std::span<const std::uint8_t> ContentBytes() const noexcept override { return {}; }
+    const VorbisMedia& Media() const noexcept { return media_; }
+    const VorbisSettings& Settings() const noexcept { return *settings_; }
+    std::span<const std::uint8_t> Prefix() const noexcept { return prefix_; }
+private:
+    VorbisCodec* codec_ = nullptr;
+    std::vector<std::uint8_t> prefix_;
+    VorbisMedia media_;
+    std::shared_ptr<const VorbisSettings> settings_;
+};
 }
 #endif

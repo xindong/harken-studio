@@ -186,7 +186,8 @@ public:
                         float outputBusVolumeDb = 0.0f,
                         bool prepared = false,
                         float spatializationMix = 1.0f,
-                        ExactSourcePhase sourcePhase = {});
+                        ExactSourcePhase sourcePhase = {},
+                        const EncodedMedia* encoded = nullptr);
 
     bool BindStreamRingToken(VnVoiceHandle handle, StreamRing* ring,
                              std::uint64_t ringToken) noexcept;

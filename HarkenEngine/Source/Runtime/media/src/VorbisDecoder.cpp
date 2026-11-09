@@ -39,6 +39,32 @@ std::size_t VorbisResident::ResidentBytes() const noexcept {
     return sizeof(*this) + bytes_.capacity() + media_.seek.capacity() * sizeof(VorbisSeekPoint) +
         media_.segmentChecksums.capacity() * sizeof(std::uint64_t) + (settings_ ? settings_->Bytes() : 0);
 }
+std::shared_ptr<VorbisStreamMedia> VorbisStreamMedia::Prepare(VorbisCodec& codec,
+    std::vector<std::uint8_t> prefix, std::uint64_t mediaBytes,
+    std::size_t budget, VorbisPrepareResult& result) {
+    result = VorbisPrepareResult::OutOfMemory;
+    if (prefix.size() > budget) return {};
+    auto source = std::make_shared<VorbisStreamMedia>();
+    source->prefix_ = std::move(prefix);
+    result = VorbisPrepareResult::Invalid;
+    if (!ParseVorbisTestMediaHeaders(source->prefix_.data(), source->prefix_.size(), mediaBytes, source->media_) ||
+        source->media_.segmentChecksums.size() != source->media_.seek.size()) return {};
+    const auto overhead = source->ResidentBytes();
+    result = VorbisPrepareResult::OutOfMemory;
+    if (overhead > budget) return {};
+    source->settings_ = codec.settings.Prepare(source->media_, budget - overhead, result);
+    if (!source->settings_) return {};
+    source->codec_ = &codec;
+    result = VorbisPrepareResult::Ok;
+    return source;
+}
+std::size_t VorbisStreamMedia::ResidentBytes() const noexcept {
+    return sizeof(*this) + prefix_.capacity() + media_.seek.capacity() * sizeof(VorbisSeekPoint) +
+        media_.segmentChecksums.capacity() * sizeof(std::uint64_t) + (settings_ ? settings_->Bytes() : 0);
+}
+MediaDecoder* VorbisStreamMedia::Acquire() const noexcept {
+    return codec_->AcquireStream(settings_);
+}
 PCMView VorbisResident::View() const noexcept {
     PCMView view;
     view.encoded = this; view.frames = media_.frames; view.channelCount = media_.channels;
