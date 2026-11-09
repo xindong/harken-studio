@@ -2904,8 +2904,11 @@ TEST(StreamRegister, VorbisPrefetchStartsBeforeOpenAndVerifiesAcrossItsPacketBou
     harken::EngineConfig config;
     config.maxStreams = 2; config.streamRingBytes = 32768;
     harken::StreamManager streams(config);
-    for (bool corrupt : {false, true}) {
-        SCOPED_TRACE(corrupt);
+    for (unsigned scenario : {0u, 1u, 2u, 3u}) {
+        const bool corrupt = scenario == 1;
+        const bool looping = scenario == 2;
+        const std::uint64_t first = looping ? 713 : scenario == 3 ? 15000 : 0;
+        SCOPED_TRACE(scenario);
         auto locator = std::make_shared<ExternalVorbisLocator>();
         auto bytes = image;
         if (corrupt) bytes[harken::vorbis_test_wire::kStreamHeaderBytes + prefixBytes + 2] ^= 1;
@@ -2923,28 +2926,39 @@ TEST(StreamRegister, VorbisPrefetchStartsBeforeOpenAndVerifiesAcrossItsPacketBou
         harken::StreamManager::StreamFacts facts;
         ASSERT_EQ(VN_OK, streams.ResolvePackSource(range, &facts));
         EXPECT_EQ(0u, locator->counts->opens.load());
-        auto request = ReplacementAt(facts);
+        auto request = ReplacementAt(facts, first);
+        if (looping) { request.loopStartFrame = 257; request.loopEndFrame = 8191; request.loopCount = 3; }
         request.prebufferTargetFrames = 48000;
         harken::StreamManager::PreparedToken token;
         ASSERT_EQ(VN_OK, streams.BeginReplacement(request, &token));
-        EXPECT_EQ(harken::StreamManager::PreparationState::Ready, streams.QueryReplacement(token));
+        EXPECT_EQ(scenario == 3 ? harken::StreamManager::PreparationState::Preparing :
+            harken::StreamManager::PreparationState::Ready, streams.QueryReplacement(token));
         harken::StreamManager::PreparedStream owned;
         ASSERT_EQ(VN_OK, streams.TransferReplacement(token, &owned));
+        if (scenario == 3) {
+            locator->releaseOpen.store(true, std::memory_order_release);
+            ASSERT_TRUE(WaitUntil([&] {
+                return streams.PromoteTransferredStream(owned) == harken::StreamManager::PreparationState::Ready;
+            }));
+        }
         ASSERT_TRUE(owned.ring->startPromoted.load());
         auto* decoder = encoded->Acquire();
         ASSERT_NE(nullptr, decoder);
         harken::PCMView output;
         ASSERT_EQ(harken::StreamDecodeResult::Ready, decoder->ReadStream(*owned.ring, 256, 0, output));
         ASSERT_GT(output.frames, 0u);
-        std::uint64_t delivered = 0;
+        std::uint64_t delivered = 0, expectedFrame = first;
+        unsigned passes = looping ? 3 : 1;
         const auto verify = [&] {
-            for (unsigned i = 0; i < output.frames; ++i)
-                EXPECT_FLOAT_EQ(fixture.reference[delivered + i], static_cast<const float*>(output.channels[0])[i]);
+            for (unsigned i = 0; i < output.frames; ++i) {
+                if (passes > 1 && expectedFrame == 8191) { --passes; expectedFrame = 257; }
+                EXPECT_FLOAT_EQ(fixture.reference[expectedFrame++], static_cast<const float*>(output.channels[0])[i]);
+            }
             owned.ring->DeliverFrames(static_cast<std::uint32_t>(output.frames));
             delivered += output.frames;
         };
         verify();
-        EXPECT_EQ(UINT64_MAX, locator->counts->firstPayloadRead.load());
+        if (scenario != 3) EXPECT_EQ(UINT64_MAX, locator->counts->firstPayloadRead.load());
         locator->releaseOpen.store(true, std::memory_order_release);
         if (corrupt) {
             ASSERT_TRUE(WaitUntil([&] { return owned.ring->TerminalReason() == harken::StreamTerminalReason::IntegrityAbort; }));
@@ -2956,7 +2970,9 @@ TEST(StreamRegister, VorbisPrefetchStartsBeforeOpenAndVerifiesAcrossItsPacketBou
                 verify();
             }
         }
-        EXPECT_EQ(range->blobOffset + prefixBytes, locator->counts->firstPayloadRead.load());
+        const auto firstRead = scenario == 3 ? range->blobOffset + media.packetDataOffset +
+            media.Seek(first)->packetOffset : range->blobOffset + prefixBytes;
+        EXPECT_EQ(firstRead, locator->counts->firstPayloadRead.load());
         decoder->Retire(); codec.states.Collect();
         ASSERT_TRUE(streams.RetirePreparedSlot(owned.ring, owned.ringToken));
         streams.SyncServe();

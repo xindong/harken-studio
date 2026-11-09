@@ -70,6 +70,86 @@ TEST(VorbisPlayback, ResidentMatchesPcmThroughRenderPitchLoopSeekAndWorkers) {
     }
 }
 
+TEST(VorbisPlayback, PrefetchAndResidentVoicesStartInTheSameQuantumWithoutIo) {
+    class UnopenedLocator final : public harken::StreamByteLocator {
+    public:
+        mutable std::atomic<unsigned> opens{0};
+        std::shared_ptr<const harken::StreamByteSource> Open(harken::StreamReadCancellation) const override {
+            ++opens;
+            return {};
+        }
+    };
+    const auto fixture = harken::test::MakeVorbisFixture(1, true);
+    harken::VorbisMedia media;
+    ASSERT_TRUE(harken::ParseVorbisTestMedia(fixture.media.data(), fixture.media.size(), media));
+    ASSERT_GT(media.seek.size(), 3u);
+    for (const auto workers : {0u, 2u}) {
+        std::vector<float> reference;
+        auto config = harkentest::MakeNullConfig(4, 64, 48000);
+        config.renderWorkerCount = workers; config.maxStreams = 2;
+        harkentest::EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        engine.streams.SetThrottled(true);
+        harken::PCMView pcm{};
+        pcm.channels[0] = fixture.reference.data(); pcm.channelCount = 1;
+        pcm.sampleRate = media.sampleRate; pcm.frames = media.frames; pcm.stride = 1;
+        const auto cut = media.packetDataOffset + media.seek[3].packetOffset;
+        std::vector<std::uint8_t> prefix(fixture.media.begin(), fixture.media.begin() + cut);
+        harken::VorbisPrepareResult prepared;
+        auto encoded = harken::VorbisStreamMedia::Prepare(engine.vorbis, std::move(prefix),
+            fixture.media.size(), 4 * 1024 * 1024, prepared, true);
+        ASSERT_NE(nullptr, encoded);
+        auto locator = std::make_shared<UnopenedLocator>();
+        auto external = std::make_shared<harken::PackExternalStream>();
+        external->locator = locator;
+        external->fileBytes = harken::vorbis_test_wire::kStreamHeaderBytes + fixture.media.size();
+        auto range = std::make_shared<harken::PackMediaRange>();
+        range->external = external; range->vorbis = encoded;
+        range->blobOffset = harken::vorbis_test_wire::kStreamHeaderBytes;
+        range->sampleRate = media.sampleRate; range->channelCount = media.channels;
+        range->frameCount = media.frames; range->contentRevision = media.revision;
+        harken::StreamManager::StreamFacts facts;
+        ASSERT_EQ(VN_OK, engine.streams.ResolvePackSource(range, &facts));
+        for (bool streaming : {false, true}) {
+            SCOPED_TRACE(::testing::Message() << workers << '/' << streaming);
+            VnVoiceHandle resident = 0, second = 0;
+            ASSERT_EQ(VN_OK, Start(engine, pcm, 1.0, 1, 149, resident));
+            if (!streaming) {
+                ASSERT_EQ(VN_OK, Start(engine, pcm, 1.0, 1, 149, second));
+            } else {
+                harken::StreamManager::ReplacementRequest request;
+                request.fileIndex = facts.fileIndex; request.sourceGeneration = facts.sourceGeneration;
+                request.contentRevision = facts.contentRevision; request.loopEndFrame = media.frames;
+                request.targetFrame = 149;
+                harken::StreamManager::PreparedToken token;
+                ASSERT_EQ(VN_OK, engine.streams.BeginReplacement(request, &token));
+                harken::StreamManager::PreparedStream stream;
+                ASSERT_EQ(VN_OK, engine.streams.TransferReplacement(token, &stream));
+                ASSERT_TRUE(stream.ring->startPromoted.load());
+                ASSERT_EQ(VN_OK, engine.voices.PlayStream(stream.ring, 1, media.sampleRate, 0, -12.0f,
+                    1.0, 0, false, 0, 0, 0,
+                    harken::ResolvePanGains(engine.config.mixChannelLayout, 0.0f), 149,
+                    media.frames, 0, media.frames, 1, harken::ResampleProfile::LegacyCompatibility,
+                    &second, 1, UINT32_MAX, 0, nullptr, 0, false, 1, {}, encoded.get()));
+                ASSERT_TRUE(engine.voices.BindStreamRingToken(second, stream.ring, stream.ringToken));
+                engine.voices.ApplyPlay(second, second, 149, engine.mixer.BlocksRendered());
+            }
+            for (unsigned block = 0; block < 32; ++block) {
+                ASSERT_TRUE(PumpQuantum(engine));
+                for (unsigned sample = 0; sample < 128; ++sample) {
+                    const auto value = engine.nullBackend.LastBlock()[sample];
+                    if (!streaming) reference.push_back(value);
+                    else ASSERT_NEAR(reference[block * 128 + sample], value, 2e-7f) << block << '/' << sample;
+                }
+            }
+            Stop(engine, resident); Stop(engine, second);
+        }
+        EXPECT_EQ(0u, locator->opens.load());
+        EXPECT_GT(*std::max_element(reference.begin(), reference.end()), 0.001f);
+    }
+}
+
 TEST(VorbisPlayback, PreparedCancellationAndRapidStopsRecycleDecoderState) {
     auto config = harkentest::MakeNullConfig(2, 64, 48000);
     harkentest::EngineSession session(config);
