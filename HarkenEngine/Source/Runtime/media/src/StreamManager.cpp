@@ -325,23 +325,10 @@ bool StreamManager::FindFile(VnSoundId soundId, StreamFacts* out) const {
 
 VnResult StreamManager::ResolvePackSource(
     const std::shared_ptr<const PackMediaRange>& range, StreamFacts* out) {
-    if (out == nullptr || range == nullptr || (!range->source && !range->external) ||
-        range->channelCount == 0 || range->channelCount > kMaxChannels ||
-        (!range->vorbis && (range->chunkFrames == 0 || range->chunkFrames > kMaxStreamChunkFrames ||
-        range->chunkChecksums.size() != PackMediaChunkCount(range->frameCount, range->chunkFrames))))
+    if (out == nullptr || range == nullptr || !ValidPackMediaRange(*range))
         return VN_INVALID_ARG;
-    if (range->external && (range->source || !range->external->locator || !range->vorbis ||
-        range->blobOffset != vorbis_test_wire::kStreamHeaderBytes)) return VN_INVALID_ARG;
     if (range->vorbis) {
         const auto& media = range->vorbis->Media();
-        const auto fileBytes = range->external ? range->external->fileBytes : range->source->ByteCount();
-        if (media.sampleRate != range->sampleRate || media.channels != range->channelCount ||
-            media.frames != range->frameCount || media.revision != range->contentRevision ||
-            media.loopStart != range->loop.startFrame || media.loopEnd != range->loop.endFrame ||
-            range->blobOffset > fileBytes ||
-            media.packetDataOffset + media.packetBytes > fileBytes - range->blobOffset ||
-            (range->external && media.packetDataOffset + media.packetBytes != fileBytes - range->blobOffset))
-            return VN_INVALID_ARG;
         for (std::size_t i = 0; i < media.seek.size(); ++i) {
             const auto end = i + 1 < media.seek.size() ? media.seek[i + 1].packetOffset : media.packetBytes;
             if (end - media.seek[i].packetOffset >
@@ -1208,8 +1195,8 @@ std::shared_ptr<const StreamByteSource> StreamManager::AcquireReadSource(
     ObservedStreamRead observed(*source, facts);
     std::array<std::uint8_t, ReadWindow::kCapacityBytes> scratch{};
     if (ReadStreamBytes(observed, 0, scratch.data(), vorbis_test_wire::kStreamHeaderBytes, job.cancellation)
-            != StreamReadStatus::Ok ||
-        !ValidateVorbisTestStreamHeader(scratch.data(), vorbis_test_wire::kStreamHeaderBytes,
+            != StreamReadStatus::Ok) return {};
+    if (!ValidateVorbisTestStreamHeader(scratch.data(), vorbis_test_wire::kStreamHeaderBytes,
             file.external->fileBytes)) {
         facts.readStatus = 3;
         return {};
@@ -1218,7 +1205,8 @@ std::shared_ptr<const StreamByteSource> StreamManager::AcquireReadSource(
     for (std::size_t at = 0; at < expected.size();) {
         const auto count = std::min(scratch.size(), expected.size() - at);
         if (ReadStreamBytes(observed, file.packBlobOffset + at, scratch.data(), count, job.cancellation)
-                != StreamReadStatus::Ok || std::memcmp(scratch.data(), expected.data() + at, count) != 0) {
+                != StreamReadStatus::Ok) return {};
+        if (std::memcmp(scratch.data(), expected.data() + at, count) != 0) {
             facts.readStatus = 3;
             return {};
         }

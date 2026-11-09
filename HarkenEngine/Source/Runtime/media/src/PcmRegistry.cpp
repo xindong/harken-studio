@@ -499,10 +499,7 @@ VnResult PCMRegistry::PrepareVorbisSamples(VnSoundId soundId, VorbisCodec& codec
 VnResult PCMRegistry::PreparePackRangeSamples(VnSoundId soundId,
     std::shared_ptr<const PackMediaRange> range, PreparedPackSamples* out,
     const PreparedPackSamples* provenEqual) {
-    if (out == nullptr || out->IsPrepared() || range == nullptr || range->source == nullptr ||
-        range->channelCount == 0 || range->channelCount > kMaxChannels || range->frameCount == 0 ||
-        range->sampleRate == 0 ||
-        range->chunkChecksums.size() != PackMediaChunkCount(range->frameCount, range->chunkFrames))
+    if (out == nullptr || out->IsPrepared() || range == nullptr || !ValidPackMediaRange(*range))
         return VN_INVALID_ARG;
     if (provenEqual != nullptr) {
         if (!provenEqual->IsPrepared() || provenEqual->m_soundId != soundId ||
@@ -534,6 +531,8 @@ VnResult PCMRegistry::PrepareResidentUpgrade(const PackReference& reference,
     if (target == nullptr) return VN_STALE_HANDLE;
     const auto range = target->range;
     if (target->view.Valid() || range == nullptr) return VN_INVALID_ARG;
+    // Compressed and external streams cannot be reinterpreted as planar PCM.
+    if (range->vorbis || range->external) return VN_CAPABILITY_UNAVAILABLE;
     const auto count = static_cast<std::size_t>(range->frameCount) * range->channelCount;
     if (PcmRegisterFaultForTests() == PcmRegisterFault::SampleBacking) throw std::bad_alloc{};
     detail::PcmSampleBuffer samples;

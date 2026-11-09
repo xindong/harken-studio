@@ -49,6 +49,9 @@ struct PackMediaRange {
 // Chunk count for a planar blob, or zero when the shape cannot be chunked.
 std::uint32_t PackMediaChunkCount(std::uint64_t frameCount, std::uint32_t chunkFrames) noexcept;
 
+// Checks immutable facts without opening external media or reading payload.
+bool ValidPackMediaRange(const PackMediaRange& range) noexcept;
+
 // Reads chunk `chunk` of a planar blob into staging (chunkFrames * channels
 // floats). Frames past the media end are zero. Validation is the caller's.
 StreamReadStatus ReadPlanarMediaChunk(const StreamByteSource& source,

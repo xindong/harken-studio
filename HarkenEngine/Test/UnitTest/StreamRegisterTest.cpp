@@ -44,6 +44,10 @@
 
 namespace harken::detail {
 struct StreamManagerTestAccess {
+    static VnMonitorStreamFactV1 Observation(StreamManager& manager, std::uint32_t slot) {
+        std::lock_guard<std::mutex> lock(manager.m_mutex);
+        return manager.m_slots[slot].observation;
+    }
     static void SetCommitPageLimit(StreamManager& manager, std::size_t pages) {
         manager.m_ringStorage.SetCommitPageLimitForTests(pages);
     }
@@ -2505,6 +2509,7 @@ TEST(StreamRegister, ExternalVorbisOpensOnDemandClosesAfterReferencesAndValidate
             std::shared_ptr<Counts> counts;
             std::shared_ptr<const std::vector<std::uint8_t>> bytes;
             std::thread::id caller;
+            std::uint64_t failOffset = UINT64_MAX;
             ~Source() override {
                 if (std::this_thread::get_id() == caller) ++counts->wrongThread;
                 ++counts->closes;
@@ -2521,6 +2526,7 @@ TEST(StreamRegister, ExternalVorbisOpensOnDemandClosesAfterReferencesAndValidate
                 recordMax(counts->largestRead, count);
                 recordMax(counts->furthestRead, offset + count);
                 if (cancel.IsCancelled()) return {harken::StreamReadStatus::Cancelled, 0};
+                if (offset == failOffset) return {};
                 if (offset > bytes->size() || count > bytes->size() - offset) return {};
                 std::memcpy(data, bytes->data() + offset, count);
                 return {harken::StreamReadStatus::Ok, count};
@@ -2529,6 +2535,7 @@ TEST(StreamRegister, ExternalVorbisOpensOnDemandClosesAfterReferencesAndValidate
         std::shared_ptr<Counts> counts = std::make_shared<Counts>();
         std::shared_ptr<const std::vector<std::uint8_t>> bytes;
         std::thread::id caller = std::this_thread::get_id();
+        std::uint64_t failOffset = UINT64_MAX;
         mutable std::atomic<bool> blockNextOpen{false}, enteredOpen{false};
         std::shared_ptr<const harken::StreamByteSource> Open(harken::StreamReadCancellation cancel) const override {
             if (std::this_thread::get_id() == caller) ++counts->wrongThread;
@@ -2540,6 +2547,7 @@ TEST(StreamRegister, ExternalVorbisOpensOnDemandClosesAfterReferencesAndValidate
             if (!bytes || cancel.IsCancelled()) return {};
             auto source = std::make_shared<Source>();
             source->counts = counts; source->bytes = bytes; source->caller = caller;
+            source->failOffset = failOffset;
             return source;
         }
     };
@@ -2563,6 +2571,22 @@ TEST(StreamRegister, ExternalVorbisOpensOnDemandClosesAfterReferencesAndValidate
     range->sampleRate = media.sampleRate; range->channelCount = media.channels;
     range->frameCount = media.frames; range->contentRevision = media.revision;
     range->loop = {media.loopStart, media.loopEnd};
+    harken::PCMRegistry registry;
+    const auto sound = harkentest::ObjectId(17509);
+    harken::PCMRegistry::PreparedPackSamples samples;
+    ASSERT_EQ(VN_OK, registry.PreparePackRangeSamples(sound, range, &samples));
+    harken::PCMRegistry::PackReferenceRegistration registration;
+    registration.soundId = sound; registration.samples = &samples;
+    harken::PCMRegistry::PreparedPackMutation mutation;
+    ASSERT_EQ(VN_OK, registry.PreparePackMutation(&registration, 1, 0, &mutation));
+    registry.CommitPreparedPackMutation(&mutation);
+    const auto reference = registry.ReferenceOf(sound, registry.CookieOf(sound));
+    ASSERT_TRUE(reference.Valid());
+    EXPECT_EQ(range, reference.Range());
+    EXPECT_FALSE(reference.View().Valid());
+    harken::PCMRegistry::PreparedResidentUpgrade upgrade;
+    EXPECT_EQ(VN_CAPABILITY_UNAVAILABLE, registry.PrepareResidentUpgrade(reference, &upgrade));
+    EXPECT_FALSE(upgrade.IsPrepared());
     harken::EngineConfig config;
     config.maxStreams = 2; config.streamRingBytes = 1024;
     harken::StreamManager streams(config);
@@ -2586,13 +2610,14 @@ TEST(StreamRegister, ExternalVorbisOpensOnDemandClosesAfterReferencesAndValidate
     EXPECT_EQ(0u, locator->counts->closes.load());
     streams.ReleasePendingRef(facts.fileIndex);
     ASSERT_TRUE(WaitUntil([&] { return locator->counts->closes.load() == 1; }));
-    for (unsigned variant = 0; variant < 5; ++variant) {
+    for (unsigned variant = 0; variant < 7; ++variant) {
         SCOPED_TRACE(variant);
         auto changed = image;
         if (variant == 2) changed.pop_back();
         if (variant == 3) changed[range->blobOffset + 92] ^= 1;
         if (variant == 4) changed[range->blobOffset + media.packetDataOffset + 2] ^= 1;
         locator->bytes = variant == 1 ? nullptr : std::make_shared<const std::vector<std::uint8_t>>(std::move(changed));
+        locator->failOffset = variant == 5 ? 0 : variant == 6 ? range->blobOffset : UINT64_MAX;
         harken::StreamManager::StreamFacts again;
         ASSERT_EQ(VN_OK, streams.ResolvePackSource(range, &again));
         EXPECT_EQ(facts.fileIndex, again.fileIndex);
@@ -2605,11 +2630,19 @@ TEST(StreamRegister, ExternalVorbisOpensOnDemandClosesAfterReferencesAndValidate
             harken::StreamTerminalReason::IntegrityAbort, ring->TerminalReason());
         if (variant == 0) EXPECT_GT(ring->BufferedFrames(), 0u);
         else EXPECT_EQ(0u, ring->BufferedFrames());
+        if (variant >= 3) {
+            const auto observation = harken::detail::StreamManagerTestAccess::Observation(streams, 0);
+            EXPECT_EQ(std::uint64_t(ring->generation.load()) << 32, observation.ringToken);
+            EXPECT_EQ(facts.sourceGeneration, observation.sourceGeneration);
+            EXPECT_GT(observation.readSequence, 0u);
+            EXPECT_EQ(variant >= 5 ? 2u : 3u, observation.readStatus);
+        }
         ring->state.store(harken::StreamSlotState::Retired, std::memory_order_release);
         streams.SyncServe();
         ASSERT_TRUE(WaitUntil([&] { return locator->counts->closes.load() == closedBefore + (variant != 1); }));
     }
-    EXPECT_EQ(6u, locator->counts->opens.load());
+    EXPECT_EQ(8u, locator->counts->opens.load());
+    locator->failOffset = UINT64_MAX;
     locator->bytes = std::make_shared<const std::vector<std::uint8_t>>(image);
     locator->blockNextOpen.store(true);
     harken::StreamManager::PreparedToken cancelled, survivor;
@@ -2628,7 +2661,7 @@ TEST(StreamRegister, ExternalVorbisOpensOnDemandClosesAfterReferencesAndValidate
     ASSERT_TRUE(streams.RetirePreparedSlot(owned.ring, owned.ringToken));
     streams.SyncServe();
     ASSERT_TRUE(WaitUntil([&] { return locator->counts->closes.load() == closedBefore + 1; }));
-    EXPECT_EQ(8u, locator->counts->opens.load());
+    EXPECT_EQ(10u, locator->counts->opens.load());
     EXPECT_EQ(2u, streams.FreeSlotCount());
     EXPECT_EQ(0u, locator->counts->wrongThread.load());
 }

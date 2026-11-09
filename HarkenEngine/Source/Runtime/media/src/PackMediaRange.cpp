@@ -2,6 +2,8 @@
 
 #include "harken/media/PackFormat.h"
 #include "harken/core/MediaCodec.h"
+#include "harken/media/VorbisDecoder.h"
+#include "harken/media/StreamFormat.h"
 
 #include <algorithm>
 #include <cassert>
@@ -9,6 +11,25 @@
 #include <limits>
 
 namespace harken {
+
+bool ValidPackMediaRange(const PackMediaRange& range) noexcept {
+    if (!range.sampleRate || !range.frameCount || !range.channelCount || range.channelCount > kMaxChannels)
+        return false;
+    if (!range.vorbis) return range.source && !range.external && range.chunkFrames &&
+        range.chunkFrames <= kMaxStreamChunkFrames &&
+        range.chunkChecksums.size() == PackMediaChunkCount(range.frameCount, range.chunkFrames);
+    if (range.external) {
+        if (range.source || !range.external->locator || range.blobOffset != vorbis_test_wire::kStreamHeaderBytes)
+            return false;
+    } else if (!range.source) return false;
+    const auto& media = range.vorbis->Media();
+    const auto bytes = range.external ? range.external->fileBytes : range.source->ByteCount();
+    return media.sampleRate == range.sampleRate && media.channels == range.channelCount &&
+        media.frames == range.frameCount && media.revision == range.contentRevision &&
+        media.loopStart == range.loop.startFrame && media.loopEnd == range.loop.endFrame &&
+        range.blobOffset <= bytes && media.packetDataOffset + media.packetBytes <= bytes - range.blobOffset &&
+        (!range.external || media.packetDataOffset + media.packetBytes == bytes - range.blobOffset);
+}
 
 std::uint32_t PackMediaChunkCount(std::uint64_t frameCount, std::uint32_t chunkFrames) noexcept {
     if (frameCount == 0 || chunkFrames == 0) return 0;
@@ -80,6 +101,7 @@ bool PlanarChunkChecksumBuilder::Complete() const noexcept {
 
 bool ReadVerifiedPackMediaChunk(const PackMediaRange& range, std::uint32_t chunk,
                        std::vector<float>& staging) {
+    if (range.vorbis || range.external || !range.source || chunk >= range.chunkChecksums.size()) return false;
     staging.resize(static_cast<std::size_t>(range.chunkFrames) * range.channelCount);
     return ReadPlanarMediaChunk(*range.source, range.blobOffset, range.frameCount,
                range.channelCount, range.chunkFrames, chunk, staging.data(), {}) ==
