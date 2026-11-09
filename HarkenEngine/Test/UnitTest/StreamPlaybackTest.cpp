@@ -1,5 +1,6 @@
 #include "Common/StreamFixtureRegistration.h"
 #include "Common/PcmStreamFixture.h"
+#include "Common/ExternalPcmFixture.h"
 // Streamed playback mechanics on the null backend: prebuffer gating and
 // the PREPARING snapshot state, stream slot exhaustion and refusal
 // ordering, starvation survival with exact notification cooldown spacing and
@@ -1383,6 +1384,7 @@ void RenderFreshSourceCoordinates(bool streamed, std::uint32_t workers,
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         ASSERT_EQ(VN_OK, engine.streams.TakeReplacement(token, &prepared));
     };
+    std::shared_ptr<const harken::PackMediaRange> range, replacementRange;
     if (streamed) {
         StreamSpec spec;
         spec.soundId = id;
@@ -1392,9 +1394,24 @@ void RenderFreshSourceCoordinates(bool streamed, std::uint32_t workers,
         spec.loopStartFrame = 64;
         spec.loopEndFrame = 256;
         const auto path = TempPath("stream_fresh_coordinates.stream");
-        WriteFileBytes(path, BuildStreamBytes(spec, samples));
-        ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(id, path.c_str()));
-        ASSERT_TRUE(engine.streams.FindFile(id, &facts));
+        const auto bytes = BuildStreamBytes(spec, samples);
+        WriteFileBytes(path, bytes);
+        range = harkentest::ExternalPcmFixtureRange(bytes,
+            [path](auto) { return harken::OpenStreamByteSource(path.c_str()); });
+        ASSERT_NE(nullptr, range);
+        ASSERT_EQ(VN_OK, engine.streams.ResolvePackSource(range, &facts));
+        ASSERT_TRUE(engine.streams.AcquirePendingRef(facts.fileIndex));
+        VnResult preparation = VN_OK;
+        auto state = harken::StreamManager::PreparationState::Preparing;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(4);
+        while (state == harken::StreamManager::PreparationState::Preparing &&
+               std::chrono::steady_clock::now() < deadline) {
+            state = engine.streams.PreparePackSource(facts.fileIndex, facts.sourceGeneration,
+                engine.vorbis, engine.config.maxPackDecodeStagingBytes, &preparation);
+            if (state == harken::StreamManager::PreparationState::Preparing)
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        ASSERT_EQ(harken::StreamManager::PreparationState::Ready, state);
         request.fileIndex = facts.fileIndex;
         request.sourceGeneration = facts.sourceGeneration;
         request.contentRevision = facts.contentRevision;
@@ -1404,6 +1421,7 @@ void RenderFreshSourceCoordinates(bool streamed, std::uint32_t workers,
         request.loopCount = loops;
         request.prebufferTargetFrames = 4096;
         ASSERT_NO_FATAL_FAILURE(prepareRing());
+        engine.streams.ReleasePendingRef(facts.fileIndex);
         if (park) ASSERT_TRUE(engine.streams.AcquirePendingRef(facts.fileIndex));
         ASSERT_EQ(VN_OK, engine.voices.PlayStream(prepared.ring, 1, 44100, 64,
             0, pitch, 0, false, 0, 0, 0, pan, startFrame, samples.size(),
@@ -1449,10 +1467,13 @@ void RenderFreshSourceCoordinates(bool streamed, std::uint32_t workers,
             changed.soundId = id;
             changed.sampleRate = 44100;
             const auto replacementPath = TempPath("stream_park_changed_generation.stream");
-            WriteFileBytes(replacementPath, BuildStreamBytes(changed, std::vector<float>(1024, -0.4f)));
-            ASSERT_EQ(VN_OK, harkentest::ReplaceFixtureStream(id, replacementPath.c_str()));
+            const auto replacementBytes = BuildStreamBytes(changed, std::vector<float>(1024, -0.4f));
+            WriteFileBytes(replacementPath, replacementBytes);
+            replacementRange = harkentest::ExternalPcmFixtureRange(replacementBytes,
+                [replacementPath](auto) { return harken::OpenStreamByteSource(replacementPath.c_str()); });
             harken::StreamManager::StreamFacts current;
-            ASSERT_TRUE(engine.streams.FindFile(id, &current));
+            ASSERT_EQ(VN_OK, engine.streams.ResolvePackSource(replacementRange, &current));
+            range.reset();
             ASSERT_NE(facts.sourceGeneration, current.sourceGeneration);
             request.targetFrame = saved->feedFrame;
             request.loopCount = saved->feedLoopsRemaining;
@@ -1475,7 +1496,6 @@ void RenderFreshSourceCoordinates(bool streamed, std::uint32_t workers,
     if (streamed) {
         engine.streams.SyncServe();
         EXPECT_EQ(2u, engine.streams.FreeSlotCount());
-        EXPECT_EQ(VN_OK, harkentest::UnregisterFixtureStream(id));
     }
 }
 

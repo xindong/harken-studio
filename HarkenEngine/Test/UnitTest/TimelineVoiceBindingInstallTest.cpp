@@ -1,4 +1,4 @@
-#include "Common/StreamFixtureRegistration.h"
+#include "Common/ExternalPcmFixture.h"
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/StreamBuilder.h"
 #include "Engine.h"
@@ -899,6 +899,7 @@ TEST(TimelineVoiceInstall, OutputCropUsesBoundPitchAndPreservesLoopOutroSamples)
                 harken::TimelineVoiceInstallFacts facts{};
                 facts.soundId = kSound;
                 facts.outputBusId = VN_BUS_MASTER;
+                std::shared_ptr<const harken::PackMediaRange> range;
                 if (streamed) {
                     harkentest::StreamSpec spec;
                     spec.soundId = kSound;
@@ -907,10 +908,12 @@ TEST(TimelineVoiceInstall, OutputCropUsesBoundPitchAndPreservesLoopOutroSamples)
                     spec.loopStartFrame = 64;
                     spec.loopEndFrame = 256;
                     const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "compose_crop.stream").string();
-                    harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, pcm));
-                    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(kSound, path.c_str()));
+                    const auto bytes = harkentest::BuildStreamBytes(spec, pcm);
+                    harkentest::WriteFileBytes(path, bytes);
+                    range = harkentest::PreparedExternalPcmFixtureRange(bytes,
+                        [path](auto) { return harken::OpenStreamByteSource(path.c_str()); });
                     harken::StreamManager::StreamFacts source;
-                    ASSERT_TRUE(engine.streams.FindFile(kSound, &source));
+                    ASSERT_EQ(VN_OK, engine.streams.ResolvePackSource(range, &source));
                     facts.streamed = true;
                     facts.streamFileIndex = source.fileIndex;
                     facts.streamSampleRate = source.sampleRate;
@@ -1002,10 +1005,12 @@ TEST(TimelineVoiceInstall, OneFrameStreamRingRejectsMissingNeighborButAcceptsNat
         harkentest::StreamSpec spec;
         spec.soundId = kSound;
         const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "compose_ring_one.stream").string();
-        harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, std::vector<float>(sourceFrames, 0.25f)));
-        ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(kSound, path.c_str()));
+        const auto bytes = harkentest::BuildStreamBytes(spec, std::vector<float>(sourceFrames, 0.25f));
+        harkentest::WriteFileBytes(path, bytes);
+        const auto range = harkentest::PreparedExternalPcmFixtureRange(bytes,
+            [path](auto) { return harken::OpenStreamByteSource(path.c_str()); });
         harken::StreamManager::StreamFacts source;
-        ASSERT_TRUE(engine.streams.FindFile(kSound, &source));
+        ASSERT_EQ(VN_OK, engine.streams.ResolvePackSource(range, &source));
         harken::TimelineVoiceInstallFacts facts{};
         facts.soundId = kSound;
         facts.outputBusId = VN_BUS_MASTER;

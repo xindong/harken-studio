@@ -90,4 +90,21 @@ inline std::shared_ptr<const harken::PackMediaRange> ExternalPcmFixtureRange(
     return range;
 }
 
+// Renderer and worker tests may begin after metadata preparation. The payload
+// still comes from the provider, so checksum and supply failures remain real.
+inline std::shared_ptr<const harken::PackMediaRange> PreparedExternalPcmFixtureRange(
+    const std::vector<std::uint8_t>& expected, ExternalPcmFixtureLocator::OpenFn open) {
+    const auto original = ExternalPcmFixtureRange(expected, std::move(open));
+    if (!original) return {};
+    harken::StreamHeader header{};
+    if (!harken::ParseStreamHeader(expected.data(), &header)) return {};
+    const auto toc = harken::ParseStreamTocEntry(expected.data() + header.tocOffset);
+    if (toc.payloadOffset > expected.size()) return {};
+    auto range = std::make_shared<harken::PackMediaRange>(*original);
+    auto external = std::make_shared<harken::PackExternalStream>(*range->external);
+    external->pcmPrefix.assign(expected.begin(), expected.begin() + toc.payloadOffset);
+    range->external = std::move(external);
+    return range;
+}
+
 } // namespace harkentest

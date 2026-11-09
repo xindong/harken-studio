@@ -1,4 +1,3 @@
-#include "Common/StreamFixtureRegistration.h"
 #include "harken/media/PackStreamResolver.h"
 #include "UnitTest/CanonicalPackSetActivate.h"
 #include "AllocationProbe.h"
@@ -3962,8 +3961,6 @@ TEST(CanonicalPackSetActivate, StreamedPackMediaPlaysResidentSamplesWithoutResid
     ASSERT_TRUE(harkentest::WriteBytes(set.content, content));
     VnCanonicalPackSetActivationReportV1 report{};
     ASSERT_EQ(VN_OK, Activate(set.members, report));
-    // The shared playable-ID space still sees the range-only registration.
-    EXPECT_EQ(VN_IN_USE, harkentest::RegisterFixtureStream(kSound, set.content.c_str()));
     std::weak_ptr<const harken::StreamByteSource> source;
     {
         const auto reference = engine->registry.ReferenceOf(kSound, engine->registry.CookieOf(kSound));

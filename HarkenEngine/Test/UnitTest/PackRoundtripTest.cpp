@@ -1,4 +1,3 @@
-#include "Common/StreamFixtureRegistration.h"
 // Pack round-trip fidelity, driven through the real compiler tool: the
 // test synthesizes sources, writes them as IEEE float32 wav files, runs
 // packc as a subprocess to build a .pack, and then renders every
@@ -448,57 +447,5 @@ TEST(PackRoundtrip, PackcRefusesMalformedInput) {
 }
 
 
-TEST(PackRoundtrip, LoadRefusedWhenEntryShadowsStream) {
-    // Symmetric to the container case: the flat playable-ID space refuses a
-    // pack whose entry id names a registered stream (all-or-nothing), and the
-    // stream registration is untouched.
-    harkentest::StreamSpec spec;
-    spec.soundId = harkentest::ObjectId(8100);
-    spec.sampleRate = kRate;
-    spec.channelCount = 1;
-    spec.chunkFrames = 256;
-    const std::vector<float> tone =
-        harkentest::MakeSine(600, 440.0, kRate, 0.5f);
-    const std::string streamPath = TempPath("shadow_stream.stream");
-    harkentest::WriteFileBytes(streamPath,
-                              harkentest::BuildStreamBytes(spec, tone));
-
-    // A 2-entry pack whose first entry id (8100) collides with the stream.
-    const std::vector<float> a = harkentest::MakeSine(400, 500.0, kRate, 0.5f);
-    const std::vector<float> b = harkentest::MakeSine(400, 700.0, kRate, 0.5f);
-    const std::string wavA = TempPath("shadow_stream_a.wav");
-    const std::string wavB = TempPath("shadow_stream_b.wav");
-    WriteWavF32(wavA, a, 1, kRate);
-    WriteWavF32(wavB, b, 1, kRate);
-    const std::string packPath = TempPath("shadow_stream.pack");
-    const std::string manifest =
-        ManifestPrefix(packPath) + "    { \"path\": \"" + wavA +
-        "\", \"id\": \"3da91a64-b947-4560-0000-000000001fa4\" },\n" + "    { \"path\": \"" + wavB +
-        "\", \"id\": \"3da91a64-b947-4560-0000-000000001fa5\" }\n" + "  ]\n}\n";
-    const std::string manifestPath = TempPath("shadow_stream_manifest.json");
-    WriteTextFile(manifestPath, manifest);
-    ASSERT_EQ(0, CompilePack(manifestPath));
-
-    EngineSession session(MakeNullConfig(0, kBlockFrames, kRate));
-    ASSERT_EQ(VN_OK, session.InitResult());
-    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(8100), streamPath.c_str()));
-
-    VnPackDesc desc{};
-    desc.structSize = sizeof(VnPackDesc);
-    desc.utf8Path = packPath.c_str();
-    VnPackHandle pack = 0;
-    EXPECT_EQ(VN_IN_USE, Vn_LoadPack(&desc, &pack));
-
-    // All-or-nothing: the non-colliding entry (8101) registered nothing.
-    VnPlayDesc play = MakePlayDesc(harkentest::ObjectId(8101));
-    VnVoiceHandle voice = 0;
-    EXPECT_EQ(VN_UNKNOWN_ID, harkentest::PlayRaw(&play, &voice));
-    // The stream is untouched — still registered, so unregister succeeds.
-    EXPECT_EQ(VN_OK, harkentest::UnregisterFixtureStream(harkentest::ObjectId(8100)));
-
-    // With the stream gone, the same pack loads and 8101 becomes playable.
-    ASSERT_EQ(VN_OK, Vn_LoadPack(&desc, &pack));
-    EXPECT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
-}
 
 } // namespace

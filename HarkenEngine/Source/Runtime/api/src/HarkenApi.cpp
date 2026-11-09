@@ -94299,11 +94299,11 @@ bool PrepareContainerSingleLeaf(
         return false;
     }
     const auto* musicParent = engine.ResolvePlayableService(context.parentService);
-    // Music successors can release their Start arm before Source completion.
-    // Retain the same native Source receipt used by variable-controlled Sounds.
+    // Scheduled Sounds can finish before logic observes their retired Start arm.
+    // Keep their native Source receipt through completion and physical release.
     const bool retainedSound = instanceKind == harken::PlayableKind::Sound &&
         (variableAncestor || (context.privateScheduleOwner != nullptr && context.initialAdmissionGroup.Valid()) ||
-            (musicParent != nullptr && (HasMusicScheduleAncestor(engine, *musicParent) ||
+            (musicParent != nullptr && (context.scheduleChild != nullptr || HasMusicScheduleAncestor(engine, *musicParent) ||
                 (musicParent->queueMode && musicParent->scheduleTerminalChild != nullptr &&
                  musicParent->scheduleTerminalChild->content.kind == harken::PlayableKindV1::Sound))));
     auto* const resourceService = frontierChild != nullptr ? frontierChild
