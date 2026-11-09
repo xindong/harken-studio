@@ -79,6 +79,7 @@ bool PlanarChunkChecksumBuilder::Complete() const noexcept {
 
 bool ReadVerifiedPackMediaChunk(const PackMediaRange& range, std::uint32_t chunk,
                        std::vector<float>& staging) {
+    if (range.codec != MediaRangeCodec::PcmPlanar || chunk >= range.chunkChecksums.size()) return false;
     staging.resize(static_cast<std::size_t>(range.chunkFrames) * range.channelCount);
     return ReadPlanarMediaChunk(*range.source, range.blobOffset, range.frameCount,
                range.channelCount, range.chunkFrames, chunk, staging.data(), {}) ==

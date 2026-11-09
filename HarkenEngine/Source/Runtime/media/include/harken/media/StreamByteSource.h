@@ -5,8 +5,18 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <vector>
 
 namespace harken {
+
+// Per-slot physical read cache shared by PCM and compressed producers.
+struct StreamReadWindow {
+    static constexpr std::size_t kCapacityBytes = 16 * 1024;
+    std::vector<std::uint8_t> bytes;
+    std::uint64_t offset = 0;
+    std::size_t validBytes = 0;
+    std::atomic<std::uint64_t> capacityBytes{0};
+};
 
 struct StreamReadCancellation {
     const std::atomic<bool>* requested = nullptr;

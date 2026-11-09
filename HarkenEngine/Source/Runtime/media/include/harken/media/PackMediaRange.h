@@ -21,7 +21,13 @@ namespace harken {
 // well below kMaxStreamChunkFrames.
 inline constexpr std::uint32_t kPackMediaRangeChunkFrames = 4096;
 
+// Internal producer identity, not a serialized Pack sampleFormat value.
+// The Pack reader must wait for the authoritative schema encoding contract.
+enum class MediaRangeCodec { PcmPlanar, Vorbis };
+
 struct PackMediaRange {
+    MediaRangeCodec codec = MediaRangeCodec::PcmPlanar;
+    std::uint64_t encodedBytes = 0;
     std::shared_ptr<const StreamByteSource> source;
     std::uint64_t blobOffset = 0;
     std::uint32_t sampleRate = 0;

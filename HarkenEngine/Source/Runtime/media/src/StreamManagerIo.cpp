@@ -231,6 +231,11 @@ void StreamManager::DrainCleanupAfterStop() noexcept {
         requests.swap(m_sourceRequests);
         cleanup = std::move(m_cleanup);
     }
+    for (auto& slot : m_slots) slot.decoder.reset();
+    while (m_decoderCleanup) {
+        auto decoder = std::move(m_decoderCleanup);
+        m_decoderCleanup = std::move(decoder->nextCleanup);
+    }
     while (cleanup) {
         auto file = std::move(cleanup);
         cleanup = std::move(file->nextCleanup);
@@ -275,10 +280,13 @@ void StreamManager::IoMain(std::size_t index) {
         try {
             switch (lane.kind) {
             case IoLane::Kind::Chunk:
-                lane.valid = RunChunkJob(lane.chunk, lane.slot->staging, lane.slot->window);
+                lane.valid = RunChunkJob(lane.chunk, *lane.slot);
                 break;
             case IoLane::Kind::Source:
                 ValidateSourceSlice(*lane.request);
+                break;
+            case IoLane::Kind::DecoderCleanup:
+                lane.decoderCleanup.reset();
                 break;
             case IoLane::Kind::Cleanup:
                 lane.cleanup.reset();
@@ -324,7 +332,7 @@ void StreamManager::SteadyIoMain() {
         job.valid = false;
         try {
             if (!job.cancelled.load(std::memory_order_acquire))
-                job.valid = RunChunkJob(job.input, slot->staging, slot->window);
+                job.valid = RunChunkJob(job.input, *slot);
         } catch (...) { job.exception = true; }
         job.state.store(3, std::memory_order_release);
         {
@@ -485,6 +493,12 @@ void StreamManager::DispatchIo() {
         sourceLane.kind = IoLane::Kind::Cleanup;
         sourceLane.cleanup = std::move(m_cleanup);
         m_cleanup = std::move(sourceLane.cleanup->nextCleanup);
+        dispatch(sourceLane);
+    }
+    if (sourceLane.state.load(std::memory_order_acquire) == 0 && m_decoderCleanup) {
+        sourceLane.kind = IoLane::Kind::DecoderCleanup;
+        sourceLane.decoderCleanup = std::move(m_decoderCleanup);
+        m_decoderCleanup = std::move(sourceLane.decoderCleanup->nextCleanup);
         dispatch(sourceLane);
     }
     if (WorkerState() != StreamWorkerState::Ready) return;

@@ -155,6 +155,7 @@ add_executable(harken_runtime_tests
     UnitTest/StreamFormatTest.cpp
     UnitTest/StreamRegisterTest.cpp
     UnitTest/StreamPlaybackTest.cpp
+    UnitTest/VorbisStreamTest.cpp
     UnitTest/StreamWorkerLifecycleTest.cpp
     UnitTest/StreamConfigTest.cpp
     UnitTest/Utf8PathTest.cpp
@@ -334,7 +335,7 @@ add_executable(harken_runtime_tests
 # the engine-free harken/media/ResourceFactsValue.h from a separate include root.
 # The interface target carries that root (and no linked code), so the test can
 # resolve it without this target learning the whole media include layout.
-target_link_libraries(harken_runtime_tests PRIVATE harken_core harken_buildinfo harken_remote
+target_link_libraries(harken_runtime_tests PRIVATE harken_core harken_buildinfo harken_remote vorbisfile
                       harken_reference_slots harken_resource_facts_contract
                       harken_program_registration harken_current_world_compiler
                       harken_preview harkenizer_resource_compiler harken_studio_pack_build

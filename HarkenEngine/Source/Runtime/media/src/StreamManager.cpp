@@ -332,8 +332,14 @@ VnResult StreamManager::ResolvePackSource(
     if (out == nullptr || range == nullptr || range->source == nullptr ||
         range->channelCount == 0 || range->channelCount > kMaxChannels ||
         range->chunkFrames == 0 || range->chunkFrames > kMaxStreamChunkFrames ||
-        range->chunkChecksums.size() != PackMediaChunkCount(range->frameCount, range->chunkFrames))
+        (range->codec == MediaRangeCodec::Vorbis &&
+         PackMediaChunkCount(range->frameCount, range->chunkFrames) == 0) ||
+        (range->codec != MediaRangeCodec::PcmPlanar && range->codec != MediaRangeCodec::Vorbis) ||
+        (range->codec == MediaRangeCodec::PcmPlanar &&
+         range->chunkChecksums.size() != PackMediaChunkCount(range->frameCount, range->chunkFrames)))
         return VN_INVALID_ARG;
+    if (range->codec == MediaRangeCodec::Vorbis &&
+        range->encodedBytes > VorbisStreamDecoder::kMaxEncodedBytes) return VN_CAPABILITY_UNAVAILABLE;
     std::lock_guard<std::mutex> lock(m_mutex);
     if (m_shutdown || WorkerState() != StreamWorkerState::Ready) return VN_DEVICE_ERROR;
     const auto fill = [&](std::size_t index, const StreamFile& file) {
@@ -361,6 +367,8 @@ VnResult StreamManager::ResolvePackSource(
         record->packPrivate = true;
         record->packRange = range;
         record->packBlobOffset = range->blobOffset;
+        record->codec = range->codec;
+        record->encodedBytes = range->encodedBytes;
         record->source = range->source;
         record->toc.sampleRate = range->sampleRate;
         record->toc.channelCount = static_cast<std::uint16_t>(range->channelCount);
@@ -547,6 +555,7 @@ std::uint64_t StreamManager::InitializeSlot(
     // writes are private until Active publishes them. The source reference
     // was acquired under m_mutex, so retirement cannot close it in between.
     s.window.validBytes = 0;
+    s.decodeFailure = VorbisStreamDecoder::Failure::None;
     if (s.promotionPending) {
         assert(m_pendingPromotionCount != 0);
         --m_pendingPromotionCount;
@@ -1064,6 +1073,10 @@ void StreamManager::DetachRetiredSlots() {
         }
         m_files[slot.fileIndex]->activeStreams.fetch_sub(
             1, std::memory_order_relaxed);
+        if (slot.decoder) {
+            slot.decoder->nextCleanup = std::move(m_decoderCleanup);
+            m_decoderCleanup = std::move(slot.decoder);
+        }
         slot.window.validBytes = 0;
         std::vector<std::uint8_t>().swap(slot.window.bytes);
         slot.window.capacityBytes.store(0, std::memory_order_release);
@@ -1080,8 +1093,37 @@ void StreamManager::DetachRetiredSlots() {
     }
 }
 
-bool StreamManager::RunChunkJob(const ChunkJob& job,
-                                std::vector<float>& staging, ReadWindow& window) {
+bool StreamManager::RunChunkJob(const ChunkJob& job, StreamSlot& slot) {
+    auto& staging = slot.staging;
+    auto& window = slot.window;
+    if (job.file->codec == MediaRangeCodec::Vorbis) {
+        try {
+            if (!slot.decoder) {
+                slot.decoder = std::make_unique<VorbisStreamDecoder>(*job.file->source,
+                    job.file->packBlobOffset, job.file->encodedBytes, window);
+                if (!slot.decoder->Open(job.file->toc.sampleRate, job.channels,
+                                        job.file->toc.frameCount, job.cancellation)) {
+                    slot.decodeFailure = slot.decoder->Error();
+                    return false;
+                }
+                if ((slot.loopInfinite || slot.loopPassesRemaining > 1) &&
+                    !slot.decoder->PrepareLoop((slot.loopStartFrame / job.chunkFrames) * job.chunkFrames,
+                                                job.cancellation)) {
+                    slot.decodeFailure = slot.decoder->Error();
+                    return false;
+                }
+            }
+            staging.assign(static_cast<std::size_t>(job.chunkFrames) * job.channels, 0.0f);
+            const auto count = StreamChunkValidFrames(job.chunkIndex, job.chunkFrames, job.file->toc.frameCount);
+            const bool valid = slot.decoder->Read(static_cast<std::uint64_t>(job.chunkIndex) * job.chunkFrames,
+                count, staging.data(), job.chunkFrames, job.cancellation);
+            slot.decodeFailure = slot.decoder->Error();
+            return valid;
+        } catch (...) {
+            slot.decodeFailure = VorbisStreamDecoder::Failure::Io;
+            return false;
+        }
+    }
     return ReadChunk(job, staging, window) &&
         ValidateChunk(job, staging,
             Fnv1a64(staging.data(), static_cast<std::size_t>(job.chunkBytes)));
@@ -1190,7 +1232,8 @@ void StreamManager::CompleteChunk(StreamSlot& slot, const ChunkJob& job,
         slot.stagedChunk = job.chunkIndex;
     } else {
         // Already published material was verified and drains normally.
-        slot.ring.MarkEndOfData(StreamTerminalReason::IntegrityAbort);
+        slot.ring.MarkEndOfData(slot.decodeFailure == VorbisStreamDecoder::Failure::Io
+            ? StreamTerminalReason::ProducerFailure : StreamTerminalReason::IntegrityAbort);
         slot.feedStopped = true;
     }
 }

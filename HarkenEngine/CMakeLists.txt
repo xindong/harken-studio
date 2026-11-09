@@ -1,3 +1,12 @@
+# Reuse the Xiph targets used by the editor. Runtime never links vorbisenc.
+if(NOT TARGET ogg)
+    add_subdirectory(${CMAKE_SOURCE_DIR}/HarkenStudio/ThirdParty/libogg ${CMAKE_CURRENT_BINARY_DIR}/libogg)
+endif()
+if(NOT TARGET vorbisfile)
+    add_subdirectory(${CMAKE_SOURCE_DIR}/HarkenStudio/ThirdParty/libvorbis ${CMAKE_CURRENT_BINARY_DIR}/libvorbis)
+endif()
+set_target_properties(ogg vorbis vorbisfile PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 # harken_core — the engine runtime libraries and (desktop only) the host-side
 # tooling. Split from the repository root so engine build edits live under
 # HarkenEngine/** — the path the engine-facing PR gates watch. Reads the
@@ -97,6 +106,7 @@ set(HARKEN_RUNTIME_SOURCES
     ${HARKEN_RUNTIME_DIR}/media/src/PackTable.cpp
     ${HARKEN_RUNTIME_DIR}/media/src/StreamManager.cpp
     ${HARKEN_RUNTIME_DIR}/media/src/StreamByteSource.cpp
+    ${HARKEN_RUNTIME_DIR}/media/src/VorbisStreamDecoder.cpp
     ${HARKEN_RUNTIME_DIR}/media/src/StreamManagerIo.cpp
     ${HARKEN_RUNTIME_DIR}/param/src/BindingTable.cpp
     ${HARKEN_RUNTIME_DIR}/param/src/BusTargetStore.cpp
@@ -213,7 +223,7 @@ if(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE AND NOT HARKEN_BUILD_RUNTIME_UNIT_TEST
 endif()
 
 add_library(harken_core STATIC ${HARKEN_RUNTIME_SOURCES})
-target_link_libraries(harken_core PRIVATE harken_buildinfo)
+target_link_libraries(harken_core PRIVATE harken_buildinfo vorbisfile)
 set_target_properties(harken_core PROPERTIES OUTPUT_NAME HarkenCore)
 if(HARKEN_BUILD_RUNTIME_UNIT_TESTS)
     # Native lifetime observation belongs to the test-linked static runtime.
@@ -260,7 +270,7 @@ endif()
 
 if(HARKEN_BUILD_RUNTIME_UNIT_TESTS)
     add_library(harken_core_hub_absent STATIC ${HARKEN_RUNTIME_SOURCES})
-    target_link_libraries(harken_core_hub_absent PRIVATE harken_buildinfo)
+    target_link_libraries(harken_core_hub_absent PRIVATE harken_buildinfo vorbisfile)
     target_include_directories(harken_core_hub_absent
         PUBLIC ${HARKEN_RUNTIME_DIR}/api/include
         PRIVATE ${HARKEN_RUNTIME_PRIVATE_INCLUDES}
@@ -291,7 +301,7 @@ endif()
 # consumers resolve Vn_* at link time from the object symbols directly.
 if(HARKEN_BUILD_SHARED)
     add_library(harken_core_shared SHARED ${HARKEN_RUNTIME_SOURCES})
-    target_link_libraries(harken_core_shared PRIVATE harken_buildinfo)
+    target_link_libraries(harken_core_shared PRIVATE harken_buildinfo vorbisfile)
     target_include_directories(harken_core_shared
         PUBLIC ${HARKEN_RUNTIME_DIR}/api/include
         PRIVATE ${HARKEN_RUNTIME_PRIVATE_INCLUDES}
@@ -342,7 +352,7 @@ if(HARKEN_BUILD_RT_QUALIFICATION)
     endif()
     add_library(harken_core_rt_qualification STATIC
         ${_harken_rt_qualification_sources})
-    target_link_libraries(harken_core_rt_qualification PRIVATE harken_buildinfo)
+    target_link_libraries(harken_core_rt_qualification PRIVATE harken_buildinfo vorbisfile)
     target_include_directories(harken_core_rt_qualification
         PUBLIC ${HARKEN_RUNTIME_DIR}/api/include
         PRIVATE ${HARKEN_RUNTIME_PRIVATE_INCLUDES}

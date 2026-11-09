@@ -14,6 +14,7 @@
 #include "harken/media/PackMediaRange.h"
 #include "harken/media/StreamFormat.h"
 #include "harken/media/StreamByteSource.h"
+#include "harken/media/VorbisStreamDecoder.h"
 
 #include <array>
 #include <atomic>
@@ -354,6 +355,8 @@ private:
         bool packPrivate = false;
         std::weak_ptr<const PackMediaRange> packRange;
         std::uint64_t packBlobOffset = 0;
+        MediaRangeCodec codec = MediaRangeCodec::PcmPlanar;
+        std::uint64_t encodedBytes = 0;
         std::shared_ptr<const StreamByteSource> source;
         std::unique_ptr<StreamFile> nextCleanup;
         StreamTocEntry toc;
@@ -397,13 +400,7 @@ private:
         bool valid = false, exception = false;
     };
 
-    struct ReadWindow {
-        static constexpr std::size_t kCapacityBytes = 16 * 1024;
-        std::vector<std::uint8_t> bytes;
-        std::uint64_t offset = 0;
-        std::size_t validBytes = 0;
-        std::atomic<std::uint64_t> capacityBytes{0};
-    };
+    using ReadWindow = StreamReadWindow;
 
     static constexpr int kSourceIoLane = 0;
     static constexpr int kPreparationIoLane = 1;
@@ -415,6 +412,8 @@ private:
         int ioLane = -1; // -1 idle, kPreparationIoLane or kSteadyIoOwner
         SlotIoJob io;
         ReadWindow window;
+        std::unique_ptr<VorbisStreamDecoder> decoder;
+        VorbisStreamDecoder::Failure decodeFailure = VorbisStreamDecoder::Failure::None;
         std::uint64_t passGoal = 0;
         std::uint64_t exceptionSerial = 0;
 
@@ -525,13 +524,14 @@ private:
     void ServeSlots();
 
     struct IoLane {
-        enum class Kind { Chunk, Source, Cleanup } kind = Kind::Chunk;
+        enum class Kind { Chunk, Source, Cleanup, DecoderCleanup } kind = Kind::Chunk;
         std::atomic<unsigned> state{0}; // idle, queued, running, completed
         std::atomic<bool> cancelled{false};
         ChunkJob chunk;
         StreamSlot* slot = nullptr;
         SourceRequest* request = nullptr;
         std::unique_ptr<StreamFile> cleanup;
+        std::unique_ptr<VorbisStreamDecoder> decoderCleanup;
         bool valid = false, exception = false;
         std::thread thread;
     };
@@ -539,7 +539,7 @@ private:
     // checksum mismatch; the caller decides what that means for the slot, since
     // only the caller knows the slot. Static: the job depends on nothing but its
     // arguments, which is what makes it relocatable.
-    static bool RunChunkJob(const ChunkJob& job, std::vector<float>& staging, ReadWindow& window);
+    static bool RunChunkJob(const ChunkJob& job, StreamSlot& slot);
     static bool ReadChunk(const ChunkJob& job, std::vector<float>& staging, ReadWindow& window);
     static bool TryCopyReadWindow(const ChunkJob& job, std::vector<float>& staging,
                                   const ReadWindow& window) noexcept;
@@ -579,6 +579,7 @@ private:
     std::condition_variable m_steadyWake;
     std::deque<StreamSlot*> m_readySteady; // one entry per outstanding steady slot
     std::unique_ptr<StreamFile> m_cleanup;
+    std::unique_ptr<VorbisStreamDecoder> m_decoderCleanup;
     std::size_t m_sourceCursor = 0, m_slotCursor = 0;
     friend struct detail::StreamManagerTestAccess;
     std::array<StableRowStorage<float>, kMaxChannels> m_ringStorage;
