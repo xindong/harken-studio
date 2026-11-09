@@ -58,7 +58,8 @@ namespace Harken.Test
         {
             var reader = new RetainedReader();
             var config = Config();
-            Ok(PackBootstrap.Start(PackSource.FromReader(reader.ReadFile), ref config,
+            Ok(PackBootstrap.Start(PackSource.FromReader(reader.ReadFile, streamOpen: (path, revision, bytes, cancellation) =>
+                { GC.KeepAlive(reader); return null; }), ref config,
                 out PackBootstrapSession session), "retained reader start");
             Ok(session.PrepareActions(new[] { "Play_Head" }, session.ProjectId,
                 out ActionPreparation scope), "retained scope");

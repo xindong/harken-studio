@@ -113,7 +113,8 @@ namespace Harken
                         // Another waiter may have installed this exact captured input already.
                         if (!refresh && owner.Handle.IsValid && owner.StableId == input.Facts.packStableId &&
                             owner.ContentHash == input.Facts.contentHash && owner.ByteCount == input.Bytes.Length &&
-                            owner.Names.Name == input.Names.Name && owner.Names.Language == input.Names.Language) break;
+                            owner.Names.Name == input.Names.Name && owner.Names.Language == input.Names.Language &&
+                            PackStreamBinding.Same(owner.Streams, input.Streams)) break;
                         return VnResult.VN_PACK_STALE_REVISION;
                     }
                 }

@@ -137,9 +137,10 @@ namespace Harken
         internal readonly Pack Expected;
         internal readonly byte[] Bytes;
         internal readonly PackCompanion Names;
+        internal readonly PackStreamBinding Streams;
         internal CompanionMember(ulong id, uint kind, Pack expected, uint operation = VnConstants.VN_PACK_MEMBER_KEEP,
-            byte[] bytes = null, PackCompanion names = null)
-        { Id = id; Kind = kind; Expected = expected; Operation = operation; Bytes = bytes; Names = names; }
+            byte[] bytes = null, PackCompanion names = null, PackStreamBinding streams = null)
+        { Id = id; Kind = kind; Expected = expected; Operation = operation; Bytes = bytes; Names = names; Streams = streams; }
     }
 
     internal static class CompanionNative
@@ -269,16 +270,20 @@ namespace Harken
             results = null;
             PinnedNames[] names = null;
             int[] providers = null;
+            PackStreamBinding.NativeLease[] streams = null;
             try
             {
-                var native = new VnCanonicalPackSetMemberV2[members.Length];
+                var native = new VnCanonicalPackSetMemberV3[members.Length];
+                var resolvers = new VnPackStreamResolverV1[members.Length];
+                streams = new PackStreamBinding.NativeLease[members.Length];
                 var rows = new VnCanonicalPackSetMemberResultV1[members.Length];
                 names = new PinnedNames[members.Length];
                 providers = new int[members.Length];
                 for (int i = 0; i < members.Length; ++i)
                 {
                     CompanionMember source = members[i];
-                    ref VnCanonicalPackSetMemberV2 member = ref native[i];
+                    native[i].structSize = (uint)sizeof(VnCanonicalPackSetMemberV3);
+                    ref VnCanonicalPackSetMemberV2 member = ref native[i].member;
                     member.structSize = (uint)sizeof(VnCanonicalPackSetMemberV2);
                     member.operation = source.Operation;
                     member.source.structSize = (uint)sizeof(VnCanonicalPackSetMemberV1);
@@ -292,8 +297,31 @@ namespace Harken
                     providers[i] = PackByteProvider.Register(PackByteProvider.PreparedBytes, source.Bytes);
                     if (providers[i] == 0) return VnResult.VN_BACKPRESSURE;
                     PackByteProvider.BindMember(ref member.source, providers[i]);
+                    if (source.Kind == VnConstants.VN_CANONICAL_PACK_SET_MEMBER_CONTENT &&
+                        source.Operation == VnConstants.VN_PACK_MEMBER_CONTENT && source.Streams != null)
+                    {
+                        streams[i] = new PackStreamBinding.NativeLease(source.Streams);
+                        resolvers[i] = streams[i].Descriptor;
+                    }
                 }
-                VnResult result = ActivatePrepared(native, rows, members.Length, init, revision, out report);
+                VnResult result;
+                fixed (VnPackStreamResolverV1* resolverPtr = resolvers)
+                fixed (VnCanonicalPackSetMemberV3* memberPtr = native)
+                fixed (VnCanonicalPackSetMemberResultV1* rowPtr = rows)
+                {
+                    for (int i = 0; i < members.Length; ++i)
+                        if (streams[i] != null) native[i].streams = (IntPtr)(resolverPtr + i);
+                    var desc = new VnCanonicalPackSetActivationDescV3
+                    {
+                        structSize = (uint)sizeof(VnCanonicalPackSetActivationDescV3),
+                        expectedCurrentInitHandle = init.Handle, baseSetRevision = revision, setRevision = revision + 1,
+                        memberCount = (uint)members.Length, memberStructSize = (uint)sizeof(VnCanonicalPackSetMemberV3),
+                        members = (IntPtr)memberPtr, outputMemberCapacity = (uint)rows.Length,
+                        outputMemberStructSize = (uint)sizeof(VnCanonicalPackSetMemberResultV1), outputMembers = (IntPtr)rowPtr
+                    };
+                    report.structSize = (uint)sizeof(VnCanonicalPackSetActivationReportV1);
+                    result = Packs.ObserveMutation(HarkenNative.Vn_ActivateCanonicalPackSetV3(desc, ref report));
+                }
                 if (result == VnResult.VN_OK) results = rows;
                 return result;
             }
@@ -301,6 +329,7 @@ namespace Harken
             catch (EncoderFallbackException) { return VnResult.VN_BAD_PACK; }
             finally
             {
+                if (streams != null) foreach (var stream in streams) stream?.Dispose();
                 if (providers != null) foreach (int key in providers) if (key != 0) PackByteProvider.Unregister(key);
                 if (names != null) foreach (PinnedNames pinned in names) pinned?.Dispose();
             }

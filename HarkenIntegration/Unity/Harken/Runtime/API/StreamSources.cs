@@ -8,7 +8,7 @@ namespace Harken
     /// <summary>
     /// One immutable, positional byte-source lease. ReadAt calls may overlap.
     /// Return a VN_BYTE_READ_* status and never retain destination. Callbacks
-    /// must not use Runtime or Unity main-thread APIs. After accepted Begin,
+    /// must not use Runtime or Unity main-thread APIs. After accepted Begin or return from a Pack opener,
     /// native owns Dispose; the caller must not dispose or transfer it again.
     /// A refused Begin preserves caller ownership and allows another attempt.
     /// Use a distinct lease object when sharing an underlying resource.
@@ -86,8 +86,8 @@ namespace Harken
     {
         static readonly VnByteSourceReadAtFn ReadDelegate = ReadThunk;
         static readonly VnByteSourceReleaseFn ReleaseDelegate = ReleaseThunk;
-        static readonly IntPtr ReadPointer = Marshal.GetFunctionPointerForDelegate(ReadDelegate);
-        static readonly IntPtr ReleasePointer = Marshal.GetFunctionPointerForDelegate(ReleaseDelegate);
+        internal static readonly IntPtr ReadPointer = Marshal.GetFunctionPointerForDelegate(ReadDelegate);
+        internal static readonly IntPtr ReleasePointer = Marshal.GetFunctionPointerForDelegate(ReleaseDelegate);
 
         public static VnResult BeginRegister(VnObjectId soundId, string path, out StreamSourceRequest request)
             => BeginFile(soundId, VnConstants.VN_STREAM_SOURCE_REGISTER, path, out request);

@@ -84,11 +84,107 @@ namespace Harken.Test
             Until(() => request.Query(out var info) == VnResult.VN_OK && info.state == VnConstants.VN_STREAM_SOURCE_READY,
                 "source did not become Ready");
         }
+        static readonly VnReadIsCancelledFn CancellationQuery = context => (uint)Marshal.ReadInt32(context);
+
+        static unsafe void PackResolvers()
+        {
+            byte[] bytes = new byte[64];
+            var probe = new Probe { AllowRead = 1 };
+            string opened = null;
+            StreamReadCancellation openView = null;
+            PackStreamOpen open = (path, revision, length, cancellation) =>
+            {
+                opened = path; openView = cancellation;
+                Check(revision == 91 && length == 64, "expected media identity reaches opener");
+                return new Provider(bytes, probe);
+            };
+            object identity = new object();
+            var binding = new PackStreamBinding(identity, "French", 1, null, open);
+            Check(PackStreamBinding.Same(binding, new PackStreamBinding(identity, "French", 1, null, open)),
+                "identical capture source can keep its generation");
+            Check(!PackStreamBinding.Same(binding, new PackStreamBinding(identity, "", 1, null, open)) &&
+                !PackStreamBinding.Same(binding, new PackStreamBinding(identity, "French", 2, null, open)),
+                "fallback scope and publication revisions replace source identity");
+            var owner = new PackStreamBinding.NativeLease(binding);
+            var descriptor = owner.Descriptor;
+            var retain = Marshal.GetDelegateForFunctionPointer<VnPackStreamRetainFn>(descriptor.retain);
+            var release = Marshal.GetDelegateForFunctionPointer<VnByteSourceReleaseFn>(descriptor.release);
+            var invoke = Marshal.GetDelegateForFunctionPointer<VnPackStreamOpenFn>(descriptor.open);
+            Ok(retain(descriptor.userData), "native retain");
+            owner.Dispose(); owner.Dispose();
+            Collect();
+            int* cancellationFlag = stackalloc int[1];
+            cancellationFlag[0] = 0;
+            IntPtr cancellationPointer = (IntPtr)cancellationFlag;
+            var view = new VnReadCancellationViewV1
+            {
+                structSize = (uint)sizeof(VnReadCancellationViewV1), context = cancellationPointer,
+                isCancelled = Marshal.GetFunctionPointerForDelegate(CancellationQuery)
+            };
+            byte[] locator = System.Text.Encoding.UTF8.GetBytes("nested/Media.stream\0");
+            VnByteSourceDescV1 source = default;
+            fixed (byte* text = locator)
+            {
+                Ok(invoke(descriptor.userData, 7, (IntPtr)text, 91, 64, (IntPtr)(&view), (IntPtr)(&source)), "open retained Pack source");
+                Check(opened == "French/nested/Media.stream" && openView.IsCancellationRequested,
+                    "captured language scope and invalidated open cancellation");
+                Check(probe.Releases == 0, "open lease remains live");
+                var read = Marshal.GetDelegateForFunctionPointer<VnByteSourceReadAtFn>(source.readAt);
+                var close = Marshal.GetDelegateForFunctionPointer<VnByteSourceReleaseFn>(source.release);
+                byte* data = stackalloc byte[64];
+                uint count = 0;
+                Check(read(source.userData, 0, (IntPtr)data, 64, (IntPtr)(&count), (IntPtr)(&view)) == VnConstants.VN_BYTE_READ_OK && count == 17,
+                    "Pack source reuses bounded byte reads");
+                Check(probe.LastView.IsCancellationRequested, "read cancellation expires after callback");
+                probe.ThrowRead = 1;
+                Check(read(source.userData, 0, (IntPtr)data, 64, (IntPtr)(&count), (IntPtr)(&view)) == VnConstants.VN_BYTE_READ_IO_ERROR && count == 0,
+                    "read exception cannot cross native boundary");
+                probe.ThrowRelease = 1;
+                close(source.userData);
+                Check(probe.Releases == 1, "native close disposes once despite exception");
+                Marshal.WriteInt32(cancellationPointer, 1);
+                Check(invoke(descriptor.userData, 7, (IntPtr)text, 91, 64, (IntPtr)(&view), (IntPtr)(&source)) != VnResult.VN_OK && probe.Releases == 1,
+                    "cancelled open never calls provider");
+            }
+            release(descriptor.userData);
+
+            var rejectedProbe = new Probe { AllowRead = 1 };
+            var rejected = new PackStreamBinding(identity, "", 1, null, (path, revision, length, cancellation) =>
+            { Marshal.WriteInt32(cancellationPointer, 1); return new Provider(bytes, rejectedProbe); });
+            using (var rejectedOwner = new PackStreamBinding.NativeLease(rejected))
+            {
+                descriptor = rejectedOwner.Descriptor;
+                invoke = Marshal.GetDelegateForFunctionPointer<VnPackStreamOpenFn>(descriptor.open);
+                Marshal.WriteInt32(cancellationPointer, 0);
+                fixed (byte* text = locator)
+                    Check(invoke(descriptor.userData, 7, (IntPtr)text, 91, 64, (IntPtr)(&view), (IntPtr)(&source)) != VnResult.VN_OK,
+                        "cancellation after opener rejects lease");
+                Check(rejectedProbe.Releases == 1, "late cancellation disposes returned lease");
+            }
+            string root = Path.GetFullPath(Path.GetTempPath());
+            using (var paths = new PackStreamBinding.NativeLease(new PackStreamBinding(identity, "French", 0, root, null)))
+            {
+                descriptor = paths.Descriptor;
+                var resolve = Marshal.GetDelegateForFunctionPointer<VnPackStreamPathFn>(descriptor.path);
+                IntPtr output = IntPtr.Zero;
+                fixed (byte* text = locator)
+                    Ok(resolve(descriptor.userData, 7, (IntPtr)text, 91, 64, (IntPtr)(&output)), "resolve without opening file");
+                Check(Marshal.PtrToStringUTF8(output) == Path.GetFullPath(Path.Combine(root, "French/nested/Media.stream")),
+                    "directory source resolves captured scope");
+                byte[] bad = System.Text.Encoding.UTF8.GetBytes("../Escape.stream\0");
+                fixed (byte* text = bad)
+                    Check(resolve(descriptor.userData, 7, (IntPtr)text, 91, 64, (IntPtr)(&output)) != VnResult.VN_OK && output == IntPtr.Zero,
+                        "directory traversal refused");
+            }
+            Console.WriteLine("[Pack stream resolvers] scope, retention, cancellation, lease transfer and callback exceptions PASS.");
+        }
+
         internal static bool Run()
         {
             bool initialized = false;
             try
             {
+                PackResolvers();
                 // Produced by StreamRegister.SoundIdNamespaceIsSharedWithPCM
                 // using the native StreamBuilder, without a second format writer.
                 string path = Path.Combine(AppContext.BaseDirectory, "Fixtures", "StreamSource.stream");
