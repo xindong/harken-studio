@@ -21,6 +21,9 @@ struct TimelineVoiceInstallFacts {
     std::uint64_t streamSourceGeneration = 0;
     std::uint64_t streamLoopStartFrame = 0;
     std::uint64_t streamLoopEndFrame = 0;
+    // A streamed clip on a music track that rejoins its timeline after a
+    // starvation instead of resuming late.
+    bool timelineResync = false;
     VnObjectId soundId{};
     VnObjectId outputBusId{};
     std::uint64_t sourceStartFrame = 0;

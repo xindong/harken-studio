@@ -720,6 +720,29 @@ public:
                     std::uint64_t sourceFrame,
                     const StreamSeekHandoffSnapshot* stream = nullptr) noexcept;
 
+    // Timeline resync for streamed clips (see VoiceRenderContext). Logic
+    // enables it while the slot is still private. Audio publishes every latch
+    // and every missed rejoin as a new serial; logic answers one serial with
+    // one prepared replacement ring and the timeline frame it switches in at.
+    struct StreamResyncView {
+        VnVoiceHandle handle = 0;
+        std::uint64_t serial = 0;
+        bool latched = false;
+        bool mappable = false;
+        double ratio = 1.0;
+        std::uint64_t timelineAnchor = 0;
+        std::uint64_t sourceAnchor = 0;
+        std::uint64_t endFrame = 0;
+    };
+    bool EnableStreamResync(VnVoiceHandle handle) noexcept;
+    bool ReadStreamResync(VnVoiceHandle handle, StreamResyncView* out) const noexcept;
+    bool PostStreamResync(VnVoiceHandle handle, std::uint64_t serial,
+                          std::uint64_t ticket, std::uint64_t token,
+                          std::uint64_t frame) noexcept;
+    void AttachStreamSeekHandoffs(StreamSeekHandoffTable* table) noexcept {
+        m_streamSeekHandoffs = table;
+    }
+
     // Resolves a handle to its live slot; nullptr when the handle is stale.
     // Internal surface (host/tests); public operations go through play/stop.
     // On the logic thread the pointer may be used only as a liveness
@@ -1047,6 +1070,18 @@ private:
         MonitorVoiceControlBinding monitorControl{};
         bool monitorSourceTerminalPublished = false;
         std::atomic<std::uint64_t> streamRingToken{0};
+        std::atomic<bool> resyncEnabled{false};
+        std::atomic<std::uint64_t> resyncSerial{0};
+        std::atomic<bool> resyncLatched{false};
+        std::atomic<bool> resyncMappable{false};
+        std::atomic<std::uint64_t> resyncRatioBits{0};
+        std::atomic<std::uint64_t> resyncTimelineAnchor{0};
+        std::atomic<std::uint64_t> resyncSourceAnchor{0};
+        std::atomic<std::uint64_t> resyncEndFrame{0};
+        std::atomic<std::uint64_t> resyncRequestSerial{0};
+        std::atomic<std::uint64_t> resyncRequestTicket{0};
+        std::atomic<std::uint64_t> resyncRequestFrame{0};
+        std::atomic<std::uint64_t> resyncRequestToken{0};
         mutable std::atomic<std::uint64_t> renderedState{0};
         VoiceRenderContext render;
         // Only logic resizes this storage while the slot is private. Physical
@@ -1098,6 +1133,11 @@ private:
         VariableWeightControlIdentity owner, bool create) noexcept;
     void PrepareFirstOutputTimelineWeights(Slot& slot) noexcept;
     static bool FirstOutputProtected(const Slot& slot) noexcept;
+    void ServiceStreamResync(std::uint32_t slotIndex, Slot& slot,
+                             std::uint32_t blockFrames) noexcept;
+    void PublishStreamResync(Slot& slot) noexcept;
+    void SwitchStreamRing(std::uint32_t slotIndex, Slot& slot, std::uint64_t sourceFrame,
+                          const StreamSeekHandoffSnapshot& stream) noexcept;
 
     Slot* ResolveTimelineReservation(const VoiceTimelineReservation& reservation) noexcept;
 
@@ -1243,6 +1283,7 @@ private:
     std::atomic<void (*)(void*)> m_releaseHeldHookForTest{nullptr};
     std::atomic<void*> m_releaseHeldContextForTest{nullptr};
     TimelineArmTable* m_timelineArms = nullptr;
+    StreamSeekHandoffTable* m_streamSeekHandoffs = nullptr;
     const SourceCommandInstallProof* m_commandMetadataProof = nullptr;
     std::atomic<std::uint64_t> m_liveOriginalVoiceOwners{0};
     std::uint64_t m_nextOriginalBodyMarker = 1;

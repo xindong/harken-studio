@@ -8071,6 +8071,7 @@ Destination CopyTimelineVoiceInstallFacts(const Source& source) noexcept {
     facts.streamSourceGeneration = source.streamSourceGeneration;
     facts.streamLoopStartFrame = source.streamLoopStartFrame;
     facts.streamLoopEndFrame = source.streamLoopEndFrame;
+    facts.timelineResync = source.timelineResync;
     facts.soundId = source.soundId;
     facts.outputBusId = source.outputBusId;
     facts.sourceStartFrame = source.sourceStartFrame;
@@ -8534,6 +8535,24 @@ enum class TimelineVoiceInstallPublication : std::uint8_t {
     OnInstallation
 };
 
+void TrackStreamResync(harken::Engine& engine, VnVoiceHandle handle,
+    const harken::TimelineVoiceInstallFacts& install, std::uint32_t sampleRate,
+    std::uint32_t prebufferFrames) noexcept {
+    const auto index = static_cast<std::uint32_t>(handle);
+    if (index >= engine.streamResyncs.size()) return;
+    auto& row = engine.streamResyncs[index];
+    // A reused slot cannot still be rendering the previous voice.
+    if (row.token != 0) (void)engine.streamSeekHandoffs.Abandon(row.token);
+    if (row.ticket != 0) engine.streamSeekHandoffs.ReleaseTicket(row.ticket);
+    row = {};
+    row.handle = handle;
+    row.fileIndex = install.streamFileIndex;
+    row.sampleRate = sampleRate;
+    row.prebufferFrames = prebufferFrames;
+    row.contentRevision = install.streamContentRevision;
+    row.frameCount = install.streamFrameCount;
+}
+
 TimelineVoiceInstallResult InstallTimelineVoiceStart(
     harken::Engine& engine, const harken::TimelineVoiceInstallInput& input,
     harken::ProgramGeneration programGeneration, std::uint64_t startFrame,
@@ -8835,6 +8854,8 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
             } else if (!engine.voices.BindStreamRingToken(render, owned.ring, owned.ringToken)) {
                 // PlayStream transferred retirement responsibility to the voice.
                 play = VN_DEVICE_ERROR;
+            } else if (install.timelineResync && engine.voices.EnableStreamResync(render)) {
+                TrackStreamResync(engine, render, install, streamFacts.sampleRate, prebufferFrames);
             }
         }
     } else {
@@ -22872,7 +22893,7 @@ harken::PlayableStartStatus CaptureTimelineVoiceInstallFromCut(
     harken::TimelineSemanticTarget finalTarget,
     harken::CapturedTimelineVoiceInstall* out,
     std::uint64_t authoredDurationFrames = UINT64_MAX,
-    std::uint64_t sourceOutputOffsetFrames = 0) noexcept {
+    std::uint64_t sourceOutputOffsetFrames = 0, bool timelineClip = false) noexcept {
     if (out == nullptr || harken::memguard::IsAudioTagged())
         return harken::PlayableStartStatus::InvalidInput;
     ResolvedTimelineVoiceInstallSource source;
@@ -22886,6 +22907,7 @@ harken::PlayableStartStatus CaptureTimelineVoiceInstallFromCut(
             facts.target = finalTarget;
             facts.authoredDurationFrames = authoredDurationFrames;
             facts.sourceOutputOffsetFrames = sourceOutputOffsetFrames;
+            facts.timelineResync = timelineClip && facts.streamed && facts.loopCount == 1u;
             return PopulateTimelineVoiceInstallColumns(
                 engine, cut, source, bindings, path, sends, effects);
         }, out);
@@ -22916,7 +22938,8 @@ harken::PlayableStartStatus CaptureScheduleLeafStart(
     const auto duration = materialized.endOffsetFrames == UINT64_MAX ? UINT64_MAX :
         materialized.endOffsetFrames - materialized.startOffsetFrames;
     return CaptureTimelineVoiceInstallFromCut(
-        engine, cut, leaseOrNull, true, target, out, duration, materialized.sourceOutputOffsetFrames);
+        engine, cut, leaseOrNull, true, target, out, duration, materialized.sourceOutputOffsetFrames,
+        materialized.pathTrackIds[materialized.selectionCount - 1u] != VnObjectId{});
 }
 
 harken::PlayableStartStatus BuildScheduleLeafStart(
@@ -37505,6 +37528,71 @@ bool ScheduleSourcePreparationHorizon(harken::Engine& engine, std::uint64_t* hor
     if (lead > UINT64_MAX - floor || floor + lead > UINT64_MAX - (block - 1u)) return false;
     *horizon = ((floor + lead + block - 1u) / block) * block;
     return true;
+}
+
+// Answers each new resync serial with one replacement ring prepared at the
+// source frame the voice's timeline reaches at the first preparable boundary.
+// A boundary past the clip end leaves the voice silent until it ends.
+void ServiceStreamResyncs(harken::Engine& engine) noexcept {
+    constexpr std::uint64_t kResyncTicketBit = UINT64_C(1) << 63;
+    for (auto& row : engine.streamResyncs) {
+        if (row.handle == 0) continue;
+        harken::VoicePool::StreamResyncView view;
+        if (!engine.voices.ReadStreamResync(row.handle, &view)) {
+            if (row.token != 0) (void)engine.streamSeekHandoffs.Abandon(row.token);
+            if (row.ticket != 0) engine.streamSeekHandoffs.ReleaseTicket(row.ticket);
+            row = {};
+            continue;
+        }
+        if (row.ticket != 0 && (!view.latched || view.serial != row.servedSerial)) {
+            engine.streamSeekHandoffs.ReleaseTicket(row.ticket);
+            row.ticket = 0;
+            row.token = 0;
+        }
+        if (!view.latched || view.serial == row.servedSerial) continue;
+        std::uint64_t frame = 0;
+        if (!view.mappable || !ScheduleSourcePreparationHorizon(engine, &frame) ||
+            frame < view.timelineAnchor || frame >= view.endFrame) {
+            row.servedSerial = view.serial;
+            continue;
+        }
+        const auto target = view.sourceAnchor + static_cast<std::uint64_t>(
+            std::llround(static_cast<double>(frame - view.timelineAnchor) * view.ratio));
+        std::uint64_t oldRingToken = 0;
+        if (target >= row.frameCount) {
+            row.servedSerial = view.serial;
+            continue;
+        }
+        if (!engine.voices.CaptureStreamRingToken(row.handle, &oldRingToken) ||
+            engine.streams.FreeSlotCount() <= engine.pendingStreamReservations) continue;
+        std::uint32_t slot = UINT32_MAX;
+        harken::StreamRing* ring = nullptr;
+        std::uint64_t ringToken = 0;
+        VnResult prepared = VN_DEVICE_ERROR;
+        try {
+            prepared = engine.streams.PrepareSeekSlot(row.fileIndex, row.contentRevision, target,
+                row.prebufferFrames, &slot, &ring, &ringToken);
+        } catch (...) {
+            prepared = VN_DEVICE_ERROR;
+        }
+        if (prepared != VN_OK) continue;
+        const std::uint64_t ticket = kResyncTicketBit | ++engine.streamResyncTickets;
+        std::uint64_t token = 0;
+        if (!engine.streamSeekHandoffs.Prepare(ticket, row.handle, oldRingToken, ring, ringToken,
+                row.fileIndex, row.contentRevision, target, row.frameCount, row.sampleRate,
+                std::min(row.prebufferFrames, ring->capacity), &token)) {
+            (void)engine.streams.RetirePreparedSlot(ring, ringToken);
+            continue;
+        }
+        if (!engine.voices.PostStreamResync(row.handle, view.serial, ticket, token, frame)) {
+            (void)engine.streamSeekHandoffs.Abandon(token);
+            engine.streamSeekHandoffs.ReleaseTicket(ticket);
+            continue;
+        }
+        row.servedSerial = view.serial;
+        row.ticket = ticket;
+        row.token = token;
+    }
 }
 
 // A selectable switch boundary leaves a streamed target the same preparation
@@ -110989,6 +111077,7 @@ VnResult Vn_Update(void) {
      * integrator with nothing but sound that stopped. */
     engine->streams.ReclaimAfterWorkerFailure();
     engine->streams.ServiceTransferredPreparations();
+    ServiceStreamResyncs(*engine);
     if (engine->streams.ConsumeWorkerFailureForLog()) {
         harken::LogRecord record{};
         record.level = VN_LOG_ERROR;

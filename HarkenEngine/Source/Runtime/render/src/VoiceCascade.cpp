@@ -584,6 +584,8 @@ bool PreparePlainPcm(const VoiceRenderContext& ctx, std::uint32_t blockFrames,
         ctx.shelfEnabled || ctx.shelfTransition.transitioning || ctx.shelfGlide.active ||
         ctx.highShelfEnabled || ctx.highShelfTransition.transitioning || ctx.highShelfGlide.active ||
         ctx.fading || ctx.timelineStopPending || ctx.timelineFallbackStopActive ||
+        ctx.resyncLatched || ctx.resyncFadeInDone < ctx.resyncFadeFrames ||
+        ctx.resyncFadeOutTotal != 0 ||
         ctx.authoredRootStopApplied || ctx.timelineEvents.eventCount != 0 ||
         ctx.timelineEnvelopes[0].active || ctx.timelineEnvelopes[1].active ||
         ctx.sourceExits != nullptr ||
@@ -995,6 +997,22 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
     // the next block retries identically (sample-accurate start included);
     // only the observational taps update, to report the silence. The
     // arena's overflow counter records the event.
+    if (ctx.resyncOnStarve && !ctx.resyncLatched && ctx.resyncFadeOutTotal == 0 &&
+        ctx.streamRing != nullptr && ctx.streamGateOpen && !ctx.streamRing->SourceEnded()) {
+        const double ratio = ctx.resampler.CurrentRatio();
+        const double buffered = static_cast<double>(ctx.streamRing->ReadAvailable()) +
+            static_cast<double>(ctx.resampler.writeIndex - ctx.resampler.readIndex);
+        const double available = ratio > 0.0 ? buffered / ratio : 0.0;
+        // A just-opened prebuffer gate must not read as an imminent underrun.
+        const std::uint32_t fade = std::max(1u, std::min(ctx.resyncFadeFrames, ctx.prebufferTargetFrames / 2u));
+        // Blocks drain whole, so the decision is taken one block early.
+        if (available < static_cast<double>(2u * blockFrames + fade)) {
+            ctx.resyncFadeOutTotal = static_cast<std::uint32_t>(std::clamp(
+                available - static_cast<double>(kResampleHistoryPad), 1.0,
+                static_cast<double>(fade)));
+            ctx.resyncFadeOutDone = 0;
+        }
+    }
     ctx.cascade.plainPcmCandidate =
         PreparePlainPcm(ctx, blockFrames, offset, ctx.cascade.plainPcmFeedFrames);
     float* scratch[kMaxChannels] = {};
@@ -1152,7 +1170,29 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
 
     // --- source decode + resample (single forward pass) ---
     std::uint32_t produced = 0;
-    while (produced < sourceTarget) {
+    // A latched resync voice renders silence for its moving timeline until a
+    // prepared ring switches in, or until its clip would have ended.
+    std::uint32_t resyncSwitchAt = UINT32_MAX;
+    bool resyncEnded = false;
+    if (ctx.resyncLatched) {
+        std::uint32_t silent = sourceTarget;
+        if (ctx.resyncSwitchOffset != UINT32_MAX) {
+            silent = std::min(sourceTarget, ctx.resyncSwitchOffset > offset
+                ? ctx.resyncSwitchOffset - offset : 0u);
+            resyncSwitchAt = silent;
+            ctx.resyncSwitchOffset = UINT32_MAX;
+            ctx.resyncLatched = false;
+            ctx.resyncFadeInDone = 0;
+        } else if (ctx.resyncEndFrame < sourceBlockStart + sourceTarget) {
+            silent = ctx.resyncEndFrame > sourceBlockStart
+                ? static_cast<std::uint32_t>(ctx.resyncEndFrame - sourceBlockStart) : 0u;
+            resyncEnded = true;
+        }
+        for (std::uint32_t ch = 0; ch < channels; ++ch)
+            std::fill_n(scratch[ch] + offset, silent, 0.0f);
+        produced = silent;
+    }
+    while (!ctx.resyncLatched && produced < sourceTarget) {
         produced += ctx.resampler.Produce(scratch, offset + produced,
                                           sourceTarget - produced);
         if (produced >= sourceTarget) {
@@ -1166,6 +1206,62 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
         }
     }
     ctx.logicalSourceOutputFramesThisBlock = produced;
+    if (ctx.resyncFadeInDone < ctx.resyncFadeFrames && !ctx.resyncLatched) {
+        const std::uint32_t begin = resyncSwitchAt == UINT32_MAX ? 0u : resyncSwitchAt;
+        const std::uint32_t count = std::min(produced - std::min(produced, begin),
+            ctx.resyncFadeFrames - ctx.resyncFadeInDone);
+        const float step = 1.0f / static_cast<float>(ctx.resyncFadeFrames);
+        for (std::uint32_t ch = 0; ch < channels; ++ch)
+            for (std::uint32_t i = 0; i < count; ++i)
+                scratch[ch][offset + begin + i] *= static_cast<float>(ctx.resyncFadeInDone + i + 1u) * step;
+        ctx.resyncFadeInDone += count;
+    }
+    const std::uint32_t dataBegin = resyncSwitchAt == UINT32_MAX ? 0u : resyncSwitchAt;
+    if (ctx.resyncFadeOutTotal != 0 && !ctx.resyncLatched) {
+        const float step = 1.0f / static_cast<float>(ctx.resyncFadeOutTotal + 1u);
+        for (std::uint32_t i = dataBegin; i < produced; ++i) {
+            const std::uint32_t k = ctx.resyncFadeOutDone + (i - dataBegin);
+            const float gain = k >= ctx.resyncFadeOutTotal ? 0.0f
+                : static_cast<float>(ctx.resyncFadeOutTotal - k) * step;
+            for (std::uint32_t ch = 0; ch < channels; ++ch) scratch[ch][offset + i] *= gain;
+        }
+        ctx.resyncFadeOutDone += produced - std::min(produced, dataBegin);
+    }
+    const bool resyncFadedOut = ctx.resyncFadeOutTotal != 0 &&
+        ctx.resyncFadeOutDone >= ctx.resyncFadeOutTotal;
+    if (ctx.resyncOnStarve && !ctx.resyncLatched && ctx.streamRing != nullptr &&
+        ctx.streamGateOpen && (produced < sourceTarget || resyncFadedOut) &&
+        !ctx.streamRing->SourceEnded() && !ctx.resampler.Exhausted()) {
+        // The source is still live but the ring cannot keep up: fade out,
+        // latch, and pin where the timeline would find the source.
+        if (ctx.resyncFadeOutTotal == 0) {
+            const std::uint32_t fade = std::min(produced - std::min(produced, dataBegin),
+                ctx.resyncFadeFrames);
+            const float step = 1.0f / static_cast<float>(fade + 1u);
+            for (std::uint32_t ch = 0; ch < channels; ++ch)
+                for (std::uint32_t i = 0; i < fade; ++i)
+                    scratch[ch][offset + produced - fade + i] *= static_cast<float>(fade - i) * step;
+        }
+        ctx.resyncFadeOutTotal = 0;
+        const std::uint64_t local = ctx.resampler.SourceFrame();
+        const std::uint64_t advance = local > kResampleHistoryPad ? local - kResampleHistoryPad : 0u;
+        const std::uint64_t source = std::min(ctx.streamFrameCount,
+            ctx.streamActivationStartFrame + std::min(advance, ctx.streamFrameCount));
+        const double ratio = ctx.resampler.CurrentRatio();
+        ctx.resyncRatio = ratio;
+        ctx.resyncMappable = ratio > 0.0 && ratio == ctx.resampler.TargetRatio() &&
+            ctx.resampler.RampFramesRemaining() == 0;
+        ctx.resyncTimelineAnchor = sourceBlockStart + produced;
+        ctx.resyncSourceAnchor = source;
+        const double remaining = ratio > 0.0
+            ? std::ceil(static_cast<double>(ctx.streamFrameCount - source) / ratio) : 0.0;
+        ctx.resyncEndFrame = ctx.resyncTimelineAnchor + static_cast<std::uint64_t>(remaining);
+        for (std::uint32_t ch = 0; ch < channels; ++ch)
+            std::fill_n(scratch[ch] + offset + produced, sourceTarget - produced, 0.0f);
+        produced = sourceTarget;
+        ctx.resyncLatched = true;
+        ctx.resyncLatchedThisBlock = true;
+    }
     const bool sourceExhausted = ctx.resampler.Exhausted();
     const bool deadlineFallsInRenderedSpan =
         ctx.authoredSourceDeadlineFrame != UINT64_MAX &&
@@ -1181,11 +1277,11 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
         produced = sourceTarget;
     }
     const auto sourceBoundary = offset + produced;
-    const bool sourceEnded = sourceExhausted || authoredDeadlineReached;
+    const bool sourceEnded = sourceExhausted || authoredDeadlineReached || resyncEnded;
     auto sourceResult = SourceTerminalKind::None;
     if (sourceEnded) {
         sourceResult = SourceTerminalKind::Natural;
-        if (!authoredDeadlineReached && ctx.streamRing != nullptr) {
+        if (!authoredDeadlineReached && !resyncEnded && ctx.streamRing != nullptr) {
             switch (ctx.streamRing->TerminalReason()) {
             case StreamTerminalReason::NaturalEnd:
                 if (ctx.sourceTerminal != nullptr && ctx.sourceTerminalStreamGeneration !=

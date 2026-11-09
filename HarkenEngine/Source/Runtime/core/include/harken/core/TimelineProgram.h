@@ -196,6 +196,7 @@ struct TimelineVoiceInstallDesc {
     std::uint64_t streamSourceGeneration = 0;
     std::uint64_t streamLoopStartFrame = 0;
     std::uint64_t streamLoopEndFrame = 0;
+    bool timelineResync = false;
     std::uint32_t bindingCount = 0;
     TimelineVoiceBindingInstall bindingStorage[kMaxVoiceBindingInstanceSlots]{};
     PlaybackPath playbackPath{};

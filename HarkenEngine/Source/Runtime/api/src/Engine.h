@@ -7592,6 +7592,8 @@ public:
             !playablePropertyCutScratch.Reset(cutConfig)) {
             throw std::bad_alloc{};
         }
+        voices.AttachStreamSeekHandoffs(&streamSeekHandoffs);
+        streamResyncs.assign(voices.Capacity(), StreamResyncRow{});
         for (std::uint32_t bus = 0; bus < buses.BusCount(); ++bus) {
             if (buses.AliveAt(bus)) {
                 busTargets.InitializeBusGeneration(
@@ -15238,6 +15240,21 @@ public:
     ActionFiringTable actionFirings;
     ActionSeekTable actionSeeks;
     StreamSeekHandoffTable streamSeekHandoffs;
+    // Logic-side owner of timeline resync per voice slot: the stream facts a
+    // replacement ring needs and the one request outstanding for the voice.
+    struct StreamResyncRow {
+        VnVoiceHandle handle = 0;
+        std::uint32_t fileIndex = 0;
+        std::uint32_t sampleRate = 0;
+        std::uint32_t prebufferFrames = 0;
+        std::uint64_t contentRevision = 0;
+        std::uint64_t frameCount = 0;
+        std::uint64_t servedSerial = 0;
+        std::uint64_t ticket = 0;
+        std::uint64_t token = 0;
+    };
+    std::vector<StreamResyncRow> streamResyncs;
+    std::uint64_t streamResyncTickets = 0;
     ActionDeferredRecordTable actionDeferredRecords;
     ActionDeferredPairState lastDeferredPairFault{};
     VnResult lastDeferredPairFaultLeaseResult = VN_OK;
