@@ -44,7 +44,7 @@ const std::vector<InspectorSectionInfo>& inspectorSections()
         {PropertySection::Dimension, PropertyCategory::Basic, "dimensions", "Dimension"},
         {PropertySection::Label, PropertyCategory::Basic, "labels", "Label"},
         {PropertySection::Clip, PropertyCategory::Basic, "clips", "Clip"},
-        {PropertySection::Effect, PropertyCategory::Basic, "effects", "FX"},
+        {PropertySection::Effect, PropertyCategory::Basic, "effects", "Effect"},
         {PropertySection::Custom, PropertyCategory::Basic, "custom", "Custom"},
         {PropertySection::Output, PropertyCategory::Route, "output", "Output"},
         {PropertySection::Input, PropertyCategory::Route, "inputs", "Input"},

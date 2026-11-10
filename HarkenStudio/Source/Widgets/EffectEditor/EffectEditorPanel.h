@@ -4,9 +4,13 @@
 #include <QVariantMap>
 #include <QWidget>
 
+#include <array>
+#include <memory>
+
 namespace VNX {
 
 struct ProjectItem;
+class ParameterSlider;
 
 class EffectEditorPanel final : public QWidget
 {
@@ -14,6 +18,7 @@ class EffectEditorPanel final : public QWidget
 
 public:
     explicit EffectEditorPanel(QWidget* parent = nullptr);
+    ~EffectEditorPanel() override;
 
     int panelId() const { return panelId_; }
     void setPanelId(int id) { panelId_ = id; }
@@ -34,17 +39,26 @@ signals:
     void pinToggled(bool pinned);
 
 protected:
+    bool event(QEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
     void focusInEvent(QFocusEvent* event) override;
 
 private:
+    struct Selection;
+    static std::unique_ptr<Selection> resolveSelection(const ProjectItem* item, const QUuid& rowGuid);
     void installFocusFilterRecursively(QObject* root);
     void refreshEffect();
+    void cancelPendingEdits();
+    void commitParameter(size_t index, double value);
 
     int panelId_ = 0;
     bool pinned_ = false;
     QUuid ownerGuid_;
     QUuid rowGuid_;
+    QWidget* fields_ = nullptr;
+    std::array<ParameterSlider*, 2> parameters_{};
+    std::unique_ptr<Selection> selection_;
+    bool updating_ = false;
 };
 
 }

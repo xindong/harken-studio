@@ -28,6 +28,7 @@
 #include "../Components/VSpatial.h"
 #include "../Components/VBus.h"
 #include "../Components/VAction.h"
+#include "../Components/VEffect.h"
 #include "../Components/VSelection.h"
 #include "../Components/VSound.h"
 #include "../ContainerBehaviorSemantics.h"
@@ -1445,6 +1446,51 @@ bool claimsEffectsItemProperty(ProjectItem* item, const QString& propertyName)
         && item->comp<VMixNode>() != nullptr;
 }
 
+bool claimsEffectParameterItemProperty(ProjectItem* item, const QString& propertyName)
+{
+    return item->comp<VEffect>() && std::any_of(VEffect::schema().begin(), VEffect::schema().end(),
+        [&propertyName](const PropertyDescriptor& field) { return field.field == propertyName; });
+}
+
+ActionResult handleEffectParameterItemProperty(ProjectManager* manager, ProjectItem* item,
+                                               const QString& propertyName, const QJsonObject& args,
+                                               const QObject* originator)
+{
+    if (args.contains(QStringLiteral("platform_ids"))
+        || args.contains(QStringLiteral("override_operation")))
+        return {false, {}, "INVALID_ARGS", "Effect preset parameters are shared across platforms"};
+    auto* effect = item->comp<VEffect>();
+    auto candidate = *effect;
+    if (!args.value(QStringLiteral("value")).isDouble()
+        || !candidate.setField(propertyName, args.value(QStringLiteral("value")).toVariant()))
+        return {false, {}, "INVALID_ARGS", "Effect parameter is outside its valid range"};
+    ActionResult result;
+    result.success = true;
+    result.data = QJsonObject{{"property", propertyName},
+                              {"value", QJsonValue::fromVariant(candidate.getField(propertyName))}};
+    const auto before = effect->definition;
+    const auto after = candidate.definition;
+    if (before.toJson() == after.toJson()) return result;
+    const auto projectId = manager->currentProject()->projectId;
+    const auto apply = [manager, projectId, guid = item->guid](
+                           const EffectDefinition& definition, const QObject* origin) {
+        const auto* project = manager->currentProject();
+        if (!project || project->projectId != projectId) return;
+        auto* target = manager->findItemByGuid(guid);
+        auto* targetEffect = target ? target->comp<VEffect>() : nullptr;
+        if (!targetEffect) return;
+        targetEffect->definition = definition;
+        target->markDirty();
+        emit manager->itemPropertyChanged(target, QStringLiteral("parameters"), origin);
+    };
+    apply(after, originator);
+    result.undoFn = [apply, before] { apply(before, nullptr); };
+    result.redoFn = [apply, after] { apply(after, nullptr); };
+    result.undoText = QStringLiteral("Set %1").arg(propertyName);
+    result.authoringWriteSet = QSet<QUuid>{item->guid};
+    return result;
+}
+
 namespace {
 
 bool gridAxesAreUnique(const std::vector<QUuid>& axes)
@@ -2023,6 +2069,7 @@ const ItemPropertyRoute kItemPropertyRoutes[] = {
     {claimsTimelineItemProperty,      handleTimelineItemProperty},
     {claimsSelectionItemProperty,     handleSelectionItemProperty},
     {claimsEffectsItemProperty,       handleEffectsItemProperty},
+    {claimsEffectParameterItemProperty, handleEffectParameterItemProperty},
     {claimsAudioItemProperty,         handleAudioItemProperty},
 };
 

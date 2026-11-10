@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <utility>
 #include <vector>
 
 namespace VNX {
@@ -90,6 +91,7 @@ namespace EffectChainSemantics {
 QString typeName(EffectType type);
 QString displayName(EffectType type);
 std::optional<EffectType> parseType(const QString& value);
+const std::vector<std::pair<float, float>>& parameterRanges(EffectType type);
 int parameterCount(EffectType type);
 std::vector<float> defaultParameters(EffectType type);
 bool validate(const EffectEntry& entry, QString* diagnostic = nullptr);

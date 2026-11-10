@@ -7,7 +7,7 @@
 #include <set>
 
 namespace VNX {
-namespace {
+namespace EffectChainSemantics {
 
 const std::vector<std::pair<float, float>>& parameterRanges(EffectType type)
 {

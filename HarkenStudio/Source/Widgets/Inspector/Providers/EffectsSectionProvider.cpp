@@ -460,7 +460,7 @@ private:
                 row->setObjectName(QStringLiteral("effectRow"));
                 row->setProperty("effectGuid", guid);
                 row->setProperty("lastRow", index + 1 == effects.size());
-                row->setProperty("searchText", tr("FXs Active") + QLatin1Char(' ') + name);
+                row->setProperty("searchText", tr("Effects Active") + QLatin1Char(' ') + name);
                 auto* rowLayout = new QHBoxLayout(row);
                 rowLayout->setContentsMargins(0, 0, 0, 0);
                 rowLayout->setSpacing(0);

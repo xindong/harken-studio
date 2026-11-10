@@ -14,7 +14,7 @@ inline PropertyDescriptor effectsInspectorDescriptor()
     effects.field = QStringLiteral("effects");
     effects.ownerComponent = ComponentType::MixNode;
     effects.type = PropType::List;
-    effects.label = QStringLiteral("FXs");
+    effects.label = QStringLiteral("Effects");
     effects.section = PropertySection::Effect;
     effects.flags.serialize = false;
 
