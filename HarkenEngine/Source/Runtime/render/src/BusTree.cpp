@@ -134,8 +134,9 @@ void BusTree::InitializeBusSlot(std::uint32_t busIndex, VnBusId id,
 void BusTree::RetireBusSlotEffects(Bus& bus) noexcept {
     for (std::uint32_t slot = 0; slot < m_fxSlots; ++slot) {
         if (bus.fxSlotEffectRef[slot].type != kEffectTypeNone) {
-            m_effectBank.RetireQueue().TryPush(
-                bus.fxSlotEffectRef[slot]);
+            const bool retired = m_effectBank.Retire(bus.fxSlotEffectRef[slot]);
+            assert(retired && "effect retirement lane must hold every assigned row");
+            (void)retired;
             bus.fxSlots[slot] = InsertEffect{};
             bus.fxSlotEffectRef[slot] = EffectInstanceRef{};
         }
@@ -1513,7 +1514,9 @@ void BusTree::ApplySetBusEffect(std::uint32_t busIndex, std::uint32_t slot,
         // Not audio-visible yet (never reached in practice; a bus's effect
         // command drains after its create swap) or out of range: retire the
         // unused instance rather than leak it (the audio thread never frees).
-        m_effectBank.RetireQueue().TryPush(incoming);
+        const bool retired = m_effectBank.Retire(incoming);
+        assert(retired && "effect retirement lane must hold every assigned row");
+        (void)retired;
         return;
     }
     Bus& bus = m_buses[busIndex];
@@ -1529,7 +1532,9 @@ void BusTree::ApplySetBusEffect(std::uint32_t busIndex, std::uint32_t slot,
             harken::monitor::NoteExactInstanceRetired(
                 VN_MONITOR_TAP_EFFECT_SLOT_OUTPUT, effectHandle, effectGeneration);
         }
-        m_effectBank.RetireQueue().TryPush(bus.fxSlotEffectRef[slot]);
+        const bool retired = m_effectBank.Retire(bus.fxSlotEffectRef[slot]);
+        assert(retired && "effect retirement lane must hold every assigned row");
+        (void)retired;
     }
     bus.fxSlots[slot] =
         BuildEffect(effectType, incomingState);
@@ -1561,7 +1566,9 @@ void BusTree::ApplyClearBusEffect(std::uint32_t busIndex, std::uint32_t slot,
             harken::monitor::NoteExactInstanceRetired(
                 VN_MONITOR_TAP_EFFECT_SLOT_OUTPUT, effectHandle, effectGeneration);
         }
-        m_effectBank.RetireQueue().TryPush(bus.fxSlotEffectRef[slot]);
+        const bool retired = m_effectBank.Retire(bus.fxSlotEffectRef[slot]);
+        assert(retired && "effect retirement lane must hold every assigned row");
+        (void)retired;
         bus.fxSlots[slot] = InsertEffect{};
         bus.fxSlotEffectRef[slot] = EffectInstanceRef{};
     }

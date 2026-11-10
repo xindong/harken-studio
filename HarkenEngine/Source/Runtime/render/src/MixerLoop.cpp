@@ -884,7 +884,7 @@ bool MixerLoop::DrainOriginalSource(std::uint64_t blockIndex, std::uint64_t& owe
             assert(owned < row->incomingCount_);
             const bool handedOff = applyMetadata
                 ? m_voices.ApplyOwnedVoiceEffect(effect.handle, effect.slot, incoming)
-                : registry.effects_.RetireQueue().TryPush(incoming);
+                : registry.effects_.Retire(incoming);
             if (!handedOff) return defer();
             row->incomingDone_[owned] = true;
         } else if (applyMetadata && command.opcode == kOpcodeClearVoiceEffect) {
@@ -904,7 +904,7 @@ bool MixerLoop::DrainOriginalSource(std::uint64_t blockIndex, std::uint64_t& owe
     }
     for (std::uint32_t i = 0; i < row->incomingCount_; ++i) {
         if (row->incomingDone_[i]) continue;
-        if (!registry.effects_.RetireQueue().TryPush(row->incoming_[i])) return defer();
+        if (!registry.effects_.Retire(row->incoming_[i])) return defer();
         row->incomingDone_[i] = true;
     }
     if (row->disposition_ == Registry::Disposition::Apply) {

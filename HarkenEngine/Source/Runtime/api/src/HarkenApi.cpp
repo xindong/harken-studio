@@ -8430,10 +8430,7 @@ VnResult PreflightTimelineVoiceStart(
                 ++sameTypeDemand;
             }
         }
-        const std::uint32_t capacity =
-            engine.effectBank.CapacityOf(source.type);
-        const std::uint32_t inUse = engine.effectBank.InUseOf(source.type);
-        if (capacity < inUse || sameTypeDemand > capacity - inUse) {
+        if (!engine.effectBank.CanAdmit(source.type, sameTypeDemand)) {
             return VN_BACKPRESSURE;
         }
     }
@@ -23308,10 +23305,7 @@ harken::PlayableStartStatus PreflightScheduleLeafStartsImpl(
                     }
                 }
             }
-            const std::uint32_t capacity =
-                engine.effectBank.CapacityOf(type);
-            const std::uint32_t inUse = engine.effectBank.InUseOf(type);
-            if (capacity < inUse || demand > capacity - inUse) {
+            if (!engine.effectBank.EnsureAvailable(type, demand)) {
                 return harken::PlayableStartStatus::Backpressure;
             }
         }
@@ -64262,7 +64256,8 @@ Engine::PendingOrdinarySelectionResult Engine::ServicePendingOrdinarySelections(
             std::uint32_t demand = 1;
             for (std::uint32_t prior = 0; prior < effect; ++prior)
                 demand += voice.effects[prior].type == voice.effects[effect].type;
-            if (demand > effectBank.CapacityOf(voice.effects[effect].type)) return reject(VN_INVALID_CONFIG);
+            const auto limit = effectBank.ConfiguredLimitOf(voice.effects[effect].type);
+            if (limit != 0 && demand > limit) return reject(VN_INVALID_CONFIG);
         }
         const auto preflight = PreflightTimelineVoiceStart(*this, voice);
         if (preflight != VN_OK && !temporary(preflight)) return reject(preflight);
@@ -74886,8 +74881,7 @@ VnResult StageVoiceRecipe(
              recipe->installs) {
             demand += install.effectType == type ? 1u : 0u;
         }
-        if (demand > engine.effectBank.CapacityOf(type) -
-                         engine.effectBank.InUseOf(type)) {
+        if (!engine.effectBank.EnsureAvailable(type, demand)) {
             return VN_NO_EFFECT;
         }
     }
@@ -76285,7 +76279,7 @@ PendingStartOutcome StartDeferredVoice(
                  rec.effects) {
                 if (staged.set && staged.ownsInstance) {
                     engine.effectBank.Recycle(harken::EffectInstanceRef{
-                        staged.type, staged.poolIndex});
+                        staged.type, staged.poolIndex, staged.poolGeneration});
                 }
             }
             if (rec.heldStreamRef) {
@@ -124967,10 +124961,9 @@ VnResult ScreenPackRevision(Engine& engine, const PackLogicRecord& record,
                 ++heldByRevision;
             }
         }
-        if (newInstances[type] >
-            engine.effectBank.CapacityOf(type) -
-                    engine.effectBank.InUseOf(type) +
-                heldByRevision) {
+        const auto remaining = newInstances[type] > heldByRevision
+            ? newInstances[type] - heldByRevision : 0u;
+        if (remaining != 0 && !engine.effectBank.EnsureAvailable(type, remaining)) {
             return VN_NO_EFFECT;
         }
     }

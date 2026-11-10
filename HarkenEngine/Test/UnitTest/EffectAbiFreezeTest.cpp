@@ -341,15 +341,14 @@ static_assert(std::is_trivially_copyable_v<harken::CommandRecord>,
 // --- effect-pool default capacities ---
 // Runtime EXPECTs rather than static_asserts: these are the internal
 // EngineConfig's default-resolved capacities (a zero in the public VnConfig
-// resolves to them), the values that size both pools when a caller leaves the
-// config fields unset.
+// selects automatic backing growth when a caller leaves the fields unset).
 TEST(EffectAbiFreeze, DefaultEffectPoolCapacities) {
     const harken::EngineConfig config;
-    EXPECT_EQ(8u, config.delayEffectPoolCapacity);
-    EXPECT_EQ(16u, config.toneEffectPoolCapacity);
-    EXPECT_EQ(16u, config.gainEffectPoolCapacity);
-    EXPECT_EQ(16u, config.limiterEffectPoolCapacity);
-    EXPECT_EQ(16u, config.compressorEffectPoolCapacity);
+    EXPECT_EQ(0u, config.delayEffectPoolCapacity);
+    EXPECT_EQ(0u, config.toneEffectPoolCapacity);
+    EXPECT_EQ(0u, config.gainEffectPoolCapacity);
+    EXPECT_EQ(0u, config.limiterEffectPoolCapacity);
+    EXPECT_EQ(0u, config.compressorEffectPoolCapacity);
 }
 
 } // namespace

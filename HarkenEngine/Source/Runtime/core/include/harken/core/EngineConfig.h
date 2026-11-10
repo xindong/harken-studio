@@ -166,11 +166,11 @@ struct EngineConfig {
     void* notificationUserData = nullptr;
     VnLogFn logCallback = nullptr;
     void* logUserData = nullptr;
-    std::uint32_t delayEffectPoolCapacity = 8;
-    std::uint32_t toneEffectPoolCapacity = 16;
-    std::uint32_t gainEffectPoolCapacity = 16;
-    std::uint32_t limiterEffectPoolCapacity = 16;
-    std::uint32_t compressorEffectPoolCapacity = 16;
+    std::uint32_t delayEffectPoolCapacity = 0;
+    std::uint32_t toneEffectPoolCapacity = 0;
+    std::uint32_t gainEffectPoolCapacity = 0;
+    std::uint32_t limiterEffectPoolCapacity = 0;
+    std::uint32_t compressorEffectPoolCapacity = 0;
     std::uint32_t dynamicRouteCapacity = 64;
     std::uint32_t dynamicRoutePlanPoolCapacity = 4;
     std::uint32_t dynamicBusTapCapacity = 16;

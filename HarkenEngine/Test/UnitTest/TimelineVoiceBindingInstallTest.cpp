@@ -42,7 +42,8 @@ struct InstalledVoiceStart {
     harken::EventTemplate event{};
     harken::ProgramView schedule{};
 
-    void Publish(harken::Engine& engine, VnVoiceHandle render, std::uint64_t frames) {
+    void Publish(harken::Engine& engine, VnVoiceHandle render, std::uint64_t frames,
+                 bool deferPublication = false) {
         harken::EngineTimelineVoiceInstallIdentity installed{};
         ASSERT_TRUE(engine.CaptureTimelineVoiceInstallIdentity(render, &installed));
         payload.kind = harken::TimelineEventKind::Start;
@@ -63,6 +64,7 @@ struct InstalledVoiceStart {
         post.transportEpoch = engine.timelinePool.Epoch();
         post.logicCommitSequence = 1;
         ASSERT_EQ(harken::PostStatus::Reserved, engine.timelinePlanner.PostPlay(schedule, post).status);
+        if (deferPublication) return;
         engine.AcceptSourceCommandPublications();
         engine.timelinePlanner.PublishThrough(installed.onsetFrame + frames);
         engine.nullBackend.Pump(static_cast<std::uint32_t>(installed.onsetFrame / kBlock));
@@ -871,6 +873,64 @@ TEST(TimelineVoiceInstall, BorrowedInputCopiesOnlyNativeFactsAndKeepsBindingSnap
         EXPECT_EQ(1u, BindingInstanceCount(&engine, render));
         EXPECT_FALSE(engine.runtimeRecreateRequired);
     }
+}
+
+TEST(TimelineVoiceInstall, DefaultEffectBackingGrowsAcrossVoicesAndBusAndRetires) {
+    EngineSession session(TimelineInstallConfig(8, kBlock, kRate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
+    ASSERT_EQ(0u, engine.effectBank.CapacityOf(VN_EFFECT_LIMITER));
+    VnLimiterDesc limiter{};
+    limiter.structSize = sizeof(limiter);
+    limiter.ceilingDb = -12.0f;
+    limiter.releaseMs = 100.0f;
+    std::array<harken::TimelineVoiceEffectInstall, 8> effects{};
+    for (std::uint32_t slot = 0; slot < effects.size(); ++slot) {
+        ASSERT_EQ(VN_OK, Vn_SetBusEffect(VN_BUS_MASTER, slot, VN_EFFECT_LIMITER,
+            reinterpret_cast<const VnEffectDesc*>(&limiter)));
+        effects[slot].type = VN_EFFECT_LIMITER;
+        effects[slot].slot = slot;
+        effects[slot].descriptorSize = sizeof(limiter);
+        std::memcpy(effects[slot].descriptor, &limiter, sizeof(limiter));
+    }
+    harken::TimelineVoiceInstallFacts facts{};
+    facts.soundId = kSound;
+    facts.outputBusId = VN_BUS_MASTER;
+    facts.capturedMedia = engine.registry.Lookup(kSound);
+    const harken::TimelineVoiceInstallInput input{&facts, {}, {}, {}, effects};
+    std::array<InstalledVoiceStart, 3> starts{};
+    for (auto& start : starts) {
+        const auto parent = engine.playableInstances.Acquire(harken::PlayableKind::Sound, 0);
+        ASSERT_NE(0u, parent);
+        ASSERT_EQ(VN_OK, harken::test::PreflightTimelineVoiceStart(engine, input));
+        const auto result = harken::test::InstallTimelineVoiceStart(engine, input, parent, parent, parent, true,
+            engine.timelinePool.PublishCutoffFrame());
+        ASSERT_EQ(VN_OK, result.status);
+        ASSERT_NE(0u, result.renderHandle);
+        ASSERT_NO_FATAL_FAILURE(start.Publish(engine, result.renderHandle, kRate, true));
+    }
+    ASSERT_EQ(32u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+    EXPECT_GE(engine.effectBank.CapacityOf(VN_EFFECT_LIMITER), 32u);
+    engine.AcceptSourceCommandPublications();
+    const auto onset = starts.front().schedule.entryAnchorFrame;
+    engine.timelinePlanner.PublishThrough(onset + kRate);
+    engine.nullBackend.Pump(static_cast<std::uint32_t>(onset / kBlock) + 1);
+    const auto count = engine.nullBackend.BlockFrames() * engine.nullBackend.Channels();
+    const auto* output = engine.nullBackend.LastBlock();
+    EXPECT_TRUE(std::any_of(output, output + count,
+        [](float sample) { return std::abs(sample) > 0.01f; }));
+    const auto ceiling = std::pow(10.0f, limiter.ceilingDb / 20.0f);
+    for (std::uint32_t i = 0; i < count; ++i) EXPECT_LE(std::abs(output[i]), ceiling + 1e-5f);
+    engine.nullBackend.Pump(kRate / kBlock + 16);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(8u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+    for (std::uint32_t slot = 0; slot < effects.size(); ++slot)
+        ASSERT_EQ(VN_OK, Vn_ClearBusEffect(VN_BUS_MASTER, slot));
+    engine.nullBackend.Pump(2);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+    EXPECT_FALSE(engine.runtimeRecreateRequired);
 }
 
 TEST(TimelineVoiceInstall, OutputCropUsesBoundPitchAndPreservesLoopOutroSamples) {

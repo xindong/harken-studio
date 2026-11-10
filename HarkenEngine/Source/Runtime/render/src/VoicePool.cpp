@@ -4388,17 +4388,17 @@ bool VoicePool::ApplyOwnedVoiceEffect(VnVoiceHandle handle, std::uint32_t slot,
         // The voice ended between the logic-side Set and this apply: the
         // instance was acquired but never installed, so retire it here or it
         // would leak (the audio thread never frees; the logic side reclaims).
-        return m_effectBank.RetireQueue().TryPush(incoming);
+        return m_effectBank.Retire(incoming);
     }
     VoiceRenderContext& render = s->render;
     if (slot >= render.fxSlotCount) {
         // Out of range for this voice (validated logic-side; defensive):
         // retire the unused instance rather than drop it.
-        return m_effectBank.RetireQueue().TryPush(incoming);
+        return m_effectBank.Retire(incoming);
     }
     // In-place replace: whatever this slot held is retired for reclamation.
     if (render.fxSlotEffectRef[slot].type != kEffectTypeNone) {
-        if (!m_effectBank.RetireQueue().TryPush(render.fxSlotEffectRef[slot])) return false;
+        if (!m_effectBank.Retire(render.fxSlotEffectRef[slot])) return false;
     }
     render.fxSlots[slot] =
         BuildEffect(incoming.type, incomingState);
@@ -4430,7 +4430,7 @@ bool VoicePool::ApplyOwnedClearVoiceEffect(VnVoiceHandle handle, std::uint32_t s
         // block, so removing this slot immediately drops its contribution to
         // the remaining life (down to the surviving slots, or to Done when it
         // was the only one keeping the voice alive).
-        if (!m_effectBank.RetireQueue().TryPush(render.fxSlotEffectRef[slot])) return false;
+        if (!m_effectBank.Retire(render.fxSlotEffectRef[slot])) return false;
         render.fxSlots[slot] = InsertEffect{};
         render.fxSlotEffectRef[slot] = EffectInstanceRef{};
     }
@@ -5669,7 +5669,9 @@ void VoicePool::ReleaseSlot(Slot& slot, ReleaseThread thread) {
     for (std::uint32_t s = 0; s < slot.render.fxSlotCount; ++s) {
         if (slot.render.fxSlotEffectRef[s].type != kEffectTypeNone) {
             if (thread == ReleaseThread::Audio) {
-                m_effectBank.RetireQueue().TryPush(slot.render.fxSlotEffectRef[s]);
+                const bool retired = m_effectBank.Retire(slot.render.fxSlotEffectRef[s]);
+                assert(retired && "effect retirement lane must hold every assigned row");
+                (void)retired;
             } else {
                 // ReleaseHeld excludes readers of this slot. Logic must not
                 // become a second producer of the audio retirement ring.

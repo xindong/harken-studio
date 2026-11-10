@@ -218,9 +218,9 @@ typedef struct VnConfig {
     VnLogFn logCallback;     /* log-record sink, or NULL for none */
     void* logUserData;       /* passed through to logCallback verbatim */
     uint32_t delayEffectPoolCapacity; /* feedback-delay instances shared across
-                                       * all voice chains; 0 = 8 */
+                                       * all voice and bus chains; 0 = grow on demand */
     uint32_t toneEffectPoolCapacity;  /* three-band-tone instances shared across
-                                       * all voice chains; 0 = 16 */
+                                       * all voice and bus chains; 0 = grow on demand */
     uint32_t streamRingFrames;   /* per-stream ring capacity in frames;
                                   * 0 = 16384; rounded up to a power of two */
     uint32_t maxStreams;         /* stream slot capacity; 0 = 16. A streamed
@@ -359,17 +359,17 @@ typedef struct VnConfig {
      * config that leaves it zero behaves exactly as one built against an older
      * header vintage. */
     uint32_t gainEffectPoolCapacity; /* Gain insert-effect instances shared
-                                      * across all voice and bus chains; 0 = 16 */
+                                      * across all voice and bus chains; 0 = grow on demand */
     uint32_t reserved7;              /* keeps 8-byte alignment for future fields */
     /* Limiter insert-effect pool capacity (one struct-size vintage,
      * zero-means-default). A shorter struct omitting it reads the default. */
     uint32_t limiterEffectPoolCapacity; /* Limiter instances shared across all
-                                         * voice and bus chains; 0 = 16 */
+                                         * voice and bus chains; 0 = grow on demand */
     uint32_t reserved8;                 /* keeps 8-byte alignment for future fields */
     /* Compressor and Dynamic Modulation / Sidechain capacities. A shorter
      * struct omitting this vintage reads every field as its default. */
     uint32_t compressorEffectPoolCapacity; /* Compressor instances shared across
-                                            * voice and bus chains; 0 = 16 */
+                                            * voice and bus chains; 0 = grow on demand */
     uint32_t dynamicRouteCapacity;         /* effect-private dynamic routes;
                                             * 0 = 64 */
     uint32_t dynamicRoutePlanPoolCapacity; /* immutable route plans; 0 = 4 */
@@ -432,8 +432,9 @@ typedef struct VnConfig {
     uint32_t reserved12;                    /* must be 0 */
 } VnConfig;
 
-/* Create the engine and preallocate every pool. All capacity is fixed here;
- * nothing allocates on the audio thread afterwards. */
+/* Create the engine and initialize configured resources. Effect pool capacities
+ * are logical quotas when nonzero; their backing is prepared on demand on the
+ * logic thread. The audio thread never allocates. */
 VnResult Vn_Init(const VnConfig* config);
 
 /* Release the platform audio device while preserving the engine, mixer,
@@ -1190,17 +1191,17 @@ typedef struct VnVoiceSnapshot {
  * needs no snapshot layout change. */
 #define VN_MAX_EFFECT_TYPE_STATS 16
 
-/* One effect type's pool statistics. effectType is the VnEffectType the row
- * describes; capacity is that type's configured pool size; activeCount is how
- * many instances are live now; highWater is the most ever live at once;
- * refusalCount is the cumulative number of pool-exhaustion refusals for the
- * type (a Set refused because the pool was full). reserved0 is zero. */
+/* One effect type's pool statistics. Explicit capacity is the configured quota;
+ * automatic capacity is the number of fully backed rows, including free rows.
+ * activeCount includes prepared, queued and retired-but-not-reclaimed instances.
+ * highWater is the peak observed on live commit. refusalCount counts failed
+ * acquisitions (quota, backing allocation or identity exhaustion). */
 typedef struct VnEffectTypeStats {
     uint32_t effectType;   /* VnEffectType this row describes */
-    uint32_t capacity;     /* configured instances for this type */
-    uint32_t activeCount;  /* instances currently live */
+    uint32_t capacity;     /* explicit quota or automatic backing rows */
+    uint32_t activeCount;  /* issued instances not yet reclaimed */
     uint32_t highWater;    /* most instances ever live at once */
-    uint32_t refusalCount; /* cumulative pool-exhaustion refusals */
+    uint32_t refusalCount; /* cumulative acquisition refusals */
     uint32_t reserved0;    /* reserved, zero */
 } VnEffectTypeStats;
 
