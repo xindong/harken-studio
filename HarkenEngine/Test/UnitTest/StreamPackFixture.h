@@ -46,9 +46,13 @@ public:
         std::ifstream input(std::filesystem::path(reinterpret_cast<const char8_t*>(path.c_str())), std::ios::binary);
         if (!input) return VN_BAD_STREAM_FILE;
         const std::vector<std::uint8_t> bytes{std::istreambuf_iterator<char>(input), {}};
+        return AddStreamRange(id, ExternalPcmFixtureRange(bytes,
+            [path](auto) { return harken::OpenStreamByteSource(path.c_str()); }));
+    }
+
+    VnResult AddStreamRange(VnSoundId id, std::shared_ptr<const harken::PackMediaRange> range) {
         Row row;
-        row.range = ExternalPcmFixtureRange(bytes,
-            [path](auto) { return harken::OpenStreamByteSource(path.c_str()); });
+        row.range = std::move(range);
         const auto result = engine_.registry.PreparePackRangeSamples(id, row.range, &row.prepared);
         if (result != VN_OK) return result;
         row.facts = row.prepared.Facts();

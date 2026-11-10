@@ -24426,7 +24426,7 @@ TEST(PlayableStart, FutureStreamCohortWaitsForIndependentProvidersWithinPreparat
     struct Provider {
         std::vector<std::uint8_t> bytes;
         std::uint64_t payloadOffset = 0;
-        std::atomic<unsigned> payloadReads{0}, releases{0};
+        std::atomic<unsigned> payloadReads{0}, opens{0}, releases{0};
         std::atomic<bool> allowPayload{false};
         static std::int32_t Read(void* context, std::uint64_t offset, void* destination,
             std::uint32_t count, std::uint32_t* outRead, const VnReadCancellationViewV1* cancel) {
@@ -24466,6 +24466,8 @@ TEST(PlayableStart, FutureStreamCohortWaitsForIndependentProvidersWithinPreparat
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
         auto& engine = *session.Engine();
+        harkentest::StreamPackFixture pack(engine, "independent_stream_providers_pack");
+        std::array<std::shared_ptr<const harken::PackMediaRange>, 2> ranges;
         // PCM checks require completed quanta, independent of host worker scheduling.
         harken::detail::VoicePoolReleaseTestAccess::SetWorkerDeadline(
             engine.voices, harken::CpuClockTicksPerSecond());
@@ -24483,15 +24485,16 @@ TEST(PlayableStart, FutureStreamCohortWaitsForIndependentProvidersWithinPreparat
             harken::StreamHeader header{};
             ASSERT_TRUE(harken::ParseStreamHeader(provider.bytes.data(), &header));
             provider.payloadOffset = harken::ParseStreamTocEntry(provider.bytes.data() + header.tocOffset).payloadOffset;
-            const VnByteSourceDescV1 descriptor{sizeof(VnByteSourceDescV1), 0, provider.bytes.size(),
-                &provider, &Provider::Read, &Provider::Release};
-            auto source = std::make_shared<harken::HostStreamByteSource>(descriptor);
-            harken::StreamManager::SourceToken request;
-            ASSERT_EQ(VN_OK, engine.streams.BeginSource(sounds[index], source, false, 0, &request));
-            source->Adopt();
-            ASSERT_TRUE(waitFor([&] { return engine.streams.QuerySource(request) == harken::StreamManager::PreparationState::Ready; }));
-            ASSERT_EQ(VN_OK, engine.streams.TakeSource(request));
-            ASSERT_TRUE(engine.streams.FindFile(sounds[index], &original[index]));
+            ranges[index] = harkentest::ExternalPcmFixtureRange(provider.bytes, [&provider](auto) {
+                const VnByteSourceDescV1 descriptor{sizeof(VnByteSourceDescV1), 0, provider.bytes.size(),
+                    &provider, &Provider::Read, &Provider::Release};
+                auto source = std::make_shared<harken::HostStreamByteSource>(descriptor);
+                source->Adopt();
+                provider.opens.fetch_add(1, std::memory_order_release);
+                return source;
+            });
+            ASSERT_EQ(VN_OK, pack.AddStreamRange(sounds[index], ranges[index]));
+            ASSERT_EQ(VN_OK, engine.streams.ResolvePackSource(ranges[index], &original[index]));
             EXPECT_EQ(0u, provider.payloadReads.load(std::memory_order_acquire));
         }
         DirectCompositeTrackWorldImage image(original[0].contentRevision, original[1].contentRevision);
@@ -24519,11 +24522,12 @@ TEST(PlayableStart, FutureStreamCohortWaitsForIndependentProvidersWithinPreparat
         install.trackSchedules = &image.track;
         install.trackScheduleCount = 1;
         install.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(install);
-        ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, install).status);
+        ASSERT_EQ(VN_OK, pack.Activate(install, image.Root()));
+        ASSERT_EQ(VN_OK, pack.PrepareSources());
         harken::PlayableStartRequest request;
         request.root = image.Root();
-        const auto started = harken::StartPlayable(engine, request);
-        ASSERT_EQ(harken::PlayableStartStatus::Accepted, started.status);
+        const auto started = pack.Post();
+        ASSERT_EQ(VN_OK, started.result);
         const auto root = std::find_if(engine.playableServices.begin(), engine.playableServices.end(),
             [&](const auto& row) { return row.ownerInstance == started.instance; });
         ASSERT_NE(engine.playableServices.end(), root);
@@ -24538,7 +24542,7 @@ TEST(PlayableStart, FutureStreamCohortWaitsForIndependentProvidersWithinPreparat
             ASSERT_EQ(VN_OK, Vn_Update());
             for (std::size_t index = 0; index < providers.size(); ++index) {
                 harken::StreamManager::StreamFacts current{};
-                ASSERT_TRUE(engine.streams.FindFile(sounds[index], &current));
+                ASSERT_TRUE(engine.streams.FactsForFileIndex(original[index].fileIndex, &current));
                 EXPECT_EQ(original[index].fileIndex, current.fileIndex);
                 EXPECT_EQ(original[index].sourceGeneration, current.sourceGeneration);
                 EXPECT_EQ(original[index].contentRevision, current.contentRevision);
@@ -24598,8 +24602,12 @@ TEST(PlayableStart, FutureStreamCohortWaitsForIndependentProvidersWithinPreparat
         EXPECT_TRUE(waitFor([&] { engine.streams.SyncServe(); return engine.streams.FreeSlotCount() == config.maxStreams; }));
         EXPECT_FALSE(engine.runtimeRecreateRequired);
         for (std::size_t index = 0; index < providers.size(); ++index) {
-            EXPECT_EQ(VN_OK, harkentest::UnregisterFixtureStream(sounds[index]));
-            EXPECT_TRUE(waitFor([&] { return providers[index].releases.load(std::memory_order_acquire) == 1u; }));
+            EXPECT_GT(providers[index].opens.load(std::memory_order_acquire), 0u);
+            EXPECT_TRUE(waitFor([&] {
+                engine.streams.SyncServe();
+                return providers[index].releases.load(std::memory_order_acquire) ==
+                    providers[index].opens.load(std::memory_order_acquire);
+            }));
         }
     }
 }
@@ -24908,6 +24916,7 @@ static void CheckFutureStreamWithIndependentNativeVariable(bool earlyTerm, unsig
         harkentest::EngineSession session(config);
         ASSERT_EQ(VN_OK, session.InitResult());
         auto& engine = *session.Engine();
+        harkentest::StreamPackFixture pack(engine, "independent_native_variable_pack");
         const auto voicesBefore = engine.voices.AvailableSlotCount();
         std::vector<float> resident(1024, 0.0f), streamed(1024, 0.0f);
         for (std::size_t frame = 0; frame < 512; ++frame) {
@@ -24915,16 +24924,15 @@ static void CheckFutureStreamWithIndependentNativeVariable(bool earlyTerm, unsig
             streamed[512 + frame] = 0.5f;
         }
         const auto pcm = harkentest::InterleavedDesc(resident, 2, 48000);
-        ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &pcm));
+        ASSERT_EQ(VN_OK, pack.AddPcm(kSound, pcm));
         harkentest::StreamSpec spec;
         spec.soundId = kSecondSound;
         spec.channelCount = 2;
         const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "compose_independent_native_page.stream").string();
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, streamed));
-        ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(kSecondSound, path.c_str()));
-        harken::StreamManager::StreamFacts facts;
-        ASSERT_TRUE(engine.streams.FindFile(kSecondSound, &facts));
-        DirectCompositeTrackWorldImage image(engine.registry.Lookup(kSound).contentRevision, facts.contentRevision);
+        ASSERT_EQ(VN_OK, pack.AddStreamFile(kSecondSound, path));
+        const auto facts = pack.Facts(kSecondSound);
+        DirectCompositeTrackWorldImage image(pack.Facts(kSound).contentRevision, facts.contentRevision);
         constexpr auto streamingSlot = static_cast<std::size_t>(
             harken::playableproperties::PlayablePropertyIdV1::StreamingMode) - 1;
         image.properties[1].payload.presentMask |= UINT64_C(1) << streamingSlot;
@@ -24949,7 +24957,7 @@ static void CheckFutureStreamWithIndependentNativeVariable(bool earlyTerm, unsig
         image.track.placements = placements.data();
         image.track.placementCount = placements.size();
         image.track.scheduleSemanticFingerprint = harken::ComputeTrackScheduleFingerprintV1(image.track);
-        VariableControlWorldImage control(engine.registry.Lookup(kSound).contentRevision, image.world.generation);
+        VariableControlWorldImage control(pack.Facts(kSound).contentRevision, image.world.generation);
         control.properties[1].authoredStableOrder = 3;
         control.properties[1].programSemanticFingerprint = harken::ComputePlayablePropertyFingerprintV1(control.properties[1]);
         control.container.programSemanticFingerprint = control.properties[1].programSemanticFingerprint;
@@ -25000,12 +25008,13 @@ static void CheckFutureStreamWithIndependentNativeVariable(bool earlyTerm, unsig
         install.variables = &variable;
         install.variableCount = 1;
         install.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(install);
-        ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, install).status);
+        ASSERT_EQ(VN_OK, pack.Activate(install, image.Root()));
+        ASSERT_EQ(VN_OK, pack.PrepareSources());
         engine.streams.SetThrottled(true);
         harken::PlayableStartRequest request;
         request.root = image.Root();
-        const auto started = harken::StartPlayable(engine, request);
-        ASSERT_EQ(harken::PlayableStartStatus::Accepted, started.status);
+        const auto started = pack.Post();
+        ASSERT_EQ(VN_OK, started.result);
         auto root = std::find_if(engine.playableServices.begin(), engine.playableServices.end(),
             [&](const auto& row) { return row.ownerInstance == started.instance; });
         ASSERT_NE(engine.playableServices.end(), root);
@@ -25044,7 +25053,7 @@ static void CheckFutureStreamWithIndependentNativeVariable(bool earlyTerm, unsig
             engine.nullBackend.Pump(1);
         }
         EXPECT_EQ(readyBeforeDeadline, releasedBeforeDeadline);
-        ASSERT_FALSE(root->pendingDirectStartBinding);
+        ASSERT_FALSE(root->pendingImmediateScheduleAnchor);
         ASSERT_EQ(anchor, root->startFrame);
         if (earlyTerm) {
             ASSERT_NE(nullptr, root->scheduleAggregate);
@@ -25152,7 +25161,6 @@ static void CheckFutureStreamWithIndependentNativeVariable(bool earlyTerm, unsig
         EXPECT_FALSE(engine.runtimeRecreateRequired);
         engine.streams.SyncServe();
         EXPECT_EQ(config.maxStreams, engine.streams.FreeSlotCount());
-        EXPECT_EQ(VN_OK, harkentest::UnregisterFixtureStream(kSecondSound));
     }
 }
 
