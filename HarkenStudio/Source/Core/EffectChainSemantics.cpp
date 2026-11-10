@@ -76,7 +76,6 @@ QJsonValue EffectEntry::toJson() const
     else
         object[QStringLiteral("effectGuid")] = effectGuid.toString(QUuid::WithoutBraces);
     if (bypass) object[QStringLiteral("bypass")] = true;
-    if (wetDry != 1.0f) object[QStringLiteral("wetDry")] = wetDry;
     return object;
 }
 
@@ -91,17 +90,13 @@ EffectEntry EffectEntry::fromJson(const QJsonValue& value)
     const QJsonObject object = value.toObject();
     const auto mode = object.value(QStringLiteral("mode"));
     const bool isCustom = mode == QStringLiteral("custom");
-    const QJsonValue wetDry = object.value(QStringLiteral("wetDry"));
     const QJsonValue bypass = object.value(QStringLiteral("bypass"));
     if ((!mode.isUndefined() && mode != QStringLiteral("custom") && mode != QStringLiteral("preset"))
         || object.contains(QStringLiteral("type")) || object.contains(QStringLiteral("parameters"))
         || object.contains(QStringLiteral("effectRef"))
         || (isCustom ? object.contains(QStringLiteral("effectGuid"))
                      : object.contains(QStringLiteral("custom")))
-        || (!bypass.isUndefined() && !bypass.isBool())
-        || (!wetDry.isUndefined() && (!wetDry.isDouble()
-            || !std::isfinite(wetDry.toDouble())
-            || wetDry.toDouble() < 0.0 || wetDry.toDouble() > 1.0))) {
+        || (!bypass.isUndefined() && !bypass.isBool())) {
         entry.typed = false;
         entry.opaqueValue = value;
         return entry;
@@ -122,7 +117,6 @@ EffectEntry EffectEntry::fromJson(const QJsonValue& value)
         entry.effectGuid = QUuid::fromString(object.value(QStringLiteral("effectGuid")).toString());
     }
     entry.bypass = bypass.toBool();
-    entry.wetDry = static_cast<float>(wetDry.toDouble(1.0));
     entry.extensions = object;
     entry.extensions.remove(QStringLiteral("guid"));
     entry.extensions.remove(QStringLiteral("mode"));
@@ -234,10 +228,6 @@ bool validate(const EffectEntry& entry, QString* diagnostic)
         if (!validate(entry.custom, diagnostic)) return false;
     } else if (entry.mode != EffectMode::Preset || entry.effectGuid.isNull()) {
         if (diagnostic) *diagnostic = QStringLiteral("Effect reference is missing");
-        return false;
-    }
-    if (!std::isfinite(entry.wetDry) || entry.wetDry < 0.0f || entry.wetDry > 1.0f) {
-        if (diagnostic) *diagnostic = QStringLiteral("Effect wet/dry level is out of range");
         return false;
     }
     return true;

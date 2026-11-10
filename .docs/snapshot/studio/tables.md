@@ -25,7 +25,7 @@
 | C08 | 配置 | External Editor / Binding | 仅编辑本地贡献 |
 | C09 | 配置 | Container Selection Editor / Transition | # / Source / Exit / Fade Out / Target / Entry / Fade In；按匹配具体程度排序，默认规则最后 |
 | C12 | 配置 | Project Platform / Resample Policies | 按阈值排序，保留 Infinite 行 |
-| C13 | 配置 | Sound、Container、Layer、Track、Segment、Bus / FXs | Basic > FX；# / Effect / Level / Active；本地效果器链配置 |
+| C13 | 配置 | Sound、Container、Layer、Track、Segment、Bus / FXs | Basic > FX；# / Effect / Active；本地效果器链配置 |
 | D01 | 展示 | Bus Inspector / Inputs | 路由反向查询，无序号列 |
 | D02 | 展示 | Bus Inspector / Receives | 路由反向查询，# 仅展示行号，不提供行移动 |
 | D03 | 展示 | Control / Variables | 变量试听值及作用域 |
@@ -141,12 +141,11 @@
 
 | 项目 | 当前表现 |
 |---|---|
-| 位置与列 | Sound、Container、Layer、Track、Segment、Bus 的 Basic > FX；# / Effect / Level / Active |
+| 位置与列 | Sound、Container、Layer、Track、Segment、Bus 的 Basic > FX；# / Effect / Active |
 | 模式与增删 | 加号选择 Limiter 插入 Custom，或 Select Preset... 引用共享预设，允许重复引用；减号删除所选行，支持排序及撤销重做 |
 | Custom | 普通标签显示插件名称，右侧提供 detach 按钮；双击标签或单击 detach 打开 Effect Editor，单击标签不打开；独立 chevron 位于内容左侧，使用默认箭头指针，Replace 子菜单含 Limiter 和 Select Preset...，另提供 Save As Preset... |
 | Preset | 标准 ObjectRef 保留定位、激活和选择器，独立菜单 chevron 位于内容左侧；chevron 使用默认箭头指针，含 Replace > Limiter、Convert to Custom |
-| 转换与替换 | 保留行身份、顺序、Active、Level；替换插件使用默认参数，Convert to Custom 复制预设当前配置并解除共享；Save As Preset 创建资产并切换引用，合为一次撤销 |
-| Level | 干湿比 0～100%，默认 100%；0% 全干、100% 全湿；仅保存编辑配置并支持撤销，本阶段不参与试听或 Pack 运行时处理 |
+| 转换与替换 | 保留行身份、顺序、Active；替换插件使用默认参数，Convert to Custom 复制预设当前配置并解除共享；Save As Preset 创建资产并切换引用，合为一次撤销 |
 | Active | 新增默认开启，映射现有旁通配置；Bus 沿用既有支持，非 Bus 含关闭项时仍受现有试听／发布能力检查限制 |
 | 继承范围 | Sound、Container、Layer、Track、Segment 沿归属父级继承整条 FXs 链，不与父链叠加；根直接编辑自身配置，Bus 不提供 Inherit |
 | 本地历史 | 首次关闭 Inherit 复制当前有效链并建立独立槽位身份，已有本地历史时恢复历史；重新继承保留历史；Rebuild Local from Current Effective Values 重建本地链 |
@@ -154,7 +153,7 @@
 | 有效值与只读 | 继承展示当前平台解析出的有效链，禁止增删、排序和修改，保留编辑器查看及 ObjectRef 导航；混合平台有效链不能作为一条链编辑；可编辑的 All Platforms 显示共享本地链 |
 | 配置与身份 | 继承关系、本地历史和平台覆盖为保存依据，有效链为解析结果；Custom 参数和 Preset 引用随整链保存，复制到另一对象建立独立槽位身份，同一对象各平台的同一槽位保留身份 |
 | 共享资产 | Assets 的 Effect 桶保存类型与全部参数，New Effect > Limiter 为当前唯一类型入口；创建后插件类型固定，Inspector 只显示 Notes，无 Status section；双击对象打开 Effect Editor |
-| 删除资产 | 清理共享链、各平台覆盖及未生效本地历史中的 Preset 引用行，保留 Custom；撤销一并恢复原顺序、Level 和 Active |
+| 删除资产 | 清理共享链、各平台覆盖及未生效本地历史中的 Preset 引用行，保留 Custom；撤销一并恢复原顺序和 Active |
 
 ## Publisher 表格
 

@@ -406,11 +406,6 @@
             "bypass": {
               "type": "boolean"
             },
-            "wetDry": {
-              "minimum": 0,
-              "maximum": 1,
-              "type": "number"
-            },
             "mode": {
               "const": "custom",
               "type": "string"
@@ -440,11 +435,6 @@
             },
             "bypass": {
               "type": "boolean"
-            },
-            "wetDry": {
-              "minimum": 0,
-              "maximum": 1,
-              "type": "number"
             },
             "mode": {
               "const": "preset",

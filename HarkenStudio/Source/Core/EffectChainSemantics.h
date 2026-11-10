@@ -44,7 +44,6 @@ struct EffectEntry
     EffectDefinition custom;
     QUuid effectGuid;
     bool bypass = false;
-    float wetDry = 1.0f;
     QJsonObject extensions;
     QJsonValue opaqueValue;
     bool typed = true;

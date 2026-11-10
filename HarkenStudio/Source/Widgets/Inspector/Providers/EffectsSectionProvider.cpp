@@ -11,9 +11,6 @@
 #include "Core/ThemeManager.h"
 #include "Core/UndoCommands.h"
 #include "Widgets/Common/ListFooter.h"
-#include "Widgets/Common/ParameterBinding.h"
-#include "Widgets/Common/ParameterSlider.h"
-#include "Widgets/Common/ParameterValueEditor.h"
 #include "Widgets/Common/TableWidget.h"
 #include "Widgets/Inspector/EffectsFieldSchema.h"
 #include "Widgets/Inspector/FieldGroupInspectorView.h"
@@ -53,7 +50,6 @@ public:
         table_->setColumns(QStringLiteral("MixNodeEffects"), {
             {QStringLiteral("Number"), {}, 0},
             {QStringLiteral("Effect"), {}, 520},
-            {QStringLiteral("Level"), {}, 360},
             {QStringLiteral("Active"), {}, 120}
         });
         applyInspectorTableDescriptor(table_, effectsInspectorDescriptor());
@@ -415,16 +411,6 @@ private:
         if (!commit(std::move(effects))) rebuild();
     }
 
-    void setLevel(const QUuid& guid, double value)
-    {
-        auto effects = effects_.entries();
-        const auto found = std::find_if(effects.begin(), effects.end(),
-            [&guid](const EffectEntry& effect) { return effect.guid == guid; });
-        if (found == effects.end()) return;
-        found->wetDry = static_cast<float>(value / 100.0);
-        if (!commit(std::move(effects))) rebuild();
-    }
-
     void cancelPendingEdits()
     {
         for (auto* row : rows_) {
@@ -432,10 +418,6 @@ private:
                 menu->close();
             for (auto* reference : row->findChildren<ObjectRefWidget*>())
                 reference->cancelPendingSelection();
-            for (auto* value : row->findChildren<ParameterValueEditor*>())
-                value->cancelPendingInput();
-            for (auto* slider : row->findChildren<ParameterSlider*>())
-                slider->cancelPendingInput();
         }
     }
 
@@ -478,7 +460,7 @@ private:
                 row->setObjectName(QStringLiteral("effectRow"));
                 row->setProperty("effectGuid", guid);
                 row->setProperty("lastRow", index + 1 == effects.size());
-                row->setProperty("searchText", tr("FXs Level Active") + QLatin1Char(' ') + name);
+                row->setProperty("searchText", tr("FXs Active") + QLatin1Char(' ') + name);
                 auto* rowLayout = new QHBoxLayout(row);
                 rowLayout->setContentsMargins(0, 0, 0, 0);
                 rowLayout->setSpacing(0);
@@ -580,39 +562,6 @@ private:
                 }
                 rowLayout->addWidget(effectCell);
 
-                auto* levelCell = table_->createCell(row);
-                levelCell->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-                auto* level = new ParameterSlider(QString(), levelCell);
-                level->setObjectName(QStringLiteral("effectLevel"));
-                level->setPresenterOverride(ParameterPresenterId::HorizontalSlider);
-                level->setRange(0.0, 100.0, 1);
-                level->setSuffix(QStringLiteral(" %"));
-                level->binding()->setName(tr("Level"));
-                level->binding()->setDefaultValue(100.0);
-                level->setValue(effect.wetDry * 100.0);
-                level->setEnabled(editable);
-                level->setToolTip(tr("Dry/wet mix. Stored in Studio; not applied to audio processing."));
-                connect(level, &ParameterSlider::valueChanged, this,
-                    [this, generation, guid](double value) {
-                        if (generation == generation_ && canEdit()) setLevel(guid, value);
-                    });
-                connect(level, &ParameterSlider::interactiveEditEnd, this,
-                    [this, generation, guid](double, double value, bool committed) {
-                        if (committed && generation == generation_ && canEdit()) setLevel(guid, value);
-                    });
-                levelCell->addWidget(level);
-                auto* value = new ParameterValueEditor(level->binding(), &ThemeManager::instance(), levelCell);
-                value->setCompact(true);
-                value->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
-                value->setEnabled(editable);
-                value->setToolTip(level->toolTip());
-                levelCell->addWidget(value, 0);
-                ThemeManager::instance().bindMetrics(levelCell,
-                    [this, levelCell](const ThemeMetrics&) {
-                        table_->setColumnMinimumWidth(2, levelCell->minimumSizeHint().width());
-                    });
-                rowLayout->addWidget(levelCell);
-
                 auto* activeCell = table_->createCell(row);
                 auto* active = new QCheckBox(activeCell);
                 active->setObjectName(QStringLiteral("effectActive"));
@@ -625,7 +574,7 @@ private:
                 activeCell->addWidget(active, 0, Qt::AlignCenter);
                 rowLayout->addWidget(activeCell);
                 layout->addWidget(row);
-                table_->registerRow(row, {number, effectCell, levelCell, activeCell});
+                table_->registerRow(row, {number, effectCell, activeCell});
                 rows_.push_back(row);
             }
         }

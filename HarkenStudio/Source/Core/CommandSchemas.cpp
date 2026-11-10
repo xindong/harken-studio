@@ -144,7 +144,6 @@ QJsonObject effect()
 {
     auto schema = object({{"guid", uuid()}, {"mode", choice({"custom", "preset"})},
         {"effectGuid", uuid()}, {"bypass", boolean()},
-        {"wetDry", QJsonObject{{"type", "number"}, {"minimum", 0}, {"maximum", 1}}},
         {"custom", object({{"type", choice({"feedbackDelay", "threeBandTone", "gain", "limiter", "compressor"})},
                             {"parameters", array(number(), 1)}}, {"type", "parameters"})}}, {"guid"});
     schema.insert("oneOf", QJsonArray{
