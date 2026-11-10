@@ -8636,8 +8636,10 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
     const bool capturedVariables = initialVariableCut != nullptr && initialVariableCut->Valid();
     const bool pendingVariablePlacement = capturedVariables &&
         !engine.variables.ReadCutHasFixedPlacement(*initialVariableCut);
-    // Only a pending cut can replace the source geometry before Start.
-    if (pendingImmediateStart && pendingVariablePlacement && install.sourceOutputOffsetFrames != 0) {
+    // A pending pitch binding can change the cropped source geometry before Start.
+    if (pendingImmediateStart && pendingVariablePlacement && install.sourceOutputOffsetFrames != 0 &&
+        std::any_of(input.bindings.begin(), input.bindings.end(),
+            [](const auto& binding) { return binding.targetId == harken::kTargetVoicePitch; })) {
         result.status = VN_CAPABILITY_UNAVAILABLE;
         return result;
     }

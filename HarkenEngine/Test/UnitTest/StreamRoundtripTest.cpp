@@ -1,13 +1,10 @@
-#include "Common/StreamFixtureRegistration.h"
+#include "Common/ExternalPcmFixture.h"
 // .stream round-trip fidelity through the real compiler tool: the
 // test synthesizes sources, writes IEEE float32 wav files, runs packc in
-// --stream mode as a subprocess, registers the container as a stream,
-// and renders it on the null backend against the same source registered
-// as resident PCM — asserting the two renders are bit-identical
-// (tolerance zero). Float32 wav keeps the chain lossless end to end, and
-// a streamed voice whose whole file fits in the default ring is
-// prebuffered synchronously at raw voice start, so both renders start on the
-// same block and exact equality is the honest expectation.
+// --stream mode as a subprocess, supplies the container through an external
+// Pack media range, and renders it against the same source registered as
+// resident PCM. The captures must be bit-identical (tolerance zero).
+// Both sources are prepared before the first render quantum.
 //
 // Also covered here because they need the real tool: byte-stable output
 // with a full checksum audit of the produced image, the manifest
@@ -161,31 +158,57 @@ struct SpatialCaptureSettings {
     float width;
 };
 
-// Plays one registered sound on the master bus and captures its whole
-// render, padded past the source length so the end-of-data drain and the
-// resampler tail land inside the capture.
+// Capture the complete source and its end-of-data/resampler drain.
 void CaptureSound(harken::Engine* engine, VnSoundId soundId,
                   std::uint64_t sourceFrames, Capture* out,
-                  const SpatialCaptureSettings* spatial = nullptr) {
-    VnPlayDesc play = MakePlayDesc(soundId);
-    if (spatial != nullptr) {
-        play.spatialized = 1;
-        play.positionZ = -10.0f;
+                  const SpatialCaptureSettings* spatial = nullptr,
+                  const std::string* streamPath = nullptr) {
+    VnVoiceHandle render = 0;
+    std::shared_ptr<const harken::PackMediaRange> range;
+    if (streamPath != nullptr) {
+        std::vector<std::uint8_t> bytes;
+        ASSERT_TRUE(ReadFileBytes(*streamPath, &bytes));
+        range = harkentest::PreparedExternalPcmFixtureRange(bytes,
+            [path = *streamPath](auto) { return harken::OpenStreamByteSource(path.c_str()); });
+        ASSERT_NE(nullptr, range);
+        harken::StreamManager::StreamFacts facts{};
+        ASSERT_EQ(VN_OK, engine->streams.ResolvePackSource(range, &facts));
+        std::uint32_t slot = 0;
+        ASSERT_TRUE(engine->streams.PeekFreeSlot(&slot));
+        ASSERT_TRUE(engine->streams.PrepareSlotWorkingSet(slot, facts.channelCount));
+        std::uint64_t token = 0;
+        ASSERT_EQ(VN_OK, engine->streams.ActivateSlot(slot, facts.fileIndex, 0, 0, facts.frameCount, 1, &token));
+        auto* ring = engine->streams.RingOf(slot);
+        ASSERT_EQ(VN_OK, engine->voices.PlayStream(ring, facts.channelCount, facts.sampleRate,
+            0, 0, 1, 0, spatial != nullptr, 0, 0, spatial != nullptr ? -10.0f : 0.0f,
+            harken::ResolvePanGains(engine->config.mixChannelLayout, 0), 0, facts.frameCount,
+            0, facts.frameCount, 1, harken::ResampleProfile::LegacyCompatibility, &render));
+        ASSERT_TRUE(engine->voices.BindStreamRingToken(render, ring, token));
+        engine->streams.SyncServe();
+        engine->voices.ApplyPlay(render, render, 0, engine->mixer.BlocksRendered());
+        if (spatial != nullptr) {
+            engine->voices.ApplySetWidth(render, spatial->width);
+            engine->voices.ApplySetSpatializationMix(render, spatial->mix);
+        }
+    } else {
+        VnPlayDesc play = MakePlayDesc(soundId);
+        if (spatial != nullptr) {
+            play.spatialized = 1;
+            play.positionZ = -10.0f;
+        }
+        VnVoiceHandle voice = 0;
+        ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+        render = harkentest::RenderHandle(engine, voice);
+        if (spatial != nullptr) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            ASSERT_EQ(VN_OK, Vn_SetVoiceWidth(voice, spatial->width));
+            ASSERT_EQ(VN_OK, Vn_SetVoiceSpatializationMix(voice, spatial->mix));
+        }
     }
-    VnVoiceHandle voice = 0;
-    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
-    if (spatial != nullptr) {
-        ASSERT_EQ(VN_OK, Vn_Update());
-        ASSERT_EQ(VN_OK, Vn_SetVoiceWidth(voice, spatial->width));
-        ASSERT_EQ(VN_OK, Vn_SetVoiceSpatializationMix(voice, spatial->mix));
-    }
-    const std::uint32_t blocks = static_cast<std::uint32_t>(
-        sourceFrames / kBlockFrames + 4);
+    const std::uint32_t blocks = static_cast<std::uint32_t>(sourceFrames / kBlockFrames + 4);
     harkentest::PumpAndCapture(engine, blocks, *out);
-    // The voice must have ended inside the capture window; a still-live
-    // voice would mean the two capture windows compared different spans.
-    ASSERT_EQ(nullptr, engine->voices.Resolve(harkentest::RenderHandle(engine,
-        voice)));
+    ASSERT_EQ(nullptr, engine->voices.Resolve(render));
+    engine->streams.SyncServe();
 }
 
 struct SourceSpec {
@@ -259,14 +282,10 @@ TEST(StreamRoundtrip, StreamPlaybackBitIdenticalToResident) {
         EngineSession session(MakeNullConfig(0, kBlockFrames, kRate));
         ASSERT_EQ(VN_OK, session.InitResult());
         for (std::size_t i = 0; i < sources.size(); ++i) {
-            ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(sources[i].id,
-                                                   containers[i].c_str()));
-        }
-        for (std::size_t i = 0; i < sources.size(); ++i) {
             const std::uint64_t frames =
                 sources[i].interleaved.size() / sources[i].channels;
             CaptureSound(session.Engine(), sources[i].id, frames,
-                         &fromStream[i]);
+                         &fromStream[i], nullptr, &containers[i]);
         }
         EXPECT_EQ(0u, harken::memguard::HitCount());
     }
@@ -351,9 +370,7 @@ TEST(StreamRoundtrip, SpatialMonoAndStereoPreserveChannelsAndMatchResident) {
         ASSERT_EQ(VN_OK, session.InitResult());
         auto& captures = path == 0 ? fromStream : fromResident;
         for (std::size_t i = 0; i < sources.size(); ++i) {
-            if (path == 0) {
-                ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(sources[i].id, containers[i].c_str()));
-            } else {
+            if (path != 0) {
                 const auto desc = harkentest::InterleavedDesc(
                     sources[i].interleaved, sources[i].channels, kRate);
                 ASSERT_EQ(VN_OK, Vn_RegisterPCM(sources[i].id, &desc));
@@ -367,7 +384,7 @@ TEST(StreamRoundtrip, SpatialMonoAndStereoPreserveChannelsAndMatchResident) {
                 const auto frames = sources[i].interleaved.size() / sources[i].channels;
                 ASSERT_NO_FATAL_FAILURE(CaptureSound(session.Engine(), sources[i].id,
                     frames, &captures[mode][i],
-                    mode == 0 ? nullptr : &spatialCases[mode - 1]));
+                    mode == 0 ? nullptr : &spatialCases[mode - 1], path == 0 ? &containers[i] : nullptr));
                 HARKENTEST_ASSERT_NON_SILENT(captures[mode][i].left);
                 HARKENTEST_ASSERT_NON_SILENT(captures[mode][i].right);
                 ASSERT_GT(captures[mode][i].left.size(), frames);
