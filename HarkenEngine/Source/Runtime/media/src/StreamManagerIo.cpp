@@ -8,15 +8,6 @@
 
 namespace harken {
 namespace {
-std::atomic<std::uint64_t> g_sourceRequestIdentity{0};
-std::uint64_t NextSourceRequestIdentity() noexcept {
-    auto previous = g_sourceRequestIdentity.load(std::memory_order_relaxed);
-    while (previous != UINT64_MAX) {
-        if (g_sourceRequestIdentity.compare_exchange_weak(previous, previous + 1,
-                std::memory_order_relaxed)) return previous + 1;
-    }
-    return 0;
-}
 constexpr auto kIoPoll = std::chrono::milliseconds(2);
 }
 
@@ -204,199 +195,15 @@ void StreamManager::ServicePackSources(VorbisCodec& codec, std::size_t budget) {
     }
 }
 
-VnResult StreamManager::BeginSource(VnSoundId id,
-    std::shared_ptr<const StreamByteSource> source, bool replace,
-    std::uint64_t expected, SourceToken* out) {
-    if (!source) return VN_INVALID_ARG;
-    return BeginSourceImpl(id, std::move(source), nullptr, replace, expected, out);
-}
-
-VnResult StreamManager::BeginFileSource(VnSoundId id, const char* path,
-    bool replace, std::uint64_t expected, SourceToken* out) {
-    if (path == nullptr) return VN_INVALID_ARG;
-    return BeginSourceImpl(id, {}, path, replace, expected, out);
-}
-
-VnResult StreamManager::BeginSourceImpl(VnSoundId id,
-    std::shared_ptr<const StreamByteSource> source, const char* path,
-    bool replace, std::uint64_t expected, SourceToken* out) {
-    if (out == nullptr) return VN_INVALID_ARG;
-    *out = {};
-    std::lock_guard<std::mutex> lock(m_mutex);
-    if (m_shutdown || WorkerState() != StreamWorkerState::Ready) return VN_DEVICE_ERROR;
-    for (const auto& pending : m_sourceRequests)
-        if (pending && !pending->metadataFile && !pending->discard && pending->soundId == id) return VN_IN_USE;
-    StreamFile* current = nullptr;
-    for (const auto& file : m_files) {
-        if (!file || file->packPrivate) continue;
-        if (!file->retiring && file->soundId == id) current = file.get();
-        if (replace && file->retiring && file->retiredFromId == id) return VN_IN_USE;
-    }
-    if (!replace && current) return VN_IN_USE;
-    if (replace && !current) return VN_UNKNOWN_ID;
-    if (replace && expected != current->sourceGeneration) return VN_STALE_HANDLE;
-    try {
-        if (StreamRequestFaultForTests() == StreamRequestFault::Enqueue) return VN_BAD_STREAM_FILE;
-        auto pending = std::make_unique<SourceRequest>();
-        pending->candidate = std::make_unique<StreamFile>();
-        pending->soundId = id;
-        pending->candidate->soundId = id;
-        pending->replace = replace;
-        pending->expectedOldGeneration = expected;
-        if (path) pending->path = path;
-        auto position = std::find_if(m_sourceRequests.begin(), m_sourceRequests.end(),
-                                    [](const auto& item) { return !item; });
-        if (position == m_sourceRequests.end()) {
-            m_sourceRequests.emplace_back();
-            position = m_sourceRequests.end() - 1;
-        }
-        pending->generation = NextSourceRequestIdentity();
-        if (pending->generation == 0) return VN_BACKPRESSURE;
-        // No potentially failing operation follows this ownership transfer.
-        pending->candidate->source = std::move(source);
-        out->value = pending->generation;
-        *position = std::move(pending);
-        m_serviceRequested = true;
-        m_wake.notify_all();
-        return VN_OK;
-    } catch (const std::bad_alloc&) { return VN_BACKPRESSURE; }
-}
-
-StreamManager::PreparationState StreamManager::QuerySource(SourceToken token, VnResult* error,
-    VnSoundId* soundId, bool* replace) const {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    if (error) *error = VN_STALE_HANDLE;
-    for (const auto& request : m_sourceRequests) {
-        if (!request || request->metadataFile || request->generation != token.value) continue;
-        if (soundId) *soundId = request->soundId;
-        if (replace) *replace = request->replace;
-        if (error) *error = WorkerState() == StreamWorkerState::Failed ? VN_DEVICE_ERROR
-            : (request->ioLane < 0 ? request->result : VN_OK);
-        return request->state;
-    }
-    return PreparationState::Invalid;
-}
-
-bool StreamManager::HasPendingSource(VnSoundId id) const {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    return std::any_of(m_sourceRequests.begin(), m_sourceRequests.end(), [&](const auto& request) {
-        return request && !request->metadataFile && !request->discard && request->soundId == id;
-    });
-}
-
 std::uint64_t StreamManager::SourcePreparationBytes() const {
     std::lock_guard<std::mutex> lock(m_mutex);
     std::uint64_t bytes = m_sourceRequests.capacity() * sizeof(std::unique_ptr<SourceRequest>);
     for (const auto& request : m_sourceRequests) {
         if (!request) continue;
-        bytes += sizeof(SourceRequest) + request->path.capacity();
+        bytes += sizeof(SourceRequest);
         bytes += request->metadataBytes.load(std::memory_order_acquire);
     }
     return bytes;
-}
-
-bool StreamManager::CancelSource(SourceToken token) {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    for (auto& request : m_sourceRequests) {
-        if (!request || request->metadataFile || request->generation != token.value || request->discard) continue;
-        request->discard = true;
-        request->state = PreparationState::Cancelled;
-        request->cancelled.store(true, std::memory_order_release);
-        m_serviceRequested = true;
-        m_wake.notify_all();
-        return true;
-    }
-    return false;
-}
-
-VnResult StreamManager::TakeSource(SourceToken token, StreamFacts* out, VnResult authority) {
-    if (out) *out = {};
-    std::lock_guard<std::mutex> lock(m_mutex);
-    if (WorkerState() != StreamWorkerState::Ready || m_shutdown) return VN_DEVICE_ERROR;
-    for (auto& request : m_sourceRequests) {
-        if (!request || request->metadataFile || request->generation != token.value) continue;
-        if (request->state == PreparationState::Preparing) return VN_BACKPRESSURE;
-        if (request->state == PreparationState::Failed) return request->result;
-        if (request->state != PreparationState::Ready) return VN_STALE_HANDLE;
-        VnResult refusal = VN_OK;
-        bool retryable = false;
-        StreamFile* previous = nullptr;
-        for (auto& file : m_files) {
-            if (!file || file->packPrivate) continue;
-            if (!file->retiring && file->soundId == request->soundId) previous = file.get();
-            if (request->replace && file->retiring && file->retiredFromId == request->soundId) {
-                refusal = VN_IN_USE;
-                retryable = true;
-            }
-        }
-        if (WorkerState() != StreamWorkerState::Ready || m_shutdown) refusal = VN_DEVICE_ERROR;
-        else if (request->replace && (!previous || previous->sourceGeneration != request->expectedOldGeneration))
-            refusal = VN_STALE_HANDLE;
-        else if (!request->replace && previous) refusal = VN_IN_USE;
-        else if (m_lastSourceGeneration == UINT64_MAX) refusal = VN_BACKPRESSURE;
-        if (authority != VN_OK) { refusal = authority; retryable = false; }
-        if (refusal == VN_OK) {
-            try {
-                auto empty = std::find_if(m_files.begin(), m_files.end(), [](const auto& file) { return !file; });
-                if (empty == m_files.end()) {
-                    if (m_files.size() == UINT32_MAX) throw std::bad_alloc{};
-                    m_files.emplace_back();
-                    empty = m_files.end() - 1;
-                }
-                auto& record = *request->candidate;
-                record.sourceGeneration = ++m_lastSourceGeneration;
-                if (previous) {
-                    previous->retiring = true;
-                    previous->retiredFromId = previous->soundId;
-                    previous->soundId = {};
-                }
-                if (out) {
-                    out->fileIndex = static_cast<std::uint32_t>(empty - m_files.begin());
-                    out->sourceGeneration = record.sourceGeneration;
-                    out->contentRevision = record.contentRevision;
-                    out->sampleRate = record.toc.sampleRate;
-                    out->channelCount = record.toc.channelCount;
-                    out->frameCount = record.toc.frameCount;
-                    out->flags = record.toc.flags;
-                    out->loopStartFrame = record.toc.loopStartFrame;
-                    out->loopEndFrame = record.toc.loopEndFrame;
-                }
-                *empty = std::move(request->candidate);
-                request.reset();
-                m_serviceRequested = true;
-                m_wake.notify_all();
-                return VN_OK;
-            } catch (const std::bad_alloc&) { refusal = VN_BACKPRESSURE; }
-        }
-        if (refusal == VN_BACKPRESSURE || (retryable && refusal == VN_IN_USE)) return refusal;
-        request->state = PreparationState::Failed;
-        request->result = refusal;
-        return refusal;
-    }
-    return VN_STALE_HANDLE;
-}
-
-VnResult StreamManager::RegisterSourceAndWait(VnSoundId id, const char* path, bool replace) {
-    StreamFacts current;
-    if (replace && !FindFile(id, &current))
-        return WorkerState() == StreamWorkerState::Ready ? VN_UNKNOWN_ID : VN_DEVICE_ERROR;
-    SourceToken token;
-    const auto accepted = BeginFileSource(id, path, replace, current.sourceGeneration, &token);
-    if (accepted != VN_OK) return accepted;
-    {
-        std::unique_lock<std::mutex> lock(m_mutex);
-        for (;;) {
-            bool preparing = false;
-            for (const auto& request : m_sourceRequests)
-                if (request && request->generation == token.value)
-                    preparing = request->state == PreparationState::Preparing;
-            if (!preparing || WorkerState() != StreamWorkerState::Ready || m_shutdown) break;
-            m_done.wait_for(lock, kIoPoll);
-        }
-    }
-    const auto result = WorkerState() == StreamWorkerState::Ready ? TakeSource(token) : VN_DEVICE_ERROR;
-    if (result != VN_OK) CancelSource(token);
-    return result;
 }
 
 void StreamManager::QueueCleanup(std::unique_ptr<StreamFile> file) noexcept {
@@ -463,7 +270,7 @@ void StreamManager::IoMain(std::size_t index) {
                 lane.valid = RunChunkJob(lane.chunk, lane.slot->staging, lane.slot->window, lane.readFacts);
                 break;
             case IoLane::Kind::Source:
-                ValidateSourceSlice(*lane.request);
+                ReadExternalMetadataSlice(*lane.request);
                 break;
             case IoLane::Kind::Cleanup:
                 lane.cleanup.reset();
@@ -584,10 +391,7 @@ void StreamManager::SettleIo() {
 void StreamManager::ServiceRequests() {
     for (auto iterator = m_batch.begin(); iterator != m_batch.end();) {
         auto& request = **iterator;
-        if (request.kind == Request::Kind::Unregister) {
-            HandleUnregister(request);
-            request.done = true;
-        } else if (request.kind == Request::Kind::Reap) {
+        if (request.kind == Request::Kind::Reap) {
             // Settle/detach/close already ran before request processing.
             request.done = true;
         } else {

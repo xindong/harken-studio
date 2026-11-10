@@ -24840,10 +24840,7 @@
         "kTraceCallApplyBusTopology": 91,
         "kTraceCallApplyVoiceBinding": 63,
         "kTraceCallAttachBinding": 61,
-        "kTraceCallBeginStreamFile": 141,
-        "kTraceCallBeginStreamSource": 140,
         "kTraceCallBindVoiceAttenuation": 14,
-        "kTraceCallCancelStreamSource": 142,
         "kTraceCallCaptureCompressorRuntimeInfo": 86,
         "kTraceCallCaptureEffectCapabilities": 77,
         "kTraceCallCaptureEffectDynamicCapabilities": 83,
@@ -24860,7 +24857,6 @@
         "kTraceCallClearVoiceBinding": 64,
         "kTraceCallClearVoiceEffect": 20,
         "kTraceCallClearVoiceSend": 40,
-        "kTraceCallCommitStreamSource": 143,
         "kTraceCallCommitVoiceStart": 94,
         "kTraceCallConnectBusSend": 36,
         "kTraceCallCreateBus": 5,
@@ -24888,7 +24884,6 @@
         "kTraceCallRegisterAttenuation": 13,
         "kTraceCallRegisterBinding": 58,
         "kTraceCallRegisterPCM": 1,
-        "kTraceCallRegisterStreamFile": 22,
         "kTraceCallReleaseActionFiring": 103,
         "kTraceCallReleaseActionSeek": 134,
         "kTraceCallRemoved65": 65,
@@ -24900,7 +24895,6 @@
         "kTraceCallReplaceBinding": 60,
         "kTraceCallReplacePCM": 49,
         "kTraceCallReplacePack": 51,
-        "kTraceCallReplaceStreamFile": 50,
         "kTraceCallReservedLegacyActionFindByName": 47,
         "kTraceCallReservedLegacyActionInstanceState": 89,
         "kTraceCallReservedLegacyActionRegister": 33,
@@ -24968,8 +24962,7 @@
         "kTraceCallUnloadPack": 17,
         "kTraceCallUnloadPackEx": 104,
         "kTraceCallUnregisterBinding": 59,
-        "kTraceCallUnregisterPCM": 2,
-        "kTraceCallUnregisterStreamFile": 23
+        "kTraceCallUnregisterPCM": 2
       },
       "constants": {
         "kTraceCaptureResultFeature": 1380991830,
@@ -25023,7 +25016,7 @@
       "formatVersion": 7
     }
   },
-  "contractSha256": "2b1587aacca5dabda720ab9cbc7b0f77c2a5dfe7bfe01ae0327d89a59ed1518e",
+  "contractSha256": "6b419a9fc58315fa6ccf01e9774a77932296ed72fb6a7c99827b1879fe813fe6",
   "generatedFiles": {
     "HarkenEngine/Source/Tooling/Binding/generated/harken_binding_abi_pin.g.h": {
       "sha256": "a140e7e24de88b1fb750d71e36fedeb08f8f8820e9810462ec23ef779dcac0fd",
@@ -25067,7 +25060,7 @@
   "sectionSha256": {
     "nativeAbiSha256": "c43dde7a212088032094a84f647717ea041f704b840724956c4bb83e4f781505",
     "remoteWireSha256": "6d6fe82bfbc0e1f7af6ed1195a1f8b42fd98ea3b61bc0c4713194ee7665720cf",
-    "traceFormatSha256": "c43ada4c2f8b42c3ce2a66b0cf1af258b5c6e3d338fc00ce480954afdfa78ecc"
+    "traceFormatSha256": "b41aa47236bb26df73342eecb96d0a2d314b231688d06e87febafdb8bc1a15c4"
   },
   "sourceFiles": {
     "HarkenEngine/Source/Runtime/api/include/harken/Harken.h": {
@@ -25079,8 +25072,8 @@
       "size": 4323
     },
     "HarkenEngine/Source/Runtime/api/src/TraceFormat.h": {
-      "sha256": "590feeeb652acc53ebe6ea5dbfba89dbd3af547a0bd86cbd6c67e6d266449509",
-      "size": 19988
+      "sha256": "c6bf9ef08613d65ce7e73ee92d717689753ca73ee9f87034840d9fd88bf68db3",
+      "size": 19924
     },
     "HarkenEngine/Source/Tooling/Abi/gen_abi_manifest.py": {
       "sha256": "6b232dd009d7bbbacf38c502d82f016b4f11a8dcc69e257f01bac2a87a05d8cc",

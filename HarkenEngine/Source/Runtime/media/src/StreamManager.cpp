@@ -24,9 +24,6 @@
 #endif
 #include <windows.h>
 // Keep the WinSDK alias from rewriting the StreamManager method definition.
-#ifdef ReplaceFile
-#undef ReplaceFile
-#endif
 #endif
 
 namespace harken {
@@ -293,7 +290,7 @@ void StreamManager::ReclaimAfterWorkerFailure() {
     EndActiveStreamsOnFailure();
     SettleIo();
     DetachRetiredSlots();
-    CloseDrainedRetiringFiles();
+    CloseUnreferencedFiles();
     DispatchIo(); // Failed permits cleanup only.
 }
 
@@ -307,43 +304,6 @@ bool StreamManager::ConsumeWorkerFailureForLog() noexcept {
     }
     m_workerFailureLogged = true;
     return true;
-}
-
-VnResult StreamManager::RegisterFile(VnSoundId soundId, const char* utf8Path) {
-    return RegisterSourceAndWait(soundId, utf8Path, false);
-}
-VnResult StreamManager::UnregisterFile(VnSoundId soundId) {
-    Request request;
-    request.kind = Request::Kind::Unregister;
-    request.soundId = soundId;
-    return PostAndWait(request);
-}
-VnResult StreamManager::ReplaceFile(VnSoundId soundId, const char* utf8Path) {
-    return RegisterSourceAndWait(soundId, utf8Path, true);
-}
-
-bool StreamManager::FindFile(VnSoundId soundId, StreamFacts* out) const {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    for (std::size_t i = 0; i < m_files.size(); ++i) {
-        const StreamFile* file = m_files[i].get();
-        if (file == nullptr || file->retiring || file->packPrivate ||
-            file->soundId != soundId) {
-            continue;
-        }
-        out->encoded = file->vorbis.get();
-        out->encodedPending = file->PacketEncoded() && !file->vorbis;
-        out->fileIndex = static_cast<std::uint32_t>(i);
-        out->sampleRate = file->toc.sampleRate;
-        out->channelCount = file->toc.channelCount;
-        out->frameCount = file->toc.frameCount;
-        out->contentRevision = file->contentRevision;
-        out->sourceGeneration = file->sourceGeneration;
-        out->flags = file->toc.flags;
-        out->loopStartFrame = file->toc.loopStartFrame;
-        out->loopEndFrame = file->toc.loopEndFrame;
-        return true;
-    }
-    return false;
 }
 
 VnResult StreamManager::ResolvePackSource(
@@ -375,7 +335,7 @@ VnResult StreamManager::ResolvePackSource(
     };
     for (std::size_t i = 0; i < m_files.size(); ++i) {
         const StreamFile* file = m_files[i].get();
-        if (file != nullptr && file->packPrivate && !file->packRange.expired() &&
+        if (file != nullptr && !file->packRange.expired() &&
             !file->packRange.owner_before(range) && !range.owner_before(file->packRange)) {
             fill(i, *file);
             return VN_OK;
@@ -384,7 +344,6 @@ VnResult StreamManager::ResolvePackSource(
     if (m_lastSourceGeneration == UINT64_MAX) return VN_BACKPRESSURE;
     try {
         auto record = std::make_unique<StreamFile>();
-        record->packPrivate = true;
         record->vorbis = range->vorbis;
         record->packRange = range;
         record->external = range->external;
@@ -440,28 +399,6 @@ bool StreamManager::FactsForFileIndex(std::uint32_t fileIndex,
     out->loopStartFrame = file->toc.loopStartFrame;
     out->loopEndFrame = file->toc.loopEndFrame;
     return true;
-}
-
-std::uint32_t StreamManager::RetiringFileCount() const {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    std::uint32_t count = 0;
-    for (const std::unique_ptr<StreamFile>& file : m_files) {
-        if (file != nullptr && file->retiring) {
-            ++count;
-        }
-    }
-    return count;
-}
-
-bool StreamManager::HasRetiringFor(VnSoundId soundId) const {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    for (const std::unique_ptr<StreamFile>& file : m_files) {
-        if (file != nullptr && file->retiring &&
-            file->retiredFromId == soundId) {
-            return true;
-        }
-    }
-    return false;
 }
 
 bool StreamManager::AcquirePendingRef(std::uint32_t fileIndex) {
@@ -1059,7 +996,7 @@ void StreamManager::ThreadMain() {
             try {
                 SettleIo();
                 DetachRetiredSlots();
-                CloseDrainedRetiringFiles();
+                CloseUnreferencedFiles();
                 while (!m_requests.empty()) {
                     m_batch.push_back(m_requests.front());
                     m_requests.pop_front();
@@ -1102,17 +1039,11 @@ bool StreamManager::RingStorageReady(std::uint32_t slot, std::uint32_t channels)
     return m_ringStorage.ConstructedCount() >= (static_cast<std::uint64_t>(slot) + 1u) * m_ringBytes;
 }
 
-void StreamManager::ValidateSourceSlice(SourceRequest& request) {
-    if (request.metadataFile) { ReadExternalMetadataSlice(request); return; }
-    ValidatePcmSourceSlice(request);
-}
-
 void StreamManager::ValidatePcmSourceSlice(SourceRequest& request) {
     auto& record = *request.candidate;
     const StreamReadCancellation cancel{&request.cancelled};
     if (cancel.IsCancelled()) return;
     if (request.phase == 0) {
-        if (!record.source) record.source = OpenStreamByteSource(request.path.c_str());
         if (!record.source) { request.result = VN_BAD_STREAM_FILE; return; }
         std::array<std::uint8_t, kStreamHeaderBytes> bytes{};
         if (ReadStreamBytes(*record.source, 0, bytes.data(), bytes.size(), cancel) != StreamReadStatus::Ok ||
@@ -1139,7 +1070,7 @@ void StreamManager::ValidatePcmSourceSlice(SourceRequest& request) {
         const auto& entry = record.toc;
         const std::uint64_t checksumBytes = static_cast<std::uint64_t>(entry.chunkCount) * sizeof(std::uint64_t);
         if (!ValidateStreamEntry(request.header, entry, record.source->ByteCount()) ||
-            (!request.metadataFile && entry.soundId != request.soundId) || checksumBytes > SIZE_MAX) {
+            checksumBytes > SIZE_MAX) {
             request.result = VN_BAD_STREAM_FILE; return;
         }
         if (request.metadataFile && (request.metadataBudget < sizeof(StreamFile) ||
@@ -1231,12 +1162,12 @@ VnResult StreamManager::PreparePcmPrefix(StreamFile& file) {
     return VN_OK;
 }
 
-void StreamManager::CloseDrainedRetiringFiles() {
+void StreamManager::CloseUnreferencedFiles() {
     for (std::unique_ptr<StreamFile>& file : m_files) {
         if (!file || file->activeStreams.load(std::memory_order_relaxed) != 0 ||
             file->pendingRefs.load(std::memory_order_relaxed) != 0) continue;
         file->metadataResult = VN_OK;
-        if (file->retiring || (file->packPrivate && file->packRange.expired())) {
+        if (file->packRange.expired()) {
             QueueCleanup(std::move(file));
         } else if (file->external && file->source) {
             // DetachRetiredSlots waits for physical I/O completion before
@@ -1247,24 +1178,6 @@ void StreamManager::CloseDrainedRetiringFiles() {
             QueueCleanup(std::move(cleanup));
         }
     }
-}
-
-void StreamManager::HandleUnregister(Request& request) {
-    for (std::unique_ptr<StreamFile>& file : m_files) {
-        if (file == nullptr || file->retiring || file->packPrivate ||
-            file->soundId != request.soundId) {
-            continue;
-        }
-        if (file->activeStreams.load(std::memory_order_relaxed) != 0 ||
-            file->pendingRefs.load(std::memory_order_relaxed) != 0) {
-            request.result = VN_IN_USE;
-            return;
-        }
-        QueueCleanup(std::move(file));
-        request.result = VN_OK;
-        return;
-    }
-    request.result = VN_UNKNOWN_ID;
 }
 
 void StreamManager::DetachRetiredSlots() {
@@ -1489,7 +1402,7 @@ std::uint64_t StreamManager::ReadWindowBytes() const noexcept {
 
 bool StreamManager::TryCopyReadWindow(const ChunkJob& job, std::vector<float>& staging,
                                       const ReadWindow& window) noexcept {
-    if ((job.file->packPrivate && !job.file->external) || job.chunkBytes == 0 || job.chunkBytes / sizeof(float) > staging.size() ||
+    if (!job.file->external || job.chunkBytes == 0 || job.chunkBytes / sizeof(float) > staging.size() ||
         window.validBytes > window.bytes.size()) return false;
     const auto offset = StreamChunkFileOffset(job.file->toc.payloadOffset, job.chunkIndex, job.chunkBytes);
     if (offset < window.offset || offset - window.offset > window.validBytes ||
@@ -1518,7 +1431,7 @@ bool StreamManager::ReadChunk(const ChunkJob& job, std::vector<float>& staging,
         return true;
     }
     staging.resize(static_cast<std::size_t>(job.chunkFrames) * job.channels);
-    if (job.file->packPrivate && !job.file->external) {
+    if (!job.file->external) {
         // Pack blobs are whole-media planar; each channel is a separate range.
         return ReadPlanarMediaChunk(source, job.file->packBlobOffset, job.file->toc.frameCount,
                    job.channels, job.chunkFrames, job.chunkIndex, staging.data(),

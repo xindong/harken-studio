@@ -209,8 +209,6 @@ enum : std::uint16_t {
     kTraceCallClearVoiceEffect = 20, // u64 handle, u32 slot
     kTraceCallSetVoiceEffectParam = 21, // u64 handle, u32 slot,
                                         //   u32 paramIndex, f32 value
-    kTraceCallRegisterStreamFile = 22, // u64 soundId, fileref
-    kTraceCallUnregisterStreamFile = 23, // u64 soundId
     kTraceCallCreateEmitter = 24,  // v4: u64 trace-local emitter ordinal
     kTraceCallDestroyEmitter = 25, // u64 handle
     kTraceCallSetEmitterPosition = 26, // u64 handle, vec3
@@ -243,7 +241,6 @@ enum : std::uint16_t {
     kTraceCallReservedLegacyActionTriggerByName = 48,
     kTraceCallReplacePCM = 49,     // u64 soundId, desc(VnPCMDesc) + samples
                                    //   (the RegisterPCM encoding)
-    kTraceCallReplaceStreamFile = 50, // u64 soundId, fileref
     kTraceCallReplacePack = 51,    // u64 handle, desc(VnPackDesc), fileref
     kTraceCallReplaceAttenuation = 52, // u64 id, desc(VnAttenuationDesc)
     kTraceCallReservedLegacyActionReplace = 53,
@@ -327,10 +324,6 @@ enum : std::uint16_t {
     kTraceCallActivateCanonicalPackSetV2 = 137,
     kTraceCallUnloadCanonicalPackSet = 138,
     kTraceCallUnloadCompanionPack = 139,
-    kTraceCallBeginStreamSource = 140, // local callback lease, unreplayable
-    kTraceCallBeginStreamFile = 141, // asynchronous request identity, unreplayable
-    kTraceCallCancelStreamSource = 142,
-    kTraceCallCommitStreamSource = 143,
     kTraceCallSetValues = 192,
     kTraceCallSetEmitterValues = 193,
     kTraceCallClearEmitterValues = 194,

@@ -5562,8 +5562,7 @@ VnResult AttachBinding(Engine& engine, BindingId id, std::uint32_t scopeKind,
         }
     } else if (scopeKind == kTargetScopeVoice) {
         if (engine.registry.CookieOf(objectId) == 0) {
-            StreamManager::StreamFacts facts;
-            bool knownHost = engine.streams.FindFile(objectId, &facts);
+            bool knownHost = false;
             const auto world = engine.variables.CurrentPlayableWorld();
             for (std::uint32_t i = 0; !knownHost && i < world.propertyCount; ++i)
                 knownHost = world.properties[i].stableId == objectId;
@@ -22760,11 +22759,7 @@ harken::PlayableStartStatus ResolveTimelineVoiceInstallSource(
             media = reference.View();
         }
     } else if (streamed) {
-        if (!allowDirectActionStream ||
-            !engine.streams.FindFile(cut.leaf.stableId, &streamFacts) ||
-            streamFacts.contentRevision != cut.leaf.contentRevision) {
-            return harken::PlayableStartStatus::CapabilityUnavailable;
-        }
+        return harken::PlayableStartStatus::CapabilityUnavailable;
     } else {
         media = engine.registry.Lookup(cut.leaf.stableId);
     }
@@ -76839,13 +76834,11 @@ void RefreshServiceFrameClock(harken::Engine& engine) {
 
 // --- hot reload (replace verbs) support ---
 
-// The live pinned-generation total across the three media generation
-// owners: PCM entries retired by ReplacePCM, whole-pack old generations,
-// and replaced-away stream files still open.
+// The live pinned-generation total across resident media entries and Packs
+// retained by playback after replacement.
 std::uint64_t PinnedGenerationCount(harken::Engine& engine) {
     return static_cast<std::uint64_t>(engine.registry.RetiredCount()) +
-           static_cast<std::uint64_t>(engine.packs.RetiringCount()) +
-           engine.streams.RetiringFileCount();
+           static_cast<std::uint64_t>(engine.packs.RetiringCount());
 }
 
 void ObservePinnedGenerationHighWater(harken::Engine& engine) noexcept {
@@ -76876,9 +76869,6 @@ void SweepRetiredGenerations(harken::Engine& engine) {
     };
     engine.packs.SweepRetiring(+retainResourceToken,
                                &engine.packComposition);
-    if (engine.streams.RetiringFileCount() > 0) {
-        engine.streams.SyncServe();
-    }
 }
 
 // Books one replace verb's outcome — the counters and the log-ring record
@@ -102635,7 +102625,8 @@ bool PrepareImmediateActionCompositePlay(
         (materializationStatus == SharedInitialFrontierStatus::Ok ||
          materializationStatus == SharedInitialFrontierStatus::ZeroWork) &&
         (materialization.schedule.hasZeroWorkCompletion ||
-         !PendingImmediateOffsetsFit(engine, materialization.schedule));
+         (materialization.schedule.leafCount != 0 &&
+          !PendingImmediateOffsetsFit(engine, materialization.schedule)));
     if (materialization.dynamicSchedule || aggregateGeometry || (scratch->packLeaseOwned
         ? MaterializedHasRegisteredStream(engine, scratch->packPlaybackView, root, materialization.schedule)
         : MaterializedHasRegisteredStream(engine, world, root, materialization.schedule))) {
@@ -112162,13 +112153,6 @@ VnResult Vn_RegisterPCM(VnSoundId soundId, const VnPCMDesc* desc) {
         .ObjectId(soundId)
         .PcmDesc(desc);
     try {
-        // Sound ids live in one flat playable-ID namespace across every
-        // registration surface: an id already naming a registered stream or a
-        // container is taken, exactly like a duplicate PCM registration.
-        harken::StreamManager::StreamFacts streamFacts;
-        if (engine->streams.FindFile(soundId, &streamFacts) || engine->streams.HasPendingSource(soundId)) {
-            return VN_IN_USE;
-        }
         return engine->registry.RegisterPCM(soundId, desc);
     } catch (...) {
         return VN_DEVICE_ERROR;
@@ -112682,18 +112666,7 @@ static VnResult LoadPackObserved(const VnPackDesc* desc,
         if (packHeaderBytes != harken::kPackMediaFileHeaderBytes) {
             return VN_BAD_PACK;
         }
-        /* Bulk registration into the same logic-side registry Vn_RegisterPCM
-         * uses; file reading stays on this thread. The Sound-ID space has no
-         * bulk exemption, so the load refuses (all-or-nothing) if any entry id
-         * collides with a registered stream. Registry duplicates are still
-         * caught per entry inside load. */
-        const auto isReserved = [](void* ctx, VnSoundId id) -> bool {
-            auto* engine = static_cast<harken::Engine*>(ctx);
-            harken::StreamManager::StreamFacts facts;
-            return engine->streams.FindFile(id, &facts) || engine->streams.HasPendingSource(id);
-        };
-        return engine->packs.Load(desc->utf8Path, engine->registry, outHandle,
-                                  +isReserved, engine);
+        return engine->packs.Load(desc->utf8Path, engine->registry, outHandle, nullptr, nullptr);
     } catch (...) {
         return VN_DEVICE_ERROR;
     }
@@ -113049,31 +113022,10 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
 
     const VnSoundId originPlayable = desc->soundId;
     const VnSoundId playableId = desc->soundId;
-    // Id resolution: registered PCM first, then the stream table. A sound
-    // id lives in one namespace, and the registration surfaces refuse
-    // cross-namespace duplicates, so at most one of the two can match.
     const harken::PCMView view = engine->registry.Lookup(playableId);
-    harken::StreamManager::StreamFacts streamFacts;
-    const bool isStream =
-        !view.Valid() &&
-        engine->streams.FindFile(playableId, &streamFacts);
-    if (!view.Valid() && !isStream) {
-        return VN_UNKNOWN_ID;
-    }
-    // A streamed voice is fed by the streaming thread and ended by it. Starting
-    // one after that thread has died strands both slots it claims: nothing ever
-    // fills the ring, so the prebuffer gate never opens, and nothing ever marks
-    // the source ended, so the voice neither starves nor finishes -- it holds a
-    // stream slot and a voice slot for the rest of the session while reporting
-    // PREPARING forever. Refuse for the same reason every other stream request
-    // is refused once the subsystem is gone. One acquire load on the logic
-    // thread; the audio thread is untouched.
-    if (isStream && engine->streams.WorkerState() !=
-                        harken::StreamWorkerState::Ready) {
-        return VN_DEVICE_ERROR;
-    }
+    if (!view.Valid()) return VN_UNKNOWN_ID;
     const std::uint32_t sourceSampleRate =
-        isStream ? streamFacts.sampleRate : view.sampleRate;
+        view.sampleRate;
     const harken::ResampleProfile resampleProfile =
         harken::SelectResampleProfile(
             sourceSampleRate, engine->config.mixRate.SampleRate());
@@ -113094,44 +113046,28 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
     // Spatial mono/stereo sources retain their channels through processing.
     // Unsupported wider sources are refused consistently for direct and Action plays.
     const std::uint32_t sourceChannels =
-        isStream ? streamFacts.channelCount : view.channelCount;
+        view.channelCount;
     if (spatialized && sourceChannels > 2) return VN_INVALID_ARG;
     // Resolve the loop region on the logic side so the audio thread performs
     // no lookups: loopable metadata contributes its loop points, everything
-    // else loops over the whole file. The stream path passes the resolved
-    // region to the streaming thread; the audio thread still consumes only
-    // the ring's ordinary end-of-data signal.
-    std::uint64_t loopStart = isStream ? 0 : view.loop.startFrame;
-    std::uint64_t loopEnd = isStream ? streamFacts.frameCount : view.LoopEndFrame();
-    if (isStream) {
-        if ((streamFacts.flags & harken::kStreamFlagLoopable) != 0) {
-            const std::uint64_t end =
-                streamFacts.loopEndFrame == 0 ? streamFacts.frameCount
-                                               : streamFacts.loopEndFrame;
-            if (streamFacts.loopStartFrame < end &&
-                end <= streamFacts.frameCount) {
-                loopStart = streamFacts.loopStartFrame;
-                loopEnd = end;
-            }
-        }
-    } else {
-        const harken::PackEntry* loopEntry =
-            engine->packs.FindEntryBySound(playableId, engine->registry);
-        if (loopEntry != nullptr &&
-            (loopEntry->flags & harken::kPackFlagLoopable) != 0) {
-            const std::uint64_t end = (loopEntry->loopEndFrame == 0)
-                                          ? view.frames
-                                          : loopEntry->loopEndFrame;
-            // The loader validated loopStart < loopEnd <= frameCount; stay
-            // defensive here, collapsing any region that is not strictly
-            // inside the resolved length to whole-file.
-            if (loopEntry->loopStartFrame < end && end <= view.frames) {
-                loopStart = loopEntry->loopStartFrame;
-                loopEnd = end;
-            }
+    // else loops over the whole file.
+    std::uint64_t loopStart = view.loop.startFrame;
+    std::uint64_t loopEnd = view.LoopEndFrame();
+    const harken::PackEntry* loopEntry =
+        engine->packs.FindEntryBySound(playableId, engine->registry);
+    if (loopEntry != nullptr &&
+        (loopEntry->flags & harken::kPackFlagLoopable) != 0) {
+        const std::uint64_t end = (loopEntry->loopEndFrame == 0)
+                                      ? view.frames
+                                      : loopEntry->loopEndFrame;
+        // The loader validated loopStart < loopEnd <= frameCount; stay
+        // defensive here, collapsing any region that is not strictly
+        // inside the resolved length to whole-file.
+        if (loopEntry->loopStartFrame < end && end <= view.frames) {
+            loopStart = loopEntry->loopStartFrame;
+            loopEnd = end;
         }
     }
-
     // Binding acceptance (sections 5.3/5.7), before any admission or slot
     // claim so every refusal below is side-effect-free. The resolved
     // attachment set pins WHOLE or refuses: a set beyond the per-voice instance slots
@@ -113292,11 +113228,8 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
     freshRequest.priority = priority;
     freshRequest.audibilityDb = immediateAudibilityDb;
     freshRequest.residency =
-        isStream ? harken::VoiceManager::Residency::RenderRequired
-                 : harken::VoiceManager::Residency::
-                       ApproximateParkingAllowed;
+        harken::VoiceManager::Residency::ApproximateParkingAllowed;
     const bool virtualCapacityAvailable =
-        !isStream &&
         engine->ledger.ParkedCount() <
             engine->config.voiceCapacity.Virtual();
     harken::VoiceManager::FreeRender noFree;
@@ -113376,16 +113309,6 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
     // A staged install stays in the pending-start ledger until the caller's
     // commit admits and publishes one indivisible command batch.
     if (stagedInstall) {
-        if (isStream) {
-            // Guarantee the deferred stream start a slot the same way the
-            // steal path does: only free capacity beyond the outstanding
-            // reservations counts, and the reservation taken below keeps this
-            // start's slot from being handed out twice.
-            if (engine->streams.FreeSlotCount() <=
-                engine->pendingStreamReservations) {
-                return VN_NO_STREAM;
-            }
-        }
         const VnResult recipeStaged = stageRecipe();
         if (recipeStaged != VN_OK) {
             return recipeStaged;
@@ -113413,7 +113336,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
         rec.publicHandle = pendingPublic;
         // Hold the record out of the deferred pass until the caller commits.
         rec.stagedInstall = stagedInstall;
-        rec.isStream = isStream;
+        rec.isStream = false;
         rec.priority = priority;
         rec.emitterHandle = emitterHandle;
         rec.baseVolumeDb = desc->volumeDb;
@@ -113446,28 +113369,13 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
         AdoptVoiceRecipe(*engine, rec, voiceRecipe, recipeEffects, recipeBypass);
         recipeGuard.armed = false;
         pinGuard.armed = false;
-        if (isStream) {
-            // Pin the stream registration and reserve a slot for the onset,
-            // exactly as a steal-deferred stream start does.
-            rec.streamFileIndex = streamFacts.fileIndex;
-            rec.streamFacts = streamFacts;
-            rec.heldStreamRef =
-                engine->streams.AcquirePendingRef(streamFacts.fileIndex);
-            if (!rec.heldStreamRef) {
-                AbandonPendingStart(*engine, pendingSlot);
-                return VN_NO_STREAM;
-            }
-            ++engine->pendingStreamReservations;
-            rec.heldStreamReservation = true;
-        } else {
-            rec.view = view;
-            // Hold a use-count reference so the resolved PCM survives the
-            // onset window; the deferred start transfers it to the live
-            // voice.
-            if (view.useCount != nullptr) {
-                view.useCount->fetch_add(1, std::memory_order_relaxed);
-                rec.heldPcmRef = true;
-            }
+        rec.view = view;
+        // Hold a use-count reference so the resolved PCM survives the
+        // onset window; the deferred start transfers it to the live
+        // voice.
+        if (view.useCount != nullptr) {
+            view.useCount->fetch_add(1, std::memory_order_relaxed);
+            rec.heldPcmRef = true;
         }
         *outHandle = pendingPublic;
         return VN_OK;
@@ -113499,38 +113407,6 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
             StreamVictimCompletionGuard::CompletionGuarded) {
             return VN_BACKPRESSURE;
         }
-        // A stream incoming needs a stream slot at start, not just a voice
-        // slot. Preflight it here, side-effect-free, so the deferred start is
-        // bounded. A slot is guaranteed only if either:
-        //   - an unreserved free slot exists now (free slots exceed the slots
-        //     already promised to other pending starts), which this start then
-        //     reserves so a later admission cannot overbook the same slot; or
-        //   - the chosen victim is itself a stream voice, whose release frees a
-        //     stream slot promised to this start (each victim is stolen at most
-        //     once — already-stolen voices are excluded from candidates).
-        // Both cases take a reservation (committed in the staging block below,
-        // after AcquirePending succeeds, so a later refusal leaks nothing):
-        // even the victim's slot, once it frees and detaches, would otherwise
-        // be claimable by an unrelated normal play before this deferred start
-        // runs, reintroducing the unbounded spin. The guarantee is decided
-        // here, before any side effect.
-        if (isStream) {
-            const bool unreservedFreeSlot =
-                engine->streams.FreeSlotCount() >
-                engine->pendingStreamReservations;
-            bool streamGuaranteed = unreservedFreeSlot;
-            if (!streamGuaranteed) {
-                const std::uint32_t victimSlot =
-                    static_cast<std::uint32_t>(victim);
-                streamGuaranteed =
-                    victimSlot < engine->voicePlayFacts.size() &&
-                    engine->voicePlayFacts[victimSlot].valid &&
-                    engine->voicePlayFacts[victimSlot].isStream;
-            }
-            if (!streamGuaranteed) {
-                return VN_NO_STREAM;
-            }
-        }
         const VnResult recipeStaged = stageRecipe();
         if (recipeStaged != VN_OK) {
             return recipeStaged;
@@ -113559,7 +113435,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
         rec.Reset();
         rec.active = true;
         rec.publicHandle = pendingPublic;
-        rec.isStream = isStream;
+        rec.isStream = false;
         rec.priority = priority;
         rec.emitterHandle = emitterHandle;
         rec.baseVolumeDb = desc->volumeDb;
@@ -113590,31 +113466,12 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
         AdoptVoiceRecipe(*engine, rec, voiceRecipe, recipeEffects, recipeBypass);
         recipeGuard.armed = false;
         pinGuard.armed = false;
-        if (isStream) {
-            // A pending stream voice holds no stream slot; pin its
-            // registration so the source survives the pending window and
-            // cannot be swapped (unregister refuses VN_IN_USE while pinned).
-            // The deferred start re-resolves the (guaranteed-live) source and
-            // hands the pin off to the active stream's own count.
-            rec.streamFileIndex = streamFacts.fileIndex;
-            rec.streamFacts = streamFacts;
-            rec.heldStreamRef =
-                engine->streams.AcquirePendingRef(streamFacts.fileIndex);
-            if (!rec.heldStreamRef) {
-                AbandonPendingStart(*engine, pendingSlot);
-                return VN_NO_STREAM;
-            }
-            // Reserve a stream slot for this deferred start (guaranteed above).
-            ++engine->pendingStreamReservations;
-            rec.heldStreamReservation = true;
-        } else {
-            rec.view = view;
-            // Hold a use-count reference so the PCM survives while pending; the
-            // deferred start transfers it to the live voice.
-            if (view.useCount != nullptr) {
-                view.useCount->fetch_add(1, std::memory_order_relaxed);
-                rec.heldPcmRef = true;
-            }
+        rec.view = view;
+        // Hold a use-count reference so the PCM survives while pending; the
+        // deferred start transfers it to the live voice.
+        if (view.useCount != nullptr) {
+            view.useCount->fetch_add(1, std::memory_order_relaxed);
+            rec.heldPcmRef = true;
         }
         if (!AdmitCommandBatch(
                 *engine, PendingStartCommandDemand(*engine, rec) + 1u)) {
@@ -113791,87 +113648,16 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
             (void)cancelled;
         }
     } directPreparationGuard{engine, &renderHandle};
-    if (isStream) {
-        // Refusal order: voice capacity, then stream-slot capacity — each
-        // side-effect-free. The probe carries play()'s refusal accounting;
-        // the peek claims nothing, so a VN_NO_STREAM refusal leaves no
-        // trace. Only this thread claims voice or stream slots, so both
-        // observations hold through the claims below.
-        const VnResult capacity = engine->voices.CheckCapacityForPlay();
-        if (capacity != VN_OK) {
-            return capacity;
-        }
-        // A slot promised to a steal-deferred stream start is not available to
-        // a normal play: only free capacity beyond the outstanding
-        // reservations counts, so a reserved slot cannot be consumed out from
-        // under a pending start. With no reservations this is exactly the prior
-        // peek behavior (bit-for-bit under the default config).
-        std::uint32_t streamSlot = 0;
-        if (engine->streams.FreeSlotCount() <=
-                engine->pendingStreamReservations ||
-            !engine->streams.PeekFreeSlot(&streamSlot) ||
-            !engine->streams.PrepareSlotWorkingSet(streamSlot, streamFacts.channelCount)) {
-            return VN_NO_STREAM;
-        }
-        // Prebuffer span converted to source frames, rounded up so a
-        // nonzero configured span never resolves to a zero-frame gate.
-        // The math stays in 64 bits and is clamped to the ring capacity
-        // (the effective gate ceiling anyway) before narrowing, so no
-        // sampleRate/prebufferMs combination can wrap the cast.
-        const std::uint64_t prebufferFrames64 =
-            (static_cast<std::uint64_t>(engine->config.prebufferMs) *
-                 streamFacts.sampleRate +
-             999) /
-            1000;
-        const std::uint32_t prebufferFrames =
-            static_cast<std::uint32_t>(std::min<std::uint64_t>(
-                prebufferFrames64,
-                engine->streams.RingOf(streamSlot)->FrameCapacity(streamFacts.channelCount, streamFacts.encoded != nullptr)));
-        const VnResult played = engine->voices.PlayStream(
-            engine->streams.RingOf(streamSlot), streamFacts.channelCount,
-            streamFacts.sampleRate, prebufferFrames, desc->volumeDb, ratio,
-            busIndex, spatialized, desc->positionX, desc->positionY,
-            desc->positionZ,
-            harken::ResolvePanGains(engine->config.mixChannelLayout, 0.0f),
-            /*activationStartFrame=*/0, streamFacts.frameCount,
-            loopStart, loopEnd, loopCount,
-            resampleProfile, &renderHandle,
-            engine->buses.GenerationAt(busIndex),
-            freeRender.slot, freeRender.generation,
-            /*resumeToken=*/nullptr, /*outputBusVolumeDb=*/0.0f,
-            /*prepared=*/true, 1.0f, {}, streamFacts.encoded);
-        if (played != VN_OK) {
-            return played; // unreachable after the probe; defensive
-        }
-        // Publish the stream slot only after the voice context is fully
-        // wired: the streaming thread starts feeding the ring the moment
-        // Active is visible.
-        // A fresh play begins at frame 0 because no public field requests an
-        // offset. M9 pressure waiting may later resume it mid-source from an
-        // exact audio-side checkpoint.
-        std::uint64_t streamRingToken = 0;
-        const VnResult activated = engine->streams.ActivateSlot(
-            streamSlot, streamFacts.fileIndex, /*startFrame=*/0, loopStart,
-            loopEnd, loopCount, &streamRingToken);
-        if (activated != VN_OK ||
-            !engine->voices.BindStreamRingToken(
-                renderHandle, engine->streams.RingOf(streamSlot),
-                streamRingToken)) {
-            return activated != VN_OK ? activated : VN_DEVICE_ERROR;
-        }
-    } else {
-        const VnResult result = engine->voices.Play(
-            view, desc->volumeDb, ratio, busIndex, spatialized,
-            desc->positionX, desc->positionY, desc->positionZ,
-            harken::ResolvePanGains(engine->config.mixChannelLayout, 0.0f),
-            loopStart, loopEnd, loopCount, resampleProfile, &renderHandle,
-            engine->buses.GenerationAt(busIndex), freeRender.slot,
-            freeRender.generation, /*prepared=*/true);
-        if (result != VN_OK) {
-            return result;
-        }
+    const VnResult result = engine->voices.Play(
+        view, desc->volumeDb, ratio, busIndex, spatialized,
+        desc->positionX, desc->positionY, desc->positionZ,
+        harken::ResolvePanGains(engine->config.mixChannelLayout, 0.0f),
+        loopStart, loopEnd, loopCount, resampleProfile, &renderHandle,
+        engine->buses.GenerationAt(busIndex), freeRender.slot,
+        freeRender.generation, /*prepared=*/true);
+    if (result != VN_OK) {
+        return result;
     }
-
     (void)engine->voices.BindMonitorControl(renderHandle,
         engine->ledger.ArmMonitorControl(ledgerSlot, renderHandle));
     harken::CommandRecord command{};
@@ -114010,7 +113796,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
     if (slotIndex < engine->voiceOriginPlayable.size())
         engine->voiceOriginPlayable[slotIndex] = originPlayable;
     RecordPlayFacts(*engine, renderHandle, originPlayable, playableId,
-                    isStream, view, streamFacts, busIndex, loopStart, loopEnd, loopCount,
+                    false, view, {}, busIndex, loopStart, loopEnd, loopCount,
                     desc->volumeDb, ratio, resampleProfile, priority,
                     voiceRecipe == nullptr ? nullptr : voiceRecipe->bindings.data(),
                     recipeBindingCount, hasRecipeTonePreset ? &recipeTonePreset : nullptr);
@@ -122532,15 +122318,9 @@ VnResult Vn_ReplacePack(VnPackHandle handle, const VnPackDesc* desc) {
                                                       desc->utf8Path),
                                  harken::kHotReloadClassPack, handle);
         }
-        // Registered streams reserve their ids from media-only pack entries.
-        const auto isReserved = [](void* ctx, VnSoundId id) -> bool {
-            auto* engine = static_cast<harken::Engine*>(ctx);
-            harken::StreamManager::StreamFacts facts;
-            return engine->streams.FindFile(id, &facts) || engine->streams.HasPendingSource(id);
-        };
         harken::PackTable::PreparedReplaceToken prepared;
         const VnResult valid = engine->packs.PrepareReplace(
-            handle, desc->utf8Path, engine->registry, +isReserved, engine,
+            handle, desc->utf8Path, engine->registry, nullptr, nullptr,
             &prepared);
         if (valid != VN_OK) {
             return NoteHotReload(*engine, valid,
@@ -123213,10 +122993,6 @@ VnResult CheckPackClosureAgainstLoadedState(
             return state.NoteProvider(
                 state.engine.packs.OwnerOfSound(id, state.engine.registry));
         }
-        harken::StreamManager::StreamFacts stream;
-        if (state.engine.streams.FindFile(id, &stream)) {
-            return true;
-        }
         return false;
     };
     resolver.busExists = [](void* opaque, VnBusId id) {
@@ -123813,9 +123589,6 @@ VnResult RegisterPcmWithLoopRegionV1(
                 return VN_BACKPRESSURE;
             result = engine->registry.CommitPreparedReplacePCM(&prepared);
         } else {
-            StreamManager::StreamFacts streamFacts;
-            if (engine->streams.FindFile(soundId, &streamFacts) || engine->streams.HasPendingSource(soundId))
-                return VN_IN_USE;
             result = engine->registry.RegisterPCM(soundId, &desc, nullptr, loop);
         }
         if (result == VN_OK)
@@ -124760,17 +124533,9 @@ VnResult ScreenPackRevision(Engine& engine, const PackLogicRecord& record,
     }
 
     // Media: the v1 replace gates (retiring bound, foreign ownership).
-    struct ReservedCtx {
-        Engine* engine;
-    } reservedCtx{&engine};
-    const auto isReserved = [](void* ctx, VnSoundId id) -> bool {
-        auto* c = static_cast<ReservedCtx*>(ctx);
-        StreamManager::StreamFacts facts;
-        return c->engine->streams.FindFile(id, &facts) || c->engine->streams.HasPendingSource(id);
-    };
     VnResult r = engine.packs.CanReplacePreparedV2(
-        revision.handle, image.media, engine.registry, +isReserved,
-        &reservedCtx);
+        revision.handle, image.media, engine.registry, nullptr,
+        nullptr);
     if (r != VN_OK) {
         return r;
     }
@@ -128662,12 +128427,6 @@ VnResult AdoptOwnedPackBytes(const VnPackByteSpan& span,
     return VN_OK;
 }
 
-bool StreamIdReserved(void* ctx, VnSoundId id) {
-    auto* engine = static_cast<Engine*>(ctx);
-    StreamManager::StreamFacts facts;
-    return engine->streams.FindFile(id, &facts) || engine->streams.HasPendingSource(id);
-}
-
 bool CanonicalAttenuationGenerationIsLiveV1(
     const Engine& engine, VnAttenuationId id, std::uint64_t generation) noexcept {
     if (id == VnObjectId{} || generation == 0) {
@@ -130172,9 +129931,6 @@ VnResult AcquireCanonicalSetMember(Engine& engine, const VnPackLoadDesc& load,
         return VN_BAD_PACK;
     }
     if (out->image.packStableId != load.packStableId) { return VN_UNKNOWN_ID; }
-    for (const auto& media : out->image.media) {
-        if (StreamIdReserved(&engine, media.soundId)) { return VN_IN_USE; }
-    }
     return VN_OK;
 }
 
@@ -132003,11 +131759,6 @@ VnResult LoadCanonicalPackImpl(Engine& engine, const VnPackLoadDesc* desc,
     if (adopted != VN_OK) {
         return adopted;
     }
-    for (const PackTocEntry& media : image.media) {
-        if (StreamIdReserved(&engine, media.soundId)) {
-            return VN_IN_USE;
-        }
-    }
     PackTable::PreparedLoadToken token;
     const VnResult prepared = engine.packs.PrepareLoad(&token);
     if (prepared != VN_OK) {
@@ -132348,7 +132099,7 @@ static VnResult ReplaceCanonicalPackImpl(Engine& engine, VnPackHandle handle,
     }
     std::vector<PackEntry> mediaEntries = MakeCanonicalMediaEntries(image.media);
     const VnResult canReplace = engine.packs.CanReplacePreparedV2(
-        handle, image.media, engine.registry, +StreamIdReserved, &engine);
+        handle, image.media, engine.registry, nullptr, &engine);
     if (canReplace != VN_OK) {
         return canReplace;
     }

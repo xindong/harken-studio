@@ -23527,7 +23527,6 @@ TEST(PlayableStart, PackStreamReplacementKeepsOldRefillsAndSelectsNewMedia) {
     EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(old.firing));
     EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(fresh.firing));
     ASSERT_NO_FATAL_FAILURE(pump(2));
-    EXPECT_EQ(0u, engine.streams.RetiringFileCount());
     EXPECT_EQ(0u, engine.packs.RetiringCount());
 }
 
@@ -24484,7 +24483,6 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
         EXPECT_EQ(voicesBefore, engine.voices.AvailableSlotCount());
         engine.streams.SyncServe();
         EXPECT_EQ(config.maxStreams, engine.streams.FreeSlotCount());
-        EXPECT_EQ(0u, engine.streams.RetiringFileCount());
         EXPECT_FALSE(engine.runtimeRecreateRequired);
         if (resetHeld) {
             EXPECT_EQ(harken::RuntimeTransportResetStatus::Complete, resetStatus);
