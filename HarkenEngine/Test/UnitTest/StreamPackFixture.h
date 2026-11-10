@@ -70,7 +70,7 @@ public:
         return {};
     }
 
-    VnResult Activate(harken::ContainerWorldInstallViewV1 world, const harken::PlayableRefV1& root,
+    VnResult Activate(harken::ContainerWorldInstallViewV1 world, const harken::PlayableRefV1& root = {},
         std::span<const harken::PlayableRefV1> peers = {}) {
         using namespace harken;
         using namespace packfoundation;
@@ -99,7 +99,7 @@ public:
             SetAbsoluteTime(&step.cooldown);
             steps.push_back(step);
         };
-        appendPlay(root);
+        if (root.stableId != VnObjectId{}) appendPlay(root);
         for (const auto& peer : peers) appendPlay(peer);
         ActionProgramViewV1 action{};
         action.actionStableId = RootAction();
@@ -109,7 +109,7 @@ public:
         action.programSemanticFingerprint = ComputeActionProgramFingerprintV1(action);
         std::vector<ActionProgramViewV1> actions;
         if (world.actionCount) actions.assign(world.actions, world.actions + world.actionCount);
-        actions.push_back(action);
+        if (!steps.empty()) actions.push_back(action);
         std::sort(actions.begin(), actions.end(), [](const auto& a, const auto& b) { return a.actionStableId < b.actionStableId; });
         world.actions = actions.data();
         world.actionCount = static_cast<std::uint32_t>(actions.size());
