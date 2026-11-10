@@ -132238,8 +132238,8 @@ VnResult UnloadCanonicalPack(Engine& engine, VnPackHandle handle,
 }
 
 
-VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle,
-                              const VnPackLoadDesc* desc) try {
+static VnResult ReplaceCanonicalPackImpl(Engine& engine, VnPackHandle handle,
+    const VnPackLoadDesc* desc, std::vector<PCMRegistry::PreparedPackSamples>* preparedSamples) try {
     if (desc == nullptr) {
         return VN_INVALID_ARG;
     }
@@ -132269,7 +132269,7 @@ VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle,
         if (existing.handle != handle && existing.readiness == PackOwnerReadiness::Active)
             demand.Retain(existing);
     const auto resolver = demand.Resolver();
-    if ((desc->flags & VN_PACK_LOAD_FLAG_PROVIDER) == 0 && engine.trace == nullptr) {
+    if (preparedSamples == nullptr && (desc->flags & VN_PACK_LOAD_FLAG_PROVIDER) == 0 && engine.trace == nullptr) {
         std::string path;
         const auto rooted = ResolveCanonicalFilePath(*desc, &path);
         if (rooted != VN_OK) return rooted;
@@ -132348,9 +132348,10 @@ VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle,
     const PackRevisionKey successorKey =
         MakeCanonicalRevisionKey(handle, image);
     PackTable::PreparedMutation media;
+    PackTable::AlignedBuffer noMediaBytes;
     const VnResult preparedMedia = engine.packs.PrepareRevisionMutation(
-        handle, owned, mediaEntries, image.media, engine.registry, &media,
-        &successorKey, boundedFile ? &samples : nullptr);
+        handle, preparedSamples ? noMediaBytes : owned, mediaEntries, image.media, engine.registry, &media,
+        &successorKey, preparedSamples ? preparedSamples : boundedFile ? &samples : nullptr);
     if (preparedMedia != VN_OK) {
         ReportCanonicalMediaConflict(engine, image);
         return preparedMedia;
@@ -132427,6 +132428,17 @@ VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle,
     return VN_OK;
 } catch (const detail::PackDecodeCapacity&) {
     return VN_PACK_RESIDENT_CAPACITY;
+}
+
+VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle,
+    const VnPackLoadDesc* desc) {
+    return ReplaceCanonicalPackImpl(engine, handle, desc, nullptr);
+}
+
+VnResult ReplaceProvisionalCanonicalContentForTests(Engine& engine, VnPackHandle handle,
+    const VnPackLoadDesc* desc, std::vector<PCMRegistry::PreparedPackSamples>* samples) {
+    if (samples == nullptr) return VN_INVALID_ARG;
+    return ReplaceCanonicalPackImpl(engine, handle, desc, samples);
 }
 
 

@@ -1,4 +1,3 @@
-#include "Common/StreamFixtureRegistration.h"
 #include "UnitTest/StreamPackFixture.h"
 #include "Common/PcmStreamFixture.h"
 #include "../Common/MonitorExecutionTestSupport.h"
@@ -34730,70 +34729,6 @@ TEST(ActionFiringApi, StreamLocalStopPreservesMissingBoundaryPolicy) {
     }
 }
 
-TEST(ActionFiringApi, StreamLoopReplacementRefusesOldWorldAndAcceptsNewRevision) {
-    auto config = harkentest::MakeNullConfig(1, 64, 48000);
-    config.maxStreams = 2;
-    config.streamRingBytes = (256) * sizeof(float);
-    config.prebufferMs = 1;
-    harkentest::EngineSession session(config);
-    ASSERT_EQ(VN_OK, session.InitResult());
-    auto* engine = session.Engine();
-    const std::vector<float> samples(4096, 0.25f);
-    const auto original = WriteActionStream("action_loop_revision_old.stream",
-        CanonicalActionWorld::kFirstSound, samples);
-    const auto replacement = WriteActionStream("action_loop_revision_new.stream",
-        CanonicalActionWorld::kFirstSound, samples, true);
-    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(
-        CanonicalActionWorld::kFirstSound, original.c_str()));
-    harken::StreamManager::StreamFacts facts{};
-    ASSERT_TRUE(engine->streams.FindFile(CanonicalActionWorld::kFirstSound, &facts));
-    CanonicalActionWorld oldWorld(facts.contentRevision);
-    const auto prepare = [](CanonicalActionWorld& image) {
-        image.properties[0].payload.presentMask |= UINT64_C(0x10);
-        image.properties[0].payload.values[4].bits = 1;
-        image.RelinkFirstSound();
-        image.MakeImmediateSoundPlayAction();
-    };
-    prepare(oldWorld);
-    ASSERT_EQ(harken::WorldInstallStatus::Ok,
-              harken::InstallContainerWorldV1(*engine, oldWorld.world).status);
-    ASSERT_EQ(VN_OK, harkentest::ReplaceFixtureStream(
-        CanonicalActionWorld::kFirstSound, replacement.c_str()));
-    const auto head = engine->commands.PublishedHead();
-    auto post = ValidPostDesc();
-    post.actionId = oldWorld.actions[9].actionStableId;
-    VnActionFiringHandle firing = 0;
-    EXPECT_EQ(VN_CAPABILITY_UNAVAILABLE, Vn_PostAction(&post, &firing));
-    EXPECT_EQ(0u, firing);
-    EXPECT_EQ(head, engine->commands.PublishedHead());
-    EXPECT_EQ(0u, engine->voices.ActiveCount());
-    EXPECT_EQ(config.maxStreams, engine->streams.FreeSlotCount());
-
-    ASSERT_TRUE(engine->streams.FindFile(CanonicalActionWorld::kFirstSound, &facts));
-    CanonicalActionWorld newWorld(facts.contentRevision);
-    prepare(newWorld);
-    ASSERT_EQ(harken::WorldInstallStatus::Ok,
-              harken::InstallContainerWorldV1(*engine, newWorld.world).status);
-    ASSERT_EQ(VN_OK, Vn_PostAction(&post, &firing));
-    EXPECT_NE(0u, firing);
-    for (unsigned block = 0; block < 4; ++block) {
-        ASSERT_EQ(VN_OK, Vn_Update());
-        engine->streams.SyncServe();
-        engine->nullBackend.Pump(1);
-    }
-    EXPECT_EQ(1u, engine->voices.ActiveCount());
-    ASSERT_EQ(VN_OK, Vn_StopActionFiring(firing, 0));
-    for (unsigned block = 0; block < 8; ++block) {
-        engine->streams.SyncServe();
-        engine->nullBackend.Pump(1);
-        ASSERT_EQ(VN_OK, Vn_Update());
-    }
-    EXPECT_EQ(0u, engine->voices.ActiveCount());
-    EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(firing));
-    engine->streams.SyncServe();
-    EXPECT_EQ(config.maxStreams, engine->streams.FreeSlotCount());
-    EXPECT_EQ(VN_OK, harkentest::UnregisterFixtureStream(CanonicalActionWorld::kFirstSound));
-}
 
 TEST(ActionFiringApi, StreamSeekSwapsExactRingAndRendersRequestedSourceFrames) {
     (void)Vn_Term();

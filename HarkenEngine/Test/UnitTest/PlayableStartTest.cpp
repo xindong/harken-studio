@@ -23459,6 +23459,79 @@ TEST(PlayableStart, DirectTrackMixedStreamWaitsStartsTogetherAndCancelsBeforeRea
     }
 }
 
+TEST(PlayableStart, PackStreamReplacementKeepsOldRefillsAndSelectsNewMedia) {
+    auto config = harkentest::MakeNullConfig(4, 256, 48000);
+    config.maxStreams = 4;
+    config.streamRingBytes = 1024 * sizeof(float);
+    config.prebufferMs = 1;
+    harkentest::EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    harkentest::StreamPackFixture pack(engine, "stream_pack_live_replacement");
+    harkentest::StreamSpec spec;
+    spec.soundId = kSound;
+    spec.chunkFrames = 256;
+    const auto publish = [&](const char* name, std::uint32_t frames, float value) {
+        const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / name).string();
+        harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, std::vector<float>(frames, value)));
+        pack.ClearMediaForReplacement();
+        ASSERT_EQ(VN_OK, pack.AddStreamFile(kSound, path));
+        PlayableWorldImage image(pack.Facts(kSound).contentRevision, harken::ContainerModeV1::Sequence);
+        constexpr auto streamingSlot = static_cast<std::size_t>(
+            harken::playableproperties::PlayablePropertyIdV1::StreamingMode) - 1;
+        image.properties[0].payload.presentMask |= UINT64_C(1) << streamingSlot;
+        image.properties[0].payload.values[streamingSlot].bits = 1;
+        image.properties[0].programSemanticFingerprint = harken::ComputePlayablePropertyFingerprintV1(image.properties[0]);
+        image.child.playable.expectedProgramSemanticFingerprint = image.properties[0].programSemanticFingerprint;
+        image.world.playablePropertyCount = 1;
+        image.world.containers = nullptr;
+        image.world.containerCount = 0;
+        image.world.playableOccurrences = nullptr;
+        image.world.playableOccurrenceCount = 0;
+        ASSERT_EQ(VN_OK, pack.Activate(image.world, image.child.playable));
+        ASSERT_EQ(VN_OK, pack.PrepareSources());
+    };
+    const auto pump = [&](unsigned blocks) {
+        for (unsigned block = 0; block < blocks; ++block) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            engine.streams.SyncServe();
+            engine.nullBackend.Pump(1);
+        }
+    };
+    const auto expectLevel = [&](float value) {
+        for (unsigned sample = 0; sample < config.blockFrames * 2; ++sample)
+            ASSERT_FLOAT_EQ(value, engine.nullBackend.LastBlock()[sample]);
+    };
+    ASSERT_NO_FATAL_FAILURE(publish("stream_pack_old.stream", 48000, 0.25f));
+    const auto oldRevision = pack.Facts(kSound).contentRevision;
+    const auto old = pack.Post();
+    ASSERT_EQ(VN_OK, old.result);
+    ASSERT_NO_FATAL_FAILURE(pump(8));
+    ASSERT_NO_FATAL_FAILURE(expectLevel(0.25f));
+    ASSERT_NO_FATAL_FAILURE(publish("stream_pack_new.stream", 24000, 0.5f));
+    EXPECT_NE(oldRevision, pack.Facts(kSound).contentRevision);
+    EXPECT_GT(engine.packs.RetiringCount(), 0u);
+    EXPECT_EQ(24000u, engine.registry.ReferenceOf(kSound, engine.registry.CookieOf(kSound)).Facts().frames);
+    ASSERT_NO_FATAL_FAILURE(pump(8));
+    ASSERT_NO_FATAL_FAILURE(expectLevel(0.25f));
+    const auto fresh = pack.Post();
+    ASSERT_EQ(VN_OK, fresh.result);
+    ASSERT_NO_FATAL_FAILURE(pump(8));
+    ASSERT_NO_FATAL_FAILURE(expectLevel(0.75f));
+    ASSERT_EQ(VN_OK, Vn_StopActionFiring(old.firing, 0));
+    ASSERT_NO_FATAL_FAILURE(pump(8));
+    ASSERT_NO_FATAL_FAILURE(expectLevel(0.5f));
+    ASSERT_EQ(VN_OK, Vn_StopActionFiring(fresh.firing, 0));
+    ASSERT_NO_FATAL_FAILURE(pump(8));
+    EXPECT_EQ(0u, engine.voices.ActiveCount());
+    EXPECT_EQ(config.maxStreams, engine.streams.FreeSlotCount());
+    EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(old.firing));
+    EXPECT_EQ(VN_OK, Vn_ReleaseActionFiring(fresh.firing));
+    ASSERT_NO_FATAL_FAILURE(pump(2));
+    EXPECT_EQ(0u, engine.streams.RetiringFileCount());
+    EXPECT_EQ(0u, engine.packs.RetiringCount());
+}
+
 TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFailure) {
     for (const auto workers : {0u, 2u}) for (const auto scenario : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u, 10u, 11u, 12u, 13u, 14u, 15u, 16u, 17u, 18u, 19u, 20u, 21u, 22u, 23u, 24u, 25u, 26u, 27u, 28u, 29u, 30u, 31u, 32u, 33u, 34u}) {
         const bool deepOrdinary = scenario == 17u || scenario == 31u;

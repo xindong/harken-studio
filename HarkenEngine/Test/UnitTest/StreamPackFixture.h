@@ -18,6 +18,9 @@ public:
     explicit StreamPackFixture(harken::Engine& engine, const char* name)
         : engine_(engine), directory_(std::filesystem::path(HARKEN_TEMP_DIR) / name) {}
 
+    void ClearMediaForReplacement() { rows_.clear(); }
+    VnPackHandle ContentHandle() const { return content_; }
+
     VnResult AddPcm(VnSoundId id, const VnPCMDesc& desc) {
         Row row;
         auto planar = desc;
@@ -122,8 +125,12 @@ public:
         initWorld.capacity = world.capacity;
         initWorld.identity.projectId = world.identity.projectId;
         const auto initBytes = BuildWorld(initWorld, true);
-        const auto init = ActivateInitBytesV1(directory_, initBytes, kInitPackStableId);
-        if (init.result != VN_OK) return init.result;
+        if (content_ == 0) {
+            const auto init = ActivateInitBytesV1(directory_, initBytes, kInitPackStableId);
+            if (init.result != VN_OK) return init.result;
+        } else {
+            ++revision_;
+        }
         std::sort(rows_.begin(), rows_.end(), [](const auto& a, const auto& b) { return a.id < b.id; });
         const auto contentBytes = BuildWorld(world, false);
         PackCanonicalImage parsed;
@@ -137,7 +144,9 @@ public:
         VnPackLoadDesc load{};
         load.structSize = sizeof(load);
         load.utf8Path = path.c_str();
-        const auto result = LoadProvisionalCanonicalContentForTests(engine_, &load, &content_, &prepared);
+        const auto result = content_ == 0
+            ? LoadProvisionalCanonicalContentForTests(engine_, &load, &content_, &prepared)
+            : ReplaceProvisionalCanonicalContentForTests(engine_, content_, &load, &prepared);
         return result;
     }
 
@@ -217,7 +226,7 @@ private:
         header.bodyBytes = body.size();
         header.bodyChecksum = Fnv1a64(body.data(), body.size());
         header.packStableId = id;
-        header.partitionRevision = 1;
+        header.partitionRevision = init ? 1 : revision_;
         header.ownedDefinitionCount = world.variableCount + world.playablePropertyCount + world.actionCount;
         ApplyCanonicalBusTriple(&header, bus.triple);
         std::vector<std::uint8_t> partition(header.headerBytes + body.size());
@@ -227,7 +236,7 @@ private:
         std::memcpy(partition.data() + header.headerBytes, body.data(), body.size());
         ImageBuilder image(init ? kPackKindInit : kPackKindCanonicalContent);
         image.AddEntry(kPackEntryKindPackRequirementBlock, id,
-            RequirementPayload(id, 1, 1, header.ownedDefinitionCount, body.size(), bus.triple));
+            RequirementPayload(id, header.partitionRevision, header.partitionRevision, header.ownedDefinitionCount, body.size(), bus.triple));
         image.AddEntry(kPackEntryKindCanonicalDefinitionPartition, id, std::move(partition));
         if (init) AppendRuntimeBusFixture(&image, bus);
         else {
@@ -262,6 +271,7 @@ private:
     std::filesystem::path directory_;
     std::vector<Row> rows_;
     VnPackHandle content_ = 0;
+    std::uint64_t revision_ = 1;
 };
 
 } // namespace harkentest
