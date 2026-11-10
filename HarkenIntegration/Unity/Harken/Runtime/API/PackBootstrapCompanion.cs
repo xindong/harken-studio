@@ -79,7 +79,7 @@ namespace Harken
             if (!active) return VnResult.VN_NOT_INITIALIZED;
             VnResult thread = RequireOwnerThread();
             if (thread != VnResult.VN_OK) return thread;
-            return mutationPhase == MutationPhase.Idle && !inCompanionReadCallback.Value
+            return mutationPhase == MutationPhase.Idle && !LanguageSwitchPending && !inCompanionReadCallback.Value
                 ? VnResult.VN_OK : VnResult.VN_IN_USE;
         }
 

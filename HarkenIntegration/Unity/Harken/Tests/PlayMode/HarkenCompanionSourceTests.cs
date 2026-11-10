@@ -29,6 +29,79 @@ namespace Harken.Unity.Tests
         private static void Set(object target, string name, object value)
             => target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic).SetValue(target, value);
 
+#if HARKEN_SDK_TEST_NULL_PUMP
+        [System.Runtime.InteropServices.DllImport(HarkenNative.LibraryName,
+            CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
+        private static extern VnResult HarkenSdkTest_PumpAndCopy(
+            [System.Runtime.InteropServices.In, System.Runtime.InteropServices.Out] float[] output,
+            uint capacity, out uint frames, out uint channels);
+
+        [UnityTest]
+        public IEnumerator LanguageSwitchPreservesOldPcmAndNaturalCompletionWithNewPosts()
+        {
+            var baseline = new List<float>();
+            foreach (bool switchLanguage in new[] { false, true })
+            {
+                using (var fixture = new Fixture())
+                {
+                    Assert.That(fixture.Runtime.StartRuntime(PackSource.FromReader(Read)), Is.EqualTo(VnResult.VN_OK));
+                    PackBootstrapSession session = fixture.Runtime.Session;
+                    Assert.That(session.PrepareActions(new[] { "Play_Head" }, session.ProjectId,
+                        out ActionPreparation scope), Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(Actions.Resolve("Play_Head", out ActionResolved original), Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(Actions.Post(in original, Emitter.None, 301, out ActionFiring old), Is.EqualTo(VnResult.VN_OK));
+                    ActionFiring next = default;
+                    var samples = new float[4096];
+                    int offset = 0;
+                    double energy = 0;
+                    for (int block = 0; block < 64; ++block)
+                    {
+                        if (block == 4 && switchLanguage)
+                        {
+                            Assert.That(old.Query(out VnActionFiringInfo active), Is.EqualTo(VnResult.VN_OK));
+                            Assert.That(active.state, Is.EqualTo((uint)VnActionFiringState.VN_ACTION_FIRING_ACTIVE));
+                            Task<VnResult> switching = session.SetLanguageAsync("English");
+                            Assert.That(switching.IsCompleted, Is.True, "The synchronous reader needs no frame advance.");
+                            Assert.That(switching.GetAwaiter().GetResult(), Is.EqualTo(VnResult.VN_OK));
+                            Assert.That(fixture.Runtime.Language, Is.EqualTo("English"));
+                            Assert.That(scope.IsPrepared, Is.True);
+                            Assert.That(Actions.Post(in original, Emitter.None, 302, out _), Is.EqualTo(VnResult.VN_STALE_HANDLE));
+                            Assert.That(new PackDirectorySource(Root, "English").Capture("Play_Head",
+                                VnObjectId.Parse(session.ProjectId), Read("Init.bytes"), out CompanionInput selected), Is.EqualTo(VnResult.VN_OK));
+                            Assert.That(session.AcquirePack(selected.Facts.packStableId, out Pack localized), Is.EqualTo(VnResult.VN_OK));
+                            Assert.That(session.ReleasePack(selected.Facts.packStableId, localized), Is.EqualTo(VnResult.VN_OK));
+                        }
+                        if (block == 8)
+                        {
+                            Assert.That(Actions.Resolve("Play_Head", out ActionResolved current), Is.EqualTo(VnResult.VN_OK));
+                            Assert.That(Actions.Post(in current, Emitter.None, 303, out next), Is.EqualTo(VnResult.VN_OK));
+                        }
+                        Assert.That(HarkenEngine.Update(), Is.EqualTo(VnResult.VN_OK));
+                        Assert.That(HarkenSdkTest_PumpAndCopy(samples, (uint)samples.Length,
+                            out uint frames, out uint channels), Is.EqualTo(VnResult.VN_OK));
+                        Assert.That(frames * channels, Is.GreaterThan(0));
+                        for (int i = 0; i < frames * channels; ++i, ++offset)
+                        {
+                            energy += samples[i] * samples[i];
+                            if (switchLanguage) Assert.That(samples[i], Is.EqualTo(baseline[offset]).Within(1e-7f),
+                                "Language selection must not restart, cut or alter the retained firing.");
+                            else baseline.Add(samples[i]);
+                        }
+                    }
+                    Assert.That(energy, Is.GreaterThan(1));
+                    Assert.That(old.Query(out VnActionFiringInfo oldInfo), Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(next.Query(out VnActionFiringInfo nextInfo), Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(oldInfo.state, Is.EqualTo((uint)VnActionFiringState.VN_ACTION_FIRING_TERMINAL_RETAINED));
+                    Assert.That(nextInfo.state, Is.EqualTo((uint)VnActionFiringState.VN_ACTION_FIRING_TERMINAL_RETAINED));
+                    Assert.That(old.Release(), Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(next.Release(), Is.EqualTo(VnResult.VN_OK));
+                    Assert.That(scope.Release(), Is.EqualTo(VnResult.VN_OK));
+                }
+                yield return null;
+            }
+        }
+#endif
+
         [UnityTest]
         public IEnumerator ExplicitSourceStartsWithLegacyProjectAndComponentInitPaths()
         {
