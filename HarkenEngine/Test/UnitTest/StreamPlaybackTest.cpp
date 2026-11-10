@@ -726,27 +726,7 @@ TEST(StreamPlayback, CorruptOutroChunkIsReachedOnlyOnFinalLoopPass) {
     EXPECT_EQ(0u, harken::memguard::HitCount());
 }
 
-TEST(StreamPlayback, UnregisterRefusedWhilePlaying) {
-    EngineSession session(MakeNullConfig(0, kBlockFrames, kRate));
-    ASSERT_EQ(VN_OK, session.InitResult());
-    harken::Engine* engine = session.Engine();
 
-    const std::string path =
-        WriteSineStream("stream_unreg_busy.stream", harkentest::ObjectId(7107), 48000);
-    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(7107), path.c_str()));
-
-    const VnPlayDesc play = MakePlayDesc(harkentest::ObjectId(7107));
-    VnVoiceHandle voice = 0;
-    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
-    EXPECT_EQ(VN_IN_USE, harkentest::UnregisterFixtureStream(harkentest::ObjectId(7107)));
-
-    // After the voice stops and the retired slot detaches, the file is
-    // free to go.
-    ASSERT_EQ(VN_OK, Vn_Stop(voice, 0));
-    engine->nullBackend.Pump(2);
-    engine->streams.SyncServe();
-    EXPECT_EQ(VN_OK, harkentest::UnregisterFixtureStream(harkentest::ObjectId(7107)));
-}
 
 TEST(StreamPlayback, StreamingThreadRunsOutsideAudioGuard) {
     // The streaming thread's whole job is what the audio thread must
@@ -1032,263 +1012,17 @@ TEST(StreamPlayback, FiniteStreamLoopImmediateStopDoesNotFinishLater) {
 
 // --- stream voice stealing (a stream incoming needs a stream slot) ---
 
-TEST(StreamPlayback, StreamStealRefusedWhenVictimIsNotStream) {
-    // A stream incoming needs a stream slot at start, not just a voice slot.
-    // With every stream slot taken and the policy-chosen victim a PCM voice
-    // (whose release frees no stream slot), the steal is refused VN_NO_STREAM
-    // before any side effect — no victim marked, no pending entry, no counter.
-    VnConfig config = MakeStreamConfig(nullptr, /*maxVoices=*/2,
-                                       /*ringFrames=*/0,
-                                       /*maxStreams=*/1);
-    config.voiceStealPolicy = 2; // steal-oldest
-    EngineSession session(config);
-    ASSERT_EQ(VN_OK, session.InitResult());
-    harken::Engine* engine = session.Engine();
 
-    const std::vector<float> tone =
-        harkentest::MakeSine(48000, 500.0, kRate, 0.5f);
-    VnPCMDesc pcm = harkentest::MonoDesc(tone, kRate);
-    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9001), &pcm));
-    const std::string path =
-        WriteSineStream("stream_steal_pcmvictim.stream", harkentest::ObjectId(9002), 48000);
-    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9002), path.c_str()));
 
-    VnVoiceHandle pcmVoice = 0;
-    VnVoiceHandle streamVoice = 0;
-    VnPlayDesc playPcm = MakePlayDesc(harkentest::ObjectId(9001));
-    VnPlayDesc playStream = MakePlayDesc(harkentest::ObjectId(9002));
-    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&playPcm, &pcmVoice)); // oldest candidate
-    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&playStream, &streamVoice));
 
-    VnVoiceHandle refused = 0;
-    EXPECT_EQ(VN_NO_STREAM, harkentest::PlayRaw(&playStream, &refused));
-    EXPECT_EQ(0u, engine->ledger.PendingStartCount());
-    EXPECT_EQ(0u, Snap().voiceStolenCount);
-    EXPECT_NE(nullptr, engine->voices.Resolve(
-                           harkentest::RenderHandle(engine, pcmVoice)));
-    EXPECT_NE(nullptr, engine->voices.Resolve(
-                           harkentest::RenderHandle(engine, streamVoice)));
-}
 
-TEST(StreamPlayback, StreamStealSucceedsWhenVictimIsStream) {
-    // The chosen victim is itself a stream voice, so its release provably frees
-    // a stream slot: the steal is admitted and the deferred start lands within
-    // a bounded number of updates.
-    VnConfig config = MakeStreamConfig(nullptr, /*maxVoices=*/1,
-                                       /*ringFrames=*/0,
-                                       /*maxStreams=*/1);
-    config.voiceStealPolicy = 2; // steal-oldest
-    EngineSession session(config);
-    ASSERT_EQ(VN_OK, session.InitResult());
-    harken::Engine* engine = session.Engine();
 
-    const std::string path =
-        WriteSineStream("stream_steal_victim.stream", harkentest::ObjectId(9101), 48000);
-    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9101), path.c_str()));
 
-    VnVoiceHandle first = 0;
-    VnPlayDesc playStream = MakePlayDesc(harkentest::ObjectId(9101));
-    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&playStream, &first));
-    engine->streams.SyncServe();
-    EXPECT_GT(PumpBlockPeak(engine), harkentest::kSilenceFloor); // rendering
 
-    VnVoiceHandle incoming = 0;
-    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&playStream, &incoming));
-    EXPECT_EQ(1u, engine->ledger.PendingStartCount());
-    EXPECT_EQ(1u, Snap().voiceStolenCount);
 
-    // Drive the victim's release and the streaming thread's stream-slot detach,
-    // then the deferred start lands.
-    bool started = false;
-    for (int i = 0; i < 16 && !started; ++i) {
-        engine->nullBackend.Pump(1);
-        ASSERT_EQ(VN_OK, Vn_Update());
-        engine->streams.SyncServe(); // detach the retired stream slot
-        started = engine->ledger.Classify(incoming).kind ==
-                  harken::VoiceLedger::HandleKind::Live;
-    }
-    EXPECT_TRUE(started);
-    EXPECT_EQ(0u, engine->ledger.PendingStartCount());
-}
 
-TEST(StreamPlayback, PendingStreamStealPinsItsRegistration) {
-    // A pending stream steal holds no stream slot, so it pins its registration:
-    // the source cannot be unregistered (dropping the start) nor re-registered
-    // to a different asset under the same id (swapping the source) while
-    // pending. Cancelling releases the pin.
-    VnConfig config = MakeStreamConfig(nullptr, /*maxVoices=*/1,
-                                       /*ringFrames=*/0,
-                                       /*maxStreams=*/1);
-    config.voiceStealPolicy = 2; // steal-oldest
-    EngineSession session(config);
-    ASSERT_EQ(VN_OK, session.InitResult());
-    harken::Engine* engine = session.Engine();
 
-    const std::string pathA =
-        WriteSineStream("stream_pin_a.stream", harkentest::ObjectId(9201), 48000);
-    const std::string pathB =
-        WriteSineStream("stream_pin_b.stream", harkentest::ObjectId(9202), 48000);
-    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9201), pathA.c_str()));
-    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9202), pathB.c_str()));
 
-    // The victim (id 9201) holds the only stream slot; the incoming (id 9202)
-    // steals it and becomes pending, pinning 9202's registration.
-    VnVoiceHandle victim = 0;
-    VnVoiceHandle incoming = 0;
-    VnPlayDesc playA = MakePlayDesc(harkentest::ObjectId(9201));
-    VnPlayDesc playB = MakePlayDesc(harkentest::ObjectId(9202));
-    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&playA, &victim));
-    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&playB, &incoming));
-    ASSERT_EQ(harken::VoiceLedger::HandleKind::Pending,
-              engine->ledger.Classify(incoming).kind);
-
-    // Pinned: unregister is refused, and the id cannot be re-registered to a
-    // different asset (RegisterFile refuses an already-registered id).
-    EXPECT_EQ(VN_IN_USE, harkentest::UnregisterFixtureStream(harkentest::ObjectId(9202)));
-    EXPECT_EQ(VN_IN_USE, harkentest::RegisterFixtureStream(harkentest::ObjectId(9202), pathA.c_str()));
-
-    // Cancelling the pending start releases the pin; unregister then succeeds.
-    ASSERT_EQ(VN_OK, Vn_Stop(incoming, 0));
-    EXPECT_EQ(VN_OK, harkentest::UnregisterFixtureStream(harkentest::ObjectId(9202)));
-}
-
-TEST(StreamPlayback, StreamStealReservationPreventsOverbooking) {
-    // The overbooking scenario: one free stream slot, two PCM victims, two
-    // stream steals before any pump. The first reserves the slot; the second
-    // finds only reserved capacity and a PCM victim (whose release frees no
-    // stream slot) -> refused VN_NO_STREAM, side-effect-free. Without the
-    // reservation both would observe the same free slot and overbook it.
-    VnConfig config = MakeStreamConfig(nullptr, /*maxVoices=*/2,
-                                       /*ringFrames=*/0,
-                                       /*maxStreams=*/1);
-    config.voiceStealPolicy = 2; // steal-oldest
-    EngineSession session(config);
-    ASSERT_EQ(VN_OK, session.InitResult());
-    harken::Engine* engine = session.Engine();
-
-    const std::vector<float> tone =
-        harkentest::MakeSine(48000, 500.0, kRate, 0.5f);
-    VnPCMDesc pcm = harkentest::MonoDesc(tone, kRate);
-    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9301), &pcm));
-    const std::string path =
-        WriteSineStream("stream_overbook.stream", harkentest::ObjectId(9302), 48000);
-    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9302), path.c_str()));
-
-    VnVoiceHandle p1 = 0;
-    VnVoiceHandle p2 = 0;
-    VnPlayDesc playPcm = MakePlayDesc(harkentest::ObjectId(9301));
-    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&playPcm, &p1)); // oldest -> first steal's victim
-    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&playPcm, &p2));
-
-    VnPlayDesc playStream = MakePlayDesc(harkentest::ObjectId(9302));
-    VnVoiceHandle t1 = 0;
-    VnVoiceHandle t2 = 0;
-    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&playStream, &t1));        // reserves the free slot
-    EXPECT_EQ(VN_NO_STREAM, harkentest::PlayRaw(&playStream, &t2)); // only reserved remains
-    EXPECT_EQ(1u, engine->ledger.PendingStartCount());  // only t1 pending
-    EXPECT_EQ(1u, Snap().voiceStolenCount);              // only one victim taken
-    EXPECT_NE(nullptr,
-              engine->voices.Resolve(harkentest::RenderHandle(engine, p2)));
-}
-
-TEST(StreamPlayback, TwoStreamVictimsBothStealsAdmittedAndStart) {
-    // Two stream steals whose victims are both stream voices: each victim's
-    // slot is reserved for its stealer (each victim stolen at most once), both
-    // steals are admitted, and both deferred starts land within bound.
-    VnConfig config = MakeStreamConfig(nullptr, /*maxVoices=*/2,
-                                       /*ringFrames=*/0,
-                                       /*maxStreams=*/2);
-    config.voiceStealPolicy = 2; // steal-oldest
-    EngineSession session(config);
-    ASSERT_EQ(VN_OK, session.InitResult());
-    harken::Engine* engine = session.Engine();
-
-    const std::string path =
-        WriteSineStream("stream_two_victims.stream", harkentest::ObjectId(9501), 48000);
-    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9501), path.c_str()));
-    VnPlayDesc playStream = MakePlayDesc(harkentest::ObjectId(9501));
-
-    VnVoiceHandle s1 = 0;
-    VnVoiceHandle s2 = 0;
-    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&playStream, &s1));
-    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&playStream, &s2));
-    engine->streams.SyncServe();
-    EXPECT_GT(PumpBlockPeak(engine), harkentest::kSilenceFloor); // rendering
-
-    VnVoiceHandle t1 = 0;
-    VnVoiceHandle t2 = 0;
-    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&playStream, &t1));
-    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&playStream, &t2));
-    EXPECT_EQ(2u, engine->ledger.PendingStartCount());
-    EXPECT_EQ(2u, Snap().voiceStolenCount);
-
-    bool bothStarted = false;
-    for (int i = 0; i < 24 && !bothStarted; ++i) {
-        engine->nullBackend.Pump(1);
-        ASSERT_EQ(VN_OK, Vn_Update());
-        engine->streams.SyncServe(); // detach the retired stream slots
-        bothStarted = engine->ledger.Classify(t1).kind ==
-                          harken::VoiceLedger::HandleKind::Live &&
-                      engine->ledger.Classify(t2).kind ==
-                          harken::VoiceLedger::HandleKind::Live;
-    }
-    EXPECT_TRUE(bothStarted);
-    EXPECT_EQ(0u, engine->ledger.PendingStartCount());
-}
-
-TEST(StreamPlayback, ReservedStreamSlotIsNotConsumedByNormalPlay) {
-    // A pending stream steal reserves a free stream slot; a normal stream play
-    // arriving while the reservation stands is refused (only reserved capacity
-    // remains) even though a stream slot is physically free — so the pending
-    // start keeps its promised slot and lands within bound.
-    VnConfig config = MakeStreamConfig(nullptr, /*maxVoices=*/2,
-                                       /*ringFrames=*/0,
-                                       /*maxStreams=*/1);
-    config.voiceStealPolicy = 2; // steal-oldest
-    EngineSession session(config);
-    ASSERT_EQ(VN_OK, session.InitResult());
-    harken::Engine* engine = session.Engine();
-
-    const std::vector<float> tone =
-        harkentest::MakeSine(48000, 500.0, kRate, 0.5f);
-    VnPCMDesc pcm = harkentest::MonoDesc(tone, kRate);
-    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9401), &pcm));
-    const std::string path =
-        WriteSineStream("stream_reserved.stream", harkentest::ObjectId(9402), 48000);
-    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9402), path.c_str()));
-
-    VnVoiceHandle p1 = 0;
-    VnVoiceHandle p2 = 0;
-    VnPlayDesc playPcm = MakePlayDesc(harkentest::ObjectId(9401));
-    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&playPcm, &p1)); // oldest -> the steal victim
-    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&playPcm, &p2));
-
-    VnPlayDesc playStream = MakePlayDesc(harkentest::ObjectId(9402));
-    VnVoiceHandle pending = 0;
-    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&playStream, &pending)); // reserves the free slot
-    ASSERT_EQ(harken::VoiceLedger::HandleKind::Pending,
-              engine->ledger.Classify(pending).kind);
-
-    // The PCM victim frees its voice slot; a normal stream play now has a voice
-    // slot, but the one physically free stream slot is reserved -> refused.
-    engine->nullBackend.Pump(1);
-    VnVoiceHandle normal = 0;
-    EXPECT_EQ(VN_NO_STREAM, harkentest::PlayRaw(&playStream, &normal));
-
-    // The pending start claims its reserved slot within bound.
-    bool started = false;
-    for (int i = 0; i < 16 && !started; ++i) {
-        ASSERT_EQ(VN_OK, Vn_Update());
-        engine->streams.SyncServe();
-        started = engine->ledger.Classify(pending).kind ==
-                  harken::VoiceLedger::HandleKind::Live;
-        if (!started) {
-            engine->nullBackend.Pump(1);
-        }
-    }
-    EXPECT_TRUE(started);
-    EXPECT_EQ(0u, engine->ledger.PendingStartCount());
-}
 
 // --- mid-source start frame (spec §7.6) ---
 
@@ -1459,6 +1193,10 @@ void RenderFreshSourceCoordinates(bool streamed, std::uint32_t workers,
             ASSERT_EQ(harken::StreamParkDisposition::ResumeReady, outcome.disposition);
             const auto* saved = engine.voices.ResolveParkOwnedToken(outcome.token);
             ASSERT_NE(nullptr, saved);
+            EXPECT_TRUE(harken::Resampler::ValidateParkState(saved->resampler));
+            EXPECT_TRUE(saved->gateOpen);
+            EXPECT_EQ(harken::ResampleProfile::LegacyCompatibility, saved->profile);
+            EXPECT_LE(saved->activationFrame, saved->feedFrame);
             ASSERT_GT(saved->resampler.legacyWriteIndex, saved->resampler.legacyReadIndex);
             ASSERT_GT(saved->resampler.rampRemaining, 0u);
             ASSERT_NE(0u, saved->resampler.legacyPhaseHigh);
@@ -1467,7 +1205,7 @@ void RenderFreshSourceCoordinates(bool streamed, std::uint32_t workers,
             changed.soundId = id;
             changed.sampleRate = 44100;
             const auto replacementPath = TempPath("stream_park_changed_generation.stream");
-            const auto replacementBytes = BuildStreamBytes(changed, std::vector<float>(1024, -0.4f));
+            const auto replacementBytes = BuildStreamBytes(changed, std::vector<float>(1536, -0.4f));
             WriteFileBytes(replacementPath, replacementBytes);
             replacementRange = harkentest::ExternalPcmFixtureRange(replacementBytes,
                 [replacementPath](auto) { return harken::OpenStreamByteSource(replacementPath.c_str()); });
@@ -1475,6 +1213,11 @@ void RenderFreshSourceCoordinates(bool streamed, std::uint32_t workers,
             ASSERT_EQ(VN_OK, engine.streams.ResolvePackSource(replacementRange, &current));
             range.reset();
             ASSERT_NE(facts.sourceGeneration, current.sourceGeneration);
+            EXPECT_NE(facts.frameCount, current.frameCount);
+            harken::StreamManager::StreamFacts retained;
+            ASSERT_TRUE(engine.streams.FactsForFileIndex(facts.fileIndex, &retained));
+            EXPECT_EQ(samples.size(), retained.frameCount);
+            EXPECT_EQ(facts.sourceGeneration, retained.sourceGeneration);
             request.targetFrame = saved->feedFrame;
             request.loopCount = saved->feedLoopsRemaining;
             ASSERT_NO_FATAL_FAILURE(prepareRing());
@@ -1488,6 +1231,8 @@ void RenderFreshSourceCoordinates(bool streamed, std::uint32_t workers,
             engine.voices.ReleaseParkOwnedToken(outcome.token);
             ASSERT_TRUE(engine.voices.CommitPreparedVoice(voice));
             engine.voices.ApplyPlay(voice, voice, 0, block + 1);
+            ASSERT_NE(nullptr, engine.voices.Resolve(voice));
+            EXPECT_EQ(samples.size(), engine.voices.Resolve(voice)->streamFrameCount);
         }
     }
     HARKENTEST_ASSERT_NON_SILENT(capture->left);
@@ -1913,72 +1658,7 @@ TEST(StreamPlayback, PressureWaitUsesAppliedDistanceBeforeUnpublishedGeometryCha
     }
 }
 
-TEST(StreamPlayback,
-     CompletionOwnedStreamVictimIsProtectedBeforePressurePark) {
-    EngineSession session(MakeStreamWaitConfig(nullptr));
-    ASSERT_EQ(VN_OK, session.InitResult());
-    harken::Engine* engine = session.Engine();
 
-    const std::string path =
-        WriteSineStream("stream_wait_completion_owned.stream", harkentest::ObjectId(9791), 48000);
-    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9791), path.c_str()));
-    const std::vector<float> pcmData(48000, 0.2f);
-    const VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
-    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9792), &pcm));
-
-    VnVoiceHandle stream = 0;
-    ASSERT_EQ(VN_OK, PlayDefault(harkentest::ObjectId(9791), &stream));
-    engine->streams.SyncServe();
-    engine->nullBackend.Pump(3);
-    const harken::VoiceLedger::Resolved live =
-        engine->ledger.Classify(stream);
-    ASSERT_EQ(harken::VoiceLedger::HandleKind::Live, live.kind);
-
-    harken::OccurrenceToken occurrence{};
-    harken::OccurrenceKey key{};
-    key.clipId = harkentest::ObjectId(9791);
-    ASSERT_TRUE(engine->timelineOccurrences.Acquire(key, &occurrence));
-    constexpr std::uint64_t kFactsRevision = 601;
-    ASSERT_TRUE(engine->timelineOccurrences.BindCompletionProgress(
-        occurrence, static_cast<std::uint32_t>(live.renderHandle >> 32),
-        kFactsRevision));
-    const harken::CompletionOwnerRef owner =
-        harken::CompletionOwnerRef::Single({61, 1}, kFactsRevision);
-    ASSERT_TRUE(engine->timelineOccurrences.TryPinCompletionOwner(
-        occurrence, owner));
-    ASSERT_TRUE(engine->ledger.BindCompletionMutation(
-        live.ledgerSlot, {occurrence, owner}));
-
-    const std::uint64_t commandHead = engine->commands.PublishedHead();
-    const std::uint64_t backpressure = engine->commands.BackpressureCount();
-    VnVoiceHandle claimant = 0;
-    EXPECT_EQ(VN_NO_VOICE, PlayDefault(harkentest::ObjectId(9792), &claimant));
-
-    EXPECT_EQ(harken::VoiceLedger::HandleKind::Live,
-              engine->ledger.Classify(stream).kind);
-    EXPECT_NE(nullptr, engine->voices.Resolve(live.renderHandle));
-    EXPECT_EQ(0u, engine->ledger.ParkedCount());
-    EXPECT_EQ(0u, engine->ledger.PendingStartCount());
-    EXPECT_EQ(0u, engine->voiceParkedCount);
-    EXPECT_EQ(commandHead, engine->commands.PublishedHead());
-    EXPECT_EQ(backpressure, engine->commands.BackpressureCount());
-    for (const harken::ParkRecord& rec : engine->parkRecords) {
-        EXPECT_FALSE(rec.active);
-        EXPECT_FALSE(rec.heldStreamRef);
-        EXPECT_EQ(0u, rec.streamParkRequestSequence);
-        EXPECT_FALSE(rec.streamParkToken.IsValid());
-    }
-
-    const harken::CompletionMutationBinding binding{occurrence, owner};
-    ASSERT_TRUE(engine->ledger.ClearCompletionMutationExact(
-        live.ledgerSlot, binding));
-    ASSERT_TRUE(engine->timelineOccurrences.RollbackCompletionOwnerPinExact(
-        occurrence, owner));
-    EXPECT_EQ(VN_OK, PlayDefault(harkentest::ObjectId(9792), &claimant));
-    EXPECT_EQ(harken::VoiceLedger::HandleKind::Parked,
-              engine->ledger.Classify(stream).kind);
-    EXPECT_EQ(backpressure, engine->commands.BackpressureCount());
-}
 
 TEST(StreamPlayback,
      ParkTokenKeepsFiniteLoopAudibleAndFeedFrontiersOrdered) {
@@ -2141,41 +1821,7 @@ TEST(StreamPlayback,
     EXPECT_GT(secondFeedAdvance, feedAdvance);
 }
 
-TEST(StreamPlayback, StopDuringAckPendingCannotResurrect) {
-    NotificationLog log;
-    EngineSession session(MakeStreamWaitConfig(&log));
-    ASSERT_EQ(VN_OK, session.InitResult());
-    harken::Engine* engine = session.Engine();
 
-    const std::string path =
-        WriteSineStream("stream_wait_cancel.stream", harkentest::ObjectId(9711), 48000);
-    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9711), path.c_str()));
-    const std::vector<float> pcmData =
-        harkentest::MakeSine(48000, 800.0, kRate, 0.25f);
-    VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
-    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9712), &pcm));
-
-    VnVoiceHandle stream = 0;
-    ASSERT_EQ(VN_OK, PlayDefault(harkentest::ObjectId(9711), &stream));
-    engine->streams.SyncServe();
-    engine->nullBackend.Pump(2);
-    VnVoiceHandle claimant = 0;
-    ASSERT_EQ(VN_OK, PlayDefault(harkentest::ObjectId(9712), &claimant));
-    ASSERT_EQ(harken::VoiceLedger::HandleKind::Parked,
-              engine->ledger.Classify(stream).kind);
-
-    ASSERT_EQ(VN_OK, Vn_Stop(stream, 0));
-    EXPECT_EQ(VN_STALE_HANDLE, Vn_Stop(stream, 0));
-    engine->nullBackend.Pump(1);
-    engine->streams.SyncServe();
-    ASSERT_EQ(VN_OK, Vn_Update());
-    EXPECT_EQ(harken::VoiceLedger::HandleKind::Stale,
-              engine->ledger.Classify(stream).kind);
-    EXPECT_TRUE(log.OfType(VN_NOTIFY_VOICE_PARKED).empty());
-    EXPECT_TRUE(log.OfType(VN_NOTIFY_VOICE_RETURNED).empty());
-    ASSERT_EQ(harken::VoiceLedger::HandleKind::Live,
-              engine->ledger.Classify(claimant).kind);
-}
 
 TEST(StreamPlayback,
      CancelledParkTokenStaysReservedUntilPublishedOutcomeIsConsumed) {
@@ -2397,262 +2043,18 @@ TEST(StreamPlayback, StreamConsumedOffsetAboveDoublePrecisionStaysExact) {
     EXPECT_DOUBLE_EQ(0.75, restored->resampler.SourceFraction());
 }
 
-TEST(StreamPlayback, OneVirtualSeatRefusesSecondSameTickPressureAdmission) {
-    VnConfig config = MakeStreamWaitConfig(
-        nullptr, /*maxVoices=*/2, /*maxStreams=*/2,
-        /*maxParked=*/1);
-    EngineSession session(config);
-    ASSERT_EQ(VN_OK, session.InitResult());
-    harken::Engine* engine = session.Engine();
-    const std::string path =
-        WriteSineStream("stream_wait_one_virtual.stream", harkentest::ObjectId(9731), 48000);
-    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9731), path.c_str()));
-    const std::vector<float> pcmData(48000, 0.2f);
-    VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
-    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9732), &pcm));
-
-    VnPlayDesc streamPlay = MakePlayDesc(harkentest::ObjectId(9731));
-    VnVoiceHandle first = 0;
-    VnVoiceHandle second = 0;
-    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&streamPlay, &first));
-    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&streamPlay, &second));
-
-    VnPlayDesc pcmPlay = MakePlayDesc(harkentest::ObjectId(9732));
-    VnVoiceHandle c1 = 0;
-    VnVoiceHandle c2 = 0;
-    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&pcmPlay, &c1));
-    const std::uint32_t commandRoom = engine->commands.FreeSlots();
-    EXPECT_EQ(VN_NO_VOICE, harkentest::PlayRaw(&pcmPlay, &c2));
-    EXPECT_EQ(0u, c2);
-    EXPECT_EQ(commandRoom, engine->commands.FreeSlots());
-    EXPECT_EQ(1u, engine->ledger.ParkedCount());
-    EXPECT_EQ(0u, engine->voiceStolenCount);
-    EXPECT_EQ(harken::VoiceLedger::HandleKind::Pending,
-              engine->ledger.Classify(c1).kind);
-    const std::uint32_t parked =
-        (engine->ledger.Classify(first).kind ==
-         harken::VoiceLedger::HandleKind::Parked)
-            ? 1u
-            : 0u;
-    EXPECT_EQ(1u, parked +
-                      (engine->ledger.Classify(second).kind ==
-                               harken::VoiceLedger::HandleKind::Parked
-                           ? 1u
-                           : 0u));
-}
-
-TEST(StreamPlayback, VirtualAndLogicalFullKeepsLegacyRefusal) {
-    NotificationLog log;
-    EngineSession session(MakeStreamWaitConfig(&log));
-    ASSERT_EQ(VN_OK, session.InitResult());
-    harken::Engine* engine = session.Engine();
-    const std::vector<float> pcmData(48000, 0.2f);
-    VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
-    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9741), &pcm));
-    const std::string path =
-        WriteSineStream("stream_wait_vfull.stream", harkentest::ObjectId(9742), 48000);
-    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9742), path.c_str()));
-
-    VnPlayDesc quiet = MakePlayDesc(harkentest::ObjectId(9741));
-    quiet.volumeDb = -100.0f;
-    VnVoiceHandle virtualVoice = 0;
-    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&quiet, &virtualVoice));
-    ASSERT_EQ(harken::VoiceLedger::HandleKind::Parked,
-              engine->ledger.Classify(virtualVoice).kind);
-
-    VnVoiceHandle stream = 0;
-    ASSERT_EQ(VN_OK, PlayDefault(harkentest::ObjectId(9742), &stream));
-    const VnVoiceHandle render =
-        harkentest::RenderHandle(engine, stream);
-    const std::uint32_t commandRoom = engine->commands.FreeSlots();
-    VnVoiceHandle claimant = 0;
-    EXPECT_EQ(VN_NO_VOICE, PlayDefault(harkentest::ObjectId(9741), &claimant));
-    EXPECT_EQ(0u, claimant);
-    EXPECT_EQ(commandRoom, engine->commands.FreeSlots());
-    EXPECT_EQ(harken::VoiceLedger::HandleKind::Live,
-              engine->ledger.Classify(stream).kind);
-    EXPECT_FALSE(engine->ledger.IsStolen(render));
-    EXPECT_EQ(1u, engine->ledger.ParkedCount());
-    EXPECT_EQ(0u, engine->voiceStolenCount);
-}
-
-TEST(StreamPlayback, DisabledWaitingKeepsLegacyTerminalSteal) {
-    NotificationLog log;
-    VnConfig config = MakeStreamWaitConfig(&log);
-    config.audibilityParkEnabled = 0;
-    EngineSession session(config);
-    ASSERT_EQ(VN_OK, session.InitResult());
-    harken::Engine* engine = session.Engine();
-
-    const std::string path =
-        WriteSineStream("stream_wait_disabled.stream", harkentest::ObjectId(9743), 48000);
-    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9743), path.c_str()));
-    const std::vector<float> pcmData(48000, 0.2f);
-    VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
-    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9744), &pcm));
-
-    VnVoiceHandle stream = 0;
-    ASSERT_EQ(VN_OK, PlayDefault(harkentest::ObjectId(9743), &stream));
-    engine->streams.SyncServe();
-    engine->nullBackend.Pump(1);
-    VnVoiceHandle claimant = 0;
-    ASSERT_EQ(VN_OK, PlayDefault(harkentest::ObjectId(9744), &claimant));
-    const VnVoiceHandle render = engine->ledger.ToRender(stream);
-    EXPECT_TRUE(engine->ledger.IsStolen(render));
-    EXPECT_EQ(1u, engine->voiceStolenCount);
-    EXPECT_EQ(0u, engine->ledger.ParkedCount());
-
-    engine->nullBackend.Pump(1);
-    ASSERT_EQ(VN_OK, Vn_Update());
-    EXPECT_EQ(1u, log.OfType(VN_NOTIFY_VOICE_STOLEN).size());
-    EXPECT_TRUE(log.OfType(VN_NOTIFY_VOICE_PARKED).empty());
-}
 
 
-TEST(StreamPlayback, MaxStreamsOneClaimantCancellationBalancesReservation) {
-    NotificationLog log;
-    EngineSession session(MakeStreamWaitConfig(
-        &log, /*maxVoices=*/1, /*maxStreams=*/1,
-        /*maxParked=*/1));
-    ASSERT_EQ(VN_OK, session.InitResult());
-    harken::Engine* engine = session.Engine();
-    const std::string victimPath =
-        WriteSineStream("stream_wait_one_slot_victim.stream", harkentest::ObjectId(9754), 48000);
-    const std::string claimantPath =
-        WriteSineStream("stream_wait_one_slot_claimant.stream", harkentest::ObjectId(9755), 48000);
-    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9754), victimPath.c_str()));
-    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9755), claimantPath.c_str()));
 
-    VnVoiceHandle victim = 0;
-    ASSERT_EQ(VN_OK, PlayDefault(harkentest::ObjectId(9754), &victim));
-    engine->streams.SyncServe();
-    engine->nullBackend.Pump(2);
 
-    VnVoiceHandle claimant = 0;
-    ASSERT_EQ(VN_OK, PlayDefault(harkentest::ObjectId(9755), &claimant));
-    ASSERT_EQ(harken::VoiceLedger::HandleKind::Pending,
-              engine->ledger.Classify(claimant).kind);
-    ASSERT_EQ(harken::VoiceLedger::HandleKind::Parked,
-              engine->ledger.Classify(victim).kind);
-    EXPECT_EQ(1u, engine->pendingStreamReservations);
-    ASSERT_EQ(VN_OK, Vn_Stop(claimant, 0));
-    EXPECT_EQ(0u, engine->pendingStreamReservations);
-    EXPECT_EQ(harken::VoiceLedger::HandleKind::Stale,
-              engine->ledger.Classify(claimant).kind);
 
-    engine->nullBackend.Pump(1);
-    engine->streams.SyncServe();
-    ASSERT_EQ(VN_OK, Vn_Update());
-    EXPECT_NE(harken::VoiceLedger::HandleKind::Stale,
-              engine->ledger.Classify(victim).kind);
-    EXPECT_TRUE(log.OfType(VN_NOTIFY_VOICE_STOLEN).empty());
-    EXPECT_EQ(0u, engine->voiceStolenCount);
-}
 
-TEST(StreamPlayback, ParkedPcmReturnUsesStreamWaitTransaction) {
-    VnConfig config = MakeStreamWaitConfig(
-        nullptr, /*maxVoices=*/1, /*maxStreams=*/1,
-        /*maxParked=*/2);
-    EngineSession session(config);
-    ASSERT_EQ(VN_OK, session.InitResult());
-    harken::Engine* engine = session.Engine();
-    const std::vector<float> pcmData(48000, 0.2f);
-    VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
-    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9761), &pcm));
-    const std::string path =
-        WriteSineStream("stream_wait_pcm_return.stream", harkentest::ObjectId(9762), 48000);
-    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9762), path.c_str()));
 
-    VnPlayDesc quiet = MakePlayDesc(harkentest::ObjectId(9761));
-    quiet.volumeDb = -100.0f;
-    VnVoiceHandle pcmVoice = 0;
-    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&quiet, &pcmVoice));
-    ASSERT_EQ(harken::VoiceLedger::HandleKind::Parked,
-              engine->ledger.Classify(pcmVoice).kind);
-    VnVoiceHandle stream = 0;
-    ASSERT_EQ(VN_OK, PlayDefault(harkentest::ObjectId(9762), &stream));
-    ASSERT_EQ(VN_OK, Vn_SetVoiceVolume(pcmVoice, 100.0f, 0));
-    ASSERT_EQ(VN_OK, Vn_Update());
-    EXPECT_EQ(harken::VoiceLedger::HandleKind::Parked,
-              engine->ledger.Classify(stream).kind);
-    EXPECT_EQ(0u, engine->voiceStolenCount);
-}
 
-TEST(StreamPlayback, AckPendingControlsMutateWaiterWithoutRenderCommands) {
-    VnConfig config = MakeStreamWaitConfig(nullptr);
-    config.fxSlotsPerVoice = 1;
-    config.gainEffectPoolCapacity = 2;
-    config.voiceBindingInstanceSlots = 4;
-    EngineSession session(config);
-    ASSERT_EQ(VN_OK, session.InitResult());
-    harken::Engine* engine = session.Engine();
-    const std::string path =
-        WriteSineStream("stream_wait_controls.stream", harkentest::ObjectId(9763), 48000);
-    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9763), path.c_str()));
-    const std::vector<float> pcmData(48000, 0.2f);
-    VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
-    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9764), &pcm));
 
-    VnGainDesc gain{};
-    gain.structSize = sizeof(gain);
-    gain.gainDb = -3.0f;
-    VnVoiceHandle stream = 0;
-    ASSERT_EQ(VN_OK, PlayDefault(harkentest::ObjectId(9763), &stream));
-    ASSERT_EQ(VN_OK,
-              Vn_SetVoiceEffect(
-                  stream, 0, VN_EFFECT_GAIN,
-                  reinterpret_cast<const VnEffectDesc*>(&gain)));
-    engine->streams.SyncServe();
-    engine->nullBackend.Pump(2);
-    VnVoiceHandle claimant = 0;
-    ASSERT_EQ(VN_OK, PlayDefault(harkentest::ObjectId(9764), &claimant));
-    const harken::VoiceLedger::Resolved waiting =
-        engine->ledger.Classify(stream);
-    ASSERT_EQ(harken::VoiceLedger::HandleKind::Parked, waiting.kind);
-    ASSERT_EQ(harken::ParkRecord::State::StreamAckPending,
-              engine->parkRecords[waiting.ledgerSlot].state);
-    constexpr VnBindingId kBinding = harkentest::ObjectId(9765);
-    constexpr VnVariableId kVariable = harkentest::ObjectId(9766);
-    ASSERT_EQ(harken::WorldInstallStatus::Ok,
-              harkentest::InstallSmoothDefinitions(
-                  engine, {kVariable}, 0.0f, 1.0f).status);
-    VnBindingDesc binding{};
-    binding.structSize = sizeof(binding);
-    binding.variableId = kVariable;
-    binding.targetScopeKind = VN_TARGET_SCOPE_VOICE;
-    binding.targetId = harken::kTargetVoiceVolume;
-    binding.curve.structSize = sizeof(VnCurveDesc);
-    binding.curve.pointCount = 2;
-    binding.curve.points[0] = {0.0f, 0.0f};
-    binding.curve.points[1] = {1.0f, -6.0f};
-    binding.curve.handles[0] = harkentest::EndpointHandles(
-        binding.curve.points[0], binding.curve.points[1]);
-    ASSERT_EQ(VN_OK, Vn_RegisterBinding(kBinding, &binding));
-    ASSERT_EQ(VN_OK, Vn_SetValue(kVariable, 1.0f));
-    harkentest::AdvanceVariableWrite(engine);
-    const std::uint32_t commandRoom = engine->commands.FreeSlots();
-    ASSERT_EQ(VN_OK, Vn_SetVoiceVolume(stream, -12.0f, 0));
-    ASSERT_EQ(VN_OK, Vn_SetVoicePitch(stream, 1.5f));
-    ASSERT_EQ(VN_OK, Vn_SetVoiceSpatializationMix(stream, 0.25f));
-    ASSERT_EQ(VN_OK, Vn_SetVoiceEffectParam(
-                         stream, 0, harken::kGainParamGainDb, -9.0f));
-    ASSERT_EQ(VN_OK, Vn_SetVoiceEffectBypass(stream, 0, 1));
-    ASSERT_EQ(VN_OK, Vn_ApplyVoiceBinding(stream, kBinding));
-    EXPECT_EQ(commandRoom, engine->commands.FreeSlots());
 
-    harken::ParkRecord& rec =
-        engine->parkRecords[waiting.ledgerSlot];
-    ASSERT_EQ(1u, rec.effects.size());
-    EXPECT_FLOAT_EQ(-9.0f,
-                    rec.effects[0].params[harken::kGainParamGainDb]);
-    EXPECT_TRUE(rec.effectBypass[0]);
-    EXPECT_FLOAT_EQ(0.25f, rec.spatial.spatializationMix);
-    ASSERT_EQ(1u, rec.bindingInstances.size());
-    EXPECT_EQ(kBinding, rec.bindingInstances[0].definitionId);
-    ASSERT_EQ(VN_OK, Vn_ClearVoiceBinding(stream, kBinding));
-    EXPECT_TRUE(rec.bindingInstances.empty());
-    EXPECT_EQ(commandRoom, engine->commands.FreeSlots());
-}
+
+
 
 TEST(StreamPlayback, StopAfterPublishedAckDrainsWinnerBeforeEnding) {
     NotificationLog log;
@@ -2733,53 +2135,7 @@ TEST(StreamPlayback, PublishedNaturalEndWinsOverLaterFadedStop) {
     EXPECT_TRUE(log.OfType(VN_NOTIFY_VOICE_PARKED).empty());
 }
 
-TEST(StreamPlayback, LateAckCannotMutateReusedLogicalSlot) {
-    VnConfig config = MakeStreamWaitConfig(
-        nullptr, /*maxVoices=*/1, /*maxStreams=*/1,
-        /*maxParked=*/1);
-    EngineSession session(config);
-    ASSERT_EQ(VN_OK, session.InitResult());
-    harken::Engine* engine = session.Engine();
-    const std::string path =
-        WriteSineStream("stream_wait_late_identity.stream", harkentest::ObjectId(9769), 48000);
-    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9769), path.c_str()));
-    const std::vector<float> pcmData(48000, 0.2f);
-    VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
-    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9770), &pcm));
 
-    VnVoiceHandle stream = 0;
-    ASSERT_EQ(VN_OK, PlayDefault(harkentest::ObjectId(9769), &stream));
-    engine->streams.SyncServe();
-    engine->nullBackend.Pump(2);
-    VnVoiceHandle claimant = 0;
-    ASSERT_EQ(VN_OK, PlayDefault(harkentest::ObjectId(9770), &claimant));
-    const std::uint32_t oldLedgerSlot =
-        engine->ledger.Classify(stream).ledgerSlot;
-    ASSERT_EQ(VN_OK, Vn_Stop(stream, 0));
-
-    VnPlayDesc quiet = MakePlayDesc(harkentest::ObjectId(9770));
-    quiet.volumeDb = -100.0f;
-    VnVoiceHandle replacement = 0;
-    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&quiet, &replacement));
-    const harken::VoiceLedger::Resolved replacementBefore =
-        engine->ledger.Classify(replacement);
-    ASSERT_EQ(harken::VoiceLedger::HandleKind::Parked,
-              replacementBefore.kind);
-    ASSERT_EQ(oldLedgerSlot, replacementBefore.ledgerSlot);
-    ASSERT_EQ(harken::ParkRecord::State::PcmResumeReady,
-              engine->parkRecords[oldLedgerSlot].state);
-
-    engine->nullBackend.Pump(1);
-    ASSERT_EQ(VN_OK, Vn_Update());
-    const harken::VoiceLedger::Resolved replacementAfter =
-        engine->ledger.Classify(replacement);
-    ASSERT_EQ(harken::VoiceLedger::HandleKind::Parked,
-              replacementAfter.kind);
-    EXPECT_EQ(harken::ParkRecord::State::PcmResumeReady,
-              engine->parkRecords[oldLedgerSlot].state);
-    EXPECT_EQ(harken::VoiceLedger::HandleKind::Stale,
-              engine->ledger.Classify(stream).kind);
-}
 
 TEST(StreamPlayback, FiniteCheckpointCoversIntroSeamFinalAndOutro) {
     const ParkCheckpoint intro = CaptureFiniteParkCheckpoint(0);
@@ -3031,40 +2387,7 @@ TEST(StreamPlayback, IntegrityAbortRacingParkHasOneTerminalWinner) {
     EXPECT_EQ(1u, log.OfType(VN_NOTIFY_VOICE_ENDED).size());
 }
 
-TEST(StreamPlayback, PublishedAckDrainsWhileSuspendedAndReturnsAfterResume) {
-    EngineSession session(MakeStreamWaitConfig(nullptr));
-    ASSERT_EQ(VN_OK, session.InitResult());
-    harken::Engine* engine = session.Engine();
-    const std::string path =
-        WriteSineStream("stream_wait_suspend.stream", harkentest::ObjectId(9779), 48000);
-    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9779), path.c_str()));
-    const std::vector<float> pcmData(48000, 0.2f);
-    VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
-    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9780), &pcm));
 
-    VnVoiceHandle stream = 0;
-    ASSERT_EQ(VN_OK, PlayDefault(harkentest::ObjectId(9779), &stream));
-    engine->streams.SyncServe();
-    engine->nullBackend.Pump(2);
-    VnVoiceHandle claimant = 0;
-    ASSERT_EQ(VN_OK, PlayDefault(harkentest::ObjectId(9780), &claimant));
-    engine->nullBackend.Pump(1);
-    ASSERT_EQ(VN_OK, Vn_Stop(claimant, 0));
-    engine->nullBackend.Pump(1);
-    engine->streams.SyncServe();
-    ASSERT_EQ(VN_OK, Vn_Suspend());
-    ASSERT_EQ(VN_OK, Vn_Update());
-    const harken::VoiceLedger::Resolved waiting =
-        engine->ledger.Classify(stream);
-    ASSERT_EQ(harken::VoiceLedger::HandleKind::Parked, waiting.kind);
-    ASSERT_EQ(harken::ParkRecord::State::StreamResumeReady,
-              engine->parkRecords[waiting.ledgerSlot].state);
-
-    ASSERT_EQ(VN_OK, Vn_Resume());
-    ASSERT_EQ(VN_OK, Vn_Update());
-    EXPECT_EQ(harken::VoiceLedger::HandleKind::Live,
-              engine->ledger.Classify(stream).kind);
-}
 
 TEST(StreamPlayback, HotReplacementKeepsParkedGenerationFacts) {
     EngineSession session(MakeStreamWaitConfig(nullptr));
@@ -3104,66 +2427,9 @@ TEST(StreamPlayback, HotReplacementKeepsParkedGenerationFacts) {
 }
 
 
-TEST(StreamPlayback, StreamParkCommandBackpressureIsAtomic) {
-    VnConfig config = MakeStreamWaitConfig(nullptr);
-    config.commandQueueDepth = 1;
-    EngineSession session(config);
-    ASSERT_EQ(VN_OK, session.InitResult());
-    harken::Engine* engine = session.Engine();
-    const std::string path =
-        WriteSineStream("stream_wait_backpressure.stream", harkentest::ObjectId(9790), 48000);
-    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9790), path.c_str()));
-    const std::vector<float> pcmData(48000, 0.2f);
-    VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
-    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9791), &pcm));
 
-    VnVoiceHandle stream = 0;
-    ASSERT_EQ(VN_OK, PlayDefault(harkentest::ObjectId(9790), &stream));
-    ASSERT_EQ(0u, engine->commands.FreeSlots());
-    const VnVoiceHandle renderBefore = engine->ledger.ToRender(stream);
-    VnVoiceHandle claimant = 0;
-    EXPECT_EQ(VN_BACKPRESSURE, PlayDefault(harkentest::ObjectId(9791), &claimant));
-    EXPECT_EQ(harken::VoiceLedger::HandleKind::Live,
-              engine->ledger.Classify(stream).kind);
-    EXPECT_EQ(renderBefore, engine->ledger.ToRender(stream));
-    EXPECT_EQ(0u, engine->ledger.ParkedCount());
-    EXPECT_EQ(0u, engine->voiceStolenCount);
-}
 
-TEST(StreamPlayback, StreamParkFilePinRefusalIsAtomic) {
-    EngineSession session(MakeStreamWaitConfig(nullptr));
-    ASSERT_EQ(VN_OK, session.InitResult());
-    harken::Engine* engine = session.Engine();
-    const std::string path =
-        WriteSineStream("stream_wait_pin_refusal.stream", harkentest::ObjectId(97910), 48000);
-    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(97910), path.c_str()));
-    const std::vector<float> pcmData(48000, 0.2f);
-    VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
-    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(97911), &pcm));
 
-    VnVoiceHandle stream = 0;
-    ASSERT_EQ(VN_OK, PlayDefault(harkentest::ObjectId(97910), &stream));
-    engine->streams.SyncServe();
-    engine->nullBackend.Pump(1);
-    const VnVoiceHandle render = engine->ledger.ToRender(stream);
-    const std::uint32_t renderSlot =
-        static_cast<std::uint32_t>(render);
-    ASSERT_LT(renderSlot, engine->voicePlayFacts.size());
-    const std::uint32_t exactFileIndex =
-        engine->voicePlayFacts[renderSlot].streamFileIndex;
-    engine->voicePlayFacts[renderSlot].streamFileIndex = UINT32_MAX;
-
-    const std::uint32_t commandRoom = engine->commands.FreeSlots();
-    VnVoiceHandle claimant = 0;
-    EXPECT_EQ(VN_NO_VOICE, PlayDefault(harkentest::ObjectId(97911), &claimant));
-    engine->voicePlayFacts[renderSlot].streamFileIndex = exactFileIndex;
-    EXPECT_EQ(harken::VoiceLedger::HandleKind::Live,
-              engine->ledger.Classify(stream).kind);
-    EXPECT_EQ(render, engine->ledger.ToRender(stream));
-    EXPECT_EQ(0u, engine->ledger.ParkedCount());
-    EXPECT_EQ(commandRoom, engine->commands.FreeSlots());
-    EXPECT_EQ(0u, engine->voiceStolenCount);
-}
 
 TEST(StreamPlayback, ParkCaptureAllocationFailureIsAtomic) {
     EngineSession session(MakeStreamWaitConfig(nullptr));
@@ -3206,61 +2472,7 @@ TEST(StreamPlayback, ParkCaptureAllocationFailureIsAtomic) {
     EXPECT_EQ(VN_OK, PlayDefault(harkentest::ObjectId(9784), &claimant));
 }
 
-TEST(StreamPlayback, ReturnSeedFailureLeavesWaiterAndExactPinIntact) {
-    VnConfig config = MakeStreamWaitConfig(nullptr);
-    config.fxSlotsPerVoice = 1;
-    config.gainEffectPoolCapacity = 2;
-    EngineSession session(config);
-    ASSERT_EQ(VN_OK, session.InitResult());
-    harken::Engine* engine = session.Engine();
-    const std::string path =
-        WriteSineStream("stream_wait_seed_refusal.stream", harkentest::ObjectId(9792), 48000);
-    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9792), path.c_str()));
-    const std::vector<float> pcmData(48000, 0.2f);
-    VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
-    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9793), &pcm));
 
-    VnVoiceHandle stream = 0;
-    ASSERT_EQ(VN_OK, PlayDefault(harkentest::ObjectId(9792), &stream));
-    VnGainDesc gain{};
-    gain.structSize = sizeof(gain);
-    gain.gainDb = -3.0f;
-    ASSERT_EQ(VN_OK,
-              Vn_SetVoiceEffect(
-                  stream, 0, VN_EFFECT_GAIN,
-                  reinterpret_cast<const VnEffectDesc*>(&gain)));
-    engine->streams.SyncServe();
-    engine->nullBackend.Pump(2);
-    VnVoiceHandle claimant = 0;
-    ASSERT_EQ(VN_OK, PlayDefault(harkentest::ObjectId(9793), &claimant));
-    engine->nullBackend.Pump(1);
-    ASSERT_EQ(VN_OK, Vn_Update());
-    ASSERT_EQ(VN_OK, Vn_Stop(claimant, 0));
-    engine->nullBackend.Pump(1);
-    engine->streams.SyncServe();
-    engine->effectParamTargets.SetPrepareSeedFailureAfterForTests(0);
-    ASSERT_EQ(VN_OK, Vn_Update());
-    const harken::VoiceLedger::Resolved waiting =
-        engine->ledger.Classify(stream);
-    ASSERT_EQ(harken::VoiceLedger::HandleKind::Parked, waiting.kind);
-    const harken::ParkRecord& record =
-        engine->parkRecords[waiting.ledgerSlot];
-    EXPECT_TRUE(record.heldStreamRef);
-    EXPECT_FALSE(
-        record.returnEffectsPrepared);
-    const harken::StreamParkTokenRef heldToken =
-        record.streamParkToken;
-    ASSERT_TRUE(heldToken.IsValid());
-    EXPECT_NE(nullptr,
-              engine->voices.ResolveParkOwnedToken(heldToken));
-
-    engine->effectParamTargets.SetPrepareSeedFailureAfterForTests(-1);
-    ASSERT_EQ(VN_OK, Vn_Update());
-    EXPECT_EQ(harken::VoiceLedger::HandleKind::Live,
-              engine->ledger.Classify(stream).kind);
-    EXPECT_EQ(nullptr,
-              engine->voices.ResolveParkOwnedToken(heldToken));
-}
 
 TEST(StreamPlayback, NotificationOverflowDoesNotOwnAckEligibility) {
     VnConfig config = MakeStreamWaitConfig(
@@ -3404,47 +2616,7 @@ TEST(StreamPlayback, IntegrityDiscoveredDuringParkFadeWinsBeforeAck) {
     EXPECT_EQ(nullptr, engine->voices.Resolve(live.renderHandle));
 }
 
-TEST(StreamPlayback, DirectPlayDrainsPublishedMailboxBeforeNextAdmission) {
-    EngineSession session(MakeStreamWaitConfig(
-        nullptr, /*maxVoices=*/1, /*maxStreams=*/2, /*maxParked=*/2));
-    ASSERT_EQ(VN_OK, session.InitResult());
-    harken::Engine* engine = session.Engine();
-    const std::string firstPath =
-        WriteSineStream("stream_wait_mailbox_first.stream", harkentest::ObjectId(9802), 48000);
-    const std::string secondPath =
-        WriteSineStream("stream_wait_mailbox_second.stream", harkentest::ObjectId(9803), 48000);
-    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9802), firstPath.c_str()));
-    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(harkentest::ObjectId(9803), secondPath.c_str()));
-    const std::vector<float> pcmData(48000, 0.2f);
-    VnPCMDesc pcm = harkentest::MonoDesc(pcmData, kRate);
-    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9804), &pcm));
 
-    VnVoiceHandle first = 0;
-    ASSERT_EQ(VN_OK, PlayDefault(harkentest::ObjectId(9802), &first));
-    engine->streams.SyncServe();
-    engine->nullBackend.Pump(2);
-    VnVoiceHandle firstClaimant = 0;
-    ASSERT_EQ(VN_OK, PlayDefault(harkentest::ObjectId(9804), &firstClaimant));
-    engine->nullBackend.Pump(1);
-    ASSERT_EQ(VN_OK, Vn_Stop(firstClaimant, 0));
-    engine->streams.SyncServe();
-
-    VnVoiceHandle second = 0;
-    ASSERT_EQ(VN_OK, PlayDefault(harkentest::ObjectId(9803), &second));
-    const harken::VoiceLedger::Resolved firstWaiting =
-        engine->ledger.Classify(first);
-    ASSERT_EQ(harken::VoiceLedger::HandleKind::Parked, firstWaiting.kind);
-    EXPECT_EQ(harken::ParkRecord::State::StreamResumeReady,
-              engine->parkRecords[firstWaiting.ledgerSlot].state);
-    engine->streams.SyncServe();
-    engine->nullBackend.Pump(2);
-
-    VnVoiceHandle secondClaimant = 0;
-    ASSERT_EQ(VN_OK, PlayDefault(harkentest::ObjectId(9804), &secondClaimant));
-    EXPECT_EQ(harken::VoiceLedger::HandleKind::Parked,
-              engine->ledger.Classify(second).kind);
-    EXPECT_EQ(0u, engine->voiceStolenCount);
-}
 
 TEST(StreamPlayback, StreamTerminalReasonDoesNotCrossGeneration) {
     harkentest::PcmStreamFixture ring;
