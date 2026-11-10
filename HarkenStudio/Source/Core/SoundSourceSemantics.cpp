@@ -488,6 +488,41 @@ SoundSourceDef canonicalized(const SoundSourceDef& source, uint64_t totalFrames)
     return result;
 }
 
+double fadeGainAtFrame(const SoundSourceDef& canonicalSource, double absoluteFrame)
+{
+    const double start = double(canonicalSource.trimStartFrame);
+    const double end = double(*canonicalSource.trimEndFrame);
+    if (absoluteFrame < start || absoluteFrame > end)
+        return 1.0;
+    const auto& fadeIn = canonicalSource.fadeIn;
+    if (fadeIn.durationFrames > 0 && absoluteFrame < start + double(fadeIn.durationFrames))
+        return curveBezierValueAt(fadeIn.curve, fadeIn.handles,
+            float((absoluteFrame - start) / double(fadeIn.durationFrames)));
+    const auto& fadeOut = canonicalSource.fadeOut;
+    const double outStart = end - double(fadeOut.durationFrames);
+    if (fadeOut.durationFrames > 0 && absoluteFrame > outStart)
+        return curveBezierValueAt(fadeOut.curve, fadeOut.handles,
+            float((absoluteFrame - outStart) / double(fadeOut.durationFrames)));
+    return 1.0;
+}
+
+void applyFadeEnvelope(std::span<float> samples, uint32_t channels,
+                       const SoundSourceDef& source, uint64_t totalFrames,
+                       uint64_t startFrame)
+{
+    Q_ASSERT(channels > 0 && samples.size() % channels == 0);
+    const auto canonicalSource = canonicalized(source, totalFrames);
+    if (canonicalSource.fadeIn.durationFrames == 0 && canonicalSource.fadeOut.durationFrames == 0)
+        return;
+    for (size_t offset = 0; offset < samples.size(); offset += channels) {
+        const auto frame = startFrame + offset / channels;
+        const float gain = static_cast<float>(fadeGainAtFrame(canonicalSource, double(frame)));
+        if (gain == 1.0f) continue;
+        for (uint32_t channel = 0; channel < channels; ++channel)
+            samples[offset + channel] *= gain;
+    }
+}
+
 void stampAuthoringAnchors(std::vector<SoundSourceDef>& sources,
                            const std::vector<SoundSourceDef>& previous,
                            const std::function<const AssetInfo*(uint32_t)>& resolve)

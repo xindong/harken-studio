@@ -128,7 +128,7 @@ GUI、IPC、CLI 会话导出和 CLI 已保存工程构建使用同一个 `Projec
 | `waveforms/<source-relative-path>.vkd` | WaveformCache → 编辑器、波形导出 | 共用波形数据；不再附带 .vkd.source.json 或第二份源摘要 |
 | `.build.lock` | 构建服务 → 其他构建请求 | QLockFile 进程锁记录，串行维护同一工程的 builds.json 和转换缓存；不是历史或成功标记 |
 
-转换 key 只包含源内容摘要、有效裁剪／循环、量化到实际采样帧的调度偏移、实际重采样目标及转换格式版本；不含源 ID、平台 UUID 或不影响实际转换的参数。等价转换跨平台复用；实际载入 PCM 时读取并校验其摘要一次。资产既有 `platformCaches` 服务编辑器／预览；本链不借它额外生成转换 WAV。
+转换 key 只包含源内容摘要、有效裁剪／循环、已启用 Source 淡入淡出的有效时长与曲线、量化到实际采样帧的调度偏移、实际重采样目标及转换格式版本；不含源 ID、平台 UUID 或不影响实际转换的参数。淡入淡出在源采样率下按裁剪两端处理，随后重采样并添加调度前置静音；与对象试听共用处理算法。等价转换跨平台复用；实际载入 PCM 时读取并校验其摘要一次。资产既有 `platformCaches` 服务编辑器／预览；本链不借它额外生成转换 WAV。
 
 `builds.json` 不保存 units、counts、warnings、完整结果、平台配置副本、逐包媒体引用历史或源摘要副本。名称、语言、统计、警告由当前计划推导，大小／时间由实际文件查询。Publisher 从这张状态表恢复产物显示，后续只维护内存，不再写 `pack-artifacts.json`。包勾选与 Export Platforms 保存到既有用户 QSettings 的 `PackExportSelection/<projectId>`，不作为构建缓存。
 

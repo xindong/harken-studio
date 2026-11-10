@@ -283,6 +283,11 @@ public:
                                                 uint64_t startFrame,
                                                 uint64_t frameCount,
                                                 bool loops = false);
+    RawPcmSliceRegistration registerRawPcmSlice(harkenstudio::ObjectId soundId,
+                                                std::vector<float> interleaved,
+                                                int channels, int sampleRate,
+                                                uint64_t startFrame, uint64_t frameCount,
+                                                bool loops = false);
     RawPcmSliceRegistration relocateRawPcmSlice(harkenstudio::ObjectId soundId,
                                                 uint64_t startFrame);
     EngineResult unregisterRawPcm(harkenstudio::ObjectId soundId);

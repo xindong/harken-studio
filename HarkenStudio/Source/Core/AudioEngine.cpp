@@ -683,6 +683,23 @@ Bridge::EngineSession::RawPcmSliceRegistration AudioEngine::registerRawPcmSlice(
     return session_->registerRawPcmSlice(soundId, absolutePath, startFrame, frameCount, loops);
 }
 
+Bridge::EngineSession::RawPcmSliceRegistration AudioEngine::registerRawPcmSlice(
+    harkenstudio::ObjectId soundId, std::vector<float> interleaved,
+    int channels, int sampleRate, uint64_t startFrame, uint64_t frameCount, bool loops)
+{
+    if (!session_) {
+        Bridge::EngineSession::RawPcmSliceRegistration registration;
+        registration.soundId = soundId;
+        registration.startFrame = startFrame;
+        registration.frameCount = frameCount;
+        registration.loops = loops;
+        registration.result = Bridge::kEngineNotInit;
+        return registration;
+    }
+    return session_->registerRawPcmSlice(soundId, std::move(interleaved), channels,
+                                        sampleRate, startFrame, frameCount, loops);
+}
+
 Bridge::EngineSession::RawPcmSliceRegistration AudioEngine::relocateRawPcmSlice(
     harkenstudio::ObjectId soundId, uint64_t startFrame)
 {

@@ -131,7 +131,9 @@ TEST(SoundSourceSemanticsTest, DerivativeCachePreservesMediaAcrossInputChanges)
                 ConversionSettings settings;
                 settings.performResample = rate != 0;
                 if (rate != 0) settings.targetSampleRate = rate;
-                for (int variant = 0; variant < 4; ++variant) {
+                std::vector<float> uneditedSamples, previousFadeSamples;
+                QString uneditedKey, previousFadeKey;
+                for (int variant = 0; variant < 7; ++variant) {
                     SCOPED_TRACE(::testing::Message() << channels << "/" << revision
                         << "/" << rate << "/" << variant);
                     auto definition = source(1);
@@ -149,11 +151,34 @@ TEST(SoundSourceSemanticsTest, DerivativeCachePreservesMediaAcrossInputChanges)
                         definition.trimStartFrame = 73;
                         definition.loopRegion = SoundLoopRegion{51, 141};
                         offset = 0.003;
+                    } else if (variant == 4 || variant == 5) {
+                        definition.fadeIn.durationFrames = 83;
+                        definition.fadeOut.durationFrames = 109;
+                        if (variant == 5) {
+                            definition.fadeIn.handles = {{0.1f, 0.8f, 0.6f, 1.0f}};
+                            definition.fadeOut.handles = {{0.3f, 0.9f, 0.8f, 0.1f}};
+                        }
                     }
                     QString error;
+                    const auto uncached = SoundSourceDerivative::prepare(
+                        inputPath, definition, offset, settings, &error);
+                    ASSERT_TRUE(uncached) << error.toStdString();
                     const auto reference = SoundSourceDerivative::materialize(
                         inputPath, definition, offset, platform, referenceDir, settings, &error);
                     ASSERT_TRUE(reference) << error.toStdString();
+                    EXPECT_EQ(*reference->samples, uncached->samples);
+                    if (variant == 0) {
+                        uneditedSamples = *reference->samples;
+                        uneditedKey = reference->cacheKey;
+                    } else if (variant == 4 || variant == 5) {
+                        EXPECT_NE(*reference->samples, variant == 4 ? uneditedSamples : previousFadeSamples);
+                        EXPECT_NE(reference->cacheKey, variant == 4 ? uneditedKey : previousFadeKey);
+                        previousFadeSamples = *reference->samples;
+                        previousFadeKey = reference->cacheKey;
+                    } else if (variant == 6) {
+                        EXPECT_EQ(*reference->samples, uneditedSamples);
+                        EXPECT_EQ(reference->cacheKey, uneditedKey);
+                    }
                     const auto fromSnapshot = SoundSourceDerivative::materialize(
                         captured->inputPath, definition, offset, platform, snapshotDir,
                         settings, &error, &snapshotCache, captured.get());
@@ -196,6 +221,63 @@ TEST(SoundSourceSemanticsTest, DerivativeCachePreservesMediaAcrossInputChanges)
                     else EXPECT_NE(reference->cacheKey, previousKeys[requestIndex]);
                     ++requestIndex;
                 }
+            }
+        }
+    }
+}
+
+TEST(SoundSourceSemanticsTest, MediaEditsPreserveSourceCoordinatesAcrossSlicesAndConversion)
+{
+    QTemporaryDir directory;
+    ASSERT_TRUE(directory.isValid());
+    auto definition = source(1);
+    definition.trimStartFrame = 17;
+    definition.trimEndFrame = 241;
+    definition.fadeIn.durationFrames = 79;
+    definition.fadeOut.durationFrames = 103;
+    definition.fadeIn.handles = {{0.1f, 0.7f, 0.8f, 1.0f}};
+    definition.fadeOut.handles = {{0.3f, 0.9f, 0.7f, 0.2f}};
+    definition.loopRegion = SoundLoopRegion{53, 209};
+    auto bakedDefinition = definition;
+    bakedDefinition.fadeIn.durationFrames = 0;
+    bakedDefinition.fadeOut.durationFrames = 0;
+    constexpr uint64_t totalFrames = 257;
+    for (const uint16_t channels : {1, 2}) {
+        std::vector<float> original(totalFrames * channels);
+        for (size_t index = 0; index < original.size(); ++index)
+            original[index] = static_cast<float>(index % 31 + 1) / 64.0f;
+        auto baked = original;
+        SoundSourceSemantics::applyFadeEnvelope(baked, channels, definition, totalFrames);
+        EXPECT_NE(baked, original);
+        for (const auto range : {SoundLoopRegion{17, 241}, SoundLoopRegion{42, 88},
+                                 *definition.loopRegion, SoundLoopRegion{193, 233}}) {
+            SCOPED_TRACE(::testing::Message() << channels << "/" << range.startFrame);
+            const auto begin = static_cast<std::ptrdiff_t>(range.startFrame * channels);
+            const auto end = static_cast<std::ptrdiff_t>(range.endFrame * channels);
+            std::vector<float> sliced(original.begin() + begin, original.begin() + end);
+            SoundSourceSemantics::applyFadeEnvelope(
+                sliced, channels, definition, totalFrames, range.startFrame);
+            EXPECT_EQ(sliced, std::vector<float>(baked.begin() + begin, baked.begin() + end));
+        }
+        const auto originalPath = directory.filePath(QStringLiteral("original.wav"));
+        const auto bakedPath = directory.filePath(QStringLiteral("baked.wav"));
+        ASSERT_TRUE(AssetConverter::writeFloatWav(originalPath, original, channels, 44100));
+        ASSERT_TRUE(AssetConverter::writeFloatWav(bakedPath, baked, channels, 44100));
+        for (const uint32_t rate : {44100u, 22050u, 48000u}) {
+            ConversionSettings settings;
+            settings.performResample = true;
+            settings.targetSampleRate = rate;
+            for (const double offset : {0.0, 0.00125}) {
+                QString error;
+                const auto prepared = SoundSourceDerivative::prepare(
+                    originalPath, definition, offset, settings, &error);
+                ASSERT_TRUE(prepared) << error.toStdString();
+                const auto reference = SoundSourceDerivative::prepare(
+                    bakedPath, bakedDefinition, offset, settings, &error);
+                ASSERT_TRUE(reference) << error.toStdString();
+                EXPECT_EQ(prepared->samples, reference->samples);
+                EXPECT_EQ(prepared->loopStartFrame, reference->loopStartFrame);
+                EXPECT_EQ(prepared->loopEndFrame, reference->loopEndFrame);
             }
         }
     }

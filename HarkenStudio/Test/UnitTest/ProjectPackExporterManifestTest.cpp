@@ -5606,6 +5606,21 @@ TEST(EditorProjectPackExporterManifest, ProjectBuildIncrementalResultsMatchForce
     ASSERT_TRUE(initial.allPlatformsSucceeded) << initial.preflightError.toStdString();
     ASSERT_TRUE(initial.finalizationResult.success) << initial.finalizationResult.error.toStdString();
     QByteArray previousContent = readFileBytes(context.live.filePath(QStringLiteral("One.bytes")));
+    const auto readMedia = [&](QByteArray& payload) {
+        QByteArray bytes;
+        harken::PackCanonicalImage image;
+        harken::CurrentWorldBodyImage body;
+        ASSERT_NO_FATAL_FAILURE(readCanonicalWorld(
+            context.live.filePath(QStringLiteral("One.bytes")), bytes, image, body));
+        ASSERT_EQ(image.media.size(), 1u);
+        const auto& media = image.media.front();
+        payload = bytes.mid(static_cast<qsizetype>(media.blobOffset),
+                            static_cast<qsizetype>(media.blobBytes));
+    };
+    QByteArray previousMedia;
+    ASSERT_NO_FATAL_FAILURE(readMedia(previousMedia));
+    auto& source = context.project.layers.front().rootItem->children.front()
+        ->comp<VNX::VSound>()->sources.plain.entries.front();
     const QString sourcePath = QDir(VNX::PathUtils::getAudioSourcesDir(context.directory.path()))
         .filePath(QStringLiteral("tone.wav"));
     const std::vector<std::function<void()>> changes{
@@ -5625,6 +5640,16 @@ TEST(EditorProjectPackExporterManifest, ProjectBuildIncrementalResultsMatchForce
             ASSERT_TRUE(file.setFileTime(modified, QFileDevice::FileModificationTime));
             EXPECT_EQ(QFileInfo(sourcePath).size(), bytes.size());
             EXPECT_EQ(QFileInfo(sourcePath).lastModified(), modified);
+        },
+        [&] {
+            source.fadeIn.durationFrames = 32;
+            source.fadeOut.durationFrames = 16;
+        },
+        [&] {
+            source.fadeIn.durationFrames = 48;
+        },
+        [&] {
+            source.fadeIn.handles = {{0.1f, 0.8f, 0.6f, 1.0f}};
         },
         [&] {
             const QString path = context.live.filePath(QStringLiteral("One.bytes"));
@@ -5647,8 +5672,13 @@ TEST(EditorProjectPackExporterManifest, ProjectBuildIncrementalResultsMatchForce
         ASSERT_TRUE(incremental.finalizationResult.success) << incremental.finalizationResult.error.toStdString();
         ASSERT_EQ(incremental.platforms.size(), 1u);
         const auto content = readFileBytes(context.live.filePath(QStringLiteral("One.bytes")));
-        if (index < 2) EXPECT_NE(content, previousContent);
+        if (index < 5) EXPECT_NE(content, previousContent);
         previousContent = content;
+        QByteArray media;
+        ASSERT_NO_FATAL_FAILURE(readMedia(media));
+        if (index >= 1 && index <= 4) EXPECT_NE(media, previousMedia);
+        else EXPECT_EQ(media, previousMedia);
+        previousMedia = media;
         QMap<QString, QByteArray> expected;
         for (const auto& path : publicationFiles(context.live.path()))
             expected.insert(path, readFileBytes(context.live.filePath(path)));

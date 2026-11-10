@@ -484,6 +484,26 @@ EngineSession::RawPcmSliceRegistration EngineSession::registerRawPcmSlice(
     return registration;
 }
 
+EngineSession::RawPcmSliceRegistration EngineSession::registerRawPcmSlice(
+    harkenstudio::ObjectId soundId, std::vector<float> interleaved,
+    int channels, int sampleRate, uint64_t startFrame, uint64_t frameCount, bool loops)
+{
+    RawPcmSliceRegistration registration;
+    registration.soundId = soundId;
+    registration.startFrame = startFrame;
+    registration.frameCount = frameCount;
+    registration.windowStartFrame = startFrame;
+    registration.windowFrameCount = frameCount;
+    registration.loops = loops;
+    registration.result = Detail::runtimeRegisterRawPcmSlice(
+        soundId, std::move(interleaved), channels, sampleRate, startFrame, frameCount, loops);
+    if (registration.result == kEngineOk) {
+        registration.channels = static_cast<uint32_t>(channels);
+        registration.sampleRate = static_cast<uint32_t>(sampleRate);
+    }
+    return registration;
+}
+
 EngineSession::RawPcmSliceRegistration EngineSession::relocateRawPcmSlice(
     harkenstudio::ObjectId soundId, uint64_t startFrame)
 {
