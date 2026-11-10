@@ -24,28 +24,34 @@ public:
 
     VnResult Result() const { return result_; }
 
-    VnResult Start(float volumeDb, std::uint32_t loops, VnVoiceHandle* render) {
+    VnResult Start(float volumeDb, std::uint32_t loops, VnVoiceHandle* render,
+        const harken::StreamParkTokenRef* resume = nullptr, std::uint64_t startFrame = 0) {
         if (result_ != VN_OK) return result_;
         if (render == nullptr) return VN_INVALID_ARG;
         *render = 0;
+        const auto* saved = resume ? engine_.voices.ResolveParkOwnedToken(*resume) : nullptr;
+        if (resume != nullptr && saved == nullptr) return VN_INVALID_ARG;
+        const auto start = saved ? saved->feedFrame : startFrame;
+        if (saved) loops = saved->feedLoopsRemaining;
+        const auto pitch = saved ? saved->resampler.targetRatio * engine_.config.mixRate.SampleRate() / facts_.sampleRate : 1.0;
         std::uint32_t slot = 0;
         if (!engine_.streams.PeekFreeSlot(&slot) ||
             !engine_.streams.PrepareSlotWorkingSet(slot, facts_.channelCount)) return VN_NO_STREAM;
         const bool loopable = (facts_.flags & harken::kStreamFlagLoopable) != 0;
         const auto loopStart = loopable ? facts_.loopStartFrame : 0;
-        const auto loopEnd = loopable ? facts_.loopEndFrame : facts_.frameCount;
+        const auto loopEnd = loopable && facts_.loopEndFrame != 0 ? facts_.loopEndFrame : facts_.frameCount;
         std::uint64_t token = 0;
-        const auto active = engine_.streams.ActivateSlot(slot, facts_.fileIndex, 0, loopStart, loopEnd, loops, &token);
+        const auto active = engine_.streams.ActivateSlot(slot, facts_.fileIndex, start, loopStart, loopEnd, loops, &token);
         if (active != VN_OK) return active;
         auto* ring = engine_.streams.RingOf(slot);
         const auto prebuffer = std::min<std::uint64_t>(
             (std::uint64_t(engine_.config.prebufferMs) * facts_.sampleRate + 999u) / 1000u,
             ring->FrameCapacity(facts_.channelCount));
         const auto played = engine_.voices.PlayStream(ring, facts_.channelCount, facts_.sampleRate,
-            static_cast<std::uint32_t>(prebuffer), volumeDb, 1, 0, false, 0, 0, 0,
-            harken::ResolvePanGains(engine_.config.mixChannelLayout, 0), 0, facts_.frameCount,
-            loopStart, loopEnd, loops, harken::ResampleProfile::LegacyCompatibility, render,
-            engine_.buses.GenerationAt(0));
+            static_cast<std::uint32_t>(prebuffer), volumeDb, pitch, 0, false, 0, 0, 0,
+            harken::ResolvePanGains(engine_.config.mixChannelLayout, 0), start, facts_.frameCount,
+            loopStart, loopEnd, loops, saved ? saved->profile : harken::ResampleProfile::LegacyCompatibility, render,
+            engine_.buses.GenerationAt(0), UINT32_MAX, 0, resume);
         if (played != VN_OK) { engine_.streams.RetirePreparedSlot(ring, token); return played; }
         engine_.voices.BindStreamRingToken(*render, ring, token);
         engine_.voices.ApplyPlay(*render, *render, 0, engine_.mixer.BlocksRendered());
