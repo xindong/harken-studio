@@ -12738,6 +12738,16 @@ bool PreparePlayableServiceRow(
     return RegisterScheduleSourcePublicationWork(engine, row);
 }
 
+harken::PlayableRootMetadata PreparedServiceMetadata(harken::PlayableRootMetadata metadata,
+    const harken::EnginePlayableServiceRow* parent) noexcept {
+    // Descendant scheduling and read-cut ordinals do not identify a public Action step.
+    if (parent != nullptr) {
+        metadata.actionFiring = parent->Invocation().actionFiring;
+        metadata.actionExecutionOrdinal = parent->Invocation().actionExecutionOrdinal;
+    }
+    return metadata;
+}
+
 harken::EnginePlayableServiceReference PlayableServiceReference(
     const harken::EnginePlayableServiceRow& row) noexcept {
     return {row.identity, row.ownerInstance, row.ownerEpoch, row.invocationGeneration};
@@ -26817,8 +26827,10 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
             *schedule->preparedRootOwnedFlag = 1;
         }
     }
-    if (!(executorOwnsRoot ? scratch->playableTreeExecutor.SetPreparedRootMetadata(engine.playableInstances, rootMetadata)
-                         : engine.playableInstances.SetPreparedRootMetadata(preparedRoot, rootMetadata))) {
+    auto* serviceParent = schedule == nullptr ? continuationParent : schedule->parent;
+    const auto serviceMetadata = PreparedServiceMetadata(rootMetadata, serviceParent);
+    if (!(executorOwnsRoot ? scratch->playableTreeExecutor.SetPreparedRootMetadata(engine.playableInstances, serviceMetadata)
+                         : engine.playableInstances.SetPreparedRootMetadata(preparedRoot, serviceMetadata))) {
         (void)cancelPreparedRoot();
         result.status = harken::PlayableStartStatus::Capacity;
         return result;
@@ -26838,7 +26850,6 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
         result.status = harken::PlayableStartStatus::Capacity;
         return result;
     }
-    auto* serviceParent = schedule == nullptr ? continuationParent : schedule->parent;
     if (!PreparePlayableServiceRow(engine, row, instance, preparedRoot.ScheduleEpoch(),
             serviceParent == nullptr ? nullptr : &serviceParent->Invocation(),
             &scratch->variableControlOwnerContext, &scratch->storage, serviceParent)) {
@@ -26903,7 +26914,8 @@ harken::PlayableStartResult PrepareVariableControlInitialImpl(
     row.Invocation().emitterOrigin = request.emitterOrigin;
     row.Invocation().invocationEmitter = request.emitter;
     row.Invocation().actionFiring = rootMetadata.actionFiring;
-    row.Invocation().actionExecutionOrdinal = rootMetadata.actionExecutionOrdinal;
+    if (!row.parentService.Valid())
+        row.Invocation().actionExecutionOrdinal = rootMetadata.actionExecutionOrdinal;
     row.variableControlEmitter = request.emitter;
     BindVariableControlWorldAuthority(engine, row, world);
     for (std::uint32_t index = 0; index < childCount; ++index) {
@@ -92846,7 +92858,8 @@ bool ResolveSharedScheduleInitialBoundary(harken::Engine& engine,
 }
 
 bool ReplaceScheduleSourceMember(ContainerPreparationContext& context,
-    harken::EnginePlayableServiceRow& parent, harken::EngineScheduleAggregateChild& replacement) noexcept {
+    const harken::EngineActionPlayScratch& scratch, harken::EnginePlayableServiceRow& parent,
+    harken::EngineScheduleAggregateChild& replacement) noexcept {
     auto* cohort = context.scheduleSourceCohort;
     auto* original = context.scheduleChild;
     if (cohort == nullptr || original == nullptr || original->sourceCohort != cohort ||
@@ -92867,8 +92880,8 @@ bool ReplaceScheduleSourceMember(ContainerPreparationContext& context,
         if (!engine.originalPlayableServiceLifetimeHolders[parent.identity.slot].Borrow(&retention->service)) return false;
         if (replacement.content.kind == harken::PlayableKindV1::Sound) {
             const auto& property = replacement.properties;
-            if ((owner->Invocation().packLease.leaseToken != 0
-                ? engine.playablePropertyCutScratch.Resolve(owner->Invocation().packPlaybackView, property.propertyRoot,
+            if (((scratch.packLeaseOwned || scratch.packLeaseBorrowed)
+                ? engine.playablePropertyCutScratch.Resolve(scratch.packPlaybackView, property.propertyRoot,
                     property.ordinals.data(), static_cast<std::uint32_t>(property.ordinals.size()), property.trackIds.data())
                 : engine.playablePropertyCutScratch.Resolve(context.world, property.propertyRoot,
                     property.ordinals.data(), static_cast<std::uint32_t>(property.ordinals.size()), property.trackIds.data())) != harken::ResolvedPlayablePropertyCutStatusV1::Ok ||
@@ -93428,7 +93441,8 @@ struct ScheduleContainerPreparationOperations {
         metadata.invocationEmitter = context.emitter;
         metadata.actionFiring = context.actionFiring;
         metadata.actionExecutionOrdinal = context.entry.executionOrdinal;
-        return PrepareContainerQueueCompositeTree(engine, context.world, metadata,
+        return PrepareContainerQueueCompositeTree(engine, context.world,
+            PreparedServiceMetadata(metadata, Parent()),
             context.playbackRequest, context.emitterOrigin,
             [&](harken::PlayableKind kind, const harken::MonitorRequestContext& request,
                 const harken::MonitorEmitterOrigin& origin, harken::EngineActionPlayScratch& owned) noexcept {
@@ -93449,9 +93463,11 @@ struct ScheduleContainerPreparationOperations {
         const harken::PlayableStartRequest& request, const harken::SelectionPathNodeV1* path,
         std::uint32_t pathCount, harken::EngineActionPlayScratch* scratch,
         harken::ActionFiringHandle firing, std::uint32_t ordinal) noexcept {
+        const auto* parent = Parent();
         return &targetEngine == &engine && HasPreparationAuthority(scratch) &&
             PrepareNestedVariableControlOuterTree(engine, world, request, path, pathCount,
-                scratch, firing, ordinal, context.parentInstance);
+                scratch, parent == nullptr ? firing : parent->Invocation().actionFiring,
+                parent == nullptr ? ordinal : parent->Invocation().actionExecutionOrdinal, context.parentInstance);
     }
     harken::PlayableStartResult PrepareVariableInitial(harken::Engine& targetEngine,
         const harken::PlayableWorldViewV1& world,
@@ -93648,7 +93664,8 @@ ContainerMixedTerminalResult PrepareContainerMixedScheduleTerminal(ContainerPrep
     metadata.invocationEmitter = context.emitter;
     metadata.actionFiring = context.actionFiring;
     metadata.actionExecutionOrdinal = context.entry.executionOrdinal;
-    if (!scratch.playableTreeExecutor.SetPreparedRootMetadata(engine.playableInstances, metadata))
+    if (!scratch.playableTreeExecutor.SetPreparedRootMetadata(engine.playableInstances,
+            PreparedServiceMetadata(metadata, engine.ResolvePlayableService(context.parentService))))
         return fail(VN_NO_VOICE);
     const bool serviceReady = parented || context.directRoot
         ? childOperations.PrepareService(engine, *rootService, preparedRoot.Handle(),
@@ -93672,7 +93689,7 @@ ContainerMixedTerminalResult PrepareContainerMixedScheduleTerminal(ContainerPrep
     invocation.emitterOrigin = context.emitterOrigin;
     invocation.invocationEmitter = context.emitter;
     invocation.actionFiring = context.actionFiring;
-    if (ScheduleSourceNativeForestOwner(engine, scratch) == nullptr)
+    if (!rootService->parentService.Valid())
         invocation.actionExecutionOrdinal = context.entry.executionOrdinal;
     invocation.projectId = metadata.projectId;
     invocation.worldGeneration = metadata.worldGeneration;
@@ -93813,7 +93830,7 @@ ContainerMixedTerminalResult PrepareContainerMixedScheduleTerminal(ContainerPrep
     record.sourceOffsetFrames = context.sourceOffsetFrames;
     record.musicFromEntry = context.musicFromEntry;
     if (!CaptureScheduleTargetFade(record, context.scheduleTargetFade)) return fail(VN_BACKPRESSURE);
-    if (selected.sharedSelectedTerminal && !ReplaceScheduleSourceMember(context, *terminalParent, record))
+    if (selected.sharedSelectedTerminal && !ReplaceScheduleSourceMember(context, scratch, *terminalParent, record))
         return fail(VN_BACKPRESSURE);
     if (scratch.selectionPlayCount != 0 && scratch.selectionPlays[0].Valid())
         rootService->selectionSeedProbe = engine.selectionMemory.PreparedPlaySeedProbe(scratch.selectionPlays[0]);
@@ -94103,7 +94120,8 @@ bool PrepareContainerSingleLeaf(
         context.actionFiring;
     rootMetadata.actionExecutionOrdinal = planned.executionOrdinal;
     if (!scratch->playableTreeExecutor.SetPreparedRootMetadata(
-            engine.playableInstances, rootMetadata)) {
+            engine.playableInstances, PreparedServiceMetadata(rootMetadata,
+                engine.ResolvePlayableService(context.parentService)))) {
         CancelPlayableExecution(engine, scratch);
         (void)operations.ReleaseLease(scratch);
         context.result = VN_DEVICE_ERROR;
@@ -94321,7 +94339,8 @@ bool PrepareContainerSingleLeaf(
     row->Invocation().invocationEmitter = context.emitter;
     row->Invocation().actionFiring =
         context.actionFiring;
-    row->Invocation().actionExecutionOrdinal = planned.executionOrdinal;
+    if (!row->parentService.Valid())
+        row->Invocation().actionExecutionOrdinal = planned.executionOrdinal;
     row->ticket = provisionalSequence;
     row->Invocation().projectId = rootMetadata.projectId;
     row->Invocation().worldGeneration =
@@ -94955,7 +94974,8 @@ bool PrepareContainerCompositeQueueChild(
     rootMetadata.actionExecutionOrdinal = planned.executionOrdinal;
     if (!reusePreparedTree &&
         !scratch->playableTreeExecutor.SetPreparedRootMetadata(
-            engine.playableInstances, rootMetadata)) {
+            engine.playableInstances, PreparedServiceMetadata(rootMetadata,
+                engine.ResolvePlayableService(context.parentService)))) {
         scratch->playableTreeExecutor.Cancel(engine.playableInstances);
         context.result = VN_DEVICE_ERROR;
         return false;
@@ -95058,7 +95078,8 @@ bool PrepareContainerCompositeQueueChild(
     row->Invocation().invocationEmitter = context.emitter;
     row->Invocation().actionFiring =
         context.actionFiring;
-    row->Invocation().actionExecutionOrdinal = planned.executionOrdinal;
+    if (!row->parentService.Valid())
+        row->Invocation().actionExecutionOrdinal = planned.executionOrdinal;
     row->ticket = provisionalSequence;
     row->Invocation().projectId = rootMetadata.projectId;
     row->Invocation().worldGeneration = packQueue
@@ -95588,7 +95609,8 @@ bool PrepareContainerNestedVariableControl(
     metadata.actionExecutionOrdinal = planned.executionOrdinal;
     if (!scratch->variableControlOuterRoot.Valid() ||
         !engine.playableInstances.SetPreparedRootMetadata(
-            scratch->variableControlOuterRoot, metadata)) {
+            scratch->variableControlOuterRoot, PreparedServiceMetadata(metadata,
+                engine.ResolvePlayableService(context.parentService)))) {
         return fail(VN_DEVICE_ERROR);
     }
 
@@ -95709,7 +95731,8 @@ bool PrepareContainerNestedVariableControl(
 
     operations.BindAttemptOrigin(*scratch);
     scratch->row->Invocation().actionFiring = metadata.actionFiring;
-    scratch->row->Invocation().actionExecutionOrdinal = planned.executionOrdinal;
+    if (!scratch->row->parentService.Valid())
+        scratch->row->Invocation().actionExecutionOrdinal = planned.executionOrdinal;
     if (captureInitialVariables && !immediateLane) {
         auto& initialCut = scratch->storage.initialVariableCut;
         const bool sourcesReady = materializedVariables || context.claimedResetOrder.Valid()
@@ -96104,7 +96127,8 @@ bool PrepareContainerExecution(
         }
         operations.BindAttemptOrigin(*scratch);
         scratch->row->Invocation().actionFiring = metadata.actionFiring;
-        scratch->row->Invocation().actionExecutionOrdinal = planned.executionOrdinal;
+        if (!scratch->row->parentService.Valid())
+            scratch->row->Invocation().actionExecutionOrdinal = planned.executionOrdinal;
         if (captureInitialVariables && !pendingRegisteredVariables) {
             auto& initialCut = scratch->storage.initialVariableCut;
             const bool sourcesReady = materializedVariables || context.claimedResetOrder.Valid()
@@ -99689,7 +99713,8 @@ bool PrepareMixedScheduleExecution(ContainerPreparationContext& context,
     metadata.invocationEmitter = context.emitter;
     metadata.actionFiring = context.actionFiring;
     metadata.actionExecutionOrdinal = context.entry.executionOrdinal;
-    if (!scratch.playableTreeExecutor.SetPreparedRootMetadata(engine.playableInstances, metadata)) return false;
+    if (!scratch.playableTreeExecutor.SetPreparedRootMetadata(engine.playableInstances,
+            PreparedServiceMetadata(metadata, engine.ResolvePlayableService(context.parentService)))) return false;
     ObservePreparedContent(engine, scratch.playableTreeExecutor, preparedRoot.Handle(),
         pack ? MonitorContentFor(scratch.packPlaybackView, context.root) : MonitorContentFor(context.world, context.root));
     const bool serviceReady = context.parentInstance == 0
@@ -99721,7 +99746,7 @@ bool PrepareMixedScheduleExecution(ContainerPreparationContext& context,
     row->Invocation().invocationEmitter = context.emitter;
     row->Invocation().scheduleCallerSeed = context.callerSeed;
     row->Invocation().actionFiring = context.actionFiring;
-    if (ScheduleSourceNativeForestOwner(engine, scratch) == nullptr)
+    if (!row->parentService.Valid())
         row->Invocation().actionExecutionOrdinal = context.entry.executionOrdinal;
     row->Invocation().worldGeneration = metadata.worldGeneration;
     row->Invocation().projectId = metadata.projectId;
@@ -102046,7 +102071,8 @@ bool PrepareStaticScheduleExecution(
         context.actionFiring;
     rootMetadata.actionExecutionOrdinal = planned.executionOrdinal;
     if (!scratch->playableTreeExecutor.SetPreparedRootMetadata(
-            engine.playableInstances, rootMetadata)) {
+            engine.playableInstances, PreparedServiceMetadata(rootMetadata,
+                engine.ResolvePlayableService(context.parentService)))) {
         scratch->playableTreeExecutor.Cancel(engine.playableInstances);
         (void)operations.ReleaseLease(scratch);
         context.result = VN_DEVICE_ERROR;
@@ -102116,7 +102142,8 @@ bool PrepareStaticScheduleExecution(
     row->Invocation().invocationEmitter = context.emitter;
     row->Invocation().actionFiring =
         context.actionFiring;
-    row->Invocation().actionExecutionOrdinal = planned.executionOrdinal;
+    if (!row->parentService.Valid())
+        row->Invocation().actionExecutionOrdinal = planned.executionOrdinal;
     row->ticket = provisionalSequence;
     row->Invocation().projectId = rootMetadata.projectId;
     row->Invocation().worldGeneration =

@@ -181,10 +181,10 @@ public:
         std::uint64_t instance = 0;
         std::uint64_t ticket = 0;
     };
-    Start Post(std::uint64_t emitter = 0, std::uint64_t seed = 0) {
+    Start Post(std::uint64_t emitter = 0, std::uint64_t seed = 0, VnActionId action = {}) {
         VnPostActionDesc post{};
         post.structSize = sizeof(post);
-        post.actionId = RootAction();
+        post.actionId = action == VnObjectId{} ? RootAction() : action;
         post.emitter = emitter;
         post.callerSeed = seed;
         Start out;
