@@ -7855,6 +7855,125 @@ bool ReserveVoiceCommandTransport(harken::Engine& engine, std::uint32_t count,
     return AdmitCommandBatch(engine, count) && engine.commands.ReserveBatch(count, reservation);
 }
 
+static_assert(sizeof(harken::CommandRecord::Payload::SetVoiceEffect) == 56);
+static_assert(harken::kMaxEffectParamCount <=
+    std::extent_v<decltype(harken::CommandRecord::Payload::SetVoiceEffect::initialParams)>);
+static_assert([] {
+    for (const auto& row : harken::kEffectRegistry)
+        if (row.paramCount > std::extent_v<decltype(harken::CommandRecord::Payload::SetVoiceEffect::initialParams)>)
+            return false;
+    return true;
+}(), "every registered effect must fit the initial-parameter transport");
+
+bool ValidateTimelineEffectMirror(const harken::Engine& engine,
+    const harken::CommandQueue::PreparedBatchProof& proof, std::uint32_t offset,
+    const harken::CommandRecord& header) noexcept {
+    const auto render = header.payload.play.handle;
+    const auto row = static_cast<std::uint32_t>(render);
+    if (render == 0 || row >= engine.effectSlotTypes.size() ||
+        row >= engine.voiceEffectInstanceRefs.size() || row >= engine.effectSlotConfig.size()) return false;
+    const auto validSlot = [&](std::uint32_t slot) { return slot < engine.config.fxSlotsPerVoice; };
+    for (std::uint32_t index = 1; index < header.payload.play.batch.batchCommandCount; ++index) {
+        harken::CommandRecord command{};
+        if (!engine.commands.ReadPreparedAt(proof, offset + index, &command)) return false;
+        switch (command.opcode) {
+        case harken::kOpcodeSetVoiceEffect: {
+            const auto& effect = command.payload.setVoiceEffect;
+            const auto count = harken::EffectParamCount(effect.effectType);
+            if (effect.handle != render || !validSlot(effect.slot) || effect.poolGeneration == 0 ||
+                count == 0 || count > harken::kMaxEffectParamCount) return false;
+            for (std::uint32_t param = 0; param < count; ++param)
+                if (harken::ValidateEffectParam(effect.effectType, param, effect.initialParams[param],
+                        engine.config.mixRate.SampleRate()) != VN_OK) return false;
+            break;
+        }
+        case harken::kOpcodeSetVoiceEffectBypass: {
+            const auto& effect = command.payload.setVoiceEffectBypass;
+            if (effect.handle != render) break;
+            if (!validSlot(effect.slot) || effect.bypass > 1 ||
+                (effect.action != harken::kEffectActionBypass && effect.action != harken::kEffectActionReset))
+                return false;
+            break;
+        }
+        case harken::kOpcodeClearVoiceEffect: {
+            const auto& effect = command.payload.clearVoiceEffect;
+            if (effect.handle == render && !validSlot(effect.slot)) return false;
+            break;
+        }
+        case harken::kOpcodeSetVoiceEffectParam: {
+            if (command.flags == harken::kCommandFlagPreparedCompressor) {
+                // Timeline has no effect-target binding initializer. Prepared DSP
+                // coefficients cannot recover exact authored compressor values.
+                if (command.payload.setCompressorEffectParam.host == render) return false;
+                break;
+            }
+            const auto& effect = command.payload.setVoiceEffectParam;
+            if (effect.handle != render) break;
+            if (!validSlot(effect.slot) ||
+                harken::ValidateEffectParam(effect.effectType, effect.paramIndex, effect.value,
+                    engine.config.mixRate.SampleRate()) != VN_OK) return false;
+            break;
+        }
+        default: break;
+        }
+    }
+    return true;
+}
+
+void PublishTimelineEffectMirror(harken::Engine& engine,
+    const harken::CommandQueue::PreparedBatchProof& proof, std::uint32_t offset,
+    const harken::CommandRecord& header) noexcept {
+    const auto render = header.payload.play.handle;
+    const auto row = static_cast<std::uint32_t>(render);
+    auto& types = engine.effectSlotTypes[row];
+    auto& refs = engine.voiceEffectInstanceRefs[row];
+    auto& config = engine.effectSlotConfig[row];
+    // This non-owning accepted-config mirror changes only at final publication,
+    // including empty InitialSource children and reused render slots.
+    types.fill(harken::kEffectTypeNone);
+    refs = {};
+    config = {};
+    for (std::uint32_t index = 1; index < header.payload.play.batch.batchCommandCount; ++index) {
+        harken::CommandRecord command{};
+        const bool read = engine.commands.ReadPreparedAt(proof, offset + index, &command);
+        assert(read);
+        (void)read;
+        switch (command.opcode) {
+        case harken::kOpcodeSetVoiceEffect: {
+            const auto& effect = command.payload.setVoiceEffect;
+            types[effect.slot] = effect.effectType;
+            refs[effect.slot] = {effect.effectType, effect.poolIndex, effect.poolGeneration};
+            std::copy_n(effect.initialParams, harken::kMaxEffectParamCount, config[effect.slot].params.begin());
+            break;
+        }
+        case harken::kOpcodeSetVoiceEffectBypass: {
+            const auto& effect = command.payload.setVoiceEffectBypass;
+            if (effect.handle == render && effect.action == harken::kEffectActionBypass)
+                config[effect.slot].bypass = effect.bypass != 0;
+            break;
+        }
+        case harken::kOpcodeClearVoiceEffect: {
+            const auto& effect = command.payload.clearVoiceEffect;
+            if (effect.handle == render) {
+                types[effect.slot] = harken::kEffectTypeNone;
+                refs[effect.slot] = {};
+                config[effect.slot].params.fill(0.0f);
+            }
+            break;
+        }
+        case harken::kOpcodeSetVoiceEffectParam: {
+            if (command.flags == harken::kCommandFlagPreparedCompressor) break;
+            const auto& effect = command.payload.setVoiceEffectParam;
+            if (effect.handle == render && types[effect.slot] == effect.effectType &&
+                effect.effectType != VN_EFFECT_COMPRESSOR)
+                config[effect.slot].params[effect.paramIndex] = effect.value;
+            break;
+        }
+        default: break;
+        }
+    }
+}
+
 bool PrepareVoiceCommandBatch(harken::Engine& engine,
     harken::CommandQueue::BatchReservation* reservation,
     std::span<const harken::CommandRecord> commands,
@@ -7877,6 +7996,7 @@ bool PrepareVoiceCommandBatch(harken::Engine& engine,
             command.payload.play.batch.batchKind == harken::PlayLedBatchKind::TimelineArm) {
             const auto count = command.payload.play.batch.batchCommandCount;
             if (count == 0 || count > commands.size() - offset ||
+                !ValidateTimelineEffectMirror(engine, proof, offset, command) ||
                 !engine.originalSourceSubmissions.BindPreparedChild(proof, offset, count)) {
                 proof.Release();
                 return false;
@@ -7925,6 +8045,7 @@ void PublishVoiceCommandBatch(harken::Engine& engine,
         if (command.opcode == harken::kOpcodePlay &&
             command.payload.play.batch.batchKind == harken::PlayLedBatchKind::TimelineArm) {
             engine.originalSourceSubmissions.PublishPreparedChild(command);
+            PublishTimelineEffectMirror(engine, proof, offset, command);
             offset += command.payload.play.batch.batchCommandCount;
         } else ++offset;
     }
@@ -9220,6 +9341,8 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
         effectCommand.payload.setVoiceEffect.effectType = ref.type;
         effectCommand.payload.setVoiceEffect.poolIndex = ref.poolIndex;
         effectCommand.payload.setVoiceEffect.poolGeneration = ref.generation;
+        (void)harken::EffectParamsFromDesc(source.type, descriptor,
+            effectCommand.payload.setVoiceEffect.initialParams);
     }
     if (!AppendTimelineBindingCommands(engine, render, &commandIndex, initialReader,
                                        spatialInitialTargets)) {

@@ -99,7 +99,7 @@ inline constexpr std::uint32_t kEffectActionReset = 1;
 inline constexpr std::uint32_t kStopModeOrdinary = 0;
 inline constexpr std::uint32_t kStopModeStreamPark = 1;
 
-inline constexpr std::uint8_t kCommandVersion = 7;
+inline constexpr std::uint8_t kCommandVersion = 8;
 inline constexpr std::uint8_t kPlayLedBatchVersion = 1;
 
 enum class PlayLedBatchKind : std::uint8_t {
@@ -303,13 +303,16 @@ struct CommandRecord {
             // The instance was acquired and configured on the logic side; the
             // audio thread resolves (effectType, poolIndex) to the pooled
             // state through the effect bank and installs it into the slot,
-            // retiring whatever the slot held. Only ids and indices cross the
-            // boundary — no pointer into logic-owned mutable memory.
+            // retiring whatever the slot held. Ids, indices and authored values
+            // cross the boundary, never a pointer into logic-owned mutable memory.
             VnVoiceHandle handle;
+            std::uint64_t poolGeneration;
             std::uint32_t slot;
             std::uint32_t effectType; // VnEffectType
             std::uint32_t poolIndex;  // instance index within the type's pool
-            std::uint64_t poolGeneration;
+            // Canonical authored values for the Timeline final-publication mirror.
+            // Audio installs the already configured state; other producers keep zero.
+            float initialParams[7];
         } setVoiceEffect;
         struct ClearVoiceEffect {
             VnVoiceHandle handle;

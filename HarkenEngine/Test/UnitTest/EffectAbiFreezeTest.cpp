@@ -321,8 +321,8 @@ static_assert(harken::kOpcodeSetBusEffect == 20 &&
                   harken::kOpcodeSetBusFilter == 25,
               "bus-effect, fader-point, and bus-filter opcodes are frozen");
 
-static_assert(harken::kCommandVersion == 7,
-              "Action Seek transport vintage is pinned");
+static_assert(harken::kCommandVersion == 8,
+              "Timeline effect mirror transport vintage is pinned");
 
 // Ceiling of the frozen audio-thread vocabulary. No such pin exists in the
 // production headers (enforcement there is a frozen enum plus a Debug bounds

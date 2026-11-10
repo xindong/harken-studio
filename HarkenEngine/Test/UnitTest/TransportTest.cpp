@@ -29,10 +29,22 @@ using harkentest::MonoDesc;
 
 constexpr std::uint32_t kBlockFrames = 256;
 
-static_assert(harken::kCommandVersion == 7,
-              "Action Seek requires transport version 7");
+static_assert(harken::kCommandVersion == 8,
+              "Timeline effect mirrors require transport version 8");
 
 // Structural contract of the transport records and queues.
+static_assert(sizeof(harken::CommandRecord::Payload::SetVoiceEffect) == 56);
+static_assert(offsetof(harken::CommandRecord::Payload::SetVoiceEffect, handle) == 0);
+static_assert(offsetof(harken::CommandRecord::Payload::SetVoiceEffect, poolGeneration) == 8);
+static_assert(offsetof(harken::CommandRecord::Payload::SetVoiceEffect, initialParams) == 28);
+static_assert(harken::kMaxEffectParamCount <=
+    std::extent_v<decltype(harken::CommandRecord::Payload::SetVoiceEffect::initialParams)>);
+static_assert([] {
+    for (const auto& row : harken::kEffectRegistry)
+        if (row.paramCount > std::extent_v<decltype(harken::CommandRecord::Payload::SetVoiceEffect::initialParams)>)
+            return false;
+    return true;
+}(), "every registered effect must fit the initial-parameter transport");
 static_assert(sizeof(harken::CommandRecord) == 64,
               "command records are fixed 64-byte POD");
 static_assert(sizeof(harken::PlayLedBatchHeader) == 16,
