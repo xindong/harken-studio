@@ -927,6 +927,7 @@ bool TimelineArmTable::ReserveInternal(
         row.startFrame = startFrame;
         row.armDeadline = armDeadline;
         row.pendingImmediateStart = pendingImmediateStart;
+        row.initialLaneApplied.reset();
         row.startBound = !pendingImmediateStart &&
             (control == nullptr || control->stage != AuthoredControlStage::Pending);
         row.programGeneration = programGeneration;
@@ -1165,6 +1166,7 @@ bool TimelineArmTable::CancelPrepared(TimelineArmToken token) noexcept {
         return false;
     }
     row->identity.store(0, std::memory_order_release);
+    row->initialLaneApplied.reset();
     if (token.generation != UINT32_MAX) row->generation = token.generation + 1u;
     row->renderSlot = UINT32_MAX;
     row->renderGeneration = 0;
@@ -1246,6 +1248,7 @@ bool TimelineArmTable::RetirePendingImmediateBatchExact(
     for (std::size_t index = 0; index < inputCount; ++index) {
         const auto token = inputs[index].arm;
         Row& row = *reservedRows[index];
+        row.initialLaneApplied.reset();
         row.frontierAdmission = nullptr;
         row.frontierAdmissionLease = nullptr;
         row.frontierAdmissionFinished.store(true, std::memory_order_release);
@@ -1382,6 +1385,7 @@ bool TimelineArmTable::FinishUnpublishedPendingRetirement(
     for (std::size_t index = 0; index < proof->count_; ++index) {
         const auto& input = proof->inputs_[index];
         Row& row = *proof->rows_[index];
+        row.initialLaneApplied.reset();
         if (input.ownedReader != nullptr && input.ownedReader->Valid()) {
             input.ownedReader->owner_ = nullptr;
             input.ownedReader->token_ = {};
@@ -1514,6 +1518,26 @@ void TimelineArmTable::AcknowledgeSourceCommand(SourceCommandRowProof& proof,
     proof.row_->armedCompletionSequence.store(completionSequence, std::memory_order_relaxed);
     proof.row_->state.store(ArmState::Armed, std::memory_order_release);
     proof.completion_ = completionSequence;
+}
+
+bool TimelineArmTable::BindInitialLaneApplied(TimelineArmToken token,
+    std::shared_ptr<const ImmediateLaneAppliedReceipt> receipt) noexcept {
+    auto* row = Resolve(token);
+    if (row == nullptr || receipt == nullptr ||
+        row->state.load(std::memory_order_acquire) != ArmState::Prepared ||
+        row->initialLaneApplied != nullptr) return false;
+    row->initialLaneApplied = std::move(receipt);
+    return true;
+}
+
+bool TimelineArmTable::HasInitialLaneDependency(TimelineArmToken token) const noexcept {
+    const auto* row = Resolve(token);
+    return row != nullptr && row->initialLaneApplied != nullptr;
+}
+
+bool TimelineArmTable::InitialLaneApplied(TimelineArmToken token, std::uint64_t through) const noexcept {
+    const auto* row = Resolve(token);
+    return row != nullptr && (row->initialLaneApplied == nullptr || row->initialLaneApplied->Applied(through));
 }
 
 bool TimelineArmTable::SourcePublicationAccepted(TimelineArmToken token) const noexcept {
@@ -1841,6 +1865,7 @@ TimelineArmTable::ConsumeOriginalUnparentedUnpublishedSource(
     // Native factory, original Source disposition and all exits were checked
     // under the same row gate. No fallible operation follows this seal.
     scope.jointHeld = true;
+    row.initialLaneApplied.reset();
     row.identity.store(0, std::memory_order_release);
     if (token.generation != UINT32_MAX) row.generation = token.generation + 1u;
     row.renderSlot = UINT32_MAX; row.renderGeneration = 0;
@@ -2655,6 +2680,8 @@ TimelineArmOperationDisposition TimelineArmTable::ProvePlainAudioApply(TimelineA
         return reject(TimelineArmOperationDisposition::Cancelled);
     if (starts && row->sourcePublicationSequence > acceptedSourceTail_)
         return reject(TimelineArmOperationDisposition::Deferred);
+    if (starts && !InitialLaneApplied(token, audioSequence))
+        return reject(TimelineArmOperationDisposition::Ineligible);
     if (state != ArmState::Published && state != ArmState::AudioClaimed &&
         (!(state == ArmState::Started) || starts || transient))
         return reject(TimelineArmOperationDisposition::Ineligible);
@@ -3312,6 +3339,7 @@ bool TimelineArmTable::ProveBoundFrontierArm(TimelineArmToken token,
     if (row == nullptr || out == nullptr || out->Valid() || audioSequence == 0 ||
         row->reservation.test_and_set(std::memory_order_acquire)) return false;
     if (row->sourcePublicationSequence > acceptedSourceTail_ || row->authoredControl.operation != nullptr ||
+        (starts && !InitialLaneApplied(token, audioSequence)) ||
         row->frontierAdmissionFinished.load(std::memory_order_acquire) ||
         row->frontierReaderPins.load(std::memory_order_acquire) == 0 ||
         row->frontierAdmission == nullptr || row->frontierAdmissionLease == nullptr ||
@@ -4019,6 +4047,7 @@ bool TimelineArmTable::Reclaim(
             expected, ArmState::Quarantined, std::memory_order_acq_rel,
             std::memory_order_acquire);
         if (quarantined) {
+            row->initialLaneApplied.reset();
             row->authoredControl = {};
             row->identity.store(0, std::memory_order_release);
         }
@@ -4029,6 +4058,7 @@ bool TimelineArmTable::Reclaim(
         expected, ArmState::Free, std::memory_order_acq_rel,
         std::memory_order_acquire);
     if (freed) {
+        row->initialLaneApplied.reset();
         row->identity.store(0, std::memory_order_release);
         row->generation = token.generation + 1;
         row->renderSlot = UINT32_MAX;

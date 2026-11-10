@@ -2339,6 +2339,12 @@ void VoicePool::ActivatePendingNativeVariableStarts(NotificationQueue& notificat
     }
 }
 
+bool VoicePool::PrepareTimelineStartEventBacking(VnVoiceHandle handle) noexcept {
+    const auto* slot = SlotFor(handle);
+    return slot != nullptr && slot->state.load(std::memory_order_acquire) == SlotState::Prepared &&
+        m_pendingTimelineVariableEvents.ConstructThrough(static_cast<std::uint32_t>(handle) + 1u);
+}
+
 bool VoicePool::BindPreparedFirstOutputOrder(VnVoiceHandle handle, VariablePlaybackOrder order) noexcept {
     auto* slot = SlotFor(handle);
     if (slot == nullptr || order.sequence == 0 ||

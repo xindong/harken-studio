@@ -253,6 +253,7 @@ public:
     }
     std::size_t FirstOutputStorageBytes() const noexcept;
     // Backing only: native timeline authority still governs every pending event.
+    bool PrepareTimelineStartEventBacking(VnVoiceHandle handle) noexcept;
     std::span<VoiceTimelineEvent> PendingTimelineVariableEvents(std::uint32_t renderSlot) noexcept {
         if (renderSlot >= m_pendingTimelineVariableEvents.ConstructedCount()) return {};
         return m_pendingTimelineVariableEvents[renderSlot];

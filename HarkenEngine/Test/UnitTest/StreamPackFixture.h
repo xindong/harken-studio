@@ -57,12 +57,21 @@ public:
         return VN_OK;
     }
 
+    void AddVoiceBinding(VnBindingId id, const VnBindingDesc& desc, VnSoundId sound) {
+        harken::PackBindingAttachmentEntry attachment{};
+        attachment.bindingId = id;
+        attachment.scopeKind = VN_TARGET_SCOPE_VOICE;
+        attachment.objectId = sound;
+        bindings_.push_back({id, desc, attachment});
+    }
+
     harken::PcmMediaFacts Facts(VnSoundId id) const {
         for (const auto& row : rows_) if (row.id == id) return row.facts;
         return {};
     }
 
-    VnResult Activate(harken::ContainerWorldInstallViewV1 world, const harken::PlayableRefV1& root) {
+    VnResult Activate(harken::ContainerWorldInstallViewV1 world, const harken::PlayableRefV1& root,
+        std::span<const harken::PlayableRefV1> peers = {}) {
         using namespace harken;
         using namespace packfoundation;
         std::vector<PlayablePropertyProgramViewV1> properties;
@@ -72,23 +81,31 @@ public:
             return std::tie(a.contentPropertyKind, a.stableId) < std::tie(b.contentPropertyKind, b.stableId);
         });
         world.playableProperties = properties.data();
-        ActionStepProgramViewV1 step{};
-        step.opcode = ActionOpcodeV1::Play;
-        switch (root.kind) {
-        case PlayableKindV1::Sound: step.target.kind = ActionTargetKindV1::Sound; break;
-        case PlayableKindV1::Track: step.target.kind = ActionTargetKindV1::Track; break;
-        case PlayableKindV1::Segment: step.target.kind = ActionTargetKindV1::Segment; break;
-        default: step.target.kind = ActionTargetKindV1::Container; break;
-        }
-        step.target.stableId = root.stableId;
-        step.target.expectedProgramSemanticFingerprint = root.expectedProgramSemanticFingerprint;
-        SetAbsoluteTime(&step.delay);
-        SetAbsoluteTime(&step.fade);
-        SetAbsoluteTime(&step.cooldown);
+        std::vector<ActionStepProgramViewV1> steps;
+        const auto appendPlay = [&](const PlayableRefV1& target) {
+            ActionStepProgramViewV1 step{};
+            step.opcode = ActionOpcodeV1::Play;
+            step.authoredEventIndex = static_cast<std::uint32_t>(steps.size());
+            switch (target.kind) {
+            case PlayableKindV1::Sound: step.target.kind = ActionTargetKindV1::Sound; break;
+            case PlayableKindV1::Track: step.target.kind = ActionTargetKindV1::Track; break;
+            case PlayableKindV1::Segment: step.target.kind = ActionTargetKindV1::Segment; break;
+            default: step.target.kind = ActionTargetKindV1::Container; break;
+            }
+            step.target.stableId = target.stableId;
+            step.target.expectedProgramSemanticFingerprint = target.expectedProgramSemanticFingerprint;
+            SetAbsoluteTime(&step.delay);
+            SetAbsoluteTime(&step.fade);
+            SetAbsoluteTime(&step.cooldown);
+            steps.push_back(step);
+        };
+        appendPlay(root);
+        for (const auto& peer : peers) appendPlay(peer);
         ActionProgramViewV1 action{};
         action.actionStableId = RootAction();
-        action.steps = &step;
-        action.stepCount = action.expandedStepOccurrenceCount = action.expandedFiringCount = 1;
+        action.steps = steps.data();
+        action.stepCount = action.expandedStepOccurrenceCount = static_cast<std::uint32_t>(steps.size());
+        action.expandedFiringCount = 1;
         action.programSemanticFingerprint = ComputeActionProgramFingerprintV1(action);
         std::vector<ActionProgramViewV1> actions;
         if (world.actionCount) actions.assign(world.actions, world.actions + world.actionCount);
@@ -217,8 +234,26 @@ private:
                 image.AddMedia(row.id, std::vector<float>(row.facts.frames * row.facts.channelCount),
                     row.facts.loop, static_cast<std::uint16_t>(row.facts.channelCount));
         }
+        if (!init) for (std::size_t index = 0; index < bindings_.size(); ++index) {
+            const auto& binding = bindings_[index];
+            std::vector<std::uint8_t> definition(kPackBindingDefinitionBytes);
+            WritePackBindingDefinition(binding.id, binding.desc, definition.data());
+            image.AddEntry(kPackEntryKindBindingDefinition, binding.id, std::move(definition),
+                kPackBindingDefinitionVintage);
+            std::vector<std::uint8_t> attachment(kPackBindingAttachmentBytes);
+            SerializePackBindingAttachment(binding.attachment, attachment.data());
+            const auto entry = image.AddEntry(kPackEntryKindBindingAttachment, VnObjectId{},
+                std::move(attachment), kPackBindingAttachmentVintage);
+            image.SetRelationOrdinal(entry, index);
+        }
         return image.Build();
     }
+    struct Binding {
+        VnBindingId id;
+        VnBindingDesc desc;
+        harken::PackBindingAttachmentEntry attachment;
+    };
+    std::vector<Binding> bindings_;
     harken::Engine& engine_;
     std::filesystem::path directory_;
     std::vector<Row> rows_;
