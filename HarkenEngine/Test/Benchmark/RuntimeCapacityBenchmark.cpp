@@ -1,4 +1,4 @@
-#include "Common/StreamFixtureRegistration.h"
+#include "Common/ExternalPcmRenderFixture.h"
 // Release-only NullBackend laboratory characterization for the M11 Runtime
 // capacity matrix. Wall-clock results describe this binary and host only.
 // They are not a supported-voice-count promise or real-device qualification.
@@ -1087,9 +1087,9 @@ StreamingRunResult RunStreamingOnce(
         result.error = "active engine missing";
         return result;
     }
-    if (harkentest::RegisterFixtureStream(kStreamSoundId,
-                              streamPath.c_str()) != VN_OK) {
-        result.error = "harkentest::RegisterFixtureStream failed";
+    harkentest::ExternalPcmRenderFixture stream(*engine, streamPath);
+    if (stream.Result() != VN_OK) {
+        result.error = "external stream fixture preparation failed";
         return result;
     }
 
@@ -1111,21 +1111,14 @@ StreamingRunResult RunStreamingOnce(
         }
     }
 
-    for (std::uint32_t voice = 0; voice < scenario.streamVoices;
-         ++voice) {
-        VnPlayDesc play{};
-        play.structSize = sizeof(play);
-        play.soundId = kStreamSoundId;
-        play.busId = VN_BUS_MASTER;
-        play.volumeDb = -60.0f;
-        play.pitchRatio = 1.0f;
-        play.loopCount = 0;
-        VnVoiceHandle handle = 0;
-        if (harkentest::PlayRaw(&play, &handle) != VN_OK || handle == 0) {
-            result.error = "stream raw voice start failed";
+    for (std::uint32_t voice = 0; voice < scenario.streamVoices; ++voice) {
+        VnVoiceHandle render = 0;
+        if (stream.Start(-60.0f, 0, &render) != VN_OK || render == 0) {
+            result.error = "external stream renderer start failed";
             return result;
         }
     }
+    engine->streams.SyncServe();
     for (std::uint32_t voice = 0; voice < pcmVoices; ++voice) {
         VnPlayDesc play{};
         play.structSize = sizeof(play);

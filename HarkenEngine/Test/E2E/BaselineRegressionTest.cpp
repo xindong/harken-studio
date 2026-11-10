@@ -1,4 +1,4 @@
-#include "Common/StreamFixtureRegistration.h"
+#include "Common/ExternalPcmRenderFixture.h"
 // Recorded-baseline regression cases: deterministic null-backend
 // coverage spans the original acceptance flows plus stream, effect-chain,
 // and combined-scene paths.
@@ -747,13 +747,11 @@ TEST(BaselineRegression, StreamedSubregionLoop) {
     const std::string path = TempPath("baseline_streamed_subregion.stream");
     harkentest::WriteFileBytes(path,
                               harkentest::BuildStreamBytes(spec, source));
-    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(spec.soundId, path.c_str()));
-
-    VnPlayDesc play = MakePlayDesc(spec.soundId);
-    play.loopCount = 5;
-    VnVoiceHandle handle = 0;
-    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
-    (void)handle;
+    harkentest::ExternalPcmRenderFixture stream(*engine, path);
+    ASSERT_EQ(VN_OK, stream.Result());
+    VnVoiceHandle render = 0;
+    ASSERT_EQ(VN_OK, stream.Start(0.0f, 5, &render));
+    engine->streams.SyncServe();
 
     const std::uint32_t blocks = ScenarioBlockCount(engine);
     std::vector<float> peaks;
@@ -817,8 +815,8 @@ TEST(BaselineRegression, CombinedM2Scene) {
     const std::string musicPath = TempPath("baseline_m2_music.stream");
     harkentest::WriteFileBytes(
         musicPath, harkentest::BuildStreamBytes(musicSpec, music));
-    ASSERT_EQ(VN_OK, harkentest::RegisterFixtureStream(musicSpec.soundId,
-                                           musicPath.c_str()));
+    harkentest::ExternalPcmRenderFixture stream(*engine, musicPath);
+    ASSERT_EQ(VN_OK, stream.Result());
 
     const std::vector<float> ambience =
         MakeMiniAmbience(static_cast<std::size_t>(0.5 * kRate));
@@ -832,10 +830,9 @@ TEST(BaselineRegression, CombinedM2Scene) {
     const VnPCMDesc oneShotPcm = MonoDesc(oneShot, 48000);
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(8303), &oneShotPcm));
 
-    VnPlayDesc musicPlay = MakePlayDesc(musicSpec.soundId, -9.0f);
-    VnVoiceHandle musicVoice = 0;
-    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&musicPlay, &musicVoice));
-    (void)musicVoice;
+    VnVoiceHandle musicRender = 0;
+    ASSERT_EQ(VN_OK, stream.Start(-9.0f, 1, &musicRender));
+    engine->streams.SyncServe();
 
     VnPlayDesc ambiencePlay = MakePlayDesc(harkentest::ObjectId(8302), -13.0f);
     ambiencePlay.loopCount = 0;
