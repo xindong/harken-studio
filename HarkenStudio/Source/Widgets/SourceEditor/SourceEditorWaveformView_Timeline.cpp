@@ -596,6 +596,7 @@ void SourceEditorWaveformView::editHandleValue(Handle handle, int fadeIndex)
         return;
     cancelGesture();
     selectedFade_ = fadeIndex;
+    selectedFadeAnchor_ = fadeIndex == 0 ? FadePart::End : FadePart::Start;
     ToolTip::hideText();
     auto* dialog = new QDialog(this, Qt::Popup);
     valueEditor_ = dialog;
@@ -760,7 +761,7 @@ void SourceEditorWaveformView::contextMenuEvent(QContextMenuEvent* event)
     if (units_ && editable_) {
         const FadeHit fadeHit = hitTestFade(event->pos());
         if (fadeHit.index >= 0) {
-            showFadeMenu(fadeHit.index, event->globalPos());
+            showFadeMenu(fadeHit, event->globalPos());
             event->accept();
             return;
         }

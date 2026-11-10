@@ -1,4 +1,5 @@
 #include "CurveCanvas.h"
+#include "CurvePresetMenu.h"
 #include "Core/ThemeLayout.h"
 #include "CurveRenderer.h"
 #include "Core/BindingSemantics.h"
@@ -529,6 +530,17 @@ void CurveCanvas::contextMenuEvent(QContextMenuEvent* event)
         return;
     }
 
+    if (pointIndex >= 0) {
+        if (!selectedPoints_.contains(pointIndex))
+            setSingleSelection(pointIndex);
+        else
+            selectedPoint_ = pointIndex;
+    } else {
+        setSingleSelection(segmentIndex);
+    }
+    emit selectionChanged();
+    update();
+
     QMenu menu(this);
     if (pointIndex >= 0) {
         QAction* enterCoordinates = menu.addAction(tr("Enter Coordinates..."));
@@ -563,25 +575,11 @@ void CurveCanvas::contextMenuEvent(QContextMenuEvent* event)
     connect(deleteAction, &QAction::triggered, this,
             [this]() { deleteSelectedPoint(); });
 
-    if (segmentIndex >= 0 && segmentIndex < handles_.size()) {
+    if (selectedPoint_ >= 0 && selectedPoint_ < handles_.size()) {
         menu.addSeparator();
-        QMenu* presetMenu = menu.addMenu(tr("Presets"));
-        struct PresetTemplate {
-            const char* name;
-            float u1, v1, u2, v2;
-        };
-        static constexpr PresetTemplate kPresets[] = {
-            {QT_TR_NOOP("Linear"),   0.0f,  0.0f, 1.0f,  1.0f},
-            {QT_TR_NOOP("Ease-In"),  0.42f, 0.0f, 1.0f,  1.0f},
-            {QT_TR_NOOP("Ease-Out"), 0.0f,  0.0f, 0.58f, 1.0f},
-            {QT_TR_NOOP("S-Curve"),  0.42f, 0.0f, 0.58f, 1.0f},
-        };
-        for (const PresetTemplate& preset : kPresets) {
-            QAction* action = presetMenu->addAction(tr(preset.name));
-            connect(action, &QAction::triggered, this, [this, segmentIndex, preset]() {
-                applyCurvePreset(segmentIndex, preset.u1, preset.v1, preset.u2, preset.v2);
-            });
-        }
+        addCurvePresetMenu(&menu, points_.at(selectedPoint_), points_.at(selectedPoint_ + 1),
+            handles_.at(selectedPoint_), axisScale(),
+            [this](CurvePreset preset) { applySelectedCurvePreset(preset); });
     }
 
     menu.exec(event->globalPos());
@@ -1602,35 +1600,20 @@ int CurveCanvas::insertPointBySplit(float x)
     return seg + 1;
 }
 
-void CurveCanvas::applyCurvePreset(int segment, float u1, float v1, float u2, float v2)
+bool CurveCanvas::applySelectedCurvePreset(CurvePreset preset)
 {
+    const int segment = selectedPoint_;
     if (segment < 0 || segment >= handles_.size() || segment + 1 >= points_.size())
-        return;
+        return false;
 
-    const CurvePointDef& a = points_.at(segment);
-    const CurvePointDef& b = points_.at(segment + 1);
-    const auto vToValue = [&](float v) -> float {
-        if (v == 0.0f)
-            return a.value;
-        if (v == 1.0f)
-            return b.value;
-        const double ya = curveAxisNormalizedY(axisScale(), yMin(), yMax(), a.value);
-        const double yb = curveAxisNormalizedY(axisScale(), yMin(), yMax(), b.value);
-        return curveAxisValueFromNormalizedY(axisScale(), yMin(), yMax(), ya + v * (yb - ya));
-    };
-
-    CurveHandlePairDef next;
-    next.h1x = a.x + u1 * (b.x - a.x);
-    next.h1y = std::clamp(vToValue(v1), valueMin(), valueMax());
-    next.h2x = a.x + u2 * (b.x - a.x);
-    next.h2y = std::clamp(vToValue(v2), valueMin(), valueMax());
+    const auto next = curvePresetHandles(preset, points_.at(segment), points_.at(segment + 1), axisScale());
     if (sameHandlePair(handles_.at(segment), next))
-        return;
+        return false;
 
     handles_[segment] = next;
-    normalizeCurve();
     emit curveEdited(points_, handles_, tr("Apply Curve Preset"));
     update();
+    return true;
 }
 
 // Removing an interior anchor merges its two segments: the merged pair keeps

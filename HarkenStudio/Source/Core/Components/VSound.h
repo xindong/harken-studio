@@ -32,7 +32,7 @@ struct SoundSourceFadeDef
 {
     uint64_t durationFrames = 0;
     QVector<CurvePointDef> curve{{0.0f, 0.0f}, {1.0f, 1.0f}};
-    QVector<CurveHandlePairDef> handles{{2.0f / 3.0f, 0.0f, 1.0f / 3.0f, 1.0f}};
+    QVector<CurveHandlePairDef> handles{curvePresetHandles(CurvePreset::Convex, {0.0f, 0.0f}, {1.0f, 1.0f})};
 
     bool operator==(const SoundSourceFadeDef&) const = default;
 };
@@ -45,7 +45,7 @@ struct SoundSourceDef
     std::optional<uint64_t> trimEndFrame;
     SoundSourceFadeDef fadeIn;
     SoundSourceFadeDef fadeOut{0, {{0.0f, 1.0f}, {1.0f, 0.0f}},
-                              {{2.0f / 3.0f, 1.0f, 1.0f / 3.0f, 0.0f}}};
+                              {curvePresetHandles(CurvePreset::Convex, {0.0f, 1.0f}, {1.0f, 0.0f})}};
     std::optional<SoundLoopRegion> loopRegion;
     SoundLoopProvenance loopProvenance = SoundLoopProvenance::Authored;
     QString rangeContentHash;

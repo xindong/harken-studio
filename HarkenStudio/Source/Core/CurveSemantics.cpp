@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <numbers>
 
 namespace VNX {
 
@@ -18,6 +19,38 @@ harkenstudiobuild::CurveDomain runtimeDomain(CurveAxisScale scale)
         : harkenstudiobuild::CurveDomain::MirroredAmplitudeDb;
 }
 
+}
+
+CurveHandlePairDef curvePresetHandles(CurvePreset preset,
+                                     const CurvePointDef& a, const CurvePointDef& b,
+                                     CurveAxisScale scale)
+{
+    constexpr float s = 1.0f - 2.0f / std::numbers::pi_v<float>;
+    constexpr std::array<CurveHandlePairDef, kCurvePresets.size()> shapes{{
+        {1.0f / 3.0f, 1.0f, 2.0f / 3.0f, 1.0f},
+        {1.0f / 3.0f, 2.0f / 3.0f, 2.0f / 3.0f, 1.0f},
+        {s, 0.0f, 1.0f - s, 1.0f},
+        {1.0f / 3.0f, 1.0f / 3.0f, 2.0f / 3.0f, 2.0f / 3.0f},
+        {0.0f, s, 1.0f, 1.0f - s},
+        {1.0f / 3.0f, 0.0f, 2.0f / 3.0f, 1.0f / 3.0f},
+        {1.0f / 3.0f, 0.0f, 2.0f / 3.0f, 0.0f},
+    }};
+    auto shape = shapes[static_cast<std::size_t>(preset)];
+    const double start = curveAxisCoordinate(scale, a.value);
+    const double end = curveAxisCoordinate(scale, b.value);
+    if (start == end)
+        return {a.x + (b.x - a.x) / 3.0f, a.value,
+                a.x + (b.x - a.x) * 2.0f / 3.0f, b.value};
+    if (start > end)
+        shape = {1.0f - shape.h2x, 1.0f - shape.h2y,
+                 1.0f - shape.h1x, 1.0f - shape.h1y};
+    const auto valueAt = [&](float progress) {
+        if (progress == 0.0f) return a.value;
+        if (progress == 1.0f) return b.value;
+        return curveAxisValueFromCoordinate(scale, start + progress * (end - start));
+    };
+    return {a.x + shape.h1x * (b.x - a.x), valueAt(shape.h1y),
+            a.x + shape.h2x * (b.x - a.x), valueAt(shape.h2y)};
 }
 
 double curveAxisCoordinate(CurveAxisScale scale, float value)

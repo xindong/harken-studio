@@ -145,7 +145,7 @@ private:
     void beginFadeDrag(FadeHit target, const QPoint& position, bool pullHandle = false);
     void dragFade(const QPoint& position, Qt::KeyboardModifiers modifiers = Qt::NoModifier);
     void setFadeDuration(int index, uint64_t duration);
-    void showFadeMenu(int index, const QPoint& position);
+    void showFadeMenu(FadeHit target, const QPoint& position);
 
     QString path_;
     WaveformPeakData peaks_;
@@ -160,6 +160,7 @@ private:
     FadeHit activeFade_;
     FadeHit hoveredFade_;
     int selectedFade_ = -1;
+    FadePart selectedFadeAnchor_ = FadePart::Start;
     QPointF fadeGrabOffset_;
     QPointF fadeDragOrigin_;
     double fadeDragT_ = 0.5;

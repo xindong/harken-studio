@@ -2,6 +2,7 @@
 
 #include "Core/ThemeManager.h"
 #include "Widgets/CurveEditor/CurveCanvas.h"
+#include "Widgets/CurveEditor/CurvePresetMenu.h"
 #include "Widgets/CurveEditor/CurveRenderer.h"
 
 #include <QLabel>
@@ -150,7 +151,7 @@ void SourceEditorWaveformView::paintFades(QPainter& painter)
                 const FadeHit target{index, part};
                 const QPointF point = fadeTargetPosition(target);
                 if (point.x() >= graph.left() && point.x() <= graph.right())
-                    data.points.append({point, selected, hoveredFade_ == target});
+                    data.points.append({point, selected && selectedFadeAnchor_ == part, hoveredFade_ == target});
             }
             if ((selected || hovered) && fade(index).durationFrames > 0) {
                 data.handles.append({fadeTargetPosition({index, FadePart::Start}),
@@ -173,6 +174,8 @@ void SourceEditorWaveformView::beginFadeDrag(FadeHit target, const QPoint& posit
     activeFade_ = target;
     hoveredFade_ = target;
     selectedFade_ = target.index;
+    selectedFadeAnchor_ = target.part == FadePart::End || target.part == FadePart::Handle2
+        ? FadePart::End : FadePart::Start;
     hoveredHandle_ = Handle::None;
     dragPosition_ = position;
     dragMoved_ = false;
@@ -281,10 +284,13 @@ void SourceEditorWaveformView::dragFade(const QPoint& position, Qt::KeyboardModi
     emit previewChanged();
 }
 
-void SourceEditorWaveformView::showFadeMenu(int index, const QPoint& position)
+void SourceEditorWaveformView::showFadeMenu(FadeHit target, const QPoint& position)
 {
     cancelGesture();
+    const int index = target.index;
     selectedFade_ = index;
+    selectedFadeAnchor_ = target.part == FadePart::End || target.part == FadePart::Handle2
+        ? FadePart::End : FadePart::Start;
     ToolTip::hideText();
     auto* menu = new QMenu(this);
     menu->setObjectName(QStringLiteral("sourceFadeContextMenu"));
@@ -293,13 +299,12 @@ void SourceEditorWaveformView::showFadeMenu(int index, const QPoint& position)
     auto* enter = menu->addAction(tr("Enter Duration..."), this,
         [this, index] { editHandleValue(Handle::None, index); });
     enter->setObjectName(QStringLiteral("sourceFadeEnterDuration"));
-    auto* reset = menu->addAction(tr("Reset to Linear"), this, [this, index] {
+    const auto& definition = fade(index);
+    auto* presets = addCurvePresetMenu(menu, definition.curve.front(), definition.curve.back(),
+        definition.handles.front(), CurveAxisScale::LinearValue, [this, index](CurvePreset preset) {
         originalSource_ = previewSource_;
         auto& definition = index == 0 ? previewSource_.fadeIn : previewSource_.fadeOut;
-        const float start = definition.curve.front().value;
-        const float end = definition.curve.back().value;
-        definition.handles = {{1.0f / 3.0f, start + (end - start) / 3.0f,
-                               2.0f / 3.0f, start + (end - start) * 2.0f / 3.0f}};
+        definition.handles = {curvePresetHandles(preset, definition.curve.front(), definition.curve.back())};
         if (previewSource_ != originalSource_) {
             originalSource_ = previewSource_;
             emit previewChanged();
@@ -308,7 +313,7 @@ void SourceEditorWaveformView::showFadeMenu(int index, const QPoint& position)
         }
         update();
     });
-    reset->setObjectName(QStringLiteral("sourceFadeReset"));
+    presets->menuAction()->setEnabled(selectedFadeAnchor_ == FadePart::Start);
     auto* remove = menu->addAction(tr("Remove Fade"), this, [this, index] {
         originalSource_ = previewSource_;
         setFadeDuration(index, 0);
