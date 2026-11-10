@@ -136,7 +136,7 @@ struct EngineConfig {
     ResolvedMixRateConfig mixRate;
     std::uint32_t blockFrames = 256;
     VoiceCapacityModel voiceCapacity;
-    std::uint32_t fxSlotsPerVoice = 1;
+    std::uint32_t fxSlotsPerVoice = 8;
     std::uint32_t arenaBytes = 2u << 20;
     bool nullDevice = true;
     std::uint32_t maxBuses = 32;

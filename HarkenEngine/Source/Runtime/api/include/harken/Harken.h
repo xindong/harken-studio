@@ -201,7 +201,7 @@ typedef struct VnConfig {
     uint32_t blockFrames;    /* frames per render block; 0 = 256 */
     uint32_t maxVoices;      /* legacy field name: Render Voice capacity;
                               * 0 = 256 */
-    uint32_t fxSlotsPerVoice;/* insert-effect slots per voice; 0 = 1 */
+    uint32_t fxSlotsPerVoice;/* insert-effect slots per voice; 0 = 8 */
     uint32_t arenaBytes;     /* per-block bump arena size; 0 = 2097152 */
     uint32_t deviceMode;     /* VN_DEVICE_REAL or VN_DEVICE_NULL */
     uint32_t reserved0;      /* keeps 8-byte alignment for future fields */

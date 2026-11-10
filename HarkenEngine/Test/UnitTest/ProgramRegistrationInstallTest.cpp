@@ -1816,7 +1816,9 @@ TEST(ProgramRegistrationInstall, InstalledChainStepReachesTheEngine) {
 // incomplete chain. This covers the ordinary rollback; the saturated-queue
 // refusal is covered separately below.
 TEST(ProgramRegistrationInstall, ARefusedChainStepAbandonsTheInstall) {
-    EngineSession session(InstallEngineConfig());
+    VnConfig config = InstallEngineConfig();
+    config.fxSlotsPerVoice = 1;
+    EngineSession session(config);
     ASSERT_EQ(session.InitResult(), VN_OK);
     const std::vector<float> dc = MakeDC(kRate, 0.5f);
     const VnPCMDesc desc = MonoDesc(dc, kRate);
@@ -1824,7 +1826,7 @@ TEST(ProgramRegistrationInstall, ARefusedChainStepAbandonsTheInstall) {
 
     harkenprogramreg::VoiceStartInstall install =
         MasterInstall(0.0f, 1.0f, false);
-    // InstallEngineConfig resolves one effect slot per voice, so slot 1 is past it.
+    // This session explicitly permits one effect slot, so slot 1 is past it.
     install.effectSlots = {GainStep(1, -6.0f)};
     VnVoiceHandle handle = 0;
     EXPECT_EQ(PlayInstall(install, &handle),

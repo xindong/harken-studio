@@ -371,24 +371,27 @@ TEST(EffectChain, ReplacingTailDuringDrainRecomputesAggregate) {
 
 TEST(EffectChain, ConfigFxSlotsPlumbToVoiceChainLength) {
     // The resolved fxSlotsPerVoice becomes the voice's active chain length.
-    VnConfig config = harkentest::MakeNullConfig(0, kBlock, 48000);
-    config.fxSlotsPerVoice = 8;
-    harkentest::EngineSession session(config);
-    ASSERT_EQ(VN_OK, session.InitResult());
+    for (const std::uint32_t requested : {0u, 1u, 4u, 8u}) {
+        SCOPED_TRACE(requested);
+        VnConfig config = harkentest::MakeNullConfig(0, kBlock, 48000);
+        config.fxSlotsPerVoice = requested;
+        harkentest::EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
 
-    const std::vector<float> sine =
-        harkentest::MakeSine(200, 1000.0, 48000.0, 0.5f);
-    const VnPCMDesc desc = harkentest::MonoDesc(sine, 48000);
-    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &desc));
+        const std::vector<float> sine =
+            harkentest::MakeSine(200, 1000.0, 48000.0, 0.5f);
+        const VnPCMDesc desc = harkentest::MonoDesc(sine, 48000);
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &desc));
 
-    const VnPlayDesc play = harkentest::MakePlayDesc(harkentest::ObjectId(1));
-    VnVoiceHandle handle = 0;
-    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
-    harken::VoiceRenderContext* voice =
-        session.Engine()->voices.Resolve(harkentest::RenderHandle(session.Engine(
-            ), handle));
-    ASSERT_NE(nullptr, voice);
-    EXPECT_EQ(8u, voice->fxSlotCount);
+        const VnPlayDesc play = harkentest::MakePlayDesc(harkentest::ObjectId(1));
+        VnVoiceHandle handle = 0;
+        ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
+        harken::VoiceRenderContext* voice =
+            session.Engine()->voices.Resolve(harkentest::RenderHandle(session.Engine(
+                ), handle));
+        ASSERT_NE(nullptr, voice);
+        EXPECT_EQ(requested == 0 ? 8u : requested, voice->fxSlotCount);
+    }
 }
 
 TEST(EffectChain, ConfigFxSlotsOverCapacityRefused) {
