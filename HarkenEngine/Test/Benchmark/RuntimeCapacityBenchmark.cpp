@@ -2,6 +2,11 @@
 // capacity matrix. Wall-clock results describe this binary and host only.
 // They are not a supported-voice-count promise or real-device qualification.
 #include "Common/ObjectIdTestSupport.h"
+#include "Common/DirectSoundActionWorld.h"
+#include "PlayableRuntime.h"
+#include "ProjectGenerationTransaction.h"
+#include "UnitTest/VoicePoolReleaseTestAccess.h"
+#include "harken_preview/PreviewProject.h"
 #include <harken/Harken.h>
 
 #include "Engine.h"
@@ -12,6 +17,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -271,7 +277,7 @@ std::string EnvironmentValue(const char* name) {
 #endif
 }
 
-Environment ConfigureEnvironment() {
+Environment ConfigureEnvironment(bool pinSingleCpu = true) {
     Environment environment;
     environment.hardwareThreads = std::thread::hardware_concurrency();
     environment.processorIdentifier = EnvironmentValue("PROCESSOR_IDENTIFIER");
@@ -288,7 +294,7 @@ Environment ConfigureEnvironment() {
 
     DWORD_PTR processMask = 0;
     DWORD_PTR systemMask = 0;
-    if (GetProcessAffinityMask(GetCurrentProcess(), &processMask,
+    if (pinSingleCpu && GetProcessAffinityMask(GetCurrentProcess(), &processMask,
                                &systemMask) != 0 &&
         processMask != 0) {
         DWORD_PTR benchmarkMask = 0;
@@ -2205,9 +2211,304 @@ int RunSpatial(const SpatialCase& scenario, bool smoke, bool once) {
 #endif
 }
 
+
+int RunEffectChain(std::uint32_t voiceCount, std::uint32_t blockFrames,
+                   std::uint32_t channels, std::uint32_t workers, bool smoke) {
+    const auto environment = ConfigureEnvironment(workers == 0);
+    const auto require = [](bool ok, const char* stage) {
+        if (!ok) std::fprintf(stderr, "effect-chain integrity failed: %s\n", stage);
+        return ok;
+    };
+    const std::uint32_t cycles = smoke ? 2 : 64;
+    const std::uint32_t transitionBlocks = (240 + blockFrames - 1) / blockFrames;
+    const std::uint32_t expectedEffects = (voiceCount + 1) * 8;
+    const auto layout = channels == 1 ? VN_CHANNEL_LAYOUT_MONO :
+        channels == 2 ? VN_CHANNEL_LAYOUT_STEREO : VN_CHANNEL_LAYOUT_7_1;
+    VnConfig config{};
+    config.structSize = sizeof(config); config.deviceMode = VN_DEVICE_NULL;
+    config.sampleRate = 48000; config.blockFrames = blockFrames;
+    config.maxVoices = voiceCount; config.maxEmitters = voiceCount;
+    config.maxParkedVoices = 16; config.arenaBytes = kArenaBytes;
+    config.mixChannelLayout = config.deviceChannelLayout = layout;
+    config.renderWorkerCount = workers;
+    config.commandQueueDepth = 16384; config.maxControlCommandsPerQuantum = 8192;
+    config.notificationQueueDepth = 2048;
+    if (!require(Vn_Init(&config) == VN_OK, "init")) return 1;
+    std::vector<float> source;
+    EngineGuard guard(true);
+    auto& engine = *harken::detail::ActiveEngine();
+    if (!require(engine.nullBackend.BlockFrames() == blockFrames &&
+        engine.nullBackend.Channels() == channels && engine.buses.MixChannels() == channels &&
+        engine.config.mixChannelLayout == layout && engine.config.mixChannelCount == channels &&
+        engine.config.renderWorkerCount == workers,
+        "resolved source/mix/device configuration")) return 1;
+    float peak = 0, lastPeak = 0; std::uint64_t nonfinite = 0, outputHash = kFnvOffset;
+    const auto inspectBlock = [&] {
+        lastPeak = 0;
+        HashAndInspect(engine.nullBackend.LastBlock(), blockFrames * channels,
+            &outputHash, &lastPeak, &nonfinite);
+        peak = std::max(peak, lastPeak);
+        return require(nonfinite == 0, "fresh finite output block");
+    };
+    std::uint32_t availableCpus = environment.hardwareThreads;
+#if defined(_WIN32)
+    DWORD_PTR processMask = 0, systemMask = 0;
+    if (!require(GetProcessAffinityMask(GetCurrentProcess(), &processMask, &systemMask) != 0,
+        "read actual process affinity")) return 1;
+    availableCpus = std::popcount(processMask);
+#endif
+    if (!require(workers == 0 || availableCpus > 1, "multiworker process affinity")) return 1;
+    const auto sound = harkentest::ObjectId(21), action = harkentest::ObjectId(41);
+    const auto unit = MakeInterleavedSource(48000, channels);
+    const std::size_t sourceFrames = (cycles + 4) * (240 + blockFrames * 8) + blockFrames * 64;
+    source.resize(sourceFrames * channels);
+    for (std::size_t i = 0; i < source.size(); ++i) source[i] = unit[i % unit.size()];
+    VnPCMDesc pcm{};
+    pcm.structSize = sizeof(pcm); pcm.sampleRate = 48000; pcm.channels = channels;
+    pcm.layout = VN_PCM_LAYOUT_INTERLEAVED; pcm.policy = VN_PCM_POLICY_REFERENCE;
+    pcm.frames = sourceFrames; pcm.samplesInterleaved = source.data();
+    if (!require(Vn_RegisterPCM(sound, &pcm) == VN_OK, "PCM")) return 1;
+    harken::VariableDefinitionV1 variable{};
+    variable.variableId = harkentest::ObjectId(7);
+    variable.kind = harken::VariableKindV1::Smooth; variable.rangeMax = 1;
+    harken::PlayablePropertyPayloadViewV1 payload{};
+    payload.presentMask = harken::kResolvedSectionGroupPropertyMaskV1;
+    payload.values[3].bits = 1; payload.values[6].objectId = VN_BUS_MASTER;
+    payload.values[11].bits = std::bit_cast<std::uint32_t>(1.0f);
+    payload.values[16].bits = std::bit_cast<std::uint32_t>(1.0f);
+    harkentest::DirectSoundActionWorld world(engine.registry.Lookup(sound).contentRevision,
+        sound, action, variable, payload);
+    VnBusId master = VN_BUS_MASTER;
+    std::uint32_t generation = engine.buses.GenerationAt(0), parent = 0, feeder = 0,
+        emittedFeeder = 0, fader = 8;
+    std::uint8_t alive = 1, emitted = 0;
+    float neutral = 0;
+    std::vector<std::uint32_t> sends(engine.config.busSendSlotsPerBus, harken::kEmptySendTarget);
+    std::vector<float> levels(sends.size());
+    std::vector<std::uint8_t> apply(sends.size());
+    harken::ProspectiveTopologyView topology{1, &master, &generation, &parent, &alive,
+        sends.data(), levels.data(), apply.data(), &feeder, &emittedFeeder, &emitted};
+    harken::ProjectGenerationInstallViewV1 publication{};
+    publication.token = {1, 1, 1, 1}; publication.publicationVintage = 5;
+    publication.ownerId = 77; publication.ownerRevision = 1;
+    publication.publishedBusFingerprint = publication.compileTargetProfileFingerprint = 1;
+    publication.compiledWorld = world.world; publication.prospective = &topology;
+    publication.authoredBusIds = &master; publication.authoredBusVolumeDb = &neutral;
+    publication.authoredBusOutputVolumeDb = &neutral; publication.authoredBusCount = 1;
+    publication.busFaderPositions = {&fader, 1};
+    harken::PreparedProjectGenerationV1 prepared;
+    if (!require(harken::PrepareProjectGenerationV1(engine, publication, prepared).status ==
+            harken::ProjectGenerationPrepareStatusV1::Ok &&
+        harken::CommitPreparedProjectGenerationV1(engine, prepared).status ==
+            harken::ProjectGenerationCommitStatusV1::Ok, "initial paired world")) return 1;
+    engine.nullBackend.Pump(1);
+    if (!inspectBlock()) return 1;
+    if (!require(Vn_Update() == VN_OK, "initial acknowledgement")) return 1;
+    for (std::uint32_t i = 0; i < voiceCount; ++i) {
+        VnEmitterHandle emitter = 0;
+        if (!require(Vn_CreateEmitter(&emitter) == VN_OK, "emitter")) return 1;
+        VnPostActionDesc post{}; post.structSize = sizeof(post); post.actionId = action; post.emitter = emitter;
+        VnActionFiringHandle firing = 0;
+        if (!require(Vn_PostAction(&post, &firing) == VN_OK, "playable action")) return 1;
+    }
+    std::vector<VnVoiceHandle> handles;
+    handles.reserve(voiceCount);
+    for (unsigned attempt = 0; attempt < 32 && handles.size() != voiceCount; ++attempt) {
+        if (!require(Vn_Update() == VN_OK, "start update")) return 1;
+        engine.nullBackend.Pump(1); handles.clear();
+        if (!inspectBlock()) return 1;
+        if (!require(harken::ObserveCurrentPlaybackPaths(
+            [](const harken::PlaybackPathObservation& path, void* opaque) {
+                auto& rows = *static_cast<std::vector<VnVoiceHandle>*>(opaque);
+                if (std::find(rows.begin(), rows.end(), path.voiceInstance) == rows.end())
+                    rows.push_back(path.voiceInstance);
+            }, &handles), "observed playable handles")) return 1;
+    }
+    if (!require(handles.size() == voiceCount, "all voices observed")) return 1;
+    for (auto handle : handles)
+        if (!require(engine.voices.CheckLive(handle) == VN_OK, "full live Render identity")) return 1;
+    const auto memoryBefore = ReadProcessMemory();
+    const char* phaseNames[]{"voice_setters", "bus_prepare", "bus_commit", "adoption_block",
+        "remaining_transition_block", "settled_block", "update"};
+    std::array<std::vector<double>, 7> timings;
+    std::array<std::size_t, 7> allocations{}, allocationBytes{};
+    for (auto& rows : timings) rows.reserve(cycles * 16);
+    const auto measured = [&](unsigned phase, auto&& operation, bool collect) {
+        allocation_probe::count = allocation_probe::bytes = 0;
+        allocation_probe::enabled = true;
+        const auto begin = std::chrono::steady_clock::now();
+        const bool ok = operation();
+        const auto end = std::chrono::steady_clock::now();
+        allocation_probe::enabled = false;
+        if (collect) {
+            timings[phase].push_back(std::chrono::duration<double, std::micro>(end - begin).count());
+            allocations[phase] += allocation_probe::count;
+            allocationBytes[phase] += allocation_probe::bytes;
+        }
+        return ok;
+    };
+    std::vector<harken::EffectInstanceRef> oldRefs, nextRefs;
+    oldRefs.reserve(expectedEffects); nextRefs.reserve(expectedEffects);
+    std::array<harken::PreviewBusEffect, 8> effects{};
+    std::array<harken::PreviewEffectParameter, 16> parameters{};
+    std::uint32_t verifiedAdoptions = 0, verifiedRetirements = 0;
+    const auto collectRefs = [&](auto& refs) {
+        refs.clear();
+        for (auto handle : handles)
+            for (unsigned slot = 0; slot < 8; ++slot)
+                refs.push_back(engine.voiceEffectInstanceRefs[static_cast<std::uint32_t>(handle)][slot]);
+        for (unsigned slot = 0; slot < 8; ++slot) refs.push_back(engine.busEffectInstanceRefs[0][slot]);
+    };
+    const auto fail = [&](const char* stage) { require(false, stage); return 1; };
+    for (std::uint32_t cycle = 0; cycle <= cycles; ++cycle) {
+        const bool collect = cycle != 0;
+        const unsigned set = cycle % 2;
+        collectRefs(oldRefs);
+        const auto before = ReadProcessMemory();
+        const auto capacityBefore = engine.effectBank.CapacityOf(VN_EFFECT_LIMITER);
+        std::size_t logicAllocations = 0, logicBytes = 0;
+        if (!measured(0, [&] {
+            for (unsigned voice = 0; voice < voiceCount; ++voice) {
+                VnPreviewVoiceEffectChainV1 chain{};
+                chain.structSize = sizeof(chain); chain.entryCount = 8;
+                for (unsigned slot = 0; slot < 8; ++slot)
+                    chain.entries[slot] = {harkentest::ObjectId(1000 + set * 10000 + voice * 8 + slot),
+                        VN_EFFECT_LIMITER, 0, -18.0f, 100.0f};
+                if (VnPreview_SetVoiceEffectChain(handles[voice], &chain) != VN_OK) return false;
+            }
+            return true;
+        }, collect)) return fail("Voice all8 submission");
+        logicAllocations += allocation_probe::count; logicBytes += allocation_probe::bytes;
+        for (unsigned slot = 0; slot < 8; ++slot) {
+            effects[slot] = {VN_BUS_MASTER, harkentest::ObjectId(50000 + set * 100 + slot),
+                slot, VN_EFFECT_LIMITER, 1, 0, slot * 2, 2};
+            parameters[slot * 2] = {0, -6}; parameters[slot * 2 + 1] = {1, 100};
+        }
+        publication.ownerBaseRevision = publication.ownerRevision++;
+        ++publication.token.authoringRevision; ++publication.token.submissionSerial;
+        ++publication.publishedBusFingerprint;
+        publication.effects = effects; publication.effectParameters = parameters;
+        if (!measured(1, [&] { return harken::PrepareProjectGenerationV1(engine, publication, prepared).status ==
+            harken::ProjectGenerationPrepareStatusV1::Ok; }, collect)) return fail("Bus all8 prepare");
+        logicAllocations += allocation_probe::count; logicBytes += allocation_probe::bytes;
+        if (!measured(2, [&] { return harken::CommitPreparedProjectGenerationV1(engine, prepared).status ==
+            harken::ProjectGenerationCommitStatusV1::Ok; }, collect)) return fail("Bus all8 commit");
+        logicAllocations += allocation_probe::count; logicBytes += allocation_probe::bytes;
+        collectRefs(nextRefs);
+        if (!require(engine.effectBank.InUseOf(VN_EFFECT_LIMITER) == expectedEffects * (collect ? 2 : 1),
+            "all new and old instances coexist")) return 1;
+        for (unsigned block = 0; block < transitionBlocks; ++block) {
+            const auto priorBlock = engine.mixer.BlocksRendered();
+            measured(block == 0 ? 3 : 4, [&] { engine.nullBackend.Pump(1); return true; }, collect);
+            if (!inspectBlock()) return 1;
+            if (!require(engine.mixer.BlocksRendered() > priorBlock, "fresh transition block")) return 1;
+            if (block == 0) {
+                const auto expectedPhase = blockFrames >= 240 ? harken::EffectChainUpdate::Phase::Complete :
+                    harken::EffectChainUpdate::Phase::Active;
+                for (auto handle : handles) {
+                    auto* update = harken::detail::VoicePoolReleaseTestAccess::EffectUpdate(engine.voices,
+                        static_cast<std::uint32_t>(handle));
+                    if (!require(update && update->phase.load() == expectedPhase && update->ownedTargets == 0,
+                        "Voice adopted target chain")) return 1;
+                }
+                auto* bus = engine.buses.PreviewEffectState(engine.buses.RefAt(0));
+                if (!require(bus && bus->update.phase.load() == expectedPhase && bus->update.ownedTargets == 0,
+                    "Bus adopted target chain")) return 1;
+                for (const auto& ref : nextRefs) {
+                    const auto* dsp = static_cast<const harken::LimiterState*>(engine.effectBank.LiveStateFor(ref));
+                    if (!require(dsp && dsp->hasRendered, "every new Limiter actually processed")) return 1;
+                }
+                ++verifiedAdoptions;
+            }
+        }
+        if (!measured(6, [] { return Vn_Update() == VN_OK; }, collect)) return fail("retirement update");
+        if (!require(engine.effectBank.InUseOf(VN_EFFECT_LIMITER) == expectedEffects, "retired instance count")) return 1;
+        if (collect) for (const auto& ref : oldRefs)
+            if (!require(engine.effectBank.LiveStateFor(ref) == nullptr, "old generation reclaimed")) return 1;
+        if (collect) ++verifiedRetirements;
+        for (unsigned settled = 0; settled < 8; ++settled) {
+            const auto priorBlock = engine.mixer.BlocksRendered();
+            measured(5, [&] { engine.nullBackend.Pump(1); return true; }, collect);
+            if (!inspectBlock() || !require(engine.mixer.BlocksRendered() > priorBlock,
+                "fresh settled block")) return 1;
+            if (!measured(6, [] { return Vn_Update() == VN_OK; }, collect)) return fail("settled update");
+        }
+        const auto after = ReadProcessMemory();
+        if (cycle <= 2) std::printf("{\"schema\":\"preview-effect-chain-v1\",\"kind\":\"resource\","
+            "\"phase\":\"%s\",\"logic_allocations\":%zu,\"logic_allocated_bytes\":%zu,"
+            "\"pool_capacity_before\":%u,\"pool_capacity_after\":%u,\"settled_in_use\":%u,"
+            "\"private_bytes_before\":%llu,\"private_bytes_after\":%llu}\n",
+            cycle == 0 ? "initial_growth" : cycle == 1 ? "replacement_growth" : "drained_same_size_reuse",
+            logicAllocations, logicBytes, capacityBefore, engine.effectBank.CapacityOf(VN_EFFECT_LIMITER),
+            engine.effectBank.InUseOf(VN_EFFECT_LIMITER), static_cast<unsigned long long>(before.privateBytes),
+            static_cast<unsigned long long>(after.privateBytes));
+    }
+
+    if (!require(lastPeak > kOutputFloor && nonfinite == 0, "fresh finite audible output")) return 1;
+    const double period = 1e6 * blockFrames / 48000.0;
+    const auto memoryAfter = ReadProcessMemory();
+    std::printf("{\"schema\":\"preview-effect-chain-v1\",\"kind\":\"identity\","
+        "\"configuration\":\"%s\",\"voices\":%u,\"block_frames\":%u,\"source_channels\":%u,"
+        "\"mix_channels\":%u,\"device_channels\":%u,\"workers\":%u,\"cycles\":%u,"
+        "\"sample_rate\":48000,\"slots_per_host\":8,\"transition_frames\":240,"
+        "\"transition_blocks\":%u,\"verified_adoptions\":%u,\"verified_retirements\":%u,"
+        "\"period_us\":%.9g,\"process_affinity_single_cpu\":%s,"
+        "\"private_bytes_initial\":%llu,\"private_bytes_final\":%llu,"
+        "\"output_peak\":%.9g,\"smoke\":%s,\"real_device_qualification\":false,"
+        "\"configured_limiter_capacity\":%u,\"available_process_cpus\":%u,\"source_commit\":",
+        HARKEN_BENCHMARK_CONFIGURATION, voiceCount, blockFrames, channels, channels, channels, workers,
+        cycles, transitionBlocks, verifiedAdoptions, verifiedRetirements, period,
+        environment.processAffinitySet ? "true" : "false", static_cast<unsigned long long>(memoryBefore.privateBytes),
+        static_cast<unsigned long long>(memoryAfter.privateBytes), peak, smoke ? "true" : "false",
+        engine.config.limiterEffectPoolCapacity, availableCpus);
+    PrintJsonString(environment.sourceCommit.c_str());
+    std::fputs(",\"source_dirty\":", stdout);
+    PrintJsonString(environment.sourceDirty.c_str());
+    std::fputs(",\"compiler\":", stdout);
+    PrintJsonString(CompilerName());
+    std::fputs(",\"processor_identifier\":", stdout);
+    PrintJsonString(environment.processorIdentifier.c_str());
+    std::printf(",\"process_priority_set\":%s,\"thread_priority_set\":%s,"
+        "\"debugger_attached\":%s,\"profiler_attached\":%s,\"output_nonfinite\":%llu,"
+        "\"output_hash\":%llu}\n", environment.processPrioritySet ? "true" : "false",
+        environment.threadPrioritySet ? "true" : "false", environment.debuggerAttached ? "true" : "false",
+        environment.profilerAttached ? "true" : "false", static_cast<unsigned long long>(nonfinite),
+        static_cast<unsigned long long>(outputHash));
+    for (unsigned phase = 0; phase < timings.size(); ++phase) {
+        const auto summary = SummarizeTiming(timings[phase], period);
+        std::printf("{\"schema\":\"preview-effect-chain-v1\",\"kind\":\"timing\",\"phase\":\"%s\","
+            "\"samples\":%zu,\"p50_us\":%.9g,\"p99_us\":%.9g,\"max_us\":%.9g,"
+            "\"deadline_exceed_count\":%llu,\"caller_thread_allocations\":%zu,\"caller_thread_allocated_bytes\":%zu,"
+            "\"raw_us\":[", phaseNames[phase], timings[phase].size(), summary.p50Us, summary.p99Us,
+            summary.maximumUs, static_cast<unsigned long long>(summary.nominalPeriodExceedCount),
+            allocations[phase], allocationBytes[phase]);
+        for (std::size_t i = 0; i < timings[phase].size(); ++i)
+            std::printf("%s%.9g", i ? "," : "", timings[phase][i]);
+        std::printf("]}\n");
+    }
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
+    if (argc >= 2 && std::strcmp(argv[1], "--effect-chain") == 0) {
+        if (argc != 6 && argc != 7) return 2;
+        const bool smoke = argc == 7 && std::strcmp(argv[6], "--smoke") == 0;
+        if (argc == 7 && !smoke) return 2;
+        std::array<std::uint32_t, 4> values{};
+        for (unsigned i = 0; i < values.size(); ++i) {
+            char* end = nullptr;
+            const auto value = std::strtoul(argv[i + 2], &end, 10);
+            if (end == argv[i + 2] || *end || value > 256) return 2;
+            values[i] = static_cast<std::uint32_t>(value);
+        }
+        if ((values[0] != 1 && values[0] != 64) ||
+            (values[1] != 32 && values[1] != 64 && values[1] != 256) ||
+            (values[2] != 1 && values[2] != 2 && values[2] != 8) ||
+            (values[3] != 0 && values[3] != 2)) return 2;
+        return RunEffectChain(values[0], values[1], values[2], values[3], smoke);
+    }
     if (argc >= 2 && std::strcmp(argv[1], "--spatial") == 0) {
         if (argc < 6 || argc > 8) return 2;
         SpatialCase scenario;
@@ -2267,6 +2568,7 @@ int main(int argc, char* argv[]) {
                 "Usage: harken_runtime_capacity_benchmark "
                 "--list | --list-resources | --resource <id> | "
                 "--scenario <id> [--pilot|--smoke] | "
+                "--effect-chain <voices:1|64> <block:32|64|256> <channels:1|2|8> <workers:0|2> [--smoke] | "
                 "--spatial <voices:1..512> <voices-per-emitter:1|4> "
                 "<static|ten|all|listener|replace|residency> <builtin|curves> [--highpass] [--smoke|--once]\n");
             return 0;

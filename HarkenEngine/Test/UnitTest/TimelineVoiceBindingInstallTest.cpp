@@ -1,4 +1,5 @@
 #include "Common/EffectPoolTestAccess.h"
+#include "Common/DirectSoundActionWorld.h"
 #include "AllocationProbe.h"
 #include "harken/core/CpuClock.h"
 #include "harken_preview/PreviewProject.h"
@@ -228,56 +229,11 @@ std::uint32_t BindingInstanceCount(harken::Engine* engine,
     return count;
 }
 
-struct DirectWorldSoundPlayAction {
-    harken::VariableDefinitionV1 variable{};
-    harken::PlayablePropertyProgramViewV1 property{};
-    harken::ActionStepProgramViewV1 step{};
-    harken::ActionProgramViewV1 action{};
-    harken::ContainerWorldInstallViewV1 world{};
-
-    explicit DirectWorldSoundPlayAction(std::uint64_t contentRevision) {
-        variable = harkentest::MakeVariableDefinition(
-            kVariable, harken::VariableKindV1::Smooth, 0.0f, 1.0f, 0.0f);
-        property.contentPropertyKind =
-            harken::playableproperties::ContentPropertyKindV1::Sound;
-        property.stableId = harkentest::ObjectId(kSound);
-        property.contentRevision = contentRevision;
-        property.routeStableId = VN_BUS_MASTER;
-        property.compatibilityFingerprint = 1;
-        property.payload = ResolvedPayload();
-        property.programSemanticFingerprint =
-            harken::ComputePlayablePropertyFingerprintV1(property);
-
-        step.opcode = harken::ActionOpcodeV1::Play;
-        step.target.kind = harken::ActionTargetKindV1::Sound;
-        step.target.stableId = harkentest::ObjectId(kSound);
-        step.target.expectedProgramSemanticFingerprint =
-            property.programSemanticFingerprint;
-        SetAbsoluteTime(&step.delay);
-        SetAbsoluteTime(&step.fade);
-        SetAbsoluteTime(&step.cooldown);
-
-        action.actionStableId = harkentest::ObjectId(kAction);
-        action.steps = &step;
-        action.stepCount = 1;
-        action.expandedStepOccurrenceCount = 1;
-        action.expandedFiringCount = 1;
-        action.programSemanticFingerprint =
-            harken::ComputeActionProgramFingerprintV1(action);
-
-        world.variables = &variable;
-        world.variableCount = 1;
-        world.playableProperties = &property;
-        world.playablePropertyCount = 1;
-        world.actions = &action;
-        world.actionCount = 1;
-        world.identity.capabilityMask =
-            harken::kWorldCapabilityVariableDefinitions |
-            harken::kWorldCapabilityPlayableProperties |
-            harken::kWorldCapabilityActionDefinitions;
-        world.identity.runtimeSemanticFingerprint =
-            harken::ComputeCurrentWorldFingerprintV4(world);
-    }
+struct DirectWorldSoundPlayAction : harkentest::DirectSoundActionWorld {
+    explicit DirectWorldSoundPlayAction(std::uint64_t contentRevision)
+        : DirectSoundActionWorld(contentRevision, kSound, kAction,
+            harkentest::MakeVariableDefinition(kVariable, harken::VariableKindV1::Smooth,
+                0.0f, 1.0f, 0.0f), ResolvedPayload()) {}
 };
 
 harken::ResolvedPlayablePropertyCutViewV1 ResolveSoundCut(
