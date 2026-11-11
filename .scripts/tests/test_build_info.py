@@ -78,7 +78,7 @@ class BuildInfoTest(unittest.TestCase):
     def test_build_refreshes_independent_product_and_contract_versions(self) -> None:
         self.write_manifest("Editor", [7, 14])
         self.write_manifest("Pack", [3, 29])
-        result = self.configure("dev", "-DHARKEN_BUILD_CORE=ON", "-DHARKEN_BUILD_EDITOR=ON",
+        result = self.configure("dev", "-DHARKEN_BUILD_ENGINE=ON", "-DHARKEN_BUILD_EDITOR=ON",
                                 "-DCMAKE_DISABLE_FIND_PACKAGE_Python3=TRUE")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         for source, value, expected in (
@@ -106,7 +106,7 @@ class BuildInfoTest(unittest.TestCase):
 
     def test_core_identity_requires_only_pack_contract_without_python(self) -> None:
         self.write_manifest("Pack", [3, 31])
-        result = self.configure("dev", "-DHARKEN_BUILD_CORE=ON",
+        result = self.configure("dev", "-DHARKEN_BUILD_ENGINE=ON",
                                 "-DCMAKE_DISABLE_FIND_PACKAGE_Python3=TRUE")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.contract_definitions(), {"HARKEN_PACK_SCHEMA_VERSION=31"})

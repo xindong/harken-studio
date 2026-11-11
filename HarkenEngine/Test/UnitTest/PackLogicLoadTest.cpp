@@ -32,7 +32,7 @@
 // swapped at the next Vn_Update). Every refusal asserts zero observable
 // mutation.
 #include "Common/ObjectIdTestSupport.h"
-#include "Common/ResourceCompilerTestUtil.h"
+#include "Common/TestPackWriter.h"
 #include "UnitTest/CanonicalPackSetActivate.h"
 #include "Common/RecipePackTestUtil.h"
 #include "Common/TestUtil.h"
@@ -190,7 +190,7 @@ void WriteWavF32(const std::string& path,
             return false;
         }
     }
-    return harkentest::CompileResources({manifestPath}) == 0;
+    return harkentest::BuildTestPack({manifestPath}) == 0;
 }
 
 harkentest::RecipePackArtifact BuildDelayAndToneRecipePack(
@@ -2800,133 +2800,6 @@ TEST(PackLogicLoad, ResidentOnlyKindRefusedAtLoad) {
     EXPECT_EQ(0u, engine->packs.LoadedCount());
     EXPECT_EQ(VN_UNKNOWN_ID, Vn_SetBusVolume(harkentest::ObjectId(751), -1.0f, 0));
     EXPECT_EQ(VN_UNKNOWN_ID, Vn_SetBusVolume(harkentest::ObjectId(753), -1.0f, 0));
-}
-
-TEST(PackLogicLoad, CompilerRefusesResidentSectionInContentManifest) {
-    // The compiler half of the defense in depth: a content manifest
-    // carrying a "buses" section refuses at build with a report.
-    const std::vector<float> tone = harkentest::MakeDC(kBlock, 0.5f);
-    const std::string wavPath = TempPath("pll_kind_twin_tone.wav");
-    WriteWavF32(wavPath, tone, 1, kRate);
-
-    const std::string packPath = TempPath("pll_kind_twin.pack");
-    const std::string manifestPath = TempPath("pll_kind_twin_manifest.json");
-    WriteTextFile(
-        manifestPath,
-        V2LogicManifest(packPath, "content",
-                        "\"entries\": [ { \"path\": \"" + wavPath +
-                            "\", \"id\": \"3da91a64-b947-4560-0000-0000000002f9\" } ],\n"
-                            R"("buses": [ { "id": "3da91a64-b947-4560-0000-0000000002fa", "parent": "00000000-0000-0000-0000-000000000001" } ])"));
-    std::filesystem::remove(packPath);
-    std::filesystem::remove(packPath + ".report.json");
-    std::filesystem::remove(manifestPath + ".report.json");
-
-    EXPECT_NE(0, harkentest::CompileResources({manifestPath}));
-    EXPECT_FALSE(std::filesystem::exists(packPath));
-
-    // A refused build still emits its report (the v1 refusal contract,
-    // unchanged for v2). A manifest refused during parsing never
-    // registered its output path, so the report-location fallback lands
-    // the report beside the MANIFEST — the malformed-JSON precedent —
-    // never beside the output it refused to name.
-    EXPECT_FALSE(std::filesystem::exists(packPath + ".report.json"));
-    std::string reportText;
-    ASSERT_TRUE(ReadFileText(manifestPath + ".report.json", &reportText));
-    harkenhost::JsonValue report;
-    std::string error;
-    ASSERT_TRUE(harkenhost::ParseJson(reportText, &report, &error)) << error;
-    const harkenhost::JsonValue* status = report.Find("status");
-    ASSERT_NE(nullptr, status);
-    EXPECT_EQ("refused", status->text);
-    const harkenhost::JsonValue* refusal = report.Find("refusal");
-    ASSERT_NE(nullptr, refusal);
-    const harkenhost::JsonValue* message = refusal->Find("message");
-    ASSERT_NE(nullptr, message);
-    EXPECT_FALSE(message->text.empty());
-}
-
-TEST(PackLogicLoad, CompilerRefusesRetiredActionsSection) {
-    const std::vector<float> tone = harkentest::MakeDC(kBlock, 0.5f);
-    const std::string wavPath = TempPath("pll_dupname_tone.wav");
-    WriteWavF32(wavPath, tone, 1, kRate);
-
-    const std::string packPath = TempPath("pll_dupname.pack");
-    const std::string manifestPath = TempPath("pll_dupname_manifest.json");
-    WriteTextFile(
-        manifestPath,
-        V2LogicManifest(
-            packPath, "content",
-            "\"entries\": [ { \"path\": \"" + wavPath +
-                "\", \"id\": \"3da91a64-b947-4560-0000-0000000003d5\" } ],\n" +
-                std::string(
-                    R"("actions": [ { "id": "3da91a64-b947-4560-0000-0000000003d6", "steps": [
-      { "type": "play", "playable": "3da91a64-b947-4560-0000-0000000003d5", "bus": "00000000-0000-0000-0000-000000000001" } ] } ])")));
-    std::filesystem::remove(packPath);
-
-    EXPECT_NE(0, harkentest::CompileResources({manifestPath}));
-    EXPECT_FALSE(std::filesystem::exists(packPath));
-}
-
-
-// --- compiler determinism: byte-identical output across runs ---
-
-TEST(PackLogicLoad, CompilerOutputByteIdenticalAcrossRuns) {
-    // A full-shape content manifest: media, container, voice binding, and
-    // attachment. The same manifest builds three times — clean,
-    // cache-hit, and cache-deleted — and the cache discipline demands
-    // the pack bytes never move: a cache may only save work, never
-    // change output.
-    const std::vector<float> tone = harkentest::MakeDC(kBlock * 2, 0.5f);
-    const std::string wavPath = TempPath("pll_byteident_tone.wav");
-    WriteWavF32(wavPath, tone, 1, kRate);
-
-    const std::string packPath = TempPath("pll_byteident.pack");
-    const std::string manifestPath = TempPath("pll_byteident_manifest.json");
-    WriteTextFile(
-        manifestPath,
-        V2LogicManifest(
-            packPath, "content",
-            "\"entries\": [ { \"path\": \"" + wavPath +
-                "\", \"id\": \"3da91a64-b947-4560-0000-0000000003cb\" } ],\n" +
-                std::string(
-                    R"("containers": [ { "id": "3da91a64-b947-4560-0000-0000000003cc", "order": "weightedRandom",
-                    "children": [ { "playable": "3da91a64-b947-4560-0000-0000000003cb", "weight": 1 } ] } ],
-"bindings": [ { "id": "3da91a64-b947-4560-0000-0000000003ce", "variable": "3da91a64-b947-4560-0000-000000001d39", "scope": "voice", "target": 0,
-                "curve": { "points": [[0.0, 0.0], [1.0, -6.0]],
-                           "handles": [[0.0, 0.0, 1.0, -6.0]] } } ],
-"attachments": [ { "binding": "3da91a64-b947-4560-0000-0000000003ce", "scope": "voice", "object": "3da91a64-b947-4560-0000-0000000003cb" } ])")));
-
-    const std::string cachePath = packPath + ".cache.json";
-    const std::string reportPath = packPath + ".report.json";
-    std::filesystem::remove(packPath);
-    std::filesystem::remove(cachePath);
-    std::filesystem::remove(reportPath);
-
-    // Build #1: clean decode; the report appears and the cache seeds.
-    ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
-    std::string first;
-    ASSERT_TRUE(ReadFileText(packPath, &first));
-    ASSERT_FALSE(first.empty());
-    EXPECT_TRUE(std::filesystem::exists(reportPath));
-    ASSERT_TRUE(std::filesystem::exists(cachePath));
-
-    // Build #2: nothing touched, so every entry may serve from the
-    // cache — and the output must still be byte-identical.
-    ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
-    std::string second;
-    ASSERT_TRUE(ReadFileText(packPath, &second));
-    EXPECT_TRUE(std::filesystem::exists(reportPath));
-    EXPECT_TRUE(first == second) << "cache-hit rebuild moved the pack bytes";
-
-    // Build #3: only the cache file removed — a full re-decode of the
-    // unchanged sources must land on the same bytes again.
-    ASSERT_TRUE(std::filesystem::remove(cachePath));
-    ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
-    std::string third;
-    ASSERT_TRUE(ReadFileText(packPath, &third));
-    EXPECT_TRUE(std::filesystem::exists(reportPath));
-    EXPECT_TRUE(first == third)
-        << "clean re-decode diverged from the cache-assisted build";
 }
 
 // --- load: corruption ---

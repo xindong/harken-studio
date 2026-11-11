@@ -131,11 +131,11 @@ def main() -> int:
     if output.exists():
         parser.error(f"Output must not already exist: {output}")
     suffix = ".exe" if executable.suffix.lower() == ".exe" else ""
-    binaries = [executable, *(executable.parent / (name + suffix) for name in ("HarkenStudioCLI", "harken_host"))]
+    binaries = [executable, executable.parent / ("HarkenStudioCLI" + suffix)]
     for binary in binaries:
         if not binary.is_file():
             parser.error(f"Required executable does not exist: {binary}")
-    for name in ("HarkenStudioRuntimeTest.dll", "libHarkenStudioRuntimeTest.so", "libHarkenStudioRuntimeTest.dylib"):
+    for name in ("HarkenEngineDev.dll", "libHarkenEngineDev.so", "libHarkenEngineDev.dylib"):
         runtime = executable.parent / name
         if runtime.is_file():
             binaries.append(runtime)

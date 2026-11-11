@@ -344,6 +344,7 @@ def cache_record(
         "CMAKE_HOME_DIRECTORY",
         "HARKEN_RUNTIME_ONLY",
         "HARKEN_BUILD_CORE",
+        "HARKEN_BUILD_ENGINE",
         "HARKEN_BUILD_EDITOR",
         "HARKEN_BUILD_HUB",
         "HARKEN_BUILD_TOOLS",
@@ -489,7 +490,28 @@ def toolchain_record(build: Path) -> dict[str, Any]:
     }
 
 
+def declares_engine_editions(root: Path) -> bool:
+    cmake_source = (root / "CMakeLists.txt").read_text(encoding="utf-8")
+    return re.search(r"\boption\s*\(\s*HARKEN_BUILD_ENGINE\b", cmake_source) is not None
+
+
+def shipping_library_name(root: Path) -> str:
+    return "HarkenEngine.dll" if declares_engine_editions(root) else "HarkenCore.dll"
+
+
 def runtime_build_options(root: Path) -> dict[str, str]:
+    if declares_engine_editions(root):
+        return {
+            "HARKEN_BUILD_ENGINE": "ON",
+            "HARKEN_BUILD_EDITOR": "OFF",
+            "HARKEN_BUILD_TOOLS": "OFF",
+            "HARKEN_BUILD_HUB": "OFF",
+            "HARKEN_BUILD_RUNTIME_UNIT_TESTS": "OFF",
+            "HARKEN_BUILD_EDITOR_UNIT_TESTS": "OFF",
+            "HARKEN_BUILD_HUB_UNIT_TESTS": "OFF",
+            "HARKEN_BUILD_RUNTIME_BENCHMARKS": "OFF",
+            "HARKEN_BUILD_RT_QUALIFICATION": "OFF",
+        }
     options = {
         "HARKEN_BUILD_SHARED": "ON",
         "HARKEN_BUILD_RUNTIME_UNIT_TESTS": "OFF",
@@ -804,10 +826,10 @@ def main() -> int:
     )
 
     old_dll = (
-        old_build / "bin" / config / "HarkenCore.dll"
+        old_build / "bin" / config / shipping_library_name(old_root)
     ).resolve()
     current_dll = (
-        current_build / "bin" / config / "HarkenCore.dll"
+        current_build / "bin" / config / shipping_library_name(current_root)
     ).resolve()
     dumpbin = find_dumpbin()
     old_exports, old_export_hash = public_exports(

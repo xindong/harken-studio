@@ -55,8 +55,8 @@ jobs:
       - name: Configure (windows-release, runtime and editor tests)
         run: >-
           cmake --fresh --preset windows-release -B build-daily
-          -DHARKEN_BUILD_CORE=ON
-          -DHARKEN_BUILD_SHARED=ON
+          -DHARKEN_BUILD_ENGINE=ON
+          -DHARKEN_BUILD_ENGINE_DEV=ON
           -DHARKEN_BUILD_TOOLS=ON
           -DHARKEN_BUILD_EDITOR=ON
           -DHARKEN_BUILD_RUNTIME_UNIT_TESTS=ON

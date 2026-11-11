@@ -1,6 +1,6 @@
 # harken_runtime_bridge -- the editor's single point of contact with the
-# runtime. Public headers expose editor-owned Qt/std structs only; the private
-# side talks to harken_core through the in-process Harken.h C API.
+# engine. Public headers expose editor-owned Qt/std structs only; the private
+# side talks to the published Harken::EngineDev through its public headers.
 
 add_library(harken_runtime_bridge STATIC
     # Public interface, partitioned by migration cluster (one header each).
@@ -52,7 +52,7 @@ target_include_directories(harken_runtime_bridge PRIVATE
 target_link_libraries(harken_runtime_bridge PRIVATE
     harken_current_world_compiler
     harken_bus_compiler
-    harken_studio_runtime_api
+    Harken::EngineDev
     harken_studio_media_decode
     harkenizer_resource_compiler
     harkenizer_compiler_client

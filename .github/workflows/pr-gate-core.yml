@@ -56,9 +56,9 @@ jobs:
       - name: Configure (windows-release, runtime tests)
         run: >-
           cmake --fresh --preset windows-release -B build-core
-          -DHARKEN_BUILD_CORE=ON
+          -DHARKEN_BUILD_ENGINE=ON
           -DHARKEN_BUILD_TOOLS=ON
-          -DHARKEN_BUILD_SHARED=ON
+          -DHARKEN_BUILD_ENGINE_DEV=ON
           -DHARKEN_BUILD_RUNTIME_UNIT_TESTS=ON
 
       - name: Run source contracts before compilation
@@ -126,9 +126,9 @@ jobs:
         run: >-
           cmake --fresh --preset macos-release -B build-macos-runtime
           -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }}
-          -DHARKEN_BUILD_CORE=ON
+          -DHARKEN_BUILD_ENGINE=ON
           -DHARKEN_BUILD_TOOLS=ON
-          -DHARKEN_BUILD_SHARED=ON
+          -DHARKEN_BUILD_ENGINE_DEV=ON
           -DHARKEN_BUILD_RUNTIME_UNIT_TESTS=ON
 
       - name: Build Core and monitor runtime tests
@@ -187,8 +187,8 @@ jobs:
       - name: Configure (linux-release, runtime only)
         run: >-
           cmake --fresh --preset linux-release
-          -DHARKEN_BUILD_CORE=ON
-          -DHARKEN_BUILD_SHARED=ON
+          -DHARKEN_BUILD_ENGINE=ON
+          -DHARKEN_BUILD_ENGINE_DEV=ON
 
       - name: Build (harken_core harken_core_shared)
         run: |
@@ -214,7 +214,7 @@ jobs:
           -DCMAKE_OSX_SYSROOT=iphoneos
           -DCMAKE_OSX_ARCHITECTURES=arm64
           -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0
-          -DHARKEN_BUILD_CORE=ON
+          -DHARKEN_BUILD_ENGINE=ON
 
       - name: Build libHarkenCore.a
         run: cmake --build build-ios --config Release --target harken_core --parallel
@@ -247,8 +247,8 @@ jobs:
           -DANDROID_PLATFORM=android-21
           -DANDROID_STL=c++_static
           -DANDROID_ABI=arm64-v8a
-          -DHARKEN_BUILD_CORE=ON
-          -DHARKEN_BUILD_SHARED=ON
+          -DHARKEN_BUILD_ENGINE=ON
+          -DHARKEN_BUILD_ENGINE_DEV=ON
 
       - name: Build libHarkenCore.so
         run: cmake --build build-android --config Release --target harken_core_shared --parallel

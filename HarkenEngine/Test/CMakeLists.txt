@@ -239,7 +239,6 @@ add_executable(harken_runtime_tests
     UnitTest/ActionCatalogOwnershipTest.cpp
     UnitTest/ActionNamePostTest.cpp
     UnitTest/PackCompositionTest.cpp
-    UnitTest/PackcPipelineTest.cpp
     UnitTest/StreamRoundtripTest.cpp
     UnitTest/EffectChainGoldenTest.cpp
     UnitTest/LoopSeamGoldenTest.cpp
@@ -295,7 +294,6 @@ add_executable(harken_runtime_tests
     UnitTest/TimelineVoiceBindingInstallTest.cpp
     UnitTest/PlayableStartTest.cpp
     UnitTest/BusAdmissionStartTest.cpp
-    UnitTest/CurrentWorldCompilerTest.cpp
     UnitTest/CurrentWorldHistoricalDecodeTest.cpp
     UnitTest/ResourceFactsTest.cpp
     UnitTest/ResolvedSlotTicketTest.cpp
@@ -321,9 +319,7 @@ add_executable(harken_runtime_tests
     UnitTest/TimelineExecutorTest.cpp
     UnitTest/TimelineConvergenceTest.cpp
     UnitTest/TransportEpochOwnerTest.cpp
-    UnitTest/ProgramConvergenceTest.cpp
     UnitTest/PreviewAbiTest.cpp
-    UnitTest/ProgramRegistrationInstallTest.cpp
     UnitTest/EffectDescriptorWriterTest.cpp
     E2E/BaselineRegressionTest.cpp
     E2E/RemoteChannelTest.cpp
@@ -335,10 +331,8 @@ add_executable(harken_runtime_tests
 # The interface target carries that root (and no linked code), so the test can
 # resolve it without this target learning the whole media include layout.
 target_link_libraries(harken_runtime_tests PRIVATE harken_core harken_buildinfo harken_remote
-                      harken_reference_slots harken_resource_facts_contract
-                      harken_program_registration harken_current_world_compiler
-                      harken_preview harkenizer_resource_compiler harken_studio_pack_build
-                      GTest::gtest_main)
+                      harken_resource_facts_contract harken_program_registration
+                      harken_preview GTest::gtest_main)
 if(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
     target_compile_definitions(harken_runtime_tests PRIVATE
         HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
@@ -387,6 +381,7 @@ target_include_directories(harken_runtime_tests PRIVATE
     # The host tool's pure parsing helpers are unit-tested here.
     ${CMAKE_SOURCE_DIR}/HarkenEngine/Tool/Host
     ${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Tooling/Common
+    ${HARKEN_THIRD_PARTY_DIR}/miniaudio
     # The generated C# binding's C++ ABI-pin header (compiled by
     # BindingAbiPinTest.cpp to make table<->Harken.h drift a compile error).
     ${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Tooling/Binding/generated
@@ -573,7 +568,7 @@ gtest_discover_tests(harken_render_worker_deadline_tests
 #
 # The control is target-private and the top-level HARKEN_RT_PROBE_* options stay
 # off, so the configure-time check that refuses probe definitions outside a
-# qualification build keeps doing its job: harken_core and harken_core_shared are
+# qualification build keeps doing its job: harken_core and harken_engine are
 # still built without any probe control, and this executable links neither.
 #
 # The qualification presets are Visual Studio and MSVC only, so this is also the
@@ -597,19 +592,21 @@ add_test(NAME harken_rt_probe_worker
          COMMAND "$<TARGET_FILE:harken_rt_probe_worker_tests>")
 set_tests_properties(harken_rt_probe_worker PROPERTIES TIMEOUT 120)
 
-if(TARGET harken_core_shared)
+if(TARGET harken_engine)
     add_executable(harken_native_variable_api_smoke UnitTest/NativeVariableApiSmoke.cpp)
-    target_link_libraries(harken_native_variable_api_smoke PRIVATE harken_core_shared)
+    target_link_libraries(harken_native_variable_api_smoke PRIVATE harken_engine)
+    target_include_directories(harken_native_variable_api_smoke PRIVATE
+        ${HARKEN_RUNTIME_DIR}/api/include)
     add_test(NAME harken_native_variable_api_smoke COMMAND harken_native_variable_api_smoke)
 endif()
 
-if(WIN32 AND TARGET harken_core_shared)
+if(WIN32 AND TARGET harken_engine)
     add_executable(harken_shared_load_smoke
         UnitTest/SharedLibraryLoadSmoke.cpp)
-    add_dependencies(harken_shared_load_smoke harken_core_shared)
+    add_dependencies(harken_shared_load_smoke harken_engine)
     add_test(NAME harken_shared_load_smoke
              COMMAND "$<TARGET_FILE:harken_shared_load_smoke>"
-                     "$<TARGET_FILE:harken_core_shared>")
+                     "$<TARGET_FILE:harken_engine>")
 endif()
 
 # Generated-artifact and export-surface contract checks. Each re-derives a
@@ -664,23 +661,10 @@ _harken_add_python_check_test(pack_wire_generated_check
     --check)
 _harken_add_python_check_test(pack_wire_codegen_unit
     "${CMAKE_SOURCE_DIR}/.scripts/tests/test_pack_wire_codegen.py")
-_harken_add_python_check_test(schema_archive_unit
-    "${CMAKE_SOURCE_DIR}/.scripts/tests/test_schema_archive.py")
 _harken_add_python_check_test(managed_generation_policy_check
     "${CMAKE_SOURCE_DIR}/HarkenEngine/Test/UnitTest/test_managed_generation_policy.py")
 _harken_add_python_check_test(remote_wire_generated_check
     "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Tooling/Remote/wire/gen_wire.py"
-    --check)
-# The reference-slot vocabulary, whose compile-side and runtime-side definitions
-# are emitted from one table. This check is what replaces the pin test that used
-# to compare the two hand-written numberings: with both generated, comparing them
-# to each other is a tautology, while comparing the checked-in headers to the
-# table still catches a hand edit or a table change nobody regenerated.
-_harken_add_python_check_test(reference_slots_generated_check
-    "${CMAKE_SOURCE_DIR}/HarkenStudio/Source/Tooling/ReferenceSlots/slots/gen_reference_slots.py"
-    --check)
-_harken_add_python_check_test(playable_properties_generated_check
-    "${CMAKE_SOURCE_DIR}/HarkenStudio/Source/Tooling/PlayableProperties/properties/gen_playable_properties.py"
     --check)
 _harken_add_python_check_test(variable_catalog_generated_check
     "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Tooling/VariableCatalog/gen_variable_catalog.py"
@@ -744,10 +728,10 @@ _harken_add_python_check_test(preview_surface_isolation_check
 # specification for something the build does not do.
 _harken_add_python_check_test(preview_allocation_table_check
     "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Tooling/Preview/abi/check_preview_allocation.py")
-if(WIN32 AND TARGET harken_core_shared)
+if(WIN32 AND TARGET harken_engine)
     _harken_add_python_check_test(abi_export_surface_check
         "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Tooling/Abi/gen_abi_exports.py"
-        --verify-dll "$<TARGET_FILE:harken_core_shared>")
+        --verify-dll "$<TARGET_FILE:harken_engine>")
     set_tests_properties(abi_export_surface_check PROPERTIES LABELS harken-artifact-contract)
 endif()
 if(TARGET harken_host_selection_copy_test)

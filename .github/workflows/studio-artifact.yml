@@ -118,7 +118,7 @@ jobs:
         run: >-
           cmake --fresh --preset windows-release
           -DHARKEN_VS_DIR:PATH="$env:VSINSTALLDIR"
-          -DHARKEN_BUILD_CORE=ON
+          -DHARKEN_BUILD_ENGINE=ON
           -DHARKEN_BUILD_EDITOR=ON
           -DHARKEN_BUILD_TOOLS=ON
 
@@ -320,7 +320,7 @@ jobs:
         run: >-
           cmake --fresh --preset macos-release
           -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }}
-          -DHARKEN_BUILD_CORE=ON
+          -DHARKEN_BUILD_ENGINE=ON
           -DHARKEN_BUILD_EDITOR=ON
           -DHARKEN_BUILD_TOOLS=ON
 

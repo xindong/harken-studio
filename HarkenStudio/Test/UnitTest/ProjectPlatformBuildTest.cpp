@@ -18,8 +18,8 @@
 #include "Core/UndoCommands.h"
 #include "Tooling/Harkenizer/ResourceCompilerClient.h"
 
-#include <harken/media/PackFormat.h>
-#include <harken/media/PackFormatV2.h>
+#include "harken_studio_build/PackFormat.h"
+#include "harken_studio_build/PackFormatV2.h"
 
 #include <gtest/gtest.h>
 #include <QApplication>
@@ -214,19 +214,19 @@ StudioCliResult runStudioCli(const QStringList& arguments)
         process.readAllStandardOutput(), process.readAllStandardError()};
 }
 
-QVector<harken::PackTocEntry> mediaEntries(const QString& path)
+QVector<harkenstudiobuild::PackTocEntry> mediaEntries(const QString& path)
 {
-    QVector<harken::PackTocEntry> result;
+    QVector<harkenstudiobuild::PackTocEntry> result;
     const auto content = bytes(path);
-    if (content.size() < static_cast<qsizetype>(harken::kPackFileHeaderBytes)) return result;
+    if (content.size() < static_cast<qsizetype>(harkenstudiobuild::kPackFileHeaderBytes)) return result;
     const auto* data = reinterpret_cast<const uint8_t*>(content.constData());
-    harken::PackFileHeader header;
-    if (!harken::ReadPackFileHeader(data, &header)) return result;
+    harkenstudiobuild::PackFileHeader header;
+    if (!harkenstudiobuild::ReadPackFileHeader(data, &header)) return result;
     for (uint32_t i = 0; i < header.entryCount; ++i) {
-        const auto entry = harken::ReadPackDirectoryEntry(
-            data + header.directoryOffset + i * harken::kPackDirectoryEntryBytes);
-        if (entry.kind == harken::kPackEntryKindMedia)
-            result.append(harken::ReadPackMedia(data + entry.offset));
+        const auto entry = harkenstudiobuild::ReadPackDirectoryEntry(
+            data + header.directoryOffset + i * harkenstudiobuild::kPackDirectoryEntryBytes);
+        if (entry.kind == harkenstudiobuild::kPackEntryKindMedia)
+            result.append(harkenstudiobuild::ReadPackMedia(data + entry.offset));
     }
     return result;
 }

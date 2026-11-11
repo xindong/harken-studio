@@ -51,7 +51,7 @@
 // manifests (subprocess, the pipeline-test precedent); refusals assert
 // the old revision through rendering, not internal state.
 #include "Common/ObjectIdTestSupport.h"
-#include "Common/ResourceCompilerTestUtil.h"
+#include "Common/TestPackWriter.h"
 #include "Common/TestUtil.h"
 
 #include "PackLogicStore.h"
@@ -164,7 +164,7 @@ void WriteWavF32(const std::string& path,
             return false;
         }
     }
-    return harkentest::CompileResources({manifestPath}) == 0;
+    return harkentest::BuildTestPack({manifestPath}) == 0;
 }
 
 [[nodiscard]] bool BuildMediaPackFile(const std::string& name,
@@ -185,7 +185,7 @@ void WriteWavF32(const std::string& path,
             return false;
         }
     }
-    return harkentest::CompileResources({manifestPath}) == 0;
+    return harkentest::BuildTestPack({manifestPath}) == 0;
 }
 
 std::string V2LogicManifest(const std::string& outputPath,

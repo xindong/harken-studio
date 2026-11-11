@@ -258,6 +258,7 @@ if(HARKEN_BUILD_RUNTIME_UNIT_TESTS OR HARKEN_BUILD_EDITOR_UNIT_TESTS OR
     )
     # Match the engine's CRT choice (dynamic runtime) instead of gtest's default.
     set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+    set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(googletest)
     # Clang 21+ added -Wcharacter-conversion, which fires inside gtest's own
     # headers (v1.17.0) and becomes fatal under googletest's /WX. Suppress it

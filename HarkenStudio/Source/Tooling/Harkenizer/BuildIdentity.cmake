@@ -10,7 +10,7 @@ set(build_identity_targets
     harken_reference_slots
     harken_studio_pack_build
     harken_studio_media_decode
-    harken_studio_runtime
+    Harken::EngineDev
     vorbis
     vorbisenc
     vorbisfile

@@ -35,8 +35,8 @@ jobs:
         shell: pwsh
         run: >-
           cmake --fresh --preset windows-release -B build-runtime
-          -DHARKEN_BUILD_CORE=ON
-          -DHARKEN_BUILD_SHARED=ON
+          -DHARKEN_BUILD_ENGINE=ON
+          -DHARKEN_BUILD_ENGINE_DEV=ON
 
       - name: Build HarkenCore.dll
         run: cmake --build build-runtime --config Release --target harken_core_shared --parallel
@@ -87,8 +87,8 @@ jobs:
         run: |
           cmake --fresh --preset macos-release -B build-runtime \
             -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
-            -DHARKEN_BUILD_CORE=ON \
-            -DHARKEN_BUILD_SHARED=ON
+            -DHARKEN_BUILD_ENGINE=ON \
+            -DHARKEN_BUILD_ENGINE_DEV=ON
 
       - name: Build universal libHarkenCore.dylib
         run: cmake --build build-runtime --config Release --target harken_core_shared --parallel
@@ -141,7 +141,7 @@ jobs:
             -DCMAKE_OSX_SYSROOT=iphoneos \
             -DCMAKE_OSX_ARCHITECTURES=arm64 \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0 \
-            -DHARKEN_BUILD_CORE=ON
+            -DHARKEN_BUILD_ENGINE=ON
 
       - name: Build libHarkenCore.a
         run: cmake --build build-ios --config Release --target harken_core --parallel
@@ -200,8 +200,8 @@ jobs:
         shell: bash
         run: |
           cmake --fresh --preset linux-release -B build-runtime \
-            -DHARKEN_BUILD_CORE=ON \
-            -DHARKEN_BUILD_SHARED=ON
+            -DHARKEN_BUILD_ENGINE=ON \
+            -DHARKEN_BUILD_ENGINE_DEV=ON
 
       - name: Build libHarkenCore.so
         run: cmake --build build-runtime --config Release --target harken_core_shared --parallel
@@ -266,8 +266,8 @@ jobs:
             -DANDROID_PLATFORM=android-21 \
             -DANDROID_STL=c++_static \
             -DANDROID_ABI=arm64-v8a \
-            -DHARKEN_BUILD_CORE=ON \
-            -DHARKEN_BUILD_SHARED=ON
+            -DHARKEN_BUILD_ENGINE=ON \
+            -DHARKEN_BUILD_ENGINE_DEV=ON
           cmake --build build-android-arm64-v8a --config Release --target harken_core_shared --parallel
 
       - name: Stage Android arm64 runtime

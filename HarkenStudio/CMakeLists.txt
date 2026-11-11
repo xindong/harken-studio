@@ -1,7 +1,7 @@
 # Harken Studio — the Qt front end. Everything under this directory is
-# editor-side: it is never linked into harken_core and carries its own
-# third-party closure. Engine contact is isolated in Source/RuntimeBridge and
-# uses the harken_core in-process C API.
+# editor-side and carries its own third-party closure. Engine contact is
+# isolated in Source/RuntimeBridge, which links only the published
+# Harken::EngineDev.
 
 # Editor tree opts into C++ exceptions. Runtime stays exception-disabled
 # (Audio Thread no-throw discipline); Editor is Qt6 GUI and uses try/catch
@@ -13,6 +13,43 @@ if(MSVC)
     add_compile_options(/EHsc /permissive- /FS)
     add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
 endif()
+
+if(NOT TARGET Harken::EngineDev)
+    message(FATAL_ERROR "Harken Studio requires the Harken::EngineDev target")
+endif()
+if(NOT Python3_Interpreter_FOUND)
+    message(FATAL_ERROR "Python 3 is required to generate and publish the Studio Schema")
+endif()
+
+set(HARKEN_SCHEMA_GENERATED_DIR "${CMAKE_BINARY_DIR}/generated/schema")
+set(HARKEN_SCHEMA_GENERATED_CORE_DIR "${HARKEN_SCHEMA_GENERATED_DIR}/Core")
+set(HARKEN_SCHEMA_GENERATED_PROJECT_HEADER
+    "${HARKEN_SCHEMA_GENERATED_CORE_DIR}/ProjectSchemaGenerated.h")
+set(HARKEN_SCHEMA_GENERATED_BUILD_HEADER
+    "${HARKEN_SCHEMA_GENERATED_CORE_DIR}/SchemaBuildGenerated.h")
+set(HARKEN_SCHEMA_GENERATED_VALIDATOR_HEADER
+    "${HARKEN_SCHEMA_GENERATED_CORE_DIR}/ProjectSchemaValidator.generated.h")
+set(HARKEN_SCHEMA_GENERATED_VALIDATOR_SOURCE
+    "${HARKEN_SCHEMA_GENERATED_CORE_DIR}/ProjectSchemaValidator.generated.cpp")
+set(HARKEN_SCHEMA_GENERATED_FILES
+    ${HARKEN_SCHEMA_GENERATED_PROJECT_HEADER}
+    ${HARKEN_SCHEMA_GENERATED_BUILD_HEADER}
+    ${HARKEN_SCHEMA_GENERATED_VALIDATOR_HEADER}
+    ${HARKEN_SCHEMA_GENERATED_VALIDATOR_SOURCE})
+file(GLOB_RECURSE HARKEN_SCHEMA_INPUTS CONFIGURE_DEPENDS
+    "${HARKEN_SCHEMA_SOURCE_DIR}/*.json")
+add_custom_command(
+    OUTPUT ${HARKEN_SCHEMA_GENERATED_FILES}
+    COMMAND ${Python3_EXECUTABLE}
+        "${CMAKE_SOURCE_DIR}/.scripts/schema_archive.py"
+        --schema-root "${HARKEN_SCHEMA_SOURCE_DIR}"
+        --generate-code "${HARKEN_SCHEMA_GENERATED_CORE_DIR}"
+    DEPENDS
+        "${CMAKE_SOURCE_DIR}/.scripts/schema_archive.py"
+        ${HARKEN_SCHEMA_INPUTS}
+    VERBATIM)
+add_custom_target(harken_schema_codegen
+    DEPENDS ${HARKEN_SCHEMA_GENERATED_FILES})
 
 # Binary output directories are set globally at the top level (bin/ for
 # runtime,  lib/ for archives); the editor exe, the engine DLL, the deployed
@@ -305,6 +342,7 @@ endif()
 # Runtime bridge -- the only sanctioned editor target that may talk to the
 # engine. Must precede Source/Core: harken_editor_foundation links it; all
 # editor runtime access goes through it.
+add_subdirectory(Source/Tooling)
 include(Source/Tooling/Harkenizer/CompilerClient.cmake)
 add_subdirectory(Source/RuntimeBridge)
 add_subdirectory(Source/Tooling/Harkenizer/Core)
@@ -530,10 +568,6 @@ add_custom_command(TARGET harken_studio_cli POST_BUILD
 )
 endif()
 
-if(NOT Python3_Interpreter_FOUND)
-    message(FATAL_ERROR "Python 3 is required to publish the Studio Schema snapshot")
-endif()
-
 if(HARKEN_BUILD_EDITOR)
 add_custom_command(TARGET harken_editor POST_BUILD
     COMMAND ${Python3_EXECUTABLE}
@@ -705,3 +739,7 @@ foreach(_harken_headless_target harken_studio_core harken_studio_cli)
         harken_verify_headless_dependencies(${_harken_headless_target})
     endif()
 endforeach()
+
+if(HARKEN_BUILD_EDITOR_UNIT_TESTS)
+    add_subdirectory(Test)
+endif()

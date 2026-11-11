@@ -15,7 +15,7 @@
 // replace: music must keep rendering across the activation tick with
 // only the expected level change (no dropout block).
 #include "Common/ObjectIdTestSupport.h"
-#include "Common/ResourceCompilerTestUtil.h"
+#include "Common/TestPackWriter.h"
 #include "Common/TestUtil.h"
 
 #include "harken/param/ParamTargets.h"
@@ -148,7 +148,7 @@ void WriteWavF32(const std::string& path,
             return false;
         }
     }
-    return harkentest::CompileResources({manifestPath}) == 0;
+    return harkentest::BuildTestPack({manifestPath}) == 0;
 }
 
 VnResult LoadPack(const std::string& path, VnPackHandle* outHandle) {
@@ -399,7 +399,7 @@ TEST(PackLogicRoundtrip, ManifestAttenuationBezierMatchesDirectApiGoldens) {
     }
     manifest += "]}\n";
     WriteTextFile(manifestPath, manifest);
-    ASSERT_EQ(0, harkentest::CompileResources({manifestPath}));
+    ASSERT_EQ(0, harkentest::BuildTestPack({manifestPath}));
 
     for (std::size_t group = 0; group < std::size(goldens); ++group) {
         for (std::size_t sample = 0; sample < std::size(distances);

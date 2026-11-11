@@ -30,7 +30,7 @@ PRODUCTS = (
     "HarkenSchema",
 )
 
-ENGINE_PUBLIC_HEADER_NAMES = ("Harken.h", "HarkenDevelopment.h")
+ENGINE_PUBLIC_HEADER_NAMES = ("Harken.h", "HarkenDevelopment.h", "PreviewAbi.h", "PreviewProject.h")
 
 ALLOWED_EDGES = {
     ("HarkenStudio", "HarkenEngine"): {
@@ -140,16 +140,25 @@ def strip_cmake_comments(text: str) -> str:
 
 def cmake_commands(text: str):
     text = strip_cmake_comments(text)
-    for match in re.finditer(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(", text):
+    pattern = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+    position = 0
+    while True:
+        match = pattern.search(text, position)
+        if match is None:
+            return
         depth = 1
+        in_quote = False
         i = match.end()
         while i < len(text) and depth:
-            if text[i] == "(":
+            if text[i] == '"' and text[i - 1] != "\\":
+                in_quote = not in_quote
+            elif not in_quote and text[i] == "(":
                 depth += 1
-            elif text[i] == ")":
+            elif not in_quote and text[i] == ")":
                 depth -= 1
             i += 1
         yield match.group(1).lower(), text[match.end():i - 1], line_of(text, match.start())
+        position = i
 
 
 def cmake_args(body: str) -> list[str]:

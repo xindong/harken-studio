@@ -143,7 +143,7 @@ harkentest::RecipePackArtifact BuildSpatialRecipePack(
             return artifact;
         }
     }
-    artifact.built = harkentest::CompileResources({manifest}) == 0;
+    artifact.built = harkentest::BuildTestPack({manifest}) == 0;
     return artifact;
 }
 
