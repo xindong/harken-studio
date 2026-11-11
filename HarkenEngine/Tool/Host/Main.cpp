@@ -26,8 +26,7 @@
 #include "RemoteServe.h"
 #include "SchedulingMeasure.h"
 #include "TraceReplay.h"
-#include "ResourceCompiler.h"
-#include "JsonWriter.h"
+#include "StreamImage.h"
 #include "harken/core/AllocGuard.h"
 #include "harken/media/StreamFormat.h"
 #include "Engine.h" // internal: --null mode drives blocks via the pump
@@ -89,7 +88,6 @@ struct Options {
     double seconds = 6.0;
     bool nullMode = false;
     bool synth = false;
-    std::string packcPath;
     std::string outDir = ".temp/m7-s7-listen";
     std::uint32_t chunkFrames = 4096;
 };
@@ -100,9 +98,9 @@ void PrintUsage() {
         "usage: harken_host demo --wav <fileA> --wav <fileB> [--seconds N] "
         "[--null]\n"
         "       harken_host demo --synth [--seconds N] [--null]\n"
-        "       harken_host stream-endurance [--seconds N] [--packc <exe>] "
+        "       harken_host stream-endurance [--seconds N] "
         "[--chunk-frames N] [--null]\n"
-        "       harken_host m2-scene [--seconds N] [--packc <exe>] "
+        "       harken_host m2-scene [--seconds N] "
         "[--chunk-frames N] [--music <wav>] [--ambience <wav>] "
         "[--oneshot <wav>] [--null]\n"
         "       harken_host m6-scene [--seconds N] [--null]\n"
@@ -143,7 +141,7 @@ void PrintUsage() {
         "                 by an internal clock - no audio hardware.\n");
     std::fprintf(stderr,
                  "\nstream-endurance writes a low-level source under .temp/,\n"
-                 "compiles it through Harkenizer's resource compiler, streams it, polls\n"
+                 "writes it as a .stream container, streams it, polls\n"
                  "Vn_CaptureSnapshot, and exits on the ended notification.\n");
     std::fprintf(stderr,
                  "\nm2-scene plays a streamed music sound, an in-memory\n"
@@ -183,7 +181,7 @@ void PrintUsage() {
     harkenhost::PrintAtt04NearFarProbeUsage();
 }
 
-bool ModeUsesPackc(Options::Mode mode) {
+bool ModeUsesStream(Options::Mode mode) {
     return mode == Options::Mode::StreamEndurance ||
            mode == Options::Mode::M2Scene;
 }
@@ -252,10 +250,7 @@ bool ParseOptions(int argc, char** argv, Options* out) {
             out->outDir = argv[++i];
         } else if (out->mode == Options::Mode::Demo && arg == "--synth") {
             out->synth = true;
-        } else if (ModeUsesPackc(out->mode) && arg == "--packc" &&
-                   i + 1 < argc) {
-            out->packcPath = argv[++i];
-        } else if (ModeUsesPackc(out->mode) && arg == "--chunk-frames" &&
+        } else if (ModeUsesStream(out->mode) && arg == "--chunk-frames" &&
                    i + 1 < argc) {
             if (!ParseChunkFrames(argv[++i], &out->chunkFrames)) {
                 return false;
@@ -893,65 +888,23 @@ std::string JsonEscape(const std::filesystem::path& path) {
     return out;
 }
 
-bool WriteTextFile(const std::filesystem::path& path,
-                   const std::string& text) {
-    std::ofstream out(path, std::ios::binary | std::ios::trunc);
-    if (!out) {
+bool WriteStreamFromWav(VnObjectId sound, const std::filesystem::path& source,
+    const std::filesystem::path& output, std::uint32_t chunkFrames) {
+    LoadedWav wav;
+    if (!LoadWav(source.string(), &wav)) {
         return false;
     }
-    out.write(text.data(), static_cast<std::streamsize>(text.size()));
+    harkenhost::StreamSpec spec;
+    spec.soundId = sound;
+    spec.sampleRate = wav.sampleRate;
+    spec.channelCount = static_cast<std::uint16_t>(wav.channels);
+    spec.chunkFrames = chunkFrames;
+    const std::vector<std::uint8_t> bytes = harkenhost::BuildStreamBytes(
+        spec, harkenhost::DeinterleaveFrames(wav.samples, wav.channels));
+    std::ofstream out(output, std::ios::binary | std::ios::trunc);
+    out.write(reinterpret_cast<const char*>(bytes.data()),
+              static_cast<std::streamsize>(bytes.size()));
     return out.good();
-}
-
-std::string QuoteArg(const std::filesystem::path& path) {
-    return "\"" + path.string() + "\"";
-}
-
-bool CompileStream(const Options& options,
-                       const std::filesystem::path& manifest) {
-    if (options.packcPath.empty()) {
-        harkenizer::resourcecompiler::Request request;
-        const auto path = manifest.u8string();
-        request.manifestPaths.emplace_back(path.begin(), path.end());
-        request.container = harkenizer::resourcecompiler::Container::Stream;
-        const auto result = harkenizer::resourcecompiler::compile(request);
-        std::fputs(result.outputLog.c_str(), stdout);
-        std::fputs(result.diagnosticLog.c_str(), stderr);
-        return result.success;
-    }
-    const std::string command = QuoteArg(options.packcPath) + " --stream " +
-                                QuoteArg(manifest);
-#if defined(_WIN32)
-    // cmd.exe strips the first and last quote character from the string it
-    // receives unless the whole command line is wrapped in one extra pair,
-    // so the quoted executable path would lose its opening quote.
-    return std::system(("\"" + command + "\"").c_str()) == 0;
-#else
-    return std::system(command.c_str()) == 0;
-#endif
-}
-
-std::string StreamManifest(VnObjectId sound, const std::filesystem::path& source,
-    const std::filesystem::path& output, std::uint32_t chunkFrames) {
-    harkenhost::JsonWriter json;
-    json.BeginObject();
-    json.Key("manifestVersion");
-    json.ValueU64(3);
-    json.Key("output");
-    json.ValueString(std::filesystem::absolute(output).generic_string());
-    json.Key("chunkFrames");
-    json.ValueU64(chunkFrames);
-    json.Key("entries");
-    json.BeginArray();
-    json.BeginObject();
-    json.Key("path");
-    json.ValueString(std::filesystem::absolute(source).generic_string());
-    json.Key("id");
-    json.ValueString(harken::ObjectIdString(sound));
-    json.EndObject();
-    json.EndArray();
-    json.EndObject();
-    return json.Finish();
 }
 
 bool WriteEnduranceWav16(const std::filesystem::path& path,
@@ -1187,21 +1140,14 @@ int RunStreamEndurance(const Options& options, char** argv) {
     constexpr VnSoundId kStreamId{0x76656e7573686f73, 8001};
     const std::filesystem::path wavPath =
         ".temp/harken_host_stream_endurance.wav";
-    const std::filesystem::path manifestPath =
-        ".temp/harken_host_stream_endurance_manifest.json";
     const std::filesystem::path streamPath =
         ".temp/harken_host_stream_endurance.stream";
     if (!WriteEnduranceWav16(wavPath, options.seconds)) {
         std::fprintf(stderr, "error: cannot write endurance wav\n");
         return 1;
     }
-    const std::string manifest = StreamManifest(kStreamId, wavPath, streamPath, options.chunkFrames);
-    if (!WriteTextFile(manifestPath, manifest)) {
-        std::fprintf(stderr, "error: cannot write endurance manifest\n");
-        return 1;
-    }
-    if (!CompileStream(options, manifestPath)) {
-        std::fprintf(stderr, "error: stream resource compilation failed\n");
+    if (!WriteStreamFromWav(kStreamId, wavPath, streamPath, options.chunkFrames)) {
+        std::fprintf(stderr, "error: cannot write endurance stream\n");
         return 1;
     }
 
@@ -2108,8 +2054,6 @@ int RunM2Scene(const Options& options, char** argv) {
         options.musicPath.empty()
             ? std::filesystem::path(".temp/harken_host_m2_music.wav")
             : std::filesystem::path(options.musicPath);
-    const std::filesystem::path manifestPath =
-        ".temp/harken_host_m2_scene_manifest.json";
     const std::filesystem::path streamPath =
         ".temp/harken_host_m2_scene.stream";
     const double oneShotStartSeconds =
@@ -2155,13 +2099,8 @@ int RunM2Scene(const Options& options, char** argv) {
                     expectedMusicSeconds);
     }
 
-    const std::string manifest = StreamManifest(kMusicId, musicWavPath, streamPath, options.chunkFrames);
-    if (!WriteTextFile(manifestPath, manifest)) {
-        std::fprintf(stderr, "error: cannot write m2-scene manifest\n");
-        return 1;
-    }
-    if (!CompileStream(options, manifestPath)) {
-        std::fprintf(stderr, "error: stream resource compilation failed\n");
+    if (!WriteStreamFromWav(kMusicId, musicWavPath, streamPath, options.chunkFrames)) {
+        std::fprintf(stderr, "error: cannot write m2-scene stream\n");
         return 1;
     }
 

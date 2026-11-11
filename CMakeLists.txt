@@ -162,44 +162,50 @@ if((HARKEN_ENABLE_ASAN OR HARKEN_ENABLE_UBSAN)
     unset(_harken_clang_rd_rc)
 endif()
 
-option(HARKEN_BUILD_CORE "Build the Harken Core runtime" OFF)
-option(HARKEN_BUILD_SHARED "Build the HarkenCore shared library (C# binding native lib)" OFF)
+option(HARKEN_BUILD_ENGINE "Build the shipping Harken Engine (HarkenEngine)" OFF)
+option(HARKEN_BUILD_ENGINE_DEV "Build the development Harken Engine (HarkenEngineDev)" OFF)
 option(HARKEN_BUILD_EDITOR "Build the Harken Studio editor" OFF)
 option(HARKEN_BUILD_STUDIO_CLI "Build the Harken Studio command-line authoring host" ${HARKEN_BUILD_EDITOR})
 option(HARKEN_BUILD_HUB "Build the Harken Hub application" OFF)
-option(HARKEN_BUILD_TOOLS "Build the host, compiler, and preview tooling" OFF)
-option(HARKEN_BUILD_RUNTIME_UNIT_TESTS "Build the runtime correctness tests" OFF)
+option(HARKEN_BUILD_TOOLS "Build the Engine host and remote-control tools" OFF)
+option(HARKEN_BUILD_RUNTIME_UNIT_TESTS "Build the Engine correctness tests" OFF)
 option(HARKEN_BUILD_EDITOR_UNIT_TESTS "Build Editor/Qt unit tests" OFF)
 option(HARKEN_BUILD_HUB_UNIT_TESTS "Build Hub unit tests" OFF)
-option(HARKEN_BUILD_RUNTIME_BENCHMARKS "Build the runtime performance benchmarks" OFF)
+option(HARKEN_BUILD_RUNTIME_BENCHMARKS "Build the Engine performance benchmarks" OFF)
 option(HARKEN_BUILD_RT_QUALIFICATION
-       "Build the private real-time qualification Runtime and runner" OFF)
+       "Build the private real-time qualification Engine and runner" OFF)
 
-if(HARKEN_RUNTIME_ONLY)
-    message(FATAL_ERROR
-        "HARKEN_RUNTIME_ONLY has been removed. Select HARKEN_BUILD_CORE, "
-        "HARKEN_BUILD_EDITOR, HARKEN_BUILD_HUB, HARKEN_BUILD_TOOLS, and the "
-        "HARKEN_BUILD_*_UNIT_TESTS options explicitly.")
+foreach(_harken_removed_option HARKEN_RUNTIME_ONLY HARKEN_BUILD_CORE HARKEN_BUILD_SHARED)
+    if(DEFINED ${_harken_removed_option})
+        message(FATAL_ERROR
+            "${_harken_removed_option} has been removed. Select HARKEN_BUILD_ENGINE, "
+            "HARKEN_BUILD_ENGINE_DEV, HARKEN_BUILD_EDITOR, HARKEN_BUILD_HUB, "
+            "HARKEN_BUILD_TOOLS, and the HARKEN_BUILD_*_UNIT_TESTS options explicitly.")
+    endif()
+endforeach()
+
+set(HARKEN_BUILD_ENGINE_ANY OFF)
+if(HARKEN_BUILD_ENGINE OR HARKEN_BUILD_ENGINE_DEV)
+    set(HARKEN_BUILD_ENGINE_ANY ON)
 endif()
 
-foreach(_harken_core_consumer
-        HARKEN_BUILD_EDITOR
+foreach(_harken_engine_consumer
+        HARKEN_BUILD_TOOLS
         HARKEN_BUILD_RUNTIME_UNIT_TESTS
         HARKEN_BUILD_RUNTIME_BENCHMARKS
-        HARKEN_BUILD_RT_QUALIFICATION
-        HARKEN_BUILD_TOOLS
-        HARKEN_BUILD_SHARED)
-    if(${_harken_core_consumer} AND NOT HARKEN_BUILD_CORE)
-        message(FATAL_ERROR "${_harken_core_consumer} requires HARKEN_BUILD_CORE=ON")
+        HARKEN_BUILD_RT_QUALIFICATION)
+    if(${_harken_engine_consumer} AND NOT HARKEN_BUILD_ENGINE_ANY)
+        message(FATAL_ERROR
+            "${_harken_engine_consumer} requires HARKEN_BUILD_ENGINE or HARKEN_BUILD_ENGINE_DEV")
     endif()
 endforeach()
 
-foreach(_harken_tools_consumer HARKEN_BUILD_EDITOR HARKEN_BUILD_STUDIO_CLI HARKEN_BUILD_RUNTIME_UNIT_TESTS)
-    if(${_harken_tools_consumer} AND NOT HARKEN_BUILD_TOOLS)
-        message(FATAL_ERROR "${_harken_tools_consumer} requires HARKEN_BUILD_TOOLS=ON")
-    endif()
-endforeach()
-
+if(HARKEN_BUILD_RUNTIME_UNIT_TESTS AND NOT HARKEN_BUILD_TOOLS)
+    message(FATAL_ERROR "HARKEN_BUILD_RUNTIME_UNIT_TESTS requires HARKEN_BUILD_TOOLS=ON")
+endif()
+if((HARKEN_BUILD_EDITOR OR HARKEN_BUILD_STUDIO_CLI) AND NOT HARKEN_BUILD_ENGINE_DEV)
+    message(FATAL_ERROR "Harken Studio requires HARKEN_BUILD_ENGINE_DEV=ON")
+endif()
 if(HARKEN_BUILD_EDITOR AND NOT HARKEN_BUILD_STUDIO_CLI)
     message(FATAL_ERROR "HARKEN_BUILD_EDITOR requires HARKEN_BUILD_STUDIO_CLI=ON")
 endif()
@@ -222,35 +228,7 @@ if(ANDROID OR CMAKE_SYSTEM_NAME STREQUAL "iOS")
     endforeach()
 endif()
 
-option(HARKEN_RT_PROBE_DEVICE_CALLBACK
-       "Instrument Runtime-owned work inside the production device callback" OFF)
-option(HARKEN_RT_PROBE_MIX_PUBLICATION
-       "Instrument the end-of-block Runtime publication window" OFF)
-option(HARKEN_RT_PROBE_WORKER_BARRIER
-       "Instrument the existing render-worker completion barrier" OFF)
-
-set(HARKEN_RT_PROBE_DEFINITIONS "")
-foreach(_harken_rt_probe_control
-        HARKEN_RT_PROBE_DEVICE_CALLBACK
-        HARKEN_RT_PROBE_MIX_PUBLICATION
-        HARKEN_RT_PROBE_WORKER_BARRIER)
-    if(${_harken_rt_probe_control})
-        list(APPEND HARKEN_RT_PROBE_DEFINITIONS
-             ${_harken_rt_probe_control})
-    endif()
-endforeach()
-if(HARKEN_RT_PROBE_DEFINITIONS AND NOT HARKEN_BUILD_RT_QUALIFICATION)
-    message(FATAL_ERROR
-        "HARKEN_RT_PROBE_* controls require "
-        "HARKEN_BUILD_RT_QUALIFICATION=ON; shipping Runtime targets never "
-        "accept probe definitions")
-endif()
-
-# Engine modules live under HarkenEngine/Source/Runtime (project convention).
-set(HARKEN_RUNTIME_DIR ${CMAKE_CURRENT_SOURCE_DIR}/HarkenEngine/Source/Runtime)
-set(HARKEN_THIRD_PARTY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/HarkenEngine/ThirdParty)
-
-if(HARKEN_BUILD_CORE)
+if(HARKEN_BUILD_ENGINE_ANY OR HARKEN_BUILD_EDITOR OR HARKEN_BUILD_STUDIO_CLI)
     set(HARKEN_SCHEMA_SOURCE_DIR "${CMAKE_SOURCE_DIR}/HarkenSchema"
         CACHE PATH "Harken Schema source tree")
 endif()
@@ -260,59 +238,12 @@ endif()
 # Windows binary file properties by harken_attach_version_resource().
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildInfo.cmake)
 
-# Python 3 is discovered at the root so the engine's regeneration targets and
-# the product test generated-contract checks share one interpreter discovery.
-if(HARKEN_BUILD_TOOLS)
-    find_package(Python3 COMPONENTS Interpreter REQUIRED)
-endif()
-
-if(HARKEN_BUILD_EDITOR OR HARKEN_BUILD_TOOLS)
-    set(HARKEN_SCHEMA_GENERATED_DIR "${CMAKE_BINARY_DIR}/generated/schema")
-    set(HARKEN_SCHEMA_GENERATED_CORE_DIR "${HARKEN_SCHEMA_GENERATED_DIR}/Core")
-    set(HARKEN_SCHEMA_GENERATED_PROJECT_HEADER
-        "${HARKEN_SCHEMA_GENERATED_CORE_DIR}/ProjectSchemaGenerated.h")
-    set(HARKEN_SCHEMA_GENERATED_BUILD_HEADER
-        "${HARKEN_SCHEMA_GENERATED_CORE_DIR}/SchemaBuildGenerated.h")
-    set(HARKEN_SCHEMA_GENERATED_VALIDATOR_HEADER
-        "${HARKEN_SCHEMA_GENERATED_CORE_DIR}/ProjectSchemaValidator.generated.h")
-    set(HARKEN_SCHEMA_GENERATED_VALIDATOR_SOURCE
-        "${HARKEN_SCHEMA_GENERATED_CORE_DIR}/ProjectSchemaValidator.generated.cpp")
-    set(HARKEN_SCHEMA_GENERATED_FILES
-        ${HARKEN_SCHEMA_GENERATED_PROJECT_HEADER}
-        ${HARKEN_SCHEMA_GENERATED_BUILD_HEADER}
-        ${HARKEN_SCHEMA_GENERATED_VALIDATOR_HEADER}
-        ${HARKEN_SCHEMA_GENERATED_VALIDATOR_SOURCE})
-    file(GLOB_RECURSE HARKEN_SCHEMA_INPUTS CONFIGURE_DEPENDS
-        "${HARKEN_SCHEMA_SOURCE_DIR}/*.json")
-    add_custom_command(
-        OUTPUT ${HARKEN_SCHEMA_GENERATED_FILES}
-        COMMAND ${Python3_EXECUTABLE}
-            "${CMAKE_SOURCE_DIR}/.scripts/schema_archive.py"
-            --schema-root "${HARKEN_SCHEMA_SOURCE_DIR}"
-            --generate-code "${HARKEN_SCHEMA_GENERATED_CORE_DIR}"
-        DEPENDS
-            "${CMAKE_SOURCE_DIR}/.scripts/schema_archive.py"
-            ${HARKEN_SCHEMA_INPUTS}
-        VERBATIM)
-    add_custom_target(harken_schema_codegen
-        DEPENDS ${HARKEN_SCHEMA_GENERATED_FILES})
-endif()
-
-if(HARKEN_BUILD_CORE)
-    add_subdirectory(HarkenEngine)
-endif()
-
-if(HARKEN_BUILD_TOOLS)
-    add_subdirectory(HarkenStudio/Source/Tooling)
-endif()
+# One interpreter discovery shared by every product that runs Python helpers.
+find_package(Python3 COMPONENTS Interpreter)
 
 if(HARKEN_BUILD_RUNTIME_UNIT_TESTS OR HARKEN_BUILD_EDITOR_UNIT_TESTS OR
-   HARKEN_BUILD_HUB_UNIT_TESTS OR TARGET harken_rt_probe_test OR
-   TARGET harken_host_selection_copy_test)
+   HARKEN_BUILD_HUB_UNIT_TESTS OR HARKEN_BUILD_RT_QUALIFICATION)
     enable_testing()
-endif()
-if(TARGET harken_rt_probe_test)
-    add_test(NAME harken_rt_probe_test COMMAND harken_rt_probe_test)
 endif()
 
 if(HARKEN_BUILD_RUNTIME_UNIT_TESTS OR HARKEN_BUILD_EDITOR_UNIT_TESTS OR
@@ -343,18 +274,6 @@ if(HARKEN_BUILD_RUNTIME_UNIT_TESTS OR HARKEN_BUILD_EDITOR_UNIT_TESTS OR
     endif()
 endif()
 
-# The Qt front end (editor). A self-contained subtree with its own
-# third-party closure and the legacy-engine compat stub; consumes only
-# harken_buildinfo from the runtime side. Switchable so runtime-focused CI
-# can configure without Qt (the subtree hard-requires Qt6 at find_package).
-if(HARKEN_BUILD_EDITOR OR HARKEN_BUILD_STUDIO_CLI)
-    add_subdirectory(HarkenStudio)
-endif()
-
-if(HARKEN_BUILD_HUB)
-    add_subdirectory(HarkenHub)
-endif()
-
 function(harken_add_ci_test_target product)
     get_property(_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
     set(_executables)
@@ -367,20 +286,20 @@ function(harken_add_ci_test_target product)
     add_custom_target(harken_${product}_ci_tests DEPENDS ${_executables})
 endfunction()
 
-if(HARKEN_BUILD_RUNTIME_UNIT_TESTS OR HARKEN_BUILD_RUNTIME_BENCHMARKS)
-    add_subdirectory(HarkenEngine/Test)
+if(HARKEN_BUILD_ENGINE_ANY)
+    add_subdirectory(HarkenEngine)
 endif()
 
-if(HARKEN_BUILD_EDITOR_UNIT_TESTS)
-    add_subdirectory(HarkenStudio/Test)
+if(HARKEN_BUILD_EDITOR OR HARKEN_BUILD_STUDIO_CLI)
+    add_subdirectory(HarkenStudio)
+endif()
+
+if(HARKEN_BUILD_HUB)
+    add_subdirectory(HarkenHub)
 endif()
 
 if(HARKEN_BUILD_HUB_UNIT_TESTS)
     add_subdirectory(HarkenHub/Test)
-endif()
-
-if(TARGET harken_runtime_ci_tests AND TARGET harken_host_selection_copy_test)
-    add_dependencies(harken_runtime_ci_tests harken_host_selection_copy_test)
 endif()
 
 get_property(_harken_versioned_binary_targets GLOBAL PROPERTY HARKEN_VERSIONED_BINARY_TARGETS)

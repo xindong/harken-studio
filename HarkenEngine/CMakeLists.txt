@@ -1,8 +1,38 @@
-# harken_core — the engine runtime libraries and (desktop only) the host-side
-# tooling. Split from the repository root so engine build edits live under
-# HarkenEngine/** — the path the engine-facing PR gates watch. Reads the
-# root-scope anchors  (HARKEN_RUNTIME_DIR, HARKEN_THIRD_PARTY_DIR), the shared
-# build switches, and the root's Python 3 discovery.
+# Harken Engine — the shipping (HarkenEngine) and development (HarkenEngineDev)
+# editions, the internal static runtime the Engine's own tests and tools link,
+# and (desktop only) the host-side tooling. Everything the Engine builds is
+# defined here; no other product directory is read.
+
+set(HARKEN_RUNTIME_DIR ${CMAKE_CURRENT_SOURCE_DIR}/Source/Runtime)
+set(HARKEN_THIRD_PARTY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty)
+
+option(HARKEN_RT_PROBE_DEVICE_CALLBACK
+       "Instrument Runtime-owned work inside the production device callback" OFF)
+option(HARKEN_RT_PROBE_MIX_PUBLICATION
+       "Instrument the end-of-block Runtime publication window" OFF)
+option(HARKEN_RT_PROBE_WORKER_BARRIER
+       "Instrument the existing render-worker completion barrier" OFF)
+
+set(HARKEN_RT_PROBE_DEFINITIONS "")
+foreach(_harken_rt_probe_control
+        HARKEN_RT_PROBE_DEVICE_CALLBACK
+        HARKEN_RT_PROBE_MIX_PUBLICATION
+        HARKEN_RT_PROBE_WORKER_BARRIER)
+    if(${_harken_rt_probe_control})
+        list(APPEND HARKEN_RT_PROBE_DEFINITIONS
+             ${_harken_rt_probe_control})
+    endif()
+endforeach()
+if(HARKEN_RT_PROBE_DEFINITIONS AND NOT HARKEN_BUILD_RT_QUALIFICATION)
+    message(FATAL_ERROR
+        "HARKEN_RT_PROBE_* controls require "
+        "HARKEN_BUILD_RT_QUALIFICATION=ON; shipping Runtime targets never "
+        "accept probe definitions")
+endif()
+
+if(HARKEN_BUILD_TOOLS AND NOT Python3_Interpreter_FOUND)
+    message(FATAL_ERROR "HARKEN_BUILD_TOOLS requires a Python 3 interpreter")
+endif()
 
 # The runtime module sources, factored into a variable so the static library
 # and the optional shared library for the C# binding build from one list.
@@ -213,34 +243,6 @@ if(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE AND NOT HARKEN_BUILD_RUNTIME_UNIT_TEST
         "HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE requires HARKEN_BUILD_RUNTIME_UNIT_TESTS")
 endif()
 
-add_library(harken_core STATIC ${HARKEN_RUNTIME_SOURCES})
-target_link_libraries(harken_core PRIVATE harken_buildinfo)
-set_target_properties(harken_core PROPERTIES OUTPUT_NAME HarkenCore)
-if(HARKEN_BUILD_RUNTIME_UNIT_TESTS)
-    # Native lifetime observation belongs to the test-linked static runtime.
-    # It does not change capacity or enter the shared shipping runtime.
-    target_compile_definitions(harken_core PUBLIC
-        HARKEN_TEST_PACK_RESOURCE_OBSERVATION)
-endif()
-if(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
-    # Internal Engine headers must use the same test layout as this library.
-    target_compile_definitions(harken_core PUBLIC
-        HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
-endif()
-add_library(harken_remote_protocol INTERFACE)
-target_include_directories(harken_remote_protocol INTERFACE
-    ${HARKEN_RUNTIME_DIR}/remote/include)
-target_include_directories(harken_core
-    PUBLIC ${HARKEN_RUNTIME_DIR}/api/include
-    PRIVATE ${HARKEN_RUNTIME_PRIVATE_INCLUDES}
-            ${HARKEN_RUNTIME_DIR}/api/src
-)
-if(HARKEN_PLATFORM_AUDIO_LIBS)
-    target_link_libraries(harken_core PUBLIC ${HARKEN_PLATFORM_AUDIO_LIBS})
-endif()
-if(WIN32)
-    target_link_libraries(harken_core PUBLIC advapi32 ws2_32 iphlpapi)
-endif()
 # Per-voice stage taps follow SnapshotBuffer.h's declared gating: Debug
 # always measures, Release measures only by this explicit opt-in. The
 # unconditional Release measurement that once lived here protected the
@@ -255,9 +257,47 @@ endif()
 option(HARKEN_ENABLE_STAGE_TAPS
        "Compile the per-voice stage-tap peak scans into Release builds (Debug always measures; the bus output scan is unconditional)"
        OFF)
+
+set(HARKEN_BUILD_INTERNAL_RUNTIME OFF)
+if(HARKEN_BUILD_TOOLS OR HARKEN_BUILD_RUNTIME_UNIT_TESTS OR
+   HARKEN_BUILD_RUNTIME_BENCHMARKS OR HARKEN_BUILD_RT_QUALIFICATION)
+    set(HARKEN_BUILD_INTERNAL_RUNTIME ON)
+endif()
+
+if(HARKEN_BUILD_INTERNAL_RUNTIME)
+add_library(harken_core STATIC ${HARKEN_RUNTIME_SOURCES})
+target_link_libraries(harken_core PRIVATE harken_buildinfo)
+set_target_properties(harken_core PROPERTIES OUTPUT_NAME HarkenCore)
+if(HARKEN_BUILD_RUNTIME_UNIT_TESTS)
+    # Native lifetime observation belongs to the test-linked static runtime.
+    # It does not change capacity or enter the shared shipping runtime.
+    target_compile_definitions(harken_core PUBLIC
+        HARKEN_TEST_PACK_RESOURCE_OBSERVATION)
+endif()
+if(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
+    # Internal Engine headers must use the same test layout as this library.
+    target_compile_definitions(harken_core PUBLIC
+        HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
+endif()
+target_include_directories(harken_core
+    PUBLIC ${HARKEN_RUNTIME_DIR}/api/include
+    PRIVATE ${HARKEN_RUNTIME_PRIVATE_INCLUDES}
+            ${HARKEN_RUNTIME_DIR}/api/src
+)
+if(HARKEN_PLATFORM_AUDIO_LIBS)
+    target_link_libraries(harken_core PUBLIC ${HARKEN_PLATFORM_AUDIO_LIBS})
+endif()
+if(WIN32)
+    target_link_libraries(harken_core PUBLIC advapi32 ws2_32 iphlpapi)
+endif()
 if(HARKEN_ENABLE_STAGE_TAPS)
     target_compile_definitions(harken_core PRIVATE HARKEN_ENABLE_STAGE_TAPS)
 endif()
+endif()
+
+add_library(harken_remote_protocol INTERFACE)
+target_include_directories(harken_remote_protocol INTERFACE
+    ${HARKEN_RUNTIME_DIR}/remote/include)
 
 if(HARKEN_BUILD_RUNTIME_UNIT_TESTS)
     add_library(harken_core_hub_absent STATIC ${HARKEN_RUNTIME_SOURCES})
@@ -278,62 +318,170 @@ if(HARKEN_BUILD_RUNTIME_UNIT_TESTS)
     endif()
 endif()
 
-# Optional shared library for the C# binding (HarkenIntegration): the native artifact the
-# UPM package's Plugins/ ships and the managed ABI/zero-GC harness loads. Built
-# from the SAME runtime sources as the static harken_core — no render code is
-# duplicated or altered. The public API is extern "C", and on Windows the DLL
-# exports exactly the entry points listed in the generated module-definition
-# file below — the export surface is a reviewed allowlist, not whatever the
-# linker happens to find. On macOS/Linux the symbols are exported by default.
-# It is an independent additional target: existing targets and test results are
-# unaffected whether it is ON or OFF. iOS ships the STATIC library linked as
-# __Internal (the binding bakes that name), not this shared library. The static
-# harken_core needs none of this: an archive has no export table, so its
-# consumers resolve Vn_* at link time from the object symbols directly.
-if(HARKEN_BUILD_SHARED)
-    add_library(harken_core_shared SHARED ${HARKEN_RUNTIME_SOURCES})
-    target_link_libraries(harken_core_shared PRIVATE harken_buildinfo)
-    target_include_directories(harken_core_shared
-        PUBLIC ${HARKEN_RUNTIME_DIR}/api/include
-        PRIVATE ${HARKEN_RUNTIME_PRIVATE_INCLUDES}
-                ${HARKEN_RUNTIME_DIR}/api/src
-    )
+option(HARKEN_DEVELOPMENT_PREVIEW
+       "Build the development preview play surface with its gate open" ON)
+
+# The two published editions. Both build from the same runtime sources; the
+# development edition adds the Development surface and compiles Core with
+# HARKEN_ENGINE_DEV=1. Shared libraries everywhere except iOS, which links the
+# engine statically as __Internal. Consumers see only the staged public headers.
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
+
+set(HARKEN_ENGINE_PUBLIC_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR}/include)
+set(HARKEN_ENGINE_DEV_PUBLIC_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR}/include-dev)
+set(HARKEN_ENGINE_PUBLIC_HEADERS
+    ${HARKEN_RUNTIME_DIR}/api/include/harken/Harken.h
+    ${HARKEN_RUNTIME_DIR}/api/include/harken/ObjectId.h)
+set(HARKEN_ENGINE_DEV_PUBLIC_HEADERS
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Tooling/Preview/include/harken_preview/PreviewAbi.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Tooling/Preview/include/harken_preview/PreviewProject.h)
+foreach(_header IN LISTS HARKEN_ENGINE_PUBLIC_HEADERS)
+    get_filename_component(_name ${_header} NAME)
+    configure_file(${_header} ${HARKEN_ENGINE_PUBLIC_INCLUDE_DIR}/harken/${_name} COPYONLY)
+endforeach()
+foreach(_header IN LISTS HARKEN_ENGINE_DEV_PUBLIC_HEADERS)
+    get_filename_component(_name ${_header} NAME)
+    configure_file(${_header} ${HARKEN_ENGINE_DEV_PUBLIC_INCLUDE_DIR}/harken_preview/${_name} COPYONLY)
+endforeach()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    set(HARKEN_ENGINE_LIBRARY_TYPE STATIC)
+else()
+    set(HARKEN_ENGINE_LIBRARY_TYPE SHARED)
+endif()
+
+function(harken_add_engine_edition target output_name export_name)
+    add_library(${target} ${HARKEN_ENGINE_LIBRARY_TYPE} ${HARKEN_RUNTIME_SOURCES} ${ARGN})
+    add_library(Harken::${export_name} ALIAS ${target})
+    target_link_libraries(${target} PRIVATE $<BUILD_INTERFACE:harken_buildinfo>)
+    target_include_directories(${target}
+        PUBLIC
+            $<BUILD_INTERFACE:${HARKEN_ENGINE_PUBLIC_INCLUDE_DIR}>
+            $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+        PRIVATE
+            ${HARKEN_RUNTIME_DIR}/api/include
+            ${HARKEN_RUNTIME_PRIVATE_INCLUDES}
+            ${HARKEN_RUNTIME_DIR}/api/src)
     if(HARKEN_ENABLE_STAGE_TAPS)
-        target_compile_definitions(harken_core_shared PRIVATE
-            HARKEN_ENABLE_STAGE_TAPS)
+        target_compile_definitions(${target} PRIVATE HARKEN_ENABLE_STAGE_TAPS)
     endif()
     if(ANDROID)
         # Keep the Unity plugin self-contained and consistent with the Android
-        # presets' ANDROID_STL=c++_static policy. A dynamic libc++ dependency
-        # would require shipping another ABI-specific library beside HarkenCore.
-        target_link_libraries(harken_core_shared PRIVATE c++_static c++abi)
-        # Android 15 devices may use a 16 KiB memory page size. Keep every LOAD
-        # segment compatible so Unity can package and load this plugin there.
-        target_link_options(harken_core_shared PRIVATE
+        # presets' ANDROID_STL=c++_static policy, and keep every LOAD segment
+        # compatible with 16 KiB page-size devices.
+        target_link_libraries(${target} PRIVATE c++_static c++abi)
+        target_link_options(${target} PRIVATE
             "-Wl,-z,max-page-size=16384"
             "-Wl,-z,common-page-size=16384")
     endif()
     if(HARKEN_PLATFORM_AUDIO_LIBS)
-        target_link_libraries(harken_core_shared PRIVATE ${HARKEN_PLATFORM_AUDIO_LIBS})
+        target_link_libraries(${target} PRIVATE ${HARKEN_PLATFORM_AUDIO_LIBS})
     endif()
     if(WIN32)
-        target_link_libraries(harken_core_shared PRIVATE advapi32 ws2_32 iphlpapi)
-        # Listing the .def among the target's sources makes CMake forward it to
-        # the linker as /DEF:, so the allowlist is the same artifact reviewers
-        # read and the linker obeys. Regenerate it from Harken.h with
-        # HarkenEngine/Source/Tooling/Abi/gen_abi_exports.py after adding or
-        # removing a public entry point; the abi_export_allowlist_check and
-        # abi_export_surface_check tests fail on drift.
-        target_sources(harken_core_shared PRIVATE
-            ${HARKEN_RUNTIME_DIR}/api/abi/HarkenCore.def)
+        target_link_libraries(${target} PRIVATE advapi32 ws2_32 iphlpapi)
     endif()
-    set_target_properties(harken_core_shared PROPERTIES
-        # HarkenCore.dll / libHarkenCore.{so,dylib} matches the native binding.
-        OUTPUT_NAME HarkenCore
-        # Keep the Windows import library from clashing with the static
-        # HarkenCore.lib in the archive output directory.
-        ARCHIVE_OUTPUT_NAME HarkenCoreImport)
+    set_target_properties(${target} PROPERTIES
+        OUTPUT_NAME ${output_name}
+        EXPORT_NAME ${export_name})
+endfunction()
+
+if(HARKEN_BUILD_ENGINE)
+    harken_add_engine_edition(harken_engine HarkenEngine Engine)
+    target_compile_definitions(harken_engine PRIVATE HARKEN_ENGINE_DEV=0)
+    if(WIN32)
+        # The export surface is a reviewed allowlist: CMake forwards the
+        # checked-in .def to the linker as /DEF:. Regenerate it from Harken.h
+        # with Source/Tooling/Abi/gen_abi_exports.py after an entry point
+        # changes; the abi export checks fail on drift.
+        target_sources(harken_engine PRIVATE ${HARKEN_RUNTIME_DIR}/api/abi/HarkenCore.def)
+    endif()
 endif()
+
+if(HARKEN_BUILD_ENGINE_DEV)
+    set(_harken_preview_dir ${CMAKE_CURRENT_SOURCE_DIR}/Source/Tooling/Preview)
+    harken_add_engine_edition(harken_engine_dev HarkenEngineDev EngineDev
+        ${_harken_preview_dir}/src/PreviewAbi.cpp
+        ${_harken_preview_dir}/src/PreviewAbiLayout.cpp
+        ${_harken_preview_dir}/src/PreviewProject.cpp)
+    target_include_directories(harken_engine_dev
+        PUBLIC $<BUILD_INTERFACE:${HARKEN_ENGINE_DEV_PUBLIC_INCLUDE_DIR}>
+        PRIVATE ${_harken_preview_dir}/include)
+    target_compile_definitions(harken_engine_dev PRIVATE
+        HARKEN_ENGINE_DEV=1
+        HARKEN_DEVELOPMENT_PREVIEW=$<BOOL:${HARKEN_DEVELOPMENT_PREVIEW}>)
+    file(STRINGS "${HARKEN_RUNTIME_DIR}/api/abi/HarkenCore.def" _dev_exports
+        REGEX "^[ \t]+Vn_[A-Za-z0-9_]+$")
+    list(TRANSFORM _dev_exports STRIP)
+    foreach(_header IN LISTS HARKEN_ENGINE_DEV_PUBLIC_HEADERS)
+        file(READ "${_header}" _dev_header)
+        string(REGEX MATCHALL "VnPreview_[A-Za-z0-9_]+[ \r\n]*\\(" _dev_entries "${_dev_header}")
+        foreach(_entry IN LISTS _dev_entries)
+            string(REGEX REPLACE "[ \r\n]*\\(" "" _entry "${_entry}")
+            list(APPEND _dev_exports "${_entry}")
+        endforeach()
+    endforeach()
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        ${HARKEN_ENGINE_DEV_PUBLIC_HEADERS}
+        "${HARKEN_RUNTIME_DIR}/api/abi/HarkenCore.def")
+    if(WIN32)
+        list(JOIN _dev_exports "\n    " _dev_exports)
+        file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/HarkenEngineDev.def"
+            CONTENT "EXPORTS\n    ${_dev_exports}\n" @ONLY)
+        target_sources(harken_engine_dev PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/HarkenEngineDev.def")
+    elseif(APPLE AND HARKEN_ENGINE_LIBRARY_TYPE STREQUAL "SHARED")
+        list(TRANSFORM _dev_exports PREPEND "_")
+        list(JOIN _dev_exports "\n" _dev_exports)
+        set(_dev_export_file "${CMAKE_CURRENT_BINARY_DIR}/HarkenEngineDev.exports")
+        file(CONFIGURE OUTPUT "${_dev_export_file}" CONTENT "${_dev_exports}\n" @ONLY)
+        target_link_options(harken_engine_dev PRIVATE
+            "LINKER:-exported_symbols_list,${_dev_export_file}")
+        set_property(TARGET harken_engine_dev APPEND PROPERTY LINK_DEPENDS "${_dev_export_file}")
+    elseif(UNIX AND HARKEN_ENGINE_LIBRARY_TYPE STREQUAL "SHARED")
+        list(JOIN _dev_exports ";\n    " _dev_exports)
+        set(_dev_export_file "${CMAKE_CURRENT_BINARY_DIR}/HarkenEngineDev.map")
+        file(CONFIGURE OUTPUT "${_dev_export_file}"
+            CONTENT "{\n  global:\n    ${_dev_exports};\n  local: *;\n};\n" @ONLY)
+        target_link_options(harken_engine_dev PRIVATE "LINKER:--version-script,${_dev_export_file}")
+        set_property(TARGET harken_engine_dev APPEND PROPERTY LINK_DEPENDS "${_dev_export_file}")
+    endif()
+endif()
+
+set(_harken_installed_editions)
+foreach(_edition harken_engine harken_engine_dev)
+    if(TARGET ${_edition})
+        list(APPEND _harken_installed_editions ${_edition})
+    endif()
+endforeach()
+install(TARGETS ${_harken_installed_editions}
+    EXPORT HarkenEngineTargets
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+install(FILES ${HARKEN_ENGINE_PUBLIC_HEADERS}
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/harken)
+if(TARGET harken_engine_dev)
+    install(FILES ${HARKEN_ENGINE_DEV_PUBLIC_HEADERS}
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/harken_preview)
+endif()
+install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/Source/Tooling/Abi/generated/harken_abi_manifest.g.json
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/HarkenEngine
+    RENAME harken_abi_manifest.json)
+install(EXPORT HarkenEngineTargets
+    NAMESPACE Harken::
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/HarkenEngine)
+configure_package_config_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/HarkenEngineConfig.cmake.in
+    ${CMAKE_CURRENT_BINARY_DIR}/HarkenEngineConfig.cmake
+    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/HarkenEngine)
+write_basic_package_version_file(
+    ${CMAKE_CURRENT_BINARY_DIR}/HarkenEngineConfigVersion.cmake
+    VERSION ${HARKEN_VERSION}
+    COMPATIBILITY SameMajorVersion)
+install(FILES
+    ${CMAKE_CURRENT_BINARY_DIR}/HarkenEngineConfig.cmake
+    ${CMAKE_CURRENT_BINARY_DIR}/HarkenEngineConfigVersion.cmake
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/HarkenEngine)
 
 if(HARKEN_BUILD_RT_QUALIFICATION)
     set(_harken_rt_qualification_sources ${HARKEN_RUNTIME_SOURCES})
@@ -424,22 +572,6 @@ _harken_add_python_regen_target(
     "Regenerating the Windows export allowlist from Harken.h"
 )
 
-# Convenience regeneration target for the reference-slot vocabulary. Emits the
-# compile-side and runtime-side slot definitions from one table, so the two
-# numberings cannot be edited apart. Products are checked in; the build stays
-# Python-free.
-_harken_add_python_regen_target(
-    harken_reference_slots_regen
-    "${CMAKE_SOURCE_DIR}/HarkenStudio/Source/Tooling/ReferenceSlots/slots/gen_reference_slots.py"
-    "Regenerating the reference-slot vocabulary from harken_reference_slot_table.json"
-)
-
-_harken_add_python_regen_target(
-    harken_playable_properties_regen
-    "${CMAKE_SOURCE_DIR}/HarkenStudio/Source/Tooling/PlayableProperties/properties/gen_playable_properties.py"
-    "Regenerating PlayablePropertyRegistryV1 from harken_playable_property_table.json"
-)
-
 _harken_add_python_regen_target(
     harken_variable_catalog_regen
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/Tooling/VariableCatalog/gen_variable_catalog.py"
@@ -457,12 +589,8 @@ _harken_add_python_regen_target(
 # the engine only through the public C API.
 add_subdirectory(Tool/Remote)
 
-# Development preview play surface (Source/Tooling): the C entry face a
-# Studio-side host uses to hear one registered program. A tooling library because
-# playing a segment directly is not a gameplay capability -- production content
-# starts through the Action program surface -- and a separate target because which
-# targets link it is what keeps it out of shipped products. harken_core exports
-# nothing for it and knows nothing about it.
+# Development preview play surface (Source/Tooling): the host links it
+# statically; the published HarkenEngineDev compiles the same sources itself.
 add_subdirectory(Source/Tooling/Preview)
 
 # v5->v6 migration dry-run inventory (Source/Tooling): a read-only pass that
@@ -476,4 +604,16 @@ add_subdirectory(Source/Tooling/Preview)
 # never part of the shipping library, driving the engine as a game would.
 add_subdirectory(Tool/Host)
 
+endif()
+
+if(HARKEN_BUILD_RUNTIME_UNIT_TESTS OR HARKEN_BUILD_RUNTIME_BENCHMARKS)
+    add_subdirectory(Test)
+endif()
+
+if(TARGET harken_rt_probe_test)
+    add_test(NAME harken_rt_probe_test COMMAND harken_rt_probe_test)
+endif()
+
+if(TARGET harken_runtime_ci_tests AND TARGET harken_host_selection_copy_test)
+    add_dependencies(harken_runtime_ci_tests harken_host_selection_copy_test)
 endif()
