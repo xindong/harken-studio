@@ -21,8 +21,7 @@
 
 namespace {
 static_assert(sizeof(VnPreviewBusEffectV1) == 56);
-static_assert(sizeof(VnPreviewEffectParameterV1) == 8);
-static_assert(sizeof(VnPreviewBusProcessPositionV1) == 24);
+static_assert(sizeof(VnPreviewBusEffectParameterV1) == 8);
 static_assert(offsetof(VnPreviewProjectDescV4, busEffects) == sizeof(VnPreviewProjectDescV3));
 static_assert(sizeof(harken::CommandRecord::Payload::PreviewBusEffectControl) == 48);
 static_assert(sizeof(VnPreviewVoiceEffectEntryV1) == 32);

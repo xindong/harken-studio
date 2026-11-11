@@ -9,6 +9,7 @@
 #include "harken/core/CurrentWorld.h"
 #include "harken/core/EngineConfig.h"
 #include "harken/param/VariableService.h"
+#include "harken/param/EffectParamTargetStore.h"
 #include "harken/media/PackFormatV2.h"
 #include "harken/core/CommandQueue.h"
 
@@ -298,6 +299,7 @@ private:
         bindingSourceStamp_ = 0;
         effects_.reset();
         effectChains_.clear();
+        effectSeeds_.clear();
     }
 
     void MoveFrom(PreparedProjectGenerationV1& other) noexcept {
@@ -335,6 +337,7 @@ private:
         bindingSourceStamp_ = other.bindingSourceStamp_;
         effects_ = std::move(other.effects_);
         effectChains_ = std::move(other.effectChains_);
+        effectSeeds_ = std::move(other.effectSeeds_);
         other.ClearFields();
     }
 
@@ -372,6 +375,7 @@ private:
     std::vector<std::uint8_t> projectedVolumeApply_;
     std::uint64_t bindingSourceStamp_ = 0;
     std::vector<PreparedBusEffectChain> effectChains_;
+    std::vector<EffectParamTargetStore::PreparedSeedToken> effectSeeds_;
 };
 
 ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(

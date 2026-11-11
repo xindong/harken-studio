@@ -1053,6 +1053,17 @@ public:
         return true;
     }
 
+    // Logic-thread resource rollback follows the frozen batch, including
+    // cancellation through an original child or disposition receipt.
+    bool SetPreparedBatchCancellationHandler(const PreparedBatchProof& proof,
+        void* context, void (*handler)(void*) noexcept) noexcept {
+        if (!FrozenProofMatches(proof) || handler == nullptr ||
+            m_frozenCancellationHandler != nullptr) return false;
+        m_frozenCancellationContext = context;
+        m_frozenCancellationHandler = handler;
+        return true;
+    }
+
     PublishedBatchView ConsumePreparedBatch(PreparedBatchProof&& proof) noexcept {
         assert(FrozenProofMatches(proof));
         if (!FrozenProofMatches(proof)) return {};
@@ -1093,6 +1104,8 @@ public:
         if (m_frozenInitialSource)
             m_initialSources[static_cast<std::uint32_t>(head & m_mask)].publishSequence =
                 m_nextSourcePublication;
+        m_frozenCancellationHandler = nullptr;
+        m_frozenCancellationContext = nullptr;
         m_lastPublishedFrozenOrigin = proof.origin_;
         if (m_frozenDispositionReceipt != nullptr) {
             assert(DispositionReceiptMatches(*m_frozenDispositionReceipt, proof));
@@ -1821,6 +1834,9 @@ private:
         m_frozenCount = 0;
         m_frozenInitialSource = false;
         ClearReservation(proof.reservation_);
+        auto* context = std::exchange(m_frozenCancellationContext, nullptr);
+        auto handler = std::exchange(m_frozenCancellationHandler, nullptr);
+        if (handler != nullptr) handler(context);
     }
 
     bool ReservationMatches(const BatchReservation* reservation) const noexcept {
@@ -1861,6 +1877,8 @@ private:
     std::uint64_t m_lastPublishedFrozenOrigin = 0;
     BatchReservation* m_frozenReservation = nullptr;
     PreparedBatchDispositionReceipt* m_frozenDispositionReceipt = nullptr;
+    void* m_frozenCancellationContext = nullptr;
+    void (*m_frozenCancellationHandler)(void*) noexcept = nullptr;
     std::uint64_t m_frozenReservationId = 0;
     std::uint64_t m_frozenHead = 0;
     std::uint32_t m_frozenCount = 0;

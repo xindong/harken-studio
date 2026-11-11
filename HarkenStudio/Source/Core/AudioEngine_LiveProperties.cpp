@@ -270,8 +270,12 @@ void AudioEngine::applyLivePropertyPreview()
                 for (auto& effect : installed) effectState->emplace(effect.id, std::move(effect));
             }
         }
+        const bool liveChain = leaf->chain && effectState != preview.appliedEffects.end() &&
+            std::all_of(effectState->begin(), effectState->end(), [](const auto& entry) {
+                return entry.second.type == static_cast<uint32_t>(EffectType::Limiter);
+            });
         for (const auto& effect : leaf->effects) {
-            if (leaf->chain) break;
+            if (liveChain) break;
             if (effectState == preview.appliedEffects.end()) break;
             auto& appliedEffects = *effectState;
             const auto previous = appliedEffects.find(effect.id);
@@ -282,8 +286,10 @@ void AudioEngine::applyLivePropertyPreview()
             next.bypass = effect.bypass;
             if (next == previous->second) continue;
             if (HarkenEditor::Bridge::setPreviewVoiceEffect(path.voiceInstance, effect.id,
-                    next.type, next.parameters, next.bypass) == HarkenEditor::Bridge::kEngineOk)
+                    next.type, next.parameters, next.bypass) == HarkenEditor::Bridge::kEngineOk) {
                 previous->second = std::move(next);
+                preview.appliedChains.remove(path.voiceInstance);
+            }
         }
         auto values = leaf->fields;
         float volumeDb = 0;
@@ -300,10 +306,14 @@ void AudioEngine::applyLivePropertyPreview()
         values[{static_cast<uint8_t>(LiveProperty::Volume), {}}] = volumeDb;
         values[{static_cast<uint8_t>(LiveProperty::Pitch), {}}] = std::clamp(pitchCents, -7200.0f, 7200.0f);
         auto& acceptedChain = preview.appliedChains[path.voiceInstance];
-        if (leaf->chain && acceptedChain != leaf->chain) {
+        if (liveChain && acceptedChain != leaf->chain) {
             const auto result = HarkenEditor::Bridge::setPreviewVoiceEffectChain(
                 path.voiceInstance, *leaf->chain);
-            if (result == HarkenEditor::Bridge::kEngineOk) acceptedChain = leaf->chain;
+            if (result == HarkenEditor::Bridge::kEngineOk) {
+                acceptedChain = leaf->chain;
+                effectState->clear();
+                for (const auto& effect : leaf->effects) effectState->emplace(effect.id, effect);
+            }
         }
         auto& applied = preview.applied[path.voiceInstance];
         for (const auto& [key, value] : values) {

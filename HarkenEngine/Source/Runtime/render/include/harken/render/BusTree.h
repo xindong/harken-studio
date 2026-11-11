@@ -64,6 +64,8 @@ public:
         const std::array<EffectInstanceRef, kMaxFxSlotsPerBus>& current,
         VnObjectId projectId, PreparedBusEffectChain& out) noexcept;
     bool CanCommitPreviewEffectChain(const PreparedBusEffectChain& prepared) const noexcept;
+    VnResult PreparePreviewEffectOwnerRelease(BusSlotRef host, std::uint64_t owner,
+        PreparedBusEffectChain& out) noexcept;
     void CancelPreviewEffectChain(PreparedBusEffectChain& prepared) noexcept;
     void CommitPreviewEffectChain(const PreparedBusEffectChain& prepared) noexcept;
     void ApplyPreviewEffectChain(const BusEffectChainAdoption& adoption) noexcept;

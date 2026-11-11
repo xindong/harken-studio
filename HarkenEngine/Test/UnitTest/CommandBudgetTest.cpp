@@ -878,6 +878,40 @@ TEST(CommandBudget, OriginalQueueProofFreezesActualBytesAndPublishesOnce) {
     EXPECT_TRUE(range.ResetAfterDisposition());
 }
 
+TEST(CommandBudget, PreparedResourceCancellationFollowsActualBatchDisposition) {
+    for (const auto mode : {0, 1, 2, 3}) {
+        SCOPED_TRACE(mode);
+        harken::CommandQueue queue(8);
+        harken::CommandQueue::BatchReservation reservation{};
+        harken::CommandQueue::PreparedBatchProof proof;
+        std::optional<harken::CommandQueue::PreparedBatchDispositionReceipt> receipt{std::in_place};
+        harken::CommandRecord record{};
+        record.opcode = harken::kOpcodeSetVoicePan;
+        int cancellations = 0;
+        const auto cancel = +[](void* context) noexcept { ++*static_cast<int*>(context); };
+        ASSERT_TRUE(queue.ReserveBatch(1, &reservation));
+        ASSERT_TRUE(queue.ProvePreparedBatch(&reservation, &record, 1, &proof, &*receipt));
+        ASSERT_TRUE(queue.SetPreparedBatchCancellationHandler(proof, &cancellations, cancel));
+        EXPECT_FALSE(queue.SetPreparedBatchCancellationHandler(proof, &cancellations, cancel));
+        if (mode == 0) proof.Release();
+        else if (mode == 1) ASSERT_TRUE(queue.CancelReservedBatchExact(&reservation));
+        else if (mode == 2) receipt.reset();
+        else EXPECT_EQ(1u, queue.ConsumePreparedBatch(std::move(proof)).Count());
+        EXPECT_EQ(mode == 3 ? 0 : 1, cancellations);
+
+        harken::CommandQueue::PreparedBatchProof next;
+        ASSERT_TRUE(queue.ReserveBatch(1, &reservation));
+        ASSERT_TRUE(queue.ProvePreparedBatch(&reservation, &record, 1, &next));
+        ASSERT_TRUE(queue.SetPreparedBatchCancellationHandler(next, &cancellations, cancel));
+        proof.Release();
+        EXPECT_TRUE(next.Valid());
+        EXPECT_EQ(mode == 3 ? 0 : 1, cancellations);
+        next.Release();
+        next.Release();
+        EXPECT_EQ(mode == 3 ? 1 : 2, cancellations);
+    }
+}
+
 TEST(CommandBudget, OriginalQueueProofAbortReproveKeepsSequenceAndRefusesExhaustedOrigin) {
     harken::CommandQueue queue(8);
     harken::CommandQueue::BatchReservation reservation{};

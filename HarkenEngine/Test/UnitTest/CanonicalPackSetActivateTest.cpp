@@ -225,7 +225,8 @@ TEST(CanonicalPackSetActivate, InitBusLimitersRenderReplaceRollbackAndUnload) {
     EXPECT_NEAR(std::pow(10.0f, -24.0f / 20.0f), engine.nullBackend.LastBlock()[0], 2e-5f);
     ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(&member, 1, &row, report,
         first.initHandle, 1));
-    engine.nullBackend.Pump(1);
+    // Reused instances follow the normal bypass transition.
+    engine.nullBackend.Pump(8);
     for (unsigned frame = 0; frame < 64; ++frame)
         EXPECT_NEAR(0.5f, engine.nullBackend.LastBlock()[frame * 2], 2e-5f);
     ASSERT_EQ(VN_OK, Vn_Update());
@@ -3148,7 +3149,30 @@ TEST(CanonicalPackSetActivate, InitNewBusLimiterBindingUsesProspectiveEffect) {
     EXPECT_EQ(8u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
     engine.nullBackend.Pump(1);
     EXPECT_NEAR(std::pow(10.0f, -24.0f / 20.0f), engine.nullBackend.LastBlock()[0], 2e-5f);
-    EXPECT_EQ(VN_OK, UnloadSet(activated.initHandle, 1));
+    const auto replacementPath = (directory / "BoundReplacement.pack").string();
+    ASSERT_TRUE(harkentest::WriteBytes(replacementPath, harkentest::WithCanonicalBindingRows(
+        CanonicalLimiterInit(-12, false, 2, true), kBusBindingId, desc, &attachment)));
+    member.utf8Path = replacementPath.c_str();
+    ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(&member, 1, &row, report,
+        activated.initHandle, 1));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    engine.nullBackend.Pump(16);
+    EXPECT_NEAR(std::pow(10.0f, -18.0f / 20.0f), engine.nullBackend.LastBlock()[0], 2e-5f);
+    const auto secondHandle = report.initHandle;
+    const auto secondRevision = report.resultSetRevision;
+    ASSERT_TRUE(harkentest::WriteBytes(replacementPath, CanonicalLimiterInit(-9, false, 3, true)));
+    member.expectedHandle = secondHandle;
+    ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(&member, 1, &row, report,
+        secondHandle, secondRevision));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_FLOAT_EQ(-9.0f, engine.effectParamTargets.AuthoredBase(
+        harken::EffectParamTargetStore::Scope::Bus, bus, 7, 0));
+    EXPECT_FLOAT_EQ(-9.0f, engine.effectParamTargets.LastCommitted(
+        harken::EffectParamTargetStore::Scope::Bus, bus, 7, 0));
+    // Retained detector gain needs the authored 100 ms release to reach the higher ceiling.
+    engine.nullBackend.Pump(80);
+    EXPECT_NEAR(std::pow(10.0f, -9.0f / 20.0f), engine.nullBackend.LastBlock()[0], 2e-5f);
+    EXPECT_EQ(VN_OK, UnloadSet(report.initHandle, report.resultSetRevision));
 }
 
 TEST(CanonicalPackSetActivate, InitBusEffectParamIsNotKindRefused) {

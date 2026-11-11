@@ -22,6 +22,7 @@ struct BusEffectChainAdoption {
     std::uint64_t host = 0;
     std::uint64_t owner = 0;
     std::uint64_t revision = 0;
+    bool releaseOwner = false;
 };
 
 // A preparation also records no-op rows: a direct edit after prepare must
@@ -32,6 +33,7 @@ struct PreparedBusEffectChain {
     std::uint64_t expectedOwner = 0;
     std::uint64_t expectedRevision = 0;
     bool changes = false;
+    bool releaseOwner = false;
 };
 
 } // namespace harken

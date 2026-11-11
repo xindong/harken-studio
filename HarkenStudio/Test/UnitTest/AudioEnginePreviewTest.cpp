@@ -900,7 +900,7 @@ TEST_F(AudioPlaybackRegression, ConcurrentPreviewCancelAndUndoRemainConsistentFo
     EXPECT_NEAR(settledPeak(), baseline, 0.002f);
 }
 
-TEST_F(AudioPlaybackRegression, EffectEditsPreserveRunningInstancesAndDeferStructureUntilReplay)
+TEST_F(AudioPlaybackRegression, LimiterEditsPreserveRunningInstancesAndApplyStructureLive)
 {
     VNX::registerProjectActions(VNX::ActionManager::instance(), &projects, nullptr);
     auto* undo = VNX::UndoRedoManager::instance().undoStack();
@@ -949,13 +949,13 @@ TEST_F(AudioPlaybackRegression, EffectEditsPreserveRunningInstancesAndDeferStruc
     effect.mode = VNX::EffectMode::Preset;
     effect.effectGuid = preset->guid;
     ASSERT_TRUE(replace({effect.toJson()}));
-    EXPECT_NEAR(settledPeak(), limited, 0.002f);
+    EXPECT_GT(settledPeak(), dry * 0.9f);
     effect.bypass = true;
     ASSERT_TRUE(replace({effect.toJson()}));
     EXPECT_NEAR(settledPeak(), dry, 0.002f);
     effect.bypass = false;
     ASSERT_TRUE(replace({effect.toJson()}));
-    EXPECT_NEAR(settledPeak(), limited, 0.002f);
+    EXPECT_NEAR(settledPeak(), dry, 0.002f);
     engine.stopAll(0);
     settledPeak();
     ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
@@ -969,7 +969,7 @@ TEST_F(AudioPlaybackRegression, EffectEditsPreserveRunningInstancesAndDeferStruc
          {QStringLiteral("value"), -24.0}}, VNX::ActionSource::GUI).success);
     EXPECT_NEAR(settledPeak(), limited, 0.002f);
     ASSERT_TRUE(replace({}));
-    EXPECT_NEAR(settledPeak(), limited, 0.002f);
+    EXPECT_NEAR(settledPeak(), dry, 0.002f);
     engine.stopAll(0);
     settledPeak();
     ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
@@ -978,7 +978,7 @@ TEST_F(AudioPlaybackRegression, EffectEditsPreserveRunningInstancesAndDeferStruc
     EXPECT_NEAR(settledPeak(), dry, 0.002f);
 }
 
-TEST_F(AudioPlaybackRegression, EffectSourceReplacementBeforeFirstLiveTickKeepsInstalledSource)
+TEST_F(AudioPlaybackRegression, LimiterSourceReplacementBeforeFirstLiveTickAdoptsLatestSource)
 {
     VNX::registerProjectActions(VNX::ActionManager::instance(), &projects, nullptr);
     auto* preset = projects.createItem(nullptr, QStringLiteral("FirstTickReplacement"),
@@ -1008,10 +1008,10 @@ TEST_F(AudioPlaybackRegression, EffectSourceReplacementBeforeFirstLiveTickKeepsI
     effect.bypass = true;
     ASSERT_TRUE(replace());
     const float dry = settledPeak();
-    EXPECT_LT(limited, dry * 0.7f);
+    EXPECT_GT(limited, dry * 0.9f);
     effect.bypass = false;
     ASSERT_TRUE(replace());
-    EXPECT_NEAR(settledPeak(), limited, 0.002f);
+    EXPECT_NEAR(settledPeak(), dry, 0.002f);
     engine.stopAll(0);
     settledPeak();
     ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
@@ -1079,7 +1079,7 @@ TEST_F(AudioPlaybackRegression, EquivalentEffectSourcesKeepSeparatePlaybackGener
     ASSERT_EQ(paths.size(), 1u);
     EXPECT_EQ(paths.front().worldGeneration, installedGeneration);
     ASSERT_TRUE(setCeiling(second, 0.0));
-    EXPECT_NEAR(settledPeak(), limited, 0.002f);
+    EXPECT_GT(settledPeak(), limited * 1.2f);
     engine.stopAll(0);
     settledPeak();
     ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
@@ -1089,7 +1089,7 @@ TEST_F(AudioPlaybackRegression, EquivalentEffectSourcesKeepSeparatePlaybackGener
     EXPECT_GT(settledPeak(), limited / 0.7f);
 }
 
-TEST_F(AudioPlaybackRegression, ScheduledVoiceRetainsEffectSourceAcrossAnEmptyVoiceInterval)
+TEST_F(AudioPlaybackRegression, ScheduledVoiceAdoptsLatestLimiterSourceWhenItStarts)
 {
     VNX::registerProjectActions(VNX::ActionManager::instance(), &projects, nullptr);
     auto* preset = projects.createItem(nullptr, QStringLiteral("ScheduledReplacement"),
@@ -1142,13 +1142,13 @@ TEST_F(AudioPlaybackRegression, ScheduledVoiceRetainsEffectSourceAcrossAnEmptyVo
     effect.bypass = true;
     ASSERT_TRUE(replace());
     const float dry = settledPeak();
-    EXPECT_LT(limited, dry * 0.7f);
+    EXPECT_GT(limited, dry * 0.9f);
     effect.bypass = false;
     ASSERT_TRUE(replace());
-    EXPECT_NEAR(settledPeak(), limited, 0.002f);
+    EXPECT_NEAR(settledPeak(), dry, 0.002f);
 }
 
-TEST_F(AudioPlaybackRegression, BusEffectSourceReplacementWaitsForPlaybackToFinish)
+TEST_F(AudioPlaybackRegression, BusLimiterSourceReplacementAppliesDuringPlayback)
 {
     VNX::registerProjectActions(VNX::ActionManager::instance(), &projects, nullptr);
     auto* bus = projects.getMasterBusItem();
@@ -1202,13 +1202,13 @@ TEST_F(AudioPlaybackRegression, BusEffectSourceReplacementWaitsForPlaybackToFini
         QMetaObject::invokeMethod(&engine, "onRuntimeServiceTimer", Qt::DirectConnection);
         QThread::msleep(1);
     }
-    EXPECT_NEAR(settledPeak(), limited, 0.002f);
+    EXPECT_NEAR(settledPeak(), dry, 0.002f);
     effect.bypass = true;
     ASSERT_TRUE(replace());
     EXPECT_NEAR(settledPeak(), dry, 0.002f);
     effect.bypass = false;
     ASSERT_TRUE(replace());
-    EXPECT_NEAR(settledPeak(), limited, 0.002f);
+    EXPECT_NEAR(settledPeak(), dry, 0.002f);
     engine.stopAll(0);
     settledPeak();
     ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
@@ -1293,10 +1293,17 @@ TEST_F(AudioPlaybackRegression, LiveEffectChainUsesInheritedPreviewAndRetriesLat
     projects.fieldGroupsPreviewed(sounds[0], child);
     const float limited = settledPeak();
     EXPECT_NEAR(limited, dry * std::pow(10.0f, -23.0f / 20.0f) / 0.125f, 0.002f);
-    const auto accepted = render->fxSlotEffectRef[0];
     VNX::EffectEntry unresolved;
     unresolved.guid = QUuid::createUuid();
     unresolved.effectGuid = QUuid::createUuid();
+    entry.custom.parameters[0] = 0.0f;
+    previewParent({entry, unresolved});
+    // An unresolved reference rejects the snapshot as a whole, preserving accepted audio.
+    EXPECT_NEAR(settledPeak(), limited, 0.002f);
+    entry.custom.parameters[0] = -23.0f;
+    previewParent({entry});
+    EXPECT_NEAR(settledPeak(), limited, 0.002f);
+    const auto accepted = render->fxSlotEffectRef[0];
     previewParent({unresolved});
     EXPECT_NEAR(settledPeak(), limited, 0.002f);
     EXPECT_EQ(accepted.poolIndex, render->fxSlotEffectRef[0].poolIndex);
@@ -1387,7 +1394,7 @@ TEST_F(AudioPlaybackRegression, LiveEffectPresetActionsReachEveryInheritedRefere
                                   VNX::RuntimeCapabilityOperation::PackBuild}) {
         const auto capability = VNX::RuntimeCapabilityMatrix::evaluate(*sounds[0],
             *projects.currentProject(), operation, VNX::RuntimeCapabilityFeature::TypedEffect);
-        EXPECT_EQ(VNX::RuntimeCapabilityState::UnavailableEngineContract, capability.state)
+        EXPECT_EQ(VNX::RuntimeCapabilityState::Ready, capability.state)
             << capability.diagnostic.toStdString();
     }
     for (const auto& path : paths) {

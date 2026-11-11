@@ -57,6 +57,7 @@ VnResult BusTree::PreparePreviewEffectChain(BusSlotRef host, std::uint64_t owner
             m_previewEffectStates[host.index].store(state, std::memory_order_release);
         }
         const bool retained = state->acceptedHost == host;
+        const bool accepted = retained && state->owner == owner;
         if (retained && state->owner != 0 && state->owner != owner) return VN_IN_USE;
         out = {state, host, state->owner, state->revision, false};
         bool identical = retained && state->owner == owner;
@@ -89,7 +90,7 @@ VnResult BusTree::PreparePreviewEffectChain(BusSlotRef host, std::uint64_t owner
                 (target.effectType == kEffectTypeNone ||
                  m_effectBank.ObjectIdentity(current[i]).effectId == target.effectId);
             if (!same) update.changedMask |= 1u << i;
-            if (!retained || state->accepted[i].bypass != target.bypass)
+            if (!accepted || state->accepted[i].bypass != target.bypass)
                 update.bypassMask |= 1u << i;
             if (target.effectType == kEffectTypeNone) {
                 update.targetRefs[i] = {};
@@ -103,9 +104,9 @@ VnResult BusTree::PreparePreviewEffectChain(BusSlotRef host, std::uint64_t owner
                 CancelPreviewEffectChain(out);
                 return VN_INVALID_ARG;
             }
-            if (!retained || state->accepted[i].ceilingDb != target.ceilingDb)
+            if (!accepted || state->accepted[i].ceilingDb != target.ceilingDb)
                 update.parameterMask[i] |= 1;
-            if (!retained || state->accepted[i].releaseMs != target.releaseMs)
+            if (!accepted || state->accepted[i].releaseMs != target.releaseMs)
                 update.parameterMask[i] |= 2;
             if (same) continue;
             const auto ref = m_effectBank.Acquire(VN_EFFECT_LIMITER, {target.effectId, projectId});
@@ -134,6 +135,26 @@ VnResult BusTree::PreparePreviewEffectChain(BusSlotRef host, std::uint64_t owner
         CancelPreviewEffectChain(out);
         return VN_DEVICE_ERROR;
     }
+}
+
+VnResult BusTree::PreparePreviewEffectOwnerRelease(BusSlotRef host, std::uint64_t owner,
+    PreparedBusEffectChain& out) noexcept {
+    out = {};
+    DrainPreviewEffectChains();
+    auto* state = PreviewEffectState(host);
+    if (state == nullptr || state->owner == 0) return VN_OK;
+    if (state->owner != owner) return VN_IN_USE;
+    auto& update = state->update;
+    if (update.phase.load(std::memory_order_acquire) != Phase::Free) return VN_BACKPRESSURE;
+    if (state->revision == UINT64_MAX) return VN_RUNTIME_RECREATE_REQUIRED;
+    out = {state, host, state->owner, state->revision, true, true};
+    state->preparedOwner = owner;
+    update.host = host.Packed();
+    update.baseRevision = state->revision;
+    update.targetRevision = state->revision + 1;
+    update.ownedTargets = update.ownedOld = 0;
+    update.phase.store(Phase::Preparing, std::memory_order_release);
+    return VN_OK;
 }
 
 bool BusTree::CanCommitPreviewEffectChain(const PreparedBusEffectChain& prepared) const noexcept {
@@ -165,9 +186,9 @@ void BusTree::CommitPreviewEffectChain(const PreparedBusEffectChain& prepared) n
     auto& state = *prepared.state;
     auto& update = state.update;
     state.acceptedHost = prepared.host;
-    state.owner = state.preparedOwner;
+    state.owner = prepared.releaseOwner ? 0 : state.preparedOwner;
     state.revision = update.targetRevision;
-    state.accepted = update.targets;
+    state.accepted = prepared.releaseOwner ? decltype(state.accepted){} : update.targets;
     m_pendingPreviewEffects.fetch_add(1, std::memory_order_relaxed);
     update.phase.store(Phase::Queued, std::memory_order_release);
 }
@@ -182,6 +203,17 @@ void BusTree::ApplyPreviewEffectChain(const BusEffectChainAdoption& adoption) no
     const auto host = BusSlotRef::FromPacked(update.host);
     if (!host.Valid() || host.index >= m_audioCount) return;
     auto& bus = m_buses[host.index];
+    if (adoption.releaseOwner) {
+        // The following cold Set/Clear commands retain sole ownership of refs.
+        // This adoption changes only metadata, after a quiescent preflight.
+        if (bus.generation == host.generation && bus.fxChainTransition == nullptr &&
+            bus.previewEffectOwner == adoption.owner && bus.previewEffectRevision == update.baseRevision) {
+            bus.previewEffectOwner = 0;
+            bus.previewEffectRevision = update.targetRevision;
+        }
+        update.phase.store(Phase::Complete, std::memory_order_release);
+        return;
+    }
     // Deleted hosts adopt their empty chain after the new topology is installed.
     bool valid = bus.generation == host.generation && bus.id != VnBusId{};
     valid = valid && bus.fxChainTransition == nullptr && bus.previewEffectRevision == update.baseRevision &&

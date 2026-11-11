@@ -2704,10 +2704,59 @@ void StartLiveBusConsumer(harken::Engine& engine, const AdmissionWorldImage& ima
 
 
 void SetLiveBusLimiter(LiveBusPublication& publication, VnBusId bus, unsigned identity = 401) {
-    publication.effects = {{bus, harkentest::ObjectId(identity), 0, VN_EFFECT_LIMITER, 1, 0, 0, 2}};
+    publication.effects = {{bus, harkentest::ObjectId(identity), 0, VN_EFFECT_LIMITER, 2, 0, 0, 2}};
     publication.parameters = {{0, -18}, {1, 100}};
     publication.view.effects = publication.effects;
     publication.view.effectParameters = publication.parameters;
+}
+
+TEST(BusAdmissionStart, LiveBusLimiterColdEffectHandoffKeepsOneWriterAndCanReturn) {
+    AdmissionSession fixture;
+    auto& engine = *fixture.session.Engine();
+    LiveBusPublication publication(engine, fixture.image, 5);
+    SetLiveBusLimiter(publication, VN_BUS_MASTER);
+    CommitAndConsumeLiveBus(engine, publication);
+    ASSERT_FALSE(HasFatalFailure());
+    engine.nullBackend.Pump(4);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    auto* state = engine.buses.PreviewEffectState(engine.buses.RefAt(0));
+    ASSERT_NE(nullptr, state);
+    const auto revision = state->revision;
+    publication.Next(0);
+    publication.effects = {{VN_BUS_MASTER, harkentest::ObjectId(402), 0, VN_EFFECT_GAIN, 2, 0, 0, 1}};
+    publication.parameters = {{0, -6}};
+    publication.view.effects = publication.effects;
+    publication.view.effectParameters = publication.parameters;
+    CommitAndConsumeLiveBus(engine, publication);
+    ASSERT_FALSE(HasFatalFailure());
+    EXPECT_FALSE(engine.buses.PreviewEffectOwned(engine.buses.RefAt(0)));
+    EXPECT_GT(state->revision, revision);
+    EXPECT_EQ(VN_EFFECT_GAIN, engine.buses.BusState(0)->fxSlotEffectRef[0].type);
+    EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+    publication.Next(0);
+    SetLiveBusLimiter(publication, VN_BUS_MASTER);
+    CommitAndConsumeLiveBus(engine, publication);
+    ASSERT_FALSE(HasFatalFailure());
+    EXPECT_EQ(VN_EFFECT_LIMITER, engine.buses.BusState(0)->fxSlotEffectRef[0].type);
+    engine.nullBackend.Pump(4);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_TRUE(engine.effectParamTargets.CanBind(harken::EffectParamTargetStore::Scope::Bus,
+        0, {VN_EFFECT_LIMITER, 0, 0}));
+    EXPECT_FLOAT_EQ(-18, engine.effectParamTargets.AuthoredBase(
+        harken::EffectParamTargetStore::Scope::Bus, 0, 0, 0));
+    EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_GAIN));
+    StartLiveBusConsumer(engine, fixture.image, std::pow(10.0f, -18.0f / 20.0f));
+    ASSERT_FALSE(HasFatalFailure());
+    publication.Next(0);
+    publication.effects = {{VN_BUS_MASTER, harkentest::ObjectId(402), 0, VN_EFFECT_GAIN, 2, 0, 0, 1}};
+    publication.parameters = {{0, -6}};
+    publication.view.effects = publication.effects;
+    publication.view.effectParameters = publication.parameters;
+    harken::PreparedProjectGenerationV1 refused;
+    EXPECT_EQ(harken::ProjectGenerationPrepareStatusV1::Backpressure,
+        harken::PrepareProjectGenerationV1(engine, publication.view, refused).status);
+    EXPECT_EQ(VN_EFFECT_LIMITER, engine.busEffectSlotTypes[0][0]);
+    EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_GAIN));
 }
 
 TEST(BusAdmissionStart, LiveBusV5DirectBypassAdvancesNewBranchAndClearRetirementOwnsMaster) {
@@ -2980,7 +3029,7 @@ TEST(BusAdmissionStart, LiveBusV5AtomicEightSlotsPreserveInstancesAndRejectStale
     LiveBusPublication publication(engine, fixture.image, 5);
     for (std::uint32_t slot = 0; slot < 8; ++slot) {
         publication.effects.push_back({VN_BUS_MASTER, harkentest::ObjectId(400 + slot),
-            slot, VN_EFFECT_LIMITER, 1, 0, slot * 2, 2});
+            slot, VN_EFFECT_LIMITER, 2, 0, slot * 2, 2});
         publication.parameters.push_back({0, -18.0f});
         publication.parameters.push_back({1, 100.0f});
     }
@@ -3785,7 +3834,7 @@ TEST(BusAdmissionStart, LiveBusEightLimiterInsertionPreservesContinuousChainDete
         publication.Next(0);
         for (unsigned slot = 0; slot < 8; ++slot) {
             publication.effects.push_back({VN_BUS_MASTER, harkentest::ObjectId(1400 + slot),
-                slot, VN_EFFECT_LIMITER, 1, 0, slot * 2, 2});
+                slot, VN_EFFECT_LIMITER, 2, 0, slot * 2, 2});
             publication.parameters.push_back({0, -18}); publication.parameters.push_back({1, 100});
         }
         publication.view.effects = publication.effects;
