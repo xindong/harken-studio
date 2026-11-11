@@ -363,8 +363,14 @@ CurrentWorldSyncResult installCompiledWorld(
         hold.effectDefinitionChanged = std::any_of(hold.busResult->effects.begin(),
             hold.busResult->effects.end(), [&](const auto& effect) {
                 const auto previous = definitions.find(effect.effectId);
+                const auto limiterOnly = [&](const auto& rows) {
+                    return std::all_of(rows.begin(), rows.end(), [&](const auto& row) {
+                        return row.busId != effect.busId || row.effectType == VN_EFFECT_LIMITER;
+                    });
+                };
                 return previous != definitions.end()
-                    && previous->second != effect.definitionGuid;
+                    && previous->second != effect.definitionGuid
+                    && !(limiterOnly(publishedBusResult->effects) && limiterOnly(hold.busResult->effects));
             });
     }
     hold.soundPreparation = request->soundPreparation;

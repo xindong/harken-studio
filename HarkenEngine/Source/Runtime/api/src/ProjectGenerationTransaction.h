@@ -4,9 +4,12 @@
 #include <harken/ObjectId.h>
 #include "PlayableRuntime.h"
 #include "SignalPublication.h"
+#include "harken/core/PreviewBusEffects.h"
+#include "harken/render/BusEffectChainUpdate.h"
 #include "harken/core/CurrentWorld.h"
 #include "harken/core/EngineConfig.h"
 #include "harken/param/VariableService.h"
+#include "harken/param/EffectParamTargetStore.h"
 #include "harken/media/PackFormatV2.h"
 #include "harken/core/CommandQueue.h"
 
@@ -44,7 +47,9 @@ TopologyOwnerRevisionDispositionV1 ClassifyTopologyOwnerRevisionV1(
 bool MasterHasAuthoredClaimV1(const Engine& engine) noexcept;
 bool PreviewOwnsSoleMasterV1(const Engine& engine, std::uint64_t ownerId) noexcept;
 std::uint64_t NeutralMasterFingerprintV1(const Engine& engine) noexcept;
-bool PreviewMasterCompatible(const Engine& engine, std::uint64_t fingerprint) noexcept;
+bool PreviewMasterCompatible(const Engine& engine, std::uint64_t fingerprint,
+    std::uint64_t ownerId = 0) noexcept;
+bool HasPreviewEffectAttachment(const Engine& engine, BusSlotRef host) noexcept;
 std::uint32_t SelectPreviewOwnerDestination(const Engine& engine, std::uint64_t ownerId) noexcept;
 bool HasPredecessorDirectWorldPublication(const Engine& engine) noexcept;
 inline constexpr std::uint64_t kCanonicalPackSetMasterOwnerId = 0x5053434E00000001ull;
@@ -116,6 +121,7 @@ struct ProjectGenerationInstallViewV1 {
     std::span<const PackBusDefinitionEffect> effects;
     std::span<const PackBusDefinitionEffectParameter> effectParameters;
     bool forceWorldReplacement = false;
+    std::span<const std::uint32_t> busFaderPositions{};
 };
 
 enum class ProjectGenerationPrepareStatusV1 : std::uint8_t {
@@ -127,6 +133,11 @@ enum class ProjectGenerationPrepareStatusV1 : std::uint8_t {
     DeviceError = 5,
     InvalidWorld = 6,
 };
+
+ProjectGenerationPrepareStatusV1 ValidatePreviewBusEffects(
+    std::span<const VnBusId> buses, std::span<const std::uint32_t> faders,
+    std::span<const PreviewBusEffect> effects, std::span<const PreviewEffectParameter> parameters,
+    std::uint32_t slots, std::uint32_t sampleRate) noexcept;
 
 enum class ProjectGenerationCommitStatusV1 : std::uint8_t {
     Ok = 0,
@@ -287,6 +298,8 @@ private:
         projectedVolumeApply_.clear();
         bindingSourceStamp_ = 0;
         effects_.reset();
+        effectChains_.clear();
+        effectSeeds_.clear();
     }
 
     void MoveFrom(PreparedProjectGenerationV1& other) noexcept {
@@ -323,6 +336,8 @@ private:
         projectedVolumeApply_ = std::move(other.projectedVolumeApply_);
         bindingSourceStamp_ = other.bindingSourceStamp_;
         effects_ = std::move(other.effects_);
+        effectChains_ = std::move(other.effectChains_);
+        effectSeeds_ = std::move(other.effectSeeds_);
         other.ClearFields();
     }
 
@@ -359,6 +374,8 @@ private:
     std::vector<float> sourceOutputDb_;
     std::vector<std::uint8_t> projectedVolumeApply_;
     std::uint64_t bindingSourceStamp_ = 0;
+    std::vector<PreparedBusEffectChain> effectChains_;
+    std::vector<EffectParamTargetStore::PreparedSeedToken> effectSeeds_;
 };
 
 ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(

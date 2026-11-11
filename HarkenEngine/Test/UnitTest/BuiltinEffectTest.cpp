@@ -9,6 +9,9 @@
 #include <harken/Harken.h>
 
 #include "Common/TestUtil.h"
+#include "Common/EffectPoolTestAccess.h"
+#include <thread>
+#include <atomic>
 #include "harken/dsp/Biquad.h"
 #include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/render/BuiltinEffects.h"
@@ -19,20 +22,6 @@
 #include <vector>
 #include <limits>
 #include <utility>
-
-namespace harken::detail {
-struct EffectPoolTestAccess {
-    static bool SeedFreeGeneration(EffectPoolBank& bank, const EffectInstanceRef& disposed,
-                                   std::uint64_t generation) {
-        auto* slot = bank.SlotFor(disposed.type);
-        if (slot == nullptr || disposed.poolIndex >= slot->capacity ||
-            slot->states[disposed.poolIndex].load(std::memory_order_acquire) !=
-                EffectPoolBank::InstanceState::Free) return false;
-        slot->generations[disposed.poolIndex] = generation;
-        return true;
-    }
-};
-}
 
 namespace {
 
@@ -339,6 +328,163 @@ TEST(BuiltinEffectValidation, StaleHandleIsBenignAcrossEffectCalls) {
 
 // --- pooling and lifecycle ---
 
+TEST(BuiltinEffectPool, AutomaticGrowthPreservesPublishedRowsProofsAndUndrainedRetirements) {
+    harken::EffectPoolBank bank(harken::EngineConfig{});
+    const auto anchor = bank.Acquire(VN_EFFECT_GAIN);
+    ASSERT_EQ(VN_EFFECT_GAIN, anchor.type);
+    void* const address = bank.LiveStateFor(anchor);
+    const auto prepared = bank.AcquirePrepared(VN_EFFECT_GAIN);
+    harken::EffectPoolBank::PreparedCommitProof proof;
+    ASSERT_TRUE(bank.ProvePreparedCommit(prepared, {}, &proof));
+    std::atomic<bool> done{false}, invalid{false};
+    std::atomic<unsigned> reads{0};
+    std::thread reader([&] {
+        harken::memguard::AudioThreadScope audio;
+        while (!done.load(std::memory_order_acquire)) {
+            if (bank.LiveStateFor(anchor) != address) invalid.store(true);
+            reads.fetch_add(1, std::memory_order_relaxed);
+        }
+    });
+    while (reads.load(std::memory_order_relaxed) == 0) std::this_thread::yield();
+    std::vector<harken::EffectInstanceRef> refs;
+    refs.reserve(4097);
+    for (unsigned i = 0; i < 4097; ++i) {
+        const auto ref = bank.Acquire(VN_EFFECT_GAIN);
+        if (ref.type != VN_EFFECT_GAIN) break;
+        refs.push_back(ref);
+    }
+    done.store(true, std::memory_order_release);
+    reader.join();
+    ASSERT_EQ(4097u, refs.size());
+    EXPECT_FALSE(invalid.load());
+    EXPECT_EQ(address, bank.LiveStateFor(anchor));
+    harken::EffectInstanceRef original{};
+    ASSERT_TRUE(bank.CaptureOriginalPreparedEffect(proof, &original));
+    EXPECT_EQ(prepared.poolIndex, original.poolIndex);
+    EXPECT_EQ(prepared.generation, original.generation);
+    proof.Release();
+    ASSERT_TRUE(bank.CancelPrepared(prepared));
+    {
+        harken::memguard::AudioThreadScope audio;
+        EXPECT_TRUE(bank.Retire(anchor));
+        for (const auto& ref : refs) EXPECT_TRUE(bank.Retire(ref));
+        for (const auto& ref : refs) EXPECT_TRUE(bank.Retire(ref));
+    }
+    EXPECT_EQ(4098u, bank.InUseOf(VN_EFFECT_GAIN));
+    EXPECT_EQ(4098u, bank.DrainRetire());
+    EXPECT_EQ(0u, bank.DrainRetire());
+    EXPECT_EQ(0u, bank.InUseOf(VN_EFFECT_GAIN));
+}
+
+TEST(BuiltinEffectPool, RetiredGenerationSurvivesConcurrentLogicReuse) {
+    harken::EngineConfig config;
+    config.gainEffectPoolCapacity = 1;
+    harken::EffectPoolBank bank(config);
+    const auto old = bank.Acquire(VN_EFFECT_GAIN);
+    ASSERT_EQ(VN_EFFECT_GAIN, old.type);
+    harken::EffectInstanceRef fresh{};
+    std::atomic<unsigned> phase{0};
+    std::atomic<bool> valid{true};
+    std::thread audio([&] {
+        harken::memguard::AudioThreadScope scope;
+        if (!bank.Retire(old)) valid.store(false);
+        phase.store(1, std::memory_order_release);
+        while (phase.load(std::memory_order_acquire) != 2) std::this_thread::yield();
+        for (unsigned i = 0; i < 1000; ++i)
+            if (!bank.Retire(old) || bank.LiveStateFor(fresh) == nullptr) valid.store(false);
+        if (!bank.Retire(fresh)) valid.store(false);
+    });
+    while (phase.load(std::memory_order_acquire) != 1) std::this_thread::yield();
+    EXPECT_EQ(1u, bank.DrainRetire());
+    fresh = bank.Acquire(VN_EFFECT_GAIN);
+    phase.store(2, std::memory_order_release);
+    audio.join();
+    EXPECT_EQ(old.poolIndex, fresh.poolIndex);
+    EXPECT_GT(fresh.generation, old.generation);
+    EXPECT_TRUE(valid.load());
+    EXPECT_EQ(1u, bank.DrainRetire());
+    EXPECT_EQ(0u, bank.InUseOf(VN_EFFECT_GAIN));
+}
+
+TEST(BuiltinEffectPool, ExplicitBackingSaturatesWithoutReservingLogicalIdentities) {
+    harken::EngineConfig config;
+    config.gainEffectPoolCapacity = 2;
+    harken::EffectPoolBank bank(config);
+    const auto live = bank.Acquire(VN_EFFECT_GAIN);
+    ASSERT_EQ(VN_EFFECT_GAIN, live.type);
+    harken::EffectPoolBank::BackingDemand demand{};
+    demand[VN_EFFECT_GAIN] = 100;
+    harken::EffectPoolBank::BackingPreparation first, second;
+    ASSERT_TRUE(bank.PrepareBacking(demand, &first));
+    ASSERT_TRUE(bank.PrepareBacking(demand, &second));
+    harken::detail::ArmLogicAllocFaultForTests(1, harken::detail::LogicAllocSite::None);
+    {
+        auto use = harken::EffectPoolBank::UseBacking(&second);
+        const auto available = bank.AcquirePrepared(VN_EFFECT_GAIN);
+        EXPECT_EQ(VN_EFFECT_GAIN, available.type);
+        EXPECT_EQ(harken::kEffectTypeNone, bank.AcquirePrepared(VN_EFFECT_GAIN).type);
+        EXPECT_TRUE(bank.CancelPrepared(available));
+        const auto retry = bank.AcquirePrepared(VN_EFFECT_GAIN);
+        EXPECT_EQ(available.poolIndex, retry.poolIndex);
+        EXPECT_TRUE(bank.CancelPrepared(retry));
+        harken::EffectPoolBank::BackingPreparation nested;
+        EXPECT_FALSE(bank.PrepareBacking(demand, &nested));
+    }
+    EXPECT_EQ(1u, harken::detail::g_logicAllocFault.remaining);
+    harken::detail::DisarmLogicAllocFaultForTests();
+    bank.Recycle(live);
+}
+
+TEST(BuiltinEffectPool, AutomaticHoldsPrepareEveryTypeAndPreserveOtherHolds) {
+    harken::EffectPoolBank bank(harken::EngineConfig{});
+    harken::EffectPoolBank::BackingDemand demand{};
+    demand.fill(1);
+    harken::EffectPoolBank::BackingPreparation first, second;
+    ASSERT_TRUE(bank.PrepareBacking(demand, &first));
+    ASSERT_TRUE(bank.PrepareBacking(demand, &second));
+    const auto ordinary = bank.Acquire(VN_EFFECT_GAIN);
+    ASSERT_EQ(VN_EFFECT_GAIN, ordinary.type);
+    EXPECT_EQ(3u, bank.CapacityOf(VN_EFFECT_GAIN));
+    harken::detail::ArmLogicAllocFaultForTests(1, harken::detail::LogicAllocSite::None);
+    std::array<harken::EffectInstanceRef, harken::kEffectRegistryRowCount> a{}, b{};
+    {
+        auto use = harken::EffectPoolBank::UseBacking(&first);
+        for (const auto& registry : harken::kEffectRegistry) {
+            a[registry.effectType] = bank.AcquirePrepared(registry.effectType);
+            EXPECT_EQ(registry.effectType, a[registry.effectType].type);
+        }
+    }
+    {
+        auto use = harken::EffectPoolBank::UseBacking(&second);
+        for (const auto& registry : harken::kEffectRegistry) {
+            b[registry.effectType] = bank.AcquirePrepared(registry.effectType);
+            EXPECT_EQ(registry.effectType, b[registry.effectType].type);
+        }
+    }
+    EXPECT_EQ(1u, harken::detail::g_logicAllocFault.remaining);
+    harken::detail::DisarmLogicAllocFaultForTests();
+    for (const auto& ref : a) EXPECT_TRUE(bank.CancelPrepared(ref));
+    for (const auto& ref : b) EXPECT_TRUE(bank.CancelPrepared(ref));
+    bank.Recycle(ordinary);
+}
+
+TEST(BuiltinEffectPool, FailedBackingNeverIssuesIdentityAndRemainsRetryable) {
+    for (auto site : {harken::detail::LogicAllocSite::EffectInstanceStorage,
+                      harken::detail::LogicAllocSite::EffectRetireStorage,
+                      harken::detail::LogicAllocSite::EffectExtraStorage}) {
+        harken::EffectPoolBank bank(harken::EngineConfig{});
+        harken::detail::ArmLogicAllocFaultForTests(1, site);
+        EXPECT_EQ(harken::kEffectTypeNone, bank.AcquirePrepared(VN_EFFECT_FEEDBACK_DELAY).type);
+        EXPECT_EQ(0u, bank.InUseOf(VN_EFFECT_FEEDBACK_DELAY));
+        EXPECT_EQ(0u, bank.HighWaterOf(VN_EFFECT_FEEDBACK_DELAY));
+        harken::detail::DisarmLogicAllocFaultForTests();
+        const auto retry = bank.AcquirePrepared(VN_EFFECT_FEEDBACK_DELAY);
+        ASSERT_EQ(VN_EFFECT_FEEDBACK_DELAY, retry.type);
+        EXPECT_EQ(1u, retry.generation);
+        EXPECT_TRUE(bank.CancelPrepared(retry));
+    }
+}
+
 TEST(BuiltinEffectPool, PreparedCommitHeldBlocksMutationAndAbortRestoresOriginalState) {
     auto config = EffectConfig();
     config.gainEffectPoolCapacity = 1;
@@ -357,7 +503,7 @@ TEST(BuiltinEffectPool, PreparedCommitHeldBlocksMutationAndAbortRestoresOriginal
     EXPECT_FALSE(bank.CancelPrepared(ref));
     bank.Recycle(ref);
     bank.PublishInstalled(ref);
-    ASSERT_TRUE(bank.RetireQueue().TryPush(ref));
+    ASSERT_TRUE(bank.Retire(ref));
     bank.DrainRetire();
     EXPECT_EQ(nullptr, bank.StateFor(ref.type, ref.poolIndex));
     EXPECT_EQ(nullptr, bank.LiveStateFor(ref));
@@ -877,22 +1023,19 @@ TEST(BuiltinEffectPool, HighWaterSurfacesInSnapshot) {
     EXPECT_EQ(0u, harken::memguard::HitCount());
 }
 
-TEST(BuiltinEffectPool, DelayLineByteCeilingRejectsOversizedConfig) {
-    // The instance-count ceiling alone would accept a large delay pool at a
-    // high sample rate; the byte-level ceiling rejects the combination before
-    // Init attempts a multi-gigabyte allocation (which would otherwise throw
-    // bad_alloc out of the C API). A modest pool at a normal rate still Inits,
-    // so the check discriminates rather than blanket-refusing.
-    VnConfig oversized = harkentest::MakeNullConfig(0, kBlock, 384000);
-    oversized.delayEffectPoolCapacity = 64; // 64 * 384000 * 8ch * 4B ~= 786 MB
-    oversized.toneEffectPoolCapacity = 1;
-    EXPECT_EQ(VN_INVALID_CONFIG, Vn_Init(&oversized)); // no engine constructed
-
-    VnConfig ok = harkentest::MakeNullConfig(0, kBlock, kRate);
-    ok.delayEffectPoolCapacity = 4; // 4 * 48000 * 8ch * 4B ~= 6 MB
-    ok.toneEffectPoolCapacity = 1;
-    harkentest::EngineSession session(ok);
-    EXPECT_EQ(VN_OK, session.InitResult());
+TEST(BuiltinEffectPool, LargeExplicitQuotaDoesNotPreallocateDelayLines) {
+    auto config = harkentest::MakeNullConfig(0, kBlock, 384000);
+    config.delayEffectPoolCapacity = 65536;
+    config.gainEffectPoolCapacity = UINT32_MAX;
+    EffectExtraAllocationFault fault;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& bank = session.Engine()->effectBank;
+    EXPECT_EQ(65536u, bank.CapacityOf(VN_EFFECT_FEEDBACK_DELAY));
+    EXPECT_EQ(0u, harken::detail::EffectPoolTestAccess::ReadyCount(bank, VN_EFFECT_FEEDBACK_DELAY));
+    EXPECT_EQ(1u, harken::detail::g_logicAllocFault.remaining);
+    EXPECT_EQ(harken::kEffectTypeNone, bank.Acquire(VN_EFFECT_FEEDBACK_DELAY).type);
+    EXPECT_EQ(0u, bank.InUseOf(VN_EFFECT_FEEDBACK_DELAY));
 }
 
 TEST(BuiltinEffectDrain, ClearingLongTailMidDrainEndsVoiceEarly) {

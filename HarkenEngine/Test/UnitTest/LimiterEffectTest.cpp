@@ -2254,7 +2254,7 @@ TEST(CompressorEffect, ConfigVintageDefaultsAndNewTailValidation) {
         phase1.dynamicRoutePlanPoolCapacity = 1;
         EngineSession session(phase1);
         ASSERT_EQ(VN_OK, session.InitResult());
-        EXPECT_EQ(16u, session.Engine()->config.compressorEffectPoolCapacity);
+        EXPECT_EQ(0u, session.Engine()->config.compressorEffectPoolCapacity);
         EXPECT_EQ(64u, session.Engine()->config.dynamicRouteCapacity);
         EXPECT_EQ(4u,
                   session.Engine()->config.dynamicRoutePlanPoolCapacity);

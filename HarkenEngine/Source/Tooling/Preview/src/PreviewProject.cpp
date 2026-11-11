@@ -137,7 +137,7 @@ bool ValidateVolumePublication(const VnPreviewProjectDescV2& desc,
                                 bool authoredSends = false,
                                 const VnPreviewProjectDescV4* effects = nullptr) {
     const auto& base = desc.base;
-    if (base.busCount < 2 || base.busCount > engine.config.maxBuses ||
+    if (base.busCount == 0 || base.busCount > engine.config.maxBuses ||
         base.busCount > 4096 || base.buses == nullptr || desc.busVolumes == nullptr ||
         desc.busVolumeCount != base.busCount ||
         base.sendCount > static_cast<std::uint64_t>(base.busCount) *
@@ -264,12 +264,13 @@ bool ValidateVolumePublication(const VnPreviewProjectDescV2& desc,
             if (effects->busFaderAfterSlots[i] != harken::busfingerprint::kNeutralFaderAfterSlotV1)
                 return false;
             auto& row = image.busDefinitionBusesV2.back();
-            row.effectFirst = root ? 0 : effectEnd;
+            row.effectFirst = root && (effectEnd == effects->busEffectCount ||
+                effects->busEffects[effectEnd].busId != bus.id) ? 0 : effectEnd;
             while (effectEnd < effects->busEffectCount &&
                    effects->busEffects[effectEnd].busId == bus.id) {
-                if (root || (row.effectCount != 0 &&
+                if (row.effectCount != 0 &&
                     effects->busEffects[effectEnd - 1].slot >=
-                    effects->busEffects[effectEnd].slot)) return false;
+                    effects->busEffects[effectEnd].slot) return false;
                 ++row.effectCount;
                 ++effectEnd;
             }
@@ -357,6 +358,7 @@ VnPreviewPrepareStatus PrepareProjectImpl(
         }
         if (effects) {
             view.forceWorldReplacement = effects->forceWorldReplacement != 0;
+            view.busFaderPositions = {effects->busFaderAfterSlots, effects->busFaderCount};
             for (std::uint32_t i = 0; i < effects->busEffectCount; ++i) {
                 const auto& row = effects->busEffects[i];
                 project->effects.push_back({row.busId, row.effectId, row.slot, row.effectType,

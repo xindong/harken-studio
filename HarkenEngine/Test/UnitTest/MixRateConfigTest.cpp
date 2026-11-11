@@ -187,26 +187,18 @@ TEST(MixRateConfig, ProductionDefaultAndSupportedOptInRates) {
 }
 
 TEST(MixRateConfig,
-     InitialDeviceRateRerunsDerivedBudgetsWithoutPollutingOutput) {
+     InitialDeviceRateDoesNotTreatEffectQuotaAsPreallocatedMemory) {
     VnConfig config = MakeConfig(VN_DEVICE_REAL, 0);
     config.delayEffectPoolCapacity = 64;
-
-    harken::EngineConfig fallback;
-    ASSERT_EQ(VN_OK, harken::ResolveConfig(&config, &fallback));
-    ASSERT_EQ(48000u, fallback.mixRate.SampleRate());
-
-    VnConfig sentinelConfig = MakeConfig(VN_DEVICE_NULL, 44100);
     harken::EngineConfig output;
-    ASSERT_EQ(VN_OK, harken::ResolveConfig(&sentinelConfig, &output));
-    output.topologyPlanPoolBytes = 987654321u;
-
-    EXPECT_EQ(VN_INVALID_CONFIG,
-              harken::ResolveConfigForInitialDevice(
-                  &config, 2, 192000, &output));
-    EXPECT_EQ(44100u, output.mixRate.SampleRate());
-    EXPECT_EQ(harken::MixRateResolution::ExplicitRequest,
+    ASSERT_EQ(VN_OK, harken::ResolveConfig(&config, &output));
+    ASSERT_EQ(48000u, output.mixRate.SampleRate());
+    ASSERT_EQ(VN_OK, harken::ResolveConfigForInitialDevice(
+        &config, 2, 192000, &output));
+    EXPECT_EQ(192000u, output.mixRate.SampleRate());
+    EXPECT_EQ(harken::MixRateResolution::InitialDeviceObservation,
               output.mixRate.Resolution());
-    EXPECT_EQ(987654321u, output.topologyPlanPoolBytes);
+    EXPECT_EQ(64u, output.delayEffectPoolCapacity);
 }
 
 TEST(MixRateConfig,
@@ -304,11 +296,10 @@ TEST_F(MixRateDeviceTest,
 }
 
 TEST_F(MixRateDeviceTest,
-       InvalidObservedRateBudgetFailsBeforePublishingOrOpeningDevice) {
+       InvalidObservedRateFailsBeforePublishingOrOpeningDevice) {
     deviceState.querySucceeds = true;
-    deviceState.querySampleRate = 192000;
+    deviceState.querySampleRate = 384001;
     VnConfig config = MakeConfig(VN_DEVICE_REAL, 0);
-    config.delayEffectPoolCapacity = 64;
 
     EXPECT_EQ(VN_INVALID_CONFIG, Vn_Init(&config));
     EXPECT_EQ(nullptr, harken::detail::ActiveEngine());

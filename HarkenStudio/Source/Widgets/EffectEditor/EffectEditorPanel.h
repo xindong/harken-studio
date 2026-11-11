@@ -13,6 +13,7 @@ namespace VNX {
 
 struct ProjectItem;
 class ParameterSlider;
+class PropertyEditSession;
 
 class EffectEditorPanel final : public QWidget
 {
@@ -55,6 +56,9 @@ private:
     void installFocusFilterRecursively(QObject* root);
     void refreshEffect();
     void cancelPendingEdits();
+    void previewParameter(size_t index, double value);
+    void finishParameter(size_t index, double value, bool committed);
+    void clearParameterPreview();
     void commitParameter(size_t index, double value);
 
     int panelId_ = 0;
@@ -65,6 +69,8 @@ private:
     QWidget* fields_ = nullptr;
     std::array<ParameterSlider*, 2> parameters_{};
     std::unique_ptr<Selection> selection_;
+    std::unique_ptr<PropertyEditSession> editSession_;
+    bool groupPreviewActive_ = false;
     bool updating_ = false;
 };
 

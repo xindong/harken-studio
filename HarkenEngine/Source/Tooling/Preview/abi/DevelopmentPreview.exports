@@ -48,6 +48,7 @@ EXPORTS
     VnPreview_ResetPlayable
     VnPreview_SetBusEffect
     VnPreview_SetVoiceEffect
+    VnPreview_SetVoiceEffectChain
     VnPreview_SetVoiceProperty
     VnPreview_StopPlayable
     VnPreview_TakeChannelPeaks

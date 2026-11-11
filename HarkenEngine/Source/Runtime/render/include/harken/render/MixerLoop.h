@@ -61,8 +61,10 @@ public:
 
     // Renders one block of interleaved output. Runs under the allocation
     // guard's audio-thread tag: no system heap, no locks, no I/O.
+    // A device callback can share one absolute worker-wait cutoff across its
+    // internal blocks. Zero preserves the standalone block-period budget.
     void RenderBlock(float* interleavedOut, std::uint32_t frames,
-                     std::uint32_t channels);
+                     std::uint32_t channels, std::uint64_t workerDeadlineAt = 0);
 
     std::uint64_t BlocksRendered() const {
         return m_blocksRendered.load(std::memory_order_acquire);
@@ -114,6 +116,10 @@ public:
     // The render-worker rendezvous budget in force, in performance-counter
     // ticks. 0 only when the counter rate is unavailable.
     std::uint64_t JobDeadlineTicks() const { return m_jobDeadlineTicks; }
+    // Workload-based wait cutoff for a complete caller request, not a measured
+    // hardware deadline. All staging blocks in that request share this value.
+    std::uint64_t JobDeadlineForRequest(std::uint64_t entryTicks,
+                                      std::uint32_t frames) const noexcept;
 
     // Records the last drain declined to apply, and the most ever declined.
     std::uint32_t CommandsDeferredLastBlock() const {

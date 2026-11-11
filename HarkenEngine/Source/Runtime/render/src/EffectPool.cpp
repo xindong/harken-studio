@@ -11,18 +11,6 @@ namespace harken {
 
 namespace {
 
-// Total instance count across every registered type, from the generated
-// registry rows and the resolved config. Sizes the retire ring so it can hold
-// every instance at once (an instance is on at most one slot, so outstanding
-// retirements never exceed this).
-std::uint32_t TotalInstanceCapacity(const EngineConfig& config) {
-    std::uint32_t total = 0;
-    for (std::uint32_t r = 0; r < kEffectRegistryRowCount; ++r) {
-        total += kEffectRegistry[r].capacity(config);
-    }
-    return total;
-}
-
 // Whole std::max_align_t units needed to hold one instance of `stateBytes`. Each
 // instance occupies whole units, so its base address is max_align_t-aligned —
 // which the registry pins to be at least every state type's alignment.
@@ -34,101 +22,135 @@ std::uint32_t StrideUnits(std::uint32_t stateBytes) {
 
 } // namespace
 
-EffectPoolBank::ExtraStorage::ExtraStorage(std::size_t count) {
-    detail::LogicAllocCheckpoint(detail::LogicAllocSite::EffectExtraStorage);
-    samples.assign(count, 0.0f);
-}
-
-EffectPoolBank::EffectPoolBank(const EngineConfig& config)
-    : m_retire(TotalInstanceCapacity(config)) {
-    m_slots.resize(kEffectRegistryRowCount);
+EffectPoolBank::EffectPoolBank(const EngineConfig& config) {
+    static_assert(std::atomic<std::uint64_t>::is_always_lock_free);
     for (std::uint32_t r = 0; r < kEffectRegistryRowCount; ++r) {
-        const EffectRegistryRow& row = kEffectRegistry[r];
-        PoolTypeSlot& slot = m_slots[r];
-        slot.effectType = row.effectType;
-        slot.capacity = row.capacity(config);
-        slot.strideUnits = StrideUnits(row.stateSize);
-        slot.registry = &row;
+        const auto& registry = kEffectRegistry[r];
+        auto& slot = m_slots[r];
+        slot.effectType = registry.effectType;
+        slot.configuredLimit = registry.capacity(config);
+        slot.strideUnits = StrideUnits(registry.stateSize);
+        slot.registry = &registry;
         slot.sampleRate = config.mixRate.SampleRate();
-
-        // Type-erased instance storage: capacity * strideUnits max_align_t units,
-        // zero-filled before construction. Every instance base is aligned to
-        // alignof(std::max_align_t) (>= the state's alignment, pinned by the
-        // registry static_asserts).
-        slot.storage.assign(static_cast<std::size_t>(slot.capacity) *
-                                slot.strideUnits,
-                            std::max_align_t{});
-
-        slot.extraFramesPerChannel = row.extraFramesPerChannel(config);
-        if (slot.extraFramesPerChannel != 0 && slot.capacity != 0) {
-            slot.extra = std::make_unique<ExtraStorageTable>();
-            if (!slot.extra->Reserve(slot.capacity)) throw std::bad_alloc{};
-        }
-
-        slot.freeList.reserve(slot.capacity);
-        slot.generations.assign(slot.capacity, 0);
-        slot.states = std::make_unique<std::atomic<InstanceState>[]>(slot.capacity);
-        for (std::uint32_t i = 0; i < slot.capacity; ++i) {
-            slot.states[i].store(InstanceState::Free, std::memory_order_relaxed);
-        }
-        slot.identities.resize(slot.capacity);
-        slot.installed.assign(slot.capacity, 0);
-        if (row.effectType == VN_EFFECT_COMPRESSOR) {
-            slot.compressorRuntime =
-                std::make_unique<
-                    EffectPoolBank::PoolTypeSlot::CompressorRuntimeSlot[]>(
-                    slot.capacity);
-        }
-        for (std::uint32_t i = 0; i < slot.capacity; ++i) {
-            row.initInstance(slot.StateAt(i), nullptr, 0, slot.sampleRate);
-            // Push in reverse so the first acquisitions hand out ascending
-            // indices (0, 1, 2, ...) — friendlier to read in snapshots and
-            // tests.
-            slot.freeList.push_back(slot.capacity - 1 - i);
-        }
+        slot.extraFramesPerChannel = registry.extraFramesPerChannel(config);
     }
 }
 
-bool EffectPoolBank::EnsureExtraBacking(PoolTypeSlot& slot, std::uint32_t index) noexcept {
-    if (slot.extra == nullptr) return true;
-    const auto available = [&](const ExtraStorage& row) noexcept {
-        return slot.states[slot.extra->IndexOf(row)].load(std::memory_order_acquire) == InstanceState::Free;
-    };
-    const auto construct = [&](std::uint32_t candidate) noexcept {
-        return slot.extra->Emplace(candidate, static_cast<std::size_t>(slot.extraFramesPerChannel) * kMaxChannels);
-    };
-    return construct(index) && slot.extra->ProtectBackingForAcquire(index, available, construct);
+EffectPoolBank::~EffectPoolBank() {
+    for (const auto& slot : m_slots)
+        assert(slot.backingGrowth.heldRows == 0 && slot.backingGrowth.preparedUsers == 0);
+}
+
+bool EffectPoolBank::GrowBacking(PoolTypeSlot& slot, std::uint32_t count) noexcept {
+    if (count <= slot.readyCount) return true;
+    if (memguard::IsAudioTagged() || slot.backingGrowth.preparedUsers != 0) return false;
+    const auto sampleCount = static_cast<std::uint64_t>(slot.extraFramesPerChannel) * kMaxChannels;
+    if (sampleCount > static_cast<std::size_t>(PTRDIFF_MAX) / sizeof(float)) return false;
+    try {
+        if (count > slot.freeList.capacity()) {
+            detail::LogicAllocCheckpoint(detail::LogicAllocSite::EffectInstanceStorage);
+            const auto reserve = std::max<std::uint64_t>(count,
+                std::min<std::uint64_t>(UINT32_MAX, slot.freeList.capacity() * 2ull));
+            slot.freeList.reserve(static_cast<std::size_t>(reserve));
+        }
+        if (!slot.rows.ConstructThrough(count)) return false;
+        while (slot.readyCount < count) {
+            const auto index = slot.readyCount;
+            auto& row = slot.rows[index];
+            const auto laneIndex = std::bit_width(static_cast<std::uint64_t>(index) + 1u) - 1u;
+            auto& lane = slot.retireLanes[laneIndex];
+            if (!lane) {
+                detail::LogicAllocCheckpoint(detail::LogicAllocSite::EffectRetireStorage);
+                lane = std::make_unique<EffectRetireQueue>(UINT32_C(1) << laneIndex);
+            }
+            if (row.storage.empty()) {
+                detail::LogicAllocCheckpoint(detail::LogicAllocSite::EffectInstanceStorage);
+                row.storage.assign(slot.strideUnits, std::max_align_t{});
+            }
+            if (sampleCount != 0 && row.extra.empty()) {
+                detail::LogicAllocCheckpoint(detail::LogicAllocSite::EffectExtraStorage);
+                row.extra.assign(static_cast<std::size_t>(sampleCount), 0.0f);
+            }
+            if (slot.effectType == VN_EFFECT_COMPRESSOR && !row.compressorRuntime) {
+                detail::LogicAllocCheckpoint(detail::LogicAllocSite::EffectInstanceStorage);
+                row.compressorRuntime = std::make_unique<CompressorRuntimeSlot>();
+            }
+            slot.registry->initInstance(row.storage.data(),
+                row.extra.empty() ? nullptr : row.extra.data(),
+                slot.extraFramesPerChannel, slot.sampleRate);
+            row.retireLane = lane.get();
+            // Metadata alone is not an issuable instance. Publish availability
+            // only after every dependency is ready, retaining caches on failure.
+            slot.freeList.push_back(index);
+            ++slot.readyCount;
+        }
+        return true;
+    } catch (...) { return false; }
+}
+
+bool EffectPoolBank::EnsureBacking(PoolTypeSlot& slot, std::uint64_t count) noexcept {
+    if (memguard::IsAudioTagged() || slot.backingGrowth.preparedUsers != 0) return false;
+    const auto occupied = slot.OccupiedRows();
+    const auto held = slot.backingGrowth.heldRows;
+    std::uint64_t target = 0;
+    if (slot.configuredLimit != 0) {
+        // Explicit quotas saturate physical preparation, not logical admission.
+        target = std::min<std::uint64_t>(slot.configuredLimit,
+            occupied + std::min<std::uint64_t>(held, slot.configuredLimit) +
+            std::min<std::uint64_t>(count, slot.configuredLimit));
+    } else {
+        if (count > UINT32_MAX || held > UINT32_MAX - count ||
+            occupied > UINT32_MAX - count - held) return false;
+        target = occupied + held + count;
+    }
+    return GrowBacking(slot, static_cast<std::uint32_t>(target));
+}
+
+bool EffectPoolBank::CanAdmit(std::uint32_t type, std::uint64_t count) const noexcept {
+    const auto* slot = SlotFor(type);
+    if (slot == nullptr) return false;
+    if (slot->backingGrowth.preparedUsers != 0) return count <= slot->freeList.size();
+    const auto limit = slot->configuredLimit == 0 ? UINT32_MAX : slot->configuredLimit;
+    const auto occupied = slot->OccupiedRows();
+    return occupied <= limit && count <= limit - occupied;
+}
+
+bool EffectPoolBank::EnsureAvailable(std::uint32_t type, std::uint64_t count) noexcept {
+    auto* slot = SlotFor(type);
+    if (slot == nullptr || !CanAdmit(type, count)) return false;
+    if (slot->backingGrowth.preparedUsers != 0) return true;
+    return EnsureBacking(*slot, count);
 }
 
 bool EffectPoolBank::PrepareBacking(const BackingDemand& demand, BackingPreparation* out) noexcept {
-    if (out == nullptr) return false;
+    if (out == nullptr || memguard::IsAudioTagged()) return false;
     for (const auto& column : *out) if (column.Valid()) return false;
+    BackingPreparation prepared;
     for (std::uint32_t type = 0; type < m_slots.size(); ++type) {
         auto& slot = m_slots[type];
-        if (slot.extra == nullptr) continue;
-        const auto available = [&](const ExtraStorage& row) noexcept {
-            return slot.states[slot.extra->IndexOf(row)].load(std::memory_order_acquire) == InstanceState::Free;
-        };
-        const auto construct = [&](std::uint32_t candidate) noexcept {
-            return slot.extra->Emplace(candidate, static_cast<std::size_t>(slot.extraFramesPerChannel) * kMaxChannels);
-        };
-        if (!slot.extra->PrepareBacking(static_cast<std::uint32_t>(
-                std::min<std::uint64_t>(demand[type], slot.capacity)), 0, available, construct, &(*out)[type]))
-            return false;
+        const auto count = slot.configuredLimit != 0
+            ? std::min<std::uint64_t>(demand[type], slot.configuredLimit) : demand[type];
+        if (count > UINT32_MAX || slot.backingGrowth.heldRows > UINT64_MAX - count ||
+            !EnsureBacking(slot, count)) return false;
+        slot.backingGrowth.heldRows += count;
+        prepared[type].state_ = &slot.backingGrowth;
+        prepared[type].count_ = static_cast<std::uint32_t>(count);
     }
+    *out = std::move(prepared);
     return true;
 }
 
 EffectPoolBank::BackingUse EffectPoolBank::UseBacking(const BackingPreparation* backing) noexcept {
     return [&]<std::size_t... Index>(std::index_sequence<Index...>) {
-        return BackingUse{(backing == nullptr ? ExtraStorageTable::PreparedUse{} : (*backing)[Index].Use())...};
+        return BackingUse{(backing == nullptr ? StableStoragePreparedUse{} : (*backing)[Index].Use())...};
     }(std::make_index_sequence<kEffectRegistryRowCount>{});
 }
 
 EffectPoolBank::PreparedCommitProof::PreparedCommitProof(
     PreparedCommitProof&& other) noexcept
     : m_slot(std::exchange(other.m_slot, nullptr)),
-      m_state(std::exchange(other.m_state, nullptr)) {}
+      m_state(std::exchange(other.m_state, nullptr)),
+      m_ref(std::exchange(other.m_ref, {})) {}
 
 EffectPoolBank::PreparedCommitProof&
 EffectPoolBank::PreparedCommitProof::operator=(PreparedCommitProof&& other) noexcept {
@@ -136,6 +158,7 @@ EffectPoolBank::PreparedCommitProof::operator=(PreparedCommitProof&& other) noex
         Release();
         m_slot = std::exchange(other.m_slot, nullptr);
         m_state = std::exchange(other.m_state, nullptr);
+        m_ref = std::exchange(other.m_ref, {});
     }
     return *this;
 }
@@ -146,6 +169,7 @@ void EffectPoolBank::PreparedCommitProof::Release() {
     }
     m_slot = nullptr;
     m_state = nullptr;
+    m_ref = {};
 }
 
 void EffectPoolBank::PreparedCommitProof::Consume() && {
@@ -156,43 +180,29 @@ void EffectPoolBank::PreparedCommitProof::Consume() && {
     m_state->store(InstanceState::Live, std::memory_order_release);
     m_slot = nullptr;
     m_state = nullptr;
+    m_ref = {};
 }
 
 EffectInstanceRef EffectPoolBank::AcquireWithState(
     std::uint32_t type, EffectObjectIdentity identity, InstanceState state) {
     PoolTypeSlot* slot = SlotFor(type);
     if (slot == nullptr) { return {}; }
-    if (slot->freeList.empty()) {
+    if (!EnsureAvailable(type, 1)) {
         ++slot->refusalCount;
         return {};
     }
-    auto free = slot->freeList.end() - 1;
-    if (slot->extra != nullptr && slot->extra->PreparedUseActive()) {
-        const auto prepared = std::find_if(slot->freeList.rbegin(), slot->freeList.rend(),
-            [&](std::uint32_t index) { return slot->extra->IsConstructed(index); });
-        if (prepared == slot->freeList.rend()) return {};
-        free = prepared.base() - 1;
-    }
-    const std::uint32_t idx = *free;
-    if (!EnsureExtraBacking(*slot, idx)) return {};
-    if (slot->extra != nullptr && !(*slot->extra)[idx].initialized) {
-        auto& extra = (*slot->extra)[idx];
-        slot->registry->initInstance(slot->StateAt(idx), extra.samples.data(),
-            slot->extraFramesPerChannel, slot->sampleRate);
-        extra.initialized = true;
-    }
-    *free = slot->freeList.back();
+    const auto idx = slot->freeList.back();
     slot->freeList.pop_back();
     // Only genuinely Free rows enter this freelist. A maximum generation is
     // issued once, then disposal quarantines the row permanently.
-    const std::uint64_t generation = ++slot->generations[idx];
+    const std::uint64_t generation = ++slot->rows[idx].generation;
     ++slot->inUse;
-    slot->identities[idx] = identity;
-    slot->installed[idx] = 0;
+    slot->rows[idx].identity = identity;
+    slot->rows[idx].installed = 0;
     if (state == InstanceState::Live && slot->inUse > slot->highWater) {
         slot->highWater = slot->inUse;
     }
-    slot->states[idx].store(state, std::memory_order_release);
+    slot->rows[idx].state.store(state, std::memory_order_release);
     return EffectInstanceRef{type, idx, generation};
 }
 
@@ -211,25 +221,26 @@ bool EffectPoolBank::ProvePreparedCommit(
     PreparedCommitProof* out) {
     if (out == nullptr || out->Valid()) { return false; }
     PoolTypeSlot* slot = SlotFor(original.type);
-    if (slot == nullptr || original.poolIndex >= slot->capacity ||
+    if (slot == nullptr || original.poolIndex >= slot->readyCount ||
         original.generation == 0) { return false; }
     const std::uint32_t index = original.poolIndex;
-    if (slot->states[index].load(std::memory_order_acquire) != InstanceState::Prepared ||
-        slot->generations[index] != original.generation || slot->installed[index] != 0 ||
-        slot->identities[index].effectId != originalIdentity.effectId ||
-        slot->identities[index].projectId != originalIdentity.projectId) { return false; }
+    if (slot->rows[index].state.load(std::memory_order_acquire) != InstanceState::Prepared ||
+        slot->rows[index].generation != original.generation || slot->rows[index].installed != 0 ||
+        slot->rows[index].identity.effectId != originalIdentity.effectId ||
+        slot->rows[index].identity.projectId != originalIdentity.projectId) { return false; }
     InstanceState expected = InstanceState::Prepared;
-    if (!slot->states[index].compare_exchange_strong(
+    if (!slot->rows[index].state.compare_exchange_strong(
             expected, InstanceState::PreparedCommitHeld,
             std::memory_order_acq_rel, std::memory_order_acquire)) { return false; }
-    if (slot->generations[index] != original.generation || slot->installed[index] != 0 ||
-        slot->identities[index].effectId != originalIdentity.effectId ||
-        slot->identities[index].projectId != originalIdentity.projectId) {
-        slot->states[index].store(InstanceState::Prepared, std::memory_order_release);
+    if (slot->rows[index].generation != original.generation || slot->rows[index].installed != 0 ||
+        slot->rows[index].identity.effectId != originalIdentity.effectId ||
+        slot->rows[index].identity.projectId != originalIdentity.projectId) {
+        slot->rows[index].state.store(InstanceState::Prepared, std::memory_order_release);
         return false;
     }
     out->m_slot = slot;
-    out->m_state = &slot->states[index];
+    out->m_state = &slot->rows[index].state;
+    out->m_ref = original;
     return true;
 }
 
@@ -238,56 +249,51 @@ bool EffectPoolBank::CaptureOriginalPreparedEffect(const PreparedCommitProof& pr
     if (!proof.Valid() || out == nullptr ||
         proof.m_state->load(std::memory_order_acquire) != InstanceState::PreparedCommitHeld)
         return false;
-    for (const auto& slot : m_slots) {
-        if (&slot != proof.m_slot) continue;
-        const auto index = static_cast<std::uint32_t>(proof.m_state - slot.states.get());
-        if (index >= slot.capacity) return false;
-        *out = {slot.effectType, index, slot.generations[index]};
-        return true;
-    }
-    return false;
+    if (SlotFor(proof.m_ref.type) != proof.m_slot) return false;
+    *out = proof.m_ref;
+    return true;
 }
 
 bool EffectPoolBank::CommitPrepared(const EffectInstanceRef& ref) {
     PoolTypeSlot* slot = SlotFor(ref.type);
-    if (slot == nullptr || ref.poolIndex >= slot->capacity || ref.generation == 0 ||
-        slot->states[ref.poolIndex].load(std::memory_order_acquire) != InstanceState::Prepared ||
-        slot->generations[ref.poolIndex] != ref.generation) { return false; }
+    if (slot == nullptr || ref.poolIndex >= slot->readyCount || ref.generation == 0 ||
+        slot->rows[ref.poolIndex].state.load(std::memory_order_acquire) != InstanceState::Prepared ||
+        slot->rows[ref.poolIndex].generation != ref.generation) { return false; }
     if (slot->inUse > slot->highWater) { slot->highWater = slot->inUse; }
-    slot->states[ref.poolIndex].store(InstanceState::Live, std::memory_order_release);
+    slot->rows[ref.poolIndex].state.store(InstanceState::Live, std::memory_order_release);
     return true;
 }
 
 bool EffectPoolBank::CancelPrepared(const EffectInstanceRef& ref) {
     PoolTypeSlot* slot = SlotFor(ref.type);
-    if (slot == nullptr || ref.poolIndex >= slot->capacity || ref.generation == 0 ||
-        slot->states[ref.poolIndex].load(std::memory_order_acquire) != InstanceState::Prepared ||
-        slot->generations[ref.poolIndex] != ref.generation || slot->inUse == 0) { return false; }
+    if (slot == nullptr || ref.poolIndex >= slot->readyCount || ref.generation == 0 ||
+        slot->rows[ref.poolIndex].state.load(std::memory_order_acquire) != InstanceState::Prepared ||
+        slot->rows[ref.poolIndex].generation != ref.generation || slot->inUse == 0) { return false; }
     Dispose(*slot, ref);
     return true;
 }
 
 void EffectPoolBank::Dispose(PoolTypeSlot& slot, const EffectInstanceRef& ref) {
-    slot.identities[ref.poolIndex] = {};
-    slot.installed[ref.poolIndex] = 0;
+    slot.rows[ref.poolIndex].identity = {};
+    slot.rows[ref.poolIndex].installed = 0;
     --slot.inUse;
     if (ref.generation == std::numeric_limits<std::uint64_t>::max()) {
-        slot.states[ref.poolIndex].store(InstanceState::Exhausted, std::memory_order_release);
+        slot.rows[ref.poolIndex].state.store(InstanceState::Exhausted, std::memory_order_release);
     } else {
-        slot.states[ref.poolIndex].store(InstanceState::Free, std::memory_order_release);
-        // Init reserved the full capacity; a row can be disposed only once.
+        slot.rows[ref.poolIndex].state.store(InstanceState::Free, std::memory_order_release);
+        // Growth reserves freelist space before issuing any row.
         slot.freeList.push_back(ref.poolIndex);
     }
 }
 
 void EffectPoolBank::Recycle(const EffectInstanceRef& ref) {
     PoolTypeSlot* slot = SlotFor(ref.type);
-    if (slot == nullptr || ref.poolIndex >= slot->capacity || ref.generation == 0) { return; }
-    const InstanceState state = slot->states[ref.poolIndex].load(std::memory_order_acquire);
-    if ((state != InstanceState::Live && state != InstanceState::Prepared) ||
-        slot->generations[ref.poolIndex] != ref.generation || slot->inUse == 0) { return; }
-    if (slot->installed[ref.poolIndex] != 0) {
-        const EffectObjectIdentity identity = slot->identities[ref.poolIndex];
+    if (slot == nullptr || ref.poolIndex >= slot->readyCount || ref.generation == 0) { return; }
+    const InstanceState state = slot->rows[ref.poolIndex].state.load(std::memory_order_acquire);
+    if ((state != InstanceState::Live && state != InstanceState::Prepared && state != InstanceState::Retired) ||
+        slot->rows[ref.poolIndex].generation != ref.generation || slot->inUse == 0) { return; }
+    if (slot->rows[ref.poolIndex].installed != 0) {
+        const EffectObjectIdentity identity = slot->rows[ref.poolIndex].identity;
         MonitorLifecycleFacts facts{};
         facts.projectId = identity.projectId;
         ObserveMonitorLifecycle(MonitorLifecyclePhase::EffectReleased,
@@ -299,38 +305,59 @@ void EffectPoolBank::Recycle(const EffectInstanceRef& ref) {
         auto* state = static_cast<CompressorState*>(slot->StateAt(ref.poolIndex));
         const std::uint32_t sampleRate = state->sampleRate;
         CompressorInit(state, sampleRate);
-        if (slot->compressorRuntime != nullptr) {
-            slot->compressorRuntime[ref.poolIndex].lastCoherent = CompressorRuntimePayload{};
+        if (slot->rows[ref.poolIndex].compressorRuntime != nullptr) {
+            slot->rows[ref.poolIndex].compressorRuntime->lastCoherent = CompressorRuntimePayload{};
         }
     }
     Dispose(*slot, ref);
 }
 
-void EffectPoolBank::DrainRetire() {
+bool EffectPoolBank::Retire(const EffectInstanceRef& ref) noexcept {
+    auto* slot = SlotFor(ref.type);
+    auto* row = slot == nullptr ? nullptr : slot->rows.TryAt(ref.poolIndex);
+    if (row == nullptr || ref.generation == 0 || ref.generation <= row->retiredGeneration)
+        return true;
+    if (row->state.load(std::memory_order_acquire) != InstanceState::Live ||
+        row->generation.load(std::memory_order_acquire) != ref.generation) return true;
+    // Only the mixer owns published instances. An earlier retirement is caught
+    // above before logic can recycle the row into a new Live generation.
+    const auto previous = row->retiredGeneration;
+    row->state.store(InstanceState::Retired, std::memory_order_release);
+    row->retiredGeneration = ref.generation;
+    if (row->retireLane->TryPush(ref)) return true;
+    // A lane holds every row assigned to it; full implies a broken invariant.
+    row->retiredGeneration = previous;
+    row->state.store(InstanceState::Live, std::memory_order_release);
+    return false;
+}
+
+std::uint64_t EffectPoolBank::DrainRetire() {
     EffectInstanceRef ref;
-    while (m_retire.TryPop(ref)) {
-        Recycle(ref);
-    }
+    std::uint64_t count = 0;
+    for (auto& slot : m_slots)
+        for (const auto& lane : slot.retireLanes)
+            if (lane) while (lane->TryPop(ref)) { Recycle(ref); ++count; }
+    return count;
 }
 
 EffectObjectIdentity EffectPoolBank::ObjectIdentity(const EffectInstanceRef& ref) const {
     const PoolTypeSlot* slot = SlotFor(ref.type);
-    if (slot == nullptr || ref.poolIndex >= slot->capacity || ref.generation == 0 ||
-        slot->generations[ref.poolIndex] != ref.generation) return {};
-    const InstanceState state = slot->states[ref.poolIndex].load(std::memory_order_acquire);
+    if (slot == nullptr || ref.poolIndex >= slot->readyCount || ref.generation == 0 ||
+        slot->rows[ref.poolIndex].generation != ref.generation) return {};
+    const InstanceState state = slot->rows[ref.poolIndex].state.load(std::memory_order_acquire);
     if (state != InstanceState::Prepared && state != InstanceState::PreparedCommitHeld &&
         state != InstanceState::Live) return {};
-    return slot->identities[ref.poolIndex];
+    return slot->rows[ref.poolIndex].identity;
 }
 
 void EffectPoolBank::PublishInstalled(const EffectInstanceRef& ref) {
     PoolTypeSlot* slot = SlotFor(ref.type);
-    if (slot == nullptr || ref.poolIndex >= slot->capacity || ref.generation == 0 ||
-        slot->generations[ref.poolIndex] != ref.generation ||
-        slot->states[ref.poolIndex].load(std::memory_order_acquire) != InstanceState::Live ||
-        slot->installed[ref.poolIndex] != 0) return;
-    slot->installed[ref.poolIndex] = 1;
-    const EffectObjectIdentity identity = slot->identities[ref.poolIndex];
+    if (slot == nullptr || ref.poolIndex >= slot->readyCount || ref.generation == 0 ||
+        slot->rows[ref.poolIndex].generation != ref.generation ||
+        slot->rows[ref.poolIndex].state.load(std::memory_order_acquire) != InstanceState::Live ||
+        slot->rows[ref.poolIndex].installed != 0) return;
+    slot->rows[ref.poolIndex].installed = 1;
+    const EffectObjectIdentity identity = slot->rows[ref.poolIndex].identity;
     MonitorLifecycleFacts facts{};
     facts.projectId = identity.projectId;
     ObserveMonitorLifecycle(MonitorLifecyclePhase::EffectInstalled,
@@ -340,40 +367,39 @@ void EffectPoolBank::PublishInstalled(const EffectInstanceRef& ref) {
 }
 
 void* EffectPoolBank::StateFor(std::uint32_t type, std::uint32_t index) {
-    PoolTypeSlot* slot = SlotFor(type);
-    if (slot == nullptr || index >= slot->capacity) {
-        return nullptr;
-    }
-    const InstanceState state = slot->states[index].load(std::memory_order_acquire);
-    if (state != InstanceState::Prepared && state != InstanceState::Live) { return nullptr; }
-    return slot->StateAt(index);
+    auto* slot = SlotFor(type);
+    auto* row = slot == nullptr ? nullptr : slot->rows.TryAt(index);
+    if (row == nullptr) return nullptr;
+    const auto state = row->state.load(std::memory_order_acquire);
+    if (state != InstanceState::Prepared && state != InstanceState::Live) return nullptr;
+    return row->storage.data();
 }
 
 void* EffectPoolBank::LiveStateFor(const EffectInstanceRef& ref) {
-    PoolTypeSlot* slot = SlotFor(ref.type);
-    if (slot == nullptr || ref.poolIndex >= slot->capacity || ref.generation == 0 ||
-        slot->states[ref.poolIndex].load(std::memory_order_acquire) != InstanceState::Live ||
-        slot->generations[ref.poolIndex] != ref.generation) { return nullptr; }
-    return slot->StateAt(ref.poolIndex);
+    auto* slot = SlotFor(ref.type);
+    auto* row = slot == nullptr ? nullptr : slot->rows.TryAt(ref.poolIndex);
+    if (row == nullptr || ref.generation == 0 ||
+        row->state.load(std::memory_order_acquire) != InstanceState::Live ||
+        row->generation.load(std::memory_order_acquire) != ref.generation) return nullptr;
+    return row->storage.data();
 }
 
 void EffectPoolBank::PublishCompressorRuntime(
     const EffectInstanceRef& ref,
     const CompressorRuntimePayload& payload) {
     PoolTypeSlot* slot = SlotFor(VN_EFFECT_COMPRESSOR);
-    if (slot == nullptr || ref.type != VN_EFFECT_COMPRESSOR ||
-        ref.poolIndex >= slot->capacity ||
-        slot->compressorRuntime == nullptr ||
-        ref.generation == 0 ||
-        slot->states[ref.poolIndex].load(std::memory_order_acquire) != InstanceState::Live ||
-        slot->generations[ref.poolIndex] != ref.generation) {
+    auto* row = slot == nullptr ? nullptr : slot->rows.TryAt(ref.poolIndex);
+    if (row == nullptr || ref.type != VN_EFFECT_COMPRESSOR || ref.generation == 0 ||
+        row->state.load(std::memory_order_acquire) != InstanceState::Live ||
+        row->generation.load(std::memory_order_acquire) != ref.generation ||
+        row->compressorRuntime == nullptr) {
         return;
     }
     CompressorRuntimePayload& write =
-        slot->compressorRuntime[ref.poolIndex].published.BeginWrite();
+        row->compressorRuntime->published.BeginWrite();
     write = payload;
     write.poolGeneration = ref.generation;
-    slot->compressorRuntime[ref.poolIndex].published.EndWrite();
+    row->compressorRuntime->published.EndWrite();
     m_audioCompressorDetectorNonFiniteCount +=
         payload.detectorNonFiniteCount;
     m_audioCompressorDetectorSaturationCount +=
@@ -387,17 +413,15 @@ bool EffectPoolBank::CaptureCompressorRuntime(
         return false;
     }
     PoolTypeSlot* slot = SlotFor(VN_EFFECT_COMPRESSOR);
-    if (slot == nullptr || ref.type != VN_EFFECT_COMPRESSOR ||
-        ref.poolIndex >= slot->capacity ||
-        slot->compressorRuntime == nullptr ||
-        ref.generation == 0 ||
-        slot->states[ref.poolIndex].load(std::memory_order_acquire) != InstanceState::Live ||
-        slot->generations[ref.poolIndex] != ref.generation) {
+    auto* row = slot == nullptr ? nullptr : slot->rows.TryAt(ref.poolIndex);
+    if (row == nullptr || ref.type != VN_EFFECT_COMPRESSOR || ref.generation == 0 ||
+        row->state.load(std::memory_order_acquire) != InstanceState::Live ||
+        row->generation.load(std::memory_order_acquire) != ref.generation ||
+        row->compressorRuntime == nullptr) {
         *out = CompressorRuntimePayload{};
         return false;
     }
-    PoolTypeSlot::CompressorRuntimeSlot& runtime =
-        slot->compressorRuntime[ref.poolIndex];
+    CompressorRuntimeSlot& runtime = *row->compressorRuntime;
     CompressorRuntimePayload captured = runtime.lastCoherent;
     const bool coherent = runtime.published.Capture(captured);
     if (coherent) {

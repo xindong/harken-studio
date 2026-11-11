@@ -27,6 +27,7 @@
 #include "harken/core/SourceCursorMirror.h"
 #include "harken/core/SourceTerminalRecord.h"
 #include "harken/core/StableRowStorage.h"
+#include "harken/render/EffectChainUpdate.h"
 #include "harken/core/StableSlotStorage.h"
 #include "harken/core/TimelineArmTable.h"
 #include "harken/core/VariableReadCut.h"
@@ -744,6 +745,19 @@ public:
         m_streamSeekHandoffs = table;
     }
 
+    // Complete Preview-chain transaction; only the synchronized logic caller
+    // prepares/cancels, and only the mixer consumes or retires published rows.
+    VnResult PrepareEffectChainUpdate(VnVoiceHandle handle,
+        const std::array<PreviewEffectChainEntry, kMaxFxSlotsPerVoice>& targets,
+        const std::array<EffectInstanceRef, kMaxFxSlotsPerVoice>& currentRefs,
+        const std::array<std::uint8_t, kMaxFxSlotsPerVoice>& parameterMask,
+        std::uint32_t bypassMask, VnObjectId projectId, EffectChainUpdate** out) noexcept;
+    void QueueEffectChainUpdate(EffectChainUpdate& update) noexcept;
+    void CancelEffectChainUpdate(EffectChainUpdate& update) noexcept;
+    void ApplyEffectChainUpdate(VnVoiceHandle handle, std::uint64_t revision) noexcept;
+    void DrainEffectChainUpdates() noexcept;
+    void ServiceEffectChainRetirements() noexcept;
+
     // Resolves a handle to its live slot; nullptr when the handle is stale.
     // Internal surface (host/tests); public operations go through play/stop.
     // On the logic thread the pointer may be used only as a liveness
@@ -1085,6 +1099,8 @@ private:
         std::atomic<std::uint64_t> resyncRequestFrame{0};
         std::atomic<std::uint64_t> resyncRequestToken{0};
         mutable std::atomic<std::uint64_t> renderedState{0};
+        std::atomic<EffectChainUpdate*> effectChainUpdate{nullptr};
+        std::atomic<std::uint32_t> sourceChannels{0};
         VoiceRenderContext render;
         // Only logic resizes this storage while the slot is private. Physical
         // release leaves capacity available for reuse; audio never frees it.
@@ -1230,6 +1246,10 @@ private:
     OriginalVoiceDisposal TryDisposeOriginalTimelineVoiceImpl(
         const OriginalVoiceOwner& owner, ReleaseThread thread) noexcept;
     void ReleaseSlot(Slot& slot, ReleaseThread thread);
+    void FinishEffectChainTransition(Slot& slot) noexcept;
+    void ReleaseEffectChainTransition(Slot& slot, ReleaseThread thread) noexcept;
+    void RetireEffectChainReferences(EffectChainUpdate& update, ReleaseThread thread) noexcept;
+    void ShutdownEffectChainUpdates() noexcept;
     void PublishStreamObservation(Slot& slot, std::uint64_t blockIndex) noexcept;
     void PublishSourceTerminal(Slot& slot, std::uint64_t blockIndex) noexcept;
     void PublishPlaybackEnd(Slot& slot, std::uint64_t blockIndex) noexcept;
@@ -1292,6 +1312,7 @@ private:
     std::uint64_t m_nextOriginalBodyMarker = 1;
     bool m_originalBodyMarkerExhausted = false;
     bool m_originalBodyShutdown = false;
+    std::atomic<std::uint32_t> m_pendingEffectChains{0};
     StableRowStorage<Slot> m_slots;
     static void FillSourceCursor(const Slot& slot, SlotState state,
         SourceCursorMirror::Row& row, std::uint64_t serial, bool captureParking) noexcept;

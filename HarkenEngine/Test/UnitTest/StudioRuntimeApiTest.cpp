@@ -1,13 +1,14 @@
 #include <harken/Harken.h>
-#include "UnitTest/ObjectIdTestSupport.h"
+#include "Common/ObjectIdTestSupport.h"
 #include "UnitTest/StudioObjectIdTestSupport.h"
-#include "UnitTest/TestUtil.h"
+#include "Common/TestUtil.h"
 #include <harken_preview/PreviewProject.h>
 #include <harken_current_world_compiler/CurrentWorldCompiler.h>
 #include <harken_bus_compiler/BusCompiler.h>
 #include <harken_studio_build/WorldCodec.h>
 #include <harken/core/ChannelLayout.h>
 #include <harken/media/PackLogicImage.h>
+#include <harken/core/PreviewBusEffects.h>
 
 #include <gtest/gtest.h>
 #include <algorithm>
@@ -63,7 +64,7 @@ protected:
         v2.base.compileTargetProfileFingerprint = harken::busfingerprint::ProfileFingerprintV1(
             v2.profileVintage, v2.renderSampleRateHz, v2.mixLayout,
             v2.deviceLayout, v2.runtimeCapabilityMask);
-        harken::PackCanonicalImage image;
+        image = {};
         image.hasBusDefinitionSnapshot = true;
         auto& header = image.busDefinitionSnapshotHeader;
         header.schemaVersion = 2;
@@ -148,6 +149,7 @@ protected:
         return result;
     }
 
+    harken::PackCanonicalImage image;
     VnConfig config{};
     VnPreviewBusV1 master{VN_BUS_MASTER, VN_BUS_MASTER};
     std::array<VnPreviewBusV1, 2> v2Buses{};
@@ -433,12 +435,14 @@ TEST_F(StudioRuntimeApi, EffectPublicationUpdatesAudioAndRetainsOwnedStateAcross
     ASSERT_EQ(VN_PREVIEW_PREPARE_OK, VnPreview_PrepareProjectV4(&pending, &handle));
     const VnLimiterDesc external{sizeof(VnLimiterDesc), 0, harkentest::ObjectId(92),
         -24.0f, 100.0f};
-    ASSERT_EQ(VN_OK, Vn_SetBusEffect(v2Buses[0].id, 1, VN_EFFECT_LIMITER,
+    EXPECT_EQ(VN_IN_USE, Vn_SetBusEffect(v2Buses[0].id, 1, VN_EFFECT_LIMITER,
         reinterpret_cast<const VnEffectDesc*>(&external)));
+    EXPECT_NEAR(retained, peak(), 0.01f);
+    ASSERT_EQ(VN_OK, Vn_SetBusEffectParam(v2Buses[0].id, 0, 0, -24.0f));
     const float externalPeak = peak();
     ASSERT_LT(externalPeak, retained * 0.25f);
     std::uint64_t refusedGeneration = 99;
-    EXPECT_EQ(VN_PREVIEW_COMMIT_BACKPRESSURE,
+    EXPECT_EQ(VN_PREVIEW_COMMIT_INVALID,
         VnPreview_CommitProject(handle, &refusedGeneration));
     EXPECT_EQ(0u, refusedGeneration);
     std::uint64_t ownerRevision = 0;
@@ -447,11 +451,11 @@ TEST_F(StudioRuntimeApi, EffectPublicationUpdatesAudioAndRetainsOwnedStateAcross
     EXPECT_NEAR(externalPeak, peak(), 0.01f);
     VnPreview_CancelProject(handle);
     handle = 0;
-    ASSERT_EQ(VN_OK, Vn_ClearBusEffect(v2Buses[0].id, 1));
+    ASSERT_EQ(VN_OK, Vn_SetBusEffectParam(v2Buses[0].id, 0, 0, -6.0f));
     EXPECT_NEAR(retained, peak(), 0.01f);
 }
 
-TEST_F(StudioRuntimeApi, OversizedPublicationRefusesWithoutBlockingLaterTransactions) {
+TEST_F(StudioRuntimeApi, LowBudgetLimiterPublicationCanCancelWithoutBlockingLaterTransactions) {
     ASSERT_EQ(VN_OK, Vn_Term());
     config.maxControlCommandsPerQuantum = 2;
     config.commandQueueDepth = 256;
@@ -470,15 +474,17 @@ TEST_F(StudioRuntimeApi, OversizedPublicationRefusesWithoutBlockingLaterTransact
     ASSERT_EQ(VN_PREVIEW_COMMIT_OK, VnPreview_CommitProject(handle, &generation));
     handle = 0;
     drain(generation);
-    auto oversized = EffectDesc(-12.0f, 0);
-    auto& requested = oversized.base.base.base;
+    auto limiter = EffectDesc(-12.0f, 0);
+    auto& requested = limiter.base.base.base;
     requested.ownerBaseRevision = 1;
     requested.ownerRevision = 2;
     requested.authoringRevision = 2;
     requested.submissionSerial = 2;
-    EXPECT_EQ(VN_PREVIEW_PREPARE_CAPACITY,
-        VnPreview_PrepareProjectV4(&oversized, &handle));
-    EXPECT_EQ(0u, handle);
+    ASSERT_EQ(VN_PREVIEW_PREPARE_OK,
+        VnPreview_PrepareProjectV4(&limiter, &handle));
+    ASSERT_NE(0u, handle);
+    VnPreview_CancelProject(handle);
+    handle = 0;
     std::uint64_t revision = 0;
     ASSERT_TRUE(VnPreview_QueryOwnerRevision(desc.ownerId, &revision));
     EXPECT_EQ(1u, revision);
@@ -576,6 +582,100 @@ TEST_F(StudioRuntimeApi, EffectPublicationFollowsTopologyOrderAcrossEmptyBuses) 
     EXPECT_TRUE(VnPreview_ProjectIsOpen(generation));
 }
 
+
+TEST_F(StudioRuntimeApi, V4CopiesTypedEffectsAndRejectsInvalidOrUnfingerprintedRows) {
+    VnPreviewProjectDescV4 v4{};
+    v4.base.base = VolumeDesc(5);
+    v4.base.base.base.structSize = sizeof(v4);
+    VnPreviewBusEffectV1 row{v2Buses[0].id, harkentest::ObjectId(100), 0,
+        VN_EFFECT_LIMITER, 2, 0, 0, 2};
+    std::array<VnPreviewBusEffectParameterV1, 2> params{{{0, -12}, {1, 100}}};
+    std::array<std::uint32_t, 2> positions{8, 8};
+    v4.busEffects = &row;
+    v4.busEffectCount = 1;
+    v4.busEffectParameters = params.data();
+    v4.busEffectParameterCount = 2;
+    v4.busFaderAfterSlots = positions.data();
+    v4.busFaderCount = 2;
+    image.busDefinitionSnapshotHeader.effectCount = 1;
+    image.busDefinitionSnapshotHeader.effectParameterCount = 2;
+    image.busDefinitionBusesV2[0].effectCount = 1;
+    image.busDefinitionBusesV2[1].effectFirst = 0;
+    std::array<harken::PreviewBusEffect, 1> rows{{{row.busId, row.effectId, row.slot,
+        row.effectType, row.descriptorVintage, row.flags, 0, 2}}};
+    std::array<harken::PreviewEffectParameter, 2> values{{{0, -12}, {1, 100}}};
+    v4.base.base.base.publishedBusFingerprint = harken::CanonicalVolumeBusFingerprint(image, rows, values);
+    row.flags = 2;
+    EXPECT_EQ(VN_PREVIEW_PREPARE_INVALID, VnPreview_PrepareProjectV4(&v4, &handle));
+    row.flags = 0;
+    params[0].value = 1;
+    EXPECT_EQ(VN_PREVIEW_PREPARE_INVALID, VnPreview_PrepareProjectV4(&v4, &handle));
+    params[0].value = -6;
+    EXPECT_EQ(VN_PREVIEW_PREPARE_INVALID, VnPreview_PrepareProjectV4(&v4, &handle));
+    params[0].value = -12;
+    positions[0] = 7;
+    EXPECT_EQ(VN_PREVIEW_PREPARE_INVALID, VnPreview_PrepareProjectV4(&v4, &handle));
+    positions[0] = 8;
+    ASSERT_EQ(VN_PREVIEW_PREPARE_OK, VnPreview_PrepareProjectV4(&v4, &handle));
+    row = {};
+    params = {};
+    positions = {};
+    std::uint64_t generation = 0;
+    ASSERT_EQ(VN_PREVIEW_COMMIT_OK, VnPreview_CommitProject(handle, &generation));
+    VnPreview_PumpNullMixer(4);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(VN_OK, Vn_SetBusEffectParam(v2Buses[0].id, 0, 0, -6));
+    EXPECT_EQ(VN_OK, Vn_SetBusEffectBypass(v2Buses[0].id, 0, 1));
+    EXPECT_EQ(VN_IN_USE, Vn_ClearBusEffect(v2Buses[0].id, 0));
+}
+
+
+TEST_F(StudioRuntimeApi, V4AcceptsMasterOnlyEffectsAndRejectsZeroBuses) {
+    VnPreviewProjectDescV4 v4{};
+    v4.base.base = VolumeDesc(5);
+    v4.base.base.base.structSize = sizeof(v4);
+    v4.base.base.base.buses = &v2Buses[1];
+    v4.base.base.base.busCount = 1;
+    v4.base.base.busVolumes = &v2Volumes[1];
+    v4.base.base.busVolumeCount = 1;
+    VnPreviewBusEffectV1 row{VN_BUS_MASTER, harkentest::ObjectId(100), 0,
+        VN_EFFECT_LIMITER, 2, 0, 0, 2};
+    std::array<VnPreviewBusEffectParameterV1, 2> params{{{0, -12}, {1, 100}}};
+    std::uint32_t position = 8;
+    v4.busEffects = &row;
+    v4.busEffectCount = 1;
+    v4.busEffectParameters = params.data();
+    v4.busEffectParameterCount = 2;
+    v4.busFaderAfterSlots = &position;
+    v4.busFaderCount = 1;
+    image.busDefinitionSnapshotHeader.busCount = 1;
+    image.busDefinitionSnapshotHeader.effectCount = 1;
+    image.busDefinitionSnapshotHeader.effectParameterCount = 2;
+    image.busDefinitionSnapshotHeader.downmixCount = 1;
+    image.busDefinitionSnapshotHeader.coefficientCount = 64;
+    image.busDefinitionBusesV2.erase(image.busDefinitionBusesV2.begin());
+    image.busDefinitionBusesV2[0].feedsFirstOrdinal = 0;
+    image.busDefinitionBusesV2[0].downmixFirst = 0;
+    image.busDefinitionBusesV2[0].effectCount = 1;
+    image.busDefinitionDownmixesV2.erase(image.busDefinitionDownmixesV2.begin());
+    image.busDefinitionDownmixesV2[0].coefficientFirst = 0;
+    image.busDefinitionCoefficients.resize(64);
+    std::array<harken::PreviewBusEffect, 1> rows{{{row.busId, row.effectId, row.slot,
+        row.effectType, row.descriptorVintage, row.flags, 0, 2}}};
+    std::array<harken::PreviewEffectParameter, 2> values{{{0, -12}, {1, 100}}};
+    v4.base.base.base.publishedBusFingerprint = harken::CanonicalVolumeBusFingerprint(image, rows, values);
+    ASSERT_EQ(VN_PREVIEW_PREPARE_OK, VnPreview_PrepareProjectV4(&v4, &handle));
+    std::uint64_t generation = 0;
+    ASSERT_EQ(VN_PREVIEW_COMMIT_OK, VnPreview_CommitProject(handle, &generation));
+    VnPreview_PumpNullMixer(4);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(VN_OK, Vn_SetBusEffectBypass(VN_BUS_MASTER, 0, 1));
+    v4.base.base.base.busCount = 0;
+    v4.base.base.busVolumeCount = 0;
+    v4.busFaderCount = 0;
+    EXPECT_EQ(VN_PREVIEW_PREPARE_INVALID, VnPreview_PrepareProjectV4(&v4, &handle));
+}
+
 TEST_F(StudioRuntimeApi, InvalidDescriptorsDoNotReserveAHandle) {
     handle = 99;
     EXPECT_NE(VN_PREVIEW_PREPARE_OK, VnPreview_PrepareProject(nullptr, &handle));
@@ -605,6 +705,21 @@ TEST_F(StudioRuntimeApi, InvalidDescriptorsDoNotReserveAHandle) {
     desc.buses = &master;
     desc.busCount = 1;
     ASSERT_EQ(VN_PREVIEW_PREPARE_OK, VnPreview_PrepareProject(&desc, &handle));
+}
+#else
+TEST_F(StudioRuntimeApi, DisabledPreviewCannotPrepareLegacyOrTypedEffects) {
+    handle = 99;
+    EXPECT_EQ(VN_PREVIEW_PREPARE_UNAVAILABLE, VnPreview_PrepareProject(&desc, &handle));
+    EXPECT_EQ(0u, handle);
+    VnPreviewProjectDescV4 v4{};
+    v4.base.base = VolumeDesc(5);
+    v4.base.base.base.structSize = sizeof(v4);
+    std::array<std::uint32_t, 2> positions{8, 8};
+    v4.busFaderAfterSlots = positions.data();
+    v4.busFaderCount = 2;
+    handle = 99;
+    EXPECT_EQ(VN_PREVIEW_PREPARE_UNAVAILABLE, VnPreview_PrepareProjectV4(&v4, &handle));
+    EXPECT_EQ(0u, handle);
 }
 #endif
 }

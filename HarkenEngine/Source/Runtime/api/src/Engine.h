@@ -15292,6 +15292,8 @@ public:
     void* originalQueueDecisionPreparationContextForTest = nullptr;
     std::vector<OccurrenceStatePool::OriginalSingleCompletionOwnerPin> originalSingleOccurrenceBaselines;
     std::vector<OccurrenceStatePool::PreparedSingleCompletionCommitProof> originalSingleOccurrenceCommitProofs;
+    // Must outlive the proof, whose cancellation releases all prepared seeds.
+    std::vector<EffectParamTargetStore::PreparedSeedToken> preparedVoiceEffectSeeds;
     CommandQueue::PreparedBatchProof preparedVoiceCommandBatchProof;
     std::vector<CommandRecord> actionPlayCommandScratch;
     std::vector<CommandRecord> actionSeekCommandScratch;

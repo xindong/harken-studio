@@ -1459,6 +1459,7 @@ ActionResult handleEffectParameterItemProperty(ProjectManager* manager, ProjectI
     if (args.contains(QStringLiteral("platform_ids"))
         || args.contains(QStringLiteral("override_operation")))
         return {false, {}, "INVALID_ARGS", "Effect preset parameters are shared across platforms"};
+    PropertyEditSession::cancelActiveFor(item, QStringLiteral("parameters"));
     auto* effect = item->comp<VEffect>();
     auto candidate = *effect;
     if (!args.value(QStringLiteral("value")).isDouble()
@@ -1479,6 +1480,7 @@ ActionResult handleEffectParameterItemProperty(ProjectManager* manager, ProjectI
         auto* target = manager->findItemByGuid(guid);
         auto* targetEffect = target ? target->comp<VEffect>() : nullptr;
         if (!targetEffect) return;
+        PropertyEditSession::cancelActiveFor(target, QStringLiteral("parameters"));
         targetEffect->definition = definition;
         target->markDirty();
         emit manager->itemPropertyChanged(target, QStringLiteral("parameters"), origin);
@@ -1979,6 +1981,7 @@ ActionResult handleEffectsItemProperty(ProjectManager* projectManager, ProjectIt
     if (!plan.error.isEmpty()) return {false, {}, "INVALID_ARGS", plan.error};
     if (reset && plan.kind != PlayableLandingKind::Overlay)
         return {false, {}, "INVALID_ARGS", "clear_platform_override requires platform_ids"};
+    PropertyEditSession::cancelActiveFor(item, QStringLiteral("effects"));
     auto* mix = item->comp<VMixNode>();
     const auto oldChain = mix->effects;
     const auto oldPlatforms = mix->effectPlatforms;
@@ -2013,6 +2016,7 @@ ActionResult handleEffectsItemProperty(ProjectManager* projectManager, ProjectIt
         ProjectItem* target = ProjectManager::instance().findItemByGuid(guid);
         auto* targetMix = target ? target->comp<VMixNode>() : nullptr;
         if (!targetMix) return;
+        PropertyEditSession::cancelActiveFor(target, QStringLiteral("effects"));
         targetMix->effects = chain;
         targetMix->effectPlatforms = platforms;
         target->markDirty();

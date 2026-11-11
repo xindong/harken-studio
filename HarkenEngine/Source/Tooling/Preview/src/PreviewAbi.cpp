@@ -1,3 +1,5 @@
+#include "harken_preview/PreviewProject.h"
+#include "harken/core/PreviewEffectChain.h"
 #include "harken_preview/PreviewAbi.h"
 
 #include "HarkenApiInternal.h"
@@ -112,6 +114,23 @@ VnPreviewResult MapReset(harken::PlayableResetStatus status) noexcept {
 }
 
 extern "C" {
+
+VnResult VnPreview_SetVoiceEffectChain(uint64_t voiceInstance,
+    const VnPreviewVoiceEffectChainV1* chain) {
+    if (!kGateOpen) return VN_NOT_INITIALIZED;
+    if (chain == nullptr || chain->structSize != sizeof(*chain) ||
+        chain->entryCount > VN_PREVIEW_EFFECT_CHAIN_CAPACITY) return VN_INVALID_ARG;
+    std::array<harken::PreviewEffectChainEntry, VN_PREVIEW_EFFECT_CHAIN_CAPACITY> entries{};
+    for (std::uint32_t i = 0; i < chain->entryCount; ++i) {
+        const auto& source = chain->entries[i];
+        if (source.bypass > 1) return VN_INVALID_ARG;
+        entries[i] = {source.effectId, source.effectType, source.bypass != 0,
+            source.ceilingDb, source.releaseMs};
+    }
+    return harken::SetPreviewVoiceEffectChain(voiceInstance, {entries.data(), chain->entryCount});
+}
+
+
 
 VnPreviewResult VnPreview_CapturePlaybackPaths(
     VnPreviewPlaybackPathV1* outPaths, uint32_t capacity, uint32_t* requiredCount) {

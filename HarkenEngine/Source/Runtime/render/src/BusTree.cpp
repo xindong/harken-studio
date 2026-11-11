@@ -42,6 +42,7 @@ BusTree::BusTree(const EngineConfig& config, TopologyPlanPool& plans,
       m_effectBank(effects),
       m_dynamicRoutes(dynamicRoutes),
       m_buses(config.maxBuses),
+      m_previewEffectStates(std::make_unique<std::atomic<BusEffectChainState*>[]>(config.maxBuses)),
       m_logicParent(config.maxBuses, 0),
       m_logicAlive(config.maxBuses, 0),
       m_logicId(config.maxBuses),
@@ -132,10 +133,12 @@ void BusTree::InitializeBusSlot(std::uint32_t busIndex, VnBusId id,
 }
 
 void BusTree::RetireBusSlotEffects(Bus& bus) noexcept {
+    ReleasePreviewEffectChain(bus);
     for (std::uint32_t slot = 0; slot < m_fxSlots; ++slot) {
         if (bus.fxSlotEffectRef[slot].type != kEffectTypeNone) {
-            m_effectBank.RetireQueue().TryPush(
-                bus.fxSlotEffectRef[slot]);
+            const bool retired = m_effectBank.Retire(bus.fxSlotEffectRef[slot]);
+            assert(retired && "effect retirement lane must hold every assigned row");
+            (void)retired;
             bus.fxSlots[slot] = InsertEffect{};
             bus.fxSlotEffectRef[slot] = EffectInstanceRef{};
         }
@@ -649,6 +652,14 @@ void BusTree::ApplyTopologyPlan(std::uint32_t planIndex,
             }
         }
     }
+    // Deleted Preview hosts first adopt their prepared empty chain, transferring
+    // current instances to the same non-lossy retirement owner as live edits.
+    for (std::uint32_t i = 0; i < plan.effectUpdateCount; ++i) {
+        const auto& adoption = plan.effectUpdates[i];
+        const auto host = BusSlotRef::FromPacked(adoption.host);
+        if (plan.alive != nullptr && host.index < m_audioCount && plan.alive[host.index] == 0)
+            ApplyPreviewEffectChain(adoption);
+    }
     // Tombstoned slots leave the graph at this same swap: retire any
     // installed effect instances back to their pools (the logic thread
     // reclaims them like every clear — a bus is a persistent node, so the
@@ -698,6 +709,7 @@ void BusTree::ApplyTopologyPlan(std::uint32_t planIndex,
                     continue;
                 }
                 Bus& bus = m_buses[i];
+                if ((plan.busVolumeApply[i] & kApplyBusPreserveEffects) == 0)
                 for (std::uint32_t slot = 0; slot < m_fxSlots; ++slot) {
                     ApplyClearBusEffect(i, slot, generation);
                     bus.fxBypassMix[slot] = 0.0f;
@@ -716,6 +728,8 @@ void BusTree::ApplyTopologyPlan(std::uint32_t planIndex,
             }
         }
     }
+    for (std::uint32_t i = 0; i < plan.effectUpdateCount; ++i)
+        ApplyPreviewEffectChain(plan.effectUpdates[i]);
     // Reconcile each audio edge directly against its authoritative plan slot.
     // The logic-side adjacency keeps stable slots across republishes, so equal
     // slot+target preserves the live gain and ramp, an empty slot clears it,
@@ -944,10 +958,15 @@ void BusTree::FinalizeBus(Bus& bus, float* const* planes,
         auto* limiter = bus.fxSlotEffectRef[slot].type == VN_EFFECT_LIMITER
             ? static_cast<LimiterState*>(bus.fxSlots[slot].state) : nullptr;
         if (limiter != nullptr) LimiterBeginRender(*limiter, blockEpoch, sourceFrameBegin);
+        auto* transition = bus.fxChainTransition;
         ProcessChainSlot(bus.fxSlots[slot], bus.fxBypassRamping[slot],
-                         bus.fxBypassMix[slot], bus.fxBypassTarget[slot],
-                         planes, dry, m_mixChannels, 0, blockFrames, input, limiter);
-        if (limiter != nullptr) LimiterFinishRender(*limiter, 0, blockFrames);
+            bus.fxBypassMix[slot], bus.fxBypassTarget[slot],
+            planes, dry, m_mixChannels, 0, blockFrames, input, limiter);
+        if (limiter != nullptr) {
+            LimiterFinishRender(*limiter, 0, blockFrames);
+            if (transition != nullptr)
+                limiter->gainReduction.status = LimiterGainReductionStatus::ChainTransition;
+        }
         if (bus.fxSlots[slot].process != nullptr &&
             harken::monitor::AudioLiveArmed()) {
             harken::monitor::PublishPlanarAudioChunk(
@@ -1015,13 +1034,55 @@ void BusTree::FinalizeBus(Bus& bus, float* const* planes,
                 bus.fxSlotEffectRef[slot], payload);
         }
     };
+    const auto processRange = [&](std::uint32_t first, std::uint32_t end) {
+        for (auto slot = first; slot < end; ++slot) {
+            auto* transition = bus.fxChainTransition;
+            auto next = slot + 1;
+            if (transition == nullptr || (transition->changedMask & (1u << slot)) == 0) {
+                processSlot(slot);
+                continue;
+            }
+            next = end;
+            std::array<float, kMaxFxSlotsPerBus> starts{};
+            for (auto s = slot; s < next; ++s)
+                starts[s] = bus.fxBypassRamping[s] ? bus.fxBypassMix[s] : -1.0f;
+            const auto tap = [&](std::uint32_t s, float* const* branch, bool output) {
+                auto* limiter = bus.fxSlotEffectRef[s].type == VN_EFFECT_LIMITER
+                    ? static_cast<LimiterState*>(bus.fxSlots[s].state) : nullptr;
+                if (limiter != nullptr) {
+                    if (!output) LimiterBeginRender(*limiter, blockEpoch, sourceFrameBegin);
+                    else {
+                        LimiterFinishRender(*limiter, 0, blockFrames);
+                        limiter->gainReduction.status = LimiterGainReductionStatus::ChainTransition;
+                    }
+                }
+                // Passive observations describe the new branch's actual slot
+                // I/O; arming a monitor must not change the audible transition.
+                if (bus.fxSlots[s].process != nullptr && harken::monitor::AudioLiveArmed())
+                    harken::monitor::PublishPlanarAudioChunk(
+                        output ? VN_MONITOR_TAP_EFFECT_SLOT_OUTPUT : VN_MONITOR_TAP_EFFECT_SLOT_INPUT,
+                        PackedMonitorEffectHandle(busIndex, s), bus.fxSlotEffectRef[s].generation,
+                        s, branch, blockFrames, m_mixChannels, 0, m_mixLayout,
+                        m_sampleRate, sourceFrameBegin);
+            };
+            ProcessTransitionChainRange(transition->oldEffects.data(), transition->oldBypass.data(),
+                bus.fxSlots, bus.fxBypassTarget, starts.data(), slot, next,
+                planes, transition->dry.data(), transition->alternate.data(), m_mixChannels,
+                0, blockFrames, transition->done, transition->totalFrames,
+                [&](auto s, auto branch) { tap(s, branch, false); },
+                [&](auto s, auto branch) { tap(s, branch, true); });
+            for (auto s = slot; s < next; ++s) {
+                bus.fxBypassMix[s] = bus.fxBypassTarget[s];
+                bus.fxBypassRamping[s] = false;
+            }
+            slot = next - 1;
+        }
+    };
     if (!bus.signalBoundsPrepared)
         (void)SignalBusBounds(static_cast<std::uint32_t>(&bus - m_buses.data()), blockFrames, {});
     bus.signalBoundsPrepared = false;
     // Pre-fader chain: fx slots [0, faderAfterSlot) before the gain.
-    for (std::uint32_t s = 0; s < fader; ++s) {
-        processSlot(s);
-    }
+    processRange(0, fader);
     m_dynamicRoutes.CaptureBus(busIndex, VN_DYNAMIC_TAP_BUS_PRE_FADER,
                                planes, m_mixChannels, blockFrames);
     const bool unchangedFaderSamples = bus.gain.remainingFrames == 0 &&
@@ -1059,9 +1120,8 @@ void BusTree::FinalizeBus(Bus& bus, float* const* planes,
             sourceFrameBegin);
     }
     // Post-fader chain: fx slots [faderAfterSlot, m_fxSlots) after the gain.
-    for (std::uint32_t s = fader; s < m_fxSlots; ++s) {
-        processSlot(s);
-    }
+    processRange(fader, m_fxSlots);
+    FinishPreviewEffectChain(bus, blockFrames);
     // Post-everything output tap (after post-fader fx): by the time this bus is
     // finalized every feeder has folded in and the whole chain has run, so the
     // tap covers the bus's whole subtree; at index 0 it is the final mix. Sends
@@ -1513,7 +1573,9 @@ void BusTree::ApplySetBusEffect(std::uint32_t busIndex, std::uint32_t slot,
         // Not audio-visible yet (never reached in practice; a bus's effect
         // command drains after its create swap) or out of range: retire the
         // unused instance rather than leak it (the audio thread never frees).
-        m_effectBank.RetireQueue().TryPush(incoming);
+        const bool retired = m_effectBank.Retire(incoming);
+        assert(retired && "effect retirement lane must hold every assigned row");
+        (void)retired;
         return;
     }
     Bus& bus = m_buses[busIndex];
@@ -1529,7 +1591,9 @@ void BusTree::ApplySetBusEffect(std::uint32_t busIndex, std::uint32_t slot,
             harken::monitor::NoteExactInstanceRetired(
                 VN_MONITOR_TAP_EFFECT_SLOT_OUTPUT, effectHandle, effectGeneration);
         }
-        m_effectBank.RetireQueue().TryPush(bus.fxSlotEffectRef[slot]);
+        const bool retired = m_effectBank.Retire(bus.fxSlotEffectRef[slot]);
+        assert(retired && "effect retirement lane must hold every assigned row");
+        (void)retired;
     }
     bus.fxSlots[slot] =
         BuildEffect(effectType, incomingState);
@@ -1561,7 +1625,9 @@ void BusTree::ApplyClearBusEffect(std::uint32_t busIndex, std::uint32_t slot,
             harken::monitor::NoteExactInstanceRetired(
                 VN_MONITOR_TAP_EFFECT_SLOT_OUTPUT, effectHandle, effectGeneration);
         }
-        m_effectBank.RetireQueue().TryPush(bus.fxSlotEffectRef[slot]);
+        const bool retired = m_effectBank.Retire(bus.fxSlotEffectRef[slot]);
+        assert(retired && "effect retirement lane must hold every assigned row");
+        (void)retired;
         bus.fxSlots[slot] = InsertEffect{};
         bus.fxSlotEffectRef[slot] = EffectInstanceRef{};
     }

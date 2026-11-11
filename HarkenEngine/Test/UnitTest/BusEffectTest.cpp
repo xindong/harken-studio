@@ -791,11 +791,8 @@ TEST(BusEffect, NeutralPlanGenerationTransitionAndRepeatedSwapsRetireOnce) {
         EXPECT_EQ(generation, engine.buses.BusState(index)->generation);
         EXPECT_EQ(1u, engine.effectBank.InUseOf(VN_EFFECT_GAIN));
     }
-    harken::EffectInstanceRef retired{};
-    ASSERT_TRUE(engine.effectBank.RetireQueue().TryPop(retired));
-    EXPECT_EQ(VN_EFFECT_GAIN, retired.type);
-    engine.effectBank.Recycle(retired);
-    EXPECT_FALSE(engine.effectBank.RetireQueue().TryPop(retired));
+    EXPECT_EQ(1u, engine.effectBank.DrainRetire());
+    EXPECT_EQ(0u, engine.effectBank.DrainRetire());
     EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_GAIN));
     const auto first = engine.effectBank.Acquire(VN_EFFECT_GAIN);
     const auto second = engine.effectBank.Acquire(VN_EFFECT_GAIN);
@@ -853,7 +850,7 @@ TEST(BusEffect, NeutralPlanSharesRetirementCapacityWithUndrainedVoiceEffects) {
     {
         harken::memguard::AudioThreadScope scope;
         for (std::size_t i = 0; i < otherTypes.size(); ++i)
-            pushed[i] = engine.effectBank.RetireQueue().TryPush(otherTypes[i]);
+            pushed[i] = engine.effectBank.Retire(otherTypes[i]);
     }
     for (bool result : pushed) ASSERT_TRUE(result);
     const auto index = engine.buses.FindIndex(kBusA);
@@ -866,20 +863,9 @@ TEST(BusEffect, NeutralPlanSharesRetirementCapacityWithUndrainedVoiceEffects) {
     Capture after;
     PumpAndCapture(&engine, 1, after);
     for (float sample : after.left) EXPECT_NEAR(0.1875f, sample, 1e-6f);
-    std::array<bool, 8> seen{};
-    std::uint32_t retiredCount = 0;
-    harken::EffectInstanceRef ref{};
-    while (engine.effectBank.RetireQueue().TryPop(ref)) {
-        ++retiredCount;
-        if (ref.type == VN_EFFECT_GAIN) {
-            ASSERT_LT(ref.poolIndex, seen.size());
-            EXPECT_FALSE(seen[ref.poolIndex]);
-            seen[ref.poolIndex] = true;
-        }
-        engine.effectBank.Recycle(ref);
-    }
-    EXPECT_EQ(12u, retiredCount);
-    for (bool retired : seen) EXPECT_TRUE(retired);
+    EXPECT_EQ(12u, engine.effectBank.DrainRetire());
+    EXPECT_EQ(0u, engine.effectBank.DrainRetire());
+    for (auto type : types) EXPECT_EQ(0u, engine.effectBank.InUseOf(type));
     EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_GAIN));
     std::array<harken::EffectInstanceRef, 8> reacquired{};
     for (auto& acquired : reacquired) {

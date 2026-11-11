@@ -367,7 +367,8 @@ function(harken_add_ci_test_target product)
     add_custom_target(harken_${product}_ci_tests DEPENDS ${_executables})
 endfunction()
 
-if(HARKEN_BUILD_RUNTIME_UNIT_TESTS OR HARKEN_BUILD_RUNTIME_BENCHMARKS)
+if(HARKEN_BUILD_RUNTIME_UNIT_TESTS OR HARKEN_BUILD_RUNTIME_BENCHMARKS OR
+   HARKEN_BUILD_EDITOR_UNIT_TESTS)
     add_subdirectory(HarkenEngine/Test)
 endif()
 

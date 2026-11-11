@@ -43,6 +43,7 @@ TopologyPlanPool::TopologyPlanPool(std::uint32_t capacity,
       m_busVolumeApply(static_cast<std::size_t>(capacity) * busCapacity, 0),
       m_slotCount(capacity, 0),
       m_signals(capacity),
+      m_effectUpdates(capacity),
       m_acquired(capacity, 0) {
     m_free.reserve(capacity);
     // Freelist stack: pop the lowest index first for deterministic slot reuse.
@@ -109,6 +110,7 @@ std::uint32_t TopologyPlanPool::Acquire() {
         m_busVolumeApply[pb + i] = 0;
     }
     m_slotCount[index] = 0;
+    m_effectUpdates[index].clear();
     return index;
 }
 
@@ -182,6 +184,11 @@ bool TopologyPlanPool::CopyPlanFrom(const TopologyPlanPool& source,
               m_downmixCoeffs.begin() + dstCoeff);
     m_slotCount[destinationIndex] = source.m_slotCount[sourceIndex];
     m_signals[destinationIndex] = source.m_signals[sourceIndex];
+    try {
+        m_effectUpdates[destinationIndex] = source.m_effectUpdates[sourceIndex];
+    } catch (...) {
+        return false;
+    }
     return true;
 }
 
@@ -190,9 +197,14 @@ void TopologyPlanPool::Recycle(std::uint32_t planIndex) noexcept {
         return;
     }
     m_signals[planIndex].reset();
+    m_effectUpdates[planIndex].clear();
     m_free.push_back(planIndex);
     m_acquired[planIndex] = 0;
     --m_inUse;
+}
+
+void TopologyPlanPool::SetEffectUpdates(std::uint32_t plan, std::vector<BusEffectChainAdoption> updates) {
+    if (IsAcquired(plan)) m_effectUpdates[plan] = std::move(updates);
 }
 
 void TopologyPlanPool::SetSignals(std::uint32_t plan, std::shared_ptr<SignalRenderPlan> signals) {
@@ -335,6 +347,8 @@ TopologyPlanView TopologyPlanPool::View(std::uint32_t planIndex) const {
     v.busVolumeApply = m_busVolumeApply.data() + FoldBase(planIndex);
     v.slotCount = m_slotCount[planIndex];
     v.signals = m_signals[planIndex].get();
+    v.effectUpdates = m_effectUpdates[planIndex].data();
+    v.effectUpdateCount = static_cast<std::uint32_t>(m_effectUpdates[planIndex].size());
     v.valid = true;
     return v;
 }

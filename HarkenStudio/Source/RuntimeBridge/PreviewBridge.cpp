@@ -132,6 +132,12 @@ void detachPreviewBinding(harkenstudio::ObjectId id, uint32_t scope, harkenstudi
 
 void removePreviewBinding(harkenstudio::ObjectId id) { Vn_UnregisterBinding(toNative(id)); }
 
+EngineResult setPreviewVoiceEffectChain(uint64_t voice,
+    const std::vector<PreviewVoiceEffectEntry>& chain)
+{
+    return Detail::runtimeSetPreviewVoiceEffectChain(voice, chain);
+}
+
 EngineResult refreshPreviewVoiceBindings(uint64_t voice)
 {
     return Detail::runtimeRefreshPreviewVoiceBindings(voice);
