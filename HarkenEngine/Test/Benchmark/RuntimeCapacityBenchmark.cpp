@@ -13,6 +13,7 @@
 #include "Common/RawVoiceTestSupport.h"
 #include "UnitTest/AllocationProbe.h"
 #include "harken/core/VoiceLedger.h"
+#include "harken/core/CpuClock.h"
 #include "harken/media/StreamFormat.h"
 
 #include <algorithm>
@@ -2333,6 +2334,10 @@ int RunEffectChain(std::uint32_t voiceCount, std::uint32_t blockFrames,
     std::array<std::vector<double>, 7> timings;
     std::array<std::size_t, 7> allocations{}, allocationBytes{};
     for (auto& rows : timings) rows.reserve(cycles * 16);
+    double lastOperationMicros = 0;
+    std::uint64_t lastOperationReturnedTicks = 0;
+    std::uint32_t renderAttempts = 0, freshRenderBlocks = 0;
+    const double period = 1e6 * blockFrames / 48000.0;
     const auto measured = [&](unsigned phase, auto&& operation, bool collect) {
         allocation_probe::count = allocation_probe::bytes = 0;
         allocation_probe::enabled = true;
@@ -2340,12 +2345,64 @@ int RunEffectChain(std::uint32_t voiceCount, std::uint32_t blockFrames,
         const bool ok = operation();
         const auto end = std::chrono::steady_clock::now();
         allocation_probe::enabled = false;
+        lastOperationReturnedTicks = harken::CpuClockTicks();
+        lastOperationMicros = std::chrono::duration<double, std::micro>(end - begin).count();
         if (collect) {
-            timings[phase].push_back(std::chrono::duration<double, std::micro>(end - begin).count());
+            timings[phase].push_back(lastOperationMicros);
             allocations[phase] += allocation_probe::count;
             allocationBytes[phase] += allocation_probe::bytes;
         }
         return ok;
+    };
+    const auto printTimings = [&](const char* selection) {
+        for (unsigned phase = 0; phase < timings.size(); ++phase) {
+            const auto summary = SummarizeTiming(timings[phase], period);
+            std::printf("{\"schema\":\"preview-effect-chain-v1\",\"kind\":\"timing\",\"phase\":\"%s\","
+                "\"sample_selection\":\"%s\",\"samples\":%zu,\"p50_us\":%.9g,\"p99_us\":%.9g,\"max_us\":%.9g,"
+                "\"deadline_exceed_count\":%llu,\"caller_thread_allocations\":%zu,\"caller_thread_allocated_bytes\":%zu,"
+                "\"raw_us\":[", phaseNames[phase], selection, timings[phase].size(), summary.p50Us, summary.p99Us,
+                summary.maximumUs, static_cast<unsigned long long>(summary.nominalPeriodExceedCount),
+                allocations[phase], allocationBytes[phase]);
+            for (std::size_t i = 0; i < timings[phase].size(); ++i)
+                std::printf("%s%.9g", i ? "," : "", timings[phase][i]);
+            std::printf("]}\n");
+        }
+    };
+    const auto reportIncomplete = [&](unsigned phase, unsigned cycle, unsigned block, bool collect) {
+        const auto failureObservedTicks = harken::CpuClockTicks();
+        // An unfinished callback is not a fast completed render sample. Keep
+        // its duration separately, and retain every earlier completed sample.
+        if (collect) {
+            timings[phase].pop_back();
+            allocations[phase] -= allocation_probe::count;
+            allocationBytes[phase] -= allocation_probe::bytes;
+        }
+        const auto planned = (cycles + 1) * (transitionBlocks + 8);
+        std::printf("{\"schema\":\"preview-effect-chain-v1\",\"kind\":\"incomplete_run\","
+            "\"status\":\"failed\",\"voices\":%u,\"block_frames\":%u,\"channels\":%u,\"workers\":%u,"
+            "\"phase\":\"%s\",\"cycle\":%u,\"block\":%u,\"warmup\":%s,\"incomplete_elapsed_us\":%.9g,"
+            "\"incomplete_caller_thread_allocations\":%zu,\"incomplete_caller_thread_allocated_bytes\":%zu,"
+            "\"counts_scope\":\"effect_update_cycles\","
+            "\"counts_include_warmup\":true,\"render_attempts\":%u,\"fresh_render_blocks\":%u,"
+            "\"incomplete_render_blocks\":%u,\"unexecuted_render_blocks\":%u,"
+            "\"operation_returned_ticks\":%llu,"
+            "\"failure_observed_ticks\":%llu,\"clock_ticks_per_second\":%llu,\"source_commit\":",
+            voiceCount, blockFrames, channels, workers, phaseNames[phase], cycle, block,
+            collect ? "false" : "true", lastOperationMicros, allocation_probe::count, allocation_probe::bytes,
+            renderAttempts, freshRenderBlocks,
+            renderAttempts - freshRenderBlocks, planned - renderAttempts,
+            static_cast<unsigned long long>(lastOperationReturnedTicks),
+            static_cast<unsigned long long>(failureObservedTicks),
+            static_cast<unsigned long long>(harken::CpuClockTicksPerSecond()));
+        PrintJsonString(environment.sourceCommit.c_str());
+        std::fputs(",\"source_dirty\":", stdout);
+        PrintJsonString(environment.sourceDirty.c_str());
+        std::fputs("}\n", stdout);
+        printTimings("completed_operations_before_first_failure");
+        harken::LogRecord record{};
+        while (engine.logRing.TryPop(record))
+            std::fprintf(stderr, "audio_log=%u arg0=%llu arg1=%llu\n", record.code,
+                static_cast<unsigned long long>(record.arg0), static_cast<unsigned long long>(record.arg1));
     };
     std::vector<harken::EffectInstanceRef> oldRefs, nextRefs;
     oldRefs.reserve(expectedEffects); nextRefs.reserve(expectedEffects);
@@ -2400,16 +2457,15 @@ int RunEffectChain(std::uint32_t voiceCount, std::uint32_t blockFrames,
         for (unsigned block = 0; block < transitionBlocks; ++block) {
             const auto priorBlock = engine.mixer.BlocksRendered();
             measured(block == 0 ? 3 : 4, [&] { engine.nullBackend.Pump(1); return true; }, collect);
+            ++renderAttempts;
             if (!inspectBlock()) return 1;
             if (!require(engine.mixer.BlocksRendered() > priorBlock, "fresh transition block")) {
                 std::fprintf(stderr, "cycle=%u transition_block=%u elapsed_us=%.9g\n", cycle, block,
-                    collect ? timings[block == 0 ? 3 : 4].back() : 0.0);
-                harken::LogRecord record{};
-                while (engine.logRing.TryPop(record))
-                    std::fprintf(stderr, "audio_log=%u arg0=%llu arg1=%llu\n", record.code,
-                        static_cast<unsigned long long>(record.arg0), static_cast<unsigned long long>(record.arg1));
+                    lastOperationMicros);
+                reportIncomplete(block == 0 ? 3 : 4, cycle, block, collect);
                 return 1;
             }
+            ++freshRenderBlocks;
             if (block == 0) {
                 const auto expectedPhase = blockFrames >= 240 ? harken::EffectChainUpdate::Phase::Complete :
                     harken::EffectChainUpdate::Phase::Active;
@@ -2437,8 +2493,13 @@ int RunEffectChain(std::uint32_t voiceCount, std::uint32_t blockFrames,
         for (unsigned settled = 0; settled < 8; ++settled) {
             const auto priorBlock = engine.mixer.BlocksRendered();
             measured(5, [&] { engine.nullBackend.Pump(1); return true; }, collect);
-            if (!inspectBlock() || !require(engine.mixer.BlocksRendered() > priorBlock,
-                "fresh settled block")) return 1;
+            ++renderAttempts;
+            if (!inspectBlock()) return 1;
+            if (!require(engine.mixer.BlocksRendered() > priorBlock, "fresh settled block")) {
+                reportIncomplete(5, cycle, settled, collect);
+                return 1;
+            }
+            ++freshRenderBlocks;
             if (!measured(6, [] { return Vn_Update() == VN_OK; }, collect)) return fail("settled update");
         }
         const auto after = ReadProcessMemory();
@@ -2453,7 +2514,6 @@ int RunEffectChain(std::uint32_t voiceCount, std::uint32_t blockFrames,
     }
 
     if (!require(lastPeak > kOutputFloor && nonfinite == 0, "fresh finite audible output")) return 1;
-    const double period = 1e6 * blockFrames / 48000.0;
     const auto memoryAfter = ReadProcessMemory();
     std::printf("{\"schema\":\"preview-effect-chain-v1\",\"kind\":\"identity\","
         "\"configuration\":\"%s\",\"voices\":%u,\"block_frames\":%u,\"source_channels\":%u,"
@@ -2482,18 +2542,7 @@ int RunEffectChain(std::uint32_t voiceCount, std::uint32_t blockFrames,
         environment.threadPrioritySet ? "true" : "false", environment.debuggerAttached ? "true" : "false",
         environment.profilerAttached ? "true" : "false", static_cast<unsigned long long>(nonfinite),
         static_cast<unsigned long long>(outputHash));
-    for (unsigned phase = 0; phase < timings.size(); ++phase) {
-        const auto summary = SummarizeTiming(timings[phase], period);
-        std::printf("{\"schema\":\"preview-effect-chain-v1\",\"kind\":\"timing\",\"phase\":\"%s\","
-            "\"samples\":%zu,\"p50_us\":%.9g,\"p99_us\":%.9g,\"max_us\":%.9g,"
-            "\"deadline_exceed_count\":%llu,\"caller_thread_allocations\":%zu,\"caller_thread_allocated_bytes\":%zu,"
-            "\"raw_us\":[", phaseNames[phase], timings[phase].size(), summary.p50Us, summary.p99Us,
-            summary.maximumUs, static_cast<unsigned long long>(summary.nominalPeriodExceedCount),
-            allocations[phase], allocationBytes[phase]);
-        for (std::size_t i = 0; i < timings[phase].size(); ++i)
-            std::printf("%s%.9g", i ? "," : "", timings[phase][i]);
-        std::printf("]}\n");
-    }
+    printTimings("all_measured_operations");
     return 0;
 }
 
