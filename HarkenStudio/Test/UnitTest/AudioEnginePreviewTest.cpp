@@ -11,6 +11,7 @@
 #include "Components/VTrack.h"
 #include "Components/VEffect.h"
 #include "Components/VMixNode.h"
+#include "PlatformContextService.h"
 #include "Widgets/EffectEditor/EffectEditorPanel.h"
 #include "Widgets/Common/ParameterSlider.h"
 #include "Widgets/Common/ParameterBinding.h"
@@ -805,6 +806,9 @@ TEST_F(AudioPlaybackRegression, EffectEditorExternalPresetEditEndsDragBeforeTaki
 TEST_F(AudioPlaybackRegression, EffectEditorBusDragCannotRestoreADeletedPresetReference)
 {
     VNX::registerProjectActions(VNX::ActionManager::instance(), &projects, nullptr);
+    VNX::PlatformContextService::instance().setAll(true);
+    for (const bool overlay : {false, true}) {
+    SCOPED_TRACE(overlay);
     auto* preset = projects.createItem(nullptr, QStringLiteral("DeletedPreset"), VNX::ProjectItem::Type::Effect);
     auto* bus = projects.createItem(projects.getMasterBusItem(), QStringLiteral("DragBus"), VNX::ProjectItem::Type::Bus);
     ASSERT_NE(preset, nullptr);
@@ -817,7 +821,10 @@ TEST_F(AudioPlaybackRegression, EffectEditorBusDragCannotRestoreADeletedPresetRe
     reference.guid = QUuid::createUuid();
     reference.effectGuid = preset->guid;
     auto* mix = bus->comp<VNX::VMixNode>();
-    ASSERT_TRUE(mix->effects.replace({custom, reference}));
+    const auto platform = projects.currentProject()->platforms.front().id;
+    ASSERT_TRUE(mix->effects.replace(overlay ? std::vector<VNX::EffectEntry>{custom}
+        : std::vector<VNX::EffectEntry>{custom, reference}));
+    if (overlay) ASSERT_TRUE(mix->effectPlatforms[platform].replace({custom, reference}));
     VNX::EffectEditorPanel panel;
     panel.bindEffect(bus->guid, custom.guid);
     auto* slider = panel.findChild<VNX::ParameterSlider*>(QStringLiteral("effectParameter_ceilingDb"));
@@ -830,12 +837,18 @@ TEST_F(AudioPlaybackRegression, EffectEditorBusDragCannotRestoreADeletedPresetRe
     ASSERT_TRUE(projects.deleteItem(preset));
     QCoreApplication::processEvents();
     ASSERT_EQ(1u, mix->effects.entries().size());
+    if (overlay) {
+        ASSERT_TRUE(mix->effectPlatforms.contains(platform));
+        EXPECT_EQ(1u, mix->effectPlatforms.at(platform).entries().size());
+    }
     EXPECT_FLOAT_EQ(0, mix->effects.entries()[0].custom.parameters[0]);
     EXPECT_EQ(1, undo->count());
     undo->undo();
-    ASSERT_EQ(2u, mix->effects.entries().size());
-    EXPECT_FLOAT_EQ(0, mix->effects.entries()[0].custom.parameters[0]);
-    EXPECT_EQ(reference.effectGuid, mix->effects.entries()[1].effectGuid);
+    const auto& restored = overlay ? mix->effectPlatforms.at(platform) : mix->effects;
+    ASSERT_EQ(2u, restored.entries().size());
+    EXPECT_FLOAT_EQ(0, restored.entries()[0].custom.parameters[0]);
+    EXPECT_EQ(reference.effectGuid, restored.entries()[1].effectGuid);
+    }
 }
 
 TEST_F(AudioPlaybackRegression, ConcurrentPreviewCancelAndUndoRemainConsistentForCurrentAndFuturePlayback)

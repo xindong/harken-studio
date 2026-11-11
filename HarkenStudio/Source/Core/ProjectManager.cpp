@@ -5332,12 +5332,11 @@ DeletedSubtreeRefLog ProjectManager::cleanupReferencesToDeletedSubtree(ProjectIt
         }
 
         {
-            auto before = folderComponentReferences(*pi);
-            auto after = PhysicalFolderReferenceEdits::removeReferences(before, deletedGuids);
-            if (before != after) {
+            if (pi->comp<VMixNode>())
                 PropertyEditSession::cancelActiveFor(pi, QStringLiteral("effects"));
-                before = folderComponentReferences(*pi);
-                after = PhysicalFolderReferenceEdits::removeReferences(before, deletedGuids);
+            const auto before = folderComponentReferences(*pi);
+            const auto after = PhysicalFolderReferenceEdits::removeReferences(before, deletedGuids);
+            if (before != after) {
                 log.folderComponentRefs.push_back({pi->objectID, before, after});
                 applyFolderComponentReferences(*pi, after);
             }
