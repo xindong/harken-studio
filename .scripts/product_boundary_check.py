@@ -89,19 +89,20 @@ def edge(source: str, target: str) -> dict | None:
     return ALLOWED_EDGES.get((source, target))
 
 
-def path_allowed(source: str, target_path: str) -> bool:
+def path_allowed(source: str, target_path: str,
+                 public_headers: frozenset[str] = frozenset()) -> bool:
     target = product_of(target_path)
     if target is None or target == source:
         return True
     rules = edge(source, target)
     if rules is None:
         return False
-    if rules["public_headers"] and is_engine_public_header(target_path):
+    if rules["public_headers"] and target_path in public_headers:
         return True
     return any(target_path.startswith(prefix) for prefix in rules["paths"])
 
 
-def is_engine_public_header(path: str) -> bool:
+def is_engine_public_root(path: str) -> bool:
     if not path.startswith("HarkenEngine/"):
         return False
     if path.startswith("HarkenEngine/Format/Pack/"):
@@ -167,6 +168,19 @@ class Checker:
         for path in files:
             if path.endswith((".h", ".hpp", ".hh", ".hxx", ".inl")):
                 self.header_index.setdefault(PurePosixPath(path).name, []).append(path)
+        self.public_headers = self.engine_public_closure()
+
+    def engine_public_closure(self) -> frozenset[str]:
+        pending = [p for p in self.files if is_engine_public_root(p)]
+        seen = set(pending)
+        while pending:
+            path = pending.pop()
+            for match in INCLUDE_RE.finditer(self.read(path)):
+                for found in self.resolve_include(path, match.group(1)):
+                    if found.startswith("HarkenEngine/") and found not in seen:
+                        seen.add(found)
+                        pending.append(found)
+        return frozenset(seen)
 
     def report(self, *args) -> None:
         self.violations.append(Violation(*args))
@@ -229,7 +243,7 @@ class Checker:
                     if other == owner:
                         continue
                     for match in re.finditer(rf"(?<![A-Za-z]){other}/[^\s\")]*|(?<![A-Za-z]){other}(?=[\s\")])", body):
-                        if not path_allowed(owner, match.group(0)):
+                        if not path_allowed(owner, match.group(0), self.public_headers):
                             self.report("cmake-path", path, line, owner, other,
                                         match.group(0))
                 for ident in sorted(set(IDENT_RE.findall(body))):
@@ -294,7 +308,7 @@ class Checker:
                 candidates = self.resolve_include(path, include)
                 if not candidates or any(product_of(c) == owner for c in candidates):
                     continue
-                if any(path_allowed(owner, c) for c in candidates):
+                if any(path_allowed(owner, c, self.public_headers) for c in candidates):
                     continue
                 target = product_of(candidates[0]) or "shared"
                 if target == "shared":
@@ -321,7 +335,7 @@ class Checker:
                 if target_path is None:
                     continue
                 target = product_of(target_path)
-                if target is None or target == owner or path_allowed(owner, target_path):
+                if target is None or target == owner or path_allowed(owner, target_path, self.public_headers):
                     continue
                 key = (line_of(text, match.start()), target_path)
                 if key in seen:

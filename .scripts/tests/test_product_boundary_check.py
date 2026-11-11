@@ -42,7 +42,10 @@ class ProductBoundaryCheckTest(unittest.TestCase):
 
     def test_only_public_headers_cross_products(self) -> None:
         found = run({
-            "HarkenEngine/Source/api/include/harken/Harken.h": "",
+            "HarkenEngine/Source/api/include/harken/Harken.h":
+                "#include <harken/Ids.h>\n",
+            "HarkenEngine/Source/api/include/harken/Ids.h": "",
+            "HarkenStudio/Source/Bridge/C.cpp": '#include "harken/Ids.h"\n',
             "HarkenEngine/Source/core/include/harken/core/Private.h": "",
             "HarkenEngine/Format/Pack/include/harken/pack/Layout.h": "",
             "HarkenStudio/Source/Bridge/A.cpp":
