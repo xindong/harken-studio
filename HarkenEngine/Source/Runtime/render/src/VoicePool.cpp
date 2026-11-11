@@ -292,6 +292,9 @@ VoicePool::VoicePool(const EngineConfig& config, const ResampleTables* tables,
 }
 
 VoicePool::~VoicePool() {
+    m_workers.Stop();
+    ShutdownEffectChainUpdates();
+    for (auto& slot : m_slots) delete slot.effectChainUpdate.load(std::memory_order_relaxed);
     while (m_slotStorageRegistrations != nullptr) m_slotStorageRegistrations->Detach();
     assert(m_liveOriginalVoiceOwners.load(std::memory_order_relaxed) == 0 &&
         "original physical owners must retire before the pool");
@@ -375,6 +378,7 @@ VnResult VoicePool::Play(const PCMView& view, float volumeDb,
     slot.render.biquadTrig = m_biquadTrig;
     slot.render.engineSampleRate = m_sampleRate;
     slot.render.pcm = view;
+    slot.sourceChannels.store(view.channelCount, std::memory_order_release);
     BindMonitorPreChainBacking(slotIndex);
     slot.render.busIndex = busIndex;
     slot.render.busGeneration = busGeneration;
@@ -546,6 +550,7 @@ VnResult VoicePool::PlayStream(StreamRing* ring, std::uint32_t channelCount,
     // two facts; the data planes stay null because the stream feed path
     // never dereferences pcm (frames == 0 keeps every pcm read unreachable).
     slot.render.pcm.channelCount = channelCount;
+    slot.sourceChannels.store(channelCount, std::memory_order_release);
     BindMonitorPreChainBacking(slotIndex);
     slot.render.pcm.sampleRate = sourceSampleRate;
     slot.render.busIndex = busIndex;
@@ -1838,6 +1843,7 @@ void VoicePool::ShutdownOriginalSourceBodiesAfterQuiescence() noexcept {
     // actual thread join, and the lifecycle owner has already stopped callback.
     m_workers.Stop();
     m_originalBodyShutdown = true;
+    ShutdownEffectChainUpdates();
     for (auto& slot : m_slots) CompleteOriginalSourceBodyDisposition(slot);
     EndAudioBlock();
     for (auto& slot : m_slots) slot.nativeVariableStart = {};
@@ -4705,6 +4711,7 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
         }
     }
     const auto beginEffects = [&](VoiceRenderContext& render) {
+        render.fxChainTransitionThisBlock = false;
         for (std::uint32_t slot = 0; slot < render.fxSlotCount; ++slot) {
             if (render.fxSlotEffectRef[slot].type == VN_EFFECT_LIMITER &&
                 render.fxSlots[slot].state != nullptr) {
@@ -4734,6 +4741,9 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
                 LimiterFinishRender(*static_cast<LimiterState*>(render.fxSlots[s].state),
                     render.cascade.offset,
                     render.cascade.runnable ? render.cascade.produced : 0);
+                if (render.fxChainTransitionThisBlock)
+                    static_cast<LimiterState*>(render.fxSlots[s].state)->gainReduction.status =
+                        LimiterGainReductionStatus::ChainTransition;
             }
         }
     };
@@ -4855,6 +4865,7 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
                         : 0);
             }
             finishLimiters(slot.render);
+            FinishEffectChainTransition(slot);
             publishCompressors(i, slot);
             PublishStreamObservation(slot, blockIndex);
             (void)StageCompletionProgress(
@@ -5041,6 +5052,7 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
                 slot.render.cascade.produced > 0) slot.firstOutputPhase = FirstOutputPhase::FirstFolded;
         }
         finishLimiters(slot.render);
+        FinishEffectChainTransition(slot);
         publishCompressors(i, slot);
         PublishStreamObservation(slot, m_jobQuantumIndex);
         (void)StageCompletionProgress(
@@ -5630,6 +5642,7 @@ void VoicePool::NoteMonitorVoiceRetired(VnVoiceHandle publicHandle) noexcept {
 }
 
 void VoicePool::ReleaseSlot(Slot& slot, ReleaseThread thread) {
+    ReleaseEffectChainTransition(slot, thread);
     ClearFirstOutput(slot);
     const bool nativeFinished = FinishNativeVariableStart(slot, false);
     assert(nativeFinished);

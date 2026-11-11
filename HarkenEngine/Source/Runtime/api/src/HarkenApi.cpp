@@ -82548,6 +82548,89 @@ VnResult RefreshPreviewVoiceBindings(std::uint64_t render) noexcept {
         ? VN_OK : VN_BACKPRESSURE;
 }
 
+VnResult SetPreviewVoiceEffectChain(std::uint64_t render,
+    std::span<const PreviewEffectChainEntry> chain) noexcept {
+    auto* engine = detail::ActiveEngine();
+    if (engine == nullptr || engine->callbackFatalSticky) return VN_NOT_INITIALIZED;
+    const auto owner = engine->ledger.OwnerForRender(render);
+    if (!owner.live || owner.visibility != VoiceLedger::PublicVisibility::PlayableOwnedInternal ||
+        engine->voices.CheckLive(render) != VN_OK) return VN_STALE_HANDLE;
+    const auto observed = engine->voices.RenderedState(render);
+    if (observed != VN_VOICE_STATE_ACTIVE && observed != VN_VOICE_STATE_DRAINING)
+        return VN_STALE_HANDLE;
+    if (chain.size() > engine->config.fxSlotsPerVoice) return VN_INVALID_ARG;
+    for (std::size_t i = 0; i < chain.size(); ++i) {
+        const auto& entry = chain[i];
+        if (entry.effectType != VN_EFFECT_LIMITER || entry.effectId == VnObjectId{} ||
+            ValidateEffectParam(VN_EFFECT_LIMITER, kLimiterParamCeilingDb, entry.ceilingDb,
+                engine->config.mixRate.SampleRate()) != VN_OK ||
+            ValidateEffectParam(VN_EFFECT_LIMITER, kLimiterParamReleaseMs, entry.releaseMs,
+                engine->config.mixRate.SampleRate()) != VN_OK) return VN_INVALID_ARG;
+        for (std::size_t j = 0; j < i; ++j)
+            if (chain[j].effectId == entry.effectId) return VN_INVALID_ARG;
+    }
+    const auto row = static_cast<std::uint32_t>(render);
+    if (row >= engine->effectSlotConfig.size() || row >= engine->voiceEffectInstanceRefs.size())
+        return VN_STALE_HANDLE;
+    std::array<PreviewEffectChainEntry, kMaxFxSlotsPerVoice> targets{};
+    std::copy(chain.begin(), chain.end(), targets.begin());
+    std::array<std::uint8_t, kMaxFxSlotsPerVoice> parameterMask{};
+    std::uint32_t bypassMask = 0;
+    bool identical = true;
+    for (std::uint32_t i = 0; i < engine->config.fxSlotsPerVoice; ++i) {
+        const auto& ref = engine->voiceEffectInstanceRefs[row][i];
+        const auto& config = engine->effectSlotConfig[row][i];
+        const auto& target = targets[i];
+        if (config.params[0] != target.ceilingDb) parameterMask[i] |= 1;
+        if (config.params[1] != target.releaseMs) parameterMask[i] |= 2;
+        if (config.bypass != target.bypass) bypassMask |= 1u << i;
+        identical = identical && ref.type == target.effectType &&
+            (ref.type == kEffectTypeNone ||
+             (engine->effectBank.ObjectIdentity(ref).effectId == target.effectId && parameterMask[i] == 0)) &&
+            config.bypass == target.bypass;
+    }
+    if (identical) return VN_OK;
+    if (!AtomicBatchFitsCapacities(*engine, 1)) return VN_INVALID_CONFIG;
+    if (!AdmitSingleCommand(*engine)) return VN_BACKPRESSURE;
+    CommandQueue::BatchReservation reservation{};
+    if (!engine->commands.ReserveBatch(1, &reservation)) return VN_BACKPRESSURE;
+    engine->effectBank.DrainRetire();
+    engine->voices.DrainEffectChainUpdates();
+    EffectChainUpdate* update = nullptr;
+    const auto prepared = engine->voices.PrepareEffectChainUpdate(render, targets,
+        engine->voiceEffectInstanceRefs[row], parameterMask, bypassMask, engine->CurrentProjectId(), &update);
+    if (prepared != VN_OK) {
+        engine->commands.CancelReservedBatch(&reservation);
+        return prepared;
+    }
+    const auto refs = update->targetRefs;
+    const auto revision = update->targetRevision;
+    CommandRecord command{};
+    command.opcode = kOpcodeApplyPreviewEffectChain;
+    command.payload.applyPreviewEffectChain = {render, revision};
+    engine->voices.QueueEffectChainUpdate(*update);
+    if (!engine->commands.CommitReservedBatch(&reservation, &command)) {
+        engine->commands.CancelReservedBatch(&reservation);
+        engine->voices.CancelEffectChainUpdate(*update);
+        return VN_BACKPRESSURE;
+    }
+    update->acceptedHandle = render;
+    update->acceptedRevision = revision;
+    for (std::uint32_t i = 0; i < kMaxFxSlotsPerVoice; ++i) {
+        engine->effectSlotTypes[row][i] = targets[i].effectType;
+        engine->voiceEffectInstanceRefs[row][i] = refs[i];
+        auto& config = engine->effectSlotConfig[row][i];
+        config = {};
+        config.bypass = targets[i].bypass;
+        if (targets[i].effectType != kEffectTypeNone) {
+            config.params[0] = targets[i].ceilingDb;
+            config.params[1] = targets[i].releaseMs;
+            engine->effectBank.PublishInstalled(refs[i]);
+        }
+    }
+    return VN_OK;
+}
+
 VnResult SetPreviewVoiceProperty(std::uint64_t render,
     playableproperties::PlayablePropertyIdV1 property, float value,
     VnObjectId sendBusId) noexcept {
@@ -111730,6 +111813,7 @@ VnResult Vn_Update(void) {
      * in-place replace): the audio thread never frees, so the logic side
      * returns each retired instance to its pool here. */
     engine->effectBank.DrainRetire();
+    engine->voices.DrainEffectChainUpdates();
     /* Hot-reload retirement detection: destroy every old content generation
      * whose last logical voice has drained. The audio thread only ever
      * decrements the shared use counters; all freeing happens here on the

@@ -725,3 +725,37 @@ TEST(EffectChain, FadeStopEndsInfiniteTailVoice) {
 }
 
 } // namespace
+
+TEST(EffectChain, StructuralTransitionUsesOneSampleClockAcrossPartitionsAndExactEndpoint) {
+    constexpr std::uint32_t total = 240;
+    for (const auto block : {1u, 17u, 64u, 256u}) {
+        SCOPED_TRACE(block);
+        std::array<float, 270> data{};
+        std::array<float, 270> dry{}, alternate{};
+        float* planes[]{data.data()};
+        float* dries[]{dry.data()};
+        float* alternatives[]{alternate.data()};
+        std::uint64_t oldFrames = 0, newFrames = 0;
+        AddProbe prior{2.0f, nullptr, &oldFrames};
+        AddProbe next{6.0f, nullptr, &newFrames};
+        harken::InsertEffect oldEffect{}, nextEffect{};
+        oldEffect.state = &prior; oldEffect.process = AddProbeProcess;
+        nextEffect.state = &next; nextEffect.process = AddProbeProcess;
+        std::uint32_t done = 0;
+        for (std::uint32_t start = 0; start < 257;) {
+            const auto frames = std::min(block, 257u - start);
+            data.fill(1.0f);
+            harken::ProcessTransitionChainSlot(oldEffect, 0, nextEffect, 0, planes,
+                dries, alternatives, 1, 7, frames, done, total);
+            EXPECT_FLOAT_EQ(1, data[6]);
+            for (std::uint32_t i = 0; i < frames; ++i) {
+                const auto progress = std::min(total, start + i + 1);
+                EXPECT_NEAR(3.0f + 4.0f * progress / total, data[7 + i], 1e-6f);
+            }
+            done += std::min(frames, total - done);
+            start += frames;
+        }
+        EXPECT_EQ(total, oldFrames);
+        EXPECT_EQ(257u, newFrames);
+    }
+}

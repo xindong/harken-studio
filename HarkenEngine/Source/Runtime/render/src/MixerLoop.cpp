@@ -964,6 +964,7 @@ std::uint32_t MixerLoop::DrainCommands(std::uint64_t blockIndex,
     const CommandQueue::BlockInputCut& cut) {
     // Both transports share these counters for this entire block, including
     // every raw prefix before an initial-installation barrier.
+    m_voices.ServiceEffectChainRetirements();
     std::uint32_t rawApplied = 0;
     std::uint32_t initialApplied = 0;
     const auto initialBudget = static_cast<std::uint64_t>(m_voices.Capacity()) * 3u;
@@ -1397,6 +1398,10 @@ std::uint32_t MixerLoop::DrainRawCommands(std::uint64_t blockIndex,
         // A later ordinary command supersedes the deferred value for its physical endpoint.
         m_voices.SupersedeDeferredFirstOutput(command, pendingNativeStart);
         switch (command.opcode) {
+        case kOpcodeApplyPreviewEffectChain:
+            m_voices.ApplyEffectChainUpdate(command.payload.applyPreviewEffectChain.handle,
+                command.payload.applyPreviewEffectChain.revision);
+            break;
         case kOpcodePlay:
             if (pendingSourceInstall.Valid()) {
                 VoicePool::BeginSourceCommandInstallation(pendingSourceInstall,

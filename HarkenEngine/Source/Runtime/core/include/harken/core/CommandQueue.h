@@ -83,7 +83,8 @@ inline constexpr std::uint16_t kOpcodeSeekVoice = 26;
 // above this. The command queue records which opcodes it has ever admitted (a
 // bit per opcode), so a composed scene can prove it stayed within the vocabulary
 // — the acceptance command-vocabulary check.
-inline constexpr std::uint16_t kMaxKnownOpcode = kOpcodeSeekVoice;
+inline constexpr std::uint16_t kOpcodeApplyPreviewEffectChain = 27;
+inline constexpr std::uint16_t kMaxKnownOpcode = kOpcodeApplyPreviewEffectChain;
 
 // SetVoiceFilter selects which tone-stage section it retunes. One opcode
 // covers both sections so the audio-thread vocabulary stays minimal.
@@ -299,6 +300,10 @@ struct CommandRecord {
             std::uint32_t action; // kEffectAction*
             std::uint32_t expectedEffectType;
         } setVoiceEffectBypass;
+        struct ApplyPreviewEffectChain {
+            VnVoiceHandle handle;
+            std::uint64_t revision;
+        } applyPreviewEffectChain;
         struct SetVoiceEffect {
             // The instance was acquired and configured on the logic side; the
             // audio thread resolves (effectType, poolIndex) to the pooled

@@ -119,6 +119,7 @@ set(HARKEN_RUNTIME_SOURCES
     ${HARKEN_RUNTIME_DIR}/render/src/RenderWorkerPool.cpp
     ${HARKEN_RUNTIME_DIR}/render/src/TopologyPlan.cpp
     ${HARKEN_RUNTIME_DIR}/render/src/VoiceCascade.cpp
+    ${HARKEN_RUNTIME_DIR}/render/src/VoiceEffectChain.cpp
     ${HARKEN_RUNTIME_DIR}/render/src/VoicePool.cpp
     ${HARKEN_RUNTIME_DIR}/render/src/SignalRouting.cpp
     ${HARKEN_RUNTIME_DIR}/render/src/FrontierTimelineFinalizer.cpp

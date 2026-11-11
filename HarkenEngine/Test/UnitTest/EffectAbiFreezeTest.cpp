@@ -7,6 +7,7 @@
 // expected value from the thing under test, so a pin only agrees when the
 // value has not moved.
 #include <harken/Harken.h>
+#include "harken_preview/PreviewProject.h"
 
 #include "harken/core/CommandQueue.h"
 #include "harken/core/EngineConfig.h"
@@ -19,6 +20,9 @@
 #include <type_traits>
 
 namespace {
+static_assert(sizeof(VnPreviewVoiceEffectEntryV1) == 32);
+static_assert(sizeof(VnPreviewVoiceEffectChainV1) == 264);
+static_assert(offsetof(VnPreviewVoiceEffectChainV1, entries) == 8);
 
 // --- effect type ids (append-only, never renumbered) ---
 
@@ -326,10 +330,10 @@ static_assert(harken::kCommandVersion == 8,
 
 // Ceiling of the frozen audio-thread vocabulary. No such pin exists in the
 // production headers (enforcement there is a frozen enum plus a Debug bounds
-// assert); this fixes the count from the test side so a 27th opcode cannot be
+// assert); this fixes the count from the test side so another opcode cannot be
 // appended without tripping a build error the reviewer must acknowledge.
-static_assert(harken::kMaxKnownOpcode == 26,
-              "audio-thread opcode ceiling is frozen at 26");
+static_assert(harken::kMaxKnownOpcode == 27,
+              "audio-thread opcode ceiling includes the atomic Preview effect-chain command");
 
 // --- command record transport shape (mirror of the production assert) ---
 

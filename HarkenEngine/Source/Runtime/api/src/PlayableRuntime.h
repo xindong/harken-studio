@@ -9,10 +9,14 @@
 #include "harken/core/MonitorRequest.h"
 
 #include <cstdint>
+#include <span>
 
 namespace harken {
 
 struct Engine;
+struct PreviewEffectChainEntry;
+VnResult SetPreviewVoiceEffectChain(std::uint64_t voiceInstance,
+    std::span<const PreviewEffectChainEntry> chain) noexcept;
 
 struct PlaybackPathObservation {
     std::uint64_t voiceInstance = 0;
