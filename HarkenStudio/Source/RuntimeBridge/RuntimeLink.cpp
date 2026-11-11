@@ -1897,6 +1897,16 @@ bool runtimeHasEffectChainConsumers()
     return runtimeIsActive() && VnPreview_HasEffectChainConsumers() != 0;
 }
 
+uint64_t runtimePreviewVoiceWorldGeneration(uint64_t voiceInstance)
+{
+    return runtimeIsActive() ? VnPreview_QueryVoiceWorldGeneration(voiceInstance) : 0;
+}
+
+bool runtimeHasPreviewWorldGeneration(uint64_t generation)
+{
+    return runtimeIsActive() && VnPreview_HasWorldGeneration(generation) != 0;
+}
+
 EngineResult runtimeRefreshPreviewVoiceBindings(uint64_t voiceInstance)
 {
     return VnPreview_RefreshVoiceBindings(voiceInstance);
@@ -1912,6 +1922,14 @@ EngineResult runtimeSetPreviewVoiceEffect(uint64_t voiceInstance, harkenstudio::
     uint32_t effectType, const std::vector<float>& parameters, bool bypass)
 {
     return VnPreview_SetVoiceEffect(voiceInstance, toNative(effectId), effectType,
+        parameters.data(), static_cast<uint32_t>(parameters.size()), bypass ? 1u : 0u);
+}
+
+EngineResult runtimeSetPreviewBusEffect(uint64_t ownerId, harkenstudio::ObjectId busId,
+    harkenstudio::ObjectId effectId, uint32_t effectType,
+    const std::vector<float>& parameters, bool bypass)
+{
+    return VnPreview_SetBusEffect(ownerId, toNative(busId), toNative(effectId), effectType,
         parameters.data(), static_cast<uint32_t>(parameters.size()), bypass ? 1u : 0u);
 }
 

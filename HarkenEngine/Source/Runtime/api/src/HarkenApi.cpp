@@ -80275,6 +80275,14 @@ bool AdmitSingleLiveCommand(Engine& engine) {
     return AdmitSingleCommand(engine);
 }
 
+bool AdmitLiveCommandBatch(const Engine& engine, std::uint32_t count) {
+    return AdmitCommandBatch(engine, count);
+}
+
+bool LiveCommandBatchFitsCapacities(const Engine& engine, std::uint32_t count) {
+    return AtomicBatchFitsCapacities(engine, count);
+}
+
 void ClearPairedInstallAckIdentity(Engine& engine, std::uint32_t planIndex) {
     if (planIndex < engine.projectGenerationInstallAckSideTable.size()) {
         engine.projectGenerationInstallAckSideTable[planIndex] = {};
@@ -82251,10 +82259,12 @@ bool ObserveCurrentPlaybackPaths(
 }
 
 bool BuildBusEffectParameterCommandV1(Engine& engine, std::uint32_t busIndex,
-    std::uint32_t slot, std::uint32_t paramIndex, float value,
+    std::uint32_t slot, std::uint32_t paramIndex, std::span<const float> parameters,
     std::uint32_t type, CommandRecord* out) noexcept {
+    if (paramIndex >= parameters.size()) return false;
     return MakeEffectParamCommand(engine, EffectParamTargetStore::Scope::Bus,
-        busIndex, slot, paramIndex, value, type, out);
+        busIndex, slot, paramIndex, parameters[paramIndex], type, out,
+        parameters.data(), static_cast<std::uint32_t>(parameters.size()));
 }
 
 VnResult SetPreviewVoiceEffect(std::uint64_t render, VnObjectId effectId,
@@ -82282,20 +82292,28 @@ VnResult SetPreviewVoiceEffect(std::uint64_t render, VnObjectId effectId,
     auto& current = engine->effectSlotConfig[renderSlot][slot];
     std::array<CommandRecord, kMaxEffectParamCount + 1> commands{};
     std::array<bool, kMaxEffectParamCount> bound{};
+    std::array<float, kMaxEffectParamCount> effectiveParameters{};
     std::uint32_t commandCount = 0;
     constexpr auto scope = EffectParamTargetStore::Scope::Voice;
     for (std::uint32_t index = 0; index < parameterCount; ++index) {
         const auto valid = ValidateEffectParam(effectType, index, parameters[index],
             engine->config.mixRate.SampleRate());
         if (valid != VN_OK) return valid;
+        bound[index] = engine->bindings.HasEffectParamBinding(scope, render, slot, index, effectType);
+        effectiveParameters[index] = bound[index] || current.params[index] == parameters[index]
+            ? engine->effectParamTargets.LastCommitted(scope, render, slot, index) : parameters[index];
+    }
+    for (std::uint32_t index = 0; index < parameterCount; ++index) {
         if (current.params[index] == parameters[index]) continue;
         if (engine->effectParamTargets.ForeignClaim(scope, render,
                 static_cast<std::uint32_t>(render >> 32), slot, index)) return VN_BACKPRESSURE;
-        bound[index] = engine->bindings.HasEffectParamBinding(scope, render, slot, index, effectType);
         if (!bound[index] && !MakeEffectParamCommand(*engine, scope, render, slot, index,
-                parameters[index], effectType, &commands[commandCount++], parameters, parameterCount))
+                parameters[index], effectType, &commands[commandCount++], effectiveParameters.data(), parameterCount))
             return VN_INVALID_ARG;
     }
+    if (commandCount != 0 && (effectType == VN_EFFECT_COMPRESSOR || effectType == VN_EFFECT_THREE_BAND_TONE) &&
+        engine->effectParamTargets.ForeignClaimInSlot(scope, render,
+            static_cast<std::uint32_t>(render >> 32), slot)) return VN_BACKPRESSURE;
     if (current.bypass != (bypass != 0)) {
         auto& command = commands[commandCount++];
         command.opcode = kOpcodeSetVoiceEffectBypass;
@@ -82315,6 +82333,88 @@ VnResult SetPreviewVoiceEffect(std::uint64_t render, VnObjectId effectId,
         current.params[index] = parameters[index];
     }
     current.bypass = bypass != 0;
+    return VN_OK;
+}
+
+VnResult SetPreviewBusEffect(std::uint64_t ownerId, VnBusId busId, VnObjectId effectId,
+    std::uint32_t effectType, const float* parameters, std::uint32_t parameterCount,
+    std::uint32_t bypass) noexcept {
+    Engine* engine = detail::ActiveEngine();
+    if (engine == nullptr || engine->callbackFatalSticky) return VN_NOT_INITIALIZED;
+    if (ownerId == 0 || IsNull(effectId) || parameters == nullptr || bypass > 1u
+        || parameterCount == 0 || parameterCount > kMaxEffectParamCount
+        || parameterCount != EffectParamCount(effectType)) return VN_INVALID_ARG;
+    const auto bus = engine->buses.FindIndex(busId);
+    if (bus == kInvalidBusIndex) return VN_UNKNOWN_ID;
+    if (engine->busTopologyOwnerIds[bus] != ownerId || engine->busOwnerCookies[bus] != 0)
+        return VN_IN_USE;
+    std::uint32_t slot = engine->config.fxSlotsPerBus;
+    for (std::uint32_t index = 0; index < engine->config.fxSlotsPerBus; ++index) {
+        if (engine->busEffectSlotTypes[bus][index] == effectType
+            && engine->effectBank.ObjectIdentity(
+                engine->busEffectInstanceRefs[bus][index]).effectId == effectId) {
+            slot = index;
+            break;
+        }
+    }
+    if (slot == engine->config.fxSlotsPerBus) return VN_UNKNOWN_ID;
+    if (engine->busEffectOwnerCookies[bus][slot] != ownerId) return VN_IN_USE;
+    const auto generation = engine->buses.GenerationAt(bus);
+    constexpr auto scope = EffectParamTargetStore::Scope::Bus;
+    std::array<CommandRecord, kMaxEffectParamCount + 1> commands{};
+    std::array<bool, kMaxEffectParamCount> changed{};
+    std::array<bool, kMaxEffectParamCount> bound{};
+    std::array<float, kMaxEffectParamCount> effectiveParameters{};
+    std::uint32_t commandCount = 0;
+    for (std::uint32_t index = 0; index < parameterCount; ++index) {
+        const auto valid = ValidateEffectParam(effectType, index, parameters[index],
+            engine->config.mixRate.SampleRate());
+        if (valid != VN_OK) return valid;
+        changed[index] = engine->effectParamTargets.AuthoredBase(scope, bus, slot, index) != parameters[index];
+        bound[index] = engine->bindings.HasEffectParamBinding(scope, bus, slot, index, effectType);
+        effectiveParameters[index] = bound[index] || !changed[index]
+            ? engine->effectParamTargets.LastCommitted(scope, bus, slot, index) : parameters[index];
+    }
+    for (std::uint32_t index = 0; index < parameterCount; ++index) {
+        if (!changed[index]) continue;
+        if (engine->effectParamTargets.ForeignClaim(scope, bus, generation, slot, index))
+            return VN_BACKPRESSURE;
+        if (!bound[index] && !MakeEffectParamCommand(*engine, scope, bus, slot, index,
+                parameters[index], effectType, &commands[commandCount++], effectiveParameters.data(), parameterCount))
+            return VN_INVALID_ARG;
+    }
+    if (commandCount != 0 && (effectType == VN_EFFECT_COMPRESSOR || effectType == VN_EFFECT_THREE_BAND_TONE) &&
+        engine->effectParamTargets.ForeignClaimInSlot(scope, bus, generation, slot)) return VN_BACKPRESSURE;
+    if (engine->busEffectSlotBypass[bus][slot] != bypass) {
+        auto& command = commands[commandCount++];
+        command.opcode = kOpcodeSetBusEffectBypass;
+        command.payload.setBusEffectBypass.busIndex = bus;
+        command.payload.setBusEffectBypass.slot = slot;
+        command.payload.setBusEffectBypass.bypass = bypass;
+        command.payload.setBusEffectBypass.busGeneration = generation;
+    }
+    if (commandCount != 0 && (!AtomicBatchFitsCapacities(*engine, commandCount)
+        || !AdmitCommandBatch(*engine, commandCount)
+        || !engine->commands.TryPushBatch(commands.data(), commandCount))) return VN_BACKPRESSURE;
+    for (std::uint32_t index = 0; index < parameterCount; ++index) {
+        if (!changed[index]) continue;
+        if (bound[index])
+            engine->effectParamTargets.NoteDirectBound(scope, bus, slot, index, parameters[index]);
+        else
+            engine->effectParamTargets.NoteDirect(scope, bus, slot, index, parameters[index], parameters[index]);
+    }
+    engine->busEffectSlotBypass[bus][slot] = static_cast<std::uint8_t>(bypass);
+    const auto& reference = engine->busEffectInstanceRefs[bus][slot];
+    MonitorEffectFacts facts{};
+    facts.bypass01 = bypass;
+    void* storage = engine->effectBank.StateFor(reference.type, reference.poolIndex);
+    const auto effect = BuildEffect(reference.type, storage);
+    if (effect.tailFrames) {
+        facts.tailFrames = effect.tailFrames(storage);
+        facts.tailKnown = true;
+    }
+    ObserveMonitorEffect(PackedMonitorEffectHandle(bus, slot), reference.generation,
+        effectId, VN_ACTION_TERMINAL_NONE, facts);
     return VN_OK;
 }
 

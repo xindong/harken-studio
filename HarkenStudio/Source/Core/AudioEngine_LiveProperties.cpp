@@ -1,12 +1,15 @@
 #include "AudioEngine.h"
 
 #include "AttenuationStore.h"
+#include "Components/VMixNode.h"
 #include "Tooling/Harkenizer/Core/CurrentWorldProjectAdapter.h"
 #include "Tooling/Harkenizer/Core/CanonicalRuntimeProjectAdapterPrivate.h"
 #include "FieldGroupProjectAdapter.h"
 #include "PlatformContextService.h"
 #include "ProjectManager.h"
+#include "RuntimeSyncCoordinator.h"
 #include "RuntimeBridge/PreviewBridge.h"
+#include "RuntimeBridge/CurrentWorldSyncBridge.h"
 
 #include <algorithm>
 #include <map>
@@ -37,15 +40,11 @@ bool updateCurvePreview(QHash<Key, QVector<std::pair<QUuid, Value>>>& previews,
 }
 
 struct LivePropertyPreview {
-    struct Effect {
-        harkenstudio::ObjectId id{};
-        uint32_t type = 0;
-        EffectMode mode = EffectMode::Custom;
-        QUuid presetGuid;
-        std::vector<float> parameters;
-        bool bypass = false;
-
-        bool operator==(const Effect&) const = default;
+    using Effect = HarkenEditor::Bridge::PreviewEffectSource;
+    struct BusEffect {
+        harkenstudio::ObjectId busId{};
+        harkenstudio::ObjectId definitionId{};
+        Effect effect;
     };
 
     struct Definition {
@@ -70,6 +69,7 @@ struct LivePropertyPreview {
     QHash<harkenstudio::ObjectId, Definition> definitions;
     QHash<uint64_t, LivePropertyValues> applied;
     QHash<uint64_t, std::map<harkenstudio::ObjectId, Effect>> appliedEffects;
+    std::vector<BusEffect> busEffects;
     QHash<QUuid, QVector<std::pair<QUuid, AttenuationSnapshot>>> attenuations;
     QSet<QUuid> pendingAttenuations;
     bool dirty = true;
@@ -164,7 +164,6 @@ void AudioEngine::applyLivePropertyPreview()
     if (paths.empty()) {
         preview.applied.clear();
         preview.appliedEffects.clear();
-        return;
     }
     if (preview.dirty) {
         const auto scope = currentWorldPlatformScope(PlatformContextService::instance().context());
@@ -199,28 +198,64 @@ void AudioEngine::applyLivePropertyPreview()
             }
             for (const auto& entry : groups.effects.effects.entries()) {
                 const auto* effect = EffectChainSemantics::resolve(entry, *project);
-                if (effect)
-                    definition.effects.push_back({entry.runtimeId(), static_cast<uint32_t>(effect->type),
-                        entry.mode, entry.effectGuid, effect->parameters, entry.bypass});
+                if (!effect) continue;
+                const auto preset = sourceIndex->byQtGuid.find(entry.effectGuid);
+                const auto presetId = entry.mode == EffectMode::Preset && preset != sourceIndex->byQtGuid.end()
+                    ? preset->second->runtimeId() : harkenstudio::ObjectId{};
+                definition.effects.push_back({entry.runtimeId(), presetId,
+                    static_cast<uint32_t>(effect->type), effect->parameters, entry.bypass});
+            }
+        }
+        preview.busEffects.clear();
+        for (const auto* item : sourceIndex->buses) {
+            const auto* mix = item->comp<VMixNode>();
+            if (!mix) continue;
+            for (const auto& entry : mix->effectsForPlatform(scope).entries()) {
+                const auto* effect = EffectChainSemantics::resolve(entry, *project);
+                if (!effect) continue;
+                const auto definitionId = toFieldGroupGuid(
+                    entry.mode == EffectMode::Preset ? entry.effectGuid : item->guid);
+                preview.busEffects.push_back({item->runtimeId(), definitionId,
+                    {entry.runtimeId(), {}, static_cast<uint32_t>(effect->type),
+                        effect->parameters, entry.bypass}});
             }
         }
         preview.dirty = false;
     }
+    const auto installedWorld = runtimeSyncCoordinator().installedWorld();
+    if (installedWorld)
+        for (const auto& busEffect : preview.busEffects)
+            (void)HarkenEditor::Bridge::updateLivePreviewBusEffect(installedWorld->runtimeEpoch,
+                runtimeSyncCoordinator().currentAuthoringRevision(), busEffect.busId,
+                busEffect.definitionId, busEffect.effect);
     QSet<uint64_t> active;
     for (const auto& path : paths) {
         active.insert(path.voiceInstance);
         (void)HarkenEditor::Bridge::refreshPreviewVoiceBindings(path.voiceInstance);
         const auto leaf = preview.definitions.constFind(path.soundId);
         if (leaf == preview.definitions.cend()) continue;
-        auto& appliedEffects = preview.appliedEffects[path.voiceInstance];
+        auto effectState = preview.appliedEffects.find(path.voiceInstance);
+        if (effectState == preview.appliedEffects.end()) {
+            std::vector<HarkenEditor::Bridge::PreviewEffectSource> installed;
+            if (HarkenEditor::Bridge::captureInstalledPreviewEffects(
+                    path.worldGeneration, path.soundId, installed)) {
+                effectState = preview.appliedEffects.insert(path.voiceInstance, {});
+                for (auto& effect : installed) effectState->emplace(effect.id, std::move(effect));
+            }
+        }
         for (const auto& effect : leaf->effects) {
+            if (effectState == preview.appliedEffects.end()) break;
+            auto& appliedEffects = *effectState;
             const auto previous = appliedEffects.find(effect.id);
-            if (previous != appliedEffects.end()
-                && (previous->second == effect || previous->second.mode != effect.mode
-                    || previous->second.presetGuid != effect.presetGuid)) continue;
+            if (previous == appliedEffects.end()) continue;
+            auto next = previous->second;
+            if (next.type == effect.type && next.presetId == effect.presetId)
+                next.parameters = effect.parameters;
+            next.bypass = effect.bypass;
+            if (next == previous->second) continue;
             if (HarkenEditor::Bridge::setPreviewVoiceEffect(path.voiceInstance, effect.id,
-                    effect.type, effect.parameters, effect.bypass) == HarkenEditor::Bridge::kEngineOk)
-                appliedEffects[effect.id] = effect;
+                    next.type, next.parameters, next.bypass) == HarkenEditor::Bridge::kEngineOk)
+                previous->second = std::move(next);
         }
         auto values = leaf->fields;
         float volumeDb = 0;

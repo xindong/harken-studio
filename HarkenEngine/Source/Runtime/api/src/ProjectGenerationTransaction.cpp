@@ -188,7 +188,7 @@ VnResult PreparedBusEffectsV1::Prepare(Engine& engine, const SlotPlanV1& plan,
                     if (row.parameters[p] == row.originalParameters[p]) continue;
                     CommandRecord command{};
                     if (!BuildBusEffectParameterCommandV1(engine, bus, slot, p,
-                            row.parameters[p], effect->effectType, &command)) return VN_INVALID_ARG;
+                            row.parameters, effect->effectType, &command)) return VN_INVALID_ARG;
                     state->commands.push_back(command);
                 }
             } else if (effect) {
@@ -1545,6 +1545,10 @@ ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(
     }
     const bool volumeOnly = view.publicationVintage == 3 ||
         view.publicationVintage == 4 || view.publicationVintage == 5;
+    if (view.forceWorldReplacement && view.publicationVintage != 5) {
+        result.status = ProjectGenerationPrepareStatusV1::InvalidView;
+        return result;
+    }
     const bool closeEffects = view.publicationVintage == 1 && view.prospective &&
         view.prospective->busCount == 1 && view.prospective->busIds &&
         view.prospective->busIds[0] == VN_BUS_MASTER;
@@ -1661,6 +1665,13 @@ ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(
                 return result;
             }
         }
+        const auto commandCount = 1u + (effects ? effects->Commands().size() : 0u);
+        if (commandCount > UINT32_MAX ||
+            !LiveCommandBatchFitsCapacities(engine, static_cast<std::uint32_t>(commandCount))) {
+            ReleasePreparedSlot(engine, planIndex, ownerSlot);
+            result.status = ProjectGenerationPrepareStatusV1::Capacity;
+            return result;
+        }
         ApplySlotPlanToProspective(slotPlan, remapped);
         fillView = &remapped;
         std::vector<std::uint32_t> feederScratch(remapped.busCount, 0);
@@ -1759,7 +1770,8 @@ ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(
             return result;
         }
         imageStatus = engine.variables.PrepareCurrentWorldImageV1(
-            view.compiledWorld, image);
+            view.compiledWorld, image,
+            view.forceWorldReplacement && transition != TopologyOwnerRevisionDispositionV1::Retry);
         if (imageStatus == WorldInstallStatus::Ok) {
             const auto current = engine.variables.CurrentWorldGeneration();
             if (current == UINT64_MAX && !image.PreservesContent()) {
@@ -2013,8 +2025,14 @@ ProjectGenerationCommitResultV1 CommitPreparedProjectGenerationV1(
         return result;
     }
     CommandQueue::BatchReservation reservation{};
+    if (commands.size() > UINT32_MAX ||
+        !LiveCommandBatchFitsCapacities(engine, static_cast<std::uint32_t>(commands.size()))) {
+        engine.topologyPlans.Recycle(liveIndex);
+        result.status = ProjectGenerationCommitStatusV1::InvalidPrepared;
+        return result;
+    }
     if (!ProjectCheckpoint(detail::LogicAllocSite::ProjectCommandReserve) ||
-        !AdmitSingleLiveCommand(engine) ||
+        !AdmitLiveCommandBatch(engine, static_cast<std::uint32_t>(commands.size())) ||
         !engine.commands.ReserveBatch(static_cast<std::uint32_t>(commands.size()), &reservation)) {
         engine.topologyPlans.Recycle(liveIndex);
         result.status = ProjectGenerationCommitStatusV1::Backpressure;

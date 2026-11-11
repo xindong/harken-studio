@@ -356,6 +356,7 @@ VnPreviewPrepareStatus PrepareProjectImpl(
             view.authoredBusCount = volumeCount;
         }
         if (effects) {
+            view.forceWorldReplacement = effects->forceWorldReplacement != 0;
             for (std::uint32_t i = 0; i < effects->busEffectCount; ++i) {
                 const auto& row = effects->busEffects[i];
                 project->effects.push_back({row.busId, row.effectId, row.slot, row.effectType,
@@ -434,7 +435,7 @@ VnPreviewPrepareStatus VnPreview_PrepareProjectV4(
     const VnPreviewProjectDescV4* desc, VnPreviewProjectHandle* outHandle) {
     if (outHandle) *outHandle = 0;
     if (!desc || desc->base.base.base.structSize != sizeof(VnPreviewProjectDescV4) ||
-        desc->base.base.reserved0 != 0 || desc->base.reserved1 != 0 || desc->reserved2 != 0 ||
+        desc->base.base.reserved0 != 0 || desc->base.reserved1 != 0 || desc->forceWorldReplacement > 1 ||
         !desc->base.base.busVolumes || !desc->busFaderAfterSlots ||
         desc->busFaderCount != desc->base.base.base.busCount ||
         desc->base.busSendLevelCount != desc->base.base.base.sendCount ||
@@ -497,6 +498,46 @@ uint32_t VnPreview_HasPlayableConsumers(void) {
 uint32_t VnPreview_HasEffectChainConsumers(void) {
     auto* engine = ActiveEngine();
     return engine && harken::HasEffectChainPublicationConsumers(*engine);
+}
+
+uint64_t VnPreview_QueryVoiceWorldGeneration(uint64_t voiceInstance) {
+    const auto* engine = ActiveEngine();
+    const auto slot = static_cast<std::uint32_t>(voiceInstance);
+    if (!engine || slot >= engine->playbackPaths.ConstructedCount() || !engine->voices.IsAlive(voiceInstance)) return 0;
+    const auto& stored = engine->playbackPaths[slot];
+    if (stored.voiceInstance != voiceInstance) return 0;
+    const auto path = stored.Capture();
+    for (std::uint32_t i = path.path.rowCount; i != 0; --i) {
+        const auto& row = path.path.rows[i - 1];
+        if (row.stableId == path.soundId && row.occurrenceOrdinal == UINT32_MAX)
+            return row.source.ownerStableId == 0 && row.source.leaseIdentity == 0
+                ? row.source.worldGeneration : 0;
+    }
+    return 0;
+}
+
+uint32_t VnPreview_HasWorldGeneration(uint64_t generation) {
+    const auto* engine = ActiveEngine();
+    if (!engine || generation == 0) return 0;
+    if (engine->variables.CurrentWorldGeneration() == generation) return 1;
+    for (const auto& row : engine->playableServices) {
+        if (row.phase != harken::EnginePlayableStartPhase::Free && row.InvocationValid() &&
+            row.Invocation().packLease.leaseToken == 0 &&
+            row.Invocation().worldGeneration == generation) return 1;
+    }
+    for (std::uint32_t slot = 0; slot < engine->actionDeferredRecords.Capacity(); ++slot) {
+        harken::ActionDeferredRecordToken token{};
+        harken::ActionDeferredRecord record{};
+        harken::ActionDeferredRecordState state{};
+        if (engine->actionDeferredRecords.CapturePublicationAt(slot, &token, &record, &state) &&
+            record.owner.kind == harken::ActionFiringOwnerKind::DirectWorld &&
+            record.owner.worldGeneration == generation) return 1;
+    }
+    for (const auto& path : engine->playbackPaths) {
+        if (path.pathRowCount != 0 &&
+            VnPreview_QueryVoiceWorldGeneration(path.voiceInstance) == generation) return 1;
+    }
+    return 0;
 }
 
 uint32_t VnPreview_HasAction(VnObjectId actionId) {
@@ -564,6 +605,14 @@ VnResult VnPreview_SetVoiceEffect(uint64_t voiceInstance, VnObjectId effectId,
     uint32_t bypass) {
     if (!ActiveEngine()) return VN_NOT_INITIALIZED;
     return harken::SetPreviewVoiceEffect(voiceInstance, effectId, effectType,
+        parameters, parameterCount, bypass);
+}
+
+VnResult VnPreview_SetBusEffect(uint64_t ownerId, VnBusId busId, VnObjectId effectId,
+    uint32_t effectType, const float* parameters, uint32_t parameterCount,
+    uint32_t bypass) {
+    if (!ActiveEngine()) return VN_NOT_INITIALIZED;
+    return harken::SetPreviewBusEffect(ownerId, busId, effectId, effectType,
         parameters, parameterCount, bypass);
 }
 

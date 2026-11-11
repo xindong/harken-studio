@@ -58,7 +58,7 @@ bool CanResetVolumeOnlyNonVolumePropertiesV2(
 void ResetVolumeOnlyNonVolumePropertiesV2(Engine& engine,
     std::uint32_t slot, bool preserveEffects = false) noexcept;
 bool BuildBusEffectParameterCommandV1(Engine& engine, std::uint32_t busIndex,
-    std::uint32_t slot, std::uint32_t paramIndex, float value,
+    std::uint32_t slot, std::uint32_t paramIndex, std::span<const float> parameters,
     std::uint32_t type, CommandRecord* out) noexcept;
 struct TopologyPlanView;
 bool ValidateTopologyPlanVolumesV1(const TopologyPlanView& plan) noexcept;
@@ -115,6 +115,7 @@ struct ProjectGenerationInstallViewV1 {
     std::uint32_t authoredBusCount = 0;
     std::span<const PackBusDefinitionEffect> effects;
     std::span<const PackBusDefinitionEffectParameter> effectParameters;
+    bool forceWorldReplacement = false;
 };
 
 enum class ProjectGenerationPrepareStatusV1 : std::uint8_t {

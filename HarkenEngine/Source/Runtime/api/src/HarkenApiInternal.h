@@ -27,6 +27,8 @@ void FillLiveOrPreparedPlan(Engine& engine, TopologyPlanPool& plans,
 bool ProspectiveTopologyIsAcyclic(
     Engine& engine, const ProspectiveTopologyView* prospective);
 bool AdmitSingleLiveCommand(Engine& engine);
+bool AdmitLiveCommandBatch(const Engine& engine, std::uint32_t count);
+bool LiveCommandBatchFitsCapacities(const Engine& engine, std::uint32_t count);
 void ClearPairedInstallAckIdentity(Engine& engine, std::uint32_t planIndex);
 void UpdateSendHighWater(Engine& engine) noexcept;
 void ResetBusLogicSlot(Engine& engine, std::uint32_t busIndex,

@@ -317,6 +317,38 @@ TEST_F(StudioRuntimeApi, ConcurrentBusChangeDoesNotPartiallyPublishPreparedWorld
     ASSERT_NEAR(before.busPeaks[0], afterRefusal.busPeaks[0], 1e-4f);
 }
 
+TEST_F(StudioRuntimeApi, ForcedPreviewWorldReplacementPreservesExactOwnerRetry) {
+    auto view = EffectDesc(-12.0f, 0);
+    view.forceWorldReplacement = 1;
+    const auto publish = [&](std::uint64_t& generation) {
+        ASSERT_EQ(VN_PREVIEW_PREPARE_OK, VnPreview_PrepareProjectV4(&view, &handle));
+        ASSERT_EQ(VN_PREVIEW_COMMIT_OK, VnPreview_CommitProject(handle, &generation));
+        handle = 0;
+        for (int i = 0; i < 16 && !VnPreview_ProjectIsOpen(generation); ++i) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            VnPreview_PumpNullMixer(1);
+            VnPreview_DrainProjectAcks();
+        }
+        ASSERT_TRUE(VnPreview_ProjectIsOpen(generation));
+    };
+    std::uint64_t initial = 0;
+    publish(initial);
+    auto& base = view.base.base.base;
+    base.ownerBaseRevision = 1;
+    base.ownerRevision = 2;
+    base.authoringRevision = 2;
+    base.submissionSerial = 2;
+    std::uint64_t replaced = 0;
+    publish(replaced);
+    EXPECT_GT(replaced, initial);
+    std::uint64_t retried = 0;
+    publish(retried);
+    EXPECT_EQ(retried, replaced);
+    std::uint64_t revision = 0;
+    ASSERT_TRUE(VnPreview_QueryOwnerRevision(base.ownerId, &revision));
+    EXPECT_EQ(revision, 2u);
+}
+
 TEST_F(StudioRuntimeApi, EffectPublicationUpdatesAudioAndRetainsOwnedStateAcrossRevisions) {
     v2Volumes[0].volumeDb = 0.0f;
     std::uint64_t revision = 0;
@@ -362,6 +394,18 @@ TEST_F(StudioRuntimeApi, EffectPublicationUpdatesAudioAndRetainsOwnedStateAcross
     const float limited = peak();
     ASSERT_GT(limited, 0.1f);
     EXPECT_LT(limited, 0.3f);
+    std::array<float, 2> liveParameters{-18.0f, 100.0f};
+    EXPECT_EQ(VN_IN_USE, VnPreview_SetBusEffect(desc.ownerId + 1, effect.busId,
+        effect.effectId, effect.effectType, liveParameters.data(), liveParameters.size(), 0));
+    EXPECT_EQ(VN_UNKNOWN_ID, VnPreview_SetBusEffect(desc.ownerId, effect.busId,
+        harkentest::ObjectId(999), effect.effectType, liveParameters.data(), liveParameters.size(), 0));
+    EXPECT_NEAR(limited, peak(), 0.01f);
+    ASSERT_EQ(VN_OK, VnPreview_SetBusEffect(desc.ownerId, effect.busId,
+        effect.effectId, effect.effectType, liveParameters.data(), liveParameters.size(), 0));
+    EXPECT_NEAR(limited * 0.5f, peak(), 0.01f);
+    ASSERT_EQ(VN_OK, VnPreview_SetBusEffect(desc.ownerId, effect.busId,
+        effect.effectId, effect.effectType, liveParameters.data(), liveParameters.size(), 1));
+    EXPECT_NEAR(0.8f, peak(), 0.01f);
     publish(-6.0f, 0);
     const float raised = peak();
     EXPECT_GT(raised, limited * 1.4f);
@@ -405,6 +449,52 @@ TEST_F(StudioRuntimeApi, EffectPublicationUpdatesAudioAndRetainsOwnedStateAcross
     handle = 0;
     ASSERT_EQ(VN_OK, Vn_ClearBusEffect(v2Buses[0].id, 1));
     EXPECT_NEAR(retained, peak(), 0.01f);
+}
+
+TEST_F(StudioRuntimeApi, OversizedPublicationRefusesWithoutBlockingLaterTransactions) {
+    ASSERT_EQ(VN_OK, Vn_Term());
+    config.maxControlCommandsPerQuantum = 2;
+    config.commandQueueDepth = 256;
+    ASSERT_EQ(VN_OK, Vn_Init(&config));
+    const auto drain = [&](std::uint64_t generation) {
+        for (int i = 0; i < 16 && !VnPreview_ProjectIsOpen(generation); ++i) {
+            ASSERT_EQ(VN_OK, Vn_Update());
+            VnPreview_PumpNullMixer(1);
+            VnPreview_DrainProjectAcks();
+        }
+        EXPECT_TRUE(VnPreview_ProjectIsOpen(generation));
+    };
+    auto initial = VolumeDesc();
+    ASSERT_EQ(VN_PREVIEW_PREPARE_OK, VnPreview_PrepareProjectV2(&initial, &handle));
+    std::uint64_t generation = 0;
+    ASSERT_EQ(VN_PREVIEW_COMMIT_OK, VnPreview_CommitProject(handle, &generation));
+    handle = 0;
+    drain(generation);
+    auto oversized = EffectDesc(-12.0f, 0);
+    auto& requested = oversized.base.base.base;
+    requested.ownerBaseRevision = 1;
+    requested.ownerRevision = 2;
+    requested.authoringRevision = 2;
+    requested.submissionSerial = 2;
+    EXPECT_EQ(VN_PREVIEW_PREPARE_CAPACITY,
+        VnPreview_PrepareProjectV4(&oversized, &handle));
+    EXPECT_EQ(0u, handle);
+    std::uint64_t revision = 0;
+    ASSERT_TRUE(VnPreview_QueryOwnerRevision(desc.ownerId, &revision));
+    EXPECT_EQ(1u, revision);
+    EXPECT_TRUE(VnPreview_ProjectIsOpen(generation));
+    v2Volumes[0].volumeDb = -12.0f;
+    auto next = VolumeDesc();
+    next.base.ownerBaseRevision = 1;
+    next.base.ownerRevision = 2;
+    next.base.authoringRevision = 2;
+    next.base.submissionSerial = 3;
+    ASSERT_EQ(VN_PREVIEW_PREPARE_OK, VnPreview_PrepareProjectV2(&next, &handle));
+    ASSERT_EQ(VN_PREVIEW_COMMIT_OK, VnPreview_CommitProject(handle, &generation));
+    handle = 0;
+    drain(generation);
+    ASSERT_TRUE(VnPreview_QueryOwnerRevision(desc.ownerId, &revision));
+    EXPECT_EQ(2u, revision);
 }
 
 TEST_F(StudioRuntimeApi, EffectPublicationValidatesCompleteInputBeforeReservingResources) {

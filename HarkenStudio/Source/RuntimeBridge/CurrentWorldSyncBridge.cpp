@@ -50,12 +50,21 @@ struct PreparedProjectGenerationHold {
     bool soundPcmRegistered = false;
     bool emptyWorldClose = false;
     bool effectDefinitionChanged = false;
+    PreviewEffectDefinitions voiceEffects;
 };
 
 std::optional<PreparedProjectGenerationHold> generationHold;
 std::uint64_t publishedOwnerId = 0;
 std::uint64_t publishedRuntimeEpoch = 0;
 std::shared_ptr<const harkenbuscompiler::CompiledBusResultV1> publishedBusResult;
+struct PublishedBusEffectValues {
+    std::vector<float> parameters;
+    bool bypass = false;
+};
+std::map<harkenstudio::ObjectId, PublishedBusEffectValues> publishedBusEffectValues;
+std::map<std::uint64_t, PreviewEffectDefinitions> publishedVoiceEffects;
+std::uint64_t publishedVoiceEffectEpoch = 0;
+std::uint64_t publishedVoiceEffectGeneration = 0;
 std::deque<CurrentWorldSyncResult> completedWorlds;
 CurrentWorldInstallBackend installBackend;
 CurrentWorldDiscardObserver discardObserver;
@@ -275,6 +284,13 @@ CurrentWorldSyncResult prepareAndCommitHold(PreparedProjectGenerationHold& hold)
     publishedOwnerId = hold.view.ownerId;
     publishedRuntimeEpoch = hold.token.runtimeEpoch;
     publishedBusResult = hold.busResult;
+    publishedBusEffectValues.clear();
+    for (const auto& effect : hold.busResult->effects) {
+        auto& values = publishedBusEffectValues[effect.effectId];
+        values.bypass = (effect.flags & 1u) != 0;
+        for (std::uint32_t i = 0; i < effect.parameterCount; ++i)
+            values.parameters.push_back(hold.busResult->effectParameters[effect.parameterFirst + i].value);
+    }
     result.status = CurrentWorldSyncStatus::Pending;
     result.worldGeneration = generation;
     return result;
@@ -294,6 +310,17 @@ CurrentWorldSyncResult finishOpenIfReady(PreparedProjectGenerationHold& hold)
     }
     result.status = CurrentWorldSyncStatus::Ok;
     confirmPublishedBuses(hold);
+    if (publishedVoiceEffectEpoch != hold.token.runtimeEpoch) {
+        publishedVoiceEffects.clear();
+        publishedVoiceEffectEpoch = hold.token.runtimeEpoch;
+    }
+    for (auto it = publishedVoiceEffects.begin(); it != publishedVoiceEffects.end();) {
+        if (!Detail::runtimeHasPreviewWorldGeneration(it->first))
+            it = publishedVoiceEffects.erase(it);
+        else ++it;
+    }
+    publishedVoiceEffects[hold.installedWorldGeneration] = hold.voiceEffects;
+    publishedVoiceEffectGeneration = hold.installedWorldGeneration;
     if (hold.soundPreparation) {
         for (const auto& sound : hold.soundPreparation->sounds) {
             syncSound(sound.binding);
@@ -327,6 +354,7 @@ CurrentWorldSyncResult installCompiledWorld(
     hold.emptyWorldClose = emptyWorldClose;
     hold.world = std::move(world);
     hold.busResult = request->busResult;
+    hold.voiceEffects = request->previewEffects;
     if (publishedBusResult && publishedOwnerId == ownerId
         && publishedRuntimeEpoch == token.runtimeEpoch) {
         std::map<harkenstudio::ObjectId, harkenprojectschema::AuthoringGuid> definitions;
@@ -416,6 +444,19 @@ CurrentWorldSyncResult installCompiledWorld(
     hold.effectView.busEffectParameterCount = static_cast<std::uint32_t>(hold.effectParameters.size());
     hold.effectView.busFaderAfterSlots = hold.faderAfterSlots.data();
     hold.effectView.busFaderCount = static_cast<std::uint32_t>(hold.faderAfterSlots.size());
+    const auto previousEffects = publishedVoiceEffects.find(publishedVoiceEffectGeneration);
+    if (publishedVoiceEffectEpoch == token.runtimeEpoch && previousEffects != publishedVoiceEffects.end()) {
+        for (const auto& [soundId, effects] : hold.voiceEffects) {
+            const auto sound = previousEffects->second.find(soundId);
+            if (sound == previousEffects->second.end()) continue;
+            for (const auto& effect : effects) {
+                const auto old = std::find_if(sound->second.begin(), sound->second.end(),
+                    [&](const auto& candidate) { return candidate.id == effect.id; });
+                if (old != sound->second.end() && old->presetId != effect.presetId)
+                    hold.effectView.forceWorldReplacement = 1;
+            }
+        }
+    }
 
     result = prepareAndCommitHold(hold);
     if (result.status == CurrentWorldSyncStatus::Pending) {
@@ -824,6 +865,10 @@ void resetCurrentWorldSyncStateForTesting() noexcept
     publishedOwnerId = 0;
     publishedRuntimeEpoch = 0;
     publishedBusResult.reset();
+    publishedVoiceEffects.clear();
+    publishedVoiceEffectEpoch = 0;
+    publishedVoiceEffectGeneration = 0;
+    publishedBusEffectValues.clear();
     completedWorlds.clear();
     installBackend = nullptr;
     discardObserver = nullptr;
@@ -844,6 +889,52 @@ bool queryRuntimeLiveOwnerRevision(std::uint64_t ownerId,
         return false;
     if (outRevision)
         *outRevision = live.currentRevision;
+    return true;
+}
+
+bool updateLivePreviewBusEffect(std::uint64_t runtimeEpoch, std::uint64_t authoringRevision,
+    harkenstudio::ObjectId busId,
+    harkenstudio::ObjectId definitionId, const PreviewEffectSource& effect)
+{
+    if (!publishedBusResult || runtimeEpoch != publishedRuntimeEpoch) return false;
+    const auto installed = std::find_if(publishedBusResult->effects.begin(),
+        publishedBusResult->effects.end(), [&](const auto& candidate) {
+            return candidate.effectId == effect.id && candidate.busId == busId;
+        });
+    if (installed == publishedBusResult->effects.end()) return false;
+    auto& applied = publishedBusEffectValues.at(effect.id);
+    const auto& parameters = installed->definitionGuid == definitionId && installed->effectType == effect.type
+        ? effect.parameters : applied.parameters;
+    if (parameters == applied.parameters && effect.bypass == applied.bypass) return true;
+    if (Detail::runtimeSetPreviewBusEffect(publishedOwnerId, busId, effect.id,
+            installed->effectType, parameters, effect.bypass) != kEngineOk) return false;
+    if (generationHold && !generationHold->committed) {
+        if (generationHold->token.authoringRevision < authoringRevision) {
+            const auto superseded = discardPendingCurrentWorld(PendingCurrentWorldDisposition::Superseded);
+            if (superseded) enqueueCompletion(*superseded);
+        } else if (generationHold->prepared.Valid()) {
+            Detail::runtimeCancelPreparedProjectGeneration(std::move(generationHold->prepared));
+        }
+    }
+    applied.parameters = parameters;
+    applied.bypass = effect.bypass;
+    return true;
+}
+
+bool captureInstalledPreviewEffects(std::uint64_t generation,
+    harkenstudio::ObjectId soundId, std::vector<PreviewEffectSource>& effects)
+{
+    effects.clear();
+    for (auto it = publishedVoiceEffects.begin(); it != publishedVoiceEffects.end();) {
+        if (!Detail::runtimeHasPreviewWorldGeneration(it->first))
+            it = publishedVoiceEffects.erase(it);
+        else ++it;
+    }
+    const auto world = publishedVoiceEffects.find(generation);
+    if (world == publishedVoiceEffects.end()) return false;
+    const auto sound = world->second.find(soundId);
+    if (sound == world->second.end()) return false;
+    effects = sound->second;
     return true;
 }
 

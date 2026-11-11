@@ -3994,7 +3994,8 @@ std::vector<std::uint8_t> Build(std::uint32_t type, std::initializer_list<float>
     auto& header = image.busDefinitionSnapshotHeader;
     header.publicationCapabilityVintage = 5;
     header.runtimeCapabilityMask |= (UINT64_C(1) << 19) |
-        (UINT64_C(1) << (32 + VN_EFFECT_GAIN)) | (UINT64_C(1) << (32 + VN_EFFECT_LIMITER));
+        (UINT64_C(1) << (32 + VN_EFFECT_GAIN)) | (UINT64_C(1) << (32 + VN_EFFECT_LIMITER)) |
+        (UINT64_C(1) << (32 + VN_EFFECT_COMPRESSOR));
     header.compileTargetProfileFingerprint = harken::busfingerprint::ProfileFingerprintV1(
         header.profileVintage, header.renderSampleRateHz, header.mixLayout,
         header.deviceLayout, header.runtimeCapabilityMask);
@@ -4130,6 +4131,55 @@ TEST(CanonicalPackSetActivate, BusEffectsPreserveAudioAndResourcesAcrossReplacem
     EXPECT_NEAR(dry, SettledLevel(engine), 2e-3f);
     EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
     EXPECT_EQ(harken::kInvalidBusIndex, engine.buses.FindIndex(busId));
+}
+
+TEST(CanonicalPackSetActivate, RetainedBusEffectAppliesCompleteParameterRevisionToAudio) {
+    using namespace buseffectfixture;
+    auto config = CanonicalActivationConfig(2, 256, 48000);
+    config.compressorEffectPoolCapacity = 1;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const auto directory = std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-bus-effect-parameters";
+    const auto initial = harkentest::ActivateInitBytesV1(directory,
+        Build(VN_EFFECT_COMPRESSOR, {-6.0f, 2.0f, 1.0f, 10.0f, 0.0f, 0.0f}, true),
+        harkentest::packfoundation::kInitPackStableId);
+    ASSERT_EQ(VN_OK, initial.result);
+    const auto bus = engine.buses.FindIndex(busId);
+    ASSERT_NE(harken::kInvalidBusIndex, bus);
+    const auto retained = engine.busEffectInstanceRefs[bus][0];
+    const auto samples = harkentest::MakeDC(48000, 0.8f);
+    const auto pcm = harkentest::MonoDesc(samples, 48000);
+    constexpr auto sound = VN_OBJECT_ID(0, 9403);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(sound, &pcm));
+    auto play = harkentest::MakePlayDesc(sound);
+    play.busId = busId;
+    play.loopCount = 0;
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+    const float dry = SettledLevel(engine);
+    ASSERT_TRUE(harkentest::WriteBytes(initial.initPath,
+        Build(VN_EFFECT_COMPRESSOR, {-24.0f, 4.0f, 1.0f, 10.0f, 0.0f, 0.0f})));
+    const auto* published = engine.packComposition.Published();
+    VnCanonicalPackSetMemberV1 member{};
+    member.structSize = sizeof(member);
+    member.packStableId = harkentest::packfoundation::kInitPackStableId;
+    member.packKind = VN_CANONICAL_PACK_SET_MEMBER_INIT;
+    member.expectedHandle = published->initHandle;
+    member.utf8Path = initial.initPath.c_str();
+    VnCanonicalPackSetMemberResultV1 row{};
+    row.structSize = sizeof(row);
+    VnCanonicalPackSetActivationReportV1 report{};
+    ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(&member, 1, &row, report,
+        published->initHandle, published->ledger.setRevision));
+    EXPECT_EQ(retained.poolIndex, engine.busEffectInstanceRefs[bus][0].poolIndex);
+    EXPECT_EQ(retained.generation, engine.busEffectInstanceRefs[bus][0].generation);
+    EXPECT_FLOAT_EQ(-24.0f, engine.effectParamTargets.Reduce(
+        harken::EffectParamTargetStore::Scope::Bus, bus, 0, 0));
+    EXPECT_FLOAT_EQ(4.0f, engine.effectParamTargets.Reduce(
+        harken::EffectParamTargetStore::Scope::Bus, bus, 0, 1));
+    const float expectedDb = -24.0f + (20.0f * std::log10(dry) + 24.0f) / 4.0f;
+    EXPECT_NEAR(std::pow(10.0f, expectedDb / 20.0f), SettledLevel(engine), 0.003f);
 }
 
 TEST(CanonicalPackSetActivate, BusEffectTransactionsRefuseForeignEffectsWithoutTakingOwnership) {

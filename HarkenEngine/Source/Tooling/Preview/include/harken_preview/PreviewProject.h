@@ -98,7 +98,7 @@ typedef struct VnPreviewProjectDescV4 {
     const VnPreviewBusEffectParameterV1* busEffectParameters;
     const uint32_t* busFaderAfterSlots;
     uint32_t busFaderCount;
-    uint32_t reserved2;
+    uint32_t forceWorldReplacement;
 } VnPreviewProjectDescV4;
 
 typedef enum VnPreviewPrepareStatus {
@@ -136,6 +136,8 @@ uint32_t VnPreview_ProjectIsOpen(uint64_t generation);
 uint32_t VnPreview_QueryOwnerRevision(uint64_t ownerId, uint64_t* outRevision);
 uint32_t VnPreview_HasPlayableConsumers(void);
 uint32_t VnPreview_HasEffectChainConsumers(void);
+uint64_t VnPreview_QueryVoiceWorldGeneration(uint64_t voiceInstance);
+uint32_t VnPreview_HasWorldGeneration(uint64_t generation);
 uint32_t VnPreview_HasAction(VnObjectId actionId);
 void VnPreview_PumpNullMixer(uint32_t blockCount);
 VnResult VnPreview_EnableChannelPeakMetering(void);
@@ -147,6 +149,9 @@ VnResult VnPreview_RefreshVoiceBindings(uint64_t voiceInstance);
 VnResult VnPreview_SetVoiceProperty(uint64_t voiceInstance,
     uint32_t property, float value, VnBusId sendBusId);
 VnResult VnPreview_SetVoiceEffect(uint64_t voiceInstance, VnObjectId effectId,
+    uint32_t effectType, const float* parameters, uint32_t parameterCount,
+    uint32_t bypass);
+VnResult VnPreview_SetBusEffect(uint64_t ownerId, VnBusId busId, VnObjectId effectId,
     uint32_t effectType, const float* parameters, uint32_t parameterCount,
     uint32_t bypass);
 

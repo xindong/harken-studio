@@ -321,6 +321,14 @@ Engine 发布前校验引用闭包与 Init 依赖，在播放租约中保留共�
 
 共享预设修复验证：Engine 相关 499 项、Studio 导出与试听相关 94 项、ProjectSchema 28 项、格式生成器 20 项均通过。CLI 创建两个 Action 共享一枚 Preset，其中一个重复引用两次，两者均带 Custom；原生解码确认 Init 定义唯一、Action 无预设参数副本、槽位身份独立。初始 Custom 限幅峰值为 0.0631／0.1259；共享 Preset 从 -12 dB 改为 -24 dB 并增量导出后，两者均为 0.0631。CLI 真实设备试听的 11 个观测点通过。旧 reader 拒绝新引用包，新 reader 成功读取修复前的内联包。证据位于 `.temp/fx-shared-preset/` 的 `summary.json`、`runtime.json`、`editor.json`、`cli-live-summary.json` 和 `compatibility.json`。
 
+PR #305 复审修正（2026-11-11）：Preview 发布按拓扑与全部 FX 命令的总量检查单个音频处理周期及队列容量，超限在发布前拒绝，不留下无法消费的批次。保留的 Compressor 更新使用完整的新参数向量，避免后续参数命令覆盖同次修改。
+
+试听 FX 来源基线取自已安装编译结果，并随实际播放持有的 World generation 保留，覆盖第一次 live tick 前替换及尚未产生声音的延迟播放。即使两个预设当前参数相同，替换来源也遵守现有生命周期；新增 Preview V4 换代标志只在新 owner revision 上生效，精确重试仍保持幂等。来源变化期间参数保持原来源，Active 继续按槽位即时更新。
+
+Bus 即时编辑独立读取当前创作值，只对已安装且来源兼容的槽位更新参数，Active 不受待生效来源替换阻塞。成功的即时修改淘汰旧创作版本的未提交事务，避免停止播放时重试旧参数。链结构和来源替换仍在下一次播放生效，Pack 的 Init 共享预设／Action 引用合同不变。
+
+复审验证：Engine 294 项、Preview API 9 项、Studio 试听／协调器 40 项与源码合同 25 项，共 368 项通过。真实设备 CLI 的 20 个观测点通过，覆盖旧播放身份保持、待生效来源／结构期间的参数与 Active、停止后重播。原生 PCM 回归覆盖整批容量拒绝后的恢复、Compressor 多参数修改、绑定结果保留及参数占用冲突后的重试。首次 tick、等参数不同来源和零声音间隔的延迟播放均通过。Windows CI 缺失的 Preview 导出清单声明已补齐；本地证据位于 `.temp/fx-pr-review/verification-summary.json` 及同目录日志。
+
 ## 兼容范围
 
 | 项目 | 当前结果 |

@@ -27,6 +27,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <limits>
 #include <map>
@@ -358,6 +359,23 @@ bool buildDefinitionNode(ProjectItem& item, const ProjectIndex& index,
             item, scope, index, groups, *request->identityIndex, &node, error,
             exportPresetReferences)) {
         return false;
+    }
+    if (!exportPresetReferences) {
+        auto& effects = request->previewEffects[item.runtimeId()];
+        const auto& entries = groups.definitions.at(toFieldGroupGuid(item.guid)).effects.effects.entries();
+        for (std::size_t i = 0; i < node.signalGraph.nodes.size(); ++i) {
+            const auto& compiled = node.signalGraph.nodes[i];
+            const auto& authored = entries[i];
+            HarkenEditor::Bridge::PreviewEffectSource effect;
+            effect.id = compiled.effectId;
+            effect.type = compiled.effectType;
+            effect.bypass = (compiled.flags & 1u) != 0;
+            if (authored.mode == EffectMode::Preset)
+                effect.presetId = index.byQtGuid.at(authored.effectGuid)->runtimeId();
+            for (const auto& parameter : compiled.params)
+                effect.parameters.push_back(std::bit_cast<float>(parameter.valueBits));
+            effects.push_back(std::move(effect));
+        }
     }
 
     std::vector<ProjectItem*> ownedChildren;

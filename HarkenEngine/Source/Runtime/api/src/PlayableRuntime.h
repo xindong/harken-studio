@@ -33,6 +33,9 @@ VnResult RefreshPreviewVoiceBindings(std::uint64_t voiceInstance) noexcept;
 VnResult SetPreviewVoiceEffect(std::uint64_t voiceInstance, VnObjectId effectId,
     std::uint32_t effectType, const float* parameters, std::uint32_t parameterCount,
     std::uint32_t bypass) noexcept;
+VnResult SetPreviewBusEffect(std::uint64_t ownerId, VnBusId busId, VnObjectId effectId,
+    std::uint32_t effectType, const float* parameters, std::uint32_t parameterCount,
+    std::uint32_t bypass) noexcept;
 
 enum class PlayableStartStatus : std::uint8_t {
     Accepted = 0,
