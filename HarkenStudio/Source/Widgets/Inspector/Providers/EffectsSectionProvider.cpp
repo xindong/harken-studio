@@ -498,8 +498,8 @@ private:
                     detach->setAutoRaise(true);
                     detach->setToolButtonStyle(Qt::ToolButtonIconOnly);
                     QtControlSkin::setSemanticProperty(detach, "flatIconButton", true);
-                    detach->setToolTip(tr("Open Effect Editor"));
-                    detach->setAccessibleName(tr("Open Effect Editor"));
+                    detach->setToolTip(tr("Open Effect Editor in New Window"));
+                    detach->setAccessibleName(detach->toolTip());
                     const auto refreshIcon = [detach] {
                         auto& theme = ThemeManager::instance();
                         const int extent = theme.metrics().iconExtent;
@@ -515,7 +515,7 @@ private:
                         if (generation != generation_ || !isCurrentContext() || !inspector_) return;
                         selected_ = guid;
                         refreshSelection();
-                        inspector_->requestEffectEditorSelection(boundGuid_, guid);
+                        inspector_->requestEffectEditorDetach(boundGuid_, guid);
                     });
                     effectCell->addWidget(detach, 0, Qt::AlignRight | Qt::AlignVCenter);
                 } else {

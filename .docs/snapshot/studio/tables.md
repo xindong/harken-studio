@@ -143,7 +143,7 @@
 |---|---|
 | 位置与列 | Sound、Container、Layer、Track、Segment、Bus 的 Basic > Effect；# / Effect / Active |
 | 模式与增删 | 加号选择 Limiter 插入 Custom，或 Select Preset... 引用共享预设，允许重复引用；减号删除所选行，支持排序及撤销重做 |
-| Custom | 普通标签显示插件名称，右侧提供 detach 按钮；双击标签或单击 detach 打开 Effect Editor，单击标签不打开；独立 chevron 位于内容左侧，使用默认箭头指针，Replace 子菜单含 Limiter 和 Select Preset...，另提供 Save As Preset... |
+| Custom | 普通标签显示插件名称，双击标签按普通停靠及既有布局打开或复用独立 Effect Editor，单击标签不打开；每次单击右侧 detach 按钮均新建独立浮动 Effect Editor，已有同类型实例及原面板保留；新窗沿当前屏幕已有浮窗向右下错开，遇屏幕边缘回绕，已有窗口及已记忆位置不重排；独立 chevron 位于内容左侧，使用默认箭头指针，Replace 子菜单含 Limiter 和 Select Preset...，另提供 Save As Preset... |
 | Preset | 标准 ObjectRef 保留定位、激活和选择器，独立菜单 chevron 位于内容左侧；chevron 使用默认箭头指针，含 Replace > Limiter、Convert to Custom |
 | 转换与替换 | 保留行身份、顺序、Active；替换插件使用默认参数，Convert to Custom 复制预设当前配置并解除共享；Save As Preset 创建资产并切换引用，合为一次撤销 |
 | Active | 新增默认开启，映射现有旁通配置；Bus 沿用既有支持，非 Bus 含关闭项时仍受现有试听／发布能力检查限制 |
@@ -152,7 +152,8 @@
 | 平台配置 | Shared 与单平台分别保存整链配置，Bus 同样支持；All Platforms 修改共享链并清除该链的平台覆盖，单平台只修改当前平台，与 Shared 相同的链自动消除覆盖；非 Bus 的继承开关也按平台保存，沿用标题菜单 Reset Inherit 恢复共享继承模式 |
 | 有效值与只读 | 继承展示当前平台解析出的有效链，禁止增删、排序和修改，保留编辑器查看及 ObjectRef 导航；混合平台有效链不能作为一条链编辑；可编辑的 All Platforms 显示共享本地链 |
 | 配置与身份 | 继承关系、本地历史和平台覆盖为保存依据，有效链为解析结果；Custom 参数和 Preset 引用随整链保存，复制到另一对象建立独立槽位身份，同一对象各平台的同一槽位保留身份 |
-| 共享资产 | Assets 的 Effect 桶保存类型与全部参数，New Effect > Limiter 为当前唯一类型入口；创建后插件类型固定，Inspector 只显示 Notes，无 Status section；双击对象打开 Effect Editor |
+| 共享资产 | Assets 的 Effect 桶保存类型与全部参数，New Effect > Limiter 为当前唯一类型入口；创建后插件类型固定，Inspector 常规属性区只显示 Notes，无 Status section |
+| 资产编辑区 | 双击 Effect 对象在 Inspector 下半区显示 Effect Editor，标题暂用居中的 Details，上半区保留常规属性；初始上下比例 1:1，分隔边框可拖动；每个 Inspector 首次展开后，选择其他 Effect 直接更新内容并保留比例，切换到非 Effect、清空选择、删除当前资产或关闭工程时清空并隐藏，再选择 Effect 自动恢复；每次单击右上 detach 均为当前资产新建独立浮动 Effect Editor，已有同类型实例及内嵌编辑区保留；新窗沿当前屏幕已有浮窗向右下错开，遇屏幕边缘回绕，已有窗口及已记忆位置不重排；固定 Inspector 保持自身对象 |
 | 删除资产 | 清理共享链、各平台覆盖及未生效本地历史中的 Preset 引用行，保留 Custom；撤销一并恢复原顺序和 Active |
 
 ## Publisher 表格
@@ -174,6 +175,6 @@
 | 视图 | 范围注解 |
 |---|---|
 | Curve Editor、Timeline | 领域画布，不计入普通表格 |
-| Effect Editor | Limiter 使用两行标准表单：Ceiling 范围 −24～0 dB、默认 0 dB，Release 范围 1～1000 ms、默认 100 ms；提供标准滑条、数值输入与复位，Preset 与 Custom 参数支持编辑、撤销重做及保存，Preset 参数跨平台共享，Custom 参数编辑遵循当前平台作用域，继承 Custom 只读；支持预设资产及稳定槽位上下文、多实例、固定和布局恢复，槽位切换模式及当前平台有效配置后继续跟随 |
+| Effect Editor | 内嵌与独立参数表单均不计入普通表格；Limiter 使用两行标准表单：Ceiling 范围 −24～0 dB、默认 0 dB，Release 范围 1～1000 ms、默认 100 ms；提供标准滑条、数值输入与复位，Preset 与 Custom 参数支持编辑、撤销重做及保存，Preset 参数跨平台共享，Custom 参数编辑遵循当前平台作用域，继承 Custom 只读；支持预设资产及稳定槽位上下文，独立编辑器支持多实例、固定和布局恢复，槽位切换模式及当前平台有效配置后继续跟随 |
 | Hierarchy、Explorer、Sources、Selector、Template Chooser 预览 | 导航或选择树，不计入普通表格 |
 | Log | 文本视图，不计为 Monitor 表格 |
