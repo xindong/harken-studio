@@ -1,5 +1,6 @@
 #include "harken/render/BusTree.h"
 #include "harken/render/BuiltinEffects.h"
+#include "MonitorCaptureHub.h"
 #include <algorithm>
 #include <limits>
 
@@ -243,6 +244,14 @@ void BusTree::ApplyPreviewEffectChain(const BusEffectChainAdoption& adoption) no
             if (update.oldRefs[i].type != kEffectTypeNone) update.ownedOld |= bit;
             if (update.targetRefs[i].type == kEffectTypeNone && bus.fxBypassMix[i] == 1 &&
                 !bus.fxBypassRamping[i]) update.changedMask &= ~bit;
+            if (update.oldRefs[i].type != kEffectTypeNone && monitor::AudioLiveArmed()) {
+                const auto effectHandle = PackedMonitorEffectHandle(host.index, i);
+                const auto effectGeneration = update.oldRefs[i].generation;
+                monitor::NoteExactInstanceRetired(
+                    VN_MONITOR_TAP_EFFECT_SLOT_INPUT, effectHandle, effectGeneration);
+                monitor::NoteExactInstanceRetired(
+                    VN_MONITOR_TAP_EFFECT_SLOT_OUTPUT, effectHandle, effectGeneration);
+            }
             bus.fxSlotEffectRef[i] = update.targetRefs[i];
             bus.fxSlots[i] = update.targetRefs[i].type == kEffectTypeNone ? InsertEffect{} :
                 BuildEffect(update.targetRefs[i].type, m_effectBank.LiveStateFor(update.targetRefs[i]));

@@ -9,6 +9,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -1209,89 +1210,125 @@ TEST(MonitorMeasure, VoiceExactInstanceIgnoresSiblingVoice) {
     EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(handle));
 }
 
-TEST(MonitorMeasure, EffectExactInstanceUsesPackedHandleAndStalesOnClear) {
-    harkentest::EngineSession session(MeasurementRegistryConfig(0, 256));
-    ASSERT_EQ(VN_OK, session.InitResult());
-    VnMonitorSessionHandle handle = 0;
-    VnMonitorSessionDesc desc = MakeControlDesc();
-    ASSERT_EQ(VN_OK, Vn_MonitorOpenSession(&desc, &handle));
-    VnMonitorCaptureControlStatus lease{};
-    ASSERT_EQ(VN_OK, Acquire(handle, &lease));
-    VnGainDesc gain{};
-    gain.structSize = sizeof(gain);
-    gain.gainDb = -6.0f;
-    ASSERT_EQ(VN_OK, Vn_SetBusEffect(VN_BUS_MASTER, 0, VN_EFFECT_GAIN,
-                                     reinterpret_cast<const VnEffectDesc*>(&gain)));
-    session.Engine()->nullBackend.Pump(2);
-    const harken::BusTree::Bus* master = session.Engine()->buses.BusState(0);
-    ASSERT_NE(nullptr, master);
-    ASSERT_NE(harken::kEffectTypeNone, master->fxSlotEffectRef[0].type);
-    const std::uint64_t packed =
-        harken::PackedMonitorEffectHandle(0, 0);
-    const std::uint64_t generation = master->fxSlotEffectRef[0].generation;
-    VnMonitorTapDescriptor tap{};
-    tap.structSize = sizeof(tap);
-    tap.tapKind = VN_MONITOR_TAP_EFFECT_SLOT_INPUT;
-    tap.ownerKind = VN_MONITOR_ENTITY_EFFECT;
-    tap.selectorMode = VN_MONITOR_TAP_SELECTOR_EXACT_INSTANCE;
-    tap.ownerInstanceHandle = packed;
-    tap.ownerGeneration = generation;
-    tap.slotId = 0;
-    VnMonitorCapturePlan plan{};
-    plan.structSize = sizeof(plan);
-    plan.streamKindMask = VN_MONITOR_STREAM_OPTIONAL_AUDIO;
-    plan.tapCount = 1;
-    plan.downsample = 1;
-    plan.taps = &tap;
-    VnMonitorEffectiveCapturePlan accepted{};
-    accepted.structSize = sizeof(accepted);
-    ASSERT_EQ(VN_OK, Vn_MonitorApplyCapturePlan(handle, lease.leaseGeneration, &plan,
-                                                &accepted));
-    harken::monitor::AdvanceExecuteFrameForTests(1);
-    const std::vector<float> sine =
-        harkentest::MakeSine(256, 750.0, 48000.0, 0.7f);
-    const VnPCMDesc pcm = harkentest::MonoDesc(sine, 48000);
-    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9), &pcm));
-    const VnPlayDesc play = harkentest::MakePlayDesc(harkentest::ObjectId(9));
-    VnVoiceHandle voice = 0;
-    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
-    harkentest::Capture out;
-    harkentest::PumpAndCapture(session.Engine(), 1, out);
-    std::vector<unsigned char> first;
-    VnMonitorPollResult armed{};
-    ASSERT_TRUE(PollUntilAudioChunk(handle, &first, &armed));
-    ASSERT_EQ(VN_OK, Vn_ClearBusEffect(VN_BUS_MASTER, 0));
-    session.Engine()->nullBackend.Pump(2);
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    std::vector<unsigned char> buffer(1u << 20, 0);
-    VnMonitorPollDesc pollDesc{};
-    pollDesc.structSize = sizeof(pollDesc);
-    pollDesc.buffer = buffer.data();
-    pollDesc.bufferBytes = buffer.size();
-    VnMonitorPollResult result{};
-    result.structSize = sizeof(result);
-    ASSERT_EQ(VN_OK, Vn_MonitorPoll(handle, &pollDesc, &result));
-    bool sawStale = false;
-    bool sawChunk = false;
-    std::uint64_t offset = 0;
-    while (offset + VN_MONITOR_RECORD_ENVELOPE_PACKED_BYTES <= result.bytesWritten) {
-        const unsigned char* rec = buffer.data() + offset;
-        const std::uint32_t kind = ReadU32(rec);
-        const std::uint64_t recordBytes = ReadU64(rec + 16);
-        if (kind == VN_MONITOR_RECORD_TAP_BINDING_CHANGED) {
-            EXPECT_EQ(static_cast<std::uint32_t>(VN_MONITOR_STALE_TAP),
-                      ReadU32(rec + 248));
-            sawStale = true;
+TEST(MonitorMeasure, EffectExactInstanceStalesOnDirectClearAndLiveChainChanges) {
+    for (const auto tapKind : {VN_MONITOR_TAP_EFFECT_SLOT_INPUT, VN_MONITOR_TAP_EFFECT_SLOT_OUTPUT})
+    for (const auto change : {0, 1, 2}) {
+        SCOPED_TRACE(tapKind);
+        SCOPED_TRACE(change);
+        harkentest::EngineSession session(MeasurementRegistryConfig(0, 256));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        VnMonitorSessionHandle handle = 0;
+        VnMonitorSessionDesc desc = MakeControlDesc();
+        ASSERT_EQ(VN_OK, Vn_MonitorOpenSession(&desc, &handle));
+        VnMonitorCaptureControlStatus lease{};
+        ASSERT_EQ(VN_OK, Acquire(handle, &lease));
+        VnGainDesc gain{};
+        gain.structSize = sizeof(gain);
+        gain.gainDb = -6.0f;
+        VnLimiterDesc limiter{};
+        limiter.structSize = sizeof(limiter);
+        limiter.ceilingDb = -6.0f;
+        limiter.releaseMs = 100.0f;
+        const auto* effectDesc = change == 0
+            ? reinterpret_cast<const VnEffectDesc*>(&gain)
+            : reinterpret_cast<const VnEffectDesc*>(&limiter);
+        ASSERT_EQ(VN_OK, Vn_SetBusEffect(VN_BUS_MASTER, 0,
+            change == 0 ? VN_EFFECT_GAIN : VN_EFFECT_LIMITER, effectDesc));
+        session.Engine()->nullBackend.Pump(2);
+        const harken::BusTree::Bus* master = session.Engine()->buses.BusState(0);
+        ASSERT_NE(nullptr, master);
+        ASSERT_NE(harken::kEffectTypeNone, master->fxSlotEffectRef[0].type);
+        const std::uint64_t packed =
+            harken::PackedMonitorEffectHandle(0, 0);
+        const std::uint64_t generation = master->fxSlotEffectRef[0].generation;
+        VnMonitorTapDescriptor tap{};
+        tap.structSize = sizeof(tap);
+        tap.tapKind = tapKind;
+        tap.ownerKind = VN_MONITOR_ENTITY_EFFECT;
+        tap.selectorMode = VN_MONITOR_TAP_SELECTOR_EXACT_INSTANCE;
+        tap.ownerInstanceHandle = packed;
+        tap.ownerGeneration = generation;
+        tap.slotId = 0;
+        VnMonitorCapturePlan plan{};
+        plan.structSize = sizeof(plan);
+        plan.streamKindMask = VN_MONITOR_STREAM_OPTIONAL_AUDIO;
+        plan.tapCount = 1;
+        plan.downsample = 1;
+        plan.taps = &tap;
+        VnMonitorEffectiveCapturePlan accepted{};
+        accepted.structSize = sizeof(accepted);
+        ASSERT_EQ(VN_OK, Vn_MonitorApplyCapturePlan(handle, lease.leaseGeneration, &plan,
+                                                    &accepted));
+        harken::monitor::AdvanceExecuteFrameForTests(1);
+        const std::vector<float> sine =
+            harkentest::MakeSine(256, 750.0, 48000.0, 0.7f);
+        const VnPCMDesc pcm = harkentest::MonoDesc(sine, 48000);
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(9), &pcm));
+        const VnPlayDesc play = harkentest::MakePlayDesc(harkentest::ObjectId(9));
+        VnVoiceHandle voice = 0;
+        ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+        harkentest::Capture out;
+        harkentest::PumpAndCapture(session.Engine(), 1, out);
+        std::vector<unsigned char> first;
+        VnMonitorPollResult armed{};
+        ASSERT_TRUE(PollUntilAudioChunk(handle, &first, &armed));
+        if (change == 0) {
+            ASSERT_EQ(VN_OK, Vn_ClearBusEffect(VN_BUS_MASTER, 0));
+        } else {
+            auto& buses = session.Engine()->buses;
+            std::array<harken::PreviewEffectChainEntry, harken::kMaxFxSlotsPerBus> targets{};
+            if (change == 2)
+                targets[0] = {harkentest::ObjectId(901), VN_EFFECT_LIMITER, false, -12.0f, 100.0f};
+            harken::PreparedBusEffectChain prepared{};
+            std::array<harken::EffectInstanceRef, harken::kMaxFxSlotsPerBus> current{};
+            std::copy_n(master->fxSlotEffectRef, current.size(), current.begin());
+            ASSERT_EQ(VN_OK, buses.PreparePreviewEffectChain(buses.RefAt(0), 1, targets,
+                current, harkentest::ObjectId(902), prepared));
+            ASSERT_TRUE(prepared.changes);
+            if (change == 2) {
+                // Different rows can carry the same generation; the old exact tap
+                // must stale at adoption, before any new-branch samples are emitted.
+                ASSERT_NE(master->fxSlotEffectRef[0].poolIndex,
+                    prepared.state->update.targetRefs[0].poolIndex);
+                ASSERT_EQ(generation, prepared.state->update.targetRefs[0].generation);
+            }
+            ASSERT_TRUE(buses.CanCommitPreviewEffectChain(prepared));
+            buses.CommitPreviewEffectChain(prepared);
+            buses.ApplyPreviewEffectChain({prepared.state, prepared.host.Packed(), 1,
+                prepared.state->update.targetRevision, false});
         }
-        if (kind == VN_MONITOR_RECORD_AUDIO_CHUNK) {
-            sawChunk = true;
+        session.Engine()->nullBackend.Pump(2);
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        std::vector<unsigned char> buffer(1u << 20, 0);
+        VnMonitorPollDesc pollDesc{};
+        pollDesc.structSize = sizeof(pollDesc);
+        pollDesc.buffer = buffer.data();
+        pollDesc.bufferBytes = buffer.size();
+        VnMonitorPollResult result{};
+        result.structSize = sizeof(result);
+        ASSERT_EQ(VN_OK, Vn_MonitorPoll(handle, &pollDesc, &result));
+        bool sawStale = false;
+        bool sawChunk = false;
+        std::uint64_t offset = 0;
+        while (offset + VN_MONITOR_RECORD_ENVELOPE_PACKED_BYTES <= result.bytesWritten) {
+            const unsigned char* rec = buffer.data() + offset;
+            const std::uint32_t kind = ReadU32(rec);
+            const std::uint64_t recordBytes = ReadU64(rec + 16);
+            if (kind == VN_MONITOR_RECORD_TAP_BINDING_CHANGED) {
+                EXPECT_EQ(static_cast<std::uint32_t>(VN_MONITOR_STALE_TAP),
+                          ReadU32(rec + 248));
+                sawStale = true;
+            }
+            if (kind == VN_MONITOR_RECORD_AUDIO_CHUNK) {
+                sawChunk = true;
+            }
+            if (recordBytes == 0) {
+                break;
+            }
+            offset += recordBytes;
         }
-        if (recordBytes == 0) {
-            break;
-        }
-        offset += recordBytes;
+        EXPECT_TRUE(sawStale);
+        EXPECT_FALSE(sawChunk);
+        EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(handle));
     }
-    EXPECT_TRUE(sawStale);
-    EXPECT_FALSE(sawChunk);
-    EXPECT_EQ(VN_OK, Vn_MonitorCloseSession(handle));
 }
