@@ -284,36 +284,62 @@ void LayoutController::revealDock(ads::CDockWidget* dock)
             const bool wasFloating = dock->isInFloatingContainer();
             dock->toggleView(true);
             const bool createFloating = wasClosed && (!wasFloating || !dock->isFloating());
-            if (createFloating) {
+            if (createFloating)
                 dock->setFloating();
-                if (auto* fc = dock->floatingDockContainer()) {
-                    const QSize hint = dock->widget() ? dock->widget()->sizeHint() : QSize();
-                    const int w = std::max(hint.width(), ThemeManager::instance().metrics().dialog.wideWidth);
-                    const int h = std::max(hint.height(), ThemeManager::instance().metrics().dialog.wideHeight);
-                    fc->resize(w, h);
-                }
-            }
-            if (auto* fc = dock->floatingDockContainer()) {
-                const QRect available = (createFloating && host_ ? host_->screen() : fc->screen())->availableGeometry();
-                if (createFloating || !available.contains(fc->frameGeometry())) {
-                    const QSize frameSize = fc->frameGeometry().size() - fc->size();
-                    fc->resize(fc->size().boundedTo(available.size() - frameSize));
-                    const QSize size = fc->frameGeometry().size();
-                    const QPoint center = host_ ? host_->frameGeometry().center() : available.center();
-                    QPoint position = createFloating
-                        ? center - QPoint(size.width() / 2, size.height() / 2)
-                        : fc->frameGeometry().topLeft();
-                    position.setX(qMax(available.left(), qMin(position.x(), available.right() - size.width() + 1)));
-                    position.setY(qMax(available.top(), qMin(position.y(), available.bottom() - size.height() + 1)));
-                    fc->move(position);
-                }
-            }
+            updateFloatingDockGeometry(dock, createFloating);
             break;
         }
         case PreferredOpenArea::RestoreSaved:
             reanchorFloatingZoneDock(dock);
             dock->toggleView(true);
             break;
+    }
+}
+
+void LayoutController::detachDock(ads::CDockWidget* dock)
+{
+    if (!dock || isDockLocked(dock))
+        return;
+    const bool createFloating = !dock->isInFloatingContainer();
+    dock->toggleView(true);
+    if (createFloating)
+        dock->setFloating();
+    if (auto* area = dock->dockAreaWidget())
+        area->setCurrentDockWidget(dock);
+    dock->setAsCurrentTab();
+    if (auto* floating = dock->floatingDockContainer()) {
+        floating->setWindowState(floating->windowState() & ~Qt::WindowMinimized);
+        updateFloatingDockGeometry(dock, createFloating);
+        floating->raise();
+        floating->activateWindow();
+    }
+    if (auto* content = dock->widget())
+        content->setFocus(Qt::OtherFocusReason);
+}
+
+void LayoutController::updateFloatingDockGeometry(ads::CDockWidget* dock, bool initialize)
+{
+    auto* floating = dock->floatingDockContainer();
+    if (!floating)
+        return;
+    if (initialize) {
+        const QSize hint = dock->widget() ? dock->widget()->sizeHint() : QSize();
+        const auto& metrics = ThemeManager::instance().metrics();
+        floating->resize(std::max(hint.width(), metrics.dialog.wideWidth),
+                         std::max(hint.height(), metrics.dialog.wideHeight));
+    }
+    const QRect available = (initialize && host_ ? host_->screen() : floating->screen())->availableGeometry();
+    if (initialize || !available.contains(floating->frameGeometry())) {
+        const QSize frameSize = floating->frameGeometry().size() - floating->size();
+        floating->resize(floating->size().boundedTo(available.size() - frameSize));
+        const QSize size = floating->frameGeometry().size();
+        const QPoint center = host_ ? host_->frameGeometry().center() : available.center();
+        QPoint position = initialize
+            ? center - QPoint(size.width() / 2, size.height() / 2)
+            : floating->frameGeometry().topLeft();
+        position.setX(qMax(available.left(), qMin(position.x(), available.right() - size.width() + 1)));
+        position.setY(qMax(available.top(), qMin(position.y(), available.bottom() - size.height() + 1)));
+        floating->move(position);
     }
 }
 

@@ -5,6 +5,8 @@
 #include "Core/Components/VMixNode.h"
 #include "Core/PlatformContextService.h"
 #include "Core/ProjectManager.h"
+#include "Core/QtControlSkin.h"
+#include "Core/ThemeAssetCatalog.h"
 #include "Core/ThemeLayout.h"
 #include "Core/ThemeManager.h"
 #include "Widgets/Common/ParameterBinding.h"
@@ -14,8 +16,11 @@
 
 #include <QChildEvent>
 #include <QFocusEvent>
+#include <QHBoxLayout>
+#include <QLabel>
 #include <QScrollArea>
 #include <QScopedValueRollback>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -91,7 +96,7 @@ std::unique_ptr<EffectEditorPanel::Selection> EffectEditorPanel::resolveSelectio
     return selection;
 }
 
-EffectEditorPanel::EffectEditorPanel(QWidget* parent)
+EffectEditorPanel::EffectEditorPanel(QWidget* parent, Presentation presentation)
     : QWidget(parent)
 {
     setObjectName(QStringLiteral("EffectEditorPanel"));
@@ -99,6 +104,44 @@ EffectEditorPanel::EffectEditorPanel(QWidget* parent)
     auto* layout = new QVBoxLayout(this);
     ThemeLayout::margins(layout, ThemeLayout::Space::Panel);
     layout->setSpacing(0);
+    if (presentation == Presentation::Embedded) {
+        ThemeLayout::spacing(layout, ThemeLayout::Space::Control);
+        auto* header = new QWidget(this);
+        header->setObjectName(QStringLiteral("effectEditorHeader"));
+        auto* headerLayout = new QHBoxLayout(header);
+        headerLayout->setContentsMargins(0, 0, 0, 0);
+        ThemeLayout::spacing(headerLayout, ThemeLayout::Space::Control);
+        auto* leadingSpace = new QWidget(header);
+        headerLayout->addWidget(leadingSpace);
+        auto* title = new QLabel(tr("Details"), header);
+        title->setAlignment(Qt::AlignCenter);
+        QtControlSkin::setSemanticProperty(title, "textRole", QStringLiteral("title"));
+        headerLayout->addWidget(title, 1);
+        detachButton_ = new QToolButton(header);
+        detachButton_->setObjectName(QStringLiteral("effectEditorDetach"));
+        detachButton_->setAutoRaise(true);
+        detachButton_->setToolButtonStyle(Qt::ToolButtonIconOnly);
+        QtControlSkin::setSemanticProperty(detachButton_, "flatIconButton", true);
+        detachButton_->setToolTip(tr("Open Effect Editor in New Window"));
+        detachButton_->setAccessibleName(detachButton_->toolTip());
+        ThemeManager::instance().bindMetrics(detachButton_, [this, leadingSpace](const ThemeMetrics& metrics) {
+            leadingSpace->setFixedWidth(metrics.controlHeight);
+            detachButton_->setIconSize(QSize(metrics.iconExtent, metrics.iconExtent));
+            detachButton_->setFixedSize(metrics.controlHeight, metrics.controlHeight);
+        });
+        const auto refreshIcon = [this] {
+            detachButton_->setIcon(ThemeManager::instance().resolveIcon(
+                QString::fromLatin1(ThemeAssetIds::InspectorDetach)).icon);
+        };
+        refreshIcon();
+        connect(&ThemeManager::instance(), &ThemeManager::appearanceChanged,
+                detachButton_, refreshIcon);
+        connect(detachButton_, &QToolButton::clicked, this, [this] {
+            if (hasEffect()) emit detachRequested(ownerGuid_, rowGuid_);
+        });
+        headerLayout->addWidget(detachButton_);
+        layout->addWidget(header);
+    }
     auto* scroll = new QScrollArea(this);
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setWidgetResizable(true);
@@ -212,6 +255,7 @@ void EffectEditorPanel::refreshEffect()
             preset ? preset->name : EffectChainSemantics::displayName(selection->definition.type));
     }
     setWindowTitle(title);
+    if (detachButton_) detachButton_->setEnabled(static_cast<bool>(selection));
     if (selection_ && selection && *selection_ == *selection) return;
     cancelPendingEdits();
     selection_ = std::move(selection);

@@ -2892,7 +2892,8 @@ QWidget* MainWindow::createStandaloneEditorPanel(const QString& type)
     return editor;
 }
 
-QWidget* MainWindow::createStandaloneEditorPanelWithId(const QString& type, int id, bool deferShow)
+QWidget* MainWindow::createStandaloneEditorPanelWithId(const QString& type, int id, bool deferShow,
+                                                       PreferredOpenArea placement)
 {
     if (workspaceWindowManager_) {
         const auto* descriptor = workspaceWindowManager_->catalog().find(type);
@@ -2916,7 +2917,9 @@ QWidget* MainWindow::createStandaloneEditorPanelWithId(const QString& type, int 
     ads::CDockAreaWidget* anchorArea = nullptr;
     ads::CDockAreaWidget* inspectorArea = nullptr;
     bool seedBelowHeight = false;
-    if (type == QLatin1String("ExternalEditor")) {
+    if (placement == PreferredOpenArea::Float) {
+        layoutController_->setPlacementHint(dockObjectName, PreferredOpenArea::RestoreSaved);
+    } else if (type == QLatin1String("ExternalEditor")) {
         layoutController_->setPlacementHint(dockObjectName, PreferredOpenArea::RestoreSaved);
     } else if (ti.openBelowCentralArea) {
         for (QWidget* panel : panelRegistry_->allPanels(type)) {
@@ -2946,7 +2949,7 @@ QWidget* MainWindow::createStandaloneEditorPanelWithId(const QString& type, int 
         layoutController_->setPlacementHint(dockObjectName, PreferredOpenArea::RestoreSaved);
     }
 
-    const WorkspaceDockCreateSpec spec{
+    WorkspaceDockCreateSpec spec{
         pinfo->label,
         dockObjectName,
         editor,
@@ -2956,7 +2959,11 @@ QWidget* MainWindow::createStandaloneEditorPanelWithId(const QString& type, int 
         area,
         anchorArea
     };
-    auto* dock = ti.openBelowCentralArea && !anchorArea
+    if (placement == PreferredOpenArea::Float) {
+        const auto& metrics = ThemeManager::instance().metrics().dialog;
+        spec.initialFloatingSize = QSize(metrics.wideWidth, metrics.wideHeight).expandedTo(editor->sizeHint());
+    }
+    auto* dock = placement != PreferredOpenArea::Float && ti.openBelowCentralArea && !anchorArea
         ? layoutController_->createEditorDock(spec, ads::BottomDockWidgetArea)
         : WorkspaceDockFactory::createDock(dockManager_, spec);
 
@@ -3152,9 +3159,9 @@ InspectorPanel* MainWindow::inspectorShowingItem(ProjectItem* item, bool include
     return fallback;
 }
 
-void MainWindow::openOrFocusInspectorForItem(ProjectItem* item, const PlacementContext* placement)
+InspectorPanel* MainWindow::openOrFocusInspectorForItem(ProjectItem* item, const PlacementContext* placement)
 {
-    if (!item || !ItemTypeCatalog::isUserFacingType(item->type)) return;
+    if (!item || !ItemTypeCatalog::isUserFacingType(item->type)) return nullptr;
 
     if (InspectorPanel* existing = inspectorShowingItem(item, true)) {
         if (placement) existing->showItemInspector(item, *placement);
@@ -3164,15 +3171,16 @@ void MainWindow::openOrFocusInspectorForItem(ProjectItem* item, const PlacementC
             d->setAsCurrentTab();
         }
         setLastFocusedInspectorPanelId(existing->panelId());
-        return;
+        return existing;
     }
 
     InspectorPanel* panel = createInspectorPanel(PreferredOpenArea::CentralTab);
-    if (!panel) return;
+    if (!panel) return nullptr;
 
     setLastFocusedInspectorPanelId(panel->panelId());
     if (placement) panel->showItemInspector(item, *placement);
     else panel->showItemInspector(item);
+    return panel;
 }
 
 void MainWindow::wireInspectorDockCloseHandler(ads::CDockWidget* dock)
@@ -3233,7 +3241,14 @@ void MainWindow::wireInspectorPanelSignals(InspectorPanel* panel)
         if (editor && addBinding)
             QTimer::singleShot(0, editor, &ExternalEditorPanel::showBindingAddMenu);
     });
-    connect(panel, &InspectorPanel::effectEditorRequested, this, &MainWindow::openEffectEditor);
+    connect(panel, &InspectorPanel::effectEditorRequested, this,
+        [this](const QUuid& ownerGuid, const QUuid& rowGuid) {
+            openEffectEditor(ownerGuid, rowGuid);
+        });
+    connect(panel, &InspectorPanel::effectEditorDetachRequested, this,
+        [this](const QUuid& ownerGuid, const QUuid& rowGuid) {
+            openEffectEditor(ownerGuid, rowGuid, EditorOpenMode::NewWindow);
+        });
 
     connect(panel, &InspectorPanel::titleContextChanged, this,
         [this](int, const QString&, const QString&) { refreshInspectorDockTitles(); });
@@ -4932,7 +4947,8 @@ ExternalEditorPanel* MainWindow::openExternalEditor(const ExternalEditorSelectio
     return ed;
 }
 
-EffectEditorPanel* MainWindow::openEffectEditor(const QUuid& ownerGuid, const QUuid& rowGuid)
+EffectEditorPanel* MainWindow::openEffectEditor(const QUuid& ownerGuid, const QUuid& rowGuid,
+                                               EditorOpenMode mode)
 {
     auto& manager = ProjectManager::instance();
     const auto* owner = manager.findItemByGuid(ownerGuid);
@@ -4940,22 +4956,29 @@ EffectEditorPanel* MainWindow::openEffectEditor(const QUuid& ownerGuid, const QU
 
     const QString type = QStringLiteral("EffectEditor");
     EffectEditorPanel* editor = nullptr;
-    for (const auto& instance : panelRegistry_->instances(type)) {
-        auto* candidate = qobject_cast<EffectEditorPanel*>(instance.second);
-        if (candidate && candidate->ownerGuid() == ownerGuid && candidate->rowGuid() == rowGuid) {
-            editor = candidate;
-            break;
+    if (mode == EditorOpenMode::Reuse) {
+        for (const auto& instance : panelRegistry_->instances(type)) {
+            auto* candidate = qobject_cast<EffectEditorPanel*>(instance.second);
+            if (candidate && candidate->ownerGuid() == ownerGuid && candidate->rowGuid() == rowGuid) {
+                editor = candidate;
+                break;
+            }
         }
+        if (!editor)
+            editor = qobject_cast<EffectEditorPanel*>(activeStandaloneEditorPanel(type));
     }
     if (!editor)
-        editor = qobject_cast<EffectEditorPanel*>(activeStandaloneEditorPanel(type));
-    if (!editor)
-        editor = qobject_cast<EffectEditorPanel*>(createStandaloneEditorPanel(type));
+        editor = qobject_cast<EffectEditorPanel*>(createStandaloneEditorPanelWithId(
+            type, panelRegistry_->allocatePanelId(type), false,
+            mode == EditorOpenMode::NewWindow ? PreferredOpenArea::Float : PreferredOpenArea::RestoreSaved));
     if (!editor) return nullptr;
 
     editor->bindEffect(ownerGuid, rowGuid);
     panelRegistry_->setLastFocusedPanelId(type, editor->panelId());
-    setStandaloneEditorVisible(editor, true);
+    if (mode == EditorOpenMode::NewWindow)
+        layoutController_->detachDock(dockOfPanel(editor));
+    else
+        setStandaloneEditorVisible(editor, true);
     editor->setFocus(Qt::OtherFocusReason);
     return editor;
 }

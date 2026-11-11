@@ -7,6 +7,8 @@
 #include <array>
 #include <memory>
 
+class QToolButton;
+
 namespace VNX {
 
 struct ProjectItem;
@@ -17,7 +19,10 @@ class EffectEditorPanel final : public QWidget
     Q_OBJECT
 
 public:
-    explicit EffectEditorPanel(QWidget* parent = nullptr);
+    enum class Presentation { Standalone, Embedded };
+
+    explicit EffectEditorPanel(QWidget* parent = nullptr,
+                               Presentation presentation = Presentation::Standalone);
     ~EffectEditorPanel() override;
 
     int panelId() const { return panelId_; }
@@ -37,6 +42,7 @@ public:
 signals:
     void panelFocused(int panelId);
     void pinToggled(bool pinned);
+    void detachRequested(const QUuid& ownerGuid, const QUuid& rowGuid);
 
 protected:
     bool event(QEvent* event) override;
@@ -55,6 +61,7 @@ private:
     bool pinned_ = false;
     QUuid ownerGuid_;
     QUuid rowGuid_;
+    QToolButton* detachButton_ = nullptr;
     QWidget* fields_ = nullptr;
     std::array<ParameterSlider*, 2> parameters_{};
     std::unique_ptr<Selection> selection_;
