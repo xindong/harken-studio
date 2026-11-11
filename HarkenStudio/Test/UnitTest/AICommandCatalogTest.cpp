@@ -90,6 +90,29 @@ TEST(AICommandCatalogTest, HostRegistriesContainOnlyTheirOwnCommands)
     manager.clearAllForTesting();
 }
 
+TEST(CommandArgumentValidatorTest, PointerCommandsRequireCompleteNonnegativeCoordinates)
+{
+    TestSupport::ensureApp();
+    IPCServer desktop(nullptr);
+    for (const auto* command : {"click_widget", "open_context_menu"}) {
+        const auto schema = describeEditorCommand(command, &desktop).value("inputSchema").toObject();
+        QString error;
+        const QJsonObject target{{"widget_id", "coordinate-target"}};
+        EXPECT_TRUE(validateCommandArguments(target, schema, &error)) << error.toStdString();
+        auto coordinates = target;
+        coordinates["x"] = 0;
+        EXPECT_FALSE(validateCommandArguments(coordinates, schema, &error));
+        coordinates["y"] = 0;
+        EXPECT_TRUE(validateCommandArguments(coordinates, schema, &error)) << error.toStdString();
+        for (const auto& invalid : {QJsonValue(-1), QJsonValue(0.5), QJsonValue("0")}) {
+            coordinates["x"] = invalid;
+            EXPECT_FALSE(validateCommandArguments(coordinates, schema, &error));
+        }
+        coordinates.remove("x");
+        EXPECT_FALSE(validateCommandArguments(coordinates, schema, &error));
+    }
+}
+
 TEST(CommandArgumentValidatorTest, NestedContractsReportTheFailingArgumentPath)
 {
     const QJsonObject schema{

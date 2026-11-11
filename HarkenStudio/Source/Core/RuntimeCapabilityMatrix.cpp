@@ -274,9 +274,6 @@ RuntimeCapabilityEntry compileCurrentWorldCapability(const ProjectItem& item,
                                       QStringLiteral("Effect reference does not resolve"));
                     if (!EffectChainSemantics::validate(*asset, &diagnostic))
                         return refuse(S::InvalidAuthoring, diagnostic);
-                    if (effect.bypass)
-                        return refuse(S::UnavailableEngineContract,
-                            QStringLiteral("Current World playable effect graphs do not carry effect bypass"));
                 }
             } else {
                 const auto binding = bindingCapability(*dependency, project, operation);
@@ -623,9 +620,6 @@ RuntimeCapabilityEntry evaluateForContext(const ProjectItem& item,
                               QStringLiteral("Effect reference does not resolve"));
             if (!EffectChainSemantics::validate(*asset, &diagnostic))
                 return refuse(S::InvalidAuthoring, diagnostic);
-            if (effect.bypass && item.type != T::Bus)
-                return refuse(S::UnavailableEngineContract,
-                              QStringLiteral("Current World playable effect graphs do not carry effect bypass"));
         }
     }
     const bool currentWorldFeature = feature == F::ContentClosure

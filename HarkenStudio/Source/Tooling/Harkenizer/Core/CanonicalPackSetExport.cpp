@@ -207,6 +207,7 @@ bool collectEntries(const QByteArray& bytes, const QString& path,
             && record.kind != harkenstudiobuild::kPackEntryKindBus
             && record.kind != harkenstudiobuild::kPackEntryKindBusSend
             && record.kind != harkenstudiobuild::kPackEntryKindAttenuation
+            && record.kind != harkenstudiobuild::kPackEntryKindEffectPreset
             && record.kind != harkenstudiobuild::kPackEntryKindBusEffect
             && record.kind != harkenstudiobuild::kPackEntryKindEffectDynamicRoute) continue;
         Bridge::PackBuildSession::CanonicalPackEntry entry;
@@ -1850,14 +1851,43 @@ bool mergeCapacity(harkenstudiobuild::WorldCapacitySummaryV1* target,
     return changed;
 }
 
+std::set<harkenstudio::ObjectId> effectPresetReferences(
+    const harkenstudiobuild::ContainerWorldInstallViewV1& world)
+{
+    std::set<harkenstudio::ObjectId> references;
+    const auto collect = [&](const auto& payload) {
+        for (std::uint32_t i = 0; i < payload.effectNodeCount; ++i)
+            if (!harkenstudio::IsNull(payload.effectNodes[i].presetId))
+                references.insert(payload.effectNodes[i].presetId);
+    };
+    for (std::uint32_t i = 0; i < world.playablePropertyCount; ++i) {
+        const auto& property = world.playableProperties[i];
+        collect(property.payload);
+        for (std::uint32_t j = 0; j < property.structuralAncestorCount; ++j)
+            collect(property.structuralAncestors[j].payload);
+    }
+    for (std::uint32_t i = 0; i < world.playableOccurrenceCount; ++i)
+        collect(world.playableOccurrences[i].payload);
+    return references;
+}
+
 bool harmonizePublicationCapacity(std::vector<PackMeta>* packs,
                                   PackBuildState* buildState,
+                                  const std::map<harkenstudio::ObjectId, std::vector<std::uint8_t>>& authoredPresets,
                                   QString* error)
 {
     std::vector<std::unique_ptr<harkenstudiobuild::CurrentWorldBodyImage>> bodies;
     std::vector<harkenstudiobuild::PackCanonicalPartitionHeader> headers;
     harkenstudiobuild::WorldCapacitySummaryV1 common;
     QStringList languages{QString()};
+    std::map<harkenstudio::ObjectId, std::vector<std::uint8_t>> presets;
+    for (const auto& pack : *packs) {
+        if (pack.packKind != harkenstudiobuild::kPackKindInit) continue;
+        const auto& entries = pack.retained ? pack.previousEntries : pack.resourceEntries;
+        for (const auto& entry : entries)
+            if (entry.kind == harkenstudiobuild::kPackEntryKindEffectPreset)
+                presets.emplace(entry.id, entry.payload);
+    }
     for (auto& pack : *packs) {
         auto body = std::make_unique<harkenstudiobuild::CurrentWorldBodyImage>();
         if (pack.retained) {
@@ -1899,6 +1929,21 @@ bool harmonizePublicationCapacity(std::vector<PackMeta>* packs,
                 static_cast<std::size_t>(header.bodyBytes), header.bodyVintage))) {
             *error = QStringLiteral("Cannot decode Pack capacity for '%1'").arg(pack.fileName);
             return false;
+        }
+        for (const auto& presetId : effectPresetReferences(*body->ProductionView())) {
+            const auto preset = presets.find(presetId);
+            if (preset == presets.end()) {
+                *error = QStringLiteral("Pack '%1' references missing Effect preset %2; re-export Init with its Actions")
+                    .arg(pack.fileName, objectIdString(presetId));
+                return false;
+            }
+            if (pack.retained) continue;
+            const auto authored = authoredPresets.find(presetId);
+            if (authored == authoredPresets.end() || authored->second != preset->second) {
+                *error = QStringLiteral("Pack '%1' requires an updated Effect preset %2; re-export Init with its Actions")
+                    .arg(pack.fileName, objectIdString(presetId));
+                return false;
+            }
         }
         mergeCapacity(&common, body->ProductionView()->capacity);
         if (pack.previousValid) mergeCapacity(&common, pack.previousCapacity);
@@ -2112,6 +2157,7 @@ bool inspectPackPublication(const QString& directory, const QString& projectId,
     QSet<qulonglong> ids;
     std::unordered_map<std::uint64_t, std::uint32_t> kinds;
     std::vector<harkenstudiobuild::PackDependencyEdge> dependencyEdges;
+    std::set<harkenstudio::ObjectId> presetIds, presetReferences;
     QSet<QString> names;
     QSet<QString> actionIds;
     QSet<QString> localizedNames;
@@ -2327,7 +2373,17 @@ bool inspectPackPublication(const QString& directory, const QString& projectId,
         ids.insert(image.packStableId);
         kinds.emplace(image.packStableId, image.packKind);
         dependencyEdges.insert(dependencyEdges.end(), image.dependencyEdges.begin(), image.dependencyEdges.end());
+        for (const auto& preset : image.effectPresets)
+            presetIds.insert(preset.header.presetId);
+        const auto references = effectPresetReferences(world);
+        presetReferences.insert(references.begin(), references.end());
         packs->append(row);
+    }
+    if (requireComplete) {
+        for (const auto& presetId : presetReferences)
+            if (presetIds.count(presetId) == 0)
+                return reject(QStringLiteral("Pack publication references missing Effect preset %1")
+                    .arg(objectIdString(presetId)));
     }
     if (requireComplete && !selectedInit) return reject(QStringLiteral("Pack publication is missing Init.bytes and Init.json; re-export all Packs with the current Studio version"));
     if (requireComplete && initId != 0) {
@@ -2457,7 +2513,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         return harkenbuscompiler::BuildPublishedBusProjectionV1(
             *context->busResult,
             harkenbuscompiler::BusPublicationCapabilityVintageV1::
-                TopologyVolumeAndSendNeutralOtherProperties);
+                TopologyVolumeSendAndEffectsNeutralOtherProperties);
     }();
     if (!busDiagnostics.empty() || busProjection.fingerprint == 0) {
         result.error = busDiagnostics.empty()
@@ -2725,6 +2781,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                         || entry.kind == harkenstudiobuild::kPackEntryKindBus
                         || entry.kind == harkenstudiobuild::kPackEntryKindBusSend
                         || entry.kind == harkenstudiobuild::kPackEntryKindAttenuation
+                        || entry.kind == harkenstudiobuild::kPackEntryKindEffectPreset
                         || entry.kind == harkenstudiobuild::kPackEntryKindBusEffect
                         || entry.kind == harkenstudiobuild::kPackEntryKindEffectDynamicRoute)
                         meta.resourceEntries.push_back(entry);
@@ -3416,6 +3473,10 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         }
     }
 
+    std::map<harkenstudio::ObjectId, std::vector<std::uint8_t>> authoredPresets;
+    for (const auto& entry : packs.front().resourceEntries)
+        if (entry.kind == harkenstudiobuild::kPackEntryKindEffectPreset)
+            authoredPresets.emplace(entry.id, entry.payload);
     if (request.options.updateSelectedOnly) {
         packs.erase(std::remove_if(packs.begin() + 1, packs.end(), [&](const auto& pack) {
             if (!request.options.onlyPackPaths.isEmpty())
@@ -3440,7 +3501,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             else packs.push_back(std::move(retained));
         }
     }
-    if (!harmonizePublicationCapacity(&packs, request.options.packBuildState.get(), &compileError))
+    if (!harmonizePublicationCapacity(&packs, request.options.packBuildState.get(), authoredPresets, &compileError))
         return fail(compileError);
     std::set<harkenstudio::ObjectId> bindingIds;
     std::erase_if(lowering.programs, [&](const auto& program) {

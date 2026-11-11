@@ -143,6 +143,12 @@ EngineResult setPreviewVoiceProperty(uint64_t voice, uint8_t property, float val
     return Detail::runtimeSetPreviewVoiceProperty(voice, property, value, sendBus);
 }
 
+EngineResult setPreviewVoiceEffect(uint64_t voice, harkenstudio::ObjectId effectId,
+    uint32_t effectType, const std::vector<float>& parameters, bool bypass)
+{
+    return Detail::runtimeSetPreviewVoiceEffect(voice, effectId, effectType, parameters, bypass);
+}
+
 bool currentWorldBusAdmissionIsOpen(uint64_t generation)
 {
     return Detail::runtimeCurrentWorldBusAdmissionIsOpen(generation);

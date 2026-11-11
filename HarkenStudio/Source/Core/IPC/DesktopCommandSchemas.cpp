@@ -76,7 +76,7 @@ const QMap<QString, QJsonObject>& schemas()
         result["get_list_items"] = target({{"max_items", integer(0, 5000)}});
         result["get_tree_data"] = target({{"max_depth", integer(1, 50)}});
         result["click_widget"] = target({{"button", choice({"left", "right", "middle"})},
-            {"double_click", flag(false)}});
+            {"double_click", flag(false)}, {"x", integer()}, {"y", integer()}});
         result["key_press"] = target({{"key", integer(1)}, {"modifiers", integer()}}, {"key"}, true);
         result["set_widget_value"] = target({{"value", QJsonObject{
             {"type", QJsonArray{"string", "number", "boolean"}},
@@ -92,6 +92,7 @@ const QMap<QString, QJsonObject>& schemas()
         const QJsonObject noCoordinates{{"not", anyCoordinate}};
         const QJsonObject coordinatePair{{"anyOf", QJsonArray{bothCoordinates, noCoordinates}}};
         result["open_context_menu"].insert("allOf", QJsonArray{coordinatePair});
+        result["click_widget"].insert("allOf", QJsonArray{coordinatePair});
         result["trigger_menu_action"] = target({{"action_text", text()}}, {"action_text"}, true);
         result["answer_dialog"] = object({{"response", text("Enabled button text, or accept/ok/reject/cancel where supported by the active dialog.")},
             {"text", QJsonObject{{"type", "string"}}}, {"path", text()}});

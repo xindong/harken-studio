@@ -37,10 +37,22 @@ bool updateCurvePreview(QHash<Key, QVector<std::pair<QUuid, Value>>>& previews,
 }
 
 struct LivePropertyPreview {
+    struct Effect {
+        harkenstudio::ObjectId id{};
+        uint32_t type = 0;
+        EffectMode mode = EffectMode::Custom;
+        QUuid presetGuid;
+        std::vector<float> parameters;
+        bool bypass = false;
+
+        bool operator==(const Effect&) const = default;
+    };
+
     struct Definition {
         float volumeDb = 0;
         float pitchCents = 0;
         LivePropertyValues fields;
+        std::vector<Effect> effects;
 
         void refreshMix(ProjectItem& item, const PlayablePropertyLocatorV1& locator,
                         PlatformScope scope)
@@ -57,6 +69,7 @@ struct LivePropertyPreview {
     QHash<QUuid, DefinitionFieldGroups> groups;
     QHash<harkenstudio::ObjectId, Definition> definitions;
     QHash<uint64_t, LivePropertyValues> applied;
+    QHash<uint64_t, std::map<harkenstudio::ObjectId, Effect>> appliedEffects;
     QHash<QUuid, QVector<std::pair<QUuid, AttenuationSnapshot>>> attenuations;
     QSet<QUuid> pendingAttenuations;
     bool dirty = true;
@@ -150,6 +163,7 @@ void AudioEngine::applyLivePropertyPreview()
     if (!HarkenEditor::Bridge::capturePlaybackPaths(paths)) return;
     if (paths.empty()) {
         preview.applied.clear();
+        preview.appliedEffects.clear();
         return;
     }
     if (preview.dirty) {
@@ -183,6 +197,12 @@ void AudioEngine::applyLivePropertyPreview()
                     definition.fields[{static_cast<uint8_t>(LiveProperty::Sends), target->second->runtimeId()}]
                         = send.sendLevel;
             }
+            for (const auto& entry : groups.effects.effects.entries()) {
+                const auto* effect = EffectChainSemantics::resolve(entry, *project);
+                if (effect)
+                    definition.effects.push_back({entry.runtimeId(), static_cast<uint32_t>(effect->type),
+                        entry.mode, entry.effectGuid, effect->parameters, entry.bypass});
+            }
         }
         preview.dirty = false;
     }
@@ -192,6 +212,16 @@ void AudioEngine::applyLivePropertyPreview()
         (void)HarkenEditor::Bridge::refreshPreviewVoiceBindings(path.voiceInstance);
         const auto leaf = preview.definitions.constFind(path.soundId);
         if (leaf == preview.definitions.cend()) continue;
+        auto& appliedEffects = preview.appliedEffects[path.voiceInstance];
+        for (const auto& effect : leaf->effects) {
+            const auto previous = appliedEffects.find(effect.id);
+            if (previous != appliedEffects.end()
+                && (previous->second == effect || previous->second.mode != effect.mode
+                    || previous->second.presetGuid != effect.presetGuid)) continue;
+            if (HarkenEditor::Bridge::setPreviewVoiceEffect(path.voiceInstance, effect.id,
+                    effect.type, effect.parameters, effect.bypass) == HarkenEditor::Bridge::kEngineOk)
+                appliedEffects[effect.id] = effect;
+        }
         auto values = leaf->fields;
         float volumeDb = 0;
         float pitchCents = 0;
@@ -220,6 +250,10 @@ void AudioEngine::applyLivePropertyPreview()
     }
     for (auto it = preview.applied.begin(); it != preview.applied.end();) {
         if (!active.contains(it.key())) it = preview.applied.erase(it);
+        else ++it;
+    }
+    for (auto it = preview.appliedEffects.begin(); it != preview.appliedEffects.end();) {
+        if (!active.contains(it.key())) it = preview.appliedEffects.erase(it);
         else ++it;
     }
 }

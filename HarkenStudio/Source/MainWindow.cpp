@@ -588,7 +588,6 @@ void MainWindow::initializeStructure(
     {
         StandaloneEditorTypeInfo info;
         info.label = tr("Effect Editor");
-        info.clearOnUnrelatedSelection = false;
         info.dockObjectPrefix = QStringLiteral("EffectEditorDock");
         info.createConfigured = [this](int id) -> QWidget* {
             auto* editor = new EffectEditorPanel(this);
@@ -2877,6 +2876,8 @@ QWidget* MainWindow::createStandaloneEditorPanel(const QString& type)
 {
     QWidget* editor = createStandaloneEditorPanelWithId(
         type, panelRegistry_->allocatePanelId(type), false);
+    if (editor && type == QLatin1String("EffectEditor"))
+        pushEffectSelectionToEditors(effectSelectionOwnerGuid_, effectSelectionRowGuid_);
     if (editor && (type == QLatin1String("TimelineEditor")
                    || type == QLatin1String("GridEditor"))) {
         const StandaloneEditorTypeInfo ti = standaloneEditorTypes_.value(type);
@@ -3045,6 +3046,15 @@ void MainWindow::pushSelectionToStandaloneEditors(ProjectItem* item,
 {
     for (const QString& type : standaloneEditorTypes_.keys()) {
         const StandaloneEditorTypeInfo ti = standaloneEditorTypes_.value(type);
+        if (type == QLatin1String("EffectEditor")) {
+            if (reason != StandaloneEditorPushReason::PinToggled
+                && (!item || item->guid != effectSelectionOwnerGuid_)) {
+                effectSelectionOwnerGuid_ = item ? item->guid : QUuid{};
+                effectSelectionRowGuid_ = QUuid{};
+            }
+            pushEffectSelectionToEditors(effectSelectionOwnerGuid_, effectSelectionRowGuid_);
+            continue;
+        }
         if (type == QLatin1String("TimelineEditor") && item && item->type == ProjectItem::Type::Track) {
             auto* owner = TimelineEditorPanel::timelineOwner(item);
             ads::CDockWidget* matchingDock = nullptr;
@@ -3245,6 +3255,8 @@ void MainWindow::wireInspectorPanelSignals(InspectorPanel* panel)
         [this](const QUuid& ownerGuid, const QUuid& rowGuid) {
             openEffectEditor(ownerGuid, rowGuid);
         });
+    connect(panel, &InspectorPanel::effectSelectionChanged,
+        this, &MainWindow::pushEffectSelectionToEditors);
     connect(panel, &InspectorPanel::effectEditorDetachRequested, this,
         [this](const QUuid& ownerGuid, const QUuid& rowGuid) {
             openEffectEditor(ownerGuid, rowGuid, EditorOpenMode::NewWindow);
@@ -3524,6 +3536,23 @@ void MainWindow::wireStandaloneEditorPin(QWidget* editor)
 ProjectItem* MainWindow::currentStandaloneEditorSelection() const
 {
     return selectionRouter_->activeItem();
+}
+
+void MainWindow::pushEffectSelectionToEditors(const QUuid& ownerGuid, const QUuid& rowGuid)
+{
+    effectSelectionOwnerGuid_ = ownerGuid;
+    effectSelectionRowGuid_ = rowGuid;
+    const auto* owner = ProjectManager::instance().findItemByGuid(ownerGuid);
+    const bool valid = EffectEditorPanel::canOpen(owner, rowGuid);
+    for (QWidget* panel : panelRegistry_->allPanels(QStringLiteral("EffectEditor"))) {
+        auto* editor = qobject_cast<EffectEditorPanel*>(panel);
+        if (!editor || editor->isPinned()) continue;
+        if (!valid) {
+            editor->clearEditor();
+        } else if (editor->ownerGuid() != ownerGuid || editor->rowGuid() != rowGuid) {
+            editor->bindEffect(ownerGuid, rowGuid);
+        }
+    }
 }
 
 void MainWindow::collapseUnrelatedStandaloneEditor(const QString& type, QWidget* editor,
@@ -4953,6 +4982,8 @@ EffectEditorPanel* MainWindow::openEffectEditor(const QUuid& ownerGuid, const QU
     auto& manager = ProjectManager::instance();
     const auto* owner = manager.findItemByGuid(ownerGuid);
     if (!EffectEditorPanel::canOpen(owner, rowGuid)) return nullptr;
+
+    pushEffectSelectionToEditors(ownerGuid, rowGuid);
 
     const QString type = QStringLiteral("EffectEditor");
     EffectEditorPanel* editor = nullptr;

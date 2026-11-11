@@ -706,6 +706,11 @@ void InspectorPanel::requestEffectEditorSelection(const QUuid& ownerGuid, const 
     emit effectEditorRequested(ownerGuid, rowGuid);
 }
 
+void InspectorPanel::requestEffectSelection(const QUuid& ownerGuid, const QUuid& rowGuid)
+{
+    emit effectSelectionChanged(ownerGuid, rowGuid);
+}
+
 void InspectorPanel::requestEffectEditorDetach(const QUuid& ownerGuid, const QUuid& rowGuid)
 {
     emit effectEditorDetachRequested(ownerGuid, rowGuid);

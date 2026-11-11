@@ -74,6 +74,33 @@ typedef struct VnPreviewProjectDescV3 {
     uint32_t reserved1;
 } VnPreviewProjectDescV3;
 
+typedef struct VnPreviewBusEffectV1 {
+    VnBusId busId;
+    VnObjectId effectId;
+    uint32_t slot;
+    uint32_t effectType;
+    uint32_t descriptorVintage;
+    uint32_t flags;
+    uint32_t parameterFirst;
+    uint32_t parameterCount;
+} VnPreviewBusEffectV1;
+
+typedef struct VnPreviewBusEffectParameterV1 {
+    uint32_t index;
+    float value;
+} VnPreviewBusEffectParameterV1;
+
+typedef struct VnPreviewProjectDescV4 {
+    VnPreviewProjectDescV3 base;
+    const VnPreviewBusEffectV1* busEffects;
+    uint32_t busEffectCount;
+    uint32_t busEffectParameterCount;
+    const VnPreviewBusEffectParameterV1* busEffectParameters;
+    const uint32_t* busFaderAfterSlots;
+    uint32_t busFaderCount;
+    uint32_t reserved2;
+} VnPreviewProjectDescV4;
+
 typedef enum VnPreviewPrepareStatus {
     VN_PREVIEW_PREPARE_OK = 0,
     VN_PREVIEW_PREPARE_INVALID = 1,
@@ -99,6 +126,8 @@ VnPreviewPrepareStatus VnPreview_PrepareProjectV2(
     const VnPreviewProjectDescV2* desc, VnPreviewProjectHandle* outHandle);
 VnPreviewPrepareStatus VnPreview_PrepareProjectV3(
     const VnPreviewProjectDescV3* desc, VnPreviewProjectHandle* outHandle);
+VnPreviewPrepareStatus VnPreview_PrepareProjectV4(
+    const VnPreviewProjectDescV4* desc, VnPreviewProjectHandle* outHandle);
 VnPreviewCommitStatus VnPreview_CommitProject(
     VnPreviewProjectHandle handle, uint64_t* outGeneration);
 void VnPreview_CancelProject(VnPreviewProjectHandle handle);
@@ -106,6 +135,7 @@ uint32_t VnPreview_DrainProjectAcks(void);
 uint32_t VnPreview_ProjectIsOpen(uint64_t generation);
 uint32_t VnPreview_QueryOwnerRevision(uint64_t ownerId, uint64_t* outRevision);
 uint32_t VnPreview_HasPlayableConsumers(void);
+uint32_t VnPreview_HasEffectChainConsumers(void);
 uint32_t VnPreview_HasAction(VnObjectId actionId);
 void VnPreview_PumpNullMixer(uint32_t blockCount);
 VnResult VnPreview_EnableChannelPeakMetering(void);
@@ -116,6 +146,9 @@ VnResult VnPreview_PlayVoiceRaw(const VnPlayDesc* desc, VnVoiceHandle* outHandle
 VnResult VnPreview_RefreshVoiceBindings(uint64_t voiceInstance);
 VnResult VnPreview_SetVoiceProperty(uint64_t voiceInstance,
     uint32_t property, float value, VnBusId sendBusId);
+VnResult VnPreview_SetVoiceEffect(uint64_t voiceInstance, VnObjectId effectId,
+    uint32_t effectType, const float* parameters, uint32_t parameterCount,
+    uint32_t bypass);
 
 #ifdef __cplusplus
 }

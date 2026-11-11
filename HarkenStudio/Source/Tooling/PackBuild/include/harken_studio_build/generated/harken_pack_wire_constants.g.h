@@ -7,6 +7,7 @@ namespace harkenstudiobuild {
 
 inline constexpr std::uint64_t kPackBlobAlign = 64ULL;
 inline constexpr std::uint64_t kPackBusDefinitionDownmixCoefficientCount = 64ULL;
+inline constexpr std::uint64_t kPackEffectPresetReferenceType = 4294967295ULL;
 inline constexpr std::uint64_t kPackPayloadAlign = 8ULL;
 inline constexpr std::uint64_t kPackShippingBodyVintage = 18ULL;
 inline constexpr std::uint64_t kPackVoiceRecipeMaxParams = 64ULL;

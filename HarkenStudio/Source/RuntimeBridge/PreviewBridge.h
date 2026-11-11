@@ -56,6 +56,8 @@ void removePreviewBinding(harkenstudio::ObjectId id);
 EngineResult refreshPreviewVoiceBindings(uint64_t voice);
 EngineResult setPreviewVoiceProperty(uint64_t voice, uint8_t property, float value,
                                      harkenstudio::ObjectId sendBus = {});
+EngineResult setPreviewVoiceEffect(uint64_t voice, harkenstudio::ObjectId effectId,
+    uint32_t effectType, const std::vector<float>& parameters, bool bypass);
 bool currentWorldBusAdmissionIsOpen(uint64_t generation);
 EngineResult setCurrentWorldBusMute(harkenstudio::ObjectId bus, bool mute, uint32_t fadeMs);
 EngineResult setCurrentWorldBusSolo(harkenstudio::ObjectId bus, bool solo, uint32_t fadeMs);

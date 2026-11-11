@@ -340,7 +340,8 @@ bool buildDefinitionNode(ProjectItem& item, const ProjectIndex& index,
                          const std::unordered_set<ProjectItem*>& included,
                          const FieldGroupEffectiveSnapshot& groups,
                          int64_t editorOrder, PlatformScope scope,
-                         BridgeRequest* request, QString* error)
+                         BridgeRequest* request, QString* error,
+                         bool exportPresetReferences)
 {
     const auto kind = contentKind(item.type);
     const auto locator = PlayablePropertyAuthoringV1::definitionLocator(item);
@@ -354,7 +355,8 @@ bool buildDefinitionNode(ProjectItem& item, const ProjectIndex& index,
     node.guid = authoringGuid(item.guid);
     node.editorOrder = editorOrder;
     if (!HarkenEditor::Bridge::copyStudioDefinitionPayload(
-            item, scope, index, groups, *request->identityIndex, &node, error)) {
+            item, scope, index, groups, *request->identityIndex, &node, error,
+            exportPresetReferences)) {
         return false;
     }
 
@@ -1619,7 +1621,8 @@ buildCurrentWorldSyncRequestForContext(ProjectData& project, PlatformScope scope
                 }
             }
             if (!buildDefinitionNode(*item, index, included, groups, editorOrder++,
-                                     scope, request.get(), error))
+                                     scope, request.get(), error,
+                                     options && options->validatePackResources))
                 return false;
             return true;
         };

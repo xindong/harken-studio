@@ -133,6 +133,7 @@ EffectEntry EffectEntry::fromJson(const QJsonValue& value)
 
 bool EffectChainLedger::replace(std::vector<EffectEntry> entries)
 {
+    if (entries.size() > kCapacity) return false;
     std::set<harkenstudio::ObjectId> identities;
     for (const EffectEntry& entry : entries) {
         if (!entry.typed) return false;

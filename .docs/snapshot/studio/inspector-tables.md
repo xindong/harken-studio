@@ -40,11 +40,14 @@
 | 表格／字段 | 当前行为 |
 |---|---|
 | Effects / 模式与增删 | 加号选择 Limiter 插入 Custom，或 Select Preset... 引用已有 Effect；允许跨对象及同链重复引用；减号删除选中行，支持排序与撤销重做 |
+| Effects / 容量 | 每条链最多 8 槽；满 8 槽禁用加号，删除到 7 槽后恢复，撤销重做同步状态。新增回调、共享创作校验、CLI 合同和编译检查拒绝超限，不截断数据 |
 | Effects / Custom | 普通标签显示插件名称，双击标签按普通停靠及既有布局打开或复用独立 Effect Editor，单击标签不打开；每次单击右侧 detach 按钮均新建独立浮动 Effect Editor，已有同类型实例及原面板保留；新窗沿当前屏幕已有浮窗向右下错开，遇屏幕边缘回绕，已有窗口及已记忆位置不重排；内容左侧的独立 chevron 使用默认箭头指针，Replace 子菜单提供 Limiter 和 Select Preset...，另提供 Save As Preset... |
 | Effects / Preset | ObjectRef 保留定位、双击激活和预设选择器；内容左侧的独立 chevron 使用默认箭头指针，提供 Replace > Limiter 和 Convert to Custom |
 | Effects / 切换 | 保留行位置、行 GUID、Active；替换插件使用默认参数，Convert to Custom 复制预设当前插件与参数后解除共享，不改预设资产 |
 | Effects / 保存预设 | Save As Preset... 使用标准目录／名称选择器，将当前 Custom 配置存为共享 Effect 并切换为引用；创建与切换合为一次撤销 |
-| Effects / Active | 新增默认开启，映射现有旁通配置；Bus 沿用既有支持，非 Bus 含关闭项时仍受现有试听／发布能力检查限制 |
+| Effects / Active | 新增默认开启，映射旁通配置；Bus 与非 Bus 均接通试听和 Pack，关闭时保留效果实例并旁通 |
+| Effects / 在播编辑 | 参数和 Active 即时更新；链条增删、替换、重排沿现有生命周期，在下一次播放生效 |
+| Effects / 独立编辑器跟随 | 所有未 Pin 实例跟随预设选择和 FX 行单选；单选只更新已开窗口，不新建。Pin 保留绑定，解除 Pin 立即同步；选择非 Effect 对象时清空未 Pin 参数但保留窗口，同一所属对象的再次选择保留当前槽位 |
 | Effects / 继承 | Sound、Container、Layer、Track、Segment 沿归属父级继承整条链，包括 Custom／Preset、顺序、Active，不与父链叠加；根对象直接编辑自身配置，Bus 不继承 |
 | Effects / 本地历史 | 首次关闭 Inherit 复制当前有效链并分配本对象槽位身份；已有本地历史时恢复历史；开启继承保留历史；Rebuild Local from Current Effective Values 使用当前有效链重建本地配置 |
 | Effects / 平台 | 沿用 Shared 与平台覆盖规则；All Platforms 编辑共享链并清除该链的平台覆盖，单平台只改当前平台，配置与 Shared 相同时自动消除该覆盖；继承开关按平台独立保存，沿用标题菜单 Reset Inherit 恢复共享继承模式；Bus 也支持平台链，但没有 Inherit |

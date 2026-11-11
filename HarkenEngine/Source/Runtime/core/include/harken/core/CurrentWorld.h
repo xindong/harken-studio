@@ -173,6 +173,8 @@ struct EffectNodeV1 {
     std::uint32_t paramCount = 0;
     const EffectParamV1* params = nullptr;
     VnObjectId effectId{};
+    std::uint32_t flags = 0;
+    VnObjectId presetId{};
 };
 
 struct EffectEdgeV1 {

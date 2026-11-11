@@ -515,6 +515,7 @@ VnConfig makeConfig(const EngineSessionConfig& config)
     c.maxVoices = positiveOrDefault(config.maxVoices, 64);
     c.maxActions = 65536;
     c.voiceSendSlots = 8;
+    c.fxSlotsPerVoice = 8;
     c.deviceMode = config.deviceMode == EngineDeviceMode::Null
         ? VN_DEVICE_NULL
         : VN_DEVICE_REAL;
@@ -1891,6 +1892,11 @@ bool runtimeHasCurrentWorldPlayableConsumers()
     return runtimeIsActive() && VnPreview_HasPlayableConsumers() != 0;
 }
 
+bool runtimeHasEffectChainConsumers()
+{
+    return runtimeIsActive() && VnPreview_HasEffectChainConsumers() != 0;
+}
+
 EngineResult runtimeRefreshPreviewVoiceBindings(uint64_t voiceInstance)
 {
     return VnPreview_RefreshVoiceBindings(voiceInstance);
@@ -1900,6 +1906,13 @@ EngineResult runtimeSetPreviewVoiceProperty(uint64_t voiceInstance, uint8_t prop
     float value, harkenstudio::ObjectId sendBusId)
 {
     return VnPreview_SetVoiceProperty(voiceInstance, property, value, toNative(sendBusId));
+}
+
+EngineResult runtimeSetPreviewVoiceEffect(uint64_t voiceInstance, harkenstudio::ObjectId effectId,
+    uint32_t effectType, const std::vector<float>& parameters, bool bypass)
+{
+    return VnPreview_SetVoiceEffect(voiceInstance, toNative(effectId), effectType,
+        parameters.data(), static_cast<uint32_t>(parameters.size()), bypass ? 1u : 0u);
 }
 
 void runtimeSetVoicePitchByName(const QString& name, float cents)
@@ -2088,6 +2101,17 @@ RuntimeProjectGenerationPrepareStatus runtimePrepareProjectGeneration(
         return RuntimeProjectGenerationPrepareStatus::RuntimeUnavailable;
     return static_cast<RuntimeProjectGenerationPrepareStatus>(
         VnPreview_PrepareProjectV3(&view, &out.handle));
+}
+
+RuntimeProjectGenerationPrepareStatus runtimePrepareProjectGeneration(
+    const VnPreviewProjectDescV4& view, RuntimePreparedProject& out)
+{
+    if (out.Valid())
+        return RuntimeProjectGenerationPrepareStatus::InvalidView;
+    if (!runtimeIsActive())
+        return RuntimeProjectGenerationPrepareStatus::RuntimeUnavailable;
+    return static_cast<RuntimeProjectGenerationPrepareStatus>(
+        VnPreview_PrepareProjectV4(&view, &out.handle));
 }
 
 RuntimeProjectGenerationCommitStatus runtimeCommitPreparedProjectGeneration(

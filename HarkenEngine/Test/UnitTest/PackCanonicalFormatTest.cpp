@@ -1468,6 +1468,83 @@ TEST(PackCanonicalFormat, ExistingResidentAndContentGoldensStillParse) {
     EXPECT_EQ(kPackKindContent, emptyImage.packKind);
 }
 
+std::vector<std::uint8_t> EffectPresetPayload(
+    PackEffectPresetHeader header, std::vector<PackEffectPresetParameter> parameters) {
+    std::vector<std::uint8_t> payload(kPackEffectPresetHeaderBytes +
+        parameters.size() * kPackEffectPresetParameterBytes);
+    PackWireBuffer<std::uint8_t> output{payload.data(), payload.size()};
+    EXPECT_TRUE(AppendPackEffectPresetHeader(output, header));
+    for (const auto& parameter : parameters)
+        EXPECT_TRUE(AppendPackEffectPresetParameter(output, parameter));
+    return payload;
+}
+
+TEST(PackCanonicalFormat, SharedEffectDefinitionsEnforceIdentityAndDescriptorContract) {
+    const PackEffectPresetHeader header{harkentest::ObjectId(8801), VN_EFFECT_LIMITER,
+        kPackEffectDescriptorVintage, 2};
+    const std::vector<PackEffectPresetParameter> parameters{
+        {0, std::bit_cast<std::uint32_t>(-12.0f)},
+        {1, std::bit_cast<std::uint32_t>(1.0f)}};
+    const auto payload = EffectPresetPayload(header, parameters);
+    const auto bytes = BuildInitWithTypedEntry(kPackEntryKindEffectPreset, 8801, payload);
+    PackCanonicalImage image;
+    ASSERT_EQ(VN_OK, ParsePackCanonicalImage(bytes.data(), bytes.size(), &image));
+    ASSERT_EQ(1u, image.effectPresets.size());
+    EXPECT_EQ(header.presetId, image.effectPresets.front().header.presetId);
+    ASSERT_EQ(2u, image.effectPresets.front().parameters.size());
+    EXPECT_EQ(parameters[0].valueBits, image.effectPresets.front().parameters[0].valueBits);
+    std::vector<std::vector<std::uint8_t>> malformed;
+    auto changed = header;
+    changed.presetId = {};
+    malformed.push_back(EffectPresetPayload(changed, parameters));
+    changed = header;
+    changed.presetId = harkentest::ObjectId(8802);
+    malformed.push_back(EffectPresetPayload(changed, parameters));
+    changed = header;
+    changed.effectType = static_cast<std::uint32_t>(kPackEffectPresetReferenceType);
+    malformed.push_back(EffectPresetPayload(changed, parameters));
+    changed = header;
+    ++changed.descriptorVintage;
+    malformed.push_back(EffectPresetPayload(changed, parameters));
+    changed = header;
+    --changed.paramCount;
+    malformed.push_back(EffectPresetPayload(changed, parameters));
+    auto changedParameters = parameters;
+    changedParameters[1].paramId = 0;
+    malformed.push_back(EffectPresetPayload(header, changedParameters));
+    changedParameters = parameters;
+    changedParameters[0].valueBits = std::bit_cast<std::uint32_t>(-25.0f);
+    malformed.push_back(EffectPresetPayload(header, changedParameters));
+    malformed.push_back(payload);
+    malformed.back().pop_back();
+    for (const auto& invalid : malformed) {
+        const auto invalidBytes = BuildInitWithTypedEntry(kPackEntryKindEffectPreset, 8801, invalid);
+        PackCanonicalImage unchanged;
+        unchanged.packStableId = 0xDEAD;
+        EXPECT_EQ(VN_BAD_PACK, ParsePackCanonicalImage(invalidBytes.data(), invalidBytes.size(), &unchanged));
+        EXPECT_EQ(0xDEADu, unchanged.packStableId);
+        EXPECT_TRUE(unchanged.effectPresets.empty());
+    }
+}
+
+TEST(PackCanonicalFormat, SharedEffectDefinitionsRequireUniqueInitOwnership) {
+    const auto presetId = harkentest::ObjectId(8801);
+    const auto payload = EffectPresetPayload({presetId, VN_EFFECT_GAIN,
+        kPackEffectDescriptorVintage, 1}, {{0, std::bit_cast<std::uint32_t>(-6.0f)}});
+    for (const auto packKind : {kPackKindInit, kPackKindCanonicalContent}) {
+        ImageBuilder builder(packKind);
+        auto requirement = RequirementPayload(11, 1, 0);
+        StampRequirementCoverage(&requirement);
+        builder.AddEntry(kPackEntryKindPackRequirementBlock, 11, std::move(requirement));
+        builder.AddEntry(kPackEntryKindEffectPreset, presetId, payload);
+        if (packKind == kPackKindInit)
+            builder.AddEntry(kPackEntryKindEffectPreset, presetId, payload);
+        const auto bytes = builder.Build();
+        PackCanonicalImage image;
+        EXPECT_EQ(VN_BAD_PACK, ParsePackCanonicalImage(bytes.data(), bytes.size(), &image));
+    }
+}
+
 TEST(PackCanonicalFormat, Kind26Vintage1IsCanonicalEntry) {
     const std::vector<std::uint8_t> bytes = BuildInitWithTypedEntry(
         kPackEntryKindVariablePolicyOverlay, 0, Kind26Payload(TwoOverlayRows()));

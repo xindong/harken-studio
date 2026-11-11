@@ -403,6 +403,8 @@ private:
     std::unique_ptr<WorkspaceWindowManager> workspaceWindowManager_;
 
     QHash<QString, StandaloneEditorTypeInfo> standaloneEditorTypes_;
+    QUuid effectSelectionOwnerGuid_;
+    QUuid effectSelectionRowGuid_;
 
     InspectorPanel* createInspectorPanelWithId(int id, PreferredOpenArea placement, bool deferShow);
     Hierarchy* createHierarchyPanelWithId(int id, bool deferShow, bool deleteOnClose = true);
@@ -417,6 +419,7 @@ private:
     void setStandaloneEditorVisible(QWidget* editor, bool visible);
     void wireStandaloneEditorPin(QWidget* editor);
     ProjectItem* currentStandaloneEditorSelection() const;
+    void pushEffectSelectionToEditors(const QUuid& ownerGuid, const QUuid& rowGuid = {});
     void collapseUnrelatedStandaloneEditor(const QString& type, QWidget* editor,
                                           StandaloneEditorPushReason reason);
     QWidget* workspaceSingletonContent(const QString& typeId, bool materialize) const;

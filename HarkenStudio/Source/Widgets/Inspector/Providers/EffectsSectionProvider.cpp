@@ -59,7 +59,7 @@ public:
         });
         table_->setRowSelectionHandler([this](QWidget* row) {
             selected_ = row->property("effectGuid").toUuid();
-            refreshSelection();
+            refreshSelection(true);
         });
         table_->setRowMoveHandler([this](int from, int to) {
             auto effects = effects_.entries();
@@ -68,7 +68,7 @@ public:
             effects.insert(effects.begin() + to, effect);
             if (commit(std::move(effects))) {
                 selected_ = effect.guid;
-                refreshSelection();
+                refreshSelection(true);
             }
         }, [this](int from, int to) {
             const int count = static_cast<int>(effects_.size());
@@ -91,7 +91,7 @@ public:
             queuePresetSelector({});
         });
         connect(add_, &QToolButton::clicked, this, [this] {
-            if (canEdit() && isCurrentContext())
+            if (canEdit() && isCurrentContext() && effects_.size() < EffectChainLedger::kCapacity)
                 addMenu_->popup(add_->mapToGlobal(QPoint(0, add_->height())));
         });
         connect(remove_, &QToolButton::clicked, this, [this] {
@@ -194,7 +194,7 @@ protected:
         auto* widget = static_cast<QWidget*>(watched);
         if (auto* row = table_->rowForWidget(widget)) {
             selected_ = row->property("effectGuid").toUuid();
-            refreshSelection();
+            refreshSelection(true);
             if (event->type() == QEvent::MouseButtonDblClick
                 && widget->objectName() == QStringLiteral("effectContent")
                 && qobject_cast<QLabel*>(widget) && widget->isEnabled()
@@ -278,6 +278,7 @@ private:
     void showPresetSelector(const QUuid& guid)
     {
         if (!canEdit() || !isCurrentContext()) return;
+        if (guid.isNull() && effects_.size() >= EffectChainLedger::kCapacity) return;
         const QPointer<EffectsListWidget> self(this);
         const uint64_t generation = generation_;
         SelectorRequest request;
@@ -292,6 +293,7 @@ private:
                 self->replaceEffect(guid, objectID);
                 return;
             }
+            if (self->effects_.size() >= EffectChainLedger::kCapacity) return;
             const auto* target = ProjectManager::instance().findItemByObjectID(objectID);
             auto effects = self->effects_.entries();
             EffectEntry effect;
@@ -301,7 +303,7 @@ private:
             effects.push_back(effect);
             if (self->commit(std::move(effects))) {
                 self->selected_ = effect.guid;
-                self->refreshSelection();
+                self->refreshSelection(true);
             }
         };
         SelectorWindow::open(request, guid.isNull() ? static_cast<QWidget*>(add_) : this);
@@ -329,6 +331,7 @@ private:
         auto found = std::find_if(effects.begin(), effects.end(),
             [&guid](const EffectEntry& effect) { return effect.guid == guid; });
         if (guid.isNull()) {
+            if (effects.size() >= EffectChainLedger::kCapacity) return;
             effects.emplace_back();
             found = std::prev(effects.end());
             found->guid = QUuid::createUuid();
@@ -341,7 +344,7 @@ private:
         const QUuid selected = found->guid;
         if (commit(std::move(effects))) {
             selected_ = selected;
-            refreshSelection();
+            refreshSelection(true);
         }
     }
 
@@ -439,7 +442,7 @@ private:
         }
         rows_.clear();
         const bool editable = canEdit();
-        add_->setEnabled(editable);
+        add_->setEnabled(editable && effects_.size() < EffectChainLedger::kCapacity);
         table_->footer()->setVisible(editable);
         table_->bodyMessage()->setText(mixed_ ? tr("Mixed table\nSelect a single platform to edit")
             : groupView_.diagnostics.join(QLatin1Char('\n')));
@@ -584,7 +587,7 @@ private:
         if (inspector_ && !search_.isEmpty()) inspector_->reapplySearchFilter();
     }
 
-    void refreshSelection()
+    void refreshSelection(bool follow = false)
     {
         bool found = false;
         for (auto* row : rows_) {
@@ -594,6 +597,8 @@ private:
         }
         if (!found) selected_ = QUuid{};
         remove_->setEnabled(found && canEdit());
+        if (follow && found && isCurrentContext() && inspector_)
+            inspector_->requestEffectSelection(boundGuid_, selected_);
     }
 
     void applySearch()
