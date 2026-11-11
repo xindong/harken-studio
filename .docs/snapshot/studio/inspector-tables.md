@@ -47,7 +47,7 @@
 | Effects / 保存预设 | Save As Preset... 使用标准目录／名称选择器，将当前 Custom 配置存为共享 Effect 并切换为引用；创建与切换合为一次撤销 |
 | Effects / Active | 新增默认开启，映射旁通配置；Bus 与非 Bus 均接通试听和 Pack，关闭时保留效果实例并旁通 |
 | Effects / 在播编辑 | 参数和 Active 即时更新；链条增删、替换、重排沿现有生命周期，在下一次播放生效 |
-| Effects / 独立编辑器跟随 | 所有未 Pin 实例跟随预设选择和 FX 行单选；单选只更新已开窗口，不新建。Pin 保留绑定，解除 Pin 立即同步；选择非 Effect 对象时清空未 Pin 参数但保留窗口，同一所属对象的再次选择保留当前槽位 |
+| Effects / 独立编辑器跟随 | 所有未 Pin 实例只跟随有效的 Effect 预设选择和 FX 行单选；单选只更新已开窗口，不新建。选择 Bus 等所属对象（无论是否有 FX）、其他对象或取消选择均保留当前效果器，不自动选择其他槽位。Pin 保留绑定，解除 Pin 时若最近一次效果器选择仍有效则立即同步，否则保留自身绑定；当前效果器失效时隐藏参数，槽位删除后撤销可恢复，关闭工程清空绑定和选择记录 |
 | Effects / 继承 | Sound、Container、Layer、Track、Segment 沿归属父级继承整条链，包括 Custom／Preset、顺序、Active，不与父链叠加；根对象直接编辑自身配置，Bus 不继承 |
 | Effects / 本地历史 | 首次关闭 Inherit 复制当前有效链并分配本对象槽位身份；已有本地历史时恢复历史；开启继承保留历史；Rebuild Local from Current Effective Values 使用当前有效链重建本地配置 |
 | Effects / 平台 | 沿用 Shared 与平台覆盖规则；All Platforms 编辑共享链并清除该链的平台覆盖，单平台只改当前平台，配置与 Shared 相同时自动消除该覆盖；继承开关按平台独立保存，沿用标题菜单 Reset Inherit 恢复共享继承模式；Bus 也支持平台链，但没有 Inherit |

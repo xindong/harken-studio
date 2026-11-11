@@ -3047,12 +3047,10 @@ void MainWindow::pushSelectionToStandaloneEditors(ProjectItem* item,
     for (const QString& type : standaloneEditorTypes_.keys()) {
         const StandaloneEditorTypeInfo ti = standaloneEditorTypes_.value(type);
         if (type == QLatin1String("EffectEditor")) {
-            if (reason != StandaloneEditorPushReason::PinToggled
-                && (!item || item->guid != effectSelectionOwnerGuid_)) {
-                effectSelectionOwnerGuid_ = item ? item->guid : QUuid{};
-                effectSelectionRowGuid_ = QUuid{};
-            }
-            pushEffectSelectionToEditors(effectSelectionOwnerGuid_, effectSelectionRowGuid_);
+            if (reason == StandaloneEditorPushReason::PinToggled)
+                pushEffectSelectionToEditors(effectSelectionOwnerGuid_, effectSelectionRowGuid_);
+            else if (item && item->type == ProjectItem::Type::Effect)
+                pushEffectSelectionToEditors(item->guid, {});
             continue;
         }
         if (type == QLatin1String("TimelineEditor") && item && item->type == ProjectItem::Type::Track) {
@@ -3540,18 +3538,15 @@ ProjectItem* MainWindow::currentStandaloneEditorSelection() const
 
 void MainWindow::pushEffectSelectionToEditors(const QUuid& ownerGuid, const QUuid& rowGuid)
 {
+    const auto* owner = ProjectManager::instance().findItemByGuid(ownerGuid);
+    if (!EffectEditorPanel::canOpen(owner, rowGuid)) return;
     effectSelectionOwnerGuid_ = ownerGuid;
     effectSelectionRowGuid_ = rowGuid;
-    const auto* owner = ProjectManager::instance().findItemByGuid(ownerGuid);
-    const bool valid = EffectEditorPanel::canOpen(owner, rowGuid);
     for (QWidget* panel : panelRegistry_->allPanels(QStringLiteral("EffectEditor"))) {
         auto* editor = qobject_cast<EffectEditorPanel*>(panel);
         if (!editor || editor->isPinned()) continue;
-        if (!valid) {
-            editor->clearEditor();
-        } else if (editor->ownerGuid() != ownerGuid || editor->rowGuid() != rowGuid) {
+        if (editor->ownerGuid() != ownerGuid || editor->rowGuid() != rowGuid)
             editor->bindEffect(ownerGuid, rowGuid);
-        }
     }
 }
 
@@ -3848,6 +3843,8 @@ void MainWindow::connectSignals()
 
     connect(&ProjectManager::instance(), &ProjectManager::projectClosed,
             this, [this]() {
+        effectSelectionOwnerGuid_ = QUuid{};
+        effectSelectionRowGuid_ = QUuid{};
         busController_->clearSelection();
         for (auto* ip : allInspectorPanels())
             if (ip) ip->showEmpty();
