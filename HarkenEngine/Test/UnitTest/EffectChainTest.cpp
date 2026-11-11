@@ -728,15 +728,20 @@ TEST(EffectChain, FadeStopEndsInfiniteTailVoice) {
 
 TEST(EffectChain, StructuralTransitionUsesOneSampleClockAcrossPartitionsAndExactEndpoint) {
     constexpr std::uint32_t total = 240;
+    for (const float oldAmount : {2.0f, std::numeric_limits<float>::infinity()})
+    for (const auto channelCount : {1u, 2u, 8u})
     for (const auto block : {1u, 17u, 64u, 256u}) {
         SCOPED_TRACE(block);
-        std::array<float, 270> data{};
-        std::array<float, 270> dry{}, alternate{};
-        float* planes[]{data.data()};
-        float* dries[]{dry.data()};
-        float* alternatives[]{alternate.data()};
+        SCOPED_TRACE(channelCount);
+        SCOPED_TRACE(oldAmount);
+        std::array<std::array<float, 270>, 8> data{}, dry{}, alternate{};
+        std::array<float*, 8> planes{}, dries{}, alternatives{};
+        for (unsigned ch = 0; ch < channelCount; ++ch) {
+            planes[ch] = data[ch].data(); dries[ch] = dry[ch].data();
+            alternatives[ch] = alternate[ch].data();
+        }
         std::uint64_t oldFrames = 0, newFrames = 0;
-        AddProbe prior{2.0f, nullptr, &oldFrames};
+        AddProbe prior{oldAmount, nullptr, &oldFrames};
         AddProbe next{6.0f, nullptr, &newFrames};
         harken::InsertEffect oldEffect{}, nextEffect{};
         oldEffect.state = &prior; oldEffect.process = AddProbeProcess;
@@ -744,13 +749,18 @@ TEST(EffectChain, StructuralTransitionUsesOneSampleClockAcrossPartitionsAndExact
         std::uint32_t done = 0;
         for (std::uint32_t start = 0; start < 257;) {
             const auto frames = std::min(block, 257u - start);
-            data.fill(1.0f);
-            harken::ProcessTransitionChainSlot(oldEffect, 0, nextEffect, 0, planes,
-                dries, alternatives, 1, 7, frames, done, total);
-            EXPECT_FLOAT_EQ(1, data[6]);
-            for (std::uint32_t i = 0; i < frames; ++i) {
-                const auto progress = std::min(total, start + i + 1);
-                EXPECT_NEAR(3.0f + 4.0f * progress / total, data[7 + i], 1e-6f);
+            for (unsigned ch = 0; ch < channelCount; ++ch) data[ch].fill(1.0f + ch);
+            harken::ProcessTransitionChainSlot(oldEffect, 0, nextEffect, 0, planes.data(),
+                dries.data(), alternatives.data(), channelCount, 7, frames, done, total);
+            for (unsigned ch = 0; ch < channelCount; ++ch) {
+                EXPECT_FLOAT_EQ(1.0f + ch, data[ch][6]);
+                for (std::uint32_t i = 0; i < frames; ++i) {
+                    const auto progress = std::min(total, start + i + 1);
+                    const float alpha = static_cast<float>(progress) / total;
+                    const float expected = progress == total ? 7.0f + ch :
+                        (1.0f + ch + oldAmount) * (1.0f - alpha) + (7.0f + ch) * alpha;
+                    EXPECT_FLOAT_EQ(expected, data[ch][7 + i]);
+                }
             }
             done += std::min(frames, total - done);
             start += frames;

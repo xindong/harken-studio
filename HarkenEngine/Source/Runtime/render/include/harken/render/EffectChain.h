@@ -105,7 +105,27 @@ inline void ProcessTransitionChainSlot(InsertEffect& oldEffect, float oldBypass,
     std::uint32_t total, float nextBypassStart = -1.0f) {
     if (frames == 0) return;
     const auto prefix = std::min(frames, total > done ? total - done : 0u);
-    if (prefix != 0) {
+    if (prefix != 0 && channels != 0 && oldEffect.process && nextEffect.process &&
+        oldBypass == 0.0f && nextBypass == 0.0f && nextBypassStart <= 0.0f) {
+        // Fully wet branches do not need the dry input after processing.
+        // Reuse its scratch for one shared ramp instead of dividing per lane.
+        for (std::uint32_t ch = 0; ch < channels; ++ch)
+            std::memcpy(alternate[ch], planes[ch] + offset, prefix * sizeof(float));
+        oldEffect.process(oldEffect.state, planes, channels, offset, prefix);
+        nextEffect.process(nextEffect.state, alternate, channels, 0, prefix);
+        const bool reachesTarget = done + prefix == total;
+        const auto blendFrames = prefix - static_cast<std::uint32_t>(reachesTarget);
+        for (std::uint32_t i = 0; i < blendFrames; ++i)
+            dry[0][i] = static_cast<float>(done + i + 1u) / static_cast<float>(total);
+        for (std::uint32_t ch = 0; ch < channels; ++ch) {
+            float* output = planes[ch] + offset;
+            for (std::uint32_t i = 0; i < blendFrames; ++i) {
+                const float alpha = dry[0][i];
+                output[i] = output[i] * (1.0f - alpha) + alternate[ch][i] * alpha;
+            }
+            if (reachesTarget) output[prefix - 1u] = alternate[ch][prefix - 1u];
+        }
+    } else if (prefix != 0) {
         for (std::uint32_t ch = 0; ch < channels; ++ch) {
             std::memcpy(dry[ch], planes[ch] + offset, prefix * sizeof(float));
             std::memcpy(alternate[ch], dry[ch], prefix * sizeof(float));

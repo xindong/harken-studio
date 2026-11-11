@@ -19,6 +19,7 @@
 #include <cstring>
 #include <limits>
 #include <new>
+#include <thread>
 
 namespace harken {
 
@@ -1647,8 +1648,21 @@ void MixerLoop::PublishSourceCursors(std::uint64_t blockIndex,
     m_sourceCursors.EndWrite(blockIndex, outputFrame, m_commands.ConsumedCount());
 }
 
+std::uint64_t MixerLoop::JobDeadlineForRequest(std::uint64_t entryTicks,
+                                             std::uint32_t frames) const noexcept {
+    constexpr auto maximum = (std::numeric_limits<std::uint64_t>::max)();
+    if (m_blockFrames == 0 || frames == 0 || m_jobDeadlineTicks == 0)
+        return std::max<std::uint64_t>(1, entryTicks);
+    // Staging may need a full final block even when the caller wants only a
+    // fragment. Charge that block now; its cached remainder costs no render
+    // work when consumed by subsequent requests.
+    const std::uint64_t blocks = frames / m_blockFrames + (frames % m_blockFrames != 0);
+    if (m_jobDeadlineTicks > (maximum - entryTicks) / blocks) return maximum;
+    return std::max<std::uint64_t>(1, entryTicks + blocks * m_jobDeadlineTicks);
+}
+
 void MixerLoop::RenderBlock(float* interleavedOut, std::uint32_t frames,
-                            std::uint32_t channels) {
+                            std::uint32_t channels, std::uint64_t workerDeadlineAt) {
     const std::uint64_t ticksEntry = CpuClockTicks();
     floatmode::ScopedFlushDenormals floatModeScope;
     memguard::AudioThreadScope audioScope;
@@ -1679,8 +1693,22 @@ void MixerLoop::RenderBlock(float* interleavedOut, std::uint32_t frames,
 
     std::memset(interleavedOut, 0,
         static_cast<std::size_t>(frames) * channels * sizeof(float));
-    if (m_renderDeferred &&
-        (frames != m_deferredFrames || !m_voices.DeferredRenderReady())) return;
+    if (m_renderDeferred) {
+        if (frames != m_deferredFrames) return;
+        // A prior callback may have exhausted its wait budget. Give that same
+        // retained quantum the new callback's remaining wait window, rather
+        // than turning every staging slice into silence before it can finish.
+        while (!m_voices.DeferredRenderReady()) {
+            if (workerDeadlineAt == 0) return;
+            const auto now = CpuClockTicks();
+            if (now >= workerDeadlineAt) {
+                m_audioCpuPeakUs = std::max(m_audioCpuPeakUs,
+                    CpuTicksToMicros(ticksEntry, now, m_cpuTicksPerSecond));
+                return;
+            }
+            std::this_thread::yield();
+        }
+    }
 
     const std::uint64_t blockIndex =
         m_blocksRendered.load(std::memory_order_relaxed);
@@ -1802,7 +1830,7 @@ void MixerLoop::RenderBlock(float* interleavedOut, std::uint32_t frames,
         const VoicePool::RenderAllResult voicesOutcome =
             m_voices.RenderAll(m_arena, m_busPlanes.data(), frames,
                                m_notifications, blockIndex,
-                               ticksEntry + m_jobDeadlineTicks,
+                               workerDeadlineAt != 0 ? workerDeadlineAt : ticksEntry + m_jobDeadlineTicks,
                                static_cast<std::uint64_t>(blockIndex) * frames, signals, &m_buses);
         signalOk = !voicesOutcome.signalFailed;
         if (voicesOutcome.batchDeferred) {
