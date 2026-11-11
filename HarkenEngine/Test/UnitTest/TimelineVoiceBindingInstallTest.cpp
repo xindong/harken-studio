@@ -14,6 +14,7 @@
 #include "harken/core/CurrentWorld.h"
 #include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/PlayablePropertyCut.h"
+#include "harken/render/EffectChain.h"
 #include "harken/param/MeterProbe.h"
 #include "harken/param/ParamTargets.h"
 
@@ -3215,3 +3216,102 @@ TEST(TimelineVoiceInstall, LiveEffectChainActiveWorkerQuarantineRetainsScratchUn
     EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
 }
 #endif
+
+TEST(TimelineVoiceInstall, LiveEightLimiterInsertionDoesNotMultiplyTransientDetectorHistory) {
+    for (auto block : {32u, 64u, 256u}) {
+        SCOPED_TRACE(block);
+        EngineSession session(TimelineInstallConfig(1, block, kRate));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
+        DirectWorldSoundPlayAction image(engine.registry.Lookup(kSound).contentRevision);
+        ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, image.world).status);
+        ASSERT_EQ(VN_OK, PostSourceAction());
+        const auto tokens = PublishedSourceTokens(engine);
+        ASSERT_EQ(1u, tokens.size());
+        const auto render = SourceRegistry::RenderOf(tokens[0]);
+        ASSERT_GT(FreshSourcePeak(engine), 0.2f);
+        VnPreviewVoiceEffectChainV1 chain{};
+        chain.structSize = sizeof(chain); chain.entryCount = 8;
+        for (unsigned slot = 0; slot < 8; ++slot)
+            chain.entries[slot] = {harkentest::ObjectId(1900 + slot), VN_EFFECT_LIMITER, 0, -18.0f, 100.0f};
+        ASSERT_EQ(VN_OK, VnPreview_SetVoiceEffectChain(render, &chain));
+        engine.nullBackend.Pump((240 + block - 1) / block);
+        const float expected = 0.12589254f;
+        for (unsigned hold = 0; hold < 24000 / block; ++hold) {
+            engine.nullBackend.Pump(1);
+            ASSERT_EQ(VN_OK, Vn_Update());
+            const auto* output = engine.nullBackend.LastBlock();
+            ASSERT_NEAR(expected, output[0], 2e-5f) << "hold block=" << hold;
+        }
+        // Exercise actual command adoption with a retained active detector
+        // between two replacements. Its existing attenuation must survive;
+        // only additional history caused by the structural blend is forbidden.
+        chain.entries[0].bypass = chain.entries[2].bypass = 1;
+        ASSERT_EQ(VN_OK, VnPreview_SetVoiceEffectChain(render, &chain));
+        engine.nullBackend.Pump(2);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        auto* context = engine.voices.Resolve(render);
+        ASSERT_NE(nullptr, context);
+        const auto middle = context->fxSlotEffectRef[1];
+        const auto middleIdentity = engine.effectBank.ObjectIdentity(middle).effectId;
+        const auto* middleState = static_cast<harken::LimiterState*>(context->fxSlots[1].state);
+        ASSERT_LT(middleState->currentGain, 0.9);
+        ASSERT_GT(middleState->currentGain, 0.0);
+        std::array<harken::LimiterState, 8> oldStates{}, targetStates{};
+        std::array<harken::InsertEffect, 8> oldEffects{}, targetEffects{};
+        std::array<float, 8> oldBypass{};
+        for (unsigned slot = 0; slot < 8; ++slot) {
+            oldStates[slot] = *static_cast<harken::LimiterState*>(context->fxSlots[slot].state);
+            targetStates[slot] = oldStates[slot];
+            if (slot == 0 || slot == 2) {
+                targetStates[slot] = {};
+                targetStates[slot].sampleRate = kRate;
+            }
+            oldEffects[slot] = harken::BuildEffect(VN_EFFECT_LIMITER, &oldStates[slot]);
+            targetEffects[slot] = harken::BuildEffect(VN_EFFECT_LIMITER, &targetStates[slot]);
+            oldBypass[slot] = context->fxBypassMix[slot];
+            if (slot == 0 || slot == 2) {
+                targetEffects[slot].setParam(targetEffects[slot].state, 0, -18);
+                targetEffects[slot].setParam(targetEffects[slot].state, 1, 100);
+                chain.entries[slot].effectId = harkentest::ObjectId(2000 + slot);
+                chain.entries[slot].bypass = 0;
+            }
+        }
+        ASSERT_EQ(VN_OK, VnPreview_SetVoiceEffectChain(render, &chain));
+        std::array<float, 256> prior{}, target{}, scratch{};
+        float* priorPlanes[]{prior.data()}; float* targetPlanes[]{target.data()};
+        float* scratchPlanes[]{scratch.data()};
+        for (unsigned begin = 0; begin < 768; begin += block) {
+            prior.fill(0.5f); target.fill(0.5f);
+            const auto oldFrames = std::min(block, begin < 240 ? 240u - begin : 0u);
+            for (unsigned slot = 0; slot < 8; ++slot) {
+                bool ramping = false; float mix = oldBypass[slot];
+                harken::ProcessChainSlot(oldEffects[slot], ramping, mix, mix,
+                    priorPlanes, scratchPlanes, 1, 0, oldFrames);
+                mix = 0;
+                harken::ProcessChainSlot(targetEffects[slot], ramping, mix, 0,
+                    targetPlanes, scratchPlanes, 1, 0, block);
+            }
+            engine.nullBackend.Pump(1);
+            for (unsigned i = 0; i < block; ++i) {
+                const float alpha = std::min(1.0f, (begin + i + 1) / 240.0f);
+                const float reference = alpha == 1 ? target[i] : prior[i] * (1 - alpha) + target[i] * alpha;
+                ASSERT_NEAR(reference, engine.nullBackend.LastBlock()[i * 2], 2e-6f) << begin + i;
+            }
+            ASSERT_EQ(middle.poolIndex, context->fxSlotEffectRef[1].poolIndex);
+            ASSERT_EQ(middle.generation, context->fxSlotEffectRef[1].generation);
+            ASSERT_EQ(middleIdentity, engine.effectBank.ObjectIdentity(context->fxSlotEffectRef[1]).effectId);
+            ASSERT_EQ(middleState, context->fxSlots[1].state);
+            ASSERT_EQ(VN_OK, Vn_Update());
+        }
+        EXPECT_EQ(8u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+        chain.entries[0].effectId = harkentest::ObjectId(2100);
+        ASSERT_EQ(VN_OK, VnPreview_SetVoiceEffectChain(render, &chain));
+        engine.nullBackend.Pump((240 + block - 1) / block);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        EXPECT_EQ(8u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+        EXPECT_EQ(middle.poolIndex, context->fxSlotEffectRef[1].poolIndex);
+        EXPECT_EQ(middle.generation, context->fxSlotEffectRef[1].generation);
+    }
+}

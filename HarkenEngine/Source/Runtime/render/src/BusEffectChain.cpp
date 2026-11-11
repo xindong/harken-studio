@@ -193,6 +193,16 @@ void BusTree::ApplyPreviewEffectChain(const BusEffectChainAdoption& adoption) no
         RetirePreviewEffectReferences(update);
         return;
     }
+    if (update.changedMask != 0) {
+        for (std::uint32_t i = 0; i < m_fxSlots; ++i) {
+            update.oldBypass[i] = bus.fxBypassMix[i];
+            if ((update.changedMask & (1u << i)) == 0 &&
+                bus.fxSlotEffectRef[i].type == VN_EFFECT_LIMITER) {
+                update.oldLimiterStates[i] = *static_cast<LimiterState*>(bus.fxSlots[i].state);
+                update.oldEffects[i] = BuildEffect(VN_EFFECT_LIMITER, &update.oldLimiterStates[i]);
+            }
+        }
+    }
     for (std::uint32_t i = 0; i < m_fxSlots; ++i) {
         const auto bit = 1u << i;
         if ((update.changedMask & bit) != 0) {

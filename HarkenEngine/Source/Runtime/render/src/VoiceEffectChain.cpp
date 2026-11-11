@@ -142,6 +142,16 @@ void VoicePool::ApplyEffectChainUpdate(VnVoiceHandle handle, std::uint64_t revis
         return;
     }
     auto& render = slot->render;
+    if (update->changedMask != 0) {
+        for (std::uint32_t i = 0; i < render.fxSlotCount; ++i) {
+            update->oldBypass[i] = render.fxBypassMix[i];
+            if ((update->changedMask & (1u << i)) == 0 &&
+                render.fxSlotEffectRef[i].type == VN_EFFECT_LIMITER) {
+                update->oldLimiterStates[i] = *static_cast<LimiterState*>(render.fxSlots[i].state);
+                update->oldEffects[i] = BuildEffect(VN_EFFECT_LIMITER, &update->oldLimiterStates[i]);
+            }
+        }
+    }
     for (std::uint32_t i = 0; i < render.fxSlotCount; ++i) {
         const auto bit = 1u << i;
         if ((update->changedMask & bit) != 0) {

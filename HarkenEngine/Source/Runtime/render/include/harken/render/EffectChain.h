@@ -95,70 +95,49 @@ inline void ProcessChainSlot(InsertEffect& fx, bool& bypassRamping,
     }
 }
 
-// Two independent branches consume the same slot input. The host supplies the
-// shared sample clock; this helper never advances it. Scratch is host-owned,
-// prepared on logic, and reused sequentially by changed slots.
-inline void ProcessTransitionChainSlot(InsertEffect& oldEffect, float oldBypass,
-    InsertEffect& nextEffect, float nextBypass, float* const* planes,
+// A structural edit's suffix must feed each detector from its own branch.
+// Blending between every slot teaches downstream dynamics the temporary dry
+// signal and can multiply their release histories into a near-silent dip.
+// Retained downstream Limiters use adoption-time private state on the old
+// branch and their installed instances on the new branch. Only an explicit
+// host signal-flow boundary terminates the range; an unchanged slot does not.
+template <class BeforeNext, class AfterNext>
+inline void ProcessTransitionChainRange(InsertEffect* oldEffects, const float* oldBypass,
+    InsertEffect* nextEffects, const float* nextBypass, const float* nextStarts,
+    std::uint32_t first, std::uint32_t end, float* const* planes,
     float* const* dry, float* const* alternate, std::uint32_t channels,
     std::uint32_t offset, std::uint32_t frames, std::uint32_t done,
-    std::uint32_t total, float nextBypassStart = -1.0f) {
+    std::uint32_t total, BeforeNext&& beforeNext, AfterNext&& afterNext) {
     if (frames == 0) return;
     const auto prefix = std::min(frames, total > done ? total - done : 0u);
-    if (prefix != 0 && channels != 0 && oldEffect.process && nextEffect.process &&
-        oldBypass == 0.0f && nextBypass == 0.0f && nextBypassStart <= 0.0f) {
-        // Fully wet branches do not need the dry input after processing.
-        // Reuse its scratch for one shared ramp instead of dividing per lane.
-        for (std::uint32_t ch = 0; ch < channels; ++ch)
-            std::memcpy(alternate[ch], planes[ch] + offset, prefix * sizeof(float));
-        oldEffect.process(oldEffect.state, planes, channels, offset, prefix);
-        nextEffect.process(nextEffect.state, alternate, channels, 0, prefix);
-        const bool reachesTarget = done + prefix == total;
-        const auto blendFrames = prefix - static_cast<std::uint32_t>(reachesTarget);
-        for (std::uint32_t i = 0; i < blendFrames; ++i)
-            dry[0][i] = static_cast<float>(done + i + 1u) / static_cast<float>(total);
-        for (std::uint32_t ch = 0; ch < channels; ++ch) {
-            float* output = planes[ch] + offset;
-            for (std::uint32_t i = 0; i < blendFrames; ++i) {
-                const float alpha = dry[0][i];
+    for (std::uint32_t ch = 0; ch < channels; ++ch)
+        std::memcpy(alternate[ch], planes[ch] + offset, frames * sizeof(float));
+    for (std::uint32_t slot = first; slot < end; ++slot) {
+        bool ramping = false;
+        float mix = oldBypass[slot];
+        ProcessChainSlot(oldEffects[slot], ramping, mix, mix,
+            planes, dry, channels, offset, prefix);
+    }
+    for (std::uint32_t slot = first; slot < end; ++slot) {
+        bool ramping = nextStarts != nullptr && nextStarts[slot] >= 0.0f
+            && nextStarts[slot] != nextBypass[slot];
+        float mix = ramping ? nextStarts[slot] : nextBypass[slot];
+        beforeNext(slot, alternate);
+        ProcessChainSlot(nextEffects[slot], ramping, mix, nextBypass[slot],
+            alternate, dry, channels, 0, frames);
+        afterNext(slot, alternate);
+    }
+    for (std::uint32_t ch = 0; ch < channels; ++ch) {
+        float* output = planes[ch] + offset;
+        for (std::uint32_t i = 0; i < prefix; ++i) {
+            if (done + i + 1u == total) output[i] = alternate[ch][i];
+            else {
+                const float alpha = static_cast<float>(done + i + 1u) / total;
                 output[i] = output[i] * (1.0f - alpha) + alternate[ch][i] * alpha;
             }
-            if (reachesTarget) output[prefix - 1u] = alternate[ch][prefix - 1u];
         }
-    } else if (prefix != 0) {
-        for (std::uint32_t ch = 0; ch < channels; ++ch) {
-            std::memcpy(dry[ch], planes[ch] + offset, prefix * sizeof(float));
-            std::memcpy(alternate[ch], dry[ch], prefix * sizeof(float));
-        }
-        if (oldEffect.process) oldEffect.process(oldEffect.state, planes, channels, offset, prefix);
-        if (nextEffect.process) nextEffect.process(nextEffect.state, alternate, channels, 0, prefix);
-        for (std::uint32_t ch = 0; ch < channels; ++ch) {
-            for (std::uint32_t i = 0; i < prefix; ++i) {
-                const float input = dry[ch][i];
-                const float bypass = nextBypassStart < 0.0f ? nextBypass :
-                    nextBypassStart + (nextBypass - nextBypassStart) *
-                        (static_cast<float>(i + 1u) / static_cast<float>(frames));
-                const float next = !nextEffect.process || bypass == 1.0f ? input :
-                    bypass == 0.0f ? alternate[ch][i] :
-                    input * bypass + alternate[ch][i] * (1.0f - bypass);
-                if (done + i + 1u == total) {
-                    planes[ch][offset + i] = next;
-                } else {
-                    const float previous = !oldEffect.process || oldBypass == 1.0f ? input :
-                        oldBypass == 0.0f ? planes[ch][offset + i] :
-                        input * oldBypass + planes[ch][offset + i] * (1.0f - oldBypass);
-                    const float alpha = static_cast<float>(done + i + 1u) / static_cast<float>(total);
-                    planes[ch][offset + i] = previous * (1.0f - alpha) + next * alpha;
-                }
-            }
-        }
-    }
-    if (prefix != frames) {
-        bool ramping = nextBypassStart >= 0.0f && nextBypassStart != nextBypass;
-        float mix = nextBypassStart < 0.0f ? nextBypass : nextBypassStart +
-            (nextBypass - nextBypassStart) * (static_cast<float>(prefix) / static_cast<float>(frames));
-        ProcessChainSlot(nextEffect, ramping, mix, nextBypass, planes, dry,
-            channels, offset + prefix, frames - prefix);
+        std::memcpy(output + prefix, alternate[ch] + prefix,
+            (frames - prefix) * sizeof(float));
     }
 }
 

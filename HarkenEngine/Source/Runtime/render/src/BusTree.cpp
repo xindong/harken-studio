@@ -959,19 +959,9 @@ void BusTree::FinalizeBus(Bus& bus, float* const* planes,
             ? static_cast<LimiterState*>(bus.fxSlots[slot].state) : nullptr;
         if (limiter != nullptr) LimiterBeginRender(*limiter, blockEpoch, sourceFrameBegin);
         auto* transition = bus.fxChainTransition;
-        if (transition != nullptr && (transition->changedMask & (1u << slot)) != 0) {
-            ProcessTransitionChainSlot(transition->oldEffects[slot], transition->oldBypass[slot],
-                bus.fxSlots[slot], bus.fxBypassTarget[slot], planes, transition->dry.data(),
-                transition->alternate.data(), m_mixChannels, 0, blockFrames,
-                transition->done, transition->totalFrames,
-                bus.fxBypassRamping[slot] ? bus.fxBypassMix[slot] : -1.0f);
-            bus.fxBypassMix[slot] = bus.fxBypassTarget[slot];
-            bus.fxBypassRamping[slot] = false;
-        } else {
-            ProcessChainSlot(bus.fxSlots[slot], bus.fxBypassRamping[slot],
-                bus.fxBypassMix[slot], bus.fxBypassTarget[slot],
-                planes, dry, m_mixChannels, 0, blockFrames, input, limiter);
-        }
+        ProcessChainSlot(bus.fxSlots[slot], bus.fxBypassRamping[slot],
+            bus.fxBypassMix[slot], bus.fxBypassTarget[slot],
+            planes, dry, m_mixChannels, 0, blockFrames, input, limiter);
         if (limiter != nullptr) {
             LimiterFinishRender(*limiter, 0, blockFrames);
             if (transition != nullptr)
@@ -1044,13 +1034,55 @@ void BusTree::FinalizeBus(Bus& bus, float* const* planes,
                 bus.fxSlotEffectRef[slot], payload);
         }
     };
+    const auto processRange = [&](std::uint32_t first, std::uint32_t end) {
+        for (auto slot = first; slot < end; ++slot) {
+            auto* transition = bus.fxChainTransition;
+            auto next = slot + 1;
+            if (transition == nullptr || (transition->changedMask & (1u << slot)) == 0) {
+                processSlot(slot);
+                continue;
+            }
+            next = end;
+            std::array<float, kMaxFxSlotsPerBus> starts{};
+            for (auto s = slot; s < next; ++s)
+                starts[s] = bus.fxBypassRamping[s] ? bus.fxBypassMix[s] : -1.0f;
+            const auto tap = [&](std::uint32_t s, float* const* branch, bool output) {
+                auto* limiter = bus.fxSlotEffectRef[s].type == VN_EFFECT_LIMITER
+                    ? static_cast<LimiterState*>(bus.fxSlots[s].state) : nullptr;
+                if (limiter != nullptr) {
+                    if (!output) LimiterBeginRender(*limiter, blockEpoch, sourceFrameBegin);
+                    else {
+                        LimiterFinishRender(*limiter, 0, blockFrames);
+                        limiter->gainReduction.status = LimiterGainReductionStatus::ChainTransition;
+                    }
+                }
+                // Passive observations describe the new branch's actual slot
+                // I/O; arming a monitor must not change the audible transition.
+                if (bus.fxSlots[s].process != nullptr && harken::monitor::AudioLiveArmed())
+                    harken::monitor::PublishPlanarAudioChunk(
+                        output ? VN_MONITOR_TAP_EFFECT_SLOT_OUTPUT : VN_MONITOR_TAP_EFFECT_SLOT_INPUT,
+                        PackedMonitorEffectHandle(busIndex, s), bus.fxSlotEffectRef[s].generation,
+                        s, branch, blockFrames, m_mixChannels, 0, m_mixLayout,
+                        m_sampleRate, sourceFrameBegin);
+            };
+            ProcessTransitionChainRange(transition->oldEffects.data(), transition->oldBypass.data(),
+                bus.fxSlots, bus.fxBypassTarget, starts.data(), slot, next,
+                planes, transition->dry.data(), transition->alternate.data(), m_mixChannels,
+                0, blockFrames, transition->done, transition->totalFrames,
+                [&](auto s, auto branch) { tap(s, branch, false); },
+                [&](auto s, auto branch) { tap(s, branch, true); });
+            for (auto s = slot; s < next; ++s) {
+                bus.fxBypassMix[s] = bus.fxBypassTarget[s];
+                bus.fxBypassRamping[s] = false;
+            }
+            slot = next - 1;
+        }
+    };
     if (!bus.signalBoundsPrepared)
         (void)SignalBusBounds(static_cast<std::uint32_t>(&bus - m_buses.data()), blockFrames, {});
     bus.signalBoundsPrepared = false;
     // Pre-fader chain: fx slots [0, faderAfterSlot) before the gain.
-    for (std::uint32_t s = 0; s < fader; ++s) {
-        processSlot(s);
-    }
+    processRange(0, fader);
     m_dynamicRoutes.CaptureBus(busIndex, VN_DYNAMIC_TAP_BUS_PRE_FADER,
                                planes, m_mixChannels, blockFrames);
     const bool unchangedFaderSamples = bus.gain.remainingFrames == 0 &&
@@ -1088,9 +1120,7 @@ void BusTree::FinalizeBus(Bus& bus, float* const* planes,
             sourceFrameBegin);
     }
     // Post-fader chain: fx slots [faderAfterSlot, m_fxSlots) after the gain.
-    for (std::uint32_t s = fader; s < m_fxSlots; ++s) {
-        processSlot(s);
-    }
+    processRange(fader, m_fxSlots);
     FinishPreviewEffectChain(bus, blockFrames);
     // Post-everything output tap (after post-fader fx): by the time this bus is
     // finalized every feeder has folded in and the whole chain has run, so the

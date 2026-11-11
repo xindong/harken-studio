@@ -1,17 +1,20 @@
 #pragma once
 
 #include "harken/render/InsertEffect.h"
+#include "harken/render/BuiltinEffects.h"
 #include "harken/core/ChannelLayout.h"
 #include "harken/core/EngineConfig.h"
 #include "harken/core/PreviewEffectChain.h"
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <type_traits>
 #include <vector>
 
 namespace harken {
 
 static_assert(PreviewEffectChainEntry{}.effectType == kEffectTypeNone);
+static_assert(std::is_trivially_copyable_v<LimiterState>);
 
 // One lazily allocated, stable row per edited physical Voice slot. Logic owns
 // Free/Preparing, the command consumer owns Queued/Retiring, and the cascade
@@ -29,6 +32,11 @@ struct EffectChainUpdate {
     std::array<EffectInstanceRef, kMaxFxSlotsPerVoice> targetRefs{};
     std::array<EffectInstanceRef, kMaxFxSlotsPerVoice> oldRefs{};
     std::array<InsertEffect, kMaxFxSlotsPerVoice> oldEffects{};
+    // Retained Limiter instances stay installed on the target branch. Audio
+    // adoption copies their state here before applying this edit's controls;
+    // the old branch then advances independently until the same Complete gate.
+    // These private values have no pool identity or retirement ownership.
+    std::array<LimiterState, kMaxFxSlotsPerVoice> oldLimiterStates{};
     std::array<float, kMaxFxSlotsPerVoice> oldBypass{};
     std::array<std::array<float, 2>, kMaxFxSlotsPerVoice> preparedParams{};
     std::array<std::uint8_t, kMaxFxSlotsPerVoice> parameterMask{};

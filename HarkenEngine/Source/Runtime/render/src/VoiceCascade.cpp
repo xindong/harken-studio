@@ -1420,11 +1420,25 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
         for (std::uint32_t s = 0; s < ctx.fxSlotCount; ++s) {
             auto* transition = ctx.fxChainTransition;
             if (transition != nullptr && (transition->changedMask & (1u << s)) != 0) {
-                ProcessTransitionChainSlot(transition->oldEffects[s], transition->oldBypass[s],
-                    ctx.fxSlots[s], ctx.fxBypassTarget[s], scratch, transition->dry.data(),
+                const auto end = ctx.fxSlotCount;
+                std::array<float, kMaxFxSlotsPerVoice> starts{};
+                for (auto slot = s; slot < end; ++slot)
+                    starts[slot] = ctx.fxBypassRamping[slot] ? ctx.fxBypassMix[slot] : -1.0f;
+                ProcessTransitionChainRange(transition->oldEffects.data(), transition->oldBypass.data(),
+                    ctx.fxSlots, ctx.fxBypassTarget, starts.data(), s, end, scratch, transition->dry.data(),
                     transition->alternate.data(), channels, offset, produced,
-                    transition->done, transition->totalFrames);
+                    transition->done, transition->totalFrames,
+                    [](auto, auto) {}, [&](auto slot, auto) {
+                        if (ctx.fxSlotEffectRef[slot].type == VN_EFFECT_LIMITER &&
+                            ctx.fxSlots[slot].state != nullptr)
+                            static_cast<LimiterState*>(ctx.fxSlots[slot].state)->gainReduction.frameOffset += offset;
+                    });
+                for (auto slot = s; slot < end; ++slot) {
+                    ctx.fxBypassMix[slot] = ctx.fxBypassTarget[slot];
+                    ctx.fxBypassRamping[slot] = false;
+                }
                 ctx.fxChainTransitionThisBlock = true;
+                s = end - 1;
                 continue;
             }
             ProcessChainSlot(ctx.fxSlots[s], ctx.fxBypassRamping[s],

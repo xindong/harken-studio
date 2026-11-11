@@ -15,6 +15,7 @@
 #include "harken/core/CurrentWorld.h"
 #include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/dsp/GainRamp.h"
+#include "harken/render/EffectChain.h"
 #include "harken_preview/PreviewAbi.h"
 
 #include <gtest/gtest.h>
@@ -3768,4 +3769,108 @@ TEST(BusAdmissionStart, PairedWorldReplacementRejectsGlobalAppliedAfterPrepare) 
     EXPECT_FLOAT_EQ(0.75f, value);
     ASSERT_TRUE(e.params.ScopedVariableValue(nullptr, 0, definitions[0].variableId, &value));
     EXPECT_FLOAT_EQ(0.75f, value);
+}
+
+TEST(BusAdmissionStart, LiveBusEightLimiterInsertionPreservesContinuousChainDetectorInput) {
+    for (auto fader : {8u}) {
+        SCOPED_TRACE(fader);
+        AdmissionSession fixture;
+        auto& engine = *fixture.session.Engine();
+        LiveBusPublication publication(engine, fixture.image, 5);
+        publication.faders[0] = fader;
+        CommitAndConsumeLiveBus(engine, publication);
+        ASSERT_FALSE(HasFatalFailure());
+        StartLiveBusConsumer(engine, fixture.image);
+        ASSERT_FALSE(HasFatalFailure());
+        publication.Next(0);
+        for (unsigned slot = 0; slot < 8; ++slot) {
+            publication.effects.push_back({VN_BUS_MASTER, harkentest::ObjectId(1400 + slot),
+                slot, VN_EFFECT_LIMITER, 1, 0, slot * 2, 2});
+            publication.parameters.push_back({0, -18}); publication.parameters.push_back({1, 100});
+        }
+        publication.view.effects = publication.effects;
+        publication.view.effectParameters = publication.parameters;
+        CommitAndConsumeLiveBus(engine, publication);
+        ASSERT_FALSE(HasFatalFailure());
+        engine.nullBackend.Pump(3);
+        // Leave source frames for a subsequent separated replacement and reuse.
+        for (unsigned hold = 0; hold < 30; ++hold) {
+            engine.nullBackend.Pump(1);
+            ASSERT_EQ(VN_OK, Vn_Update());
+            ASSERT_NEAR(0.12589254f, engine.nullBackend.LastBlock()[0], 2e-5f) << hold;
+        }
+        publication.Next(0);
+        publication.effects[0].flags = publication.effects[2].flags = 1;
+        CommitAndConsumeLiveBus(engine, publication);
+        ASSERT_FALSE(HasFatalFailure());
+        auto* bus = engine.buses.BusState(0);
+        ASSERT_NE(nullptr, bus);
+        const auto middle = bus->fxSlotEffectRef[1];
+        const auto middleIdentity = engine.effectBank.ObjectIdentity(middle).effectId;
+        const auto* middleState = static_cast<harken::LimiterState*>(bus->fxSlots[1].state);
+        ASSERT_LT(middleState->currentGain, 0.9);
+        ASSERT_GT(middleState->currentGain, 0.0);
+        std::array<harken::LimiterState, 8> oldStates{}, targetStates{};
+        std::array<harken::InsertEffect, 8> oldEffects{}, targetEffects{};
+        std::array<float, 8> oldBypass{};
+        for (unsigned slot = 0; slot < 8; ++slot) {
+            oldStates[slot] = *static_cast<harken::LimiterState*>(bus->fxSlots[slot].state);
+            targetStates[slot] = oldStates[slot];
+            if (slot == 0 || slot == 2) {
+                targetStates[slot] = {};
+                targetStates[slot].sampleRate = 48000;
+            }
+            oldEffects[slot] = harken::BuildEffect(VN_EFFECT_LIMITER, &oldStates[slot]);
+            targetEffects[slot] = harken::BuildEffect(VN_EFFECT_LIMITER, &targetStates[slot]);
+            oldBypass[slot] = bus->fxBypassMix[slot];
+            if (slot == 0 || slot == 2) {
+                targetEffects[slot].setParam(targetEffects[slot].state, 0, -18);
+                targetEffects[slot].setParam(targetEffects[slot].state, 1, 100);
+                publication.effects[slot].effectId = harkentest::ObjectId(1500 + slot);
+                publication.effects[slot].flags = 0;
+            }
+        }
+        publication.Next(0);
+        harken::PreparedProjectGenerationV1 prepared;
+        ASSERT_EQ(harken::ProjectGenerationPrepareStatusV1::Ok,
+            harken::PrepareProjectGenerationV1(engine, publication.view, prepared).status);
+        ASSERT_EQ(harken::ProjectGenerationCommitStatusV1::Ok,
+            harken::CommitPreparedProjectGenerationV1(engine, prepared).status);
+        std::array<float, 64> prior{}, target{}, scratch{};
+        float* priorPlanes[]{prior.data()}; float* targetPlanes[]{target.data()};
+        float* scratchPlanes[]{scratch.data()};
+        for (unsigned begin = 0; begin < 768; begin += 64) {
+            prior.fill(0.25f); target.fill(0.25f);
+            const auto oldFrames = std::min(64u, begin < 240 ? 240u - begin : 0u);
+            for (unsigned slot = 0; slot < 8; ++slot) {
+                bool ramping = false; float mix = oldBypass[slot];
+                harken::ProcessChainSlot(oldEffects[slot], ramping, mix, mix,
+                    priorPlanes, scratchPlanes, 1, 0, oldFrames);
+                mix = 0;
+                harken::ProcessChainSlot(targetEffects[slot], ramping, mix, 0,
+                    targetPlanes, scratchPlanes, 1, 0, 64);
+            }
+            engine.nullBackend.Pump(1);
+            for (unsigned i = 0; i < 64; ++i) {
+                const float alpha = std::min(1.0f, (begin + i + 1) / 240.0f);
+                const float reference = alpha == 1 ? target[i] : prior[i] * (1 - alpha) + target[i] * alpha;
+                ASSERT_NEAR(reference, engine.nullBackend.LastBlock()[i * 2], 2e-6f) << begin + i;
+            }
+            ASSERT_EQ(middle.poolIndex, bus->fxSlotEffectRef[1].poolIndex);
+            ASSERT_EQ(middle.generation, bus->fxSlotEffectRef[1].generation);
+            ASSERT_EQ(middleIdentity, engine.effectBank.ObjectIdentity(bus->fxSlotEffectRef[1]).effectId);
+            ASSERT_EQ(middleState, bus->fxSlots[1].state);
+            ASSERT_EQ(VN_OK, Vn_Update());
+        }
+        EXPECT_EQ(8u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+        publication.Next(0);
+        publication.effects[0].effectId = harkentest::ObjectId(1600);
+        CommitAndConsumeLiveBus(engine, publication);
+        ASSERT_FALSE(HasFatalFailure());
+        engine.nullBackend.Pump(3);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        EXPECT_EQ(8u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+        EXPECT_EQ(middle.poolIndex, bus->fxSlotEffectRef[1].poolIndex);
+        EXPECT_EQ(middle.generation, bus->fxSlotEffectRef[1].generation);
+    }
 }
