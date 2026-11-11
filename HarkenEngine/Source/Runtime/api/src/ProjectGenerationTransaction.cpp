@@ -94,8 +94,7 @@ VnResult PreparedBusEffectsV1::Prepare(Engine& engine, const SlotPlanV1& plan,
             !incoming.emplace(std::make_pair(effect.busId, effect.slot), &effect).second)
             return VN_INVALID_ARG;
         const auto assigned = FindAssignedSlot(plan, effect.busId);
-        if (assigned >= plan.busCount || plan.neutralSlots[assigned] == 0 ||
-            effect.busId == VN_BUS_MASTER) return VN_INVALID_ARG;
+        if (assigned >= plan.busCount || plan.neutralSlots[assigned] == 0) return VN_INVALID_ARG;
         for (std::uint32_t p = 0; p < effect.parameterCount; ++p) {
             const auto& parameter = parameters[effect.parameterFirst + p];
             if (parameter.index != p || ValidateEffectParam(effect.effectType, p,
@@ -497,7 +496,8 @@ bool CanResetVolumeOnlyNonVolumePropertiesV2(const Engine& engine,
     bool referenced = false;
     engine.bindings.ForEachAttachment([&](const auto& attachment, const auto&) {
         referenced |= attachment.busIndex == slot &&
-            attachment.scopeKind == VN_TARGET_SCOPE_BUS_EFFECT_PARAM;
+            attachment.scopeKind == VN_TARGET_SCOPE_BUS_EFFECT_PARAM &&
+            (allowedOwnerCookie == 0 || attachment.ownerCookie != allowedOwnerCookie);
     });
     engine.bindings.ForEachProbeAttachment([&](const auto& attachment, const auto&) {
         referenced |= attachment.busIndex == slot &&
@@ -754,6 +754,12 @@ bool SameHolderRow(const PreviewMasterHolderV1& a, const PreviewMasterHolderV1& 
 bool PreviewMasterCompatible(const Engine& engine, std::uint64_t fingerprint,
     std::uint64_t ownerId) noexcept {
     if (engine.buses.PreviewMasterEffectsClaimedByOther(ownerId)) return false;
+    const auto* published = engine.packComposition.Published();
+    for (std::uint32_t slot = 0; slot < engine.config.fxSlotsPerBus; ++slot) {
+        const auto cookie = engine.busEffectOwnerCookies[0][slot];
+        if (cookie != 0 && published != nullptr && cookie == published->initHandle &&
+            ownerId != kCanonicalPackSetMasterOwnerId) return false;
+    }
     for (const auto& holder : engine.previewMasterHolders) {
         if (holder.occupied && holder.fingerprint != fingerprint) return false;
     }
