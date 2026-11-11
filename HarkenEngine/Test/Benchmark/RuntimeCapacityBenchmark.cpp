@@ -2401,7 +2401,15 @@ int RunEffectChain(std::uint32_t voiceCount, std::uint32_t blockFrames,
             const auto priorBlock = engine.mixer.BlocksRendered();
             measured(block == 0 ? 3 : 4, [&] { engine.nullBackend.Pump(1); return true; }, collect);
             if (!inspectBlock()) return 1;
-            if (!require(engine.mixer.BlocksRendered() > priorBlock, "fresh transition block")) return 1;
+            if (!require(engine.mixer.BlocksRendered() > priorBlock, "fresh transition block")) {
+                std::fprintf(stderr, "cycle=%u transition_block=%u elapsed_us=%.9g\n", cycle, block,
+                    collect ? timings[block == 0 ? 3 : 4].back() : 0.0);
+                harken::LogRecord record{};
+                while (engine.logRing.TryPop(record))
+                    std::fprintf(stderr, "audio_log=%u arg0=%llu arg1=%llu\n", record.code,
+                        static_cast<unsigned long long>(record.arg0), static_cast<unsigned long long>(record.arg1));
+                return 1;
+            }
             if (block == 0) {
                 const auto expectedPhase = blockFrames >= 240 ? harken::EffectChainUpdate::Phase::Complete :
                     harken::EffectChainUpdate::Phase::Active;
