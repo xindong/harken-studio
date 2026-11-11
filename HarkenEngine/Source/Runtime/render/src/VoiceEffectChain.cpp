@@ -175,10 +175,8 @@ void VoicePool::ApplyEffectChainUpdate(VnVoiceHandle handle, std::uint64_t revis
                             update->preparedParams[i][parameter], update->totalFrames);
             }
             if ((update->bypassMask & bit) != 0) {
-                render.fxBypassTarget[i] = update->targets[i].bypass ? 1.0f : 0.0f;
-                render.fxBypassRamping[i] = render.fxSlots[i].process != nullptr &&
-                    render.fxBypassMix[i] != render.fxBypassTarget[i];
-                if (!render.fxSlots[i].process) render.fxBypassMix[i] = render.fxBypassTarget[i];
+                ApplySetVoiceEffectBypass(handle, i, update->targets[i].bypass,
+                    kEffectActionBypass, VN_EFFECT_LIMITER);
             }
         }
     }

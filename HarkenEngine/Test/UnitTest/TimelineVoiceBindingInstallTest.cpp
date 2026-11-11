@@ -3130,6 +3130,46 @@ TEST(TimelineVoiceInstall, LiveEffectChainRetirementBackpressureRetainsOwnerAfte
 }
 
 
+TEST(TimelineVoiceInstall, LiveEffectChainReenableClearsBypassedLimiterHistory) {
+    for (const bool replaceOtherSlot : {false, true}) {
+        SCOPED_TRACE(replaceOtherSlot);
+        EngineSession session(TimelineInstallConfig(1, kBlock, kRate));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        auto samples = MakeDC(kRate, 0.01f);
+        std::fill_n(samples.begin(), 2048, 0.5f);
+        const auto desc = MonoDesc(samples, kRate);
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &desc));
+        DirectWorldSoundPlayAction image(engine.registry.Lookup(kSound).contentRevision);
+        ASSERT_EQ(harken::WorldInstallStatus::Ok,
+            harken::InstallContainerWorldV1(engine, image.world).status);
+        ASSERT_EQ(VN_OK, PostSourceAction());
+        const auto tokens = PublishedSourceTokens(engine);
+        ASSERT_EQ(1u, tokens.size());
+        const auto render = SourceRegistry::RenderOf(tokens[0]);
+        ASSERT_GT(FreshSourcePeak(engine), 0.2f);
+        VnPreviewVoiceEffectChainV1 chain{};
+        chain.structSize = sizeof(chain);
+        chain.entryCount = 1;
+        chain.entries[0] = {harkentest::ObjectId(901), VN_EFFECT_LIMITER, 1, -18.0f, 1000.0f};
+        ASSERT_EQ(VN_OK, VnPreview_SetVoiceEffectChain(render, &chain));
+        // Process the loud section while bypassed, then reach below-threshold
+        // input before the long release can clear the detector history.
+        engine.nullBackend.Pump(40);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        ASSERT_NEAR(0.01f, FreshSourcePeak(engine), 1e-5f);
+        chain.entries[0].bypass = 0;
+        if (replaceOtherSlot) {
+            chain.entryCount = 2;
+            chain.entries[1] = {harkentest::ObjectId(902), VN_EFFECT_LIMITER, 0, 0.0f, 100.0f};
+        }
+        ASSERT_EQ(VN_OK, VnPreview_SetVoiceEffectChain(render, &chain));
+        engine.nullBackend.Pump(8);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        EXPECT_NEAR(0.01f, FreshSourcePeak(engine), 1e-5f);
+    }
+}
+
 TEST(TimelineVoiceInstall, LiveEffectChainEightSlotsUseOneCommandAndPreserveBypassAcrossSuspend) {
     EngineSession session(TimelineInstallConfig(1, kBlock, kRate));
     ASSERT_EQ(VN_OK, session.InitResult());

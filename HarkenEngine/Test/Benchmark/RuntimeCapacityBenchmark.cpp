@@ -6,7 +6,6 @@
 #include "PlayableRuntime.h"
 #include "ProjectGenerationTransaction.h"
 #include "UnitTest/VoicePoolReleaseTestAccess.h"
-#include "harken_preview/PreviewProject.h"
 #include <harken/Harken.h>
 
 #include "Engine.h"
@@ -15,6 +14,7 @@
 #include "harken/core/VoiceLedger.h"
 #include "harken/core/CpuClock.h"
 #include "harken/media/StreamFormat.h"
+#include "harken/media/generated/harken_pack_effect_schema.g.h"
 
 #include <algorithm>
 #include <array>
@@ -2426,19 +2426,20 @@ int RunEffectChain(std::uint32_t voiceCount, std::uint32_t blockFrames,
         std::size_t logicAllocations = 0, logicBytes = 0;
         if (!measured(0, [&] {
             for (unsigned voice = 0; voice < voiceCount; ++voice) {
-                VnPreviewVoiceEffectChainV1 chain{};
-                chain.structSize = sizeof(chain); chain.entryCount = 8;
+                std::array<harken::PreviewEffectChainEntry, 8> chain{};
                 for (unsigned slot = 0; slot < 8; ++slot)
-                    chain.entries[slot] = {harkentest::ObjectId(1000 + set * 10000 + voice * 8 + slot),
-                        VN_EFFECT_LIMITER, 0, -18.0f, 100.0f};
-                if (VnPreview_SetVoiceEffectChain(handles[voice], &chain) != VN_OK) return false;
+                    chain[slot] = {harkentest::ObjectId(1000 + set * 10000 + voice * 8 + slot),
+                        VN_EFFECT_LIMITER, false, -18.0f, 100.0f};
+                if (harken::SetPreviewVoiceEffectChain(handles[voice], chain) != VN_OK) return false;
             }
             return true;
         }, collect)) return fail("Voice all8 submission");
         logicAllocations += allocation_probe::count; logicBytes += allocation_probe::bytes;
         for (unsigned slot = 0; slot < 8; ++slot) {
             effects[slot] = {VN_BUS_MASTER, harkentest::ObjectId(50000 + set * 100 + slot),
-                slot, VN_EFFECT_LIMITER, 1, 0, slot * 2, 2};
+                slot, VN_EFFECT_LIMITER,
+                harken::FindPackEffectSchemaByType(VN_EFFECT_LIMITER)->descriptorVintage,
+                0, slot * 2, 2};
             parameters[slot * 2] = {0, -6}; parameters[slot * 2 + 1] = {1, 100};
         }
         publication.ownerBaseRevision = publication.ownerRevision++;
