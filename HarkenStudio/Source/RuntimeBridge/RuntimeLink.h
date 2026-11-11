@@ -20,6 +20,7 @@
 
 namespace HarkenEditor {
 namespace Bridge {
+struct PreviewVoiceEffectEntry;
 namespace Detail {
 
 bool runtimeInit(const EngineSessionConfig& config);
@@ -116,6 +117,8 @@ bool runtimeHasCurrentWorldPlayableConsumers();
 bool runtimeHasEffectChainConsumers();
 uint64_t runtimePreviewVoiceWorldGeneration(uint64_t voiceInstance);
 bool runtimeHasPreviewWorldGeneration(uint64_t generation);
+EngineResult runtimeSetPreviewVoiceEffectChain(uint64_t voiceInstance,
+    const std::vector<PreviewVoiceEffectEntry>& chain);
 EngineResult runtimeRefreshPreviewVoiceBindings(uint64_t voiceInstance);
 EngineResult runtimeSetPreviewVoiceProperty(uint64_t voiceInstance, uint8_t property,
     float value, harkenstudio::ObjectId sendBusId = {});

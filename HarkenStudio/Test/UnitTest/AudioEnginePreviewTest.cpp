@@ -9,12 +9,14 @@
 #include "Tooling/Harkenizer/Core/CurrentWorldProjectAdapter.h"
 #include "Components/VAction.h"
 #include "Components/VTrack.h"
+#include "Components/VEffect.h"
 #include "IPC/IPCServer.h"
 #include "ProjectManager.h"
 #include "ProjectTypes.h"
 #include "PropertyEditSession.h"
 #include "UndoCommands.h"
 #include "RuntimeSyncCoordinator.h"
+#include "RuntimeCapabilityMatrix.h"
 #include "AuditionManager.h"
 #include "RuntimeBridge/CurrentWorldSyncBridgeInternal.h"
 #include "RuntimeBridge/ProjectSyncBridge.h"
@@ -1076,6 +1078,174 @@ TEST_F(AudioPlaybackRegression, BusEffectSourceReplacementWaitsForPlaybackToFini
          {QStringLiteral("value"), 0.0}}, VNX::ActionSource::GUI).success);
     engine.runtimeSyncCoordinator().flushPendingMutationNow();
     EXPECT_NEAR(settledPeak(), dry, 0.002f);
+}
+
+TEST_F(AudioPlaybackRegression, LiveEffectChainUsesInheritedPreviewAndRetriesLatestDesired) {
+    ASSERT_EQ(engine.playByNameDetailed(QStringLiteral("Play_Good")).engineResult,
+        HarkenEditor::Bridge::kEngineOk);
+    const float dry = settledPeak();
+    ASSERT_GT(dry, 0.05f);
+    auto* runtime = harken::detail::ActiveEngine();
+    std::vector<HarkenEditor::Bridge::PlaybackPathObservation> paths;
+    ASSERT_TRUE(HarkenEditor::Bridge::capturePlaybackPaths(paths));
+    ASSERT_EQ(1u, paths.size());
+    const auto handle = paths[0].voiceInstance;
+    auto* render = runtime->voices.Resolve(handle);
+    ASSERT_NE(nullptr, render);
+    VNX::EffectEntry entry;
+    entry.guid = QUuid::createUuid();
+    entry.mode = VNX::EffectMode::Custom;
+    entry.custom.parameters = {-24.0f, 20.0f};
+    auto parent = layer->fieldGroups;
+    auto child = sounds[0]->fieldGroups;
+    child.effects.shared.mode = VNX::FieldGroupMode::Inherit;
+    projects.fieldGroupsPreviewed(sounds[0], child);
+    const auto previewParent = [&](const std::vector<VNX::EffectEntry>& entries) {
+        VNX::EffectFieldGroup group;
+        EXPECT_TRUE(group.effects.replace(entries));
+        parent.effects.shared = {VNX::FieldGroupMode::Local, group};
+        projects.fieldGroupsPreviewed(layer, parent);
+    };
+    previewParent({entry});
+    EXPECT_NEAR(settledPeak(), dry * std::pow(10.0f, -24.0f / 20.0f) / 0.125f, 0.002f);
+    const auto ref = render->fxSlotEffectRef[0];
+    entry.custom.parameters[0] = -21;
+    previewParent({entry});
+    EXPECT_NEAR(settledPeak(), dry * std::pow(10.0f, -21.0f / 20.0f) / 0.125f, 0.002f);
+    EXPECT_EQ(ref.poolIndex, render->fxSlotEffectRef[0].poolIndex);
+    EXPECT_EQ(ref.generation, render->fxSlotEffectRef[0].generation);
+    entry.guid = QUuid::createUuid();
+    entry.custom.parameters[0] = -18;
+    previewParent({entry});
+    QMetaObject::invokeMethod(&engine, "onRuntimeServiceTimer", Qt::DirectConnection);
+    entry.guid = QUuid::createUuid();
+    entry.custom.parameters[0] = -23;
+    previewParent({entry});
+    QMetaObject::invokeMethod(&engine, "onRuntimeServiceTimer", Qt::DirectConnection);
+    EXPECT_NEAR(settledPeak(), dry * std::pow(10.0f, -23.0f / 20.0f) / 0.125f, 0.002f);
+    EXPECT_EQ(entry.runtimeId().high, runtime->effectBank.ObjectIdentity(render->fxSlotEffectRef[0]).effectId.high);
+    EXPECT_EQ(entry.runtimeId().low, runtime->effectBank.ObjectIdentity(render->fxSlotEffectRef[0]).effectId.low);
+    entry.bypass = true;
+    previewParent({entry});
+    EXPECT_NEAR(settledPeak(), dry, 0.002f);
+    child.effects.shared = {VNX::FieldGroupMode::Local, VNX::EffectFieldGroup{}};
+    projects.fieldGroupsPreviewed(sounds[0], child);
+    EXPECT_NEAR(settledPeak(), dry, 0.002f);
+    EXPECT_EQ(harken::kEffectTypeNone, render->fxSlotEffectRef[0].type);
+    entry.bypass = false;
+    previewParent({entry});
+    EXPECT_NEAR(settledPeak(), dry, 0.002f);
+    child.effects.shared.mode = VNX::FieldGroupMode::Inherit;
+    projects.fieldGroupsPreviewed(sounds[0], child);
+    const float limited = settledPeak();
+    EXPECT_NEAR(limited, dry * std::pow(10.0f, -23.0f / 20.0f) / 0.125f, 0.002f);
+    const auto accepted = render->fxSlotEffectRef[0];
+    VNX::EffectEntry unresolved;
+    unresolved.guid = QUuid::createUuid();
+    unresolved.effectGuid = QUuid::createUuid();
+    previewParent({unresolved});
+    EXPECT_NEAR(settledPeak(), limited, 0.002f);
+    EXPECT_EQ(accepted.poolIndex, render->fxSlotEffectRef[0].poolIndex);
+    EXPECT_EQ(accepted.generation, render->fxSlotEffectRef[0].generation);
+    previewParent({});
+    EXPECT_NEAR(settledPeak(), dry, 0.002f);
+    EXPECT_EQ(harken::kEffectTypeNone, render->fxSlotEffectRef[0].type);
+}
+
+TEST_F(AudioPlaybackRegression, LiveEffectPresetActionsReachEveryInheritedReference) {
+    VNX::registerProjectActions(VNX::ActionManager::instance(), &projects, nullptr);
+    auto* preset = projects.createItem(nullptr, QStringLiteral("SharedLimiter"), VNX::ProjectItem::Type::Effect);
+    ASSERT_NE(nullptr, preset);
+    auto* secondAction = projects.createActionTargeting(sounds[1], VNX::VActionStep::Type::Play,
+        QStringLiteral("Play_Second"));
+    ASSERT_NE(nullptr, secondAction);
+    const auto mode = [&](VNX::ProjectItem* item, const char* value) {
+        return VNX::ActionManager::instance().execute(QStringLiteral("set_field_group_mode"),
+            {{QStringLiteral("definition_guid"), item->guid.toString(QUuid::WithoutBraces)},
+             {QStringLiteral("group"), QStringLiteral("effect")},
+             {QStringLiteral("scope"), QStringLiteral("Shared")},
+             {QStringLiteral("mode"), QString::fromLatin1(value)}}, VNX::ActionSource::IPC);
+    };
+    for (auto* sound : sounds) {
+        const auto childMode = mode(sound, "Inherit");
+        ASSERT_TRUE(childMode.success) << childMode.errorMessage.toStdString();
+    }
+    VNX::EffectEntry first;
+    first.guid = QUuid::createUuid();
+    first.effectGuid = preset->guid;
+    auto second = first;
+    second.guid = QUuid::createUuid();
+    const auto replaced = VNX::ActionManager::instance().execute(QStringLiteral("replace_field_group_effects"),
+        {{QStringLiteral("definition_guid"), layer->guid.toString(QUuid::WithoutBraces)},
+         {QStringLiteral("group"), QStringLiteral("effect")},
+         {QStringLiteral("scope"), QStringLiteral("Shared")},
+         {QStringLiteral("effects"), QJsonArray{first.toJson(), second.toJson()}}}, VNX::ActionSource::IPC);
+    ASSERT_TRUE(replaced.success) << replaced.errorMessage.toStdString();
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    ASSERT_EQ(engine.playByNameDetailed(QStringLiteral("Play_Good")).engineResult, HarkenEditor::Bridge::kEngineOk);
+    ASSERT_EQ(engine.playByNameDetailed(QStringLiteral("Play_Second")).engineResult, HarkenEditor::Bridge::kEngineOk);
+    const float dry = settledPeak();
+    ASSERT_GT(dry, 0.1f);
+    std::vector<HarkenEditor::Bridge::PlaybackPathObservation> paths;
+    ASSERT_TRUE(HarkenEditor::Bridge::capturePlaybackPaths(paths));
+    ASSERT_EQ(2u, paths.size());
+    auto* runtime = harken::detail::ActiveEngine();
+    std::array<std::array<harken::EffectInstanceRef, 8>, 2> before;
+    for (std::size_t i = 0; i < paths.size(); ++i) {
+        const auto* voice = runtime->voices.Resolve(paths[i].voiceInstance);
+        ASSERT_NE(nullptr, voice);
+        std::copy_n(voice->fxSlotEffectRef, 8, before[i].begin());
+    }
+    EXPECT_NE(before[0][0].poolIndex, before[0][1].poolIndex);
+    EXPECT_NE(before[1][0].poolIndex, before[1][1].poolIndex);
+    for (std::uint32_t a = 0; a < 2; ++a)
+        for (std::uint32_t b = 0; b < 2; ++b)
+            EXPECT_NE(before[0][a].poolIndex, before[1][b].poolIndex);
+    const auto setPreset = [&](const QString& property, float value) {
+        return VNX::ActionManager::instance().execute(QStringLiteral("set_item_property"),
+            {{QStringLiteral("authoring_handle"), static_cast<qint64>(preset->objectID)},
+             {QStringLiteral("property"), property}, {QStringLiteral("value"), value}}, VNX::ActionSource::IPC);
+    };
+    ASSERT_TRUE(setPreset(QStringLiteral("ceilingDb"), -24).success);
+    ASSERT_TRUE(setPreset(QStringLiteral("releaseMs"), 17).success);
+    EXPECT_NEAR(settledPeak(), dry * (2.0f * std::pow(10.0f, -24.0f / 20.0f) / 0.375f), 0.002f);
+    for (std::size_t i = 0; i < paths.size(); ++i) {
+        const auto handle = paths[i].voiceInstance;
+        const auto* voice = runtime->voices.Resolve(handle);
+        ASSERT_NE(nullptr, voice);
+        for (std::uint32_t slot = 0; slot < 2; ++slot) {
+            EXPECT_EQ(before[i][slot].poolIndex, voice->fxSlotEffectRef[slot].poolIndex);
+            EXPECT_EQ(before[i][slot].generation, voice->fxSlotEffectRef[slot].generation);
+            EXPECT_FLOAT_EQ(-24, runtime->effectSlotConfig[static_cast<std::uint32_t>(handle)][slot].params[0]);
+            EXPECT_FLOAT_EQ(17, runtime->effectSlotConfig[static_cast<std::uint32_t>(handle)][slot].params[1]);
+        }
+    }
+    first.bypass = second.bypass = true;
+    const auto bypassed = VNX::ActionManager::instance().execute(QStringLiteral("replace_field_group_effects"),
+        {{QStringLiteral("definition_guid"), layer->guid.toString(QUuid::WithoutBraces)},
+         {QStringLiteral("group"), QStringLiteral("effect")},
+         {QStringLiteral("scope"), QStringLiteral("Shared")},
+         {QStringLiteral("effects"), QJsonArray{second.toJson(), first.toJson()}}}, VNX::ActionSource::IPC);
+    ASSERT_TRUE(bypassed.success) << bypassed.errorMessage.toStdString();
+    engine.runtimeSyncCoordinator().flushPendingMutationNow();
+    EXPECT_NEAR(settledPeak(), dry, 0.002f);
+    for (const auto operation : {VNX::RuntimeCapabilityOperation::CompiledPreview,
+                                  VNX::RuntimeCapabilityOperation::PackBuild}) {
+        const auto capability = VNX::RuntimeCapabilityMatrix::evaluate(*sounds[0],
+            *projects.currentProject(), operation, VNX::RuntimeCapabilityFeature::TypedEffect);
+        EXPECT_EQ(VNX::RuntimeCapabilityState::UnavailableEngineContract, capability.state)
+            << capability.diagnostic.toStdString();
+    }
+    for (const auto& path : paths) {
+        const auto* voice = runtime->voices.Resolve(path.voiceInstance);
+        ASSERT_NE(nullptr, voice);
+        EXPECT_EQ(second.runtimeId().high, runtime->effectBank.ObjectIdentity(voice->fxSlotEffectRef[0]).effectId.high);
+        EXPECT_EQ(second.runtimeId().low, runtime->effectBank.ObjectIdentity(voice->fxSlotEffectRef[0]).effectId.low);
+        EXPECT_EQ(first.runtimeId().high, runtime->effectBank.ObjectIdentity(voice->fxSlotEffectRef[1]).effectId.high);
+        EXPECT_EQ(first.runtimeId().low, runtime->effectBank.ObjectIdentity(voice->fxSlotEffectRef[1]).effectId.low);
+        EXPECT_FLOAT_EQ(1.0f, voice->fxBypassMix[0]);
+        EXPECT_FLOAT_EQ(1.0f, voice->fxBypassMix[1]);
+    }
 }
 
 TEST_F(AudioPlaybackRegression, ScalarEditCannotPublishCachedWorldAfterInvalidStructuralEdit)

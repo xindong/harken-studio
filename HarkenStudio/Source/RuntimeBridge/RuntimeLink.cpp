@@ -1,4 +1,5 @@
 #include "RuntimeLink.h"
+#include "PreviewBridge.h"
 #include "NativeValues.h"
 #include "RuntimeLinkInternal.h"
 
@@ -1905,6 +1906,21 @@ uint64_t runtimePreviewVoiceWorldGeneration(uint64_t voiceInstance)
 bool runtimeHasPreviewWorldGeneration(uint64_t generation)
 {
     return runtimeIsActive() && VnPreview_HasWorldGeneration(generation) != 0;
+}
+
+EngineResult runtimeSetPreviewVoiceEffectChain(uint64_t voiceInstance,
+    const std::vector<PreviewVoiceEffectEntry>& chain)
+{
+    if (chain.size() > VN_PREVIEW_EFFECT_CHAIN_CAPACITY) return kEngineInvalidArg;
+    VnPreviewVoiceEffectChainV1 native{};
+    native.structSize = sizeof(native);
+    native.entryCount = static_cast<uint32_t>(chain.size());
+    for (std::size_t i = 0; i < chain.size(); ++i) {
+        const auto& entry = chain[i];
+        native.entries[i] = {toNative(entry.effectId), entry.effectType,
+            entry.bypass ? 1u : 0u, entry.ceilingDb, entry.releaseMs};
+    }
+    return VnPreview_SetVoiceEffectChain(voiceInstance, &native);
 }
 
 EngineResult runtimeRefreshPreviewVoiceBindings(uint64_t voiceInstance)
