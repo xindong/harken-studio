@@ -1650,7 +1650,8 @@ ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(
         result.status = ProjectGenerationPrepareStatusV1::InvalidView;
         return result;
     }
-    const std::uint32_t commandFreeBefore = engine.commands.FreeSlots();
+    const auto commandHeadBefore = engine.commands.PublishedHead();
+    const auto initialSourceHeadBefore = engine.commands.InitialSourcePublishedHead();
     const std::uint32_t liveInUse = engine.topologyPlans.InUse();
     const std::uint32_t planIndex = engine.preparedTopologyPlans.Acquire();
     if (planIndex == kInvalidTopologyPlanIndex) {
@@ -1842,7 +1843,8 @@ ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(
                 engine.preparedTopologyPlans.DownmixCoeffsData(planIndex) + static_cast<std::size_t>(slot) * 64);
         }
         if (engine.topologyPlans.InUse() != liveInUse ||
-            engine.commands.FreeSlots() != commandFreeBefore) {
+            engine.commands.PublishedHead() != commandHeadBefore ||
+            engine.commands.InitialSourcePublishedHead() != initialSourceHeadBefore) {
             ReleasePreparedSlot(engine, planIndex, ownerSlot);
             result.status = ProjectGenerationPrepareStatusV1::DeviceError;
             return result;
@@ -1907,7 +1909,8 @@ ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(
         return result;
     }
     if (engine.topologyPlans.InUse() != liveInUse ||
-        engine.commands.FreeSlots() != commandFreeBefore) {
+        engine.commands.PublishedHead() != commandHeadBefore ||
+        engine.commands.InitialSourcePublishedHead() != initialSourceHeadBefore) {
         ReleasePreparedSlot(engine, planIndex, ownerSlot);
         result.status = ProjectGenerationPrepareStatusV1::DeviceError;
         return result;

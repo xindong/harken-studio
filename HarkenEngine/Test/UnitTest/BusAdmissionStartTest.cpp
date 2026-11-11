@@ -1,4 +1,5 @@
 #include "Common/ObjectIdTestSupport.h"
+#include "AllocationProbe.h"
 #include "Common/EffectPoolTestAccess.h"
 #include "UnitTest/CanonicalPackSetActivate.h"
 #include "Common/RawVoiceTestSupport.h"
@@ -290,6 +291,38 @@ TEST(BusAdmissionStart, PreparedPoolRecyclesExactlyOnceAfterRetirement) {
     pool.Recycle(second);
     pool.Recycle(second);
     EXPECT_EQ(0u, pool.InUse());
+}
+
+TEST(BusAdmissionStart, PreparationAllowsAudioToConsumePreviouslyPublishedCommands) {
+    AdmissionSession fixture;
+    auto& engine = *fixture.session.Engine();
+    ASSERT_EQ(Vn_SetBusVolume(VN_BUS_MASTER, 0.0f, 0), VN_OK);
+    const auto head = engine.commands.PublishedHead();
+    const auto initialHead = engine.commands.InitialSourcePublishedHead();
+    const auto consumed = engine.commands.ConsumedCount();
+    ASSERT_GT(head, consumed);
+    struct Probe { harken::Engine* engine; bool pumped = false; } probe{&engine};
+    allocation_probe::countContext = &probe;
+    allocation_probe::countIf = [](void* context) noexcept {
+        auto& probe = *static_cast<Probe*>(context);
+        allocation_probe::enabled = false;
+        probe.engine->nullBackend.Pump(1);
+        probe.pumped = true;
+        return false;
+    };
+    allocation_probe::enabled = true;
+    harken::PreparedProjectGenerationV1 prepared;
+    const auto result = harken::PrepareProjectGenerationV1(engine, MakeInstallView(fixture.image), prepared);
+    allocation_probe::enabled = false;
+    allocation_probe::countIf = nullptr;
+    allocation_probe::countContext = nullptr;
+    ASSERT_TRUE(probe.pumped);
+    EXPECT_GT(engine.commands.ConsumedCount(), consumed);
+    EXPECT_EQ(engine.commands.PublishedHead(), head);
+    EXPECT_EQ(engine.commands.InitialSourcePublishedHead(), initialHead);
+    ASSERT_EQ(result.status, harken::ProjectGenerationPrepareStatusV1::Ok);
+    EXPECT_EQ(harken::CommitPreparedProjectGenerationV1(engine, prepared).status,
+        harken::ProjectGenerationCommitStatusV1::Ok);
 }
 
 TEST(BusAdmissionStart, PreparedLifetimeMoveAndDestructorReleaseExactReservations) {
