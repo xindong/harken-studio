@@ -181,8 +181,9 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install Linux build deps
-        run: sudo apt-get update && sudo apt-get install -y ninja-build
+      # GitHub's Ubuntu image includes Ninja; avoid an unnecessary apt mirror dependency.
+      - name: Verify preinstalled Ninja
+        run: ninja --version
 
       - name: Configure (linux-release, runtime only)
         run: >-
@@ -232,8 +233,9 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install Ninja
-        run: sudo apt-get update && sudo apt-get install -y ninja-build
+      # GitHub's Ubuntu image includes Ninja; avoid an unnecessary apt mirror dependency.
+      - name: Verify preinstalled Ninja
+        run: ninja --version
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4
