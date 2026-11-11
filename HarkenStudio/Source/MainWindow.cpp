@@ -1214,14 +1214,8 @@ void MainWindow::setupMenuBar()
             this, refreshZoomActions);
     refreshZoomActions();
 
-    connect(viewsMenu, &QMenu::aboutToShow, this, [this, viewsMenu, zoomInAction, zoomOutAction]() {
+    connect(viewsMenu, &QMenu::aboutToShow, this, [this, viewsMenu]() {
         viewsMenu->clear();
-
-        auto* appearanceMenu = viewsMenu->addMenu(tr("Appearance"));
-        appearanceMenu->setObjectName(QStringLiteral("viewsAppearanceMenu"));
-        appearanceMenu->addAction(zoomInAction);
-        appearanceMenu->addAction(zoomOutAction);
-        viewsMenu->addSeparator();
 
         QSet<QString> editorPanelTypes;
         for (const QString& t : standaloneEditorTypes_.keys())
