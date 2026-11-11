@@ -103,7 +103,14 @@ void AudioEngine::bindProjectPropertyPreview(ProjectManager& project)
     connect(&project, &ProjectManager::itemPropertyChanged, this, updateProperty);
     connect(&project, &ProjectManager::itemCreated, this, invalidate);
     connect(&project, &ProjectManager::itemMoved, this, invalidate);
-    connect(&project, &ProjectManager::itemDeleted, this, invalidate);
+    connect(&project, &ProjectManager::itemDeleted, this, [this, &project] {
+        auto& preview = *livePropertyPreview_;
+        for (auto it = preview.groups.begin(); it != preview.groups.end();) {
+            if (!project.findItemByGuid(it.key())) it = preview.groups.erase(it);
+            else ++it;
+        }
+        preview.dirty = true;
+    });
     connect(&project, &ProjectManager::fieldGroupsPreviewed, this,
         [this](ProjectItem* item, const DefinitionFieldGroups& groups) {
             if (!item) return;

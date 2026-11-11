@@ -5,6 +5,7 @@
 #include "Core/Components/VMixNode.h"
 #include "Core/PlatformContextService.h"
 #include "Core/ProjectManager.h"
+#include "Core/PropertyEditSession.h"
 #include "Core/QtControlSkin.h"
 #include "Core/ThemeAssetCatalog.h"
 #include "Core/ThemeLayout.h"
@@ -169,9 +170,11 @@ EffectEditorPanel::EffectEditorPanel(QWidget* parent, Presentation presentation)
         parameters_[index] = parameter;
         connect(parameter, &ParameterSlider::valueChanged, this,
             [this, index](double value) { commitParameter(index, value); });
+        connect(parameter, &ParameterSlider::interactivePreview, this,
+            [this, index](double value) { previewParameter(index, value); });
         connect(parameter, &ParameterSlider::interactiveEditEnd, this,
             [this, index](double start, double value, bool committed) {
-                if (committed && start != value) commitParameter(index, value);
+                finishParameter(index, value, committed && start != value);
             });
     }
     fieldsLayout->addStretch();
@@ -180,6 +183,20 @@ EffectEditorPanel::EffectEditorPanel(QWidget* parent, Presentation presentation)
 
     auto& project = ProjectManager::instance();
     connect(&project, &ProjectManager::projectClosed, this, &EffectEditorPanel::clearEditor);
+    connect(&project, &ProjectManager::propertyEditsCancelling, this,
+        [this](ProjectItem* item, const QString& field) {
+            if (!item || !selection_) return;
+            if ((!selection_->presetGuid.isNull() && item->guid == selection_->presetGuid)
+                || (selection_->presetGuid.isNull() && item->guid == ownerGuid_
+                    && field == QLatin1String("effects"))) cancelPendingEdits();
+        });
+    connect(&project, &ProjectManager::activePropertyEditsFinishing, this,
+        [this](bool commit) {
+            for (auto* parameter : parameters_) {
+                if (commit) parameter->binding()->commitEdit();
+                else parameter->cancelPendingInput();
+            }
+        });
     connect(&project, &ProjectManager::itemDeleted, this, [this] {
         if (!ownerGuid_.isNull() && !boundItem())
             clearEditor();
@@ -203,7 +220,7 @@ EffectEditorPanel::EffectEditorPanel(QWidget* parent, Presentation presentation)
     installFocusFilterRecursively(this);
 }
 
-EffectEditorPanel::~EffectEditorPanel() = default;
+EffectEditorPanel::~EffectEditorPanel() { cancelPendingEdits(); }
 
 ProjectItem* EffectEditorPanel::boundItem() const
 {
@@ -258,6 +275,7 @@ void EffectEditorPanel::refreshEffect()
     if (detachButton_) detachButton_->setEnabled(static_cast<bool>(selection));
     if (selection_ && selection && *selection_ == *selection) return;
     cancelPendingEdits();
+    selection = resolveSelection(boundItem(), rowGuid_);
     selection_ = std::move(selection);
     fields_->setVisible(static_cast<bool>(selection_));
     fields_->setEnabled(selection_ && selection_->editable);
@@ -272,6 +290,65 @@ void EffectEditorPanel::cancelPendingEdits()
     QScopedValueRollback updating(updating_, true);
     for (auto* parameter : parameters_)
         parameter->cancelPendingInput();
+    clearParameterPreview();
+}
+
+void EffectEditorPanel::clearParameterPreview()
+{
+    editSession_.reset();
+    if (!groupPreviewActive_) return;
+    groupPreviewActive_ = false;
+    if (auto* item = boundItem())
+        emit ProjectManager::instance().fieldGroupsPreviewed(item, item->fieldGroups);
+}
+
+void EffectEditorPanel::finishParameter(size_t index, double value, bool committed)
+{
+    clearParameterPreview();
+    if (!updating_ && committed) commitParameter(index, value);
+}
+
+void EffectEditorPanel::previewParameter(size_t index, double value)
+{
+    if (updating_ || !selection_ || !selection_->editable || !isEnabled()) return;
+    auto& manager = ProjectManager::instance();
+    auto* item = boundItem();
+    if (!item || !manager.currentProject() ||
+        selection_->context != PlatformContextService::instance().context()) return;
+    auto definition = selection_->definition;
+    definition.parameters[index] = static_cast<float>(value);
+    if (!std::isfinite(value) || !EffectChainSemantics::validate(definition)) return;
+    if (!selection_->presetGuid.isNull()) {
+        auto* preset = manager.findItemByGuid(selection_->presetGuid);
+        if (!preset) return;
+        if (!editSession_) editSession_ = std::make_unique<PropertyEditSession>(preset,
+            VEffect::schema()[index].field, selection_->definition.parameters[index], this);
+        editSession_->preview(value);
+        return;
+    }
+    auto effects = selection_->chain.entries();
+    const auto row = std::find_if(effects.begin(), effects.end(), [this](const auto& entry) {
+        return entry.guid == rowGuid_;
+    });
+    if (row == effects.end()) return;
+    row->custom = std::move(definition);
+    EffectFieldGroup group;
+    if (!group.effects.replace(std::move(effects))) return;
+    if (selection_->grouped) {
+        const auto& view = selection_->groupView;
+        const auto prepared = prepareFieldGroupEdit(*manager.currentProject(), {
+            item->guid, FieldGroupId::Effect, view.editScopes,
+            ReplaceFieldGroupEffects{std::move(group)}, view.expectedBefore});
+        if (!prepared.ok()) return;
+        groupPreviewActive_ = true;
+        emit manager.fieldGroupsPreviewed(item, *prepared.after);
+    } else {
+        const auto& context = selection_->context;
+        if (!editSession_) editSession_ = std::make_unique<PropertyEditSession>(item,
+            QStringLiteral("effects"), selection_->chain.toJson().toVariantList(), this,
+            context.all ? std::optional<QVector<ProjectPlatformId>>{} : context.selected);
+        editSession_->preview(group.effects.toJson().toVariantList());
+    }
 }
 
 void EffectEditorPanel::commitParameter(size_t index, double value)

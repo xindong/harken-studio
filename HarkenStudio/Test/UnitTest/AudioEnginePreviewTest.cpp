@@ -10,6 +10,10 @@
 #include "Components/VAction.h"
 #include "Components/VTrack.h"
 #include "Components/VEffect.h"
+#include "Components/VMixNode.h"
+#include "Widgets/EffectEditor/EffectEditorPanel.h"
+#include "Widgets/Common/ParameterSlider.h"
+#include "Widgets/Common/ParameterBinding.h"
 #include "IPC/IPCServer.h"
 #include "ProjectManager.h"
 #include "ProjectTypes.h"
@@ -696,6 +700,143 @@ protected:
         return peak;
     }
 };
+
+TEST_F(AudioPlaybackRegression, EffectEditorDragPreviewsBeforeCommitAndCancelsWithoutUndo)
+{
+    VNX::registerProjectActions(VNX::ActionManager::instance(), &projects, nullptr);
+    VNX::EffectEntry entry;
+    entry.guid = QUuid::createUuid();
+    entry.mode = VNX::EffectMode::Custom;
+    entry.custom.parameters = {0.0f, 20.0f};
+    VNX::EffectFieldGroup group;
+    ASSERT_TRUE(group.effects.replace({entry}));
+    sounds[0]->fieldGroups.effects.shared = {VNX::FieldGroupMode::Local, group};
+    projects.itemPropertyChanged(sounds[0], QStringLiteral("fieldGroups"), nullptr);
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    ASSERT_EQ(engine.playByNameDetailed(QStringLiteral("Play_Good")).engineResult,
+        HarkenEditor::Bridge::kEngineOk);
+    const auto dry = settledPeak();
+    VNX::EffectEditorPanel panel;
+    panel.bindEffect(sounds[0]->guid, entry.guid);
+    auto* slider = panel.findChild<VNX::ParameterSlider*>(QStringLiteral("effectParameter_ceilingDb"));
+    ASSERT_NE(slider, nullptr);
+    auto* undo = VNX::UndoRedoManager::instance().undoStack();
+    undo->clear();
+    slider->binding()->beginEdit();
+    slider->binding()->previewEdit(-24);
+    EXPECT_LT(settledPeak(), dry * 0.6f);
+    EXPECT_EQ(0, undo->count());
+    slider->binding()->cancelEdit();
+    settledPeak();
+    settledPeak();
+    EXPECT_NEAR(settledPeak(), dry, 0.002f);
+    EXPECT_EQ(0, undo->count());
+    slider->binding()->beginEdit();
+    slider->binding()->previewEdit(-21);
+    slider->binding()->previewEdit(-24);
+    EXPECT_LT(settledPeak(), dry * 0.6f);
+    slider->binding()->commitEdit();
+    EXPECT_EQ(1, undo->count());
+    EXPECT_LT(settledPeak(), dry * 0.6f);
+    undo->undo();
+    settledPeak();
+    settledPeak();
+    EXPECT_NEAR(settledPeak(), dry, 0.002f);
+}
+
+TEST_F(AudioPlaybackRegression, EffectEditorPresetDragRestoresOnSelectionChange)
+{
+    VNX::registerProjectActions(VNX::ActionManager::instance(), &projects, nullptr);
+    auto* preset = projects.createItem(nullptr, QStringLiteral("DragPreset"), VNX::ProjectItem::Type::Effect);
+    ASSERT_NE(preset, nullptr);
+    auto* effect = preset->comp<VNX::VEffect>();
+    ASSERT_NE(effect, nullptr);
+    const auto original = effect->definition.parameters[0];
+    VNX::EffectEditorPanel panel;
+    panel.bindEffect(preset->guid);
+    auto* slider = panel.findChild<VNX::ParameterSlider*>(QStringLiteral("effectParameter_ceilingDb"));
+    ASSERT_NE(slider, nullptr);
+    auto* undo = VNX::UndoRedoManager::instance().undoStack();
+    undo->clear();
+    slider->binding()->beginEdit();
+    slider->binding()->previewEdit(-24);
+    EXPECT_FLOAT_EQ(-24, effect->definition.parameters[0]);
+    EXPECT_EQ(0, undo->count());
+    panel.clearEditor();
+    EXPECT_FLOAT_EQ(original, effect->definition.parameters[0]);
+    EXPECT_EQ(0, undo->count());
+}
+
+TEST_F(AudioPlaybackRegression, EffectEditorExternalPresetEditEndsDragBeforeTakingUndoSnapshot)
+{
+    VNX::registerProjectActions(VNX::ActionManager::instance(), &projects, nullptr);
+    auto* preset = projects.createItem(nullptr, QStringLiteral("ExternalPreset"), VNX::ProjectItem::Type::Effect);
+    ASSERT_NE(preset, nullptr);
+    auto* effect = preset->comp<VNX::VEffect>();
+    const auto original = effect->definition.parameters[0];
+    VNX::EffectEditorPanel panel;
+    panel.bindEffect(preset->guid);
+    auto* slider = panel.findChild<VNX::ParameterSlider*>(QStringLiteral("effectParameter_ceilingDb"));
+    ASSERT_NE(slider, nullptr);
+    auto* undo = VNX::UndoRedoManager::instance().undoStack();
+    undo->clear();
+    slider->binding()->beginEdit();
+    slider->binding()->previewEdit(-24);
+    ASSERT_TRUE(VNX::ActionManager::instance().execute(QStringLiteral("set_item_property"),
+        {{QStringLiteral("authoring_handle"), static_cast<qint64>(preset->objectID)},
+         {QStringLiteral("property"), QStringLiteral("ceilingDb")},
+         {QStringLiteral("value"), -12.0}}, VNX::ActionSource::IPC).success);
+    QCoreApplication::processEvents();
+    EXPECT_FLOAT_EQ(-12, effect->definition.parameters[0]);
+    slider->binding()->previewEdit(-30);
+    slider->binding()->commitEdit();
+    EXPECT_FLOAT_EQ(-12, effect->definition.parameters[0]);
+    EXPECT_EQ(1, undo->count());
+    undo->undo();
+    EXPECT_FLOAT_EQ(original, effect->definition.parameters[0]);
+    QCoreApplication::processEvents();
+    slider->binding()->beginEdit();
+    slider->binding()->previewEdit(-18);
+    projects.itemCreated(preset);
+    EXPECT_FLOAT_EQ(original, effect->definition.parameters[0]);
+    EXPECT_DOUBLE_EQ(original, slider->value());
+}
+
+TEST_F(AudioPlaybackRegression, EffectEditorBusDragCannotRestoreADeletedPresetReference)
+{
+    VNX::registerProjectActions(VNX::ActionManager::instance(), &projects, nullptr);
+    auto* preset = projects.createItem(nullptr, QStringLiteral("DeletedPreset"), VNX::ProjectItem::Type::Effect);
+    auto* bus = projects.createItem(projects.getMasterBusItem(), QStringLiteral("DragBus"), VNX::ProjectItem::Type::Bus);
+    ASSERT_NE(preset, nullptr);
+    ASSERT_NE(bus, nullptr);
+    VNX::EffectEntry custom;
+    custom.guid = QUuid::createUuid();
+    custom.mode = VNX::EffectMode::Custom;
+    custom.custom.parameters = {0.0f, 20.0f};
+    VNX::EffectEntry reference;
+    reference.guid = QUuid::createUuid();
+    reference.effectGuid = preset->guid;
+    auto* mix = bus->comp<VNX::VMixNode>();
+    ASSERT_TRUE(mix->effects.replace({custom, reference}));
+    VNX::EffectEditorPanel panel;
+    panel.bindEffect(bus->guid, custom.guid);
+    auto* slider = panel.findChild<VNX::ParameterSlider*>(QStringLiteral("effectParameter_ceilingDb"));
+    ASSERT_NE(slider, nullptr);
+    auto* undo = VNX::UndoRedoManager::instance().undoStack();
+    undo->clear();
+    slider->binding()->beginEdit();
+    slider->binding()->previewEdit(-24);
+    EXPECT_FLOAT_EQ(-24, mix->effects.entries()[0].custom.parameters[0]);
+    ASSERT_TRUE(projects.deleteItem(preset));
+    QCoreApplication::processEvents();
+    ASSERT_EQ(1u, mix->effects.entries().size());
+    EXPECT_FLOAT_EQ(0, mix->effects.entries()[0].custom.parameters[0]);
+    EXPECT_EQ(1, undo->count());
+    undo->undo();
+    ASSERT_EQ(2u, mix->effects.entries().size());
+    EXPECT_FLOAT_EQ(0, mix->effects.entries()[0].custom.parameters[0]);
+    EXPECT_EQ(reference.effectGuid, mix->effects.entries()[1].effectGuid);
+}
 
 TEST_F(AudioPlaybackRegression, ConcurrentPreviewCancelAndUndoRemainConsistentForCurrentAndFuturePlayback)
 {
