@@ -102,7 +102,7 @@ inline void ProcessTransitionChainSlot(InsertEffect& oldEffect, float oldBypass,
     InsertEffect& nextEffect, float nextBypass, float* const* planes,
     float* const* dry, float* const* alternate, std::uint32_t channels,
     std::uint32_t offset, std::uint32_t frames, std::uint32_t done,
-    std::uint32_t total) {
+    std::uint32_t total, float nextBypassStart = -1.0f) {
     if (frames == 0) return;
     const auto prefix = std::min(frames, total > done ? total - done : 0u);
     if (prefix != 0) {
@@ -115,9 +115,12 @@ inline void ProcessTransitionChainSlot(InsertEffect& oldEffect, float oldBypass,
         for (std::uint32_t ch = 0; ch < channels; ++ch) {
             for (std::uint32_t i = 0; i < prefix; ++i) {
                 const float input = dry[ch][i];
-                const float next = !nextEffect.process || nextBypass == 1.0f ? input :
-                    nextBypass == 0.0f ? alternate[ch][i] :
-                    input * nextBypass + alternate[ch][i] * (1.0f - nextBypass);
+                const float bypass = nextBypassStart < 0.0f ? nextBypass :
+                    nextBypassStart + (nextBypass - nextBypassStart) *
+                        (static_cast<float>(i + 1u) / static_cast<float>(frames));
+                const float next = !nextEffect.process || bypass == 1.0f ? input :
+                    bypass == 0.0f ? alternate[ch][i] :
+                    input * bypass + alternate[ch][i] * (1.0f - bypass);
                 if (done + i + 1u == total) {
                     planes[ch][offset + i] = next;
                 } else {
@@ -131,8 +134,9 @@ inline void ProcessTransitionChainSlot(InsertEffect& oldEffect, float oldBypass,
         }
     }
     if (prefix != frames) {
-        bool ramping = false;
-        float mix = nextBypass;
+        bool ramping = nextBypassStart >= 0.0f && nextBypassStart != nextBypass;
+        float mix = nextBypassStart < 0.0f ? nextBypass : nextBypassStart +
+            (nextBypass - nextBypassStart) * (static_cast<float>(prefix) / static_cast<float>(frames));
         ProcessChainSlot(nextEffect, ramping, mix, nextBypass, planes, dry,
             channels, offset + prefix, frames - prefix);
     }

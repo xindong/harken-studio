@@ -129,10 +129,11 @@ static_assert(std::is_trivial_v<PlayLedBatchHeader> &&
 
 inline constexpr std::uint8_t kCommandFlagPreparedCompressor = 1u << 0;
 inline constexpr std::uint8_t kCommandFlagVariableWeightSegment = 1u << 1;
+inline constexpr std::uint8_t kCommandFlagPreviewBusEffect = 1u << 2;
 inline constexpr std::uint8_t kCommandKnownFlagsMask =
-    kCommandFlagPreparedCompressor | kCommandFlagVariableWeightSegment;
-static_assert(kCommandKnownFlagsMask == 0x03u,
-              "command flag bits 0 and 1 are assigned internal flags");
+    kCommandFlagPreparedCompressor | kCommandFlagVariableWeightSegment | kCommandFlagPreviewBusEffect;
+static_assert(kCommandKnownFlagsMask == 0x07u,
+              "command flag bits 0 through 2 are assigned internal flags");
 
 struct PreparedBiquadCoeffs {
     float b0;
@@ -457,10 +458,23 @@ struct CommandRecord {
             std::uint32_t tailFrames;
             std::uint32_t transitionFrames;
         } setBusFilter;
+        struct PreviewBusEffectControl {
+            std::uint64_t host;
+            std::uint64_t owner;
+            std::uint64_t revision;
+            std::uint32_t slot;
+            std::uint32_t parameter;
+            float value;
+            float prepared;
+            std::uint32_t transitionFrames;
+            std::uint32_t effectType;
+        } previewBusEffectControl;
         unsigned char raw[56];
     } payload;
 };
 
+static_assert(sizeof(CommandRecord::Payload::PreviewBusEffectControl) == 48);
+static_assert(std::is_trivially_copyable_v<CommandRecord::Payload::PreviewBusEffectControl>);
 static_assert(sizeof(CommandRecord) == 64,
               "command records are fixed 64-byte POD");
 static_assert(sizeof(CommandRecord::Payload::SetBusTopologyPlan) <= 56,

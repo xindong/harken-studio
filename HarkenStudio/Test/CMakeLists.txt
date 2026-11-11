@@ -396,34 +396,9 @@ target_include_directories(harken_bus_compiler_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR} ${HARKEN_RUNTIME_DIR}/api/include)
 gtest_discover_tests(harken_bus_compiler_tests TEST_PREFIX "BusCompiler." PROPERTIES TIMEOUT 120)
 
-add_executable(harken_studio_runtime_api_tests UnitTest/StudioRuntimeApiTest.cpp)
-target_include_directories(harken_studio_runtime_api_tests PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR} ${_studio_test_runtime_includes})
-target_link_libraries(harken_studio_runtime_api_tests PRIVATE
-    harken_studio_runtime harken_current_world_compiler GTest::gtest_main)
-target_compile_definitions(harken_studio_runtime_api_tests PRIVATE
-    HARKEN_TEST_PREVIEW_ENABLED=$<BOOL:${HARKEN_DEVELOPMENT_PREVIEW}>)
-if(UNIX)
-    target_link_libraries(harken_studio_runtime_api_tests PRIVATE ${CMAKE_DL_LIBS})
-    target_compile_definitions(harken_studio_runtime_api_tests PRIVATE
-        HARKEN_TEST_RUNTIME_LIBRARY="$<TARGET_FILE:harken_studio_runtime>")
-endif()
-gtest_discover_tests(harken_studio_runtime_api_tests DISCOVERY_MODE PRE_TEST)
-
-add_executable(harken_studio_runtime_disabled_tests
-    UnitTest/StudioRuntimeApiTest.cpp ${_studio_preview_source_dir}/src/PreviewProject.cpp)
-target_include_directories(harken_studio_runtime_disabled_tests PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR} ${_studio_preview_source_dir}/include
-    ${_studio_test_runtime_includes} ${HARKEN_RUNTIME_DIR}/api/src
-    ${HARKEN_RUNTIME_DIR}/core/include ${HARKEN_RUNTIME_DIR}/media/include)
-target_link_libraries(harken_studio_runtime_disabled_tests PRIVATE
-    harken_core harken_current_world_compiler GTest::gtest_main)
-target_compile_definitions(harken_studio_runtime_disabled_tests PRIVATE
-    HARKEN_DEVELOPMENT_PREVIEW=0 HARKEN_TEST_PREVIEW_ENABLED=0)
-gtest_discover_tests(harken_studio_runtime_disabled_tests
-    TEST_PREFIX "Disabled." DISCOVERY_MODE PRE_TEST)
-
 harken_add_ci_test_target(editor)
+add_dependencies(harken_editor_ci_tests
+    harken_studio_runtime_api_tests harken_studio_runtime_disabled_tests)
 add_test(NAME studio_reference_slots_generated_check
     COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_SOURCE_DIR}/HarkenStudio/Source/Tooling/ReferenceSlots/slots/gen_reference_slots.py

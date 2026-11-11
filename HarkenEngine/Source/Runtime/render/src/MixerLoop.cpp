@@ -465,7 +465,12 @@ void MixerLoop::ApplyCommandRecord(const CommandRecord& command,
             command.payload.setVoiceSendLevel.rampMs);
         break;
     case kOpcodeSetBusEffectParam:
-        if (command.flags == kCommandFlagPreparedCompressor) {
+        if (command.flags == kCommandFlagPreviewBusEffect) {
+            const auto& p = command.payload.previewBusEffectControl;
+            if (p.effectType == VN_EFFECT_LIMITER)
+                m_buses.ApplyPreviewEffectControl(BusSlotRef::FromPacked(p.host), p.owner,
+                    p.revision, p.slot, p.parameter, p.prepared, p.transitionFrames, false);
+        } else if (command.flags == kCommandFlagPreparedCompressor) {
             const auto& payload = command.payload.setCompressorEffectParam;
             const BusSlotRef busRef = BusSlotRef::FromPacked(payload.host);
             if (payload.effectType == VN_EFFECT_COMPRESSOR && busRef.Valid()) {
@@ -965,6 +970,7 @@ std::uint32_t MixerLoop::DrainCommands(std::uint64_t blockIndex,
     // Both transports share these counters for this entire block, including
     // every raw prefix before an initial-installation barrier.
     m_voices.ServiceEffectChainRetirements();
+    m_buses.ServicePreviewEffectRetirements();
     std::uint32_t rawApplied = 0;
     std::uint32_t initialApplied = 0;
     const auto initialBudget = static_cast<std::uint64_t>(m_voices.Capacity()) * 3u;
@@ -1527,6 +1533,14 @@ std::uint32_t MixerLoop::DrainRawCommands(std::uint64_t blockIndex,
                 command.payload.clearBusEffect.dynamicRoutePlanIndex);
             break;
         case kOpcodeSetBusEffectBypass:
+            if (command.flags == kCommandFlagPreviewBusEffect) {
+                const auto& p = command.payload.previewBusEffectControl;
+                if (p.effectType == VN_EFFECT_LIMITER && p.parameter <= 1)
+                    m_buses.ApplyPreviewEffectControl(BusSlotRef::FromPacked(p.host), p.owner,
+                        p.revision, p.slot, p.parameter, 0, 0, true);
+                break;
+            }
+            if (command.flags != 0) break;
             m_buses.ApplySetBusEffectBypass(
                 command.payload.setBusEffectBypass.busIndex,
                 command.payload.setBusEffectBypass.slot,

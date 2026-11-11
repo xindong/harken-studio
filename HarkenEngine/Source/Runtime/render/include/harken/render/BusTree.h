@@ -28,6 +28,7 @@
 #include "harken/core/CommandQueue.h"
 #include "harken/dsp/GainRamp.h"
 #include "harken/render/EffectPool.h"
+#include "harken/render/BusEffectChainUpdate.h"
 #include "harken/render/DynamicRoute.h"
 #include "harken/render/InsertEffect.h"
 #include "harken/render/TopologyPlan.h"
@@ -53,6 +54,26 @@ public:
     BusTree(const EngineConfig& config, TopologyPlanPool& plans,
             EffectPoolBank& effects, DynamicRouteSystem& dynamicRoutes,
             const BiquadTrigTable* biquadTrig = nullptr);
+
+    ~BusTree();
+    BusEffectChainState* PreviewEffectState(BusSlotRef ref) const noexcept;
+    bool PreviewEffectOwned(BusSlotRef ref) const noexcept;
+    bool PreviewMasterEffectsClaimedByOther(std::uint64_t owner) const noexcept;
+    VnResult PreparePreviewEffectChain(BusSlotRef host, std::uint64_t owner,
+        const std::array<PreviewEffectChainEntry, kMaxFxSlotsPerBus>& targets,
+        const std::array<EffectInstanceRef, kMaxFxSlotsPerBus>& current,
+        VnObjectId projectId, PreparedBusEffectChain& out) noexcept;
+    bool CanCommitPreviewEffectChain(const PreparedBusEffectChain& prepared) const noexcept;
+    void CancelPreviewEffectChain(PreparedBusEffectChain& prepared) noexcept;
+    void CommitPreviewEffectChain(const PreparedBusEffectChain& prepared) noexcept;
+    void ApplyPreviewEffectChain(const BusEffectChainAdoption& adoption) noexcept;
+    void ApplyPreviewEffectControl(BusSlotRef host, std::uint64_t owner,
+        std::uint64_t revision, std::uint32_t slot, std::uint32_t parameter,
+        float prepared, std::uint32_t frames, bool bypass) noexcept;
+    void ForgetPreviewEffectOwner(BusSlotRef ref) noexcept;
+    void DrainPreviewEffectChains() noexcept;
+    void ServicePreviewEffectRetirements() noexcept;
+    void ShutdownPreviewEffectChains() noexcept;
 
     struct PreparedBusSlot {
         VnBusId id{};
@@ -398,6 +419,9 @@ public:
         float fxBypassTarget[kMaxFxSlotsPerBus] = {};
         bool fxBypassRamping[kMaxFxSlotsPerBus] = {};
         EffectInstanceRef fxSlotEffectRef[kMaxFxSlotsPerBus];
+        EffectChainUpdate* fxChainTransition = nullptr;
+        std::uint64_t previewEffectOwner = 0;
+        std::uint64_t previewEffectRevision = 0;
         double signalSlotHistory[kMaxFxSlotsPerBus] = {};
         double signalToneHistory[kMaxFxSlotsPerBus][3] = {};
         double signalGainHistory = 1, signalOutputHistory = 1, signalLayoutHistory = 1;
@@ -458,6 +482,9 @@ private:
                            std::uint32_t parentIndex,
                            std::uint32_t generation) noexcept;
     void RetireBusSlotEffects(Bus& bus) noexcept;
+    void RetirePreviewEffectReferences(EffectChainUpdate& update, bool quiescent = false) noexcept;
+    void ReleasePreviewEffectChain(Bus& bus, bool quiescent = false) noexcept;
+    void FinishPreviewEffectChain(Bus& bus, std::uint32_t frames) noexcept;
 
     // One bus->bus send edge's audio-thread level state. Its array slot mirrors
     // the authoritative topology-plan membership slot; equal slot+target keeps
@@ -525,6 +552,8 @@ private:
     // Resized to capacity at Init. [0, m_count) is logic-visible;
     // [m_count, m_materializedCount) may hold one hidden prepared append batch.
     std::vector<Bus> m_buses;
+    std::unique_ptr<std::atomic<BusEffectChainState*>[]> m_previewEffectStates;
+    std::atomic<std::uint32_t> m_pendingPreviewEffects{0};
     // Logic-owned tree-parent shadow and slot liveness, indexed by dense bus
     // index and sized to capacity at init. CreateBus (and a live reparent)
     // write these; the planner reads them through ParentOf; the plan carries

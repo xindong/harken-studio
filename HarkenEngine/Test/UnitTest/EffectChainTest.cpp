@@ -759,3 +759,20 @@ TEST(EffectChain, StructuralTransitionUsesOneSampleClockAcrossPartitionsAndExact
         EXPECT_EQ(257u, newFrames);
     }
 }
+
+TEST(EffectChain, DirectBypassDuringStructuralTransitionUsesWholeCallRampAcrossSuffix) {
+    std::array<float, 256> data{}, dry{}, alternate{};
+    data.fill(1);
+    float* planes[]{data.data()}; float* dries[]{dry.data()}; float* alternatives[]{alternate.data()};
+    AddProbe prior{2.0f, nullptr, nullptr}, next{6.0f, nullptr, nullptr};
+    harken::InsertEffect oldEffect{}, nextEffect{};
+    oldEffect.state = &prior; oldEffect.process = AddProbeProcess;
+    nextEffect.state = &next; nextEffect.process = AddProbeProcess;
+    harken::ProcessTransitionChainSlot(oldEffect, 0, nextEffect, 1, planes,
+        dries, alternatives, 1, 0, 256, 200, 240, 0);
+    for (unsigned i = 0; i < 256; ++i) {
+        const float nextValue = 7 - 6 * (i + 1) / 256.0f;
+        const float alpha = std::min(1.0f, (201 + i) / 240.0f);
+        EXPECT_NEAR(3 * (1 - alpha) + nextValue * alpha, data[i], 1e-6f) << i;
+    }
+}

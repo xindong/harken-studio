@@ -357,6 +357,7 @@ VnPreviewPrepareStatus PrepareProjectImpl(
         }
         if (effects) {
             view.forceWorldReplacement = effects->forceWorldReplacement != 0;
+            view.busFaderPositions = {effects->busFaderAfterSlots, effects->busFaderCount};
             for (std::uint32_t i = 0; i < effects->busEffectCount; ++i) {
                 const auto& row = effects->busEffects[i];
                 project->effects.push_back({row.busId, row.effectId, row.slot, row.effectType,

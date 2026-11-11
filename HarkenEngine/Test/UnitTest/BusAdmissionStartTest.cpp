@@ -1,4 +1,6 @@
 #include "Common/ObjectIdTestSupport.h"
+#include "Common/EffectPoolTestAccess.h"
+#include "UnitTest/CanonicalPackSetActivate.h"
 #include "Common/RawVoiceTestSupport.h"
 #include "Common/TestUtil.h"
 
@@ -2575,10 +2577,13 @@ TEST(BusAdmissionStart, PreviewCommitMigratesPublishedIdentityAndFactsOffDeadSlo
 }
 
 struct LiveBusPublication {
-    std::array<VnBusId, 1> ids{VN_BUS_MASTER};
-    std::array<std::uint8_t, 1> alive{1}, emitted{};
-    std::array<std::uint32_t, 1> generations{}, parents{}, feeders{}, emittedFeeders{};
-    std::array<float, 1> volume{}, neutral{};
+    std::array<VnBusId, 2> ids{VN_BUS_MASTER};
+    std::array<std::uint8_t, 2> alive{1}, emitted{};
+    std::array<std::uint32_t, 2> generations{}, parents{}, feeders{}, emittedFeeders{};
+    std::array<float, 2> volume{}, neutral{};
+    std::array<std::uint32_t, 2> faders{8, 8};
+    std::vector<harken::PreviewBusEffect> effects;
+    std::vector<harken::PreviewEffectParameter> parameters;
     std::vector<std::uint32_t> sends;
     std::vector<float> levels;
     std::vector<std::uint8_t> levelApply;
@@ -2587,7 +2592,7 @@ struct LiveBusPublication {
 
     LiveBusPublication(harken::Engine& engine, const AdmissionWorldImage& image,
                        std::uint32_t vintage)
-        : sends(engine.config.busSendSlotsPerBus, harken::kEmptySendTarget),
+        : sends(engine.config.busSendSlotsPerBus * 2, harken::kEmptySendTarget),
           levels(sends.size()), levelApply(sends.size()), view(MakeInstallView(image)) {
         generations[0] = engine.buses.GenerationAt(0);
         topology.busCount = 1;
@@ -2607,6 +2612,7 @@ struct LiveBusPublication {
         view.authoredBusVolumeDb = volume.data();
         view.authoredBusOutputVolumeDb = neutral.data();
         view.authoredBusCount = 1;
+        if (vintage == 5) view.busFaderPositions = {faders.data(), 1};
     }
 
     void Next(float db) {
@@ -2659,6 +2665,352 @@ void StartLiveBusConsumer(harken::Engine& engine, const AdmissionWorldImage& ima
     }
     ASSERT_TRUE(heard);
     EXPECT_NEAR(expected, engine.nullBackend.LastBlock()[0], 1e-5f);
+}
+
+
+
+void SetLiveBusLimiter(LiveBusPublication& publication, VnBusId bus, unsigned identity = 401) {
+    publication.effects = {{bus, harkentest::ObjectId(identity), 0, VN_EFFECT_LIMITER, 1, 0, 0, 2}};
+    publication.parameters = {{0, -18}, {1, 100}};
+    publication.view.effects = publication.effects;
+    publication.view.effectParameters = publication.parameters;
+}
+
+TEST(BusAdmissionStart, LiveBusV5DirectBypassAdvancesNewBranchAndClearRetirementOwnsMaster) {
+    AdmissionSession fixture;
+    auto& engine = *fixture.session.Engine();
+    LiveBusPublication publication(engine, fixture.image, 5);
+    SetLiveBusLimiter(publication, VN_BUS_MASTER);
+    CommitAndConsumeLiveBus(engine, publication);
+    ASSERT_FALSE(HasFatalFailure());
+    engine.nullBackend.Pump(3);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    const auto limited = std::pow(10.0f, -18.0f / 20.0f);
+    StartLiveBusConsumer(engine, fixture.image, limited);
+    ASSERT_FALSE(HasFatalFailure());
+    publication.Next(0);
+    SetLiveBusLimiter(publication, VN_BUS_MASTER, 402);
+    harken::PreparedProjectGenerationV1 prepared;
+    ASSERT_EQ(harken::ProjectGenerationPrepareStatusV1::Ok,
+        harken::PrepareProjectGenerationV1(engine, publication.view, prepared).status);
+    ASSERT_EQ(harken::ProjectGenerationCommitStatusV1::Ok,
+        harken::CommitPreparedProjectGenerationV1(engine, prepared).status);
+    ASSERT_EQ(VN_OK, Vn_SetBusEffectBypass(VN_BUS_MASTER, 0, 1));
+    const auto block = engine.mixer.BlocksRendered();
+    engine.nullBackend.Pump(1);
+    ASSERT_GT(engine.mixer.BlocksRendered(), block);
+    for (unsigned i = 0; i < 64; ++i) {
+        const float expected = limited + (0.25f - limited) * (i + 1) / 64.0f * (i + 1) / 240.0f;
+        EXPECT_NEAR(expected, engine.nullBackend.LastBlock()[i * 2], 2e-6f) << i;
+    }
+    engine.nullBackend.Pump(3);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    const auto old = engine.busEffectInstanceRefs[0][0];
+    publication.Next(0);
+    publication.view.effects = {};
+    publication.view.effectParameters = {};
+    ASSERT_EQ(harken::ProjectGenerationPrepareStatusV1::Ok,
+        harken::PrepareProjectGenerationV1(engine, publication.view, prepared).status);
+    ASSERT_EQ(harken::ProjectGenerationCommitStatusV1::Ok,
+        harken::CommitPreparedProjectGenerationV1(engine, prepared).status);
+    auto& lane = harken::detail::EffectPoolTestAccess::RetireLane(engine.effectBank, old);
+    unsigned filled = 0;
+    while (lane.TryPush({})) ++filled;
+    ASSERT_GT(filled, 0u);
+    engine.nullBackend.Pump(4);
+    auto* state = engine.buses.PreviewEffectState(engine.buses.RefAt(0));
+    ASSERT_NE(nullptr, state);
+    EXPECT_EQ(harken::EffectChainUpdate::Phase::Retiring, state->update.phase.load());
+    EXPECT_EQ(1u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+    EXPECT_FALSE(harken::PreviewMasterCompatible(engine, harken::NeutralMasterFingerprintV1(engine)));
+    LiveBusPublication other(engine, fixture.image, 5);
+    other.view.ownerId = 88;
+    EXPECT_NE(harken::ProjectGenerationPrepareStatusV1::Ok,
+        harken::PrepareProjectGenerationV1(engine, other.view, prepared).status);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    engine.nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(harken::EffectChainUpdate::Phase::Free, state->update.phase.load());
+    EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+    CommitAndConsumeLiveBus(engine, other);
+    ASSERT_FALSE(HasFatalFailure());
+    publication.Next(0);
+    SetLiveBusLimiter(publication, VN_BUS_MASTER);
+    EXPECT_EQ(harken::ProjectGenerationPrepareStatusV1::CapabilityUnavailable,
+        harken::PrepareProjectGenerationV1(engine, publication.view, prepared).status);
+}
+
+TEST(BusAdmissionStart, LiveBusV5DeletionRetainsRetirementAndReusesNewGeneration) {
+    AdmissionSession fixture;
+    auto& engine = *fixture.session.Engine();
+    LiveBusPublication publication(engine, fixture.image, 5);
+    const auto child = harkentest::ObjectId(600);
+    publication.ids[1] = child;
+    publication.alive[1] = 1;
+    publication.generations[1] = 1;
+    publication.topology.busCount = publication.view.authoredBusCount = 2;
+    publication.view.busFaderPositions = publication.faders;
+    SetLiveBusLimiter(publication, child);
+    CommitAndConsumeLiveBus(engine, publication);
+    ASSERT_FALSE(HasFatalFailure());
+    engine.nullBackend.Pump(3);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    const auto host = engine.buses.FindRef(child);
+    auto* state = engine.buses.PreviewEffectState(host);
+    ASSERT_NE(nullptr, state);
+    const auto old = engine.busEffectInstanceRefs[host.index][0];
+    publication.Next(0);
+    publication.topology.busCount = publication.view.authoredBusCount = 1;
+    publication.view.busFaderPositions = {publication.faders.data(), 1};
+    publication.view.effects = {};
+    publication.view.effectParameters = {};
+    harken::PreparedProjectGenerationV1 prepared;
+    ASSERT_EQ(harken::ProjectGenerationPrepareStatusV1::Ok,
+        harken::PrepareProjectGenerationV1(engine, publication.view, prepared).status);
+    ASSERT_EQ(harken::ProjectGenerationCommitStatusV1::Ok,
+        harken::CommitPreparedProjectGenerationV1(engine, prepared).status);
+    auto& lane = harken::detail::EffectPoolTestAccess::RetireLane(engine.effectBank, old);
+    while (lane.TryPush({})) {}
+    engine.nullBackend.Pump(1);
+    EXPECT_FALSE(engine.buses.FindRef(child).Valid());
+    EXPECT_EQ(harken::EffectChainUpdate::Phase::Retiring, state->update.phase.load());
+    EXPECT_EQ(1u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    engine.nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+    publication.Next(0);
+    publication.topology.busCount = publication.view.authoredBusCount = 2;
+    publication.view.busFaderPositions = publication.faders;
+    SetLiveBusLimiter(publication, child, 403);
+    CommitAndConsumeLiveBus(engine, publication);
+    ASSERT_FALSE(HasFatalFailure());
+    const auto current = engine.buses.FindRef(child);
+    EXPECT_EQ(host.index, current.index);
+    EXPECT_GT(current.generation, host.generation);
+    engine.nullBackend.Pump(3);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(1u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+}
+
+TEST(BusAdmissionStart, LiveBusV5RejectsVariableAndProbeAttachmentsIncludingLegacyAndLateRows) {
+    for (const bool probe : {false, true}) {
+        for (const bool late : {false, true}) {
+            SCOPED_TRACE(probe);
+            SCOPED_TRACE(late);
+            AdmissionSession fixture;
+            auto& engine = *fixture.session.Engine();
+            LiveBusPublication publication(engine, fixture.image, 5);
+            SetLiveBusLimiter(publication, VN_BUS_MASTER);
+            const auto binding = harkentest::ObjectId(700);
+            const auto scope = VN_TARGET_SCOPE_BUS_EFFECT_PARAM;
+            const auto target = harken::PackEffectParamLocator(VN_EFFECT_LIMITER, 0, 0);
+            const harken::CurvePoint points[]{{0, -18}, {1, -6}};
+            const harken::CurveHandlePair handles[]{{0, -18, 1, -6}};
+            if (probe) ASSERT_EQ(VN_OK, engine.bindings.RegisterProbeBinding(binding,
+                harkentest::ObjectId(701), 1, scope, target, points, handles, 2, 0));
+            else ASSERT_EQ(VN_OK, engine.bindings.RegisterBinding(binding,
+                harkentest::ObjectId(701), scope, target, points, handles, 2, 0, &engine.logicLogRing));
+            harken::PreparedProjectGenerationV1 prepared;
+            if (late) ASSERT_EQ(harken::ProjectGenerationPrepareStatusV1::Ok,
+                harken::PrepareProjectGenerationV1(engine, publication.view, prepared).status);
+            if (probe) ASSERT_EQ(VN_OK, engine.bindings.AttachProbe(binding, scope, VN_BUS_MASTER, 0, 0, 0));
+            else ASSERT_EQ(VN_OK, engine.bindings.Attach(binding, scope, VN_BUS_MASTER, 0, &engine.logicLogRing));
+            const auto head = engine.commands.PublishedHead();
+            if (late) EXPECT_EQ(harken::ProjectGenerationCommitStatusV1::InvalidPrepared,
+                harken::CommitPreparedProjectGenerationV1(engine, prepared).status);
+            else EXPECT_EQ(harken::ProjectGenerationPrepareStatusV1::CapabilityUnavailable,
+                harken::PrepareProjectGenerationV1(engine, publication.view, prepared).status);
+            EXPECT_EQ(head, engine.commands.PublishedHead());
+        }
+    }
+}
+
+
+TEST(BusAdmissionStart, LiveBusV5OwnerRejectsProbeAndCanonicalEffectAttachments) {
+    AdmissionSession fixture;
+    auto& engine = *fixture.session.Engine();
+    LiveBusPublication publication(engine, fixture.image, 5);
+    const auto child = harkentest::ObjectId(600);
+    publication.ids[1] = child;
+    publication.alive[1] = 1;
+    publication.generations[1] = 1;
+    publication.topology.busCount = publication.view.authoredBusCount = 2;
+    publication.view.busFaderPositions = publication.faders;
+    SetLiveBusLimiter(publication, child);
+    CommitAndConsumeLiveBus(engine, publication);
+    ASSERT_FALSE(HasFatalFailure());
+    engine.nullBackend.Pump(3);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    const auto probe = harkentest::ObjectId(750), binding = harkentest::ObjectId(751);
+    std::uint32_t generation = 0;
+    ASSERT_EQ(VN_OK, harken::InstallMeterProbe(engine, probe, VN_BUS_MASTER,
+        VN_BUS_METER_TAP_POST_EFFECTS, 0, 0, &generation));
+    ASSERT_EQ(harken::MeterSystem::State::Installed, engine.meterDetectors.Find(probe)->state);
+    const harken::CurvePoint points[]{{-96, 0}, {0, 0}};
+    const harken::CurveHandlePair handles[]{{-96, 0, 0, 0}};
+    const auto target = harken::PackEffectParamLocator(VN_EFFECT_LIMITER, 0, 0);
+    ASSERT_EQ(VN_OK, harken::DefineMeterProbeBinding(engine, binding, probe, generation,
+        VN_TARGET_SCOPE_BUS_EFFECT_PARAM, target, points, handles, 2, 0));
+    EXPECT_EQ(VN_IN_USE, harken::AttachMeterProbeBinding(engine, binding,
+        VN_TARGET_SCOPE_BUS_EFFECT_PARAM, child, 0, engine.buses.FindRef(child).generation));
+    EXPECT_EQ(0u, engine.bindings.ProbeAttachmentCount());
+    VnBindingDesc desc{};
+    desc.structSize = sizeof(desc);
+    desc.variableId = harkentest::ObjectId(752);
+    desc.targetScopeKind = VN_TARGET_SCOPE_BUS_EFFECT_PARAM;
+    desc.targetId = target;
+    desc.curve.structSize = sizeof(desc.curve);
+    desc.curve.pointCount = 2;
+    desc.curve.points[0] = {0, -18}; desc.curve.points[1] = {1, -6};
+    desc.curve.handles[0] = {0, -18, 1, -6};
+    harken::PackBindingAttachmentEntry attachment{};
+    attachment.bindingId = harkentest::ObjectId(753);
+    attachment.scopeKind = VN_TARGET_SCOPE_BUS_EFFECT_PARAM;
+    attachment.objectId = child;
+    const auto head = engine.commands.PublishedHead();
+    const auto activation = harkentest::ActivateInitBytesV1(
+        std::filesystem::path(HARKEN_TEMP_DIR) / "preview-effect-binding-conflict",
+        harkentest::WithCanonicalBindingRows(harkentest::BuildMasterOnlyInitBytes(),
+            attachment.bindingId, desc, &attachment), harkentest::packfoundation::kInitPackStableId);
+    EXPECT_EQ(VN_IN_USE, activation.result);
+    EXPECT_EQ(nullptr, engine.packComposition.Published());
+    EXPECT_EQ(nullptr, engine.bindings.Find(attachment.bindingId));
+    EXPECT_EQ(head, engine.commands.PublishedHead());
+}
+
+
+TEST(BusAdmissionStart, LiveBusV5CancelAndFinalPreflightRefusalReleaseOnlyPreparedReplacement) {
+    for (const bool refuseCommit : {false, true}) {
+        SCOPED_TRACE(refuseCommit);
+        AdmissionSession fixture;
+        auto& engine = *fixture.session.Engine();
+        LiveBusPublication publication(engine, fixture.image, 5);
+        SetLiveBusLimiter(publication, VN_BUS_MASTER);
+        CommitAndConsumeLiveBus(engine, publication);
+        ASSERT_FALSE(HasFatalFailure());
+        engine.nullBackend.Pump(3);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        const auto limited = std::pow(10.0f, -18.0f / 20.0f);
+        StartLiveBusConsumer(engine, fixture.image, limited);
+        ASSERT_FALSE(HasFatalFailure());
+        const auto old = engine.busEffectInstanceRefs[0][0];
+        auto* state = engine.buses.PreviewEffectState(engine.buses.RefAt(0));
+        ASSERT_NE(nullptr, state);
+        const auto revision = state->revision;
+        const auto head = engine.commands.PublishedHead();
+        publication.Next(0);
+        SetLiveBusLimiter(publication, VN_BUS_MASTER, 402);
+        publication.parameters[0].value = -24;
+        harken::PreparedProjectGenerationV1 prepared;
+        ASSERT_EQ(harken::ProjectGenerationPrepareStatusV1::Ok,
+            harken::PrepareProjectGenerationV1(engine, publication.view, prepared).status);
+        EXPECT_EQ(2u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+        EXPECT_EQ(harken::EffectChainUpdate::Phase::Preparing, state->update.phase.load());
+        if (refuseCommit) {
+            harken::detail::ArmLogicAllocFaultForTests(1,
+                harken::detail::LogicAllocSite::ProjectFinalPreflight);
+            const auto result = harken::CommitPreparedProjectGenerationV1(engine, prepared);
+            harken::detail::DisarmLogicAllocFaultForTests();
+            EXPECT_EQ(harken::ProjectGenerationCommitStatusV1::Backpressure, result.status);
+        }
+        EXPECT_EQ(head, engine.commands.PublishedHead());
+        EXPECT_EQ(revision, state->revision);
+        EXPECT_EQ(old.poolIndex, engine.busEffectInstanceRefs[0][0].poolIndex);
+        EXPECT_EQ(old.generation, engine.busEffectInstanceRefs[0][0].generation);
+        const auto block = engine.mixer.BlocksRendered();
+        engine.nullBackend.Pump(1);
+        ASSERT_GT(engine.mixer.BlocksRendered(), block);
+        EXPECT_NEAR(limited, engine.nullBackend.LastBlock()[0], 1e-6f);
+        harken::CancelPreparedProjectGenerationV1(engine, std::move(prepared));
+        EXPECT_EQ(harken::EffectChainUpdate::Phase::Free, state->update.phase.load());
+        EXPECT_EQ(1u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+        EXPECT_NE(nullptr, engine.effectBank.LiveStateFor(old));
+        EXPECT_EQ(0u, engine.preparedTopologyPlans.InUse());
+        CommitAndConsumeLiveBus(engine, publication);
+        ASSERT_FALSE(HasFatalFailure());
+        engine.nullBackend.Pump(3);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        EXPECT_EQ(1u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+        EXPECT_EQ(nullptr, engine.effectBank.LiveStateFor(old));
+        EXPECT_EQ(revision + 1, state->revision);
+        // The fourth block begins at transition sample 193; its final frames
+        // are the exact new branch after the shared 240-sample endpoint.
+        EXPECT_NEAR(std::pow(10.0f, -24.0f / 20.0f), engine.nullBackend.LastBlock()[126], 1e-6f);
+    }
+}
+
+TEST(BusAdmissionStart, LiveBusV5AtomicEightSlotsPreserveInstancesAndRejectStalePrepared) {
+    AdmissionSession fixture;
+    auto& engine = *fixture.session.Engine();
+    LiveBusPublication publication(engine, fixture.image, 5);
+    for (std::uint32_t slot = 0; slot < 8; ++slot) {
+        publication.effects.push_back({VN_BUS_MASTER, harkentest::ObjectId(400 + slot),
+            slot, VN_EFFECT_LIMITER, 1, 0, slot * 2, 2});
+        publication.parameters.push_back({0, -18.0f});
+        publication.parameters.push_back({1, 100.0f});
+    }
+    publication.view.effects = publication.effects;
+    publication.view.effectParameters = publication.parameters;
+    harken::PreparedProjectGenerationV1 prepared;
+    ASSERT_EQ(harken::ProjectGenerationPrepareStatusV1::Ok,
+        harken::PrepareProjectGenerationV1(engine, publication.view, prepared).status);
+    const auto head = engine.commands.PublishedHead();
+    ASSERT_EQ(harken::ProjectGenerationCommitStatusV1::Ok,
+        harken::CommitPreparedProjectGenerationV1(engine, prepared).status);
+    EXPECT_EQ(head + 1, engine.commands.PublishedHead());
+    engine.nullBackend.Pump(4);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    const auto refs = engine.busEffectInstanceRefs[0];
+    StartLiveBusConsumer(engine, fixture.image, std::pow(10.0f, -18.0f / 20.0f));
+    ASSERT_FALSE(HasFatalFailure());
+    publication.Next(0);
+    CommitAndConsumeLiveBus(engine, publication);
+    ASSERT_FALSE(HasFatalFailure());
+    for (std::uint32_t slot = 0; slot < 8; ++slot) {
+        EXPECT_EQ(refs[slot].poolIndex, engine.busEffectInstanceRefs[0][slot].poolIndex);
+        EXPECT_EQ(refs[slot].generation, engine.busEffectInstanceRefs[0][slot].generation);
+    }
+    publication.Next(0);
+    ASSERT_EQ(harken::ProjectGenerationPrepareStatusV1::Ok,
+        harken::PrepareProjectGenerationV1(engine, publication.view, prepared).status);
+    ASSERT_EQ(VN_OK, Vn_SetBusEffectParam(VN_BUS_MASTER, 0, 0, -12.0f));
+    const auto afterDirect = engine.commands.PublishedHead();
+    EXPECT_EQ(harken::ProjectGenerationCommitStatusV1::InvalidPrepared,
+        harken::CommitPreparedProjectGenerationV1(engine, prepared).status);
+    EXPECT_EQ(afterDirect, engine.commands.PublishedHead());
+    EXPECT_EQ(VN_IN_USE, Vn_ClearBusEffect(VN_BUS_MASTER, 0));
+    VnGainDesc gain{};
+    gain.structSize = sizeof(gain);
+    gain.effectId = harkentest::ObjectId(799);
+    EXPECT_EQ(VN_IN_USE, Vn_SetBusEffect(VN_BUS_MASTER, 0, VN_EFFECT_GAIN,
+        reinterpret_cast<const VnEffectDesc*>(&gain)));
+    VnBindingDesc binding{};
+    binding.structSize = sizeof(binding);
+    binding.variableId = harkentest::ObjectId(710);
+    binding.targetScopeKind = VN_TARGET_SCOPE_BUS_EFFECT_PARAM;
+    binding.targetId = harken::PackEffectParamLocator(VN_EFFECT_LIMITER, 0, 0);
+    binding.curve.structSize = sizeof(VnCurveDesc);
+    binding.curve.pointCount = 2;
+    binding.curve.points[0] = {0, -18}; binding.curve.points[1] = {1, -6};
+    binding.curve.handles[0] = {0, -18, 1, -6};
+    ASSERT_EQ(VN_OK, Vn_RegisterBinding(harkentest::ObjectId(711), &binding));
+    VnBindingAttachDesc attach{};
+    attach.structSize = sizeof(attach);
+    attach.scopeKind = VN_TARGET_SCOPE_BUS_EFFECT_PARAM;
+    attach.objectId = VN_BUS_MASTER;
+    EXPECT_EQ(VN_IN_USE, Vn_AttachBinding(harkentest::ObjectId(711), &attach));
+    auto* state = engine.buses.PreviewEffectState(engine.buses.RefAt(0));
+    ASSERT_NE(nullptr, state);
+    const auto revision = state->revision;
+    const auto accepted = state->accepted[0].ceilingDb;
+    harken::CommandRecord filler{};
+    filler.opcode = harken::kOpcodeSetBusEffectBypass;
+    while (engine.commands.TryPush(filler)) {}
+    EXPECT_EQ(VN_BACKPRESSURE, Vn_SetBusEffectParam(VN_BUS_MASTER, 0, 0, -9));
+    EXPECT_EQ(revision, state->revision);
+    EXPECT_EQ(accepted, state->accepted[0].ceilingDb);
+
 }
 
 TEST(BusAdmissionStart, LiveBusV3AndV4RetainActualConsumerAndValidatedWorld) {

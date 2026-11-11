@@ -72,10 +72,11 @@ static_assert(sizeof(harken::CommandRecord::Payload::SetBusEffectParam) == 52,
 static_assert(
     harken::kCommandKnownFlagsMask ==
         (harken::kCommandFlagPreparedCompressor |
-         harken::kCommandFlagVariableWeightSegment) &&
+         harken::kCommandFlagVariableWeightSegment | harken::kCommandFlagPreviewBusEffect) &&
         harken::kCommandFlagPreparedCompressor == 0x01u &&
-        harken::kCommandFlagVariableWeightSegment == 0x02u,
-    "prepared compressor and variable weight own distinct flags");
+        harken::kCommandFlagVariableWeightSegment == 0x02u &&
+        harken::kCommandFlagPreviewBusEffect == 0x04u,
+    "prepared compressor, variable weight and Preview Bus effects own distinct flags");
 static_assert(
     sizeof(harken::CommandRecord::Payload::SetCompressorEffectParam) == 56,
     "prepared compressor payload fills the fixed record");

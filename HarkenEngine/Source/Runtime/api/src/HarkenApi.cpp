@@ -5585,6 +5585,7 @@ VnResult AttachBinding(Engine& engine, BindingId id, std::uint32_t scopeKind,
         if (def == nullptr) {
             return VN_UNKNOWN_ID;
         }
+        if (engine.buses.PreviewEffectOwned(engine.buses.RefAt(busIndex))) return VN_IN_USE;
         if (!engine.effectParamTargets.CanBind(
                 EffectParamTargetStore::Scope::Bus, busIndex,
                 UnpackEffectParamLocator(def->targetId))) {
@@ -82596,6 +82597,7 @@ VnResult SetPreviewVoiceEffectChain(std::uint64_t render,
     if (!engine->commands.ReserveBatch(1, &reservation)) return VN_BACKPRESSURE;
     engine->effectBank.DrainRetire();
     engine->voices.DrainEffectChainUpdates();
+    engine->buses.DrainPreviewEffectChains();
     EffectChainUpdate* update = nullptr;
     const auto prepared = engine->voices.PrepareEffectChainUpdate(render, targets,
         engine->voiceEffectInstanceRefs[row], parameterMask, bypassMask, engine->CurrentProjectId(), &update);
@@ -111814,6 +111816,7 @@ VnResult Vn_Update(void) {
      * returns each retired instance to its pool here. */
     engine->effectBank.DrainRetire();
     engine->voices.DrainEffectChainUpdates();
+    engine->buses.DrainPreviewEffectChains();
     /* Hot-reload retirement detection: destroy every old content generation
      * whose last logical voice has drained. The audio thread only ever
      * decrements the shared use counters; all freeing happens here on the
@@ -117109,6 +117112,7 @@ VnResult Vn_SetBusEffect(VnBusId busId, uint32_t slot, VnEffectType type,
     std::uint32_t busIndex = harken::kInvalidBusIndex;
     const VnResult mutableBus = ResolveMutableBusProperties(*engine, busId, busIndex);
     if (mutableBus != VN_OK) return mutableBus;
+    if (engine->buses.PreviewEffectOwned(engine->buses.RefAt(busIndex))) return VN_IN_USE;
     if (engine->busEffectOwnerCookies[busIndex][slot] != 0) {
         return VN_IN_USE;
     }
@@ -117275,6 +117279,7 @@ VnResult Vn_ClearBusEffect(VnBusId busId, uint32_t slot) {
     std::uint32_t busIndex = harken::kInvalidBusIndex;
     const VnResult mutableBus = ResolveMutableBusProperties(*engine, busId, busIndex);
     if (mutableBus != VN_OK) return mutableBus;
+    if (engine->buses.PreviewEffectOwned(engine->buses.RefAt(busIndex))) return VN_IN_USE;
     if (engine->busEffectOwnerCookies[busIndex][slot] != 0) {
         return VN_IN_USE;
     }
@@ -117364,6 +117369,43 @@ VnResult Vn_ClearBusEffect(VnBusId busId, uint32_t slot) {
         return VN_DEVICE_ERROR;
     }}
 
+static VnResult SetPreviewBusEffectControl(harken::Engine& engine, std::uint32_t busIndex,
+    std::uint32_t slot, std::uint32_t parameter, float value, bool bypass) {
+    const auto host = engine.buses.RefAt(busIndex);
+    auto* state = engine.buses.PreviewEffectState(host);
+    if (state == nullptr || !engine.buses.PreviewEffectOwned(host)) return VN_IN_USE;
+    if (state->accepted[slot].effectType != VN_EFFECT_LIMITER) return VN_INVALID_ARG;
+    if (state->revision == UINT64_MAX) return VN_RUNTIME_RECREATE_REQUIRED;
+    float prepared = 0;
+    if (!bypass && harken::ValidateEffectParam(VN_EFFECT_LIMITER, parameter, value,
+            engine.config.mixRate.SampleRate()) != VN_OK) return VN_INVALID_ARG;
+    if (!bypass && !harken::PrepareLimiterParam(parameter, value,
+            engine.config.mixRate.SampleRate(), &prepared)) return VN_INVALID_ARG;
+    if (harken::HasPreviewEffectAttachment(engine, host)) return VN_IN_USE;
+    if (!AdmitSingleCommand(engine)) return VN_BACKPRESSURE;
+    harken::CommandQueue::BatchReservation reservation{};
+    if (!engine.commands.ReserveBatch(1, &reservation)) return VN_BACKPRESSURE;
+    harken::CommandRecord command{};
+    command.opcode = bypass ? harken::kOpcodeSetBusEffectBypass : harken::kOpcodeSetBusEffectParam;
+    command.flags = harken::kCommandFlagPreviewBusEffect;
+    command.payload.previewBusEffectControl = {host.Packed(), state->owner, state->revision + 1,
+        slot, parameter, bypass ? 0.0f : value, prepared,
+        bypass ? 0u : std::max(1u, static_cast<std::uint32_t>(
+            (static_cast<std::uint64_t>(engine.config.mixRate.SampleRate()) * 5u + 999u) / 1000u)),
+        VN_EFFECT_LIMITER};
+    if (!engine.commands.CommitReservedBatch(&reservation, &command)) {
+        engine.commands.CancelReservedBatch(&reservation);
+        return VN_BACKPRESSURE;
+    }
+    ++state->revision;
+    if (bypass) {
+        state->accepted[slot].bypass = parameter != 0;
+        engine.busEffectSlotBypass[busIndex][slot] = static_cast<std::uint8_t>(parameter);
+    } else if (parameter == harken::kLimiterParamCeilingDb) state->accepted[slot].ceilingDb = value;
+    else state->accepted[slot].releaseMs = value;
+    return VN_OK;
+}
+
 VnResult Vn_SetBusEffectParam(VnBusId busId, uint32_t slot, uint32_t paramIndex,
                               float value) {
     try {
@@ -117386,7 +117428,10 @@ VnResult Vn_SetBusEffectParam(VnBusId busId, uint32_t slot, uint32_t paramIndex,
     if (!std::isfinite(value)) {
         return VN_INVALID_ARG;
     }
-    std::uint32_t busIndex = harken::kInvalidBusIndex;
+    std::uint32_t busIndex = engine->buses.FindIndex(busId);
+    if (busIndex != harken::kInvalidBusIndex &&
+        engine->buses.PreviewEffectOwned(engine->buses.RefAt(busIndex)))
+        return SetPreviewBusEffectControl(*engine, busIndex, slot, paramIndex, value, false);
     const VnResult mutableBus = ResolveMutableBusProperties(*engine, busId, busIndex);
     if (mutableBus != VN_OK) return mutableBus;
     if (engine->busEffectOwnerCookies[busIndex][slot] != 0) {
@@ -117469,7 +117514,10 @@ VnResult Vn_SetBusEffectBypass(VnBusId busId, uint32_t slot,
     if (slot >= engine->config.fxSlotsPerBus) {
         return VN_INVALID_ARG;
     }
-    std::uint32_t busIndex = harken::kInvalidBusIndex;
+    std::uint32_t busIndex = engine->buses.FindIndex(busId);
+    if (busIndex != harken::kInvalidBusIndex &&
+        engine->buses.PreviewEffectOwned(engine->buses.RefAt(busIndex)))
+        return SetPreviewBusEffectControl(*engine, busIndex, slot, bypass01, 0, true);
     const VnResult mutableBus = ResolveMutableBusProperties(*engine, busId, busIndex);
     if (mutableBus != VN_OK) return mutableBus;
     if (engine->busEffectOwnerCookies[busIndex][slot] != 0) {
@@ -123793,6 +123841,16 @@ bool CombinedBusGraphAcyclic(const CombinedBusGraph& graph) {
     return count == n;
 }
 
+template<class AttachmentRange>
+bool PreviewBusEffectAttachmentConflict(const harken::Engine& engine, const AttachmentRange& attachments) {
+    for (const auto& attachment : attachments) {
+        if (attachment.scopeKind != VN_TARGET_SCOPE_BUS_EFFECT_PARAM) continue;
+        const auto ref = engine.buses.FindRef(attachment.objectId);
+        if (engine.buses.PreviewEffectOwned(ref)) return true;
+    }
+    return false;
+}
+
 VnResult ValidatePackBusEffectAttachment(
     const harken::Engine& engine, const harken::PackLogicImage& image,
     const harken::PackBindingAttachmentEntry& attachment) {
@@ -123805,6 +123863,7 @@ VnResult ValidatePackBusEffectAttachment(
         return VN_UNKNOWN_ID;
     }
 
+    if (engine.buses.PreviewEffectOwned(engine.buses.RefAt(busIndex))) return VN_IN_USE;
     const harken::BindingTable::Definition* definition = nullptr;
     bool packDefinitionFound = false;
     std::uint32_t targetId = 0;
@@ -127008,6 +127067,13 @@ VnResult ApplyPreparedPackTransaction(
         return VN_BACKPRESSURE;
     }
 
+    if (PreviewBusEffectAttachmentConflict(engine, image.bindingAttachments)) {
+        if (commandCount != 0) queueGuard.Cancel();
+        CancelRevisionAttenuationDiscrete(engine, revision);
+        CancelRevisionBindings(engine, revision);
+        return VN_IN_USE;
+    }
+
     // The media generation swap is the final fallible operation. It guarantees
     // zero mutation on refusal, so the unpublished queue ticket can be
     // cancelled and the complete activation attempt retried.
@@ -129828,6 +129894,7 @@ VnResult PrepareCanonicalBindingDiff(
             if (bus != VN_OK) {
                 return bus;
             }
+            if (engine.buses.PreviewEffectOwned(engine.buses.RefAt(busIndex))) return VN_IN_USE;
             if (!engine.effectParamTargets.CanBind(
                     EffectParamTargetStore::Scope::Bus, busIndex,
                     UnpackEffectParamLocator(targetId))) {
@@ -131720,7 +131787,12 @@ VnResult ActivateCanonicalPackSetImpl(
                 if (PackFault(PackStagingFault::AfterAllPreparedBeforeCommit)) {
                     return VN_PACK_RESIDENT_CAPACITY;
                 }
-                if (!CanCommitCanonicalVolumesV2(engine, prepared) ||
+                for (const auto& member : prepared.members)
+                    if (PreviewBusEffectAttachmentConflict(engine, member.image.bindingAttachments))
+                        return VN_IN_USE;
+                if (!PreviewMasterCompatible(engine,
+                        prepared.publication.composition.Published()->ledger.masterFingerprint) ||
+                    !CanCommitCanonicalVolumesV2(engine, prepared) ||
                     !CanCommitSignals(engine, prepared.publication.signals) ||
                     engine.packComposition.Published() != prepared.basePublication ||
                     engine.packComposition.CompositeGeneration() !=
