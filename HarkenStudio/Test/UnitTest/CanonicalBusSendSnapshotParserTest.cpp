@@ -10,6 +10,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <initializer_list>
 #include <utility>
 #include <vector>
@@ -23,7 +24,8 @@ std::uint64_t AlignPackPayload(std::uint64_t value) {
 
 std::vector<std::uint8_t> MakeBusSendSnapshotPack(
     std::uint32_t capability, bool destinationIsChildOfSource,
-    std::initializer_list<std::pair<VnObjectId, VnObjectId>> sends) {
+    std::initializer_list<std::pair<VnObjectId, VnObjectId>> sends,
+    const std::function<void(harken::PackCanonicalImage&)>& edit = {}) {
     const VnObjectId source = harkentest::ObjectId(801);
     const VnObjectId destination = harkentest::ObjectId(802);
     harken::PackCanonicalImage image;
@@ -70,13 +72,17 @@ std::vector<std::uint8_t> MakeBusSendSnapshotPack(
     snapshot.sendRowBytes = harken::kPackBusDefinitionSendBytes;
     snapshot.downmixRowBytes = harken::kPackBusDefinitionDownmixBytes;
     snapshot.coefficientRowBytes = harken::kPackBusDefinitionCoefficientBytes;
-    snapshot.contentGeneration = harken::CanonicalVolumeBusFingerprint(image);
+    if (edit) edit(image);
+    snapshot.contentGeneration = harken::CanonicalVolumeBusFingerprint(image,
+        image.busDefinitionEffects, image.busDefinitionEffectParameters);
     snapshot.publishedBusFingerprint = snapshot.contentGeneration;
     snapshot.busOffset = snapshot.headerBytes;
     snapshot.sendOffset = snapshot.busOffset + snapshot.busCount * snapshot.busRowBytes;
     snapshot.effectOffset = snapshot.sendOffset + snapshot.sendCount * snapshot.sendRowBytes;
-    snapshot.effectParameterOffset = snapshot.effectOffset;
-    snapshot.downmixOffset = snapshot.effectOffset;
+    snapshot.effectParameterOffset = snapshot.effectOffset +
+        snapshot.effectCount * harken::kPackBusDefinitionEffectBytes;
+    snapshot.downmixOffset = snapshot.effectParameterOffset +
+        snapshot.effectParameterCount * harken::kPackBusDefinitionEffectParameterBytes;
     snapshot.coefficientOffset = snapshot.downmixOffset +
         snapshot.downmixCount * snapshot.downmixRowBytes;
     snapshot.payloadBytes = snapshot.coefficientOffset +
@@ -97,6 +103,12 @@ std::vector<std::uint8_t> MakeBusSendSnapshotPack(
         harken::StoreLEF32(payload.data() + snapshot.coefficientOffset +
             i * snapshot.coefficientRowBytes, image.busDefinitionCoefficients[i]);
     }
+    for (std::uint32_t i = 0; i < snapshot.effectCount; ++i)
+        harken::SerializePackBusDefinitionEffect(image.busDefinitionEffects[i],
+            payload.data() + snapshot.effectOffset + i * harken::kPackBusDefinitionEffectBytes);
+    for (std::uint32_t i = 0; i < snapshot.effectParameterCount; ++i)
+        harken::SerializePackBusDefinitionEffectParameter(image.busDefinitionEffectParameters[i],
+            payload.data() + snapshot.effectParameterOffset + i * harken::kPackBusDefinitionEffectParameterBytes);
     harken::SerializePackBusDefinitionSnapshotHeader(snapshot, payload.data());
     snapshot.checksum = harken::Fnv1a64(payload.data(), payload.size());
     harken::SerializePackBusDefinitionSnapshotHeader(snapshot, payload.data());
@@ -177,6 +189,52 @@ TEST(CanonicalBusSendSnapshotParser, CapabilityFourRejectsCombinedGraphCycles) {
         {{source, destination}, {destination, source}}), false);
     ExpectBothParsers(MakeBusSendSnapshotPack(4, true,
         {{source, destination}}), false);
+}
+
+TEST(CanonicalBusSendSnapshotParser, EffectPublicationSharesIdentitySliceAndValueValidation) {
+    const auto withEffects = [](harken::PackCanonicalImage& image) {
+        auto& header = image.busDefinitionSnapshotHeader;
+        header.effectCount = 2;
+        header.effectParameterCount = 4;
+        header.runtimeCapabilityMask |= (UINT64_C(1) << 19) |
+            (UINT64_C(1) << (32 + VN_EFFECT_LIMITER));
+        header.compileTargetProfileFingerprint = harken::busfingerprint::ProfileFingerprintV1(
+            header.profileVintage, header.renderSampleRateHz, header.mixLayout,
+            header.deviceLayout, header.runtimeCapabilityMask);
+        image.busDefinitionBusesV2[1].effectCount = 2;
+        image.busDefinitionBusesV2[2].effectFirst = 2;
+        image.busDefinitionEffects = {
+            {harkentest::ObjectId(801), harkentest::ObjectId(901), 0, VN_EFFECT_LIMITER, 2, 0, 0, 2},
+            {harkentest::ObjectId(801), harkentest::ObjectId(902), 1, VN_EFFECT_LIMITER, 2, 1, 2, 2}};
+        image.busDefinitionEffectParameters = {{0, -6.0f}, {1, 100.0f}, {0, -12.0f}, {1, 50.0f}};
+    };
+    ExpectBothParsers(MakeBusSendSnapshotPack(5, false, {}, withEffects), true);
+    for (const auto bit : {19u, 32u + VN_EFFECT_LIMITER}) {
+        ExpectBothParsers(MakeBusSendSnapshotPack(5, false, {}, [&](auto& image) {
+            withEffects(image);
+            auto& header = image.busDefinitionSnapshotHeader;
+            header.runtimeCapabilityMask &= ~(UINT64_C(1) << bit);
+            header.compileTargetProfileFingerprint = harken::busfingerprint::ProfileFingerprintV1(
+                header.profileVintage, header.renderSampleRateHz, header.mixLayout,
+                header.deviceLayout, header.runtimeCapabilityMask);
+        }), false);
+    }
+    for (const auto& corrupt : std::vector<std::function<void(harken::PackCanonicalImage&)>>{
+        [](auto& image) { image.busDefinitionEffects[0].flags = 2; },
+        [](auto& image) { image.busDefinitionEffects[1].effectId = image.busDefinitionEffects[0].effectId; },
+        [](auto& image) { image.busDefinitionEffects[1].slot = 0; },
+        [](auto& image) { image.busDefinitionEffects[1].parameterFirst = 1; },
+        [](auto& image) { image.busDefinitionEffects[1].parameterCount = 3; },
+        [](auto& image) { image.busDefinitionEffectParameters[1].index = 0; },
+        [](auto& image) { image.busDefinitionEffectParameters[0].value = 1.0f; },
+        [](auto& image) { image.busDefinitionBusesV2[1].faderAfterSlot = 4; },
+        [](auto& image) { image.busDefinitionBusesV2[2].effectFirst = 0; },
+    }) {
+        ExpectBothParsers(MakeBusSendSnapshotPack(5, false, {}, [&](auto& image) {
+            withEffects(image);
+            corrupt(image);
+        }), false);
+    }
 }
 
 } // namespace

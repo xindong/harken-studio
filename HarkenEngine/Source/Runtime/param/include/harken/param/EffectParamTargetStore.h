@@ -232,6 +232,8 @@ public:
     // clamps to its validated range. Unknown records reduce to 0.
     float Reduce(Scope scope, std::uint64_t objectId, std::uint32_t slot,
                  std::uint32_t paramIndex) const;
+    float AuthoredBase(Scope scope, std::uint64_t objectId, std::uint32_t slot,
+                       std::uint32_t paramIndex) const;
 
     // --- publication ---
 

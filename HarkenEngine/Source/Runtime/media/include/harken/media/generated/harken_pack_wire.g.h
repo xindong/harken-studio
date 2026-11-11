@@ -51,6 +51,8 @@ inline constexpr std::uint32_t kPackVariablePolicyOverlayVintage = 1u;
 inline constexpr std::uint32_t kPackEntryKindVariableRequirements = 27u;
 inline constexpr std::uint32_t kPackVariableRequirementsVintage = 1u;
 inline constexpr std::uint32_t kPackEntryKindVariableNameCatalog = 28u;
+inline constexpr std::uint32_t kPackEntryKindEffectPreset = 29u;
+inline constexpr std::uint32_t kPackEffectPresetVintage = 1u;
 
 [[nodiscard]] inline bool PackEntryKindSupported(std::uint32_t kind) noexcept {
     switch (kind) {
@@ -70,6 +72,7 @@ inline constexpr std::uint32_t kPackEntryKindVariableNameCatalog = 28u;
     case kPackEntryKindBusDefinitionSnapshot: return true;
     case kPackEntryKindVariablePolicyOverlay: return true;
     case kPackEntryKindVariableRequirements: return true;
+    case kPackEntryKindEffectPreset: return true;
     default: return false;
     }
 }
@@ -92,6 +95,7 @@ inline constexpr std::uint32_t kPackEntryKindVariableNameCatalog = 28u;
     case kPackEntryKindBusDefinitionSnapshot: return kPackBusDefinitionSnapshotVintage;
     case kPackEntryKindVariablePolicyOverlay: return kPackVariablePolicyOverlayVintage;
     case kPackEntryKindVariableRequirements: return kPackVariableRequirementsVintage;
+    case kPackEntryKindEffectPreset: return kPackEffectPresetVintage;
     default: return 0;
     }
 }
@@ -114,6 +118,7 @@ inline constexpr std::uint32_t kPackEntryKindVariableNameCatalog = 28u;
     case kPackEntryKindBusDefinitionSnapshot: return vintage == kPackBusDefinitionSnapshotVintage;
     case kPackEntryKindVariablePolicyOverlay: return vintage == kPackVariablePolicyOverlayVintage;
     case kPackEntryKindVariableRequirements: return vintage == kPackVariableRequirementsVintage;
+    case kPackEntryKindEffectPreset: return vintage == kPackEffectPresetVintage;
     default: return false;
     }
 }
@@ -426,14 +431,14 @@ inline constexpr std::uint64_t kPackBodyPayloadEffectNodeHeaderNodeIdOffset = 0U
 inline constexpr std::uint64_t kPackBodyPayloadEffectNodeHeaderEffectIdOffset = 4ULL;
 inline constexpr std::uint64_t kPackBodyPayloadEffectNodeHeaderEffectTypeOffset = 20ULL;
 inline constexpr std::uint64_t kPackBodyPayloadEffectNodeHeaderParamCountOffset = 24ULL;
-inline constexpr std::uint64_t kPackBodyPayloadEffectNodeHeaderReservedOffset = 28ULL;
+inline constexpr std::uint64_t kPackBodyPayloadEffectNodeHeaderFlagsOffset = 28ULL;
 
 inline void SerializePackBodyPayloadEffectNodeHeader(const EffectNodeV1& row, std::uint8_t* out) noexcept {
     StoreLE32(out + 0, static_cast<std::uint32_t>(row.nodeId));
     StoreObjectId(out + 4, row.effectId);
     StoreLE32(out + 20, static_cast<std::uint32_t>(row.effectType));
     StoreLE32(out + 24, static_cast<std::uint32_t>(row.paramCount));
-    std::memset(out + 28, 0, 4);
+    StoreLE32(out + 28, static_cast<std::uint32_t>(row.flags));
 }
 
 [[nodiscard]] inline bool ParsePackBodyPayloadEffectNodeHeader(const std::uint8_t* in, std::uint64_t size, EffectNodeV1* out) noexcept {
@@ -442,9 +447,7 @@ inline void SerializePackBodyPayloadEffectNodeHeader(const EffectNodeV1& row, st
     out->effectId = static_cast<std::remove_cvref_t<decltype(out->effectId)>>(LoadObjectId(in + 4));
     out->effectType = static_cast<std::remove_cvref_t<decltype(out->effectType)>>(LoadLE32(in + 20));
     out->paramCount = static_cast<std::remove_cvref_t<decltype(out->paramCount)>>(LoadLE32(in + 24));
-    for (std::uint64_t i = 0; i < 4; ++i) {
-        if ((in + 28)[i] != 0) return false;
-    }
+    out->flags = static_cast<std::remove_cvref_t<decltype(out->flags)>>(LoadLE32(in + 28));
     return true;
 }
 
@@ -461,6 +464,19 @@ inline void SerializePackBodyPayloadEffectParam(const EffectParamV1& row, std::u
     if (size != kPackBodyPayloadEffectParamBytes) return false;
     out->paramId = static_cast<std::remove_cvref_t<decltype(out->paramId)>>(LoadLE32(in + 0));
     out->valueBits = static_cast<std::remove_cvref_t<decltype(out->valueBits)>>(LoadLE32(in + 4));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBodyPayloadEffectPresetReferenceBytes = 16ULL;
+inline constexpr std::uint64_t kPackBodyPayloadEffectPresetReferencePresetIdOffset = 0ULL;
+
+inline void SerializePackBodyPayloadEffectPresetReference(const EffectNodeV1& row, std::uint8_t* out) noexcept {
+    StoreObjectId(out + 0, row.presetId);
+}
+
+[[nodiscard]] inline bool ParsePackBodyPayloadEffectPresetReference(const std::uint8_t* in, std::uint64_t size, EffectNodeV1* out) noexcept {
+    if (size != kPackBodyPayloadEffectPresetReferenceBytes) return false;
+    out->presetId = static_cast<std::remove_cvref_t<decltype(out->presetId)>>(LoadObjectId(in + 0));
     return true;
 }
 
@@ -2108,6 +2124,56 @@ inline void SerializePackBusDefinitionDownmix(const PackBusDefinitionDownmix& ro
     return true;
 }
 
+inline constexpr std::uint64_t kPackBusDefinitionEffectBytes = 56ULL;
+inline constexpr std::uint64_t kPackBusDefinitionEffectBusIdOffset = 0ULL;
+inline constexpr std::uint64_t kPackBusDefinitionEffectEffectIdOffset = 16ULL;
+inline constexpr std::uint64_t kPackBusDefinitionEffectSlotOffset = 32ULL;
+inline constexpr std::uint64_t kPackBusDefinitionEffectEffectTypeOffset = 36ULL;
+inline constexpr std::uint64_t kPackBusDefinitionEffectDescriptorVintageOffset = 40ULL;
+inline constexpr std::uint64_t kPackBusDefinitionEffectFlagsOffset = 44ULL;
+inline constexpr std::uint64_t kPackBusDefinitionEffectParameterFirstOffset = 48ULL;
+inline constexpr std::uint64_t kPackBusDefinitionEffectParameterCountOffset = 52ULL;
+
+inline void SerializePackBusDefinitionEffect(const PackBusDefinitionEffect& row, std::uint8_t* out) noexcept {
+    StoreObjectId(out + 0, row.busId);
+    StoreObjectId(out + 16, row.effectId);
+    StoreLE32(out + 32, static_cast<std::uint32_t>(row.slot));
+    StoreLE32(out + 36, static_cast<std::uint32_t>(row.effectType));
+    StoreLE32(out + 40, static_cast<std::uint32_t>(row.descriptorVintage));
+    StoreLE32(out + 44, static_cast<std::uint32_t>(row.flags));
+    StoreLE32(out + 48, static_cast<std::uint32_t>(row.parameterFirst));
+    StoreLE32(out + 52, static_cast<std::uint32_t>(row.parameterCount));
+}
+
+[[nodiscard]] inline bool ParsePackBusDefinitionEffect(const std::uint8_t* in, std::uint64_t size, PackBusDefinitionEffect* out) noexcept {
+    if (size != kPackBusDefinitionEffectBytes) return false;
+    out->busId = static_cast<std::remove_cvref_t<decltype(out->busId)>>(LoadObjectId(in + 0));
+    out->effectId = static_cast<std::remove_cvref_t<decltype(out->effectId)>>(LoadObjectId(in + 16));
+    out->slot = static_cast<std::remove_cvref_t<decltype(out->slot)>>(LoadLE32(in + 32));
+    out->effectType = static_cast<std::remove_cvref_t<decltype(out->effectType)>>(LoadLE32(in + 36));
+    out->descriptorVintage = static_cast<std::remove_cvref_t<decltype(out->descriptorVintage)>>(LoadLE32(in + 40));
+    out->flags = static_cast<std::remove_cvref_t<decltype(out->flags)>>(LoadLE32(in + 44));
+    out->parameterFirst = static_cast<std::remove_cvref_t<decltype(out->parameterFirst)>>(LoadLE32(in + 48));
+    out->parameterCount = static_cast<std::remove_cvref_t<decltype(out->parameterCount)>>(LoadLE32(in + 52));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackBusDefinitionEffectParameterBytes = 8ULL;
+inline constexpr std::uint64_t kPackBusDefinitionEffectParameterIndexOffset = 0ULL;
+inline constexpr std::uint64_t kPackBusDefinitionEffectParameterValueOffset = 4ULL;
+
+inline void SerializePackBusDefinitionEffectParameter(const PackBusDefinitionEffectParameter& row, std::uint8_t* out) noexcept {
+    StoreLE32(out + 0, static_cast<std::uint32_t>(row.index));
+    StoreLEF32(out + 4, static_cast<float>(row.value));
+}
+
+[[nodiscard]] inline bool ParsePackBusDefinitionEffectParameter(const std::uint8_t* in, std::uint64_t size, PackBusDefinitionEffectParameter* out) noexcept {
+    if (size != kPackBusDefinitionEffectParameterBytes) return false;
+    out->index = static_cast<std::remove_cvref_t<decltype(out->index)>>(LoadLE32(in + 0));
+    out->value = static_cast<std::remove_cvref_t<decltype(out->value)>>(LoadLEF32(in + 4));
+    return true;
+}
+
 inline constexpr std::uint64_t kPackBusDefinitionSendBytes = 48ULL;
 inline constexpr std::uint64_t kPackBusDefinitionSendSourceOffset = 0ULL;
 inline constexpr std::uint64_t kPackBusDefinitionSendTargetOffset = 16ULL;
@@ -2553,6 +2619,44 @@ inline void SerializePackEffectDynamicRoute(const PackEffectDynamicRouteEntry& r
     for (std::uint64_t i = 0; i < 8; ++i) {
         if ((in + 64)[i] != 0) return false;
     }
+    return true;
+}
+
+inline constexpr std::uint64_t kPackEffectPresetHeaderBytes = 28ULL;
+inline constexpr std::uint64_t kPackEffectPresetHeaderPresetIdOffset = 0ULL;
+inline constexpr std::uint64_t kPackEffectPresetHeaderEffectTypeOffset = 16ULL;
+inline constexpr std::uint64_t kPackEffectPresetHeaderDescriptorVintageOffset = 20ULL;
+inline constexpr std::uint64_t kPackEffectPresetHeaderParamCountOffset = 24ULL;
+
+inline void SerializePackEffectPresetHeader(const PackEffectPresetHeader& row, std::uint8_t* out) noexcept {
+    StoreObjectId(out + 0, row.presetId);
+    StoreLE32(out + 16, static_cast<std::uint32_t>(row.effectType));
+    StoreLE32(out + 20, static_cast<std::uint32_t>(row.descriptorVintage));
+    StoreLE32(out + 24, static_cast<std::uint32_t>(row.paramCount));
+}
+
+[[nodiscard]] inline bool ParsePackEffectPresetHeader(const std::uint8_t* in, std::uint64_t size, PackEffectPresetHeader* out) noexcept {
+    if (size != kPackEffectPresetHeaderBytes) return false;
+    out->presetId = static_cast<std::remove_cvref_t<decltype(out->presetId)>>(LoadObjectId(in + 0));
+    out->effectType = static_cast<std::remove_cvref_t<decltype(out->effectType)>>(LoadLE32(in + 16));
+    out->descriptorVintage = static_cast<std::remove_cvref_t<decltype(out->descriptorVintage)>>(LoadLE32(in + 20));
+    out->paramCount = static_cast<std::remove_cvref_t<decltype(out->paramCount)>>(LoadLE32(in + 24));
+    return true;
+}
+
+inline constexpr std::uint64_t kPackEffectPresetParameterBytes = 8ULL;
+inline constexpr std::uint64_t kPackEffectPresetParameterParamIdOffset = 0ULL;
+inline constexpr std::uint64_t kPackEffectPresetParameterValueBitsOffset = 4ULL;
+
+inline void SerializePackEffectPresetParameter(const PackEffectPresetParameter& row, std::uint8_t* out) noexcept {
+    StoreLE32(out + 0, static_cast<std::uint32_t>(row.paramId));
+    StoreLE32(out + 4, static_cast<std::uint32_t>(row.valueBits));
+}
+
+[[nodiscard]] inline bool ParsePackEffectPresetParameter(const std::uint8_t* in, std::uint64_t size, PackEffectPresetParameter* out) noexcept {
+    if (size != kPackEffectPresetParameterBytes) return false;
+    out->paramId = static_cast<std::remove_cvref_t<decltype(out->paramId)>>(LoadLE32(in + 0));
+    out->valueBits = static_cast<std::remove_cvref_t<decltype(out->valueBits)>>(LoadLE32(in + 4));
     return true;
 }
 
@@ -3358,6 +3462,28 @@ template <class Buffer>
 [[nodiscard]] inline bool MeasurePackBodyPayloadEffectParam(const EffectParamV1&, std::uint64_t& size) noexcept {
     if (size > UINT64_MAX - kPackBodyPayloadEffectParamBytes) return false;
     size += kPackBodyPayloadEffectParamBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBodyPayloadEffectPresetReference(Buffer& buffer, const EffectNodeV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyPayloadEffectPresetReferenceBytes)));
+    auto* bytes = buffer.Take(kPackBodyPayloadEffectPresetReferenceBytes);
+    if (!bytes) return false;
+    SerializePackBodyPayloadEffectPresetReference(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBodyPayloadEffectPresetReference(Buffer& buffer, EffectNodeV1& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBodyPayloadEffectPresetReferenceBytes)));
+    const auto* bytes = buffer.Take(kPackBodyPayloadEffectPresetReferenceBytes);
+    return bytes && ParsePackBodyPayloadEffectPresetReference(bytes, kPackBodyPayloadEffectPresetReferenceBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBodyPayloadEffectPresetReference(const EffectNodeV1&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBodyPayloadEffectPresetReferenceBytes) return false;
+    size += kPackBodyPayloadEffectPresetReferenceBytes;
     return true;
 }
 
@@ -4418,6 +4544,50 @@ template <class Buffer>
 }
 
 template <class Buffer>
+[[nodiscard]] bool AppendPackBusDefinitionEffect(Buffer& buffer, const PackBusDefinitionEffect& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBusDefinitionEffectBytes)));
+    auto* bytes = buffer.Take(kPackBusDefinitionEffectBytes);
+    if (!bytes) return false;
+    SerializePackBusDefinitionEffect(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBusDefinitionEffect(Buffer& buffer, PackBusDefinitionEffect& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBusDefinitionEffectBytes)));
+    const auto* bytes = buffer.Take(kPackBusDefinitionEffectBytes);
+    return bytes && ParsePackBusDefinitionEffect(bytes, kPackBusDefinitionEffectBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBusDefinitionEffect(const PackBusDefinitionEffect&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBusDefinitionEffectBytes) return false;
+    size += kPackBusDefinitionEffectBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackBusDefinitionEffectParameter(Buffer& buffer, const PackBusDefinitionEffectParameter& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBusDefinitionEffectParameterBytes)));
+    auto* bytes = buffer.Take(kPackBusDefinitionEffectParameterBytes);
+    if (!bytes) return false;
+    SerializePackBusDefinitionEffectParameter(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackBusDefinitionEffectParameter(Buffer& buffer, PackBusDefinitionEffectParameter& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackBusDefinitionEffectParameterBytes)));
+    const auto* bytes = buffer.Take(kPackBusDefinitionEffectParameterBytes);
+    return bytes && ParsePackBusDefinitionEffectParameter(bytes, kPackBusDefinitionEffectParameterBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackBusDefinitionEffectParameter(const PackBusDefinitionEffectParameter&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackBusDefinitionEffectParameterBytes) return false;
+    size += kPackBusDefinitionEffectParameterBytes;
+    return true;
+}
+
+template <class Buffer>
 [[nodiscard]] bool AppendPackBusDefinitionSend(Buffer& buffer, const PackBusDefinitionSend& row) noexcept {
     static_assert(noexcept(buffer.Take(kPackBusDefinitionSendBytes)));
     auto* bytes = buffer.Take(kPackBusDefinitionSendBytes);
@@ -4634,6 +4804,50 @@ template <class Buffer>
 [[nodiscard]] inline bool MeasurePackEffectDynamicRoute(const PackEffectDynamicRouteEntry&, std::uint64_t& size) noexcept {
     if (size > UINT64_MAX - kPackEffectDynamicRouteBytes) return false;
     size += kPackEffectDynamicRouteBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackEffectPresetHeader(Buffer& buffer, const PackEffectPresetHeader& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackEffectPresetHeaderBytes)));
+    auto* bytes = buffer.Take(kPackEffectPresetHeaderBytes);
+    if (!bytes) return false;
+    SerializePackEffectPresetHeader(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackEffectPresetHeader(Buffer& buffer, PackEffectPresetHeader& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackEffectPresetHeaderBytes)));
+    const auto* bytes = buffer.Take(kPackEffectPresetHeaderBytes);
+    return bytes && ParsePackEffectPresetHeader(bytes, kPackEffectPresetHeaderBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackEffectPresetHeader(const PackEffectPresetHeader&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackEffectPresetHeaderBytes) return false;
+    size += kPackEffectPresetHeaderBytes;
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool AppendPackEffectPresetParameter(Buffer& buffer, const PackEffectPresetParameter& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackEffectPresetParameterBytes)));
+    auto* bytes = buffer.Take(kPackEffectPresetParameterBytes);
+    if (!bytes) return false;
+    SerializePackEffectPresetParameter(row, bytes);
+    return true;
+}
+
+template <class Buffer>
+[[nodiscard]] bool ReadPackEffectPresetParameter(Buffer& buffer, PackEffectPresetParameter& row) noexcept {
+    static_assert(noexcept(buffer.Take(kPackEffectPresetParameterBytes)));
+    const auto* bytes = buffer.Take(kPackEffectPresetParameterBytes);
+    return bytes && ParsePackEffectPresetParameter(bytes, kPackEffectPresetParameterBytes, &row);
+}
+
+[[nodiscard]] inline bool MeasurePackEffectPresetParameter(const PackEffectPresetParameter&, std::uint64_t& size) noexcept {
+    if (size > UINT64_MAX - kPackEffectPresetParameterBytes) return false;
+    size += kPackEffectPresetParameterBytes;
     return true;
 }
 
@@ -5072,6 +5286,13 @@ template <class Buffer, class Visitor>
         auto&& row = visitor.Header();
         if (!AppendPackBodyPayloadEffectNodeHeader(buffer, row)) return false;
     }
+    if (static_cast<std::uint64_t>(value.effectType) == 4294967295) {
+        {
+            static_assert(noexcept(visitor.PresetReference()));
+            auto&& row = visitor.PresetReference();
+            if (!AppendPackBodyPayloadEffectPresetReference(buffer, row)) return false;
+        }
+    }
     const std::uint64_t paramsCount = static_cast<std::uint64_t>(value.paramCount);
     static_assert(noexcept(visitor.PrepareParams(paramsCount)));
     if (!visitor.PrepareParams(paramsCount)) return false;
@@ -5094,6 +5315,13 @@ template <class Buffer, class Visitor>
         auto&& row = visitor.Header();
         if (!ReadPackBodyPayloadEffectNodeHeader(buffer, row)) return false;
     }
+    if (static_cast<std::uint64_t>(value.effectType) == 4294967295) {
+        {
+            static_assert(noexcept(visitor.PresetReference()));
+            auto&& row = visitor.PresetReference();
+            if (!ReadPackBodyPayloadEffectPresetReference(buffer, row)) return false;
+        }
+    }
     const std::uint64_t paramsCount = static_cast<std::uint64_t>(value.paramCount);
     static_assert(noexcept(buffer.Remaining()));
     if (paramsCount > buffer.Remaining() / 8ULL) return false;
@@ -5115,6 +5343,10 @@ template <class Visitor>
     static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, EffectNodeV1>);
     if (size > UINT64_MAX - 32ULL) return false;
     size += 32ULL;
+    if (static_cast<std::uint64_t>(value.effectType) == 4294967295) {
+        if (size > UINT64_MAX - 16ULL) return false;
+        size += 16ULL;
+    }
     const std::uint64_t paramsCount = static_cast<std::uint64_t>(value.paramCount);
     if (paramsCount > (UINT64_MAX - size) / 8ULL) return false;
     size += paramsCount * 8ULL;
@@ -6568,8 +6800,14 @@ template <class Visitor>
     size += sendsCount * 48ULL;
     if (size > std::numeric_limits<std::remove_cvref_t<decltype(value.effectOffset)>>::max()) return false;
     value.effectOffset = static_cast<std::remove_cvref_t<decltype(value.effectOffset)>>(size);
+    const std::uint64_t effectsCount = static_cast<std::uint64_t>(value.effectCount);
+    if (effectsCount > (UINT64_MAX - size) / 56ULL) return false;
+    size += effectsCount * 56ULL;
     if (size > std::numeric_limits<std::remove_cvref_t<decltype(value.effectParameterOffset)>>::max()) return false;
     value.effectParameterOffset = static_cast<std::remove_cvref_t<decltype(value.effectParameterOffset)>>(size);
+    const std::uint64_t effectParametersCount = static_cast<std::uint64_t>(value.effectParameterCount);
+    if (effectParametersCount > (UINT64_MAX - size) / 8ULL) return false;
+    size += effectParametersCount * 8ULL;
     if (size > std::numeric_limits<std::remove_cvref_t<decltype(value.downmixOffset)>>::max()) return false;
     value.downmixOffset = static_cast<std::remove_cvref_t<decltype(value.downmixOffset)>>(size);
     const std::uint64_t downmixesCount = static_cast<std::uint64_t>(value.downmixCount);
@@ -6625,6 +6863,22 @@ template <class Buffer, class Visitor>
         auto&& row = visitor.Sends(i);
         if (!AppendPackBusDefinitionSend(buffer, row)) return false;
     }
+    const std::uint64_t effectsCount = static_cast<std::uint64_t>(value.effectCount);
+    static_assert(noexcept(visitor.PrepareEffects(effectsCount)));
+    if (!visitor.PrepareEffects(effectsCount)) return false;
+    for (std::uint64_t i = 0; i < effectsCount; ++i) {
+        static_assert(noexcept(visitor.Effects(i)));
+        auto&& row = visitor.Effects(i);
+        if (!AppendPackBusDefinitionEffect(buffer, row)) return false;
+    }
+    const std::uint64_t effectParametersCount = static_cast<std::uint64_t>(value.effectParameterCount);
+    static_assert(noexcept(visitor.PrepareEffectParameters(effectParametersCount)));
+    if (!visitor.PrepareEffectParameters(effectParametersCount)) return false;
+    for (std::uint64_t i = 0; i < effectParametersCount; ++i) {
+        static_assert(noexcept(visitor.EffectParameters(i)));
+        auto&& row = visitor.EffectParameters(i);
+        if (!AppendPackBusDefinitionEffectParameter(buffer, row)) return false;
+    }
     const std::uint64_t downmixesCount = static_cast<std::uint64_t>(value.downmixCount);
     static_assert(noexcept(visitor.PrepareDownmixes(downmixesCount)));
     if (!visitor.PrepareDownmixes(downmixesCount)) return false;
@@ -6677,6 +6931,26 @@ template <class Buffer, class Visitor>
         auto&& row = visitor.Sends(i);
         if (!ReadPackBusDefinitionSend(buffer, row)) return false;
     }
+    const std::uint64_t effectsCount = static_cast<std::uint64_t>(value.effectCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (effectsCount > buffer.Remaining() / 56ULL) return false;
+    static_assert(noexcept(visitor.PrepareEffects(effectsCount)));
+    if (!visitor.PrepareEffects(effectsCount)) return false;
+    for (std::uint64_t i = 0; i < effectsCount; ++i) {
+        static_assert(noexcept(visitor.Effects(i)));
+        auto&& row = visitor.Effects(i);
+        if (!ReadPackBusDefinitionEffect(buffer, row)) return false;
+    }
+    const std::uint64_t effectParametersCount = static_cast<std::uint64_t>(value.effectParameterCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (effectParametersCount > buffer.Remaining() / 8ULL) return false;
+    static_assert(noexcept(visitor.PrepareEffectParameters(effectParametersCount)));
+    if (!visitor.PrepareEffectParameters(effectParametersCount)) return false;
+    for (std::uint64_t i = 0; i < effectParametersCount; ++i) {
+        static_assert(noexcept(visitor.EffectParameters(i)));
+        auto&& row = visitor.EffectParameters(i);
+        if (!ReadPackBusDefinitionEffectParameter(buffer, row)) return false;
+    }
     const std::uint64_t downmixesCount = static_cast<std::uint64_t>(value.downmixCount);
     static_assert(noexcept(buffer.Remaining()));
     if (downmixesCount > buffer.Remaining() / 40ULL) return false;
@@ -6715,6 +6989,12 @@ template <class Visitor>
     const std::uint64_t sendsCount = static_cast<std::uint64_t>(value.sendCount);
     if (sendsCount > (UINT64_MAX - size) / 48ULL) return false;
     size += sendsCount * 48ULL;
+    const std::uint64_t effectsCount = static_cast<std::uint64_t>(value.effectCount);
+    if (effectsCount > (UINT64_MAX - size) / 56ULL) return false;
+    size += effectsCount * 56ULL;
+    const std::uint64_t effectParametersCount = static_cast<std::uint64_t>(value.effectParameterCount);
+    if (effectParametersCount > (UINT64_MAX - size) / 8ULL) return false;
+    size += effectParametersCount * 8ULL;
     const std::uint64_t downmixesCount = static_cast<std::uint64_t>(value.downmixCount);
     if (downmixesCount > (UINT64_MAX - size) / 40ULL) return false;
     size += downmixesCount * 40ULL;
@@ -6780,6 +7060,65 @@ template <class Visitor>
     const std::uint64_t childrenCount = static_cast<std::uint64_t>(value.childCount);
     if (childrenCount > (UINT64_MAX - size) / 32ULL) return false;
     size += childrenCount * 32ULL;
+    return true;
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool AppendPackEffectPreset(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, PackEffectPresetHeader>);
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!AppendPackEffectPresetHeader(buffer, row)) return false;
+    }
+    const std::uint64_t parametersCount = static_cast<std::uint64_t>(value.paramCount);
+    static_assert(noexcept(visitor.PrepareParameters(parametersCount)));
+    if (!visitor.PrepareParameters(parametersCount)) return false;
+    for (std::uint64_t i = 0; i < parametersCount; ++i) {
+        static_assert(noexcept(visitor.Parameters(i)));
+        auto&& row = visitor.Parameters(i);
+        if (!AppendPackEffectPresetParameter(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Buffer, class Visitor>
+[[nodiscard]] bool ReadPackEffectPreset(Buffer& buffer, Visitor& visitor) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, PackEffectPresetHeader>);
+    {
+        static_assert(noexcept(visitor.Header()));
+        auto&& row = visitor.Header();
+        if (!ReadPackEffectPresetHeader(buffer, row)) return false;
+    }
+    const std::uint64_t parametersCount = static_cast<std::uint64_t>(value.paramCount);
+    static_assert(noexcept(buffer.Remaining()));
+    if (parametersCount > buffer.Remaining() / 8ULL) return false;
+    static_assert(noexcept(visitor.PrepareParameters(parametersCount)));
+    if (!visitor.PrepareParameters(parametersCount)) return false;
+    for (std::uint64_t i = 0; i < parametersCount; ++i) {
+        static_assert(noexcept(visitor.Parameters(i)));
+        auto&& row = visitor.Parameters(i);
+        if (!ReadPackEffectPresetParameter(buffer, row)) return false;
+    }
+    static_assert(noexcept(visitor.Finish()));
+    return visitor.Finish();
+}
+
+template <class Visitor>
+[[nodiscard]] bool MeasurePackEffectPreset(Visitor& visitor, std::uint64_t& size) noexcept {
+    static_assert(noexcept(visitor.Value()));
+    auto& value = visitor.Value();
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(value)>, PackEffectPresetHeader>);
+    if (size > UINT64_MAX - 28ULL) return false;
+    size += 28ULL;
+    const std::uint64_t parametersCount = static_cast<std::uint64_t>(value.paramCount);
+    if (parametersCount > (UINT64_MAX - size) / 8ULL) return false;
+    size += parametersCount * 8ULL;
     return true;
 }
 

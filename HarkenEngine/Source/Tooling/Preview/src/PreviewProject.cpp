@@ -28,6 +28,8 @@ struct PreparedProject {
     std::vector<std::uint8_t> alive, levelApply, emitted;
     std::vector<float> levels, sendLevelDb;
     std::vector<float> authoredVolume, authoredOutputVolume;
+    std::vector<harken::PackBusDefinitionEffect> effects;
+    std::vector<harken::PackBusDefinitionEffectParameter> effectParameters;
     harken::ProspectiveTopologyView topology;
     harken::PreparedProjectGenerationV1 transaction;
 };
@@ -132,7 +134,8 @@ bool BuildTopology(const VnPreviewProjectDescV1& desc, const float* sendLevelsDb
 bool ValidateVolumePublication(const VnPreviewProjectDescV2& desc,
                                 const harken::Engine& engine,
                                 const float* sendLevelsDb = nullptr,
-                                bool authoredSends = false) {
+                                bool authoredSends = false,
+                                const VnPreviewProjectDescV4* effects = nullptr) {
     const auto& base = desc.base;
     if (base.busCount < 2 || base.busCount > engine.config.maxBuses ||
         base.busCount > 4096 || base.buses == nullptr || desc.busVolumes == nullptr ||
@@ -224,7 +227,7 @@ bool ValidateVolumePublication(const VnPreviewProjectDescV2& desc,
     auto& header = image.busDefinitionSnapshotHeader;
     header.schemaVersion = 2;
     header.storageModelVersion = 2;
-    header.publicationCapabilityVintage = authoredSends ? 4 : 3;
+    header.publicationCapabilityVintage = effects ? 5 : authoredSends ? 4 : 3;
     header.profileVintage = desc.profileVintage;
     header.renderSampleRateHz = desc.renderSampleRateHz;
     header.mixLayout = desc.mixLayout;
@@ -233,12 +236,15 @@ bool ValidateVolumePublication(const VnPreviewProjectDescV2& desc,
     header.compileTargetProfileFingerprint = base.compileTargetProfileFingerprint;
     header.busCount = base.busCount;
     header.sendCount = base.sendCount;
+    header.effectCount = effects ? effects->busEffectCount : 0;
+    header.effectParameterCount = effects ? effects->busEffectParameterCount : 0;
     header.downmixCount = base.busCount;
     header.coefficientCount = base.busCount * 64u;
     image.busDefinitionBusesV2.reserve(base.busCount);
     image.busDefinitionSendsV2.reserve(base.sendCount);
     image.busDefinitionDownmixesV2.reserve(base.busCount);
     image.busDefinitionCoefficients.reserve(static_cast<std::size_t>(base.busCount) * 64u);
+    std::uint32_t effectEnd = 0;
     for (std::uint32_t i = 0; i < base.busCount; ++i) {
         const auto& bus = base.buses[i];
         const auto& volume = desc.busVolumes[i];
@@ -254,6 +260,20 @@ bool ValidateVolumePublication(const VnPreviewProjectDescV2& desc,
             .outputLayout = output,
             .downmixFirst = i,
             .downmixCount = 1});
+        if (effects) {
+            if (effects->busFaderAfterSlots[i] != harken::busfingerprint::kNeutralFaderAfterSlotV1)
+                return false;
+            auto& row = image.busDefinitionBusesV2.back();
+            row.effectFirst = root ? 0 : effectEnd;
+            while (effectEnd < effects->busEffectCount &&
+                   effects->busEffects[effectEnd].busId == bus.id) {
+                if (root || (row.effectCount != 0 &&
+                    effects->busEffects[effectEnd - 1].slot >=
+                    effects->busEffects[effectEnd].slot)) return false;
+                ++row.effectCount;
+                ++effectEnd;
+            }
+        }
         image.busDefinitionDownmixesV2.push_back({bus.id, desc.mixLayout,
             output, i * 64u, 64});
         std::array<float, 64> coefficients{};
@@ -265,7 +285,19 @@ bool ValidateVolumePublication(const VnPreviewProjectDescV2& desc,
         image.busDefinitionSendsV2.push_back({base.sends[i].source,
              base.sends[i].target, authoredSends
                  ? (sendLevelsDb[i] == 0.0f ? 0.0f : sendLevelsDb[i]) : 0.0f});
-    return harken::CanonicalVolumeBusFingerprint(image) == base.publishedBusFingerprint;
+    if (effects) {
+        if (effectEnd != effects->busEffectCount) return false;
+        for (std::uint32_t i = 0; i < effects->busEffectCount; ++i) {
+            const auto& row = effects->busEffects[i];
+            image.busDefinitionEffects.push_back({row.busId, row.effectId, row.slot,
+                row.effectType, row.descriptorVintage, row.flags, row.parameterFirst, row.parameterCount});
+        }
+        for (std::uint32_t i = 0; i < effects->busEffectParameterCount; ++i)
+            image.busDefinitionEffectParameters.push_back({effects->busEffectParameters[i].index,
+                effects->busEffectParameters[i].value});
+    }
+    return harken::CanonicalVolumeBusFingerprint(image, image.busDefinitionEffects,
+        image.busDefinitionEffectParameters) == base.publishedBusFingerprint;
 }
 
 }
@@ -274,7 +306,7 @@ VnPreviewPrepareStatus PrepareProjectImpl(
     const VnPreviewProjectDescV1* desc, const VnPreviewBusVolumeV2* busVolumes,
     std::uint32_t volumeCount, std::uint32_t expectedSize,
     const float* sendLevelsDb, bool authoredSends,
-    VnPreviewProjectHandle* outHandle) {
+    VnPreviewProjectHandle* outHandle, const VnPreviewProjectDescV4* effects = nullptr) {
     if (outHandle) *outHandle = 0;
     auto* engine = ActiveEngine();
     if (!engine) return VN_PREVIEW_PREPARE_UNAVAILABLE;
@@ -317,11 +349,24 @@ VnPreviewPrepareStatus PrepareProjectImpl(
         view.compiledWorld = *project->world.ProductionView();
         view.prospective = &project->topology;
         if (busVolumes != nullptr) {
-            view.publicationVintage = authoredSends ? 4 : 3;
+            view.publicationVintage = effects ? 5 : authoredSends ? 4 : 3;
             view.authoredBusIds = project->ids.data();
             view.authoredBusVolumeDb = project->authoredVolume.data();
             view.authoredBusOutputVolumeDb = project->authoredOutputVolume.data();
             view.authoredBusCount = volumeCount;
+        }
+        if (effects) {
+            view.forceWorldReplacement = effects->forceWorldReplacement != 0;
+            for (std::uint32_t i = 0; i < effects->busEffectCount; ++i) {
+                const auto& row = effects->busEffects[i];
+                project->effects.push_back({row.busId, row.effectId, row.slot, row.effectType,
+                    row.descriptorVintage, row.flags, row.parameterFirst, row.parameterCount});
+            }
+            for (std::uint32_t i = 0; i < effects->busEffectParameterCount; ++i)
+                project->effectParameters.push_back({effects->busEffectParameters[i].index,
+                    effects->busEffectParameters[i].value});
+            view.effects = project->effects;
+            view.effectParameters = project->effectParameters;
         }
         const auto result = harken::PrepareProjectGenerationV1(*engine, view, project->transaction);
         if (result.status != harken::ProjectGenerationPrepareStatusV1::Ok)
@@ -386,6 +431,32 @@ VnPreviewPrepareStatus VnPreview_PrepareProjectV3(
         desc->busSendLevelsDb, true, outHandle);
 }
 
+VnPreviewPrepareStatus VnPreview_PrepareProjectV4(
+    const VnPreviewProjectDescV4* desc, VnPreviewProjectHandle* outHandle) {
+    if (outHandle) *outHandle = 0;
+    if (!desc || desc->base.base.base.structSize != sizeof(VnPreviewProjectDescV4) ||
+        desc->base.base.reserved0 != 0 || desc->base.reserved1 != 0 || desc->forceWorldReplacement > 1 ||
+        !desc->base.base.busVolumes || !desc->busFaderAfterSlots ||
+        desc->busFaderCount != desc->base.base.base.busCount ||
+        desc->base.busSendLevelCount != desc->base.base.base.sendCount ||
+        (desc->base.busSendLevelCount != 0 && !desc->base.busSendLevelsDb) ||
+        desc->busEffectCount > UINT32_C(32768) || desc->busEffectParameterCount > UINT32_C(2097152) ||
+        (desc->busEffectCount != 0 && !desc->busEffects) ||
+        (desc->busEffectParameterCount != 0 && !desc->busEffectParameters))
+        return VN_PREVIEW_PREPARE_INVALID;
+    auto* engine = ActiveEngine();
+    if (!engine) return VN_PREVIEW_PREPARE_UNAVAILABLE;
+    try {
+        if (!ValidateVolumePublication(desc->base.base, *engine,
+                desc->base.busSendLevelsDb, true, desc)) return VN_PREVIEW_PREPARE_INVALID;
+    } catch (...) {
+        return VN_PREVIEW_PREPARE_INVALID;
+    }
+    return PrepareProjectImpl(&desc->base.base.base, desc->base.base.busVolumes,
+        desc->base.base.busVolumeCount, sizeof(VnPreviewProjectDescV4),
+        desc->base.busSendLevelsDb, true, outHandle, desc);
+}
+
 VnPreviewCommitStatus VnPreview_CommitProject(VnPreviewProjectHandle handle,
                                             uint64_t* outGeneration) {
     if (outGeneration) *outGeneration = 0;
@@ -422,6 +493,51 @@ uint32_t VnPreview_QueryOwnerRevision(uint64_t ownerId, uint64_t* outRevision) {
 uint32_t VnPreview_HasPlayableConsumers(void) {
     auto* engine = ActiveEngine();
     return engine && harken::HasCurrentWorldPlayableConsumers(*engine);
+}
+
+uint32_t VnPreview_HasEffectChainConsumers(void) {
+    auto* engine = ActiveEngine();
+    return engine && harken::HasEffectChainPublicationConsumers(*engine);
+}
+
+uint64_t VnPreview_QueryVoiceWorldGeneration(uint64_t voiceInstance) {
+    const auto* engine = ActiveEngine();
+    const auto slot = static_cast<std::uint32_t>(voiceInstance);
+    if (!engine || slot >= engine->playbackPaths.ConstructedCount() || !engine->voices.IsAlive(voiceInstance)) return 0;
+    const auto& stored = engine->playbackPaths[slot];
+    if (stored.voiceInstance != voiceInstance) return 0;
+    const auto path = stored.Capture();
+    for (std::uint32_t i = path.path.rowCount; i != 0; --i) {
+        const auto& row = path.path.rows[i - 1];
+        if (row.stableId == path.soundId && row.occurrenceOrdinal == UINT32_MAX)
+            return row.source.ownerStableId == 0 && row.source.leaseIdentity == 0
+                ? row.source.worldGeneration : 0;
+    }
+    return 0;
+}
+
+uint32_t VnPreview_HasWorldGeneration(uint64_t generation) {
+    const auto* engine = ActiveEngine();
+    if (!engine || generation == 0) return 0;
+    if (engine->variables.CurrentWorldGeneration() == generation) return 1;
+    for (const auto& row : engine->playableServices) {
+        if (row.phase != harken::EnginePlayableStartPhase::Free && row.InvocationValid() &&
+            row.Invocation().packLease.leaseToken == 0 &&
+            row.Invocation().worldGeneration == generation) return 1;
+    }
+    for (std::uint32_t slot = 0; slot < engine->actionDeferredRecords.Capacity(); ++slot) {
+        harken::ActionDeferredRecordToken token{};
+        harken::ActionDeferredRecord record{};
+        harken::ActionDeferredRecordState state{};
+        if (engine->actionDeferredRecords.CapturePublicationAt(slot, &token, &record, &state) &&
+            record.owner.kind == harken::ActionFiringOwnerKind::DirectWorld &&
+            record.owner.worldGeneration == generation) return 1;
+    }
+    for (const auto& path : engine->playbackPaths) {
+        if (path.pathRowCount != 0 &&
+            VnPreview_QueryVoiceWorldGeneration(path.voiceInstance) == generation) return 1;
+    }
+    return 0;
 }
 
 uint32_t VnPreview_HasAction(VnObjectId actionId) {
@@ -482,6 +598,22 @@ VnResult VnPreview_SetVoiceProperty(uint64_t voiceInstance,
     if (property > UINT8_MAX) return VN_INVALID_ARG;
     return harken::SetPreviewVoiceProperty(voiceInstance,
         static_cast<harken::playableproperties::PlayablePropertyIdV1>(property), value, sendBusId);
+}
+
+VnResult VnPreview_SetVoiceEffect(uint64_t voiceInstance, VnObjectId effectId,
+    uint32_t effectType, const float* parameters, uint32_t parameterCount,
+    uint32_t bypass) {
+    if (!ActiveEngine()) return VN_NOT_INITIALIZED;
+    return harken::SetPreviewVoiceEffect(voiceInstance, effectId, effectType,
+        parameters, parameterCount, bypass);
+}
+
+VnResult VnPreview_SetBusEffect(uint64_t ownerId, VnBusId busId, VnObjectId effectId,
+    uint32_t effectType, const float* parameters, uint32_t parameterCount,
+    uint32_t bypass) {
+    if (!ActiveEngine()) return VN_NOT_INITIALIZED;
+    return harken::SetPreviewBusEffect(ownerId, busId, effectId, effectType,
+        parameters, parameterCount, bypass);
 }
 
 }

@@ -28,6 +28,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <climits>
 #include <cstdint>
@@ -791,6 +792,7 @@ struct PackBuildSession::Impl
     std::vector<PackBus> buses;
     std::vector<PackBusSend> busSends;
     std::vector<PackAttenuation> attenuations;
+    std::vector<PackEffectPreset> effectPresets;
     std::vector<harkenstudio::ObjectId> discreteVariables;
     std::vector<PackMeterWiring> meterWirings;
     std::vector<PackParameterBinding> bindings;
@@ -1084,6 +1086,52 @@ struct PackBuildSession::Impl
         return result;
     }
 
+    bool appendEffectPresetEntries(std::vector<CanonicalPackEntry>* entries)
+    {
+        if (!initPack && !effectPresets.empty()) {
+            lastError = QStringLiteral("Effect presets are only allowed in Init packs");
+            return false;
+        }
+        std::sort(effectPresets.begin(), effectPresets.end(), [](const auto& a, const auto& b) {
+            return a.id < b.id;
+        });
+        harkenstudio::ObjectId previousId{};
+        for (const auto& preset : effectPresets) {
+            const auto* schema = harkenstudiobuild::FindPackEffectSchemaByType(preset.type);
+            if (harkenstudio::IsNull(preset.id) || preset.id == previousId || !schema
+                || preset.parameters.size() != schema->paramCount) {
+                lastError = QStringLiteral("Effect preset identity or descriptor is invalid");
+                return false;
+            }
+            previousId = preset.id;
+            CanonicalPackEntry entry;
+            entry.kind = harkenstudiobuild::kPackEntryKindEffectPreset;
+            entry.vintage = harkenstudiobuild::kPackEffectPresetVintage;
+            entry.id = preset.id;
+            entry.payload.resize(harkenstudiobuild::kPackEffectPresetHeaderBytes
+                + preset.parameters.size() * harkenstudiobuild::kPackEffectPresetParameterBytes);
+            harkenstudiobuild::PackWireBuffer<uint8_t> buffer{
+                entry.payload.data(), entry.payload.size()};
+            const harkenstudiobuild::PackEffectPresetHeader header{
+                preset.id, preset.type, schema->descriptorVintage, schema->paramCount};
+            if (!harkenstudiobuild::AppendPackEffectPresetHeader(buffer, header)) {
+                lastError = QStringLiteral("Effect preset header could not be encoded");
+                return false;
+            }
+            for (uint32_t i = 0; i < schema->paramCount; ++i) {
+                if (!harkenstudiobuild::PackEffectParamInAuthoredRange(preset.type, i, preset.parameters[i])
+                    || !harkenstudiobuild::AppendPackEffectPresetParameter(buffer,
+                        harkenstudiobuild::PackEffectPresetParameter{
+                            i, std::bit_cast<uint32_t>(preset.parameters[i])})) {
+                    lastError = QStringLiteral("Effect preset parameter is invalid");
+                    return false;
+                }
+            }
+            entries->push_back(std::move(entry));
+        }
+        return true;
+    }
+
     QJsonObject description()
     {
         const bool resident = initPack;
@@ -1152,6 +1200,11 @@ void PackBuildSession::addModulatorBinding(harkenstudio::ObjectId targetObjectId
 void PackBuildSession::addAttenuation(const PackAttenuation& attenuation)
 {
     impl_->attenuations.push_back(attenuation);
+}
+
+void PackBuildSession::addEffectPreset(const PackEffectPreset& preset)
+{
+    impl_->effectPresets.push_back(preset);
 }
 
 void PackBuildSession::addDiscreteVariable(harkenstudio::ObjectId variableId)
@@ -1466,7 +1519,7 @@ bool PackBuildSession::buildEntries(std::vector<CanonicalPackEntry>* entries)
         entry.media = std::move(source.media);
         entries->push_back(std::move(entry));
     }
-    return true;
+    return impl_->appendEffectPresetEntries(entries);
 }
 
 bool PackBuildSession::buildToFile(const QString& outputPath)
@@ -1489,6 +1542,11 @@ QString PackBuildSession::inputFingerprint()
     hash.addData(QJsonDocument(description).toJson(QJsonDocument::Compact));
     hash.addData(impl_->initPack ? "resident" : "content");
     hash.addData(Harkenizer::resourceCompilerIdentity());
+    std::vector<CanonicalPackEntry> presetEntries;
+    if (!impl_->appendEffectPresetEntries(&presetEntries)) return {};
+    for (const auto& entry : presetEntries)
+        hash.addData(QByteArrayView(reinterpret_cast<const char*>(entry.payload.data()),
+            static_cast<qsizetype>(entry.payload.size())));
     if (!impl_->initPack) {
         for (const auto& source : impl_->media) {
             const QJsonObject identity{

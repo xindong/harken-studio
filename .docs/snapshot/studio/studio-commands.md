@@ -136,6 +136,8 @@ HarkenStudioCLI --instance <id> exec list_ui_windows --json
 
 `get_widget_value`、`get_widget_children`、表格/列表/树读取及截图使用相同解析规则。查询可以检查隐藏或禁用控件；交互要求目标可见、启用且不被模态对话框阻塞。`path` 仅供阅读，不是稳定选择器。`get_ui_tree` 未指定目标时默认主窗口；`key_press` 未指定目标时默认当前焦点控件，无焦点时使用主窗口。
 
+`click_widget` 支持可选的成对 `x/y`，坐标相对目标控件；滚动区域控件以 viewport 为坐标系和事件接收者。省略坐标时点击中心，越界坐标在入队前和执行时均拒绝。`double_click` 使用相同位置。`get_tree_data` 的条目返回 `visible`，可见条目另含 viewport 内的裁剪矩形 `rect`，可取矩形中心定位树节点；折叠、离屏或隐藏条目不提供点击矩形。
+
 ```json
 {"cmd":"find_widget","args":{"name":"sourceActive","visible_only":true}}
 {"cmd":"get_widget_value","args":{"widget_id":"<discovered-widget-id>"}}

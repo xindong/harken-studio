@@ -306,7 +306,8 @@
         "voiceRecipeMaxParams": 64,
         "blobAlign": 64,
         "payloadAlign": 8,
-        "shippingBodyVintage": 18
+        "shippingBodyVintage": 18,
+        "effectPresetReferenceType": 4294967295
       },
       "kinds": [
         {
@@ -404,6 +405,12 @@
           "id": 27,
           "vintage": 1,
           "record": "variableRequirementsPayload"
+        },
+        {
+          "name": "effectPreset",
+          "id": 29,
+          "vintage": 1,
+          "record": "effectPreset"
         }
       ],
       "records": {
@@ -661,6 +668,56 @@
               "name": "reserved1",
               "type": "u64",
               "reserved": true
+            }
+          ]
+        },
+        "busDefinitionEffect": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "busId",
+              "type": "id"
+            },
+            {
+              "name": "effectId",
+              "type": "id"
+            },
+            {
+              "name": "slot",
+              "type": "u32"
+            },
+            {
+              "name": "effectType",
+              "type": "u32"
+            },
+            {
+              "name": "descriptorVintage",
+              "type": "u32"
+            },
+            {
+              "name": "flags",
+              "type": "u32"
+            },
+            {
+              "name": "parameterFirst",
+              "type": "u32"
+            },
+            {
+              "name": "parameterCount",
+              "type": "u32"
+            }
+          ]
+        },
+        "busDefinitionEffectParameter": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "index",
+              "type": "u32"
+            },
+            {
+              "name": "value",
+              "type": "f32"
             }
           ]
         },
@@ -2014,9 +2071,8 @@
               "type": "u32"
             },
             {
-              "name": "reserved",
-              "type": "u32",
-              "reserved": true
+              "name": "flags",
+              "type": "u32"
             }
           ]
         },
@@ -2053,6 +2109,15 @@
               "name": "header",
               "type": "record",
               "record": "bodyPayloadEffectNodeHeader"
+            },
+            {
+              "name": "presetReference",
+              "type": "record",
+              "record": "bodyPayloadEffectPresetReference",
+              "when": {
+                "field": "effectType",
+                "equals": 4294967295
+              }
             },
             {
               "name": "params",
@@ -3997,13 +4062,29 @@
               ]
             },
             {
+              "name": "effects",
+              "type": "rows",
+              "record": "busDefinitionEffect",
+              "count": "effectCount",
+              "position": [
+                "effectOffset"
+              ]
+            },
+            {
+              "name": "effectParameters",
+              "type": "rows",
+              "record": "busDefinitionEffectParameter",
+              "count": "effectParameterCount",
+              "position": [
+                "effectParameterOffset"
+              ]
+            },
+            {
               "name": "downmixes",
               "type": "rows",
               "record": "busDefinitionDownmix",
               "count": "downmixCount",
               "position": [
-                "effectOffset",
-                "effectParameterOffset",
                 "downmixOffset"
               ]
             },
@@ -4139,6 +4220,65 @@
             {
               "name": "reserved",
               "type": "u32"
+            }
+          ]
+        },
+        "effectPresetHeader": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "presetId",
+              "type": "id"
+            },
+            {
+              "name": "effectType",
+              "type": "u32"
+            },
+            {
+              "name": "descriptorVintage",
+              "type": "u32"
+            },
+            {
+              "name": "paramCount",
+              "type": "u32"
+            }
+          ]
+        },
+        "effectPresetParameter": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "paramId",
+              "type": "u32"
+            },
+            {
+              "name": "valueBits",
+              "type": "u32"
+            }
+          ]
+        },
+        "effectPreset": {
+          "mode": "stream",
+          "fields": [
+            {
+              "name": "header",
+              "type": "record",
+              "record": "effectPresetHeader"
+            },
+            {
+              "name": "parameters",
+              "type": "rows",
+              "record": "effectPresetParameter",
+              "count": "paramCount"
+            }
+          ]
+        },
+        "bodyPayloadEffectPresetReference": {
+          "mode": "fixed",
+          "fields": [
+            {
+              "name": "presetId",
+              "type": "id"
             }
           ]
         }

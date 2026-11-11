@@ -742,6 +742,7 @@ ProjectPackExporter::ExportInitPack(const ProjectData& project,
     if (!CollectBuses(project, builder, exportScope, &result.error)) return result;
     if (!CollectSends(project, builder, exportScope, &result.error)) return result;
     CollectAttenuations(project, builder);
+    if (!CollectEffectPresets(project, builder, &result.error)) return result;
     if (!options.deferBindings
         && !CollectTypedBindings(project, builder, nullptr, &result.error, options.buildContext.get()))
         return result;
@@ -1674,6 +1675,34 @@ bool ProjectPackExporter::CollectSends(const ProjectData& project,
         }
     });
     return valid;
+}
+
+bool ProjectPackExporter::CollectEffectPresets(const ProjectData& project,
+                                              Bridge::PackBuildSession& builder,
+                                              QString* errorOut)
+{
+    const auto collect = [&](const auto& self, const ProjectItem* item) -> bool {
+        if (!item) return true;
+        if (item->type == ProjectItem::Type::Effect) {
+            const auto* effect = item->comp<VEffect>();
+            QString diagnostic;
+            if (!effect || harkenstudio::IsNull(item->runtimeId())
+                || !EffectChainSemantics::validate(effect->definition, &diagnostic)) {
+                if (errorOut) *errorOut = QStringLiteral("Effect preset '%1': %2").arg(item->name,
+                    diagnostic.isEmpty() ? QStringLiteral("Effect definition or identity is invalid")
+                                         : diagnostic);
+                return false;
+            }
+            builder.addEffectPreset({item->runtimeId(),
+                static_cast<uint32_t>(effect->definition.type), effect->definition.parameters});
+        }
+        for (const auto& child : item->children)
+            if (!self(self, child.get())) return false;
+        return true;
+    };
+    for (const auto& binding : project.effectItems)
+        if (!collect(collect, binding.rootItem.get())) return false;
+    return true;
 }
 
 void ProjectPackExporter::CollectAttenuations(const ProjectData& project,

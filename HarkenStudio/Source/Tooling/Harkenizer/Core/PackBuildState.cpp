@@ -150,7 +150,8 @@ void PackBuildState::deriveInputs(const QSet<QString>* successfulPaths)
         if (!item || visited.contains(item)) return;
         visited.insert(item);
         if (item->type == ProjectItem::Type::Bus || item->type == ProjectItem::Type::Variable
-            || item->type == ProjectItem::Type::Attenuation) {
+            || item->type == ProjectItem::Type::Attenuation
+            || item->type == ProjectItem::Type::Effect) {
             const auto fingerprint = itemDigest(item);
             if (fingerprint.isEmpty()) reusable_ = false;
             globals.insert(objectIdString(item->runtimeId()), fingerprint);

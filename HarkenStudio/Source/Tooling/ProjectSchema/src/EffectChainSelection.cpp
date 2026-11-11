@@ -154,7 +154,7 @@ CompiledEffectChain CompileChain(StableId owner,
         entry.effectId = node->effectId;
         entry.effectType = node->effectType;
         entry.paramBlockRef = static_cast<std::uint32_t>(chain.paramBlocks.size());
-        entry.flags = 0;
+        entry.flags = node->flags;
         chain.entries.push_back(entry);
 
         EffectParamBlock block;

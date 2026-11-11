@@ -8,6 +8,7 @@
 #include "AssetPipeline/MediaPool.h"
 #include "Tooling/Harkenizer/Core/CurrentWorldProjectAdapter.h"
 #include "Components/VAction.h"
+#include "Components/VTrack.h"
 #include "IPC/IPCServer.h"
 #include "ProjectManager.h"
 #include "ProjectTypes.h"
@@ -741,6 +742,340 @@ TEST_F(AudioPlaybackRegression, ConcurrentPreviewCancelAndUndoRemainConsistentFo
     ASSERT_EQ(engine.playByNameDetailed(QStringLiteral("Play_Good")).engineResult,
               HarkenEditor::Bridge::kEngineOk);
     EXPECT_NEAR(settledPeak(), baseline, 0.002f);
+}
+
+TEST_F(AudioPlaybackRegression, EffectEditsPreserveRunningInstancesAndDeferStructureUntilReplay)
+{
+    VNX::registerProjectActions(VNX::ActionManager::instance(), &projects, nullptr);
+    auto* undo = VNX::UndoRedoManager::instance().undoStack();
+    undo->clear();
+    VNX::EffectEntry effect;
+    effect.guid = QUuid::createUuid();
+    effect.mode = VNX::EffectMode::Custom;
+    effect.custom.parameters = {-24.0f, 1.0f};
+    effect.bypass = true;
+    const auto replace = [&](const QJsonArray& effects) {
+        return VNX::ActionManager::instance().execute(QStringLiteral("replace_field_group_effects"),
+            {{QStringLiteral("definition_guid"), layer->guid.toString(QUuid::WithoutBraces)},
+             {QStringLiteral("group"), QStringLiteral("effect")},
+             {QStringLiteral("scope"), QStringLiteral("Shared")},
+             {QStringLiteral("effects"), effects}}, VNX::ActionSource::GUI).success;
+    };
+    ASSERT_TRUE(replace({effect.toJson()}));
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    const auto started = engine.playByNameDetailed(QStringLiteral("Play_Good"));
+    ASSERT_EQ(started.engineResult, HarkenEditor::Bridge::kEngineOk);
+    const float dry = settledPeak();
+    ASSERT_GT(dry, 0.05f);
+    std::vector<HarkenEditor::Bridge::PlaybackPathObservation> before;
+    ASSERT_TRUE(HarkenEditor::Bridge::capturePlaybackPaths(before));
+    ASSERT_EQ(before.size(), 1u);
+
+    effect.bypass = false;
+    ASSERT_TRUE(replace({effect.toJson()}));
+    const float limited = settledPeak();
+    EXPECT_GT(limited, 0.0f);
+    EXPECT_LT(limited, dry * 0.7f);
+    effect.custom.parameters[0] = 0.0f;
+    ASSERT_TRUE(replace({effect.toJson()}));
+    EXPECT_NEAR(settledPeak(), dry, 0.002f);
+    ASSERT_TRUE(undo->canUndo());
+    undo->undo();
+    EXPECT_NEAR(settledPeak(), limited, 0.002f);
+    std::vector<HarkenEditor::Bridge::PlaybackPathObservation> after;
+    ASSERT_TRUE(HarkenEditor::Bridge::capturePlaybackPaths(after));
+    ASSERT_EQ(after.size(), 1u);
+    EXPECT_EQ(after.front().voiceInstance, before.front().voiceInstance);
+
+    auto* preset = projects.createItem(nullptr, QStringLiteral("ReplacementLimiter"),
+                                      VNX::ProjectItem::Type::Effect);
+    ASSERT_NE(preset, nullptr);
+    effect.mode = VNX::EffectMode::Preset;
+    effect.effectGuid = preset->guid;
+    ASSERT_TRUE(replace({effect.toJson()}));
+    EXPECT_NEAR(settledPeak(), limited, 0.002f);
+    effect.bypass = true;
+    ASSERT_TRUE(replace({effect.toJson()}));
+    EXPECT_NEAR(settledPeak(), dry, 0.002f);
+    effect.bypass = false;
+    ASSERT_TRUE(replace({effect.toJson()}));
+    EXPECT_NEAR(settledPeak(), limited, 0.002f);
+    engine.stopAll(0);
+    settledPeak();
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    ASSERT_EQ(engine.playByNameDetailed(QStringLiteral("Play_Good")).engineResult,
+              HarkenEditor::Bridge::kEngineOk);
+    EXPECT_NEAR(settledPeak(), dry, 0.002f);
+
+    ASSERT_TRUE(VNX::ActionManager::instance().execute(QStringLiteral("set_item_property"),
+        {{QStringLiteral("authoring_handle"), static_cast<qint64>(preset->objectID)},
+         {QStringLiteral("property"), QStringLiteral("ceilingDb")},
+         {QStringLiteral("value"), -24.0}}, VNX::ActionSource::GUI).success);
+    EXPECT_NEAR(settledPeak(), limited, 0.002f);
+    ASSERT_TRUE(replace({}));
+    EXPECT_NEAR(settledPeak(), limited, 0.002f);
+    engine.stopAll(0);
+    settledPeak();
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    ASSERT_EQ(engine.playByNameDetailed(QStringLiteral("Play_Good")).engineResult,
+              HarkenEditor::Bridge::kEngineOk);
+    EXPECT_NEAR(settledPeak(), dry, 0.002f);
+}
+
+TEST_F(AudioPlaybackRegression, EffectSourceReplacementBeforeFirstLiveTickKeepsInstalledSource)
+{
+    VNX::registerProjectActions(VNX::ActionManager::instance(), &projects, nullptr);
+    auto* preset = projects.createItem(nullptr, QStringLiteral("FirstTickReplacement"),
+                                      VNX::ProjectItem::Type::Effect);
+    ASSERT_NE(preset, nullptr);
+    VNX::EffectEntry effect;
+    effect.guid = QUuid::createUuid();
+    effect.mode = VNX::EffectMode::Custom;
+    effect.custom.parameters = {-24.0f, 1.0f};
+    const auto replace = [&] {
+        return VNX::ActionManager::instance().execute(QStringLiteral("replace_field_group_effects"),
+            {{QStringLiteral("definition_guid"), layer->guid.toString(QUuid::WithoutBraces)},
+             {QStringLiteral("group"), QStringLiteral("effect")},
+             {QStringLiteral("scope"), QStringLiteral("Shared")},
+             {QStringLiteral("effects"), QJsonArray{effect.toJson()}}}, VNX::ActionSource::GUI).success;
+    };
+    ASSERT_TRUE(replace());
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    ASSERT_EQ(engine.playByNameDetailed(QStringLiteral("Play_Good")).engineResult,
+              HarkenEditor::Bridge::kEngineOk);
+    ASSERT_GT(pumpUntilPreviewAudible(), 0.0f);
+    effect.mode = VNX::EffectMode::Preset;
+    effect.effectGuid = preset->guid;
+    ASSERT_TRUE(replace());
+    const float limited = settledPeak();
+    ASSERT_GT(limited, 0.0f);
+    effect.bypass = true;
+    ASSERT_TRUE(replace());
+    const float dry = settledPeak();
+    EXPECT_LT(limited, dry * 0.7f);
+    effect.bypass = false;
+    ASSERT_TRUE(replace());
+    EXPECT_NEAR(settledPeak(), limited, 0.002f);
+    engine.stopAll(0);
+    settledPeak();
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    ASSERT_EQ(engine.playByNameDetailed(QStringLiteral("Play_Good")).engineResult,
+              HarkenEditor::Bridge::kEngineOk);
+    EXPECT_NEAR(settledPeak(), dry, 0.002f);
+}
+
+TEST_F(AudioPlaybackRegression, EquivalentEffectSourcesKeepSeparatePlaybackGenerations)
+{
+    VNX::registerProjectActions(VNX::ActionManager::instance(), &projects, nullptr);
+    ASSERT_TRUE(VNX::ActionManager::instance().execute(QStringLiteral("set_item_property"),
+        {{QStringLiteral("authoring_handle"), static_cast<qint64>(sounds[0]->objectID)},
+         {QStringLiteral("property"), QStringLiteral("loopCount")},
+         {QStringLiteral("value"), 0}}, VNX::ActionSource::GUI).success);
+    auto* first = projects.createItem(nullptr, QStringLiteral("FirstLimiter"),
+                                     VNX::ProjectItem::Type::Effect);
+    auto* second = projects.createItem(nullptr, QStringLiteral("SecondLimiter"),
+                                      VNX::ProjectItem::Type::Effect);
+    ASSERT_NE(first, nullptr);
+    ASSERT_NE(second, nullptr);
+    const auto setCeiling = [&](VNX::ProjectItem* preset, double ceiling) {
+        return VNX::ActionManager::instance().execute(QStringLiteral("set_item_property"),
+            {{QStringLiteral("authoring_handle"), static_cast<qint64>(preset->objectID)},
+             {QStringLiteral("property"), QStringLiteral("ceilingDb")},
+             {QStringLiteral("value"), ceiling}}, VNX::ActionSource::GUI).success;
+    };
+    ASSERT_TRUE(setCeiling(first, -24.0));
+    ASSERT_TRUE(setCeiling(second, -24.0));
+    VNX::EffectEntry effect;
+    effect.guid = QUuid::createUuid();
+    effect.mode = VNX::EffectMode::Preset;
+    effect.effectGuid = first->guid;
+    const auto replace = [&] {
+        return VNX::ActionManager::instance().execute(QStringLiteral("replace_field_group_effects"),
+            {{QStringLiteral("definition_guid"), layer->guid.toString(QUuid::WithoutBraces)},
+             {QStringLiteral("group"), QStringLiteral("effect")},
+             {QStringLiteral("scope"), QStringLiteral("Shared")},
+             {QStringLiteral("effects"), QJsonArray{effect.toJson()}}}, VNX::ActionSource::GUI).success;
+    };
+    ASSERT_TRUE(replace());
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    auto* runtime = harken::detail::ActiveEngine();
+    const auto installedGeneration = runtime->variables.CurrentWorldGeneration();
+    ASSERT_EQ(engine.playByNameDetailed(QStringLiteral("Play_Good")).engineResult,
+              HarkenEditor::Bridge::kEngineOk);
+    ASSERT_GT(pumpUntilPreviewAudible(), 0.0f);
+    effect.effectGuid = second->guid;
+    ASSERT_TRUE(replace());
+    for (int block = 0; block < 64; ++block) {
+        QCoreApplication::processEvents();
+        engine.runtimeSyncCoordinator().flushPendingMutationNow();
+        QMetaObject::invokeMethod(&engine, "onRuntimeServiceTimer", Qt::DirectConnection);
+        runtime->nullBackend.Pump(1);
+        QThread::msleep(1);
+    }
+    EXPECT_EQ(runtime->variables.CurrentWorldGeneration(), installedGeneration);
+    const auto& coordinator = engine.runtimeSyncCoordinator();
+    EXPECT_EQ(coordinator.barrier(coordinator.currentAuthoringRevision()).state,
+              VNX::RuntimeSyncCoordinator::RevisionBarrierState::Pending);
+    const float limited = settledPeak();
+    ASSERT_GT(limited, 0.0f);
+    std::vector<HarkenEditor::Bridge::PlaybackPathObservation> paths;
+    ASSERT_TRUE(HarkenEditor::Bridge::capturePlaybackPaths(paths));
+    ASSERT_EQ(paths.size(), 1u);
+    EXPECT_EQ(paths.front().worldGeneration, installedGeneration);
+    ASSERT_TRUE(setCeiling(second, 0.0));
+    EXPECT_NEAR(settledPeak(), limited, 0.002f);
+    engine.stopAll(0);
+    settledPeak();
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    EXPECT_NE(runtime->variables.CurrentWorldGeneration(), installedGeneration);
+    ASSERT_EQ(engine.playByNameDetailed(QStringLiteral("Play_Good")).engineResult,
+              HarkenEditor::Bridge::kEngineOk);
+    EXPECT_GT(settledPeak(), limited / 0.7f);
+}
+
+TEST_F(AudioPlaybackRegression, ScheduledVoiceRetainsEffectSourceAcrossAnEmptyVoiceInterval)
+{
+    VNX::registerProjectActions(VNX::ActionManager::instance(), &projects, nullptr);
+    auto* preset = projects.createItem(nullptr, QStringLiteral("ScheduledReplacement"),
+                                      VNX::ProjectItem::Type::Effect);
+    auto* track = projects.createItem(layer, QStringLiteral("DelayedTrack"),
+                                     VNX::ProjectItem::Type::Track);
+    ASSERT_NE(preset, nullptr);
+    ASSERT_NE(track, nullptr);
+    ASSERT_TRUE(projects.moveItem(sounds[0], track));
+    auto* timeline = track->comp<VNX::VTrack>();
+    ASSERT_NE(timeline, nullptr);
+    ASSERT_EQ(timeline->clips.items.size(), 1u);
+    auto& clip = timeline->clips.items.front();
+    clip.start = 250000000;
+    clip.duration = 1000000000;
+    ASSERT_NE(projects.createActionTargeting(track, VNX::VActionStep::Type::Play,
+                                             QStringLiteral("Play_Delayed")), nullptr);
+    VNX::EffectEntry effect;
+    effect.guid = QUuid::createUuid();
+    effect.mode = VNX::EffectMode::Custom;
+    effect.custom.parameters = {-24.0f, 1.0f};
+    const auto replace = [&] {
+        return VNX::ActionManager::instance().execute(QStringLiteral("replace_field_group_effects"),
+            {{QStringLiteral("definition_guid"), layer->guid.toString(QUuid::WithoutBraces)},
+             {QStringLiteral("group"), QStringLiteral("effect")},
+             {QStringLiteral("scope"), QStringLiteral("Shared")},
+             {QStringLiteral("effects"), QJsonArray{effect.toJson()}}}, VNX::ActionSource::GUI).success;
+    };
+    ASSERT_TRUE(replace());
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    const auto generation = harken::detail::ActiveEngine()->variables.CurrentWorldGeneration();
+    ASSERT_EQ(engine.playByNameDetailed(QStringLiteral("Play_Delayed")).engineResult,
+              HarkenEditor::Bridge::kEngineOk);
+    EXPECT_EQ(settledPeak(), 0.0f);
+    std::vector<HarkenEditor::Bridge::PlaybackPathObservation> paths;
+    ASSERT_TRUE(HarkenEditor::Bridge::capturePlaybackPaths(paths));
+    ASSERT_TRUE(paths.empty());
+    effect.mode = VNX::EffectMode::Preset;
+    effect.effectGuid = preset->guid;
+    ASSERT_TRUE(replace());
+    engine.runtimeSyncCoordinator().flushPendingMutationNow();
+    EXPECT_EQ(settledPeak(), 0.0f);
+    EXPECT_EQ(harken::detail::ActiveEngine()->variables.CurrentWorldGeneration(), generation);
+    ASSERT_GT(pumpUntilPreviewAudible(512), 0.0f);
+    const float limited = settledPeak();
+    ASSERT_GT(limited, 0.0f);
+    ASSERT_TRUE(HarkenEditor::Bridge::capturePlaybackPaths(paths));
+    ASSERT_EQ(paths.size(), 1u);
+    EXPECT_EQ(paths.front().worldGeneration, generation);
+    effect.bypass = true;
+    ASSERT_TRUE(replace());
+    const float dry = settledPeak();
+    EXPECT_LT(limited, dry * 0.7f);
+    effect.bypass = false;
+    ASSERT_TRUE(replace());
+    EXPECT_NEAR(settledPeak(), limited, 0.002f);
+}
+
+TEST_F(AudioPlaybackRegression, BusEffectSourceReplacementWaitsForPlaybackToFinish)
+{
+    VNX::registerProjectActions(VNX::ActionManager::instance(), &projects, nullptr);
+    auto* bus = projects.getMasterBusItem();
+    ASSERT_NE(bus, nullptr);
+    auto* preset = projects.createItem(nullptr, QStringLiteral("BusReplacementLimiter"),
+                                      VNX::ProjectItem::Type::Effect);
+    ASSERT_NE(preset, nullptr);
+    ASSERT_TRUE(VNX::ActionManager::instance().execute(QStringLiteral("set_item_property"),
+        {{QStringLiteral("authoring_handle"), static_cast<qint64>(preset->objectID)},
+         {QStringLiteral("property"), QStringLiteral("releaseMs")},
+         {QStringLiteral("value"), 1.0}}, VNX::ActionSource::GUI).success);
+    VNX::EffectEntry effect;
+    effect.guid = QUuid::createUuid();
+    effect.mode = VNX::EffectMode::Custom;
+    effect.custom.parameters = {-24.0f, 1.0f};
+    effect.bypass = true;
+    VNX::EffectEntry added;
+    added.guid = QUuid::createUuid();
+    added.mode = VNX::EffectMode::Custom;
+    bool includeAdded = false;
+    const auto replace = [&] {
+        QJsonArray effects{effect.toJson()};
+        if (includeAdded) effects.append(added.toJson());
+        return VNX::ActionManager::instance().execute(QStringLiteral("set_item_property"),
+            {{QStringLiteral("authoring_handle"), static_cast<qint64>(bus->objectID)},
+             {QStringLiteral("property"), QStringLiteral("effects")},
+             {QStringLiteral("value"), effects}},
+            VNX::ActionSource::GUI).success;
+    };
+    ASSERT_TRUE(replace());
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    ASSERT_EQ(engine.playByNameDetailed(QStringLiteral("Play_Good")).engineResult,
+              HarkenEditor::Bridge::kEngineOk);
+    const float dry = settledPeak();
+    ASSERT_GT(dry, 0.05f);
+    effect.bypass = false;
+    ASSERT_TRUE(replace());
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    const float limited = settledPeak();
+    EXPECT_GT(limited, 0.0f);
+    EXPECT_LT(limited, dry * 0.7f);
+
+    effect.mode = VNX::EffectMode::Preset;
+    effect.effectGuid = preset->guid;
+    ASSERT_TRUE(replace());
+    engine.runtimeSyncCoordinator().flushPendingMutationNow();
+    QElapsedTimer wait;
+    wait.start();
+    while (wait.elapsed() < 100) {
+        QCoreApplication::processEvents();
+        QMetaObject::invokeMethod(&engine, "onRuntimeServiceTimer", Qt::DirectConnection);
+        QThread::msleep(1);
+    }
+    EXPECT_NEAR(settledPeak(), limited, 0.002f);
+    effect.bypass = true;
+    ASSERT_TRUE(replace());
+    EXPECT_NEAR(settledPeak(), dry, 0.002f);
+    effect.bypass = false;
+    ASSERT_TRUE(replace());
+    EXPECT_NEAR(settledPeak(), limited, 0.002f);
+    engine.stopAll(0);
+    settledPeak();
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    ASSERT_EQ(engine.playByNameDetailed(QStringLiteral("Play_Good")).engineResult,
+              HarkenEditor::Bridge::kEngineOk);
+    EXPECT_NEAR(settledPeak(), dry, 0.002f);
+
+    ASSERT_TRUE(VNX::ActionManager::instance().execute(QStringLiteral("set_item_property"),
+        {{QStringLiteral("authoring_handle"), static_cast<qint64>(preset->objectID)},
+         {QStringLiteral("property"), QStringLiteral("ceilingDb")},
+         {QStringLiteral("value"), -24.0}}, VNX::ActionSource::GUI).success);
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    EXPECT_NEAR(settledPeak(), limited, 0.002f);
+    includeAdded = true;
+    ASSERT_TRUE(replace());
+    engine.runtimeSyncCoordinator().flushPendingMutationNow();
+    EXPECT_NEAR(settledPeak(), limited, 0.002f);
+    ASSERT_TRUE(VNX::ActionManager::instance().execute(QStringLiteral("set_item_property"),
+        {{QStringLiteral("authoring_handle"), static_cast<qint64>(preset->objectID)},
+         {QStringLiteral("property"), QStringLiteral("ceilingDb")},
+         {QStringLiteral("value"), 0.0}}, VNX::ActionSource::GUI).success);
+    engine.runtimeSyncCoordinator().flushPendingMutationNow();
+    EXPECT_NEAR(settledPeak(), dry, 0.002f);
 }
 
 TEST_F(AudioPlaybackRegression, ScalarEditCannotPublishCachedWorldAfterInvalidStructuralEdit)

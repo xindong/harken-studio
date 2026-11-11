@@ -389,7 +389,8 @@ bool checkedFingerprintStreamSize(const Result& result, bool published,
                      : 64 + kAuthoredBusFingerprintTagV1.size();
     const bool volumeOnly = published && (capabilityVintage ==
         BusPublicationCapabilityVintageV1::TopologyAndVolumeNeutralOtherProperties ||
-        capabilityVintage == BusPublicationCapabilityVintageV1::TopologyVolumeAndSendNeutralOtherProperties);
+        capabilityVintage == BusPublicationCapabilityVintageV1::TopologyVolumeAndSendNeutralOtherProperties ||
+        capabilityVintage == BusPublicationCapabilityVintageV1::TopologyVolumeSendAndEffectsNeutralOtherProperties);
     return checkedFingerprintSection(result.buses.size(), volumeOnly ? 68 : 64, size)
         && checkedFingerprintSection(result.sends.size(), 40, size)
         && checkedFingerprintSection(result.effects.size(), 56, size)
@@ -415,7 +416,8 @@ bool fingerprintStream(
     bytes.reserve(static_cast<std::size_t>(checkedSize));
     const bool volumeOnly = published && (capabilityVintage ==
         BusPublicationCapabilityVintageV1::TopologyAndVolumeNeutralOtherProperties ||
-        capabilityVintage == BusPublicationCapabilityVintageV1::TopologyVolumeAndSendNeutralOtherProperties);
+        capabilityVintage == BusPublicationCapabilityVintageV1::TopologyVolumeAndSendNeutralOtherProperties ||
+        capabilityVintage == BusPublicationCapabilityVintageV1::TopologyVolumeSendAndEffectsNeutralOtherProperties);
     const std::string_view tag = volumeOnly ? kPublishedBusFingerprintTagV2
         : published ? kPublishedBusFingerprintTagV1 : kAuthoredBusFingerprintTagV1;
     appendU32(bytes, static_cast<std::uint32_t>(tag.size()));
@@ -1070,7 +1072,8 @@ BusCompileOutcomeV1 CompileBusProjectV1(const BusCompilerInputV1& input)
             CompiledBusEffectV1 compiled{
                 effect.busId, effect.effectId, effect.slot, effect.effectType,
                 effect.descriptorVintage, effect.bypass ? 1u : 0u, 0, 0,
-                appendSource(result->sourceLocations, effect.source)};
+                appendSource(result->sourceLocations, effect.source),
+                effect.definitionGuid};
             compiled.parameterFirst = static_cast<std::uint32_t>(
                 result->effectParameters.size());
             for (std::uint32_t index = 0; index < effect.parameterCount; ++index) {
@@ -1222,6 +1225,11 @@ PublishedBusProjectionV1 BuildPublishedBusProjectionV1(
     projection.compileTargetProfileFingerprint = result.compileTargetProfileFingerprint;
     projection.buses = result.buses;
     projection.sends = result.sends;
+    const bool preserveEffects = capabilityVintage == BusPublicationCapabilityVintageV1::
+        TopologyVolumeSendAndEffectsNeutralOtherProperties;
+    if (preserveEffects && std::any_of(projection.buses.begin(), projection.buses.end(),
+            [](const auto& bus) { return bus.faderAfterSlot != 8; }))
+        return projection;
     if (capabilityVintage == BusPublicationCapabilityVintageV1::
             TopologyAndVolumeNeutralOtherProperties) {
         for (auto& send : projection.sends) send.sendLevelDb = 0.0f;
@@ -1232,21 +1240,23 @@ PublishedBusProjectionV1 BuildPublishedBusProjectionV1(
         projection.downmix = result.downmix;
         projection.downmixCoefficients = result.downmixCoefficients;
     } else {
-        projection.effects.clear();
-        projection.effectParameters.clear();
+        if (preserveEffects) {
+            projection.effects = result.effects;
+            projection.effectParameters = result.effectParameters;
+        }
         projection.downmix.clear();
         projection.downmixCoefficients.clear();
         for (auto& bus : projection.buses) {
             if (capabilityVintage != BusPublicationCapabilityVintageV1::
                     TopologyAndVolumeNeutralOtherProperties &&
                 capabilityVintage != BusPublicationCapabilityVintageV1::
-                    TopologyVolumeAndSendNeutralOtherProperties) {
+                    TopologyVolumeAndSendNeutralOtherProperties && !preserveEffects) {
                 bus.faderDb = 0.0f;
                 bus.outputBusVolumeDb = 0.0f;
-            } else {
+            } else if (!preserveEffects) {
                 bus.faderAfterSlot = 8;
             }
-            bus.effectFirst = bus.effectCount = 0;
+            if (!preserveEffects) bus.effectFirst = bus.effectCount = 0;
             bus.downmixFirst = static_cast<std::uint32_t>(projection.downmix.size());
             bus.downmixCount = 1;
             const std::uint32_t destination = projection.compileTargetProfile

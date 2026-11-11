@@ -29,19 +29,25 @@ EXPORTS
     VnPreview_DrainProjectAcks
     VnPreview_EnableChannelPeakMetering
     VnPreview_HasAction
+    VnPreview_HasEffectChainConsumers
     VnPreview_HasPlayableConsumers
+    VnPreview_HasWorldGeneration
     VnPreview_PlayPlayable
     VnPreview_PlayVoiceRaw
     VnPreview_PrepareProject
     VnPreview_PrepareProjectV2
     VnPreview_PrepareProjectV3
+    VnPreview_PrepareProjectV4
     VnPreview_ProjectIsOpen
     VnPreview_PumpNullMixer
     VnPreview_QueryOwnerRevision
     VnPreview_QueryPlayable
+    VnPreview_QueryVoiceWorldGeneration
     VnPreview_RefreshVoiceBindings
     VnPreview_RegisterPcm
     VnPreview_ResetPlayable
+    VnPreview_SetBusEffect
+    VnPreview_SetVoiceEffect
     VnPreview_SetVoiceProperty
     VnPreview_StopPlayable
     VnPreview_TakeChannelPeaks

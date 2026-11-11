@@ -59,6 +59,7 @@ enum class DiagnosticCode : std::uint32_t {
     OccurrencePropertiesOnNonContainer = 127,
     OccurrenceOrdinalOverflow = 128,
     ContainerChildOccurrencesOnNonContainer = 129,
+    UnknownEffectFlags = 130,
 
     // Stage 2 — stable identity.
     DuplicateGuid = 200,             // two authored objects share one GUID

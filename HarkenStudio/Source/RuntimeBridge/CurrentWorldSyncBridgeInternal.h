@@ -48,6 +48,7 @@ public:
     };
 
     harkenprojectschema::ProjectInput project;
+    PreviewEffectDefinitions previewEffects;
     std::shared_ptr<const harkenprojectschema::RuntimeIdentityIndexV1>
         identityIndex;
     std::shared_ptr<const harkenprojectschema::CompileTargetProfileV1>

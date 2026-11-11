@@ -52,7 +52,8 @@ bool copyStudioDefinitionPayload(
     const CanonicalRuntimeProjectSourceIndexV1& index,
     const VNX::FieldGroupEffectiveSnapshot& groups,
     const harkenprojectschema::RuntimeIdentityIndexV1& identity,
-    harkenprojectschema::InputNode* output, QString* error);
+    harkenprojectschema::InputNode* output, QString* error,
+    bool exportPresetReferences = false);
 
 bool copyStudioOccurrencePayload(
     VNX::ProjectItem& owner, const VNX::PlayablePropertyLocatorV1& locator,

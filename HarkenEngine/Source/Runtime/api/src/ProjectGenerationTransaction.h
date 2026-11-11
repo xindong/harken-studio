@@ -7,9 +7,12 @@
 #include "harken/core/CurrentWorld.h"
 #include "harken/core/EngineConfig.h"
 #include "harken/param/VariableService.h"
+#include "harken/media/PackFormatV2.h"
+#include "harken/core/CommandQueue.h"
 
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -45,13 +48,18 @@ bool PreviewMasterCompatible(const Engine& engine, std::uint64_t fingerprint) no
 std::uint32_t SelectPreviewOwnerDestination(const Engine& engine, std::uint64_t ownerId) noexcept;
 bool HasPredecessorDirectWorldPublication(const Engine& engine) noexcept;
 inline constexpr std::uint64_t kCanonicalPackSetMasterOwnerId = 0x5053434E00000001ull;
-bool CanResetNeutralBusPropertiesV1(const Engine& engine, std::uint32_t slot) noexcept;
+bool CanResetNeutralBusPropertiesV1(const Engine& engine, std::uint32_t slot,
+    std::uint64_t allowedEffectOwner = 0) noexcept;
 void ResetNeutralBusPropertiesV1(Engine& engine, std::uint32_t slot) noexcept;
 bool CanResetVolumeOnlyNonVolumePropertiesV2(
     const Engine& engine, std::uint32_t slot,
-    std::uint64_t allowedOwnerCookie = 0) noexcept;
+    std::uint64_t allowedOwnerCookie = 0,
+    std::uint64_t allowedEffectOwner = 0) noexcept;
 void ResetVolumeOnlyNonVolumePropertiesV2(Engine& engine,
-                                          std::uint32_t slot) noexcept;
+    std::uint32_t slot, bool preserveEffects = false) noexcept;
+bool BuildBusEffectParameterCommandV1(Engine& engine, std::uint32_t busIndex,
+    std::uint32_t slot, std::uint32_t paramIndex, std::span<const float> parameters,
+    std::uint32_t type, CommandRecord* out) noexcept;
 struct TopologyPlanView;
 bool ValidateTopologyPlanVolumesV1(const TopologyPlanView& plan) noexcept;
 struct BusSlotRef;
@@ -105,6 +113,9 @@ struct ProjectGenerationInstallViewV1 {
     const float* authoredBusMakeUpGainDb = nullptr;
     const float* authoredBusOutputVolumeDb = nullptr;
     std::uint32_t authoredBusCount = 0;
+    std::span<const PackBusDefinitionEffect> effects;
+    std::span<const PackBusDefinitionEffectParameter> effectParameters;
+    bool forceWorldReplacement = false;
 };
 
 enum class ProjectGenerationPrepareStatusV1 : std::uint8_t {
@@ -182,6 +193,25 @@ bool SlotPlanMatchesLive(const Engine& engine, const SlotPlanV1& plan) noexcept;
 void InstallSlotPlanLogic(Engine& engine, const SlotPlanV1& plan) noexcept;
 std::uint32_t FindAssignedSlot(const SlotPlanV1& plan, VnBusId id) noexcept;
 
+class PreparedBusEffectsV1 {
+public:
+    PreparedBusEffectsV1();
+    ~PreparedBusEffectsV1();
+    PreparedBusEffectsV1(const PreparedBusEffectsV1&) = delete;
+    PreparedBusEffectsV1& operator=(const PreparedBusEffectsV1&) = delete;
+    VnResult Prepare(Engine& engine, const SlotPlanV1& plan,
+        std::span<const PackBusDefinitionEffect> effects,
+        std::span<const PackBusDefinitionEffectParameter> parameters,
+        std::uint64_t allowedOwner, std::uint64_t nextOwner,
+        bool deferStructureWhilePlaying = false);
+    bool CanCommit() const noexcept;
+    void Commit() noexcept;
+    std::span<const CommandRecord> Commands() const noexcept;
+private:
+    struct State;
+    std::unique_ptr<State> state_;
+};
+
 class PreparedProjectGenerationV1 {
 public:
     PreparedProjectGenerationV1() = default;
@@ -256,6 +286,7 @@ private:
         sourceOutputDb_.clear();
         projectedVolumeApply_.clear();
         bindingSourceStamp_ = 0;
+        effects_.reset();
     }
 
     void MoveFrom(PreparedProjectGenerationV1& other) noexcept {
@@ -291,6 +322,7 @@ private:
         sourceOutputDb_ = std::move(other.sourceOutputDb_);
         projectedVolumeApply_ = std::move(other.projectedVolumeApply_);
         bindingSourceStamp_ = other.bindingSourceStamp_;
+        effects_ = std::move(other.effects_);
         other.ClearFields();
     }
 
@@ -313,6 +345,7 @@ private:
     std::uint64_t publishedBusFingerprint_ = 0;
     std::uint64_t compileTargetProfileFingerprint_ = 0;
     std::uint32_t publicationVintage_ = 0;
+    std::unique_ptr<PreparedBusEffectsV1> effects_;
     ContainerWorldInstallViewV1 compiledWorld_{};
     VariableServiceV1::PreparedCurrentWorldImageV1 worldImage_{};
     PreparedSignalPublication signals_{};
