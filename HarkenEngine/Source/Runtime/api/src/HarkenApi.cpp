@@ -5425,7 +5425,7 @@ VnResult UnregisterBindingImpl(Engine& engine, BindingId id,
     if (engine.bindings.Find(id) == nullptr) {
         return VN_UNKNOWN_ID;
     }
-    // Section 5.4: refused while ANY reference exists ¡ª attachments, live
+    // Section 5.4: refused while ANY reference exists â€” attachments, live
     // voice instances, parked identity holders, or pending-start pinned
     // sets (parked and pending logical voices hold live instances,
     // sections 5.6/5.7). Detach first; no hidden cascade.
@@ -5571,7 +5571,7 @@ VnResult AttachBinding(Engine& engine, BindingId id, std::uint32_t scopeKind,
     } else {
         // Unsupported scope refused, never guessed. VN_TARGET_SCOPE_VOICE_-
         // EFFECT_PARAM lands here too: a voice-effect binding attaches to a
-        // LIVE voice via Vn_ApplyVoiceBinding, not to a playable id ¡ª no
+        // LIVE voice via Vn_ApplyVoiceBinding, not to a playable id â€” no
         // playable-id attach path exists for it.
         return VN_INVALID_ARG;
     }
@@ -5669,7 +5669,7 @@ VnResult DetachBinding(Engine& engine, BindingId id, std::uint32_t scopeKind,
         // transitionMs; the slots free when their voices end). Parked
         // logical voices hold live instances, so their identity lists
         // shed the attachment too; pending-start pinned sets are
-        // deliberately NOT altered (section 5.7 ¡ª an already-resolved
+        // deliberately NOT altered (section 5.7 â€” an already-resolved
         // queued play keeps its resolved set).
         engine.params.NeutralizeInstancesOf(id, objectId);
         for (ParkRecord& rec : engine.parkRecords) {
@@ -6038,7 +6038,7 @@ namespace {
 // Shared buffer validation: requiredCount is mandatory (truncation
 // reports through it); a sized buffer must exist and declare a known row
 // vintage. Row shapes have a single vintage so far, so the check is an
-// exact sizeof match ¡ª later vintages widen this the VnConfig way.
+// exact sizeof match â€” later vintages widen this the VnConfig way.
 template <typename Row>
 VnResult ValidateCaptureBuffer(const Row* out, std::uint32_t capacity,
                                const std::uint32_t* requiredCount) {
@@ -6066,7 +6066,7 @@ void NoteCaptureTruncated(harken::Engine& engine, std::uint64_t surface,
 }
 
 // The value an untouched combine slot reports in a target row: the fold's
-// no-op ¡ª 0 for the additive domains, the reduction's starting base for
+// no-op â€” 0 for the additive domains, the reduction's starting base for
 // the min/max domains (a printed 0 would read as a hard filter clamp).
 float UntouchedSlotValue(std::uint32_t scopeKind, std::uint32_t targetId,
                          float base) {
@@ -6278,7 +6278,7 @@ VnResult CapturePropertyBindings(Engine& engine, VnPropertyBindingInfo* out,
                 row.currentInput = input;
             }
             // Lifecycle flags are exhaustive for instances: every live
-            // entry is either evaluating (ACTIVE ¡ª an unset Variable
+            // entry is either evaluating (ACTIVE â€” an unset Variable
             // just contributes 0) or on its way out (NEUTRALIZING).
             const std::uint32_t flags =
                 r.neutralized ? VN_PROPERTY_BINDING_NEUTRALIZING
@@ -6287,7 +6287,7 @@ VnResult CapturePropertyBindings(Engine& engine, VnPropertyBindingInfo* out,
             // the clear/detach window it is still the in-force value the
             // target rows' Variable slot folds (the exit evaluation is
             // what zeroes it), and it reads 0 while the Variable has
-            // never resolved ¡ª so binding rows sum to the target rows in
+            // never resolved â€” so binding rows sum to the target rows in
             // every phase, the section-12 attribution invariant.
             row.currentContribution = r.lastContribution;
             row.stateFlags = flags;
@@ -6298,7 +6298,7 @@ VnResult CapturePropertyBindings(Engine& engine, VnPropertyBindingInfo* out,
     // currently evaluating. Revision and transition are the definition's
     // current (held identities evaluate the current revision at
     // return/onset), and the contribution is what the current input
-    // would apply then ¡ª mirroring the parked re-evaluation.
+    // would apply then â€” mirroring the parked re-evaluation.
     const auto emitHeldIdentity = [&](BindingId bindingId,
                                       VnVoiceHandle publicHandle,
                                       VnEmitterHandle emitterHandle) {
@@ -6716,7 +6716,7 @@ VnResult CaptureCompressorRuntimeInfo(
 namespace harken::detail {
 
 // Single engine instance. The API is externally synchronized, so plain
-// pointer state is sufficient ¡ª no atomics, no locks.
+// pointer state is sufficient â€” no atomics, no locks.
 Engine* g_engine = nullptr;
 
 bool CanonicalSetMutationBlocked() noexcept {
@@ -6846,7 +6846,7 @@ VnResult StopRealDevice(Engine& engine) {
 
 // Single teardown epilogue, shared by the direct Vn_Term path and the
 // deferred in-callback path. The device callback stops first so no audio
-// thread runs inside the mixer ¡ª or appends trace journal blocks ¡ª while
+// thread runs inside the mixer â€” or appends trace journal blocks â€” while
 // the session trace finalizes (the implicit Vn_TraceStop) and the engine
 // is destroyed.
 void TeardownEngine(Engine* engine) {
@@ -7408,14 +7408,14 @@ bool PrepareFilterSection(float sampleRate, std::uint32_t filterKind,
 // Translates one resolved combine-domain value into its wire command. The
 // audio thread receives only final values: dB for the gain stage, a
 // playback ratio for the resampler, or filter metadata with prepared
-// coefficients for the tone stage ¡ª never curves, never combine slots.
+// coefficients for the tone stage â€” never curves, never combine slots.
 // Returns false to DROP the commit: a non-finite resolved value, a Volume
 // that cannot convert to a finite non-negative linear gain, or an unstable
 // prepared section is poisoned math that will not heal by retrying, so it
 // is consumed here instead of wiring garbage to the audio thread or
 // live-locking the flush. Finite overflows such as 800 dB take the same
 // drop as +inf; they must not Stage and rely on the audio thread to refuse.
-// (The lowpass "fully open" sentinel is float max ¡ª finite, unaffected by
+// (The lowpass "fully open" sentinel is float max â€” finite, unaffected by
 // this gate.)
 bool MakeParamCommand(const harken::Engine& engine,
                       const harken::ParamCommit& commit,
@@ -7439,7 +7439,7 @@ bool MakeParamCommand(const harken::Engine& engine,
         // the changed bindings' transitionMs and a same-tick API-direct
         // rampMs.
         // Raw curve-copy bindings have no transition, so a graph without
-        // definitions still snaps ¡ª bit-identical to the prior engine.
+        // definitions still snaps â€” bit-identical to the prior engine.
         command.opcode = harken::kOpcodeSetVoiceVolume;
         command.payload.setVoiceVolume.handle = commit.handle;
         command.payload.setVoiceVolume.volumeDb = commit.resolved;
@@ -7763,8 +7763,8 @@ bool MakeEffectParamCommand(
 //
 // Every producer OUTSIDE the property publication batch admits through
 // these gates: from the moment a publication batch is deferred, its
-// admission is reserved, so other traffic ¡ª direct setters, plays, sends,
-// stops, effects, topology ¡ª admits only into capacity beyond the pending
+// admission is reserved, so other traffic â€” direct setters, plays, sends,
+// stops, effects, topology â€” admits only into capacity beyond the pending
 // batch's structural worst case. Steady traffic and later dirty-set growth
 // therefore cannot starve the batch; its delay bound is one tick. With
 // nothing deferred both gates reduce to the plain capacity checks they
@@ -7799,9 +7799,9 @@ std::uint32_t ReservedPublicationDemand(const harken::Engine& engine) {
 }
 
 // One command beyond the reservation (the direct setters' pre-checked
-// immediate admission, unchanged in shape ¡ª only the reserved capacity is
+// immediate admission, unchanged in shape â€” only the reserved capacity is
 // off limits). The seam's AdmitSingle covers the staged batch; the second
-// check extends it with live growth (targets dirtied since the deferral) ¡ª
+// check extends it with live growth (targets dirtied since the deferral) â€”
 // the max lives here, the five seam methods' contracts are unchanged.
 bool AdmitSingleCommand(harken::Engine& engine) {
     if (!engine.propertyPublisher.AdmitSingle(&CommandQueueFreeSlots,
@@ -74080,7 +74080,7 @@ namespace {
 // range, so the applied gain converts to exact linear zero.
 inline constexpr float kBusMuteFloorDb = -960.0f;
 
-// Whether a bus lies on a solo path ¡ª inside a soloed bus's subtree
+// Whether a bus lies on a solo path â€” inside a soloed bus's subtree
 // (soloed ancestor-or-self), or on a soloed bus's ancestor chain to the
 // master. Tree edges only: send-fed paths deliberately do not follow solo.
 // One bus's solo flag can be overridden so the solo flip computes its
@@ -74233,7 +74233,7 @@ bool PushPropertyCommit(void* ctx, const harken::PropertyCommit& commit) {
     resolved.targetId = commit.targetId;
     resolved.rampMs = commit.rampMs;
     /* Verbatim translation: the staged value IS current, because the batch
-     * is rebuilt by a fresh gather every tick ¡ª a deferred batch's targets
+     * is rebuilt by a fresh gather every tick â€” a deferred batch's targets
      * stay dirty and re-collect at current resolved values, and a target a
      * direct setter consumed during the deferral window is clean and never
      * re-stages. One command per target per tick, no stale overwrite. */
@@ -74498,7 +74498,7 @@ std::uint32_t PinCapacity(const harken::Engine& engine) {
 // Collects the VOICE-scope attachments activated by one Sound play. Writes up to
 // `capacity` identities and returns the TOTAL matched count: a total
 // beyond the per-voice instance ceiling makes the caller refuse the whole
-// play at acceptance (section 5.7 pins the resolved set ¡ª the whole set,
+// play at acceptance (section 5.7 pins the resolved set â€” the whole set,
 // never a truncation; over-ceiling refuses loudly, never silently drops).
 std::uint32_t MatchVoiceAttachments(
     harken::Engine& engine, VnSoundId playedId, VnSoundId leafId,
@@ -74520,7 +74520,7 @@ std::uint32_t MatchVoiceAttachments(
     return matched;
 }
 
-// Unique VOICE-scope targets a pinned identity set feeds ¡ª the admission
+// Unique VOICE-scope targets a pinned identity set feeds â€” the admission
 // headroom the start batch needs for its resolved initial values (one
 // command per target per tick; a primed value equal to the authored base
 // publishes nothing, so this is a conservative upper bound).
@@ -74619,7 +74619,7 @@ private:
 // into the already-admitted start batch: one command per non-tone target,
 // one per touched physical tone section (the section command carries the
 // full resolved tuple, so members beyond the first dedupe away). rampMs 0
-// throughout ¡ª initial instantiation snaps (section 9.2).
+// throughout â€” initial instantiation snaps (section 9.2).
 template <typename Writer>
 bool PushPrimedParamCommandsWith(
     harken::Engine& engine, VnVoiceHandle render,
@@ -74798,7 +74798,7 @@ constexpr std::uint32_t kTonePresetTargetCount =
                                sizeof(kTonePresetTargets[0]));
 
 // Installs an authored tone preset on a started voice and publishes the
-// touched physical sections into the already-admitted start batch ¡ª the
+// touched physical sections into the already-admitted start batch â€” the
 // consumer of the "+4 tone" command reservation every start path admits.
 // The voice's first rendered block carries the authored tone (same-batch
 // rule, section 5.7); sections whose authored values resolve equal to the
@@ -74830,7 +74830,7 @@ void ApplyTonePresetAndPrime(harken::Engine& engine, VnVoiceHandle render,
 
 // Books one structurally-unreachable instance-bind failure at a
 // voice-birth site: acceptance reserved the capacity and refused
-// over-ceiling sets, so a refusal here marks a bookkeeping bug ¡ª counted
+// over-ceiling sets, so a refusal here marks a bookkeeping bug â€” counted
 // and logged, never silent.
 void NoteOnsetBindFailure(harken::Engine& engine) {
     ++engine.bindingInstanceOnsetFailCount;
@@ -74844,7 +74844,7 @@ void NoteOnsetBindFailure(harken::Engine& engine) {
 }
 
 // Instantiates a pinned identity set on a new voice (reading each
-// definition's CURRENT revision ¡ª a Replace between acceptance and onset
+// definition's CURRENT revision â€” a Replace between acceptance and onset
 // is live) and publishes the resolved initial targets into the admitted
 // start batch. A definition a pin references cannot have unregistered
 // (the pinned set counts as a reference). `reservedTargets` is the
@@ -75293,7 +75293,7 @@ bool PrimeRecipeBindings(
                                    count, writer, reader);
 }
 
-// Renders one drained log record as text. Logic thread only ¡ª the audio
+// Renders one drained log record as text. Logic thread only â€” the audio
 // side ships binary records; strings exist solely for the caller's sink.
 // Known codes get a semantic message; anything else degrades to a raw
 // field dump instead of being dropped.
@@ -75490,7 +75490,7 @@ void FormatLogRecord(const harken::LogRecord& record, char* out,
     case harken::kLogCodePackApplyDefect:
         std::snprintf(out, capacity,
                       "pack apply defect: entry %s refused with code "
-                      "%llu after staging ¡ª bookkeeping bug, not content",
+                      "%llu after staging â€” bookkeeping bug, not content",
                       entryText,
                       static_cast<unsigned long long>(record.arg1));
         break;
@@ -75547,11 +75547,11 @@ void FormatLogRecord(const harken::LogRecord& record, char* out,
     }
 }
 
-// Cancels a pending-start voice ¡ª a steal's deferred start that has not yet
+// Cancels a pending-start voice â€” a steal's deferred start that has not yet
 // claimed a render slot. Releases the held PCM reference and any staged effect
 // instances back to their pools (no audio-thread involvement), ends the ledger
-// entry, and emits the notification a stopped voice would ¡ª stopped-by-fade
-// when fadeMs > 0, otherwise ended ¡ª carrying the public handle through the
+// entry, and emits the notification a stopped voice would â€” stopped-by-fade
+// when fadeMs > 0, otherwise ended â€” carrying the public handle through the
 // logic-side notification queue (it has no render block, so its timestamp is 0).
 void CancelPendingEffectSeeds(harken::Engine& engine,
                               harken::PendingStartRecord& rec) {
@@ -75882,7 +75882,7 @@ DirectParkPendingResult CommitDirectParkPending(
     // Would-be metric in the combine model's additive-dB volume domain: play
     // base + staged API-direct volume + distance attenuation, plus the
     // pinned binding instances' live volume term (pending-start logical
-    // voices hold live instances, section 5.7 ¡ª their contribution is
+    // voices hold live instances, section 5.7 â€” their contribution is
     // evaluated at the current definition revisions and current scoped
     // values, exactly as a parked voice's would be). The pinned pitch
     // term seeds the virtual advance rate below.
@@ -75921,7 +75921,7 @@ DirectParkPendingResult CommitDirectParkPending(
                 distanceScale, rec.attenuationGeneration,
                 rec.source.emitterDistanceScale));
     }
-    // Below threshold: park directly. Build the play facts locally ¡ª there is no
+    // Below threshold: park directly. Build the play facts locally â€” there is no
     // render slot to key RecordPlayFacts on.
     harken::VoicePlayFacts facts{};
     facts.valid = true;
@@ -76001,7 +76001,7 @@ DirectParkPendingResult CommitDirectParkPending(
         rec.baseVolumeDb, rec.hasVolume ? rec.volumeDb : 0.0f);
     prec.instanceVolumeDb = pinnedVolumeDb;
     // The pinned identities become the parked voice's live instances
-    // (sections 5.6/5.7): identities, never curve copies ¡ª a Replace
+    // (sections 5.6/5.7): identities, never curve copies â€” a Replace
     // while parked is live at the next re-evaluation and on return. The
     // acceptance-reserved capacity transfers to the park hold with them
     // (the logical voice lives on; rec.Reset() below clears the pending
@@ -76080,11 +76080,11 @@ DirectParkPendingResult CommitDirectParkPending(
     // Transfer the pending PCM pin to the park record: exactly one use-count
     // reference stays held (released at the parked voice's return or end), so the
     // source cannot be unregistered while parked. rec.Reset() below clears the
-    // pending flag without releasing ¡ª the reference is now the park's.
+    // pending flag without releasing â€” the reference is now the park's.
     prec.heldPcmRef = rec.heldPcmRef;
     // Carry the staged effect configuration into the park record (return
     // reconstructs it with fresh instances), then recycle the staged pool
-    // instances ¡ª they never rendered. This matches the live-park path, which
+    // instances â€” they never rendered. This matches the live-park path, which
     // likewise re-stages effect config on return.
     for (std::uint32_t fx = 0; fx < rec.effects.size(); ++fx) {
         const harken::PendingStartRecord::StagedEffect& staged = rec.effects[fx];
@@ -76171,7 +76171,7 @@ std::uint32_t PendingStartCommandDemand(harken::Engine& engine,
 }
 
 // What one attempt at landing a pending start achieved. The deferred pass
-// ignores it ¡ª every non-terminal outcome simply retries at the next update ¡ª
+// ignores it â€” every non-terminal outcome simply retries at the next update â€”
 // while the staged-install commit reports it to a caller that cannot retry
 // mid-install and must know whether the start is now owned by the engine.
 enum class PendingStartOutcome : std::uint8_t {
@@ -76396,7 +76396,7 @@ PendingStartOutcome StartDeferredVoice(
         if (!engine.streams.FactsForFileIndex(rec.streamFileIndex, &facts)) {
             // Defensive: the pending ref pins the file open, so it cannot
             // vanish while pending and this is not expected. Handle it
-            // anyway ¡ª recycle staged effects, release the pin, and end the
+            // anyway â€” recycle staged effects, release the pin, and end the
             // entry with a logic-side ENDED so the handle goes stale
             // cleanly.
             for (const harken::PendingStartRecord::StagedEffect& staged :
@@ -76626,7 +76626,7 @@ PendingStartOutcome StartDeferredVoice(
     // Apply per-slot bypass BEFORE installing effects: on the fresh render slot
     // each bypassed slot is still empty, so the command settles its mix directly
     // to the target (no ramp), and the effect install that follows keeps that
-    // settled mix ¡ª a staged bypassed effect is dry from the first block, the
+    // settled mix â€” a staged bypassed effect is dry from the first block, the
     // same as the live "bypass while empty, then install" path. Installing first
     // would arm a one-block wet->dry ramp.
     for (std::uint32_t slot = 0;
@@ -76671,7 +76671,7 @@ PendingStartOutcome StartDeferredVoice(
             engine.effectSlotConfig[renderSlot][slot].params = staged.params;
         }
         // Seed the effect-parameter binding store from the applied values, like
-        // the live install path ¡ª a deferred-start install must not leave the
+        // the live install path â€” a deferred-start install must not leave the
         // store without a base for a parameter a binding may later drive.
         engine.effectParamTargets.CommitPreparedInstalledEffectSeed(
             &rec.preparedSeedTokens[slot]);
@@ -76746,7 +76746,7 @@ PendingStartOutcome StartDeferredVoice(
 // --- Action Step execution and the pending-Step service ---
 
 // Refreshes the logic-side audio-frame clock (blocks rendered x blockFrames)
-// from the published snapshot ¡ª a coherent cross-thread read. Monotonic: a
+// from the published snapshot â€” a coherent cross-thread read. Monotonic: a
 // failed capture leaves the last value in place. Called both when a delayed
 // Step is scheduled and when the queue is serviced (Vn_Update),
 // so a due frame is measured against a clock current as of the trigger, not the
@@ -76805,8 +76805,8 @@ void SweepRetiredGenerations(harken::Engine& engine) {
     }
 }
 
-// Books one replace verb's outcome ¡ª the counters and the log-ring record
-// (asset class + id) every replace writes, success or refusal ¡ª and passes
+// Books one replace verb's outcome â€” the counters and the log-ring record
+// (asset class + id) every replace writes, success or refusal â€” and passes
 // the result through so call sites stay one line.
 template <typename AssetId>
 VnResult NoteHotReload(harken::Engine& engine, VnResult result,
@@ -76968,7 +76968,7 @@ void SampleParkedSource(harken::Engine& engine, harken::ParkRecord& rec) {
 
 // A parked voice's recomputed audibility metric: the non-spatial,
 // non-instance contribution frozen at park, plus the live binding
-// instance volume term (re-evaluated each tick ¡ª section 5.6), plus the
+// instance volume term (re-evaluated each tick â€” section 5.6), plus the
 // live distance attenuation. Distance- and binding-driven return are both
 // tracked; the cone angular term stayed frozen at park.
 float ParkedMetricDb(harken::Engine& engine, harken::ParkRecord& rec) {
@@ -77151,8 +77151,8 @@ void DoParkVoice(harken::Engine& engine, VnVoiceHandle render,
     // parked voice keeps LIVE instances, re-evaluated each tick against
     // the current definition revision and current scoped values, and
     // re-applied by identity on return. The instance ENTRIES leave the
-    // parameter table now ¡ª the identities above are the parked voice's
-    // instances ¡ª and their worst-case demand transfers to the record as
+    // parameter table now â€” the identities above are the parked voice's
+    // instances â€” and their worst-case demand transfers to the record as
     // a held reservation, so the return's re-binds grow back into
     // guaranteed room and the later slot reuse releases only the raw
     // bindings' demand (no double release, no leak).
@@ -77176,7 +77176,7 @@ void DoParkVoice(harken::Engine& engine, VnVoiceHandle render,
         static_cast<std::uint32_t>(render >> 32));
     // Capture the voice's effect chain (type + committed params + bypass) so the
     // return reconstructs it. A fresh instance is acquired at return, so only the
-    // configuration travels ¡ª never the DSP state.
+    // configuration travels â€” never the DSP state.
     rec.effects.clear();
     if (slot < engine.effectSlotTypes.size()) {
         for (std::uint32_t fx = 0; fx < engine.config.fxSlotsPerVoice; ++fx) {
@@ -77813,12 +77813,12 @@ std::size_t FindParkedEffectIndex(const harken::ParkRecord& rec,
 
 // Attempts to return a parked voice: compiles a Play at its virtual offset,
 // re-applies the captured parameter state (base, spatial, emitter, Variable
-// bindings, API-direct targets, and the effect chain ¡ª type, committed
+// bindings, API-direct targets, and the effect chain â€” type, committed
 // params, bypass) to the new render slot, and rebinds the ledger entry (keeping
-// the public handle). Subject to normal capacity and steal policy (spec ¡ì6),
+// the public handle). Subject to normal capacity and steal policy (spec Â§6),
 // command room, and effect-instance availability; returns false to keep the
-// voice parked and retry next tick. Only DSP state ¡ª resampler history, effect
-// delay/filter memory ¡ª is not preserved: a return is a fresh start at the
+// voice parked and retry next tick. Only DSP state â€” resampler history, effect
+// delay/filter memory â€” is not preserved: a return is a fresh start at the
 // virtual offset, so re-staged effects begin with clean internal state.
 bool ParkedEffectMatches(const harken::ParkRecord& rec, const harken::EffectParamLocator& locator) {
     for (const auto& effect : rec.effects)
@@ -78061,12 +78061,12 @@ bool TryReturnParked(harken::Engine& engine, std::uint32_t ledgerSlot,
             target.slot = decision.renderSlot;
             target.generation = decision.renderGeneration;
         } else {
-        // Return is subject to capacity and steal policy (spec ¡ì6). Refuse
+        // Return is subject to capacity and steal policy (spec Â§6). Refuse
         // policy: stay parked (the caller counts the refusal).
         // A steal this return already issued may still be resolving: while the
         // victim occupies its slot, wait rather than steal a second voice. If
         // the victim freed but the slot was taken by another voice, the steal is
-        // spent ¡ª clear it and issue a fresh one this tick.
+        // spent â€” clear it and issue a fresh one this tick.
         // Preflight both the victim stop and the claimant's complete future
         // return batch before publishing the claim.
         const VnVoiceHandle victim = decision.victimRenderHandle;
@@ -78114,7 +78114,7 @@ bool TryReturnParked(harken::Engine& engine, std::uint32_t ledgerSlot,
         }
         // The slot frees once the audio thread applies the declick; the return
         // completes on a later tick through the free-slot path below. Deferred-
-        // start machinery does not apply ¡ª the parked record itself is the
+        // start machinery does not apply â€” the parked record itself is the
         // pending state.
         return false;
         }
@@ -78308,7 +78308,7 @@ bool TryReturnParked(harken::Engine& engine, std::uint32_t ledgerSlot,
         forward.z = rec.spatial.fwdZ;
         (void)engine.spatial.SetVoiceOrientation(newRender, forward);
     }
-    // Re-register raw Variable bindings (curve copies ¡ª the M1
+    // Re-register raw Variable bindings (curve copies â€” the M1
     // engine-internal wiring), and re-apply binding instances BY IDENTITY
     // against the current definition revisions (section 5.6): a Replace
     // that landed while the voice was parked is what the returned voice
@@ -78365,7 +78365,7 @@ bool TryReturnParked(harken::Engine& engine, std::uint32_t ledgerSlot,
     }
     // First-block correctness for the return (section 5.6): evaluate the
     // re-applied bindings, instances and spatial state now and push their resolved
-    // values into this admitted batch ¡ª the returned voice's first block
+    // values into this admitted batch â€” the returned voice's first block
     // renders with current binding state (a replaced curve included),
     // not with a one-tick hole. Values equal to the published base
     // need no command. An illegal initial volume abandons the unpublished
@@ -78396,7 +78396,7 @@ bool TryReturnParked(harken::Engine& engine, std::uint32_t ledgerSlot,
     // slot each bypassed slot is still empty, so the bypass command settles its
     // mix directly to the target (no ramp); the effect install that follows
     // keeps that settled mix, so a returning bypassed effect is dry from the
-    // first block ¡ª matching the live "bypass while empty, then install" path.
+    // first block â€” matching the live "bypass while empty, then install" path.
     // Installing first would arm a one-block wet->dry ramp and leak a wet block.
     for (std::uint32_t s = 0;
          s < engine.config.fxSlotsPerVoice && s < rec.effectBypass.size(); ++s) {
@@ -78414,7 +78414,7 @@ bool TryReturnParked(harken::Engine& engine, std::uint32_t ledgerSlot,
         }
     }
     // Then re-stage the captured effect chain using the pre-acquired instances:
-    // reset each (clean DSP state ¡ª the spec's "fresh start at the virtual
+    // reset each (clean DSP state â€” the spec's "fresh start at the virtual
     // offset"), apply the committed parameters, install it, mirror the config.
     // Command room (installs + bypasses) was verified above.
     for (std::uint32_t i = 0; i < rec.returnEffectCount; ++i) {
@@ -78451,7 +78451,7 @@ bool TryReturnParked(harken::Engine& engine, std::uint32_t ledgerSlot,
     // the fresh render slot. The effects above were re-seeded first, so each
     // binding composes on its restored base. These instances kept their pool
     // slots across the park (the held reservation), so this is a pure retarget
-    // that never allocates and cannot be refused ¡ª the reservation guarantees
+    // that never allocates and cannot be refused â€” the reservation guarantees
     // the restore is all-or-nothing.
     if (!PrimeParkedEffectBindings(engine, rec, publicHandle, newRender, commands, variableCut.Reader())) return false;
     // Re-issue the captured voice sends on the fresh render slot (mirror +
@@ -78631,7 +78631,7 @@ double PendingRequestAudibility(harken::Engine& engine,
 }
 
 // A pending start is the deferred pass's business once its record is live and
-// its onset gate has passed ¡ª but never while it is a staged install, whose
+// its onset gate has passed â€” but never while it is a staged install, whose
 // publication belongs to its caller's commit alone.
 bool PendingStartDueForService(const harken::Engine& engine,
                                const harken::PendingStartRecord& rec) {
@@ -79221,11 +79221,11 @@ void RunAudibilityPass(harken::Engine& engine) {
 
 // Runs the combined tree+send graph's feeds-first topological sort (Kahn with
 // highest-index-ready selection, so a pure tree yields exactly descending index
-// ¡ª bit-identical to the pre-plan fold). An optional prospective edge (extraFrom
+// â€” bit-identical to the pre-plan fold). An optional prospective edge (extraFrom
 // -> extraTo, both valid) is included so a connect can be cycle-checked before
 // its edge is committed, and an optional prospective tree-edge override
 // (treeChild's parent read as treeNewParent, both valid) so a reparent can be
-// cycle-checked the same way ¡ª both are pure read-only preflights. Writes the
+// cycle-checked the same way â€” both are pure read-only preflights. Writes the
 // order into `order` (busCount entries) when non-null. Returns true if acyclic
 // (every bus emitted), false if a cycle remains. Logic thread only (its
 // scratch is logic-side heap).
@@ -79278,7 +79278,7 @@ bool TopoSortBuses(harken::Engine& engine, std::uint32_t extraFrom,
     // feederCount[x] = edges feeding x (tree children + send sources);
     // emittedFeeders[x] rises as those feeders emit; x is ready when equal.
     // Tombstoned slots take no part: pre-marked emitted, feeding nothing,
-    // never picked ¡ª the emitted order covers exactly the live buses.
+    // never picked â€” the emitted order covers exactly the live buses.
     std::vector<std::uint32_t> localFeederCount;
     std::vector<std::uint32_t> localEmittedFeeders;
     std::vector<std::uint8_t> localEmitted;
@@ -79638,10 +79638,10 @@ void FillPlan(harken::Engine& engine, std::uint32_t planIndex,
 }
 
 // Reserves the two resources a structural change needs: one free plan slot and
-// one command admission ¡ª plus `extraCommands` further admissions for a caller
+// one command admission â€” plus `extraCommands` further admissions for a caller
 // whose change publishes companion commands in the same atomic call (a
 // reparent's solo-audibility republishes). Drains plan retires first (a
-// plan-pool shortage clears after a pump ¡ª the documented retry). On shortage
+// plan-pool shortage clears after a pump â€” the documented retry). On shortage
 // returns kInvalidTopologyPlanIndex and counts the refusal; the caller then
 // returns VN_BACKPRESSURE having mutated nothing. Logic thread only.
 std::uint32_t ReserveTopologyChange(harken::Engine& engine,
@@ -80215,7 +80215,7 @@ bool DynamicInfluenceReaches(
 }
 
 // The per-call session-trace hook. Tracing OFF costs exactly the recorder
-// null test ¡ª the one branch per API call the trace contract allows on the
+// null test â€” the one branch per API call the trace contract allows on the
 // logic thread; the stateful variant additionally closes the Vn_TraceStart
 // gate with an unconditional flag store. Returned by value: the temporary's
 // destructor commits the record at the end of the hook expression. Kept
@@ -111316,7 +111316,7 @@ VnResult Vn_Init(const VnConfig* config) {
         // Construction preallocates every pool (voices, buses, effect instance
         // pools, queues) up front. A resolved config that passes the capacity
         // ceilings can still exceed what this machine can actually allocate; a
-        // std::bad_alloc ¡ª or any construction failure ¡ª must become a defined
+        // std::bad_alloc â€” or any construction failure â€” must become a defined
         // result code here rather than propagating out of the C ABI. On a ctor
         // throw the object is fully unwound and the assignment never ran, so
         // g_engine stays null (it was null on entry).
@@ -111358,7 +111358,7 @@ VnResult Vn_Init(const VnConfig* config) {
     engine->traceOrigin.resolvedDeviceLayout = resolved.deviceChannelLayout;
     if (!resolved.nullDevice) {
         // Real device: build and start the platform's shared-mode backend.
-        // Any failure ¡ª including a build with no real backend ¡ª unwinds init
+        // Any failure â€” including a build with no real backend â€” unwinds init
         // completely; the engine never silently downgrades to the null device.
         VnResult device = VN_DEVICE_ERROR;
         std::uint64_t admissionGeneration = 0;
@@ -111502,8 +111502,8 @@ VnResult Vn_Term(void) {
     if (harken::detail::g_callbackDepth > 0) {
         // Term issued from inside a user callback: the outer Vn_Update is
         // still running over the engine, so destroying it here would free
-        // the memory under that stack. Detach the engine now ¡ª every later
-        // call from the same callback reports the not-initialized state ¡ª
+        // the memory under that stack. Detach the engine now â€” every later
+        // call from the same callback reports the not-initialized state â€”
         // and let the outer update run the teardown once the callback
         // returns.
         harken::detail::g_engine = nullptr;
@@ -111561,8 +111561,8 @@ VnResult Vn_Update(void) {
         engine->logicLogRing.Push(record);
     }
     /* Self-measurement window opens at entry and closes just before the
-     * return below; everything the pump does ¡ª including any session-trace
-     * writes ¡ª is honest update cost. */
+     * return below; everything the pump does â€” including any session-trace
+     * writes â€” is honest update cost. */
     const std::uint64_t updateBeginTicks = harken::CpuClockTicks();
     engine->variables.AcknowledgeFinishedTimelineReadUses(engine->mixer.BlocksRendered());
     harken::RefreshRetainedPackSignals(*engine);
@@ -111580,8 +111580,8 @@ VnResult Vn_Update(void) {
     (void)harken::DrainProjectGenerationInstallAcksV1(*engine);
     /* Pack revision activation,
      * pinned immediately BEFORE the binding revision install: a staged
-     * pack revision applies whole here ¡ª media generation swap, registry
-     * swaps, live revisions, one topology republish ¡ª and any binding
+     * pack revision applies whole here â€” media generation swap, registry
+     * swaps, live revisions, one topology republish â€” and any binding
      * replaces it stages are picked up by the install right below, so
      * the entire revision is visible from this tick's first evaluation
      * on. Every lookup before this point saw the OLD revision in full,
@@ -111589,8 +111589,8 @@ VnResult Vn_Update(void) {
     harken::ActivatePendingPackRevisions(*engine);
     /* Fixed first phase of the update: install pending binding
      * definition revisions BEFORE
-     * anything evaluates, so every reader of this tick ¡ª bus attachments,
-     * live voice instances, parked and pending-start instances ¡ª sees the
+     * anything evaluates, so every reader of this tick â€” bus attachments,
+     * live voice instances, parked and pending-start instances â€” sees the
      * new revision. Instances read definition storage through pointers,
      * so the install is one copy per replaced definition; the demand mark
      * grows the live census exactly like a Variable write, and the
@@ -111694,7 +111694,7 @@ VnResult Vn_Update(void) {
             return VN_DEVICE_ERROR;
         }
         // The callback may have issued Vn_Term: the engine is detached and
-        // nothing of this update ¡ª the rest of this drain included ¡ª may
+        // nothing of this update â€” the rest of this drain included â€” may
         // touch it again. Run the deferred teardown and end the update.
         if (harken::detail::g_termPending) {
             harken::detail::TeardownEngine(engine);
@@ -111727,12 +111727,12 @@ VnResult Vn_Update(void) {
             engine->ledger.Reap(renderHandle);
         }
     }
-    /* Deferred starts: a voice whose start was deferred ¡ª by a steal or by a
-     * resolved container onset delay ¡ª is serviced when its onset and victim
+    /* Deferred starts: a voice whose start was deferred â€” by a steal or by a
+     * resolved container onset delay â€” is serviced when its onset and victim
      * gates are open. An eligible resident PCM can park directly without a
      * Render slot or command batch; the Render fallback additionally requires
-     * a free slot and room for its whole start batch. A freed slot ¡ª not the
-     * (advisory, droppable) victim notification ¡ª is the steal trigger, so a
+     * a free slot and room for its whole start batch. A freed slot â€” not the
+     * (advisory, droppable) victim notification â€” is the steal trigger, so a
      * deferred start never strands on a lost notification; the frame clock is
      * refreshed first so an onset falls due on the first update at or after its
      * frame. Runs before the
@@ -111745,12 +111745,12 @@ VnResult Vn_Update(void) {
     // frame boundary.
     engine->timelineService->Service();
     // Only a steal-deferred record carries a victim gate. 0 is not a
-        // valid render handle to wait on ¡ª the pool's slot 0 in its first
-        // generation would alias it ¡ª so an onset-deferred record (victim 0)
+        // valid render handle to wait on â€” the pool's slot 0 in its first
+        // generation would alias it â€” so an onset-deferred record (victim 0)
         // skips the liveness check entirely.
         // The pinned attachment set's resolved initial values ride the
         // SAME batch as the start command (section 5.7): one command per
-        // unique pinned target, admitted together ¡ª if the whole batch
+        // unique pinned target, admitted together â€” if the whole batch
         // cannot be admitted this tick, the start defers whole.
     RefreshServiceFrameClock(*engine);
     /* Logic-originated notifications travel their own fixed-capacity queue
@@ -111844,7 +111844,7 @@ VnResult Vn_Update(void) {
      * detection marks moved targets dirty with their section-9.2 ramp
      * folds; the bus flush below stages them into the tick's transaction.
      * A bus with no attachments and no direct set marks nothing and
-     * publishes nothing ¡ª bit-identical to M5. */
+     * publishes nothing â€” bit-identical to M5. */
     engine->bindings.EvaluateDirtyBusAttachments(engine->params,
                                             engine->busTargets);
     /* Effect-parameter bindings, on the SAME tick semantics as the bus
@@ -111852,7 +111852,7 @@ VnResult Vn_Update(void) {
      * voice-effect binding's Variable-through-curve contribution onto its
      * parameter's base, then flush every changed parameter as the composed
      * value on the existing opcodes 14/22. This path is deliberately outside
-     * the property-publisher transaction ¡ª effect parameters already reach the
+     * the property-publisher transaction â€” effect parameters already reach the
      * audio thread by their own single-command route (Vn_Set*EffectParam), so
      * the resolver reuses it. A push refused for a full queue leaves the
      * parameter dirty to retry next update (no silent loss). */
@@ -111904,7 +111904,7 @@ VnResult Vn_Update(void) {
             return engine->commands.TryPush(command);
         });
     /* Property publication: the tick's
-     * property commits cross to the audio thread as one transaction ¡ª all
+     * property commits cross to the audio thread as one transaction â€” all
      * of them or none, never a half-applied mix. Gather runs EVERY tick
      * (section 14.3's fixed phase): it evaluates dirty bindings, reduces
      * dirty targets, and stages every changed commit with the wire
@@ -111912,11 +111912,11 @@ VnResult Vn_Update(void) {
      * check and pushes all in stage order (cleaning the marks per pushed
      * commit) or pushes nothing, keeps every target dirty, counts the
      * deferral, and reserves the batch's admission against other
-     * producers until it lands ¡ª delay bound one tick. The dirty marks
+     * producers until it lands â€” delay bound one tick. The dirty marks
      * ARE the retry mechanism: a deferred batch's targets were never
      * mark-committed, so restage discards the stale image and the fresh
      * gather re-collects them at CURRENT resolved values together with
-     * newly-dirty targets ¡ª one batch = one tick's property commits, and
+     * newly-dirty targets â€” one batch = one tick's property commits, and
      * a target a direct setter consumed meanwhile is clean and never
      * re-stages (one command per target per tick). */
     harken::PropertyPublisher& publisher = engine->propertyPublisher;
@@ -111932,7 +111932,7 @@ VnResult Vn_Update(void) {
                 return harken::FlushOutcome::Retry;
             /* Gather-phase defenses, applied before staging so the
              * batch holds only pushable commits. Advisory identity liveness
-             * only: no render payload is accessed ¡ª
+             * only: no render payload is accessed â€”
              * the audio side stays the authority and no-ops a handle
              * that dies after this look. */
             if (engine->params.ForeignClaim(commit.handle,
@@ -111941,13 +111941,13 @@ VnResult Vn_Update(void) {
             }
             if (!engine->voices.IsAlive(commit.handle)) {
                 /* Voice ended: the commit is inert. Consumed,
-                 * uncounted ¡ª benign lifecycle, not degradation. */
+                 * uncounted â€” benign lifecycle, not degradation. */
                 return harken::FlushOutcome::Dropped;
             }
             harken::CommandRecord probe;
             if (!MakeParamCommand(*engine, commit, &probe)) {
                 /* Poisoned value: consume, never retry. This drop is a
-                 * degradation the host can observe, so it counts ¡ª but
+                 * degradation the host can observe, so it counts â€” but
                  * it is not a commit; no command reached the audio
                  * thread. */
                 ++engine->paramDropCount;
@@ -111960,7 +111960,7 @@ VnResult Vn_Update(void) {
             staged.resolved = commit.resolved;
             staged.pan2d = commit.pan2d;
             // Section 9.3: Variable-driven voice commits carry the
-            // tick's aggregated ramp (command construction only ¡ª the
+            // tick's aggregated ramp (command construction only â€” the
             // render-side ramp contract is unchanged).
             staged.rampMs = commit.rampMs;
             bool stagedOk = false;
@@ -111977,7 +111977,7 @@ VnResult Vn_Update(void) {
             }
             if (!stagedOk) {
                 /* This branch handles graphs whose one-tick dirty set
-                 * exceeds the command queue's capacity ¡ª a zone the
+                 * exceeds the command queue's capacity â€” a zone the
                  * binding-instance bound cannot govern, because
                  * spatializer-owned contributions dirty targets outside
                  * it. All builds: the staged capacity-sized chunk
@@ -111998,7 +111998,7 @@ VnResult Vn_Update(void) {
         &engine->emitters);
     };
     /* Bus-target flush (sections 8 / 9.2): stage every dirty bus target's
-     * reduced value ¡ª neutral base + API-direct slot + Variable slot ¡ª
+     * reduced value â€” neutral base + API-direct slot + Variable slot â€”
      * into the SAME transactional batch as the voice commits, with the
      * aggregated rampMs (max of changed contributors' transitionMs and a
      * same-tick API-direct rampMs). Staged is not committed: the marks
@@ -112068,8 +112068,8 @@ VnResult Vn_Update(void) {
     engine->variables.PublishPreparedPlaybackPages();
     /* Second logic-notification drain. The pass above is itself a
      * logic-notification producer (PARKED/RETURNED/ENDED) and runs after the
-     * primary drain, so its notifications are delivered here ¡ª in the same
-     * pump that produced them ¡ª instead of lingering until the next update.
+     * primary drain, so its notifications are delivered here â€” in the same
+     * pump that produced them â€” instead of lingering until the next update.
      * Nothing between the primary drain and the pass produces further logic
      * notifications, so this one extra drain covers exactly the pass's
      * output. */
@@ -112098,7 +112098,7 @@ VnResult Vn_Update(void) {
     harken::ReclaimRetiredAttenuationProfiles(*engine);
     /* Log-ring drain: the audio side pushed binary records wait-free;
      * text exists only here. Without a configured sink the records are
-     * still consumed ¡ª drop accounting stays exact ¡ª but nothing formats,
+     * still consumed â€” drop accounting stays exact â€” but nothing formats,
      * because formatting with no reader is wasted work. */
     harken::LogRecord record;
     char text[160];
@@ -113070,7 +113070,7 @@ VnResult Vn_RegisterStreamFile(VnSoundId soundId, const char* utf8Path) {
             return VN_IN_USE;
         }
         // Blocks until the streaming thread has opened and validated the file
-        // (or refused it) ¡ª no file handle ever exists on this thread.
+        // (or refused it) â€” no file handle ever exists on this thread.
         return engine->streams.RegisterFile(soundId, utf8Path);
     } catch (...) {
         return VN_BAD_STREAM_FILE;
@@ -113191,7 +113191,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
         observation->Submitted();
     }
     // reserved0 is the play-flag bit field. It sits ahead of every vintage
-    // boundary, so an older caller has the storage ¡ª but not the entry points
+    // boundary, so an older caller has the storage â€” but not the entry points
     // the flags pair with, so any bit set there is a mis-set field rather than
     // a request. Within the full vintage only defined bits are accepted:
     // refusing an unknown bit keeps the field's meaning single-valued, where
@@ -113224,7 +113224,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
     }
     // emitterHandle (present only at the full vintage; 0 = none) attaches the
     // voice to an emitter. A nonzero handle that does not name a live emitter
-    // is a stale handle ¡ª refuse the play before any side effect, benignly, so
+    // is a stale handle â€” refuse the play before any side effect, benignly, so
     // a caller racing a destroy gets VN_STALE_HANDLE rather than a wrong-scope
     // voice.
     const VnEmitterHandle emitterHandle =
@@ -113527,8 +113527,8 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
             /*stealPolicy=*/0, noFree, nullptr, 0);
     // An immediately inaudible resident PCM voice can be born Virtual when
     // every current voice-volume term is known before admission. A staged
-    // install's terms are not all known yet ¡ª the caller has not installed its
-    // gain, attenuation or effects ¡ª so it stages instead and is judged at its
+    // install's terms are not all known yet â€” the caller has not installed its
+    // gain, attenuation or effects â€” so it stages instead and is judged at its
     // commit, against the complete state.
     if (!stagedInstall && virtualDecision.kind ==
         harken::VoiceManager::DecisionKind::DirectVirtual) {
@@ -113652,7 +113652,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
         // The registered Sound id kept for the deferred-start play facts.
         rec.soundId = playableId;
         // Pin the resolved attachment set at acceptance (section 5.7):
-        // "resolve first, then schedule" extends to bindings ¡ª attaching
+        // "resolve first, then schedule" extends to bindings â€” attaching
         // or detaching after this point does not alter this queued play.
         // Identities only: the curves are read at onset, so a Replace in
         // the gap is live on the first audible block. The acceptance-
@@ -113727,7 +113727,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
         //     reserves so a later admission cannot overbook the same slot; or
         //   - the chosen victim is itself a stream voice, whose release frees a
         //     stream slot promised to this start (each victim is stolen at most
-        //     once ¡ª already-stolen voices are excluded from candidates).
+        //     once â€” already-stolen voices are excluded from candidates).
         // Both cases take a reservation (committed in the staging block below,
         // after AcquirePending succeeds, so a later refusal leaks nothing):
         // even the victim's slot, once it frees and detaches, would otherwise
@@ -113893,7 +113893,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
 
     // Normal start: a free render slot exists. The matched attachment
     // set (resolved and reserved at acceptance above) admits its play
-    // command TOGETHER with the instances' resolved initial values ¡ª
+    // command TOGETHER with the instances' resolved initial values â€”
     // first-block correctness (section 5.7) applies to an immediate start
     // exactly as to a deferred one, and the refusal stays side-effect-free
     // (nothing is claimed yet; the acceptance guard releases the
@@ -114012,7 +114012,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
         }
     } directPreparationGuard{engine, &renderHandle};
     if (isStream) {
-        // Refusal order: voice capacity, then stream-slot capacity ¡ª each
+        // Refusal order: voice capacity, then stream-slot capacity â€” each
         // side-effect-free. The probe carries play()'s refusal accounting;
         // the peek claims nothing, so a VN_NO_STREAM refusal leaves no
         // trace. Only this thread claims voice or stream slots, so both
@@ -114287,7 +114287,7 @@ VnResult Vn_CommitVoiceStart(VnVoiceHandle handle) {
     }
     // Releasing the hold hands the record to the shared admit-then-publish
     // path, so a committed start and a deferred one emit the same run of
-    // records ¡ª there is one publication shape, not two.
+    // records â€” there is one publication shape, not two.
     rec.stagedInstall = false;
     const PendingStartOutcome outcome =
         ServicePendingRenderRequest(*engine, resolved.ledgerSlot);
@@ -114334,7 +114334,7 @@ VnResult Vn_CommitVoiceStart(VnVoiceHandle handle) {
     }
     if (result != VN_OK) {
         // Put the hold back so the refusal leaves the install exactly as it
-        // was ¡ª staged, silent, and cancellable. Without it the deferred pass
+        // was â€” staged, silent, and cancellable. Without it the deferred pass
         // would start a voice the caller was just told it did not get.
         harken::PendingStartRecord& after =
             engine->pendingStarts[resolved.ledgerSlot];
@@ -114384,7 +114384,7 @@ static VnResult StopVoiceObserved(VnVoiceHandle handle, uint32_t fadeMs,
         return VN_OK;
     }
     // Otherwise resolve to the render-slot handle (0 for a stale public handle)
-    // and validate render liveness ¡ª CheckLive reports the same benign
+    // and validate render liveness â€” CheckLive reports the same benign
     // VN_STALE_HANDLE (with the counter) for a stale ledger handle or a live
     // voice that ended in flight. Commands carry the render handle.
     const VnVoiceHandle render =
@@ -115162,7 +115162,7 @@ VnResult Vn_SetVoiceEffectParam(VnVoiceHandle handle, uint32_t slot,
     }
     // Interpose: when a binding drives this parameter, the direct set retargets
     // the base and defers to the update's fold+flush (which emits the composed
-    // value) ¡ª it must NOT also emit opcode 14 here, or the parameter would
+    // value) â€” it must NOT also emit opcode 14 here, or the parameter would
     // double-emit. When unbound, the path below keeps the same single emit,
     // admission, and refusal behavior.
     if (engine->effectParamTargets.ForeignClaim(
@@ -116323,7 +116323,7 @@ VnResult Vn_DestroyBus(VnBusId busId) {
         }
     }
     // Where the cascade's routed voices (and staged plays) migrate: the
-    // destroyed subtree root's surviving parent ¡ª every dead bus's nearest
+    // destroyed subtree root's surviving parent â€” every dead bus's nearest
     // alive ancestor, because the cascade removes whole subtrees.
     const std::uint32_t migrateTarget = engine->buses.ParentOf(busIndex);
     // Solo audibility among the SURVIVORS can shift when soloed buses die
@@ -116722,7 +116722,7 @@ VnResult Vn_ConnectBusSend(VnBusId fromBus, VnBusId toBus, float levelDb) {
     PublishPlan(*engine, planIndex, from, to, levelDb);
     // A send connect is the one LATER topology change that can close a
     // meter control loop (section 11.5): it is deliberately NOT refused
-    // here ¡ª the next Vn_Update detects it and freezes the offending
+    // here â€” the next Vn_Update detects it and freezes the offending
     // bindings at neutral, benign degradation, never divergence.
     return VN_OK;
 
@@ -117067,7 +117067,7 @@ VnResult Vn_SetVoiceSendLevel(VnVoiceHandle handle, uint32_t sendSlot,
     }}
 
 /* Bus insert-effect chain + fader point. Buses are persistent nodes, so unlike
- * the voice quartet there is no pending/parked/live handle classification ¡ª a
+ * the voice quartet there is no pending/parked/live handle classification â€” a
  * bus always exists once created. The chain mechanics are otherwise a pure
  * mirror of the voice quartet: the same pool, the same logic-side acquire/
  * configure + audio-side install/retire handoff, the same descriptor validation
@@ -118177,14 +118177,14 @@ VnResult Vn_SetBusVolume(VnBusId busId, float volumeDb, uint32_t rampMs) {
         return VN_BACKPRESSURE;
     }
     // Queue admission BEFORE any combine-slot write, so a refused call has
-    // zero side effects ¡ª the direct setters' pre-checked immediate
+    // zero side effects â€” the direct setters' pre-checked immediate
     // admission, unchanged in latency (section 10.3).
     if (!AdmitSingleCommand(*engine)) {
         engine->commands.NoteBackpressure();
         return VN_BACKPRESSURE;
     }
     // Combine (section 8): this call retargets the API-direct slot and
-    // commits the REDUCED value ¡ª neutral base + authored + API-direct +
+    // commits the REDUCED value â€” neutral base + authored + API-direct +
     // Variable + MeterProbe. With no other slots active the reduction IS
     // the caller's value, so the no-binding path pushes exactly the
     // pre-M6 command. Its own rampMs governs API-direct changes as
@@ -118456,7 +118456,7 @@ VnResult Vn_SetBusSolo(VnBusId busId, uint32_t solo01, uint32_t fadeMs) {
         return VN_OK; // state already held: benign no-op, nothing publishes
     }
     // Collect every bus whose effective audibility the flip changes, all
-    // against the prospective solo state ¡ª nothing mutates before the whole
+    // against the prospective solo state â€” nothing mutates before the whole
     // batch is admitted, so a refusal has zero side effects. Logic-side
     // scratch heap, like the topology sort.
     const std::uint8_t newValue = static_cast<std::uint8_t>(solo01);
@@ -118618,7 +118618,7 @@ VnResult Vn_SetVoiceVolume(VnVoiceHandle handle, float volumeDb,
         // A parked voice holds no render slot; mutate the captured replay state
         // the return will apply. Volume is part of the frozen non-spatial term
         // of the parked audibility metric, so shift that term by the change from
-        // the currently captured volume ¡ª the metric (and thus return and
+        // the currently captured volume â€” the metric (and thus return and
         // hysteresis) then tracks the new volume.
         if (!harken::TryVolumeGainFromDb(volumeDb)) {
             return VN_INVALID_ARG;
@@ -118825,7 +118825,7 @@ VnResult Vn_SetVoicePitch(VnVoiceHandle handle, float ratio) {
         .U64(handle)
         .F32(ratio);
     // The ratio enters the combine model as cents (1200 * log2(ratio)), so
-    // zero and negative values are structurally meaningless here ¡ª unlike
+    // zero and negative values are structurally meaningless here â€” unlike
     // The raw-Voice descriptor, where zero means "field not filled in".
     if (!std::isfinite(ratio) || ratio <= 0.0f || ratio > 64.0f) {
         return VN_INVALID_ARG;
@@ -118930,7 +118930,7 @@ VnResult Vn_SetVoicePosition(VnVoiceHandle handle, VnVec3 position) {
         .U64(handle)
         .Vec3(position);
     // Precedence: an attached voice derives its position from the emitter, so
-    // that refusal (VN_EMITTER_ATTACHED ¡ª one owner per fact) outranks argument
+    // that refusal (VN_EMITTER_ATTACHED â€” one owner per fact) outranks argument
     // validation; a caller learns the voice is emitter-owned whatever it
     // passed. Below the gate a bad value is still reported before a stale
     // handle (value-before-handle), matching the other voice setters. Pending
@@ -119662,7 +119662,7 @@ VnResult Vn_CaptureSnapshot(VnSnapshot* outSnapshot) {
     const bool hasBusChannelPeakFields =
         (outSnapshot->structSize >= snapshotVintage18Size);
 
-    /* Render-side facts come only from the published double buffer ¡ª
+    /* Render-side facts come only from the published double buffer â€”
      * never from the live render state the audio thread mutates. A
      * capture that collides with the writer through every bounded retry
      * falls back to the previous coherent copy (the writer publishes at
@@ -119700,7 +119700,7 @@ VnResult Vn_CaptureSnapshot(VnSnapshot* outSnapshot) {
     outSnapshot->arenaOverflowCount = payload.arenaOverflowCount;
     outSnapshot->voiceCompletedCount = payload.voiceCompletedCount;
 
-    /* Logic-owned counters merge here, on the calling thread ¡ª no
+    /* Logic-owned counters merge here, on the calling thread â€” no
      * cross-thread reads, no publication needed. */
     outSnapshot->voiceHighWater = engine->voices.HighWaterVoices();
     outSnapshot->staleHandleCount = engine->voices.StaleHandleCount();
@@ -119731,8 +119731,8 @@ VnResult Vn_CaptureSnapshot(VnSnapshot* outSnapshot) {
          * that a live ledger entry currently owns, publish the public handle
          * the caller holds. The live predicate reads the voice pool as a
          * liveness check only (the same advisory use as the flush above), so an
-         * ended-but-unreaped ledger entry ¡ª whose render slot a newer voice may
-         * already hold ¡ª never clobbers the true owner's row. Logic thread
+         * ended-but-unreaped ledger entry â€” whose render slot a newer voice may
+         * already hold â€” never clobbers the true owner's row. Logic thread
          * only; no cross-thread reads. */
         engine->ledger.FillPublicHandles(
             outSnapshot->voicePublicHandles, VN_SNAPSHOT_MAX_VOICES,
@@ -119819,7 +119819,7 @@ VnResult Vn_CaptureSnapshot(VnSnapshot* outSnapshot) {
          * is the pool's active admission state: zero while disabled, suspended,
          * or permanently faulted (merged here on the logic thread). The
          * output downmix runs exactly when the device layout is narrower than
-         * the mix. The worker busy peak is the one audio-measured figure ¡ª it
+         * the mix. The worker busy peak is the one audio-measured figure â€” it
          * rides the published payload and reads 0 while rendering serially. */
         outSnapshot->mixChannelCount = engine->config.mixChannelCount;
         outSnapshot->deviceChannelCount = engine->config.deviceChannelCount;
@@ -119843,7 +119843,7 @@ VnResult Vn_CaptureSnapshot(VnSnapshot* outSnapshot) {
         /* Property/binding observability (section 12), all logic-owned.
          * The pool marks and refusal counters read straight off their
          * owners; the meter overflow total is the logic-observed drain
-         * figure (at most one pump behind the audio-side producer ¡ª no
+         * figure (at most one pump behind the audio-side producer â€” no
          * cross-thread read). */
         outSnapshot->bindingDefinitionHighWater =
             engine->bindings.DefinitionHighWater();
@@ -120066,7 +120066,7 @@ VnResult Vn_CaptureSnapshot(VnSnapshot* outSnapshot) {
 
 /* Spatial surface: listener pose, attenuation profiles, and per-voice
  * emitter facts are logic-side state consumed by the per-tick spatial
- * evaluation in Vn_Update ¡ª none of these calls touch the command queue
+ * evaluation in Vn_Update â€” none of these calls touch the command queue
  * directly; their acoustic consequences travel as resolved parameter
  * commits at the next update. */
 
@@ -120208,10 +120208,10 @@ VnResult Vn_SetVoiceOrientation(VnVoiceHandle handle, VnVec3 forward) {
         .U64(handle)
         .Vec3(forward);
     // Precedence mirrors Vn_SetVoicePosition: the emitter-attachment refusal
-    // (VN_EMITTER_ATTACHED ¡ª one owner per fact) outranks argument validation,
+    // (VN_EMITTER_ATTACHED â€” one owner per fact) outranks argument validation,
     // and below it a bad value is reported before a stale handle
-    // (value-before-handle). A vector with no usable direction ¡ª zero length,
-    // or components so large that even the double-domain length overflows ¡ª
+    // (value-before-handle). A vector with no usable direction â€” zero length,
+    // or components so large that even the double-domain length overflows â€”
     // defines no cone axis and is an invalid argument, not a representable
     // orientation. Pending checks the staged emitter; live the mirror's.
     const harken::VoiceLedger::Resolved resolved =
@@ -120379,9 +120379,9 @@ VnResult Vn_DestroyEmitter(VnEmitterHandle handle) {
     TraceStateful(engine, harken::kTraceCallDestroyEmitter).U64(engine->trace != nullptr && engine->trace->Active()
                   ? engine->trace->RecordedEmitterHandle(handle)
                   : handle);
-    // Detach is lazy: attached voices keep playing ¡ª the spatializer freezes
+    // Detach is lazy: attached voices keep playing â€” the spatializer freezes
     // each at its last emitter-derived pose on the next update and Variable
-    // reads fall back to global ¡ª because the handle no longer resolves live.
+    // reads fall back to global â€” because the handle no longer resolves live.
     if (!engine->emitters.IsPublicLive(handle)) {
         return VN_STALE_HANDLE;
     }
@@ -122886,7 +122886,7 @@ VnResult Vn_ReplaceAttenuation(VnAttenuationId id,
         .ObjectId(id)
         .AttenuationDesc(desc);
     // Logic-side curves swap in place; bound voices re-evaluate against the
-    // new profile at the next Vn_Update through the spatial pass ¡ª the
+    // new profile at the next Vn_Update through the spatial pass â€” the
     // parameter system's ordinary dirty path. No generation exists to sweep.
     return NoteHotReload(*engine, engine->spatial.ReplaceProfile(id, desc),
                          harken::kHotReloadClassAttenuation, id);
@@ -122975,7 +122975,7 @@ VnResult Vn_TraceStop(void) {
  * authoritative fold config and publish a topology plan, which FillPlan
  * populates with the full per-bus fold config, so the block-boundary plan swap
  * carries the change to the audio thread through the existing
- * kOpcodeSetBusTopologyPlan command ¡ª no new opcode (the amendment's
+ * kOpcodeSetBusTopologyPlan command â€” no new opcode (the amendment's
  * narrow-waist boundary). They are ordinary stateful calls: TraceStateful marks
  * the Vn_TraceStart gate and journals the call so a trace that uses them
  * replays faithfully (VnDownmixMatrixDesc is a fixed no-pointer desc, copied at
@@ -123065,10 +123065,10 @@ VnResult Vn_SetBusDownmixMatrix(VnBusId busId, const VnDownmixMatrixDesc* desc) 
     // The desc must describe THIS bus's actual fold: src is the mix layout, dst
     // is the bus's current output layout (the device layout for the master).
     // A matrix whose layouts do not match the fold the audio thread performs
-    // would read a different coefficient sub-block than validated ¡ª refused as
+    // would read a different coefficient sub-block than validated â€” refused as
     // an invalid argument. (Vn_SetBusOutputLayout reseeds the bus's matrix to
     // the new fold's default, so a matrix is always set against the current
-    // output layout ¡ª see that call.)
+    // output layout â€” see that call.)
     if (desc->srcLayout != engine->config.mixChannelLayout ||
         desc->dstLayout != engine->busOutputLayout[busIndex]) {
         return VN_INVALID_ARG;
@@ -123202,9 +123202,9 @@ bool UnpackBindingDesc(const VnBindingDesc* desc,
 /* --- pack logic entries ---
  * The v2 container's staged, all-or-nothing load and its symmetric
  * unload, beside the untouched v1 media path. Staging exhausts every
- * failure mode ¡ª parse, closure, id conflicts, every pool capacity, the
+ * failure mode â€” parse, closure, id conflicts, every pool capacity, the
  * variable table, the topology-plan slot, command-queue admission, and
- * the loader's own allocations ¡ª before the first mutation; the apply
+ * the loader's own allocations â€” before the first mutation; the apply
  * path then cannot refuse for business reasons. Bus entries never
  * replay per-call public APIs: the loader creates buses and send edges
  * on the logic side, cycle-checks the combined graph once during
@@ -123479,7 +123479,7 @@ VnPackHandle OwnerPackOfBinding(const harken::Engine& engine, VnBindingId id) {
     // for a caller registration), and unlike the ledger scan it survives
     // the recycle race: a caller who unregistered a pack's definition
     // and re-registered the id owns the live slot, and the imprint says
-    // so ¡ª the ledger would still claim it for the pack.
+    // so â€” the ledger would still claim it for the pack.
     return engine.bindings.DefinitionOwnerOf(id);
 }
 
@@ -123567,7 +123567,7 @@ VnResult ValidatePackVoiceRecipes(const harken::Engine& engine,
             }
         }
         if (recipe.tone.present != 0) {
-            // Largest float strictly below Nyquist ¡ª the same bound the
+            // Largest float strictly below Nyquist â€” the same bound the
             // published effect-parameter capabilities advertise, so the
             // load-time accept domain matches the published clamp.
             const float nyquist = std::nextafter(
@@ -123897,7 +123897,7 @@ VnResult ValidatePackBusEffectAttachment(
 }
 
 // Whole-load staging: every refusal the apply path could otherwise meet
-// is proven absent here, in refusal-class order ¡ª closure, id
+// is proven absent here, in refusal-class order â€” closure, id
 // conflicts, semantic validation through the tables' own const
 // preflights, every pool capacity, the combined-graph structural checks
 // (bus cycles, container nesting, trigger cycles, meter control loops),
@@ -124023,7 +124023,7 @@ VnResult StagePackLogic(harken::Engine& engine, PackStaging& staging) {
             if (def.id == attachment.bindingId) {
                 // Scope agreement against the pack's own definition; the
                 // duplicate check is intra-pack only (the image layer did
-                // it) ¡ª the definition is new, so no live duplicate can
+                // it) â€” the definition is new, so no live duplicate can
                 // exist.
                 if (def.desc.targetScopeKind != attachment.scopeKind) {
                     return VN_INVALID_ARG;
@@ -124046,7 +124046,7 @@ VnResult StagePackLogic(harken::Engine& engine, PackStaging& staging) {
         return VN_BAD_PACK;
     }
 
-    // Ledger content builds here ¡ª every bookkeeping allocation is
+    // Ledger content builds here â€” every bookkeeping allocation is
     // exhausted before the first mutation, and the apply only moves it.
     BuildPackLedgerContent(image, std::move(staging.providers),
                            &staging.stagedRecord);
@@ -124813,7 +124813,7 @@ VnResult UnloadPackV2(Engine& engine, VnPackHandle handle) {
     }
     // A staged revision is in its gap: the pack cannot leave while an
     // activation (holding reservations against this very ledger) is
-    // scheduled. Activate or discard first ¡ª one gap at a time.
+    // scheduled. Activate or discard first â€” one gap at a time.
     if (engine.logicPacks.PendingFor(handle) != nullptr) {
         return VN_IN_USE;
     }
@@ -124838,14 +124838,14 @@ VnResult UnloadPackV2(Engine& engine, VnPackHandle handle) {
     for (VnBindingId id : record->bindingDefinitions) {
         // A recorded definition the caller has since unregistered (and
         // possibly re-registered under the same id) is no longer the
-        // pack's to screen or to remove ¡ª the provenance imprint, not
+        // pack's to screen or to remove â€” the provenance imprint, not
         // the id, decides (the v1 cookie rule).
         if (engine.bindings.DefinitionOwnerOf(id) != handle) {
             continue;
         }
         // Only this pack's still-present own attachments may reference
-        // the definition (they detach below); anything else ¡ª a foreign
-        // triple, a live/parked/pending instance ¡ª refuses. The shared
+        // the definition (they detach below); anything else â€” a foreign
+        // triple, a live/parked/pending instance â€” refuses. The shared
         // screen decides ownership per exact imprinted triple.
         r = ScreenPackBindingRemoval(engine, *record, id);
         if (r != VN_OK) {
@@ -124854,13 +124854,13 @@ VnResult UnloadPackV2(Engine& engine, VnPackHandle handle) {
     }
 
     // Gates all green: the mutations below cannot refuse. Reverse of the
-    // apply order ¡ª attachments, actions, definitions, then media + the slot
+    // apply order â€” attachments, actions, definitions, then media + the slot
     // itself.
     for (std::size_t i = record->bindingAttachments.size(); i-- > 0;) {
         const PackBindingAttachmentEntry& attachment =
             record->bindingAttachments[i];
         // A recorded triple the caller already detached is no longer the
-        // pack's to touch (the v1 cookie rule) ¡ª and a SAME triple the
+        // pack's to touch (the v1 cookie rule) â€” and a SAME triple the
         // caller re-attached after detaching carries a caller imprint,
         // which the ownership probe distinguishes where bare existence
         // cannot. Both skip benignly, never a defect.
@@ -124879,7 +124879,7 @@ VnResult UnloadPackV2(Engine& engine, VnPackHandle handle) {
     for (std::size_t i = record->bindingDefinitions.size(); i-- > 0;) {
         // A definition the caller took over (unregister + same-id
         // re-register) carries a caller imprint: not the pack's to
-        // remove ¡ª the cookie-rule skip, mirroring the screen above.
+        // remove â€” the cookie-rule skip, mirroring the screen above.
         if (engine.bindings.DefinitionOwnerOf(record->bindingDefinitions[i]) !=
             handle) {
             continue;
@@ -124916,7 +124916,7 @@ const PackLogicImage::Stamp* FindStamp(
 
 // The section-5.4 reference screen for removing one of this pack's
 // binding definitions: everything beyond the pack's OWN attachments
-// (which detach as part of the same activation) refuses ¡ª a foreign
+// (which detach as part of the same activation) refuses â€” a foreign
 // attachment, a live voice instance, a parked identity, a pinned
 // pending-start set. Shared by the unload gate's logic and the replace
 // diff, phrased against the ledger record.
@@ -124925,7 +124925,7 @@ VnResult ScreenPackBindingRemoval(Engine& engine,
                                   VnBindingId id) {
     // Ownership is per exact IMPRINTED triple, never count arithmetic or
     // bare existence: a recorded triple the caller has since detached is
-    // no longer the pack's (the v1 cookie rule) ¡ª and one the caller
+    // no longer the pack's (the v1 cookie rule) â€” and one the caller
     // detached and re-attached VERBATIM is a caller-imprinted rebirth
     // that existence alone cannot tell from the pack's own. Only triples
     // that are live and still carry this pack's imprint count as own;
@@ -124971,7 +124971,7 @@ VnResult ScreenPackBindingRemoval(Engine& engine,
     });
     // Voice-effect apply instances reference the definition just as built-in
     // instances do, and the pack gate must screen them in the SAME atomic
-    // preflight ¡ª otherwise a pack-owned scope-2 definition applied to a live or
+    // preflight â€” otherwise a pack-owned scope-2 definition applied to a live or
     // parked voice would pass this gate, the unload would begin mutating, and the
     // inner UnregisterBinding would then refuse VN_IN_USE mid-unwind, breaking
     // the gate's all-or-nothing contract. A parked instance keeps its slot, so
@@ -125061,7 +125061,7 @@ VnResult ScreenPackRevision(Engine& engine, const PackLogicRecord& record,
     // Coarse provider protection, re-run at activation too (a consumer
     // loaded DURING the gap counts): any removal a loaded consumer could
     // have resolved through refuses while a consumer exists. Per-entry
-    // consumer edges are not recorded, so the gate is conservative ¡ª it
+    // consumer edges are not recorded, so the gate is conservative â€” it
     // never orphans, it only over-refuses.
     const bool removesReferenceable = !revision.removeBindingDefs.empty() ||
         PackReplacementRemovesMedia(engine, revision.handle, image.media);
@@ -125351,7 +125351,7 @@ VnResult ScreenPackRevision(Engine& engine, const PackLogicRecord& record,
         // An identity-changed definition re-registers its own id, which
         // is still live at screening time: IN_USE then certifies a valid
         // desc (content checks run first). A genuinely NEW id must screen
-        // clean of everything but the pool ¡ª IN_USE on it means the gap
+        // clean of everything but the pool â€” IN_USE on it means the gap
         // took the id, while a pool-full result is deferred to the net
         // arithmetic below (the same revision's removals free their
         // slots before the adds land, so a full pool at screening time
@@ -125446,12 +125446,12 @@ VnResult ScreenPackRevision(Engine& engine, const PackLogicRecord& record,
         // The duplicate/admission check is skipped ONLY in the two
         // provably safe shapes: (a) the identical triple is removed by
         // this very revision AND is still live under THIS pack's imprint
-        // (a genuine remove + add pair ¡ª the live duplicate detaches
+        // (a genuine remove + add pair â€” the live duplicate detaches
         // before the re-attach; a same-triple caller rebirth carries a
         // caller imprint and is NOT a safe twin), or (b) the definition
         // id is not registered at all (no live attachment can reference
-        // an unregistered definition). Everything else ¡ª kept pack
-        // definitions included ¡ª runs the real admission, so a triple an
+        // an unregistered definition). Everything else â€” kept pack
+        // definitions included â€” runs the real admission, so a triple an
         // external caller attached during the gap surfaces as VN_IN_USE
         // here and discards the revision instead of reaching the apply
         // path and corrupting ownership.
@@ -125476,8 +125476,8 @@ VnResult ScreenPackRevision(Engine& engine, const PackLogicRecord& record,
             // A full pool defers to the net arithmetic below: this
             // revision's removals detach before the adds attach, so
             // pool-full at screening time is not pool-full at the add.
-            // Everything else ¡ª the duplicate a gap caller attached
-            // included ¡ª refuses here.
+            // Everything else â€” the duplicate a gap caller attached
+            // included â€” refuses here.
             if (r != VN_OK && r != kResultNoBinding) {
                 return r;
             }
@@ -127329,7 +127329,7 @@ VnResult ApplyPreparedPackTransaction(
         const PackBindingAttachmentEntry& attachment =
             revision.removeAttachments[i];
         // Caller-detached during the gap: no longer the pack's to touch
-        // (the v1 cookie rule) ¡ª and a same-triple caller re-attach
+        // (the v1 cookie rule) â€” and a same-triple caller re-attach
         // carries a caller imprint, which the ownership probe tells
         // apart where bare existence cannot. Skipped benignly.
         BindingTable::PreparedAttachmentToken& token =
@@ -127832,7 +127832,7 @@ VnResult ReplacePackV2(Engine& engine, VnPackHandle handle,
         return VN_STALE_HANDLE; // caller checked; defensive
     }
     // One staged revision per pack: the previous one must activate (or
-    // discard) before the next stages ¡ª the media class's one-retiring-
+    // discard) before the next stages â€” the media class's one-retiring-
     // generation bound, extended to the revision gap.
     if (engine.logicPacks.PendingFor(handle) != nullptr) {
         return VN_IN_USE;
@@ -128178,7 +128178,7 @@ void ActivatePendingPackRevisions(Engine& engine) {
             // landing sets, walk state, the run-plan occupancy copy), so
             // it can itself throw on system exhaustion. No exception may
             // escape the update tick, and a re-screen that cannot run to
-            // completion is a late staging failure ¡ª the section-19.5
+            // completion is a late staging failure â€” the section-19.5
             // sentence applies verbatim: the staged revision is
             // discarded, the old revision survives intact. Routed
             // through the same discard arm below.
@@ -132726,7 +132726,7 @@ VnResult Vn_ReplaceBinding(VnBindingId bindingId, const VnBindingDesc* desc) {
     TraceStateful(engine, harken::kTraceCallReplaceBinding)
         .ObjectId(bindingId)
         .BindingDesc(desc);
-    // A replace verb books every outcome ¡ª descriptor refusals included ¡ª
+    // A replace verb books every outcome â€” descriptor refusals included â€”
     // through the shared hot-reload bottleneck, like its six siblings.
     harken::UnpackedBindingCurve curve;
     if (!UnpackBindingDesc(desc, &curve)) {
@@ -132971,10 +132971,10 @@ VnResult Vn_CapturePropertyTargets(VnPropertyTargetInfo* out,
         return VN_NOT_INITIALIZED;
     }
     /* Query journal, the snapshot-capture precedent: the row vintage is
-     * journaled explicitly (0 when the buffer is absent or unread ¡ª
+     * journaled explicitly (0 when the buffer is absent or unread â€”
      * capacity 0 never reads it), and the requiredCount pointer's
      * presence as a flag, so replay reconstructs the exact argument shape
-     * including refused calls ¡ª the truncation counter and log record are
+     * including refused calls â€” the truncation counter and log record are
      * observable state replay must reproduce. */
     const uint32_t rowVintage =
         (capacity > 0 && out != nullptr) ? out->structSize : 0u;
