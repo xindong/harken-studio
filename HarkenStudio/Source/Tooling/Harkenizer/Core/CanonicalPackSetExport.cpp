@@ -98,8 +98,8 @@ std::vector<std::uint8_t> requirementPayload(std::uint64_t packStableId,
                                              harkenstudiobuild::CanonicalBusTriple busTriple)
 {
     harkenstudiobuild::PackRequirementBlock block;
-    block.schemaVersion = harkenstudiobuild::kPackPackRequirementBlockVintage;
-    block.storageModelVersion = harkenstudiobuild::kPackPackRequirementBlockVintage;
+    block.schemaVersion = HK_PACK_PACK_REQUIREMENT_BLOCK_VINTAGE;
+    block.storageModelVersion = HK_PACK_PACK_REQUIREMENT_BLOCK_VINTAGE;
     block.packStableId = packStableId;
     block.packContentRevision = contentRevision;
     block.definitionPartitionRevision = partitionRevision;
@@ -110,8 +110,8 @@ std::vector<std::uint8_t> requirementPayload(std::uint64_t packStableId,
     block.ownedDefinitionCount = ownedDefinitions;
     block.ownedResourceCount = ownedResources;
     harkenstudiobuild::ApplyCanonicalBusTriple(&block, busTriple);
-    std::vector<std::uint8_t> payload(harkenstudiobuild::kPackRequirementBlockBytes, 0);
-    harkenstudiobuild::SerializePackRequirementBlock(block, payload.data());
+    std::vector<std::uint8_t> payload(harkenstudiobuild::kPackBytes<HkPackRequirementBlock>, 0);
+    harkenstudiobuild::SerializePackRow<HkPackRequirementBlock>(block, payload.data());
     harkenstudiobuild::StampRequirementCoverage(&payload);
     return payload;
 }
@@ -126,10 +126,10 @@ std::vector<std::uint8_t> dependencyPayload(std::uint64_t prerequisiteId,
     edge.edgeKind = edgeKind;
     edge.required01 = 1;
     edge.expectedPrerequisiteContentRevision = expectedRevision;
-    if (edgeKind == harkenstudiobuild::kPackDependencyEdgeKindInit)
+    if (edgeKind == HK_PACK_DEPENDENCY_EDGE_KIND_INIT)
         harkenstudiobuild::ApplyCanonicalBusTriple(&edge, busTriple);
-    std::vector<std::uint8_t> payload(harkenstudiobuild::kPackDependencyEdgeBytes, 0);
-    harkenstudiobuild::SerializePackDependencyEdge(edge, payload.data());
+    std::vector<std::uint8_t> payload(harkenstudiobuild::kPackBytes<HkPackDependencyEdge>, 0);
+    harkenstudiobuild::SerializePackRow<HkPackDependencyEdge>(edge, payload.data());
     return payload;
 }
 
@@ -154,13 +154,13 @@ bool appendEntry(Bridge::PackBuildSession::CanonicalPackEntry entry, const QStri
                 && candidate.relationOrdinal == entry.relationOrdinal;
         });
     if (existing != entries->end()) {
-        const bool samePayload = entry.kind == harkenstudiobuild::kPackEntryKindMedia
+        const bool samePayload = entry.kind == HK_PACK_ENTRY_KIND_MEDIA
             ? existing->payload.size() == entry.payload.size()
                 && existing->mediaBytes() == entry.mediaBytes()
-                && std::equal(entry.payload.begin(), entry.payload.begin() + harkenstudiobuild::kPackMediaBlobOffsetOffset,
+                && std::equal(entry.payload.begin(), entry.payload.begin() + offsetof(HkPackMedia, blobOffset),
                               existing->payload.begin())
-                && std::equal(entry.payload.begin() + harkenstudiobuild::kPackMediaBlobBytesOffset, entry.payload.end(),
-                              existing->payload.begin() + harkenstudiobuild::kPackMediaBlobBytesOffset)
+                && std::equal(entry.payload.begin() + offsetof(HkPackMedia, blobBytes), entry.payload.end(),
+                              existing->payload.begin() + offsetof(HkPackMedia, blobBytes))
                 && (existing->media == entry.media || entry.mediaBytes() == 0
                     || std::memcmp(existing->mediaData(), entry.mediaData(), entry.mediaBytes()) == 0)
             : existing->payload == entry.payload;
@@ -181,7 +181,7 @@ bool collectEntries(const QByteArray& bytes, const QString& path,
                     QString* error, bool resourcesOnly, bool publicationMetadataOnly,
                     harkenizer::resourcecompiler::MediaCache* mediaCache = nullptr)
 {
-    if (bytes.size() < static_cast<int>(harkenstudiobuild::kPackFileHeaderBytes)) {
+    if (bytes.size() < static_cast<int>(harkenstudiobuild::kPackBytes<HkPackFileHeader>)) {
         if (error)
             *error = QStringLiteral("Pack '%1' is too small").arg(path);
         return false;
@@ -196,32 +196,32 @@ bool collectEntries(const QByteArray& bytes, const QString& path,
     for (std::uint32_t i = 0; i < header.entryCount; ++i) {
         const harkenstudiobuild::PackDirectoryEntry record = harkenstudiobuild::ReadPackDirectoryEntry(
             reinterpret_cast<const std::uint8_t*>(bytes.constData()) +
-            header.directoryOffset + i * harkenstudiobuild::kPackDirectoryEntryBytes);
+            header.directoryOffset + i * harkenstudiobuild::kPackBytes<HkPackDirectoryEntry>);
         if (publicationMetadataOnly
-            && record.kind != harkenstudiobuild::kPackEntryKindCanonicalDefinitionPartition
-            && record.kind != harkenstudiobuild::kPackEntryKindPackRequirementBlock
-            && record.kind != harkenstudiobuild::kPackEntryKindPackDependencyEdge
-            && record.kind != harkenstudiobuild::kPackEntryKindVariablePolicyOverlay
-            && record.kind != harkenstudiobuild::kPackEntryKindVariableRequirements) continue;
-        if (resourcesOnly && record.kind != harkenstudiobuild::kPackEntryKindMedia
-            && record.kind != harkenstudiobuild::kPackEntryKindBus
-            && record.kind != harkenstudiobuild::kPackEntryKindBusSend
-            && record.kind != harkenstudiobuild::kPackEntryKindAttenuation
-            && record.kind != harkenstudiobuild::kPackEntryKindBusEffect
-            && record.kind != harkenstudiobuild::kPackEntryKindEffectDynamicRoute) continue;
+            && record.kind != HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION
+            && record.kind != HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK
+            && record.kind != HK_PACK_ENTRY_KIND_PACK_DEPENDENCY_EDGE
+            && record.kind != HK_PACK_ENTRY_KIND_VARIABLE_POLICY_OVERLAY
+            && record.kind != HK_PACK_ENTRY_KIND_VARIABLE_REQUIREMENTS) continue;
+        if (resourcesOnly && record.kind != HK_PACK_ENTRY_KIND_MEDIA
+            && record.kind != HK_PACK_ENTRY_KIND_BUS
+            && record.kind != HK_PACK_ENTRY_KIND_BUS_SEND
+            && record.kind != HK_PACK_ENTRY_KIND_ATTENUATION
+            && record.kind != HK_PACK_ENTRY_KIND_BUS_EFFECT
+            && record.kind != HK_PACK_ENTRY_KIND_EFFECT_DYNAMIC_ROUTE) continue;
         Bridge::PackBuildSession::CanonicalPackEntry entry;
         entry.kind = record.kind;
         entry.vintage = record.vintage;
         entry.id = record.id;
         entry.relationOrdinal = record.relationOrdinal;
-        if (record.kind == harkenstudiobuild::kPackEntryKindMedia) {
+        if (record.kind == HK_PACK_ENTRY_KIND_MEDIA) {
             const harkenstudiobuild::PackTocEntry toc = harkenstudiobuild::ReadPackMedia(
                 reinterpret_cast<const std::uint8_t*>(bytes.constData()) + record.offset);
-            entry.payload.resize(harkenstudiobuild::kPackMediaBytes);
+            entry.payload.resize(harkenstudiobuild::kPackBytes<HkPackMedia>);
             std::memcpy(entry.payload.data(),
                         reinterpret_cast<const std::uint8_t*>(bytes.constData()) +
                             record.offset,
-                        harkenstudiobuild::kPackMediaBytes);
+                        harkenstudiobuild::kPackBytes<HkPackMedia>);
             harkenstudiobuild::StorePackMediaBlobOffset(entry.payload.data(), 0);
             if (toc.blobBytes != 0) {
                 const auto* blob = reinterpret_cast<const std::uint8_t*>(bytes.constData()) + toc.blobOffset;
@@ -367,9 +367,9 @@ bool scanOutputFiles(const QDir& dir, QStringList* names, QStringList* packs, QS
                 *error = QStringLiteral("Cannot inspect export output: %1").arg(entry.absoluteFilePath());
                 return false;
             }
-            const auto magic = file.read(sizeof(harkenstudiobuild::kPackFilePrefixMagic));
-            if (magic.size() == sizeof(harkenstudiobuild::kPackFilePrefixMagic)
-                && std::memcmp(magic.constData(), harkenstudiobuild::kPackFilePrefixMagic, magic.size()) == 0)
+            const auto magic = file.read(sizeof(HkPackFilePrefix::magic));
+            if (magic.size() == sizeof(HkPackFilePrefix::magic)
+                && std::memcmp(magic.constData(), HK_PACK_MAGIC, magic.size()) == 0)
                 packs->append(relative);
         }
     }
@@ -654,8 +654,8 @@ void stripBindingEntries(
 {
     entries->erase(std::remove_if(entries->begin(), entries->end(),
         [](const Bridge::PackBuildSession::CanonicalPackEntry& entry) {
-            return entry.kind == harkenstudiobuild::kPackEntryKindBindingDefinition
-                || entry.kind == harkenstudiobuild::kPackEntryKindBindingAttachment;
+            return entry.kind == HK_PACK_ENTRY_KIND_BINDING_DEFINITION
+                || entry.kind == HK_PACK_ENTRY_KIND_BINDING_ATTACHMENT;
         }), entries->end());
 }
 
@@ -685,10 +685,10 @@ bool encodeBindingDefinitionEntry(
         desc.curve.handles[i].h2x = program.handles[i].h2x;
         desc.curve.handles[i].h2y = program.handles[i].h2y;
     }
-    out->kind = harkenstudiobuild::kPackEntryKindBindingDefinition;
-    out->vintage = harkenstudiobuild::kPackBindingDefinitionVintage;
+    out->kind = HK_PACK_ENTRY_KIND_BINDING_DEFINITION;
+    out->vintage = HK_PACK_BINDING_DEFINITION_VINTAGE;
     out->id = program.bindingId;
-    out->payload.assign(harkenstudiobuild::kPackBindingDefinitionBytes, 0);
+    out->payload.assign(harkenstudiobuild::kPackBytes<HkPackBindingDefinition>, 0);
     harkenstudiobuild::WritePackBindingDefinition(program.bindingId, desc,
                                             out->payload.data());
     return true;
@@ -703,11 +703,11 @@ bool appendCanonicalBindingEntries(
     if (!entries)
         return false;
     stripBindingEntries(entries);
-    const bool initPack = meta.packKind == harkenstudiobuild::kPackKindInit;
+    const bool initPack = meta.packKind == HK_PACK_KIND_INIT;
     std::set<harkenstudio::ObjectId> localObjectIds;
     for (const auto& entry : *entries) {
-        if (entry.kind == harkenstudiobuild::kPackEntryKindMedia
-            || entry.kind == harkenstudiobuild::kPackEntryKindBus)
+        if (entry.kind == HK_PACK_ENTRY_KIND_MEDIA
+            || entry.kind == HK_PACK_ENTRY_KIND_BUS)
             localObjectIds.insert(entry.id);
     }
     localObjectIds.insert(meta.ownedPlayableIds.begin(),
@@ -742,15 +742,15 @@ bool appendCanonicalBindingEntries(
     std::uint64_t ordinal = 0;
     for (const BindingRuntimeAttachment& attachment : kept) {
         Bridge::PackBuildSession::CanonicalPackEntry entry;
-        entry.kind = harkenstudiobuild::kPackEntryKindBindingAttachment;
-        entry.vintage = harkenstudiobuild::kPackBindingAttachmentVintage;
+        entry.kind = HK_PACK_ENTRY_KIND_BINDING_ATTACHMENT;
+        entry.vintage = HK_PACK_BINDING_ATTACHMENT_VINTAGE;
         entry.relationOrdinal = ordinal++;
         harkenstudiobuild::PackBindingAttachmentEntry wire;
         wire.bindingId = attachment.bindingId;
         wire.scopeKind = attachment.scopeKind;
         wire.objectId = attachment.objectId;
-        entry.payload.assign(harkenstudiobuild::kPackBindingAttachmentBytes, 0);
-        harkenstudiobuild::SerializePackBindingAttachment(wire, entry.payload.data());
+        entry.payload.assign(harkenstudiobuild::kPackBytes<HkPackBindingAttachment>, 0);
+        harkenstudiobuild::SerializePackRow<HkPackBindingAttachment>(wire, entry.payload.data());
         entries->push_back(std::move(entry));
     }
     return true;
@@ -1027,7 +1027,7 @@ bool fillWaveformCompanion(const CanonicalPackSetExportRequest& request,
     QJsonArray waveforms;
     std::set<harkenstudio::ObjectId> mediaIds;
     for (const auto& entry : pack.resourceEntries)
-        if (entry.kind == harkenstudiobuild::kPackEntryKindMedia)
+        if (entry.kind == HK_PACK_ENTRY_KIND_MEDIA)
             mediaIds.insert(entry.id);
     const auto& snapshot = *request.options.snapshot;
     const auto& project = *request.project;
@@ -1684,7 +1684,7 @@ bool encodePartition(std::uint64_t packStableId,
         return false;
     }
     harkenstudiobuild::PackCanonicalPartitionHeader header;
-    header.headerBytes = harkenstudiobuild::kPackCanonicalPartitionHeaderBytes;
+    header.headerBytes = harkenstudiobuild::kPackBytes<HkPackCanonicalPartitionHeader>;
     header.bodyVintage = harkenstudiobuild::kCanonicalDefinitionPartitionBodyVintage;
     header.bodyBytes = body.size();
     header.bodyChecksum = harkenstudiobuild::Fnv1a64(body.data(), body.size());
@@ -1692,12 +1692,12 @@ bool encodePartition(std::uint64_t packStableId,
     header.partitionRevision = partitionRevision;
     header.ownedDefinitionCount = ownedDefinitions;
     harkenstudiobuild::ApplyCanonicalBusTriple(&header, busTriple);
-    payload->assign(harkenstudiobuild::kPackCanonicalPartitionHeaderBytes + body.size(), 0);
-    harkenstudiobuild::SerializePackCanonicalPartitionHeader(header, payload->data());
-    header.headerChecksum = harkenstudiobuild::Fnv1a64(payload->data(), harkenstudiobuild::kPackCanonicalPartitionHeaderHeaderChecksumOffset);
-    harkenstudiobuild::SerializePackCanonicalPartitionHeader(header, payload->data());
+    payload->assign(harkenstudiobuild::kPackBytes<HkPackCanonicalPartitionHeader> + body.size(), 0);
+    harkenstudiobuild::SerializePackRow<HkPackCanonicalPartitionHeader>(header, payload->data());
+    header.headerChecksum = harkenstudiobuild::Fnv1a64(payload->data(), offsetof(HkPackCanonicalPartitionHeader, headerChecksum));
+    harkenstudiobuild::SerializePackRow<HkPackCanonicalPartitionHeader>(header, payload->data());
     if (!body.empty()) {
-        std::memcpy(payload->data() + harkenstudiobuild::kPackCanonicalPartitionHeaderBytes,
+        std::memcpy(payload->data() + harkenstudiobuild::kPackBytes<HkPackCanonicalPartitionHeader>,
                     body.data(), body.size());
     }
     return true;
@@ -1738,7 +1738,7 @@ std::uint32_t ownedDefinitionCount(
 bool decodePreviousPack(const PackMeta& pack, harkenstudiobuild::CurrentWorldBodyImage* body)
 {
     const auto found = std::find_if(pack.previousEntries.begin(), pack.previousEntries.end(), [](const auto& entry) {
-        return entry.kind == harkenstudiobuild::kPackEntryKindCanonicalDefinitionPartition;
+        return entry.kind == HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION;
     });
     if (found == pack.previousEntries.end()) return false;
     harkenstudiobuild::PackCanonicalPartitionHeader header;
@@ -1869,13 +1869,13 @@ bool harmonizePublicationCapacity(std::vector<PackMeta>* packs,
             if (buildState)
                 pack.resourceFingerprint = buildState->resourceFingerprint(pack.fileName);
             for (const auto& entry : pack.previousEntries) {
-                if (entry.kind == harkenstudiobuild::kPackEntryKindCanonicalDefinitionPartition)
+                if (entry.kind == HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION)
                     pack.partitionPayload = entry.payload;
-                else if (entry.kind == harkenstudiobuild::kPackEntryKindVariablePolicyOverlay)
+                else if (entry.kind == HK_PACK_ENTRY_KIND_VARIABLE_POLICY_OVERLAY)
                     pack.variablePolicyOverlayPayload = entry.payload;
-                else if (entry.kind == harkenstudiobuild::kPackEntryKindVariableRequirements)
+                else if (entry.kind == HK_PACK_ENTRY_KIND_VARIABLE_REQUIREMENTS)
                     pack.variableRequirementsPayload = entry.payload;
-                else if (entry.kind == harkenstudiobuild::kPackEntryKindPackRequirementBlock) {
+                else if (entry.kind == HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK) {
                     harkenstudiobuild::PackRequirementBlock requirement;
                     if (!harkenstudiobuild::ReadPackRequirementBlock(
                             entry.payload.data(), entry.payload.size(), &requirement)) {
@@ -1985,8 +1985,8 @@ bool harmonizePublicationCapacity(std::vector<PackMeta>* packs,
                 headers[i].partitionRevision))
             return false;
         pack.semanticFingerprint = harkenstudiobuild::Fnv1a64(
-            pack.partitionPayload.data() + harkenstudiobuild::kPackCanonicalPartitionHeaderBytes,
-            pack.partitionPayload.size() - harkenstudiobuild::kPackCanonicalPartitionHeaderBytes);
+            pack.partitionPayload.data() + harkenstudiobuild::kPackBytes<HkPackCanonicalPartitionHeader>,
+            pack.partitionPayload.size() - harkenstudiobuild::kPackBytes<HkPackCanonicalPartitionHeader>);
         pack.metadataUpdated = pack.retained;
     }
     return true;
@@ -2025,7 +2025,7 @@ bool readExistingPack(const QDir& output, const QString& path,
     }
     if (!collectEntries(bytes, output.filePath(path), &pack->previousEntries, error, false, false)) return false;
     pack->fileName = path;
-    pack->formatVersion = harkenstudiobuild::kPackFormatVersion;
+    pack->formatVersion = HK_PACK_FORMAT_VERSION;
     pack->fileSize = bytes.size();
     pack->packStableId = image.packStableId;
     pack->packKind = image.packKind;
@@ -2033,11 +2033,11 @@ bool readExistingPack(const QDir& output, const QString& path,
     pack->language = file.path() == QStringLiteral(".") ? QString() : file.path();
     pack->platform = platformId;
     pack->companion = document.object();
-    pack->name = image.packKind == harkenstudiobuild::kPackKindInit
+    pack->name = image.packKind == HK_PACK_KIND_INIT
         ? QStringLiteral("Init") : pack->companion.value(QStringLiteral("name")).toString();
-    pack->unitKey = image.packKind == harkenstudiobuild::kPackKindInit
+    pack->unitKey = image.packKind == HK_PACK_KIND_INIT
         ? QStringLiteral("Init") : QStringLiteral("a:") + pack->companion.value(QStringLiteral("guid")).toString();
-    if (image.packKind != harkenstudiobuild::kPackKindInit)
+    if (image.packKind != HK_PACK_KIND_INIT)
         pack->actionStableIds.push_back(runtimeObjectId(QUuid(pack->companion.value(QStringLiteral("guid")).toString())));
     QJsonArray dependencies;
     for (const auto& edge : image.dependencyEdges) {
@@ -2143,10 +2143,10 @@ bool inspectPackPublication(const QString& directory, const QString& projectId,
             return reject(QStringLiteral("Pack publication contains another project's content: %1").arg(path));
         if (selected && !platformId.isEmpty() && (requireComplete || !allowPlatformReplacement)) {
             const auto expectedInit = fnvName(platformId + QStringLiteral("/Init"));
-            if (image.packKind == harkenstudiobuild::kPackKindInit && image.packStableId != expectedInit)
+            if (image.packKind == HK_PACK_KIND_INIT && image.packStableId != expectedInit)
                 return reject(QStringLiteral("Pack publication contains another platform's content: %1").arg(path));
             for (const auto& edge : image.dependencyEdges)
-                if (edge.edgeKind == harkenstudiobuild::kPackDependencyEdgeKindInit
+                if (edge.edgeKind == HK_PACK_DEPENDENCY_EDGE_KIND_INIT
                     && edge.prerequisitePackStableId != expectedInit
                     && harkenstudiobuild::ValidateCanonicalInitDependency(
                         image.dependencyEdges, edge.prerequisitePackStableId) == harkenstudiobuild::kPackOk)
@@ -2177,7 +2177,7 @@ bool inspectPackPublication(const QString& directory, const QString& projectId,
             if (requireComplete && selected && ids.contains(image.packStableId))
                 return rejectPair(QStringLiteral("Pack publication repeats a Pack identity: %1").arg(path));
             QString name;
-            if (image.packKind == harkenstudiobuild::kPackKindInit) {
+            if (image.packKind == HK_PACK_KIND_INIT) {
                 if ((selected && initId != 0) || path != QStringLiteral("Init.bytes")
                     || (!platformId.isEmpty() && image.packStableId != fnvName(platformId + QStringLiteral("/Init")))
                     || companion.size() != 2 + companion.contains(QStringLiteral("waveforms"))
@@ -2229,7 +2229,7 @@ bool inspectPackPublication(const QString& directory, const QString& projectId,
                 const QString guid = companion.value(QStringLiteral("guid")).toString();
                 const auto id = runtimeObjectId(QUuid(guid));
                 const QString scope = info.path() == QStringLiteral(".") ? QString() : info.path();
-                if (image.packKind != harkenstudiobuild::kPackKindCanonicalContent
+                if (image.packKind != HK_PACK_KIND_CANONICAL_CONTENT
                     || companion.size() != 3 + companion.contains(QStringLiteral("waveforms"))
                         + companion.contains(QStringLiteral("metadata"))
                     || !NameValidator::validateItemName(name, ProjectItem::Type::Action)
@@ -2306,7 +2306,7 @@ bool inspectPackPublication(const QString& directory, const QString& projectId,
             continue;
         }
         if (harkenstudio::IsNull(expectedProject) && selected) expectedProject = pairProject;
-        if (selected && image.packKind == harkenstudiobuild::kPackKindInit) {
+        if (selected && image.packKind == HK_PACK_KIND_INIT) {
             initId = image.packStableId;
             selectedInit = true;
         } else if (selected) {
@@ -2367,8 +2367,8 @@ bool inspectPackPublication(const QString& directory, const QString& projectId,
         for (const auto& edge : dependencyEdges) {
             const auto prerequisite = kinds.find(edge.prerequisitePackStableId);
             if (prerequisite == kinds.end()
-                || (edge.edgeKind == harkenstudiobuild::kPackDependencyEdgeKindInit)
-                    != (prerequisite->second == harkenstudiobuild::kPackKindInit))
+                || (edge.edgeKind == HK_PACK_DEPENDENCY_EDGE_KIND_INIT)
+                    != (prerequisite->second == HK_PACK_KIND_INIT))
                 return reject(QStringLiteral("Pack publication contains an incompatible dependency"));
         }
     }
@@ -2388,10 +2388,10 @@ bool inspectPackPublication(const QString& directory, const QString& projectId,
                 || !body.Decode(image.partitionBody.data(), image.partitionBody.size(),
                     harkenstudiobuild::kCanonicalDefinitionPartitionBodyVintage)
                 || body.ProductionView()->identity.projectId != expectedProject) continue;
-            if ((image.packKind == harkenstudiobuild::kPackKindCanonicalContent
+            if ((image.packKind == HK_PACK_KIND_CANONICAL_CONTENT
                     && harkenstudiobuild::ValidateCanonicalInitDependency(image.dependencyEdges, initId)
                         == harkenstudiobuild::kPackOk)
-                || (image.packKind == harkenstudiobuild::kPackKindInit && image.packStableId == initId))
+                || (image.packKind == HK_PACK_KIND_INIT && image.packStableId == initId))
                 managedFiles->append(path);
         }
     }
@@ -2573,7 +2573,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         init.fileName = QStringLiteral("Init") + Bridge::packArtifactExtension();
         init.platform = request.options.platform;
         init.packStableId = initId;
-        init.packKind = harkenstudiobuild::kPackKindInit;
+        init.packKind = HK_PACK_KIND_INIT;
         packs.push_back(std::move(init));
     }
     for (const PackBuildUnit& planned : request.plan->units) {
@@ -2598,7 +2598,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             continue;
         content.packStableId = fnvName(PackBuildPlanning::relativePackPath(
             planned.variant.platform, planned.variant.language, planned.artifactKey));
-        content.packKind = harkenstudiobuild::kPackKindCanonicalContent;
+        content.packKind = HK_PACK_KIND_CANONICAL_CONTENT;
         content.dependencies = {initId};
         packs.push_back(std::move(content));
     }
@@ -2661,7 +2661,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         pack.previousEntries = previous->previousEntries;
         pack.previousCapacity = previous->previousCapacity;
         pack.previousValid = true;
-        if (request.options.updateSelectedOnly && pack.packKind == harkenstudiobuild::kPackKindInit) {
+        if (request.options.updateSelectedOnly && pack.packKind == HK_PACK_KIND_INIT) {
             harkenstudiobuild::CurrentWorldBodyImage body;
             if (decodePreviousPack(pack, &body)) {
                 const auto& world = *body.ProductionView();
@@ -2721,12 +2721,12 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             }
             if (resource.reusedResources) {
                 for (const auto& entry : meta.previousEntries)
-                    if (entry.kind == harkenstudiobuild::kPackEntryKindMedia
-                        || entry.kind == harkenstudiobuild::kPackEntryKindBus
-                        || entry.kind == harkenstudiobuild::kPackEntryKindBusSend
-                        || entry.kind == harkenstudiobuild::kPackEntryKindAttenuation
-                        || entry.kind == harkenstudiobuild::kPackEntryKindBusEffect
-                        || entry.kind == harkenstudiobuild::kPackEntryKindEffectDynamicRoute)
+                    if (entry.kind == HK_PACK_ENTRY_KIND_MEDIA
+                        || entry.kind == HK_PACK_ENTRY_KIND_BUS
+                        || entry.kind == HK_PACK_ENTRY_KIND_BUS_SEND
+                        || entry.kind == HK_PACK_ENTRY_KIND_ATTENUATION
+                        || entry.kind == HK_PACK_ENTRY_KIND_BUS_EFFECT
+                        || entry.kind == HK_PACK_ENTRY_KIND_EFFECT_DYNAMIC_ROUTE)
                         meta.resourceEntries.push_back(entry);
                 return true;
             }
@@ -2741,12 +2741,12 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             if (!appendResources(unit, {})) unit.success = false;
             meta.resourceFingerprint = meta.previousResourceFingerprint;
             for (const auto& entry : meta.resourceEntries)
-                if (entry.kind == harkenstudiobuild::kPackEntryKindMedia) ++meta.ownedResources;
+                if (entry.kind == HK_PACK_ENTRY_KIND_MEDIA) ++meta.ownedResources;
             unit.mediaCount = static_cast<int>(meta.ownedResources);
             unit.actionCount = static_cast<int>(meta.actionStableIds.size());
             return unit;
         }
-        if (meta.packKind == harkenstudiobuild::kPackKindInit) {
+        if (meta.packKind == HK_PACK_KIND_INIT) {
             std::vector<Bridge::PackBuildSession::CanonicalPackEntry> entries;
             unit = exporter.ExportInitPack(project, path, resourceOptions, &entries);
             if (!unit.success) return unit;
@@ -2796,7 +2796,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                 unit.canceled = true;
                 return unit;
             }
-            if (entry.kind == harkenstudiobuild::kPackEntryKindContainer) {
+            if (entry.kind == HK_PACK_ENTRY_KIND_CONTAINER) {
                 unit.success = false;
                 unit.error = QStringLiteral(
                     "Pack '%1' emitted pack entry kind 9; CurrentWorld is the "
@@ -2804,7 +2804,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                                  .arg(meta.fileName);
                 return unit;
             }
-            if (entry.kind == harkenstudiobuild::kPackEntryKindVoiceRecipe) {
+            if (entry.kind == HK_PACK_ENTRY_KIND_VOICE_RECIPE) {
                 unit.success = false;
                 unit.error = QStringLiteral(
                     "Pack '%1' emitted pack entry kind 11; CurrentWorld is the "
@@ -2812,7 +2812,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                                  .arg(meta.fileName);
                 return unit;
             }
-            if (entry.kind != harkenstudiobuild::kPackEntryKindMedia)
+            if (entry.kind != HK_PACK_ENTRY_KIND_MEDIA)
                 continue;
             if (meta.soundContentRevisions.count(entry.id) != 0) {
                 ++meta.ownedResources;
@@ -2821,11 +2821,11 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             unit.success = false;
             unit.error = QStringLiteral("Pack '%1' contains invalid PCM media %2")
                 .arg(meta.fileName).arg(VNX::objectIdString(entry.id));
-            if (entry.payload.size() < harkenstudiobuild::kPackMediaBytes)
+            if (entry.payload.size() < harkenstudiobuild::kPackBytes<HkPackMedia>)
                 return unit;
             const auto media = harkenstudiobuild::ReadPackMedia(entry.payload.data());
             const auto pcmBytes = entry.mediaBytes();
-            if (media.sampleFormat != harkenstudiobuild::kPackSampleFormatF32Planar
+            if (media.sampleFormat != HK_PACK_SAMPLE_FORMAT_F32_PLANAR
                 || media.blobBytes != pcmBytes || pcmBytes % sizeof(float) != 0
                 || media.channelCount == 0 || media.frameCount == 0)
                 return unit;
@@ -2838,7 +2838,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                 channels[channel] = entry.media->data() + channel * media.frameCount;
             std::uint64_t revision = 0;
             const bool loopable =
-                (media.flags & harkenstudiobuild::kPackFlagLoopable) != 0;
+                (media.flags & HK_PACK_MEDIA_FLAG_LOOPABLE) != 0;
             if (!harkenstudiobuild::ComputeMediaPcmContentRevisionV1(
                     media.sampleRate, media.channelCount, media.frameCount,
                     channels.data(), 1, &revision,
@@ -3216,7 +3216,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             for (PackMeta& pack : packs) {
                 if (!packNeedsEncode(pack))
                     continue;
-                if (initOnly != (pack.packKind == harkenstudiobuild::kPackKindInit))
+                if (initOnly != (pack.packKind == HK_PACK_KIND_INIT))
                     continue;
                 for (auto& playable : pack.slicedPlayables) {
                     const auto before = playable.programSemanticFingerprint;
@@ -3366,14 +3366,14 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                                  &pack.partitionPayload, &compileError, busTriple))
                 return fail(compileError);
             pack.semanticFingerprint = harkenstudiobuild::Fnv1a64(
-                pack.partitionPayload.data() + harkenstudiobuild::kPackCanonicalPartitionHeaderBytes,
+                pack.partitionPayload.data() + harkenstudiobuild::kPackBytes<HkPackCanonicalPartitionHeader>,
                 pack.partitionPayload.size()
-                    - harkenstudiobuild::kPackCanonicalPartitionHeaderBytes);
+                    - harkenstudiobuild::kPackBytes<HkPackCanonicalPartitionHeader>);
             pack.lineageFingerprint = lineageFingerprint(owners, pack.packStableId);
-            if (pack.packKind == harkenstudiobuild::kPackKindInit &&
+            if (pack.packKind == HK_PACK_KIND_INIT &&
                 !fillInitCompanion(world, project, &pack.companion, &compileError))
                 return fail(compileError);
-            if (pack.packKind == harkenstudiobuild::kPackKindInit
+            if (pack.packKind == HK_PACK_KIND_INIT
                 && pack.variablePolicyOverlayPayload.empty()
                 && world.variableCount > 0) {
                 if (!encodeVariablePolicyOverlay(
@@ -3458,12 +3458,12 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         if (pack.retained) {
             globals = pack.previousEntries;
             std::erase_if(globals, [](const auto& entry) {
-                return entry.kind == harkenstudiobuild::kPackEntryKindCanonicalDefinitionPartition
-                    || entry.kind == harkenstudiobuild::kPackEntryKindPackRequirementBlock
-                    || entry.kind == harkenstudiobuild::kPackEntryKindPackDependencyEdge
-                    || entry.kind == harkenstudiobuild::kPackEntryKindVariablePolicyOverlay
-                    || entry.kind == harkenstudiobuild::kPackEntryKindVariableRequirements
-                    || entry.kind == harkenstudiobuild::kPackEntryKindBusDefinitionSnapshot;
+                return entry.kind == HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION
+                    || entry.kind == HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK
+                    || entry.kind == HK_PACK_ENTRY_KIND_PACK_DEPENDENCY_EDGE
+                    || entry.kind == HK_PACK_ENTRY_KIND_VARIABLE_POLICY_OVERLAY
+                    || entry.kind == HK_PACK_ENTRY_KIND_VARIABLE_REQUIREMENTS
+                    || entry.kind == HK_PACK_ENTRY_KIND_BUS_DEFINITION_SNAPSHOT;
             });
         } else if (!appendCanonicalBindingEntries(lowering, pack, &globals, &compileError)) {
             return fail(compileError);
@@ -3474,9 +3474,9 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             return previous == pack.previousEntries.end() ? payload.empty() : previous->payload == payload;
         };
         if (pack.current
-            && samePayload(harkenstudiobuild::kPackEntryKindCanonicalDefinitionPartition, pack.partitionPayload)
-            && samePayload(harkenstudiobuild::kPackEntryKindVariablePolicyOverlay, pack.variablePolicyOverlayPayload)
-            && samePayload(harkenstudiobuild::kPackEntryKindVariableRequirements, pack.variableRequirementsPayload)
+            && samePayload(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, pack.partitionPayload)
+            && samePayload(HK_PACK_ENTRY_KIND_VARIABLE_POLICY_OVERLAY, pack.variablePolicyOverlayPayload)
+            && samePayload(HK_PACK_ENTRY_KIND_VARIABLE_REQUIREMENTS, pack.variableRequirementsPayload)
             && std::all_of(globals.begin(), globals.end(), [&](const auto& entry) {
                 return std::any_of(pack.previousEntries.begin(), pack.previousEntries.end(), [&](const auto& previous) {
                     return entry.kind == previous.kind && entry.vintage == previous.vintage
@@ -3502,9 +3502,9 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             contentRevision = harkenstudiobuild::Fnv1a64(
                 entry.mediaData(), entry.mediaBytes(), contentRevision);
         }
-        for (const auto& row : {std::make_pair(harkenstudiobuild::kPackEntryKindVariablePolicyOverlay,
+        for (const auto& row : {std::make_pair(HK_PACK_ENTRY_KIND_VARIABLE_POLICY_OVERLAY,
                                               &pack.variablePolicyOverlayPayload),
-                                std::make_pair(harkenstudiobuild::kPackEntryKindVariableRequirements,
+                                std::make_pair(HK_PACK_ENTRY_KIND_VARIABLE_REQUIREMENTS,
                                               &pack.variableRequirementsPayload)}) {
             if (row.second->empty()) continue;
             std::array<std::uint8_t, 16> header{};
@@ -3524,7 +3524,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         pack.requiredInitRevision = packs.front().contentRevision;
         if (pack.retained) {
             for (const auto& entry : pack.previousEntries) {
-                if (entry.kind != harkenstudiobuild::kPackEntryKindPackDependencyEdge) continue;
+                if (entry.kind != HK_PACK_ENTRY_KIND_PACK_DEPENDENCY_EDGE) continue;
                 harkenstudiobuild::PackDependencyEdge edge;
                 if (!harkenstudiobuild::ReadPackDependencyEdge(
                         entry.payload.data(), entry.payload.size(), &edge))
@@ -3556,9 +3556,9 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         if (meta.retained) {
             auto entries = meta.previousEntries;
             for (auto& entry : entries) {
-                if (entry.kind == harkenstudiobuild::kPackEntryKindCanonicalDefinitionPartition) {
+                if (entry.kind == HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION) {
                     entry.payload = meta.partitionPayload;
-                } else if (entry.kind == harkenstudiobuild::kPackEntryKindPackRequirementBlock) {
+                } else if (entry.kind == HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK) {
                     harkenstudiobuild::PackRequirementBlock requirement;
                     if (!harkenstudiobuild::ReadPackRequirementBlock(
                             entry.payload.data(), entry.payload.size(), &requirement)) {
@@ -3567,9 +3567,9 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                     }
                     requirement.semanticFingerprint = meta.semanticFingerprint;
                     requirement.packContentRevision = meta.contentRevision;
-                    harkenstudiobuild::SerializePackRequirementBlock(requirement, entry.payload.data());
+                    harkenstudiobuild::SerializePackRow<HkPackRequirementBlock>(requirement, entry.payload.data());
                     harkenstudiobuild::StampRequirementCoverage(&entry.payload);
-                } else if (entry.kind == harkenstudiobuild::kPackEntryKindPackDependencyEdge) {
+                } else if (entry.kind == HK_PACK_ENTRY_KIND_PACK_DEPENDENCY_EDGE) {
                     harkenstudiobuild::PackDependencyEdge edge;
                     if (!harkenstudiobuild::ReadPackDependencyEdge(
                             entry.payload.data(), entry.payload.size(), &edge)) {
@@ -3578,12 +3578,12 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                     }
                     if (edge.prerequisitePackStableId == initId) {
                         edge.expectedPrerequisiteContentRevision = meta.requiredInitRevision;
-                        harkenstudiobuild::SerializePackDependencyEdge(edge, entry.payload.data());
+                        harkenstudiobuild::SerializePackRow<HkPackDependencyEdge>(edge, entry.payload.data());
                     }
                 }
             }
             unit.success = Bridge::PackBuildSession::writeCanonicalPackFile(
-                path, meta.packKind == harkenstudiobuild::kPackKindInit
+                path, meta.packKind == HK_PACK_KIND_INIT
                     ? Bridge::PackBuildSession::CanonicalPackKind::Init
                     : Bridge::PackBuildSession::CanonicalPackKind::CanonicalContent,
                 entries, &unit.error);
@@ -3593,25 +3593,25 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         }
         auto& entries = meta.resourceEntries;
         Bridge::PackBuildSession::CanonicalPackEntry partition;
-        partition.kind = harkenstudiobuild::kPackEntryKindCanonicalDefinitionPartition;
-        partition.vintage = harkenstudiobuild::kPackCanonicalDefinitionPartitionVintage;
+        partition.kind = HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION;
+        partition.vintage = HK_PACK_CANONICAL_DEFINITION_PARTITION_VINTAGE;
         partition.relationOrdinal = 0;
         partition.payload = meta.partitionPayload;
         entries.push_back(std::move(partition));
-        if (meta.packKind == harkenstudiobuild::kPackKindInit
+        if (meta.packKind == HK_PACK_KIND_INIT
             && !meta.variablePolicyOverlayPayload.empty()) {
             Bridge::PackBuildSession::CanonicalPackEntry overlay;
-            overlay.kind = harkenstudiobuild::kPackEntryKindVariablePolicyOverlay;
-            overlay.vintage = harkenstudiobuild::kPackVariablePolicyOverlayVintage;
+            overlay.kind = HK_PACK_ENTRY_KIND_VARIABLE_POLICY_OVERLAY;
+            overlay.vintage = HK_PACK_VARIABLE_POLICY_OVERLAY_VINTAGE;
             overlay.id = {};
             overlay.payload = meta.variablePolicyOverlayPayload;
             entries.push_back(std::move(overlay));
         }
-        if (meta.packKind == harkenstudiobuild::kPackKindCanonicalContent
+        if (meta.packKind == HK_PACK_KIND_CANONICAL_CONTENT
             && !meta.variableRequirementsPayload.empty()) {
             Bridge::PackBuildSession::CanonicalPackEntry requirements;
-            requirements.kind = harkenstudiobuild::kPackEntryKindVariableRequirements;
-            requirements.vintage = harkenstudiobuild::kPackVariableRequirementsVintage;
+            requirements.kind = HK_PACK_ENTRY_KIND_VARIABLE_REQUIREMENTS;
+            requirements.vintage = HK_PACK_VARIABLE_REQUIREMENTS_VINTAGE;
             requirements.id = {};
             requirements.payload = meta.variableRequirementsPayload;
             entries.push_back(std::move(requirements));
@@ -3620,20 +3620,20 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         std::uint32_t edgeOrdinal = 0;
         for (std::uint64_t dependency : meta.dependencies) {
             Bridge::PackBuildSession::CanonicalPackEntry edge;
-            edge.kind = harkenstudiobuild::kPackEntryKindPackDependencyEdge;
-            edge.vintage = harkenstudiobuild::kPackPackDependencyEdgeVintage;
+            edge.kind = HK_PACK_ENTRY_KIND_PACK_DEPENDENCY_EDGE;
+            edge.vintage = HK_PACK_PACK_DEPENDENCY_EDGE_VINTAGE;
             edge.relationOrdinal = edgeOrdinal++;
             edge.payload = dependencyPayload(
                 dependency,
-                dependency == initId ? harkenstudiobuild::kPackDependencyEdgeKindInit
-                    : harkenstudiobuild::kPackDependencyEdgeKindContent,
+                dependency == initId ? HK_PACK_DEPENDENCY_EDGE_KIND_INIT
+                    : HK_PACK_DEPENDENCY_EDGE_KIND_CONTENT,
                 dependency == initId ? meta.requiredInitRevision : 0,
                 busTriple);
             entries.push_back(std::move(edge));
         }
         Bridge::PackBuildSession::CanonicalPackEntry requirement;
-        requirement.kind = harkenstudiobuild::kPackEntryKindPackRequirementBlock;
-        requirement.vintage = harkenstudiobuild::kPackPackRequirementBlockVintage;
+        requirement.kind = HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK;
+        requirement.vintage = HK_PACK_PACK_REQUIREMENT_BLOCK_VINTAGE;
         requirement.relationOrdinal = 0;
         requirement.payload = requirementPayload(
             meta.packStableId, meta.ownedResources, meta.ownedDefinitions, 1,
@@ -3641,10 +3641,10 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             busTriple);
         entries.push_back(std::move(requirement));
 
-        if (meta.packKind == harkenstudiobuild::kPackKindInit) {
+        if (meta.packKind == HK_PACK_KIND_INIT) {
             Bridge::PackBuildSession::CanonicalPackEntry snapshot;
-            snapshot.kind = harkenstudiobuild::kPackEntryKindBusDefinitionSnapshot;
-            snapshot.vintage = harkenstudiobuild::kPackBusDefinitionSnapshotVintage;
+            snapshot.kind = HK_PACK_ENTRY_KIND_BUS_DEFINITION_SNAPSHOT;
+            snapshot.vintage = HK_PACK_BUS_DEFINITION_SNAPSHOT_VINTAGE;
             snapshot.id = {};
             snapshot.relationOrdinal = 1;
             snapshot.payload = busSnapshotPayload;
@@ -3657,7 +3657,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                 && first.payload == second.payload && first.media == second.media;
         };
         if ((meta.current || (meta.previousValid && !request.options.forceReexport
-                && meta.packKind == harkenstudiobuild::kPackKindInit))
+                && meta.packKind == HK_PACK_KIND_INIT))
             && entries.size() == meta.previousEntries.size()
             && std::all_of(entries.begin(), entries.end(), [&](const auto& entry) {
                 return std::any_of(meta.previousEntries.begin(), meta.previousEntries.end(),
@@ -3665,7 +3665,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             })) return reuse();
         if (!Bridge::PackBuildSession::writeCanonicalPackFile(
                 path,
-                meta.packKind == harkenstudiobuild::kPackKindInit
+                meta.packKind == HK_PACK_KIND_INIT
                     ? Bridge::PackBuildSession::CanonicalPackKind::Init
                     : Bridge::PackBuildSession::CanonicalPackKind::CanonicalContent,
                 entries, &unit.error)) {
@@ -3731,7 +3731,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
             pack.elapsedNanoseconds += timer.nsecsElapsed();
         }
         if (unit.success && !pack.retained) {
-            if (pack.packKind == harkenstudiobuild::kPackKindCanonicalContent) {
+            if (pack.packKind == HK_PACK_KIND_CANONICAL_CONTENT) {
                 const auto* action = pack.actionStableIds.size() == 1 ? actionFor(pack.actionStableIds.front()) : nullptr;
                 if (!action) {
                     unit.success = false;
@@ -3761,9 +3761,9 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                 } else {
                     auto ids = worldMetadataObjectIds(*body.ProductionView());
                     for (const auto& entry : pack.resourceEntries) {
-                        if (entry.kind == harkenstudiobuild::kPackEntryKindMedia
-                            || entry.kind == harkenstudiobuild::kPackEntryKindAttenuation) ids.insert(entry.id);
-                        if (entry.kind == harkenstudiobuild::kPackEntryKindBindingDefinition) {
+                        if (entry.kind == HK_PACK_ENTRY_KIND_MEDIA
+                            || entry.kind == HK_PACK_ENTRY_KIND_ATTENUATION) ids.insert(entry.id);
+                        if (entry.kind == HK_PACK_ENTRY_KIND_BINDING_DEFINITION) {
                             harkenstudio::ObjectId id;
                             harkenstudiobuild::BindingDefinition binding;
                             if (!harkenstudiobuild::ReadPackBindingDefinition(
@@ -3778,17 +3778,17 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                     if (!pack.variableRequirementsPayload.empty()) {
                         const auto* data = pack.variableRequirementsPayload.data();
                         harkenstudiobuild::PackVariableRequirementsHeader header;
-                        if (!harkenstudiobuild::ParsePackVariableRequirementsHeader(data,
-                                harkenstudiobuild::kPackVariableRequirementsHeaderBytes, &header)) {
+                        if (!harkenstudiobuild::ParsePackRow<HkPackVariableRequirementsHeader>(data,
+                                harkenstudiobuild::kPackBytes<HkPackVariableRequirementsHeader>, &header)) {
                             unit.success = false;
                             unit.error = QStringLiteral("Cannot read variable requirement metadata for '%1'").arg(pack.name);
                             break;
                         }
                         for (std::uint32_t i = 0; i < header.rowCount; ++i) {
                             harkenstudiobuild::PackVariableRequirement row;
-                            if (!harkenstudiobuild::ParsePackVariableRequirement(data +
-                                    harkenstudiobuild::kPackVariableRequirementsHeaderBytes + i * harkenstudiobuild::kPackVariableRequirementBytes,
-                                    harkenstudiobuild::kPackVariableRequirementBytes, &row)) {
+                            if (!harkenstudiobuild::ParsePackRow<HkPackVariableRequirement>(data +
+                                    harkenstudiobuild::kPackBytes<HkPackVariableRequirementsHeader> + i * harkenstudiobuild::kPackBytes<HkPackVariableRequirement>,
+                                    harkenstudiobuild::kPackBytes<HkPackVariableRequirement>, &row)) {
                                 unit.success = false;
                                 unit.error = QStringLiteral("Cannot read variable requirement metadata for '%1'").arg(pack.name);
                                 break;
@@ -3796,7 +3796,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                             ids.insert(row.stableId);
                         }
                     }
-                    if (pack.packKind == harkenstudiobuild::kPackKindInit)
+                    if (pack.packKind == HK_PACK_KIND_INIT)
                         for (const auto& bus : busProjection.buses) ids.insert(bus.busId);
                     ids.erase(harkenstudio::ObjectId{});
                     ids.erase(harkenstudio::kMasterBusObjectId);
@@ -3832,9 +3832,9 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
         pack.finished = true;
         completed.insert(pack.packStableId);
         pack.fileSize = unit.fileSize;
-        pack.formatVersion = harkenstudiobuild::kPackFormatVersion;
+        pack.formatVersion = HK_PACK_FORMAT_VERSION;
         result.warnings.append(unit.warnings);
-        if (!pack.retained || pack.packKind == harkenstudiobuild::kPackKindInit) {
+        if (!pack.retained || pack.packKind == HK_PACK_KIND_INIT) {
             result.fileSize += unit.fileSize;
             result.mediaCount += unit.mediaCount;
             result.objectCount += unit.objectCount;

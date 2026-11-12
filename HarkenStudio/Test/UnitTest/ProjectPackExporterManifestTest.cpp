@@ -404,7 +404,7 @@ void expectMediaMatchesDefinition(const QByteArray& bytes,
                                   const harkenstudiobuild::PlayablePropertyProgramViewV1& property)
 {
     ASSERT_EQ(media.soundId, property.stableId);
-    ASSERT_EQ(media.sampleFormat, harkenstudiobuild::kPackSampleFormatF32Planar);
+    ASSERT_EQ(media.sampleFormat, HK_PACK_SAMPLE_FORMAT_F32_PLANAR);
     ASSERT_LE(media.blobOffset + media.blobBytes,
               static_cast<std::uint64_t>(bytes.size()));
     ASSERT_EQ(media.blobBytes, media.frameCount * media.channelCount * sizeof(float));
@@ -415,7 +415,7 @@ void expectMediaMatchesDefinition(const QByteArray& bytes,
     for (std::uint16_t channel = 0; channel < media.channelCount; ++channel)
         channels[channel] = planar.data() + channel * media.frameCount;
     std::uint64_t revision = 0;
-    const bool loopable = (media.flags & harkenstudiobuild::kPackFlagLoopable) != 0;
+    const bool loopable = (media.flags & HK_PACK_MEDIA_FLAG_LOOPABLE) != 0;
     ASSERT_TRUE(harkenstudiobuild::ComputeMediaPcmContentRevisionV1(
         media.sampleRate, media.channelCount, media.frameCount, channels.data(),
         1, &revision, loopable ? media.loopStartFrame : 0,
@@ -473,12 +473,12 @@ void expectInitHasVolumeOnlyKind24(const QString& path)
     ASSERT_TRUE(image.hasPartition) << path.toStdString();
     EXPECT_EQ(image.requirement.schemaVersion, 2u) << path.toStdString();
     EXPECT_EQ(image.partitionHeader.headerBytes,
-              harkenstudiobuild::kPackCanonicalPartitionHeaderBytes)
+              harkenstudiobuild::kPackBytes<HkPackCanonicalPartitionHeader>)
         << path.toStdString();
     const auto& snapshot = image.busDefinitionSnapshotHeader;
     EXPECT_EQ(snapshot.schemaVersion, 2u) << path.toStdString();
     EXPECT_EQ(snapshot.storageModelVersion, 2u) << path.toStdString();
-    EXPECT_EQ(snapshot.headerBytes, harkenstudiobuild::kPackBusDefinitionSnapshotHeaderBytes)
+    EXPECT_EQ(snapshot.headerBytes, harkenstudiobuild::kPackBytes<HkPackBusDefinitionSnapshotHeader>)
         << path.toStdString();
     EXPECT_EQ(snapshot.publicationCapabilityVintage, 4u) << path.toStdString();
     const auto expected = harkenstudiobuild::SnapshotBusTriple(snapshot);
@@ -497,7 +497,7 @@ void expectInitHasVolumeOnlyKind24(const QString& path)
         << path.toStdString();
     for (const auto& edge : image.dependencyEdges) {
         const bool initRequired =
-            edge.edgeKind == harkenstudiobuild::kPackDependencyEdgeKindInit &&
+            edge.edgeKind == HK_PACK_DEPENDENCY_EDGE_KIND_INIT &&
             edge.required01 == 1;
         if (initRequired) {
             EXPECT_TRUE(harkenstudiobuild::CanonicalBusTripleEqual(
@@ -531,7 +531,7 @@ std::uint32_t packKindCount(const QString& path, std::uint32_t kind)
     for (std::uint32_t i = 0; i < header.entryCount; ++i) {
         const harkenstudiobuild::PackDirectoryEntry record = harkenstudiobuild::ReadPackDirectoryEntry(
             reinterpret_cast<const std::uint8_t*>(bytes.constData()) +
-            header.directoryOffset + i * harkenstudiobuild::kPackDirectoryEntryBytes);
+            header.directoryOffset + i * harkenstudiobuild::kPackBytes<HkPackDirectoryEntry>);
         if (record.kind == kind)
             ++count;
     }
@@ -995,8 +995,8 @@ TEST(EditorProjectPackExporterManifest, InitHasNoRoutingCatalogAndEveryPackHasKi
     for (std::uint32_t i = 0; i < initHeader.entryCount; ++i) {
         const harkenstudiobuild::PackDirectoryEntry record = harkenstudiobuild::ReadPackDirectoryEntry(
             reinterpret_cast<const std::uint8_t*>(initBytes.constData()) +
-            initHeader.directoryOffset + i * harkenstudiobuild::kPackDirectoryEntryBytes);
-        if (record.kind == harkenstudiobuild::kPackEntryKindInitRoutingCatalog)
+            initHeader.directoryOffset + i * harkenstudiobuild::kPackBytes<HkPackDirectoryEntry>);
+        if (record.kind == HK_PACK_ENTRY_KIND_RETIRED_INIT_ROUTING_CATALOG)
             sawCatalogEntry = true;
     }
     EXPECT_FALSE(sawCatalogEntry);
@@ -1810,7 +1810,7 @@ TEST(EditorProjectPackExporterManifest, ProductionPackPairGoldenIsRepeatable)
             EXPECT_EQ(row.value(QStringLiteral("contentHash")).toString().toULongLong(),
                 harkenstudiobuild::Fnv1a64(bytes.constData(), bytes.size()));
             harkenstudiobuild::PackFileHeader header;
-            ASSERT_GE(bytes.size(), harkenstudiobuild::kPackFileHeaderBytes);
+            ASSERT_GE(bytes.size(), harkenstudiobuild::kPackBytes<HkPackFileHeader>);
             ASSERT_TRUE(harkenstudiobuild::ReadPackFileHeader(reinterpret_cast<const uint8_t*>(bytes.constData()), &header));
             EXPECT_EQ(header.formatVersion, HARKEN_PACK_SCHEMA_VERSION);
             ASSERT_NO_FATAL_FAILURE(expectCanonicalPackParsesWithPartition(path));
@@ -2136,7 +2136,7 @@ TEST(EditorProjectPackExporterManifest, RuntimeBundlePreservesLanguagePathsThrou
             ASSERT_EQ(image.media.size(), 1u);
             const auto& media = image.media.front();
             ASSERT_EQ(media.channelCount, 1u);
-            ASSERT_EQ(media.sampleFormat, harkenstudiobuild::kPackSampleFormatF32Planar);
+            ASSERT_EQ(media.sampleFormat, HK_PACK_SAMPLE_FORMAT_F32_PLANAR);
             ASSERT_LE(media.blobOffset + 2 * sizeof(float),
                       static_cast<std::uint64_t>(contents.size()));
             float sample = 0.0f;
@@ -2262,7 +2262,7 @@ TEST(EditorProjectPackExporterManifest, LocalizedSinglePackRequiresExplicitLangu
     result = exporter.ExportActionPack(project, QStringLiteral("Spoken"), path, opts);
     ASSERT_TRUE(result.success) << result.error.toStdString();
     EXPECT_EQ(result.mediaCount, 1);
-    EXPECT_TRUE(packHasKind(path, harkenstudiobuild::kPackEntryKindMedia));
+    EXPECT_TRUE(packHasKind(path, HK_PACK_ENTRY_KIND_MEDIA));
     VNX::AssetRegistry::instance().clear();
 }
 
@@ -2472,7 +2472,7 @@ void verifyIncrementalPublication(const QString& directory)
     for (const auto& name : publicationFiles(live.path())) {
         if (!name.endsWith(QStringLiteral(".bytes"))) continue;
         auto outdated = readFileBytes(live.filePath(name));
-        ASSERT_GE(outdated.size(), harkenstudiobuild::kPackFileHeaderBytes);
+        ASSERT_GE(outdated.size(), harkenstudiobuild::kPackBytes<HkPackFileHeader>);
         harkenstudiobuild::StoreLE32(reinterpret_cast<std::uint8_t*>(outdated.data()) + 4,
                           HARKEN_PACK_SCHEMA_VERSION + 1);
         writeFileBytes(live.filePath(name), outdated);

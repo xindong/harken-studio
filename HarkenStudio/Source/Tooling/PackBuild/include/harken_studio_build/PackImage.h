@@ -16,7 +16,7 @@
 
 namespace harkenstudiobuild {
 struct PackLogicImage {
-    std::uint32_t packKind = kPackKindContent;
+    std::uint32_t packKind = HK_PACK_KIND_CONTENT;
 
     std::vector<PackTocEntry> media;
     std::vector<PackBusEntry> buses;

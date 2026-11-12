@@ -289,7 +289,7 @@ TEST(PackLogicRoundtrip, EmptyContentPacksCarryNoRuntimeCargo) {
     std::vector<std::uint8_t> secondBytes;
     ASSERT_TRUE(ReadFileBytes(firstPath, &firstBytes));
     ASSERT_TRUE(ReadFileBytes(secondPath, &secondBytes));
-    ASSERT_EQ(harken::kPackFileHeaderBytes, firstBytes.size());
+    ASSERT_EQ(harken::kPackBytes<HkPackFileHeader>, firstBytes.size());
     ASSERT_EQ(firstBytes, secondBytes);
 
     VnConfig config = SceneConfig();
@@ -321,7 +321,7 @@ TEST(PackLogicRoundtrip, EmptyContentPacksCarryNoRuntimeCargo) {
     ASSERT_NE(nullptr, firstRecord);
     ASSERT_NE(nullptr, secondRecord);
     for (const harken::PackLogicRecord* record : {firstRecord, secondRecord}) {
-        EXPECT_EQ(harken::kPackKindContent, record->packKind);
+        EXPECT_EQ(HK_PACK_KIND_CONTENT, record->packKind);
         EXPECT_TRUE(record->buses.empty());
         EXPECT_TRUE(record->busSends.empty());
         EXPECT_TRUE(record->busEffects.empty());

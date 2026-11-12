@@ -30,7 +30,7 @@
 #include "harken/core/VariableSliceTable.h"
 #include "harken/core/StableRowStorage.h"
 #include "harken/param/EffectParamLocator.h"
-#include "harken/render/generated/harken_effect_registry.g.h"
+#include "harken/render/EffectRegistry.h"
 
 #include <array>
 #include <cstddef>

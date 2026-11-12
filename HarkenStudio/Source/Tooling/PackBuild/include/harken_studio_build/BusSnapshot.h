@@ -12,12 +12,12 @@ namespace harkenstudiobuild {
 
 inline void StampRequirementCoverage(std::vector<std::uint8_t>* payload) {
     StorePackRequirementBlockPayloadChecksumCoverage(payload->data(),
-        Fnv1a64(payload->data(), kPackRequirementBlockPayloadChecksumCoverageOffset));
+        Fnv1a64(payload->data(), offsetof(HkPackRequirementBlock, payloadChecksumCoverage)));
 }
 
 inline void StampSnapshotChecksum(std::vector<std::uint8_t>* payload) {
-    constexpr auto checksumOffset = kPackBusDefinitionSnapshotHeaderChecksumOffset;
-    constexpr auto checksumEnd = kPackBusDefinitionSnapshotHeaderCompileTargetProfileFingerprintOffset;
+    constexpr auto checksumOffset = offsetof(HkPackBusDefinitionSnapshotHeader, checksum);
+    constexpr auto checksumEnd = offsetof(HkPackBusDefinitionSnapshotHeader, compileTargetProfileFingerprint);
     const std::uint8_t zeros[checksumEnd - checksumOffset] = {};
     std::uint64_t hash = Fnv1a64(payload->data(), checksumOffset);
     hash = Fnv1a64(zeros, sizeof(zeros), hash);
@@ -52,13 +52,13 @@ inline PackCanonicalImage NeutralMasterSnapshotImage() {
     PackCanonicalImage image;
     image.hasBusDefinitionSnapshot = true;
     auto& header = image.busDefinitionSnapshotHeader;
-    header.schemaVersion = kPackBusDefinitionSnapshotVintage;
-    header.storageModelVersion = kPackBusDefinitionSnapshotVintage;
-    header.headerBytes = kPackBusDefinitionSnapshotHeaderBytes;
-    header.busRowBytes = kPackBusDefinitionBusBytes;
-    header.sendRowBytes = kPackBusDefinitionSendBytes;
-    header.downmixRowBytes = kPackBusDefinitionDownmixBytes;
-    header.coefficientRowBytes = kPackBusDefinitionCoefficientBytes;
+    header.schemaVersion = HK_PACK_BUS_DEFINITION_SNAPSHOT_VINTAGE;
+    header.storageModelVersion = HK_PACK_BUS_DEFINITION_SNAPSHOT_VINTAGE;
+    header.headerBytes = kPackBytes<HkPackBusDefinitionSnapshotHeader>;
+    header.busRowBytes = kPackBytes<HkPackBusDefinitionBus>;
+    header.sendRowBytes = kPackBytes<HkPackBusDefinitionSend>;
+    header.downmixRowBytes = kPackBytes<HkPackBusDefinitionDownmix>;
+    header.coefficientRowBytes = kPackBytes<HkPackBusDefinitionCoefficient>;
     header.publicationCapabilityVintage = 3;
     header.contentGeneration = kNeutralMasterBusContentGeneration;
     header.profileVintage = 1;
@@ -152,9 +152,9 @@ inline std::vector<std::uint8_t> VolumeBusSnapshotPayload(
     PackCanonicalImage image;
     image.hasBusDefinitionSnapshot = true;
     auto& header = image.busDefinitionSnapshotHeader;
-    header.schemaVersion = kPackBusDefinitionSnapshotVintage;
-    header.storageModelVersion = kPackBusDefinitionSnapshotVintage;
-    header.headerBytes = kPackBusDefinitionSnapshotHeaderBytes;
+    header.schemaVersion = HK_PACK_BUS_DEFINITION_SNAPSHOT_VINTAGE;
+    header.storageModelVersion = HK_PACK_BUS_DEFINITION_SNAPSHOT_VINTAGE;
+    header.headerBytes = kPackBytes<HkPackBusDefinitionSnapshotHeader>;
     header.publicationCapabilityVintage =
         static_cast<std::uint32_t>(projection.capabilityVintage);
     header.contentGeneration = projection.fingerprint;
@@ -169,10 +169,10 @@ inline std::vector<std::uint8_t> VolumeBusSnapshotPayload(
     header.sendCount = static_cast<std::uint32_t>(projection.sends.size());
     header.downmixCount = static_cast<std::uint32_t>(projection.downmix.size());
     header.coefficientCount = static_cast<std::uint32_t>(projection.downmixCoefficients.size());
-    header.busRowBytes = kPackBusDefinitionBusBytes;
-    header.sendRowBytes = kPackBusDefinitionSendBytes;
-    header.downmixRowBytes = kPackBusDefinitionDownmixBytes;
-    header.coefficientRowBytes = kPackBusDefinitionCoefficientBytes;
+    header.busRowBytes = kPackBytes<HkPackBusDefinitionBus>;
+    header.sendRowBytes = kPackBytes<HkPackBusDefinitionSend>;
+    header.downmixRowBytes = kPackBytes<HkPackBusDefinitionDownmix>;
+    header.coefficientRowBytes = kPackBytes<HkPackBusDefinitionCoefficient>;
     for (const auto& bus : projection.buses) {
         image.busDefinitionBusesV2.push_back({bus.busId, bus.parentId,
             bus.feedsFirstOrdinal, bus.faderDb,

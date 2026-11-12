@@ -311,7 +311,7 @@ TEST(PackRoundtrip, FullUuidSeparatesObjectsWithIdenticalMedia) {
     const harken::PackTocEntry mono =
         harken::ReadPackMedia(bytes.data() + header.tocOffset);
     const harken::PackTocEntry stereo = harken::ReadPackMedia(
-        bytes.data() + header.tocOffset + harken::kPackMediaBytes);
+        bytes.data() + header.tocOffset + harken::kPackBytes<HkPackMedia>);
     EXPECT_EQ(1u, mono.channelCount);
     EXPECT_EQ(2u, mono.frameCount);
     EXPECT_EQ(2u, stereo.channelCount);

@@ -79,6 +79,7 @@ EXPORTS
     Vn_QueryActionPlaybackReadiness
     Vn_QueryActionSeek
     Vn_QueryActionStep
+    Vn_QueryPackFormatVersion
     Vn_QueryStreamSource
     Vn_QueryVariable
     Vn_QueryVariableCatalog

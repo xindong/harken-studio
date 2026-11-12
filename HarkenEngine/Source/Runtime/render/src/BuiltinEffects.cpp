@@ -2,7 +2,7 @@
 #include "harken/render/SignalPathBounds.h"
 #include "harken/dsp/GainRamp.h"
 
-#include "harken/render/generated/harken_effect_registry.g.h"
+#include "harken/render/EffectRegistry.h"
 
 #include <harken/Harken.h>
 
@@ -14,7 +14,7 @@
 namespace harken {
 
 // The built-in effects are realized as free functions with external
-// linkage — the generated registry (harken_effect_registry.g.h) binds their
+// linkage — the registry (harken/render/EffectRegistry.h) binds their
 // addresses into its rows, so the public entry points below are table lookups
 // rather than hand-written type switches. The kernels themselves (process/tail/
 // setParam/reset) are referenced by the registry rather than a hand-written

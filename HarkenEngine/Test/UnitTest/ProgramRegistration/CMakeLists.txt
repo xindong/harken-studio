@@ -10,8 +10,8 @@ target_include_directories(harken_program_registration
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${HARKEN_RUNTIME_DIR}/core/include
-        ${HARKEN_RUNTIME_DIR}/core/contract/include
         ${HARKEN_RUNTIME_DIR}/media/include
+        ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
         ${HARKEN_RUNTIME_DIR}/param/include
     PRIVATE
         ${HARKEN_RUNTIME_DIR}/api/src

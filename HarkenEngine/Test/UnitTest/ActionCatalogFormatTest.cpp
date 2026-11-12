@@ -33,9 +33,9 @@ public:
     std::size_t AddEntry(std::uint32_t kind, std::uint64_t packed,
                          std::vector<std::uint8_t> payload,
                          std::uint32_t vintage = 0) {
-        if (kind == kPackEntryKindBusDefinitionSnapshot ||
-            kind == kPackEntryKindBindingAttachment ||
-            kind == kPackEntryKindPackDependencyEdge) {
+        if (kind == HK_PACK_ENTRY_KIND_BUS_DEFINITION_SNAPSHOT ||
+            kind == HK_PACK_ENTRY_KIND_BINDING_ATTACHMENT ||
+            kind == HK_PACK_ENTRY_KIND_PACK_DEPENDENCY_EDGE) {
             const auto index =
                 AddEntry(kind, VnObjectId{}, std::move(payload), vintage);
             SetRelationOrdinal(index, packed);
@@ -65,18 +65,18 @@ public:
     }
 
     std::vector<std::uint8_t> Build() {
-        const std::uint64_t dirOffset = kPackFileHeaderBytes;
+        const std::uint64_t dirOffset = kPackBytes<HkPackFileHeader>;
         const std::uint64_t dirBytes =
             static_cast<std::uint64_t>(entries_.size()) *
-            kPackDirectoryEntryBytes;
+            kPackBytes<HkPackDirectoryEntry>;
         const std::uint64_t dirEnd = dirOffset + dirBytes;
         payloadOffsets_.assign(entries_.size(), 0);
-        std::uint64_t cursor = AlignUp(dirEnd, kPackPayloadAlign);
+        std::uint64_t cursor = AlignUp(dirEnd, HK_PACK_PAYLOAD_ALIGN);
         std::uint64_t contentEnd = dirEnd;
         for (std::size_t i = 0; i < entries_.size(); ++i) {
             payloadOffsets_[i] = cursor;
             contentEnd = cursor + entries_[i].payload.size();
-            cursor = AlignUp(contentEnd, kPackPayloadAlign);
+            cursor = AlignUp(contentEnd, HK_PACK_PAYLOAD_ALIGN);
         }
         std::vector<std::uint8_t> bytes(static_cast<std::size_t>(contentEnd), 0);
         for (std::size_t i = 0; i < entries_.size(); ++i) {
@@ -95,13 +95,13 @@ public:
             record.payloadChecksum = Fnv1a64(
                 bytes.data() + static_cast<std::size_t>(payloadOffsets_[i]),
                 static_cast<std::size_t>(record.size));
-            SerializePackDirectoryEntry(
+            SerializePackRow<HkPackDirectoryEntry>(
                 record, bytes.data() + static_cast<std::size_t>(dirOffset) +
-                            i * kPackDirectoryEntryBytes);
+                            i * kPackBytes<HkPackDirectoryEntry>);
         }
         PackFileHeader header;
-        header.formatVersion = kPackFormatVersion;
-        header.headerBytes = kPackFileHeaderBytes;
+        header.formatVersion = HK_PACK_FORMAT_VERSION;
+        header.headerBytes = kPackBytes<HkPackFileHeader>;
         header.fileBytes = contentEnd;
         header.packKind = packKind_;
         header.entryCount = static_cast<std::uint32_t>(entries_.size());
@@ -109,7 +109,7 @@ public:
         header.directoryChecksum =
             Fnv1a64(bytes.data() + static_cast<std::size_t>(dirOffset),
                     static_cast<std::size_t>(dirBytes));
-        SerializePackFileHeader(header, bytes.data());
+        SerializePackRow<HkPackFileHeader>(header, bytes.data());
         return bytes;
     }
 
@@ -122,7 +122,7 @@ private:
         std::vector<std::uint8_t> payload;
     };
 
-    std::uint32_t packKind_ = kPackKindInit;
+    std::uint32_t packKind_ = HK_PACK_KIND_INIT;
     std::vector<Entry> entries_;
     std::vector<std::uint64_t> payloadOffsets_;
 };
@@ -135,10 +135,10 @@ std::vector<std::uint8_t> MakeInitPartition(std::uint64_t* bodyBytes) {
 std::vector<std::uint8_t> BuildInitBare() {
     std::uint64_t bodyBytes = 0;
     std::vector<std::uint8_t> partition = MakeInitPartition(&bodyBytes);
-    ImageBuilder builder(kPackKindInit);
-    builder.AddEntry(kPackEntryKindPackRequirementBlock, kInitId,
+    ImageBuilder builder(HK_PACK_KIND_INIT);
+    builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, kInitId,
                      RequirementPayload(kInitId, 1, 1, 0, bodyBytes));
-    builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, kInitId,
+    builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, kInitId,
                      std::move(partition));
     harkentest::packfoundation::AppendNeutralMasterSnapshot(&builder);
     return builder.Build();
@@ -149,12 +149,12 @@ std::vector<std::uint8_t> BuildInitWithGameplayCatalog(
     std::uint32_t vintage = 1u) {
     std::uint64_t bodyBytes = 0;
     std::vector<std::uint8_t> partition = MakeInitPartition(&bodyBytes);
-    ImageBuilder builder(kPackKindInit);
-    builder.AddEntry(kPackEntryKindGameplayCatalog, 0, std::move(catalog),
+    ImageBuilder builder(HK_PACK_KIND_INIT);
+    builder.AddEntry(HK_PACK_ENTRY_KIND_RETIRED_GAMEPLAY_CATALOG, 0, std::move(catalog),
                      vintage);
-    builder.AddEntry(kPackEntryKindPackRequirementBlock, kInitId,
+    builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, kInitId,
                      RequirementPayload(kInitId, 1, 1, 0, bodyBytes));
-    builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, kInitId,
+    builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, kInitId,
                      std::move(partition));
     harkentest::packfoundation::AppendNeutralMasterSnapshot(&builder);
     return builder.Build();

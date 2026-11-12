@@ -30,6 +30,7 @@ PRODUCTS = (
     "HarkenSchema",
 )
 
+PACK_FORMAT_INCLUDE_PREFIX = "harken_pack/"
 ENGINE_PUBLIC_HEADER_NAMES = ("Harken.h", "HarkenDevelopment.h", "PreviewAbi.h", "PreviewProject.h")
 
 ALLOWED_EDGES = {
@@ -302,6 +303,9 @@ class Checker:
         local = normalize(local)
         if local in self.file_set:
             return [local]
+        if include.startswith(PACK_FORMAT_INCLUDE_PREFIX):
+            staged = "HarkenEngine/Format/Pack/" + include[len(PACK_FORMAT_INCLUDE_PREFIX):]
+            return [staged] if staged in self.file_set else []
         suffix = "/" + include.lstrip("./")
         candidates = self.header_index.get(PurePosixPath(include).name, [])
         return [c for c in candidates if ("/" + c).endswith(suffix)]

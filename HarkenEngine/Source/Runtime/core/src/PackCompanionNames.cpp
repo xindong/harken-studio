@@ -141,7 +141,7 @@ VnResult ValidatePackCompanionNames(const PackCompanionNames& names,
     const ContainerWorldInstallViewV1& view,
     const std::vector<PackCanonicalImage::VariablePolicyOverlay>& variables) {
     if (names.projectId != view.identity.projectId) return VN_GAMEPLAY_WRONG_PROJECT;
-    if (kind == kPackKindCanonicalContent) {
+    if (kind == HK_PACK_KIND_CANONICAL_CONTENT) {
         if (names.rootActionId == VnObjectId{} || initPackId == 0 ||
             CompanionActionPackId(initPackId, names.rootActionId, names.language) != packId)
             return VN_BAD_PACK;
@@ -149,7 +149,7 @@ VnResult ValidatePackCompanionNames(const PackCompanionNames& names,
             if (view.actions[i].actionStableId == names.rootActionId) return VN_OK;
         return VN_BAD_PACK;
     }
-    if (kind != kPackKindInit || names.rootActionId != VnObjectId{} ||
+    if (kind != HK_PACK_KIND_INIT || names.rootActionId != VnObjectId{} ||
         packId != initPackId || names.variables.size() != view.variableCount) return VN_BAD_PACK;
     for (const auto& name : names.variables) {
         bool found = false;

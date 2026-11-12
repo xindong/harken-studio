@@ -188,7 +188,7 @@
       "io": "none",
       "loopBound": "unknown-blocker",
       "qualifiedName": "harken::FindEffectRow",
-      "source": "HarkenEngine/Source/Runtime/render/include/harken/render/generated/harken_effect_registry.g.h",
+      "source": "HarkenEngine/Source/Runtime/render/include/harken/render/EffectRegistry.h",
       "threadQos": "callback-or-render-worker"
     },
     "fn:04d904d6d0df9b8a13f793d0": {

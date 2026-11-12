@@ -38,7 +38,6 @@ REQUIRED_SOURCE_CONTRACT_PATHS = (
     "CMakeLists.txt",
     "HarkenEngine/Source/Tooling/Binding/gen_binding.py",
     "HarkenEngine/Source/Tooling/Remote/wire/gen_wire.py",
-    "HarkenEngine/Source/Tooling/Effects/gen_effect_registry.py",
     "HarkenIntegration/Test/ContractTest/AbiFidelity.csproj",
 )
 SOURCE_VOLATILE_PREFIXES = (".temp",)
@@ -125,7 +124,6 @@ M1_EVIDENCE_POLICY = {
             "required_argv_contains": ["-N", "Debug"],
             "required_stdout_contains": [
                 "harken_shared_load_smoke",
-                "effect_registry_manifest_check",
             ],
         },
         {
@@ -167,16 +165,6 @@ M1_EVIDENCE_POLICY = {
             "count": 1,
             "executable": "python",
             "required_argv_contains": ["gen_wire.py", "--check"],
-        },
-        {
-            "kind": "generator-effects",
-            "execution_kind": "subprocess",
-            "count": 1,
-            "executable": "python",
-            "required_argv_contains": [
-                "gen_effect_registry.py",
-                "--check",
-            ],
         },
         {
             "kind": "sdk-contract-managed",
@@ -2150,7 +2138,6 @@ def validate_record_scope(
         "ctest-release": "ctest",
         "generator-binding": "python",
         "generator-wire": "python",
-        "generator-effects": "python",
         "sdk-contract-managed": "dotnet",
         "sdk-contract-native": "dotnet",
         "perf-compressor-matrix": "python",
@@ -2239,14 +2226,6 @@ def validate_record_scope(
             / "Remote"
             / "wire"
             / "gen_wire.py"
-        ),
-        "generator-effects": (
-            source_root
-            / "HarkenEngine"
-            / "Source"
-            / "Tooling"
-            / "Effects"
-            / "gen_effect_registry.py"
         ),
     }
     for kind, expected in generator_paths.items():
@@ -2479,10 +2458,6 @@ def validate_record_scope(
         ],
         "generator-wire": [
             str(generator_paths["generator-wire"].resolve()),
-            "--check",
-        ],
-        "generator-effects": [
-            str(generator_paths["generator-effects"].resolve()),
             "--check",
         ],
         "sdk-contract-managed": [

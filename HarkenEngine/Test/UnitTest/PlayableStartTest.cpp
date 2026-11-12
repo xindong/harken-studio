@@ -20245,7 +20245,7 @@ TEST(PlayableStart, MusicTransitionEntryAndNaturalEndUseActualBodyCount) {
             std::vector<std::uint8_t> body;
             ASSERT_TRUE(EncodeCurrentWorldBodyV19(install, body));
             PackCanonicalPartitionHeader header{};
-            header.headerBytes = kPackCanonicalPartitionHeaderBytes;
+            header.headerBytes = kPackBytes<HkPackCanonicalPartitionHeader>;
             header.bodyVintage = kCurrentWorldBodyVintageV19;
             header.bodyBytes = body.size();
             header.bodyChecksum = Fnv1a64(body.data(), body.size());
@@ -20254,14 +20254,14 @@ TEST(PlayableStart, MusicTransitionEntryAndNaturalEndUseActualBodyCount) {
             header.ownedDefinitionCount = install.playablePropertyCount + install.variableCount + install.actionCount;
             ApplyCanonicalBusTriple(&header, DefaultFixtureBusTriple());
             std::vector<std::uint8_t> partition(header.headerBytes + body.size(), 0);
-            SerializePackCanonicalPartitionHeader(header, partition.data());
-            header.headerChecksum = Fnv1a64(partition.data(), kPackCanonicalPartitionHeaderHeaderChecksumOffset);
-            SerializePackCanonicalPartitionHeader(header, partition.data());
+            SerializePackRow<HkPackCanonicalPartitionHeader>(header, partition.data());
+            header.headerChecksum = Fnv1a64(partition.data(), offsetof(HkPackCanonicalPartitionHeader, headerChecksum));
+            SerializePackRow<HkPackCanonicalPartitionHeader>(header, partition.data());
             std::memcpy(partition.data() + header.headerBytes, body.data(), body.size());
-            ImageBuilder builder(kPackKindCanonicalContent);
-            builder.AddEntry(kPackEntryKindPackRequirementBlock, 22,
+            ImageBuilder builder(HK_PACK_KIND_CANONICAL_CONTENT);
+            builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, 22,
                 RequirementPayload(22, 1, 1, header.ownedDefinitionCount, body.size()));
-            builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, 22, std::move(partition));
+            builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, 22, std::move(partition));
             builder.AddMedia(kSound, samples);
             const auto write = [](const char* filename, const std::vector<std::uint8_t>& bytes) {
                 const auto path = std::filesystem::path(HARKEN_TEMP_DIR) / filename;
@@ -37644,7 +37644,7 @@ TEST(PlayableStart, MusicQueueCropsAcrossEntriesAndRestoresEachBodyPass) {
             std::vector<std::uint8_t> body;
             ASSERT_TRUE(EncodeCurrentWorldBodyV19(install, body));
             PackCanonicalPartitionHeader header{};
-            header.headerBytes = kPackCanonicalPartitionHeaderBytes;
+            header.headerBytes = kPackBytes<HkPackCanonicalPartitionHeader>;
             header.bodyVintage = kCurrentWorldBodyVintageV19;
             header.bodyBytes = body.size();
             header.bodyChecksum = Fnv1a64(body.data(), body.size());
@@ -37653,14 +37653,14 @@ TEST(PlayableStart, MusicQueueCropsAcrossEntriesAndRestoresEachBodyPass) {
             header.ownedDefinitionCount = install.playablePropertyCount + install.variableCount + install.actionCount;
             ApplyCanonicalBusTriple(&header, DefaultFixtureBusTriple());
             std::vector<std::uint8_t> partition(header.headerBytes + body.size(), 0);
-            SerializePackCanonicalPartitionHeader(header, partition.data());
-            header.headerChecksum = Fnv1a64(partition.data(), kPackCanonicalPartitionHeaderHeaderChecksumOffset);
-            SerializePackCanonicalPartitionHeader(header, partition.data());
+            SerializePackRow<HkPackCanonicalPartitionHeader>(header, partition.data());
+            header.headerChecksum = Fnv1a64(partition.data(), offsetof(HkPackCanonicalPartitionHeader, headerChecksum));
+            SerializePackRow<HkPackCanonicalPartitionHeader>(header, partition.data());
             std::memcpy(partition.data() + header.headerBytes, body.data(), body.size());
-            ImageBuilder builder(kPackKindCanonicalContent);
-            builder.AddEntry(kPackEntryKindPackRequirementBlock, 22,
+            ImageBuilder builder(HK_PACK_KIND_CANONICAL_CONTENT);
+            builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, 22,
                 RequirementPayload(22, 1, 1, header.ownedDefinitionCount, body.size()));
-            builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, 22, std::move(partition));
+            builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, 22, std::move(partition));
             builder.AddMedia(kSound, first);
             builder.AddMedia(kSecondSound, second);
             const auto write = [](const char* filename, const std::vector<std::uint8_t>& bytes) {
@@ -38607,7 +38607,7 @@ TEST(PlayableStart, QueueMusicTransitionStartsAtTargetEntryAndReclaims) {
             std::vector<std::uint8_t> body;
             ASSERT_TRUE(EncodeCurrentWorldBodyV19(install, body));
             PackCanonicalPartitionHeader header{};
-            header.headerBytes = kPackCanonicalPartitionHeaderBytes;
+            header.headerBytes = kPackBytes<HkPackCanonicalPartitionHeader>;
             header.bodyVintage = kCurrentWorldBodyVintageV19;
             header.bodyBytes = body.size();
             header.bodyChecksum = Fnv1a64(body.data(), body.size());
@@ -38616,14 +38616,14 @@ TEST(PlayableStart, QueueMusicTransitionStartsAtTargetEntryAndReclaims) {
             header.ownedDefinitionCount = install.playablePropertyCount + install.variableCount + install.actionCount;
             ApplyCanonicalBusTriple(&header, DefaultFixtureBusTriple());
             std::vector<std::uint8_t> partition(header.headerBytes + body.size(), 0);
-            SerializePackCanonicalPartitionHeader(header, partition.data());
-            header.headerChecksum = Fnv1a64(partition.data(), kPackCanonicalPartitionHeaderHeaderChecksumOffset);
-            SerializePackCanonicalPartitionHeader(header, partition.data());
+            SerializePackRow<HkPackCanonicalPartitionHeader>(header, partition.data());
+            header.headerChecksum = Fnv1a64(partition.data(), offsetof(HkPackCanonicalPartitionHeader, headerChecksum));
+            SerializePackRow<HkPackCanonicalPartitionHeader>(header, partition.data());
             std::memcpy(partition.data() + header.headerBytes, body.data(), body.size());
-            ImageBuilder builder(kPackKindCanonicalContent);
-            builder.AddEntry(kPackEntryKindPackRequirementBlock, 22,
+            ImageBuilder builder(HK_PACK_KIND_CANONICAL_CONTENT);
+            builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, 22,
                 RequirementPayload(22, 1, 1, header.ownedDefinitionCount, body.size()));
-            builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, 22, std::move(partition));
+            builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, 22, std::move(partition));
             builder.AddMedia(kSound, music);
             builder.AddMedia(kSecondSound, initial);
             if (multipleQueueTargets) builder.AddMedia(kThirdSound, initial);

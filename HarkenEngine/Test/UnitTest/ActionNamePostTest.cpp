@@ -111,7 +111,7 @@ std::vector<std::uint8_t> ActionPartitionPayload(std::uint64_t packStableId,
     std::vector<std::uint8_t> body;
     EXPECT_TRUE(EncodeCurrentWorldShippingBody(world, body));
     PackCanonicalPartitionHeader header;
-    header.headerBytes = kPackCanonicalPartitionHeaderBytes;
+    header.headerBytes = kPackBytes<HkPackCanonicalPartitionHeader>;
     header.bodyVintage = kCanonicalDefinitionPartitionBodyVintage;
     header.bodyBytes = body.size();
     header.bodyChecksum = Fnv1a64(body.data(), body.size());
@@ -121,11 +121,11 @@ std::vector<std::uint8_t> ActionPartitionPayload(std::uint64_t packStableId,
     harkentest::packfoundation::ApplyCanonicalBusTriple(
         &header, harkentest::packfoundation::DefaultFixtureBusTriple());
     std::vector<std::uint8_t> payload(
-        kPackCanonicalPartitionHeaderBytes + body.size(), 0);
-    SerializePackCanonicalPartitionHeader(header, payload.data());
-    header.headerChecksum = Fnv1a64(payload.data(), kPackCanonicalPartitionHeaderHeaderChecksumOffset);
-    SerializePackCanonicalPartitionHeader(header, payload.data());
-    std::memcpy(payload.data() + kPackCanonicalPartitionHeaderBytes,
+        kPackBytes<HkPackCanonicalPartitionHeader> + body.size(), 0);
+    SerializePackRow<HkPackCanonicalPartitionHeader>(header, payload.data());
+    header.headerChecksum = Fnv1a64(payload.data(), offsetof(HkPackCanonicalPartitionHeader, headerChecksum));
+    SerializePackRow<HkPackCanonicalPartitionHeader>(header, payload.data());
+    std::memcpy(payload.data() + kPackBytes<HkPackCanonicalPartitionHeader>,
                 body.data(), body.size());
     return payload;
 }
@@ -139,14 +139,14 @@ std::vector<std::uint8_t> BuildContentPack(std::uint64_t revision,
     std::vector<std::uint8_t> partition = ActionPartitionPayload(
         packId, revision, actionId, valueBits, actionCount, variableId);
     const std::uint64_t bodyBytes =
-        partition.size() > kPackCanonicalPartitionHeaderBytes
-            ? partition.size() - kPackCanonicalPartitionHeaderBytes
+        partition.size() > kPackBytes<HkPackCanonicalPartitionHeader>
+            ? partition.size() - kPackBytes<HkPackCanonicalPartitionHeader>
             : 0;
-    ImageBuilder builder(kPackKindCanonicalContent);
-    builder.AddEntry(kPackEntryKindPackRequirementBlock, packId,
+    ImageBuilder builder(HK_PACK_KIND_CANONICAL_CONTENT);
+    builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, packId,
                      RequirementPayload(packId, revision, revision, actionCount + 1,
                                         bodyBytes));
-    builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, packId,
+    builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, packId,
                      std::move(partition));
     return builder.Build();
 }
@@ -185,10 +185,10 @@ std::vector<std::uint8_t> BuildInitBare(std::uint32_t actionCapacity = 64) {
     std::vector<std::uint8_t> partition =
         harkentest::packfoundation::PartitionPayload(kInitId, 1, 0, 0,
             &bodyBytes, actionCapacity, ObjectIdFromBytes(kProjectGuid));
-    ImageBuilder builder(kPackKindInit);
-    builder.AddEntry(kPackEntryKindPackRequirementBlock, kInitId,
+    ImageBuilder builder(HK_PACK_KIND_INIT);
+    builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, kInitId,
                      RequirementPayload(kInitId, 1, 1, 0, bodyBytes));
-    builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, kInitId,
+    builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, kInitId,
                      std::move(partition));
     harkentest::packfoundation::AppendNeutralMasterSnapshot(&builder);
     return builder.Build();

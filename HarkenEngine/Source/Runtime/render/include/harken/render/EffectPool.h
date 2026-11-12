@@ -13,7 +13,7 @@
 //
 // The per-type pools are not hand-written members; they are a bounded table
 // with one row per built-in effect, sized and constructed from the generated
-// effect registry (harken_effect_registry.g.h) at Init. Each row's per-instance
+// effect registry (harken/render/EffectRegistry.h) at Init. Each row's per-instance
 // state footprint, extra storage, and capacity all come from its registry row,
 // so adding a built-in effect adds a registry row rather than another pool
 // member here.
@@ -27,7 +27,7 @@
 #include "harken/core/StableSlotStorage.h"
 #include "harken/render/BuiltinEffects.h"
 #include "harken/render/InsertEffect.h"
-#include "harken/render/generated/harken_effect_registry.g.h"
+#include "harken/render/EffectRegistry.h"
 
 #include <atomic>
 #include <array>

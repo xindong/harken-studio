@@ -6,7 +6,7 @@
 
 #include <cstdint>
 
-#include <harken/media/generated/harken_pack_wire_constants.g.h>
+#include <harken_pack/PackFile.h>
 
 namespace harken {
 
@@ -27,7 +27,7 @@ inline constexpr std::uint32_t kCurrentWorldBodyVintageV18 = 18;
 inline constexpr std::uint32_t kCurrentWorldBodyVintageV19 = 19;
 inline constexpr std::uint32_t kCurrentWorldBodyVintageV20 = 20;
 inline constexpr std::uint32_t kCurrentWorldShippingBodyVintage =
-    kPackShippingBodyVintage;
+    HK_PACK_SHIPPING_BODY_VINTAGE;
 
 inline constexpr bool IsReadableCurrentWorldBodyVintage(
     std::uint32_t vintage) noexcept {

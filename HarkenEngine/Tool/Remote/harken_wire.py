@@ -6987,6 +6987,22 @@ TABLE_JSON = r'''
         ]
       ]
     },
+    "VnPackFormatVersionInfo": {
+      "fields": [
+        [
+          "structSize",
+          "u32"
+        ],
+        [
+          "oldestReadable",
+          "u32"
+        ],
+        [
+          "newestReadable",
+          "u32"
+        ]
+      ]
+    },
     "VnVariableCatalogInfoV1": {
       "fields": [
         [
@@ -10636,6 +10652,18 @@ TABLE_JSON = r'''
           "name": "value",
           "ctype": "float",
           "wire": "f32"
+        }
+      ]
+    },
+    {
+      "name": "Vn_QueryPackFormatVersion",
+      "note": "Readable Pack format version range; not part of the remote command-mirror (no opcode).",
+      "params": [
+        {
+          "name": "out",
+          "ctype": "VnPackFormatVersionInfo*",
+          "wire": "outstruct",
+          "type": "VnPackFormatVersionInfo"
         }
       ]
     },

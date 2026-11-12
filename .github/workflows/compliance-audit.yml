@@ -52,6 +52,12 @@ jobs:
           python .scripts/tests/test_product_boundary_check.py -v
           python .scripts/product_boundary_check.py --json-out .temp/compliance/product-boundary.json
 
+      - name: Check Pack layout lock
+        if: github.event_name == 'pull_request'
+        run: |
+          python .scripts/tests/test_pack_layout_lock_check.py -v
+          python .scripts/pack_layout_lock_check.py --base ${{ github.event.pull_request.base.sha }}
+
       - name: Publish GitHub compliance report
         if: always() && hashFiles('.temp/compliance/compliance-report.json') != ''
         env:

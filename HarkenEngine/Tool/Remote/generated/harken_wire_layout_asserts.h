@@ -3276,6 +3276,15 @@ static_assert(offsetof(VnVariableQueryDescV1, emitter) == 24,
 static_assert(offsetof(VnVariableQueryDescV1, reserved0) == 32,
               "wire table offset drift: VnVariableQueryDescV1.reserved0");
 
+static_assert(sizeof(VnPackFormatVersionInfo) == 12,
+              "wire table size drift: VnPackFormatVersionInfo");
+static_assert(offsetof(VnPackFormatVersionInfo, structSize) == 0,
+              "wire table offset drift: VnPackFormatVersionInfo.structSize");
+static_assert(offsetof(VnPackFormatVersionInfo, oldestReadable) == 4,
+              "wire table offset drift: VnPackFormatVersionInfo.oldestReadable");
+static_assert(offsetof(VnPackFormatVersionInfo, newestReadable) == 8,
+              "wire table offset drift: VnPackFormatVersionInfo.newestReadable");
+
 static_assert(sizeof(VnVariableCatalogInfoV1) == 24,
               "wire table size drift: VnVariableCatalogInfoV1");
 static_assert(offsetof(VnVariableCatalogInfoV1, structSize) == 0,

@@ -70,14 +70,14 @@ std::uint8_t* ReadWholeFileAligned(const char* utf8Path,
     }
     std::uint8_t* buffer = static_cast<std::uint8_t*>(::operator new[](
         static_cast<std::size_t>(size),
-        std::align_val_t{kPackBlobAlign}, std::nothrow));
+        std::align_val_t{HK_PACK_BLOB_ALIGN}, std::nothrow));
     if (buffer == nullptr) {
         return nullptr;
     }
     in.read(reinterpret_cast<char*>(buffer),
             static_cast<std::streamsize>(size));
     if (in.gcount() != static_cast<std::streamsize>(size)) {
-        ::operator delete[](buffer, std::align_val_t{kPackBlobAlign});
+        ::operator delete[](buffer, std::align_val_t{HK_PACK_BLOB_ALIGN});
         return nullptr;
     }
     *outBytes = size;
@@ -90,10 +90,10 @@ std::uint8_t* ReadWholeFileAligned(const char* utf8Path,
 // metadata. Bounds math is ordered so no expression can wrap.
 bool ValidateTocEntry(const PackTocEntry& e, std::uint64_t fileBytes,
                       std::uint64_t blobRegionStart) {
-    if (e.sampleFormat != kPackSampleFormatF32Planar) {
+    if (e.sampleFormat != HK_PACK_SAMPLE_FORMAT_F32_PLANAR) {
         return false;
     }
-    if ((e.flags & ~kPackKnownFlagsMask) != 0) {
+    if ((e.flags & ~HK_PACK_MEDIA_KNOWN_FLAGS) != 0) {
         return false;
     }
     if (e.sampleRate == 0 || e.channelCount == 0 ||
@@ -110,14 +110,14 @@ bool ValidateTocEntry(const PackTocEntry& e, std::uint64_t fileBytes,
     if (e.blobBytes != e.frameCount * channels * sizeof(float)) {
         return false;
     }
-    if (e.blobOffset % kPackBlobAlign != 0) {
+    if (e.blobOffset % HK_PACK_BLOB_ALIGN != 0) {
         return false;
     }
     if (e.blobOffset < blobRegionStart || e.blobOffset > fileBytes ||
         e.blobBytes > fileBytes - e.blobOffset) {
         return false;
     }
-    if ((e.flags & kPackFlagLoopable) != 0) {
+    if ((e.flags & HK_PACK_MEDIA_FLAG_LOOPABLE) != 0) {
         const std::uint64_t loopEnd =
             e.loopEndFrame == 0 ? e.frameCount : e.loopEndFrame;
         if (loopEnd > e.frameCount || e.loopStartFrame >= loopEnd) {
@@ -134,7 +134,7 @@ bool ValidateTocEntry(const PackTocEntry& e, std::uint64_t fileBytes,
 } // namespace
 
 void PackTable::AlignedDeleter::operator()(std::uint8_t* p) const {
-    ::operator delete[](p, std::align_val_t{kPackBlobAlign});
+    ::operator delete[](p, std::align_val_t{HK_PACK_BLOB_ALIGN});
 }
 
 PackTable::PackTable(std::uint32_t capacity,
@@ -448,7 +448,7 @@ VnResult PackTable::ReadAndValidate(
     std::vector<PackTocEntry>* outParsed) const {
     std::uint64_t fileBytes = 0;
     AlignedBuffer bytes(ReadWholeFileAligned(utf8Path, &fileBytes));
-    if (bytes == nullptr || fileBytes < kPackMediaFileHeaderBytes) {
+    if (bytes == nullptr || fileBytes < kPackBytes<HkPackMediaFileHeader>) {
         return VN_BAD_PACK;
     }
 
@@ -457,7 +457,7 @@ VnResult PackTable::ReadAndValidate(
         return VN_BAD_PACK;
     }
     if (!SupportedPackFormatVersion(header.formatVersion) ||
-        header.headerBytes != kPackMediaFileHeaderBytes ||
+        header.headerBytes != kPackBytes<HkPackMediaFileHeader> ||
         header.fileBytes != fileBytes || header.entryCount == 0) {
         return VN_BAD_PACK;
     }

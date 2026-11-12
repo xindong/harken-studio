@@ -2344,6 +2344,10 @@ static_assert(offsetof(VnVariableQueryDescV1, flags) == 4, "binding offset drift
 static_assert(offsetof(VnVariableQueryDescV1, variableId) == 8, "binding offset drift: VnVariableQueryDescV1.variableId");
 static_assert(offsetof(VnVariableQueryDescV1, emitter) == 24, "binding offset drift: VnVariableQueryDescV1.emitter");
 static_assert(offsetof(VnVariableQueryDescV1, reserved0) == 32, "binding offset drift: VnVariableQueryDescV1.reserved0");
+static_assert(sizeof(VnPackFormatVersionInfo) == 12, "binding size drift: VnPackFormatVersionInfo");
+static_assert(offsetof(VnPackFormatVersionInfo, structSize) == 0, "binding offset drift: VnPackFormatVersionInfo.structSize");
+static_assert(offsetof(VnPackFormatVersionInfo, oldestReadable) == 4, "binding offset drift: VnPackFormatVersionInfo.oldestReadable");
+static_assert(offsetof(VnPackFormatVersionInfo, newestReadable) == 8, "binding offset drift: VnPackFormatVersionInfo.newestReadable");
 static_assert(sizeof(VnVariableCatalogInfoV1) == 24, "binding size drift: VnVariableCatalogInfoV1");
 static_assert(offsetof(VnVariableCatalogInfoV1, structSize) == 0, "binding offset drift: VnVariableCatalogInfoV1.structSize");
 static_assert(offsetof(VnVariableCatalogInfoV1, reserved0) == 4, "binding offset drift: VnVariableCatalogInfoV1.reserved0");
@@ -2693,6 +2697,7 @@ extern "C" {
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_SetValueByLabelName)(VnVariableId, const char*, VnEmitterHandle) = &Vn_SetValueByLabelName;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_SetValueByName)(const char*, float) = &Vn_SetValueByName;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_SetEmitterValueByName)(VnEmitterHandle, const char*, float) = &Vn_SetEmitterValueByName;
+[[maybe_unused]] static VnResult (*const binding_sig_Vn_QueryPackFormatVersion)(VnPackFormatVersionInfo*) = &Vn_QueryPackFormatVersion;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_QueryVariableCatalog)(VnVariableCatalogInfoV1*) = &Vn_QueryVariableCatalog;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_ResolveVariableByName)(const VnPostActionByNameDesc*, VnVariableResolved*) = &Vn_ResolveVariableByName;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_CreateEmitterEx)(const VnEmitterCreateDescV1*, VnEmitterHandle*) = &Vn_CreateEmitterEx;

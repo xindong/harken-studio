@@ -1085,6 +1085,10 @@ namespace Harken
             Off(f, "VnVariableQueryDescV1", "variableId", Marshal.OffsetOf<VnVariableQueryDescV1>("variableId"), 8);
             Off(f, "VnVariableQueryDescV1", "emitter", Marshal.OffsetOf<VnVariableQueryDescV1>("emitter"), 24);
             Off(f, "VnVariableQueryDescV1", "reserved0", Marshal.OffsetOf<VnVariableQueryDescV1>("reserved0"), 32);
+            Size(f, "VnPackFormatVersionInfo", Marshal.SizeOf<VnPackFormatVersionInfo>(), 12);
+            Off(f, "VnPackFormatVersionInfo", "structSize", Marshal.OffsetOf<VnPackFormatVersionInfo>("structSize"), 0);
+            Off(f, "VnPackFormatVersionInfo", "oldestReadable", Marshal.OffsetOf<VnPackFormatVersionInfo>("oldestReadable"), 4);
+            Off(f, "VnPackFormatVersionInfo", "newestReadable", Marshal.OffsetOf<VnPackFormatVersionInfo>("newestReadable"), 8);
             Size(f, "VnVariableCatalogInfoV1", Marshal.SizeOf<VnVariableCatalogInfoV1>(), 24);
             Off(f, "VnVariableCatalogInfoV1", "structSize", Marshal.OffsetOf<VnVariableCatalogInfoV1>("structSize"), 0);
             Off(f, "VnVariableCatalogInfoV1", "reserved0", Marshal.OffsetOf<VnVariableCatalogInfoV1>("reserved0"), 4);

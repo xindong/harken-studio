@@ -16,7 +16,7 @@
 #ifndef HARKEN_PROJECT_SCHEMA_MODEL_H
 #define HARKEN_PROJECT_SCHEMA_MODEL_H
 
-#include "harken_playable_properties.g.h"
+#include "harken_playable_properties/PlayableProperties.h"
 #include <harken_studio/ObjectId.h>
 
 #include <bit>

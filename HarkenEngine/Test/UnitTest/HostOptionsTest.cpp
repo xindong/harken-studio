@@ -169,15 +169,15 @@ TEST(HostOptions, CompanionCaptureUsesPairedFilesAndRefusesPartialLanguageOrPubl
         std::uint64_t bodyBytes = 0;
         auto partition = PartitionPayload(id, 1, init ? 0 : 1, 0x3f000000u,
             &bodyBytes, 64, project, bus.triple);
-        ImageBuilder image(init ? harken::kPackKindInit : harken::kPackKindCanonicalContent);
-        image.AddEntry(harken::kPackEntryKindPackRequirementBlock, id,
+        ImageBuilder image(init ? HK_PACK_KIND_INIT : HK_PACK_KIND_CANONICAL_CONTENT);
+        image.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, id,
             RequirementPayload(id, 1, 1, init ? 0 : 2, bodyBytes, bus.triple));
-        image.AddEntry(harken::kPackEntryKindCanonicalDefinitionPartition, id, std::move(partition));
+        image.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, id, std::move(partition));
         if (init) {
-            image.AddEntry(harken::kPackEntryKindBusDefinitionSnapshot, 1, bus.snapshot);
+            image.AddEntry(HK_PACK_ENTRY_KIND_BUS_DEFINITION_SNAPSHOT, 1, bus.snapshot);
         } else {
-            image.AddEntry(harken::kPackEntryKindPackDependencyEdge, VnObjectId{},
-                DependencyPayload(kInitPackStableId, 1, bus.triple), harken::kPackPackDependencyEdgeVintage);
+            image.AddEntry(HK_PACK_ENTRY_KIND_PACK_DEPENDENCY_EDGE, VnObjectId{},
+                DependencyPayload(kInitPackStableId, 1, bus.triple), HK_PACK_PACK_DEPENDENCY_EDGE_VINTAGE);
         }
         return image.Build();
     };

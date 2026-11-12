@@ -1444,7 +1444,7 @@ def parse_translation_units(
                 cursor.kind.name == "VAR_DECL"
                 and cursor.spelling == "kEffectRegistry"
                 and relative_source(cursor.location.file, repo_root).endswith(
-                    "harken_effect_registry.g.h"
+                    "harken/render/EffectRegistry.h"
                 )
             ):
                 registry_cursor = cursor

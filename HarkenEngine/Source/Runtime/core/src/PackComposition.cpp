@@ -1903,7 +1903,7 @@ WorldInstallStatus EncodeIdentityDefinition(const PackComposition::PublishedOwne
                 continue;
             }
             const std::size_t offset = bytes.size();
-            for (std::size_t i = 0; i < kPackBindingDefinitionBytes; ++i)
+            for (std::size_t i = 0; i < kPackBytes<HkPackBindingDefinition>; ++i)
                 detail::DecodeAppend(bytes, std::uint8_t{0}, staging, requestedSlots);
             WritePackBindingDefinition(binding.bindingId, binding.descriptor,
                                               bytes.data() + offset);
@@ -2957,7 +2957,7 @@ VnResult PackComposition::PrepareCandidate(const PackCanonicalImage& image,
         if (attachment.scopeKind != VN_TARGET_SCOPE_VOICE) {
             continue;
         }
-        if (image.packKind == kPackKindInit) {
+        if (image.packKind == HK_PACK_KIND_INIT) {
             return VN_BAD_PACK;
         }
         const auto definition = std::find_if(image.bindingDefinitions.begin(),
@@ -3007,7 +3007,7 @@ VnResult PackComposition::PrepareCandidate(const PackCanonicalImage& image,
             definition.desc.targetScopeKind != VN_TARGET_SCOPE_VOICE_EFFECT_PARAM) {
             continue;
         }
-        if (image.packKind == kPackKindInit) {
+        if (image.packKind == HK_PACK_KIND_INIT) {
             return VN_BAD_PACK;
         }
         if (definition.desc.targetScopeKind != VN_TARGET_SCOPE_VOICE) {
@@ -3030,12 +3030,12 @@ VnResult PackComposition::PrepareCandidate(const PackCanonicalImage& image,
     candidate.bindingManifest.attachments.reserve(image.bindingAttachments.size());
     candidate.dependencyEdges.reserve(static_cast<std::size_t>(dependencyCount));
     const auto definitionEntersTable = [&](std::uint32_t scopeKind) {
-        return image.packKind == kPackKindInit &&
+        return image.packKind == HK_PACK_KIND_INIT &&
                (scopeKind == VN_TARGET_SCOPE_BUS ||
                 scopeKind == VN_TARGET_SCOPE_BUS_EFFECT_PARAM);
     };
     const auto attachmentEntersTable = [&](std::uint32_t scopeKind) {
-        return image.packKind == kPackKindInit &&
+        return image.packKind == HK_PACK_KIND_INIT &&
                (scopeKind == VN_TARGET_SCOPE_BUS ||
                 scopeKind == VN_TARGET_SCOPE_BUS_EFFECT_PARAM);
     };
@@ -3173,7 +3173,7 @@ VnResult PackComposition::BuildIndex(PublishedView& view,
         if (left.first->bindingId != right.first->bindingId) continue;
         leftDefinition.clear();
         rightDefinition.clear();
-        for (std::size_t byte = 0; byte < kPackBindingDefinitionBytes; ++byte) {
+        for (std::size_t byte = 0; byte < kPackBytes<HkPackBindingDefinition>; ++byte) {
             detail::DecodeAppend(leftDefinition, std::uint8_t{0}, comparisonStaging, leftSlots);
             detail::DecodeAppend(rightDefinition, std::uint8_t{0}, comparisonStaging, rightSlots);
         }
@@ -3394,11 +3394,11 @@ VnResult PackComposition::PrepareCommit(
             const bool init = owner.handle == next->initHandle;
             if (!init && !std::any_of(owner.dependencyEdges.begin(), owner.dependencyEdges.end(),
                 [&](const auto& edge) {
-                    return edge.edgeKind == kPackDependencyEdgeKindInit && edge.required01 == 1 &&
+                    return edge.edgeKind == HK_PACK_DEPENDENCY_EDGE_KIND_INIT && edge.required01 == 1 &&
                         edge.prerequisitePackStableId == next->initPackStableId;
                 })) return VN_BAD_PACK;
             const auto valid = ValidatePackCompanionNames(names,
-                init ? kPackKindInit : kPackKindCanonicalContent,
+                init ? HK_PACK_KIND_INIT : HK_PACK_KIND_CANONICAL_CONTENT,
                 owner.packStableId, next->initPackStableId, owner.view,
                 owner.variablePolicyOverlays);
             if (valid != VN_OK) return valid;

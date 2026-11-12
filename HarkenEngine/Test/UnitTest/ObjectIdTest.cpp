@@ -167,9 +167,9 @@ TEST(ObjectId, PackDirectoryKeepsUuidSeparateFromRelationOrdinal)
     entry.offset = 512;
     entry.size = 256;
     entry.payloadChecksum = 0x1122334455667788;
-    std::array<uint8_t, harken::kPackDirectoryEntryBytes + 2> bytes{};
+    std::array<uint8_t, harken::kPackBytes<HkPackDirectoryEntry> + 2> bytes{};
     bytes.front() = bytes.back() = 0xa5;
-    harken::SerializePackDirectoryEntry(entry, bytes.data() + 1);
+    harken::SerializePackRow<HkPackDirectoryEntry>(entry, bytes.data() + 1);
     const auto decoded = harken::ReadPackDirectoryEntry(bytes.data() + 1);
     EXPECT_EQ(decoded.id, entry.id);
     EXPECT_EQ(decoded.relationOrdinal, entry.relationOrdinal);

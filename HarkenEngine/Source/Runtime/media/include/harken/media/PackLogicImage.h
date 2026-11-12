@@ -69,7 +69,7 @@ struct PackMediaDemandResolver {
 };
 
 inline PcmLoopRegion CanonicalPcmLoop(const PackTocEntry& media) noexcept {
-    if ((media.flags & kPackFlagLoopable) == 0) return {};
+    if ((media.flags & HK_PACK_MEDIA_FLAG_LOOPABLE) == 0) return {};
     // Pack permits EOF as zero; keep the default PCM region representation.
     return {media.loopStartFrame,
             media.loopStartFrame != 0 && media.loopEndFrame == 0
@@ -82,7 +82,7 @@ inline PcmLoopRegion CanonicalPcmLoop(const PackTocEntry& media) noexcept {
 // registration-facing descriptor structs are assembled by the
 // consumer, which owns wiring the array pointers.
 struct PackLogicImage {
-    std::uint32_t packKind = kPackKindContent;
+    std::uint32_t packKind = HK_PACK_KIND_CONTENT;
 
     std::vector<PackTocEntry> media;
     std::vector<PackBusEntry> buses;

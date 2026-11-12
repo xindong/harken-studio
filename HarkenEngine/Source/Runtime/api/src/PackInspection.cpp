@@ -190,15 +190,15 @@ VnResult Vn_InspectCanonicalPackV1(const VnPackInspectDescV1* desc,
         CurrentWorldBodyImage body, initBody;
         auto result = Decode(desc->pack, pack, body);
         if (result != VN_OK) return result;
-        const bool isInit = pack.packKind == kPackKindInit;
-        if (!isInit && pack.packKind != kPackKindCanonicalContent) return VN_BAD_PACK;
+        const bool isInit = pack.packKind == HK_PACK_KIND_INIT;
+        if (!isInit && pack.packKind != HK_PACK_KIND_CANONICAL_CONTENT) return VN_BAD_PACK;
         if (!isInit) {
             if (!valid(desc->init)) return VN_INVALID_ARG;
             if (desc->init.byteCount > budget) return VN_PACK_RESIDENT_CAPACITY;
             budget -= desc->init.byteCount;
             result = Decode(desc->init, initImage, initBody);
             if (result != VN_OK) return result;
-            if (initImage.packKind != kPackKindInit ||
+            if (initImage.packKind != HK_PACK_KIND_INIT ||
                 initBody.ProductionView()->identity.projectId != body.ProductionView()->identity.projectId)
                 return VN_BAD_PACK;
         }
@@ -208,7 +208,7 @@ VnResult Vn_InspectCanonicalPackV1(const VnPackInspectDescV1* desc,
             bool initEdge = false;
             for (const auto& edge : pack.dependencyEdges) {
                 if (!edge.required01) continue;
-                if (edge.edgeKind != kPackDependencyEdgeKindInit ||
+                if (edge.edgeKind != HK_PACK_DEPENDENCY_EDGE_KIND_INIT ||
                     edge.prerequisitePackStableId != init.packStableId) return VN_CONTENT_NOT_LOADED;
                 initEdge = true;
                 const auto& bus = init.busDefinitionSnapshotHeader;

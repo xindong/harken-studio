@@ -31,7 +31,7 @@
 // edited apart. Validation dispatches on the generated target kind rather than
 // on a mapping written per slot, which is what stops a new slot from arriving
 // with no existence check while every existing check still passes.
-#include "harken/media/generated/harken_resolved_slot_kinds.g.h"
+#include "harken/media/ResolvedSlotKinds.h"
 
 #include <cstdint>
 

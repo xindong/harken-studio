@@ -86,12 +86,12 @@ VnResult LoadCanonicalPackOrActivateInit(const VnPackLoadDesc& load,
     if (parsed != VN_OK) {
         return parsed;
     }
-    if (image.packKind == harken::kPackKindInit) {
+    if (image.packKind == HK_PACK_KIND_INIT) {
         const std::uint64_t packStableId =
             load.packStableId != 0 ? load.packStableId : image.packStableId;
         return ActivateInitLoadDescV1(load, packStableId, outHandle);
     }
-    if (image.packKind == harken::kPackKindCanonicalContent) {
+    if (image.packKind == HK_PACK_KIND_CANONICAL_CONTENT) {
         return harken::LoadProvisionalCanonicalContentForTests(
             *engine, &load, outHandle);
     }
@@ -128,7 +128,7 @@ public:
         Entry entry;
         entry.kind = kind;
         entry.vintage = vintage;
-        if (kind == kPackEntryKindBus) {
+        if (kind == HK_PACK_ENTRY_KIND_BUS) {
             entry.id = CanonicalSnapshotBusIdV1(id);
         } else {
             entry.resourceId = id;
@@ -155,8 +155,8 @@ public:
                          std::uint64_t loopStartFrame = 0,
                          std::uint64_t loopEndFrame = 0) {
         Entry entry;
-        entry.kind = kPackEntryKindMedia;
-        entry.vintage = kPackMediaVintage;
+        entry.kind = HK_PACK_ENTRY_KIND_MEDIA;
+        entry.vintage = HK_PACK_MEDIA_VINTAGE;
         entry.id = soundId;
         entry.isMedia = true;
         entry.soundId = soundId;
@@ -170,28 +170,28 @@ public:
     }
 
     std::vector<std::uint8_t> Build() {
-        const std::uint64_t dirOffset = kPackFileHeaderBytes;
+        const std::uint64_t dirOffset = kPackBytes<HkPackFileHeader>;
         const std::uint64_t dirBytes =
             static_cast<std::uint64_t>(entries_.size()) *
-            kPackDirectoryEntryBytes;
+            kPackBytes<HkPackDirectoryEntry>;
         const std::uint64_t dirEnd = dirOffset + dirBytes;
         payloadOffsets_.assign(entries_.size(), 0);
         blobOffsets_.assign(entries_.size(), 0);
-        std::uint64_t cursor = AlignUp(dirEnd, kPackPayloadAlign);
+        std::uint64_t cursor = AlignUp(dirEnd, HK_PACK_PAYLOAD_ALIGN);
         std::uint64_t contentEnd = dirEnd;
         for (std::size_t i = 0; i < entries_.size(); ++i) {
             payloadOffsets_[i] = cursor;
             contentEnd = cursor + PayloadSize(entries_[i]);
-            cursor = AlignUp(contentEnd, kPackPayloadAlign);
+            cursor = AlignUp(contentEnd, HK_PACK_PAYLOAD_ALIGN);
         }
-        std::uint64_t blobCursor = AlignUp(contentEnd, kPackBlobAlign);
+        std::uint64_t blobCursor = AlignUp(contentEnd, HK_PACK_BLOB_ALIGN);
         for (std::size_t i = 0; i < entries_.size(); ++i) {
             if (!entries_[i].isMedia) {
                 continue;
             }
             blobOffsets_[i] = blobCursor;
             contentEnd = blobCursor + BlobBytes(entries_[i]);
-            blobCursor = AlignUp(contentEnd, kPackBlobAlign);
+            blobCursor = AlignUp(contentEnd, HK_PACK_BLOB_ALIGN);
         }
         std::vector<std::uint8_t> bytes(static_cast<std::size_t>(contentEnd), 0);
         for (std::size_t i = 0; i < entries_.size(); ++i) {
@@ -207,10 +207,10 @@ public:
                 toc.soundId = entry.soundId;
                 toc.sampleRate = entry.sampleRate;
                 toc.channelCount = entry.channelCount;
-                toc.sampleFormat = kPackSampleFormatF32Planar;
+                toc.sampleFormat = HK_PACK_SAMPLE_FORMAT_F32_PLANAR;
                 toc.frameCount = entry.planar.size() / entry.channelCount;
                 if (entry.loopStartFrame != 0 || entry.loopEndFrame != 0) {
-                    toc.flags = kPackFlagLoopable;
+                    toc.flags = HK_PACK_MEDIA_FLAG_LOOPABLE;
                     toc.loopStartFrame = entry.loopStartFrame;
                     toc.loopEndFrame = entry.loopEndFrame;
                 }
@@ -219,7 +219,7 @@ public:
                 toc.blobChecksum = Fnv1a64(
                     bytes.data() + static_cast<std::size_t>(blobOffsets_[i]),
                     static_cast<std::size_t>(toc.blobBytes));
-                SerializePackMedia(toc, payload);
+                SerializePackRow<HkPackMedia>(toc, payload);
             } else {
                 std::memcpy(payload, entry.payload.data(), entry.payload.size());
             }
@@ -235,13 +235,13 @@ public:
             record.payloadChecksum = Fnv1a64(
                 bytes.data() + static_cast<std::size_t>(payloadOffsets_[i]),
                 static_cast<std::size_t>(record.size));
-            SerializePackDirectoryEntry(
+            SerializePackRow<HkPackDirectoryEntry>(
                 record, bytes.data() + static_cast<std::size_t>(dirOffset) +
-                            i * kPackDirectoryEntryBytes);
+                            i * kPackBytes<HkPackDirectoryEntry>);
         }
         PackFileHeader header;
-        header.formatVersion = kPackFormatVersion;
-        header.headerBytes = kPackFileHeaderBytes;
+        header.formatVersion = HK_PACK_FORMAT_VERSION;
+        header.headerBytes = kPackBytes<HkPackFileHeader>;
         header.fileBytes = contentEnd;
         header.packKind = packKind_;
         header.entryCount = static_cast<std::uint32_t>(entries_.size());
@@ -249,7 +249,7 @@ public:
         header.directoryChecksum =
             Fnv1a64(bytes.data() + static_cast<std::size_t>(dirOffset),
                     static_cast<std::size_t>(dirBytes));
-        SerializePackFileHeader(header, bytes.data());
+        SerializePackRow<HkPackFileHeader>(header, bytes.data());
         return bytes;
     }
 
@@ -274,13 +274,13 @@ private:
     };
 
     static std::uint64_t PayloadSize(const Entry& entry) {
-        return entry.isMedia ? kPackMediaBytes : entry.payload.size();
+        return entry.isMedia ? kPackBytes<HkPackMedia> : entry.payload.size();
     }
     static std::uint64_t BlobBytes(const Entry& entry) {
         return static_cast<std::uint64_t>(entry.planar.size()) * sizeof(float);
     }
 
-    std::uint32_t packKind_ = kPackKindInit;
+    std::uint32_t packKind_ = HK_PACK_KIND_INIT;
     std::vector<Entry> entries_;
     std::vector<std::uint64_t> payloadOffsets_;
     std::vector<std::uint64_t> blobOffsets_;
@@ -300,8 +300,8 @@ std::vector<std::uint8_t> RequirementPayload(std::uint64_t packStableId,
     block.resourceClosureRevision = 1;
     harkentest::packfoundation::ApplyCanonicalBusTriple(
         &block, harkentest::packfoundation::DefaultFixtureBusTriple());
-    std::vector<std::uint8_t> payload(kPackRequirementBlockBytes, 0);
-    SerializePackRequirementBlock(block, payload.data());
+    std::vector<std::uint8_t> payload(kPackBytes<HkPackRequirementBlock>, 0);
+    SerializePackRow<HkPackRequirementBlock>(block, payload.data());
     StoreLE64(payload.data() + 104, Fnv1a64(payload.data(), 104));
     return payload;
 }
@@ -431,7 +431,7 @@ std::vector<std::uint8_t> EmptyPartitionPayload(
     std::vector<std::uint8_t> body;
     EXPECT_TRUE(EncodeCurrentWorldShippingBody(world, body));
     PackCanonicalPartitionHeader header;
-    header.headerBytes = kPackCanonicalPartitionHeaderBytes;
+    header.headerBytes = kPackBytes<HkPackCanonicalPartitionHeader>;
     header.bodyVintage = kCanonicalDefinitionPartitionBodyVintage;
     header.bodyBytes = body.size();
     header.bodyChecksum = Fnv1a64(body.data(), body.size());
@@ -440,11 +440,11 @@ std::vector<std::uint8_t> EmptyPartitionPayload(
     header.ownedDefinitionCount = 0;
     harkentest::packfoundation::ApplyCanonicalBusTriple(&header, triple);
     std::vector<std::uint8_t> payload(
-        kPackCanonicalPartitionHeaderBytes + body.size(), 0);
-    SerializePackCanonicalPartitionHeader(header, payload.data());
-    header.headerChecksum = Fnv1a64(payload.data(), kPackCanonicalPartitionHeaderHeaderChecksumOffset);
-    SerializePackCanonicalPartitionHeader(header, payload.data());
-    std::memcpy(payload.data() + kPackCanonicalPartitionHeaderBytes,
+        kPackBytes<HkPackCanonicalPartitionHeader> + body.size(), 0);
+    SerializePackRow<HkPackCanonicalPartitionHeader>(header, payload.data());
+    header.headerChecksum = Fnv1a64(payload.data(), offsetof(HkPackCanonicalPartitionHeader, headerChecksum));
+    SerializePackRow<HkPackCanonicalPartitionHeader>(header, payload.data());
+    std::memcpy(payload.data() + kPackBytes<HkPackCanonicalPartitionHeader>,
                 body.data(), body.size());
     return payload;
 }
@@ -456,11 +456,11 @@ std::vector<std::uint8_t> BuildInit(
     const auto bus = busFixture != nullptr ? *busFixture : sendBus == 0
         ? harkentest::packfoundation::DefaultRuntimeBusFixture()
         : harkentest::packfoundation::Bus2RuntimeBusFixture();
-    ImageBuilder builder(kPackKindInit);
-    builder.AddEntry(kPackEntryKindPackRequirementBlock, kInitId,
+    ImageBuilder builder(HK_PACK_KIND_INIT);
+    builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, kInitId,
                      harkentest::packfoundation::RequirementPayload(
                          kInitId, 1, 1, 0, 64, bus.triple));
-    builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, kInitId,
+    builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, kInitId,
                      EmptyPartitionPayload(kInitId, 1, capacity, bus.triple));
     harkentest::packfoundation::AppendRuntimeBusFixture(&builder, bus);
     return builder.Build();
@@ -475,18 +475,18 @@ std::vector<std::uint8_t> BuildInit(
 std::vector<std::uint8_t> RequiredEdgePayload(
     std::uint64_t providerStableId,
     std::uint64_t expectedContentRevision = 0,
-    std::uint32_t edgeKind = kPackDependencyEdgeKindContent) {
+    std::uint32_t edgeKind = HK_PACK_DEPENDENCY_EDGE_KIND_CONTENT) {
     PackDependencyEdge edge;
     edge.prerequisitePackStableId = providerStableId;
     edge.edgeKind = edgeKind;
     edge.required01 = 1;
     edge.expectedPrerequisiteContentRevision = expectedContentRevision;
-    if (edgeKind == kPackDependencyEdgeKindInit) {
+    if (edgeKind == HK_PACK_DEPENDENCY_EDGE_KIND_INIT) {
         harkentest::packfoundation::ApplyCanonicalBusTriple(
             &edge, harkentest::packfoundation::DefaultFixtureBusTriple());
     }
-    std::vector<std::uint8_t> payload(kPackDependencyEdgeBytes, 0);
-    SerializePackDependencyEdge(edge, payload.data());
+    std::vector<std::uint8_t> payload(kPackBytes<HkPackDependencyEdge>, 0);
+    SerializePackRow<HkPackDependencyEdge>(edge, payload.data());
     return payload;
 }
 
@@ -560,7 +560,7 @@ std::vector<std::uint8_t> DelayedPlayPartitionPayload(
     std::vector<std::uint8_t> body;
     EXPECT_TRUE(EncodeCurrentWorldShippingBody(world, body));
     PackCanonicalPartitionHeader header;
-    header.headerBytes = kPackCanonicalPartitionHeaderBytes;
+    header.headerBytes = kPackBytes<HkPackCanonicalPartitionHeader>;
     header.bodyVintage = kCanonicalDefinitionPartitionBodyVintage;
     header.bodyBytes = body.size();
     header.bodyChecksum = Fnv1a64(body.data(), body.size());
@@ -570,11 +570,11 @@ std::vector<std::uint8_t> DelayedPlayPartitionPayload(
     harkentest::packfoundation::ApplyCanonicalBusTriple(
         &header, harkentest::packfoundation::DefaultFixtureBusTriple());
     std::vector<std::uint8_t> payload(
-        kPackCanonicalPartitionHeaderBytes + body.size(), 0);
-    SerializePackCanonicalPartitionHeader(header, payload.data());
-    header.headerChecksum = Fnv1a64(payload.data(), kPackCanonicalPartitionHeaderHeaderChecksumOffset);
-    SerializePackCanonicalPartitionHeader(header, payload.data());
-    std::memcpy(payload.data() + kPackCanonicalPartitionHeaderBytes,
+        kPackBytes<HkPackCanonicalPartitionHeader> + body.size(), 0);
+    SerializePackRow<HkPackCanonicalPartitionHeader>(header, payload.data());
+    header.headerChecksum = Fnv1a64(payload.data(), offsetof(HkPackCanonicalPartitionHeader, headerChecksum));
+    SerializePackRow<HkPackCanonicalPartitionHeader>(header, payload.data());
+    std::memcpy(payload.data() + kPackBytes<HkPackCanonicalPartitionHeader>,
                 body.data(), body.size());
     return payload;
 }
@@ -590,11 +590,11 @@ std::vector<std::uint8_t> BuildDelayedPlayPack(
     EXPECT_TRUE(ComputeMediaPcmContentRevisionV1(
         48000, 1, static_cast<std::uint64_t>(planar.size()), channels, 1,
         &mediaRevision));
-    ImageBuilder builder(kPackKindCanonicalContent);
-    builder.AddEntry(kPackEntryKindPackRequirementBlock, packStableId,
+    ImageBuilder builder(HK_PACK_KIND_CANONICAL_CONTENT);
+    builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, packStableId,
                      RequirementPayload(packStableId, contentRevision,
                                         partitionRevision));
-    builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, packStableId,
+    builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, packStableId,
                      DelayedPlayPartitionPayload(
                          packStableId, partitionRevision, actionId, soundId,
                          mediaRevision, delayNanoseconds, 0.0f,
@@ -614,16 +614,16 @@ std::vector<std::uint8_t> BuildContentPack(
     VariableScopeV1 scope = VariableScopeV1::Global,
     std::uint64_t loopStartFrame = 0,
     std::uint64_t loopEndFrame = 0) {
-    ImageBuilder builder(kPackKindCanonicalContent);
-    builder.AddEntry(kPackEntryKindPackRequirementBlock, packStableId,
+    ImageBuilder builder(HK_PACK_KIND_CANONICAL_CONTENT);
+    builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, packStableId,
                      RequirementPayload(packStableId, contentRevision,
                                         partitionRevision));
-    builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, packStableId,
+    builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, packStableId,
                      ActionPartitionPayload(packStableId, partitionRevision,
                                             actionId, variableId, valueBits,
                                             scope));
     if (requiredProvider != 0) {
-        builder.AddEntry(kPackEntryKindPackDependencyEdge, 0,
+        builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_DEPENDENCY_EDGE, 0,
                          RequiredEdgePayload(requiredProvider));
     }
     if (soundId != VnObjectId{} && !planar.empty()) {
@@ -642,7 +642,7 @@ std::vector<std::uint8_t> WrapWorldPartitionWithOwnedDefinitionCount(
         ? EncodeCurrentWorldBodyV19(world, body)
         : EncodeCurrentWorldShippingBody(world, body));
     PackCanonicalPartitionHeader header;
-    header.headerBytes = kPackCanonicalPartitionHeaderBytes;
+    header.headerBytes = kPackBytes<HkPackCanonicalPartitionHeader>;
     header.bodyVintage = world.sourceBodyVintage;
     header.bodyBytes = body.size();
     header.bodyChecksum = Fnv1a64(body.data(), body.size());
@@ -652,11 +652,11 @@ std::vector<std::uint8_t> WrapWorldPartitionWithOwnedDefinitionCount(
     harkentest::packfoundation::ApplyCanonicalBusTriple(
         &header, harkentest::packfoundation::DefaultFixtureBusTriple());
     std::vector<std::uint8_t> payload(
-        kPackCanonicalPartitionHeaderBytes + body.size(), 0);
-    SerializePackCanonicalPartitionHeader(header, payload.data());
-    header.headerChecksum = Fnv1a64(payload.data(), kPackCanonicalPartitionHeaderHeaderChecksumOffset);
-    SerializePackCanonicalPartitionHeader(header, payload.data());
-    std::memcpy(payload.data() + kPackCanonicalPartitionHeaderBytes,
+        kPackBytes<HkPackCanonicalPartitionHeader> + body.size(), 0);
+    SerializePackRow<HkPackCanonicalPartitionHeader>(header, payload.data());
+    header.headerChecksum = Fnv1a64(payload.data(), offsetof(HkPackCanonicalPartitionHeader, headerChecksum));
+    SerializePackRow<HkPackCanonicalPartitionHeader>(header, payload.data());
+    std::memcpy(payload.data() + kPackBytes<HkPackCanonicalPartitionHeader>,
                 body.data(), body.size());
     return payload;
 }
@@ -680,14 +680,14 @@ std::vector<std::uint8_t> BuildCanonicalPartitionPack(
     std::vector<std::uint8_t> partitionPayload,
     std::uint64_t requiredProvider = 0,
     std::uint64_t expectedProviderContentRevision = 0) {
-    ImageBuilder builder(kPackKindCanonicalContent);
-    builder.AddEntry(kPackEntryKindPackRequirementBlock, packStableId,
+    ImageBuilder builder(HK_PACK_KIND_CANONICAL_CONTENT);
+    builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, packStableId,
                      RequirementPayload(packStableId, contentRevision,
                                         partitionRevision));
-    builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, packStableId,
+    builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, packStableId,
                      std::move(partitionPayload));
     if (requiredProvider != 0) {
-        builder.AddEntry(kPackEntryKindPackDependencyEdge, 0,
+        builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_DEPENDENCY_EDGE, 0,
                          RequiredEdgePayload(requiredProvider,
                                              expectedProviderContentRevision));
     }
@@ -849,14 +849,14 @@ std::vector<std::uint8_t> PartitionWithCapacityLimit(
     std::uint64_t packStableId, std::uint64_t partitionRevision,
     const std::vector<std::uint8_t>& partitionPayload,
     std::uint32_t WorldCapacitySummaryV1::*field, std::uint32_t limit) {
-    if (partitionPayload.size() < kPackCanonicalPartitionHeaderBytes) {
+    if (partitionPayload.size() < kPackBytes<HkPackCanonicalPartitionHeader>) {
         ADD_FAILURE() << "partition payload is truncated";
         return {};
     }
     CurrentWorldBodyImage body;
     const CurrentWorldBodyDecodeResult decoded = body.DecodeWithResult(
-        partitionPayload.data() + kPackCanonicalPartitionHeaderBytes,
-        partitionPayload.size() - kPackCanonicalPartitionHeaderBytes,
+        partitionPayload.data() + kPackBytes<HkPackCanonicalPartitionHeader>,
+        partitionPayload.size() - kPackBytes<HkPackCanonicalPartitionHeader>,
         kCanonicalDefinitionPartitionBodyVintage,
         CurrentWorldDecodeMode::StrictArtifact);
     if (decoded != CurrentWorldBodyDecodeResult::Ok) {
@@ -1358,15 +1358,15 @@ std::vector<std::uint8_t> BuildPostActionPack(
     std::uint64_t partitionRevision, VnObjectId actionId,
     VnObjectId targetActionId, std::uint64_t targetFingerprint,
     std::uint64_t requiredProvider, std::uint32_t childStepCount = 1) {
-    ImageBuilder builder(kPackKindCanonicalContent);
-    builder.AddEntry(kPackEntryKindPackRequirementBlock, packStableId,
+    ImageBuilder builder(HK_PACK_KIND_CANONICAL_CONTENT);
+    builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, packStableId,
                      RequirementPayload(packStableId, contentRevision,
                                         partitionRevision));
     builder.AddEntry(
-        kPackEntryKindCanonicalDefinitionPartition, packStableId,
+        HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, packStableId,
         PostActionPartitionPayload(packStableId, partitionRevision, actionId,
                                    targetActionId, targetFingerprint, childStepCount));
-    builder.AddEntry(kPackEntryKindPackDependencyEdge, 0,
+    builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_DEPENDENCY_EDGE, 0,
                      RequiredEdgePayload(requiredProvider));
     return builder.Build();
 }
@@ -3381,7 +3381,7 @@ ReferenceBackingRevision MakeReferenceBackingRevision(
     EXPECT_EQ(VN_OK, ParsePackCanonicalImage(
                          encoded.data(), encoded.size(), &result.image));
     result.bytes.reset(static_cast<std::uint8_t*>(::operator new[](
-        encoded.size(), std::align_val_t{kPackBlobAlign})));
+        encoded.size(), std::align_val_t{HK_PACK_BLOB_ALIGN})));
     std::memcpy(result.bytes.get(), encoded.data(), encoded.size());
     result.entries.reserve(result.image.media.size());
     for (const PackTocEntry& source : result.image.media) {
@@ -3420,10 +3420,10 @@ TEST(PackCompositionContract,
         PackTable packs(1, 1);
         auto original = MakeReferenceBackingRevision(soundId, 0.25f);
         ASSERT_EQ(1u, original.image.media.size());
-        original.image.media[0].flags = kPackFlagLoopable;
+        original.image.media[0].flags = HK_PACK_MEDIA_FLAG_LOOPABLE;
         original.image.media[0].loopStartFrame = 2;
         original.image.media[0].loopEndFrame = 6;
-        original.entries[0].flags = kPackFlagLoopable;
+        original.entries[0].flags = HK_PACK_MEDIA_FLAG_LOOPABLE;
         original.entries[0].loopStartFrame = 2;
         original.entries[0].loopEndFrame = 6;
         VnPackHandle handle = 0;
@@ -3629,7 +3629,7 @@ TEST(PackCompositionContract, RetirementCapacityRefusesBeforePublishingSuccessor
         EXPECT_EQ(VN_OK, ParsePackCanonicalImage(
                              encoded.data(), encoded.size(), &revision.image));
         auto* raw = static_cast<std::uint8_t*>(::operator new[](
-            encoded.size(), std::align_val_t{kPackBlobAlign}));
+            encoded.size(), std::align_val_t{HK_PACK_BLOB_ALIGN}));
         revision.bytes = PackTable::AlignedBuffer(raw);
         std::memcpy(revision.bytes.get(), encoded.data(), encoded.size());
         revision.entries.reserve(revision.image.media.size());
@@ -4112,7 +4112,7 @@ TEST(PackCompositionContract, ResourceClosureCapacityIsAtomicAndStaleSafe) {
     ASSERT_EQ(VN_OK, ParsePackCanonicalImage(
                          encoded.data(), encoded.size(), &image));
     auto* raw = static_cast<std::uint8_t*>(::operator new[](
-        encoded.size(), std::align_val_t{kPackBlobAlign}));
+        encoded.size(), std::align_val_t{HK_PACK_BLOB_ALIGN}));
     PackTable::AlignedBuffer bytes(raw);
     std::memcpy(bytes.get(), encoded.data(), encoded.size());
     std::vector<PackEntry> entries;
@@ -5390,15 +5390,15 @@ TEST(PackCompositionContract, TraceOffReplacementTailCannotFailAfterCommit) {
 
 TEST(PackCompositionContract, TraceOnReplacementPreservesRequiredClosureOrder) {
     const auto consumer = [](std::uint64_t revision) {
-        ImageBuilder builder(kPackKindCanonicalContent);
-        builder.AddEntry(kPackEntryKindPackRequirementBlock, 22,
+        ImageBuilder builder(HK_PACK_KIND_CANONICAL_CONTENT);
+        builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, 22,
                          RequirementPayload(22, revision, revision + 6));
-        builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, 22,
+        builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, 22,
                          ActionPartitionPayload(22, revision + 6,
                              harkentest::ObjectId(2002), harkentest::ObjectId(7)));
         // Deliberately retain the source order rather than sorting by ID.
-        builder.AddEntry(kPackEntryKindPackDependencyEdge, 0, RequiredEdgePayload(44));
-        builder.AddEntry(kPackEntryKindPackDependencyEdge, 1, RequiredEdgePayload(33));
+        builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_DEPENDENCY_EDGE, 0, RequiredEdgePayload(44));
+        builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_DEPENDENCY_EDGE, 1, RequiredEdgePayload(33));
         return builder.Build();
     };
     const auto oldBytes = consumer(1);
@@ -6398,14 +6398,14 @@ TEST(PackComposition, CapacitySummaryMismatchKeepsPublication) {
     ASSERT_EQ(VN_OK, composition.PrepareCandidate(
                          secondImage, kSecondHandle, &secondOwner));
     ASSERT_GE(secondPartition.size(),
-              kPackCanonicalPartitionHeaderBytes);
+              kPackBytes<HkPackCanonicalPartitionHeader>);
     CurrentWorldBodyImage secondBody;
     ASSERT_EQ(CurrentWorldBodyDecodeResult::Ok,
               secondBody.DecodeWithResult(
                   secondPartition.data() +
-                      kPackCanonicalPartitionHeaderBytes,
+                      kPackBytes<HkPackCanonicalPartitionHeader>,
                   secondPartition.size() -
-                      kPackCanonicalPartitionHeaderBytes,
+                      kPackBytes<HkPackCanonicalPartitionHeader>,
                   kCanonicalDefinitionPartitionBodyVintage,
                   CurrentWorldDecodeMode::StrictArtifact));
     const ContainerWorldInstallViewV1& secondWorld = *secondBody.ProductionView();
@@ -7979,7 +7979,7 @@ TEST(PackComposition,
     consumerOwner.view = *consumerOwner.body->ProductionView();
     PackDependencyEdge requiredEdge;
     requiredEdge.prerequisitePackStableId = kProviderPack;
-    requiredEdge.edgeKind = kPackDependencyEdgeKindContent;
+    requiredEdge.edgeKind = HK_PACK_DEPENDENCY_EDGE_KIND_CONTENT;
     requiredEdge.required01 = 1;
     consumerOwner.dependencyEdges.push_back(requiredEdge);
 
@@ -8057,11 +8057,11 @@ std::vector<std::uint8_t> BuildImmediatePlaySoundPack(
     EXPECT_TRUE(ComputeMediaPcmContentRevisionV1(
         48000, 1, static_cast<std::uint64_t>(planar.size()), channels, 1,
         &mediaRevision));
-    ImageBuilder builder(kPackKindCanonicalContent);
-    builder.AddEntry(kPackEntryKindPackRequirementBlock, packStableId,
+    ImageBuilder builder(HK_PACK_KIND_CANONICAL_CONTENT);
+    builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, packStableId,
                      RequirementPayload(packStableId, contentRevision,
                                         partitionRevision));
-    builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, packStableId,
+    builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, packStableId,
                      DelayedPlayPartitionPayload(packStableId, partitionRevision,
                                                  actionId, soundId,
                                                  mediaRevision, 0,
@@ -8156,11 +8156,11 @@ std::vector<std::uint8_t> BuildImmediateContainerPlayPack(
     EXPECT_TRUE(ComputeMediaPcmContentRevisionV1(
         48000, 1, static_cast<std::uint64_t>(planar.size()), channels, 1,
         &mediaRevision));
-    ImageBuilder builder(kPackKindCanonicalContent);
-    builder.AddEntry(kPackEntryKindPackRequirementBlock, packStableId,
+    ImageBuilder builder(HK_PACK_KIND_CANONICAL_CONTENT);
+    builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, packStableId,
                      RequirementPayload(packStableId, contentRevision,
                                         partitionRevision));
-    builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, packStableId,
+    builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, packStableId,
                      ImmediateContainerPlayPartitionPayload(
                          packStableId, partitionRevision, actionId, containerId,
                          soundId, mediaRevision, mismatchTargetFingerprint,
@@ -8262,11 +8262,11 @@ std::vector<std::uint8_t> BuildImmediateTrackPlayPack(
     EXPECT_TRUE(ComputeMediaPcmContentRevisionV1(
         48000, 1, static_cast<std::uint64_t>(planar.size()), channels, 1,
         &mediaRevision));
-    ImageBuilder builder(kPackKindCanonicalContent);
-    builder.AddEntry(kPackEntryKindPackRequirementBlock, packStableId,
+    ImageBuilder builder(HK_PACK_KIND_CANONICAL_CONTENT);
+    builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, packStableId,
                      RequirementPayload(packStableId, contentRevision,
                                         partitionRevision));
-    builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, packStableId,
+    builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, packStableId,
                      ImmediateTrackPlayPartitionPayload(
                          packStableId, partitionRevision, actionId, trackId,
                          soundId, mediaRevision));
@@ -8412,11 +8412,11 @@ std::vector<std::uint8_t> BuildImmediateSequenceQueuePlayPack(
     EXPECT_TRUE(ComputeMediaPcmContentRevisionV1(
         secondRate, 1, static_cast<std::uint64_t>(secondPlanar.size()),
         secondChannels, 1, &secondRevision));
-    ImageBuilder builder(kPackKindCanonicalContent);
-    builder.AddEntry(kPackEntryKindPackRequirementBlock, packStableId,
+    ImageBuilder builder(HK_PACK_KIND_CANONICAL_CONTENT);
+    builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, packStableId,
                      RequirementPayload(packStableId, contentRevision,
                                         partitionRevision));
-    builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, packStableId,
+    builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, packStableId,
                      ImmediateSequenceQueuePlayPartitionPayload(
                          packStableId, partitionRevision, actionId, containerId,
                          firstSoundId, secondSoundId, firstRevision,
@@ -8559,11 +8559,11 @@ std::vector<std::uint8_t> BuildImmediateRandomQueuePlayPack(
     EXPECT_TRUE(ComputeMediaPcmContentRevisionV1(
         48000, 1, static_cast<std::uint64_t>(secondPlanar.size()),
         secondChannels, 1, &secondRevision));
-    ImageBuilder builder(kPackKindCanonicalContent);
-    builder.AddEntry(kPackEntryKindPackRequirementBlock, packStableId,
+    ImageBuilder builder(HK_PACK_KIND_CANONICAL_CONTENT);
+    builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, packStableId,
                      RequirementPayload(packStableId, contentRevision,
                                         partitionRevision));
-    builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, packStableId,
+    builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, packStableId,
                      ImmediateRandomQueuePlayPartitionPayload(
                          packStableId, partitionRevision, actionId, containerId,
                          firstSoundId, secondSoundId, firstRevision,
@@ -8792,11 +8792,11 @@ std::vector<std::uint8_t> BuildImmediateVariableControlDiscretePlayPack(
     EXPECT_TRUE(ComputeMediaPcmContentRevisionV1(
         48000, 1, static_cast<std::uint64_t>(secondPlanar.size()),
         secondChannels, 1, &secondRevision));
-    ImageBuilder builder(kPackKindCanonicalContent);
-    builder.AddEntry(kPackEntryKindPackRequirementBlock, packStableId,
+    ImageBuilder builder(HK_PACK_KIND_CANONICAL_CONTENT);
+    builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, packStableId,
                      RequirementPayload(packStableId, contentRevision,
                                         partitionRevision));
-    builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, packStableId,
+    builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, packStableId,
                      ImmediateVariableControlDiscretePlayPartitionPayload(
                          packStableId, partitionRevision, actionId, containerId,
                          firstSoundId, secondSoundId, firstRevision,
@@ -8961,12 +8961,12 @@ std::vector<std::uint8_t> BuildImmediateRandomContainerToVariableControlPack(
     EXPECT_TRUE(ComputeMediaPcmContentRevisionV1(
         48000, 1, static_cast<std::uint64_t>(firstPlanar.size()),
         firstChannels, 1, &firstRevision));
-    ImageBuilder builder(kPackKindCanonicalContent);
-    builder.AddEntry(kPackEntryKindPackRequirementBlock, packStableId,
+    ImageBuilder builder(HK_PACK_KIND_CANONICAL_CONTENT);
+    builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, packStableId,
                      RequirementPayload(packStableId, contentRevision,
                                         partitionRevision));
     builder.AddEntry(
-        kPackEntryKindCanonicalDefinitionPartition, packStableId,
+        HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, packStableId,
         ImmediateRandomContainerToVariableControlPlayPartitionPayload(
             packStableId, partitionRevision, actionId, outerContainerId,
             variableControlId, firstSoundId, firstRevision,
@@ -9176,12 +9176,12 @@ std::vector<std::uint8_t> BuildVariableControlNestedLoopPlayPack(
         48000, 1, firstPlanar.size(), firstChannels, 1, &firstRevision));
     EXPECT_TRUE(ComputeMediaPcmContentRevisionV1(
         48000, 1, secondPlanar.size(), secondChannels, 1, &secondRevision));
-    ImageBuilder builder(kPackKindCanonicalContent);
-    builder.AddEntry(kPackEntryKindPackRequirementBlock, packStableId,
+    ImageBuilder builder(HK_PACK_KIND_CANONICAL_CONTENT);
+    builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, packStableId,
                      RequirementPayload(packStableId, contentRevision,
                                         partitionRevision));
     builder.AddEntry(
-        kPackEntryKindCanonicalDefinitionPartition, packStableId,
+        HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, packStableId,
         ImmediateVariableControlNestedLoopPlayPayload(
             packStableId, partitionRevision, actionId, outerId,
             variableControlId, initialNestedId, retargetNestedId,
@@ -9327,11 +9327,11 @@ std::vector<std::uint8_t> BuildImmediateVariableControlContinuousPlayPack(
     EXPECT_TRUE(ComputeMediaPcmContentRevisionV1(
         48000, 1, static_cast<std::uint64_t>(secondPlanar.size()),
         secondChannels, 1, &secondRevision));
-    ImageBuilder builder(kPackKindCanonicalContent);
-    builder.AddEntry(kPackEntryKindPackRequirementBlock, packStableId,
+    ImageBuilder builder(HK_PACK_KIND_CANONICAL_CONTENT);
+    builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, packStableId,
                      RequirementPayload(packStableId, contentRevision,
                                         partitionRevision));
-    builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, packStableId,
+    builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, packStableId,
                      ImmediateVariableControlContinuousPlayPartitionPayload(
                          packStableId, partitionRevision, actionId, containerId,
                          firstSoundId, secondSoundId, firstRevision,
@@ -9499,11 +9499,11 @@ std::vector<std::uint8_t> BuildImmediateSegmentPlayPack(
     EXPECT_TRUE(ComputeMediaPcmContentRevisionV1(
         48000, 1, static_cast<std::uint64_t>(planar.size()), channels, 1,
         &mediaRevision, loopStartFrame, loopEndFrame));
-    ImageBuilder builder(kPackKindCanonicalContent);
-    builder.AddEntry(kPackEntryKindPackRequirementBlock, packStableId,
+    ImageBuilder builder(HK_PACK_KIND_CANONICAL_CONTENT);
+    builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, packStableId,
                      RequirementPayload(packStableId, contentRevision,
                                         partitionRevision));
-    builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, packStableId,
+    builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, packStableId,
                      ImmediateSegmentPlayPartitionPayload(
                          packStableId, partitionRevision, actionId, segmentId,
                          trackId, soundId, mediaRevision, loopCount,
@@ -9691,11 +9691,11 @@ std::vector<std::uint8_t> BuildMusicalSegmentQuantizePack(
     EXPECT_TRUE(ComputeMediaPcmContentRevisionV1(
         48000, 1, static_cast<std::uint64_t>(soundPlanar.size()), soundChannels,
         1, &soundRevision));
-    ImageBuilder builder(kPackKindCanonicalContent);
-    builder.AddEntry(kPackEntryKindPackRequirementBlock, packStableId,
+    ImageBuilder builder(HK_PACK_KIND_CANONICAL_CONTENT);
+    builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, packStableId,
                      RequirementPayload(packStableId, contentRevision,
                                         partitionRevision));
-    builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, packStableId,
+    builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, packStableId,
                      MusicalSegmentQuantizePartitionPayload(
                          packStableId, partitionRevision, segmentActionId,
                          soundActionId, segmentId, trackId, segmentSoundId,
@@ -10058,11 +10058,11 @@ std::vector<std::uint8_t> BuildImmediateEmptyTrackPlayPack(
     std::uint64_t packStableId, std::uint64_t contentRevision,
     std::uint64_t partitionRevision, VnObjectId actionId,
     VnObjectId trackId) {
-    ImageBuilder builder(kPackKindCanonicalContent);
-    builder.AddEntry(kPackEntryKindPackRequirementBlock, packStableId,
+    ImageBuilder builder(HK_PACK_KIND_CANONICAL_CONTENT);
+    builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, packStableId,
                      RequirementPayload(packStableId, contentRevision,
                                         partitionRevision));
-    builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, packStableId,
+    builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, packStableId,
                      ImmediateEmptyTrackPlayPartitionPayload(
                          packStableId, partitionRevision, actionId, trackId));
     return builder.Build();
@@ -10077,7 +10077,7 @@ bool DirectoryHasKind(const std::vector<std::uint8_t>& bytes,
     for (std::uint32_t i = 0; i < header.entryCount; ++i) {
         const PackDirectoryEntry entry = ReadPackDirectoryEntry(
             bytes.data() + static_cast<std::size_t>(header.directoryOffset) +
-            i * kPackDirectoryEntryBytes);
+            i * kPackBytes<HkPackDirectoryEntry>);
         if (entry.kind == kind) {
             return true;
         }
@@ -10092,8 +10092,8 @@ void ExpectCurrentProgramChapter(const std::vector<std::uint8_t>& bytes) {
     ASSERT_TRUE(image.hasPartition);
     EXPECT_EQ(kCanonicalDefinitionPartitionBodyVintage,
               image.partitionHeader.bodyVintage);
-    EXPECT_FALSE(DirectoryHasKind(bytes, kPackEntryKindContainer));
-    EXPECT_FALSE(DirectoryHasKind(bytes, kPackEntryKindVoiceRecipe));
+    EXPECT_FALSE(DirectoryHasKind(bytes, HK_PACK_ENTRY_KIND_CONTAINER));
+    EXPECT_FALSE(DirectoryHasKind(bytes, HK_PACK_ENTRY_KIND_VOICE_RECIPE));
 }
 
 TEST(PackComposition, OldDescRefusesShippingContentPack) {
@@ -17214,11 +17214,11 @@ std::vector<std::uint8_t> BuildImmediateNestedRandomPlayPack(
     EXPECT_TRUE(ComputeMediaPcmContentRevisionV1(
         48000, 1, static_cast<std::uint64_t>(planar.size()), channels, 1,
         &mediaRevision));
-    ImageBuilder builder(kPackKindCanonicalContent);
-    builder.AddEntry(kPackEntryKindPackRequirementBlock, packStableId,
+    ImageBuilder builder(HK_PACK_KIND_CANONICAL_CONTENT);
+    builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, packStableId,
                      RequirementPayload(packStableId, contentRevision,
                                         partitionRevision));
-    builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, packStableId,
+    builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, packStableId,
                      ImmediateNestedRandomPlayPartitionPayload(
                          packStableId, partitionRevision, actionId, parentId,
                          childId, soundId, mediaRevision));
@@ -17388,12 +17388,12 @@ std::vector<std::uint8_t> BuildImmediateNestedQueueContainerPlayPack(
     EXPECT_TRUE(ComputeMediaPcmContentRevisionV1(
         48000, 1, static_cast<std::uint64_t>(secondPlanar.size()),
         secondChannels, 1, &secondRevision));
-    ImageBuilder builder(kPackKindCanonicalContent);
-    builder.AddEntry(kPackEntryKindPackRequirementBlock, packStableId,
+    ImageBuilder builder(HK_PACK_KIND_CANONICAL_CONTENT);
+    builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, packStableId,
                      RequirementPayload(packStableId, contentRevision,
                                         partitionRevision));
     builder.AddEntry(
-        kPackEntryKindCanonicalDefinitionPartition, packStableId,
+        HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, packStableId,
         ImmediateNestedQueueContainerPlayPartitionPayload(
             packStableId, partitionRevision, actionId, parentId, queueId,
             firstSoundId, secondSoundId, firstRevision, secondRevision,
@@ -17481,11 +17481,11 @@ std::vector<std::uint8_t> BuildImmediateSequencePlayPack(
     EXPECT_TRUE(ComputeMediaPcmContentRevisionV1(
         48000, 1, static_cast<std::uint64_t>(planar.size()), channels, 1,
         &mediaRevision));
-    ImageBuilder builder(kPackKindCanonicalContent);
-    builder.AddEntry(kPackEntryKindPackRequirementBlock, packStableId,
+    ImageBuilder builder(HK_PACK_KIND_CANONICAL_CONTENT);
+    builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, packStableId,
                      RequirementPayload(packStableId, contentRevision,
                                         partitionRevision));
-    builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, packStableId,
+    builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, packStableId,
                      ImmediateSequencePlayPartitionPayload(
                          packStableId, partitionRevision, actionId, containerId,
                          soundId, mediaRevision));
@@ -17742,11 +17742,11 @@ std::vector<std::uint8_t> BuildImmediateQueueCompositeChildPlayPack(
     EXPECT_TRUE(ComputeMediaPcmContentRevisionV1(
         48000, 1, static_cast<std::uint64_t>(secondPlanar.size()),
         secondChannels, 1, &secondRevision));
-    ImageBuilder builder(kPackKindCanonicalContent);
-    builder.AddEntry(kPackEntryKindPackRequirementBlock, packStableId,
+    ImageBuilder builder(HK_PACK_KIND_CANONICAL_CONTENT);
+    builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, packStableId,
                      RequirementPayload(packStableId, contentRevision,
                                         partitionRevision));
-    builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, packStableId,
+    builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, packStableId,
                      ImmediateQueueCompositeChildPlayPartitionPayload(
                          packStableId, partitionRevision, actionId, containerId,
                          trackId, segmentId, firstSoundId, secondSoundId,
@@ -17939,11 +17939,11 @@ std::vector<std::uint8_t> BuildImmediateBundlePartialPlayPack(
     EXPECT_TRUE(ComputeMediaPcmContentRevisionV1(
         48000, 1, static_cast<std::uint64_t>(planar.size()), channels, 1,
         &mediaRevision));
-    ImageBuilder builder(kPackKindCanonicalContent);
-    builder.AddEntry(kPackEntryKindPackRequirementBlock, packStableId,
+    ImageBuilder builder(HK_PACK_KIND_CANONICAL_CONTENT);
+    builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, packStableId,
                      RequirementPayload(packStableId, contentRevision,
                                         partitionRevision));
-    builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, packStableId,
+    builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, packStableId,
                      ImmediateBundlePartialPlayPartitionPayload(
                          packStableId, partitionRevision, actionId, soundId,
                          emptyTrackId, mediaRevision));
@@ -18471,20 +18471,20 @@ TEST(PackComposition, PackActionSharedLeafFromContentRootRenders) {
     sound.contentRevision = mediaRevision;
     sound.programSemanticFingerprint = ComputePlayablePropertyFingerprintV1(sound);
     const PlayableRefV1 child = PlayableRefFromProperty(sound);
-    ImageBuilder contentBuilder(kPackKindCanonicalContent);
-    contentBuilder.AddEntry(kPackEntryKindPackRequirementBlock, kContentPack,
+    ImageBuilder contentBuilder(HK_PACK_KIND_CANONICAL_CONTENT);
+    contentBuilder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, kContentPack,
                             RequirementPayload(kContentPack, 1, 7));
     contentBuilder.AddEntry(
-        kPackEntryKindCanonicalDefinitionPartition, kContentPack,
+        HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, kContentPack,
         ImmediateSharedLeafFromContentRootPartitionPayload(
             kContentPack, 7, kActionId, kContainerId, child));
-    contentBuilder.AddEntry(kPackEntryKindPackDependencyEdge, 0,
+    contentBuilder.AddEntry(HK_PACK_ENTRY_KIND_PACK_DEPENDENCY_EDGE, 0,
                             RequiredEdgePayload(kSharedPack));
     const std::vector<std::uint8_t> contentBytes = contentBuilder.Build();
-    ImageBuilder sharedBuilder(kPackKindCanonicalContent);
-    sharedBuilder.AddEntry(kPackEntryKindPackRequirementBlock, kSharedPack,
+    ImageBuilder sharedBuilder(HK_PACK_KIND_CANONICAL_CONTENT);
+    sharedBuilder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, kSharedPack,
                            RequirementPayload(kSharedPack, 1, 9));
-    sharedBuilder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, kSharedPack,
+    sharedBuilder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, kSharedPack,
                            SharedSoundPartitionPayload(kSharedPack, 9, sound));
     sharedBuilder.AddMedia(kSoundId, std::move(planar));
     const std::vector<std::uint8_t> sharedBytes = sharedBuilder.Build();
@@ -18576,22 +18576,22 @@ TEST(PackComposition, PackActionTwoPlayStepsDifferentPacksRenders) {
     foreignSound.programSemanticFingerprint =
         ComputePlayablePropertyFingerprintV1(foreignSound);
     const PlayableRefV1 foreignRef = PlayableRefFromProperty(foreignSound);
-    ImageBuilder packABuilder(kPackKindCanonicalContent);
-    packABuilder.AddEntry(kPackEntryKindPackRequirementBlock, kPackA,
+    ImageBuilder packABuilder(HK_PACK_KIND_CANONICAL_CONTENT);
+    packABuilder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, kPackA,
                           RequirementPayload(kPackA, 1, 7));
     packABuilder.AddEntry(
-        kPackEntryKindCanonicalDefinitionPartition, kPackA,
+        HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, kPackA,
         ImmediateTwoPlayStepsDifferentPacksPartitionPayload(
             kPackA, 7, kActionId, kLocalSoundId, kForeignSoundId, localRevision,
             foreignRef));
-    packABuilder.AddEntry(kPackEntryKindPackDependencyEdge, 0,
+    packABuilder.AddEntry(HK_PACK_ENTRY_KIND_PACK_DEPENDENCY_EDGE, 0,
                           RequiredEdgePayload(kPackB));
     packABuilder.AddMedia(kLocalSoundId, std::move(localPlanar));
     const std::vector<std::uint8_t> packABytes = packABuilder.Build();
-    ImageBuilder packBBuilder(kPackKindCanonicalContent);
-    packBBuilder.AddEntry(kPackEntryKindPackRequirementBlock, kPackB,
+    ImageBuilder packBBuilder(HK_PACK_KIND_CANONICAL_CONTENT);
+    packBBuilder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, kPackB,
                           RequirementPayload(kPackB, 1, 9));
-    packBBuilder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, kPackB,
+    packBBuilder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, kPackB,
                           SharedSoundPartitionPayload(kPackB, 9, foreignSound));
     packBBuilder.AddMedia(kForeignSoundId, std::move(foreignPlanar));
     const std::vector<std::uint8_t> packBBytes = packBBuilder.Build();
@@ -19675,9 +19675,9 @@ struct OriginalDeferredOperationFixture {
         image.world.actionCount = nestedDeferredChild ? 3 : 2;
         image.world.identity.runtimeSemanticFingerprint = ComputeCurrentWorldFingerprintV4(image.world);
         EXPECT_EQ(WorldInstallStatus::Ok, ValidateCurrentWorldV1(image.world));
-        ImageBuilder builder(kPackKindCanonicalContent);
-        builder.AddEntry(kPackEntryKindPackRequirementBlock, 22, RequirementPayload(22, 1, 7));
-        builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, 22,
+        ImageBuilder builder(HK_PACK_KIND_CANONICAL_CONTENT);
+        builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, 22, RequirementPayload(22, 1, 7));
+        builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, 22,
             WrapWorldPartition(22, 7, image.world, 0));
         builder.AddMedia(ContainerMatrixWorld::kFirstSound, pcm);
         const auto content = builder.Build();
@@ -20554,9 +20554,9 @@ void ExpectVariableControlNaturalCompletion(ContainerMatrixEntry entry, bool con
     ASSERT_EQ(VN_OK, session.InitResult());
     auto& engine = *session.Engine();
     if (entry == ContainerMatrixEntry::PackAction) {
-        ImageBuilder builder(kPackKindCanonicalContent);
-        builder.AddEntry(kPackEntryKindPackRequirementBlock, 22, RequirementPayload(22, 1, 1));
-        builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, 22,
+        ImageBuilder builder(HK_PACK_KIND_CANONICAL_CONTENT);
+        builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, 22, RequirementPayload(22, 1, 1));
+        builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, 22,
             WrapWorldPartition(22, 1, image.world, image.world.playablePropertyCount +
                 image.world.actionCount + image.world.variableCount));
         builder.AddMedia(ContainerMatrixWorld::kFirstSound, firstSamples);
@@ -20915,9 +20915,9 @@ void ExpectShortVariableControlTargetPromotion(ContainerMatrixEntry entry, bool 
     ::testing::Test::RecordProperty("member_completion_bytes", std::to_string(sizeof(VariableControlMemberCompletion)));
     ::testing::Test::RecordProperty("member_completion_count", std::to_string(engine.playableStorage.memberCount));
     if (entry == ContainerMatrixEntry::PackAction) {
-        ImageBuilder builder(kPackKindCanonicalContent);
-        builder.AddEntry(kPackEntryKindPackRequirementBlock, 22, RequirementPayload(22, 1, 1));
-        builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, 22,
+        ImageBuilder builder(HK_PACK_KIND_CANONICAL_CONTENT);
+        builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, 22, RequirementPayload(22, 1, 1));
+        builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, 22,
             WrapWorldPartition(22, 1, image.world, image.world.playablePropertyCount +
                 image.world.actionCount + image.world.variableCount));
         builder.AddMedia(ContainerMatrixWorld::kFirstSound, firstSamples);
@@ -21335,10 +21335,10 @@ void ExpectOrdinaryNavigationDepth(ContainerMatrixEntry entry, std::uint32_t dep
     const auto containerFreeBaseline = engine->containerPlayback.FreeCount();
     const auto selectionFreeBaseline = engine->selectionMemory.FreeDeltaCount();
     if (entry == ContainerMatrixEntry::PackAction) {
-        ImageBuilder builder(kPackKindCanonicalContent);
-        builder.AddEntry(kPackEntryKindPackRequirementBlock, 22,
+        ImageBuilder builder(HK_PACK_KIND_CANONICAL_CONTENT);
+        builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, 22,
                          RequirementPayload(22, 1, 1));
-        builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, 22,
+        builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, 22,
                          WrapWorldPartition(22, 1, image.base.world,
                              image.base.world.playablePropertyCount + 1u));
         builder.AddMedia(ContainerMatrixWorld::kFirstSound, samples);
@@ -21827,9 +21827,9 @@ void ExpectQueueSequenceBranchesAcrossEntry(ContainerMatrixEntry entry, std::uin
     auto& engine = *session.Engine();
     if (entry == ContainerMatrixEntry::PackAction) {
         constexpr std::uint64_t packId = 22;
-        ImageBuilder builder(kPackKindCanonicalContent);
-        builder.AddEntry(kPackEntryKindPackRequirementBlock, packId, RequirementPayload(packId, 1, 1));
-        builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, packId,
+        ImageBuilder builder(HK_PACK_KIND_CANONICAL_CONTENT);
+        builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, packId, RequirementPayload(packId, 1, 1));
+        builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, packId,
             WrapWorldPartition(packId, 1, image.world, image.world.playablePropertyCount + 1u + image.world.variableCount));
         for (std::uint32_t index = 0; index < 4; ++index)
             builder.AddMedia(harkentest::ObjectId(2300u + index), samples, 1, sourceRates[index]);
@@ -22831,14 +22831,14 @@ void ExpectMultiLeafContainerLoopCompletesAndReclaims(
     ASSERT_NE(nullptr, engine);
     VnPackHandle pack = 0;
     if (entry == ContainerMatrixEntry::PackAction) {
-        ImageBuilder builder(kPackKindCanonicalContent);
+        ImageBuilder builder(HK_PACK_KIND_CANONICAL_CONTENT);
         const std::uint64_t ownedDefinitionCount =
             image.world.playablePropertyCount + image.world.actionCount;
         builder.AddEntry(
-            kPackEntryKindPackRequirementBlock, kPackStableId,
+            HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, kPackStableId,
             RequirementPayload(kPackStableId, 1, 1));
         builder.AddEntry(
-            kPackEntryKindCanonicalDefinitionPartition, kPackStableId,
+            HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, kPackStableId,
             WrapWorldPartition(kPackStableId, 1, image.world,
                                ownedDefinitionCount));
         builder.AddMedia(ContainerMatrixWorld::kFirstSound, firstSamples);
@@ -23840,15 +23840,15 @@ void RunContainerMatrixEntry(ContainerModeV1 mode, ContainerMatrixChild childKin
     VnPackHandle pack = 0;
     if (entry == ContainerMatrixEntry::PackAction) {
         constexpr std::uint64_t kPackStableId = 22;
-        ImageBuilder builder(kPackKindCanonicalContent);
+        ImageBuilder builder(HK_PACK_KIND_CANONICAL_CONTENT);
         const std::uint64_t ownedDefinitionCount =
             image.world.playablePropertyCount + image.world.actionCount +
             image.world.variableCount;
         const auto partition = WrapWorldPartition(
             kPackStableId, 1, image.world, ownedDefinitionCount);
-        builder.AddEntry(kPackEntryKindPackRequirementBlock, kPackStableId,
+        builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, kPackStableId,
                          RequirementPayload(kPackStableId, 1, 1));
-        builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition,
+        builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION,
                          kPackStableId, partition);
         builder.AddMedia(ContainerMatrixWorld::kFirstSound, firstSamples);
         builder.AddMedia(ContainerMatrixWorld::kSecondSound, secondSamples);
@@ -24247,10 +24247,10 @@ TEST(PackComposition,
         VnPackHandle pack = 0;
         if (entry == ContainerMatrixEntry::PackAction) {
             constexpr std::uint64_t kPackStableId = 22;
-            ImageBuilder builder(kPackKindCanonicalContent);
-            builder.AddEntry(kPackEntryKindPackRequirementBlock, kPackStableId,
+            ImageBuilder builder(HK_PACK_KIND_CANONICAL_CONTENT);
+            builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, kPackStableId,
                              RequirementPayload(kPackStableId, 1, 1));
-            builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition,
+            builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION,
                 kPackStableId, WrapWorldPartition(kPackStableId, 1, image.world,
                     image.world.playablePropertyCount + image.world.actionCount));
             builder.AddMedia(ContainerMatrixWorld::kFirstSound, firstSamples);
@@ -24480,10 +24480,10 @@ TEST(PackComposition, QueueSegmentOverlappingSameSoundWaitsForLastClipAcrossActi
         VnPackHandle pack = 0;
         if (entry == ContainerMatrixEntry::PackAction) {
             constexpr std::uint64_t kPackStableId = 22;
-            ImageBuilder builder(kPackKindCanonicalContent);
-            builder.AddEntry(kPackEntryKindPackRequirementBlock, kPackStableId,
+            ImageBuilder builder(HK_PACK_KIND_CANONICAL_CONTENT);
+            builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, kPackStableId,
                              RequirementPayload(kPackStableId, 1, 1));
-            builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition,
+            builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION,
                 kPackStableId, WrapWorldPartition(kPackStableId, 1, image.world,
                     image.world.playablePropertyCount + image.world.actionCount));
             builder.AddMedia(ContainerMatrixWorld::kFirstSound, firstSamples);
@@ -25539,9 +25539,9 @@ TEST(PackComposition, NestedVariableTrackQueueCompletesWithPreparingPackLease) {
         }
         image.world.identity.capabilityMask = detail::ComputeCurrentWorldLocalCapabilityMaskV1(image.world);
         image.world.identity.runtimeSemanticFingerprint = ComputeCurrentWorldFingerprintV4(image.world);
-        ImageBuilder builder(kPackKindCanonicalContent);
-        builder.AddEntry(kPackEntryKindPackRequirementBlock, 22, RequirementPayload(22, 1, 1));
-        builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, 22,
+        ImageBuilder builder(HK_PACK_KIND_CANONICAL_CONTENT);
+        builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, 22, RequirementPayload(22, 1, 1));
+        builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, 22,
             WrapWorldPartition(22, 1, image.world, image.world.playablePropertyCount +
                 image.world.actionCount + image.world.variableCount));
         builder.AddMedia(ContainerMatrixWorld::kFirstSound, first);
@@ -27383,21 +27383,21 @@ TEST(PackComposition, FrozenSelectionIdentityTracksCanonicalUnionNotPublicationH
 }
 
 std::vector<std::uint8_t> Kind26OverlayPayload(std::initializer_list<PackVariablePolicyRow> rows) {
-    std::vector<std::uint8_t> payload(kPackVariablePolicyHeaderBytes + rows.size() *
-        (kPackVariablePolicyRowBytes + kPackVariableAnchorCountBytes + kPackVariableLabelHeaderBytes), 0);
-    SerializePackVariablePolicyHeader({static_cast<std::uint32_t>(rows.size())}, payload.data());
-    std::size_t cursor = kPackVariablePolicyHeaderBytes;
+    std::vector<std::uint8_t> payload(kPackBytes<HkPackVariablePolicyHeader> + rows.size() *
+        (kPackBytes<HkPackVariablePolicyRow> + kPackBytes<HkPackVariableAnchorCount> + kPackBytes<HkPackVariableLabelHeader>), 0);
+    SerializePackRow<HkPackVariablePolicyHeader>(PackVariablePolicyHeader{static_cast<std::uint32_t>(rows.size())}, payload.data());
+    std::size_t cursor = kPackBytes<HkPackVariablePolicyHeader>;
     for (const auto& row : rows) {
-        SerializePackVariablePolicyRow(row, payload.data() + cursor);
-        cursor += kPackVariablePolicyRowBytes;
+        SerializePackRow<HkPackVariablePolicyRow>(row, payload.data() + cursor);
+        cursor += kPackBytes<HkPackVariablePolicyRow>;
     }
     for (std::size_t i = 0; i < rows.size(); ++i) {
-        SerializePackVariableAnchorCount({0}, payload.data() + cursor);
-        cursor += kPackVariableAnchorCountBytes;
+        SerializePackRow<HkPackVariableAnchorCount>(PackVariableAnchorHeader{0}, payload.data() + cursor);
+        cursor += kPackBytes<HkPackVariableAnchorCount>;
     }
     for (const auto& row : rows) {
-        SerializePackVariableLabelHeader({ComputeVariableLabelMappingFingerprintV1(row.variableId, {}), 0}, payload.data() + cursor);
-        cursor += kPackVariableLabelHeaderBytes;
+        SerializePackRow<HkPackVariableLabelHeader>(PackVariableLabelHeader{ComputeVariableLabelMappingFingerprintV1(row.variableId, {}), 0}, payload.data() + cursor);
+        cursor += kPackBytes<HkPackVariableLabelHeader>;
     }
     return payload;
 }
@@ -27420,15 +27420,15 @@ std::vector<std::uint8_t> BuildInitWithVariableOverlay(
     world.identity.capabilityMask = kWorldCapabilityVariableDefinitions;
     world.identity.runtimeSemanticFingerprint =
         ComputeCurrentWorldFingerprintV4(world);
-    ImageBuilder builder(kPackKindInit);
+    ImageBuilder builder(HK_PACK_KIND_INIT);
     const auto revision = names ? names->initContentRevision : 1;
-    builder.AddEntry(kPackEntryKindPackRequirementBlock, 11,
+    builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, 11,
                      RequirementPayload(11, revision, 1));
-    builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, 11,
+    builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, 11,
                      WrapWorldPartition(11, 1, world, 1));
     harkentest::packfoundation::AppendNeutralMasterSnapshot(&builder);
     if (emitOverlay) {
-        builder.AddEntry(kPackEntryKindVariablePolicyOverlay, 0,
+        builder.AddEntry(HK_PACK_ENTRY_KIND_VARIABLE_POLICY_OVERLAY, 0,
                          emptyOverlay
                              ? Kind26OverlayPayload({})
                              : Kind26OverlayPayload({{variableId, writers, fingerprint}}));
@@ -27453,13 +27453,13 @@ std::vector<std::uint8_t> BuildInitWithTwoVariables(
     world.identity.capabilityMask = kWorldCapabilityVariableDefinitions;
     world.identity.runtimeSemanticFingerprint =
         ComputeCurrentWorldFingerprintV4(world);
-    ImageBuilder builder(kPackKindInit);
-    builder.AddEntry(kPackEntryKindPackRequirementBlock, 11,
+    ImageBuilder builder(HK_PACK_KIND_INIT);
+    builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, 11,
                      RequirementPayload(11, 1, 1));
-    builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, 11,
+    builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, 11,
                      WrapWorldPartition(11, 1, world, 2));
     harkentest::packfoundation::AppendNeutralMasterSnapshot(&builder);
-    builder.AddEntry(kPackEntryKindVariablePolicyOverlay, 0,
+    builder.AddEntry(HK_PACK_ENTRY_KIND_VARIABLE_POLICY_OVERLAY, 0,
                      Kind26OverlayPayload({{harkentest::ObjectId(7), writersA, fingerprintA},
                                            {harkentest::ObjectId(8), writersB, fingerprintB}}));
     return builder.Build();
@@ -27471,7 +27471,7 @@ bool LoadInitPack(const std::vector<std::uint8_t>& bytes, const char* name,
     *handle = 0;
     harken::PackCanonicalImage image;
     if (ParsePackCanonicalImage(bytes.data(), bytes.size(), &image) != VN_OK ||
-        image.packKind != kPackKindInit) {
+        image.packKind != HK_PACK_KIND_INIT) {
         return false;
     }
     if (names != nullptr) {
@@ -27692,10 +27692,10 @@ VnResult LoadAuthoredStopNestedVariableControlPackForTest(
     VnObjectId soundId, const std::vector<float>& samples) {
     constexpr std::uint64_t kPackStableId = 22;
     constexpr const char* kLocator = "u6-stop-nested-vc.pack";
-    ImageBuilder builder(kPackKindCanonicalContent);
-    builder.AddEntry(kPackEntryKindPackRequirementBlock, kPackStableId,
+    ImageBuilder builder(HK_PACK_KIND_CANONICAL_CONTENT);
+    builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, kPackStableId,
                      RequirementPayload(kPackStableId, 1, 1));
-    builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, kPackStableId,
+    builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, kPackStableId,
                      WrapWorldPartition(
                          kPackStableId, 1, world,
                          world.variableCount + world.playablePropertyCount +

@@ -339,18 +339,6 @@ target_include_directories(harken_bus_compiler_tests PRIVATE ${CMAKE_CURRENT_SOU
 gtest_discover_tests(harken_bus_compiler_tests TEST_PREFIX "BusCompiler." PROPERTIES TIMEOUT 120)
 
 harken_add_ci_test_target(editor)
-add_test(NAME studio_reference_slots_generated_check
-    COMMAND ${Python3_EXECUTABLE}
-        ${CMAKE_SOURCE_DIR}/HarkenStudio/Source/Tooling/ReferenceSlots/slots/gen_reference_slots.py
-        --check)
-add_test(NAME studio_playable_properties_generated_check
-    COMMAND ${Python3_EXECUTABLE}
-        ${CMAKE_SOURCE_DIR}/HarkenStudio/Source/Tooling/PlayableProperties/properties/gen_playable_properties.py
-        --check)
-add_test(NAME studio_pack_wire_generated_check
-    COMMAND ${Python3_EXECUTABLE}
-        ${CMAKE_SOURCE_DIR}/.scripts/pack_wire_codegen.py
-        --check)
 add_test(NAME studio_schema_archive_unit
     COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/.scripts/tests/test_schema_archive.py"
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})

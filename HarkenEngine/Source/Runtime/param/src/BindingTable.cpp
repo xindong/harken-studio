@@ -9,7 +9,7 @@
 #include <harken/Harken.h>
 
 #include "harken/param/EffectParamLocator.h"
-#include "harken/render/generated/harken_effect_registry.g.h"
+#include "harken/render/EffectRegistry.h"
 
 #include <bit>
 #include <cmath>

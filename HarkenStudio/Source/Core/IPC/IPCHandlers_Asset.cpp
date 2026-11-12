@@ -723,12 +723,12 @@ QJsonObject IPCServer::handleGetPackInfo(const QJsonObject& args)
     using namespace harkenstudiobuild;
     const auto* data = reinterpret_cast<const uint8_t*>(bytes.constData());
     PackFileHeader header;
-    if (bytes.size() < kPackFileHeaderBytes || !ReadPackFileHeader(data, &header))
+    if (bytes.size() < kPackBytes<HkPackFileHeader> || !ReadPackFileHeader(data, &header))
         return errorResponse("INVALID_PACK", "Invalid pack header");
     PackCanonicalImage canonical;
     PackLogicImage logic;
-    const bool isCanonical = header.packKind == kPackKindInit
-        || header.packKind == kPackKindCanonicalContent;
+    const bool isCanonical = header.packKind == HK_PACK_KIND_INIT
+        || header.packKind == HK_PACK_KIND_CANONICAL_CONTENT;
     const auto parsed = isCanonical
         ? ParsePackCanonicalImage(data, bytes.size(), &canonical)
         : ParsePackV2Image(data, bytes.size(), &logic);
@@ -738,7 +738,7 @@ QJsonObject IPCServer::handleGetPackInfo(const QJsonObject& args)
     QJsonArray sections;
     for (uint32_t index = 0; index < header.entryCount; ++index) {
         const auto entry = ReadPackDirectoryEntry(
-            data + header.directoryOffset + static_cast<uint64_t>(index) * kPackDirectoryEntryBytes);
+            data + header.directoryOffset + static_cast<uint64_t>(index) * kPackBytes<HkPackDirectoryEntry>);
         sections.append(QJsonObject{
             {"kind", static_cast<qint64>(entry.kind)},
             {"vintage", static_cast<qint64>(entry.vintage)},
@@ -756,7 +756,7 @@ QJsonObject IPCServer::handleGetPackInfo(const QJsonObject& args)
         {"packKind", static_cast<qint64>(header.packKind)},
         {"sectionCount", static_cast<qint64>(header.entryCount)},
         {"directoryChecksum", QString::number(header.directoryChecksum, 16)},
-        {"isInitPack", header.packKind == kPackKindInit},
+        {"isInitPack", header.packKind == HK_PACK_KIND_INIT},
         {"media_count", static_cast<qint64>(isCanonical ? canonical.media.size() : logic.media.size())},
         {"sections", sections}};
     if (isCanonical)

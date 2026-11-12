@@ -818,7 +818,7 @@ struct PackBodyReadAction : PackBodyReadRow<ActionProgramViewV1> {
     bool PrepareSteps(std::uint64_t count) noexcept {
         state.actionSteps += count;
         return count != 0 && count <= kPackBodyActionStepCap && state.actionSteps <= kHardActionStepCapacity &&
-               count <= (state.reader.size - state.reader.offset) / kPackBodyWorldActionStepBytes &&
+               count <= (state.reader.size - state.reader.offset) / kPackBytes<HkPackBodyWorldActionStep> &&
                state.Resize(owned.steps, count, kPackBodyActionStepCap);
     }
     auto& Steps(std::uint64_t i) noexcept { return owned.steps[static_cast<std::size_t>(i)]; }
@@ -885,7 +885,7 @@ struct PackBodyReadHeader : PackBodyReadRow<ContainerWorldInstallViewV1> {
                value.containerCount <= kHardContainerProgramCapacity &&
                value.transitionCount <= kHardPlayablePropertyChildRowCapacity &&
                value.actionCount <= kHardActionDefinitionCapacity &&
-               value.actionCount <= (state.reader.size - state.reader.offset) / kPackBodyWorldActionHeaderBytes &&
+               value.actionCount <= (state.reader.size - state.reader.offset) / kPackBytes<HkPackBodyWorldActionHeader> &&
                prefix.playablePropertySendCount <= kHardPlayablePropertyChildRowCapacity &&
                prefix.reservedChildCount1 <= kHardPlayablePropertyChildRowCapacity &&
                prefix.reservedChildCount2 <= kHardPlayablePropertyChildRowCapacity &&
@@ -1119,16 +1119,16 @@ bool EncodeCurrentWorldPreviewBody(const ContainerWorldInstallViewV1& world,
         const auto offset = out.size();
         const auto relations = std::uint64_t{world.signalRelationCount};
         const auto receivers = std::uint64_t{world.signalReceiverCount};
-        out.resize(offset + kPackBodyWorldSignalCountsBytes +
-                   relations * kPackBodyWorldSignalRelationBytes +
-                   receivers * kPackBodyWorldSignalReceiverBytes);
+        out.resize(offset + kPackBytes<HkPackBodyWorldSignalCounts> +
+                   relations * kPackBytes<HkPackBodyWorldSignalRelation> +
+                   receivers * kPackBytes<HkPackBodyWorldSignalReceiver>);
         auto* cursor = out.data() + offset;
-        SerializePackBodyWorldSignalCounts(world, cursor);
-        cursor += kPackBodyWorldSignalCountsBytes;
-        for (std::uint64_t i = 0; i < relations; ++i, cursor += kPackBodyWorldSignalRelationBytes)
-            SerializePackBodyWorldSignalRelation(world.signalRelations[i], cursor);
-        for (std::uint64_t i = 0; i < receivers; ++i, cursor += kPackBodyWorldSignalReceiverBytes)
-            SerializePackBodyWorldSignalReceiver(world.signalReceivers[i], cursor);
+        SerializePackRow<HkPackBodyWorldSignalCounts>(world, cursor);
+        cursor += kPackBytes<HkPackBodyWorldSignalCounts>;
+        for (std::uint64_t i = 0; i < relations; ++i, cursor += kPackBytes<HkPackBodyWorldSignalRelation>)
+            SerializePackRow<HkPackBodyWorldSignalRelation>(world.signalRelations[i], cursor);
+        for (std::uint64_t i = 0; i < receivers; ++i, cursor += kPackBytes<HkPackBodyWorldSignalReceiver>)
+            SerializePackRow<HkPackBodyWorldSignalReceiver>(world.signalReceivers[i], cursor);
         return true;
     } catch (...) { out.clear(); return false; }
 }
@@ -1155,14 +1155,14 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
         PackBodyReadWorld<Impl> visitor{{{}, world}, *decoded, state};
         if (!ReadPackBodyWorldBody(reader, visitor)) return state.result;
         if (worldTraceVintage == kCurrentWorldBodyVintageV20) {
-            const auto* counts = reader.Take(kPackBodyWorldSignalCountsBytes);
+            const auto* counts = reader.Take(kPackBytes<HkPackBodyWorldSignalCounts>);
             if (counts == nullptr ||
-                !ParsePackBodyWorldSignalCounts(counts, kPackBodyWorldSignalCountsBytes, &world))
+                !ParsePackRow<HkPackBodyWorldSignalCounts>(counts, kPackBytes<HkPackBodyWorldSignalCounts>, &world))
                 return CurrentWorldBodyDecodeResult::Invalid;
             const auto relations = world.signalRelationCount;
             const auto receivers = world.signalReceiverCount;
-            const auto tableBytes = std::uint64_t{relations} * kPackBodyWorldSignalRelationBytes +
-                std::uint64_t{receivers} * kPackBodyWorldSignalReceiverBytes;
+            const auto tableBytes = std::uint64_t{relations} * kPackBytes<HkPackBodyWorldSignalRelation> +
+                std::uint64_t{receivers} * kPackBytes<HkPackBodyWorldSignalReceiver>;
             if (tableBytes != reader.size - reader.offset ||
                 relations > decoded->signalRelations.max_size() ||
                 receivers > decoded->signalReceivers.max_size())
@@ -1170,15 +1170,15 @@ CurrentWorldBodyDecodeResult CurrentWorldBodyImage::DecodeWithResult(
             decoded->signalRelations.resize(relations);
             decoded->signalReceivers.resize(receivers);
             for (auto& row : decoded->signalRelations) {
-                const auto* bytes = reader.Take(kPackBodyWorldSignalRelationBytes);
+                const auto* bytes = reader.Take(kPackBytes<HkPackBodyWorldSignalRelation>);
                 if (bytes == nullptr ||
-                    !ParsePackBodyWorldSignalRelation(bytes, kPackBodyWorldSignalRelationBytes, &row))
+                    !ParsePackRow<HkPackBodyWorldSignalRelation>(bytes, kPackBytes<HkPackBodyWorldSignalRelation>, &row))
                     return CurrentWorldBodyDecodeResult::Invalid;
             }
             for (auto& row : decoded->signalReceivers) {
-                const auto* bytes = reader.Take(kPackBodyWorldSignalReceiverBytes);
+                const auto* bytes = reader.Take(kPackBytes<HkPackBodyWorldSignalReceiver>);
                 if (bytes == nullptr ||
-                    !ParsePackBodyWorldSignalReceiver(bytes, kPackBodyWorldSignalReceiverBytes, &row))
+                    !ParsePackRow<HkPackBodyWorldSignalReceiver>(bytes, kPackBytes<HkPackBodyWorldSignalReceiver>, &row))
                     return CurrentWorldBodyDecodeResult::Invalid;
             }
         }

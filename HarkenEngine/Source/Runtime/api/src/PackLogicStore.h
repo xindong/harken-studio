@@ -49,7 +49,7 @@ struct UnpackedBindingCurve {
 struct PackLogicRecord {
     bool used = false;
     VnPackHandle handle = 0;
-    std::uint32_t packKind = kPackKindContent;
+    std::uint32_t packKind = HK_PACK_KIND_CONTENT;
 
     std::vector<PackBusEntry> buses;
     std::vector<PackBusSendEntry> busSends;
@@ -89,7 +89,7 @@ struct PackBusEffectReservation {
 // whole on a late failure with the old revision intact.
 struct PackPendingRevision {
     VnPackHandle handle = 0;
-    std::uint32_t packKind = kPackKindContent;
+    std::uint32_t packKind = HK_PACK_KIND_CONTENT;
     PackLogicImage image;
     PackTable::AlignedBuffer bytes;
     std::vector<VnPackHandle> providers;

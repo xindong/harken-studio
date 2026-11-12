@@ -8,9 +8,9 @@ add_executable(harken_object_identity_tests
 target_include_directories(harken_object_identity_tests PRIVATE
     ${HARKEN_RUNTIME_DIR}/api/include
     ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/core/contract/include
     ${HARKEN_RUNTIME_DIR}/dsp/include
     ${HARKEN_RUNTIME_DIR}/media/include
+    ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
     ${HARKEN_RUNTIME_DIR}/param/include
     ${HARKEN_RUNTIME_DIR}/remote/include
     ${HARKEN_RUNTIME_DIR}/render/include
@@ -33,10 +33,9 @@ target_link_libraries(harken_remote_runtime_tests PRIVATE harken_core harken_bui
 target_include_directories(harken_remote_runtime_tests PRIVATE
     ${HARKEN_RUNTIME_DIR}/api/src
     ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/core/contract/include
     ${HARKEN_RUNTIME_DIR}/dsp/include
     ${HARKEN_RUNTIME_DIR}/media/include
-    ${HARKEN_RUNTIME_DIR}/media/contract/include
+    ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
     ${HARKEN_RUNTIME_DIR}/param/include
     ${HARKEN_RUNTIME_DIR}/render/include
     ${HARKEN_THIRD_PARTY_DIR}/miniaudio
@@ -66,10 +65,9 @@ target_include_directories(harken_monitor_runtime_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/HarkenEngine/Tool/Remote/generated
     ${HARKEN_RUNTIME_DIR}/api/src
     ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/core/contract/include
     ${HARKEN_RUNTIME_DIR}/dsp/include
     ${HARKEN_RUNTIME_DIR}/media/include
-    ${HARKEN_RUNTIME_DIR}/media/contract/include
+    ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
     ${HARKEN_RUNTIME_DIR}/param/include
     ${HARKEN_RUNTIME_DIR}/render/include
     ${HARKEN_THIRD_PARTY_DIR}/miniaudio
@@ -89,8 +87,8 @@ add_executable(harken_pack_storage_tests
 target_link_libraries(harken_pack_storage_tests PRIVATE harken_core harken_buildinfo GTest::gtest_main)
 target_include_directories(harken_pack_storage_tests PRIVATE
     ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/core/contract/include
     ${HARKEN_RUNTIME_DIR}/media/include
+    ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
     ${HARKEN_RUNTIME_DIR}/param/include
     ${HARKEN_RUNTIME_DIR}/render/include
     ${HARKEN_RUNTIME_DIR}/dsp/include
@@ -326,12 +324,8 @@ add_executable(harken_runtime_tests
     E2E/TraceReplayTest.cpp
     E2E/PackLogicRoundtripTest.cpp
 )
-# ResourceFactsTest.cpp includes harken/media/ResourceFacts.h, which now pulls in
-# the engine-free harken/media/ResourceFactsValue.h from a separate include root.
-# The interface target carries that root (and no linked code), so the test can
-# resolve it without this target learning the whole media include layout.
 target_link_libraries(harken_runtime_tests PRIVATE harken_core harken_buildinfo harken_remote
-                      harken_resource_facts_contract harken_program_registration
+                      harken_program_registration
                       harken_preview GTest::gtest_main)
 if(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
     target_compile_definitions(harken_runtime_tests PRIVATE
@@ -372,9 +366,9 @@ target_compile_definitions(harken_runtime_tests PRIVATE HARKEN_EFFECT_TYPE_STATS
 target_include_directories(harken_runtime_tests PRIVATE
     ${HARKEN_RUNTIME_DIR}/api/src
     ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/core/contract/include
     ${HARKEN_RUNTIME_DIR}/dsp/include
     ${HARKEN_RUNTIME_DIR}/media/include
+    ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
     ${HARKEN_RUNTIME_DIR}/param/include
     ${HARKEN_RUNTIME_DIR}/render/include
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -430,9 +424,9 @@ target_link_libraries(harken_variable_name_set_test PRIVATE harken_core harken_b
 target_include_directories(harken_variable_name_set_test PRIVATE
     ${HARKEN_RUNTIME_DIR}/api/src
     ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/core/contract/include
     ${HARKEN_RUNTIME_DIR}/dsp/include
     ${HARKEN_RUNTIME_DIR}/media/include
+    ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
     ${HARKEN_RUNTIME_DIR}/param/include
     ${HARKEN_RUNTIME_DIR}/render/include
     ${CMAKE_CURRENT_SOURCE_DIR})
@@ -445,14 +439,14 @@ gtest_discover_tests(harken_variable_name_set_test)
 add_executable(harken_pack_schema_tests
     UnitTest/PackFoundationQualificationTest.cpp)
 target_link_libraries(harken_pack_schema_tests PRIVATE
-    harken_core harken_buildinfo harken_resource_facts_contract GTest::gtest_main)
+    harken_core harken_buildinfo GTest::gtest_main)
 target_include_directories(harken_pack_schema_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${HARKEN_RUNTIME_DIR}/api/src
     ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/core/contract/include
     ${HARKEN_RUNTIME_DIR}/dsp/include
     ${HARKEN_RUNTIME_DIR}/media/include
+    ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
     ${HARKEN_RUNTIME_DIR}/param/include
     ${HARKEN_RUNTIME_DIR}/render/include)
 target_compile_definitions(harken_pack_schema_tests PRIVATE
@@ -485,9 +479,9 @@ target_link_libraries(harken_runtime_tests_hub_absent PRIVATE
 target_include_directories(harken_runtime_tests_hub_absent PRIVATE
     ${HARKEN_RUNTIME_DIR}/api/src
     ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/core/contract/include
     ${HARKEN_RUNTIME_DIR}/dsp/include
     ${HARKEN_RUNTIME_DIR}/media/include
+    ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
     ${HARKEN_RUNTIME_DIR}/param/include
     ${HARKEN_RUNTIME_DIR}/render/include
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -515,7 +509,6 @@ target_link_libraries(harken_render_worker_wake_fallback_tests PRIVATE
     GTest::gtest_main)
 target_include_directories(harken_render_worker_wake_fallback_tests PRIVATE
     ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/core/contract/include
     ${HARKEN_RUNTIME_DIR}/render/include
 )
 target_compile_definitions(harken_render_worker_wake_fallback_tests PRIVATE
@@ -544,7 +537,6 @@ target_link_libraries(harken_render_worker_deadline_tests PRIVATE
     GTest::gtest_main)
 target_include_directories(harken_render_worker_deadline_tests PRIVATE
     ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/core/contract/include
     ${HARKEN_RUNTIME_DIR}/render/include
 )
 target_compile_definitions(harken_render_worker_deadline_tests PRIVATE
@@ -582,7 +574,6 @@ add_executable(harken_rt_probe_worker_tests
 )
 target_include_directories(harken_rt_probe_worker_tests PRIVATE
     ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/core/contract/include
     ${HARKEN_RUNTIME_DIR}/render/include
 )
 target_compile_definitions(harken_rt_probe_worker_tests PRIVATE
@@ -650,17 +641,9 @@ function(_harken_add_python_check_test test_name)
         LABELS harken-source-contract TIMEOUT 120)
 endfunction()
 
-_harken_add_python_check_test(effect_registry_manifest_check
-    "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Tooling/Effects/gen_effect_registry.py"
-    --check)
 _harken_add_python_check_test(binding_generated_check
     "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Tooling/Binding/gen_binding.py"
     --check)
-_harken_add_python_check_test(pack_wire_generated_check
-    "${CMAKE_SOURCE_DIR}/.scripts/pack_wire_codegen.py"
-    --check)
-_harken_add_python_check_test(pack_wire_codegen_unit
-    "${CMAKE_SOURCE_DIR}/.scripts/tests/test_pack_wire_codegen.py")
 _harken_add_python_check_test(managed_generation_policy_check
     "${CMAKE_SOURCE_DIR}/HarkenEngine/Test/UnitTest/test_managed_generation_policy.py")
 _harken_add_python_check_test(remote_wire_generated_check
@@ -767,9 +750,9 @@ target_include_directories(harken_benchmarks PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${HARKEN_RUNTIME_DIR}/api/src
     ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/core/contract/include
     ${HARKEN_RUNTIME_DIR}/dsp/include
     ${HARKEN_RUNTIME_DIR}/media/include
+    ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
     ${HARKEN_RUNTIME_DIR}/param/include
     ${HARKEN_RUNTIME_DIR}/render/include
 )
@@ -789,9 +772,9 @@ target_include_directories(harken_resample_benchmark PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${HARKEN_RUNTIME_DIR}/api/src
     ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/core/contract/include
     ${HARKEN_RUNTIME_DIR}/dsp/include
     ${HARKEN_RUNTIME_DIR}/media/include
+    ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
     ${HARKEN_RUNTIME_DIR}/param/include
     ${HARKEN_RUNTIME_DIR}/render/include
 )
@@ -815,9 +798,9 @@ target_include_directories(harken_runtime_capacity_benchmark PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${HARKEN_RUNTIME_DIR}/api/src
     ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/core/contract/include
     ${HARKEN_RUNTIME_DIR}/dsp/include
     ${HARKEN_RUNTIME_DIR}/media/include
+    ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
     ${HARKEN_RUNTIME_DIR}/param/include
     ${HARKEN_RUNTIME_DIR}/render/include
 )
@@ -837,9 +820,9 @@ target_include_directories(harken_pack_foundation_qualification PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${HARKEN_RUNTIME_DIR}/api/src
     ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/core/contract/include
     ${HARKEN_RUNTIME_DIR}/dsp/include
     ${HARKEN_RUNTIME_DIR}/media/include
+    ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
     ${HARKEN_RUNTIME_DIR}/param/include
     ${HARKEN_RUNTIME_DIR}/render/include
 )
@@ -861,9 +844,9 @@ target_include_directories(harken_exported_pack_qualification PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${HARKEN_RUNTIME_DIR}/api/src
     ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/core/contract/include
     ${HARKEN_RUNTIME_DIR}/dsp/include
     ${HARKEN_RUNTIME_DIR}/media/include
+    ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
     ${HARKEN_RUNTIME_DIR}/param/include
     ${HARKEN_RUNTIME_DIR}/render/include
 )
@@ -883,9 +866,9 @@ target_include_directories(harken_denormal_probe PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${HARKEN_RUNTIME_DIR}/api/src
     ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/core/contract/include
     ${HARKEN_RUNTIME_DIR}/dsp/include
     ${HARKEN_RUNTIME_DIR}/media/include
+    ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
     ${HARKEN_RUNTIME_DIR}/param/include
     ${HARKEN_RUNTIME_DIR}/render/include
 )
@@ -906,9 +889,9 @@ target_include_directories(harken_meter_benchmark PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${HARKEN_RUNTIME_DIR}/api/src
     ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/core/contract/include
     ${HARKEN_RUNTIME_DIR}/dsp/include
     ${HARKEN_RUNTIME_DIR}/media/include
+    ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
     ${HARKEN_RUNTIME_DIR}/param/include
     ${HARKEN_RUNTIME_DIR}/render/include
 )

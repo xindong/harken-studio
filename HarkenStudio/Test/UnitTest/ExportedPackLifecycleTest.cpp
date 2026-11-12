@@ -1411,21 +1411,21 @@ bool att06StageTree(const std::filesystem::path& src, const std::filesystem::pat
 bool att06ChoosePayload(const std::vector<uint8_t>& bytes, uint64_t* offset, uint64_t* size,
                         uint64_t* payloadChecksum, uint64_t* directoryChecksum)
 {
-    if (bytes.size() < harkenstudiobuild::kPackFileHeaderBytes)
+    if (bytes.size() < harkenstudiobuild::kPackBytes<HkPackFileHeader>)
         return false;
     harkenstudiobuild::PackFileHeader header;
     if (!harkenstudiobuild::ReadPackFileHeader(bytes.data(), &header))
         return false;
     if (header.fileBytes != bytes.size() ||
-        header.headerBytes != harkenstudiobuild::kPackFileHeaderBytes ||
-        header.directoryOffset != harkenstudiobuild::kPackFileHeaderBytes)
+        header.headerBytes != harkenstudiobuild::kPackBytes<HkPackFileHeader> ||
+        header.directoryOffset != harkenstudiobuild::kPackBytes<HkPackFileHeader>)
         return false;
     if (header.entryCount == 0 ||
         header.entryCount > (std::numeric_limits<uint64_t>::max() /
-                             harkenstudiobuild::kPackDirectoryEntryBytes))
+                             harkenstudiobuild::kPackBytes<HkPackDirectoryEntry>))
         return false;
     const uint64_t dirBytes =
-        uint64_t(header.entryCount) * harkenstudiobuild::kPackDirectoryEntryBytes;
+        uint64_t(header.entryCount) * harkenstudiobuild::kPackBytes<HkPackDirectoryEntry>;
     if (header.directoryOffset > bytes.size() ||
         dirBytes > bytes.size() - header.directoryOffset)
         return false;
@@ -1437,11 +1437,11 @@ bool att06ChoosePayload(const std::vector<uint8_t>& bytes, uint64_t* offset, uin
     for (uint32_t i = 0; i < header.entryCount; ++i) {
         const auto entry = harkenstudiobuild::ReadPackDirectoryEntry(
             bytes.data() + header.directoryOffset +
-            size_t(i) * harkenstudiobuild::kPackDirectoryEntryBytes);
-        if (entry.kind == harkenstudiobuild::kPackEntryKindInitRoutingCatalog)
+            size_t(i) * harkenstudiobuild::kPackBytes<HkPackDirectoryEntry>);
+        if (entry.kind == HK_PACK_ENTRY_KIND_RETIRED_INIT_ROUTING_CATALOG)
             continue;
         if (entry.size == 0 || entry.offset < dirEnd ||
-            entry.offset % harkenstudiobuild::kPackPayloadAlign != 0 ||
+            entry.offset % HK_PACK_PAYLOAD_ALIGN != 0 ||
             entry.offset > bytes.size() ||
             entry.size > bytes.size() - entry.offset)
             continue;
@@ -1545,13 +1545,13 @@ std::vector<std::uint8_t> att05ReadFile(const QString& path)
 
 bool att05DropAttenuationEntry(std::vector<std::uint8_t>* bytes, VnObjectId target, int* removedCount)
 {
-    if (bytes->size() < harkenstudiobuild::kPackFileHeaderBytes)
+    if (bytes->size() < harkenstudiobuild::kPackBytes<HkPackFileHeader>)
         return false;
     harkenstudiobuild::PackFileHeader header;
     if (!harkenstudiobuild::ReadPackFileHeader(bytes->data(), &header))
         return false;
     const uint64_t directoryBytes =
-        static_cast<uint64_t>(header.entryCount) * harkenstudiobuild::kPackDirectoryEntryBytes;
+        static_cast<uint64_t>(header.entryCount) * harkenstudiobuild::kPackBytes<HkPackDirectoryEntry>;
     if (header.directoryOffset != header.headerBytes || header.entryCount == 0
         || header.directoryOffset + directoryBytes > bytes->size())
         return false;
@@ -1560,8 +1560,8 @@ bool att05DropAttenuationEntry(std::vector<std::uint8_t>* bytes, VnObjectId targ
     for (uint32_t index = 0; index < header.entryCount; ++index) {
         const auto entry = harkenstudiobuild::ReadPackDirectoryEntry(
             bytes->data() + header.directoryOffset
-            + static_cast<size_t>(index) * harkenstudiobuild::kPackDirectoryEntryBytes);
-        if (entry.kind != harkenstudiobuild::kPackEntryKindAttenuation)
+            + static_cast<size_t>(index) * harkenstudiobuild::kPackBytes<HkPackDirectoryEntry>);
+        if (entry.kind != HK_PACK_ENTRY_KIND_ATTENUATION)
             continue;
         ++attenuationCount;
         if (entry.id == target) {
@@ -1574,13 +1574,13 @@ bool att05DropAttenuationEntry(std::vector<std::uint8_t>* bytes, VnObjectId targ
         return false;
     auto* directory = bytes->data() + header.directoryOffset;
     const uint32_t tail = header.entryCount - static_cast<uint32_t>(found) - 1u;
-    std::memmove(directory + static_cast<size_t>(found) * harkenstudiobuild::kPackDirectoryEntryBytes,
-                 directory + (static_cast<size_t>(found) + 1u) * harkenstudiobuild::kPackDirectoryEntryBytes,
-                 static_cast<size_t>(tail) * harkenstudiobuild::kPackDirectoryEntryBytes);
+    std::memmove(directory + static_cast<size_t>(found) * harkenstudiobuild::kPackBytes<HkPackDirectoryEntry>,
+                 directory + (static_cast<size_t>(found) + 1u) * harkenstudiobuild::kPackBytes<HkPackDirectoryEntry>,
+                 static_cast<size_t>(tail) * harkenstudiobuild::kPackBytes<HkPackDirectoryEntry>);
     header.entryCount -= 1u;
     header.directoryChecksum = harkenstudiobuild::Fnv1a64(
-        directory, static_cast<size_t>(header.entryCount) * harkenstudiobuild::kPackDirectoryEntryBytes);
-    harkenstudiobuild::SerializePackFileHeader(header, bytes->data());
+        directory, static_cast<size_t>(header.entryCount) * harkenstudiobuild::kPackBytes<HkPackDirectoryEntry>);
+    harkenstudiobuild::SerializePackRow<HkPackFileHeader>(header, bytes->data());
     *removedCount = attenuationCount;
     return true;
 }

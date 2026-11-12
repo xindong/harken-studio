@@ -404,6 +404,9 @@ namespace Harken
         [DllImport(LibraryName, EntryPoint = "Vn_SetEmitterValueByName", CallingConvention = CallingConvention.Cdecl)]
         public static extern VnResult Vn_SetEmitterValueByName(ulong handle, byte* utf8Name, float value);
 
+        [DllImport(LibraryName, EntryPoint = "Vn_QueryPackFormatVersion", CallingConvention = CallingConvention.Cdecl)]
+        public static extern VnResult Vn_QueryPackFormatVersion(ref VnPackFormatVersionInfo @out);
+
         [DllImport(LibraryName, EntryPoint = "Vn_QueryVariableCatalog", CallingConvention = CallingConvention.Cdecl)]
         public static extern VnResult Vn_QueryVariableCatalog(ref VnVariableCatalogInfoV1 @out);
 

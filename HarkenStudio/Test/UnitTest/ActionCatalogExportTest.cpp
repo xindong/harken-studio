@@ -219,7 +219,7 @@ protected:
         QJsonArray result;
         for (const auto& value : publication(outputDir)) {
             const auto row = value.toObject();
-            if (row.value("packKind").toInt() == harkenstudiobuild::kPackKindCanonicalContent)
+            if (row.value("packKind").toInt() == HK_PACK_KIND_CANONICAL_CONTENT)
                 result.append(row.value("companion"));
         }
         return result;
@@ -229,7 +229,7 @@ protected:
     {
         for (const auto& value : publication(outputDir)) {
             const auto row = value.toObject();
-            if (guid.isEmpty() ? row.value("packKind").toInt() == harkenstudiobuild::kPackKindInit
+            if (guid.isEmpty() ? row.value("packKind").toInt() == HK_PACK_KIND_INIT
                 : row.value("companion").toObject().value("guid").toString() == guid)
                 return row;
         }

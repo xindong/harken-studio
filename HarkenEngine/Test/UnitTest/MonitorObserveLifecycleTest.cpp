@@ -553,10 +553,10 @@ TEST(MonitorObserve, ActivatedInitRetainsProjectIdentityWhenOrdinaryUnloadRefuse
     const VnObjectId objectId{0x19, 0x37};
     std::uint64_t bodyBytes = 0;
     auto partition = PartitionPayload(kInitPackStableId, 1, 0, 0, &bodyBytes, 64, projectId);
-    ImageBuilder builder(harken::kPackKindInit);
-    builder.AddEntry(harken::kPackEntryKindPackRequirementBlock, kInitPackStableId,
+    ImageBuilder builder(HK_PACK_KIND_INIT);
+    builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, kInitPackStableId,
         RequirementPayload(kInitPackStableId, 1, 1, 0, bodyBytes));
-    builder.AddEntry(harken::kPackEntryKindCanonicalDefinitionPartition, kInitPackStableId,
+    builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, kInitPackStableId,
         std::move(partition));
     AppendNeutralMasterSnapshot(&builder);
     auto bytes = builder.Build();
@@ -635,14 +635,14 @@ TEST(MonitorObserve, LegacyResidentMasterEffectRetainsIdentityAndPackOwnership) 
     const VnObjectId effectId{0x19, 0x37};
     const VnObjectId masterId{0x4d4153544552, 1};
     EXPECT_EQ(0u, harken::CanonicalSnapshotPackedBusIdV1(masterId));
-    ImageBuilder builder(harken::kPackKindResident);
+    ImageBuilder builder(HK_PACK_KIND_RESIDENT);
     harken::PackBusEntry master{};
     master.busId = masterId;
     master.parentBusId = VN_BUS_MASTER;
-    std::vector<std::uint8_t> masterBytes(harken::kPackBusBytes);
-    harken::SerializePackBus(master, masterBytes.data());
-    builder.AddEntry(harken::kPackEntryKindBus, masterId, std::move(masterBytes),
-        harken::kPackBusVintage);
+    std::vector<std::uint8_t> masterBytes(harken::kPackBytes<HkPackBus>);
+    harken::SerializePackRow<HkPackBus>(master, masterBytes.data());
+    builder.AddEntry(HK_PACK_ENTRY_KIND_BUS, masterId, std::move(masterBytes),
+        HK_PACK_BUS_VINTAGE);
     harken::PackBusEffectEntry effect{};
     effect.busId = masterId;
     effect.effectId = effectId;
@@ -651,9 +651,9 @@ TEST(MonitorObserve, LegacyResidentMasterEffectRetainsIdentityAndPackOwnership) 
     effect.faderPointGuard = 8;
     effect.paramCount = 1;
     effect.paramBytes = sizeof(float);
-    std::vector<std::uint8_t> effectBytes(harken::kPackBusEffectBytes);
-    harken::SerializePackBusEffect(effect, effectBytes.data());
-    builder.AddEntry(harken::kPackEntryKindBusEffect, 0, std::move(effectBytes));
+    std::vector<std::uint8_t> effectBytes(harken::kPackBytes<HkPackBusEffect>);
+    harken::SerializePackRow<HkPackBusEffect>(effect, effectBytes.data());
+    builder.AddEntry(HK_PACK_ENTRY_KIND_BUS_EFFECT, 0, std::move(effectBytes));
     auto bytes = builder.Build();
     auto config = harkentest::MakeNullConfig();
     config.gainEffectPoolCapacity = 1;

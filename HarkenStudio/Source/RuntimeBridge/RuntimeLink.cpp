@@ -1477,12 +1477,12 @@ bool runtimeLoadPack(const QString& path, EngineResult* outResult)
     const QByteArray bytes = file.readAll();
     if (file.error() != QFileDevice::NoError) return false;
     harkenstudiobuild::PackFileHeader header{};
-    if (bytes.size() >= harkenstudiobuild::kPackFileHeaderBytes
+    if (bytes.size() >= harkenstudiobuild::kPackBytes<HkPackFileHeader>
         && harkenstudiobuild::ReadPackFileHeader(
             reinterpret_cast<const uint8_t*>(bytes.constData()), &header)
-        && header.headerBytes == harkenstudiobuild::kPackFileHeaderBytes
-        && (header.packKind == harkenstudiobuild::kPackKindInit
-            || header.packKind == harkenstudiobuild::kPackKindCanonicalContent)) {
+        && header.headerBytes == harkenstudiobuild::kPackBytes<HkPackFileHeader>
+        && (header.packKind == HK_PACK_KIND_INIT
+            || header.packKind == HK_PACK_KIND_CANONICAL_CONTENT)) {
         harkenstudiobuild::PackCanonicalImage image;
         if (harkenstudiobuild::ParsePackCanonicalImage(
                 reinterpret_cast<const uint8_t*>(bytes.constData()), bytes.size(), &image)

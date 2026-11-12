@@ -1,7 +1,7 @@
 #pragma once
 #include "Utils/ObjectId.h"
 
-#include "harken_playable_property_studio.g.h"
+#include "harken_playable_properties/PlayablePropertyStudio.h"
 #include "PlatformContext.h"
 #include "SelectionData.h"
 

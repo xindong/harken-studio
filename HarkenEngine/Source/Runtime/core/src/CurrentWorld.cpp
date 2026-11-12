@@ -1,10 +1,11 @@
+#include <harken_pack/PackChecksum.h>
 #include "harken/core/CurrentWorld.h"
 #include "harken/core/MediaContentRevision.h"
 #include "harken/core/detail/CurrentWorldValidation.h"
 
 #include "harken/param/VariableService.h"
 #include "harken/param/ParamTargetTable.h"
-#include "harken/render/generated/harken_effect_registry.g.h"
+#include "harken/render/EffectRegistry.h"
 
 #include <algorithm>
 #include <bit>
@@ -2036,7 +2037,7 @@ namespace {
 std::uint64_t ComputePlayablePropertyFingerprintImpl(
     const PlayablePropertyProgramViewV1& row,
     bool includeAncestorPayloadHeader) noexcept {
-    Fnv64 hash("HARKEN-PROPERTY-DEFINITION-V1");
+    Fnv64 hash(HK_PACK_DOMAIN_PROPERTY_DEFINITION_V1);
     hash.U32(static_cast<std::uint32_t>(row.contentPropertyKind));
     hash.U32(row.authoredStableOrder);
     hash.ObjectId(row.stableId);
@@ -2083,7 +2084,7 @@ std::uint64_t ComputePlayablePropertyFingerprintV1(
 
 std::uint64_t ComputePlayableOccurrenceFingerprintV1(
     const PlayableOccurrencePropertyViewV1& row) noexcept {
-    Fnv64 hash("HARKEN-PROPERTY-OCCURRENCE-V1");
+    Fnv64 hash(HK_PACK_DOMAIN_PROPERTY_OCCURRENCE_V1);
     hash.U32(static_cast<std::uint32_t>(row.parentKind));
     hash.U32(row.stableOccurrenceOrdinal);
     hash.ObjectId(row.parentStableId);
@@ -2153,14 +2154,14 @@ void HashSegmentSchedule(Fnv64& hash,
 
 std::uint64_t ComputeTrackScheduleFingerprintV1(
     const TrackScheduleProgramViewV1& row) noexcept {
-    Fnv64 hash("HARKEN-TRACK-SCHEDULE-V1");
+    Fnv64 hash(HK_PACK_DOMAIN_TRACK_SCHEDULE_V1);
     HashTrackSchedule(hash, row, true);
     return hash.Finish();
 }
 
 std::uint64_t ComputeSegmentScheduleFingerprintV1(
     const SegmentScheduleProgramViewV1& row) noexcept {
-    Fnv64 hash("HARKEN-PIECE-SCHEDULE-V1");
+    Fnv64 hash(HK_PACK_DOMAIN_PIECE_SCHEDULE_V1);
     HashSegmentSchedule(hash, row, true);
     return hash.Finish();
 }
@@ -2846,7 +2847,7 @@ std::uint64_t ComputeCurrentWorldFingerprintV3Replay(
 
 std::uint64_t ComputeActionProgramFingerprintV1(
     const ActionProgramViewV1& program) noexcept {
-    Fnv64 hash("HARKEN-ACTION-PROGRAM-V1");
+    Fnv64 hash(HK_PACK_DOMAIN_ACTION_PROGRAM_V1);
     if (!PointerMatches(program.stepCount, program.steps)) return 0;
     HashActionProgram(hash, program, true);
     return hash.Finish();
@@ -2932,7 +2933,7 @@ std::uint64_t ComputeCurrentWorldFingerprintV4(
 
 std::uint64_t ComputeCurrentWorldFingerprintV5(
     const ContainerWorldInstallViewV1& world) noexcept {
-    Fnv64 hash("HARKEN-WORLD-V5");
+    Fnv64 hash(HK_PACK_DOMAIN_WORLD_V5);
     hash.ObjectId(world.identity.projectId);
     CurrentWorldV3PrefixValues prefix{};
     if (!TryBuildCurrentWorldV3Prefix(world, true, &prefix) ||
@@ -3019,7 +3020,7 @@ std::uint64_t ComputeCurrentWorldFingerprintV7(
         !PointerMatches(world.signalReceiverCount, world.signalReceivers)) return 0;
     const auto legacy = ComputeCurrentWorldFingerprintV5(world);
     if (legacy == 0) return 0;
-    Fnv64 hash("HARKEN-WORLD-V7");
+    Fnv64 hash(HK_PACK_DOMAIN_WORLD_V7);
     hash.U32(world.sourceBodyVintage);
     hash.U64(legacy);
     hash.U32(world.signalRelationCount);

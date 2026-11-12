@@ -1210,49 +1210,49 @@ bool writeCanonicalPack(const QString& outputPath,
                         PackBuildSession::CanonicalPackKind packKind,
                         QString* error)
 {
-    const std::uint64_t dirOffset = harkenstudiobuild::kPackFileHeaderBytes;
+    const std::uint64_t dirOffset = harkenstudiobuild::kPackBytes<HkPackFileHeader>;
     const std::uint64_t dirBytes =
-        static_cast<std::uint64_t>(entries.size()) * harkenstudiobuild::kPackDirectoryEntryBytes;
-    std::uint64_t cursor = alignUp(dirOffset + dirBytes, harkenstudiobuild::kPackPayloadAlign);
+        static_cast<std::uint64_t>(entries.size()) * harkenstudiobuild::kPackBytes<HkPackDirectoryEntry>;
+    std::uint64_t cursor = alignUp(dirOffset + dirBytes, HK_PACK_PAYLOAD_ALIGN);
     std::vector<std::uint64_t> offsets(entries.size(), 0);
     std::vector<std::uint64_t> payloadSizes(entries.size(), 0);
     std::uint64_t contentEnd = dirOffset + dirBytes;
     for (std::size_t i = 0; i < entries.size(); ++i) {
         offsets[i] = cursor;
-        payloadSizes[i] = entries[i].kind == harkenstudiobuild::kPackEntryKindMedia
-            ? harkenstudiobuild::kPackMediaBytes
+        payloadSizes[i] = entries[i].kind == HK_PACK_ENTRY_KIND_MEDIA
+            ? harkenstudiobuild::kPackBytes<HkPackMedia>
             : entries[i].payload.size();
         contentEnd = cursor + payloadSizes[i];
-        cursor = alignUp(contentEnd, harkenstudiobuild::kPackPayloadAlign);
+        cursor = alignUp(contentEnd, HK_PACK_PAYLOAD_ALIGN);
     }
     std::vector<std::uint64_t> blobOffsets(entries.size(), 0);
     std::uint64_t fileBytes = contentEnd;
     for (std::size_t i = 0; i < entries.size(); ++i) {
-        if (entries[i].kind != harkenstudiobuild::kPackEntryKindMedia)
+        if (entries[i].kind != HK_PACK_ENTRY_KIND_MEDIA)
             continue;
-        if (entries[i].payload.size() < harkenstudiobuild::kPackMediaBytes) {
+        if (entries[i].payload.size() < harkenstudiobuild::kPackBytes<HkPackMedia>) {
             if (error)
                 *error = QStringLiteral("Media entry is missing its TOC payload");
             return false;
         }
-        blobOffsets[i] = alignUp(fileBytes, harkenstudiobuild::kPackBlobAlign);
+        blobOffsets[i] = alignUp(fileBytes, HK_PACK_BLOB_ALIGN);
         fileBytes = blobOffsets[i] + entries[i].mediaBytes();
     }
     std::vector<std::uint8_t> directory(static_cast<std::size_t>(dirBytes));
-    std::vector<std::array<std::uint8_t, harkenstudiobuild::kPackMediaBytes>>
+    std::vector<std::array<std::uint8_t, harkenstudiobuild::kPackBytes<HkPackMedia>>>
         mediaPayloads;
     mediaPayloads.reserve(std::count_if(entries.begin(), entries.end(), [](const auto& entry) {
-        return entry.kind == harkenstudiobuild::kPackEntryKindMedia;
+        return entry.kind == HK_PACK_ENTRY_KIND_MEDIA;
     }));
     for (std::size_t i = 0; i < entries.size(); ++i) {
         const std::uint8_t* payload = entries[i].payload.data();
-        if (entries[i].kind == harkenstudiobuild::kPackEntryKindMedia) {
+        if (entries[i].kind == HK_PACK_ENTRY_KIND_MEDIA) {
             harkenstudiobuild::PackTocEntry toc =
                 harkenstudiobuild::ReadPackMedia(payload);
             toc.blobOffset = blobOffsets[i];
             toc.blobBytes = entries[i].mediaBytes();
             auto& mediaPayload = mediaPayloads.emplace_back();
-            harkenstudiobuild::SerializePackMedia(toc, mediaPayload.data());
+            harkenstudiobuild::SerializePackRow<HkPackMedia>(toc, mediaPayload.data());
             payload = mediaPayload.data();
         }
         harkenstudiobuild::PackDirectoryEntry record;
@@ -1264,20 +1264,20 @@ bool writeCanonicalPack(const QString& outputPath,
         record.size = payloadSizes[i];
         record.payloadChecksum =
             harkenstudiobuild::Fnv1a64(payload, static_cast<std::size_t>(record.size));
-        harkenstudiobuild::SerializePackDirectoryEntry(
-            record, directory.data() + i * harkenstudiobuild::kPackDirectoryEntryBytes);
+        harkenstudiobuild::SerializePackRow<HkPackDirectoryEntry>(
+            record, directory.data() + i * harkenstudiobuild::kPackBytes<HkPackDirectoryEntry>);
     }
     harkenstudiobuild::PackFileHeader header;
-    header.formatVersion = harkenstudiobuild::kPackFormatVersion;
-    header.headerBytes = harkenstudiobuild::kPackFileHeaderBytes;
+    header.formatVersion = HK_PACK_FORMAT_VERSION;
+    header.headerBytes = harkenstudiobuild::kPackBytes<HkPackFileHeader>;
     header.fileBytes = fileBytes;
     header.packKind = static_cast<std::uint32_t>(packKind);
     header.entryCount = static_cast<std::uint32_t>(entries.size());
     header.directoryOffset = dirOffset;
     header.directoryChecksum =
         harkenstudiobuild::Fnv1a64(directory.data(), directory.size());
-    std::array<std::uint8_t, harkenstudiobuild::kPackFileHeaderBytes> headerBytes;
-    harkenstudiobuild::SerializePackFileHeader(header, headerBytes.data());
+    std::array<std::uint8_t, harkenstudiobuild::kPackBytes<HkPackFileHeader>> headerBytes;
+    harkenstudiobuild::SerializePackRow<HkPackFileHeader>(header, headerBytes.data());
     QDir().mkpath(QFileInfo(outputPath).absolutePath());
     QFile file(outputPath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
@@ -1294,7 +1294,7 @@ bool writeCanonicalPack(const QString& outputPath,
                     .arg(outputPath);
         return false;
     };
-    const std::array<char, harkenstudiobuild::kPackBlobAlign> padding{};
+    const std::array<char, HK_PACK_BLOB_ALIGN> padding{};
     std::uint64_t position = 0;
     const auto writeAt = [&](std::uint64_t offset, const std::uint8_t* data,
                              std::uint64_t size) {
@@ -1316,13 +1316,13 @@ bool writeCanonicalPack(const QString& outputPath,
         return writeFailed();
     std::size_t mediaIndex = 0;
     for (std::size_t i = 0; i < entries.size(); ++i) {
-        const auto* payload = entries[i].kind == harkenstudiobuild::kPackEntryKindMedia
+        const auto* payload = entries[i].kind == HK_PACK_ENTRY_KIND_MEDIA
             ? mediaPayloads[mediaIndex++].data() : entries[i].payload.data();
         if (!writeAt(offsets[i], payload, payloadSizes[i]))
             return writeFailed();
     }
     for (std::size_t i = 0; i < entries.size(); ++i) {
-        if (entries[i].kind != harkenstudiobuild::kPackEntryKindMedia)
+        if (entries[i].kind != HK_PACK_ENTRY_KIND_MEDIA)
             continue;
         if (!writeAt(blobOffsets[i], entries[i].mediaData(), entries[i].mediaBytes()))
             return writeFailed();
@@ -1343,7 +1343,7 @@ bool collectExistingEntries(const QString& sourcePath,
         return false;
     }
     const QByteArray bytes = file.readAll();
-    if (bytes.size() < static_cast<int>(harkenstudiobuild::kPackFileHeaderBytes)) {
+    if (bytes.size() < static_cast<int>(harkenstudiobuild::kPackBytes<HkPackFileHeader>)) {
         if (error)
             *error = QStringLiteral("Pack '%1' is too small").arg(sourcePath);
         return false;
@@ -1351,7 +1351,7 @@ bool collectExistingEntries(const QString& sourcePath,
     harkenstudiobuild::PackFileHeader header;
     if (!harkenstudiobuild::ReadPackFileHeader(reinterpret_cast<const std::uint8_t*>(bytes.constData()),
                                   &header) ||
-        header.formatVersion != harkenstudiobuild::kPackFormatVersion) {
+        header.formatVersion != HK_PACK_FORMAT_VERSION) {
         if (error)
             *error = QStringLiteral("Pack '%1' is not a v2 container").arg(sourcePath);
         return false;
@@ -1360,7 +1360,7 @@ bool collectExistingEntries(const QString& sourcePath,
     for (std::uint32_t i = 0; i < header.entryCount; ++i) {
         const harkenstudiobuild::PackDirectoryEntry record = harkenstudiobuild::ReadPackDirectoryEntry(
             reinterpret_cast<const std::uint8_t*>(bytes.constData()) +
-            header.directoryOffset + i * harkenstudiobuild::kPackDirectoryEntryBytes);
+            header.directoryOffset + i * harkenstudiobuild::kPackBytes<HkPackDirectoryEntry>);
         PackBuildSession::CanonicalPackEntry entry;
         entry.kind = record.kind;
         entry.vintage = record.vintage;
@@ -1370,7 +1370,7 @@ bool collectExistingEntries(const QString& sourcePath,
             reinterpret_cast<const std::uint8_t*>(bytes.constData()) + record.offset,
             reinterpret_cast<const std::uint8_t*>(bytes.constData()) + record.offset +
                 record.size);
-        if (record.kind == harkenstudiobuild::kPackEntryKindMedia) {
+        if (record.kind == HK_PACK_ENTRY_KIND_MEDIA) {
             const harkenstudiobuild::PackTocEntry toc = harkenstudiobuild::ReadPackMedia(entry.payload.data());
             entry.media = mediaCache.intern(
                 reinterpret_cast<const std::uint8_t*>(bytes.constData()) + toc.blobOffset,
@@ -1473,8 +1473,8 @@ bool PackBuildSession::buildToFile(const QString& outputPath)
 {
     std::vector<CanonicalPackEntry> entries;
     if (!buildEntries(&entries)) return false;
-    const auto kind = impl_->initPack ? harkenstudiobuild::kPackKindResident
-                                     : harkenstudiobuild::kPackKindContent;
+    const auto kind = impl_->initPack ? HK_PACK_KIND_RESIDENT
+                                     : HK_PACK_KIND_CONTENT;
     return writeCanonicalPackFile(outputPath, static_cast<CanonicalPackKind>(kind),
                                   entries, &impl_->lastError);
 }

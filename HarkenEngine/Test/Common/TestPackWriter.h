@@ -5,7 +5,7 @@
 #include "WavLoader.h"
 #include "harken/media/PackFormat.h"
 #include "harken/media/PackFormatV2.h"
-#include "harken/media/generated/harken_pack_effect_schema.g.h"
+#include "harken/media/PackEffectSchema.h"
 #include <harken/Harken.h>
 #include <harken/ObjectId.h>
 
@@ -280,12 +280,12 @@ inline harken::PackTocEntry MediaToc(const Media& media, std::uint64_t blobOffse
     toc.soundId = media.id;
     toc.sampleRate = media.sampleRate;
     toc.channelCount = media.channels;
-    toc.sampleFormat = harken::kPackSampleFormatF32Planar;
+    toc.sampleFormat = HK_PACK_SAMPLE_FORMAT_F32_PLANAR;
     toc.frameCount = media.frames;
     toc.blobOffset = blobOffset;
     toc.blobBytes = media.planar.size() * sizeof(float);
     toc.blobChecksum = harken::Fnv1a64(blob, static_cast<std::size_t>(toc.blobBytes));
-    toc.flags = media.loopable ? harken::kPackFlagLoopable : 0;
+    toc.flags = media.loopable ? HK_PACK_MEDIA_FLAG_LOOPABLE : 0;
     toc.loopStartFrame = media.loopable ? media.loopStartFrame : 0;
     toc.loopEndFrame = media.loopable ? media.loopEndFrame : 0;
     return toc;
@@ -296,49 +296,49 @@ inline std::uint64_t AlignTo(std::uint64_t value, std::uint64_t align) {
 }
 
 inline std::vector<std::uint8_t> MediaOnlyImage(const std::vector<Media>& media) {
-    const std::uint64_t tocOffset = harken::kPackMediaFileHeaderBytes;
-    const std::uint64_t tocBytes = media.size() * harken::kPackMediaBytes;
+    const std::uint64_t tocOffset = harken::kPackBytes<HkPackMediaFileHeader>;
+    const std::uint64_t tocBytes = media.size() * harken::kPackBytes<HkPackMedia>;
     std::vector<std::uint64_t> blobOffsets(media.size());
     std::uint64_t fileBytes = tocOffset + tocBytes;
-    std::uint64_t cursor = AlignTo(fileBytes, harken::kPackBlobAlign);
+    std::uint64_t cursor = AlignTo(fileBytes, HK_PACK_BLOB_ALIGN);
     for (std::size_t i = 0; i < media.size(); ++i) {
         blobOffsets[i] = cursor;
         fileBytes = cursor + media[i].planar.size() * sizeof(float);
-        cursor = AlignTo(fileBytes, harken::kPackBlobAlign);
+        cursor = AlignTo(fileBytes, HK_PACK_BLOB_ALIGN);
     }
     std::vector<std::uint8_t> bytes = Sized(fileBytes);
     std::vector<std::uint8_t> toc = Sized(tocBytes);
     for (std::size_t i = 0; i < media.size(); ++i) {
         std::memcpy(bytes.data() + blobOffsets[i], media[i].planar.data(),
                     media[i].planar.size() * sizeof(float));
-        harken::SerializePackMedia(MediaToc(media[i], blobOffsets[i], bytes.data() + blobOffsets[i]),
-                                   toc.data() + i * harken::kPackMediaBytes);
+        harken::SerializePackRow<HkPackMedia>(MediaToc(media[i], blobOffsets[i], bytes.data() + blobOffsets[i]),
+                                   toc.data() + i * harken::kPackBytes<HkPackMedia>);
     }
     std::memcpy(bytes.data() + tocOffset, toc.data(), toc.size());
     harken::PackMediaFileHeader header;
-    header.formatVersion = harken::kPackFormatVersion;
-    header.headerBytes = harken::kPackMediaFileHeaderBytes;
+    header.formatVersion = HK_PACK_FORMAT_VERSION;
+    header.headerBytes = harken::kPackBytes<HkPackMediaFileHeader>;
     header.fileBytes = fileBytes;
     header.entryCount = static_cast<std::uint32_t>(media.size());
     header.tocOffset = static_cast<std::uint32_t>(tocOffset);
     header.tocChecksum = harken::Fnv1a64(toc.data(), toc.size());
-    harken::SerializePackMediaFileHeader(header, bytes.data());
+    harken::SerializePackRow<HkPackMediaFileHeader>(header, bytes.data());
     return bytes;
 }
 
 inline std::vector<std::uint8_t> LogicImage(std::uint32_t packKind, const std::vector<Media>& media,
                                             std::vector<Placement> placements) {
-    const std::uint64_t directoryBytes = placements.size() * harken::kPackDirectoryEntryBytes;
+    const std::uint64_t directoryBytes = placements.size() * harken::kPackBytes<HkPackDirectoryEntry>;
     std::vector<std::uint64_t> offsets(placements.size());
-    std::uint64_t cursor = harken::kPackFileHeaderBytes + directoryBytes;
+    std::uint64_t cursor = harken::kPackBytes<HkPackFileHeader> + directoryBytes;
     for (std::size_t i = 0; i < placements.size(); ++i) {
-        offsets[i] = AlignTo(cursor, harken::kPackPayloadAlign);
+        offsets[i] = AlignTo(cursor, HK_PACK_PAYLOAD_ALIGN);
         cursor = offsets[i] + placements[i].payload.size();
     }
     std::vector<std::uint64_t> blobOffsets(media.size());
     std::uint64_t fileBytes = cursor;
     for (std::size_t i = 0; i < media.size(); ++i) {
-        blobOffsets[i] = AlignTo(fileBytes, harken::kPackBlobAlign);
+        blobOffsets[i] = AlignTo(fileBytes, HK_PACK_BLOB_ALIGN);
         fileBytes = blobOffsets[i] + media[i].planar.size() * sizeof(float);
     }
     std::vector<std::uint8_t> bytes = Sized(fileBytes);
@@ -351,7 +351,7 @@ inline std::vector<std::uint8_t> LogicImage(std::uint32_t packKind, const std::v
         Placement& placement = placements[i];
         if (placement.media != SIZE_MAX) {
             const std::size_t m = placement.media;
-            harken::SerializePackMedia(
+            harken::SerializePackRow<HkPackMedia>(
                 MediaToc(media[m], blobOffsets[m], bytes.data() + blobOffsets[m]),
                 placement.payload.data());
         }
@@ -364,21 +364,21 @@ inline std::vector<std::uint8_t> LogicImage(std::uint32_t packKind, const std::v
         entry.offset = offsets[i];
         entry.size = placement.payload.size();
         entry.payloadChecksum = harken::Fnv1a64(bytes.data() + offsets[i], placement.payload.size());
-        harken::SerializePackDirectoryEntry(entry,
-                                            directory.data() + i * harken::kPackDirectoryEntryBytes);
+        harken::SerializePackRow<HkPackDirectoryEntry>(entry,
+                                            directory.data() + i * harken::kPackBytes<HkPackDirectoryEntry>);
     }
     if (!directory.empty()) {
-        std::memcpy(bytes.data() + harken::kPackFileHeaderBytes, directory.data(), directory.size());
+        std::memcpy(bytes.data() + harken::kPackBytes<HkPackFileHeader>, directory.data(), directory.size());
     }
     harken::PackFileHeader header;
-    header.formatVersion = harken::kPackFormatVersion;
-    header.headerBytes = harken::kPackFileHeaderBytes;
+    header.formatVersion = HK_PACK_FORMAT_VERSION;
+    header.headerBytes = harken::kPackBytes<HkPackFileHeader>;
     header.fileBytes = fileBytes;
     header.packKind = packKind;
     header.entryCount = static_cast<std::uint32_t>(placements.size());
-    header.directoryOffset = harken::kPackFileHeaderBytes;
+    header.directoryOffset = harken::kPackBytes<HkPackFileHeader>;
     header.directoryChecksum = harken::Fnv1a64(directory.data(), directory.size());
-    harken::SerializePackFileHeader(header, bytes.data());
+    harken::SerializePackRow<HkPackFileHeader>(header, bytes.data());
     return bytes;
 }
 
@@ -409,10 +409,10 @@ inline std::vector<std::uint8_t> RecipePayload(const JsonValue& item, Reader* re
     if (const JsonValue* source = item.Find("tone")) {
         tone.present = 1u;
         tone.sectionEnableMask =
-            (read->Bool(*source, "lowpassEnabled") ? harken::kPackVoiceToneLowpassEnabled : 0u) |
-            (read->Bool(*source, "highpassEnabled") ? harken::kPackVoiceToneHighpassEnabled : 0u) |
-            (read->Bool(*source, "lowShelfEnabled") ? harken::kPackVoiceToneLowShelfEnabled : 0u) |
-            (read->Bool(*source, "highShelfEnabled") ? harken::kPackVoiceToneHighShelfEnabled : 0u);
+            (read->Bool(*source, "lowpassEnabled") ? HK_PACK_VOICE_TONE_LOWPASS : 0u) |
+            (read->Bool(*source, "highpassEnabled") ? HK_PACK_VOICE_TONE_HIGHPASS : 0u) |
+            (read->Bool(*source, "lowShelfEnabled") ? HK_PACK_VOICE_TONE_LOW_SHELF : 0u) |
+            (read->Bool(*source, "highShelfEnabled") ? HK_PACK_VOICE_TONE_HIGH_SHELF : 0u);
         tone.lowpassFrequencyHz = read->Float(*source, "lowpassFrequencyHz");
         tone.lowpassQ = read->Float(*source, "lowpassQ");
         tone.highpassFrequencyHz = read->Float(*source, "highpassFrequencyHz");
@@ -560,7 +560,7 @@ inline bool BuildLogicPlacements(const JsonValue& root, std::size_t mediaCount, 
         return out->back().payload;
     };
     for (std::size_t i = 0; i < mediaCount; ++i) {
-        out->push_back({harken::kPackEntryKindMedia, {}, 0, Sized(harken::kPackMediaBytes), i});
+        out->push_back({HK_PACK_ENTRY_KIND_MEDIA, {}, 0, Sized(harken::kPackBytes<HkPackMedia>), i});
     }
     for (const JsonValue& item : read->Array(root, "buses")) {
         harken::PackBusEntry bus;
@@ -568,8 +568,8 @@ inline bool BuildLogicPlacements(const JsonValue& root, std::size_t mediaCount, 
         bus.parentBusId = read->Id(item, "parent");
         bus.volume = read->Float(item, "volume");
         bus.outputBusVolume = read->Float(item, "outputBusVolume");
-        harken::SerializePackBus(bus, entry(harken::kPackEntryKindBus, bus.busId,
-                                            harken::kPackBusBytes).data());
+        harken::SerializePackRow<HkPackBus>(bus, entry(HK_PACK_ENTRY_KIND_BUS, bus.busId,
+                                            harken::kPackBytes<HkPackBus>).data());
     }
     std::uint64_t ordinal = 0;
     for (const JsonValue& item : read->Array(root, "busSends")) {
@@ -577,21 +577,21 @@ inline bool BuildLogicPlacements(const JsonValue& root, std::size_t mediaCount, 
         send.fromBusId = read->Id(item, "from");
         send.toBusId = read->Id(item, "to");
         send.levelDb = read->Float(item, "levelDb");
-        harken::SerializePackBusSend(send, entry(harken::kPackEntryKindBusSend, {},
-                                                 harken::kPackBusSendBytes, ordinal++).data());
+        harken::SerializePackRow<HkPackBusSend>(send, entry(HK_PACK_ENTRY_KIND_BUS_SEND, {},
+                                                 harken::kPackBytes<HkPackBusSend>, ordinal++).data());
     }
     for (const JsonValue& item : read->Array(root, "attenuations")) {
-        harken::SerializePackAttenuation(
+        harken::SerializePackRow<HkPackAttenuation>(
             Attenuation(item, read),
-            entry(harken::kPackEntryKindAttenuation, read->Id(item, "id"),
-                  harken::kPackAttenuationBytes).data());
+            entry(HK_PACK_ENTRY_KIND_ATTENUATION, read->Id(item, "id"),
+                  harken::kPackBytes<HkPackAttenuation>).data());
     }
     for (const JsonValue& item : read->Array(root, "bindings")) {
         const VnBindingId id = read->Id(item, "id");
         harken::WritePackBindingDefinition(
             id, Binding(item, read),
-            entry(harken::kPackEntryKindBindingDefinition, id,
-                  harken::kPackBindingDefinitionBytes).data());
+            entry(HK_PACK_ENTRY_KIND_BINDING_DEFINITION, id,
+                  harken::kPackBytes<HkPackBindingDefinition>).data());
     }
     ordinal = 0;
     for (const JsonValue& item : read->Array(root, "attachments")) {
@@ -599,12 +599,12 @@ inline bool BuildLogicPlacements(const JsonValue& root, std::size_t mediaCount, 
         attachment.bindingId = read->Id(item, "binding");
         attachment.scopeKind = read->Enum(item, "scope", kScopeNames);
         attachment.objectId = read->Id(item, "object");
-        harken::SerializePackBindingAttachment(
-            attachment, entry(harken::kPackEntryKindBindingAttachment, {},
-                              harken::kPackBindingAttachmentBytes, ordinal++).data());
+        harken::SerializePackRow<HkPackBindingAttachment>(
+            attachment, entry(HK_PACK_ENTRY_KIND_BINDING_ATTACHMENT, {},
+                              harken::kPackBytes<HkPackBindingAttachment>, ordinal++).data());
     }
     for (const JsonValue& item : read->Array(root, "containers")) {
-        out->push_back({harken::kPackEntryKindContainer, read->Id(item, "id"), 0,
+        out->push_back({HK_PACK_ENTRY_KIND_CONTAINER, read->Id(item, "id"), 0,
                         ContainerPayload(item, read)});
     }
     std::vector<std::pair<VnObjectId, const JsonValue*>> recipes;
@@ -614,7 +614,7 @@ inline bool BuildLogicPlacements(const JsonValue& root, std::size_t mediaCount, 
     std::stable_sort(recipes.begin(), recipes.end(),
                      [](const auto& a, const auto& b) { return a.first < b.first; });
     for (const auto& [id, item] : recipes) {
-        out->push_back({harken::kPackEntryKindVoiceRecipe, id, 0, RecipePayload(*item, read)});
+        out->push_back({HK_PACK_ENTRY_KIND_VOICE_RECIPE, id, 0, RecipePayload(*item, read)});
     }
     std::vector<harken::PackBusEffectEntry> busEffects;
     for (const JsonValue& item : read->Array(root, "busEffects")) {
@@ -629,8 +629,8 @@ inline bool BuildLogicPlacements(const JsonValue& root, std::size_t mediaCount, 
     });
     ordinal = 0;
     for (const auto& effect : busEffects) {
-        harken::SerializePackBusEffect(effect, entry(harken::kPackEntryKindBusEffect, {},
-                                                     harken::kPackBusEffectBytes, ordinal++).data());
+        harken::SerializePackRow<HkPackBusEffect>(effect, entry(HK_PACK_ENTRY_KIND_BUS_EFFECT, {},
+                                                     harken::kPackBytes<HkPackBusEffect>, ordinal++).data());
     }
     std::vector<harken::PackEffectDynamicRouteEntry> routes;
     for (const JsonValue& item : read->Array(root, "dynamicRoutes")) {
@@ -657,9 +657,9 @@ inline bool BuildLogicPlacements(const JsonValue& root, std::size_t mediaCount, 
     });
     ordinal = 0;
     for (const auto& route : routes) {
-        harken::SerializePackEffectDynamicRoute(
-            route, entry(harken::kPackEntryKindEffectDynamicRoute, {},
-                         harken::kPackEffectDynamicRouteBytes, ordinal++).data());
+        harken::SerializePackRow<HkPackEffectDynamicRoute>(
+            route, entry(HK_PACK_ENTRY_KIND_EFFECT_DYNAMIC_ROUTE, {},
+                         harken::kPackBytes<HkPackEffectDynamicRoute>, ordinal++).data());
     }
     return read->ok;
 }
@@ -746,8 +746,8 @@ inline int BuildTestPack(const std::vector<std::string>& args) {
     for (std::size_t i = 0; i < media.size(); ++i) {
         placements[i].id = media[i].id;
     }
-    const std::uint32_t kind = packKind->text == "resident" ? harken::kPackKindResident
-                                                             : harken::kPackKindContent;
+    const std::uint32_t kind = packKind->text == "resident" ? HK_PACK_KIND_RESIDENT
+                                                             : HK_PACK_KIND_CONTENT;
     return testpack::WriteBytes(outputPath,
                                 testpack::LogicImage(kind, media, std::move(placements)))
                ? 0

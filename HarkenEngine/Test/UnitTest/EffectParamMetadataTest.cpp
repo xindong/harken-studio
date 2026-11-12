@@ -10,9 +10,9 @@
 // resolves the same rows.
 #include <harken/Harken.h>
 
-#include "harken/media/generated/harken_pack_effect_schema.g.h"
+#include "harken/media/PackEffectSchema.h"
 #include "harken/render/BuiltinEffects.h"
-#include "harken/render/generated/harken_effect_registry.g.h"
+#include "harken/render/EffectRegistry.h"
 
 #include <gtest/gtest.h>
 
@@ -200,12 +200,12 @@ TEST(PackEffectSchema, NyquistUpperBoundRemainsRuntimeDependent) {
         FindPackEffectSchemaByType(VN_EFFECT_THREE_BAND_TONE);
     ASSERT_NE(nullptr, tone);
     ASSERT_LT(harken::kToneParamLowShelfFreqHz, tone->paramCount);
-    const harken::PackEffectAuthoredRange& frequency =
-        tone->authoredRanges[harken::kToneParamLowShelfFreqHz];
-    EXPECT_TRUE(frequency.hasMinimum);
-    EXPECT_FALSE(frequency.minimumInclusive);
+    const HkPackEffectParam& frequency =
+        tone->params[harken::kToneParamLowShelfFreqHz];
+    EXPECT_NE(0u, frequency.rangeFlags & HK_PACK_RANGE_HAS_MINIMUM);
+    EXPECT_EQ(0u, frequency.rangeFlags & HK_PACK_RANGE_MINIMUM_INCLUSIVE);
     EXPECT_FLOAT_EQ(0.0f, frequency.minimum);
-    EXPECT_FALSE(frequency.hasMaximum);
+    EXPECT_EQ(0u, frequency.rangeFlags & HK_PACK_RANGE_HAS_MAXIMUM);
     EXPECT_TRUE(harken::PackEffectParamInAuthoredRange(
         VN_EFFECT_THREE_BAND_TONE,
         harken::kToneParamLowShelfFreqHz, 1000000.0f));

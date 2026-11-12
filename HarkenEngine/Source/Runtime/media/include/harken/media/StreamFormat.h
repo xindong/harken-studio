@@ -61,8 +61,8 @@ inline constexpr std::uint64_t kStreamPayloadAlign = 64;
 // Sample formats and flags reuse the .pack vocabulary: only canonical
 // float32 planar exists in v1, and only the loopable flag is defined.
 inline constexpr std::uint16_t kStreamSampleFormatF32Planar =
-    kPackSampleFormatF32Planar;
-inline constexpr std::uint32_t kStreamFlagLoopable = kPackFlagLoopable;
+    HK_PACK_SAMPLE_FORMAT_F32_PLANAR;
+inline constexpr std::uint32_t kStreamFlagLoopable = HK_PACK_MEDIA_FLAG_LOOPABLE;
 inline constexpr std::uint32_t kStreamKnownFlagsMask =
     kStreamFlagLoopable;
 

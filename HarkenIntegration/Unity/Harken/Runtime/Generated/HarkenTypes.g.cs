@@ -2162,6 +2162,14 @@ namespace Harken
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    public struct VnPackFormatVersionInfo
+    {
+    public uint structSize;
+    public uint oldestReadable;
+    public uint newestReadable;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     public struct VnVariableCatalogInfoV1
     {
     public uint structSize;

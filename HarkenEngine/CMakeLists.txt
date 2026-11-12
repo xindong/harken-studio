@@ -6,6 +6,23 @@
 set(HARKEN_RUNTIME_DIR ${CMAKE_CURRENT_SOURCE_DIR}/Source/Runtime)
 set(HARKEN_THIRD_PARTY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty)
 
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
+
+set(HARKEN_PACK_FORMAT_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR}/include-pack)
+file(GLOB HARKEN_PACK_FORMAT_HEADERS CONFIGURE_DEPENDS
+    ${CMAKE_CURRENT_SOURCE_DIR}/Format/Pack/*.h)
+foreach(_header IN LISTS HARKEN_PACK_FORMAT_HEADERS)
+    get_filename_component(_name ${_header} NAME)
+    configure_file(${_header} ${HARKEN_PACK_FORMAT_INCLUDE_DIR}/harken_pack/${_name} COPYONLY)
+endforeach()
+add_library(harken_pack_format INTERFACE)
+add_library(Harken::PackFormat ALIAS harken_pack_format)
+target_include_directories(harken_pack_format INTERFACE
+    $<BUILD_INTERFACE:${HARKEN_PACK_FORMAT_INCLUDE_DIR}>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+set_target_properties(harken_pack_format PROPERTIES EXPORT_NAME PackFormat)
+
 option(HARKEN_RT_PROBE_DEVICE_CALLBACK
        "Instrument Runtime-owned work inside the production device callback" OFF)
 option(HARKEN_RT_PROBE_MIX_PUBLICATION
@@ -168,45 +185,14 @@ set(HARKEN_RUNTIME_PRIVATE_INCLUDES
     ${HARKEN_RUNTIME_DIR}/remote/include
     ${HARKEN_RUNTIME_DIR}/remote/src
     ${HARKEN_BI_GENERATED_DIR}
+    ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
     ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/core/contract/include
     ${HARKEN_RUNTIME_DIR}/dsp/include
     ${HARKEN_RUNTIME_DIR}/media/include
-    ${HARKEN_RUNTIME_DIR}/media/contract/include
     ${HARKEN_RUNTIME_DIR}/param/include
     ${HARKEN_RUNTIME_DIR}/render/include
     ${HARKEN_THIRD_PARTY_DIR}/miniaudio
 )
-
-# The engine-free ResourceFacts value contract. A tooling-side compiler links
-# this INTERFACE target to consume harken/media/ResourceFactsValue.h — the plain
-# value an audio resource reduces to — without gaining the rest of the media
-# include root or any harken_core dependency. The runtime targets reach the same
-# header through their private media includes above; the concept stays owned by
-# the runtime media layer.
-add_library(harken_resource_facts_contract INTERFACE)
-target_include_directories(harken_resource_facts_contract INTERFACE
-    ${HARKEN_RUNTIME_DIR}/media/contract/include)
-
-# The engine-free voice slot-layout contract. A tooling-side compiler links this
-# INTERFACE target to consume harken/abi/VoiceSlotLayout.h — the published
-# per-voice send-slot layout ceiling — without gaining the core include root or
-# any harken_core dependency. The runtime targets reach the same header through
-# their private core/contract include above; the ceiling stays owned by the core
-# config that sizes the per-voice arrays.
-add_library(harken_voice_slot_layout_contract INTERFACE)
-target_include_directories(harken_voice_slot_layout_contract INTERFACE
-    ${HARKEN_RUNTIME_DIR}/core/contract/include)
-
-add_library(harken_bus_definition_fingerprint_contract INTERFACE)
-target_include_directories(harken_bus_definition_fingerprint_contract INTERFACE
-    ${HARKEN_RUNTIME_DIR}/api/include)
-
-# Header-only Variable execution fingerprint (FNV-1a domain hasher). Tooling
-# consumes it without linking harken_core.
-add_library(harken_variable_execution_fingerprint_contract INTERFACE)
-target_include_directories(harken_variable_execution_fingerprint_contract INTERFACE
-    ${HARKEN_RUNTIME_DIR}/core/include)
 
 # Platform link requirements of the miniaudio device backend. CI and every
 # automated test run on the null backend and need none of these; they matter
@@ -325,9 +311,6 @@ option(HARKEN_DEVELOPMENT_PREVIEW
 # development edition adds the Development surface and compiles Core with
 # HARKEN_ENGINE_DEV=1. Shared libraries everywhere except iOS, which links the
 # engine statically as __Internal. Consumers see only the staged public headers.
-include(GNUInstallDirs)
-include(CMakePackageConfigHelpers)
-
 set(HARKEN_ENGINE_PUBLIC_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR}/include)
 set(HARKEN_ENGINE_DEV_PUBLIC_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR}/include-dev)
 set(HARKEN_ENGINE_PUBLIC_HEADERS
@@ -453,13 +436,15 @@ foreach(_edition harken_engine harken_engine_dev)
         list(APPEND _harken_installed_editions ${_edition})
     endif()
 endforeach()
-install(TARGETS ${_harken_installed_editions}
+install(TARGETS ${_harken_installed_editions} harken_pack_format
     EXPORT HarkenEngineTargets
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
 install(FILES ${HARKEN_ENGINE_PUBLIC_HEADERS}
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/harken)
+install(FILES ${HARKEN_PACK_FORMAT_HEADERS}
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/harken_pack)
 if(TARGET harken_engine_dev)
     install(FILES ${HARKEN_ENGINE_DEV_PUBLIC_HEADERS}
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/harken_preview)
@@ -551,17 +536,6 @@ _harken_add_python_regen_target(
     "Regenerating the public ABI manifest"
 )
 
-# Convenience regeneration target for the built-in effect registry (same
-# discipline as harken_binding_regen). The generated header is checked in under
-# the render include tree — already on every consumer's include path — so the
-# ordinary build needs no Python; this target only rewrites it after the source
-# table changes.
-_harken_add_python_regen_target(
-    harken_effect_registry_regen
-    "${CMAKE_CURRENT_SOURCE_DIR}/Source/Tooling/Effects/gen_effect_registry.py"
-    "Regenerating the built-in effect registry from effect_registry.json"
-)
-
 # Convenience regeneration target for the Windows export allowlist (same
 # discipline as the generators above). The .def is checked in and consumed
 # directly by the shared-library link, so the ordinary build stays Python-free;
@@ -576,12 +550,6 @@ _harken_add_python_regen_target(
     harken_variable_catalog_regen
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/Tooling/VariableCatalog/gen_variable_catalog.py"
     "Regenerating Native/Unity Variable catalog constants from variable_catalog.json"
-)
-
-_harken_add_python_regen_target(
-    harken_pack_wire_regen
-    "${CMAKE_SOURCE_DIR}/.scripts/pack_wire_codegen.py"
-    "Regenerating the Pack binary layout from the current contract"
 )
 
 # Remote-control channel (Tool/Remote): a static tooling library the

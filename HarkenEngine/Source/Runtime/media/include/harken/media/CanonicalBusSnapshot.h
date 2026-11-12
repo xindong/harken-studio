@@ -11,12 +11,12 @@ namespace harken {
 
 inline void StampRequirementCoverage(std::vector<std::uint8_t>* payload) {
     StorePackRequirementBlockPayloadChecksumCoverage(payload->data(),
-        Fnv1a64(payload->data(), kPackRequirementBlockPayloadChecksumCoverageOffset));
+        Fnv1a64(payload->data(), offsetof(HkPackRequirementBlock, payloadChecksumCoverage)));
 }
 
 inline void StampSnapshotChecksum(std::vector<std::uint8_t>* payload) {
-    constexpr auto checksumOffset = kPackBusDefinitionSnapshotHeaderChecksumOffset;
-    constexpr auto checksumEnd = kPackBusDefinitionSnapshotHeaderCompileTargetProfileFingerprintOffset;
+    constexpr auto checksumOffset = offsetof(HkPackBusDefinitionSnapshotHeader, checksum);
+    constexpr auto checksumEnd = offsetof(HkPackBusDefinitionSnapshotHeader, compileTargetProfileFingerprint);
     const std::uint8_t zeros[checksumEnd - checksumOffset] = {};
     std::uint64_t hash = Fnv1a64(payload->data(), checksumOffset);
     hash = Fnv1a64(zeros, sizeof(zeros), hash);
@@ -52,13 +52,13 @@ inline PackCanonicalImage NeutralMasterSnapshotImage() {
     PackCanonicalImage image;
     image.hasBusDefinitionSnapshot = true;
     auto& header = image.busDefinitionSnapshotHeader;
-    header.schemaVersion = kPackBusDefinitionSnapshotVintage;
-    header.storageModelVersion = kPackBusDefinitionSnapshotVintage;
-    header.headerBytes = kPackBusDefinitionSnapshotHeaderBytes;
-    header.busRowBytes = kPackBusDefinitionBusBytes;
-    header.sendRowBytes = kPackBusDefinitionSendBytes;
-    header.downmixRowBytes = kPackBusDefinitionDownmixBytes;
-    header.coefficientRowBytes = kPackBusDefinitionCoefficientBytes;
+    header.schemaVersion = HK_PACK_BUS_DEFINITION_SNAPSHOT_VINTAGE;
+    header.storageModelVersion = HK_PACK_BUS_DEFINITION_SNAPSHOT_VINTAGE;
+    header.headerBytes = kPackBytes<HkPackBusDefinitionSnapshotHeader>;
+    header.busRowBytes = kPackBytes<HkPackBusDefinitionBus>;
+    header.sendRowBytes = kPackBytes<HkPackBusDefinitionSend>;
+    header.downmixRowBytes = kPackBytes<HkPackBusDefinitionDownmix>;
+    header.coefficientRowBytes = kPackBytes<HkPackBusDefinitionCoefficient>;
     header.publicationCapabilityVintage = 3;
     header.contentGeneration = kNeutralMasterBusContentGeneration;
     header.profileVintage = 1;

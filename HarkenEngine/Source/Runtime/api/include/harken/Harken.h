@@ -1660,6 +1660,18 @@ typedef void (*VnPackByteReleaseFn)(
     uint64_t packStableId,
     VnPackByteSpan span);
 
+typedef struct VnPackFormatVersionInfo {
+    uint32_t structSize;
+    uint32_t oldestReadable;
+    uint32_t newestReadable;
+} VnPackFormatVersionInfo;
+
+#ifdef __cplusplus
+static_assert(sizeof(VnPackFormatVersionInfo) == 12, "VnPackFormatVersionInfo");
+#endif
+
+VnResult Vn_QueryPackFormatVersion(VnPackFormatVersionInfo* out);
+
 #define VN_PACK_LOAD_FLAG_PROVIDER ((uint32_t)0x00000001u)
 #define VN_PACK_LOAD_FLAG_ROOT ((uint32_t)0x00000002u)
 #define VN_PACK_UNLOAD_REFUSE_IF_USED ((uint32_t)0x00000001u)

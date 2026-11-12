@@ -33,13 +33,13 @@
 #include "harken/media/PackLogicImage.h"
 #include "harken/media/CanonicalAttenuationFingerprint.h"
 #include "harken/core/PackComposition.h"
-#include "harken/core/generated/harken_playable_property_runtime.g.h"
+#include "harken/core/PlayablePropertyRuntime.h"
 #include "harken/BusDefinitionFingerprintValue.h"
 #include "harken/render/DynamicRoute.h"
 #include "harken/core/ResamplerAdvance.h"
 #include "harken/core/PackReadinessContract.h"
 #include "harken/render/BuiltinEffects.h"
-#include "harken/render/generated/harken_effect_registry.g.h"
+#include "harken/render/EffectRegistry.h"
 #include "harken/dsp/GainRamp.h"
 
 #include <algorithm>
@@ -74754,7 +74754,7 @@ std::uint32_t UniqueRecipeTargetCount(
     if (recipe == nullptr) {
         return 0;
     }
-    std::uint32_t targets[harken::kPackVoiceRecipeMaxBindings] = {};
+    std::uint32_t targets[HK_PACK_VOICE_RECIPE_MAX_BINDINGS] = {};
     std::uint32_t count = 0;
     for (VnBindingId id : recipe->bindings) {
         const harken::BindingTable::Definition* def = engine.bindings.Find(id);
@@ -74775,7 +74775,7 @@ std::uint32_t UniqueRecipeTargetCount(
 std::uint32_t UniqueRecipeTargetCount(const harken::Engine& engine,
                                       const VnBindingId* ids,
                                       std::uint32_t idCount) {
-    std::uint32_t targets[harken::kPackVoiceRecipeMaxBindings] = {};
+    std::uint32_t targets[HK_PACK_VOICE_RECIPE_MAX_BINDINGS] = {};
     std::uint32_t count = 0;
     for (std::uint32_t i = 0; i < idCount; ++i) {
         const harken::BindingTable::Definition* def =
@@ -74950,16 +74950,16 @@ bool RecipeTonePreset(
     harken::VoiceTonePreset tone;
     tone.lowpassEnabled =
         (recipe->tone.sectionEnableMask &
-         harken::kPackVoiceToneLowpassEnabled) != 0;
+         HK_PACK_VOICE_TONE_LOWPASS) != 0;
     tone.highpassEnabled =
         (recipe->tone.sectionEnableMask &
-         harken::kPackVoiceToneHighpassEnabled) != 0;
+         HK_PACK_VOICE_TONE_HIGHPASS) != 0;
     tone.lowShelfEnabled =
         (recipe->tone.sectionEnableMask &
-         harken::kPackVoiceToneLowShelfEnabled) != 0;
+         HK_PACK_VOICE_TONE_LOW_SHELF) != 0;
     tone.highShelfEnabled =
         (recipe->tone.sectionEnableMask &
-         harken::kPackVoiceToneHighShelfEnabled) != 0;
+         HK_PACK_VOICE_TONE_HIGH_SHELF) != 0;
     tone.lowpassFrequencyHz = recipe->tone.lowpassFrequencyHz;
     tone.lowpassQ = recipe->tone.lowpassQ;
     tone.highpassFrequencyHz = recipe->tone.highpassFrequencyHz;
@@ -75017,10 +75017,10 @@ bool PrimeRecipeBindingsWith(
     if (count == 0) {
         return true;
     }
-    if (count > harken::kPackVoiceRecipeMaxBindings) return false;
+    if (count > HK_PACK_VOICE_RECIPE_MAX_BINDINGS) return false;
     const VnEmitterHandle emitter = engine.params.EmitterHandleOf(renderHandle);
-    std::array<float, harken::kPackVoiceRecipeMaxBindings> inputs{};
-    std::array<bool, harken::kPackVoiceRecipeMaxBindings> hasInput{};
+    std::array<float, HK_PACK_VOICE_RECIPE_MAX_BINDINGS> inputs{};
+    std::array<bool, HK_PACK_VOICE_RECIPE_MAX_BINDINGS> hasInput{};
     for (std::uint32_t i = 0; i < count; ++i) {
         const auto* def = engine.bindings.Find(ids[i]);
         if (def == nullptr) continue;
@@ -75039,8 +75039,8 @@ bool PrimeRecipeBindingsWith(
     if (!activated) {
         return false;
     }
-    std::uint32_t handled[harken::kPackVoiceRecipeMaxBindings] = {};
-    std::array<float, harken::kPackVoiceRecipeMaxBindings> resolvedValues{};
+    std::uint32_t handled[HK_PACK_VOICE_RECIPE_MAX_BINDINGS] = {};
+    std::array<float, HK_PACK_VOICE_RECIPE_MAX_BINDINGS> resolvedValues{};
     std::uint32_t handledCount = 0;
     for (std::uint32_t i = 0; i < count; ++i) {
         const harken::BindingTable::Definition* first =
@@ -112203,7 +112203,7 @@ VnResult Vn_InspectInitPack(const VnPackLoadDesc* desc,
         if (parsed != VN_OK) {
             return finish(parsed);
         }
-        if (image.packKind != harken::kPackKindInit || !image.hasRequirement ||
+        if (image.packKind != HK_PACK_KIND_INIT || !image.hasRequirement ||
             (image.requirement.storageModelVersion == 2 && !image.hasBusDefinitionSnapshot)) {
             return finish(VN_BAD_PACK);
         }
@@ -112293,10 +112293,10 @@ static VnResult LoadPackObserved(const VnPackDesc* desc,
             !harken::SupportedPackFormatVersion(packFormatVersion)) {
             return VN_BAD_PACK;
         }
-        if (packHeaderBytes == harken::kPackFileHeaderBytes) {
+        if (packHeaderBytes == harken::kPackBytes<HkPackFileHeader>) {
             return harken::LoadPackV2(*engine, desc->utf8Path, outHandle);
         }
-        if (packHeaderBytes != harken::kPackMediaFileHeaderBytes) {
+        if (packHeaderBytes != harken::kPackBytes<HkPackMediaFileHeader>) {
             return VN_BAD_PACK;
         }
         /* Bulk registration into the same logic-side registry Vn_RegisterPCM
@@ -112901,7 +112901,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
         const harken::PackEntry* loopEntry =
             engine->packs.FindEntryBySound(playableId, engine->registry);
         if (loopEntry != nullptr &&
-            (loopEntry->flags & harken::kPackFlagLoopable) != 0) {
+            (loopEntry->flags & HK_PACK_MEDIA_FLAG_LOOPABLE) != 0) {
             const std::uint64_t end = (loopEntry->loopEndFrame == 0)
                                           ? view.frames
                                           : loopEntry->loopEndFrame;
@@ -119019,6 +119019,15 @@ VnResult Vn_QueryVariable(const VnVariableQueryDescV1* desc,
         return VN_DEVICE_ERROR;
     }}
 
+VnResult Vn_QueryPackFormatVersion(VnPackFormatVersionInfo* out) {
+    if (out == nullptr || out->structSize != sizeof(VnPackFormatVersionInfo)) {
+        return VN_INVALID_ARG;
+    }
+    out->oldestReadable = HK_PACK_FORMAT_VERSION;
+    out->newestReadable = HK_PACK_FORMAT_VERSION;
+    return VN_OK;
+}
+
 VnResult Vn_QueryVariableCatalog(VnVariableCatalogInfoV1* out) {
     try {
     harken::Engine* engine = harken::detail::g_engine;
@@ -122765,7 +122774,7 @@ harken::PackTable::AlignedBuffer ReadPackFileAligned(const char* utf8Path,
         return harken::PackTable::AlignedBuffer();
     }
     std::uint8_t* buffer = static_cast<std::uint8_t*>(::operator new[](
-        static_cast<std::size_t>(size), std::align_val_t{harken::kPackBlobAlign},
+        static_cast<std::size_t>(size), std::align_val_t{HK_PACK_BLOB_ALIGN},
         std::nothrow));
     if (buffer == nullptr) {
         return harken::PackTable::AlignedBuffer();
@@ -122773,7 +122782,7 @@ harken::PackTable::AlignedBuffer ReadPackFileAligned(const char* utf8Path,
     in.read(reinterpret_cast<char*>(buffer),
             static_cast<std::streamsize>(size));
     if (in.gcount() != static_cast<std::streamsize>(size)) {
-        ::operator delete[](buffer, std::align_val_t{harken::kPackBlobAlign});
+        ::operator delete[](buffer, std::align_val_t{HK_PACK_BLOB_ALIGN});
         return harken::PackTable::AlignedBuffer();
     }
     *outBytes = size;
@@ -123670,13 +123679,13 @@ bool PeekPackHeader(const char* utf8Path, std::uint32_t* outVersion,
     if (!in) {
         return false;
     }
-    std::uint8_t head[kPackFilePrefixBytes] = {};
+    std::uint8_t head[kPackBytes<HkPackFilePrefix>] = {};
     in.read(reinterpret_cast<char*>(head), sizeof head);
     if (in.gcount() != static_cast<std::streamsize>(sizeof head)) {
         return false;
     }
     PackFilePrefix prefix;
-    if (!ParsePackFilePrefix(head, sizeof head, &prefix)) return false;
+    if (!ParsePackRow<HkPackFilePrefix>(head, sizeof head, &prefix)) return false;
     *outVersion = prefix.formatVersion;
     *outHeaderBytes = prefix.headerBytes;
     return true;
@@ -124324,7 +124333,7 @@ VnResult UnloadPackV2(Engine& engine, VnPackHandle handle) {
     if (engine.logicPacks.PendingFor(handle) != nullptr) {
         return VN_IN_USE;
     }
-    if (record->packKind == kPackKindResident) {
+    if (record->packKind == HK_PACK_KIND_RESIDENT) {
         return UnloadReversibleResident(engine, *record);
     }
     if (PackProviderHasConsumer(engine, handle)) {
@@ -125061,9 +125070,9 @@ VnResult DiffPackRevision(Engine& engine, const PackLogicRecord& record,
     for (std::size_t i = 0; i < image.buses.size(); ++i) {
         const PackBusEntry& bus = image.buses[i];
         const PackLogicImage::Stamp* oldStamp =
-            FindStamp(record.stamps, kPackEntryKindBus, bus.busId);
+            FindStamp(record.stamps, HK_PACK_ENTRY_KIND_BUS, bus.busId);
         const PackLogicImage::Stamp* newStamp =
-            FindStamp(image.stamps, kPackEntryKindBus, bus.busId);
+            FindStamp(image.stamps, HK_PACK_ENTRY_KIND_BUS, bus.busId);
         if (oldStamp != nullptr) {
             if (newStamp == nullptr ||
                 newStamp->checksum != oldStamp->checksum) {
@@ -125241,9 +125250,9 @@ VnResult DiffPackRevision(Engine& engine, const PackLogicRecord& record,
     for (std::size_t i = 0; i < image.attenuations.size(); ++i) {
         const VnAttenuationId id = image.attenuations[i].id;
         const PackLogicImage::Stamp* oldStamp =
-            FindStamp(record.stamps, kPackEntryKindAttenuation, id);
+            FindStamp(record.stamps, HK_PACK_ENTRY_KIND_ATTENUATION, id);
         const PackLogicImage::Stamp* newStamp =
-            FindStamp(image.stamps, kPackEntryKindAttenuation, id);
+            FindStamp(image.stamps, HK_PACK_ENTRY_KIND_ATTENUATION, id);
         if (oldStamp == nullptr) {
             revision.addAttenuations.push_back(i);
         } else if (newStamp != nullptr &&
@@ -125295,9 +125304,9 @@ VnResult DiffPackRevision(Engine& engine, const PackLogicRecord& record,
             continue;
         }
         const PackLogicImage::Stamp* oldStamp = FindStamp(
-            record.stamps, kPackEntryKindBindingDefinition, def.id);
+            record.stamps, HK_PACK_ENTRY_KIND_BINDING_DEFINITION, def.id);
         const PackLogicImage::Stamp* newStamp = FindStamp(
-            image.stamps, kPackEntryKindBindingDefinition, def.id);
+            image.stamps, HK_PACK_ENTRY_KIND_BINDING_DEFINITION, def.id);
         if (oldStamp == nullptr || newStamp == nullptr ||
             newStamp->checksum != oldStamp->checksum) {
             revision.reviseBindingDefs.push_back(i);
@@ -128470,7 +128479,7 @@ VnResult AdoptOwnedPackBytes(const VnPackByteSpan& span,
     }
     std::uint8_t* buffer = static_cast<std::uint8_t*>(::operator new[](
         static_cast<std::size_t>(span.byteCount),
-        std::align_val_t{kPackBlobAlign}, std::nothrow));
+        std::align_val_t{HK_PACK_BLOB_ALIGN}, std::nothrow));
     if (buffer == nullptr) {
         return VN_DEVICE_ERROR;
     }
@@ -128728,7 +128737,7 @@ VnResult ValidateCanonicalSetClosure(
                 provider->image.requirement.packContentRevision != edge.expectedPrerequisiteContentRevision) {
                 return VN_PACK_STALE_REVISION;
             }
-            if (provider->image.packKind == kPackKindInit &&
+            if (provider->image.packKind == HK_PACK_KIND_INIT &&
                 provider->image.hasBusDefinitionSnapshot) {
                 const auto& header = provider->image.busDefinitionSnapshotHeader;
                 if ((edge.expectedBusContentGeneration != 0 &&
@@ -128765,7 +128774,7 @@ VnResult ValidateCanonicalSetClosure(
 VnResult ValidateCanonicalPackSetVoiceRecipes(
     const std::vector<AcquiredCanonicalSetMember>& members,
     const PackComposition::PublishedView* previous) noexcept {
-    if (members.empty() || members.front().image.packKind != kPackKindInit) {
+    if (members.empty() || members.front().image.packKind != HK_PACK_KIND_INIT) {
         return VN_PACK_INIT_LIFECYCLE;
     }
     detail::PackDecodeCharge scratch(members.front().image.staging.Budget());
@@ -128981,7 +128990,7 @@ VnResult ScreenCanonicalBindingScope(std::uint32_t packKind, std::uint32_t scope
     if (attachment && scopeKind == VN_TARGET_SCOPE_VOICE_EFFECT_PARAM) {
         return VN_BAD_PACK;
     }
-    if (packKind == kPackKindInit && CanonicalVoiceScope(scopeKind)) {
+    if (packKind == HK_PACK_KIND_INIT && CanonicalVoiceScope(scopeKind)) {
         return VN_BAD_PACK;
     }
     if (!CanonicalVoiceScope(scopeKind) && !CanonicalBusTableScope(scopeKind)) {
@@ -128991,7 +129000,7 @@ VnResult ScreenCanonicalBindingScope(std::uint32_t packKind, std::uint32_t scope
 }
 
 bool CanonicalBindingEntersTable(std::uint32_t packKind, std::uint32_t scopeKind) {
-    return packKind == kPackKindInit && CanonicalBusTableScope(scopeKind);
+    return packKind == HK_PACK_KIND_INIT && CanonicalBusTableScope(scopeKind);
 }
 
 const PackComposition::PublishedOwner* FindPublishedOwner(
@@ -130738,7 +130747,7 @@ VnResult PrepareCanonicalSetActivation(Engine& engine,
             captured.hash = old->contentHash;
             if (i == 0) captured.image = CopyCanonicalImageWithBudget(previous->catalog, budget);
             else {
-                captured.image.packKind = kPackKindCanonicalContent;
+                captured.image.packKind = HK_PACK_KIND_CANONICAL_CONTENT;
                 captured.image.packStableId = old->packStableId;
                 captured.image.requirement.packContentRevision = old->contentRevision;
                 captured.image.staging = detail::PackDecodeCharge(budget);
@@ -130759,7 +130768,7 @@ VnResult PrepareCanonicalSetActivation(Engine& engine,
                 return VN_PACK_STALE_REVISION;
         }
         const auto& image = captured.image;
-        if (image.packKind != (i == 0 ? kPackKindInit : kPackKindCanonicalContent)) {
+        if (image.packKind != (i == 0 ? HK_PACK_KIND_INIT : HK_PACK_KIND_CANONICAL_CONTENT)) {
             return VN_PACK_INIT_LIFECYCLE;
         }
         if (i == 0 && !image.hasBusDefinitionSnapshot) {
@@ -131110,7 +131119,7 @@ VnResult ActivateCanonicalPackSetImpl(
             const auto result = keep ?
                 (member.structSize == sizeof(member) && member.packStableId != 0 &&
                  member.expectedHandle != 0 && member.flags == 0 && member.reserved0 == 0 &&
-                 member.packKind == (i == 0 ? kPackKindInit : kPackKindCanonicalContent) &&
+                 member.packKind == (i == 0 ? HK_PACK_KIND_INIT : HK_PACK_KIND_CANONICAL_CONTENT) &&
                  member.utf8Path == nullptr && member.utf8ContainmentRoot == nullptr &&
                  member.providerUserData == nullptr && member.provide == nullptr && member.release == nullptr
                     ? VN_OK : VN_INVALID_ARG) : ValidateCanonicalPackSetMember(member, i == 0);
@@ -131600,23 +131609,23 @@ VnResult LoadCanonicalPackImpl(Engine& engine, const VnPackLoadDesc* desc,
         return parsed;
     }
     if (mode == CanonicalLoadMode::Public &&
-        (image.packKind == kPackKindInit ||
-         image.packKind == kPackKindCanonicalContent)) {
+        (image.packKind == HK_PACK_KIND_INIT ||
+         image.packKind == HK_PACK_KIND_CANONICAL_CONTENT)) {
         return VN_PACK_INIT_LIFECYCLE;
     }
     if (mode == CanonicalLoadMode::ProvisionalContent &&
-        image.packKind != kPackKindCanonicalContent) {
+        image.packKind != HK_PACK_KIND_CANONICAL_CONTENT) {
         return VN_PACK_INIT_LIFECYCLE;
     }
     if (PackFault(PackStagingFault::AfterParse) ||
         PackFault(PackStagingFault::PartitionDecode)) {
         return VN_BAD_PACK;
     }
-    if (image.packKind != kPackKindInit &&
-        image.packKind != kPackKindCanonicalContent) {
+    if (image.packKind != HK_PACK_KIND_INIT &&
+        image.packKind != HK_PACK_KIND_CANONICAL_CONTENT) {
         return VN_BAD_PACK;
     }
-    if (image.packKind == kPackKindInit && engine.packComposition.Published() != nullptr &&
+    if (image.packKind == HK_PACK_KIND_INIT && engine.packComposition.Published() != nullptr &&
         engine.packComposition.Published()->initHandle != 0) {
         return VN_PACK_INIT_LIFECYCLE;
     }
@@ -131642,7 +131651,7 @@ VnResult LoadCanonicalPackImpl(Engine& engine, const VnPackLoadDesc* desc,
                       image.packStableId)) {
         return VN_PACK_CYCLE;
     }
-    if (image.packKind == kPackKindCanonicalContent) {
+    if (image.packKind == HK_PACK_KIND_CANONICAL_CONTENT) {
         if (const auto* published = engine.packComposition.Published()) {
             const VnResult catalogCheck = CheckContentAgainstGameplayCatalog(*published, image);
             if (catalogCheck != VN_OK)
@@ -131715,24 +131724,24 @@ VnResult LoadCanonicalPackImpl(Engine& engine, const VnPackLoadDesc* desc,
     }
     owners.push_back(std::move(candidate));
     const PackCanonicalImage* catalog =
-        image.packKind == kPackKindInit ? &image : nullptr;
+        image.packKind == HK_PACK_KIND_INIT ? &image : nullptr;
     PreparedCanonicalPublication publication;
     const VnResult published = PrepareCanonicalOwners(
         engine, std::move(owners), catalog,
-        image.packKind == kPackKindInit ? handle
+        image.packKind == HK_PACK_KIND_INIT ? handle
                                         : (engine.packComposition.Published() != nullptr
                                                ? engine.packComposition.Published()
                                                      ->initHandle
                                                : 0),
-        image.packKind == kPackKindInit ? PackVariablePublicationReason::InitPublication
+        image.packKind == HK_PACK_KIND_INIT ? PackVariablePublicationReason::InitPublication
                                        : PackVariablePublicationReason::ContentMutation,
         &publication, nullptr, nullptr, nullptr, budget);
     if (published != VN_OK) {
         return published;
     }
-    if (image.packKind == kPackKindInit) {
+    if (image.packKind == HK_PACK_KIND_INIT) {
         PackStaging resources;
-        resources.image.packKind = kPackKindResident;
+        resources.image.packKind = HK_PACK_KIND_RESIDENT;
         resources.image.buses = image.buses;
         resources.image.busSends = image.busSends;
         resources.image.busEffects = image.busEffects;
@@ -131820,12 +131829,12 @@ VnResult UnloadCanonicalPack(Engine& engine, VnPackHandle handle,
             member.structSize = sizeof(member);
             member.packStableId = existing.packStableId;
             member.packKind = existing.handle == published->initHandle
-                ? kPackKindInit : kPackKindCanonicalContent;
+                ? HK_PACK_KIND_INIT : HK_PACK_KIND_CANONICAL_CONTENT;
             member.expectedHandle = existing.handle;
             members.push_back(member);
         }
         std::sort(members.begin(), members.end(), [](const auto& a, const auto& b) {
-            if (a.packKind != b.packKind) return a.packKind == kPackKindInit;
+            if (a.packKind != b.packKind) return a.packKind == HK_PACK_KIND_INIT;
             return a.packStableId < b.packStableId;
         });
         const auto count = static_cast<std::uint32_t>(members.size());
@@ -131965,7 +131974,7 @@ VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle,
             ParsePackCanonicalImageWithBudget(span.bytes, span.byteCount, &image, &artifactHash, budget);
         if (parsed != VN_OK) return parsed;
     }
-    if (image.packKind != kPackKindCanonicalContent) {
+    if (image.packKind != HK_PACK_KIND_CANONICAL_CONTENT) {
         return VN_PACK_INIT_LIFECYCLE;
     }
     const PackComposition::PublishedOwner* liveOwner = nullptr;

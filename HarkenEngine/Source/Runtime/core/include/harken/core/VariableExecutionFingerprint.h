@@ -1,6 +1,7 @@
 #ifndef HARKEN_CORE_VARIABLE_EXECUTION_FINGERPRINT_H
 #define HARKEN_CORE_VARIABLE_EXECUTION_FINGERPRINT_H
 
+#include <harken_pack/PackChecksum.h>
 #include <harken/ObjectId.h>
 #include "harken/core/MediaContentRevision.h"
 #include "harken/core/VariableLabel.h"
@@ -12,17 +13,17 @@
 
 namespace harken {
 
-inline constexpr char kVariableExecutionDomain[] = "HARKEN-VARIABLE-EXECUTION-V1";
-inline constexpr char kVariableCatalogDomain[] = "HARKEN-VARIABLE-CATALOG-V1";
+inline constexpr char kVariableExecutionDomain[] = HK_PACK_DOMAIN_VARIABLE_EXECUTION_V1;
+inline constexpr char kVariableCatalogDomain[] = HK_PACK_DOMAIN_VARIABLE_CATALOG_V1;
 inline constexpr char kVariableExecutionCatalogDomain[] =
-    "HARKEN-VARIABLE-EXECUTION-CATALOG-V1";
+    HK_PACK_DOMAIN_VARIABLE_EXECUTION_CATALOG_V1;
 inline constexpr char kVariableApiCatalogDomain[] =
-    "HARKEN-VARIABLE-SDK-CATALOG-V1";
+    HK_PACK_DOMAIN_VARIABLE_SDK_CATALOG_V1;
 
 inline std::uint64_t ComputeVariableDefinitionFingerprintV1(
     VnObjectId variableId, std::uint32_t kind, std::uint32_t scope,
     float rangeMin, float rangeMax, float defaultValue) noexcept {
-    constexpr char domain[] = "HARKEN-VARIABLE-DEFINITION-V1";
+    constexpr char domain[] = HK_PACK_DOMAIN_VARIABLE_DEFINITION_V1;
     MediaContentRevisionHasherV1 hash(domain, sizeof(domain));
     hash.AddObjectId(variableId);
     hash.AddU32(kind);
@@ -116,7 +117,7 @@ struct VariableCatalogFingerprintRowV1 {
 
 inline std::uint64_t ComputeVariableLabelMappingFingerprintV1(
     VnObjectId variableId, std::span<const VariableLabelDefinitionV1> labels) noexcept {
-    constexpr char domain[] = "HARKEN-VARIABLE-LABEL-MAPPING-V1";
+    constexpr char domain[] = HK_PACK_DOMAIN_VARIABLE_LABEL_MAPPING_V1;
     MediaContentRevisionHasherV1 hash(domain, sizeof(domain));
     hash.AddObjectId(variableId);
     hash.AddU32(static_cast<std::uint32_t>(labels.size()));

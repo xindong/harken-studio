@@ -218,14 +218,14 @@ QVector<harkenstudiobuild::PackTocEntry> mediaEntries(const QString& path)
 {
     QVector<harkenstudiobuild::PackTocEntry> result;
     const auto content = bytes(path);
-    if (content.size() < static_cast<qsizetype>(harkenstudiobuild::kPackFileHeaderBytes)) return result;
+    if (content.size() < static_cast<qsizetype>(harkenstudiobuild::kPackBytes<HkPackFileHeader>)) return result;
     const auto* data = reinterpret_cast<const uint8_t*>(content.constData());
     harkenstudiobuild::PackFileHeader header;
     if (!harkenstudiobuild::ReadPackFileHeader(data, &header)) return result;
     for (uint32_t i = 0; i < header.entryCount; ++i) {
         const auto entry = harkenstudiobuild::ReadPackDirectoryEntry(
-            data + header.directoryOffset + i * harkenstudiobuild::kPackDirectoryEntryBytes);
-        if (entry.kind == harkenstudiobuild::kPackEntryKindMedia)
+            data + header.directoryOffset + i * harkenstudiobuild::kPackBytes<HkPackDirectoryEntry>);
+        if (entry.kind == HK_PACK_ENTRY_KIND_MEDIA)
             result.append(harkenstudiobuild::ReadPackMedia(data + entry.offset));
     }
     return result;

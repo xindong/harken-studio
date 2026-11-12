@@ -20,7 +20,7 @@
 #include "VoicePoolReleaseTestAccess.h"
 #include "AllocationProbe.h"
 #include "harken/render/BuiltinEffects.h"
-#include "harken/render/generated/harken_effect_registry.g.h"
+#include "harken/render/EffectRegistry.h"
 
 #include <algorithm>
 #include <atomic>

@@ -18,13 +18,13 @@ target_include_directories(harken_preview
         ${HARKEN_RUNTIME_DIR}/api/src
         ${HARKEN_RUNTIME_DIR}/core/include
         ${HARKEN_RUNTIME_DIR}/media/include
+        ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
         ${HARKEN_RUNTIME_DIR}/param/include
 )
 target_link_libraries(harken_preview
     PRIVATE
         harken_core
         harken_buildinfo
-        harken_voice_slot_layout_contract
 )
 target_compile_definitions(harken_preview PUBLIC
     HARKEN_DEVELOPMENT_PREVIEW=$<BOOL:${HARKEN_DEVELOPMENT_PREVIEW}>)

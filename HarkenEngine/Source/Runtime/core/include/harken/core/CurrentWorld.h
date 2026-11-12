@@ -2,7 +2,7 @@
 #define HARKEN_CORE_CURRENT_WORLD_H
 
 #include <harken/ObjectId.h>
-#include "harken/core/generated/harken_playable_property_runtime.g.h"
+#include "harken/core/PlayablePropertyRuntime.h"
 #include "harken/media/CurrentWorldBodyVintage.h"
 #include "harken/param/Curve.h"
 

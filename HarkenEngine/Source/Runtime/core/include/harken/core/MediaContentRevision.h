@@ -1,6 +1,7 @@
 #ifndef HARKEN_CORE_MEDIA_CONTENT_REVISION_H
 #define HARKEN_CORE_MEDIA_CONTENT_REVISION_H
 
+#include <harken_pack/PackChecksum.h>
 #include <harken/ObjectId.h>
 
 #include <cstddef>
@@ -10,10 +11,8 @@
 
 namespace harken {
 
-inline constexpr std::uint64_t kMediaRevisionFnv1a64OffsetBasis =
-    14695981039346656037ull;
-inline constexpr std::uint64_t kMediaRevisionFnv1a64Prime =
-    1099511628211ull;
+inline constexpr std::uint64_t kMediaRevisionFnv1a64OffsetBasis = HK_PACK_FNV1A64_OFFSET_BASIS;
+inline constexpr std::uint64_t kMediaRevisionFnv1a64Prime = HK_PACK_FNV1A64_PRIME;
 
 class MediaContentRevisionHasherV1 {
 public:
@@ -59,7 +58,7 @@ public:
     }
 
     std::uint64_t Finish() const noexcept {
-        return m_hash == 0 ? 1 : m_hash;
+        return hkPackFingerprintFinish(m_hash);
     }
 
     void AddObjectId(VnObjectId value) noexcept {
@@ -96,7 +95,7 @@ inline bool MediaPcmRevisionInputValidV1(
 
 inline MediaContentRevisionHasherV1 BeginMediaPcmRevisionV1(
     const MediaPcmContentRevisionInputV1& input) noexcept {
-    static constexpr char kDomain[] = "HARKEN-MEDIA-PCM-V1";
+    static constexpr char kDomain[] = HK_PACK_DOMAIN_MEDIA_PCM_V1;
     MediaContentRevisionHasherV1 hash(kDomain, sizeof(kDomain));
     hash.AddU32(input.sampleRate);
     hash.AddU32(input.channelCount);
@@ -231,7 +230,7 @@ struct MediaStreamSemanticHeaderV1 {
 
 inline MediaContentRevisionHasherV1 BeginMediaStreamContentRevisionV1(
     const MediaStreamSemanticHeaderV1& header) noexcept {
-    static constexpr char kDomain[] = "HARKEN-MEDIA-STREAM-V1";
+    static constexpr char kDomain[] = HK_PACK_DOMAIN_MEDIA_STREAM_V1;
     MediaContentRevisionHasherV1 hash(kDomain, sizeof(kDomain));
     hash.AddU32(header.sampleRate);
     hash.AddU32(header.channelCount);

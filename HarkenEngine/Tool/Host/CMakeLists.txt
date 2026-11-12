@@ -32,9 +32,9 @@ add_executable(harken_host_selection_copy_test
 target_include_directories(harken_host_selection_copy_test PRIVATE
     ${HARKEN_RUNTIME_DIR}/api/src
     ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/core/contract/include
     ${HARKEN_RUNTIME_DIR}/dsp/include
     ${HARKEN_RUNTIME_DIR}/media/include
+    ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
     ${HARKEN_RUNTIME_DIR}/param/include
     ${HARKEN_RUNTIME_DIR}/render/include
     ${HARKEN_THIRD_PARTY_DIR}/miniaudio
@@ -46,9 +46,9 @@ target_link_libraries(harken_host_selection_copy_test PRIVATE harken_core harken
 target_include_directories(harken_host PRIVATE
     ${HARKEN_RUNTIME_DIR}/api/src
     ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/core/contract/include
     ${HARKEN_RUNTIME_DIR}/dsp/include
     ${HARKEN_RUNTIME_DIR}/media/include
+    ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
     ${HARKEN_RUNTIME_DIR}/param/include
     ${HARKEN_RUNTIME_DIR}/render/include
     ${HARKEN_THIRD_PARTY_DIR}/miniaudio

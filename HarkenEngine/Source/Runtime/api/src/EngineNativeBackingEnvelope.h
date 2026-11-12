@@ -8,7 +8,7 @@
 #include <harken/core/CurrentSelection.h>
 #include <harken/core/EngineConfig.h>
 #include <harken/core/TimelineProgram.h>
-#include <harken/render/generated/harken_effect_registry.g.h>
+#include "harken/render/EffectRegistry.h"
 
 #include <algorithm>
 #include <array>
