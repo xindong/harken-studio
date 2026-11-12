@@ -117,7 +117,6 @@ protected:
     QTreeWidgetItem* findTreeItem(ProjectItem* item) const;
     QTreeWidgetItem* createTreeItem(ProjectItem* item);
     void updateTreeItem(QTreeWidgetItem* treeItem, ProjectItem* projectItem);
-    void setSubtreeExpanded(QTreeWidgetItem* item, bool expanded);
     QString typeToString(ProjectItem::Type type) const;
 
     ProjectItem* projectItemForTreeItem(QTreeWidgetItem* treeItem) const;

@@ -49,6 +49,21 @@ QString variableKindName(VariableKind kind)
     return kind == VariableKind::Step ? QObject::tr("Step") : QObject::tr("Smooth");
 }
 
+int defaultMatchValue(const VVariable& variable)
+{
+    return VariableSemantics::discreteRead(VariableSemantics::currentValue(
+        std::nullopt, variable.kind, variable.rangeMin, variable.rangeMax, variable.defaultValue));
+}
+
+QString matchValueText(int value, const VVariable& variable)
+{
+    const QString text = VariableSemantics::labelTextForValue(value, variable.labels)
+                             .value_or(QString::number(value));
+    return value >= variable.rangeMin && value <= variable.rangeMax
+            && value == defaultMatchValue(variable)
+        ? QObject::tr("%1 (Default)").arg(text) : text;
+}
+
 QString invalidCellMessage(int value, const ProjectItem& variableItem,
                            const VVariable& variable)
 {
@@ -86,12 +101,18 @@ public:
                                        std::floor(static_cast<double>(variable->rangeMax)));
             if (begin <= end && end - begin < VariableSemantics::kStepComboMaxInclusiveCount) {
                 for (int value = static_cast<int>(begin); value <= static_cast<int>(end); ++value)
-                    edit->addItem(VariableSemantics::labelTextForValue(value, variable->labels)
-                                      .value_or(QString::number(value)), value);
+                    edit->addItem(matchValueText(value, *variable), value);
             } else {
                 for (const auto& label : VariableSemantics::effectiveLabels(*variable))
-                    edit->addItem(label.name.isEmpty() ? QString::number(label.anchor) : label.name,
-                                  label.anchor);
+                    edit->addItem(matchValueText(label.anchor, *variable), label.anchor);
+                const int defaultValue = defaultMatchValue(*variable);
+                if (defaultValue >= begin && defaultValue <= end
+                    && edit->findData(defaultValue) < 0) {
+                    int index = 1;
+                    while (index < edit->count() && edit->itemData(index).toInt() < defaultValue)
+                        ++index;
+                    edit->insertItem(index, matchValueText(defaultValue, *variable), defaultValue);
+                }
             }
         }
         auto* self = const_cast<GridCellDelegate*>(this);
@@ -470,7 +491,7 @@ void DiscreteGridWidget::rebuildTable()
                     ? VariableSemantics::labelTextForValue(
                           static_cast<float>(*cell), var->labels)
                     : std::nullopt;
-                item->setText(label ? *label : QString::number(*cell));
+                item->setText(var ? matchValueText(*cell, *var) : QString::number(*cell));
                 if (label)
                     item->setToolTip(QStringLiteral("= %1").arg(*cell));
                 if (var && (*cell < var->rangeMin || *cell > var->rangeMax)) {

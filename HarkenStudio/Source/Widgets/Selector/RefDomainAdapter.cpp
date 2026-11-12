@@ -5,6 +5,7 @@
 #include "Core/AssetPipeline/AssetRegistry.h"
 #include "Core/AuthoringPolicy.h"
 #include "Core/AssetPipeline/PathUtils.h"
+#include "Core/Components/VSound.h"
 #include "Core/ItemTypeIcons.h"
 #include "Core/ProjectManager.h"
 #include "Core/ThemeAssetCatalog.h"
@@ -45,7 +46,25 @@ public:
         if (!item)
             return {};
         const auto* project = ProjectManager::instance().currentProject();
-        return project ? project->itemPath(item) : item->name;
+        QString tip = project ? project->itemPath(item) : item->name;
+        if (const auto* sound = item->comp<VSound>()) {
+            const auto appendSources = [&](const SoundSourceSet& sources, const QString& language) {
+                for (const auto& source : sources.entries) {
+                    const auto* asset = AssetRegistry::instance().getAsset(source.sourceId);
+                    const QString path = asset ? assetDisplayPath(*asset) : QObject::tr("Missing");
+                    tip += QLatin1Char('\n') + (language.isEmpty()
+                        ? QObject::tr("Source: %1").arg(path)
+                        : QObject::tr("Source (%1): %2").arg(language, path));
+                }
+            };
+            if (sound->distinguishLanguage) {
+                for (auto it = sound->sources.localized.cbegin(); it != sound->sources.localized.cend(); ++it)
+                    appendSources(it.value(), it.key());
+            } else {
+                appendSources(sound->sources.plain, {});
+            }
+        }
+        return tip;
     }
 
     QIcon icon(uint32_t id, const QColor& tint) const override
@@ -71,29 +90,51 @@ public:
             });
     }
 
-    QList<QMetaObject::Connection> connectChanged(
-        QObject* ctx, std::function<void(uint32_t)> onChanged) const override
+    std::unique_ptr<QObject> connectChanged(
+        QObject* ctx, std::function<void()> onChanged,
+        std::optional<uint32_t> objectID) const override
     {
+        auto subscription = std::make_unique<QObject>(ctx);
+        auto* receiver = subscription.get();
         auto* pm = &ProjectManager::instance();
-        return {
-            QObject::connect(
-                pm, &ProjectManager::itemPropertyChanged, ctx,
-                [cb = onChanged](ProjectItem* item, const QString& property, const QObject*) {
-                    if (item && (property == QStringLiteral("mode")
-                                 || property == QStringLiteral("playType")
-                                 || property == QStringLiteral("kind")))
-                        cb(item->objectID);
-                }),
-            QObject::connect(
-                pm, &ProjectManager::itemRenamed, ctx,
-                [cb = onChanged](ProjectItem*, const QString&) { cb(0); }),
-            QObject::connect(pm, &ProjectManager::itemCreated, ctx,
-                [cb = onChanged](ProjectItem*) { cb(0); }),
-            QObject::connect(pm, &ProjectManager::itemDeleted, ctx,
-                [cb = onChanged](ProjectItem*) { cb(0); }, Qt::QueuedConnection),
-            QObject::connect(pm, &ProjectManager::itemMoved, ctx,
-                [cb = std::move(onChanged)](ProjectItem*, ProjectItem*, ProjectItem*) { cb(0); }),
+        auto* registry = &AssetRegistry::instance();
+        const auto refreshSources = [objectID, cb = onChanged](uint32_t sourceID) {
+            if (objectID) {
+                const auto* item = ProjectManager::instance().findItemByObjectID(*objectID);
+                const auto* sound = item ? item->comp<VSound>() : nullptr;
+                if (!sound)
+                    return;
+                const auto containsSource = [sourceID](const SoundSourceSet& sources) {
+                    return std::any_of(sources.entries.begin(), sources.entries.end(),
+                        [sourceID](const auto& source) { return source.sourceId == sourceID; });
+                };
+                const bool affected = sound->distinguishLanguage
+                    ? std::any_of(sound->sources.localized.cbegin(), sound->sources.localized.cend(),
+                                  containsSource)
+                    : containsSource(sound->sources.plain);
+                if (!affected)
+                    return;
+            }
+            cb();
         };
+        QObject::connect(registry, &AssetRegistry::assetRegistered, receiver, refreshSources);
+        QObject::connect(registry, &AssetRegistry::assetModified, receiver, refreshSources);
+        QObject::connect(registry, &AssetRegistry::assetUnregistered, receiver, refreshSources);
+        QObject::connect(pm, &ProjectManager::itemPropertyChanged, receiver,
+            [objectID, cb = onChanged](ProjectItem* item, const QString& property, const QObject*) {
+                if (item && (!objectID || item->objectID == *objectID)
+                    && (property == QStringLiteral("mode")
+                        || property == QStringLiteral("playType")
+                        || property == QStringLiteral("kind")
+                        || property == QStringLiteral("sources")
+                        || property == QStringLiteral("distinguishLanguage")))
+                    cb();
+            });
+        QObject::connect(pm, &ProjectManager::itemRenamed, receiver, onChanged);
+        QObject::connect(pm, &ProjectManager::itemCreated, receiver, onChanged);
+        QObject::connect(pm, &ProjectManager::itemDeleted, receiver, onChanged);
+        QObject::connect(pm, &ProjectManager::itemMoved, receiver, onChanged);
+        return subscription;
     }
 
     void populate(QTreeWidget* tree, const SelectorRequest& request) const override
@@ -163,6 +204,7 @@ public:
             if (QTreeWidgetItem* existing = buckets.value(folder))
                 return existing;
             QTreeWidgetItem* bucket = TreeRowStyle::makeBucketRow(folder);
+            bucket->setData(0, kRoleFolderPath, folder);
             bucket->setFlags(bucket->flags() & ~Qt::ItemIsSelectable);
             tree->addTopLevelItem(bucket);
             buckets[folder] = bucket;
@@ -238,16 +280,20 @@ public:
 
     bool matchesFilter(uint32_t id, const RefFilter&) const override { return isAvailable(id); }
 
-    QList<QMetaObject::Connection> connectChanged(
-        QObject* ctx, std::function<void(uint32_t)> onChanged) const override
+    std::unique_ptr<QObject> connectChanged(
+        QObject* ctx, std::function<void()> onChanged,
+        std::optional<uint32_t> objectID) const override
     {
+        auto subscription = std::make_unique<QObject>(ctx);
         auto* registry = &AssetRegistry::instance();
-        auto invoke = [cb = std::move(onChanged)](uint32_t id) { cb(id); };
-        return {
-            QObject::connect(registry, &AssetRegistry::assetRegistered, ctx, invoke),
-            QObject::connect(registry, &AssetRegistry::assetModified, ctx, invoke),
-            QObject::connect(registry, &AssetRegistry::assetUnregistered, ctx, invoke),
+        auto invoke = [objectID, cb = std::move(onChanged)](uint32_t id) {
+            if (!objectID || id == *objectID)
+                cb();
         };
+        QObject::connect(registry, &AssetRegistry::assetRegistered, subscription.get(), invoke);
+        QObject::connect(registry, &AssetRegistry::assetModified, subscription.get(), invoke);
+        QObject::connect(registry, &AssetRegistry::assetUnregistered, subscription.get(), invoke);
+        return subscription;
     }
 
     void populate(QTreeWidget* tree, const SelectorRequest& request) const override
@@ -271,6 +317,7 @@ public:
                     continue;
                 }
                 QTreeWidgetItem* folder = TreeRowStyle::makeFolderRow(segment);
+                folder->setData(0, kRoleFolderPath, key);
                 folder->setFlags(folder->flags() & ~Qt::ItemIsSelectable);
                 if (parent)
                     parent->addChild(folder);
@@ -292,8 +339,9 @@ public:
                 && (!request.isSelectable || request.isSelectable(id));
             auto* row = new QTreeWidgetItem;
             row->setText(0, assetDisplayName(*asset));
+            row->setToolTip(0, tooltip(id));
             if (!selectionError.isEmpty())
-                row->setToolTip(0, selectionError);
+                row->setToolTip(0, row->toolTip(0) + QLatin1Char('\n') + selectionError);
             row->setIcon(0, icon(id, QColor()));
             row->setData(0, kRoleObjectID, id);
             row->setData(0, kRoleSelectable, selectable);
