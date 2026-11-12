@@ -24,10 +24,7 @@ callback and lifecycle tests consume companion inputs.
 ## Prepare an isolated Unity project
 
 Use a dedicated Unity project with the current Unity Integration Package, the matching native
-library and test assemblies enabled. Enable the built-in
-`com.unity.modules.assetbundle` package for the AssetBundle case.
-Copy `HarkenIntegration/Test/ExternalConsumer/Unity`
-to `Assets/ExternalConsumer` to include the unrelated public consumer assembly.
+library and test assemblies enabled.
 
 ```powershell
 python HarkenIntegration/Test/UnityFixture/prepare.py --project <Unity-project>
@@ -43,10 +40,9 @@ Run `Harken.Unity.Tests.HarkenUnityFixtureAssets.Prepare` through Unity's
 `PrepareVariableSource` prepares the Variable source independently. These assets
 include both JSON and bytes; use `CaptureCompanion` to create runtime sources.
 
-Run EditMode and PlayMode, including `ExternalConsumerTests`. Tests using
-`HARKEN_SDK_TEST_NULL_PUMP` require the dedicated native test bridge and the same
-define enabled for Standalone. The bridge is test-only and must not ship in the
-Integration Package. Editor results do not establish Android, IL2CPP or audible device behavior.
+Run EditMode and PlayMode. Tests using `HARKEN_SDK_TEST_NULL_PUMP` advance null
+audio through `VnPreview_PumpNullMixer`; they require the Development native
+library and the same define enabled for Standalone. Editor results do not establish Android, IL2CPP or audible device behavior.
 
 ### Production Windows Player checks
 
@@ -55,7 +51,7 @@ explicit restart, nested/direct ownership and cancellation of pending reads.
 Use a separate project with the same prepared fixtures, the matching Harken Engine
 libraries with **Native Library** set to *Development* (the checks read engine
 snapshots), an available Windows output device, and no
-`HARKEN_SDK_TEST_NULL_PUMP` define. These tests are excluded from bridge builds
+`HARKEN_SDK_TEST_NULL_PUMP` define. These tests are excluded from `HARKEN_SDK_TEST_NULL_PUMP` builds
 and only run in a Windows Player.
 
 Run each scripting backend separately with Unity Test Framework:

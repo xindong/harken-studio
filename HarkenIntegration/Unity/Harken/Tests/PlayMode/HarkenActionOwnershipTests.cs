@@ -476,14 +476,14 @@ namespace Harken.Unity.Tests
 #if HARKEN_SDK_TEST_NULL_PUMP
         [System.Runtime.InteropServices.DllImport(HarkenNative.LibraryName,
             CallingConvention = System.Runtime.InteropServices.CallingConvention.Cdecl)]
-        private static extern VnResult HarkenSdkTest_PumpNull(uint blocks);
+        private static extern void VnPreview_PumpNullMixer(uint blockCount);
 #endif
 
         private static void PumpControlledDevice(Fixture fixture)
         {
 #if HARKEN_SDK_TEST_NULL_PUMP
             if (fixture.NullDevice)
-                Assert.That(HarkenSdkTest_PumpNull(1), Is.EqualTo(VnResult.VN_OK));
+                VnPreview_PumpNullMixer(1);
 #endif
         }
 

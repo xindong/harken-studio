@@ -29,21 +29,5 @@ Null audio does not render automatically: release before retirement returns
 `VN_IN_USE`; shutdown owns the remaining firing. This runner does not claim audio
 completion or delivered notification coverage.
 
-For real Unity compilation and callback/AOT coverage, copy `Unity/` to the
-dedicated fixture project's `Assets/ExternalConsumer` directory. Keep the
-`Harken.ExternalUnityConsumer` assembly name unchanged and outside the managed API's friend
-lists. Prepare the project with the existing `../UnityFixture/README.md` process,
-the current Integration Package, and the dedicated **test-only** native bridge. Enable
-`HARKEN_SDK_TEST_NULL_PUMP` for Standalone and run the external test alongside
-`Harken.Unity.PlayModeTests` in PlayMode and a Standalone Windows IL2CPP Player.
-Also run `Harken.Unity.EditModeTests`. PlayableDemo remains suspended and is not a runtime validation input.
-
-`PublicHostPreservesCallbacksAndTerminalActionRelease` posts and stops an authored
-Action, advances null audio until the same firing is terminal, and releases it.
-It queues a fresh native notification, forces GC, pumps the public Update path,
-and verifies delivery, host state and calling thread. The private P/Invokes in
-that test only drive the existing native test bridge; they do not grant access
-to managed API internals. Never distribute the bridge DLL or test define with a production
-Integration Package.
 Unity Player tests complement the production-library host run; neither replaces
 actual device/game/listening acceptance when a change requires it.

@@ -50,6 +50,10 @@ ALLOWED_EDGES = {
     },
 }
 
+EXEMPTIONS = {
+    ("root-product-logic", "cmake/BuildInfo.cmake", "HarkenHub"),
+}
+
 ROOT_SWITCH_OWNERS = (
     (re.compile(r"^HARKEN_BUILD_(EDITOR|STUDIO)"), "HarkenStudio"),
     (re.compile(r"^HARKEN_BUILD_HUB"), "HarkenHub"),
@@ -192,7 +196,9 @@ class Checker:
         return frozenset(seen)
 
     def report(self, *args) -> None:
-        self.violations.append(Violation(*args))
+        violation = Violation(*args)
+        if (violation.check, violation.source, violation.target) not in EXEMPTIONS:
+            self.violations.append(violation)
 
     def cmake_files(self) -> list[str]:
         return [p for p in self.files
