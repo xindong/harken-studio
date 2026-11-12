@@ -376,6 +376,512 @@ TABLE_JSON = r'''
         ]
       ]
     },
+    "VnRemoteClientDesc": {
+      "fields": [
+        [
+          "structSize",
+          "u32"
+        ],
+        [
+          "flags",
+          "u32"
+        ],
+        [
+          "clientName",
+          {
+            "ptr": "string",
+            "ctype": "const char*"
+          }
+        ]
+      ]
+    },
+    "VnRemoteClientRequest": {
+      "fields": [
+        [
+          "structSize",
+          "u32"
+        ],
+        [
+          "kind",
+          "u32"
+        ],
+        [
+          "operation",
+          "u32"
+        ],
+        [
+          "durationMs",
+          "u32"
+        ],
+        [
+          "expectedGeneration",
+          "u64"
+        ],
+        [
+          "target",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "instanceHandle",
+          "u64"
+        ],
+        [
+          "secondary",
+          "u64"
+        ],
+        [
+          "value",
+          "f32"
+        ],
+        [
+          "offset",
+          "u32"
+        ],
+        [
+          "streamMask",
+          "u32"
+        ],
+        [
+          "cadenceHz",
+          "u32"
+        ],
+        [
+          "bytesPerSecond",
+          "u32"
+        ],
+        [
+          "executionFactVersion",
+          "u32"
+        ],
+        [
+          "permissionMask",
+          "u32"
+        ],
+        [
+          "requestSymbols",
+          "u32"
+        ],
+        [
+          "consumerQueueBytes",
+          "u64"
+        ],
+        [
+          "sessionEpoch",
+          "u64"
+        ]
+      ]
+    },
+    "VnRemoteClientTarget": {
+      "fields": [
+        [
+          "result",
+          "i32"
+        ],
+        [
+          "protocolMajor",
+          "u32"
+        ],
+        [
+          "protocolMinor",
+          "u32"
+        ],
+        [
+          "processId",
+          "u32"
+        ],
+        [
+          "tcpPort",
+          "u32"
+        ],
+        [
+          "sampleRate",
+          "u32"
+        ],
+        [
+          "blockFrames",
+          "u32"
+        ],
+        [
+          "compatible",
+          "u32"
+        ],
+        [
+          "instanceId",
+          "u64"
+        ],
+        [
+          "sessionId",
+          "u64"
+        ],
+        [
+          "capabilities",
+          "u64"
+        ],
+        [
+          "address",
+          {
+            "array": [
+              "u8",
+              64
+            ]
+          }
+        ],
+        [
+          "bindAddress",
+          {
+            "array": [
+              "u8",
+              64
+            ]
+          }
+        ],
+        [
+          "applicationName",
+          {
+            "array": [
+              "u8",
+              128
+            ]
+          }
+        ],
+        [
+          "projectName",
+          {
+            "array": [
+              "u8",
+              128
+            ]
+          }
+        ],
+        [
+          "machineName",
+          {
+            "array": [
+              "u8",
+              128
+            ]
+          }
+        ],
+        [
+          "engineVersion",
+          {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        ],
+        [
+          "buildId",
+          {
+            "array": [
+              "u8",
+              128
+            ]
+          }
+        ],
+        [
+          "platform",
+          {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        ]
+      ]
+    },
+    "VnRemoteClientSnapshot": {
+      "fields": [
+        [
+          "result",
+          "i32"
+        ],
+        [
+          "activeVoices",
+          "u32"
+        ],
+        [
+          "blockIndex",
+          "u64"
+        ],
+        [
+          "busCount",
+          "u32"
+        ],
+        [
+          "callbackCpuUs",
+          "u32"
+        ],
+        [
+          "updateCpuUs",
+          "u32"
+        ],
+        [
+          "voiceRows",
+          "u32"
+        ],
+        [
+          "commandBackpressure",
+          "u64"
+        ],
+        [
+          "droppedNotifications",
+          "u64"
+        ],
+        [
+          "busRows",
+          "u32"
+        ],
+        [
+          "reserved0",
+          "u32"
+        ]
+      ]
+    },
+    "VnRemoteClientCaptureStatus": {
+      "fields": [
+        [
+          "result",
+          "i32"
+        ],
+        [
+          "state",
+          "u32"
+        ],
+        [
+          "sessionEpoch",
+          "u64"
+        ],
+        [
+          "startedTimestampNs",
+          "u64"
+        ],
+        [
+          "stoppedTimestampNs",
+          "u64"
+        ],
+        [
+          "sourceDroppedRecords",
+          "u64"
+        ],
+        [
+          "deliveryDroppedRecords",
+          "u64"
+        ],
+        [
+          "transportDroppedRecords",
+          "u64"
+        ],
+        [
+          "execution",
+          "u32"
+        ],
+        [
+          "acceptedExecutionFactVersion",
+          "u32"
+        ],
+        [
+          "baselineAvailability",
+          "u32"
+        ],
+        [
+          "requestedPermissionMask",
+          "u32"
+        ],
+        [
+          "acceptedPermissionMask",
+          "u32"
+        ],
+        [
+          "deniedPermissionMask",
+          "u32"
+        ],
+        [
+          "unsupportedPermissionMask",
+          "u32"
+        ],
+        [
+          "acceptedStreamKindMask",
+          "u32"
+        ],
+        [
+          "symbolsDecision",
+          "u32"
+        ],
+        [
+          "symbolAvailability",
+          "u32"
+        ],
+        [
+          "identityUnavailableCount",
+          "u64"
+        ],
+        [
+          "baselineStateCutId",
+          "u64"
+        ],
+        [
+          "supportedFactKinds",
+          {
+            "array": [
+              "u64",
+              2
+            ]
+          }
+        ]
+      ]
+    },
+    "VnRemoteClientEvent": {
+      "fields": [
+        [
+          "structSize",
+          "u32"
+        ],
+        [
+          "kind",
+          "u32"
+        ],
+        [
+          "requestId",
+          "u32"
+        ],
+        [
+          "result",
+          "i32"
+        ],
+        [
+          "failure",
+          "u32"
+        ],
+        [
+          "osError",
+          "i32"
+        ],
+        [
+          "operation",
+          "u32"
+        ],
+        [
+          "recordCount",
+          "u32"
+        ],
+        [
+          "handle",
+          "u64"
+        ],
+        [
+          "sessionEpoch",
+          "u64"
+        ],
+        [
+          "planGeneration",
+          "u64"
+        ],
+        [
+          "streamMask",
+          "u32"
+        ],
+        [
+          "catalogTotal",
+          "u32"
+        ],
+        [
+          "catalogGeneration",
+          "u64"
+        ],
+        [
+          "catalogOffset",
+          "u32"
+        ],
+        [
+          "catalogRows",
+          "u32"
+        ],
+        [
+          "dataBytes",
+          "u64"
+        ],
+        [
+          "target",
+          {
+            "struct": "VnRemoteClientTarget"
+          }
+        ],
+        [
+          "snapshot",
+          {
+            "struct": "VnRemoteClientSnapshot"
+          }
+        ],
+        [
+          "capture",
+          {
+            "struct": "VnRemoteClientCaptureStatus"
+          }
+        ]
+      ]
+    },
+    "VnRemoteClientCatalogRow": {
+      "fields": [
+        [
+          "id",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "kind",
+          "u32"
+        ],
+        [
+          "reserved0",
+          "u32"
+        ]
+      ]
+    },
+    "VnRemoteClientVoice": {
+      "fields": [
+        [
+          "handle",
+          "u64"
+        ],
+        [
+          "soundId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "state",
+          "u32"
+        ],
+        [
+          "peak",
+          "f32"
+        ]
+      ]
+    },
+    "VnRemoteClientBus": {
+      "fields": [
+        [
+          "id",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "generation",
+          "u32"
+        ],
+        [
+          "peak",
+          "f32"
+        ]
+      ]
+    },
     "VnConfig": {
       "_comment": "Not a wire desc (Vn_Init is refused-lifecycle); described here so the C# binding mirrors the full public struct and the layout asserts pin it. Callback/void* fields are raw C pointers (ptr:opaque) - 8 bytes, never wire-marshalled.",
       "fields": [
@@ -9687,6 +10193,132 @@ TABLE_JSON = r'''
       ]
     },
     {
+      "name": "Vn_RemoteClientCreate",
+      "note": "Development remote client; process-local, no remote opcode.",
+      "params": [
+        {
+          "name": "desc",
+          "ctype": "const VnRemoteClientDesc*",
+          "wire": "desc",
+          "type": "VnRemoteClientDesc"
+        },
+        {
+          "name": "outClient",
+          "ctype": "VnRemoteClient*",
+          "wire": "out"
+        }
+      ]
+    },
+    {
+      "name": "Vn_RemoteClientDestroy",
+      "note": "Development remote client; process-local, no remote opcode.",
+      "params": [
+        {
+          "name": "client",
+          "ctype": "VnRemoteClient",
+          "wire": "u64"
+        }
+      ]
+    },
+    {
+      "name": "Vn_RemoteClientDiscover",
+      "note": "Development remote client; process-local, no remote opcode.",
+      "params": [
+        {
+          "name": "client",
+          "ctype": "VnRemoteClient",
+          "wire": "u64"
+        },
+        {
+          "name": "discoveryPort",
+          "ctype": "uint32_t",
+          "wire": "u32"
+        }
+      ]
+    },
+    {
+      "name": "Vn_RemoteClientConnect",
+      "note": "Development remote client; process-local, no remote opcode.",
+      "params": [
+        {
+          "name": "client",
+          "ctype": "VnRemoteClient",
+          "wire": "u64"
+        },
+        {
+          "name": "host",
+          "ctype": "const char*",
+          "wire": "string"
+        },
+        {
+          "name": "tcpPort",
+          "ctype": "uint32_t",
+          "wire": "u32"
+        }
+      ]
+    },
+    {
+      "name": "Vn_RemoteClientDisconnect",
+      "note": "Development remote client; process-local, no remote opcode.",
+      "params": [
+        {
+          "name": "client",
+          "ctype": "VnRemoteClient",
+          "wire": "u64"
+        }
+      ]
+    },
+    {
+      "name": "Vn_RemoteClientRequest",
+      "note": "Development remote client; process-local, no remote opcode.",
+      "params": [
+        {
+          "name": "client",
+          "ctype": "VnRemoteClient",
+          "wire": "u64"
+        },
+        {
+          "name": "request",
+          "ctype": "const VnRemoteClientRequest*",
+          "wire": "desc",
+          "type": "VnRemoteClientRequest"
+        },
+        {
+          "name": "outRequestId",
+          "ctype": "uint32_t*",
+          "wire": "outu32"
+        }
+      ]
+    },
+    {
+      "name": "Vn_RemoteClientPoll",
+      "note": "Development remote client; process-local, no remote opcode.",
+      "params": [
+        {
+          "name": "client",
+          "ctype": "VnRemoteClient",
+          "wire": "u64"
+        },
+        {
+          "name": "outEvent",
+          "ctype": "VnRemoteClientEvent*",
+          "wire": "outstruct",
+          "type": "VnRemoteClientEvent"
+        },
+        {
+          "name": "buffer",
+          "ctype": "void*",
+          "wire": "outbuf",
+          "capacityParam": "bufferBytes"
+        },
+        {
+          "name": "bufferBytes",
+          "ctype": "uint64_t",
+          "wire": "u64"
+        }
+      ]
+    },
+    {
       "name": "Vn_MonitorGetCapabilities",
       "note": "Runtime Monitor public C ABI; not part of the remote command-mirror (no opcode). Present so the C# binding covers the full public C API.",
       "params": [
@@ -10662,7 +11294,8 @@ TABLE_JSON = r'''
       "VnMonitorChunkKind": "u32",
       "VnMonitorChunkFlags": "u32",
       "VnStreamSourceRequest": "u64",
-      "VnPlaybackReadinessState": "u32"
+      "VnPlaybackReadinessState": "u32",
+      "VnRemoteClient": "u64"
     },
     "results": {
       "backing": "i32",
@@ -10746,7 +11379,9 @@ TABLE_JSON = r'''
         "VN_NO_VARIABLE_LABEL": -1206,
         "VN_GAMEPLAY_NAME_RETIRED": -1000,
         "VN_GAMEPLAY_WRONG_PROJECT": -1001,
-        "VN_GAMEPLAY_CONTRACT_MISMATCH": -1002
+        "VN_GAMEPLAY_CONTRACT_MISMATCH": -1002,
+        "VN_REMOTE_CLIENT_NO_EVENT": -1300,
+        "VN_REMOTE_CLIENT_BUFFER_TOO_SMALL": -1301
       }
     },
     "enums": {
@@ -11743,6 +12378,89 @@ TABLE_JSON = r'''
           "VN_PLAYBACK_READINESS_CANCELLED": 5,
           "VN_PLAYBACK_READINESS_TERMINAL": 6
         }
+      },
+      "VnRemoteCapability": {
+        "backing": "u32",
+        "values": {
+          "VN_REMOTE_CAPABILITY_SNAPSHOT": 1,
+          "VN_REMOTE_CAPABILITY_CATALOG": 2,
+          "VN_REMOTE_CAPABILITY_CONTROL": 4,
+          "VN_REMOTE_CAPABILITY_MONITOR_RECORDS": 8,
+          "VN_REMOTE_CAPABILITY_EVENT_CAPTURE": 16,
+          "VN_REMOTE_CAPABILITY_EXECUTION_OBSERVATION": 32
+        }
+      },
+      "VnRemoteClientFlags": {
+        "backing": "u32",
+        "values": {
+          "VN_REMOTE_CLIENT_LOCAL_ONLY": 1
+        }
+      },
+      "VnRemoteClientRequestKind": {
+        "backing": "u32",
+        "values": {
+          "VN_REMOTE_CLIENT_REQUEST_SNAPSHOT": 1,
+          "VN_REMOTE_CLIENT_REQUEST_CATALOG": 2,
+          "VN_REMOTE_CLIENT_REQUEST_COMMAND": 3,
+          "VN_REMOTE_CLIENT_REQUEST_MONITOR_START": 4,
+          "VN_REMOTE_CLIENT_REQUEST_MONITOR_STOP": 5,
+          "VN_REMOTE_CLIENT_REQUEST_EVENT_START": 6,
+          "VN_REMOTE_CLIENT_REQUEST_EVENT_START_V2": 7,
+          "VN_REMOTE_CLIENT_REQUEST_EVENT_SEAL": 8
+        }
+      },
+      "VnRemoteOperation": {
+        "backing": "u32",
+        "values": {
+          "VN_REMOTE_OPERATION_POST_ACTION": 1,
+          "VN_REMOTE_OPERATION_STOP_ALL": 3,
+          "VN_REMOTE_OPERATION_STOP_VOICE": 4,
+          "VN_REMOTE_OPERATION_STOP_ACTION": 5,
+          "VN_REMOTE_OPERATION_SET_GLOBAL_VARIABLE": 6,
+          "VN_REMOTE_OPERATION_SET_BUS_VOLUME": 7,
+          "VN_REMOTE_OPERATION_SET_VOICE_VOLUME": 8
+        }
+      },
+      "VnRemoteCatalogKind": {
+        "backing": "u32",
+        "values": {
+          "VN_REMOTE_CATALOG_ACTION": 1,
+          "VN_REMOTE_CATALOG_VARIABLE": 2,
+          "VN_REMOTE_CATALOG_BUS": 3
+        }
+      },
+      "VnRemoteClientEventKind": {
+        "backing": "u32",
+        "values": {
+          "VN_REMOTE_CLIENT_EVENT_TARGET_FOUND": 1,
+          "VN_REMOTE_CLIENT_EVENT_HANDSHAKING": 2,
+          "VN_REMOTE_CLIENT_EVENT_CONNECTED": 3,
+          "VN_REMOTE_CLIENT_EVENT_FAILED": 4,
+          "VN_REMOTE_CLIENT_EVENT_REJECTED": 5,
+          "VN_REMOTE_CLIENT_EVENT_SNAPSHOT": 6,
+          "VN_REMOTE_CLIENT_EVENT_CATALOG": 7,
+          "VN_REMOTE_CLIENT_EVENT_COMMAND_RESULT": 8,
+          "VN_REMOTE_CLIENT_EVENT_MONITOR_STATUS": 9,
+          "VN_REMOTE_CLIENT_EVENT_MONITOR_RECORDS": 10,
+          "VN_REMOTE_CLIENT_EVENT_CAPTURE_STATUS": 11,
+          "VN_REMOTE_CLIENT_EVENT_CAPTURE_RECORDS": 12
+        }
+      },
+      "VnRemoteClientFailure": {
+        "backing": "u32",
+        "values": {
+          "VN_REMOTE_CLIENT_FAILURE_CONNECT": 1,
+          "VN_REMOTE_CLIENT_FAILURE_DISCONNECTED": 2,
+          "VN_REMOTE_CLIENT_FAILURE_CONNECT_TIMEOUT": 3,
+          "VN_REMOTE_CLIENT_FAILURE_RESPONSE_TIMEOUT": 4,
+          "VN_REMOTE_CLIENT_FAILURE_COMMAND_TIMEOUT": 5,
+          "VN_REMOTE_CLIENT_FAILURE_SILENT": 6,
+          "VN_REMOTE_CLIENT_FAILURE_IN_USE": 7,
+          "VN_REMOTE_CLIENT_FAILURE_INCOMPATIBLE": 8,
+          "VN_REMOTE_CLIENT_FAILURE_PROTOCOL": 9,
+          "VN_REMOTE_CLIENT_FAILURE_SEND": 10,
+          "VN_REMOTE_CLIENT_FAILURE_SEQUENCE_EXHAUSTED": 11
+        }
       }
     },
     "defines": {
@@ -12132,6 +12850,10 @@ TABLE_JSON = r'''
       "VN_MONITOR_STREAM_FACT_AUDIO": {
         "type": "u32",
         "value": 2
+      },
+      "VN_REMOTE_PROTOCOL_MAJOR": {
+        "type": "u32",
+        "value": 3
       }
     },
     "callbacks": {

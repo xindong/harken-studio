@@ -350,6 +350,27 @@ namespace Harken
         [DllImport(LibraryName, EntryPoint = "Vn_RemoteGetStatus", CallingConvention = CallingConvention.Cdecl)]
         public static extern VnResult Vn_RemoteGetStatus(ref VnRemoteStatus outStatus);
 
+        [DllImport(LibraryName, EntryPoint = "Vn_RemoteClientCreate", CallingConvention = CallingConvention.Cdecl)]
+        public static extern VnResult Vn_RemoteClientCreate(in VnRemoteClientDesc desc, out ulong outClient);
+
+        [DllImport(LibraryName, EntryPoint = "Vn_RemoteClientDestroy", CallingConvention = CallingConvention.Cdecl)]
+        public static extern VnResult Vn_RemoteClientDestroy(ulong client);
+
+        [DllImport(LibraryName, EntryPoint = "Vn_RemoteClientDiscover", CallingConvention = CallingConvention.Cdecl)]
+        public static extern VnResult Vn_RemoteClientDiscover(ulong client, uint discoveryPort);
+
+        [DllImport(LibraryName, EntryPoint = "Vn_RemoteClientConnect", CallingConvention = CallingConvention.Cdecl)]
+        public static extern VnResult Vn_RemoteClientConnect(ulong client, byte* host, uint tcpPort);
+
+        [DllImport(LibraryName, EntryPoint = "Vn_RemoteClientDisconnect", CallingConvention = CallingConvention.Cdecl)]
+        public static extern VnResult Vn_RemoteClientDisconnect(ulong client);
+
+        [DllImport(LibraryName, EntryPoint = "Vn_RemoteClientRequest", CallingConvention = CallingConvention.Cdecl)]
+        public static extern VnResult Vn_RemoteClientRequest(ulong client, in VnRemoteClientRequest request, out uint outRequestId);
+
+        [DllImport(LibraryName, EntryPoint = "Vn_RemoteClientPoll", CallingConvention = CallingConvention.Cdecl)]
+        public static extern VnResult Vn_RemoteClientPoll(ulong client, ref VnRemoteClientEvent outEvent, void* buffer, ulong bufferBytes);
+
         [DllImport(LibraryName, EntryPoint = "Vn_MonitorOpenEventSession", CallingConvention = CallingConvention.Cdecl)]
         public static extern VnResult Vn_MonitorOpenEventSession(in VnMonitorSessionDesc desc, out ulong outHandle);
 

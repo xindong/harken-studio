@@ -516,6 +516,10 @@
           "type": "u32",
           "value": 37840
         },
+        "VN_REMOTE_PROTOCOL_MAJOR": {
+          "type": "u32",
+          "value": 3
+        },
         "VN_SNAPSHOT_MAX_BUSES": {
           "type": "u32",
           "value": 32
@@ -1463,10 +1467,93 @@
             "VN_PROPERTY_BINDING_PENDING": 4
           }
         },
+        "VnRemoteCapability": {
+          "backing": "u32",
+          "values": {
+            "VN_REMOTE_CAPABILITY_CATALOG": 2,
+            "VN_REMOTE_CAPABILITY_CONTROL": 4,
+            "VN_REMOTE_CAPABILITY_EVENT_CAPTURE": 16,
+            "VN_REMOTE_CAPABILITY_EXECUTION_OBSERVATION": 32,
+            "VN_REMOTE_CAPABILITY_MONITOR_RECORDS": 8,
+            "VN_REMOTE_CAPABILITY_SNAPSHOT": 1
+          }
+        },
+        "VnRemoteCatalogKind": {
+          "backing": "u32",
+          "values": {
+            "VN_REMOTE_CATALOG_ACTION": 1,
+            "VN_REMOTE_CATALOG_BUS": 3,
+            "VN_REMOTE_CATALOG_VARIABLE": 2
+          }
+        },
+        "VnRemoteClientEventKind": {
+          "backing": "u32",
+          "values": {
+            "VN_REMOTE_CLIENT_EVENT_CAPTURE_RECORDS": 12,
+            "VN_REMOTE_CLIENT_EVENT_CAPTURE_STATUS": 11,
+            "VN_REMOTE_CLIENT_EVENT_CATALOG": 7,
+            "VN_REMOTE_CLIENT_EVENT_COMMAND_RESULT": 8,
+            "VN_REMOTE_CLIENT_EVENT_CONNECTED": 3,
+            "VN_REMOTE_CLIENT_EVENT_FAILED": 4,
+            "VN_REMOTE_CLIENT_EVENT_HANDSHAKING": 2,
+            "VN_REMOTE_CLIENT_EVENT_MONITOR_RECORDS": 10,
+            "VN_REMOTE_CLIENT_EVENT_MONITOR_STATUS": 9,
+            "VN_REMOTE_CLIENT_EVENT_REJECTED": 5,
+            "VN_REMOTE_CLIENT_EVENT_SNAPSHOT": 6,
+            "VN_REMOTE_CLIENT_EVENT_TARGET_FOUND": 1
+          }
+        },
+        "VnRemoteClientFailure": {
+          "backing": "u32",
+          "values": {
+            "VN_REMOTE_CLIENT_FAILURE_COMMAND_TIMEOUT": 5,
+            "VN_REMOTE_CLIENT_FAILURE_CONNECT": 1,
+            "VN_REMOTE_CLIENT_FAILURE_CONNECT_TIMEOUT": 3,
+            "VN_REMOTE_CLIENT_FAILURE_DISCONNECTED": 2,
+            "VN_REMOTE_CLIENT_FAILURE_INCOMPATIBLE": 8,
+            "VN_REMOTE_CLIENT_FAILURE_IN_USE": 7,
+            "VN_REMOTE_CLIENT_FAILURE_PROTOCOL": 9,
+            "VN_REMOTE_CLIENT_FAILURE_RESPONSE_TIMEOUT": 4,
+            "VN_REMOTE_CLIENT_FAILURE_SEND": 10,
+            "VN_REMOTE_CLIENT_FAILURE_SEQUENCE_EXHAUSTED": 11,
+            "VN_REMOTE_CLIENT_FAILURE_SILENT": 6
+          }
+        },
+        "VnRemoteClientFlags": {
+          "backing": "u32",
+          "values": {
+            "VN_REMOTE_CLIENT_LOCAL_ONLY": 1
+          }
+        },
+        "VnRemoteClientRequestKind": {
+          "backing": "u32",
+          "values": {
+            "VN_REMOTE_CLIENT_REQUEST_CATALOG": 2,
+            "VN_REMOTE_CLIENT_REQUEST_COMMAND": 3,
+            "VN_REMOTE_CLIENT_REQUEST_EVENT_SEAL": 8,
+            "VN_REMOTE_CLIENT_REQUEST_EVENT_START": 6,
+            "VN_REMOTE_CLIENT_REQUEST_EVENT_START_V2": 7,
+            "VN_REMOTE_CLIENT_REQUEST_MONITOR_START": 4,
+            "VN_REMOTE_CLIENT_REQUEST_MONITOR_STOP": 5,
+            "VN_REMOTE_CLIENT_REQUEST_SNAPSHOT": 1
+          }
+        },
         "VnRemoteFlags": {
           "backing": "u32",
           "values": {
             "VN_REMOTE_DISCOVERY_ENABLED": 1
+          }
+        },
+        "VnRemoteOperation": {
+          "backing": "u32",
+          "values": {
+            "VN_REMOTE_OPERATION_POST_ACTION": 1,
+            "VN_REMOTE_OPERATION_SET_BUS_VOLUME": 7,
+            "VN_REMOTE_OPERATION_SET_GLOBAL_VARIABLE": 6,
+            "VN_REMOTE_OPERATION_SET_VOICE_VOLUME": 8,
+            "VN_REMOTE_OPERATION_STOP_ACTION": 5,
+            "VN_REMOTE_OPERATION_STOP_ALL": 3,
+            "VN_REMOTE_OPERATION_STOP_VOICE": 4
           }
         },
         "VnRemoteState": {
@@ -3242,6 +3329,119 @@
         },
         {
           "callingConvention": "cdecl",
+          "name": "Vn_RemoteClientCreate",
+          "parameters": [
+            {
+              "ctype": "const VnRemoteClientDesc*",
+              "name": "desc"
+            },
+            {
+              "ctype": "VnRemoteClient*",
+              "name": "outClient"
+            }
+          ],
+          "returnType": "VnResult"
+        },
+        {
+          "callingConvention": "cdecl",
+          "name": "Vn_RemoteClientDestroy",
+          "parameters": [
+            {
+              "ctype": "VnRemoteClient",
+              "name": "client"
+            }
+          ],
+          "returnType": "VnResult"
+        },
+        {
+          "callingConvention": "cdecl",
+          "name": "Vn_RemoteClientDiscover",
+          "parameters": [
+            {
+              "ctype": "VnRemoteClient",
+              "name": "client"
+            },
+            {
+              "ctype": "uint32_t",
+              "name": "discoveryPort"
+            }
+          ],
+          "returnType": "VnResult"
+        },
+        {
+          "callingConvention": "cdecl",
+          "name": "Vn_RemoteClientConnect",
+          "parameters": [
+            {
+              "ctype": "VnRemoteClient",
+              "name": "client"
+            },
+            {
+              "ctype": "const char*",
+              "name": "host"
+            },
+            {
+              "ctype": "uint32_t",
+              "name": "tcpPort"
+            }
+          ],
+          "returnType": "VnResult"
+        },
+        {
+          "callingConvention": "cdecl",
+          "name": "Vn_RemoteClientDisconnect",
+          "parameters": [
+            {
+              "ctype": "VnRemoteClient",
+              "name": "client"
+            }
+          ],
+          "returnType": "VnResult"
+        },
+        {
+          "callingConvention": "cdecl",
+          "name": "Vn_RemoteClientRequest",
+          "parameters": [
+            {
+              "ctype": "VnRemoteClient",
+              "name": "client"
+            },
+            {
+              "ctype": "const VnRemoteClientRequest*",
+              "name": "request"
+            },
+            {
+              "ctype": "uint32_t*",
+              "name": "outRequestId"
+            }
+          ],
+          "returnType": "VnResult"
+        },
+        {
+          "callingConvention": "cdecl",
+          "name": "Vn_RemoteClientPoll",
+          "parameters": [
+            {
+              "ctype": "VnRemoteClient",
+              "name": "client"
+            },
+            {
+              "ctype": "VnRemoteClientEvent*",
+              "name": "outEvent"
+            },
+            {
+              "ctype": "void*",
+              "name": "buffer"
+            },
+            {
+              "ctype": "uint64_t",
+              "name": "bufferBytes"
+            }
+          ],
+          "returnType": "VnResult"
+        },
+        {
+          "callingConvention": "cdecl",
           "name": "Vn_MonitorGetCapabilities",
           "parameters": [
             {
@@ -4026,6 +4226,13 @@
         "Vn_RegisterStreamFile",
         "Vn_ReleaseActionFiring",
         "Vn_ReleaseActionSeek",
+        "Vn_RemoteClientConnect",
+        "Vn_RemoteClientCreate",
+        "Vn_RemoteClientDestroy",
+        "Vn_RemoteClientDisconnect",
+        "Vn_RemoteClientDiscover",
+        "Vn_RemoteClientPoll",
+        "Vn_RemoteClientRequest",
         "Vn_RemoteGetStatus",
         "Vn_RemoteStart",
         "Vn_RemoteStop",
@@ -4165,6 +4372,8 @@
           "VN_PACK_PROVIDER_FAILED": -416,
           "VN_PACK_RESIDENT_CAPACITY": -415,
           "VN_PACK_STALE_REVISION": -222,
+          "VN_REMOTE_CLIENT_BUFFER_TOO_SMALL": -1301,
+          "VN_REMOTE_CLIENT_NO_EVENT": -1300,
           "VN_REVISION_CONFLICT": -325,
           "VN_RUNTIME_RECREATE_REQUIRED": -328,
           "VN_SEND_CYCLE": -315,
@@ -4235,6 +4444,7 @@
         "VnMonitorValidityFlags": "u32",
         "VnPackHandle": "u64",
         "VnPlaybackReadinessState": "u32",
+        "VnRemoteClient": "u64",
         "VnResult": "i32",
         "VnStreamSourceRequest": "u64",
         "VnVoiceHandle": "u64"
@@ -18444,6 +18654,1090 @@
           ],
           "size": 24
         },
+        "VnRemoteClientBus": {
+          "alignment": 8,
+          "fields": [
+            {
+              "alignment": 8,
+              "name": "id",
+              "offset": 0,
+              "shape": {
+                "kind": "struct",
+                "type": "VnObjectId"
+              },
+              "size": 16
+            },
+            {
+              "alignment": 4,
+              "name": "generation",
+              "offset": 16,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "peak",
+              "offset": 20,
+              "shape": {
+                "kind": "scalar",
+                "type": "f32"
+              },
+              "size": 4
+            }
+          ],
+          "size": 24
+        },
+        "VnRemoteClientCaptureStatus": {
+          "alignment": 8,
+          "fields": [
+            {
+              "alignment": 4,
+              "name": "result",
+              "offset": 0,
+              "shape": {
+                "kind": "scalar",
+                "type": "i32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "state",
+              "offset": 4,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 8,
+              "name": "sessionEpoch",
+              "offset": 8,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "startedTimestampNs",
+              "offset": 16,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "stoppedTimestampNs",
+              "offset": 24,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "sourceDroppedRecords",
+              "offset": 32,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "deliveryDroppedRecords",
+              "offset": 40,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "transportDroppedRecords",
+              "offset": 48,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 4,
+              "name": "execution",
+              "offset": 56,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "acceptedExecutionFactVersion",
+              "offset": 60,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "baselineAvailability",
+              "offset": 64,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "requestedPermissionMask",
+              "offset": 68,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "acceptedPermissionMask",
+              "offset": 72,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "deniedPermissionMask",
+              "offset": 76,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "unsupportedPermissionMask",
+              "offset": 80,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "acceptedStreamKindMask",
+              "offset": 84,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "symbolsDecision",
+              "offset": 88,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "symbolAvailability",
+              "offset": 92,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 8,
+              "name": "identityUnavailableCount",
+              "offset": 96,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "baselineStateCutId",
+              "offset": 104,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "supportedFactKinds",
+              "offset": 112,
+              "shape": {
+                "count": 2,
+                "element": "u64",
+                "kind": "array"
+              },
+              "size": 16
+            }
+          ],
+          "size": 128
+        },
+        "VnRemoteClientCatalogRow": {
+          "alignment": 8,
+          "fields": [
+            {
+              "alignment": 8,
+              "name": "id",
+              "offset": 0,
+              "shape": {
+                "kind": "struct",
+                "type": "VnObjectId"
+              },
+              "size": 16
+            },
+            {
+              "alignment": 4,
+              "name": "kind",
+              "offset": 16,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "reserved0",
+              "offset": 20,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            }
+          ],
+          "size": 24
+        },
+        "VnRemoteClientDesc": {
+          "alignment": 8,
+          "fields": [
+            {
+              "alignment": 4,
+              "name": "structSize",
+              "offset": 0,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "flags",
+              "offset": 4,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 8,
+              "name": "clientName",
+              "offset": 8,
+              "shape": {
+                "ctype": "const char*",
+                "kind": "pointer",
+                "storage": "string"
+              },
+              "size": 8
+            }
+          ],
+          "size": 16
+        },
+        "VnRemoteClientEvent": {
+          "alignment": 8,
+          "fields": [
+            {
+              "alignment": 4,
+              "name": "structSize",
+              "offset": 0,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "kind",
+              "offset": 4,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "requestId",
+              "offset": 8,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "result",
+              "offset": 12,
+              "shape": {
+                "kind": "scalar",
+                "type": "i32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "failure",
+              "offset": 16,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "osError",
+              "offset": 20,
+              "shape": {
+                "kind": "scalar",
+                "type": "i32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "operation",
+              "offset": 24,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "recordCount",
+              "offset": 28,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 8,
+              "name": "handle",
+              "offset": 32,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "sessionEpoch",
+              "offset": 40,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "planGeneration",
+              "offset": 48,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 4,
+              "name": "streamMask",
+              "offset": 56,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "catalogTotal",
+              "offset": 60,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 8,
+              "name": "catalogGeneration",
+              "offset": 64,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 4,
+              "name": "catalogOffset",
+              "offset": 72,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "catalogRows",
+              "offset": 76,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 8,
+              "name": "dataBytes",
+              "offset": 80,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "target",
+              "offset": 88,
+              "shape": {
+                "kind": "struct",
+                "type": "VnRemoteClientTarget"
+              },
+              "size": 760
+            },
+            {
+              "alignment": 8,
+              "name": "snapshot",
+              "offset": 848,
+              "shape": {
+                "kind": "struct",
+                "type": "VnRemoteClientSnapshot"
+              },
+              "size": 56
+            },
+            {
+              "alignment": 8,
+              "name": "capture",
+              "offset": 904,
+              "shape": {
+                "kind": "struct",
+                "type": "VnRemoteClientCaptureStatus"
+              },
+              "size": 128
+            }
+          ],
+          "size": 1032
+        },
+        "VnRemoteClientRequest": {
+          "alignment": 8,
+          "fields": [
+            {
+              "alignment": 4,
+              "name": "structSize",
+              "offset": 0,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "kind",
+              "offset": 4,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "operation",
+              "offset": 8,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "durationMs",
+              "offset": 12,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 8,
+              "name": "expectedGeneration",
+              "offset": 16,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "target",
+              "offset": 24,
+              "shape": {
+                "kind": "struct",
+                "type": "VnObjectId"
+              },
+              "size": 16
+            },
+            {
+              "alignment": 8,
+              "name": "instanceHandle",
+              "offset": 40,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "secondary",
+              "offset": 48,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 4,
+              "name": "value",
+              "offset": 56,
+              "shape": {
+                "kind": "scalar",
+                "type": "f32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "offset",
+              "offset": 60,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "streamMask",
+              "offset": 64,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "cadenceHz",
+              "offset": 68,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "bytesPerSecond",
+              "offset": 72,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "executionFactVersion",
+              "offset": 76,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "permissionMask",
+              "offset": 80,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "requestSymbols",
+              "offset": 84,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 8,
+              "name": "consumerQueueBytes",
+              "offset": 88,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "sessionEpoch",
+              "offset": 96,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            }
+          ],
+          "size": 104
+        },
+        "VnRemoteClientSnapshot": {
+          "alignment": 8,
+          "fields": [
+            {
+              "alignment": 4,
+              "name": "result",
+              "offset": 0,
+              "shape": {
+                "kind": "scalar",
+                "type": "i32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "activeVoices",
+              "offset": 4,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 8,
+              "name": "blockIndex",
+              "offset": 8,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 4,
+              "name": "busCount",
+              "offset": 16,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "callbackCpuUs",
+              "offset": 20,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "updateCpuUs",
+              "offset": 24,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "voiceRows",
+              "offset": 28,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 8,
+              "name": "commandBackpressure",
+              "offset": 32,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "droppedNotifications",
+              "offset": 40,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 4,
+              "name": "busRows",
+              "offset": 48,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "reserved0",
+              "offset": 52,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            }
+          ],
+          "size": 56
+        },
+        "VnRemoteClientTarget": {
+          "alignment": 8,
+          "fields": [
+            {
+              "alignment": 4,
+              "name": "result",
+              "offset": 0,
+              "shape": {
+                "kind": "scalar",
+                "type": "i32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "protocolMajor",
+              "offset": 4,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "protocolMinor",
+              "offset": 8,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "processId",
+              "offset": 12,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "tcpPort",
+              "offset": 16,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "sampleRate",
+              "offset": 20,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "blockFrames",
+              "offset": 24,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "compatible",
+              "offset": 28,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 8,
+              "name": "instanceId",
+              "offset": 32,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "sessionId",
+              "offset": 40,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "capabilities",
+              "offset": 48,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 1,
+              "name": "address",
+              "offset": 56,
+              "shape": {
+                "count": 64,
+                "element": "u8",
+                "kind": "array"
+              },
+              "size": 64
+            },
+            {
+              "alignment": 1,
+              "name": "bindAddress",
+              "offset": 120,
+              "shape": {
+                "count": 64,
+                "element": "u8",
+                "kind": "array"
+              },
+              "size": 64
+            },
+            {
+              "alignment": 1,
+              "name": "applicationName",
+              "offset": 184,
+              "shape": {
+                "count": 128,
+                "element": "u8",
+                "kind": "array"
+              },
+              "size": 128
+            },
+            {
+              "alignment": 1,
+              "name": "projectName",
+              "offset": 312,
+              "shape": {
+                "count": 128,
+                "element": "u8",
+                "kind": "array"
+              },
+              "size": 128
+            },
+            {
+              "alignment": 1,
+              "name": "machineName",
+              "offset": 440,
+              "shape": {
+                "count": 128,
+                "element": "u8",
+                "kind": "array"
+              },
+              "size": 128
+            },
+            {
+              "alignment": 1,
+              "name": "engineVersion",
+              "offset": 568,
+              "shape": {
+                "count": 32,
+                "element": "u8",
+                "kind": "array"
+              },
+              "size": 32
+            },
+            {
+              "alignment": 1,
+              "name": "buildId",
+              "offset": 600,
+              "shape": {
+                "count": 128,
+                "element": "u8",
+                "kind": "array"
+              },
+              "size": 128
+            },
+            {
+              "alignment": 1,
+              "name": "platform",
+              "offset": 728,
+              "shape": {
+                "count": 32,
+                "element": "u8",
+                "kind": "array"
+              },
+              "size": 32
+            }
+          ],
+          "size": 760
+        },
+        "VnRemoteClientVoice": {
+          "alignment": 8,
+          "fields": [
+            {
+              "alignment": 8,
+              "name": "handle",
+              "offset": 0,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "soundId",
+              "offset": 8,
+              "shape": {
+                "kind": "struct",
+                "type": "VnObjectId"
+              },
+              "size": 16
+            },
+            {
+              "alignment": 4,
+              "name": "state",
+              "offset": 24,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "peak",
+              "offset": 28,
+              "shape": {
+                "kind": "scalar",
+                "type": "f32"
+              },
+              "size": 4
+            }
+          ],
+          "size": 32
+        },
         "VnRemoteConfig": {
           "alignment": 8,
           "fields": [
@@ -22057,6 +23351,33 @@
             "source": "default",
             "unknownSize": "reject"
           },
+          "VnRemoteClientDesc": {
+            "acceptedSizes": [
+              16
+            ],
+            "currentSize": 16,
+            "mode": "exact-current",
+            "source": "default",
+            "unknownSize": "reject"
+          },
+          "VnRemoteClientEvent": {
+            "acceptedSizes": [
+              1032
+            ],
+            "currentSize": 1032,
+            "mode": "exact-current",
+            "source": "default",
+            "unknownSize": "reject"
+          },
+          "VnRemoteClientRequest": {
+            "acceptedSizes": [
+              104
+            ],
+            "currentSize": 104,
+            "mode": "exact-current",
+            "source": "default",
+            "unknownSize": "reject"
+          },
           "VnRemoteConfig": {
             "acceptedSizes": [
               56
@@ -24220,11 +25541,11 @@
       "formatVersion": 8
     }
   },
-  "contractSha256": "c75ddb38ef030a49f2b12f018a1b24524126d4bc5b9084b95e624fbd1a97d476",
+  "contractSha256": "e4fe636fb8e44185d0255f8727a3ac3526011cbb975f14e9c0ec5e7e03598c54",
   "generatedFiles": {
     "HarkenEngine/Tool/HostControl/generated/harken_wire_desc_meta.h": {
-      "sha256": "7e862ff3932685da31e0e58cd2ad010da6266afd468108b37a6765812f6dcb66",
-      "size": 7866
+      "sha256": "bcee9798217bcf58801129124d84d247015babc0052e3a854c765e6d814248a3",
+      "size": 8313
     },
     "HarkenEngine/Tool/HostControl/generated/harken_wire_dispatch.inl": {
       "sha256": "cd3b9d40270bf4283199b58f15de648435ba025c3d57165af9a573f5cc6b716e",
@@ -24235,34 +25556,34 @@
       "size": 5421
     },
     "HarkenEngine/Tool/HostControl/generated/harken_wire_layout_asserts.h": {
-      "sha256": "945dc8e5878110e8354f376cda53a9c368bc0103c7c652b0c532cf1cfc307fa2",
-      "size": 246991
+      "sha256": "2400d98a3321b837ccdae465dc76d6e86b71d3229b2d07b763000db03eac19ad",
+      "size": 262816
     },
     "HarkenEngine/Tool/HostControl/harken_wire.py": {
-      "sha256": "792df66caefb7608d8bc6cd430024add8b64c5bc772133380e212a061ff8dcde",
-      "size": 257206
+      "sha256": "86966429045daaa04e145b23912115eebffb42ca8fb85fe75a02f0130f13e8b5",
+      "size": 271664
     },
     "HarkenIntegration/Unity/Binding/generated/harken_binding_abi_pin.g.h": {
-      "sha256": "045cd9b985f9e3bff56c63312cc2e98b72df91e133ad4bf81f8bb0ca183c863b",
-      "size": 334070
+      "sha256": "acf0884e2fefb7fc99ffac4715c918baa1f2d09b353a25856ab56e4d1d06c646",
+      "size": 355660
     },
     "HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenAbi.g.cs": {
-      "sha256": "63d80355a5fc66fe328d6f09d82e8ef098ae7277ef290419eb4317789db117bf",
-      "size": 127635
+      "sha256": "b9db81eb7bc7800143b33158ebbc409f8d5f7a5ff541deaf9a51ae25cf1b67ec",
+      "size": 140898
     },
     "HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenNative.g.cs": {
-      "sha256": "1a7518e8928401bbe62f44aab7e2180b6be355a0c6c8767da322d9199d4a8e88",
-      "size": 29643
+      "sha256": "58491b67a16898f5c7e5592924951e9193d9cda004eb6343a93be1d4c21395f5",
+      "size": 31206
     },
     "HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs": {
-      "sha256": "c179dae5b7f605dcf73ccf6f024029fd3695ceb7bcd709fb3a7902e222a91668",
-      "size": 68813
+      "sha256": "e83f20d2780545e4ac6c1715d99bc540b41d7c3c95c0c8e70c6046994e3dedcd",
+      "size": 75761
     }
   },
   "kind": "harken-contract-suite-manifest",
   "schemaVersion": 1,
   "sectionSha256": {
-    "nativeAbiSha256": "c191fc9d50ba19a2825af39891fa402a3d1365efeabe7698382757f831759f32",
+    "nativeAbiSha256": "eb5391c5fe433a45466924cfbb8171d96bce89e47f5861c91c60269fd1f9be7c",
     "remoteWireSha256": "d47f60b0d2b7c0c842900be965ebc513575209455558ad0d8fcb310c4395b8e7",
     "traceFormatSha256": "ff8cdaf56000521230e08660d9d9a0318f883e3b578cd85700a7df2d1af517a5"
   },
@@ -24272,8 +25593,8 @@
       "size": 57230
     },
     "HarkenEngine/Source/Core/api/include/harken/Harken.h": {
-      "sha256": "e59cc23ec6d3f351fa32dcf8136596a9fddb470f813f045a016b2342f310d5a5",
-      "size": 230502
+      "sha256": "ec668dd8eeb60f11091565e758edac6c9206e4320211f9d547e27d836e758cd4",
+      "size": 230589
     },
     "HarkenEngine/Source/Core/api/include/harken/ObjectId.h": {
       "sha256": "90b6f66ad515c5e411564f1e5981b65bec2e461fabbdee6c57aa86b26b9a300d",
@@ -24284,16 +25605,16 @@
       "size": 19883
     },
     "HarkenEngine/Source/Development/include/harken/HarkenDevelopment.h": {
-      "sha256": "19b95d6f0bb7167f1b0b80cf7562529d1e46b5150a2bebeb3ff8d58753fe329b",
-      "size": 21440
+      "sha256": "4013c717f8c2b481b677bf17303017b66b1ffcfb81c85ba9930a8bc7ba0d705f",
+      "size": 27745
     },
     "HarkenEngine/Tool/HostControl/wire/gen_wire.py": {
       "sha256": "bf64d770282491f895b5d92943f8c5843e8c6224fc25771e47bb61e63cbd9265",
       "size": 30889
     },
     "HarkenEngine/Tool/HostControl/wire/harken_wire_table.json": {
-      "sha256": "d9789ae75072d1b8a33291fa7390c70897434e440ca13c3dbd6ffac945657aea",
-      "size": 255966
+      "sha256": "ecda79ca59e3afa8ba36146398cca36900d2a0de47466a4671be3eb824f6c19d",
+      "size": 270424
     },
     "HarkenIntegration/Unity/Binding/gen_binding.py": {
       "sha256": "45c07298a5ecaa05a647c307b2e9ec498166463518a8e5e0d56667220ddbbb7d",

@@ -72,6 +72,8 @@ namespace Harken
         VN_GAMEPLAY_NAME_RETIRED = -1000,
         VN_GAMEPLAY_WRONG_PROJECT = -1001,
         VN_GAMEPLAY_CONTRACT_MISMATCH = -1002,
+        VN_REMOTE_CLIENT_NO_EVENT = -1300,
+        VN_REMOTE_CLIENT_BUFFER_TOO_SMALL = -1301,
     }
 
     internal enum VnMonitorExecutionFactKind : uint
@@ -671,6 +673,82 @@ namespace Harken
         VN_REMOTE_FAILED = 3,
     }
 
+    internal enum VnRemoteCapability : uint
+    {
+        VN_REMOTE_CAPABILITY_SNAPSHOT = 1,
+        VN_REMOTE_CAPABILITY_CATALOG = 2,
+        VN_REMOTE_CAPABILITY_CONTROL = 4,
+        VN_REMOTE_CAPABILITY_MONITOR_RECORDS = 8,
+        VN_REMOTE_CAPABILITY_EVENT_CAPTURE = 16,
+        VN_REMOTE_CAPABILITY_EXECUTION_OBSERVATION = 32,
+    }
+
+    internal enum VnRemoteClientFlags : uint
+    {
+        VN_REMOTE_CLIENT_LOCAL_ONLY = 1,
+    }
+
+    internal enum VnRemoteClientRequestKind : uint
+    {
+        VN_REMOTE_CLIENT_REQUEST_SNAPSHOT = 1,
+        VN_REMOTE_CLIENT_REQUEST_CATALOG = 2,
+        VN_REMOTE_CLIENT_REQUEST_COMMAND = 3,
+        VN_REMOTE_CLIENT_REQUEST_MONITOR_START = 4,
+        VN_REMOTE_CLIENT_REQUEST_MONITOR_STOP = 5,
+        VN_REMOTE_CLIENT_REQUEST_EVENT_START = 6,
+        VN_REMOTE_CLIENT_REQUEST_EVENT_START_V2 = 7,
+        VN_REMOTE_CLIENT_REQUEST_EVENT_SEAL = 8,
+    }
+
+    internal enum VnRemoteOperation : uint
+    {
+        VN_REMOTE_OPERATION_POST_ACTION = 1,
+        VN_REMOTE_OPERATION_STOP_ALL = 3,
+        VN_REMOTE_OPERATION_STOP_VOICE = 4,
+        VN_REMOTE_OPERATION_STOP_ACTION = 5,
+        VN_REMOTE_OPERATION_SET_GLOBAL_VARIABLE = 6,
+        VN_REMOTE_OPERATION_SET_BUS_VOLUME = 7,
+        VN_REMOTE_OPERATION_SET_VOICE_VOLUME = 8,
+    }
+
+    internal enum VnRemoteCatalogKind : uint
+    {
+        VN_REMOTE_CATALOG_ACTION = 1,
+        VN_REMOTE_CATALOG_VARIABLE = 2,
+        VN_REMOTE_CATALOG_BUS = 3,
+    }
+
+    internal enum VnRemoteClientEventKind : uint
+    {
+        VN_REMOTE_CLIENT_EVENT_TARGET_FOUND = 1,
+        VN_REMOTE_CLIENT_EVENT_HANDSHAKING = 2,
+        VN_REMOTE_CLIENT_EVENT_CONNECTED = 3,
+        VN_REMOTE_CLIENT_EVENT_FAILED = 4,
+        VN_REMOTE_CLIENT_EVENT_REJECTED = 5,
+        VN_REMOTE_CLIENT_EVENT_SNAPSHOT = 6,
+        VN_REMOTE_CLIENT_EVENT_CATALOG = 7,
+        VN_REMOTE_CLIENT_EVENT_COMMAND_RESULT = 8,
+        VN_REMOTE_CLIENT_EVENT_MONITOR_STATUS = 9,
+        VN_REMOTE_CLIENT_EVENT_MONITOR_RECORDS = 10,
+        VN_REMOTE_CLIENT_EVENT_CAPTURE_STATUS = 11,
+        VN_REMOTE_CLIENT_EVENT_CAPTURE_RECORDS = 12,
+    }
+
+    internal enum VnRemoteClientFailure : uint
+    {
+        VN_REMOTE_CLIENT_FAILURE_CONNECT = 1,
+        VN_REMOTE_CLIENT_FAILURE_DISCONNECTED = 2,
+        VN_REMOTE_CLIENT_FAILURE_CONNECT_TIMEOUT = 3,
+        VN_REMOTE_CLIENT_FAILURE_RESPONSE_TIMEOUT = 4,
+        VN_REMOTE_CLIENT_FAILURE_COMMAND_TIMEOUT = 5,
+        VN_REMOTE_CLIENT_FAILURE_SILENT = 6,
+        VN_REMOTE_CLIENT_FAILURE_IN_USE = 7,
+        VN_REMOTE_CLIENT_FAILURE_INCOMPATIBLE = 8,
+        VN_REMOTE_CLIENT_FAILURE_PROTOCOL = 9,
+        VN_REMOTE_CLIENT_FAILURE_SEND = 10,
+        VN_REMOTE_CLIENT_FAILURE_SEQUENCE_EXHAUSTED = 11,
+    }
+
     /// <summary>Harken.h #define constants.</summary>
     public static class VnConstants
     {
@@ -714,6 +792,7 @@ namespace Harken
         public const int VN_BYTE_READ_OK = 0;
         public const int VN_BYTE_READ_CANCELLED = 1;
         public const int VN_BYTE_READ_IO_ERROR = 2;
+        internal const uint VN_REMOTE_PROTOCOL_MAJOR = 3u;
     }
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
@@ -786,6 +865,153 @@ namespace Harken
     public fixed byte engineVersion[32];
     public fixed byte buildId[128];
     public fixed byte platform[32];
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct VnRemoteClientDesc
+    {
+    public uint structSize;
+    public uint flags;
+    public IntPtr clientName;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct VnRemoteClientRequest
+    {
+    public uint structSize;
+    public uint kind;
+    public uint operation;
+    public uint durationMs;
+    public ulong expectedGeneration;
+    public VnObjectId target;
+    public ulong instanceHandle;
+    public ulong secondary;
+    public float value;
+    public uint offset;
+    public uint streamMask;
+    public uint cadenceHz;
+    public uint bytesPerSecond;
+    public uint executionFactVersion;
+    public uint permissionMask;
+    public uint requestSymbols;
+    public ulong consumerQueueBytes;
+    public ulong sessionEpoch;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe struct VnRemoteClientTarget
+    {
+    public int result;
+    public uint protocolMajor;
+    public uint protocolMinor;
+    public uint processId;
+    public uint tcpPort;
+    public uint sampleRate;
+    public uint blockFrames;
+    public uint compatible;
+    public ulong instanceId;
+    public ulong sessionId;
+    public ulong capabilities;
+    public fixed byte address[64];
+    public fixed byte bindAddress[64];
+    public fixed byte applicationName[128];
+    public fixed byte projectName[128];
+    public fixed byte machineName[128];
+    public fixed byte engineVersion[32];
+    public fixed byte buildId[128];
+    public fixed byte platform[32];
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct VnRemoteClientSnapshot
+    {
+    public int result;
+    public uint activeVoices;
+    public ulong blockIndex;
+    public uint busCount;
+    public uint callbackCpuUs;
+    public uint updateCpuUs;
+    public uint voiceRows;
+    public ulong commandBackpressure;
+    public ulong droppedNotifications;
+    public uint busRows;
+    public uint reserved0;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe struct VnRemoteClientCaptureStatus
+    {
+    public int result;
+    public uint state;
+    public ulong sessionEpoch;
+    public ulong startedTimestampNs;
+    public ulong stoppedTimestampNs;
+    public ulong sourceDroppedRecords;
+    public ulong deliveryDroppedRecords;
+    public ulong transportDroppedRecords;
+    public uint execution;
+    public uint acceptedExecutionFactVersion;
+    public uint baselineAvailability;
+    public uint requestedPermissionMask;
+    public uint acceptedPermissionMask;
+    public uint deniedPermissionMask;
+    public uint unsupportedPermissionMask;
+    public uint acceptedStreamKindMask;
+    public uint symbolsDecision;
+    public uint symbolAvailability;
+    public ulong identityUnavailableCount;
+    public ulong baselineStateCutId;
+    public fixed ulong supportedFactKinds[2];
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct VnRemoteClientEvent
+    {
+    public uint structSize;
+    public uint kind;
+    public uint requestId;
+    public int result;
+    public uint failure;
+    public int osError;
+    public uint operation;
+    public uint recordCount;
+    public ulong handle;
+    public ulong sessionEpoch;
+    public ulong planGeneration;
+    public uint streamMask;
+    public uint catalogTotal;
+    public ulong catalogGeneration;
+    public uint catalogOffset;
+    public uint catalogRows;
+    public ulong dataBytes;
+    public VnRemoteClientTarget target;
+    public VnRemoteClientSnapshot snapshot;
+    public VnRemoteClientCaptureStatus capture;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct VnRemoteClientCatalogRow
+    {
+    public VnObjectId id;
+    public uint kind;
+    public uint reserved0;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct VnRemoteClientVoice
+    {
+    public ulong handle;
+    public VnObjectId soundId;
+    public uint state;
+    public float peak;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct VnRemoteClientBus
+    {
+    public VnObjectId id;
+    public uint generation;
+    public float peak;
     }
 
     [StructLayout(LayoutKind.Sequential)]

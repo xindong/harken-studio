@@ -278,6 +278,224 @@ VnResult Vn_RemoteStop(void);
 
 VnResult Vn_RemoteGetStatus(VnRemoteStatus* outStatus);
 
+#define VN_REMOTE_PROTOCOL_MAJOR 3u
+
+typedef uint64_t VnRemoteClient;
+
+enum {
+    VN_REMOTE_CAPABILITY_SNAPSHOT = 1u,
+    VN_REMOTE_CAPABILITY_CATALOG = 2u,
+    VN_REMOTE_CAPABILITY_CONTROL = 4u,
+    VN_REMOTE_CAPABILITY_MONITOR_RECORDS = 8u,
+    VN_REMOTE_CAPABILITY_EVENT_CAPTURE = 16u,
+    VN_REMOTE_CAPABILITY_EXECUTION_OBSERVATION = 32u
+};
+
+enum {
+    VN_REMOTE_CLIENT_LOCAL_ONLY = 1u
+};
+
+enum {
+    VN_REMOTE_CLIENT_REQUEST_SNAPSHOT = 1u,
+    VN_REMOTE_CLIENT_REQUEST_CATALOG = 2u,
+    VN_REMOTE_CLIENT_REQUEST_COMMAND = 3u,
+    VN_REMOTE_CLIENT_REQUEST_MONITOR_START = 4u,
+    VN_REMOTE_CLIENT_REQUEST_MONITOR_STOP = 5u,
+    VN_REMOTE_CLIENT_REQUEST_EVENT_START = 6u,
+    VN_REMOTE_CLIENT_REQUEST_EVENT_START_V2 = 7u,
+    VN_REMOTE_CLIENT_REQUEST_EVENT_SEAL = 8u
+};
+
+enum {
+    VN_REMOTE_OPERATION_POST_ACTION = 1u,
+    VN_REMOTE_OPERATION_STOP_ALL = 3u,
+    VN_REMOTE_OPERATION_STOP_VOICE = 4u,
+    VN_REMOTE_OPERATION_STOP_ACTION = 5u,
+    VN_REMOTE_OPERATION_SET_GLOBAL_VARIABLE = 6u,
+    VN_REMOTE_OPERATION_SET_BUS_VOLUME = 7u,
+    VN_REMOTE_OPERATION_SET_VOICE_VOLUME = 8u
+};
+
+enum {
+    VN_REMOTE_CATALOG_ACTION = 1u,
+    VN_REMOTE_CATALOG_VARIABLE = 2u,
+    VN_REMOTE_CATALOG_BUS = 3u
+};
+
+enum {
+    VN_REMOTE_CLIENT_EVENT_TARGET_FOUND = 1u,
+    VN_REMOTE_CLIENT_EVENT_HANDSHAKING = 2u,
+    VN_REMOTE_CLIENT_EVENT_CONNECTED = 3u,
+    VN_REMOTE_CLIENT_EVENT_FAILED = 4u,
+    VN_REMOTE_CLIENT_EVENT_REJECTED = 5u,
+    VN_REMOTE_CLIENT_EVENT_SNAPSHOT = 6u,
+    VN_REMOTE_CLIENT_EVENT_CATALOG = 7u,
+    VN_REMOTE_CLIENT_EVENT_COMMAND_RESULT = 8u,
+    VN_REMOTE_CLIENT_EVENT_MONITOR_STATUS = 9u,
+    VN_REMOTE_CLIENT_EVENT_MONITOR_RECORDS = 10u,
+    VN_REMOTE_CLIENT_EVENT_CAPTURE_STATUS = 11u,
+    VN_REMOTE_CLIENT_EVENT_CAPTURE_RECORDS = 12u
+};
+
+enum {
+    VN_REMOTE_CLIENT_FAILURE_CONNECT = 1u,
+    VN_REMOTE_CLIENT_FAILURE_DISCONNECTED = 2u,
+    VN_REMOTE_CLIENT_FAILURE_CONNECT_TIMEOUT = 3u,
+    VN_REMOTE_CLIENT_FAILURE_RESPONSE_TIMEOUT = 4u,
+    VN_REMOTE_CLIENT_FAILURE_COMMAND_TIMEOUT = 5u,
+    VN_REMOTE_CLIENT_FAILURE_SILENT = 6u,
+    VN_REMOTE_CLIENT_FAILURE_IN_USE = 7u,
+    VN_REMOTE_CLIENT_FAILURE_INCOMPATIBLE = 8u,
+    VN_REMOTE_CLIENT_FAILURE_PROTOCOL = 9u,
+    VN_REMOTE_CLIENT_FAILURE_SEND = 10u,
+    VN_REMOTE_CLIENT_FAILURE_SEQUENCE_EXHAUSTED = 11u
+};
+
+typedef struct VnRemoteClientDesc {
+    uint32_t structSize;
+    uint32_t flags;
+    const char* clientName;
+} VnRemoteClientDesc;
+
+typedef struct VnRemoteClientRequest {
+    uint32_t structSize;
+    uint32_t kind;
+    uint32_t operation;
+    uint32_t durationMs;
+    uint64_t expectedGeneration;
+    VnObjectId target;
+    uint64_t instanceHandle;
+    uint64_t secondary;
+    float value;
+    uint32_t offset;
+    uint32_t streamMask;
+    uint32_t cadenceHz;
+    uint32_t bytesPerSecond;
+    uint32_t executionFactVersion;
+    uint32_t permissionMask;
+    uint32_t requestSymbols;
+    uint64_t consumerQueueBytes;
+    uint64_t sessionEpoch;
+} VnRemoteClientRequest;
+
+typedef struct VnRemoteClientTarget {
+    VnResult result;
+    uint32_t protocolMajor;
+    uint32_t protocolMinor;
+    uint32_t processId;
+    uint32_t tcpPort;
+    uint32_t sampleRate;
+    uint32_t blockFrames;
+    uint32_t compatible;
+    uint64_t instanceId;
+    uint64_t sessionId;
+    uint64_t capabilities;
+    char address[64];
+    char bindAddress[64];
+    char applicationName[128];
+    char projectName[128];
+    char machineName[128];
+    char engineVersion[32];
+    char buildId[128];
+    char platform[32];
+} VnRemoteClientTarget;
+
+typedef struct VnRemoteClientSnapshot {
+    VnResult result;
+    uint32_t activeVoices;
+    uint64_t blockIndex;
+    uint32_t busCount;
+    uint32_t callbackCpuUs;
+    uint32_t updateCpuUs;
+    uint32_t voiceRows;
+    uint64_t commandBackpressure;
+    uint64_t droppedNotifications;
+    uint32_t busRows;
+    uint32_t reserved0;
+} VnRemoteClientSnapshot;
+
+typedef struct VnRemoteClientCaptureStatus {
+    VnResult result;
+    uint32_t state;
+    uint64_t sessionEpoch;
+    uint64_t startedTimestampNs;
+    uint64_t stoppedTimestampNs;
+    uint64_t sourceDroppedRecords;
+    uint64_t deliveryDroppedRecords;
+    uint64_t transportDroppedRecords;
+    uint32_t execution;
+    uint32_t acceptedExecutionFactVersion;
+    uint32_t baselineAvailability;
+    uint32_t requestedPermissionMask;
+    uint32_t acceptedPermissionMask;
+    uint32_t deniedPermissionMask;
+    uint32_t unsupportedPermissionMask;
+    uint32_t acceptedStreamKindMask;
+    uint32_t symbolsDecision;
+    uint32_t symbolAvailability;
+    uint64_t identityUnavailableCount;
+    uint64_t baselineStateCutId;
+    uint64_t supportedFactKinds[2];
+} VnRemoteClientCaptureStatus;
+
+typedef struct VnRemoteClientEvent {
+    uint32_t structSize;
+    uint32_t kind;
+    uint32_t requestId;
+    VnResult result;
+    uint32_t failure;
+    int32_t osError;
+    uint32_t operation;
+    uint32_t recordCount;
+    uint64_t handle;
+    uint64_t sessionEpoch;
+    uint64_t planGeneration;
+    uint32_t streamMask;
+    uint32_t catalogTotal;
+    uint64_t catalogGeneration;
+    uint32_t catalogOffset;
+    uint32_t catalogRows;
+    uint64_t dataBytes;
+    VnRemoteClientTarget target;
+    VnRemoteClientSnapshot snapshot;
+    VnRemoteClientCaptureStatus capture;
+} VnRemoteClientEvent;
+
+typedef struct VnRemoteClientCatalogRow {
+    VnObjectId id;
+    uint32_t kind;
+    uint32_t reserved0;
+} VnRemoteClientCatalogRow;
+
+typedef struct VnRemoteClientVoice {
+    uint64_t handle;
+    VnObjectId soundId;
+    uint32_t state;
+    float peak;
+} VnRemoteClientVoice;
+
+typedef struct VnRemoteClientBus {
+    VnObjectId id;
+    uint32_t generation;
+    float peak;
+} VnRemoteClientBus;
+
+VnResult Vn_RemoteClientCreate(const VnRemoteClientDesc* desc, VnRemoteClient* outClient);
+
+VnResult Vn_RemoteClientDestroy(VnRemoteClient client);
+
+VnResult Vn_RemoteClientDiscover(VnRemoteClient client, uint32_t discoveryPort);
+
+VnResult Vn_RemoteClientConnect(VnRemoteClient client, const char* host, uint32_t tcpPort);
+
+VnResult Vn_RemoteClientDisconnect(VnRemoteClient client);
+
+VnResult Vn_RemoteClientRequest(VnRemoteClient client, const VnRemoteClientRequest* request,
+                                uint32_t* outRequestId);
+
+VnResult Vn_RemoteClientPoll(VnRemoteClient client, VnRemoteClientEvent* outEvent,
+                             void* buffer, uint64_t bufferBytes);
+
 typedef int32_t VnPreviewResult;
 typedef uint64_t VnPreviewPlayableHandle;
 

@@ -54,10 +54,12 @@ callback; the network worker exchanges bounded queues with the logic thread.
 
 ## Connection Contract
 
-`include/harken_remote/Protocol.h` is the shared Engine/Studio binary contract.
-It uses explicit little-endian fixed-width fields and length-prefixed UTF-8
-strings, with a 16-byte header and a maximum 256 KiB payload. It does not expose
-C++ object layouts, addresses or the legacy tooling pipe protocol.
+`src/Protocol.h` is the Engine-internal wire format. It uses explicit
+little-endian fixed-width fields and length-prefixed UTF-8 strings, with a
+16-byte header and a maximum 256 KiB payload. Tools connect through the
+development ABI client (`Vn_RemoteClient*` in `HarkenDevelopment.h`), which owns
+sockets, framing, handshake, timeouts and heartbeats and reports decoded events
+through `Vn_RemoteClientPoll`. Catalog rows carry only IDs and kinds.
 
 Discovery sends a query to multicast group `239.255.37.84` and receives unicast
 announcements correlated by request ID. Each application instance has its own

@@ -96,6 +96,237 @@ static_assert(offsetof(VnRemoteStatus, buildId) == 440,
 static_assert(offsetof(VnRemoteStatus, platform) == 568,
               "wire table offset drift: VnRemoteStatus.platform");
 
+static_assert(sizeof(VnRemoteClientDesc) == 16,
+              "wire table size drift: VnRemoteClientDesc");
+static_assert(offsetof(VnRemoteClientDesc, structSize) == 0,
+              "wire table offset drift: VnRemoteClientDesc.structSize");
+static_assert(offsetof(VnRemoteClientDesc, flags) == 4,
+              "wire table offset drift: VnRemoteClientDesc.flags");
+static_assert(offsetof(VnRemoteClientDesc, clientName) == 8,
+              "wire table offset drift: VnRemoteClientDesc.clientName");
+
+static_assert(sizeof(VnRemoteClientRequest) == 104,
+              "wire table size drift: VnRemoteClientRequest");
+static_assert(offsetof(VnRemoteClientRequest, structSize) == 0,
+              "wire table offset drift: VnRemoteClientRequest.structSize");
+static_assert(offsetof(VnRemoteClientRequest, kind) == 4,
+              "wire table offset drift: VnRemoteClientRequest.kind");
+static_assert(offsetof(VnRemoteClientRequest, operation) == 8,
+              "wire table offset drift: VnRemoteClientRequest.operation");
+static_assert(offsetof(VnRemoteClientRequest, durationMs) == 12,
+              "wire table offset drift: VnRemoteClientRequest.durationMs");
+static_assert(offsetof(VnRemoteClientRequest, expectedGeneration) == 16,
+              "wire table offset drift: VnRemoteClientRequest.expectedGeneration");
+static_assert(offsetof(VnRemoteClientRequest, target) == 24,
+              "wire table offset drift: VnRemoteClientRequest.target");
+static_assert(offsetof(VnRemoteClientRequest, instanceHandle) == 40,
+              "wire table offset drift: VnRemoteClientRequest.instanceHandle");
+static_assert(offsetof(VnRemoteClientRequest, secondary) == 48,
+              "wire table offset drift: VnRemoteClientRequest.secondary");
+static_assert(offsetof(VnRemoteClientRequest, value) == 56,
+              "wire table offset drift: VnRemoteClientRequest.value");
+static_assert(offsetof(VnRemoteClientRequest, offset) == 60,
+              "wire table offset drift: VnRemoteClientRequest.offset");
+static_assert(offsetof(VnRemoteClientRequest, streamMask) == 64,
+              "wire table offset drift: VnRemoteClientRequest.streamMask");
+static_assert(offsetof(VnRemoteClientRequest, cadenceHz) == 68,
+              "wire table offset drift: VnRemoteClientRequest.cadenceHz");
+static_assert(offsetof(VnRemoteClientRequest, bytesPerSecond) == 72,
+              "wire table offset drift: VnRemoteClientRequest.bytesPerSecond");
+static_assert(offsetof(VnRemoteClientRequest, executionFactVersion) == 76,
+              "wire table offset drift: VnRemoteClientRequest.executionFactVersion");
+static_assert(offsetof(VnRemoteClientRequest, permissionMask) == 80,
+              "wire table offset drift: VnRemoteClientRequest.permissionMask");
+static_assert(offsetof(VnRemoteClientRequest, requestSymbols) == 84,
+              "wire table offset drift: VnRemoteClientRequest.requestSymbols");
+static_assert(offsetof(VnRemoteClientRequest, consumerQueueBytes) == 88,
+              "wire table offset drift: VnRemoteClientRequest.consumerQueueBytes");
+static_assert(offsetof(VnRemoteClientRequest, sessionEpoch) == 96,
+              "wire table offset drift: VnRemoteClientRequest.sessionEpoch");
+
+static_assert(sizeof(VnRemoteClientTarget) == 760,
+              "wire table size drift: VnRemoteClientTarget");
+static_assert(offsetof(VnRemoteClientTarget, result) == 0,
+              "wire table offset drift: VnRemoteClientTarget.result");
+static_assert(offsetof(VnRemoteClientTarget, protocolMajor) == 4,
+              "wire table offset drift: VnRemoteClientTarget.protocolMajor");
+static_assert(offsetof(VnRemoteClientTarget, protocolMinor) == 8,
+              "wire table offset drift: VnRemoteClientTarget.protocolMinor");
+static_assert(offsetof(VnRemoteClientTarget, processId) == 12,
+              "wire table offset drift: VnRemoteClientTarget.processId");
+static_assert(offsetof(VnRemoteClientTarget, tcpPort) == 16,
+              "wire table offset drift: VnRemoteClientTarget.tcpPort");
+static_assert(offsetof(VnRemoteClientTarget, sampleRate) == 20,
+              "wire table offset drift: VnRemoteClientTarget.sampleRate");
+static_assert(offsetof(VnRemoteClientTarget, blockFrames) == 24,
+              "wire table offset drift: VnRemoteClientTarget.blockFrames");
+static_assert(offsetof(VnRemoteClientTarget, compatible) == 28,
+              "wire table offset drift: VnRemoteClientTarget.compatible");
+static_assert(offsetof(VnRemoteClientTarget, instanceId) == 32,
+              "wire table offset drift: VnRemoteClientTarget.instanceId");
+static_assert(offsetof(VnRemoteClientTarget, sessionId) == 40,
+              "wire table offset drift: VnRemoteClientTarget.sessionId");
+static_assert(offsetof(VnRemoteClientTarget, capabilities) == 48,
+              "wire table offset drift: VnRemoteClientTarget.capabilities");
+static_assert(offsetof(VnRemoteClientTarget, address) == 56,
+              "wire table offset drift: VnRemoteClientTarget.address");
+static_assert(offsetof(VnRemoteClientTarget, bindAddress) == 120,
+              "wire table offset drift: VnRemoteClientTarget.bindAddress");
+static_assert(offsetof(VnRemoteClientTarget, applicationName) == 184,
+              "wire table offset drift: VnRemoteClientTarget.applicationName");
+static_assert(offsetof(VnRemoteClientTarget, projectName) == 312,
+              "wire table offset drift: VnRemoteClientTarget.projectName");
+static_assert(offsetof(VnRemoteClientTarget, machineName) == 440,
+              "wire table offset drift: VnRemoteClientTarget.machineName");
+static_assert(offsetof(VnRemoteClientTarget, engineVersion) == 568,
+              "wire table offset drift: VnRemoteClientTarget.engineVersion");
+static_assert(offsetof(VnRemoteClientTarget, buildId) == 600,
+              "wire table offset drift: VnRemoteClientTarget.buildId");
+static_assert(offsetof(VnRemoteClientTarget, platform) == 728,
+              "wire table offset drift: VnRemoteClientTarget.platform");
+
+static_assert(sizeof(VnRemoteClientSnapshot) == 56,
+              "wire table size drift: VnRemoteClientSnapshot");
+static_assert(offsetof(VnRemoteClientSnapshot, result) == 0,
+              "wire table offset drift: VnRemoteClientSnapshot.result");
+static_assert(offsetof(VnRemoteClientSnapshot, activeVoices) == 4,
+              "wire table offset drift: VnRemoteClientSnapshot.activeVoices");
+static_assert(offsetof(VnRemoteClientSnapshot, blockIndex) == 8,
+              "wire table offset drift: VnRemoteClientSnapshot.blockIndex");
+static_assert(offsetof(VnRemoteClientSnapshot, busCount) == 16,
+              "wire table offset drift: VnRemoteClientSnapshot.busCount");
+static_assert(offsetof(VnRemoteClientSnapshot, callbackCpuUs) == 20,
+              "wire table offset drift: VnRemoteClientSnapshot.callbackCpuUs");
+static_assert(offsetof(VnRemoteClientSnapshot, updateCpuUs) == 24,
+              "wire table offset drift: VnRemoteClientSnapshot.updateCpuUs");
+static_assert(offsetof(VnRemoteClientSnapshot, voiceRows) == 28,
+              "wire table offset drift: VnRemoteClientSnapshot.voiceRows");
+static_assert(offsetof(VnRemoteClientSnapshot, commandBackpressure) == 32,
+              "wire table offset drift: VnRemoteClientSnapshot.commandBackpressure");
+static_assert(offsetof(VnRemoteClientSnapshot, droppedNotifications) == 40,
+              "wire table offset drift: VnRemoteClientSnapshot.droppedNotifications");
+static_assert(offsetof(VnRemoteClientSnapshot, busRows) == 48,
+              "wire table offset drift: VnRemoteClientSnapshot.busRows");
+static_assert(offsetof(VnRemoteClientSnapshot, reserved0) == 52,
+              "wire table offset drift: VnRemoteClientSnapshot.reserved0");
+
+static_assert(sizeof(VnRemoteClientCaptureStatus) == 128,
+              "wire table size drift: VnRemoteClientCaptureStatus");
+static_assert(offsetof(VnRemoteClientCaptureStatus, result) == 0,
+              "wire table offset drift: VnRemoteClientCaptureStatus.result");
+static_assert(offsetof(VnRemoteClientCaptureStatus, state) == 4,
+              "wire table offset drift: VnRemoteClientCaptureStatus.state");
+static_assert(offsetof(VnRemoteClientCaptureStatus, sessionEpoch) == 8,
+              "wire table offset drift: VnRemoteClientCaptureStatus.sessionEpoch");
+static_assert(offsetof(VnRemoteClientCaptureStatus, startedTimestampNs) == 16,
+              "wire table offset drift: VnRemoteClientCaptureStatus.startedTimestampNs");
+static_assert(offsetof(VnRemoteClientCaptureStatus, stoppedTimestampNs) == 24,
+              "wire table offset drift: VnRemoteClientCaptureStatus.stoppedTimestampNs");
+static_assert(offsetof(VnRemoteClientCaptureStatus, sourceDroppedRecords) == 32,
+              "wire table offset drift: VnRemoteClientCaptureStatus.sourceDroppedRecords");
+static_assert(offsetof(VnRemoteClientCaptureStatus, deliveryDroppedRecords) == 40,
+              "wire table offset drift: VnRemoteClientCaptureStatus.deliveryDroppedRecords");
+static_assert(offsetof(VnRemoteClientCaptureStatus, transportDroppedRecords) == 48,
+              "wire table offset drift: VnRemoteClientCaptureStatus.transportDroppedRecords");
+static_assert(offsetof(VnRemoteClientCaptureStatus, execution) == 56,
+              "wire table offset drift: VnRemoteClientCaptureStatus.execution");
+static_assert(offsetof(VnRemoteClientCaptureStatus, acceptedExecutionFactVersion) == 60,
+              "wire table offset drift: VnRemoteClientCaptureStatus.acceptedExecutionFactVersion");
+static_assert(offsetof(VnRemoteClientCaptureStatus, baselineAvailability) == 64,
+              "wire table offset drift: VnRemoteClientCaptureStatus.baselineAvailability");
+static_assert(offsetof(VnRemoteClientCaptureStatus, requestedPermissionMask) == 68,
+              "wire table offset drift: VnRemoteClientCaptureStatus.requestedPermissionMask");
+static_assert(offsetof(VnRemoteClientCaptureStatus, acceptedPermissionMask) == 72,
+              "wire table offset drift: VnRemoteClientCaptureStatus.acceptedPermissionMask");
+static_assert(offsetof(VnRemoteClientCaptureStatus, deniedPermissionMask) == 76,
+              "wire table offset drift: VnRemoteClientCaptureStatus.deniedPermissionMask");
+static_assert(offsetof(VnRemoteClientCaptureStatus, unsupportedPermissionMask) == 80,
+              "wire table offset drift: VnRemoteClientCaptureStatus.unsupportedPermissionMask");
+static_assert(offsetof(VnRemoteClientCaptureStatus, acceptedStreamKindMask) == 84,
+              "wire table offset drift: VnRemoteClientCaptureStatus.acceptedStreamKindMask");
+static_assert(offsetof(VnRemoteClientCaptureStatus, symbolsDecision) == 88,
+              "wire table offset drift: VnRemoteClientCaptureStatus.symbolsDecision");
+static_assert(offsetof(VnRemoteClientCaptureStatus, symbolAvailability) == 92,
+              "wire table offset drift: VnRemoteClientCaptureStatus.symbolAvailability");
+static_assert(offsetof(VnRemoteClientCaptureStatus, identityUnavailableCount) == 96,
+              "wire table offset drift: VnRemoteClientCaptureStatus.identityUnavailableCount");
+static_assert(offsetof(VnRemoteClientCaptureStatus, baselineStateCutId) == 104,
+              "wire table offset drift: VnRemoteClientCaptureStatus.baselineStateCutId");
+static_assert(offsetof(VnRemoteClientCaptureStatus, supportedFactKinds) == 112,
+              "wire table offset drift: VnRemoteClientCaptureStatus.supportedFactKinds");
+
+static_assert(sizeof(VnRemoteClientEvent) == 1032,
+              "wire table size drift: VnRemoteClientEvent");
+static_assert(offsetof(VnRemoteClientEvent, structSize) == 0,
+              "wire table offset drift: VnRemoteClientEvent.structSize");
+static_assert(offsetof(VnRemoteClientEvent, kind) == 4,
+              "wire table offset drift: VnRemoteClientEvent.kind");
+static_assert(offsetof(VnRemoteClientEvent, requestId) == 8,
+              "wire table offset drift: VnRemoteClientEvent.requestId");
+static_assert(offsetof(VnRemoteClientEvent, result) == 12,
+              "wire table offset drift: VnRemoteClientEvent.result");
+static_assert(offsetof(VnRemoteClientEvent, failure) == 16,
+              "wire table offset drift: VnRemoteClientEvent.failure");
+static_assert(offsetof(VnRemoteClientEvent, osError) == 20,
+              "wire table offset drift: VnRemoteClientEvent.osError");
+static_assert(offsetof(VnRemoteClientEvent, operation) == 24,
+              "wire table offset drift: VnRemoteClientEvent.operation");
+static_assert(offsetof(VnRemoteClientEvent, recordCount) == 28,
+              "wire table offset drift: VnRemoteClientEvent.recordCount");
+static_assert(offsetof(VnRemoteClientEvent, handle) == 32,
+              "wire table offset drift: VnRemoteClientEvent.handle");
+static_assert(offsetof(VnRemoteClientEvent, sessionEpoch) == 40,
+              "wire table offset drift: VnRemoteClientEvent.sessionEpoch");
+static_assert(offsetof(VnRemoteClientEvent, planGeneration) == 48,
+              "wire table offset drift: VnRemoteClientEvent.planGeneration");
+static_assert(offsetof(VnRemoteClientEvent, streamMask) == 56,
+              "wire table offset drift: VnRemoteClientEvent.streamMask");
+static_assert(offsetof(VnRemoteClientEvent, catalogTotal) == 60,
+              "wire table offset drift: VnRemoteClientEvent.catalogTotal");
+static_assert(offsetof(VnRemoteClientEvent, catalogGeneration) == 64,
+              "wire table offset drift: VnRemoteClientEvent.catalogGeneration");
+static_assert(offsetof(VnRemoteClientEvent, catalogOffset) == 72,
+              "wire table offset drift: VnRemoteClientEvent.catalogOffset");
+static_assert(offsetof(VnRemoteClientEvent, catalogRows) == 76,
+              "wire table offset drift: VnRemoteClientEvent.catalogRows");
+static_assert(offsetof(VnRemoteClientEvent, dataBytes) == 80,
+              "wire table offset drift: VnRemoteClientEvent.dataBytes");
+static_assert(offsetof(VnRemoteClientEvent, target) == 88,
+              "wire table offset drift: VnRemoteClientEvent.target");
+static_assert(offsetof(VnRemoteClientEvent, snapshot) == 848,
+              "wire table offset drift: VnRemoteClientEvent.snapshot");
+static_assert(offsetof(VnRemoteClientEvent, capture) == 904,
+              "wire table offset drift: VnRemoteClientEvent.capture");
+
+static_assert(sizeof(VnRemoteClientCatalogRow) == 24,
+              "wire table size drift: VnRemoteClientCatalogRow");
+static_assert(offsetof(VnRemoteClientCatalogRow, id) == 0,
+              "wire table offset drift: VnRemoteClientCatalogRow.id");
+static_assert(offsetof(VnRemoteClientCatalogRow, kind) == 16,
+              "wire table offset drift: VnRemoteClientCatalogRow.kind");
+static_assert(offsetof(VnRemoteClientCatalogRow, reserved0) == 20,
+              "wire table offset drift: VnRemoteClientCatalogRow.reserved0");
+
+static_assert(sizeof(VnRemoteClientVoice) == 32,
+              "wire table size drift: VnRemoteClientVoice");
+static_assert(offsetof(VnRemoteClientVoice, handle) == 0,
+              "wire table offset drift: VnRemoteClientVoice.handle");
+static_assert(offsetof(VnRemoteClientVoice, soundId) == 8,
+              "wire table offset drift: VnRemoteClientVoice.soundId");
+static_assert(offsetof(VnRemoteClientVoice, state) == 24,
+              "wire table offset drift: VnRemoteClientVoice.state");
+static_assert(offsetof(VnRemoteClientVoice, peak) == 28,
+              "wire table offset drift: VnRemoteClientVoice.peak");
+
+static_assert(sizeof(VnRemoteClientBus) == 24,
+              "wire table size drift: VnRemoteClientBus");
+static_assert(offsetof(VnRemoteClientBus, id) == 0,
+              "wire table offset drift: VnRemoteClientBus.id");
+static_assert(offsetof(VnRemoteClientBus, generation) == 16,
+              "wire table offset drift: VnRemoteClientBus.generation");
+static_assert(offsetof(VnRemoteClientBus, peak) == 20,
+              "wire table offset drift: VnRemoteClientBus.peak");
+
 static_assert(sizeof(VnConfig) == 352,
               "wire table size drift: VnConfig");
 static_assert(offsetof(VnConfig, structSize) == 0,

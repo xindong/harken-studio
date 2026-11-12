@@ -6,7 +6,7 @@
 #include <harken/param/VariableService.h>
 #include <harken/media/PackFormatV2.h>
 #include <harken/media/StreamFormat.h>
-#include <harken_remote/Protocol.h>
+#include "Protocol.h"
 #include <harken_host_control/WireFormat.h>
 
 #include <gtest/gtest.h>

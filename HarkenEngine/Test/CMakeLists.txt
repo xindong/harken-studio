@@ -29,7 +29,7 @@ add_executable(harken_remote_runtime_tests
     UnitTest/AllocationProbe.cpp
     UnitTest/RuntimeRemoteTest.cpp
     UnitTest/monitor_fixture_decode.cpp)
-target_link_libraries(harken_remote_runtime_tests PRIVATE harken_core harken_buildinfo harken_remote_protocol harken_preview GTest::gtest_main)
+target_link_libraries(harken_remote_runtime_tests PRIVATE harken_core harken_buildinfo harken_preview GTest::gtest_main)
 target_include_directories(harken_remote_runtime_tests PRIVATE
     ${HARKEN_CORE_DIR}/api/src
     ${HARKEN_DEVELOPMENT_PRIVATE_INCLUDES}

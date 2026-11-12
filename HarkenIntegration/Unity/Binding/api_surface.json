@@ -609,7 +609,14 @@
         "native:Vn_TraceStart",
         "native:Vn_TraceStop",
         "native:Vn_UnregisterBinding",
-        "native:Vn_UnregisterPCM"
+        "native:Vn_UnregisterPCM",
+        "native:Vn_RemoteClientConnect",
+        "native:Vn_RemoteClientCreate",
+        "native:Vn_RemoteClientDestroy",
+        "native:Vn_RemoteClientDisconnect",
+        "native:Vn_RemoteClientDiscover",
+        "native:Vn_RemoteClientPoll",
+        "native:Vn_RemoteClientRequest"
       ]
     },
     "native-tombstones": {
@@ -1445,7 +1452,7 @@
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConstants::public const uint VN_STREAM_SOURCE_READY = 2u",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConstants::public const uint VN_STREAM_SOURCE_REGISTER = 0u",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConstants::public const uint VN_STREAM_SOURCE_REPLACE = 1u",
-        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConstants::public static class VnConstants [ordered-members:b334f9c8f7359f26634cd860c148edf78b58e42f6121f73229e67de2accf2bbe]",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConstants::public static class VnConstants [ordered-members:708c809abb3ee3abfd8f7f5d87aca521afb2f73e6dcbbb55541e6ceef6965a36]",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConstants::public static readonly VnObjectId VN_BUS_MASTER = new VnObjectId ( 0UL , 1UL )",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnCurrentWorldLoadDesc::[ StructLayout ( LayoutKind . Sequential ) ] public struct VnCurrentWorldLoadDesc [ordered-members:ed0a74203613697bf8f279e747fce6aeb5e5fc6764c5bdbacbbafa5dea64c5d7]",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnCurrentWorldLoadDesc::public IntPtr utf8Path",
@@ -1656,7 +1663,7 @@
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnResult::VN_VARIABLE_SCOPE_MISMATCH = - 1200",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnResult::VN_VARIABLE_TRANSACTION_EXHAUSTED = - 1203",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnResult::VN_VARIABLE_WRITER_FORBIDDEN = - 1201",
-        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnResult::public enum VnResult : int [ordered-members:e183c3fe2a6f4fed029bbfc4799cf4c52a748cc79305fa8ed372ea310b3bff5b]",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnResult::public enum VnResult : int [ordered-members:fc7012b3a874d4ef3f37a9b9183d5f6a93a701cb4eccd0a8e7e1859ba6452363]",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnStreamSourceInfoV1::[ StructLayout ( LayoutKind . Sequential ) ] public struct VnStreamSourceInfoV1 [ordered-members:4c9a56bd2408ed007c6ceee55100cade44c5274add7caf4205e85ce29dcb09b7]",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnStreamSourceInfoV1::public int result",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnStreamSourceInfoV1::public uint reserved0",
@@ -1729,7 +1736,9 @@
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnAbiVersionInfo::public uint minor",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnAbiVersionInfo::public uint structSize",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConstants::public const uint VN_ABI_VERSION_MAJOR = 1u",
-        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConstants::public const uint VN_ABI_VERSION_MINOR = 0u"
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnConstants::public const uint VN_ABI_VERSION_MINOR = 0u",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnResult::VN_REMOTE_CLIENT_BUFFER_TOO_SMALL = - 1301",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs/Harken.VnResult::VN_REMOTE_CLIENT_NO_EVENT = - 1300"
       ]
     },
     "tool-types": {
@@ -1964,7 +1973,23 @@
       "VnStreamSourceInfoV1": "required-types",
       "VnReadIsCancelledFn": "required-types",
       "VnByteSourceReadAtFn": "required-types",
-      "VnByteSourceReleaseFn": "required-types"
+      "VnByteSourceReleaseFn": "required-types",
+      "VnRemoteCapability": "tool-types",
+      "VnRemoteCatalogKind": "tool-types",
+      "VnRemoteClientBus": "tool-types",
+      "VnRemoteClientCaptureStatus": "tool-types",
+      "VnRemoteClientCatalogRow": "tool-types",
+      "VnRemoteClientDesc": "tool-types",
+      "VnRemoteClientEvent": "tool-types",
+      "VnRemoteClientEventKind": "tool-types",
+      "VnRemoteClientFailure": "tool-types",
+      "VnRemoteClientFlags": "tool-types",
+      "VnRemoteClientRequest": "tool-types",
+      "VnRemoteClientRequestKind": "tool-types",
+      "VnRemoteClientSnapshot": "tool-types",
+      "VnRemoteClientTarget": "tool-types",
+      "VnRemoteClientVoice": "tool-types",
+      "VnRemoteOperation": "tool-types"
     },
     "constants": {
       "VN_ATTENUATION_MAX_CURVE_POINTS": "tool-types",
@@ -2006,7 +2031,8 @@
       "VN_STREAM_SOURCE_FAILED": "required-types",
       "VN_BYTE_READ_OK": "required-types",
       "VN_BYTE_READ_CANCELLED": "required-types",
-      "VN_BYTE_READ_IO_ERROR": "required-types"
+      "VN_BYTE_READ_IO_ERROR": "required-types",
+      "VN_REMOTE_PROTOCOL_MAJOR": "tool-types"
     }
   },
   "managed_projection": {

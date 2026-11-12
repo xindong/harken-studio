@@ -152,6 +152,9 @@ enum {
     VN_VARIABLE_CATALOG_MISMATCH = -1205, /* typed API execution catalog mismatch */
     VN_NO_VARIABLE_LABEL = -1206,
 
+    VN_REMOTE_CLIENT_NO_EVENT = -1300,
+    VN_REMOTE_CLIENT_BUFFER_TOO_SMALL = -1301,
+
     /* Gameplay catalog checked-name results. Values are ABI-fixed. */
     VN_GAMEPLAY_NAME_RETIRED = -1000,
     VN_GAMEPLAY_WRONG_PROJECT = -1001,

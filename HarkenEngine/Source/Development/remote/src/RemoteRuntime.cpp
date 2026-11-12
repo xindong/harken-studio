@@ -30,7 +30,7 @@
 #include "Engine.h"
 #include "MonitorCaptureHub.h"
 #include "RemoteRuntime.h"
-#include "harken_remote/Protocol.h"
+#include "Protocol.h"
 #include <harken_buildinfo.h>
 
 #include <algorithm>

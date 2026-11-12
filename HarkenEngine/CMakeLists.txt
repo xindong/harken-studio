@@ -172,6 +172,7 @@ set(HARKEN_DEVELOPMENT_SOURCES
     ${HARKEN_DEVELOPMENT_DIR}/monitor/MonitorSpectrumHandler.cpp
     ${HARKEN_DEVELOPMENT_DIR}/monitor/MonitorWaveformHandler.cpp
     ${HARKEN_DEVELOPMENT_DIR}/monitor/MonitorWaveformReduce.cpp
+    ${HARKEN_DEVELOPMENT_DIR}/remote/src/RemoteClient.cpp
     ${HARKEN_DEVELOPMENT_DIR}/remote/src/RemoteRuntime.cpp
     ${HARKEN_DEVELOPMENT_DIR}/trace/TraceCodec.cpp
     ${HARKEN_DEVELOPMENT_DIR}/trace/TraceRecorder.cpp
@@ -200,7 +201,6 @@ set(HARKEN_DEVELOPMENT_PRIVATE_INCLUDES
     ${HARKEN_DEVELOPMENT_DIR}/include
     ${HARKEN_DEVELOPMENT_DIR}/generation
     ${HARKEN_DEVELOPMENT_DIR}/monitor
-    ${HARKEN_DEVELOPMENT_DIR}/remote/include
     ${HARKEN_DEVELOPMENT_DIR}/remote/src
     ${HARKEN_DEVELOPMENT_DIR}/trace
 )
@@ -293,10 +293,6 @@ if(HARKEN_ENABLE_STAGE_TAPS)
     target_compile_definitions(harken_core PRIVATE HARKEN_ENABLE_STAGE_TAPS)
 endif()
 endif()
-
-add_library(harken_remote_protocol INTERFACE)
-target_include_directories(harken_remote_protocol INTERFACE
-    ${HARKEN_DEVELOPMENT_DIR}/remote/include)
 
 if(HARKEN_BUILD_RUNTIME_UNIT_TESTS)
     add_library(harken_core_hub_absent STATIC ${HARKEN_CORE_SOURCES} ${HARKEN_DEVELOPMENT_SOURCES})

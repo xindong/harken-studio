@@ -52,6 +52,19 @@ struct WireDescMeta<VnRemoteConfig> {
 };
 
 template <>
+struct WireDescMeta<VnRemoteClientDesc> {
+    static bool DecodeSections(WireReader& reader, WireArena& arena,
+                               VnRemoteClientDesc* desc, std::uint32_t declared) {
+        if (offsetof(VnRemoteClientDesc, clientName) + sizeof(void*) <= declared) {
+            if (!ReadStringSection(reader, arena, &desc->clientName)) {
+                return false;
+            }
+        }
+        return true;
+    }
+};
+
+template <>
 struct WireDescMeta<VnBusTopologyDesc> {
     static bool DecodeSections(WireReader& reader, WireArena& arena,
                                VnBusTopologyDesc* desc, std::uint32_t declared) {

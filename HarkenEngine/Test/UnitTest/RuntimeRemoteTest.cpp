@@ -14,7 +14,7 @@
 #include "MonitorIdentityCut.h"
 #include "Common/MonitorExecutionTestSupport.h"
 #include <harken/HarkenDevelopment.h>
-#include "harken_remote/Protocol.h"
+#include "Protocol.h"
 #include "RemoteRuntime.h"
 #include <gtest/gtest.h>
 #include <harken/Harken.h>
@@ -26,6 +26,7 @@
 #include <chrono>
 #include <functional>
 #include <thread>
+#include <vector>
 
 namespace {
 using namespace harken::remote;
@@ -888,6 +889,51 @@ TEST(RuntimeRemote, TcpHandshakeSnapshotAndCommandsUseLogicPump) {
     ASSERT_TRUE(WaitUntil([&] { return client.Read(frame); }));
     ASSERT_TRUE(DecodePayload(frame, result));
     EXPECT_EQ(VN_STALE_HANDLE, result.result);
+}
+
+TEST(RuntimeRemote, DevelopmentClientHandshakesAndCorrelatesRequests) {
+    harkentest::EngineSession session(harkentest::MakeNullConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    const auto config = RemoteConfig();
+    ASSERT_EQ(VN_OK, Vn_RemoteStart(&config));
+    VnRemoteClientDesc desc{sizeof(VnRemoteClientDesc), VN_REMOTE_CLIENT_LOCAL_ONLY, "Remote runtime tests"};
+    VnRemoteClient client = 0;
+    ASSERT_EQ(VN_OK, Vn_RemoteClientCreate(&desc, &client));
+    EXPECT_EQ(VN_INVALID_ARG, Vn_RemoteClientConnect(client, "192.0.2.1", Status().tcpPort));
+    ASSERT_EQ(VN_OK, Vn_RemoteClientConnect(client, "127.0.0.1", Status().tcpPort));
+    std::vector<std::uint8_t> data(65536);
+    VnRemoteClientEvent event{};
+    const auto next = [&](std::uint32_t kind) {
+        return WaitUntil([&] {
+            event = {};
+            event.structSize = sizeof(event);
+            if (Vn_RemoteClientPoll(client, &event, data.data(), data.size()) != VN_OK)
+                return false;
+            EXPECT_NE(VN_REMOTE_CLIENT_EVENT_FAILED, event.kind) << event.failure << " " << event.osError;
+            return event.kind == kind || event.kind == VN_REMOTE_CLIENT_EVENT_FAILED;
+        }) && event.kind == kind;
+    };
+    ASSERT_TRUE(next(VN_REMOTE_CLIENT_EVENT_CONNECTED));
+    EXPECT_EQ(Status().instanceId, event.target.instanceId);
+    EXPECT_EQ(1u, event.target.compatible);
+    VnRemoteClientRequest request{};
+    request.structSize = sizeof(request);
+    request.kind = VN_REMOTE_CLIENT_REQUEST_CATALOG;
+    std::uint32_t requestId = 0;
+    ASSERT_EQ(VN_OK, Vn_RemoteClientRequest(client, &request, &requestId));
+    ASSERT_TRUE(next(VN_REMOTE_CLIENT_EVENT_CATALOG));
+    EXPECT_EQ(requestId, event.requestId);
+    EXPECT_EQ(VN_OK, event.result);
+    EXPECT_EQ(event.catalogRows * sizeof(VnRemoteClientCatalogRow), event.dataBytes);
+    request.kind = VN_REMOTE_CLIENT_REQUEST_COMMAND;
+    request.operation = VN_REMOTE_OPERATION_STOP_ALL;
+    request.expectedGeneration = event.catalogGeneration + 1;
+    ASSERT_EQ(VN_OK, Vn_RemoteClientRequest(client, &request, &requestId));
+    ASSERT_TRUE(next(VN_REMOTE_CLIENT_EVENT_COMMAND_RESULT));
+    EXPECT_EQ(requestId, event.requestId);
+    EXPECT_EQ(VN_STALE_HANDLE, event.result);
+    EXPECT_EQ(VN_OK, Vn_RemoteClientDestroy(client));
+    EXPECT_EQ(VN_STALE_HANDLE, Vn_RemoteClientDestroy(client));
 }
 
 TEST(RuntimeRemote, EventCaptureDeliversGameOperationsAndSealedTail) {
