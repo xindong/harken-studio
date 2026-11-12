@@ -3,6 +3,7 @@
 #include "Core/ThemeLayout.h"
 #include "Core/FontManager.h"
 #include "Widgets/Common/DialogFormLayout.h"
+#include "Widgets/Shared/TreeExpansionWidget.h"
 
 #include <QButtonGroup>
 #include <QFileDialog>
@@ -117,7 +118,7 @@ void TemplateChooserWidget::buildUi()
         ThemeLayout::spacing(prevLayout, ThemeLayout::Space::Section);
 
         auto makeColumn = [&](const QString& header) {
-            auto* col = new QTreeWidget(previewPage_);
+            auto* col = new TreeExpansionWidget(previewPage_);
             col->setColumnCount(1);
             col->setHeaderLabel(header);
             col->header()->setSectionResizeMode(QHeaderView::Stretch);

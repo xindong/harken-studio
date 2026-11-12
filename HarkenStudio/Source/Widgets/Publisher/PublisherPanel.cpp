@@ -28,6 +28,7 @@
 #include "../Common/MultiSelectComboBox.h"
 #include "../Common/SplitButton.h"
 #include "../Common/StatusTip.h"
+#include "../Common/TreeExpansion.h"
 #include "../Shared/TreeRowStyle.h"
 
 #include <QVBoxLayout>
@@ -262,7 +263,7 @@ private:
         option.rect = visualRect(index);
         const auto* delegate = static_cast<const PackTreeDelegate*>(itemDelegateForIndex(index));
         if (!delegate->chevronRect(option, index).contains(event->pos())) return false;
-        item->setExpanded(!item->isExpanded());
+        TreeExpansion::toggle(item, event->modifiers());
         event->accept();
         return true;
     }

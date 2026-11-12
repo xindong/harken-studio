@@ -10,6 +10,7 @@
 #include "Core/ThemeManager.h"
 #include "Widgets/Common/SearchField.h"
 #include "Widgets/Common/SwitchIndicator.h"
+#include "Widgets/Common/TreeExpansion.h"
 #include "Widgets/Shared/TreeRowStyle.h"
 #include "Widgets/Shared/TreeExpansionWidget.h"
 
@@ -353,14 +354,14 @@ SelectorWindow::SelectorWindow()
             this, &SelectorWindow::applySearchFilter);
     const auto toggleBucket = [this](QTreeWidgetItem* item, int) {
         if (!request_.creation && item && item->data(0, TreeRowStyle::kBucketRole).toBool())
-            item->setExpanded(!item->isExpanded());
+            TreeExpansion::toggle(item, QApplication::keyboardModifiers());
     };
     connect(tree_, &QTreeWidget::itemClicked, this, toggleBucket);
     connect(tree_, &QTreeWidget::itemDoubleClicked, this, toggleBucket);
     connect(tree_, &QTreeWidget::itemActivated, this,
             [this](QTreeWidgetItem* item, int) {
                 if (request_.creation) {
-                    if (item) item->setExpanded(!item->isExpanded());
+                    TreeExpansion::toggle(item, QApplication::keyboardModifiers());
                     nameEdit_->setFocus();
                     nameEdit_->selectAll();
                     return;

@@ -5,6 +5,7 @@
 #include "Core/AssetPipeline/AssetRegistry.h"
 #include "Core/AuthoringPolicy.h"
 #include "Core/AssetPipeline/PathUtils.h"
+#include "Core/Components/VSound.h"
 #include "Core/ItemTypeIcons.h"
 #include "Core/ProjectManager.h"
 #include "Core/ThemeAssetCatalog.h"
@@ -45,7 +46,25 @@ public:
         if (!item)
             return {};
         const auto* project = ProjectManager::instance().currentProject();
-        return project ? project->itemPath(item) : item->name;
+        QString tip = project ? project->itemPath(item) : item->name;
+        if (const auto* sound = item->comp<VSound>()) {
+            const auto appendSources = [&](const SoundSourceSet& sources, const QString& language) {
+                for (const auto& source : sources.entries) {
+                    const auto* asset = AssetRegistry::instance().getAsset(source.sourceId);
+                    const QString path = asset ? assetDisplayPath(*asset) : QObject::tr("Missing");
+                    tip += QLatin1Char('\n') + (language.isEmpty()
+                        ? QObject::tr("Source: %1").arg(path)
+                        : QObject::tr("Source (%1): %2").arg(language, path));
+                }
+            };
+            if (sound->distinguishLanguage) {
+                for (auto it = sound->sources.localized.cbegin(); it != sound->sources.localized.cend(); ++it)
+                    appendSources(it.value(), it.key());
+            } else {
+                appendSources(sound->sources.plain, {});
+            }
+        }
+        return tip;
     }
 
     QIcon icon(uint32_t id, const QColor& tint) const override
@@ -75,13 +94,20 @@ public:
         QObject* ctx, std::function<void(uint32_t)> onChanged) const override
     {
         auto* pm = &ProjectManager::instance();
+        auto* registry = &AssetRegistry::instance();
+        const auto refreshSources = [cb = onChanged](uint32_t) { cb(0); };
         return {
+            QObject::connect(registry, &AssetRegistry::assetRegistered, ctx, refreshSources),
+            QObject::connect(registry, &AssetRegistry::assetModified, ctx, refreshSources),
+            QObject::connect(registry, &AssetRegistry::assetUnregistered, ctx, refreshSources),
             QObject::connect(
                 pm, &ProjectManager::itemPropertyChanged, ctx,
                 [cb = onChanged](ProjectItem* item, const QString& property, const QObject*) {
                     if (item && (property == QStringLiteral("mode")
                                  || property == QStringLiteral("playType")
-                                 || property == QStringLiteral("kind")))
+                                 || property == QStringLiteral("kind")
+                                 || property == QStringLiteral("sources")
+                                 || property == QStringLiteral("distinguishLanguage")))
                         cb(item->objectID);
                 }),
             QObject::connect(
@@ -292,8 +318,9 @@ public:
                 && (!request.isSelectable || request.isSelectable(id));
             auto* row = new QTreeWidgetItem;
             row->setText(0, assetDisplayName(*asset));
+            row->setToolTip(0, tooltip(id));
             if (!selectionError.isEmpty())
-                row->setToolTip(0, selectionError);
+                row->setToolTip(0, row->toolTip(0) + QLatin1Char('\n') + selectionError);
             row->setIcon(0, icon(id, QColor()));
             row->setData(0, kRoleObjectID, id);
             row->setData(0, kRoleSelectable, selectable);

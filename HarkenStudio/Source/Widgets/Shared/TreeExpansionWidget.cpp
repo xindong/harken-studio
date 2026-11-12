@@ -2,6 +2,7 @@
 
 #include "TreeRowStyle.h"
 #include "Core/ThemeManager.h"
+#include "Widgets/Common/TreeExpansion.h"
 
 #include <QMouseEvent>
 
@@ -53,7 +54,7 @@ void TreeExpansionWidget::mouseReleaseEvent(QMouseEvent* event)
         togglePressIndex_ = QModelIndex();
         if (toggleClick && treeItem && treeItem->childCount() > 0
             && toggleRectForItem(this, treeItem).contains(event->position().toPoint())) {
-            treeItem->setExpanded(!treeItem->isExpanded());
+            TreeExpansion::toggle(treeItem, event->modifiers());
             event->accept();
             return;
         }
@@ -75,12 +76,14 @@ void TreeExpansionWidget::mouseDoubleClickEvent(QMouseEvent* event)
         && toggleRectForItem(this, treeItem).contains(pos)) {
         togglePressIndex_ = indexFromItem(treeItem, 0);
         suppressToggleReleaseIndex_ = togglePressIndex_;
-        treeItem->setExpanded(!treeItem->isExpanded());
+        TreeExpansion::toggle(treeItem, event->modifiers());
         event->accept();
         return;
     }
 
-    QTreeWidget::mouseDoubleClickEvent(event);
+    TreeExpansion::handleNativeMouseEvent(*this, event, [this, event] {
+        QTreeWidget::mouseDoubleClickEvent(event);
+    });
 }
 
 }

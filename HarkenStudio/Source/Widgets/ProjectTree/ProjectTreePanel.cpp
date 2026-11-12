@@ -1,6 +1,7 @@
 
 #include "ProjectTreePanel.h"
 #include "Core/FontManager.h"
+#include "Widgets/Common/TreeExpansion.h"
 #include "Widgets/Shared/ProjectObjectLabels.h"
 #include "Core/ThemeAssetCatalog.h"
 #include "Widgets/Shared/ProjectItemMenuController.h"
@@ -581,11 +582,11 @@ void ProjectTreePanel::buildItemMenu()
             };
             auto* expandAll = sub->addAction(tr("Expand All"), this, [this]() {
                 for (QTreeWidgetItem* node : expandTargetRows())
-                    setSubtreeExpanded(node, true);
+                    TreeExpansion::setExpanded(node, true, true);
             });
             auto* collapseAll = sub->addAction(tr("Collapse All"), this, [this]() {
                 for (QTreeWidgetItem* node : expandTargetRows())
-                    setSubtreeExpanded(node, false);
+                    TreeExpansion::setExpanded(node, false, true);
             });
             const auto [canExpandAll, canCollapseAll] = expansionStates(expandTargetRows());
             expandAll->setEnabled(canExpandAll);
@@ -1584,14 +1585,6 @@ QTreeWidgetItem* ProjectTreePanel::findTreeItem(ProjectItem* item) const
     return nullptr;
 }
 
-void ProjectTreePanel::setSubtreeExpanded(QTreeWidgetItem* item, bool expanded)
-{
-    if (!item) return;
-    item->setExpanded(expanded);
-    for (int i = 0; i < item->childCount(); ++i)
-        setSubtreeExpanded(item->child(i), expanded);
-}
-
 void ProjectTreePanel::addToItemMap(QTreeWidgetItem* treeItem, ProjectItem* projectItem)
 {
     itemMap_[treeItem] = projectItem;
@@ -1840,7 +1833,7 @@ void ProjectTreePanel::onItemClicked(QTreeWidgetItem* item, int column)
 
     if (item && item->data(0, kBucketRole).toBool())
     {
-        item->setExpanded(!item->isExpanded());
+        TreeExpansion::toggle(item, QApplication::keyboardModifiers());
         emit itemSelected(nullptr);
         return;
     }
@@ -1880,14 +1873,14 @@ void ProjectTreePanel::onItemDoubleClicked(QTreeWidgetItem* item, int column)
     Q_UNUSED(column)
 
     if (item && item->data(0, kBucketRole).toBool()) {
-        item->setExpanded(!item->isExpanded());
+        TreeExpansion::toggle(item, QApplication::keyboardModifiers());
         return;
     }
 
     if (ProjectItem* projItem = itemMap_.value(item, nullptr))
         emit itemDoubleClicked(projItem);
     else if (folderMap_.contains(item))
-        item->setExpanded(!item->isExpanded());
+        TreeExpansion::toggle(item, QApplication::keyboardModifiers());
 }
 
 void ProjectTreePanel::onItemExpanded(QTreeWidgetItem* item)
