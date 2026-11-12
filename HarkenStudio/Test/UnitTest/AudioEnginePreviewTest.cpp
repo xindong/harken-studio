@@ -14,9 +14,10 @@
 #include "UndoCommands.h"
 #include "RuntimeSyncCoordinator.h"
 #include "AuditionManager.h"
+#include "Core/Build/CurrentWorldCompile.h"
 #include "RuntimeBridge/CurrentWorldSyncBridgeInternal.h"
 #include "RuntimeBridge/ProjectSyncBridge.h"
-#include "RuntimeBridge/PackagingBridge.h"
+#include "Core/Build/PackagingBridge.h"
 #include "RuntimeBridge/PreviewBridge.h"
 #include "RuntimeBridge/RuntimeLink.h"
 #include "harken/Harken.h"
@@ -52,11 +53,10 @@ bool pendingDiscardObserved = false;
 bool runtimeActiveDuringPendingDiscard = false;
 HarkenEditor::Bridge::CurrentWorldSyncToken discardedPendingToken;
 
-harkenstudiobuild::WorldInstallResult backpressuredWorldInstall(
-    const harkenstudiobuild::ContainerWorldInstallViewV1&) noexcept
+HarkenEditor::Bridge::CurrentWorldTestInstallResult backpressuredWorldInstall() noexcept
 {
-    harkenstudiobuild::WorldInstallResult result;
-    result.status = harkenstudiobuild::WorldInstallStatus::Backpressure;
+    HarkenEditor::Bridge::CurrentWorldTestInstallResult result;
+    result.status = HarkenEditor::Bridge::CurrentWorldTestInstallResult::Status::Backpressure;
     return result;
 }
 

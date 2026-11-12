@@ -5,6 +5,7 @@
 #include "LanguageContextService.h"
 #include "PlatformContextService.h"
 #include "PlaybackReferenceValidation.h"
+#include "Core/Build/CurrentWorldCompile.h"
 #include "RuntimeBridge/CurrentWorldSyncBridgeInternal.h"
 
 namespace HarkenEditor::Bridge {

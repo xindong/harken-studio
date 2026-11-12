@@ -211,7 +211,7 @@ target_link_libraries(harkenizer_core PUBLIC
     Qt6::Core
     Qt6::Network
     Qt6::Concurrent
-    harken_runtime_bridge
+    harken_studio_build_pipeline
     harken_current_world_compiler
     harken_buildinfo
     vorbis

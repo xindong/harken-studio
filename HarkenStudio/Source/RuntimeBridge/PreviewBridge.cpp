@@ -93,9 +93,9 @@ EngineResult writePreviewVariable(harkenstudio::ObjectId id, float value,
 }
 
 EngineResult setPreviewBinding(harkenstudio::ObjectId id,
-                               const harkenstudiobuild::BindingDefinition& definition)
+                               const PreviewBindingDefinition& definition)
 {
-    if (definition.curve.pointCount > VN_CURVE_MAX_POINTS)
+    if (definition.pointCount > VN_CURVE_MAX_POINTS)
         return static_cast<EngineResult>(VN_INVALID_ARG);
     VnBindingDesc desc{};
     desc.structSize = sizeof(desc);
@@ -104,11 +104,11 @@ EngineResult setPreviewBinding(harkenstudio::ObjectId id,
     desc.targetId = definition.targetId;
     desc.transitionMs = definition.transitionMs;
     desc.curve.structSize = sizeof(desc.curve);
-    desc.curve.pointCount = definition.curve.pointCount;
+    desc.curve.pointCount = definition.pointCount;
     for (uint32_t i = 0; i < desc.curve.pointCount; ++i) {
-        desc.curve.points[i] = {definition.curve.points[i].x, definition.curve.points[i].y};
+        desc.curve.points[i] = {definition.points[i].x, definition.points[i].y};
         if (i + 1 < desc.curve.pointCount) {
-            const auto& h = definition.curve.handles[i];
+            const auto& h = definition.handles[i];
             desc.curve.handles[i] = {h.h1x, h.h1y, h.h2x, h.h2y};
         }
     }

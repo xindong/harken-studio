@@ -1,7 +1,7 @@
 #pragma once
 
 #include "PlatformContext.h"
-#include "RuntimeBridge/CurrentWorldSyncBridge.h"
+#include "Core/Build/CurrentWorldCompile.h"
 
 #include <QString>
 #include <QStringView>

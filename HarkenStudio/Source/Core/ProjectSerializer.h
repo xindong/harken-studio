@@ -14,7 +14,7 @@
 
 #include "ProjectTypes.h"
 #include "ProjectUpgradeManager.h"
-#include "RuntimeBridge/PackagingBridge.h"
+#include "Core/Build/PackagingBridge.h"
 
 class QSaveFile;
 

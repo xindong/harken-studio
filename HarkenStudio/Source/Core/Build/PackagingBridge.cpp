@@ -1,5 +1,5 @@
-#include "PackagingBridge.h"
-#include "ProjectSyncBridge.h"
+#include "Core/Build/PackagingBridge.h"
+#include "RuntimeBridge/ProjectSyncBridge.h"
 #include "Utils/AudioFileReader.h"
 #include "Tooling/Harkenizer/ResourceCompilerClient.h"
 #include "Tooling/Harkenizer/ResourceCompiler/ResourceCompiler.h"
@@ -9,7 +9,6 @@
 #include <miniaudio.h>
 #include <vorbis/vorbisfile.h>
 
-#include <harken/Harken.h>
 #include <harken_studio_build/PackFormat.h>
 #include <harken_studio_build/PackFormatV2.h>
 #include <harken_studio_build/EffectEncoding.h>
@@ -43,29 +42,6 @@ namespace HarkenEditor {
 namespace Bridge {
 
 namespace {
-
-struct LocalMediaEntry
-{
-    QString path;
-    uint64_t fileSize = 0;
-};
-
-QHash<uint32_t, LocalMediaEntry>& localMediaRegistry()
-{
-    static QHash<uint32_t, LocalMediaEntry> registry;
-    return registry;
-}
-
-QMutex& localMediaRegistryMutex()
-{
-    static QMutex mutex;
-    return mutex;
-}
-
-QString normalizedMediaPath(const QString& path)
-{
-    return QDir::cleanPath(QFileInfo(path).absoluteFilePath());
-}
 
 uint32_t fnv1a32(const QByteArray& bytes)
 {
@@ -533,37 +509,41 @@ uint32_t packFormatCrc32(const uint8_t* data, uint32_t length)
     return crc32(data, length);
 }
 
-QString mediaRegistryFindPath(uint32_t sourceId)
+namespace {
+
+class BuildMediaServices final : public MediaServices
 {
-    QMutexLocker lock(&localMediaRegistryMutex());
-    const auto it = localMediaRegistry().constFind(sourceId);
-    return it == localMediaRegistry().constEnd() ? QString() : it->path;
+public:
+    bool decodeInterleaved(const QString& path, std::vector<float>& outInterleaved,
+                           int& outChannels, int& outSampleRate) override
+    {
+        return decodeAudioFileInterleaved(path, outInterleaved, outChannels, outSampleRate);
+    }
+
+    uint64_t pcmContentRevision(const std::vector<float>& samples, uint32_t channels,
+                                uint32_t sampleRate, uint64_t loopStartFrame,
+                                uint64_t loopEndFrame) override
+    {
+        if (channels == 0 || channels > 8 || sampleRate == 0
+            || samples.empty() || samples.size() % channels != 0)
+            return 0;
+        const float* planes[8]{};
+        for (uint32_t channel = 0; channel < channels; ++channel)
+            planes[channel] = samples.data() + channel;
+        uint64_t revision = 0;
+        if (!harkenstudiobuild::ComputeMediaPcmContentRevisionV1(
+                sampleRate, channels, samples.size() / channels, planes, channels,
+                &revision, loopStartFrame, loopEndFrame))
+            return 0;
+        return revision;
+    }
+};
+
 }
 
-void mediaRegistryRegister(uint32_t sourceId, const QString& absolutePath, uint64_t fileSize)
+std::shared_ptr<MediaServices> makeBuildMediaServices()
 {
-    if (sourceId == 0 || absolutePath.isEmpty())
-        return;
-    QMutexLocker lock(&localMediaRegistryMutex());
-    localMediaRegistry().insert(sourceId, LocalMediaEntry{normalizedMediaPath(absolutePath), fileSize});
-}
-
-void mediaRegistryUnregister(uint32_t sourceId)
-{
-    QMutexLocker lock(&localMediaRegistryMutex());
-    localMediaRegistry().remove(sourceId);
-}
-
-uint32_t mediaRegistryCount()
-{
-    QMutexLocker lock(&localMediaRegistryMutex());
-    return static_cast<uint32_t>(localMediaRegistry().size());
-}
-
-void mediaRegistryClear()
-{
-    QMutexLocker lock(&localMediaRegistryMutex());
-    localMediaRegistry().clear();
+    return std::make_shared<BuildMediaServices>();
 }
 
 uint32_t packLanguageIdFromName(const QString& name)
@@ -689,18 +669,6 @@ AudioFileInfoData audioFileInfo(const QString& path)
     }
     ma_decoder_uninit(&decoder);
     return out;
-}
-
-uint32_t mediaRegistryFindSourceIdByPath(const QString& absolutePath)
-{
-    const QString needle = normalizedMediaPath(absolutePath);
-    QMutexLocker lock(&localMediaRegistryMutex());
-    for (auto it = localMediaRegistry().constBegin(); it != localMediaRegistry().constEnd(); ++it)
-    {
-        if (it->path == needle)
-            return it.key();
-    }
-    return 0;
 }
 
 bool encodePackVorbis(const std::vector<float>&, int, int,

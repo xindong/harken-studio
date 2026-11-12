@@ -1,6 +1,9 @@
 #pragma once
 
 #include "Utils/ObjectId.h"
+#include "RuntimeBridge/MediaRegistry.h"
+#include "RuntimeBridge/ProjectSyncBridge.h"
+#include "RuntimeBridge/MediaServices.h"
 
 // PackagingBridge -- packaging / asset-pipeline cluster of the runtime bridge.
 //
@@ -55,13 +58,7 @@ uint32_t legacyPackContainerMagic(); // legacy .vp container magic
 /// CRC32 as defined by the runtime pack format (loose media body checksum).
 uint32_t packFormatCrc32(const uint8_t* data, uint32_t length);
 
-/// Absolute path registered for a source ID; empty when not registered.
-QString mediaRegistryFindPath(uint32_t sourceId);
-void mediaRegistryRegister(uint32_t sourceId, const QString& absolutePath,
-                           uint64_t fileSize = 0);
-void mediaRegistryUnregister(uint32_t sourceId);
-uint32_t mediaRegistryCount();
-void mediaRegistryClear();
+std::shared_ptr<MediaServices> makeBuildMediaServices();
 
 /// Pack language identity (legacy language-id string mapping).
 uint32_t packLanguageIdFromName(const QString& name);
@@ -85,9 +82,6 @@ struct AudioFileInfoData
     double durationSeconds = 0.0;
 };
 AudioFileInfoData audioFileInfo(const QString& path);
-
-/// Source ID registered for an absolute media path; 0 when not registered.
-uint32_t mediaRegistryFindSourceIdByPath(const QString& absolutePath);
 
 //==============================================================================
 // Pack codec side-table inspection.
@@ -284,14 +278,6 @@ struct PackMeterWiring
     uint32_t releaseMs = 0;
 };
 
-struct PackCurveHandle
-{
-    float h1x = 0.0f;
-    float h1y = 0.0f;
-    float h2x = 0.0f;
-    float h2y = 0.0f;
-};
-
 struct PackParameterBinding
 {
     harkenstudio::ObjectId id{};
@@ -314,27 +300,6 @@ struct PackBindingAttachment
     harkenstudio::ObjectId bindingId{};
     uint8_t scope = 0; // runtime target-scope ordinal (0 voice, 1 bus)
     harkenstudio::ObjectId objectId = {};
-};
-
-struct PackAttenuation
-{
-    harkenstudio::ObjectId id{};
-    float maxDistance = 100.0f;
-
-    struct CurvePoint
-    {
-        float distance = 0.0f;
-        float value = 0.0f;
-    };
-    struct Slot
-    {
-        uint8_t slot = 0;    // runtime curve slot (0 volume)
-        std::vector<CurvePoint> points;
-        std::vector<PackCurveHandle> handles;
-    };
-    // Named curveSlots (not "slots") because Qt's keyword macros are in
-    // effect wherever QObject-based editor code includes this header.
-    std::vector<Slot> curveSlots;
 };
 
 struct PackMediaDesc

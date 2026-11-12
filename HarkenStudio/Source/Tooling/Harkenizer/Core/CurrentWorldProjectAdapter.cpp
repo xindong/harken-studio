@@ -1,5 +1,6 @@
 #include "Tooling/Harkenizer/Core/CurrentWorldProjectAdapter.h"
 #include "Tooling/Harkenizer/Core/CanonicalRuntimeProjectAdapterPrivate.h"
+#include "Core/Build/CurrentWorldCompile.h"
 #include "RuntimeBridge/CurrentWorldSyncBridgeInternal.h"
 
 #include "ActionStepUtils.h"

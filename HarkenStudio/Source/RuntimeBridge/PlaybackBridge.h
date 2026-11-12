@@ -259,6 +259,9 @@ public:
 
     // -- packs / prepare --
     bool loadPack(const QString& path, EngineResult* outResult = nullptr);
+    bool loadCanonicalPack(const QString& path, const QByteArray& bytes,
+                           uint64_t packStableId, uint32_t packKind,
+                           EngineResult* outResult = nullptr);
     bool unloadPack(const QString& path, EngineResult* outResult = nullptr);
     uint32_t loadedPackCount() const;
     QStringList loadedPackPaths() const;

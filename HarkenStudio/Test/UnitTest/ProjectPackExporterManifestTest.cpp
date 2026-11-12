@@ -26,7 +26,7 @@
 #include "NameValidator.h"
 #include "ProjectTypes.h"
 #include "FieldGroupProjectAdapter.h"
-#include "RuntimeBridge/PackagingBridge.h"
+#include "Core/Build/PackagingBridge.h"
 #include "RuntimeContentBundleBuilder.h"
 #include "harken_buildinfo.h"
 

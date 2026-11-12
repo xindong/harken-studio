@@ -29,8 +29,9 @@
 #include "AssetPipeline/PathUtils.h"
 #include "AssetPipeline/WaveformCache.h"
 
+#include "Core/Build/CurrentWorldCompile.h"
 #include "RuntimeBridge/CurrentWorldSyncBridgeInternal.h"
-#include "RuntimeBridge/PackagingBridge.h"
+#include "Core/Build/PackagingBridge.h"
 
 #include <harken_studio_build/WorldCodec.h>
 #include <harken_studio_build/MediaContentRevision.h>

@@ -5,6 +5,7 @@
 #include "Tooling/Harkenizer/Core/CurrentWorldProjectAdapter.h"
 #include "Tooling/Harkenizer/Core/CurrentWorldArtifactWriter.h"
 #include "Tooling/Harkenizer/Core/CurrentWorldArtifactWriterInternal.h"
+#include "Core/Build/CurrentWorldCompile.h"
 #include "RuntimeBridge/CurrentWorldSyncBridgeInternal.h"
 #include "PlayablePropertyAuthoringV1.h"
 #include "ProjectTypes.h"

@@ -11,10 +11,12 @@
 #include "RuntimeSyncCoordinator.h"
 #include "HarkenMath.h"
 #include "RuntimeBridge/CurrentWorldSyncBridge.h"
+#include "Core/Build/CurrentWorldCompile.h"
 #include "RuntimeBridge/CurrentWorldSyncBridgeInternal.h"
 #include "RuntimeBridge/ProjectSyncBridge.h"
 #include "RuntimeBridge/PreviewBridge.h"
-#include "RuntimeBridge/PackagingBridge.h"
+#include "Core/Build/PackagingBridge.h"
+#include <harken_studio_build/PackImage.h>
 #include "VariableRehearsal.h"
 
 
@@ -24,6 +26,8 @@
 #include <mutex>
 #include <thread>
 #include <QDateTime>
+#include <QFile>
+#include <QFileInfo>
 #include <QDebug>
 #include <QCoreApplication>
 #include <QThread>
@@ -224,6 +228,7 @@ AudioEngine::AudioEngine(QObject* parent)
     : QObject(parent)
 {
     instance_ = this;
+    Bridge::setMediaServices(Bridge::makeBuildMediaServices());
     currentWorldCompilation_ = std::make_unique<CurrentWorldCompilation>();
     runtimeSyncCoordinator_ = std::make_unique<RuntimeSyncCoordinator>(
         [this](Bridge::CurrentWorldSyncToken token) {
@@ -906,6 +911,27 @@ bool AudioEngine::loadPack(const QString& path, Bridge::EngineResult* result)
         return false;
     }
 
+    QFile file(QFileInfo(path).absoluteFilePath());
+    if (file.open(QIODevice::ReadOnly)) {
+        const QByteArray bytes = file.readAll();
+        harkenstudiobuild::PackFileHeader header{};
+        if (file.error() == QFileDevice::NoError
+            && bytes.size() >= harkenstudiobuild::kPackBytes<HkPackFileHeader>
+            && harkenstudiobuild::ReadPackFileHeader(
+                reinterpret_cast<const uint8_t*>(bytes.constData()), &header)
+            && header.headerBytes == harkenstudiobuild::kPackBytes<HkPackFileHeader>
+            && (header.packKind == HK_PACK_KIND_INIT
+                || header.packKind == HK_PACK_KIND_CANONICAL_CONTENT)) {
+            harkenstudiobuild::PackCanonicalImage image;
+            if (harkenstudiobuild::ParsePackCanonicalImage(
+                    reinterpret_cast<const uint8_t*>(bytes.constData()), bytes.size(), &image)
+                != harkenstudiobuild::kPackOk) {
+                if (result) *result = Bridge::kEngineInvalidArg;
+                return false;
+            }
+            return session_->loadCanonicalPack(path, bytes, image.packStableId, image.packKind, result);
+        }
+    }
     return session_->loadPack(path, result);
 }
 
@@ -1019,7 +1045,7 @@ void AudioEngine::syncRuntimeBindings()
     if (lowering.failed)
         return;
 
-    auto fillDesc = [](const BindingRuntimeProgram& program, harkenstudiobuild::BindingDefinition* desc) {
+    auto fillDesc = [](const BindingRuntimeProgram& program, HarkenEditor::Bridge::PreviewBindingDefinition* desc) {
         *desc = {};
         desc->variableId = program.variableId;
         desc->targetScopeKind = program.targetScopeKind;
@@ -1028,19 +1054,19 @@ void AudioEngine::syncRuntimeBindings()
         const uint32_t count = std::min(
             static_cast<uint32_t>(program.points.size()),
             static_cast<uint32_t>(harkenstudio::kCurveMaxPoints));
-        desc->curve.pointCount = count;
+        desc->pointCount = count;
         for (uint32_t i = 0; i < count; ++i) {
-            desc->curve.points[i].x = program.points[static_cast<int>(i)].x;
-            desc->curve.points[i].y = program.points[static_cast<int>(i)].value;
+            desc->points[i].x = program.points[static_cast<int>(i)].x;
+            desc->points[i].y = program.points[static_cast<int>(i)].value;
         }
         const uint32_t handleCount = count > 0 ? count - 1 : 0;
         for (uint32_t i = 0; i < handleCount
              && i < static_cast<uint32_t>(program.handles.size()); ++i) {
             const CurveHandlePairDef& handle = program.handles[static_cast<int>(i)];
-            desc->curve.handles[i].h1x = handle.h1x;
-            desc->curve.handles[i].h1y = handle.h1y;
-            desc->curve.handles[i].h2x = handle.h2x;
-            desc->curve.handles[i].h2y = handle.h2y;
+            desc->handles[i].h1x = handle.h1x;
+            desc->handles[i].h1y = handle.h1y;
+            desc->handles[i].h2x = handle.h2x;
+            desc->handles[i].h2y = handle.h2y;
         }
     };
 
@@ -1055,7 +1081,7 @@ void AudioEngine::syncRuntimeBindings()
             registeredOk.push_back(program.bindingId);
             continue;
         }
-        harkenstudiobuild::BindingDefinition desc{};
+        HarkenEditor::Bridge::PreviewBindingDefinition desc{};
         fillDesc(program, &desc);
         const auto result = HarkenEditor::Bridge::setPreviewBinding(program.bindingId, desc);
         if (result == HarkenEditor::Bridge::kEngineOk) {

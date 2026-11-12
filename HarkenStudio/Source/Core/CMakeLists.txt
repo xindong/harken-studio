@@ -179,7 +179,7 @@ target_include_directories(harken_studio_core PRIVATE
     ${CMAKE_SOURCE_DIR}/HarkenStudio/Source/Tooling/Common)
 target_link_libraries(harken_studio_core PUBLIC
     harkenizer_build Qt6::Core Qt6::Network Qt6::Concurrent
-    harken_runtime_bridge harken_editor_monitor_data harken_bus_compiler
+    harken_runtime_bridge harken_studio_build_pipeline harken_editor_monitor_data harken_bus_compiler
     harken_buildinfo harken_playable_properties vorbis vorbisenc ogg r8brain)
 if(APPLE)
     find_library(IOKIT_FRAMEWORK IOKit REQUIRED)

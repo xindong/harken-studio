@@ -3,7 +3,7 @@
 #include "Core/AssetPipeline/CacheArtifactWriter.h"
 #include "Core/AssetPipeline/MediaBuildSnapshot.h"
 #include "Core/AssetPipeline/WaveformCache.h"
-#include "RuntimeBridge/PackagingBridge.h"
+#include "Core/Build/PackagingBridge.h"
 #include "Tooling/Harkenizer/Core/SoundSourceDerivative.h"
 #include "Core/SoundSourceSemantics.h"
 

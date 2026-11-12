@@ -3,11 +3,11 @@
 #include "RuntimeLinkInternal.h"
 
 #include "DiagnosticsBridge.h"
-#include "PackagingBridge.h"
+#include "MediaRegistry.h"
+#include "MediaServices.h"
 #include "CurrentWorldSyncBridgeInternal.h"
 
 #include <harken/Harken.h>
-#include <harken_studio_build/PackImage.h>
 #include <harken/HarkenDevelopment.h>
 
 #include <QCoreApplication>
@@ -596,6 +596,13 @@ bool ensureRuntimeStarted()
     return true;
 }
 
+bool decodeMedia(const QString& path, std::vector<float>& outInterleaved,
+                 int& outChannels, int& outSampleRate)
+{
+    const auto services = mediaServices();
+    return services && services->decodeInterleaved(path, outInterleaved, outChannels, outSampleRate);
+}
+
 VnResult registerDecodedSound(harkenstudio::ObjectId soundId, const std::vector<float>& samples,
                                 uint32_t channels, uint32_t sampleRate,
                                 uint64_t loopStartFrame, uint64_t loopEndFrame)
@@ -650,7 +657,7 @@ bool registerPcmForBinding(const SoundBinding& binding)
     std::vector<float> interleaved;
     int channels = 0;
     int sampleRate = 0;
-    if (!decodeAudioFileInterleaved(path, interleaved, channels, sampleRate))
+    if (!decodeMedia(path, interleaved, channels, sampleRate))
     {
         qWarning() << "[PlaybackRoute] runtime pcm register failed:"
                    << "sourceId=" << binding.sourceId
@@ -1249,7 +1256,7 @@ EngineResult runtimeRegisterRawPcmSlice(harkenstudio::ObjectId soundId,
         channels = cachedIt->second.channels;
         sampleRate = cachedIt->second.sampleRate;
     } else {
-        if (!decodeAudioFileInterleaved(normalized, decoded, channels, sampleRate))
+        if (!decodeMedia(normalized, decoded, channels, sampleRate))
             return kEngineInvalidArg;
         interleaved = &decoded;
     }
@@ -1480,33 +1487,6 @@ bool runtimeLoadPack(const QString& path, EngineResult* outResult)
     }
 
     if (outResult) *outResult = VN_INVALID_ARG;
-    QFile file(normalized);
-    if (!file.open(QIODevice::ReadOnly)) return false;
-    const QByteArray bytes = file.readAll();
-    if (file.error() != QFileDevice::NoError) return false;
-    harkenstudiobuild::PackFileHeader header{};
-    if (bytes.size() >= harkenstudiobuild::kPackBytes<HkPackFileHeader>
-        && harkenstudiobuild::ReadPackFileHeader(
-            reinterpret_cast<const uint8_t*>(bytes.constData()), &header)
-        && header.headerBytes == harkenstudiobuild::kPackBytes<HkPackFileHeader>
-        && (header.packKind == HK_PACK_KIND_INIT
-            || header.packKind == HK_PACK_KIND_CANONICAL_CONTENT)) {
-        harkenstudiobuild::PackCanonicalImage image;
-        if (harkenstudiobuild::ParsePackCanonicalImage(
-                reinterpret_cast<const uint8_t*>(bytes.constData()), bytes.size(), &image)
-            != harkenstudiobuild::kPackOk)
-            return false;
-        for (const auto& [loadedPath, loaded] : g_runtime.loadedPacksByPath) {
-            Q_UNUSED(loadedPath);
-            if (loaded.stableId == image.packStableId
-                || (loaded.kind == VN_CANONICAL_PACK_SET_MEMBER_INIT
-                    && image.packKind == VN_CANONICAL_PACK_SET_MEMBER_INIT))
-                return false;
-        }
-        auto desired = g_runtime.loadedPacksByPath;
-        desired.emplace(normalized, LoadedPack{0, image.packStableId, image.packKind, bytes});
-        return activatePackSet(std::move(desired), outResult);
-    }
     const QByteArray utf8 = normalized.toUtf8();
     VnPackDesc desc{};
     desc.structSize = sizeof(VnPackDesc);
@@ -1522,6 +1502,36 @@ bool runtimeLoadPack(const QString& path, EngineResult* outResult)
     }
     g_runtime.loadedPacksByPath[normalized] = LoadedPack{handle};
     return true;
+}
+
+bool runtimeLoadCanonicalPack(const QString& path, const QByteArray& bytes,
+                              uint64_t packStableId, uint32_t packKind,
+                              EngineResult* outResult)
+{
+    if (outResult) *outResult = VN_INVALID_ARG;
+    if (path.isEmpty() || packStableId == 0
+        || (packKind != VN_CANONICAL_PACK_SET_MEMBER_INIT
+            && packKind != VN_CANONICAL_PACK_SET_MEMBER_CONTENT))
+        return false;
+    if (outResult) *outResult = VN_DEVICE_ERROR;
+    if (!ensureRuntimeStarted())
+        return false;
+    const QString normalized = QFileInfo(path).absoluteFilePath();
+    if (g_runtime.loadedPacksByPath.find(normalized) != g_runtime.loadedPacksByPath.end()) {
+        if (outResult) *outResult = VN_OK;
+        return true;
+    }
+    if (outResult) *outResult = VN_INVALID_ARG;
+    for (const auto& [loadedPath, loaded] : g_runtime.loadedPacksByPath) {
+        Q_UNUSED(loadedPath);
+        if (loaded.stableId == packStableId
+            || (loaded.kind == VN_CANONICAL_PACK_SET_MEMBER_INIT
+                && packKind == VN_CANONICAL_PACK_SET_MEMBER_INIT))
+            return false;
+    }
+    auto desired = g_runtime.loadedPacksByPath;
+    desired.emplace(normalized, LoadedPack{0, packStableId, packKind, bytes});
+    return activatePackSet(std::move(desired), outResult);
 }
 
 bool runtimeUnloadPack(const QString& path, EngineResult* outResult)

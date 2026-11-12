@@ -7,7 +7,7 @@
 #include "ProjectManager.h"
 #include "Tooling/Harkenizer/Core/ProjectPackExporter.h"
 #include "ProjectTypes.h"
-#include "RuntimeBridge/PackagingBridge.h"
+#include "Core/Build/PackagingBridge.h"
 #include "FieldGroupProjectAdapter.h"
 #include "Support/AITestSupport.h"
 #include "Support/ProjectPlatformTestUtils.h"

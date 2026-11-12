@@ -2,12 +2,51 @@
 #include "Components/VEffect.h"
 #include "ProjectTypes.h"
 
+#include <harken_pack/PackEffects.h>
+
 #include <algorithm>
 #include <cmath>
 #include <set>
 
 namespace VNX {
 namespace {
+
+static_assert(static_cast<uint32_t>(EffectType::FeedbackDelay) == HK_PACK_EFFECT_FEEDBACK_DELAY
+              && static_cast<uint32_t>(EffectType::ThreeBandTone) == HK_PACK_EFFECT_THREE_BAND_TONE
+              && static_cast<uint32_t>(EffectType::Gain) == HK_PACK_EFFECT_GAIN
+              && static_cast<uint32_t>(EffectType::Limiter) == HK_PACK_EFFECT_LIMITER
+              && static_cast<uint32_t>(EffectType::Compressor) == HK_PACK_EFFECT_COMPRESSOR);
+
+struct FormatDomain
+{
+    const HkPackEffectParam* rows = nullptr;
+    size_t count = 0;
+};
+
+FormatDomain formatDomain(EffectType type)
+{
+    switch (type) {
+    case EffectType::FeedbackDelay: return {hkPackDelayParams, HK_PACK_DELAY_PARAM_COUNT};
+    case EffectType::ThreeBandTone: return {hkPackToneParams, HK_PACK_TONE_PARAM_COUNT};
+    case EffectType::Gain: return {hkPackGainParams, HK_PACK_GAIN_PARAM_COUNT};
+    case EffectType::Limiter: return {hkPackLimiterParams, HK_PACK_LIMITER_PARAM_COUNT};
+    case EffectType::Compressor: return {hkPackCompressorParams, HK_PACK_COMPRESSOR_PARAM_COUNT};
+    }
+    return {};
+}
+
+bool insideFormatDomain(const HkPackEffectParam& row, float value)
+{
+    if ((row.rangeFlags & HK_PACK_RANGE_HAS_MINIMUM) != 0) {
+        const bool inclusive = (row.rangeFlags & HK_PACK_RANGE_MINIMUM_INCLUSIVE) != 0;
+        if (inclusive ? value < row.minimum : value <= row.minimum) return false;
+    }
+    if ((row.rangeFlags & HK_PACK_RANGE_HAS_MAXIMUM) != 0) {
+        const bool inclusive = (row.rangeFlags & HK_PACK_RANGE_MAXIMUM_INCLUSIVE) != 0;
+        if (inclusive ? value > row.maximum : value >= row.maximum) return false;
+    }
+    return true;
+}
 
 const std::vector<std::pair<float, float>>& parameterRanges(EffectType type)
 {
@@ -204,7 +243,7 @@ std::optional<EffectType> parseType(const QString& value)
 
 int parameterCount(EffectType type)
 {
-    return static_cast<int>(parameterRanges(type).size());
+    return static_cast<int>(formatDomain(type).count);
 }
 
 std::vector<float> defaultParameters(EffectType type)
@@ -249,15 +288,16 @@ bool validate(const EffectDefinition& effect, QString* diagnostic)
         if (diagnostic) *diagnostic = QStringLiteral("Effect type is unavailable");
         return false;
     }
+    const FormatDomain domain = formatDomain(effect.type);
     const auto& ranges = parameterRanges(effect.type);
-    if (effect.parameters.size() != ranges.size()) {
+    if (effect.parameters.size() != domain.count || ranges.size() != domain.count) {
         if (diagnostic) *diagnostic = QStringLiteral("Effect parameter count is invalid");
         return false;
     }
-    for (size_t i = 0; i < ranges.size(); ++i) {
+    for (size_t i = 0; i < domain.count; ++i) {
         const float value = effect.parameters[i];
-        if (!std::isfinite(value) || value < ranges[i].first
-            || value > ranges[i].second) {
+        if (!std::isfinite(value) || !insideFormatDomain(domain.rows[i], value)
+            || value < ranges[i].first || value > ranges[i].second) {
             if (diagnostic) *diagnostic = QStringLiteral("Effect parameter is out of range");
             return false;
         }

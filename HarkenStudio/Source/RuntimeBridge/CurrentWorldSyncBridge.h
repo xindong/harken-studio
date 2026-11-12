@@ -1,16 +1,18 @@
 #pragma once
 
 #include "Utils/ObjectId.h"
+#include "RuntimeBridge/ProjectSyncBridge.h"
+
+#include <QString>
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
+#include <unordered_map>
 #include <vector>
 
 namespace HarkenEditor::Bridge {
-
-class CurrentWorldSyncRequest;
-using CurrentWorldSyncRequestPtr = std::shared_ptr<CurrentWorldSyncRequest>;
 
 enum class CurrentWorldSyncStatus : std::uint32_t {
     Ok = 0,
@@ -56,9 +58,78 @@ struct CurrentWorldSyncResult {
     }
 };
 
-CurrentWorldSyncResult syncCurrentWorld(CurrentWorldSyncRequestPtr request,
-                                        CurrentWorldSyncToken token);
-CurrentWorldSyncResult clearCurrentWorld(CurrentWorldSyncToken token);
+struct CurrentWorldSoundPreparation {
+    struct SourceState {
+        std::uint32_t sourceId = 0;
+        QString path;
+        QString contentHash;
+        bool assetAvailable = false;
+        bool fileExists = false;
+        qint64 size = 0;
+        qint64 lastModifiedMs = 0;
+    };
+    struct Sound {
+        SoundDesc binding;
+        QString sourcePath;
+        std::vector<float> samples;
+        std::uint32_t channels = 0;
+        std::uint32_t sampleRate = 0;
+        std::uint64_t loopStartFrame = 0;
+        std::uint64_t loopEndFrame = 0;
+    };
+
+    std::vector<Sound> sounds;
+    std::vector<SourceState> sources;
+    std::unordered_map<harkenstudio::ObjectId, std::uint64_t> contentRevisions;
+};
+
+struct CurrentWorldArtifact {
+    struct Bus {
+        harkenstudio::ObjectId id = {};
+        harkenstudio::ObjectId parentId = {};
+        float faderDb = 0.0f;
+        float outputBusVolumeDb = 0.0f;
+    };
+    struct Send {
+        harkenstudio::ObjectId sourceId = {};
+        harkenstudio::ObjectId targetId = {};
+        float levelDb = 0.0f;
+    };
+    struct Profile {
+        std::uint32_t vintage = 0;
+        std::uint32_t sampleRate = 0;
+        std::uint32_t mixLayout = 0;
+        std::uint32_t deviceLayout = 0;
+        std::uint64_t capabilityMask = 0;
+    };
+
+    std::vector<std::uint8_t> body;
+    std::uint32_t bodyVintage = 0;
+    std::vector<Bus> buses;
+    std::vector<Send> sends;
+    std::uint64_t publishedBusFingerprint = 0;
+    std::uint64_t compileTargetProfileFingerprint = 0;
+    std::optional<Profile> profile;
+    std::uint64_t ownerBaseRevision = 0;
+    std::shared_ptr<const CurrentWorldSoundPreparation> soundPreparation;
+};
+
+struct CurrentWorldArtifactResult {
+    CurrentWorldSyncStatus status = CurrentWorldSyncStatus::InvalidProject;
+    harkenstudio::ObjectId relatedStableId = {};
+    CurrentWorldArtifact artifact;
+
+    bool ok() const noexcept { return status == CurrentWorldSyncStatus::Ok; }
+};
+
+using CurrentWorldArtifactBuilder = std::function<CurrentWorldArtifactResult()>;
+
+CurrentWorldSyncResult submitCurrentWorld(CurrentWorldSyncToken token,
+                                          const CurrentWorldArtifactBuilder& build);
+CurrentWorldSyncResult submitCompiledCurrentWorld(CurrentWorldArtifactResult compiled,
+                                                  CurrentWorldSyncToken token);
+CurrentWorldSyncResult closeCurrentWorld(CurrentWorldSyncToken token,
+                                         const CurrentWorldArtifactBuilder& buildEmpty);
 std::optional<CurrentWorldSyncResult> discardPendingCurrentWorld(
     PendingCurrentWorldDisposition disposition =
         PendingCurrentWorldDisposition::Cancelled) noexcept;

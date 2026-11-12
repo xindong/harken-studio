@@ -9,7 +9,7 @@
 #include "PackArtifactCache.h"
 #include "PackGenerationRecord.h"
 #include "ProjectTypes.h"
-#include "RuntimeBridge/PackagingBridge.h"
+#include "Core/Build/PackagingBridge.h"
 #include <QObject>
 #include <QMap>
 #include <QSet>

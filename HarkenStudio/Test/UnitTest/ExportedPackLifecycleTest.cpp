@@ -24,8 +24,9 @@
 #include "RuntimeSyncCoordinator.h"
 #include "ProjectTypes.h"
 #include "FieldGroupProjectAdapter.h"
+#include "Core/Build/CurrentWorldCompile.h"
 #include "RuntimeBridge/CurrentWorldSyncBridgeInternal.h"
-#include "RuntimeBridge/PackagingBridge.h"
+#include "Core/Build/PackagingBridge.h"
 #include "Timeline/TimelineTypes.h"
 
 #include "harken/Harken.h"
