@@ -55,6 +55,7 @@ endif()
 # Core is everything a shipping game needs; Development adds observation,
 # tracing, remote connection, inspection and live project editing.
 set(HARKEN_CORE_SOURCES
+    ${HARKEN_CORE_DIR}/api/src/PackInspection.cpp
     ${HARKEN_CORE_DIR}/api/src/DeviceBackend.cpp
     ${HARKEN_CORE_DIR}/api/src/RealDeviceInitStage.cpp
     ${HARKEN_CORE_DIR}/api/src/MiniaudioImpl.cpp
@@ -158,7 +159,6 @@ set(HARKEN_CORE_SOURCES
 set(HARKEN_DEVELOPMENT_SOURCES
     ${HARKEN_DEVELOPMENT_DIR}/api/DevelopmentApi.cpp
     ${HARKEN_DEVELOPMENT_DIR}/api/MonitorApi.cpp
-    ${HARKEN_DEVELOPMENT_DIR}/api/PackInspection.cpp
     ${HARKEN_DEVELOPMENT_DIR}/generation/ProjectGenerationTransaction.cpp
     ${HARKEN_DEVELOPMENT_DIR}/monitor/MonitorCaptureHub.cpp
     ${HARKEN_DEVELOPMENT_DIR}/monitor/MonitorDerivedDispatch.cpp

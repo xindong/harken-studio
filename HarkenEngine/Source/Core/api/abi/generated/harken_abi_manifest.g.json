@@ -25593,8 +25593,8 @@
       "size": 57230
     },
     "HarkenEngine/Source/Core/api/include/harken/Harken.h": {
-      "sha256": "ec668dd8eeb60f11091565e758edac6c9206e4320211f9d547e27d836e758cd4",
-      "size": 230589
+      "sha256": "fbcda3826a82771bd0d258843b51e179226f74ef484c7f107b9c897054fa87ab",
+      "size": 231490
     },
     "HarkenEngine/Source/Core/api/include/harken/ObjectId.h": {
       "sha256": "90b6f66ad515c5e411564f1e5981b65bec2e461fabbdee6c57aa86b26b9a300d",
@@ -25605,8 +25605,8 @@
       "size": 19883
     },
     "HarkenEngine/Source/Development/include/harken/HarkenDevelopment.h": {
-      "sha256": "4013c717f8c2b481b677bf17303017b66b1ffcfb81c85ba9930a8bc7ba0d705f",
-      "size": 27745
+      "sha256": "6d6bfe13c33e0e85e0914e49cc3d5c2f4773fce56db412ccd6be827a8658b6ab",
+      "size": 26844
     },
     "HarkenEngine/Tool/HostControl/wire/gen_wire.py": {
       "sha256": "bf64d770282491f895b5d92943f8c5843e8c6224fc25771e47bb61e63cbd9265",

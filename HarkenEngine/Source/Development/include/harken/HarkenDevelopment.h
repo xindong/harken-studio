@@ -77,21 +77,6 @@ typedef struct VnRemoteStatus {
  * VN_NOT_INITIALIZED. */
 VnResult Vn_CaptureSnapshot(VnSnapshot* outSnapshot);
 
-/* Legal before Vn_Init. Does not create an engine, install partitions, or
- * retain bytes after return. */
-VnResult Vn_InspectInitPack(const VnPackLoadDesc* desc,
-                            VnInitPackInspectReport* outReport);
-
-/* Legal before Init; borrows immutable inputs only for this call. Uses the
- * shipping decoder and property fold. No engine or media installation occurs.
- * Zero capacities with null arrays query required counts. Otherwise every
- * capacity must suffice; VN_PACK_RESIDENT_CAPACITY writes only the report.
- * Unsupported preview is a successful inspection with zero occurrences.
- * Fixed gain is the authored source/output chain, not a mixed DSP result.
- * Only flagged duration/gain fields are known. No decoder pointers escape. */
-VnResult Vn_InspectCanonicalPackV1(const VnPackInspectDescV1* desc,
-                                  VnPackInspectReportV1* outReport);
-
 /* Captures the generated built-in effect registry without allocation.
  * Always writes *requiredCount; writes min(capacity, requiredCount) rows and
  * returns VN_OK when truncated. A NULL requiredCount, a NULL out with nonzero
