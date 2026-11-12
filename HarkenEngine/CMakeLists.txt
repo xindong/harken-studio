@@ -158,6 +158,7 @@ set(HARKEN_CORE_SOURCES
 
 set(HARKEN_DEVELOPMENT_SOURCES
     ${HARKEN_DEVELOPMENT_DIR}/api/DevelopmentApi.cpp
+    ${HARKEN_DEVELOPMENT_DIR}/api/SnapshotApi.cpp
     ${HARKEN_DEVELOPMENT_DIR}/api/MonitorApi.cpp
     ${HARKEN_DEVELOPMENT_DIR}/generation/ProjectGenerationTransaction.cpp
     ${HARKEN_DEVELOPMENT_DIR}/monitor/MonitorCaptureHub.cpp
@@ -295,6 +296,28 @@ endif()
 endif()
 
 if(HARKEN_BUILD_RUNTIME_UNIT_TESTS)
+    add_library(harken_core_release STATIC ${HARKEN_CORE_SOURCES})
+    target_link_libraries(harken_core_release PRIVATE harken_buildinfo)
+    target_include_directories(harken_core_release
+        PUBLIC ${HARKEN_CORE_DIR}/api/include
+        PRIVATE ${HARKEN_RUNTIME_PRIVATE_INCLUDES}
+                ${HARKEN_CORE_DIR}/api/src)
+    target_compile_definitions(harken_core_release PUBLIC
+        HARKEN_ENGINE_DEV=0 HARKEN_TEST_PACK_RESOURCE_OBSERVATION)
+    if(HARKEN_PLATFORM_AUDIO_LIBS)
+        target_link_libraries(harken_core_release PUBLIC ${HARKEN_PLATFORM_AUDIO_LIBS})
+    endif()
+    if(WIN32)
+        target_link_libraries(harken_core_release PUBLIC advapi32)
+    endif()
+    if(HARKEN_ENABLE_STAGE_TAPS)
+        target_compile_definitions(harken_core_release PRIVATE HARKEN_ENABLE_STAGE_TAPS)
+    endif()
+    if(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
+        target_compile_definitions(harken_core_release PUBLIC
+            HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
+    endif()
+
     add_library(harken_core_hub_absent STATIC ${HARKEN_CORE_SOURCES} ${HARKEN_DEVELOPMENT_SOURCES})
     target_link_libraries(harken_core_hub_absent PRIVATE harken_buildinfo)
     target_include_directories(harken_core_hub_absent

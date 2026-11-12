@@ -415,6 +415,237 @@ gtest_discover_tests(harken_runtime_tests
     TEST_LIST harken_runtime_daily_tests
     PROPERTIES LABELS harken-daily)
 
+# The release edition compiles Core with HARKEN_ENGINE_DEV=0. These are the
+# runtime tests that need no development entry point, built and run against
+# that configuration so release-only code paths stay covered.
+add_executable(harken_release_runtime_tests
+    E2E/BaselineRegressionTest.cpp
+    E2E/PackLogicRoundtripTest.cpp
+    UnitTest/AbiExceptionFirewallSweepTest.cpp
+    UnitTest/AbiVintageContractTest.cpp
+    UnitTest/ActionCooldownTableTest.cpp
+    UnitTest/ActionDeferredRecordTableTest.cpp
+    UnitTest/ActionFiringAbiTest.cpp
+    UnitTest/ActionFiringTableTest.cpp
+    UnitTest/ActionSeekTableTest.cpp
+    UnitTest/AirAbsorptionGoldenTest.cpp
+    UnitTest/AllocationProbe.cpp
+    UnitTest/AttenuationOverrideGoldenTest.cpp
+    UnitTest/AttenuationRolloffGoldenTest.cpp
+    UnitTest/AuthoredStopAudioTest.cpp
+    UnitTest/BindingApiTest.cpp
+    UnitTest/BindingLivenessTest.cpp
+    UnitTest/BindingPoolTest.cpp
+    UnitTest/BiquadGoldenTest.cpp
+    UnitTest/BlockArenaTest.cpp
+    UnitTest/BuiltinEffectGoldenTest.cpp
+    UnitTest/BuiltinEffectTest.cpp
+    UnitTest/BusDestroyTest.cpp
+    UnitTest/BusDownmixTest.cpp
+    UnitTest/BusEffectTest.cpp
+    UnitTest/BusFilterTest.cpp
+    UnitTest/BusLifecycleContractSeamTest.cpp
+    UnitTest/BusMeterSidechainTest.cpp
+    UnitTest/BusMixGoldenTest.cpp
+    UnitTest/BusMuteSoloTest.cpp
+    UnitTest/BusRampGoldenTest.cpp
+    UnitTest/BusReparentTest.cpp
+    UnitTest/BusSendTest.cpp
+    UnitTest/BusTargetStoreTest.cpp
+    UnitTest/BusTopologyBuilderTest.cpp
+    UnitTest/BusTopologySnapshotTest.cpp
+    UnitTest/BusTreeTest.cpp
+    UnitTest/CapacityContractTest.cpp
+    UnitTest/CascadeGainGoldenTest.cpp
+    UnitTest/CascadeProtocolTest.cpp
+    UnitTest/ChannelLayoutAbiPinTest.cpp
+    UnitTest/ChannelPeakMeterTest.cpp
+    UnitTest/ClockKernelTest.cpp
+    UnitTest/CommandBudgetTest.cpp
+    UnitTest/CompletionMutationGuardTest.cpp
+    UnitTest/CompletionOwnerTest.cpp
+    UnitTest/CompletionProgressRenderTest.cpp
+    UnitTest/CompletionProgressTest.cpp
+    UnitTest/ConeGoldenTest.cpp
+    UnitTest/CurrentSelectionTest.cpp
+    UnitTest/CurrentWorldHistoricalDecodeTest.cpp
+    UnitTest/CurrentWorldInstallTest.cpp
+    UnitTest/CurveGoldenTest.cpp
+    UnitTest/CurveMemoryPinTest.cpp
+    UnitTest/DecisionGroupTest.cpp
+    UnitTest/DeferredIntentPoolTest.cpp
+    UnitTest/DownmixGoldenTest.cpp
+    UnitTest/DuckingReceiverTest.cpp
+    UnitTest/EffectAbiFreezeTest.cpp
+    UnitTest/EffectChainGoldenTest.cpp
+    UnitTest/EffectChainTest.cpp
+    UnitTest/EffectContractSeamTest.cpp
+    UnitTest/EffectKernelCharacterizationTest.cpp
+    UnitTest/EffectParamBindingE2ETest.cpp
+    UnitTest/EffectParamBindingTableTest.cpp
+    UnitTest/EffectParamLocatorTest.cpp
+    UnitTest/EffectParamMetadataTest.cpp
+    UnitTest/EffectParamTargetStoreTest.cpp
+    UnitTest/EffectRecycleCleanTest.cpp
+    UnitTest/EffectTypeStatsSeamTest.cpp
+    UnitTest/FloatModeTest.cpp
+    UnitTest/GainEffectTest.cpp
+    UnitTest/HostOptionsTest.cpp
+    UnitTest/HotReloadTest.cpp
+    UnitTest/ImmediateActionLaneTest.cpp
+    UnitTest/JsonReaderTest.cpp
+    UnitTest/KnownCompletionTest.cpp
+    UnitTest/LifecycleTest.cpp
+    UnitTest/LogRingTest.cpp
+    UnitTest/LogicCommitBundleTest.cpp
+    UnitTest/LogicTimeAndStampTest.cpp
+    UnitTest/LoopPlaybackTest.cpp
+    UnitTest/LoopSeamGoldenTest.cpp
+    UnitTest/MarkerIndexTest.cpp
+    UnitTest/MemguardScopeTest.cpp
+    UnitTest/MeterBallisticsGoldenTest.cpp
+    UnitTest/MeterBlockRingTest.cpp
+    UnitTest/MeterProbeTest.cpp
+    UnitTest/MixRateConfigTest.cpp
+    UnitTest/MonitorFixturePlanTest.cpp
+    UnitTest/MonitorFixtureRecordTest.cpp
+    UnitTest/MonitorFixtureSessionTest.cpp
+    UnitTest/MonitorModelOnlyTest.cpp
+    UnitTest/MonitorRequestTest.cpp
+    UnitTest/MultichannelPanGoldenTest.cpp
+    UnitTest/MusicPlaybackTimelineTest.cpp
+    UnitTest/NearfieldShelfGoldenTest.cpp
+    UnitTest/NotificationQueueTest.cpp
+    UnitTest/OccurrencePathBindingTest.cpp
+    UnitTest/OccurrenceStatePoolTest.cpp
+    UnitTest/OriginalSourceSubmissionTest.cpp
+    UnitTest/OutputGainTest.cpp
+    UnitTest/PackCanonicalFormatTest.cpp
+    UnitTest/PackReplaceTest.cpp
+    UnitTest/PackRoundtripTest.cpp
+    UnitTest/PackSignalRelationTest.cpp
+    UnitTest/PackTest.cpp
+    UnitTest/PackV2FormatTest.cpp
+    UnitTest/PanLawGoldenTest.cpp
+    UnitTest/ParamCombineTest.cpp
+    UnitTest/PassthroughGoldenTest.cpp
+    UnitTest/PcmRegistryTest.cpp
+    UnitTest/PitchContinuityGoldenTest.cpp
+    UnitTest/PlatformBackendTest.cpp
+    UnitTest/PlayableBindingGateTest.cpp
+    UnitTest/PlayableEntryConvergenceTest.cpp
+    UnitTest/PlayableInstanceTableTest.cpp
+    UnitTest/PlayablePropertyCutTest.cpp
+    UnitTest/ProfilingTimingTest.cpp
+    UnitTest/ProgramGenerationRegistryTest.cpp
+    UnitTest/PropertyPressureGoldenTest.cpp
+    UnitTest/PropertyPublicationTest.cpp
+    UnitTest/ProximityFrequencyRenderedTest.cpp
+    UnitTest/QueueRuntimeTest.cpp
+    UnitTest/RenameAbiPinTest.cpp
+    UnitTest/RenderSliceTest.cpp
+    UnitTest/RenderWorkerTest.cpp
+    UnitTest/ResamplerAdvanceTest.cpp
+    UnitTest/ResamplerGoldenTest.cpp
+    UnitTest/ResamplerHighRatioTest.cpp
+    UnitTest/ResolvedSlotTicketTest.cpp
+    UnitTest/ResourceFactsTest.cpp
+    UnitTest/RuntimeWorkIndexTest.cpp
+    UnitTest/SamePositionResolverTest.cpp
+    UnitTest/ScheduledTransactionPoolTest.cpp
+    UnitTest/SignalBlockExchangeTest.cpp
+    UnitTest/SignalFeedbackPlanTest.cpp
+    UnitTest/SignalRenderPlanTest.cpp
+    UnitTest/SnapshotTest.cpp
+    UnitTest/SourceCursorMirrorTest.cpp
+    UnitTest/SourceTerminalRecordTest.cpp
+    UnitTest/SpatialApiTest.cpp
+    UnitTest/SpatialCombineTest.cpp
+    UnitTest/SpatialMatrixTest.cpp
+    UnitTest/SpatialValidationTest.cpp
+    UnitTest/StableSlotStorageTest.cpp
+    UnitTest/StageTapGoldenTest.cpp
+    UnitTest/StagedVoiceStartTest.cpp
+    UnitTest/StealTest.cpp
+    UnitTest/StereoBalanceGoldenTest.cpp
+    UnitTest/StreamConfigTest.cpp
+    UnitTest/StreamFormatTest.cpp
+    UnitTest/StreamPlaybackTest.cpp
+    UnitTest/StreamRoundtripTest.cpp
+    UnitTest/StreamWorkerLifecycleTest.cpp
+    UnitTest/TargetMetadataTest.cpp
+    UnitTest/TimelineConvergenceTest.cpp
+    UnitTest/TimelineExecutorTest.cpp
+    UnitTest/TimelinePlannerTest.cpp
+    UnitTest/TimelineVoiceBindingInstallTest.cpp
+    UnitTest/TransitionInstancePoolTest.cpp
+    UnitTest/TransportEpochOwnerTest.cpp
+    UnitTest/TransportTest.cpp
+    UnitTest/Utf8PathTest.cpp
+    UnitTest/VariableCatalogTest.cpp
+    UnitTest/VariableControlGridTest.cpp
+    UnitTest/VariableControlRuntimeTest.cpp
+    UnitTest/VariableCurrentSliceTest.cpp
+    UnitTest/VariableExecutionFingerprintTest.cpp
+    UnitTest/VariableQueryTest.cpp
+    UnitTest/VariableSliceTableTest.cpp
+    UnitTest/VariableSweepGoldenTest.cpp
+    UnitTest/VariableWorldTest.cpp
+    UnitTest/VoiceCapacityTest.cpp
+    UnitTest/VoiceLedgerTest.cpp
+    UnitTest/VoiceManagerTest.cpp
+    UnitTest/VoicePoolTest.cpp
+    UnitTest/VoiceRampGoldenTest.cpp
+    UnitTest/VoiceSetterTest.cpp
+    UnitTest/WidthCollapseGoldenTest.cpp
+    UnitTest/monitor_fixture_decode.cpp
+    UnitTest/monitor_remote_codec.cpp
+    UnitTest/monitor_session_codec.cpp
+    ${HARKEN_DEVELOPMENT_DIR}/api/SnapshotApi.cpp
+)
+target_link_libraries(harken_release_runtime_tests PRIVATE harken_core_release harken_buildinfo
+                      GTest::gtest_main)
+if(MSVC)
+    target_compile_options(harken_release_runtime_tests PRIVATE /FS /MP1 /bigobj)
+endif()
+if(HARKEN_ENABLE_STAGE_TAPS)
+    target_compile_definitions(harken_release_runtime_tests PRIVATE HARKEN_ENABLE_STAGE_TAPS)
+endif()
+target_compile_definitions(harken_release_runtime_tests PRIVATE
+    HARKEN_BASELINE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/Baselines"
+    HARKEN_MONITOR_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/UnitTest/monitor"
+    HARKEN_MONITOR_PLAN_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/UnitTest/monitor/plan"
+    HARKEN_MONITOR_SESSION_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/UnitTest/monitor/session"
+    HARKEN_MONITOR_REMOTE_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/UnitTest/monitor/remote"
+    HARKEN_EFFECT_TYPE_STATS_PUBLISHED
+    HARKEN_TEMP_DIR="${CMAKE_SOURCE_DIR}/.temp"
+    HARKEN_HOST_PATH="$<TARGET_FILE:harken_host>"
+    _CRT_SECURE_NO_WARNINGS)
+target_include_directories(harken_release_runtime_tests PRIVATE
+    ${HARKEN_CORE_DIR}/api/src
+    ${HARKEN_DEVELOPMENT_PRIVATE_INCLUDES}
+    ${HARKEN_CORE_DIR}/core/include
+    ${HARKEN_CORE_DIR}/dsp/include
+    ${HARKEN_CORE_DIR}/media/include
+    ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
+    ${HARKEN_CORE_DIR}/param/include
+    ${HARKEN_CORE_DIR}/render/include
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/HarkenEngine/Tool/Host
+    ${CMAKE_SOURCE_DIR}/HarkenEngine/Tool/Common
+    ${CMAKE_CURRENT_SOURCE_DIR}/Common/VariableCatalog
+    ${HARKEN_THIRD_PARTY_DIR}/miniaudio
+)
+add_dependencies(harken_release_runtime_tests harken_host)
+gtest_discover_tests(harken_release_runtime_tests
+    TEST_PREFIX "Release."
+    TEST_FILTER "-${_harken_runtime_daily_filter}"
+    PROPERTIES LABELS harken-release-edition)
+gtest_discover_tests(harken_release_runtime_tests
+    TEST_PREFIX "Release."
+    TEST_FILTER "${_harken_runtime_daily_filter}"
+    PROPERTIES LABELS "harken-release-edition;harken-daily")
+
 add_executable(harken_pack_schema_tests
     UnitTest/PackFoundationQualificationTest.cpp)
 target_link_libraries(harken_pack_schema_tests PRIVATE
