@@ -65,7 +65,6 @@
       "HarkenIntegration/Unity/Harken/Runtime/API/PackCompanion.cs",
       "HarkenIntegration/Unity/Harken/Runtime/API/PackDirectorySource.cs",
       "HarkenIntegration/Unity/Harken/Runtime/API/PackPaths.cs",
-      "HarkenEngine/Tool/Host/PackCompanion.h",
       "HarkenStudio/Source/RuntimeBridge/PackagingBridge.*",
       "HarkenStudio/Source/Tooling/Harkenizer/Core/CanonicalPackSetExport.*",
       "HarkenStudio/Source/Tooling/Harkenizer/Core/ProjectPackExporter.*",

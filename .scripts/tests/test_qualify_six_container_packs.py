@@ -194,7 +194,7 @@ class QualifySixContainerPacksTest(unittest.TestCase):
         case = next(item for item in MODULE.CASES if item.name == "Shuffle")
         gate = Path("gate.ready")
         wasapi = MODULE.host_command(
-            Path("host.exe"), Path("export"), case, "variable", False, gate
+            Path("host.exe"), Path("export"), case, "action", "variable", False, gate
         )
         flag = wasapi.index("--capture-ready-timeout-ms")
         self.assertEqual(str(MODULE.WASAPI_CAPTURE_READY_TIMEOUT_MS), wasapi[flag + 1])
@@ -208,6 +208,7 @@ class QualifySixContainerPacksTest(unittest.TestCase):
                 Path("host.exe"),
                 Path("export"),
                 case,
+                "action",
                 "variable",
                 True,
                 null_gate,
@@ -215,7 +216,7 @@ class QualifySixContainerPacksTest(unittest.TestCase):
             self.assertIn("--null", null_command)
             self.assertNotIn("--capture-ready-timeout-ms", null_command)
         without_gate = MODULE.host_command(
-            Path("host.exe"), Path("export"), case, "variable", False, None
+            Path("host.exe"), Path("export"), case, "action", "variable", False, None
         )
         self.assertNotIn("--capture-ready-timeout-ms", without_gate)
 

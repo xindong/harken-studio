@@ -383,7 +383,7 @@ struct RemoteConnection::Impl
             }
             catalogStagingGeneration = result.generation;
             for (const auto& entry : result.entries)
-                catalogStaging.push_back({fromNative(entry.id), text(entry.name), static_cast<quint32>(entry.kind)});
+                catalogStaging.push_back({fromNative(entry.id), static_cast<quint32>(entry.kind)});
             catalogOffset += static_cast<quint32>(result.entries.size());
             if (result.result == 0 && catalogOffset < result.totalCount) {
                 requestCatalogPage();

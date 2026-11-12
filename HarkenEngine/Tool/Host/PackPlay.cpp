@@ -1,5 +1,5 @@
 #include "PackPlay.h"
-#include "PackCompanion.h"
+#include "HostPacks.h"
 
 #include "Engine.h"
 #include "PackPlaySelection.h"
@@ -41,9 +41,9 @@ constexpr std::uint32_t kBlockFrames = 256;
 constexpr float kSilenceFloor = 1.0e-4f;
 
 struct Options {
-    std::string root;
-    std::string actionName;
-    std::string language;
+    std::string initPack;
+    std::string contentPack;
+    VnObjectId actionId{};
     double seconds = 2.0;
     std::uint32_t repeats = 1;
     std::uint32_t startDelayMs = 0;
@@ -111,14 +111,12 @@ bool ParseOptions(int argc, char** argv, Options* out) {
         const std::string arg = argv[i];
         if (arg == "--null") {
             out->nullMode = true;
-        } else if (arg == "--root" && i + 1 < argc) {
-            out->root = argv[++i];
-        } else if (arg == "--language" && i + 1 < argc) {
-            out->language = argv[++i];
-            if (!PackCompanionLanguage(out->language)) return false;
-        } else if (arg == "--action-name" && i + 1 < argc) {
-            out->actionName = argv[++i];
-            if (!PackCompanionName(out->actionName) || out->actionName == "Init") return false;
+        } else if (arg == "--init-pack" && i + 1 < argc) {
+            out->initPack = argv[++i];
+        } else if (arg == "--content-pack" && i + 1 < argc) {
+            out->contentPack = argv[++i];
+        } else if (arg == "--action-id" && i + 1 < argc) {
+            if (!harken::ParseObjectId(argv[++i], &out->actionId)) return false;
         } else if (arg == "--seconds" && i + 1 < argc) {
             char* end = nullptr;
             const double seconds = std::strtod(argv[++i], &end);
@@ -170,7 +168,8 @@ bool ParseOptions(int argc, char** argv, Options* out) {
         ? harken::IsNull(out->variableId)
         : !harken::IsNull(out->variableId) &&
               out->variableValues.size() == out->repeats;
-    return !out->root.empty() && !out->actionName.empty() && variableOptionsValid;
+    return !out->initPack.empty() && !out->contentPack.empty() &&
+        !harken::IsNull(out->actionId) && variableOptionsValid;
 }
 
 std::uint64_t CurrentProcessId() {
@@ -241,9 +240,9 @@ std::string ReadFileText(const std::filesystem::path& path) {
                        std::istreambuf_iterator<char>());
 }
 
-std::string Utf8Path(const std::filesystem::path& path) {
-    const auto text = path.generic_u8string();
-    return {reinterpret_cast<const char*>(text.data()), text.size()};
+std::filesystem::path PathFromUtf8(const std::string& text) {
+    return std::filesystem::path(std::u8string_view(
+        reinterpret_cast<const char8_t*>(text.data()), text.size()));
 }
 
 struct RenderCursor {
@@ -584,18 +583,16 @@ bool RunTriggerWindow(harken::Engine* engine, const Options& options,
 
 void PrintPackPlayUsage() {
     std::fprintf(stderr,
-                 "\npack-play loads a Studio gold pack set through the public "
-                 "native sequence and posts one or more Actions.\n"
-                 "  harken_host pack-play --root <platform-dir> --action-name <name> "
-                 "[--language NAME] [--seconds N] [--repeats N] "
+                 "\npack-play activates an Init and a content Pack through the public "
+                 "native sequence and posts one Action one or more times.\n"
+                 "  harken_host pack-play --init-pack <file> --content-pack <file> --action-id <guid> "
+                 "[--seconds N] [--repeats N] "
                  "[--start-delay-ms N] "
                  "[--capture-ready-gate <path> "
                  "--capture-ready-timeout-ms N] "
                  "[--caller-seed N] "
                  "[--variable-id ID --variable-values v1,v2] "
                  "[--no-recovery] [--null]\n"
-                 "  Reads Init and Action companion pairs from the selected platform directory.\n"
-                 "  Legacy manifest/index exports are unsupported; re-export with the matching Studio release.\n"
                  "  --null is smoke only. Default device is VN_DEVICE_REAL.\n");
 }
 
@@ -622,40 +619,23 @@ int RunPackPlay(int argc, char** argv) {
         std::fflush(stdout);
     }
 
-    std::error_code ec;
-    const std::filesystem::path requestedRoot =
-        std::filesystem::weakly_canonical(std::filesystem::path(std::u8string_view(reinterpret_cast<const char8_t*>(options.root.data()), options.root.size())),
-                                          ec);
-    if (ec) {
-        std::fprintf(stderr, "error: cannot resolve --root '%s'\n",
-                     options.root.c_str());
-        return 1;
-    }
-    PackCompanion companionInit, companionContent;
-    PackCompanionDiagnostic diagnostic;
-    VnResult captured = CapturePackCompanion(requestedRoot, {}, {}, nullptr, &companionInit, &diagnostic);
+    HostPack packInit, packContent;
+    VnResult captured = CaptureHostPack(PathFromUtf8(options.initPack), nullptr, {}, &packInit);
     if (captured == VN_OK)
-        captured = CapturePackCompanion(requestedRoot, options.actionName, options.language,
-            &companionInit, &companionContent, &diagnostic);
+        captured = CaptureHostPack(PathFromUtf8(options.contentPack), &packInit, options.actionId,
+                                   &packContent);
     if (captured != VN_OK) {
-        auto binaryPath = diagnostic.jsonPath;
-        binaryPath.replace_extension(".bytes");
-        std::fprintf(stderr, "error: %s companion '%s' (bytes '%s'): %s failed (%d)\n",
-            diagnostic.kind, Utf8Path(diagnostic.jsonPath).c_str(), Utf8Path(binaryPath).c_str(),
-            diagnostic.stage, captured);
-        std::fprintf(stderr, "Re-export with the matching Studio release (required schemaVersion: %u); "
-            "select its platform directory. Legacy manifest/index exports are unsupported.\n",
-            static_cast<unsigned>(HK_PACK_FORMAT_VERSION));
+        std::fprintf(stderr, "error: cannot read or inspect the packs (%d)\n", captured);
         return 3;
     }
 
     VnPackLoadDesc inspectDesc{};
     inspectDesc.structSize = sizeof(inspectDesc);
     inspectDesc.flags = VN_PACK_LOAD_FLAG_PROVIDER;
-    inspectDesc.packStableId = companionInit.facts.packStableId;
-    inspectDesc.providerUserData = &companionInit;
-    inspectDesc.provide = PackCompanion::Provide;
-    inspectDesc.release = PackCompanion::Release;
+    inspectDesc.packStableId = packInit.facts.packStableId;
+    inspectDesc.providerUserData = &packInit;
+    inspectDesc.provide = HostPack::Provide;
+    inspectDesc.release = HostPack::Release;
     VnInitPackInspectReport inspection{};
     inspection.structSize = sizeof(inspection);
     const VnResult inspected = Vn_InspectInitPack(&inspectDesc, &inspection);
@@ -706,7 +686,7 @@ int RunPackPlay(int argc, char** argv) {
     }
 
     const auto activate = [&]() {
-        return ActivatePackCompanions(companionInit, companionContent);
+        return ActivateHostPacks(packInit, packContent);
     };
     const VnResult activated = activate();
     if (activated != VN_OK) {
@@ -715,22 +695,9 @@ int RunPackPlay(int argc, char** argv) {
         return 3;
     }
 
-    VnPostActionByNameDesc named{};
-    named.structSize = sizeof(named);
-    named.utf8Name = options.actionName.c_str();
-    harken::StoreObjectId(named.projectGuid, companionInit.facts.projectId);
-    VnActionResolved resolved{};
-    resolved.structSize = sizeof(resolved);
-    const auto result = Vn_ResolveActionByName(&named, &resolved);
-    if (result != VN_OK) {
-        std::fprintf(stderr, "error: companion name resolution failed (%d)\n", result);
-        Vn_Term();
-        return 3;
-    }
-
     VnPostActionDesc post{};
     post.structSize = sizeof(post);
-    post.actionId = resolved.actionId;
+    post.actionId = options.actionId;
     post.callerSeed = options.callerSeed;
     if (Vn_CreateEmitter(&post.emitter) != VN_OK) {
         std::fprintf(stderr, "error: Vn_CreateEmitter failed\n");
@@ -938,7 +905,7 @@ int RunPackPlay(int argc, char** argv) {
     }
 
     std::printf("pack-play peak=%.4f action=%s non-silent\n", maxPeak,
-                harken::ObjectIdString(resolved.actionId).c_str());
+                harken::ObjectIdString(options.actionId).c_str());
     Vn_Term();
     return 0;
 }

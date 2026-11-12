@@ -529,6 +529,15 @@ bool ensureRuntimeStarted()
     if (g_runtime.initialized)
         return true;
 
+    VnAbiVersionInfo abi{};
+    abi.structSize = sizeof(abi);
+    if (Vn_QueryAbiVersion(&abi) != VN_OK || abi.major != VN_ABI_VERSION_MAJOR)
+    {
+        qWarning() << "RuntimeLink: Engine ABI major" << abi.major
+                   << "does not match" << VN_ABI_VERSION_MAJOR;
+        return false;
+    }
+
     VnConfig c = makeConfig(g_runtime.requestedConfig);
     qInfo() << "RuntimeLink: before Vn_Init"
             << "sampleRate=" << c.sampleRate

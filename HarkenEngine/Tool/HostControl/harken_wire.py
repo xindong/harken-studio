@@ -2517,114 +2517,6 @@ TABLE_JSON = r'''
         ]
       ]
     },
-    "VnPackVariableNameV1": {
-      "fields": [
-        [
-          "variableId",
-          {
-            "struct": "VnObjectId"
-          }
-        ],
-        [
-          "utf8Name",
-          {
-            "ptr": "string",
-            "ctype": "const char*"
-          }
-        ]
-      ]
-    },
-    "VnPackLabelNameV1": {
-      "fields": [
-        [
-          "variableId",
-          {
-            "struct": "VnObjectId"
-          }
-        ],
-        [
-          "labelId",
-          {
-            "struct": "VnObjectId"
-          }
-        ],
-        [
-          "utf8Name",
-          {
-            "ptr": "string",
-            "ctype": "const char*"
-          }
-        ]
-      ]
-    },
-    "VnPackNamesV1": {
-      "fields": [
-        [
-          "structSize",
-          "u32"
-        ],
-        [
-          "flags",
-          "u32"
-        ],
-        [
-          "projectId",
-          {
-            "struct": "VnObjectId"
-          }
-        ],
-        [
-          "rootActionId",
-          {
-            "struct": "VnObjectId"
-          }
-        ],
-        [
-          "utf8RootName",
-          {
-            "ptr": "string",
-            "ctype": "const char*"
-          }
-        ],
-        [
-          "utf8Language",
-          {
-            "ptr": "string",
-            "ctype": "const char*"
-          }
-        ],
-        [
-          "variableCount",
-          "u32"
-        ],
-        [
-          "labelCount",
-          "u32"
-        ],
-        [
-          "variables",
-          {
-            "ptr": {
-              "kind": "array",
-              "count": "variableCount",
-              "stride": "VnPackVariableNameV1"
-            },
-            "ctype": "const VnPackVariableNameV1*"
-          }
-        ],
-        [
-          "labels",
-          {
-            "ptr": {
-              "kind": "array",
-              "count": "labelCount",
-              "stride": "VnPackLabelNameV1"
-            },
-            "ctype": "const VnPackLabelNameV1*"
-          }
-        ]
-      ]
-    },
     "VnCanonicalPackSetMemberV2": {
       "fields": [
         [
@@ -2639,13 +2531,6 @@ TABLE_JSON = r'''
           "source",
           {
             "struct": "VnCanonicalPackSetMemberV1"
-          }
-        ],
-        [
-          "names",
-          {
-            "ptr": "opaque",
-            "ctype": "const VnPackNamesV1*"
           }
         ]
       ]
@@ -2899,10 +2784,9 @@ TABLE_JSON = r'''
           }
         ],
         [
-          "names",
+          "rootActionId",
           {
-            "ptr": "opaque",
-            "ctype": "const VnPackNamesV1*"
+            "struct": "VnObjectId"
           }
         ],
         [
@@ -3189,139 +3073,6 @@ TABLE_JSON = r'''
         [
           "reserved0",
           "u64"
-        ]
-      ]
-    },
-    "VnPostActionByNameDesc": {
-      "fields": [
-        [
-          "structSize",
-          "u32"
-        ],
-        [
-          "flags",
-          "u32"
-        ],
-        [
-          "utf8Name",
-          {
-            "ptr": "string",
-            "ctype": "const char*"
-          }
-        ],
-        [
-          "projectGuid",
-          {
-            "array": [
-              "u8",
-              16
-            ]
-          }
-        ],
-        [
-          "emitter",
-          "u64"
-        ],
-        [
-          "callerSeed",
-          "u64"
-        ],
-        [
-          "reserved0",
-          "u64"
-        ]
-      ]
-    },
-    "VnActionPinnedDesc": {
-      "fields": [
-        [
-          "structSize",
-          "u32"
-        ],
-        [
-          "flags",
-          "u32"
-        ],
-        [
-          "projectGuid",
-          {
-            "array": [
-              "u8",
-              16
-            ]
-          }
-        ],
-        [
-          "actionId",
-          {
-            "struct": "VnObjectId"
-          }
-        ],
-        [
-          "utf8ExpectedName",
-          {
-            "ptr": "string",
-            "ctype": "const char*"
-          }
-        ],
-        [
-          "nameBindingRevision",
-          "u64"
-        ],
-        [
-          "callableFingerprint",
-          "u64"
-        ],
-        [
-          "emitter",
-          "u64"
-        ],
-        [
-          "callerSeed",
-          "u64"
-        ],
-        [
-          "reserved0",
-          "u64"
-        ]
-      ]
-    },
-    "VnActionResolved": {
-      "fields": [
-        [
-          "structSize",
-          "u32"
-        ],
-        [
-          "reserved0",
-          "u32"
-        ],
-        [
-          "actionId",
-          {
-            "struct": "VnObjectId"
-          }
-        ],
-        [
-          "nameBindingRevision",
-          "u64"
-        ],
-        [
-          "callableFingerprint",
-          "u64"
-        ],
-        [
-          "publicationGeneration",
-          "u64"
-        ],
-        [
-          "projectGuid",
-          {
-            "array": [
-              "u8",
-              16
-            ]
-          }
         ]
       ]
     },
@@ -6892,37 +6643,6 @@ TABLE_JSON = r'''
         ]
       ]
     },
-    "VnVariableResolved": {
-      "fields": [
-        [
-          "structSize",
-          "u32"
-        ],
-        [
-          "reserved0",
-          "u32"
-        ],
-        [
-          "variableId",
-          {
-            "struct": "VnObjectId"
-          }
-        ],
-        [
-          "executionFingerprint",
-          "u64"
-        ],
-        [
-          "projectGuid",
-          {
-            "array": [
-              "u8",
-              16
-            ]
-          }
-        ]
-      ]
-    },
     "VnVariableTicketQueryDescV1": {
       "fields": [
         [
@@ -6984,6 +6704,22 @@ TABLE_JSON = r'''
         [
           "reserved0",
           "u64"
+        ]
+      ]
+    },
+    "VnAbiVersionInfo": {
+      "fields": [
+        [
+          "structSize",
+          "u32"
+        ],
+        [
+          "major",
+          "u32"
+        ],
+        [
+          "minor",
+          "u32"
         ]
       ]
     },
@@ -7828,7 +7564,7 @@ TABLE_JSON = r'''
   "functions": [
     {
       "name": "Vn_ActivateCanonicalPackSetV2",
-      "note": "Atomic companion names/content. Process-local providers, no remote opcode.",
+      "note": "Atomic content activation. Process-local providers, no remote opcode.",
       "params": [
         {
           "name": "desc",
@@ -8245,23 +7981,6 @@ TABLE_JSON = r'''
           "name": "forward",
           "ctype": "VnVec3",
           "wire": "vec3"
-        }
-      ]
-    },
-    {
-      "name": "Vn_SetGameplayCatalog",
-      "note": "public Runtime API; binds the publication directory independently of Init. No remote opcode.",
-      "params": [
-        {
-          "name": "expectedInitHandle",
-          "ctype": "VnPackHandle",
-          "wire": "u64"
-        },
-        {
-          "name": "catalog",
-          "ctype": "const VnPackByteSpan*",
-          "wire": "desc",
-          "type": "VnPackByteSpan"
         }
       ]
     },
@@ -9851,86 +9570,31 @@ TABLE_JSON = r'''
     },
     {
       "opcode": 128,
-      "name": "Vn_PostActionByName",
-      "policy": "mirror",
-      "params": [
-        {
-          "name": "desc",
-          "ctype": "const VnPostActionByNameDesc*",
-          "wire": "desc",
-          "type": "VnPostActionByNameDesc"
-        },
-        {
-          "name": "outFiring",
-          "ctype": "VnActionFiringHandle*",
-          "wire": "out"
-        }
-      ]
+      "name": "ReservedPostActionByName",
+      "policy": "reserved-unknown",
+      "public": false,
+      "note": "permanent numeric tombstone"
     },
     {
       "opcode": 129,
-      "name": "Vn_ResolveActionByName",
-      "policy": "mirror",
-      "params": [
-        {
-          "name": "desc",
-          "ctype": "const VnPostActionByNameDesc*",
-          "wire": "desc",
-          "type": "VnPostActionByNameDesc"
-        },
-        {
-          "name": "outResolved",
-          "ctype": "VnActionResolved*",
-          "wire": "outstruct",
-          "type": "VnActionResolved"
-        }
-      ]
+      "name": "ReservedResolveActionByName",
+      "policy": "reserved-unknown",
+      "public": false,
+      "note": "permanent numeric tombstone"
     },
     {
       "opcode": 130,
-      "name": "Vn_PostActionPinned",
-      "policy": "mirror",
-      "params": [
-        {
-          "name": "desc",
-          "ctype": "const VnActionPinnedDesc*",
-          "wire": "desc",
-          "type": "VnActionPinnedDesc"
-        },
-        {
-          "name": "outFiring",
-          "ctype": "VnActionFiringHandle*",
-          "wire": "out"
-        }
-      ]
+      "name": "ReservedPostActionPinned",
+      "policy": "reserved-unknown",
+      "public": false,
+      "note": "permanent numeric tombstone"
     },
     {
       "opcode": 131,
-      "name": "Vn_PostActionResolved",
-      "policy": "mirror",
-      "params": [
-        {
-          "name": "resolved",
-          "ctype": "const VnActionResolved*",
-          "wire": "desc",
-          "type": "VnActionResolved"
-        },
-        {
-          "name": "emitter",
-          "ctype": "VnEmitterHandle",
-          "wire": "u64"
-        },
-        {
-          "name": "callerSeed",
-          "ctype": "uint64_t",
-          "wire": "u64"
-        },
-        {
-          "name": "outFiring",
-          "ctype": "VnActionFiringHandle*",
-          "wire": "out"
-        }
-      ]
+      "name": "ReservedPostActionResolved",
+      "policy": "reserved-unknown",
+      "public": false,
+      "note": "permanent numeric tombstone"
     },
     {
       "opcode": 132,
@@ -10601,57 +10265,14 @@ TABLE_JSON = r'''
       ]
     },
     {
-      "name": "Vn_SetValueByLabelName",
+      "name": "Vn_QueryAbiVersion",
+      "note": "ABI version; not part of the remote command-mirror (no opcode).",
       "params": [
         {
-          "name": "variableId",
-          "ctype": "VnVariableId",
-          "wire": "objectid"
-        },
-        {
-          "name": "utf8Name",
-          "ctype": "const char*",
-          "wire": "string"
-        },
-        {
-          "name": "emitter",
-          "ctype": "VnEmitterHandle",
-          "wire": "u64"
-        }
-      ]
-    },
-    {
-      "name": "Vn_SetValueByName",
-      "params": [
-        {
-          "name": "utf8Name",
-          "ctype": "const char*",
-          "wire": "string"
-        },
-        {
-          "name": "value",
-          "ctype": "float",
-          "wire": "f32"
-        }
-      ]
-    },
-    {
-      "name": "Vn_SetEmitterValueByName",
-      "params": [
-        {
-          "name": "handle",
-          "ctype": "VnEmitterHandle",
-          "wire": "u64"
-        },
-        {
-          "name": "utf8Name",
-          "ctype": "const char*",
-          "wire": "string"
-        },
-        {
-          "name": "value",
-          "ctype": "float",
-          "wire": "f32"
+          "name": "out",
+          "ctype": "VnAbiVersionInfo*",
+          "wire": "outstruct",
+          "type": "VnAbiVersionInfo"
         }
       ]
     },
@@ -10676,24 +10297,6 @@ TABLE_JSON = r'''
           "ctype": "VnVariableCatalogInfoV1*",
           "wire": "outstruct",
           "type": "VnVariableCatalogInfoV1"
-        }
-      ]
-    },
-    {
-      "name": "Vn_ResolveVariableByName",
-      "note": "Variable name resolution. Not a remote opcode. Failure codes are the gameplay name results; the caller writes with Vn_SetValue.",
-      "params": [
-        {
-          "name": "desc",
-          "ctype": "const VnPostActionByNameDesc*",
-          "wire": "desc",
-          "type": "VnPostActionByNameDesc"
-        },
-        {
-          "name": "outResolved",
-          "ctype": "VnVariableResolved*",
-          "wire": "outstruct",
-          "type": "VnVariableResolved"
         }
       ]
     },
@@ -12143,6 +11746,14 @@ TABLE_JSON = r'''
       }
     },
     "defines": {
+      "VN_ABI_VERSION_MAJOR": {
+        "type": "u32",
+        "value": 1
+      },
+      "VN_ABI_VERSION_MINOR": {
+        "type": "u32",
+        "value": 0
+      },
       "VN_EMITTER_CREATE_STATE_ONLY": {
         "type": "u32",
         "value": 1
@@ -12217,10 +11828,6 @@ TABLE_JSON = r'''
       "VN_PACK_MEMBER_CONTENT": {
         "type": "u32",
         "value": 1
-      },
-      "VN_PACK_MEMBER_NAME_ONLY": {
-        "type": "u32",
-        "value": 2
       },
       "VN_PACK_PREVIEW_UNSUPPORTED": {
         "type": "u32",

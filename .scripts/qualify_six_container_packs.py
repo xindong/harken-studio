@@ -1278,6 +1278,7 @@ def host_command(
     host_exe: Path,
     export_dir: Path,
     case: Case,
+    action_id: str,
     variable_id: str,
     null_mode: bool,
     capture_ready_gate: Path | None = None,
@@ -1285,10 +1286,12 @@ def host_command(
     command = [
         str(host_exe),
         "pack-play",
-        "--root",
-        str(export_dir),
-        "--action-name",
-        f"Play_{case.name}",
+        "--init-pack",
+        str(export_dir / "Init.bytes"),
+        "--content-pack",
+        str(export_dir / f"Play_{case.name}.bytes"),
+        "--action-id",
+        action_id,
         "--seconds",
         str(case.seconds_per_trigger),
         "--repeats",
@@ -1955,7 +1958,8 @@ def main() -> int:
         report["null_smoke"] = null_results
         for case in CASES:
             command = host_command(
-                host_exe, export_dir, case, variable_id, True
+                host_exe, export_dir, case,
+                companions[f"Play_{case.name}"]["data"]["guid"], variable_id, True
             )
             result = run_host(
                 command,
@@ -1987,6 +1991,7 @@ def main() -> int:
                     host_exe,
                     export_dir,
                     case,
+                    companions[f"Play_{case.name}"]["data"]["guid"],
                     variable_id,
                     False,
                     ready_gate_path,

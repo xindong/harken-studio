@@ -15,7 +15,7 @@ namespace harken::remote {
 static_assert(sizeof(float) == sizeof(std::uint32_t) && std::numeric_limits<float>::is_iec559);
 
 inline constexpr std::uint32_t kMagic = 0x4d524e56u;
-inline constexpr std::uint32_t kProtocolMajor = 2;
+inline constexpr std::uint32_t kProtocolMajor = 3;
 inline constexpr std::uint32_t kProtocolMinor = 0;
 inline constexpr std::uint32_t kHeaderBytes = 16;
 inline constexpr std::uint32_t kMaxPayloadBytes = 262144;
@@ -58,7 +58,6 @@ enum class Message : std::uint16_t {
 
 enum class Operation : std::uint32_t {
     PostAction = 1,
-    PostActionByName = 2,
     StopAll = 3,
     StopVoice = 4,
     StopAction = 5,
@@ -276,7 +275,6 @@ struct Snapshot {
 struct CatalogEntry {
     CatalogKind kind = CatalogKind::Action;
     VnObjectId id{};
-    std::string name;
 };
 
 struct Catalog {
@@ -295,7 +293,6 @@ struct Command {
     std::uint64_t secondary = 0;
     float value = 0;
     std::uint32_t durationMs = 0;
-    std::string name;
 };
 
 struct CommandResult {
@@ -447,18 +444,17 @@ inline void Encode(Writer &w, const Catalog &v) {
     for (const auto &row : v.entries) {
         w.U32(static_cast<std::uint32_t>(row.kind));
         w.ObjectId(row.id);
-        w.String(row.name);
     }
 }
 inline bool Decode(Reader &r, Catalog &v) {
     std::uint32_t count = 0;
     if (!r.I32(v.result) || !r.U64(v.generation) || !r.U32(v.totalCount) || !r.U32(v.offset) ||
-        !r.U32(count) || count > 16384 || count > r.Remaining() / 24)
+        !r.U32(count) || count > 16384 || count > r.Remaining() / 20)
         return false;
     v.entries.resize(count);
     for (auto &row : v.entries) {
         std::uint32_t kind = 0;
-        if (!r.U32(kind) || kind < 1 || kind > 3 || !r.ObjectId(row.id) || !r.String(row.name, 65535))
+        if (!r.U32(kind) || kind < 1 || kind > 3 || !r.ObjectId(row.id))
             return false;
         row.kind = static_cast<CatalogKind>(kind);
     }
@@ -472,12 +468,11 @@ inline void Encode(Writer &w, const Command &v) {
     w.U64(v.secondary);
     w.F32(v.value);
     w.U32(v.durationMs);
-    w.String(v.name);
 }
 inline bool Decode(Reader &r, Command &v) {
     std::uint32_t op = 0;
     if (!r.U32(op) || !r.U64(v.expectedGeneration) || !r.ObjectId(v.target) || !r.U64(v.instanceHandle) || !r.U64(v.secondary) ||
-        !r.F32(v.value) || !r.U32(v.durationMs) || !r.String(v.name) || !r.Done())
+        !r.F32(v.value) || !r.U32(v.durationMs) || !r.Done())
         return false;
     v.operation = static_cast<Operation>(op);
     return true;

@@ -98,7 +98,6 @@ set(HARKEN_CORE_SOURCES
     ${HARKEN_CORE_DIR}/core/src/LogicReasonCode.cpp
     ${HARKEN_CORE_DIR}/core/src/OccurrenceStatePool.cpp
     ${HARKEN_CORE_DIR}/core/src/PackComposition.cpp
-    ${HARKEN_CORE_DIR}/core/src/PackCompanionNames.cpp
     ${HARKEN_CORE_DIR}/core/src/PlayableInstanceTable.cpp
     ${HARKEN_CORE_DIR}/core/src/ContainerPlaybackTable.cpp
     ${HARKEN_CORE_DIR}/core/src/QueueRuntime.cpp

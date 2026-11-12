@@ -1614,80 +1614,20 @@ case 105: { /* Vn_SetBusOutputFilter */
     EncodeReply(reply, sequence, 105, result, nullptr, 0);
     return;
 }
-case 128: { /* Vn_PostActionByName */
-    const VnPostActionByNameDesc* p0 = nullptr;
-    std::uint64_t p1 = 0;
-    if (!DecodeWireDesc<VnPostActionByNameDesc>(reader, arena, &p0)) {
-        EncodeWireError(reply, sequence, kWireErrMalformedPayload, 128);
-        return;
-    }
-    if (!reader.AtEnd()) {
-        EncodeWireError(reply, sequence, kWireErrMalformedPayload, 128);
-        return;
-    }
-    const VnResult result = Vn_PostActionByName(p0, reinterpret_cast<VnActionFiringHandle*>(&p1));
-    const std::uint64_t outs[] = { p1 };
-    EncodeReply(reply, sequence, 128, result, outs, 1);
+case 128: { /* ReservedPostActionByName */
+    EncodeWireError(reply, sequence, kWireErrUnknownOpcode, 128);
     return;
 }
-case 129: { /* Vn_ResolveActionByName */
-    const VnPostActionByNameDesc* p0 = nullptr;
-    VnActionResolved p1{};
-    if (!DecodeWireDesc<VnPostActionByNameDesc>(reader, arena, &p0)) {
-        EncodeWireError(reply, sequence, kWireErrMalformedPayload, 129);
-        return;
-    }
-    if (!reader.AtEnd()) {
-        EncodeWireError(reply, sequence, kWireErrMalformedPayload, 129);
-        return;
-    }
-    p1.structSize = sizeof(VnActionResolved);
-    const VnResult result = Vn_ResolveActionByName(p0, &p1);
-    EncodeReply(reply, sequence, 129, result, nullptr, 0);
-    WireWriter outWriter(&reply->payload);
-    outWriter.U32(p1.structSize);
-    outWriter.U32(p1.reserved0);
-    outWriter.ObjectId(p1.actionId);
-    outWriter.U64(p1.nameBindingRevision);
-    outWriter.U64(p1.callableFingerprint);
-    outWriter.U64(p1.publicationGeneration);
-    outWriter.Bytes(p1.projectGuid, 16);
+case 129: { /* ReservedResolveActionByName */
+    EncodeWireError(reply, sequence, kWireErrUnknownOpcode, 129);
     return;
 }
-case 130: { /* Vn_PostActionPinned */
-    const VnActionPinnedDesc* p0 = nullptr;
-    std::uint64_t p1 = 0;
-    if (!DecodeWireDesc<VnActionPinnedDesc>(reader, arena, &p0)) {
-        EncodeWireError(reply, sequence, kWireErrMalformedPayload, 130);
-        return;
-    }
-    if (!reader.AtEnd()) {
-        EncodeWireError(reply, sequence, kWireErrMalformedPayload, 130);
-        return;
-    }
-    const VnResult result = Vn_PostActionPinned(p0, reinterpret_cast<VnActionFiringHandle*>(&p1));
-    const std::uint64_t outs[] = { p1 };
-    EncodeReply(reply, sequence, 130, result, outs, 1);
+case 130: { /* ReservedPostActionPinned */
+    EncodeWireError(reply, sequence, kWireErrUnknownOpcode, 130);
     return;
 }
-case 131: { /* Vn_PostActionResolved */
-    const VnActionResolved* p0 = nullptr;
-    std::uint64_t p1 = 0;
-    std::uint64_t p2 = 0;
-    std::uint64_t p3 = 0;
-    if (!DecodeWireDesc<VnActionResolved>(reader, arena, &p0) ||
-        !reader.ReadU64(&p1) ||
-        !reader.ReadU64(&p2)) {
-        EncodeWireError(reply, sequence, kWireErrMalformedPayload, 131);
-        return;
-    }
-    if (!reader.AtEnd()) {
-        EncodeWireError(reply, sequence, kWireErrMalformedPayload, 131);
-        return;
-    }
-    const VnResult result = Vn_PostActionResolved(p0, static_cast<VnEmitterHandle>(p1), static_cast<uint64_t>(p2), reinterpret_cast<VnActionFiringHandle*>(&p3));
-    const std::uint64_t outs[] = { p3 };
-    EncodeReply(reply, sequence, 131, result, outs, 1);
+case 131: { /* ReservedPostActionResolved */
+    EncodeWireError(reply, sequence, kWireErrUnknownOpcode, 131);
     return;
 }
 case 132: { /* Vn_SeekActionFiring */

@@ -538,8 +538,10 @@ def verify(cli: Path, host: Path | None, work: Path, audio_output: bool = True) 
         journal.unlink()
         if host:
             platform_dir = next(pack.parent for pack in packs if pack.stem == "PlayTone")
-            playback = run(host, ["pack-play", "--root", str(platform_dir), "--action-name", "PlayTone",
-                                  "--seconds", "1", "--null"], environment)
+            action_id = json.loads((platform_dir / "PlayTone.json").read_text(encoding="utf-8"))["guid"]
+            playback = run(host, ["pack-play", "--init-pack", str(platform_dir / "Init.bytes"),
+                                  "--content-pack", str(platform_dir / "PlayTone.bytes"),
+                                  "--action-id", action_id, "--seconds", "1", "--null"], environment)
             assert playback.returncode == 0, (
                 playback.stdout.decode("utf-8", "replace"), playback.stderr.decode("utf-8", "replace"))
     print("CLI protocol, desktop isolation, persistence, conversion, read-only builds and pack equivalence passed.")

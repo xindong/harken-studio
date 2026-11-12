@@ -34,9 +34,7 @@ EXPORTS
     Vn_LoadCurrentWorld
     Vn_LoadPack
     Vn_PostAction
-    Vn_PostActionByName
-    Vn_PostActionPinned
-    Vn_PostActionResolved
+    Vn_QueryAbiVersion
     Vn_QueryActionFiring
     Vn_QueryActionPlaybackReadiness
     Vn_QueryActionSeek
@@ -62,8 +60,6 @@ EXPORTS
     Vn_ResetBusEffect
     Vn_ResetValues
     Vn_ResetVoiceEffect
-    Vn_ResolveActionByName
-    Vn_ResolveVariableByName
     Vn_Resume
     Vn_SeekActionFiring
     Vn_SetBusDownmixMatrix
@@ -84,15 +80,11 @@ EXPORTS
     Vn_SetEmitterOrientation
     Vn_SetEmitterPosition
     Vn_SetEmitterValue
-    Vn_SetEmitterValueByName
     Vn_SetEmitterValues
-    Vn_SetGameplayCatalog
     Vn_SetListener
     Vn_SetListenerDistanceReference
     Vn_SetValue
     Vn_SetValueByLabelId
-    Vn_SetValueByLabelName
-    Vn_SetValueByName
     Vn_SetValues
     Vn_SetVoiceDistanceScale
     Vn_SetVoiceEffect

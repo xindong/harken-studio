@@ -52,31 +52,6 @@ inline VnResult SetValue(VnVariableId variable, VnObjectId label,
     return ::Vn_SetValueByLabelId(variable, label, emitter);
 }
 
-inline VnResult SetValue(VnVariableId variable, const char* name,
-                        VnEmitterHandle emitter = 0) {
-    const VnResult guard = GuardTypedVariableCatalog();
-    if (guard != VN_OK) return guard;
-    return ::Vn_SetValueByLabelName(variable, name, emitter);
-}
-
-inline VnResult SetValue(const char* name, float value, VnEmitterHandle emitter = 0) {
-    return emitter == 0 ? ::Vn_SetValueByName(name, value)
-                        : ::Vn_SetEmitterValueByName(emitter, name, value);
-}
-
-inline VnResult Resolve(const char* name, VnVariableId* outVariableId) {
-    if (outVariableId == nullptr) return VN_INVALID_ARG;
-    *outVariableId = {};
-    VnPostActionByNameDesc desc{};
-    desc.structSize = sizeof(desc);
-    desc.utf8Name = name;
-    VnVariableResolved resolved{};
-    resolved.structSize = sizeof(resolved);
-    const auto result = ::Vn_ResolveVariableByName(&desc, &resolved);
-    if (result == VN_OK) *outVariableId = resolved.variableId;
-    return result;
-}
-
 inline VnResult SetValue(VnVariableId variable, float value,
                          VnEmitterHandle emitter = 0) {
     const VnResult guard = GuardTypedVariableCatalog();
@@ -85,28 +60,9 @@ inline VnResult SetValue(VnVariableId variable, float value,
                         : ::Vn_SetEmitterValue(emitter, variable, value);
 }
 
-inline VnResult SetValue(const char* variableName, VnObjectId label,
-                        VnEmitterHandle emitter = 0) {
-    VnVariableId variable{};
-    const VnResult result = Resolve(variableName, &variable);
-    return result == VN_OK ? ::Vn_SetValueByLabelId(variable, label, emitter) : result;
-}
-
-inline VnResult SetValue(const char* variableName, const char* labelName,
-                        VnEmitterHandle emitter = 0) {
-    VnVariableId variable{};
-    const VnResult result = Resolve(variableName, &variable);
-    return result == VN_OK ? ::Vn_SetValueByLabelName(variable, labelName, emitter) : result;
-}
-
 template <std::integral T>
 inline VnResult SetValue(VnVariableId variable, T value, VnEmitterHandle emitter = 0) {
     return SetValue(variable, static_cast<float>(value), emitter);
-}
-
-template <std::integral T>
-inline VnResult SetValue(const char* name, T value, VnEmitterHandle emitter = 0) {
-    return SetValue(name, static_cast<float>(value), emitter);
 }
 
 [[deprecated("Use SetValue(variable, value, optional emitter)")]]

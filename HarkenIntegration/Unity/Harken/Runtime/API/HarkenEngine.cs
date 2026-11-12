@@ -79,7 +79,11 @@ namespace Harken
         public static VnResult Term()
         {
             VnResult result = HarkenNative.Vn_Term();
-            if (result == VnResult.VN_OK) VariableGameplay.NotifySessionChanged();
+            if (result == VnResult.VN_OK)
+            {
+                GameplayNames.Clear();
+                VariableGameplay.NotifySessionChanged();
+            }
             return result;
         }
 

@@ -1,6 +1,5 @@
 using System;
 using System.Runtime.InteropServices;
-using System.Text;
 
 namespace Harken
 {
@@ -100,31 +99,27 @@ namespace Harken
 
     public readonly struct ActionResolved
     {
-        readonly VnActionResolved native;
+        readonly VnObjectId actionId;
+        readonly ulong revision, fingerprint, generation;
 
-        internal ActionResolved(in VnActionResolved native)
+        internal ActionResolved(VnObjectId actionId, ulong revision, ulong fingerprint, ulong generation)
         {
-            this.native = native;
+            this.actionId = actionId;
+            this.revision = revision;
+            this.fingerprint = fingerprint;
+            this.generation = generation;
         }
 
-        public VnObjectId ActionId => native.actionId;
-        public ulong NameBindingRevision => native.nameBindingRevision;
-        public ulong CallableFingerprint => native.callableFingerprint;
-        public ulong PublicationGeneration => native.publicationGeneration;
-
-        internal VnActionResolved Native => native;
+        public VnObjectId ActionId => actionId;
+        public ulong NameBindingRevision => revision;
+        public ulong CallableFingerprint => fingerprint;
+        public ulong PublicationGeneration => generation;
     }
 
     public static class Actions
     {
         private static readonly uint PostDescSize =
             (uint)Marshal.SizeOf<VnPostActionDesc>();
-        private static readonly uint ByNameDescSize =
-            (uint)Marshal.SizeOf<VnPostActionByNameDesc>();
-        private static readonly uint PinnedDescSize =
-            (uint)Marshal.SizeOf<VnActionPinnedDesc>();
-        private static readonly uint ResolvedSize =
-            (uint)Marshal.SizeOf<VnActionResolved>();
 
         public static VnResult Post(VnObjectId actionId, Emitter emitter,
                                     out ActionFiring firing)
@@ -150,68 +145,47 @@ namespace Harken
 
         public static unsafe VnResult Post(string actionName, Emitter emitter,
                                            ulong callerSeed,
-                                           out ActionFiring firing)
+                                    out ActionFiring firing)
         {
             firing = default;
-            if (actionName != null && actionName.IndexOf('\0') >= 0)
-                return VnResult.VN_INVALID_ARG;
-            Span<byte> stackBuf = stackalloc byte[256];
-            byte[] heap = EncodeName(actionName, stackBuf);
-            fixed (byte* stackP = stackBuf)
-            fixed (byte* heapP = heap)
-            {
-                VnPostActionByNameDesc desc = default;
-                desc.structSize = ByNameDescSize;
-                desc.utf8Name = actionName == null
-                    ? IntPtr.Zero
-                    : (IntPtr)(heap != null ? heapP : stackP);
-                desc.emitter = emitter.Handle;
-                desc.callerSeed = callerSeed;
-                VnResult result = HarkenNative.Vn_PostActionByName(
-                    desc, out ulong handle);
-                firing = new ActionFiring(handle);
-                return result;
-            }
+            VnResult result = Resolve(actionName, default(VnObjectId), out ActionResolved resolved);
+            return result == VnResult.VN_OK
+                ? Post(resolved.ActionId, emitter, callerSeed, out firing) : result;
         }
 
         public static unsafe VnResult Post(in ActionReference pinned,
                                            Emitter emitter, ulong callerSeed,
-                                           out ActionFiring firing)
+                                    out ActionFiring firing)
         {
             firing = default;
-            if (pinned.ExpectedName == null || pinned.ExpectedName.IndexOf('\0') >= 0 ||
+            if (!PackCompanion.IsName(pinned.ExpectedName) ||
                 pinned.ProjectGuid == null || pinned.ProjectGuid.Length != 16 || pinned.ActionId.IsNull)
             {
                 return VnResult.VN_INVALID_ARG;
             }
-
-            Span<byte> stackBuf = stackalloc byte[256];
-            byte[] heap = EncodeName(pinned.ExpectedName, stackBuf);
-            fixed (byte* stackP = stackBuf)
-            fixed (byte* heapP = heap)
+            ulong high = 0, low = 0;
+            for (int i = 0; i < 8; ++i)
             {
-                VnActionPinnedDesc desc = default;
-                desc.structSize = PinnedDescSize;
-                for (int i = 0; i < 16; i++)
-                {
-                    desc.projectGuid[i] = pinned.ProjectGuid[i];
-                }
-                desc.actionId = pinned.ActionId;
-                desc.utf8ExpectedName = (IntPtr)(heap != null ? heapP : stackP);
-                desc.nameBindingRevision = pinned.NameBindingRevision;
-                desc.callableFingerprint = pinned.CallableFingerprint;
-                desc.emitter = emitter.Handle;
-                desc.callerSeed = callerSeed;
-                VnResult result = HarkenNative.Vn_PostActionPinned(
-                    desc, out ulong handle);
-                firing = new ActionFiring(handle);
-                return result;
+                high = (high << 8) | pinned.ProjectGuid[i];
+                low = (low << 8) | pinned.ProjectGuid[i + 8];
             }
+            VnResult result = GameplayNames.FindAction(pinned.ExpectedName, new VnObjectId(high, low),
+                out GameplayNames.Action action);
+            if (result == VnResult.VN_UNKNOWN_ID &&
+                GameplayNames.FindAction(pinned.ActionId, out _) == VnResult.VN_OK)
+                return VnResult.VN_GAMEPLAY_NAME_RETIRED;
+            if (result != VnResult.VN_OK) return result;
+            if (action.Id != pinned.ActionId) return VnResult.VN_GAMEPLAY_NAME_RETIRED;
+            if (pinned.NameBindingRevision != 0 && pinned.NameBindingRevision != action.Revision)
+                return VnResult.VN_STALE_HANDLE;
+            if (pinned.CallableFingerprint != 0 && pinned.CallableFingerprint != action.Fingerprint)
+                return VnResult.VN_GAMEPLAY_CONTRACT_MISMATCH;
+            return Post(action.Id, emitter, callerSeed, out firing);
         }
 
         public static unsafe VnResult Resolve(string actionName,
                                               out ActionResolved resolved)
-            => Resolve(actionName, Guid.Empty, out resolved);
+            => Resolve(actionName, default(VnObjectId), out resolved);
 
         public static VnResult Resolve(string actionName, string projectId,
                                        out ActionResolved resolved)
@@ -220,53 +194,33 @@ namespace Harken
             if (!Guid.TryParseExact(projectId, "D", out Guid project) ||
                 project == Guid.Empty)
                 return VnResult.VN_INVALID_ARG;
-            return Resolve(actionName, project, out resolved);
+            return Resolve(actionName, VnObjectId.FromGuid(project), out resolved);
         }
 
-        private static unsafe VnResult Resolve(string actionName, Guid project,
-                                               out ActionResolved resolved)
+        private static VnResult Resolve(string actionName, VnObjectId project,
+                                        out ActionResolved resolved)
         {
             resolved = default;
-            if (actionName != null && actionName.IndexOf('\0') >= 0)
+            if (!PackCompanion.IsName(actionName))
                 return VnResult.VN_INVALID_ARG;
-            Span<byte> stackBuf = stackalloc byte[256];
-            byte[] heap = EncodeName(actionName, stackBuf);
-            fixed (byte* stackP = stackBuf)
-            fixed (byte* heapP = heap)
-            {
-                VnPostActionByNameDesc desc = default;
-                desc.structSize = ByNameDescSize;
-                Span<byte> projectBytes = stackalloc byte[16];
-                project.TryWriteBytes(projectBytes);
-                for (int i = 0; i < 16; ++i)
-                {
-                    int source = i < 4 ? 3 - i : i < 6 ? 9 - i : i < 8 ? 13 - i : i;
-                    desc.projectGuid[i] = projectBytes[source];
-                }
-                desc.utf8Name = actionName == null
-                    ? IntPtr.Zero
-                    : (IntPtr)(heap != null ? heapP : stackP);
-                VnActionResolved native = default;
-                native.structSize = ResolvedSize;
-                VnResult result = HarkenNative.Vn_ResolveActionByName(
-                    desc, ref native);
-                if (result == VnResult.VN_OK)
-                {
-                    resolved = new ActionResolved(native);
-                }
-                return result;
-            }
+            VnResult result = GameplayNames.FindAction(actionName, project, out GameplayNames.Action action);
+            if (result == VnResult.VN_OK)
+                resolved = new ActionResolved(action.Id, action.Revision, action.Fingerprint,
+                    GameplayNames.Generation);
+            return result;
         }
 
         public static VnResult Post(in ActionResolved resolved, Emitter emitter,
                                     ulong callerSeed, out ActionFiring firing)
         {
-            VnActionResolved native = resolved.Native;
-            native.structSize = ResolvedSize;
-            VnResult result = HarkenNative.Vn_PostActionResolved(
-                native, emitter.Handle, callerSeed, out ulong handle);
-            firing = new ActionFiring(handle);
-            return result;
+            firing = default;
+            if (resolved.ActionId.IsNull) return VnResult.VN_INVALID_ARG;
+            VnResult result = GameplayNames.FindAction(resolved.ActionId, out GameplayNames.Action action);
+            if (result == VnResult.VN_UNKNOWN_ID || result == VnResult.VN_OK &&
+                action.Revision != resolved.NameBindingRevision)
+                return VnResult.VN_STALE_HANDLE;
+            return result == VnResult.VN_OK
+                ? Post(action.Id, emitter, callerSeed, out firing) : result;
         }
 
         public static string Describe(VnResult result, string actionName)
@@ -315,17 +269,6 @@ namespace Harken
                 default:
                     return "Action " + quoted + " failed (" + code + ").";
             }
-        }
-
-        static byte[] EncodeName(string name, Span<byte> stackBuf)
-        {
-            if (name == null)
-            {
-                return null;
-            }
-            return Utf8.TryEncode(name, stackBuf, out _)
-                ? null
-                : Encoding.UTF8.GetBytes(name + "\0");
         }
     }
 }

@@ -1,6 +1,5 @@
 using System;
 using System.Runtime.InteropServices;
-using System.Text;
 
 namespace Harken
 {
@@ -73,12 +72,8 @@ namespace Harken
         {
             if (!VariableGameplay.IsGameThread || string.IsNullOrEmpty(name) || name.IndexOf('\0') >= 0 ||
                 (emitter.HasValue && !emitter.Value.IsValid)) return VnResult.VN_INVALID_ARG;
-            Span<byte> buffer = stackalloc byte[256];
-            byte[] heap = Utf8.TryEncode(name, buffer, out _) ? null : Encoding.UTF8.GetBytes(name + '\0');
-            fixed (byte* stackPointer = buffer)
-            fixed (byte* heapPointer = heap)
-                return HarkenNative.Vn_SetValueByLabelName(variableId,
-                    heap != null ? heapPointer : stackPointer, emitter?.Handle ?? 0);
+            VnResult found = GameplayNames.FindLabel(variableId, name, out VnObjectId labelId);
+            return found == VnResult.VN_OK ? SetValue(variableId, labelId, emitter) : found;
         }
 
         public static VnResult Resolve(string variableName, out VnObjectId variableId)
@@ -226,37 +221,14 @@ namespace Harken
             return Guid.TryParseExact(projectId, "D", out project) && project != Guid.Empty;
         }
 
-        static unsafe VnResult Resolve(string variableName, Guid project, out VnObjectId id)
+        static VnResult Resolve(string variableName, Guid project, out VnObjectId id)
         {
             id = default;
             if (variableName.Length > 128) return VnResult.VN_INVALID_ARG;
-            Span<byte> buffer = stackalloc byte[129];
-            for (int i = 0; i < variableName.Length; ++i)
-            {
-                char c = variableName[i];
+            foreach (char c in variableName)
                 if (c == 0 || c > 127) return VnResult.VN_INVALID_ARG;
-                buffer[i] = (byte)c;
-            }
-            buffer[variableName.Length] = 0;
-            fixed (byte* stackPointer = buffer)
-            {
-                VnPostActionByNameDesc desc = default;
-                desc.structSize = (uint)Marshal.SizeOf<VnPostActionByNameDesc>();
-                Span<byte> projectBytes = stackalloc byte[16];
-                project.TryWriteBytes(projectBytes);
-                for (int i = 0; i < 16; ++i)
-                {
-                    int source = i < 4 ? 3 - i : i < 6 ? 9 - i : i < 8 ? 13 - i : i;
-                    desc.projectGuid[i] = projectBytes[source];
-                }
-                desc.utf8Name = (IntPtr)stackPointer;
-                VnVariableResolved native = default;
-                native.structSize = (uint)Marshal.SizeOf<VnVariableResolved>();
-                VnResult result = HarkenNative.Vn_ResolveVariableByName(in desc, ref native);
-                if (result == VnResult.VN_OK)
-                    id = native.variableId;
-                return result;
-            }
+            return GameplayNames.FindVariable(variableName,
+                project == Guid.Empty ? default : VnObjectId.FromGuid(project), out id);
         }
 
     }

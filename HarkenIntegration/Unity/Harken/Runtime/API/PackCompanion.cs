@@ -6,7 +6,6 @@ using System.Text;
 
 namespace Harken
 {
-    // Name metadata is a candidate input. Native owns the committed name table.
     internal sealed class PackCompanion
     {
         internal readonly struct Variable
@@ -144,57 +143,6 @@ namespace Harken
 
     internal static class CompanionNative
     {
-        private sealed class PinnedNames : IDisposable
-        {
-            private readonly GCHandle[] pins;
-            private int count;
-            internal readonly IntPtr Pointer;
-
-            internal PinnedNames(PackCompanion names)
-            {
-                pins = new GCHandle[5 + names.Variables.Length + names.Labels.Length];
-                try
-                {
-                    var variables = new VnPackVariableNameV1[names.Variables.Length];
-                    var labels = new VnPackLabelNameV1[names.Labels.Length];
-                    for (int i = 0; i < variables.Length; ++i)
-                    {
-                        variables[i].variableId = names.Variables[i].Id;
-                        variables[i].utf8Name = Text(names.Variables[i].Name);
-                    }
-                    for (int i = 0; i < labels.Length; ++i)
-                    {
-                        labels[i].variableId = names.Labels[i].VariableId;
-                        labels[i].labelId = names.Labels[i].Id;
-                        labels[i].utf8Name = Text(names.Labels[i].Name);
-                    }
-                    var value = new VnPackNamesV1
-                    {
-                        structSize = (uint)Marshal.SizeOf<VnPackNamesV1>(),
-                        projectId = names.ProjectId, rootActionId = names.RootId,
-                        utf8RootName = Text(names.Name), utf8Language = Text(names.Language),
-                        variableCount = (uint)variables.Length, labelCount = (uint)labels.Length,
-                        variables = Pin(variables), labels = Pin(labels)
-                    };
-                    Pointer = Pin(new[] { value });
-                }
-                catch { Dispose(); throw; }
-            }
-
-            private IntPtr Text(string value) => Pin(new UTF8Encoding(false, true).GetBytes(value + "\0"));
-            private IntPtr Pin(Array value)
-            {
-                if (value.Length == 0) return IntPtr.Zero;
-                GCHandle pin = GCHandle.Alloc(value, GCHandleType.Pinned);
-                pins[count++] = pin;
-                return pin.AddrOfPinnedObject();
-            }
-            public void Dispose()
-            {
-                while (count != 0) pins[--count].Free();
-            }
-        }
-
         internal static unsafe VnResult Inspect(byte[] bytes, byte[] init, PackCompanion names,
             out VnPackInspectReportV1 report)
             => Inspect(bytes, init, names, out report, out _, out _, false);
@@ -209,20 +157,17 @@ namespace Harken
             if (bytes == null || names == null) return VnResult.VN_INVALID_ARG;
             try
             {
-                using (var pinned = new PinnedNames(names))
                 fixed (byte* packPtr = bytes)
                 fixed (byte* initPtr = init)
                 {
                     var desc = new VnPackInspectDescV1
                     {
-                        structSize = (uint)sizeof(VnPackInspectDescV1), names = pinned.Pointer,
+                        structSize = (uint)sizeof(VnPackInspectDescV1), rootActionId = names.RootId,
                         pack = new VnPackByteSpan { structSize = (uint)sizeof(VnPackByteSpan),
                             bytes = (IntPtr)packPtr, byteCount = (ulong)bytes.LongLength },
                         init = new VnPackByteSpan { structSize = (uint)sizeof(VnPackByteSpan),
                             bytes = (IntPtr)initPtr, byteCount = (ulong)(init?.LongLength ?? 0) },
-                        maxInputBytes = (ulong)bytes.LongLength + (ulong)(init?.LongLength ?? 0) +
-                            1024u + (ulong)(names.Variables.Length + names.Labels.Length) * 256u +
-                            (ulong)NameByteCount(names)
+                        maxInputBytes = (ulong)bytes.LongLength + (ulong)(init?.LongLength ?? 0) + 1024u
                     };
                     report.structSize = (uint)sizeof(VnPackInspectReportV1);
                     VnResult result = HarkenNative.Vn_InspectCanonicalPackV1(desc, ref report);
@@ -251,15 +196,6 @@ namespace Harken
                 }
             }
             catch (OutOfMemoryException) { return VnResult.VN_DEVICE_ERROR; }
-            catch (EncoderFallbackException) { return VnResult.VN_BAD_PACK; }
-        }
-
-        private static long NameByteCount(PackCompanion names)
-        {
-            long count = Encoding.UTF8.GetByteCount(names.Name) + Encoding.UTF8.GetByteCount(names.Language);
-            foreach (var row in names.Variables) count += Encoding.UTF8.GetByteCount(row.Name);
-            foreach (var row in names.Labels) count += Encoding.UTF8.GetByteCount(row.Name);
-            return count;
         }
 
         internal static unsafe VnResult Activate(CompanionMember[] members, Pack init, ulong revision,
@@ -267,13 +203,11 @@ namespace Harken
         {
             report = default;
             results = null;
-            PinnedNames[] names = null;
             int[] providers = null;
             try
             {
                 var native = new VnCanonicalPackSetMemberV2[members.Length];
                 var rows = new VnCanonicalPackSetMemberResultV1[members.Length];
-                names = new PinnedNames[members.Length];
                 providers = new int[members.Length];
                 for (int i = 0; i < members.Length; ++i)
                 {
@@ -287,8 +221,6 @@ namespace Harken
                     member.source.expectedHandle = source.Expected.Handle;
                     rows[i].structSize = (uint)sizeof(VnCanonicalPackSetMemberResultV1);
                     if (source.Operation == VnConstants.VN_PACK_MEMBER_KEEP) continue;
-                    names[i] = new PinnedNames(source.Names);
-                    member.names = names[i].Pointer;
                     providers[i] = PackByteProvider.Register(PackByteProvider.PreparedBytes, source.Bytes);
                     if (providers[i] == 0) return VnResult.VN_BACKPRESSURE;
                     PackByteProvider.BindMember(ref member.source, providers[i]);
@@ -298,11 +230,9 @@ namespace Harken
                 return result;
             }
             catch (OutOfMemoryException) { return VnResult.VN_DEVICE_ERROR; }
-            catch (EncoderFallbackException) { return VnResult.VN_BAD_PACK; }
             finally
             {
                 if (providers != null) foreach (int key in providers) if (key != 0) PackByteProvider.Unregister(key);
-                if (names != null) foreach (PinnedNames pinned in names) pinned?.Dispose();
             }
         }
 

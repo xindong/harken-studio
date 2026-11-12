@@ -2,7 +2,7 @@
 #include <harken/HarkenDevelopment.h>
 
 #include "harken/core/CurrentWorldCodec.h"
-#include "harken/core/PackCompanionNames.h"
+#include "harken/media/PackLogicImage.h"
 #include "harken/core/PlayablePropertyCut.h"
 #include "harken/param/VariableService.h"
 
@@ -173,7 +173,7 @@ VnResult Vn_InspectCanonicalPackV1(const VnPackInspectDescV1* desc,
                                   VnPackInspectReportV1* report) {
     if (desc == nullptr || report == nullptr || desc->structSize != sizeof(*desc) ||
         report->structSize != sizeof(*report) || desc->flags != 0 ||
-        desc->names == nullptr || desc->maxInputBytes == 0 ||
+        desc->maxInputBytes == 0 ||
         (desc->variableCapacity != 0 && desc->variables == nullptr) ||
         (desc->labelCapacity != 0 && desc->labels == nullptr) ||
         (desc->occurrenceCapacity != 0 && desc->occurrences == nullptr) ||
@@ -223,16 +223,13 @@ VnResult Vn_InspectCanonicalPackV1(const VnPackInspectDescV1* desc,
             if (!initEdge) return VN_BAD_PACK;
         }
         const auto& view = *body.ProductionView();
-        // Companion JSON has no project identity. Inspection may discover it;
-        // activation still requires the explicit, validated project identity.
-        VnPackNamesV1 requestedNames = *desc->names;
-        if (requestedNames.projectId == VnObjectId{}) requestedNames.projectId = view.identity.projectId;
-        PackCompanionNames names;
-        const auto captured = CapturePackCompanionNames(requestedNames, budget, &names);
-        if (captured != VN_OK) return captured;
-        result = ValidatePackCompanionNames(names, pack.packKind, pack.packStableId,
-            init.packStableId, view, pack.variablePolicyOverlays);
-        if (result != VN_OK) return result;
+        if (isInit != (desc->rootActionId == VnObjectId{})) return VN_INVALID_ARG;
+        if (!isInit) {
+            bool rooted = false;
+            for (std::uint32_t i = 0; i < view.actionCount; ++i)
+                rooted |= view.actions[i].actionStableId == desc->rootActionId;
+            if (!rooted) return VN_BAD_PACK;
+        }
         std::vector<VnPackVariableFactV1> variables;
         std::vector<VnPackLabelFactV1> labels;
         std::vector<VnPackOccurrenceFactV1> occurrences;
@@ -261,7 +258,7 @@ VnResult Vn_InspectCanonicalPackV1(const VnPackInspectDescV1* desc,
         output.structSize = sizeof(output);
         output.packKind = pack.packKind;
         output.projectId = view.identity.projectId;
-        output.rootActionId = names.rootActionId;
+        output.rootActionId = desc->rootActionId;
         output.packStableId = pack.packStableId;
         output.initPackStableId = init.packStableId;
         output.contentRevision = pack.requirement.packContentRevision;
@@ -269,7 +266,7 @@ VnResult Vn_InspectCanonicalPackV1(const VnPackInspectDescV1* desc,
         output.initContentHash = isInit ? output.contentHash :
             Fnv1a64(desc->init.bytes, static_cast<std::size_t>(desc->init.byteCount));
         output.executionFingerprint = view.identity.runtimeSemanticFingerprint;
-        if (!isInit) PreviewFacts(view, pack, init, names.rootActionId, output.previewKind, occurrences);
+        if (!isInit) PreviewFacts(view, pack, init, desc->rootActionId, output.previewKind, occurrences);
         output.variableCount = static_cast<std::uint32_t>(variables.size());
         output.labelCount = static_cast<std::uint32_t>(labels.size());
         output.occurrenceCount = static_cast<std::uint32_t>(occurrences.size());

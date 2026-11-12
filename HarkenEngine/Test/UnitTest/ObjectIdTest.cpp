@@ -5,7 +5,6 @@
 #include <harken/core/CurrentWorldCodec.h>
 #include <harken/param/VariableService.h>
 #include <harken/media/PackFormatV2.h>
-#include <harken/media/GameplayCatalogFormat.h>
 #include <harken/media/StreamFormat.h>
 #include <harken_remote/Protocol.h>
 #include <harken_host_control/WireFormat.h>
@@ -260,45 +259,6 @@ TEST(ObjectId, WorldBodyRetainsUuidAndRefusesPreviousFormats)
     std::vector<uint8_t> encoded;
     ASSERT_TRUE(harken::EncodeCurrentWorldShippingBody(*image.ProductionView(), encoded));
     EXPECT_EQ(encoded, bytes);
-}
-
-TEST(ObjectId, GameplayCatalogUsesOneUuidAndPreservesFollowingFields)
-{
-    const VnObjectId first{0xcacc73dc2e344d29, 0x894f3ed9db63e6fa};
-    const VnObjectId second{0xbacc73dc2e344d29, first.low};
-    harken::PackGameplayCatalogHeader header{};
-    header.projectGuid = harken::ObjectIdBytes({0x76656e7573746573, 1});
-    header.initPackStableId = 91;
-    header.initContentRevision = 7;
-    harken::PackGameplayCatalogActiveDraft active{};
-    active.actionStableId = first;
-    active.name = "Play";
-    active.nameBindingRevision = 3;
-    active.callableFingerprint = harken::GameplayCallableFingerprint(first, 3, active.name);
-    active.ownerPackStableId = 92;
-    active.providerClosureFingerprint = 123;
-    harken::PackGameplayCatalogRetiredDraft retired{};
-    retired.lastActionStableId = second;
-    retired.lastNameBindingRevision = 2;
-    retired.reason = harken::kGameplayCatalogRetiredReasonDeleted;
-    retired.name = "Previous";
-    std::vector<uint8_t> bytes;
-    ASSERT_TRUE(harken::EncodeGameplayCatalog(header, {active}, {retired}, &bytes));
-    harken::PackGameplayCatalogActiveRow decoded{};
-    ASSERT_TRUE(harken::ParsePackGameplayCatalogActiveRow(
-        bytes.data() + harken::kGameplayCatalogHeaderBytes, &decoded));
-    EXPECT_EQ(decoded.actionStableId, first);
-    EXPECT_EQ(decoded.nameBindingRevision, 3u);
-    EXPECT_EQ(decoded.ownerPackStableId, 92u);
-    EXPECT_EQ(decoded.providerClosureFingerprint, 123u);
-    EXPECT_EQ(decoded.callableFingerprint, active.callableFingerprint);
-    EXPECT_NE(harken::GameplayCallableFingerprint(second, 3, active.name), decoded.callableFingerprint);
-    harken::PackGameplayCatalogRetiredRow old{};
-    ASSERT_TRUE(harken::ParsePackGameplayCatalogRetiredRow(bytes.data() +
-        harken::kGameplayCatalogHeaderBytes + harken::kGameplayCatalogActiveRowBytes, &old));
-    EXPECT_EQ(old.lastActionStableId, second);
-    EXPECT_EQ(old.lastNameBindingRevision, 2u);
-    EXPECT_EQ(old.reason, retired.reason);
 }
 
 #if defined(HARKEN_HOST_PATH)

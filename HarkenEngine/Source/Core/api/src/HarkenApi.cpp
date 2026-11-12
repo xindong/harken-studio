@@ -110673,8 +110673,6 @@ bool CancelNativeQueueResetResourcesForTest(Engine& engine, std::uint32_t scratc
 namespace harken {
 void JournalCanonicalPackFileRef(TraceCallScribe& trace, const Engine& engine,
                                  const VnPackLoadDesc& load);
-VnResult SetGameplayCatalog(Engine& engine, VnPackHandle expectedInitHandle,
-                            const VnPackByteSpan* catalog);
 VnResult ActivateCanonicalPackSetV2(Engine& engine,
     const VnCanonicalPackSetActivationDescV2* desc,
     VnCanonicalPackSetActivationReportV1* outReport);
@@ -112286,7 +112284,7 @@ static VnResult UnloadPackWithFlags(VnPackHandle handle,
     }
     harken::VariableOperationScope variableOperation(engine);
     const auto* companion = engine->packComposition.Published();
-    if (companion != nullptr && companion->companionNames) {
+    if (companion != nullptr && companion->setActivated) {
         const auto revision = companion->ledger.setRevision;
         const auto result = harken::UnloadCanonicalPack(*engine, handle, flags);
         auto trace = TraceStateful(engine, harken::kTraceCallUnloadCompanionPack);
@@ -112366,18 +112364,6 @@ VnResult Vn_UnloadPackEx(VnPackHandle handle, std::uint32_t flags) {
     harken::monitor::ObserveOperation(VN_MONITOR_OPERATION_UNLOAD_PACK, result,
                                      VN_MONITOR_ENTITY_NONE, {}, handle, flags);
     return result;
-}
-
-VnResult Vn_SetGameplayCatalog(VnPackHandle expectedInitHandle,
-                              const VnPackByteSpan* catalog) {
-    if (harken::detail::CanonicalSetMutationBlocked()) return VN_IN_USE;
-    try {
-        harken::Engine* engine = harken::detail::g_engine;
-        if (engine == nullptr || engine->callbackFatalSticky) return VN_NOT_INITIALIZED;
-        return harken::SetGameplayCatalog(*engine, expectedInitHandle, catalog);
-    } catch (...) {
-        return VN_DEVICE_ERROR;
-    }
 }
 
 VnResult Vn_ActivateCanonicalPackSetV1(
@@ -118872,6 +118858,15 @@ VnResult Vn_QueryVariable(const VnVariableQueryDescV1* desc,
         return VN_DEVICE_ERROR;
     }}
 
+VnResult Vn_QueryAbiVersion(VnAbiVersionInfo* out) {
+    if (out == nullptr || out->structSize != sizeof(VnAbiVersionInfo)) {
+        return VN_INVALID_ARG;
+    }
+    out->major = VN_ABI_VERSION_MAJOR;
+    out->minor = VN_ABI_VERSION_MINOR;
+    return VN_OK;
+}
+
 VnResult Vn_QueryPackFormatVersion(VnPackFormatVersionInfo* out) {
     if (out == nullptr || out->structSize != sizeof(VnPackFormatVersionInfo)) {
         return VN_INVALID_ARG;
@@ -119975,90 +119970,6 @@ VnResult harken::detail::PostActionWithValidation(
 
 namespace {
 
-bool GuidIsZero(const std::uint8_t* guid) {
-    static const std::uint8_t kZero[16] = {};
-    return std::memcmp(guid, kZero, 16) == 0;
-}
-
-VnResult ValidateAuthoredActionName(const char* utf8Name) {
-    return utf8Name != nullptr && harken::IsCallableName(utf8Name) ? VN_OK : VN_INVALID_ARG;
-}
-
-std::string_view GameplayCatalogName(
-    const harken::GameplayCatalogImage& catalog, std::uint32_t offset,
-    std::uint16_t length) {
-    if (static_cast<std::size_t>(offset) + length > catalog.namePool.size()) {
-        return {};
-    }
-    return std::string_view(
-        reinterpret_cast<const char*>(catalog.namePool.data() + offset),
-        length);
-}
-
-const harken::PackGameplayCatalogActiveRow* FindActiveRowByName(
-    const harken::GameplayCatalogImage& catalog, std::string_view name) {
-    if (name.size() > 0xFFFFu) {
-        return nullptr;
-    }
-    const auto nameLen = static_cast<std::uint16_t>(name.size());
-    std::size_t lo = 0;
-    std::size_t hi = catalog.active.size();
-    while (lo < hi) {
-        const std::size_t mid = lo + (hi - lo) / 2;
-        const harken::PackGameplayCatalogActiveRow& row = catalog.active[mid];
-        const std::string_view rowName =
-            GameplayCatalogName(catalog, row.nameOffset, row.nameLength);
-        const int cmp = harken::CompareGameplayCatalogNameBytes(
-            name.data(), nameLen, rowName.data(),
-            static_cast<std::uint16_t>(rowName.size()));
-        if (cmp < 0) {
-            hi = mid;
-        } else if (cmp > 0) {
-            lo = mid + 1;
-        } else {
-            return &row;
-        }
-    }
-    return nullptr;
-}
-
-const harken::PackGameplayCatalogRetiredRow* FindRetiredRowByName(
-    const harken::GameplayCatalogImage& catalog, std::string_view name) {
-    if (name.size() > 0xFFFFu) {
-        return nullptr;
-    }
-    const auto nameLen = static_cast<std::uint16_t>(name.size());
-    std::size_t lo = 0;
-    std::size_t hi = catalog.retired.size();
-    while (lo < hi) {
-        const std::size_t mid = lo + (hi - lo) / 2;
-        const harken::PackGameplayCatalogRetiredRow& row = catalog.retired[mid];
-        const std::string_view rowName =
-            GameplayCatalogName(catalog, row.nameOffset, row.nameLength);
-        const int cmp = harken::CompareGameplayCatalogNameBytes(
-            name.data(), nameLen, rowName.data(),
-            static_cast<std::uint16_t>(rowName.size()));
-        if (cmp < 0) {
-            hi = mid;
-        } else if (cmp > 0) {
-            lo = mid + 1;
-        } else {
-            return &row;
-        }
-    }
-    return nullptr;
-}
-
-const harken::PackGameplayCatalogActiveRow* FindActiveRowByActionId(
-    const harken::GameplayCatalogImage& catalog, VnObjectId actionId) {
-    for (const harken::PackGameplayCatalogActiveRow& row : catalog.active) {
-        if (row.actionStableId == actionId) {
-            return &row;
-        }
-    }
-    return nullptr;
-}
-
 const harken::PackComposition::PublishedOwner* FindPublishedOwner(
     const harken::PackComposition::PublishedView& published,
     std::uint64_t packStableId) {
@@ -120068,211 +119979,6 @@ const harken::PackComposition::PublishedOwner* FindPublishedOwner(
         }
     }
     return nullptr;
-}
-
-VnResult RequireRequiredProviders(
-    const harken::PackComposition::PublishedView& published,
-    const harken::PackComposition::PublishedOwner& owner) {
-    for (const harken::PackDependencyEdge& edge : owner.dependencyEdges) {
-        if (edge.required01 == 0 || edge.prerequisitePackStableId == 0) {
-            continue;
-        }
-        const harken::PackComposition::PublishedOwner* provider =
-            FindPublishedOwner(published, edge.prerequisitePackStableId);
-        if (provider == nullptr ||
-            provider->readiness != harken::PackOwnerReadiness::Active) {
-            return VN_CONTENT_NOT_LOADED;
-        }
-    }
-    return VN_OK;
-}
-
-VnResult BindGameplayCatalog(
-    harken::Engine* engine,
-    const harken::PackComposition::PublishedView** outPublished) {
-    if (engine == nullptr || engine->callbackFatalSticky) {
-        return VN_NOT_INITIALIZED;
-    }
-    if (engine->packComposition.Authority() != harken::PackAuthorityMode::Pack) {
-        return VN_CAPABILITY_UNAVAILABLE;
-    }
-    const harken::PackComposition::PublishedView* published =
-        engine->packComposition.Published();
-    if (published == nullptr || (!published->hasGameplayCatalog && !published->companionNames)) {
-        return VN_CAPABILITY_UNAVAILABLE;
-    }
-    *outPublished = published;
-    return VN_OK;
-}
-
-VnResult BindProjectGuid(const harken::PackGameplayCatalogHeader& header,
-                         const std::uint8_t* projectGuid) {
-    if (GuidIsZero(projectGuid)) {
-        return VN_OK;
-    }
-    if (std::memcmp(projectGuid, header.projectGuid.data(), 16) != 0) {
-        return VN_GAMEPLAY_WRONG_PROJECT;
-    }
-    return VN_OK;
-}
-
-VnResult BindProjectGuid(const harken::PackComposition::PublishedView& published,
-                         const std::uint8_t* projectGuid) {
-    const auto bytes = harken::ObjectIdBytes(published.projectId);
-    return GuidIsZero(projectGuid) || std::memcmp(projectGuid, bytes.data(), bytes.size()) == 0
-        ? VN_OK : VN_GAMEPLAY_WRONG_PROJECT;
-}
-
-void CompanionActionBinding(const harken::PackComposition::PublishedView& published,
-    const harken::PackComposition::PublishedView::ActionName& name,
-    harken::PackGameplayCatalogActiveRow* out) {
-    *out = {};
-    out->actionStableId = name.actionId;
-    out->ownerPackStableId = name.ownerPackId;
-    out->callableFingerprint = name.fingerprint;
-    const auto* owner = FindPublishedOwner(published, name.ownerPackId);
-    if (owner != nullptr) out->providerClosureFingerprint = owner->providerClosureFingerprint;
-    // No authored history exists in companion output. The resolved token's
-    // publication generation protects the session-local binding instead.
-}
-
-bool FindActionBinding(const harken::PackComposition::PublishedView& published,
-    VnObjectId id, harken::PackGameplayCatalogActiveRow* out) {
-    if (published.companionNames) {
-        for (const auto& name : published.actionNames) {
-            if (name.actionId != id) continue;
-            CompanionActionBinding(published, name, out);
-            return true;
-        }
-        return false;
-    }
-    const auto* row = FindActiveRowByActionId(published.gameplayCatalog, id);
-    if (row == nullptr) return false;
-    *out = *row;
-    return true;
-}
-
-VnResult LookupActiveRowByName(
-    const harken::PackComposition::PublishedView& published,
-    const std::uint8_t* projectGuid, const char* utf8Name,
-    harken::PackGameplayCatalogActiveRow* outRow) {
-    const VnResult project = BindProjectGuid(published, projectGuid);
-    if (project != VN_OK) {
-        return project;
-    }
-    const std::string_view name(utf8Name);
-    if (published.companionNames) {
-        const auto row = std::lower_bound(published.actionNames.begin(), published.actionNames.end(), name,
-            [](const auto& candidate, auto wanted) { return candidate.name < wanted; });
-        if (row == published.actionNames.end() || row->name != name) return VN_UNKNOWN_ID;
-        CompanionActionBinding(published, *row, outRow);
-        return VN_OK;
-    }
-    const harken::PackGameplayCatalogActiveRow* active =
-        FindActiveRowByName(published.gameplayCatalog, name);
-    if (active != nullptr) {
-        *outRow = *active;
-        return VN_OK;
-    }
-    if (FindRetiredRowByName(published.gameplayCatalog, name) != nullptr) {
-        return VN_GAMEPLAY_NAME_RETIRED;
-    }
-    return VN_UNKNOWN_ID;
-}
-
-VnResult RefuseIfOwnerNotReady(
-    const harken::PackComposition::PublishedView& published,
-    const harken::PackGameplayCatalogActiveRow& row) {
-    const harken::PackComposition::PublishedOwner* owner =
-        FindPublishedOwner(published, row.ownerPackStableId);
-    if (owner == nullptr ||
-        owner->readiness != harken::PackOwnerReadiness::Active) {
-        return VN_CONTENT_NOT_LOADED;
-    }
-    if (owner->providerClosureFingerprint != row.providerClosureFingerprint)
-        return VN_GAMEPLAY_CONTRACT_MISMATCH;
-    return RequireRequiredProviders(published, *owner);
-}
-
-struct CheckedSubmitContext {
-    VnObjectId actionStableId{};
-    std::uint64_t ownerPackStableId = 0;
-    std::uint64_t expectedGeneration = 0;
-    bool requireGeneration = false;
-    bool checkPinned = false;
-    std::uint64_t nameBindingRevision = 0;
-    std::uint64_t callableFingerprint = 0;
-};
-
-VnResult CheckedAdmissionValidator(
-    const harken::detail::ActionAdmissionView& view,
-    const void* context) noexcept {
-    const auto* ctx = static_cast<const CheckedSubmitContext*>(context);
-    if (ctx == nullptr || view.publication == nullptr || !view.packBacked ||
-        view.action == nullptr) {
-        return VN_CAPABILITY_UNAVAILABLE;
-    }
-    if (ctx->requireGeneration &&
-        view.publication->compositeGeneration != ctx->expectedGeneration) {
-        return VN_STALE_HANDLE;
-    }
-    if (view.action->actionStableId != ctx->actionStableId) {
-        return VN_GAMEPLAY_CONTRACT_MISMATCH;
-    }
-    const harken::PackComposition::PublishedOwner* owner =
-        FindPublishedOwner(*view.publication, ctx->ownerPackStableId);
-    if (owner == nullptr ||
-        owner->readiness != harken::PackOwnerReadiness::Active) {
-        return VN_CONTENT_NOT_LOADED;
-    }
-    const VnResult providers =
-        RequireRequiredProviders(*view.publication, *owner);
-    if (providers != VN_OK) {
-        return providers;
-    }
-    harken::PackGameplayCatalogActiveRow binding{};
-    if (!FindActionBinding(*view.publication, ctx->actionStableId, &binding))
-        return VN_GAMEPLAY_CONTRACT_MISMATCH;
-    const auto* catalogRow = &binding;
-    if (catalogRow->actionStableId != ctx->actionStableId
-        || catalogRow->ownerPackStableId != ctx->ownerPackStableId
-        || catalogRow->providerClosureFingerprint != owner->providerClosureFingerprint)
-        return VN_GAMEPLAY_CONTRACT_MISMATCH;
-    if (ctx->checkPinned) {
-        const harken::PackGameplayCatalogActiveRow* live = catalogRow;
-        if (live == nullptr ||
-            live->nameBindingRevision != ctx->nameBindingRevision ||
-            live->callableFingerprint != ctx->callableFingerprint) {
-            return VN_GAMEPLAY_CONTRACT_MISMATCH;
-        }
-    }
-    return VN_OK;
-}
-
-VnResult SubmitCheckedAction(
-    harken::Engine& engine, VnObjectId actionId, VnEmitterHandle emitter,
-    std::uint64_t callerSeed, const CheckedSubmitContext& context,
-    VnActionFiringHandle* outFiring, const harken::MonitorRequestContext& request,
-    harken::monitor::RequestObservation* observation) {
-    VnPostActionDesc numeric{};
-    numeric.structSize = sizeof(numeric);
-    numeric.actionId = actionId;
-    numeric.emitter = emitter;
-    numeric.callerSeed = callerSeed;
-    return harken::detail::PostActionWithValidation(
-        &numeric, outFiring, CheckedAdmissionValidator, &context, false, request, observation);
-}
-
-void FillResolved(const harken::PackComposition::PublishedView& published,
-                  const harken::PackGameplayCatalogActiveRow& row,
-                  VnActionResolved* outResolved) {
-    outResolved->reserved0 = 0;
-    outResolved->actionId = row.actionStableId;
-    outResolved->nameBindingRevision = row.nameBindingRevision;
-    outResolved->callableFingerprint = row.callableFingerprint;
-    outResolved->publicationGeneration = published.compositeGeneration;
-    const auto project = harken::ObjectIdBytes(published.projectId);
-    std::memcpy(outResolved->projectGuid, project.data(), project.size());
 }
 
 VnResult StopEmitterPlayablesCore(harken::Engine& engine, VnEmitterHandle emitter,
@@ -120409,336 +120115,6 @@ VnResult StopAllPlayablesCore(harken::Engine &engine, std::uint32_t fadeMs,
 } // namespace
 
 extern "C" {
-
-static VnResult PostActionByNameObserved(const VnPostActionByNameDesc* desc,
-                             VnActionFiringHandle* outFiring,
-                             const harken::MonitorRequestContext& request,
-                             harken::monitor::RequestObservation* observation) {
-    try {
-    if (harken::detail::CanonicalSetMutationBlocked()) { return VN_IN_USE; }
-        if (outFiring == nullptr) {
-            return VN_INVALID_ARG;
-        }
-        *outFiring = 0;
-        if (desc == nullptr ||
-            desc->structSize != sizeof(VnPostActionByNameDesc) ||
-            desc->flags != 0 || desc->reserved0 != 0 ||
-            desc->utf8Name == nullptr) {
-            return VN_INVALID_ARG;
-        }
-        if (observation) observation->Submitted();
-        const VnResult grammar = ValidateAuthoredActionName(desc->utf8Name);
-        if (grammar != VN_OK) {
-            return grammar;
-        }
-        harken::Engine* engine = harken::detail::g_engine;
-        const harken::PackComposition::PublishedView* published = nullptr;
-        const VnResult bound = BindGameplayCatalog(engine, &published);
-        if (engine == nullptr || engine->callbackFatalSticky) {
-            return bound;
-        }
-        harken::VariableOperationScope variableOperation(engine);
-        harken::TraceCallScribe trace =
-            TraceStateful(engine, harken::kTraceCallPostActionByName);
-        trace.U32(2)
-            .U32(desc->structSize)
-            .U32(desc->flags)
-            .Str(desc->utf8Name)
-            .Bytes(desc->projectGuid, 16)
-            .U64(engine->trace != nullptr && harken::tracing::Active(engine->trace.get())
-                     ? harken::tracing::RecordedEmitterHandle(engine->trace.get(), desc->emitter)
-                     : desc->emitter)
-            .U64(desc->callerSeed)
-            .U64(desc->reserved0);
-        if (bound != VN_OK) {
-            trace.U32(static_cast<std::uint32_t>(bound)).U64(0);
-            return bound;
-        }
-        harken::PackGameplayCatalogActiveRow binding{};
-        const auto* row = &binding;
-        const VnResult looked =
-            LookupActiveRowByName(*published, desc->projectGuid, desc->utf8Name,
-                                  &binding);
-        if (looked != VN_OK) {
-            trace.U32(static_cast<std::uint32_t>(looked)).U64(0);
-            return looked;
-        }
-        if (observation) observation->TargetContent(row->actionStableId, VN_MONITOR_CONTENT_ACTION);
-        const VnResult ready = RefuseIfOwnerNotReady(*published, *row);
-        if (ready != VN_OK) {
-            trace.U32(static_cast<std::uint32_t>(ready)).U64(0);
-            return ready;
-        }
-        CheckedSubmitContext ctx{};
-        ctx.actionStableId = row->actionStableId;
-        ctx.ownerPackStableId = row->ownerPackStableId;
-        const VnResult posted =
-            SubmitCheckedAction(*engine, row->actionStableId, desc->emitter,
-                                desc->callerSeed, ctx, outFiring, request, observation);
-        trace.U32(static_cast<std::uint32_t>(posted))
-            .U64(posted == VN_OK ? *outFiring : 0);
-        if (posted == VN_OK) {
-            trace.U64(engine->actionCommitBundle.Sequence())
-                .U64(engine->variables.CurrentWorldGeneration());
-        }
-        return posted;
-    } catch (const std::bad_alloc&) {
-        return VN_DEVICE_ERROR;
-    } catch (...) {
-        return VN_DEVICE_ERROR;
-    }
-}
-
-VnResult Vn_ResolveActionByName(const VnPostActionByNameDesc* desc,
-                                VnActionResolved* outResolved) {
-    try {
-        if (outResolved == nullptr ||
-            outResolved->structSize != sizeof(VnActionResolved)) {
-            return VN_INVALID_ARG;
-        }
-        if (desc == nullptr ||
-            desc->structSize != sizeof(VnPostActionByNameDesc) ||
-            desc->flags != 0 || desc->reserved0 != 0 ||
-            desc->utf8Name == nullptr) {
-            return VN_INVALID_ARG;
-        }
-        const VnResult grammar = ValidateAuthoredActionName(desc->utf8Name);
-        if (grammar != VN_OK) {
-            return grammar;
-        }
-        harken::Engine* engine = harken::detail::g_engine;
-        const harken::PackComposition::PublishedView* published = nullptr;
-        const VnResult bound = BindGameplayCatalog(engine, &published);
-        if (engine == nullptr || engine->callbackFatalSticky) {
-            return bound;
-        }
-        harken::TraceCallScribe trace =
-            TraceStateful(engine, harken::kTraceCallResolveActionByName);
-        trace.U32(1)
-            .U32(desc->structSize)
-            .U32(desc->flags)
-            .Str(desc->utf8Name)
-            .Bytes(desc->projectGuid, 16)
-            .U64(desc->emitter)
-            .U64(desc->callerSeed)
-            .U64(desc->reserved0);
-        if (bound != VN_OK) {
-            trace.U32(static_cast<std::uint32_t>(bound));
-            return bound;
-        }
-        harken::PackGameplayCatalogActiveRow binding{};
-        const auto* row = &binding;
-        const VnResult looked =
-            LookupActiveRowByName(*published, desc->projectGuid, desc->utf8Name,
-                                  &binding);
-        if (looked != VN_OK) {
-            trace.U32(static_cast<std::uint32_t>(looked));
-            return looked;
-        }
-        FillResolved(*published, *row, outResolved);
-        trace.U32(0).ObjectId(outResolved->actionId);
-        return VN_OK;
-    } catch (const std::bad_alloc&) {
-        return VN_DEVICE_ERROR;
-    } catch (...) {
-        return VN_DEVICE_ERROR;
-    }
-}
-
-static VnResult PostActionPinnedObserved(const VnActionPinnedDesc* desc,
-                             VnActionFiringHandle* outFiring,
-                             const harken::MonitorRequestContext& request,
-                             harken::monitor::RequestObservation* observation) {
-    try {
-    if (harken::detail::CanonicalSetMutationBlocked()) { return VN_IN_USE; }
-        if (outFiring == nullptr) {
-            return VN_INVALID_ARG;
-        }
-        *outFiring = 0;
-        if (desc == nullptr || desc->structSize != sizeof(VnActionPinnedDesc) ||
-            desc->flags != 0 || desc->reserved0 != 0 ||
-            desc->utf8ExpectedName == nullptr || desc->actionId == VnObjectId{}) {
-            return VN_INVALID_ARG;
-        }
-        if (observation) {
-            observation->TargetContent(desc->actionId, VN_MONITOR_CONTENT_ACTION);
-            observation->Submitted();
-        }
-        const VnResult grammar =
-            ValidateAuthoredActionName(desc->utf8ExpectedName);
-        if (grammar != VN_OK) {
-            return grammar;
-        }
-        harken::Engine* engine = harken::detail::g_engine;
-        const harken::PackComposition::PublishedView* published = nullptr;
-        const VnResult bound = BindGameplayCatalog(engine, &published);
-        if (engine == nullptr || engine->callbackFatalSticky) {
-            return bound;
-        }
-        harken::VariableOperationScope variableOperation(engine);
-        harken::TraceCallScribe trace =
-            TraceStateful(engine, harken::kTraceCallPostActionPinned);
-        trace.U32(2)
-            .U32(desc->structSize)
-            .U32(desc->flags)
-            .Bytes(desc->projectGuid, 16)
-            .ObjectId(desc->actionId)
-            .Str(desc->utf8ExpectedName)
-            .U64(desc->nameBindingRevision)
-            .U64(desc->callableFingerprint)
-            .U64(engine->trace != nullptr && harken::tracing::Active(engine->trace.get())
-                     ? harken::tracing::RecordedEmitterHandle(engine->trace.get(), desc->emitter)
-                     : desc->emitter)
-            .U64(desc->callerSeed)
-            .U64(desc->reserved0);
-        if (bound != VN_OK) {
-            trace.U32(static_cast<std::uint32_t>(bound)).U64(0);
-            return bound;
-        }
-        if (published->companionNames) {
-            trace.U32(static_cast<std::uint32_t>(VN_CAPABILITY_UNAVAILABLE)).U64(0);
-            return VN_CAPABILITY_UNAVAILABLE;
-        }
-        harken::PackGameplayCatalogActiveRow binding{};
-        const auto* row = &binding;
-        const VnResult looked = LookupActiveRowByName(
-            *published, desc->projectGuid, desc->utf8ExpectedName, &binding);
-        if (looked != VN_OK) {
-            trace.U32(static_cast<std::uint32_t>(looked)).U64(0);
-            return looked;
-        }
-        if (row->actionStableId != desc->actionId ||
-            row->nameBindingRevision != desc->nameBindingRevision ||
-            row->callableFingerprint != desc->callableFingerprint) {
-            trace.U32(static_cast<std::uint32_t>(VN_GAMEPLAY_CONTRACT_MISMATCH))
-                .U64(0);
-            return VN_GAMEPLAY_CONTRACT_MISMATCH;
-        }
-        const VnResult ready = RefuseIfOwnerNotReady(*published, *row);
-        if (ready != VN_OK) {
-            trace.U32(static_cast<std::uint32_t>(ready)).U64(0);
-            return ready;
-        }
-        CheckedSubmitContext ctx{};
-        ctx.actionStableId = row->actionStableId;
-        ctx.ownerPackStableId = row->ownerPackStableId;
-        ctx.checkPinned = true;
-        ctx.nameBindingRevision = desc->nameBindingRevision;
-        ctx.callableFingerprint = desc->callableFingerprint;
-        const VnResult posted =
-            SubmitCheckedAction(*engine, row->actionStableId, desc->emitter,
-                                desc->callerSeed, ctx, outFiring, request, observation);
-        trace.U32(static_cast<std::uint32_t>(posted))
-            .U64(posted == VN_OK ? *outFiring : 0);
-        if (posted == VN_OK) {
-            trace.U64(engine->actionCommitBundle.Sequence())
-                .U64(engine->variables.CurrentWorldGeneration());
-        }
-        return posted;
-    } catch (const std::bad_alloc&) {
-        return VN_DEVICE_ERROR;
-    } catch (...) {
-        return VN_DEVICE_ERROR;
-    }
-}
-
-static VnResult PostActionResolvedObserved(const VnActionResolved* resolved,
-                               VnEmitterHandle emitter, uint64_t callerSeed,
-                               VnActionFiringHandle* outFiring,
-                             const harken::MonitorRequestContext& request,
-                             harken::monitor::RequestObservation* observation) {
-    try {
-    if (harken::detail::CanonicalSetMutationBlocked()) { return VN_IN_USE; }
-        if (outFiring == nullptr) {
-            return VN_INVALID_ARG;
-        }
-        *outFiring = 0;
-        if (resolved == nullptr ||
-            resolved->structSize != sizeof(VnActionResolved) ||
-            resolved->reserved0 != 0 || resolved->actionId == VnObjectId{}) {
-            return VN_INVALID_ARG;
-        }
-        if (observation) {
-            observation->TargetContent(resolved->actionId, VN_MONITOR_CONTENT_ACTION);
-            observation->Submitted();
-        }
-        harken::Engine* engine = harken::detail::g_engine;
-        const harken::PackComposition::PublishedView* published = nullptr;
-        const VnResult bound = BindGameplayCatalog(engine, &published);
-        if (engine == nullptr || engine->callbackFatalSticky) {
-            return bound;
-        }
-        harken::VariableOperationScope variableOperation(engine);
-        harken::TraceCallScribe trace =
-            TraceStateful(engine, harken::kTraceCallPostActionResolved);
-        trace.U32(2)
-            .U32(resolved->structSize)
-            .U32(resolved->reserved0)
-            .ObjectId(resolved->actionId)
-            .U64(resolved->nameBindingRevision)
-            .U64(resolved->callableFingerprint)
-            .U64(resolved->publicationGeneration)
-            .Bytes(resolved->projectGuid, 16)
-            .U64(engine->trace != nullptr && harken::tracing::Active(engine->trace.get())
-                     ? harken::tracing::RecordedEmitterHandle(engine->trace.get(), emitter)
-                     : emitter)
-            .U64(callerSeed)
-            .U64(published != nullptr ? published->compositeGeneration : 0);
-        if (bound != VN_OK) {
-            trace.U32(static_cast<std::uint32_t>(bound)).U64(0);
-            return bound;
-        }
-        const VnResult project =
-            BindProjectGuid(*published, resolved->projectGuid);
-        if (project != VN_OK) {
-            trace.U32(static_cast<std::uint32_t>(project)).U64(0);
-            return project;
-        }
-        harken::PackGameplayCatalogActiveRow binding{};
-        const auto* row = &binding;
-        if (!FindActionBinding(*published, resolved->actionId, &binding)) {
-            trace.U32(static_cast<std::uint32_t>(VN_UNKNOWN_ID)).U64(0);
-            return VN_UNKNOWN_ID;
-        }
-        if (row->nameBindingRevision != resolved->nameBindingRevision ||
-            row->callableFingerprint != resolved->callableFingerprint) {
-            trace.U32(static_cast<std::uint32_t>(VN_GAMEPLAY_CONTRACT_MISMATCH))
-                .U64(0);
-            return VN_GAMEPLAY_CONTRACT_MISMATCH;
-        }
-        if (resolved->publicationGeneration != published->compositeGeneration) {
-            trace.U32(static_cast<std::uint32_t>(VN_STALE_HANDLE)).U64(0);
-            return VN_STALE_HANDLE;
-        }
-        const VnResult ready = RefuseIfOwnerNotReady(*published, *row);
-        if (ready != VN_OK) {
-            trace.U32(static_cast<std::uint32_t>(ready)).U64(0);
-            return ready;
-        }
-        CheckedSubmitContext ctx{};
-        ctx.actionStableId = row->actionStableId;
-        ctx.ownerPackStableId = row->ownerPackStableId;
-        ctx.requireGeneration = true;
-        ctx.expectedGeneration = resolved->publicationGeneration;
-        ctx.checkPinned = true;
-        ctx.nameBindingRevision = resolved->nameBindingRevision;
-        ctx.callableFingerprint = resolved->callableFingerprint;
-        const VnResult posted =
-            SubmitCheckedAction(*engine, row->actionStableId, emitter,
-                                callerSeed, ctx, outFiring, request, observation);
-        trace.U32(static_cast<std::uint32_t>(posted))
-            .U64(posted == VN_OK ? *outFiring : 0);
-        if (posted == VN_OK) {
-            trace.U64(engine->actionCommitBundle.Sequence())
-                .U64(engine->variables.CurrentWorldGeneration());
-        }
-        return posted;
-    } catch (const std::bad_alloc&) {
-        return VN_DEVICE_ERROR;
-    } catch (...) {
-        return VN_DEVICE_ERROR;
-    }
-}
 
 static VnResult StopActionObserved(VnActionFiringHandle firing,
                              uint32_t fadeMs, const harken::MonitorControlCause& cause) {
@@ -127475,49 +126851,6 @@ void ReportCanonicalConflict(Engine& engine, VnObjectId objectId,
     engine.logicLogRing.Push({VN_LOG_ERROR, kLogCodePackContentConflict, 0, packId, 0, objectId, projectId});
 }
 
-VnResult CheckContentAgainstGameplayCatalog(
-    const PackComposition::PublishedView& published,
-    const PackCanonicalImage& image) {
-    if (!published.hasGameplayCatalog) {
-        return VN_OK;
-    }
-    detail::PackDecodeCharge scratch(image.staging.Budget());
-    std::vector<VnObjectId> actionIds;
-    if (image.hasPartition) {
-        CurrentWorldBodyImage body;
-        const CurrentWorldBodyDecodeResult decoded = body.DecodeWithBudget(
-            image.partitionBody.data(), image.partitionBody.size(),
-            image.partitionHeader.bodyVintage,
-            CurrentWorldDecodeMode::StrictArtifact, image.staging.Budget());
-        if (decoded != CurrentWorldBodyDecodeResult::Ok ||
-            body.ProductionView() == nullptr) {
-            return decoded == CurrentWorldBodyDecodeResult::Capacity
-                       ? VN_PACK_RESIDENT_CAPACITY
-                       : VN_BAD_PACK;
-        }
-        const ContainerWorldInstallViewV1& view = *body.ProductionView();
-        detail::DecodeReserve(actionIds, view.actionCount, scratch);
-        for (std::uint32_t i = 0; i < view.actionCount; ++i) {
-            actionIds.push_back(view.actions[i].actionStableId);
-        }
-    }
-    std::sort(actionIds.begin(), actionIds.end());
-    for (const PackGameplayCatalogActiveRow& row :
-         published.gameplayCatalog.active) {
-        const bool containsAction = std::binary_search(
-            actionIds.begin(), actionIds.end(), row.actionStableId);
-        if (row.ownerPackStableId != image.packStableId) {
-            if (containsAction)
-                return VN_PACK_STALE_REVISION;
-            continue;
-        }
-        if (!containsAction) {
-            return VN_PACK_STALE_REVISION;
-        }
-    }
-    return VN_OK;
-}
-
 void ReportCanonicalMediaConflict(Engine& engine, const PackCanonicalImage& candidate) {
     const VnSoundId sound = engine.packs.ConflictingSoundId();
     if (sound == VnObjectId{}) return;
@@ -127549,7 +126882,6 @@ VnResult PrepareCanonicalOwners(
     PreparedCanonicalPublication* out,
     const PackAttenuationBindingMapV1* attenuationBindings = nullptr,
     const PackComposition::CanonicalPackSetLedgerV1* ledger = nullptr,
-    const GameplayCatalogImage* gameplayCatalog = nullptr,
     detail::PackDecodeBudget budget = {}) {
     if (out == nullptr) {
         return VN_INVALID_ARG;
@@ -127581,7 +126913,7 @@ VnResult PrepareCanonicalOwners(
         const VnResult composed = engine.packComposition.PrepareCommit(
             std::move(owners), catalog, initHandle, engine.config.maxActions,
             engine.serviceFrameClock, &prepared.composition, attenuationBindings, ledger,
-            reason == PackVariablePublicationReason::InitUnload, gameplayCatalog, budget);
+            reason == PackVariablePublicationReason::InitUnload, budget);
         if (composed != VN_OK) {
             const auto& facts = engine.packComposition.Facts();
             if (composed != VN_PACK_RESIDENT_CAPACITY && facts.conflictingStableId != VnObjectId{}) {
@@ -127607,7 +126939,7 @@ VnResult PrepareCanonicalOwners(
                 VN_PACK_RESIDENT_CAPACITY);
             return VN_PACK_RESIDENT_CAPACITY;
         }
-        const VnResult variables = prepared.composition.NamesOnly() ? VN_OK :
+        const VnResult variables =
             PreparePackVariables(engine, *next, reason, &prepared.variables);
         if (variables != VN_OK) {
             return variables;
@@ -127631,11 +126963,6 @@ VnResult PrepareCanonicalOwners(
 
 VnResult PrepareCanonicalSignals(Engine& engine, PreparedCanonicalPublication& prepared,
     std::uint32_t planIndex = kInvalidTopologyPlanIndex) {
-    if (prepared.composition.NamesOnly()) {
-        prepared.signals.predecessor = engine.acceptedSignalRevision;
-        prepared.signalsReady = true;
-        return VN_OK;
-    }
     const auto topology = engine.topologyPlans.View(planIndex);
     const auto result = PreparePackSignals(engine, prepared.composition.Published(),
         planIndex == kInvalidTopologyPlanIndex ? nullptr : &topology, prepared.signals);
@@ -127658,8 +126985,7 @@ void CommitCanonicalOwners(Engine& engine,
         return;
     }
     assert(prepared->signalsReady && CanCommitSignals(engine, prepared->signals));
-    if (!prepared->composition.NamesOnly())
-        CommitPackVariables(engine, &prepared->variables);
+    CommitPackVariables(engine, &prepared->variables);
     engine.packComposition.CommitPrepared(&prepared->composition);
     CommitSignals(engine, prepared->signals);
     if (prepared->signalTopology) prepared->signalTopology->Commit();
@@ -129959,7 +129285,6 @@ VnResult PrepareCanonicalSetActivation(Engine& engine,
     const VnCanonicalPackSetActivationDescV1& desc, std::uint64_t semanticKey,
     const PackComposition::PublishedView* previous, PreparedCanonicalPackSetV1* out,
     const std::vector<std::uint32_t>* operations = nullptr,
-    const std::vector<std::shared_ptr<const PackCompanionNames>>* names = nullptr,
     std::vector<AcquiredCanonicalSetMember>* capturedMembers = nullptr) {
     const auto priorGeneration = previous != nullptr && previous->initHandle != 0
         ? previous->ledger.activationGeneration : engine.packSetTombstone.activationGeneration;
@@ -130009,8 +129334,6 @@ VnResult PrepareCanonicalSetActivation(Engine& engine,
             }
             if (operations != nullptr && old != nullptr && captured.hash == old->contentHash)
                 captured.keptOwner = old;
-            if (operation == VN_PACK_MEMBER_NAME_ONLY && captured.keptOwner == nullptr)
-                return VN_PACK_STALE_REVISION;
         }
         const auto& image = captured.image;
         if (image.packKind != (i == 0 ? HK_PACK_KIND_INIT : HK_PACK_KIND_CANONICAL_CONTENT)) {
@@ -130117,7 +129440,7 @@ VnResult PrepareCanonicalSetActivation(Engine& engine,
             if (candidate != VN_OK) return candidate;
         }
         owner.contentHash = member.hash;
-        if (names != nullptr && (*names)[i] != nullptr) owner.companionNames = (*names)[i];
+        owner.setMember = operations != nullptr;
         owners.push_back(std::move(owner));
     }
     const auto fingerprint = NeutralMasterFingerprintV1(engine);
@@ -130184,16 +129507,11 @@ VnResult PrepareCanonicalSetActivation(Engine& engine,
     std::memcpy(ledger.lastMemberResults.data(), results.data(), ledger.lastMemberResults.size());
     const auto published = PrepareCanonicalOwners(engine, std::move(owners), &init, initHandle,
         out->preserveInit ? PackVariablePublicationReason::ContentMutation : PackVariablePublicationReason::InitPublication,
-        &out->publication, &bindings, &ledger, nullptr, budget);
+        &out->publication, &bindings, &ledger, budget);
     if (published != VN_OK) { return published; }
     const auto* next = out->publication.composition.Published();
     const auto references = ValidateCanonicalSetReferences(*next, previous);
     if (references != VN_OK) { return references; }
-    for (std::uint32_t i = 1; i < desc.memberCount; ++i) {
-        if (operations != nullptr) continue;
-        const auto catalog = CheckContentAgainstGameplayCatalog(*next, out->members[i].image);
-        if (catalog != VN_OK) { return catalog; }
-    }
     if (out->preserveInit) {
         out->ownerSlot = UINT32_MAX;
         std::vector<VnPackHandle> nextHandles;
@@ -130293,50 +129611,11 @@ void JournalSuccessfulCanonicalPackSetActivation(
 
 }  // namespace
 
-VnResult SetGameplayCatalog(Engine& engine, VnPackHandle expectedInitHandle,
-                            const VnPackByteSpan* catalog) try {
-    if (catalog == nullptr || catalog->structSize != sizeof(VnPackByteSpan) ||
-        catalog->reserved0 != 0 || catalog->bytes == nullptr || expectedInitHandle == 0)
-        return VN_INVALID_ARG;
-    if (engine.canonicalPackSetBusy) return VN_IN_USE;
-    CanonicalSetScope scope(engine);
-    const auto* published = engine.packComposition.Published();
-    if (published == nullptr || published->initHandle != expectedInitHandle)
-        return VN_STALE_HANDLE;
-    if (published->companionNames) return VN_AUTHORITY_CONFLICT;
-    const auto budget = detail::MakePackDecodeBudget(engine.config.maxPackDecodeStagingBytes);
-    detail::PackDecodeCharge staging(budget);
-    GameplayCatalogImage image;
-    const auto parsed = ParseGameplayCatalogWithBudget(
-        static_cast<const std::uint8_t*>(catalog->bytes), catalog->byteCount, &image, staging);
-    if (parsed != VN_OK) return parsed;
-    std::vector<PackComposition::CandidateOwner> owners;
-    detail::DecodeReserve(owners, published->owners.size(), staging);
-    for (const auto& owner : published->owners)
-        owners.push_back(PackComposition::Keep(owner, budget));
-    PreparedCanonicalPublication prepared;
-    const auto result = PrepareCanonicalOwners(engine, std::move(owners), nullptr,
-        expectedInitHandle, PackVariablePublicationReason::ContentMutation,
-        &prepared, nullptr, &published->ledger, &image, budget);
-    if (result != VN_OK) return result;
-    const auto signals = PrepareCanonicalSignals(engine, prepared);
-    if (signals != VN_OK) return signals;
-    CommitCanonicalOwners(engine, &prepared);
-    auto trace = ::TraceStateful(&engine, kTraceCallSetGameplayCatalog);
-    trace.U64(expectedInitHandle).U64(catalog->byteCount)
-        .Bytes(catalog->bytes, static_cast<std::size_t>(catalog->byteCount));
-    return VN_OK;
-} catch (const detail::PackDecodeCapacity&) {
-    return VN_PACK_RESIDENT_CAPACITY;
-}
-
 
 VnResult ActivateCanonicalPackSetImpl(
     Engine& engine, const VnCanonicalPackSetActivationDescV1* descriptor,
     VnCanonicalPackSetActivationReportV1* outReport,
     const std::vector<std::uint32_t>* operations = nullptr,
-    const std::vector<std::shared_ptr<const PackCompanionNames>>* names = nullptr,
-    std::uint64_t capturedNameBytes = 0,
     std::vector<std::uint64_t>* traceResources = nullptr,
     bool* traceInputMissing = nullptr) {
     VariableOperationScope variableOperation(&engine);
@@ -130409,7 +129688,6 @@ VnResult ActivateCanonicalPackSetImpl(
         PreparedCanonicalPackSetV1 prepared;
         prepared.budget = detail::MakePackDecodeBudget(engine.config.maxPackDecodeStagingBytes);
         prepared.staging = detail::PackDecodeCharge(prepared.budget);
-        prepared.staging.Add(capturedNameBytes);
         const auto previousHandle = engine.packComposition.PublishedHandle();
         const PackComposition::PublishedView* success = nullptr;
         bool commit = false;
@@ -130422,7 +129700,7 @@ VnResult ActivateCanonicalPackSetImpl(
                 const auto* previous = previousHandle.get();
                 const bool companion = operations != nullptr;
                 if (previous != nullptr && previous->initHandle != 0 &&
-                    previous->companionNames != companion) return VN_AUTHORITY_CONFLICT;
+                    previous->setActivated != companion) return VN_AUTHORITY_CONFLICT;
                 auto semanticKey = HashCanonicalPackSetSemanticKey(desc, !companion);
                 std::vector<AcquiredCanonicalSetMember> captured;
                 std::vector<std::vector<PackSoundStreamingRow>> demandRows;
@@ -130436,8 +129714,7 @@ VnResult ActivateCanonicalPackSetImpl(
                     detail::DecodeResize(captured, desc.memberCount, prepared.staging);
                     for (std::uint32_t i = 0; i < desc.memberCount; ++i) {
                         const auto operation = (*operations)[i];
-                        const auto digest = (*names)[i] != nullptr ? (*names)[i]->digest : 0;
-                        const std::uint64_t identity[] = {2, operation, digest};
+                        const std::uint64_t identity[] = {2, operation};
                         semanticKey = Fnv1a64(identity, sizeof(identity), semanticKey);
                         if (operation == VN_PACK_MEMBER_KEEP) continue;
                         const auto result = AcquireCanonicalSetMember(engine,
@@ -130491,7 +129768,7 @@ VnResult ActivateCanonicalPackSetImpl(
                     }
                 }
                 const auto preparedResult = PrepareCanonicalSetActivation(
-                    engine, desc, semanticKey, previous, &prepared, operations, names,
+                    engine, desc, semanticKey, previous, &prepared, operations,
                     companion ? &captured : nullptr);
                 if (preparedResult != VN_OK) {
                     return preparedResult;
@@ -130576,25 +129853,14 @@ VnResult ActivateCanonicalPackSetV2(
     if (engine.canonicalPackSetBusy) return VN_IN_USE;
     std::vector<VnCanonicalPackSetMemberV1> members;
     std::vector<std::uint32_t> operations;
-    std::vector<std::shared_ptr<const PackCompanionNames>> names;
     members.reserve(input->memberCount);
     operations.reserve(input->memberCount);
-    names.reserve(input->memberCount);
-    auto nameBudget = engine.config.maxPackDecodeStagingBytes;
     for (std::uint32_t i = 0; i < input->memberCount; ++i) {
         const auto& member = input->members[i];
-        if (member.structSize != sizeof(member) || member.operation > VN_PACK_MEMBER_NAME_ONLY ||
-            (member.operation == VN_PACK_MEMBER_KEEP) != (member.names == nullptr))
+        if (member.structSize != sizeof(member) || member.operation > VN_PACK_MEMBER_CONTENT)
             return refuse(VN_INVALID_ARG);
-        std::shared_ptr<PackCompanionNames> captured;
-        if (member.names != nullptr) {
-            captured = std::make_shared<PackCompanionNames>();
-            const auto result = CapturePackCompanionNames(*member.names, nameBudget, captured.get());
-            if (result != VN_OK) return refuse(result);
-        }
         members.push_back(member.source);
         operations.push_back(member.operation);
-        names.push_back(std::move(captured));
     }
     VnCanonicalPackSetActivationDescV1 desc{};
     desc.structSize = sizeof(desc);
@@ -130612,9 +129878,8 @@ VnResult ActivateCanonicalPackSetV2(
     const auto* before = engine.packComposition.Published();
     const auto priorRevision = before != nullptr ? before->ledger.setRevision : 0;
     bool missingInput = false;
-    const auto result = ActivateCanonicalPackSetImpl(engine, &desc, outReport, &operations, &names,
-        engine.config.maxPackDecodeStagingBytes - nameBudget, recording ? &resources : nullptr,
-        recording ? &missingInput : nullptr);
+    const auto result = ActivateCanonicalPackSetImpl(engine, &desc, outReport, &operations,
+        recording ? &resources : nullptr, recording ? &missingInput : nullptr);
     if (!recording) return result;
     auto trace = ::TraceStateful(&engine, kTraceCallActivateCanonicalPackSetV2);
     if (result == VN_INVALID_ARG) {
@@ -130627,15 +129892,6 @@ VnResult ActivateCanonicalPackSetV2(
         const auto& member = members[i];
         trace.U32(operations[i]).U64(member.packStableId).U64(member.expectedHandle)
             .U32(member.packKind).U64(resources[i]);
-        if (names[i] == nullptr) continue;
-        const auto& captured = *names[i];
-        trace.ObjectId(captured.projectId).ObjectId(captured.rootActionId)
-            .Str(captured.rootName.c_str()).Str(captured.language.c_str())
-            .U32(static_cast<std::uint32_t>(captured.variables.size()))
-            .U32(static_cast<std::uint32_t>(captured.labels.size()));
-        for (const auto& row : captured.variables) trace.ObjectId(row.id).Str(row.name.c_str());
-        for (const auto& row : captured.labels)
-            trace.ObjectId(row.variableId).ObjectId(row.id).Str(row.name.c_str());
     }
     const auto policy = IsTransientPackTraceRefusal(result) ? 1u :
         (missingInput && (result == VN_PACK_PROVIDER_FAILED || result == VN_BAD_PACK) ? 2u : 0u);
@@ -130838,7 +130094,7 @@ VnResult LoadCanonicalPackImpl(Engine& engine, const VnPackLoadDesc* desc,
     CanonicalByteSpanGuard spanGuard{*desc};
     const VnPackByteSpan& span = spanGuard.span;
     if (const auto* published = engine.packComposition.Published()) {
-        if (published->companionNames) return VN_AUTHORITY_CONFLICT;
+        if (published->setActivated) return VN_AUTHORITY_CONFLICT;
     }
     const VnResult acquired = AcquireCanonicalBytes(
         *desc, &owned, &spanGuard.span, &spanGuard.release,
@@ -130895,13 +130151,6 @@ VnResult LoadCanonicalPackImpl(Engine& engine, const VnPackLoadDesc* desc,
     if (RequiredCycle(engine.packComposition, image.dependencyEdges,
                       image.packStableId)) {
         return VN_PACK_CYCLE;
-    }
-    if (image.packKind == HK_PACK_KIND_CANONICAL_CONTENT) {
-        if (const auto* published = engine.packComposition.Published()) {
-            const VnResult catalogCheck = CheckContentAgainstGameplayCatalog(*published, image);
-            if (catalogCheck != VN_OK)
-                return catalogCheck;
-        }
     }
     const VnResult adopted = AdoptOwnedPackBytes(span, &owned);
     if (adopted != VN_OK) {
@@ -130980,7 +130229,7 @@ VnResult LoadCanonicalPackImpl(Engine& engine, const VnPackLoadDesc* desc,
                                                : 0),
         image.packKind == HK_PACK_KIND_INIT ? PackVariablePublicationReason::InitPublication
                                        : PackVariablePublicationReason::ContentMutation,
-        &publication, nullptr, nullptr, nullptr, budget);
+        &publication, nullptr, nullptr, budget);
     if (published != VN_OK) {
         return published;
     }
@@ -131065,7 +130314,7 @@ VnResult UnloadCanonicalPack(Engine& engine, VnPackHandle handle,
             return canUnload;
         }
     }
-    if (published->companionNames) {
+    if (published->setActivated) {
         if (published->ledger.setRevision == UINT64_MAX) return VN_RUNTIME_RECREATE_REQUIRED;
         std::vector<VnCanonicalPackSetMemberV1> members;
         for (const auto& existing : published->owners) {
@@ -131084,7 +130333,6 @@ VnResult UnloadCanonicalPack(Engine& engine, VnPackHandle handle,
         });
         const auto count = static_cast<std::uint32_t>(members.size());
         std::vector<std::uint32_t> operations(count, VN_PACK_MEMBER_KEEP);
-        std::vector<std::shared_ptr<const PackCompanionNames>> names(count);
         std::vector<VnCanonicalPackSetMemberResultV1> results(count);
         for (auto& row : results) row.structSize = sizeof(row);
         VnCanonicalPackSetActivationDescV1 desc{};
@@ -131100,7 +130348,7 @@ VnResult UnloadCanonicalPack(Engine& engine, VnPackHandle handle,
         desc.outputMembers = results.data();
         VnCanonicalPackSetActivationReportV1 report{};
         report.structSize = sizeof(report);
-        return ActivateCanonicalPackSetImpl(engine, &desc, &report, &operations, &names);
+        return ActivateCanonicalPackSetImpl(engine, &desc, &report, &operations);
     }
     const auto budget = detail::MakePackDecodeBudget(engine.config.maxPackDecodeStagingBytes);
     detail::PackDecodeCharge staging(budget);
@@ -131123,7 +130371,7 @@ VnResult UnloadCanonicalPack(Engine& engine, VnPackHandle handle,
     const VnResult preparedPublication = PrepareCanonicalOwners(
         engine, std::move(owners), nullptr, published->initHandle,
         PackVariablePublicationReason::ContentMutation,
-        &publication, nullptr, nullptr, nullptr, budget);
+        &publication, nullptr, nullptr, budget);
     if (preparedPublication != VN_OK) {
         engine.packs.CancelPreparedMutation(&media);
         return preparedPublication;
@@ -131176,7 +130424,7 @@ VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle,
     if (published == nullptr) {
         return VN_STALE_HANDLE;
     }
-    if (published->companionNames) return VN_AUTHORITY_CONFLICT;
+    if (published->setActivated) return VN_AUTHORITY_CONFLICT;
     for (const auto& owner : published->owners) {
         if (owner.handle == handle &&
             owner.packStableId == published->initPackStableId) {
@@ -131239,10 +130487,6 @@ VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle,
     if (RequiredCycle(engine.packComposition, image.dependencyEdges,
                       image.packStableId)) {
         return VN_PACK_CYCLE;
-    }
-    const VnResult catalogCheck = CheckContentAgainstGameplayCatalog(*published, image);
-    if (catalogCheck != VN_OK) {
-        return catalogCheck;
     }
     if (!boundedFile) {
         const VnResult adopted = AdoptOwnedPackBytes(span, &owned);
@@ -131312,7 +130556,7 @@ VnResult ReplaceCanonicalPack(Engine& engine, VnPackHandle handle,
     const VnResult preparedPublication = PrepareCanonicalOwners(
         engine, std::move(owners), nullptr, published->initHandle,
         PackVariablePublicationReason::ContentMutation,
-        &publication, nullptr, nullptr, nullptr, budget);
+        &publication, nullptr, nullptr, budget);
     if (preparedPublication != VN_OK) {
         engine.packs.CancelPreparedMutation(&media);
         return preparedPublication;
@@ -131615,28 +130859,6 @@ VnResult Vn_SetValue(VnVariableId variableId, float value) {
     return result;
 }
 
-VnResult Vn_SetValueByName(const char* utf8Name, float value) {
-    VnPostActionByNameDesc desc{};
-    desc.structSize = sizeof(desc);
-    desc.utf8Name = utf8Name;
-    VnVariableResolved resolved{};
-    resolved.structSize = sizeof(resolved);
-    const auto result = Vn_ResolveVariableByName(&desc, &resolved);
-    return result == VN_OK ? Vn_SetValue(resolved.variableId, value)
-                           : RejectVariableRequest({}, value, 0, result);
-}
-
-VnResult Vn_SetEmitterValueByName(VnEmitterHandle handle, const char* utf8Name, float value) {
-    VnPostActionByNameDesc desc{};
-    desc.structSize = sizeof(desc);
-    desc.utf8Name = utf8Name;
-    VnVariableResolved resolved{};
-    resolved.structSize = sizeof(resolved);
-    const auto result = Vn_ResolveVariableByName(&desc, &resolved);
-    return result == VN_OK ? Vn_SetEmitterValue(handle, resolved.variableId, value)
-                           : RejectVariableRequest({}, value, handle, result);
-}
-
 VnResult Vn_SetEmitterValue(VnEmitterHandle handle, VnVariableId variableId, float value) {
     const auto request = harken::detail::BeginMonitorRequest(
         harken::MonitorRequestOrigin::NativeAPI, VN_MONITOR_OPERATION_SET_EMITTER_VALUE);
@@ -131658,84 +130880,6 @@ VnResult Vn_SetValueByLabelId(VnVariableId variableId, VnObjectId labelId,
     if (result != VN_OK) return RejectVariableRequest(variableId, 0.0f, emitter, result);
     return emitter == 0 ? Vn_SetValue(variableId, value)
                         : Vn_SetEmitterValue(emitter, variableId, value);
-}
-
-VnResult Vn_SetValueByLabelName(VnVariableId variableId, const char* utf8Name,
-                         VnEmitterHandle emitter) {
-    if (harken::detail::CanonicalSetMutationBlocked()) return RejectVariableRequest(variableId, 0.0f, emitter, VN_IN_USE);
-    const auto* engine = harken::detail::g_engine;
-    if (engine == nullptr || engine->callbackFatalSticky) return RejectVariableRequest(variableId, 0.0f, emitter, VN_NOT_INITIALIZED);
-    if (engine->runtimeTransportResetActive) return RejectVariableRequest(variableId, 0.0f, emitter, VN_BACKPRESSURE);
-    if (utf8Name == nullptr) return RejectVariableRequest(variableId, 0.0f, emitter, VN_INVALID_ARG);
-    const auto* published = engine->packComposition.Published();
-    if (published != nullptr && published->companionNames) {
-        for (const auto& owner : published->owners) {
-            if (owner.handle != published->initHandle || owner.companionNames == nullptr) continue;
-            for (const auto& label : owner.companionNames->labels) {
-                if (label.variableId == variableId && label.name == utf8Name)
-                    return Vn_SetValueByLabelId(variableId, label.id, emitter);
-            }
-        }
-        return RejectVariableRequest(variableId, 0.0f, emitter, VN_UNKNOWN_ID);
-    }
-    float value = 0.0f;
-    const auto result = engine->variables.ResolveLabel(variableId, std::string_view(utf8Name), &value);
-    if (result != VN_OK) return RejectVariableRequest(variableId, 0.0f, emitter, result);
-    return emitter == 0 ? Vn_SetValue(variableId, value)
-                        : Vn_SetEmitterValue(emitter, variableId, value);
-}
-
-VnResult Vn_ResolveVariableByName(const VnPostActionByNameDesc* desc,
-                                  VnVariableResolved* outResolved) {
-    try {
-        if (outResolved == nullptr ||
-            outResolved->structSize != sizeof(VnVariableResolved)) {
-            return VN_INVALID_ARG;
-        }
-        if (desc == nullptr ||
-            desc->structSize != sizeof(VnPostActionByNameDesc) ||
-            desc->flags != 0 || desc->reserved0 != 0 || desc->emitter != 0 ||
-            desc->callerSeed != 0 || desc->utf8Name == nullptr) {
-            return VN_INVALID_ARG;
-        }
-        const VnResult grammar = ValidateAuthoredActionName(desc->utf8Name);
-        if (grammar != VN_OK) {
-            return grammar;
-        }
-        harken::Engine* engine = harken::detail::g_engine;
-        if (engine == nullptr || engine->callbackFatalSticky) {
-            return VN_NOT_INITIALIZED;
-        }
-        const auto* published = engine->packComposition.Published();
-        if (published == nullptr || !published->hasVariableNameCatalog) {
-            return VN_CAPABILITY_UNAVAILABLE;
-        }
-        const auto& catalog = published->variableNameCatalog;
-        if (!GuidIsZero(desc->projectGuid) &&
-            std::memcmp(desc->projectGuid, catalog.projectGuid.data(), 16) != 0) {
-            return VN_GAMEPLAY_WRONG_PROJECT;
-        }
-        const std::string_view wanted(desc->utf8Name);
-        const auto active = std::lower_bound(catalog.rows.begin(), catalog.rows.end(), wanted,
-            [](const auto& row, std::string_view name) { return row.name < name; });
-        if (active == catalog.rows.end() || active->name != wanted) {
-            return VN_NO_VARIABLE;
-        }
-        VnVariableQueryResultV1 live{};
-        live.structSize = sizeof(live);
-        const VnResult queried = engine->variables.QueryVariable(
-            active->variableId, 0, engine->emitters, &live);
-        if (queried != VN_OK) return queried;
-        outResolved->reserved0 = 0;
-        outResolved->variableId = active->variableId;
-        outResolved->executionFingerprint = live.executionFingerprint;
-        std::memcpy(outResolved->projectGuid, catalog.projectGuid.data(), 16);
-        return VN_OK;
-    } catch (const std::bad_alloc&) {
-        return VN_DEVICE_ERROR;
-    } catch (...) {
-        return VN_DEVICE_ERROR;
-    }
 }
 
 VnResult Vn_SetValues(const VnVariableBatchDescV1* desc, VnVariableTicketV1* outTicket) {
@@ -131799,59 +130943,6 @@ VnResult Vn_PostAction(const VnPostActionDesc* desc, VnActionFiringHandle* outFi
         VN_MONITOR_ENTITY_ACTION, readable ? desc->actionId : VnObjectId{},
         result == VN_OK && outFiring ? *outFiring : 0,
         readable ? desc->emitter : 0, readable ? desc->callerSeed : 0);
-    if (result == VN_OK && outFiring) {
-        observation.TargetValidated();
-        harken::detail::CaptureMonitorAcceptedRequest(observation, VN_MONITOR_SUBJECT_ACTION, *outFiring);
-    }
-    return observation.Returned(result);
-}
-
-VnResult Vn_PostActionByName(const VnPostActionByNameDesc* desc, VnActionFiringHandle* outFiring) {
-    const auto request = harken::detail::BeginMonitorRequest(
-        harken::MonitorRequestOrigin::NativeAPI, VN_MONITOR_OPERATION_POST_ACTION_BY_NAME);
-    harken::monitor::RequestObservation observation(request);
-    const auto result = PostActionByNameObserved(desc, outFiring, request, &observation);
-    const bool readable = desc && desc->structSize == sizeof(*desc);
-    harken::monitor::ObserveOperation(VN_MONITOR_OPERATION_POST_ACTION_BY_NAME, result,
-        VN_MONITOR_ENTITY_ACTION, {}, result == VN_OK && outFiring ? *outFiring : 0,
-        readable ? desc->emitter : 0, readable ? desc->callerSeed : 0, 0,
-        readable ? desc->utf8Name : nullptr);
-    if (result == VN_OK && outFiring) {
-        observation.TargetValidated();
-        harken::detail::CaptureMonitorAcceptedRequest(observation, VN_MONITOR_SUBJECT_ACTION, *outFiring);
-    }
-    return observation.Returned(result);
-}
-
-VnResult Vn_PostActionPinned(const VnActionPinnedDesc* desc, VnActionFiringHandle* outFiring) {
-    const auto request = harken::detail::BeginMonitorRequest(
-        harken::MonitorRequestOrigin::NativeAPI, VN_MONITOR_OPERATION_POST_ACTION_PINNED);
-    harken::monitor::RequestObservation observation(request);
-    const auto result = PostActionPinnedObserved(desc, outFiring, request, &observation);
-    const bool readable = desc && desc->structSize == sizeof(*desc);
-    harken::monitor::ObserveOperation(VN_MONITOR_OPERATION_POST_ACTION_PINNED, result,
-        VN_MONITOR_ENTITY_ACTION, readable ? desc->actionId : VnObjectId{},
-        result == VN_OK && outFiring ? *outFiring : 0,
-        readable ? desc->emitter : 0, readable ? desc->callerSeed : 0, 0,
-        readable ? desc->utf8ExpectedName : nullptr);
-    if (result == VN_OK && outFiring) {
-        observation.TargetValidated();
-        harken::detail::CaptureMonitorAcceptedRequest(observation, VN_MONITOR_SUBJECT_ACTION, *outFiring);
-    }
-    return observation.Returned(result);
-}
-
-VnResult Vn_PostActionResolved(const VnActionResolved* resolved,
-                               VnEmitterHandle emitter, uint64_t callerSeed,
-                               VnActionFiringHandle* outFiring) {
-    const auto request = harken::detail::BeginMonitorRequest(
-        harken::MonitorRequestOrigin::NativeAPI, VN_MONITOR_OPERATION_POST_ACTION_RESOLVED);
-    harken::monitor::RequestObservation observation(request);
-    const auto result = PostActionResolvedObserved(resolved, emitter, callerSeed, outFiring, request, &observation);
-    harken::monitor::ObserveOperation(VN_MONITOR_OPERATION_POST_ACTION_RESOLVED, result,
-        VN_MONITOR_ENTITY_ACTION,
-        resolved && resolved->structSize == sizeof(*resolved) ? resolved->actionId : VnObjectId{},
-        result == VN_OK && outFiring ? *outFiring : 0, emitter, callerSeed);
     if (result == VN_OK && outFiring) {
         observation.TargetValidated();
         harken::detail::CaptureMonitorAcceptedRequest(observation, VN_MONITOR_SUBJECT_ACTION, *outFiring);

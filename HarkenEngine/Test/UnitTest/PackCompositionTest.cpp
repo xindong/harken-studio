@@ -5726,20 +5726,20 @@ TEST(PackComposition, InactiveOwnerPreparationAdmitsWorldScratchBeforeAllocation
     auto budget = detail::MakePackDecodeBudget(1024 * 1024);
     PackComposition::PreparedCommit prepared;
     ASSERT_EQ(VN_OK, composition.PrepareCommit(candidates(), nullptr, 0, 8, 0,
-        &prepared, nullptr, nullptr, false, nullptr, budget));
+        &prepared, nullptr, nullptr, false, budget));
     const auto retainedPreparation = budget->live;
     prepared = {};
     ASSERT_EQ(0u, budget->live);
     budget->limit = retainedPreparation + worldScratch - 1;
     EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY, composition.PrepareCommit(candidates(),
-        nullptr, 0, 8, 0, &prepared, nullptr, nullptr, false, nullptr, budget));
+        nullptr, 0, 8, 0, &prepared, nullptr, nullptr, false, budget));
     EXPECT_FALSE(prepared.IsPrepared());
     EXPECT_EQ(previous, composition.PublishedHandle());
     EXPECT_EQ(generation, composition.CompositeGeneration());
     EXPECT_EQ(0u, budget->live);
     ++budget->limit;
     ASSERT_EQ(VN_OK, composition.PrepareCommit(candidates(), nullptr, 0, 8, 0,
-        &prepared, nullptr, nullptr, false, nullptr, budget));
+        &prepared, nullptr, nullptr, false, budget));
     EXPECT_EQ(retainedPreparation, budget->live);
     composition.CommitPrepared(&prepared);
     EXPECT_EQ(0u, budget->live);
@@ -5784,7 +5784,7 @@ TEST(PackComposition, ComparisonBudgetRefusalPreservesPublicationAndRetries) {
     allocation_probe::count = 0;
     allocation_probe::enabled = true;
     const auto mapRefused = composition.PrepareCommit(std::move(owners), nullptr, 0, 8, 0,
-        &prepared, nullptr, nullptr, false, nullptr, budget);
+        &prepared, nullptr, nullptr, false, budget);
     allocation_probe::enabled = false;
     EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY, mapRefused);
     EXPECT_EQ(0u, allocation_probe::count);
@@ -5795,7 +5795,7 @@ TEST(PackComposition, ComparisonBudgetRefusalPreservesPublicationAndRetries) {
     budget->limit = budget->live + sizeof(PackComposition::PublishedView) +
         2 * sizeof(PackComposition::PublishedOwner) + 2 * mapBytes;
     EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY, composition.PrepareCommit(std::move(owners),
-        nullptr, 0, 8, 0, &prepared, nullptr, nullptr, false, nullptr, budget));
+        nullptr, 0, 8, 0, &prepared, nullptr, nullptr, false, budget));
     EXPECT_EQ(prior.get(), composition.Published());
     EXPECT_EQ(generation, composition.CompositeGeneration());
     EXPECT_EQ(VnObjectId{}, composition.Facts().conflictingStableId);
@@ -5805,7 +5805,7 @@ TEST(PackComposition, ComparisonBudgetRefusalPreservesPublicationAndRetries) {
     allocation_probe::count = 0;
     allocation_probe::enabled = true;
     const auto measured = composition.PrepareCommit(std::move(owners), nullptr, 0, 8, 0,
-        &prepared, nullptr, nullptr, false, nullptr, budget);
+        &prepared, nullptr, nullptr, false, budget);
     allocation_probe::enabled = false;
     const auto attempts = allocation_probe::count;
     ASSERT_EQ(VN_OK, measured);
@@ -5820,7 +5820,7 @@ TEST(PackComposition, ComparisonBudgetRefusalPreservesPublicationAndRetries) {
         allocation_probe::failAt = nth;
         allocation_probe::enabled = true;
         const auto result = composition.PrepareCommit(std::move(owners), nullptr, 0, 8, 0,
-            &prepared, nullptr, nullptr, false, nullptr, budget);
+            &prepared, nullptr, nullptr, false, budget);
         allocation_probe::enabled = false;
         const bool consumed = allocation_probe::failAt == 0;
         allocation_probe::failAt = 0;
@@ -5832,7 +5832,7 @@ TEST(PackComposition, ComparisonBudgetRefusalPreservesPublicationAndRetries) {
         EXPECT_EQ(0u, budget->live);
     }
     ASSERT_EQ(VN_OK, composition.PrepareCommit(keep(), nullptr, 0, 8, 0, &prepared,
-        nullptr, nullptr, false, nullptr, budget));
+        nullptr, nullptr, false, budget));
     EXPECT_GT(budget->live, 0u);
     composition.CommitPrepared(&prepared);
     EXPECT_EQ(0u, budget->live);
@@ -27411,20 +27411,19 @@ std::vector<std::uint8_t> BuildInitWithVariableOverlay(
     float defaultValue = 0.0f, bool emitOverlay = true,
     bool emptyOverlay = false, std::uint8_t writers = 1,
     VariableScopeV1 scope = VariableScopeV1::Global,
-    const PackVariableNameCatalog* names = nullptr) {
+    VnObjectId projectId = {}) {
     VariableDefinitionV1 variable = harkentest::MakeVariableDefinition(
         variableId, VariableKindV1::Smooth, rangeMin, rangeMax, defaultValue);
     ContainerWorldInstallViewV1 world{};
     world.variables = &variable;
     world.variableCount = 1;
-    if (names) world.identity.projectId = ObjectIdFromBytes(names->projectGuid);
+    if (!harken::IsNull(projectId)) world.identity.projectId = projectId;
     world.identity.capabilityMask = kWorldCapabilityVariableDefinitions;
     world.identity.runtimeSemanticFingerprint =
         ComputeCurrentWorldFingerprintV4(world);
     ImageBuilder builder(HK_PACK_KIND_INIT);
-    const auto revision = names ? names->initContentRevision : 1;
     builder.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, 11,
-                     RequirementPayload(11, revision, 1));
+                     RequirementPayload(11, 1, 1));
     builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, 11,
                      WrapWorldPartition(11, 1, world, 1));
     harkentest::packfoundation::AppendNeutralMasterSnapshot(&builder);
@@ -27467,39 +27466,13 @@ std::vector<std::uint8_t> BuildInitWithTwoVariables(
 }
 
 bool LoadInitPack(const std::vector<std::uint8_t>& bytes, const char* name,
-                  VnPackHandle* handle, const VnPackNamesV1* names = nullptr) {
+                  VnPackHandle* handle) {
     const auto path = WriteTemp(name, bytes);
     *handle = 0;
     harken::PackCanonicalImage image;
     if (ParsePackCanonicalImage(bytes.data(), bytes.size(), &image) != VN_OK ||
         image.packKind != HK_PACK_KIND_INIT) {
         return false;
-    }
-    if (names != nullptr) {
-        VnCanonicalPackSetMemberV2 member{};
-        member.structSize = sizeof(member);
-        member.operation = VN_PACK_MEMBER_CONTENT;
-        member.source.structSize = sizeof(member.source);
-        member.source.packStableId = image.packStableId;
-        member.source.packKind = VN_CANONICAL_PACK_SET_MEMBER_INIT;
-        member.source.utf8Path = path.c_str();
-        member.names = names;
-        VnCanonicalPackSetMemberResultV1 result{};
-        result.structSize = sizeof(result);
-        VnCanonicalPackSetActivationDescV2 desc{};
-        desc.structSize = sizeof(desc);
-        desc.setRevision = 1;
-        desc.memberCount = 1;
-        desc.memberStructSize = sizeof(member);
-        desc.members = &member;
-        desc.outputMemberCapacity = 1;
-        desc.outputMemberStructSize = sizeof(result);
-        desc.outputMembers = &result;
-        VnCanonicalPackSetActivationReportV1 report{};
-        report.structSize = sizeof(report);
-        if (Vn_ActivateCanonicalPackSetV2(&desc, &report) != VN_OK) return false;
-        *handle = report.initHandle;
-        return true;
     }
     return harkentest::ActivateExistingInitPackV1(path.c_str(), image.packStableId,
                                                  handle) == VN_OK;
@@ -27513,18 +27486,10 @@ TEST(PackComposition, VariableApiSetValuePreservesWriteScopeAndPublishesInitFixt
     std::uint64_t fingerprint = 0;
     ASSERT_TRUE(ComputeVariableExecutionFingerprintV1(variable, 1, 1, 3,
         0, 1, 0, nullptr, 0, &fingerprint));
-    PackVariableNameCatalog names;
-    names.projectGuid[15] = 1;
-    names.initPackStableId = 11;
-    names.initContentRevision = 1;
-    names.rows.push_back({variable, "VehicleRPM"});
     const auto bytes = BuildInitWithVariableOverlay(variable, fingerprint,
-        0, 1, 0, true, false, 3, VariableScopeV1::Global, &names);
+        0, 1, 0, true, false, 3, VariableScopeV1::Global, VnObjectId{0, 1});
     VnPackHandle init = 0;
-    const VnPackVariableNameV1 variableName{variable, "VehicleRPM"};
-    const VnPackNamesV1 companion{sizeof(companion), 0,
-        ObjectIdFromBytes(names.projectGuid), {}, "", "", 1, 0, &variableName, nullptr};
-    ASSERT_TRUE(LoadInitPack(bytes, "variable-sdk-init.pack", &init, &companion));
+    ASSERT_TRUE(LoadInitPack(bytes, "variable-sdk-init.pack", &init));
     ASSERT_EQ(VN_OK, harken::GuardTypedVariableCatalog(
         harken::generated::kVariableExecutionCatalogFingerprint));
     VnEmitterHandle a = 0, b = 0;
@@ -27553,24 +27518,6 @@ TEST(PackComposition, VariableApiSetValuePreservesWriteScopeAndPublishesInitFixt
     ASSERT_EQ(VN_OK, Vn_SetValue(variable, 0.75f));
     harkentest::AdvanceVariableWrite(&engine);
     expect(0.75f, 0.75f, 0);
-}
-
-TEST(PackComposition, VariableNamesRejectAmbiguousIdentity) {
-    PackVariableNameCatalog names;
-    names.projectGuid[15] = 1;
-    names.initPackStableId = 11;
-    names.initContentRevision = 1;
-    names.rows.push_back({harkentest::ObjectId(7), "Speed"});
-    ASSERT_TRUE(ValidateVariableNameCatalog(names));
-    names.rows.push_back({harkentest::ObjectId(8), "Speed"});
-    EXPECT_FALSE(ValidateVariableNameCatalog(names));
-    names.rows.back().name = "Velocity";
-    names.rows.back().variableId = names.rows.front().variableId;
-    EXPECT_FALSE(ValidateVariableNameCatalog(names));
-    names.rows.back().variableId = harkentest::ObjectId(8);
-    EXPECT_TRUE(ValidateVariableNameCatalog(names));
-    names.rows.back().name = "Bad Name";
-    EXPECT_FALSE(ValidateVariableNameCatalog(names));
 }
 
 TEST(PackComposition, GameWriteHonorsWritersMask) {
@@ -28499,7 +28446,7 @@ TEST(PackComposition, MixedMusicAndLegacyContractsKeepOwnerFingerprintsAndRollba
             allocation_probe::count = 0;
             allocation_probe::enabled = true;
             const auto measured = composition.PrepareCommit(std::move(owners), nullptr, 0, 16, 0,
-                &budgetPrepared, nullptr, nullptr, false, nullptr, budget);
+                &budgetPrepared, nullptr, nullptr, false, budget);
             allocation_probe::enabled = false;
             const auto attempts = allocation_probe::count;
             ASSERT_EQ(VN_OK, measured);
@@ -28514,7 +28461,7 @@ TEST(PackComposition, MixedMusicAndLegacyContractsKeepOwnerFingerprintsAndRollba
                 allocation_probe::failAt = nth;
                 allocation_probe::enabled = true;
                 const auto result = composition.PrepareCommit(std::move(owners), nullptr, 0, 16, 0,
-                    &budgetPrepared, nullptr, nullptr, false, nullptr, budget);
+                    &budgetPrepared, nullptr, nullptr, false, budget);
                 allocation_probe::enabled = false;
                 const bool consumed = allocation_probe::failAt == 0;
                 allocation_probe::failAt = 0;
@@ -28526,7 +28473,7 @@ TEST(PackComposition, MixedMusicAndLegacyContractsKeepOwnerFingerprintsAndRollba
                 EXPECT_EQ(0u, budget->live);
             }
             ASSERT_EQ(VN_OK, composition.PrepareCommit(keep(), nullptr, 0, 16, 0,
-                &budgetPrepared, nullptr, nullptr, false, nullptr, budget));
+                &budgetPrepared, nullptr, nullptr, false, budget));
             budgetPrepared = {};
             EXPECT_EQ(0u, budget->live);
         }

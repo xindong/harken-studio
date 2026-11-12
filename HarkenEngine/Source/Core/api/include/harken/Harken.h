@@ -976,18 +976,6 @@ VnResult Vn_SetVoicePan(VnVoiceHandle handle, float pan);
  * 2D voices store width without changing their image. */
 VnResult Vn_SetVoiceWidth(VnVoiceHandle handle, float width);
 
-typedef struct VnVariableResolved {
-    uint32_t structSize;
-    uint32_t reserved0;
-    VnObjectId variableId;
-    uint64_t executionFingerprint;
-    uint8_t projectGuid[16];
-} VnVariableResolved;
-
-#ifdef __cplusplus
-static_assert(sizeof(VnVariableResolved) == 48, "VnVariableResolved");
-#endif
-
 /* Accepts a Global write for an installed current-world Variable definition.
  * Applying it atomically removes every emitter override for this Variable,
  * even when the global value is unchanged. Other Variables are unaffected.
@@ -997,13 +985,9 @@ static_assert(sizeof(VnVariableResolved) == 48, "VnVariableResolved");
  * accepted and will reach one applied, superseded, or lifecycle termination
  * outcome. Logic thread only. */
 VnResult Vn_SetValue(VnVariableId variableId, float value);
-VnResult Vn_SetValueByName(const char* utf8Name, float value);
-VnResult Vn_SetEmitterValueByName(VnEmitterHandle handle, const char* utf8Name, float value);
 
 VnResult Vn_SetValueByLabelId(VnVariableId variableId, VnObjectId labelId,
                    VnEmitterHandle emitter);
-VnResult Vn_SetValueByLabelName(VnVariableId variableId, const char* utf8Name,
-                         VnEmitterHandle emitter);
 
 #define VN_VARIABLE_BATCH_WRITE_CAPACITY 8
 
@@ -1653,6 +1637,23 @@ typedef void (*VnPackByteReleaseFn)(
     uint64_t packStableId,
     VnPackByteSpan span);
 
+#define VN_ABI_VERSION_MAJOR 1u
+#define VN_ABI_VERSION_MINOR 0u
+
+typedef struct VnAbiVersionInfo {
+    uint32_t structSize;
+    uint32_t major;
+    uint32_t minor;
+} VnAbiVersionInfo;
+
+#ifdef __cplusplus
+static_assert(sizeof(VnAbiVersionInfo) == 12, "VnAbiVersionInfo");
+#endif
+
+/* Legal before Vn_Init. Consumers compare major with VN_ABI_VERSION_MAJOR at
+ * startup; minor grows when entry points or struct vintages are added. */
+VnResult Vn_QueryAbiVersion(VnAbiVersionInfo* out);
+
 typedef struct VnPackFormatVersionInfo {
     uint32_t structSize;
     uint32_t oldestReadable;
@@ -1747,59 +1748,24 @@ typedef struct VnCanonicalPackSetUnloadDescV1 {
     uint64_t reserved0;
 } VnCanonicalPackSetUnloadDescV1;
 
-VnResult Vn_SetGameplayCatalog(VnPackHandle expectedInitHandle,
-                              const VnPackByteSpan* catalog);
-
 VnResult Vn_ActivateCanonicalPackSetV1(
     const VnCanonicalPackSetActivationDescV1* desc,
     VnCanonicalPackSetActivationReportV1* outReport);
 VnResult Vn_UnloadCanonicalPackSetV1(
     const VnCanonicalPackSetUnloadDescV1* desc);
 
-/* Companion names are supplied with the captured pack, never inferred from
- * an authored-history catalog. Strings and rows are copied during the call.
- * Init supplies all Variable names and any named subset of its Labels.
- * Content supplies exactly its root Action name and the selected language
- * (empty for General). Object identity remains the authored GUID. */
-typedef struct VnPackVariableNameV1 {
-    VnVariableId variableId;
-    const char* utf8Name;
-} VnPackVariableNameV1;
-
-typedef struct VnPackLabelNameV1 {
-    VnVariableId variableId;
-    VnObjectId labelId;
-    const char* utf8Name;
-} VnPackLabelNameV1;
-
-typedef struct VnPackNamesV1 {
-    uint32_t structSize;
-    uint32_t flags;
-    VnObjectId projectId;
-    VnObjectId rootActionId;
-    const char* utf8RootName;
-    const char* utf8Language;
-    uint32_t variableCount;
-    uint32_t labelCount;
-    const VnPackVariableNameV1* variables;
-    const VnPackLabelNameV1* labels;
-} VnPackNamesV1;
-
 #define VN_PACK_MEMBER_KEEP ((uint32_t)0u)
 #define VN_PACK_MEMBER_CONTENT ((uint32_t)1u)
-#define VN_PACK_MEMBER_NAME_ONLY ((uint32_t)2u)
 
 typedef struct VnCanonicalPackSetMemberV2 {
     uint32_t structSize;
     uint32_t operation;
     VnCanonicalPackSetMemberV1 source;
-    const VnPackNamesV1* names;
 } VnCanonicalPackSetMemberV2;
 
 /* The complete desired set, Init first, remaining members ordered by pack ID.
- * Keep has only source identity/kind/expectedHandle, with no source or names.
- * Content and NameOnly capture the source and names; NameOnly requires the
- * bytes to match the installed content. Omitted owners are unloaded atomically.
+ * Keep has only source identity/kind/expectedHandle, with no source bytes.
+ * Content captures the source bytes. Omitted owners are unloaded atomically.
  * V1 layouts and legacy semantics remain unchanged. A companion Init accepts
  * only V2 mutations until unloaded; legacy catalog writes cannot replace it. */
 typedef struct VnCanonicalPackSetActivationDescV2 {
@@ -1895,7 +1861,7 @@ typedef struct VnPackInspectDescV1 {
     uint32_t flags;
     VnPackByteSpan pack;
     VnPackByteSpan init; /* Required for Content; empty for Init. */
-    const VnPackNamesV1* names;
+    VnObjectId rootActionId; /* Content: the authored root Action; zero for Init. */
     uint64_t maxInputBytes;
     uint32_t variableCapacity;
     uint32_t labelCapacity;
@@ -2775,39 +2741,6 @@ typedef struct VnActionStepResult {
     uint32_t remainingPlayableCount;
 } VnActionStepResult;
 
-typedef struct VnPostActionByNameDesc {
-    uint32_t structSize;
-    uint32_t flags;
-    const char* utf8Name;    /* exact authored name; borrowed for the call */
-    uint8_t projectGuid[16]; /* all-zero = use session-bound project */
-    VnEmitterHandle emitter;
-    uint64_t callerSeed;
-    uint64_t reserved0;
-} VnPostActionByNameDesc;
-
-typedef struct VnActionPinnedDesc {
-    uint32_t structSize;
-    uint32_t flags;
-    uint8_t projectGuid[16];
-    VnActionId actionId;
-    const char* utf8ExpectedName;
-    uint64_t nameBindingRevision;
-    uint64_t callableFingerprint;
-    VnEmitterHandle emitter;
-    uint64_t callerSeed;
-    uint64_t reserved0;
-} VnActionPinnedDesc;
-
-typedef struct VnActionResolved {
-    uint32_t structSize;
-    uint32_t reserved0;
-    VnActionId actionId;
-    uint64_t nameBindingRevision;
-    uint64_t callableFingerprint;
-    uint64_t publicationGeneration; /* PublishedView.compositeGeneration */
-    uint8_t projectGuid[16];
-} VnActionResolved;
-
 /* All PostAction entry points normalize emitter=0 to the engine session's
  * persistent, private StateOnly context. Emitter-scoped selection memory,
  * variables, cooldowns and controls are shared by these default callers;
@@ -2816,24 +2749,6 @@ typedef struct VnActionResolved {
  * VN_STALE_HANDLE, never a fallback to the default context. */
 VnResult Vn_PostAction(const VnPostActionDesc* desc,
                        VnActionFiringHandle* outFiring);
-VnResult Vn_PostActionByName(const VnPostActionByNameDesc* desc,
-                             VnActionFiringHandle* outFiring);
-VnResult Vn_ResolveActionByName(const VnPostActionByNameDesc* desc,
-                                VnActionResolved* outResolved);
-
-/* Resolves one exact variable name in the published catalog. A wrong project,
- * a retired or renamed name, and an execution fingerprint that does not match
- * the live definition use the gameplay name results. The caller writes the
- * resolved id with Vn_SetValue. Logic thread only. */
-VnResult Vn_ResolveVariableByName(const VnPostActionByNameDesc* desc,
-                                  VnVariableResolved* outResolved);
-
-VnResult Vn_PostActionPinned(const VnActionPinnedDesc* desc,
-                             VnActionFiringHandle* outFiring);
-VnResult Vn_PostActionResolved(const VnActionResolved* resolved,
-                               VnEmitterHandle emitter,
-                               uint64_t callerSeed,
-                               VnActionFiringHandle* outFiring);
 VnResult Vn_StopActionFiring(VnActionFiringHandle firing, uint32_t fadeMs);
 VnResult Vn_QueryActionFiring(VnActionFiringHandle firing,
                               VnActionFiringInfo* outInfo);

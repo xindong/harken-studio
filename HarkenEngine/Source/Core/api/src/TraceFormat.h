@@ -34,7 +34,7 @@ inline constexpr char kTraceMagic[4] = {'V', 'T', 'R', 'C'};
 inline constexpr std::uint32_t kTraceFormatVersionV2 = 2;
 inline constexpr std::uint32_t kTraceFormatVersionV3 = 3;
 inline constexpr std::uint32_t kTraceFormatVersionV4 = 4;
-inline constexpr std::uint32_t kTraceFormatVersion = 7;
+inline constexpr std::uint32_t kTraceFormatVersion = 8;
 
 // Fixed-size header fields ahead of the config image. Serialized field by
 // field (never as a struct overlay — the container-format discipline).
@@ -312,15 +312,15 @@ enum : std::uint16_t {
     kTraceCallSetVoiceFilter = 108,
     kTraceCallSetBusFilter = 109,
     kTraceCallSetBusOutputFilter = 110,
-    kTraceCallPostActionByName = 128,
-    kTraceCallResolveActionByName = 129,
-    kTraceCallPostActionPinned = 130,
-    kTraceCallPostActionResolved = 131,
+    kTraceCallReservedPostActionByName = 128,
+    kTraceCallReservedResolveActionByName = 129,
+    kTraceCallReservedPostActionPinned = 130,
+    kTraceCallReservedPostActionResolved = 131,
     kTraceCallSeekActionFiring = 132,
     kTraceCallQueryActionSeek = 133,
     kTraceCallReleaseActionSeek = 134,
     kTraceCallActivateCanonicalPackSet = 135,
-    kTraceCallSetGameplayCatalog = 136,
+    kTraceCallReservedSetGameplayCatalog = 136,
     kTraceCallActivateCanonicalPackSetV2 = 137,
     kTraceCallUnloadCanonicalPackSet = 138,
     kTraceCallUnloadCompanionPack = 139,

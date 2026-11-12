@@ -104,9 +104,6 @@ namespace Harken
         [DllImport(LibraryName, EntryPoint = "Vn_SetVoiceOrientation", CallingConvention = CallingConvention.Cdecl)]
         public static extern VnResult Vn_SetVoiceOrientation(ulong handle, VnVec3 forward);
 
-        [DllImport(LibraryName, EntryPoint = "Vn_SetGameplayCatalog", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetGameplayCatalog(ulong expectedInitHandle, in VnPackByteSpan catalog);
-
         [DllImport(LibraryName, EntryPoint = "Vn_ActivateCanonicalPackSetV1", CallingConvention = CallingConvention.Cdecl)]
         public static extern VnResult Vn_ActivateCanonicalPackSetV1(in VnCanonicalPackSetActivationDescV1 desc, ref VnCanonicalPackSetActivationReportV1 outReport);
 
@@ -329,18 +326,6 @@ namespace Harken
         [DllImport(LibraryName, EntryPoint = "Vn_SetBusOutputFilter", CallingConvention = CallingConvention.Cdecl)]
         public static extern VnResult Vn_SetBusOutputFilter(VnObjectId busId, uint filterKind, float cutoffHz, float q, uint enable01, uint rampMs);
 
-        [DllImport(LibraryName, EntryPoint = "Vn_PostActionByName", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_PostActionByName(in VnPostActionByNameDesc desc, out ulong outFiring);
-
-        [DllImport(LibraryName, EntryPoint = "Vn_ResolveActionByName", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_ResolveActionByName(in VnPostActionByNameDesc desc, ref VnActionResolved outResolved);
-
-        [DllImport(LibraryName, EntryPoint = "Vn_PostActionPinned", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_PostActionPinned(in VnActionPinnedDesc desc, out ulong outFiring);
-
-        [DllImport(LibraryName, EntryPoint = "Vn_PostActionResolved", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_PostActionResolved(in VnActionResolved resolved, ulong emitter, ulong callerSeed, out ulong outFiring);
-
         [DllImport(LibraryName, EntryPoint = "Vn_SeekActionFiring", CallingConvention = CallingConvention.Cdecl)]
         public static extern VnResult Vn_SeekActionFiring(in VnActionSeekDescV1 desc, out ulong outTicket);
 
@@ -395,23 +380,14 @@ namespace Harken
         [DllImport(LibraryName, EntryPoint = "Vn_SetValueByLabelId", CallingConvention = CallingConvention.Cdecl)]
         public static extern VnResult Vn_SetValueByLabelId(VnObjectId variableId, VnObjectId labelId, ulong emitter);
 
-        [DllImport(LibraryName, EntryPoint = "Vn_SetValueByLabelName", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetValueByLabelName(VnObjectId variableId, byte* utf8Name, ulong emitter);
-
-        [DllImport(LibraryName, EntryPoint = "Vn_SetValueByName", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetValueByName(byte* utf8Name, float value);
-
-        [DllImport(LibraryName, EntryPoint = "Vn_SetEmitterValueByName", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_SetEmitterValueByName(ulong handle, byte* utf8Name, float value);
+        [DllImport(LibraryName, EntryPoint = "Vn_QueryAbiVersion", CallingConvention = CallingConvention.Cdecl)]
+        public static extern VnResult Vn_QueryAbiVersion(ref VnAbiVersionInfo @out);
 
         [DllImport(LibraryName, EntryPoint = "Vn_QueryPackFormatVersion", CallingConvention = CallingConvention.Cdecl)]
         public static extern VnResult Vn_QueryPackFormatVersion(ref VnPackFormatVersionInfo @out);
 
         [DllImport(LibraryName, EntryPoint = "Vn_QueryVariableCatalog", CallingConvention = CallingConvention.Cdecl)]
         public static extern VnResult Vn_QueryVariableCatalog(ref VnVariableCatalogInfoV1 @out);
-
-        [DllImport(LibraryName, EntryPoint = "Vn_ResolveVariableByName", CallingConvention = CallingConvention.Cdecl)]
-        public static extern VnResult Vn_ResolveVariableByName(in VnPostActionByNameDesc desc, ref VnVariableResolved outResolved);
 
         [DllImport(LibraryName, EntryPoint = "Vn_CreateEmitterEx", CallingConvention = CallingConvention.Cdecl)]
         public static extern VnResult Vn_CreateEmitterEx(in VnEmitterCreateDescV1 desc, out ulong outHandle);

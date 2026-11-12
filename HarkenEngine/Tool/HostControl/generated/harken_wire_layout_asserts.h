@@ -1112,46 +1112,7 @@ static_assert(offsetof(VnCanonicalPackSetUnloadDescV1, unloadRevision) == 24,
 static_assert(offsetof(VnCanonicalPackSetUnloadDescV1, reserved0) == 32,
               "wire table offset drift: VnCanonicalPackSetUnloadDescV1.reserved0");
 
-static_assert(sizeof(VnPackVariableNameV1) == 24,
-              "wire table size drift: VnPackVariableNameV1");
-static_assert(offsetof(VnPackVariableNameV1, variableId) == 0,
-              "wire table offset drift: VnPackVariableNameV1.variableId");
-static_assert(offsetof(VnPackVariableNameV1, utf8Name) == 16,
-              "wire table offset drift: VnPackVariableNameV1.utf8Name");
-
-static_assert(sizeof(VnPackLabelNameV1) == 40,
-              "wire table size drift: VnPackLabelNameV1");
-static_assert(offsetof(VnPackLabelNameV1, variableId) == 0,
-              "wire table offset drift: VnPackLabelNameV1.variableId");
-static_assert(offsetof(VnPackLabelNameV1, labelId) == 16,
-              "wire table offset drift: VnPackLabelNameV1.labelId");
-static_assert(offsetof(VnPackLabelNameV1, utf8Name) == 32,
-              "wire table offset drift: VnPackLabelNameV1.utf8Name");
-
-static_assert(sizeof(VnPackNamesV1) == 80,
-              "wire table size drift: VnPackNamesV1");
-static_assert(offsetof(VnPackNamesV1, structSize) == 0,
-              "wire table offset drift: VnPackNamesV1.structSize");
-static_assert(offsetof(VnPackNamesV1, flags) == 4,
-              "wire table offset drift: VnPackNamesV1.flags");
-static_assert(offsetof(VnPackNamesV1, projectId) == 8,
-              "wire table offset drift: VnPackNamesV1.projectId");
-static_assert(offsetof(VnPackNamesV1, rootActionId) == 24,
-              "wire table offset drift: VnPackNamesV1.rootActionId");
-static_assert(offsetof(VnPackNamesV1, utf8RootName) == 40,
-              "wire table offset drift: VnPackNamesV1.utf8RootName");
-static_assert(offsetof(VnPackNamesV1, utf8Language) == 48,
-              "wire table offset drift: VnPackNamesV1.utf8Language");
-static_assert(offsetof(VnPackNamesV1, variableCount) == 56,
-              "wire table offset drift: VnPackNamesV1.variableCount");
-static_assert(offsetof(VnPackNamesV1, labelCount) == 60,
-              "wire table offset drift: VnPackNamesV1.labelCount");
-static_assert(offsetof(VnPackNamesV1, variables) == 64,
-              "wire table offset drift: VnPackNamesV1.variables");
-static_assert(offsetof(VnPackNamesV1, labels) == 72,
-              "wire table offset drift: VnPackNamesV1.labels");
-
-static_assert(sizeof(VnCanonicalPackSetMemberV2) == 88,
+static_assert(sizeof(VnCanonicalPackSetMemberV2) == 80,
               "wire table size drift: VnCanonicalPackSetMemberV2");
 static_assert(offsetof(VnCanonicalPackSetMemberV2, structSize) == 0,
               "wire table offset drift: VnCanonicalPackSetMemberV2.structSize");
@@ -1159,8 +1120,6 @@ static_assert(offsetof(VnCanonicalPackSetMemberV2, operation) == 4,
               "wire table offset drift: VnCanonicalPackSetMemberV2.operation");
 static_assert(offsetof(VnCanonicalPackSetMemberV2, source) == 8,
               "wire table offset drift: VnCanonicalPackSetMemberV2.source");
-static_assert(offsetof(VnCanonicalPackSetMemberV2, names) == 80,
-              "wire table offset drift: VnCanonicalPackSetMemberV2.names");
 
 static_assert(sizeof(VnCanonicalPackSetActivationDescV2) == 64,
               "wire table size drift: VnCanonicalPackSetActivationDescV2");
@@ -1267,7 +1226,7 @@ static_assert(offsetof(VnPackOccurrenceFactV1, fixedGainLinear) == 100,
 static_assert(offsetof(VnPackOccurrenceFactV1, durationSeconds) == 104,
               "wire table offset drift: VnPackOccurrenceFactV1.durationSeconds");
 
-static_assert(sizeof(VnPackInspectDescV1) == 120,
+static_assert(sizeof(VnPackInspectDescV1) == 128,
               "wire table size drift: VnPackInspectDescV1");
 static_assert(offsetof(VnPackInspectDescV1, structSize) == 0,
               "wire table offset drift: VnPackInspectDescV1.structSize");
@@ -1277,25 +1236,25 @@ static_assert(offsetof(VnPackInspectDescV1, pack) == 8,
               "wire table offset drift: VnPackInspectDescV1.pack");
 static_assert(offsetof(VnPackInspectDescV1, init) == 32,
               "wire table offset drift: VnPackInspectDescV1.init");
-static_assert(offsetof(VnPackInspectDescV1, names) == 56,
-              "wire table offset drift: VnPackInspectDescV1.names");
-static_assert(offsetof(VnPackInspectDescV1, maxInputBytes) == 64,
+static_assert(offsetof(VnPackInspectDescV1, rootActionId) == 56,
+              "wire table offset drift: VnPackInspectDescV1.rootActionId");
+static_assert(offsetof(VnPackInspectDescV1, maxInputBytes) == 72,
               "wire table offset drift: VnPackInspectDescV1.maxInputBytes");
-static_assert(offsetof(VnPackInspectDescV1, variableCapacity) == 72,
+static_assert(offsetof(VnPackInspectDescV1, variableCapacity) == 80,
               "wire table offset drift: VnPackInspectDescV1.variableCapacity");
-static_assert(offsetof(VnPackInspectDescV1, labelCapacity) == 76,
+static_assert(offsetof(VnPackInspectDescV1, labelCapacity) == 84,
               "wire table offset drift: VnPackInspectDescV1.labelCapacity");
-static_assert(offsetof(VnPackInspectDescV1, occurrenceCapacity) == 80,
+static_assert(offsetof(VnPackInspectDescV1, occurrenceCapacity) == 88,
               "wire table offset drift: VnPackInspectDescV1.occurrenceCapacity");
-static_assert(offsetof(VnPackInspectDescV1, mediaCapacity) == 84,
+static_assert(offsetof(VnPackInspectDescV1, mediaCapacity) == 92,
               "wire table offset drift: VnPackInspectDescV1.mediaCapacity");
-static_assert(offsetof(VnPackInspectDescV1, variables) == 88,
+static_assert(offsetof(VnPackInspectDescV1, variables) == 96,
               "wire table offset drift: VnPackInspectDescV1.variables");
-static_assert(offsetof(VnPackInspectDescV1, labels) == 96,
+static_assert(offsetof(VnPackInspectDescV1, labels) == 104,
               "wire table offset drift: VnPackInspectDescV1.labels");
-static_assert(offsetof(VnPackInspectDescV1, occurrences) == 104,
+static_assert(offsetof(VnPackInspectDescV1, occurrences) == 112,
               "wire table offset drift: VnPackInspectDescV1.occurrences");
-static_assert(offsetof(VnPackInspectDescV1, media) == 112,
+static_assert(offsetof(VnPackInspectDescV1, media) == 120,
               "wire table offset drift: VnPackInspectDescV1.media");
 
 static_assert(sizeof(VnPackInspectReportV1) == 112,
@@ -1408,63 +1367,6 @@ static_assert(offsetof(VnPostActionDesc, callerSeed) == 32,
               "wire table offset drift: VnPostActionDesc.callerSeed");
 static_assert(offsetof(VnPostActionDesc, reserved0) == 40,
               "wire table offset drift: VnPostActionDesc.reserved0");
-
-static_assert(sizeof(VnPostActionByNameDesc) == 56,
-              "wire table size drift: VnPostActionByNameDesc");
-static_assert(offsetof(VnPostActionByNameDesc, structSize) == 0,
-              "wire table offset drift: VnPostActionByNameDesc.structSize");
-static_assert(offsetof(VnPostActionByNameDesc, flags) == 4,
-              "wire table offset drift: VnPostActionByNameDesc.flags");
-static_assert(offsetof(VnPostActionByNameDesc, utf8Name) == 8,
-              "wire table offset drift: VnPostActionByNameDesc.utf8Name");
-static_assert(offsetof(VnPostActionByNameDesc, projectGuid) == 16,
-              "wire table offset drift: VnPostActionByNameDesc.projectGuid");
-static_assert(offsetof(VnPostActionByNameDesc, emitter) == 32,
-              "wire table offset drift: VnPostActionByNameDesc.emitter");
-static_assert(offsetof(VnPostActionByNameDesc, callerSeed) == 40,
-              "wire table offset drift: VnPostActionByNameDesc.callerSeed");
-static_assert(offsetof(VnPostActionByNameDesc, reserved0) == 48,
-              "wire table offset drift: VnPostActionByNameDesc.reserved0");
-
-static_assert(sizeof(VnActionPinnedDesc) == 88,
-              "wire table size drift: VnActionPinnedDesc");
-static_assert(offsetof(VnActionPinnedDesc, structSize) == 0,
-              "wire table offset drift: VnActionPinnedDesc.structSize");
-static_assert(offsetof(VnActionPinnedDesc, flags) == 4,
-              "wire table offset drift: VnActionPinnedDesc.flags");
-static_assert(offsetof(VnActionPinnedDesc, projectGuid) == 8,
-              "wire table offset drift: VnActionPinnedDesc.projectGuid");
-static_assert(offsetof(VnActionPinnedDesc, actionId) == 24,
-              "wire table offset drift: VnActionPinnedDesc.actionId");
-static_assert(offsetof(VnActionPinnedDesc, utf8ExpectedName) == 40,
-              "wire table offset drift: VnActionPinnedDesc.utf8ExpectedName");
-static_assert(offsetof(VnActionPinnedDesc, nameBindingRevision) == 48,
-              "wire table offset drift: VnActionPinnedDesc.nameBindingRevision");
-static_assert(offsetof(VnActionPinnedDesc, callableFingerprint) == 56,
-              "wire table offset drift: VnActionPinnedDesc.callableFingerprint");
-static_assert(offsetof(VnActionPinnedDesc, emitter) == 64,
-              "wire table offset drift: VnActionPinnedDesc.emitter");
-static_assert(offsetof(VnActionPinnedDesc, callerSeed) == 72,
-              "wire table offset drift: VnActionPinnedDesc.callerSeed");
-static_assert(offsetof(VnActionPinnedDesc, reserved0) == 80,
-              "wire table offset drift: VnActionPinnedDesc.reserved0");
-
-static_assert(sizeof(VnActionResolved) == 64,
-              "wire table size drift: VnActionResolved");
-static_assert(offsetof(VnActionResolved, structSize) == 0,
-              "wire table offset drift: VnActionResolved.structSize");
-static_assert(offsetof(VnActionResolved, reserved0) == 4,
-              "wire table offset drift: VnActionResolved.reserved0");
-static_assert(offsetof(VnActionResolved, actionId) == 8,
-              "wire table offset drift: VnActionResolved.actionId");
-static_assert(offsetof(VnActionResolved, nameBindingRevision) == 24,
-              "wire table offset drift: VnActionResolved.nameBindingRevision");
-static_assert(offsetof(VnActionResolved, callableFingerprint) == 32,
-              "wire table offset drift: VnActionResolved.callableFingerprint");
-static_assert(offsetof(VnActionResolved, publicationGeneration) == 40,
-              "wire table offset drift: VnActionResolved.publicationGeneration");
-static_assert(offsetof(VnActionResolved, projectGuid) == 48,
-              "wire table offset drift: VnActionResolved.projectGuid");
 
 static_assert(sizeof(VnActionFiringInfo) == 72,
               "wire table size drift: VnActionFiringInfo");
@@ -3231,19 +3133,6 @@ static_assert(offsetof(VnVariableTicketV1, worldGeneration) == 8,
 static_assert(offsetof(VnVariableTicketV1, transportGeneration) == 16,
               "wire table offset drift: VnVariableTicketV1.transportGeneration");
 
-static_assert(sizeof(VnVariableResolved) == 48,
-              "wire table size drift: VnVariableResolved");
-static_assert(offsetof(VnVariableResolved, structSize) == 0,
-              "wire table offset drift: VnVariableResolved.structSize");
-static_assert(offsetof(VnVariableResolved, reserved0) == 4,
-              "wire table offset drift: VnVariableResolved.reserved0");
-static_assert(offsetof(VnVariableResolved, variableId) == 8,
-              "wire table offset drift: VnVariableResolved.variableId");
-static_assert(offsetof(VnVariableResolved, executionFingerprint) == 24,
-              "wire table offset drift: VnVariableResolved.executionFingerprint");
-static_assert(offsetof(VnVariableResolved, projectGuid) == 32,
-              "wire table offset drift: VnVariableResolved.projectGuid");
-
 static_assert(sizeof(VnVariableTicketQueryDescV1) == 32,
               "wire table size drift: VnVariableTicketQueryDescV1");
 static_assert(offsetof(VnVariableTicketQueryDescV1, structSize) == 0,
@@ -3276,6 +3165,15 @@ static_assert(offsetof(VnVariableQueryDescV1, emitter) == 24,
               "wire table offset drift: VnVariableQueryDescV1.emitter");
 static_assert(offsetof(VnVariableQueryDescV1, reserved0) == 32,
               "wire table offset drift: VnVariableQueryDescV1.reserved0");
+
+static_assert(sizeof(VnAbiVersionInfo) == 12,
+              "wire table size drift: VnAbiVersionInfo");
+static_assert(offsetof(VnAbiVersionInfo, structSize) == 0,
+              "wire table offset drift: VnAbiVersionInfo.structSize");
+static_assert(offsetof(VnAbiVersionInfo, major) == 4,
+              "wire table offset drift: VnAbiVersionInfo.major");
+static_assert(offsetof(VnAbiVersionInfo, minor) == 8,
+              "wire table offset drift: VnAbiVersionInfo.minor");
 
 static_assert(sizeof(VnPackFormatVersionInfo) == 12,
               "wire table size drift: VnPackFormatVersionInfo");

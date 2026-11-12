@@ -31,11 +31,9 @@
 
 #include "harken/media/PackFormat.h"
 #include "harken/media/PackFormatV2.h"
-#include "harken/media/GameplayCatalogFormat.h"
 #include "harken/media/PcmRegistry.h"
 
 #include <cstdint>
-#include "harken/media/PackVariableNameCatalog.h"
 #include "harken/core/detail/PackDecodeBudget.h"
 #include <span>
 #include <vector>

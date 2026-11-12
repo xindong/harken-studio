@@ -214,7 +214,7 @@ TEST(VariableCatalog, TypedLabelWritesGuardGlobalAndEmitterMutations) {
     ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
     ASSERT_EQ(VN_OK, harken::variables::SetValue(variable, labelActive));
     ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(engine));
-    ASSERT_EQ(VN_OK, harken::variables::SetValue(variable, "None", emitter));
+    ASSERT_EQ(VN_OK, harken::variables::SetValue(variable, labelNone, emitter));
     ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(engine));
     ASSERT_TRUE(harken::test::SetDefinitionExecutionFingerprint(
         engine->variables, variable, execution ^ 1));
@@ -227,8 +227,6 @@ TEST(VariableCatalog, TypedLabelWritesGuardGlobalAndEmitterMutations) {
     for (const VnEmitterHandle target : {VnEmitterHandle{0}, emitter}) {
         EXPECT_EQ(VN_VARIABLE_CATALOG_MISMATCH,
                   harken::variables::SetValue(variable, labelNone, target));
-        EXPECT_EQ(VN_VARIABLE_CATALOG_MISMATCH,
-                  harken::variables::SetValue(variable, "Active", target));
         query.emitter = target;
         ASSERT_EQ(VN_OK, Vn_QueryVariable(&query, &current));
         EXPECT_FLOAT_EQ(target == 0 ? 1.0f : 0.0f, current.currentValue);
@@ -236,7 +234,7 @@ TEST(VariableCatalog, TypedLabelWritesGuardGlobalAndEmitterMutations) {
     EXPECT_EQ(accepted, engine->variables.AcceptedCount());
     ASSERT_TRUE(harken::test::SetDefinitionExecutionFingerprint(
         engine->variables, variable, execution));
-    ASSERT_EQ(VN_OK, harken::variables::SetValue(variable, "None"));
+    ASSERT_EQ(VN_OK, harken::variables::SetValue(variable, labelNone));
     ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(engine));
     ASSERT_EQ(VN_OK, harken::variables::SetValue(variable, labelActive, emitter));
     ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(engine));
@@ -274,7 +272,7 @@ TEST(VariableCatalog, LabelWritesResolveCurrentIdentityAndRetainGlobalEmitterSem
     ASSERT_NO_FATAL_FAILURE(publish());
     VnEmitterHandle emitter = 0;
     ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
-    ASSERT_EQ(VN_OK, Vn_SetValueByLabelName(variable, "AAA", 0));
+    ASSERT_EQ(VN_OK, Vn_SetValueByLabelId(variable, labelA, 0));
     ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(engine));
     ASSERT_EQ(VN_OK, Vn_SetValueByLabelId(variable, labelB, emitter));
     ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(engine));
@@ -295,9 +293,6 @@ TEST(VariableCatalog, LabelWritesResolveCurrentIdentityAndRetainGlobalEmitterSem
     ASSERT_NO_FATAL_FAILURE(publish());
     ASSERT_EQ(VN_OK, Vn_QueryVariable(&query, &current));
     EXPECT_FLOAT_EQ(current.currentValue, 1.0f);
-    EXPECT_EQ(VN_NO_VARIABLE_LABEL, Vn_SetValueByLabelName(variable, "AAA", 0));
-    EXPECT_EQ(VN_NO_VARIABLE_LABEL, Vn_SetValueByLabelName(variable, "2", 0));
-    EXPECT_EQ(VN_NO_VARIABLE_LABEL, Vn_SetValueByLabelName(variable, "renamed", 0));
     ASSERT_EQ(VN_OK, Vn_SetValueByLabelId(variable, labelA, 0));
     ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(engine));
     ASSERT_EQ(VN_OK, Vn_QueryVariable(&query, &current));
@@ -305,5 +300,4 @@ TEST(VariableCatalog, LabelWritesResolveCurrentIdentityAndRetainGlobalEmitterSem
     labels.erase(labels.begin());
     ASSERT_NO_FATAL_FAILURE(publish());
     EXPECT_EQ(VN_NO_VARIABLE_LABEL, Vn_SetValueByLabelId(variable, labelA, 0));
-    EXPECT_EQ(VN_NO_VARIABLE_LABEL, Vn_SetValueByLabelName(variable, "Renamed", 0));
 }

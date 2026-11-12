@@ -8,7 +8,6 @@
 #include "harken/core/CurrentWorldCodec.h"
 #include "harken/core/PackPlaybackView.h"
 #include "harken/core/PackReadinessContract.h"
-#include "harken/core/PackCompanionNames.h"
 #include "harken/core/PlayablePropertyCut.h"
 #include "harken/core/StableRowStorage.h"
 #include "harken/media/PackLogicImage.h"
@@ -109,7 +108,7 @@ public:
         detail::PackDecodeCharge staging;
         std::uint64_t packStableId = 0;
         std::uint64_t contentHash = 0;
-        std::shared_ptr<const PackCompanionNames> companionNames;
+        bool setMember = false;
         VnPackHandle handle = 0;
         std::uint64_t contentRevision = 0;
         std::uint64_t partitionRevision = 0;
@@ -169,15 +168,8 @@ public:
 
     struct PublishedView {
         detail::PackDecodeCharge staging;
-        struct ActionName {
-            std::string name;
-            VnObjectId actionId{};
-            std::uint64_t ownerPackId = 0;
-            std::uint64_t fingerprint = 0;
-        };
         VnObjectId projectId{};
-        bool companionNames = false;
-        std::vector<ActionName> actionNames;
+        bool setActivated = false;
         std::uint64_t compositeGeneration = 0;
         std::vector<PublishedOwner> owners;
         std::vector<IdentityIndexEntry> index;
@@ -186,10 +178,6 @@ public:
         PackCanonicalImage catalog;
         std::uint64_t initPackStableId = 0;
         VnPackHandle initHandle = 0;
-        bool hasGameplayCatalog = false;
-        GameplayCatalogImage gameplayCatalog;
-        bool hasVariableNameCatalog = false;
-        PackVariableNameCatalog variableNameCatalog;
         std::shared_ptr<const PackPlaybackOwnerStore> playbackStore;
         CanonicalPackSetLedgerV1 ledger{};
         PackAttenuationBindingMapV1 attenuationBindings;
@@ -199,7 +187,7 @@ public:
         detail::PackDecodeCharge staging;
         std::uint64_t packStableId = 0;
         std::uint64_t contentHash = 0;
-        std::shared_ptr<const PackCompanionNames> companionNames;
+        bool setMember = false;
         VnPackHandle handle = 0;
         std::uint64_t contentRevision = 0;
         std::uint64_t partitionRevision = 0;
@@ -235,7 +223,6 @@ public:
         PreparedCommit& operator=(PreparedCommit&&) noexcept = default;
 
         bool IsPrepared() const noexcept { return owner_ != nullptr; }
-        bool NamesOnly() const noexcept { return namesOnly_; }
         const PublishedView* Published() const noexcept {
             return published_.get();
         }
@@ -245,7 +232,6 @@ public:
         PackComposition* owner_ = nullptr;
         std::shared_ptr<PublishedView> published_;
         PackOwnerLocalFacts facts_{};
-        bool namesOnly_ = false;
     };
 
     static CandidateOwner Keep(const PublishedOwner& existing,
@@ -295,7 +281,6 @@ public:
                            const PackAttenuationBindingMapV1* attenuationBindings = nullptr,
                            const CanonicalPackSetLedgerV1* ledger = nullptr,
                            bool clearInit = false,
-                           const GameplayCatalogImage* gameplayCatalog = nullptr,
                            const detail::PackDecodeBudget& budget = {});
     void CommitPrepared(PreparedCommit* prepared) noexcept;
     void RestorePublished(std::shared_ptr<const PublishedView> previous) noexcept;

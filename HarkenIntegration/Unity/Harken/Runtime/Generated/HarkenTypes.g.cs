@@ -674,6 +674,8 @@ namespace Harken
     /// <summary>Harken.h #define constants.</summary>
     public static class VnConstants
     {
+        public const uint VN_ABI_VERSION_MAJOR = 1u;
+        public const uint VN_ABI_VERSION_MINOR = 0u;
         internal const uint VN_EMITTER_CREATE_STATE_ONLY = 1u;
         public const uint VN_REMOTE_DEFAULT_DISCOVERY_PORT = 37840u;
         public static readonly VnObjectId VN_BUS_MASTER = new VnObjectId(0UL, 1UL);
@@ -692,7 +694,6 @@ namespace Harken
         public const uint VN_CANONICAL_PACK_SET_MEMBER_ROOT = 2u;
         internal const uint VN_PACK_MEMBER_KEEP = 0u;
         internal const uint VN_PACK_MEMBER_CONTENT = 1u;
-        internal const uint VN_PACK_MEMBER_NAME_ONLY = 2u;
         internal const uint VN_PACK_PREVIEW_UNSUPPORTED = 0u;
         internal const uint VN_PACK_PREVIEW_SOUND = 1u;
         internal const uint VN_PACK_PREVIEW_RANDOM_SOUNDS = 2u;
@@ -1400,42 +1401,11 @@ namespace Harken
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    internal struct VnPackVariableNameV1
-    {
-    public VnObjectId variableId;
-    public IntPtr utf8Name;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    internal struct VnPackLabelNameV1
-    {
-    public VnObjectId variableId;
-    public VnObjectId labelId;
-    public IntPtr utf8Name;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    internal struct VnPackNamesV1
-    {
-    public uint structSize;
-    public uint flags;
-    public VnObjectId projectId;
-    public VnObjectId rootActionId;
-    public IntPtr utf8RootName;
-    public IntPtr utf8Language;
-    public uint variableCount;
-    public uint labelCount;
-    public IntPtr variables;
-    public IntPtr labels;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
     internal struct VnCanonicalPackSetMemberV2
     {
     public uint structSize;
     public uint operation;
     public VnCanonicalPackSetMemberV1 source;
-    public IntPtr names;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -1515,7 +1485,7 @@ namespace Harken
     public uint flags;
     public VnPackByteSpan pack;
     public VnPackByteSpan init;
-    public IntPtr names;
+    public VnObjectId rootActionId;
     public ulong maxInputBytes;
     public uint variableCapacity;
     public uint labelCapacity;
@@ -1598,45 +1568,6 @@ namespace Harken
     public ulong emitter;
     public ulong callerSeed;
     public ulong reserved0;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    public unsafe struct VnPostActionByNameDesc
-    {
-    public uint structSize;
-    public uint flags;
-    public IntPtr utf8Name;
-    public fixed byte projectGuid[16];
-    public ulong emitter;
-    public ulong callerSeed;
-    public ulong reserved0;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    public unsafe struct VnActionPinnedDesc
-    {
-    public uint structSize;
-    public uint flags;
-    public fixed byte projectGuid[16];
-    public VnObjectId actionId;
-    public IntPtr utf8ExpectedName;
-    public ulong nameBindingRevision;
-    public ulong callableFingerprint;
-    public ulong emitter;
-    public ulong callerSeed;
-    public ulong reserved0;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    public unsafe struct VnActionResolved
-    {
-    public uint structSize;
-    public uint reserved0;
-    public VnObjectId actionId;
-    public ulong nameBindingRevision;
-    public ulong callableFingerprint;
-    public ulong publicationGeneration;
-    public fixed byte projectGuid[16];
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -2125,16 +2056,6 @@ namespace Harken
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    public unsafe struct VnVariableResolved
-    {
-    public uint structSize;
-    public uint reserved0;
-    public VnObjectId variableId;
-    public ulong executionFingerprint;
-    public fixed byte projectGuid[16];
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
     public struct VnVariableTicketQueryDescV1
     {
     public uint structSize;
@@ -2159,6 +2080,14 @@ namespace Harken
     public VnObjectId variableId;
     public ulong emitter;
     public ulong reserved0;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct VnAbiVersionInfo
+    {
+    public uint structSize;
+    public uint major;
+    public uint minor;
     }
 
     [StructLayout(LayoutKind.Sequential)]

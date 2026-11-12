@@ -235,9 +235,6 @@ add_executable(harken_runtime_tests
     UnitTest/PackV2FormatTest.cpp
     UnitTest/PackCanonicalFormatTest.cpp
     UnitTest/CanonicalPackSetActivateTest.cpp
-    UnitTest/ActionCatalogFormatTest.cpp
-    UnitTest/ActionCatalogOwnershipTest.cpp
-    UnitTest/ActionNamePostTest.cpp
     UnitTest/PackCompositionTest.cpp
     UnitTest/StreamRoundtripTest.cpp
     UnitTest/EffectChainGoldenTest.cpp
@@ -421,25 +418,6 @@ gtest_discover_tests(harken_runtime_tests
     TEST_FILTER "${_harken_runtime_daily_filter}"
     TEST_LIST harken_runtime_daily_tests
     PROPERTIES LABELS harken-daily)
-
-add_executable(harken_variable_name_set_test
-    UnitTest/VariableNameSetTest.cpp)
-target_link_libraries(harken_variable_name_set_test PRIVATE harken_core harken_buildinfo GTest::gtest_main)
-target_include_directories(harken_variable_name_set_test PRIVATE
-    ${HARKEN_CORE_DIR}/api/src
-    ${HARKEN_DEVELOPMENT_PRIVATE_INCLUDES}
-    ${HARKEN_CORE_DIR}/core/include
-    ${HARKEN_CORE_DIR}/dsp/include
-    ${HARKEN_CORE_DIR}/media/include
-    ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
-    ${HARKEN_CORE_DIR}/param/include
-    ${HARKEN_CORE_DIR}/render/include
-    ${CMAKE_CURRENT_SOURCE_DIR})
-target_compile_definitions(harken_variable_name_set_test PRIVATE _CRT_SECURE_NO_WARNINGS)
-if(MSVC)
-    target_compile_options(harken_variable_name_set_test PRIVATE /FS /bigobj)
-endif()
-gtest_discover_tests(harken_variable_name_set_test)
 
 add_executable(harken_pack_schema_tests
     UnitTest/PackFoundationQualificationTest.cpp)

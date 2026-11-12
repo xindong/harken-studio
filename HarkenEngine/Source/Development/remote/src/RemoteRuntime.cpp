@@ -905,43 +905,24 @@ class Server {
                                                  : engine->variables.CurrentWorldGeneration();
         std::size_t bytes = 24;
         bool pageComplete = false;
-        auto append = [&](CatalogKind kind, VnObjectId id, std::string_view suppliedName) {
+        auto append = [&](CatalogKind kind, VnObjectId id) {
             const std::uint32_t index = result.totalCount++;
             if (index < offset || pageComplete || result.entries.size() >= 256)
                 return;
-            std::string name =
-                suppliedName.empty() ? harken::ObjectIdString(id) : std::string(suppliedName);
-            if (bytes + 24 + name.size() > kMaxPayloadBytes) {
+            if (bytes + 20 > kMaxPayloadBytes) {
                 pageComplete = true;
                 return;
             }
-            bytes += 24 + name.size();
-            result.entries.push_back({kind, id, std::move(name)});
+            bytes += 20;
+            result.entries.push_back({kind, id});
         };
-        if (published != nullptr && published->hasGameplayCatalog) {
-            const auto &catalog = published->gameplayCatalog;
-            for (const auto &row : catalog.active) {
-                if (row.nameOffset > catalog.namePool.size() ||
-                    row.nameLength > catalog.namePool.size() - row.nameOffset)
-                    continue;
-                append(CatalogKind::Action, row.actionStableId,
-                       std::string_view(
-                           reinterpret_cast<const char *>(catalog.namePool.data() + row.nameOffset),
-                           row.nameLength));
-            }
-        } else {
-            for (std::uint32_t i = 0; i < engine->variables.ActionProgramCount(); ++i) {
-                const auto id = engine->variables.ActionProgramAt(i).actionStableId;
-                append(CatalogKind::Action, id, {});
-            }
-        }
-        for (std::uint32_t i = 0; i < engine->variables.DefinitionCount(); ++i) {
-            const auto &definition = engine->variables.DefinitionAt(i);
-            append(CatalogKind::Variable, definition.variableId, {});
-        }
+        for (std::uint32_t i = 0; i < engine->variables.ActionProgramCount(); ++i)
+            append(CatalogKind::Action, engine->variables.ActionProgramAt(i).actionStableId);
+        for (std::uint32_t i = 0; i < engine->variables.DefinitionCount(); ++i)
+            append(CatalogKind::Variable, engine->variables.DefinitionAt(i).variableId);
         const Snapshot snapshot = Capture();
         for (const auto &bus : snapshot.buses)
-            append(CatalogKind::Bus, bus.id, bus.id == VN_BUS_MASTER ? "Master" : "");
+            append(CatalogKind::Bus, bus.id);
         if (offset > result.totalCount)
             result.result = VN_INVALID_ARG;
         return result;
@@ -962,8 +943,7 @@ class Server {
             result.result = VN_INVALID_ARG;
             return result;
         }
-        const bool postsAction = command.operation == Operation::PostAction ||
-                                 command.operation == Operation::PostActionByName;
+        const bool postsAction = command.operation == Operation::PostAction;
         if (postsAction && g_remoteFirings.size() >= 1024) {
             result.result = VN_BACKPRESSURE;
             return result;
@@ -977,14 +957,6 @@ class Server {
             desc.actionId = command.target;
             desc.emitter = command.secondary;
             result.result = Vn_PostAction(&desc, &result.handle);
-            break;
-        }
-        case Operation::PostActionByName: {
-            VnPostActionByNameDesc desc{};
-            desc.structSize = sizeof(desc);
-            desc.utf8Name = command.name.c_str();
-            desc.emitter = command.secondary;
-            result.result = Vn_PostActionByName(&desc, &result.handle);
             break;
         }
         case Operation::StopAll:

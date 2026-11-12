@@ -161,6 +161,14 @@
         }
       },
       "defines": {
+        "VN_ABI_VERSION_MAJOR": {
+          "type": "u32",
+          "value": 1
+        },
+        "VN_ABI_VERSION_MINOR": {
+          "type": "u32",
+          "value": 0
+        },
         "VN_ATTENUATION_MAX_CURVE_POINTS": {
           "type": "u32",
           "value": 8
@@ -475,10 +483,6 @@
         "VN_PACK_MEMBER_KEEP": {
           "type": "u32",
           "value": 0
-        },
-        "VN_PACK_MEMBER_NAME_ONLY": {
-          "type": "u32",
-          "value": 2
         },
         "VN_PACK_OCCURRENCE_DURATION": {
           "type": "u32",
@@ -1908,21 +1912,6 @@
         },
         {
           "callingConvention": "cdecl",
-          "name": "Vn_SetGameplayCatalog",
-          "parameters": [
-            {
-              "ctype": "VnPackHandle",
-              "name": "expectedInitHandle"
-            },
-            {
-              "ctype": "const VnPackByteSpan*",
-              "name": "catalog"
-            }
-          ],
-          "returnType": "VnResult"
-        },
-        {
-          "callingConvention": "cdecl",
           "name": "Vn_ActivateCanonicalPackSetV1",
           "parameters": [
             {
@@ -3167,74 +3156,6 @@
         },
         {
           "callingConvention": "cdecl",
-          "name": "Vn_PostActionByName",
-          "parameters": [
-            {
-              "ctype": "const VnPostActionByNameDesc*",
-              "name": "desc"
-            },
-            {
-              "ctype": "VnActionFiringHandle*",
-              "name": "outFiring"
-            }
-          ],
-          "returnType": "VnResult"
-        },
-        {
-          "callingConvention": "cdecl",
-          "name": "Vn_ResolveActionByName",
-          "parameters": [
-            {
-              "ctype": "const VnPostActionByNameDesc*",
-              "name": "desc"
-            },
-            {
-              "ctype": "VnActionResolved*",
-              "name": "outResolved"
-            }
-          ],
-          "returnType": "VnResult"
-        },
-        {
-          "callingConvention": "cdecl",
-          "name": "Vn_PostActionPinned",
-          "parameters": [
-            {
-              "ctype": "const VnActionPinnedDesc*",
-              "name": "desc"
-            },
-            {
-              "ctype": "VnActionFiringHandle*",
-              "name": "outFiring"
-            }
-          ],
-          "returnType": "VnResult"
-        },
-        {
-          "callingConvention": "cdecl",
-          "name": "Vn_PostActionResolved",
-          "parameters": [
-            {
-              "ctype": "const VnActionResolved*",
-              "name": "resolved"
-            },
-            {
-              "ctype": "VnEmitterHandle",
-              "name": "emitter"
-            },
-            {
-              "ctype": "uint64_t",
-              "name": "callerSeed"
-            },
-            {
-              "ctype": "VnActionFiringHandle*",
-              "name": "outFiring"
-            }
-          ],
-          "returnType": "VnResult"
-        },
-        {
-          "callingConvention": "cdecl",
           "name": "Vn_SeekActionFiring",
           "parameters": [
             {
@@ -3812,53 +3733,11 @@
         },
         {
           "callingConvention": "cdecl",
-          "name": "Vn_SetValueByLabelName",
+          "name": "Vn_QueryAbiVersion",
           "parameters": [
             {
-              "ctype": "VnVariableId",
-              "name": "variableId"
-            },
-            {
-              "ctype": "const char*",
-              "name": "utf8Name"
-            },
-            {
-              "ctype": "VnEmitterHandle",
-              "name": "emitter"
-            }
-          ],
-          "returnType": "VnResult"
-        },
-        {
-          "callingConvention": "cdecl",
-          "name": "Vn_SetValueByName",
-          "parameters": [
-            {
-              "ctype": "const char*",
-              "name": "utf8Name"
-            },
-            {
-              "ctype": "float",
-              "name": "value"
-            }
-          ],
-          "returnType": "VnResult"
-        },
-        {
-          "callingConvention": "cdecl",
-          "name": "Vn_SetEmitterValueByName",
-          "parameters": [
-            {
-              "ctype": "VnEmitterHandle",
-              "name": "handle"
-            },
-            {
-              "ctype": "const char*",
-              "name": "utf8Name"
-            },
-            {
-              "ctype": "float",
-              "name": "value"
+              "ctype": "VnAbiVersionInfo*",
+              "name": "out"
             }
           ],
           "returnType": "VnResult"
@@ -3881,21 +3760,6 @@
             {
               "ctype": "VnVariableCatalogInfoV1*",
               "name": "out"
-            }
-          ],
-          "returnType": "VnResult"
-        },
-        {
-          "callingConvention": "cdecl",
-          "name": "Vn_ResolveVariableByName",
-          "parameters": [
-            {
-              "ctype": "const VnPostActionByNameDesc*",
-              "name": "desc"
-            },
-            {
-              "ctype": "VnVariableResolved*",
-              "name": "outResolved"
             }
           ],
           "returnType": "VnResult"
@@ -4146,9 +4010,7 @@
         "Vn_MonitorStopRecording",
         "Vn_MonitorValidateCapturePlan",
         "Vn_PostAction",
-        "Vn_PostActionByName",
-        "Vn_PostActionPinned",
-        "Vn_PostActionResolved",
+        "Vn_QueryAbiVersion",
         "Vn_QueryActionFiring",
         "Vn_QueryActionPlaybackReadiness",
         "Vn_QueryActionSeek",
@@ -4177,8 +4039,6 @@
         "Vn_ResetBusEffect",
         "Vn_ResetValues",
         "Vn_ResetVoiceEffect",
-        "Vn_ResolveActionByName",
-        "Vn_ResolveVariableByName",
         "Vn_Resume",
         "Vn_SeekActionFiring",
         "Vn_SetBusDownmixMatrix",
@@ -4199,15 +4059,11 @@
         "Vn_SetEmitterOrientation",
         "Vn_SetEmitterPosition",
         "Vn_SetEmitterValue",
-        "Vn_SetEmitterValueByName",
         "Vn_SetEmitterValues",
-        "Vn_SetGameplayCatalog",
         "Vn_SetListener",
         "Vn_SetListenerDistanceReference",
         "Vn_SetValue",
         "Vn_SetValueByLabelId",
-        "Vn_SetValueByLabelName",
-        "Vn_SetValueByName",
         "Vn_SetValues",
         "Vn_SetVoiceDistanceScale",
         "Vn_SetVoiceEffect",
@@ -4392,6 +4248,42 @@
         "VnVariableId": "VnObjectId"
       },
       "types": {
+        "VnAbiVersionInfo": {
+          "alignment": 4,
+          "fields": [
+            {
+              "alignment": 4,
+              "name": "structSize",
+              "offset": 0,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "major",
+              "offset": 4,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "minor",
+              "offset": 8,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            }
+          ],
+          "size": 12
+        },
         "VnActionFiringInfo": {
           "alignment": 8,
           "fields": [
@@ -4517,114 +4409,6 @@
             }
           ],
           "size": 72
-        },
-        "VnActionPinnedDesc": {
-          "alignment": 8,
-          "fields": [
-            {
-              "alignment": 4,
-              "name": "structSize",
-              "offset": 0,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 4,
-              "name": "flags",
-              "offset": 4,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 1,
-              "name": "projectGuid",
-              "offset": 8,
-              "shape": {
-                "count": 16,
-                "element": "u8",
-                "kind": "array"
-              },
-              "size": 16
-            },
-            {
-              "alignment": 8,
-              "name": "actionId",
-              "offset": 24,
-              "shape": {
-                "kind": "struct",
-                "type": "VnObjectId"
-              },
-              "size": 16
-            },
-            {
-              "alignment": 8,
-              "name": "utf8ExpectedName",
-              "offset": 40,
-              "shape": {
-                "ctype": "const char*",
-                "kind": "pointer",
-                "storage": "string"
-              },
-              "size": 8
-            },
-            {
-              "alignment": 8,
-              "name": "nameBindingRevision",
-              "offset": 48,
-              "shape": {
-                "kind": "scalar",
-                "type": "u64"
-              },
-              "size": 8
-            },
-            {
-              "alignment": 8,
-              "name": "callableFingerprint",
-              "offset": 56,
-              "shape": {
-                "kind": "scalar",
-                "type": "u64"
-              },
-              "size": 8
-            },
-            {
-              "alignment": 8,
-              "name": "emitter",
-              "offset": 64,
-              "shape": {
-                "kind": "scalar",
-                "type": "u64"
-              },
-              "size": 8
-            },
-            {
-              "alignment": 8,
-              "name": "callerSeed",
-              "offset": 72,
-              "shape": {
-                "kind": "scalar",
-                "type": "u64"
-              },
-              "size": 8
-            },
-            {
-              "alignment": 8,
-              "name": "reserved0",
-              "offset": 80,
-              "shape": {
-                "kind": "scalar",
-                "type": "u64"
-              },
-              "size": 8
-            }
-          ],
-          "size": 88
         },
         "VnActionPlaybackReadinessV1": {
           "alignment": 8,
@@ -4791,83 +4575,6 @@
             }
           ],
           "size": 80
-        },
-        "VnActionResolved": {
-          "alignment": 8,
-          "fields": [
-            {
-              "alignment": 4,
-              "name": "structSize",
-              "offset": 0,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 4,
-              "name": "reserved0",
-              "offset": 4,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 8,
-              "name": "actionId",
-              "offset": 8,
-              "shape": {
-                "kind": "struct",
-                "type": "VnObjectId"
-              },
-              "size": 16
-            },
-            {
-              "alignment": 8,
-              "name": "nameBindingRevision",
-              "offset": 24,
-              "shape": {
-                "kind": "scalar",
-                "type": "u64"
-              },
-              "size": 8
-            },
-            {
-              "alignment": 8,
-              "name": "callableFingerprint",
-              "offset": 32,
-              "shape": {
-                "kind": "scalar",
-                "type": "u64"
-              },
-              "size": 8
-            },
-            {
-              "alignment": 8,
-              "name": "publicationGeneration",
-              "offset": 40,
-              "shape": {
-                "kind": "scalar",
-                "type": "u64"
-              },
-              "size": 8
-            },
-            {
-              "alignment": 1,
-              "name": "projectGuid",
-              "offset": 48,
-              "shape": {
-                "count": 16,
-                "element": "u8",
-                "kind": "array"
-              },
-              "size": 16
-            }
-          ],
-          "size": 64
         },
         "VnActionSeekDescV1": {
           "alignment": 8,
@@ -6497,20 +6204,9 @@
                 "type": "VnCanonicalPackSetMemberV1"
               },
               "size": 72
-            },
-            {
-              "alignment": 8,
-              "name": "names",
-              "offset": 80,
-              "shape": {
-                "ctype": "const VnPackNamesV1*",
-                "kind": "pointer",
-                "storage": "opaque"
-              },
-              "size": 8
             }
           ],
-          "size": 88
+          "size": 80
         },
         "VnCanonicalPackSetUnloadDescV1": {
           "alignment": 8,
@@ -17258,19 +16954,18 @@
             },
             {
               "alignment": 8,
-              "name": "names",
+              "name": "rootActionId",
               "offset": 56,
               "shape": {
-                "ctype": "const VnPackNamesV1*",
-                "kind": "pointer",
-                "storage": "opaque"
+                "kind": "struct",
+                "type": "VnObjectId"
               },
-              "size": 8
+              "size": 16
             },
             {
               "alignment": 8,
               "name": "maxInputBytes",
-              "offset": 64,
+              "offset": 72,
               "shape": {
                 "kind": "scalar",
                 "type": "u64"
@@ -17280,26 +16975,6 @@
             {
               "alignment": 4,
               "name": "variableCapacity",
-              "offset": 72,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 4,
-              "name": "labelCapacity",
-              "offset": 76,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 4,
-              "name": "occurrenceCapacity",
               "offset": 80,
               "shape": {
                 "kind": "scalar",
@@ -17309,8 +16984,28 @@
             },
             {
               "alignment": 4,
-              "name": "mediaCapacity",
+              "name": "labelCapacity",
               "offset": 84,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "occurrenceCapacity",
+              "offset": 88,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "mediaCapacity",
+              "offset": 92,
               "shape": {
                 "kind": "scalar",
                 "type": "u32"
@@ -17320,7 +17015,7 @@
             {
               "alignment": 8,
               "name": "variables",
-              "offset": 88,
+              "offset": 96,
               "shape": {
                 "ctype": "VnPackVariableFactV1*",
                 "kind": "pointer",
@@ -17335,7 +17030,7 @@
             {
               "alignment": 8,
               "name": "labels",
-              "offset": 96,
+              "offset": 104,
               "shape": {
                 "ctype": "VnPackLabelFactV1*",
                 "kind": "pointer",
@@ -17350,7 +17045,7 @@
             {
               "alignment": 8,
               "name": "occurrences",
-              "offset": 104,
+              "offset": 112,
               "shape": {
                 "ctype": "VnPackOccurrenceFactV1*",
                 "kind": "pointer",
@@ -17365,7 +17060,7 @@
             {
               "alignment": 8,
               "name": "media",
-              "offset": 112,
+              "offset": 120,
               "shape": {
                 "ctype": "VnPackMediaFactV1*",
                 "kind": "pointer",
@@ -17378,7 +17073,7 @@
               "size": 8
             }
           ],
-          "size": 120
+          "size": 128
         },
         "VnPackInspectReportV1": {
           "alignment": 8,
@@ -17592,43 +17287,6 @@
           ],
           "size": 40
         },
-        "VnPackLabelNameV1": {
-          "alignment": 8,
-          "fields": [
-            {
-              "alignment": 8,
-              "name": "variableId",
-              "offset": 0,
-              "shape": {
-                "kind": "struct",
-                "type": "VnObjectId"
-              },
-              "size": 16
-            },
-            {
-              "alignment": 8,
-              "name": "labelId",
-              "offset": 16,
-              "shape": {
-                "kind": "struct",
-                "type": "VnObjectId"
-              },
-              "size": 16
-            },
-            {
-              "alignment": 8,
-              "name": "utf8Name",
-              "offset": 32,
-              "shape": {
-                "ctype": "const char*",
-                "kind": "pointer",
-                "storage": "string"
-              },
-              "size": 8
-            }
-          ],
-          "size": 40
-        },
         "VnPackLoadDesc": {
           "alignment": 8,
           "fields": [
@@ -17775,124 +17433,6 @@
             }
           ],
           "size": 40
-        },
-        "VnPackNamesV1": {
-          "alignment": 8,
-          "fields": [
-            {
-              "alignment": 4,
-              "name": "structSize",
-              "offset": 0,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 4,
-              "name": "flags",
-              "offset": 4,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 8,
-              "name": "projectId",
-              "offset": 8,
-              "shape": {
-                "kind": "struct",
-                "type": "VnObjectId"
-              },
-              "size": 16
-            },
-            {
-              "alignment": 8,
-              "name": "rootActionId",
-              "offset": 24,
-              "shape": {
-                "kind": "struct",
-                "type": "VnObjectId"
-              },
-              "size": 16
-            },
-            {
-              "alignment": 8,
-              "name": "utf8RootName",
-              "offset": 40,
-              "shape": {
-                "ctype": "const char*",
-                "kind": "pointer",
-                "storage": "string"
-              },
-              "size": 8
-            },
-            {
-              "alignment": 8,
-              "name": "utf8Language",
-              "offset": 48,
-              "shape": {
-                "ctype": "const char*",
-                "kind": "pointer",
-                "storage": "string"
-              },
-              "size": 8
-            },
-            {
-              "alignment": 4,
-              "name": "variableCount",
-              "offset": 56,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 4,
-              "name": "labelCount",
-              "offset": 60,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 8,
-              "name": "variables",
-              "offset": 64,
-              "shape": {
-                "ctype": "const VnPackVariableNameV1*",
-                "kind": "pointer",
-                "storage": {
-                  "count": "variableCount",
-                  "kind": "array",
-                  "stride": "VnPackVariableNameV1"
-                }
-              },
-              "size": 8
-            },
-            {
-              "alignment": 8,
-              "name": "labels",
-              "offset": 72,
-              "shape": {
-                "ctype": "const VnPackLabelNameV1*",
-                "kind": "pointer",
-                "storage": {
-                  "count": "labelCount",
-                  "kind": "array",
-                  "stride": "VnPackLabelNameV1"
-                }
-              },
-              "size": 8
-            }
-          ],
-          "size": 80
         },
         "VnPackOccurrenceFactV1": {
           "alignment": 8,
@@ -18155,33 +17695,6 @@
             }
           ],
           "size": 56
-        },
-        "VnPackVariableNameV1": {
-          "alignment": 8,
-          "fields": [
-            {
-              "alignment": 8,
-              "name": "variableId",
-              "offset": 0,
-              "shape": {
-                "kind": "struct",
-                "type": "VnObjectId"
-              },
-              "size": 16
-            },
-            {
-              "alignment": 8,
-              "name": "utf8Name",
-              "offset": 16,
-              "shape": {
-                "ctype": "const char*",
-                "kind": "pointer",
-                "storage": "string"
-              },
-              "size": 8
-            }
-          ],
-          "size": 24
         },
         "VnPlayDesc": {
           "alignment": 8,
@@ -18564,84 +18077,6 @@
             }
           ],
           "size": 160
-        },
-        "VnPostActionByNameDesc": {
-          "alignment": 8,
-          "fields": [
-            {
-              "alignment": 4,
-              "name": "structSize",
-              "offset": 0,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 4,
-              "name": "flags",
-              "offset": 4,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 8,
-              "name": "utf8Name",
-              "offset": 8,
-              "shape": {
-                "ctype": "const char*",
-                "kind": "pointer",
-                "storage": "string"
-              },
-              "size": 8
-            },
-            {
-              "alignment": 1,
-              "name": "projectGuid",
-              "offset": 16,
-              "shape": {
-                "count": 16,
-                "element": "u8",
-                "kind": "array"
-              },
-              "size": 16
-            },
-            {
-              "alignment": 8,
-              "name": "emitter",
-              "offset": 32,
-              "shape": {
-                "kind": "scalar",
-                "type": "u64"
-              },
-              "size": 8
-            },
-            {
-              "alignment": 8,
-              "name": "callerSeed",
-              "offset": 40,
-              "shape": {
-                "kind": "scalar",
-                "type": "u64"
-              },
-              "size": 8
-            },
-            {
-              "alignment": 8,
-              "name": "reserved0",
-              "offset": 48,
-              "shape": {
-                "kind": "scalar",
-                "type": "u64"
-              },
-              "size": 8
-            }
-          ],
-          "size": 56
         },
         "VnPostActionDesc": {
           "alignment": 8,
@@ -21266,63 +20701,6 @@
           ],
           "size": 48
         },
-        "VnVariableResolved": {
-          "alignment": 8,
-          "fields": [
-            {
-              "alignment": 4,
-              "name": "structSize",
-              "offset": 0,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 4,
-              "name": "reserved0",
-              "offset": 4,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 8,
-              "name": "variableId",
-              "offset": 8,
-              "shape": {
-                "kind": "struct",
-                "type": "VnObjectId"
-              },
-              "size": 16
-            },
-            {
-              "alignment": 8,
-              "name": "executionFingerprint",
-              "offset": 24,
-              "shape": {
-                "kind": "scalar",
-                "type": "u64"
-              },
-              "size": 8
-            },
-            {
-              "alignment": 1,
-              "name": "projectGuid",
-              "offset": 32,
-              "shape": {
-                "count": 16,
-                "element": "u8",
-                "kind": "array"
-              },
-              "size": 16
-            }
-          ],
-          "size": 48
-        },
         "VnVariableTicketQueryDescV1": {
           "alignment": 8,
           "fields": [
@@ -21584,6 +20962,15 @@
         "status": "declared-and-layout-resolved",
         "stride": {},
         "struct_size": {
+          "VnAbiVersionInfo": {
+            "acceptedSizes": [
+              12
+            ],
+            "currentSize": 12,
+            "mode": "exact-current",
+            "source": "default",
+            "unknownSize": "reject"
+          },
           "VnActionFiringInfo": {
             "acceptedSizes": [
               72
@@ -21593,29 +20980,11 @@
             "source": "default",
             "unknownSize": "reject"
           },
-          "VnActionPinnedDesc": {
-            "acceptedSizes": [
-              88
-            ],
-            "currentSize": 88,
-            "mode": "exact-current",
-            "source": "default",
-            "unknownSize": "reject"
-          },
           "VnActionPlaybackReadinessV1": {
             "acceptedSizes": [
               80
             ],
             "currentSize": 80,
-            "mode": "exact-current",
-            "source": "default",
-            "unknownSize": "reject"
-          },
-          "VnActionResolved": {
-            "acceptedSizes": [
-              64
-            ],
-            "currentSize": 64,
             "mode": "exact-current",
             "source": "default",
             "unknownSize": "reject"
@@ -21774,9 +21143,9 @@
           },
           "VnCanonicalPackSetMemberV2": {
             "acceptedSizes": [
-              88
+              80
             ],
-            "currentSize": 88,
+            "currentSize": 80,
             "mode": "exact-current",
             "source": "default",
             "unknownSize": "reject"
@@ -22592,9 +21961,9 @@
           },
           "VnPackInspectDescV1": {
             "acceptedSizes": [
-              120
+              128
             ],
-            "currentSize": 120,
+            "currentSize": 128,
             "mode": "exact-current",
             "source": "default",
             "unknownSize": "reject"
@@ -22613,15 +21982,6 @@
               56
             ],
             "currentSize": 56,
-            "mode": "exact-current",
-            "source": "default",
-            "unknownSize": "reject"
-          },
-          "VnPackNamesV1": {
-            "acceptedSizes": [
-              80
-            ],
-            "currentSize": 80,
             "mode": "exact-current",
             "source": "default",
             "unknownSize": "reject"
@@ -22657,15 +22017,6 @@
               160
             ],
             "currentSize": 160,
-            "mode": "exact-current",
-            "source": "default",
-            "unknownSize": "reject"
-          },
-          "VnPostActionByNameDesc": {
-            "acceptedSizes": [
-              56
-            ],
-            "currentSize": 56,
             "mode": "exact-current",
             "source": "default",
             "unknownSize": "reject"
@@ -22880,15 +22231,6 @@
             "unknownSize": "reject"
           },
           "VnVariableQueryResultV1": {
-            "acceptedSizes": [
-              48
-            ],
-            "currentSize": 48,
-            "mode": "exact-current",
-            "source": "default",
-            "unknownSize": "reject"
-          },
-          "VnVariableResolved": {
             "acceptedSizes": [
               48
             ],
@@ -24473,77 +23815,28 @@
           "policy": "mirror"
         },
         {
-          "name": "Vn_PostActionByName",
+          "name": "ReservedPostActionByName",
           "opcode": 128,
-          "parameters": [
-            {
-              "name": "desc",
-              "type": "VnPostActionByNameDesc",
-              "wire": "desc"
-            },
-            {
-              "name": "outFiring",
-              "wire": "out"
-            }
-          ],
-          "policy": "mirror"
+          "parameters": [],
+          "policy": "reserved-unknown"
         },
         {
-          "name": "Vn_ResolveActionByName",
+          "name": "ReservedResolveActionByName",
           "opcode": 129,
-          "parameters": [
-            {
-              "name": "desc",
-              "type": "VnPostActionByNameDesc",
-              "wire": "desc"
-            },
-            {
-              "name": "outResolved",
-              "type": "VnActionResolved",
-              "wire": "outstruct"
-            }
-          ],
-          "policy": "mirror"
+          "parameters": [],
+          "policy": "reserved-unknown"
         },
         {
-          "name": "Vn_PostActionPinned",
+          "name": "ReservedPostActionPinned",
           "opcode": 130,
-          "parameters": [
-            {
-              "name": "desc",
-              "type": "VnActionPinnedDesc",
-              "wire": "desc"
-            },
-            {
-              "name": "outFiring",
-              "wire": "out"
-            }
-          ],
-          "policy": "mirror"
+          "parameters": [],
+          "policy": "reserved-unknown"
         },
         {
-          "name": "Vn_PostActionResolved",
+          "name": "ReservedPostActionResolved",
           "opcode": 131,
-          "parameters": [
-            {
-              "name": "resolved",
-              "type": "VnActionResolved",
-              "wire": "desc"
-            },
-            {
-              "name": "emitter",
-              "wire": "u64"
-            },
-            {
-              "name": "callerSeed",
-              "wire": "u64"
-            },
-            {
-              "name": "outFiring",
-              "wire": "out"
-            }
-          ],
-          "policy": "mirror"
+          "parameters": [],
+          "policy": "reserved-unknown"
         },
         {
           "name": "Vn_SeekActionFiring",
@@ -24778,9 +24071,6 @@
         "kTraceCallLoadCurrentWorld": 98,
         "kTraceCallLoadPack": 16,
         "kTraceCallPostAction": 99,
-        "kTraceCallPostActionByName": 128,
-        "kTraceCallPostActionPinned": 130,
-        "kTraceCallPostActionResolved": 131,
         "kTraceCallPreviewPlayPlayable": 95,
         "kTraceCallPreviewQueryPlayable": 97,
         "kTraceCallPreviewResetPlayable": 105,
@@ -24819,11 +24109,15 @@
         "kTraceCallReservedLegacyContainerReplace": 54,
         "kTraceCallReservedLegacyContainerUnregister": 32,
         "kTraceCallReservedLegacyDirectPlay": 3,
+        "kTraceCallReservedPostActionByName": 128,
+        "kTraceCallReservedPostActionPinned": 130,
+        "kTraceCallReservedPostActionResolved": 131,
+        "kTraceCallReservedResolveActionByName": 129,
+        "kTraceCallReservedSetGameplayCatalog": 136,
         "kTraceCallResetBusDownmixMatrix": 57,
         "kTraceCallResetBusEffect": 82,
         "kTraceCallResetValues": 195,
         "kTraceCallResetVoiceEffect": 81,
-        "kTraceCallResolveActionByName": 129,
         "kTraceCallSeekActionFiring": 132,
         "kTraceCallSetBusDownmixMatrix": 56,
         "kTraceCallSetBusEffect": 42,
@@ -24844,7 +24138,6 @@
         "kTraceCallSetEmitterPosition": 26,
         "kTraceCallSetEmitterValue": 29,
         "kTraceCallSetEmitterValues": 193,
-        "kTraceCallSetGameplayCatalog": 136,
         "kTraceCallSetListener": 12,
         "kTraceCallSetListenerDistanceReference": 200,
         "kTraceCallSetValue": 10,
@@ -24893,7 +24186,7 @@
         "kTraceFlagArgsUnreplayable": 1,
         "kTraceFlagCallbackContext": 2,
         "kTraceFlagRawReadableAttempt": 4,
-        "kTraceFormatVersion": 7,
+        "kTraceFormatVersion": 8,
         "kTraceFormatVersionV2": 2,
         "kTraceFormatVersionV3": 3,
         "kTraceFormatVersionV4": 4,
@@ -24924,54 +24217,54 @@
         "kTraceRequiredCountUnavailable": 4294967295,
         "kTraceStrNull": 4294967295
       },
-      "formatVersion": 7
+      "formatVersion": 8
     }
   },
-  "contractSha256": "3e6c1ab83e776c5570a55622fbe3c161ed2e7d95c1ae90bffc25993bcb9b7589",
+  "contractSha256": "c75ddb38ef030a49f2b12f018a1b24524126d4bc5b9084b95e624fbd1a97d476",
   "generatedFiles": {
     "HarkenEngine/Tool/HostControl/generated/harken_wire_desc_meta.h": {
-      "sha256": "88e29d7bb7c7de36e628fac050a248ed69fdf1d01dcee880b48ffb65b33f44c4",
-      "size": 11076
+      "sha256": "7e862ff3932685da31e0e58cd2ad010da6266afd468108b37a6765812f6dcb66",
+      "size": 7866
     },
     "HarkenEngine/Tool/HostControl/generated/harken_wire_dispatch.inl": {
-      "sha256": "06a9b79a7542e4bfbfcef7ca22aae276d826c7868262afd5bd0f76906a77d59c",
-      "size": 65489
+      "sha256": "cd3b9d40270bf4283199b58f15de648435ba025c3d57165af9a573f5cc6b716e",
+      "size": 63092
     },
     "HarkenEngine/Tool/HostControl/generated/harken_wire_ids.h": {
-      "sha256": "996652dd904fb382826b7e9a9aab2a0991ec2b6c210249d9e9b2984342081d59",
-      "size": 5401
+      "sha256": "52fa09ead9a31b0c2a373c0226e5c5800b65869549a3112a64531e0c9956d7f0",
+      "size": 5421
     },
     "HarkenEngine/Tool/HostControl/generated/harken_wire_layout_asserts.h": {
-      "sha256": "6a974c06c04becf4aae7022b5872cd2faf0656aad3276f755bfc038ac5b71e69",
-      "size": 253318
+      "sha256": "945dc8e5878110e8354f376cda53a9c368bc0103c7c652b0c532cf1cfc307fa2",
+      "size": 246991
     },
     "HarkenEngine/Tool/HostControl/harken_wire.py": {
-      "sha256": "addf6aa3b0359bc41296b1500b07ace7fe4dc9a896d4c04eba1653b42ef18278",
-      "size": 264713
+      "sha256": "792df66caefb7608d8bc6cd430024add8b64c5bc772133380e212a061ff8dcde",
+      "size": 257206
     },
     "HarkenIntegration/Unity/Binding/generated/harken_binding_abi_pin.g.h": {
-      "sha256": "66c9652e57af391dcf16c18061d26e51c44fe5af87aba7ab8738d4d74ce31831",
-      "size": 340686
+      "sha256": "045cd9b985f9e3bff56c63312cc2e98b72df91e133ad4bf81f8bb0ca183c863b",
+      "size": 334070
     },
     "HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenAbi.g.cs": {
-      "sha256": "9a30d01044edfefaf14bb16c44b1102145a25feac4713b0e48a35b493b9859c8",
-      "size": 132852
+      "sha256": "63d80355a5fc66fe328d6f09d82e8ef098ae7277ef290419eb4317789db117bf",
+      "size": 127635
     },
     "HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenNative.g.cs": {
-      "sha256": "c685babb4e016c66d335b2f144109b85c87fca53647ccf0e24e47a10211317d3",
-      "size": 31545
+      "sha256": "1a7518e8928401bbe62f44aab7e2180b6be355a0c6c8767da322d9199d4a8e88",
+      "size": 29643
     },
     "HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs": {
-      "sha256": "b3654101768c4a9bdf518ee8b89d63a848bd3c9ac4ebc0dd9318ed99dc840908",
-      "size": 70672
+      "sha256": "c179dae5b7f605dcf73ccf6f024029fd3695ceb7bcd709fb3a7902e222a91668",
+      "size": 68813
     }
   },
   "kind": "harken-contract-suite-manifest",
   "schemaVersion": 1,
   "sectionSha256": {
-    "nativeAbiSha256": "c36ed0a1bd00ae1cd25bb9c503962643a875530a319525c7357d7da7caae56a9",
-    "remoteWireSha256": "d99304d71d24436e14a34fd990b3ded5e6ddd7bca6c13dc2065a9709d53577d3",
-    "traceFormatSha256": "5a48f4b2591eb3c9ade95bc3621d6002cd999290816aede8436b8a4cfdf8e3fd"
+    "nativeAbiSha256": "c191fc9d50ba19a2825af39891fa402a3d1365efeabe7698382757f831759f32",
+    "remoteWireSha256": "d47f60b0d2b7c0c842900be965ebc513575209455558ad0d8fcb310c4395b8e7",
+    "traceFormatSha256": "ff8cdaf56000521230e08660d9d9a0318f883e3b578cd85700a7df2d1af517a5"
   },
   "sourceFiles": {
     "HarkenEngine/Source/Core/api/abi/gen_abi_manifest.py": {
@@ -24979,28 +24272,28 @@
       "size": 57230
     },
     "HarkenEngine/Source/Core/api/include/harken/Harken.h": {
-      "sha256": "020e68819690d3ad798021aef52deb753e80192ec2dbc86debacbb97f789c68f",
-      "size": 233834
+      "sha256": "e59cc23ec6d3f351fa32dcf8136596a9fddb470f813f045a016b2342f310d5a5",
+      "size": 230502
     },
     "HarkenEngine/Source/Core/api/include/harken/ObjectId.h": {
       "sha256": "90b6f66ad515c5e411564f1e5981b65bec2e461fabbdee6c57aa86b26b9a300d",
       "size": 4323
     },
     "HarkenEngine/Source/Core/api/src/TraceFormat.h": {
-      "sha256": "8d2d412c4919c4230a8fefe07ec77be7c673d5a2c62015ea01558e10686b7a9d",
-      "size": 19843
+      "sha256": "44de3dc5c3f14b499e696e678df2bf3cecf53c444555217cafc857e00354ce41",
+      "size": 19883
     },
     "HarkenEngine/Source/Development/include/harken/HarkenDevelopment.h": {
-      "sha256": "41d79b1ba8d15868285d7a6c33adf7d85df31e1c6c7d645871bc55c7b577f267",
-      "size": 21598
+      "sha256": "19b95d6f0bb7167f1b0b80cf7562529d1e46b5150a2bebeb3ff8d58753fe329b",
+      "size": 21440
     },
     "HarkenEngine/Tool/HostControl/wire/gen_wire.py": {
       "sha256": "bf64d770282491f895b5d92943f8c5843e8c6224fc25771e47bb61e63cbd9265",
       "size": 30889
     },
     "HarkenEngine/Tool/HostControl/wire/harken_wire_table.json": {
-      "sha256": "710b930e7c69ca0f716332ee1f92818f2218cb89638a69593abe2d6205a916dc",
-      "size": 263473
+      "sha256": "d9789ae75072d1b8a33291fa7390c70897434e440ca13c3dbd6ffac945657aea",
+      "size": 255966
     },
     "HarkenIntegration/Unity/Binding/gen_binding.py": {
       "sha256": "45c07298a5ecaa05a647c307b2e9ec498166463518a8e5e0d56667220ddbbb7d",

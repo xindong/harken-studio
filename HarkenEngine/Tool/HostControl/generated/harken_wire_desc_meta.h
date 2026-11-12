@@ -148,64 +148,6 @@ struct WireDescMeta<VnCanonicalPackSetActivationDescV1> {
 };
 
 template <>
-struct WireDescMeta<VnPackVariableNameV1> {
-    static bool DecodeSections(WireReader& reader, WireArena& arena,
-                               VnPackVariableNameV1* desc, std::uint32_t declared) {
-        if (offsetof(VnPackVariableNameV1, utf8Name) + sizeof(void*) <= declared) {
-            if (!ReadStringSection(reader, arena, &desc->utf8Name)) {
-                return false;
-            }
-        }
-        return true;
-    }
-};
-
-template <>
-struct WireDescMeta<VnPackLabelNameV1> {
-    static bool DecodeSections(WireReader& reader, WireArena& arena,
-                               VnPackLabelNameV1* desc, std::uint32_t declared) {
-        if (offsetof(VnPackLabelNameV1, utf8Name) + sizeof(void*) <= declared) {
-            if (!ReadStringSection(reader, arena, &desc->utf8Name)) {
-                return false;
-            }
-        }
-        return true;
-    }
-};
-
-template <>
-struct WireDescMeta<VnPackNamesV1> {
-    static bool DecodeSections(WireReader& reader, WireArena& arena,
-                               VnPackNamesV1* desc, std::uint32_t declared) {
-        if (offsetof(VnPackNamesV1, utf8RootName) + sizeof(void*) <= declared) {
-            if (!ReadStringSection(reader, arena, &desc->utf8RootName)) {
-                return false;
-            }
-        }
-        if (offsetof(VnPackNamesV1, utf8Language) + sizeof(void*) <= declared) {
-            if (!ReadStringSection(reader, arena, &desc->utf8Language)) {
-                return false;
-            }
-        }
-        if (offsetof(VnPackNamesV1, variables) + sizeof(void*) <= declared) {
-            if (!ReadArraySection(reader, arena, desc->variableCount,
-                                  static_cast<std::uint32_t>(sizeof(VnPackVariableNameV1)), true,
-                                  reinterpret_cast<const void**>(&desc->variables))) {
-                return false;
-            }
-        }
-        if (offsetof(VnPackNamesV1, labels) + sizeof(void*) <= declared) {
-            if (!ReadArraySection(reader, arena, desc->labelCount,
-                                  static_cast<std::uint32_t>(sizeof(VnPackLabelNameV1)), true,
-                                  reinterpret_cast<const void**>(&desc->labels))) {
-                return false;
-            }
-        }
-        return true;
-    }
-};
-
-template <>
 struct WireDescMeta<VnCanonicalPackSetActivationDescV2> {
     static bool DecodeSections(WireReader& reader, WireArena& arena,
                                VnCanonicalPackSetActivationDescV2* desc, std::uint32_t declared) {
@@ -226,32 +168,6 @@ struct WireDescMeta<VnCurrentWorldLoadDesc> {
                                VnCurrentWorldLoadDesc* desc, std::uint32_t declared) {
         if (offsetof(VnCurrentWorldLoadDesc, utf8Path) + sizeof(void*) <= declared) {
             if (!ReadStringSection(reader, arena, &desc->utf8Path)) {
-                return false;
-            }
-        }
-        return true;
-    }
-};
-
-template <>
-struct WireDescMeta<VnPostActionByNameDesc> {
-    static bool DecodeSections(WireReader& reader, WireArena& arena,
-                               VnPostActionByNameDesc* desc, std::uint32_t declared) {
-        if (offsetof(VnPostActionByNameDesc, utf8Name) + sizeof(void*) <= declared) {
-            if (!ReadStringSection(reader, arena, &desc->utf8Name)) {
-                return false;
-            }
-        }
-        return true;
-    }
-};
-
-template <>
-struct WireDescMeta<VnActionPinnedDesc> {
-    static bool DecodeSections(WireReader& reader, WireArena& arena,
-                               VnActionPinnedDesc* desc, std::uint32_t declared) {
-        if (offsetof(VnActionPinnedDesc, utf8ExpectedName) + sizeof(void*) <= declared) {
-            if (!ReadStringSection(reader, arena, &desc->utf8ExpectedName)) {
                 return false;
             }
         }

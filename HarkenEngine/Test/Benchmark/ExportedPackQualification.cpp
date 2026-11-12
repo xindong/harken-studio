@@ -3,7 +3,7 @@
 #include <harken_buildinfo.h>
 
 #include "Engine.h"
-#include "PackCompanion.h"
+#include "HostPacks.h"
 #include "harken/core/AllocGuard.h"
 #include "harken/core/EngineConfig.h"
 #include "harken/media/PackFormat.h"
@@ -111,30 +111,26 @@ struct ExportedPack {
 };
 
 VnResult CaptureExportedPacks(const std::filesystem::path& root,
-                              const std::string& actionName,
-                              const std::string& language,
-                              ExportedPack* init, ExportedPack* content,
-                              VnObjectId* actionId) {
-    harkenhost::PackCompanion initInput, contentInput;
-    harkenhost::PackCompanionDiagnostic diagnostic;
-    VnResult result = harkenhost::CapturePackCompanion(root, {}, {}, nullptr,
-                                                      &initInput, &diagnostic);
+                              const std::string& initPath,
+                              const std::string& contentPath,
+                              VnObjectId actionId,
+                              ExportedPack* init, ExportedPack* content) {
+    harkenhost::HostPack initInput, contentInput;
+    VnResult result = harkenhost::CaptureHostPack(root / std::filesystem::path(initPath),
+                                                  nullptr, {}, &initInput);
     if (result == VN_OK) {
-        result = harkenhost::CapturePackCompanion(root, actionName, language,
-                                                 &initInput, &contentInput, &diagnostic);
+        result = harkenhost::CaptureHostPack(root / std::filesystem::path(contentPath),
+                                             &initInput, actionId, &contentInput);
     }
     if (result != VN_OK) {
-        std::fprintf(stderr, "%s companion %s failed at %s (%d). Re-export with the current Studio.\n",
-                     diagnostic.kind, diagnostic.jsonPath.generic_string().c_str(),
-                     diagnostic.stage, result);
+        std::fprintf(stderr, "packs under %s failed inspection (%d)\n",
+                     root.generic_string().c_str(), result);
         return result;
     }
-    init->path = "Init.bytes";
+    init->path = initPath;
     init->packStableId = initInput.facts.packStableId;
-    content->path = (std::filesystem::path(contentInput.language) /
-                      (actionName + ".bytes")).generic_string();
+    content->path = contentPath;
     content->packStableId = contentInput.facts.packStableId;
-    *actionId = contentInput.facts.rootActionId;
     return VN_OK;
 }
 
@@ -521,26 +517,31 @@ int main(int argc, char* argv[]) {
     std::filesystem::path exportedPackRoot;
     std::filesystem::path nextRoot;
     VnObjectId actionId{};
-    std::string actionName;
-    std::string language;
+    std::string initRelative;
+    std::string contentRelative;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--exported-pack-root" && i + 1 < argc) {
             exportedPackRoot = argv[++i];
         } else if (arg == "--next-root" && i + 1 < argc) {
             nextRoot = argv[++i];
-        } else if (arg == "--action-name" && i + 1 < argc) {
-            actionName = argv[++i];
-        } else if (arg == "--language" && i + 1 < argc) {
-            language = argv[++i];
+        } else if (arg == "--init-pack" && i + 1 < argc) {
+            initRelative = argv[++i];
+        } else if (arg == "--content-pack" && i + 1 < argc) {
+            contentRelative = argv[++i];
+        } else if (arg == "--action-id" && i + 1 < argc) {
+            if (!harken::ParseObjectId(argv[++i], &actionId)) {
+                std::fprintf(stderr, "--action-id must be a GUID\n");
+                return 2;
+            }
         } else {
-            std::fprintf(stderr, "Unknown or incomplete argument. Use --exported-pack-root <platform-dir> --action-name NAME [--language NAME] [--next-root <platform-dir>].\n");
+            std::fprintf(stderr, "Unknown or incomplete argument. Use --exported-pack-root <dir> --init-pack <relative-file> --content-pack <relative-file> --action-id <guid> [--next-root <dir>].\n");
             return 2;
         }
     }
-    if (exportedPackRoot.empty() || !harkenhost::PackCompanionName(actionName) ||
-        actionName == "Init" || !harkenhost::PackCompanionLanguage(language)) {
-        std::fprintf(stderr, "--exported-pack-root <platform-dir> and --action-name NAME are required\n");
+    if (exportedPackRoot.empty() || initRelative.empty() || contentRelative.empty() ||
+        harken::IsNull(actionId)) {
+        std::fprintf(stderr, "--exported-pack-root, --init-pack, --content-pack and --action-id are required\n");
         return 2;
     }
 
@@ -548,8 +549,8 @@ int main(int argc, char* argv[]) {
     if (!nextRoot.empty()) nextRoot = std::filesystem::absolute(nextRoot).lexically_normal();
     const std::string root = exportedPackRoot.generic_string();
     ExportedPack initPack, contentPack;
-    if (CaptureExportedPacks(exportedPackRoot, actionName, language,
-                             &initPack, &contentPack, &actionId) != VN_OK) return 1;
+    if (CaptureExportedPacks(exportedPackRoot, initRelative, contentRelative, actionId,
+                             &initPack, &contentPack) != VN_OK) return 1;
     const ExportedPack* init = &initPack;
     const ExportedPack* content = &contentPack;
     const std::filesystem::path initFile = PackFilePath(exportedPackRoot, *init);
@@ -665,13 +666,8 @@ int main(int argc, char* argv[]) {
         replaceResult = VN_BAD_PACK;
         const std::string nextRootText = nextRoot.generic_string();
         ExportedPack nextInit, nextContent;
-        VnObjectId nextActionId{};
-        replaceResult = CaptureExportedPacks(nextRoot, actionName, language,
-                                             &nextInit, &nextContent, &nextActionId);
-        if (replaceResult == VN_OK && nextActionId != actionId) {
-            std::fprintf(stderr, "successor companion changed the Action identity\n");
-            replaceResult = VN_BAD_PACK;
-        }
+        replaceResult = CaptureExportedPacks(nextRoot, initRelative, contentRelative, actionId,
+                                             &nextInit, &nextContent);
         if (replaceResult == VN_OK) {
             const std::string nextPath = PackFilePath(nextRoot, nextContent).generic_string();
             replaceUs = MeasureUs([&] {

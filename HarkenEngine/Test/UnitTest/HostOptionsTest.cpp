@@ -3,10 +3,8 @@
 // the (0, 3600] range — no partial parses, no infinities reaching the
 // duration-to-frame conversions.
 #include "DemoOptions.h"
-#include "PackCompanion.h"
 #include "SchedulingMeasureOptions.h"
 #include "Common/PackFoundationFixture.h"
-#include "harken/core/PackCompanionNames.h"
 
 #include <gtest/gtest.h>
 
@@ -21,11 +19,6 @@
 #endif
 
 namespace {
-
-std::string CompanionJson(const std::string& fields) {
-    return "{\"schemaVersion\":" + std::to_string(HK_PACK_FORMAT_VERSION) +
-        "," + fields + "}";
-}
 
 TEST(HostOptions, AcceptsFiniteSecondsInRange) {
     double seconds = 0.0;
@@ -102,130 +95,6 @@ TEST(HostOptions, ParsesSchedulingLoadAndCompetition) {
     EXPECT_EQ(256u, threads);
     EXPECT_FALSE(harkenhost::ParseSchedulingCpuThreads("257", &threads));
     EXPECT_EQ(256u, threads);
-}
-
-TEST(HostOptions, CompanionNamesPreserveGuidAndStrictJsonContract) {
-    harkenhost::PackCompanion input;
-    const std::string action = CompanionJson(R"("name":"Play_Head","guid":"11111111-2222-3333-4444-555555555555","display":{"gain":1})");
-    ASSERT_EQ(harkenhost::ParsePackCompanion(action, "Play_Head", "", {}, &input), VN_OK);
-    EXPECT_EQ(harken::ObjectIdString(input.names.rootActionId), "11111111-2222-3333-4444-555555555555");
-    EXPECT_EQ(harkenhost::ParsePackCompanion(action, "WrongName", "", {}, &input), VN_BAD_PACK);
-    EXPECT_EQ(harkenhost::ParsePackCompanion(CompanionJson(R"("variables":[],"variables":[])"), "", "", {}, &input), VN_BAD_PACK);
-    EXPECT_EQ(harkenhost::ParsePackCompanion(CompanionJson(R"("variables":[])") + " trailing", "", "", {}, &input), VN_BAD_PACK);
-    EXPECT_EQ(harkenhost::ParsePackCompanion(CompanionJson(R"("variables":[{"name":"Choice","guid":"11111111-2222-3333-4444-555555555555","labels":[{"guid":"21111111-2222-3333-4444-555555555555","name":"\u4e2d\u6587"}]}])"), "", "", {}, &input), VN_OK);
-    ASSERT_EQ(input.labels.size(), 1u);
-    EXPECT_STREQ(input.labels.front().utf8Name, "\xe4\xb8\xad\xe6\x96\x87");
-    EXPECT_FALSE(harkenhost::PackCompanionName("../Play_Head"));
-    EXPECT_FALSE(harkenhost::PackCompanionName("Play-Head"));
-    EXPECT_FALSE(harkenhost::PackCompanionLanguage("../English"));
-}
-
-TEST(HostOptions, CompanionVersionUsesExactJsonIntegerSemantics) {
-    harkenhost::PackCompanion input;
-    const std::string current = std::to_string(HK_PACK_FORMAT_VERSION);
-    const std::string next = std::to_string(std::uint64_t{HK_PACK_FORMAT_VERSION} + 1);
-    for (bool init : {true, false}) {
-        const std::string fields = init ? R"("variables":[])"
-            : R"("name":"Play_Head","guid":"11111111-2222-3333-4444-555555555555")";
-        const std::string name = init ? "" : "Play_Head";
-        for (const std::string& version : {current, current + ".0", current + "e0", current + "0e-1",
-                "0.0" + current + "E+" + std::to_string(current.size() + 1), current + "00e-2", current + "e-0000"}) {
-            SCOPED_TRACE(version);
-            EXPECT_EQ(harkenhost::ParsePackCompanion(std::string("{\"schemaVersion\":") + version + "," + fields +
-                R"(,"metadata":false,"waveforms":42})", name, "", {}, &input), VN_OK);
-        }
-        for (const std::string& version : std::vector<std::string>{"", next, "\"" + current + "\"", "true", "null", "[]", "{}",
-                current + ".5", "-" + current, "0", current + ".0000000000000001",
-                std::to_string(HK_PACK_FORMAT_VERSION - 1) + ".9999999999999999",
-                current + "e999999999999999999999", current + "e-999999999999999999999"}) {
-            SCOPED_TRACE(version);
-            const std::string field = version.empty() ? "" : "\"schemaVersion\":" + version + ",";
-            const char* stage = nullptr;
-            EXPECT_EQ(harkenhost::ParsePackCompanion("{" + field + fields +
-                ",\"schema_version\":" + current + ",\"metadata\":{\"schemaVersion\":" + current + "}}",
-                name, "", {}, &input, &stage), VN_BAD_PACK);
-            EXPECT_STREQ(stage, "schemaVersion");
-        }
-    }
-    EXPECT_EQ(harkenhost::ParsePackCompanion(CompanionJson(R"("variables":[{"name":"Choice","guid":"11111111-2222-3333-4444-555555555555","labels":[]}])"),
-        "", "", {}, &input), VN_OK);
-}
-
-TEST(HostOptions, CompanionCaptureUsesPairedFilesAndRefusesPartialLanguageOrPublication) {
-    using namespace harkentest::packfoundation;
-    const auto directory = std::filesystem::path(HARKEN_TEMP_DIR) /
-        ("host-companion-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    struct Cleanup { std::filesystem::path root; ~Cleanup() { std::error_code ec; std::filesystem::remove_all(root, ec); } } cleanup{directory};
-    const auto source = directory / "source";
-    const auto root = directory / "capture";
-    ASSERT_TRUE(std::filesystem::create_directories(source / "English"));
-    ASSERT_TRUE(std::filesystem::create_directories(root / "English"));
-    const auto project = harkentest::ObjectId(1);
-    const auto action = harkentest::ObjectId(kActionBase);
-    const auto bus = DefaultRuntimeBusFixture();
-    const auto build = [&](bool init, const std::string& language) {
-        const auto id = init ? kInitPackStableId :
-            harken::CompanionActionPackId(kInitPackStableId, action, language);
-        std::uint64_t bodyBytes = 0;
-        auto partition = PartitionPayload(id, 1, init ? 0 : 1, 0x3f000000u,
-            &bodyBytes, 64, project, bus.triple);
-        ImageBuilder image(init ? HK_PACK_KIND_INIT : HK_PACK_KIND_CANONICAL_CONTENT);
-        image.AddEntry(HK_PACK_ENTRY_KIND_PACK_REQUIREMENT_BLOCK, id,
-            RequirementPayload(id, 1, 1, init ? 0 : 2, bodyBytes, bus.triple));
-        image.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, id, std::move(partition));
-        if (init) {
-            image.AddEntry(HK_PACK_ENTRY_KIND_BUS_DEFINITION_SNAPSHOT, 1, bus.snapshot);
-        } else {
-            image.AddEntry(HK_PACK_ENTRY_KIND_PACK_DEPENDENCY_EDGE, VnObjectId{},
-                DependencyPayload(kInitPackStableId, 1, bus.triple), HK_PACK_PACK_DEPENDENCY_EDGE_VINTAGE);
-        }
-        return image.Build();
-    };
-    const auto writeJson = [](const std::filesystem::path& path, const std::string& text) {
-        std::ofstream output(path, std::ios::binary);
-        output << text;
-        return output.good();
-    };
-    const auto actionJson = CompanionJson("\"name\":\"Play_Head\",\"guid\":\"" + harken::ObjectIdString(action) + "\"");
-    ASSERT_TRUE(WriteFile(source / "Init.bytes", build(true, "")));
-    ASSERT_TRUE(writeJson(source / "Init.json", CompanionJson(R"("variables":[])")));
-    ASSERT_TRUE(WriteFile(source / "Play_Head.bytes", build(false, "")));
-    ASSERT_TRUE(writeJson(source / "Play_Head.json", actionJson));
-    ASSERT_TRUE(WriteFile(source / "English/Play_Head.bytes", build(false, "English")));
-    ASSERT_TRUE(writeJson(source / "English/Play_Head.json", actionJson));
-    harkenhost::PackCompanion init, fallback, localized;
-    ASSERT_EQ(harkenhost::CapturePackCompanion(source, {}, {}, nullptr, &init), VN_OK);
-    ASSERT_EQ(harkenhost::CapturePackCompanion(source, "Play_Head", "French", &init, &fallback), VN_OK);
-    EXPECT_TRUE(fallback.language.empty());
-    ASSERT_EQ(harkenhost::CapturePackCompanion(source, "Play_Head", "English", &init, &localized), VN_OK);
-    EXPECT_EQ(localized.language, "English");
-    EXPECT_EQ(localized.facts.rootActionId, fallback.facts.rootActionId);
-    { std::ofstream json(root / "HarkenPackManifest.json"); json << R"({"schema_version":3,"packs":[]})"; }
-    { std::ofstream json(root / "HarkenPackIndex.json"); json << R"({"schema_version":3,"platforms":[]})"; }
-    harkenhost::PackCompanion missingInit;
-    EXPECT_EQ(harkenhost::CapturePackCompanion(root, {}, {}, nullptr, &missingInit), VN_CONTENT_NOT_LOADED);
-    for (const auto* file : {"Play_Head.bytes", "Play_Head.json"})
-        std::filesystem::copy_file(source / file, root / file);
-    std::filesystem::copy_file(source / "English/Play_Head.bytes", root / "English/Play_Head.bytes");
-    harkenhost::PackCompanion refused;
-    harkenhost::PackCompanionDiagnostic diagnostic;
-    EXPECT_EQ(harkenhost::CapturePackCompanion(root, "Play_Head", "English", &init, &refused, &diagnostic), VN_BAD_PACK);
-    EXPECT_STREQ(diagnostic.stage, "file capture");
-    ASSERT_TRUE(writeJson(root / "English/Play_Head.json", "{\"schemaVersion\":" +
-        std::to_string(std::uint64_t{HK_PACK_FORMAT_VERSION} + 1) + "}"));
-    EXPECT_EQ(harkenhost::CapturePackCompanion(root, "Play_Head", "English", &init, &refused, &diagnostic), VN_BAD_PACK);
-    EXPECT_STREQ(diagnostic.kind, "Action");
-    EXPECT_EQ(diagnostic.jsonPath, root / "English/Play_Head.json");
-    EXPECT_STREQ(diagnostic.stage, "schemaVersion");
-    std::filesystem::copy_file(source / "English/Play_Head.json", root / "English/Play_Head.json",
-        std::filesystem::copy_options::overwrite_existing);
-    EXPECT_EQ(harkenhost::CapturePackCompanion(root, "Play_Head", "English", &init, &refused), VN_OK);
-    { std::ofstream marker(root / ".harken-pack-publishing"); marker << "publishing"; }
-    EXPECT_EQ(harkenhost::CapturePackCompanion(root, "Play_Head", "", &init, &refused, &diagnostic), VN_PACK_STALE_REVISION);
-    EXPECT_STREQ(diagnostic.stage, "file capture");
-    std::filesystem::remove(root / ".harken-pack-publishing");
-    std::filesystem::rename(root / "Play_Head.bytes", root / "play_head.bytes");
-    EXPECT_EQ(harkenhost::CapturePackCompanion(root, "Play_Head", "", &init, &refused), VN_BAD_PACK);
 }
 
 } // namespace
