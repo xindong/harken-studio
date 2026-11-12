@@ -12,8 +12,8 @@ CMAKE = REPO / "HarkenEngine" / "Test" / "CMakeLists.txt"
 PROBE_ALLOWED = {
     "<harken/Harken.h>",
     "<harken/HarkenDevelopment.h>",
-    '"monitor_fixture_decode.h"',
-    '"monitor_session_codec.h"',
+    '"MonitorFixtureDecode.h"',
+    '"MonitorSessionCodec.h"',
     "<stdint.h>",
     "<stdio.h>",
     "<stdlib.h>",
@@ -22,8 +22,8 @@ PROBE_ALLOWED = {
 HARNESS_ALLOWED = {
     "<harken/Harken.h>",
     "<harken/HarkenDevelopment.h>",
-    '"monitor_fixture_decode.h"',
-    '"monitor_session_codec.h"',
+    '"MonitorFixtureDecode.h"',
+    '"MonitorSessionCodec.h"',
     "<stdint.h>",
     "<stddef.h>",
     "<cstring>",

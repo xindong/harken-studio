@@ -19,7 +19,7 @@
 
 #include <gtest/gtest.h>
 
-#include "monitor_fixture_decode.h"
+#include "MonitorFixtureDecode.h"
 
 #include <cstdint>
 #include <cstring>

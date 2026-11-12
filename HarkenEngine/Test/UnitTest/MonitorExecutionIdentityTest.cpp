@@ -11,7 +11,7 @@
 #include "MonitorCaptureHubTestHooks.h"
 #include "MonitorCaptureHub.h"
 #include "MonitorExecutionCodec.h"
-#include "monitor_fixture_decode.h"
+#include "MonitorFixtureDecode.h"
 #include <gtest/gtest.h>
 #include <algorithm>
 #include <array>

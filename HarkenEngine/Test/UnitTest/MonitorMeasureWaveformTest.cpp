@@ -6,7 +6,7 @@
 #include "MonitorDerivedDispatch.h"
 #include "MonitorRecordPack.h"
 #include "Common/TestUtil.h"
-#include "monitor_fixture_decode.h"
+#include "MonitorFixtureDecode.h"
 #include "MonitorWaveformReduce.h"
 
 #include <gtest/gtest.h>

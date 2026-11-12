@@ -7,7 +7,7 @@
 #include "MonitorMeterHandlerTestHooks.h"
 #include "MonitorRecordPack.h"
 #include "Common/TestUtil.h"
-#include "monitor_fixture_decode.h"
+#include "MonitorFixtureDecode.h"
 #include "harken/core/AllocGuard.h"
 #include "MonitorMeterReduce.h"
 

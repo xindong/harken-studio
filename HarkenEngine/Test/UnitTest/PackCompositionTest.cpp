@@ -2,6 +2,7 @@
 #include "UnitTest/CanonicalPackSetActivate.h"
 #include "AllocationProbe.h"
 #include "Common/ObjectIdTestSupport.h"
+#include "Common/TestTempPath.h"
 #include "Common/TestUtil.h"
 #include "Common/VariableOutcomeCapture.h"
 #include "Common/PackFoundationFixture.h"
@@ -1374,7 +1375,9 @@ std::vector<std::uint8_t> BuildPostActionPack(
 
 std::string WriteTemp(const std::string& name,
                       const std::vector<std::uint8_t>& bytes) {
-    const std::string path = std::string(HARKEN_TEMP_DIR "/") + name;
+    const std::string path = name.find('/') == std::string::npos
+        ? (harkentest::TestTempDirectory(HARKEN_TEMP_DIR) / name).string()
+        : std::string(HARKEN_TEMP_DIR "/") + name;
     std::filesystem::create_directories(std::filesystem::path(path).parent_path());
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
     out.write(reinterpret_cast<const char*>(bytes.data()),

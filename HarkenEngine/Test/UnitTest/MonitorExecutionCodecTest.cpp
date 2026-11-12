@@ -3,7 +3,7 @@
 #include "MonitorExecutionCodec.h"
 #include "MonitorIdentityCodec.h"
 #include "MonitorLifecycleProjection.h"
-#include "monitor_fixture_decode.h"
+#include "MonitorFixtureDecode.h"
 #include <gtest/gtest.h>
 #include <array>
 #include <cstring>

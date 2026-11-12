@@ -225,3 +225,9 @@ HarkenTest/Runtime/UnitTest/width_collapse_golden_test.cpp	HarkenEngine/Test/Uni
 HarkenTest/TestSupport/pipe_client.h	HarkenEngine/Test/E2E/PipeClient.h
 HarkenTest/TestSupport/stream_builder.h	HarkenEngine/Test/Common/StreamBuilder.h
 HarkenTest/TestSupport/test_util.h	HarkenEngine/Test/Common/TestUtil.h
+HarkenEngine/Test/UnitTest/monitor_fixture_decode.cpp	HarkenEngine/Test/UnitTest/MonitorFixtureDecode.cpp
+HarkenEngine/Test/UnitTest/monitor_fixture_decode.h	HarkenEngine/Test/UnitTest/MonitorFixtureDecode.h
+HarkenEngine/Test/UnitTest/monitor_remote_codec.cpp	HarkenEngine/Test/UnitTest/MonitorRemoteCodec.cpp
+HarkenEngine/Test/UnitTest/monitor_remote_codec.h	HarkenEngine/Test/UnitTest/MonitorRemoteCodec.h
+HarkenEngine/Test/UnitTest/monitor_session_codec.cpp	HarkenEngine/Test/UnitTest/MonitorSessionCodec.cpp
+HarkenEngine/Test/UnitTest/monitor_session_codec.h	HarkenEngine/Test/UnitTest/MonitorSessionCodec.h

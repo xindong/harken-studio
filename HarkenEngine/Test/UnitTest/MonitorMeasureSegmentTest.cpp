@@ -6,7 +6,7 @@
 #include "MonitorCaptureHubTestHooks.h"
 #include "MonitorRecordPack.h"
 #include "Common/TestUtil.h"
-#include "monitor_fixture_decode.h"
+#include "MonitorFixtureDecode.h"
 #include "harken/render/BusTree.h"
 
 #include <gtest/gtest.h>

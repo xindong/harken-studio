@@ -22,8 +22,8 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[5]
 OUT = REPO / "HarkenEngine" / "Test" / "UnitTest" / "monitor"
 MANIFEST = OUT / "manifest.json"
-DECODER_H = REPO / "HarkenEngine" / "Test" / "UnitTest" / "monitor_fixture_decode.h"
-DECODER_CC = REPO / "HarkenEngine" / "Test" / "UnitTest" / "monitor_fixture_decode.cpp"
+DECODER_H = REPO / "HarkenEngine" / "Test" / "UnitTest" / "MonitorFixtureDecode.h"
+DECODER_CC = REPO / "HarkenEngine" / "Test" / "UnitTest" / "MonitorFixtureDecode.cpp"
 
 PACKED = 316
 KIND_EVENT = 5
@@ -345,7 +345,7 @@ def check_decoder_includes() -> None:
     include_re = re.compile(r'^\s*#\s*include\s*[<"]([^>"]+)[>"]')
     allowed = {
         DECODER_H: {"harken/Harken.h", "harken/HarkenDevelopment.h", "stddef.h", "stdint.h"},
-        DECODER_CC: {"monitor_fixture_decode.h", "cstring"},
+        DECODER_CC: {"MonitorFixtureDecode.h", "cstring"},
     }
     forbidden_needles = (
         "Core/api/src",

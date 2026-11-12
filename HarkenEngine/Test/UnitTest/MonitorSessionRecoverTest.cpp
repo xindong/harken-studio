@@ -2,7 +2,7 @@
 #include "MonitorSessionRecover.h"
 #include "MonitorCaptureHubTestHooks.h"
 #include "Common/TestUtil.h"
-#include "monitor_session_codec.h"
+#include "MonitorSessionCodec.h"
 
 #include <harken/Harken.h>
 #include <harken/HarkenDevelopment.h>

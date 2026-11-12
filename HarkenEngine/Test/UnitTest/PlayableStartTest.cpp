@@ -2,6 +2,7 @@
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
 #include "Common/StreamBuilder.h"
+#include "Common/TestTempPath.h"
 #include "UnitTest/PlayableStorageTestSupport.h"
 #include "UnitTest/CanonicalPackSetActivate.h"
 
@@ -13,7 +14,7 @@
 #include "PlayableRuntime.h"
 #include "MonitorCaptureHubTestHooks.h"
 #include "Common/MonitorExecutionTestSupport.h"
-#include "monitor_fixture_decode.h"
+#include "MonitorFixtureDecode.h"
 #include "harken/core/CurrentWorld.h"
 #include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/VariableControlGrid.h"
@@ -20265,7 +20266,7 @@ TEST(PlayableStart, MusicTransitionEntryAndNaturalEndUseActualBodyCount) {
             builder.AddEntry(HK_PACK_ENTRY_KIND_CANONICAL_DEFINITION_PARTITION, 22, std::move(partition));
             builder.AddMedia(kSound, samples);
             const auto write = [](const char* filename, const std::vector<std::uint8_t>& bytes) {
-                const auto path = std::filesystem::path(HARKEN_TEMP_DIR) / filename;
+                const auto path = harkentest::TestTempDirectory(HARKEN_TEMP_DIR) / filename;
                 std::ofstream file(path, std::ios::binary | std::ios::trunc);
                 file.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
                 return path.string();
@@ -21345,7 +21346,7 @@ TEST(PlayableStart, QueueInitialStreamWaitPreservesSignalOnlyResidentSuccessorOr
         ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSecondSound, &pcm));
         harkentest::StreamSpec spec;
         spec.soundId = kSound;
-        const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "compose_queue_boundary.stream").string();
+        const auto path = (harkentest::TestTempDirectory(HARKEN_TEMP_DIR) / "compose_queue_boundary.stream").string();
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, std::vector<float>(sourceFrames, 0.25f)));
         ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSound, path.c_str()));
         harken::StreamManager::StreamFacts facts;
@@ -21427,7 +21428,7 @@ TEST(PlayableStart, MusicSegmentStreamedAndResidentStemsStartSampleAligned) {
         ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &pcm));
         harkentest::StreamSpec spec;
         spec.soundId = kSecondSound;
-        const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "music_streamed_stem.stream").string();
+        const auto path = (harkentest::TestTempDirectory(HARKEN_TEMP_DIR) / "music_streamed_stem.stream").string();
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, std::vector<float>(kFrames, -0.5f)));
         ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSecondSound, path.c_str()));
         harken::StreamManager::StreamFacts facts;
@@ -21500,7 +21501,7 @@ TEST(PlayableStart, MusicSegmentStreamedClipRepeatsEveryPassOnTheTimeline) {
         std::fill(samples.begin() + 1200, samples.end(), 0.3f);
         harkentest::StreamSpec spec;
         spec.soundId = kSound;
-        const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "music_streamed_repeat.stream").string();
+        const auto path = (harkentest::TestTempDirectory(HARKEN_TEMP_DIR) / "music_streamed_repeat.stream").string();
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, samples));
         ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSound, path.c_str()));
         harken::StreamManager::StreamFacts facts;
@@ -21599,7 +21600,7 @@ TEST(PlayableStart, MusicSegmentStarvedStreamedStemRejoinsItsTimelinePosition) {
         for (std::size_t frame = 0; frame < kFrames; ++frame) streamed[frame] = ramp(frame);
         harkentest::StreamSpec spec;
         spec.soundId = kSecondSound;
-        const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "music_starved_stem.stream").string();
+        const auto path = (harkentest::TestTempDirectory(HARKEN_TEMP_DIR) / "music_starved_stem.stream").string();
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, streamed));
         ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSecondSound, path.c_str()));
         harken::StreamManager::StreamFacts facts;
@@ -21849,7 +21850,7 @@ TEST(PlayableStart, StreamedMusicTransitionPreparesSelectableBoundariesAndRefuse
         ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &pcm));
         harkentest::StreamSpec spec;
         spec.soundId = kSecondSound;
-        const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "music_transition_target.stream").string();
+        const auto path = (harkentest::TestTempDirectory(HARKEN_TEMP_DIR) / "music_transition_target.stream").string();
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, std::vector<float>(6400, -0.5f)));
         ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSecondSound, path.c_str()));
         harken::StreamManager::StreamFacts facts;
@@ -22003,7 +22004,7 @@ TEST(PlayableStart, QueueStreamedSuccessorStartsAtPredecessorEndOrIsRefused) {
         constexpr unsigned kStreamFrames = 512;
         harkentest::StreamSpec spec;
         spec.soundId = kSecondSound;
-        const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "queue_streamed_successor.stream").string();
+        const auto path = (harkentest::TestTempDirectory(HARKEN_TEMP_DIR) / "queue_streamed_successor.stream").string();
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, std::vector<float>(kStreamFrames, 0.25f)));
         ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSecondSound, path.c_str()));
         harken::StreamManager::StreamFacts facts;
@@ -22126,7 +22127,7 @@ TEST(PlayableStart, VariableControlStreamedTargetSwitchesOnPreparedBoundaryOrKee
         ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &pcm));
         harkentest::StreamSpec spec;
         spec.soundId = kSecondSound;
-        const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "variable_streamed_target.stream").string();
+        const auto path = (harkentest::TestTempDirectory(HARKEN_TEMP_DIR) / "variable_streamed_target.stream").string();
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, std::vector<float>(16384, 0.25f)));
         ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSecondSound, path.c_str()));
         harken::StreamManager::StreamFacts facts;
@@ -22235,7 +22236,7 @@ TEST(PlayableStart, ContainerLoopStreamedSuccessorPlaysWholeAfterPreparationOrIs
         constexpr unsigned kStreamFrames = 512;
         harkentest::StreamSpec spec;
         spec.soundId = kSecondSound;
-        const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "loop_streamed_successor.stream").string();
+        const auto path = (harkentest::TestTempDirectory(HARKEN_TEMP_DIR) / "loop_streamed_successor.stream").string();
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, std::vector<float>(kStreamFrames, -0.5f)));
         ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSecondSound, path.c_str()));
         harken::StreamManager::StreamFacts facts;
@@ -22323,7 +22324,7 @@ TEST(PlayableStart, ContainerLoopStreamedChildKeepsTheRandomSelection) {
     ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &firstPcm));
     harkentest::StreamSpec spec;
     spec.soundId = kSecondSound;
-    const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "loop_random_streamed.stream").string();
+    const auto path = (harkentest::TestTempDirectory(HARKEN_TEMP_DIR) / "loop_random_streamed.stream").string();
     harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, std::vector<float>(kFrames, -0.5f)));
     ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSecondSound, path.c_str()));
     harken::StreamManager::StreamFacts facts;
@@ -22419,7 +22420,7 @@ TEST(PlayableStart, NativeInitialStreamWaitRetainsSourceAndCancelsBeforeReady) {
         const auto voicesBefore = engine.voices.AvailableSlotCount();
         harkentest::StreamSpec spec;
         spec.soundId = kSound;
-        const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "compose_native_initial.stream").string();
+        const auto path = (harkentest::TestTempDirectory(HARKEN_TEMP_DIR) / "compose_native_initial.stream").string();
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, std::vector<float>(512, 0.25f)));
         ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSound, path.c_str()));
         harken::StreamManager::StreamFacts facts;
@@ -22519,7 +22520,7 @@ TEST(PlayableStart, QueueTrackInitialStreamWaitHoldsResidentSiblingAndReclaims) 
         ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSecondSound, &pcm));
         harkentest::StreamSpec spec;
         spec.soundId = kSound;
-        const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "compose_queue_track.stream").string();
+        const auto path = (harkentest::TestTempDirectory(HARKEN_TEMP_DIR) / "compose_queue_track.stream").string();
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, std::vector<float>(512, 0.25f)));
         ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSound, path.c_str()));
         harken::StreamManager::StreamFacts facts;
@@ -22659,7 +22660,7 @@ static void CheckNativeTrackInitialStreamWaitPreservesSubBlockFutureCohort(bool 
         ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSecondSound, &pcm));
         harkentest::StreamSpec spec;
         spec.soundId = kSound;
-        const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "compose_queue_track_subblock_future.stream").string();
+        const auto path = (harkentest::TestTempDirectory(HARKEN_TEMP_DIR) / "compose_queue_track_subblock_future.stream").string();
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, std::vector<float>(blendProbe ? 4096 : 512, 0.25f)));
         ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSound, path.c_str()));
         harken::StreamManager::StreamFacts facts;
@@ -22971,7 +22972,7 @@ TEST(PlayableStart, DirectOrdinaryStreamRetainsSelectedInitialSourceWhileWaiting
         const auto voicesBefore = engine.voices.AvailableSlotCount();
         harkentest::StreamSpec spec;
         spec.soundId = kSound;
-        const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "compose_ordinary.stream").string();
+        const auto path = (harkentest::TestTempDirectory(HARKEN_TEMP_DIR) / "compose_ordinary.stream").string();
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, std::vector<float>(512, 0.25f)));
         ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSound, path.c_str()));
         harken::StreamManager::StreamFacts facts;
@@ -23076,7 +23077,7 @@ TEST(PlayableStart, ActionPlaybackReadinessMatchesMixedOutputAndStreamObservatio
         harkentest::StreamSpec spec;
         spec.soundId = kSecondSound;
         spec.channelCount = 2;
-        const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "readiness_mixed.stream").string();
+        const auto path = (harkentest::TestTempDirectory(HARKEN_TEMP_DIR) / "readiness_mixed.stream").string();
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, streamed));
         ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSecondSound, path.c_str()));
         harken::StreamManager::StreamFacts source;
@@ -23289,7 +23290,7 @@ TEST(PlayableStart, DirectTrackMixedStreamWaitsStartsTogetherAndCancelsBeforeRea
         harkentest::StreamSpec spec;
         spec.soundId = kSecondSound;
         spec.channelCount = 2;
-        const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "compose_direct_track.stream").string();
+        const auto path = (harkentest::TestTempDirectory(HARKEN_TEMP_DIR) / "compose_direct_track.stream").string();
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, streamed));
         ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSecondSound, path.c_str()));
         harken::StreamManager::StreamFacts facts;
@@ -23460,7 +23461,7 @@ TEST(PlayableStart, FutureMixedStreamCohortKeepsAuthorTimeAndContainsDeadlineFai
         harkentest::StreamSpec spec;
         spec.soundId = kSecondSound;
         spec.channelCount = 2;
-        const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "compose_future_mixed.stream").string();
+        const auto path = (harkentest::TestTempDirectory(HARKEN_TEMP_DIR) / "compose_future_mixed.stream").string();
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, streamed));
         ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSecondSound, path.c_str()));
         harken::StreamManager::StreamFacts facts;
@@ -24582,7 +24583,7 @@ TEST(PlayableStart, InitialStreamAnchorKeepsSubBlockFutureStartsFixedAndContains
         harkentest::StreamSpec spec;
         spec.soundId = kSecondSound;
         spec.channelCount = 2;
-        const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "compose_initial_subblock_future.stream").string();
+        const auto path = (harkentest::TestTempDirectory(HARKEN_TEMP_DIR) / "compose_initial_subblock_future.stream").string();
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, streamed));
         ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSecondSound, path.c_str()));
         harken::StreamManager::StreamFacts facts;
@@ -24817,7 +24818,7 @@ static void CheckFutureStreamWithIndependentNativeVariable(bool earlyTerm, unsig
         harkentest::StreamSpec spec;
         spec.soundId = kSecondSound;
         spec.channelCount = 2;
-        const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "compose_independent_native_page.stream").string();
+        const auto path = (harkentest::TestTempDirectory(HARKEN_TEMP_DIR) / "compose_independent_native_page.stream").string();
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, streamed));
         ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSecondSound, path.c_str()));
         harken::StreamManager::StreamFacts facts;
@@ -25087,7 +25088,7 @@ TEST(PlayableStart, CroppedEmptyInitialStreamCompletesAndCancelsWithOrWithoutRes
         harkentest::StreamSpec spec;
         spec.soundId = kSecondSound;
         spec.channelCount = 2;
-        const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "compose_initial_empty_crop.stream").string();
+        const auto path = (harkentest::TestTempDirectory(HARKEN_TEMP_DIR) / "compose_initial_empty_crop.stream").string();
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, streamed));
         ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSecondSound, path.c_str()));
         harken::StreamManager::StreamFacts facts;
@@ -25207,7 +25208,7 @@ TEST(PlayableStart, RepeatedTrackMixedStreamWaitPreservesFutureClipAndCancellati
         harkentest::StreamSpec spec;
         spec.soundId = kSecondSound;
         spec.channelCount = 2;
-        const auto path = (std::filesystem::path(HARKEN_TEMP_DIR) / "compose_repeated_track.stream").string();
+        const auto path = (harkentest::TestTempDirectory(HARKEN_TEMP_DIR) / "compose_repeated_track.stream").string();
         harkentest::WriteFileBytes(path, harkentest::BuildStreamBytes(spec, streamed));
         ASSERT_EQ(VN_OK, Vn_RegisterStreamFile(kSecondSound, path.c_str()));
         harken::StreamManager::StreamFacts facts;
@@ -37665,7 +37666,7 @@ TEST(PlayableStart, MusicQueueCropsAcrossEntriesAndRestoresEachBodyPass) {
             builder.AddMedia(kSound, first);
             builder.AddMedia(kSecondSound, second);
             const auto write = [](const char* filename, const std::vector<std::uint8_t>& bytes) {
-                const auto path = std::filesystem::path(HARKEN_TEMP_DIR) / filename;
+                const auto path = harkentest::TestTempDirectory(HARKEN_TEMP_DIR) / filename;
                 std::ofstream file(path, std::ios::binary | std::ios::trunc);
                 file.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
                 return path.string();
@@ -38629,7 +38630,7 @@ TEST(PlayableStart, QueueMusicTransitionStartsAtTargetEntryAndReclaims) {
             builder.AddMedia(kSecondSound, initial);
             if (multipleQueueTargets) builder.AddMedia(kThirdSound, initial);
             const auto write = [](const char* filename, const std::vector<std::uint8_t>& bytes) {
-                const auto path = std::filesystem::path(HARKEN_TEMP_DIR) / filename;
+                const auto path = harkentest::TestTempDirectory(HARKEN_TEMP_DIR) / filename;
                 std::ofstream file(path, std::ios::binary | std::ios::trunc);
                 file.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
                 return path.string();

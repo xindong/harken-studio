@@ -1,7 +1,7 @@
 #ifndef HARKEN_MONITOR_SESSION_CODEC_H
 #define HARKEN_MONITOR_SESSION_CODEC_H
 
-#include "monitor_fixture_decode.h"
+#include "MonitorFixtureDecode.h"
 
 #ifdef __cplusplus
 extern "C" {

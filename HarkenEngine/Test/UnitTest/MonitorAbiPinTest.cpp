@@ -218,8 +218,8 @@ TEST(MonitorAbiPin, FileMagicIsEightByteAscii) {
 }
 
 TEST(MonitorAbiPin, MonitorEntriesHaveNoRemoteOpcode) {
-    const auto table = std::filesystem::path(HARKEN_TEMP_DIR).parent_path() /
-        "HarkenEngine/Tool/HostControl/wire/harken_wire_table.json";
+    const auto table = std::filesystem::path(__FILE__).parent_path().parent_path().parent_path() /
+        "Tool/HostControl/wire/harken_wire_table.json";
     std::ifstream in(table);
     ASSERT_TRUE(in);
     const std::string text((std::istreambuf_iterator<char>(in)),

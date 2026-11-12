@@ -12,7 +12,7 @@
 #include "MonitorSessionFileWrite.h"
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
-#include "monitor_session_codec.h"
+#include "MonitorSessionCodec.h"
 
 #include <gtest/gtest.h>
 

@@ -4,7 +4,7 @@
 #include <harken/HarkenDevelopment.h>
 #include "MonitorCaptureHubTestHooks.h"
 #include "MonitorExecutionCodec.h"
-#include "../UnitTest/monitor_fixture_decode.h"
+#include "../UnitTest/MonitorFixtureDecode.h"
 #include <gtest/gtest.h>
 #include <array>
 #include <vector>
