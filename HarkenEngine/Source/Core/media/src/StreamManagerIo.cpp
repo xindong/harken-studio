@@ -275,7 +275,11 @@ void StreamManager::IoMain(std::size_t index) {
         try {
             switch (lane.kind) {
             case IoLane::Kind::Chunk:
+#if HARKEN_ENGINE_DEV
                 lane.valid = RunChunkJob(lane.chunk, lane.slot->staging, lane.slot->window, lane.readFacts);
+#else
+                lane.valid = RunChunkJob(lane.chunk, lane.slot->staging, lane.slot->window);
+#endif
                 break;
             case IoLane::Kind::Source:
                 ValidateSourceSlice(*lane.request);
@@ -322,10 +326,16 @@ void StreamManager::SteadyIoMain() {
         job.state.store(2, std::memory_order_relaxed);
         job.exception = false;
         job.valid = false;
+#if HARKEN_ENGINE_DEV
         job.readFacts = {};
+#endif
         try {
             if (!job.cancelled.load(std::memory_order_acquire))
+#if HARKEN_ENGINE_DEV
                 job.valid = RunChunkJob(job.input, slot->staging, slot->window, job.readFacts);
+#else
+                job.valid = RunChunkJob(job.input, slot->staging, slot->window);
+#endif
         } catch (...) { job.exception = true; }
         job.state.store(3, std::memory_order_release);
         {
@@ -344,7 +354,9 @@ void StreamManager::SettleIo() {
         if (lane.state.load(std::memory_order_acquire) != 3) continue;
         if (lane.kind == IoLane::Kind::Chunk) {
             auto& slot = *lane.slot;
+#if HARKEN_ENGINE_DEV
             CompleteReadObservation(slot, lane.chunk, lane.readFacts, lane.valid, lane.exception);
+#endif
             if (slot.ring.state.load(std::memory_order_acquire) == StreamSlotState::Active &&
                 !lane.cancelled.load(std::memory_order_acquire)) {
                 if (lane.exception) {
@@ -369,7 +381,9 @@ void StreamManager::SettleIo() {
     }
     for (auto& slot : m_slots) {
         if (slot.io.state.load(std::memory_order_acquire) != 3) continue;
+#if HARKEN_ENGINE_DEV
         CompleteReadObservation(slot, slot.io.input, slot.io.readFacts, slot.io.valid, slot.io.exception);
+#endif
         if (slot.ring.state.load(std::memory_order_acquire) == StreamSlotState::Active &&
             !slot.io.cancelled.load(std::memory_order_acquire)) {
             if (slot.io.exception) {
@@ -465,7 +479,9 @@ void StreamManager::ServeSlots() {
                 Fnv1a64(slot.staging.data(), static_cast<std::size_t>(job.chunkBytes)));
             if (slot.ring.state.load(std::memory_order_acquire) != StreamSlotState::Active ||
                 slot.ring.generation.load(std::memory_order_relaxed) != generation) break;
+#if HARKEN_ENGINE_DEV
             CompleteReadObservation(slot, job, {}, valid, false);
+#endif
             CompleteChunk(slot, job, valid);
             if (!valid) break;
         }

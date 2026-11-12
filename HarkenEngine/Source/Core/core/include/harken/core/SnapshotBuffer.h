@@ -29,14 +29,27 @@ namespace harken {
 #define HARKEN_STAGE_TAPS_ACTIVE 0
 #endif
 
-static_assert(std::is_trivially_copyable_v<VnVoiceSnapshot>,
+inline constexpr std::uint32_t kSnapshotMaxVoices = 64;
+inline constexpr std::uint32_t kSnapshotMaxBuses = 32;
+
+inline constexpr std::uint32_t kVoiceSnapshotInactive = 0;
+inline constexpr std::uint32_t kVoiceSnapshotActive = 1;
+inline constexpr std::uint32_t kVoiceSnapshotDraining = 2;
+inline constexpr std::uint32_t kVoiceSnapshotPreparing = 3;
+
+struct VoiceSnapshotRow {
+    std::uint32_t handle;
+    std::uint32_t state;
+    float tapPostResample;
+    float tapPostFx;
+    float tapPostFilter;
+    float tapPostGain;
+};
+
+static_assert(std::is_trivially_copyable_v<VoiceSnapshotRow>,
               "snapshot entries cross threads by memcpy semantics");
-static_assert(sizeof(VnVoiceSnapshot) == 24,
+static_assert(sizeof(VoiceSnapshotRow) == 24,
               "voice snapshot entry layout is frozen");
-static_assert(std::is_trivially_copyable_v<VnSnapshot>,
-              "the public snapshot must stay a plain POD");
-static_assert(sizeof(VnSnapshot) == 5400,
-              "snapshot layout is frozen (append-only header contract)");
 
 // Peak absolute sample over planar channels [offset, offset + frames),
 // max across channels: the stage-tap measurement. A peak (rather than
@@ -73,12 +86,12 @@ struct SnapshotPayload {
     std::uint64_t blockIndex = 0; // canary: the writer fills this first
     std::uint32_t activeVoiceCount = 0;
     std::uint32_t reserved0 = 0; // keeps 8-byte alignment stable
-    VnVoiceSnapshot voices[VN_SNAPSHOT_MAX_VOICES] = {};
+    VoiceSnapshotRow voices[kSnapshotMaxVoices] = {};
     std::uint32_t busCount = 0;
-    float busPeaks[VN_SNAPSHOT_MAX_BUSES] = {};
-    float busPeaksPreFader[VN_SNAPSHOT_MAX_BUSES] = {};
-    float busPeaksPostFader[VN_SNAPSHOT_MAX_BUSES] = {};
-    float busChannelPeaks[VN_SNAPSHOT_MAX_BUSES * VN_MAX_CHANNELS] = {};
+    float busPeaks[kSnapshotMaxBuses] = {};
+    float busPeaksPreFader[kSnapshotMaxBuses] = {};
+    float busPeaksPostFader[kSnapshotMaxBuses] = {};
+    float busChannelPeaks[kSnapshotMaxBuses * VN_MAX_CHANNELS] = {};
     std::uint64_t arenaHighWaterBytes = 0;
     std::uint64_t arenaOverflowCount = 0;
     std::uint64_t voiceCompletedCount = 0;

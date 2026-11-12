@@ -9,6 +9,7 @@
 #define HARKEN_TESTS_TESTSUPPORT_TEST_UTIL_H
 
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 #include "Common/SignalTestSupport.h"
 
 #include "Engine.h"

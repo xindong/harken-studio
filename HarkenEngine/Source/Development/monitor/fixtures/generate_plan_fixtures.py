@@ -19,11 +19,11 @@ REPO = Path(__file__).resolve().parents[5]
 OUT = REPO / "HarkenEngine" / "Test" / "UnitTest" / "monitor" / "plan"
 TABLE = Path(__file__).resolve().parent / "plan_state_table.json"
 MANIFEST = OUT / "manifest.json"
-HARKEN_H = REPO / "HarkenEngine" / "Source" / "Core" / "api" / "include" / "harken" / "Harken.h"
+HARKEN_DEVELOPMENT_H = REPO / "HarkenEngine" / "Source" / "Development" / "include" / "harken" / "HarkenDevelopment.h"
 
 
 def packed_bytes_from_header() -> int:
-    text = HARKEN_H.read_text(encoding="utf-8")
+    text = HARKEN_DEVELOPMENT_H.read_text(encoding="utf-8")
     match = re.search(
         r"#define\s+VN_MONITOR_RECORD_ENVELOPE_PACKED_BYTES\s+(\d+)u", text
     )

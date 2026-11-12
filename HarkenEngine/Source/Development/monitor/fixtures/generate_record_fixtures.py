@@ -344,7 +344,7 @@ def write_manifest(m0_digest: str, lifecycle_digest: str) -> str:
 def check_decoder_includes() -> None:
     include_re = re.compile(r'^\s*#\s*include\s*[<"]([^>"]+)[>"]')
     allowed = {
-        DECODER_H: {"harken/Harken.h", "stddef.h", "stdint.h"},
+        DECODER_H: {"harken/Harken.h", "harken/HarkenDevelopment.h", "stddef.h", "stdint.h"},
         DECODER_CC: {"monitor_fixture_decode.h", "cstring"},
     }
     forbidden_needles = (

@@ -3,6 +3,7 @@
 #include "NativeValues.h"
 #include "Monitor/MonitorTypes.h"
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 #include <algorithm>
 
 namespace HarkenEditor::Bridge {

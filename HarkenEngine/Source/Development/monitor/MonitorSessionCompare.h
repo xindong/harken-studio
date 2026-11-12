@@ -2,6 +2,7 @@
 #define HARKEN_API_MONITOR_SESSION_COMPARE_H
 
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 namespace harken {
 namespace monitor {

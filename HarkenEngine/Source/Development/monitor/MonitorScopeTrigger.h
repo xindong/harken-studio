@@ -2,6 +2,7 @@
 #define HARKEN_CORE_MONITOR_SCOPE_TRIGGER_H
 
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include <cstdint>
 

@@ -931,6 +931,7 @@ void BusTree::FinalizeBus(Bus& bus, float* const* planes,
                 input = &dynamicInput;
             }
         }
+#if HARKEN_ENGINE_DEV
         const std::uint64_t effectHandle =
             PackedMonitorEffectHandle(busIndex, slot);
         const std::uint64_t effectGeneration = bus.fxSlotEffectRef[slot].generation;
@@ -941,6 +942,7 @@ void BusTree::FinalizeBus(Bus& bus, float* const* planes,
                 slot, planes, blockFrames, m_mixChannels, 0, m_mixLayout,
                 m_sampleRate, sourceFrameBegin);
         }
+#endif
         auto* limiter = bus.fxSlotEffectRef[slot].type == VN_EFFECT_LIMITER
             ? static_cast<LimiterState*>(bus.fxSlots[slot].state) : nullptr;
         if (limiter != nullptr) LimiterBeginRender(*limiter, blockEpoch, sourceFrameBegin);
@@ -948,6 +950,7 @@ void BusTree::FinalizeBus(Bus& bus, float* const* planes,
                          bus.fxBypassMix[slot], bus.fxBypassTarget[slot],
                          planes, dry, m_mixChannels, 0, blockFrames, input, limiter);
         if (limiter != nullptr) LimiterFinishRender(*limiter, 0, blockFrames);
+#if HARKEN_ENGINE_DEV
         if (bus.fxSlots[slot].process != nullptr &&
             harken::monitor::AudioLiveArmed()) {
             harken::monitor::PublishPlanarAudioChunk(
@@ -955,6 +958,7 @@ void BusTree::FinalizeBus(Bus& bus, float* const* planes,
                 slot, planes, blockFrames, m_mixChannels, 0, m_mixLayout,
                 m_sampleRate, sourceFrameBegin);
         }
+#endif
         if (compressorState != nullptr) {
             compressorState->telemetry.detectorNonFiniteCount +=
                 detectorStatus.nonFiniteCount;
@@ -971,32 +975,32 @@ void BusTree::FinalizeBus(Bus& bus, float* const* planes,
             payload.hostDenseIndex = busIndex;
             payload.effectSlot = slot;
             if (bypassedThisBlock) {
-                payload.stateFlags |= VN_COMPRESSOR_RUNTIME_BYPASSED;
+                payload.stateFlags |= kCompressorRuntimeBypassed;
             }
             if (bypassTransitionThisBlock) {
                 payload.stateFlags |=
-                    VN_COMPRESSOR_RUNTIME_BYPASS_TRANSITION;
+                    kCompressorRuntimeBypassTransition;
             }
             if (parameterTransitionThisBlock ||
                 compressorState->parameterTransitionFramesRemaining != 0) {
                 payload.stateFlags |=
-                    VN_COMPRESSOR_RUNTIME_PARAM_TRANSITION;
+                    kCompressorRuntimeParamTransition;
             }
             if (detectorStatus.authored) {
                 payload.stateFlags |=
-                    VN_COMPRESSOR_RUNTIME_EXTERNAL_AUTHORED;
+                    kCompressorRuntimeExternalAuthored;
             }
             if (detectorStatus.active) {
                 payload.stateFlags |=
-                    VN_COMPRESSOR_RUNTIME_EXTERNAL_ACTIVE;
+                    kCompressorRuntimeExternalActive;
             }
             if (compressorState->telemetry.resetThisBlock) {
                 payload.stateFlags |=
-                    VN_COMPRESSOR_RUNTIME_RESET_THIS_BLOCK;
+                    kCompressorRuntimeResetThisBlock;
             }
             if (compressorState->telemetry.resetBridgeActive) {
                 payload.stateFlags |=
-                    VN_COMPRESSOR_RUNTIME_RESET_BRIDGE;
+                    kCompressorRuntimeResetBridge;
             }
             payload.transitionFramesRemaining =
                 compressorState->parameterTransitionFramesRemaining;
@@ -1030,12 +1034,14 @@ void BusTree::FinalizeBus(Bus& bus, float* const* planes,
     float unchangedChannelPeaks[kMaxChannels];
     bus.preFaderPeak = StageTapPeak(planes, m_mixChannels, 0, blockFrames,
         unchangedFaderSamples && fader == m_fxSlots ? unchangedChannelPeaks : nullptr);
+#if HARKEN_ENGINE_DEV
     if (harken::monitor::AudioLiveArmed()) {
         harken::monitor::PublishPlanarAudioChunk(
             VN_MONITOR_TAP_BUS_PRE_FADER, busIndex + 1u, bus.generation, 0, planes,
             blockFrames, m_mixChannels, 0, m_mixLayout, m_sampleRate,
             sourceFrameBegin);
     }
+#endif
     // BusVolume — frame-accurate OutputGain. Silent mix frames still advance.
     bus.gain.Apply(planes, m_mixChannels, 0, blockFrames);
     ProcessBusToneSection(bus.busLpf, BusToneKind::Lowpass, m_biquadTrig,
@@ -1052,12 +1058,14 @@ void BusTree::FinalizeBus(Bus& bus, float* const* planes,
         bus.postFaderPeak = StageTapPeak(planes, m_mixChannels, 0, blockFrames,
             fader == m_fxSlots ? bus.outputChannelPeaks : nullptr);
     }
+#if HARKEN_ENGINE_DEV
     if (harken::monitor::AudioLiveArmed()) {
         harken::monitor::PublishPlanarAudioChunk(
             VN_MONITOR_TAP_BUS_POST_FADER, busIndex + 1u, bus.generation, 0, planes,
             blockFrames, m_mixChannels, 0, m_mixLayout, m_sampleRate,
             sourceFrameBegin);
     }
+#endif
     // Post-fader chain: fx slots [faderAfterSlot, m_fxSlots) after the gain.
     for (std::uint32_t s = fader; s < m_fxSlots; ++s) {
         processSlot(s);
@@ -1075,12 +1083,14 @@ void BusTree::FinalizeBus(Bus& bus, float* const* planes,
             ? bus.postFaderPeak
             : StageTapPeak(planes, m_mixChannels, 0, blockFrames,
                 bus.outputChannelPeaks);
+#if HARKEN_ENGINE_DEV
     if (harken::monitor::AudioLiveArmed()) {
         harken::monitor::PublishPlanarAudioChunk(
             VN_MONITOR_TAP_BUS_POST_EFFECTS, busIndex + 1u, bus.generation, 0, planes,
             blockFrames, m_mixChannels, 0, m_mixLayout, m_sampleRate,
             sourceFrameBegin);
     }
+#endif
 }
 
 void BusTree::FoldBusOutput(Bus& bus, float* const* planes,
@@ -1519,6 +1529,7 @@ void BusTree::ApplySetBusEffect(std::uint32_t busIndex, std::uint32_t slot,
     Bus& bus = m_buses[busIndex];
     // In-place replace: whatever this slot held is retired for reclamation.
     if (bus.fxSlotEffectRef[slot].type != kEffectTypeNone) {
+#if HARKEN_ENGINE_DEV
         if (harken::monitor::AudioLiveArmed()) {
             const std::uint64_t effectHandle =
                 PackedMonitorEffectHandle(busIndex, slot);
@@ -1529,6 +1540,7 @@ void BusTree::ApplySetBusEffect(std::uint32_t busIndex, std::uint32_t slot,
             harken::monitor::NoteExactInstanceRetired(
                 VN_MONITOR_TAP_EFFECT_SLOT_OUTPUT, effectHandle, effectGeneration);
         }
+#endif
         m_effectBank.RetireQueue().TryPush(bus.fxSlotEffectRef[slot]);
     }
     bus.fxSlots[slot] =
@@ -1551,6 +1563,7 @@ void BusTree::ApplyClearBusEffect(std::uint32_t busIndex, std::uint32_t slot,
     if (bus.fxSlotEffectRef[slot].type != kEffectTypeNone) {
         // Retire the instance and empty the slot; its tail is cut here (a bus is
         // a persistent node with no drain, so a cleared effect simply stops).
+#if HARKEN_ENGINE_DEV
         if (harken::monitor::AudioLiveArmed()) {
             const std::uint64_t effectHandle =
                 PackedMonitorEffectHandle(busIndex, slot);
@@ -1561,6 +1574,7 @@ void BusTree::ApplyClearBusEffect(std::uint32_t busIndex, std::uint32_t slot,
             harken::monitor::NoteExactInstanceRetired(
                 VN_MONITOR_TAP_EFFECT_SLOT_OUTPUT, effectHandle, effectGeneration);
         }
+#endif
         m_effectBank.RetireQueue().TryPush(bus.fxSlotEffectRef[slot]);
         bus.fxSlots[slot] = InsertEffect{};
         bus.fxSlotEffectRef[slot] = EffectInstanceRef{};

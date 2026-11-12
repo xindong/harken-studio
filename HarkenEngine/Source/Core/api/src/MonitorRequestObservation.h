@@ -1,6 +1,9 @@
 #ifndef HARKEN_API_MONITOR_REQUEST_OBSERVATION_H
 #define HARKEN_API_MONITOR_REQUEST_OBSERVATION_H
 
+#if HARKEN_ENGINE_DEV
+#include <harken/HarkenDevelopment.h>
+
 #include "MonitorSeam.h"
 #include "MonitorExecutionBuilder.h"
 #include "harken/core/LogRing.h"
@@ -141,4 +144,35 @@ private:
 
 } // namespace harken::monitor
 
+#else
+
+#include "MonitorSeam.h"
+#include "harken/core/MonitorEmitterIdentity.h"
+#include "harken/core/MonitorRequest.h"
+
+namespace harken::monitor {
+
+class RequestObservation {
+public:
+    explicit RequestObservation(const MonitorRequestContext&) noexcept {}
+    RequestObservation(const RequestObservation&) = delete;
+    RequestObservation& operator=(const RequestObservation&) = delete;
+    bool Active() const noexcept { return false; }
+    void TargetHandle(unsigned, std::uint64_t) noexcept {}
+    void TargetContent(VnObjectId, unsigned) noexcept {}
+    void TargetAll() noexcept {}
+    void TargetValidated() noexcept {}
+    void Subject(unsigned, std::uint64_t) noexcept {}
+    void Content(VnObjectId, VnObjectId, unsigned, std::uint64_t, std::uint64_t,
+                 std::uint64_t = 0) noexcept {}
+    void Emitters(const MonitorEmitterOrigin&, const MonitorEmitterBinding&) noexcept {}
+    void Relations(std::uint64_t, std::uint64_t, std::uint64_t) noexcept {}
+    void Submitted() noexcept {}
+    template<class Result> Result Returned(Result result) noexcept { return result; }
+};
+
+} // namespace harken::monitor
+
+
+#endif
 #endif

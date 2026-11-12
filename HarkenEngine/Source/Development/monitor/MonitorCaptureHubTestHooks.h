@@ -2,6 +2,7 @@
 #define HARKEN_API_MONITOR_CAPTURE_HUB_TEST_HOOKS_H
 
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include <cstdint>
 #include <string>

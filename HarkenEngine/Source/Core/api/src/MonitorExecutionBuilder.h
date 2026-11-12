@@ -1,6 +1,9 @@
 #ifndef HARKEN_API_MONITOR_EXECUTION_BUILDER_H
 #define HARKEN_API_MONITOR_EXECUTION_BUILDER_H
 
+#if HARKEN_ENGINE_DEV
+#include <harken/HarkenDevelopment.h>
+
 #include <harken/Harken.h>
 #include <harken/core/MonitorEmitterIdentity.h>
 #include <harken/core/MonitorExecutionFact.h>
@@ -207,4 +210,5 @@ inline void CaptureFactEmitters(MonitorExecutionFact& fact, const MonitorEmitter
 
 } // namespace harken::monitor
 
+#endif
 #endif

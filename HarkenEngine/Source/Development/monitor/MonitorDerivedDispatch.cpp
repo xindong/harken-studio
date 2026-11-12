@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <harken/HarkenDevelopment.h>
 
 namespace harken {
 namespace monitor {

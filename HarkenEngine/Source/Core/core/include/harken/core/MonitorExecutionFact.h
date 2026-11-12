@@ -1,6 +1,9 @@
 #ifndef HARKEN_CORE_MONITOR_EXECUTION_FACT_H
 #define HARKEN_CORE_MONITOR_EXECUTION_FACT_H
 
+#if HARKEN_ENGINE_DEV
+#include <harken/HarkenDevelopment.h>
+
 #include <harken/ObjectId.h>
 #include <harken/Harken.h>
 #include "harken/core/MonitorIdentity.h"
@@ -189,4 +192,5 @@ static_assert(std::is_standard_layout_v<MonitorExecutionFact>);
 
 } // namespace harken
 
+#endif
 #endif

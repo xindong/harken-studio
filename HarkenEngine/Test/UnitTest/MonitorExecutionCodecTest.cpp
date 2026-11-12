@@ -1,3 +1,4 @@
+#include <harken/HarkenDevelopment.h>
 #include "MonitorIdentityCut.h"
 #include "MonitorExecutionCodec.h"
 #include "MonitorIdentityCodec.h"

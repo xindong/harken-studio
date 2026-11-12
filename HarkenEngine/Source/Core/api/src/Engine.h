@@ -7095,10 +7095,12 @@ public:
           projectGenerationInstallAckRing(resolved.topologyPlanPoolCapacity),
           queueCheckpoints(resolved.maxQueueCheckpoints),
           dynamicRoutes(resolved),
+#if HARKEN_ENGINE_DEV
           dynamicRouteCaptureScratch(
               resolved.dynamicRouteCapacity == 0
                   ? 1u
                   : resolved.dynamicRouteCapacity),
+#endif
           influenceVisited(resolved.maxBuses, 0),
           influenceStack(resolved.maxBuses, 0),
           sourceTerminals(resolved.maxPlayableInstances),
@@ -13842,9 +13844,11 @@ public:
         projectGenerationInstallAckSideTable;
     ProjectGenerationInstallAckRingV1 projectGenerationInstallAckRing;
     DynamicRouteSystem dynamicRoutes;
+#if HARKEN_ENGINE_DEV
     // Logic-side caller-buffer capture scratch. Sized once at Init so route
     // capture can preserve its canonical public ordering without allocating.
     std::vector<VnEffectDynamicRouteInfo> dynamicRouteCaptureScratch;
+#endif
     // Logic-side fixed scratch for the combined signal/control influence DAG.
     // Wiring and route preflights reuse it; no public mutation allocates a walk.
     std::vector<std::uint8_t> influenceVisited;

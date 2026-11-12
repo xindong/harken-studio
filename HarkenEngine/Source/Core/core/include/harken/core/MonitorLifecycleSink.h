@@ -3,6 +3,9 @@
 
 #include <harken/ObjectId.h>
 #include <harken/Harken.h>
+#if HARKEN_ENGINE_DEV
+#include <harken/HarkenDevelopment.h>
+#endif
 #include "harken/core/MonitorRequest.h"
 #include "harken/core/MonitorEmitterIdentity.h"
 #include "harken/core/MonitorIdentity.h"
@@ -173,7 +176,6 @@ inline void ObserveMonitorEffectRelease(std::uint64_t, std::uint64_t, VnObjectId
                                         std::uint32_t) noexcept {}
 inline void ObserveMonitorDspGap() noexcept {}
 inline bool MonitorStreamObservationEnabled() noexcept { return false; }
-inline void ObserveMonitorStream(VnMonitorStreamFactV1&) noexcept {}
 inline void ObserveMonitorSelectionUnavailable() noexcept {}
 
 #endif

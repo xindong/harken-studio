@@ -432,7 +432,9 @@ bool VoiceLedger::Acquire(VnVoiceHandle* outPublicHandle,
     entry.emitterOrigin = emitterOrigin;
     entry.monitorContent = {};
     entry.monitorContent.content.stableId = media;
+#if HARKEN_ENGINE_DEV
     entry.monitorContent.kind = media == VnObjectId{} ? VN_MONITOR_CONTENT_UNKNOWN : VN_MONITOR_CONTENT_MEDIA;
+#endif
     entry.controlCause = {};
     entry.selectionCause = {};
     entry.monitorSelectionAccepted = false;
@@ -1017,7 +1019,9 @@ bool VoiceLedger::AcquirePending(VnVoiceHandle* outPublicHandle,
     entry.emitterOrigin = emitterOrigin;
     entry.monitorContent = {};
     entry.monitorContent.content.stableId = media;
+#if HARKEN_ENGINE_DEV
     entry.monitorContent.kind = media == VnObjectId{} ? VN_MONITOR_CONTENT_UNKNOWN : VN_MONITOR_CONTENT_MEDIA;
+#endif
     entry.controlCause = {};
     entry.selectionCause = {};
     entry.monitorSelectionAccepted = false;

@@ -2,6 +2,7 @@
 #define HARKEN_MONITOR_REMOTE_CODEC_H
 
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include <stdint.h>
 

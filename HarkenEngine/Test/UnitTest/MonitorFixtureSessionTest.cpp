@@ -9,6 +9,7 @@
 #include <iterator>
 #include <string>
 #include <vector>
+#include <harken/HarkenDevelopment.h>
 
 #ifndef HARKEN_MONITOR_SESSION_FIXTURE_DIR
 #define HARKEN_MONITOR_SESSION_FIXTURE_DIR "."

@@ -1,4 +1,5 @@
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include "Engine.h"
 #include "HarkenApiInternal.h"
@@ -10,10 +11,33 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <new>
+#include <type_traits>
 #include <vector>
+
+static_assert(sizeof(VnVoiceSnapshot) == sizeof(harken::VoiceSnapshotRow));
+static_assert(offsetof(VnVoiceSnapshot, state) == offsetof(harken::VoiceSnapshotRow, state));
+static_assert(offsetof(VnVoiceSnapshot, tapPostGain) == offsetof(harken::VoiceSnapshotRow, tapPostGain));
+static_assert(VN_SNAPSHOT_MAX_VOICES == harken::kSnapshotMaxVoices);
+static_assert(VN_SNAPSHOT_MAX_BUSES == harken::kSnapshotMaxBuses);
+static_assert(VN_VOICE_STATE_INACTIVE == harken::kVoiceSnapshotInactive);
+static_assert(VN_VOICE_STATE_ACTIVE == harken::kVoiceSnapshotActive);
+static_assert(VN_VOICE_STATE_DRAINING == harken::kVoiceSnapshotDraining);
+static_assert(VN_VOICE_STATE_PREPARING == harken::kVoiceSnapshotPreparing);
+static_assert(VN_MAX_EFFECT_TYPE_STATS == harken::kMaxEffectTypeStats);
+static_assert(std::is_trivially_copyable_v<VnSnapshot>);
+static_assert(VN_COMPRESSOR_RUNTIME_BYPASSED == harken::kCompressorRuntimeBypassed);
+static_assert(VN_COMPRESSOR_RUNTIME_BYPASS_TRANSITION == harken::kCompressorRuntimeBypassTransition);
+static_assert(VN_COMPRESSOR_RUNTIME_PARAM_TRANSITION == harken::kCompressorRuntimeParamTransition);
+static_assert(VN_COMPRESSOR_RUNTIME_EXTERNAL_AUTHORED == harken::kCompressorRuntimeExternalAuthored);
+static_assert(VN_COMPRESSOR_RUNTIME_EXTERNAL_ACTIVE == harken::kCompressorRuntimeExternalActive);
+static_assert(VN_COMPRESSOR_RUNTIME_RESET_THIS_BLOCK == harken::kCompressorRuntimeResetThisBlock);
+static_assert(VN_COMPRESSOR_RUNTIME_STALE == harken::kCompressorRuntimeStale);
+static_assert(VN_COMPRESSOR_RUNTIME_RESET_BRIDGE == harken::kCompressorRuntimeResetBridge);
+static_assert(sizeof(VnSnapshot) == 5400);
 
 using harken::detail::BusEffectivelyAudible;
 using harken::detail::FinishCaptureTrace;

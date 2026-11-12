@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <harken/HarkenDevelopment.h>
 
 namespace harken {
 namespace core {

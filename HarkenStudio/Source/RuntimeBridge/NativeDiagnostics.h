@@ -2,6 +2,7 @@
 
 #include "DiagnosticsBridge.h"
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 namespace HarkenEditor::Bridge {
 

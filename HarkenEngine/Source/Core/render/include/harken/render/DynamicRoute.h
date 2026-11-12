@@ -8,6 +8,9 @@
 
 #include <harken/ObjectId.h>
 #include <harken/Harken.h>
+#if HARKEN_ENGINE_DEV
+#include <harken/HarkenDevelopment.h>
+#endif
 
 #include "harken/core/EngineConfig.h"
 #include "harken/core/PinnedSnapshot3.h"
@@ -815,6 +818,7 @@ public:
         }
     }
 
+#if HARKEN_ENGINE_DEV
     VnResult CaptureRoutes(VnEffectDynamicRouteInfo* out,
                            std::uint32_t capacity,
                            std::uint32_t* requiredCount) {
@@ -889,6 +893,7 @@ public:
         }
         return VN_OK;
     }
+#endif
 
     // --- both sides: immutable plan storage ---
 

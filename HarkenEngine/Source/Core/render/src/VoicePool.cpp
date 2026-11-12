@@ -366,7 +366,9 @@ VnResult VoicePool::Play(const PCMView& view, float volumeDb,
     slot.completionProgressTerminal = false;
     slot.monitorControl = {};
     slot.monitorSourceTerminalPublished = false;
+#if HARKEN_ENGINE_DEV
     slot.streamObservation = {};
+#endif
     slot.render = VoiceRenderContext{};
     BindHighRatioBacking(slotIndex);
     BindVariableWeightBacking(slotIndex);
@@ -534,7 +536,9 @@ VnResult VoicePool::PlayStream(StreamRing* ring, std::uint32_t channelCount,
     slot.resyncEnabled.store(false, std::memory_order_relaxed);
     slot.monitorControl = {};
     slot.monitorSourceTerminalPublished = false;
+#if HARKEN_ENGINE_DEV
     slot.streamObservation = {};
+#endif
     slot.render = VoiceRenderContext{};
     BindHighRatioBacking(slotIndex);
     BindVariableWeightBacking(slotIndex);
@@ -646,7 +650,9 @@ bool VoicePool::BindStreamRingToken(VnVoiceHandle handle, StreamRing* ring,
         return false;
     }
     slot->render.streamRingToken = ringToken;
+#if HARKEN_ENGINE_DEV
     slot->streamObservation.ringToken = ringToken;
+#endif
     ring->observationRender.store(handle, std::memory_order_release);
     slot->streamRingToken.store(ringToken, std::memory_order_release);
     return true;
@@ -2843,6 +2849,7 @@ bool VoicePool::CancelOriginalPreparedVoice(const OriginalVoiceOwner& owner) noe
     return true;
 }
 
+#if HARKEN_ENGINE_DEV
 void VoicePool::RefreshStreamObservationIdentity(VnVoiceHandle handle, std::uint32_t ledgerSlot) noexcept {
     auto* slot = SlotFor(handle);
     if (slot == nullptr) return;
@@ -2851,6 +2858,7 @@ void VoicePool::RefreshStreamObservationIdentity(VnVoiceHandle handle, std::uint
         state != SlotState::PreparedCommitHeld) return;
     monitor::CaptureStreamIdentity(ledgerSlot, handle, slot->streamObservation);
 }
+#endif
 
 bool VoicePool::BindMonitorControl(VnVoiceHandle handle,
     const MonitorVoiceControlBinding& binding) noexcept {
@@ -2859,7 +2867,9 @@ bool VoicePool::BindMonitorControl(VnVoiceHandle handle,
     const auto state = slot->state.load(std::memory_order_acquire);
     if (state != SlotState::Claimed && state != SlotState::Prepared) return false;
     slot->monitorControl = binding;
+#if HARKEN_ENGINE_DEV
     RefreshStreamObservationIdentity(handle, binding.ledgerSlot);
+#endif
     return true;
 }
 
@@ -2879,6 +2889,7 @@ bool VoicePool::BindSourceTerminal(VnVoiceHandle handle,
     return true;
 }
 
+#if HARKEN_ENGINE_DEV
 void VoicePool::PublishStreamObservation(Slot& slot, std::uint64_t blockIndex) noexcept {
     const auto& render = slot.render;
     if (render.streamRing == nullptr || !monitor::StreamObservationEnabled() ||
@@ -2921,6 +2932,7 @@ void VoicePool::PublishStreamObservation(Slot& slot, std::uint64_t blockIndex) n
         ? VN_PLAYBACK_READINESS_APPLIED : VN_PLAYBACK_READINESS_PREPARING;
     (void)monitor::PublishStreamFact(value, true);
 }
+#endif
 
 void VoicePool::PublishSourceTerminal(Slot& slot, std::uint64_t blockIndex) noexcept {
     auto& render = slot.render;
@@ -3499,7 +3511,9 @@ void VoicePool::ApplyStop(VnVoiceHandle handle, std::uint32_t fadeMs,
         PublishPlaybackEnd(*slot, blockIndex);
         // An immediate cut has no ramp, so it reports as a plain ended
         // voice; stopped-by-fade is reserved for a ramp reaching zero.
+#if HARKEN_ENGINE_DEV
         NoteMonitorVoiceRetired(slot->render.dynamicSourceIdentity);
+#endif
         m_dynamicRoutes.InvalidateVoiceTap(
             slot->render.dynamicSourceIdentity);
         if (m_timelineArms != nullptr &&
@@ -4771,26 +4785,26 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
                         : render.fxBypassMix[effectSlot] >= 1.0f;
                 if (bypassed) {
                     payload.stateFlags |=
-                        VN_COMPRESSOR_RUNTIME_BYPASSED;
+                        kCompressorRuntimeBypassed;
                 }
                 if (render.compressorBypassTransitionThisBlock[
                         effectSlot]) {
                     payload.stateFlags |=
-                        VN_COMPRESSOR_RUNTIME_BYPASS_TRANSITION;
+                        kCompressorRuntimeBypassTransition;
                 }
                 if (render.compressorParamTransitionThisBlock[
                         effectSlot] ||
                     state->parameterTransitionFramesRemaining != 0) {
                     payload.stateFlags |=
-                        VN_COMPRESSOR_RUNTIME_PARAM_TRANSITION;
+                        kCompressorRuntimeParamTransition;
                 }
                 if (state->telemetry.resetThisBlock) {
                     payload.stateFlags |=
-                        VN_COMPRESSOR_RUNTIME_RESET_THIS_BLOCK;
+                        kCompressorRuntimeResetThisBlock;
                 }
                 if (state->telemetry.resetBridgeActive) {
                     payload.stateFlags |=
-                        VN_COMPRESSOR_RUNTIME_RESET_BRIDGE;
+                        kCompressorRuntimeResetBridge;
                 }
                 payload.transitionFramesRemaining =
                     state->parameterTransitionFramesRemaining;
@@ -4856,7 +4870,9 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
             }
             finishLimiters(slot.render);
             publishCompressors(i, slot);
+#if HARKEN_ENGINE_DEV
             PublishStreamObservation(slot, blockIndex);
+#endif
             (void)StageCompletionProgress(
                 slot, blockIndex,
                 slot.render.logicalSourceOutputFramesThisBlock);
@@ -5042,7 +5058,9 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
         }
         finishLimiters(slot.render);
         publishCompressors(i, slot);
+#if HARKEN_ENGINE_DEV
         PublishStreamObservation(slot, m_jobQuantumIndex);
+#endif
         (void)StageCompletionProgress(
             slot, blockIndex,
             slot.render.logicalSourceOutputFramesThisBlock);
@@ -5075,8 +5093,10 @@ void VoicePool::QuarantineSlot(std::uint32_t slotIndex, Slot& slot,
     // this render context.
     // A stranded writer keeps this true native installation loan until join.
     slot.originalBodyInstallationCompleted.store(false, std::memory_order_release);
+#if HARKEN_ENGINE_DEV
     NoteMonitorVoiceRetired(
         slot.monitorPublicHandle.load(std::memory_order_relaxed));
+#endif
     std::uint32_t next =
         slot.generation.load(std::memory_order_relaxed) + 1;
     if (next == 0) {
@@ -5217,7 +5237,9 @@ void VoicePool::HandleVoiceLifecycle(std::uint32_t slotIndex, Slot& slot,
             slot.render.fadeDoneFrames >= slot.render.fadeTotalFrames;
         const VnVoiceHandle handle = MakeHandle(
             slotIndex, slot.generation.load(std::memory_order_relaxed));
+#if HARKEN_ENGINE_DEV
         NoteMonitorVoiceRetired(slot.render.dynamicSourceIdentity);
+#endif
         ReleaseSlot(slot, ReleaseThread::Audio);
         notifications.Push(MakeVoiceNotification(
             fadedOut ? VN_NOTIFY_VOICE_STOPPED_BY_FADE : VN_NOTIFY_VOICE_ENDED,
@@ -5402,7 +5424,7 @@ void VoicePool::GatherSnapshot(SnapshotPayload& out) const {
     std::uint32_t rendering = 0;
     const std::uint32_t reported =
         static_cast<std::uint32_t>(std::min<std::size_t>(
-            m_slots.Capacity(), VN_SNAPSHOT_MAX_VOICES));
+            m_slots.Capacity(), kSnapshotMaxVoices));
     for (std::uint32_t i = 0; i < m_slots.size(); ++i) {
         const Slot& slot = m_slots[i];
         // The snapshot describes the RENDERED block, so only Rendering
@@ -5419,27 +5441,27 @@ void VoicePool::GatherSnapshot(SnapshotPayload& out) const {
         if (isRendering) {
             ++rendering;
         }
-        std::uint32_t observedState = VN_VOICE_STATE_INACTIVE;
+        std::uint32_t observedState = kVoiceSnapshotInactive;
         if (isRendering) {
             if (slot.render.phase == SourcePhase::Active) {
                 observedState = slot.render.streamRing != nullptr && !slot.render.streamGateOpen
-                    ? VN_VOICE_STATE_PREPARING : VN_VOICE_STATE_ACTIVE;
+                    ? kVoiceSnapshotPreparing : kVoiceSnapshotActive;
             } else if (slot.render.phase == SourcePhase::Draining) {
-                observedState = VN_VOICE_STATE_DRAINING;
+                observedState = kVoiceSnapshotDraining;
             }
         }
         const auto playbackState = isRendering && slot.render.timelineGated
-            ? VN_VOICE_STATE_PREPARING : observedState;
+            ? kVoiceSnapshotPreparing : observedState;
         slot.renderedState.store(
             (static_cast<std::uint64_t>(slot.generation.load(std::memory_order_relaxed)) << 32)
                 | playbackState, std::memory_order_release);
         if (i >= reported) {
             continue;
         }
-        VnVoiceSnapshot& entry = out.voices[i];
+        VoiceSnapshotRow& entry = out.voices[i];
         entry.handle = i;
         if (!isRendering) {
-            entry.state = VN_VOICE_STATE_INACTIVE;
+            entry.state = kVoiceSnapshotInactive;
             entry.tapPostResample = 0.0f;
             entry.tapPostFx = 0.0f;
             entry.tapPostFilter = 0.0f;
@@ -5453,12 +5475,12 @@ void VoicePool::GatherSnapshot(SnapshotPayload& out) const {
         entry.tapPostGain = slot.render.tapPostGain;
     }
     for (std::uint32_t i = m_slots.ConstructedCount(); i < reported; ++i) {
-        out.voices[i] = VnVoiceSnapshot{};
+        out.voices[i] = VoiceSnapshotRow{};
         out.voices[i].handle = i;
-        out.voices[i].state = VN_VOICE_STATE_INACTIVE;
+        out.voices[i].state = kVoiceSnapshotInactive;
     }
-    for (std::uint32_t i = reported; i < VN_SNAPSHOT_MAX_VOICES; ++i) {
-        out.voices[i] = VnVoiceSnapshot{};
+    for (std::uint32_t i = reported; i < kSnapshotMaxVoices; ++i) {
+        out.voices[i] = VoiceSnapshotRow{};
     }
     // Rendering slots only: the count matches the block this payload
     // describes, and pending (Claimed) voices become visible exactly when
@@ -5471,10 +5493,10 @@ void VoicePool::GatherSnapshot(SnapshotPayload& out) const {
 
 std::uint32_t VoicePool::RenderedState(VnVoiceHandle handle) const noexcept {
     const auto index = static_cast<std::uint32_t>(handle);
-    if (handle == 0 || index >= m_slots.size()) return VN_VOICE_STATE_INACTIVE;
+    if (handle == 0 || index >= m_slots.size()) return kVoiceSnapshotInactive;
     const auto observed = m_slots[index].renderedState.load(std::memory_order_acquire);
     return (observed >> 32) == (handle >> 32)
-        ? static_cast<std::uint32_t>(observed) : VN_VOICE_STATE_INACTIVE;
+        ? static_cast<std::uint32_t>(observed) : kVoiceSnapshotInactive;
 }
 
 bool VoicePool::CapturePreparedRoutingV1(VnVoiceHandle handle,
@@ -5617,6 +5639,7 @@ VoicePool::Slot* VoicePool::SlotForCommandMetadata(VnVoiceHandle handle) {
     return SlotFor(handle);
 }
 
+#if HARKEN_ENGINE_DEV
 void VoicePool::NoteMonitorVoiceRetired(VnVoiceHandle publicHandle) noexcept {
     if (publicHandle == 0 || !harken::monitor::AudioLiveArmed()) {
         return;
@@ -5628,6 +5651,7 @@ void VoicePool::NoteMonitorVoiceRetired(VnVoiceHandle publicHandle) noexcept {
     harken::monitor::NoteExactInstanceRetired(
         VN_MONITOR_TAP_VOICE_POST_CHAIN, publicHandle, publicGeneration);
 }
+#endif
 
 void VoicePool::ReleaseSlot(Slot& slot, ReleaseThread thread) {
     ClearFirstOutput(slot);

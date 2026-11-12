@@ -6040,6 +6040,7 @@ VnResult ClearVoiceBinding(Engine& engine, VnVoiceHandle publicHandle,
 // read logic-thread state only, never allocate, and share the buffer /
 // truncation contract documented at the public header. ---
 
+#if HARKEN_ENGINE_DEV
 namespace {
 
 // Shared buffer validation: requiredCount is mandatory (truncation
@@ -6719,6 +6720,7 @@ VnResult CaptureCompressorRuntimeInfo(
     }
     return VN_OK;
 }
+#endif
 
 } // namespace harken
 
@@ -6907,20 +6909,21 @@ Engine* ActiveEngine() {
     return g_engine;
 }
 
+#if HARKEN_ENGINE_DEV
 void CaptureMonitorAcceptedRequest(monitor::RequestObservation& observation,
     std::uint32_t subject, std::uint64_t handle) noexcept {
     if (!observation.Active() || g_engine == nullptr) return;
     auto& engine = *g_engine;
     observation.Subject(subject, handle);
     MonitorEmitterOrigin origin{};
-    if (subject == VN_MONITOR_SUBJECT_ACTION) {
+    if (subject == harken::monitor::kSubjectAction) {
         ActionFiringSnapshot snapshot{};
         if (!engine.actionFirings.Capture(handle, &snapshot)) return;
-        observation.Content(snapshot.owner.projectId, snapshot.actionId, VN_MONITOR_CONTENT_ACTION,
+        observation.Content(snapshot.owner.projectId, snapshot.actionId, harken::monitor::kContentAction,
             snapshot.worldGeneration, snapshot.programSemanticFingerprint);
         observation.Relations(snapshot.root, handle, snapshot.acceptedLogicSequence);
         origin = snapshot.emitterOrigin;
-    } else if (subject == VN_MONITOR_SUBJECT_PLAYABLE) {
+    } else if (subject == harken::monitor::kSubjectPlayable) {
         MonitorContentIdentity content{};
         const auto view = engine.playableInstances.Classify(handle);
         if (!view.live || !engine.playableInstances.CaptureContentIdentity(handle, &content)) return;
@@ -6928,7 +6931,7 @@ void CaptureMonitorAcceptedRequest(monitor::RequestObservation& observation,
             content.worldGeneration, content.programSemanticFingerprint, content.contentRevision);
         observation.Relations(handle, 0, 0);
         engine.playableInstances.CaptureEmitterOrigin(handle, &origin);
-    } else if (subject == VN_MONITOR_SUBJECT_LOGICAL_VOICE) {
+    } else if (subject == harken::monitor::kSubjectLogicalVoice) {
         const auto resolved = engine.ledger.Classify(handle);
         VoiceLedger::MonitorIdentity identity{};
         if (resolved.kind == VoiceLedger::HandleKind::Stale ||
@@ -6939,6 +6942,7 @@ void CaptureMonitorAcceptedRequest(monitor::RequestObservation& observation,
     observation.Emitters(origin, engine.monitorEmitters.CaptureBinding(origin,
         context.stateEmitter, context.spatialEmitter));
 }
+#endif
 
 
 #if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
@@ -9434,13 +9438,13 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
     monitorContent.content = install.monitorContent;
     if (monitorContent.content.stableId != VnObjectId{}) {
         monitorContent.content.projectId = monitorOwner.projectId;
-        monitorContent.kind = VN_MONITOR_CONTENT_SOUND;
+        monitorContent.kind = harken::monitor::kContentSound;
     } else {
         monitorContent.content.stableId = install.soundId;
-        monitorContent.kind = VN_MONITOR_CONTENT_MEDIA;
+        monitorContent.kind = harken::monitor::kContentMedia;
     }
     monitorContent.root = monitorOwnerKnown ? monitorOwner.root : playableRoot;
-    if (playableRoot != 0 && monitorOwner.contentKind == VN_MONITOR_CONTENT_SOUND &&
+    if (playableRoot != 0 && monitorOwner.contentKind == harken::monitor::kContentSound &&
         monitorOwner.contentObject == monitorContent.content.stableId)
         monitorContent.leaf = monitorInstance;
     monitorContent.action = monitorOwner.relatedAction;
@@ -9463,7 +9467,7 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
             if (!occurrence.valid) {
                 // Queue completion keys may store a Sound ID in their clip field.
                 // Only authored cuts or the raw timeline carry a Clip identity.
-                if (monitorContent.kind == VN_MONITOR_CONTENT_MEDIA) occurrence.clipId = key->clipId;
+                if (monitorContent.kind == harken::monitor::kContentMedia) occurrence.clipId = key->clipId;
                 occurrence.occurrenceOrdinal = key->occurrenceOrdinal;
             }
             occurrence.arrangingInstance = key->arrangingInstance;
@@ -9473,7 +9477,9 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
         } else monitorContent.incomplete = true;
     }
     engine.ledger.RecordMonitorContent(ledgerSlot, monitorContent);
+#if HARKEN_ENGINE_DEV
     engine.voices.RefreshStreamObservationIdentity(render, ledgerSlot);
+#endif
     (void)engine.ledger.CaptureMonitorSelection(ledgerSlot, render, &result.monitorSelection.observation, selectionCause);
     result.monitorSelection.arm = arm;
     engine.timelineVoiceInstallIdentities[renderSlot] = {
@@ -74255,7 +74261,7 @@ VnResult RejectVariableRequest(VnVariableId variableId, float value,
     VnEmitterHandle emitter, VnResult result) noexcept {
     const auto request = harken::detail::BeginMonitorRequest(
         harken::MonitorRequestOrigin::NativeAPI, emitter == 0
-            ? VN_MONITOR_OPERATION_SET_VALUE : VN_MONITOR_OPERATION_SET_EMITTER_VALUE);
+            ? harken::monitor::kOperationSetValue : harken::monitor::kOperationSetEmitterValue);
     ObserveRejectedVariableWrite(request, variableId, value, emitter, result);
     return result;
 }
@@ -82201,7 +82207,7 @@ bool ObserveCurrentPlaybackPaths(
     for (const auto& path : engine->playbackPaths) {
         if (path.pathRowCount == 0) continue;
         const auto state = engine->voices.RenderedState(path.voiceInstance);
-        if (state != VN_VOICE_STATE_ACTIVE && state != VN_VOICE_STATE_DRAINING) continue;
+        if (state != kVoiceSnapshotActive && state != kVoiceSnapshotDraining) continue;
         const auto owner = engine->ledger.OwnerForRender(path.voiceInstance);
         if (owner.live && owner.visibility == VoiceLedger::PublicVisibility::PlayableOwnedInternal) {
             const auto observation = path.Capture();
@@ -82358,8 +82364,8 @@ void RecordPreviewPlayPlayable(
     Engine* engine = detail::ActiveEngine();
     if (engine == nullptr) return;
     VariableOperationScope variableOperation(engine);
-    monitor::ObserveOperation(VN_MONITOR_OPERATION_PLAY_PREVIEW, result,
-        VN_MONITOR_ENTITY_PLAYABLE, stableId, handle, emitter, kind);
+    monitor::ObserveOperation(harken::monitor::kOperationPlayPreview, result,
+        harken::monitor::kEntityPlayable, stableId, handle, emitter, kind);
     engine->statefulCallSeen = true;
     engine->traceOriginWorldProbeOnly = false;
     if (engine->trace != nullptr && harken::tracing::Active(engine->trace.get())) {
@@ -82391,8 +82397,8 @@ void RecordPreviewStopPlayable(std::uint64_t handle,
     Engine* engine = detail::ActiveEngine();
     if (engine == nullptr) return;
     VariableOperationScope variableOperation(engine);
-    monitor::ObserveOperation(VN_MONITOR_OPERATION_STOP_PREVIEW, result,
-        VN_MONITOR_ENTITY_PLAYABLE, {}, handle, fadeMs);
+    monitor::ObserveOperation(harken::monitor::kOperationStopPreview, result,
+        harken::monitor::kEntityPlayable, {}, handle, fadeMs);
     engine->statefulCallSeen = true;
     engine->traceOriginWorldProbeOnly = false;
     if (engine->trace != nullptr && harken::tracing::Active(engine->trace.get())) {
@@ -93978,7 +93984,7 @@ bool PrepareContainerSingleLeaf(
             checksumKnown && media.contentRevision == voice.facts->capturedMedia.contentRevision &&
             media.frames == voice.facts->capturedMedia.frames && media.sampleRate == voice.facts->capturedMedia.sampleRate &&
             media.channelCount == voice.facts->capturedMedia.channelCount) {
-            provenance.knownFlags = VN_MONITOR_PLAYABLE_PROVENANCE_KNOWN;
+            provenance.knownFlags = harken::monitor::kPlayableProvenanceKnown;
             (void)scratch->playableTreeExecutor.SetPreparedProvenance(engine.playableInstances, instance, provenance);
         }
     }
@@ -111129,7 +111135,9 @@ VnResult Vn_Update(void) {
      * the audio thread retires, so the logic thread takes that over; and it
      * reports itself once, because a subsystem that dies silently leaves the
      * integrator with nothing but sound that stopped. */
+#if HARKEN_ENGINE_DEV
     engine->streams.PublishPlaybackObservations();
+#endif
     engine->streams.ReclaimAfterWorkerFailure();
     engine->streams.ServiceTransferredPreparations();
     ServiceStreamResyncs(*engine);
@@ -112352,8 +112360,8 @@ static VnResult UnloadPackWithFlags(VnPackHandle handle,
 VnResult Vn_UnloadPack(VnPackHandle handle) {
     if (harken::detail::CanonicalSetMutationBlocked()) { return VN_IN_USE; }
     const auto result = UnloadPackWithFlags(handle, 0, harken::kTraceCallUnloadPack);
-    harken::monitor::ObserveOperation(VN_MONITOR_OPERATION_UNLOAD_PACK, result,
-                                     VN_MONITOR_ENTITY_NONE, {}, handle);
+    harken::monitor::ObserveOperation(harken::monitor::kOperationUnloadPack, result,
+                                     harken::monitor::kEntityNone, {}, handle);
     return result;
 }
 
@@ -112361,8 +112369,8 @@ VnResult Vn_UnloadPackEx(VnPackHandle handle, std::uint32_t flags) {
     if (harken::detail::CanonicalSetMutationBlocked()) { return VN_IN_USE; }
     const auto result = (flags & ~VN_PACK_UNLOAD_REFUSE_IF_USED) != 0
         ? VN_INVALID_ARG : UnloadPackWithFlags(handle, flags, harken::kTraceCallUnloadPackEx);
-    harken::monitor::ObserveOperation(VN_MONITOR_OPERATION_UNLOAD_PACK, result,
-                                     VN_MONITOR_ENTITY_NONE, {}, handle, flags);
+    harken::monitor::ObserveOperation(harken::monitor::kOperationUnloadPack, result,
+                                     harken::monitor::kEntityNone, {}, handle, flags);
     return result;
 }
 
@@ -112688,7 +112696,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
         return VN_INVALID_ARG;
     }
     if (observation) {
-        observation->TargetContent(desc->soundId, VN_MONITOR_CONTENT_MEDIA);
+        observation->TargetContent(desc->soundId, harken::monitor::kContentMedia);
         observation->Submitted();
     }
     // reserved0 is the play-flag bit field. It sits ahead of every vintage
@@ -119597,7 +119605,7 @@ VnResult harken::detail::PostActionWithValidation(
             return VN_INVALID_ARG;
         }
         if (observation) {
-            observation->TargetContent(desc->actionId, VN_MONITOR_CONTENT_ACTION);
+            observation->TargetContent(desc->actionId, harken::monitor::kContentAction);
             observation->Submitted();
         }
         harken::Engine* engine = harken::detail::g_engine;
@@ -123296,7 +123304,7 @@ VnResult ScreenPackRevision(Engine& engine, const PackLogicRecord& record,
             return VN_BAD_PACK;
         }
     }
-    std::array<std::uint32_t, VN_MAX_EFFECT_TYPE_STATS> newInstances{};
+    std::array<std::uint32_t, kMaxEffectTypeStats> newInstances{};
     for (std::size_t i = 0; i < image.busEffects.size(); ++i) {
         const PackBusEffectEntry& effect = image.busEffects[i];
         const EffectRegistryRow* row = FindEffectRow(effect.effectType);
@@ -130792,80 +130800,80 @@ VnResult Vn_LoadPack(const VnPackDesc* desc, VnPackHandle* outHandle) {
     const auto result = LoadPackObserved(desc, outHandle);
     const auto* load = desc && desc->structSize == sizeof(VnPackLoadDesc)
         ? reinterpret_cast<const VnPackLoadDesc*>(desc) : nullptr;
-    harken::monitor::ObserveOperation(VN_MONITOR_OPERATION_LOAD_PACK, result,
-        VN_MONITOR_ENTITY_NONE, {},
+    harken::monitor::ObserveOperation(harken::monitor::kOperationLoadPack, result,
+        harken::monitor::kEntityNone, {},
         result == VN_OK && outHandle ? *outHandle : 0);
     return result;
 }
 
 VnResult Vn_Stop(VnVoiceHandle handle, uint32_t fadeMs) {
     const harken::MonitorControlCause cause{harken::detail::BeginMonitorRequest(
-        harken::MonitorRequestOrigin::NativeAPI, VN_MONITOR_OPERATION_STOP_VOICE)};
+        harken::MonitorRequestOrigin::NativeAPI, harken::monitor::kOperationStopVoice)};
     harken::monitor::RequestObservation observation(cause.request);
-    observation.TargetHandle(VN_MONITOR_TARGET_LOGICAL_VOICE, handle);
+    observation.TargetHandle(harken::monitor::kTargetLogicalVoice, handle);
     observation.Submitted();
     const auto result = StopVoiceObserved(handle, fadeMs, cause);
-    harken::monitor::ObserveOperation(VN_MONITOR_OPERATION_STOP_VOICE, result,
-        VN_MONITOR_ENTITY_VOICE, {}, handle, fadeMs);
+    harken::monitor::ObserveOperation(harken::monitor::kOperationStopVoice, result,
+        harken::monitor::kEntityVoice, {}, handle, fadeMs);
     if (result == VN_OK) observation.TargetValidated();
     return observation.Returned(result);
 }
 
 VnResult Vn_StopActionFiring(VnActionFiringHandle firing, uint32_t fadeMs) {
     const harken::MonitorControlCause cause{harken::detail::BeginMonitorRequest(
-        harken::MonitorRequestOrigin::NativeAPI, VN_MONITOR_OPERATION_STOP_ACTION)};
+        harken::MonitorRequestOrigin::NativeAPI, harken::monitor::kOperationStopAction)};
     harken::monitor::RequestObservation observation(cause.request);
-    observation.TargetHandle(VN_MONITOR_TARGET_ACTION, firing);
+    observation.TargetHandle(harken::monitor::kTargetAction, firing);
     observation.Submitted();
     const auto result = StopActionObserved(firing, fadeMs, cause);
-    harken::monitor::ObserveOperation(VN_MONITOR_OPERATION_STOP_ACTION, result,
-        VN_MONITOR_ENTITY_ACTION, {}, firing, fadeMs);
+    harken::monitor::ObserveOperation(harken::monitor::kOperationStopAction, result,
+        harken::monitor::kEntityAction, {}, firing, fadeMs);
     if (result == VN_OK) observation.TargetValidated();
     return observation.Returned(result);
 }
 
 VnResult Vn_StopAll(uint32_t fadeMs) {
     const harken::MonitorControlCause cause{harken::detail::BeginMonitorRequest(
-        harken::MonitorRequestOrigin::NativeAPI, VN_MONITOR_OPERATION_STOP_ALL)};
+        harken::MonitorRequestOrigin::NativeAPI, harken::monitor::kOperationStopAll)};
     harken::monitor::RequestObservation observation(cause.request);
     observation.TargetAll();
     observation.Submitted();
     const auto result = StopAllObserved(fadeMs, cause);
-    harken::monitor::ObserveOperation(VN_MONITOR_OPERATION_STOP_ALL, result,
-        VN_MONITOR_ENTITY_NONE, {}, 0, fadeMs);
+    harken::monitor::ObserveOperation(harken::monitor::kOperationStopAll, result,
+        harken::monitor::kEntityNone, {}, 0, fadeMs);
     return observation.Returned(result);
 }
 
 VnResult Vn_StopEmitter(VnEmitterHandle handle, uint32_t fadeMs) {
     const harken::MonitorControlCause cause{harken::detail::BeginMonitorRequest(
-        harken::MonitorRequestOrigin::NativeAPI, VN_MONITOR_OPERATION_STOP_EMITTER)};
+        harken::MonitorRequestOrigin::NativeAPI, harken::monitor::kOperationStopEmitter)};
     harken::monitor::RequestObservation observation(cause.request);
-    observation.TargetHandle(VN_MONITOR_TARGET_EMITTER, handle);
+    observation.TargetHandle(harken::monitor::kTargetEmitter, handle);
     observation.Submitted();
     const auto result = StopEmitterObserved(handle, fadeMs, cause);
-    harken::monitor::ObserveOperation(VN_MONITOR_OPERATION_STOP_EMITTER, result,
-        VN_MONITOR_ENTITY_NONE, {}, handle, fadeMs);
+    harken::monitor::ObserveOperation(harken::monitor::kOperationStopEmitter, result,
+        harken::monitor::kEntityNone, {}, handle, fadeMs);
     if (result == VN_OK) observation.TargetValidated();
     return observation.Returned(result);
 }
 
 VnResult Vn_SetValue(VnVariableId variableId, float value) {
     const auto request = harken::detail::BeginMonitorRequest(
-        harken::MonitorRequestOrigin::NativeAPI, VN_MONITOR_OPERATION_SET_VALUE);
+        harken::MonitorRequestOrigin::NativeAPI, harken::monitor::kOperationSetValue);
     const auto result = SetValueObserved(variableId, value, request);
     ObserveRejectedVariableWrite(request, variableId, value, 0, result);
-    harken::monitor::ObserveOperation(VN_MONITOR_OPERATION_SET_VALUE, result,
-        VN_MONITOR_ENTITY_NONE, variableId, 0, 0, 0, value);
+    harken::monitor::ObserveOperation(harken::monitor::kOperationSetValue, result,
+        harken::monitor::kEntityNone, variableId, 0, 0, 0, value);
     return result;
 }
 
 VnResult Vn_SetEmitterValue(VnEmitterHandle handle, VnVariableId variableId, float value) {
     const auto request = harken::detail::BeginMonitorRequest(
-        harken::MonitorRequestOrigin::NativeAPI, VN_MONITOR_OPERATION_SET_EMITTER_VALUE);
+        harken::MonitorRequestOrigin::NativeAPI, harken::monitor::kOperationSetEmitterValue);
     const auto result = SetEmitterValueObserved(handle, variableId, value, request);
     ObserveRejectedVariableWrite(request, variableId, value, handle, result);
-    harken::monitor::ObserveOperation(VN_MONITOR_OPERATION_SET_EMITTER_VALUE, result,
-        VN_MONITOR_ENTITY_NONE, variableId, handle, 0, 0, value);
+    harken::monitor::ObserveOperation(harken::monitor::kOperationSetEmitterValue, result,
+        harken::monitor::kEntityNone, variableId, handle, 0, 0, value);
     return result;
 }
 
@@ -130884,7 +130892,7 @@ VnResult Vn_SetValueByLabelId(VnVariableId variableId, VnObjectId labelId,
 
 VnResult Vn_SetValues(const VnVariableBatchDescV1* desc, VnVariableTicketV1* outTicket) {
     const auto request = harken::detail::BeginMonitorRequest(
-        harken::MonitorRequestOrigin::NativeAPI, VN_MONITOR_OPERATION_SET_VALUES);
+        harken::MonitorRequestOrigin::NativeAPI, harken::monitor::kOperationSetValues);
     const auto result = SetValuesObserved(desc, outTicket, request);
     ObserveRejectedVariableBatch(request, desc, 0, result);
     if (harken::monitor::EventCatalogEnabled()) {
@@ -130892,12 +130900,12 @@ VnResult Vn_SetValues(const VnVariableBatchDescV1* desc, VnVariableTicketV1* out
         if (count > 0 && count <= VN_VARIABLE_BATCH_WRITE_CAPACITY && desc->writes) {
             for (std::uint32_t i = 0; i < count; ++i) {
                 const auto& write = desc->writes[i];
-                harken::monitor::ObserveOperation(VN_MONITOR_OPERATION_SET_VALUES, result,
-                    VN_MONITOR_ENTITY_NONE, write.variableId, 0, i, count, write.value);
+                harken::monitor::ObserveOperation(harken::monitor::kOperationSetValues, result,
+                    harken::monitor::kEntityNone, write.variableId, 0, i, count, write.value);
             }
         } else {
-            harken::monitor::ObserveOperation(VN_MONITOR_OPERATION_SET_VALUES, result,
-                VN_MONITOR_ENTITY_NONE, {}, 0, 0, count);
+            harken::monitor::ObserveOperation(harken::monitor::kOperationSetValues, result,
+                harken::monitor::kEntityNone, {}, 0, 0, count);
         }
     }
     return result;
@@ -130905,7 +130913,7 @@ VnResult Vn_SetValues(const VnVariableBatchDescV1* desc, VnVariableTicketV1* out
 
 VnResult Vn_ResetValues(const VnVariableBatchDescV1* desc, VnVariableTicketV1* outTicket) {
     const auto request = harken::detail::BeginMonitorRequest(
-        harken::MonitorRequestOrigin::NativeAPI, VN_MONITOR_OPERATION_RESET_VALUES);
+        harken::MonitorRequestOrigin::NativeAPI, harken::monitor::kOperationResetValues);
     const auto result = ResetValuesObserved(desc, outTicket, request);
     ObserveRejectedVariableBatch(request, desc, 0, result);
     return result;
@@ -130914,7 +130922,7 @@ VnResult Vn_ResetValues(const VnVariableBatchDescV1* desc, VnVariableTicketV1* o
 VnResult Vn_SetEmitterValues(VnEmitterHandle emitter, const VnVariableBatchDescV1* desc,
                              VnVariableTicketV1* outTicket) {
     const auto request = harken::detail::BeginMonitorRequest(
-        harken::MonitorRequestOrigin::NativeAPI, VN_MONITOR_OPERATION_SET_EMITTER_VALUES);
+        harken::MonitorRequestOrigin::NativeAPI, harken::monitor::kOperationSetEmitterValues);
     const auto result = SetEmitterValuesObserved(emitter, desc, outTicket, request);
     ObserveRejectedVariableBatch(request, desc, emitter, result);
     if (harken::monitor::EventCatalogEnabled()) {
@@ -130922,12 +130930,12 @@ VnResult Vn_SetEmitterValues(VnEmitterHandle emitter, const VnVariableBatchDescV
         if (count > 0 && count <= VN_VARIABLE_BATCH_WRITE_CAPACITY && desc->writes) {
             for (std::uint32_t i = 0; i < count; ++i) {
                 const auto& write = desc->writes[i];
-                harken::monitor::ObserveOperation(VN_MONITOR_OPERATION_SET_EMITTER_VALUES, result,
-                    VN_MONITOR_ENTITY_NONE, write.variableId, emitter, i, count, write.value);
+                harken::monitor::ObserveOperation(harken::monitor::kOperationSetEmitterValues, result,
+                    harken::monitor::kEntityNone, write.variableId, emitter, i, count, write.value);
             }
         } else {
-            harken::monitor::ObserveOperation(VN_MONITOR_OPERATION_SET_EMITTER_VALUES, result,
-                VN_MONITOR_ENTITY_NONE, {}, emitter, 0, count);
+            harken::monitor::ObserveOperation(harken::monitor::kOperationSetEmitterValues, result,
+                harken::monitor::kEntityNone, {}, emitter, 0, count);
         }
     }
     return result;
@@ -130935,17 +130943,19 @@ VnResult Vn_SetEmitterValues(VnEmitterHandle emitter, const VnVariableBatchDescV
 
 VnResult Vn_PostAction(const VnPostActionDesc* desc, VnActionFiringHandle* outFiring) {
     const auto request = harken::detail::BeginMonitorRequest(
-        harken::MonitorRequestOrigin::NativeAPI, VN_MONITOR_OPERATION_POST_ACTION);
+        harken::MonitorRequestOrigin::NativeAPI, harken::monitor::kOperationPostAction);
     harken::monitor::RequestObservation observation(request);
     const auto result = PostActionObserved(desc, outFiring, request, &observation);
     const bool readable = desc && desc->structSize == sizeof(*desc);
-    harken::monitor::ObserveOperation(VN_MONITOR_OPERATION_POST_ACTION, result,
-        VN_MONITOR_ENTITY_ACTION, readable ? desc->actionId : VnObjectId{},
+    harken::monitor::ObserveOperation(harken::monitor::kOperationPostAction, result,
+        harken::monitor::kEntityAction, readable ? desc->actionId : VnObjectId{},
         result == VN_OK && outFiring ? *outFiring : 0,
         readable ? desc->emitter : 0, readable ? desc->callerSeed : 0);
     if (result == VN_OK && outFiring) {
         observation.TargetValidated();
-        harken::detail::CaptureMonitorAcceptedRequest(observation, VN_MONITOR_SUBJECT_ACTION, *outFiring);
+#if HARKEN_ENGINE_DEV
+        harken::detail::CaptureMonitorAcceptedRequest(observation, harken::monitor::kSubjectAction, *outFiring);
+#endif
     }
     return observation.Returned(result);
 }

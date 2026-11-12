@@ -134,7 +134,7 @@
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenAction.cs/Harken.Unity.HarkenAction::public string ActionName",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenAction.cs/Harken.Unity.HarkenAction::public string ProjectId",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenAction.cs/Harken.Unity.HarkenAction::public void BeforeRuntimeShutdown ( )",
-        "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenAudioSystem.cs/Harken.Unity.HarkenAudioSystem::[ DefaultExecutionOrder ( - 10000 ) ] public partial class HarkenAudioSystem : MonoBehaviour [ordered-members:13afb0a5d69e3b6ce4f2702aaf0df9554dafae3e3dfd9801088572f7291a8b56]",
+        "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenAudioSystem.cs/Harken.Unity.HarkenAudioSystem::[ DefaultExecutionOrder ( - 10000 ) ] public partial class HarkenAudioSystem : MonoBehaviour [ordered-members:92dc413403525db65d39400fa0f31bbf625f26b01199ab40542c3e1210e91abd]",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenAudioSystem.cs/Harken.Unity.HarkenAudioSystem::public HarkenRuntimeState State { get ; private set ; }",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenAudioSystem.cs/Harken.Unity.HarkenAudioSystem::public PackBootstrapSession Session",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenAudioSystem.cs/Harken.Unity.HarkenAudioSystem::public VnResult ConfigureBeforeStartup ( string relativePackRoot , string relativeInitPack , ulong [ ] startupPacks , bool useNullDevice , bool keepAcrossScenes )",
@@ -217,7 +217,7 @@
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public const uint DefaultMaxPacks = 256",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public const uint DefaultMaxVoices = 256",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public const uint UnlimitedActionFirings = 256",
-        "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public sealed class HarkenProjectSettings : ScriptableObject [ordered-members:5ed3073f8569dcb864adf835ea1db5b826b295ab141a68cb1f586957d6ac4e79]",
+        "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public sealed class HarkenProjectSettings : ScriptableObject [ordered-members:f86e38a52e8dba4504370bd2b27cad4999be8f0e43871a0e07eb61c903d05a8c]",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public static HarkenProjectSettings Load ( )",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public string InitPack",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public string Language",
@@ -288,7 +288,9 @@
         "native:Vn_StopActionFiring",
         "native:Vn_StopAll",
         "native:Vn_StopEmitter",
-        "native:Vn_QueryAbiVersion"
+        "native:Vn_QueryAbiVersion",
+        "context:managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenAudioSystem.cs::preprocessor-order:6f99bf7e29a3184ba58cbdb5180900da27d33de7f363488facf01aba6992ab2e",
+        "context:managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs::preprocessor-order:3f07044b1f9f52cf6a1758f921c2b9b1b08ba3bb44f51660a3af0466e496527e"
       ]
     },
     "host": {
@@ -322,7 +324,7 @@
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/HarkenEngine.cs/Harken.HarkenEngine::public static VnResult Suspend ( )",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/HarkenEngine.cs/Harken.HarkenEngine::public static VnResult Term ( )",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/HarkenEngine.cs/Harken.HarkenEngine::public static VnResult Update ( )",
-        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/HarkenEngine.cs/Harken.HarkenEngine::public static class HarkenEngine [ordered-members:d64ff6fa0930a485fc956a76c4e467928d4e3e36c60839e29b16a454af173e81]",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/HarkenEngine.cs/Harken.HarkenEngine::public static class HarkenEngine [ordered-members:372e8dbeb323e03574784e816654892ccf1c8e1d6c67cfd590db0ee863eb1d5e]",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrap.cs/Harken.ActionPreparation::public async Task < VnResult > PrepareAsync ( CancellationToken cancellation = default )",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrap.cs/Harken.PackBootstrap::public static VnResult ApplyRecommendations ( ref VnConfig config , in InitPackInspection inspection , int startupPackCount )",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/PackBootstrap.cs/Harken.PackBootstrap::public static VnResult Start ( string initPackPath , string containmentRoot , ulong [ ] startupPackStableIds , ref VnConfig config , out PackBootstrapSession session )",
@@ -453,7 +455,8 @@
         "native:Vn_UnloadPackEx",
         "native:Vn_UnregisterStreamFile",
         "native:Vn_Update",
-        "native:Vn_QueryActionPlaybackReadiness"
+        "native:Vn_QueryActionPlaybackReadiness",
+        "context:managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/HarkenEngine.cs::preprocessor-order:b2b2e1fdf6751bcfbaea3be6f69e92a1f978b9bffb34cca71a788b892df0dc8d"
       ]
     },
     "runtime-mix": {
@@ -467,7 +470,8 @@
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/HarkenEngine.cs/Harken.HarkenEngine::public static VnResult SetBusVolume ( VnObjectId busId , float volumeDb , uint rampMs )",
         "native:Vn_SetBusMute",
         "native:Vn_SetBusOutputVolume",
-        "native:Vn_SetBusVolume"
+        "native:Vn_SetBusVolume",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/HarkenEngine.cs/<global>::#define HARKEN_ENGINE_DEV [conditions:[\"#if HARKEN_NATIVE_DEVELOPMENT || ( ! HARKEN_NATIVE_RELEASE && ( UNITY_EDITOR || DEVELOPMENT_BUILD ) )\"]]"
       ]
     },
     "voice-controls": {
@@ -742,7 +746,7 @@
         "managed:Harken.Unity.Editor/HarkenIntegration/Unity/Harken/Editor/HarkenEditorCatalog.cs/Harken.Unity.Editor.HarkenEditorPack::public ulong PackStableId { get ; }",
         "managed:Harken.Unity.Editor/HarkenIntegration/Unity/Harken/Editor/HarkenEditorPlaybackWaveform.cs/Harken.Unity.Editor.HarkenEditorPreview.Scope::public VnResult GetPlayingWaveform ( ActionFiring firing , HarkenEditorCatalog catalog , out HarkenActionWaveform waveform , out string diagnostic )",
         "managed:Harken.Unity.Editor/HarkenIntegration/Unity/Harken/Editor/HarkenEditorPlaybackWaveform.cs/Harken.Unity.Editor.HarkenEditorPreview.Scope::public sealed partial class Scope",
-        "managed:Harken.Unity.Editor/HarkenIntegration/Unity/Harken/Editor/HarkenEditorPlaybackWaveform.cs/Harken.Unity.Editor.HarkenEditorPreview::public sealed partial class HarkenEditorPreview [ordered-members:a6e81cce131198ab6f63dcd23ae89b0b4cd29607e428c347684162e1ff088c8a]",
+        "managed:Harken.Unity.Editor/HarkenIntegration/Unity/Harken/Editor/HarkenEditorPlaybackWaveform.cs/Harken.Unity.Editor.HarkenEditorPreview::public sealed partial class HarkenEditorPreview [ordered-members:61f2c19b55d125fca5af4a8c8f10c473378ddfb1b99f5257d2a4e1bc50c80c0a]",
         "managed:Harken.Unity.Editor/HarkenIntegration/Unity/Harken/Editor/HarkenEditorPreview.cs/Harken.Unity.Editor.HarkenEditorPreview.Scope::public VnResult CreateSpatialSource ( Transform target , out HarkenSpatialSource spatialSource )",
         "managed:Harken.Unity.Editor/HarkenIntegration/Unity/Harken/Editor/HarkenEditorPreview.cs/Harken.Unity.Editor.HarkenEditorPreview.Scope::public VnResult LastResult { get ; private set ; } = VnResult . VN_OK",
         "managed:Harken.Unity.Editor/HarkenIntegration/Unity/Harken/Editor/HarkenEditorPreview.cs/Harken.Unity.Editor.HarkenEditorPreview.Scope::public VnResult Play ( string name , HarkenSpatialSource spatialSource , out ActionFiring firing )",
@@ -776,7 +780,7 @@
         "managed:Harken.Unity.Editor/HarkenIntegration/Unity/Harken/Editor/HarkenEditorPreview.cs/Harken.Unity.Editor.HarkenEditorPreview::public string Diagnostic { get ; private set ; } = string . Empty",
         "managed:Harken.Unity.Editor/HarkenIntegration/Unity/Harken/Editor/HarkenEditorPreview.cs/Harken.Unity.Editor.HarkenEditorPreview::public void Dispose ( )",
         "managed:Harken.Unity.Editor/HarkenIntegration/Unity/Harken/Editor/HarkenEditorProjectSettings.cs/Harken.Unity.Editor.HarkenEditorProjectSettings::public const string AssetPath = \" Assets/Harken/Editor/HarkenEditorProjectSettings.asset \"",
-        "managed:Harken.Unity.Editor/HarkenIntegration/Unity/Harken/Editor/HarkenEditorProjectSettings.cs/Harken.Unity.Editor.HarkenEditorProjectSettings::public sealed class HarkenEditorProjectSettings : ScriptableObject [ordered-members:5da52331b167de857c892a6d7bea31e25776a2de88571df906e737d3e58983ac]",
+        "managed:Harken.Unity.Editor/HarkenIntegration/Unity/Harken/Editor/HarkenEditorProjectSettings.cs/Harken.Unity.Editor.HarkenEditorProjectSettings::public sealed class HarkenEditorProjectSettings : ScriptableObject [ordered-members:415f72f832a7c716a1e62ff5c723dbe31b176ef7af7e4bd02de034c7a01d981d]",
         "managed:Harken.Unity.Editor/HarkenIntegration/Unity/Harken/Editor/HarkenEditorProjectSettings.cs/Harken.Unity.Editor.HarkenEditorProjectSettings::public static HarkenEditorProjectSettings GetOrCreate ( )",
         "managed:Harken.Unity.Editor/HarkenIntegration/Unity/Harken/Editor/HarkenEditorProjectSettings.cs/Harken.Unity.Editor.HarkenEditorProjectSettings::public static HarkenEditorProjectSettings Load ( )",
         "managed:Harken.Unity.Editor/HarkenIntegration/Unity/Harken/Editor/HarkenEditorProjectSettings.cs/Harken.Unity.Editor.HarkenEditorProjectSettings::public static void ValidateNotInResources ( )",
@@ -814,7 +818,14 @@
         "managed:Harken.Unity.Editor/HarkenIntegration/Unity/Harken/Editor/HarkenVariableCatalogGenerator.cs/Harken.Unity.Editor.HarkenVariableCatalogGenerator::public static void GenerateFromMenu ( )",
         "managed:Harken.Unity.Editor/HarkenIntegration/Unity/Harken/Editor/HarkenVariableIdDrawer.cs/Harken.Unity.Editor.HarkenVariableIdDrawer::[ CustomPropertyDrawer ( typeof ( HarkenVariableId ) ) ] public sealed class HarkenVariableIdDrawer : PropertyDrawer",
         "managed:Harken.Unity.Editor/HarkenIntegration/Unity/Harken/Editor/HarkenVariableIdDrawer.cs/Harken.Unity.Editor.HarkenVariableIdDrawer::public override void OnGUI ( Rect position , SerializedProperty property , GUIContent label )",
-        "managed:Harken.Unity.Editor/HarkenIntegration/Unity/Harken/Editor/HarkenVariableIdDrawer.cs/Harken.Unity.Editor.HarkenVariableIdDrawer::public static bool TryResolve ( string codeName , out VnObjectId stableId )"
+        "managed:Harken.Unity.Editor/HarkenIntegration/Unity/Harken/Editor/HarkenVariableIdDrawer.cs/Harken.Unity.Editor.HarkenVariableIdDrawer::public static bool TryResolve ( string codeName , out VnObjectId stableId )",
+        "context:managed:Harken.Unity.Editor/HarkenIntegration/Unity/Harken/Editor/HarkenEditorPlaybackWaveform.cs::preprocessor-order:fcc1463cd37d3ca3d6986ba94310e10727292557cb292c9341226b46261ed608",
+        "context:managed:Harken.Unity.Editor/HarkenIntegration/Unity/Harken/Editor/HarkenEditorPreview.cs::preprocessor-order:dcdf13458b60d63a15cd4b7e9f96a2057fc8f94b0b4afecde666574cf00ba16f",
+        "managed:Harken.Unity.Editor/HarkenIntegration/Unity/Harken/Editor/HarkenEditorProjectSettings.cs/Harken.Unity.Editor.HarkenEditorProjectSettings::public HarkenNativeLibrary NativeLibrary",
+        "managed:Harken.Unity.Editor/HarkenIntegration/Unity/Harken/Editor/HarkenEditorProjectSettings.cs/Harken.Unity.Editor.HarkenNativeLibrary::Automatic",
+        "managed:Harken.Unity.Editor/HarkenIntegration/Unity/Harken/Editor/HarkenEditorProjectSettings.cs/Harken.Unity.Editor.HarkenNativeLibrary::Development",
+        "managed:Harken.Unity.Editor/HarkenIntegration/Unity/Harken/Editor/HarkenEditorProjectSettings.cs/Harken.Unity.Editor.HarkenNativeLibrary::Release",
+        "managed:Harken.Unity.Editor/HarkenIntegration/Unity/Harken/Editor/HarkenEditorProjectSettings.cs/Harken.Unity.Editor.HarkenNativeLibrary::public enum HarkenNativeLibrary [ordered-members:70c3cd65e50265d6e36c1d7f3380ff06ab6c8e0f8728ac0201d76a3427becf5e]"
       ]
     },
     "remote-host": {
@@ -823,18 +834,20 @@
       "rationale": "Retain optional runtime communication, settings, retry and status in Player as well as Editor.",
       "consumer_contract": "HarkenAudioSystem and HarkenEngineSubsystem Remote APIs; the host owns startup configuration.",
       "entries": [
-        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/HarkenEngine.cs/Harken.HarkenEngine::public static VnResult QueryRemoteCommunication ( out VnRemoteStatus status )",
-        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/HarkenEngine.cs/Harken.HarkenEngine::public static VnResult StartRemoteCommunication ( string applicationName , string bindAddress = \" 127.0.0.1 \" , int port = 0 , bool enableDiscovery = true , int discoveryPort = 0 , string projectName = null )",
-        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/HarkenEngine.cs/Harken.HarkenEngine::public static VnResult StopRemoteCommunication ( )",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/HarkenEngine.cs/Harken.HarkenEngine::public static VnResult QueryRemoteCommunication ( out VnRemoteStatus status ) [conditions:[\"#if HARKEN_ENGINE_DEV\"]]",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/HarkenEngine.cs/Harken.HarkenEngine::public static VnResult StartRemoteCommunication ( string applicationName , string bindAddress = \" 127.0.0.1 \" , int port = 0 , bool enableDiscovery = true , int discoveryPort = 0 , string projectName = null ) [conditions:[\"#if HARKEN_ENGINE_DEV\"]]",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/HarkenEngine.cs/Harken.HarkenEngine::public static VnResult StopRemoteCommunication ( ) [conditions:[\"#if HARKEN_ENGINE_DEV\"]]",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenAudioSystem.cs/Harken.Unity.HarkenAudioSystem::public VnResult LastRemoteResult { get ; private set ; } = VnResult . VN_OK",
-        "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenAudioSystem.cs/Harken.Unity.HarkenAudioSystem::public VnResult QueryRemoteCommunication ( out VnRemoteStatus status )",
-        "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenAudioSystem.cs/Harken.Unity.HarkenAudioSystem::public VnResult RetryRemoteCommunication ( )",
+        "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenAudioSystem.cs/Harken.Unity.HarkenAudioSystem::public VnResult QueryRemoteCommunication ( out VnRemoteStatus status ) [conditions:[\"#if HARKEN_ENGINE_DEV\"]]",
+        "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenAudioSystem.cs/Harken.Unity.HarkenAudioSystem::public VnResult RetryRemoteCommunication ( ) [conditions:[\"#if HARKEN_ENGINE_DEV\"]]",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenAudioSystem.cs/Harken.Unity.HarkenAudioSystem::public string LastRemoteError { get ; private set ; } = string . Empty",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public bool EnableCommunicationInBuilds",
         "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/Harken.Unity.HarkenProjectSettings::public static bool CommunicationEnabled",
         "native:Vn_RemoteGetStatus",
         "native:Vn_RemoteStart",
-        "native:Vn_RemoteStop"
+        "native:Vn_RemoteStop",
+        "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenAudioSystem.cs/<global>::#define HARKEN_ENGINE_DEV [conditions:[\"#if HARKEN_NATIVE_DEVELOPMENT || ( ! HARKEN_NATIVE_RELEASE && ( UNITY_EDITOR || DEVELOPMENT_BUILD ) )\"]]",
+        "managed:Harken.Unity/HarkenIntegration/Unity/Harken/Runtime/Unity/HarkenProjectSettings.cs/<global>::#define HARKEN_ENGINE_DEV [conditions:[\"#if HARKEN_NATIVE_DEVELOPMENT || ( ! HARKEN_NATIVE_RELEASE && ( UNITY_EDITOR || DEVELOPMENT_BUILD ) )\"]]"
       ]
     },
     "remote-bridge": {
@@ -855,7 +868,7 @@
         "assembly:HarkenIntegration/Unity/Harken/Runtime/Unity/Harken.Unity.asmdef::{\"allowUnsafeCode\":false,\"autoReferenced\":true,\"defineConstraints\":[],\"excludePlatforms\":[],\"includePlatforms\":[],\"name\":\"Harken.Unity\",\"noEngineReferences\":false,\"overrideReferences\":false,\"precompiledReferences\":[],\"references\":[\"Harken.Core\"],\"rootNamespace\":\"Harken.Unity\",\"versionDefines\":[]}",
         "context:managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/MonoPInvokeCallbackShim.cs::preprocessor-order:3dd7f828968b38e825cfcfcaa09cf11a23bbdc2a2233647f077e854a94f6992e",
         "context:managed:Harken.Unity.Editor/HarkenIntegration/Unity/Harken/Editor/HarkenEditorLifecycle.cs::preprocessor-order:5c4e6d9b7c90b076252b8a057916c1111eec8da17c957499406c790840ed601b",
-        "context:managed:Harken.Unity.Editor/HarkenIntegration/Unity/Harken/Editor/HarkenPluginImporterSetup.cs::preprocessor-order:0090e58abfe0bd086a049719f7744589923ff35b7375f9608858367b2cd1f555",
+        "context:managed:Harken.Unity.Editor/HarkenIntegration/Unity/Harken/Editor/HarkenPluginImporterSetup.cs::preprocessor-order:ddb7ae4cc7cdbf049ded7bc4e2602c90fbaa4cfe2d6666f9919a978130d193cd",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenAbi.g.cs/<global>::using System",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenAbi.g.cs/<global>::using System . Collections . Generic",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenAbi.g.cs/<global>::using System . Runtime . InteropServices",
@@ -937,8 +950,8 @@
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/Packs.cs/<global>::using System",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/Packs.cs/<global>::using System . Runtime . InteropServices",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/Packs.cs/<global>::using System . Text",
-        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/RemoteCommunication.cs/<global>::using System",
-        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/RemoteCommunication.cs/<global>::using System . Runtime . InteropServices",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/RemoteCommunication.cs/<global>::using System [conditions:[\"#if HARKEN_ENGINE_DEV\"]]",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/RemoteCommunication.cs/<global>::using System . Runtime . InteropServices [conditions:[\"#if HARKEN_ENGINE_DEV\"]]",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/CatalogSymbols.cs/<global>::using System",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/CatalogSymbols.cs/<global>::using System . Collections . Generic",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/StreamSources.cs/<global>::using System",
@@ -1151,7 +1164,15 @@
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/GameplayNames.cs/<global>::using System",
         "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/GameplayNames.cs/<global>::using System . Collections . Generic",
         "source:HarkenIntegration/Unity/Harken/Runtime/API/GameplayNames.cs",
-        "context:managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenNative.g.cs::preprocessor-order:2b96c4a267dbbb5b310cb9f58dad08b4ad6c005f14eec9a806bfe4520cf1c7a7"
+        "context:managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenNative.g.cs::preprocessor-order:a813f758391721ab0fe80b0b85abd03716b8f7ca541551923be1a7c985797641",
+        "context:managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/RemoteCommunication.cs::preprocessor-order:ed8379b66b04ee539e8747886d24a8086b7159a6eb5eea0c2f8f7d2fe9690faf",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/API/RemoteCommunication.cs/<global>::#define HARKEN_ENGINE_DEV [conditions:[\"#if HARKEN_NATIVE_DEVELOPMENT || ( ! HARKEN_NATIVE_RELEASE && ( UNITY_EDITOR || DEVELOPMENT_BUILD ) )\"]]",
+        "managed:Harken.Core/HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenNative.g.cs/<global>::#define HARKEN_ENGINE_DEV [conditions:[\"#if HARKEN_NATIVE_DEVELOPMENT || ( ! HARKEN_NATIVE_RELEASE && ( UNITY_EDITOR || DEVELOPMENT_BUILD ) )\"]]",
+        "managed:Harken.Unity.Editor/HarkenIntegration/Unity/Harken/Editor/HarkenEditorPlaybackWaveform.cs/<global>::#define HARKEN_ENGINE_DEV [conditions:[\"#if HARKEN_NATIVE_DEVELOPMENT || ( ! HARKEN_NATIVE_RELEASE && ( UNITY_EDITOR || DEVELOPMENT_BUILD ) )\"]]",
+        "managed:Harken.Unity.Editor/HarkenIntegration/Unity/Harken/Editor/HarkenEditorPreview.cs/<global>::#define HARKEN_ENGINE_DEV [conditions:[\"#if HARKEN_NATIVE_DEVELOPMENT || ( ! HARKEN_NATIVE_RELEASE && ( UNITY_EDITOR || DEVELOPMENT_BUILD ) )\"]]",
+        "managed:Harken.Unity.Editor/HarkenIntegration/Unity/Harken/Editor/HarkenPluginImporterSetup.cs/<global>::using System . Linq [conditions:[\"#if UNITY_EDITOR\"]]",
+        "managed:Harken.Unity.Editor/HarkenIntegration/Unity/Harken/Editor/HarkenPluginImporterSetup.cs/<global>::using UnityEditor . Build . Reporting [conditions:[\"#if UNITY_EDITOR\"]]",
+        "managed:Harken.Unity.Editor/HarkenIntegration/Unity/Harken/Editor/HarkenPluginImporterSetup.cs/<global>::using UnityEditor . Build [conditions:[\"#if UNITY_EDITOR\"]]"
       ]
     },
     "required-types": {

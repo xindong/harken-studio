@@ -1,6 +1,7 @@
 #ifndef HARKEN_API_MONITOR_LIFECYCLE_PROJECTION_H
 #define HARKEN_API_MONITOR_LIFECYCLE_PROJECTION_H
 
+#include <harken/HarkenDevelopment.h>
 #include "MonitorExecutionBuilder.h"
 #include "harken/core/MonitorLifecycleSink.h"
 

@@ -26,6 +26,9 @@
 
 #include <harken/ObjectId.h>
 #include <harken/Harken.h>
+#if HARKEN_ENGINE_DEV
+#include <harken/HarkenDevelopment.h>
+#endif
 
 #include "harken/core/LogRing.h"
 #include "harken/core/StableRowStorage.h"
@@ -1074,12 +1077,14 @@ VnResult ApplyVoiceBinding(Engine& engine, VnVoiceHandle publicHandle,
                            BindingId id);
 VnResult ClearVoiceBinding(Engine& engine, VnVoiceHandle publicHandle,
                            BindingId id);
+#if HARKEN_ENGINE_DEV
 VnResult CapturePropertyTargets(Engine& engine, VnPropertyTargetInfo* out,
                                 std::uint32_t capacity,
                                 std::uint32_t* requiredCount);
 VnResult CapturePropertyBindings(Engine& engine, VnPropertyBindingInfo* out,
                                  std::uint32_t capacity,
                                  std::uint32_t* requiredCount);
+#endif
 
 } // namespace harken
 

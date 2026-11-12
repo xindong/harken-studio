@@ -1,4 +1,5 @@
 #include "MonitorSessionRecover.h"
+#include <harken/HarkenDevelopment.h>
 
 #include "MonitorRecordPack.h"
 #include "MonitorSessionFileWrite.h"

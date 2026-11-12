@@ -5,6 +5,7 @@
 #include "MonitorExecutionProducer.h"
 #include <span>
 #include <vector>
+#include <harken/HarkenDevelopment.h>
 
 namespace harken::monitor {
 

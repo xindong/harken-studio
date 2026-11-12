@@ -2,6 +2,7 @@
 #define HARKEN_MONITOR_FIXTURE_DECODE_H
 
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include <stddef.h>
 #include <stdint.h>

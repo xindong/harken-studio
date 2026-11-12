@@ -443,7 +443,8 @@ add_executable(harken_monitor_public_api_probe
 set_source_files_properties(UnitTest/MonitorPublicApiProbe.c PROPERTIES LANGUAGE C)
 target_include_directories(harken_monitor_public_api_probe PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/UnitTest
-    ${HARKEN_CORE_DIR}/api/include)
+    ${HARKEN_CORE_DIR}/api/include
+    ${HARKEN_DEVELOPMENT_DIR}/include)
 target_compile_definitions(harken_monitor_public_api_probe PRIVATE
     HARKEN_MONITOR_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/UnitTest/monitor"
     HARKEN_MONITOR_SESSION_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/UnitTest/monitor/session"

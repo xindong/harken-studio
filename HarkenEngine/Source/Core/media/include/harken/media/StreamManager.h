@@ -6,6 +6,9 @@
 
 #include <harken/ObjectId.h>
 #include <harken/Harken.h>
+#if HARKEN_ENGINE_DEV
+#include <harken/HarkenDevelopment.h>
+#endif
 
 #include "harken/core/EngineConfig.h"
 #include "harken/core/MediaContentRevision.h"
@@ -276,7 +279,9 @@ public:
     };
     bool CapturePlayback(std::uint64_t ringToken, PlaybackObservation* out) const;
     // Logic thread: emits current supply snapshots; readSequence identifies the completed job.
+#if HARKEN_ENGINE_DEV
     void PublishPlaybackObservations();
+#endif
     bool CancelReplacement(PreparedToken token) noexcept;
     VnResult TakeReplacement(PreparedToken token, PreparedStream* out) noexcept;
 
@@ -417,7 +422,9 @@ private:
         std::atomic<unsigned> state{0}; // idle, queued, running, completed
         std::atomic<bool> cancelled{false};
         bool valid = false, exception = false;
+#if HARKEN_ENGINE_DEV
         VnMonitorStreamFactV1 readFacts{};
+#endif
     };
 
     struct ReadWindow {
@@ -440,7 +447,9 @@ private:
         ReadWindow window;
         std::uint64_t passGoal = 0;
         std::uint64_t exceptionSerial = 0;
+#if HARKEN_ENGINE_DEV
         VnMonitorStreamFactV1 observation{};
+#endif
 
         // Logic-owned preparation metadata. The worker never touches it,
         // including while returning a retired ring to Free.
@@ -514,9 +523,11 @@ private:
     VnResult RegisterSourceAndWait(VnSoundId soundId, const char* path, bool replace);
     static void ValidateSourceSlice(SourceRequest& request);
     void SettleIo();
+#if HARKEN_ENGINE_DEV
     void CompleteReadObservation(StreamSlot& slot, const ChunkJob& job,
         const VnMonitorStreamFactV1& facts, bool valid, bool exception) noexcept;
     void PublishPlaybackObservation(StreamSlot& slot);
+#endif
     void DispatchIo();
     void ServiceRequests();
     void IoMain(std::size_t laneIndex);
@@ -560,15 +571,21 @@ private:
         SourceRequest* request = nullptr;
         std::unique_ptr<StreamFile> cleanup;
         bool valid = false, exception = false;
+#if HARKEN_ENGINE_DEV
         VnMonitorStreamFactV1 readFacts{};
+#endif
         std::thread thread;
     };
     // Stages one whole verified chunk into `staging`. False on a short read or a
     // checksum mismatch; the caller decides what that means for the slot, since
     // only the caller knows the slot. Static: the job depends on nothing but its
     // arguments, which is what makes it relocatable.
+#if HARKEN_ENGINE_DEV
     static bool RunChunkJob(const ChunkJob& job, std::vector<float>& staging, ReadWindow& window,
                             VnMonitorStreamFactV1& readFacts);
+#else
+    static bool RunChunkJob(const ChunkJob& job, std::vector<float>& staging, ReadWindow& window);
+#endif
     static bool ReadChunk(const ChunkJob& job, std::vector<float>& staging, ReadWindow& window,
                           const StreamByteSource& source);
     static bool TryCopyReadWindow(const ChunkJob& job, std::vector<float>& staging,

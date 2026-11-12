@@ -1,6 +1,7 @@
 #ifndef HARKEN_API_MONITOR_HOST_SYMBOL_H
 #define HARKEN_API_MONITOR_HOST_SYMBOL_H
 
+#include <harken/HarkenDevelopment.h>
 #include "MonitorHostDescription.h"
 #include "MonitorExecutionProducer.h"
 #include "harken/core/MonitorEmitterIdentity.h"

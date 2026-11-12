@@ -3,6 +3,7 @@
 
 #include "MonitorIdentityCodec.h"
 #include "MonitorHostSymbolCodec.h"
+#include <harken/HarkenDevelopment.h>
 
 namespace harken::monitor {
 

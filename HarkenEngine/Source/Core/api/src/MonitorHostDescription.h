@@ -1,6 +1,9 @@
 #ifndef HARKEN_API_MONITOR_HOST_DESCRIPTION_H
 #define HARKEN_API_MONITOR_HOST_DESCRIPTION_H
 
+#if HARKEN_ENGINE_DEV
+#include <harken/HarkenDevelopment.h>
+
 #include "harken/Harken.h"
 #include <cstdint>
 #include <cstring>
@@ -60,4 +63,5 @@ static_assert(sizeof(MonitorHostDescription) == 456);
 static_assert(sizeof(VnMonitorHostRegistrationV2) == 512);
 
 } // namespace harken
+#endif
 #endif

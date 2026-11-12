@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <harken/HarkenDevelopment.h>
 
 // Public completeness pin: 112 functions / 84 structs after Compare.
 

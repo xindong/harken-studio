@@ -1,4 +1,5 @@
 #include "monitor_session_codec.h"
+#include <harken/HarkenDevelopment.h>
 
 #include <cstring>
 #include <vector>

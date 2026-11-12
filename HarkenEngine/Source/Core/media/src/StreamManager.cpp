@@ -545,7 +545,9 @@ std::uint64_t StreamManager::InitializeSlot(
     std::uint64_t startFrame, std::uint64_t loopStartFrame,
     std::uint64_t loopEndFrame, std::uint32_t loopCount) {
     StreamSlot& s = m_slots[slot];
+#if HARKEN_ENGINE_DEV
     PublishPlaybackObservation(s);
+#endif
     // The slot is Free: neither real-time thread observes it, so these
     // writes are private until Active publishes them. The source reference
     // was acquired under m_mutex, so retirement cannot close it in between.
@@ -585,6 +587,7 @@ std::uint64_t StreamManager::InitializeSlot(
     s.ring.contentRevision = file.contentRevision;
     s.prebufferTargetFrames = static_cast<std::uint32_t>(std::min<std::uint64_t>(s.ring.capacity,
         std::max<std::uint64_t>(1, (static_cast<std::uint64_t>(m_prebufferMs) * file.toc.sampleRate + 999) / 1000)));
+#if HARKEN_ENGINE_DEV
     s.observation = {};
     s.observation.structSize = sizeof(s.observation);
     s.observation.factKind = VN_MONITOR_FACT_STREAM_OBSERVATION;
@@ -594,6 +597,7 @@ std::uint64_t StreamManager::InitializeSlot(
     s.observation.sourceFrameBegin = s.observation.sourceFrameEnd = effectiveStart;
     s.observation.appliedFrame = UINT64_MAX;
     s.observation.flags = VN_MONITOR_STREAM_FACT_SUPPLY;
+#endif
     const std::uint32_t ringGeneration =
         s.ring.generation.load(std::memory_order_relaxed);
     const std::uint32_t nowActive =
@@ -1139,6 +1143,7 @@ void StreamManager::DetachRetiredSlots() {
     }
 }
 
+#if HARKEN_ENGINE_DEV
 namespace {
 // A stack adapter measures the actual provider boundary, including planar and
 // short-read retries. It owns no source and changes neither bytes nor outcomes.
@@ -1242,6 +1247,13 @@ void StreamManager::PublishPlaybackObservations() {
     std::lock_guard<std::mutex> lock(m_mutex);
     for (auto& slot : m_slots) PublishPlaybackObservation(slot);
 }
+#else
+bool StreamManager::RunChunkJob(const ChunkJob& job, std::vector<float>& staging,
+    ReadWindow& window) {
+    return ReadChunk(job, staging, window, *job.file->source) &&
+        ValidateChunk(job, staging, Fnv1a64(staging.data(), static_cast<std::size_t>(job.chunkBytes)));
+}
+#endif
 
 std::uint64_t StreamManager::ReadWindowBytes() const noexcept {
     std::uint64_t bytes = 0;

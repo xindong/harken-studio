@@ -2044,8 +2044,8 @@ bool MixerLoop::TakeChannelPeaks(ChannelPeakBatch& batch) {
         ++m_channelPeakConsumeSerial;
     batch.consumeSerial = m_channelPeakConsumeSerial;
     batch.mixChannelCount = m_mixChannels;
-    batch.busCount = std::min<std::uint32_t>(m_buses.BusCount(), VN_SNAPSHOT_MAX_BUSES);
-    for (std::uint32_t bus = 0; bus < VN_SNAPSHOT_MAX_BUSES; ++bus) {
+    batch.busCount = std::min<std::uint32_t>(m_buses.BusCount(), kSnapshotMaxBuses);
+    for (std::uint32_t bus = 0; bus < kSnapshotMaxBuses; ++bus) {
         batch.busIds[bus] = m_buses.IdAt(bus);
         const auto generation = IsNull(batch.busIds[bus]) ? 0 : m_buses.GenerationAt(bus);
         for (std::uint32_t channel = 0; channel < VN_MAX_CHANNELS; ++channel) {
@@ -2076,7 +2076,7 @@ void MixerLoop::PublishSnapshot(std::uint64_t blockIndex, bool blockRendered,
     // yet counted here.
     const std::uint32_t busCount = m_buses.AudioBusCount();
     payload.busCount = busCount;
-    for (std::uint32_t i = 0; i < VN_SNAPSHOT_MAX_BUSES; ++i) {
+    for (std::uint32_t i = 0; i < kSnapshotMaxBuses; ++i) {
         // A degraded block never reached MixDown, so its bus meters are
         // honest silence rather than the previous block's peaks.
         payload.busPeaks[i] =
@@ -2090,7 +2090,7 @@ void MixerLoop::PublishSnapshot(std::uint64_t blockIndex, bool blockRendered,
                 blockRendered ? m_buses.OutputChannelPeak(i, channel) : 0.0f;
     }
     if (auto* channelMeters = m_channelPeaks.load(std::memory_order_acquire)) {
-        const auto count = std::min<std::uint32_t>(busCount, VN_SNAPSHOT_MAX_BUSES);
+        const auto count = std::min<std::uint32_t>(busCount, kSnapshotMaxBuses);
         for (std::uint32_t bus = 0; bus < count; ++bus)
             for (std::uint32_t channel = 0; channel < m_mixChannels; ++channel)
                 channelMeters->Publish(bus, m_buses.AudioGenerationAt(bus), channel,
@@ -2100,7 +2100,7 @@ void MixerLoop::PublishSnapshot(std::uint64_t blockIndex, bool blockRendered,
         // Same honesty for the per-voice taps: nothing rendered, so the
         // published taps read silent even where slot contexts still hold
         // the previous block's measurements.
-        for (VnVoiceSnapshot& entry : payload.voices) {
+        for (VoiceSnapshotRow& entry : payload.voices) {
             entry.tapPostResample = 0.0f;
             entry.tapPostFx = 0.0f;
             entry.tapPostFilter = 0.0f;

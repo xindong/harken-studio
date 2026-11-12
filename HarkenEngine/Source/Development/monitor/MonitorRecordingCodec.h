@@ -1,6 +1,7 @@
 #ifndef HARKEN_API_MONITOR_RECORDING_CODEC_H
 #define HARKEN_API_MONITOR_RECORDING_CODEC_H
 
+#include <harken/HarkenDevelopment.h>
 #include "MonitorIdentityCut.h"
 #include "MonitorLifecycleProjection.h"
 #include <utility>

@@ -3,6 +3,7 @@
 
 #include "Engine.h"
 #include "MonitorLifecycleProjection.h"
+#include <harken/HarkenDevelopment.h>
 
 namespace harken::monitor {
 

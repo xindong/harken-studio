@@ -3,6 +3,10 @@
 
 #include <harken/ObjectId.h>
 #include <harken/Harken.h>
+#include "harken/core/MonitorVocabulary.h"
+#if HARKEN_ENGINE_DEV
+#include <harken/HarkenDevelopment.h>
+#endif
 
 #include <cstdint>
 
@@ -90,14 +94,12 @@ inline bool ExecutionObservationEnabled() noexcept { return false; }
 inline std::uint64_t ExecutionEngineInstance() noexcept { return 0; }
 inline bool PublishExecutionFact(const MonitorExecutionFact&, bool = false) noexcept { return false; }
 inline bool StreamObservationEnabled() noexcept { return false; }
-inline bool PublishStreamFact(const VnMonitorStreamFactV1&, bool = false) noexcept { return false; }
-inline void CaptureStreamIdentity(std::uint32_t, std::uint64_t, VnMonitorStreamFactV1&) noexcept {}
-inline void ObserveOperation(std::uint32_t, VnResult, std::uint32_t, VnObjectId,
-                             std::uint64_t = 0, std::uint64_t = 0,
-                             std::uint64_t = 0, float = 0, const char* = nullptr) {}
 inline void ObserveDiagnostic(std::uint32_t, std::uint32_t, std::uint64_t, std::uint64_t,
                               std::uint64_t, VnObjectId, VnObjectId, const char*,
                               std::uint32_t = 0, std::uint64_t = 0) {}
+inline void ObserveOperation(std::uint32_t, VnResult, std::uint32_t, VnObjectId,
+                             std::uint64_t = 0, std::uint64_t = 0,
+                             std::uint64_t = 0, float = 0, const char* = nullptr) {}
 inline void CompleteLogTranscription(std::uint32_t, std::uint64_t) {}
 inline void OnAudioQuantum() {}
 inline bool TimeSeriesLiveArmed() { return false; }
@@ -107,11 +109,6 @@ inline void PublishTimeSeriesQuantum(std::uint32_t, std::uint32_t, std::uint32_t
 inline void PublishMasterAudioChunk(const float*, std::uint32_t, std::uint32_t,
                                     std::uint32_t, std::uint32_t, std::uint32_t,
                                     std::uint64_t) {}
-inline void PublishPlanarAudioChunk(std::uint32_t, std::uint64_t, std::uint64_t,
-                                    std::uint32_t, float* const*, std::uint32_t,
-                                    std::uint32_t, std::uint32_t, std::uint32_t,
-                                    std::uint32_t, std::uint64_t) {}
-inline void NoteExactInstanceRetired(std::uint32_t, std::uint64_t, std::uint64_t) {}
 inline bool LogicThreadReady() { return false; }
 inline VnResult GateControlEntry() { return VN_OK; }
 

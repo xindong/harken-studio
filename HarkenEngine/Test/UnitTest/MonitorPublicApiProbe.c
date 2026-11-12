@@ -1,4 +1,5 @@
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include "monitor_fixture_decode.h"
 #include "monitor_session_codec.h"

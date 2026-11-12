@@ -1,6 +1,7 @@
 #ifndef HARKEN_API_MONITOR_SESSION_FILE_WRITE_H
 #define HARKEN_API_MONITOR_SESSION_FILE_WRITE_H
 
+#include <harken/HarkenDevelopment.h>
 #include "MonitorRecordPack.h"
 
 #include <cstdint>

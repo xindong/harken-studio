@@ -16,6 +16,9 @@
 #define HARKEN_RENDER_VOICE_POOL_H
 
 #include <harken/Harken.h>
+#if HARKEN_ENGINE_DEV
+#include <harken/HarkenDevelopment.h>
+#endif
 
 #include "harken/core/BlockArena.h"
 #include "harken/core/CommandQueue.h"
@@ -280,7 +283,9 @@ public:
     bool CaptureReleaseObserver(VnVoiceHandle handle,
                                 VoiceReleaseObserver* out) const noexcept;
     bool ReleaseObserved(const VoiceReleaseObserver& observer) const noexcept;
+#if HARKEN_ENGINE_DEV
     void RefreshStreamObservationIdentity(VnVoiceHandle handle, std::uint32_t ledgerSlot) noexcept;
+#endif
     bool BindMonitorControl(VnVoiceHandle handle, const MonitorVoiceControlBinding& binding) noexcept;
     bool BindSourceTerminal(VnVoiceHandle handle, SourceTerminalRecord* record,
                             SourceTerminalToken token) noexcept;
@@ -691,7 +696,7 @@ public:
     // advancing Voice DSP or lifecycle state. Audio thread.
     void PublishLiveRouteSilence();
 
-    // Fills the payload's voice entries (first VN_SNAPSHOT_MAX_VOICES
+    // Fills the payload's voice entries (first kSnapshotMaxVoices
     // slots, indexed by slot) and the active-voice total. Audio thread,
     // at the end of a rendered block. Only Rendering slots contribute —
     // the snapshot describes the rendered block, and only Rendering
@@ -1070,7 +1075,9 @@ private:
         std::atomic<VnVoiceHandle> monitorPublicHandle{0};
         MonitorVoiceControlBinding monitorControl{};
         bool monitorSourceTerminalPublished = false;
+#if HARKEN_ENGINE_DEV
         VnMonitorStreamFactV1 streamObservation{};
+#endif
         std::atomic<std::uint64_t> streamRingToken{0};
         std::atomic<bool> resyncEnabled{false};
         std::atomic<std::uint64_t> resyncSerial{0};
@@ -1230,7 +1237,9 @@ private:
     OriginalVoiceDisposal TryDisposeOriginalTimelineVoiceImpl(
         const OriginalVoiceOwner& owner, ReleaseThread thread) noexcept;
     void ReleaseSlot(Slot& slot, ReleaseThread thread);
+#if HARKEN_ENGINE_DEV
     void PublishStreamObservation(Slot& slot, std::uint64_t blockIndex) noexcept;
+#endif
     void PublishSourceTerminal(Slot& slot, std::uint64_t blockIndex) noexcept;
     void PublishPlaybackEnd(Slot& slot, std::uint64_t blockIndex) noexcept;
     bool StageCompletionProgress(Slot& slot,
@@ -1258,7 +1267,9 @@ private:
     void QuarantineSlot(std::uint32_t slotIndex, Slot& slot,
                         NotificationQueue& notifications,
                         std::uint64_t blockIndex);
+#if HARKEN_ENGINE_DEV
     void NoteMonitorVoiceRetired(VnVoiceHandle publicHandle) noexcept;
+#endif
 
     // Worker-pool cascade job: runs the cascade for the voice at job index j
     // (mapped through m_jobSlots), skipping a voice the pre-pass declined.

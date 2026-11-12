@@ -2,6 +2,7 @@
 #define HARKEN_CORE_CHANNEL_PEAK_ACCUMULATOR_H
 
 #include <harken/Harken.h>
+#include <harken/core/SnapshotBuffer.h>
 
 #include <array>
 #include <atomic>
@@ -15,8 +16,8 @@ struct ChannelPeakBatch {
     std::uint64_t consumeSerial = 0;
     std::uint32_t mixChannelCount = 0;
     std::uint32_t busCount = 0;
-    std::array<VnBusId, VN_SNAPSHOT_MAX_BUSES> busIds{};
-    std::array<float, VN_SNAPSHOT_MAX_BUSES * VN_MAX_CHANNELS> channelPeaks{};
+    std::array<VnBusId, kSnapshotMaxBuses> busIds{};
+    std::array<float, kSnapshotMaxBuses * VN_MAX_CHANNELS> channelPeaks{};
 };
 
 // One audio producer and one logic consumer. Each lane changes windows
@@ -25,7 +26,7 @@ class ChannelPeakAccumulator {
 public:
     void Publish(std::uint32_t bus, std::uint32_t generation,
                  std::uint32_t channel, float peak) noexcept {
-        if (bus >= VN_SNAPSHOT_MAX_BUSES || channel >= VN_MAX_CHANNELS || generation == 0)
+        if (bus >= kSnapshotMaxBuses || channel >= VN_MAX_CHANNELS || generation == 0)
             return;
         if (!(peak >= 0.0f) || !std::isfinite(peak))
             peak = 0.0f;
@@ -55,7 +56,7 @@ public:
 
 private:
     static_assert(std::atomic<std::uint64_t>::is_always_lock_free);
-    std::array<std::atomic<std::uint64_t>, VN_SNAPSHOT_MAX_BUSES * VN_MAX_CHANNELS> m_lanes{};
+    std::array<std::atomic<std::uint64_t>, kSnapshotMaxBuses * VN_MAX_CHANNELS> m_lanes{};
 };
 
 } // namespace harken

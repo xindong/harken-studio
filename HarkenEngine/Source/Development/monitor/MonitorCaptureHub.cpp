@@ -50,6 +50,7 @@
 #include <sddl.h>
 #elif defined(__APPLE__)
 #include <dispatch/dispatch.h>
+#include <harken/HarkenDevelopment.h>
 #endif
 
 namespace harken::monitor {

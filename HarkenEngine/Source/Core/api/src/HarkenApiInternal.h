@@ -2,6 +2,9 @@
 #define HARKEN_RUNTIME_API_HARKEN_API_INTERNAL_H
 
 #include <harken/Harken.h>
+#if HARKEN_ENGINE_DEV
+#include <harken/HarkenDevelopment.h>
+#endif
 
 #include <cstddef>
 
@@ -49,6 +52,7 @@ struct CanonicalByteSpanGuard {
     ~CanonicalByteSpanGuard() { ReleaseCanonicalBytes(load, span, release); }
 };
 
+#if HARKEN_ENGINE_DEV
 void NoteCaptureTruncated(Engine& engine, std::uint64_t surface,
                           std::uint64_t required);
 VnResult CaptureEffectCapabilities(Engine& engine, VnEffectCapability* out,
@@ -72,6 +76,7 @@ VnResult CapturePropertyTargets(Engine& engine, VnPropertyTargetInfo* out,
 VnResult CapturePropertyBindings(Engine& engine, VnPropertyBindingInfo* out,
                                  std::uint32_t capacity,
                                  std::uint32_t* requiredCount);
+#endif
 
 }
 
@@ -145,8 +150,10 @@ VnResult PlayVoiceRaw(const VnPlayDesc* desc,
                       VnVoiceHandle* outHandle) noexcept;
 VnResult PlayVoiceRaw(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
                      const MonitorRequestContext& request, monitor::RequestObservation* observation = nullptr) noexcept;
+#if HARKEN_ENGINE_DEV
 void CaptureMonitorAcceptedRequest(monitor::RequestObservation& observation,
     std::uint32_t subject, std::uint64_t handle) noexcept;
+#endif
 bool DirectWorldHasActionProgram(VnActionId actionId) noexcept;
 
 TraceCallScribe TraceQuery(Engine* engine, std::uint16_t callId) noexcept;

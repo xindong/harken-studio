@@ -2,6 +2,7 @@
 #define HARKEN_CORE_MONITOR_SPECTRUM_FFT_H
 
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include <cstdint>
 

@@ -1,6 +1,7 @@
 #ifndef HARKEN_API_MONITOR_IDENTITY_CODEC_H
 #define HARKEN_API_MONITOR_IDENTITY_CODEC_H
 
+#include <harken/HarkenDevelopment.h>
 #include "MonitorExecutionCodec.h"
 
 namespace harken::monitor {

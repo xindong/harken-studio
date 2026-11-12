@@ -1503,297 +1503,297 @@
           "value": 8
         },
         "VN_MAX_EFFECT_TYPE_STATS": {
-          "edition": "core",
+          "edition": "development",
           "type": "u32",
           "value": 16
         },
         "VN_MONITOR_DEDICATED_STOP_SLOTS": {
-          "edition": "core",
+          "edition": "development",
           "type": "u32",
           "value": 1
         },
         "VN_MONITOR_DEFAULT_AUDIO_CHANNELS": {
-          "edition": "core",
+          "edition": "development",
           "type": "u32",
           "value": 16
         },
         "VN_MONITOR_DEFAULT_AUDIO_CHUNK_FRAMES": {
-          "edition": "core",
+          "edition": "development",
           "type": "u32",
           "value": 1024
         },
         "VN_MONITOR_DEFAULT_CAPTURE_BYTE_RATE": {
-          "edition": "core",
+          "edition": "development",
           "type": "u64",
           "value": 16777216
         },
         "VN_MONITOR_DEFAULT_CHUNK_PAYLOAD_BYTES": {
-          "edition": "core",
+          "edition": "development",
           "type": "u64",
           "value": 67108864
         },
         "VN_MONITOR_DEFAULT_CONSUMER_QUEUE_BYTES": {
-          "edition": "core",
+          "edition": "development",
           "type": "u64",
           "value": 16777216
         },
         "VN_MONITOR_DEFAULT_CONTROL_RECORD_BYTES": {
-          "edition": "core",
+          "edition": "development",
           "type": "u32",
           "value": 4096
         },
         "VN_MONITOR_DEFAULT_DERIVED_WORK_ITEMS": {
-          "edition": "core",
+          "edition": "development",
           "type": "u32",
           "value": 1024
         },
         "VN_MONITOR_DEFAULT_MEASUREMENTS_PER_PLAN": {
-          "edition": "core",
+          "edition": "development",
           "type": "u32",
           "value": 128
         },
         "VN_MONITOR_DEFAULT_PLAN_SLOTS": {
-          "edition": "core",
+          "edition": "development",
           "type": "u32",
           "value": 8
         },
         "VN_MONITOR_DEFAULT_PROCESS_QUEUE_BYTES": {
-          "edition": "core",
+          "edition": "development",
           "type": "u64",
           "value": 536870912
         },
         "VN_MONITOR_DEFAULT_PRODUCER_REGS": {
-          "edition": "core",
+          "edition": "development",
           "type": "u32",
           "value": 128
         },
         "VN_MONITOR_DEFAULT_PRODUCER_RING_BYTES": {
-          "edition": "core",
+          "edition": "development",
           "type": "u64",
           "value": 4194304
         },
         "VN_MONITOR_DEFAULT_RAW_AUDIO_BYTE_RATE": {
-          "edition": "core",
+          "edition": "development",
           "type": "u64",
           "value": 8388608
         },
         "VN_MONITOR_DEFAULT_RECORDER_QUEUE_BYTES": {
-          "edition": "core",
+          "edition": "development",
           "type": "u64",
           "value": 67108864
         },
         "VN_MONITOR_DEFAULT_REMOTE_CLIENTS": {
-          "edition": "core",
+          "edition": "development",
           "type": "u32",
           "value": 4
         },
         "VN_MONITOR_DEFAULT_REMOTE_QUEUE_BYTES": {
-          "edition": "core",
+          "edition": "development",
           "type": "u64",
           "value": 16777216
         },
         "VN_MONITOR_DEFAULT_SESSIONS_PER_ENGINE": {
-          "edition": "core",
+          "edition": "development",
           "type": "u32",
           "value": 8
         },
         "VN_MONITOR_DEFAULT_SESSION_FILE_BYTES": {
-          "edition": "core",
+          "edition": "development",
           "type": "u64",
           "value": 8589934592
         },
         "VN_MONITOR_DEFAULT_STREAMS": {
-          "edition": "core",
+          "edition": "development",
           "type": "u32",
           "value": 512
         },
         "VN_MONITOR_DEFAULT_TAPS_PER_PLAN": {
-          "edition": "core",
+          "edition": "development",
           "type": "u32",
           "value": 32
         },
         "VN_MONITOR_HARD_AUDIO_CHANNELS": {
-          "edition": "core",
+          "edition": "development",
           "type": "u32",
           "value": 64
         },
         "VN_MONITOR_HARD_AUDIO_CHUNK_FRAMES": {
-          "edition": "core",
+          "edition": "development",
           "type": "u32",
           "value": 4096
         },
         "VN_MONITOR_HARD_CAPTURE_BYTE_RATE": {
-          "edition": "core",
+          "edition": "development",
           "type": "u64",
           "value": 134217728
         },
         "VN_MONITOR_HARD_CHUNK_PAYLOAD_BYTES": {
-          "edition": "core",
+          "edition": "development",
           "type": "u64",
           "value": 268435456
         },
         "VN_MONITOR_HARD_CONSUMER_QUEUE_BYTES": {
-          "edition": "core",
+          "edition": "development",
           "type": "u64",
           "value": 134217728
         },
         "VN_MONITOR_HARD_CONTROL_RECORD_BYTES": {
-          "edition": "core",
+          "edition": "development",
           "type": "u32",
           "value": 16384
         },
         "VN_MONITOR_HARD_DERIVED_WORK_ITEMS": {
-          "edition": "core",
+          "edition": "development",
           "type": "u32",
           "value": 8192
         },
         "VN_MONITOR_HARD_MEASUREMENTS_PER_PLAN": {
-          "edition": "core",
+          "edition": "development",
           "type": "u32",
           "value": 512
         },
         "VN_MONITOR_HARD_PLAN_SLOTS": {
-          "edition": "core",
+          "edition": "development",
           "type": "u32",
           "value": 32
         },
         "VN_MONITOR_HARD_PROCESS_QUEUE_BYTES": {
-          "edition": "core",
+          "edition": "development",
           "type": "u64",
           "value": 536870912
         },
         "VN_MONITOR_HARD_PROCESS_SESSION_SLOTS": {
-          "edition": "core",
+          "edition": "development",
           "type": "u32",
           "value": 32
         },
         "VN_MONITOR_HARD_PRODUCER_REGS": {
-          "edition": "core",
+          "edition": "development",
           "type": "u32",
           "value": 512
         },
         "VN_MONITOR_HARD_PRODUCER_RING_BYTES": {
-          "edition": "core",
+          "edition": "development",
           "type": "u64",
           "value": 67108864
         },
         "VN_MONITOR_HARD_RAW_AUDIO_BYTE_RATE": {
-          "edition": "core",
+          "edition": "development",
           "type": "u64",
           "value": 67108864
         },
         "VN_MONITOR_HARD_RECORDER_QUEUE_BYTES": {
-          "edition": "core",
+          "edition": "development",
           "type": "u64",
           "value": 536870912
         },
         "VN_MONITOR_HARD_REGISTRY_BLOB_BYTES": {
-          "edition": "core",
+          "edition": "development",
           "type": "u32",
           "value": 65536
         },
         "VN_MONITOR_HARD_REMOTE_CLIENTS": {
-          "edition": "core",
+          "edition": "development",
           "type": "u32",
           "value": 16
         },
         "VN_MONITOR_HARD_REMOTE_QUEUE_BYTES": {
-          "edition": "core",
+          "edition": "development",
           "type": "u64",
           "value": 134217728
         },
         "VN_MONITOR_HARD_SESSIONS_PER_ENGINE": {
-          "edition": "core",
+          "edition": "development",
           "type": "u32",
           "value": 32
         },
         "VN_MONITOR_HARD_SESSION_FILE_BYTES": {
-          "edition": "core",
+          "edition": "development",
           "type": "u64",
           "value": 68719476736
         },
         "VN_MONITOR_HARD_STREAMS": {
-          "edition": "core",
+          "edition": "development",
           "type": "u32",
           "value": 2048
         },
         "VN_MONITOR_HARD_TAPS_PER_PLAN": {
-          "edition": "core",
+          "edition": "development",
           "type": "u32",
           "value": 128
         },
         "VN_MONITOR_PLAYABLE_PROVENANCE_KNOWN": {
-          "edition": "core",
+          "edition": "development",
           "type": "u32",
           "value": 1
         },
         "VN_MONITOR_RECORD_ENVELOPE_PACKED_BYTES": {
-          "edition": "core",
+          "edition": "development",
           "type": "u32",
           "value": 316
         },
         "VN_MONITOR_REMOTE_MESSAGE_COUNTER_START": {
-          "edition": "core",
+          "edition": "development",
           "type": "u64",
           "value": 1
         },
         "VN_MONITOR_REMOTE_NONCE_BYTES": {
-          "edition": "core",
+          "edition": "development",
           "type": "u32",
           "value": 32
         },
         "VN_MONITOR_REMOTE_SPKI_SHA256_BYTES": {
-          "edition": "core",
+          "edition": "development",
           "type": "u32",
           "value": 32
         },
         "VN_MONITOR_SESSION_CHUNK_HEADER_BYTES": {
-          "edition": "core",
+          "edition": "development",
           "type": "u32",
           "value": 32
         },
         "VN_MONITOR_SESSION_COMMIT_FOOTER_BYTES": {
-          "edition": "core",
+          "edition": "development",
           "type": "u32",
           "value": 24
         },
         "VN_MONITOR_SESSION_COMMIT_MAGIC": {
-          "edition": "core",
+          "edition": "development",
           "type": "u64",
           "value": 13565037025381974
         },
         "VN_MONITOR_SESSION_FILE_MAGIC": {
-          "edition": "core",
+          "edition": "development",
           "type": "u64",
           "value": 13565011289787990
         },
         "VN_MONITOR_SESSION_FORMAT_MAJOR": {
-          "edition": "core",
+          "edition": "development",
           "type": "u32",
           "value": 1
         },
         "VN_MONITOR_SESSION_FORMAT_MINOR": {
-          "edition": "core",
+          "edition": "development",
           "type": "u32",
           "value": 0
         },
         "VN_MONITOR_STATE_ENTITY_SLOTS": {
-          "edition": "core",
+          "edition": "development",
           "type": "u32",
           "value": 16
         },
         "VN_MONITOR_STREAM_FACT_AUDIO": {
-          "edition": "core",
+          "edition": "development",
           "type": "u32",
           "value": 2
         },
         "VN_MONITOR_STREAM_FACT_SUPPLY": {
-          "edition": "core",
+          "edition": "development",
           "type": "u32",
           "value": 1
         },
         "VN_MONITOR_STUDIO_DEFAULT_GAME_OBJECT_ID": {
-          "edition": "core",
+          "edition": "development",
           "type": "u64",
           "value": 1
         },
@@ -1863,12 +1863,12 @@
           "value": 3
         },
         "VN_SNAPSHOT_MAX_BUSES": {
-          "edition": "core",
+          "edition": "development",
           "type": "u32",
           "value": 32
         },
         "VN_SNAPSHOT_MAX_VOICES": {
-          "edition": "core",
+          "edition": "development",
           "type": "u32",
           "value": 64
         },
@@ -2020,7 +2020,7 @@
         },
         "VnCompressorRuntimeFlags": {
           "backing": "u32",
-          "edition": "core",
+          "edition": "development",
           "values": {
             "VN_COMPRESSOR_RUNTIME_BYPASSED": 1,
             "VN_COMPRESSOR_RUNTIME_BYPASS_TRANSITION": 2,
@@ -2242,7 +2242,7 @@
         },
         "VnMonitorChannelMode": {
           "backing": "u32",
-          "edition": "core",
+          "edition": "development",
           "values": {
             "VN_MONITOR_CHANNEL_MONO_AVERAGE": 1,
             "VN_MONITOR_CHANNEL_PER_CHANNEL": 0
@@ -2250,14 +2250,14 @@
         },
         "VnMonitorChecksumAlgorithm": {
           "backing": "u32",
-          "edition": "core",
+          "edition": "development",
           "values": {
             "VN_MONITOR_CHECKSUM_CRC32C": 1
           }
         },
         "VnMonitorChunkFlags": {
           "backing": "u32",
-          "edition": "core",
+          "edition": "development",
           "values": {
             "VN_MONITOR_CHUNK_OPTIONAL": 2,
             "VN_MONITOR_CHUNK_REQUIRED": 1
@@ -2265,7 +2265,7 @@
         },
         "VnMonitorChunkKind": {
           "backing": "u32",
-          "edition": "core",
+          "edition": "development",
           "values": {
             "VN_MONITOR_CHUNK_CAPABILITIES": 2,
             "VN_MONITOR_CHUNK_CLOCK_ANCHORS": 4,
@@ -2287,7 +2287,7 @@
         },
         "VnMonitorComparisonResult": {
           "backing": "u32",
-          "edition": "core",
+          "edition": "development",
           "values": {
             "VN_MONITOR_COMPARE_COMPARABLE": 0,
             "VN_MONITOR_COMPARE_INCOMPARABLE": 2,
@@ -2297,7 +2297,7 @@
         },
         "VnMonitorDropStage": {
           "backing": "u32",
-          "edition": "core",
+          "edition": "development",
           "values": {
             "VN_MONITOR_DROP_DERIVED_INPUT": 5,
             "VN_MONITOR_DROP_HUB_FANOUT": 2,
@@ -2308,7 +2308,7 @@
         },
         "VnMonitorEntityKind": {
           "backing": "u32",
-          "edition": "core",
+          "edition": "development",
           "values": {
             "VN_MONITOR_ENTITY_ACTION": 3,
             "VN_MONITOR_ENTITY_BUS": 5,
@@ -2325,7 +2325,7 @@
         },
         "VnMonitorEventCategory": {
           "backing": "u32",
-          "edition": "core",
+          "edition": "development",
           "values": {
             "VN_MONITOR_EVENT_CATEGORY_DIAGNOSTIC": 3,
             "VN_MONITOR_EVENT_CATEGORY_LIFECYCLE": 2,
@@ -2334,7 +2334,7 @@
         },
         "VnMonitorEventClass": {
           "backing": "u32",
-          "edition": "core",
+          "edition": "development",
           "values": {
             "VN_MONITOR_EVENT_ACCEPT": 2,
             "VN_MONITOR_EVENT_DROP": 13,
@@ -2353,7 +2353,7 @@
         },
         "VnMonitorEventSessionState": {
           "backing": "u32",
-          "edition": "core",
+          "edition": "development",
           "values": {
             "VN_MONITOR_EVENT_SESSION_DRAINED": 2,
             "VN_MONITOR_EVENT_SESSION_LIVE": 0,
@@ -2362,7 +2362,7 @@
         },
         "VnMonitorExecutionContentKind": {
           "backing": "u32",
-          "edition": "core",
+          "edition": "development",
           "values": {
             "VN_MONITOR_CONTENT_ACTION": 5,
             "VN_MONITOR_CONTENT_CONTAINER": 2,
@@ -2376,7 +2376,7 @@
         },
         "VnMonitorExecutionFactKind": {
           "backing": "u32",
-          "edition": "core",
+          "edition": "development",
           "values": {
             "VN_MONITOR_FACT_ACTION_ACCEPTED": 10,
             "VN_MONITOR_FACT_ACTION_REJECTED": 13,
@@ -2427,7 +2427,7 @@
         },
         "VnMonitorExecutionField": {
           "backing": "u32",
-          "edition": "core",
+          "edition": "development",
           "values": {
             "VN_MONITOR_FACT_FIELD_ACTION_OUTCOME": 76,
             "VN_MONITOR_FACT_FIELD_ACTIVITY_STEP": 74,
@@ -2510,7 +2510,7 @@
         },
         "VnMonitorExecutionFlags": {
           "backing": "u32",
-          "edition": "core",
+          "edition": "development",
           "values": {
             "VN_MONITOR_FACT_FLAG_CONTROL_INCOMPLETE": 2,
             "VN_MONITOR_FACT_FLAG_IDENTITY_INCOMPLETE": 1
@@ -2518,7 +2518,7 @@
         },
         "VnMonitorExecutionNamespace": {
           "backing": "u32",
-          "edition": "core",
+          "edition": "development",
           "values": {
             "VN_MONITOR_SUBJECT_ACTION": 2,
             "VN_MONITOR_SUBJECT_EMITTER": 5,
@@ -2533,7 +2533,7 @@
         },
         "VnMonitorExecutionTargetKind": {
           "backing": "u32",
-          "edition": "core",
+          "edition": "development",
           "values": {
             "VN_MONITOR_TARGET_ACTION": 2,
             "VN_MONITOR_TARGET_CONTENT": 7,
@@ -2547,7 +2547,7 @@
         },
         "VnMonitorExecutionTerminalKind": {
           "backing": "u32",
-          "edition": "core",
+          "edition": "development",
           "values": {
             "VN_MONITOR_TERMINAL_FAILURE": 5,
             "VN_MONITOR_TERMINAL_NATURAL_COMPLETION": 1,
@@ -2558,7 +2558,7 @@
         },
         "VnMonitorHostOwnership": {
           "backing": "u32",
-          "edition": "core",
+          "edition": "development",
           "values": {
             "VN_MONITOR_HOST_STUDIO_DEFAULT_EMITTER": 3,
             "VN_MONITOR_HOST_UNITY_EMITTER": 1,
@@ -2568,7 +2568,7 @@
         },
         "VnMonitorHostSymbolFact": {
           "backing": "u32",
-          "edition": "core",
+          "edition": "development",
           "values": {
             "VN_MONITOR_SYMBOL_TOMBSTONE": 2,
             "VN_MONITOR_SYMBOL_UPSERT": 1
@@ -2576,7 +2576,7 @@
         },
         "VnMonitorHostSymbolField": {
           "backing": "u32",
-          "edition": "core",
+          "edition": "development",
           "values": {
             "VN_MONITOR_HOST_SYMBOL_NAME": 1,
             "VN_MONITOR_HOST_SYMBOL_PATH": 2,
@@ -2585,7 +2585,7 @@
         },
         "VnMonitorLifecycle": {
           "backing": "u32",
-          "edition": "core",
+          "edition": "development",
           "values": {
             "VN_MONITOR_LIFECYCLE_ACTION_ACCEPT": 6,
             "VN_MONITOR_LIFECYCLE_ACTION_REJECT": 9,
@@ -2611,7 +2611,7 @@
         },
         "VnMonitorMeasurementKind": {
           "backing": "u32",
-          "edition": "core",
+          "edition": "development",
           "values": {
             "VN_MONITOR_MEASURE_GAIN_REDUCTION": 5,
             "VN_MONITOR_MEASURE_LUFS_INTEGRATED": 11,
@@ -2628,7 +2628,7 @@
         },
         "VnMonitorObservationAvailability": {
           "backing": "u32",
-          "edition": "core",
+          "edition": "development",
           "values": {
             "VN_MONITOR_OBSERVATION_AVAILABLE": 1,
             "VN_MONITOR_OBSERVATION_DENIED": 3,
@@ -2640,7 +2640,7 @@
         },
         "VnMonitorOperation": {
           "backing": "u32",
-          "edition": "core",
+          "edition": "development",
           "values": {
             "VN_MONITOR_OPERATION_LOAD_PACK": 10,
             "VN_MONITOR_OPERATION_PLAY_PREVIEW": 3,
@@ -2663,7 +2663,7 @@
         },
         "VnMonitorPermissionMask": {
           "backing": "u32",
-          "edition": "core",
+          "edition": "development",
           "values": {
             "VN_MONITOR_PERM_CAPTURE_CONTROL": 8,
             "VN_MONITOR_PERM_OBSERVE_EVENTS": 2,
@@ -2676,7 +2676,7 @@
         },
         "VnMonitorPlanActivationState": {
           "backing": "u32",
-          "edition": "core",
+          "edition": "development",
           "values": {
             "VN_MONITOR_PLAN_ACTIVE": 1,
             "VN_MONITOR_PLAN_CANCELLED": 3,
@@ -2686,7 +2686,7 @@
         },
         "VnMonitorRecordFlags": {
           "backing": "u32",
-          "edition": "core",
+          "edition": "development",
           "values": {
             "VN_MONITOR_RECORD_FLAG_OPTIONAL": 2,
             "VN_MONITOR_RECORD_FLAG_REQUIRED": 1
@@ -2694,7 +2694,7 @@
         },
         "VnMonitorRecordKind": {
           "backing": "u32",
-          "edition": "core",
+          "edition": "development",
           "values": {
             "VN_MONITOR_RECORD_AGGREGATE": 18,
             "VN_MONITOR_RECORD_AUDIO_CHUNK": 7,
@@ -2729,7 +2729,7 @@
         },
         "VnMonitorRecordingState": {
           "backing": "u32",
-          "edition": "core",
+          "edition": "development",
           "values": {
             "VN_MONITOR_RECORDING_STATE_ACTIVE": 1,
             "VN_MONITOR_RECORDING_STATE_FAILED": 3,
@@ -2739,7 +2739,7 @@
         },
         "VnMonitorReductionMethod": {
           "backing": "u32",
-          "edition": "core",
+          "edition": "development",
           "values": {
             "VN_MONITOR_REDUCTION_NONE": 0,
             "VN_MONITOR_REDUCTION_PEAK": 1,
@@ -2748,7 +2748,7 @@
         },
         "VnMonitorRegistryKind": {
           "backing": "u32",
-          "edition": "core",
+          "edition": "development",
           "values": {
             "VN_MONITOR_REGISTRY_ALGORITHM": 7,
             "VN_MONITOR_REGISTRY_CAPABILITY": 8,
@@ -2762,7 +2762,7 @@
         },
         "VnMonitorRemoteOpcode": {
           "backing": "u32",
-          "edition": "core",
+          "edition": "development",
           "values": {
             "VN_MONITOR_REMOTE_OP_DISCOVERY": 1,
             "VN_MONITOR_REMOTE_OP_LEASE": 4,
@@ -2774,7 +2774,7 @@
         },
         "VnMonitorScopeEdge": {
           "backing": "u32",
-          "edition": "core",
+          "edition": "development",
           "values": {
             "VN_MONITOR_SCOPE_EDGE_FALLING": 2,
             "VN_MONITOR_SCOPE_EDGE_RISING": 1
@@ -2782,7 +2782,7 @@
         },
         "VnMonitorSecurityProfile": {
           "backing": "u32",
-          "edition": "core",
+          "edition": "development",
           "values": {
             "VN_MONITOR_SECURITY_DISABLED": 0,
             "VN_MONITOR_SECURITY_LAN_MTLS": 2,
@@ -2791,7 +2791,7 @@
         },
         "VnMonitorStateCutResult": {
           "backing": "u32",
-          "edition": "core",
+          "edition": "development",
           "values": {
             "VN_MONITOR_STATE_CUT_ABORTED": 2,
             "VN_MONITOR_STATE_CUT_COMPLETE": 0,
@@ -2800,7 +2800,7 @@
         },
         "VnMonitorStreamKind": {
           "backing": "u32",
-          "edition": "core",
+          "edition": "development",
           "values": {
             "VN_MONITOR_STREAM_EVENT": 2,
             "VN_MONITOR_STREAM_OPTIONAL_AUDIO": 8,
@@ -2810,7 +2810,7 @@
         },
         "VnMonitorTapKind": {
           "backing": "u32",
-          "edition": "core",
+          "edition": "development",
           "values": {
             "VN_MONITOR_TAP_BUS_POST_EFFECTS": 5,
             "VN_MONITOR_TAP_BUS_POST_FADER": 7,
@@ -2825,7 +2825,7 @@
         },
         "VnMonitorTapSelectorMode": {
           "backing": "u32",
-          "edition": "core",
+          "edition": "development",
           "values": {
             "VN_MONITOR_TAP_SELECTOR_EXACT_INSTANCE": 0,
             "VN_MONITOR_TAP_SELECTOR_FOLLOW_SLOT": 1
@@ -2833,7 +2833,7 @@
         },
         "VnMonitorValidityFlags": {
           "backing": "u32",
-          "edition": "core",
+          "edition": "development",
           "values": {
             "VN_MONITOR_VALID_ARMED": 1,
             "VN_MONITOR_VALID_NUMERIC": 2,
@@ -2885,7 +2885,7 @@
         },
         "VnPropertyBindingFlags": {
           "backing": "u32",
-          "edition": "core",
+          "edition": "development",
           "values": {
             "VN_PROPERTY_BINDING_ACTIVE": 1,
             "VN_PROPERTY_BINDING_NEUTRALIZING": 2,
@@ -3043,7 +3043,7 @@
         },
         "VnVoiceState": {
           "backing": "u32",
-          "edition": "core",
+          "edition": "development",
           "values": {
             "VN_VOICE_STATE_ACTIVE": 1,
             "VN_VOICE_STATE_DRAINING": 2,
@@ -8377,7 +8377,7 @@
         },
         "VnCompressorRuntimeInfo": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -9661,7 +9661,7 @@
         },
         "VnEffectCapability": {
           "alignment": 4,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -9785,7 +9785,7 @@
         },
         "VnEffectDynamicCapability": {
           "alignment": 4,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -10012,7 +10012,7 @@
         },
         "VnEffectDynamicParameterCapability": {
           "alignment": 4,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -10226,7 +10226,7 @@
         },
         "VnEffectDynamicRouteInfo": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -10423,7 +10423,7 @@
         },
         "VnEffectParameterCapability": {
           "alignment": 4,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -10530,7 +10530,7 @@
         },
         "VnEffectTypeStats": {
           "alignment": 4,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -10952,7 +10952,7 @@
         },
         "VnMonitorAggregatePayload": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -11019,7 +11019,7 @@
         },
         "VnMonitorAudioChunk": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -11166,7 +11166,7 @@
         },
         "VnMonitorCapabilities": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -11543,7 +11543,7 @@
         },
         "VnMonitorCaptureControlStatus": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -11640,7 +11640,7 @@
         },
         "VnMonitorCapturePlan": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -11799,7 +11799,7 @@
         },
         "VnMonitorCompareResult": {
           "alignment": 4,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -11826,7 +11826,7 @@
         },
         "VnMonitorDropSummary": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -11923,7 +11923,7 @@
         },
         "VnMonitorEffectiveCapturePlan": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -11990,7 +11990,7 @@
         },
         "VnMonitorEventDetail": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -12118,7 +12118,7 @@
         },
         "VnMonitorEventDetailV2": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -12257,7 +12257,7 @@
         },
         "VnMonitorEventPayload": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -12344,7 +12344,7 @@
         },
         "VnMonitorEventSessionStatus": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -12421,7 +12421,7 @@
         },
         "VnMonitorEventSessionStatusV2": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -12629,7 +12629,7 @@
         },
         "VnMonitorExecutionFactV1": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -13076,7 +13076,7 @@
         },
         "VnMonitorExecutionFactV2": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 8,
@@ -13103,7 +13103,7 @@
         },
         "VnMonitorExecutionFactV3": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 8,
@@ -13140,7 +13140,7 @@
         },
         "VnMonitorFactActivity": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -13267,7 +13267,7 @@
         },
         "VnMonitorFactCause": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 8,
@@ -13314,7 +13314,7 @@
         },
         "VnMonitorFactRequest": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 8,
@@ -13351,7 +13351,7 @@
         },
         "VnMonitorFactTarget": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 8,
@@ -13458,7 +13458,7 @@
         },
         "VnMonitorGainReductionPayload": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -13535,7 +13535,7 @@
         },
         "VnMonitorHostObjectSymbolV1": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -13653,7 +13653,7 @@
         },
         "VnMonitorHostRegistrationV1": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -13740,7 +13740,7 @@
         },
         "VnMonitorHostRegistrationV2": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -13900,7 +13900,7 @@
         },
         "VnMonitorHostSessionV1": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -13957,7 +13957,7 @@
         },
         "VnMonitorIdentityCutBeginV1": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -14065,7 +14065,7 @@
         },
         "VnMonitorIdentityCutEndV1": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -14133,7 +14133,7 @@
         },
         "VnMonitorIdentityFactV1": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -14190,7 +14190,7 @@
         },
         "VnMonitorMeasurementCapability": {
           "alignment": 4,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -14277,7 +14277,7 @@
         },
         "VnMonitorMeasurementRequest": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -14454,7 +14454,7 @@
         },
         "VnMonitorMeterPayload": {
           "alignment": 4,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -14621,7 +14621,7 @@
         },
         "VnMonitorPlayableProvenance": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 8,
@@ -14688,7 +14688,7 @@
         },
         "VnMonitorPollDesc": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -14736,7 +14736,7 @@
         },
         "VnMonitorPollResult": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -14813,7 +14813,7 @@
         },
         "VnMonitorRecordHeader": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -15210,7 +15210,7 @@
         },
         "VnMonitorRecordingDesc": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -15258,7 +15258,7 @@
         },
         "VnMonitorRecordingStatus": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -15335,7 +15335,7 @@
         },
         "VnMonitorRemoteFrameCounter": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -15372,7 +15372,7 @@
         },
         "VnMonitorRemoteHandshake": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -15501,7 +15501,7 @@
         },
         "VnMonitorScopeResult": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -15778,7 +15778,7 @@
         },
         "VnMonitorSessionChunkHeader": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -15885,7 +15885,7 @@
         },
         "VnMonitorSessionCommitFooter": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -15942,7 +15942,7 @@
         },
         "VnMonitorSessionCompareDesc": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -16011,7 +16011,7 @@
         },
         "VnMonitorSessionCompareView": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -16298,7 +16298,7 @@
         },
         "VnMonitorSessionDesc": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -16375,7 +16375,7 @@
         },
         "VnMonitorSessionDescV2": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -16472,7 +16472,7 @@
         },
         "VnMonitorSessionFileHeader": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -16599,7 +16599,7 @@
         },
         "VnMonitorSpectrumPayload": {
           "alignment": 4,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -16726,7 +16726,7 @@
         },
         "VnMonitorStateCutBegin": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -16824,7 +16824,7 @@
         },
         "VnMonitorStateCutDesc": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -16861,7 +16861,7 @@
         },
         "VnMonitorStateCutEnd": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -16939,7 +16939,7 @@
         },
         "VnMonitorStateCutStatus": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -17026,7 +17026,7 @@
         },
         "VnMonitorStateTombstone": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -17113,7 +17113,7 @@
         },
         "VnMonitorStateUpsert": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -17310,7 +17310,7 @@
         },
         "VnMonitorStreamBaseline": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -17377,7 +17377,7 @@
         },
         "VnMonitorStreamFactV1": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -17814,7 +17814,7 @@
         },
         "VnMonitorSubscriptionStatus": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -17962,7 +17962,7 @@
         },
         "VnMonitorSubscriptionStatusV2": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -18181,7 +18181,7 @@
         },
         "VnMonitorTapDescriptor": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -18378,7 +18378,7 @@
         },
         "VnMonitorTelemetryCorrelation": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -18465,7 +18465,7 @@
         },
         "VnMonitorTimeSeriesSample": {
           "alignment": 4,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -18552,7 +18552,7 @@
         },
         "VnMonitorWaveformBucket": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -20250,7 +20250,7 @@
         },
         "VnPropertyBindingInfo": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -20377,7 +20377,7 @@
         },
         "VnPropertyTargetInfo": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -21999,7 +21999,7 @@
         },
         "VnSnapshot": {
           "alignment": 8,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -24107,7 +24107,7 @@
         },
         "VnVoiceSnapshot": {
           "alignment": 4,
-          "edition": "core",
+          "edition": "development",
           "fields": [
             {
               "alignment": 4,
@@ -27462,7 +27462,7 @@
       "formatVersion": 8
     }
   },
-  "contractSha256": "62d58bfd40a3e81d057277a3c991b3132abd40df6c031824b92b92838ee0f50e",
+  "contractSha256": "8d4d511dfce07bc7790985d2a71977fb819c18d9f37abfdab15abe7251d86789",
   "generatedFiles": {
     "HarkenEngine/Tool/HostControl/generated/harken_wire_desc_meta.h": {
       "sha256": "bcee9798217bcf58801129124d84d247015babc0052e3a854c765e6d814248a3",
@@ -27488,7 +27488,7 @@
   "kind": "harken-contract-suite-manifest",
   "schemaVersion": 1,
   "sectionSha256": {
-    "nativeAbiSha256": "08edd2bcd1786efbc6c5cfc9de7614bb412688a4c654a42f6bf0c1a913a64a12",
+    "nativeAbiSha256": "2209ee8ee3fc26022ebf06e6e4b87f6992de6b9390b97a277d0ab0d80be55ff7",
     "remoteWireSha256": "d47f60b0d2b7c0c842900be965ebc513575209455558ad0d8fcb310c4395b8e7",
     "traceFormatSha256": "ff8cdaf56000521230e08660d9d9a0318f883e3b578cd85700a7df2d1af517a5"
   },
@@ -27498,8 +27498,8 @@
       "size": 59255
     },
     "HarkenEngine/Source/Core/api/include/harken/Harken.h": {
-      "sha256": "fbcda3826a82771bd0d258843b51e179226f74ef484c7f107b9c897054fa87ab",
-      "size": 231490
+      "sha256": "0ca5bc7197e5a94ab783ecff62b40b3ddd29d7dbf359652b0b0913fe6b9f19ec",
+      "size": 149082
     },
     "HarkenEngine/Source/Core/api/include/harken/ObjectId.h": {
       "sha256": "90b6f66ad515c5e411564f1e5981b65bec2e461fabbdee6c57aa86b26b9a300d",
@@ -27510,12 +27510,12 @@
       "size": 19883
     },
     "HarkenEngine/Source/Development/include/harken/HarkenDevelopment.h": {
-      "sha256": "6d6bfe13c33e0e85e0914e49cc3d5c2f4773fce56db412ccd6be827a8658b6ab",
-      "size": 26844
+      "sha256": "5c3a8f87d8ae037f5e620248c35a4477bbf829cf891191fac1ea46e628f8f2f3",
+      "size": 109252
     },
     "HarkenEngine/Source/Development/monitor/MonitorRecordPack.h": {
-      "sha256": "3a3a0c780c96a43168da0725ab4690d934dcd6b7565f81ad83a0373b94fb4ba1",
-      "size": 44636
+      "sha256": "fd77238d68b995660e23c8214fb6d0fc285b3611c351a75e4d9bbcaeab3835b9",
+      "size": 44674
     },
     "HarkenEngine/Tool/HostControl/wire/gen_wire.py": {
       "sha256": "bf64d770282491f895b5d92943f8c5843e8c6224fc25771e47bb61e63cbd9265",

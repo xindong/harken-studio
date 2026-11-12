@@ -43,6 +43,15 @@ struct EffectObjectIdentity {
     VnObjectId projectId{};
 };
 
+inline constexpr std::uint32_t kCompressorRuntimeBypassed = 1u << 0;
+inline constexpr std::uint32_t kCompressorRuntimeBypassTransition = 1u << 1;
+inline constexpr std::uint32_t kCompressorRuntimeParamTransition = 1u << 2;
+inline constexpr std::uint32_t kCompressorRuntimeExternalAuthored = 1u << 3;
+inline constexpr std::uint32_t kCompressorRuntimeExternalActive = 1u << 4;
+inline constexpr std::uint32_t kCompressorRuntimeResetThisBlock = 1u << 5;
+inline constexpr std::uint32_t kCompressorRuntimeStale = 1u << 6;
+inline constexpr std::uint32_t kCompressorRuntimeResetBridge = 1u << 7;
+
 struct CompressorRuntimePayload {
     std::uint64_t poolGeneration = 0;
     VnObjectId hostObjectId{};

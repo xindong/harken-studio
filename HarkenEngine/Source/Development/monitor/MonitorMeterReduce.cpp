@@ -7,6 +7,7 @@
 #include <cstring>
 #include <limits>
 #include <numbers>
+#include <harken/HarkenDevelopment.h>
 
 namespace harken {
 namespace core {

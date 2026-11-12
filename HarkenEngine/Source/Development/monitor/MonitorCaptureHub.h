@@ -1,6 +1,7 @@
 #ifndef HARKEN_API_MONITOR_CAPTURE_HUB_H
 #define HARKEN_API_MONITOR_CAPTURE_HUB_H
 
+#include <harken/HarkenDevelopment.h>
 #include "MonitorSeam.h"
 
 #include <cstdint>

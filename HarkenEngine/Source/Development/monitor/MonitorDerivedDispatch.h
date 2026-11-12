@@ -2,6 +2,7 @@
 #define HARKEN_API_MONITOR_DERIVED_DISPATCH_H
 
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include <cstdint>
 #include <memory>

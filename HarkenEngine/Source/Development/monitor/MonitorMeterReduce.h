@@ -3,6 +3,7 @@
 
 #include <harken/ObjectId.h>
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include <array>
 #include <cstdint>

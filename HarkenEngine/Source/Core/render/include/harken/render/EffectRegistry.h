@@ -391,7 +391,8 @@ inline const EffectParamMeta* FindEffectParamMeta(std::uint32_t type,
 }
 
 static_assert(kEffectRegistryRowCount == HK_PACK_EFFECT_TYPE_COUNT);
-static_assert(kEffectRegistryRowCount <= VN_MAX_EFFECT_TYPE_STATS);
+inline constexpr std::uint32_t kMaxEffectTypeStats = 16;
+static_assert(kEffectRegistryRowCount <= kMaxEffectTypeStats);
 static_assert(VN_EFFECT_FEEDBACK_DELAY == HK_PACK_EFFECT_FEEDBACK_DELAY);
 static_assert(kEffectRegistry[0].effectType == 0);
 static_assert(kEffectRegistry[0].paramCount == kDelayParamCount);

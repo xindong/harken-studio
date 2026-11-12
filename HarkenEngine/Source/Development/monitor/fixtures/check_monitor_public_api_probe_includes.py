@@ -11,6 +11,7 @@ PROBE = REPO / "HarkenEngine" / "Test" / "UnitTest" / "MonitorPublicApiProbe.c"
 CMAKE = REPO / "HarkenEngine" / "Test" / "CMakeLists.txt"
 PROBE_ALLOWED = {
     "<harken/Harken.h>",
+    "<harken/HarkenDevelopment.h>",
     '"monitor_fixture_decode.h"',
     '"monitor_session_codec.h"',
     "<stdint.h>",
@@ -20,6 +21,7 @@ PROBE_ALLOWED = {
 }
 HARNESS_ALLOWED = {
     "<harken/Harken.h>",
+    "<harken/HarkenDevelopment.h>",
     '"monitor_fixture_decode.h"',
     '"monitor_session_codec.h"',
     "<stdint.h>",
@@ -27,6 +29,7 @@ HARNESS_ALLOWED = {
     "<cstring>",
     "<vector>",
 }
+PUBLIC_HEADERS = {"<harken/Harken.h>", "<harken/HarkenDevelopment.h>"}
 PRIVATE_MARKERS = (
     "HarkenEngine/Source/Core/",
     "api/src/",
@@ -82,7 +85,7 @@ def main() -> int:
             errors.append("missing %s" % path)
             continue
         for include in includes_of(path):
-            if include.startswith("<harken/") and include != "<harken/Harken.h>":
+            if include.startswith("<harken/") and include not in PUBLIC_HEADERS:
                 errors.append("%s includes extra public header %s" % (path.name, include))
             if any(marker in include for marker in PRIVATE_MARKERS):
                 errors.append("%s private-header %s" % (path.name, include))

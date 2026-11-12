@@ -5,6 +5,36 @@
 #include "MonitorCaptureHub.h"
 #include "MonitorSessionCompare.h"
 #include "HarkenApiInternal.h"
+#include "harken/core/MonitorVocabulary.h"
+
+static_assert(VN_MONITOR_CONTENT_ACTION == harken::monitor::kContentAction);
+static_assert(VN_MONITOR_CONTENT_MEDIA == harken::monitor::kContentMedia);
+static_assert(VN_MONITOR_CONTENT_SOUND == harken::monitor::kContentSound);
+static_assert(VN_MONITOR_ENTITY_ACTION == harken::monitor::kEntityAction);
+static_assert(VN_MONITOR_ENTITY_NONE == harken::monitor::kEntityNone);
+static_assert(VN_MONITOR_ENTITY_PLAYABLE == harken::monitor::kEntityPlayable);
+static_assert(VN_MONITOR_ENTITY_VOICE == harken::monitor::kEntityVoice);
+static_assert(VN_MONITOR_OPERATION_LOAD_PACK == harken::monitor::kOperationLoadPack);
+static_assert(VN_MONITOR_OPERATION_PLAY_PREVIEW == harken::monitor::kOperationPlayPreview);
+static_assert(VN_MONITOR_OPERATION_POST_ACTION == harken::monitor::kOperationPostAction);
+static_assert(VN_MONITOR_OPERATION_RESET_VALUES == harken::monitor::kOperationResetValues);
+static_assert(VN_MONITOR_OPERATION_SET_EMITTER_VALUE == harken::monitor::kOperationSetEmitterValue);
+static_assert(VN_MONITOR_OPERATION_SET_EMITTER_VALUES == harken::monitor::kOperationSetEmitterValues);
+static_assert(VN_MONITOR_OPERATION_SET_VALUE == harken::monitor::kOperationSetValue);
+static_assert(VN_MONITOR_OPERATION_SET_VALUES == harken::monitor::kOperationSetValues);
+static_assert(VN_MONITOR_OPERATION_STOP_ACTION == harken::monitor::kOperationStopAction);
+static_assert(VN_MONITOR_OPERATION_STOP_ALL == harken::monitor::kOperationStopAll);
+static_assert(VN_MONITOR_OPERATION_STOP_EMITTER == harken::monitor::kOperationStopEmitter);
+static_assert(VN_MONITOR_OPERATION_STOP_PREVIEW == harken::monitor::kOperationStopPreview);
+static_assert(VN_MONITOR_OPERATION_STOP_VOICE == harken::monitor::kOperationStopVoice);
+static_assert(VN_MONITOR_OPERATION_UNLOAD_PACK == harken::monitor::kOperationUnloadPack);
+static_assert(VN_MONITOR_PLAYABLE_PROVENANCE_KNOWN == harken::monitor::kPlayableProvenanceKnown);
+static_assert(VN_MONITOR_SUBJECT_ACTION == harken::monitor::kSubjectAction);
+static_assert(VN_MONITOR_SUBJECT_LOGICAL_VOICE == harken::monitor::kSubjectLogicalVoice);
+static_assert(VN_MONITOR_SUBJECT_PLAYABLE == harken::monitor::kSubjectPlayable);
+static_assert(VN_MONITOR_TARGET_ACTION == harken::monitor::kTargetAction);
+static_assert(VN_MONITOR_TARGET_EMITTER == harken::monitor::kTargetEmitter);
+static_assert(VN_MONITOR_TARGET_LOGICAL_VOICE == harken::monitor::kTargetLogicalVoice);
 
 namespace {
 

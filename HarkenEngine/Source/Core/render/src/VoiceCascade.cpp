@@ -1799,6 +1799,7 @@ static void FoldVoiceIntoBusesImpl(VoiceRenderContext& ctx, float* const* busPla
         !directImage && (channels > 2 || imageOnly || monitorArmed || !CanCombineSpatialOutput(ctx, mixChannels))) {
         MaterializePlainPcm(ctx);
     }
+#if HARKEN_ENGINE_DEV
     if (monitorArmed) {
         const std::uint64_t voiceHandle = ctx.dynamicSourceIdentity;
         if (voiceHandle != 0) {
@@ -1818,6 +1819,7 @@ static void FoldVoiceIntoBusesImpl(VoiceRenderContext& ctx, float* const* busPla
                 ctx.engineSampleRate, frameBegin);
         }
     }
+#endif
     if (ctx.cascade.borrowed.frames != 0 && !directImage) {
         FoldPlainPcm(ctx, busPlanes, mixChannels, monoStereoMix);
         return;

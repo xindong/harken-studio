@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <harken/HarkenDevelopment.h>
 
 namespace harken {
 namespace core {

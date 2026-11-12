@@ -1,6 +1,8 @@
 #ifndef HARKEN_API_MONITOR_EMITTER_REGISTRY_H
 #define HARKEN_API_MONITOR_EMITTER_REGISTRY_H
 
+#if HARKEN_ENGINE_DEV
+
 #include "harken/core/MonitorEmitterIdentity.h"
 #include "MonitorHostDescription.h"
 #include "harken/param/EmitterTable.h"
@@ -234,4 +236,25 @@ private:
 
 } // namespace harken
 
+#else
+
+#include "harken/core/MonitorEmitterIdentity.h"
+#include "harken/param/EmitterTable.h"
+
+#include <cstdint>
+
+namespace harken {
+
+class MonitorEmitterRegistry {
+public:
+    MonitorEmitterRegistry(const EmitterTable&, std::uint32_t, std::uint64_t) noexcept {}
+    void NoteCreated(std::uint64_t) noexcept {}
+    void NoteDestroyed(std::uint64_t) noexcept {}
+    MonitorEmitterOrigin CaptureOrigin(std::uint64_t) const noexcept { return {}; }
+};
+
+} // namespace harken
+
+
+#endif
 #endif
