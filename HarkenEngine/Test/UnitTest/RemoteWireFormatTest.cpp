@@ -2,7 +2,7 @@
 // reading, the string/array section encodings with their NULL sentinels,
 // and the shared reply/error encoders. Pure byte-level cases — no engine,
 // no pipe — proving the framing layer independently of transport.
-#include "harken_remote/WireFormat.h"
+#include "harken_host_control/WireFormat.h"
 
 #include <gtest/gtest.h>
 

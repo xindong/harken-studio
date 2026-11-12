@@ -9,7 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location(
-    "api_surface", ROOT / "HarkenEngine/Source/Tooling/Binding/api_surface.py")
+    "api_surface", ROOT / "HarkenIntegration/Unity/Binding/api_surface.py")
 surface = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(surface)
 
@@ -159,7 +159,7 @@ class InventoryTest(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.write("HarkenEngine/Source/Tooling/Remote/wire/harken_wire_table.json",
+        self.write("HarkenEngine/Tool/HostControl/wire/harken_wire_table.json",
                    json.dumps({"functions": []}))
         self.write("HarkenIntegration/Unity/Harken/Runtime/Core.asmdef", '{"name":"Core"}')
 

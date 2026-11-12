@@ -11,8 +11,9 @@ SCRIPT_PATH = (
     REPO_ROOT
     / "HarkenEngine"
     / "Source"
-    / "Tooling"
-    / "Abi"
+    / "Core"
+    / "api"
+    / "abi"
     / "gen_abi_manifest.py"
 )
 SPEC = importlib.util.spec_from_file_location(
@@ -30,7 +31,7 @@ class RuntimeAbiManifestTest(unittest.TestCase):
             REPO_ROOT
             / "HarkenEngine"
             / "Source"
-            / "Runtime"
+            / "Core"
             / "api"
             / "include"
             / "harken"
@@ -39,9 +40,8 @@ class RuntimeAbiManifestTest(unittest.TestCase):
         cls.table_path = (
             REPO_ROOT
             / "HarkenEngine"
-            / "Source"
-            / "Tooling"
-            / "Remote"
+            / "Tool"
+            / "HostControl"
             / "wire"
             / "harken_wire_table.json"
         )
@@ -55,7 +55,7 @@ class RuntimeAbiManifestTest(unittest.TestCase):
             REPO_ROOT
             / "HarkenEngine"
             / "Source"
-            / "Runtime"
+            / "Core"
             / "api"
             / "src"
             / "TraceFormat.h"

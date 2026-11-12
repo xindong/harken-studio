@@ -51,7 +51,8 @@ jobs:
           python .scripts/check_integration_version.py
           python .scripts/check_unity_integration_contract.py
           python .scripts/tests/test_check_unity_integration_contract.py -v
-          python HarkenEngine/Source/Tooling/Binding/gen_binding.py --check
+          python HarkenIntegration/Unity/Binding/gen_binding.py --check
+          python HarkenIntegration/Unity/Binding/test_managed_generation_policy.py
 
       - name: Setup MSVC environment
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
@@ -127,7 +128,7 @@ jobs:
         run: python3 .scripts/tests/test_check_unity_integration_contract.py -v
 
       - name: Check generated binding drift
-        run: python3 HarkenEngine/Source/Tooling/Binding/gen_binding.py --check
+        run: python3 HarkenIntegration/Unity/Binding/gen_binding.py --check
 
       - name: Install macOS build deps
         run: brew install ninja

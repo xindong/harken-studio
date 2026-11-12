@@ -9,12 +9,12 @@ add_library(harken_program_registration STATIC
 target_include_directories(harken_program_registration
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${HARKEN_RUNTIME_DIR}/core/include
-        ${HARKEN_RUNTIME_DIR}/media/include
+        ${HARKEN_CORE_DIR}/core/include
+        ${HARKEN_CORE_DIR}/media/include
         ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
-        ${HARKEN_RUNTIME_DIR}/param/include
+        ${HARKEN_CORE_DIR}/param/include
     PRIVATE
-        ${HARKEN_RUNTIME_DIR}/api/src
-        ${HARKEN_RUNTIME_DIR}/dsp/include
+        ${HARKEN_CORE_DIR}/api/src
+        ${HARKEN_CORE_DIR}/dsp/include
 )
 target_link_libraries(harken_program_registration PUBLIC harken_core)

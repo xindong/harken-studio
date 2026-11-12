@@ -6,7 +6,7 @@
 // bytes, oversized declared vintage). No pipe: DispatchCommand is exactly
 // what the serving host's logic thread executes between Vn_Update pumps.
 #include "Common/ObjectIdTestSupport.h"
-#include "harken_remote/WireDispatch.h"
+#include "harken_host_control/WireDispatch.h"
 
 #include "Common/RecipePackTestUtil.h"
 #include "Common/TestUtil.h"

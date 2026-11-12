@@ -12,7 +12,7 @@ REMOTE_SCRIPT = (
     REPO_ROOT
     / "HarkenEngine"
     / "Source"
-    / "Runtime"
+    / "Core"
     / "api"
     / "monitor"
     / "fixtures"
@@ -26,8 +26,9 @@ ABI_PATH = (
     REPO_ROOT
     / "HarkenEngine"
     / "Source"
-    / "Tooling"
-    / "Abi"
+    / "Core"
+    / "api"
+    / "abi"
     / "generated"
     / "harken_abi_manifest.g.json"
 )

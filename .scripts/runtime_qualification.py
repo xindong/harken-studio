@@ -36,8 +36,8 @@ FIXED_CHILD_ENVIRONMENT = {
 }
 REQUIRED_SOURCE_CONTRACT_PATHS = (
     "CMakeLists.txt",
-    "HarkenEngine/Source/Tooling/Binding/gen_binding.py",
-    "HarkenEngine/Source/Tooling/Remote/wire/gen_wire.py",
+    "HarkenIntegration/Unity/Binding/gen_binding.py",
+    "HarkenEngine/Tool/HostControl/wire/gen_wire.py",
     "HarkenIntegration/Test/ContractTest/AbiFidelity.csproj",
 )
 SOURCE_VOLATILE_PREFIXES = (".temp",)
@@ -2212,18 +2212,16 @@ def validate_record_scope(
     generator_paths = {
         "generator-binding": (
             source_root
-            / "HarkenEngine"
-            / "Source"
-            / "Tooling"
+            / "HarkenIntegration"
+            / "Unity"
             / "Binding"
             / "gen_binding.py"
         ),
         "generator-wire": (
             source_root
             / "HarkenEngine"
-            / "Source"
-            / "Tooling"
-            / "Remote"
+            / "Tool"
+            / "HostControl"
             / "wire"
             / "gen_wire.py"
         ),

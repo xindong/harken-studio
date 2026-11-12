@@ -134,31 +134,31 @@ FUNCTION_KINDS = {
     "FUNCTION_TEMPLATE",
 }
 CALL_KINDS = {"CALL_EXPR"}
-RUNTIME_SOURCE_PREFIX = "HarkenEngine/Source/Runtime/"
+RUNTIME_SOURCE_PREFIX = "HarkenEngine/Source/Core/"
 ROOT_SPECS = (
     {
         "qualifiedName": "harken::DeviceBackend::Impl::DataCallback",
-        "source": "HarkenEngine/Source/Runtime/api/src/DeviceBackend.cpp",
+        "source": "HarkenEngine/Source/Core/api/src/DeviceBackend.cpp",
     },
     {
         "qualifiedName": "harken::MixerLoop::RenderBlock",
-        "source": "HarkenEngine/Source/Runtime/render/src/MixerLoop.cpp",
+        "source": "HarkenEngine/Source/Core/render/src/MixerLoop.cpp",
     },
     {
         "qualifiedName": "harken::RenderWorkerPool::Run",
-        "source": "HarkenEngine/Source/Runtime/render/src/RenderWorkerPool.cpp",
+        "source": "HarkenEngine/Source/Core/render/src/RenderWorkerPool.cpp",
     },
     {
         "qualifiedName": "harken::RenderWorkerPool::WorkerMain",
-        "source": "HarkenEngine/Source/Runtime/render/src/RenderWorkerPool.cpp",
+        "source": "HarkenEngine/Source/Core/render/src/RenderWorkerPool.cpp",
     },
     {
         "qualifiedName": "harken::RenderWorkerPool::RunBatch",
-        "source": "HarkenEngine/Source/Runtime/render/src/RenderWorkerPool.cpp",
+        "source": "HarkenEngine/Source/Core/render/src/RenderWorkerPool.cpp",
     },
     {
         "qualifiedName": "harken::VoicePool::CascadeThunk",
-        "source": "HarkenEngine/Source/Runtime/render/src/VoicePool.cpp",
+        "source": "HarkenEngine/Source/Core/render/src/VoicePool.cpp",
     },
 )
 AVRT_SYSTEM_FIELDS = {
@@ -551,7 +551,7 @@ def cmake_list_body(text: str, variable: str) -> list[str]:
 
 
 def expand_runtime_source_token(token: str, repo_root: Path) -> Path:
-    prefix = "${HARKEN_RUNTIME_DIR}/"
+    prefix = "${HARKEN_CORE_DIR}/"
     if not token.startswith(prefix):
         raise ClosureError(
             f"unsupported Runtime source token in CMake authority: {token}"
@@ -560,7 +560,7 @@ def expand_runtime_source_token(token: str, repo_root: Path) -> Path:
     if not relative.endswith(".cpp"):
         raise ClosureError(f"Runtime source is not C++: {token}")
     path = (
-        repo_root / "HarkenEngine/Source/Runtime" / relative
+        repo_root / "HarkenEngine/Source/Core" / relative
     ).resolve(strict=False)
     if not path.is_file():
         raise ClosureError(f"CMake-owned Runtime source is missing: {path}")
@@ -1901,7 +1901,7 @@ def avrt_field_identity(field: Any, repo_root: Path) -> dict[str, Any]:
 def avrt_system_ast_authority(
     ast_data: dict[str, Any], nodes: dict[str, Node], repo_root: Path
 ) -> dict[str, Any]:
-    source = "HarkenEngine/Source/Runtime/api/src/DeviceBackend.cpp"
+    source = "HarkenEngine/Source/Core/api/src/DeviceBackend.cpp"
     owner_names = {
         name: [
             node
@@ -2119,7 +2119,7 @@ def realtime_worker_domain_ast_authority(
     ast_data: dict[str, Any], nodes: dict[str, Node], repo_root: Path
 ) -> dict[str, Any]:
     """Derive the production WorkerDomain function-pointer assignments."""
-    source = "HarkenEngine/Source/Runtime/api/src/DeviceBackend.cpp"
+    source = "HarkenEngine/Source/Core/api/src/DeviceBackend.cpp"
     factory_matches = [
         node for node in nodes.values()
         if node.qualified_name == "harken::DeviceBackend::WorkerDomain"
@@ -2242,7 +2242,7 @@ def derive_realtime_worker_domain_target(
         or factory_identity.get("qualifiedName")
         != "harken::DeviceBackend::WorkerDomain"
         or factory_identity.get("source")
-        != "HarkenEngine/Source/Runtime/api/src/DeviceBackend.cpp"
+        != "HarkenEngine/Source/Core/api/src/DeviceBackend.cpp"
         or factory_identity.get("line") != 914
         or factory_identity.get("column") != 37
     ):
@@ -2275,7 +2275,7 @@ def derive_realtime_worker_domain_target(
     if (
         not isinstance(site, dict)
         or site.get("source")
-        != "HarkenEngine/Source/Runtime/api/src/DeviceBackend.cpp"
+        != "HarkenEngine/Source/Core/api/src/DeviceBackend.cpp"
         or site.get("line") != expected_assignment["line"]
         or site.get("column") != 5
         or site.get("tokens") != expected_assignment["tokens"]
@@ -2289,7 +2289,7 @@ def derive_realtime_worker_domain_target(
         or target_identity.get("qualifiedName")
         != expected_assignment["targetName"]
         or target_identity.get("source")
-        != "HarkenEngine/Source/Runtime/api/src/DeviceBackend.cpp"
+        != "HarkenEngine/Source/Core/api/src/DeviceBackend.cpp"
     ):
         raise ClosureError(
             f"RealtimeWorkerDomain {field} target identity drift"
@@ -2309,7 +2309,7 @@ def derive_realtime_worker_domain_target(
             expected_binding is None
             or not isinstance(binding_site, dict)
             or binding_site.get("source")
-            != "HarkenEngine/Source/Runtime/api/src/DeviceBackend.cpp"
+            != "HarkenEngine/Source/Core/api/src/DeviceBackend.cpp"
             or binding_site.get("line") != expected_binding[0]
             or binding_site.get("column") != 5
             or binding_site.get("tokens") != expected_binding[1]
@@ -2326,7 +2326,7 @@ def spin_until_ast_authority(
     ast_data: dict[str, Any], nodes: dict[str, Node], repo_root: Path
 ) -> dict[str, Any]:
     """Derive the single jobsDrained callable used by SpinUntil."""
-    source = "HarkenEngine/Source/Runtime/render/src/RenderWorkerPool.cpp"
+    source = "HarkenEngine/Source/Core/render/src/RenderWorkerPool.cpp"
     template_matches = [
         node for node in nodes.values()
         if node.qualified_name == "harken::RenderWorkerPool::SpinUntil"
@@ -2482,7 +2482,7 @@ def derive_spin_until_target(
     }
     for name, identity in identities.items():
         resolve_full_identity_target(nodes, "spin-until-" + name, identity)
-    source = "HarkenEngine/Source/Runtime/render/src/RenderWorkerPool.cpp"
+    source = "HarkenEngine/Source/Core/render/src/RenderWorkerPool.cpp"
     if (
         not isinstance(identities["template"], dict)
         or identities["template"].get("qualifiedName")
@@ -2694,7 +2694,7 @@ def timeline_sink_ast_authority(
     engine_constructors = [
         node for node in nodes.values()
         if node.qualified_name == "harken::Engine::Engine"
-        and node.source == "HarkenEngine/Source/Runtime/api/src/Engine.h"
+        and node.source == "HarkenEngine/Source/Core/api/src/Engine.h"
     ]
     if len(engine_constructors) != 1:
         raise ClosureError(
@@ -3678,31 +3678,31 @@ def default_overlay_template(
             )
     raii = {
         "audio-thread-scope-callback": (
-            "HarkenEngine/Source/Runtime/api/src/DeviceBackend.cpp",
+            "HarkenEngine/Source/Core/api/src/DeviceBackend.cpp",
             "harken::DeviceBackend::Impl::DataCallback",
             "harken::memguard::AudioThreadScope::AudioThreadScope",
             "harken::memguard::AudioThreadScope::~AudioThreadScope",
         ),
         "audio-thread-scope-mix": (
-            "HarkenEngine/Source/Runtime/render/src/MixerLoop.cpp",
+            "HarkenEngine/Source/Core/render/src/MixerLoop.cpp",
             "harken::MixerLoop::RenderBlock",
             "harken::memguard::AudioThreadScope::AudioThreadScope",
             "harken::memguard::AudioThreadScope::~AudioThreadScope",
         ),
         "flush-denormals-mix": (
-            "HarkenEngine/Source/Runtime/render/src/MixerLoop.cpp",
+            "HarkenEngine/Source/Core/render/src/MixerLoop.cpp",
             "harken::MixerLoop::RenderBlock",
             "harken::floatmode::ScopedFlushDenormals::ScopedFlushDenormals",
             "harken::floatmode::ScopedFlushDenormals::~ScopedFlushDenormals",
         ),
         "audio-thread-scope-worker-batch": (
-            "HarkenEngine/Source/Runtime/render/src/RenderWorkerPool.cpp",
+            "HarkenEngine/Source/Core/render/src/RenderWorkerPool.cpp",
             "harken::RenderWorkerPool::RunBatch",
             "harken::memguard::AudioThreadScope::AudioThreadScope",
             "harken::memguard::AudioThreadScope::~AudioThreadScope",
         ),
         "flush-denormals-worker-main": (
-            "HarkenEngine/Source/Runtime/render/src/RenderWorkerPool.cpp",
+            "HarkenEngine/Source/Core/render/src/RenderWorkerPool.cpp",
             "harken::RenderWorkerPool::WorkerMain",
             "harken::floatmode::ScopedFlushDenormals::ScopedFlushDenormals",
             "harken::floatmode::ScopedFlushDenormals::~ScopedFlushDenormals",

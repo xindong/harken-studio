@@ -15,7 +15,7 @@ RECORD_SCRIPT = (
     REPO_ROOT
     / "HarkenEngine"
     / "Source"
-    / "Runtime"
+    / "Core"
     / "api"
     / "monitor"
     / "fixtures"

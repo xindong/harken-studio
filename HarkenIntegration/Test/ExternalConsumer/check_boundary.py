@@ -60,7 +60,7 @@ def verify(integration, work, native_dir=None, publication=None):
               f"-p:HarkenCoreAssembly={library}", "--artifacts-path", str(work / "artifacts"), "--nologo"]
     positive = work / "positive"
     run(common + [f"-p:ConsumerSource={fixture / 'Program.cs'}", f"-p:RemoteContractSource={fixture / 'RemoteCommunicationContract.cs'}", "-o", str(positive)], work / "positive.log")
-    policy = ROOT / "HarkenEngine/Source/Tooling/Binding/api_surface.json"
+    policy = ROOT / "HarkenIntegration/Unity/Binding/api_surface.json"
     # Reflection checks every generated symbol's effective public visibility.
     run(["dotnet", str(positive / "Harken.ExternalConsumer.dll"), "--surface", str(policy)],
         work / "surface.log")

@@ -76,7 +76,7 @@ $pre443 = (Join-Path (Get-Location) '.temp/current-world-pre443').Replace('\', '
 git worktree add --detach $pre443 a4a87d76ac9f2049fea8c0f9bf6c6d27164684c6
 $generatorCmake = @"
 add_executable(harken_pre443_fixture "$fixtureDir/generate.cpp")
-target_include_directories(harken_pre443_fixture PRIVATE "$pre443/HarkenEngine/Source/Runtime/media/include")
+target_include_directories(harken_pre443_fixture PRIVATE "$pre443/HarkenEngine/Source/Core/media/include")
 target_link_libraries(harken_pre443_fixture PRIVATE harken_current_world_compiler)
 "@
 Add-Content -LiteralPath "$pre443/CMakeLists.txt" -Value $generatorCmake -Encoding UTF8

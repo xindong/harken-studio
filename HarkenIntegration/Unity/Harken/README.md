@@ -90,7 +90,7 @@ to determine whether an object is still live.
 Voice setters preserve the native validation and smoothing rules. In particular,
 `Voice.SetPosition` returns `VN_EMITTER_ATTACHED` while a live emitter owns its pose;
 move the emitter instead. The complete per-operation contract is in the native
-[`Harken.h`](../../../HarkenEngine/Source/Runtime/api/include/harken/Harken.h).
+[`Harken.h`](../../../HarkenEngine/Source/Core/api/include/harken/Harken.h).
 
 Centered mono preserves the original sample level in each stereo output channel
 in both 2D and 3D. Its equal-power pan law has unity gain per side at center;
@@ -535,12 +535,12 @@ Editor declarations and their current results are listed in the
 ## Generated ABI
 
 ABI files under `Runtime/Generated` are produced from
-`HarkenEngine/Source/Tooling/Remote/wire/harken_wire_table.json`. Regenerate and
+`HarkenEngine/Tool/HostControl/wire/harken_wire_table.json`. Regenerate and
 check them with:
 
 ```text
-py -3 HarkenEngine/Source/Tooling/Binding/gen_binding.py
-py -3 HarkenEngine/Source/Tooling/Binding/gen_binding.py --check
+py -3 HarkenIntegration/Unity/Binding/gen_binding.py
+py -3 HarkenIntegration/Unity/Binding/gen_binding.py --check
 ```
 
 The binding is IL2CPP/AOT compatible. Main-thread component lifecycle calls do

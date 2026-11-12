@@ -115,8 +115,8 @@ def _preferred_target(scope: str, relative: PurePosixPath) -> str:
         return "harken_benchmarks"
     if scope == "editor_tests":
         return "harken_editor_tests"
-    if "remote" in folded:
-        return "harken_remote"
+    if "hostcontrol" in folded:
+        return "harken_host_control"
     if "host" in folded:
         return "harken_host"
     if "studiocli" in folded:

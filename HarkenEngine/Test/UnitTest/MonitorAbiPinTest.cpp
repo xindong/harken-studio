@@ -1,6 +1,6 @@
 #include <harken/Harken.h>
 
-#include "harken_remote/WireFormat.h"
+#include "harken_host_control/WireFormat.h"
 #include "JsonReader.h"
 
 #include <gtest/gtest.h>
@@ -218,7 +218,7 @@ TEST(MonitorAbiPin, FileMagicIsEightByteAscii) {
 
 TEST(MonitorAbiPin, MonitorEntriesHaveNoRemoteOpcode) {
     const auto table = std::filesystem::path(HARKEN_TEMP_DIR).parent_path() /
-        "HarkenEngine/Source/Tooling/Remote/wire/harken_wire_table.json";
+        "HarkenEngine/Tool/HostControl/wire/harken_wire_table.json";
     std::ifstream in(table);
     ASSERT_TRUE(in);
     const std::string text((std::istreambuf_iterator<char>(in)),

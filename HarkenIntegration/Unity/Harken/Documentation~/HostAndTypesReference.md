@@ -61,8 +61,8 @@ for serialized scene compatibility; use `HarkenAudioSystem` for new scenes.
 
 The ABI mirrors `HarkenTypes.g.cs`, `HarkenNative.g.cs`, and `HarkenAbi.g.cs`
 under [`Runtime/Generated`](../Runtime/Generated/) are generated from
-`HarkenEngine/Source/Tooling/Remote/wire/harken_wire_table.json` by
-`HarkenEngine/Source/Tooling/Binding/gen_binding.py`.
+`HarkenEngine/Tool/HostControl/wire/harken_wire_table.json` by
+`HarkenIntegration/Unity/Binding/gen_binding.py`.
 The checked-in baseline `HarkenVariables.g.cs` instead comes from
 `HarkenEngine/Source/Tooling/VariableCatalog/gen_variable_catalog.py` and its
 `variable_catalog.json`. Editor generation of game-specific Action and Variable

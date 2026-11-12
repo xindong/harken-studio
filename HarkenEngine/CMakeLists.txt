@@ -3,7 +3,7 @@
 # and (desktop only) the host-side tooling. Everything the Engine builds is
 # defined here; no other product directory is read.
 
-set(HARKEN_RUNTIME_DIR ${CMAKE_CURRENT_SOURCE_DIR}/Source/Runtime)
+set(HARKEN_CORE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core)
 set(HARKEN_THIRD_PARTY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty)
 
 include(GNUInstallDirs)
@@ -54,143 +54,143 @@ endif()
 # The runtime module sources, factored into a variable so the static library
 # and the optional shared library for the C# binding build from one list.
 set(HARKEN_RUNTIME_SOURCES
-    ${HARKEN_RUNTIME_DIR}/remote/src/RemoteRuntime.cpp
-    ${HARKEN_RUNTIME_DIR}/api/src/DeviceBackend.cpp
-    ${HARKEN_RUNTIME_DIR}/api/src/RealDeviceInitStage.cpp
-    ${HARKEN_RUNTIME_DIR}/api/src/MiniaudioImpl.cpp
-    ${HARKEN_RUNTIME_DIR}/api/src/TraceCodec.cpp
-    ${HARKEN_RUNTIME_DIR}/api/src/TraceRecorder.cpp
-    ${HARKEN_RUNTIME_DIR}/api/src/MonitorApi.cpp
-    ${HARKEN_RUNTIME_DIR}/api/src/MonitorCaptureHub.cpp
-    ${HARKEN_RUNTIME_DIR}/api/src/MonitorSessionRecover.cpp
-    ${HARKEN_RUNTIME_DIR}/api/src/MonitorSessionCompare.cpp
-    ${HARKEN_RUNTIME_DIR}/api/src/MonitorDerivedDispatch.cpp
-    ${HARKEN_RUNTIME_DIR}/api/src/MonitorWaveformHandler.cpp
-    ${HARKEN_RUNTIME_DIR}/api/src/MonitorScopeHandler.cpp
-    ${HARKEN_RUNTIME_DIR}/api/src/MonitorSpectrumHandler.cpp
-    ${HARKEN_RUNTIME_DIR}/api/src/MonitorMeterHandler.cpp
-    ${HARKEN_RUNTIME_DIR}/api/src/HarkenApi.cpp
-    ${HARKEN_RUNTIME_DIR}/api/src/PlaybackReadiness.cpp
-    ${HARKEN_RUNTIME_DIR}/api/src/PackInspection.cpp
-    ${HARKEN_RUNTIME_DIR}/api/src/ProjectGenerationTransaction.cpp
-    ${HARKEN_RUNTIME_DIR}/api/src/SignalPublication.cpp
-    ${HARKEN_RUNTIME_DIR}/api/src/PackVariablePublication.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/AllocGuard.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/StableRowStorage.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/MonitorRequest.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/MonitorWaveformReduce.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/MonitorScopeTrigger.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/MonitorSpectrumFft.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/MonitorMeterReduce.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/CpuClock.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/CurrentSelection.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/CurrentSelectionMemory.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/CurrentWorld.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/CurrentWorldArtifact.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/CurrentWorldCodec.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/ActionFiringTable.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/ActionSeekTable.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/StreamSeekHandoffTable.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/ActionCooldownTable.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/ActionDeferredRecordTable.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/ArmGroupTable.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/AudioSliceLease.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/DecisionTable.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/CompletionProgress.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/ResamplerAdvance.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/CompletionOwner.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/CompletionMutationBinding.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/CompositeCompletionOwnerPool.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/KnownCompletion.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/PlayableProgramKey.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/PlayablePropertyCut.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/BlockArena.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/ClockKernel.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/MarkerIndex.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/MusicPlaybackTimeline.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/DeferredIntentPool.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/EngineConfig.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/LogicCommitCoordinator.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/LogicReasonCode.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/OccurrenceStatePool.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/PackComposition.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/PackCompanionNames.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/PlayableInstanceTable.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/ContainerPlaybackTable.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/QueueRuntime.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/PrivateCatalogStage.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/VariableControlGrid.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/VariableControlRuntime.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/ProgramGenerationRegistry.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/SamePositionResolver.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/ScheduledTransactionPool.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/ImmediateActionLane.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/TimelinePlanner.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/TimelineArmTable.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/TimelineExecutor.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/TransitionInstancePool.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/VariableSliceTable.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/Utf8Path.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/VoiceLedger.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/VoiceManager.cpp
-    ${HARKEN_RUNTIME_DIR}/dsp/src/MonoStereoMix.cpp
-    ${HARKEN_RUNTIME_DIR}/dsp/src/MonoStereoMixAvx.cpp
-    ${HARKEN_RUNTIME_DIR}/dsp/src/Resampler.cpp
-    ${HARKEN_RUNTIME_DIR}/dsp/src/ResamplerAvx2.cpp
-    ${HARKEN_RUNTIME_DIR}/media/src/PackMediaRange.cpp
-    ${HARKEN_RUNTIME_DIR}/media/src/PcmRegistry.cpp
-    ${HARKEN_RUNTIME_DIR}/media/src/ResolvedSlotTicket.cpp
-    ${HARKEN_RUNTIME_DIR}/media/src/ResourceFacts.cpp
-    ${HARKEN_RUNTIME_DIR}/media/src/PackLogicImage.cpp
-    ${HARKEN_RUNTIME_DIR}/media/src/PackTable.cpp
-    ${HARKEN_RUNTIME_DIR}/media/src/StreamManager.cpp
-    ${HARKEN_RUNTIME_DIR}/media/src/StreamByteSource.cpp
-    ${HARKEN_RUNTIME_DIR}/media/src/StreamManagerIo.cpp
-    ${HARKEN_RUNTIME_DIR}/param/src/BindingTable.cpp
-    ${HARKEN_RUNTIME_DIR}/param/src/BusTargetStore.cpp
-    ${HARKEN_RUNTIME_DIR}/param/src/Curve.cpp
-    ${HARKEN_RUNTIME_DIR}/param/src/VariableService.cpp
-    ${HARKEN_RUNTIME_DIR}/param/src/EffectParamTargetStore.cpp
-    ${HARKEN_RUNTIME_DIR}/param/src/EmitterTable.cpp
-    ${HARKEN_RUNTIME_DIR}/param/src/MeterProbe.cpp
-    ${HARKEN_RUNTIME_DIR}/param/src/MeterSystem.cpp
-    ${HARKEN_RUNTIME_DIR}/param/src/ParamSystem.cpp
-    ${HARKEN_RUNTIME_DIR}/param/src/PropertyPublisher.cpp
-    ${HARKEN_RUNTIME_DIR}/param/src/Spatializer.cpp
-    ${HARKEN_RUNTIME_DIR}/render/src/BuiltinEffects.cpp
-    ${HARKEN_RUNTIME_DIR}/render/src/BusTree.cpp
-    ${HARKEN_RUNTIME_DIR}/render/src/EffectPool.cpp
-    ${HARKEN_RUNTIME_DIR}/render/src/InsertEffect.cpp
-    ${HARKEN_RUNTIME_DIR}/render/src/MixerLoop.cpp
-    ${HARKEN_RUNTIME_DIR}/render/src/NullBackend.cpp
-    ${HARKEN_RUNTIME_DIR}/render/src/RenderWorkerPool.cpp
-    ${HARKEN_RUNTIME_DIR}/render/src/TopologyPlan.cpp
-    ${HARKEN_RUNTIME_DIR}/render/src/VoiceCascade.cpp
-    ${HARKEN_RUNTIME_DIR}/render/src/VoicePool.cpp
-    ${HARKEN_RUNTIME_DIR}/render/src/SignalRouting.cpp
-    ${HARKEN_RUNTIME_DIR}/render/src/FrontierTimelineFinalizer.cpp
-    ${HARKEN_RUNTIME_DIR}/render/src/ImmediateLaneTimelineFinalizer.cpp
+    ${HARKEN_CORE_DIR}/remote/src/RemoteRuntime.cpp
+    ${HARKEN_CORE_DIR}/api/src/DeviceBackend.cpp
+    ${HARKEN_CORE_DIR}/api/src/RealDeviceInitStage.cpp
+    ${HARKEN_CORE_DIR}/api/src/MiniaudioImpl.cpp
+    ${HARKEN_CORE_DIR}/api/src/TraceCodec.cpp
+    ${HARKEN_CORE_DIR}/api/src/TraceRecorder.cpp
+    ${HARKEN_CORE_DIR}/api/src/MonitorApi.cpp
+    ${HARKEN_CORE_DIR}/api/src/MonitorCaptureHub.cpp
+    ${HARKEN_CORE_DIR}/api/src/MonitorSessionRecover.cpp
+    ${HARKEN_CORE_DIR}/api/src/MonitorSessionCompare.cpp
+    ${HARKEN_CORE_DIR}/api/src/MonitorDerivedDispatch.cpp
+    ${HARKEN_CORE_DIR}/api/src/MonitorWaveformHandler.cpp
+    ${HARKEN_CORE_DIR}/api/src/MonitorScopeHandler.cpp
+    ${HARKEN_CORE_DIR}/api/src/MonitorSpectrumHandler.cpp
+    ${HARKEN_CORE_DIR}/api/src/MonitorMeterHandler.cpp
+    ${HARKEN_CORE_DIR}/api/src/HarkenApi.cpp
+    ${HARKEN_CORE_DIR}/api/src/PlaybackReadiness.cpp
+    ${HARKEN_CORE_DIR}/api/src/PackInspection.cpp
+    ${HARKEN_CORE_DIR}/api/src/ProjectGenerationTransaction.cpp
+    ${HARKEN_CORE_DIR}/api/src/SignalPublication.cpp
+    ${HARKEN_CORE_DIR}/api/src/PackVariablePublication.cpp
+    ${HARKEN_CORE_DIR}/core/src/AllocGuard.cpp
+    ${HARKEN_CORE_DIR}/core/src/StableRowStorage.cpp
+    ${HARKEN_CORE_DIR}/core/src/MonitorRequest.cpp
+    ${HARKEN_CORE_DIR}/core/src/MonitorWaveformReduce.cpp
+    ${HARKEN_CORE_DIR}/core/src/MonitorScopeTrigger.cpp
+    ${HARKEN_CORE_DIR}/core/src/MonitorSpectrumFft.cpp
+    ${HARKEN_CORE_DIR}/core/src/MonitorMeterReduce.cpp
+    ${HARKEN_CORE_DIR}/core/src/CpuClock.cpp
+    ${HARKEN_CORE_DIR}/core/src/CurrentSelection.cpp
+    ${HARKEN_CORE_DIR}/core/src/CurrentSelectionMemory.cpp
+    ${HARKEN_CORE_DIR}/core/src/CurrentWorld.cpp
+    ${HARKEN_CORE_DIR}/core/src/CurrentWorldArtifact.cpp
+    ${HARKEN_CORE_DIR}/core/src/CurrentWorldCodec.cpp
+    ${HARKEN_CORE_DIR}/core/src/ActionFiringTable.cpp
+    ${HARKEN_CORE_DIR}/core/src/ActionSeekTable.cpp
+    ${HARKEN_CORE_DIR}/core/src/StreamSeekHandoffTable.cpp
+    ${HARKEN_CORE_DIR}/core/src/ActionCooldownTable.cpp
+    ${HARKEN_CORE_DIR}/core/src/ActionDeferredRecordTable.cpp
+    ${HARKEN_CORE_DIR}/core/src/ArmGroupTable.cpp
+    ${HARKEN_CORE_DIR}/core/src/AudioSliceLease.cpp
+    ${HARKEN_CORE_DIR}/core/src/DecisionTable.cpp
+    ${HARKEN_CORE_DIR}/core/src/CompletionProgress.cpp
+    ${HARKEN_CORE_DIR}/core/src/ResamplerAdvance.cpp
+    ${HARKEN_CORE_DIR}/core/src/CompletionOwner.cpp
+    ${HARKEN_CORE_DIR}/core/src/CompletionMutationBinding.cpp
+    ${HARKEN_CORE_DIR}/core/src/CompositeCompletionOwnerPool.cpp
+    ${HARKEN_CORE_DIR}/core/src/KnownCompletion.cpp
+    ${HARKEN_CORE_DIR}/core/src/PlayableProgramKey.cpp
+    ${HARKEN_CORE_DIR}/core/src/PlayablePropertyCut.cpp
+    ${HARKEN_CORE_DIR}/core/src/BlockArena.cpp
+    ${HARKEN_CORE_DIR}/core/src/ClockKernel.cpp
+    ${HARKEN_CORE_DIR}/core/src/MarkerIndex.cpp
+    ${HARKEN_CORE_DIR}/core/src/MusicPlaybackTimeline.cpp
+    ${HARKEN_CORE_DIR}/core/src/DeferredIntentPool.cpp
+    ${HARKEN_CORE_DIR}/core/src/EngineConfig.cpp
+    ${HARKEN_CORE_DIR}/core/src/LogicCommitCoordinator.cpp
+    ${HARKEN_CORE_DIR}/core/src/LogicReasonCode.cpp
+    ${HARKEN_CORE_DIR}/core/src/OccurrenceStatePool.cpp
+    ${HARKEN_CORE_DIR}/core/src/PackComposition.cpp
+    ${HARKEN_CORE_DIR}/core/src/PackCompanionNames.cpp
+    ${HARKEN_CORE_DIR}/core/src/PlayableInstanceTable.cpp
+    ${HARKEN_CORE_DIR}/core/src/ContainerPlaybackTable.cpp
+    ${HARKEN_CORE_DIR}/core/src/QueueRuntime.cpp
+    ${HARKEN_CORE_DIR}/core/src/PrivateCatalogStage.cpp
+    ${HARKEN_CORE_DIR}/core/src/VariableControlGrid.cpp
+    ${HARKEN_CORE_DIR}/core/src/VariableControlRuntime.cpp
+    ${HARKEN_CORE_DIR}/core/src/ProgramGenerationRegistry.cpp
+    ${HARKEN_CORE_DIR}/core/src/SamePositionResolver.cpp
+    ${HARKEN_CORE_DIR}/core/src/ScheduledTransactionPool.cpp
+    ${HARKEN_CORE_DIR}/core/src/ImmediateActionLane.cpp
+    ${HARKEN_CORE_DIR}/core/src/TimelinePlanner.cpp
+    ${HARKEN_CORE_DIR}/core/src/TimelineArmTable.cpp
+    ${HARKEN_CORE_DIR}/core/src/TimelineExecutor.cpp
+    ${HARKEN_CORE_DIR}/core/src/TransitionInstancePool.cpp
+    ${HARKEN_CORE_DIR}/core/src/VariableSliceTable.cpp
+    ${HARKEN_CORE_DIR}/core/src/Utf8Path.cpp
+    ${HARKEN_CORE_DIR}/core/src/VoiceLedger.cpp
+    ${HARKEN_CORE_DIR}/core/src/VoiceManager.cpp
+    ${HARKEN_CORE_DIR}/dsp/src/MonoStereoMix.cpp
+    ${HARKEN_CORE_DIR}/dsp/src/MonoStereoMixAvx.cpp
+    ${HARKEN_CORE_DIR}/dsp/src/Resampler.cpp
+    ${HARKEN_CORE_DIR}/dsp/src/ResamplerAvx2.cpp
+    ${HARKEN_CORE_DIR}/media/src/PackMediaRange.cpp
+    ${HARKEN_CORE_DIR}/media/src/PcmRegistry.cpp
+    ${HARKEN_CORE_DIR}/media/src/ResolvedSlotTicket.cpp
+    ${HARKEN_CORE_DIR}/media/src/ResourceFacts.cpp
+    ${HARKEN_CORE_DIR}/media/src/PackLogicImage.cpp
+    ${HARKEN_CORE_DIR}/media/src/PackTable.cpp
+    ${HARKEN_CORE_DIR}/media/src/StreamManager.cpp
+    ${HARKEN_CORE_DIR}/media/src/StreamByteSource.cpp
+    ${HARKEN_CORE_DIR}/media/src/StreamManagerIo.cpp
+    ${HARKEN_CORE_DIR}/param/src/BindingTable.cpp
+    ${HARKEN_CORE_DIR}/param/src/BusTargetStore.cpp
+    ${HARKEN_CORE_DIR}/param/src/Curve.cpp
+    ${HARKEN_CORE_DIR}/param/src/VariableService.cpp
+    ${HARKEN_CORE_DIR}/param/src/EffectParamTargetStore.cpp
+    ${HARKEN_CORE_DIR}/param/src/EmitterTable.cpp
+    ${HARKEN_CORE_DIR}/param/src/MeterProbe.cpp
+    ${HARKEN_CORE_DIR}/param/src/MeterSystem.cpp
+    ${HARKEN_CORE_DIR}/param/src/ParamSystem.cpp
+    ${HARKEN_CORE_DIR}/param/src/PropertyPublisher.cpp
+    ${HARKEN_CORE_DIR}/param/src/Spatializer.cpp
+    ${HARKEN_CORE_DIR}/render/src/BuiltinEffects.cpp
+    ${HARKEN_CORE_DIR}/render/src/BusTree.cpp
+    ${HARKEN_CORE_DIR}/render/src/EffectPool.cpp
+    ${HARKEN_CORE_DIR}/render/src/InsertEffect.cpp
+    ${HARKEN_CORE_DIR}/render/src/MixerLoop.cpp
+    ${HARKEN_CORE_DIR}/render/src/NullBackend.cpp
+    ${HARKEN_CORE_DIR}/render/src/RenderWorkerPool.cpp
+    ${HARKEN_CORE_DIR}/render/src/TopologyPlan.cpp
+    ${HARKEN_CORE_DIR}/render/src/VoiceCascade.cpp
+    ${HARKEN_CORE_DIR}/render/src/VoicePool.cpp
+    ${HARKEN_CORE_DIR}/render/src/SignalRouting.cpp
+    ${HARKEN_CORE_DIR}/render/src/FrontierTimelineFinalizer.cpp
+    ${HARKEN_CORE_DIR}/render/src/ImmediateLaneTimelineFinalizer.cpp
 )
 # Only this isolated kernel may require AVX; startup and fallback stay baseline.
 if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC" AND
    MSVC_CXX_ARCHITECTURE_ID STREQUAL "x64")
-    set_source_files_properties(${HARKEN_RUNTIME_DIR}/dsp/src/MonoStereoMixAvx.cpp
+    set_source_files_properties(${HARKEN_CORE_DIR}/dsp/src/MonoStereoMixAvx.cpp
         PROPERTIES COMPILE_OPTIONS "/arch:AVX;/fp:strict")
-    set_source_files_properties(${HARKEN_RUNTIME_DIR}/dsp/src/ResamplerAvx2.cpp
+    set_source_files_properties(${HARKEN_CORE_DIR}/dsp/src/ResamplerAvx2.cpp
         PROPERTIES COMPILE_OPTIONS "/arch:AVX2;/fp:strict")
 endif()
 
 # Private include dirs shared by the static and shared runtime libraries.
 set(HARKEN_RUNTIME_PRIVATE_INCLUDES
-    ${HARKEN_RUNTIME_DIR}/remote/include
-    ${HARKEN_RUNTIME_DIR}/remote/src
+    ${HARKEN_CORE_DIR}/remote/include
+    ${HARKEN_CORE_DIR}/remote/src
     ${HARKEN_BI_GENERATED_DIR}
     ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
-    ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/dsp/include
-    ${HARKEN_RUNTIME_DIR}/media/include
-    ${HARKEN_RUNTIME_DIR}/param/include
-    ${HARKEN_RUNTIME_DIR}/render/include
+    ${HARKEN_CORE_DIR}/core/include
+    ${HARKEN_CORE_DIR}/dsp/include
+    ${HARKEN_CORE_DIR}/media/include
+    ${HARKEN_CORE_DIR}/param/include
+    ${HARKEN_CORE_DIR}/render/include
     ${HARKEN_THIRD_PARTY_DIR}/miniaudio
 )
 
@@ -217,7 +217,7 @@ endif()
 if(IOS)
     enable_language(OBJCXX)
     set_source_files_properties(
-        ${HARKEN_RUNTIME_DIR}/api/src/MiniaudioImpl.cpp
+        ${HARKEN_CORE_DIR}/api/src/MiniaudioImpl.cpp
         PROPERTIES LANGUAGE OBJCXX)
 endif()
 
@@ -266,9 +266,9 @@ if(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
         HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
 endif()
 target_include_directories(harken_core
-    PUBLIC ${HARKEN_RUNTIME_DIR}/api/include
+    PUBLIC ${HARKEN_CORE_DIR}/api/include
     PRIVATE ${HARKEN_RUNTIME_PRIVATE_INCLUDES}
-            ${HARKEN_RUNTIME_DIR}/api/src
+            ${HARKEN_CORE_DIR}/api/src
 )
 if(HARKEN_PLATFORM_AUDIO_LIBS)
     target_link_libraries(harken_core PUBLIC ${HARKEN_PLATFORM_AUDIO_LIBS})
@@ -283,15 +283,15 @@ endif()
 
 add_library(harken_remote_protocol INTERFACE)
 target_include_directories(harken_remote_protocol INTERFACE
-    ${HARKEN_RUNTIME_DIR}/remote/include)
+    ${HARKEN_CORE_DIR}/remote/include)
 
 if(HARKEN_BUILD_RUNTIME_UNIT_TESTS)
     add_library(harken_core_hub_absent STATIC ${HARKEN_RUNTIME_SOURCES})
     target_link_libraries(harken_core_hub_absent PRIVATE harken_buildinfo)
     target_include_directories(harken_core_hub_absent
-        PUBLIC ${HARKEN_RUNTIME_DIR}/api/include
+        PUBLIC ${HARKEN_CORE_DIR}/api/include
         PRIVATE ${HARKEN_RUNTIME_PRIVATE_INCLUDES}
-                ${HARKEN_RUNTIME_DIR}/api/src)
+                ${HARKEN_CORE_DIR}/api/src)
     target_compile_definitions(harken_core_hub_absent PRIVATE HARKEN_MONITOR_HUB_ABSENT)
     if(HARKEN_ENABLE_STAGE_TAPS)
         target_compile_definitions(harken_core_hub_absent PRIVATE HARKEN_ENABLE_STAGE_TAPS)
@@ -314,11 +314,11 @@ option(HARKEN_DEVELOPMENT_PREVIEW
 set(HARKEN_ENGINE_PUBLIC_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR}/include)
 set(HARKEN_ENGINE_DEV_PUBLIC_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR}/include-dev)
 set(HARKEN_ENGINE_PUBLIC_HEADERS
-    ${HARKEN_RUNTIME_DIR}/api/include/harken/Harken.h
-    ${HARKEN_RUNTIME_DIR}/api/include/harken/ObjectId.h)
+    ${HARKEN_CORE_DIR}/api/include/harken/Harken.h
+    ${HARKEN_CORE_DIR}/api/include/harken/ObjectId.h)
 set(HARKEN_ENGINE_DEV_PUBLIC_HEADERS
-    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Tooling/Preview/include/harken_preview/PreviewAbi.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Tooling/Preview/include/harken_preview/PreviewProject.h)
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Development/preview/include/harken_preview/PreviewAbi.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Development/preview/include/harken_preview/PreviewProject.h)
 foreach(_header IN LISTS HARKEN_ENGINE_PUBLIC_HEADERS)
     get_filename_component(_name ${_header} NAME)
     configure_file(${_header} ${HARKEN_ENGINE_PUBLIC_INCLUDE_DIR}/harken/${_name} COPYONLY)
@@ -343,9 +343,9 @@ function(harken_add_engine_edition target output_name export_name)
             $<BUILD_INTERFACE:${HARKEN_ENGINE_PUBLIC_INCLUDE_DIR}>
             $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
         PRIVATE
-            ${HARKEN_RUNTIME_DIR}/api/include
+            ${HARKEN_CORE_DIR}/api/include
             ${HARKEN_RUNTIME_PRIVATE_INCLUDES}
-            ${HARKEN_RUNTIME_DIR}/api/src)
+            ${HARKEN_CORE_DIR}/api/src)
     if(HARKEN_ENABLE_STAGE_TAPS)
         target_compile_definitions(${target} PRIVATE HARKEN_ENABLE_STAGE_TAPS)
     endif()
@@ -375,14 +375,14 @@ if(HARKEN_BUILD_ENGINE)
     if(WIN32)
         # The export surface is a reviewed allowlist: CMake forwards the
         # checked-in .def to the linker as /DEF:. Regenerate it from Harken.h
-        # with Source/Tooling/Abi/gen_abi_exports.py after an entry point
+        # with Source/Core/api/abi/gen_abi_exports.py after an entry point
         # changes; the abi export checks fail on drift.
-        target_sources(harken_engine PRIVATE ${HARKEN_RUNTIME_DIR}/api/abi/HarkenCore.def)
+        target_sources(harken_engine PRIVATE ${HARKEN_CORE_DIR}/api/abi/HarkenCore.def)
     endif()
 endif()
 
 if(HARKEN_BUILD_ENGINE_DEV)
-    set(_harken_preview_dir ${CMAKE_CURRENT_SOURCE_DIR}/Source/Tooling/Preview)
+    set(_harken_preview_dir ${CMAKE_CURRENT_SOURCE_DIR}/Source/Development/preview)
     harken_add_engine_edition(harken_engine_dev HarkenEngineDev EngineDev
         ${_harken_preview_dir}/src/PreviewAbi.cpp
         ${_harken_preview_dir}/src/PreviewAbiLayout.cpp
@@ -393,7 +393,7 @@ if(HARKEN_BUILD_ENGINE_DEV)
     target_compile_definitions(harken_engine_dev PRIVATE
         HARKEN_ENGINE_DEV=1
         HARKEN_DEVELOPMENT_PREVIEW=$<BOOL:${HARKEN_DEVELOPMENT_PREVIEW}>)
-    file(STRINGS "${HARKEN_RUNTIME_DIR}/api/abi/HarkenCore.def" _dev_exports
+    file(STRINGS "${HARKEN_CORE_DIR}/api/abi/HarkenCore.def" _dev_exports
         REGEX "^[ \t]+Vn_[A-Za-z0-9_]+$")
     list(TRANSFORM _dev_exports STRIP)
     foreach(_header IN LISTS HARKEN_ENGINE_DEV_PUBLIC_HEADERS)
@@ -406,7 +406,7 @@ if(HARKEN_BUILD_ENGINE_DEV)
     endforeach()
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
         ${HARKEN_ENGINE_DEV_PUBLIC_HEADERS}
-        "${HARKEN_RUNTIME_DIR}/api/abi/HarkenCore.def")
+        "${HARKEN_CORE_DIR}/api/abi/HarkenCore.def")
     if(WIN32)
         list(JOIN _dev_exports "\n    " _dev_exports)
         file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/HarkenEngineDev.def"
@@ -449,7 +449,7 @@ if(TARGET harken_engine_dev)
     install(FILES ${HARKEN_ENGINE_DEV_PUBLIC_HEADERS}
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/harken_preview)
 endif()
-install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/Source/Tooling/Abi/generated/harken_abi_manifest.g.json
+install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/api/abi/generated/harken_abi_manifest.g.json
     DESTINATION ${CMAKE_INSTALL_DATADIR}/HarkenEngine
     RENAME harken_abi_manifest.json)
 install(EXPORT HarkenEngineTargets
@@ -472,15 +472,15 @@ if(HARKEN_BUILD_RT_QUALIFICATION)
     set(_harken_rt_qualification_sources ${HARKEN_RUNTIME_SOURCES})
     if(HARKEN_RT_PROBE_DEFINITIONS)
         list(APPEND _harken_rt_qualification_sources
-            ${HARKEN_RUNTIME_DIR}/core/src/RtProbe.cpp)
+            ${HARKEN_CORE_DIR}/core/src/RtProbe.cpp)
     endif()
     add_library(harken_core_rt_qualification STATIC
         ${_harken_rt_qualification_sources})
     target_link_libraries(harken_core_rt_qualification PRIVATE harken_buildinfo)
     target_include_directories(harken_core_rt_qualification
-        PUBLIC ${HARKEN_RUNTIME_DIR}/api/include
+        PUBLIC ${HARKEN_CORE_DIR}/api/include
         PRIVATE ${HARKEN_RUNTIME_PRIVATE_INCLUDES}
-                ${HARKEN_RUNTIME_DIR}/api/src)
+                ${HARKEN_CORE_DIR}/api/src)
     target_compile_definitions(harken_core_rt_qualification PRIVATE
         HARKEN_RT_QUALIFICATION
         ${HARKEN_RT_PROBE_DEFINITIONS})
@@ -518,21 +518,12 @@ function(_harken_add_python_regen_target target_name script_path target_comment)
     endif()
 endfunction()
 
-# Convenience regeneration target for the C# binding (mirrors harken_wire_regen).
-# Never part of ALL: the generated products are checked in and the build stays
-# Python-free.
-_harken_add_python_regen_target(
-    harken_binding_regen
-    "${CMAKE_CURRENT_SOURCE_DIR}/Source/Tooling/Binding/gen_binding.py"
-    "Regenerating the C# binding from harken_wire_table.json"
-)
-
 # Convenience regeneration target for the machine-readable public ABI
 # manifest. The manifest is checked in for release provenance and does not make
 # the ordinary build depend on Python.
 _harken_add_python_regen_target(
     harken_abi_manifest_regen
-    "${CMAKE_CURRENT_SOURCE_DIR}/Source/Tooling/Abi/gen_abi_manifest.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/api/abi/gen_abi_manifest.py"
     "Regenerating the public ABI manifest"
 )
 
@@ -542,30 +533,18 @@ _harken_add_python_regen_target(
 # this target only rewrites it after Harken.h gains or loses an entry point.
 _harken_add_python_regen_target(
     harken_abi_exports_regen
-    "${CMAKE_CURRENT_SOURCE_DIR}/Source/Tooling/Abi/gen_abi_exports.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/api/abi/gen_abi_exports.py"
     "Regenerating the Windows export allowlist from Harken.h"
 )
 
-_harken_add_python_regen_target(
-    harken_variable_catalog_regen
-    "${CMAKE_CURRENT_SOURCE_DIR}/Source/Tooling/VariableCatalog/gen_variable_catalog.py"
-    "Regenerating Native/Unity Variable catalog constants from variable_catalog.json"
-)
-
-# Remote-control channel (Tool/Remote): a static tooling library the
+# Remote-control channel (Tool/HostControl): a static tooling library the
 # host embeds for its remote-serve verb. Never linked into a game; drives
 # the engine only through the public C API.
-add_subdirectory(Tool/Remote)
+add_subdirectory(Tool/HostControl)
 
-# Development preview play surface (Source/Tooling): the host links it
+# Development preview play surface (Source/Development): the host links it
 # statically; the published HarkenEngineDev compiles the same sources itself.
-add_subdirectory(Source/Tooling/Preview)
-
-# v5->v6 migration dry-run inventory (Source/Tooling): a read-only pass that
-# reports how a v5 project's items map to the v6 object model and which items it
-# refuses to migrate automatically. A tooling library for the same reason the
-# schema front-end is one — the work belongs to migration/compilation, not the
-# runtime — and Qt-free despite reading a Qt-authored format.
+add_subdirectory(Source/Development/preview)
 
 # Host-side tooling executables (Tool/Host): the demo/serve host
 # and the .pack compiler. The spec's host/ module lives here physically —

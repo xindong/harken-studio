@@ -4,7 +4,7 @@ The managed API layer exposed by the engine integrations separates game intent a
 host integration from authoring and engine tooling. Integration Package names the
 complete deliverable for a game engine, including its API bindings and host adapters.
 The complete native ABI remains the implementation authority.
-`HarkenEngine/Source/Tooling/Binding/api_surface.json` classifies every observed
+`HarkenIntegration/Unity/Binding/api_surface.json` classifies every observed
 native and managed declaration; it does not redefine native signatures, layouts, exports, or
 wire opcodes. Unity now enforces this classification through managed visibility.
 The C projection has not been changed by the Unity visibility work.
@@ -131,7 +131,7 @@ using its explicit lease API.
 ## Check and change the surface
 
 The source parsers are development dependencies installed as PyPI wheels,
-with versions pinned in `HarkenEngine/Source/Tooling/Binding/surface-requirements.txt`.
+with versions pinned in `HarkenIntegration/Unity/Binding/surface-requirements.txt`.
 They are not vendored or included in product distributions. Their upstream
 license files remain in the installed wheels.
 
@@ -143,8 +143,8 @@ license files remain in the installed wheels.
 Use Python 3.12 and the pinned source-parser requirements:
 
 ```text
-python -m pip install --only-binary=:all: -r HarkenEngine/Source/Tooling/Binding/surface-requirements.txt
-python HarkenEngine/Source/Tooling/Binding/api_surface.py
+python -m pip install --only-binary=:all: -r HarkenIntegration/Unity/Binding/surface-requirements.txt
+python HarkenIntegration/Unity/Binding/api_surface.py
 python .scripts/tests/test_api_surface.py -v
 python HarkenEngine/Test/UnitTest/test_managed_generation_policy.py -v
 ```
@@ -154,7 +154,7 @@ numbers to a caller-selected file. It never assigns an audience or updates the
 approved policy:
 
 ```text
-python HarkenEngine/Source/Tooling/Binding/api_surface.py --inventory .temp/api-surface.json
+python HarkenIntegration/Unity/Binding/api_surface.py --inventory .temp/api-surface.json
 ```
 
 For an intentional API change, review each added/changed/removed declaration,

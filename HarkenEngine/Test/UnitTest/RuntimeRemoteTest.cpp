@@ -15,7 +15,7 @@
 #include "Common/MonitorExecutionTestSupport.h"
 #include "harken_preview/PreviewAbi.h"
 #include "harken_remote/Protocol.h"
-#include "../../Source/Runtime/remote/src/RemoteRuntime.h"
+#include "../../Source/Core/remote/src/RemoteRuntime.h"
 #include <gtest/gtest.h>
 #include <harken/Harken.h>
 

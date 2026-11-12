@@ -40,7 +40,7 @@ import wave
 
 REPO_ROOT = os.path.normpath(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".."))
-sys.path.insert(0, os.path.join(REPO_ROOT, "HarkenEngine", "Tool", "Remote"))
+sys.path.insert(0, os.path.join(REPO_ROOT, "HarkenEngine", "Tool", "HostControl"))
 import remote_client
 import harken_wire as wire
 

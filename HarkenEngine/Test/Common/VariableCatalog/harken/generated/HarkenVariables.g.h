@@ -1,0 +1,17 @@
+#ifndef HARKEN_API_GENERATED_HARKEN_VARIABLES_G_H
+#define HARKEN_API_GENERATED_HARKEN_VARIABLES_G_H
+
+#include <cstdint>
+#include <harken/Harken.h>
+
+namespace harken {
+namespace generated {
+
+inline constexpr std::uint64_t kVariableExecutionCatalogFingerprint = 16614305461123137292ull;
+inline constexpr std::uint64_t kVariableCatalogFingerprint = 17516663512755061971ull;
+inline constexpr VnVariableId kVariable_VehicleRPM = {0x67e0c65bf36e40d9ull, 0x80ee75af00ecf712ull};
+
+} // namespace generated
+} // namespace harken
+
+#endif

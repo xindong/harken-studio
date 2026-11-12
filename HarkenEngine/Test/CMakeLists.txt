@@ -6,16 +6,16 @@ add_executable(harken_object_identity_tests
     UnitTest/ObjectIdTest.cpp
     UnitTest/ObjectIdCContract.c)
 target_include_directories(harken_object_identity_tests PRIVATE
-    ${HARKEN_RUNTIME_DIR}/api/include
-    ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/dsp/include
-    ${HARKEN_RUNTIME_DIR}/media/include
+    ${HARKEN_CORE_DIR}/api/include
+    ${HARKEN_CORE_DIR}/core/include
+    ${HARKEN_CORE_DIR}/dsp/include
+    ${HARKEN_CORE_DIR}/media/include
     ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
-    ${HARKEN_RUNTIME_DIR}/param/include
-    ${HARKEN_RUNTIME_DIR}/remote/include
-    ${HARKEN_RUNTIME_DIR}/render/include
-    ${CMAKE_SOURCE_DIR}/HarkenEngine/Tool/Remote/include
-    ${CMAKE_SOURCE_DIR}/HarkenEngine/Tool/Remote/generated)
+    ${HARKEN_CORE_DIR}/param/include
+    ${HARKEN_CORE_DIR}/remote/include
+    ${HARKEN_CORE_DIR}/render/include
+    ${CMAKE_SOURCE_DIR}/HarkenEngine/Tool/HostControl/include
+    ${CMAKE_SOURCE_DIR}/HarkenEngine/Tool/HostControl/generated)
 target_link_libraries(harken_object_identity_tests PRIVATE harken_core harken_buildinfo GTest::gtest_main)
 if(WIN32 AND TARGET harken_host)
     add_dependencies(harken_object_identity_tests harken_host)
@@ -31,13 +31,13 @@ add_executable(harken_remote_runtime_tests
     UnitTest/monitor_fixture_decode.cpp)
 target_link_libraries(harken_remote_runtime_tests PRIVATE harken_core harken_buildinfo harken_remote_protocol harken_preview GTest::gtest_main)
 target_include_directories(harken_remote_runtime_tests PRIVATE
-    ${HARKEN_RUNTIME_DIR}/api/src
-    ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/dsp/include
-    ${HARKEN_RUNTIME_DIR}/media/include
+    ${HARKEN_CORE_DIR}/api/src
+    ${HARKEN_CORE_DIR}/core/include
+    ${HARKEN_CORE_DIR}/dsp/include
+    ${HARKEN_CORE_DIR}/media/include
     ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
-    ${HARKEN_RUNTIME_DIR}/param/include
-    ${HARKEN_RUNTIME_DIR}/render/include
+    ${HARKEN_CORE_DIR}/param/include
+    ${HARKEN_CORE_DIR}/render/include
     ${HARKEN_THIRD_PARTY_DIR}/miniaudio
     ${CMAKE_CURRENT_SOURCE_DIR})
 gtest_discover_tests(harken_remote_runtime_tests)
@@ -62,14 +62,14 @@ add_executable(harken_monitor_runtime_tests
     UnitTest/monitor_remote_codec.cpp)
 target_link_libraries(harken_monitor_runtime_tests PRIVATE harken_core harken_buildinfo GTest::gtest_main)
 target_include_directories(harken_monitor_runtime_tests PRIVATE
-    ${CMAKE_SOURCE_DIR}/HarkenEngine/Tool/Remote/generated
-    ${HARKEN_RUNTIME_DIR}/api/src
-    ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/dsp/include
-    ${HARKEN_RUNTIME_DIR}/media/include
+    ${CMAKE_SOURCE_DIR}/HarkenEngine/Tool/HostControl/generated
+    ${HARKEN_CORE_DIR}/api/src
+    ${HARKEN_CORE_DIR}/core/include
+    ${HARKEN_CORE_DIR}/dsp/include
+    ${HARKEN_CORE_DIR}/media/include
     ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
-    ${HARKEN_RUNTIME_DIR}/param/include
-    ${HARKEN_RUNTIME_DIR}/render/include
+    ${HARKEN_CORE_DIR}/param/include
+    ${HARKEN_CORE_DIR}/render/include
     ${HARKEN_THIRD_PARTY_DIR}/miniaudio
     ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(harken_monitor_runtime_tests PRIVATE
@@ -86,12 +86,12 @@ add_executable(harken_pack_storage_tests
     UnitTest/CanonicalAttenuationGenerationTest.cpp)
 target_link_libraries(harken_pack_storage_tests PRIVATE harken_core harken_buildinfo GTest::gtest_main)
 target_include_directories(harken_pack_storage_tests PRIVATE
-    ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/media/include
+    ${HARKEN_CORE_DIR}/core/include
+    ${HARKEN_CORE_DIR}/media/include
     ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
-    ${HARKEN_RUNTIME_DIR}/param/include
-    ${HARKEN_RUNTIME_DIR}/render/include
-    ${HARKEN_RUNTIME_DIR}/dsp/include
+    ${HARKEN_CORE_DIR}/param/include
+    ${HARKEN_CORE_DIR}/render/include
+    ${HARKEN_CORE_DIR}/dsp/include
     ${CMAKE_CURRENT_SOURCE_DIR})
 gtest_discover_tests(harken_pack_storage_tests PROPERTIES TIMEOUT 120)
 
@@ -324,7 +324,7 @@ add_executable(harken_runtime_tests
     E2E/TraceReplayTest.cpp
     E2E/PackLogicRoundtripTest.cpp
 )
-target_link_libraries(harken_runtime_tests PRIVATE harken_core harken_buildinfo harken_remote
+target_link_libraries(harken_runtime_tests PRIVATE harken_core harken_buildinfo harken_host_control
                       harken_program_registration
                       harken_preview GTest::gtest_main)
 if(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
@@ -364,21 +364,22 @@ target_compile_definitions(harken_runtime_tests PRIVATE HARKEN_EFFECT_TYPE_STATS
 # Tests drive internals directly (null backend pump, guard state); they see
 # module-internal headers the public API deliberately does not expose.
 target_include_directories(harken_runtime_tests PRIVATE
-    ${HARKEN_RUNTIME_DIR}/api/src
-    ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/dsp/include
-    ${HARKEN_RUNTIME_DIR}/media/include
+    ${HARKEN_CORE_DIR}/api/src
+    ${HARKEN_CORE_DIR}/core/include
+    ${HARKEN_CORE_DIR}/dsp/include
+    ${HARKEN_CORE_DIR}/media/include
     ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
-    ${HARKEN_RUNTIME_DIR}/param/include
-    ${HARKEN_RUNTIME_DIR}/render/include
+    ${HARKEN_CORE_DIR}/param/include
+    ${HARKEN_CORE_DIR}/render/include
     ${CMAKE_CURRENT_SOURCE_DIR}
     # The host tool's pure parsing helpers are unit-tested here.
     ${CMAKE_SOURCE_DIR}/HarkenEngine/Tool/Host
-    ${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Tooling/Common
+    ${CMAKE_SOURCE_DIR}/HarkenEngine/Tool/Common
+    ${CMAKE_CURRENT_SOURCE_DIR}/Common/VariableCatalog
     ${HARKEN_THIRD_PARTY_DIR}/miniaudio
     # The generated C# binding's C++ ABI-pin header (compiled by
     # BindingAbiPinTest.cpp to make table<->Harken.h drift a compile error).
-    ${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Tooling/Binding/generated
+    ${CMAKE_SOURCE_DIR}/HarkenIntegration/Unity/Binding/generated
 )
 set_source_files_properties(UnitTest/MonitorAbiPinC.c PROPERTIES LANGUAGE C)
 
@@ -422,13 +423,13 @@ add_executable(harken_variable_name_set_test
     UnitTest/VariableNameSetTest.cpp)
 target_link_libraries(harken_variable_name_set_test PRIVATE harken_core harken_buildinfo GTest::gtest_main)
 target_include_directories(harken_variable_name_set_test PRIVATE
-    ${HARKEN_RUNTIME_DIR}/api/src
-    ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/dsp/include
-    ${HARKEN_RUNTIME_DIR}/media/include
+    ${HARKEN_CORE_DIR}/api/src
+    ${HARKEN_CORE_DIR}/core/include
+    ${HARKEN_CORE_DIR}/dsp/include
+    ${HARKEN_CORE_DIR}/media/include
     ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
-    ${HARKEN_RUNTIME_DIR}/param/include
-    ${HARKEN_RUNTIME_DIR}/render/include
+    ${HARKEN_CORE_DIR}/param/include
+    ${HARKEN_CORE_DIR}/render/include
     ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(harken_variable_name_set_test PRIVATE _CRT_SECURE_NO_WARNINGS)
 if(MSVC)
@@ -442,13 +443,13 @@ target_link_libraries(harken_pack_schema_tests PRIVATE
     harken_core harken_buildinfo GTest::gtest_main)
 target_include_directories(harken_pack_schema_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${HARKEN_RUNTIME_DIR}/api/src
-    ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/dsp/include
-    ${HARKEN_RUNTIME_DIR}/media/include
+    ${HARKEN_CORE_DIR}/api/src
+    ${HARKEN_CORE_DIR}/core/include
+    ${HARKEN_CORE_DIR}/dsp/include
+    ${HARKEN_CORE_DIR}/media/include
     ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
-    ${HARKEN_RUNTIME_DIR}/param/include
-    ${HARKEN_RUNTIME_DIR}/render/include)
+    ${HARKEN_CORE_DIR}/param/include
+    ${HARKEN_CORE_DIR}/render/include)
 target_compile_definitions(harken_pack_schema_tests PRIVATE
     HARKEN_TEMP_DIR="${CMAKE_SOURCE_DIR}/.temp")
 if(HARKEN_ENABLE_STAGE_TAPS)
@@ -463,7 +464,7 @@ add_executable(harken_monitor_public_api_probe
 set_source_files_properties(UnitTest/MonitorPublicApiProbe.c PROPERTIES LANGUAGE C)
 target_include_directories(harken_monitor_public_api_probe PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/UnitTest
-    ${HARKEN_RUNTIME_DIR}/api/include)
+    ${HARKEN_CORE_DIR}/api/include)
 target_compile_definitions(harken_monitor_public_api_probe PRIVATE
     HARKEN_MONITOR_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/UnitTest/monitor"
     HARKEN_MONITOR_SESSION_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/UnitTest/monitor/session"
@@ -477,13 +478,13 @@ add_executable(harken_runtime_tests_hub_absent
 target_link_libraries(harken_runtime_tests_hub_absent PRIVATE
     harken_core_hub_absent harken_buildinfo GTest::gtest_main)
 target_include_directories(harken_runtime_tests_hub_absent PRIVATE
-    ${HARKEN_RUNTIME_DIR}/api/src
-    ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/dsp/include
-    ${HARKEN_RUNTIME_DIR}/media/include
+    ${HARKEN_CORE_DIR}/api/src
+    ${HARKEN_CORE_DIR}/core/include
+    ${HARKEN_CORE_DIR}/dsp/include
+    ${HARKEN_CORE_DIR}/media/include
     ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
-    ${HARKEN_RUNTIME_DIR}/param/include
-    ${HARKEN_RUNTIME_DIR}/render/include
+    ${HARKEN_CORE_DIR}/param/include
+    ${HARKEN_CORE_DIR}/render/include
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 target_compile_definitions(harken_runtime_tests_hub_absent PRIVATE
@@ -501,15 +502,15 @@ gtest_discover_tests(harken_runtime_tests_hub_absent
 # RenderWorkerPool layout for this target.
 add_executable(harken_render_worker_wake_fallback_tests
     UnitTest/RenderWorkerWakeFallbackTest.cpp
-    ${HARKEN_RUNTIME_DIR}/render/src/RenderWorkerPool.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/AllocGuard.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/CpuClock.cpp
+    ${HARKEN_CORE_DIR}/render/src/RenderWorkerPool.cpp
+    ${HARKEN_CORE_DIR}/core/src/AllocGuard.cpp
+    ${HARKEN_CORE_DIR}/core/src/CpuClock.cpp
 )
 target_link_libraries(harken_render_worker_wake_fallback_tests PRIVATE
     GTest::gtest_main)
 target_include_directories(harken_render_worker_wake_fallback_tests PRIVATE
-    ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/render/include
+    ${HARKEN_CORE_DIR}/core/include
+    ${HARKEN_CORE_DIR}/render/include
 )
 target_compile_definitions(harken_render_worker_wake_fallback_tests PRIVATE
     HARKEN_RENDER_WORKER_POOL_FORCE_WAKE_FALLBACK
@@ -529,15 +530,15 @@ gtest_discover_tests(harken_render_worker_wake_fallback_tests
 # definitions the library's own copy was not.
 add_executable(harken_render_worker_deadline_tests
     UnitTest/RenderWorkerDeadlineTest.cpp
-    ${HARKEN_RUNTIME_DIR}/render/src/RenderWorkerPool.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/AllocGuard.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/CpuClock.cpp
+    ${HARKEN_CORE_DIR}/render/src/RenderWorkerPool.cpp
+    ${HARKEN_CORE_DIR}/core/src/AllocGuard.cpp
+    ${HARKEN_CORE_DIR}/core/src/CpuClock.cpp
 )
 target_link_libraries(harken_render_worker_deadline_tests PRIVATE
     GTest::gtest_main)
 target_include_directories(harken_render_worker_deadline_tests PRIVATE
-    ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/render/include
+    ${HARKEN_CORE_DIR}/core/include
+    ${HARKEN_CORE_DIR}/render/include
 )
 target_compile_definitions(harken_render_worker_deadline_tests PRIVATE
     HARKEN_RENDER_WORKER_POOL_TEST_HOOKS
@@ -567,14 +568,14 @@ gtest_discover_tests(harken_render_worker_deadline_tests
 # first time these sources are compiled by clang-cl.
 add_executable(harken_rt_probe_worker_tests
     UnitTest/RtProbeTest.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/RtProbe.cpp
-    ${HARKEN_RUNTIME_DIR}/render/src/RenderWorkerPool.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/AllocGuard.cpp
-    ${HARKEN_RUNTIME_DIR}/core/src/CpuClock.cpp
+    ${HARKEN_CORE_DIR}/core/src/RtProbe.cpp
+    ${HARKEN_CORE_DIR}/render/src/RenderWorkerPool.cpp
+    ${HARKEN_CORE_DIR}/core/src/AllocGuard.cpp
+    ${HARKEN_CORE_DIR}/core/src/CpuClock.cpp
 )
 target_include_directories(harken_rt_probe_worker_tests PRIVATE
-    ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/render/include
+    ${HARKEN_CORE_DIR}/core/include
+    ${HARKEN_CORE_DIR}/render/include
 )
 target_compile_definitions(harken_rt_probe_worker_tests PRIVATE
     HARKEN_RT_PROBE_WORKER_BARRIER
@@ -587,7 +588,8 @@ if(TARGET harken_engine)
     add_executable(harken_native_variable_api_smoke UnitTest/NativeVariableApiSmoke.cpp)
     target_link_libraries(harken_native_variable_api_smoke PRIVATE harken_engine)
     target_include_directories(harken_native_variable_api_smoke PRIVATE
-        ${HARKEN_RUNTIME_DIR}/api/include)
+        ${HARKEN_CORE_DIR}/api/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/Common/VariableCatalog)
     add_test(NAME harken_native_variable_api_smoke COMMAND harken_native_variable_api_smoke)
 endif()
 
@@ -641,37 +643,29 @@ function(_harken_add_python_check_test test_name)
         LABELS harken-source-contract TIMEOUT 120)
 endfunction()
 
-_harken_add_python_check_test(binding_generated_check
-    "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Tooling/Binding/gen_binding.py"
-    --check)
-_harken_add_python_check_test(managed_generation_policy_check
-    "${CMAKE_SOURCE_DIR}/HarkenEngine/Test/UnitTest/test_managed_generation_policy.py")
 _harken_add_python_check_test(remote_wire_generated_check
-    "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Tooling/Remote/wire/gen_wire.py"
-    --check)
-_harken_add_python_check_test(variable_catalog_generated_check
-    "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Tooling/VariableCatalog/gen_variable_catalog.py"
+    "${CMAKE_SOURCE_DIR}/HarkenEngine/Tool/HostControl/wire/gen_wire.py"
     --check)
 _harken_add_python_check_test(public_abi_manifest_check
-    "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Tooling/Abi/gen_abi_manifest.py"
+    "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Core/api/abi/gen_abi_manifest.py"
     --check)
 _harken_add_python_check_test(monitor_record_fixture_check
-    "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Runtime/api/monitor/fixtures/generate_record_fixtures.py"
+    "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Core/api/monitor/fixtures/generate_record_fixtures.py"
     --check)
 _harken_add_python_check_test(monitor_plan_fixture_check
-    "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Runtime/api/monitor/fixtures/generate_plan_fixtures.py"
+    "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Core/api/monitor/fixtures/generate_plan_fixtures.py"
     --check)
 _harken_add_python_check_test(monitor_session_fixture_check
-    "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Runtime/api/monitor/fixtures/generate_session_fixtures.py"
+    "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Core/api/monitor/fixtures/generate_session_fixtures.py"
     --check)
 _harken_add_python_check_test(monitor_remote_fixture_check
-    "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Runtime/api/monitor/fixtures/generate_remote_fixtures.py"
+    "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Core/api/monitor/fixtures/generate_remote_fixtures.py"
     --check)
 _harken_add_python_check_test(monitor_appendix_a_check
-    "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Runtime/api/monitor/fixtures/check_appendix_a.py"
+    "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Core/api/monitor/fixtures/check_appendix_a.py"
     --check)
 _harken_add_python_check_test(monitor_public_api_probe_includes_check
-    "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Runtime/api/monitor/fixtures/check_monitor_public_api_probe_includes.py"
+    "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Core/api/monitor/fixtures/check_monitor_public_api_probe_includes.py"
     --check)
 _harken_add_python_check_test(public_abi_manifest_unit
     "${CMAKE_CURRENT_SOURCE_DIR}/UnitTest/test_runtime_abi_manifest.py")
@@ -690,7 +684,7 @@ _harken_add_python_check_test(monitor_remote_fixture_unit
 # reintroduced WINDOWS_EXPORT_ALL_SYMBOLS would republish thousands of internal
 # symbols while the first check still passed.
 _harken_add_python_check_test(abi_export_allowlist_check
-    "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Tooling/Abi/gen_abi_exports.py"
+    "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Core/api/abi/gen_abi_exports.py"
     --check)
 # The parser behind that check, against declaration shapes it must recognize and
 # shapes it must refuse. A shape it silently fails to model would omit an entry
@@ -705,15 +699,15 @@ _harken_add_python_check_test(abi_export_parser_unit
 # one in the wire table fails here at once, before anything is regenerated, and it
 # holds the preview export manifest in step with its header in both directions.
 _harken_add_python_check_test(preview_surface_isolation_check
-    "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Tooling/Preview/abi/check_preview_isolation.py")
+    "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Development/preview/abi/check_preview_isolation.py")
 # The preview allocation table against the header it documents. A status code the
 # header allocates and the table omits is the drift that makes a table read as a
 # specification for something the build does not do.
 _harken_add_python_check_test(preview_allocation_table_check
-    "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Tooling/Preview/abi/check_preview_allocation.py")
+    "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Development/preview/abi/check_preview_allocation.py")
 if(WIN32 AND TARGET harken_engine)
     _harken_add_python_check_test(abi_export_surface_check
-        "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Tooling/Abi/gen_abi_exports.py"
+        "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Core/api/abi/gen_abi_exports.py"
         --verify-dll "$<TARGET_FILE:harken_engine>")
     set_tests_properties(abi_export_surface_check PROPERTIES LABELS harken-artifact-contract)
 endif()
@@ -748,13 +742,13 @@ endif()
 # module-internal headers (Engine.h and the runtime module includes).
 target_include_directories(harken_benchmarks PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${HARKEN_RUNTIME_DIR}/api/src
-    ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/dsp/include
-    ${HARKEN_RUNTIME_DIR}/media/include
+    ${HARKEN_CORE_DIR}/api/src
+    ${HARKEN_CORE_DIR}/core/include
+    ${HARKEN_CORE_DIR}/dsp/include
+    ${HARKEN_CORE_DIR}/media/include
     ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
-    ${HARKEN_RUNTIME_DIR}/param/include
-    ${HARKEN_RUNTIME_DIR}/render/include
+    ${HARKEN_CORE_DIR}/param/include
+    ${HARKEN_CORE_DIR}/render/include
 )
 
 # Standalone resampler stretch characterization. It uses the same null-backend
@@ -770,13 +764,13 @@ if(HARKEN_ENABLE_STAGE_TAPS)
 endif()
 target_include_directories(harken_resample_benchmark PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${HARKEN_RUNTIME_DIR}/api/src
-    ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/dsp/include
-    ${HARKEN_RUNTIME_DIR}/media/include
+    ${HARKEN_CORE_DIR}/api/src
+    ${HARKEN_CORE_DIR}/core/include
+    ${HARKEN_CORE_DIR}/dsp/include
+    ${HARKEN_CORE_DIR}/media/include
     ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
-    ${HARKEN_RUNTIME_DIR}/param/include
-    ${HARKEN_RUNTIME_DIR}/render/include
+    ${HARKEN_CORE_DIR}/param/include
+    ${HARKEN_CORE_DIR}/render/include
 )
 
 # Standalone M11 capacity characterizer. It keeps capacity/resource evidence
@@ -796,13 +790,13 @@ if(HARKEN_ENABLE_STAGE_TAPS)
 endif()
 target_include_directories(harken_runtime_capacity_benchmark PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${HARKEN_RUNTIME_DIR}/api/src
-    ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/dsp/include
-    ${HARKEN_RUNTIME_DIR}/media/include
+    ${HARKEN_CORE_DIR}/api/src
+    ${HARKEN_CORE_DIR}/core/include
+    ${HARKEN_CORE_DIR}/dsp/include
+    ${HARKEN_CORE_DIR}/media/include
     ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
-    ${HARKEN_RUNTIME_DIR}/param/include
-    ${HARKEN_RUNTIME_DIR}/render/include
+    ${HARKEN_CORE_DIR}/param/include
+    ${HARKEN_CORE_DIR}/render/include
 )
 
 add_executable(harken_pack_foundation_qualification
@@ -818,13 +812,13 @@ if(WIN32)
 endif()
 target_include_directories(harken_pack_foundation_qualification PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${HARKEN_RUNTIME_DIR}/api/src
-    ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/dsp/include
-    ${HARKEN_RUNTIME_DIR}/media/include
+    ${HARKEN_CORE_DIR}/api/src
+    ${HARKEN_CORE_DIR}/core/include
+    ${HARKEN_CORE_DIR}/dsp/include
+    ${HARKEN_CORE_DIR}/media/include
     ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
-    ${HARKEN_RUNTIME_DIR}/param/include
-    ${HARKEN_RUNTIME_DIR}/render/include
+    ${HARKEN_CORE_DIR}/param/include
+    ${HARKEN_CORE_DIR}/render/include
 )
 
 add_executable(harken_exported_pack_qualification
@@ -840,15 +834,15 @@ if(WIN32)
 endif()
 target_include_directories(harken_exported_pack_qualification PRIVATE
     ${CMAKE_SOURCE_DIR}/HarkenEngine/Tool/Host
-    ${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Tooling/Common
+    ${CMAKE_SOURCE_DIR}/HarkenEngine/Tool/Common
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${HARKEN_RUNTIME_DIR}/api/src
-    ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/dsp/include
-    ${HARKEN_RUNTIME_DIR}/media/include
+    ${HARKEN_CORE_DIR}/api/src
+    ${HARKEN_CORE_DIR}/core/include
+    ${HARKEN_CORE_DIR}/dsp/include
+    ${HARKEN_CORE_DIR}/media/include
     ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
-    ${HARKEN_RUNTIME_DIR}/param/include
-    ${HARKEN_RUNTIME_DIR}/render/include
+    ${HARKEN_CORE_DIR}/param/include
+    ${HARKEN_CORE_DIR}/render/include
 )
 
 # Standalone denormal timing probe. It compares the caller thread's default
@@ -864,13 +858,13 @@ if(HARKEN_ENABLE_STAGE_TAPS)
 endif()
 target_include_directories(harken_denormal_probe PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${HARKEN_RUNTIME_DIR}/api/src
-    ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/dsp/include
-    ${HARKEN_RUNTIME_DIR}/media/include
+    ${HARKEN_CORE_DIR}/api/src
+    ${HARKEN_CORE_DIR}/core/include
+    ${HARKEN_CORE_DIR}/dsp/include
+    ${HARKEN_CORE_DIR}/media/include
     ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
-    ${HARKEN_RUNTIME_DIR}/param/include
-    ${HARKEN_RUNTIME_DIR}/render/include
+    ${HARKEN_CORE_DIR}/param/include
+    ${HARKEN_CORE_DIR}/render/include
 )
 
 # Release metering benchmark (spec section 11.7 / acceptance item 11).
@@ -887,12 +881,12 @@ add_executable(harken_meter_benchmark
 target_link_libraries(harken_meter_benchmark PRIVATE harken_core harken_buildinfo)
 target_include_directories(harken_meter_benchmark PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${HARKEN_RUNTIME_DIR}/api/src
-    ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/dsp/include
-    ${HARKEN_RUNTIME_DIR}/media/include
+    ${HARKEN_CORE_DIR}/api/src
+    ${HARKEN_CORE_DIR}/core/include
+    ${HARKEN_CORE_DIR}/dsp/include
+    ${HARKEN_CORE_DIR}/media/include
     ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
-    ${HARKEN_RUNTIME_DIR}/param/include
-    ${HARKEN_RUNTIME_DIR}/render/include
+    ${HARKEN_CORE_DIR}/param/include
+    ${HARKEN_CORE_DIR}/render/include
 )
 endif()

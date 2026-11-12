@@ -167,7 +167,7 @@ def verify_header_prefixes(
     abi_module: Any,
 ) -> dict[str, Any]:
     relative = Path(
-        "HarkenEngine/Source/Runtime/api/include/harken/Harken.h"
+        "HarkenEngine/Source/Core/api/include/harken/Harken.h"
     )
     old = abi_module.parse_header_contract(
         (old_root / relative).read_text(encoding="utf-8")
@@ -218,7 +218,7 @@ def verify_wire_layouts(
     wire_module: Any,
 ) -> dict[str, Any]:
     relative = Path(
-        "HarkenEngine/Source/Tooling/Remote/wire/"
+        "HarkenEngine/Tool/HostControl/wire/"
         "harken_wire_table.json"
     )
     old_table = load_json(old_root / relative)
@@ -674,16 +674,16 @@ def managed_output_index(output: Path) -> dict[str, Any]:
 def verify_generators(root: Path, *, include_manifest: bool) -> list[str]:
     scripts = [
         Path(
-            "HarkenEngine/Source/Tooling/Binding/gen_binding.py"
+            "HarkenIntegration/Unity/Binding/gen_binding.py"
         ),
         Path(
-            "HarkenEngine/Source/Tooling/Remote/wire/gen_wire.py"
+            "HarkenEngine/Tool/HostControl/wire/gen_wire.py"
         ),
     ]
     if include_manifest:
         scripts.append(
             Path(
-                "HarkenEngine/Source/Tooling/Abi/"
+                "HarkenEngine/Source/Core/api/abi/"
                 "gen_abi_manifest.py"
             )
         )
@@ -756,7 +756,7 @@ def main() -> int:
 
     current_abi_script = (
         current_root
-        / "HarkenEngine/Source/Tooling/Abi/gen_abi_manifest.py"
+        / "HarkenEngine/Source/Core/api/abi/gen_abi_manifest.py"
     )
     abi_module = load_module(
         "history_current_abi", current_abi_script
@@ -764,7 +764,7 @@ def main() -> int:
     wire_module = load_module(
         "history_current_wire",
         current_root
-        / "HarkenEngine/Source/Tooling/Remote/wire/gen_wire.py",
+        / "HarkenEngine/Tool/HostControl/wire/gen_wire.py",
     )
 
     header_result = verify_header_prefixes(
@@ -809,18 +809,18 @@ def main() -> int:
     old_client_build_evidence = rebuild_client(
         client_source,
         old_client_build,
-        old_root / "HarkenEngine/Source/Runtime/api/include",
+        old_root / "HarkenEngine/Source/Core/api/include",
         old_root
-        / "HarkenEngine/Source/Tooling/Binding/generated",
+        / "HarkenIntegration/Unity/Binding/generated",
         old_client,
         config,
     )
     current_client_build_evidence = rebuild_client(
         client_source,
         current_client_build,
-        current_root / "HarkenEngine/Source/Runtime/api/include",
+        current_root / "HarkenEngine/Source/Core/api/include",
         current_root
-        / "HarkenEngine/Source/Tooling/Binding/generated",
+        / "HarkenIntegration/Unity/Binding/generated",
         current_client,
         config,
     )
@@ -841,12 +841,12 @@ def main() -> int:
 
     old_table = load_json(
         old_root
-        / "HarkenEngine/Source/Tooling/Remote/wire/"
+        / "HarkenEngine/Tool/HostControl/wire/"
         "harken_wire_table.json"
     )
     current_table = load_json(
         current_root
-        / "HarkenEngine/Source/Tooling/Remote/wire/"
+        / "HarkenEngine/Tool/HostControl/wire/"
         "harken_wire_table.json"
     )
     expected_old = sorted(

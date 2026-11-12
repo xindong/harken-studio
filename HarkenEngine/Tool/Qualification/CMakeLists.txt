@@ -61,13 +61,13 @@ target_compile_definitions(harken_rt_qualification PRIVATE
 )
 
 target_include_directories(harken_rt_qualification PRIVATE
-    ${HARKEN_RUNTIME_DIR}/api/src
-    ${HARKEN_RUNTIME_DIR}/core/include
-    ${HARKEN_RUNTIME_DIR}/dsp/include
-    ${HARKEN_RUNTIME_DIR}/media/include
+    ${HARKEN_CORE_DIR}/api/src
+    ${HARKEN_CORE_DIR}/core/include
+    ${HARKEN_CORE_DIR}/dsp/include
+    ${HARKEN_CORE_DIR}/media/include
     ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
-    ${HARKEN_RUNTIME_DIR}/param/include
-    ${HARKEN_RUNTIME_DIR}/render/include
+    ${HARKEN_CORE_DIR}/param/include
+    ${HARKEN_CORE_DIR}/render/include
 )
 
 if(HARKEN_RT_PROBE_DEFINITIONS)
@@ -81,8 +81,8 @@ if(HARKEN_RT_PROBE_DEFINITIONS)
         ${HARKEN_RT_PROBE_DEFINITIONS}
     )
     target_include_directories(harken_rt_probe_test PRIVATE
-        ${HARKEN_RUNTIME_DIR}/core/include
-        ${HARKEN_RUNTIME_DIR}/render/include
+        ${HARKEN_CORE_DIR}/core/include
+        ${HARKEN_CORE_DIR}/render/include
     )
     # This target's ctest registration lives in the top-level CMakeLists, not
     # here: this directory is processed from HarkenEngine before enable_testing()
@@ -109,6 +109,6 @@ if(HARKEN_RT_PROBE_DEVICE_CALLBACK)
         HARKEN_RTQ_WINDOWS_SDK="${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION}"
     )
     target_include_directories(harken_rt_observer_cost PRIVATE
-        ${HARKEN_RUNTIME_DIR}/core/include
+        ${HARKEN_CORE_DIR}/core/include
     )
 endif()

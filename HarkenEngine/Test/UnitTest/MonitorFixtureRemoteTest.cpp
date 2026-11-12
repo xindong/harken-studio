@@ -2,7 +2,7 @@
 
 #include "JsonReader.h"
 
-#include "harken_remote/WireFormat.h"
+#include "harken_host_control/WireFormat.h"
 
 #include <gtest/gtest.h>
 
