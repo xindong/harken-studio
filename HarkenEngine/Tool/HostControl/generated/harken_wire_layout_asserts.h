@@ -7,6 +7,7 @@
 #define HARKEN_REMOTE_WIRE_LAYOUT_ASSERTS_H
 
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include <cstddef>
 

@@ -45,8 +45,19 @@ class RuntimeAbiManifestTest(unittest.TestCase):
             / "wire"
             / "harken_wire_table.json"
         )
+        development_header_path = (
+            REPO_ROOT
+            / "HarkenEngine"
+            / "Source"
+            / "Development"
+            / "include"
+            / "harken"
+            / "HarkenDevelopment.h"
+        )
         cls.header_text = (cls.header_path.with_name("ObjectId.h").read_text(encoding="utf-8") +
-                           "\n" + cls.header_path.read_text(encoding="utf-8"))
+                           "\n" + cls.header_path.read_text(encoding="utf-8") + "\n" +
+                           MODULE.strip_preview_surface(
+                               development_header_path.read_text(encoding="utf-8")))
         cls.header_contract = MODULE.parse_header_contract(
             cls.header_text
         )

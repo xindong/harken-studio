@@ -12,6 +12,7 @@
 // 10) power ratio, a sign flip) is caught rather than mirrored.
 #include "Common/ObjectIdTestSupport.h"
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include "Common/TestUtil.h"
 #include "harken/render/BuiltinEffects.h"

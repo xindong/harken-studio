@@ -3,6 +3,7 @@
 
 #include "JsonReader.h"
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 #include <harken_pack/PackFile.h>
 
 #include <algorithm>

@@ -12,7 +12,7 @@ target_include_directories(harken_object_identity_tests PRIVATE
     ${HARKEN_CORE_DIR}/media/include
     ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
     ${HARKEN_CORE_DIR}/param/include
-    ${HARKEN_CORE_DIR}/remote/include
+    ${HARKEN_DEVELOPMENT_PRIVATE_INCLUDES}
     ${HARKEN_CORE_DIR}/render/include
     ${CMAKE_SOURCE_DIR}/HarkenEngine/Tool/HostControl/include
     ${CMAKE_SOURCE_DIR}/HarkenEngine/Tool/HostControl/generated)
@@ -32,6 +32,7 @@ add_executable(harken_remote_runtime_tests
 target_link_libraries(harken_remote_runtime_tests PRIVATE harken_core harken_buildinfo harken_remote_protocol harken_preview GTest::gtest_main)
 target_include_directories(harken_remote_runtime_tests PRIVATE
     ${HARKEN_CORE_DIR}/api/src
+    ${HARKEN_DEVELOPMENT_PRIVATE_INCLUDES}
     ${HARKEN_CORE_DIR}/core/include
     ${HARKEN_CORE_DIR}/dsp/include
     ${HARKEN_CORE_DIR}/media/include
@@ -64,6 +65,7 @@ target_link_libraries(harken_monitor_runtime_tests PRIVATE harken_core harken_bu
 target_include_directories(harken_monitor_runtime_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/HarkenEngine/Tool/HostControl/generated
     ${HARKEN_CORE_DIR}/api/src
+    ${HARKEN_DEVELOPMENT_PRIVATE_INCLUDES}
     ${HARKEN_CORE_DIR}/core/include
     ${HARKEN_CORE_DIR}/dsp/include
     ${HARKEN_CORE_DIR}/media/include
@@ -365,6 +367,7 @@ target_compile_definitions(harken_runtime_tests PRIVATE HARKEN_EFFECT_TYPE_STATS
 # module-internal headers the public API deliberately does not expose.
 target_include_directories(harken_runtime_tests PRIVATE
     ${HARKEN_CORE_DIR}/api/src
+    ${HARKEN_DEVELOPMENT_PRIVATE_INCLUDES}
     ${HARKEN_CORE_DIR}/core/include
     ${HARKEN_CORE_DIR}/dsp/include
     ${HARKEN_CORE_DIR}/media/include
@@ -424,6 +427,7 @@ add_executable(harken_variable_name_set_test
 target_link_libraries(harken_variable_name_set_test PRIVATE harken_core harken_buildinfo GTest::gtest_main)
 target_include_directories(harken_variable_name_set_test PRIVATE
     ${HARKEN_CORE_DIR}/api/src
+    ${HARKEN_DEVELOPMENT_PRIVATE_INCLUDES}
     ${HARKEN_CORE_DIR}/core/include
     ${HARKEN_CORE_DIR}/dsp/include
     ${HARKEN_CORE_DIR}/media/include
@@ -444,6 +448,7 @@ target_link_libraries(harken_pack_schema_tests PRIVATE
 target_include_directories(harken_pack_schema_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${HARKEN_CORE_DIR}/api/src
+    ${HARKEN_DEVELOPMENT_PRIVATE_INCLUDES}
     ${HARKEN_CORE_DIR}/core/include
     ${HARKEN_CORE_DIR}/dsp/include
     ${HARKEN_CORE_DIR}/media/include
@@ -479,6 +484,7 @@ target_link_libraries(harken_runtime_tests_hub_absent PRIVATE
     harken_core_hub_absent harken_buildinfo GTest::gtest_main)
 target_include_directories(harken_runtime_tests_hub_absent PRIVATE
     ${HARKEN_CORE_DIR}/api/src
+    ${HARKEN_DEVELOPMENT_PRIVATE_INCLUDES}
     ${HARKEN_CORE_DIR}/core/include
     ${HARKEN_CORE_DIR}/dsp/include
     ${HARKEN_CORE_DIR}/media/include
@@ -650,22 +656,22 @@ _harken_add_python_check_test(public_abi_manifest_check
     "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Core/api/abi/gen_abi_manifest.py"
     --check)
 _harken_add_python_check_test(monitor_record_fixture_check
-    "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Core/api/monitor/fixtures/generate_record_fixtures.py"
+    "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Development/monitor/fixtures/generate_record_fixtures.py"
     --check)
 _harken_add_python_check_test(monitor_plan_fixture_check
-    "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Core/api/monitor/fixtures/generate_plan_fixtures.py"
+    "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Development/monitor/fixtures/generate_plan_fixtures.py"
     --check)
 _harken_add_python_check_test(monitor_session_fixture_check
-    "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Core/api/monitor/fixtures/generate_session_fixtures.py"
+    "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Development/monitor/fixtures/generate_session_fixtures.py"
     --check)
 _harken_add_python_check_test(monitor_remote_fixture_check
-    "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Core/api/monitor/fixtures/generate_remote_fixtures.py"
+    "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Development/monitor/fixtures/generate_remote_fixtures.py"
     --check)
 _harken_add_python_check_test(monitor_appendix_a_check
-    "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Core/api/monitor/fixtures/check_appendix_a.py"
+    "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Development/monitor/fixtures/check_appendix_a.py"
     --check)
 _harken_add_python_check_test(monitor_public_api_probe_includes_check
-    "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Core/api/monitor/fixtures/check_monitor_public_api_probe_includes.py"
+    "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Development/monitor/fixtures/check_monitor_public_api_probe_includes.py"
     --check)
 _harken_add_python_check_test(public_abi_manifest_unit
     "${CMAKE_CURRENT_SOURCE_DIR}/UnitTest/test_runtime_abi_manifest.py")
@@ -711,6 +717,12 @@ if(WIN32 AND TARGET harken_engine)
         --verify-dll "$<TARGET_FILE:harken_engine>")
     set_tests_properties(abi_export_surface_check PROPERTIES LABELS harken-artifact-contract)
 endif()
+if(WIN32 AND TARGET harken_engine_dev)
+    _harken_add_python_check_test(abi_development_export_surface_check
+        "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Core/api/abi/gen_abi_exports.py"
+        --verify-development-dll "$<TARGET_FILE:harken_engine_dev>")
+    set_tests_properties(abi_development_export_surface_check PROPERTIES LABELS harken-artifact-contract)
+endif()
 if(TARGET harken_host_selection_copy_test)
     add_test(NAME harken_host_selection_copy_test
              COMMAND "$<TARGET_FILE:harken_host_selection_copy_test>")
@@ -743,6 +755,7 @@ endif()
 target_include_directories(harken_benchmarks PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${HARKEN_CORE_DIR}/api/src
+    ${HARKEN_DEVELOPMENT_PRIVATE_INCLUDES}
     ${HARKEN_CORE_DIR}/core/include
     ${HARKEN_CORE_DIR}/dsp/include
     ${HARKEN_CORE_DIR}/media/include
@@ -765,6 +778,7 @@ endif()
 target_include_directories(harken_resample_benchmark PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${HARKEN_CORE_DIR}/api/src
+    ${HARKEN_DEVELOPMENT_PRIVATE_INCLUDES}
     ${HARKEN_CORE_DIR}/core/include
     ${HARKEN_CORE_DIR}/dsp/include
     ${HARKEN_CORE_DIR}/media/include
@@ -791,6 +805,7 @@ endif()
 target_include_directories(harken_runtime_capacity_benchmark PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${HARKEN_CORE_DIR}/api/src
+    ${HARKEN_DEVELOPMENT_PRIVATE_INCLUDES}
     ${HARKEN_CORE_DIR}/core/include
     ${HARKEN_CORE_DIR}/dsp/include
     ${HARKEN_CORE_DIR}/media/include
@@ -813,6 +828,7 @@ endif()
 target_include_directories(harken_pack_foundation_qualification PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${HARKEN_CORE_DIR}/api/src
+    ${HARKEN_DEVELOPMENT_PRIVATE_INCLUDES}
     ${HARKEN_CORE_DIR}/core/include
     ${HARKEN_CORE_DIR}/dsp/include
     ${HARKEN_CORE_DIR}/media/include
@@ -837,6 +853,7 @@ target_include_directories(harken_exported_pack_qualification PRIVATE
     ${CMAKE_SOURCE_DIR}/HarkenEngine/Tool/Common
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${HARKEN_CORE_DIR}/api/src
+    ${HARKEN_DEVELOPMENT_PRIVATE_INCLUDES}
     ${HARKEN_CORE_DIR}/core/include
     ${HARKEN_CORE_DIR}/dsp/include
     ${HARKEN_CORE_DIR}/media/include
@@ -859,6 +876,7 @@ endif()
 target_include_directories(harken_denormal_probe PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${HARKEN_CORE_DIR}/api/src
+    ${HARKEN_DEVELOPMENT_PRIVATE_INCLUDES}
     ${HARKEN_CORE_DIR}/core/include
     ${HARKEN_CORE_DIR}/dsp/include
     ${HARKEN_CORE_DIR}/media/include
@@ -882,6 +900,7 @@ target_link_libraries(harken_meter_benchmark PRIVATE harken_core harken_buildinf
 target_include_directories(harken_meter_benchmark PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${HARKEN_CORE_DIR}/api/src
+    ${HARKEN_DEVELOPMENT_PRIVATE_INCLUDES}
     ${HARKEN_CORE_DIR}/core/include
     ${HARKEN_CORE_DIR}/dsp/include
     ${HARKEN_CORE_DIR}/media/include

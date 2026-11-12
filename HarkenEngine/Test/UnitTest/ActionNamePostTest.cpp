@@ -1,3 +1,4 @@
+#include <harken/HarkenDevelopment.h>
 #include "UnitTest/CanonicalPackSetActivate.h"
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/PackFoundationFixture.h"

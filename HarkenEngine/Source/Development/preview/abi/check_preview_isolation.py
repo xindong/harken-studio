@@ -49,10 +49,8 @@ REPO_ROOT = os.path.normpath(
 
 MANIFEST = os.path.join(SCRIPT_DIR, "DevelopmentPreview.exports")
 PREVIEW_HEADER = os.path.join(
-    REPO_ROOT, "HarkenEngine", "Source", "Development", "preview", "include",
-    "harken_preview", "PreviewAbi.h")
-PREVIEW_PROJECT_HEADER = os.path.join(
-    os.path.dirname(PREVIEW_HEADER), "PreviewProject.h")
+    REPO_ROOT, "HarkenEngine", "Source", "Development", "include",
+    "harken", "HarkenDevelopment.h")
 
 # The gameplay face: the two generator inputs first, then the products. Inputs
 # are listed because failing on the input is what makes the failure early --
@@ -141,7 +139,7 @@ def main():
     if not tokens:
         failures.append("DevelopmentPreview.exports declares no isolated tokens")
     check_manifest_matches_header(
-        exports, read(PREVIEW_HEADER) + "\n" + read(PREVIEW_PROJECT_HEADER), failures)
+        exports, read(PREVIEW_HEADER), failures)
     check_gameplay_face(tokens, failures)
 
     if failures:

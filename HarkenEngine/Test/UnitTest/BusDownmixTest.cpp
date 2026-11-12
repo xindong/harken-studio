@@ -8,6 +8,7 @@
 // mix-width planes (L->FL, R->FR) and routes up to the master, so the captured
 // master FL/FR carry exactly the bus's fold — proving the matrix is a property
 // of the bus, not a master-only setting.
+#include <harken/HarkenDevelopment.h>
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
 

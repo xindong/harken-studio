@@ -3,7 +3,7 @@
 #include "harken/render/BusTree.h"
 #include "harken/render/OriginalSourceSubmission.h"
 
-#include "MonitorCaptureHub.h"
+#include "MonitorSeam.h"
 
 #include "harken/core/CommandQueue.h"
 #include "harken/core/DecisionTable.h"

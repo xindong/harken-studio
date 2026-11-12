@@ -14,6 +14,7 @@
 // and fixed-seed configs. A third case covers the section-19.5 staged
 // replace: music must keep rendering across the activation tick with
 // only the expected level change (no dropout block).
+#include <harken/HarkenDevelopment.h>
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestPackWriter.h"
 #include "Common/TestUtil.h"

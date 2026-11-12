@@ -621,6 +621,7 @@ def emit_cpp_pin(table):
     lines.append("#define HARKEN_BINDING_ABI_PIN_H")
     lines.append("")
     lines.append("#include <harken/Harken.h>")
+    lines.append("#include <harken/HarkenDevelopment.h>")
     lines.append("")
     lines.append("#include <cstddef>")
     lines.append("#include <cstdint>")
@@ -692,7 +693,7 @@ def emit_cpp_pin(table):
 def emit_monitor_reader(table):
     # Follow the native packed writer, whose envelope intentionally differs
     # from C struct layout. Field types still come from the ABI table.
-    source = os.path.join(REPO_ROOT, "HarkenEngine", "Source", "Core", "api", "src", "MonitorRecordPack.h")
+    source = os.path.join(REPO_ROOT, "HarkenEngine", "Source", "Development", "monitor", "MonitorRecordPack.h")
     with open(source, encoding="utf-8") as stream:
         writer = stream.read().split("inline void PackHeader(", 1)[1].split("inline void FillSyntheticHeader", 1)[0]
     header = re.findall(r"Write(U32|U64|ObjectId)\(out \+ o, header\.([A-Za-z0-9_.]+)\);", writer)

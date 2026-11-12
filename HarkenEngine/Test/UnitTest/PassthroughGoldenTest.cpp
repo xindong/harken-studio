@@ -6,6 +6,7 @@
 // Tolerances: identity
 // comparisons are exact (tolerance 0) — an empty slot performs no
 // arithmetic and this mono-to-mono cascade is the unity-gain identity path.
+#include <harken/HarkenDevelopment.h>
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
 

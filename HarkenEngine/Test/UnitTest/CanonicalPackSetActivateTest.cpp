@@ -1,9 +1,11 @@
+#include <harken/HarkenDevelopment.h>
 #include "UnitTest/CanonicalPackSetActivate.h"
 #include "AllocationProbe.h"
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
 
 #include "Engine.h"
+#include "ProjectGenerationTransaction.h"
 #include "PackLogicStore.h"
 #include "TraceFormat.h"
 #include "TraceRecorder.h"

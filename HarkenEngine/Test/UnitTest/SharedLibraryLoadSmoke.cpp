@@ -45,22 +45,14 @@ int wmain(int argc, wchar_t* argv[]) {
         "Vn_Update",
         "Vn_RegisterStreamFile",
         "Vn_ReplacePack",
-        "Vn_TraceStart",
         "Vn_SetBusOutputLayout",
         "Vn_RegisterBinding",
         "Vn_SetVoiceDistanceScale",
         "Vn_SetVoiceSpatializationMix",
-        "Vn_CaptureEffectCapabilities",
-        "Vn_CaptureEffectParameterCapabilities",
         "Vn_SetBusEffectDynamicRoute",
         "Vn_ClearBusEffectDynamicRoute",
         "Vn_ResetVoiceEffect",
         "Vn_ResetBusEffect",
-        "Vn_CaptureEffectDynamicCapabilities",
-        "Vn_CaptureEffectDynamicParameterCapabilities",
-        "Vn_CaptureEffectDynamicRoutes",
-        "Vn_CaptureCompressorRuntimeInfo",
-        "Vn_CapturePropertyTargets",
     };
 
     bool missingExport = false;

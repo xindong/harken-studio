@@ -2,7 +2,7 @@
 #include "harken/render/SignalRenderPlan.h"
 #include "harken/render/MixerLoop.h"
 
-#include "MonitorCaptureHub.h"
+#include "MonitorSeam.h"
 
 #include "harken/core/AllocGuard.h"
 #include "harken/core/ChannelLayout.h"

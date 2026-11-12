@@ -16,6 +16,7 @@
 // 2 = SILENT verdict (the run never moved the master bus above the
 // silence floor); 3 = engine call failure.
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include "Att03KeepProbe.h"
 #include "Att04NearFarProbe.h"

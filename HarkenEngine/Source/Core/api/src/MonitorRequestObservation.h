@@ -1,7 +1,7 @@
 #ifndef HARKEN_API_MONITOR_REQUEST_OBSERVATION_H
 #define HARKEN_API_MONITOR_REQUEST_OBSERVATION_H
 
-#include "MonitorCaptureHub.h"
+#include "MonitorSeam.h"
 #include "MonitorExecutionBuilder.h"
 #include "harken/core/LogRing.h"
 

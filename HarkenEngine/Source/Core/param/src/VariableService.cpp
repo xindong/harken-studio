@@ -2,7 +2,7 @@
 
 #include "Engine.h"
 #include "SignalPublication.h"
-#include "MonitorCaptureHub.h"
+#include "MonitorSeam.h"
 #include "harken/core/CommandQueue.h"
 #include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/VariableExecutionFingerprint.h"
@@ -143,7 +143,7 @@ WorldInstallResult InstallContainerWorldV1(
             ObserveMonitorCurrentWorld(result.resultGeneration);
         }
         engine.statefulCallSeen = true;
-        if (engine.trace == nullptr || !engine.trace->Active()) {
+        if (engine.trace == nullptr || !harken::tracing::Active(engine.trace.get())) {
             engine.traceOriginWorldProbeOnly =
                 engine.traceOriginWorldProbeOnly &&
                 result.status == WorldInstallStatus::Ok;
@@ -155,10 +155,10 @@ WorldInstallResult InstallContainerWorldV1(
                 engine.busTargets);
         }
         if (traceOwner == CurrentWorldTraceOwnerV1::Internal &&
-            engine.trace != nullptr && engine.trace->Active()) {
+            engine.trace != nullptr && harken::tracing::Active(engine.trace.get())) {
             const std::uint32_t encoding =
                 result.status == WorldInstallStatus::Ok ? 0u : 1u;
-            engine.trace->RecordCurrentWorldInstall(install, result, encoding);
+            harken::tracing::RecordCurrentWorldInstall(engine.trace.get(), install, result, encoding);
         }
         return result;
     } catch (...) {
@@ -166,8 +166,8 @@ WorldInstallResult InstallContainerWorldV1(
         result.status = WorldInstallStatus::Capacity;
         result.priorGeneration = engine.variables.CurrentWorldGeneration();
         if (traceOwner == CurrentWorldTraceOwnerV1::Internal &&
-            engine.trace != nullptr && engine.trace->Active()) {
-            engine.trace->RecordCurrentWorldInstall(install, result, 1);
+            engine.trace != nullptr && harken::tracing::Active(engine.trace.get())) {
+            harken::tracing::RecordCurrentWorldInstall(engine.trace.get(), install, result, 1);
         }
         return result;
     }

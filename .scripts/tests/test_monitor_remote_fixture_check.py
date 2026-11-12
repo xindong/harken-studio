@@ -12,8 +12,7 @@ REMOTE_SCRIPT = (
     REPO_ROOT
     / "HarkenEngine"
     / "Source"
-    / "Core"
-    / "api"
+    / "Development"
     / "monitor"
     / "fixtures"
     / "generate_remote_fixtures.py"

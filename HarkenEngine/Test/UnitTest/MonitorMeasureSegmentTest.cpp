@@ -1,5 +1,6 @@
 #include "Common/ObjectIdTestSupport.h"
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include "MonitorCaptureHub.h"
 #include "MonitorCaptureHubTestHooks.h"

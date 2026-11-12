@@ -1,3 +1,4 @@
+#include <harken/HarkenDevelopment.h>
 #include "Engine.h"
 #include "HarkenApiInternal.h"
 

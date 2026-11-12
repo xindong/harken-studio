@@ -12,10 +12,9 @@
 #include "EngineNativeVoiceSide.h"
 #include "EngineQueueScheduleStorage.h"
 #include "PlayableRuntime.h"
-#include "ProjectGenerationTransaction.h"
-#include "TraceCodec.h"
+#include "TopologySlotPlan.h"
+#include "TraceSeam.h"
 #include "PackLogicStore.h"
-#include "TraceRecorder.h"
 #include "MonitorEmitterRegistry.h"
 #include "harken/render/OriginalSourceSubmission.h"
 #include "PreparedSingleCurrentOriginBundle.h"
@@ -15570,7 +15569,7 @@ public:
     // and cleared by the next accepted Vn_TraceStart. traceOrigin keeps the
     // caller vocabulary and the resolved device format as semantic values;
     // process-local callback pointers are nulled before it is stored.
-    std::unique_ptr<TraceRecorder> trace;
+    TraceRecorderOwner trace;
     void CompleteVariableOperation() noexcept;
     void* variableOutcomeSinkContext = nullptr;
     void (*variableOutcomeSink)(void*, const VariableOutcomeRecord&) noexcept = nullptr;

@@ -33,7 +33,7 @@
 #include "harken/param/MeterProbe.h"
 #include "harken/param/VariableService.h"
 #include "harken/render/BuiltinEffects.h"
-#include "harken_preview/PreviewAbi.h"
+#include <harken/HarkenDevelopment.h>
 
 #include <gtest/gtest.h>
 
@@ -2682,7 +2682,7 @@ bool RecordPairedCurrentWorldTrace(const std::string& tracePath,
         harken::WorldInstallStatus::Ok) {
         return fail("install");
     }
-    auto recorder = std::make_unique<harken::TraceRecorder>(*engine);
+    harken::TraceRecorderOwner recorder(new harken::TraceRecorder(*engine));
     if (recorder->Start(tracePath.c_str()) != VN_OK) {
         return fail("trace-start");
     }

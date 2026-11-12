@@ -21,6 +21,7 @@
 // Ranges come from the engine's capability capture rather than the registry rows
 // directly: the registry may hold sentinels for open or rate-dependent bounds,
 // while the capture resolves them to concrete finite values for this engine.
+#include <harken/HarkenDevelopment.h>
 #include "Common/TestUtil.h"
 
 #include "harken_program_registration/EffectDescriptorWriter.h"

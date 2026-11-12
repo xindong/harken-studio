@@ -30,7 +30,7 @@ PRODUCTS = (
 )
 
 PACK_FORMAT_INCLUDE_PREFIX = "harken_pack/"
-ENGINE_PUBLIC_HEADER_NAMES = ("Harken.h", "HarkenDevelopment.h", "PreviewAbi.h", "PreviewProject.h")
+ENGINE_PUBLIC_HEADER_NAMES = ("Harken.h", "HarkenDevelopment.h")
 
 ALLOWED_EDGES = {
     ("HarkenStudio", "HarkenEngine"): {

@@ -4,6 +4,7 @@
 #include "Engine.h"
 
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 #include <harken/ObjectId.h>
 
 #include <algorithm>

@@ -15,6 +15,7 @@ target_include_directories(harken_program_registration
         ${HARKEN_CORE_DIR}/param/include
     PRIVATE
         ${HARKEN_CORE_DIR}/api/src
+        ${HARKEN_DEVELOPMENT_PRIVATE_INCLUDES}
         ${HARKEN_CORE_DIR}/dsp/include
 )
 target_link_libraries(harken_program_registration PUBLIC harken_core)

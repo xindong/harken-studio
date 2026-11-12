@@ -5,6 +5,7 @@
 #include "Common/ObjectIdTestSupport.h"
 #include "UnitTest/AllocationProbe.h"
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include "Engine.h"
 #include "harken/core/AllocGuard.h"

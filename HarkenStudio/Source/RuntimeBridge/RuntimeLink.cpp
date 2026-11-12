@@ -8,8 +8,7 @@
 
 #include <harken/Harken.h>
 #include <harken_studio_build/PackImage.h>
-#include <harken_preview/PreviewAbi.h>
-#include <harken_preview/PreviewProject.h>
+#include <harken/HarkenDevelopment.h>
 
 #include <QCoreApplication>
 #include <QFileInfo>

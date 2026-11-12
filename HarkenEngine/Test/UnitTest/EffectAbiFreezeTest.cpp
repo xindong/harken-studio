@@ -7,6 +7,7 @@
 // expected value from the thing under test, so a pin only agrees when the
 // value has not moved.
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include "harken/core/CommandQueue.h"
 #include "harken/core/EngineConfig.h"

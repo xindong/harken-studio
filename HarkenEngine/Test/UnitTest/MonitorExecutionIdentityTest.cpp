@@ -1,3 +1,4 @@
+#include <harken/HarkenDevelopment.h>
 #include "AllocationProbe.h"
 #include <new>
 #include "MonitorIdentityCut.h"

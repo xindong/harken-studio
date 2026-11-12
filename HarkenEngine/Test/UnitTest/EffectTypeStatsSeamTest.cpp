@@ -29,6 +29,7 @@
 #include "UnitTest/RedTestGate.h"
 
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include <gtest/gtest.h>
 

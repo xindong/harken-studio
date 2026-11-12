@@ -50,6 +50,7 @@
 // vintage split. Pack files are compiled by the real packc tool from v2
 // manifests (subprocess, the pipeline-test precedent); refusals assert
 // the old revision through rendering, not internal state.
+#include <harken/HarkenDevelopment.h>
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestPackWriter.h"
 #include "Common/TestUtil.h"

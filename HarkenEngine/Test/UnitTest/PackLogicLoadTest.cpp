@@ -31,6 +31,7 @@
 // and the staged v2 replace's activation timing (staged at the call,
 // swapped at the next Vn_Update). Every refusal asserts zero observable
 // mutation.
+#include <harken/HarkenDevelopment.h>
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestPackWriter.h"
 #include "UnitTest/CanonicalPackSetActivate.h"

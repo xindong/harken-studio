@@ -6,6 +6,7 @@
 // thread and the audio thread. Every drill is made deterministic through
 // the stream manager's test hooks (throttle + synchronous serve) — no
 // sleeps, no timing luck.
+#include <harken/HarkenDevelopment.h>
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/StreamBuilder.h"
 #include "Common/TestUtil.h"

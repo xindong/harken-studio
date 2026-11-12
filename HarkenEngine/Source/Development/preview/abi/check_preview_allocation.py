@@ -29,8 +29,8 @@ import sys
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 TABLE = os.path.join(SCRIPT_DIR, "PreviewAbiAllocation.md")
-HEADER = os.path.join(SCRIPT_DIR, "..", "include", "harken_preview",
-                      "PreviewAbi.h")
+HEADER = os.path.join(SCRIPT_DIR, "..", "..", "include", "harken",
+                      "HarkenDevelopment.h")
 
 # A status macro in the header. Only the plain decimal status space is matched:
 # the bit-flag and enumerated-field macros in the same header are cast
@@ -86,22 +86,22 @@ def main():
     table = table_statuses(read(TABLE), failures)
 
     if not header:
-        failures.append("no status macros found in PreviewAbi.h")
+        failures.append("no status macros found in HarkenDevelopment.h")
     if not table:
         failures.append("no status rows found in PreviewAbiAllocation.md")
 
     for name in sorted(set(header) - set(table)):
         failures.append(
-            "%s = %d is defined in PreviewAbi.h but has no row in "
+            "%s = %d is defined in HarkenDevelopment.h but has no row in "
             "PreviewAbiAllocation.md" % (name, header[name]))
     for name in sorted(set(table) - set(header)):
         failures.append(
             "%s = %d has a row in PreviewAbiAllocation.md but is not defined in "
-            "PreviewAbi.h" % (name, table[name]))
+            "HarkenDevelopment.h" % (name, table[name]))
     for name in sorted(set(header) & set(table)):
         if header[name] != table[name]:
             failures.append(
-                "%s is %d in PreviewAbi.h and %d in PreviewAbiAllocation.md" %
+                "%s is %d in HarkenDevelopment.h and %d in PreviewAbiAllocation.md" %
                 (name, header[name], table[name]))
 
     values = sorted(table.values())

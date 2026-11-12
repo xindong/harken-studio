@@ -7,6 +7,7 @@
 #define HARKEN_BINDING_ABI_PIN_H
 
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include <cstddef>
 #include <cstdint>

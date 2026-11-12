@@ -1,3 +1,4 @@
+#include <harken/HarkenDevelopment.h>
 #include "UnitTest/CanonicalPackSetActivate.h"
 #include "AllocationProbe.h"
 #include "Common/ObjectIdTestSupport.h"

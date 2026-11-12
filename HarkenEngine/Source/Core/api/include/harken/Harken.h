@@ -1486,13 +1486,6 @@ typedef struct VnSnapshot {
     float busChannelPeaks[VN_SNAPSHOT_MAX_BUSES * VN_MAX_CHANNELS];
 } VnSnapshot;
 
-/* Fills the caller's snapshot from the audio-side published double buffer
- * plus logic-owned counters. Never blocks the audio thread and never
- * touches audio-mutable state outside the published buffer. NULL or a
- * structSize mismatch is VN_INVALID_ARG; no engine is
- * VN_NOT_INITIALIZED. */
-VnResult Vn_CaptureSnapshot(VnSnapshot* outSnapshot);
-
 typedef VnObjectId VnAttenuationId;
 
 /* Values for VnAttenuationDesc.rolloff: how the built-in distance rolloff
@@ -1843,11 +1836,6 @@ typedef struct VnInitPackInspectReport {
     uint64_t semanticFingerprint;
 } VnInitPackInspectReport;
 
-/* Legal before Vn_Init. Does not create an engine, install partitions, or
- * retain bytes after return. */
-VnResult Vn_InspectInitPack(const VnPackLoadDesc* desc,
-                            VnInitPackInspectReport* outReport);
-
 #define VN_PACK_PREVIEW_UNSUPPORTED ((uint32_t)0u)
 #define VN_PACK_PREVIEW_SOUND ((uint32_t)1u)
 #define VN_PACK_PREVIEW_RANDOM_SOUNDS ((uint32_t)2u)
@@ -1937,18 +1925,6 @@ typedef struct VnPackInspectReportV1 {
     uint32_t mediaCount;
     uint32_t reserved0;
 } VnPackInspectReportV1;
-
-/* Legal before Init; borrows immutable inputs only for this call. Uses the
- * shipping decoder and property fold. No engine or media installation occurs.
- * A zero names.projectId discovers the actual project from the Pack; a nonzero
- * value must match. Activation always requires an explicit project identity.
- * Zero capacities with null arrays query required counts. Otherwise every
- * capacity must suffice; VN_PACK_RESIDENT_CAPACITY writes only the report.
- * Unsupported preview is a successful inspection with zero occurrences.
- * Fixed gain is the authored source/output chain, not a mixed DSP result.
- * Only flagged duration/gain fields are known. No decoder pointers escape. */
-VnResult Vn_InspectCanonicalPackV1(const VnPackInspectDescV1* desc,
-                                  VnPackInspectReportV1* outReport);
 
 typedef uint32_t VnCurrentWorldLoadStatus;
 
@@ -2438,37 +2414,6 @@ typedef struct VnEffectParameterCapability {
     float clampMax;
     uint32_t reserved0;
 } VnEffectParameterCapability;
-
-/* Captures the generated built-in effect registry without allocation.
- * Always writes *requiredCount; writes min(capacity, requiredCount) rows and
- * returns VN_OK when truncated. A NULL requiredCount, a NULL out with nonzero
- * capacity, or an unknown row vintage is VN_INVALID_ARG. No initialized engine
- * is VN_NOT_INITIALIZED. */
-VnResult Vn_CaptureEffectCapabilities(VnEffectCapability* out,
-                                      uint32_t capacity,
-                                      uint32_t* requiredCount);
-
-/* Captures generated parameter metadata using the same buffer and refusal
- * contract as Vn_CaptureEffectCapabilities. */
-VnResult Vn_CaptureEffectParameterCapabilities(
-    VnEffectParameterCapability* out, uint32_t capacity,
-    uint32_t* requiredCount);
-
-VnResult Vn_CaptureEffectDynamicCapabilities(
-    VnEffectDynamicCapability* out, uint32_t capacity,
-    uint32_t* requiredCount);
-
-VnResult Vn_CaptureEffectDynamicParameterCapabilities(
-    VnEffectDynamicParameterCapability* out, uint32_t capacity,
-    uint32_t* requiredCount);
-
-VnResult Vn_CaptureEffectDynamicRoutes(VnEffectDynamicRouteInfo* out,
-                                       uint32_t capacity,
-                                       uint32_t* requiredCount);
-
-VnResult Vn_CaptureCompressorRuntimeInfo(VnCompressorRuntimeInfo* out,
-                                         uint32_t capacity,
-                                         uint32_t* requiredCount);
 
 /* Installs a built-in effect into one of a voice's insert-effect slots. The
  * instance is taken from the effect type's preallocated pool and configured on
@@ -3225,40 +3170,6 @@ VnResult Vn_ReplaceAttenuation(VnAttenuationId id,
  * branch per API call on the logic thread and nothing on the audio thread.
  * File I/O runs buffered on the logic thread (the pack-load precedent). */
 
-/* Starts capturing a session trace into utf8Path (UTF-8, created or
- * truncated). Start gate: a trace must begin from a reconstructible origin,
- * so the call is accepted only before the first STATEFUL API call after
- * Vn_Init — stateful meaning anything that mutates engine content or
- * playback (content loads, bus creation, Action posts, value writes, replaces).
- * Queries (Vn_CaptureSnapshot, Vn_QueryActionFiring), Vn_Update, and
- * Vn_TraceStart itself are not stateful. A later start is refused
- * VN_TRACE_TOO_LATE: replaying a journal that begins mid-state would
- * require a full state bundle, a recorded leave-open for a future trace
- * format version. Refusals: NULL path is VN_INVALID_ARG; a trace already
- * capturing is VN_IN_USE; a file that cannot be created is
- * VN_BAD_TRACE_FILE (the engine is unaffected). An accepted start clears
- * the sticky traceFailed snapshot flag. A write failure mid-session stops
- * the trace, keeps the engine running, and surfaces as traceFailed plus a
- * log-ring record. API calls issued from inside a notification or log
- * callback are journaled at their real ordinal (inside the enclosing
- * Vn_Update's barrier pair) and are replayed after that update returns — a
- * session whose callbacks mutate state mid-update may replay with that
- * reordering; such traces are flagged, and the replayer completes them as
- * a LIMITED deterministic replay: it warns, still renders and captures,
- * and exits with a distinct status (0 = ordinary deterministic replay,
- * 3 = limited replay, 4 = content-hash refusal), so automation can never
- * read a limited run as ordinary proof of the recorded interleaving.
- * Logic thread only. */
-VnResult Vn_TraceStart(const char* utf8Path);
-
-/* Stops the active session trace, writes the end marker, flushes, and
- * closes the file. Stopping when no trace is active is a benign no-op
- * returning VN_OK. A flush failure here surfaces exactly like a mid-session
- * write failure (traceFailed + log record); the call still returns VN_OK.
- * Vn_Term with a trace still active performs this stop implicitly. Logic
- * thread only. */
-VnResult Vn_TraceStop(void);
-
 /* Multichannel output: per-bus output layout and downmix matrix. Beyond
  * stereo, the engine renders every bus at the mix layout (VnConfig.
  * mixChannelLayout) and folds to a narrower layout at two boundaries — the
@@ -3654,32 +3565,6 @@ typedef struct VnPropertyBindingInfo {
     float currentInput;         /* Variable value at the row's scope */
     float currentContribution;  /* curve output, target domain */
 } VnPropertyBindingInfo;
-
-/* Captures one row per active property target — every bus or live-voice
- * target the property system is currently driving or has driven (any
- * combine slot active, a publication pending, a binding feeding it, or a
- * committed value differing from its base). Enumeration is deterministic
- * within one call — bus rows in creation order, then live-voice rows —
- * but the order is not a contract. Always writes *requiredCount; writes
- * min(capacity, requiredCount) rows and returns VN_OK even when
- * truncated (truncation is reported via *requiredCount, counted, and
- * logged with a named code). Refusals: a NULL requiredCount, a NULL out
- * with nonzero capacity, or an out[0].structSize that is not a known row
- * vintage is VN_INVALID_ARG; no engine is VN_NOT_INITIALIZED. Never
- * allocates; never touches audio-thread state. Logic thread only. */
-VnResult Vn_CapturePropertyTargets(VnPropertyTargetInfo* out,
-                                   uint32_t capacity,
-                                   uint32_t* requiredCount);
-
-/* Captures one row per binding attachment and per binding instance:
- * every attachment pool entry (bus and voice scope), every live voice's
- * definition-backed instance, and every instance identity held by a
- * parked voice or pinned by a pending-start voice (flagged PENDING).
- * Same buffer, truncation, refusal, and threading contract as
- * Vn_CapturePropertyTargets. */
-VnResult Vn_CapturePropertyBindings(VnPropertyBindingInfo* out,
-                                    uint32_t capacity,
-                                    uint32_t* requiredCount);
 
 /* Runtime Monitor public contract, first vintage. Result codes and this
  * version of each VnMonitor* layout are frozen; later Monitor fields may
@@ -4801,7 +4686,6 @@ typedef struct VnMonitorMeasurementRequest {
     uint32_t reserved1;
 } VnMonitorMeasurementRequest;
 
-
 typedef struct VnMonitorSessionFileHeader {
     uint32_t structSize;
     uint32_t formatMajor;
@@ -5237,123 +5121,6 @@ typedef struct VnMonitorHostRegistrationV2 {
     uint8_t path[256];
     uint8_t scene[128];
 } VnMonitorHostRegistrationV2;
-
-VnResult Vn_MonitorRegisterHostV2(const VnMonitorHostRegistrationV2* desc);
-VnResult Vn_MonitorBeginHostSession(VnMonitorHostSessionV1* outSession);
-VnResult Vn_MonitorEndHostSession(uint64_t engineInstance, uint64_t sdkSession);
-VnResult Vn_MonitorRegisterHost(const VnMonitorHostRegistrationV1* desc);
-
-VnResult Vn_MonitorGetCapabilities(VnMonitorCapabilities* outCapabilities);
-VnResult Vn_MonitorOpenSession(const VnMonitorSessionDesc* desc,
-                               VnMonitorSessionHandle* outHandle);
-VnResult Vn_MonitorCloseSession(VnMonitorSessionHandle handle);
-VnResult Vn_MonitorOpenEventSession(const VnMonitorSessionDesc* desc,
-                                    VnMonitorSessionHandle* outHandle);
-VnResult Vn_MonitorSealEventSession(VnMonitorSessionHandle handle);
-VnResult Vn_MonitorGetEventSessionStatus(VnMonitorSessionHandle handle,
-                                         VnMonitorEventSessionStatus* outStatus);
-VnResult Vn_MonitorGetSubscriptionStatus(VnMonitorSessionHandle handle,
-                                         VnMonitorSubscriptionStatus* outStatus);
-VnResult Vn_MonitorCaptureRegistry(uint32_t kind,
-                                   void* out,
-                                   uint32_t capacityBytes,
-                                   uint32_t* requiredBytes,
-                                   uint64_t* revision);
-VnResult Vn_MonitorRequestStateCut(VnMonitorSessionHandle handle,
-                                   const VnMonitorStateCutDesc* desc,
-                                   uint64_t* outStateCutId);
-VnResult Vn_MonitorGetStateCutStatus(VnMonitorSessionHandle handle,
-                                     uint64_t stateCutId,
-                                     VnMonitorStateCutStatus* outStatus);
-VnResult Vn_MonitorAcquireCaptureControl(VnMonitorSessionHandle handle,
-                                         VnMonitorCaptureControlStatus* outStatus);
-VnResult Vn_MonitorReleaseCaptureControl(VnMonitorSessionHandle handle,
-                                         uint64_t leaseGeneration);
-VnResult Vn_MonitorGetCaptureControlStatus(VnMonitorSessionHandle handle,
-                                           VnMonitorCaptureControlStatus* outStatus);
-VnResult Vn_MonitorValidateCapturePlan(VnMonitorSessionHandle handle,
-                                       uint64_t leaseGeneration,
-                                       const VnMonitorCapturePlan* plan,
-                                       VnMonitorEffectiveCapturePlan* outAccepted);
-VnResult Vn_MonitorApplyCapturePlan(VnMonitorSessionHandle handle,
-                                    uint64_t leaseGeneration,
-                                    const VnMonitorCapturePlan* plan,
-                                    VnMonitorEffectiveCapturePlan* outAccepted);
-VnResult Vn_MonitorStopCapture(VnMonitorSessionHandle handle,
-                               uint64_t leaseGeneration,
-                               VnMonitorEffectiveCapturePlan* outResult);
-VnResult Vn_MonitorGetEffectiveCapturePlan(VnMonitorSessionHandle handle,
-                                           uint64_t capturePlanGeneration,
-                                           VnMonitorEffectiveCapturePlan* outPlan);
-VnResult Vn_MonitorPoll(VnMonitorSessionHandle handle,
-                        const VnMonitorPollDesc* desc,
-                        VnMonitorPollResult* outResult);
-VnResult Vn_MonitorGetConsumerStatus(VnMonitorSessionHandle handle,
-                                     VnMonitorDropSummary* outSummaries,
-                                     uint32_t capacity,
-                                     uint32_t* requiredCount);
-VnResult Vn_MonitorStartRecording(VnMonitorSessionHandle handle,
-                                  uint64_t leaseGeneration,
-                                  const VnMonitorRecordingDesc* desc);
-VnResult Vn_MonitorStopRecording(VnMonitorSessionHandle handle,
-                                 uint64_t leaseGeneration);
-VnResult Vn_MonitorGetRecordingStatus(VnMonitorSessionHandle handle,
-                                      VnMonitorRecordingStatus* outStatus);
-VnResult Vn_MonitorCompareSessions(const VnMonitorSessionCompareDesc* desc,
-                                   VnMonitorCompareResult* out);
-
-#define VN_REMOTE_DEFAULT_DISCOVERY_PORT 37840u
-
-enum {
-    VN_REMOTE_DISCOVERY_ENABLED = 1u,
-    VN_REMOTE_STOPPED = 0u,
-    VN_REMOTE_LISTENING = 1u,
-    VN_REMOTE_CONNECTED = 2u,
-    VN_REMOTE_FAILED = 3u
-};
-
-typedef struct VnRemoteConfig {
-    uint32_t structSize;
-    uint32_t tcpPort;
-    uint32_t discoveryPort;
-    uint32_t flags;
-    const char* bindAddress;
-    const char* applicationName;
-    const char* projectName;
-    uint32_t queueBytes;
-    uint32_t maxCommandsPerUpdate;
-    uint32_t requestTimeoutMs;
-    uint32_t reserved0;
-} VnRemoteConfig;
-
-typedef struct VnRemoteStatus {
-    uint32_t structSize;
-    uint32_t state;
-    uint32_t tcpPort;
-    uint32_t discoveryPort;
-    uint32_t processId;
-    uint32_t protocolMajor;
-    uint32_t protocolMinor;
-    uint32_t clientCount;
-    VnResult lastResult;
-    uint32_t reserved0;
-    uint64_t instanceId;
-    uint64_t sessionId;
-    uint64_t capabilities;
-    uint64_t receivedCommands;
-    uint64_t sentFrames;
-    uint64_t droppedFrames;
-    char bindAddress[64];
-    char applicationName[128];
-    char projectName[128];
-    char engineVersion[32];
-    char buildId[128];
-    char platform[32];
-} VnRemoteStatus;
-
-VnResult Vn_RemoteStart(const VnRemoteConfig* config);
-VnResult Vn_RemoteStop(void);
-VnResult Vn_RemoteGetStatus(VnRemoteStatus* outStatus);
 
 #ifdef __cplusplus
 } /* extern "C" */

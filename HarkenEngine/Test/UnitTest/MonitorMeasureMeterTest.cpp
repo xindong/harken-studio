@@ -1,5 +1,6 @@
 #include "Common/ObjectIdTestSupport.h"
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include "MonitorCaptureHubTestHooks.h"
 #include "MonitorDerivedDispatch.h"
@@ -8,7 +9,7 @@
 #include "Common/TestUtil.h"
 #include "monitor_fixture_decode.h"
 #include "harken/core/AllocGuard.h"
-#include "harken/core/MonitorMeterReduce.h"
+#include "MonitorMeterReduce.h"
 
 #include <gtest/gtest.h>
 

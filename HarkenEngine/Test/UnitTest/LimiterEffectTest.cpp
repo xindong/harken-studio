@@ -12,6 +12,7 @@
 // attenuation follows a one-pole release toward unity.
 #include "Common/ObjectIdTestSupport.h"
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include "Common/TestUtil.h"
 #include "harken/core/FloatMode.h"

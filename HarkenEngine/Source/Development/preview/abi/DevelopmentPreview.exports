@@ -1,7 +1,7 @@
 ; The development preview surface's declared entry names, and the tokens that
 ; must never reach a gameplay product.
 ;
-; Source: HarkenEngine/Source/Development/preview/include/harken_preview/PreviewAbi.h
+; Source: HarkenEngine/Source/Development/include/harken/HarkenDevelopment.h
 ; Check:  py -3 HarkenEngine/Source/Development/preview/abi/check_preview_isolation.py
 ;
 ; Why a manifest for a static library. Nothing links this file: harken_preview is

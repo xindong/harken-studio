@@ -8,6 +8,7 @@
 // forced public/render divergence so it cannot pass by coincidence), the
 // logic-side notification queue's drop-oldest counter, the config vintage-6
 // acceptance/refusal/defaults, and snapshot old-size compatibility.
+#include <harken/HarkenDevelopment.h>
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
 

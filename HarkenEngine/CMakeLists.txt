@@ -4,6 +4,7 @@
 # defined here; no other product directory is read.
 
 set(HARKEN_CORE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core)
+set(HARKEN_DEVELOPMENT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/Source/Development)
 set(HARKEN_THIRD_PARTY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty)
 
 include(GNUInstallDirs)
@@ -51,37 +52,20 @@ if(HARKEN_BUILD_TOOLS AND NOT Python3_Interpreter_FOUND)
     message(FATAL_ERROR "HARKEN_BUILD_TOOLS requires a Python 3 interpreter")
 endif()
 
-# The runtime module sources, factored into a variable so the static library
-# and the optional shared library for the C# binding build from one list.
-set(HARKEN_RUNTIME_SOURCES
-    ${HARKEN_CORE_DIR}/remote/src/RemoteRuntime.cpp
+# Core is everything a shipping game needs; Development adds observation,
+# tracing, remote connection, inspection and live project editing.
+set(HARKEN_CORE_SOURCES
     ${HARKEN_CORE_DIR}/api/src/DeviceBackend.cpp
     ${HARKEN_CORE_DIR}/api/src/RealDeviceInitStage.cpp
     ${HARKEN_CORE_DIR}/api/src/MiniaudioImpl.cpp
-    ${HARKEN_CORE_DIR}/api/src/TraceCodec.cpp
-    ${HARKEN_CORE_DIR}/api/src/TraceRecorder.cpp
-    ${HARKEN_CORE_DIR}/api/src/MonitorApi.cpp
-    ${HARKEN_CORE_DIR}/api/src/MonitorCaptureHub.cpp
-    ${HARKEN_CORE_DIR}/api/src/MonitorSessionRecover.cpp
-    ${HARKEN_CORE_DIR}/api/src/MonitorSessionCompare.cpp
-    ${HARKEN_CORE_DIR}/api/src/MonitorDerivedDispatch.cpp
-    ${HARKEN_CORE_DIR}/api/src/MonitorWaveformHandler.cpp
-    ${HARKEN_CORE_DIR}/api/src/MonitorScopeHandler.cpp
-    ${HARKEN_CORE_DIR}/api/src/MonitorSpectrumHandler.cpp
-    ${HARKEN_CORE_DIR}/api/src/MonitorMeterHandler.cpp
     ${HARKEN_CORE_DIR}/api/src/HarkenApi.cpp
     ${HARKEN_CORE_DIR}/api/src/PlaybackReadiness.cpp
-    ${HARKEN_CORE_DIR}/api/src/PackInspection.cpp
-    ${HARKEN_CORE_DIR}/api/src/ProjectGenerationTransaction.cpp
+    ${HARKEN_CORE_DIR}/api/src/TopologySlotPlan.cpp
     ${HARKEN_CORE_DIR}/api/src/SignalPublication.cpp
     ${HARKEN_CORE_DIR}/api/src/PackVariablePublication.cpp
     ${HARKEN_CORE_DIR}/core/src/AllocGuard.cpp
     ${HARKEN_CORE_DIR}/core/src/StableRowStorage.cpp
     ${HARKEN_CORE_DIR}/core/src/MonitorRequest.cpp
-    ${HARKEN_CORE_DIR}/core/src/MonitorWaveformReduce.cpp
-    ${HARKEN_CORE_DIR}/core/src/MonitorScopeTrigger.cpp
-    ${HARKEN_CORE_DIR}/core/src/MonitorSpectrumFft.cpp
-    ${HARKEN_CORE_DIR}/core/src/MonitorMeterReduce.cpp
     ${HARKEN_CORE_DIR}/core/src/CpuClock.cpp
     ${HARKEN_CORE_DIR}/core/src/CurrentSelection.cpp
     ${HARKEN_CORE_DIR}/core/src/CurrentSelectionMemory.cpp
@@ -171,6 +155,28 @@ set(HARKEN_RUNTIME_SOURCES
     ${HARKEN_CORE_DIR}/render/src/FrontierTimelineFinalizer.cpp
     ${HARKEN_CORE_DIR}/render/src/ImmediateLaneTimelineFinalizer.cpp
 )
+
+set(HARKEN_DEVELOPMENT_SOURCES
+    ${HARKEN_DEVELOPMENT_DIR}/api/DevelopmentApi.cpp
+    ${HARKEN_DEVELOPMENT_DIR}/api/MonitorApi.cpp
+    ${HARKEN_DEVELOPMENT_DIR}/api/PackInspection.cpp
+    ${HARKEN_DEVELOPMENT_DIR}/generation/ProjectGenerationTransaction.cpp
+    ${HARKEN_DEVELOPMENT_DIR}/monitor/MonitorCaptureHub.cpp
+    ${HARKEN_DEVELOPMENT_DIR}/monitor/MonitorDerivedDispatch.cpp
+    ${HARKEN_DEVELOPMENT_DIR}/monitor/MonitorMeterHandler.cpp
+    ${HARKEN_DEVELOPMENT_DIR}/monitor/MonitorMeterReduce.cpp
+    ${HARKEN_DEVELOPMENT_DIR}/monitor/MonitorScopeHandler.cpp
+    ${HARKEN_DEVELOPMENT_DIR}/monitor/MonitorScopeTrigger.cpp
+    ${HARKEN_DEVELOPMENT_DIR}/monitor/MonitorSessionCompare.cpp
+    ${HARKEN_DEVELOPMENT_DIR}/monitor/MonitorSessionRecover.cpp
+    ${HARKEN_DEVELOPMENT_DIR}/monitor/MonitorSpectrumFft.cpp
+    ${HARKEN_DEVELOPMENT_DIR}/monitor/MonitorSpectrumHandler.cpp
+    ${HARKEN_DEVELOPMENT_DIR}/monitor/MonitorWaveformHandler.cpp
+    ${HARKEN_DEVELOPMENT_DIR}/monitor/MonitorWaveformReduce.cpp
+    ${HARKEN_DEVELOPMENT_DIR}/remote/src/RemoteRuntime.cpp
+    ${HARKEN_DEVELOPMENT_DIR}/trace/TraceCodec.cpp
+    ${HARKEN_DEVELOPMENT_DIR}/trace/TraceRecorder.cpp
+)
 # Only this isolated kernel may require AVX; startup and fallback stay baseline.
 if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC" AND
    MSVC_CXX_ARCHITECTURE_ID STREQUAL "x64")
@@ -182,8 +188,6 @@ endif()
 
 # Private include dirs shared by the static and shared runtime libraries.
 set(HARKEN_RUNTIME_PRIVATE_INCLUDES
-    ${HARKEN_CORE_DIR}/remote/include
-    ${HARKEN_CORE_DIR}/remote/src
     ${HARKEN_BI_GENERATED_DIR}
     ${HARKEN_PACK_FORMAT_INCLUDE_DIR}
     ${HARKEN_CORE_DIR}/core/include
@@ -192,6 +196,14 @@ set(HARKEN_RUNTIME_PRIVATE_INCLUDES
     ${HARKEN_CORE_DIR}/param/include
     ${HARKEN_CORE_DIR}/render/include
     ${HARKEN_THIRD_PARTY_DIR}/miniaudio
+)
+set(HARKEN_DEVELOPMENT_PRIVATE_INCLUDES
+    ${HARKEN_DEVELOPMENT_DIR}/include
+    ${HARKEN_DEVELOPMENT_DIR}/generation
+    ${HARKEN_DEVELOPMENT_DIR}/monitor
+    ${HARKEN_DEVELOPMENT_DIR}/remote/include
+    ${HARKEN_DEVELOPMENT_DIR}/remote/src
+    ${HARKEN_DEVELOPMENT_DIR}/trace
 )
 
 # Platform link requirements of the miniaudio device backend. CI and every
@@ -251,8 +263,9 @@ if(HARKEN_BUILD_TOOLS OR HARKEN_BUILD_RUNTIME_UNIT_TESTS OR
 endif()
 
 if(HARKEN_BUILD_INTERNAL_RUNTIME)
-add_library(harken_core STATIC ${HARKEN_RUNTIME_SOURCES})
+add_library(harken_core STATIC ${HARKEN_CORE_SOURCES} ${HARKEN_DEVELOPMENT_SOURCES})
 target_link_libraries(harken_core PRIVATE harken_buildinfo)
+target_compile_definitions(harken_core PUBLIC HARKEN_ENGINE_DEV=1)
 set_target_properties(harken_core PROPERTIES OUTPUT_NAME HarkenCore)
 if(HARKEN_BUILD_RUNTIME_UNIT_TESTS)
     # Native lifetime observation belongs to the test-linked static runtime.
@@ -266,8 +279,9 @@ if(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
         HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
 endif()
 target_include_directories(harken_core
-    PUBLIC ${HARKEN_CORE_DIR}/api/include
+    PUBLIC ${HARKEN_CORE_DIR}/api/include ${HARKEN_DEVELOPMENT_DIR}/include
     PRIVATE ${HARKEN_RUNTIME_PRIVATE_INCLUDES}
+            ${HARKEN_DEVELOPMENT_PRIVATE_INCLUDES}
             ${HARKEN_CORE_DIR}/api/src
 )
 if(HARKEN_PLATFORM_AUDIO_LIBS)
@@ -283,16 +297,17 @@ endif()
 
 add_library(harken_remote_protocol INTERFACE)
 target_include_directories(harken_remote_protocol INTERFACE
-    ${HARKEN_CORE_DIR}/remote/include)
+    ${HARKEN_DEVELOPMENT_DIR}/remote/include)
 
 if(HARKEN_BUILD_RUNTIME_UNIT_TESTS)
-    add_library(harken_core_hub_absent STATIC ${HARKEN_RUNTIME_SOURCES})
+    add_library(harken_core_hub_absent STATIC ${HARKEN_CORE_SOURCES} ${HARKEN_DEVELOPMENT_SOURCES})
     target_link_libraries(harken_core_hub_absent PRIVATE harken_buildinfo)
     target_include_directories(harken_core_hub_absent
-        PUBLIC ${HARKEN_CORE_DIR}/api/include
+        PUBLIC ${HARKEN_CORE_DIR}/api/include ${HARKEN_DEVELOPMENT_DIR}/include
         PRIVATE ${HARKEN_RUNTIME_PRIVATE_INCLUDES}
+                ${HARKEN_DEVELOPMENT_PRIVATE_INCLUDES}
                 ${HARKEN_CORE_DIR}/api/src)
-    target_compile_definitions(harken_core_hub_absent PRIVATE HARKEN_MONITOR_HUB_ABSENT)
+    target_compile_definitions(harken_core_hub_absent PUBLIC HARKEN_ENGINE_DEV=1 PRIVATE HARKEN_MONITOR_HUB_ABSENT)
     if(HARKEN_ENABLE_STAGE_TAPS)
         target_compile_definitions(harken_core_hub_absent PRIVATE HARKEN_ENABLE_STAGE_TAPS)
     endif()
@@ -317,15 +332,14 @@ set(HARKEN_ENGINE_PUBLIC_HEADERS
     ${HARKEN_CORE_DIR}/api/include/harken/Harken.h
     ${HARKEN_CORE_DIR}/api/include/harken/ObjectId.h)
 set(HARKEN_ENGINE_DEV_PUBLIC_HEADERS
-    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Development/preview/include/harken_preview/PreviewAbi.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Development/preview/include/harken_preview/PreviewProject.h)
+    ${HARKEN_DEVELOPMENT_DIR}/include/harken/HarkenDevelopment.h)
 foreach(_header IN LISTS HARKEN_ENGINE_PUBLIC_HEADERS)
     get_filename_component(_name ${_header} NAME)
     configure_file(${_header} ${HARKEN_ENGINE_PUBLIC_INCLUDE_DIR}/harken/${_name} COPYONLY)
 endforeach()
 foreach(_header IN LISTS HARKEN_ENGINE_DEV_PUBLIC_HEADERS)
     get_filename_component(_name ${_header} NAME)
-    configure_file(${_header} ${HARKEN_ENGINE_DEV_PUBLIC_INCLUDE_DIR}/harken_preview/${_name} COPYONLY)
+    configure_file(${_header} ${HARKEN_ENGINE_DEV_PUBLIC_INCLUDE_DIR}/harken/${_name} COPYONLY)
 endforeach()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
@@ -335,7 +349,7 @@ else()
 endif()
 
 function(harken_add_engine_edition target output_name export_name)
-    add_library(${target} ${HARKEN_ENGINE_LIBRARY_TYPE} ${HARKEN_RUNTIME_SOURCES} ${ARGN})
+    add_library(${target} ${HARKEN_ENGINE_LIBRARY_TYPE} ${HARKEN_CORE_SOURCES} ${ARGN})
     add_library(Harken::${export_name} ALIAS ${target})
     target_link_libraries(${target} PRIVATE $<BUILD_INTERFACE:harken_buildinfo>)
     target_include_directories(${target}
@@ -362,7 +376,7 @@ function(harken_add_engine_edition target output_name export_name)
         target_link_libraries(${target} PRIVATE ${HARKEN_PLATFORM_AUDIO_LIBS})
     endif()
     if(WIN32)
-        target_link_libraries(${target} PRIVATE advapi32 ws2_32 iphlpapi)
+        target_link_libraries(${target} PRIVATE advapi32)
     endif()
     set_target_properties(${target} PROPERTIES
         OUTPUT_NAME ${output_name}
@@ -384,12 +398,16 @@ endif()
 if(HARKEN_BUILD_ENGINE_DEV)
     set(_harken_preview_dir ${CMAKE_CURRENT_SOURCE_DIR}/Source/Development/preview)
     harken_add_engine_edition(harken_engine_dev HarkenEngineDev EngineDev
+        ${HARKEN_DEVELOPMENT_SOURCES}
         ${_harken_preview_dir}/src/PreviewAbi.cpp
         ${_harken_preview_dir}/src/PreviewAbiLayout.cpp
         ${_harken_preview_dir}/src/PreviewProject.cpp)
     target_include_directories(harken_engine_dev
         PUBLIC $<BUILD_INTERFACE:${HARKEN_ENGINE_DEV_PUBLIC_INCLUDE_DIR}>
-        PRIVATE ${_harken_preview_dir}/include)
+        PRIVATE ${HARKEN_DEVELOPMENT_PRIVATE_INCLUDES})
+    if(WIN32)
+        target_link_libraries(harken_engine_dev PRIVATE ws2_32 iphlpapi)
+    endif()
     target_compile_definitions(harken_engine_dev PRIVATE
         HARKEN_ENGINE_DEV=1
         HARKEN_DEVELOPMENT_PREVIEW=$<BOOL:${HARKEN_DEVELOPMENT_PREVIEW}>)
@@ -398,7 +416,7 @@ if(HARKEN_BUILD_ENGINE_DEV)
     list(TRANSFORM _dev_exports STRIP)
     foreach(_header IN LISTS HARKEN_ENGINE_DEV_PUBLIC_HEADERS)
         file(READ "${_header}" _dev_header)
-        string(REGEX MATCHALL "VnPreview_[A-Za-z0-9_]+[ \r\n]*\\(" _dev_entries "${_dev_header}")
+        string(REGEX MATCHALL "Vn(Preview)?_[A-Za-z0-9_]+[ \r\n]*\\(" _dev_entries "${_dev_header}")
         foreach(_entry IN LISTS _dev_entries)
             string(REGEX REPLACE "[ \r\n]*\\(" "" _entry "${_entry}")
             list(APPEND _dev_exports "${_entry}")
@@ -447,7 +465,7 @@ install(FILES ${HARKEN_PACK_FORMAT_HEADERS}
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/harken_pack)
 if(TARGET harken_engine_dev)
     install(FILES ${HARKEN_ENGINE_DEV_PUBLIC_HEADERS}
-        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/harken_preview)
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/harken)
 endif()
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/api/abi/generated/harken_abi_manifest.g.json
     DESTINATION ${CMAKE_INSTALL_DATADIR}/HarkenEngine
@@ -469,7 +487,7 @@ install(FILES
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/HarkenEngine)
 
 if(HARKEN_BUILD_RT_QUALIFICATION)
-    set(_harken_rt_qualification_sources ${HARKEN_RUNTIME_SOURCES})
+    set(_harken_rt_qualification_sources ${HARKEN_CORE_SOURCES} ${HARKEN_DEVELOPMENT_SOURCES})
     if(HARKEN_RT_PROBE_DEFINITIONS)
         list(APPEND _harken_rt_qualification_sources
             ${HARKEN_CORE_DIR}/core/src/RtProbe.cpp)
@@ -478,9 +496,11 @@ if(HARKEN_BUILD_RT_QUALIFICATION)
         ${_harken_rt_qualification_sources})
     target_link_libraries(harken_core_rt_qualification PRIVATE harken_buildinfo)
     target_include_directories(harken_core_rt_qualification
-        PUBLIC ${HARKEN_CORE_DIR}/api/include
+        PUBLIC ${HARKEN_CORE_DIR}/api/include ${HARKEN_DEVELOPMENT_DIR}/include
         PRIVATE ${HARKEN_RUNTIME_PRIVATE_INCLUDES}
+                ${HARKEN_DEVELOPMENT_PRIVATE_INCLUDES}
                 ${HARKEN_CORE_DIR}/api/src)
+    target_compile_definitions(harken_core_rt_qualification PUBLIC HARKEN_ENGINE_DEV=1)
     target_compile_definitions(harken_core_rt_qualification PRIVATE
         HARKEN_RT_QUALIFICATION
         ${HARKEN_RT_PROBE_DEFINITIONS})

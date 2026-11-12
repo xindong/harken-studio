@@ -8,6 +8,7 @@
 // within 1e-6 of the closed form; 1e-5 leaves headroom while failing on any
 // wrong topology (a missed or doubled gain level shifts the sum by a factor
 // of 2 here).
+#include <harken/HarkenDevelopment.h>
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
 

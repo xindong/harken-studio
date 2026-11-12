@@ -1,3 +1,4 @@
+#include <harken/HarkenDevelopment.h>
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
 #include "Common/StreamBuilder.h"

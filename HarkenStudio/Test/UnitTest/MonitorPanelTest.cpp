@@ -1,5 +1,5 @@
 #include <harken/Harken.h>
-#include <harken_preview/PreviewProject.h>
+#include <harken/HarkenDevelopment.h>
 #include "Widgets/Monitor/MonitorPanel.h"
 #include "Widgets/Selector/ObjectRefNavigation.h"
 #include "AssetPipeline/AssetRegistry.h"

@@ -14,6 +14,7 @@
 // on; the four snapshot counters and the per-outcome log-ring records; and
 // one all-or-nothing refusal per verb proving the old content stays fully in
 // force.
+#include <harken/HarkenDevelopment.h>
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/StreamBuilder.h"
 #include "Common/TestUtil.h"

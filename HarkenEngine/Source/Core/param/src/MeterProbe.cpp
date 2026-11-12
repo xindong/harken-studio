@@ -1391,15 +1391,15 @@ VnResult InstallMeterProbe(Engine& engine, VnObjectId probeStableId,
     std::uint32_t generation = 0;
     const VnResult result = engine.meterProbes.Install(
         engine, probeStableId, busId, tap, attackMs, releaseMs, &generation);
-    if ((engine.trace == nullptr || !engine.trace->Active()) &&
+    if ((engine.trace == nullptr || !harken::tracing::Active(engine.trace.get())) &&
         result != VN_OK) {
         engine.traceOriginWorldProbeOnly = false;
     }
     if (installedGeneration != nullptr && result == VN_OK) {
         *installedGeneration = generation;
     }
-    if (engine.trace != nullptr && engine.trace->Active()) {
-        engine.trace->RecordMeterProbeInstall(
+    if (engine.trace != nullptr && harken::tracing::Active(engine.trace.get())) {
+        harken::tracing::RecordMeterProbeInstall(engine.trace.get(), 
             probeStableId, busId, tap, attackMs, releaseMs, generation, result);
     }
     return result;
@@ -1408,13 +1408,13 @@ VnResult InstallMeterProbe(Engine& engine, VnObjectId probeStableId,
 VnResult UninstallMeterProbe(Engine& engine, VnObjectId probeStableId,
                              std::uint32_t expectedGeneration) {
     engine.statefulCallSeen = true;
-    if (engine.trace == nullptr || !engine.trace->Active()) {
+    if (engine.trace == nullptr || !harken::tracing::Active(engine.trace.get())) {
         engine.traceOriginWorldProbeOnly = false;
     }
     const VnResult result = engine.meterProbes.Uninstall(
         engine, probeStableId, expectedGeneration);
-    if (engine.trace != nullptr && engine.trace->Active()) {
-        engine.trace->RecordMeterProbeUninstall(
+    if (engine.trace != nullptr && harken::tracing::Active(engine.trace.get())) {
+        harken::tracing::RecordMeterProbeUninstall(engine.trace.get(), 
             probeStableId, expectedGeneration, result);
     }
     return result;
@@ -1430,12 +1430,12 @@ VnResult DefineMeterProbeBinding(
     const VnResult result = engine.meterProbes.DefineBinding(
         engine, bindingId, probeStableId, probeGeneration, targetScope,
         targetId, points, handles, pointCount, transitionMs);
-    if ((engine.trace == nullptr || !engine.trace->Active()) &&
+    if ((engine.trace == nullptr || !harken::tracing::Active(engine.trace.get())) &&
         result != VN_OK) {
         engine.traceOriginWorldProbeOnly = false;
     }
-    if (engine.trace != nullptr && engine.trace->Active()) {
-        engine.trace->RecordMeterProbeBindingDefine(
+    if (engine.trace != nullptr && harken::tracing::Active(engine.trace.get())) {
+        harken::tracing::RecordMeterProbeBindingDefine(engine.trace.get(), 
             bindingId, probeStableId, probeGeneration, targetScope, targetId,
             points, handles, pointCount, transitionMs, result);
     }
@@ -1445,13 +1445,13 @@ VnResult DefineMeterProbeBinding(
 VnResult UndefineMeterProbeBinding(Engine& engine,
                                    VnObjectId bindingId) {
     engine.statefulCallSeen = true;
-    if (engine.trace == nullptr || !engine.trace->Active()) {
+    if (engine.trace == nullptr || !harken::tracing::Active(engine.trace.get())) {
         engine.traceOriginWorldProbeOnly = false;
     }
     const VnResult result =
         engine.meterProbes.UndefineBinding(engine, bindingId);
-    if (engine.trace != nullptr && engine.trace->Active()) {
-        engine.trace->RecordMeterProbeBindingUndefine(bindingId, result);
+    if (engine.trace != nullptr && harken::tracing::Active(engine.trace.get())) {
+        harken::tracing::RecordMeterProbeBindingUndefine(engine.trace.get(), bindingId, result);
     }
     return result;
 }
@@ -1463,14 +1463,14 @@ VnResult AttachMeterProbeBinding(Engine& engine, VnObjectId bindingId,
     engine.statefulCallSeen = true;
     const VnResult result = engine.meterProbes.Attach(
         engine, bindingId, targetScope, targetStableId, targetInstanceHandle, targetGeneration);
-    if ((engine.trace == nullptr || !engine.trace->Active()) &&
+    if ((engine.trace == nullptr || !harken::tracing::Active(engine.trace.get())) &&
         result != VN_OK) {
         engine.traceOriginWorldProbeOnly = false;
     }
-    if (engine.trace != nullptr && engine.trace->Active()) {
+    if (engine.trace != nullptr && harken::tracing::Active(engine.trace.get())) {
         const MeterProbeAttachment attachment{bindingId, targetScope,
                                               targetStableId, targetInstanceHandle, targetGeneration};
-        engine.trace->RecordMeterProbeBindingAttachment(
+        harken::tracing::RecordMeterProbeBindingAttachment(engine.trace.get(), 
             kTraceRecordMeterProbeBindingAttach, attachment, result);
     }
     return result;
@@ -1481,15 +1481,15 @@ VnResult DetachMeterProbeBinding(Engine& engine, VnObjectId bindingId,
                                  VnObjectId targetStableId, VnVoiceHandle targetInstanceHandle,
                                  std::uint32_t targetGeneration) {
     engine.statefulCallSeen = true;
-    if (engine.trace == nullptr || !engine.trace->Active()) {
+    if (engine.trace == nullptr || !harken::tracing::Active(engine.trace.get())) {
         engine.traceOriginWorldProbeOnly = false;
     }
     const VnResult result = engine.meterProbes.Detach(
         engine, bindingId, targetScope, targetStableId, targetInstanceHandle, targetGeneration);
-    if (engine.trace != nullptr && engine.trace->Active()) {
+    if (engine.trace != nullptr && harken::tracing::Active(engine.trace.get())) {
         const MeterProbeAttachment attachment{bindingId, targetScope,
                                               targetStableId, targetInstanceHandle, targetGeneration};
-        engine.trace->RecordMeterProbeBindingAttachment(
+        harken::tracing::RecordMeterProbeBindingAttachment(engine.trace.get(), 
             kTraceRecordMeterProbeBindingDetach, attachment, result);
     }
     return result;

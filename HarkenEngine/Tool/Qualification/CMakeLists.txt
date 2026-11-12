@@ -62,6 +62,7 @@ target_compile_definitions(harken_rt_qualification PRIVATE
 
 target_include_directories(harken_rt_qualification PRIVATE
     ${HARKEN_CORE_DIR}/api/src
+    ${HARKEN_DEVELOPMENT_PRIVATE_INCLUDES}
     ${HARKEN_CORE_DIR}/core/include
     ${HARKEN_CORE_DIR}/dsp/include
     ${HARKEN_CORE_DIR}/media/include

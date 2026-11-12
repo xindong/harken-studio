@@ -92,22 +92,6 @@ struct MonitorLifecycleFacts {
     std::uint32_t notifyType = 0;
 };
 
-void ObserveMonitorLifecycle(MonitorLifecyclePhase phase,
-                             std::uint64_t instanceHandle,
-                             std::uint64_t instanceGeneration,
-                             std::uint64_t worldGeneration,
-                             VnObjectId stableId,
-                             std::uint64_t relatedPlayableHandle,
-                             std::uint64_t relatedActionHandle,
-                             std::uint32_t reason,
-                             std::uint8_t playableKind,
-                             std::uint64_t occurrence = 0,
-                             const MonitorLifecycleFacts& facts = {}) noexcept;
-
-// Called after a successful non-idempotent CurrentWorld install. Reads the
-// already-committed generation; does not drive world replacement.
-void ObserveMonitorCurrentWorld(std::uint64_t worldGeneration) noexcept;
-
 struct MonitorVariableResultFacts {
     MonitorRequestContext request{};
     MonitorEmitterOrigin emitterOrigin{};
@@ -124,8 +108,6 @@ struct MonitorVariableResultFacts {
     bool emitterScope = false;
 };
 
-void ObserveMonitorVariableResult(const MonitorVariableResultFacts& facts) noexcept;
-
 struct MonitorEffectFacts {
     std::uint32_t bypass01 = 0;
     std::uint32_t latencyFrames = 0;
@@ -133,32 +115,68 @@ struct MonitorEffectFacts {
     bool tailKnown = false;
 };
 
-void ObserveMonitorEffect(std::uint64_t instanceHandle,
-                          std::uint64_t instanceGeneration,
-                          VnObjectId stableId, std::uint32_t reason,
-                          const MonitorEffectFacts& facts) noexcept;
-
 struct MonitorBusFacts {
     std::uint32_t mute01 = 0;
     std::uint32_t solo01 = 0;
     VnObjectId routeBusId{};
 };
 
+#if HARKEN_ENGINE_DEV
+
+void ObserveMonitorLifecycle(MonitorLifecyclePhase phase,
+                             std::uint64_t instanceHandle,
+                             std::uint64_t instanceGeneration,
+                             std::uint64_t worldGeneration,
+                             VnObjectId stableId,
+                             std::uint64_t relatedPlayableHandle,
+                             std::uint64_t relatedActionHandle,
+                             std::uint32_t reason,
+                             std::uint8_t playableKind,
+                             std::uint64_t occurrence = 0,
+                             const MonitorLifecycleFacts& facts = {}) noexcept;
+// Called after a successful non-idempotent CurrentWorld install. Reads the
+// already-committed generation; does not drive world replacement.
+void ObserveMonitorCurrentWorld(std::uint64_t worldGeneration) noexcept;
+void ObserveMonitorVariableResult(const MonitorVariableResultFacts& facts) noexcept;
+void ObserveMonitorEffect(std::uint64_t instanceHandle,
+                          std::uint64_t instanceGeneration,
+                          VnObjectId stableId, std::uint32_t reason,
+                          const MonitorEffectFacts& facts) noexcept;
 void ObserveMonitorBus(std::uint64_t instanceHandle,
                        std::uint64_t instanceGeneration, VnObjectId stableId,
                        const MonitorBusFacts& facts) noexcept;
-
 void ObserveMonitorEffectRelease(std::uint64_t instanceHandle,
                                  std::uint64_t instanceGeneration,
                                  VnObjectId stableId,
                                  std::uint32_t reason) noexcept;
-
 void ObserveMonitorDspGap() noexcept;
 // Logic-owned supply snapshot. The sink may fill known playback associations;
 // those values remain attached to this ring after the ledger row retires.
 bool MonitorStreamObservationEnabled() noexcept;
 void ObserveMonitorStream(VnMonitorStreamFactV1& fact) noexcept;
 void ObserveMonitorSelectionUnavailable() noexcept;
+
+#else
+
+inline void ObserveMonitorLifecycle(MonitorLifecyclePhase, std::uint64_t, std::uint64_t,
+                                    std::uint64_t, VnObjectId, std::uint64_t,
+                                    std::uint64_t, std::uint32_t, std::uint8_t,
+                                    std::uint64_t = 0,
+                                    const MonitorLifecycleFacts& = {}) noexcept {}
+inline void ObserveMonitorCurrentWorld(std::uint64_t) noexcept {}
+inline void ObserveMonitorVariableResult(const MonitorVariableResultFacts&) noexcept {}
+inline void ObserveMonitorEffect(std::uint64_t, std::uint64_t, VnObjectId, std::uint32_t,
+                                 const MonitorEffectFacts&) noexcept {}
+inline void ObserveMonitorBus(std::uint64_t, std::uint64_t, VnObjectId,
+                              const MonitorBusFacts&) noexcept {}
+inline void ObserveMonitorEffectRelease(std::uint64_t, std::uint64_t, VnObjectId,
+                                        std::uint32_t) noexcept {}
+inline void ObserveMonitorDspGap() noexcept {}
+inline bool MonitorStreamObservationEnabled() noexcept { return false; }
+inline void ObserveMonitorStream(VnMonitorStreamFactV1&) noexcept {}
+inline void ObserveMonitorSelectionUnavailable() noexcept {}
+
+#endif
 
 } // namespace harken
 

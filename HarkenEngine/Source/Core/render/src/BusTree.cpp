@@ -3,7 +3,7 @@
 #include "harken/render/SignalRenderPlan.h"
 #include "harken/render/BusTree.h"
 
-#include "MonitorCaptureHub.h"
+#include "MonitorSeam.h"
 
 #include "harken/core/ChannelLayout.h"
 #include "harken/core/SnapshotBuffer.h"

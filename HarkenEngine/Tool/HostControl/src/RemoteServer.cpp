@@ -4,6 +4,7 @@
  * thread that owns the engine (plus thread-safe enqueue helpers shared
  * with the notification bridge, which Vn_Update invokes on that same
  * thread); the pipe itself lives entirely on the transport thread. */
+#include <harken/HarkenDevelopment.h>
 #include "harken_host_control/RemoteServer.h"
 
 #include "harken_host_control/WireDispatch.h"

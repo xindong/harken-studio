@@ -134,7 +134,7 @@ FUNCTION_KINDS = {
     "FUNCTION_TEMPLATE",
 }
 CALL_KINDS = {"CALL_EXPR"}
-RUNTIME_SOURCE_PREFIX = "HarkenEngine/Source/Core/"
+RUNTIME_SOURCE_PREFIX = ("HarkenEngine/Source/Core/", "HarkenEngine/Source/Development/")
 ROOT_SPECS = (
     {
         "qualifiedName": "harken::DeviceBackend::Impl::DataCallback",
@@ -550,9 +550,18 @@ def cmake_list_body(text: str, variable: str) -> list[str]:
     return tokens
 
 
+RUNTIME_SOURCE_TOKEN_ROOTS = {
+    "${HARKEN_CORE_DIR}/": "HarkenEngine/Source/Core",
+    "${HARKEN_DEVELOPMENT_DIR}/": "HarkenEngine/Source/Development",
+}
+
+
 def expand_runtime_source_token(token: str, repo_root: Path) -> Path:
-    prefix = "${HARKEN_CORE_DIR}/"
-    if not token.startswith(prefix):
+    prefix = next(
+        (key for key in RUNTIME_SOURCE_TOKEN_ROOTS if token.startswith(key)),
+        None,
+    )
+    if prefix is None:
         raise ClosureError(
             f"unsupported Runtime source token in CMake authority: {token}"
         )
@@ -560,7 +569,7 @@ def expand_runtime_source_token(token: str, repo_root: Path) -> Path:
     if not relative.endswith(".cpp"):
         raise ClosureError(f"Runtime source is not C++: {token}")
     path = (
-        repo_root / "HarkenEngine/Source/Core" / relative
+        repo_root / RUNTIME_SOURCE_TOKEN_ROOTS[prefix] / relative
     ).resolve(strict=False)
     if not path.is_file():
         raise ClosureError(f"CMake-owned Runtime source is missing: {path}")
@@ -575,7 +584,10 @@ def qualification_source_inventory(
     if not cmake_path.is_file():
         raise ClosureError(f"missing CMake source authority: {cmake_path}")
     text = cmake_path.read_text(encoding="utf-8", errors="strict")
-    base_tokens = cmake_list_body(text, "HARKEN_RUNTIME_SOURCES")
+    base_tokens = [
+        *cmake_list_body(text, "HARKEN_CORE_SOURCES"),
+        *cmake_list_body(text, "HARKEN_DEVELOPMENT_SOURCES"),
+    ]
     base_sources = [
         expand_runtime_source_token(token, repo_root)
         for token in base_tokens
@@ -583,12 +595,12 @@ def qualification_source_inventory(
 
     qualification_init = re.compile(
         r"set\(\s*_harken_rt_qualification_sources\s+"
-        r"\$\{HARKEN_RUNTIME_SOURCES\}\s*\)"
+        r"\$\{HARKEN_CORE_SOURCES\}\s+\$\{HARKEN_DEVELOPMENT_SOURCES\}\s*\)"
     )
     if len(qualification_init.findall(text)) != 1:
         raise ClosureError(
             "qualification source ownership no longer initializes from "
-            "HARKEN_RUNTIME_SOURCES"
+            "HARKEN_CORE_SOURCES and HARKEN_DEVELOPMENT_SOURCES"
         )
     conditional_pattern = re.compile(
         r"(?ms)if\(\s*HARKEN_RT_PROBE_DEFINITIONS\s*\)\s*"

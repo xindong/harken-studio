@@ -8,6 +8,7 @@
 #include "harken/core/AllocGuard.h"
 
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include <algorithm>
 #include <chrono>

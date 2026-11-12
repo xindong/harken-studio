@@ -15,15 +15,6 @@ EXPORTS
     Vn_BeginStreamSource
     Vn_BindVoiceAttenuation
     Vn_CancelStreamSource
-    Vn_CaptureCompressorRuntimeInfo
-    Vn_CaptureEffectCapabilities
-    Vn_CaptureEffectDynamicCapabilities
-    Vn_CaptureEffectDynamicParameterCapabilities
-    Vn_CaptureEffectDynamicRoutes
-    Vn_CaptureEffectParameterCapabilities
-    Vn_CapturePropertyBindings
-    Vn_CapturePropertyTargets
-    Vn_CaptureSnapshot
     Vn_ClearBusEffect
     Vn_ClearBusEffectDynamicRoute
     Vn_ClearVoiceBinding
@@ -40,37 +31,8 @@ EXPORTS
     Vn_DetachBinding
     Vn_DisconnectBusSend
     Vn_Init
-    Vn_InspectCanonicalPackV1
-    Vn_InspectInitPack
     Vn_LoadCurrentWorld
     Vn_LoadPack
-    Vn_MonitorAcquireCaptureControl
-    Vn_MonitorApplyCapturePlan
-    Vn_MonitorBeginHostSession
-    Vn_MonitorCaptureRegistry
-    Vn_MonitorCloseSession
-    Vn_MonitorCompareSessions
-    Vn_MonitorEndHostSession
-    Vn_MonitorGetCapabilities
-    Vn_MonitorGetCaptureControlStatus
-    Vn_MonitorGetConsumerStatus
-    Vn_MonitorGetEffectiveCapturePlan
-    Vn_MonitorGetEventSessionStatus
-    Vn_MonitorGetRecordingStatus
-    Vn_MonitorGetStateCutStatus
-    Vn_MonitorGetSubscriptionStatus
-    Vn_MonitorOpenEventSession
-    Vn_MonitorOpenSession
-    Vn_MonitorPoll
-    Vn_MonitorRegisterHost
-    Vn_MonitorRegisterHostV2
-    Vn_MonitorReleaseCaptureControl
-    Vn_MonitorRequestStateCut
-    Vn_MonitorSealEventSession
-    Vn_MonitorStartRecording
-    Vn_MonitorStopCapture
-    Vn_MonitorStopRecording
-    Vn_MonitorValidateCapturePlan
     Vn_PostAction
     Vn_PostActionByName
     Vn_PostActionPinned
@@ -90,9 +52,6 @@ EXPORTS
     Vn_RegisterStreamFile
     Vn_ReleaseActionFiring
     Vn_ReleaseActionSeek
-    Vn_RemoteGetStatus
-    Vn_RemoteStart
-    Vn_RemoteStop
     Vn_ReparentBus
     Vn_ReplaceAttenuation
     Vn_ReplaceBinding
@@ -156,8 +115,6 @@ EXPORTS
     Vn_StopEmitter
     Vn_Suspend
     Vn_Term
-    Vn_TraceStart
-    Vn_TraceStop
     Vn_UnloadCanonicalPackSetV1
     Vn_UnloadPack
     Vn_UnloadPackEx

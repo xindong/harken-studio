@@ -1,4 +1,5 @@
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include "harken_host_control/WireFormat.h"
 #include "JsonReader.h"

@@ -1,4 +1,5 @@
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 #include <harken_buildinfo.h>
 
 #include "Engine.h"

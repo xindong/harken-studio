@@ -1,4 +1,5 @@
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 #include <harken/core/VoiceLedger.h>
 
 #include "AllocationProbe.h"

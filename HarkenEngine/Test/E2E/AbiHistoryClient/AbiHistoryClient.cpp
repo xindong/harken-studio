@@ -1,4 +1,5 @@
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 #include "harken_binding_abi_pin.g.h"
 
 #include <windows.h>

@@ -1,3 +1,4 @@
+#include <harken/HarkenDevelopment.h>
 #include "MeterBridge.h"
 
 #include "NativeMonitorValues.h"

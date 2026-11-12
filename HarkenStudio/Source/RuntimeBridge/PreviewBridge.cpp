@@ -3,7 +3,7 @@
 #include "RuntimeLink.h"
 
 #include <harken/Harken.h>
-#include <harken_preview/PreviewAbi.h>
+#include <harken/HarkenDevelopment.h>
 
 namespace HarkenEditor::Bridge {
 

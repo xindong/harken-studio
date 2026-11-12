@@ -1,5 +1,6 @@
 #include <harken/ObjectId.h>
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 #include <harken/core/LogRing.h>
 #include <harken/core/CurrentWorldCodec.h>
 #include <harken/param/VariableService.h>

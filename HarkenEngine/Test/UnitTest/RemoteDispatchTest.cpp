@@ -5,6 +5,7 @@
 // and the wire-level error paths (unknown opcode, short payload, trailing
 // bytes, oversized declared vintage). No pipe: DispatchCommand is exactly
 // what the serving host's logic thread executes between Vn_Update pumps.
+#include <harken/HarkenDevelopment.h>
 #include "Common/ObjectIdTestSupport.h"
 #include "harken_host_control/WireDispatch.h"
 

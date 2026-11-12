@@ -13,8 +13,9 @@ add_library(harken_preview STATIC
 )
 target_include_directories(harken_preview
     PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${HARKEN_DEVELOPMENT_DIR}/include
     PRIVATE
+        ${HARKEN_DEVELOPMENT_PRIVATE_INCLUDES}
         ${HARKEN_CORE_DIR}/api/src
         ${HARKEN_CORE_DIR}/core/include
         ${HARKEN_CORE_DIR}/media/include

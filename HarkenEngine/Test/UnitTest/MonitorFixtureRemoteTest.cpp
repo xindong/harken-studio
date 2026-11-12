@@ -1,3 +1,4 @@
+#include <harken/HarkenDevelopment.h>
 #include "monitor_remote_codec.h"
 
 #include "JsonReader.h"

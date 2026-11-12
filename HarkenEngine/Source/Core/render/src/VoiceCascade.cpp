@@ -3,7 +3,7 @@
 #include "harken/render/EffectChain.h"
 #include "harken/render/VoiceTimelineEligibility.h"
 
-#include "MonitorCaptureHub.h"
+#include "MonitorSeam.h"
 
 #include "harken/abi/TimelineStopContract.h"
 #include "harken/core/ChannelLayout.h"

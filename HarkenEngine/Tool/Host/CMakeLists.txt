@@ -31,6 +31,7 @@ add_executable(harken_host_selection_copy_test
 )
 target_include_directories(harken_host_selection_copy_test PRIVATE
     ${HARKEN_CORE_DIR}/api/src
+    ${HARKEN_DEVELOPMENT_PRIVATE_INCLUDES}
     ${HARKEN_CORE_DIR}/core/include
     ${HARKEN_CORE_DIR}/dsp/include
     ${HARKEN_CORE_DIR}/media/include
@@ -45,6 +46,7 @@ target_link_libraries(harken_host_selection_copy_test PRIVATE harken_core harken
 
 target_include_directories(harken_host PRIVATE
     ${HARKEN_CORE_DIR}/api/src
+    ${HARKEN_DEVELOPMENT_PRIVATE_INCLUDES}
     ${HARKEN_CORE_DIR}/core/include
     ${HARKEN_CORE_DIR}/dsp/include
     ${HARKEN_CORE_DIR}/media/include

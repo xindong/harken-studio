@@ -11,6 +11,7 @@
 #include "VoiceTimelineSinkTestAccess.h"
 
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 #include "harken/abi/TimelineStopContract.h"
 
 #include "Engine.h"

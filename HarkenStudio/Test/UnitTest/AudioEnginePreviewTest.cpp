@@ -21,7 +21,7 @@
 #include "RuntimeBridge/RuntimeLink.h"
 #include "harken/Harken.h"
 #include <harken_bus_compiler/BusCompiler.h>
-#include <harken_preview/PreviewProject.h>
+#include <harken/HarkenDevelopment.h>
 
 #include <gtest/gtest.h>
 

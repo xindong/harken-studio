@@ -6,6 +6,8 @@
 #include <cstddef>
 
 #include "PlayableRuntime.h"
+#include "TraceSeam.h"
+#include "harken/media/PackTable.h"
 #include "harken/core/QueueRuntime.h"
 #include "harken/core/PlayablePropertyCut.h"
 #include "harken/core/TimelineProgram.h"
@@ -32,6 +34,44 @@ void UpdateSendHighWater(Engine& engine) noexcept;
 void ResetBusLogicSlot(Engine& engine, std::uint32_t busIndex,
                        std::uint32_t retiringGeneration,
                        std::uint32_t newGeneration) noexcept;
+
+VnResult AcquireCanonicalBytes(const VnPackLoadDesc& desc,
+                               PackTable::AlignedBuffer* owned,
+                               VnPackByteSpan* span, bool* releaseSpan,
+                               std::uint64_t maxBytes = UINT64_MAX);
+void ReleaseCanonicalBytes(const VnPackLoadDesc& desc, VnPackByteSpan span,
+                           bool releaseSpan);
+
+struct CanonicalByteSpanGuard {
+    const VnPackLoadDesc& load;
+    VnPackByteSpan span{};
+    bool release = false;
+    ~CanonicalByteSpanGuard() { ReleaseCanonicalBytes(load, span, release); }
+};
+
+void NoteCaptureTruncated(Engine& engine, std::uint64_t surface,
+                          std::uint64_t required);
+VnResult CaptureEffectCapabilities(Engine& engine, VnEffectCapability* out,
+                                   std::uint32_t capacity,
+                                   std::uint32_t* requiredCount);
+VnResult CaptureEffectParameterCapabilities(
+    Engine& engine, VnEffectParameterCapability* out,
+    std::uint32_t capacity, std::uint32_t* requiredCount);
+VnResult CaptureEffectDynamicCapabilities(
+    Engine& engine, VnEffectDynamicCapability* out,
+    std::uint32_t capacity, std::uint32_t* requiredCount);
+VnResult CaptureEffectDynamicParameterCapabilities(
+    Engine& engine, VnEffectDynamicParameterCapability* out,
+    std::uint32_t capacity, std::uint32_t* requiredCount);
+VnResult CaptureCompressorRuntimeInfo(
+    Engine& engine, VnCompressorRuntimeInfo* out,
+    std::uint32_t capacity, std::uint32_t* requiredCount);
+VnResult CapturePropertyTargets(Engine& engine, VnPropertyTargetInfo* out,
+                                std::uint32_t capacity,
+                                std::uint32_t* requiredCount);
+VnResult CapturePropertyBindings(Engine& engine, VnPropertyBindingInfo* out,
+                                 std::uint32_t capacity,
+                                 std::uint32_t* requiredCount);
 
 }
 
@@ -94,6 +134,8 @@ namespace harken::monitor { class RequestObservation; }
 
 namespace harken::detail {
 
+extern Engine* g_engine;
+
 bool CanonicalSetMutationBlocked() noexcept;
 
 MonitorRequestContext BeginMonitorRequest(
@@ -106,6 +148,12 @@ VnResult PlayVoiceRaw(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
 void CaptureMonitorAcceptedRequest(monitor::RequestObservation& observation,
     std::uint32_t subject, std::uint64_t handle) noexcept;
 bool DirectWorldHasActionProgram(VnActionId actionId) noexcept;
+
+TraceCallScribe TraceQuery(Engine* engine, std::uint16_t callId) noexcept;
+void FinishCaptureTrace(TraceCallScribe& trace, VnResult result,
+                        const std::uint32_t* requiredCount) noexcept;
+bool BusEffectivelyAudible(const Engine& engine, std::uint32_t busIndex);
+std::uint64_t PinnedGenerationCount(Engine& engine);
 
 }
 

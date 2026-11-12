@@ -23,7 +23,7 @@
 #include "TraceRecorder.h" // HashFileContents
 #include "harken/core/Utf8Path.h" // non-throwing UTF-8 path construction
 #include "harken/media/PackFormat.h" // Fnv1a64 for the render capture hash
-#include "harken_preview/PreviewAbi.h"
+#include <harken/HarkenDevelopment.h>
 
 #include <cstddef>
 #include <cstdint>

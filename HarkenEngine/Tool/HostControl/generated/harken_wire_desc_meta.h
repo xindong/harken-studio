@@ -7,6 +7,7 @@
 #define HARKEN_REMOTE_WIRE_DESC_META_H
 
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include "harken_host_control/WireFormat.h"
 

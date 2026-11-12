@@ -1,3 +1,4 @@
+#include <harken/HarkenDevelopment.h>
 #include "MonitorCaptureHubTestHooks.h"
 #include "MonitorRecordPack.h"
 #include "Common/TestUtil.h"

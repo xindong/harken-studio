@@ -14,6 +14,7 @@
 #include "RemoteServe.h"
 
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include "DemoOptions.h"
 #include "Engine.h" // internal: null-mode block pump (test-clock precedent)

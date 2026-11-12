@@ -61,6 +61,9 @@ REPO_ROOT = os.path.normpath(os.path.join(SCRIPT_DIR, "..", "..", "..", "..", ".
 HARKEN_H = os.path.join(
     REPO_ROOT, "HarkenEngine", "Source", "Core", "api", "include", "harken",
     "Harken.h")
+DEVELOPMENT_H = os.path.join(
+    REPO_ROOT, "HarkenEngine", "Source", "Development", "include", "harken",
+    "HarkenDevelopment.h")
 OUT_PATH = os.path.join(
     REPO_ROOT, "HarkenEngine", "Source", "Core", "api", "abi",
     "HarkenCore.def")
@@ -88,6 +91,10 @@ DECL_RE = re.compile(r"^VnResult\s+(Vn_[A-Za-z0-9_]+)\s*\(", re.MULTILINE)
 # prevent. Both are legal C, and both would have shipped a DLL missing that
 # entry point while every check stayed green.
 IDENT_RE = re.compile(r"\bVn_[A-Za-z0-9_]+\b")
+
+DEVELOPMENT_DECL_RE = re.compile(
+    r"^[A-Za-z_][A-Za-z0-9_ \t\*]*?\b(Vn(?:Preview)?_[A-Za-z0-9_]+)\s*\(",
+    re.MULTILINE)
 
 # Vn_-prefixed identifiers that are deliberately not exported entry points. Empty
 # today: every such identifier in the header is a public function. A future
@@ -328,6 +335,10 @@ def parse_args(argv):
     mode.add_argument(
         "--verify-dll", metavar="PATH",
         help="verify a linked DLL's PE export directory equals the allowlist")
+    mode.add_argument(
+        "--verify-development-dll", metavar="PATH",
+        help="verify a development DLL exports exactly Harken.h plus "
+             "HarkenDevelopment.h")
     args = parser.parse_args(argv)
     return args
 
@@ -338,6 +349,23 @@ def main(argv=None):
     verify_dll = args.verify_dll
 
     names = find_public_exports(HARKEN_H)
+
+    if args.verify_development_dll:
+        path = args.verify_development_dll
+        if not os.path.isfile(path):
+            print("MISMATCH: %s does not exist" % path)
+            return 1
+        with open(DEVELOPMENT_H, "r", encoding="utf-8") as f:
+            development = DEVELOPMENT_DECL_RE.findall(strip_comments(f.read()))
+        expected = sorted(set(names) | set(development))
+        exported = read_pe_export_names(path)
+        if exported != expected:
+            print("MISMATCH: %s" % path)
+            describe_difference(expected, exported)
+            return 1
+        print("ok: %s exports exactly the %d Core and Development entry points"
+              % (path, len(expected)))
+        return 0
 
     if verify_dll:
         if not os.path.isfile(verify_dll):

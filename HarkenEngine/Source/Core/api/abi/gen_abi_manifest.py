@@ -595,6 +595,23 @@ def parse_define_value(expression: str) -> Any:
     return evaluate_integer(expression)
 
 
+def strip_preview_surface(header: str) -> str:
+    text = re.sub(
+        r"(?ms)^#if defined\(__cplusplus\)\n#define VN_PREVIEW_STATIC_ASSERT.*?^#endif\n",
+        "", header)
+    text = re.sub(r"(?m)^#define (?:HARKEN|VN)_PREVIEW_\w+.*\n", "", text)
+    text = re.sub(r"(?ms)^VN_PREVIEW_STATIC_ASSERT\(.*?\);\n", "", text)
+    text = re.sub(
+        r"(?ms)^typedef (?:struct|enum) (?:VnPreview\w*)?\s*\{.*?^\} VnPreview\w+;\n",
+        "", text)
+    text = re.sub(r"(?m)^typedef [\w ]+ VnPreview\w+;\n", "", text)
+    text = re.sub(
+        r"(?ms)^[A-Za-z_][\w \*]*\bVnPreview_\w+\s*\(.*?\);\n", "", text)
+    if re.search(r"\b(?:VnPreview|VN_PREVIEW_|HARKEN_PREVIEW_)", remove_comments(text)):
+        raise ManifestError("development preview surface was not fully excluded")
+    return text
+
+
 def parse_header_contract(header: str) -> dict[str, Any]:
     clean = remove_comments(header)
     defines = parse_defines(clean)
@@ -1354,6 +1371,15 @@ def build_manifest(repo_root: Path) -> dict[str, Any]:
         / "harken"
         / "Harken.h"
     )
+    development_header_path = (
+        repo_root
+        / "HarkenEngine"
+        / "Source"
+        / "Development"
+        / "include"
+        / "harken"
+        / "HarkenDevelopment.h"
+    )
     trace_path = (
         repo_root
         / "HarkenEngine"
@@ -1380,7 +1406,9 @@ def build_manifest(repo_root: Path) -> dict[str, Any]:
     table = load_json_strict(table_path)
     identity_header_path = header_path.with_name("ObjectId.h")
     header = (identity_header_path.read_text(encoding="utf-8") + "\n" +
-              header_path.read_text(encoding="utf-8"))
+              header_path.read_text(encoding="utf-8") + "\n" +
+              strip_preview_surface(
+                  development_header_path.read_text(encoding="utf-8")))
     validate_table_metadata(table)
 
     issues = compare_completeness(
@@ -1493,6 +1521,7 @@ def build_manifest(repo_root: Path) -> dict[str, Any]:
         for path in (
             table_path,
             header_path,
+            development_header_path,
             identity_header_path,
             trace_path,
             *generator_paths,

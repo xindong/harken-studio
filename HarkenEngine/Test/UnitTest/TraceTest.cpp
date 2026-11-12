@@ -16,6 +16,7 @@
 // never waits on. Tracing OFF is one null-pointer test per API call.
 #include "Common/ObjectIdTestSupport.h"
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include "Common/TestUtil.h"
 #include "TraceFormat.h"

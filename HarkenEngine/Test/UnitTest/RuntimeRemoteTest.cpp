@@ -13,9 +13,9 @@
 #include "MonitorCaptureHub.h"
 #include "MonitorIdentityCut.h"
 #include "Common/MonitorExecutionTestSupport.h"
-#include "harken_preview/PreviewAbi.h"
+#include <harken/HarkenDevelopment.h>
 #include "harken_remote/Protocol.h"
-#include "../../Source/Core/remote/src/RemoteRuntime.h"
+#include "RemoteRuntime.h"
 #include <gtest/gtest.h>
 #include <harken/Harken.h>
 

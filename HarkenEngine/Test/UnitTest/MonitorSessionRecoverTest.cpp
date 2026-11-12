@@ -5,6 +5,7 @@
 #include "monitor_session_codec.h"
 
 #include <harken/Harken.h>
+#include <harken/HarkenDevelopment.h>
 
 #include <gtest/gtest.h>
 
