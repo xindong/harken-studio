@@ -106,18 +106,40 @@ float Curve::Eval(float x, CurveDomain domain) const {
 
     double lo = 0.0;
     double hi = 1.0;
-    for (int i = 0; i < 32; ++i) {
-        const double mid = (lo + hi) * 0.5;
-        const double bx = BezierCoordinate(
-            xa, static_cast<double>(h.h1x), static_cast<double>(h.h2x), xb,
-            mid);
-        if (bx < target) {
-            lo = mid;
-        } else {
-            hi = mid;
+    double t = (target - xa) / (xb - xa);
+    bool converged = false;
+    for (int i = 0; i < 8; ++i) {
+        const double bx = BezierCoordinate(xa, h.h1x, h.h2x, xb, t);
+        if (bx == target) {
+            converged = true;
+            break;
         }
+        if (bx < target) lo = t;
+        else hi = t;
+        const double u = 1.0 - t;
+        const double slope = 3.0 * (u * u * (h.h1x - xa)
+            + 2.0 * u * t * (static_cast<double>(h.h2x) - h.h1x)
+            + t * t * (xb - h.h2x));
+        if (!(slope > 0.0)) {
+            t = (lo + hi) * 0.5;
+            continue;
+        }
+        const double next = t - (bx - target) / slope;
+        if (std::abs(next - t) <= 1e-12) {
+            t = next;
+            converged = true;
+            break;
+        }
+        t = next > lo && next < hi ? next : (lo + hi) * 0.5;
     }
-    const double t = (lo + hi) * 0.5;
+    if (!converged) {
+        for (int i = 0; i < 32; ++i) {
+            const double mid = (lo + hi) * 0.5;
+            if (BezierCoordinate(xa, h.h1x, h.h2x, xb, mid) < target) lo = mid;
+            else hi = mid;
+        }
+        t = (lo + hi) * 0.5;
+    }
     if (domain != CurveDomain::LinearValue) {
         if (a.y == b.y && a.y == h.h1y && a.y == h.h2y)
             return a.y;

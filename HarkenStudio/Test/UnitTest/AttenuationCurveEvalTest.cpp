@@ -198,14 +198,17 @@ TEST(CurveAxisMapping, MirroredAmplitudeRoundTripsTheEntireVolumeRange)
 TEST(AttenuationCurveEval, PitchLinearDomainMatchesParametricOracle)
 {
     const QVector<CurvePointDef> points{{0.0f, -1200.0f}, {100.0f, 1200.0f}};
-    const QVector<CurveHandlePairDef> handles{{25.0f, -1200.0f, 75.0f, 1200.0f}};
-    for (int i = 1; i < 20; ++i) {
-        const double t = static_cast<double>(i) / 20.0;
-        const double x = bezier(0.0, 25.0, 75.0, 100.0, t);
-        const double expected = bezier(-1200.0, -1200.0, 1200.0, 1200.0, t);
-        EXPECT_NEAR(VNX::curveBezierValueAt(points, handles,
-                                                  static_cast<float>(x)),
-                    expected, 5.0e-3) << "t=" << t;
+    for (const float h1x : {0.0f, 25.0f, 50.0f, 75.0f, 100.0f}) {
+        for (const float h2x : {0.0f, 25.0f, 50.0f, 75.0f, 100.0f}) {
+            const QVector<CurveHandlePairDef> handles{{h1x, -1200.0f, h2x, 1200.0f}};
+            for (int i = 0; i <= 64; ++i) {
+                const double t = static_cast<double>(i) / 64.0;
+                const double x = bezier(0.0, h1x, h2x, 100.0, t);
+                const double expected = bezier(-1200.0, -1200.0, 1200.0, 1200.0, t);
+                EXPECT_NEAR(VNX::curveBezierValueAt(points, handles, static_cast<float>(x)),
+                            expected, 5.0e-3) << "t=" << t << " handles=" << h1x << "," << h2x;
+            }
+        }
     }
 }
 

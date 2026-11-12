@@ -21,7 +21,7 @@ namespace VNX::SoundSourceDerivative {
 namespace {
 
 constexpr quint32 kArtifactMagic = 0x4d435048;
-constexpr quint32 kArtifactVersion = 2;
+constexpr quint32 kArtifactVersion = 3;
 constexpr qint64 kHeaderBytes = 40;
 constexpr qint64 kDigestBytes = 32;
 

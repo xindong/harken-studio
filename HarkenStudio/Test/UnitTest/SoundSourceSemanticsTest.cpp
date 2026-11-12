@@ -249,7 +249,15 @@ TEST(SoundSourceSemanticsTest, MediaEditsPreserveSourceCoordinatesAcrossSlicesAn
         auto baked = original;
         SoundSourceSemantics::applyFadeEnvelope(baked, channels, definition, totalFrames);
         EXPECT_NE(baked, original);
-        for (const auto range : {SoundLoopRegion{17, 241}, SoundLoopRegion{42, 88},
+        const auto canonicalSource = SoundSourceSemantics::canonicalized(definition, totalFrames);
+        for (uint64_t frame = 0; frame < totalFrames; ++frame) {
+            const float gain = static_cast<float>(SoundSourceSemantics::fadeGainAtFrame(
+                canonicalSource, double(frame)));
+            for (uint16_t channel = 0; channel < channels; ++channel)
+                EXPECT_FLOAT_EQ(baked[frame * channels + channel], original[frame * channels + channel] * gain);
+        }
+        for (const auto range : {SoundLoopRegion{0, 17}, SoundLoopRegion{17, 241},
+                                 SoundLoopRegion{241, 257}, SoundLoopRegion{42, 88},
                                  *definition.loopRegion, SoundLoopRegion{193, 233}}) {
             SCOPED_TRACE(::testing::Message() << channels << "/" << range.startFrame);
             const auto begin = static_cast<std::ptrdiff_t>(range.startFrame * channels);
