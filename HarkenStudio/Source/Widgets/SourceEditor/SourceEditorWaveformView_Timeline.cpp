@@ -45,7 +45,6 @@ const ThemeMetrics::TimeAxis& timeAxisMetrics()
     return ThemeManager::instance().metrics().timeAxis;
 }
 constexpr int kScrollSteps = 1000000;
-constexpr double kMaximumVerticalZoom = 32.0;
 
 void placeAbove(QWidget* popup, const QPoint& anchor)
 {
@@ -114,16 +113,10 @@ void SourceEditorWaveformView::setupTimeline()
     };
     zoomOut_ = button(QStringLiteral("sourceWaveZoomOut"), tr("Zoom out time"));
     zoomIn_ = button(QStringLiteral("sourceWaveZoomIn"), tr("Zoom in time"));
-    verticalZoomIn_ = button(QStringLiteral("sourceWaveVerticalZoomIn"), tr("Zoom in vertically"));
-    verticalZoomOut_ = button(QStringLiteral("sourceWaveVerticalZoomOut"), tr("Zoom out vertically"));
     connect(zoomOut_, &QToolButton::clicked, this,
         [this] { zoomAround(waveformRect().center().x(), 0.5); });
     connect(zoomIn_, &QToolButton::clicked, this,
         [this] { zoomAround(waveformRect().center().x(), 2.0); });
-    connect(verticalZoomIn_, &QToolButton::clicked, this,
-        [this] { zoomVertically(channelViewportRect().center().y(), 1.25); });
-    connect(verticalZoomOut_, &QToolButton::clicked, this,
-        [this] { zoomVertically(channelViewportRect().center().y(), 0.8); });
 
     scroll_ = new QScrollBar(Qt::Horizontal, this);
     scroll_->setObjectName(QStringLiteral("sourceWaveScroll"));
@@ -135,12 +128,6 @@ void SourceEditorWaveformView::setupTimeline()
             ? double(value) / scroll_->maximum() * (double(totalFrames()) - viewFrameCount()) : 0.0;
         setViewRange(start, viewFrameCount());
     });
-    channelScroll_ = new QScrollBar(Qt::Vertical, this);
-    channelScroll_->setObjectName(QStringLiteral("sourceWaveChannelScroll"));
-    channelScroll_->setCursor(Qt::ArrowCursor);
-    QtControlSkin::setSemanticProperty(channelScroll_, "scrollRole", QStringLiteral("canvas"));
-    channelScroll_->installEventFilter(this);
-    connect(channelScroll_, &QScrollBar::valueChanged, this, [this] { update(); });
 
     handleValue_ = new QLabel(this, Qt::ToolTip | Qt::WindowTransparentForInput);
     handleValue_->setObjectName(QStringLiteral("sourceTrimValue"));
@@ -183,10 +170,10 @@ QRect SourceEditorWaveformView::waveformRect() const
     const int chevronExtent = ThemeManager::instance().metrics().iconExtent;
     const int axisWidth = std::max(metrics.horizontalAdvance(QStringLiteral("-96.00")) + timeAxisMetrics().labelPadding * 2, chevronExtent);
     const int rulerHeight = std::max(metrics.height() + timeAxisMetrics().majorTickLength, chevronExtent);
-    const int rightWidth = channelScroll_ ? channelScroll_->sizeHint().width() : 0;
+    const int rightInset = ThemeManager::instance().snapshot()->domains.curve.metrics.graphRightInset;
     const int footerHeight = scroll_ ? scroll_->sizeHint().height() : 0;
     return QRect(axisWidth, rulerHeight,
-        std::max(1, width() - axisWidth - rightWidth - 1),
+        std::max(1, width() - axisWidth - rightInset - 1),
         std::max(1, height() - rulerHeight - footerHeight - 1));
 }
 
@@ -197,19 +184,12 @@ QRect SourceEditorWaveformView::channelViewportRect() const
         std::max(1, plot.height() - timeAxisMetrics().handleBandHeight));
 }
 
-int SourceEditorWaveformView::channelContentHeight() const
-{
-    const QFontMetrics metrics(FontManager::instance().getFont(FontRole::Caption), this);
-    const int minimumHeight = std::max(timeAxisMetrics().channelHeight, metrics.height() * 4 + timeAxisMetrics().labelPadding * 4);
-    return int(std::lround(std::max(minimumHeight, channelViewportRect().height()) * verticalZoom_));
-}
-
 QRect SourceEditorWaveformView::channelWaveformRect() const
 {
     const QFontMetrics metrics(FontManager::instance().getFont(FontRole::Caption), this);
     QRect viewport = channelViewportRect();
     viewport.setLeft(waveformRect().left());
-    return waveformAmplitudeBounds(viewport, channelContentHeight(), channelScroll_->value(), metrics, timeAxisMetrics().labelPadding);
+    return waveformAmplitudeBounds(viewport, viewport.height(), 0, metrics, timeAxisMetrics().labelPadding);
 }
 
 double SourceEditorWaveformView::viewFrameCount() const
@@ -239,19 +219,6 @@ void SourceEditorWaveformView::zoomAround(int x, double factor)
     const double count = std::clamp(viewFrameCount() / factor,
         std::min(8.0, double(totalFrames())), double(totalFrames()));
     setViewRange(focus - ratio * count, count);
-}
-
-void SourceEditorWaveformView::zoomVertically(int y, double factor)
-{
-    if (totalFrames() == 0)
-        return;
-    const QRect viewport = channelViewportRect();
-    const int anchor = std::clamp(y - viewport.top(), 0, viewport.height());
-    const double focus = double(channelScroll_->value() + anchor) / channelContentHeight();
-    verticalZoom_ = std::clamp(verticalZoom_ * factor, 1.0, kMaximumVerticalZoom);
-    refreshTimelineControls();
-    channelScroll_->setValue(int(std::lround(focus * channelContentHeight() - anchor)));
-    update();
 }
 
 bool SourceEditorWaveformView::isTimeRuler(const QPoint& position) const
@@ -291,7 +258,6 @@ void SourceEditorWaveformView::layoutTimeline()
     const QRect plot = waveformRect();
     const int footerY = plot.bottom() + 1;
     const int horizontalExtent = scroll_->sizeHint().height();
-    const int verticalExtent = channelScroll_->sizeHint().width();
     const int chevronExtent = ThemeManager::instance().metrics().iconExtent;
     units_->setGeometry((plot.left() - chevronExtent) / 2,
         (plot.top() - chevronExtent) / 2, chevronExtent, chevronExtent);
@@ -299,16 +265,6 @@ void SourceEditorWaveformView::layoutTimeline()
     zoomOut_->setGeometry(plot.right() + 1 - horizontalExtent, footerY, horizontalExtent, horizontalExtent);
     scroll_->setGeometry(plot.left() + horizontalExtent, footerY,
         std::max(1, plot.width() - 2 * horizontalExtent), horizontalExtent);
-    verticalZoomIn_->setGeometry(plot.right() + 1, plot.top(), verticalExtent, verticalExtent);
-    verticalZoomOut_->setGeometry(plot.right() + 1, plot.bottom() + 1 - verticalExtent,
-        verticalExtent, verticalExtent);
-    const int available = channelViewportRect().height();
-    channelScroll_->setGeometry(plot.right() + 1, plot.top() + verticalExtent,
-        verticalExtent, std::max(1, plot.height() - 2 * verticalExtent));
-    channelScroll_->setRange(0, std::max(0, channelContentHeight() - available));
-    channelScroll_->setPageStep(available);
-    channelScroll_->setSingleStep(std::max(1, available / 10));
-    channelScroll_->setEnabled(totalFrames() > 0 && channelScroll_->maximum() > 0);
 }
 
 void SourceEditorWaveformView::refreshTimelineControls()
@@ -319,8 +275,6 @@ void SourceEditorWaveformView::refreshTimelineControls()
     units_->setEnabled(valid);
     zoomOut_->setEnabled(valid && viewFrameCount() < double(totalFrames()));
     zoomIn_->setEnabled(valid && viewFrameCount() > 8.0);
-    verticalZoomIn_->setEnabled(valid && verticalZoom_ < kMaximumVerticalZoom);
-    verticalZoomOut_->setEnabled(valid && verticalZoom_ > 1.0);
     {
         QSignalBlocker blocker(scroll_);
         const double ratio = valid ? viewFrameCount() / double(totalFrames()) : 1.0;
@@ -333,8 +287,8 @@ void SourceEditorWaveformView::refreshTimelineControls()
             ? int(std::lround(viewStart_ / maxStart * scroll_->maximum())) : 0);
         scroll_->setEnabled(valid && page < kScrollSteps);
     }
-    const int iconExtent = std::min(scroll_->sizeHint().height(), channelScroll_->sizeHint().width());
-    for (auto* button : {zoomIn_, zoomOut_, verticalZoomIn_, verticalZoomOut_})
+    const int iconExtent = scroll_->sizeHint().height();
+    for (auto* button : {zoomIn_, zoomOut_})
         button->setIconSize(QSize(iconExtent, iconExtent));
     units_->setToolTip(frameDisplay_ ? tr("Time unit: audio sample frames") : tr("Time unit: seconds"));
     refreshTimelineAppearance();
@@ -350,8 +304,6 @@ void SourceEditorWaveformView::refreshTimelineAppearance()
     const ThemeAssetVariant variant{zoomIn_->iconSize(), devicePixelRatioF(), 0, theme->ui.colors.textPrimary};
     zoomOut_->setIcon(manager.resolveIcon(QString::fromLatin1(ThemeAssetIds::TableRemove), variant).icon);
     zoomIn_->setIcon(manager.resolveIcon(QString::fromLatin1(ThemeAssetIds::TableAdd), variant).icon);
-    verticalZoomIn_->setIcon(zoomIn_->icon());
-    verticalZoomOut_->setIcon(zoomOut_->icon());
     QPalette palette = handleValue_->palette();
     palette.setColor(QPalette::Window, theme->ui.colors.bgSecondary);
     palette.setColor(QPalette::WindowText, theme->ui.colors.textPrimary);
@@ -367,8 +319,8 @@ void SourceEditorWaveformView::paintTimeline(QPainter& painter)
     const int axisWidth = plot.left();
     painter.setFont(FontManager::instance().getFont(FontRole::Caption));
     const QFontMetrics metrics(painter.font(), painter.device());
-    painter.fillRect(QRect(0, 0, width(), rulerHeight), colors.bgSecondary);
-    painter.fillRect(QRect(0, rulerHeight, axisWidth, plot.height()), colors.bgSecondary);
+    painter.fillRect(rect(), colors.bgSecondary);
+    painter.fillRect(plot, colors.bgPrimary);
 
     const auto timeTicks = timeAxisTicks();
     drawTimeAxisRuler(painter, colors, timeAxisMetrics(), QRect(plot.left(), 0, plot.width(), rulerHeight), timeTicks);
@@ -391,7 +343,7 @@ void SourceEditorWaveformView::paintTimeline(QPainter& painter)
         metrics, theme->domains.curve.metrics.amplitudeGridTargetRowSpacing,
         WaveformRenderer::amplitudeScale(waveStyle, amplitudeExponent_));
     for (const auto& tick : ticks) {
-        painter.setPen(theme->domains.curve.colors.grid);
+        painter.setPen(tick.major ? colors.borderPrimary : theme->domains.curve.colors.grid);
         painter.drawLine(plot.left(), tick.y, plot.right(), tick.y);
         QRect bounds = labelRect(tick.y);
         if (tick.major)
@@ -572,7 +524,6 @@ void SourceEditorWaveformView::cancelGesture()
     hoverPosition_.reset();
     edgeScroll_.stop();
     panOrigin_.reset();
-    panVerticalStart_.reset();
     panButton_ = Qt::NoButton;
     if (handleValue_)
         handleValue_->hide();
@@ -596,6 +547,7 @@ void SourceEditorWaveformView::editHandleValue(Handle handle, int fadeIndex)
         return;
     cancelGesture();
     selectedFade_ = fadeIndex;
+    selectedFadeAnchor_ = fadeIndex == 0 ? FadePart::End : FadePart::Start;
     ToolTip::hideText();
     auto* dialog = new QDialog(this, Qt::Popup);
     valueEditor_ = dialog;
@@ -685,10 +637,7 @@ void SourceEditorWaveformView::wheelEvent(QWheelEvent* event)
     const QPoint delta = event->angleDelta().isNull() ? event->pixelDelta() : event->angleDelta();
     const double steps = double(delta.y() != 0 ? delta.y() : delta.x())
         / (event->angleDelta().isNull() ? 40.0 : 120.0);
-    if (event->modifiers().testFlag(Qt::ControlModifier))
-        zoomVertically(int(event->position().y()), std::pow(1.25, steps));
-    else
-        zoomAround(int(event->position().x()), std::pow(1.25, steps));
+    zoomAround(int(event->position().x()), std::pow(1.25, steps));
     event->accept();
 }
 
@@ -727,11 +676,6 @@ void SourceEditorWaveformView::mouseDoubleClickEvent(QMouseEvent* event)
         const Handle handle = hitTestHandle(event->position().toPoint());
         if (handle != Handle::None) {
             editHandleValue(handle);
-        } else if (event->position().x() < waveformRect().left()) {
-            verticalZoom_ = 1.0;
-            channelScroll_->setValue(0);
-            refreshTimelineControls();
-            update();
         } else if (isTimeRuler(event->position().toPoint())) {
             setViewRange(0.0, double(totalFrames()));
         }
@@ -743,6 +687,12 @@ void SourceEditorWaveformView::mouseDoubleClickEvent(QMouseEvent* event)
 
 void SourceEditorWaveformView::contextMenuEvent(QContextMenuEvent* event)
 {
+    const FadeHit fadeHit = hitTestFade(event->pos());
+    if (fadeHit.index >= 0) {
+        showFadeMenu(fadeHit, event->globalPos());
+        event->accept();
+        return;
+    }
     const QRect plot = waveformRect();
     const QFontMetrics metrics(FontManager::instance().getFont(FontRole::Caption), this);
     const QRect axis = units_
@@ -758,12 +708,6 @@ void SourceEditorWaveformView::contextMenuEvent(QContextMenuEvent* event)
         return;
     }
     if (units_ && editable_) {
-        const FadeHit fadeHit = hitTestFade(event->pos());
-        if (fadeHit.index >= 0) {
-            showFadeMenu(fadeHit.index, event->globalPos());
-            event->accept();
-            return;
-        }
         const Handle handle = hitTestHandle(event->pos());
         if (handle != Handle::None) {
             cancelGesture();

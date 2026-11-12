@@ -86,6 +86,11 @@ EngineResult runtimeRegisterRawPcmSlice(harkenstudio::ObjectId soundId,
                                         uint32_t* outSampleRate = nullptr,
                                         uint64_t* outWindowStartFrame = nullptr,
                                         uint64_t* outWindowFrameCount = nullptr);
+EngineResult runtimeRegisterRawPcmSlice(harkenstudio::ObjectId soundId,
+                                        std::vector<float> interleaved,
+                                        int channels, int sampleRate,
+                                        uint64_t startFrame, uint64_t frameCount,
+                                        bool loops);
 EngineResult runtimeRelocateRawPcmSlice(harkenstudio::ObjectId soundId,
                                         uint64_t startFrame,
                                         uint64_t* outStartFrame = nullptr,

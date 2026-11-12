@@ -76,6 +76,9 @@ private:
     QUuid entryId_;
     harkenstudio::ObjectId previewSoundId_{};
     uint64_t previewPlaybackHandle_ = 0;
+    std::optional<SoundSourceDef> preparedSource_;
+    QString preparedSourcePath_;
+    QString preparedSourceContentHash_;
     uint32_t auditionPlayingId_ = 0;
     QPointer<HarkenEditor::AuditionManager> audition_;
     bool refreshingDisplayedSource_ = false;

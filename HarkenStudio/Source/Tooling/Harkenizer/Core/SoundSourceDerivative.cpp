@@ -4,6 +4,7 @@
 #include "AssetPipeline/AssetImporter.h"
 #include "AssetPipeline/BuildSourceInputs.h"
 #include "AssetPipeline/CacheArtifactWriter.h"
+#include "Core/SoundSourceSemantics.h"
 #include "RuntimeBridge/PackagingBridge.h"
 
 #include <QCryptographicHash>
@@ -20,7 +21,7 @@ namespace VNX::SoundSourceDerivative {
 namespace {
 
 constexpr quint32 kArtifactMagic = 0x4d435048;
-constexpr quint32 kArtifactVersion = 1;
+constexpr quint32 kArtifactVersion = 3;
 constexpr qint64 kHeaderBytes = 40;
 constexpr qint64 kDigestBytes = 32;
 
@@ -66,6 +67,15 @@ QByteArray requestKey(const QString& inputFingerprint, const SoundSourceDef& sou
            << static_cast<quint64>(loop ? loop->start : 0) << static_cast<quint64>(loop ? loop->end : 0)
            << static_cast<quint64>(*offset)
            << static_cast<quint32>(outputRate == metadata.sampleRate ? 0 : outputRate);
+    const auto canonicalSource = SoundSourceSemantics::canonicalized(source, metadata.totalSamples);
+    for (const auto* fade : {&canonicalSource.fadeIn, &canonicalSource.fadeOut}) {
+        stream << static_cast<quint64>(fade->durationFrames);
+        if (fade->durationFrames == 0) continue;
+        for (const auto& point : fade->curve)
+            stream << point.x << point.value;
+        for (const auto& handles : fade->handles)
+            stream << handles.h1x << handles.h1y << handles.h2x << handles.h2y;
+    }
     return QCryptographicHash::hash(request, QCryptographicHash::Sha256).toHex();
 }
 
@@ -228,6 +238,8 @@ std::optional<PreparedMedia> prepare(const QString& inputPath,
     const auto end = samples.begin()
         + static_cast<std::ptrdiff_t>(range->end * static_cast<uint64_t>(channels));
     std::vector<float> trimmed(begin, end);
+    SoundSourceSemantics::applyFadeEnvelope(trimmed, static_cast<uint32_t>(channels),
+                                           source, totalFrames, range->start);
     LoopInfo loop;
     if (const auto region = loopRange(source, *range)) {
         loop.enabled = true;

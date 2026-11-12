@@ -70,6 +70,13 @@
         <file alias="pin-filled.svg">Resources/icons/pin-filled.svg</file>
         <file alias="pause.svg">Resources/icons/pause.svg</file>
         <file alias="play.svg">Resources/icons/play.svg</file>
+        <file alias="curve-s.svg">Resources/icons/curve-s.svg</file>
+        <file alias="curve-log3.svg">Resources/icons/curve-log3.svg</file>
+        <file alias="curve-convex.svg">Resources/icons/curve-convex.svg</file>
+        <file alias="curve-linear.svg">Resources/icons/curve-linear.svg</file>
+        <file alias="curve-concave.svg">Resources/icons/curve-concave.svg</file>
+        <file alias="curve-exp3.svg">Resources/icons/curve-exp3.svg</file>
+        <file alias="curve-inverse-s.svg">Resources/icons/curve-inverse-s.svg</file>
         <file alias="plus.svg">Resources/icons/plus.svg</file>
         <file alias="redo.svg">Resources/icons/redo.svg</file>
         <file alias="refresh.svg">Resources/icons/refresh.svg</file>

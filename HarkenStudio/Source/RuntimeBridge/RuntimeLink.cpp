@@ -1274,6 +1274,29 @@ EngineResult runtimeRegisterRawPcmSlice(harkenstudio::ObjectId soundId,
     return kEngineOk;
 }
 
+EngineResult runtimeRegisterRawPcmSlice(harkenstudio::ObjectId soundId,
+                                        std::vector<float> interleaved,
+                                        int channels, int sampleRate,
+                                        uint64_t startFrame, uint64_t frameCount,
+                                        bool loops)
+{
+    if (harkenstudio::IsNull(soundId) || frameCount == 0)
+        return kEngineInvalidArg;
+    if (!ensureRuntimeStarted())
+        return kEngineNotInit;
+    if (g_runtime.registeredSounds.contains(soundId)
+        && !g_runtime.registeredRawPcm.contains(soundId))
+        return kEngineInUse;
+
+    const EngineResult result = registerDecodedPcmSlice(
+        soundId, interleaved, channels, sampleRate, startFrame, frameCount);
+    if (result == kEngineOk)
+        rememberRawPcmDecode(soundId, {}, std::move(interleaved), channels,
+                             sampleRate, startFrame, frameCount,
+                             startFrame, frameCount, loops);
+    return result;
+}
+
 EngineResult runtimeRelocateRawPcmSlice(harkenstudio::ObjectId soundId,
                                         uint64_t startFrame,
                                         uint64_t* outStartFrame,
