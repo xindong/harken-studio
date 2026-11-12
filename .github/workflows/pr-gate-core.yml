@@ -1,6 +1,6 @@
 name: PR Gate Core
 
-# Engine-core gate: compiles harken_core everywhere it ships and runs the
+# Engine gate: compiles both Engine editions everywhere they ship and runs the
 # runtime test suite on Windows. Path-scoped — studio, hub, and Integration changes
 # do not trigger it; they have their own gates. Note these path-filtered
 # gates must NOT be listed as required status checks (a skipped workflow
@@ -70,10 +70,10 @@ jobs:
       # takes precedence over CMAKE_BUILD_PARALLEL_LEVEL, which each runner's
       # .env sets so three concurrent jobs share the machine instead of each
       # claiming all of it.
-      - name: Build Core and all registered runtime test targets
+      - name: Build Engine editions and all registered runtime test targets
         shell: bash
         run: |
-          for target in harken_core harken_core_shared harken_runtime_ci_tests; do
+          for target in harken_engine harken_engine_dev harken_runtime_ci_tests; do
             cmake --build build-core --config Release --target "$target"
           done
 
@@ -130,10 +130,10 @@ jobs:
           -DHARKEN_BUILD_ENGINE_DEV=ON
           -DHARKEN_BUILD_RUNTIME_UNIT_TESTS=ON
 
-      - name: Build Core and monitor runtime tests
+      - name: Build Engine editions and monitor runtime tests
         shell: bash
         run: |
-          for target in harken_core harken_core_shared harken_monitor_runtime_tests; do
+          for target in harken_engine harken_engine_dev harken_monitor_runtime_tests; do
             cmake --build build-macos-runtime --config Release --target "$target" --parallel
           done
 
@@ -142,19 +142,19 @@ jobs:
           ctest --test-dir build-macos-runtime -C Release
           -R '^MonitorRuntime\.MonitorHubFanout\.' --no-tests=error --output-on-failure
 
-      - name: Verify HarkenCore architecture
+      - name: Verify Engine architecture
         shell: bash
         run: |
           set -euo pipefail
           {
-            echo "## macOS HarkenCore (${{ matrix.slug }})"
+            echo "## macOS Harken Engine (${{ matrix.slug }})"
             echo ""
             echo "| Artifact | Slices |"
             echo "| --- | --- |"
           } >> "$GITHUB_STEP_SUMMARY"
-          artifacts=$(find build-macos-runtime \( -name 'libHarkenCore.dylib' -o -name 'libHarkenCore.a' \) -type f)
+          artifacts=$(find build-macos-runtime \( -name 'libHarkenEngine.dylib' -o -name 'libHarkenEngineDev.dylib' \) -type f)
           if [ -z "$artifacts" ]; then
-            echo "::error::no HarkenCore artifacts found under build-macos-runtime/"
+            echo "::error::no Engine artifacts found under build-macos-runtime/"
             exit 1
           fi
           status=0
@@ -189,9 +189,9 @@ jobs:
           -DHARKEN_BUILD_ENGINE=ON
           -DHARKEN_BUILD_ENGINE_DEV=ON
 
-      - name: Build (harken_core harken_core_shared)
+      - name: Build (harken_engine harken_engine_dev)
         run: |
-          for target in harken_core harken_core_shared; do
+          for target in harken_engine harken_engine_dev; do
             cmake --build --preset linux-release --target "$target" --parallel
           done
 
@@ -214,9 +214,10 @@ jobs:
           -DCMAKE_OSX_ARCHITECTURES=arm64
           -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0
           -DHARKEN_BUILD_ENGINE=ON
+          -DHARKEN_BUILD_ENGINE_DEV=ON
 
-      - name: Build libHarkenCore.a
-        run: cmake --build build-ios --config Release --target harken_core --parallel
+      - name: Build libHarkenEngine.a and libHarkenEngineDev.a
+        run: cmake --build build-ios --config Release --target harken_engine harken_engine_dev --parallel
 
   core-android-arm64:
     name: core-android-arm64
@@ -249,5 +250,5 @@ jobs:
           -DHARKEN_BUILD_ENGINE=ON
           -DHARKEN_BUILD_ENGINE_DEV=ON
 
-      - name: Build libHarkenCore.so
-        run: cmake --build build-android --config Release --target harken_core_shared --parallel
+      - name: Build libHarkenEngine.so and libHarkenEngineDev.so
+        run: cmake --build build-android --config Release --target harken_engine harken_engine_dev --parallel

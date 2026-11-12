@@ -47,10 +47,10 @@ jobs:
           --markdown-out .temp/compliance/compliance-report.md
           --fail-on high
 
-      - name: Report product boundary violations
+      - name: Enforce product boundaries
         run: |
           python .scripts/tests/test_product_boundary_check.py -v
-          python .scripts/product_boundary_check.py --json-out .temp/compliance/product-boundary.json
+          python .scripts/product_boundary_check.py --json-out .temp/compliance/product-boundary.json --strict
 
       - name: Check Pack layout lock
         if: github.event_name == 'pull_request'
