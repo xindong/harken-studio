@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "HarkenStudio" / "Source" / "Tooling" / "SchemaArchive"))
 import check_integration_version
 import schema_archive
 import studio_schema_release_audit

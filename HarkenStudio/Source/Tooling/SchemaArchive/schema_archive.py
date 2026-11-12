@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parents[4]
 SCHEMA_ROOT = REPO_ROOT / "HarkenStudio" / "Format"
 PROJECT_SCHEMA_NAME = "ProjectSerializedSchema.json"
 PACK_SCHEMA_NAME = "PackManifestSchema.json"

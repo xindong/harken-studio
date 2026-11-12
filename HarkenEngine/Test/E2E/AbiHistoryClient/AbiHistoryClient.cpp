@@ -215,7 +215,7 @@ int main(int argc, char** argv) {
     if (argc != 3) {
         std::fprintf(
             stderr,
-            "usage: harken_abi_history_client <profile> <HarkenCore.dll>\n");
+            "usage: harken_abi_history_client <profile> <HarkenEngine.dll>\n");
         return 2;
     }
     std::error_code ec;

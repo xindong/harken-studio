@@ -20,6 +20,9 @@ from typing import Any, Iterator
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
+SCHEMA_TOOL_DIR = SCRIPT_DIR.parent / "HarkenStudio" / "Source" / "Tooling" / "SchemaArchive"
+if str(SCHEMA_TOOL_DIR) not in sys.path:
+    sys.path.insert(0, str(SCHEMA_TOOL_DIR))
 
 import schema_archive
 
@@ -694,7 +697,7 @@ def verify_release_readers(current_binary: Path, baseline_readers: dict[str, Pat
                 "checks": ["new-reads-old", "old-edits-new", "new-reopens-preserved-content"]})
     platform = "macOS" if sys.platform == "darwin" else "x86_64"
     native_directory = current_binary.parent / "HarkenIntegration/Unity/Harken/Runtime/Plugins" / platform
-    native_name = "HarkenCore.dll" if os.name == "nt" else "libHarkenCore.dylib" if sys.platform == "darwin" else "libHarkenCore.so"
+    native_name = "HarkenEngine.dll" if os.name == "nt" else "libHarkenEngine.dylib" if sys.platform == "darwin" else "libHarkenEngine.so"
     if not (native_directory / native_name).is_file():
         native_directory = current_binary.parent
     if not (native_directory / native_name).is_file():

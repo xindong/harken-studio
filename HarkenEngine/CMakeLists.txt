@@ -386,7 +386,7 @@ if(HARKEN_BUILD_ENGINE)
         # checked-in .def to the linker as /DEF:. Regenerate it from Harken.h
         # with Source/Core/api/abi/gen_abi_exports.py after an entry point
         # changes; the abi export checks fail on drift.
-        target_sources(harken_engine PRIVATE ${HARKEN_CORE_DIR}/api/abi/HarkenCore.def)
+        target_sources(harken_engine PRIVATE ${HARKEN_CORE_DIR}/api/abi/HarkenEngine.def)
     endif()
 endif()
 
@@ -406,7 +406,7 @@ if(HARKEN_BUILD_ENGINE_DEV)
     target_compile_definitions(harken_engine_dev PRIVATE
         HARKEN_ENGINE_DEV=1
         HARKEN_DEVELOPMENT_PREVIEW=$<BOOL:${HARKEN_DEVELOPMENT_PREVIEW}>)
-    file(STRINGS "${HARKEN_CORE_DIR}/api/abi/HarkenCore.def" _dev_exports
+    file(STRINGS "${HARKEN_CORE_DIR}/api/abi/HarkenEngine.def" _dev_exports
         REGEX "^[ \t]+Vn_[A-Za-z0-9_]+$")
     list(TRANSFORM _dev_exports STRIP)
     foreach(_header IN LISTS HARKEN_ENGINE_DEV_PUBLIC_HEADERS)
@@ -419,7 +419,7 @@ if(HARKEN_BUILD_ENGINE_DEV)
     endforeach()
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
         ${HARKEN_ENGINE_DEV_PUBLIC_HEADERS}
-        "${HARKEN_CORE_DIR}/api/abi/HarkenCore.def")
+        "${HARKEN_CORE_DIR}/api/abi/HarkenEngine.def")
     if(WIN32)
         list(JOIN _dev_exports "\n    " _dev_exports)
         file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/HarkenEngineDev.def"

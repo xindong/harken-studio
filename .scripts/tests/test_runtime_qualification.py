@@ -1415,7 +1415,7 @@ class RuntimeQualificationTest(unittest.TestCase):
                 run_root / "build" / "vs" / "bin" / "Release"
             )
             native_dir.mkdir(parents=True, exist_ok=True)
-            native_dll = native_dir / "HarkenCore.dll"
+            native_dll = native_dir / "HarkenEngineDev.dll"
             native_dll.write_bytes(b"native")
             overrides, native_inputs = MODULE.command_environment(
                 [f"HARKEN_NATIVE_DIR={native_dir}"],

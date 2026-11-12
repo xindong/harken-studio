@@ -267,7 +267,7 @@ TEST(CurrentWorldProjectAdapter, SelectionHistoryAndOccurrencesSurviveAuthoringB
     ASSERT_EQ(1u, request->containers.size());
     EXPECT_EQ(65u, request->containers[0].children.size());
     EXPECT_EQ(64u, request->containers[0].avoidLastN);
-    EXPECT_TRUE(HarkenEditor::Bridge::compileCurrentWorldRequest(*request, true).ok());
+    EXPECT_TRUE(HarkenEditor::Build::compileCurrentWorldRequest(*request, true).ok());
 }
 
 TEST(CurrentWorldProjectAdapter, UnsupportedTransitionTimingIsNeverSilentlyDiscarded)
@@ -298,6 +298,7 @@ TEST(CurrentWorldProjectAdapter, UnsupportedTransitionTimingIsNeverSilentlyDisca
 TEST(CurrentWorldProjectAdapter, ScalarUpdatesMatchFullCompilationAcrossPlatformsAndRestoration)
 {
     namespace Bridge = HarkenEditor::Bridge;
+    namespace Build = HarkenEditor::Build;
     using Authoring = PlayablePropertyAuthoringV1;
     using Property = harkenplayableproperties::PlayablePropertyIdV1;
     std::shared_ptr<ProjectItem> container;
@@ -332,10 +333,10 @@ TEST(CurrentWorldProjectAdapter, ScalarUpdatesMatchFullCompilationAcrossPlatform
     preparedSound.sampleRate = 48000;
     preparation->sounds.push_back(preparedSound);
     baseline->soundPreparation = preparation;
-    Bridge::CurrentWorldRequestCache cache;
+    Build::CurrentWorldRequestCache cache;
     auto cached = cache.update(baseline, {}, token);
     ASSERT_NE(cached, nullptr);
-    auto first = Bridge::compileCurrentWorldRequest(*cached, true);
+    auto first = Build::compileCurrentWorldRequest(*cached, true);
     ASSERT_TRUE(first.ok()) << static_cast<int>(first.status);
     const auto originalBody = first.body;
     auto wrongReceipt = token;
@@ -360,9 +361,9 @@ TEST(CurrentWorldProjectAdapter, ScalarUpdatesMatchFullCompilationAcrossPlatform
     EXPECT_EQ(baseline->soundPreparation->sounds.front().samples, preparedSound.samples);
 
     const auto verify = [&](std::vector<std::pair<ProjectItem*, std::uint8_t>> fields) {
-        std::vector<Bridge::CurrentWorldScalarUpdate> updates;
+        std::vector<Build::CurrentWorldScalarUpdate> updates;
         for (const auto& [item, property] : fields) {
-            Bridge::CurrentWorldScalarUpdate update;
+            Build::CurrentWorldScalarUpdate update;
             ASSERT_TRUE(readCurrentWorldScalarUpdate(*item, scope, property, &update));
             updates.push_back(update);
         }
@@ -373,8 +374,8 @@ TEST(CurrentWorldProjectAdapter, ScalarUpdatesMatchFullCompilationAcrossPlatform
         auto fresh = buildCurrentWorldSyncRequest(project, scope, &error, nullptr,
                                                   &options, token.authoringRevision);
         ASSERT_NE(fresh, nullptr) << error.toStdString();
-        auto actual = Bridge::compileCurrentWorldRequest(*cached, true);
-        auto expected = Bridge::compileCurrentWorldRequest(*fresh, true);
+        auto actual = Build::compileCurrentWorldRequest(*cached, true);
+        auto expected = Build::compileCurrentWorldRequest(*fresh, true);
         ASSERT_TRUE(actual.ok()) << static_cast<int>(actual.status);
         ASSERT_TRUE(expected.ok()) << static_cast<int>(expected.status);
         EXPECT_EQ(actual.body, expected.body);
@@ -399,10 +400,10 @@ TEST(CurrentWorldProjectAdapter, ScalarUpdatesMatchFullCompilationAcrossPlatform
     ASSERT_TRUE(Authoring::clearOverride(*container, *parentLocator, volume, std::nullopt));
     ASSERT_TRUE(Authoring::clearOverride(*container, *parentLocator, pitch, scope));
     verify({{sound.get(), volume}, {container.get(), volume}, {container.get(), pitch}});
-    const auto restored = Bridge::compileCurrentWorldRequest(*cached, true);
+    const auto restored = Build::compileCurrentWorldRequest(*cached, true);
     EXPECT_EQ(restored.body, originalBody);
     EXPECT_EQ(baseline->busResult->projectGeneration, 1u);
-    EXPECT_EQ(Bridge::compileCurrentWorldRequest(*baseline, true).body, originalBody);
+    EXPECT_EQ(Build::compileCurrentWorldRequest(*baseline, true).body, originalBody);
     const auto replacement = cache.update(baseline, {}, token);
     ASSERT_NE(replacement, nullptr);
     auto oldReceipt = token;
@@ -417,15 +418,16 @@ TEST(CurrentWorldProjectAdapter, ScalarUpdatesMatchFullCompilationAcrossPlatform
 TEST(CurrentWorldProjectAdapter, CachedInputsRejectForeignIdentityAndRequireReplacementAfterRestart)
 {
     namespace Bridge = HarkenEditor::Bridge;
+    namespace Build = HarkenEditor::Build;
     std::shared_ptr<ProjectItem> container;
     std::shared_ptr<ProjectItem> sound;
     auto project = makeRandomProject(&container, &sound);
     auto request = buildCurrentWorldSyncRequest(project, std::nullopt);
     ASSERT_NE(request, nullptr);
-    Bridge::CurrentWorldRequestCache cache;
+    Build::CurrentWorldRequestCache cache;
     const Bridge::CurrentWorldSyncToken initial{1, 1, 1, 1};
     ASSERT_NE(cache.update(request, {}, initial), nullptr);
-    Bridge::CurrentWorldScalarUpdate update;
+    Build::CurrentWorldScalarUpdate update;
     ASSERT_TRUE(readCurrentWorldScalarUpdate(*sound, std::nullopt, 1, &update));
     update.guid = {987, 654};
     EXPECT_EQ(cache.update({}, {update}, {1, 2, 1, 2}), nullptr);

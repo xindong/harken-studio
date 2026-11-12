@@ -427,14 +427,14 @@ def single_file(root: Path, pattern: str) -> Path:
     return matches[0]
 
 
-def toolchain_record(build: Path) -> dict[str, Any]:
+def toolchain_record(build: Path, target: str) -> dict[str, Any]:
     compiler_file = single_file(
         build / "CMakeFiles", "*/CMakeCXXCompiler.cmake"
     )
     system_file = single_file(
         build / "CMakeFiles", "*/CMakeSystem.cmake"
     )
-    project_file = build / "harken_core_shared.vcxproj"
+    project_file = single_file(build, f"**/{target}.vcxproj")
     compiler_values = parse_cmake_set_file(compiler_file)
     system_values = parse_cmake_set_file(system_file)
     required_compiler = {
@@ -496,6 +496,10 @@ def declares_engine_editions(root: Path) -> bool:
 
 def shipping_library_name(root: Path) -> str:
     return "HarkenEngine.dll" if declares_engine_editions(root) else "HarkenCore.dll"
+
+
+def shipping_target(root: Path) -> str:
+    return "harken_engine" if declares_engine_editions(root) else "harken_core_shared"
 
 
 def runtime_build_options(root: Path) -> dict[str, str]:
@@ -561,7 +565,7 @@ def rebuild_runtime(
         "--config",
         configuration,
         "--target",
-        "harken_core_shared",
+        shipping_target(root),
         "--clean-first",
         "--parallel",
     ]
@@ -582,7 +586,7 @@ def rebuild_runtime(
         ),
         "compile": command_record(build_command, root, compiled),
         "cache": cache,
-        "toolchain": toolchain_record(build),
+        "toolchain": toolchain_record(build, shipping_target(root)),
     }
 
 

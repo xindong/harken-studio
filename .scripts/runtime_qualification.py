@@ -98,8 +98,10 @@ M1_EVIDENCE_POLICY = {
                     "harken_render_worker_wake_fallback_tests.exe"
                 ),
                 "build/vs/bin/Debug/harken_shared_load_smoke.exe",
-                "build/vs/bin/Debug/HarkenCore.dll",
-                "build/vs/bin/Debug/HarkenCore.pdb",
+                "build/vs/bin/Debug/HarkenEngine.dll",
+                "build/vs/bin/Debug/HarkenEngineDev.dll",
+                "build/vs/bin/Debug/HarkenEngine.pdb",
+                "build/vs/bin/Debug/HarkenEngineDev.pdb",
             ],
         },
         {
@@ -113,7 +115,8 @@ M1_EVIDENCE_POLICY = {
                     "harken_render_worker_wake_fallback_tests.exe"
                 ),
                 "build/vs/bin/Release/harken_shared_load_smoke.exe",
-                "build/vs/bin/Release/HarkenCore.dll",
+                "build/vs/bin/Release/HarkenEngine.dll",
+                "build/vs/bin/Release/HarkenEngineDev.dll",
             ],
         },
         {
@@ -1080,7 +1083,7 @@ def command_environment(
                     "HARKEN_NATIVE_DIR must be the qualified Release "
                     f"directory: {expected_native_dir}"
                 )
-            native_dll = native_dir / "HarkenCore.dll"
+            native_dll = native_dir / "HarkenEngineDev.dll"
             if not native_dll.is_file():
                 raise FileNotFoundError(
                     f"native Runtime DLL is missing: {native_dll}"
@@ -1375,7 +1378,8 @@ def record_external(args: argparse.Namespace) -> int:
             run_root / "build" / "vs" / "bin" / configuration
         ).resolve()
         required_binary_paths = {
-            (config_dir / "HarkenCore.dll").resolve(),
+            (config_dir / "HarkenEngine.dll").resolve(),
+            (config_dir / "HarkenEngineDev.dll").resolve(),
             (config_dir / "harken_runtime_tests.exe").resolve(),
             (
                 config_dir
@@ -1398,7 +1402,7 @@ def record_external(args: argparse.Namespace) -> int:
                 f"{missing_binaries}"
             )
         if configuration == "Debug":
-            required_pdb = (config_dir / "HarkenCore.pdb").resolve()
+            required_pdb = (config_dir / "HarkenEngine.pdb").resolve()
             recorded_pdb_paths = {
                 (run_root / item["path"]).resolve()
                 for item in artifacts

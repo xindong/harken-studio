@@ -36,17 +36,18 @@
 namespace VNX {
 
 namespace Bridge = HarkenEditor::Bridge;
+namespace Build = HarkenEditor::Build;
 
 struct CurrentWorldCompilation {
     struct Job {
         Bridge::CurrentWorldSyncToken token;
-        Bridge::CurrentWorldSyncRequestPtr request;
-        std::vector<Bridge::CurrentWorldScalarUpdate> updates;
+        Build::CurrentWorldSyncRequestPtr request;
+        std::vector<Build::CurrentWorldScalarUpdate> updates;
     };
     struct Result {
         Bridge::CurrentWorldSyncToken token;
-        Bridge::CurrentWorldSyncRequestPtr request;
-        Bridge::CurrentWorldCompileResult compiled;
+        Build::CurrentWorldSyncRequestPtr request;
+        Build::CurrentWorldCompileResult compiled;
     };
 
     CurrentWorldCompilation() : worker([this] { run(); }) {}
@@ -95,7 +96,7 @@ struct CurrentWorldCompilation {
     }
 
     void run() {
-        Bridge::CurrentWorldRequestCache cache;
+        Build::CurrentWorldRequestCache cache;
         for (;;) {
             Job job;
             {
@@ -129,7 +130,7 @@ struct CurrentWorldCompilation {
             try {
                 result.request = cache.update(std::move(job.request), job.updates, job.token);
                 if (result.request)
-                    result.compiled = Bridge::compileCurrentWorldRequest(*result.request, true);
+                    result.compiled = Build::compileCurrentWorldRequest(*result.request, true);
             } catch (...) {
                 result.compiled.status = Bridge::CurrentWorldSyncStatus::CompileFailed;
             }
@@ -158,7 +159,7 @@ static_assert(static_cast<uint8_t>(AudioEngine::ExecErrorDomain::Unclassified)
 
 namespace {
 
-bool preparedSoundsAreCurrent(const Bridge::CurrentWorldSyncRequestPtr& request)
+bool preparedSoundsAreCurrent(const Build::CurrentWorldSyncRequestPtr& request)
 {
     if (!request || !request->soundPreparation) return true;
     const auto& preparation = *request->soundPreparation;
@@ -247,7 +248,7 @@ AudioEngine::AudioEngine(QObject* parent)
                 currentWorldPreviewMutations_.clear();
                 currentWorldRequestSession_ = 0;
                 currentWorldRequestEpoch_ = 0;
-                return Bridge::clearCurrentWorld(token);
+                return Build::clearCurrentWorld(token);
             }
             bindCurrentWorldPlatformContext();
             QString error;
@@ -269,7 +270,7 @@ AudioEngine::AudioEngine(QObject* parent)
                 }
                 for (const auto& [stableId, propertyId] : properties) {
                     auto* item = ProjectManager::instance().findItemByRuntimeStableId(stableId);
-                    Bridge::CurrentWorldScalarUpdate update;
+                    Build::CurrentWorldScalarUpdate update;
                     if (!item || !readCurrentWorldScalarUpdate(
                             *item, scope, propertyId, &update)) {
                         incremental = false;
@@ -1164,7 +1165,7 @@ void AudioEngine::onRuntimeServiceTimer()
                     currentWorldRequestSession_ = 0;
                     currentWorldRequestEpoch_ = 0;
                 }
-                result = Bridge::installCompiledCurrentWorld(
+                result = Build::installCompiledCurrentWorld(
                     std::move(compiled->request), std::move(compiled->compiled), compiled->token);
             }
             if (result.ok())

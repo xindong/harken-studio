@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Windows export allowlist generator for the HarkenCore shared library.
+"""Windows export allowlist generator for the HarkenEngine shared library.
 
 The shared library's export surface is an ABI contract: every named export is a
 symbol a shipped game may bind to, and one that cannot be withdrawn without
@@ -14,8 +14,8 @@ IS the public contract, so the DLL exports exactly the documented C API:
         The public C API header. Every public entry point is declared at file
         scope inside its extern "C" block as `VnResult Vn_<Name>(...)`.
 
-  <repo>/HarkenEngine/Source/Core/api/abi/HarkenCore.def
-        The emitted module-definition file. Listed in the harken_core_shared
+  <repo>/HarkenEngine/Source/Core/api/abi/HarkenEngine.def
+        The emitted module-definition file. Listed in the harken_engine
         target's sources on Windows, where CMake forwards it to the linker as
         /DEF: -- making it both the linker's instruction and the reviewable
         allowlist. Names are emitted sorted so adding an entry point produces a
@@ -66,14 +66,14 @@ DEVELOPMENT_H = os.path.join(
     "HarkenDevelopment.h")
 OUT_PATH = os.path.join(
     REPO_ROOT, "HarkenEngine", "Source", "Core", "api", "abi",
-    "HarkenCore.def")
+    "HarkenEngine.def")
 
 HEADER = (
     "; generated, do not edit.\n"
     "; Source: HarkenEngine/Source/Core/api/include/harken/Harken.h\n"
     "; Regenerate: py -3 HarkenEngine/Source/Core/api/abi/gen_abi_exports.py\n"
     ";\n"
-    "; The Windows export allowlist for the HarkenCore shared library. Every\n"
+    "; The Windows export allowlist for the HarkenEngine shared library. Every\n"
     "; name here is a public ABI commitment; nothing outside this list is\n"
     "; exported. No LIBRARY statement -- the output name comes from the build.\n"
     "EXPORTS\n")
@@ -326,7 +326,7 @@ def parse_args(argv):
     parser = argparse.ArgumentParser(
         prog="gen_abi_exports.py",
         description="Generate or verify the Windows export allowlist for the "
-                    "HarkenCore shared library.",
+                    "HarkenEngine shared library.",
         allow_abbrev=False)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument(
@@ -369,7 +369,7 @@ def main(argv=None):
 
     if verify_dll:
         if not os.path.isfile(verify_dll):
-            print("MISMATCH: %s does not exist; build harken_core_shared before "
+            print("MISMATCH: %s does not exist; build harken_engine before "
                   "verifying its export table" % verify_dll)
             return 1
         if not os.path.isfile(OUT_PATH):

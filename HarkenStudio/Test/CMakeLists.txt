@@ -181,7 +181,7 @@ if(WIN32)
 endif()
 add_custom_command(TARGET harken_editor_tests POST_BUILD
     COMMAND ${Python3_EXECUTABLE}
-        "${CMAKE_SOURCE_DIR}/.scripts/schema_archive.py"
+        "${CMAKE_SOURCE_DIR}/HarkenStudio/Source/Tooling/SchemaArchive/schema_archive.py"
         --schema-root "${HARKEN_SCHEMA_SOURCE_DIR}"
         --check-generated "${HARKEN_SCHEMA_GENERATED_CORE_DIR}"
         --publish "$<TARGET_FILE_DIR:harken_editor_tests>/schema"
@@ -208,7 +208,7 @@ target_compile_definitions(harken_timeline_benchmark PRIVATE
 add_dependencies(harken_timeline_benchmark harken_editor)
 add_custom_command(TARGET harken_timeline_benchmark POST_BUILD
     COMMAND ${Python3_EXECUTABLE}
-        "${CMAKE_SOURCE_DIR}/.scripts/schema_archive.py"
+        "${CMAKE_SOURCE_DIR}/HarkenStudio/Source/Tooling/SchemaArchive/schema_archive.py"
         --schema-root "${HARKEN_SCHEMA_SOURCE_DIR}"
         --check-generated "${HARKEN_SCHEMA_GENERATED_CORE_DIR}"
         --publish "$<TARGET_FILE_DIR:harken_timeline_benchmark>/schema"

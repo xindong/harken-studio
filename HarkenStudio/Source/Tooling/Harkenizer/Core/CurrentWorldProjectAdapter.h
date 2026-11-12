@@ -17,6 +17,9 @@
 namespace HarkenEditor::Bridge {
 struct CanonicalRuntimeProjectSourceIndexV1;
 struct CanonicalRuntimeProjectContextV1;
+}
+
+namespace HarkenEditor::Build {
 struct CurrentWorldScalarUpdate;
 }
 
@@ -81,13 +84,13 @@ struct CurrentWorldBuildOptions
     std::vector<CurrentWorldBuildDiagnostic>* loweringDiagnostics = nullptr;
 };
 
-HarkenEditor::Bridge::CurrentWorldSyncRequestPtr
+HarkenEditor::Build::CurrentWorldSyncRequestPtr
 buildCurrentWorldSyncRequest(ProjectData& project, PlatformScope scope,
                              QString* error = nullptr,
                              CurrentWorldBuildStatus* status = nullptr,
                              const CurrentWorldBuildOptions* options = nullptr,
                              std::uint64_t projectGeneration = 0);
-HarkenEditor::Bridge::CurrentWorldSyncRequestPtr
+HarkenEditor::Build::CurrentWorldSyncRequestPtr
 buildCurrentWorldSyncRequestForContext(ProjectData& project, PlatformScope scope,
                                        QString* error,
                                        CurrentWorldBuildStatus* status,
@@ -95,7 +98,7 @@ buildCurrentWorldSyncRequestForContext(ProjectData& project, PlatformScope scope
                                        std::uint64_t projectGeneration,
                                        const QString& languageFallback);
 void retainCurrentWorldSyncRequestInputs(
-    HarkenEditor::Bridge::CurrentWorldSyncRequest& request,
+    HarkenEditor::Build::CurrentWorldSyncRequest& request,
     const HarkenEditor::Bridge::CanonicalRuntimeProjectSourceIndexV1& sourceIndex,
     const std::set<harkenstudio::ObjectId>& actionIds,
     const std::set<harkenstudio::ObjectId>& definitionIds);
@@ -107,6 +110,6 @@ bool affectsCurrentWorld(ProjectItemType itemType,
                          QStringView propertyName = {});
 bool readCurrentWorldScalarUpdate(
     ProjectItem& item, PlatformScope scope, std::uint8_t propertyId,
-    HarkenEditor::Bridge::CurrentWorldScalarUpdate* output);
+    HarkenEditor::Build::CurrentWorldScalarUpdate* output);
 
 } // namespace VNX

@@ -38,7 +38,7 @@
 namespace VNX {
 namespace {
 
-using BridgeRequest = HarkenEditor::Bridge::CurrentWorldSyncRequest;
+using BridgeRequest = HarkenEditor::Build::CurrentWorldSyncRequest;
 using ContentKind = harkenprojectschema::ContentKind;
 using ProjectIndex =
     HarkenEditor::Bridge::CanonicalRuntimeProjectSourceIndexV1;
@@ -1494,7 +1494,7 @@ bool appendActionPrograms(
 
 } // namespace
 
-HarkenEditor::Bridge::CurrentWorldSyncRequestPtr
+HarkenEditor::Build::CurrentWorldSyncRequestPtr
 buildCurrentWorldSyncRequestForContext(ProjectData& project, PlatformScope scope,
                              QString* error,
                              CurrentWorldBuildStatus* status,
@@ -1772,7 +1772,7 @@ buildCurrentWorldSyncRequestForContext(ProjectData& project, PlatformScope scope
 }
 
 void retainCurrentWorldSyncRequestInputs(
-    HarkenEditor::Bridge::CurrentWorldSyncRequest& request,
+    HarkenEditor::Build::CurrentWorldSyncRequest& request,
     const HarkenEditor::Bridge::CanonicalRuntimeProjectSourceIndexV1& sourceIndex,
     const std::set<harkenstudio::ObjectId>& actionIds,
     const std::set<harkenstudio::ObjectId>& definitionIds)
@@ -1874,7 +1874,7 @@ bool isCurrentWorldPlayableForContext(ProjectData& project, const ProjectItem& i
 
 bool readCurrentWorldScalarUpdate(
     ProjectItem& item, PlatformScope scope, std::uint8_t propertyId,
-    HarkenEditor::Bridge::CurrentWorldScalarUpdate* output)
+    HarkenEditor::Build::CurrentWorldScalarUpdate* output)
 {
     using Property = harkenplayableproperties::PlayablePropertyIdV1;
     const auto property = static_cast<Property>(propertyId);

@@ -44,7 +44,7 @@ VNX::CanonicalRuntimeProjectAdapter::compile(
 
 namespace VNX {
 
-HarkenEditor::Bridge::CurrentWorldSyncRequestPtr
+HarkenEditor::Build::CurrentWorldSyncRequestPtr
 buildCurrentWorldSyncRequest(ProjectData& project, PlatformScope scope,
                              QString* error,
                              CurrentWorldBuildStatus* status,
@@ -75,7 +75,7 @@ bool WriteCurrentWorldArtifactV1(
     auto request = buildCurrentWorldSyncRequest(project, scope, error);
     if (!request)
         return false;
-    auto compiled = HarkenEditor::Bridge::compileCurrentWorldRequest(*request);
+    auto compiled = HarkenEditor::Build::compileCurrentWorldRequest(*request);
     if (!compiled.ok()) {
         if (error) *error = QStringLiteral(
             "Current World project compilation failed (%1, stable id %2)")
@@ -99,7 +99,7 @@ bool WriteCurrentWorldArtifactV1(
     if (!request)
         return false;
     request->soundContentRevisions = soundRevisions;
-    auto compiled = HarkenEditor::Bridge::compileCurrentWorldRequest(*request);
+    auto compiled = HarkenEditor::Build::compileCurrentWorldRequest(*request);
     if (!compiled.ok()) {
         if (error) *error = QStringLiteral(
             "Current World project compilation failed (%1, stable id %2)")

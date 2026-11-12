@@ -20,7 +20,7 @@ std::wstring WidenAscii(const char* text) {
 
 int wmain(int argc, wchar_t* argv[]) {
     if (argc != 2) {
-        std::wcerr << L"usage: harken_shared_load_smoke <HarkenCore.dll>\n";
+        std::wcerr << L"usage: harken_shared_load_smoke <HarkenEngine.dll>\n";
         return 1;
     }
 

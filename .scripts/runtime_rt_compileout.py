@@ -138,7 +138,7 @@ def validate(off_build: Path, all_build: Path) -> dict:
         "harken_core_rt_qualification.lib"
     )
     all_shipping = all_build / "lib" / "Release" / "HarkenCore.lib"
-    all_shared = all_build / "bin" / "Release" / "HarkenCore.dll"
+    all_shared = all_build / "bin" / "Release" / "HarkenEngine.dll"
 
     require_probe_absent(
         "all-Off qualification library",
@@ -158,7 +158,7 @@ def validate(off_build: Path, all_build: Path) -> dict:
     )
 
     all_shipping_project = project_text(all_build, "harken_core")
-    all_shared_project = project_text(all_build, "harken_core_shared")
+    all_shared_project = project_text(all_build, "harken_engine")
     all_qualification_project = project_text(
         all_build, "harken_core_rt_qualification"
     )

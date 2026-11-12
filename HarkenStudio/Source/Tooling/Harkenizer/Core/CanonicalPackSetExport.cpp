@@ -80,6 +80,7 @@ namespace VNX {
 namespace {
 
 namespace Bridge = HarkenEditor::Bridge;
+namespace Build = HarkenEditor::Build;
 
 constexpr char kWaveformLock[] = ".harken-pack-waveforms.lock";
 
@@ -3120,7 +3121,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                 return fail(QStringLiteral("Missing packed media for Sound %1 on %2/%3")
                                 .arg(VNX::objectIdString(source.stableId)).arg(request.options.platform, language));
         }
-        auto compiled = Bridge::compileCurrentWorldRequest(*worldRequest);
+        auto compiled = Build::compileCurrentWorldRequest(*worldRequest);
         if (exportCanceled(request.options.cancelCheck, &result.error)) return fail(result.error);
         if (!compiled.ok() || !compiled.world) {
             return fail(QStringLiteral(

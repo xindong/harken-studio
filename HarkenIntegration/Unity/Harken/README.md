@@ -194,7 +194,7 @@ or call `StartRuntimeAsync` explicitly. See the
 
 The repository deliberately does not track generated native binaries. Studio
 builds and Integration Package release artifacts inject binaries produced by the
-`harken_core_shared` target. `Runtime/Plugins/README.md` documents the exact
+`harken_engine` and `harken_engine_dev` targets. `Runtime/Plugins/README.md` documents the exact
 platform and CPU layout. Only reviewed Unity identity and importer metadata is
 kept beside assets that need stable GUIDs (Scenes, Prefabs, referenced
 scripts/asmdefs, Samples, Tests, and native plugin importer settings).

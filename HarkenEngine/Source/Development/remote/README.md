@@ -1,7 +1,7 @@
 # Runtime Remote Communication
 
-Remote is part of the same runtime sources used by the static Engine and
-`HarkenCore` shared library. It is available in Debug, RelWithDebInfo and Release.
+Remote is part of the Development sources and ships only in the
+`HarkenEngineDev` shared library. It is available in Debug, RelWithDebInfo and Release.
 The library runs the service inside its loading process. No separate Engine
 host executable is required.
 

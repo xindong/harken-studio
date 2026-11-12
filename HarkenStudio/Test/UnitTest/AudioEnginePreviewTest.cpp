@@ -79,11 +79,11 @@ void ensureApp()
     static QApplication app(argc, argv);
 }
 
-std::shared_ptr<HarkenEditor::Bridge::CurrentWorldSyncRequest>
+std::shared_ptr<HarkenEditor::Build::CurrentWorldSyncRequest>
 makeValidCurrentWorldRequest()
 {
     auto request =
-        std::make_shared<HarkenEditor::Bridge::CurrentWorldSyncRequest>();
+        std::make_shared<HarkenEditor::Build::CurrentWorldSyncRequest>();
     const harkenprojectschema::AuthoringGuid masterGuid{0x4d4153544552, 1};
     const auto identity = harkenprojectschema::BuildRuntimeIdentityIndexV1({
         {1, {masterGuid,
@@ -349,7 +349,7 @@ TEST(AudioEnginePreview,
 
     const HarkenEditor::Bridge::CurrentWorldSyncToken token{31, 32, firstEpoch, 33};
     auto request = makeValidCurrentWorldRequest();
-    ASSERT_TRUE(HarkenEditor::Bridge::syncCurrentWorld(
+    ASSERT_TRUE(HarkenEditor::Build::syncCurrentWorld(
                     std::move(request), token).pending());
 
     engine.stopOutput();

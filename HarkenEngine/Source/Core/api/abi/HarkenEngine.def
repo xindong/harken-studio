@@ -2,7 +2,7 @@
 ; Source: HarkenEngine/Source/Core/api/include/harken/Harken.h
 ; Regenerate: py -3 HarkenEngine/Source/Core/api/abi/gen_abi_exports.py
 ;
-; The Windows export allowlist for the HarkenCore shared library. Every
+; The Windows export allowlist for the HarkenEngine shared library. Every
 ; name here is a public ABI commitment; nothing outside this list is
 ; exported. No LIBRARY statement -- the output name comes from the build.
 EXPORTS

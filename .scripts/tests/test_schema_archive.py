@@ -14,7 +14,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = REPO_ROOT / ".scripts" / "schema_archive.py"
+SCRIPT = REPO_ROOT / "HarkenStudio" / "Source" / "Tooling" / "SchemaArchive" / "schema_archive.py"
 MODULE = runpy.run_path(str(SCRIPT))
 SCHEMA_ROOT = REPO_ROOT / "HarkenStudio" / "Format"
 GENERATED_NAMES = {

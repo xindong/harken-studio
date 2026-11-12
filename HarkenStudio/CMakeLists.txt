@@ -58,11 +58,11 @@ file(GLOB_RECURSE HARKEN_SCHEMA_INPUTS CONFIGURE_DEPENDS
 add_custom_command(
     OUTPUT ${HARKEN_SCHEMA_GENERATED_FILES}
     COMMAND ${Python3_EXECUTABLE}
-        "${CMAKE_SOURCE_DIR}/.scripts/schema_archive.py"
+        "${CMAKE_SOURCE_DIR}/HarkenStudio/Source/Tooling/SchemaArchive/schema_archive.py"
         --schema-root "${HARKEN_SCHEMA_SOURCE_DIR}"
         --generate-code "${HARKEN_SCHEMA_GENERATED_CORE_DIR}"
     DEPENDS
-        "${CMAKE_SOURCE_DIR}/.scripts/schema_archive.py"
+        "${CMAKE_SOURCE_DIR}/HarkenStudio/Source/Tooling/SchemaArchive/schema_archive.py"
         ${HARKEN_SCHEMA_INPUTS}
     VERBATIM)
 add_custom_target(harken_schema_codegen
@@ -579,7 +579,7 @@ endif()
 
 add_custom_command(TARGET harken_studio_cli POST_BUILD
     COMMAND ${Python3_EXECUTABLE}
-        "${CMAKE_SOURCE_DIR}/.scripts/schema_archive.py"
+        "${CMAKE_SOURCE_DIR}/HarkenStudio/Source/Tooling/SchemaArchive/schema_archive.py"
         --schema-root "${HARKEN_SCHEMA_SOURCE_DIR}"
         --check-generated "${HARKEN_SCHEMA_GENERATED_CORE_DIR}"
         --publish "$<TARGET_FILE_DIR:harken_studio_cli>/schema"
@@ -589,7 +589,7 @@ endif()
 if(HARKEN_BUILD_EDITOR)
 add_custom_command(TARGET harken_editor POST_BUILD
     COMMAND ${Python3_EXECUTABLE}
-        "${CMAKE_SOURCE_DIR}/.scripts/schema_archive.py"
+        "${CMAKE_SOURCE_DIR}/HarkenStudio/Source/Tooling/SchemaArchive/schema_archive.py"
         --schema-root "${HARKEN_SCHEMA_SOURCE_DIR}"
         --check-generated "${HARKEN_SCHEMA_GENERATED_CORE_DIR}"
         --publish "$<TARGET_FILE_DIR:harken_editor>/schema"

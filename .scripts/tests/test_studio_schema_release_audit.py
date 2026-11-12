@@ -707,8 +707,8 @@ class ReaderGateTest(unittest.TestCase):
         self.pack_reader = self.root / "HarkenAbiFidelity.dll"
         self.pack_root = self.root / "pack"
         self.pack_root.mkdir()
-        native_name = "HarkenCore.dll" if MODULE.os.name == "nt" else "libHarkenCore.dylib" \
-            if MODULE.sys.platform == "darwin" else "libHarkenCore.so"
+        native_name = "HarkenEngine.dll" if MODULE.os.name == "nt" else "libHarkenEngine.dylib" \
+            if MODULE.sys.platform == "darwin" else "libHarkenEngine.so"
         for path in (self.binary, self.old_binary, self.pack_reader,
                      self.binary.parent / native_name, self.pack_root / "Init.bytes", self.pack_root / "Init.json",
                      self.pack_root / "Play.bytes", self.pack_root / "Play.json",

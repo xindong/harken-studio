@@ -9,6 +9,9 @@ from typing import Any
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
+SCHEMA_TOOL_DIR = SCRIPT_DIR.parent / "HarkenStudio" / "Source" / "Tooling" / "SchemaArchive"
+if str(SCHEMA_TOOL_DIR) not in sys.path:
+    sys.path.insert(0, str(SCHEMA_TOOL_DIR))
 
 import schema_archive
 import studio_schema_release_audit as audit
