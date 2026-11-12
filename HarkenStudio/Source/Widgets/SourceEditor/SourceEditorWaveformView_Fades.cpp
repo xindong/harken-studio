@@ -1,6 +1,7 @@
 #include "SourceEditorWaveformView.h"
 
 #include "Core/ThemeManager.h"
+#include "Widgets/Common/WaveformRenderer.h"
 #include "Widgets/CurveEditor/CurveCanvas.h"
 #include "Widgets/CurveEditor/CurvePresetMenu.h"
 #include "Widgets/CurveEditor/CurveRenderer.h"
@@ -24,9 +25,13 @@ const SoundSourceFadeDef& SourceEditorWaveformView::fade(int index) const
 
 QRectF SourceEditorWaveformView::fadeGraphRect() const
 {
-    QRectF graph = channelViewportRect();
-    graph.setLeft(waveformRect().left());
-    return graph.adjusted(0.0, 0.0, -1.0, -1.0);
+    const QRect wave = channelWaveformRect();
+    const auto theme = ThemeManager::instance().snapshot();
+    const auto scale = WaveformRenderer::amplitudeScale(theme->domains.waveform, amplitudeExponent_);
+    const int center = wave.top() + wave.height() / 2;
+    const double amplitude = wave.height() / 2 * scale.dbToPosition(0.0);
+    return QRectF(QPointF(wave.left(), qRound(center - amplitude)),
+                  QPointF(wave.right(), qRound(center + amplitude)));
 }
 
 QPointF SourceEditorWaveformView::fadePointPosition(int index, float x, float value) const
@@ -65,22 +70,22 @@ QPainterPath SourceEditorWaveformView::fadePath(int index) const
 
 SourceEditorWaveformView::FadeHit SourceEditorWaveformView::hitTestFade(const QPoint& position) const
 {
-    if (!editable_ || presentation_ != Presentation::TrimEditor || totalFrames() == 0
-        || !waveformRect().contains(position)
-        || position.y() < channelViewportRect().top())
+    if (!editable_ || presentation_ != Presentation::TrimEditor || totalFrames() == 0)
         return {};
 
     const int first = selectedFade_ >= 0 ? selectedFade_ : 0;
-    const QRectF graph = fadeGraphRect();
+    const QRectF graph = fadeGraphRect().intersected(QRectF(channelViewportRect()));
+    const auto theme = ThemeManager::instance().snapshot();
+    const auto& metrics = theme->domains.curve.metrics;
+    const int padding = theme->ui.metrics.spacingXSmall;
     const auto hit = [&](FadeHit target, qreal radius) {
         const QPointF point = fadeTargetPosition(target);
-        return point.x() >= graph.left() && point.x() <= graph.right()
-            && QLineF(position, point).length() <= radius;
+        return graph.contains(point) && QLineF(position, point).length() <= radius;
     };
     for (const int index : {first, 1 - first}) {
         for (const FadePart part : {FadePart::Start, FadePart::End}) {
             const FadeHit target{index, part};
-            if (hit(target, 9.0))
+            if (hit(target, metrics.pointSelectedRadius + padding))
                 return target;
         }
     }
@@ -90,10 +95,12 @@ SourceEditorWaveformView::FadeHit SourceEditorWaveformView::hitTestFade(const QP
             continue;
         for (const FadePart part : {FadePart::Handle1, FadePart::Handle2}) {
             const FadeHit target{index, part};
-            if (hit(target, 8.0))
+            if (hit(target, metrics.handleRadius + padding))
                 return target;
         }
     }
+    if (!graph.contains(position))
+        return {};
     QPainterPathStroker stroke;
     stroke.setWidth(10.0);
     for (const int index : {first, 1 - first}) {
@@ -133,15 +140,15 @@ void SourceEditorWaveformView::paintFades(QPainter& painter)
         return;
     const auto theme = ThemeManager::instance().snapshot();
     const auto& style = theme->domains.curve;
-    const QRectF graph = fadeGraphRect();
+    const QRectF graph = fadeGraphRect().intersected(QRectF(channelViewportRect()));
+    if (graph.isEmpty())
+        return;
     painter.save();
-    painter.setClipRect(graph);
     for (int index = 0; index < 2; ++index) {
         const bool selected = selectedFade_ == index;
         const bool hovered = hoveredFade_.index == index;
         CurveRenderData data;
         data.frameVisible = false;
-        data.clipToPlot = true;
         data.graphRect = graph;
         data.curveColor = style.colors.gridFade;
         if (fade(index).durationFrames > 0)
@@ -150,16 +157,19 @@ void SourceEditorWaveformView::paintFades(QPainter& painter)
             for (const FadePart part : {FadePart::Start, FadePart::End}) {
                 const FadeHit target{index, part};
                 const QPointF point = fadeTargetPosition(target);
-                if (point.x() >= graph.left() && point.x() <= graph.right())
+                if (graph.contains(point))
                     data.points.append({point, selected && selectedFadeAnchor_ == part, hoveredFade_ == target});
             }
             if ((selected || hovered) && fade(index).durationFrames > 0) {
-                data.handles.append({fadeTargetPosition({index, FadePart::Start}),
-                    fadeTargetPosition({index, FadePart::Handle1}),
-                    activeFade_ == FadeHit{index, FadePart::Handle1}});
-                data.handles.append({fadeTargetPosition({index, FadePart::End}),
-                    fadeTargetPosition({index, FadePart::Handle2}),
-                    activeFade_ == FadeHit{index, FadePart::Handle2}});
+                for (const FadePart part : {FadePart::Handle1, FadePart::Handle2}) {
+                    const FadeHit target{index, part};
+                    const QPointF point = fadeTargetPosition(target);
+                    if (graph.contains(point)) {
+                        data.handles.append({fadeTargetPosition({index,
+                            part == FadePart::Handle1 ? FadePart::Start : FadePart::End}),
+                            point, activeFade_ == target});
+                    }
+                }
             }
         }
         CurveRenderer::renderForeground(painter, style, CurveColorRole::GridFade, data);

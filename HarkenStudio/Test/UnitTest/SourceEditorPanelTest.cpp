@@ -1,5 +1,7 @@
 #include "Core/AssetPipeline/WaveformCache.h"
+#include "Core/FontManager.h"
 #include "Core/ThemeManager.h"
+#include "Widgets/Common/WaveformRenderer.h"
 #include "Widgets/SourceEditor/SourceEditorWaveformView.h"
 
 #include <gtest/gtest.h>
@@ -8,6 +10,7 @@
 #include <QByteArray>
 #include <QContextMenuEvent>
 #include <QFile>
+#include <QFontMetrics>
 #include <QMenu>
 #include <QTemporaryDir>
 
@@ -146,7 +149,18 @@ TEST(SourceEditorPanelTest, FadePresetMenusFollowTheSameRightSegmentRule)
         ++commits;
     });
     const QRect plot = view.waveformRect();
-    const int top = plot.top() + VNX::ThemeManager::instance().metrics().timeAxis.handleBandHeight;
+    const auto theme = VNX::ThemeManager::instance().snapshot();
+    const auto& metrics = theme->ui.metrics.timeAxis;
+    const QRect viewport = plot.adjusted(0, metrics.handleBandHeight, 0, 0);
+    const QFontMetrics font(VNX::FontManager::instance().getFont(VNX::FontRole::Caption), &view);
+    const QRect wave = VNX::waveformAmplitudeBounds(viewport, viewport.height(), 0, font, metrics.labelPadding);
+    const auto ticks = VNX::buildAmplitudeAxisTicks(viewport, wave.top() + wave.height() / 2,
+        wave.height() / 2, font, theme->domains.curve.metrics.amplitudeGridTargetRowSpacing,
+        VNX::WaveformRenderer::amplitudeScale(theme->domains.waveform, view.amplitudeExponent()));
+    QVector<int> unityRows;
+    for (const auto& tick : ticks)
+        if (tick.major) unityRows.append(tick.y);
+    ASSERT_EQ(unityRows.size(), 2);
     for (const int fadeIndex : {0, 1}) {
         for (const bool rightAnchor : {false, true}) {
             view.setSource(source);
@@ -154,7 +168,7 @@ TEST(SourceEditorPanelTest, FadePresetMenusFollowTheSameRightSegmentRule)
             const int frame = fadeIndex == 0 ? (rightAnchor ? 300 : 100) : (rightAnchor ? 900 : 600);
             const bool upperAnchor = (fadeIndex == 0) == rightAnchor;
             const QPoint position(plot.left() + qRound(frame / 1000.0 * (plot.width() - 1)),
-                                  upperAnchor ? top : plot.bottom() - 1);
+                                  upperAnchor ? unityRows.front() : unityRows.back());
             QContextMenuEvent event(QContextMenuEvent::Mouse, position, view.mapToGlobal(position));
             QApplication::sendEvent(&view, &event);
             auto* menu = view.findChild<QMenu*>(QStringLiteral("sourceFadeContextMenu"));
