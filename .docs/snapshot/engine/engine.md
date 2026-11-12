@@ -54,7 +54,7 @@
 | Variable 写入 | 定义不设 scope；全局赋值清除该 Variable 的全部 Emitter 覆盖 | 全局值与覆盖清除在同一边界生效；相同值仍执行清除；保留后续局部写入、Action 顺序和原子批次，失败恢复原状态 | 一致 |
 | Binding 消费上下文 | 局部值由 Emitter 与 Variable 共同确定；Layer 跟随后代播放，Bus 只读全局 | 同一 Emitter 的不同 Action、Play、Layer 共享局部值；路由不改变范围；无公开局部 Clear，Emitter 销毁结束局部状态 | 一致 |
 | 曲线 | 带线性、等功率、指数、对数、S 形、阶梯标签的分段曲线 | 最多 8 个控制点的分段三次 Bezier 与查找表，无形状枚举或阶梯段 | 偏差 |
-| Variable 类型 | Step / Smooth，range / default 描述数值，Label 将稳定身份和名称映射到当前整数位置 | 校验数值域，Label 解析后复用 Global / Emitter 写入；Kind 不限制 Label 或消费者 | 一致 |
+| Variable 类型 | Step / Smooth，range / default 描述数值，Label 将稳定身份映射到当前整数位置 | 校验数值域，Label 按 ID 解析后复用 Global / Emitter 写入，Engine 不保存 Label 名称；Kind 不限制 Label 或消费者 | 一致 |
 | 空间化与衰减 | 逻辑侧按距离求值，音频线程不执行几何计算 | 逐 tick 计算三种 rolloff、空气吸收、声锥、近场与宽度 | 一致 |
 
 ## 公开表面
@@ -63,5 +63,5 @@
 |---|---|---|---|
 | ABI 纪律 | 单头 C 原语，只增不改，尺寸字段标识版本，区分身份与结果码 | 结构体尺寸版本化，原生布局与 ABI 历史均有校验 | 一致 |
 | 音频原语边界 | 上层能力编译为既有音频侧原语 | 新特性保持既有音频侧操作集合 | 一致 |
-| 托管 API 投影边界 | Monitor 服务于引擎与 Studio | 托管 API 排除 Monitor 专用类型、函数、常量和错误码；引擎完整 ABI 校验仍覆盖 Monitor | 已实现 |
+| 托管 API 投影边界 | Monitor 服务于引擎与 Studio | Monitor、快照、能力与绑定查询类型只在开发版头文件 `HarkenDevelopment.h` 中；托管 API 排除 Monitor 专用类型、函数、常量和错误码，开发版入口受 `HARKEN_ENGINE_DEV` 隔离；引擎完整 ABI 校验仍覆盖 Monitor | 已实现 |
 | 其他公开能力 | — | 总线树作用域的 Mute / Solo、暂停 / 恢复、能力发现、实时探测、约 90 个性能快照字段、UTF-8 路径支持及增量打包缓存 | 未记载 |

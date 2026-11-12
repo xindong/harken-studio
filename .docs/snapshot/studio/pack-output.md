@@ -258,28 +258,21 @@ GUI、IPC、CLI 会话导出和 CLI 已保存工程构建使用同一个 `Projec
 | 新一轮构建 | 本轮参与行 | 清零进度及旧 Result／Cost；未参与行保留 |
 | 清缓存 | 本地产物 | 构建记录清空后产物列留空；包选择属于用户偏好，工程配置仍由工程保存 |
 
-## Pack 二进制合同（2026-11-05）
+## Pack 二进制合同（2026-11-12）
 
-`HarkenSchema/Pack/current/PackManifestSchema.json` 的 `x-harken-format.binaryLayout` 描述当前有效生产写入路径的 `.bytes` 布局，是 Engine 和 Studio 共用的布局来源。合同包含字段顺序、类型、固定值、保留字段、行数与章节顺序、偏移、对齐以及目录 kind／vintage；C++ 类型和成员映射单独保存在 `.scripts/pack-wire-bindings.json`。
+Pack 的 `.bytes` 布局由 Engine 定义，唯一来源是 `HarkenEngine/Format/Pack` 下的手写纯 C 头文件（总入口 `HarkenPack.h`，按段族拆分为 `PackFile.h`、`PackMedia.h`、`PackBus.h`、`PackCurve.h`、`PackBinding.h`、`PackVoiceRecipe.h`、`PackContainer.h`、`PackVariable.h`、`PackWorldBody.h`、`PackEffects.h`、`PackProperties.h`、`PackSlots.h`、`PackChecksum.h`），经只含头文件的 `Harken::PackFormat` 目标发布，消费方以 `harken_pack/` 前缀引用。
 
-| 覆盖范围 | 当前内容 |
+| 方面 | 当前做法 |
 |---|---|
-| 文件框架 | 文件前缀、包头、媒体文件头、目录条目 |
-| 资源条目 | Media(1)、Bus(2)、BusSend(3)、Attenuation(4)、BindingDefinition(7)、BindingAttachment(8)、BusEffect(12)、EffectDynamicRoute(13) |
-| 低层资源写入 | Container(9)、VoiceRecipe(11)；虽不由常规最终组包直接生成，仍有有效生产写入路径 |
-| 组合与依赖 | CanonicalDefinitionPartition(21)、RequirementBlock(22)、DependencyEdge(23)、BusDefinitionSnapshot(24) |
-| 变量 | VariablePolicyOverlay(26)、VariableRequirements(27) |
-| 分区 body | shipping V18，包括可播放属性、时间表、容器、转换与 Action 章节；V19 的入口时间线与 V20 的信号表扩展同样由合同生成 |
+| 记录与取值域 | 固定宽度、小端、显式填充的 `HkPack*` 结构体；枚举、单位、可接受范围、世界能力位和硬上限与布局写在同一处 |
+| 布局锁 | 每条记录以 `HK_PACK_SIZE`／`HK_PACK_OFFSET` 静态断言锁定；`.scripts/pack_layout_lock_check.py` 在 PR 中要求布局锁变动同时提升 `HK_PACK_FORMAT_VERSION` |
+| 读写映射 | Engine 读取端 `harken/media/PackWire.h` 与 Studio 写入端 `harken_studio_build/PackWire.h` 各自手写映射，不使用代码生成器；构建路径不运行 Python |
+| 版本 | Pack 格式版本当前为 4，独立于 ABI 与产品版本；Engine 经 `Vn_QueryPackFormatVersion` 声明可读范围 |
+| 伴随 JSON | 由 Studio 定义，Schema 位于 `HarkenStudio/Format/PackMetadata`；Engine 不读取伴随文件，Pack 激活只接收二进制 |
 
-有效目录 kind 共 16 个。DiscreteVariable(5)、MeterWiring(6)、Action(10)、InitRoutingCatalog(20)、GameplayCatalog(25)、VariableNameCatalog(28) 共 6 个列入 `retiredKinds`，读取端不再接纳；其中 Action 的当前生产数据位于分区 body。独立的 `Vn_SetGameplayCatalog` 接口与伴随 JSON 的变量名称映射继续保留，不作为 Pack 目录条目。
+有效目录 kind 共 16 个。DiscreteVariable(5)、MeterWiring(6)、Action(10)、InitRoutingCatalog(20)、GameplayCatalog(25)、VariableNameCatalog(28) 已退役，读取端不再接纳；Action 的当前生产数据位于分区 body。Engine 只以 ID 识别创作内容，名称与 ID 的换算由 Studio 与 Integration 依据伴随 JSON 完成。
 
-`.scripts/pack_wire_codegen.py` 从合同和绑定表生成四份入仓头文件：Engine 的 `Runtime/media/include/harken/media/generated/` 与 Studio 的 `Tooling/PackBuild/include/harken_studio_build/generated/` 下各有 `harken_pack_wire_constants.g.h` 和 `harken_pack_wire.g.h`，目录均相对于各端 `Source`。前置常量头提供 `binaryLayout.constants`，供域结构的定长数组等声明使用；布局头生成定长记录访问及变长章节顺序。域结构、分配和字段语义校验仍由调用方负责。生成的定长读写直接操作调用方内存，变长读取通过 visitor 使用调用方存储，不新增中间容器。
-
-修改布局后运行 `python .scripts/pack_wire_codegen.py`，或显式构建 `harken_pack_wire_regen`。普通构建直接使用入仓产物，不运行 Pack 布局生成器，也不新增 Engine 对 Studio 的依赖。`pack_wire_generated_check` 运行 `--check`，核对生成结果并扫描布局源码中的手写字节访问；Core 和 Studio PR 门禁覆盖合同、生成器及绑定表的改动。发布审计范围保留既有 Pack 范围并加入生成器、绑定表和四份产物，迁移期间增加的手写布局文件列表已移除。
-
-Studio 写入 Pack 的分区仍只有 shipping V18。Engine 按 owner 接受可读的 V18、V19、V20 分区，用于原生音乐和信号发布，Studio 的 Pack 读取只接受 shipping V18；V19、V20 的扩展段与主体一样来自合同。`.stream`、独立 Gameplay catalog 数据及 World artifact 外层封装不在本次合同内；Effect 参数定义仍来自既有 registry，指纹和校验和算法保持原有职责。
-
-`current` 已补齐实际布局，与已发布的 Pack 4 档案不同。此次只更新当前合同和实现，不修改 `HarkenSchema/Pack/3`、`HarkenSchema/Pack/4` 档案或发布版本，不执行 Pack 5 发布。发布审计仍要求不同合同换代，后续由发布者完成；当前版本号保持 4 不表示本次合同变化已经完成发布。
+Studio 写入 Pack 的分区仍只有 shipping V18。Engine 按 owner 接受可读的 V18、V19、V20 分区，用于原生音乐和信号发布；Studio 的 Pack 读取只接受 shipping V18。
 
 ## 兼容范围
 
