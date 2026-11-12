@@ -80,8 +80,8 @@ struct PlayableStartRequest {
     PlayableRefV1 root{};
     std::uint64_t callerSeed = 0;
     std::uint64_t emitter = 0;
-    MonitorRequestContext playbackRequest{};
-    MonitorEmitterOrigin emitterOrigin{};
+    HARKEN_MONITOR_FIELD MonitorRequestContext playbackRequest{};
+    HARKEN_MONITOR_FIELD MonitorEmitterOrigin emitterOrigin{};
 };
 
 struct PlayableStartResult {

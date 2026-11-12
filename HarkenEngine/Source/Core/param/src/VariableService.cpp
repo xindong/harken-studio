@@ -1913,6 +1913,7 @@ VariableAcceptResult VariableServiceV1::AcceptBatch(
 void VariableServiceV1::BindMonitorRequest(const VariableAcceptResult& accepted,
     const MonitorRequestContext& request,
     const MonitorEmitterOrigin& emitterOrigin, VnObjectId projectId) noexcept {
+#if HARKEN_ENGINE_DEV
     if (accepted.result != VN_OK || accepted.ticket.sequence == 0 ||
         !request.key.Valid()) return;
     for (std::uint32_t i = 0; i < accepted.writeCount_; ++i) {
@@ -1924,6 +1925,7 @@ void VariableServiceV1::BindMonitorRequest(const VariableAcceptResult& accepted,
             row.transport == accepted.observation.transport)
             history_[slot].monitorOrigin = {request, emitterOrigin, projectId, 0};
     }
+#endif
 }
 
 void VariableServiceV1::BindPreparedMonitorRequest(
@@ -1931,9 +1933,11 @@ void VariableServiceV1::BindPreparedMonitorRequest(
     const MonitorRequestContext& request,
     const MonitorEmitterOrigin& emitterOrigin,
     std::uint64_t actionFiring, VnObjectId projectId) noexcept {
+#if HARKEN_ENGINE_DEV
     if (prepared.owner_ != this || !prepared.prepared_ ||
         prepared.slot_ >= history_.size()) return;
     history_[prepared.slot_].monitorOrigin = {request, emitterOrigin, projectId, actionFiring};
+#endif
 }
 
 VariableAcceptResult VariableServiceV1::Accept(
@@ -2223,6 +2227,7 @@ void VariableServiceV1::FinalizeRow(WriteRow& row,
     record.emitterGeneration = row.scope.emitterGeneration;
     outcomes_[outcomeCount_++] = record;
     RememberFinalizedTicket(row.ticket.sequence, outcome, row.world, row.transport);
+#if HARKEN_ENGINE_DEV
     const auto& origin = row.monitorOrigin;
     if (origin.request.key.Valid()) {
         MonitorVariableResultFacts facts{};
@@ -2241,6 +2246,7 @@ void VariableServiceV1::FinalizeRow(WriteRow& row,
         facts.emitterScope = row.scope.scope == VariableScopeV1::Emitter;
         ObserveMonitorVariableResult(facts);
     }
+#endif
     if (outcome == VariableOutcomeKind::Applied) {
         ++appliedCount_;
     } else if (outcome == VariableOutcomeKind::Superseded) {

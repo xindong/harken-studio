@@ -70,6 +70,7 @@ bool PrepareLedgerCommitInput(harken::VoiceLedger& ledger, VnVoiceHandle render,
         slot == input->identity.slot;
 }
 
+#if HARKEN_ENGINE_DEV
 TEST(VoiceLedger, EmptyQueriesKeepNativeBackingUnconstructedAndCapacityAvailable) {
     harken::VoiceLedger ledger(0);
     EXPECT_EQ(1u, ledger.Capacity());
@@ -107,7 +108,9 @@ TEST(VoiceLedger, EmptyQueriesKeepNativeBackingUnconstructedAndCapacityAvailable
     harken::detail::StablePageReservation::FailNextReservationForTests();
     EXPECT_THROW((harken::VoiceLedger(4)), std::bad_alloc);
 }
+#endif
 
+#if HARKEN_ENGINE_DEV
 TEST(VoiceLedger, AllIssuersPreserveOutputsOnReceiptAndEntryCommitFailureAndRecover) {
     for (const auto issuer : {0, 1, 2, 3}) {
         SCOPED_TRACE(issuer);
@@ -157,7 +160,9 @@ TEST(VoiceLedger, AllIssuersPreserveOutputsOnReceiptAndEntryCommitFailureAndReco
         EXPECT_EQ(1u, ledger.ConstructedEntryCount());
     }
 }
+#endif
 
+#if HARKEN_ENGINE_DEV
 TEST(VoiceLedger, AcceptedBackingSurvivesOrdinaryReuseAndCommitFailures) {
     harken::VoiceLedger ledger(8);
     harken::VoiceLedger::BackingPreparation first, second;
@@ -210,6 +215,7 @@ TEST(VoiceLedger, AcceptedBackingSurvivesOrdinaryReuseAndCommitFailures) {
     EXPECT_EQ(0u, ledger.AvailableEntryCount());
     for (const auto slot : slots) ledger.Release(slot);
 }
+#endif
 
 TEST(VoiceLedger, DirectVoiceBackingRefusalPreservesAdmissionAndSkipsInternalSlots) {
     for (const bool pending : {false, true}) {
@@ -267,6 +273,7 @@ TEST(VoiceLedger, DirectVoiceBackingRefusalPreservesAdmissionAndSkipsInternalSlo
     }
 }
 
+#if HARKEN_ENGINE_DEV
 TEST(VoiceLedger, AudioTaggedIssuersAndGenerationPreparationCannotConstructNativeRows) {
     harken::VoiceLedger ledger(8);
     VnVoiceHandle publicOut = 41;
@@ -298,6 +305,7 @@ TEST(VoiceLedger, AudioTaggedIssuersAndGenerationPreparationCannotConstructNativ
     EXPECT_EQ(3u, ledger.ConstructedEntryCount());
     EXPECT_EQ(8u, ledger.AvailableEntryCount());
 }
+#endif
 
 TEST(VoiceLedger, PreparedProofExcludesRealMutationAndAbortPreservesOriginalCancel) {
     using Proof = harken::VoiceLedger::PreparedCommitProof;
@@ -668,11 +676,16 @@ TEST(VoiceLedger, GenerationFloorCoversEveryIssuancePathAndLazyRows) {
     const harken::VoiceLedger::PlayableParentRef parent{UINT64_C(0x8000000100000000), UINT64_C(0x100000000)};
     ASSERT_TRUE(ledger.AcquirePlayableOwned(parent, &slots[2]));
     ASSERT_TRUE(ledger.PreparePlayableOwned(parent, &slots[3]));
+#if HARKEN_ENGINE_DEV
     for (const auto slot : slots) {
         harken::VoiceLedger::MonitorIdentity identity{};
         ASSERT_TRUE(ledger.CaptureMonitorIdentity(slot, &identity));
         EXPECT_EQ(42u, identity.generation);
     }
+#else
+    EXPECT_EQ(42u, direct >> 32);
+    EXPECT_EQ(42u, pending >> 32);
+#endif
     ASSERT_TRUE(ledger.CancelPreparedPlayableOwned(slots[3]));
     for (unsigned i = 0; i != 3; ++i) ledger.Release(slots[i]);
     EXPECT_EQ(43u, ledger.GenerationHighWater());
@@ -1219,6 +1232,7 @@ TEST(VoiceLedger, OriginalMutationFactoryRequiresRealHeldSingleAndRejectsForeign
     fixture.ReleaseAll();
 }
 
+#if HARKEN_ENGINE_DEV
 TEST(VoiceLedger, NativeProofAndOriginalLoansRetainTheirActualEntryThroughLaterGrowth) {
     harken::VoiceLedger ledger(128, 2);
     OriginalLedgerNativeFixture fixture;
@@ -1261,6 +1275,7 @@ TEST(VoiceLedger, NativeProofAndOriginalLoansRetainTheirActualEntryThroughLaterG
     EXPECT_EQ(ledger.Capacity(), ledger.AvailableEntryCount());
     fixture.ReleaseAll();
 }
+#endif
 
 TEST(VoiceLedger, OriginalMutationLoansAllowRealReapAndAllCapacityPathsWaitOnlyForLastReturn) {
     using Original = harken::VoiceLedger::OriginalCompletionMutationOwner;
@@ -1892,6 +1907,7 @@ TEST(VoiceLedger, PreparedCompositeFactoryInputKeepsGenuineHeldCommitAndNativeEn
 }
 
 
+#if HARKEN_ENGINE_DEV
 namespace harken::detail {
 struct MonitorVoiceControlTestAccess {
     static bool BeginWrite(const MonitorVoiceControlBinding& binding) {
@@ -1922,7 +1938,9 @@ struct MonitorVoiceControlTestAccess {
     }
 };
 }
+#endif
 
+#if HARKEN_ENGINE_DEV
 TEST(MonitorVoiceControl, SourceAndPlaybackEndPublishIndependentlyOncePerActivation) {
     for (const bool sourceFirst : {false, true}) {
         harken::MonitorVoiceControlReceipt receipt;
@@ -1961,7 +1979,9 @@ TEST(MonitorVoiceControl, SourceAndPlaybackEndPublishIndependentlyOncePerActivat
         EXPECT_FALSE(receipt.TryReadEnd(binding, &end));
     }
 }
+#endif
 
+#if HARKEN_ENGINE_DEV
 TEST(MonitorVoiceControl, RebindingRejectsLateWritersInvalidationAndTicketReuse) {
     harken::MonitorVoiceControlReceipt receipt;
     const harken::MonitorVoiceControlBinding old{&receipt, 1, MakeRenderHandle(0, 1), 0, 1};
@@ -1993,7 +2013,9 @@ TEST(MonitorVoiceControl, RebindingRejectsLateWritersInvalidationAndTicketReuse)
     EXPECT_TRUE(receipt.TryArm(harken::MonitorVoiceControlReceipt::kMaxTicket));
     EXPECT_FALSE(receipt.TryArm(harken::MonitorVoiceControlReceipt::kMaxTicket + 1u));
 }
+#endif
 
+#if HARKEN_ENGINE_DEV
 TEST(MonitorVoiceControl, PlaybackEndWriterSurvivesInvalidationAndRejectsRearmUntilComplete) {
     harken::MonitorVoiceControlReceipt receipt;
     const harken::MonitorVoiceControlBinding old{&receipt, 1, MakeRenderHandle(0, 1), 0, 1};
@@ -2026,7 +2048,9 @@ TEST(MonitorVoiceControl, PlaybackEndWriterSurvivesInvalidationAndRejectsRearmUn
     EXPECT_EQ(46u, end.frame);
     EXPECT_FALSE(end.cause.request.key.Valid());
 }
+#endif
 
+#if HARKEN_ENGINE_DEV
 TEST(VoiceLedger, ObservationWritingCannotBlockParkEndOrReuseAndCannotCrossGenerations) {
     harken::VoiceLedger ledger(128);
     VnVoiceHandle publicHandle = 0;
@@ -2076,7 +2100,9 @@ TEST(VoiceLedger, ObservationWritingCannotBlockParkEndOrReuseAndCannotCrossGener
     EXPECT_FALSE(identity.controlObservationIncomplete);
     EXPECT_EQ(thirdCause.request.key, identity.controlCause.request.key);
 }
+#endif
 
+#if HARKEN_ENGINE_DEV
 TEST(VoiceLedger, ObservationReturnParkUsesDistinctActivationWithinSameLogicalGeneration) {
     harken::VoiceLedger ledger(1);
     VnVoiceHandle publicHandle = 0;
@@ -2108,7 +2134,9 @@ TEST(VoiceLedger, ObservationReturnParkUsesDistinctActivationWithinSameLogicalGe
     ASSERT_TRUE(ledger.CaptureMonitorIdentity(slot, &identity));
     EXPECT_FALSE(identity.controlCause.request.key.Valid());
 }
+#endif
 
+#if HARKEN_ENGINE_DEV
 TEST(VoiceLedger, ObservedSourceWinnerOverridesLaterAcceptedControlWithoutChangingTermination) {
     for (const auto kind : {harken::SourceTerminalKind::Natural, harken::SourceTerminalKind::ProducerFailure,
                            harken::SourceTerminalKind::IntegrityAbort, harken::SourceTerminalKind::Stop}) {
@@ -2135,7 +2163,9 @@ TEST(VoiceLedger, ObservedSourceWinnerOverridesLaterAcceptedControlWithoutChangi
             identity.controlCause.request.key);
     }
 }
+#endif
 
+#if HARKEN_ENGINE_DEV
 TEST(VoiceLedger, ResetSelectionAndCancellationKeepPlaybackIdentityAndDoNotChangeOwnership) {
     harken::VoiceLedger ledger(1);
     harken::VoiceLedger::MonitorSelectionBacking monitorBacking;
@@ -2183,3 +2213,4 @@ TEST(VoiceLedger, ResetSelectionAndCancellationKeepPlaybackIdentityAndDoNotChang
     EXPECT_FALSE(identity.controlCause.request.key.Valid());
     EXPECT_FALSE(identity.selectionCause.request.key.Valid());
 }
+#endif

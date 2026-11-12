@@ -511,7 +511,6 @@ add_executable(harken_release_runtime_tests
     UnitTest/MonitorFixtureRecordTest.cpp
     UnitTest/MonitorFixtureSessionTest.cpp
     UnitTest/MonitorModelOnlyTest.cpp
-    UnitTest/MonitorRequestTest.cpp
     UnitTest/MultichannelPanGoldenTest.cpp
     UnitTest/MusicPlaybackTimelineTest.cpp
     UnitTest/NearfieldShelfGoldenTest.cpp

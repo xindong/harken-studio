@@ -121,11 +121,17 @@ DriverResult RunTimeline(TimelineDriverMode mode) {
 
     const auto ledgerRows = engine->ledger.ConstructedEntryCount();
     const auto ledgerBytes = engine->ledger.EntryStorageBytes();
+#if HARKEN_ENGINE_DEV
     const auto receiptBytes = engine->ledger.MonitorReceiptStorageBytes();
+#endif
     const auto ledgerPages = engine->ledger.EntryCommittedBytes();
+#if HARKEN_ENGINE_DEV
     const auto receiptPages = engine->ledger.MonitorReceiptCommittedBytes();
+#endif
     engine->ledger.SetEntryCommitPageLimitForTests(0);
+#if HARKEN_ENGINE_DEV
     engine->ledger.SetReceiptCommitPageLimitForTests(0);
+#endif
 
     DigestSink digestSink;
     engine->timelineExecutor.SetDigestSink(&digestSink);
@@ -196,9 +202,13 @@ DriverResult RunTimeline(TimelineDriverMode mode) {
 
     EXPECT_EQ(ledgerRows, engine->ledger.ConstructedEntryCount());
     EXPECT_EQ(ledgerBytes, engine->ledger.EntryStorageBytes());
+#if HARKEN_ENGINE_DEV
     EXPECT_EQ(receiptBytes, engine->ledger.MonitorReceiptStorageBytes());
+#endif
     EXPECT_EQ(ledgerPages, engine->ledger.EntryCommittedBytes());
+#if HARKEN_ENGINE_DEV
     EXPECT_EQ(receiptPages, engine->ledger.MonitorReceiptCommittedBytes());
+#endif
 
     return result;
 }

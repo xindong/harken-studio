@@ -229,13 +229,22 @@ public:
 
     using BackingUse = std::array<StableStoragePreparedUse, 2>;
     struct BackingPreparation {
+#if HARKEN_ENGINE_DEV
         bool Valid() const noexcept { return receipts_.Valid() && entries_.Valid(); }
         bool Empty() const noexcept { return !receipts_.Valid() && !entries_.Valid(); }
         void Release() noexcept { entries_.Release(); receipts_.Release(); }
         BackingUse Use() const noexcept { return {receipts_.Use(), entries_.Use()}; }
+#else
+        bool Valid() const noexcept { return entries_.Valid(); }
+        bool Empty() const noexcept { return !entries_.Valid(); }
+        void Release() noexcept { entries_.Release(); }
+        BackingUse Use() const noexcept { return {StableStoragePreparedUse{}, entries_.Use()}; }
+#endif
     private:
         friend class VoiceLedger;
+#if HARKEN_ENGINE_DEV
         StableStoragePreparation receipts_;
+#endif
         StableStoragePreparation entries_;
     };
     bool PrepareBacking(std::uint32_t count, BackingPreparation* out) noexcept;
@@ -295,8 +304,8 @@ public:
     RenderOwner OwnerForRender(VnVoiceHandle renderHandle) const;
 
     struct MonitorContent {
-        MonitorContentIdentity content{};
-        MonitorOccurrenceIdentity occurrence{};
+        HARKEN_MONITOR_FIELD MonitorContentIdentity content{};
+        HARKEN_MONITOR_FIELD MonitorOccurrenceIdentity occurrence{};
         std::uint64_t root = 0;
         std::uint64_t action = 0;
         std::uint64_t leaf = 0;
@@ -314,11 +323,11 @@ public:
         VnVoiceHandle logicalHandle = 0;
         VnVoiceHandle renderHandle = 0;
         PlayableParentRef parent{};
-        MonitorContent content{};
-        MonitorRequestContext playbackRequest{};
-        MonitorEmitterOrigin emitterOrigin{};
-        MonitorControlCause controlCause{};
-        MonitorControlCause selectionCause{};
+        HARKEN_MONITOR_FIELD MonitorContent content{};
+        HARKEN_MONITOR_FIELD MonitorRequestContext playbackRequest{};
+        HARKEN_MONITOR_FIELD MonitorEmitterOrigin emitterOrigin{};
+        HARKEN_MONITOR_FIELD MonitorControlCause controlCause{};
+        HARKEN_MONITOR_FIELD MonitorControlCause selectionCause{};
         bool controlObservationIncomplete = false;
         bool prepared = false;
     };
@@ -328,6 +337,7 @@ public:
         MonitorLifecycleFacts* out) const noexcept;
     // Logic-thread diagnostic aliases retain frozen values, never playback resources.
     // The shared storage can outlive the Ledger during Engine member destruction.
+#if HARKEN_ENGINE_DEV
     class MonitorSelection;
     class MonitorSelectionBacking;
     class MonitorSelectionUse {
@@ -388,6 +398,31 @@ public:
         std::uint32_t slot_ = UINT32_MAX;
         std::uint32_t generation_ = 0;
     };
+#else
+    class MonitorSelectionUse {
+    public:
+        MonitorSelectionUse() noexcept = default;
+        MonitorSelectionUse(MonitorSelectionUse&&) noexcept = default;
+        MonitorSelectionUse(const MonitorSelectionUse&) = delete;
+        MonitorSelectionUse& operator=(const MonitorSelectionUse&) = delete;
+    };
+    class MonitorSelectionBacking {
+    public:
+        bool Valid() const noexcept { return true; }
+        void Release() noexcept {}
+        MonitorSelectionUse Use() const noexcept { return {}; }
+    };
+    class MonitorSelection {
+    public:
+        VnVoiceHandle RenderActivation() const noexcept { return 0; }
+        MonitorControlCause Cause() const noexcept { return {}; }
+        void SetCause(const MonitorControlCause&) noexcept {}
+        bool CaptureFacts(MonitorLifecycleFacts*, std::uint32_t* = nullptr) const noexcept { return false; }
+        bool PrepareMonitorSelectionBacking(std::uint32_t, MonitorSelectionBacking* out) const noexcept {
+            return out != nullptr;
+        }
+    };
+#endif
     bool CaptureMonitorSelection(std::uint32_t ledgerSlot, VnVoiceHandle render,
         MonitorSelection* out, const MonitorControlCause* cause = nullptr) const noexcept;
     void PublishMonitorSelection(MonitorSelection& selection,
@@ -403,7 +438,9 @@ public:
         VnVoiceHandle render) noexcept;
     std::uint64_t CaptureMonitorPlaybackEnd(std::uint32_t ledgerSlot,
         MonitorVoicePlaybackEnd* out) const noexcept;
+#if HARKEN_ENGINE_DEV
     std::uint64_t MonitorControlUnavailableCount() const noexcept { return m_monitorControlUnavailable; }
+#endif
 
     bool BindCompletionMutation(
         std::uint32_t ledgerSlot,
@@ -669,15 +706,19 @@ public:
     std::size_t EntryStorageBytes() const noexcept { return m_entries.RequestedBytes(); }
     std::size_t EntryCommittedBytes() const noexcept { return m_entries.CommittedBytes(); }
     std::size_t EntryReservedBytes() const noexcept { return m_entries.ReservedBytes(); }
+#if HARKEN_ENGINE_DEV
     std::size_t MonitorReceiptStorageBytes() const noexcept { return m_monitorControlReceipts.RequestedBytes(); }
     std::size_t MonitorReceiptCommittedBytes() const noexcept { return m_monitorControlReceipts.CommittedBytes(); }
     std::size_t MonitorReceiptReservedBytes() const noexcept { return m_monitorControlReceipts.ReservedBytes(); }
+#endif
     void SetEntryCommitPageLimitForTests(std::size_t pages) noexcept {
         m_entries.SetCommitPageLimitForTests(pages);
     }
+#if HARKEN_ENGINE_DEV
     void SetReceiptCommitPageLimitForTests(std::size_t pages) noexcept {
         m_monitorControlReceipts.SetCommitPageLimitForTests(pages);
     }
+#endif
     std::uint32_t QuarantinedCount() const { return m_quarantinedCount; }
     bool SetGenerationForTests(std::uint32_t slot,
                                std::uint32_t generation) noexcept;
@@ -715,15 +756,19 @@ private:
     };
 
     struct Entry {
-        MonitorRequestContext playbackRequest{};
-        MonitorEmitterOrigin emitterOrigin{};
-        MonitorControlCause controlCause{};
-        MonitorControlCause selectionCause{};
-        MonitorContent monitorContent{};
+        HARKEN_MONITOR_FIELD MonitorRequestContext playbackRequest{};
+        HARKEN_MONITOR_FIELD MonitorEmitterOrigin emitterOrigin{};
+        HARKEN_MONITOR_FIELD MonitorControlCause controlCause{};
+        HARKEN_MONITOR_FIELD MonitorControlCause selectionCause{};
+        HARKEN_MONITOR_FIELD MonitorContent monitorContent{};
+#if HARKEN_ENGINE_DEV
         bool monitorSelectionAccepted = false;
         bool monitorCancellationAccepted = false;
-        MonitorVoiceControlBinding monitorControl{};
+#endif
+        HARKEN_MONITOR_FIELD MonitorVoiceControlBinding monitorControl{};
+#if HARKEN_ENGINE_DEV
         bool monitorControlAttempted = false;
+#endif
         OriginalCompletionEpisode originalCompletion{};
         std::uint32_t generation = 1;
         EntryState state = EntryState::Free;
@@ -737,7 +782,9 @@ private:
         PublicVisibility visibility = PublicVisibility::DirectVoice;
         PlayableParentRef parent{};
         CompletionMutationBinding completionMutation{};
+#if HARKEN_ENGINE_DEV
         std::uint64_t monitorObserveCount = 0;
+#endif
     };
 
     struct ReverseRenderEntry {
@@ -786,11 +833,15 @@ private:
 
     StableRowStorage<Entry> m_entries;
     std::uint32_t m_initialGeneration = 1;
+#if HARKEN_ENGINE_DEV
     StableRowStorage<MonitorVoiceControlReceipt> m_monitorControlReceipts;
     std::uint64_t m_monitorControlTicket = 0;
     std::uint64_t m_monitorControlUnavailable = 0;
+#endif
     std::vector<ReverseRenderEntry> m_renderOwners;
+#if HARKEN_ENGINE_DEV
     std::shared_ptr<MonitorSelectionStorage> m_monitorSelections;
+#endif
     std::uint64_t m_lastOriginalCompletionMarker = 0;
     std::uint64_t m_nextStartOrder = 1; // monotonic; 0 means "never started"
     std::uint32_t m_quarantinedCount = 0;

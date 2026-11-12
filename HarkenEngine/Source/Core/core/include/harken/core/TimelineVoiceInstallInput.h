@@ -8,8 +8,8 @@
 namespace harken {
 
 struct TimelineVoiceInstallFacts {
-    MonitorContentIdentity monitorContent{};
-    MonitorOccurrenceIdentity monitorOccurrence{};
+    HARKEN_MONITOR_FIELD MonitorContentIdentity monitorContent{};
+    HARKEN_MONITOR_FIELD MonitorOccurrenceIdentity monitorOccurrence{};
     PCMView capturedMedia{};
     bool streamed = false;
     std::uint32_t streamFileIndex = 0;

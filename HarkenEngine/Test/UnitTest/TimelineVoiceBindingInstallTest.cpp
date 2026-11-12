@@ -755,6 +755,7 @@ TEST(TimelineVoiceInstall, BorrowedInputValidatesEveryActiveRangeBeforeNativeAcq
         harken::TimelineVoiceInstallInput{&facts}));
 }
 
+#if HARKEN_ENGINE_DEV
 TEST(TimelineVoiceInstall, BorrowedInputCopiesOnlyNativeFactsAndKeepsBindingSnapshotAfterCallerRelease) {
     for (const auto pathCount : {1u, harken::kPlaybackPathRowCapacity}) {
         SCOPED_TRACE(pathCount);
@@ -872,6 +873,7 @@ TEST(TimelineVoiceInstall, BorrowedInputCopiesOnlyNativeFactsAndKeepsBindingSnap
         EXPECT_FALSE(engine.runtimeRecreateRequired);
     }
 }
+#endif
 
 TEST(TimelineVoiceInstall, OutputCropUsesBoundPitchAndPreservesLoopOutroSamples) {
     for (const auto workers : {0u, 2u}) {

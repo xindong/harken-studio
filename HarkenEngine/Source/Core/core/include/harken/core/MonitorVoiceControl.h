@@ -1,6 +1,10 @@
 #ifndef HARKEN_CORE_MONITOR_VOICE_CONTROL_H
 #define HARKEN_CORE_MONITOR_VOICE_CONTROL_H
 
+#include "harken/core/MonitorField.h"
+
+#if HARKEN_ENGINE_DEV
+
 #include "harken/core/MonitorRequest.h"
 #include "harken/core/SourceTerminalRecord.h"
 
@@ -143,4 +147,24 @@ static_assert(std::is_trivially_copyable_v<MonitorVoiceControlFact>);
 
 } // namespace harken
 
+#else
+
+#include "harken/core/MonitorRequest.h"
+#include "harken/core/SourceTerminalRecord.h"
+
+#include <cstdint>
+
+namespace harken {
+
+struct MonitorVoiceControlBinding {
+    bool Valid() const noexcept { return false; }
+};
+
+struct MonitorVoiceControlFact {};
+
+struct MonitorVoicePlaybackEnd {};
+
+} // namespace harken
+
+#endif
 #endif

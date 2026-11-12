@@ -98,7 +98,9 @@ enum class ActionTerminalReason : std::uint8_t {
 };
 
 struct ActionFiringStepResult {
+#if HARKEN_ENGINE_DEV
     bool monitorExecutionOnCommit = false;
+#endif
     ActionStepState state = ActionStepState::Pending;
     std::int32_t result = 0;
     ActionTerminalReason terminalReason = ActionTerminalReason::None;
@@ -117,9 +119,9 @@ struct ActionFiringStepResult {
 };
 
 struct ActionFiringSnapshot {
-    MonitorRequestContext playbackRequest{};
-    MonitorEmitterOrigin emitterOrigin{};
-    MonitorControlCause controlCause{};
+    HARKEN_MONITOR_FIELD MonitorRequestContext playbackRequest{};
+    HARKEN_MONITOR_FIELD MonitorEmitterOrigin emitterOrigin{};
+    HARKEN_MONITOR_FIELD MonitorControlCause controlCause{};
     ActionFiringState state = ActionFiringState::Active;
     ActionFiringOutcome outcome = ActionFiringOutcome::Pending;
     ActionTerminalReason terminalReason = ActionTerminalReason::None;
@@ -351,9 +353,9 @@ private:
     };
 
     struct Row {
-        MonitorRequestContext playbackRequest{};
-        MonitorEmitterOrigin emitterOrigin{};
-        MonitorControlCause controlCause{};
+        HARKEN_MONITOR_FIELD MonitorRequestContext playbackRequest{};
+        HARKEN_MONITOR_FIELD MonitorEmitterOrigin emitterOrigin{};
+        HARKEN_MONITOR_FIELD MonitorControlCause controlCause{};
         SlotState state = SlotState::Free;
         std::uint64_t generation = 0;
         VnObjectId actionId{};
@@ -366,7 +368,9 @@ private:
         ActionFiringOutcome outcome = ActionFiringOutcome::Pending;
         ActionTerminalReason terminalReason = ActionTerminalReason::None;
         std::int32_t terminalResult = 0;
+#if HARKEN_ENGINE_DEV
         bool monitorTerminalPublished = false;
+#endif
         std::vector<std::uint64_t> monitorExecutedSteps;
         ActionFiringHandle parent = 0;
         ActionFiringHandle root = 0;

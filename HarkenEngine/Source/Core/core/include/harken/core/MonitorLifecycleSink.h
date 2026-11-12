@@ -1,6 +1,8 @@
 #ifndef HARKEN_CORE_MONITOR_LIFECYCLE_SINK_H
 #define HARKEN_CORE_MONITOR_LIFECYCLE_SINK_H
 
+#include "harken/core/MonitorField.h"
+
 #include <harken/ObjectId.h>
 #include <harken/Harken.h>
 #if HARKEN_ENGINE_DEV
@@ -51,6 +53,7 @@ enum class MonitorLifecyclePhase : std::uint8_t {
 // Facts already present on the committing table row. Missing values stay 0
 // and must not be invented by the Hub mapper.
 struct MonitorLifecycleFacts {
+#if HARKEN_ENGINE_DEV
     MonitorRequestContext playbackRequest{};
     MonitorEmitterOrigin emitterOrigin{};
     MonitorControlCause controlCause{};
@@ -93,9 +96,11 @@ struct MonitorLifecycleFacts {
     float volumeDb = 0.0f;
     bool volumeKnown = false;
     std::uint32_t notifyType = 0;
+#endif
 };
 
 struct MonitorVariableResultFacts {
+#if HARKEN_ENGINE_DEV
     MonitorRequestContext request{};
     MonitorEmitterOrigin emitterOrigin{};
     VnObjectId projectId{};
@@ -109,19 +114,24 @@ struct MonitorVariableResultFacts {
     std::int32_t result = 0;
     float value = 0.0f;
     bool emitterScope = false;
+#endif
 };
 
 struct MonitorEffectFacts {
+#if HARKEN_ENGINE_DEV
     std::uint32_t bypass01 = 0;
     std::uint32_t latencyFrames = 0;
     std::uint32_t tailFrames = 0;
     bool tailKnown = false;
+#endif
 };
 
 struct MonitorBusFacts {
+#if HARKEN_ENGINE_DEV
     std::uint32_t mute01 = 0;
     std::uint32_t solo01 = 0;
     VnObjectId routeBusId{};
+#endif
 };
 
 #if HARKEN_ENGINE_DEV

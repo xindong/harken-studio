@@ -1444,7 +1444,9 @@ bool QueueInstanceTable::AcquireInternal(
         row.resetIntentCounter = 0;
         row.resetIntentGeneration = 0;
         row.resetOrder = {};
+#if HARKEN_ENGINE_DEV
         row.monitorReset = {};
+#endif
         row.Pending().pendingResetIntent = 0;
         row.signalReservation = SignalReservation::None;
         row.nextStateOwner = NextStateOwner::None;
@@ -1515,8 +1517,10 @@ bool QueueInstanceTable::PrepareInitialReset(const PreparedQueueInstanceV1& prep
     row.resetIntentGeneration = ++row.resetIntentCounter;
     row.resetOrder = {frame, sequence, ordinal};
     row.resetExecuteFrame = frame;
+#if HARKEN_ENGINE_DEV
     row.monitorReset = {cause, row.resetOrder, row.resetIntentGeneration, current.version,
         row.resetNextVersion, MonitorQueueResetObservation::Stage::Intent};
+#endif
     // This private owner is admitted with its same-boundary Action. Its current
     // selection stays intact; the first conditional consumes the Reset intent.
     row.resetPending.store(true, std::memory_order_release);
@@ -1643,15 +1647,20 @@ bool QueueInstanceTable::Capture(QueueInstanceToken token,
 
 bool QueueInstanceTable::CaptureMonitorReset(QueueInstanceToken token,
     MonitorQueueResetObservation* out) const noexcept {
+#if HARKEN_ENGINE_DEV
     const auto* row = Resolve(token);
     if (out == nullptr || row == nullptr ||
         row->monitorReset.stage == MonitorQueueResetObservation::Stage::None) return false;
     *out = row->monitorReset;
     return true;
+#else
+    return false;
+#endif
 }
 
 void QueueInstanceTable::RecordMonitorResetSelection(QueueInstanceToken token,
     QueueExecutionOrderV1 order, const MonitorControlCause& cause) noexcept {
+#if HARKEN_ENGINE_DEV
     auto* row = Resolve(token);
     EffectiveQueueState current{};
     // Native replacement uses the same zero-frame normalization at selection.
@@ -1664,15 +1673,20 @@ void QueueInstanceTable::RecordMonitorResetSelection(QueueInstanceToken token,
     if (row->monitorReset.resetIntent == row->resetIntentGeneration) return;
     row->monitorReset = {cause, order, row->resetIntentGeneration, current.version,
         row->Pending().pendingNext.version, MonitorQueueResetObservation::Stage::Selected};
+#endif
 }
 
 MonitorControlCause QueueInstanceTable::MarkMonitorResetApplied(Row& row,
     std::uint64_t intent, std::uint64_t previousVersion, std::uint64_t nextVersion) noexcept {
+#if HARKEN_ENGINE_DEV
     if (intent == 0 || row.monitorReset.resetIntent != intent) return {};
     row.monitorReset.previousVersion = previousVersion;
     row.monitorReset.stage = MonitorQueueResetObservation::Stage::Applied;
     row.monitorReset.nextVersion = nextVersion;
     return row.monitorReset.cause;
+#else
+    return {};
+#endif
 }
 
 bool QueueInstanceTable::CaptureRowSnapshot(
@@ -1937,8 +1951,10 @@ bool QueueInstanceTable::ResolveNextSelection(
     if (!row->resetPending.load(std::memory_order_acquire)) return true;
     if (!ProjectReset(*row, *outCurrent, outNext)) return false;
     *outReset = true;
+#if HARKEN_ENGINE_DEV
     if (observation != nullptr && row->monitorReset.resetIntent == row->resetIntentGeneration)
         *observation = row->monitorReset;
+#endif
     return true;
 }
 
@@ -1968,8 +1984,10 @@ bool QueueInstanceTable::ResolveNextSelection(
         !QueueExecutionPrecedes(row->resetOrder, selectionOrder)) return true;
     if (!ProjectReset(*row, *outCurrent, outNext)) return false;
     *outResetIntent = row->resetIntentGeneration;
+#if HARKEN_ENGINE_DEV
     if (observation != nullptr && row->monitorReset.resetIntent == *outResetIntent)
         *observation = row->monitorReset;
+#endif
     return true;
 }
 
@@ -2148,10 +2166,12 @@ QueueResetStatusV1 QueueInstanceTable::CommitPreparedReset(
         row.resetIntentGeneration = ++row.resetIntentCounter;
         row.resetOrder = prepared->order_;
         row.resetOrder.sequence = sequence;
+#if HARKEN_ENGINE_DEV
         row.monitorReset = {cause, row.resetOrder, row.resetIntentGeneration, current.version,
             row.resetNextVersion, row.Pending().pendingConsumesReset.load(std::memory_order_acquire) &&
                 row.Pending().pendingResetIntent == row.resetIntentGeneration
                 ? MonitorQueueResetObservation::Stage::Selected : MonitorQueueResetObservation::Stage::Intent};
+#endif
         row.resetExecuteFrame = row.resetOrder.executeFrame;
         row.resetPending.store(row.resetExecuteFrame <= logicNow_, std::memory_order_release);
         row.resetReservation = 0;
@@ -3747,9 +3767,12 @@ bool QueueInstanceTable::SettleActivated(
     }
     // Only the consumed head is being settled. Its following nodes retain their
     // exact identities; publishing the mirror before the head keeps both views valid.
+#if HARKEN_ENGINE_DEV
     EffectiveQueueState monitorPrevious{};
     (void)LoadMirror(*row, &monitorPrevious);
+#endif
     if (!StoreMirror(*row, row->Pending().pendingNext, row->Pending().pendingDecision)) return false;
+#if HARKEN_ENGINE_DEV
     MonitorLifecycleFacts facts = row->monitorIdentity;
     facts.controlCause = {};
     facts.logicCommitSequence = 0;
@@ -3757,16 +3780,24 @@ bool QueueInstanceTable::SettleActivated(
     facts.projectId = row->projectId;
     facts.programSemanticFingerprint = row->programSemanticFingerprint;
     facts.arrangingInstance = row->rootInstance;
+#endif
     if (row->Pending().pendingConsumesReset.exchange(false,
                                            std::memory_order_acq_rel)) {
+#if HARKEN_ENGINE_DEV
         facts.controlCause = MarkMonitorResetApplied(*row, row->Pending().pendingResetIntent, monitorPrevious.version, row->Pending().pendingNext.version);
         facts.logicCommitSequence = row->resetOrder.sequence;
+#endif
         ConsumeResetIntent(*row, row->Pending().pendingResetIntent);
-    } else facts.publishLegacy = false;
+    }
+#if HARKEN_ENGINE_DEV
+    else facts.publishLegacy = false;
+#endif
     const auto handle = (static_cast<std::uint64_t>(token.generation) << 32) | token.slot;
+#if HARKEN_ENGINE_DEV
     ObserveMonitorLifecycle(MonitorLifecyclePhase::QueueAdvance, handle, token.generation,
         row->world, row->containerStableId, row->rootInstance, 0, 0, 0,
         row->Pending().pendingNext.version, facts);
+#endif
     auto& settled = row->Pending();
     auto* following = settled.following.load(std::memory_order_acquire);
     if (following == nullptr) {
@@ -3824,17 +3855,22 @@ bool QueueInstanceTable::AdvanceAfterSignalCompletion(
         return false;
     }
     if (!StoreMirror(*row, next)) return false;
+#if HARKEN_ENGINE_DEV
     MonitorLifecycleFacts facts = row->monitorIdentity;
     facts.reasonKnown = false;
     facts.controlCause = {};
     facts.logicCommitSequence = 0;
+#endif
     if (consumesReset) {
+#if HARKEN_ENGINE_DEV
         facts.controlCause = MarkMonitorResetApplied(*row, row->resetIntentGeneration, current.version, next.version);
         facts.logicCommitSequence = row->resetOrder.sequence;
+#endif
         ConsumeResetIntent(*row, row->resetIntentGeneration);
     }
     const std::uint64_t handle =
         (static_cast<std::uint64_t>(token.generation) << 32) | token.slot;
+#if HARKEN_ENGINE_DEV
     facts.projectId = row->projectId;
     facts.programSemanticFingerprint = row->programSemanticFingerprint;
     facts.arrangingInstance = row->rootInstance;
@@ -3842,6 +3878,7 @@ bool QueueInstanceTable::AdvanceAfterSignalCompletion(
         MonitorLifecyclePhase::QueueAdvance, handle, token.generation,
         row->world, row->containerStableId, row->rootInstance, 0, 0, 0,
         next.version, facts);
+#endif
     return true;
 }
 
@@ -3969,22 +4006,28 @@ bool QueueInstanceTable::SettleSignalAdvance(
             (outcome == QueueSignalOutcomeV1::Applied ? applied == 0 : applied != 0)) return false;
     }
     if (outcome == QueueSignalOutcomeV1::Applied) {
+#if HARKEN_ENGINE_DEV
         EffectiveQueueState monitorPrevious{};
         (void)LoadMirror(*row, &monitorPrevious);
+#endif
         if (!StoreMirror(*row, row->Pending().pendingNext)) return false;
+#if HARKEN_ENGINE_DEV
         MonitorLifecycleFacts facts = row->monitorIdentity;
         facts.reasonKnown = false;
         facts.controlCause = MarkMonitorResetApplied(*row, accepted.resetIntent, monitorPrevious.version, row->Pending().pendingNext.version);
         facts.logicCommitSequence = accepted.order.sequence;
+#endif
         ConsumeResetIntent(*row, accepted.resetIntent);
         const auto handle = (static_cast<std::uint64_t>(accepted.queue.generation) << 32) |
             accepted.queue.slot;
+#if HARKEN_ENGINE_DEV
         facts.projectId = row->projectId;
         facts.programSemanticFingerprint = row->programSemanticFingerprint;
         facts.arrangingInstance = row->rootInstance;
         ObserveMonitorLifecycle(MonitorLifecyclePhase::QueueAdvance, handle,
             accepted.queue.generation, row->world, row->containerStableId,
             row->rootInstance, 0, 0, 0, row->Pending().pendingNext.version, facts);
+#endif
     } else if (outcome != QueueSignalOutcomeV1::DefinitivelyNotApplied) {
         return false;
     }
@@ -4084,8 +4127,10 @@ bool QueueInstanceTable::RetireConditionalForAbort(
     const ConditionalQueueActivation activation =
         row->Pending().pendingActivation.load(std::memory_order_acquire);
     if (activation == ConditionalQueueActivation::Activated) {
+#if HARKEN_ENGINE_DEV
         EffectiveQueueState monitorPrevious{};
         (void)LoadMirror(*row, &monitorPrevious);
+#endif
         auto* lastActivated = &row->Pending();
         for (auto* next = lastActivated->following.load(std::memory_order_acquire);
              next != nullptr && next->pendingActivation.load(std::memory_order_acquire) == ConditionalQueueActivation::Activated;
@@ -4094,8 +4139,10 @@ bool QueueInstanceTable::RetireConditionalForAbort(
         if (!StoreMirror(*row, lastActivated->pendingNext)) return false;
         if (row->Pending().pendingConsumesReset.exchange(
                 false, std::memory_order_acq_rel)) {
+#if HARKEN_ENGINE_DEV
             (void)MarkMonitorResetApplied(*row, row->Pending().pendingResetIntent,
                 monitorPrevious.version, row->Pending().pendingNext.version);
+#endif
             ConsumeResetIntent(*row, row->Pending().pendingResetIntent);
         }
         row->Pending().pendingResetIntent = 0;
@@ -4744,6 +4791,7 @@ QueueFailureDisposition QueueInstanceTable::FailContainer(
                             std::memory_order_release);
     const std::uint64_t handle =
         (static_cast<std::uint64_t>(token.generation) << 32) | token.slot;
+#if HARKEN_ENGINE_DEV
     MonitorLifecycleFacts facts = row->monitorIdentity;
     facts.projectId = row->projectId;
     facts.programSemanticFingerprint = row->programSemanticFingerprint;
@@ -4752,6 +4800,7 @@ QueueFailureDisposition QueueInstanceTable::FailContainer(
         MonitorLifecyclePhase::QueueFail, handle, token.generation, row->world,
         row->containerStableId, row->rootInstance, 0,
         static_cast<std::uint32_t>(reason), 0, 0, facts);
+#endif
     return QueueFailureDisposition::NewlyFailed;
 }
 
@@ -4782,6 +4831,7 @@ QueueFailureDisposition QueueInstanceTable::FailContainerBeforeConditional(
     }
     const std::uint64_t handle =
         (static_cast<std::uint64_t>(token.generation) << 32) | token.slot;
+#if HARKEN_ENGINE_DEV
     MonitorLifecycleFacts facts = row->monitorIdentity;
     facts.projectId = row->projectId;
     facts.programSemanticFingerprint = row->programSemanticFingerprint;
@@ -4790,6 +4840,7 @@ QueueFailureDisposition QueueInstanceTable::FailContainerBeforeConditional(
         MonitorLifecyclePhase::QueueFail, handle, token.generation, row->world,
         row->containerStableId, row->rootInstance, 0,
         static_cast<std::uint32_t>(reason), 0, 0, facts);
+#endif
     return QueueFailureDisposition::NewlyFailed;
 }
 

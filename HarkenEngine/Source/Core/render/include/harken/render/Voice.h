@@ -170,7 +170,7 @@ struct VoiceSendSlot {
 struct VoiceTimelineEvent {
     struct StopPayload {
         AuthoredStopOperationIdentity authoredStopOperation{};
-        MonitorControlCause controlCause{};
+        HARKEN_MONITOR_FIELD MonitorControlCause controlCause{};
     };
     struct WeightPayload {
         WeightSegmentV1 variableWeight{};
@@ -274,10 +274,12 @@ struct VoiceRenderContext {
     std::uint32_t sourceTerminalStreamGeneration = 0;
     SourceTerminalKind stagedSourceTerminal = SourceTerminalKind::None;
     SourceTerminalKind stagedPlaybackEnd = SourceTerminalKind::None;
-    MonitorControlCause monitorAdoptedControlCause{};
+    HARKEN_MONITOR_FIELD MonitorControlCause monitorAdoptedControlCause{};
+#if HARKEN_ENGINE_DEV
     bool monitorControlAdopted = false;
     bool monitorTimelineControlAdopted = false;
     bool monitorStoppedBeforeCascade = false;
+#endif
     std::uint32_t stagedSourceTerminalOffset = 0;
     std::uint32_t stagedPlaybackEndOffset = 0;
     const BiquadTrigTable* biquadTrig = nullptr;
@@ -613,10 +615,12 @@ struct VoiceRenderContext {
     };
     CascadeScratch cascade;
     std::uint32_t logicalSourceOutputFramesThisBlock = 0;
+#if HARKEN_ENGINE_DEV
     std::uint32_t monitorRenderSlot = 0;
     std::uint32_t monitorRenderGeneration = 0;
     float* monitorPreChain[kMaxChannels] = {};
     std::uint32_t monitorPreChainFrames = 0;
+#endif
     // Keep frequently read block state ahead of the large resident event array.
     VoiceEventSpan timelineEvents{};
 };

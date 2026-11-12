@@ -325,7 +325,9 @@ public:
     bool AttachSlotStoragePreparation(SlotStorageRegistration& registration,
         void* context, SlotStorageRegistration::Prepare prepare) noexcept;
     bool PrepareSlotBacking(std::uint32_t count, StableStoragePreparation* out) noexcept;
+#if HARKEN_ENGINE_DEV
     bool PrepareMonitorPreChainBacking() noexcept;
+#endif
     bool PrepareSlotWorkingSet(std::uint32_t renderSlot, std::uint32_t channelCount,
         ResampleProfile profile = ResampleProfile::LegacyCompatibility,
         bool prepareOwnedWeights = true, std::uint32_t highRatioChannels = 0,
@@ -338,8 +340,11 @@ public:
             m_professionalStorage.RequestedBytes() + m_variableWeightStorage.RequestedBytes() +
             m_timelineEnvelopeCurves.RequestedBytes() + m_signalPathStorageBytes;
         for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch)
-            bytes += m_ringStorage[ch].RequestedBytes() + m_monitorPreChainStorage[ch].RequestedBytes() +
-                m_highRatioStorage[ch].RequestedBytes();
+            bytes += m_ringStorage[ch].RequestedBytes() + m_highRatioStorage[ch].RequestedBytes();
+#if HARKEN_ENGINE_DEV
+        for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch)
+            bytes += m_monitorPreChainStorage[ch].RequestedBytes();
+#endif
         return bytes;
     }
     std::size_t RenderWorksetCommittedBytes() const noexcept {
@@ -348,8 +353,11 @@ public:
             m_professionalStorage.CommittedBytes() + m_variableWeightStorage.CommittedBytes() +
             m_timelineEnvelopeCurves.CommittedBytes() + m_signalPathStorageBytes;
         for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch)
-            bytes += m_ringStorage[ch].CommittedBytes() + m_monitorPreChainStorage[ch].CommittedBytes() +
-                m_highRatioStorage[ch].CommittedBytes();
+            bytes += m_ringStorage[ch].CommittedBytes() + m_highRatioStorage[ch].CommittedBytes();
+#if HARKEN_ENGINE_DEV
+        for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch)
+            bytes += m_monitorPreChainStorage[ch].CommittedBytes();
+#endif
         return bytes;
     }
     std::size_t RenderWorksetReservedBytes() const noexcept {
@@ -358,8 +366,11 @@ public:
             m_professionalStorage.ReservedBytes() + m_variableWeightStorage.ReservedBytes() +
             m_timelineEnvelopeCurves.ReservedBytes() + m_signalPathStorageBytes;
         for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch)
-            bytes += m_ringStorage[ch].ReservedBytes() + m_monitorPreChainStorage[ch].ReservedBytes() +
-                m_highRatioStorage[ch].ReservedBytes();
+            bytes += m_ringStorage[ch].ReservedBytes() + m_highRatioStorage[ch].ReservedBytes();
+#if HARKEN_ENGINE_DEV
+        for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch)
+            bytes += m_monitorPreChainStorage[ch].ReservedBytes();
+#endif
         return bytes;
     }
     void SetSlotCommitPageLimitForTests(std::size_t pages) noexcept {
@@ -1072,9 +1083,13 @@ private:
         std::atomic<bool> originalBodyInstallationCompleted{false};
         OriginalSourceInstallationLoan pendingOriginalSource;
         OriginalSourceInstallationLoan installedOriginalSource;
+#if HARKEN_ENGINE_DEV
         std::atomic<VnVoiceHandle> monitorPublicHandle{0};
-        MonitorVoiceControlBinding monitorControl{};
+#endif
+        HARKEN_MONITOR_FIELD MonitorVoiceControlBinding monitorControl{};
+#if HARKEN_ENGINE_DEV
         bool monitorSourceTerminalPublished = false;
+#endif
 #if HARKEN_ENGINE_DEV
         VnMonitorStreamFactV1 streamObservation{};
 #endif
@@ -1320,7 +1335,9 @@ private:
     std::array<StableRowStorage<ResamplerHighRatioChannelState>, kMaxChannels> m_highRatioStorage;
     ResamplerHighRatioColumns m_highRatioColumns{};
     void BindHighRatioBacking(std::uint32_t slot) noexcept;
+#if HARKEN_ENGINE_DEV
     void BindMonitorPreChainBacking(std::uint32_t slot) noexcept;
+#endif
     StableSlotStorage<MultirateResamplerCandidate> m_professionalStorage;
     using VariableWeightStorage = std::array<VoiceRenderContext::OwnedVariableWeight, kSelectionPathNodeCapacity>;
     StableSlotStorage<VariableWeightStorage> m_variableWeightStorage;
@@ -1358,8 +1375,12 @@ private:
     std::uint64_t m_jobQuantumIndex = 0;
     std::uint32_t m_jobBlockFrames = 0; // block width for the in-flight batch
     std::uint64_t m_jobSourceFrameBegin = 0;
+#if HARKEN_ENGINE_DEV
     std::array<StableRowStorage<float>, kMaxChannels> m_monitorPreChainStorage;
+#endif
+#if HARKEN_ENGINE_DEV
     std::atomic<bool> m_monitorPreChainPrepared{false};
+#endif
     std::uint64_t m_workerBusyPeakTicks = 0; // running peak, audio-thread-owned
 };
 

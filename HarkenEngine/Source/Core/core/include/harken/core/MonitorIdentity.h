@@ -1,6 +1,8 @@
 #ifndef HARKEN_CORE_MONITOR_IDENTITY_H
 #define HARKEN_CORE_MONITOR_IDENTITY_H
 
+#include "harken/core/MonitorField.h"
+
 #include <harken/ObjectId.h>
 #include "harken/core/CurrentWorld.h"
 #include "harken/core/LogicCommitCoordinator.h"
@@ -24,38 +26,50 @@ struct MonitorInstanceKey {
 };
 
 struct MonitorContentIdentity {
+#if HARKEN_ENGINE_DEV
     VnObjectId projectId{};
     VnObjectId stableId{};
     std::uint64_t worldGeneration = 0;
     std::uint64_t programSemanticFingerprint = 0;
     std::uint64_t contentRevision = 0;
+#endif
 };
 
 // Captured from the selected executable occurrence and its leased media.
 struct MonitorPlayableProvenance {
+#if HARKEN_ENGINE_DEV
     VnObjectId rootPlayableId;
     std::uint64_t rootProgramFingerprint;
     std::uint64_t occurrenceFingerprint;
     std::uint64_t mediaChecksum;
     std::uint32_t childOrdinal;
     std::uint32_t knownFlags;
+#endif
 };
+#if HARKEN_ENGINE_DEV
 static_assert(sizeof(MonitorPlayableProvenance) == 48);
+#endif
 
 struct MonitorOccurrenceIdentity {
+#if HARKEN_ENGINE_DEV
     std::uint64_t arrangingInstance = 0;
     VnObjectId clipId{};
     std::uint32_t loopIteration = 0;
     std::uint32_t occurrenceOrdinal = 0;
     bool valid = false;
     bool loopKnown = false;
+#endif
 };
 
 inline MonitorContentIdentity MakeMonitorContentIdentity(
     VnObjectId projectId, std::uint64_t worldGeneration,
     const PlayableRefV1& content) noexcept {
+#if HARKEN_ENGINE_DEV
     return {projectId, content.stableId, worldGeneration,
             content.expectedProgramSemanticFingerprint, content.contentRevision};
+#else
+    return {};
+#endif
 }
 
 inline bool SameMonitorInstanceKey(const MonitorInstanceKey& a,

@@ -949,6 +949,7 @@ bool ActionFiringTable::TryFinalizeSubtree(
 }
 
 MonitorLifecycleFacts ActionFiringTable::CaptureMonitorFacts(const Row& row) const noexcept {
+#if HARKEN_ENGINE_DEV
     MonitorLifecycleFacts facts{};
     facts.playbackRequest = row.playbackRequest;
     facts.emitterOrigin = row.emitterOrigin;
@@ -959,6 +960,9 @@ MonitorLifecycleFacts ActionFiringTable::CaptureMonitorFacts(const Row& row) con
     facts.programSemanticFingerprint = row.programSemanticFingerprint;
     facts.logicCommitSequence = row.acceptedLogicSequence;
     return facts;
+#else
+    return {};
+#endif
 }
 
 void ActionFiringTable::ObserveCommittedSubtree(ActionFiringHandle handle) noexcept {
@@ -969,8 +973,10 @@ void ActionFiringTable::ObserveCommittedSubtree(ActionFiringHandle handle) noexc
         row->generation, row->worldGeneration, row->actionId, 0, handle,
         0, 0, 0, facts);
     for (std::uint32_t index = 0; index < row->directStepCount; ++index) {
+#if HARKEN_ENGINE_DEV
         if (row->results[index].monitorExecutionOnCommit)
             ObserveStepExecution(handle, index);
+#endif
     }
     for (ActionFiringHandle child = row->firstChild; child != 0;) {
         const Row* childRow = Resolve(child);
@@ -981,6 +987,7 @@ void ActionFiringTable::ObserveCommittedSubtree(ActionFiringHandle handle) noexc
 }
 
 void ActionFiringTable::ObserveStepExecution(ActionFiringHandle handle, std::uint32_t index) noexcept {
+#if HARKEN_ENGINE_DEV
     Row* row = Resolve(handle);
     if (row == nullptr || row->state != SlotState::Active || index >= row->directStepCount) return;
     const std::uint64_t mask = UINT64_C(1) << (index % 64u);
@@ -999,9 +1006,11 @@ void ActionFiringTable::ObserveStepExecution(ActionFiringHandle handle, std::uin
     ObserveMonitorLifecycle(MonitorLifecyclePhase::StepExecuted, handle,
         row->generation, row->worldGeneration, row->actionId,
         result.producedPlayableInstance, handle, 0, 0, 0, facts);
+#endif
 }
 
 void ActionFiringTable::ObserveActionTerminal(Row& row) noexcept {
+#if HARKEN_ENGINE_DEV
     if (row.monitorTerminalPublished) return;
     row.monitorTerminalPublished = true;
     const auto handle = MakeHandle(static_cast<std::uint32_t>(&row - rows_.data()), row.generation);
@@ -1031,6 +1040,7 @@ void ActionFiringTable::ObserveActionTerminal(Row& row) noexcept {
     ObserveMonitorLifecycle(MonitorLifecyclePhase::ActionTerminal, handle,
         row.generation, row.worldGeneration, row.actionId, 0, handle,
         facts.terminalReason, 0, 0, facts);
+#endif
 }
 
 bool ActionFiringTable::Commit(
@@ -1146,7 +1156,9 @@ bool ActionFiringTable::Recycle(std::uint32_t slot, Row& row) noexcept {
     row.outcome = ActionFiringOutcome::Pending;
     row.terminalReason = ActionTerminalReason::None;
     row.terminalResult = 0;
+#if HARKEN_ENGINE_DEV
     row.monitorTerminalPublished = false;
+#endif
     std::vector<std::uint64_t>{}.swap(row.monitorExecutedSteps);
     row.parent = 0;
     row.root = 0;
@@ -1285,6 +1297,7 @@ bool ActionFiringTable::MarkStopping(
         return false;
     }
     const bool ok = MarkStoppingSubtree(handle, reason, cause);
+#if HARKEN_ENGINE_DEV
     if (ok) {
         MonitorLifecycleFacts facts{};
         facts.playbackRequest = row->playbackRequest;
@@ -1301,6 +1314,7 @@ bool ActionFiringTable::MarkStopping(
             row->worldGeneration, row->actionId, 0, handle,
             static_cast<std::uint32_t>(reason), 0, 0, facts);
     }
+#endif
     return ok;
 }
 
@@ -1327,6 +1341,7 @@ bool ActionFiringTable::MarkTreeStopping(
         return false;
     }
     const bool ok = MarkStoppingSubtree(rootHandle, reason, cause);
+#if HARKEN_ENGINE_DEV
     if (ok) {
         MonitorLifecycleFacts facts{};
         facts.playbackRequest = root->playbackRequest;
@@ -1343,6 +1358,7 @@ bool ActionFiringTable::MarkTreeStopping(
             worldGeneration, actionId, 0, rootHandle,
             static_cast<std::uint32_t>(reason), 0, 0, facts);
     }
+#endif
     return ok;
 }
 

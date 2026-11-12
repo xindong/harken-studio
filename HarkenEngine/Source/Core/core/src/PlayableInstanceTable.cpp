@@ -957,9 +957,11 @@ PlayableInstanceHandle PlayableInstanceTable::Acquire(
         entry.contentIdentity = {};
         entry.playableProvenance = {};
         entry.monitorPreparedCandidateIdentity = {};
+#if HARKEN_ENGINE_DEV
         entry.monitorPreparedCandidateObserved = false;
         entry.monitorStartedObserved = false;
         entry.monitorFinishedObserved = false;
+#endif
         entry.monitorPlaybackEnd = {};
         entry.playbackRequest = parent != 0 ? FindAny(parent)->playbackRequest : request;
         entry.emitterOrigin = parent != 0 ? FindAny(parent)->emitterOrigin : emitterOrigin;
@@ -986,6 +988,7 @@ PlayableInstanceHandle PlayableInstanceTable::Acquire(
             --m_liveCount;
             return 0;
         }
+#if HARKEN_ENGINE_DEV
         if (kind == PlayableKind::Sound) ++m_pendingStartedObservationCount;
         MonitorLifecycleFacts facts{};
         FillMonitorFacts(entry, handle, facts);
@@ -993,6 +996,7 @@ PlayableInstanceHandle PlayableInstanceTable::Acquire(
             MonitorLifecyclePhase::PlayableStart, handle, entry.generation, 0,
             entry.contentIdentity.stableId, handle, 0,
             0, static_cast<std::uint8_t>(entry.kind), 0, facts);
+#endif
         return handle;
     }
     return 0;
@@ -1061,9 +1065,11 @@ bool PlayableInstanceTable::PrepareAcquireInternal(
         entry.contentIdentity = {};
         entry.playableProvenance = {};
         entry.monitorPreparedCandidateIdentity = {};
+#if HARKEN_ENGINE_DEV
         entry.monitorPreparedCandidateObserved = false;
         entry.monitorStartedObserved = false;
         entry.monitorFinishedObserved = false;
+#endif
         entry.monitorPlaybackEnd = {};
         entry.playbackRequest = parent != 0 ? FindAny(parent)->playbackRequest : request;
         entry.emitterOrigin = parent != 0 ? FindAny(parent)->emitterOrigin : emitterOrigin;
@@ -1100,11 +1106,13 @@ bool PlayableInstanceTable::SetPreparedRootMetadata(
         return false;
     }
     entry->rootMetadata = metadata;
+#if HARKEN_ENGINE_DEV
     const auto revision = entry->contentIdentity.stableId == metadata.definitionStableId &&
         entry->contentIdentity.worldGeneration == metadata.worldGeneration
             ? entry->contentIdentity.contentRevision : 0;
     entry->contentIdentity = {metadata.projectId, metadata.definitionStableId,
         metadata.worldGeneration, metadata.programSemanticFingerprint, revision};
+#endif
     if (entry->preparingCommitOwned) entry->preparationInput.metadata = metadata;
     return true;
 }
@@ -1120,6 +1128,7 @@ bool PlayableInstanceTable::SetPreparedProvenance(const PreparedPlayableInstance
 bool PlayableInstanceTable::SetPreparedContentIdentity(
     const PreparedPlayableInstance& prepared,
     const MonitorContentIdentity& identity) noexcept {
+#if HARKEN_ENGINE_DEV
     Entry* entry = FindPrepared(prepared);
     if (entry == nullptr) return false;
     entry->contentIdentity = identity;
@@ -1139,16 +1148,23 @@ bool PlayableInstanceTable::SetPreparedContentIdentity(
         entry->generation, identity.worldGeneration, identity.stableId, prepared.Handle(),
         facts.relatedAction, 0, static_cast<std::uint8_t>(entry->kind), 0, facts);
     return true;
+#else
+    return FindPrepared(prepared) != nullptr;
+#endif
 }
 
 bool PlayableInstanceTable::CaptureContentIdentity(
     PlayableInstanceHandle handle, MonitorContentIdentity* out) const noexcept {
+#if HARKEN_ENGINE_DEV
     if (out == nullptr) return false;
     *out = {};
     const Entry* entry = FindAny(handle);
     if (entry == nullptr) return false;
     *out = entry->contentIdentity;
     return true;
+#else
+    return false;
+#endif
 }
 
 bool PlayableInstanceTable::CaptureEmitterOrigin(
@@ -1223,16 +1239,19 @@ void PlayableInstanceTable::ActivatePreparedEntry(Entry& actual,
     entry->preparingCommitOwned = false;
     entry->lifecycle = PlayableLifecycle::Active;
     ++m_liveCount;
+#if HARKEN_ENGINE_DEV
     if (entry->kind == PlayableKind::Sound && !entry->monitorStartedObserved)
         ++m_pendingStartedObservationCount;
     if (entry->kind == PlayableKind::Sound && !entry->monitorFinishedObserved &&
         entry->monitorPlaybackEnd.audioBlock != 0)
         ++m_pendingPlaybackEndObservationCount;
+#endif
     if (m_liveCount > m_highWater) {
         m_highWater = m_liveCount;
     }
     const std::uint32_t generation = GenerationOf(handle);
     const PlayableKind kind = entry->kind;
+#if HARKEN_ENGINE_DEV
     const VnObjectId stableId = entry->contentIdentity.stableId;
     MonitorLifecycleFacts facts{};
     FillMonitorFacts(*entry, handle, facts);
@@ -1240,6 +1259,7 @@ void PlayableInstanceTable::ActivatePreparedEntry(Entry& actual,
                             generation, entry->contentIdentity.worldGeneration,
                             stableId, handle, entry->rootMetadata.actionFiring, 0,
                             static_cast<std::uint8_t>(kind), 0, facts);
+#endif
 }
 
 bool PlayableInstanceTable::PublishPreparedLink(
@@ -1305,7 +1325,9 @@ bool PlayableInstanceTable::CancelPreparedImpl(
     entry->contentIdentity = {};
     entry->playableProvenance = {};
     entry->monitorPreparedCandidateIdentity = {};
+#if HARKEN_ENGINE_DEV
     entry->monitorPreparedCandidateObserved = false;
+#endif
     entry->playbackRequest = {};
     entry->emitterOrigin = {};
     entry->controlCause = {};
@@ -1397,6 +1419,7 @@ bool PlayableInstanceTable::RollbackCommitted(
 
 void PlayableInstanceTable::FillMonitorFacts(const Entry& entry,
     PlayableInstanceHandle handle, MonitorLifecycleFacts& out) const noexcept {
+#if HARKEN_ENGINE_DEV
     out.playableProvenance = entry.playableProvenance;
     out.playbackRequest = entry.playbackRequest;
     out.emitterOrigin = entry.emitterOrigin;
@@ -1417,8 +1440,10 @@ void PlayableInstanceTable::FillMonitorFacts(const Entry& entry,
     for (std::size_t depth = 0; depth < m_entries.size(); ++depth) {
         if (ancestor->rootMetadata.actionFiring != 0 && out.relatedAction == 0) {
             out.relatedAction = ancestor->rootMetadata.actionFiring;
+#if HARKEN_ENGINE_DEV
             out.selectionCause.actionFiring = ancestor->rootMetadata.actionFiring;
             out.selectionCause.executionOrdinal = ancestor->rootMetadata.actionExecutionOrdinal;
+#endif
         }
         if (ancestor->parent == 0) {
             out.root = cursor;
@@ -1429,10 +1454,12 @@ void PlayableInstanceTable::FillMonitorFacts(const Entry& entry,
         if (ancestor == nullptr) break;
     }
     out.identityObservationIncomplete = true;
+#endif
 }
 
 PlayableInstanceHandle PlayableInstanceTable::CaptureMonitorIdentityAt(
     std::uint32_t slot, MonitorLifecycleFacts* out) const noexcept {
+#if HARKEN_ENGINE_DEV
     if (out == nullptr) return 0;
     *out = {};
     if (slot >= m_entries.size()) return 0;
@@ -1442,31 +1469,45 @@ PlayableInstanceHandle PlayableInstanceTable::CaptureMonitorIdentityAt(
     FillMonitorFacts(entry, handle, *out);
     out->reasonKnown = false;
     return handle;
+#else
+    return 0;
+#endif
 }
 
 bool PlayableInstanceTable::CaptureMonitorFacts(PlayableInstanceHandle handle,
     MonitorLifecycleFacts* out) const noexcept {
+#if HARKEN_ENGINE_DEV
     if (out == nullptr) return false;
     *out = {};
     const auto* entry = FindAny(handle);
     if (entry == nullptr) return false;
     FillMonitorFacts(*entry, handle, *out);
     return true;
+#else
+    return false;
+#endif
 }
 
 bool PlayableInstanceTable::NeedsStartedObservation(PlayableInstanceHandle handle) const noexcept {
+#if HARKEN_ENGINE_DEV
     const auto* entry = Find(handle);
     return entry != nullptr && entry->kind == PlayableKind::Sound && !entry->monitorStartedObserved;
+#else
+    return false;
+#endif
 }
 
 void PlayableInstanceTable::RemovePendingStartedObservation(const Entry& entry) noexcept {
+#if HARKEN_ENGINE_DEV
     if (entry.kind != PlayableKind::Sound || entry.monitorStartedObserved) return;
     assert(m_pendingStartedObservationCount != 0);
     --m_pendingStartedObservationCount;
+#endif
 }
 
 void PlayableInstanceTable::ObserveStarted(PlayableInstanceHandle handle,
     std::uint64_t audioBlock, std::uint64_t frame) noexcept {
+#if HARKEN_ENGINE_DEV
     auto* entry = FindMut(handle);
     if (entry == nullptr || entry->kind != PlayableKind::Sound ||
         entry->monitorStartedObserved || audioBlock == 0) return;
@@ -1486,27 +1527,33 @@ void PlayableInstanceTable::ObserveStarted(PlayableInstanceHandle handle,
         GenerationOf(handle), entry->contentIdentity.worldGeneration,
         entry->contentIdentity.stableId, handle, facts.relatedAction, 0,
         static_cast<std::uint8_t>(entry->kind), 0, facts);
+#endif
 }
 
 void PlayableInstanceTable::RecordPlaybackEnd(PlayableInstanceHandle handle,
     std::uint64_t audioBlock, std::uint64_t frame,
     const PlayableTerminalOutcome& outcome, const MonitorControlCause& cause) noexcept {
+#if HARKEN_ENGINE_DEV
     auto* entry = FindMut(handle);
     if (entry == nullptr || entry->kind != PlayableKind::Sound || audioBlock == 0 ||
         entry->monitorFinishedObserved || entry->monitorPlaybackEnd.audioBlock != 0) return;
     entry->monitorPlaybackEnd = {audioBlock, frame, outcome, cause};
     ++m_pendingPlaybackEndObservationCount;
+#endif
 }
 
 void PlayableInstanceTable::RemovePendingPlaybackEndObservation(const Entry& entry) noexcept {
+#if HARKEN_ENGINE_DEV
     if (entry.kind != PlayableKind::Sound || entry.monitorFinishedObserved ||
         entry.monitorPlaybackEnd.audioBlock == 0) return;
     assert(m_pendingPlaybackEndObservationCount != 0);
     --m_pendingPlaybackEndObservationCount;
+#endif
 }
 
 PlayableInstanceHandle PlayableInstanceTable::CapturePlaybackEndAt(std::uint32_t slot,
     std::uint64_t* audioBlock, std::uint64_t* frame) const noexcept {
+#if HARKEN_ENGINE_DEV
     if (slot >= m_entries.size() || audioBlock == nullptr || frame == nullptr) return 0;
     const auto& entry = m_entries[slot];
     const auto handle = MakeHandle(slot, entry.generation);
@@ -1515,9 +1562,13 @@ PlayableInstanceHandle PlayableInstanceTable::CapturePlaybackEndAt(std::uint32_t
     *audioBlock = entry.monitorPlaybackEnd.audioBlock;
     *frame = entry.monitorPlaybackEnd.frame;
     return handle;
+#else
+    return 0;
+#endif
 }
 
 void PlayableInstanceTable::ObserveFinished(PlayableInstanceHandle handle) noexcept {
+#if HARKEN_ENGINE_DEV
     auto* entry = FindMut(handle);
     if (entry == nullptr || entry->kind != PlayableKind::Sound || entry->monitorFinishedObserved) return;
     RemovePendingPlaybackEndObservation(*entry);
@@ -1540,6 +1591,7 @@ void PlayableInstanceTable::ObserveFinished(PlayableInstanceHandle handle) noexc
         GenerationOf(handle), entry->contentIdentity.worldGeneration,
         entry->contentIdentity.stableId, handle, facts.relatedAction, 0,
         static_cast<std::uint8_t>(entry->kind), 0, facts);
+#endif
 }
 
 bool PlayableInstanceTable::CaptureRootMetadata(
@@ -1707,6 +1759,7 @@ bool PlayableInstanceTable::ActivateDelayedCancellation(
     if (cause != nullptr) RecordControlCause(cancellation->handle_, *cause);
     entry->scheduleEpoch = cancellation->issuedEpoch_;
     entry->delayedCancellationEpoch = 0;
+#if HARKEN_ENGINE_DEV
     MonitorLifecycleFacts facts{};
     FillMonitorFacts(*entry, cancellation->handle_, facts);
     ObserveMonitorLifecycle(
@@ -1714,6 +1767,7 @@ bool PlayableInstanceTable::ActivateDelayedCancellation(
         entry->contentIdentity.worldGeneration, entry->contentIdentity.stableId,
         cancellation->handle_, entry->rootMetadata.actionFiring, 0,
         static_cast<std::uint8_t>(entry->kind), 0, facts);
+#endif
     cancellation->Clear();
     return true;
 }
@@ -1933,8 +1987,11 @@ bool PlayableInstanceTable::AdvanceLifecycle(PlayableInstanceHandle handle,
     if (to == PlayableLifecycle::Retired) RemovePendingStartedObservation(*entry);
     const PlayableKind kind = entry->kind;
     const std::uint32_t generation = entry->generation;
+#if HARKEN_ENGINE_DEV
     const VnObjectId stableId = entry->contentIdentity.stableId;
+#endif
     entry->lifecycle = to;
+#if HARKEN_ENGINE_DEV
     MonitorLifecyclePhase phase = MonitorLifecyclePhase::PlayableStart;
     if (to == PlayableLifecycle::LogicalComplete) {
         phase = MonitorLifecyclePhase::PlayableLogicalComplete;
@@ -1948,6 +2005,7 @@ bool PlayableInstanceTable::AdvanceLifecycle(PlayableInstanceHandle handle,
     ObserveMonitorLifecycle(phase, handle, generation, entry->contentIdentity.worldGeneration,
                             stableId, handle, entry->rootMetadata.actionFiring, 0,
                             static_cast<std::uint8_t>(kind), 0, facts);
+#endif
     if (to == PlayableLifecycle::Retired) {
         // One generation move per lifetime, taken here: handles to this
         // instance are stale from now on and the slot is reusable unless the
@@ -1968,7 +2026,9 @@ bool PlayableInstanceTable::AdvanceLifecycle(PlayableInstanceHandle handle,
         entry->contentIdentity = {};
     entry->playableProvenance = {};
         entry->monitorPreparedCandidateIdentity = {};
+#if HARKEN_ENGINE_DEV
         entry->monitorPreparedCandidateObserved = false;
+#endif
         entry->playbackRequest = {};
         entry->emitterOrigin = {};
         entry->controlCause = {};
@@ -2011,6 +2071,7 @@ IssueResult PlayableInstanceTable::BumpScheduleEpochChecked(
     }
     if (cause != nullptr) RecordControlCause(handle, *cause);
     entry->scheduleEpoch = issue.value;
+#if HARKEN_ENGINE_DEV
     MonitorLifecycleFacts facts{};
     FillMonitorFacts(*entry, handle, facts);
     ObserveMonitorLifecycle(
@@ -2018,6 +2079,7 @@ IssueResult PlayableInstanceTable::BumpScheduleEpochChecked(
         entry->contentIdentity.worldGeneration, entry->contentIdentity.stableId,
         handle, entry->rootMetadata.actionFiring, 0,
         static_cast<std::uint8_t>(entry->kind), 0, facts);
+#endif
     return issue;
 }
 

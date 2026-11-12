@@ -62,11 +62,15 @@ bool VoicePool::PrepareRenderSlotBacking(std::uint32_t count, std::uint32_t chan
     bool firstOutput, std::uint32_t highRatioChannels) noexcept {
     if (count > m_slots.Capacity() || channelCount > kMaxChannels ||
         highRatioChannels > kMaxChannels) return false;
+#if HARKEN_ENGINE_DEV
     const bool monitorPrepared = m_monitorPreChainPrepared.load(std::memory_order_acquire);
+#endif
     for (std::uint32_t ch = 0; ch < channelCount; ++ch) {
-        if (!m_ringStorage[ch].ConstructThrough(count) ||
-            (monitorPrepared &&
-             !m_monitorPreChainStorage[ch].ConstructThrough(count * m_blockFrames))) return false;
+        if (!m_ringStorage[ch].ConstructThrough(count)) return false;
+#if HARKEN_ENGINE_DEV
+        if (monitorPrepared &&
+            !m_monitorPreChainStorage[ch].ConstructThrough(count * m_blockFrames)) return false;
+#endif
     }
     highRatioChannels = std::max(channelCount, highRatioChannels);
     for (std::uint32_t ch = 0; ch < highRatioChannels; ++ch)
@@ -82,6 +86,7 @@ bool VoicePool::PrepareRenderSlotBacking(std::uint32_t count, std::uint32_t chan
     return true;
 }
 
+#if HARKEN_ENGINE_DEV
 bool VoicePool::PrepareMonitorPreChainBacking() noexcept {
     if (m_monitorPreChainPrepared.load(std::memory_order_acquire)) return true;
     if (memguard::IsAudioTagged() || m_slots.PreparedUseActive()) return false;
@@ -93,16 +98,21 @@ bool VoicePool::PrepareMonitorPreChainBacking() noexcept {
     m_monitorPreChainPrepared.store(true, std::memory_order_release);
     return true;
 }
+#endif
 
 bool VoicePool::RenderSlotBackingReady(std::uint32_t count, std::uint32_t channelCount,
     std::uint32_t highRatioChannels) const noexcept {
     if (count > m_slots.Capacity() || channelCount > kMaxChannels ||
         highRatioChannels > kMaxChannels) return false;
+#if HARKEN_ENGINE_DEV
     const bool monitorPrepared = m_monitorPreChainPrepared.load(std::memory_order_acquire);
+#endif
     for (std::uint32_t ch = 0; ch < channelCount; ++ch) {
-        if (m_ringStorage[ch].ConstructedCount() < count ||
-            (monitorPrepared &&
-             m_monitorPreChainStorage[ch].ConstructedCount() < count * m_blockFrames)) return false;
+        if (m_ringStorage[ch].ConstructedCount() < count) return false;
+#if HARKEN_ENGINE_DEV
+        if (monitorPrepared &&
+            m_monitorPreChainStorage[ch].ConstructedCount() < count * m_blockFrames) return false;
+#endif
     }
     highRatioChannels = std::max(channelCount, highRatioChannels);
     for (std::uint32_t ch = 0; ch < highRatioChannels; ++ch)
@@ -118,6 +128,7 @@ void VoicePool::BindHighRatioBacking(std::uint32_t slot) noexcept {
     m_slots[slot].render.resampler.BindHighRatioColumns(m_highRatioColumns, slot, channels);
 }
 
+#if HARKEN_ENGINE_DEV
 void VoicePool::BindMonitorPreChainBacking(std::uint32_t slot) noexcept {
     auto& render = m_slots[slot].render;
     // Reserved addresses and source width stay fixed for this voice generation.
@@ -128,6 +139,7 @@ void VoicePool::BindMonitorPreChainBacking(std::uint32_t slot) noexcept {
             : nullptr;
     }
 }
+#endif
 
 bool VoicePool::PrepareTimelineEnvelopeCurveBacking(std::uint32_t slot) noexcept {
     if (m_timelineEnvelopeCurves.IsConstructed(slot)) return true;
@@ -270,9 +282,12 @@ VoicePool::VoicePool(const EngineConfig& config, const ResampleTables* tables,
         !m_pendingTimelineVariableEvents.Reserve(config.voiceCapacity.Render())) throw std::bad_alloc{};
     for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch) {
         if (!m_ringStorage[ch].Reserve(config.voiceCapacity.Render()) ||
-            !m_highRatioStorage[ch].Reserve(config.voiceCapacity.Render()) ||
-            !m_monitorPreChainStorage[ch].Reserve(static_cast<std::uint32_t>(monitorCapacity)))
+            !m_highRatioStorage[ch].Reserve(config.voiceCapacity.Render()))
             throw std::bad_alloc{};
+#if HARKEN_ENGINE_DEV
+        if (!m_monitorPreChainStorage[ch].Reserve(static_cast<std::uint32_t>(monitorCapacity)))
+            throw std::bad_alloc{};
+#endif
         m_highRatioColumns.channels[ch] = m_highRatioStorage[ch].data();
     }
     // Create the fixed worker set on the logic thread. Real-device workers stay
@@ -365,8 +380,8 @@ VnResult VoicePool::Play(const PCMView& view, float volumeDb,
     slot.completionProgressStaged = false;
     slot.completionProgressTerminal = false;
     slot.monitorControl = {};
-    slot.monitorSourceTerminalPublished = false;
 #if HARKEN_ENGINE_DEV
+    slot.monitorSourceTerminalPublished = false;
     slot.streamObservation = {};
 #endif
     slot.render = VoiceRenderContext{};
@@ -377,7 +392,9 @@ VnResult VoicePool::Play(const PCMView& view, float volumeDb,
     slot.render.biquadTrig = m_biquadTrig;
     slot.render.engineSampleRate = m_sampleRate;
     slot.render.pcm = view;
+#if HARKEN_ENGINE_DEV
     BindMonitorPreChainBacking(slotIndex);
+#endif
     slot.render.busIndex = busIndex;
     slot.render.busGeneration = busGeneration;
     slot.render.phase = SourcePhase::Active;
@@ -535,8 +552,8 @@ VnResult VoicePool::PlayStream(StreamRing* ring, std::uint32_t channelCount,
     slot.streamRingToken.store(0, std::memory_order_relaxed);
     slot.resyncEnabled.store(false, std::memory_order_relaxed);
     slot.monitorControl = {};
-    slot.monitorSourceTerminalPublished = false;
 #if HARKEN_ENGINE_DEV
+    slot.monitorSourceTerminalPublished = false;
     slot.streamObservation = {};
 #endif
     slot.render = VoiceRenderContext{};
@@ -550,7 +567,9 @@ VnResult VoicePool::PlayStream(StreamRing* ring, std::uint32_t channelCount,
     // two facts; the data planes stay null because the stream feed path
     // never dereferences pcm (frames == 0 keeps every pcm read unreachable).
     slot.render.pcm.channelCount = channelCount;
+#if HARKEN_ENGINE_DEV
     BindMonitorPreChainBacking(slotIndex);
+#endif
     slot.render.pcm.sampleRate = sourceSampleRate;
     slot.render.busIndex = busIndex;
     slot.render.busGeneration = busGeneration;
@@ -2862,6 +2881,7 @@ void VoicePool::RefreshStreamObservationIdentity(VnVoiceHandle handle, std::uint
 
 bool VoicePool::BindMonitorControl(VnVoiceHandle handle,
     const MonitorVoiceControlBinding& binding) noexcept {
+#if HARKEN_ENGINE_DEV
     Slot* slot = SlotFor(handle);
     if (slot == nullptr || !binding.Valid() || binding.render != handle) return false;
     const auto state = slot->state.load(std::memory_order_acquire);
@@ -2871,6 +2891,9 @@ bool VoicePool::BindMonitorControl(VnVoiceHandle handle,
     RefreshStreamObservationIdentity(handle, binding.ledgerSlot);
 #endif
     return true;
+#else
+    return false;
+#endif
 }
 
 bool VoicePool::BindSourceTerminal(VnVoiceHandle handle,
@@ -2936,6 +2959,7 @@ void VoicePool::PublishStreamObservation(Slot& slot, std::uint64_t blockIndex) n
 
 void VoicePool::PublishSourceTerminal(Slot& slot, std::uint64_t blockIndex) noexcept {
     auto& render = slot.render;
+#if HARKEN_ENGINE_DEV
     const auto observedKind = render.monitorStoppedBeforeCascade
         ? SourceTerminalKind::Stop : render.stagedSourceTerminal;
     const auto observedOffset = render.monitorStoppedBeforeCascade ? 0u : render.stagedSourceTerminalOffset;
@@ -2951,6 +2975,7 @@ void VoicePool::PublishSourceTerminal(Slot& slot, std::uint64_t blockIndex) noex
                 timelineControl ? render.monitorAdoptedControlCause : MonitorControlCause{}, timelineControl);
         }
     }
+#endif
     auto* record = render.sourceTerminal;
     if (record == nullptr || render.stagedSourceTerminal == SourceTerminalKind::None ||
         blockIndex == UINT64_MAX || blockIndex > (UINT64_MAX - m_blockFrames) / m_blockFrames ||
@@ -2966,6 +2991,7 @@ void VoicePool::PublishSourceTerminal(Slot& slot, std::uint64_t blockIndex) noex
 }
 
 void VoicePool::PublishPlaybackEnd(Slot& slot, std::uint64_t blockIndex) noexcept {
+#if HARKEN_ENGINE_DEV
     const auto& render = slot.render;
     if (!slot.monitorControl.Valid() || render.streamParkActive ||
         render.stagedPlaybackEnd == SourceTerminalKind::None ||
@@ -2975,6 +3001,7 @@ void VoicePool::PublishPlaybackEnd(Slot& slot, std::uint64_t blockIndex) noexcep
     (void)slot.monitorControl.receipt->TryPublishEnd(slot.monitorControl, blockIndex + 1u,
         blockIndex * m_blockFrames + render.stagedPlaybackEndOffset, render.stagedPlaybackEnd,
         timelineControl ? render.monitorAdoptedControlCause : MonitorControlCause{}, timelineControl);
+#endif
 }
 
 bool VoicePool::CapturePreparedCompletionProgress(const PreparedCommitProof& proof,
@@ -3027,7 +3054,9 @@ void VoicePool::InitializePlay(Slot& slot, VnVoiceHandle sourceIdentity,
         slot.completionProgressTerminal = true;
     }
     render.dynamicSourceIdentity = sourceIdentity;
+#if HARKEN_ENGINE_DEV
     slot.monitorPublicHandle.store(sourceIdentity, std::memory_order_release);
+#endif
     // Seed the PCM read cursor before rendering begins. 0 is the original
     // "start at the file" behavior; a nonzero value (a parked voice's
     // virtual offset) starts the read there — a start frame inside the loop
@@ -3502,7 +3531,9 @@ void VoicePool::ApplyStop(VnVoiceHandle handle, std::uint32_t fadeMs,
     }
     if (frames == 0) {
         // An API stop cannot replace a previously adopted timeline cause.
+#if HARKEN_ENGINE_DEV
         slot->render.monitorControlAdopted = true;
+#endif
         slot->render.stagedSourceTerminal = SourceTerminalKind::Stop;
         slot->render.stagedSourceTerminalOffset = 0;
         slot->render.stagedPlaybackEnd = SourceTerminalKind::Stop;
@@ -3543,7 +3574,9 @@ void VoicePool::ApplyStop(VnVoiceHandle handle, std::uint32_t fadeMs,
     }
     if (!slot->render.fading) {
         // An API stop cannot replace a previously adopted timeline cause.
+#if HARKEN_ENGINE_DEV
         slot->render.monitorControlAdopted = true;
+#endif
         slot->render.fading = true;
         slot->render.fadeTotalFrames = frames;
         slot->render.fadeDoneFrames = 0;
@@ -4837,10 +4870,12 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
             ServiceStreamResync(i, slot, blockFrames);
             PrepareFirstOutputTimelineWeights(slot);
             beginEffects(slot.render);
+#if HARKEN_ENGINE_DEV
             slot.render.monitorRenderSlot = i;
             slot.render.monitorRenderGeneration =
                 slot.generation.load(std::memory_order_relaxed);
             slot.render.monitorPreChainFrames = 0;
+#endif
             slot.render.dynamicVoiceTapActive =
                 m_dynamicRoutes.HasVoiceTap(slot.render.dynamicSourceIdentity);
             // Pass the full bus-major plane base: the cascade folds into the
@@ -4909,10 +4944,12 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
             ServiceStreamResync(i, slot, blockFrames);
             PrepareFirstOutputTimelineWeights(slot);
             beginEffects(slot.render);
+#if HARKEN_ENGINE_DEV
             slot.render.monitorRenderSlot = i;
             slot.render.monitorRenderGeneration =
                 slot.generation.load(std::memory_order_relaxed);
             slot.render.monitorPreChainFrames = 0;
+#endif
             slot.render.dynamicVoiceTapActive =
                 m_dynamicRoutes.HasVoiceTap(slot.render.dynamicSourceIdentity);
             const SignalMemberImage preparedImage{nullptr, &slot.render.outputGain,
@@ -5135,8 +5172,10 @@ void VoicePool::RunCascadeJob(std::uint32_t jobIndex) {
         return;
     }
     if (ctx.cascade.runnable) {
+#if HARKEN_ENGINE_DEV
         ctx.monitorRenderSlot = m_jobSlots[jobIndex];
         ctx.monitorRenderGeneration = m_jobGenerations[jobIndex];
+#endif
         RunVoiceCascade(ctx, m_jobBlockFrames);
     }
 }
@@ -5671,7 +5710,9 @@ void VoicePool::ReleaseSlot(Slot& slot, ReleaseThread thread) {
     }
     slot.render.sourceTerminal = nullptr;
     slot.render.sourceTerminalToken = {};
+#if HARKEN_ENGINE_DEV
     slot.monitorPublicHandle.store(0, std::memory_order_relaxed);
+#endif
     if (slot.render.pcm.useCount != nullptr) {
         slot.render.pcm.useCount->fetch_sub(1, std::memory_order_release);
     }

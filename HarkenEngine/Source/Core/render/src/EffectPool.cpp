@@ -287,6 +287,7 @@ void EffectPoolBank::Recycle(const EffectInstanceRef& ref) {
     if ((state != InstanceState::Live && state != InstanceState::Prepared) ||
         slot->generations[ref.poolIndex] != ref.generation || slot->inUse == 0) { return; }
     if (slot->installed[ref.poolIndex] != 0) {
+#if HARKEN_ENGINE_DEV
         const EffectObjectIdentity identity = slot->identities[ref.poolIndex];
         MonitorLifecycleFacts facts{};
         facts.projectId = identity.projectId;
@@ -294,6 +295,7 @@ void EffectPoolBank::Recycle(const EffectInstanceRef& ref) {
             (static_cast<std::uint64_t>(ref.type + 1u) << 32) | (ref.poolIndex + 1u),
             ref.generation, 0, identity.effectId, 0, 0,
             VN_ACTION_TERMINAL_NONE, 0, 0, facts);
+#endif
     }
     if (ref.type == VN_EFFECT_COMPRESSOR) {
         auto* state = static_cast<CompressorState*>(slot->StateAt(ref.poolIndex));
@@ -330,6 +332,7 @@ void EffectPoolBank::PublishInstalled(const EffectInstanceRef& ref) {
         slot->states[ref.poolIndex].load(std::memory_order_acquire) != InstanceState::Live ||
         slot->installed[ref.poolIndex] != 0) return;
     slot->installed[ref.poolIndex] = 1;
+#if HARKEN_ENGINE_DEV
     const EffectObjectIdentity identity = slot->identities[ref.poolIndex];
     MonitorLifecycleFacts facts{};
     facts.projectId = identity.projectId;
@@ -337,6 +340,7 @@ void EffectPoolBank::PublishInstalled(const EffectInstanceRef& ref) {
         (static_cast<std::uint64_t>(ref.type + 1u) << 32) | (ref.poolIndex + 1u),
         ref.generation, 0, identity.effectId, 0, 0,
         VN_ACTION_TERMINAL_NONE, 0, 0, facts);
+#endif
 }
 
 void* EffectPoolBank::StateFor(std::uint32_t type, std::uint32_t index) {

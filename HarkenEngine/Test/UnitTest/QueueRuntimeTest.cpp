@@ -2232,6 +2232,7 @@ TEST(QueueRuntime, CancelLaterResetPreparationPreservesAcceptedFutureIntent) {
     EXPECT_EQ(3u, projected.currentChildOrdinal);
 }
 
+#if HARKEN_ENGINE_DEV
 TEST(QueueRuntime, PreparedSignalKeepsMirrorAndResetUntilExactAcceptedOutcome) {
     FutureQueueResetFixture fixture;
     fixture.table.ApplyDue(64);
@@ -2299,7 +2300,9 @@ TEST(QueueRuntime, PreparedSignalKeepsMirrorAndResetUntilExactAcceptedOutcome) {
     EXPECT_TRUE(fixture.table.Release(fixture.queue));
     EXPECT_FALSE(fixture.table.CaptureMonitorReset(fixture.queue, &observation));
 }
+#endif
 
+#if HARKEN_ENGINE_DEV
 TEST(QueueRuntime, DuplicateDueResetAndStaleSelectionCannotReplaceOriginalCause) {
     FutureQueueResetFixture fixture;
     harken::MonitorControlCause original{}, later{};
@@ -2322,6 +2325,7 @@ TEST(QueueRuntime, DuplicateDueResetAndStaleSelectionCannotReplaceOriginalCause)
     EXPECT_EQ(harken::MonitorQueueResetObservation::Stage::Intent, after.stage);
     EXPECT_FALSE(fixture.table.CaptureMonitorReset(stale, &after));
 }
+#endif
 
 TEST(QueueRuntime, CancelPreparedAndNegativeAcceptedSignalPreserveOriginalResetIdentity) {
     FutureQueueResetFixture fixture;

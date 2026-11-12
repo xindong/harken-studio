@@ -963,8 +963,10 @@ struct EngineQueueProgramRange {
 };
 
 struct EngineMonitorSelection {
+#if HARKEN_ENGINE_DEV
     VoiceLedger::MonitorSelection observation{};
     TimelineArmToken arm{};
+#endif
 };
 
 struct VariableControlMemberCompletion {
@@ -1149,7 +1151,7 @@ struct EnginePlayableMemberRecord {
     CapturedTimelineVoiceInstall voice{};
     PlayableRefV1 leaf{};
     TimelineArmToken arm{};
-    EngineMonitorSelection monitorSelection{};
+    HARKEN_MONITOR_FIELD EngineMonitorSelection monitorSelection{};
     VnVoiceHandle render = 0;
     VoiceReleaseObserver release{};
     VariableControlMemberCompletion completion{};
@@ -1596,8 +1598,8 @@ private:
 struct EngineActionPlayStorage;
 
 struct EnginePlayableStartRow {
-    MonitorRequestContext playbackRequest{};
-    MonitorEmitterOrigin emitterOrigin{};
+    HARKEN_MONITOR_FIELD MonitorRequestContext playbackRequest{};
+    HARKEN_MONITOR_FIELD MonitorEmitterOrigin emitterOrigin{};
     VnObjectId projectId{};
     std::uint32_t slot = UINT32_MAX;
     std::uint64_t generation = 1;
@@ -1768,7 +1770,7 @@ private:
 // Future filing data is separate from the playable service's Current owners.
 // A retained copy is scheduling data, never a native publication/apply right.
 struct EngineQueueFutureFilingLayout {
-    EngineMonitorSelection queueMonitorSelection{};
+    HARKEN_MONITOR_FIELD EngineMonitorSelection queueMonitorSelection{};
     DecisionToken queueDecision{};
     ConditionalQueueVersionToken queueConditional{};
     std::uint8_t queueSuccessorProgramPlane = 1;
@@ -2550,7 +2552,7 @@ public:
     bool variableControlDeferredSupersede = false;
     Plan03GroupSliceIdentity variableControlDeferredCancellationSlice{};
     std::uint32_t variableControlDeferredCancellationReasonBit = 0;
-    MonitorControlCause pendingControlCause{};
+    HARKEN_MONITOR_FIELD MonitorControlCause pendingControlCause{};
     PlayableInstanceHandle pendingControlTarget = 0;
     std::uint64_t pendingControlTargetEpoch = 0;
     std::uint32_t pendingCancellationFadeMs = 0;
@@ -2612,7 +2614,7 @@ public:
     EventTemplate event{};
     ProgramView schedule{};
     VoiceReleaseObserver releaseObserver{};
-    EngineMonitorSelection monitorSelection{};
+    HARKEN_MONITOR_FIELD EngineMonitorSelection monitorSelection{};
     std::uint32_t prepareCount = 0;
 
     bool InvocationValid() const noexcept {
@@ -3036,7 +3038,7 @@ enum class TimelinePhysicalAdmissionFault : std::uint8_t {
 
 struct EngineTimelineProgramSet {
     VoiceLedger::BackingPreparation ledgerBacking;
-    VoiceLedger::MonitorSelectionBacking monitorBacking;
+    HARKEN_MONITOR_FIELD VoiceLedger::MonitorSelectionBacking monitorBacking;
     TimelineProgramSet programs;
     std::vector<EngineTimelineOccurrence> occurrences;
     ProgramGeneration generation = 0;
@@ -3520,7 +3522,7 @@ struct EngineImmediateEntryAttempt {
     bool plainArmsPinned = false;
     bool plainPublished = false;
     bool plainAbortPending = false;
-    MonitorControlCause plainCancellationCause{};
+    HARKEN_MONITOR_FIELD MonitorControlCause plainCancellationCause{};
     std::uint8_t plainCancellationIntent = 0;
     std::uint32_t plainCancellationFadeMs = 0;
     bool plainReferencesReturned = false;
@@ -3779,7 +3781,7 @@ struct EngineAuthoredStopRoot {
     std::uint64_t generation = 0;
     std::optional<AuthoredStopOperation> operation;
     DelayedPlayableCancellation cancellation{};
-    MonitorControlCause controlCause{};
+    HARKEN_MONITOR_FIELD MonitorControlCause controlCause{};
     std::uint64_t fadeStartFrame = 0;
     std::uint32_t firstResource = UINT32_MAX;
     std::uint32_t resourceCount = 0;
@@ -3917,7 +3919,7 @@ private:
 };
 
 struct EnginePreparedTimelineVoiceStart {
-    EngineMonitorSelection monitorSelection{};
+    HARKEN_MONITOR_FIELD EngineMonitorSelection monitorSelection{};
     static constexpr std::uint32_t kMaxCommandCount =
         3u + kTimelineMaxVoiceSends + kTimelineMaxVoiceEffects + 2u +
         kMaxVoiceBindingInstanceSlots + kSpatialDrivenTargetsPerVoice;
@@ -5052,7 +5054,7 @@ struct EngineActionPlayScratch {
         reset(variableControlOuterPathChildren);
     }
     EngineActionPlayStorage& storage;
-    MonitorControlCause cancellationCause{};
+    HARKEN_MONITOR_FIELD MonitorControlCause cancellationCause{};
     bool cancellationCauseAccepted = false;
     std::uint32_t frontierServiceCount = 0;
     std::uint32_t frontierQueueCount = 0;
@@ -5853,7 +5855,7 @@ struct EngineActionStopScratch {
     EnginePlayableServiceRow* row = nullptr;
     PreparedPlayableCancellation cancellation{};
     EnginePreparedAuthoredStop authoredStop{};
-    MonitorControlCause controlCause{};
+    HARKEN_MONITOR_FIELD MonitorControlCause controlCause{};
     PlayableRetirementObserver retirementObserver{};
     std::uint64_t fadeStartFrame = 0;
     std::uint64_t silenceFrame = 0;
@@ -5875,7 +5877,7 @@ struct EngineNativeQueueMusicCandidateDeleter {
 struct EngineActionQueueReplacementScratch {
     std::unique_ptr<EngineNativeQueueMusicCandidate, EngineNativeQueueMusicCandidateDeleter> musicCandidate;
     QueuePageConditionalReceiver* oldPageReceiver = nullptr;
-    MonitorControlCause resetCause{};
+    HARKEN_MONITOR_FIELD MonitorControlCause resetCause{};
     EnginePlayableServiceRow* row = nullptr;
     QueueInstanceToken nativeReplacement{};
     DecisionToken nativeMemberDecision{}, nativeSourceDecision{};
@@ -6147,7 +6149,7 @@ struct Engine {
         CapturedTimelineVoiceInstall replacementVoice;
         StableStoragePreparation nativeVoiceBacking;
         VoiceLedger::BackingPreparation nativeLedgerBacking;
-        VoiceLedger::MonitorSelectionBacking nativeMonitorBacking;
+        HARKEN_MONITOR_FIELD VoiceLedger::MonitorSelectionBacking nativeMonitorBacking;
         StableSlotStorage<EngineActionPlayScratch>::Preparation nativePlayBacking;
         StableSlotStorage<EnginePlayableMemberRecord>::Preparation nativeMemberBacking;
         StableStoragePreparation nativeRelationBacking;
@@ -6251,7 +6253,7 @@ struct Engine {
         CompositeCompletionOwnerPool::BackingPreparation completions;
         StableStoragePreparation voices;
         VoiceLedger::BackingPreparation ledger;
-        VoiceLedger::MonitorSelectionBacking monitor;
+        HARKEN_MONITOR_FIELD VoiceLedger::MonitorSelectionBacking monitor;
         SelectionMemoryTableV1::BackingPreparation selectionHistory;
         StableStoragePreparation arms;
         ArmGroupTable::BackingPreparation groups;
@@ -6276,7 +6278,7 @@ struct Engine {
     struct NativeRuntimeBackingUse {
         std::array<StableStoragePreparedUse, 13> columns;
         VoiceLedger::BackingUse ledger;
-        VoiceLedger::MonitorSelectionUse monitor;
+        HARKEN_MONITOR_FIELD VoiceLedger::MonitorSelectionUse monitor;
         SelectionMemoryTableV1::BackingUse selectionHistory;
         ArmGroupTable::PreparedUse groups;
         ScheduledTransactionPool::ImmediateLaneBackingUse laneGroups;
@@ -7237,8 +7239,10 @@ public:
                     projectGenerationInstallAckSideTable.size()),
                 &projectGenerationInstallAckRing, &originalSourceSubmissions),
            nullBackend(mixer, resolved) {
+#if HARKEN_ENGINE_DEV
         monitorPlaybackEvents.reserve(static_cast<std::size_t>(timelineArms.Capacity()) +
             playableInstances.Capacity());
+#endif
         voices.AttachTimelineVariableStartAuthority({&variables,
             [](void* context, VariableTimelineReadUseRef use, std::uint64_t nativeHandle) noexcept {
                 return static_cast<VariableServiceV1*>(context)->TimelineReadUseStartStatus(use, nativeHandle);
@@ -12583,7 +12587,7 @@ public:
     struct OriginalQueueReplacementHolder {
         enum class Phase : std::uint8_t { Empty, Preparing, Frozen, Selected, Published, Retiring };
         Phase phase = Phase::Empty;
-        MonitorControlCause resetCause{};
+        HARKEN_MONITOR_FIELD MonitorControlCause resetCause{};
         EngineActionQueueReplacementScratch* preparation = nullptr;
         EnginePlayableServiceReference service{};
         QueueInstanceToken queue{};
@@ -13468,12 +13472,14 @@ public:
 
     MonitorLifecycleFacts CaptureMonitorOwner(PlayableInstanceHandle owner) const noexcept {
         MonitorLifecycleFacts facts{};
+#if HARKEN_ENGINE_DEV
         if (!playableInstances.CaptureMonitorFacts(owner, &facts)) {
             facts.identityObservationIncomplete = owner != 0;
             return facts;
         }
         facts.parentPlayable = owner;
         facts.resourceOwner = owner;
+#endif
         return facts;
     }
 
@@ -13785,12 +13791,16 @@ public:
     const EngineConfig config;
     MonitorRequestSource monitorRequests{AllocateMonitorEngineInstance()};
     struct MonitorPlaybackEvent {
+#if HARKEN_ENGINE_DEV
         std::uint64_t instance = 0;
         std::uint64_t audioBlock = 0;
         std::uint64_t frame = 0;
         bool finished = false;
+#endif
     };
+#if HARKEN_ENGINE_DEV
     std::vector<MonitorPlaybackEvent> monitorPlaybackEvents;
+#endif
     const PlayableStorageLayout playableStorage;
     ResampleTables tables;
     MultirateResampleTables multirateTables;
@@ -15239,7 +15249,7 @@ public:
     // local Variable overrides. Attached voices follow an emitter's pose and
     // resolve Variable reads at emitter scope; the audio thread never sees it.
     EmitterTable emitters;
-    MonitorEmitterRegistry monitorEmitters;
+    HARKEN_MONITOR_FIELD MonitorEmitterRegistry monitorEmitters;
     ActionFiringTable actionFirings;
     ActionSeekTable actionSeeks;
     StreamSeekHandoffTable streamSeekHandoffs;

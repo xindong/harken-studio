@@ -1,6 +1,8 @@
 #ifndef HARKEN_CORE_MONITOR_EMITTER_IDENTITY_H
 #define HARKEN_CORE_MONITOR_EMITTER_IDENTITY_H
 
+#include "harken/core/MonitorField.h"
+
 #include <cstdint>
 #include <type_traits>
 
@@ -39,11 +41,13 @@ inline bool operator==(const MonitorHostKey& a, const MonitorHostKey& b) noexcep
 // Copied at acceptance. Current binding and later host registration cannot
 // rewrite this historical value, including after emitter slot reuse.
 struct MonitorEmitterOrigin {
+#if HARKEN_ENGINE_DEV
     std::uint64_t emitter = 0;
     MonitorHostKey host{};
     std::uint64_t registrationRevision = 0;
     MonitorEmitterKind kind = MonitorEmitterKind::Unknown;
     MonitorHostOwnership ownership = MonitorHostOwnership::Unknown;
+#endif
 };
 
 enum class MonitorBindingState : std::uint32_t {
@@ -53,14 +57,18 @@ enum class MonitorBindingState : std::uint32_t {
 };
 
 struct MonitorEmitterBinding {
+#if HARKEN_ENGINE_DEV
     std::uint64_t stateEmitter = 0;
     std::uint64_t spatialEmitter = 0;
     MonitorBindingState state = MonitorBindingState::None;
     MonitorBindingState spatial = MonitorBindingState::None;
+#endif
 };
 
 static_assert(std::is_trivially_copyable_v<MonitorEmitterOrigin>);
+#if HARKEN_ENGINE_DEV
 static_assert(sizeof(MonitorEmitterOrigin) == 48);
+#endif
 
 } // namespace harken
 

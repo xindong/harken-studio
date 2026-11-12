@@ -611,21 +611,23 @@ private:
         PlayableInstanceHandle nextSibling = 0;
         std::uint64_t scheduleEpoch = 0;
         PlayableRootMetadata rootMetadata{};
-        MonitorContentIdentity contentIdentity{};
-        MonitorPlayableProvenance playableProvenance{};
-        MonitorContentIdentity monitorPreparedCandidateIdentity{};
+        HARKEN_MONITOR_FIELD MonitorContentIdentity contentIdentity{};
+        HARKEN_MONITOR_FIELD MonitorPlayableProvenance playableProvenance{};
+        HARKEN_MONITOR_FIELD MonitorContentIdentity monitorPreparedCandidateIdentity{};
+#if HARKEN_ENGINE_DEV
         bool monitorPreparedCandidateObserved = false;
         bool monitorStartedObserved = false;
         bool monitorFinishedObserved = false;
+#endif
         struct PlaybackEnd {
             std::uint64_t audioBlock = 0;
             std::uint64_t frame = 0;
             PlayableTerminalOutcome outcome{};
-            MonitorControlCause cause{};
+            HARKEN_MONITOR_FIELD MonitorControlCause cause{};
         } monitorPlaybackEnd{};
-        MonitorRequestContext playbackRequest{};
-        MonitorEmitterOrigin emitterOrigin{};
-        MonitorControlCause controlCause{};
+        HARKEN_MONITOR_FIELD MonitorRequestContext playbackRequest{};
+        HARKEN_MONITOR_FIELD MonitorEmitterOrigin emitterOrigin{};
+        HARKEN_MONITOR_FIELD MonitorControlCause controlCause{};
         bool controlCauseAccepted = false;
         PlayableTerminalOutcome terminalOutcome{};
         bool cancellationPrepared = false;

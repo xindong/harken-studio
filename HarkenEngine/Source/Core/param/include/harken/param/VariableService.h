@@ -1138,14 +1138,16 @@ private:
         const ActionOrderIdentity& identity);
 
     struct MonitorWriteOrigin {
+#if HARKEN_ENGINE_DEV
         MonitorRequestContext request{};
         MonitorEmitterOrigin emitterOrigin{};
         VnObjectId projectId{};
         std::uint64_t actionFiring = 0;
+#endif
     };
 
     struct WriteRow {
-        MonitorWriteOrigin monitorOrigin{};
+        HARKEN_MONITOR_FIELD MonitorWriteOrigin monitorOrigin{};
         CurrentSliceBacking calendarBacking;
         bool used = false;
         bool reserved = false;

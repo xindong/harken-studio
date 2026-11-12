@@ -7,6 +7,7 @@
 
 namespace harken {
 
+#if HARKEN_ENGINE_DEV
 struct VoiceLedger::MonitorSelectionStorage {
     struct Slot {
         MonitorLifecycleFacts facts{};
@@ -116,11 +117,16 @@ void VoiceLedger::MonitorSelection::Reset() noexcept {
 }
 
 VnVoiceHandle VoiceLedger::MonitorSelection::RenderActivation() const noexcept {
+#if HARKEN_ENGINE_DEV
     const auto* slot = storage_ == nullptr ? nullptr : storage_->Resolve(slot_, generation_);
     return slot == nullptr ? 0 : slot->facts.renderActivation;
+#else
+    return 0;
+#endif
 }
 
 void VoiceLedger::MonitorSelection::SetCause(const MonitorControlCause& cause) noexcept {
+#if HARKEN_ENGINE_DEV
     auto* slot = storage_ == nullptr ? nullptr : storage_->Resolve(slot_, generation_);
     if (slot == nullptr) return;
     const auto& previous = slot->facts.selectionCause;
@@ -148,11 +154,16 @@ void VoiceLedger::MonitorSelection::SetCause(const MonitorControlCause& cause) n
         slot = &replacement;
     }
     slot->facts.selectionCause = cause;
+#endif
 }
 
 MonitorControlCause VoiceLedger::MonitorSelection::Cause() const noexcept {
+#if HARKEN_ENGINE_DEV
     const auto* slot = storage_ == nullptr ? nullptr : storage_->Resolve(slot_, generation_);
     return slot == nullptr ? MonitorControlCause{} : slot->facts.selectionCause;
+#else
+    return {};
+#endif
 }
 
 bool VoiceLedger::MonitorSelection::CaptureFacts(MonitorLifecycleFacts* out,
@@ -167,21 +178,42 @@ bool VoiceLedger::MonitorSelection::CaptureFacts(MonitorLifecycleFacts* out,
     return true;
 }
 
-std::size_t VoiceLedger::MonitorSelectionCapacity() const noexcept { return m_monitorSelections->slots.Capacity(); }
+#endif
+std::size_t VoiceLedger::MonitorSelectionCapacity() const noexcept {
+#if HARKEN_ENGINE_DEV
+    return m_monitorSelections->slots.Capacity();
+#else
+    return 0;
+#endif
+}
 std::size_t VoiceLedger::MonitorSelectionStorageBytes() const noexcept {
+#if HARKEN_ENGINE_DEV
     return m_monitorSelections->slots.RequestedBytes();
+#else
+    return 0;
+#endif
 }
 
 bool VoiceLedger::PrepareMonitorSelectionBacking(std::uint32_t count, MonitorSelectionBacking* out) noexcept {
+#if HARKEN_ENGINE_DEV
     return out != nullptr && out->Prepare(m_monitorSelections, count);
+#else
+    return out != nullptr;
+#endif
 }
 
 bool VoiceLedger::MonitorSelectionPreparedUseActive() const noexcept {
+#if HARKEN_ENGINE_DEV
     return m_monitorSelections->slots.PreparedUseActive();
+#else
+    return false;
+#endif
 }
 
 void VoiceLedger::SetMonitorSelectionCommitPageLimitForTests(std::size_t pages) noexcept {
+#if HARKEN_ENGINE_DEV
     m_monitorSelections->slots.SetCommitPageLimitForTests(pages);
+#endif
 }
 
 VoiceLedger::VoiceLedger(std::uint32_t capacity,
@@ -193,15 +225,21 @@ VoiceLedger::VoiceLedger(std::uint32_t capacity,
     : m_renderOwners(renderCapacity == 0
                          ? (capacity == 0 ? 1 : capacity)
                          : renderCapacity),
+#if HARKEN_ENGINE_DEV
       m_monitorSelections(std::make_shared<MonitorSelectionStorage>(monitorSelectionCapacity == 0
           ? 2 * static_cast<std::size_t>(capacity == 0 ? 1 : capacity) : monitorSelectionCapacity)),
+#endif
       m_prepareDirectVoiceStorage(prepareDirectVoiceStorage),
       m_directVoiceStorageContext(directVoiceStorageContext) {
     if (generationFloor >= kMaxGeneration)
         throw std::invalid_argument("voice handle generation exhausted");
     m_initialGeneration = generationFloor + 1;
     const auto logicalCapacity = capacity == 0 ? 1 : capacity;
-    if (!m_monitorControlReceipts.Reserve(logicalCapacity) || !m_entries.Reserve(logicalCapacity))
+#if HARKEN_ENGINE_DEV
+    if (!m_monitorControlReceipts.Reserve(logicalCapacity))
+        throw std::bad_alloc();
+#endif
+    if (!m_entries.Reserve(logicalCapacity))
         throw std::bad_alloc();
 }
 
@@ -224,8 +262,10 @@ bool VoiceLedger::PrepareBacking(std::uint32_t count, BackingPreparation* out) n
     if (memguard::IsAudioTagged() || out == nullptr || !out->Empty()) return false;
     const auto occupied = Capacity() - AvailableEntryCount();
     BackingPreparation candidate;
-    if (!m_monitorControlReceipts.PrepareBacking(count, occupied, &candidate.receipts_) ||
-        !m_entries.PrepareBacking(count, occupied, &candidate.entries_)) return false;
+#if HARKEN_ENGINE_DEV
+    if (!m_monitorControlReceipts.PrepareBacking(count, occupied, &candidate.receipts_)) return false;
+#endif
+    if (!m_entries.PrepareBacking(count, occupied, &candidate.entries_)) return false;
     *out = std::move(candidate);
     return true;
 }
@@ -240,9 +280,11 @@ std::uint32_t VoiceLedger::FindReusableSlot() noexcept {
             if (reusable == UINT32_MAX) reusable = i;
         } else ++occupied;
     }
-    if (occupied == m_entries.Capacity() ||
-        !m_monitorControlReceipts.ConstructThrough(occupied + 1) ||
-        !m_entries.ConstructThrough(occupied + 1)) return UINT32_MAX;
+    if (occupied == m_entries.Capacity()) return UINT32_MAX;
+#if HARKEN_ENGINE_DEV
+    if (!m_monitorControlReceipts.ConstructThrough(occupied + 1)) return UINT32_MAX;
+#endif
+    if (!m_entries.ConstructThrough(occupied + 1)) return UINT32_MAX;
     const auto selected = reusable == UINT32_MAX ? constructed : reusable;
     m_entries[selected].generation = std::max(m_entries[selected].generation, m_initialGeneration);
     return selected;
@@ -431,14 +473,16 @@ bool VoiceLedger::Acquire(VnVoiceHandle* outPublicHandle,
     entry.playbackRequest = request;
     entry.emitterOrigin = emitterOrigin;
     entry.monitorContent = {};
-    entry.monitorContent.content.stableId = media;
 #if HARKEN_ENGINE_DEV
+    entry.monitorContent.content.stableId = media;
     entry.monitorContent.kind = media == VnObjectId{} ? VN_MONITOR_CONTENT_UNKNOWN : VN_MONITOR_CONTENT_MEDIA;
 #endif
     entry.controlCause = {};
     entry.selectionCause = {};
+#if HARKEN_ENGINE_DEV
     entry.monitorSelectionAccepted = false;
     entry.monitorCancellationAccepted = false;
+#endif
     entry.stolen = false;
     entry.terminating = false;
     entry.preparedReservation = false;
@@ -446,7 +490,9 @@ bool VoiceLedger::Acquire(VnVoiceHandle* outPublicHandle,
     entry.visibility = PublicVisibility::DirectVoice;
     entry.parent = {};
     entry.completionMutation = {};
+#if HARKEN_ENGINE_DEV
     entry.monitorObserveCount = 0;
+#endif
     entry.publicHandle = MakeHandle(i, entry.generation);
     *outPublicHandle = entry.publicHandle;
     *outLedgerSlot = i;
@@ -454,6 +500,7 @@ bool VoiceLedger::Acquire(VnVoiceHandle* outPublicHandle,
 }
 
 bool VoiceLedger::CaptureMonitorIdentity(std::uint32_t ledgerSlot, MonitorIdentity* out) const noexcept {
+#if HARKEN_ENGINE_DEV
     if (out == nullptr) return false;
     *out = {};
     if (ledgerSlot >= m_entries.ConstructedCount()) return false;
@@ -475,10 +522,14 @@ bool VoiceLedger::CaptureMonitorIdentity(std::uint32_t ledgerSlot, MonitorIdenti
     out->controlObservationIncomplete = facts.controlObservationIncomplete;
     out->prepared = entry.preparedReservation;
     return true;
+#else
+    return false;
+#endif
 }
 
 VnVoiceHandle VoiceLedger::CaptureMonitorIdentityAt(std::uint32_t ledgerSlot,
     MonitorLifecycleFacts* out) const noexcept {
+#if HARKEN_ENGINE_DEV
     if (out == nullptr) return 0;
     *out = {};
     if (ledgerSlot >= m_entries.ConstructedCount()) return 0;
@@ -489,6 +540,9 @@ VnVoiceHandle VoiceLedger::CaptureMonitorIdentityAt(std::uint32_t ledgerSlot,
     CaptureMonitorFacts(entry, *out, false, false);
     out->reasonKnown = false;
     return entry.publicHandle;
+#else
+    return 0;
+#endif
 }
 
 void VoiceLedger::RecordMonitorContent(std::uint32_t ledgerSlot, const MonitorContent& content) noexcept {
@@ -500,15 +554,18 @@ void VoiceLedger::RecordMonitorContent(std::uint32_t ledgerSlot, const MonitorCo
 }
 
 void VoiceLedger::RecordMonitorSelection(VnVoiceHandle render, const MonitorControlCause& cause) noexcept {
+#if HARKEN_ENGINE_DEV
     const auto owner = OwnerForRender(render);
     if (!owner.live) return;
     MonitorSelection selection{};
     if (!CaptureMonitorSelection(owner.ledgerSlot, render, &selection)) return;
     PublishMonitorSelection(selection, &cause);
+#endif
 }
 
 bool VoiceLedger::CaptureMonitorSelection(std::uint32_t ledgerSlot, VnVoiceHandle render,
     MonitorSelection* out, const MonitorControlCause* cause) const noexcept {
+#if HARKEN_ENGINE_DEV
     if (out == nullptr) return false;
     *out = {};
     if (ledgerSlot >= m_entries.ConstructedCount() || render == 0) return false;
@@ -538,10 +595,14 @@ bool VoiceLedger::CaptureMonitorSelection(std::uint32_t ledgerSlot, VnVoiceHandl
     out->slot_ = index;
     out->generation_ = slot.generation;
     return true;
+#else
+    return false;
+#endif
 }
 
 void VoiceLedger::PublishMonitorSelection(MonitorSelection& selection,
     const MonitorControlCause* cause) noexcept {
+#if HARKEN_ENGINE_DEV
     if (selection.storage_ != m_monitorSelections) return;
     auto* slot = m_monitorSelections->Resolve(selection.slot_, selection.generation_);
     if (slot == nullptr) return;
@@ -564,19 +625,25 @@ void VoiceLedger::PublishMonitorSelection(MonitorSelection& selection,
     ObserveMonitorLifecycle(MonitorLifecyclePhase::SelectionCommitted, facts.logicalVoice,
         generation, facts.contentWorld, facts.contentObject, facts.parentPlayable,
         facts.relatedAction, 0, facts.contentKind, 0, facts);
+#endif
 }
 
 void VoiceLedger::RecordMonitorCancellation(VnVoiceHandle render, const MonitorControlCause& cause) noexcept {
     const auto owner = OwnerForRender(render);
     if (!owner.live) return;
     auto& entry = m_entries[owner.ledgerSlot];
+#if HARKEN_ENGINE_DEV
     if (entry.monitorCancellationAccepted || entry.stolen || entry.terminating) return;
+#endif
     entry.controlCause = cause;
+#if HARKEN_ENGINE_DEV
     entry.monitorCancellationAccepted = true;
+#endif
 }
 
 MonitorVoiceControlBinding VoiceLedger::ArmMonitorControl(std::uint32_t ledgerSlot,
     VnVoiceHandle render) noexcept {
+#if HARKEN_ENGINE_DEV
     if (ledgerSlot >= m_entries.ConstructedCount() || render == 0) return {};
     auto& entry = m_entries[ledgerSlot];
     if (entry.state != EntryState::Live && entry.state != EntryState::PreparedCommitHeld &&
@@ -591,10 +658,14 @@ MonitorVoiceControlBinding VoiceLedger::ArmMonitorControl(std::uint32_t ledgerSl
     entry.monitorControl = {&m_monitorControlReceipts[ledgerSlot], m_monitorControlTicket,
         render, ledgerSlot, entry.generation};
     return entry.monitorControl;
+#else
+    return {};
+#endif
 }
 
 std::uint64_t VoiceLedger::CaptureMonitorPlaybackEnd(std::uint32_t ledgerSlot,
     MonitorVoicePlaybackEnd* out) const noexcept {
+#if HARKEN_ENGINE_DEV
     if (ledgerSlot >= m_entries.ConstructedCount() || out == nullptr) return 0;
     const auto& entry = m_entries[ledgerSlot];
     const auto& binding = entry.monitorControl;
@@ -603,16 +674,22 @@ std::uint64_t VoiceLedger::CaptureMonitorPlaybackEnd(std::uint32_t ledgerSlot,
         binding.render != entry.renderHandle || !binding.receipt->TryReadEnd(binding, out)) return 0;
     if (!out->timelineControl && out->kind == SourceTerminalKind::Stop) out->cause = entry.controlCause;
     return entry.monitorContent.leaf;
+#else
+    return 0;
+#endif
 }
 
 void VoiceLedger::InvalidateMonitorControl(Entry& entry) noexcept {
+#if HARKEN_ENGINE_DEV
     if (entry.monitorControl.Valid()) entry.monitorControl.receipt->Invalidate(entry.monitorControl.ticket);
     entry.monitorControl = {};
     entry.monitorControlAttempted = false;
+#endif
 }
 
 void VoiceLedger::CaptureMonitorFacts(const Entry& entry, MonitorLifecycleFacts& facts,
     bool terminal, bool readAudioReceipt) const noexcept {
+#if HARKEN_ENGINE_DEV
     const auto& content = entry.monitorContent;
     facts.publishLegacy = entry.visibility == PublicVisibility::DirectVoice;
     facts.logicalVoice = entry.publicHandle;
@@ -648,11 +725,13 @@ void VoiceLedger::CaptureMonitorFacts(const Entry& entry, MonitorLifecycleFacts&
     if (observed.sourceKind == SourceTerminalKind::Stop) {
         if (observed.timelineControl) facts.controlCause = observed.cause;
     } else if (observed.sourceKind != SourceTerminalKind::Cancelled) facts.controlCause = {};
+#endif
 }
 
 void VoiceLedger::ObserveVoice(MonitorLifecyclePhase phase,
                                std::uint32_t ledgerSlot, std::uint32_t reason,
                                const MonitorLifecycleFacts& facts) noexcept {
+#if HARKEN_ENGINE_DEV
     if (ledgerSlot >= m_entries.ConstructedCount()) {
         return;
     }
@@ -670,6 +749,7 @@ void VoiceLedger::ObserveVoice(MonitorLifecyclePhase phase,
     CaptureMonitorFacts(entry, observation);
     ObserveMonitorLifecycle(phase, entry.publicHandle, generation, 0, {}, 0, 0,
                             reason, 0, entry.monitorObserveCount, observation);
+#endif
 }
 
 bool VoiceLedger::AcquirePlayableOwned(const PlayableParentRef& parent,
@@ -687,8 +767,10 @@ bool VoiceLedger::AcquirePlayableOwned(const PlayableParentRef& parent,
     entry.controlCause = {};
     entry.selectionCause = {};
     entry.monitorContent = {};
+#if HARKEN_ENGINE_DEV
     entry.monitorSelectionAccepted = false;
     entry.monitorCancellationAccepted = false;
+#endif
     entry.stolen = false;
     entry.terminating = false;
     entry.priority = 128;
@@ -699,7 +781,9 @@ bool VoiceLedger::AcquirePlayableOwned(const PlayableParentRef& parent,
     entry.parent = parent;
     entry.completionMutation = {};
     entry.preparedReservation = false;
+#if HARKEN_ENGINE_DEV
     entry.monitorObserveCount = 0;
+#endif
     *outLedgerSlot = i;
     return true;
 }
@@ -720,8 +804,10 @@ bool VoiceLedger::PreparePlayableOwned(const PlayableParentRef& parent,
     entry.controlCause = {};
     entry.selectionCause = {};
     entry.monitorContent = {};
+#if HARKEN_ENGINE_DEV
     entry.monitorSelectionAccepted = false;
     entry.monitorCancellationAccepted = false;
+#endif
     entry.stolen = false;
     entry.terminating = false;
     entry.preparedReservation = true;
@@ -732,7 +818,9 @@ bool VoiceLedger::PreparePlayableOwned(const PlayableParentRef& parent,
     entry.visibility = PublicVisibility::PlayableOwnedInternal;
     entry.parent = parent;
     entry.completionMutation = {};
+#if HARKEN_ENGINE_DEV
     entry.monitorObserveCount = 0;
+#endif
     *outLedgerSlot = i;
     if (outIdentity != nullptr) *outIdentity = {i, entry.generation};
     return true;
@@ -1018,14 +1106,16 @@ bool VoiceLedger::AcquirePending(VnVoiceHandle* outPublicHandle,
     entry.playbackRequest = request;
     entry.emitterOrigin = emitterOrigin;
     entry.monitorContent = {};
-    entry.monitorContent.content.stableId = media;
 #if HARKEN_ENGINE_DEV
+    entry.monitorContent.content.stableId = media;
     entry.monitorContent.kind = media == VnObjectId{} ? VN_MONITOR_CONTENT_UNKNOWN : VN_MONITOR_CONTENT_MEDIA;
 #endif
     entry.controlCause = {};
     entry.selectionCause = {};
+#if HARKEN_ENGINE_DEV
     entry.monitorSelectionAccepted = false;
     entry.monitorCancellationAccepted = false;
+#endif
     entry.stolen = false;
     entry.terminating = false;
     entry.preparedReservation = false;
@@ -1036,7 +1126,9 @@ bool VoiceLedger::AcquirePending(VnVoiceHandle* outPublicHandle,
     entry.visibility = PublicVisibility::DirectVoice;
     entry.parent = {};
     entry.completionMutation = {};
+#if HARKEN_ENGINE_DEV
     entry.monitorObserveCount = 0;
+#endif
     *outPublicHandle = entry.publicHandle;
     *outLedgerSlot = i;
     ObserveVoice(MonitorLifecyclePhase::VoicePending, i,
@@ -1090,7 +1182,9 @@ void VoiceLedger::CancelPending(std::uint32_t ledgerSlot, const MonitorControlCa
     }
     MonitorLifecycleFacts facts{};
     CaptureMonitorFacts(entry, facts);
+#if HARKEN_ENGINE_DEV
     facts.controlCause = cause;
+#endif
     entry.renderHandle = 0;
     entry.stolen = false;
     entry.terminating = false;
@@ -1115,7 +1209,9 @@ void VoiceLedger::MarkStolen(VnVoiceHandle renderHandle, const MonitorControlCau
         Entry& entry = m_entries[i];
         if (entry.state == EntryState::Live &&
             entry.renderHandle == renderHandle) {
+#if HARKEN_ENGINE_DEV
             if (!entry.stolen && !entry.terminating && !entry.monitorCancellationAccepted) entry.controlCause = cause;
+#endif
             entry.stolen = true;
             return;
         }
@@ -1145,7 +1241,9 @@ void VoiceLedger::MarkTerminating(VnVoiceHandle renderHandle, const MonitorContr
         Entry& entry = m_entries[i];
         if (entry.state == EntryState::Live &&
             entry.renderHandle == renderHandle) {
+#if HARKEN_ENGINE_DEV
             if (recordControlCause && !entry.stolen && !entry.terminating && !entry.monitorCancellationAccepted) entry.controlCause = cause;
+#endif
             entry.terminating = true;
             return;
         }
@@ -1345,7 +1443,9 @@ bool VoiceLedger::Park(VnVoiceHandle renderHandle,
     RevokeOriginalCompletionAssociation(*entry);
     MonitorLifecycleFacts facts{};
     CaptureMonitorFacts(*entry, facts);
+#if HARKEN_ENGINE_DEV
     entry->controlCause = facts.controlCause;
+#endif
     InvalidateMonitorControl(*entry);
     entry->state = EntryState::Parked;
     entry->renderHandle = 0;
@@ -1370,7 +1470,9 @@ void VoiceLedger::ReturnPark(std::uint32_t ledgerSlot,
     entry.startOrder = m_nextStartOrder++;
     BindReverse(ledgerSlot, renderHandle);
     MonitorLifecycleFacts facts{};
+#if HARKEN_ENGINE_DEV
     facts.notifyType = VN_NOTIFY_VOICE_RETURNED;
+#endif
     ObserveVoice(MonitorLifecyclePhase::VoiceLive, ledgerSlot,
                  VN_ACTION_TERMINAL_CAPABILITY_UNAVAILABLE, facts);
 }
@@ -1385,7 +1487,9 @@ void VoiceLedger::EndParked(std::uint32_t ledgerSlot, const MonitorControlCause&
     }
     MonitorLifecycleFacts facts{};
     CaptureMonitorFacts(entry, facts);
+#if HARKEN_ENGINE_DEV
     facts.controlCause = cause;
+#endif
     entry.renderHandle = 0;
     entry.terminating = false;
     entry.parent = {};
@@ -1395,7 +1499,9 @@ void VoiceLedger::EndParked(std::uint32_t ledgerSlot, const MonitorControlCause&
     const bool publish = endedHandle != 0;
     AdvanceGeneration(entry, EntryState::Ended);
     if (publish) {
+#if HARKEN_ENGINE_DEV
         facts.notifyType = VN_NOTIFY_VOICE_ENDED;
+#endif
         ObserveMonitorLifecycle(MonitorLifecyclePhase::VoiceEnd, endedHandle,
                                 endedGeneration, 0, {}, 0, 0,
                                 VN_ACTION_TERMINAL_NATURAL, 0, 0, facts);
@@ -1432,8 +1538,10 @@ void VoiceLedger::Release(std::uint32_t ledgerSlot) {
     if (!entry.preparedReservation && entry.state == EntryState::Live && entry.renderHandle != 0) {
         MonitorLifecycleFacts facts{};
         CaptureMonitorFacts(entry, facts);
+#if HARKEN_ENGINE_DEV
         facts.publishLegacy = false;
         facts.reasonKnown = false;
+#endif
         ObserveMonitorLifecycle(MonitorLifecyclePhase::VoiceEnd, entry.publicHandle,
             entry.generation, 0, {}, entry.parent.internalToken, 0, 0, 0, 0, facts);
     }
@@ -1519,8 +1627,10 @@ void VoiceLedger::Reap(VnVoiceHandle renderHandle) {
     entry->completionMutation = {};
     AdvanceGeneration(*entry, EntryState::Ended);
     if (publish) {
+#if HARKEN_ENGINE_DEV
         facts.notifyType =
             stolen ? VN_NOTIFY_VOICE_STOLEN : VN_NOTIFY_VOICE_ENDED;
+#endif
         ObserveMonitorLifecycle(
             MonitorLifecyclePhase::VoiceEnd, endedHandle, endedGeneration, 0, {},
             0, 0,
@@ -1621,9 +1731,13 @@ void VoiceLedger::AdvanceGeneration(Entry& entry,
     entry.emitterOrigin = {};
     entry.controlCause = {};
     entry.selectionCause = {};
+#if HARKEN_ENGINE_DEV
     entry.monitorSelectionAccepted = false;
+#endif
     entry.monitorContent = {};
+#if HARKEN_ENGINE_DEV
     entry.monitorCancellationAccepted = false;
+#endif
     entry.parent = {};
     entry.completionMutation = {};
     entry.preparedReservation = false;
@@ -1638,7 +1752,9 @@ void VoiceLedger::AdvanceGeneration(Entry& entry,
     entry.state = reusableState;
     entry.publicHandle = 0;
     entry.visibility = PublicVisibility::DirectVoice;
+#if HARKEN_ENGINE_DEV
     entry.monitorObserveCount = 0;
+#endif
 }
 
 bool VoiceLedger::CanBindRender(VnVoiceHandle renderHandle) const noexcept {
@@ -1650,10 +1766,13 @@ bool VoiceLedger::CanBindRender(VnVoiceHandle renderHandle) const noexcept {
 bool VoiceLedger::SetGenerationForTests(std::uint32_t slot,
                                         std::uint32_t generation) noexcept {
     if (memguard::IsAudioTagged() || slot >= m_entries.Capacity() || generation == 0 ||
-        generation > kMaxGeneration || !m_monitorControlReceipts.ConstructThrough(slot + 1) ||
-        !m_entries.ConstructThrough(slot + 1)) {
+        generation > kMaxGeneration) {
         return false;
     }
+#if HARKEN_ENGINE_DEV
+    if (!m_monitorControlReceipts.ConstructThrough(slot + 1)) return false;
+#endif
+    if (!m_entries.ConstructThrough(slot + 1)) return false;
     Entry& entry = m_entries[slot];
     if (!ReusableEntry(entry)) {
         return false;

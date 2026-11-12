@@ -539,11 +539,13 @@ void ApplyTimelineControlEvent(VoiceRenderContext& ctx,
             if (ctx.timelineStopPending ||
                 (ctx.timelineFallbackStopActive && ctx.fading)) return;
         }
+#if HARKEN_ENGINE_DEV
         if (!ctx.monitorControlAdopted) {
             ctx.monitorControlAdopted = true;
             ctx.monitorTimelineControlAdopted = true;
             ctx.monitorAdoptedControlCause = event.Stop().controlCause;
         }
+#endif
         ctx.timelineStopPending = true;
         ctx.timelineStopOffset = event.offset;
         ctx.timelineStopFrame = event.authoredRootStop ? ctx.authoredRootStopFrame :
@@ -668,11 +670,13 @@ bool RunPlainPcm(VoiceRenderContext& ctx, std::uint32_t frames) {
         }
     }
     if (!ctx.resampler.BorrowLinearUnity(frames, ctx.cascade.borrowed)) return false;
+#if HARKEN_ENGINE_DEV
     ctx.monitorPreChainFrames = 0;
     if (ctx.monitorPreChain[0] != nullptr && harken::monitor::AudioLiveArmed()) {
         CopyPlainPcm(ctx, ctx.monitorPreChain, 0);
         ctx.monitorPreChainFrames = frames;
     }
+#endif
     const auto last = (ctx.cascade.borrowed.ringOffset + frames - 1) &
                       (kResampleFifoFrames - 1);
     for (std::uint32_t ch = 0; ch < ctx.pcm.channelCount; ++ch) {
@@ -827,7 +831,9 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
     ctx.stagedSourceTerminalOffset = 0;
     ctx.stagedPlaybackEnd = SourceTerminalKind::None;
     ctx.stagedPlaybackEndOffset = 0;
+#if HARKEN_ENGINE_DEV
     ctx.monitorStoppedBeforeCascade = false;
+#endif
 
     const VoiceEventSpan& timelineSpan = ctx.timelineEvents;
 
@@ -859,11 +865,13 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
     if (rootStopArrived && (prebufferWaiting ||
         (ctx.timelineGated && ctx.authoredRootStopFrame <= quantumStart + earliestStart))) {
         ctx.authoredRootStopApplied = true;
+#if HARKEN_ENGINE_DEV
         if (!ctx.monitorControlAdopted) {
             ctx.monitorControlAdopted = true;
             ctx.monitorTimelineControlAdopted = true;
             ctx.monitorAdoptedControlCause = ctx.authoredRootStopControl.Stop().controlCause;
         }
+#endif
         ctx.stagedSourceTerminal = SourceTerminalKind::Stop;
         ctx.stagedSourceTerminalOffset = static_cast<std::uint32_t>(
             ctx.authoredRootStopFrame > quantumStart ? ctx.authoredRootStopFrame - quantumStart : 0);
@@ -914,7 +922,9 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
         ? ctx.timelineFallbackStopFrame : ctx.timelineStopFrame;
     if (ctx.authoredRootStopApplied && pendingStopFrame < quantumStart &&
         quantumStart - pendingStopFrame >= ctx.timelineStopDeclickFrames) {
+#if HARKEN_ENGINE_DEV
         ctx.monitorStoppedBeforeCascade = true;
+#endif
         ctx.stagedPlaybackEnd = SourceTerminalKind::Stop;
         ctx.phase = SourcePhase::Done;
         ctx.starvedThisBlock = false;
@@ -1329,6 +1339,7 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
     ctx.tapPostResample = StageTapPeak(scratch, channels, offset, produced);
 #endif
 
+#if HARKEN_ENGINE_DEV
     ctx.monitorPreChainFrames = 0;
     if (produced > 0 && ctx.monitorPreChain[0] != nullptr &&
         harken::monitor::AudioLiveArmed()) {
@@ -1341,6 +1352,7 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
         }
         ctx.monitorPreChainFrames = produced;
     }
+#endif
 
     // --- lifecycle + tail drain (data, not control flow) ---
     SourcePhase phase = SourcePhase::Active;

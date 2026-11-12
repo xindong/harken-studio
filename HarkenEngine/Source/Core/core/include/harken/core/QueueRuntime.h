@@ -316,7 +316,7 @@ struct QueueInstanceCreateRequest {
     std::uint32_t emitterGeneration = 0;
     EffectiveQueueState initial{};
     EffectiveQueueState resetInitial{};
-    MonitorLifecycleFacts monitorIdentity{};
+    HARKEN_MONITOR_FIELD MonitorLifecycleFacts monitorIdentity{};
 };
 
 class QueueInstanceTable;
@@ -470,6 +470,7 @@ struct QueueExecutionOrderV1 {
 
 // Logic-owned observation; it never participates in Queue selection or proof.
 struct MonitorQueueResetObservation {
+#if HARKEN_ENGINE_DEV
     enum class Stage : std::uint8_t { None, Intent, Selected, Applied };
     MonitorControlCause cause{};
     QueueExecutionOrderV1 order{};
@@ -477,7 +478,17 @@ struct MonitorQueueResetObservation {
     std::uint64_t previousVersion = 0;
     std::uint64_t nextVersion = 0;
     Stage stage = Stage::None;
+#endif
 };
+
+inline MonitorControlCause ResetObservationCause(
+    const MonitorQueueResetObservation& observation) noexcept {
+#if HARKEN_ENGINE_DEV
+    return observation.cause;
+#else
+    return {};
+#endif
+}
 
 inline bool QueueExecutionPrecedes(QueueExecutionOrderV1 left,
                                   QueueExecutionOrderV1 right) noexcept {
@@ -1430,8 +1441,8 @@ private:
         std::uint64_t resetIntentCounter = 0;
         std::uint64_t resetIntentGeneration = 0;
         QueueExecutionOrderV1 resetOrder{};
-        MonitorQueueResetObservation monitorReset{};
-        MonitorLifecycleFacts monitorIdentity{};
+        HARKEN_MONITOR_FIELD MonitorQueueResetObservation monitorReset{};
+        HARKEN_MONITOR_FIELD MonitorLifecycleFacts monitorIdentity{};
 
         SignalReservation signalReservation = SignalReservation::None;
         NextStateOwner nextStateOwner = NextStateOwner::None;

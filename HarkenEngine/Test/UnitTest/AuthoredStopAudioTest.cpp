@@ -70,6 +70,7 @@ struct StopAudioHarness {
             EXPECT_TRUE(token.Valid());
             EXPECT_TRUE(engine->voices.BindSourceTerminal(render, engine->sourceTerminals.Resolve(token), token));
         }
+#if HARKEN_ENGINE_DEV
         if (captureControl) {
             EXPECT_LT(controlCount, controls.size());
             if (controlCount < controls.size()) {
@@ -81,6 +82,7 @@ struct StopAudioHarness {
                 ++controlCount;
             }
         }
+#endif
         if (!apply) return render;
         engine->voices.ApplyPlay(render, render, 0, quantum);
         auto* context = engine->voices.Resolve(render);
@@ -108,10 +110,12 @@ struct StopAudioHarness {
 
     float Sample(std::uint32_t frame) const { return planes[0][frame]; }
 
+#if HARKEN_ENGINE_DEV
     std::array<harken::MonitorVoiceControlReceipt, 2> controls;
     std::array<harken::MonitorVoiceControlBinding, 2> controlBindings{};
     std::uint32_t controlCount = 0;
     bool captureControl = false;
+#endif
     harkentest::EngineSession session;
     std::vector<float> samples;
     harken::BlockArena arena;
@@ -878,7 +882,9 @@ struct FrontierAudioHarness {
 TEST(AuthoredStopAudio, DeferredWorkerRetainsFrozenFrontierUntilCompletion) {
     FrontierAudioHarness h(1);
     h.audio.retainSources = true;
+#if HARKEN_ENGINE_DEV
     h.audio.captureControl = true;
+#endif
     h.Prepare(32, false, false, false, harken::VariableControlSide::Discrete,
         false, false, false, false, UINT64_MAX, true);
     ASSERT_FALSE(::testing::Test::HasFatalFailure());
@@ -2931,6 +2937,7 @@ TEST(AuthoredStopAudio, NonemptyDecisionDescriptorWithoutMatchingPinCannotApply)
     EXPECT_EQ(0u, op.AppliedAudioSequence());
 }
 
+#if HARKEN_ENGINE_DEV
 TEST(AuthoredStopAudio, GatedRootStopReleasesWithoutStartingInSerialAndWorker) {
     for (const auto workers : {0u, 2u}) {
         for (const auto laterStart : {0, 17, 31}) {
@@ -2959,6 +2966,7 @@ TEST(AuthoredStopAudio, GatedRootStopReleasesWithoutStartingInSerialAndWorker) {
         }
     }
 }
+#endif
 
 TEST(AuthoredStopAudio, PreinstalledGroupPreservesEarlySamplesAndCancelsFutureSlices) {
     for (const auto workers : {2u}) {
@@ -3292,6 +3300,7 @@ TEST(AuthoredStopAudio, ActualCoverageControlsSameQuantumAndLateOrMissingEnvelop
     }
 }
 
+#if HARKEN_ENGINE_DEV
 TEST(AuthoredStopAudio, ResetTimelineStopCapturesOnlyItsActualSourceWinner) {
     for (const auto workers : {0u, 2u}) {
         for (const auto naturalFirst : {false, true}) {
@@ -3334,7 +3343,9 @@ TEST(AuthoredStopAudio, ResetTimelineStopCapturesOnlyItsActualSourceWinner) {
         }
     }
 }
+#endif
 
+#if HARKEN_ENGINE_DEV
 TEST(AuthoredStopAudio, FirstAppliedControlSurvivesTimelineAndApiStopMixing) {
     for (const auto workers : {0u, 2u}) {
         for (const auto timelineFirst : {false, true}) {
@@ -3373,7 +3384,9 @@ TEST(AuthoredStopAudio, FirstAppliedControlSurvivesTimelineAndApiStopMixing) {
         }
     }
 }
+#endif
 
+#if HARKEN_ENGINE_DEV
 TEST(AuthoredStopAudio, RootStopDominatesLaterControlsAcrossQuanta) {
     for (const auto workers : {2u}) {
         StopAudioHarness h(workers);
@@ -3414,6 +3427,7 @@ TEST(AuthoredStopAudio, RootStopDominatesLaterControlsAcrossQuanta) {
         EXPECT_EQ(harken::SourceTerminalKind::Stop, control.sourceKind);
     }
 }
+#endif
 
 TEST(AuthoredStopAudio, CrossQuantumAuthoredEnvelopeDoesNotRestoreGainAtStop) {
     for (const auto workers : {2u}) {
@@ -7698,6 +7712,7 @@ TEST(AuthoredStopAudio, OriginalControlHeaderFactoryKeepsTypedLifetimeSeparateFr
     EXPECT_EQ(2u, table.FreeCount());
 }
 
+#if HARKEN_ENGINE_DEV
 TEST(AuthoredStopAudio, OriginalControlHeaderFrozenFactoryRejectsForeignHeaderAndAbortsRealUnpublishedRange) {
     for (unsigned field = 0; field < 9; ++field) {
         SCOPED_TRACE(field);
@@ -7741,7 +7756,9 @@ TEST(AuthoredStopAudio, OriginalControlHeaderFrozenFactoryRejectsForeignHeaderAn
         h.Dispose();
     }
 }
+#endif
 
+#if HARKEN_ENGINE_DEV
 TEST(AuthoredStopAudio, OriginalControlHeaderConsumedCommitUnpublishedAbortRetainsTrueReclaimFence) {
     OriginalControlHeaderHarness h;
     ASSERT_TRUE(h.InstallSource());
@@ -7764,7 +7781,9 @@ TEST(AuthoredStopAudio, OriginalControlHeaderConsumedCommitUnpublishedAbortRetai
     h.ExpectSourceUnchanged();
     h.Dispose();
 }
+#endif
 
+#if HARKEN_ENGINE_DEV
 TEST(AuthoredStopAudio, OriginalControlHeaderReceiverRefusesGenuineOtherTableWithIdenticalFullTokenBeforeMovingOwner) {
     OriginalControlHeaderHarness h;
     ASSERT_TRUE(h.InstallSource());
@@ -7811,7 +7830,9 @@ TEST(AuthoredStopAudio, OriginalControlHeaderReceiverRefusesGenuineOtherTableWit
     ASSERT_TRUE(h.Range().ResetAfterDisposition());
     h.Dispose();
 }
+#endif
 
+#if HARKEN_ENGINE_DEV
 TEST(AuthoredStopAudio, OriginalControlHeaderReissuedRangeAndRowConfirmOnlyNewGenerationAndKeepTrueSourcePcm) {
     OriginalControlHeaderHarness h;
     ASSERT_TRUE(h.InstallSource());
@@ -7920,7 +7941,9 @@ TEST(AuthoredStopAudio, OriginalControlHeaderReissuedRangeAndRowConfirmOnlyNewGe
     EXPECT_EQ(engine.timelineArms.Capacity(), engine.timelineArms.FreeCount());
     EXPECT_EQ(0u, engine.mixer.CommandProtocolViolationCount());
 }
+#endif
 
+#if HARKEN_ENGINE_DEV
 TEST(AuthoredStopAudio, OriginalControlHeaderPublishedCancelAndMaximumInitialBlockKeepActualOriginalUntilCompletion) {
     OriginalControlHeaderHarness h;
     ASSERT_TRUE(h.InstallSource());
@@ -7956,7 +7979,9 @@ TEST(AuthoredStopAudio, OriginalControlHeaderPublishedCancelAndMaximumInitialBlo
     EXPECT_EQ(0u, engine.mixer.CommandProtocolViolationCount());
     h.Dispose();
 }
+#endif
 
+#if HARKEN_ENGINE_DEV
 TEST(AuthoredStopAudio, OriginalControlHeaderBusyAckRetainsLoanAndRejectsMaximumRetryWithoutAdvancingSettled) {
     for (const bool cancel : {false, true}) {
         SCOPED_TRACE(cancel);
@@ -7996,7 +8021,9 @@ TEST(AuthoredStopAudio, OriginalControlHeaderBusyAckRetainsLoanAndRejectsMaximum
         h.Dispose();
     }
 }
+#endif
 
+#if HARKEN_ENGINE_DEV
 TEST(AuthoredStopAudio, OriginalControlHeaderActualCorruptRecordCompletesInvalidWithoutConfirmingSourceOrControl) {
     OriginalControlHeaderHarness h;
     ASSERT_TRUE(h.InstallSource());
@@ -8022,7 +8049,9 @@ TEST(AuthoredStopAudio, OriginalControlHeaderActualCorruptRecordCompletesInvalid
     ASSERT_TRUE(h.Range().ResetAfterDisposition());
     h.Dispose();
 }
+#endif
 
+#if HARKEN_ENGINE_DEV
 TEST(AuthoredStopAudio, OriginalControlHeaderEngineShutdownReturnsQueuedAndPendingRealLifetimeOwnersAfterJoin) {
     for (const bool pendingAck : {false, true}) {
         SCOPED_TRACE(pendingAck);
@@ -8042,6 +8071,7 @@ TEST(AuthoredStopAudio, OriginalControlHeaderEngineShutdownReturnsQueuedAndPendi
         ASSERT_EQ(VN_OK, Vn_Term());
     }
 }
+#endif
 
 TEST(AuthoredStopAudio, PendingControlRejectsUnoriginalSourceAndIncompleteWorstCaseStorageBeforeReservation) {
     for (unsigned mode = 0; mode < 7; ++mode) {
@@ -8196,6 +8226,7 @@ void ReturnControlOriginAndDisposePhysicalSource(OriginalControlOriginHarness& h
 }
 } // namespace
 
+#if HARKEN_ENGINE_DEV
 TEST(AuthoredStopAudio, ControlOriginTruePreparedAndFrozenFactoriesRetainFullScopeAndAbortWithoutHeadExposure) {
     static_assert(!std::is_copy_constructible_v<ControlOriginPin>);
     static_assert(std::is_nothrow_move_constructible_v<ControlOriginPin>);
@@ -8261,7 +8292,9 @@ TEST(AuthoredStopAudio, ControlOriginTruePreparedAndFrozenFactoriesRetainFullSco
     ASSERT_NO_FATAL_FAILURE(DisposeControlPhysicalSourceAndOriginalTerminal(h));
     EXPECT_EQ(engine.timelineArms.Capacity(), engine.timelineArms.FreeCount());
 }
+#endif
 
+#if HARKEN_ENGINE_DEV
 TEST(AuthoredStopAudio, ControlOriginDefaultLegacyGenuineTypedHeaderDoesNotRequireUnusedNewScopeOrMintActor) {
     OriginalControlHeaderHarness h;
     ASSERT_TRUE(h.InstallSource());
@@ -8300,7 +8333,9 @@ TEST(AuthoredStopAudio, ControlOriginDefaultLegacyGenuineTypedHeaderDoesNotRequi
     ASSERT_NO_FATAL_FAILURE(DisposeControlPhysicalSourceAndOriginalTerminal(h));
     EXPECT_EQ(engine.timelineArms.Capacity(), engine.timelineArms.FreeCount());
 }
+#endif
 
+#if HARKEN_ENGINE_DEV
 TEST(AuthoredStopAudio, ControlOriginActualBusyAckKeepsNativeActorAcrossTwoCallbacksAndForeignDoesNotBlockAck) {
     OriginalControlOriginHarness h;
     ASSERT_NO_FATAL_FAILURE(PreparePublishedControlOrigin(h));
@@ -8352,7 +8387,9 @@ TEST(AuthoredStopAudio, ControlOriginActualBusyAckKeepsNativeActorAcrossTwoCallb
     foreign.Release();
     ASSERT_NO_FATAL_FAILURE(ReturnControlOriginAndDisposePhysicalSource(h));
 }
+#endif
 
+#if HARKEN_ENGINE_DEV
 TEST(AuthoredStopAudio, ControlOriginActualCommandCutoffAndMaximumDoNotBorrowOrPublishCompletion) {
     OriginalControlOriginHarness h;
     ASSERT_NO_FATAL_FAILURE(PreparePublishedControlOrigin(h));
@@ -8380,7 +8417,9 @@ TEST(AuthoredStopAudio, ControlOriginActualCommandCutoffAndMaximumDoNotBorrowOrP
     EXPECT_GE(ControlOriginAccess::Observe(h.Range()).epoch, 2u);
     ASSERT_NO_FATAL_FAILURE(ReturnControlOriginAndDisposePhysicalSource(h));
 }
+#endif
 
+#if HARKEN_ENGINE_DEV
 TEST(AuthoredStopAudio, ControlOriginRealMaximumEpochExhaustsWithoutWrapAndStillCompletesActualOldAck) {
     OriginalControlOriginHarness h;
     ASSERT_NO_FATAL_FAILURE(PreparePublishedControlOrigin(h));
@@ -8405,7 +8444,9 @@ TEST(AuthoredStopAudio, ControlOriginRealMaximumEpochExhaustsWithoutWrapAndStill
     child.Release();
     ASSERT_NO_FATAL_FAILURE(ReturnControlOriginAndDisposePhysicalSource(h));
 }
+#endif
 
+#if HARKEN_ENGINE_DEV
 TEST(AuthoredStopAudio, ControlOriginRealChildCountExhaustionKeepsActualAckProgressAndBlocksOnlyRangeReuse) {
     OriginalControlOriginHarness h;
     ASSERT_NO_FATAL_FAILURE(PreparePublishedControlOrigin(h));
@@ -8434,7 +8475,9 @@ TEST(AuthoredStopAudio, ControlOriginRealChildCountExhaustionKeepsActualAckProgr
     for (auto& loan : loans) loan.Release();
     ASSERT_NO_FATAL_FAILURE(ReturnControlOriginAndDisposePhysicalSource(h));
 }
+#endif
 
+#if HARKEN_ENGINE_DEV
 TEST(AuthoredStopAudio, ControlOriginActualCancelAndCorruptWireReturnActorWithoutStartingOrReleasingSource) {
     for (const bool cancel : {false, true}) {
         SCOPED_TRACE(cancel);
@@ -8472,7 +8515,9 @@ TEST(AuthoredStopAudio, ControlOriginActualCancelAndCorruptWireReturnActorWithou
         ASSERT_NO_FATAL_FAILURE(ReturnControlOriginAndDisposePhysicalSource(h));
     }
 }
+#endif
 
+#if HARKEN_ENGINE_DEV
 TEST(AuthoredStopAudio, ControlOriginActualQuiescentTermReturnsQueuedOrRetainedPendingActorsAfterJoin) {
     for (const bool busy : {false, true}) {
         SCOPED_TRACE(busy);
@@ -8495,3 +8540,4 @@ TEST(AuthoredStopAudio, ControlOriginActualQuiescentTermReturnsQueuedOrRetainedP
         ASSERT_EQ(VN_OK, Vn_Term());
     }
 }
+#endif

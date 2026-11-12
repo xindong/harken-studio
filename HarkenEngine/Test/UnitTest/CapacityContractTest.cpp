@@ -1276,6 +1276,7 @@ TEST(CapacityContract, PlayableStorageUsesSevenCheckedFamilies) {
         std::bad_alloc);
 }
 
+#if HARKEN_ENGINE_DEV
 TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     harkentest::EngineSession session(harkentest::MakeNullConfig(2, 256, 48000));
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -1693,6 +1694,7 @@ TEST(CapacityContract, PlayableStoragePartitionsAllMemberAndScheduleVectors) {
     newConsumer.Discard();
     finishLaneWork();
 }
+#endif
 
 TEST(CapacityContract, CompositeActionCapacityGrowthMatchesBothBlockProfiles) {
     VnConfig config = MakeNullConfig();

@@ -74,7 +74,7 @@ struct TimelineEventPayload {
     WeightSegmentV1 variableWeight{};
     VariableWeightControlIdentity variableWeightOwner{};
     AuthoredStopOperationIdentity authoredStopOperation{};
-    MonitorControlCause controlCause{};
+    HARKEN_MONITOR_FIELD MonitorControlCause controlCause{};
 };
 
 struct LogicalOnlyOccurrence {
@@ -183,8 +183,8 @@ struct TimelineVoiceBindingInstall {
 };
 
 struct TimelineVoiceInstallDesc {
-    MonitorContentIdentity monitorContent{};
-    MonitorOccurrenceIdentity monitorOccurrence{};
+    HARKEN_MONITOR_FIELD MonitorContentIdentity monitorContent{};
+    HARKEN_MONITOR_FIELD MonitorOccurrenceIdentity monitorOccurrence{};
     PCMView capturedMedia{};
     bool streamed = false;
     std::uint32_t streamFileIndex = 0;

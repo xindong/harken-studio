@@ -1,5 +1,7 @@
 #include "harken/core/MonitorRequest.h"
 
+#if HARKEN_ENGINE_DEV
+
 #include <random>
 
 namespace harken {
@@ -42,3 +44,5 @@ MonitorRequestContext MonitorRequestSource::Begin(
 }
 
 } // namespace harken
+
+#endif
