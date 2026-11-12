@@ -236,6 +236,57 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildInfo.cmake)
 # One interpreter discovery shared by every product that runs Python helpers.
 find_package(Python3 COMPONENTS Interpreter)
 
+function(harken_add_python_regen_target target_name script_path target_comment)
+    if(Python3_Interpreter_FOUND)
+        add_custom_target(${target_name}
+            COMMAND "${Python3_EXECUTABLE}" "${script_path}" ${ARGN}
+            COMMENT "${target_comment}"
+            VERBATIM
+        )
+    else()
+        add_custom_target(${target_name}
+            COMMAND "${CMAKE_COMMAND}" -E echo
+                    "ERROR: ${target_name} requires a Python 3 interpreter; install Python 3 and reconfigure."
+            COMMAND "${CMAKE_COMMAND}" -E false
+            COMMENT "${target_comment}"
+            VERBATIM
+        )
+    endif()
+endfunction()
+
+# Python check tests are registered whether or not an interpreter was found.
+# Registering them conditionally made a missing interpreter delete the checks
+# rather than fail them, and ctest exits 0 for a selection matching nothing --
+# with other tests still present the selection was not even empty, so losing just
+# these stayed green. A placeholder that always fails keeps the gate red for the
+# one reason that matters: the check did not run.
+function(harken_add_python_check_test test_name)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME ${test_name}
+                 COMMAND "${Python3_EXECUTABLE}" ${ARGN}
+                 WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+        set_tests_properties(${test_name} PROPERTIES
+            LABELS harken-source-contract TIMEOUT 120)
+        return()
+    endif()
+    set(_stub "${CMAKE_CURRENT_BINARY_DIR}/python_check_unavailable_${test_name}.cmake")
+    file(WRITE "${_stub}"
+         "message(FATAL_ERROR
+"
+         "    \"${test_name} could not run: no Python 3 interpreter was found at \"
+"
+         "    \"configure time, so this contract check was never registered. The \"
+"
+         "    \"gate reports failure rather than skipping silently, because an \"
+"
+         "    \"unverified contract is not a verified one.\")
+")
+    add_test(NAME ${test_name}
+             COMMAND "${CMAKE_COMMAND}" -P "${_stub}")
+    set_tests_properties(${test_name} PROPERTIES
+        LABELS harken-source-contract TIMEOUT 120)
+endfunction()
+
 if(HARKEN_BUILD_RUNTIME_UNIT_TESTS OR HARKEN_BUILD_EDITOR_UNIT_TESTS OR
    HARKEN_BUILD_HUB_UNIT_TESTS OR HARKEN_BUILD_RT_QUALIFICATION)
     enable_testing()

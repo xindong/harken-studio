@@ -179,14 +179,7 @@ if(WIN32)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "$<TARGET_FILE:Qt6::Core>" "$<TARGET_FILE_DIR:harken_resource_compiler_process>")
 endif()
-add_custom_command(TARGET harken_editor_tests POST_BUILD
-    COMMAND ${Python3_EXECUTABLE}
-        "${CMAKE_SOURCE_DIR}/HarkenStudio/Source/Tooling/SchemaArchive/schema_archive.py"
-        --schema-root "${HARKEN_SCHEMA_SOURCE_DIR}"
-        --check-generated "${HARKEN_SCHEMA_GENERATED_CORE_DIR}"
-        --publish "$<TARGET_FILE_DIR:harken_editor_tests>/schema"
-    COMMENT "Publishing the Studio Schema build snapshot for editor tests"
-)
+harken_publish_studio_schema(harken_editor_tests)
 
 target_compile_definitions(harken_editor_tests PRIVATE
     HARKEN_STUDIO_CLI_PATH="$<TARGET_FILE:harken_studio_cli>")
@@ -206,13 +199,7 @@ target_link_libraries(harken_timeline_benchmark PRIVATE harken_editor_lib)
 target_compile_definitions(harken_timeline_benchmark PRIVATE
     HARKEN_BENCHMARK_CONFIGURATION="$<CONFIG>")
 add_dependencies(harken_timeline_benchmark harken_editor)
-add_custom_command(TARGET harken_timeline_benchmark POST_BUILD
-    COMMAND ${Python3_EXECUTABLE}
-        "${CMAKE_SOURCE_DIR}/HarkenStudio/Source/Tooling/SchemaArchive/schema_archive.py"
-        --schema-root "${HARKEN_SCHEMA_SOURCE_DIR}"
-        --check-generated "${HARKEN_SCHEMA_GENERATED_CORE_DIR}"
-        --publish "$<TARGET_FILE_DIR:harken_timeline_benchmark>/schema"
-)
+harken_publish_studio_schema(harken_timeline_benchmark)
 if(TARGET Qt6::QOffscreenIntegrationPlugin)
     add_custom_command(TARGET harken_timeline_benchmark POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory
@@ -339,6 +326,10 @@ target_include_directories(harken_bus_compiler_tests PRIVATE ${CMAKE_CURRENT_SOU
 gtest_discover_tests(harken_bus_compiler_tests TEST_PREFIX "BusCompiler." PROPERTIES TIMEOUT 120)
 
 harken_add_ci_test_target(editor)
-add_test(NAME studio_schema_archive_unit
-    COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/.scripts/tests/test_schema_archive.py"
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+harken_add_python_check_test(studio_schema_archive_unit
+    "${CMAKE_SOURCE_DIR}/.scripts/tests/test_schema_archive.py")
+harken_add_python_check_test(studio_schema_generated_check
+    "${HARKEN_SCHEMA_TOOL}"
+    --schema-root "${HARKEN_SCHEMA_SOURCE_DIR}"
+    --check-generated "${HARKEN_SCHEMA_GENERATED_CORE_DIR}"
+    --check-published "${HARKEN_SCHEMA_PUBLISHED_DIR}")

@@ -17,9 +17,6 @@ endif()
 if(NOT TARGET Harken::EngineDev)
     message(FATAL_ERROR "Harken Studio requires the Harken::EngineDev target")
 endif()
-if(NOT Python3_Interpreter_FOUND)
-    message(FATAL_ERROR "Python 3 is required to generate and publish the Studio Schema")
-endif()
 
 set(HARKEN_SCHEMA_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Format")
 foreach(_format_tree Project PackMetadata)
@@ -38,8 +35,10 @@ add_compile_definitions(
     HARKEN_PROJECT_SCHEMA_VERSION=${_format_version_Project}
     HARKEN_PACK_METADATA_VERSION=${_format_version_PackMetadata})
 
-set(HARKEN_SCHEMA_GENERATED_DIR "${CMAKE_BINARY_DIR}/generated/schema")
+set(HARKEN_SCHEMA_TOOL "${CMAKE_CURRENT_SOURCE_DIR}/Source/Tooling/SchemaArchive/schema_archive.py")
+set(HARKEN_SCHEMA_GENERATED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Source/Tooling/SchemaArchive/generated")
 set(HARKEN_SCHEMA_GENERATED_CORE_DIR "${HARKEN_SCHEMA_GENERATED_DIR}/Core")
+set(HARKEN_SCHEMA_PUBLISHED_DIR "${HARKEN_SCHEMA_GENERATED_DIR}/schema")
 set(HARKEN_SCHEMA_GENERATED_PROJECT_HEADER
     "${HARKEN_SCHEMA_GENERATED_CORE_DIR}/ProjectSchemaGenerated.h")
 set(HARKEN_SCHEMA_GENERATED_BUILD_HEADER
@@ -48,25 +47,22 @@ set(HARKEN_SCHEMA_GENERATED_VALIDATOR_HEADER
     "${HARKEN_SCHEMA_GENERATED_CORE_DIR}/ProjectSchemaValidator.generated.h")
 set(HARKEN_SCHEMA_GENERATED_VALIDATOR_SOURCE
     "${HARKEN_SCHEMA_GENERATED_CORE_DIR}/ProjectSchemaValidator.generated.cpp")
-set(HARKEN_SCHEMA_GENERATED_FILES
-    ${HARKEN_SCHEMA_GENERATED_PROJECT_HEADER}
-    ${HARKEN_SCHEMA_GENERATED_BUILD_HEADER}
-    ${HARKEN_SCHEMA_GENERATED_VALIDATOR_HEADER}
-    ${HARKEN_SCHEMA_GENERATED_VALIDATOR_SOURCE})
-file(GLOB_RECURSE HARKEN_SCHEMA_INPUTS CONFIGURE_DEPENDS
-    "${HARKEN_SCHEMA_SOURCE_DIR}/*.json")
-add_custom_command(
-    OUTPUT ${HARKEN_SCHEMA_GENERATED_FILES}
-    COMMAND ${Python3_EXECUTABLE}
-        "${CMAKE_SOURCE_DIR}/HarkenStudio/Source/Tooling/SchemaArchive/schema_archive.py"
-        --schema-root "${HARKEN_SCHEMA_SOURCE_DIR}"
-        --generate-code "${HARKEN_SCHEMA_GENERATED_CORE_DIR}"
-    DEPENDS
-        "${CMAKE_SOURCE_DIR}/HarkenStudio/Source/Tooling/SchemaArchive/schema_archive.py"
-        ${HARKEN_SCHEMA_INPUTS}
-    VERBATIM)
-add_custom_target(harken_schema_codegen
-    DEPENDS ${HARKEN_SCHEMA_GENERATED_FILES})
+harken_add_python_regen_target(
+    harken_schema_regen
+    "${HARKEN_SCHEMA_TOOL}"
+    "Regenerating the Studio Schema code and published snapshot"
+    --schema-root "${HARKEN_SCHEMA_SOURCE_DIR}"
+    --generate-code "${HARKEN_SCHEMA_GENERATED_CORE_DIR}"
+    --publish "${HARKEN_SCHEMA_PUBLISHED_DIR}")
+
+function(harken_publish_studio_schema target)
+    add_custom_command(TARGET ${target} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E rm -rf "$<TARGET_FILE_DIR:${target}>/schema"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${HARKEN_SCHEMA_PUBLISHED_DIR}"
+            "$<TARGET_FILE_DIR:${target}>/schema"
+        COMMENT "Publishing the Studio Schema snapshot"
+        VERBATIM)
+endfunction()
 
 # Binary output directories are set globally at the top level (bin/ for
 # runtime,  lib/ for archives); the editor exe, the engine DLL, the deployed
@@ -577,24 +573,11 @@ if(WIN32)
     target_link_libraries(harken_studio_cli PRIVATE ole32 shell32)
 endif()
 
-add_custom_command(TARGET harken_studio_cli POST_BUILD
-    COMMAND ${Python3_EXECUTABLE}
-        "${CMAKE_SOURCE_DIR}/HarkenStudio/Source/Tooling/SchemaArchive/schema_archive.py"
-        --schema-root "${HARKEN_SCHEMA_SOURCE_DIR}"
-        --check-generated "${HARKEN_SCHEMA_GENERATED_CORE_DIR}"
-        --publish "$<TARGET_FILE_DIR:harken_studio_cli>/schema"
-)
+harken_publish_studio_schema(harken_studio_cli)
 endif()
 
 if(HARKEN_BUILD_EDITOR)
-add_custom_command(TARGET harken_editor POST_BUILD
-    COMMAND ${Python3_EXECUTABLE}
-        "${CMAKE_SOURCE_DIR}/HarkenStudio/Source/Tooling/SchemaArchive/schema_archive.py"
-        --schema-root "${HARKEN_SCHEMA_SOURCE_DIR}"
-        --check-generated "${HARKEN_SCHEMA_GENERATED_CORE_DIR}"
-        --publish "$<TARGET_FILE_DIR:harken_editor>/schema"
-    COMMENT "Publishing the Studio Schema build snapshot"
-)
+harken_publish_studio_schema(harken_editor)
 
 endif()
 

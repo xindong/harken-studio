@@ -820,71 +820,37 @@ endif()
 # declared contract, and the Windows export allowlist against the header plus the
 # linked DLL. Uses the same discovered Python 3 interpreter as the generator
 # custom targets; WORKING_DIRECTORY is the repo root.
-#
-# Every one of them is registered whether or not an interpreter was found.
-# Registering them conditionally made a missing interpreter delete the checks
-# rather than fail them, and ctest exits 0 for a selection matching nothing --
-# with other tests still present the selection was not even empty, so losing just
-# these stayed green. A placeholder that always fails keeps the gate red for the
-# one reason that matters: the check did not run.
-function(_harken_add_python_check_test test_name)
-    if(Python3_Interpreter_FOUND)
-        add_test(NAME ${test_name}
-                 COMMAND "${Python3_EXECUTABLE}" ${ARGN}
-                 WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-        set_tests_properties(${test_name} PROPERTIES
-            LABELS harken-source-contract TIMEOUT 120)
-        return()
-    endif()
-    set(_stub "${CMAKE_CURRENT_BINARY_DIR}/python_check_unavailable_${test_name}.cmake")
-    file(WRITE "${_stub}"
-         "message(FATAL_ERROR
-"
-         "    \"${test_name} could not run: no Python 3 interpreter was found at \"
-"
-         "    \"configure time, so this contract check was never registered. The \"
-"
-         "    \"gate reports failure rather than skipping silently, because an \"
-"
-         "    \"unverified contract is not a verified one.\")
-")
-    add_test(NAME ${test_name}
-             COMMAND "${CMAKE_COMMAND}" -P "${_stub}")
-    set_tests_properties(${test_name} PROPERTIES
-        LABELS harken-source-contract TIMEOUT 120)
-endfunction()
-
-_harken_add_python_check_test(remote_wire_generated_check
+harken_add_python_check_test(remote_wire_generated_check
     "${CMAKE_SOURCE_DIR}/HarkenEngine/Tool/HostControl/wire/gen_wire.py"
     --check)
-_harken_add_python_check_test(public_abi_manifest_check
+harken_add_python_check_test(public_abi_manifest_check
     "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Core/api/abi/gen_abi_manifest.py"
     --check)
-_harken_add_python_check_test(monitor_record_fixture_check
+harken_add_python_check_test(monitor_record_fixture_check
     "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Development/monitor/fixtures/generate_record_fixtures.py"
     --check)
-_harken_add_python_check_test(monitor_plan_fixture_check
+harken_add_python_check_test(monitor_plan_fixture_check
     "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Development/monitor/fixtures/generate_plan_fixtures.py"
     --check)
-_harken_add_python_check_test(monitor_session_fixture_check
+harken_add_python_check_test(monitor_session_fixture_check
     "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Development/monitor/fixtures/generate_session_fixtures.py"
     --check)
-_harken_add_python_check_test(monitor_remote_fixture_check
+harken_add_python_check_test(monitor_remote_fixture_check
     "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Development/monitor/fixtures/generate_remote_fixtures.py"
     --check)
-_harken_add_python_check_test(monitor_appendix_a_check
+harken_add_python_check_test(monitor_appendix_a_check
     "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Development/monitor/fixtures/check_appendix_a.py"
     --check)
-_harken_add_python_check_test(monitor_public_api_probe_includes_check
+harken_add_python_check_test(monitor_public_api_probe_includes_check
     "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Development/monitor/fixtures/check_monitor_public_api_probe_includes.py"
     --check)
-_harken_add_python_check_test(public_abi_manifest_unit
+harken_add_python_check_test(public_abi_manifest_unit
     "${CMAKE_CURRENT_SOURCE_DIR}/UnitTest/test_runtime_abi_manifest.py")
-_harken_add_python_check_test(public_abi_history_unit
+harken_add_python_check_test(public_abi_history_unit
     "${CMAKE_SOURCE_DIR}/.scripts/tests/test_runtime_repository_history.py")
-_harken_add_python_check_test(monitor_record_fixture_unit
+harken_add_python_check_test(monitor_record_fixture_unit
     "${CMAKE_SOURCE_DIR}/.scripts/tests/test_monitor_record_fixture_check.py")
-_harken_add_python_check_test(monitor_remote_fixture_unit
+harken_add_python_check_test(monitor_remote_fixture_unit
     "${CMAKE_SOURCE_DIR}/.scripts/tests/test_monitor_remote_fixture_check.py")
 
 # The export allowlist is checked in two independent steps. The first compares
@@ -894,13 +860,13 @@ _harken_add_python_check_test(monitor_remote_fixture_unit
 # it to that same allowlist, which is what proves the build honored /DEF: -- a
 # reintroduced WINDOWS_EXPORT_ALL_SYMBOLS would republish thousands of internal
 # symbols while the first check still passed.
-_harken_add_python_check_test(abi_export_allowlist_check
+harken_add_python_check_test(abi_export_allowlist_check
     "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Core/api/abi/gen_abi_exports.py"
     --check)
 # The parser behind that check, against declaration shapes it must recognize and
 # shapes it must refuse. A shape it silently fails to model would omit an entry
 # point from the DLL with every other check still green.
-_harken_add_python_check_test(abi_export_parser_unit
+harken_add_python_check_test(abi_export_parser_unit
     "${CMAKE_SOURCE_DIR}/.scripts/tests/test_abi_exports.py")
 # The development preview surface's isolation from the gameplay face. The export
 # allowlist and the C# binding are generated from the engine's own declarations
@@ -909,21 +875,21 @@ _harken_add_python_check_test(abi_export_parser_unit
 # structure load-bearing: declaring a preview entry in the public header or naming
 # one in the wire table fails here at once, before anything is regenerated, and it
 # holds the preview export manifest in step with its header in both directions.
-_harken_add_python_check_test(preview_surface_isolation_check
+harken_add_python_check_test(preview_surface_isolation_check
     "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Development/preview/abi/check_preview_isolation.py")
 # The preview allocation table against the header it documents. A status code the
 # header allocates and the table omits is the drift that makes a table read as a
 # specification for something the build does not do.
-_harken_add_python_check_test(preview_allocation_table_check
+harken_add_python_check_test(preview_allocation_table_check
     "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Development/preview/abi/check_preview_allocation.py")
 if(WIN32 AND TARGET harken_engine)
-    _harken_add_python_check_test(abi_export_surface_check
+    harken_add_python_check_test(abi_export_surface_check
         "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Core/api/abi/gen_abi_exports.py"
         --verify-dll "$<TARGET_FILE:harken_engine>")
     set_tests_properties(abi_export_surface_check PROPERTIES LABELS harken-artifact-contract)
 endif()
 if(WIN32 AND TARGET harken_engine_dev)
-    _harken_add_python_check_test(abi_development_export_surface_check
+    harken_add_python_check_test(abi_development_export_surface_check
         "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Core/api/abi/gen_abi_exports.py"
         --verify-development-dll "$<TARGET_FILE:harken_engine_dev>")
     set_tests_properties(abi_development_export_surface_check PROPERTIES LABELS harken-artifact-contract)

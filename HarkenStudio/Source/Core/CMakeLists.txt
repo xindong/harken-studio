@@ -158,7 +158,6 @@ add_library(harken_studio_core STATIC
     ${HARKEN_STUDIO_COMMAND_SOURCES}
 )
 
-add_dependencies(harken_studio_core harken_schema_codegen)
 set_target_properties(harken_studio_core PROPERTIES AUTOMOC ON)
 target_precompile_headers(harken_studio_core PRIVATE
     <QString> <QJsonObject> <QJsonArray> <QTimer> <QDebug>

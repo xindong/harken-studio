@@ -22,7 +22,7 @@ target_link_libraries(harken_host_control PUBLIC harken_core)
 
 # Convenience regeneration target; never part of ALL (the products are
 # checked in and the build must stay Python-free).
-_harken_add_python_regen_target(
+harken_add_python_regen_target(
     harken_host_control_regen
     "${CMAKE_SOURCE_DIR}/HarkenEngine/Tool/HostControl/wire/gen_wire.py"
     "Regenerating remote wire layer from harken_wire_table.json"

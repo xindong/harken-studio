@@ -48,10 +48,6 @@ if(HARKEN_RT_PROBE_DEFINITIONS AND NOT HARKEN_BUILD_RT_QUALIFICATION)
         "accept probe definitions")
 endif()
 
-if(HARKEN_BUILD_TOOLS AND NOT Python3_Interpreter_FOUND)
-    message(FATAL_ERROR "HARKEN_BUILD_TOOLS requires a Python 3 interpreter")
-endif()
-
 # Core is everything a shipping game needs; Development adds observation,
 # tracing, remote connection, inspection and live project editing.
 set(HARKEN_CORE_SOURCES
@@ -538,28 +534,10 @@ endif()
 
 if(HARKEN_BUILD_TOOLS)
 
-function(_harken_add_python_regen_target target_name script_path target_comment)
-    if(Python3_Interpreter_FOUND)
-        add_custom_target(${target_name}
-            COMMAND "${Python3_EXECUTABLE}" "${script_path}"
-            COMMENT "${target_comment}"
-            VERBATIM
-        )
-    else()
-        add_custom_target(${target_name}
-            COMMAND "${CMAKE_COMMAND}" -E echo
-                    "ERROR: ${target_name} requires a Python 3 interpreter; install Python 3 and reconfigure."
-            COMMAND "${CMAKE_COMMAND}" -E false
-            COMMENT "${target_comment}"
-            VERBATIM
-        )
-    endif()
-endfunction()
-
 # Convenience regeneration target for the machine-readable public ABI
 # manifest. The manifest is checked in for release provenance and does not make
 # the ordinary build depend on Python.
-_harken_add_python_regen_target(
+harken_add_python_regen_target(
     harken_abi_manifest_regen
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/api/abi/gen_abi_manifest.py"
     "Regenerating the public ABI manifest"
@@ -569,7 +547,7 @@ _harken_add_python_regen_target(
 # discipline as the generators above). The .def is checked in and consumed
 # directly by the shared-library link, so the ordinary build stays Python-free;
 # this target only rewrites it after Harken.h gains or loses an entry point.
-_harken_add_python_regen_target(
+harken_add_python_regen_target(
     harken_abi_exports_regen
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/api/abi/gen_abi_exports.py"
     "Regenerating the Windows export allowlist from Harken.h"

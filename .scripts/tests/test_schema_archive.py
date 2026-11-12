@@ -306,7 +306,7 @@ class SchemaArchiveTest(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(sentinel.read_text(encoding="utf-8"), "preserved")
         with self.assertRaises(ValueError):
-            MODULE["write_generated_code"](REPO_ROOT / "HarkenStudio" / "Source" / "Core" / "generated", self.bundle)
+            MODULE["write_generated_code"](SCHEMA_ROOT / "generated", self.bundle)
 
     def test_two_processes_can_publish_the_same_snapshot_to_one_directory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -1269,10 +1269,9 @@ def generated_files(bundle: dict[str, Any] | None = None) -> dict[str, bytes]:
 
 def write_generated_code(target: Path, bundle: dict[str, Any]) -> None:
     target = target.resolve()
-    source_roots = ((REPO_ROOT / "HarkenStudio").resolve(), SCHEMA_ROOT.resolve(), bundle["sourceRoot"])
-    for source_root in source_roots:
+    for source_root in (SCHEMA_ROOT.resolve(), bundle["sourceRoot"]):
         if target == source_root or source_root in target.parents:
-            raise ValueError("generated Schema code must not be written under HarkenStudio or the Schema source root")
+            raise ValueError("generated Schema code must not be written under the Schema source root")
     target.mkdir(parents=True, exist_ok=True)
     for name, data in generated_files(bundle).items():
         destination = target / name
@@ -1288,6 +1287,22 @@ def check_generated(target: Path, bundle: dict[str, Any]) -> list[str]:
             errors.append(f"missing generated schema file: {name}")
         elif path.read_bytes() != expected:
             errors.append(f"generated schema file does not match current inputs: {name}")
+    return errors
+
+
+def check_published(target: Path, bundle: dict[str, Any]) -> list[str]:
+    expected = installed_files(bundle)
+    actual = {
+        path.relative_to(target).as_posix()
+        for path in target.rglob("*") if path.is_file()
+    } if target.is_dir() else set()
+    errors = [f"missing published schema file: {name}" for name in sorted(set(expected) - actual)]
+    errors += [f"unexpected published schema file: {name}" for name in sorted(actual - set(expected))]
+    errors += [
+        f"published schema file does not match current inputs: {name}"
+        for name in sorted(set(expected) & actual)
+        if (target / name).read_bytes() != expected[name]
+    ]
     return errors
 
 
@@ -1367,14 +1382,18 @@ def main() -> int:
     parser.add_argument("--publish", type=Path)
     parser.add_argument("--generate-code", type=Path)
     parser.add_argument("--check-generated", type=Path)
+    parser.add_argument("--check-published", type=Path)
     args = parser.parse_args()
     try:
         bundle = build_bundle(args.schema_root)
+        errors = []
         if args.check_generated:
-            errors = check_generated(args.check_generated, bundle)
-            if errors:
-                print("\n".join(errors), file=sys.stderr)
-                return 1
+            errors += check_generated(args.check_generated, bundle)
+        if args.check_published:
+            errors += check_published(args.check_published, bundle)
+        if errors:
+            print("\n".join(errors), file=sys.stderr)
+            return 1
         if args.generate_code:
             write_generated_code(args.generate_code, bundle)
         if args.publish:
