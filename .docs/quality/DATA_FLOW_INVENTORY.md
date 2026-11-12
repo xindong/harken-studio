@@ -102,7 +102,7 @@ Hub 的版本菜单及服务器版本列表在用户点击 Studio 或 Unity 集�
 
 ## DF-5：Remote 游戏联调
 
-2026-09-14 新增的 `HarkenEngine/Source/Runtime/remote/` 随正式 Engine 静态库和共享库交付，Debug、RelWithDebInfo 和 Release 均可用。Unity Integration 默认随音频初始化启动通信；Unity `Project Settings > Harken` 中的 `Enable Communication in Builds` 默认开启，关闭后打包游戏不启动通信，编辑器内运行不受此开关影响。加载 Engine 的进程监听 IPv4 TCP，并可按配置接收 UDP 发现请求，无需独立 host 程序。直接使用原生 C ABI 或托管 API 的自定义宿主由集成方显式管理通信生命周期。
+远程通信服务位于 `HarkenEngine/Source/Development/remote/`，只编入开发版 `HarkenEngineDev`，正式版 `HarkenEngine` 不含远程服务端，Debug、RelWithDebInfo 和 Release 构建配置均如此。Unity Integration 在编辑器和 Development Build 中使用开发版并默认随音频初始化启动通信，正式构建使用正式版，不含通信代码；Unity `Project Settings > Harken` 中的 `Enable Communication in Builds` 默认开启，只影响使用开发版的打包游戏，关闭后不启动通信，编辑器内运行不受此开关影响。加载 Engine 的进程监听 IPv4 TCP，并可按配置接收 UDP 发现请求，无需独立 host 程序。直接使用原生 C ABI 或托管 API 的自定义宿主由集成方显式管理通信生命周期。
 
 - Unity 项目配置保存为游戏项目内的 `Assets/Harken/Resources/HarkenProjectSettings.asset`，通过 Unity Resources 随包交付。配置在本地保存，不上传。
 

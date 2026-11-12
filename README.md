@@ -166,7 +166,6 @@ harken/
 ├── cmake/                                # Build identity injection
 ├── HarkenEngine/                         # HarkenEngine — the sound engine runtime core
 ├── HarkenHub/                            # HarkenHub — the standalone launcher
-├── HarkenSchema/                         # Independent Editor and Pack JSON contracts
 ├── HarkenIntegration/                    # HarkenIntegration — shared engine integration root (Unity/Harken)
 ├── HarkenStudio/                         # HarkenEditor — the front-end editor
 ├── CLAUDE.md | AGENTS.md                 # High-level AI project instructions

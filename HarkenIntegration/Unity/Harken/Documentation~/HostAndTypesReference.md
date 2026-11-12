@@ -64,9 +64,8 @@ under [`Runtime/Generated`](../Runtime/Generated/) are generated from the ABI
 manifest published by the Harken Engine install (`harken_abi_manifest.json`) and
 `HarkenIntegration/Unity/Binding/marshalling.json` by
 `HarkenIntegration/Unity/Binding/gen_binding.py`.
-The checked-in baseline `HarkenVariables.g.cs` instead comes from
-`HarkenEngine/Source/Tooling/VariableCatalog/gen_variable_catalog.py` and its
-`variable_catalog.json`. Editor generation of game-specific Action and Variable
+The checked-in baseline `HarkenVariables.g.cs` is a frozen fixture; its former
+generator has been retired and the file is no longer regenerated. Editor generation of game-specific Action and Variable
 symbols is suspended. Use current name-based gameplay calls, as described in the
 [Editor reference](EditorApiReference.md#generated-symbols-and-project-settings).
 Running the ABI generator does not refresh those gameplay symbols.

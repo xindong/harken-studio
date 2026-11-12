@@ -166,7 +166,6 @@ harken/
 ├── cmake/                                # 项目构建身份注入
 ├── HarkenEngine/                         # HarkenEngine — 声音引擎运行核心
 ├── HarkenHub/                            # HarkenHub — 独立启动器程序
-├── HarkenSchema/                         # Editor 与 Pack 各自独立的 JSON 合同
 ├── HarkenIntegration/                    # HarkenIntegration — 共享引擎集成总目录（Unity/Harken）
 ├── HarkenStudio/                         # HarkenEditor — 前端编辑器
 ├── CLAUDE.md | AGENTS.md                 # AI 项目高层指令
