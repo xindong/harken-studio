@@ -90,6 +90,11 @@ namespace Harken.Unity.Editor
                 state.EditorProject = editorProject = new SerializedObject(HarkenEditorProjectSettings.GetOrCreate());
             project.Update();
             editorProject.Update();
+            EditorGUILayout.LabelField("Native library", EditorStyles.boldLabel);
+            SerializedProperty nativeLibrary = editorProject.FindProperty("nativeLibrary");
+            int previousNativeLibrary = nativeLibrary.enumValueIndex;
+            EditorGUILayout.PropertyField(nativeLibrary, new GUIContent("Native Library"));
+            bool nativeLibraryChanged = nativeLibrary.enumValueIndex != previousNativeLibrary;
             EditorGUILayout.LabelField("Audio project", EditorStyles.boldLabel);
             DrawFolder(editorProject.FindProperty("audioProjectDirectory"), "Audio project directory");
             EditorGUILayout.LabelField("Generated packs", EditorStyles.boldLabel);
@@ -100,6 +105,13 @@ namespace Harken.Unity.Editor
             {
                 AssetDatabase.SaveAssetIfDirty(editorProject.targetObject);
                 AssetDatabase.SaveAssetIfDirty(project.targetObject);
+            }
+            if (nativeLibraryChanged)
+            {
+                HarkenNativeLibrarySelection.ApplyScriptingDefines();
+                HarkenPluginImporterSetup.ConfigureImporters();
+                EditorUtility.DisplayDialog("Harken",
+                    "Restart Unity to load the selected native library.", "OK");
             }
             if (!HarkenProjectSettings.TryResolvePackDirectory(out string packRoot, out string packError))
                 EditorGUILayout.HelpBox(packError, MessageType.Warning);

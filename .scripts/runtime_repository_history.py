@@ -355,7 +355,6 @@ def cache_record(
         "HARKEN_BUILD_RUNTIME_BENCHMARKS",
         "HARKEN_BUILD_RT_QUALIFICATION",
         "HARKEN_PUBLIC_INCLUDE_DIR",
-        "HARKEN_BINDING_PIN_DIR",
     )
     return {
         **record,
@@ -591,7 +590,6 @@ def rebuild_client(
     source: Path,
     build: Path,
     include: Path,
-    binding_pin: Path,
     executable: Path,
     configuration: str,
 ) -> dict[str, Any]:
@@ -614,7 +612,6 @@ def rebuild_client(
         "-A",
         "x64",
         "-DHARKEN_PUBLIC_INCLUDE_DIR=%s" % include,
-        "-DHARKEN_BINDING_PIN_DIR=%s" % binding_pin,
     ]
     configure = run(configure_command, cwd=source)
     build_command = [
@@ -636,12 +633,10 @@ def rebuild_client(
             "CMAKE_GENERATOR": "Visual Studio 17 2022",
             "CMAKE_GENERATOR_PLATFORM": "x64",
             "HARKEN_PUBLIC_INCLUDE_DIR": str(include),
-            "HARKEN_BINDING_PIN_DIR": str(binding_pin),
         },
         {
             "CMAKE_HOME_DIRECTORY",
             "HARKEN_PUBLIC_INCLUDE_DIR",
-            "HARKEN_BINDING_PIN_DIR",
         },
     )
     return {
@@ -810,8 +805,6 @@ def main() -> int:
         client_source,
         old_client_build,
         old_root / "HarkenEngine/Source/Core/api/include",
-        old_root
-        / "HarkenIntegration/Unity/Binding/generated",
         old_client,
         config,
     )
@@ -819,8 +812,6 @@ def main() -> int:
         client_source,
         current_client_build,
         current_root / "HarkenEngine/Source/Core/api/include",
-        current_root
-        / "HarkenIntegration/Unity/Binding/generated",
         current_client,
         config,
     )

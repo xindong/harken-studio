@@ -22,7 +22,7 @@ import tree_sitter_c_sharp
 ROOT = Path(__file__).resolve().parents[3]
 POLICY = Path(__file__).with_name("api_surface.json")
 AUDIENCES = {"gameplay", "host-integration", "tooling", "internal"}
-DISPOSITIONS = {"supported", "move-internal", "compatibility", "tombstone"}
+DISPOSITIONS = {"supported", "move-internal", "compatibility"}
 CS_TYPES = {"class_declaration", "struct_declaration", "interface_declaration",
             "enum_declaration", "record_declaration"}
 CS_MEMBERS = {"method_declaration", "constructor_declaration", "destructor_declaration",
@@ -311,16 +311,15 @@ def _managed_surface(source, label, assembly, tree, partial_types):
     return result
 
 
-def inventory(root: Path) -> dict[str, dict]:
+def inventory(root: Path, manifest: Path) -> dict[str, dict]:
     result = {}
-    table = load_json(root / "HarkenEngine/Tool/HostControl/wire/harken_wire_table.json")
-    for fn in table["functions"]:
+    native = load_json(manifest)["contract"]["nativeAbi"]
+    for fn in native["functions"]:
         name = fn["name"]
         if f"native:{name}" in result:
             raise SurfaceError(f"Duplicate native function: {name}")
         result[f"native:{name}"] = {"language": "native", "owner": name, "kind": "function",
-                                   "native_public": fn.get("public", True),
-                                   "file": "HarkenEngine/Tool/HostControl/wire/harken_wire_table.json"}
+                                   "file": "harken_abi_manifest.json"}
     integration = root / "HarkenIntegration/Unity/Harken"
     assemblies = {}
     sources = []
@@ -369,22 +368,19 @@ def validate(policy, observed) -> list[str]:
         errors.append(f"Unclassified API declaration: {key}")
     for key in sorted(entries.keys() - observed.keys()):
         errors.append(f"Removed or changed API declaration: {key}")
-    for key in observed.keys() & entries.keys():
-        if observed[key].get("native_public") is False and entries[key].get("disposition") != "tombstone":
-            errors.append(f"Retired native entry must remain a tombstone: {key}")
-        if observed[key].get("native_public") is True and entries[key].get("disposition") == "tombstone":
-            errors.append(f"Native tombstone unexpectedly published: {key}")
     return errors
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=ROOT)
+    parser.add_argument("--manifest", type=Path, required=True,
+                        help="harken_abi_manifest.json from the Engine install")
     parser.add_argument("--policy", type=Path, default=POLICY)
     parser.add_argument("--inventory", type=Path, help="Write observations only; never approve APIs")
     args = parser.parse_args()
     try:
-        observed = inventory(args.root)
+        observed = inventory(args.root, args.manifest)
         if args.inventory:
             args.inventory.parent.mkdir(parents=True, exist_ok=True)
             args.inventory.write_text(json.dumps(observed, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")

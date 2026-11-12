@@ -223,7 +223,6 @@ add_executable(harken_runtime_tests
     UnitTest/DownmixGoldenTest.cpp
     UnitTest/BusDownmixTest.cpp
     UnitTest/ChannelLayoutAbiPinTest.cpp
-    UnitTest/BindingAbiPinTest.cpp
     UnitTest/AttenuationRolloffGoldenTest.cpp
     UnitTest/AirAbsorptionGoldenTest.cpp
     UnitTest/WidthCollapseGoldenTest.cpp
@@ -377,9 +376,6 @@ target_include_directories(harken_runtime_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/HarkenEngine/Tool/Common
     ${CMAKE_CURRENT_SOURCE_DIR}/Common/VariableCatalog
     ${HARKEN_THIRD_PARTY_DIR}/miniaudio
-    # The generated C# binding's C++ ABI-pin header (compiled by
-    # BindingAbiPinTest.cpp to make table<->Harken.h drift a compile error).
-    ${CMAKE_SOURCE_DIR}/HarkenIntegration/Unity/Binding/generated
 )
 set_source_files_properties(UnitTest/MonitorAbiPinC.c PROPERTIES LANGUAGE C)
 

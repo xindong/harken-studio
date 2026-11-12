@@ -9,9 +9,9 @@ using UnityEngine;
 public class ExternalConsumerTests
 {
 #if HARKEN_SDK_TEST_NULL_PUMP
-    [DllImport("HarkenCore", CallingConvention = CallingConvention.Cdecl)]
+    [DllImport("HarkenEngineDev", CallingConvention = CallingConvention.Cdecl)]
     private static extern VnResult HarkenSdkTest_PumpNull(uint blocks);
-    [DllImport("HarkenCore", CallingConvention = CallingConvention.Cdecl)]
+    [DllImport("HarkenEngineDev", CallingConvention = CallingConvention.Cdecl)]
     private static extern VnResult HarkenSdkTest_QueueNotification();
 
     [Test]

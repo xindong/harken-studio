@@ -1333,13 +1333,24 @@ def parse_trace_contract(trace_header: str) -> dict[str, Any]:
     }
 
 
+def edition_of(core: bool) -> str:
+    return "core" if core else "development"
+
+
+def parse_monitor_record_envelope(writer_source: str) -> list[dict[str, str]]:
+    writer = writer_source.split("inline void PackHeader(", 1)[1].split(
+        "inline void FillSyntheticHeader", 1)[0]
+    fields = re.findall(
+        r"Write(U32|U64|ObjectId)\(out \+ o, header\.([A-Za-z0-9_.]+)\);",
+        writer)
+    sizes = {"U32": 4, "U64": 8, "ObjectId": 16}
+    if not fields or sum(sizes[kind] for kind, _ in fields) != 316:
+        raise ManifestError("Monitor record envelope writer changed")
+    return [{"kind": kind, "field": field} for kind, field in fields]
+
+
 def generated_artifact_paths(repo_root: Path) -> list[Path]:
     relative = [
-        "HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenTypes.g.cs",
-        "HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenNative.g.cs",
-        "HarkenIntegration/Unity/Harken/Runtime/Generated/HarkenAbi.g.cs",
-        "HarkenIntegration/Unity/Binding/generated/"
-        "harken_binding_abi_pin.g.h",
         "HarkenEngine/Tool/HostControl/generated/harken_wire_ids.h",
         "HarkenEngine/Tool/HostControl/generated/"
         "harken_wire_layout_asserts.h",
@@ -1389,13 +1400,16 @@ def build_manifest(repo_root: Path) -> dict[str, Any]:
         / "src"
         / "TraceFormat.h"
     )
+    monitor_pack_path = (
+        repo_root
+        / "HarkenEngine"
+        / "Source"
+        / "Development"
+        / "monitor"
+        / "MonitorRecordPack.h"
+    )
     generator_paths = (
         SCRIPT_PATH,
-        repo_root
-        / "HarkenIntegration"
-        / "Unity"
-        / "Binding"
-        / "gen_binding.py",
         repo_root
         / "HarkenEngine"
         / "Tool"
@@ -1405,10 +1419,12 @@ def build_manifest(repo_root: Path) -> dict[str, Any]:
     )
     table = load_json_strict(table_path)
     identity_header_path = header_path.with_name("ObjectId.h")
-    header = (identity_header_path.read_text(encoding="utf-8") + "\n" +
-              header_path.read_text(encoding="utf-8") + "\n" +
+    core_header = (identity_header_path.read_text(encoding="utf-8") + "\n" +
+                   header_path.read_text(encoding="utf-8"))
+    header = (core_header + "\n" +
               strip_preview_surface(
                   development_header_path.read_text(encoding="utf-8")))
+    core_contract = parse_header_contract(core_header)
     validate_table_metadata(table)
 
     issues = compare_completeness(
@@ -1428,6 +1444,49 @@ def build_manifest(repo_root: Path) -> dict[str, Any]:
     )
     vintages = build_vintage_policies(table, layouts)
 
+    core_functions = {
+        function["name"] for function in core_contract["functions"]
+    }
+    core_types = (set(core_contract["structs"]) |
+                  set(core_contract["struct_typedefs"]))
+    for name, entry in types.items():
+        entry["edition"] = edition_of(name in core_types)
+    enums = {
+        name: {
+            **value,
+            "edition": edition_of(all(
+                member in core_contract["enum_values"]
+                for member in value["values"])),
+        }
+        for name, value in table["api"]["enums"].items()
+    }
+    defines = {
+        name: {
+            **value,
+            "edition": edition_of(name in core_contract["defines"]),
+        }
+        for name, value in table["api"]["defines"].items()
+    }
+    callbacks = {
+        name: {
+            **value,
+            "edition": edition_of(name in core_contract["callbacks"]),
+        }
+        for name, value in table["api"]["callbacks"].items()
+        if not name.startswith("_")
+    }
+    declaration_order = {
+        "types": list(table["types"]),
+        "enums": list(table["api"]["enums"]),
+        "enumValues": {
+            name: list(value["values"])
+            for name, value in table["api"]["enums"].items()
+        },
+        "results": list(table["api"]["results"]["values"]),
+        "defines": list(table["api"]["defines"]),
+        "callbacks": list(callbacks),
+    }
+
     native_functions = []
     remote_operations = []
     for function in table["functions"]:
@@ -1440,6 +1499,8 @@ def build_manifest(repo_root: Path) -> dict[str, Any]:
         ]
         if function.get("public", True):
             native_functions.append({
+                "edition": edition_of(
+                    function["name"] in core_functions),
                 "name": function["name"],
                 "returnType": function.get("returnType", "VnResult"),
                 "callingConvention": function.get(
@@ -1482,13 +1543,12 @@ def build_manifest(repo_root: Path) -> dict[str, Any]:
         "scalarTypedefs": table["api"]["scalarTypedefs"],
         "structTypedefs": table["api"].get("structTypedefs", {}),
         "results": table["api"]["results"],
-        "enums": table["api"]["enums"],
-        "defines": table["api"]["defines"],
-        "callbacks": {
-            name: value
-            for name, value in table["api"]["callbacks"].items()
-            if not name.startswith("_")
-        },
+        "enums": enums,
+        "defines": defines,
+        "callbacks": callbacks,
+        "declarationOrder": declaration_order,
+        "monitorRecordEnvelope": parse_monitor_record_envelope(
+            monitor_pack_path.read_text(encoding="utf-8")),
         "functions": native_functions,
         "publicExports": sorted(
             function["name"] for function in table["functions"]
@@ -1524,6 +1584,7 @@ def build_manifest(repo_root: Path) -> dict[str, Any]:
             development_header_path,
             identity_header_path,
             trace_path,
+            monitor_pack_path,
             *generator_paths,
         )
     }

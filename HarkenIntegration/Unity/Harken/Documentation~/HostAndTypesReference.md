@@ -60,8 +60,9 @@ for serialized scene compatibility; use `HarkenAudioSystem` for new scenes.
 ## Generated ABI and symbols
 
 The ABI mirrors `HarkenTypes.g.cs`, `HarkenNative.g.cs`, and `HarkenAbi.g.cs`
-under [`Runtime/Generated`](../Runtime/Generated/) are generated from
-`HarkenEngine/Tool/HostControl/wire/harken_wire_table.json` by
+under [`Runtime/Generated`](../Runtime/Generated/) are generated from the ABI
+manifest published by the Harken Engine install (`harken_abi_manifest.json`) and
+`HarkenIntegration/Unity/Binding/marshalling.json` by
 `HarkenIntegration/Unity/Binding/gen_binding.py`.
 The checked-in baseline `HarkenVariables.g.cs` instead comes from
 `HarkenEngine/Source/Tooling/VariableCatalog/gen_variable_catalog.py` and its
@@ -84,8 +85,9 @@ file does not make it public. The [API audience contract](../../../API_SURFACE.m
 separates gameplay, custom-host and internal tooling capabilities; native ABI
 availability does not grant access from a game C# assembly.
 
-Internally, the library name resolves to `HarkenCore` on dynamic-library
-platforms and to `__Internal` on iOS, visionOS, and tvOS Players. The binding
+Internally, the library name resolves to `HarkenEngineDev` (when
+`HARKEN_ENGINE_DEV` is defined) or `HarkenEngine` on dynamic-library platforms
+and to `__Internal` on iOS, visionOS, and tvOS Players. The binding
 uses static Cdecl declarations and AOT-safe callback thunks; it does not
 generate interop code at runtime. The Unity package declares its minimum Unity
 version and package version in [`package.json`](../package.json).

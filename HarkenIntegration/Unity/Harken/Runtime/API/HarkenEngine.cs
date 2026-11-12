@@ -1,3 +1,6 @@
+#if HARKEN_NATIVE_DEVELOPMENT || (!HARKEN_NATIVE_RELEASE && (UNITY_EDITOR || DEVELOPMENT_BUILD))
+#define HARKEN_ENGINE_DEV
+#endif
 using System;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -57,6 +60,7 @@ namespace Harken
         /// </summary>
         public static VnResult Resume() => HarkenNative.Vn_Resume();
 
+#if HARKEN_ENGINE_DEV
         /// <summary>
         /// Explicitly enables optional communication for the initialized host.
         /// Call on the externally synchronized engine thread. Failure leaves
@@ -75,6 +79,7 @@ namespace Harken
         /// <summary>Reads communication state, including the last startup failure.</summary>
         public static VnResult QueryRemoteCommunication(out VnRemoteStatus status)
             => RemoteCommunication.GetStatus(out status);
+#endif
 
         public static VnResult Term()
         {
@@ -103,6 +108,7 @@ namespace Harken
             }
         }
 
+#if HARKEN_ENGINE_DEV
         /// <summary>A <see cref="VnSnapshot"/> with <c>structSize</c> preset; pass
         /// by ref to <see cref="Capture"/>.</summary>
         internal static VnSnapshot DefaultSnapshot()
@@ -114,6 +120,7 @@ namespace Harken
 
         internal static VnResult Capture(ref VnSnapshot snapshot)
             => HarkenNative.Vn_CaptureSnapshot(ref snapshot);
+#endif
 
         /// <summary>
         /// Applies one complete owner-scoped Bus and Send snapshot. The arrays

@@ -64,9 +64,9 @@ internal static class Program
     private static IntPtr ResolveNative(string name, Assembly assembly, DllImportSearchPath? search)
     {
         string directory = Environment.GetEnvironmentVariable("HARKEN_NATIVE_DIR");
-        if (name != "HarkenCore" || string.IsNullOrEmpty(directory)) return IntPtr.Zero;
-        string file = OperatingSystem.IsWindows() ? "HarkenCore.dll" :
-            OperatingSystem.IsMacOS() ? "libHarkenCore.dylib" : "libHarkenCore.so";
+        if (name != "HarkenEngineDev" || string.IsNullOrEmpty(directory)) return IntPtr.Zero;
+        string file = OperatingSystem.IsWindows() ? "HarkenEngineDev.dll" :
+            OperatingSystem.IsMacOS() ? "libHarkenEngineDev.dylib" : "libHarkenEngineDev.so";
         return NativeLibrary.Load(Path.Combine(directory, file));
     }
 

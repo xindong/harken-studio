@@ -52,8 +52,9 @@ Integration Package. Editor results do not establish Android, IL2CPP or audible 
 
 The `ProductionDevice` category contains three tests for cold/warm playback,
 explicit restart, nested/direct ownership and cancellation of pending reads.
-Use a separate project with the same prepared fixtures, a matching production
-`HarkenCore.dll`, an available Windows output device, and no
+Use a separate project with the same prepared fixtures, the matching Harken Engine
+libraries with **Native Library** set to *Development* (the checks read engine
+snapshots), an available Windows output device, and no
 `HARKEN_SDK_TEST_NULL_PUMP` define. These tests are excluded from bridge builds
 and only run in a Windows Player.
 

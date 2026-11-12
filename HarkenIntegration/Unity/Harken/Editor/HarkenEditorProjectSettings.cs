@@ -5,13 +5,22 @@ using UnityEngine;
 
 namespace Harken.Unity.Editor
 {
+    public enum HarkenNativeLibrary
+    {
+        Automatic,
+        Release,
+        Development
+    }
+
     public sealed class HarkenEditorProjectSettings : ScriptableObject
     {
         public const string AssetPath = "Assets/Harken/Editor/HarkenEditorProjectSettings.asset";
 
         [SerializeField] private string audioProjectDirectory = string.Empty;
+        [SerializeField] private HarkenNativeLibrary nativeLibrary = HarkenNativeLibrary.Automatic;
 
         public string AudioProjectDirectory => audioProjectDirectory ?? string.Empty;
+        public HarkenNativeLibrary NativeLibrary => nativeLibrary;
 
         [InitializeOnLoadMethod]
         private static void InstallProbe()

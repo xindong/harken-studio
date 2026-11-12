@@ -86,7 +86,10 @@ belong to tooling. Keeping `VnConstants` public does not approve all its members
 `RemoteCommunication` is consumed directly by `HarkenProjectSettings` and
 `HarkenAudioSystem`; `PackBootstrapSession` does not start it. Custom managed hosts
 use `HarkenEngine.StartRemoteCommunication`, `StopRemoteCommunication`, and
-`QueryRemoteCommunication`. The integrated Player settings/retry path is unchanged.
+`QueryRemoteCommunication`. Remote communication, snapshots and Monitor observation
+exist only in the development edition (`HARKEN_ENGINE_DEV`: Editor, Development
+Builds, or the *Development* Native Library override); release builds load
+`HarkenEngine` and compile without them.
 
 ## Unity managed API
 
@@ -101,7 +104,7 @@ usage sections for the available entry points and ownership rules.
 | --- | --- |
 | `HarkenNative` and `HarkenAbi` | Internal. Public game and host code uses Actions, Values, Emitter/Listener, Voice, Packs and lifecycle wrappers. |
 | Action Seek | `ActionFiring.Seek` returns an explicitly owned `ActionSeekTicket` with `Query`/`Release`. Native admission, asynchronous completion and capability limits are preserved. |
-| Remote communication | Public `HarkenEngine.StartRemoteCommunication`, `StopRemoteCommunication` and `QueryRemoteCommunication` wrap the internal bridge with explicit opt-in and retry semantics. |
+| Remote communication | Public `HarkenEngine.StartRemoteCommunication`, `StopRemoteCommunication` and `QueryRemoteCommunication` wrap the internal bridge with explicit opt-in and retry semantics. Development edition only (`HARKEN_ENGINE_DEV`). |
 | Voice filter | `Voice.SetFilter` is public; the raw-handle `HarkenEngine.SetVoiceFilter` helper is internal. |
 | Variable/Action catalog generation | Temporarily unavailable. The menu is hidden; `GeneratePublication`, `Generate` and `ValidatePublication` return `VN_CAPABILITY_UNAVAILABLE` before reading or writing assets. Existing GUID/name runtime calls remain available. The underlying emitters are internal. |
 | Bus topology/solo/filter, Snapshot/Monitor DTOs and raw media/effect/binding DTOs | Internal tool APIs. Public Bus volume/output volume/mute controls remain available. |

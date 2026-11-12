@@ -3,9 +3,22 @@
   "package_name": "com.harken.core",
   "supports_custom_install_path": true,
   "expected_platforms_by_editor_host": {
-    "Windows": ["Windows", "Linux", "Android"],
-    "macOS": ["Windows", "macOS", "Android", "iOS"],
-    "Linux": ["Windows", "Linux", "Android"]
+    "Windows": [
+      "Windows",
+      "Linux",
+      "Android"
+    ],
+    "macOS": [
+      "Windows",
+      "macOS",
+      "Android",
+      "iOS"
+    ],
+    "Linux": [
+      "Windows",
+      "Linux",
+      "Android"
+    ]
   },
   "required_files": [
     "package.json",
@@ -67,41 +80,89 @@
     {
       "platform": "Windows",
       "alternatives": [
-        "Runtime/Plugins/x86_64/HarkenCore.dll"
+        "Runtime/Plugins/x86_64/HarkenEngine.dll"
+      ]
+    },
+    {
+      "platform": "Windows",
+      "alternatives": [
+        "Runtime/Plugins/x86_64/HarkenEngineDev.dll"
       ]
     },
     {
       "platform": "macOS",
       "alternatives": [
-        "Runtime/Plugins/macOS/libHarkenCore.dylib"
+        "Runtime/Plugins/macOS/libHarkenEngine.dylib"
+      ]
+    },
+    {
+      "platform": "macOS",
+      "alternatives": [
+        "Runtime/Plugins/macOS/libHarkenEngineDev.dylib"
       ]
     },
     {
       "platform": "Linux",
       "alternatives": [
-        "Runtime/Plugins/x86_64/libHarkenCore.so"
+        "Runtime/Plugins/x86_64/libHarkenEngine.so"
+      ]
+    },
+    {
+      "platform": "Linux",
+      "alternatives": [
+        "Runtime/Plugins/x86_64/libHarkenEngineDev.so"
       ]
     },
     {
       "platform": "Android",
       "alternatives": [
-        "Runtime/Plugins/Android/arm64-v8a/libHarkenCore.so"
+        "Runtime/Plugins/Android/arm64-v8a/libHarkenEngine.so"
+      ]
+    },
+    {
+      "platform": "Android",
+      "alternatives": [
+        "Runtime/Plugins/Android/arm64-v8a/libHarkenEngineDev.so"
       ]
     },
     {
       "platform": "iOS",
       "alternatives": [
-        "Runtime/Plugins/iOS/libHarkenCore.a"
+        "Runtime/Plugins/iOS/libHarkenEngine.a"
+      ]
+    },
+    {
+      "platform": "iOS",
+      "alternatives": [
+        "Runtime/Plugins/iOS/libHarkenEngineDev.a"
       ]
     }
   ],
   "native_binary_source": {
-    "target": "harken_core_shared",
+    "targets": [
+      "harken_engine",
+      "harken_engine_dev"
+    ],
     "workflow": ".github/workflows/core-artifact.yml",
-    "windows_x86_64": "Runtime/Plugins/x86_64/HarkenCore.dll",
-    "linux_x86_64": "Runtime/Plugins/x86_64/libHarkenCore.so",
-    "macos_universal": "Runtime/Plugins/macOS/libHarkenCore.dylib",
-    "android_arm64": "Runtime/Plugins/Android/arm64-v8a/libHarkenCore.so",
-    "ios_arm64": "Runtime/Plugins/iOS/libHarkenCore.a"
+    "windows_x86_64": [
+      "Runtime/Plugins/x86_64/HarkenEngine.dll",
+      "Runtime/Plugins/x86_64/HarkenEngineDev.dll"
+    ],
+    "linux_x86_64": [
+      "Runtime/Plugins/x86_64/libHarkenEngine.so",
+      "Runtime/Plugins/x86_64/libHarkenEngineDev.so"
+    ],
+    "macos_universal": [
+      "Runtime/Plugins/macOS/libHarkenEngine.dylib",
+      "Runtime/Plugins/macOS/libHarkenEngineDev.dylib"
+    ],
+    "android_arm64": [
+      "Runtime/Plugins/Android/arm64-v8a/libHarkenEngine.so",
+      "Runtime/Plugins/Android/arm64-v8a/libHarkenEngineDev.so"
+    ],
+    "ios_arm64": [
+      "Runtime/Plugins/iOS/libHarkenEngine.a",
+      "Runtime/Plugins/iOS/libHarkenEngineDev.a"
+    ]
   }
 }

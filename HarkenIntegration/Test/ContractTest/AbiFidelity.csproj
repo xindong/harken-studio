@@ -24,6 +24,7 @@
     <AssemblyName>HarkenAbiFidelity</AssemblyName>
     <RootNamespace>Harken.Test</RootNamespace>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <DefineConstants>$(DefineConstants);HARKEN_NATIVE_DEVELOPMENT</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>

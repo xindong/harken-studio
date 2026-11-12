@@ -534,13 +534,13 @@ Editor declarations and their current results are listed in the
 
 ## Generated ABI
 
-ABI files under `Runtime/Generated` are produced from
-`HarkenEngine/Tool/HostControl/wire/harken_wire_table.json`. Regenerate and
-check them with:
+ABI files under `Runtime/Generated` are produced from the ABI manifest published
+by the Harken Engine install (`<prefix>/share/HarkenEngine/harken_abi_manifest.json`).
+Regenerate and check them with:
 
 ```text
-py -3 HarkenIntegration/Unity/Binding/gen_binding.py
-py -3 HarkenIntegration/Unity/Binding/gen_binding.py --check
+py -3 HarkenIntegration/Unity/Binding/gen_binding.py --manifest <harken_abi_manifest.json>
+py -3 HarkenIntegration/Unity/Binding/gen_binding.py --manifest <harken_abi_manifest.json> --check
 ```
 
 The binding is IL2CPP/AOT compatible. Main-thread component lifecycle calls do

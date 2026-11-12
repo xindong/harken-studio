@@ -1,3 +1,6 @@
+#if HARKEN_NATIVE_DEVELOPMENT || (!HARKEN_NATIVE_RELEASE && (UNITY_EDITOR || DEVELOPMENT_BUILD))
+#define HARKEN_ENGINE_DEV
+#endif
 using System;
 using System.IO;
 using System.Runtime.CompilerServices;
@@ -270,6 +273,7 @@ namespace Harken.Unity
             catch (IOException) { return false; }
         }
 
+#if HARKEN_ENGINE_DEV
         internal static VnResult StartCommunication(string projectName)
         {
             if (!CommunicationEnabled) return VnResult.VN_CAPABILITY_UNAVAILABLE;
@@ -284,6 +288,7 @@ namespace Harken.Unity
                 settings != null ? settings.remoteDiscoveryPort : 0,
                 projectName);
         }
+#endif
 
         private static uint NonZero(uint value, uint fallback) => value != 0 ? value : fallback;
 

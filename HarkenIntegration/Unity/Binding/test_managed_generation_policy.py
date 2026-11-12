@@ -2,6 +2,7 @@
 import copy
 import importlib.util
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -16,7 +17,7 @@ SPEC.loader.exec_module(binding)
 
 class GenerationPolicyTests(unittest.TestCase):
     def setUp(self):
-        self.table = json.loads(Path(binding.TABLE_PATH).read_text(encoding="utf-8"))
+        self.table, self.layouts, _ = binding.load_inputs(os.environ["HARKEN_ABI_MANIFEST"])
         self.policy = json.loads(Path(binding.API_POLICY_PATH).read_text(encoding="utf-8"))
 
     def validate(self, policy, table=None):
@@ -82,10 +83,14 @@ class GenerationPolicyTests(unittest.TestCase):
             "entryPoint": "Vn_MonitorBoundaryProbe", "params": []})
         policy = self.validate(self.policy, table)
         projected = binding.managed_projection(table, policy)
-        for emit in (binding.emit_types, binding.emit_native, binding.emit_abi_cs):
-            with self.subTest(output=emit.__name__):
+        emitters = {
+            "emit_types": lambda t, p: binding.emit_types(t, p, self.layouts),
+            "emit_native": binding.emit_native,
+            "emit_abi_cs": lambda t, p: binding.emit_abi_cs(t, p, self.layouts),
+        }
+        for name, emit in emitters.items():
+            with self.subTest(output=name):
                 self.assertEqual(emit(baseline, baseline_policy), emit(projected, policy))
-        self.assertIn("VnMonitorBoundaryProbe", binding.emit_cpp_pin(table))
 
     def test_managed_dependencies_cannot_cross_excluded_native_boundary(self):
         for dependency in ("field", "function"):
