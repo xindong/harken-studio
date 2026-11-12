@@ -2858,7 +2858,6 @@ void ChargeOverlays(detail::PackDecodeCharge& charge,
     for (const auto& row : source) {
         charge.AddRows<std::int32_t>(row.discreteAnchors.size());
         charge.AddRows<VariableLabelDefinitionV1>(row.labels.size());
-        for (const auto& label : row.labels) charge.Add(label.name.size() + 1);
     }
 }
 template<class Owner>

@@ -1499,7 +1499,7 @@ TEST(PackCanonicalFormat, Kind26Vintage2Incompatible) {
 
 TEST(PackCanonicalFormat, Kind26LabelMappingsStayValidated) {
     const auto variableId = harkentest::ObjectId(7);
-    const VariableLabelDefinitionV1 label{8, "Step", harkentest::ObjectId(9)};
+    const VariableLabelDefinitionV1 label{8, harkentest::ObjectId(9)};
     const auto mapping = ComputeVariableLabelMappingFingerprintV1(variableId, std::span(&label, 1));
     const auto payload = Kind26Payload({{variableId, 1, 1, {8}, {label}}});
     const auto bytes = BuildInitWithTypedEntry(HK_PACK_ENTRY_KIND_VARIABLE_POLICY_OVERLAY, 0, payload);
@@ -1512,7 +1512,6 @@ TEST(PackCanonicalFormat, Kind26LabelMappingsStayValidated) {
     ASSERT_EQ(1u, overlay.labels.size());
     EXPECT_EQ(label.labelId, overlay.labels.front().labelId);
     EXPECT_EQ(label.anchor, overlay.labels.front().anchor);
-    EXPECT_TRUE(overlay.labels.front().name.empty());
 
     std::vector<std::vector<std::uint8_t>> malformed(2, payload);
     malformed[0].pop_back();

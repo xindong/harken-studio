@@ -840,7 +840,6 @@ public:
     }
     std::uint64_t ExecutionCatalogFingerprint() const noexcept;
     VnResult ResolveLabel(VnVariableId variable, VnObjectId label, float* value) const noexcept;
-    VnResult ResolveLabel(VnVariableId variable, std::string_view name, float* value) const noexcept;
     std::uint64_t ApiCatalogFingerprint() const noexcept {
         return apiCatalogFingerprint_;
     }

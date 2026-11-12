@@ -199,7 +199,7 @@ TEST(VariableCatalog, TypedLabelWritesGuardGlobalAndEmitterMutations) {
     const auto definition = harkentest::MakeVariableDefinition(
         variable, harken::VariableKindV1::Smooth, 0.0f, 1.0f, 0.0f);
     const harken::VariableLabelDefinitionV1 labels[] = {
-        {0, "None", labelNone}, {1, "Active", labelActive}};
+        {0, labelNone}, {1, labelActive}};
     const auto execution = VehicleRpmExecutionFingerprint();
     harken::VariablePolicySidecarV1 policy{3, execution};
     policy.labels = labels;
@@ -254,7 +254,7 @@ TEST(VariableCatalog, LabelWritesResolveCurrentIdentityAndRetainGlobalEmitterSem
     const auto labelB = harkentest::ObjectId(722);
     const auto definition = harkentest::MakeVariableDefinition(
         variable, harken::VariableKindV1::Smooth, 0.0f, 3.0f, 0.0f);
-    std::vector<harken::VariableLabelDefinitionV1> labels{{1, "AAA", labelA}, {2, "BBB", labelB}};
+    std::vector<harken::VariableLabelDefinitionV1> labels{{1, labelA}, {2, labelB}};
     const auto publish = [&] {
         harken::VariablePolicySidecarV1 policy;
         policy.writers = 3;
@@ -289,7 +289,6 @@ TEST(VariableCatalog, LabelWritesResolveCurrentIdentityAndRetainGlobalEmitterSem
     ASSERT_EQ(VN_OK, Vn_QueryVariable(&query, &current));
     EXPECT_FLOAT_EQ(current.currentValue, 1.0f);
     std::swap(labels[0].anchor, labels[1].anchor);
-    labels[0].name = "Renamed";
     ASSERT_NO_FATAL_FAILURE(publish());
     ASSERT_EQ(VN_OK, Vn_QueryVariable(&query, &current));
     EXPECT_FLOAT_EQ(current.currentValue, 1.0f);

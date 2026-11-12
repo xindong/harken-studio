@@ -6,6 +6,8 @@
 #include "harken_studio_build/WorldBodyVintage.h"
 #include "harken_studio_build/Curve.h"
 
+#include <harken_pack/PackWorldBody.h>
+
 #include <array>
 #include <cstdint>
 
@@ -16,17 +18,17 @@ struct VariableDefinitionV1;
 using WorldGeneration = std::uint64_t;
 
 inline constexpr WorldGeneration kNoWorldGeneration = 0;
-inline constexpr std::uint64_t kWorldCapabilityVariableDefinitions = UINT64_C(1) << 0;
-inline constexpr std::uint64_t kWorldCapabilityPlayableProperties = UINT64_C(1) << 1;
-inline constexpr std::uint64_t kWorldCapabilityRandomDraw = UINT64_C(1) << 2;
-inline constexpr std::uint64_t kWorldCapabilityRandomRotation = UINT64_C(1) << 3;
-inline constexpr std::uint64_t kWorldCapabilitySequence = UINT64_C(1) << 4;
-inline constexpr std::uint64_t kWorldCapabilityRandomQueue = UINT64_C(1) << 5;
-inline constexpr std::uint64_t kWorldCapabilitySequenceQueue = UINT64_C(1) << 6;
-inline constexpr std::uint64_t kWorldCapabilityVariableControl = UINT64_C(1) << 7;
-inline constexpr std::uint64_t kWorldCapabilityTransition = UINT64_C(1) << 8;
-inline constexpr std::uint64_t kWorldCapabilityActionDefinitions = UINT64_C(1) << 9;
-inline constexpr std::uint64_t kWorldCapabilitySignalRelations = UINT64_C(1) << 11;
+inline constexpr std::uint64_t kWorldCapabilityVariableDefinitions = HK_PACK_WORLD_CAPABILITY_VARIABLE_DEFINITIONS;
+inline constexpr std::uint64_t kWorldCapabilityPlayableProperties = HK_PACK_WORLD_CAPABILITY_PLAYABLE_PROPERTIES;
+inline constexpr std::uint64_t kWorldCapabilityRandomDraw = HK_PACK_WORLD_CAPABILITY_RANDOM_DRAW;
+inline constexpr std::uint64_t kWorldCapabilityRandomRotation = HK_PACK_WORLD_CAPABILITY_RANDOM_ROTATION;
+inline constexpr std::uint64_t kWorldCapabilitySequence = HK_PACK_WORLD_CAPABILITY_SEQUENCE;
+inline constexpr std::uint64_t kWorldCapabilityRandomQueue = HK_PACK_WORLD_CAPABILITY_RANDOM_QUEUE;
+inline constexpr std::uint64_t kWorldCapabilitySequenceQueue = HK_PACK_WORLD_CAPABILITY_SEQUENCE_QUEUE;
+inline constexpr std::uint64_t kWorldCapabilityVariableControl = HK_PACK_WORLD_CAPABILITY_VARIABLE_CONTROL;
+inline constexpr std::uint64_t kWorldCapabilityTransition = HK_PACK_WORLD_CAPABILITY_TRANSITION;
+inline constexpr std::uint64_t kWorldCapabilityActionDefinitions = HK_PACK_WORLD_CAPABILITY_ACTION_DEFINITIONS;
+inline constexpr std::uint64_t kWorldCapabilitySignalRelations = HK_PACK_WORLD_CAPABILITY_SIGNAL_RELATIONS;
 inline constexpr std::uint64_t kWorldCapabilityKnownMask =
     ((UINT64_C(1) << 10) - 1) | kWorldCapabilitySignalRelations;
 inline constexpr std::uint64_t kWorldCapabilityUnit2Mask =
@@ -60,23 +62,23 @@ inline constexpr std::uint32_t kSegmentScheduleProgramCapacity = 1024;
 inline constexpr std::uint32_t kScheduleTrackRefCapacity = 4096;
 inline constexpr std::uint32_t kSchedulePlacementCapacity = 4096;
 inline constexpr std::uint32_t kScheduleMarkerCapacity = 4096;
-inline constexpr std::uint32_t kHardVariableDefinitionCapacity = 65536;
-inline constexpr std::uint32_t kHardContainerProgramCapacity = 65536;
-inline constexpr std::uint32_t kHardContainerChildCapacity = 1024;
-inline constexpr std::uint32_t kHardSelectionAvoidCapacity = 64;
-inline constexpr std::uint32_t kHardPlayablePropertyProgramCapacity = 1048576;
-inline constexpr std::uint32_t kHardPlayableOccurrencePropertyCapacity = 1048576;
-inline constexpr std::uint32_t kHardPlayablePropertyChildRowCapacity = 1048576;
-inline constexpr std::uint32_t kHardPlayablePropertyEffectParamCapacity = 4194304;
-inline constexpr std::uint32_t kHardPlayablePropertyEffectEdgeCapacity = 2097152;
-inline constexpr std::uint32_t kHardTrackScheduleProgramCapacity = 1048576;
-inline constexpr std::uint32_t kHardSegmentScheduleProgramCapacity = 1048576;
-inline constexpr std::uint32_t kHardScheduleTrackRefCapacity = 1048576;
-inline constexpr std::uint32_t kHardSchedulePlacementCapacity = 1048576;
-inline constexpr std::uint32_t kHardScheduleMarkerCapacity = 1048576;
-inline constexpr std::uint32_t kMaxActionSteps = 64;
-inline constexpr std::uint32_t kHardActionDefinitionCapacity = 65536;
-inline constexpr std::uint32_t kHardActionStepCapacity = 4194304;
+inline constexpr std::uint32_t kHardVariableDefinitionCapacity = HK_PACK_WORLD_MAX_VARIABLE_DEFINITIONS;
+inline constexpr std::uint32_t kHardContainerProgramCapacity = HK_PACK_WORLD_MAX_CONTAINER_PROGRAMS;
+inline constexpr std::uint32_t kHardContainerChildCapacity = HK_PACK_WORLD_MAX_CONTAINER_CHILDREN;
+inline constexpr std::uint32_t kHardSelectionAvoidCapacity = HK_PACK_WORLD_MAX_SELECTION_AVOID;
+inline constexpr std::uint32_t kHardPlayablePropertyProgramCapacity = HK_PACK_WORLD_MAX_PLAYABLE_PROPERTY_PROGRAMS;
+inline constexpr std::uint32_t kHardPlayableOccurrencePropertyCapacity = HK_PACK_WORLD_MAX_PLAYABLE_OCCURRENCE_PROPERTIES;
+inline constexpr std::uint32_t kHardPlayablePropertyChildRowCapacity = HK_PACK_WORLD_MAX_PLAYABLE_PROPERTY_CHILD_ROWS;
+inline constexpr std::uint32_t kHardPlayablePropertyEffectParamCapacity = HK_PACK_WORLD_MAX_PLAYABLE_PROPERTY_EFFECT_PARAMS;
+inline constexpr std::uint32_t kHardPlayablePropertyEffectEdgeCapacity = HK_PACK_WORLD_MAX_PLAYABLE_PROPERTY_EFFECT_EDGES;
+inline constexpr std::uint32_t kHardTrackScheduleProgramCapacity = HK_PACK_WORLD_MAX_TRACK_SCHEDULE_PROGRAMS;
+inline constexpr std::uint32_t kHardSegmentScheduleProgramCapacity = HK_PACK_WORLD_MAX_SEGMENT_SCHEDULE_PROGRAMS;
+inline constexpr std::uint32_t kHardScheduleTrackRefCapacity = HK_PACK_WORLD_MAX_SCHEDULE_TRACK_REFS;
+inline constexpr std::uint32_t kHardSchedulePlacementCapacity = HK_PACK_WORLD_MAX_SCHEDULE_PLACEMENTS;
+inline constexpr std::uint32_t kHardScheduleMarkerCapacity = HK_PACK_WORLD_MAX_SCHEDULE_MARKERS;
+inline constexpr std::uint32_t kMaxActionSteps = HK_PACK_WORLD_MAX_STEPS_PER_ACTION;
+inline constexpr std::uint32_t kHardActionDefinitionCapacity = HK_PACK_WORLD_MAX_ACTION_DEFINITIONS;
+inline constexpr std::uint32_t kHardActionStepCapacity = HK_PACK_WORLD_MAX_ACTION_STEPS;
 
 enum class PlayableKindV1 : std::uint32_t {
     Sound = 0,
@@ -191,7 +193,7 @@ struct PlayablePropertyPayloadViewV1 {
     const EffectEdgeV1* effectEdges = nullptr;
 };
 
-inline constexpr std::uint64_t kResolvedSectionGroupPropertyMaskV1 = UINT64_C(0x12fe0);
+inline constexpr std::uint64_t kResolvedSectionGroupPropertyMaskV1 = HK_PACK_WORLD_SECTION_GROUP_PROPERTY_MASK;
 
 bool ValidateResolvedSectionGroupPayloadV1(
     const PlayablePropertyPayloadViewV1& payload) noexcept;

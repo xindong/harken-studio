@@ -6940,24 +6940,6 @@ VnResult VariableServiceV1::ResolveLabel(
     return VN_NO_VARIABLE_LABEL;
 }
 
-VnResult VariableServiceV1::ResolveLabel(
-    VnVariableId variable, std::string_view name, float* value) const noexcept {
-    if (value == nullptr || name.empty()) return VN_INVALID_ARG;
-    const auto* definition = FindDefinition(variable);
-    if (!definition) return VN_NO_VARIABLE;
-    for (const auto& catalog : labelCatalog_) {
-        if (catalog.variableId != variable) continue;
-        for (const auto& candidate : catalog.labels) {
-            if (candidate.name != name) continue;
-            if (candidate.anchor < definition->definition.rangeMin
-                || candidate.anchor > definition->definition.rangeMax) return VN_NO_VARIABLE_LABEL;
-            *value = static_cast<float>(candidate.anchor);
-            return VN_OK;
-        }
-    }
-    return VN_NO_VARIABLE_LABEL;
-}
-
 namespace test {
 
 void SetApiCatalogFingerprint(VariableServiceV1& service,
