@@ -281,17 +281,19 @@ Studio 写入 Pack 的分区仍只有 shipping V18。Engine 按 owner 接受可�
 
 `current` 已补齐实际布局，与已发布的 Pack 4 档案不同。此次只更新当前合同和实现，不修改 `HarkenSchema/Pack/3`、`HarkenSchema/Pack/4` 档案或发布版本，不执行 Pack 5 发布。发布审计仍要求不同合同换代，后续由发布者完成；当前版本号保持 4 不表示本次合同变化已经完成发布。
 
-## Limiter 试听与 Pack 桥接（2026-11-11）
+## Limiter 试听与 Pack 桥接（2026-11-12）
 
 非 Bus 效果的 `Active` 由工程 `bypass` 编译为 `EffectNodeV1.flags` 的 bit 0，经过 Pack 编解码、语义指纹和运行时安装传递。该字段复用原 offset 28 的 U32 保留位；全零时保持既有编码和指纹，不允许未知位。Studio 试听将 Custom 与 Preset 解析为具体插件与参数，运行时按效果行身份持有实例；正式 Pack 的共享预设采用下述 Init 定义与槽位引用。
 
 Bus 发布投影使用 publication vintage 5（`TopologyVolumeSendAndEffectsNeutralOtherProperties`），保留拓扑、音量、输出音量、Send、效果顺序、参数和旁通状态，其余属性仍按中性值发布，fader 位于效果链后。正式 Pack 的 BusDefinitionSnapshot 同步携带效果及参数表并计入完整指纹；历史 publication 3／4 的无效果编码保持不变。Preview 通过 `VnPreviewProjectDescV4` 传输同一投影，采用 prepare／commit／cancel 事务，在音频块边界应用；参数、Active 和无关属性变更保留已有效果实例。
 
-试听中参数与 Active 即时生效，链结构增删、替换与重排在下一次播放生效。总线结构变更遇到在播消费者时保留待提交事务，释放消费者后再提交；消费者检查覆盖旧发布代际仍存活的播放。该限制只用于 Studio Preview，正式 PackSet 的替换与卸载沿用既有生命周期。
+当前 Studio Preview 中，Voice／Bus 编辑前后的链均只含 Limiter（含空链）时，参数拖动、Active、链条增删、替换和重排均作用于当前播放，无需停止重播。涉及其他效果类型时，链结构与来源替换仍沿原有生命周期延后生效，已安装槽位的 Active 和来源兼容的参数可即时更新；受在播消费者阻挡的 Bus 事务保留至消费者释放，消费者检查覆盖旧发布代际仍存活的播放。该延后限制用于 Studio Preview，正式 PackSet 的替换与卸载沿用既有生命周期。
 
 Bus publication 5、Preview descriptor V4、shipping body V18 和已发布 Pack Schema 4 属于不同版本空间。本次继续只修改 `Pack/current`，不修改历史合同或执行发布换代；对外发布前仍须按合同审计完成新的 Pack 代际。
 
 配套 Engine 改动包含合同读入、旁通安装、运行状态镜像、Bus 效果事务与 PackSet 消费；复用既有 DSP、实例池和音频命令。旧 Preview 协议的默认删除校验与无关 Signal 提交规则保持原有行为。
+
+以下为 #305 阶段的验证与修正记录；其中 Limiter 链结构或来源替换延后生效的行为，已由 #307 更新为上述实时编辑行为。
 
 验证环境为 Windows x64、clang-cl、Ninja Multi-Config、RelWithDebInfo。Engine 全量执行 6581 项：6573 通过、6 跳过，2 条新增 Pack fixture 因遗漏 FX 能力声明失败；补齐 fixture 后两项和 flags 校验复跑全部通过，业务代码无剩余失败。Studio 试听、适配器、双端 Pack 解析和导出共 101 项，100 通过；唯一失败为既有的 `PartialPublicationCombinesScheduleAndEffectCapacity`，返回 `VN_PACK_RESIDENT_CAPACITY`，对应下文记录的默认 64 MiB 解码预算问题。StudioRuntimeApi 7 项、BusCompiler 4 项、ProjectSchema 27 项、Pack 生成器 20 项及生成物检查均通过。
 

@@ -148,7 +148,7 @@
 | Preset | 标准 ObjectRef 保留定位、激活和选择器，独立菜单 chevron 位于内容左侧；chevron 使用默认箭头指针，含 Replace > Limiter、Convert to Custom |
 | 转换与替换 | 保留行身份、顺序、Active；替换插件使用默认参数，Convert to Custom 复制预设当前配置并解除共享；Save As Preset 创建资产并切换引用，合为一次撤销 |
 | Active | 新增默认开启，映射旁通配置；Bus 与非 Bus 均接通试听和 Pack，关闭时保留效果实例并旁通 |
-| 在播编辑 | 参数和 Active 即时更新；链条增删、替换、重排沿现有生命周期，在下一次播放生效 |
+| 在播编辑 | Voice／Bus 编辑前后的链均只含 Limiter（含空链）时，参数、Active、增删、替换和重排即时作用于当前播放，无需停止重播；涉及其他效果类型时，链结构与来源替换延后生效，仅已安装槽位的 Active 和来源兼容的参数可即时更新 |
 | 继承范围 | Sound、Container、Layer、Track、Segment 沿归属父级继承整条 Effects 链，不与父链叠加；根直接编辑自身配置，Bus 不提供 Inherit |
 | 本地历史 | 首次关闭 Inherit 复制当前有效链并建立独立槽位身份，已有本地历史时恢复历史；重新继承保留历史；Rebuild Local from Current Effective Values 重建本地链 |
 | 平台配置 | Shared 与单平台分别保存整链配置，Bus 同样支持；All Platforms 修改共享链并清除该链的平台覆盖，单平台只修改当前平台，与 Shared 相同的链自动消除覆盖；非 Bus 的继承开关也按平台保存，沿用标题菜单 Reset Inherit 恢复共享继承模式 |

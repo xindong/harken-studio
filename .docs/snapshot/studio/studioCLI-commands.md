@@ -24,11 +24,13 @@
 
 独立模式不注册 GUI 专属接口；实例模式使用目标 Studio 的完整目录。两种模式都不注册未实现或废弃的接口；未知名称统一返回 `UNKNOWN_COMMAND`。`commands --json` 是当前目标的能力来源，不依赖静态条数。每项提供 `category`、`scope`、`readOnly`、`requiresDesktop`、`inputSchema` 等字段。所有公开命令使用显式参数契约，发现、普通执行和 AI 调用共享同一份约束。无参数命令也声明空对象并拒绝额外字段。
 
-### Effect 创作与验收（2026-11-11）
+### Effect 创作与验收（2026-11-12）
 
 `create_item(type=Effect)` 创建预设，`set_item_property` 的 `ceilingDb`／`releaseMs` 修改参数，`rename_item` 重命名。Bus 使用 `set_item_property(property=effects,value=[...])`；Sound、Container、Track、Segment、Layer 使用 `replace_field_group_effects`。两种入口共用效果行合同，完整数组表示处理顺序，增删、重排、替换和 Active 均通过该数组提交；替换或转换保留行的 `guid` 与 `bypass`。预设行使用 `effectGuid`，Custom 行使用 `custom.type` 与 `custom.parameters`。
 
-`get_item_info` 对可播放定义返回 `fieldGroups`，包含本地值、继承模式及平台覆盖，可区分未配置与显式空链；Bus FX 和预设参数在 `components` 中读取。参数和 Active 可在持续 `shell` 试听会话中修改，链结构变化在下一次播放生效。`get_metering_snapshot` 与 `audition_get_state` 可验证输出和播放身份。
+`get_item_info` 对可播放定义返回 `fieldGroups`，包含本地值、继承模式及平台覆盖，可区分未配置与显式空链；Bus FX 和预设参数在 `components` 中读取。
+
+持续 `shell` 试听中，Voice／Bus 编辑前后的链均只含 Limiter（含空链）时，参数、Active 和链条增删、替换、重排即时生效，无需停止重播。涉及其他效果类型时，链结构与来源替换仍延后生效，已安装槽位的 Active 和来源兼容的参数可即时更新。`get_metering_snapshot` 与 `audition_get_state` 可验证输出和播放身份。
 
 两种链写入入口均限制最多 8 槽；第 9 槽在参数校验阶段拒绝，原链不变。域内校验和编译也检查容量，手工篡改工程文件不能绕过导出限制，非法数据不会被自动截断。
 
