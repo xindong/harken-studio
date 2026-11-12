@@ -7,6 +7,7 @@
 // expected value from the thing under test, so a pin only agrees when the
 // value has not moved.
 #include <harken/Harken.h>
+#include "harken_preview/PreviewProject.h"
 
 #include "harken/core/CommandQueue.h"
 #include "harken/core/EngineConfig.h"
@@ -19,6 +20,13 @@
 #include <type_traits>
 
 namespace {
+static_assert(sizeof(VnPreviewBusEffectV1) == 56);
+static_assert(sizeof(VnPreviewBusEffectParameterV1) == 8);
+static_assert(offsetof(VnPreviewProjectDescV4, busEffects) == sizeof(VnPreviewProjectDescV3));
+static_assert(sizeof(harken::CommandRecord::Payload::PreviewBusEffectControl) == 48);
+static_assert(sizeof(VnPreviewVoiceEffectEntryV1) == 32);
+static_assert(sizeof(VnPreviewVoiceEffectChainV1) == 264);
+static_assert(offsetof(VnPreviewVoiceEffectChainV1, entries) == 8);
 
 // --- effect type ids (append-only, never renumbered) ---
 
@@ -321,15 +329,15 @@ static_assert(harken::kOpcodeSetBusEffect == 20 &&
                   harken::kOpcodeSetBusFilter == 25,
               "bus-effect, fader-point, and bus-filter opcodes are frozen");
 
-static_assert(harken::kCommandVersion == 7,
-              "Action Seek transport vintage is pinned");
+static_assert(harken::kCommandVersion == 8,
+              "Timeline effect mirror transport vintage is pinned");
 
 // Ceiling of the frozen audio-thread vocabulary. No such pin exists in the
 // production headers (enforcement there is a frozen enum plus a Debug bounds
-// assert); this fixes the count from the test side so a 27th opcode cannot be
+// assert); this fixes the count from the test side so another opcode cannot be
 // appended without tripping a build error the reviewer must acknowledge.
-static_assert(harken::kMaxKnownOpcode == 26,
-              "audio-thread opcode ceiling is frozen at 26");
+static_assert(harken::kMaxKnownOpcode == 27,
+              "audio-thread opcode ceiling includes the atomic Preview effect-chain command");
 
 // --- command record transport shape (mirror of the production assert) ---
 
@@ -341,15 +349,14 @@ static_assert(std::is_trivially_copyable_v<harken::CommandRecord>,
 // --- effect-pool default capacities ---
 // Runtime EXPECTs rather than static_asserts: these are the internal
 // EngineConfig's default-resolved capacities (a zero in the public VnConfig
-// resolves to them), the values that size both pools when a caller leaves the
-// config fields unset.
+// selects automatic backing growth when a caller leaves the fields unset).
 TEST(EffectAbiFreeze, DefaultEffectPoolCapacities) {
     const harken::EngineConfig config;
-    EXPECT_EQ(8u, config.delayEffectPoolCapacity);
-    EXPECT_EQ(16u, config.toneEffectPoolCapacity);
-    EXPECT_EQ(16u, config.gainEffectPoolCapacity);
-    EXPECT_EQ(16u, config.limiterEffectPoolCapacity);
-    EXPECT_EQ(16u, config.compressorEffectPoolCapacity);
+    EXPECT_EQ(0u, config.delayEffectPoolCapacity);
+    EXPECT_EQ(0u, config.toneEffectPoolCapacity);
+    EXPECT_EQ(0u, config.gainEffectPoolCapacity);
+    EXPECT_EQ(0u, config.limiterEffectPoolCapacity);
+    EXPECT_EQ(0u, config.compressorEffectPoolCapacity);
 }
 
 } // namespace

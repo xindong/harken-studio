@@ -24918,8 +24918,8 @@
   },
   "sourceFiles": {
     "HarkenEngine/Source/Runtime/api/include/harken/Harken.h": {
-      "sha256": "947d04fec152f547f13c6b4c55ab498fc0c74ab0fff387f3d0136d57bc074a8b",
-      "size": 245705
+      "sha256": "385486db967bda20d28685507b1c4b015117c4b6235a669614684db3abdee42d",
+      "size": 245886
     },
     "HarkenEngine/Source/Runtime/api/include/harken/ObjectId.h": {
       "sha256": "90b6f66ad515c5e411564f1e5981b65bec2e461fabbdee6c57aa86b26b9a300d",

@@ -13,6 +13,7 @@
 #include <harken/Harken.h>
 
 #include "Common/TestUtil.h"
+#include "PlayableRuntime.h"
 #include "harken/param/EffectParamLocator.h"
 #include "harken/render/BuiltinEffects.h"
 
@@ -908,6 +909,99 @@ TEST(EffectParamBindingE2E, BusGainBindingComposesAndDetaches) {
     Capture based;
     harkentest::PumpAndCapture(session.Engine(), 4, based);
     EXPECT_NEAR(kDc * std::pow(10.0f, -6.0f / 20.0f), SteadyLevel(based), 3e-3f);
+}
+
+TEST(EffectParamBindingE2E, PreviewBusParameterVectorPreservesBindingsAcrossDirectEdits) {
+    EngineSession session(EffectBindConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    InstallBindingVariable(&engine);
+    const auto busId = harkentest::ObjectId(190);
+    const auto effectId = harkentest::ObjectId(191);
+    const auto bindingId = harkentest::ObjectId(192);
+    const auto soundId = harkentest::ObjectId(193);
+    constexpr std::uint64_t ownerId = 194;
+    ASSERT_EQ(VN_OK, Vn_CreateBus(busId, VN_BUS_MASTER));
+    auto compressor = CompressorDesc();
+    compressor.effectId = effectId;
+    compressor.releaseMs = 5.0f;
+    ASSERT_EQ(VN_OK, Vn_SetBusEffect(busId, kSlot, VN_EFFECT_COMPRESSOR, AsBase(&compressor)));
+    const auto bus = engine.buses.FindIndex(busId);
+    engine.busTopologyOwnerIds[bus] = ownerId;
+    engine.busEffectOwnerCookies[bus][kSlot] = ownerId;
+    const auto binding = EffectParamBinding(VN_TARGET_SCOPE_BUS_EFFECT_PARAM,
+        VN_EFFECT_COMPRESSOR, harken::kCompressorParamThresholdDb, -12.0f, -12.0f);
+    ASSERT_EQ(VN_OK, Vn_RegisterBinding(bindingId, &binding));
+    VnBindingAttachDesc attach{};
+    attach.structSize = sizeof(attach);
+    attach.scopeKind = VN_TARGET_SCOPE_BUS_EFFECT_PARAM;
+    attach.objectId = busId;
+    ASSERT_EQ(VN_OK, Vn_AttachBinding(bindingId, &attach));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    engine.nullBackend.Pump(2);
+    std::vector<float> dc(kRate, kDc);
+    const auto pcm = MonoDesc(dc, kRate);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(soundId, &pcm));
+    auto play = MakePlayDesc(soundId);
+    play.busId = busId;
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+    const auto expectedLevel = [](float threshold, float ratio, float makeup) {
+        const auto inputDb = 20.0f * std::log10(kDc);
+        return std::pow(10.0f, (threshold + (inputDb - threshold) / ratio + makeup) / 20.0f);
+    };
+    const auto checkLevel = [&](float threshold, float ratio, float makeup) {
+        Capture output;
+        harkentest::PumpAndCapture(&engine, 16, output);
+        HARKENTEST_ASSERT_NON_SILENT(output.left);
+        EXPECT_NEAR(expectedLevel(threshold, ratio, makeup), SteadyLevel(output), 3e-3f);
+    };
+    checkLevel(-30.0f, 1.0f, 0.0f);
+    std::array<float, harken::kCompressorParamCount> parameters{-18.0f, 4.0f, 0.1f, 5.0f, 0.0f, 6.0f};
+    ASSERT_EQ(VN_OK, harken::SetPreviewBusEffect(ownerId, busId, effectId,
+        VN_EFFECT_COMPRESSOR, parameters.data(), parameters.size(), 0));
+    checkLevel(-30.0f, 4.0f, 6.0f);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    checkLevel(-30.0f, 4.0f, 6.0f);
+    parameters[harken::kCompressorParamThresholdDb] = -30.0f;
+    parameters[harken::kCompressorParamRatio] = 2.0f;
+    parameters[harken::kCompressorParamMakeupDb] = 3.0f;
+    ASSERT_EQ(VN_OK, harken::SetPreviewBusEffect(ownerId, busId, effectId,
+        VN_EFFECT_COMPRESSOR, parameters.data(), parameters.size(), 0));
+    checkLevel(-30.0f, 2.0f, 3.0f);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    checkLevel(-42.0f, 2.0f, 3.0f);
+    ASSERT_EQ(VN_OK, Vn_DetachBinding(bindingId, &attach));
+    parameters[harken::kCompressorParamRatio] = 4.0f;
+    parameters[harken::kCompressorParamMakeupDb] = 0.0f;
+    ASSERT_EQ(VN_OK, harken::SetPreviewBusEffect(ownerId, busId, effectId,
+        VN_EFFECT_COMPRESSOR, parameters.data(), parameters.size(), 0));
+    checkLevel(-42.0f, 4.0f, 0.0f);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    checkLevel(-30.0f, 4.0f, 0.0f);
+    using Scope = harken::EffectParamTargetStore::Scope;
+    const auto generation = engine.buses.GenerationAt(bus);
+    const auto revision = engine.effectParamTargets.TargetRevision(
+        Scope::Bus, bus, generation, kSlot, harken::kCompressorParamThresholdDb);
+    harken::VariableSliceRef claim{};
+    ASSERT_TRUE(engine.variableSlices.Reserve(engine.variables.CurrentWorldGeneration(),
+        engine.variables.CurrentTransportEpoch(), 0, 0, 0, 1, &claim));
+    ASSERT_TRUE(engine.effectParamTargets.TryClaim(Scope::Bus, bus, generation,
+        kSlot, harken::kCompressorParamThresholdDb, claim, revision));
+    ASSERT_EQ(VN_OK, harken::SetPreviewBusEffect(ownerId, busId, effectId,
+        VN_EFFECT_COMPRESSOR, parameters.data(), parameters.size(), 1));
+    ASSERT_EQ(VN_OK, harken::SetPreviewBusEffect(ownerId, busId, effectId,
+        VN_EFFECT_COMPRESSOR, parameters.data(), parameters.size(), 0));
+    parameters[harken::kCompressorParamRatio] = 2.0f;
+    EXPECT_EQ(VN_BACKPRESSURE, harken::SetPreviewBusEffect(ownerId, busId, effectId,
+        VN_EFFECT_COMPRESSOR, parameters.data(), parameters.size(), 0));
+    checkLevel(-30.0f, 4.0f, 0.0f);
+    engine.effectParamTargets.ReleaseClaim(Scope::Bus, bus, generation,
+        kSlot, harken::kCompressorParamThresholdDb, claim);
+    ASSERT_TRUE(engine.variableSlices.AbandonPrepared(claim));
+    ASSERT_EQ(VN_OK, harken::SetPreviewBusEffect(ownerId, busId, effectId,
+        VN_EFFECT_COMPRESSOR, parameters.data(), parameters.size(), 0));
+    checkLevel(-30.0f, 2.0f, 0.0f);
 }
 
 // --- bus attach enforces CanBind: empty slot / type mismatch refused ---

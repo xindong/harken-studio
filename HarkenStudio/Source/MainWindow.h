@@ -113,6 +113,7 @@ public:
     HarkenEditor::Bridge::RemoteConnection* remoteConnection() const { return remoteConnection_; }
     Monitor::EventCaptureController* eventCaptureController() const { return eventCaptureController_; }
     enum class PreferredOpenArea { CentralTab, Float, RestoreSaved };
+    enum class EditorOpenMode { Reuse, NewWindow };
 
     enum class InitializationMode { Immediate, Deferred };
 
@@ -223,13 +224,14 @@ public:
     void openItemInNewInspector(ProjectItem* item, PreferredOpenArea placement,
                                 bool syncSelection = true, const QObject* source = nullptr);
     InspectorPanel* inspectorShowingItem(ProjectItem* item, bool includeClosed = false) const;
-    void openOrFocusInspectorForItem(ProjectItem* item, const PlacementContext* placement = nullptr);
+    InspectorPanel* openOrFocusInspectorForItem(ProjectItem* item, const PlacementContext* placement = nullptr);
 
     SourceEditorPanel* openSourceEditor(uint32_t sourceId);
 
     ExternalEditorPanel* openCurveEditor(const CurveSelection& selection);
     ExternalEditorPanel* openExternalEditor(const ExternalEditorSelection& selection);
-    EffectEditorPanel* openEffectEditor(const QUuid& ownerGuid, const QUuid& rowGuid = {});
+    EffectEditorPanel* openEffectEditor(const QUuid& ownerGuid, const QUuid& rowGuid = {},
+                                       EditorOpenMode mode = EditorOpenMode::Reuse);
 
     Hierarchy* createHierarchyPanel();
     void closeHierarchyPanel(int panelId);
@@ -401,12 +403,15 @@ private:
     std::unique_ptr<WorkspaceWindowManager> workspaceWindowManager_;
 
     QHash<QString, StandaloneEditorTypeInfo> standaloneEditorTypes_;
+    QUuid effectSelectionOwnerGuid_;
+    QUuid effectSelectionRowGuid_;
 
     InspectorPanel* createInspectorPanelWithId(int id, PreferredOpenArea placement, bool deferShow);
     Hierarchy* createHierarchyPanelWithId(int id, bool deferShow, bool deleteOnClose = true);
     MeterPanel* createMeterPanelWithId(int id, bool deferShow);
 
-    QWidget* createStandaloneEditorPanelWithId(const QString& type, int id, bool deferShow);
+    QWidget* createStandaloneEditorPanelWithId(const QString& type, int id, bool deferShow,
+                                               PreferredOpenArea placement = PreferredOpenArea::RestoreSaved);
     ads::CDockAreaWidget* inspectorBelowStandaloneEditorArea() const;
     void seedInspectorBelowEditorHeight(ads::CDockAreaWidget* inspectorArea,
                                         ads::CDockWidget* dock);
@@ -414,6 +419,7 @@ private:
     void setStandaloneEditorVisible(QWidget* editor, bool visible);
     void wireStandaloneEditorPin(QWidget* editor);
     ProjectItem* currentStandaloneEditorSelection() const;
+    void pushEffectSelectionToEditors(const QUuid& ownerGuid, const QUuid& rowGuid = {});
     void collapseUnrelatedStandaloneEditor(const QString& type, QWidget* editor,
                                           StandaloneEditorPushReason reason);
     QWidget* workspaceSingletonContent(const QString& typeId, bool materialize) const;

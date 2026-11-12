@@ -79,7 +79,7 @@
 | 10 | Paste Properties | Sound、Container、Track、Segment、Layer | 剪贴板仅一个有效同类型属性源，全部明确目标兼容 |
 | 11 | Open Containing Folder | 含 Sound 的选区 | 单个 Sound，当前平台与语言的所选音源存在 |
 | 12 | Open in New Tab | 含非 Folder 对象的选区 | 全部可打开，逐个打开独立 Inspector 标签页；混入 Folder 禁用 |
-| 13 | Open in New Window | 含非 Folder 对象的选区 | 单个可打开对象，打开浮动 Inspector |
+| 13 | Open in New Window | 含非 Folder 对象的选区 | 单个可打开对象，新建浮动 Inspector；新窗沿当前屏幕已有浮窗向右下错开，遇屏幕边缘回绕，已有窗口及已记忆位置不重排 |
 | 14 | Set Color... | 隐藏 | 不可用 |
 | 15 | Operation | 所有上下文 | 按目标子树展开状态启用；无可执行子项时禁用 |
 

@@ -5,6 +5,7 @@
 
 #include <QScrollArea>
 #include <QStackedWidget>
+#include <QSplitter>
 #include <QLabel>
 #include <QLineEdit>
 #include <QComboBox>
@@ -37,6 +38,8 @@
 #include "Widgets/Inspector/InspectorCustomization.h"
 
 namespace VNX {
+
+class EffectEditorPanel;
 
 class InspectorPanelPrivate {
 public:
@@ -87,7 +90,7 @@ public:
 
     void refreshBoundPages(ProjectItem* item, const QString& prop);
     void rebindHierarchyPages(ProjectItem* createdChild);
-    void clearItemBindings();
+    void clearItemBindings(ProjectItem* nextItem = nullptr);
     bool currentContextContains(ProjectItem* item) const;
 
     void updateContext(const QString& type, const QString& name);
@@ -99,6 +102,9 @@ public:
     QLineEdit* searchBox_;
     QStackedWidget* stack_;
     QScrollArea* scrollArea_;
+    QSplitter* contentSplitter_ = nullptr;
+    EffectEditorPanel* effectEditor_ = nullptr;
+    QList<int> effectEditorSizes_;
 
     ProjectItem* currentSoundItem_ = nullptr;
     PropertyEditorEngine* soundEngine_ = nullptr;

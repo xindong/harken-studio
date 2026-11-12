@@ -5585,6 +5585,7 @@ VnResult AttachBinding(Engine& engine, BindingId id, std::uint32_t scopeKind,
         if (def == nullptr) {
             return VN_UNKNOWN_ID;
         }
+        if (engine.buses.PreviewEffectOwned(engine.buses.RefAt(busIndex))) return VN_IN_USE;
         if (!engine.effectParamTargets.CanBind(
                 EffectParamTargetStore::Scope::Bus, busIndex,
                 UnpackEffectParamLocator(def->targetId))) {
@@ -7855,6 +7856,164 @@ bool ReserveVoiceCommandTransport(harken::Engine& engine, std::uint32_t count,
     return AdmitCommandBatch(engine, count) && engine.commands.ReserveBatch(count, reservation);
 }
 
+static_assert(sizeof(harken::CommandRecord::Payload::SetVoiceEffect) == 56);
+static_assert(harken::kMaxEffectParamCount <=
+    std::extent_v<decltype(harken::CommandRecord::Payload::SetVoiceEffect::initialParams)>);
+static_assert([] {
+    for (const auto& row : harken::kEffectRegistry)
+        if (row.paramCount > std::extent_v<decltype(harken::CommandRecord::Payload::SetVoiceEffect::initialParams)>)
+            return false;
+    return true;
+}(), "every registered effect must fit the initial-parameter transport");
+
+bool ValidateTimelineEffectMirror(const harken::Engine& engine,
+    const harken::CommandQueue::PreparedBatchProof& proof, std::uint32_t offset,
+    const harken::CommandRecord& header) noexcept {
+    const auto render = header.payload.play.handle;
+    const auto row = static_cast<std::uint32_t>(render);
+    if (render == 0 || row >= engine.effectSlotTypes.size() ||
+        row >= engine.voiceEffectInstanceRefs.size() || row >= engine.effectSlotConfig.size()) return false;
+    const auto validSlot = [&](std::uint32_t slot) { return slot < engine.config.fxSlotsPerVoice; };
+    for (std::uint32_t index = 1; index < header.payload.play.batch.batchCommandCount; ++index) {
+        harken::CommandRecord command{};
+        if (!engine.commands.ReadPreparedAt(proof, offset + index, &command)) return false;
+        switch (command.opcode) {
+        case harken::kOpcodeSetVoiceEffect: {
+            const auto& effect = command.payload.setVoiceEffect;
+            const auto count = harken::EffectParamCount(effect.effectType);
+            if (effect.handle != render || !validSlot(effect.slot) || effect.poolGeneration == 0 ||
+                count == 0 || count > harken::kMaxEffectParamCount) return false;
+            for (std::uint32_t param = 0; param < count; ++param)
+                if (harken::ValidateEffectParam(effect.effectType, param, effect.initialParams[param],
+                        engine.config.mixRate.SampleRate()) != VN_OK) return false;
+            break;
+        }
+        case harken::kOpcodeSetVoiceEffectBypass: {
+            const auto& effect = command.payload.setVoiceEffectBypass;
+            if (effect.handle != render) break;
+            if (!validSlot(effect.slot) || effect.bypass > 1 ||
+                (effect.action != harken::kEffectActionBypass && effect.action != harken::kEffectActionReset))
+                return false;
+            break;
+        }
+        case harken::kOpcodeClearVoiceEffect: {
+            const auto& effect = command.payload.clearVoiceEffect;
+            if (effect.handle == render && !validSlot(effect.slot)) return false;
+            break;
+        }
+        case harken::kOpcodeSetVoiceEffectParam: {
+            if (command.flags == harken::kCommandFlagPreparedCompressor) {
+                // Timeline has no effect-target binding initializer. Prepared DSP
+                // coefficients cannot recover exact authored compressor values.
+                if (command.payload.setCompressorEffectParam.host == render) return false;
+                break;
+            }
+            const auto& effect = command.payload.setVoiceEffectParam;
+            if (effect.handle != render) break;
+            if (!validSlot(effect.slot) ||
+                harken::ValidateEffectParam(effect.effectType, effect.paramIndex, effect.value,
+                    engine.config.mixRate.SampleRate()) != VN_OK) return false;
+            break;
+        }
+        default: break;
+        }
+    }
+    return true;
+}
+
+void BuildTimelineEffectMirror(const harken::Engine& engine,
+    const harken::CommandQueue::PreparedBatchProof& proof, std::uint32_t offset,
+    const harken::CommandRecord& header,
+    std::array<std::uint32_t, harken::kMaxFxSlotsPerVoice>& types,
+    std::array<harken::EffectInstanceRef, harken::kMaxFxSlotsPerVoice>& refs,
+    std::array<harken::Engine::VoiceEffectSlotConfig, harken::kMaxFxSlotsPerVoice>& config) noexcept {
+    const auto render = header.payload.play.handle;
+    // This non-owning accepted-config mirror changes only at final publication,
+    // including empty InitialSource children and reused render slots.
+    types.fill(harken::kEffectTypeNone);
+    refs = {};
+    config = {};
+    for (std::uint32_t index = 1; index < header.payload.play.batch.batchCommandCount; ++index) {
+        harken::CommandRecord command{};
+        const bool read = engine.commands.ReadPreparedAt(proof, offset + index, &command);
+        assert(read);
+        (void)read;
+        switch (command.opcode) {
+        case harken::kOpcodeSetVoiceEffect: {
+            const auto& effect = command.payload.setVoiceEffect;
+            types[effect.slot] = effect.effectType;
+            refs[effect.slot] = {effect.effectType, effect.poolIndex, effect.poolGeneration};
+            std::copy_n(effect.initialParams, harken::kMaxEffectParamCount, config[effect.slot].params.begin());
+            break;
+        }
+        case harken::kOpcodeSetVoiceEffectBypass: {
+            const auto& effect = command.payload.setVoiceEffectBypass;
+            if (effect.handle == render && effect.action == harken::kEffectActionBypass)
+                config[effect.slot].bypass = effect.bypass != 0;
+            break;
+        }
+        case harken::kOpcodeClearVoiceEffect: {
+            const auto& effect = command.payload.clearVoiceEffect;
+            if (effect.handle == render) {
+                types[effect.slot] = harken::kEffectTypeNone;
+                refs[effect.slot] = {};
+                config[effect.slot].params.fill(0.0f);
+            }
+            break;
+        }
+        case harken::kOpcodeSetVoiceEffectParam: {
+            if (command.flags == harken::kCommandFlagPreparedCompressor) break;
+            const auto& effect = command.payload.setVoiceEffectParam;
+            if (effect.handle == render && types[effect.slot] == effect.effectType &&
+                effect.effectType != VN_EFFECT_COMPRESSOR)
+                config[effect.slot].params[effect.paramIndex] = effect.value;
+            break;
+        }
+        default: break;
+        }
+    }
+}
+
+void CancelVoiceEffectSeeds(void* context) noexcept {
+    auto& engine = *static_cast<harken::Engine*>(context);
+    for (auto& token : engine.preparedVoiceEffectSeeds)
+        engine.effectParamTargets.CancelPreparedInstalledEffectSeed(&token);
+    engine.preparedVoiceEffectSeeds.clear();
+}
+
+bool PrepareTimelineEffectSeeds(harken::Engine& engine,
+    const harken::CommandQueue::PreparedBatchProof& proof, std::uint32_t offset,
+    const harken::CommandRecord& header) {
+    std::array<std::uint32_t, harken::kMaxFxSlotsPerVoice> types{};
+    std::array<harken::EffectInstanceRef, harken::kMaxFxSlotsPerVoice> refs{};
+    std::array<harken::Engine::VoiceEffectSlotConfig, harken::kMaxFxSlotsPerVoice> config{};
+    BuildTimelineEffectMirror(engine, proof, offset, header, types, refs, config);
+    const auto render = header.payload.play.handle;
+    for (std::uint32_t slot = 0; slot < engine.config.fxSlotsPerVoice; ++slot) {
+        if (types[slot] == harken::kEffectTypeNone) continue;
+        engine.preparedVoiceEffectSeeds.emplace_back();
+        if (!engine.effectParamTargets.PrepareInstalledEffectSeed(
+                harken::EffectParamTargetStore::Scope::Voice, render,
+                static_cast<std::uint32_t>(render >> 32), slot, types[slot],
+                config[slot].params.data(), harken::EffectParamCount(types[slot]),
+                &engine.preparedVoiceEffectSeeds.back())) return false;
+    }
+    return true;
+}
+
+void PublishTimelineEffectMirror(harken::Engine& engine,
+    const harken::CommandQueue::PreparedBatchProof& proof, std::uint32_t offset,
+    const harken::CommandRecord& header) noexcept {
+    const auto render = header.payload.play.handle;
+    const auto row = static_cast<std::uint32_t>(render);
+    BuildTimelineEffectMirror(engine, proof, offset, header,
+        engine.effectSlotTypes[row], engine.voiceEffectInstanceRefs[row], engine.effectSlotConfig[row]);
+    for (std::uint32_t slot = 0; slot < engine.config.fxSlotsPerVoice; ++slot)
+        if (engine.effectSlotTypes[row][slot] == harken::kEffectTypeNone)
+            engine.effectParamTargets.ClearSlot(harken::EffectParamTargetStore::Scope::Voice,
+                render, static_cast<std::uint32_t>(render >> 32), slot);
+}
+
 bool PrepareVoiceCommandBatch(harken::Engine& engine,
     harken::CommandQueue::BatchReservation* reservation,
     std::span<const harken::CommandRecord> commands,
@@ -7867,6 +8026,13 @@ bool PrepareVoiceCommandBatch(harken::Engine& engine,
         engine.commands.CancelReservedBatch(reservation);
         return false;
     }
+    assert(engine.preparedVoiceEffectSeeds.empty());
+    if (!engine.commands.SetPreparedBatchCancellationHandler(proof, &engine, CancelVoiceEffectSeeds)) {
+        proof.Release();
+        return false;
+    }
+    try {
+        engine.preparedVoiceEffectSeeds.reserve(commands.size());
     for (std::uint32_t offset = 0; offset < commands.size();) {
         harken::CommandRecord command{};
         if (!engine.commands.ReadPreparedAt(proof, offset, &command)) {
@@ -7877,6 +8043,8 @@ bool PrepareVoiceCommandBatch(harken::Engine& engine,
             command.payload.play.batch.batchKind == harken::PlayLedBatchKind::TimelineArm) {
             const auto count = command.payload.play.batch.batchCommandCount;
             if (count == 0 || count > commands.size() - offset ||
+                !ValidateTimelineEffectMirror(engine, proof, offset, command) ||
+                !PrepareTimelineEffectSeeds(engine, proof, offset, command) ||
                 !engine.originalSourceSubmissions.BindPreparedChild(proof, offset, count)) {
                 proof.Release();
                 return false;
@@ -7908,6 +8076,10 @@ bool PrepareVoiceCommandBatch(harken::Engine& engine,
             ++offset;
         } else ++offset;
     }
+    } catch (...) {
+        proof.Release();
+        return false;
+    }
     return true;
 }
 
@@ -7917,6 +8089,9 @@ void PublishVoiceCommandBatch(harken::Engine& engine,
     auto& proof = engine.preparedVoiceCommandBatchProof;
     assert(engine.commands.PreparedBatchMatches(proof, reservation,
         static_cast<std::uint32_t>(commands.size())));
+    for (auto& token : engine.preparedVoiceEffectSeeds)
+        engine.effectParamTargets.CommitPreparedInstalledEffectSeed(&token);
+    engine.preparedVoiceEffectSeeds.clear();
     for (std::uint32_t offset = 0; offset < commands.size();) {
         harken::CommandRecord command{};
         const bool read = engine.commands.ReadPreparedAt(proof, offset, &command);
@@ -7925,18 +8100,29 @@ void PublishVoiceCommandBatch(harken::Engine& engine,
         if (command.opcode == harken::kOpcodePlay &&
             command.payload.play.batch.batchKind == harken::PlayLedBatchKind::TimelineArm) {
             engine.originalSourceSubmissions.PublishPreparedChild(command);
+            PublishTimelineEffectMirror(engine, proof, offset, command);
             offset += command.payload.play.batch.batchCommandCount;
         } else ++offset;
     }
+    std::uint32_t timelineEnd = 0;
     for (std::uint32_t offset = 0; offset < commands.size(); ++offset) {
         harken::CommandRecord command{};
         const bool read = engine.commands.ReadPreparedAt(proof, offset, &command);
         assert(read);
         (void)read;
+        if (command.opcode == harken::kOpcodePlay &&
+            command.payload.play.batch.batchKind == harken::PlayLedBatchKind::TimelineArm)
+            timelineEnd = offset + command.payload.play.batch.batchCommandCount;
         if (command.opcode != harken::kOpcodeSetVoiceEffect) continue;
         const auto& effect = command.payload.setVoiceEffect;
-        engine.effectBank.PublishInstalled(
-            {effect.effectType, effect.poolIndex, effect.poolGeneration});
+        const harken::EffectInstanceRef ref{
+            effect.effectType, effect.poolIndex, effect.poolGeneration};
+        if (offset >= timelineEnd) {
+            const auto renderSlot = static_cast<std::uint32_t>(effect.handle);
+            engine.effectSlotTypes[renderSlot][effect.slot] = effect.effectType;
+            engine.voiceEffectInstanceRefs[renderSlot][effect.slot] = ref;
+        }
+        engine.effectBank.PublishInstalled(ref);
     }
     if (engine.voiceCommandBatchPublishHookForTest != nullptr)
         engine.voiceCommandBatchPublishHookForTest(engine,
@@ -8265,6 +8451,7 @@ VnResult TimelineVoiceStartCommandBudget(
         static_cast<std::uint32_t>(input.sends.size()) +
         static_cast<std::uint32_t>(input.effects.size()) +
         SpatialStartCommandDemand(input.facts->spatialized, input.facts->attenuationResolved);
+    for (const auto& effect : input.effects) *out += (effect.flags & 1u) != 0;
     return VN_OK;
 }
 
@@ -8275,6 +8462,8 @@ VnResult TimelineVoiceStartCommandBudget(
     if (status != VN_OK) return status;
     *out = 3u + install.sendCount + install.effectCount + install.bindingCount +
         SpatialStartCommandDemand(install.spatialized, install.attenuationResolved);
+    for (std::uint32_t index = 0; index < install.effectCount; ++index)
+        *out += (install.effects[index].flags & 1u) != 0;
     return VN_OK;
 }
 
@@ -8334,6 +8523,9 @@ void ReleaseTimelineVoiceBindings(harken::Engine& engine, VnVoiceHandle render,
     engine.params.RetireVoiceTargets(render);
     engine.propertyPublisher.ShrinkWorstCase(
         engine.params.PurgeVoiceInstances(render, snapshotOnly));
+    if (!snapshotOnly)
+        engine.effectParamTargets.ClearObject(harken::EffectParamTargetStore::Scope::Voice,
+            static_cast<std::uint64_t>(render), static_cast<std::uint32_t>(render >> 32));
 }
 
 VnResult PreflightTimelineVoiceStart(
@@ -8404,7 +8596,7 @@ VnResult PreflightTimelineVoiceStart(
         if (source.descriptorSize < sizeof(VnEffectDesc) ||
             source.descriptorSize >
                 harken::kTimelineMaxEffectDescriptorBytes ||
-            source.slot >= engine.config.fxSlotsPerVoice) {
+            source.slot >= engine.config.fxSlotsPerVoice || (source.flags & ~1u) != 0) {
             return VN_INVALID_ARG;
         }
         const VnEffectDesc* descriptor =
@@ -8420,10 +8612,7 @@ VnResult PreflightTimelineVoiceStart(
                 ++sameTypeDemand;
             }
         }
-        const std::uint32_t capacity =
-            engine.effectBank.CapacityOf(source.type);
-        const std::uint32_t inUse = engine.effectBank.InUseOf(source.type);
-        if (capacity < inUse || sameTypeDemand > capacity - inUse) {
+        if (!engine.effectBank.CanAdmit(source.type, sameTypeDemand)) {
             return VN_BACKPRESSURE;
         }
     }
@@ -9153,7 +9342,7 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
     for (const auto& source : input.effects) {
         if (source.descriptorSize < sizeof(VnEffectDesc) ||
             source.descriptorSize > harken::kTimelineMaxEffectDescriptorBytes ||
-            source.slot >= engine.config.fxSlotsPerVoice) {
+            source.slot >= engine.config.fxSlotsPerVoice || (source.flags & ~1u) != 0) {
             return rollback(VN_INVALID_ARG);
         }
         const VnEffectDesc* descriptor =
@@ -9184,6 +9373,14 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
             postSourceTailFrames = harken::SaturatingTailAdd(
                 postSourceTailFrames, built.tailFrames(state));
         }
+        if ((source.flags & 1u) != 0) {
+            auto& bypassCommand = engine.playLedBatchScratch[commandIndex++];
+            bypassCommand = {};
+            bypassCommand.opcode = harken::kOpcodeSetVoiceEffectBypass;
+            bypassCommand.payload.setVoiceEffectBypass.handle = render;
+            bypassCommand.payload.setVoiceEffectBypass.slot = source.slot;
+            bypassCommand.payload.setVoiceEffectBypass.bypass = 1;
+        }
         harken::CommandRecord& effectCommand =
             engine.playLedBatchScratch[commandIndex++];
         effectCommand = {};
@@ -9193,6 +9390,8 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
         effectCommand.payload.setVoiceEffect.effectType = ref.type;
         effectCommand.payload.setVoiceEffect.poolIndex = ref.poolIndex;
         effectCommand.payload.setVoiceEffect.poolGeneration = ref.generation;
+        (void)harken::EffectParamsFromDesc(source.type, descriptor,
+            effectCommand.payload.setVoiceEffect.initialParams);
     }
     if (!AppendTimelineBindingCommands(engine, render, &commandIndex, initialReader,
                                        spatialInitialTargets)) {
@@ -22683,6 +22882,7 @@ struct ResolvedTimelineVoiceInstallSource {
     harken::TimelineVoiceInstallFacts facts{};
     const harken::PackVoiceBinding* bindings[harken::kMaxVoiceBindingInstanceSlots]{};
     std::uint32_t bindingCount = 0;
+    const harken::PackEffectPresetSnapshot* effectPresets[harken::kTimelineMaxVoiceEffects]{};
 };
 
 harken::PlayableStartStatus ResolveTimelineVoiceInstallSource(
@@ -22775,6 +22975,13 @@ harken::PlayableStartStatus ResolveTimelineVoiceInstallSource(
         bindingCount = playback.CollectCutVoiceBindings(
             cut.path, cut.pathCount, resolved,
             harken::kMaxVoiceBindingInstanceSlots);
+        for (std::uint32_t index = 0; index < cut.effectNodeCount; ++index) {
+            const auto& node = cut.effectNodes[index];
+            if (node.presetId == VnObjectId{}) continue;
+            source.effectPresets[index] = playback.ResolveEffectPreset(node.presetId);
+            if (source.effectPresets[index] == nullptr)
+                return harken::PlayableStartStatus::InvalidInput;
+        }
     } else {
         SnapshotVoiceBindingCatalog(engine);
         bindingCount = harken::CollectCutVoiceBindings(
@@ -22859,10 +23066,18 @@ harken::PlayableStartStatus PopulateTimelineVoiceInstallColumns(
         }
     }
     for (std::uint32_t index = 0; index < cut.effectNodeCount; ++index) {
-        const harken::EffectNodeV1& node = cut.effectNodes[index];
+        harken::EffectNodeV1 node = cut.effectNodes[index];
+        if (node.presetId != VnObjectId{}) {
+            const auto* preset = source.effectPresets[index];
+            if (preset == nullptr || preset->presetId != node.presetId)
+                return harken::PlayableStartStatus::InvalidInput;
+            node.effectType = preset->effectType;
+            node.paramCount = static_cast<std::uint32_t>(preset->parameters.size());
+            node.params = preset->parameters.data();
+        }
         const harken::EffectRegistryRow* effect =
             harken::FindEffectRow(node.effectType);
-        if (effect == nullptr || node.paramCount != effect->paramCount ||
+        if (effect == nullptr || (node.flags & ~1u) != 0 || node.paramCount != effect->paramCount ||
             (node.paramCount != 0 && node.params == nullptr) ||
             effect->descriptorSize >
                 harken::kTimelineMaxEffectDescriptorBytes ||
@@ -22877,6 +23092,7 @@ harken::PlayableStartStatus PopulateTimelineVoiceInstallColumns(
         install.slot = index;
         install.type = node.effectType;
         install.descriptorSize = effect->descriptorSize;
+        install.flags = node.flags;
         VnEffectDesc header{};
         header.structSize = effect->descriptorSize;
         header.effectId = node.effectId;
@@ -23261,10 +23477,7 @@ harken::PlayableStartStatus PreflightScheduleLeafStartsImpl(
                     }
                 }
             }
-            const std::uint32_t capacity =
-                engine.effectBank.CapacityOf(type);
-            const std::uint32_t inUse = engine.effectBank.InUseOf(type);
-            if (capacity < inUse || demand > capacity - inUse) {
+            if (!engine.effectBank.EnsureAvailable(type, demand)) {
                 return harken::PlayableStartStatus::Backpressure;
             }
         }
@@ -64215,7 +64428,8 @@ Engine::PendingOrdinarySelectionResult Engine::ServicePendingOrdinarySelections(
             std::uint32_t demand = 1;
             for (std::uint32_t prior = 0; prior < effect; ++prior)
                 demand += voice.effects[prior].type == voice.effects[effect].type;
-            if (demand > effectBank.CapacityOf(voice.effects[effect].type)) return reject(VN_INVALID_CONFIG);
+            const auto limit = effectBank.ConfiguredLimitOf(voice.effects[effect].type);
+            if (limit != 0 && demand > limit) return reject(VN_INVALID_CONFIG);
         }
         const auto preflight = PreflightTimelineVoiceStart(*this, voice);
         if (preflight != VN_OK && !temporary(preflight)) return reject(preflight);
@@ -74839,8 +75053,7 @@ VnResult StageVoiceRecipe(
              recipe->installs) {
             demand += install.effectType == type ? 1u : 0u;
         }
-        if (demand > engine.effectBank.CapacityOf(type) -
-                         engine.effectBank.InUseOf(type)) {
+        if (!engine.effectBank.EnsureAvailable(type, demand)) {
             return VN_NO_EFFECT;
         }
     }
@@ -76238,7 +76451,7 @@ PendingStartOutcome StartDeferredVoice(
                  rec.effects) {
                 if (staged.set && staged.ownsInstance) {
                     engine.effectBank.Recycle(harken::EffectInstanceRef{
-                        staged.type, staged.poolIndex});
+                        staged.type, staged.poolIndex, staged.poolGeneration});
                 }
             }
             if (rec.heldStreamRef) {
@@ -80228,6 +80441,14 @@ bool AdmitSingleLiveCommand(Engine& engine) {
     return AdmitSingleCommand(engine);
 }
 
+bool AdmitLiveCommandBatch(const Engine& engine, std::uint32_t count) {
+    return AdmitCommandBatch(engine, count);
+}
+
+bool LiveCommandBatchFitsCapacities(const Engine& engine, std::uint32_t count) {
+    return AtomicBatchFitsCapacities(engine, count);
+}
+
 void ClearPairedInstallAckIdentity(Engine& engine, std::uint32_t planIndex) {
     if (planIndex < engine.projectGenerationInstallAckSideTable.size()) {
         engine.projectGenerationInstallAckSideTable[planIndex] = {};
@@ -81729,6 +81950,24 @@ bool HasCurrentWorldPublicationConsumers(const Engine& engine) noexcept {
         });
 }
 
+bool HasEffectChainPublicationConsumers(const Engine& engine) noexcept {
+    for (const auto& row : engine.playableServices) {
+        if (row.phase == EnginePlayableStartPhase::Free) continue;
+        if ((row.partitionRetiring || row.phase == EnginePlayableStartPhase::Cancelling) &&
+            !engine.playableInstances.Classify(row.rootInstance).live) continue;
+        return true;
+    }
+    bool live = false;
+    const auto inspect = [&](VnVoiceHandle render) {
+        live |= engine.voices.IsAlive(render);
+    };
+    engine.ledger.ForEachLive(
+        [&](VnVoiceHandle render, std::uint32_t, std::uint32_t, bool) { inspect(render); });
+    engine.ledger.ForEachPlayableOwnedLive(
+        [&](VnVoiceHandle render, const VoiceLedger::PlayableParentRef&) { inspect(render); });
+    return live;
+}
+
 void ReclaimRetiredSelectionMemory(Engine& engine) noexcept {
     const bool packAuthority =
         engine.packComposition.Authority() == PackAuthorityMode::Pack;
@@ -82185,6 +82424,202 @@ bool ObserveCurrentPlaybackPaths(
     return true;
 }
 
+bool BuildBusEffectParameterCommandV1(Engine& engine, std::uint32_t busIndex,
+    std::uint32_t slot, std::uint32_t paramIndex, std::span<const float> parameters,
+    std::uint32_t type, CommandRecord* out) noexcept {
+    if (paramIndex >= parameters.size()) return false;
+    return MakeEffectParamCommand(engine, EffectParamTargetStore::Scope::Bus,
+        busIndex, slot, paramIndex, parameters[paramIndex], type, out,
+        parameters.data(), static_cast<std::uint32_t>(parameters.size()));
+}
+
+VnResult SetPreviewVoiceEffect(std::uint64_t render, VnObjectId effectId,
+    std::uint32_t effectType, const float* parameters, std::uint32_t parameterCount,
+    std::uint32_t bypass) noexcept {
+    Engine* engine = detail::ActiveEngine();
+    if (engine == nullptr || engine->callbackFatalSticky) return VN_NOT_INITIALIZED;
+    if (IsNull(effectId) || parameters == nullptr || bypass > 1u
+        || parameterCount == 0 || parameterCount > kMaxEffectParamCount
+        || parameterCount != EffectParamCount(effectType)) return VN_INVALID_ARG;
+    const auto owner = engine->ledger.OwnerForRender(render);
+    if (!owner.live || owner.visibility != VoiceLedger::PublicVisibility::PlayableOwnedInternal
+        || engine->voices.CheckLive(render) != VN_OK) return VN_STALE_HANDLE;
+    const auto renderSlot = static_cast<std::uint32_t>(render);
+    std::uint32_t slot = engine->config.fxSlotsPerVoice;
+    for (std::uint32_t index = 0; index < engine->config.fxSlotsPerVoice; ++index) {
+        if (engine->effectSlotTypes[renderSlot][index] == effectType
+            && engine->effectBank.ObjectIdentity(
+                engine->voiceEffectInstanceRefs[renderSlot][index]).effectId == effectId) {
+            slot = index;
+            break;
+        }
+    }
+    if (slot == engine->config.fxSlotsPerVoice) return VN_UNKNOWN_ID;
+    auto& current = engine->effectSlotConfig[renderSlot][slot];
+    std::array<CommandRecord, kMaxEffectParamCount + 1> commands{};
+    std::array<bool, kMaxEffectParamCount> bound{};
+    std::array<float, kMaxEffectParamCount> effectiveParameters{};
+    std::uint32_t commandCount = 0;
+    constexpr auto scope = EffectParamTargetStore::Scope::Voice;
+    for (std::uint32_t index = 0; index < parameterCount; ++index) {
+        const auto valid = ValidateEffectParam(effectType, index, parameters[index],
+            engine->config.mixRate.SampleRate());
+        if (valid != VN_OK) return valid;
+        bound[index] = engine->bindings.HasEffectParamBinding(scope, render, slot, index, effectType);
+        effectiveParameters[index] = bound[index] || current.params[index] == parameters[index]
+            ? engine->effectParamTargets.LastCommitted(scope, render, slot, index) : parameters[index];
+    }
+    for (std::uint32_t index = 0; index < parameterCount; ++index) {
+        if (current.params[index] == parameters[index]) continue;
+        if (engine->effectParamTargets.ForeignClaim(scope, render,
+                static_cast<std::uint32_t>(render >> 32), slot, index)) return VN_BACKPRESSURE;
+        if (!bound[index] && !MakeEffectParamCommand(*engine, scope, render, slot, index,
+                parameters[index], effectType, &commands[commandCount++], effectiveParameters.data(), parameterCount))
+            return VN_INVALID_ARG;
+    }
+    if (commandCount != 0 && (effectType == VN_EFFECT_COMPRESSOR || effectType == VN_EFFECT_THREE_BAND_TONE) &&
+        engine->effectParamTargets.ForeignClaimInSlot(scope, render,
+            static_cast<std::uint32_t>(render >> 32), slot)) return VN_BACKPRESSURE;
+    if (current.bypass != (bypass != 0)) {
+        auto& command = commands[commandCount++];
+        command.opcode = kOpcodeSetVoiceEffectBypass;
+        command.payload.setVoiceEffectBypass.handle = render;
+        command.payload.setVoiceEffectBypass.slot = slot;
+        command.payload.setVoiceEffectBypass.bypass = bypass;
+    }
+    if (commandCount != 0 && (!AtomicBatchFitsCapacities(*engine, commandCount)
+        || !AdmitCommandBatch(*engine, commandCount)
+        || !engine->commands.TryPushBatch(commands.data(), commandCount))) return VN_BACKPRESSURE;
+    for (std::uint32_t index = 0; index < parameterCount; ++index) {
+        if (current.params[index] == parameters[index]) continue;
+        if (bound[index])
+            engine->effectParamTargets.NoteDirectBound(scope, render, slot, index, parameters[index]);
+        else
+            engine->effectParamTargets.NoteDirect(scope, render, slot, index, parameters[index], parameters[index]);
+        current.params[index] = parameters[index];
+    }
+    current.bypass = bypass != 0;
+    return VN_OK;
+}
+
+VnResult SetPreviewBusEffect(std::uint64_t ownerId, VnBusId busId, VnObjectId effectId,
+    std::uint32_t effectType, const float* parameters, std::uint32_t parameterCount,
+    std::uint32_t bypass) noexcept {
+    Engine* engine = detail::ActiveEngine();
+    if (engine == nullptr || engine->callbackFatalSticky) return VN_NOT_INITIALIZED;
+    if (ownerId == 0 || IsNull(effectId) || parameters == nullptr || bypass > 1u
+        || parameterCount == 0 || parameterCount > kMaxEffectParamCount
+        || parameterCount != EffectParamCount(effectType)) return VN_INVALID_ARG;
+    const auto bus = engine->buses.FindIndex(busId);
+    if (bus == kInvalidBusIndex) return VN_UNKNOWN_ID;
+    const auto host = engine->buses.RefAt(bus);
+    auto* liveState = engine->buses.PreviewEffectOwned(host)
+        ? engine->buses.PreviewEffectState(host) : nullptr;
+    if (engine->busOwnerCookies[bus] != 0 ||
+        (liveState ? liveState->owner != ownerId : engine->busTopologyOwnerIds[bus] != ownerId))
+        return VN_IN_USE;
+    std::uint32_t slot = engine->config.fxSlotsPerBus;
+    for (std::uint32_t index = 0; index < engine->config.fxSlotsPerBus; ++index) {
+        if (engine->busEffectSlotTypes[bus][index] == effectType
+            && engine->effectBank.ObjectIdentity(
+                engine->busEffectInstanceRefs[bus][index]).effectId == effectId) {
+            slot = index;
+            break;
+        }
+    }
+    if (slot == engine->config.fxSlotsPerBus) return VN_UNKNOWN_ID;
+    if (engine->busEffectOwnerCookies[bus][slot] != ownerId) return VN_IN_USE;
+    if (liveState && HasPreviewEffectAttachment(*engine, host))
+        return VN_IN_USE;
+    const auto generation = engine->buses.GenerationAt(bus);
+    constexpr auto scope = EffectParamTargetStore::Scope::Bus;
+    std::array<CommandRecord, kMaxEffectParamCount + 1> commands{};
+    std::array<bool, kMaxEffectParamCount> changed{};
+    std::array<bool, kMaxEffectParamCount> bound{};
+    std::array<float, kMaxEffectParamCount> effectiveParameters{};
+    std::uint32_t commandCount = 0;
+    for (std::uint32_t index = 0; index < parameterCount; ++index) {
+        const auto valid = ValidateEffectParam(effectType, index, parameters[index],
+            engine->config.mixRate.SampleRate());
+        if (valid != VN_OK) return valid;
+        changed[index] = engine->effectParamTargets.AuthoredBase(scope, bus, slot, index) != parameters[index];
+        bound[index] = engine->bindings.HasEffectParamBinding(scope, bus, slot, index, effectType);
+        effectiveParameters[index] = bound[index] || !changed[index]
+            ? engine->effectParamTargets.LastCommitted(scope, bus, slot, index) : parameters[index];
+    }
+    for (std::uint32_t index = 0; index < parameterCount; ++index) {
+        if (!changed[index]) continue;
+        if (engine->effectParamTargets.ForeignClaim(scope, bus, generation, slot, index))
+            return VN_BACKPRESSURE;
+        if (bound[index]) continue;
+        if (liveState) {
+            auto& command = commands[commandCount++];
+            float prepared = 0;
+            if (!PrepareLimiterParam(index, parameters[index], engine->config.mixRate.SampleRate(), &prepared))
+                return VN_INVALID_ARG;
+            command.opcode = kOpcodeSetBusEffectParam;
+            command.flags = kCommandFlagPreviewBusEffect;
+            command.payload.previewBusEffectControl = {host.Packed(), ownerId, 0,
+                slot, index, parameters[index], prepared,
+                std::max(1u, static_cast<std::uint32_t>(
+                    (static_cast<std::uint64_t>(engine->config.mixRate.SampleRate()) * 5u + 999u) / 1000u)),
+                VN_EFFECT_LIMITER};
+        } else if (!MakeEffectParamCommand(*engine, scope, bus, slot, index,
+                parameters[index], effectType, &commands[commandCount++], effectiveParameters.data(), parameterCount))
+            return VN_INVALID_ARG;
+    }
+    if (commandCount != 0 && (effectType == VN_EFFECT_COMPRESSOR || effectType == VN_EFFECT_THREE_BAND_TONE) &&
+        engine->effectParamTargets.ForeignClaimInSlot(scope, bus, generation, slot)) return VN_BACKPRESSURE;
+    if (engine->busEffectSlotBypass[bus][slot] != bypass) {
+        auto& command = commands[commandCount++];
+        command.opcode = kOpcodeSetBusEffectBypass;
+        if (liveState) {
+            command.flags = kCommandFlagPreviewBusEffect;
+            command.payload.previewBusEffectControl = {host.Packed(), ownerId, 0,
+                slot, bypass, 0, 0, 0, VN_EFFECT_LIMITER};
+        } else {
+            command.payload.setBusEffectBypass.busIndex = bus;
+            command.payload.setBusEffectBypass.slot = slot;
+            command.payload.setBusEffectBypass.bypass = bypass;
+            command.payload.setBusEffectBypass.busGeneration = generation;
+        }
+    }
+    if (liveState) {
+        if (liveState->revision > UINT64_MAX - commandCount) return VN_RUNTIME_RECREATE_REQUIRED;
+        for (std::uint32_t i = 0; i < commandCount; ++i)
+            commands[i].payload.previewBusEffectControl.revision = liveState->revision + i + 1;
+    }
+    if (commandCount != 0 && (!AtomicBatchFitsCapacities(*engine, commandCount)
+        || !AdmitCommandBatch(*engine, commandCount)
+        || !engine->commands.TryPushBatch(commands.data(), commandCount))) return VN_BACKPRESSURE;
+    for (std::uint32_t index = 0; index < parameterCount; ++index) {
+        if (!changed[index]) continue;
+        if (bound[index])
+            engine->effectParamTargets.NoteDirectBound(scope, bus, slot, index, parameters[index]);
+        else
+            engine->effectParamTargets.NoteDirect(scope, bus, slot, index, parameters[index], parameters[index]);
+    }
+    if (liveState) {
+        liveState->revision += commandCount;
+        liveState->accepted[slot].ceilingDb = parameters[0];
+        liveState->accepted[slot].releaseMs = parameters[1];
+        liveState->accepted[slot].bypass = bypass != 0;
+    }
+    engine->busEffectSlotBypass[bus][slot] = static_cast<std::uint8_t>(bypass);
+    const auto& reference = engine->busEffectInstanceRefs[bus][slot];
+    MonitorEffectFacts facts{};
+    facts.bypass01 = bypass;
+    void* storage = engine->effectBank.StateFor(reference.type, reference.poolIndex);
+    const auto effect = BuildEffect(reference.type, storage);
+    if (effect.tailFrames) {
+        facts.tailFrames = effect.tailFrames(storage);
+        facts.tailKnown = true;
+    }
+    ObserveMonitorEffect(PackedMonitorEffectHandle(bus, slot), reference.generation,
+        effectId, VN_ACTION_TERMINAL_NONE, facts);
+    return VN_OK;
+}
+
 VnResult RefreshPreviewVoiceBindings(std::uint64_t render) noexcept {
     Engine* engine = detail::ActiveEngine();
     if (engine == nullptr || engine->callbackFatalSticky) return VN_NOT_INITIALIZED;
@@ -82196,6 +82631,146 @@ VnResult RefreshPreviewVoiceBindings(std::uint64_t render) noexcept {
         && !CompletionMutationBindingBlocks(*engine, binding);
     return engine->params.RefreshPreviewBindings(render, engine->bindings, allowPitch)
         ? VN_OK : VN_BACKPRESSURE;
+}
+
+VnResult SetPreviewVoiceEffectChain(std::uint64_t render,
+    std::span<const PreviewEffectChainEntry> chain) noexcept {
+    auto* engine = detail::ActiveEngine();
+    if (engine == nullptr || engine->callbackFatalSticky) return VN_NOT_INITIALIZED;
+    const auto owner = engine->ledger.OwnerForRender(render);
+    if (!owner.live || owner.visibility != VoiceLedger::PublicVisibility::PlayableOwnedInternal ||
+        engine->voices.CheckLive(render) != VN_OK) return VN_STALE_HANDLE;
+    const auto observed = engine->voices.RenderedState(render);
+    if (observed != VN_VOICE_STATE_ACTIVE && observed != VN_VOICE_STATE_DRAINING)
+        return VN_STALE_HANDLE;
+    if (chain.size() > engine->config.fxSlotsPerVoice) return VN_INVALID_ARG;
+    for (std::size_t i = 0; i < chain.size(); ++i) {
+        const auto& entry = chain[i];
+        if (entry.effectType != VN_EFFECT_LIMITER || entry.effectId == VnObjectId{} ||
+            ValidateEffectParam(VN_EFFECT_LIMITER, kLimiterParamCeilingDb, entry.ceilingDb,
+                engine->config.mixRate.SampleRate()) != VN_OK ||
+            ValidateEffectParam(VN_EFFECT_LIMITER, kLimiterParamReleaseMs, entry.releaseMs,
+                engine->config.mixRate.SampleRate()) != VN_OK) return VN_INVALID_ARG;
+        for (std::size_t j = 0; j < i; ++j)
+            if (chain[j].effectId == entry.effectId) return VN_INVALID_ARG;
+    }
+    const auto row = static_cast<std::uint32_t>(render);
+    if (row >= engine->effectSlotConfig.size() || row >= engine->voiceEffectInstanceRefs.size())
+        return VN_STALE_HANDLE;
+    std::array<PreviewEffectChainEntry, kMaxFxSlotsPerVoice> targets{};
+    std::copy(chain.begin(), chain.end(), targets.begin());
+    std::array<std::uint8_t, kMaxFxSlotsPerVoice> parameterMask{};
+    std::array<std::uint8_t, kMaxFxSlotsPerVoice> boundMask{};
+    std::uint32_t structureMask = 0;
+    constexpr auto scope = EffectParamTargetStore::Scope::Voice;
+    const auto generation = static_cast<std::uint32_t>(render >> 32);
+    std::uint32_t bypassMask = 0;
+    bool identical = true;
+    for (std::uint32_t i = 0; i < engine->config.fxSlotsPerVoice; ++i) {
+        const auto& ref = engine->voiceEffectInstanceRefs[row][i];
+        const auto& config = engine->effectSlotConfig[row][i];
+        const auto& target = targets[i];
+        if (config.params[0] != target.ceilingDb) parameterMask[i] |= 1;
+        if (config.params[1] != target.releaseMs) parameterMask[i] |= 2;
+        if (config.bypass != target.bypass) bypassMask |= 1u << i;
+        const bool same = ref.type == target.effectType && (ref.type == kEffectTypeNone ||
+            engine->effectBank.ObjectIdentity(ref).effectId == target.effectId);
+        if (!same) {
+            structureMask |= 1u << i;
+            if (engine->effectParamTargets.ForeignClaimInSlot(scope, render, generation, i))
+                return VN_BACKPRESSURE;
+            bool blocked = false;
+            engine->bindings.ForEachEffectInstallVariableDependency(scope, render, i, target.effectType,
+                [&](VnVariableId variable) { blocked |= engine->variables.BlocksVariableConsumer(variable); });
+            if (blocked) return VN_BACKPRESSURE;
+        } else if (target.effectType != kEffectTypeNone) {
+            for (std::uint32_t p = 0; p < 2; ++p) {
+                if ((parameterMask[i] & (1u << p)) == 0) continue;
+                if (engine->effectParamTargets.ForeignClaim(scope, render, generation, i, p))
+                    return VN_BACKPRESSURE;
+                if (engine->bindings.HasEffectParamBinding(scope, render, i, p, target.effectType))
+                    boundMask[i] |= 1u << p;
+            }
+        }
+        identical = identical && ref.type == target.effectType &&
+            (ref.type == kEffectTypeNone ||
+             (engine->effectBank.ObjectIdentity(ref).effectId == target.effectId && parameterMask[i] == 0)) &&
+            config.bypass == target.bypass;
+    }
+    if (identical) return VN_OK;
+    struct PreparedSeeds {
+        Engine& engine;
+        std::array<EffectParamTargetStore::PreparedSeedToken, kMaxFxSlotsPerVoice> tokens{};
+        ~PreparedSeeds() {
+            for (auto& token : tokens) engine.effectParamTargets.CancelPreparedInstalledEffectSeed(&token);
+        }
+    } seeds{*engine};
+    try {
+        for (std::uint32_t i = 0; i < engine->config.fxSlotsPerVoice; ++i) {
+            if ((structureMask & (1u << i)) == 0 || targets[i].effectType == kEffectTypeNone) continue;
+            const float values[]{targets[i].ceilingDb, targets[i].releaseMs};
+            if (!engine->effectParamTargets.PrepareInstalledEffectSeed(scope, render, generation,
+                    i, targets[i].effectType, values, 2, &seeds.tokens[i])) return VN_NO_EFFECT;
+        }
+    } catch (...) { return VN_DEVICE_ERROR; }
+    if (!AtomicBatchFitsCapacities(*engine, 1)) return VN_INVALID_CONFIG;
+    if (!AdmitSingleCommand(*engine)) return VN_BACKPRESSURE;
+    CommandQueue::BatchReservation reservation{};
+    if (!engine->commands.ReserveBatch(1, &reservation)) return VN_BACKPRESSURE;
+    engine->effectBank.DrainRetire();
+    engine->voices.DrainEffectChainUpdates();
+    engine->buses.DrainPreviewEffectChains();
+    EffectChainUpdate* update = nullptr;
+    auto dspMask = parameterMask;
+    for (std::uint32_t i = 0; i < engine->config.fxSlotsPerVoice; ++i)
+        dspMask[i] &= ~boundMask[i];
+    const auto prepared = engine->voices.PrepareEffectChainUpdate(render, targets,
+        engine->voiceEffectInstanceRefs[row], dspMask, bypassMask, engine->CurrentProjectId(), &update);
+    if (prepared != VN_OK) {
+        engine->commands.CancelReservedBatch(&reservation);
+        return prepared;
+    }
+    const auto refs = update->targetRefs;
+    const auto revision = update->targetRevision;
+    CommandRecord command{};
+    command.opcode = kOpcodeApplyPreviewEffectChain;
+    command.payload.applyPreviewEffectChain = {render, revision};
+    engine->voices.QueueEffectChainUpdate(*update);
+    if (!engine->commands.CommitReservedBatch(&reservation, &command)) {
+        engine->commands.CancelReservedBatch(&reservation);
+        engine->voices.CancelEffectChainUpdate(*update);
+        return VN_BACKPRESSURE;
+    }
+    update->acceptedHandle = render;
+    update->acceptedRevision = revision;
+    for (std::uint32_t i = 0; i < engine->config.fxSlotsPerVoice; ++i) {
+        if ((structureMask & (1u << i)) != 0) {
+            if (targets[i].effectType == kEffectTypeNone)
+                engine->effectParamTargets.ClearSlot(scope, render, generation, i);
+            else engine->effectParamTargets.CommitPreparedInstalledEffectSeed(&seeds.tokens[i]);
+        } else if (targets[i].effectType != kEffectTypeNone) {
+            const float values[]{targets[i].ceilingDb, targets[i].releaseMs};
+            for (std::uint32_t p = 0; p < 2; ++p) {
+                if ((parameterMask[i] & (1u << p)) == 0) continue;
+                if ((boundMask[i] & (1u << p)) != 0)
+                    engine->effectParamTargets.NoteDirectBound(scope, render, i, p, values[p]);
+                else engine->effectParamTargets.NoteDirect(scope, render, i, p, values[p], values[p]);
+            }
+        }
+    }
+    for (std::uint32_t i = 0; i < kMaxFxSlotsPerVoice; ++i) {
+        engine->effectSlotTypes[row][i] = targets[i].effectType;
+        engine->voiceEffectInstanceRefs[row][i] = refs[i];
+        auto& config = engine->effectSlotConfig[row][i];
+        config = {};
+        config.bypass = targets[i].bypass;
+        if (targets[i].effectType != kEffectTypeNone) {
+            config.params[0] = targets[i].ceilingDb;
+            config.params[1] = targets[i].releaseMs;
+            engine->effectBank.PublishInstalled(refs[i]);
+        }
+    }
+    return VN_OK;
 }
 
 VnResult SetPreviewVoiceProperty(std::uint64_t render,
@@ -111380,6 +111955,8 @@ VnResult Vn_Update(void) {
      * in-place replace): the audio thread never frees, so the logic side
      * returns each retired instance to its pool here. */
     engine->effectBank.DrainRetire();
+    engine->voices.DrainEffectChainUpdates();
+    engine->buses.DrainPreviewEffectChains();
     /* Hot-reload retirement detection: destroy every old content generation
      * whose last logical voice has drained. The audio thread only ever
      * decrements the shared use counters; all freeing happens here on the
@@ -116675,6 +117252,7 @@ VnResult Vn_SetBusEffect(VnBusId busId, uint32_t slot, VnEffectType type,
     std::uint32_t busIndex = harken::kInvalidBusIndex;
     const VnResult mutableBus = ResolveMutableBusProperties(*engine, busId, busIndex);
     if (mutableBus != VN_OK) return mutableBus;
+    if (engine->buses.PreviewEffectOwned(engine->buses.RefAt(busIndex))) return VN_IN_USE;
     if (engine->busEffectOwnerCookies[busIndex][slot] != 0) {
         return VN_IN_USE;
     }
@@ -116841,6 +117419,7 @@ VnResult Vn_ClearBusEffect(VnBusId busId, uint32_t slot) {
     std::uint32_t busIndex = harken::kInvalidBusIndex;
     const VnResult mutableBus = ResolveMutableBusProperties(*engine, busId, busIndex);
     if (mutableBus != VN_OK) return mutableBus;
+    if (engine->buses.PreviewEffectOwned(engine->buses.RefAt(busIndex))) return VN_IN_USE;
     if (engine->busEffectOwnerCookies[busIndex][slot] != 0) {
         return VN_IN_USE;
     }
@@ -116930,6 +117509,20 @@ VnResult Vn_ClearBusEffect(VnBusId busId, uint32_t slot) {
         return VN_DEVICE_ERROR;
     }}
 
+static VnResult SetPreviewBusEffectControl(harken::Engine& engine, std::uint32_t busIndex,
+    std::uint32_t slot, std::uint32_t parameter, float value, bool bypass) {
+    const auto host = engine.buses.RefAt(busIndex);
+    auto* state = engine.buses.PreviewEffectState(host);
+    if (state == nullptr || !engine.buses.PreviewEffectOwned(host)) return VN_IN_USE;
+    const auto& current = state->accepted[slot];
+    if (current.effectType != VN_EFFECT_LIMITER || (!bypass && parameter >= 2)) return VN_INVALID_ARG;
+    std::array<float, 2> parameters{current.ceilingDb, current.releaseMs};
+    if (!bypass) parameters[parameter] = value;
+    return harken::SetPreviewBusEffect(state->owner, engine.buses.IdAt(busIndex),
+        current.effectId, VN_EFFECT_LIMITER, parameters.data(), parameters.size(),
+        bypass ? parameter : static_cast<std::uint32_t>(current.bypass));
+}
+
 VnResult Vn_SetBusEffectParam(VnBusId busId, uint32_t slot, uint32_t paramIndex,
                               float value) {
     try {
@@ -116952,7 +117545,10 @@ VnResult Vn_SetBusEffectParam(VnBusId busId, uint32_t slot, uint32_t paramIndex,
     if (!std::isfinite(value)) {
         return VN_INVALID_ARG;
     }
-    std::uint32_t busIndex = harken::kInvalidBusIndex;
+    std::uint32_t busIndex = engine->buses.FindIndex(busId);
+    if (busIndex != harken::kInvalidBusIndex &&
+        engine->buses.PreviewEffectOwned(engine->buses.RefAt(busIndex)))
+        return SetPreviewBusEffectControl(*engine, busIndex, slot, paramIndex, value, false);
     const VnResult mutableBus = ResolveMutableBusProperties(*engine, busId, busIndex);
     if (mutableBus != VN_OK) return mutableBus;
     if (engine->busEffectOwnerCookies[busIndex][slot] != 0) {
@@ -117035,7 +117631,10 @@ VnResult Vn_SetBusEffectBypass(VnBusId busId, uint32_t slot,
     if (slot >= engine->config.fxSlotsPerBus) {
         return VN_INVALID_ARG;
     }
-    std::uint32_t busIndex = harken::kInvalidBusIndex;
+    std::uint32_t busIndex = engine->buses.FindIndex(busId);
+    if (busIndex != harken::kInvalidBusIndex &&
+        engine->buses.PreviewEffectOwned(engine->buses.RefAt(busIndex)))
+        return SetPreviewBusEffectControl(*engine, busIndex, slot, bypass01, 0, true);
     const VnResult mutableBus = ResolveMutableBusProperties(*engine, busId, busIndex);
     if (mutableBus != VN_OK) return mutableBus;
     if (engine->busEffectOwnerCookies[busIndex][slot] != 0) {
@@ -123359,6 +123958,16 @@ bool CombinedBusGraphAcyclic(const CombinedBusGraph& graph) {
     return count == n;
 }
 
+template<class AttachmentRange>
+bool PreviewBusEffectAttachmentConflict(const harken::Engine& engine, const AttachmentRange& attachments) {
+    for (const auto& attachment : attachments) {
+        if (attachment.scopeKind != VN_TARGET_SCOPE_BUS_EFFECT_PARAM) continue;
+        const auto ref = engine.buses.FindRef(attachment.objectId);
+        if (engine.buses.PreviewEffectOwned(ref)) return true;
+    }
+    return false;
+}
+
 VnResult ValidatePackBusEffectAttachment(
     const harken::Engine& engine, const harken::PackLogicImage& image,
     const harken::PackBindingAttachmentEntry& attachment) {
@@ -123371,6 +123980,7 @@ VnResult ValidatePackBusEffectAttachment(
         return VN_UNKNOWN_ID;
     }
 
+    if (engine.buses.PreviewEffectOwned(engine.buses.RefAt(busIndex))) return VN_IN_USE;
     const harken::BindingTable::Definition* definition = nullptr;
     bool packDefinitionFound = false;
     std::uint32_t targetId = 0;
@@ -124734,10 +125344,9 @@ VnResult ScreenPackRevision(Engine& engine, const PackLogicRecord& record,
                 ++heldByRevision;
             }
         }
-        if (newInstances[type] >
-            engine.effectBank.CapacityOf(type) -
-                    engine.effectBank.InUseOf(type) +
-                heldByRevision) {
+        const auto remaining = newInstances[type] > heldByRevision
+            ? newInstances[type] - heldByRevision : 0u;
+        if (remaining != 0 && !engine.effectBank.EnsureAvailable(type, remaining)) {
             return VN_NO_EFFECT;
         }
     }
@@ -126573,6 +127182,13 @@ VnResult ApplyPreparedPackTransaction(
         CancelRevisionAttenuationDiscrete(engine, revision);
         CancelRevisionBindings(engine, revision);
         return VN_BACKPRESSURE;
+    }
+
+    if (PreviewBusEffectAttachmentConflict(engine, image.bindingAttachments)) {
+        if (commandCount != 0) queueGuard.Cancel();
+        CancelRevisionAttenuationDiscrete(engine, revision);
+        CancelRevisionBindings(engine, revision);
+        return VN_IN_USE;
     }
 
     // The media generation swap is the final fallible operation. It guarantees
@@ -129376,10 +129992,6 @@ VnResult PrepareCanonicalBindingDiff(
                 break;
             }
         }
-        if (alreadyOwned && !detachingOwned &&
-            !identityWillChange(attachment.bindingId)) {
-            continue;
-        }
         if (attachment.scopeKind == VN_TARGET_SCOPE_BUS_EFFECT_PARAM) {
             const auto* definition =
                 FindImageBindingDefinition(*nextImage, attachment.bindingId);
@@ -129395,11 +130007,36 @@ VnResult PrepareCanonicalBindingDiff(
             if (bus != VN_OK) {
                 return bus;
             }
-            if (!engine.effectParamTargets.CanBind(
-                    EffectParamTargetStore::Scope::Bus, busIndex,
-                    UnpackEffectParamLocator(targetId))) {
+            if (engine.buses.PreviewEffectOwned(engine.buses.RefAt(busIndex))) return VN_IN_USE;
+            const auto locator = UnpackEffectParamLocator(targetId);
+            if (slotPlan != nullptr && busIndex < slotPlan->neutralSlots.size() &&
+                slotPlan->neutralSlots[busIndex] != 0) {
+                const auto matches = [&](const auto& row) {
+                    return row.busId == attachment.objectId && row.slot == locator.slot &&
+                        row.effectType == locator.effectType;
+                };
+                bool present = false;
+                if (nextImage->busDefinitionSnapshotHeader.publicationCapabilityVintage == 5) {
+                    const auto effect = std::find_if(nextImage->busDefinitionEffects.begin(),
+                        nextImage->busDefinitionEffects.end(), matches);
+                    present = effect != nextImage->busDefinitionEffects.end() &&
+                        locator.paramIndex < effect->parameterCount;
+                } else {
+                    const auto effect = std::find_if(nextImage->busEffects.begin(),
+                        nextImage->busEffects.end(), matches);
+                    present = effect != nextImage->busEffects.end() && locator.paramIndex < effect->paramCount;
+                }
+                const auto* meta = FindEffectParamMeta(locator.effectType, locator.paramIndex);
+                if (!present || meta == nullptr || meta->combine == EffectParamCombine::None)
+                    return VN_INVALID_ARG;
+            } else if (!engine.effectParamTargets.CanBind(
+                    EffectParamTargetStore::Scope::Bus, busIndex, locator)) {
                 return VN_INVALID_ARG;
             }
+        }
+        if (alreadyOwned && !detachingOwned &&
+            !identityWillChange(attachment.bindingId)) {
+            continue;
         }
         std::uint32_t busIndex = 0;
         const VnResult bus =
@@ -129651,6 +130288,9 @@ struct PreparedCanonicalPackSetV1 {
     Spatializer::PreparedProfileSet attenuation;
     PreparedCanonicalPublication publication;
     SlotPlanV1 slotPlan{};
+    std::unique_ptr<PreparedBusEffectsV1> busEffects;
+    bool requiresSoleMasterEffects = false;
+    std::vector<CommandRecord> commands;
     std::vector<float> authoredMixDb;
     std::vector<float> authoredOutputDb;
     std::vector<float> effectiveMixDb;
@@ -129703,12 +130343,14 @@ VnResult ValidateCanonicalVolumeBusProfile(const Engine& engine,
     if (!image.hasBusDefinitionSnapshot || header.schemaVersion != 2 ||
         header.storageModelVersion != 2 ||
         (header.publicationCapabilityVintage != 3 &&
-         header.publicationCapabilityVintage != 4) ||
+         header.publicationCapabilityVintage != 4 &&
+         header.publicationCapabilityVintage != 5) ||
         header.profileVintage != 1 || header.renderSampleRateHz == 0 ||
         header.renderSampleRateHz > 384000 || header.mixLayout == 0 ||
         header.deviceLayout == 0 ||
         (header.runtimeCapabilityMask & ~busfingerprint::kKnownTargetCapabilityMaskV1) != 0 ||
-        header.effectCount != 0 || header.effectParameterCount != 0 ||
+        (header.publicationCapabilityVintage != 5 &&
+         (header.effectCount != 0 || header.effectParameterCount != 0)) ||
         header.compileTargetProfileFingerprint != busfingerprint::ProfileFingerprintV1(
             header.profileVintage, header.renderSampleRateHz, header.mixLayout,
             header.deviceLayout, header.runtimeCapabilityMask)) {
@@ -129723,13 +130365,19 @@ VnResult ValidateCanonicalVolumeBusProfile(const Engine& engine,
     }
     if (image.busDefinitionBusesV2.size() != header.busCount ||
         image.busDefinitionSendsV2.size() != header.sendCount ||
+        image.busDefinitionEffects.size() != header.effectCount ||
+        image.busDefinitionEffectParameters.size() != header.effectParameterCount ||
         image.busDefinitionDownmixesV2.size() != header.downmixCount ||
         image.busDefinitionCoefficients.size() != header.coefficientCount) return VN_BAD_PACK;
     for (const auto& row : image.busDefinitionBusesV2) {
         const auto output = row.busId == VN_BUS_MASTER
             ? header.deviceLayout : header.mixLayout;
         if (row.faderAfterSlot != busfingerprint::kNeutralFaderAfterSlotV1 ||
-            row.outputLayout != output || row.effectFirst != 0 || row.effectCount != 0 ||
+            row.outputLayout != output ||
+            (header.publicationCapabilityVintage != 5 &&
+             (row.effectFirst != 0 || row.effectCount != 0)) ||
+            static_cast<std::uint64_t>(row.effectFirst) + row.effectCount >
+                image.busDefinitionEffects.size() ||
             row.downmixCount != 1 || row.downmixFirst >= image.busDefinitionDownmixesV2.size() ||
             !TryVolumeGainFromDb(row.faderDb) ||
             !TryVolumeGainFromDb(row.outputBusVolumeDb)) return VN_BAD_PACK;
@@ -129748,7 +130396,8 @@ VnResult ValidateCanonicalVolumeBusProfile(const Engine& engine,
                 return VN_BAD_PACK;
         }
     }
-    return CanonicalVolumeBusFingerprint(image) == header.publishedBusFingerprint &&
+    return CanonicalVolumeBusFingerprint(image, image.busDefinitionEffects,
+        image.busDefinitionEffectParameters) == header.publishedBusFingerprint &&
         header.contentGeneration == header.publishedBusFingerprint ? VN_OK : VN_BAD_PACK;
 }
 
@@ -129770,7 +130419,7 @@ VnResult ValidateCanonicalV2InitBusEntries(const PackCanonicalImage& init) {
             busfingerprint::CanonicalFloatBits(old.outputBusVolume) !=
                 busfingerprint::CanonicalFloatBits(row.outputBusVolumeDb)) return VN_BAD_PACK;
     }
-    if (init.busDefinitionSnapshotHeader.publicationCapabilityVintage == 4) {
+    if (init.busDefinitionSnapshotHeader.publicationCapabilityVintage >= 4) {
         std::map<std::pair<VnBusId, VnBusId>, std::uint32_t> sends;
         for (const auto& row : init.busSends) {
             if (!sends.emplace(std::make_pair(row.fromBusId, row.toBusId),
@@ -130312,7 +130961,7 @@ VnResult PreparePackGraphV1(Engine& engine, const PackCanonicalImage* image,
             static_cast<std::size_t>(oldSource) * sendSlots + chosen] != send.levelDb;
         out.slotPlan.sendLevelApply[flat] = static_cast<std::uint8_t>(changed);
         out.slotPlan.sendLevelRampMs[flat] = retained && changed && image != nullptr &&
-            image->busDefinitionSnapshotHeader.publicationCapabilityVintage == 4 ? 20u : 0u;
+            image->busDefinitionSnapshotHeader.publicationCapabilityVintage >= 4 ? 20u : 0u;
     }
     const auto capacity = engine.config.maxBuses;
     const auto oldCount = engine.buses.BusCount();
@@ -130339,7 +130988,9 @@ VnResult PreparePackGraphV1(Engine& engine, const PackCanonicalImage* image,
         }
     }
     out.slotPlan.neutralSlots.assign(capacity, 0);
-    if (volumeOnly) out.slotPlan.neutralSlots[0] = 1;
+    if (volumeOnly || (image == nullptr && oldHandle != 0 &&
+        std::any_of(engine.busEffectOwnerCookies[0].begin(), engine.busEffectOwnerCookies[0].end(),
+            [&](const auto owner) { return owner == oldHandle; }))) out.slotPlan.neutralSlots[0] = 1;
     out.slotPlan.migrationTargets.assign(capacity, 0);
     for (std::uint32_t slot = 0; slot < capacity; ++slot) {
         out.slotPlan.migrationTargets[slot] = slot;
@@ -130397,7 +131048,7 @@ VnResult PreparePackGraphV1(Engine& engine, const PackCanonicalImage* image,
     remapped.sendLevels = linear.data();
     FillLiveOrPreparedPlan(engine, engine.topologyPlans, out.planIndex, &remapped);
     if (image != nullptr &&
-        image->busDefinitionSnapshotHeader.publicationCapabilityVintage == 4) {
+        image->busDefinitionSnapshotHeader.publicationCapabilityVintage >= 4) {
         for (std::uint32_t slot = 0; slot < out.slotPlan.busCount; ++slot) {
             auto* ramps = engine.topologyPlans.SendLevelRampMsRow(out.planIndex, slot);
             for (std::uint32_t send = 0; send < sendSlots; ++send)
@@ -130406,6 +131057,44 @@ VnResult PreparePackGraphV1(Engine& engine, const PackCanonicalImage* image,
         }
     }
     out.volumeOnly = volumeOnly;
+    // Publication v5 owns its snapshot rows. Older publications retain their
+    // sidecar effects through the same atomic installer.
+    std::vector<PackBusDefinitionEffect> legacyEffects;
+    std::vector<PackBusDefinitionEffectParameter> legacyParameters;
+    if (image != nullptr && image->busDefinitionSnapshotHeader.publicationCapabilityVintage < 5) {
+        for (const auto& effect : image->busEffects) {
+            const auto first = static_cast<std::uint32_t>(legacyParameters.size());
+            legacyEffects.push_back({effect.busId, effect.effectId, effect.slot,
+                effect.effectType, effect.descriptorVintage, effect.bypass, first, effect.paramCount});
+            for (std::uint32_t p = 0; p < effect.paramCount; ++p)
+                legacyParameters.push_back({p, effect.params[p]});
+        }
+    }
+    out.busEffects = std::make_unique<PreparedBusEffectsV1>();
+    const bool snapshotEffects = image != nullptr &&
+        image->busDefinitionSnapshotHeader.publicationCapabilityVintage == 5;
+    const bool masterEffects = snapshotEffects
+        ? std::any_of(image->busDefinitionEffects.begin(), image->busDefinitionEffects.end(),
+            [](const auto& row) { return row.busId == VN_BUS_MASTER; })
+        : std::any_of(legacyEffects.begin(), legacyEffects.end(),
+            [](const auto& row) { return row.busId == VN_BUS_MASTER; });
+    if (masterEffects && !PreviewOwnsSoleMasterV1(engine, kCanonicalPackSetMasterOwnerId))
+        return VN_IN_USE;
+    out.requiresSoleMasterEffects = masterEffects;
+    for (const auto& removed : out.slotPlan.removed)
+        if (!CanResetVolumeOnlyNonVolumePropertiesV2(engine, removed.slot, oldHandle, oldHandle))
+            return VN_IN_USE;
+    if (image == nullptr) {
+        if (out.slotPlan.neutralSlots[0] != 0 &&
+            !CanResetVolumeOnlyNonVolumePropertiesV2(engine, 0, oldHandle, oldHandle)) return VN_IN_USE;
+    }
+    const auto effects = out.busEffects->Prepare(engine, out.slotPlan,
+        snapshotEffects ? std::span<const PackBusDefinitionEffect>(image->busDefinitionEffects)
+                        : std::span<const PackBusDefinitionEffect>(legacyEffects),
+        snapshotEffects ? std::span<const PackBusDefinitionEffectParameter>(image->busDefinitionEffectParameters)
+                        : std::span<const PackBusDefinitionEffectParameter>(legacyParameters),
+        oldHandle, image != nullptr ? initHandle : 0);
+    if (effects != VN_OK) return effects;
     if (volumeOnly) {
         out.authoredMixDb.assign(capacity, 0.0f);
         out.authoredOutputDb.assign(capacity, 0.0f);
@@ -130423,7 +131112,8 @@ VnResult PreparePackGraphV1(Engine& engine, const PackCanonicalImage* image,
                 engine.buses.AliveAt(slot) && engine.buses.IdAt(slot) == row.busId &&
                 engine.buses.GenerationAt(slot) == out.slotPlan.generations[slot];
             if (retained && !CanResetVolumeOnlyNonVolumePropertiesV2(
-                    engine, slot, allowedCookie)) return VN_IN_USE;
+                    engine, slot, allowedCookie, out.busEffects ? allowedCookie : 0))
+                return VN_IN_USE;
             const float effectiveMix = retained
                 ? engine.busTargets.ReduceWithSlot(slot, kBusTargetBusVolume,
                     BusTargetStore::kSlotAuthoredIndex, authoredMix) : authoredMix;
@@ -130439,7 +131129,8 @@ VnResult PreparePackGraphV1(Engine& engine, const PackCanonicalImage* image,
             out.effectiveMixDb[slot] = effectiveMix;
             out.effectiveOutputDb[slot] = effectiveOutput;
             engine.topologyPlans.BusVolumeApplyData(out.planIndex)[slot] =
-                kApplyBusNeutralProperties | kApplyBusVolume | kApplyBusOutputVolume;
+                (out.busEffects ? 0 : kApplyBusNeutralProperties) |
+                kApplyBusVolume | kApplyBusOutputVolume;
             engine.topologyPlans.PreparedBusVolumeDbData(out.planIndex)[slot] = effectiveMix;
             engine.topologyPlans.PreparedBusOutputVolumeDbData(out.planIndex)[slot] = effectiveOutput;
             engine.topologyPlans.PreparedBusVolumeRampMsData(out.planIndex)[slot] = 0;
@@ -130459,7 +131150,17 @@ VnResult PreparePackGraphV1(Engine& engine, const PackCanonicalImage* image,
         engine.topologyPlans.MigrationTargetsData(out.planIndex)[slot] =
             out.slotPlan.migrationTargets.empty() ? slot : out.slotPlan.migrationTargets[slot];
     }
-    if (!AdmitSingleLiveCommand(engine) || !engine.commands.ReserveBatch(1, &out.reservation)) {
+    out.commands.resize(1);
+    if (out.busEffects) {
+        const auto effects = out.busEffects->Commands();
+        out.commands.insert(out.commands.end(), effects.begin(), effects.end());
+    }
+    if (out.commands.size() > UINT32_MAX ||
+        !AtomicBatchFitsCapacities(engine, static_cast<std::uint32_t>(out.commands.size())))
+        return VN_INVALID_CONFIG;
+    const auto commandCount = static_cast<std::uint32_t>(out.commands.size());
+    if (!AdmitCommandBatch(engine, commandCount) ||
+        !engine.commands.ReserveBatch(commandCount, &out.reservation)) {
         return VN_BACKPRESSURE;
     }
     if (!PrepareUnpublishedTimelineRoutingV1(engine, engine.topologyPlans.View(out.planIndex),
@@ -130565,6 +131266,16 @@ VnResult ProjectCanonicalVolumeBindingsV2(Engine& engine,
 
 bool CanCommitCanonicalVolumesV2(const Engine& engine,
                                   const PreparedCanonicalPackSetV1& prepared) noexcept {
+    if (prepared.requiresSoleMasterEffects &&
+        !PreviewOwnsSoleMasterV1(engine, kCanonicalPackSetMasterOwnerId)) return false;
+    if (prepared.busEffects && !prepared.busEffects->CanCommit()) return false;
+    if (prepared.basePublication != nullptr) {
+        const auto owner = prepared.basePublication->initHandle;
+        for (const auto& removed : prepared.slotPlan.removed)
+            if (!CanResetVolumeOnlyNonVolumePropertiesV2(engine, removed.slot, owner, owner)) return false;
+        if (!prepared.volumeOnly && !prepared.slotPlan.neutralSlots.empty() && prepared.slotPlan.neutralSlots[0] != 0 &&
+            !CanResetVolumeOnlyNonVolumePropertiesV2(engine, 0, owner, owner)) return false;
+    }
     if (!prepared.volumeOnly) return true;
     if (!SlotPlanMatchesLive(engine, prepared.slotPlan) ||
         !ValidateTopologyPlanVolumesV1(engine.topologyPlans.View(prepared.planIndex)) ||
@@ -130602,7 +131313,8 @@ bool CanCommitCanonicalVolumesV2(const Engine& engine,
             engine.buses.AliveAt(slot) && engine.buses.IdAt(slot) == row.busId &&
             engine.buses.GenerationAt(slot) == prepared.slotPlan.generations[slot];
         if (retained && !CanResetVolumeOnlyNonVolumePropertiesV2(
-                engine, slot, allowedCookie)) return false;
+                engine, slot, allowedCookie, prepared.busEffects ? allowedCookie : 0))
+            return false;
         const float mix = prepared.effectiveMixDb[slot];
         const float output = prepared.effectiveOutputDb[slot];
         if (!TryVolumeGainFromDb(mix) || !TryVolumeGainFromDb(output) ||
@@ -130657,7 +131369,8 @@ void CommitCanonicalPackSet(Engine& engine, PreparedCanonicalPackSetV1& prepared
                     [&](const auto& assignment) {
                         return assignment.slot == slot && assignment.retain != 0;
                     });
-                if (retained) ResetVolumeOnlyNonVolumePropertiesV2(engine, slot);
+                if (retained) ResetVolumeOnlyNonVolumePropertiesV2(
+                    engine, slot, prepared.busEffects != nullptr);
                 else ResetNeutralBusPropertiesV1(engine, slot);
                 engine.busTargets.SetSlot(slot, kBusTargetBusVolume,
                     BusTargetStore::kSlotAuthoredIndex, prepared.authoredMixDb[slot]);
@@ -130683,15 +131396,17 @@ void CommitCanonicalPackSet(Engine& engine, PreparedCanonicalPackSetV1& prepared
                 }
             }
         }
-        CommandRecord command{};
+        if (prepared.busEffects) prepared.busEffects->Commit();
+        auto& command = prepared.commands.front();
         command.opcode = kOpcodeSetBusTopologyPlan;
         command.payload.setBusTopologyPlan.planIndex = prepared.planIndex;
         command.payload.setBusTopologyPlan.dynamicRoutePlanIndex = kInvalidDynamicRoutePlanIndex;
         command.payload.setBusTopologyPlan.connectFrom = kInvalidBusIndex;
         command.payload.setBusTopologyPlan.connectTo = kInvalidBusIndex;
         command.payload.setBusTopologyPlan.acceptedGraphRevision = acceptedRevision;
-        command.payload.setBusTopologyPlan.batchCommandCount = 1;
-        engine.commands.CommitPreparedBatch(&prepared.reservation, &command);
+        command.payload.setBusTopologyPlan.batchCommandCount =
+            static_cast<std::uint32_t>(prepared.commands.size());
+        engine.commands.CommitPreparedBatch(&prepared.reservation, prepared.commands.data());
         ++engine.acceptedBusTopologyRevision;
         prepared.planIndex = kInvalidTopologyPlanIndex;
     } else {
@@ -130867,7 +131582,7 @@ VnResult PrepareCanonicalSetActivation(Engine& engine,
         owners.push_back(std::move(owner));
     }
     const auto fingerprint = NeutralMasterFingerprintV1(engine);
-    if (!PreviewMasterCompatible(engine, fingerprint)) {
+    if (!PreviewMasterCompatible(engine, fingerprint, kCanonicalPackSetMasterOwnerId)) {
         return VN_IN_USE;
     }
     if (!out->preserveInit) {
@@ -131247,7 +131962,13 @@ VnResult ActivateCanonicalPackSetImpl(
                 if (PackFault(PackStagingFault::AfterAllPreparedBeforeCommit)) {
                     return VN_PACK_RESIDENT_CAPACITY;
                 }
-                if (!CanCommitCanonicalVolumesV2(engine, prepared) ||
+                for (const auto& member : prepared.members)
+                    if (PreviewBusEffectAttachmentConflict(engine, member.image.bindingAttachments))
+                        return VN_IN_USE;
+                if (!PreviewMasterCompatible(engine,
+                        prepared.publication.composition.Published()->ledger.masterFingerprint,
+                        kCanonicalPackSetMasterOwnerId) ||
+                    !CanCommitCanonicalVolumesV2(engine, prepared) ||
                     !CanCommitSignals(engine, prepared.publication.signals) ||
                     engine.packComposition.Published() != prepared.basePublication ||
                     engine.packComposition.CompositeGeneration() !=
@@ -131526,6 +132247,7 @@ VnResult UnloadCanonicalPackSetV1(Engine& engine,
             if (PackFault(PackStagingFault::AfterAllPreparedBeforeCommit)) {
                 return VN_PACK_RESIDENT_CAPACITY;
             }
+            if (!CanCommitCanonicalVolumesV2(engine, prepared)) return VN_BACKPRESSURE;
             commit = true;
             return VN_OK;
         }();

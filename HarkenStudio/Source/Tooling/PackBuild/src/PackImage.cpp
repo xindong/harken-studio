@@ -760,10 +760,48 @@ PackResult ParseVariableRequirementsPayload(
 
 
 
+struct PackEffectPresetReader {
+    PackEffectPreset& preset;
+    auto& Value() noexcept { return preset.header; }
+    auto& Header() noexcept { return preset.header; }
+    bool PrepareParameters(std::uint64_t count) noexcept { return count == preset.parameters.size(); }
+    auto& Parameters(std::uint64_t i) noexcept { return preset.parameters[static_cast<std::size_t>(i)]; }
+    bool Finish() noexcept { return true; }
+};
+
+PackResult ParseEffectPresetPayload(const std::uint8_t* payload, std::uint64_t size,
+    PackEffectPreset& preset) {
+    if (size < kPackEffectPresetHeaderBytes ||
+        !ParsePackEffectPresetHeader(payload, kPackEffectPresetHeaderBytes, &preset.header))
+        return kPackInvalid;
+    const auto& header = preset.header;
+    const auto* schema = FindPackEffectSchemaByType(header.effectType);
+    if (header.presetId == harkenstudio::ObjectId{} || !schema ||
+        header.descriptorVintage != schema->descriptorVintage ||
+        header.paramCount != schema->paramCount ||
+        size != kPackEffectPresetHeaderBytes +
+            static_cast<std::uint64_t>(header.paramCount) * kPackEffectPresetParameterBytes)
+        return kPackInvalid;
+    preset.parameters.resize(header.paramCount);
+    PackWireBuffer<const std::uint8_t> input{payload, size};
+    PackEffectPresetReader visitor{preset};
+    if (!ReadPackEffectPreset(input, visitor) || input.offset != size) return kPackInvalid;
+    for (std::uint32_t i = 0; i < header.paramCount; ++i) {
+        const auto& parameter = preset.parameters[i];
+        float value = 0.0f;
+        std::memcpy(&value, &parameter.valueBits, sizeof(value));
+        if (parameter.paramId != i || !PackEffectParamInAuthoredRange(header.effectType, i, value))
+            return kPackInvalid;
+    }
+    return kPackOk;
+}
+
 struct PackBusDefinitionSnapshotReader {
     PackBusDefinitionSnapshotHeader& header;
     std::vector<PackBusDefinitionBus>& buses;
     std::vector<PackBusDefinitionSend>& sends;
+    std::vector<PackBusDefinitionEffect>& effects;
+    std::vector<PackBusDefinitionEffectParameter>& effectParameters;
     std::vector<PackBusDefinitionDownmix>& downmixes;
     std::vector<float>& coefficients;
     auto& Value() noexcept { return header; }
@@ -772,6 +810,10 @@ struct PackBusDefinitionSnapshotReader {
     auto& Buses(std::uint64_t i) noexcept { return buses[static_cast<std::size_t>(i)]; }
     bool PrepareSends(std::uint64_t count) noexcept { return count == sends.size(); }
     auto& Sends(std::uint64_t i) noexcept { return sends[static_cast<std::size_t>(i)]; }
+    bool PrepareEffects(std::uint64_t count) noexcept { return count == effects.size(); }
+    auto& Effects(std::uint64_t i) noexcept { return effects[static_cast<std::size_t>(i)]; }
+    bool PrepareEffectParameters(std::uint64_t count) noexcept { return count == effectParameters.size(); }
+    auto& EffectParameters(std::uint64_t i) noexcept { return effectParameters[static_cast<std::size_t>(i)]; }
     bool PrepareDownmixes(std::uint64_t count) noexcept { return count == downmixes.size(); }
     auto& Downmixes(std::uint64_t i) noexcept { return downmixes[static_cast<std::size_t>(i)]; }
     bool PrepareCoefficients(std::uint64_t count) noexcept { return count == coefficients.size(); }
@@ -784,7 +826,9 @@ harkenstudiobuild::PackResult ParseBusDefinitionSnapshotPayload(
     PackBusDefinitionSnapshotHeader header;
     if (!ReadPackBusDefinitionSnapshotHeader(payload, size, &header) ||
         header.busCount == 0 || header.busCount > 4096 ||
-        header.effectCount != 0 || header.effectParameterCount != 0 ||
+        (header.publicationCapabilityVintage != 5 &&
+         (header.effectCount != 0 || header.effectParameterCount != 0)) ||
+        header.effectCount > static_cast<std::uint64_t>(header.busCount) * kMaxFxSlotsPerBus ||
         header.downmixCount != header.busCount ||
         header.coefficientCount != static_cast<std::uint64_t>(header.busCount) * 64) {
         return kPackInvalid;
@@ -792,10 +836,12 @@ harkenstudiobuild::PackResult ParseBusDefinitionSnapshotPayload(
     if (!ValidatePackBusDefinitionSnapshotLayout(header, size)) return kPackInvalid;
     std::vector<PackBusDefinitionBus> buses(header.busCount);
     std::vector<PackBusDefinitionSend> sends(header.sendCount);
+    std::vector<PackBusDefinitionEffect> effects(header.effectCount);
+    std::vector<PackBusDefinitionEffectParameter> effectParameters(header.effectParameterCount);
     std::vector<PackBusDefinitionDownmix> downmixes(header.downmixCount);
     std::vector<float> coefficients(header.coefficientCount);
     PackWireBuffer<const std::uint8_t> input{payload, size};
-    PackBusDefinitionSnapshotReader visitor{header, buses, sends, downmixes, coefficients};
+    PackBusDefinitionSnapshotReader visitor{header, buses, sends, effects, effectParameters, downmixes, coefficients};
     if (!ReadPackBusDefinitionSnapshot(input, visitor) || input.offset != size) return kPackInvalid;
     std::set<harkenstudio::ObjectId> ids;
     for (std::uint32_t i = 0; i < header.busCount; ++i) {
@@ -804,18 +850,52 @@ harkenstudiobuild::PackResult ParseBusDefinitionSnapshotPayload(
             !std::isfinite(row.faderDb) || row.faderDb < -96.0f || row.faderDb > 24.0f ||
             !std::isfinite(row.outputBusVolumeDb) ||
             !std::isfinite(std::pow(10.0f, row.outputBusVolumeDb / 20.0f)) ||
-            row.effectFirst != 0 || row.effectCount != 0 ||
+            (header.publicationCapabilityVintage != 5 &&
+             (row.effectFirst != 0 || row.effectCount != 0)) ||
+            (header.publicationCapabilityVintage == 5 && row.faderAfterSlot != 8) ||
+            row.effectFirst > effects.size() || row.effectCount > effects.size() - row.effectFirst ||
             row.downmixCount != 1 || row.downmixFirst != i) {
             return kPackInvalid;
         }
     }
     if (!ValidateCanonicalBusParentForestV2(buses)) return kPackInvalid;
+    std::set<harkenstudio::ObjectId> effectIds;
+    std::size_t nextEffect = 0;
+    std::size_t nextParameter = 0;
+    for (const auto& bus : buses) {
+        if (bus.busId == harkenstudio::kMasterBusObjectId) {
+            if (bus.effectFirst != 0 || bus.effectCount != 0) return kPackInvalid;
+            continue;
+        }
+        if (bus.effectFirst != nextEffect) return kPackInvalid;
+        for (std::uint32_t offset = 0; offset < bus.effectCount; ++offset) {
+            const auto& effect = effects[nextEffect++];
+            const auto* schema = FindPackEffectSchemaByType(effect.effectType);
+            if (effect.busId != bus.busId || harkenstudio::IsNull(effect.effectId) ||
+                !effectIds.insert(effect.effectId).second || effect.slot >= kMaxFxSlotsPerBus ||
+                (offset != 0 && effects[nextEffect - 2].slot >= effect.slot) ||
+                (effect.flags & ~1u) != 0 || !schema ||
+                effect.descriptorVintage != schema->descriptorVintage ||
+                effect.parameterCount != schema->paramCount ||
+                effect.parameterFirst != nextParameter ||
+                effect.parameterCount > effectParameters.size() - nextParameter ||
+                (header.runtimeCapabilityMask & (UINT64_C(1) << 19)) == 0 ||
+                (header.runtimeCapabilityMask & (UINT64_C(1) << (32 + effect.effectType))) == 0)
+                return kPackInvalid;
+            for (std::uint32_t index = 0; index < effect.parameterCount; ++index) {
+                const auto& parameter = effectParameters[nextParameter++];
+                if (parameter.index != index || !PackEffectParamInAuthoredRange(
+                        effect.effectType, index, parameter.value)) return kPackInvalid;
+            }
+        }
+    }
+    if (nextEffect != effects.size() || nextParameter != effectParameters.size()) return kPackInvalid;
     std::set<std::pair<harkenstudio::ObjectId, harkenstudio::ObjectId>> sendEdges;
     for (std::uint32_t i = 0; i < header.sendCount; ++i) {
         const auto& row = sends[i];
         if (!ids.contains(row.source) || !ids.contains(row.target) ||
             row.source == row.target ||
-            (header.publicationCapabilityVintage == 4 &&
+            (header.publicationCapabilityVintage >= 4 &&
              row.target == harkenstudio::kMasterBusObjectId) ||
             (header.publicationCapabilityVintage == 3 ? row.levelDb != 0.0f :
                 (!std::isfinite(row.levelDb) || row.levelDb < -96.0f ||
@@ -825,7 +905,7 @@ harkenstudiobuild::PackResult ParseBusDefinitionSnapshotPayload(
             return kPackInvalid;
         }
     }
-    if (header.publicationCapabilityVintage == 4 &&
+    if (header.publicationCapabilityVintage >= 4 &&
         !ValidateCanonicalBusSendGraphV2(buses, sends)) return kPackInvalid;
     for (std::uint32_t i = 0; i < header.downmixCount; ++i) {
         const auto& row = downmixes[i];
@@ -841,9 +921,12 @@ harkenstudiobuild::PackResult ParseBusDefinitionSnapshotPayload(
     image->busDefinitionSnapshotHeader = header;
     image->busDefinitionBusesV2 = std::move(buses);
     image->busDefinitionSendsV2 = std::move(sends);
+    image->busDefinitionEffects = std::move(effects);
+    image->busDefinitionEffectParameters = std::move(effectParameters);
     image->busDefinitionDownmixesV2 = std::move(downmixes);
     image->busDefinitionCoefficients = std::move(coefficients);
-    return CanonicalVolumeBusFingerprint(*image) == header.publishedBusFingerprint &&
+    return CanonicalVolumeBusFingerprint(*image, image->busDefinitionEffects,
+        image->busDefinitionEffectParameters) == header.publishedBusFingerprint &&
         header.contentGeneration == header.publishedBusFingerprint
         ? kPackOk : kPackInvalid;
 }
@@ -867,6 +950,8 @@ bool CanonicalKindLegal(std::uint32_t entryKind, std::uint32_t packKind,
     case kPackEntryKindPackRequirementBlock:
     case kPackEntryKindPackDependencyEdge:
         return PackIsCanonicalKind(packKind);
+    case kPackEntryKindEffectPreset:
+        return packKind == kPackKindInit;
     case kPackEntryKindBusDefinitionSnapshot:
         return packKind == kPackKindInit;
     case kPackEntryKindVariablePolicyOverlay:
@@ -1179,6 +1264,17 @@ harkenstudiobuild::PackResult ParsePackCanonicalImage(const std::uint8_t* bytes,
             }
             ++sendOrdinal;
             image.busSends.push_back(send);
+            break;
+        }
+        case kPackEntryKindEffectPreset: {
+            PackEffectPreset preset;
+            if (header.packKind != kPackKindInit ||
+                ParseEffectPresetPayload(payload, entry.size, preset) != kPackOk ||
+                preset.header.presetId != entry.id || entry.relationOrdinal != 0 ||
+                std::any_of(image.effectPresets.begin(), image.effectPresets.end(),
+                    [&](const auto& existing) { return existing.header.presetId == entry.id; }))
+                return kPackInvalid;
+            image.effectPresets.push_back(std::move(preset));
             break;
         }
         case kPackEntryKindAttenuation: {

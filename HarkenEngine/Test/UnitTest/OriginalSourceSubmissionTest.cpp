@@ -1,3 +1,4 @@
+#include "Common/EffectPoolTestAccess.h"
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
 #include "Engine.h"
@@ -216,7 +217,7 @@ void CheckCompletedDisposition(harken::Engine& engine, const SourceBody& body,
 void RecycleExactRetirement(harken::Engine& engine, const SourceBody& body) {
     unsigned exact = 0, others = 0;
     harken::EffectInstanceRef retired{};
-    while (engine.effectBank.RetireQueue().TryPop(retired)) {
+    while (harken::detail::EffectPoolTestAccess::RetireLane(engine.effectBank, body.incoming).TryPop(retired)) {
         if (Registry::SameEffect(retired, body.incoming)) ++exact;
         else ++others;
         engine.effectBank.Recycle(retired);
@@ -224,7 +225,7 @@ void RecycleExactRetirement(harken::Engine& engine, const SourceBody& body) {
     EXPECT_EQ(1u, exact);
     EXPECT_EQ(0u, others);
     EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_GAIN));
-    EXPECT_FALSE(engine.effectBank.RetireQueue().TryPop(retired));
+    EXPECT_FALSE(harken::detail::EffectPoolTestAccess::RetireLane(engine.effectBank, body.incoming).TryPop(retired));
 }
 
 void RetireSource(harken::Engine& engine, const SourceBody& body, bool cancelled,
@@ -602,7 +603,7 @@ TEST(OriginalSourceSubmission, FinalSourcePartialMetadataWaitsForEffectRetiremen
     // Fault-inject retire-channel saturation. Placeholders own no effect instance.
     const harken::EffectInstanceRef placeholder{};
     std::uint32_t filled = 0;
-    while (engine.effectBank.RetireQueue().TryPush(placeholder)) ++filled;
+    while (harken::detail::EffectPoolTestAccess::RetireLane(engine.effectBank, oldEffect).TryPush(placeholder)) ++filled;
     ASSERT_GT(filled, 0u);
     const auto before = engine.mixer.BlocksRendered();
     engine.nullBackend.Pump(1);
@@ -616,7 +617,7 @@ TEST(OriginalSourceSubmission, FinalSourcePartialMetadataWaitsForEffectRetiremen
     EXPECT_FALSE(engine.originalSourceSubmissions.IsOriginalInstalledSourceCurrent(original, body.source));
     EXPECT_NEAR(body.baseline * 0.5f, CurrentPeak(engine), 0.00001f);
     harken::EffectInstanceRef returned{};
-    ASSERT_TRUE(engine.effectBank.RetireQueue().TryPop(returned));
+    ASSERT_TRUE(harken::detail::EffectPoolTestAccess::RetireLane(engine.effectBank, oldEffect).TryPop(returned));
     ASSERT_TRUE(Registry::SameEffect(placeholder, returned));
     engine.nullBackend.Pump(1);
     EXPECT_EQ(body.acceptedHead, engine.commands.ConsumedCount());
@@ -626,7 +627,7 @@ TEST(OriginalSourceSubmission, FinalSourcePartialMetadataWaitsForEffectRetiremen
     EXPECT_TRUE(engine.originalSourceSubmissions.IsOriginalInstalledSourceCurrent(original, body.source));
     EXPECT_TRUE(Registry::SameEffect(body.incoming, engine.voices.Resolve(body.independent)->fxSlotEffectRef[0]));
     std::uint32_t placeholders = 0, retired = 0;
-    while (engine.effectBank.RetireQueue().TryPop(returned)) {
+    while (harken::detail::EffectPoolTestAccess::RetireLane(engine.effectBank, oldEffect).TryPop(returned)) {
         if (Registry::SameEffect(placeholder, returned)) ++placeholders;
         else {
             EXPECT_TRUE(Registry::SameEffect(oldEffect, returned));
@@ -679,7 +680,7 @@ TEST(OriginalSourceSubmission, CancelTransfersCrossTargetEffectUntilActualTarget
     EXPECT_TRUE(Registry::SameEffect(body.incoming, target->fxSlotEffectRef[0]));
     EXPECT_EQ(1u, engine.effectBank.InUseOf(VN_EFFECT_GAIN));
     harken::EffectInstanceRef premature{};
-    EXPECT_FALSE(engine.effectBank.RetireQueue().TryPop(premature));
+    EXPECT_FALSE(harken::detail::EffectPoolTestAccess::RetireLane(engine.effectBank, body.incoming).TryPop(premature));
     ASSERT_NO_FATAL_FAILURE(RetireSource(engine, body, true));
     ASSERT_EQ(VN_OK, Vn_Stop(body.independentPublic, 0));
     const auto before = engine.mixer.BlocksRendered();

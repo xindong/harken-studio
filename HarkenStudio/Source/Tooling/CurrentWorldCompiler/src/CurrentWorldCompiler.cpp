@@ -442,9 +442,13 @@ CompileResultV1 CompileCurrentWorldV1(
                 harkenstudiobuild::EffectNodeV1 node{};
                 node.nodeId = sourceNode.nodeId;
                 node.effectId = sourceNode.effectId;
-                node.effectType = sourceNode.effectType;
+                node.effectType = harkenstudio::IsNull(sourceNode.presetId)
+                    ? sourceNode.effectType : harkenstudiobuild::kPackEffectPresetReferenceType;
+                node.flags = sourceNode.flags;
+                node.presetId = sourceNode.presetId;
                 output.effectNodes.push_back(node);
-                auto params = sourceNode.params;
+                auto params = harkenstudio::IsNull(sourceNode.presetId)
+                    ? sourceNode.params : std::vector<harkenprojectschema::EffectParam>{};
                 std::sort(params.begin(), params.end(),
                           [](const auto& a, const auto& b) {
                               return a.paramId < b.paramId;

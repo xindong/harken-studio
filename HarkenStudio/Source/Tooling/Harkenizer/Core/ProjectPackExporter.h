@@ -319,6 +319,9 @@ private:
                        PlatformScope scope, QString* errorOut);
     void CollectAttenuations(const ProjectData& project,
                                      HarkenEditor::Bridge::PackBuildSession& builder);
+    bool CollectEffectPresets(const ProjectData& project,
+                             HarkenEditor::Bridge::PackBuildSession& builder,
+                             QString* errorOut);
     bool CollectTypedBindings(const ProjectData& project,
                               HarkenEditor::Bridge::PackBuildSession& builder,
                               const std::set<harkenstudio::ObjectId>* allowedRuntimeObjectIds = nullptr,

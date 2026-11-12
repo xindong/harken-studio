@@ -106,6 +106,10 @@ struct PackBusDefinitionSnapshotWriter {
     const auto& Buses(std::uint64_t i) noexcept { return image.busDefinitionBusesV2[static_cast<std::size_t>(i)]; }
     bool PrepareSends(std::uint64_t count) noexcept { return count == image.busDefinitionSendsV2.size(); }
     const auto& Sends(std::uint64_t i) noexcept { return image.busDefinitionSendsV2[static_cast<std::size_t>(i)]; }
+    bool PrepareEffects(std::uint64_t count) noexcept { return count == image.busDefinitionEffects.size(); }
+    const auto& Effects(std::uint64_t i) noexcept { return image.busDefinitionEffects[static_cast<std::size_t>(i)]; }
+    bool PrepareEffectParameters(std::uint64_t count) noexcept { return count == image.busDefinitionEffectParameters.size(); }
+    const auto& EffectParameters(std::uint64_t i) noexcept { return image.busDefinitionEffectParameters[static_cast<std::size_t>(i)]; }
     bool PrepareDownmixes(std::uint64_t count) noexcept { return count == image.busDefinitionDownmixesV2.size(); }
     const auto& Downmixes(std::uint64_t i) noexcept { return image.busDefinitionDownmixesV2[static_cast<std::size_t>(i)]; }
     bool PrepareCoefficients(std::uint64_t count) noexcept { return count == image.busDefinitionCoefficients.size(); }
@@ -138,13 +142,15 @@ inline std::vector<std::uint8_t> NeutralMasterSnapshotPayload(
 inline std::vector<std::uint8_t> VolumeBusSnapshotPayload(
     const harkenbuscompiler::PublishedBusProjectionV1& projection) {
     using namespace harkenbuscompiler;
-    if (projection.capabilityVintage !=
+    const bool hasEffects = projection.capabilityVintage ==
+        BusPublicationCapabilityVintageV1::TopologyVolumeSendAndEffectsNeutralOtherProperties;
+    if ((projection.capabilityVintage !=
             BusPublicationCapabilityVintageV1::TopologyAndVolumeNeutralOtherProperties &&
          projection.capabilityVintage !=
-            BusPublicationCapabilityVintageV1::TopologyVolumeAndSendNeutralOtherProperties ||
+            BusPublicationCapabilityVintageV1::TopologyVolumeAndSendNeutralOtherProperties && !hasEffects) ||
         !projection.compileTargetProfile || projection.fingerprint == 0 ||
-        projection.buses.empty() || projection.effects.size() != 0 ||
-        projection.effectParameters.size() != 0 ||
+        projection.buses.empty() || (!hasEffects && (!projection.effects.empty() ||
+        !projection.effectParameters.empty())) ||
         projection.downmix.size() != projection.buses.size() ||
         projection.downmixCoefficients.size() != projection.buses.size() * 64) {
         return {};
@@ -167,6 +173,8 @@ inline std::vector<std::uint8_t> VolumeBusSnapshotPayload(
     header.compileTargetProfileFingerprint = projection.compileTargetProfileFingerprint;
     header.busCount = static_cast<std::uint32_t>(projection.buses.size());
     header.sendCount = static_cast<std::uint32_t>(projection.sends.size());
+    header.effectCount = static_cast<std::uint32_t>(projection.effects.size());
+    header.effectParameterCount = static_cast<std::uint32_t>(projection.effectParameters.size());
     header.downmixCount = static_cast<std::uint32_t>(projection.downmix.size());
     header.coefficientCount = static_cast<std::uint32_t>(projection.downmixCoefficients.size());
     header.busRowBytes = kPackBusDefinitionBusBytes;
@@ -183,12 +191,20 @@ inline std::vector<std::uint8_t> VolumeBusSnapshotPayload(
         image.busDefinitionSendsV2.push_back({send.sourceBusId,
             send.targetBusId, send.sendLevelDb});
     }
+    for (const auto& effect : projection.effects) {
+        image.busDefinitionEffects.push_back({effect.busId, effect.effectId,
+            effect.slot, effect.effectType, effect.descriptorVintage, effect.flags,
+            effect.parameterFirst, effect.parameterCount});
+    }
+    for (const auto& parameter : projection.effectParameters)
+        image.busDefinitionEffectParameters.push_back({parameter.index, parameter.value});
     for (const auto& row : projection.downmix) {
         image.busDefinitionDownmixesV2.push_back({row.busId, row.sourceLayout,
             row.destinationLayout, row.coefficientFirst, row.coefficientCount});
     }
     image.busDefinitionCoefficients = projection.downmixCoefficients;
-    if (CanonicalVolumeBusFingerprint(image) != projection.fingerprint) return {};
+    if (CanonicalVolumeBusFingerprint(image, image.busDefinitionEffects,
+            image.busDefinitionEffectParameters) != projection.fingerprint) return {};
     return EncodeBusDefinitionSnapshotPayload(image);
 }
 

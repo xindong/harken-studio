@@ -1,4 +1,5 @@
 #include "RuntimeLink.h"
+#include "PreviewBridge.h"
 #include "NativeValues.h"
 #include "RuntimeLinkInternal.h"
 
@@ -515,6 +516,7 @@ VnConfig makeConfig(const EngineSessionConfig& config)
     c.maxVoices = positiveOrDefault(config.maxVoices, 64);
     c.maxActions = 65536;
     c.voiceSendSlots = 8;
+    c.fxSlotsPerVoice = 8;
     c.deviceMode = config.deviceMode == EngineDeviceMode::Null
         ? VN_DEVICE_NULL
         : VN_DEVICE_REAL;
@@ -1891,6 +1893,36 @@ bool runtimeHasCurrentWorldPlayableConsumers()
     return runtimeIsActive() && VnPreview_HasPlayableConsumers() != 0;
 }
 
+bool runtimeHasEffectChainConsumers()
+{
+    return runtimeIsActive() && VnPreview_HasEffectChainConsumers() != 0;
+}
+
+uint64_t runtimePreviewVoiceWorldGeneration(uint64_t voiceInstance)
+{
+    return runtimeIsActive() ? VnPreview_QueryVoiceWorldGeneration(voiceInstance) : 0;
+}
+
+bool runtimeHasPreviewWorldGeneration(uint64_t generation)
+{
+    return runtimeIsActive() && VnPreview_HasWorldGeneration(generation) != 0;
+}
+
+EngineResult runtimeSetPreviewVoiceEffectChain(uint64_t voiceInstance,
+    const std::vector<PreviewVoiceEffectEntry>& chain)
+{
+    if (chain.size() > VN_PREVIEW_EFFECT_CHAIN_CAPACITY) return kEngineInvalidArg;
+    VnPreviewVoiceEffectChainV1 native{};
+    native.structSize = sizeof(native);
+    native.entryCount = static_cast<uint32_t>(chain.size());
+    for (std::size_t i = 0; i < chain.size(); ++i) {
+        const auto& entry = chain[i];
+        native.entries[i] = {toNative(entry.effectId), entry.effectType,
+            entry.bypass ? 1u : 0u, entry.ceilingDb, entry.releaseMs};
+    }
+    return VnPreview_SetVoiceEffectChain(voiceInstance, &native);
+}
+
 EngineResult runtimeRefreshPreviewVoiceBindings(uint64_t voiceInstance)
 {
     return VnPreview_RefreshVoiceBindings(voiceInstance);
@@ -1900,6 +1932,21 @@ EngineResult runtimeSetPreviewVoiceProperty(uint64_t voiceInstance, uint8_t prop
     float value, harkenstudio::ObjectId sendBusId)
 {
     return VnPreview_SetVoiceProperty(voiceInstance, property, value, toNative(sendBusId));
+}
+
+EngineResult runtimeSetPreviewVoiceEffect(uint64_t voiceInstance, harkenstudio::ObjectId effectId,
+    uint32_t effectType, const std::vector<float>& parameters, bool bypass)
+{
+    return VnPreview_SetVoiceEffect(voiceInstance, toNative(effectId), effectType,
+        parameters.data(), static_cast<uint32_t>(parameters.size()), bypass ? 1u : 0u);
+}
+
+EngineResult runtimeSetPreviewBusEffect(uint64_t ownerId, harkenstudio::ObjectId busId,
+    harkenstudio::ObjectId effectId, uint32_t effectType,
+    const std::vector<float>& parameters, bool bypass)
+{
+    return VnPreview_SetBusEffect(ownerId, toNative(busId), toNative(effectId), effectType,
+        parameters.data(), static_cast<uint32_t>(parameters.size()), bypass ? 1u : 0u);
 }
 
 void runtimeSetVoicePitchByName(const QString& name, float cents)
@@ -2088,6 +2135,17 @@ RuntimeProjectGenerationPrepareStatus runtimePrepareProjectGeneration(
         return RuntimeProjectGenerationPrepareStatus::RuntimeUnavailable;
     return static_cast<RuntimeProjectGenerationPrepareStatus>(
         VnPreview_PrepareProjectV3(&view, &out.handle));
+}
+
+RuntimeProjectGenerationPrepareStatus runtimePrepareProjectGeneration(
+    const VnPreviewProjectDescV4& view, RuntimePreparedProject& out)
+{
+    if (out.Valid())
+        return RuntimeProjectGenerationPrepareStatus::InvalidView;
+    if (!runtimeIsActive())
+        return RuntimeProjectGenerationPrepareStatus::RuntimeUnavailable;
+    return static_cast<RuntimeProjectGenerationPrepareStatus>(
+        VnPreview_PrepareProjectV4(&view, &out.handle));
 }
 
 RuntimeProjectGenerationCommitStatus runtimeCommitPreparedProjectGeneration(

@@ -38,6 +38,9 @@ public:
     void requestCurveSelection(const CurveSelection& selection);
     void requestExternalEditor(const ExternalEditorSelection& selection, bool addBinding = false);
     void requestEffectEditorSelection(const QUuid& ownerGuid, const QUuid& rowGuid = {});
+    void requestEffectSelection(const QUuid& ownerGuid, const QUuid& rowGuid);
+    void requestEffectEditorDetach(const QUuid& ownerGuid, const QUuid& rowGuid = {});
+    void showEmbeddedEffectEditor();
     void showBusInspector(uint32_t busID);
     void showCanvasNode(uint32_t anchorId);
     QJsonObject getInspectorSchema(const QString& schemaId) const;
@@ -65,6 +68,8 @@ signals:
     void curveSelectionRequested(const CurveSelection& selection);
     void externalEditorRequested(const ExternalEditorSelection& selection, bool addBinding);
     void effectEditorRequested(const QUuid& ownerGuid, const QUuid& rowGuid);
+    void effectSelectionChanged(const QUuid& ownerGuid, const QUuid& rowGuid);
+    void effectEditorDetachRequested(const QUuid& ownerGuid, const QUuid& rowGuid);
 
     void panelFocused(int panelId);
 

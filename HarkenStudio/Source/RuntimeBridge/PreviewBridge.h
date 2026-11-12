@@ -53,9 +53,21 @@ EngineResult setPreviewBinding(harkenstudio::ObjectId id,
 EngineResult attachPreviewBinding(harkenstudio::ObjectId id, uint32_t scope, harkenstudio::ObjectId object);
 void detachPreviewBinding(harkenstudio::ObjectId id, uint32_t scope, harkenstudio::ObjectId object);
 void removePreviewBinding(harkenstudio::ObjectId id);
+struct PreviewVoiceEffectEntry {
+    harkenstudio::ObjectId effectId{};
+    uint32_t effectType = 0;
+    bool bypass = false;
+    float ceilingDb = 0.0f;
+    float releaseMs = 100.0f;
+    bool operator==(const PreviewVoiceEffectEntry&) const = default;
+};
+EngineResult setPreviewVoiceEffectChain(uint64_t voice,
+    const std::vector<PreviewVoiceEffectEntry>& chain);
 EngineResult refreshPreviewVoiceBindings(uint64_t voice);
 EngineResult setPreviewVoiceProperty(uint64_t voice, uint8_t property, float value,
                                      harkenstudio::ObjectId sendBus = {});
+EngineResult setPreviewVoiceEffect(uint64_t voice, harkenstudio::ObjectId effectId,
+    uint32_t effectType, const std::vector<float>& parameters, bool bypass);
 bool currentWorldBusAdmissionIsOpen(uint64_t generation);
 EngineResult setCurrentWorldBusMute(harkenstudio::ObjectId bus, bool mute, uint32_t fadeMs);
 EngineResult setCurrentWorldBusSolo(harkenstudio::ObjectId bus, bool solo, uint32_t fadeMs);

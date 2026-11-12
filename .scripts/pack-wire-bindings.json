@@ -20,6 +20,14 @@
       "engine": "PackBusDefinitionSend",
       "studio": "PackBusDefinitionSend"
     },
+    "busDefinitionEffect": {
+      "engine": "PackBusDefinitionEffect",
+      "studio": "PackBusDefinitionEffect"
+    },
+    "busDefinitionEffectParameter": {
+      "engine": "PackBusDefinitionEffectParameter",
+      "studio": "PackBusDefinitionEffectParameter"
+    },
     "busDefinitionDownmix": {
       "engine": "PackBusDefinitionDownmix",
       "studio": "PackBusDefinitionDownmix"
@@ -467,6 +475,22 @@
     "bodyWorldSignalReceiver": {
       "engine": "SignalReceiverV1",
       "studio": "SignalReceiverV1"
+    },
+    "effectPresetHeader": {
+      "engine": "PackEffectPresetHeader",
+      "studio": "PackEffectPresetHeader"
+    },
+    "effectPresetParameter": {
+      "engine": "PackEffectPresetParameter",
+      "studio": "PackEffectPresetParameter"
+    },
+    "effectPreset": {
+      "engine": "PackEffectPresetHeader",
+      "studio": "PackEffectPresetHeader"
+    },
+    "bodyPayloadEffectPresetReference": {
+      "engine": "EffectNodeV1",
+      "studio": "EffectNodeV1"
     }
   },
   "members": {

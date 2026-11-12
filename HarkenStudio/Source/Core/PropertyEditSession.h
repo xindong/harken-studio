@@ -59,6 +59,9 @@ private:
     void restorePlayableStart();
     bool previewPlayable(const QJsonValue& json);
     bool playableStateChanged() const;
+    void captureEffectStart();
+    void restoreEffectStart();
+    bool previewEffects(const QVariant& value);
     void captureFilterStart();
     void restoreFilterStart();
     bool previewFilter(const QJsonValue& value);
@@ -72,6 +75,7 @@ private:
     std::optional<PlayablePropertyLocatorV1> playableLocator_;
     std::optional<PlayableStartSnapshot> playableStartState_;
     std::optional<PlayableStartSnapshot> filterStartState_;
+    std::optional<PlayableStartSnapshot> effectStartState_;
     std::optional<QVector<ProjectPlatformId>> platforms_;
     uint8_t playablePropertyId_ = 0;
     enum class State { Active, Committed, Cancelled } state_ = State::Active;

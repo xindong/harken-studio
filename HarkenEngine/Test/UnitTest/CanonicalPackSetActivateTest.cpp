@@ -5,9 +5,11 @@
 
 #include "Engine.h"
 #include "PackLogicStore.h"
+#include "ProjectGenerationTransaction.h"
 #include "TraceFormat.h"
 #include "TraceRecorder.h"
 #include "MonitorIdentityCodec.h"
+#include "harken/media/generated/harken_pack_effect_schema.g.h"
 #include "MonitorCaptureHubTestHooks.h"
 #include <map>
 #include <set>
@@ -16,6 +18,7 @@
 #include "harken/core/PackCompanionNames.h"
 #include "harken/core/MediaContentRevision.h"
 #include "harken/core/VariableExecutionFingerprint.h"
+#include "harken/media/generated/harken_pack_effect_schema.g.h"
 
 #include <gtest/gtest.h>
 
@@ -97,6 +100,204 @@ TEST(CanonicalPackSetActivate, PathInitOnlyActivateRetryUnload) {
     EXPECT_NE(0u, afterUnload.initHandle);
     EXPECT_FALSE(session.Engine()->packSetTombstone.hasTombstone);
     ASSERT_NE(nullptr, PackMasterHolder(session.Engine()));
+}
+
+
+std::vector<std::uint8_t> CanonicalLimiterInit(float ceilingDb, bool bypass = false,
+    std::uint64_t contentRevision = 1, bool childBus = false, std::uint32_t effectCount = 8) {
+    using namespace harkentest::packfoundation;
+    ImageBuilder builder(harken::kPackKindInit);
+    const auto buses = childBus ? Bus2RuntimeBusFixture() : DefaultRuntimeBusFixture();
+    harken::VariableDefinitionV1 variable{};
+    variable.variableId = kVariableId;
+    variable.kind = harken::VariableKindV1::Smooth;
+    variable.rangeMin = -1.0f;
+    variable.rangeMax = 1.0f;
+    harken::ContainerWorldInstallViewV1 world{};
+    world.identity.capabilityMask = harken::kWorldCapabilityVariableDefinitions;
+    world.variables = &variable;
+    world.variableCount = 1;
+    world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(world);
+    std::vector<std::uint8_t> body;
+    if (!harken::EncodeCurrentWorldShippingBody(world, body)) return {};
+    harken::PackCanonicalPartitionHeader header{};
+    header.headerBytes = harken::kPackCanonicalPartitionHeaderBytes;
+    header.bodyVintage = harken::kCanonicalDefinitionPartitionBodyVintage;
+    header.bodyBytes = body.size();
+    header.bodyChecksum = harken::Fnv1a64(body.data(), body.size());
+    header.packStableId = kInitPackStableId;
+    header.partitionRevision = 1;
+    header.ownedDefinitionCount = 1;
+    ApplyCanonicalBusTriple(&header, buses.triple);
+    std::vector<std::uint8_t> partition(harken::kPackCanonicalPartitionHeaderBytes + body.size(), 0);
+    harken::SerializePackCanonicalPartitionHeader(header, partition.data());
+    header.headerChecksum = harken::Fnv1a64(partition.data(), harken::kPackCanonicalPartitionHeaderHeaderChecksumOffset);
+    harken::SerializePackCanonicalPartitionHeader(header, partition.data());
+    std::memcpy(partition.data() + harken::kPackCanonicalPartitionHeaderBytes, body.data(), body.size());
+    builder.AddEntry(harken::kPackEntryKindPackRequirementBlock, kInitPackStableId,
+        RequirementPayload(kInitPackStableId, contentRevision, 1, 1, body.size(), buses.triple));
+    builder.AddEntry(harken::kPackEntryKindCanonicalDefinitionPartition,
+        kInitPackStableId, std::move(partition));
+    std::uint64_t execution = 0;
+    if (!harken::ComputeVariableExecutionFingerprintV1(variable.variableId, 1, 1, 3,
+            variable.rangeMin, variable.rangeMax, variable.defaultValue, nullptr, 0, &execution)) return {};
+    std::vector<std::uint8_t> overlay(harken::kPackVariablePolicyHeaderBytes +
+        harken::kPackVariablePolicyRowBytes + harken::kPackVariableAnchorCountBytes +
+        harken::kPackVariableLabelHeaderBytes, 0);
+    harken::SerializePackVariablePolicyHeader({1}, overlay.data());
+    std::size_t cursor = harken::kPackVariablePolicyHeaderBytes;
+    harken::SerializePackVariablePolicyRow({variable.variableId, 3, execution}, overlay.data() + cursor);
+    cursor += harken::kPackVariablePolicyRowBytes;
+    harken::SerializePackVariableAnchorCount({0}, overlay.data() + cursor);
+    cursor += harken::kPackVariableAnchorCountBytes;
+    harken::SerializePackVariableLabelHeader({
+        harken::ComputeVariableLabelMappingFingerprintV1(variable.variableId, {}), 0}, overlay.data() + cursor);
+    builder.AddEntry(harken::kPackEntryKindVariablePolicyOverlay, 0, std::move(overlay));
+    AppendRuntimeBusFixture(&builder, buses);
+    for (std::uint32_t slot = 0; slot < effectCount; ++slot) {
+        harken::PackBusEffectEntry effect{};
+        effect.busId = childBus ? VN_OBJECT_ID(0, 2) : VN_BUS_MASTER;
+        effect.slot = slot;
+        effect.effectId = harkentest::ObjectId(0xEA00 + slot);
+        effect.effectType = VN_EFFECT_LIMITER;
+        effect.descriptorVintage = harken::FindPackEffectSchemaByType(VN_EFFECT_LIMITER)->descriptorVintage;
+        effect.faderPointGuard = 8;
+        effect.bypass = bypass ? 1 : 0;
+        effect.paramCount = 2;
+        effect.paramBytes = 8;
+        effect.params[0] = slot == 7 ? ceilingDb : 0.0f;
+        effect.params[1] = 100.0f;
+        std::vector<std::uint8_t> payload(harken::kPackBusEffectBytes);
+        harken::SerializePackBusEffect(effect, payload.data());
+        const auto index = builder.AddEntry(harken::kPackEntryKindBusEffect,
+            static_cast<std::uint64_t>(slot), std::move(payload));
+        builder.SetRelationOrdinal(index, slot);
+    }
+    return builder.Build();
+}
+
+TEST(CanonicalPackSetActivate, InitBusLimitersRenderReplaceRollbackAndUnload) {
+    EngineSession session(CanonicalActivationConfig(4, 64, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const auto directory = std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-init-limiters";
+    const auto first = harkentest::ActivateInitBytesV1(directory, CanonicalLimiterInit(-24),
+        harkentest::packfoundation::kInitPackStableId);
+    ASSERT_EQ(VN_OK, first.result);
+    EXPECT_EQ(8u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+    engine.nullBackend.Pump(1);
+    auto* master = engine.buses.BusState(0);
+    ASSERT_NE(nullptr, master);
+    for (unsigned slot = 0; slot < 8; ++slot) {
+        EXPECT_EQ(VN_EFFECT_LIMITER, master->fxSlotEffectRef[slot].type);
+        EXPECT_EQ(first.initHandle, engine.busEffectOwnerCookies[0][slot]);
+    }
+    const auto sound = harkentest::ObjectId(0xEA20);
+    const auto samples = harkentest::MakeDC(48000, 0.5f);
+    const auto pcm = harkentest::MonoDesc(samples, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(sound, &pcm));
+    auto play = harkentest::MakePlayDesc(sound);
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+    engine.nullBackend.Pump(4);
+    EXPECT_NEAR(std::pow(10.0f, -24.0f / 20.0f), engine.nullBackend.LastBlock()[0], 2e-5f);
+
+    const auto replacementPath = (directory / "Replacement.pack").string();
+    ASSERT_TRUE(harkentest::WriteBytes(replacementPath, CanonicalLimiterInit(-18, true, 2)));
+    VnCanonicalPackSetMemberV1 member{};
+    member.structSize = sizeof(member);
+    member.packStableId = harkentest::packfoundation::kInitPackStableId;
+    member.packKind = VN_CANONICAL_PACK_SET_MEMBER_INIT;
+    member.utf8Path = replacementPath.c_str();
+    member.expectedHandle = first.initHandle;
+    VnCanonicalPackSetMemberResultV1 row{};
+    row.structSize = sizeof(row);
+    VnCanonicalPackSetActivationReportV1 report{};
+    const auto oldRef = engine.busEffectInstanceRefs[0][7];
+    harken::SetPackStagingFaultForTests(harken::PackStagingFault::AfterAllPreparedBeforeCommit);
+    const auto refused = harkentest::ActivateCanonicalMembersV1(&member, 1, &row, report,
+        first.initHandle, 1);
+    harken::SetPackStagingFaultForTests(harken::PackStagingFault::None);
+    EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY, refused);
+    EXPECT_EQ(8u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+    EXPECT_EQ(oldRef.generation, engine.busEffectInstanceRefs[0][7].generation);
+    engine.nullBackend.Pump(1);
+    EXPECT_NEAR(std::pow(10.0f, -24.0f / 20.0f), engine.nullBackend.LastBlock()[0], 2e-5f);
+    ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(&member, 1, &row, report,
+        first.initHandle, 1));
+    // Reused instances follow the normal bypass transition.
+    engine.nullBackend.Pump(8);
+    for (unsigned frame = 0; frame < 64; ++frame)
+        EXPECT_NEAR(0.5f, engine.nullBackend.LastBlock()[frame * 2], 2e-5f);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(8u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+    VnCanonicalPackSetUnloadDescV1 unload{};
+    unload.structSize = sizeof(unload);
+    unload.expectedInitHandle = report.initHandle;
+    unload.baseSetRevision = report.resultSetRevision;
+    unload.unloadRevision = report.resultSetRevision + 1;
+    const auto foreignBinding = harkentest::ObjectId(0xEA32);
+    VnBindingDesc binding{};
+    binding.structSize = sizeof(binding);
+    binding.variableId = harkentest::packfoundation::kVariableId;
+    binding.targetScopeKind = VN_TARGET_SCOPE_BUS_EFFECT_PARAM;
+    binding.targetId = harken::PackEffectParamLocator(VN_EFFECT_LIMITER, 7, 0);
+    binding.curve.structSize = sizeof(binding.curve);
+    binding.curve.pointCount = 2;
+    binding.curve.points[0] = {-1.0f, 0.0f};
+    binding.curve.points[1] = {1.0f, 0.0f};
+    binding.curve.handles[0] = harkentest::EndpointHandles(binding.curve.points[0], binding.curve.points[1]);
+    ASSERT_EQ(VN_OK, Vn_RegisterBinding(foreignBinding, &binding));
+    VnBindingAttachDesc attachment{sizeof(attachment), VN_TARGET_SCOPE_BUS_EFFECT_PARAM, VN_BUS_MASTER};
+    ASSERT_EQ(VN_OK, Vn_AttachBinding(foreignBinding, &attachment));
+    EXPECT_EQ(VN_IN_USE, Vn_UnloadCanonicalPackSetV1(&unload));
+    EXPECT_EQ(8u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+    ASSERT_EQ(VN_OK, Vn_DetachBinding(foreignBinding, &attachment));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    engine.nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_UnloadCanonicalPackSetV1(&unload));
+    engine.nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+    for (unsigned slot = 0; slot < 8; ++slot) {
+        EXPECT_EQ(harken::kEffectTypeNone, master->fxSlotEffectRef[slot].type);
+        EXPECT_FLOAT_EQ(0.0f, master->fxBypassMix[slot]);
+        EXPECT_FLOAT_EQ(0.0f, master->fxBypassTarget[slot]);
+    }
+    EXPECT_EQ(VN_OK, harkentest::ActivateInitBytesV1(directory, CanonicalLimiterInit(-24),
+        harkentest::packfoundation::kInitPackStableId).result);
+}
+
+
+TEST(CanonicalPackSetActivate, InitBusLimitersProtectMasterOwnershipBothDirections) {
+    EngineSession session(CanonicalActivationConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    engine.mixer.SetMaxCommandsPerQuantumForTest(9);
+    const auto directory = std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-limiter-master-owner";
+    ASSERT_FALSE(engine.previewMasterHolders.empty());
+    auto& foreign = engine.previewMasterHolders.front();
+    foreign = {true, 0xFEE0001, 1, harken::NeutralMasterFingerprintV1(engine)};
+    EXPECT_EQ(VN_IN_USE, harkentest::ActivateInitBytesV1(directory, CanonicalLimiterInit(-24),
+        harkentest::packfoundation::kInitPackStableId).result);
+    EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+    foreign = {};
+    const auto activated = harkentest::ActivateInitBytesV1(directory, CanonicalLimiterInit(-24),
+        harkentest::packfoundation::kInitPackStableId);
+    ASSERT_EQ(VN_OK, activated.result);
+    EXPECT_FALSE(harken::PreviewMasterCompatible(engine, harken::NeutralMasterFingerprintV1(engine), 0xFEE0001));
+    EXPECT_TRUE(harken::PreviewMasterCompatible(engine, harken::NeutralMasterFingerprintV1(engine),
+        harken::kCanonicalPackSetMasterOwnerId));
+    engine.nullBackend.Pump(1);
+    VnCanonicalPackSetUnloadDescV1 unload{};
+    unload.structSize = sizeof(unload);
+    unload.expectedInitHandle = activated.initHandle;
+    unload.baseSetRevision = activated.report.resultSetRevision;
+    unload.unloadRevision = activated.report.resultSetRevision + 1;
+    ASSERT_EQ(VN_OK, Vn_UnloadCanonicalPackSetV1(&unload));
+    engine.nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
 }
 
 TEST(CanonicalPackSetActivate, FileBudgetRefusalPrecedesWholeFileAllocationAndCanRetry) {
@@ -2882,6 +3083,98 @@ TEST(CanonicalPackSetActivate, InitVoiceBindingIsRefused) {
     EXPECT_EQ(nullptr, session.Engine()->packComposition.Published());
 }
 
+
+TEST(CanonicalPackSetActivate, InitNewBusLimiterBindingUsesProspectiveEffect) {
+    EngineSession session(CanonicalActivationConfig(4, 64, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const auto directory = std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-limiter-new-bus-binding";
+    harken::PackBindingAttachmentEntry attachment{};
+    attachment.bindingId = kBusBindingId;
+    attachment.scopeKind = VN_TARGET_SCOPE_BUS_EFFECT_PARAM;
+    attachment.objectId = VN_OBJECT_ID(0, 2);
+    VnBindingDesc desc{};
+    desc.structSize = sizeof(desc);
+    desc.variableId = kBindingVariableId;
+    desc.targetScopeKind = VN_TARGET_SCOPE_BUS_EFFECT_PARAM;
+    desc.targetId = harken::PackEffectParamLocator(VN_EFFECT_LIMITER, 7, 0);
+    desc.curve.structSize = sizeof(desc.curve);
+    desc.curve.pointCount = 2;
+    desc.curve.points[0] = {-1.0f, -6.0f};
+    desc.curve.points[1] = {1.0f, -6.0f};
+    desc.curve.handles[0] = harkentest::EndpointHandles(desc.curve.points[0], desc.curve.points[1]);
+    const auto bytes = harkentest::WithCanonicalBindingRows(
+        CanonicalLimiterInit(-18, false, 1, true), kBusBindingId, desc, &attachment);
+    const auto activated = harkentest::ActivateInitBytesV1(directory, bytes,
+        harkentest::packfoundation::kInitPackStableId);
+    ASSERT_EQ(VN_OK, activated.result);
+    EXPECT_TRUE(engine.bindings.HasOwnedAttachment(kBusBindingId, VN_TARGET_SCOPE_BUS_EFFECT_PARAM,
+        attachment.objectId, activated.initHandle));
+    engine.nullBackend.Pump(1);
+    VnVariableWriteV1 write{kBindingVariableId, 0.5f, 0};
+    VnVariableBatchDescV1 batch{sizeof(batch), 1, 0, 0, &write};
+    VnVariableTicketV1 ticket{};
+    ASSERT_EQ(VN_OK, Vn_SetValues(&batch, &ticket));
+    ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(&engine));
+    engine.nullBackend.Pump(1);
+    const auto bus = engine.buses.FindIndex(attachment.objectId);
+    ASSERT_NE(harken::kInvalidBusIndex, bus);
+    EXPECT_TRUE(engine.effectParamTargets.CanBind(harken::EffectParamTargetStore::Scope::Bus,
+        bus, harken::UnpackEffectParamLocator(desc.targetId)));
+    const auto sound = harkentest::ObjectId(0xEA21);
+    const auto samples = harkentest::MakeDC(48000, 0.5f);
+    const auto pcm = harkentest::MonoDesc(samples, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(sound, &pcm));
+    auto play = harkentest::MakePlayDesc(sound);
+    play.busId = attachment.objectId;
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+    // Include the existing 10 ms effect-parameter transition before measuring the target.
+    engine.nullBackend.Pump(16);
+    EXPECT_NEAR(std::pow(10.0f, -24.0f / 20.0f), engine.nullBackend.LastBlock()[0], 2e-5f);
+    const auto invalidPath = (directory / "MissingEffect.pack").string();
+    ASSERT_TRUE(harkentest::WriteBytes(invalidPath, harkentest::WithCanonicalBindingRows(
+        CanonicalLimiterInit(-18, false, 2, true, 0), kBusBindingId, desc, &attachment)));
+    VnCanonicalPackSetMemberV1 member{};
+    member.structSize = sizeof(member);
+    member.packStableId = harkentest::packfoundation::kInitPackStableId;
+    member.packKind = VN_CANONICAL_PACK_SET_MEMBER_INIT;
+    member.utf8Path = invalidPath.c_str();
+    member.expectedHandle = activated.initHandle;
+    VnCanonicalPackSetMemberResultV1 row{};
+    row.structSize = sizeof(row);
+    VnCanonicalPackSetActivationReportV1 report{};
+    EXPECT_EQ(VN_INVALID_ARG, harkentest::ActivateCanonicalMembersV1(&member, 1, &row, report,
+        activated.initHandle, 1));
+    EXPECT_EQ(8u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+    engine.nullBackend.Pump(1);
+    EXPECT_NEAR(std::pow(10.0f, -24.0f / 20.0f), engine.nullBackend.LastBlock()[0], 2e-5f);
+    const auto replacementPath = (directory / "BoundReplacement.pack").string();
+    ASSERT_TRUE(harkentest::WriteBytes(replacementPath, harkentest::WithCanonicalBindingRows(
+        CanonicalLimiterInit(-12, false, 2, true), kBusBindingId, desc, &attachment)));
+    member.utf8Path = replacementPath.c_str();
+    ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(&member, 1, &row, report,
+        activated.initHandle, 1));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    engine.nullBackend.Pump(16);
+    EXPECT_NEAR(std::pow(10.0f, -18.0f / 20.0f), engine.nullBackend.LastBlock()[0], 2e-5f);
+    const auto secondHandle = report.initHandle;
+    const auto secondRevision = report.resultSetRevision;
+    ASSERT_TRUE(harkentest::WriteBytes(replacementPath, CanonicalLimiterInit(-9, false, 3, true)));
+    member.expectedHandle = secondHandle;
+    ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(&member, 1, &row, report,
+        secondHandle, secondRevision));
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_FLOAT_EQ(-9.0f, engine.effectParamTargets.AuthoredBase(
+        harken::EffectParamTargetStore::Scope::Bus, bus, 7, 0));
+    EXPECT_FLOAT_EQ(-9.0f, engine.effectParamTargets.LastCommitted(
+        harken::EffectParamTargetStore::Scope::Bus, bus, 7, 0));
+    // Retained detector gain needs the authored 100 ms release to reach the higher ceiling.
+    engine.nullBackend.Pump(80);
+    EXPECT_NEAR(std::pow(10.0f, -9.0f / 20.0f), engine.nullBackend.LastBlock()[0], 2e-5f);
+    EXPECT_EQ(VN_OK, UnloadSet(report.initHandle, report.resultSetRevision));
+}
+
 TEST(CanonicalPackSetActivate, InitBusEffectParamIsNotKindRefused) {
     EngineSession session(CanonicalActivationConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
@@ -3980,4 +4273,246 @@ TEST(CanonicalPackSetActivate, LargeInitProjects257VariablesAndUses65thAttenuati
         EXPECT_EQ(257u, session.Engine()->variables.DefinitionCount());
         EXPECT_EQ(65u, session.Engine()->spatial.ProfileCount());
     }
+}
+
+namespace buseffectfixture {
+
+constexpr VnBusId busId = VN_OBJECT_ID(0, 2);
+constexpr VnObjectId effectId = VN_OBJECT_ID(0, 9401);
+
+std::vector<std::uint8_t> Build(std::uint32_t type, std::initializer_list<float> parameters,
+                                bool bypass = false) {
+    auto image = harken::NeutralMasterSnapshotImage();
+    auto& header = image.busDefinitionSnapshotHeader;
+    header.publicationCapabilityVintage = 5;
+    header.runtimeCapabilityMask |= (UINT64_C(1) << 19) |
+        (UINT64_C(1) << (32 + VN_EFFECT_GAIN)) | (UINT64_C(1) << (32 + VN_EFFECT_LIMITER)) |
+        (UINT64_C(1) << (32 + VN_EFFECT_COMPRESSOR));
+    header.compileTargetProfileFingerprint = harken::busfingerprint::ProfileFingerprintV1(
+        header.profileVintage, header.renderSampleRateHz, header.mixLayout,
+        header.deviceLayout, header.runtimeCapabilityMask);
+    header.busCount = 2;
+    header.downmixCount = 2;
+    header.coefficientCount = 128;
+    auto bus = image.busDefinitionBusesV2.front();
+    bus.busId = busId;
+    bus.parentId = VN_BUS_MASTER;
+    bus.downmixFirst = 1;
+    bus.effectCount = type != harken::kEffectTypeNone ? 1u : 0u;
+    image.busDefinitionBusesV2.push_back(bus);
+    auto downmix = image.busDefinitionDownmixesV2.front();
+    downmix.busId = busId;
+    downmix.coefficientFirst = 64;
+    image.busDefinitionDownmixesV2.push_back(downmix);
+    image.busDefinitionCoefficients.resize(128);
+    harken::DefaultDownmixMatrix(VN_CHANNEL_LAYOUT_STEREO, VN_CHANNEL_LAYOUT_STEREO,
+        image.busDefinitionCoefficients.data() + 64);
+    if (type != harken::kEffectTypeNone) {
+        harken::PackBusDefinitionEffect effect{};
+        effect.busId = busId;
+        effect.effectId = effectId;
+        effect.effectType = type;
+        effect.descriptorVintage = harken::FindPackEffectSchemaByType(type)->descriptorVintage;
+        effect.flags = bypass ? 1u : 0u;
+        effect.parameterCount = static_cast<std::uint32_t>(parameters.size());
+        image.busDefinitionEffects.push_back(effect);
+        for (float value : parameters)
+            image.busDefinitionEffectParameters.push_back({
+                static_cast<std::uint32_t>(image.busDefinitionEffectParameters.size()), value});
+    }
+    header.effectCount = static_cast<std::uint32_t>(image.busDefinitionEffects.size());
+    header.effectParameterCount = static_cast<std::uint32_t>(image.busDefinitionEffectParameters.size());
+    header.publishedBusFingerprint = harken::CanonicalVolumeBusFingerprint(image,
+        image.busDefinitionEffects, image.busDefinitionEffectParameters);
+    header.contentGeneration = header.publishedBusFingerprint;
+    harkentest::packfoundation::RuntimeBusFixture fixture;
+    fixture.buses = {{busId, VN_BUS_MASTER}};
+    fixture.triple = harken::SnapshotBusTriple(header);
+    fixture.snapshot = harken::EncodeBusDefinitionSnapshotPayload(image);
+    return harkentest::BuildMasterOnlyInitBytes(harkentest::packfoundation::kInitPackStableId, fixture);
+}
+
+float SettledLevel(harken::Engine& engine) {
+    engine.nullBackend.Pump(16);
+    EXPECT_EQ(VN_OK, Vn_Update());
+    const auto count = engine.nullBackend.BlockFrames() * engine.nullBackend.Channels();
+    const auto* block = engine.nullBackend.LastBlock();
+    float peak = 0.0f;
+    for (std::uint32_t i = 0; i < count; ++i) peak = std::max(peak, std::abs(block[i]));
+    EXPECT_GT(peak, 1e-4f);
+    return peak;
+}
+
+}
+
+TEST(CanonicalPackSetActivate, BusEffectsPreserveAudioAndResourcesAcrossReplacementRollbackAndUnload) {
+    using namespace buseffectfixture;
+    auto config = CanonicalActivationConfig(2, 256, 48000);
+    config.gainEffectPoolCapacity = 1;
+    config.limiterEffectPoolCapacity = 1;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const auto directory = std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-bus-effect-transaction";
+    const auto initial = harkentest::ActivateInitBytesV1(directory,
+        Build(VN_EFFECT_GAIN, {-6.0f}, true), harkentest::packfoundation::kInitPackStableId);
+    ASSERT_EQ(VN_OK, initial.result);
+    const auto bus = engine.buses.FindIndex(busId);
+    ASSERT_NE(harken::kInvalidBusIndex, bus);
+    const auto first = engine.busEffectInstanceRefs[bus][0];
+    ASSERT_EQ(VN_EFFECT_GAIN, first.type);
+    const auto samples = harkentest::MakeDC(48000, 0.8f);
+    const auto pcm = harkentest::MonoDesc(samples, 48000);
+    constexpr auto sound = VN_OBJECT_ID(0, 9402);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(sound, &pcm));
+    auto play = harkentest::MakePlayDesc(sound);
+    play.busId = busId;
+    play.loopCount = 0;
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+    const float dry = SettledLevel(engine);
+    const auto replace = [&](const std::vector<std::uint8_t>& bytes) -> VnResult {
+        if (!harkentest::WriteBytes(initial.initPath, bytes)) return VN_DEVICE_ERROR;
+        const auto* published = engine.packComposition.Published();
+        VnCanonicalPackSetMemberV1 member{};
+        member.structSize = sizeof(member);
+        member.packStableId = harkentest::packfoundation::kInitPackStableId;
+        member.packKind = VN_CANONICAL_PACK_SET_MEMBER_INIT;
+        member.expectedHandle = published->initHandle;
+        member.utf8Path = initial.initPath.c_str();
+        VnCanonicalPackSetMemberResultV1 row{};
+        row.structSize = sizeof(row);
+        VnCanonicalPackSetActivationReportV1 report{};
+        return harkentest::ActivateCanonicalMembersV1(&member, 1, &row, report,
+            published->initHandle, published->ledger.setRevision);
+    };
+    ASSERT_EQ(VN_OK, replace(Build(VN_EFFECT_GAIN, {-12.0f})));
+    EXPECT_EQ(first.poolIndex, engine.busEffectInstanceRefs[bus][0].poolIndex);
+    EXPECT_EQ(first.generation, engine.busEffectInstanceRefs[bus][0].generation);
+    const float attenuated = SettledLevel(engine);
+    EXPECT_NEAR(dry * std::pow(10.0f, -12.0f / 20.0f), attenuated, 2e-3f);
+    const auto beforeFailure = engine.packComposition.PublishedHandle();
+    const auto commands = engine.commands.FreeSlots();
+    harken::SetPackStagingFaultForTests(harken::PackStagingFault::AfterAllPreparedBeforeCommit);
+    const auto refused = replace(Build(VN_EFFECT_LIMITER, {-18.0f, 50.0f}));
+    harken::SetPackStagingFaultForTests(harken::PackStagingFault::None);
+    EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY, refused);
+    EXPECT_EQ(beforeFailure.get(), engine.packComposition.Published());
+    EXPECT_EQ(commands, engine.commands.FreeSlots());
+    EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+    EXPECT_EQ(1u, engine.effectBank.InUseOf(VN_EFFECT_GAIN));
+    EXPECT_NEAR(attenuated, SettledLevel(engine), 2e-3f);
+    ASSERT_EQ(VN_OK, replace(Build(VN_EFFECT_LIMITER, {-18.0f, 50.0f})));
+    const float limited = SettledLevel(engine);
+    EXPECT_LT(limited, dry * 0.3f);
+    EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_GAIN));
+    EXPECT_EQ(1u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+    ASSERT_EQ(VN_OK, replace(Build(harken::kEffectTypeNone, {})));
+    EXPECT_NEAR(dry, SettledLevel(engine), 2e-3f);
+    EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+    ASSERT_EQ(VN_OK, replace(Build(VN_EFFECT_LIMITER, {-18.0f, 50.0f})));
+    EXPECT_NEAR(limited, SettledLevel(engine), 2e-3f);
+    const auto beforeUnload = engine.packComposition.PublishedHandle();
+    harken::SetPackStagingFaultForTests(harken::PackStagingFault::AfterAllPreparedBeforeCommit);
+    const auto unloadRefused = UnloadSet(beforeUnload->initHandle, beforeUnload->ledger.setRevision);
+    harken::SetPackStagingFaultForTests(harken::PackStagingFault::None);
+    EXPECT_EQ(VN_PACK_RESIDENT_CAPACITY, unloadRefused);
+    EXPECT_EQ(beforeUnload.get(), engine.packComposition.Published());
+    EXPECT_NEAR(limited, SettledLevel(engine), 2e-3f);
+    ASSERT_EQ(VN_OK, UnloadSet(beforeUnload->initHandle, beforeUnload->ledger.setRevision));
+    EXPECT_NEAR(dry, SettledLevel(engine), 2e-3f);
+    EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+    EXPECT_EQ(harken::kInvalidBusIndex, engine.buses.FindIndex(busId));
+}
+
+TEST(CanonicalPackSetActivate, RetainedBusEffectAppliesCompleteParameterRevisionToAudio) {
+    using namespace buseffectfixture;
+    auto config = CanonicalActivationConfig(2, 256, 48000);
+    config.compressorEffectPoolCapacity = 1;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const auto directory = std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-bus-effect-parameters";
+    const auto initial = harkentest::ActivateInitBytesV1(directory,
+        Build(VN_EFFECT_COMPRESSOR, {-6.0f, 2.0f, 1.0f, 10.0f, 0.0f, 0.0f}, true),
+        harkentest::packfoundation::kInitPackStableId);
+    ASSERT_EQ(VN_OK, initial.result);
+    const auto bus = engine.buses.FindIndex(busId);
+    ASSERT_NE(harken::kInvalidBusIndex, bus);
+    const auto retained = engine.busEffectInstanceRefs[bus][0];
+    const auto samples = harkentest::MakeDC(48000, 0.8f);
+    const auto pcm = harkentest::MonoDesc(samples, 48000);
+    constexpr auto sound = VN_OBJECT_ID(0, 9403);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(sound, &pcm));
+    auto play = harkentest::MakePlayDesc(sound);
+    play.busId = busId;
+    play.loopCount = 0;
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+    const float dry = SettledLevel(engine);
+    ASSERT_TRUE(harkentest::WriteBytes(initial.initPath,
+        Build(VN_EFFECT_COMPRESSOR, {-24.0f, 4.0f, 1.0f, 10.0f, 0.0f, 0.0f})));
+    const auto* published = engine.packComposition.Published();
+    VnCanonicalPackSetMemberV1 member{};
+    member.structSize = sizeof(member);
+    member.packStableId = harkentest::packfoundation::kInitPackStableId;
+    member.packKind = VN_CANONICAL_PACK_SET_MEMBER_INIT;
+    member.expectedHandle = published->initHandle;
+    member.utf8Path = initial.initPath.c_str();
+    VnCanonicalPackSetMemberResultV1 row{};
+    row.structSize = sizeof(row);
+    VnCanonicalPackSetActivationReportV1 report{};
+    ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(&member, 1, &row, report,
+        published->initHandle, published->ledger.setRevision));
+    EXPECT_EQ(retained.poolIndex, engine.busEffectInstanceRefs[bus][0].poolIndex);
+    EXPECT_EQ(retained.generation, engine.busEffectInstanceRefs[bus][0].generation);
+    EXPECT_FLOAT_EQ(-24.0f, engine.effectParamTargets.Reduce(
+        harken::EffectParamTargetStore::Scope::Bus, bus, 0, 0));
+    EXPECT_FLOAT_EQ(4.0f, engine.effectParamTargets.Reduce(
+        harken::EffectParamTargetStore::Scope::Bus, bus, 0, 1));
+    const float expectedDb = -24.0f + (20.0f * std::log10(dry) + 24.0f) / 4.0f;
+    EXPECT_NEAR(std::pow(10.0f, expectedDb / 20.0f), SettledLevel(engine), 0.003f);
+}
+
+TEST(CanonicalPackSetActivate, BusEffectTransactionsRefuseForeignEffectsWithoutTakingOwnership) {
+    using namespace buseffectfixture;
+    EngineSession session(CanonicalActivationConfig(2, 256, 48000));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const auto directory = std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-bus-effect-foreign";
+    const auto initial = harkentest::ActivateInitBytesV1(directory,
+        Build(harken::kEffectTypeNone, {}), harkentest::packfoundation::kInitPackStableId);
+    ASSERT_EQ(VN_OK, initial.result);
+    VnGainDesc gain{};
+    gain.structSize = sizeof(gain);
+    gain.effectId = VN_OBJECT_ID(0, 9499);
+    gain.gainDb = -6.0f;
+    ASSERT_EQ(VN_OK, Vn_SetBusEffect(busId, 0, VN_EFFECT_GAIN,
+        reinterpret_cast<const VnEffectDesc*>(&gain)));
+    engine.nullBackend.Pump(1);
+    const auto bus = engine.buses.FindIndex(busId);
+    const auto foreign = engine.busEffectInstanceRefs[bus][0];
+    const auto before = engine.packComposition.PublishedHandle();
+    ASSERT_TRUE(harkentest::WriteBytes(initial.initPath, Build(VN_EFFECT_GAIN, {-12.0f})));
+    VnCanonicalPackSetMemberV1 member{};
+    member.structSize = sizeof(member);
+    member.packStableId = harkentest::packfoundation::kInitPackStableId;
+    member.packKind = VN_CANONICAL_PACK_SET_MEMBER_INIT;
+    member.expectedHandle = initial.initHandle;
+    member.utf8Path = initial.initPath.c_str();
+    VnCanonicalPackSetMemberResultV1 row{};
+    row.structSize = sizeof(row);
+    VnCanonicalPackSetActivationReportV1 report{};
+    EXPECT_EQ(VN_IN_USE, harkentest::ActivateCanonicalMembersV1(&member, 1, &row, report,
+        initial.initHandle, initial.report.resultSetRevision));
+    EXPECT_EQ(VN_IN_USE, UnloadSet(initial.initHandle, initial.report.resultSetRevision));
+    EXPECT_EQ(before.get(), engine.packComposition.Published());
+    EXPECT_EQ(foreign.poolIndex, engine.busEffectInstanceRefs[bus][0].poolIndex);
+    EXPECT_EQ(foreign.generation, engine.busEffectInstanceRefs[bus][0].generation);
+    EXPECT_EQ(0u, engine.busEffectOwnerCookies[bus][0]);
+    ASSERT_EQ(VN_OK, Vn_ClearBusEffect(busId, 0));
+    engine.nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(&member, 1, &row, report,
+        initial.initHandle, initial.report.resultSetRevision));
 }

@@ -2,6 +2,7 @@
 
 #include "PlayablePropertyAuthoringV1.h"
 #include "FilterSemantics.h"
+#include "Components/VEffect.h"
 #include "harken_playable_property_studio.g.h"
 
 #include <QJsonArray>
@@ -20,9 +21,12 @@ inline QJsonObject setItemPropertySchema()
         QStringLiteral("markers"), QStringLiteral("spliceByMarker"),
         QStringLiteral("dimensions"), QStringLiteral("maxDistance"),
         QStringLiteral("range"), QStringLiteral("rangeMin"), QStringLiteral("rangeMax"),
-        QStringLiteral("transitions"), QStringLiteral("steps"), QStringLiteral("filter")};
+        QStringLiteral("transitions"), QStringLiteral("steps"), QStringLiteral("filter"),
+        QStringLiteral("effects")};
     for (const auto& field : FilterSemantics::fields())
         propertyNames.append(QLatin1String(field.field));
+    for (const auto& field : VEffect::schema())
+        propertyNames.append(field.field);
     for (const auto& field : VNX::PlayablePropertyAuthoringV1::fields()) {
         if (!PlayablePropertyAuthoringV1::isEditorExposed(field.id)) continue;
         const QString name = QString::fromLatin1(field.fieldName);
@@ -161,6 +165,11 @@ inline QJsonObject setItemPropertySchema()
             {QStringLiteral("type"), QStringLiteral("number")},
             {QStringLiteral("minimum"), field.minimum},
             {QStringLiteral("maximum"), field.maximum}});
+    for (const auto& field : VEffect::schema())
+        values.insert(field.field, QJsonObject{
+            {QStringLiteral("type"), QStringLiteral("number")},
+            {QStringLiteral("minimum"), field.min.toDouble()},
+            {QStringLiteral("maximum"), field.max.toDouble()}});
     schema.insert(QStringLiteral("propertyValues"), values);
     return schema;
 }

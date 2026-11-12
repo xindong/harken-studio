@@ -27,6 +27,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <limits>
 #include <map>
@@ -340,7 +341,8 @@ bool buildDefinitionNode(ProjectItem& item, const ProjectIndex& index,
                          const std::unordered_set<ProjectItem*>& included,
                          const FieldGroupEffectiveSnapshot& groups,
                          int64_t editorOrder, PlatformScope scope,
-                         BridgeRequest* request, QString* error)
+                         BridgeRequest* request, QString* error,
+                         bool exportPresetReferences)
 {
     const auto kind = contentKind(item.type);
     const auto locator = PlayablePropertyAuthoringV1::definitionLocator(item);
@@ -354,8 +356,26 @@ bool buildDefinitionNode(ProjectItem& item, const ProjectIndex& index,
     node.guid = authoringGuid(item.guid);
     node.editorOrder = editorOrder;
     if (!HarkenEditor::Bridge::copyStudioDefinitionPayload(
-            item, scope, index, groups, *request->identityIndex, &node, error)) {
+            item, scope, index, groups, *request->identityIndex, &node, error,
+            exportPresetReferences)) {
         return false;
+    }
+    if (!exportPresetReferences) {
+        auto& effects = request->previewEffects[item.runtimeId()];
+        const auto& entries = groups.definitions.at(toFieldGroupGuid(item.guid)).effects.effects.entries();
+        for (std::size_t i = 0; i < node.signalGraph.nodes.size(); ++i) {
+            const auto& compiled = node.signalGraph.nodes[i];
+            const auto& authored = entries[i];
+            HarkenEditor::Bridge::PreviewEffectSource effect;
+            effect.id = compiled.effectId;
+            effect.type = compiled.effectType;
+            effect.bypass = (compiled.flags & 1u) != 0;
+            if (authored.mode == EffectMode::Preset)
+                effect.presetId = index.byQtGuid.at(authored.effectGuid)->runtimeId();
+            for (const auto& parameter : compiled.params)
+                effect.parameters.push_back(std::bit_cast<float>(parameter.valueBits));
+            effects.push_back(std::move(effect));
+        }
     }
 
     std::vector<ProjectItem*> ownedChildren;
@@ -1619,7 +1639,8 @@ buildCurrentWorldSyncRequestForContext(ProjectData& project, PlatformScope scope
                 }
             }
             if (!buildDefinitionNode(*item, index, included, groups, editorOrder++,
-                                     scope, request.get(), error))
+                                     scope, request.get(), error,
+                                     options && options->validatePackResources))
                 return false;
             return true;
         };

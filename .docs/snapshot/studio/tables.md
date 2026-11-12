@@ -9,7 +9,7 @@
 | 普通表格合计 | 24 | 34 |
 | 导航配置（不计入普通表格） | 2 | 2 |
 
-注：Sends、FXs 各自在六类对象中使用，各按用途计一项、按对象类型计六处。对象实例、Binding 字段及同一对话框的不同打开位置不重复计数；Match、Blend 等专用编辑面另列。
+注：Sends、Effects 各自在六类对象中使用，各按用途计一项、按对象类型计六处。对象实例、Binding 字段及同一对话框的不同打开位置不重复计数；Match、Blend 等专用编辑面另列。
 
 ## 普通表格清单
 
@@ -25,7 +25,7 @@
 | C08 | 配置 | External Editor / Binding | 仅编辑本地贡献 |
 | C09 | 配置 | Container Selection Editor / Transition | # / Source / Exit / Fade Out / Target / Entry / Fade In；按匹配具体程度排序，默认规则最后 |
 | C12 | 配置 | Project Platform / Resample Policies | 按阈值排序，保留 Infinite 行 |
-| C13 | 配置 | Sound、Container、Layer、Track、Segment、Bus / FXs | Basic > FX；# / Effect / Level / Active；本地效果器链配置 |
+| C13 | 配置 | Sound、Container、Layer、Track、Segment、Bus / Effects | Basic > Effect；# / Effect / Active；本地效果器链配置 |
 | D01 | 展示 | Bus Inspector / Inputs | 路由反向查询，无序号列 |
 | D02 | 展示 | Bus Inspector / Receives | 路由反向查询，# 仅展示行号，不提供行移动 |
 | D03 | 展示 | Control / Variables | 变量试听值及作用域 |
@@ -137,24 +137,27 @@
 | 选择与试听 | Child 与曲线选择联动；试听游标使用 Control 覆盖值，Child 提示显示各行增益及跨行结果 |
 | 合成关系 | 同行同一 Child 仅一条曲线；跨行引用共用播放且增益相乘，成员不自动归一化 |
 
-## FXs 表格与共享资产
+## Effects 表格与共享资产
 
 | 项目 | 当前表现 |
 |---|---|
-| 位置与列 | Sound、Container、Layer、Track、Segment、Bus 的 Basic > FX；# / Effect / Level / Active |
+| 位置与列 | Sound、Container、Layer、Track、Segment、Bus 的 Basic > Effect；# / Effect / Active |
+| 容量 | 最多 8 槽，满时禁用加号；删除后恢复，撤销重做同步。GUI 新增回调、共享创作校验、CLI 与编译入口均拒绝超限 |
 | 模式与增删 | 加号选择 Limiter 插入 Custom，或 Select Preset... 引用共享预设，允许重复引用；减号删除所选行，支持排序及撤销重做 |
-| Custom | 普通标签显示插件名称，右侧提供 detach 按钮；双击标签或单击 detach 打开 Effect Editor，单击标签不打开；独立 chevron 位于内容左侧，使用默认箭头指针，Replace 子菜单含 Limiter 和 Select Preset...，另提供 Save As Preset... |
+| Custom | 普通标签显示插件名称，双击标签按普通停靠及既有布局打开或复用独立 Effect Editor，单击标签不打开；每次单击右侧 detach 按钮均新建独立浮动 Effect Editor，已有同类型实例及原面板保留；新窗沿当前屏幕已有浮窗向右下错开，遇屏幕边缘回绕，已有窗口及已记忆位置不重排；独立 chevron 位于内容左侧，使用默认箭头指针，Replace 子菜单含 Limiter 和 Select Preset...，另提供 Save As Preset... |
 | Preset | 标准 ObjectRef 保留定位、激活和选择器，独立菜单 chevron 位于内容左侧；chevron 使用默认箭头指针，含 Replace > Limiter、Convert to Custom |
-| 转换与替换 | 保留行身份、顺序、Active、Level；替换插件使用默认参数，Convert to Custom 复制预设当前配置并解除共享；Save As Preset 创建资产并切换引用，合为一次撤销 |
-| Level | 干湿比 0～100%，默认 100%；0% 全干、100% 全湿；仅保存编辑配置并支持撤销，本阶段不参与试听或 Pack 运行时处理 |
-| Active | 新增默认开启，映射现有旁通配置；Bus 沿用既有支持，非 Bus 含关闭项时仍受现有试听／发布能力检查限制 |
-| 继承范围 | Sound、Container、Layer、Track、Segment 沿归属父级继承整条 FXs 链，不与父链叠加；根直接编辑自身配置，Bus 不提供 Inherit |
+| 转换与替换 | 保留行身份、顺序、Active；替换插件使用默认参数，Convert to Custom 复制预设当前配置并解除共享；Save As Preset 创建资产并切换引用，合为一次撤销 |
+| Active | 新增默认开启，映射旁通配置；Bus 与非 Bus 均接通试听和 Pack，关闭时保留效果实例并旁通 |
+| 在播编辑 | Voice／Bus 编辑前后的链均只含 Limiter（含空链）时，参数、Active、增删、替换和重排即时作用于当前播放，无需停止重播；涉及其他效果类型时，链结构与来源替换延后生效，仅已安装槽位的 Active 和来源兼容的参数可即时更新 |
+| 继承范围 | Sound、Container、Layer、Track、Segment 沿归属父级继承整条 Effects 链，不与父链叠加；根直接编辑自身配置，Bus 不提供 Inherit |
 | 本地历史 | 首次关闭 Inherit 复制当前有效链并建立独立槽位身份，已有本地历史时恢复历史；重新继承保留历史；Rebuild Local from Current Effective Values 重建本地链 |
 | 平台配置 | Shared 与单平台分别保存整链配置，Bus 同样支持；All Platforms 修改共享链并清除该链的平台覆盖，单平台只修改当前平台，与 Shared 相同的链自动消除覆盖；非 Bus 的继承开关也按平台保存，沿用标题菜单 Reset Inherit 恢复共享继承模式 |
 | 有效值与只读 | 继承展示当前平台解析出的有效链，禁止增删、排序和修改，保留编辑器查看及 ObjectRef 导航；混合平台有效链不能作为一条链编辑；可编辑的 All Platforms 显示共享本地链 |
 | 配置与身份 | 继承关系、本地历史和平台覆盖为保存依据，有效链为解析结果；Custom 参数和 Preset 引用随整链保存，复制到另一对象建立独立槽位身份，同一对象各平台的同一槽位保留身份 |
-| 共享资产 | Assets 的 Effect 桶保存类型与全部参数，New Effect > Limiter 为当前唯一类型入口；创建后插件类型固定，Inspector 只显示 Notes，无 Status section；双击对象打开 Effect Editor |
-| 删除资产 | 清理共享链、各平台覆盖及未生效本地历史中的 Preset 引用行，保留 Custom；撤销一并恢复原顺序、Level 和 Active |
+| 共享资产 | Assets 的 Effect 桶保存类型与全部参数，New Effect > Limiter 为当前唯一类型入口；创建后插件类型固定，Inspector 常规属性区只显示 Notes，无 Status section |
+| 独立编辑器跟随 | 所有未 Pin 实例只跟随有效的 Effect 预设或 FX 行单选；单选不新建窗口。选择 Bus 等所属对象（无论是否有 FX）、其他对象或取消选择均保留当前效果器，不自动选择其他槽位；Pin 保持自身绑定，解除 Pin 时若最近一次效果器选择仍有效则立即同步，否则保留自身绑定。当前效果器失效时隐藏参数，槽位删除后撤销可恢复，关闭工程清空绑定和选择记录 |
+| 资产编辑区 | 双击 Effect 对象在 Inspector 下半区显示 Effect Editor，标题暂用居中的 Details，上半区保留常规属性；初始上下比例 1:1，分隔边框可拖动；每个 Inspector 首次展开后，选择其他 Effect 直接更新内容并保留比例，切换到非 Effect、清空选择、删除当前资产或关闭工程时清空并隐藏，再选择 Effect 自动恢复；每次单击右上 detach 均为当前资产新建独立浮动 Effect Editor，已有同类型实例及内嵌编辑区保留；新窗沿当前屏幕已有浮窗向右下错开，遇屏幕边缘回绕，已有窗口及已记忆位置不重排；固定 Inspector 保持自身对象 |
+| 删除资产 | 清理共享链、各平台覆盖及未生效本地历史中的 Preset 引用行，保留 Custom；撤销一并恢复原顺序和 Active |
 
 ## Publisher 表格
 
@@ -176,7 +179,7 @@
 | 视图 | 范围注解 |
 |---|---|
 | Curve Editor、Timeline | 领域画布，不计入普通表格 |
-| Effect Editor | 本阶段内容留空；支持预设资产及稳定槽位上下文、多实例、固定和布局恢复，槽位切换模式及当前平台有效配置后继续跟随 |
+| Effect Editor | 内嵌与独立参数表单均不计入普通表格；Limiter 使用两行标准表单：Ceiling 范围 −24～0 dB、默认 0 dB，Release 范围 1～1000 ms、默认 100 ms；提供标准滑条、数值输入与复位，Preset 与 Custom 参数支持编辑、撤销重做及保存，Preset 参数跨平台共享，Custom 参数编辑遵循当前平台作用域，继承 Custom 只读；支持预设资产及稳定槽位上下文，独立编辑器支持多实例、固定和布局恢复，槽位切换模式及当前平台有效配置后继续跟随 |
 | Hierarchy、Explorer、Sources、Selector、Template Chooser 预览 | 导航或选择树，不计入普通表格 |
 | Log | 文本视图，不计为 Monitor 表格 |
 

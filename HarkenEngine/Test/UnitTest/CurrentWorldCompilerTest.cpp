@@ -2723,6 +2723,81 @@ TEST(CurrentWorldCompiler, CapacityPlusOneRefusesWithoutOutput) {
     EXPECT_EQ(nullptr, result.world);
 }
 
+TEST(CurrentWorldCompiler, EffectFlagsRoundTripAcrossCodecsAndRejectUnknownBits) {
+    harkenprojectschema::CanonicalProject project;
+    auto sound = Sound(1);
+    sound.sound.chassis.presence.Set(harkenplayableproperties::PlayablePropertyIdV1::SignalGraph);
+    harkenprojectschema::EffectNode effect;
+    effect.nodeId = 1;
+    effect.effectId = harkentest::StudioObjectId(2);
+    effect.effectType = VN_EFFECT_GAIN;
+    effect.params = {{0, std::bit_cast<std::uint32_t>(-6.0f)}};
+    sound.sound.chassis.signalGraph.nodes.push_back(effect);
+    project.objects.push_back(sound);
+    project.roots = {harkentest::StudioObjectId(1)};
+    const std::vector<harkencurrentworldcompiler::DefinitionMaterializationV1> materializations{
+        {harkenplayableproperties::ContentPropertyKindV1::Sound,
+         harkentest::StudioObjectId(1), 1, {}, 0}};
+    std::uint64_t enabledFingerprint = 0;
+    for (const auto flags : {0u, 1u}) {
+        project.objects[0].sound.chassis.signalGraph.nodes[0].flags = flags;
+        const auto compiled = harkencurrentworldcompiler::CompileCurrentWorldV1(
+            project, {}, materializations, {});
+        ASSERT_TRUE(compiled.ok());
+        const auto& world = compiled.world->View();
+        std::vector<std::uint8_t> bytes;
+        ASSERT_TRUE(harkenstudiobuild::EncodeCurrentWorldShippingBody(world, bytes));
+        harken::CurrentWorldBodyImage decoded;
+        ASSERT_TRUE(decoded.Decode(bytes.data(), bytes.size(),
+            harken::kCurrentWorldShippingBodyVintage,
+            harken::CurrentWorldDecodeMode::StrictArtifact));
+        const auto& restored = *decoded.ProductionView();
+        ASSERT_EQ(1u, restored.playablePropertyCount);
+        ASSERT_EQ(1u, restored.playableProperties[0].payload.effectNodeCount);
+        EXPECT_EQ(flags, restored.playableProperties[0].payload.effectNodes[0].flags);
+        std::vector<std::uint8_t> again;
+        ASSERT_TRUE(harken::EncodeCurrentWorldShippingBody(restored, again));
+        EXPECT_EQ(bytes, again);
+        if (flags == 0) enabledFingerprint = restored.identity.runtimeSemanticFingerprint;
+        else EXPECT_NE(enabledFingerprint, restored.identity.runtimeSemanticFingerprint);
+
+        auto rejectedWorld = restored;
+        auto rejectedProperty = restored.playableProperties[0];
+        auto rejectedEffect = rejectedProperty.payload.effectNodes[0];
+        rejectedProperty.payload.effectNodes = &rejectedEffect;
+        rejectedWorld.playableProperties = &rejectedProperty;
+        auto studioWorld = world;
+        auto studioProperty = world.playableProperties[0];
+        auto studioEffect = studioProperty.payload.effectNodes[0];
+        studioProperty.payload.effectNodes = &studioEffect;
+        studioWorld.playableProperties = &studioProperty;
+        const auto refreshFingerprints = [&]() {
+            rejectedProperty.programSemanticFingerprint =
+                harken::ComputePlayablePropertyFingerprintV1(rejectedProperty);
+            rejectedWorld.identity.runtimeSemanticFingerprint =
+                harken::ComputeCurrentWorldFingerprintV5(rejectedWorld);
+            studioProperty.programSemanticFingerprint =
+                harkenstudiobuild::ComputePlayablePropertyFingerprintV1(studioProperty);
+            studioWorld.identity.runtimeSemanticFingerprint =
+                harkenstudiobuild::ComputeCurrentWorldFingerprintV5(studioWorld);
+        };
+        refreshFingerprints();
+        ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::ValidateCurrentWorldV1(rejectedWorld));
+        ASSERT_EQ(harkenstudiobuild::WorldInstallStatus::Ok,
+            harkenstudiobuild::ValidateCurrentWorldV1(studioWorld));
+        for (std::uint32_t bit = 1; bit < 32; ++bit) {
+            SCOPED_TRACE(bit);
+            rejectedEffect.flags = std::uint32_t{1} << bit;
+            studioEffect.flags = rejectedEffect.flags;
+            refreshFingerprints();
+            EXPECT_EQ(harken::WorldInstallStatus::InvalidWorld,
+                harken::ValidateCurrentWorldV1(rejectedWorld));
+            EXPECT_EQ(harkenstudiobuild::WorldInstallStatus::InvalidWorld,
+                harkenstudiobuild::ValidateCurrentWorldV1(studioWorld));
+        }
+    }
+}
+
 TEST(CurrentWorldCompiler, AuthoredContentGrowsCumulativeBudgetsAndPreservesExplicitLimits) {
     harkenprojectschema::CanonicalProject project;
     std::vector<harkencurrentworldcompiler::DefinitionMaterializationV1> materializations;

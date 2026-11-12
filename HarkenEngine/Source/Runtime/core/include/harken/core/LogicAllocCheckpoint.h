@@ -30,6 +30,8 @@ enum class LogicAllocSite : unsigned int {
     CapturedScheduleVoices,
     VariableReadCutColumns,
     EffectExtraStorage,
+    EffectInstanceStorage,
+    EffectRetireStorage,
     ScheduledGroupMembers,
     MonitorDerivedStorage,
     ImmediateEntryStorage,

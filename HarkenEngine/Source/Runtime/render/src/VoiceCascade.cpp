@@ -1,3 +1,4 @@
+#include "harken/render/EffectChainUpdate.h"
 #include "harken/render/Voice.h"
 #include "harken/render/SignalRenderPlan.h"
 #include "harken/render/EffectChain.h"
@@ -558,6 +559,7 @@ void ApplyTimelineControlEvent(VoiceRenderContext& ctx,
 }
 
 bool NeedsBlendScratch(const VoiceRenderContext& ctx) noexcept {
+    if (ctx.fxChainTransition != nullptr) return false;
     for (std::uint32_t slot = 0; slot < ctx.fxSlotCount; ++slot) {
         if (ctx.fxSlots[slot].process != nullptr &&
             (ctx.fxBypassRamping[slot] || ctx.fxBypassMix[slot] != 0.0f)) {
@@ -573,7 +575,7 @@ bool PreparePlainPcm(const VoiceRenderContext& ctx, std::uint32_t blockFrames,
     return false;
 #else
     const auto& rs = ctx.resampler;
-    if (offset >= blockFrames || ctx.pcm.channelCount == 0 ||
+    if (ctx.fxChainTransition != nullptr || offset >= blockFrames || ctx.pcm.channelCount == 0 ||
         ctx.pcm.channelCount > kMaxChannels || ctx.phase != SourcePhase::Active ||
         ctx.streamParkActive ||
         ctx.voiceSendActiveCount != 0 || ctx.dynamicVoiceTapActive ||
@@ -1126,7 +1128,9 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
     // otherwise their old non-owning pointers remain unread. Re-enabling either
     // path republishes its full array before any worker or fold can consume it.
     std::copy_n(scratch, kMaxChannels, ctx.cascade.scratch);
-    if (needsBlendScratch) std::copy_n(dry, kMaxChannels, ctx.cascade.dry);
+    if (ctx.fxChainTransition != nullptr)
+        std::copy_n(ctx.fxChainTransition->dry.data(), kMaxChannels, ctx.cascade.dry);
+    else if (needsBlendScratch) std::copy_n(dry, kMaxChannels, ctx.cascade.dry);
     if (tapReady) std::copy_n(tap, kMaxChannels, ctx.cascade.tap);
     ctx.cascade.needBlend = needsBlendScratch;
     ctx.cascade.tapReady = tapReady;
@@ -1414,12 +1418,38 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
     // Ascending slots share the bus chain's one-block bypass crossfade.
     if (produced > 0) {
         for (std::uint32_t s = 0; s < ctx.fxSlotCount; ++s) {
+            auto* transition = ctx.fxChainTransition;
+            if (transition != nullptr && (transition->changedMask & (1u << s)) != 0) {
+                const auto end = ctx.fxSlotCount;
+                std::array<float, kMaxFxSlotsPerVoice> starts{};
+                for (auto slot = s; slot < end; ++slot)
+                    starts[slot] = ctx.fxBypassRamping[slot] ? ctx.fxBypassMix[slot] : -1.0f;
+                ProcessTransitionChainRange(transition->oldEffects.data(), transition->oldBypass.data(),
+                    ctx.fxSlots, ctx.fxBypassTarget, starts.data(), s, end, scratch, transition->dry.data(),
+                    transition->alternate.data(), channels, offset, produced,
+                    transition->done, transition->totalFrames,
+                    [](auto, auto) {}, [&](auto slot, auto) {
+                        if (ctx.fxSlotEffectRef[slot].type == VN_EFFECT_LIMITER &&
+                            ctx.fxSlots[slot].state != nullptr)
+                            static_cast<LimiterState*>(ctx.fxSlots[slot].state)->gainReduction.frameOffset += offset;
+                    });
+                for (auto slot = s; slot < end; ++slot) {
+                    ctx.fxBypassMix[slot] = ctx.fxBypassTarget[slot];
+                    ctx.fxBypassRamping[slot] = false;
+                }
+                ctx.fxChainTransitionThisBlock = true;
+                s = end - 1;
+                continue;
+            }
             ProcessChainSlot(ctx.fxSlots[s], ctx.fxBypassRamping[s],
                              ctx.fxBypassMix[s], ctx.fxBypassTarget[s],
                              scratch, dry, channels, offset, produced, nullptr,
                              ctx.fxSlotEffectRef[s].type == VN_EFFECT_LIMITER
                                  ? static_cast<LimiterState*>(ctx.fxSlots[s].state)
                                  : nullptr);
+        }
+        if (auto* transition = ctx.fxChainTransition) {
+            transition->done += std::min(produced, transition->totalFrames - transition->done);
         }
     }
 

@@ -281,6 +281,56 @@ Studio 写入 Pack 的分区仍只有 shipping V18。Engine 按 owner 接受可�
 
 `current` 已补齐实际布局，与已发布的 Pack 4 档案不同。此次只更新当前合同和实现，不修改 `HarkenSchema/Pack/3`、`HarkenSchema/Pack/4` 档案或发布版本，不执行 Pack 5 发布。发布审计仍要求不同合同换代，后续由发布者完成；当前版本号保持 4 不表示本次合同变化已经完成发布。
 
+## Limiter 试听与 Pack 桥接（2026-11-12）
+
+非 Bus 效果的 `Active` 由工程 `bypass` 编译为 `EffectNodeV1.flags` 的 bit 0，经过 Pack 编解码、语义指纹和运行时安装传递。该字段复用原 offset 28 的 U32 保留位；全零时保持既有编码和指纹，不允许未知位。Studio 试听将 Custom 与 Preset 解析为具体插件与参数，运行时按效果行身份持有实例；正式 Pack 的共享预设采用下述 Init 定义与槽位引用。
+
+Bus 发布投影使用 publication vintage 5（`TopologyVolumeSendAndEffectsNeutralOtherProperties`），保留拓扑、音量、输出音量、Send、效果顺序、参数和旁通状态，其余属性仍按中性值发布，fader 位于效果链后。正式 Pack 的 BusDefinitionSnapshot 同步携带效果及参数表并计入完整指纹；历史 publication 3／4 的无效果编码保持不变。Preview 通过 `VnPreviewProjectDescV4` 传输同一投影，采用 prepare／commit／cancel 事务，在音频块边界应用；参数、Active 和无关属性变更保留已有效果实例。
+
+当前 Studio Preview 中，Voice／Bus 编辑前后的链均只含 Limiter（含空链）时，参数拖动、Active、链条增删、替换和重排均作用于当前播放，无需停止重播。涉及其他效果类型时，链结构与来源替换仍沿原有生命周期延后生效，已安装槽位的 Active 和来源兼容的参数可即时更新；受在播消费者阻挡的 Bus 事务保留至消费者释放，消费者检查覆盖旧发布代际仍存活的播放。该延后限制用于 Studio Preview，正式 PackSet 的替换与卸载沿用既有生命周期。
+
+Bus publication 5、Preview descriptor V4、shipping body V18 和已发布 Pack Schema 4 属于不同版本空间。本次继续只修改 `Pack/current`，不修改历史合同或执行发布换代；对外发布前仍须按合同审计完成新的 Pack 代际。
+
+配套 Engine 改动包含合同读入、旁通安装、运行状态镜像、Bus 效果事务与 PackSet 消费；复用既有 DSP、实例池和音频命令。旧 Preview 协议的默认删除校验与无关 Signal 提交规则保持原有行为。
+
+以下为 #305 阶段的验证与修正记录；其中 Limiter 链结构或来源替换延后生效的行为，已由 #307 更新为上述实时编辑行为。
+
+验证环境为 Windows x64、clang-cl、Ninja Multi-Config、RelWithDebInfo。Engine 全量执行 6581 项：6573 通过、6 跳过，2 条新增 Pack fixture 因遗漏 FX 能力声明失败；补齐 fixture 后两项和 flags 校验复跑全部通过，业务代码无剩余失败。Studio 试听、适配器、双端 Pack 解析和导出共 101 项，100 通过；唯一失败为既有的 `PartialPublicationCombinesScheduleAndEffectCapacity`，返回 `VN_PACK_RESIDENT_CAPACITY`，对应下文记录的默认 64 MiB 解码预算问题。StudioRuntimeApi 7 项、BusCompiler 4 项、ProjectSchema 27 项、Pack 生成器 20 项及生成物检查均通过。
+
+独立 Host 播放保存、重新打开后导出的五种 Pack：干声峰值 0.4883，声音／Bus Limiter 开启时均为 0.0631，旁通后均恢复 0.4883。Studio 的真实 Null 后端 PCM 回归覆盖在播改参、Active、撤销、预设替换延后与重播；事务回归覆盖取消、外部所有权、失败回滚和卸载回收。机器输出已验证，未做人工听验。首轮 Bus 样本通过工程文档 fixture 构造；随后补齐 CLI 的 Bus `effects` 合同和定义字段组读回，以下验收工程全部由 CLI 创建和编辑，不再写入 `.vp` fixture。
+
+旧 codec 实际 fixture 验证了 flags=0 的 32 字节编码完全不变、flags=1 只改变 offset 28 且被旧 reader 拒绝；未知位由新旧对应校验路径明确拒绝。完整证据位于 `.temp/limiter-bridge/` 的 `validation-summary.json`、各测试 JSON／日志、`workflow-summary.json` 和 `effect-header-compat-probe.log`。
+
+按桌面 `review.txt` 补充验收：282 次 CLI 调用覆盖六类 Mixer 对象的链编辑、转换结果、Active／行身份保留、预设断共享、参数边界、保存重开及非法输入拒绝。持续 CLI 真实设备试听的 11 个观测点确认改参、Active、撤销不更换播放身份，声音链替换及 Bus 加链在重播后生效。桌面实例 CLI 实测 14 项，12 项通过，包括真实 View 菜单、Explorer 双击、内嵌参数、Detach、多开、Save As Preset／Convert to Custom 和点击参数拒绝；失败项为下述第 9 槽与跟随选择。命令／控件通用回归 18 项通过。
+
+CLI 导出的 13 个 Pack 场景验证最近祖先继承、子级覆盖、显式空链、重复／重排／8 枚 Limiter、Bus 级联与 release 恢复趋势。标准 `harken_host pack-play` 默认仅配置 1 个 Voice FX 槽，重复和 8 槽测试使用临时 native Host 设为 8，并捕获 PCM，正式 Host 和 Engine 源码未改。1 ms／1000 ms release 在输入降低后 200–300 ms 的峰值分别为 0.1220703／0.0515176；PCM 有限，重复和 8 槽未增加相邻样本最大跳变，尚不能代替耳听无爆音结论。
+
+首轮验收发现：创作端接受第 9 槽，声音链还能无警告导出，按 8 槽初始化的 Runtime 播放返回 `VN_NO_VOICE`；独立 Effect Editor 不跟随 Explorer 单选切换。首轮曾依据 review 末尾补充把导出端展开继承判为问题，该判断已由下述用户明确合同纠正。证据在 `.temp/fx-acceptance/` 的 `cli-authoring-summary.json`、`cli-live-summary.json`、`runtime-probe-summary.json` 与 `pcm-metrics.json`。
+
+后续修正（2026-11-11）：前两项已修复。满 8 槽禁用加号，创作／CLI／编译入口拒绝超限；Sound 的非法 9 槽文件加载失败，Bus 的非法 9 槽文件导出失败，原文件保留且不生成 Pack，8 槽仍可导出。所有未 Pin 的 Effect Editor 跟随预设和 FX 行选择，解除 Pin 即时同步。CLI 创作验证 282 次调用、桌面流程 13 项、Editor／命令／导航回归 30 项、ProjectSchema 全量 28 项通过；证据在 `.temp/fx-fixes/`。
+
+用户明确的验收合同（2026-11-11）：继承由 Studio 创作侧解析，Pack 保存可播放对象的最终 FX 队列，Engine 消费该结果，不解析 Studio 继承关系。Preset Effect 定义属于 Init 内的独立共享集，Action 中的队列只引用它；Custom Effect 随声音内联到 Action 包。不得以迁移 Runtime 继承替代这项共享预设打包要求。
+
+修复前按明确合同复核实物 Pack：两个 Action 使用同一 Preset，并各带一枚 Custom。Init 未包含独立 Preset 定义；两个 Action 的 Sound 都内联了相同 Preset 参数，`effectId` 为各自槽位身份而非预设身份。Custom 已正确随 Sound 进入 Action。Engine 原生解码和实际播放均成功，当时内联结果可执行，但尚未实现共享预设入 Init／Action 引用。复现工程、CLI 请求、原生解码和播放结果在 `.temp/fx-preset-contract/summary.json` 与同目录产物中。
+
+共享预设修复（2026-11-11）：Init 通过 kind 29、vintage 1 保存按预设稳定 ID 标识的类型、参数和描述符版本。Action 的最终 FX 队列使用 `effectType = UINT32_MAX` 表示引用，独立保存 `presetId`，参数数量为 0；`effectId` 仍是每次使用的槽位身份，旁通状态仍属于槽位。Custom 保持原有内联编码。Bus 效果快照本身属于 Init，沿用其现有可执行描述符。
+
+Preset 引用通过生成的条件字段编码，Custom 的 32 字节节点头与既有内联字节格式保持不变；0 仍是合法 Delay 类型。新 Engine 继续读取旧内联内容；旧 Engine 拒绝新增 entry kind 或引用类型，不会把预设误当成其他效果。仅更新 `Pack/current`，不修改历史 schema 或执行合同发布。
+
+Engine 发布前校验引用闭包与 Init 依赖，在播放租约中保留共享定义及解码预算；换包后的新播放使用新定义，旧播放继续使用对应代际的定义。DSP 安装与容量计算均通过同一代际解析预设，重复引用同一预设仍有独立槽位实例。此路径不增加创作侧继承解析。
+
+部分发布保留原 Init 时，已编译的新 Action 不能引用其中缺失或内容过期的预设；导出在写文件前拒绝并提示一并导出 Init。保留的旧 Action 继续引用其原 Init。既有大型部分发布回归仅将测试的解码暂存预算设为 256 MiB，覆盖其 1024 个 Segment、每个 4 个 Track 的规模；生产默认预算未变。
+
+共享预设修复验证：Engine 相关 499 项、Studio 导出与试听相关 94 项、ProjectSchema 28 项、格式生成器 20 项均通过。CLI 创建两个 Action 共享一枚 Preset，其中一个重复引用两次，两者均带 Custom；原生解码确认 Init 定义唯一、Action 无预设参数副本、槽位身份独立。初始 Custom 限幅峰值为 0.0631／0.1259；共享 Preset 从 -12 dB 改为 -24 dB 并增量导出后，两者均为 0.0631。CLI 真实设备试听的 11 个观测点通过。旧 reader 拒绝新引用包，新 reader 成功读取修复前的内联包。证据位于 `.temp/fx-shared-preset/` 的 `summary.json`、`runtime.json`、`editor.json`、`cli-live-summary.json` 和 `compatibility.json`。
+
+PR #305 复审修正（2026-11-11）：Preview 发布按拓扑与全部 FX 命令的总量检查单个音频处理周期及队列容量，超限在发布前拒绝，不留下无法消费的批次。保留的 Compressor 更新使用完整的新参数向量，避免后续参数命令覆盖同次修改。
+
+试听 FX 来源基线取自已安装编译结果，并随实际播放持有的 World generation 保留，覆盖第一次 live tick 前替换及尚未产生声音的延迟播放。即使两个预设当前参数相同，替换来源也遵守现有生命周期；新增 Preview V4 换代标志只在新 owner revision 上生效，精确重试仍保持幂等。来源变化期间参数保持原来源，Active 继续按槽位即时更新。
+
+Bus 即时编辑独立读取当前创作值，只对已安装且来源兼容的槽位更新参数，Active 不受待生效来源替换阻塞。成功的即时修改淘汰旧创作版本的未提交事务，避免停止播放时重试旧参数。链结构和来源替换仍在下一次播放生效，Pack 的 Init 共享预设／Action 引用合同不变。
+
+复审验证：Engine 294 项、Preview API 9 项、Studio 试听／协调器 40 项与源码合同 25 项，共 368 项通过。真实设备 CLI 的 20 个观测点通过，覆盖旧播放身份保持、待生效来源／结构期间的参数与 Active、停止后重播。原生 PCM 回归覆盖整批容量拒绝后的恢复、Compressor 多参数修改、绑定结果保留及参数占用冲突后的重试。首次 tick、等参数不同来源和零声音间隔的延迟播放均通过。Windows CI 缺失的 Preview 导出清单声明已补齐；本地证据位于 `.temp/fx-pr-review/verification-summary.json` 及同目录日志。
+
 ## 兼容范围
 
 | 项目 | 当前结果 |

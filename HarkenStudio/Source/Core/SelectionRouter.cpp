@@ -316,9 +316,9 @@ void SelectionRouter::activateItem(ProjectItem* item, const PlacementContext* pl
         host_->openStandaloneEditor(QStringLiteral("TimelineEditor"), item);
     if (GridEditorPanel::acceptsItem(item))
         host_->openStandaloneEditor(QStringLiteral("GridEditor"), item);
-    if (item->type == ProjectItem::Type::Effect)
-        host_->openEffectEditor(item->guid);
-    host_->openOrFocusInspectorForItem(item, placement);
+    auto* inspector = host_->openOrFocusInspectorForItem(item, placement);
+    if (inspector && item->type == ProjectItem::Type::Effect)
+        inspector->showEmbeddedEffectEditor();
     republishCurveSelection();
 }
 

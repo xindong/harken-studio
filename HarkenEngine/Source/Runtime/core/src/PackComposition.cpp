@@ -1760,6 +1760,8 @@ bool SamePayload(const PlayablePropertyPayloadViewV1& left,
         if (leftNode.nodeId != rightNode.nodeId ||
             leftNode.effectId != rightNode.effectId ||
             leftNode.effectType != rightNode.effectType ||
+            leftNode.presetId != rightNode.presetId ||
+            leftNode.flags != rightNode.flags ||
             leftNode.paramCount != rightNode.paramCount ||
             !PointerCountOk(leftNode.paramCount, leftNode.params) ||
             !PointerCountOk(rightNode.paramCount, rightNode.params)) {
@@ -2629,6 +2631,41 @@ VnResult BuildPublishedResourceClosure(
     return VN_OK;
 }
 
+VnResult ValidateEffectPresetReferences(const PackComposition::PublishedView& published) {
+    for (const auto& owner : published.owners) {
+        if (owner.readiness != PackOwnerReadiness::Active) continue;
+        bool usesPreset = false;
+        const auto validate = [&](const PlayablePropertyPayloadViewV1& payload) {
+            for (std::uint32_t i = 0; i < payload.effectNodeCount; ++i) {
+                const auto& node = payload.effectNodes[i];
+                if (node.presetId == VnObjectId{}) continue;
+                usesPreset = true;
+                const auto found = std::find_if(published.catalog.effectPresets.begin(),
+                    published.catalog.effectPresets.end(), [&](const auto& preset) {
+                        return preset.header.presetId == node.presetId;
+                    });
+                if (found == published.catalog.effectPresets.end()) return false;
+            }
+            return true;
+        };
+        for (std::uint32_t i = 0; i < owner.view.playablePropertyCount; ++i) {
+            const auto& property = owner.view.playableProperties[i];
+            if (!validate(property.payload)) return VN_BAD_PACK;
+            for (std::uint32_t a = 0; a < property.structuralAncestorCount; ++a)
+                if (!validate(property.structuralAncestors[a].payload)) return VN_BAD_PACK;
+        }
+        for (std::uint32_t i = 0; i < owner.view.playableOccurrenceCount; ++i)
+            if (!validate(owner.view.playableOccurrences[i].payload)) return VN_BAD_PACK;
+        if (usesPreset && owner.packStableId != published.initPackStableId &&
+            !std::any_of(owner.dependencyEdges.begin(), owner.dependencyEdges.end(),
+                [&](const auto& edge) {
+                    return edge.edgeKind == kPackDependencyEdgeKindInit && edge.required01 == 1 &&
+                        edge.prerequisitePackStableId == published.initPackStableId;
+                })) return VN_BAD_PACK;
+    }
+    return VN_OK;
+}
+
 VnResult BuildPlaybackOwnerStore(PackComposition::PublishedView& published,
                                  std::size_t maxPacks,
                                  std::uint64_t worldSemanticFingerprint,
@@ -2637,6 +2674,19 @@ VnResult BuildPlaybackOwnerStore(PackComposition::PublishedView& published,
     store->worldSemanticFingerprint = worldSemanticFingerprint;
     published.staging.AddRows<PackAttenuationBindingMapV1::Binding>(attenuationBindings.entries.size());
     store->attenuationBindings = attenuationBindings;
+    store->effectPresetStaging = detail::PackDecodeCharge(published.staging.Budget());
+    detail::DecodeReserve(store->effectPresets, published.catalog.effectPresets.size(), store->effectPresetStaging);
+    for (const auto& source : published.catalog.effectPresets) {
+        PackEffectPresetSnapshot preset;
+        preset.presetId = source.header.presetId;
+        preset.effectType = source.header.effectType;
+        detail::DecodeReserve(preset.parameters, source.parameters.size(), store->effectPresetStaging);
+        for (const auto& parameter : source.parameters)
+            preset.parameters.push_back({parameter.paramId, parameter.valueBits});
+        store->effectPresets.push_back(std::move(preset));
+    }
+    std::sort(store->effectPresets.begin(), store->effectPresets.end(),
+        [](const auto& left, const auto& right) { return left.presetId < right.presetId; });
     store->owners.resize(published.owners.size());
     detail::PackDecodeCharge scratch(published.staging.Budget());
     std::vector<ContainerWorldInstallViewV1> worlds;
@@ -3471,6 +3521,8 @@ VnResult PackComposition::PrepareCommit(
             }
         }
     }
+    const VnResult effectPresets = ValidateEffectPresetReferences(*next);
+    if (effectPresets != VN_OK) return effectPresets;
     const VnResult overlayPolicy = ValidateInitVariablePolicy(*next);
     if (overlayPolicy != VN_OK) {
         return overlayPolicy;
@@ -4288,6 +4340,14 @@ VnObjectId PackComposition::ProjectIdAtLease(const PackPartitionLease& lease) co
 std::uint64_t PackPlaybackView::AttenuationGeneration(VnAttenuationId id) const noexcept {
     return ownerStore_ != nullptr
         ? ownerStore_->attenuationBindings.GenerationFor(id) : 0;
+}
+
+const PackEffectPresetSnapshot* PackPlaybackView::ResolveEffectPreset(VnObjectId id) const noexcept {
+    if (ownerStore_ == nullptr || id == VnObjectId{}) return nullptr;
+    const auto& presets = ownerStore_->effectPresets;
+    const auto found = std::lower_bound(presets.begin(), presets.end(), id,
+        [](const auto& preset, VnObjectId wanted) { return preset.presetId < wanted; });
+    return found != presets.end() && found->presetId == id ? &*found : nullptr;
 }
 
 VnObjectId PackPlaybackView::ProjectId() const noexcept {

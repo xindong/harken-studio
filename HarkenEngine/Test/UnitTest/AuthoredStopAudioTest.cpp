@@ -5906,7 +5906,11 @@ TEST(AuthoredStopAudio, MixerSourceHeldMetadataInstallsRealPreparedCompressorFla
     ASSERT_TRUE(harken::PrepareCompressorParameters(parameters, kRate, &prepared));
     std::array<harken::CommandRecord, 2> metadata{};
     metadata[0].opcode = harken::kOpcodeSetVoiceEffect;
-    metadata[0].payload.setVoiceEffect = {expectedSource, 0, effect.type, effect.poolIndex, effect.generation};
+    metadata[0].payload.setVoiceEffect.handle = expectedSource;
+    metadata[0].payload.setVoiceEffect.slot = 0;
+    metadata[0].payload.setVoiceEffect.effectType = effect.type;
+    metadata[0].payload.setVoiceEffect.poolIndex = effect.poolIndex;
+    metadata[0].payload.setVoiceEffect.poolGeneration = effect.generation;
     metadata[1].opcode = harken::kOpcodeSetVoiceEffectParam;
     metadata[1].flags = harken::kCommandFlagPreparedCompressor;
     auto& payload = metadata[1].payload.setCompressorEffectParam;

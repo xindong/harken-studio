@@ -11,9 +11,6 @@
 #include "Core/ThemeManager.h"
 #include "Core/UndoCommands.h"
 #include "Widgets/Common/ListFooter.h"
-#include "Widgets/Common/ParameterBinding.h"
-#include "Widgets/Common/ParameterSlider.h"
-#include "Widgets/Common/ParameterValueEditor.h"
 #include "Widgets/Common/TableWidget.h"
 #include "Widgets/Inspector/EffectsFieldSchema.h"
 #include "Widgets/Inspector/FieldGroupInspectorView.h"
@@ -53,7 +50,6 @@ public:
         table_->setColumns(QStringLiteral("MixNodeEffects"), {
             {QStringLiteral("Number"), {}, 0},
             {QStringLiteral("Effect"), {}, 520},
-            {QStringLiteral("Level"), {}, 360},
             {QStringLiteral("Active"), {}, 120}
         });
         applyInspectorTableDescriptor(table_, effectsInspectorDescriptor());
@@ -63,7 +59,7 @@ public:
         });
         table_->setRowSelectionHandler([this](QWidget* row) {
             selected_ = row->property("effectGuid").toUuid();
-            refreshSelection();
+            refreshSelection(true);
         });
         table_->setRowMoveHandler([this](int from, int to) {
             auto effects = effects_.entries();
@@ -72,7 +68,7 @@ public:
             effects.insert(effects.begin() + to, effect);
             if (commit(std::move(effects))) {
                 selected_ = effect.guid;
-                refreshSelection();
+                refreshSelection(true);
             }
         }, [this](int from, int to) {
             const int count = static_cast<int>(effects_.size());
@@ -95,7 +91,7 @@ public:
             queuePresetSelector({});
         });
         connect(add_, &QToolButton::clicked, this, [this] {
-            if (canEdit() && isCurrentContext())
+            if (canEdit() && isCurrentContext() && effects_.size() < EffectChainLedger::kCapacity)
                 addMenu_->popup(add_->mapToGlobal(QPoint(0, add_->height())));
         });
         connect(remove_, &QToolButton::clicked, this, [this] {
@@ -198,7 +194,7 @@ protected:
         auto* widget = static_cast<QWidget*>(watched);
         if (auto* row = table_->rowForWidget(widget)) {
             selected_ = row->property("effectGuid").toUuid();
-            refreshSelection();
+            refreshSelection(true);
             if (event->type() == QEvent::MouseButtonDblClick
                 && widget->objectName() == QStringLiteral("effectContent")
                 && qobject_cast<QLabel*>(widget) && widget->isEnabled()
@@ -282,6 +278,7 @@ private:
     void showPresetSelector(const QUuid& guid)
     {
         if (!canEdit() || !isCurrentContext()) return;
+        if (guid.isNull() && effects_.size() >= EffectChainLedger::kCapacity) return;
         const QPointer<EffectsListWidget> self(this);
         const uint64_t generation = generation_;
         SelectorRequest request;
@@ -296,6 +293,7 @@ private:
                 self->replaceEffect(guid, objectID);
                 return;
             }
+            if (self->effects_.size() >= EffectChainLedger::kCapacity) return;
             const auto* target = ProjectManager::instance().findItemByObjectID(objectID);
             auto effects = self->effects_.entries();
             EffectEntry effect;
@@ -305,7 +303,7 @@ private:
             effects.push_back(effect);
             if (self->commit(std::move(effects))) {
                 self->selected_ = effect.guid;
-                self->refreshSelection();
+                self->refreshSelection(true);
             }
         };
         SelectorWindow::open(request, guid.isNull() ? static_cast<QWidget*>(add_) : this);
@@ -333,6 +331,7 @@ private:
         auto found = std::find_if(effects.begin(), effects.end(),
             [&guid](const EffectEntry& effect) { return effect.guid == guid; });
         if (guid.isNull()) {
+            if (effects.size() >= EffectChainLedger::kCapacity) return;
             effects.emplace_back();
             found = std::prev(effects.end());
             found->guid = QUuid::createUuid();
@@ -345,7 +344,7 @@ private:
         const QUuid selected = found->guid;
         if (commit(std::move(effects))) {
             selected_ = selected;
-            refreshSelection();
+            refreshSelection(true);
         }
     }
 
@@ -415,16 +414,6 @@ private:
         if (!commit(std::move(effects))) rebuild();
     }
 
-    void setLevel(const QUuid& guid, double value)
-    {
-        auto effects = effects_.entries();
-        const auto found = std::find_if(effects.begin(), effects.end(),
-            [&guid](const EffectEntry& effect) { return effect.guid == guid; });
-        if (found == effects.end()) return;
-        found->wetDry = static_cast<float>(value / 100.0);
-        if (!commit(std::move(effects))) rebuild();
-    }
-
     void cancelPendingEdits()
     {
         for (auto* row : rows_) {
@@ -432,10 +421,6 @@ private:
                 menu->close();
             for (auto* reference : row->findChildren<ObjectRefWidget*>())
                 reference->cancelPendingSelection();
-            for (auto* value : row->findChildren<ParameterValueEditor*>())
-                value->cancelPendingInput();
-            for (auto* slider : row->findChildren<ParameterSlider*>())
-                slider->cancelPendingInput();
         }
     }
 
@@ -457,7 +442,7 @@ private:
         }
         rows_.clear();
         const bool editable = canEdit();
-        add_->setEnabled(editable);
+        add_->setEnabled(editable && effects_.size() < EffectChainLedger::kCapacity);
         table_->footer()->setVisible(editable);
         table_->bodyMessage()->setText(mixed_ ? tr("Mixed table\nSelect a single platform to edit")
             : groupView_.diagnostics.join(QLatin1Char('\n')));
@@ -478,7 +463,7 @@ private:
                 row->setObjectName(QStringLiteral("effectRow"));
                 row->setProperty("effectGuid", guid);
                 row->setProperty("lastRow", index + 1 == effects.size());
-                row->setProperty("searchText", tr("FXs Level Active") + QLatin1Char(' ') + name);
+                row->setProperty("searchText", tr("Effects Active") + QLatin1Char(' ') + name);
                 auto* rowLayout = new QHBoxLayout(row);
                 rowLayout->setContentsMargins(0, 0, 0, 0);
                 rowLayout->setSpacing(0);
@@ -516,8 +501,8 @@ private:
                     detach->setAutoRaise(true);
                     detach->setToolButtonStyle(Qt::ToolButtonIconOnly);
                     QtControlSkin::setSemanticProperty(detach, "flatIconButton", true);
-                    detach->setToolTip(tr("Open Effect Editor"));
-                    detach->setAccessibleName(tr("Open Effect Editor"));
+                    detach->setToolTip(tr("Open Effect Editor in New Window"));
+                    detach->setAccessibleName(detach->toolTip());
                     const auto refreshIcon = [detach] {
                         auto& theme = ThemeManager::instance();
                         const int extent = theme.metrics().iconExtent;
@@ -533,7 +518,7 @@ private:
                         if (generation != generation_ || !isCurrentContext() || !inspector_) return;
                         selected_ = guid;
                         refreshSelection();
-                        inspector_->requestEffectEditorSelection(boundGuid_, guid);
+                        inspector_->requestEffectEditorDetach(boundGuid_, guid);
                     });
                     effectCell->addWidget(detach, 0, Qt::AlignRight | Qt::AlignVCenter);
                 } else {
@@ -580,39 +565,6 @@ private:
                 }
                 rowLayout->addWidget(effectCell);
 
-                auto* levelCell = table_->createCell(row);
-                levelCell->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-                auto* level = new ParameterSlider(QString(), levelCell);
-                level->setObjectName(QStringLiteral("effectLevel"));
-                level->setPresenterOverride(ParameterPresenterId::HorizontalSlider);
-                level->setRange(0.0, 100.0, 1);
-                level->setSuffix(QStringLiteral(" %"));
-                level->binding()->setName(tr("Level"));
-                level->binding()->setDefaultValue(100.0);
-                level->setValue(effect.wetDry * 100.0);
-                level->setEnabled(editable);
-                level->setToolTip(tr("Dry/wet mix. Stored in Studio; not applied to audio processing."));
-                connect(level, &ParameterSlider::valueChanged, this,
-                    [this, generation, guid](double value) {
-                        if (generation == generation_ && canEdit()) setLevel(guid, value);
-                    });
-                connect(level, &ParameterSlider::interactiveEditEnd, this,
-                    [this, generation, guid](double, double value, bool committed) {
-                        if (committed && generation == generation_ && canEdit()) setLevel(guid, value);
-                    });
-                levelCell->addWidget(level);
-                auto* value = new ParameterValueEditor(level->binding(), &ThemeManager::instance(), levelCell);
-                value->setCompact(true);
-                value->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
-                value->setEnabled(editable);
-                value->setToolTip(level->toolTip());
-                levelCell->addWidget(value, 0);
-                ThemeManager::instance().bindMetrics(levelCell,
-                    [this, levelCell](const ThemeMetrics&) {
-                        table_->setColumnMinimumWidth(2, levelCell->minimumSizeHint().width());
-                    });
-                rowLayout->addWidget(levelCell);
-
                 auto* activeCell = table_->createCell(row);
                 auto* active = new QCheckBox(activeCell);
                 active->setObjectName(QStringLiteral("effectActive"));
@@ -625,7 +577,7 @@ private:
                 activeCell->addWidget(active, 0, Qt::AlignCenter);
                 rowLayout->addWidget(activeCell);
                 layout->addWidget(row);
-                table_->registerRow(row, {number, effectCell, levelCell, activeCell});
+                table_->registerRow(row, {number, effectCell, activeCell});
                 rows_.push_back(row);
             }
         }
@@ -635,7 +587,7 @@ private:
         if (inspector_ && !search_.isEmpty()) inspector_->reapplySearchFilter();
     }
 
-    void refreshSelection()
+    void refreshSelection(bool follow = false)
     {
         bool found = false;
         for (auto* row : rows_) {
@@ -645,6 +597,8 @@ private:
         }
         if (!found) selected_ = QUuid{};
         remove_->setEnabled(found && canEdit());
+        if (follow && found && isCurrentContext() && inspector_)
+            inspector_->requestEffectSelection(boundGuid_, selected_);
     }
 
     void applySearch()

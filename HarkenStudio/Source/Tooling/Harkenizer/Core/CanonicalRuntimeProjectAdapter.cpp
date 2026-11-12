@@ -597,7 +597,7 @@ compileBusResult(
                                          static_cast<uint32_t>(asset->type), 2,
                                          effect.bypass, parameterFirst,
                                          static_cast<uint32_t>(asset->parameters.size()),
-                                         effectSource});
+                                         effectSource, toAuthoringGuid(definitionGuid)});
             }
             const auto sendState = locator ? PlayablePropertyAuthoringV1::readProperty(
                 const_cast<ProjectItem&>(*item), *locator,
@@ -818,7 +818,8 @@ bool copyStudioDefinitionPayload(
     ProjectItem& item, PlatformScope scope,
     const CanonicalRuntimeProjectSourceIndexV1& index,
     const FieldGroupEffectiveSnapshot& groups,
-    const RuntimeIdentityIndexV1& identity, InputNode* output, QString* error)
+    const RuntimeIdentityIndexV1& identity, InputNode* output, QString* error,
+    bool exportPresetReferences)
 {
     using Property = harkenplayableproperties::PlayablePropertyIdV1;
     const auto fail = [&](const QString& message) {
@@ -917,6 +918,12 @@ bool copyStudioDefinitionPayload(
         graphNode.nodeId = id;
         graphNode.effectType = static_cast<uint32_t>(asset->type);
         graphNode.effectId = effect.runtimeId();
+        graphNode.flags = effect.bypass ? 1u : 0u;
+        if (exportPresetReferences && effect.mode == EffectMode::Preset) {
+            graphNode.presetId = target->second->runtimeId();
+            if (harkenstudio::IsNull(graphNode.presetId))
+                return fail(QStringLiteral("Effect preset is missing a stable identity"));
+        }
         for (size_t i = 0; i < asset->parameters.size(); ++i)
             graphNode.params.push_back({static_cast<uint32_t>(i),
                 std::bit_cast<uint32_t>(asset->parameters[i])});
@@ -1406,7 +1413,7 @@ harkenbuscompiler::PublishedBusProjectionV1 compileStudioBusProjectionForPlatfor
     return harkenbuscompiler::BuildPublishedBusProjectionV1(
         *context.busResult,
         harkenbuscompiler::BusPublicationCapabilityVintageV1::
-            TopologyVolumeAndSendNeutralOtherProperties);
+            TopologyVolumeSendAndEffectsNeutralOtherProperties);
 }
 
 const harkenbuscompiler::CompiledBusResultV1* compiledBusResult(
