@@ -20,6 +20,8 @@
 #include "harken/core/EngineConfig.h"
 #include "harken/render/RenderWorkerPool.h"
 
+#include <atomic>
+
 namespace harken {
 
 // Deterministic startup failure for internal API boundary tests.
@@ -165,6 +167,7 @@ public:
     DeviceRateObservation RateObservation() const noexcept {
         return m_rateObservation;
     }
+    void SetHostOutputMute(bool muted, std::uint32_t fadeMs) noexcept;
 
     // Internal deterministic seam for lifecycle tests. Both operations run on
     // the logic thread while the fake device seam has no callback.
@@ -187,6 +190,7 @@ private:
     RenderState* m_renderState = nullptr;
     DeviceRateObservation m_rateObservation;
     std::uint64_t m_nextDomainGeneration = 0;
+    std::atomic<std::uint64_t> m_hostOutputMute{0};
 };
 
 } // namespace harken

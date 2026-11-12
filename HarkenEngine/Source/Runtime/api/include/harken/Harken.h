@@ -458,6 +458,18 @@ VnResult Vn_Suspend(void);
  * thread. Repeated calls while already running are successful no-ops. */
 VnResult Vn_Resume(void);
 
+/* Silences or restores the platform device output on behalf of the host,
+ * such as an editor's audio mute toggle. The gate sits after the final mix,
+ * where rendered audio is written to the device: mixing, Bus state, metering,
+ * capture and Trace are unaffected, and audio-frame time keeps advancing.
+ * fadeMs ramps the device gain linearly in amplitude from its current value
+ * over ceil(fadeMs * sampleRate / 1000) frames; 0 snaps. The state survives
+ * Vn_Suspend/Vn_Resume and starts unmuted at Vn_Init. Setting the state
+ * already held is a benign no-op. Without a real device the call is accepted
+ * with no audible effect. mute01 above 1 is VN_INVALID_ARG; an absent or
+ * failed engine returns VN_NOT_INITIALIZED. Logic thread only. */
+VnResult Vn_SetHostOutputMute(uint32_t mute01, uint32_t fadeMs);
+
 /* Stop the device (if any) and free everything. Valid while running,
  * suspended, or waiting to retry a failed resume. */
 VnResult Vn_Term(void);

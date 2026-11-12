@@ -111632,6 +111632,18 @@ VnResult Vn_Resume(void) {
         return VN_DEVICE_ERROR;
     }}
 
+VnResult Vn_SetHostOutputMute(uint32_t mute01, uint32_t fadeMs) {
+    harken::Engine* engine = harken::detail::g_engine;
+    if (engine == nullptr || engine->callbackFatalSticky) {
+        return VN_NOT_INITIALIZED;
+    }
+    if (mute01 > 1u) {
+        return VN_INVALID_ARG;
+    }
+    engine->device.SetHostOutputMute(mute01 != 0u, fadeMs);
+    return VN_OK;
+}
+
 VnResult Vn_Term(void) {
     try {
     if (harken::detail::CanonicalSetMutationBlocked()) { return VN_IN_USE; }

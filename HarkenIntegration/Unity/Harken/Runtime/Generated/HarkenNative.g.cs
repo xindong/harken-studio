@@ -257,6 +257,9 @@ namespace Harken
         [DllImport(LibraryName, EntryPoint = "Vn_Resume", CallingConvention = CallingConvention.Cdecl)]
         public static extern VnResult Vn_Resume();
 
+        [DllImport(LibraryName, EntryPoint = "Vn_SetHostOutputMute", CallingConvention = CallingConvention.Cdecl)]
+        public static extern VnResult Vn_SetHostOutputMute(uint mute01, uint fadeMs);
+
         [DllImport(LibraryName, EntryPoint = "Vn_CaptureEffectCapabilities", CallingConvention = CallingConvention.Cdecl)]
         public static extern VnResult Vn_CaptureEffectCapabilities(VnEffectCapability* outRows, uint capacity, out uint requiredCount);
 
