@@ -644,7 +644,7 @@ int RunPackPlay(int argc, char** argv) {
             diagnostic.stage, captured);
         std::fprintf(stderr, "Re-export with the matching Studio release (required schemaVersion: %u); "
             "select its platform directory. Legacy manifest/index exports are unsupported.\n",
-            static_cast<unsigned>(HARKEN_PACK_SCHEMA_VERSION));
+            static_cast<unsigned>(HK_PACK_FORMAT_VERSION));
         return 3;
     }
 

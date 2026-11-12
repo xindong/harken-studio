@@ -34,13 +34,6 @@ using namespace harken;
 
 constexpr std::uint32_t kLegacySelectionRoundRobin = 1;
 
-TEST(PackV2Format, PackContainerUsesPublishedSchemaVersion) {
-    static_assert(HK_PACK_FORMAT_VERSION == HARKEN_PACK_SCHEMA_VERSION);
-    static_assert(HK_PACK_FORMAT_VERSION == HARKEN_PACK_SCHEMA_VERSION);
-    EXPECT_EQ(HARKEN_PACK_SCHEMA_VERSION, HK_PACK_FORMAT_VERSION);
-    EXPECT_EQ(HARKEN_PACK_SCHEMA_VERSION, HK_PACK_FORMAT_VERSION);
-}
-
 TEST(PackV2Format, VolumeSnapshotParentForestAcceptsDeepUnorderedChainAndRejectsCycles) {
     constexpr std::size_t kBusCount = 4096;
     std::vector<PackBusDefinitionBus> buses;

@@ -894,7 +894,7 @@ bool fillInitCompanion(const harkenstudiobuild::ContainerWorldInstallViewV1& wor
             {QStringLiteral("guid"), objectIdString(item->runtimeId())},
             {QStringLiteral("labels"), labels}});
     }
-    *companion = QJsonObject{{QStringLiteral("schemaVersion"), HARKEN_PACK_SCHEMA_VERSION},
+    *companion = QJsonObject{{QStringLiteral("schemaVersion"), HARKEN_PACK_METADATA_VERSION},
         {QStringLiteral("variables"), variables}};
     return true;
 }
@@ -2170,7 +2170,7 @@ bool inspectPackPublication(const QString& directory, const QString& projectId,
                 return rejectPair(QStringLiteral("Invalid Pack companion '%1'").arg(companionPath));
             companion = document.object();
             const auto companionErrors = ProjectSchemaValidator::validatePackManifest(
-                HARKEN_PACK_SCHEMA_VERSION, companion, companionPath);
+                HARKEN_PACK_METADATA_VERSION, companion, companionPath);
             if (!companionErrors.isEmpty()) return rejectPair(companionErrors.join(QLatin1Char('\n')));
             if (harkenstudio::IsNull(pairProject))
                 return rejectPair(QStringLiteral("Pack publication contains an invalid project identity: %1").arg(path));
@@ -2359,7 +2359,7 @@ bool inspectPackPublication(const QString& directory, const QString& projectId,
             if (!readAll(dir.filePath(relative), &bytes, &detail)) return reject(detail);
             const auto document = QJsonDocument::fromJson(bytes);
             if (!document.isObject() || !ProjectSchemaValidator::validatePackManifest(
-                    HARKEN_PACK_SCHEMA_VERSION, document.object(), relative).isEmpty()) continue;
+                    HARKEN_PACK_METADATA_VERSION, document.object(), relative).isEmpty()) continue;
             if (!document.object().contains(QStringLiteral("guid"))
                 && !document.object().contains(QStringLiteral("variables"))) continue;
             return reject(QStringLiteral("Pack companion has no valid matching binary: %1").arg(relative));
@@ -3737,7 +3737,7 @@ ProjectPackExporter::ExportResult ExportCanonicalPackSet(
                     unit.success = false;
                     unit.error = QStringLiteral("Action publication identity is unavailable for '%1'").arg(pack.name);
                 } else {
-                    pack.companion = QJsonObject{{QStringLiteral("schemaVersion"), HARKEN_PACK_SCHEMA_VERSION},
+                    pack.companion = QJsonObject{{QStringLiteral("schemaVersion"), HARKEN_PACK_METADATA_VERSION},
                         {QStringLiteral("name"), action->name}, {QStringLiteral("guid"), objectIdString(action->runtimeId())}};
                 }
             }
@@ -3911,7 +3911,7 @@ ProjectPackExporter::ExportResult ProjectPackExporter::FinalizePackExport(
                 {QStringLiteral("name"), platform.name},
                 {QStringLiteral("basePlatform"), ProjectPlatformSemantics::basePlatformName(platform.basePlatform)}});
         const QJsonObject metadata{
-            {QStringLiteral("schemaVersion"), HARKEN_PACK_SCHEMA_VERSION},
+            {QStringLiteral("schemaVersion"), HARKEN_PACK_METADATA_VERSION},
             {QStringLiteral("projectGuid"), QUuid(project.projectId).toString(QUuid::WithoutBraces)},
             {QStringLiteral("projectName"), project.name},
             {QStringLiteral("studioVersion"), QString::fromUtf8(Harken::BuildInfo::Version.data(),

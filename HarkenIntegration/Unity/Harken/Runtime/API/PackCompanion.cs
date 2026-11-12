@@ -98,7 +98,7 @@ namespace Harken
         private static bool MatchesPackVersion(string token, uint packVersion)
         {
             // Matching the pair does not establish support. Native inspection admits the
-            // binary against the schema version compiled from HarkenSchema/Pack/manifest.json.
+            // binary against the Pack format versions the Engine can read.
             // Compare decimal digits and scale without floating-point rounding.
             if (packVersion == 0 || token[0] == '-') return false;
             int exponentAt = token.IndexOfAny(new[] { 'e', 'E' });

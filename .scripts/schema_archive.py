@@ -15,10 +15,11 @@ from typing import Any, Iterator
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SCHEMA_ROOT = REPO_ROOT / "HarkenSchema"
+SCHEMA_ROOT = REPO_ROOT / "HarkenStudio" / "Format"
 PROJECT_SCHEMA_NAME = "ProjectSerializedSchema.json"
 PACK_SCHEMA_NAME = "PackManifestSchema.json"
 TREE_SCHEMA_NAMES = {"Editor": PROJECT_SCHEMA_NAME, "Pack": PACK_SCHEMA_NAME}
+TREE_DIRECTORIES = {"Editor": "Project", "Pack": "PackMetadata"}
 GENERATED_PROJECT_HEADER = "ProjectSchemaGenerated.h"
 GENERATED_VALIDATOR_HEADER = "ProjectSchemaValidator.generated.h"
 GENERATED_VALIDATOR_SOURCE = "ProjectSchemaValidator.generated.cpp"
@@ -515,7 +516,7 @@ def materialize_source(tree: str, source: dict[str, Any], version: int) -> dict[
 def load_tree(tree: str, schema_root: Path | None = None) -> dict[str, Any]:
     if tree not in TREE_SCHEMA_NAMES:
         raise ValueError(f"unknown schema tree: {tree}")
-    tree_root = (SCHEMA_ROOT if schema_root is None else Path(schema_root)) / tree
+    tree_root = (SCHEMA_ROOT if schema_root is None else Path(schema_root)) / TREE_DIRECTORIES[tree]
     manifest = json.loads((tree_root / "manifest.json").read_text(encoding="utf-8"))
     validate_tree_manifest(tree, manifest)
     expected = {"manifest.json", "current", *map(str, manifest["published"])}
@@ -1202,7 +1203,7 @@ bool validateProjectRules(int version,
 
 def build_bundle(schema_root: Path | None = None) -> dict[str, Any]:
     schema_root = SCHEMA_ROOT if schema_root is None else Path(schema_root)
-    unexpected = {path.name for path in schema_root.iterdir()} - set(TREE_SCHEMA_NAMES) - {"README.md"}
+    unexpected = {path.name for path in schema_root.iterdir()} - set(TREE_DIRECTORIES.values()) - {"README.md"}
     if unexpected:
         raise ValueError(f"schema root contains unexpected paths: {sorted(unexpected)}")
     trees = {tree: load_tree(tree, schema_root) for tree in TREE_SCHEMA_NAMES}
@@ -1271,7 +1272,7 @@ def write_generated_code(target: Path, bundle: dict[str, Any]) -> None:
     source_roots = ((REPO_ROOT / "HarkenStudio").resolve(), SCHEMA_ROOT.resolve(), bundle["sourceRoot"])
     for source_root in source_roots:
         if target == source_root or source_root in target.parents:
-            raise ValueError("generated Schema code must not be written under HarkenStudio or HarkenSchema")
+            raise ValueError("generated Schema code must not be written under HarkenStudio or the Schema source root")
     target.mkdir(parents=True, exist_ok=True)
     for name, data in generated_files(bundle).items():
         destination = target / name

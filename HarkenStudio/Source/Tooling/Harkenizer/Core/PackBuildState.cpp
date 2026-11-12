@@ -13,6 +13,8 @@
 #include "Tooling/Harkenizer/Core/PackBuildPlan.h"
 #include "Tooling/Harkenizer/Core/SoundSourceDerivative.h"
 
+#include <harken_pack/PackFile.h>
+
 #include <QCryptographicHash>
 #include <QDebug>
 #include <QDir>
@@ -362,7 +364,7 @@ bool PackBuildState::restore(ExportResult* result, std::vector<BuildRecord>* rec
         artifact.packName = record.packName;
         artifact.outputPath = record.outputPath;
         artifact.bytes = record.fileSize;
-        artifact.version = HARKEN_PACK_SCHEMA_VERSION;
+        artifact.version = HK_PACK_FORMAT_VERSION;
         artifact.modified = file.lastModified();
         restored.artifacts.append(artifact);
         restored.fileSize += record.fileSize;

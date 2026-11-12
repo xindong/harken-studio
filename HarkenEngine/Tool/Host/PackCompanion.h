@@ -3,6 +3,7 @@
 
 #include "JsonReader.h"
 #include <harken/Harken.h>
+#include <harken_pack/PackFile.h>
 
 #include <algorithm>
 #include <cerrno>
@@ -100,7 +101,7 @@ inline bool PackCompanionVersion(const JsonValue* value) {
     if (first == std::string::npos) return false;
     digits.erase(0, first);
     const auto significant = digits.find_last_not_of('0') + 1;
-    const std::string expected = std::to_string(HARKEN_PACK_SCHEMA_VERSION);
+    const std::string expected = std::to_string(HK_PACK_FORMAT_VERSION);
     const auto expectedSignificant = expected.find_last_not_of('0') + 1;
     return digits.substr(0, significant) == expected.substr(0, expectedSignificant) && exponent ==
         static_cast<std::int64_t>(fraction) - static_cast<std::int64_t>(digits.size() - significant) +

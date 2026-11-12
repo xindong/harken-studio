@@ -23,7 +23,7 @@
 namespace {
 
 std::string CompanionJson(const std::string& fields) {
-    return "{\"schemaVersion\":" + std::to_string(HARKEN_PACK_SCHEMA_VERSION) +
+    return "{\"schemaVersion\":" + std::to_string(HK_PACK_FORMAT_VERSION) +
         "," + fields + "}";
 }
 
@@ -122,8 +122,8 @@ TEST(HostOptions, CompanionNamesPreserveGuidAndStrictJsonContract) {
 
 TEST(HostOptions, CompanionVersionUsesExactJsonIntegerSemantics) {
     harkenhost::PackCompanion input;
-    const std::string current = std::to_string(HARKEN_PACK_SCHEMA_VERSION);
-    const std::string next = std::to_string(std::uint64_t{HARKEN_PACK_SCHEMA_VERSION} + 1);
+    const std::string current = std::to_string(HK_PACK_FORMAT_VERSION);
+    const std::string next = std::to_string(std::uint64_t{HK_PACK_FORMAT_VERSION} + 1);
     for (bool init : {true, false}) {
         const std::string fields = init ? R"("variables":[])"
             : R"("name":"Play_Head","guid":"11111111-2222-3333-4444-555555555555")";
@@ -136,7 +136,7 @@ TEST(HostOptions, CompanionVersionUsesExactJsonIntegerSemantics) {
         }
         for (const std::string& version : std::vector<std::string>{"", next, "\"" + current + "\"", "true", "null", "[]", "{}",
                 current + ".5", "-" + current, "0", current + ".0000000000000001",
-                std::to_string(HARKEN_PACK_SCHEMA_VERSION - 1) + ".9999999999999999",
+                std::to_string(HK_PACK_FORMAT_VERSION - 1) + ".9999999999999999",
                 current + "e999999999999999999999", current + "e-999999999999999999999"}) {
             SCOPED_TRACE(version);
             const std::string field = version.empty() ? "" : "\"schemaVersion\":" + version + ",";
@@ -212,7 +212,7 @@ TEST(HostOptions, CompanionCaptureUsesPairedFilesAndRefusesPartialLanguageOrPubl
     EXPECT_EQ(harkenhost::CapturePackCompanion(root, "Play_Head", "English", &init, &refused, &diagnostic), VN_BAD_PACK);
     EXPECT_STREQ(diagnostic.stage, "file capture");
     ASSERT_TRUE(writeJson(root / "English/Play_Head.json", "{\"schemaVersion\":" +
-        std::to_string(std::uint64_t{HARKEN_PACK_SCHEMA_VERSION} + 1) + "}"));
+        std::to_string(std::uint64_t{HK_PACK_FORMAT_VERSION} + 1) + "}"));
     EXPECT_EQ(harkenhost::CapturePackCompanion(root, "Play_Head", "English", &init, &refused, &diagnostic), VN_BAD_PACK);
     EXPECT_STREQ(diagnostic.kind, "Action");
     EXPECT_EQ(diagnostic.jsonPath, root / "English/Play_Head.json");

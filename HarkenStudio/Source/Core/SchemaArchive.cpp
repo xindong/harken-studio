@@ -81,7 +81,7 @@ QJsonObject SchemaArchive::buildManifest(QString* error) const
             != ProjectSchema::kProjectSchemaVersion
         || trees.value(QStringLiteral("Pack")).toObject()
                .value(QStringLiteral("currentVersion")).toInt()
-            != HARKEN_PACK_SCHEMA_VERSION
+            != HARKEN_PACK_METADATA_VERSION
         || manifest.value(QStringLiteral("files")).toArray().isEmpty()) {
         snapshotMismatch(error);
         return {};

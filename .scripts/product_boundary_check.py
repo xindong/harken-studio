@@ -27,7 +27,6 @@ PRODUCTS = (
     "HarkenStudio",
     "HarkenIntegration",
     "HarkenHub",
-    "HarkenSchema",
 )
 
 PACK_FORMAT_INCLUDE_PREFIX = "harken_pack/"

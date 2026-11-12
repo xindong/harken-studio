@@ -10,7 +10,6 @@ on:
   pull_request:
     paths:
       - 'HarkenStudio/**'
-      - 'HarkenSchema/Pack/**'
       - '.scripts/**'
       - 'cmake/**'
       - 'CMakeLists.txt'

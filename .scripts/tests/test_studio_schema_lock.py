@@ -20,18 +20,18 @@ class StudioSchemaLockTest(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
-        self.source = self.root / "HarkenSchema"
+        self.source = self.root / "HarkenStudio" / "Format"
         self.candidate = self.root / "candidate"
         self.editor_version = MODULE.schema_archive.load_tree("Editor")["currentVersion"]
         self.editor_history = MODULE.schema_archive.load_tree("Editor")["manifest"]["supportedHistorical"]
-        shutil.copytree(REPO_ROOT / "HarkenSchema", self.source)
+        shutil.copytree(REPO_ROOT / "HarkenStudio" / "Format", self.source)
         for name, value in (("SCHEMA_ROOT", self.source), ("REPO_ROOT", self.root)):
             active = patch.object(MODULE, name, value)
             active.start()
             self.addCleanup(active.stop)
 
     def add_metadata(self) -> dict:
-        path = self.source / "Editor/current/ProjectSerializedSchema.json"
+        path = self.source / "Project/current/ProjectSerializedSchema.json"
         value = json.loads(path.read_text(encoding="utf-8"))
         value["x-harken-documentTypes"][0]["schema"]["properties"]["harkenDocument"]["properties"]["futureNote"] = {}
         path.write_text(json.dumps(value), encoding="utf-8")
@@ -63,12 +63,12 @@ class StudioSchemaLockTest(unittest.TestCase):
         pack = MODULE.schema_archive.load_tree("Pack", self.candidate)
         self.assertNotIn("formatVersion", pack["currentSource"]["x-harken-format"])
         self.assertEqual(pack["current"]["$defs"]["schemaVersion"]["const"], current + 1)
-        self.assertFalse((self.source / "Pack" / str(current + 1)).exists())
+        self.assertFalse((self.source / "PackMetadata" / str(current + 1)).exists())
 
     def test_next_editor_generation_preserves_latest_previous_snapshot(self) -> None:
         source = self.add_metadata()
         latest = MODULE.schema_archive.materialize_source("Editor", source, self.editor_version)
-        (self.source / f"Editor/{self.editor_version}/ProjectSerializedSchema.json").write_text(json.dumps(latest), encoding="utf-8")
+        (self.source / f"Project/{self.editor_version}/ProjectSerializedSchema.json").write_text(json.dumps(latest), encoding="utf-8")
         result = self.stage(editor="next")
         tree = MODULE.schema_archive.load_tree("Editor", self.candidate)
         self.assertEqual(result["trees"]["Editor"]["generation"], self.editor_version + 1)
@@ -76,7 +76,7 @@ class StudioSchemaLockTest(unittest.TestCase):
         self.assertEqual(tree["manifest"]["supportedHistorical"], sorted(set(self.editor_history) | {self.editor_version}))
         self.assertEqual(tree["currentSource"], source)
         self.assertNotIn("projectSchemaVersion", source)
-        self.assertFalse((self.source / f"Editor/{self.editor_version + 1}").exists())
+        self.assertFalse((self.source / f"Project/{self.editor_version + 1}").exists())
         self.assertFalse(any("migration" in path.as_posix().lower() for path in self.candidate.rglob("*")))
 
     def test_candidate_is_buildable_before_repository_generation_changes(self) -> None:
@@ -101,7 +101,7 @@ class StudioSchemaLockTest(unittest.TestCase):
 
     def test_candidate_cannot_rewrite_historical_snapshot(self) -> None:
         self.stage(editor="next")
-        path = self.candidate / f"Editor/{self.editor_version}/ProjectSerializedSchema.json"
+        path = self.candidate / f"Project/{self.editor_version}/ProjectSerializedSchema.json"
         contract = json.loads(path.read_text(encoding="utf-8"))
         contract["x-harken-documentTypes"][0]["schema"]["properties"]["harkenDocument"]["properties"]["rewritten"] = {}
         path.write_text(json.dumps(contract), encoding="utf-8")
@@ -116,7 +116,7 @@ class StudioSchemaLockTest(unittest.TestCase):
         self.assertEqual(tree["currentSource"], source)
         self.assertEqual(tree["published"][self.editor_version], tree["current"])
         self.assertEqual(result["trees"]["Editor"]["generation"], self.editor_version)
-        self.assertFalse((self.source / f"Editor/{self.editor_version + 1}").exists())
+        self.assertFalse((self.source / f"Project/{self.editor_version + 1}").exists())
 
     def test_failed_archive_validation_rolls_back_all_contracts(self) -> None:
         self.stage(editor="next", pack="next")
@@ -125,7 +125,7 @@ class StudioSchemaLockTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "invalid archive"):
                 MODULE.archive_candidate(self.candidate)
         self.assertEqual(self.snapshot(), before)
-        self.assertFalse((self.source / f"Editor/{self.editor_version + 1}").exists())
+        self.assertFalse((self.source / f"Project/{self.editor_version + 1}").exists())
 
     def test_archive_only_updates_manifests_and_numbered_contracts(self) -> None:
         self.stage(editor="next", pack="next")
@@ -135,8 +135,9 @@ class StudioSchemaLockTest(unittest.TestCase):
         changed = {path for path in before.keys() | after.keys() if before.get(path) != after.get(path)}
         expected = set()
         for tree, summary in result["trees"].items():
-            expected.add(f"HarkenSchema/{tree}/manifest.json")
-            expected.add(f"HarkenSchema/{tree}/{summary['generation']}/{MODULE.audit.SCHEMA_NAMES[tree]}")
+            directory = MODULE.schema_archive.TREE_DIRECTORIES[tree]
+            expected.add(f"HarkenStudio/Format/{directory}/manifest.json")
+            expected.add(f"HarkenStudio/Format/{directory}/{summary['generation']}/{MODULE.audit.SCHEMA_NAMES[tree]}")
         self.assertEqual(changed, expected)
         self.assertEqual(result["schemaSnapshotHash"], MODULE.schema_archive.build_bundle(self.source)["manifest"]["snapshotHash"])
 

@@ -21,6 +21,23 @@ if(NOT Python3_Interpreter_FOUND)
     message(FATAL_ERROR "Python 3 is required to generate and publish the Studio Schema")
 endif()
 
+set(HARKEN_SCHEMA_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Format")
+foreach(_format_tree Project PackMetadata)
+    set(_format_manifest "${HARKEN_SCHEMA_SOURCE_DIR}/${_format_tree}/manifest.json")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_format_manifest}")
+    file(READ "${_format_manifest}" _format_json)
+    string(JSON _format_count LENGTH "${_format_json}" published)
+    math(EXPR _format_last "${_format_count} - 1")
+    string(JSON _format_version GET "${_format_json}" published ${_format_last})
+    if(NOT _format_version MATCHES "^[1-9][0-9]*$")
+        message(FATAL_ERROR "${_format_manifest}: the last published version must be a positive integer")
+    endif()
+    set(_format_version_${_format_tree} ${_format_version})
+endforeach()
+add_compile_definitions(
+    HARKEN_PROJECT_SCHEMA_VERSION=${_format_version_Project}
+    HARKEN_PACK_METADATA_VERSION=${_format_version_PackMetadata})
+
 set(HARKEN_SCHEMA_GENERATED_DIR "${CMAKE_BINARY_DIR}/generated/schema")
 set(HARKEN_SCHEMA_GENERATED_CORE_DIR "${HARKEN_SCHEMA_GENERATED_DIR}/Core")
 set(HARKEN_SCHEMA_GENERATED_PROJECT_HEADER

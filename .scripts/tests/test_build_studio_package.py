@@ -402,17 +402,17 @@ class BuildStudioPackageTest(unittest.TestCase):
 
     def test_development_tip_changes_do_not_require_a_numbered_snapshot_update(self):
         self.make_input()
-        source = self.root / "HarkenSchema"
+        source = self.root / "Format"
         shutil.copytree(self.module.SCHEMA_SOURCE, source)
         self.module.SCHEMA_SOURCE = source
-        path = source / "Editor/current/ProjectSerializedSchema.json"
+        path = source / "Project/current/ProjectSerializedSchema.json"
         current = json.loads(path.read_text(encoding="utf-8"))
         for document in current["x-harken-documentTypes"]:
             document["schema"]["properties"]["harkenDocument"]["properties"]["futureMetadata"] = {}
         path.write_text(json.dumps(current), encoding="utf-8")
         generation = self.module.schema_archive.load_tree("Editor", source)["currentVersion"]
         relative = f"Editor/{generation}/ProjectSerializedSchema.json"
-        numbered = source / relative
+        numbered = source / f"Project/{generation}/ProjectSerializedSchema.json"
         numbered_before = numbered.read_bytes()
         with self.assertRaises(SystemExit):
             self.run_build()
@@ -430,7 +430,7 @@ class BuildStudioPackageTest(unittest.TestCase):
         self.make_input()
         version = self.module.schema_archive.load_tree("Editor", self.module.SCHEMA_SOURCE)["currentVersion"]
         target = self.input_dir / f"schema/Editor/{version}/ProjectSerializedSchema.json"
-        source = json.loads((self.module.SCHEMA_SOURCE / "Editor/current/ProjectSerializedSchema.json").read_text(encoding="utf-8"))
+        source = json.loads((self.module.SCHEMA_SOURCE / "Project/current/ProjectSerializedSchema.json").read_text(encoding="utf-8"))
         obsolete = self.module.schema_archive.materialize_source("Editor", source, version + 1)
         target.write_text(json.dumps(obsolete), encoding="utf-8")
         with self.assertRaises(SystemExit):

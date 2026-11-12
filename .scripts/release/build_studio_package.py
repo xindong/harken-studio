@@ -23,7 +23,8 @@ PACKAGE_MANIFEST_NAME = "package-manifest.json"
 CAPABILITIES_NAME = "capabilities.json"
 SCHEMA_SOURCE = (
     Path(__file__).resolve().parents[2]
-    / "HarkenSchema"
+    / "HarkenStudio"
+    / "Format"
 )
 
 

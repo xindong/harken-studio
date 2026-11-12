@@ -228,11 +228,6 @@ if(ANDROID OR CMAKE_SYSTEM_NAME STREQUAL "iOS")
     endforeach()
 endif()
 
-if(HARKEN_BUILD_ENGINE_ANY OR HARKEN_BUILD_EDITOR OR HARKEN_BUILD_STUDIO_CLI)
-    set(HARKEN_SCHEMA_SOURCE_DIR "${CMAKE_SOURCE_DIR}/HarkenSchema"
-        CACHE PATH "Harken Schema source tree")
-endif()
-
 # Configure-time build identity (product version / git commit / build label),
 # exposed through the generated harken_buildinfo.h and embedded into
 # Windows binary file properties by harken_attach_version_resource().

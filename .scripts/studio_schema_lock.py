@@ -14,7 +14,7 @@ import schema_archive
 import studio_schema_release_audit as audit
 
 REPO_ROOT = SCRIPT_DIR.parent
-SCHEMA_ROOT = REPO_ROOT / "HarkenSchema"
+SCHEMA_ROOT = REPO_ROOT / "HarkenStudio" / "Format"
 
 
 def stage_candidate(target: Path, modes: dict[str, str], source_root: Path | None = None) -> dict[str, Any]:
@@ -35,10 +35,11 @@ def stage_candidate(target: Path, modes: dict[str, str], source_root: Path | Non
             if tree == "Editor":
                 manifest["supportedHistorical"] = sorted(set(manifest["supportedHistorical"]) | {version - 1})
         contract = schema_archive.materialize_source(tree, data["currentSource"], version)
-        destination = target / tree / str(version) / audit.SCHEMA_NAMES[tree]
+        directory = schema_archive.TREE_DIRECTORIES[tree]
+        destination = target / directory / str(version) / audit.SCHEMA_NAMES[tree]
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(schema_archive.canonical_bytes(contract))
-        (target / tree / "manifest.json").write_text(audit.canonical_text(manifest), encoding="utf-8")
+        (target / directory / "manifest.json").write_text(audit.canonical_text(manifest), encoding="utf-8")
     bundle = schema_archive.build_bundle(target)
     return {"candidateRoot": str(target), "trees": audit.tree_summary(target),
             "schemaSnapshotHash": bundle["manifest"]["snapshotHash"]}
@@ -71,8 +72,9 @@ def candidate_updates(candidate_root: Path) -> dict[Path, bytes]:
                 raise ValueError(f"{tree} candidate rewrote historical generation {historical}")
         if candidate["published"][version] != candidate["current"]:
             raise ValueError(f"{tree} candidate does not materialize current into generation {version}")
-        updates[SCHEMA_ROOT / tree / "manifest.json"] = audit.canonical_text(candidate["manifest"]).encode("utf-8")
-        updates[SCHEMA_ROOT / tree / str(version) / audit.SCHEMA_NAMES[tree]] = schema_archive.canonical_bytes(candidate["current"])
+        directory = SCHEMA_ROOT / schema_archive.TREE_DIRECTORIES[tree]
+        updates[directory / "manifest.json"] = audit.canonical_text(candidate["manifest"]).encode("utf-8")
+        updates[directory / str(version) / audit.SCHEMA_NAMES[tree]] = schema_archive.canonical_bytes(candidate["current"])
     return updates
 
 

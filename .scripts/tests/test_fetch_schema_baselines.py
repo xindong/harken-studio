@@ -178,7 +178,7 @@ class FetchSchemaBaselinesTest(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(executable.stat().st_mode), 0o755)
 
     def test_output_is_confined_to_an_explicit_repository_temp_directory(self) -> None:
-        for output in (REPO_ROOT / ".temp", REPO_ROOT / "HarkenSchema", REPO_ROOT / ".." / "outside"):
+        for output in (REPO_ROOT / ".temp", REPO_ROOT / "HarkenStudio" / "Format", REPO_ROOT / ".." / "outside"):
             with self.subTest(output=output):
                 with self.assertRaises(ValueError):
                     MODULE["fetch_baselines"]([], "windows-x64", output)

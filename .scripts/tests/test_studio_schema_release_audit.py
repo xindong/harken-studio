@@ -384,7 +384,7 @@ class ReleaseLifecycleTest(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
-        shutil.copytree(REPO_ROOT / "HarkenSchema", self.root / "HarkenSchema")
+        shutil.copytree(REPO_ROOT / "HarkenStudio" / "Format", self.root / "HarkenStudio" / "Format")
         (self.root / ".scripts").mkdir()
         shutil.copy2(REPO_ROOT / MODULE.RELEASE_SCOPE_CONFIG_PATH, self.root / MODULE.RELEASE_SCOPE_CONFIG_PATH)
         (self.root / "VERSION").write_text("1.0.0", encoding="utf-8")
@@ -404,8 +404,8 @@ class ReleaseLifecycleTest(unittest.TestCase):
 
     def synchronize_current(self) -> None:
         for tree in MODULE.TREE_NAMES:
-            loaded = MODULE.schema_archive.load_tree(tree, self.root / "HarkenSchema")
-            path = self.root / "HarkenSchema" / tree / str(loaded["currentVersion"]) / MODULE.SCHEMA_NAMES[tree]
+            loaded = MODULE.schema_archive.load_tree(tree, self.root / "HarkenStudio" / "Format")
+            path = self.root / "HarkenStudio" / "Format" / MODULE.schema_archive.TREE_DIRECTORIES[tree] / str(loaded["currentVersion"]) / MODULE.SCHEMA_NAMES[tree]
             path.write_text(json.dumps(loaded["current"]), encoding="utf-8")
 
     def publish_tag(self, tag: str) -> None:
@@ -415,7 +415,7 @@ class ReleaseLifecycleTest(unittest.TestCase):
         self.published_tags.add(tag)
 
     def test_development_current_and_version_are_not_frozen(self) -> None:
-        path = self.root / "HarkenSchema/Editor/current/ProjectSerializedSchema.json"
+        path = self.root / "HarkenStudio/Format/Project/current/ProjectSerializedSchema.json"
         source = json.loads(path.read_text(encoding="utf-8"))
         source["x-harken-documentTypes"][0]["schema"]["properties"]["harkenDocument"]["properties"]["newNote"] = {}
         path.write_text(json.dumps(source), encoding="utf-8")
@@ -426,7 +426,7 @@ class ReleaseLifecycleTest(unittest.TestCase):
     def test_publication_identity_is_rebuilt_from_the_frozen_tag(self) -> None:
         self.publish_tag("studio-first")
         commit = MODULE.run_git(["rev-parse", "HEAD"]).stdout.strip()
-        trees = MODULE.tree_summary(self.root / "HarkenSchema")
+        trees = MODULE.tree_summary(self.root / "HarkenStudio" / "Format")
         (self.root / "VERSION").write_text("1.1.0", encoding="utf-8")
         self.commit()
         record = MODULE.published_releases()["studio-first"]
@@ -438,17 +438,17 @@ class ReleaseLifecycleTest(unittest.TestCase):
     def test_formal_contract_checks_require_current_to_match_its_numbered_archive(self) -> None:
         self.synchronize_current()
         self.assertEqual(MODULE.verify_current_release()["errors"], [])
-        path = self.root / "HarkenSchema/Editor/current/ProjectSerializedSchema.json"
+        path = self.root / "HarkenStudio/Format/Project/current/ProjectSerializedSchema.json"
         source = json.loads(path.read_text(encoding="utf-8"))
         source["x-harken-documentTypes"][0]["schema"]["properties"]["harkenDocument"]["properties"]["newNote"] = {}
         path.write_text(json.dumps(source), encoding="utf-8")
         self.assertTrue(MODULE.verify_current_release()["errors"])
-        self.assertEqual(MODULE.release_schema_errors(self.root / "HarkenSchema"), [])
+        self.assertEqual(MODULE.release_schema_errors(self.root / "HarkenStudio" / "Format"), [])
 
     def test_current_tag_is_excluded_without_losing_prior_same_generation(self) -> None:
         self.publish_tag("first")
         self.publish_tag("second")
-        self.assertEqual(set(MODULE.required_baselines(self.root / "HarkenSchema", "second")), {"first"})
+        self.assertEqual(set(MODULE.required_baselines(self.root / "HarkenStudio" / "Format", "second")), {"first"})
 
     def test_unrelated_tag_does_not_become_a_release(self) -> None:
         MODULE.run_git(["tag", "internal-build"])
@@ -461,23 +461,23 @@ class ReleaseLifecycleTest(unittest.TestCase):
         MODULE.run_git(["tag", "hub-only"])
         with patch.object(MODULE, "github_studio_release_tags", return_value={tag}):
             self.assertEqual(set(MODULE.published_releases()), {tag})
-            self.assertEqual(set(MODULE.required_baselines(self.root / "HarkenSchema", "studio-first")), {tag})
-            self.assertEqual(MODULE.release_schema_errors(self.root / "HarkenSchema"), [])
+            self.assertEqual(set(MODULE.required_baselines(self.root / "HarkenStudio" / "Format", "studio-first")), {tag})
+            self.assertEqual(MODULE.release_schema_errors(self.root / "HarkenStudio" / "Format"), [])
             with self.assertRaisesRegex(ValueError, re.escape(tag)):
                 MODULE.verify_release_readers(Path("missing"), {})
-            version = MODULE.schema_archive.load_tree("Editor", self.root / "HarkenSchema")["currentVersion"]
-            path = self.root / f"HarkenSchema/Editor/{version}/ProjectSerializedSchema.json"
+            version = MODULE.schema_archive.load_tree("Editor", self.root / "HarkenStudio" / "Format")["currentVersion"]
+            path = self.root / f"HarkenStudio/Format/Project/{version}/ProjectSerializedSchema.json"
             source = json.loads(path.read_text(encoding="utf-8"))
             source["x-harken-documentTypes"][0]["schema"]["properties"]["content"]["required"].remove("name")
             path.write_text(json.dumps(source), encoding="utf-8")
-            errors = MODULE.release_schema_errors(self.root / "HarkenSchema")
+            errors = MODULE.release_schema_errors(self.root / "HarkenStudio" / "Format")
             self.assertTrue(any(tag in error for error in errors))
-            version = MODULE.schema_archive.load_tree("Pack", self.root / "HarkenSchema")["currentVersion"]
-            path = self.root / f"HarkenSchema/Pack/{version}/PackManifestSchema.json"
+            version = MODULE.schema_archive.load_tree("Pack", self.root / "HarkenStudio" / "Format")["currentVersion"]
+            path = self.root / f"HarkenStudio/Format/PackMetadata/{version}/PackManifestSchema.json"
             source = json.loads(path.read_text(encoding="utf-8"))
             source["$defs"]["identity"]["properties"]["future"] = {}
             path.write_text(json.dumps(source), encoding="utf-8")
-            errors = MODULE.release_schema_errors(self.root / "HarkenSchema")
+            errors = MODULE.release_schema_errors(self.root / "HarkenStudio" / "Format")
             self.assertTrue(any(tag in error for error in errors))
 
     def test_verifying_a_published_commit_excludes_itself_but_not_prior_readers(self) -> None:
@@ -487,11 +487,11 @@ class ReleaseLifecycleTest(unittest.TestCase):
         self.publish_tag(second)
         with patch.object(MODULE, "github_studio_release_tags", return_value={first, second}):
             commit = MODULE.run_git(["rev-parse", "HEAD"]).stdout.strip()
-            self.assertEqual(set(MODULE.required_baselines(self.root / "HarkenSchema", "studio-next", commit)), {first})
+            self.assertEqual(set(MODULE.required_baselines(self.root / "HarkenStudio" / "Format", "studio-next", commit)), {first})
             (self.root / "VERSION").write_text("1.0.1", encoding="utf-8")
             self.commit()
             commit = MODULE.run_git(["rev-parse", "HEAD"]).stdout.strip()
-            self.assertEqual(set(MODULE.required_baselines(self.root / "HarkenSchema", "studio-next", commit)), {first, second})
+            self.assertEqual(set(MODULE.required_baselines(self.root / "HarkenStudio" / "Format", "studio-next", commit)), {first, second})
 
     def test_unrelated_tag_at_a_published_commit_is_not_a_baseline(self) -> None:
         self.publish_tag("studio-first")
@@ -501,20 +501,20 @@ class ReleaseLifecycleTest(unittest.TestCase):
             discover.assert_called_once_with({"studio-first", "internal-build"})
 
     def test_same_generation_rejects_a_lost_published_metadata_property(self) -> None:
-        path = self.root / "HarkenSchema/Editor/current/ProjectSerializedSchema.json"
+        path = self.root / "HarkenStudio/Format/Project/current/ProjectSerializedSchema.json"
         original = json.loads(path.read_text(encoding="utf-8"))
         source = copy.deepcopy(original)
         source["x-harken-documentTypes"][0]["schema"]["properties"]["harkenDocument"]["properties"]["publishedNote"] = {}
         path.write_text(json.dumps(source), encoding="utf-8")
-        version = MODULE.schema_archive.load_tree("Editor", self.root / "HarkenSchema")["currentVersion"]
+        version = MODULE.schema_archive.load_tree("Editor", self.root / "HarkenStudio" / "Format")["currentVersion"]
         contract = MODULE.schema_archive.materialize_source("Editor", source, version)
-        (self.root / f"HarkenSchema/Editor/{version}/ProjectSerializedSchema.json").write_text(json.dumps(contract), encoding="utf-8")
+        (self.root / f"HarkenStudio/Format/Project/{version}/ProjectSerializedSchema.json").write_text(json.dumps(contract), encoding="utf-8")
         self.publish_tag("latest")
         path.write_text(json.dumps(original), encoding="utf-8")
-        self.assertEqual(MODULE.release_schema_errors(self.root / "HarkenSchema"), [])
+        self.assertEqual(MODULE.release_schema_errors(self.root / "HarkenStudio" / "Format"), [])
         contract = MODULE.schema_archive.materialize_source("Editor", original, version)
-        (self.root / f"HarkenSchema/Editor/{version}/ProjectSerializedSchema.json").write_text(json.dumps(contract), encoding="utf-8")
-        self.assertTrue(any("removed" in error for error in MODULE.release_schema_errors(self.root / "HarkenSchema")))
+        (self.root / f"HarkenStudio/Format/Project/{version}/ProjectSerializedSchema.json").write_text(json.dumps(contract), encoding="utf-8")
+        self.assertTrue(any("removed" in error for error in MODULE.release_schema_errors(self.root / "HarkenStudio" / "Format")))
 
     def test_integration_source_changes_are_not_a_generation_hash_lock(self) -> None:
         reader = self.root / "HarkenIntegration/Unity/Harken/Runtime/API/PackCompanion.cs"
@@ -522,19 +522,19 @@ class ReleaseLifecycleTest(unittest.TestCase):
         reader.write_text("old reader", encoding="utf-8")
         self.publish_tag("sdk-baseline")
         reader.write_text("changed reader", encoding="utf-8")
-        self.assertEqual(MODULE.release_schema_errors(self.root / "HarkenSchema"), [])
+        self.assertEqual(MODULE.release_schema_errors(self.root / "HarkenStudio" / "Format"), [])
 
     def test_release_archive_can_return_to_a_main_with_newer_development(self) -> None:
         self.publish_tag("first")
-        path = self.root / "HarkenSchema/Editor/current/ProjectSerializedSchema.json"
+        path = self.root / "HarkenStudio/Format/Project/current/ProjectSerializedSchema.json"
         original = json.loads(path.read_text(encoding="utf-8"))
         released = copy.deepcopy(original)
         released["x-harken-documentTypes"][0]["schema"]["properties"]["harkenDocument"]["properties"]["releasedNote"] = {}
         path.write_text(json.dumps(released), encoding="utf-8")
         self.publish_tag("second")
         release_commit = MODULE.run_git(["rev-parse", "HEAD"]).stdout.strip()
-        version = MODULE.schema_archive.load_tree("Editor", self.root / "HarkenSchema")["currentVersion"]
-        archive = self.root / f"HarkenSchema/Editor/{version}/ProjectSerializedSchema.json"
+        version = MODULE.schema_archive.load_tree("Editor", self.root / "HarkenStudio" / "Format")["currentVersion"]
+        archive = self.root / f"HarkenStudio/Format/Project/{version}/ProjectSerializedSchema.json"
         release_archive = archive.read_bytes()
         MODULE.run_git(["reset", "--hard", "first"])
         original["x-harken-documentTypes"][0]["schema"]["properties"]["content"]["required"].remove("name")
@@ -551,14 +551,14 @@ class ReleaseLifecycleTest(unittest.TestCase):
         self.assertTrue(MODULE.verify_current_release("HEAD")["errors"])
 
     def test_retired_generation_still_keeps_latest_published_contract(self) -> None:
-        source_root = self.root / "HarkenSchema"
-        path = source_root / "Editor/current/ProjectSerializedSchema.json"
+        source_root = self.root / "HarkenStudio" / "Format"
+        path = source_root / "Project/current/ProjectSerializedSchema.json"
         original = json.loads(path.read_text(encoding="utf-8"))
         changed = copy.deepcopy(original)
         changed["x-harken-documentTypes"][0]["schema"]["properties"]["harkenDocument"]["properties"]["releasedNote"] = {}
         path.write_text(json.dumps(changed), encoding="utf-8")
         original_version = MODULE.schema_archive.load_tree("Editor", source_root)["currentVersion"]
-        (source_root / f"Editor/{original_version}/ProjectSerializedSchema.json").write_text(
+        (source_root / f"Project/{original_version}/ProjectSerializedSchema.json").write_text(
             json.dumps(MODULE.schema_archive.materialize_source("Editor", changed, original_version)), encoding="utf-8")
         self.publish_tag("retired")
         for tree in MODULE.TREE_NAMES:
@@ -566,29 +566,29 @@ class ReleaseLifecycleTest(unittest.TestCase):
             version = loaded["currentVersion"] + 1
             loaded["manifest"]["published"].append(version)
             loaded["manifest"]["supportedHistorical"] = []
-            (source_root / tree / "manifest.json").write_text(json.dumps(loaded["manifest"]), encoding="utf-8")
-            target = source_root / tree / str(version) / MODULE.SCHEMA_NAMES[tree]
+            (source_root / MODULE.schema_archive.TREE_DIRECTORIES[tree] / "manifest.json").write_text(json.dumps(loaded["manifest"]), encoding="utf-8")
+            target = source_root / MODULE.schema_archive.TREE_DIRECTORIES[tree] / str(version) / MODULE.SCHEMA_NAMES[tree]
             target.parent.mkdir()
             target.write_text(json.dumps(MODULE.schema_archive.materialize_source(tree, loaded["currentSource"], version)), encoding="utf-8")
-        (source_root / f"Editor/{original_version}/ProjectSerializedSchema.json").write_text(
+        (source_root / f"Project/{original_version}/ProjectSerializedSchema.json").write_text(
             json.dumps(MODULE.schema_archive.materialize_source("Editor", original, original_version)), encoding="utf-8")
         self.assertEqual(MODULE.required_baselines(source_root), {})
         self.assertTrue(any("removed" in error for error in MODULE.release_schema_errors(source_root)))
 
     def test_published_generations_cannot_be_removed_after_advancing_both_trees(self) -> None:
-        source_root = self.root / "HarkenSchema"
+        source_root = self.root / "HarkenStudio" / "Format"
         self.publish_tag("published")
         for tree in MODULE.TREE_NAMES:
             loaded = MODULE.schema_archive.load_tree(tree, source_root)
             version = loaded["currentVersion"] + 1
             loaded["manifest"]["published"] = [version]
             loaded["manifest"]["supportedHistorical"] = []
-            (source_root / tree / "manifest.json").write_text(json.dumps(loaded["manifest"]), encoding="utf-8")
-            target = source_root / tree / str(version) / MODULE.SCHEMA_NAMES[tree]
+            (source_root / MODULE.schema_archive.TREE_DIRECTORIES[tree] / "manifest.json").write_text(json.dumps(loaded["manifest"]), encoding="utf-8")
+            target = source_root / MODULE.schema_archive.TREE_DIRECTORIES[tree] / str(version) / MODULE.SCHEMA_NAMES[tree]
             target.parent.mkdir()
             target.write_text(json.dumps(MODULE.schema_archive.materialize_source(tree, loaded["currentSource"], version)), encoding="utf-8")
             for published_version in loaded["published"]:
-                shutil.rmtree(source_root / tree / str(published_version))
+                shutil.rmtree(source_root / MODULE.schema_archive.TREE_DIRECTORIES[tree] / str(published_version))
         self.assertEqual(MODULE.required_baselines(source_root), {})
         errors = MODULE.release_schema_errors(source_root)
         for tree in MODULE.TREE_NAMES:
@@ -650,7 +650,7 @@ class BaselinePackageTest(unittest.TestCase):
     def check(self) -> tuple:
         @contextmanager
         def original_root(_):
-            yield REPO_ROOT / "HarkenSchema"
+            yield REPO_ROOT / "HarkenStudio" / "Format"
         with patch.object(MODULE, "run_git", return_value=SimpleNamespace(stdout="a" * 40)), \
                 patch.object(MODULE, "schema_root_at", original_root):
             return MODULE.checked_baseline_package("release", self.root)
@@ -698,8 +698,8 @@ class ReaderGateTest(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
-        self.source = self.root / "HarkenSchema"
-        shutil.copytree(REPO_ROOT / "HarkenSchema", self.source)
+        self.source = self.root / "HarkenStudio" / "Format"
+        shutil.copytree(REPO_ROOT / "HarkenStudio" / "Format", self.source)
         bundle = MODULE.schema_archive.build_bundle(self.source)
         self.pack_schema_version = bundle["manifest"]["trees"]["Pack"]["currentVersion"]
         self.binary = self.root / "current/HarkenStudio.exe"

@@ -741,7 +741,7 @@ TEST(EditorProjectPackExporterManifest, CompanionsCoverEachExportedAction)
     EXPECT_EQ(initPack.value(QStringLiteral("companion")).toObject().keys(),
               (QStringList{QStringLiteral("schemaVersion"), QStringLiteral("variables")}));
     EXPECT_EQ(initPack.value(QStringLiteral("companion")).toObject()
-                  .value(QStringLiteral("schemaVersion")).toInt(), HARKEN_PACK_SCHEMA_VERSION);
+                  .value(QStringLiteral("schemaVersion")).toInt(), HARKEN_PACK_METADATA_VERSION);
 
     for (const QString& fileName :
          {variantFileName(project, harkentest::StudioObjectId(21 + kStableIdBias)),
@@ -754,7 +754,7 @@ TEST(EditorProjectPackExporterManifest, CompanionsCoverEachExportedAction)
             fileName.chopped(6) + QStringLiteral(".json")))).object();
         EXPECT_EQ(companion.keys(), (QStringList{QStringLiteral("guid"), QStringLiteral("name"),
             QStringLiteral("schemaVersion")}));
-        EXPECT_EQ(companion.value(QStringLiteral("schemaVersion")).toInt(), HARKEN_PACK_SCHEMA_VERSION);
+        EXPECT_EQ(companion.value(QStringLiteral("schemaVersion")).toInt(), HARKEN_PACK_METADATA_VERSION);
     }
 
     VNX::AssetRegistry::instance().clear();
@@ -829,7 +829,7 @@ TEST(EditorProjectPackExporterManifest, OptionalCompanionDataFollowsPublicationL
         EXPECT_FALSE(companion.contains(QStringLiteral("waveforms")));
         EXPECT_FALSE(QDir(waveformRoot).exists());
         const auto metadata = companion.value(QStringLiteral("metadata")).toObject();
-        EXPECT_EQ(companion.value(QStringLiteral("schemaVersion")).toInt(), HARKEN_PACK_SCHEMA_VERSION);
+        EXPECT_EQ(companion.value(QStringLiteral("schemaVersion")).toInt(), HARKEN_PACK_METADATA_VERSION);
         EXPECT_FALSE(metadata.contains(QStringLiteral("schemaVersion")));
         EXPECT_EQ(metadata.value(QStringLiteral("packStableId")), row.value(QStringLiteral("packStableId")));
         EXPECT_EQ(metadata.value(QStringLiteral("platform")).toString(), QStringLiteral("Windows"));
@@ -945,7 +945,7 @@ TEST(EditorProjectPackExporterManifest, OptionalCompanionDataFollowsPublicationL
     ASSERT_TRUE(disabledAll.success) << disabledAll.error.toStdString();
     for (const auto& value : readPublication(output)) {
         const auto companion = value.toObject().value(QStringLiteral("companion")).toObject();
-        EXPECT_EQ(companion.value(QStringLiteral("schemaVersion")).toInt(), HARKEN_PACK_SCHEMA_VERSION);
+        EXPECT_EQ(companion.value(QStringLiteral("schemaVersion")).toInt(), HARKEN_PACK_METADATA_VERSION);
         EXPECT_FALSE(companion.contains(QStringLiteral("waveforms")));
         EXPECT_FALSE(companion.contains(QStringLiteral("metadata")));
     }
@@ -1812,7 +1812,7 @@ TEST(EditorProjectPackExporterManifest, ProductionPackPairGoldenIsRepeatable)
             harkenstudiobuild::PackFileHeader header;
             ASSERT_GE(bytes.size(), harkenstudiobuild::kPackBytes<HkPackFileHeader>);
             ASSERT_TRUE(harkenstudiobuild::ReadPackFileHeader(reinterpret_cast<const uint8_t*>(bytes.constData()), &header));
-            EXPECT_EQ(header.formatVersion, HARKEN_PACK_SCHEMA_VERSION);
+            EXPECT_EQ(header.formatVersion, HK_PACK_FORMAT_VERSION);
             ASSERT_NO_FATAL_FAILURE(expectCanonicalPackParsesWithPartition(path));
         }
         const auto content = findByName(packs, QStringLiteral("Play_Golden"));
@@ -2474,7 +2474,7 @@ void verifyIncrementalPublication(const QString& directory)
         auto outdated = readFileBytes(live.filePath(name));
         ASSERT_GE(outdated.size(), harkenstudiobuild::kPackBytes<HkPackFileHeader>);
         harkenstudiobuild::StoreLE32(reinterpret_cast<std::uint8_t*>(outdated.data()) + 4,
-                          HARKEN_PACK_SCHEMA_VERSION + 1);
+                          HK_PACK_FORMAT_VERSION + 1);
         writeFileBytes(live.filePath(name), outdated);
     }
     const auto rebuilt = buildPersistedPackSet(project, outputRoot, opts);

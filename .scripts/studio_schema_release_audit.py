@@ -24,7 +24,7 @@ if str(SCRIPT_DIR) not in sys.path:
 import schema_archive
 
 REPO_ROOT = SCRIPT_DIR.parent
-SCHEMA_ROOT_PATH = "HarkenSchema"
+SCHEMA_ROOT_PATH = "HarkenStudio/Format"
 RELEASE_SCOPE_CONFIG_PATH = ".scripts/studio-schema-release-scopes.json"
 TREE_NAMES = ("Editor", "Pack")
 SCHEMA_NAMES = {"Editor": "ProjectSerializedSchema.json", "Pack": "PackManifestSchema.json"}
@@ -151,7 +151,7 @@ def review_scopes(base: str, head: str) -> list[dict[str, Any]]:
     return [{"scope": tree, "files": matched}
             for tree, patterns in release_scope_config(head).items()
             if (matched := [path for path in paths
-                            if path.startswith(f"HarkenSchema/{tree}/")
+                            if path.startswith(f"{SCHEMA_ROOT_PATH}/{schema_archive.TREE_DIRECTORIES[tree]}/")
                             or any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)])]
 
 
@@ -316,7 +316,7 @@ def audit(base_revision: str | None, head_revision: str = "WORKTREE") -> dict[st
     scopes = review_scopes(base_revision, head_revision) if base_revision else []
     errors = []
     if base_revision and any(
-            re.match(r"HarkenSchema/(Editor|Pack)/(\d+/|manifest\.json$)", path)
+            re.match(r"HarkenStudio/Format/(Project|PackMetadata)/(\d+/|manifest\.json$)", path)
             for path in changed_files(base_revision, head_revision)):
         with schema_root_at(head_revision) as root:
             errors.extend(release_schema_errors(root))
