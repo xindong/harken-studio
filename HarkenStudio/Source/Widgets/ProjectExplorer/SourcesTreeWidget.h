@@ -9,7 +9,6 @@ class QDragEnterEvent;
 class QDragMoveEvent;
 class QDropEvent;
 class QMimeData;
-class QTimer;
 
 namespace VNX {
 
@@ -63,7 +62,6 @@ private:
     void clearDropHighlight();
     QPersistentModelIndex dropFolder_;
     QWidget* rootDropTarget_ = nullptr;
-    QTimer* expandTimer_ = nullptr;
 };
 
 }
