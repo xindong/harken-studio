@@ -4,11 +4,11 @@
 #include "Core/ProjectTypes.h"
 #include "Widgets/Shared/RefDomain.h"
 
-#include <QList>
-#include <QMetaObject>
+#include <QTimer>
 #include <QWidget>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <vector>
 
 class QLabel;
@@ -119,7 +119,8 @@ private:
     std::function<QString(uint32_t)> selectionError_;
     std::function<bool()> editGuard_;
     uint64_t selectionGeneration_ = 0;
-    QList<QMetaObject::Connection> changedConns_;
+    std::unique_ptr<QObject> changeSubscription_;
+    QTimer refreshTimer_;
     QLabel* iconLabel_ = nullptr;
     QLabel* nameLabel_ = nullptr;
     QToolButton* pickButton_ = nullptr;
