@@ -1349,7 +1349,7 @@ TEST(BusSettings, ReusedLimiterHasDeterministicColdFirstParameterBehavior) {
     float prepared = 0;
     ASSERT_TRUE(harken::PrepareLimiterParam(harken::kLimiterParamCeilingDb, -6,
         rebuilt->sampleRate, &prepared));
-    harken::LimiterApplyPreparedParam(rebuilt, harken::kLimiterParamCeilingDb, prepared, 64);
+    harken::LimiterRequestPreparedParam(rebuilt, harken::kLimiterParamCeilingDb, prepared, 64);
     EXPECT_EQ(0u, rebuilt->transitionFramesRemaining);
     EXPECT_FLOAT_EQ(prepared, rebuilt->ceilingLinear);
     engine.CancelBusWorkState(row);
