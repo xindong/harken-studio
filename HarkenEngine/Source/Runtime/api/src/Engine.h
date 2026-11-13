@@ -446,8 +446,8 @@ struct PendingStartRecord {
     std::array<bool, kMaxFxSlotsPerVoice> effectBypass{};
     bool hasTonePreset = false;
     VoiceTonePreset tonePreset{};
-    // Per-voice sends staged while pending, applied at the deferred start (each
-    // active slot re-issues a set-voice-send at start). A voice receives
+    // Per-voice Sends staged while pending; one prepared set is adopted at
+    // the deferred start without per-Send commands. A voice receives
     // nothing, so sends never create a cycle and need no re-validation here.
     VoiceSendConfigs voiceSends{};
     PreparedVoiceSends preparedSends{};
@@ -7683,6 +7683,9 @@ public:
         std::array<EffectInstanceRef, kMaxFxSlotsPerBus> emptyBusRefs;
         emptyBusRefs.fill(EffectInstanceRef{});
         busEffectInstanceRefs.assign(resolved.maxBuses, emptyBusRefs);
+        busEffectIdentities.resize(resolved.maxBuses);
+        busFilterSettings.resize(resolved.maxBuses);
+        busVolumePublished.assign(resolved.maxBuses, 0);
         std::array<VnPackHandle, kMaxFxSlotsPerBus> emptyBusOwners{};
         busEffectOwnerCookies.assign(resolved.maxBuses, emptyBusOwners);
         std::array<std::uint8_t, kMaxFxSlotsPerBus> emptyBusBypass{};
@@ -15712,6 +15715,26 @@ public:
     // parameter-value mirror. Per-slot bypass also lives here so Monitor can
     // copy the last committed target when an empty slot later installs an
     // Effect. Logic thread only.
+    struct BusFilterSetting {
+        float cutoffHz = 0;
+        float q = 0;
+        bool enabled = false;
+        bool configured = false;
+    };
+    // Authored settings survive physical DSP-instance retirement. Parameters
+    // remain authoritative in BusTargetStore and EffectParamTargetStore.
+    std::vector<std::array<BusFilterSetting, 4>> busFilterSettings;
+    std::vector<std::array<EffectObjectIdentity, kMaxFxSlotsPerBus>> busEffectIdentities;
+    std::vector<std::uint8_t> busVolumePublished;
+
+    // Prepares an unpublished cold row. The caller must cancel or transfer
+    // every prepared effect reference; no installed audio state is inspected.
+    VnResult PrepareBusWorkState(std::uint32_t busIndex, BusTree::Bus& row) noexcept;
+    void CancelBusWorkState(BusTree::Bus& row) noexcept;
+
+    void NoteBusSettingCommand(const CommandRecord& command) noexcept;
+    bool PublishBusSettingCommand(const CommandRecord& command) noexcept;
+
     std::vector<std::array<std::uint32_t, kMaxFxSlotsPerBus>> busEffectSlotTypes;
     std::vector<std::array<EffectInstanceRef, kMaxFxSlotsPerBus>>
         busEffectInstanceRefs;

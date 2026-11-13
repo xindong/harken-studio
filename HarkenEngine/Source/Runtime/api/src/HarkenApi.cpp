@@ -74268,7 +74268,7 @@ bool PushPropertyCommit(void* ctx, const harken::PropertyCommit& commit) {
         command.payload.setBusVolume.outputOnly = outputOnly ? 1u : 0u;
         command.payload.setBusVolume.busGeneration =
             engine->buses.GenerationAt(busIndex);
-        if (!engine->commands.TryPush(command)) {
+        if (!engine->PublishBusSettingCommand(command)) {
             return false; // unreachable under SPSC: the set was admitted
         }
         engine->busTargets.MarkCommitted(
@@ -74410,6 +74410,115 @@ bool MakeVariableEffectParamCommand(
         out->payload.setBusEffectParam.transitionFrames = frames;
     }
     return true;
+}
+
+void Engine::NoteBusSettingCommand(const CommandRecord& command) noexcept {
+    if (command.opcode == kOpcodeSetBusFilter) {
+        const auto& filter = command.payload.setBusFilter;
+        if (filter.busIndex < busFilterSettings.size() &&
+            (filter.busGeneration == 0 || filter.busGeneration == buses.GenerationAt(filter.busIndex))) {
+            const auto section = (filter.outputOnly ? 2u : 0u) +
+                (filter.filterKind == kFilterKindHighpass ? 1u : 0u);
+            busFilterSettings[filter.busIndex][section] =
+                {filter.cutoffHz, filter.q, filter.enable != 0, true};
+        }
+    } else if (command.opcode == kOpcodeSetBusVolume) {
+        const auto& volume = command.payload.setBusVolume;
+        if (!volume.outputOnly && volume.busIndex < busVolumePublished.size() &&
+            (volume.busGeneration == 0 || volume.busGeneration == buses.GenerationAt(volume.busIndex)))
+            busVolumePublished[volume.busIndex] = 1;
+    } else if (command.opcode == kOpcodeSetBusTopologyPlan) {
+        const auto plan = topologyPlans.View(command.payload.setBusTopologyPlan.planIndex);
+        if (!plan.valid || plan.busVolumeApply == nullptr) return;
+        const auto count = plan.slotCount != 0 ? plan.slotCount : plan.orderCount;
+        for (std::uint32_t bus = 0; bus < count && bus < busVolumePublished.size(); ++bus) {
+            if ((plan.busVolumeApply[bus] & kApplyBusVolume) != 0 &&
+                (plan.alive == nullptr || plan.alive[bus] != 0) &&
+                (plan.generations == nullptr || plan.generations[bus] == buses.GenerationAt(bus)))
+                busVolumePublished[bus] = 1;
+        }
+    }
+}
+
+bool Engine::PublishBusSettingCommand(const CommandRecord& command) noexcept {
+    if (!commands.TryPush(command)) return false;
+    NoteBusSettingCommand(command);
+    return true;
+}
+
+void Engine::CancelBusWorkState(BusTree::Bus& row) noexcept {
+    for (auto& ref : row.fxSlotEffectRef) {
+        if (ref.type != kEffectTypeNone) {
+            const bool cancelled = effectBank.CancelPrepared(ref);
+            assert(cancelled);
+            (void)cancelled;
+        }
+    }
+    row = {};
+}
+
+VnResult Engine::PrepareBusWorkState(std::uint32_t busIndex, BusTree::Bus& row) noexcept {
+    if (busIndex >= buses.BusCount() || !buses.AliveAt(busIndex)) return VN_UNKNOWN_ID;
+    // This function owns only its newly acquired references; callers provide
+    // a fresh, unpublished row and may not pass the currently rendering row.
+    for (const auto& ref : row.fxSlotEffectRef)
+        if (ref.type != kEffectTypeNone) return VN_IN_USE;
+    row = {};
+    const auto fail = [&](VnResult result) {
+        CancelBusWorkState(row);
+        return result;
+    };
+    try {
+        row.id = buses.IdAt(busIndex);
+        row.generation = buses.GenerationAt(busIndex);
+        row.parentIndex = buses.ParentOf(busIndex);
+        row.faderAfterSlot = busFaderAfterSlots[busIndex];
+        row.outputLayout = busOutputLayout[busIndex];
+        std::copy_n(busDownmixCoeffs.data() + static_cast<std::size_t>(busIndex) * 64,
+                    64, row.downmixCoeffs);
+        float gain = 1;
+        if (!TryVolumeGainFromDb(::WireBusVolumeDb(*this, busIndex,
+                busTargets.Reduce(busIndex, kBusTargetBusVolume)), &gain)) return fail(VN_INVALID_ARG);
+        row.gain.Set(gain);
+        row.gainStarted = busVolumePublished[busIndex] != 0;
+        if (!TryVolumeGainFromDb(busTargets.Reduce(busIndex, kBusTargetBusOutputVolume), &gain))
+            return fail(VN_INVALID_ARG);
+        row.outputGain.Set(gain);
+        std::array<BusTree::Bus::ToneSection*, 4> sections{
+            &row.busLpf, &row.busHpf, &row.outputLpf, &row.outputHpf};
+        for (std::uint32_t index = 0; index < sections.size(); ++index) {
+            const auto& setting = busFilterSettings[busIndex][index];
+            if (!setting.configured) continue;
+            PreparedFilterSection prepared;
+            if (!::PrepareFilterSection(static_cast<float>(config.mixRate.SampleRate()),
+                    (index & 1u) ? kFilterKindHighpass : kFilterKindLowpass,
+                    setting.cutoffHz, setting.q, setting.enabled, prepared)) return fail(VN_INVALID_ARG);
+            auto& section = *sections[index];
+            section.enabled = prepared.enabled;
+            section.coeffs = RestoreBiquadCoeffs(PrepareBiquadCoeffs(prepared.coeffs));
+            section.tailFrames = prepared.enabled ? EstimateBiquadTailFrames(prepared.coeffs) : 0;
+            section.transition.targetCoeffs = section.coeffs;
+            section.transition.targetTailFrames = section.tailFrames;
+            if (prepared.enabled) section.glide.Snap(prepared.cutoffHz, setting.q, 0);
+        }
+        for (std::uint32_t slot = 0; slot < config.fxSlotsPerBus; ++slot) {
+            row.fxBypassMix[slot] = row.fxBypassTarget[slot] = busEffectSlotBypass[busIndex][slot] ? 1.f : 0.f;
+            const auto type = busEffectSlotTypes[busIndex][slot];
+            if (type == kEffectTypeNone) continue;
+            const auto ref = effectBank.AcquirePrepared(type, busEffectIdentities[busIndex][slot]);
+            if (ref.type == kEffectTypeNone) return fail(VN_NO_EFFECT);
+            row.fxSlotEffectRef[slot] = ref;
+            void* state = effectBank.StateFor(ref.type, ref.poolIndex);
+            auto effect = BuildEffect(type, state);
+            if (effect.reset) effect.reset(state);
+            if (effect.setParam)
+                for (std::uint32_t param = 0; param < EffectParamCount(type); ++param)
+                    effect.setParam(state, param, effectParamTargets.Reduce(
+                        EffectParamTargetStore::Scope::Bus, busIndex, slot, param));
+            row.fxSlots[slot] = effect;
+        }
+        return VN_OK;
+    } catch (...) { return fail(VN_DEVICE_ERROR); }
 }
 
 float VariableBusWireValue(const Engine& engine, std::uint32_t busIndex,
@@ -79763,7 +79872,7 @@ void PublishPlan(harken::Engine& engine, std::uint32_t planIndex,
     cmd.payload.setBusTopologyPlan.acceptedGraphRevision =
         ++engine.acceptedBusTopologyRevision;
     cmd.payload.setBusTopologyPlan.batchCommandCount = 1;
-    (void)engine.commands.TryPush(cmd); // admission verified in Reserve
+    (void)engine.PublishBusSettingCommand(cmd); // admission verified in Reserve
     ++engine.topologyPlanCount;
 }
 
@@ -79851,6 +79960,9 @@ void ResetBusLogicSlot(harken::Engine& engine,
     }
     engine.busEffectSlotTypes[busIndex].fill(harken::kEffectTypeNone);
     engine.busEffectInstanceRefs[busIndex].fill(harken::EffectInstanceRef{});
+    engine.busEffectIdentities[busIndex] = {};
+    engine.busFilterSettings[busIndex] = {};
+    engine.busVolumePublished[busIndex] = 0;
     engine.busEffectOwnerCookies[busIndex].fill(0);
     if (busIndex < engine.busEffectSlotBypass.size()) {
         engine.busEffectSlotBypass[busIndex].fill(0);
@@ -82575,8 +82687,7 @@ VnResult SetPreviewBusEffect(std::uint64_t ownerId, VnBusId busId, VnObjectId ef
     std::uint32_t slot = engine->config.fxSlotsPerBus;
     for (std::uint32_t index = 0; index < engine->config.fxSlotsPerBus; ++index) {
         if (engine->busEffectSlotTypes[bus][index] == effectType
-            && engine->effectBank.ObjectIdentity(
-                engine->busEffectInstanceRefs[bus][index]).effectId == effectId) {
+            && engine->busEffectIdentities[bus][index].effectId == effectId) {
             slot = index;
             break;
         }
@@ -112102,7 +112213,8 @@ VnResult Vn_Update(void) {
                 engine->commands.NoteBackpressure();
                 return false; // queue full: stays dirty, retries next update
             }
-            return engine->commands.TryPush(command);
+            return scope == harken::EffectParamTargetStore::Scope::Bus
+                ? engine->PublishBusSettingCommand(command) : engine->commands.TryPush(command);
         });
     /* Property publication: the tick's
      * property commits cross to the audio thread as one transaction — all
@@ -116197,6 +116309,7 @@ VnResult Vn_ApplyBusTopology(const VnBusTopologyDesc* topology) {
     harken::ClearPairedInstallAckIdentity(*engine, planIndex);
     harken::ClearCurrentWorldBusAdmissionV1(*engine);
     engine->commands.CommitPreparedBatch(&reservation, &command);
+    engine->NoteBusSettingCommand(command);
     return VN_OK;
 
     } catch (const std::bad_alloc&) {
@@ -116364,7 +116477,7 @@ VnResult Vn_ReparentBus(VnBusId busId, VnBusId newParentId) {
         command.payload.setBusVolume.rampMs = 0;
         command.payload.setBusVolume.busGeneration =
             engine->buses.GenerationAt(i);
-        (void)engine->commands.TryPush(command); // batch reserved above
+        (void)engine->PublishBusSettingCommand(command); // batch reserved above
     }
     // Tree edges are control-graph edges for the meter loop scan: rescan at
     // the next Vn_Update, exactly like a send connect/disconnect.
@@ -116722,6 +116835,7 @@ VnResult Vn_DestroyBus(VnBusId busId) {
     engine->acceptedBusTopologyRevision = acceptedRevision;
     ++engine->topologyPlanCount;
     engine->commands.CommitPreparedBatch(&reservation, commands.data());
+    for (const auto& command : commands) engine->NoteBusSettingCommand(command);
     // The control graph shrank: frozen meter loops through the cascade may
     // have opened, so the next Vn_Update rescans.
     return VN_OK;
@@ -116886,7 +117000,7 @@ VnResult Vn_SetBusSendLevel(VnBusId fromBus, VnBusId toBus, float levelDb,
         engine->buses.GenerationAt(from);
     cmd.payload.setBusSendLevel.toGeneration =
         engine->buses.GenerationAt(to);
-    (void)engine->commands.TryPush(cmd);
+    (void)engine->PublishBusSettingCommand(cmd);
     edge->levelDb = levelDb;
     return VN_OK;
 
@@ -117257,7 +117371,7 @@ VnResult Vn_SetBusEffect(VnBusId busId, uint32_t slot, VnEffectType type,
     command.payload.setBusEffect.dynamicRoutePlanIndex = dynamicPlanIndex;
     command.payload.setBusEffect.busGeneration =
         engine->buses.GenerationAt(busIndex);
-    (void)engine->commands.TryPush(command); // space verified above
+    (void)engine->PublishBusSettingCommand(command); // space verified above
     if (clearDynamicRoutes) {
         engine->dynamicRoutes.CommitClearTarget(busIndex, slot);
         ++engine->topologyPlanCount;
@@ -117266,6 +117380,7 @@ VnResult Vn_SetBusEffect(VnBusId busId, uint32_t slot, VnEffectType type,
     if (busIndex < engine->busEffectSlotTypes.size()) {
         engine->busEffectSlotTypes[busIndex][slot] = type;
         engine->busEffectInstanceRefs[busIndex][slot] = ref;
+        engine->busEffectIdentities[busIndex][slot] = {desc->effectId, engine->CurrentProjectId()};
         engine->effectBank.PublishInstalled(ref);
     }
     {
@@ -117369,12 +117484,13 @@ VnResult Vn_ClearBusEffect(VnBusId busId, uint32_t slot) {
         topologyPlanIndex;
     command.payload.clearBusEffect.dynamicRoutePlanIndex =
         dynamicPlanIndex;
-    (void)engine->commands.TryPush(command); // space verified above
+    (void)engine->PublishBusSettingCommand(command); // space verified above
     if (clearDynamicRoutes) {
         engine->dynamicRoutes.CommitClearTarget(busIndex, slot);
         ++engine->topologyPlanCount;
     }
     harken::EffectInstanceRef released{};
+    const auto releasedIdentity = engine->busEffectIdentities[busIndex][slot];
     if (busIndex < engine->busEffectInstanceRefs.size()) {
         released = engine->busEffectInstanceRefs[busIndex][slot];
     }
@@ -117382,12 +117498,13 @@ VnResult Vn_ClearBusEffect(VnBusId busId, uint32_t slot) {
         engine->busEffectSlotTypes[busIndex][slot] = harken::kEffectTypeNone;
         engine->busEffectInstanceRefs[busIndex][slot] =
             harken::EffectInstanceRef{};
+        engine->busEffectIdentities[busIndex][slot] = {};
     }
     if (released.generation != 0 && released.type != harken::kEffectTypeNone) {
         const std::uint64_t handle =
             PackedMonitorEffectHandle(busIndex, slot);
         harken::ObserveMonitorEffectRelease(handle, released.generation,
-                                    engine->effectBank.ObjectIdentity(released).effectId,
+                                    releasedIdentity.effectId,
                                     VN_ACTION_TERMINAL_NONE);
     }
     engine->effectParamTargets.ClearSlot(
@@ -117493,7 +117610,7 @@ VnResult Vn_SetBusEffectParam(VnBusId busId, uint32_t slot, uint32_t paramIndex,
     engine->effectParamTargets.NoteDirect(
         harken::EffectParamTargetStore::Scope::Bus,
         static_cast<std::uint64_t>(busIndex), slot, paramIndex, value, value);
-    (void)engine->commands.TryPush(command); // space verified above
+    (void)engine->PublishBusSettingCommand(command); // space verified above
     return VN_OK;
 
     } catch (const std::bad_alloc&) {
@@ -117546,7 +117663,7 @@ VnResult Vn_SetBusEffectBypass(VnBusId busId, uint32_t slot,
         engine->commands.NoteBackpressure();
         return VN_BACKPRESSURE;
     }
-    (void)engine->commands.TryPush(command); // space verified above
+    (void)engine->PublishBusSettingCommand(command); // space verified above
     if (busIndex < engine->busEffectSlotBypass.size()) {
         engine->busEffectSlotBypass[busIndex][slot] =
             static_cast<std::uint8_t>(bypass01);
@@ -117567,7 +117684,7 @@ VnResult Vn_SetBusEffectBypass(VnBusId busId, uint32_t slot,
             const std::uint64_t handle =
                 PackedMonitorEffectHandle(busIndex, slot);
             harken::ObserveMonitorEffect(handle, ref.generation,
-                                 engine->effectBank.ObjectIdentity(ref).effectId,
+                                 engine->busEffectIdentities[busIndex][slot].effectId,
                                  VN_ACTION_TERMINAL_NONE, facts);
         }
     }
@@ -117622,7 +117739,7 @@ VnResult Vn_ResetBusEffect(VnBusId busId, uint32_t effectSlot,
         expectedEffectType;
     command.payload.setBusEffectBypass.busGeneration =
         engine->buses.GenerationAt(busIndex);
-    (void)engine->commands.TryPush(command);
+    (void)engine->PublishBusSettingCommand(command);
     return VN_OK;
 
     } catch (const std::bad_alloc&) {
@@ -118091,7 +118208,7 @@ VnResult Vn_SetBusFaderPoint(VnBusId busId, uint32_t faderAfterSlot) {
         engine->commands.NoteBackpressure();
         return VN_BACKPRESSURE;
     }
-    (void)engine->commands.TryPush(command); // space verified above
+    (void)engine->PublishBusSettingCommand(command); // space verified above
     engine->busFaderAfterSlots[busIndex] = faderAfterSlot;
     return VN_OK;
 
@@ -118139,7 +118256,7 @@ VnResult Vn_SetBusOutputVolume(VnBusId busId, float volumeDb, uint32_t rampMs) {
     command.payload.setBusVolume.volumeDb = resolved;
     command.payload.setBusVolume.rampMs = rampMs;
     command.payload.setBusVolume.outputOnly = 1;
-    (void)engine->commands.TryPush(command);
+    (void)engine->PublishBusSettingCommand(command);
     engine->busTargets.NoteApiDirect(
         index, harken::kBusTargetBusOutputVolume, volumeDb, rampMs, resolved);
     return VN_OK;
@@ -118213,7 +118330,7 @@ VnResult Vn_SetBusVolume(VnBusId busId, float volumeDb, uint32_t rampMs) {
     command.payload.setBusVolume.rampMs = rampMs;
     command.payload.setBusVolume.busGeneration =
         engine->buses.GenerationAt(busIndex);
-    (void)engine->commands.TryPush(command); // space verified above
+    (void)engine->PublishBusSettingCommand(command); // space verified above
     engine->busTargets.NoteApiDirect(busIndex, harken::kBusTargetBusVolume,
                                      volumeDb, rampMs, resolved);
     return VN_OK;
@@ -118307,7 +118424,7 @@ VnResult Vn_SetBusFilter(VnBusId busId, uint32_t filterKind, float cutoffHz,
         engine->commands.NoteBackpressure();
         return VN_BACKPRESSURE;
     }
-    (void)engine->commands.TryPush(command);
+    (void)engine->PublishBusSettingCommand(command);
     return VN_OK;
 
     } catch (const std::bad_alloc&) {
@@ -118358,7 +118475,7 @@ VnResult Vn_SetBusOutputFilter(VnBusId busId, uint32_t filterKind,
         engine->commands.NoteBackpressure();
         return VN_BACKPRESSURE;
     }
-    (void)engine->commands.TryPush(command);
+    (void)engine->PublishBusSettingCommand(command);
     return VN_OK;
     } catch (const std::bad_alloc&) {
         return VN_DEVICE_ERROR;
@@ -118432,7 +118549,7 @@ VnResult Vn_SetBusMute(VnBusId busId, uint32_t mute01, uint32_t fadeMs) {
     command.payload.setBusVolume.rampMs = fadeMs;
     command.payload.setBusVolume.busGeneration =
         engine->buses.GenerationAt(busIndex);
-    (void)engine->commands.TryPush(command); // space verified above
+    (void)engine->PublishBusSettingCommand(command); // space verified above
     return VN_OK;
 
     } catch (const std::bad_alloc&) {
@@ -118515,7 +118632,7 @@ VnResult Vn_SetBusSolo(VnBusId busId, uint32_t solo01, uint32_t fadeMs) {
         command.payload.setBusVolume.rampMs = fadeMs;
         command.payload.setBusVolume.busGeneration =
             engine->buses.GenerationAt(i);
-        (void)engine->commands.TryPush(command); // batch admitted above
+        (void)engine->PublishBusSettingCommand(command); // batch admitted above
     }
     return VN_OK;
 
@@ -124689,6 +124806,7 @@ VnResult UnloadReversibleResident(Engine& engine,
         engine.topologyPlans.Recycle(topologyPlan);
         return VN_BACKPRESSURE;
     }
+    for (const auto& command : commands) engine.NoteBusSettingCommand(command);
     ++engine.acceptedBusTopologyRevision;
     const std::uint64_t dynamicPlanRevision =
         engine.dynamicRoutes.PlanRevision(dynamicPlan);
@@ -124704,6 +124822,7 @@ VnResult UnloadReversibleResident(Engine& engine,
         engine.busEffectSlotTypes[bus][effect.slot] = kEffectTypeNone;
         engine.busEffectInstanceRefs[bus][effect.slot] =
             EffectInstanceRef{};
+        engine.busEffectIdentities[bus][effect.slot] = {};
         engine.busEffectOwnerCookies[bus][effect.slot] = 0;
         engine.effectParamTargets.ClearSlot(
             EffectParamTargetStore::Scope::Bus,
@@ -127090,6 +127209,7 @@ VnResult ApplyPreparedPackTransaction(
             kEffectTypeNone;
         engine.busEffectInstanceRefs[busIndex][effect.slot] =
             EffectInstanceRef{};
+        engine.busEffectIdentities[busIndex][effect.slot] = {};
         engine.busEffectOwnerCookies[busIndex][effect.slot] = 0;
         engine.effectParamTargets.ClearSlot(
             EffectParamTargetStore::Scope::Bus,
@@ -127109,6 +127229,7 @@ VnResult ApplyPreparedPackTransaction(
             effect.effectType;
         engine.busEffectInstanceRefs[busIndex][effect.slot] =
             reservation.ref;
+        engine.busEffectIdentities[busIndex][effect.slot] = engine.effectBank.ObjectIdentity(reservation.ref);
         engine.effectBank.PublishInstalled(reservation.ref);
         engine.busEffectOwnerCookies[busIndex][effect.slot] =
             revision.handle;
@@ -127262,6 +127383,7 @@ VnResult ApplyPreparedPackTransaction(
     }
     if (commandCount != 0) {
         queueGuard.Commit(packCommands.data());
+        for (const auto& command : packCommands) engine.NoteBusSettingCommand(command);
     }
     return VN_OK;
 }
@@ -130993,6 +131115,7 @@ void CommitCanonicalPackSet(Engine& engine, PreparedCanonicalPackSetV1& prepared
         command.payload.setBusTopologyPlan.batchCommandCount =
             static_cast<std::uint32_t>(prepared.commands.size());
         engine.commands.CommitPreparedBatch(&prepared.reservation, prepared.commands.data());
+        for (const auto& command : prepared.commands) engine.NoteBusSettingCommand(command);
         ++engine.acceptedBusTopologyRevision;
         prepared.planIndex = kInvalidTopologyPlanIndex;
     } else {

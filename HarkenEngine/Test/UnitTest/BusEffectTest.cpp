@@ -1177,3 +1177,139 @@ TEST(BusEffect, PreparedToneUpdatePreservesStateAndOtherSections) {
 }
 
 } // namespace
+
+
+TEST(BusSettings, ColdReconstructionPreservesSettingsAndFirstSound) {
+    const auto render = [](bool reconstruct, Capture& output) {
+        auto config = MakeNullConfig(2, kBlock);
+        config.maxBuses = 4;
+        config.fxSlotsPerBus = 3;
+        EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        const auto busB = harkentest::ObjectId(11);
+        ASSERT_EQ(VN_OK, Vn_CreateBus(kBusA, VN_BUS_MASTER));
+        ASSERT_EQ(VN_OK, Vn_CreateBus(busB, VN_BUS_MASTER));
+        ASSERT_EQ(VN_OK, Vn_ConnectBusSend(kBusA, busB, -12));
+        ASSERT_EQ(VN_OK, Vn_SetBusSendLevel(kBusA, busB, -9, 0));
+        ASSERT_EQ(VN_OK, Vn_SetBusVolume(kBusA, -3, 0));
+        ASSERT_EQ(VN_OK, Vn_SetBusOutputVolume(kBusA, -2, 0));
+        for (const auto kind : {harken::kFilterKindLowpass, harken::kFilterKindHighpass}) {
+            const auto cutoff = kind == harken::kFilterKindLowpass ? 6000.f : 80.f;
+            ASSERT_EQ(VN_OK, Vn_SetBusFilter(kBusA, kind, cutoff, .707f, 1, 0));
+            ASSERT_EQ(VN_OK, Vn_SetBusOutputFilter(kBusA, kind, cutoff * 1.2f, .8f, 1, 0));
+        }
+        VnGainDesc gain{};
+        gain.structSize = sizeof(gain);
+        gain.effectId = harkentest::ObjectId(100);
+        gain.gainDb = -1;
+        ASSERT_EQ(VN_OK, Vn_SetBusEffect(kBusA, 0, VN_EFFECT_GAIN,
+            reinterpret_cast<const VnEffectDesc*>(&gain)));
+        ASSERT_EQ(VN_OK, Vn_SetBusEffectParam(kBusA, 0, 0, -4));
+        ASSERT_EQ(VN_OK, Vn_SetBusEffectBypass(kBusA, 2, 1));
+        ASSERT_EQ(VN_OK, Vn_SetBusFaderPoint(kBusA, 1));
+        engine.nullBackend.Pump(200);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        const auto index = engine.buses.FindIndex(kBusA);
+        auto* live = engine.buses.BusState(index);
+        ASSERT_NE(nullptr, live);
+        struct PreparedRow {
+            harken::Engine& engine;
+            harken::BusTree::Bus row{};
+            ~PreparedRow() { engine.CancelBusWorkState(row); }
+        } prepared{engine};
+        // Audibility is derived from the existing combine/mute/solo authority.
+        ASSERT_EQ(VN_OK, Vn_SetBusMute(kBusA, 1, 0));
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, engine.PrepareBusWorkState(index, prepared.row));
+        EXPECT_FLOAT_EQ(live->gain.target, prepared.row.gain.target);
+        engine.CancelBusWorkState(prepared.row);
+        ASSERT_EQ(VN_OK, Vn_SetBusMute(kBusA, 0, 0));
+        ASSERT_EQ(VN_OK, Vn_SetBusSolo(busB, 1, 0));
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, engine.PrepareBusWorkState(index, prepared.row));
+        EXPECT_FLOAT_EQ(live->gain.target, prepared.row.gain.target);
+        engine.CancelBusWorkState(prepared.row);
+        ASSERT_EQ(VN_OK, Vn_SetBusSolo(busB, 0, 0));
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, engine.PrepareBusWorkState(index, prepared.row));
+        EXPECT_FLOAT_EQ(live->gain.target, prepared.row.gain.target);
+        EXPECT_FLOAT_EQ(live->outputGain.target, prepared.row.outputGain.target);
+        EXPECT_EQ(live->gainStarted, prepared.row.gainStarted);
+        EXPECT_EQ(live->faderAfterSlot, prepared.row.faderAfterSlot);
+        EXPECT_EQ(live->outputLayout, prepared.row.outputLayout);
+        for (std::size_t i = 0; i < 64; ++i)
+            EXPECT_FLOAT_EQ(live->downmixCoeffs[i], prepared.row.downmixCoeffs[i]);
+        const auto compare = [](const auto& expected, const auto& actual) {
+            EXPECT_EQ(expected.enabled, actual.enabled);
+            EXPECT_FLOAT_EQ(expected.coeffs.b0, actual.coeffs.b0);
+            EXPECT_FLOAT_EQ(expected.coeffs.b1, actual.coeffs.b1);
+            EXPECT_FLOAT_EQ(expected.coeffs.b2, actual.coeffs.b2);
+            EXPECT_FLOAT_EQ(expected.coeffs.a1, actual.coeffs.a1);
+            EXPECT_FLOAT_EQ(expected.coeffs.a2, actual.coeffs.a2);
+        };
+        compare(live->busLpf, prepared.row.busLpf);
+        compare(live->busHpf, prepared.row.busHpf);
+        compare(live->outputLpf, prepared.row.outputLpf);
+        compare(live->outputHpf, prepared.row.outputHpf);
+        EXPECT_FLOAT_EQ(live->fxBypassMix[2], prepared.row.fxBypassMix[2]);
+        ASSERT_EQ(VN_EFFECT_GAIN, prepared.row.fxSlotEffectRef[0].type);
+        EXPECT_FLOAT_EQ(static_cast<harken::GainState*>(live->fxSlots[0].state)->targetGainLinear,
+            static_cast<harken::GainState*>(prepared.row.fxSlots[0].state)->targetGainLinear);
+        EXPECT_EQ(gain.effectId, engine.effectBank.ObjectIdentity(prepared.row.fxSlotEffectRef[0]).effectId);
+        if (reconstruct) {
+            // Null backend is quiescent: transfer the newly prepared row without
+            // reading or duplicating running DSP state.
+            engine.buses.ApplyClearBusEffect(index, 0, engine.buses.GenerationAt(index));
+            engine.effectBank.DrainRetire();
+            ASSERT_TRUE(engine.effectBank.CommitPrepared(prepared.row.fxSlotEffectRef[0]));
+            engine.effectBank.PublishInstalled(prepared.row.fxSlotEffectRef[0]);
+            engine.busEffectInstanceRefs[index][0] = prepared.row.fxSlotEffectRef[0];
+            *live = prepared.row;
+            prepared.row = {};
+        } else engine.CancelBusWorkState(prepared.row);
+        auto dc = MakeDC(kRate, .25f);
+        const auto pcm = MonoDesc(dc, kRate);
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &pcm));
+        auto play = MakePlayDesc(harkentest::ObjectId(1), 0);
+        play.busId = kBusA;
+        VnVoiceHandle voice = 0;
+        ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+        PumpAndCapture(&engine, 8, output);
+    };
+    Capture normal, rebuilt;
+    ASSERT_NO_FATAL_FAILURE(render(false, normal));
+    ASSERT_NO_FATAL_FAILURE(render(true, rebuilt));
+    ASSERT_FALSE(normal.left.empty());
+    EXPECT_EQ(normal.left, rebuilt.left);
+    EXPECT_EQ(normal.right, rebuilt.right);
+}
+
+TEST(BusSettings, ReconstructionFailureReturnsEveryPreparedEffect) {
+    auto config = MakeNullConfig(1, kBlock);
+    config.fxSlotsPerBus = 2;
+    config.gainEffectPoolCapacity = 2;
+    config.limiterEffectPoolCapacity = 1;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    VnGainDesc gain{};
+    gain.structSize = sizeof(gain);
+    VnLimiterDesc limiter{};
+    limiter.structSize = sizeof(limiter);
+    limiter.ceilingDb = -1;
+    limiter.releaseMs = 100;
+    ASSERT_EQ(VN_OK, Vn_SetBusEffect(VN_BUS_MASTER, 0, VN_EFFECT_GAIN,
+        reinterpret_cast<const VnEffectDesc*>(&gain)));
+    ASSERT_EQ(VN_OK, Vn_SetBusEffect(VN_BUS_MASTER, 1, VN_EFFECT_LIMITER,
+        reinterpret_cast<const VnEffectDesc*>(&limiter)));
+    engine.nullBackend.Pump(1);
+    const auto head = engine.commands.PublishedHead();
+    harken::BusTree::Bus row{};
+    EXPECT_EQ(VN_NO_EFFECT, engine.PrepareBusWorkState(0, row));
+    EXPECT_EQ(1u, engine.effectBank.InUseOf(VN_EFFECT_GAIN));
+    EXPECT_EQ(1u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+    EXPECT_EQ(head, engine.commands.PublishedHead());
+    EXPECT_EQ(harken::kEffectTypeNone, row.fxSlotEffectRef[0].type);
+    EXPECT_EQ(harken::kEffectTypeNone, row.fxSlotEffectRef[1].type);
+}
