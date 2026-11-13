@@ -685,6 +685,7 @@ void MeterProbeSystem::CommitSliceTargets(
                     ? target->command.payload.setVoicePan.pan2d : 0.0f);
             break;
         case VariableTargetScope::Bus:
+            engine.NoteBusSettingCommand(target->command);
             engine.busTargets.MarkSliceCommitted(
                 static_cast<std::uint32_t>(target->locator.object),
                 target->locator.objectGeneration,

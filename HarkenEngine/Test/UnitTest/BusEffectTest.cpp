@@ -1313,3 +1313,45 @@ TEST(BusSettings, ReconstructionFailureReturnsEveryPreparedEffect) {
     EXPECT_EQ(harken::kEffectTypeNone, row.fxSlotEffectRef[0].type);
     EXPECT_EQ(harken::kEffectTypeNone, row.fxSlotEffectRef[1].type);
 }
+
+
+TEST(BusSettings, ReusedLimiterHasDeterministicColdFirstParameterBehavior) {
+    auto config = MakeNullConfig(1, kBlock);
+    config.fxSlotsPerBus = 1;
+    config.limiterEffectPoolCapacity = 2;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    VnLimiterDesc descriptor{};
+    descriptor.structSize = sizeof(descriptor);
+    descriptor.ceilingDb = -2;
+    descriptor.releaseMs = 100;
+    ASSERT_EQ(VN_OK, Vn_SetBusEffect(VN_BUS_MASTER, 0, VN_EFFECT_LIMITER,
+        reinterpret_cast<const VnEffectDesc*>(&descriptor)));
+    engine.nullBackend.Pump(1);
+    const auto used = engine.effectBank.Acquire(VN_EFFECT_LIMITER);
+    ASSERT_EQ(VN_EFFECT_LIMITER, used.type);
+    auto* storage = engine.effectBank.StateFor(used.type, used.poolIndex);
+    auto effect = harken::BuildEffect(used.type, storage);
+    effect.reset(storage);
+    harken::ApplyEffectDesc(used.type, &descriptor, storage);
+    std::array<float, kBlock> silence{};
+    float* planes[]{silence.data()};
+    effect.process(storage, planes, 1, 0, kBlock);
+    ASSERT_TRUE(static_cast<harken::LimiterState*>(storage)->hasRendered);
+    engine.effectBank.Recycle(used);
+    harken::BusTree::Bus row{};
+    ASSERT_EQ(VN_OK, engine.PrepareBusWorkState(0, row));
+    auto* rebuilt = static_cast<harken::LimiterState*>(row.fxSlots[0].state);
+    ASSERT_NE(nullptr, rebuilt);
+    EXPECT_EQ(used.poolIndex, row.fxSlotEffectRef[0].poolIndex);
+    EXPECT_FALSE(rebuilt->hasRendered);
+    float prepared = 0;
+    ASSERT_TRUE(harken::PrepareLimiterParam(harken::kLimiterParamCeilingDb, -6,
+        rebuilt->sampleRate, &prepared));
+    harken::LimiterApplyPreparedParam(rebuilt, harken::kLimiterParamCeilingDb, prepared, 64);
+    EXPECT_EQ(0u, rebuilt->transitionFramesRemaining);
+    EXPECT_FLOAT_EQ(prepared, rebuilt->ceilingLinear);
+    engine.CancelBusWorkState(row);
+    EXPECT_EQ(1u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+}

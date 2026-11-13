@@ -1004,16 +1004,31 @@ TEST(MeterProbe, RepeatedWithdrawalReturnsSharedSliceResources) {
         std::uint32_t generation = 0;
         ASSERT_EQ(VN_OK, harken::InstallMeterProbe(engine, kProbe, kSourceBus,
             VN_BUS_METER_TAP_POST_EFFECTS, 0, 0, &generation));
-        DefineSidechain(&engine, kSidechain, kProbe, generation);
+        if (iteration == 0)
+            DefineConstantProbeBinding(&engine, kSidechain, kProbe, generation,
+                VN_TARGET_SCOPE_BUS, harken::kBusTargetBusVolume, 0.0f, 0);
+        else DefineSidechain(&engine, kSidechain, kProbe, generation);
         ASSERT_EQ(VN_OK, harken::AttachMeterProbeBinding(engine, kSidechain,
             VN_TARGET_SCOPE_BUS, kTargetBus, 0,
             engine.buses.GenerationAt(targetIndex)));
         ASSERT_EQ(VN_OK, Vn_Update());
         engine.nullBackend.Pump(2);
+        if (iteration == 0) {
+            EXPECT_FALSE(engine.buses.BusState(targetIndex)->gainStarted);
+            EXPECT_EQ(0u, engine.busVolumePublished[targetIndex]);
+        }
         ASSERT_EQ(VN_OK, harken::UninstallMeterProbe(engine, kProbe, generation));
         for (int step = 0; step < 12; ++step) {
             engine.nullBackend.Pump(1);
             ASSERT_EQ(VN_OK, Vn_Update());
+        }
+        if (iteration == 0) {
+            EXPECT_TRUE(engine.buses.BusState(targetIndex)->gainStarted);
+            EXPECT_EQ(1u, engine.busVolumePublished[targetIndex]);
+            harken::BusTree::Bus rebuilt{};
+            ASSERT_EQ(VN_OK, engine.PrepareBusWorkState(targetIndex, rebuilt));
+            EXPECT_TRUE(rebuilt.gainStarted);
+            engine.CancelBusWorkState(rebuilt);
         }
         EXPECT_FALSE(engine.meterDetectors.IsProbe(kProbe));
         EXPECT_EQ(0u, engine.meterProbeWithdrawalCount);

@@ -74509,6 +74509,15 @@ VnResult Engine::PrepareBusWorkState(std::uint32_t busIndex, BusTree::Bus& row) 
             if (ref.type == kEffectTypeNone) return fail(VN_NO_EFFECT);
             row.fxSlotEffectRef[slot] = ref;
             void* state = effectBank.StateFor(ref.type, ref.poolIndex);
+            if (type == VN_EFFECT_LIMITER) {
+                // Live LimiterReset intentionally preserves parameter history.
+                // A newly prepared cold owner must not inherit its pool user's
+                // first-render flag or unfinished parameter transition.
+                auto& limiter = *static_cast<LimiterState*>(state);
+                const auto sampleRate = limiter.sampleRate;
+                limiter = LimiterState{};
+                limiter.sampleRate = sampleRate;
+            }
             auto effect = BuildEffect(type, state);
             if (effect.reset) effect.reset(state);
             if (effect.setParam)
