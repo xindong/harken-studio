@@ -203,7 +203,7 @@ void BusTree::ApplyPreviewEffectChain(const BusEffectChainAdoption& adoption) no
         adoption.revision != update.targetRevision) return;
     const auto host = BusSlotRef::FromPacked(update.host);
     if (!host.Valid() || host.index >= m_audioCount) return;
-    auto& bus = m_buses[host.index];
+    auto& bus = WorkState(host.index);
     if (adoption.releaseOwner) {
         // The following cold Set/Clear commands retain sole ownership of refs.
         // This adoption changes only metadata, after a quiescent preflight.
@@ -283,7 +283,7 @@ void BusTree::ApplyPreviewEffectControl(BusSlotRef host, std::uint64_t owner,
     std::uint64_t revision, std::uint32_t slot, std::uint32_t parameter,
     float prepared, std::uint32_t frames, bool bypass) noexcept {
     if (!AudioRefMatches(host) || slot >= m_fxSlots) return;
-    auto& bus = m_buses[host.index];
+    auto& bus = WorkState(host.index);
     if (bus.previewEffectOwner != owner || revision != bus.previewEffectRevision + 1 ||
         bus.fxSlotEffectRef[slot].type != VN_EFFECT_LIMITER) return;
     if (bypass) ApplySetBusEffectBypass(host.index, slot, parameter != 0, kEffectActionBypass, VN_EFFECT_LIMITER, host.generation);
@@ -319,7 +319,7 @@ void BusTree::FinishPreviewEffectChain(Bus& bus, std::uint32_t frames) noexcept 
 }
 
 void BusTree::ReleasePreviewEffectChain(Bus& bus, bool quiescent) noexcept {
-    const auto index = static_cast<std::uint32_t>(&bus - m_buses.data());
+    const auto index = bus.busIndex;
     auto* state = m_previewEffectStates[index].load(std::memory_order_acquire);
     if (state == nullptr || bus.previewEffectOwner == 0) return;
     auto& update = state->update;
@@ -370,8 +370,8 @@ void BusTree::ShutdownPreviewEffectChains() noexcept {
     for (std::uint32_t i = 0; i < m_capacity; ++i) {
         auto* state = m_previewEffectStates[i].load(std::memory_order_acquire);
         if (state == nullptr) continue;
-        ReleasePreviewEffectChain(m_buses[i], true);
-        for (auto& ref : m_buses[i].fxSlotEffectRef) {
+        ReleasePreviewEffectChain(WorkState(i), true);
+        for (auto& ref : WorkState(i).fxSlotEffectRef) {
             if (ref.type != kEffectTypeNone) m_effectBank.Recycle(ref);
             ref = {};
         }

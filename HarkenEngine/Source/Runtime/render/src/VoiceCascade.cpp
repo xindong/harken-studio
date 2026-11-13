@@ -196,7 +196,7 @@ void MixReceivedOutput(const float* source, std::span<float* const> destinations
 // block, since RenderVoiceBlock runs once per voice per block. tap holds the
 // stereo block for [offset, offset+produced); each target gets a scaled copy of
 // that same region so the spatial image travels with the send.
-void ScatterVoiceSends(VoiceRenderContext& ctx, float* const* busPlanes,
+void ScatterVoiceSends(VoiceRenderContext& ctx, const BusRenderView& busPlanes,
                        float* const* tap, std::uint32_t offset,
                        std::uint32_t produced, std::uint32_t mixChannels) {
     for (std::uint32_t s = 0; s < ctx.voiceSends.size(); ++s) {
@@ -208,7 +208,7 @@ void ScatterVoiceSends(VoiceRenderContext& ctx, float* const* busPlanes,
             send.gain.SetBlockTarget(send.rampStartGain, send.rampEndGain,
                                      send.rampBlocksDone, send.rampBlocksTotal);
         }
-        float* const* dst = busPlanes + send.targetBusIndex * mixChannels;
+        float* const* dst = busPlanes.ForBus(send.targetBusIndex, mixChannels, send.targetBusGeneration);
         send.gain.MixAddBlock(tap, dst, mixChannels, offset, produced);
         if (send.ramping) {
             ++send.rampBlocksDone;
@@ -732,11 +732,11 @@ bool CanCombineSpatialOutput(const VoiceRenderContext& ctx,
     return true;
 }
 
-void FoldPlainPcm(VoiceRenderContext& ctx, float* const* busPlanes,
+void FoldPlainPcm(VoiceRenderContext& ctx, const BusRenderView& busPlanes,
                   std::uint32_t mixChannels,
                   output_gain_detail::MonoStereoMixKernel monoStereoMix) {
     const auto span = ctx.cascade.borrowed;
-    float* const* bus = busPlanes + ctx.busIndex * mixChannels;
+    float* const* bus = busPlanes.ForBus(ctx.busIndex, mixChannels, ctx.busGeneration);
     if (ctx.pcm.channelCount == 1 && mixChannels == 2 &&
         ctx.spatialMatrix.target.gain[0][0] != 0.0f &&
         ctx.spatialMatrix.target.gain[0][1] != 0.0f) {
@@ -1814,7 +1814,7 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
 }
 
 template<bool imageOnly>
-static void FoldVoiceIntoBusesImpl(VoiceRenderContext& ctx, float* const* busPlanes,
+static void FoldVoiceIntoBusesImpl(VoiceRenderContext& ctx, const BusRenderView& busPlanes,
                         std::uint32_t blockFrames, std::uint32_t mixChannels,
                         std::uint32_t mixLayout, std::uint64_t sourceFrameBegin,
                         output_gain_detail::MonoStereoMixKernel monoStereoMix) {
@@ -1858,7 +1858,7 @@ static void FoldVoiceIntoBusesImpl(VoiceRenderContext& ctx, float* const* busPla
     // One post-matrix image feeds both the dry bus and every send. Matrix
     // state advances only for actual output frames, including worker folds.
     if (produced > 0) {
-        float* const* dry = imageOnly ? nullptr : busPlanes + ctx.busIndex * mixChannels;
+        float* const* dry = imageOnly ? nullptr : busPlanes.ForBus(ctx.busIndex, mixChannels, ctx.busGeneration);
         float** tap = ctx.cascade.tap;
         const bool haveTap = ctx.cascade.tapReady;
         if (channels <= 2) {
@@ -2031,11 +2031,11 @@ bool PrepareVoiceSignalImage(VoiceRenderContext& ctx, std::uint32_t blockFrames,
 
 template<bool Ramping>
 static void FoldFourSignalImageRange(std::span<const SignalMemberImage, 4> images,
-                          const double* const* gains, float* const* busPlanes,
+                          const double* const* gains, const BusRenderView& busPlanes,
                           std::uint32_t channels, unsigned begin, unsigned frames,
                           const float* const* levels = nullptr) {
     constexpr unsigned Count = 4;
-    float* const* buses = busPlanes + images[0].voice->busIndex * channels;
+    float* const* buses = busPlanes.ForBus(images[0].voice->busIndex, channels, images[0].voice->busGeneration);
     unsigned done = 0;
     for (unsigned ch = 0; ch < channels; ++ch) {
         if ((done & (1u << ch)) != 0) continue;
@@ -2082,7 +2082,7 @@ static void FoldFourSignalImageRange(std::span<const SignalMemberImage, 4> image
 }
 
 void FoldFourSignalImages(std::span<const SignalMemberImage, 4> images,
-                          const double* const* gains, float* const* busPlanes,
+                          const double* const* gains, const BusRenderView& busPlanes,
                           std::uint32_t channels) {
     bool ramping = false;
     for (const auto& image : images) ramping |= image.outputGain->remainingFrames != 0;
@@ -2098,7 +2098,7 @@ void FoldFourSignalImages(std::span<const SignalMemberImage, 4> images,
             const auto& image = images[v];
             for (unsigned ch = 0; ch < channels; ++ch) {
                 if ((image.silentChannels & (1u << ch)) != 0) continue;
-                auto* destination = busPlanes[image.voice->busIndex * channels + ch] + image.offset;
+                auto* destination = busPlanes.ForBus(image.voice->busIndex, channels, image.voice->busGeneration)[ch] + image.offset;
                 const auto* source = image.planes[ch] + image.offset;
                 if (gains[v] != nullptr || image.voice->cascade.signalImageReadOnly)
                     MixReceivedOutput(source, {&destination, 1},
@@ -2121,7 +2121,7 @@ void FoldFourSignalImages(std::span<const SignalMemberImage, 4> images,
 }
 
 
-void FoldVoiceIntoBuses(VoiceRenderContext& ctx, float* const* busPlanes,
+void FoldVoiceIntoBuses(VoiceRenderContext& ctx, const BusRenderView& busPlanes,
                         std::uint32_t blockFrames, std::uint32_t mixChannels,
                         std::uint32_t mixLayout, std::uint64_t sourceFrameBegin,
                         output_gain_detail::MonoStereoMixKernel monoStereoMix,
@@ -2134,7 +2134,7 @@ void FoldVoiceIntoBuses(VoiceRenderContext& ctx, float* const* busPlanes,
     const auto offset = ctx.cascade.offset;
     const auto produced = ctx.cascade.produced;
     if (produced == 0) return;
-    float* const* dry = busPlanes + ctx.busIndex * mixChannels;
+    float* const* dry = busPlanes.ForBus(ctx.busIndex, mixChannels, ctx.busGeneration);
     std::uint32_t mixedChannels = silentChannels;
     for (std::uint32_t ch = 0; ch < mixChannels; ++ch) {
         if ((mixedChannels & (1u << ch)) != 0) continue;
@@ -2160,7 +2160,7 @@ void FoldVoiceIntoBuses(VoiceRenderContext& ctx, float* const* busPlanes,
 __attribute__((aligned(64)))
 #endif
 StageResult RenderVoiceBlock(VoiceRenderContext& ctx, BlockArena& arena,
-                             float* const* busPlanes, std::uint32_t blockFrames,
+                             const BusRenderView& busPlanes, std::uint32_t blockFrames,
                              std::uint32_t mixChannels,
                              std::uint32_t mixLayout,
                              std::uint64_t sourceFrameBegin,

@@ -74470,6 +74470,7 @@ VnResult Engine::PrepareBusWorkState(std::uint32_t busIndex, BusTree::Bus& row) 
     };
     try {
         row.id = buses.IdAt(busIndex);
+        row.busIndex = busIndex;
         row.generation = buses.GenerationAt(busIndex);
         row.parentIndex = buses.ParentOf(busIndex);
         row.faderAfterSlot = busFaderAfterSlots[busIndex];

@@ -689,7 +689,7 @@ public:
     // jobDeadlineAt is the absolute cutoff; see RenderWorkerPool::RunUntil.
     // 0 renders without a bound, which only a caller that owns no deadline may
     // ask for. Audio thread.
-    RenderAllResult RenderAll(BlockArena& arena, float* const* busPlanes,
+    RenderAllResult RenderAll(BlockArena& arena, const BusRenderView& busPlanes,
                               std::uint32_t blockFrames,
                               NotificationQueue& notifications,
                               std::uint64_t blockIndex,

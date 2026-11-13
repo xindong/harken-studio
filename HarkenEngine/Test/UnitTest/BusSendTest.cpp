@@ -90,7 +90,7 @@ protected:
         return plan;
     }
 
-    std::vector<float> RenderSourceBlock() {
+    std::vector<float> RenderSourceBlock(bool remap = false) {
         constexpr std::uint32_t kBusCount = 4;
         constexpr std::uint32_t kChannels = 2;
         std::vector<float> storage(
@@ -105,10 +105,18 @@ protected:
                                     static_cast<std::size_t>(kBlockFrames);
             }
         }
-        std::fill_n(planes[2], kBlockFrames, 1.0f);
-        std::fill_n(planes[3], kBlockFrames, 1.0f);
-        engine->buses.MixDown(planes.data(), kBlockFrames, 0);
-        return std::vector<float>(planes[0], planes[0] + kBlockFrames);
+        const std::array<harken::BusRenderSlot, 4> mapping{{
+            {2, 1, 0}, {3, 1, 0}, {1, 1, 0}, {0, 1, 0}}};
+        std::uint64_t fallbacks = 0;
+        const auto view = remap ? harken::BusRenderView(planes.data(), mapping, &fallbacks)
+                                : harken::BusRenderView(planes.data());
+        auto* const* source = view.ForBus(1, kChannels);
+        std::fill_n(source[0], kBlockFrames, 1.0f);
+        std::fill_n(source[1], kBlockFrames, 1.0f);
+        engine->buses.MixDown(view, kBlockFrames, 0);
+        EXPECT_EQ(0u, fallbacks);
+        const auto* master = view.ForBus(0, kChannels)[0];
+        return std::vector<float>(master, master + kBlockFrames);
     }
 
     std::unique_ptr<EngineSession> session;
@@ -129,7 +137,7 @@ TEST_F(BusSendSlotReconcile, SameSlotAndTargetPreserveActiveRamp) {
     ASSERT_NE(harken::kInvalidTopologyPlanIndex, republish);
     engine->buses.ApplyTopologyPlan(
         republish, harken::kInvalidBusIndex, harken::kInvalidBusIndex, 0.0f);
-    const std::vector<float> second = RenderSourceBlock();
+    const std::vector<float> second = RenderSourceBlock(true);
     EXPECT_NEAR(1.5f, second.back(), 1e-5f);
 }
 

@@ -4813,7 +4813,7 @@ void VoicePool::ApplySetVoiceSendLevel(VnVoiceHandle handle,
 }
 
 VoicePool::RenderAllResult VoicePool::RenderAll(
-    BlockArena& arena, float* const* busPlanes, std::uint32_t blockFrames,
+    BlockArena& arena, const BusRenderView& busPlanes, std::uint32_t blockFrames,
     NotificationQueue& notifications, std::uint64_t blockIndex,
     std::uint64_t jobDeadlineAt, std::uint64_t sourceFrameBegin, SignalRenderPlan* signals, BusTree* signalBuses) {
     RenderAllResult outcome;

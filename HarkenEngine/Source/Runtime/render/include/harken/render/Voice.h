@@ -12,6 +12,7 @@
 #define HARKEN_RENDER_VOICE_H
 
 #include "harken/core/BlockArena.h"
+#include "harken/render/BusRenderView.h"
 #include "harken/core/ChannelLayout.h"
 #include "harken/core/CompletionProgress.h"
 #include "harken/core/SourceTerminalRecord.h"
@@ -728,7 +729,7 @@ inline void QueueVoiceTailSuffixRearm(VoiceRenderContext& ctx,
 // arena exhaustion the voice contributes nothing this block and the caller's
 // degradation counter increments.
 StageResult RenderVoiceBlock(VoiceRenderContext& ctx, BlockArena& arena,
-                             float* const* busPlanes, std::uint32_t blockFrames,
+                             const BusRenderView& busPlanes, std::uint32_t blockFrames,
                              std::uint32_t mixChannels = kOutputChannels,
                              std::uint32_t mixLayout = VN_CHANNEL_LAYOUT_STEREO,
                              std::uint64_t sourceFrameBegin = 0,
@@ -787,10 +788,10 @@ struct SignalMemberImage;
 // The caller admits four consecutive images with common range and destination.
 // This only folds PCM; each original job retains its gain and lifecycle clock.
 void FoldFourSignalImages(std::span<const SignalMemberImage, 4> members,
-                          const double* const* gains, float* const* busPlanes,
+                          const double* const* gains, const BusRenderView& busPlanes,
                           std::uint32_t mixChannels);
 
-void FoldVoiceIntoBuses(VoiceRenderContext& ctx, float* const* busPlanes,
+void FoldVoiceIntoBuses(VoiceRenderContext& ctx, const BusRenderView& busPlanes,
                         std::uint32_t blockFrames, std::uint32_t mixChannels,
                         std::uint32_t mixLayout,
                         std::uint64_t sourceFrameBegin = 0,

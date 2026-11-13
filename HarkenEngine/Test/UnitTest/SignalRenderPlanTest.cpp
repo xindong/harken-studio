@@ -296,6 +296,9 @@ TEST(SignalRenderPlan, QueuedParameterPublicationPreservesPcmEnvelopeAndRunningS
 }
 
 TEST(SignalRenderPlan, ActivityProjectionReordersAndRemovesNodesWithoutRestartingSignalHistory) {
+    for (bool ramp : {false, true}) {
+    SCOPED_TRACE(ramp);
+    const float updatedLevel = ramp ? .1f : .025f;
     std::array nodes{SignalRenderNodeInput{SignalEndpointKindV1::Sound},
                      SignalRenderNodeInput{SignalEndpointKindV1::Sound, true}};
     nodes[0].stableId = {0, 1}; nodes[1].stableId = {0, 2};
@@ -309,15 +312,15 @@ TEST(SignalRenderPlan, ActivityProjectionReordersAndRemovesNodesWithoutRestartin
     std::array expanded{nodes[1], nodes[0], nodes[1]};
     expanded[0].stableId = {0, 4};
     const std::array expandedConnections{
-        SignalConnectionInput{1, 0, .1f, {0, 5}},
-        SignalConnectionInput{1, 2, .1f, {0, 3}}};
+        SignalConnectionInput{1, 0, updatedLevel, {0, 5}},
+        SignalConnectionInput{1, 2, updatedLevel, {0, 3}}};
     const std::array expandedPaths{SignalFeedbackEdge{1, 0, 1, true},
                                    SignalFeedbackEdge{1, 2, 1, true}};
     auto next = SignalRenderPlan::Prepare(kFormat, expanded, expandedConnections, expandedPaths);
     ASSERT_NE(nullptr, next);
     ASSERT_TRUE(next->ConfigurePublication(11, 100, old.get(), 256));
     const std::array compact{nodes[1], nodes[0]};
-    const std::array compactConnections{SignalConnectionInput{1, 0, .1f, {0, 3}}};
+    const std::array compactConnections{SignalConnectionInput{1, 0, updatedLevel, {0, 3}}};
     const std::array compactPaths{SignalFeedbackEdge{1, 0, 1, true}};
     auto queued = SignalRenderPlan::Prepare(kFormat, compact, compactConnections, compactPaths);
     ASSERT_NE(nullptr, queued);
@@ -329,7 +332,7 @@ TEST(SignalRenderPlan, ActivityProjectionReordersAndRemovesNodesWithoutRestartin
     for (std::uint64_t epoch = 0; epoch < 14; ++epoch) {
         if (epoch == 4) {
             ASSERT_TRUE(next->AdoptContinuityFrom(*old));
-            ASSERT_TRUE(reference->SetConnectionLevel(0, .1f, 256));
+            ASSERT_TRUE(reference->SetConnectionLevel(0, updatedLevel, 256));
             current = next.get();
         }
         if (epoch == 5) {
@@ -360,5 +363,6 @@ TEST(SignalRenderPlan, ActivityProjectionReordersAndRemovesNodesWithoutRestartin
         ASSERT_TRUE(reference->CommitBlock());
         EXPECT_EQ(target.pcm, refTarget.pcm) << epoch;
         if (epoch == 4) for (float sample : added.pcm) EXPECT_FLOAT_EQ(1, sample);
+    }
     }
 }

@@ -22,8 +22,10 @@
 
 #include <harken/ObjectId.h>
 #include <harken/Harken.h>
+#include "harken/render/BusRenderView.h"
 
 #include "harken/core/BusSlotRef.h"
+#include "harken/core/GrowingRowStorage.h"
 #include "harken/core/EngineConfig.h"
 #include "harken/core/CommandQueue.h"
 #include "harken/dsp/GainRamp.h"
@@ -165,7 +167,7 @@ public:
     // against this. Audio thread.
     std::uint32_t AudioBusCount() const { return m_audioCount; }
     std::uint32_t AudioGenerationAt(std::uint32_t busIndex) const {
-        return busIndex < m_audioCount ? m_buses[busIndex].generation : 0;
+        return busIndex < m_audioCount ? WorkState(busIndex).generation : 0;
     }
 
     // Tree parent of a bus (itself for the master), from the LOGIC-side parent
@@ -323,7 +325,7 @@ public:
     // result back into the mix-width planes before its parent sum and sends;
     // the master->device fold is applied downstream by the mixer at the device
     // boundary. Audio thread.
-    bool MixDown(float* const* busPlanes, std::uint32_t blockFrames,
+    bool MixDown(const BusRenderView& busPlanes, std::uint32_t blockFrames,
                  std::uint64_t blockEpoch, std::uint64_t sourceFrameBegin = 0,
                  SignalRenderPlan* signals = nullptr);
     std::size_t SignalRoutingEdgeCapacity() const noexcept {
@@ -357,13 +359,13 @@ public:
     // ApplyTopologyPlan, seeded to the Appendix A default at construction.
     // Audio thread.
     const float* BusDownmixCoeffs(std::uint32_t busIndex) const {
-        return busIndex < m_audioCount ? m_buses[busIndex].downmixCoeffs
+        return busIndex < m_audioCount ? WorkState(busIndex).downmixCoeffs
                                        : nullptr;
     }
     // A bus's configured output layout (VnChannelLayout); for the master this
     // is the device layout. Audio thread.
     std::uint32_t BusOutputLayout(std::uint32_t busIndex) const {
-        return busIndex < m_audioCount ? m_buses[busIndex].outputLayout : 0;
+        return busIndex < m_audioCount ? WorkState(busIndex).outputLayout : 0;
     }
 
     // OutputPeak is the existing Post Effects bus meter: the peak absolute
@@ -376,18 +378,18 @@ public:
     // during MixDown; the mixer copies it into the snapshot payload and the
     // meter block ring in the same block.
     float OutputPeak(std::uint32_t busIndex) const {
-        return busIndex < m_audioCount ? m_buses[busIndex].outputPeak : 0.0f;
+        return busIndex < m_audioCount ? WorkState(busIndex).outputPeak : 0.0f;
     }
     float OutputChannelPeak(std::uint32_t busIndex, std::uint32_t channel) const {
         return busIndex < m_audioCount && channel < m_mixChannels
-            ? m_buses[busIndex].outputChannelPeaks[channel] : 0.0f;
+            ? WorkState(busIndex).outputChannelPeaks[channel] : 0.0f;
     }
     float PreFaderPeak(std::uint32_t busIndex) const {
-        return busIndex < m_audioCount ? m_buses[busIndex].preFaderPeak
+        return busIndex < m_audioCount ? WorkState(busIndex).preFaderPeak
                                        : 0.0f;
     }
     float PostFaderPeak(std::uint32_t busIndex) const {
-        return busIndex < m_audioCount ? m_buses[busIndex].postFaderPeak
+        return busIndex < m_audioCount ? WorkState(busIndex).postFaderPeak
                                        : 0.0f;
     }
 
@@ -397,6 +399,7 @@ public:
     // golden technique — and so future host diagnostics can read chain state.
     struct Bus {
         VnBusId id{};
+        std::uint32_t busIndex = 0;
         std::uint32_t generation = 0;
         std::uint32_t parentIndex = 0;
         OutputGain gain;
@@ -545,7 +548,14 @@ private:
 
     // Resized to capacity at Init. [0, m_count) is logic-visible;
     // [m_count, m_materializedCount) may hold one hidden prepared append batch.
-    std::vector<Bus> m_buses;
+    GrowingRowStorage<Bus> m_workRows;
+    std::vector<std::uint32_t> m_workSlots;
+    Bus& WorkState(std::uint32_t busIndex) noexcept {
+        return m_workRows[m_workSlots[busIndex]];
+    }
+    const Bus& WorkState(std::uint32_t busIndex) const noexcept {
+        return m_workRows[m_workSlots[busIndex]];
+    }
     std::unique_ptr<std::atomic<BusEffectChainState*>[]> m_previewEffectStates;
     std::atomic<std::uint32_t> m_pendingPreviewEffects{0};
     // Logic-owned tree-parent shadow and slot liveness, indexed by dense bus

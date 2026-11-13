@@ -48,7 +48,7 @@ BusTree::BusTree(const EngineConfig& config, TopologyPlanPool& plans,
     : m_plans(plans),
       m_effectBank(effects),
       m_dynamicRoutes(dynamicRoutes),
-      m_buses(config.maxBuses),
+      m_workSlots(config.maxBuses),
       m_previewEffectStates(std::make_unique<std::atomic<BusEffectChainState*>[]>(config.maxBuses)),
       m_logicParent(config.maxBuses, 0),
       m_logicAlive(config.maxBuses, 0),
@@ -73,25 +73,27 @@ BusTree::BusTree(const EngineConfig& config, TopologyPlanPool& plans,
                              config.blockFrames),
       m_outputScratch(config.mixChannelCount),
       m_biquadTrig(biquadTrig) {
+    if (!m_workRows.ConstructThrough(config.maxBuses)) throw std::bad_alloc{};
+    for (std::uint32_t i = 0; i < config.maxBuses; ++i) m_workSlots[i] = i;
     // The master bus pre-exists at index 0 and is its own parent (the fold
     // never dereferences the master's parent). Its chain defaults to all
     // pre-fader, like every created bus.
-    m_buses[0].id = VN_BUS_MASTER;
-    m_buses[0].generation = 1;
-    m_buses[0].parentIndex = 0;
+    WorkState(0).id = VN_BUS_MASTER;
+    WorkState(0).generation = 1;
+    WorkState(0).parentIndex = 0;
     m_logicParent[0] = 0;
     m_logicAlive[0] = 1;
     m_logicId[0] = VN_BUS_MASTER;
     m_logicGeneration[0] = 1;
-    m_buses[0].faderAfterSlot = m_fxSlots;
+    WorkState(0).faderAfterSlot = m_fxSlots;
     // The master's output fold is to the device layout, applied by the mixer at
     // the device boundary. Seed its default matrix (the Appendix A fold for the
     // resolved mix->device pair) so the pre-plan render — before any structural
     // change publishes a plan carrying the authoritative fold config — folds
     // correctly. At the stereo default mix == device, so this is the identity
     // and no fold runs.
-    m_buses[0].outputLayout = m_deviceLayout;
-    DefaultDownmixMatrix(m_mixLayout, m_deviceLayout, m_buses[0].downmixCoeffs);
+    WorkState(0).outputLayout = m_deviceLayout;
+    DefaultDownmixMatrix(m_mixLayout, m_deviceLayout, WorkState(0).downmixCoeffs);
     m_count = 1;
     m_activeCount = 1;
     m_materializedCount = 1;
@@ -119,9 +121,10 @@ void BusTree::InitializeBusSlot(std::uint32_t busIndex, VnBusId id,
                                 std::uint32_t parentIndex,
                                 std::uint32_t generation) noexcept {
     assert(busIndex < m_capacity);
-    Bus& bus = m_buses[busIndex];
+    Bus& bus = WorkState(busIndex);
     bus = Bus{};
     bus.id = id;
+    bus.busIndex = busIndex;
     bus.generation = generation;
     bus.parentIndex = parentIndex;
     bus.faderAfterSlot = m_fxSlots;
@@ -176,10 +179,10 @@ void BusTree::CommitPreparedBusVisibility(std::uint32_t firstIndex,
     }
     for (std::uint32_t busIndex = firstIndex;
          busIndex < firstIndex + slotCount; ++busIndex) {
-        m_logicParent[busIndex] = m_buses[busIndex].parentIndex;
+        m_logicParent[busIndex] = WorkState(busIndex).parentIndex;
         m_logicAlive[busIndex] = 1;
-        m_logicId[busIndex] = m_buses[busIndex].id;
-        m_logicGeneration[busIndex] = m_buses[busIndex].generation;
+        m_logicId[busIndex] = WorkState(busIndex).id;
+        m_logicGeneration[busIndex] = WorkState(busIndex).generation;
         ++m_activeCount;
     }
     m_count = firstIndex + slotCount;
@@ -265,7 +268,7 @@ VnResult BusTree::CreateBus(VnBusId id, VnBusId parentId) {
 }
 
 BusTree::Bus* BusTree::BusState(std::uint32_t busIndex) {
-    return busIndex < m_count ? &m_buses[busIndex] : nullptr;
+    return busIndex < m_count ? &WorkState(busIndex) : nullptr;
 }
 
 std::uint32_t BusTree::FindIndex(VnBusId id) const {
@@ -316,7 +319,7 @@ bool BusTree::LogicRefMatches(BusSlotRef ref) const {
 
 bool BusTree::AudioRefMatches(BusSlotRef ref) const {
     if (!ref.Valid() || ref.index >= m_audioCount ||
-        m_buses[ref.index].generation != ref.generation) {
+        WorkState(ref.index).generation != ref.generation) {
         return false;
     }
     const std::uint8_t* alive = InstalledAlive();
@@ -508,7 +511,7 @@ void BusTree::ApplySetBusFilter(std::uint32_t busIndex,
     if (!lowpass && filterKind != kFilterKindHighpass) {
         return;
     }
-    Bus& bus = m_buses[busIndex];
+    Bus& bus = WorkState(busIndex);
     Bus::ToneSection& section =
         outputOnly ? (lowpass ? bus.outputLpf : bus.outputHpf)
                    : (lowpass ? bus.busLpf : bus.busHpf);
@@ -548,7 +551,7 @@ void BusTree::ApplyVolume(std::uint32_t busIndex, float volumeDb,
         // covers it; the bound is defensive, not a live case.
         return;
     }
-    Bus& bus = m_buses[busIndex];
+    Bus& bus = WorkState(busIndex);
     float linear = 0.0f;
     if (!TryVolumeGainFromDb(volumeDb, &linear)) {
         ++m_invalidVolumeApplies;
@@ -617,8 +620,8 @@ void BusTree::ApplyTopologyPlan(std::uint32_t planIndex,
             if (plan.alive[i] == 0 || generation == 0) {
                 continue;
             }
-            if (m_buses[i].generation != generation) {
-                RetireBusSlotEffects(m_buses[i]);
+            if (WorkState(i).generation != generation) {
+                RetireBusSlotEffects(WorkState(i));
                 const std::uint32_t parent =
                     plan.parents != nullptr &&
                             plan.parents[i] != kPlanParentUnset
@@ -634,7 +637,7 @@ void BusTree::ApplyTopologyPlan(std::uint32_t planIndex,
     if (plan.parents != nullptr) {
         for (std::uint32_t i = 0; i < m_audioCount; ++i) {
             if (plan.parents[i] != kPlanParentUnset) {
-                m_buses[i].parentIndex = plan.parents[i];
+                WorkState(i).parentIndex = plan.parents[i];
             }
         }
     }
@@ -658,7 +661,7 @@ void BusTree::ApplyTopologyPlan(std::uint32_t planIndex,
             if (plan.alive[i] != 0) {
                 continue;
             }
-            Bus& bus = m_buses[i];
+            Bus& bus = WorkState(i);
             RetireBusSlotEffects(bus);
             bus.id = {};
             bus.preFaderPeak = 0.0f;
@@ -677,8 +680,8 @@ void BusTree::ApplyTopologyPlan(std::uint32_t planIndex,
     // the bus at "no fold". The master's entry carries its device matrix.
     if (plan.outputLayouts != nullptr && plan.downmixCoeffs != nullptr) {
         for (std::uint32_t i = 0; i < m_audioCount; ++i) {
-            m_buses[i].outputLayout = plan.outputLayouts[i];
-            std::memcpy(m_buses[i].downmixCoeffs,
+            WorkState(i).outputLayout = plan.outputLayouts[i];
+            std::memcpy(WorkState(i).downmixCoeffs,
                         plan.downmixCoeffs + static_cast<std::size_t>(i) * 64,
                         64 * sizeof(float));
         }
@@ -694,7 +697,7 @@ void BusTree::ApplyTopologyPlan(std::uint32_t planIndex,
                     generation == 0 || !AudioRefMatches({i, generation})) {
                     continue;
                 }
-                Bus& bus = m_buses[i];
+                Bus& bus = WorkState(i);
                 if ((plan.busVolumeApply[i] & kApplyBusPreserveEffects) == 0)
                 for (std::uint32_t slot = 0; slot < m_fxSlots; ++slot) {
                     ApplyClearBusEffect(i, slot, generation);
@@ -823,7 +826,7 @@ void BusTree::ApplySetBusSendLevel(std::uint32_t fromBus, std::uint32_t toBus,
 
 void BusTree::AudioDiscardLimiterGainReduction(std::uint64_t epoch) {
     for (std::uint32_t i = 0; i < m_audioCount; ++i) {
-        auto& bus = m_buses[i];
+        auto& bus = WorkState(i);
         if (!AudioRefMatches({i, bus.generation})) continue;
         for (std::uint32_t s = 0; s < m_fxSlots; ++s) {
             if (bus.fxSlotEffectRef[s].type != VN_EFFECT_LIMITER ||
@@ -839,7 +842,7 @@ bool BusTree::AudioReadLimiterGainReduction(BusSlotRef ref, std::uint32_t slot,
     std::uint64_t sourceFrameBegin, LimiterGainReduction& out) {
     out = {};
     if (!AudioRefMatches(ref) || slot >= m_fxSlots) return false;
-    const auto& bus = m_buses[ref.index];
+    const auto& bus = WorkState(ref.index);
     return CopyLimiterGainReduction(bus.fxSlots[slot], bus.fxSlotEffectRef[slot],
                                    expected, epoch, sourceFrameBegin, out);
 }
@@ -855,7 +858,7 @@ void BusTree::FinalizeBus(Bus& bus, float* const* planes,
     const std::uint32_t fader =
         (bus.faderAfterSlot <= m_fxSlots) ? bus.faderAfterSlot : m_fxSlots;
     const std::uint32_t busIndex =
-        static_cast<std::uint32_t>(&bus - m_buses.data());
+        bus.busIndex;
     const auto processSlot = [&](std::uint32_t slot) {
         EffectDynamicInputView dynamicInput{};
         const EffectDynamicInputView* input = nullptr;
@@ -1016,7 +1019,7 @@ void BusTree::FinalizeBus(Bus& bus, float* const* planes,
         }
     };
     if (!bus.signalBoundsPrepared)
-        (void)SignalBusBounds(static_cast<std::uint32_t>(&bus - m_buses.data()), blockFrames, {});
+        (void)SignalBusBounds(bus.busIndex, blockFrames, {});
     bus.signalBoundsPrepared = false;
     // Pre-fader chain: fx slots [0, faderAfterSlot) before the gain.
     processRange(0, fader);
@@ -1112,7 +1115,7 @@ void BusTree::FoldBusOutput(Bus& bus, float* const* planes,
         }
     }
     const std::uint32_t busIndex =
-        static_cast<std::uint32_t>(&bus - m_buses.data());
+        bus.busIndex;
     m_dynamicRoutes.CaptureBus(busIndex, VN_DYNAMIC_TAP_BUS_POST_EFFECTS,
                                m_fxDry.data(), dstCount, blockFrames);
     // 2. Clear every mix-width plane, then name-place the folded channels: the
@@ -1161,7 +1164,7 @@ void BusTree::ScatterSend(const float* const* src, float* const* dst,
 
 SignalBusRoutingInfo BusTree::SignalBusBounds(std::uint32_t index, std::uint32_t frames,
     std::span<SignalBiquadSegment> schedules) noexcept {
-    auto& bus = m_buses[index];
+    auto& bus = WorkState(index);
     SignalBusRoutingInfo result{};
     result.id = bus.id;
     result.generation = bus.generation;
@@ -1267,14 +1270,14 @@ std::uint32_t BusTree::SignalRoutingSnapshot(std::span<SignalBusRoutingInfo> inf
         if (plan.valid && plan.alive != nullptr && plan.alive[i] == 0) continue;
         info[i] = SignalBusBounds(i, frames, schedules.subspan(i * perBus, perBus));
         info[i].inputNode = inputNode(i);
-        m_buses[i].signalBoundsPrepared = true;
+        WorkState(i).signalBoundsPrepared = true;
     }
     std::uint32_t used = 0;
     if (segmented) {
         for (std::uint32_t bus = 0; bus < m_audioCount; ++bus) {
             if (info[bus].id == VnBusId{}) continue;
             const auto base = inputNode(bus);
-            const auto fader = std::min(m_buses[bus].faderAfterSlot, m_fxSlots);
+            const auto fader = std::min(WorkState(bus).faderAfterSlot, m_fxSlots);
             auto previous = base;
             for (std::uint32_t slot = 0; slot <= m_fxSlots; ++slot) {
                 if (slot == fader) {
@@ -1294,9 +1297,9 @@ std::uint32_t BusTree::SignalRoutingSnapshot(std::span<SignalBusRoutingInfo> inf
             if (!m_dynamicRoutes.InstalledBusTapMatches(row) || row.sourceIndex >= m_audioCount ||
                 row.targetBusIndex >= m_audioCount || row.effectSlot >= m_fxSlots ||
                 info[row.sourceIndex].id == VnBusId{} || info[row.targetBusIndex].id == VnBusId{} ||
-                m_buses[row.targetBusIndex].fxSlotEffectRef[row.effectSlot].type != VN_EFFECT_COMPRESSOR) continue;
+                WorkState(row.targetBusIndex).fxSlotEffectRef[row.effectSlot].type != VN_EFFECT_COMPRESSOR) continue;
             const auto base = inputNode(row.sourceIndex);
-            const auto fader = std::min(m_buses[row.sourceIndex].faderAfterSlot, m_fxSlots);
+            const auto fader = std::min(WorkState(row.sourceIndex).faderAfterSlot, m_fxSlots);
             std::uint32_t source = 0;
             switch (row.tap) {
             case VN_DYNAMIC_TAP_BUS_PRE_FADER: source = base + fader; break;
@@ -1314,7 +1317,7 @@ std::uint32_t BusTree::SignalRoutingSnapshot(std::span<SignalBusRoutingInfo> inf
     }
     for (std::uint32_t from = 0; from < m_audioCount; ++from) {
         if (info[from].id == VnBusId{}) continue;
-        const auto& bus = m_buses[from];
+        const auto& bus = WorkState(from);
         if (from != 0 && bus.parentIndex < m_audioCount && info[bus.parentIndex].id != VnBusId{})
             edges[used++] = {from, inputNode(bus.parentIndex),
                 SignalBoundProduct(info[from].outputFilterBound,
@@ -1345,7 +1348,7 @@ bool BusTree::SignalReceiversCannotReachSources(std::span<std::uint8_t> roles) c
     for (std::uint32_t k = count; k != 0; --k) {
         const auto from = plan.valid ? plan.order[k - 1] : count - k;
         if (from >= m_audioCount) return false;
-        const auto parent = m_buses[from].parentIndex;
+        const auto parent = WorkState(from).parentIndex;
         if (from != 0 && parent < m_audioCount) roles[from] |= roles[parent] & 1u;
         if (plan.valid) {
             const auto range = plan.Sends(from);
@@ -1359,7 +1362,7 @@ bool BusTree::SignalReceiversCannotReachSources(std::span<std::uint8_t> roles) c
     return true;
 }
 
-bool BusTree::MixDown(float* const* busPlanes, std::uint32_t blockFrames,
+bool BusTree::MixDown(const BusRenderView& busPlanes, std::uint32_t blockFrames,
                       std::uint64_t blockEpoch, std::uint64_t sourceFrameBegin,
                       SignalRenderPlan* signals) {
     const TopologyPlanView plan = m_plans.View(m_currentPlanIndex);
@@ -1381,8 +1384,8 @@ bool BusTree::MixDown(float* const* busPlanes, std::uint32_t blockFrames,
     const std::uint32_t n = usePlan ? plan.orderCount : m_audioCount;
     for (std::uint32_t k = 0; k < n; ++k) {
         const std::uint32_t i = usePlan ? plan.order[k] : (n - 1 - k);
-        Bus& bus = m_buses[i];
-        float* const* planes = busPlanes + i * m_mixChannels;
+        Bus& bus = WorkState(i);
+        float* const* planes = busPlanes.ForBus(i, m_mixChannels, bus.generation);
         if (signals == nullptr || !signals->NeedsBlockRouting()) bus.signalBoundsPrepared = false;
         FinalizeBus(bus, planes, blockFrames, blockEpoch, sourceFrameBegin);
         const auto signalNode = signals == nullptr ? UINT32_MAX : signals->NodeForBus(i, bus.id, bus.generation);
@@ -1411,7 +1414,7 @@ bool BusTree::MixDown(float* const* busPlanes, std::uint32_t blockFrames,
                 bus.outputChannelPeaks);
         }
         if (i != 0) {
-            float* const* parent = busPlanes + bus.parentIndex * m_mixChannels;
+            float* const* parent = busPlanes.ForBus(bus.parentIndex, m_mixChannels);
             const bool outputFilter =
                 ToneSectionActive(bus.outputLpf) ||
                 ToneSectionActive(bus.outputHpf);
@@ -1465,7 +1468,7 @@ bool BusTree::MixDown(float* const* busPlanes, std::uint32_t blockFrames,
                 }
                 SendEdge* edge = &plan.sendStates[range.first + s];
                 if (edge != nullptr) {
-                    ScatterSend(planes, busPlanes + to * m_mixChannels,
+                    ScatterSend(planes, busPlanes.ForBus(to, m_mixChannels, edge->toGeneration),
                                 blockFrames, *edge);
                 }
             }
@@ -1503,7 +1506,7 @@ void BusTree::ApplySetBusEffect(std::uint32_t busIndex, std::uint32_t slot,
         effectType, poolIndex, poolGeneration};
     void* incomingState = m_effectBank.LiveStateFor(incoming);
     if (incomingState == nullptr) { return; }
-    if (busIndex >= m_capacity || m_buses[busIndex].id == VnObjectId{} ||
+    if (busIndex >= m_capacity || WorkState(busIndex).id == VnObjectId{} ||
         (busGeneration != 0 &&
          !AudioRefMatches({busIndex, busGeneration})) ||
         slot >= m_fxSlots) {
@@ -1515,7 +1518,7 @@ void BusTree::ApplySetBusEffect(std::uint32_t busIndex, std::uint32_t slot,
         (void)retired;
         return;
     }
-    Bus& bus = m_buses[busIndex];
+    Bus& bus = WorkState(busIndex);
     // In-place replace: whatever this slot held is retired for reclamation.
     if (bus.fxSlotEffectRef[slot].type != kEffectTypeNone) {
         if (harken::monitor::AudioLiveArmed()) {
@@ -1542,13 +1545,13 @@ void BusTree::ApplySetBusEffect(std::uint32_t busIndex, std::uint32_t slot,
 
 void BusTree::ApplyClearBusEffect(std::uint32_t busIndex, std::uint32_t slot,
                                   std::uint32_t busGeneration) {
-    if (busIndex >= m_capacity || m_buses[busIndex].id == VnObjectId{} ||
+    if (busIndex >= m_capacity || WorkState(busIndex).id == VnObjectId{} ||
         (busGeneration != 0 &&
          !AudioRefMatches({busIndex, busGeneration})) ||
         slot >= m_fxSlots) {
         return;
     }
-    Bus& bus = m_buses[busIndex];
+    Bus& bus = WorkState(busIndex);
     if (bus.fxSlotEffectRef[slot].type != kEffectTypeNone) {
         // Retire the instance and empty the slot; its tail is cut here (a bus is
         // a persistent node with no drain, so a cleared effect simply stops).
@@ -1582,13 +1585,13 @@ void BusTree::ApplySetBusEffectParam(std::uint32_t busIndex, std::uint32_t slot,
                                      std::uint32_t tailFrames,
                                      std::uint32_t transitionFrames,
                                      std::uint32_t busGeneration) {
-    if (busIndex >= m_capacity || m_buses[busIndex].id == VnObjectId{} ||
+    if (busIndex >= m_capacity || WorkState(busIndex).id == VnObjectId{} ||
         (busGeneration != 0 &&
          !AudioRefMatches({busIndex, busGeneration})) ||
         slot >= m_fxSlots) {
         return;
     }
-    Bus& bus = m_buses[busIndex];
+    Bus& bus = WorkState(busIndex);
     if (bus.fxSlotEffectRef[slot].type != effectType) {
         return;
     }
@@ -1625,13 +1628,13 @@ void BusTree::ApplySetBusCompressorParameters(
     std::uint32_t transitionFrames,
     std::uint32_t busGeneration) {
     if (effectType != VN_EFFECT_COMPRESSOR ||
-        busIndex >= m_capacity || m_buses[busIndex].id == VnObjectId{} ||
+        busIndex >= m_capacity || WorkState(busIndex).id == VnObjectId{} ||
         (busGeneration != 0 &&
          !AudioRefMatches({busIndex, busGeneration})) ||
         slot >= m_fxSlots) {
         return;
     }
-    Bus& bus = m_buses[busIndex];
+    Bus& bus = WorkState(busIndex);
     if (bus.fxSlotEffectRef[slot].type != effectType) {
         return;
     }
@@ -1649,13 +1652,13 @@ void BusTree::ApplySetBusEffectBypass(std::uint32_t busIndex, std::uint32_t slot
                                       std::uint32_t action,
                                       std::uint32_t expectedEffectType,
                                       std::uint32_t busGeneration) {
-    if (busIndex >= m_capacity || m_buses[busIndex].id == VnObjectId{} ||
+    if (busIndex >= m_capacity || WorkState(busIndex).id == VnObjectId{} ||
         (busGeneration != 0 &&
          !AudioRefMatches({busIndex, busGeneration})) ||
         slot >= m_fxSlots) {
         return;
     }
-    Bus& bus = m_buses[busIndex];
+    Bus& bus = WorkState(busIndex);
     if (action == kEffectActionReset) {
         if (bus.fxSlotEffectRef[slot].type == expectedEffectType &&
             expectedEffectType == VN_EFFECT_COMPRESSOR &&
@@ -1694,7 +1697,7 @@ void BusTree::ApplySetBusEffectBypass(std::uint32_t busIndex, std::uint32_t slot
 void BusTree::ApplySetBusFaderPoint(std::uint32_t busIndex,
                                     std::uint32_t faderAfterSlot,
                                     std::uint32_t busGeneration) {
-    if (busIndex >= m_capacity || m_buses[busIndex].id == VnObjectId{} ||
+    if (busIndex >= m_capacity || WorkState(busIndex).id == VnObjectId{} ||
         (busGeneration != 0 &&
          !AudioRefMatches({busIndex, busGeneration}))) {
         return;
@@ -1703,7 +1706,7 @@ void BusTree::ApplySetBusFaderPoint(std::uint32_t busIndex,
     // faderAfterSlot <= fxSlotsPerBus; clamp defensively. FinalizeBus reads the
     // new split next block; see Vn_SetBusFaderPoint's public doc for the click
     // discipline.
-    m_buses[busIndex].faderAfterSlot =
+    WorkState(busIndex).faderAfterSlot =
         (faderAfterSlot <= m_fxSlots) ? faderAfterSlot : m_fxSlots;
 }
 
