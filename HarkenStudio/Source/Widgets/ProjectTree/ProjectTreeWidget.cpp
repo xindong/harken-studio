@@ -168,6 +168,9 @@ void ProjectTreeWidget::startDrag(Qt::DropActions)
     drag.setMimeData(mimeData(items));
     drag.setPixmap(items.first()->icon(0).pixmap(iconSize()));
     drag.exec(Qt::CopyAction | Qt::MoveAction, Qt::MoveAction);
+    stopDragNavigation();
+    clearDropHighlight();
+    unsetCursor();
     mousePressSelection_ = selectedItems();
     mousePressCurrent_ = currentItem();
 }

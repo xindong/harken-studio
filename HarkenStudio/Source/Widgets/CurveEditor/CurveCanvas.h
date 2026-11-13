@@ -97,6 +97,7 @@ public:
     bool addPointAt(const QPoint& pos);
     bool deleteSelectedPoint();
     bool resetCurveToDefault();
+    bool applySelectedCurvePreset(CurvePreset preset);
     bool copySelectedPointsToClipboard() const;
     bool cutSelectedPointsToClipboard();
     bool pasteFromClipboard();
@@ -167,7 +168,6 @@ private:
     void moveBodyDrag(QMouseEvent* event);
     int segmentIndexNearCoarse(const QPoint& pos) const;
     void updateGhost(const QPointF& applied, const QPointF& intended);
-    void applyCurvePreset(int segment, float u1, float v1, float u2, float v2);
     int insertPointBySplit(float x);
     void removePointMerge(int index);
     void beginPointCoordinateEdit(int index);

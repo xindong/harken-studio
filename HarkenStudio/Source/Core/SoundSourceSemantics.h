@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <span>
 #include <vector>
 
 namespace VNX {
@@ -110,6 +111,10 @@ bool hasDeepSourceSemantics(
 void clampFadeDurations(SoundSourceDef& source, uint64_t frameCount);
 bool clampFadesToAsset(SoundSourceDef& source, const AssetInfo* asset);
 SoundSourceDef canonicalized(const SoundSourceDef& source, uint64_t totalFrames);
+double fadeGainAtFrame(const SoundSourceDef& canonicalSource, double absoluteFrame);
+void applyFadeEnvelope(std::span<float> samples, uint32_t channels,
+                       const SoundSourceDef& source, uint64_t totalFrames,
+                       uint64_t startFrame = 0);
 void stampAuthoringAnchors(std::vector<SoundSourceDef>& sources,
                            const std::vector<SoundSourceDef>& previous,
                            const std::function<const AssetInfo*(uint32_t)>& resolve);

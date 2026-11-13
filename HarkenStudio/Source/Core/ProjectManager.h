@@ -578,6 +578,7 @@ signals:
     void itemCreated(ProjectItem* item);
     void itemRenamed(ProjectItem* item, const QString& oldName);
     void itemDeleted(ProjectItem* item);
+    void propertyEditsCancelling(ProjectItem* item, const QString& field);
     void itemMoved(ProjectItem* item, ProjectItem* oldParent, ProjectItem* newParent);
     void itemPropertyChanged(ProjectItem* item, const QString& propertyName,
                              const QObject* originator = nullptr);

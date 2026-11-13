@@ -57,6 +57,10 @@ target_link_libraries(harken_editor_shared PUBLIC
     harken_editor_foundation
 )
 
+if(WIN32)
+    target_link_libraries(harken_editor_shared PRIVATE user32)
+endif()
+
 if(MSVC)
     target_compile_options(harken_editor_shared PRIVATE /W4 /wd4100 /wd4189 /utf-8)
     target_compile_definitions(harken_editor_shared PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)

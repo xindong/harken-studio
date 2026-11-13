@@ -12,9 +12,7 @@
     defined(HARKEN_RT_PROBE_WORKER_BARRIER)
 #include "harken/core/RtProbe.h"
 #endif
-#if defined(HARKEN_RT_PROBE_DEVICE_CALLBACK)
 #include "harken/core/CpuClock.h"
-#endif
 
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
@@ -273,6 +271,8 @@ bool DeviceBackend::Impl::LeaveWorkerDomain(
 void DeviceBackend::Impl::DataCallback(ma_device* device, void* output,
                                        const void* /*input*/,
                                        ma_uint32 frameCount) {
+    Impl* impl = static_cast<Impl*>(device->pUserData);
+    const auto callbackEntryTicks = impl->workerCount != 0 ? CpuClockTicks() : 0;
 #if defined(HARKEN_RT_PROBE_DEVICE_CALLBACK)
     const std::uint64_t probeArrivalTicks = CpuClockTicks();
 #endif
@@ -299,7 +299,6 @@ void DeviceBackend::Impl::DataCallback(ma_device* device, void* output,
         probeRecord->beginTicks = probeArrivalTicks;
     }
 #endif
-    Impl* impl = static_cast<Impl*>(device->pUserData);
     float* out = static_cast<float*>(output);
     // Tag the whole callback walk for the allocation guard; the scope is
     // re-entrant (depth-counted), so the mixer's own per-block scope
@@ -310,6 +309,15 @@ void DeviceBackend::Impl::DataCallback(ma_device* device, void* output,
     float* stagingData = renderState.staging.data();
     const std::uint32_t channels = renderState.channels;
     const bool renderAdmitted = impl->RenderAdmitted();
+    // Internal staging quanta share the request's one wait budget. Charge
+    // only newly rendered blocks, including a cached final partial block;
+    // later conversion slices consuming that cache incur no new render work.
+    // This reserves time for remaining processing; it is not a hard bound on
+    // DSP execution or a measurement of the endpoint's queued audio.
+    const auto unstagedFrames = frameCount > renderState.cursor.availFrames ?
+        frameCount - renderState.cursor.availFrames : 0;
+    const auto workerDeadlineAt = impl->workerCount != 0 ?
+        impl->mixer->JobDeadlineForRequest(callbackEntryTicks, unstagedFrames) : 0;
 #if defined(HARKEN_RT_PROBE_DEVICE_CALLBACK)
     if (probeRecord != nullptr) {
         probeRecord->channels = channels;
@@ -336,7 +344,7 @@ void DeviceBackend::Impl::DataCallback(ma_device* device, void* output,
                     ++probeMixBlocks;
 #endif
                     impl->mixer->RenderBlock(
-                        stagingData, renderState.blockFrames, channels);
+                        stagingData, renderState.blockFrames, channels, workerDeadlineAt);
                 },
                 [&](std::uint32_t dstFrames, std::uint32_t srcFrames,
                     std::uint32_t frames) {

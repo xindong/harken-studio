@@ -18,6 +18,7 @@
 #include "Core/FontManager.h"
 #include "Widgets/Common/ReferenceImpactDialog.h"
 #include "Widgets/Common/SearchField.h"
+#include "Widgets/EffectEditor/EffectEditorPanel.h"
 
 #include <QVBoxLayout>
 #include <QFormLayout>
@@ -253,8 +254,12 @@ void InspectorPanelPrivate::rebindHierarchyPages(ProjectItem* createdChild)
     rebind(variableEngine_,  currentVariableItem_);
 }
 
-void InspectorPanelPrivate::clearItemBindings()
+void InspectorPanelPrivate::clearItemBindings(ProjectItem* nextItem)
 {
+    if (effectEditor_ && (!nextItem || nextItem->type != ProjectItem::Type::Effect)) {
+        effectEditor_->clearEditor();
+        effectEditor_->hide();
+    }
     const std::array<PropertyEditorEngine*, 10> engines = {
         soundEngine_, layerEngine_, containerEngine_, trackEngine_, segmentEngine_,
         variableEngine_, busEngine_, actionEngine_, attenuationEngine_, effectEngine_};
@@ -403,6 +408,22 @@ void InspectorPanelPrivate::setupUI()
     mainLayout->setContentsMargins(0, 0, 0, 0);
     mainLayout->setSpacing(0);
 
+    contentSplitter_ = new QSplitter(Qt::Vertical, q_ptr);
+    contentSplitter_->setObjectName(QStringLiteral("inspectorEffectSplitter"));
+    contentSplitter_->setProperty("splitterRole", QStringLiteral("border"));
+    contentSplitter_->setHandleWidth(1);
+    contentSplitter_->setChildrenCollapsible(false);
+    mainLayout->addWidget(contentSplitter_);
+    auto* inspectorContent = new QWidget(contentSplitter_);
+    auto* inspectorLayout = new QVBoxLayout(inspectorContent);
+    inspectorLayout->setContentsMargins(0, 0, 0, 0);
+    inspectorLayout->setSpacing(0);
+    contentSplitter_->addWidget(inspectorContent);
+    QObject::connect(contentSplitter_, &QSplitter::splitterMoved, q_ptr, [this] {
+        if (effectEditor_ && !effectEditor_->isHidden())
+            effectEditorSizes_ = contentSplitter_->sizes();
+    });
+
     QWidget* searchContainer = new QWidget();
     QHBoxLayout* searchLayout = new QHBoxLayout(searchContainer);
     ThemeLayout::margins(searchLayout, ThemeLayout::Space::Panel);
@@ -412,7 +433,7 @@ void InspectorPanelPrivate::setupUI()
     QObject::connect(searchBox_, &QLineEdit::textChanged, q_ptr, &InspectorPanel::onSearchTextChanged);
     searchLayout->addWidget(searchBox_);
 
-    mainLayout->addWidget(searchContainer);
+    inspectorLayout->addWidget(searchContainer);
 
     scrollArea_ = new QScrollArea();
     scrollArea_->setWidgetResizable(true);
@@ -423,7 +444,7 @@ void InspectorPanelPrivate::setupUI()
     registerPages();
 
     scrollArea_->setWidget(stack_);
-    mainLayout->addWidget(scrollArea_);
+    inspectorLayout->addWidget(scrollArea_);
 
     stack_->setCurrentIndex(PageEmpty);
 }
@@ -549,7 +570,7 @@ void InspectorPanel::showItemInspectorImpl(ProjectItem* item)
         return;
     }
 
-    d->clearItemBindings();
+    d->clearItemBindings(item);
 
     using P = InspectorPanelPrivate;
     const P::Page page = pageForItemType(item->type);
@@ -579,7 +600,8 @@ void InspectorPanel::showItemInspectorImpl(ProjectItem* item)
     if (engine) {
         engine->bindItem(item);
     }
-
+    if (page == P::PageEffect && d->effectEditor_)
+        showEmbeddedEffectEditor();
 }
 
 const PlacementContext* InspectorPanel::placementContext() const
@@ -682,6 +704,39 @@ void InspectorPanel::requestEditorLaunch(const QString& slot)
 void InspectorPanel::requestEffectEditorSelection(const QUuid& ownerGuid, const QUuid& rowGuid)
 {
     emit effectEditorRequested(ownerGuid, rowGuid);
+}
+
+void InspectorPanel::requestEffectSelection(const QUuid& ownerGuid, const QUuid& rowGuid)
+{
+    emit effectSelectionChanged(ownerGuid, rowGuid);
+}
+
+void InspectorPanel::requestEffectEditorDetach(const QUuid& ownerGuid, const QUuid& rowGuid)
+{
+    emit effectEditorDetachRequested(ownerGuid, rowGuid);
+}
+
+void InspectorPanel::showEmbeddedEffectEditor()
+{
+    auto* item = currentContextItem();
+    if (!item || item->type != ProjectItem::Type::Effect) return;
+    if (!d->effectEditor_) {
+        d->effectEditor_ = new EffectEditorPanel(d->contentSplitter_,
+            EffectEditorPanel::Presentation::Embedded);
+        d->contentSplitter_->addWidget(d->effectEditor_);
+        d->contentSplitter_->setStretchFactor(0, 1);
+        d->contentSplitter_->setStretchFactor(1, 1);
+        connect(d->effectEditor_, &EffectEditorPanel::detachRequested,
+            this, &InspectorPanel::effectEditorDetachRequested);
+        d->effectEditor_->hide();
+    }
+    const bool wasHidden = d->effectEditor_->isHidden();
+    if (d->effectEditor_->ownerGuid() != item->guid)
+        d->effectEditor_->bindEffect(item->guid);
+    d->effectEditor_->show();
+    if (wasHidden)
+        d->contentSplitter_->setSizes(d->effectEditorSizes_.isEmpty()
+            ? QList<int>{height(), height()} : d->effectEditorSizes_);
 }
 
 void InspectorPanel::onSearchTextChanged(const QString& text)

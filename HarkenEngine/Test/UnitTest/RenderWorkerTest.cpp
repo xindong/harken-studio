@@ -19,6 +19,7 @@
 #include "Common/StreamBuilder.h"
 #include "Common/TestUtil.h"
 #include "VoicePoolReleaseTestAccess.h"
+#include "DeviceBackend.h"
 
 #include "harken/core/AllocGuard.h"
 #include "harken/core/CommandQueue.h"
@@ -89,14 +90,23 @@ struct BusyPeakChainLoad {
     std::uint32_t participantCount = 0;
     std::uint64_t spinTicks = 0;
     std::uint64_t workerSpinTicks = 0;
+    bool firstBatchOnly = false;
+    std::atomic<bool> barrierTimedOut{false};
     std::thread::id coordinator = std::this_thread::get_id();
 
     static void Process(void* state, float* const*, std::uint32_t,
                         std::uint32_t, std::uint32_t) {
         auto* load = static_cast<BusyPeakChainLoad*>(state);
-        load->started.fetch_add(1, std::memory_order_acq_rel);
+        const auto ticket = load->started.fetch_add(1, std::memory_order_acq_rel);
+        if (load->firstBatchOnly && ticket >= load->participantCount) return;
+        const auto barrierDeadline = load->firstBatchOnly ?
+            harken::CpuClockTicks() + harken::CpuClockTicksPerSecond() : 0;
         while (load->started.load(std::memory_order_acquire) <
                load->participantCount) {
+            if (barrierDeadline != 0 && harken::CpuClockTicks() >= barrierDeadline) {
+                load->barrierTimedOut.store(true, std::memory_order_release);
+                return;
+            }
             std::this_thread::yield();
         }
         const std::uint64_t deadline =
@@ -1023,6 +1033,81 @@ TEST(RenderWorkerBusyPeak,
 
     const VnSnapshot snapshot = CaptureFull();
     EXPECT_EQ(snapshot.renderWorkerBusyPeakUs, expectedMicros);
+}
+
+TEST(RenderWorkerDeadlineBudget, DeviceRequestSharesBudgetAndResumesRetainedQuantum) {
+    for (unsigned scenario : {0u, 1u, 2u}) {
+        SCOPED_TRACE(scenario);
+        const bool deferBeforeRequest = scenario == 1;
+        const auto blockFrames = scenario == 2 ? 480u : 32u;
+        harken::DeviceBackendTestState deviceState;
+        struct DeviceSeam {
+            explicit DeviceSeam(harken::DeviceBackendTestState& state) {
+                harken::SetDeviceBackendTestState(&state);
+            }
+            ~DeviceSeam() { harken::SetDeviceBackendTestState(nullptr); }
+        } seam(deviceState);
+        BusyPeakChainLoad load;
+        load.participantCount = 2;
+        load.firstBatchOnly = true;
+        load.workerSpinTicks = harken::CpuClockTicksPerSecond() / (deferBeforeRequest ? 100 : 500);
+        const std::vector<float> samples(kRate, 0.125f);
+        VnConfig config = MakeNullConfigLayout(2, blockFrames, kRate,
+            VN_CHANNEL_LAYOUT_STEREO, VN_CHANNEL_LAYOUT_STEREO);
+        config.deviceMode = VN_DEVICE_REAL;
+        config.renderWorkerCount = 1;
+        config.fxSlotsPerVoice = 1;
+        EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto* engine = session.Engine();
+        const auto desc = MonoDesc(samples, kRate);
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &desc));
+        std::array<VnVoiceHandle, 2> handles{};
+        for (auto& handle : handles) {
+            const auto play = MakePlayDesc(harkentest::ObjectId(1), -2.0f);
+            ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
+        }
+        ASSERT_EQ(VN_OK, Vn_Update());
+        std::vector<float> initial(blockFrames * 2);
+        ASSERT_TRUE(engine->device.PumpCallbackForTests(initial.data(), blockFrames));
+        ASSERT_EQ(1u, engine->voices.RenderWorkerCount());
+        for (const auto handle : handles) {
+            auto* context = engine->voices.Resolve(harkentest::RenderHandle(engine, handle));
+            ASSERT_NE(context, nullptr);
+            context->fxSlots[0].process = &BusyPeakChainLoad::Process;
+            context->fxSlots[0].state = &load;
+        }
+        if (deferBeforeRequest) {
+            const auto before = engine->mixer.BlocksRendered();
+            ASSERT_TRUE(engine->device.PumpCallbackForTests(initial.data(), 32));
+            EXPECT_EQ(before, engine->mixer.BlocksRendered());
+            std::array<float, 128 * 2> expired{};
+            ASSERT_TRUE(engine->device.PumpCallbackForTests(expired.data(), 128));
+            EXPECT_EQ(before, engine->mixer.BlocksRendered());
+            EXPECT_TRUE(std::all_of(expired.begin(), expired.end(), [](float value) { return value == 0.0f; }));
+        }
+        // One 20 ms client request contains thirty 32-frame internal blocks.
+        // The retained case also exhausts a second callback's wait window.
+        // A larger final request gives it ample scheduling margin to recover.
+        const auto requestFrames = scenario == 2 ? 1u : deferBeforeRequest ? 9600u : 960u;
+        std::vector<float> output(requestFrames * 2);
+        const auto before = engine->mixer.BlocksRendered();
+        ASSERT_TRUE(engine->device.PumpCallbackForTests(output.data(), requestFrames));
+        harken::detail::VoicePoolReleaseTestAccess::JoinWorkers(engine->voices);
+        EXPECT_FALSE(load.barrierTimedOut.load(std::memory_order_acquire));
+        const auto rendered = requestFrames / blockFrames + (requestFrames % blockFrames != 0);
+        EXPECT_EQ(before + rendered, engine->mixer.BlocksRendered());
+        EXPECT_TRUE(std::all_of(output.begin(), output.end(), [](float value) { return value > 0.0f; }));
+        if (scenario == 2) {
+            // A one-frame request renders a complete block. Consuming its
+            // cached remainder must neither render again nor spend a budget.
+            const auto completed = engine->mixer.BlocksRendered();
+            std::vector<float> remainder((blockFrames - 1) * 2);
+            ASSERT_TRUE(engine->device.PumpCallbackForTests(remainder.data(), blockFrames - 1));
+            EXPECT_EQ(completed, engine->mixer.BlocksRendered());
+            EXPECT_TRUE(std::all_of(remainder.begin(), remainder.end(), [](float value) { return value > 0.0f; }));
+        }
+    }
 }
 
 // --- 3. Allocation guard armed on the worker threads ---

@@ -168,6 +168,8 @@ struct EffectNodeV1 {
     std::uint32_t paramCount = 0;
     const EffectParamV1* params = nullptr;
     harkenstudio::ObjectId effectId{};
+    std::uint32_t flags = 0;
+    harkenstudio::ObjectId presetId{};
 };
 
 struct EffectEdgeV1 {

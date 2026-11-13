@@ -14,7 +14,7 @@ inline PropertyDescriptor effectsInspectorDescriptor()
     effects.field = QStringLiteral("effects");
     effects.ownerComponent = ComponentType::MixNode;
     effects.type = PropType::List;
-    effects.label = QStringLiteral("FXs");
+    effects.label = QStringLiteral("Effects");
     effects.section = PropertySection::Effect;
     effects.flags.serialize = false;
 
@@ -24,19 +24,6 @@ inline PropertyDescriptor effectsInspectorDescriptor()
     effect.label = QStringLiteral("Effect");
     effect.refFilter = static_cast<int>(ProjectItem::Type::Effect);
 
-    PropertyDescriptor level;
-    level.field = QStringLiteral("wetDry");
-    level.type = PropType::Float;
-    level.label = QStringLiteral("Level");
-    level.unit = QStringLiteral(" %");
-    level.min = 0.0;
-    level.max = 100.0;
-    level.def = 100.0;
-    level.decimals = 1;
-    level.flags.serialize = false;
-    level.flags.settableByName = false;
-    level.toolTip = QStringLiteral("Dry/wet mix. Stored in Studio; not applied to audio processing.");
-
     PropertyDescriptor active;
     active.field = QStringLiteral("active");
     active.type = PropType::Bool;
@@ -44,7 +31,7 @@ inline PropertyDescriptor effectsInspectorDescriptor()
     active.flags.serialize = false;
     active.flags.settableByName = false;
     active.flags.state = true;
-    effects.elementSchema = {effect, level, active};
+    effects.elementSchema = {effect, active};
     effects.getItem = [](const ProjectItem* item) -> QVariant {
         const auto* mix = item ? item->comp<VMixNode>() : nullptr;
         QVariantList rows;
@@ -69,7 +56,6 @@ inline PropertyDescriptor effectsInspectorDescriptor()
                 row.insert(QStringLiteral("effectGuid"), target && target->type == ProjectItem::Type::Effect
                     ? QVariant(target->objectID) : QVariant(entry.effectGuid.toString(QUuid::WithoutBraces)));
             }
-            row.insert(QStringLiteral("wetDry"), entry.wetDry * 100.0);
             row.insert(QStringLiteral("active"), !entry.bypass);
             rows.push_back(row);
         }

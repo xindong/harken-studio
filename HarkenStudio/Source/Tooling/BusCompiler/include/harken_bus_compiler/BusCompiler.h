@@ -108,6 +108,7 @@ struct BusEffectAuthoringV1 {
     std::uint32_t parameterFirst = 0;
     std::uint32_t parameterCount = 0;
     BusSourceLocationV1 source;
+    harkenprojectschema::AuthoringGuid definitionGuid{};
 };
 
 struct BusDownmixAuthoringV1 {
@@ -157,6 +158,7 @@ struct CompiledBusEffectV1 {
     std::uint32_t parameterFirst = 0;
     std::uint32_t parameterCount = 0;
     std::uint32_t sourceLocationIndex = 0;
+    harkenprojectschema::AuthoringGuid definitionGuid{};
 };
 
 struct CompiledBusDownmixV1 {
@@ -198,6 +200,7 @@ enum class BusPublicationCapabilityVintageV1 : std::uint32_t {
     FullAuthoredProperties = 2,
     TopologyAndVolumeNeutralOtherProperties = 3,
     TopologyVolumeAndSendNeutralOtherProperties = 4,
+    TopologyVolumeSendAndEffectsNeutralOtherProperties = 5,
 };
 
 struct PublishedBusProjectionV1 {

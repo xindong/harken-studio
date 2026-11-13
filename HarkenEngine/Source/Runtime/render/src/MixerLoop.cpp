@@ -19,6 +19,7 @@
 #include <cstring>
 #include <limits>
 #include <new>
+#include <thread>
 
 namespace harken {
 
@@ -465,7 +466,12 @@ void MixerLoop::ApplyCommandRecord(const CommandRecord& command,
             command.payload.setVoiceSendLevel.rampMs);
         break;
     case kOpcodeSetBusEffectParam:
-        if (command.flags == kCommandFlagPreparedCompressor) {
+        if (command.flags == kCommandFlagPreviewBusEffect) {
+            const auto& p = command.payload.previewBusEffectControl;
+            if (p.effectType == VN_EFFECT_LIMITER)
+                m_buses.ApplyPreviewEffectControl(BusSlotRef::FromPacked(p.host), p.owner,
+                    p.revision, p.slot, p.parameter, p.prepared, p.transitionFrames, false);
+        } else if (command.flags == kCommandFlagPreparedCompressor) {
             const auto& payload = command.payload.setCompressorEffectParam;
             const BusSlotRef busRef = BusSlotRef::FromPacked(payload.host);
             if (payload.effectType == VN_EFFECT_COMPRESSOR && busRef.Valid()) {
@@ -884,7 +890,7 @@ bool MixerLoop::DrainOriginalSource(std::uint64_t blockIndex, std::uint64_t& owe
             assert(owned < row->incomingCount_);
             const bool handedOff = applyMetadata
                 ? m_voices.ApplyOwnedVoiceEffect(effect.handle, effect.slot, incoming)
-                : registry.effects_.RetireQueue().TryPush(incoming);
+                : registry.effects_.Retire(incoming);
             if (!handedOff) return defer();
             row->incomingDone_[owned] = true;
         } else if (applyMetadata && command.opcode == kOpcodeClearVoiceEffect) {
@@ -904,7 +910,7 @@ bool MixerLoop::DrainOriginalSource(std::uint64_t blockIndex, std::uint64_t& owe
     }
     for (std::uint32_t i = 0; i < row->incomingCount_; ++i) {
         if (row->incomingDone_[i]) continue;
-        if (!registry.effects_.RetireQueue().TryPush(row->incoming_[i])) return defer();
+        if (!registry.effects_.Retire(row->incoming_[i])) return defer();
         row->incomingDone_[i] = true;
     }
     if (row->disposition_ == Registry::Disposition::Apply) {
@@ -964,6 +970,8 @@ std::uint32_t MixerLoop::DrainCommands(std::uint64_t blockIndex,
     const CommandQueue::BlockInputCut& cut) {
     // Both transports share these counters for this entire block, including
     // every raw prefix before an initial-installation barrier.
+    m_voices.ServiceEffectChainRetirements();
+    m_buses.ServicePreviewEffectRetirements();
     std::uint32_t rawApplied = 0;
     std::uint32_t initialApplied = 0;
     const auto initialBudget = static_cast<std::uint64_t>(m_voices.Capacity()) * 3u;
@@ -1397,6 +1405,10 @@ std::uint32_t MixerLoop::DrainRawCommands(std::uint64_t blockIndex,
         // A later ordinary command supersedes the deferred value for its physical endpoint.
         m_voices.SupersedeDeferredFirstOutput(command, pendingNativeStart);
         switch (command.opcode) {
+        case kOpcodeApplyPreviewEffectChain:
+            m_voices.ApplyEffectChainUpdate(command.payload.applyPreviewEffectChain.handle,
+                command.payload.applyPreviewEffectChain.revision);
+            break;
         case kOpcodePlay:
             if (pendingSourceInstall.Valid()) {
                 VoicePool::BeginSourceCommandInstallation(pendingSourceInstall,
@@ -1522,6 +1534,14 @@ std::uint32_t MixerLoop::DrainRawCommands(std::uint64_t blockIndex,
                 command.payload.clearBusEffect.dynamicRoutePlanIndex);
             break;
         case kOpcodeSetBusEffectBypass:
+            if (command.flags == kCommandFlagPreviewBusEffect) {
+                const auto& p = command.payload.previewBusEffectControl;
+                if (p.effectType == VN_EFFECT_LIMITER && p.parameter <= 1)
+                    m_buses.ApplyPreviewEffectControl(BusSlotRef::FromPacked(p.host), p.owner,
+                        p.revision, p.slot, p.parameter, 0, 0, true);
+                break;
+            }
+            if (command.flags != 0) break;
             m_buses.ApplySetBusEffectBypass(
                 command.payload.setBusEffectBypass.busIndex,
                 command.payload.setBusEffectBypass.slot,
@@ -1628,8 +1648,21 @@ void MixerLoop::PublishSourceCursors(std::uint64_t blockIndex,
     m_sourceCursors.EndWrite(blockIndex, outputFrame, m_commands.ConsumedCount());
 }
 
+std::uint64_t MixerLoop::JobDeadlineForRequest(std::uint64_t entryTicks,
+                                             std::uint32_t frames) const noexcept {
+    constexpr auto maximum = (std::numeric_limits<std::uint64_t>::max)();
+    if (m_blockFrames == 0 || frames == 0 || m_jobDeadlineTicks == 0)
+        return std::max<std::uint64_t>(1, entryTicks);
+    // Staging may need a full final block even when the caller wants only a
+    // fragment. Charge that block now; its cached remainder costs no render
+    // work when consumed by subsequent requests.
+    const std::uint64_t blocks = frames / m_blockFrames + (frames % m_blockFrames != 0);
+    if (m_jobDeadlineTicks > (maximum - entryTicks) / blocks) return maximum;
+    return std::max<std::uint64_t>(1, entryTicks + blocks * m_jobDeadlineTicks);
+}
+
 void MixerLoop::RenderBlock(float* interleavedOut, std::uint32_t frames,
-                            std::uint32_t channels) {
+                            std::uint32_t channels, std::uint64_t workerDeadlineAt) {
     const std::uint64_t ticksEntry = CpuClockTicks();
     floatmode::ScopedFlushDenormals floatModeScope;
     memguard::AudioThreadScope audioScope;
@@ -1660,8 +1693,22 @@ void MixerLoop::RenderBlock(float* interleavedOut, std::uint32_t frames,
 
     std::memset(interleavedOut, 0,
         static_cast<std::size_t>(frames) * channels * sizeof(float));
-    if (m_renderDeferred &&
-        (frames != m_deferredFrames || !m_voices.DeferredRenderReady())) return;
+    if (m_renderDeferred) {
+        if (frames != m_deferredFrames) return;
+        // A prior callback may have exhausted its wait budget. Give that same
+        // retained quantum the new callback's remaining wait window, rather
+        // than turning every staging slice into silence before it can finish.
+        while (!m_voices.DeferredRenderReady()) {
+            if (workerDeadlineAt == 0) return;
+            const auto now = CpuClockTicks();
+            if (now >= workerDeadlineAt) {
+                m_audioCpuPeakUs = std::max(m_audioCpuPeakUs,
+                    CpuTicksToMicros(ticksEntry, now, m_cpuTicksPerSecond));
+                return;
+            }
+            std::this_thread::yield();
+        }
+    }
 
     const std::uint64_t blockIndex =
         m_blocksRendered.load(std::memory_order_relaxed);
@@ -1783,7 +1830,7 @@ void MixerLoop::RenderBlock(float* interleavedOut, std::uint32_t frames,
         const VoicePool::RenderAllResult voicesOutcome =
             m_voices.RenderAll(m_arena, m_busPlanes.data(), frames,
                                m_notifications, blockIndex,
-                               ticksEntry + m_jobDeadlineTicks,
+                               workerDeadlineAt != 0 ? workerDeadlineAt : ticksEntry + m_jobDeadlineTicks,
                                static_cast<std::uint64_t>(blockIndex) * frames, signals, &m_buses);
         signalOk = !voicesOutcome.signalFailed;
         if (voicesOutcome.batchDeferred) {

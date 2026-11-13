@@ -132,6 +132,12 @@ void detachPreviewBinding(harkenstudio::ObjectId id, uint32_t scope, harkenstudi
 
 void removePreviewBinding(harkenstudio::ObjectId id) { Vn_UnregisterBinding(toNative(id)); }
 
+EngineResult setPreviewVoiceEffectChain(uint64_t voice,
+    const std::vector<PreviewVoiceEffectEntry>& chain)
+{
+    return Detail::runtimeSetPreviewVoiceEffectChain(voice, chain);
+}
+
 EngineResult refreshPreviewVoiceBindings(uint64_t voice)
 {
     return Detail::runtimeRefreshPreviewVoiceBindings(voice);
@@ -141,6 +147,12 @@ EngineResult setPreviewVoiceProperty(uint64_t voice, uint8_t property, float val
                                      harkenstudio::ObjectId sendBus)
 {
     return Detail::runtimeSetPreviewVoiceProperty(voice, property, value, sendBus);
+}
+
+EngineResult setPreviewVoiceEffect(uint64_t voice, harkenstudio::ObjectId effectId,
+    uint32_t effectType, const std::vector<float>& parameters, bool bypass)
+{
+    return Detail::runtimeSetPreviewVoiceEffect(voice, effectId, effectType, parameters, bypass);
 }
 
 bool currentWorldBusAdmissionIsOpen(uint64_t generation)

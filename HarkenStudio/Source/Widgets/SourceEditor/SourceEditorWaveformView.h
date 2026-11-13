@@ -116,11 +116,9 @@ private:
     void layoutTimeline();
     void refreshTimelineControls();
     void refreshTimelineAppearance();
-    void zoomVertically(int y, double factor);
     QRect channelViewportRect() const;
     QRect channelWaveformRect() const;
     QRect crosshairRect() const;
-    int channelContentHeight() const;
     void paintTimeline(QPainter& painter);
     void requestDetail();
     void showHandleValue();
@@ -145,7 +143,7 @@ private:
     void beginFadeDrag(FadeHit target, const QPoint& position, bool pullHandle = false);
     void dragFade(const QPoint& position, Qt::KeyboardModifiers modifiers = Qt::NoModifier);
     void setFadeDuration(int index, uint64_t duration);
-    void showFadeMenu(int index, const QPoint& position);
+    void showFadeMenu(FadeHit target, const QPoint& position);
 
     QString path_;
     WaveformPeakData peaks_;
@@ -160,6 +158,7 @@ private:
     FadeHit activeFade_;
     FadeHit hoveredFade_;
     int selectedFade_ = -1;
+    FadePart selectedFadeAnchor_ = FadePart::Start;
     QPointF fadeGrabOffset_;
     QPointF fadeDragOrigin_;
     double fadeDragT_ = 0.5;
@@ -172,24 +171,19 @@ private:
     Presentation presentation_;
     double viewStart_ = 0.0;
     double viewCount_ = 0.0;
-    double verticalZoom_ = 1.0;
     double amplitudeExponent_ = 1.0;
     bool frameDisplay_ = false;
     std::optional<QPoint> panOrigin_;
     Qt::MouseButton panButton_ = Qt::NoButton;
     double panStart_ = 0.0;
-    std::optional<int> panVerticalStart_;
     int dragOffset_ = 0;
     QPoint dragPosition_;
     bool dragMoved_ = false;
     QTimer edgeScroll_;
     QToolButton* units_ = nullptr;
     QScrollBar* scroll_ = nullptr;
-    QScrollBar* channelScroll_ = nullptr;
     QToolButton* zoomOut_ = nullptr;
     QToolButton* zoomIn_ = nullptr;
-    QToolButton* verticalZoomIn_ = nullptr;
-    QToolButton* verticalZoomOut_ = nullptr;
     QLabel* handleValue_ = nullptr;
     QPointer<QDialog> valueEditor_;
     WaveformPeakData detail_;

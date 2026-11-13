@@ -168,6 +168,7 @@ struct TimelineVoiceEffectInstall {
     std::uint32_t slot = 0;
     std::uint32_t type = 0;
     std::uint32_t descriptorSize = 0;
+    std::uint32_t flags = 0;
     alignas(std::uint64_t)
         std::uint8_t descriptor[kTimelineMaxEffectDescriptorBytes]{};
 };

@@ -65,6 +65,9 @@ RuntimeProjectGenerationPrepareStatus runtimePrepareProjectGeneration(
 RuntimeProjectGenerationPrepareStatus runtimePrepareProjectGeneration(
     const VnPreviewProjectDescV3& view,
     RuntimePreparedProject& out);
+RuntimeProjectGenerationPrepareStatus runtimePrepareProjectGeneration(
+    const VnPreviewProjectDescV4& view,
+    RuntimePreparedProject& out);
 RuntimeProjectGenerationCommitStatus runtimeCommitPreparedProjectGeneration(
     RuntimePreparedProject& prepared,
     std::uint64_t* outInstalledWorldGeneration);

@@ -58,10 +58,6 @@ constexpr std::uint32_t kMaxQueueDepthCeiling = 1 << 20;
 // ceiling exists for.
 constexpr std::uint32_t kMaxControlCommandsPerQuantumCeiling =
     kMaxQueueDepthCeiling;
-// Effect instance pools preallocate all their storage at Init (the delay
-// pool's delay lines are large), so this sanity ceiling rejects clearly
-// nonsensical capacities before construction attempts the allocation.
-constexpr std::uint32_t kMaxEffectPoolCeiling = 1 << 12;
 constexpr std::uint32_t kMaxDynamicRouteCapacityCeiling = 1 << 14;
 constexpr std::uint32_t kMaxDynamicRoutePlanPoolCeiling = 1 << 12;
 constexpr std::uint32_t kMaxDynamicTapCapacityCeiling = 1 << 12;
@@ -146,17 +142,6 @@ constexpr std::uint32_t kMaxFrameBatchesPerQuantumCeiling = 1 << 16;
 constexpr std::uint32_t kMaxEventsPerQuantumCeiling = 1 << 20;
 constexpr std::uint32_t kMaxTransactionEventsCeiling = 1 << 16;
 constexpr std::uint32_t kMaxDeferredMaterializationsPerQuantumCeiling = 1 << 16;
-
-// Byte ceiling for the feedback-delay pool's total preallocated line storage.
-// Each pooled delay instance holds a full kDelayEffectMaxSeconds line across
-// kMaxChannels at the engine sample rate, so at high rates and large pools this
-// is by far the biggest single Init allocation. The instance-count ceiling
-// alone does not bound it: many instances at a very high rate could still ask
-// for tens of gigabytes and throw bad_alloc out of Vn_Init. 256 MiB caps the
-// worst case at a small fraction of a typical game's audio budget while still
-// admitting generous pools at normal rates (over 160 one-second lines at
-// 48 kHz across kMaxChannels).
-constexpr std::uint64_t kMaxDelayLineBytes = 256ull * 1024ull * 1024ull;
 
 // Byte ceiling for total streaming memory governed by the stream slot count:
 // every slot owns a preallocated ring and can grow one whole-chunk staging
@@ -594,11 +579,6 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
         resolved.maxControlCommandsPerQuantum >
             kMaxControlCommandsPerQuantumCeiling ||
         resolved.notificationQueueDepth > kMaxQueueDepthCeiling ||
-        resolved.delayEffectPoolCapacity > kMaxEffectPoolCeiling ||
-        resolved.toneEffectPoolCapacity > kMaxEffectPoolCeiling ||
-        resolved.gainEffectPoolCapacity > kMaxEffectPoolCeiling ||
-        resolved.limiterEffectPoolCapacity > kMaxEffectPoolCeiling ||
-        resolved.compressorEffectPoolCapacity > kMaxEffectPoolCeiling ||
         resolved.dynamicRouteCapacity > kMaxDynamicRouteCapacityCeiling ||
         resolved.dynamicRoutePlanPoolCapacity >
             kMaxDynamicRoutePlanPoolCeiling ||
@@ -826,22 +806,8 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
         return VN_INVALID_CONFIG;
     }
 
-    // Byte-level ceiling on the delay pool's preallocation. The instance-count
-    // and sample-rate ceilings above bound every factor (delayCap <= 4096,
-    // rate <= 384000, kMaxChannels fixed), so this product cannot overflow a
-    // 64-bit accumulator — the multiply is wraparound-safe by construction. A
-    // config that passes the count ceilings but would still allocate gigabytes
-    // of delay line is a capacity the engine will not attempt.
-    const std::uint64_t delayLineFrames = static_cast<std::uint64_t>(std::ceil(
-        kDelayEffectMaxSeconds *
-        static_cast<double>(resolved.mixRate.SampleRate())));
-    const std::uint64_t delayLineBytes =
-        static_cast<std::uint64_t>(resolved.delayEffectPoolCapacity) *
-        delayLineFrames * static_cast<std::uint64_t>(kMaxChannels) *
-        static_cast<std::uint64_t>(sizeof(float));
-    if (delayLineBytes > kMaxDelayLineBytes) {
-        return VN_INVALID_CONFIG;
-    }
+    // Effect backing is allocated on demand. A configured quota is not an
+    // up-front allocation; checked per-instance sizes are validated by the bank.
 
     // Dynamic waveform routing owns independent immutable plans, Bus tap
     // planes, double-buffered Voice tap planes, and one detector scratch.

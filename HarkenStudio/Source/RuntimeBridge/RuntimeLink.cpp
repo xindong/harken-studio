@@ -1,4 +1,5 @@
 #include "RuntimeLink.h"
+#include "PreviewBridge.h"
 #include "NativeValues.h"
 #include "RuntimeLinkInternal.h"
 
@@ -515,6 +516,7 @@ VnConfig makeConfig(const EngineSessionConfig& config)
     c.maxVoices = positiveOrDefault(config.maxVoices, 64);
     c.maxActions = 65536;
     c.voiceSendSlots = 8;
+    c.fxSlotsPerVoice = 8;
     c.deviceMode = config.deviceMode == EngineDeviceMode::Null
         ? VN_DEVICE_NULL
         : VN_DEVICE_REAL;
@@ -576,7 +578,6 @@ bool ensureRuntimeStarted()
     g_runtime.playbackByAction.clear();
     g_runtime.playbackByRawVoice.clear();
     g_runtime.actionSeeks.clear();
-    g_runtime.endedPlaybackHandles.clear();
     g_runtime.registeredSounds.clear();
     g_runtime.registeredSoundRevisions.clear();
     g_runtime.preparedSounds.clear();
@@ -825,12 +826,9 @@ void runtimeTerm()
     g_runtime.packSetRevision = 0;
     g_runtime.liveVoices.clear();
     g_runtime.voiceNameByHandle.clear();
-    g_runtime.playbacks.clear();
-    g_runtime.playbackByPreview.clear();
-    g_runtime.playbackByAction.clear();
-    g_runtime.playbackByRawVoice.clear();
+    while (!g_runtime.playbacks.empty())
+        releasePlayback(g_runtime.playbacks.begin()->first, true);
     g_runtime.actionSeeks.clear();
-    g_runtime.endedPlaybackHandles.clear();
     {
         QMutexLocker lock(&g_runtime.notificationMutex);
         ++g_runtime.notificationGeneration;
@@ -1182,7 +1180,6 @@ void runtimeClearSoundNames()
     g_runtime.playbackByPreview.clear();
     g_runtime.playbackByAction.clear();
     g_runtime.playbackByRawVoice.clear();
-    g_runtime.endedPlaybackHandles.clear();
     g_runtime.voicePitchCentsByName.clear();
     g_runtime.voiceVolumeDbByName.clear();
     g_runtime.voiceSpatMixByName.clear();
@@ -1270,6 +1267,29 @@ EngineResult runtimeRegisterRawPcmSlice(harkenstudio::ObjectId soundId,
     if (outWindowFrameCount)
         *outWindowFrameCount = frameCount;
     return kEngineOk;
+}
+
+EngineResult runtimeRegisterRawPcmSlice(harkenstudio::ObjectId soundId,
+                                        std::vector<float> interleaved,
+                                        int channels, int sampleRate,
+                                        uint64_t startFrame, uint64_t frameCount,
+                                        bool loops)
+{
+    if (harkenstudio::IsNull(soundId) || frameCount == 0)
+        return kEngineInvalidArg;
+    if (!ensureRuntimeStarted())
+        return kEngineNotInit;
+    if (g_runtime.registeredSounds.contains(soundId)
+        && !g_runtime.registeredRawPcm.contains(soundId))
+        return kEngineInUse;
+
+    const EngineResult result = registerDecodedPcmSlice(
+        soundId, interleaved, channels, sampleRate, startFrame, frameCount);
+    if (result == kEngineOk)
+        rememberRawPcmDecode(soundId, {}, std::move(interleaved), channels,
+                             sampleRate, startFrame, frameCount,
+                             startFrame, frameCount, loops);
+    return result;
 }
 
 EngineResult runtimeRelocateRawPcmSlice(harkenstudio::ObjectId soundId,
@@ -1841,13 +1861,15 @@ EngineResult runtimeReleaseActionSeek(uint64_t operationId)
     return kEngineOk;
 }
 
-bool runtimeStopPlayback(uint64_t handle, uint32_t fadeMs)
+EngineResult runtimeStopPlayback(uint64_t handle, uint32_t fadeMs)
 {
-    if (!g_runtime.initialized || handle == 0)
-        return false;
+    if (!g_runtime.initialized)
+        return kEngineNotInit;
+    if (handle == 0)
+        return kEngineInvalidArg;
     const auto playback = g_runtime.playbacks.find(handle);
     if (playback == g_runtime.playbacks.end())
-        return false;
+        return kEngineStaleHandle;
     const RuntimePlayback record = playback->second;
     const int32_t result =
         record.kind == RuntimePlaybackKind::Preview
@@ -1863,16 +1885,22 @@ bool runtimeStopPlayback(uint64_t handle, uint32_t fadeMs)
         ? result == VN_PREVIEW_STALE_HANDLE
         : result == VN_STALE_HANDLE;
     if (stale)
-        releasePlayback(handle, false);
+        releasePlayback(handle, true);
     if (result == 0 || stale)
     {
         qInfo() << "[PlaybackRoute] stop runtime:"
                 << "playback=" << static_cast<qulonglong>(handle)
                 << "native=" << static_cast<qulonglong>(record.nativeHandle)
                 << "result=" << static_cast<int>(result);
-        return true;
     }
-    return false;
+    if (stale)
+        return kEngineStaleHandle;
+    if (record.kind == RuntimePlaybackKind::Preview) {
+        if (result == VN_PREVIEW_BACKPRESSURE)
+            return kEngineBackpressure;
+        return result == VN_PREVIEW_OK ? kEngineOk : kEngineDeviceError;
+    }
+    return static_cast<EngineResult>(result);
 }
 
 bool runtimeStopAll(uint32_t fadeMs)
@@ -1891,6 +1919,36 @@ bool runtimeHasCurrentWorldPlayableConsumers()
     return runtimeIsActive() && VnPreview_HasPlayableConsumers() != 0;
 }
 
+bool runtimeHasEffectChainConsumers()
+{
+    return runtimeIsActive() && VnPreview_HasEffectChainConsumers() != 0;
+}
+
+uint64_t runtimePreviewVoiceWorldGeneration(uint64_t voiceInstance)
+{
+    return runtimeIsActive() ? VnPreview_QueryVoiceWorldGeneration(voiceInstance) : 0;
+}
+
+bool runtimeHasPreviewWorldGeneration(uint64_t generation)
+{
+    return runtimeIsActive() && VnPreview_HasWorldGeneration(generation) != 0;
+}
+
+EngineResult runtimeSetPreviewVoiceEffectChain(uint64_t voiceInstance,
+    const std::vector<PreviewVoiceEffectEntry>& chain)
+{
+    if (chain.size() > VN_PREVIEW_EFFECT_CHAIN_CAPACITY) return kEngineInvalidArg;
+    VnPreviewVoiceEffectChainV1 native{};
+    native.structSize = sizeof(native);
+    native.entryCount = static_cast<uint32_t>(chain.size());
+    for (std::size_t i = 0; i < chain.size(); ++i) {
+        const auto& entry = chain[i];
+        native.entries[i] = {toNative(entry.effectId), entry.effectType,
+            entry.bypass ? 1u : 0u, entry.ceilingDb, entry.releaseMs};
+    }
+    return VnPreview_SetVoiceEffectChain(voiceInstance, &native);
+}
+
 EngineResult runtimeRefreshPreviewVoiceBindings(uint64_t voiceInstance)
 {
     return VnPreview_RefreshVoiceBindings(voiceInstance);
@@ -1900,6 +1958,21 @@ EngineResult runtimeSetPreviewVoiceProperty(uint64_t voiceInstance, uint8_t prop
     float value, harkenstudio::ObjectId sendBusId)
 {
     return VnPreview_SetVoiceProperty(voiceInstance, property, value, toNative(sendBusId));
+}
+
+EngineResult runtimeSetPreviewVoiceEffect(uint64_t voiceInstance, harkenstudio::ObjectId effectId,
+    uint32_t effectType, const std::vector<float>& parameters, bool bypass)
+{
+    return VnPreview_SetVoiceEffect(voiceInstance, toNative(effectId), effectType,
+        parameters.data(), static_cast<uint32_t>(parameters.size()), bypass ? 1u : 0u);
+}
+
+EngineResult runtimeSetPreviewBusEffect(uint64_t ownerId, harkenstudio::ObjectId busId,
+    harkenstudio::ObjectId effectId, uint32_t effectType,
+    const std::vector<float>& parameters, bool bypass)
+{
+    return VnPreview_SetBusEffect(ownerId, toNative(busId), toNative(effectId), effectType,
+        parameters.data(), static_cast<uint32_t>(parameters.size()), bypass ? 1u : 0u);
 }
 
 void runtimeSetVoicePitchByName(const QString& name, float cents)
@@ -2088,6 +2161,17 @@ RuntimeProjectGenerationPrepareStatus runtimePrepareProjectGeneration(
         return RuntimeProjectGenerationPrepareStatus::RuntimeUnavailable;
     return static_cast<RuntimeProjectGenerationPrepareStatus>(
         VnPreview_PrepareProjectV3(&view, &out.handle));
+}
+
+RuntimeProjectGenerationPrepareStatus runtimePrepareProjectGeneration(
+    const VnPreviewProjectDescV4& view, RuntimePreparedProject& out)
+{
+    if (out.Valid())
+        return RuntimeProjectGenerationPrepareStatus::InvalidView;
+    if (!runtimeIsActive())
+        return RuntimeProjectGenerationPrepareStatus::RuntimeUnavailable;
+    return static_cast<RuntimeProjectGenerationPrepareStatus>(
+        VnPreview_PrepareProjectV4(&view, &out.handle));
 }
 
 RuntimeProjectGenerationCommitStatus runtimeCommitPreparedProjectGeneration(

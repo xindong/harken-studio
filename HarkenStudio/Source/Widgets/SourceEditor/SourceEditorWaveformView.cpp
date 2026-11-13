@@ -14,7 +14,6 @@
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPainter>
-#include <QScrollBar>
 #include <QSizePolicy>
 #include <QTimer>
 #include "Core/ToolTip.h"
@@ -89,9 +88,6 @@ void SourceEditorWaveformView::setAsset(const AssetInfo* asset)
         detailCount_ = 0;
         viewStart_ = 0.0;
         viewCount_ = 0.0;
-        verticalZoom_ = 1.0;
-        if (channelScroll_)
-            channelScroll_->setValue(0);
     }
     asset_ = asset ? std::optional<AssetInfo>{*asset} : std::nullopt;
     refreshTimelineControls();
@@ -141,9 +137,6 @@ void SourceEditorWaveformView::setSource(const SoundSourceDef& source)
     unsetCursor();
     if (differentEntry) {
         selectedFade_ = -1;
-        verticalZoom_ = 1.0;
-        if (channelScroll_)
-            channelScroll_->setValue(0);
         setViewRange(0.0, double(totalFrames()));
     }
     refreshTimelineControls();
@@ -394,9 +387,6 @@ void SourceEditorWaveformView::mousePressEvent(QMouseEvent* event)
         panOrigin_ = position;
         panButton_ = event->button();
         panStart_ = viewStart_;
-        panVerticalStart_.reset();
-        if (waveformRect().contains(position))
-            panVerticalStart_ = channelScroll_->value();
         hoveredHandle_ = Handle::None;
         hoveredFade_ = {};
         selectedFade_ = -1;
@@ -446,8 +436,6 @@ void SourceEditorWaveformView::mouseMoveEvent(QMouseEvent* event)
         const double delta = (event->position().x() - panOrigin_->x())
             / std::max(1, waveformRect().width() - 1) * viewFrameCount();
         setViewRange(panStart_ - delta, viewFrameCount());
-        if (panVerticalStart_)
-            channelScroll_->setValue(*panVerticalStart_ - (event->position().toPoint().y() - panOrigin_->y()));
         return;
     }
     if (activeHandle_ != Handle::None && (event->buttons() & Qt::LeftButton)) {
@@ -479,7 +467,6 @@ void SourceEditorWaveformView::mouseReleaseEvent(QMouseEvent* event)
     }
     if (panOrigin_ && event->button() == panButton_) {
         panOrigin_.reset();
-        panVerticalStart_.reset();
         panButton_ = Qt::NoButton;
         updateHover(event->position().toPoint());
         return;
@@ -612,20 +599,20 @@ SourceEditorWaveformView::Handle SourceEditorWaveformView::hitTestHandle(
         return Handle::None;
     if (presentation_ == Presentation::TrimEditor) {
         const QRect plot = waveformRect();
-        if (position.y() < plot.top() || position.y() > plot.bottom())
+        if (position.y() < plot.top() || position.y() >= channelViewportRect().top())
             return Handle::None;
+        const int padding = ThemeManager::instance().metrics().spacingCompact;
         Handle nearest = Handle::None;
-        int nearestDistance = timeAxisMetrics().handleWidth + timeAxisMetrics().handleHitRadius + 1;
+        int nearestDistance = timeAxisMetrics().handleWidth + padding;
         for (Handle handle : {Handle::TrimStart, Handle::TrimEnd}) {
             const int x = handlePosition(static_cast<int>(handle));
             if (x < 0)
                 continue;
             const QRect bounds = trimGripRect(handle);
-            const int center = bounds.center().x();
-            const int padding = ThemeManager::instance().metrics().spacingCompact;
-            const bool grip = bounds.adjusted(-padding, -padding, padding, padding).contains(position);
-            const int distance = std::abs(position.x() - (grip ? center : x));
-            if (distance <= (grip ? bounds.width() / 2 + padding : timeAxisMetrics().handleHitRadius) && distance < nearestDistance) {
+            if (!bounds.adjusted(-padding, 0, padding, 0).contains(position))
+                continue;
+            const int distance = std::abs(position.x() - bounds.center().x());
+            if (distance < nearestDistance) {
                 nearest = handle;
                 nearestDistance = distance;
             }

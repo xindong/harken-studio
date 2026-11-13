@@ -240,6 +240,7 @@ struct ThemeMetrics
         int width = 0;
         int artworkHeight = 0;
         int logoWidth = 0;
+        int contentPaddingX = 0;
         int progressHeight = 0;
         bool operator==(const Startup&) const = default;
     } startup;

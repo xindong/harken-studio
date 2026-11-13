@@ -46,6 +46,86 @@ TEST(AttenuationCurveEval, EndpointHandlesProduceLinearInterpolation)
     }
 }
 
+TEST(CurvePresets, PreserveBoundsMonotonicityAndTimeReflectionAcrossAxes)
+{
+    constexpr float low = -72.0f;
+    constexpr float high = 12.0f;
+    const QVector<CurvePointDef> rising{{7.0f, low}, {43.0f, high}};
+    const QVector<CurvePointDef> falling{{7.0f, high}, {43.0f, low}};
+    const QVector<CurvePointDef> flat{{7.0f, -24.0f}, {43.0f, -24.0f}};
+    const QVector<CurvePointDef> unit{{0.0f, 0.0f}, {1.0f, 1.0f}};
+    for (const auto scale : {VNX::CurveAxisScale::LinearValue,
+                            VNX::CurveAxisScale::AmplitudeDb,
+                            VNX::CurveAxisScale::MirroredAmplitudeDb}) {
+        for (const auto preset : VNX::kCurvePresets) {
+            SCOPED_TRACE(::testing::Message() << "scale=" << static_cast<int>(scale)
+                         << " preset=" << static_cast<int>(preset));
+            const QVector<CurveHandlePairDef> up{
+                VNX::curvePresetHandles(preset, rising[0], rising[1], scale)};
+            const QVector<CurveHandlePairDef> down{
+                VNX::curvePresetHandles(preset, falling[0], falling[1], scale)};
+            const QVector<CurveHandlePairDef> horizontal{
+                VNX::curvePresetHandles(preset, flat[0], flat[1], scale)};
+            const QVector<CurveHandlePairDef> normalized{
+                VNX::curvePresetHandles(preset, unit[0], unit[1])};
+            double previous = 0.0;
+            for (int sample = 0; sample <= 128; ++sample) {
+                const float t = sample / 128.0f;
+                const float x = 7.0f + 36.0f * t;
+                const float value = VNX::curveBezierValueAt(rising, up, x, scale);
+                const double y = VNX::curveAxisNormalizedY(scale, low, high, value);
+                EXPECT_GE(y, -1e-6);
+                EXPECT_LE(y, 1.0 + 1e-6);
+                EXPECT_GE(y + 1e-6, previous);
+                EXPECT_NEAR(y, VNX::curveBezierValueAt(unit, normalized, t), 2e-5);
+                const float reflected = VNX::curveBezierValueAt(falling, down, 50.0f - x, scale);
+                EXPECT_NEAR(y, VNX::curveAxisNormalizedY(scale, low, high, reflected), 2e-5);
+                EXPECT_NEAR(VNX::curveBezierValueAt(flat, horizontal, x, scale), -24.0f, 1e-5);
+                previous = y;
+            }
+        }
+    }
+}
+
+TEST(CurvePresets, CurvatureStaysOnTheSameSideOfTheChordInBothDirections)
+{
+    for (const bool descending : {false, true}) {
+        const QVector<CurvePointDef> points{{0.0f, descending ? 1.0f : 0.0f},
+                                            {1.0f, descending ? 0.0f : 1.0f}};
+        for (const float x : {0.125f, 0.25f, 0.5f, 0.75f, 0.875f}) {
+            const auto value = [&](VNX::CurvePreset preset) {
+                return VNX::curveBezierValueAt(points,
+                    {VNX::curvePresetHandles(preset, points[0], points[1])}, x);
+            };
+            const float chord = descending ? 1.0f - x : x;
+            EXPECT_GT(value(VNX::CurvePreset::Log3), value(VNX::CurvePreset::Convex));
+            EXPECT_GT(value(VNX::CurvePreset::Convex), chord);
+            EXPECT_NEAR(value(VNX::CurvePreset::Linear), chord, 1e-6);
+            EXPECT_LT(value(VNX::CurvePreset::Concave), chord);
+            EXPECT_LT(value(VNX::CurvePreset::Exp3), value(VNX::CurvePreset::Concave));
+        }
+    }
+}
+
+TEST(CurvePresets, MirroredSCurveIsTheInverseOfSCurve)
+{
+    for (const bool descending : {false, true}) {
+        const QVector<CurvePointDef> points{{0.0f, descending ? 1.0f : 0.0f},
+                                            {1.0f, descending ? 0.0f : 1.0f}};
+        const QVector<CurveHandlePairDef> forward{
+            VNX::curvePresetHandles(VNX::CurvePreset::SCurve, points[0], points[1])};
+        const QVector<CurveHandlePairDef> inverse{
+            VNX::curvePresetHandles(VNX::CurvePreset::InverseSCurve, points[0], points[1])};
+        for (int sample = 0; sample <= 128; ++sample) {
+            const float x = sample / 128.0f;
+            const float y = VNX::curveBezierValueAt(points, forward, x);
+            const float inverseY = VNX::curveBezierValueAt(points, inverse, x);
+            EXPECT_NEAR(VNX::curveBezierValueAt(points, inverse, y), x, 1e-5);
+            EXPECT_NEAR(VNX::curveBezierValueAt(points, forward, inverseY), x, 1e-5);
+        }
+    }
+}
+
 TEST(CurveAxisMapping, RoundTripStaysWithinDbTolerance)
 {
     using VNX::CurveAxisScale;
@@ -118,14 +198,17 @@ TEST(CurveAxisMapping, MirroredAmplitudeRoundTripsTheEntireVolumeRange)
 TEST(AttenuationCurveEval, PitchLinearDomainMatchesParametricOracle)
 {
     const QVector<CurvePointDef> points{{0.0f, -1200.0f}, {100.0f, 1200.0f}};
-    const QVector<CurveHandlePairDef> handles{{25.0f, -1200.0f, 75.0f, 1200.0f}};
-    for (int i = 1; i < 20; ++i) {
-        const double t = static_cast<double>(i) / 20.0;
-        const double x = bezier(0.0, 25.0, 75.0, 100.0, t);
-        const double expected = bezier(-1200.0, -1200.0, 1200.0, 1200.0, t);
-        EXPECT_NEAR(VNX::curveBezierValueAt(points, handles,
-                                                  static_cast<float>(x)),
-                    expected, 5.0e-3) << "t=" << t;
+    for (const float h1x : {0.0f, 25.0f, 50.0f, 75.0f, 100.0f}) {
+        for (const float h2x : {0.0f, 25.0f, 50.0f, 75.0f, 100.0f}) {
+            const QVector<CurveHandlePairDef> handles{{h1x, -1200.0f, h2x, 1200.0f}};
+            for (int i = 0; i <= 64; ++i) {
+                const double t = static_cast<double>(i) / 64.0;
+                const double x = bezier(0.0, h1x, h2x, 100.0, t);
+                const double expected = bezier(-1200.0, -1200.0, 1200.0, 1200.0, t);
+                EXPECT_NEAR(VNX::curveBezierValueAt(points, handles, static_cast<float>(x)),
+                            expected, 5.0e-3) << "t=" << t << " handles=" << h1x << "," << h2x;
+            }
+        }
     }
 }
 

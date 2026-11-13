@@ -41,6 +41,7 @@
 #include <type_traits>
 
 namespace harken {
+struct EffectChainUpdate;
 
 // Lifecycle fact of the stage result protocol. Orthogonal to data
 // availability: framesProduced says how much data this block carries,
@@ -407,6 +408,9 @@ struct VoiceRenderContext {
     // runs its process (so a bypassed effect's tail keeps ringing and is
     // never truncated); bypass only governs how much of the wet result the
     // blend keeps.
+    EffectChainUpdate* fxChainTransition = nullptr;
+    std::uint64_t fxChainRevision = 0;
+    bool fxChainTransitionThisBlock = false;
     InsertEffect fxSlots[kMaxFxSlotsPerVoice];
     float fxBypassMix[kMaxFxSlotsPerVoice] = {};
     float fxBypassTarget[kMaxFxSlotsPerVoice] = {};

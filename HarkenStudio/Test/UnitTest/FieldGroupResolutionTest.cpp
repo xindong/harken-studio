@@ -113,5 +113,27 @@ TEST(FieldGroupResolution, EveryGroupSelectsOneOwnershipSourceAndRespectsPlatfor
     }
 }
 
+TEST(FieldGroupResolution, RejectedEffectReplacementPreservesStateAndParsedChainsCannotBypassCapacity)
+{
+    std::vector<EffectEntry> rows(EffectChainLedger::kCapacity);
+    for (auto& row : rows) {
+        row.guid = QUuid::createUuid();
+        row.mode = EffectMode::Custom;
+    }
+    EffectChainLedger chain;
+    ASSERT_TRUE(chain.replace(rows));
+    const auto saved = chain.toJson();
+    auto extra = rows.back();
+    extra.guid = QUuid::createUuid();
+    rows.push_back(extra);
+    EXPECT_FALSE(chain.replace(rows));
+    EXPECT_EQ(chain.toJson(), saved);
+    auto oversized = saved;
+    oversized.append(extra.toJson());
+    const EffectFieldGroup parsed{EffectChainLedger::fromJson(oversized)};
+    EXPECT_TRUE(HasCode(ValidateFieldGroupPayload(Group::Effect, parsed), Code::InvalidValue));
+    EXPECT_EQ(parsed.effects.toJson(), oversized);
+}
+
 }
 }

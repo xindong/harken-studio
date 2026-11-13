@@ -487,13 +487,9 @@ TEST_F(EditorDockLayoutTest, InterfaceZoomShortcutsReachMainFloatingAndModalWind
     ASSERT_NE(viewMenu, nullptr);
     for (int iteration = 0; iteration < 3; ++iteration) {
         viewMenu->aboutToShow();
-        auto* appearance = viewMenu->actions().first()->menu();
-        ASSERT_NE(appearance, nullptr);
-        ASSERT_EQ(appearance->actions().size(), 2);
-        EXPECT_EQ(appearance->actions().first()->objectName(), VNX::Shortcuts::ZoomIn);
-        appearance->actions().first()->trigger();
+        sendShortcut(window_.get(), Qt::Key_Equal);
         EXPECT_EQ(settings.globalUIZoomLevel(), 2);
-        appearance->actions().last()->trigger();
+        sendShortcut(window_.get(), Qt::Key_Minus);
         EXPECT_EQ(settings.globalUIZoomLevel(), 1);
     }
 

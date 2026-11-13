@@ -79,7 +79,10 @@ bool CountPayload(const PlayablePropertyPayloadViewV1& payload,
     }
     for (std::uint32_t i = 0; i < payload.effectNodeCount; ++i) {
         const EffectNodeV1& node = payload.effectNodes[i];
-        if (!CountPointer(node.paramCount, node.params,
+        if ((node.effectType == kPackEffectPresetReferenceType
+                 ? node.presetId == decltype(node.presetId){} || node.paramCount != 0
+                 : node.presetId != decltype(node.presetId){}) ||
+            !CountPointer(node.paramCount, node.params,
                           kHardPlayablePropertyEffectParamCapacity) ||
             !AddCount(node.paramCount,
                       kHardPlayablePropertyEffectParamCapacity, totals[4])) {
@@ -414,6 +417,7 @@ struct PackBodyWriteRow : PackBodyVisitorEnd {
 };
 
 struct PackBodyWritePayloadNode : PackBodyWriteRow<EffectNodeV1> {
+    const auto& PresetReference() noexcept { return value; }
     bool PrepareParams(std::uint64_t count) noexcept {
         return CountPointer(static_cast<std::uint32_t>(count), value.params,
                             kHardPlayablePropertyEffectParamCapacity);
@@ -670,6 +674,7 @@ struct PackBodyReadRow : PackBodyVisitorEnd {
 };
 
 struct PackBodyReadPayloadNode : PackBodyReadRow<EffectNodeV1> {
+    auto& PresetReference() noexcept { return value; }
     std::vector<EffectParamV1>& params;
     PackBodyReadState& state;
     std::uint32_t& paramTotal;
@@ -680,7 +685,9 @@ struct PackBodyReadPayloadNode : PackBodyReadRow<EffectNodeV1> {
     auto& Params(std::uint64_t i) noexcept { return params[static_cast<std::size_t>(i)]; }
     bool Finish() noexcept {
         value.params = params.empty() ? nullptr : params.data();
-        return true;
+        return value.effectType == kPackEffectPresetReferenceType
+            ? value.presetId != decltype(value.presetId){} && value.paramCount == 0
+            : value.presetId == decltype(value.presetId){};
     }
 };
 

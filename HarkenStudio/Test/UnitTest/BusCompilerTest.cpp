@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <functional>
 
 namespace {
 
@@ -104,6 +105,44 @@ TEST(RuntimeIdentityIndexTest, CrossKindCollisionIsRejected)
     ASSERT_FALSE(outcome.diagnostics.empty());
     EXPECT_EQ(outcome.diagnostics[0].code,
               RuntimeIdentityIndexDiagnosticCodeV1::DuplicateStableId);
+}
+
+TEST(BusCompilerTest, PublicationFingerprintTracksOnlyItsRepresentedContract)
+{
+    auto input = validInput();
+    for (auto& bus : input.buses) bus.faderAfterSlot = 8;
+    const auto compiled = CompileBusProjectV1(input);
+    ASSERT_TRUE(compiled.ok());
+    auto authored = *compiled.result;
+    authored.buses.front().effectCount = 1;
+    authored.effects.push_back({authored.buses.front().busId,
+        harkentest::StudioObjectId(400), 0, VN_EFFECT_LIMITER, 2, 0, 0, 2});
+    authored.effectParameters = {{0, -6.0f}, {1, 100.0f}};
+    const auto fingerprint = [](const auto& source, BusPublicationCapabilityVintageV1 vintage) {
+        return BuildPublishedBusProjectionV1(source, vintage).fingerprint;
+    };
+    const auto legacyVolume = BusPublicationCapabilityVintageV1::TopologyAndVolumeNeutralOtherProperties;
+    const auto legacySend = BusPublicationCapabilityVintageV1::TopologyVolumeAndSendNeutralOtherProperties;
+    const auto effects = BusPublicationCapabilityVintageV1::TopologyVolumeSendAndEffectsNeutralOtherProperties;
+    const auto original = fingerprint(authored, effects);
+    ASSERT_NE(0u, original);
+    for (const auto& change : std::vector<std::function<void(CompiledBusResultV1&)>>{
+        [](auto& result) { result.effects[0].effectId = harkentest::StudioObjectId(401); },
+        [](auto& result) { result.effects[0].slot = 1; },
+        [](auto& result) { result.effects[0].flags = 1; },
+        [](auto& result) { result.effectParameters[0].value = -12.0f; },
+    }) {
+        auto changed = authored;
+        change(changed);
+        EXPECT_NE(original, fingerprint(changed, effects));
+        EXPECT_EQ(fingerprint(authored, legacyVolume), fingerprint(changed, legacyVolume));
+        EXPECT_EQ(fingerprint(authored, legacySend), fingerprint(changed, legacySend));
+    }
+    auto reordered = authored;
+    std::reverse(reordered.sourceLocations.begin(), reordered.sourceLocations.end());
+    EXPECT_EQ(original, fingerprint(reordered, effects));
+    reordered.buses.front().faderAfterSlot = 4;
+    EXPECT_EQ(0u, fingerprint(reordered, effects));
 }
 
 } // namespace

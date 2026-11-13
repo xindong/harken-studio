@@ -205,6 +205,13 @@ void applyLoopRegion(PackCodecMetadata& metadata,
 /// values.
 enum class PackMediaFormat : uint8_t { Pcm16, PcmFloat, Adpcm, Vorbis };
 
+struct PackEffectPreset
+{
+    harkenstudio::ObjectId id{};
+    uint32_t type = 0;
+    std::vector<float> parameters;
+};
+
 struct PackBusEffect
 {
     harkenstudio::ObjectId id{};
@@ -376,6 +383,7 @@ public:
     void addBusSend(const PackBusSend& send);
     void addModulatorBinding(harkenstudio::ObjectId targetObjectId, const PackModulator& modulator);
     void addAttenuation(const PackAttenuation& attenuation);
+    void addEffectPreset(const PackEffectPreset& preset);
     void addDiscreteVariable(harkenstudio::ObjectId variableId);
     void addMeterWiring(const PackMeterWiring& wiring);
     void addBinding(const PackParameterBinding& binding);

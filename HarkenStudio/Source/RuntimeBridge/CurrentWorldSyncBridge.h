@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <map>
 #include <optional>
 #include <vector>
 
@@ -11,6 +12,25 @@ namespace HarkenEditor::Bridge {
 
 class CurrentWorldSyncRequest;
 using CurrentWorldSyncRequestPtr = std::shared_ptr<CurrentWorldSyncRequest>;
+
+struct PreviewEffectSource {
+    harkenstudio::ObjectId id{};
+    harkenstudio::ObjectId presetId{};
+    std::uint32_t type = 0;
+    std::vector<float> parameters;
+    bool bypass = false;
+
+    bool operator==(const PreviewEffectSource&) const = default;
+};
+
+using PreviewEffectDefinitions =
+    std::map<harkenstudio::ObjectId, std::vector<PreviewEffectSource>>;
+
+bool captureInstalledPreviewEffects(std::uint64_t generation,
+    harkenstudio::ObjectId soundId, std::vector<PreviewEffectSource>& effects);
+bool updateLivePreviewBusEffect(std::uint64_t runtimeEpoch, std::uint64_t authoringRevision,
+    harkenstudio::ObjectId busId,
+    harkenstudio::ObjectId definitionId, const PreviewEffectSource& effect);
 
 enum class CurrentWorldSyncStatus : std::uint32_t {
     Ok = 0,

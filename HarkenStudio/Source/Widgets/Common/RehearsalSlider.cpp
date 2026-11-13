@@ -5,16 +5,9 @@
 #include "ParameterPresenter.h"
 #include "Core/Components/VVariable.h"
 #include "Core/ThemeManager.h"
+#include "Core/VariableSemantics.h"
 
-#include <QMouseEvent>
-#include <QPainter>
-#include <QPaintEvent>
 #include <QSlider>
-#include <QStyle>
-#include <QStyleOptionSlider>
-#include "Core/ToolTip.h"
-
-#include <cmath>
 
 namespace VNX {
 
@@ -28,29 +21,13 @@ RehearsalSlider::RehearsalSlider(QWidget* parent)
     setPresenterOverride(ParameterPresenterId::SliderWithValue);
 }
 
-void RehearsalSlider::attachInnerSlider()
-{
-    QSlider* inner = presenter() ? presenter()->slider() : nullptr;
-    if (!inner) return;
-    inner->setObjectName(QStringLiteral("variableRehearsalSlider"));
-    if (!inner->property("rehearsalFilterInstalled").toBool()) {
-        inner->installEventFilter(this);
-        inner->setProperty("rehearsalFilterInstalled", true);
-    }
-    inner->setMouseTracking(true);
-}
-
 void RehearsalSlider::configure(const VVariable& variable)
 {
-    if (hoveredAnchor_ >= 0)
-        ToolTip::hideText();
-    hoveredAnchor_ = -1;
     const bool step = variable.kind == VariableKind::Step;
     const auto form = VariableSemantics::editFormForKind(variable.kind);
-    lo_ = variable.rangeMin;
-    hi_ = variable.rangeMax;
-    labels_ = QVector<VariableLabel>(variable.labels.cbegin(), variable.labels.cend());
-    setRange(lo_, hi_ > lo_ ? hi_ : lo_, form.decimals);
+    const float lo = variable.rangeMin;
+    const float hi = variable.rangeMax;
+    setRange(lo, hi > lo ? hi : lo, form.decimals);
     setDecimals(form.decimals);
     binding()->setQuantum(form.quantum);
     binding()->setDefaultValue(variable.defaultValue);
@@ -69,8 +46,8 @@ void RehearsalSlider::configure(const VVariable& variable)
     setProperty("labelAnchors", anchors);
     setAccessibleDescription(anchors.join(QStringLiteral(", ")));
 
-    attachInnerSlider();
     if (QSlider* inner = presenter() ? presenter()->slider() : nullptr) {
+        inner->setObjectName(QStringLiteral("variableRehearsalSlider"));
         inner->setProperty("variableKind",
                            step ? QStringLiteral("Step") : QStringLiteral("Smooth"));
         inner->setProperty("labelAnchorCount",
@@ -92,92 +69,6 @@ float RehearsalSlider::rawValue() const
 void RehearsalSlider::setRawValue(float raw)
 {
     setValue(raw);
-}
-
-int RehearsalSlider::anchorPosition(const QSlider* slider, float anchor) const
-{
-    if (!slider || anchor < lo_ || anchor > hi_ || hi_ <= lo_) return -1;
-    QStyleOptionSlider option;
-    option.initFrom(slider);
-    option.orientation = slider->orientation();
-    option.minimum = slider->minimum();
-    option.maximum = slider->maximum();
-    option.sliderPosition = slider->sliderPosition();
-    option.sliderValue = slider->value();
-    option.singleStep = slider->singleStep();
-    option.pageStep = slider->pageStep();
-    option.upsideDown = slider->invertedAppearance();
-    const QRect groove = slider->style()->subControlRect(
-        QStyle::CC_Slider, &option, QStyle::SC_SliderGroove, slider);
-    const QRect handle = slider->style()->subControlRect(
-        QStyle::CC_Slider, &option, QStyle::SC_SliderHandle, slider);
-    const int available = groove.width() - handle.width();
-    if (available <= 0) return -1;
-    const float t = (anchor - lo_) / (hi_ - lo_);
-    return groove.x() + handle.width() / 2 + static_cast<int>(std::lround(t * available));
-}
-
-void RehearsalSlider::paintAnchors(QSlider* slider, QPaintEvent*)
-{
-    if (!slider || labels_.isEmpty() || hi_ <= lo_) return;
-    QPainter painter(slider);
-    painter.setPen(ThemeManager::instance().colors().accent);
-    const auto& metrics = ThemeManager::instance().metrics();
-    for (const VariableLabel& label : labels_) {
-        const int x = anchorPosition(slider, static_cast<float>(label.anchor));
-        if (x >= 0)
-            painter.drawLine(x, slider->height() - metrics.spacingXSmall - metrics.borderWidth, x, slider->height() - metrics.borderWidth);
-    }
-}
-
-void RehearsalSlider::updateAnchorTooltip(QSlider* slider, QMouseEvent* event)
-{
-    if (!slider || !event) return;
-    int nearest = -1;
-    int distance = ThemeManager::instance().metrics().parameter.sliderHandleLength / 2;
-    for (int index = 0; index < labels_.size(); ++index) {
-        const VariableLabel& label = labels_.at(index);
-        if (label.name.isEmpty()) continue;
-        const int x = anchorPosition(slider, static_cast<float>(label.anchor));
-        if (x < 0) continue;
-        const int delta = std::abs(event->position().toPoint().x() - x);
-        if (delta < distance) {
-            distance = delta;
-            nearest = index;
-        }
-    }
-    const QString tooltip = nearest >= 0
-        ? tr("%1 (%2)").arg(labels_.at(nearest).name).arg(labels_.at(nearest).anchor)
-        : QString();
-    if (nearest == hoveredAnchor_
-        && (nearest < 0 || (ToolTip::isVisible() && ToolTip::text() == tooltip)))
-        return;
-    hoveredAnchor_ = nearest;
-    if (nearest >= 0) {
-        ToolTip::showText(event->globalPosition().toPoint(), tooltip, slider);
-    } else {
-        ToolTip::hideText();
-    }
-}
-
-bool RehearsalSlider::eventFilter(QObject* watched, QEvent* event)
-{
-    auto* slider = qobject_cast<QSlider*>(watched);
-    if (slider && presenter() && slider == presenter()->slider()) {
-        if (event->type() == QEvent::Paint) {
-            const bool filtered = ParameterSlider::eventFilter(watched, event);
-            paintAnchors(slider, static_cast<QPaintEvent*>(event));
-            return filtered;
-        }
-        if (event->type() == QEvent::MouseMove)
-            updateAnchorTooltip(slider, static_cast<QMouseEvent*>(event));
-        else if (event->type() == QEvent::Leave) {
-            if (hoveredAnchor_ >= 0)
-                ToolTip::hideText();
-            hoveredAnchor_ = -1;
-        }
-    }
-    return ParameterSlider::eventFilter(watched, event);
 }
 
 }

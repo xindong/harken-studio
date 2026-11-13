@@ -7,7 +7,7 @@
 | Inspector 主面板 | Sound、Container、Layer、Track、Segment、Bus、Action、Attenuation、Variable、Effect，共 10 类对象 |
 | 表格种类 | 9 类：7 类配置表、2 类只读展示表 |
 | 对象展示位置 | 19 处：Sound 3、Container 2、Layer 2、Track 3、Segment 2、Bus 4、Action 1、Attenuation 1、Variable 1 |
-| 范围外 | Selection Editor、External Editor、Effect Editor、Timeline、Grid 等独立编辑面 |
+| 范围外 | Selection Editor、External Editor、Timeline、Grid 等独立编辑面；Effect Editor 的内嵌与独立参数表单不计入表格统计 |
 
 | 对象 | 表格 | Tab > Section | 列名 | 数据与编辑性质 |
 |---|---|---|---|---|
@@ -16,7 +16,7 @@
 | Action | Steps | Basic > Step | # / Type / Target / Delay / 无标题展开列 | 动作步骤配置，末列展开详情 |
 | Attenuation | Dimensions | Basic > Dimension | # / Property / Curve | 衰减维度配置 |
 | Variable | Labels | Basic > Label | # / Name | 标签配置，# 显示实际整数索引 |
-| Sound、Container、Layer、Track、Segment、Bus | FXs | Basic > FX | # / Effect / Level / Active | 整链配置与平台覆盖；除 Bus 外沿对象归属层级继承 |
+| Sound、Container、Layer、Track、Segment、Bus | Effects | Basic > Effect | # / Effect / Active | 整链配置与平台覆盖；除 Bus 外沿对象归属层级继承 |
 | Sound、Container、Layer、Track、Segment、Bus | Sends | Route > Send | # / Target / Volume / Mode | Mix、Ducking、Sidechain 路由配置；除 Bus 外可继承 |
 | Bus | Inputs | Route > Input | Source / Volume | 输出路由的反向查询，只读 |
 | Bus | Receives | Route > Receive | # / Mode / Source / Volume | Send 路由的反向查询，只读 |
@@ -39,20 +39,23 @@
 
 | 表格／字段 | 当前行为 |
 |---|---|
-| FXs / 模式与增删 | 加号选择 Limiter 插入 Custom，或 Select Preset... 引用已有 Effect；允许跨对象及同链重复引用；减号删除选中行，支持排序与撤销重做 |
-| FXs / Custom | 普通标签显示插件名称，双击标签或单击右侧 detach 按钮打开 Effect Editor，单击标签不打开；内容左侧的独立 chevron 使用默认箭头指针，Replace 子菜单提供 Limiter 和 Select Preset...，另提供 Save As Preset... |
-| FXs / Preset | ObjectRef 保留定位、双击激活和预设选择器；内容左侧的独立 chevron 使用默认箭头指针，提供 Replace > Limiter 和 Convert to Custom |
-| FXs / 切换 | 保留行位置、行 GUID、Active 和 Level；替换插件使用默认参数，Convert to Custom 复制预设当前插件与参数后解除共享，不改预设资产 |
-| FXs / 保存预设 | Save As Preset... 使用标准目录／名称选择器，将当前 Custom 配置存为共享 Effect 并切换为引用；创建与切换合为一次撤销 |
-| FXs / Level | 干湿比范围 0～100%，默认 100%；0% 全干、100% 全湿；随工程保存并支持撤销，本阶段仅作为编辑配置，不参与试听或 Pack 运行时处理 |
-| FXs / Active | 新增默认开启，映射现有旁通配置；Bus 沿用既有支持，非 Bus 含关闭项时仍受现有试听／发布能力检查限制 |
-| FXs / 继承 | Sound、Container、Layer、Track、Segment 沿归属父级继承整条链，包括 Custom／Preset、顺序、Level、Active，不与父链叠加；根对象直接编辑自身配置，Bus 不继承 |
-| FXs / 本地历史 | 首次关闭 Inherit 复制当前有效链并分配本对象槽位身份；已有本地历史时恢复历史；开启继承保留历史；Rebuild Local from Current Effective Values 使用当前有效链重建本地配置 |
-| FXs / 平台 | 沿用 Shared 与平台覆盖规则；All Platforms 编辑共享链并清除该链的平台覆盖，单平台只改当前平台，配置与 Shared 相同时自动消除该覆盖；继承开关按平台独立保存，沿用标题菜单 Reset Inherit 恢复共享继承模式；Bus 也支持平台链，但没有 Inherit |
-| FXs / 有效值 | 继承状态展示当前平台的有效链并禁止增删、排序和修改；继承 Custom 仍可打开编辑器查看，Preset 保留 ObjectRef 导航；平台有效链不同且不能编辑共享本地链时显示混合状态 |
-| FXs / 资产 | Assets 的 Effect 桶通过 New Effect > Limiter 新建；创建后插件类型固定，Inspector 仅显示 Notes，无 Status section |
-| FXs / Effect Editor | 双击 Effect 对象同步打开独立编辑器；Custom 双击槽位插件名称标签或单击 detach 按钮打开；本阶段内容留空，支持多实例、固定和布局恢复，槽位编辑器随该槽位的替换、模式切换及当前平台有效配置更新 |
-| FXs / 删除资产 | 删除 Effect 移除共享配置、各平台覆盖及未生效本地历史中的对应 Preset 引用行，保留 Custom；撤销一并恢复引用行及其原顺序、Level、Active |
+| Effects / 模式与增删 | 加号选择 Limiter 插入 Custom，或 Select Preset... 引用已有 Effect；允许跨对象及同链重复引用；减号删除选中行，支持排序与撤销重做 |
+| Effects / 容量 | 每条链最多 8 槽；满 8 槽禁用加号，删除到 7 槽后恢复，撤销重做同步状态。新增回调、共享创作校验、CLI 合同和编译检查拒绝超限，不截断数据 |
+| Effects / Custom | 普通标签显示插件名称，双击标签按普通停靠及既有布局打开或复用独立 Effect Editor，单击标签不打开；每次单击右侧 detach 按钮均新建独立浮动 Effect Editor，已有同类型实例及原面板保留；新窗沿当前屏幕已有浮窗向右下错开，遇屏幕边缘回绕，已有窗口及已记忆位置不重排；内容左侧的独立 chevron 使用默认箭头指针，Replace 子菜单提供 Limiter 和 Select Preset...，另提供 Save As Preset... |
+| Effects / Preset | ObjectRef 保留定位、双击激活和预设选择器；内容左侧的独立 chevron 使用默认箭头指针，提供 Replace > Limiter 和 Convert to Custom |
+| Effects / 切换 | 保留行位置、行 GUID、Active；替换插件使用默认参数，Convert to Custom 复制预设当前插件与参数后解除共享，不改预设资产 |
+| Effects / 保存预设 | Save As Preset... 使用标准目录／名称选择器，将当前 Custom 配置存为共享 Effect 并切换为引用；创建与切换合为一次撤销 |
+| Effects / Active | 新增默认开启，映射旁通配置；Bus 与非 Bus 均接通试听和 Pack，关闭时保留效果实例并旁通 |
+| Effects / 在播编辑 | Voice／Bus 编辑前后的链均只含 Limiter（含空链）时，参数、Active、增删、替换和重排即时作用于当前播放，无需停止重播；涉及其他效果类型时，链结构与来源替换延后生效，仅已安装槽位的 Active 和来源兼容的参数可即时更新 |
+| Effects / 独立编辑器跟随 | 所有未 Pin 实例只跟随有效的 Effect 预设选择和 FX 行单选；单选只更新已开窗口，不新建。选择 Bus 等所属对象（无论是否有 FX）、其他对象或取消选择均保留当前效果器，不自动选择其他槽位。Pin 保留绑定，解除 Pin 时若最近一次效果器选择仍有效则立即同步，否则保留自身绑定；当前效果器失效时隐藏参数，槽位删除后撤销可恢复，关闭工程清空绑定和选择记录 |
+| Effects / 继承 | Sound、Container、Layer、Track、Segment 沿归属父级继承整条链，包括 Custom／Preset、顺序、Active，不与父链叠加；根对象直接编辑自身配置，Bus 不继承 |
+| Effects / 本地历史 | 首次关闭 Inherit 复制当前有效链并分配本对象槽位身份；已有本地历史时恢复历史；开启继承保留历史；Rebuild Local from Current Effective Values 使用当前有效链重建本地配置 |
+| Effects / 平台 | 沿用 Shared 与平台覆盖规则；All Platforms 编辑共享链并清除该链的平台覆盖，单平台只改当前平台，配置与 Shared 相同时自动消除该覆盖；继承开关按平台独立保存，沿用标题菜单 Reset Inherit 恢复共享继承模式；Bus 也支持平台链，但没有 Inherit |
+| Effects / 有效值 | 继承状态展示当前平台的有效链并禁止增删、排序和修改；继承 Custom 仍可打开编辑器查看，Preset 保留 ObjectRef 导航；平台有效链不同且不能编辑共享本地链时显示混合状态 |
+| Effects / 资产 | Assets 的 Effect 桶通过 New Effect > Limiter 新建；创建后插件类型固定，Inspector 常规属性区仅显示 Notes，无 Status section |
+| Effects / 内嵌编辑区 | 双击 Effect 对象在 Inspector 下半区显示 Effect Editor，标题暂用居中的 Details，上半区保留常规属性；初始上下比例 1:1，分隔边框可拖动；每个 Inspector 首次展开后，选择其他 Effect 直接更新内容并保留比例，切换到非 Effect、清空选择、删除当前资产或关闭工程时清空并隐藏，再选择 Effect 自动恢复；每次单击右上 detach 均为当前资产新建独立浮动 Effect Editor，已有同类型实例及内嵌编辑区保留；新窗沿当前屏幕已有浮窗向右下错开，遇屏幕边缘回绕，已有窗口及已记忆位置不重排；固定 Inspector 保持自身对象 |
+| Effects / Effect Editor | Limiter 使用两行标准表单：Ceiling 范围 −24～0 dB、默认 0 dB，Release 范围 1～1000 ms、默认 100 ms，提供标准滑条、数值输入与复位；Preset 与 Custom 参数支持编辑、撤销重做及保存，Preset 参数跨平台共享，Custom 参数编辑遵循当前平台作用域，继承 Custom 只读；独立编辑器支持多实例、固定和布局恢复，槽位编辑器随该槽位的替换、模式切换及当前平台有效配置更新 |
+| Effects / 删除资产 | 删除 Effect 移除共享配置、各平台覆盖及未生效本地历史中的对应 Preset 引用行，保留 Custom；撤销一并恢复引用行及其原顺序、Active |
 | Sends / 新增 | 加号先选择 Mix、Ducking 或 Sidechain，再选择目标 Bus；取消任一步不新增行 |
 | Sends / Mode | 可编辑并参与保存、继承和撤销；旧数据缺失 Mode 时按 Mix 解释；同一目标按 Mode 区分，单个 Mode 内目标唯一；与 Output 冲突或重复的 Mode 选项禁用 |
 | Sends / Volume | 三种 Mode 均表示发送的源信号增益，范围 −96～+24 dB；Ducking 中用于调节送入避让检测端的信号强度，并非指定目标衰减量；同一行各 Mode 分别记忆 Volume，Target 共用；首次进入未配置 Mode 沿用当前值，切回恢复上次值，记忆随工程保存并参与撤销 |
@@ -102,4 +105,4 @@ Frequency 范围为 20–20000 Hz，四节默认值依次为 20000、20、200、
 | 输出 | Target（目标 Bus）、Volume（输出音量） | Route > Output |
 | 发送 | Sends | Route > Send |
 | 空间属性 | 声像、3D 开关、衰减引用、衰减距离缩放 | Spatial > Rating |
-| 效果器 | 整条 FXs 链，含 Custom／Preset、顺序、Level、Active | Basic > FX |
+| 效果器 | 整条 Effects 链，含 Custom／Preset、顺序、Active | Basic > Effect |

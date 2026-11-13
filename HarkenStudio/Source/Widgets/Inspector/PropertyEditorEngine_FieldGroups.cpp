@@ -99,7 +99,7 @@ void PropertyEditorEngine::buildGroupHeader(FieldGroupId group, CollapsibleSecti
         switch (group) {
         case FieldGroupId::Output: label = tr("Inherit Output"); break;
         case FieldGroupId::Send: label = tr("Inherit Sends"); break;
-        case FieldGroupId::Effect: label = tr("Inherit FX"); break;
+        case FieldGroupId::Effect: label = tr("Inherit Effects"); break;
         case FieldGroupId::SpatialRating: label = tr("Inherit Spatial Rating"); break;
         }
     }

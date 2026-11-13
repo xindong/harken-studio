@@ -3924,7 +3924,7 @@ private:
 struct EnginePreparedTimelineVoiceStart {
     EngineMonitorSelection monitorSelection{};
     static constexpr std::uint32_t kMaxCommandCount =
-        3u + kTimelineMaxVoiceSends + kTimelineMaxVoiceEffects + 2u +
+        3u + kTimelineMaxVoiceSends + 2u * kTimelineMaxVoiceEffects + 2u +
         kMaxVoiceBindingInstanceSlots + kSpatialDrivenTargetsPerVoice;
 
     std::uint32_t ledgerSlot = UINT32_MAX;
@@ -15304,6 +15304,8 @@ public:
     void* originalQueueDecisionPreparationContextForTest = nullptr;
     std::vector<OccurrenceStatePool::OriginalSingleCompletionOwnerPin> originalSingleOccurrenceBaselines;
     std::vector<OccurrenceStatePool::PreparedSingleCompletionCommitProof> originalSingleOccurrenceCommitProofs;
+    // Must outlive the proof, whose cancellation releases all prepared seeds.
+    std::vector<EffectParamTargetStore::PreparedSeedToken> preparedVoiceEffectSeeds;
     CommandQueue::PreparedBatchProof preparedVoiceCommandBatchProof;
     std::vector<CommandRecord> actionPlayCommandScratch;
     std::vector<CommandRecord> actionSeekCommandScratch;

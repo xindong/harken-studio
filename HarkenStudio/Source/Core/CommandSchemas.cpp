@@ -1,4 +1,5 @@
 #include "CommandSchemas.h"
+#include "EffectChainSemantics.h"
 #include "ItemPropertySchema.h"
 #include "ProjectPlatformCommandSchema.h"
 
@@ -144,7 +145,6 @@ QJsonObject effect()
 {
     auto schema = object({{"guid", uuid()}, {"mode", choice({"custom", "preset"})},
         {"effectGuid", uuid()}, {"bypass", boolean()},
-        {"wetDry", QJsonObject{{"type", "number"}, {"minimum", 0}, {"maximum", 1}}},
         {"custom", object({{"type", choice({"feedbackDelay", "threeBandTone", "gain", "limiter", "compressor"})},
                             {"parameters", array(number(), 1)}}, {"type", "parameters"})}}, {"guid"});
     schema.insert("oneOf", QJsonArray{
@@ -242,7 +242,13 @@ const QMap<QString, Contract>& contracts()
         put({"create_folder", "delete_folder"}, object({{"path", text()}}, {"path"}));
         put({"rename_folder"}, object({{"path", text()}, {"new_name", text()}}, {"path", "new_name"}));
         put({"move_folder"}, object({{"path", text()}, {"new_parent", text()}}, {"path", "new_parent"}));
+        auto effectChain = array(effect());
+        effectChain.insert("maxItems", static_cast<int>(EffectChainLedger::kCapacity));
         auto itemProperty = setItemPropertySchema();
+        auto itemPropertyValues = itemProperty.value("propertyValues").toObject();
+        itemPropertyValues.insert("effects", described(effectChain,
+            "Complete Bus FX chain in processing order. Preserve slot guid and bypass when replacing or converting an effect. Use replace_field_group_effects for playable definitions."));
+        itemProperty.insert("propertyValues", itemPropertyValues);
         itemProperty.insert("allOf", QJsonArray{QJsonObject{{"anyOf", QJsonArray{
             QJsonObject{{"required", QJsonArray{"value"}}},
             QJsonObject{{"required", QJsonArray{"override_operation"}}, {"properties", QJsonObject{
@@ -305,7 +311,7 @@ const QMap<QString, Contract>& contracts()
                 required.append("sends");
             }
             if (command == "replace_field_group_effects") {
-                fields.insert("effects", array(effect()));
+                fields.insert("effects", effectChain);
                 required.append("effects");
             }
             auto schema = object(fields, required);

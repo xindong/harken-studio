@@ -1,4 +1,9 @@
 #include "Common/ExternalPcmFixture.h"
+#include "Common/EffectPoolTestAccess.h"
+#include "Common/DirectSoundActionWorld.h"
+#include "AllocationProbe.h"
+#include "harken/core/CpuClock.h"
+#include "harken_preview/PreviewProject.h"
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/StreamBuilder.h"
 #include "Engine.h"
@@ -10,12 +15,15 @@
 #include "harken/core/CurrentWorld.h"
 #include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/core/PlayablePropertyCut.h"
+#include "harken/render/EffectChain.h"
 #include "harken/param/MeterProbe.h"
 #include "harken/param/ParamTargets.h"
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <atomic>
+#include <thread>
 #include <array>
 #include <bit>
 #include <cmath>
@@ -43,7 +51,8 @@ struct InstalledVoiceStart {
     harken::EventTemplate event{};
     harken::ProgramView schedule{};
 
-    void Publish(harken::Engine& engine, VnVoiceHandle render, std::uint64_t frames) {
+    void Publish(harken::Engine& engine, VnVoiceHandle render, std::uint64_t frames,
+                 bool deferPublication = false) {
         harken::EngineTimelineVoiceInstallIdentity installed{};
         ASSERT_TRUE(engine.CaptureTimelineVoiceInstallIdentity(render, &installed));
         payload.kind = harken::TimelineEventKind::Start;
@@ -64,6 +73,7 @@ struct InstalledVoiceStart {
         post.transportEpoch = engine.timelinePool.Epoch();
         post.logicCommitSequence = 1;
         ASSERT_EQ(harken::PostStatus::Reserved, engine.timelinePlanner.PostPlay(schedule, post).status);
+        if (deferPublication) return;
         engine.AcceptSourceCommandPublications();
         engine.timelinePlanner.PublishThrough(installed.onsetFrame + frames);
         engine.nullBackend.Pump(static_cast<std::uint32_t>(installed.onsetFrame / kBlock));
@@ -221,56 +231,11 @@ std::uint32_t BindingInstanceCount(harken::Engine* engine,
     return count;
 }
 
-struct DirectWorldSoundPlayAction {
-    harken::VariableDefinitionV1 variable{};
-    harken::PlayablePropertyProgramViewV1 property{};
-    harken::ActionStepProgramViewV1 step{};
-    harken::ActionProgramViewV1 action{};
-    harken::ContainerWorldInstallViewV1 world{};
-
-    explicit DirectWorldSoundPlayAction(std::uint64_t contentRevision) {
-        variable = harkentest::MakeVariableDefinition(
-            kVariable, harken::VariableKindV1::Smooth, 0.0f, 1.0f, 0.0f);
-        property.contentPropertyKind =
-            harken::playableproperties::ContentPropertyKindV1::Sound;
-        property.stableId = harkentest::ObjectId(kSound);
-        property.contentRevision = contentRevision;
-        property.routeStableId = VN_BUS_MASTER;
-        property.compatibilityFingerprint = 1;
-        property.payload = ResolvedPayload();
-        property.programSemanticFingerprint =
-            harken::ComputePlayablePropertyFingerprintV1(property);
-
-        step.opcode = harken::ActionOpcodeV1::Play;
-        step.target.kind = harken::ActionTargetKindV1::Sound;
-        step.target.stableId = harkentest::ObjectId(kSound);
-        step.target.expectedProgramSemanticFingerprint =
-            property.programSemanticFingerprint;
-        SetAbsoluteTime(&step.delay);
-        SetAbsoluteTime(&step.fade);
-        SetAbsoluteTime(&step.cooldown);
-
-        action.actionStableId = harkentest::ObjectId(kAction);
-        action.steps = &step;
-        action.stepCount = 1;
-        action.expandedStepOccurrenceCount = 1;
-        action.expandedFiringCount = 1;
-        action.programSemanticFingerprint =
-            harken::ComputeActionProgramFingerprintV1(action);
-
-        world.variables = &variable;
-        world.variableCount = 1;
-        world.playableProperties = &property;
-        world.playablePropertyCount = 1;
-        world.actions = &action;
-        world.actionCount = 1;
-        world.identity.capabilityMask =
-            harken::kWorldCapabilityVariableDefinitions |
-            harken::kWorldCapabilityPlayableProperties |
-            harken::kWorldCapabilityActionDefinitions;
-        world.identity.runtimeSemanticFingerprint =
-            harken::ComputeCurrentWorldFingerprintV4(world);
-    }
+struct DirectWorldSoundPlayAction : harkentest::DirectSoundActionWorld {
+    explicit DirectWorldSoundPlayAction(std::uint64_t contentRevision)
+        : DirectSoundActionWorld(contentRevision, kSound, kAction,
+            harkentest::MakeVariableDefinition(kVariable, harken::VariableKindV1::Smooth,
+                0.0f, 1.0f, 0.0f), ResolvedPayload()) {}
 };
 
 harken::ResolvedPlayablePropertyCutViewV1 ResolveSoundCut(
@@ -872,6 +837,64 @@ TEST(TimelineVoiceInstall, BorrowedInputCopiesOnlyNativeFactsAndKeepsBindingSnap
         EXPECT_EQ(1u, BindingInstanceCount(&engine, render));
         EXPECT_FALSE(engine.runtimeRecreateRequired);
     }
+}
+
+TEST(TimelineVoiceInstall, DefaultEffectBackingGrowsAcrossVoicesAndBusAndRetires) {
+    EngineSession session(TimelineInstallConfig(8, kBlock, kRate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
+    ASSERT_EQ(0u, engine.effectBank.CapacityOf(VN_EFFECT_LIMITER));
+    VnLimiterDesc limiter{};
+    limiter.structSize = sizeof(limiter);
+    limiter.ceilingDb = -12.0f;
+    limiter.releaseMs = 100.0f;
+    std::array<harken::TimelineVoiceEffectInstall, 8> effects{};
+    for (std::uint32_t slot = 0; slot < effects.size(); ++slot) {
+        ASSERT_EQ(VN_OK, Vn_SetBusEffect(VN_BUS_MASTER, slot, VN_EFFECT_LIMITER,
+            reinterpret_cast<const VnEffectDesc*>(&limiter)));
+        effects[slot].type = VN_EFFECT_LIMITER;
+        effects[slot].slot = slot;
+        effects[slot].descriptorSize = sizeof(limiter);
+        std::memcpy(effects[slot].descriptor, &limiter, sizeof(limiter));
+    }
+    harken::TimelineVoiceInstallFacts facts{};
+    facts.soundId = kSound;
+    facts.outputBusId = VN_BUS_MASTER;
+    facts.capturedMedia = engine.registry.Lookup(kSound);
+    const harken::TimelineVoiceInstallInput input{&facts, {}, {}, {}, effects};
+    std::array<InstalledVoiceStart, 3> starts{};
+    for (auto& start : starts) {
+        const auto parent = engine.playableInstances.Acquire(harken::PlayableKind::Sound, 0);
+        ASSERT_NE(0u, parent);
+        ASSERT_EQ(VN_OK, harken::test::PreflightTimelineVoiceStart(engine, input));
+        const auto result = harken::test::InstallTimelineVoiceStart(engine, input, parent, parent, parent, true,
+            engine.timelinePool.PublishCutoffFrame());
+        ASSERT_EQ(VN_OK, result.status);
+        ASSERT_NE(0u, result.renderHandle);
+        ASSERT_NO_FATAL_FAILURE(start.Publish(engine, result.renderHandle, kRate, true));
+    }
+    ASSERT_EQ(32u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+    EXPECT_GE(engine.effectBank.CapacityOf(VN_EFFECT_LIMITER), 32u);
+    engine.AcceptSourceCommandPublications();
+    const auto onset = starts.front().schedule.entryAnchorFrame;
+    engine.timelinePlanner.PublishThrough(onset + kRate);
+    engine.nullBackend.Pump(static_cast<std::uint32_t>(onset / kBlock) + 1);
+    const auto count = engine.nullBackend.BlockFrames() * engine.nullBackend.Channels();
+    const auto* output = engine.nullBackend.LastBlock();
+    EXPECT_TRUE(std::any_of(output, output + count,
+        [](float sample) { return std::abs(sample) > 0.01f; }));
+    const auto ceiling = std::pow(10.0f, limiter.ceilingDb / 20.0f);
+    for (std::uint32_t i = 0; i < count; ++i) EXPECT_LE(std::abs(output[i]), ceiling + 1e-5f);
+    engine.nullBackend.Pump(kRate / kBlock + 16);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(8u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+    for (std::uint32_t slot = 0; slot < effects.size(); ++slot)
+        ASSERT_EQ(VN_OK, Vn_ClearBusEffect(VN_BUS_MASTER, slot));
+    engine.nullBackend.Pump(2);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+    EXPECT_FALSE(engine.runtimeRecreateRequired);
 }
 
 TEST(TimelineVoiceInstall, OutputCropUsesBoundPitchAndPreservesLoopOutroSamples) {
@@ -2670,4 +2693,731 @@ TEST(TimelineVoiceInstall, OriginalSourceUnpublishedRollbackPreservesActualRepla
     EXPECT_EQ(completion, engine.timelineArms.RowAt(retained.startArm.slot)->armedCompletionSequence.load());
     EXPECT_EQ(1u, BindingInstanceCount(&engine, replacement.fresh));
     EXPECT_FALSE(engine.voices.ReleaseObserved(retained.releaseObserver));
+}
+
+TEST(TimelineVoiceInstall, EffectMirrorPublishesAuthoredConfigOnlyAfterValidatedCommit) {
+    // Plain installation, ordered metadata in two children, malformed payload,
+    // a later commit refusal, and unsupported prepared compressor metadata.
+    for (const auto mode : {0u, 1u, 2u, 3u, 4u, 5u}) {
+        SCOPED_TRACE(mode);
+        EngineSession session(TimelineInstallConfig(8, kBlock, kRate));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
+        DirectWorldSoundPlayAction image(engine.registry.Lookup(kSound).contentRevision);
+        std::array<harken::EffectParamV1, 2> params{{
+            {harken::kLimiterParamCeilingDb, std::bit_cast<std::uint32_t>(-9.0f)},
+            {harken::kLimiterParamReleaseMs, std::bit_cast<std::uint32_t>(73.0f)}}};
+        harken::EffectNodeV1 effect{1, VN_EFFECT_LIMITER, 2, params.data(), harkentest::ObjectId(901)};
+        image.property.payload.presentMask |= UINT64_C(0x8000);
+        image.property.payload.effectNodeCount = 1;
+        image.property.payload.effectNodes = &effect;
+        image.property.programSemanticFingerprint = harken::ComputePlayablePropertyFingerprintV1(image.property);
+        image.step.target.expectedProgramSemanticFingerprint = image.property.programSemanticFingerprint;
+        std::array<harken::ActionStepProgramViewV1, 2> steps{};
+        if (mode == 1 || mode == 5) {
+            ASSERT_NO_FATAL_FAILURE(InstallTwoSourceAction(engine, image, steps));
+        } else {
+            image.action.programSemanticFingerprint = harken::ComputeActionProgramFingerprintV1(image.action);
+            image.world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(image.world);
+            ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, image.world).status);
+        }
+        ASSERT_TRUE(engine.PrepareLogicVoiceStorage(2));
+        for (std::uint32_t row = 0; row < 2; ++row) {
+            engine.effectSlotTypes[row].fill(VN_EFFECT_GAIN);
+            for (std::uint32_t slot = 0; slot < harken::kMaxFxSlotsPerVoice; ++slot) {
+                engine.voiceEffectInstanceRefs[row][slot] = {VN_EFFECT_GAIN, 99, 17};
+                engine.effectSlotConfig[row][slot].bypass = true;
+                engine.effectSlotConfig[row][slot].params.fill(23.0f);
+            }
+        }
+        struct Context {
+            std::uint32_t mode, count = 0;
+            std::array<VnVoiceHandle, 2> renders{};
+        } context{mode};
+        engine.timelineVoicePreparedContextForTest = &context;
+        engine.timelineVoicePreparedHookForTest = [](harken::Engine& current,
+            const harken::EnginePreparedTimelineVoiceStart& captured, void* opaque) {
+            auto& context = *static_cast<Context*>(opaque);
+            const auto ordinal = context.count++;
+            ASSERT_LT(ordinal, context.renders.size());
+            context.renders[ordinal] = captured.renderHandle;
+            EXPECT_FALSE(current.effectParamTargets.CanBind(
+                harken::EffectParamTargetStore::Scope::Voice, captured.renderHandle,
+                {VN_EFFECT_LIMITER, 0, harken::kLimiterParamCeilingDb}));
+            const auto row = static_cast<std::uint32_t>(captured.renderHandle);
+            for (std::uint32_t slot = 0; slot < harken::kMaxFxSlotsPerVoice; ++slot) {
+                EXPECT_EQ(VN_EFFECT_GAIN, current.effectSlotTypes[row][slot]);
+                EXPECT_EQ(17u, current.voiceEffectInstanceRefs[row][slot].generation);
+                EXPECT_TRUE(current.effectSlotConfig[row][slot].bypass);
+                EXPECT_FLOAT_EQ(23.0f, current.effectSlotConfig[row][slot].params[0]);
+            }
+            auto& prepared = const_cast<harken::EnginePreparedTimelineVoiceStart&>(captured);
+            auto found = std::find_if(prepared.commands.begin(), prepared.commands.begin() + prepared.commandCount,
+                [](const auto& command) { return command.opcode == harken::kOpcodeSetVoiceEffect; });
+            ASSERT_NE(prepared.commands.begin() + prepared.commandCount, found);
+            EXPECT_FLOAT_EQ(-9.0f, found->payload.setVoiceEffect.initialParams[0]);
+            EXPECT_FLOAT_EQ(73.0f, found->payload.setVoiceEffect.initialParams[1]);
+            if (context.mode == 1) {
+                ASSERT_GE(found - prepared.commands.begin(), 3);
+                const auto install = *found;
+                prepared.commands[1] = {};
+                prepared.commands[1].opcode = harken::kOpcodeSetVoiceEffectBypass;
+                prepared.commands[1].payload.setVoiceEffectBypass.handle = captured.renderHandle;
+                prepared.commands[1].payload.setVoiceEffectBypass.bypass = 1;
+                prepared.commands[2] = install;
+                *found = {};
+                found->opcode = harken::kOpcodeSetVoiceEffectParam;
+                auto& param = found->payload.setVoiceEffectParam;
+                param.handle = captured.renderHandle;
+                param.effectType = VN_EFFECT_LIMITER;
+                param.paramIndex = harken::kLimiterParamCeilingDb;
+                param.value = -18.0f - ordinal * 3.0f;
+                ASSERT_TRUE(harken::PrepareLimiterParam(param.paramIndex, param.value, kRate, &param.coeffs.b0));
+            } else if (context.mode == 2) {
+                found->payload.setVoiceEffect.initialParams[0] = std::numeric_limits<float>::quiet_NaN();
+            } else if (context.mode == 3) {
+                current.forceTimelineVoiceCommitRollbackForTest = true;
+            } else if (context.mode == 4) {
+                prepared.commands[1] = {};
+                prepared.commands[1].opcode = harken::kOpcodeSetVoiceEffectParam;
+                prepared.commands[1].flags = harken::kCommandFlagPreparedCompressor;
+                prepared.commands[1].payload.setCompressorEffectParam.host = captured.renderHandle;
+            }
+        };
+        const auto published = engine.commands.PublishedHead();
+        VnEmitterHandle emitter = 0;
+        ASSERT_EQ(VN_OK, Vn_CreateEmitter(&emitter));
+        VnPostActionDesc post{};
+        post.structSize = sizeof(post);
+        post.actionId = kAction;
+        post.emitter = emitter;
+        VnActionFiringHandle firing = 0;
+        if (mode == 5) engine.effectParamTargets.SetPrepareSeedFailureAfterForTests(1);
+        const auto posted = Vn_PostAction(&post, &firing);
+        engine.effectParamTargets.SetPrepareSeedFailureAfterForTests(-1);
+        engine.timelineVoicePreparedHookForTest = nullptr;
+        ASSERT_EQ(mode == 1 || mode == 5 ? 2u : 1u, context.count);
+        EXPECT_EQ(0u, engine.effectParamTargets.ReservedRecordCountForTests());
+        if (mode >= 2) {
+            if (mode != 3) EXPECT_NE(VN_OK, posted);
+            else {
+                ASSERT_EQ(VN_OK, posted);
+                ASSERT_NE(0u, firing);
+                EXPECT_FALSE(engine.forceTimelineVoiceCommitRollbackForTest);
+                EXPECT_TRUE(engine.runtimeRecreateRequired);
+                VnActionStepResult step{};
+                step.structSize = sizeof(step);
+                ASSERT_EQ(VN_OK, Vn_QueryActionStep(firing, 0, &step));
+                EXPECT_EQ(VN_ACTION_STEP_FAILED, step.state);
+                EXPECT_EQ(VN_RUNTIME_RECREATE_REQUIRED, step.result);
+            }
+            EXPECT_EQ(published, engine.commands.PublishedHead());
+            EXPECT_TRUE(PublishedSourceTokens(engine).empty());
+            EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+        } else ASSERT_EQ(VN_OK, posted);
+        for (std::uint32_t ordinal = 0; ordinal < context.count; ++ordinal) {
+            const auto row = static_cast<std::uint32_t>(context.renders[ordinal]);
+            for (std::uint32_t slot = 0; slot < harken::kMaxFxSlotsPerVoice; ++slot) {
+                const auto& config = engine.effectSlotConfig[row][slot];
+                if (mode >= 2) {
+                    EXPECT_FALSE(engine.effectParamTargets.CanBind(
+                        harken::EffectParamTargetStore::Scope::Voice, context.renders[ordinal],
+                        {VN_EFFECT_LIMITER, slot, harken::kLimiterParamCeilingDb}));
+                    EXPECT_EQ(VN_EFFECT_GAIN, engine.effectSlotTypes[row][slot]);
+                    EXPECT_EQ(17u, engine.voiceEffectInstanceRefs[row][slot].generation);
+                    EXPECT_TRUE(config.bypass);
+                    EXPECT_FLOAT_EQ(23.0f, config.params[0]);
+                } else if (slot == 0) {
+                    EXPECT_EQ(VN_EFFECT_LIMITER, engine.effectSlotTypes[row][slot]);
+                    const auto ref = engine.voiceEffectInstanceRefs[row][slot];
+                    EXPECT_NE(nullptr, engine.effectBank.LiveStateFor(ref));
+                    EXPECT_EQ(effect.effectId, engine.effectBank.ObjectIdentity(ref).effectId);
+                    EXPECT_EQ(mode == 1, config.bypass);
+                    EXPECT_FLOAT_EQ(mode == 1 ? -18.0f - ordinal * 3.0f : -9.0f, config.params[0]);
+                    EXPECT_FLOAT_EQ(73.0f, config.params[1]);
+                    EXPECT_TRUE(engine.effectParamTargets.CanBind(
+                        harken::EffectParamTargetStore::Scope::Voice, context.renders[ordinal],
+                        {VN_EFFECT_LIMITER, slot, harken::kLimiterParamCeilingDb}));
+                    EXPECT_FLOAT_EQ(config.params[0], engine.effectParamTargets.LastCommitted(
+                        harken::EffectParamTargetStore::Scope::Voice, context.renders[ordinal], slot, 0));
+                } else {
+                    EXPECT_EQ(harken::kEffectTypeNone, engine.effectSlotTypes[row][slot]);
+                    EXPECT_EQ(harken::kEffectTypeNone, engine.voiceEffectInstanceRefs[row][slot].type);
+                    EXPECT_FALSE(config.bypass);
+                    EXPECT_EQ((std::array<float, harken::kMaxEffectParamCount>{}), config.params);
+                }
+            }
+        }
+    }
+}
+
+TEST(TimelineVoiceInstall, EmptyInitialSourceClearsAllEightMirrorsAfterDirectVoiceReuse) {
+    EngineSession session(TimelineInstallConfig(1, kBlock, kRate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
+    const auto play = harkentest::MakePlayDesc(kSound);
+    VnVoiceHandle direct = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &direct));
+    const auto oldRender = engine.ledger.Classify(direct).renderHandle;
+    const auto row = static_cast<std::uint32_t>(oldRender);
+    VnLimiterDesc limiter{};
+    limiter.structSize = sizeof(limiter);
+    limiter.ceilingDb = -11.0f;
+    limiter.releaseMs = 89.0f;
+    for (std::uint32_t slot = 0; slot < harken::kMaxFxSlotsPerVoice; ++slot) {
+        ASSERT_EQ(VN_OK, Vn_SetVoiceEffect(direct, slot, VN_EFFECT_LIMITER,
+            reinterpret_cast<const VnEffectDesc*>(&limiter)));
+        ASSERT_EQ(VN_OK, Vn_SetVoiceEffectBypass(direct, slot, 1));
+        EXPECT_FLOAT_EQ(-11.0f, engine.effectSlotConfig[row][slot].params[0]);
+        EXPECT_TRUE(engine.effectSlotConfig[row][slot].bypass);
+    }
+    engine.nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_Stop(direct, 0));
+    engine.nullBackend.Pump(2);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    for (std::uint32_t slot = 0; slot < harken::kMaxFxSlotsPerVoice; ++slot) {
+        ASSERT_EQ(VN_EFFECT_LIMITER, engine.effectSlotTypes[row][slot]);
+        ASSERT_FLOAT_EQ(-11.0f, engine.effectSlotConfig[row][slot].params[0]);
+        ASSERT_TRUE(engine.effectSlotConfig[row][slot].bypass);
+    }
+    DirectWorldSoundPlayAction image(engine.registry.Lookup(kSound).contentRevision);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, image.world).status);
+    ASSERT_EQ(VN_OK, PostSourceAction());
+    const auto tokens = PublishedSourceTokens(engine);
+    ASSERT_EQ(1u, tokens.size());
+    const auto fresh = SourceRegistry::RenderOf(tokens.front());
+    EXPECT_EQ(row, static_cast<std::uint32_t>(fresh));
+    EXPECT_NE(oldRender, fresh);
+    for (std::uint32_t slot = 0; slot < harken::kMaxFxSlotsPerVoice; ++slot) {
+        EXPECT_EQ(harken::kEffectTypeNone, engine.effectSlotTypes[row][slot]);
+        EXPECT_EQ(harken::kEffectTypeNone, engine.voiceEffectInstanceRefs[row][slot].type);
+        EXPECT_FALSE(engine.effectSlotConfig[row][slot].bypass);
+        EXPECT_EQ((std::array<float, harken::kMaxEffectParamCount>{}), engine.effectSlotConfig[row][slot].params);
+    }
+    EXPECT_GT(FreshSourcePeak(engine), 0.2f);
+    EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+}
+
+TEST(TimelineVoiceInstall, LiveEffectChainIsAtomicPreservesStateAndRetiresAcrossWorkers) {
+    for (auto workers : {0u, 2u}) {
+        SCOPED_TRACE(workers);
+        auto configuration = TimelineInstallConfig(8, kBlock, kRate);
+        configuration.renderWorkerCount = workers;
+        EngineSession session(configuration);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
+        DirectWorldSoundPlayAction image(engine.registry.Lookup(kSound).contentRevision);
+        ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, image.world).status);
+        ASSERT_EQ(VN_OK, PostSourceAction());
+        const auto tokens = PublishedSourceTokens(engine);
+        ASSERT_EQ(1u, tokens.size());
+        const auto render = SourceRegistry::RenderOf(tokens[0]);
+        ASSERT_GT(FreshSourcePeak(engine), 0.2f);
+        struct Observed { VnVoiceHandle handle; bool found = false; } observed{render};
+        ASSERT_TRUE(harken::ObserveCurrentPlaybackPaths(
+            [](const harken::PlaybackPathObservation& path, void* opaque) {
+                auto& result = *static_cast<Observed*>(opaque);
+                result.found = result.found || path.voiceInstance == result.handle;
+            }, &observed));
+        ASSERT_TRUE(observed.found);
+        const auto row = static_cast<std::uint32_t>(render);
+        auto* context = engine.voices.Resolve(render);
+        ASSERT_NE(nullptr, context);
+        VnPreviewVoiceEffectChainV1 chain{};
+        chain.structSize = sizeof(chain);
+        chain.entryCount = 2;
+        chain.entries[0] = {harkentest::ObjectId(901), VN_EFFECT_LIMITER, 0, -12.0f, 73.0f};
+        chain.entries[1] = {harkentest::ObjectId(902), VN_EFFECT_LIMITER, 0, -18.0f, 91.0f};
+        ASSERT_EQ(VN_OK, VnPreview_SetVoiceEffectChain(render, &chain));
+        const auto original = engine.voiceEffectInstanceRefs[row];
+        EXPECT_EQ(2u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+        EXPECT_EQ(harken::kEffectTypeNone, context->fxSlotEffectRef[0].type);
+        EXPECT_EQ(VN_OK, VnPreview_SetVoiceEffectChain(render, &chain));
+        chain.entries[0].ceilingDb = -6;
+        EXPECT_EQ(VN_BACKPRESSURE, VnPreview_SetVoiceEffectChain(render, &chain));
+        EXPECT_FLOAT_EQ(-12, engine.effectSlotConfig[row][0].params[0]);
+        chain.entries[0].ceilingDb = -12;
+        engine.nullBackend.Pump(1);
+        ASSERT_NE(nullptr, context->fxChainTransition);
+        EXPECT_EQ(64u, context->fxChainTransition->done);
+        EXPECT_EQ(240u, context->fxChainTransition->totalFrames);
+        EXPECT_EQ(harken::LimiterGainReductionStatus::ChainTransition,
+            static_cast<harken::LimiterState*>(context->fxSlots[0].state)->gainReduction.status);
+        engine.nullBackend.Pump(3);
+        EXPECT_EQ(nullptr, context->fxChainTransition);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        auto* state = static_cast<harken::LimiterState*>(context->fxSlots[0].state);
+        const auto gain = state->currentGain;
+        chain.entries[0].ceilingDb = -6;
+        ASSERT_EQ(VN_OK, VnPreview_SetVoiceEffectChain(render, &chain));
+        EXPECT_EQ(original[0].poolIndex, engine.voiceEffectInstanceRefs[row][0].poolIndex);
+        EXPECT_EQ(original[0].generation, engine.voiceEffectInstanceRefs[row][0].generation);
+        EXPECT_DOUBLE_EQ(gain, state->currentGain);
+        engine.nullBackend.Pump(1);
+        EXPECT_EQ(state, context->fxSlots[0].state);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        std::swap(chain.entries[0], chain.entries[1]);
+        ASSERT_EQ(VN_OK, VnPreview_SetVoiceEffectChain(render, &chain));
+        const auto moved = engine.voiceEffectInstanceRefs[row];
+        EXPECT_NE(original[0].poolIndex, moved[1].poolIndex);
+        EXPECT_NE(original[1].poolIndex, moved[0].poolIndex);
+        EXPECT_NE(moved[0].poolIndex, moved[1].poolIndex);
+        EXPECT_EQ(4u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+        engine.nullBackend.Pump(4);
+        EXPECT_EQ(4u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+        ASSERT_EQ(VN_OK, Vn_Update());
+        EXPECT_EQ(2u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+        chain.entryCount = 0;
+        ASSERT_EQ(VN_OK, VnPreview_SetVoiceEffectChain(render, &chain));
+        engine.nullBackend.Pump(1);
+        ASSERT_NE(nullptr, context->fxChainTransition);
+        EXPECT_EQ(64u, context->fxChainTransition->done);
+        engine.nullBackend.Pump(3);
+        EXPECT_EQ(nullptr, context->fxChainTransition);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+        EXPECT_GT(FreshSourcePeak(engine), 0.2f);
+    }
+}
+
+TEST(TimelineVoiceInstall, LiveEffectChainPreservesBoundSlotWhileReplacingAnotherSlot) {
+    EngineSession session(TimelineInstallConfig(8, kBlock, kRate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
+    DirectWorldSoundPlayAction image(engine.registry.Lookup(kSound).contentRevision);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, image.world).status);
+    ASSERT_EQ(VN_OK, PostSourceAction());
+    const auto tokens = PublishedSourceTokens(engine);
+    ASSERT_EQ(1u, tokens.size());
+    const auto render = SourceRegistry::RenderOf(tokens[0]);
+    ASSERT_GT(FreshSourcePeak(engine), 0.2f);
+    VnPreviewVoiceEffectChainV1 chain{};
+    chain.structSize = sizeof(chain);
+    chain.entryCount = 2;
+    chain.entries[0] = {harkentest::ObjectId(901), VN_EFFECT_LIMITER, 0, -12, 73};
+    chain.entries[1] = {harkentest::ObjectId(902), VN_EFFECT_LIMITER, 0, 0, 73};
+    ASSERT_EQ(VN_OK, VnPreview_SetVoiceEffectChain(render, &chain));
+    engine.nullBackend.Pump(4);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    auto desc = MakeVoiceVolumeBinding(-6, -6);
+    desc.targetScopeKind = VN_TARGET_SCOPE_VOICE_EFFECT_PARAM;
+    desc.targetId = harken::PackEffectParamLocator(VN_EFFECT_LIMITER, 0, 0);
+    ASSERT_EQ(VN_OK, Vn_RegisterBinding(kBinding, &desc));
+    ASSERT_EQ(VN_OK, engine.bindings.ApplyVoiceEffectInstance(kBinding, render, &engine.logicLogRing));
+    VnVariableWriteV1 write{kVariable, 0.5f, 0};
+    VnVariableBatchDescV1 batch{sizeof(batch), 1, 0, 0, &write};
+    VnVariableTicketV1 ticket{};
+    ASSERT_EQ(VN_OK, Vn_SetValues(&batch, &ticket));
+    ASSERT_NO_FATAL_FAILURE(harkentest::AdvanceVariableWrite(&engine));
+    engine.nullBackend.Pump(16);
+    auto* state = static_cast<harken::LimiterState*>(engine.voices.Resolve(render)->fxSlots[0].state);
+    ASSERT_NE(nullptr, state);
+    EXPECT_NEAR(std::pow(10.0f, -18.0f / 20.0f), state->ceilingLinear, 1e-6f);
+    chain.entries[0].ceilingDb = -6;
+    chain.entries[1].effectId = harkentest::ObjectId(903);
+    ASSERT_EQ(VN_OK, VnPreview_SetVoiceEffectChain(render, &chain));
+    engine.nullBackend.Pump(4);
+    EXPECT_NEAR(std::pow(10.0f, -18.0f / 20.0f), state->ceilingLinear, 1e-6f);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    engine.nullBackend.Pump(16);
+    EXPECT_NEAR(std::pow(10.0f, -12.0f / 20.0f), state->ceilingLinear, 1e-6f);
+    EXPECT_FLOAT_EQ(-6, engine.effectParamTargets.AuthoredBase(
+        harken::EffectParamTargetStore::Scope::Voice, render, 0, 0));
+}
+
+TEST(TimelineVoiceInstall, LiveEffectChainRejectsInvalidAndRollsBackCapacityWithoutPublishing) {
+    auto configuration = TimelineInstallConfig(8, kBlock, kRate);
+    configuration.limiterEffectPoolCapacity = 1;
+    EngineSession session(configuration);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
+    DirectWorldSoundPlayAction image(engine.registry.Lookup(kSound).contentRevision);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, image.world).status);
+    ASSERT_EQ(VN_OK, PostSourceAction());
+    const auto tokens = PublishedSourceTokens(engine);
+    ASSERT_EQ(1u, tokens.size());
+    const auto render = SourceRegistry::RenderOf(tokens[0]);
+        ASSERT_GT(FreshSourcePeak(engine), 0.2f);
+        struct Observed { VnVoiceHandle handle; bool found = false; } observed{render};
+        ASSERT_TRUE(harken::ObserveCurrentPlaybackPaths(
+            [](const harken::PlaybackPathObservation& path, void* opaque) {
+                auto& result = *static_cast<Observed*>(opaque);
+                result.found = result.found || path.voiceInstance == result.handle;
+            }, &observed));
+        ASSERT_TRUE(observed.found);
+    VnPreviewVoiceEffectChainV1 chain{};
+    chain.structSize = sizeof(chain);
+    chain.entryCount = 2;
+    chain.entries[0] = {harkentest::ObjectId(901), VN_EFFECT_LIMITER, 0, -12.0f, 73.0f};
+    chain.entries[1] = {harkentest::ObjectId(902), VN_EFFECT_LIMITER, 0, -18.0f, 91.0f};
+    const auto published = engine.commands.PublishedHead();
+    EXPECT_EQ(VN_NO_EFFECT, VnPreview_SetVoiceEffectChain(render, &chain));
+    EXPECT_EQ(published, engine.commands.PublishedHead());
+    EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+    chain.entries[1].effectId = chain.entries[0].effectId;
+    EXPECT_EQ(VN_INVALID_ARG, VnPreview_SetVoiceEffectChain(render, &chain));
+    chain.entryCount = 1;
+    chain.entries[0].ceilingDb = std::numeric_limits<float>::quiet_NaN();
+    EXPECT_EQ(VN_INVALID_ARG, VnPreview_SetVoiceEffectChain(render, &chain));
+    chain.entries[0].ceilingDb = -12;
+    chain.entries[0].effectType = VN_EFFECT_GAIN;
+    EXPECT_EQ(VN_INVALID_ARG, VnPreview_SetVoiceEffectChain(render, &chain));
+    chain.entries[0].effectType = VN_EFFECT_LIMITER;
+    ASSERT_EQ(VN_OK, VnPreview_SetVoiceEffectChain(render, &chain));
+    ASSERT_EQ(VN_OK, Vn_StopAll(0));
+    engine.nullBackend.Pump(2);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+    EXPECT_EQ(VN_STALE_HANDLE, VnPreview_SetVoiceEffectChain(render, &chain));
+}
+
+TEST(TimelineVoiceInstall, LiveEffectChainRetirementBackpressureRetainsOwnerAfterStop) {
+    for (const bool stop : {false, true}) {
+        SCOPED_TRACE(stop);
+        EngineSession session(TimelineInstallConfig(8, kBlock, kRate));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
+        DirectWorldSoundPlayAction image(engine.registry.Lookup(kSound).contentRevision);
+        ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, image.world).status);
+        ASSERT_EQ(VN_OK, PostSourceAction());
+        const auto tokens = PublishedSourceTokens(engine);
+        ASSERT_EQ(1u, tokens.size());
+        const auto render = SourceRegistry::RenderOf(tokens[0]);
+        ASSERT_GT(FreshSourcePeak(engine), 0.2f);
+        struct Observed { VnVoiceHandle handle; bool found = false; } observed{render};
+        ASSERT_TRUE(harken::ObserveCurrentPlaybackPaths(
+            [](const harken::PlaybackPathObservation& path, void* opaque) {
+                auto& result = *static_cast<Observed*>(opaque);
+                result.found = result.found || path.voiceInstance == result.handle;
+            }, &observed));
+        ASSERT_TRUE(observed.found);
+        const auto slot = static_cast<std::uint32_t>(render);
+        VnPreviewVoiceEffectChainV1 chain{};
+        chain.structSize = sizeof(chain);
+        chain.entryCount = 1;
+        chain.entries[0] = {harkentest::ObjectId(901), VN_EFFECT_LIMITER, 0, -12.0f, 73.0f};
+        ASSERT_EQ(VN_OK, VnPreview_SetVoiceEffectChain(render, &chain));
+        engine.nullBackend.Pump(4);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        const auto old = engine.voiceEffectInstanceRefs[slot][0];
+        chain.entries[0].effectId = harkentest::ObjectId(902);
+        ASSERT_EQ(VN_OK, VnPreview_SetVoiceEffectChain(render, &chain));
+        auto* update = harken::detail::VoicePoolReleaseTestAccess::EffectUpdate(engine.voices, slot);
+        ASSERT_NE(nullptr, update);
+        auto& lane = harken::detail::EffectPoolTestAccess::RetireLane(engine.effectBank, old);
+        std::uint32_t occupied = 0;
+        while (lane.TryPush({})) ++occupied;
+        ASSERT_GT(occupied, 0u);
+        engine.nullBackend.Pump(1);
+        if (stop) ASSERT_EQ(VN_OK, Vn_StopAll(0));
+        engine.nullBackend.Pump(3);
+        EXPECT_EQ(harken::EffectChainUpdate::Phase::Retiring, update->phase.load());
+        EXPECT_FALSE(update->scratch.empty());
+        EXPECT_EQ(2u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+        if (!stop) {
+            chain.entries[0].effectId = harkentest::ObjectId(903);
+            EXPECT_EQ(VN_BACKPRESSURE, VnPreview_SetVoiceEffectChain(render, &chain));
+        }
+        // Setter admission may drain the lane but must not release the row.
+        ASSERT_EQ(VN_OK, Vn_Update());
+        EXPECT_NE(harken::EffectChainUpdate::Phase::Free, update->phase.load());
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        EXPECT_EQ(harken::EffectChainUpdate::Phase::Free, update->phase.load());
+        EXPECT_TRUE(update->scratch.empty());
+        EXPECT_EQ(stop ? 0u : 1u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+    }
+}
+
+
+TEST(TimelineVoiceInstall, LiveEffectChainReenableClearsBypassedLimiterHistory) {
+    for (const bool replaceOtherSlot : {false, true}) {
+        SCOPED_TRACE(replaceOtherSlot);
+        EngineSession session(TimelineInstallConfig(1, kBlock, kRate));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        auto samples = MakeDC(kRate, 0.01f);
+        std::fill_n(samples.begin(), 2048, 0.5f);
+        const auto desc = MonoDesc(samples, kRate);
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(kSound, &desc));
+        DirectWorldSoundPlayAction image(engine.registry.Lookup(kSound).contentRevision);
+        ASSERT_EQ(harken::WorldInstallStatus::Ok,
+            harken::InstallContainerWorldV1(engine, image.world).status);
+        ASSERT_EQ(VN_OK, PostSourceAction());
+        const auto tokens = PublishedSourceTokens(engine);
+        ASSERT_EQ(1u, tokens.size());
+        const auto render = SourceRegistry::RenderOf(tokens[0]);
+        ASSERT_GT(FreshSourcePeak(engine), 0.2f);
+        VnPreviewVoiceEffectChainV1 chain{};
+        chain.structSize = sizeof(chain);
+        chain.entryCount = 1;
+        chain.entries[0] = {harkentest::ObjectId(901), VN_EFFECT_LIMITER, 1, -18.0f, 1000.0f};
+        ASSERT_EQ(VN_OK, VnPreview_SetVoiceEffectChain(render, &chain));
+        // Process the loud section while bypassed, then reach below-threshold
+        // input before the long release can clear the detector history.
+        engine.nullBackend.Pump(40);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        ASSERT_NEAR(0.01f, FreshSourcePeak(engine), 1e-5f);
+        chain.entries[0].bypass = 0;
+        if (replaceOtherSlot) {
+            chain.entryCount = 2;
+            chain.entries[1] = {harkentest::ObjectId(902), VN_EFFECT_LIMITER, 0, 0.0f, 100.0f};
+        }
+        ASSERT_EQ(VN_OK, VnPreview_SetVoiceEffectChain(render, &chain));
+        engine.nullBackend.Pump(8);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        EXPECT_NEAR(0.01f, FreshSourcePeak(engine), 1e-5f);
+    }
+}
+
+TEST(TimelineVoiceInstall, LiveEffectChainEightSlotsUseOneCommandAndPreserveBypassAcrossSuspend) {
+    EngineSession session(TimelineInstallConfig(1, kBlock, kRate));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
+    DirectWorldSoundPlayAction image(engine.registry.Lookup(kSound).contentRevision);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, image.world).status);
+    ASSERT_EQ(VN_OK, PostSourceAction());
+    const auto tokens = PublishedSourceTokens(engine);
+    ASSERT_EQ(1u, tokens.size());
+    const auto render = SourceRegistry::RenderOf(tokens[0]);
+    ASSERT_GT(FreshSourcePeak(engine), 0.2f);
+    auto* voice = engine.voices.Resolve(render);
+    ASSERT_NE(nullptr, voice);
+    VnPreviewVoiceEffectChainV1 chain{};
+    chain.structSize = sizeof(chain);
+    chain.entryCount = 8;
+    for (std::uint32_t i = 0; i < 8; ++i)
+        chain.entries[i] = {harkentest::ObjectId(901 + i), VN_EFFECT_LIMITER, 0, -6.0f, 73.0f};
+    engine.mixer.SetMaxCommandsPerQuantumForTest(1);
+    const auto published = engine.commands.PublishedHead();
+    ASSERT_EQ(VN_OK, VnPreview_SetVoiceEffectChain(render, &chain));
+    EXPECT_EQ(published + 1, engine.commands.PublishedHead());
+    const auto allocations = allocation_probe::count;
+    allocation_probe::enabled = true;
+    engine.nullBackend.Pump(1);
+    allocation_probe::enabled = false;
+    EXPECT_EQ(allocations, allocation_probe::count);
+    ASSERT_NE(nullptr, voice->fxChainTransition);
+    EXPECT_EQ(64u, voice->fxChainTransition->done);
+    for (const auto& ref : voice->fxSlotEffectRef) EXPECT_EQ(VN_EFFECT_LIMITER, ref.type);
+    engine.mixer.SetMaxCommandsPerQuantumForTest(256);
+    ASSERT_EQ(VN_OK, Vn_Suspend());
+    engine.nullBackend.Pump(4);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(64u, voice->fxChainTransition->done);
+    ASSERT_EQ(VN_OK, Vn_Resume());
+    engine.nullBackend.Pump(3);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    const auto ref = voice->fxSlotEffectRef[0];
+    const auto* state = voice->fxSlots[0].state;
+    chain.entries[0].bypass = 1;
+    ASSERT_EQ(VN_OK, VnPreview_SetVoiceEffectChain(render, &chain));
+    engine.nullBackend.Pump(1);
+    EXPECT_EQ(state, voice->fxSlots[0].state);
+    EXPECT_EQ(ref.generation, voice->fxSlotEffectRef[0].generation);
+    EXPECT_EQ(ref.poolIndex, voice->fxSlotEffectRef[0].poolIndex);
+    EXPECT_FLOAT_EQ(1.0f, voice->fxBypassMix[0]);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    ASSERT_EQ(VN_OK, Vn_StopAll(0));
+    engine.nullBackend.Pump(2);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+    ASSERT_EQ(VN_OK, PostSourceAction());
+    const auto reusedTokens = PublishedSourceTokens(engine);
+    ASSERT_EQ(1u, reusedTokens.size());
+    const auto reused = SourceRegistry::RenderOf(reusedTokens[0]);
+    EXPECT_EQ(static_cast<std::uint32_t>(render), static_cast<std::uint32_t>(reused));
+    EXPECT_NE(render, reused);
+    ASSERT_GT(FreshSourcePeak(engine), 0.2f);
+    EXPECT_EQ(VN_STALE_HANDLE, VnPreview_SetVoiceEffectChain(render, &chain));
+    ASSERT_EQ(VN_OK, VnPreview_SetVoiceEffectChain(reused, &chain));
+    engine.nullBackend.Pump(4);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(8u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+}
+
+#if defined(HARKEN_TEST_TIMELINE_CAPACITY_OVERRIDE)
+TEST(TimelineVoiceInstall, LiveEffectChainActiveWorkerQuarantineRetainsScratchUntilActualJoin) {
+    struct Gate {
+        harken::InsertEffect original{};
+        std::atomic<bool> entered{false};
+        std::atomic<bool> release{false};
+        static void Process(void* opaque, float* const* planes, std::uint32_t channels,
+                            std::uint32_t offset, std::uint32_t frames) {
+            auto& gate = *static_cast<Gate*>(opaque);
+            gate.original.process(gate.original.state, planes, channels, offset, frames);
+            gate.entered.store(true, std::memory_order_release);
+            while (!gate.release.load(std::memory_order_acquire)) std::this_thread::yield();
+        }
+        static void Coordinator(void* opaque, std::uint64_t) noexcept {
+            auto& gate = *static_cast<Gate*>(opaque);
+            const auto until = harken::CpuClockTicks() + 2 * harken::CpuClockTicksPerSecond();
+            while (!gate.entered.load(std::memory_order_acquire) && harken::CpuClockTicks() < until)
+                std::this_thread::yield();
+        }
+        static void Claimed(void*, std::uint64_t, std::uint32_t) noexcept {}
+    } gate;
+    auto config = TimelineInstallConfig(1, kBlock, kRate);
+    config.renderWorkerCount = 1;
+    EngineSession session(config);
+    struct ReleaseBeforeTerm {
+        Gate& gate;
+        ~ReleaseBeforeTerm() { gate.release.store(true, std::memory_order_release); }
+    } releaseBeforeTerm{gate};
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
+    DirectWorldSoundPlayAction image(engine.registry.Lookup(kSound).contentRevision);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, image.world).status);
+    ASSERT_EQ(VN_OK, PostSourceAction());
+    const auto tokens = PublishedSourceTokens(engine);
+    ASSERT_EQ(1u, tokens.size());
+    const auto render = SourceRegistry::RenderOf(tokens[0]);
+    const auto slot = static_cast<std::uint32_t>(render);
+    ASSERT_GT(FreshSourcePeak(engine), 0.2f);
+    VnPreviewVoiceEffectChainV1 chain{};
+    chain.structSize = sizeof(chain);
+    chain.entryCount = 1;
+    chain.entries[0] = {harkentest::ObjectId(901), VN_EFFECT_LIMITER, 0, -6.0f, 73.0f};
+    ASSERT_EQ(VN_OK, VnPreview_SetVoiceEffectChain(render, &chain));
+    engine.nullBackend.Pump(4);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    auto* voice = engine.voices.Resolve(render);
+    ASSERT_NE(nullptr, voice);
+    gate.original = voice->fxSlots[0];
+    voice->fxSlots[0] = {};
+    voice->fxSlots[0].process = &Gate::Process;
+    voice->fxSlots[0].state = &gate;
+    chain.entries[0].effectId = harkentest::ObjectId(902);
+    ASSERT_EQ(VN_OK, VnPreview_SetVoiceEffectChain(render, &chain));
+    using Access = harken::detail::VoicePoolReleaseTestAccess;
+    Access::SetOriginalSourceWorkerGates(engine.voices, &Gate::Coordinator, &Gate::Claimed, &gate);
+    Access::SetWorkerDeadline(engine.voices, harken::CpuClockTicksPerSecond() / 20);
+    const auto epoch = engine.mixer.BlocksRendered();
+    engine.nullBackend.Pump(1);
+    ASSERT_TRUE(gate.entered.load(std::memory_order_acquire));
+    EXPECT_EQ(epoch, engine.mixer.BlocksRendered());
+    auto* update = Access::EffectUpdate(engine.voices, slot);
+    ASSERT_NE(nullptr, update);
+    EXPECT_EQ(harken::EffectChainUpdate::Phase::Active, update->phase.load());
+    EXPECT_FALSE(update->scratch.empty());
+    ASSERT_EQ(VN_OK, Vn_Update());
+    Access::QuarantineOriginalSlot(engine.voices, engine.notifications, slot, epoch);
+    EXPECT_TRUE(Access::IsActuallyQuarantined(engine.voices, slot));
+    EXPECT_EQ(harken::EffectChainUpdate::Phase::Active, update->phase.load());
+    EXPECT_FALSE(update->scratch.empty());
+    EXPECT_EQ(2u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+    EXPECT_EQ(VN_STALE_HANDLE, VnPreview_SetVoiceEffectChain(render, &chain));
+    gate.release.store(true, std::memory_order_release);
+    Access::JoinWorkers(engine.voices);
+    engine.voices.ShutdownOriginalSourceBodiesAfterQuiescence();
+    EXPECT_TRUE(update->scratch.empty());
+    EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+}
+#endif
+
+TEST(TimelineVoiceInstall, LiveEightLimiterInsertionDoesNotMultiplyTransientDetectorHistory) {
+    for (auto block : {32u, 64u, 256u}) {
+        SCOPED_TRACE(block);
+        EngineSession session(TimelineInstallConfig(1, block, kRate));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        ASSERT_NO_FATAL_FAILURE(RegisterLeaf());
+        DirectWorldSoundPlayAction image(engine.registry.Lookup(kSound).contentRevision);
+        ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(engine, image.world).status);
+        ASSERT_EQ(VN_OK, PostSourceAction());
+        const auto tokens = PublishedSourceTokens(engine);
+        ASSERT_EQ(1u, tokens.size());
+        const auto render = SourceRegistry::RenderOf(tokens[0]);
+        ASSERT_GT(FreshSourcePeak(engine), 0.2f);
+        VnPreviewVoiceEffectChainV1 chain{};
+        chain.structSize = sizeof(chain); chain.entryCount = 8;
+        for (unsigned slot = 0; slot < 8; ++slot)
+            chain.entries[slot] = {harkentest::ObjectId(1900 + slot), VN_EFFECT_LIMITER, 0, -18.0f, 100.0f};
+        ASSERT_EQ(VN_OK, VnPreview_SetVoiceEffectChain(render, &chain));
+        engine.nullBackend.Pump((240 + block - 1) / block);
+        const float expected = 0.12589254f;
+        for (unsigned hold = 0; hold < 24000 / block; ++hold) {
+            engine.nullBackend.Pump(1);
+            ASSERT_EQ(VN_OK, Vn_Update());
+            const auto* output = engine.nullBackend.LastBlock();
+            ASSERT_NEAR(expected, output[0], 2e-5f) << "hold block=" << hold;
+        }
+        // Exercise actual command adoption with a retained active detector
+        // between two replacements. Its existing attenuation must survive;
+        // only additional history caused by the structural blend is forbidden.
+        chain.entries[0].bypass = chain.entries[2].bypass = 1;
+        ASSERT_EQ(VN_OK, VnPreview_SetVoiceEffectChain(render, &chain));
+        engine.nullBackend.Pump(2);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        auto* context = engine.voices.Resolve(render);
+        ASSERT_NE(nullptr, context);
+        const auto middle = context->fxSlotEffectRef[1];
+        const auto middleIdentity = engine.effectBank.ObjectIdentity(middle).effectId;
+        const auto* middleState = static_cast<harken::LimiterState*>(context->fxSlots[1].state);
+        ASSERT_LT(middleState->currentGain, 0.9);
+        ASSERT_GT(middleState->currentGain, 0.0);
+        std::array<harken::LimiterState, 8> oldStates{}, targetStates{};
+        std::array<harken::InsertEffect, 8> oldEffects{}, targetEffects{};
+        std::array<float, 8> oldBypass{};
+        for (unsigned slot = 0; slot < 8; ++slot) {
+            oldStates[slot] = *static_cast<harken::LimiterState*>(context->fxSlots[slot].state);
+            targetStates[slot] = oldStates[slot];
+            if (slot == 0 || slot == 2) {
+                targetStates[slot] = {};
+                targetStates[slot].sampleRate = kRate;
+            }
+            oldEffects[slot] = harken::BuildEffect(VN_EFFECT_LIMITER, &oldStates[slot]);
+            targetEffects[slot] = harken::BuildEffect(VN_EFFECT_LIMITER, &targetStates[slot]);
+            oldBypass[slot] = context->fxBypassMix[slot];
+            if (slot == 0 || slot == 2) {
+                targetEffects[slot].setParam(targetEffects[slot].state, 0, -18);
+                targetEffects[slot].setParam(targetEffects[slot].state, 1, 100);
+                chain.entries[slot].effectId = harkentest::ObjectId(2000 + slot);
+                chain.entries[slot].bypass = 0;
+            }
+        }
+        ASSERT_EQ(VN_OK, VnPreview_SetVoiceEffectChain(render, &chain));
+        std::array<float, 256> prior{}, target{}, scratch{};
+        float* priorPlanes[]{prior.data()}; float* targetPlanes[]{target.data()};
+        float* scratchPlanes[]{scratch.data()};
+        for (unsigned begin = 0; begin < 768; begin += block) {
+            prior.fill(0.5f); target.fill(0.5f);
+            const auto oldFrames = std::min(block, begin < 240 ? 240u - begin : 0u);
+            for (unsigned slot = 0; slot < 8; ++slot) {
+                bool ramping = false; float mix = oldBypass[slot];
+                harken::ProcessChainSlot(oldEffects[slot], ramping, mix, mix,
+                    priorPlanes, scratchPlanes, 1, 0, oldFrames);
+                mix = 0;
+                harken::ProcessChainSlot(targetEffects[slot], ramping, mix, 0,
+                    targetPlanes, scratchPlanes, 1, 0, block);
+            }
+            engine.nullBackend.Pump(1);
+            for (unsigned i = 0; i < block; ++i) {
+                const float alpha = std::min(1.0f, (begin + i + 1) / 240.0f);
+                const float reference = alpha == 1 ? target[i] : prior[i] * (1 - alpha) + target[i] * alpha;
+                ASSERT_NEAR(reference, engine.nullBackend.LastBlock()[i * 2], 2e-6f) << begin + i;
+            }
+            ASSERT_EQ(middle.poolIndex, context->fxSlotEffectRef[1].poolIndex);
+            ASSERT_EQ(middle.generation, context->fxSlotEffectRef[1].generation);
+            ASSERT_EQ(middleIdentity, engine.effectBank.ObjectIdentity(context->fxSlotEffectRef[1]).effectId);
+            ASSERT_EQ(middleState, context->fxSlots[1].state);
+            ASSERT_EQ(VN_OK, Vn_Update());
+        }
+        EXPECT_EQ(8u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+        chain.entries[0].effectId = harkentest::ObjectId(2100);
+        ASSERT_EQ(VN_OK, VnPreview_SetVoiceEffectChain(render, &chain));
+        engine.nullBackend.Pump((240 + block - 1) / block);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        EXPECT_EQ(8u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
+        EXPECT_EQ(middle.poolIndex, context->fxSlotEffectRef[1].poolIndex);
+        EXPECT_EQ(middle.generation, context->fxSlotEffectRef[1].generation);
+    }
 }

@@ -1,5 +1,6 @@
 #pragma once
 #include "Utils/ObjectId.h"
+#include "harken_studio_build/BuildLimits.h"
 
 #include <QJsonArray>
 #include <QJsonObject>
@@ -8,6 +9,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <utility>
 #include <vector>
 
 namespace VNX {
@@ -44,7 +46,6 @@ struct EffectEntry
     EffectDefinition custom;
     QUuid effectGuid;
     bool bypass = false;
-    float wetDry = 1.0f;
     QJsonObject extensions;
     QJsonValue opaqueValue;
     bool typed = true;
@@ -56,6 +57,9 @@ struct EffectEntry
 class EffectChainLedger
 {
 public:
+    static constexpr size_t kCapacity = harkenstudiobuild::kMaxVoiceFxSlots;
+    static_assert(kCapacity == harkenstudiobuild::kMaxFxSlotsPerBus);
+
     bool isEmpty() const { return entries_.empty(); }
     size_t size() const { return entries_.size(); }
     const std::vector<EffectEntry>& entries() const { return entries_; }
@@ -91,6 +95,7 @@ namespace EffectChainSemantics {
 QString typeName(EffectType type);
 QString displayName(EffectType type);
 std::optional<EffectType> parseType(const QString& value);
+const std::vector<std::pair<float, float>>& parameterRanges(EffectType type);
 int parameterCount(EffectType type);
 std::vector<float> defaultParameters(EffectType type);
 bool validate(const EffectEntry& entry, QString* diagnostic = nullptr);

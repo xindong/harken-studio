@@ -98,6 +98,7 @@ void deriveUiMetrics(ThemeMetrics& m, const Scale& s)
     startup.width = s.px(768);
     startup.artworkHeight = s.px(416);
     startup.logoWidth = s.px(272);
+    startup.contentPaddingX = m.spacingXLarge;
     startup.progressHeight = xSmall;
 
     auto& toggle = m.toggle;

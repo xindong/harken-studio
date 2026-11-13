@@ -12,6 +12,7 @@
 #include "Components/VAction.h"
 #include "Components/VAudio.h"
 #include "Components/VBus.h"
+#include "Components/VEffect.h"
 #include "Components/VMixNode.h"
 #include "Components/VSegment.h"
 #include "Components/VSelection.h"
@@ -604,7 +605,7 @@ void expectInitHasVolumeOnlyKind24(const QString& path)
     EXPECT_EQ(snapshot.storageModelVersion, 2u) << path.toStdString();
     EXPECT_EQ(snapshot.headerBytes, harken::kPackBusDefinitionSnapshotHeaderBytes)
         << path.toStdString();
-    EXPECT_EQ(snapshot.publicationCapabilityVintage, 4u) << path.toStdString();
+    EXPECT_EQ(snapshot.publicationCapabilityVintage, 5u) << path.toStdString();
     const auto expected = harken::SnapshotBusTriple(snapshot);
     EXPECT_TRUE(harken::CanonicalBusTripleFullyNonzero(expected))
         << path.toStdString();
@@ -4625,6 +4626,33 @@ TEST(EditorProjectPackExporterManifest, PartialPublicationCombinesScheduleAndEff
     harken::CurrentWorldBodyImage oldInitBody;
     ASSERT_NO_FATAL_FAILURE(readCanonicalWorld(output.filePath(QStringLiteral("Init.bytes")),
         oldInitBytes, oldInitImage, oldInitBody));
+    ASSERT_TRUE(oldImage.effectPresets.empty());
+    ASSERT_EQ(1u, oldInitImage.effectPresets.size());
+    const auto presetId = oldInitImage.effectPresets.front().header.presetId;
+    EXPECT_EQ(harkentest::ToRuntime(effectAsset->runtimeId()), presetId);
+    EXPECT_EQ(oldInitImage.effectPresets.front().header.paramCount,
+              oldInitImage.effectPresets.front().parameters.size());
+    std::uint32_t checkedChains = 0;
+    for (std::uint32_t i = 0; i < oldWorld.playablePropertyCount; ++i) {
+        const auto& payload = oldWorld.playableProperties[i].payload;
+        if (payload.effectNodeCount == 0) continue;
+        ASSERT_EQ(3u, payload.effectNodeCount);
+        EXPECT_NE(payload.effectNodes[0].effectId, payload.effectNodes[1].effectId);
+        for (std::uint32_t j = 0; j < 2; ++j) {
+            const auto& effect = payload.effectNodes[j];
+            EXPECT_EQ(harken::kPackEffectPresetReferenceType, effect.effectType);
+            EXPECT_EQ(presetId, effect.presetId);
+            EXPECT_NE(presetId, effect.effectId);
+            EXPECT_EQ(0u, effect.paramCount);
+            EXPECT_EQ(nullptr, effect.params);
+        }
+        const auto& custom = payload.effectNodes[2];
+        EXPECT_TRUE(harken::IsNull(custom.presetId));
+        EXPECT_NE(harken::kPackEffectPresetReferenceType, custom.effectType);
+        EXPECT_GT(custom.paramCount, 0u);
+        ++checkedChains;
+    }
+    EXPECT_GT(checkedChains, 0u);
     ASSERT_EQ(harken::kSegmentScheduleProgramCapacity, oldWorld.segmentScheduleCount);
     const auto counts = [](const harken::ContainerWorldInstallViewV1& world) {
         std::array<std::uint64_t, 8> totals{world.trackScheduleCount, world.segmentScheduleCount};
@@ -4761,10 +4789,42 @@ TEST(EditorProjectPackExporterManifest, PartialPublicationCombinesScheduleAndEff
             }
         }
     }
-    harkentest::EngineSession session(harkentest::MakeNullConfig(8, 64, 48000));
+    auto config = harkentest::MakeNullConfig(8, 64, 48000);
+    config.maxPackDecodeStagingBytes = 256ull << 20;
+    harkentest::EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     ASSERT_NO_FATAL_FAILURE(activateExportedNames(output.path(),
         {QStringLiteral("Retained"), QStringLiteral("Added")}));
+    std::map<QString, QByteArray> published;
+    for (const auto& name : {QStringLiteral("Init"), QStringLiteral("Retained"), QStringLiteral("Added")})
+        for (const auto& suffix : {QStringLiteral(".bytes"), QStringLiteral(".json")})
+            published.emplace(name + suffix, readFileBytes(output.filePath(name + suffix)));
+    auto unpublishedPreset = makeItem(QStringLiteral("UnpublishedLimiter"),
+        VNX::ProjectItem::Type::Effect, nextObjectId++);
+    project.effectItems.push_back({unpublishedPreset, QStringLiteral("Effects")});
+    VNX::EffectEntry newReference;
+    newReference.guid = QUuid::createUuid();
+    newReference.effectGuid = unpublishedPreset->guid;
+    VNX::EffectFieldGroup newEffects;
+    ASSERT_TRUE(newEffects.effects.replace({newReference}));
+    addedSegment->children.front()->fieldGroups.effects.shared = {VNX::FieldGroupMode::Local, newEffects};
+    project.nextObjectID = nextObjectId;
+    const auto missingPreset = exporter.ExportAllPacks(project, output.path(), options);
+    EXPECT_FALSE(missingPreset.success);
+    EXPECT_TRUE(missingPreset.error.contains(QStringLiteral("missing Effect preset")))
+        << missingPreset.error.toStdString();
+    for (const auto& [path, bytes] : published)
+        EXPECT_EQ(bytes, readFileBytes(output.filePath(path))) << path.toStdString();
+    newReference.effectGuid = effectAsset->guid;
+    ASSERT_TRUE(newEffects.effects.replace({newReference}));
+    addedSegment->children.front()->fieldGroups.effects.shared = {VNX::FieldGroupMode::Local, newEffects};
+    effectAsset->comp<VNX::VEffect>()->definition.parameters.front() = -6.0f;
+    const auto changedPreset = exporter.ExportAllPacks(project, output.path(), options);
+    EXPECT_FALSE(changedPreset.success);
+    EXPECT_TRUE(changedPreset.error.contains(QStringLiteral("updated Effect preset")))
+        << changedPreset.error.toStdString();
+    for (const auto& [path, bytes] : published)
+        EXPECT_EQ(bytes, readFileBytes(output.filePath(path))) << path.toStdString();
 }
 
 TEST(EditorProjectPackExporterManifest, LanguageVariantsShareCapacityWithoutAddingAlternativeDefinitions)
@@ -5606,6 +5666,21 @@ TEST(EditorProjectPackExporterManifest, ProjectBuildIncrementalResultsMatchForce
     ASSERT_TRUE(initial.allPlatformsSucceeded) << initial.preflightError.toStdString();
     ASSERT_TRUE(initial.finalizationResult.success) << initial.finalizationResult.error.toStdString();
     QByteArray previousContent = readFileBytes(context.live.filePath(QStringLiteral("One.bytes")));
+    const auto readMedia = [&](QByteArray& payload) {
+        QByteArray bytes;
+        harken::PackCanonicalImage image;
+        harken::CurrentWorldBodyImage body;
+        ASSERT_NO_FATAL_FAILURE(readCanonicalWorld(
+            context.live.filePath(QStringLiteral("One.bytes")), bytes, image, body));
+        ASSERT_EQ(image.media.size(), 1u);
+        const auto& media = image.media.front();
+        payload = bytes.mid(static_cast<qsizetype>(media.blobOffset),
+                            static_cast<qsizetype>(media.blobBytes));
+    };
+    QByteArray previousMedia;
+    ASSERT_NO_FATAL_FAILURE(readMedia(previousMedia));
+    auto& source = context.project.layers.front().rootItem->children.front()
+        ->comp<VNX::VSound>()->sources.plain.entries.front();
     const QString sourcePath = QDir(VNX::PathUtils::getAudioSourcesDir(context.directory.path()))
         .filePath(QStringLiteral("tone.wav"));
     const std::vector<std::function<void()>> changes{
@@ -5625,6 +5700,16 @@ TEST(EditorProjectPackExporterManifest, ProjectBuildIncrementalResultsMatchForce
             ASSERT_TRUE(file.setFileTime(modified, QFileDevice::FileModificationTime));
             EXPECT_EQ(QFileInfo(sourcePath).size(), bytes.size());
             EXPECT_EQ(QFileInfo(sourcePath).lastModified(), modified);
+        },
+        [&] {
+            source.fadeIn.durationFrames = 32;
+            source.fadeOut.durationFrames = 16;
+        },
+        [&] {
+            source.fadeIn.durationFrames = 48;
+        },
+        [&] {
+            source.fadeIn.handles = {{0.1f, 0.8f, 0.6f, 1.0f}};
         },
         [&] {
             const QString path = context.live.filePath(QStringLiteral("One.bytes"));
@@ -5647,8 +5732,13 @@ TEST(EditorProjectPackExporterManifest, ProjectBuildIncrementalResultsMatchForce
         ASSERT_TRUE(incremental.finalizationResult.success) << incremental.finalizationResult.error.toStdString();
         ASSERT_EQ(incremental.platforms.size(), 1u);
         const auto content = readFileBytes(context.live.filePath(QStringLiteral("One.bytes")));
-        if (index < 2) EXPECT_NE(content, previousContent);
+        if (index < 5) EXPECT_NE(content, previousContent);
         previousContent = content;
+        QByteArray media;
+        ASSERT_NO_FATAL_FAILURE(readMedia(media));
+        if (index >= 1 && index <= 4) EXPECT_NE(media, previousMedia);
+        else EXPECT_EQ(media, previousMedia);
+        previousMedia = media;
         QMap<QString, QByteArray> expected;
         for (const auto& path : publicationFiles(context.live.path()))
             expected.insert(path, readFileBytes(context.live.filePath(path)));

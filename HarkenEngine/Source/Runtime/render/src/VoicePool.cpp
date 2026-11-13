@@ -292,6 +292,9 @@ VoicePool::VoicePool(const EngineConfig& config, const ResampleTables* tables,
 }
 
 VoicePool::~VoicePool() {
+    m_workers.Stop();
+    ShutdownEffectChainUpdates();
+    for (auto& slot : m_slots) delete slot.effectChainUpdate.load(std::memory_order_relaxed);
     while (m_slotStorageRegistrations != nullptr) m_slotStorageRegistrations->Detach();
     assert(m_liveOriginalVoiceOwners.load(std::memory_order_relaxed) == 0 &&
         "original physical owners must retire before the pool");
@@ -378,6 +381,7 @@ VnResult VoicePool::Play(const PCMView& view, float volumeDb,
     slot.render.engineSampleRate = m_sampleRate;
     slot.render.pcm = view;
     slot.render.mediaDecoder = decoder;
+    slot.sourceChannels.store(view.channelCount, std::memory_order_release);
     BindMonitorPreChainBacking(slotIndex);
     slot.render.busIndex = busIndex;
     slot.render.busGeneration = busGeneration;
@@ -553,6 +557,7 @@ VnResult VoicePool::PlayStream(StreamRing* ring, std::uint32_t channelCount,
     // never dereferences pcm (frames == 0 keeps every pcm read unreachable).
     slot.render.pcm.channelCount = channelCount;
     slot.render.mediaDecoder = decoder;
+    slot.sourceChannels.store(channelCount, std::memory_order_release);
     BindMonitorPreChainBacking(slotIndex);
     slot.render.pcm.sampleRate = sourceSampleRate;
     slot.render.busIndex = busIndex;
@@ -1845,6 +1850,7 @@ void VoicePool::ShutdownOriginalSourceBodiesAfterQuiescence() noexcept {
     // actual thread join, and the lifecycle owner has already stopped callback.
     m_workers.Stop();
     m_originalBodyShutdown = true;
+    ShutdownEffectChainUpdates();
     for (auto& slot : m_slots) CompleteOriginalSourceBodyDisposition(slot);
     EndAudioBlock();
     for (auto& slot : m_slots) slot.nativeVariableStart = {};
@@ -4418,17 +4424,17 @@ bool VoicePool::ApplyOwnedVoiceEffect(VnVoiceHandle handle, std::uint32_t slot,
         // The voice ended between the logic-side Set and this apply: the
         // instance was acquired but never installed, so retire it here or it
         // would leak (the audio thread never frees; the logic side reclaims).
-        return m_effectBank.RetireQueue().TryPush(incoming);
+        return m_effectBank.Retire(incoming);
     }
     VoiceRenderContext& render = s->render;
     if (slot >= render.fxSlotCount) {
         // Out of range for this voice (validated logic-side; defensive):
         // retire the unused instance rather than drop it.
-        return m_effectBank.RetireQueue().TryPush(incoming);
+        return m_effectBank.Retire(incoming);
     }
     // In-place replace: whatever this slot held is retired for reclamation.
     if (render.fxSlotEffectRef[slot].type != kEffectTypeNone) {
-        if (!m_effectBank.RetireQueue().TryPush(render.fxSlotEffectRef[slot])) return false;
+        if (!m_effectBank.Retire(render.fxSlotEffectRef[slot])) return false;
     }
     render.fxSlots[slot] =
         BuildEffect(incoming.type, incomingState);
@@ -4460,7 +4466,7 @@ bool VoicePool::ApplyOwnedClearVoiceEffect(VnVoiceHandle handle, std::uint32_t s
         // block, so removing this slot immediately drops its contribution to
         // the remaining life (down to the surviving slots, or to Done when it
         // was the only one keeping the voice alive).
-        if (!m_effectBank.RetireQueue().TryPush(render.fxSlotEffectRef[slot])) return false;
+        if (!m_effectBank.Retire(render.fxSlotEffectRef[slot])) return false;
         render.fxSlots[slot] = InsertEffect{};
         render.fxSlotEffectRef[slot] = EffectInstanceRef{};
     }
@@ -4735,6 +4741,7 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
         }
     }
     const auto beginEffects = [&](VoiceRenderContext& render) {
+        render.fxChainTransitionThisBlock = false;
         for (std::uint32_t slot = 0; slot < render.fxSlotCount; ++slot) {
             if (render.fxSlotEffectRef[slot].type == VN_EFFECT_LIMITER &&
                 render.fxSlots[slot].state != nullptr) {
@@ -4764,6 +4771,9 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
                 LimiterFinishRender(*static_cast<LimiterState*>(render.fxSlots[s].state),
                     render.cascade.offset,
                     render.cascade.runnable ? render.cascade.produced : 0);
+                if (render.fxChainTransitionThisBlock)
+                    static_cast<LimiterState*>(render.fxSlots[s].state)->gainReduction.status =
+                        LimiterGainReductionStatus::ChainTransition;
             }
         }
     };
@@ -4885,6 +4895,7 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
                         : 0);
             }
             finishLimiters(slot.render);
+            FinishEffectChainTransition(slot);
             publishCompressors(i, slot);
             PublishStreamObservation(slot, blockIndex);
             (void)StageCompletionProgress(
@@ -5071,6 +5082,7 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
                 slot.render.cascade.produced > 0) slot.firstOutputPhase = FirstOutputPhase::FirstFolded;
         }
         finishLimiters(slot.render);
+        FinishEffectChainTransition(slot);
         publishCompressors(i, slot);
         PublishStreamObservation(slot, m_jobQuantumIndex);
         (void)StageCompletionProgress(
@@ -5661,6 +5673,7 @@ void VoicePool::NoteMonitorVoiceRetired(VnVoiceHandle publicHandle) noexcept {
 }
 
 void VoicePool::ReleaseSlot(Slot& slot, ReleaseThread thread) {
+    ReleaseEffectChainTransition(slot, thread);
     ClearFirstOutput(slot);
     const bool nativeFinished = FinishNativeVariableStart(slot, false);
     assert(nativeFinished);
@@ -5704,7 +5717,9 @@ void VoicePool::ReleaseSlot(Slot& slot, ReleaseThread thread) {
     for (std::uint32_t s = 0; s < slot.render.fxSlotCount; ++s) {
         if (slot.render.fxSlotEffectRef[s].type != kEffectTypeNone) {
             if (thread == ReleaseThread::Audio) {
-                m_effectBank.RetireQueue().TryPush(slot.render.fxSlotEffectRef[s]);
+                const bool retired = m_effectBank.Retire(slot.render.fxSlotEffectRef[s]);
+                assert(retired && "effect retirement lane must hold every assigned row");
+                (void)retired;
             } else {
                 // ReleaseHeld excludes readers of this slot. Logic must not
                 // become a second producer of the audio retirement ring.

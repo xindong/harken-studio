@@ -546,6 +546,7 @@ void AudioEngine::shutdown()
     if (session_)
         stopRuntimeSynchronization();
     session_.reset();
+    consumeRuntimeNotifications();
     runtimeProjectRestoreRequired_ = false;
 
     initialized_ = false;
@@ -605,6 +606,7 @@ void AudioEngine::stopOutput()
     }
 
     playing_ = false;
+    consumeRuntimeNotifications();
     masterMeterPeakL_ = 0.0f;
     masterMeterPeakR_ = 0.0f;
     emit meterLevelsUpdated();
@@ -681,6 +683,23 @@ Bridge::EngineSession::RawPcmSliceRegistration AudioEngine::registerRawPcmSlice(
         return registration;
     }
     return session_->registerRawPcmSlice(soundId, absolutePath, startFrame, frameCount, loops);
+}
+
+Bridge::EngineSession::RawPcmSliceRegistration AudioEngine::registerRawPcmSlice(
+    harkenstudio::ObjectId soundId, std::vector<float> interleaved,
+    int channels, int sampleRate, uint64_t startFrame, uint64_t frameCount, bool loops)
+{
+    if (!session_) {
+        Bridge::EngineSession::RawPcmSliceRegistration registration;
+        registration.soundId = soundId;
+        registration.startFrame = startFrame;
+        registration.frameCount = frameCount;
+        registration.loops = loops;
+        registration.result = Bridge::kEngineNotInit;
+        return registration;
+    }
+    return session_->registerRawPcmSlice(soundId, std::move(interleaved), channels,
+                                        sampleRate, startFrame, frameCount, loops);
 }
 
 Bridge::EngineSession::RawPcmSliceRegistration AudioEngine::relocateRawPcmSlice(
@@ -814,14 +833,11 @@ AudioEngine::PlaybackStartResult AudioEngine::playByName3DDetailed(
     return result;
 }
 
-bool AudioEngine::stopPlayback(quintptr playbackHandle, float fadeMs)
+Bridge::EngineResult AudioEngine::stopPlayback(quintptr playbackHandle, float fadeMs)
 {
-    if (!playbackHandle || !session_
-        || !session_->stopPlayback(static_cast<uint64_t>(playbackHandle), fadeMs))
-        return false;
-
-    emit playbackStopped(playbackHandle);
-    return true;
+    if (!session_)
+        return Bridge::kEngineNotInit;
+    return session_->stopPlayback(static_cast<uint64_t>(playbackHandle), fadeMs);
 }
 
 bool AudioEngine::stopAll(float fadeMs)

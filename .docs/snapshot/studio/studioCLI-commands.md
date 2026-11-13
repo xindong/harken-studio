@@ -1,6 +1,6 @@
 # HarkenStudioCLI 命令用法
 
-快照日期：2026-11-07。独立无窗口程序 `HarkenStudioCLI.exe`（macOS 为 `HarkenStudioCLI`）与 [Studio 本体](studio-commands.md) 共享工程核心命令、创作模型、资源处理和打包服务。
+快照日期：2026-11-13。独立无窗口程序 `HarkenStudioCLI.exe`（macOS 为 `HarkenStudioCLI`）与 [Studio 本体](studio-commands.md) 共享工程核心命令、创作模型、资源处理和打包服务。
 
 ## 入口组织
 
@@ -23,6 +23,18 @@
 顶层负责发现、会话执行和离线构建，业务命令沿用统一的 `动词_对象` 标识。`init <directory>` 是创建工程；运行时初始化使用 `exec init_engine` 或会话中的 `init_engine`。
 
 独立模式不注册 GUI 专属接口；实例模式使用目标 Studio 的完整目录。两种模式都不注册未实现或废弃的接口；未知名称统一返回 `UNKNOWN_COMMAND`。`commands --json` 是当前目标的能力来源，不依赖静态条数。每项提供 `category`、`scope`、`readOnly`、`requiresDesktop`、`inputSchema` 等字段。所有公开命令使用显式参数契约，发现、普通执行和 AI 调用共享同一份约束。无参数命令也声明空对象并拒绝额外字段。
+
+### Effect 创作与验收（2026-11-12）
+
+`create_item(type=Effect)` 创建预设，`set_item_property` 的 `ceilingDb`／`releaseMs` 修改参数，`rename_item` 重命名。Bus 使用 `set_item_property(property=effects,value=[...])`；Sound、Container、Track、Segment、Layer 使用 `replace_field_group_effects`。两种入口共用效果行合同，完整数组表示处理顺序，增删、重排、替换和 Active 均通过该数组提交；替换或转换保留行的 `guid` 与 `bypass`。预设行使用 `effectGuid`，Custom 行使用 `custom.type` 与 `custom.parameters`。
+
+`get_item_info` 对可播放定义返回 `fieldGroups`，包含本地值、继承模式及平台覆盖，可区分未配置与显式空链；Bus FX 和预设参数在 `components` 中读取。
+
+持续 `shell` 试听中，Voice／Bus 编辑前后的链均只含 Limiter（含空链）时，参数、Active 和链条增删、替换、重排即时生效，无需停止重播。涉及其他效果类型时，链结构与来源替换仍延后生效，已安装槽位的 Active 和来源兼容的参数可即时更新。`get_metering_snapshot` 与 `audition_get_state` 可验证输出和播放身份。
+
+两种链写入入口均限制最多 8 槽；第 9 槽在参数校验阶段拒绝，原链不变。域内校验和编译也检查容量，手工篡改工程文件不能绕过导出限制，非法数据不会被自动截断。
+
+独立 CLI 可组合创建预设、设置参数和替换链完成 Save As Preset 的最终结果；这个组合不承诺单次原子撤销。精确的 GUI Save As Preset、Detach、View 菜单及多实例窗口交互通过 `--instance` 的桌面命令测试。
 
 ## 输入与选项
 
@@ -161,6 +173,8 @@ CLI 自动等待同一作业的最终结果。单条结果含实际 `cache_path/
 `export_pack` 的单个平台与平台数组互斥，平台数组须非空且无重复；`all:true/self_clean:true` 不能与非空 `action_name` 同用。支持 `output_path/language/force`。两种构建均会写出包体、缓存及临时锁；只读指创作文件。已被 Studio 或其他进程占用的工程返回 `PROJECT_IN_USE`。
 
 未打开工程的运行时会话可 `load_pack/unload_pack`：先 Init 再内容包，卸载 Init 卸载集合；与工程 Current World 互斥。CLI 等待短暂背压消退，运行时错误、超时或中断才失败。
+
+`audition_stop` 返回停止请求的当前状态：`stopping` 表示仍在停止，`stopped` 表示目标试听已经结束，`stop_failed` 表示失败且保留控制记录。该命令不阻塞等待淡出；通过 `audition_get_state` 查看逐实例 `stop_state/stop_result`，直到目标实例消失。等待延迟、无声间隙和未来调度均属于试听生命周期。`stop_action` 同样区分 `stopping/stopped/rejected`，只在运行时确认结束后从播放列表移除。
 
 ## 输出与退出码
 

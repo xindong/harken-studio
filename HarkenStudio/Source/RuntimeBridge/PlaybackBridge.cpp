@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -400,9 +401,12 @@ bool EngineSession::hasActionProgram(harkenstudio::ObjectId actionId) const
     return Detail::runtimeHasActionProgram(actionId);
 }
 
-bool EngineSession::stopPlayback(uint64_t handle, float fadeMs)
+EngineResult EngineSession::stopPlayback(uint64_t handle, float fadeMs)
 {
-    return Detail::runtimeStopPlayback(handle, fadeMs > 0.0f ? static_cast<uint32_t>(fadeMs) : 0u);
+    if (!std::isfinite(fadeMs) || fadeMs < 0.0f)
+        return kEngineInvalidArg;
+    return Detail::runtimeStopPlayback(handle, static_cast<uint32_t>(
+        std::min<double>(fadeMs, std::numeric_limits<uint32_t>::max())));
 }
 
 bool EngineSession::stopAll(float fadeMs)
@@ -480,6 +484,26 @@ EngineSession::RawPcmSliceRegistration EngineSession::registerRawPcmSlice(
         registration.sampleRate = sampleRate;
         registration.windowStartFrame = windowStartFrame;
         registration.windowFrameCount = windowFrameCount;
+    }
+    return registration;
+}
+
+EngineSession::RawPcmSliceRegistration EngineSession::registerRawPcmSlice(
+    harkenstudio::ObjectId soundId, std::vector<float> interleaved,
+    int channels, int sampleRate, uint64_t startFrame, uint64_t frameCount, bool loops)
+{
+    RawPcmSliceRegistration registration;
+    registration.soundId = soundId;
+    registration.startFrame = startFrame;
+    registration.frameCount = frameCount;
+    registration.windowStartFrame = startFrame;
+    registration.windowFrameCount = frameCount;
+    registration.loops = loops;
+    registration.result = Detail::runtimeRegisterRawPcmSlice(
+        soundId, std::move(interleaved), channels, sampleRate, startFrame, frameCount, loops);
+    if (registration.result == kEngineOk) {
+        registration.channels = static_cast<uint32_t>(channels);
+        registration.sampleRate = static_cast<uint32_t>(sampleRate);
     }
     return registration;
 }

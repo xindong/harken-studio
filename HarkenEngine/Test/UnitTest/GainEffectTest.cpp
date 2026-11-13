@@ -494,15 +494,14 @@ TEST(GainEffect, PoolCapacityFromOwnFieldExhaustionAndIsolation) {
     EXPECT_EQ(0u, harken::memguard::HitCount());
 }
 
-TEST(GainEffect, ZeroCapacityResolvesToDefaultSixteen) {
-    // A zero gainEffectPoolCapacity resolves to the documented default (16),
-    // mirroring the tone field exactly.
+TEST(GainEffect, ZeroCapacityStartsWithoutUnusedBacking) {
+    // Automatic capacity reports actual prepared backing, not a fixed quota.
     EngineSession session(GainConfig(/*slots=*/1, /*gainCap=*/0));
     ASSERT_EQ(VN_OK, session.InitResult());
     VnSnapshot snap = TakeSnapshot();
     const VnEffectTypeStats* gain = FindRow(snap, VN_EFFECT_GAIN);
     ASSERT_NE(nullptr, gain);
-    EXPECT_EQ(16u, gain->capacity);
+    EXPECT_EQ(0u, gain->capacity);
     EXPECT_EQ(0u, harken::memguard::HitCount());
 }
 

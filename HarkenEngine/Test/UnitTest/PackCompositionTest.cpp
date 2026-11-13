@@ -6043,6 +6043,182 @@ TEST(PackComposition, UnsortedContainerProgramsRefuseWithoutPublication) {
     EXPECT_EQ(nullptr, composition.FindContainer(kHighId));
 }
 
+class FrozenEffectPresets : public ::testing::Test {
+protected:
+    static constexpr VnObjectId kSound = harkentest::ObjectId(8201);
+    static constexpr VnObjectId kPreset = harkentest::ObjectId(8301);
+    static constexpr VnPackHandle kInitHandle = VnPackHandle{1} << 32;
+    static constexpr VnPackHandle kContentHandle = VnPackHandle{2} << 32;
+    PackComposition composition{8, 8, 2};
+    PackCanonicalImage init;
+    PackCanonicalImage content;
+
+    void SetUp() override {
+        std::array<EffectNodeV1, 2> nodes{};
+        for (std::uint32_t i = 0; i < nodes.size(); ++i) {
+            nodes[i].nodeId = i + 1;
+            nodes[i].effectType = kPackEffectPresetReferenceType;
+            nodes[i].effectId = harkentest::ObjectId(8401 + i);
+            nodes[i].presetId = kPreset;
+        }
+        const EffectEdgeV1 edge{1, 2};
+        auto sound = MakeSoundProperty(kSound);
+        sound.payload.presentMask |= UINT64_C(0x8000);
+        sound.payload.effectNodes = nodes.data();
+        sound.payload.effectNodeCount = static_cast<std::uint32_t>(nodes.size());
+        sound.payload.effectEdges = &edge;
+        sound.payload.effectEdgeCount = 1;
+        sound.programSemanticFingerprint = ComputePlayablePropertyFingerprintV1(sound);
+        ContainerWorldInstallViewV1 world{};
+        world.playableProperties = &sound;
+        world.playablePropertyCount = 1;
+        FinishPlayableWorld(&world);
+        const auto initBytes = BuildInit(world.capacity);
+        ASSERT_EQ(VN_OK, ParsePackCanonicalImage(initBytes.data(), initBytes.size(), &init));
+        init.effectPresets.emplace_back();
+        auto& preset = init.effectPresets.back();
+        preset.header.presetId = kPreset;
+        preset.header.effectType = VN_EFFECT_LIMITER;
+        preset.header.descriptorVintage = kPackEffectDescriptorVintage;
+        preset.header.paramCount = 2;
+        preset.parameters.push_back({0, std::bit_cast<std::uint32_t>(-12.0f)});
+        preset.parameters.push_back({1, std::bit_cast<std::uint32_t>(1.0f)});
+        ImageBuilder builder(kPackKindCanonicalContent);
+        builder.AddEntry(kPackEntryKindPackRequirementBlock, 22, RequirementPayload(22, 1, 1));
+        builder.AddEntry(kPackEntryKindCanonicalDefinitionPartition, 22,
+            WrapWorldPartition(22, 1, world, 1));
+        builder.AddEntry(kPackEntryKindPackDependencyEdge, 0,
+            RequiredEdgePayload(11, 1, kPackDependencyEdgeKindInit));
+        const auto bytes = builder.Build();
+        ASSERT_EQ(VN_OK, ParsePackCanonicalImage(bytes.data(), bytes.size(), &content));
+    }
+
+    VnResult Publish() {
+        std::vector<PackComposition::CandidateOwner> owners(2);
+        auto result = composition.PrepareCandidate(init, kInitHandle, &owners[0]);
+        if (result != VN_OK) return result;
+        result = composition.PrepareCandidate(content, kContentHandle, &owners[1]);
+        if (result != VN_OK) return result;
+        return composition.Commit(std::move(owners), &init, kInitHandle, 8, 0);
+    }
+
+    PackIdentityLookup Lease() {
+        PackIdentityLookup lookup;
+        EXPECT_EQ(VN_OK, composition.PrepareLookup(kSound, PackLeaseSlice::Playable, &lookup));
+        if (lookup.result == VN_OK)
+            EXPECT_EQ(VN_OK, composition.CommitPreparedLease(&lookup.lease, 0));
+        return lookup;
+    }
+
+    PackPlaybackView View(const PackIdentityLookup& lookup) {
+        PackPlaybackView view;
+        EXPECT_TRUE(composition.PlaybackViewAtLease(lookup.lease, &view));
+        return view;
+    }
+};
+
+TEST_F(FrozenEffectPresets, ReplacementAndRestoreKeepLeasedDefinitionsAndSlotIdentities) {
+    ASSERT_EQ(VN_OK, Publish());
+    const auto original = composition.PublishedHandle();
+    const auto oldLease = Lease();
+    const auto oldView = View(oldLease);
+    const auto* oldPreset = oldView.ResolveEffectPreset(kPreset);
+    ASSERT_NE(nullptr, oldPreset);
+    EXPECT_EQ(VN_EFFECT_LIMITER, oldPreset->effectType);
+    const auto* property = oldView.ResolveProperty(playableproperties::ContentPropertyKindV1::Sound, kSound);
+    ASSERT_NE(nullptr, property);
+    ASSERT_EQ(2u, property->payload.effectNodeCount);
+    EXPECT_NE(property->payload.effectNodes[0].effectId, property->payload.effectNodes[1].effectId);
+    for (std::uint32_t i = 0; i < property->payload.effectNodeCount; ++i) {
+        const auto& node = property->payload.effectNodes[i];
+        EXPECT_NE(kPreset, node.effectId);
+        EXPECT_EQ(oldPreset, oldView.ResolveEffectPreset(node.presetId));
+        EXPECT_EQ(0u, node.paramCount);
+    }
+    init.requirement.packContentRevision = 2;
+    content.dependencyEdges[0].expectedPrerequisiteContentRevision = 2;
+    init.effectPresets[0].parameters[0].valueBits = std::bit_cast<std::uint32_t>(-24.0f);
+    ASSERT_EQ(VN_OK, Publish());
+    const auto newLease = Lease();
+    const auto* newPreset = View(newLease).ResolveEffectPreset(kPreset);
+    ASSERT_NE(nullptr, newPreset);
+    EXPECT_EQ(std::bit_cast<std::uint32_t>(-12.0f), oldPreset->parameters[0].valueBits);
+    EXPECT_EQ(std::bit_cast<std::uint32_t>(-24.0f), newPreset->parameters[0].valueBits);
+    composition.RestorePublished(original);
+    const auto restoredLease = Lease();
+    const auto* restored = View(restoredLease).ResolveEffectPreset(kPreset);
+    ASSERT_NE(nullptr, restored);
+    EXPECT_EQ(std::bit_cast<std::uint32_t>(-12.0f), restored->parameters[0].valueBits);
+    EXPECT_EQ(std::bit_cast<std::uint32_t>(-24.0f), newPreset->parameters[0].valueBits);
+    EXPECT_EQ(VN_OK, composition.ReleaseLease(oldLease.lease));
+    EXPECT_EQ(VN_OK, composition.ReleaseLease(newLease.lease));
+    EXPECT_EQ(VN_OK, composition.ReleaseLease(restoredLease.lease));
+}
+
+TEST_F(FrozenEffectPresets, NativeBackingCountsInstancesUsingLeasedPresetTypes) {
+    ASSERT_EQ(VN_OK, Publish());
+    const auto oldLease = Lease();
+    const auto count = [&](const PackIdentityLookup& lease) {
+        const auto view = View(lease);
+        const auto* property = view.ResolveProperty(playableproperties::ContentPropertyKindV1::Sound, kSound);
+        EXPECT_NE(nullptr, property);
+        if (property == nullptr) return native_backing::Result{};
+        native_backing::Limits limits{};
+        limits.currentScheduleDepth = 8;
+        limits.directFutureScheduleDepth = 8;
+        const native_backing::PackContent contentView(view);
+        std::array<native_backing::MemoEntry, 8> entries{};
+        native_backing::MemoWorkspace memo(entries.data(), entries.size());
+        return native_backing::Counter(contentView, limits, memo).Count(
+            PlayableRefFromProperty(*property), contentView.Authority());
+    };
+    auto& preset = init.effectPresets[0];
+    preset.header.effectType = VN_EFFECT_GAIN;
+    preset.header.paramCount = 1;
+    preset.parameters.resize(1);
+    init.requirement.packContentRevision = 2;
+    content.dependencyEdges[0].expectedPrerequisiteContentRevision = 2;
+    ASSERT_EQ(VN_OK, Publish());
+    const auto newLease = Lease();
+    const auto oldDemand = count(oldLease);
+    const auto newDemand = count(newLease);
+    ASSERT_EQ(native_backing::Status::Ok, oldDemand.status);
+    ASSERT_EQ(native_backing::Status::Ok, newDemand.status);
+    EXPECT_EQ(2u, oldDemand.profile.voice.effects);
+    EXPECT_EQ(2u, newDemand.profile.voice.effects);
+    for (std::uint32_t type = 0; type < kEffectRegistryRowCount; ++type) {
+        EXPECT_EQ(kEffectRegistry[type].effectType == VN_EFFECT_LIMITER ? 2u : 0u,
+            oldDemand.profile.voice.effectInstances[type]);
+        EXPECT_EQ(kEffectRegistry[type].effectType == VN_EFFECT_GAIN ? 2u : 0u,
+            newDemand.profile.voice.effectInstances[type]);
+    }
+    EXPECT_EQ(VN_OK, composition.ReleaseLease(oldLease.lease));
+    EXPECT_EQ(VN_OK, composition.ReleaseLease(newLease.lease));
+}
+
+TEST_F(FrozenEffectPresets, MissingDefinitionDependencyAndStaleRevisionPreservePublication) {
+    ASSERT_EQ(VN_OK, Publish());
+    const auto original = composition.PublishedHandle();
+    const auto lease = Lease();
+    const auto preset = init.effectPresets[0];
+    init.effectPresets.clear();
+    EXPECT_EQ(VN_BAD_PACK, Publish());
+    EXPECT_EQ(original, composition.PublishedHandle());
+    init.effectPresets.push_back(preset);
+    const auto edge = content.dependencyEdges[0];
+    content.dependencyEdges.clear();
+    EXPECT_EQ(VN_BAD_PACK, Publish());
+    EXPECT_EQ(original, composition.PublishedHandle());
+    content.dependencyEdges.push_back(edge);
+    ++init.requirement.packContentRevision;
+    EXPECT_EQ(VN_PACK_STALE_REVISION, Publish());
+    EXPECT_EQ(original, composition.PublishedHandle());
+    const auto* frozen = View(lease).ResolveEffectPreset(kPreset);
+    ASSERT_NE(nullptr, frozen);
+    EXPECT_EQ(std::bit_cast<std::uint32_t>(-12.0f), frozen->parameters[0].valueBits);
+    EXPECT_EQ(VN_OK, composition.ReleaseLease(lease.lease));
+}
+
 TEST(PackComposition, DeclaredSharedChildPublishesFromContentRoot) {
     constexpr std::uint64_t kContentPack = 22;
     constexpr std::uint64_t kSharedPack = 33;

@@ -20,6 +20,7 @@
 
 namespace HarkenEditor {
 namespace Bridge {
+struct PreviewVoiceEffectEntry;
 namespace Detail {
 
 bool runtimeInit(const EngineSessionConfig& config);
@@ -85,6 +86,11 @@ EngineResult runtimeRegisterRawPcmSlice(harkenstudio::ObjectId soundId,
                                         uint32_t* outSampleRate = nullptr,
                                         uint64_t* outWindowStartFrame = nullptr,
                                         uint64_t* outWindowFrameCount = nullptr);
+EngineResult runtimeRegisterRawPcmSlice(harkenstudio::ObjectId soundId,
+                                        std::vector<float> interleaved,
+                                        int channels, int sampleRate,
+                                        uint64_t startFrame, uint64_t frameCount,
+                                        bool loops);
 EngineResult runtimeRelocateRawPcmSlice(harkenstudio::ObjectId soundId,
                                         uint64_t startFrame,
                                         uint64_t* outStartFrame = nullptr,
@@ -110,12 +116,22 @@ ActionSeekStartResult runtimeSeekAction(uint64_t playbackHandle,
 EngineResult runtimeQueryActionSeek(uint64_t operationId,
                                     ActionSeekInfo& outInfo);
 EngineResult runtimeReleaseActionSeek(uint64_t operationId);
-bool runtimeStopPlayback(uint64_t handle, uint32_t fadeMs);
+EngineResult runtimeStopPlayback(uint64_t handle, uint32_t fadeMs);
 bool runtimeStopAll(uint32_t fadeMs);
 bool runtimeHasCurrentWorldPlayableConsumers();
+bool runtimeHasEffectChainConsumers();
+uint64_t runtimePreviewVoiceWorldGeneration(uint64_t voiceInstance);
+bool runtimeHasPreviewWorldGeneration(uint64_t generation);
+EngineResult runtimeSetPreviewVoiceEffectChain(uint64_t voiceInstance,
+    const std::vector<PreviewVoiceEffectEntry>& chain);
 EngineResult runtimeRefreshPreviewVoiceBindings(uint64_t voiceInstance);
 EngineResult runtimeSetPreviewVoiceProperty(uint64_t voiceInstance, uint8_t property,
     float value, harkenstudio::ObjectId sendBusId = {});
+EngineResult runtimeSetPreviewVoiceEffect(uint64_t voiceInstance, harkenstudio::ObjectId effectId,
+    uint32_t effectType, const std::vector<float>& parameters, bool bypass);
+EngineResult runtimeSetPreviewBusEffect(uint64_t ownerId, harkenstudio::ObjectId busId,
+    harkenstudio::ObjectId effectId, uint32_t effectType,
+    const std::vector<float>& parameters, bool bypass);
 void runtimePumpNullMixer(std::uint32_t blockCount);
 void runtimeSetVoicePitchByName(const QString& name, float cents);
 void runtimeSetVoiceVolumeByName(const QString& name, float volumeDb);

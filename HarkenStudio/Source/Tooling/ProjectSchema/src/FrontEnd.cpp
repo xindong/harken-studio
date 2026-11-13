@@ -201,6 +201,12 @@ bool FindGraphCycle(const std::vector<EffectNode>& nodes,
 // interpret — it checks structure and leaves meaning to a later stage.
 void ValidateSignalGraph(const InputNode& node, std::vector<Diagnostic>* out) {
     const SignalGraph& graph = node.signalGraph;
+    if (graph.nodes.size() > kFixedVoiceFxSlotCount) {
+        Diagnostic diagnostic = Make(DiagnosticCode::EffectChainExceedsSlotLimit, node.guid);
+        diagnostic.detail = graph.nodes.size();
+        out->push_back(diagnostic);
+        return;
+    }
 
     bool idsClean = true;
     std::set<GraphNodeId> seenIds;
@@ -226,6 +232,11 @@ void ValidateSignalGraph(const InputNode& node, std::vector<Diagnostic>* out) {
         }
 
         std::set<std::uint32_t> seenParams;
+        if ((n.flags & ~1u) != 0) {
+            Diagnostic d = Make(DiagnosticCode::UnknownEffectFlags, node.guid);
+            d.detail = n.flags;
+            out->push_back(d);
+        }
         for (const EffectParam& param : n.params) {
             if (!seenParams.insert(param.paramId).second) {
                 Diagnostic d =
