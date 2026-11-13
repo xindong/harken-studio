@@ -41,6 +41,7 @@
 
 namespace harken {
 struct EffectChainUpdate;
+struct VoiceSendSet;
 
 // Lifecycle fact of the stage result protocol. Orthogonal to data
 // availability: framesProduced says how much data this block carries,
@@ -386,11 +387,12 @@ struct VoiceRenderContext {
     std::uint32_t busIndex = 0;
     std::uint32_t busGeneration = 0;
 
-    // Voice->bus send slots: a fixed-capacity array processed after the dry
+    // Voice->bus send slots: an actual-size prepared span processed after the dry
     // fold. voiceSendActiveCount is the number of currently active slots; when
     // it is 0 the fold is bit-identical to the pre-send path (no tap captured,
     // no extra arena use), which preserves the no-send invariant.
-    VoiceSendSlot voiceSends[kMaxVoiceSendSlots];
+    VoiceSendSet* voiceSendSet = nullptr;
+    std::span<VoiceSendSlot> voiceSends{};
 
     ResamplerView resampler;
 

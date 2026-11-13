@@ -284,7 +284,7 @@ typedef struct VnConfig {
                                      * flag, not the threshold, gates parking) */
     uint32_t randomSeed;            /* engine PRNG seed; 0 = documented default
                                      * constant */
-    uint32_t voiceSendSlots;        /* per-voice send slots; 0 = 2 */
+    uint32_t voiceSendSlots;        /* legacy hint; Voice Sends have no count limit */
     uint32_t busSendSlotsPerBus;    /* legacy hint; does not limit Bus Send count */
     uint32_t fxSlotsPerBus;         /* per-bus insert-effect slots; 0 = 8 */
     uint32_t topologyPlanPoolCapacity; /* published bus-topology plan pool;
@@ -3022,9 +3022,9 @@ VnResult Vn_SetBusSendLevel(VnBusId fromBus, VnBusId toBus, float levelDb,
 /* Voice sends: a voice contributes a copy of its post-pan/post-width stereo
  * block (the identical block that feeds its dry bus) to a target bus, scaled by
  * the send level — so the spatial image travels with the send. sendSlot indexes
- * the voice's send slots (0-based, below the configured voiceSendSlots); setting
- * a slot that already holds a send replaces it. Refusals: sendSlot at or beyond
- * voiceSendSlots, or a non-finite level, is VN_INVALID_ARG; an unknown target
+ * the voice's sparse uint32 send labels (including UINT32_MAX); setting
+ * a slot that already holds a send replaces it. A non-finite or unrepresentable
+ * level is VN_INVALID_ARG; an unknown target
  * bus is VN_UNKNOWN_ID; a stale handle is a benign no-op returning
  * VN_STALE_HANDLE; a full command queue is VN_BACKPRESSURE with no state change.
  * A voice awaiting a render slot stages the send and a parked voice keeps it,
@@ -3032,14 +3032,14 @@ VnResult Vn_SetBusSendLevel(VnBusId fromBus, VnBusId toBus, float levelDb,
 VnResult Vn_SetVoiceSend(VnVoiceHandle handle, uint32_t sendSlot, VnBusId toBus,
                          float levelDb);
 
-/* Clears a voice's send slot. Clearing an empty slot is accepted. sendSlot at
- * or beyond voiceSendSlots is VN_INVALID_ARG; a stale handle is a benign no-op
+/* Clears a voice's send label. Clearing an empty label is accepted.
+ * A stale handle is a benign no-op
  * returning VN_STALE_HANDLE; a full command queue is VN_BACKPRESSURE with no
  * state change. Logic thread only. */
 VnResult Vn_ClearVoiceSend(VnVoiceHandle handle, uint32_t sendSlot);
 
 /* Sets a voice send slot's level. Same ramp discipline as Vn_SetBusSendLevel.
- * Refusals: sendSlot at or beyond voiceSendSlots, a non-finite level, or a slot
+ * Refusals: a non-finite or unrepresentable level, or a label
  * that holds no active send is VN_INVALID_ARG; a stale handle is a benign no-op
  * returning VN_STALE_HANDLE; a full command queue is VN_BACKPRESSURE with no
  * state change. Logic thread only. */

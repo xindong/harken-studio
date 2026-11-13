@@ -2556,17 +2556,17 @@ TEST(BusAdmissionStart, PreviewCommitMigratesPublishedIdentityAndFactsOffDeadSlo
     pending.active = true;
     pending.busIndex = grandSlot;
     pending.busGeneration = grandGeneration;
-    pending.voiceSends[0] = {true, childSlot, -5.0f, childGeneration};
+    pending.voiceSends = pending.voiceSends.WithSet({true, childSlot, -5.0f, childGeneration, 0});
     auto& parked = engine->parkRecords[0];
     parked.active = true;
     parked.facts.busIndex = grandSlot;
     parked.facts.busGeneration = grandGeneration;
-    parked.voiceSends[0] = {true, childSlot, -7.0f, childGeneration};
+    parked.voiceSends = parked.voiceSends.WithSet({true, childSlot, -7.0f, childGeneration, 0});
     auto& identity = engine->timelineVoiceInstallIdentities[0];
     identity.renderHandle = 1;
     identity.busIndex = grandSlot;
     identity.busGeneration = grandGeneration;
-    identity.voiceSends[0] = {true, childSlot, -9.0f, childGeneration};
+    identity.voiceSends = identity.voiceSends.WithSet({true, childSlot, -9.0f, childGeneration, 0});
 
     std::vector<VnBusId> secondIds{VN_BUS_MASTER};
     std::vector<std::uint8_t> secondAlive{1};
@@ -2599,12 +2599,12 @@ TEST(BusAdmissionStart, PreviewCommitMigratesPublishedIdentityAndFactsOffDeadSlo
     EXPECT_EQ(0u, facts.busIndex);
     EXPECT_EQ(engine->buses.GenerationAt(0), facts.busGeneration);
     EXPECT_EQ(0u, pending.busIndex);
-    EXPECT_FALSE(pending.voiceSends[0].active);
+    EXPECT_EQ(nullptr, pending.voiceSends.Find(0));
     EXPECT_EQ(0u, parked.facts.busIndex);
-    EXPECT_FALSE(parked.voiceSends[0].active);
+    EXPECT_EQ(nullptr, parked.voiceSends.Find(0));
     EXPECT_EQ(0u, identity.busIndex);
     EXPECT_EQ(engine->buses.GenerationAt(0), identity.busGeneration);
-    EXPECT_FALSE(identity.voiceSends[0].active);
+    EXPECT_EQ(nullptr, identity.voiceSends.Find(0));
     facts = {};
     pending = {};
     parked = {};

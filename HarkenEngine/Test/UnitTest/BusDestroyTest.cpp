@@ -269,32 +269,28 @@ TEST(BusDestroy, PendingAndParkedSendMirrorsDropCascadeTargets) {
     harken::PendingStartRecord& pending = engine->pendingStarts[0];
     pending.active = true;
     pending.busIndex = 2;
-    pending.voiceSends[0] = {true, 2, -3.0f};
-    pending.voiceSends[1] = {true, 3, -6.0f};
+    pending.voiceSends = pending.voiceSends.WithSet({true, 2, -3.0f, engine->buses.GenerationAt(2), 0});
+    pending.voiceSends = pending.voiceSends.WithSet({true, 3, -6.0f, engine->buses.GenerationAt(3), 1});
 
     harken::ParkRecord& parked = engine->parkRecords[0];
     parked.active = true;
     parked.facts.busIndex = 2;
-    parked.voiceSends[0] = {true, 2, -9.0f};
-    parked.voiceSends[1] = {true, 3, -12.0f};
+    parked.voiceSends = parked.voiceSends.WithSet({true, 2, -9.0f, engine->buses.GenerationAt(2), 0});
+    parked.voiceSends = parked.voiceSends.WithSet({true, 3, -12.0f, engine->buses.GenerationAt(3), 1});
 
     ASSERT_EQ(VN_OK, Vn_DestroyBus(kBusA));
 
     EXPECT_EQ(0u, pending.busIndex);
-    EXPECT_FALSE(pending.voiceSends[0].active);
-    EXPECT_EQ(0u, pending.voiceSends[0].targetBusIndex);
-    EXPECT_FLOAT_EQ(0.0f, pending.voiceSends[0].levelDb);
-    EXPECT_TRUE(pending.voiceSends[1].active);
-    EXPECT_EQ(3u, pending.voiceSends[1].targetBusIndex);
-    EXPECT_FLOAT_EQ(-6.0f, pending.voiceSends[1].levelDb);
+    EXPECT_EQ(nullptr, pending.voiceSends.Find(0));
+    EXPECT_TRUE(pending.voiceSends.Find(1)->active);
+    EXPECT_EQ(3u, pending.voiceSends.Find(1)->targetBusIndex);
+    EXPECT_FLOAT_EQ(-6.0f, pending.voiceSends.Find(1)->levelDb);
 
     EXPECT_EQ(0u, parked.facts.busIndex);
-    EXPECT_FALSE(parked.voiceSends[0].active);
-    EXPECT_EQ(0u, parked.voiceSends[0].targetBusIndex);
-    EXPECT_FLOAT_EQ(0.0f, parked.voiceSends[0].levelDb);
-    EXPECT_TRUE(parked.voiceSends[1].active);
-    EXPECT_EQ(3u, parked.voiceSends[1].targetBusIndex);
-    EXPECT_FLOAT_EQ(-12.0f, parked.voiceSends[1].levelDb);
+    EXPECT_EQ(nullptr, parked.voiceSends.Find(0));
+    EXPECT_TRUE(parked.voiceSends.Find(1)->active);
+    EXPECT_EQ(3u, parked.voiceSends.Find(1)->targetBusIndex);
+    EXPECT_FLOAT_EQ(-12.0f, parked.voiceSends.Find(1)->levelDb);
 
     pending.active = false;
     parked.active = false;
@@ -327,12 +323,12 @@ TEST(BusDestroy, PublishedTimelineIdentityMigratesWithFactsAndDoesNotHoldAfterAu
     identity.renderHandle = renderHandle;
     identity.busIndex = doomed.index;
     identity.busGeneration = doomed.generation;
-    identity.voiceSends[0] = {true, doomed.index, -3.0f, doomed.generation};
+    identity.voiceSends = identity.voiceSends.WithSet({true, doomed.index, -3.0f, doomed.generation, 0});
     ASSERT_NE(nullptr, engine->voices.Resolve(identity.renderHandle));
     ASSERT_EQ(VN_OK, Vn_DestroyBus(kBusA));
     EXPECT_EQ(0u, identity.busIndex);
     EXPECT_EQ(engine->buses.GenerationAt(0), identity.busGeneration);
-    EXPECT_FALSE(identity.voiceSends[0].active);
+    EXPECT_EQ(nullptr, identity.voiceSends.Find(0));
     EXPECT_NE(0u, engine->buses.RetirementRevisionAt(doomed.index));
     EXPECT_EQ(0u, harken::DrainTopologyRetirementsV1(*engine));
     (void)PumpBlock(engine);

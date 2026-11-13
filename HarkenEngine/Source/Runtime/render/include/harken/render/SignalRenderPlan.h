@@ -282,7 +282,7 @@ public:
     static std::uint64_t RoutingScratchBytes(std::uint32_t nodes, std::uint32_t buses,
                                              std::uint64_t edges, std::uint32_t frames) noexcept;
     bool ReserveRouting(BusTree& buses, BlockArena& arena, std::uint32_t members,
-                        std::size_t pathRows) noexcept;
+                        std::size_t pathRows, std::uint64_t sends) noexcept;
     bool BuildRouting(std::span<const SignalMemberImage> members, BusTree& buses) noexcept;
     void PrepareFinalOutputs(std::span<const SignalMemberImage> members) noexcept;
     const double* FinalOutputGain(const SignalMemberImage& member) const noexcept {

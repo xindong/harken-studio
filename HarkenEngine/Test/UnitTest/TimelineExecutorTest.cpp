@@ -3229,7 +3229,7 @@ TEST(TimelineExecutor, RepeatedUpdatePreparesOccurrenceExactlyOnce) {
         for (std::uint32_t row = 0; row < pathCount; ++row)
             occurrence.voice.playbackPath.rows[row] = {harkentest::ObjectId(pathId.low + row), 7 + row};
         occurrence.voice.sendCount = pathCount == harken::kPlaybackPathRowCapacity ? 1u : 0u;
-        occurrence.voice.sends[0] = {VN_BUS_MASTER, -9.0f};
+        if (occurrence.voice.sendCount != 0) occurrence.voice.SetSends({{VN_BUS_MASTER, -9.0f}});
         occurrence.voice.effectCount = 1;
         auto& effect = occurrence.voice.effects[0];
         effect.type = VN_EFFECT_GAIN;

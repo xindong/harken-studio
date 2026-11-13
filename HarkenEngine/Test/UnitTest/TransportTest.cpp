@@ -72,7 +72,7 @@ static_assert(sizeof(harken::CommandRecord::Payload::SetBusEffectParam) == 52,
 static_assert(
     harken::kCommandKnownFlagsMask ==
         (harken::kCommandFlagPreparedCompressor |
-         harken::kCommandFlagVariableWeightSegment | harken::kCommandFlagPreviewBusEffect) &&
+         harken::kCommandFlagVariableWeightSegment | harken::kCommandFlagPreviewBusEffect | harken::kCommandFlagVoiceSendSet) &&
         harken::kCommandFlagPreparedCompressor == 0x01u &&
         harken::kCommandFlagVariableWeightSegment == 0x02u &&
         harken::kCommandFlagPreviewBusEffect == 0x04u,

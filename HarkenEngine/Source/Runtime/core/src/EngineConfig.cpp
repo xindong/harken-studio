@@ -604,9 +604,6 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
         resolved.voiceStealPolicy > kMaxStealPolicy ||
         resolved.audibilityParkEnabled > 1u ||
         !std::isfinite(resolved.parkThresholdDb) ||
-        // voiceSendSlots is bounded by the POD-layout constant that sizes the
-        // per-voice send array (kMaxVoiceSendSlots), like fxSlotsPerVoice.
-        resolved.voiceSendSlots > kMaxVoiceSendSlots ||
         // Bus effect chains share the compile-time slot maximum with voices.
         resolved.fxSlotsPerBus > kMaxFxSlotsPerVoice ||
         resolved.topologyPlanPoolCapacity > kMaxTopologyPlanPoolCeiling ||

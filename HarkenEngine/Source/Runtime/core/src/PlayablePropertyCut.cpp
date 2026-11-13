@@ -1,3 +1,4 @@
+#include "harken/core/AllocGuard.h"
 #include "harken/core/PlayablePropertyCut.h"
 
 #include "harken/core/PackPlaybackView.h"
@@ -318,7 +319,6 @@ bool ResolvedPlayablePropertyCutStorageV1::Reserve(
     const ResolvedPlayablePropertyCutConfigV1& config) {
     buffer.path.reserve(config.maxPathRows);
     buffer.payloads.reserve(config.maxPathRows);
-    buffer.sends.reserve(config.maxSends);
     buffer.effectNodes.reserve(config.maxEffectNodes);
     buffer.effectParams.reserve(config.maxEffectParams);
     buffer.effectParamOffsets.reserve(config.maxEffectNodes);
@@ -328,7 +328,7 @@ bool ResolvedPlayablePropertyCutStorageV1::Reserve(
 
 bool ResolvedPlayablePropertyCutStorageV1::Reset(
     const ResolvedPlayablePropertyCutConfigV1& config) noexcept {
-    if (config.maxPathRows == 0 || config.maxSends == 0 ||
+    if (config.maxPathRows == 0 ||
         config.maxEffectNodes == 0 || config.maxEffectParams == 0 ||
         config.maxEffectEdges == 0) {
         return false;
@@ -626,8 +626,6 @@ ResolvedPlayablePropertyCutStorageV1::ResolveInto(
         std::clamp(output.view.pitchCents, -7200.0f, 7200.0f);
 
     const auto& payload = definition->payload;
-    if (payload.sendCount > config_.maxSends)
-        return ResolvedPlayablePropertyCutStatusV1::Capacity;
     if (!ValidateResolvedSectionGroupPayloadV1(payload))
         return ResolvedPlayablePropertyCutStatusV1::InvalidInput;
     output.view.outputBusRef = ObjectId(payload, PropertyId::OutputBusRef);
@@ -644,8 +642,15 @@ ResolvedPlayablePropertyCutStorageV1::ResolveInto(
         output.view.loopCount = U32(payload, PropertyId::LoopCount);
     if (Present(payload, PropertyId::StreamingMode))
         output.view.streamingMode = U32(payload, PropertyId::StreamingMode);
-    if (payload.sendCount != 0)
-        output.sends.assign(payload.sends, payload.sends + payload.sendCount);
+    if (payload.sendCount != 0) {
+        if (memguard::IsAudioTagged() && payload.sendCount > output.sends.capacity())
+            return ResolvedPlayablePropertyCutStatusV1::Capacity;
+        try {
+            output.sends.assign(payload.sends, payload.sends + payload.sendCount);
+        } catch (...) {
+            return ResolvedPlayablePropertyCutStatusV1::Capacity;
+        }
+    }
     if (Present(payload, PropertyId::SignalGraph)) {
         if ((payload.effectNodeCount != 0 && payload.effectNodes == nullptr) ||
             (payload.effectEdgeCount != 0 && payload.effectEdges == nullptr))

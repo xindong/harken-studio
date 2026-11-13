@@ -630,6 +630,38 @@ bool HasTopologyBusConsumersV1(Engine& engine, BusSlotRef ref) noexcept {
     return false;
 }
 
+std::vector<VoiceSendMirrorMigrationV1> PrepareVoiceSendMirrorMigrationV1(Engine& engine,
+    const std::uint32_t* generations, const std::uint8_t* alive, std::uint32_t count) {
+    std::vector<VoiceSendMirrorMigrationV1> result;
+    const auto capture = [&](VoiceSendConfigs& current, bool live) {
+        auto next = current.Without([&](const auto& send) {
+            return send.targetBusIndex >= count || alive[send.targetBusIndex] == 0 ||
+                generations[send.targetBusIndex] != send.targetBusGeneration;
+        });
+        if (!(next == current)) result.push_back({&current, current, std::move(next), live});
+    };
+    for (auto& current : engine.voiceSendConfig) capture(current, true);
+    for (auto& pending : engine.pendingStarts) capture(pending.voiceSends, false);
+    for (auto& parked : engine.parkRecords) capture(parked.voiceSends, false);
+    for (auto& identity : engine.timelineVoiceInstallIdentities) capture(identity.voiceSends, false);
+    return result;
+}
+
+bool CanCommitVoiceSendMirrorMigrationV1(std::span<const VoiceSendMirrorMigrationV1> rows) noexcept {
+    return std::all_of(rows.begin(), rows.end(), [](const auto& row) {
+        return row.destination != nullptr && *row.destination == row.before;
+    });
+}
+
+void CommitVoiceSendMirrorMigrationV1(Engine& engine,
+    std::span<const VoiceSendMirrorMigrationV1> rows) noexcept {
+    assert(CanCommitVoiceSendMirrorMigrationV1(rows));
+    for (const auto& row : rows) {
+        if (row.accountLive) engine.voiceSendActive -= row.before.size() - row.after.size();
+        *row.destination = row.after;
+    }
+}
+
 void CommitMigratedLogicVoiceMirrorsV1(Engine& engine, const std::uint32_t* migrationTargets,
     const std::uint32_t* generations, const std::uint8_t* alive, std::uint32_t slotCount) noexcept {
     if (migrationTargets == nullptr || generations == nullptr || alive == nullptr) return;
@@ -643,27 +675,16 @@ void CommitMigratedLogicVoiceMirrorsV1(Engine& engine, const std::uint32_t* migr
         index = target < slotCount ? target : 0u;
         generation = generations[index];
     };
-    const auto clearStaleSend = [&](VoiceSendConfig& send, bool accountLive) noexcept {
-        if (!send.active || !stale(send.targetBusIndex, send.targetBusGeneration)) return;
-        send = {};
-        if (accountLive && engine.voiceSendActive != 0) --engine.voiceSendActive;
-    };
-    for (auto& perVoice : engine.voiceSendConfig) {
-        for (auto& send : perVoice) clearStaleSend(send, true);
-    }
     for (auto& pending : engine.pendingStarts) {
         migrateDry(pending.busIndex, pending.busGeneration);
-        for (auto& send : pending.voiceSends) clearStaleSend(send, false);
     }
     for (auto& facts : engine.voicePlayFacts) migrateDry(facts.busIndex, facts.busGeneration);
     for (auto& parked : engine.parkRecords) {
         migrateDry(parked.facts.busIndex, parked.facts.busGeneration);
-        for (auto& send : parked.voiceSends) clearStaleSend(send, false);
     }
     for (auto& identity : engine.timelineVoiceInstallIdentities) {
         if (identity.renderHandle == 0) continue;
         migrateDry(identity.busIndex, identity.busGeneration);
-        for (auto& send : identity.voiceSends) clearStaleSend(send, false);
     }
 }
 

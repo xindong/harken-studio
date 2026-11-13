@@ -1002,7 +1002,7 @@ TEST(BusSend, ParkReturnRoundTripsVoiceSends) {
     play.loopCount = 0; // infinite: park-eligible while inaudible
     VnVoiceHandle handle = 0;
     ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
-    ASSERT_EQ(VN_OK, Vn_SetVoiceSend(handle, 0, kBusB, 0.0f));
+    ASSERT_EQ(VN_OK, Vn_SetVoiceSend(handle, UINT32_MAX, kBusB, 0.0f));
 
     ASSERT_EQ(VN_OK, Vn_SetVoiceOutputVolume(handle, -6.0206f, 0));
     Capture warm;
@@ -1018,8 +1018,8 @@ TEST(BusSend, ParkReturnRoundTripsVoiceSends) {
     Vn_CaptureSnapshot(&parked);
     ASSERT_EQ(1u, parked.parkedVoiceCount);
 
-    EXPECT_EQ(VN_INVALID_ARG, Vn_SetVoiceSend(handle, 0, kBusB, 800.0f));
-    EXPECT_EQ(VN_INVALID_ARG, Vn_SetVoiceSendLevel(handle, 0, 800.0f, 0));
+    EXPECT_EQ(VN_INVALID_ARG, Vn_SetVoiceSend(handle, UINT32_MAX, kBusB, 800.0f));
+    EXPECT_EQ(VN_INVALID_ARG, Vn_SetVoiceSendLevel(handle, UINT32_MAX, 800.0f, 0));
 
     // Raise it audible again: it returns and its send is re-applied. Pump with
     // interleaved updates so the return issues and the resumed voice settles
@@ -1047,6 +1047,76 @@ TEST(BusSend, ParkReturnRoundTripsVoiceSends) {
 
 // Clearing a voice send stops its contribution: after the clear the target no
 // longer receives the voice.
+TEST(BusSend, SparseVoiceLabelsAndQueuedEditsPreserveOtherRamps) {
+    EngineSession session(MakeNullConfig(2, kBlockFrames));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    const auto dc = RegisterDc(0.1f);
+    auto play = MakePlayDesc(harkentest::ObjectId(1));
+    play.loopCount = 0;
+    VnVoiceHandle handle = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
+    ASSERT_EQ(VN_OK, Vn_SetVoiceSend(handle, UINT32_MAX, VN_BUS_MASTER, 0));
+    ASSERT_EQ(VN_OK, Vn_SetVoiceSend(handle, 700000, VN_BUS_MASTER, 0));
+    Capture output;
+    PumpAndCapture(session.Engine(), 1, output);
+    ASSERT_NEAR(0.3f, output.left.back(), 1e-6f);
+    ASSERT_EQ(VN_OK, Vn_SetVoiceSendLevel(handle, UINT32_MAX, -12, 1000));
+    PumpAndCapture(session.Engine(), 1, output);
+    auto* render = session.Engine()->voices.Resolve(harkentest::RenderHandle(session.Engine(), handle));
+    ASSERT_NE(nullptr, render);
+    ASSERT_EQ(2u, render->voiceSends.size());
+    const auto rampBefore = render->voiceSends.back();
+    ASSERT_TRUE(rampBefore.ramping);
+    ASSERT_EQ(VN_OK, Vn_SetVoiceSend(handle, 42, VN_BUS_MASTER, -6));
+    ASSERT_EQ(VN_OK, Vn_SetVoiceSendLevel(handle, 42, -30, 200));
+    ASSERT_EQ(VN_OK, Vn_ClearVoiceSend(handle, 42));
+    ASSERT_EQ(VN_OK, Vn_SetVoiceSend(handle, 42, VN_BUS_MASTER, -9));
+    PumpAndCapture(session.Engine(), 1, output);
+    ASSERT_EQ(3u, render->voiceSends.size());
+    const auto& continued = render->voiceSends.back();
+    EXPECT_TRUE(continued.ramping);
+    EXPECT_EQ(rampBefore.rampBlocksDone + 1, continued.rampBlocksDone);
+    EXPECT_EQ(rampBefore.rampBlocksTotal, continued.rampBlocksTotal);
+    EXPECT_FLOAT_EQ(rampBefore.rampStartGain, continued.rampStartGain);
+    EXPECT_FALSE(render->voiceSends.front().ramping);
+    EXPECT_NEAR(std::pow(10.0f, -9.0f / 20), render->voiceSends.front().gain.current, 1e-6f);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(3u, session.Engine()->voices.RetainedVoiceSendCount());
+    ASSERT_EQ(VN_OK, Vn_Stop(handle, 0));
+    PumpAndCapture(session.Engine(), 1, output);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    EXPECT_EQ(0u, session.Engine()->voices.RetainedVoiceSendCount());
+}
+
+TEST(BusSend, VoiceSendPreparationFailureKeepsAcceptedRouting) {
+    EngineSession session(MakeNullConfig(2, kBlockFrames));
+    ASSERT_EQ(VN_OK, session.InitResult());
+    const auto dc = RegisterDc(0.1f);
+    auto play = MakePlayDesc(harkentest::ObjectId(1));
+    play.loopCount = 0;
+    VnVoiceHandle handle = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
+    ASSERT_EQ(VN_OK, Vn_SetVoiceSend(handle, 9, VN_BUS_MASTER, 0));
+    Capture output;
+    auto& engine = *session.Engine();
+    PumpAndCapture(&engine, 1, output);
+    const auto render = harkentest::RenderHandle(&engine, handle);
+    const auto before = engine.voiceSendConfig[static_cast<std::uint32_t>(render)];
+    const auto head = engine.commands.PublishedHead();
+    for (std::size_t failure = 1; failure <= 8; ++failure) {
+        SCOPED_TRACE(failure);
+        harken::detail::ArmLogicAllocFaultForTests(failure, harken::detail::LogicAllocSite::VoiceSendStorage);
+        const auto result = Vn_SetVoiceSend(handle, UINT32_MAX, VN_BUS_MASTER, -3);
+        harken::detail::DisarmLogicAllocFaultForTests();
+        EXPECT_EQ(VN_DEVICE_ERROR, result);
+        EXPECT_EQ(head, engine.commands.PublishedHead());
+        EXPECT_TRUE(before == engine.voiceSendConfig[static_cast<std::uint32_t>(render)]);
+        PumpAndCapture(&engine, 1, output);
+        EXPECT_NEAR(0.2f, output.left.back(), 1e-6f);
+    }
+    EXPECT_EQ(VN_OK, Vn_SetVoiceSend(handle, UINT32_MAX, VN_BUS_MASTER, -3));
+}
+
 TEST(BusSend, ClearVoiceSendStopsContribution) {
     VnConfig config = MakeNullConfig(2, kBlockFrames);
     config.maxBuses = 4;
@@ -1357,7 +1427,7 @@ TEST_F(BusSendSlotReconcile, NewBusCannotAliasContentNodeInOlderSignalPlan) {
     signals->EnableActualRouting();
     ASSERT_TRUE(signals->BeginBlock({1, 1, 1, 1, 0, kBlockFrames}));
     harken::BlockArena arena(128 * 1024);
-    EXPECT_FALSE(signals->ReserveRouting(engine->buses, arena, 0, 0));
+    EXPECT_FALSE(signals->ReserveRouting(engine->buses, arena, 0, 0, 0));
     EXPECT_EQ(arena.UsedBytes(), 0u);
     EXPECT_FALSE(signals->BuildRouting({}, engine->buses));
 }

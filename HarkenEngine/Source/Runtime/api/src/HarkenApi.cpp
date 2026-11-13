@@ -491,7 +491,7 @@ private:
         std::uint32_t sends, std::uint32_t effects,
         CapturedTimelineVoiceInstall::ColumnRange (&ranges)[4], std::size_t& bytes) noexcept {
         if (bindings > kMaxVoiceBindingInstanceSlots || path > kPlaybackPathRowCapacity ||
-            sends > kTimelineMaxVoiceSends || effects > kTimelineMaxVoiceEffects) return false;
+            effects > kTimelineMaxVoiceEffects) return false;
         bytes = sizeof(CapturedTimelineVoiceInstall::Header);
         return Append<TimelineVoiceBindingInstall>(bytes, bindings, ranges[0]) &&
             Append<PlaybackPathRow>(bytes, path, ranges[1]) &&
@@ -7278,12 +7278,11 @@ void ServicePendingImmediateStopIntents(
 // definitions.
 class AdmittedCommandWriter;
 void ResetVoiceSendMirror(harken::Engine& engine, std::uint32_t slot);
-void ApplyVoiceSendLive(harken::Engine& engine, VnVoiceHandle render,
-                         std::uint32_t sendSlot, std::uint32_t targetBusIndex,
-                         float levelDb);
-void ApplyVoiceSendLive(harken::Engine& engine, VnVoiceHandle render,
-                        std::uint32_t sendSlot, std::uint32_t targetBusIndex,
-                        float levelDb, AdmittedCommandWriter& writer);
+VnResult ApplyVoiceSendLive(harken::Engine& engine, VnVoiceHandle render,
+    std::uint32_t sendSlot, std::uint32_t targetBusIndex, float levelDb);
+VnResult PrepareInitialVoiceSends(harken::Engine& engine, VnVoiceHandle render,
+    const harken::VoiceSendConfigs& sends);
+std::uint64_t NextVoiceSendIncarnation(harken::Engine& engine);
 
 // The shared raw-Voice start implementation. actionEmitterPlay=true marks an
 // Action PLAY Step
@@ -8225,9 +8224,9 @@ harken::EnginePlayableMemberRecord* RetainQueueProgramMemberAt(
 VnResult ValidateTimelineVoiceInstallInputShape(
     const harken::TimelineVoiceInstallInput& input) noexcept {
     if (input.facts == nullptr) return VN_INVALID_ARG;
-    if (input.bindings.size() > harken::kMaxVoiceBindingInstanceSlots ||
+    if (input.sends.size() > UINT32_MAX ||
+        input.bindings.size() > harken::kMaxVoiceBindingInstanceSlots ||
         input.pathRows.size() > harken::kPlaybackPathRowCapacity ||
-        input.sends.size() > harken::kTimelineMaxVoiceSends ||
         input.effects.size() > harken::kTimelineMaxVoiceEffects) return VN_INVALID_CONFIG;
     return VN_OK;
 }
@@ -8236,7 +8235,7 @@ VnResult ValidateLegacyTimelineVoiceInstallCounts(
     const harken::TimelineVoiceInstallDesc& source) noexcept {
     if (source.bindingCount > harken::kMaxVoiceBindingInstanceSlots ||
         source.playbackPath.rowCount > harken::kPlaybackPathRowCapacity ||
-        source.sendCount > harken::kTimelineMaxVoiceSends ||
+        source.sendCount > source.sends.size() ||
         source.effectCount > harken::kTimelineMaxVoiceEffects) return VN_INVALID_CONFIG;
     return VN_OK;
 }
@@ -8288,7 +8287,7 @@ public:
         facts_ = CopyTimelineVoiceInstallFacts<harken::TimelineVoiceInstallFacts>(source);
         input_ = {&facts_, {source.bindingStorage, source.bindingCount},
             {source.playbackPath.rows, source.playbackPath.rowCount},
-            {source.sends, source.sendCount}, {source.effects, source.effectCount}};
+            source.sends.first(source.sendCount), {source.effects, source.effectCount}};
     }
 
     LegacyTimelineVoiceInstallProjection(const LegacyTimelineVoiceInstallProjection&) = delete;
@@ -8375,7 +8374,7 @@ harken::PlayableStartStatus PrepareNativeVoiceCapture(
 
 // Transitional value projection for readers that still own a legacy descriptor.
 harken::TimelineVoiceInstallDesc ProjectLegacyTimelineVoiceInstall(
-    const harken::CapturedTimelineVoiceInstall& captured) noexcept {
+    const harken::CapturedTimelineVoiceInstall& captured) {
     if (!captured.Valid()) return {};
     const auto input = captured.Input();
     assert(ValidateTimelineVoiceInstallInputShape(input) == VN_OK);
@@ -8386,7 +8385,7 @@ harken::TimelineVoiceInstallDesc ProjectLegacyTimelineVoiceInstall(
     result.effectCount = static_cast<std::uint32_t>(input.effects.size());
     std::copy(input.bindings.begin(), input.bindings.end(), result.bindingStorage);
     std::copy(input.pathRows.begin(), input.pathRows.end(), result.playbackPath.rows);
-    std::copy(input.sends.begin(), input.sends.end(), result.sends);
+    result.SetSends({input.sends.begin(), input.sends.end()});
     std::copy(input.effects.begin(), input.effects.end(), result.effects);
     return result;
 }
@@ -8448,7 +8447,6 @@ VnResult TimelineVoiceStartCommandBudget(
     const auto status = ValidateTimelineVoiceInstallInputShape(input);
     if (status != VN_OK) return status;
     *out = 3u + static_cast<std::uint32_t>(input.bindings.size()) +
-        static_cast<std::uint32_t>(input.sends.size()) +
         static_cast<std::uint32_t>(input.effects.size()) +
         SpatialStartCommandDemand(input.facts->spatialized, input.facts->attenuationResolved);
     for (const auto& effect : input.effects) *out += (effect.flags & 1u) != 0;
@@ -8460,7 +8458,7 @@ VnResult TimelineVoiceStartCommandBudget(
     if (out == nullptr) return VN_INVALID_ARG;
     const auto status = ValidateLegacyTimelineVoiceInstallCounts(install);
     if (status != VN_OK) return status;
-    *out = 3u + install.sendCount + install.effectCount + install.bindingCount +
+    *out = 3u + install.effectCount + install.bindingCount +
         SpatialStartCommandDemand(install.spatialized, install.attenuationResolved);
     for (std::uint32_t index = 0; index < install.effectCount; ++index)
         *out += (install.effects[index].flags & 1u) != 0;
@@ -8563,8 +8561,7 @@ VnResult PreflightTimelineVoiceStart(
         install.spatializationMix < 0.0f || install.spatializationMix > 1.0f) {
         return VN_INVALID_ARG;
     }
-    if (input.sends.size() > engine.config.voiceSendSlots ||
-        input.bindings.size() > engine.config.voiceBindingInstanceSlots ||
+    if (input.bindings.size() > engine.config.voiceBindingInstanceSlots ||
         commandCount > engine.playLedBatchScratch.size() ||
         !AtomicBatchFitsCapacities(engine, commandCount)) {
         return VN_INVALID_CONFIG;
@@ -8961,8 +8958,7 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
         return result;
     }
     commandCount += static_cast<std::uint32_t>(variableWeight != nullptr);
-    if (input.sends.size() > engine.config.voiceSendSlots ||
-        input.bindings.size() > engine.config.voiceBindingInstanceSlots ||
+    if (input.bindings.size() > engine.config.voiceBindingInstanceSlots ||
         commandCount > engine.playLedBatchScratch.size() ||
         !AtomicBatchFitsCapacities(engine, commandCount)) {
         result.status = VN_INVALID_CONFIG;
@@ -9212,7 +9208,7 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
         return result;
     };
     if (!engine.voices.BindPreparedSignalPath(render, input.pathRows) ||
-        !engine.playbackPaths[renderSlot].PreparePath(input.pathRows.size()))
+        !engine.playbackPaths[renderSlot].PreparePath(input.pathRows.size(), input.sends.size()))
         return rollback(VN_BACKPRESSURE);
     engine.params.OnVoiceStarted(render, install.volumeDb, install.pitchRatio, emitter);
     engine.voicePlayFacts[renderSlot].outputBusVolumeDb = install.outputBusVolumeDb;
@@ -9318,25 +9314,23 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
             variableWeight->bank.generation;
     }
 
-    std::array<harken::VoiceSendConfig, harken::kMaxVoiceSendSlots> timelineSends{};
-    for (std::uint32_t send = 0; send < input.sends.size(); ++send) {
-        const harken::BusSlotRef target =
-            engine.buses.FindRef(input.sends[send].targetBusId);
-        if (!target.Valid()) {
-            return rollback(VN_UNKNOWN_ID);
+    harken::VoiceSendConfigs timelineSends;
+    try {
+        harken::VoiceSendConfigs::Records records;
+        records.reserve(input.sends.size());
+        for (std::uint32_t send = 0; send < input.sends.size(); ++send) {
+            const auto target = engine.buses.FindRef(input.sends[send].targetBusId);
+            if (!target.Valid()) return rollback(VN_UNKNOWN_ID);
+            records.push_back({true, target.index, input.sends[send].levelDb,
+                target.generation, send, NextVoiceSendIncarnation(engine)});
         }
-        harken::CommandRecord& sendCommand =
-            engine.playLedBatchScratch[commandIndex++];
-        sendCommand = {};
-        sendCommand.opcode = harken::kOpcodeSetVoiceSend;
-        sendCommand.payload.setVoiceSend.handle = render;
-        sendCommand.payload.setVoiceSend.sendSlot = send;
-        sendCommand.payload.setVoiceSend.targetBusIndex = target.index;
-        sendCommand.payload.setVoiceSend.targetBusGeneration =
-            target.generation;
-        sendCommand.payload.setVoiceSend.levelDb =
-            input.sends[send].levelDb;
-        timelineSends[send] = {true, target.index, input.sends[send].levelDb, target.generation};
+        timelineSends = harken::VoiceSendConfigs::From(std::move(records));
+        const auto sendStatus = PrepareInitialVoiceSends(engine, render, timelineSends);
+        if (sendStatus != VN_OK) return rollback(sendStatus);
+        if (!engine.voices.CapturePreparedRoutingV1(render, &voicePreparation.routing))
+            return rollback(VN_STALE_HANDLE);
+    } catch (...) {
+        return rollback(VN_DEVICE_ERROR);
     }
 
     for (const auto& source : input.effects) {
@@ -9778,7 +9772,7 @@ engine.runtimeRecreateRequired = true;
     observedPath.outputBusId = install.outputBusId;
     observedPath.AssignPath(input.pathRows);
     observedPath.sendCount = static_cast<std::uint32_t>(input.sends.size());
-    std::copy(input.sends.begin(), input.sends.end(), observedPath.sends);
+    std::copy(input.sends.begin(), input.sends.end(), observedPath.sends.begin());
     result.status = VN_OK;
     result.renderHandle = render;
     result.sourceTerminal = sourceTerminal;
@@ -22938,17 +22932,8 @@ harken::PlayableStartStatus ResolveTimelineVoiceInstallSource(
         (streamed ? streamFacts.channelCount : media.channelCount) > 2) {
         return harken::PlayableStartStatus::InvalidInput;
     }
-    if (cut.sendCount > harken::kTimelineMaxVoiceSends ||
-        cut.sendCount > engine.config.voiceSendSlots ||
-        cut.effectNodeCount > harken::kTimelineMaxVoiceEffects ||
-        cut.effectNodeCount > engine.config.fxSlotsPerVoice) {
-        return cut.sendCount > harken::kTimelineMaxVoiceSends ||
-                       cut.sendCount > engine.config.voiceSendSlots ||
-                       cut.effectNodeCount > harken::kTimelineMaxVoiceEffects ||
-                       cut.effectNodeCount > engine.config.fxSlotsPerVoice
-                   ? harken::PlayableStartStatus::Capacity
-                   : harken::PlayableStartStatus::CapabilityUnavailable;
-    }
+    if (cut.effectNodeCount > harken::kTimelineMaxVoiceEffects ||
+        cut.effectNodeCount > engine.config.fxSlotsPerVoice) return harken::PlayableStartStatus::Capacity;
     auto& voice = source.facts;
     voice.streamed = streamed;
     if (streamed) {
@@ -23122,17 +23107,22 @@ harken::PlayableStartStatus BuildTimelineVoiceInstallFromCut(
     const auto resolved = ResolveTimelineVoiceInstallSource(
         engine, cut, leaseOrNull, allowDirectActionStream, source);
     if (resolved != harken::PlayableStartStatus::Accepted) return resolved;
-    auto voice = CopyTimelineVoiceInstallFacts<harken::TimelineVoiceInstallDesc>(source.facts);
-    voice.bindingCount = source.bindingCount;
-    voice.playbackPath.rowCount = cut.pathCount;
-    voice.sendCount = cut.sendCount;
-    voice.effectCount = cut.effectNodeCount;
-    const auto populated = PopulateTimelineVoiceInstallColumns(engine, cut, source,
-        {voice.bindingStorage, voice.bindingCount}, {voice.playbackPath.rows, cut.pathCount},
-        {voice.sends, voice.sendCount}, {voice.effects, voice.effectCount});
-    if (populated != harken::PlayableStartStatus::Accepted) return populated;
-    *out = voice;
-    return harken::PlayableStartStatus::Accepted;
+    try {
+        auto voice = CopyTimelineVoiceInstallFacts<harken::TimelineVoiceInstallDesc>(source.facts);
+        voice.bindingCount = source.bindingCount;
+        voice.playbackPath.rowCount = cut.pathCount;
+        voice.effectCount = cut.effectNodeCount;
+        std::vector<harken::TimelineVoiceSendInstall> sends(cut.sendCount);
+        const auto populated = PopulateTimelineVoiceInstallColumns(engine, cut, source,
+            {voice.bindingStorage, voice.bindingCount}, {voice.playbackPath.rows, cut.pathCount},
+            sends, {voice.effects, voice.effectCount});
+        if (populated != harken::PlayableStartStatus::Accepted) return populated;
+        voice.SetSends(std::move(sends));
+        *out = std::move(voice);
+        return harken::PlayableStartStatus::Accepted;
+    } catch (...) {
+        return harken::PlayableStartStatus::Capacity;
+    }
 }
 
 harken::PlayableStartStatus CaptureTimelineVoiceInstallFromCut(
@@ -53014,8 +53004,7 @@ void ServiceOriginalPlainEntry(harken::Engine& engine,
             installation.releaseObserver.slot != source.installation.releaseObserver.slot ||
             installation.releaseObserver.targetSequence != source.installation.releaseObserver.targetSequence ||
             installation.busIndex != source.installation.busIndex || installation.busGeneration != source.installation.busGeneration ||
-            std::memcmp(installation.voiceSends.data(), source.installation.voiceSends.data(),
-                sizeof(installation.voiceSends)) != 0) { fail(harken::ActionTerminalReason::RuntimeError); return; }
+            !(installation.voiceSends == source.installation.voiceSends)) { fail(harken::ActionTerminalReason::RuntimeError); return; }
         if (!source.bound) {
             if (!engine.timelineArms.BindPendingImmediateStart(source.original.event.armToken,
                     source.chosenOnset, source.chosenOnset)) return;
@@ -63214,7 +63203,7 @@ PlayableStartStatus CaptureTimelineVoiceInstallFromCut(
 }
 
 TimelineVoiceInstallDesc ProjectTimelineVoiceInstall(
-    const CapturedTimelineVoiceInstall& captured) noexcept {
+    const CapturedTimelineVoiceInstall& captured) {
     return ProjectLegacyTimelineVoiceInstall(captured);
 }
 
@@ -63886,7 +63875,7 @@ bool Engine::BuildPendingVariableNativeBacking(const EngineImmediateEntryAttempt
             for (auto& captured : slot.side.Captures()) {
                 if (!allow() || CapturedTimelineVoiceInstallBuilder::Reserve(
                         std::min({columns.bindings, config.voiceBindingInstanceSlots, kMaxVoiceBindingInstanceSlots}),
-                        columns.path, std::min({columns.sends, config.voiceSendSlots, kTimelineMaxVoiceSends}),
+                        columns.path, columns.sends,
                         std::min({columns.effects, config.fxSlotsPerVoice, kTimelineMaxVoiceEffects}), &captured.voice) !=
                             PlayableStartStatus::Accepted) return false;
             }
@@ -64242,7 +64231,7 @@ static bool PreparePendingOrdinaryVoiceBacking(Engine& engine,
             const auto& columns = result.profile.voice;
             return CapturedTimelineVoiceInstallBuilder::Reserve(
                 std::min({columns.bindings, engine.config.voiceBindingInstanceSlots, kMaxVoiceBindingInstanceSlots}),
-                columns.path, std::min({columns.sends, engine.config.voiceSendSlots, kTimelineMaxVoiceSends}),
+                columns.path, columns.sends,
                 std::min({columns.effects, engine.config.fxSlotsPerVoice, kTimelineMaxVoiceEffects}), out) ==
                     PlayableStartStatus::Accepted;
         }
@@ -76206,9 +76195,6 @@ std::uint32_t PendingStartCommandDemand(harken::Engine& engine,
     for (bool bypassed : rec.effectBypass) {
         needed += bypassed ? 1u : 0u;
     }
-    for (const harken::VoiceSendConfig& send : rec.voiceSends) {
-        needed += send.active ? 1u : 0u;
-    }
     needed += UniquePinnedTargetCount(engine, rec.pinnedBindings.data(),
                                       rec.pinnedBindingCount);
     needed += UniqueRecipeTargetCount(
@@ -76734,17 +76720,8 @@ PendingStartOutcome StartDeferredVoice(
     // command room is protected by the single-producer admission writer. A
     // refusal here therefore indicates broken bookkeeping, not a runtime path.
     if (!recipePrimed) return PendingStartOutcome::InvalidInput;
-    // Replay the staged voice sends through the shared live path (mirror +
-    // command + high-water). Command room for these was included in the
-    // deferred-start batch budget.
-    for (std::uint32_t s = 0; s < engine.config.voiceSendSlots &&
-                              s < rec.voiceSends.size();
-         ++s) {
-        if (rec.voiceSends[s].active) {
-            ApplyVoiceSendLive(engine, render, s, rec.voiceSends[s].targetBusIndex,
-                               rec.voiceSends[s].levelDb, commands);
-        }
-    }
+    if (PrepareInitialVoiceSends(engine, render, rec.voiceSends) != VN_OK)
+        return PendingStartOutcome::Unavailable;
     // Onset of the pinned attachment set (section 5.7): instantiate the
     // identities pinned at acceptance against the CURRENT definition
     // revisions and publish the resolved initial targets into this same
@@ -78012,9 +77989,6 @@ std::uint32_t ParkReturnCommandDemand(harken::Engine& engine,
          ++slot) {
         needed += rec.effectBypass[slot] ? 1u : 0u;
     }
-    for (const harken::VoiceSendConfig& send : rec.voiceSends) {
-        needed += send.active ? 1u : 0u;
-    }
     return needed;
 }
 
@@ -78502,18 +78476,7 @@ bool TryReturnParked(harken::Engine& engine, std::uint32_t ledgerSlot,
     // that never allocates and cannot be refused — the reservation guarantees
     // the restore is all-or-nothing.
     if (!PrimeParkedEffectBindings(engine, rec, publicHandle, newRender, commands, variableCut.Reader())) return false;
-    // Re-issue the captured voice sends on the fresh render slot (mirror +
-    // command + high-water). Bus destruction scrubs tombstoned targets from
-    // the captured record before a return; command room was reserved above.
-    for (std::uint32_t s = 0; s < engine.config.voiceSendSlots &&
-                              s < rec.voiceSends.size();
-         ++s) {
-        if (rec.voiceSends[s].active) {
-            ApplyVoiceSendLive(engine, newRender, s,
-                               rec.voiceSends[s].targetBusIndex,
-                               rec.voiceSends[s].levelDb, commands);
-        }
-    }
+    if (PrepareInitialVoiceSends(engine, newRender, rec.voiceSends) != VN_OK) return false;
     if (commands.Overflowed() || !variableCut.BindVoice(newRender) ||
         !engine.voices.CommitPreparedVoice(newRender)) return false;
     engine.params.CommitStagedVoiceBindings(newRender);
@@ -79932,14 +79895,7 @@ bool SameTimelineRoutingIdentity(const EngineTimelineVoiceInstallIdentity& a,
         x.subjectGuidHigh != y.subjectGuidHigh || x.subjectGuidLow != y.subjectGuidLow ||
         x.trackId != y.trackId || x.clipId != y.clipId || x.subjectId != y.subjectId ||
         x.loopIteration != y.loopIteration || x.occurrenceOrdinal != y.occurrenceOrdinal) return false;
-    for (std::size_t i = 0; i < a.voiceSends.size(); ++i) {
-        const auto& xSend = a.voiceSends[i];
-        const auto& ySend = b.voiceSends[i];
-        if (xSend.active != ySend.active || xSend.targetBusIndex != ySend.targetBusIndex ||
-            xSend.targetBusGeneration != ySend.targetBusGeneration ||
-            std::memcmp(&xSend.levelDb, &ySend.levelDb, sizeof(float)) != 0) return false;
-    }
-    return true;
+    return a.voiceSends == b.voiceSends;
 }
 
 bool CandidateRetainsRef(const Engine& engine, const TopologyPlanView& candidate,
@@ -79995,34 +79951,22 @@ bool ValidatePreparedTimelineVoiceStartRoutingV1(Engine& engine,
             command.payload.play.batch.batchCommandCount != 1 ||
             command.payload.play.batch.armToken != ((static_cast<std::uint64_t>(resource.arm.generation) << 32) | resource.arm.slot)) return false;
     }
-    std::array<bool, kMaxVoiceSendSlots> represented{};
-    for (std::uint32_t i = 0; i < kMaxVoiceSendSlots; ++i) {
-        const auto& send = identity.voiceSends[i];
-        if (send.active && !engine.buses.LogicRefMatches({send.targetBusIndex, send.targetBusGeneration})) return false;
-        if (routing.sends[i].active) {
-            if (!send.active || send.targetBusIndex != routing.sends[i].busIndex ||
-                send.targetBusGeneration != routing.sends[i].busGeneration) return false;
-            represented[i] = true;
-        }
+    const auto routes = routing.SendRoutes();
+    std::size_t active = 0;
+    for (const auto& route : routes) {
+        if (!route.active) continue;
+        const auto* send = identity.voiceSends.Find(route.slot);
+        if (send == nullptr || !send->active || send->targetBusIndex != route.busIndex ||
+            send->targetBusGeneration != route.busGeneration || send->incarnation != route.incarnation ||
+            !engine.buses.LogicRefMatches({route.busIndex, route.busGeneration})) return false;
+        ++active;
     }
-    for (std::uint32_t i = 1; i < prepared.commandCount; ++i) {
-        const auto& command = prepared.commands[i];
-        if (command.opcode == kOpcodeSetVoiceSend) {
-            const auto& send = command.payload.setVoiceSend;
-            if (send.handle != prepared.renderHandle || send.sendSlot >= kMaxVoiceSendSlots) return false;
-            const auto& expected = identity.voiceSends[send.sendSlot];
-            if (!expected.active || expected.targetBusIndex != send.targetBusIndex ||
-                expected.targetBusGeneration != send.targetBusGeneration || !std::isfinite(send.levelDb)) return false;
-            represented[send.sendSlot] = true;
-        } else if (command.opcode == kOpcodeClearVoiceSend) {
-            const auto& send = command.payload.clearVoiceSend;
-            if (send.handle != prepared.renderHandle || send.sendSlot >= kMaxVoiceSendSlots ||
-                identity.voiceSends[send.sendSlot].active) return false;
-        }
-    }
-    for (std::uint32_t i = 0; i < kMaxVoiceSendSlots; ++i) {
-        if (identity.voiceSends[i].active && !represented[i]) return false;
-    }
+    if (active != identity.voiceSends.size()) return false;
+    // Initial membership is owned by the prepared Voice; no per-Send command
+    // may bypass that exact routing proof.
+    for (std::uint32_t i = 1; i < prepared.commandCount; ++i)
+        if (prepared.commands[i].opcode == kOpcodeSetVoiceSend ||
+            prepared.commands[i].opcode == kOpcodeClearVoiceSend) return false;
     return true;
 }
 
@@ -80032,6 +79976,8 @@ bool PrepareUnpublishedTimelineRoutingV1(Engine& engine, const TopologyPlanView&
     const auto domain = engine.projectGenerationReservationDomain;
     if (domain == nullptr || !domain->live || domain->liveEngine != &engine) return false;
     out.rows.clear();
+    out.sendMirrors = PrepareVoiceSendMirrorMigrationV1(engine,
+        candidate.generations, candidate.alive, candidate.slotCount);
     std::vector<VnVoiceHandle> handles;
     const bool captured = VisitPreparedRoutingOwners(engine,
         [&](RoutingStore store, std::uint32_t outer, std::uint32_t index,
@@ -80074,23 +80020,15 @@ bool PrepareUnpublishedTimelineRoutingV1(Engine& engine, const TopologyPlanView&
             row.identityAfter.busGeneration = candidate.generations[target];
             row.changed = true;
         }
-        for (std::uint32_t i = 0; i < kMaxVoiceSendSlots; ++i) {
-            const auto& before = row.identityBefore.voiceSends[i];
-            if (before.active && !CandidateRetainsRef(engine, candidate, before.targetBusIndex, before.targetBusGeneration)) {
-                row.identityAfter.voiceSends[i] = {};
-                if (row.after.sends[i].active) row.after.sends[i] = {};
-                row.changed = true;
-            }
-        }
-        for (auto& command : row.nextCommands) {
-            if (command.opcode != kOpcodeSetVoiceSend) continue;
-            const auto slot = command.payload.setVoiceSend.sendSlot;
-            if (row.identityAfter.voiceSends[slot].active) continue;
-            CommandRecord replacement{};
-            replacement.opcode = kOpcodeClearVoiceSend;
-            replacement.payload.clearVoiceSend.handle = row.handle;
-            replacement.payload.clearVoiceSend.sendSlot = slot;
-            command = replacement;
+        row.identityAfter.voiceSends = row.identityBefore.voiceSends.Without([&](const auto& send) {
+            return !CandidateRetainsRef(engine, candidate, send.targetBusIndex, send.targetBusGeneration);
+        });
+        if (!(row.identityAfter.voiceSends == row.identityBefore.voiceSends)) {
+            const auto routes = row.before.SendRoutes();
+            auto changed = std::make_shared<std::vector<VoiceSendRoute>>(routes.begin(), routes.end());
+            for (auto& route : *changed)
+                if (!row.identityAfter.voiceSends.Find(route.slot)) route.active = false;
+            row.after.sends = std::move(changed);
             row.changed = true;
         }
         if (!engine.voices.CanCommitPreparedRoutingMigrationV1(row.handle, row.before, row.after)) return false;
@@ -80114,6 +80052,7 @@ bool CanCommitUnpublishedTimelineRoutingV1(Engine& engine, const TopologyPlanVie
     if (prepared.owner != &engine || domain == nullptr || !domain->live || domain->liveEngine != &engine ||
         domain->epoch != prepared.domainEpoch || prepared.graphRevision != engine.acceptedBusTopologyRevision ||
         !ValidRoutingCandidate(candidate)) return false;
+    if (!CanCommitVoiceSendMirrorMigrationV1(prepared.sendMirrors)) return false;
     std::size_t cursor = 0;
     const bool matched = VisitPreparedRoutingOwners(engine,
         [&](RoutingStore store, std::uint32_t outer, std::uint32_t index,
@@ -80152,6 +80091,7 @@ void CommitUnpublishedTimelineRoutingV1(Engine& engine,
         if (row.changed && !engine.voices.CanCommitPreparedRoutingMigrationV1(
                 row.handle, row.before, row.after)) return;
     }
+    CommitVoiceSendMirrorMigrationV1(engine, prepared.sendMirrors);
     for (const auto& row : prepared.rows) {
         if (!row.changed) continue;
         engine.voices.CommitPreparedRoutingMigrationV1(row.handle, row.before, row.after);
@@ -80174,59 +80114,88 @@ void ResetVoiceSendMirror(harken::Engine& engine, std::uint32_t slot) {
     if (slot >= engine.voiceSendConfig.size()) {
         return;
     }
-    for (harken::VoiceSendConfig& c : engine.voiceSendConfig[slot]) {
+    for (const harken::VoiceSendConfig& c : engine.voiceSendConfig[slot]) {
         if (c.active && engine.voiceSendActive > 0) {
             --engine.voiceSendActive;
         }
     }
-    engine.voiceSendConfig[slot].fill(harken::VoiceSendConfig{});
+    engine.voiceSendConfig[slot] = {};
 }
 
-// Applies one voice send to a live render slot: updates the logic mirror (and
-// the live count on a newly active slot), then pushes the set-voice-send
-// command. Shared by the live setter and the pending/return replays. Logic
-// thread only.
-template <typename Writer>
-void ApplyVoiceSendLiveWith(
-    harken::Engine& engine, VnVoiceHandle render, std::uint32_t sendSlot,
-    std::uint32_t targetBusIndex, float levelDb, Writer& writer) {
-    const std::uint32_t slot = static_cast<std::uint32_t>(render);
-    if (slot < engine.voiceSendConfig.size()) {
-        harken::VoiceSendConfig& c = engine.voiceSendConfig[slot][sendSlot];
-        if (!c.active) {
-            ++engine.voiceSendActive;
-        }
-        c.active = true;
-        c.targetBusIndex = targetBusIndex;
-        c.targetBusGeneration =
-            engine.buses.GenerationAt(targetBusIndex);
-        c.levelDb = levelDb;
+std::uint64_t NextVoiceSendIncarnation(harken::Engine& engine) {
+    if (engine.nextVoiceSendIncarnation == UINT64_MAX) throw std::bad_alloc{};
+    return engine.nextVoiceSendIncarnation++;
+}
+
+VnResult PrepareVoiceSendBacking(harken::Engine& engine, VnVoiceHandle render,
+    const harken::VoiceSendConfigs& sends, bool resetEdited, std::uint32_t editedSlot,
+    harken::VoiceSendSet** out) {
+    std::vector<harken::VoiceSendDefinition> definitions;
+    definitions.reserve(sends.size());
+    for (const auto& send : sends) {
+        if (!send.active) continue;
+        definitions.push_back({send.slot, send.targetBusIndex, send.targetBusGeneration,
+            send.levelDb, send.incarnation});
     }
-    harken::CommandRecord cmd{};
-    cmd.opcode = harken::kOpcodeSetVoiceSend;
-    cmd.payload.setVoiceSend.handle = render;
-    cmd.payload.setVoiceSend.sendSlot = sendSlot;
-    cmd.payload.setVoiceSend.targetBusIndex = targetBusIndex;
-    cmd.payload.setVoiceSend.targetBusGeneration =
-        engine.buses.GenerationAt(targetBusIndex);
-    cmd.payload.setVoiceSend.levelDb = levelDb;
-    (void)writer.Push(cmd);
+    const auto status = engine.voices.PrepareVoiceSendSet(render, definitions, resetEdited, editedSlot, out);
+    if (status != VN_OK) return status;
+    if (!engine.mixer.PreparePreparedChannelBacking(engine.voices.ConstructedSlotCount())) {
+        engine.voices.CancelVoiceSendSet(**out);
+        *out = nullptr;
+        engine.voices.DrainVoiceSendSets();
+        return VN_DEVICE_ERROR;
+    }
+    return VN_OK;
+}
+
+void CommitVoiceSendMirror(harken::Engine& engine, VnVoiceHandle render,
+    const harken::VoiceSendConfigs& sends) noexcept {
+    const auto slot = static_cast<std::uint32_t>(render);
+    ResetVoiceSendMirror(engine, slot);
+    engine.voiceSendConfig[slot] = sends;
+    engine.voiceSendActive += sends.size();
     UpdateSendHighWater(engine);
 }
 
-void ApplyVoiceSendLive(harken::Engine& engine, VnVoiceHandle render,
-                        std::uint32_t sendSlot, std::uint32_t targetBusIndex,
-                        float levelDb) {
-    CommandQueueWriter writer(engine);
-    ApplyVoiceSendLiveWith(engine, render, sendSlot, targetBusIndex, levelDb,
-                           writer);
+VnResult PrepareInitialVoiceSends(harken::Engine& engine, VnVoiceHandle render,
+    const harken::VoiceSendConfigs& sends) {
+    if (sends.empty()) {
+        CommitVoiceSendMirror(engine, render, sends);
+        return VN_OK;
+    }
+    harken::VoiceSendSet* set = nullptr;
+    const auto status = PrepareVoiceSendBacking(engine, render, sends, false, 0, &set);
+    if (status != VN_OK) return status;
+    if (!engine.voices.InstallPreparedVoiceSendSet(render, *set)) {
+        engine.voices.CancelVoiceSendSet(*set);
+        return VN_STALE_HANDLE;
+    }
+    CommitVoiceSendMirror(engine, render, sends);
+    return VN_OK;
 }
 
-void ApplyVoiceSendLive(harken::Engine& engine, VnVoiceHandle render,
-                        std::uint32_t sendSlot, std::uint32_t targetBusIndex,
-                        float levelDb, AdmittedCommandWriter& writer) {
-    ApplyVoiceSendLiveWith(engine, render, sendSlot, targetBusIndex, levelDb,
-                           writer);
+VnResult ApplyVoiceSendLive(harken::Engine& engine, VnVoiceHandle render,
+    std::uint32_t sendSlot, std::uint32_t targetBusIndex, float levelDb) {
+    const auto slot = static_cast<std::uint32_t>(render);
+    auto candidate = engine.voiceSendConfig[slot].WithSet({true, targetBusIndex, levelDb,
+        engine.buses.GenerationAt(targetBusIndex), sendSlot, NextVoiceSendIncarnation(engine)});
+    harken::VoiceSendSet* set = nullptr;
+    const auto status = PrepareVoiceSendBacking(engine, render, candidate, true, sendSlot, &set);
+    if (status != VN_OK) return status;
+    harken::CommandRecord command{};
+    command.opcode = harken::kOpcodeSetVoiceSend;
+    command.flags = harken::kCommandFlagVoiceSendSet;
+    command.payload.setVoiceSend.handle = render;
+    command.payload.setVoiceSend.setAddress = reinterpret_cast<std::uint64_t>(set);
+    set->phase.store(harken::VoiceSendSet::Phase::Queued, std::memory_order_release);
+    if (!engine.commands.TryPush(command)) {
+        // The producer still owns a refused unpublished record.
+        set->phase.store(harken::VoiceSendSet::Phase::Preparing, std::memory_order_relaxed);
+        engine.voices.CancelVoiceSendSet(*set);
+        return VN_BACKPRESSURE;
+    }
+    CommitVoiceSendMirror(engine, render, candidate);
+    return VN_OK;
 }
 
 bool DynamicInfluenceReaches(
@@ -82738,6 +82707,7 @@ VnResult SetPreviewVoiceEffectChain(std::uint64_t render,
     if (!engine->commands.ReserveBatch(1, &reservation)) return VN_BACKPRESSURE;
     engine->effectBank.DrainRetire();
     engine->voices.DrainEffectChainUpdates();
+    engine->voices.DrainVoiceSendSets();
     engine->buses.DrainPreviewEffectChains();
     EffectChainUpdate* update = nullptr;
     auto dspMask = parameterMask;
@@ -82849,9 +82819,11 @@ VnResult SetPreviewVoiceProperty(std::uint64_t render,
         for (std::uint32_t slot = 0; slot < path.sendCount; ++slot) {
             if (path.sends[slot].targetBusId != sendBusId) continue;
             const auto& pinned = engine->timelineVoiceInstallIdentities[static_cast<std::uint32_t>(render)].voiceSends;
-            if (slot >= pinned.size()) return VN_INVALID_ARG;
+            const auto* send = pinned.Find(slot);
+            if (send == nullptr) return VN_INVALID_ARG;
             if (!AdmitSingleCommand(*engine)) return VN_BACKPRESSURE;
-            ApplyVoiceSendLive(*engine, render, slot, pinned[slot].targetBusIndex, value);
+            const auto status = ApplyVoiceSendLive(*engine, render, slot, send->targetBusIndex, value);
+            if (status != VN_OK) return status;
             path.sends[slot].levelDb = value;
             return VN_OK;
         }
@@ -111975,6 +111947,7 @@ VnResult Vn_Update(void) {
      * returns each retired instance to its pool here. */
     engine->effectBank.DrainRetire();
     engine->voices.DrainEffectChainUpdates();
+    engine->voices.DrainVoiceSendSets();
     engine->buses.DrainPreviewEffectChains();
     /* Hot-reload retirement detection: destroy every old content generation
      * whose last logical voice has drained. The audio thread only ever
@@ -116877,8 +116850,7 @@ VnResult Vn_SetVoiceSend(VnVoiceHandle handle, uint32_t sendSlot, VnBusId toBus,
         .U32(sendSlot)
         .ObjectId(toBus)
         .F32(levelDb);
-    if (sendSlot >= engine->config.voiceSendSlots ||
-        !harken::TryVolumeGainFromDb(levelDb)) {
+    if (!harken::TryVolumeGainFromDb(levelDb)) {
         return VN_INVALID_ARG;
     }
     const std::uint32_t to = engine->buses.FindIndex(toBus);
@@ -116889,20 +116861,14 @@ VnResult Vn_SetVoiceSend(VnVoiceHandle handle, uint32_t sendSlot, VnBusId toBus,
     if (resolved.kind == harken::VoiceLedger::HandleKind::Pending) {
         harken::PendingStartRecord& rec =
             engine->pendingStarts[resolved.ledgerSlot];
-        rec.voiceSends[sendSlot].active = true;
-        rec.voiceSends[sendSlot].targetBusIndex = to;
-        rec.voiceSends[sendSlot].targetBusGeneration =
-            engine->buses.GenerationAt(to);
-        rec.voiceSends[sendSlot].levelDb = levelDb;
+        rec.voiceSends = rec.voiceSends.WithSet({true, to, levelDb,
+            engine->buses.GenerationAt(to), sendSlot, NextVoiceSendIncarnation(*engine)});
         return VN_OK;
     }
     if (resolved.kind == harken::VoiceLedger::HandleKind::Parked) {
         harken::ParkRecord& rec = engine->parkRecords[resolved.ledgerSlot];
-        rec.voiceSends[sendSlot].active = true;
-        rec.voiceSends[sendSlot].targetBusIndex = to;
-        rec.voiceSends[sendSlot].targetBusGeneration =
-            engine->buses.GenerationAt(to);
-        rec.voiceSends[sendSlot].levelDb = levelDb;
+        rec.voiceSends = rec.voiceSends.WithSet({true, to, levelDb,
+            engine->buses.GenerationAt(to), sendSlot, NextVoiceSendIncarnation(*engine)});
         return VN_OK;
     }
     const VnVoiceHandle render =
@@ -116917,8 +116883,7 @@ VnResult Vn_SetVoiceSend(VnVoiceHandle handle, uint32_t sendSlot, VnBusId toBus,
         engine->commands.NoteBackpressure();
         return VN_BACKPRESSURE;
     }
-    ApplyVoiceSendLive(*engine, render, sendSlot, to, levelDb);
-    return VN_OK;
+    return ApplyVoiceSendLive(*engine, render, sendSlot, to, levelDb);
 
     } catch (const std::bad_alloc&) {
         return VN_DEVICE_ERROR;
@@ -116939,18 +116904,15 @@ VnResult Vn_ClearVoiceSend(VnVoiceHandle handle, uint32_t sendSlot) {
     TraceStateful(engine, harken::kTraceCallClearVoiceSend)
         .U64(handle)
         .U32(sendSlot);
-    if (sendSlot >= engine->config.voiceSendSlots) {
-        return VN_INVALID_ARG;
-    }
     const harken::VoiceLedger::Resolved resolved = engine->ledger.Classify(handle);
     if (resolved.kind == harken::VoiceLedger::HandleKind::Pending) {
-        engine->pendingStarts[resolved.ledgerSlot].voiceSends[sendSlot] =
-            harken::VoiceSendConfig{};
+        auto& sends = engine->pendingStarts[resolved.ledgerSlot].voiceSends;
+        sends = sends.WithoutSlot(sendSlot);
         return VN_OK;
     }
     if (resolved.kind == harken::VoiceLedger::HandleKind::Parked) {
-        engine->parkRecords[resolved.ledgerSlot].voiceSends[sendSlot] =
-            harken::VoiceSendConfig{};
+        auto& sends = engine->parkRecords[resolved.ledgerSlot].voiceSends;
+        sends = sends.WithoutSlot(sendSlot);
         return VN_OK;
     }
     const VnVoiceHandle render =
@@ -116965,19 +116927,19 @@ VnResult Vn_ClearVoiceSend(VnVoiceHandle handle, uint32_t sendSlot) {
         engine->commands.NoteBackpressure();
         return VN_BACKPRESSURE;
     }
-    const std::uint32_t slot = static_cast<std::uint32_t>(render);
-    if (slot < engine->voiceSendConfig.size()) {
-        harken::VoiceSendConfig& c = engine->voiceSendConfig[slot][sendSlot];
-        if (c.active && engine->voiceSendActive > 0) {
-            --engine->voiceSendActive;
-        }
-        c = harken::VoiceSendConfig{};
-    }
+    const auto slot = static_cast<std::uint32_t>(render);
+    const auto& current = engine->voiceSendConfig[slot];
+    const auto* removed = current.Find(sendSlot);
+    if (removed == nullptr) return VN_OK;
+    const auto incarnation = removed->incarnation;
+    auto candidate = current.WithoutSlot(sendSlot);
     harken::CommandRecord cmd{};
     cmd.opcode = harken::kOpcodeClearVoiceSend;
     cmd.payload.clearVoiceSend.handle = render;
     cmd.payload.clearVoiceSend.sendSlot = sendSlot;
-    (void)engine->commands.TryPush(cmd);
+    cmd.payload.clearVoiceSend.incarnation = incarnation;
+    if (!engine->commands.TryPush(cmd)) return VN_BACKPRESSURE;
+    CommitVoiceSendMirror(*engine, render, candidate);
     return VN_OK;
 
     } catch (const std::bad_alloc&) {
@@ -117002,26 +116964,31 @@ VnResult Vn_SetVoiceSendLevel(VnVoiceHandle handle, uint32_t sendSlot,
         .U32(sendSlot)
         .F32(levelDb)
         .U32(rampMs);
-    if (sendSlot >= engine->config.voiceSendSlots ||
-        !harken::TryVolumeGainFromDb(levelDb)) {
+    if (!harken::TryVolumeGainFromDb(levelDb)) {
         return VN_INVALID_ARG;
     }
     const harken::VoiceLedger::Resolved resolved = engine->ledger.Classify(handle);
     if (resolved.kind == harken::VoiceLedger::HandleKind::Pending) {
         harken::PendingStartRecord& rec =
             engine->pendingStarts[resolved.ledgerSlot];
-        if (!rec.voiceSends[sendSlot].active) {
+        const auto* existing = rec.voiceSends.Find(sendSlot);
+        if (existing == nullptr) {
             return VN_INVALID_ARG; // no staged send to level
         }
-        rec.voiceSends[sendSlot].levelDb = levelDb; // staged snap; applied at start
+        auto replacement = *existing;
+        replacement.levelDb = levelDb;
+        rec.voiceSends = rec.voiceSends.WithSet(replacement);
         return VN_OK;
     }
     if (resolved.kind == harken::VoiceLedger::HandleKind::Parked) {
         harken::ParkRecord& rec = engine->parkRecords[resolved.ledgerSlot];
-        if (!rec.voiceSends[sendSlot].active) {
+        const auto* existing = rec.voiceSends.Find(sendSlot);
+        if (existing == nullptr) {
             return VN_INVALID_ARG; // no captured send to level
         }
-        rec.voiceSends[sendSlot].levelDb = levelDb; // re-applied as a snap on return
+        auto replacement = *existing;
+        replacement.levelDb = levelDb;
+        rec.voiceSends = rec.voiceSends.WithSet(replacement);
         return VN_OK;
     }
     const VnVoiceHandle render =
@@ -117033,22 +117000,27 @@ VnResult Vn_SetVoiceSendLevel(VnVoiceHandle handle, uint32_t sendSlot,
         return live;
     }
     const std::uint32_t slot = static_cast<std::uint32_t>(render);
-    if (slot >= engine->voiceSendConfig.size() ||
-        !engine->voiceSendConfig[slot][sendSlot].active) {
+    const auto* existing = slot < engine->voiceSendConfig.size()
+        ? engine->voiceSendConfig[slot].Find(sendSlot) : nullptr;
+    if (existing == nullptr) {
         return VN_INVALID_ARG; // no active send in this slot
     }
     if (!AdmitSingleCommand(*engine)) {
         engine->commands.NoteBackpressure();
         return VN_BACKPRESSURE;
     }
-    engine->voiceSendConfig[slot][sendSlot].levelDb = levelDb;
+    auto replacement = *existing;
+    replacement.levelDb = levelDb;
+    auto candidate = engine->voiceSendConfig[slot].WithSet(replacement);
     harken::CommandRecord cmd{};
     cmd.opcode = harken::kOpcodeSetVoiceSendLevel;
     cmd.payload.setVoiceSendLevel.handle = render;
     cmd.payload.setVoiceSendLevel.sendSlot = sendSlot;
     cmd.payload.setVoiceSendLevel.levelDb = levelDb;
     cmd.payload.setVoiceSendLevel.rampMs = rampMs;
-    (void)engine->commands.TryPush(cmd);
+    cmd.payload.setVoiceSendLevel.incarnation = replacement.incarnation;
+    if (!engine->commands.TryPush(cmd)) return VN_BACKPRESSURE;
+    engine->voiceSendConfig[slot] = std::move(candidate);
     return VN_OK;
 
     } catch (const std::bad_alloc&) {
@@ -126879,6 +126851,19 @@ VnResult ApplyPreparedPackTransaction(
     // The media generation swap is the final fallible operation. It guarantees
     // zero mutation on refusal, so the unpublished queue ticket can be
     // cancelled and the complete activation attempt retried.
+    std::vector<VoiceSendMirrorMigrationV1> sendMirrorMigration;
+    if (revision.needsPlan) {
+        try {
+            sendMirrorMigration = PrepareVoiceSendMirrorMigrationV1(engine,
+                revision.prospectiveBusGenerations.data(), revision.prospectiveAlive.data(),
+                revision.prospectiveBusCount);
+        } catch (...) {
+            if (commandCount != 0) queueGuard.Cancel();
+            CancelRevisionAttenuationDiscrete(engine, revision);
+            CancelRevisionBindings(engine, revision);
+            return VN_DEVICE_ERROR;
+        }
+    }
     VnPackHandle loadedHandle = 0;
     if (preserveMedia) {
         loadedHandle = revision.handle;
@@ -126908,6 +126893,7 @@ VnResult ApplyPreparedPackTransaction(
     }
     // Commit tail: every resource and capacity decision is already frozen.
     // These operations touch only preallocated state and cannot refuse.
+    CommitVoiceSendMirrorMigrationV1(engine, sendMirrorMigration);
     if (revision.needsPlan) {
         const std::uint32_t oldBusCount = engine.buses.BusCount();
         for (std::uint32_t index = 1; index < oldBusCount; ++index) {

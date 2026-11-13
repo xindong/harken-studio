@@ -124,6 +124,20 @@ typedef struct VnPreviewPlaybackPathV1 {
     VnPreviewPlaybackSendV1 sends[VN_PREVIEW_PATH_SEND_CAPACITY];
 } VnPreviewPlaybackPathV1;
 
+/* Sends are stored in a caller-owned flat array. sendOffset/sendCount select
+ * each path's range; there is no per-path Send capacity. */
+typedef struct VnPreviewPlaybackPathV2 {
+    uint32_t structSize;
+    uint32_t rowCount;
+    uint32_t sendCount;
+    uint32_t reserved0;
+    uint64_t sendOffset;
+    uint64_t voiceInstance;
+    VnObjectId soundId;
+    VnObjectId outputBusId;
+    VnPreviewPlaybackPathRowV1 rows[VN_PREVIEW_PATH_ROW_CAPACITY];
+} VnPreviewPlaybackPathV2;
+
 VN_PREVIEW_STATIC_ASSERT(sizeof(VnPreviewPlaybackPathV1) == 1784,
                          "VnPreviewPlaybackPathV1 size");
 VN_PREVIEW_STATIC_ASSERT(VN_PREVIEW_ALIGNOF(VnPreviewPlaybackPathV1) == 8,
@@ -153,6 +167,13 @@ VnPreviewResult VnPreview_QueryPlayable(VnPreviewPlayableHandle handle,
                                         VnPreviewPlayableStateV2* outState);
 VnPreviewResult VnPreview_CapturePlaybackPaths(
     VnPreviewPlaybackPathV1* outPaths, uint32_t capacity, uint32_t* requiredCount);
+
+/* Logic-thread capture. Returns required counts even when a buffer is too small.
+ * Only complete Send ranges are written. Retry after resizing both buffers;
+ * required counts and records always describe the same capture. */
+VnPreviewResult VnPreview_CapturePlaybackPathsV2(
+    VnPreviewPlaybackPathV2* outPaths, uint32_t capacity, uint32_t* requiredCount,
+    VnPreviewPlaybackSendV1* outSends, uint64_t sendCapacity, uint64_t* requiredSendCount);
 
 #ifdef __cplusplus
 }

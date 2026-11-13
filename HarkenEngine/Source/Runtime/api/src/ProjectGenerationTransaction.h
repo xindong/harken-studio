@@ -4,6 +4,7 @@
 #include <harken/ObjectId.h>
 #include "PlayableRuntime.h"
 #include "BusSendTable.h"
+#include "VoiceSendConfig.h"
 #include "SignalPublication.h"
 #include "harken/core/PreviewBusEffects.h"
 #include "harken/render/BusEffectChainUpdate.h"
@@ -74,6 +75,16 @@ void CommitRetireTopologyBusV1(Engine& engine, BusSlotRef ref, std::uint64_t rev
 void ClearRetiredBusPropertiesV1(Engine& engine, BusSlotRef ref) noexcept;
 bool HasTopologyBusConsumersV1(Engine& engine, BusSlotRef ref) noexcept;
 std::uint32_t DrainTopologyRetirementsV1(Engine& engine) noexcept;
+struct VoiceSendMirrorMigrationV1 {
+    VoiceSendConfigs* destination = nullptr;
+    VoiceSendConfigs before;
+    VoiceSendConfigs after;
+    bool accountLive = false;
+};
+std::vector<VoiceSendMirrorMigrationV1> PrepareVoiceSendMirrorMigrationV1(Engine& engine,
+    const std::uint32_t* generations, const std::uint8_t* alive, std::uint32_t count);
+bool CanCommitVoiceSendMirrorMigrationV1(std::span<const VoiceSendMirrorMigrationV1> rows) noexcept;
+void CommitVoiceSendMirrorMigrationV1(Engine& engine, std::span<const VoiceSendMirrorMigrationV1> rows) noexcept;
 void CommitMigratedLogicVoiceMirrorsV1(Engine& engine, const std::uint32_t* migrationTargets,
     const std::uint32_t* generations, const std::uint8_t* alive, std::uint32_t slotCount) noexcept;
 struct EnginePreparedTimelineVoiceStart;

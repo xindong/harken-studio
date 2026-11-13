@@ -219,7 +219,7 @@ std::uint64_t MixerLoop::SignalScratchBytes(std::uint32_t slots, std::uint32_t n
     const std::uint64_t edges = extra + m_dynamicRouteCapacity +
         static_cast<std::uint64_t>(m_maxBuses) + m_buses.RetainedSendCount() +
         relations + m_voices.PreparedSignalPathRows(slots) +
-        static_cast<std::uint64_t>(slots) * (kMaxVoiceSendSlots + 1ull);
+        static_cast<std::uint64_t>(slots) + m_voices.RetainedVoiceSendCount();
     return SignalRenderPlan::RoutingScratchBytes(static_cast<std::uint32_t>(graphNodes), m_maxBuses, edges, m_blockFrames);
 }
 
@@ -239,7 +239,7 @@ std::uint64_t MixerLoop::RetainedSignalScratchBytes(std::uint32_t slots) const n
     const auto edges = extra + m_dynamicRouteCapacity +
         static_cast<std::uint64_t>(m_maxBuses) + m_buses.RetainedSendCount() +
         m_voices.PreparedSignalPathRows(slots) +
-        static_cast<std::uint64_t>(slots) * (kMaxVoiceSendSlots + 1ull);
+        static_cast<std::uint64_t>(slots) + m_voices.RetainedVoiceSendCount();
     return m_buses.RetainedSignalScratchBytes(extra, edges, m_blockFrames);
 }
 
@@ -445,6 +445,11 @@ void MixerLoop::ApplyCommandRecord(const CommandRecord& command,
         }
         break;
     case kOpcodeSetVoiceSend:
+        if (command.flags == kCommandFlagVoiceSendSet) {
+            auto* set = reinterpret_cast<VoiceSendSet*>(command.payload.setVoiceSend.setAddress);
+            if (set != nullptr) m_voices.ApplyVoiceSendSet(*set, m_buses);
+            break;
+        }
         m_voices.ApplySetVoiceSend(
             command.payload.setVoiceSend.handle,
             command.payload.setVoiceSend.sendSlot,
@@ -455,14 +460,14 @@ void MixerLoop::ApplyCommandRecord(const CommandRecord& command,
     case kOpcodeClearVoiceSend:
         m_voices.ApplyClearVoiceSend(
             command.payload.clearVoiceSend.handle,
-            command.payload.clearVoiceSend.sendSlot);
+            command.payload.clearVoiceSend.sendSlot, command.payload.clearVoiceSend.incarnation);
         break;
     case kOpcodeSetVoiceSendLevel:
         m_voices.ApplySetVoiceSendLevel(
             command.payload.setVoiceSendLevel.handle,
             command.payload.setVoiceSendLevel.sendSlot,
             command.payload.setVoiceSendLevel.levelDb,
-            command.payload.setVoiceSendLevel.rampMs);
+            command.payload.setVoiceSendLevel.rampMs, command.payload.setVoiceSendLevel.incarnation);
         break;
     case kOpcodeSetBusEffectParam:
         if (command.flags == kCommandFlagPreviewBusEffect) {

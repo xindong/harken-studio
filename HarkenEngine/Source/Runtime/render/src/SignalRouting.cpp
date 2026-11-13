@@ -59,12 +59,12 @@ std::uint64_t SignalRenderPlan::RoutingScratchBytes(std::uint32_t nodes, std::ui
 }
 
 bool SignalRenderPlan::ReserveRouting(BusTree& buses, BlockArena& arena,
-                                     std::uint32_t members, std::size_t pathRows) noexcept {
+                                     std::uint32_t members, std::size_t pathRows, std::uint64_t sends) noexcept {
     if (buses.AudioBusCount() > routingBusCount_) return false;
     const auto graphCount = static_cast<std::uint64_t>(NodeCount()) + buses.SignalRoutingExtraNodes();
     if (graphCount > UINT32_MAX) return false;
     const auto edges = static_cast<std::uint64_t>(buses.SignalRoutingEdgeCapacity()) +
-        relations_.size() + pathRows + static_cast<std::uint64_t>(members) * (kMaxVoiceSendSlots + 1ull);
+        relations_.size() + pathRows + static_cast<std::uint64_t>(members) + sends;
     const auto bytes = RoutingScratchBytes(static_cast<std::uint32_t>(graphCount), buses.AudioBusCount(), edges, current_.frames);
     if (bytes > arena.CapacityBytes()) return false;
     auto* data = arena.ReserveFloats((static_cast<std::size_t>(bytes) + sizeof(float) - 1) / sizeof(float));
@@ -109,26 +109,31 @@ bool SignalRenderPlan::BuildRouting(std::span<const SignalMemberImage> members,
             if (!append(member.nodes[i], member.nodes[i - 1], 1, false)) return false;
         const auto source = member.nodes.front();
         const auto& voice = *member.voice;
-        const auto route = [&](std::uint32_t destination) {
+        const auto memberBegin = used;
+        const auto route = [&](std::uint32_t destination, double bound) {
             if (destination >= busCount || info[destination].id == VnBusId{}) return false;
-            double bound = destination == voice.busIndex &&
-                SignalOutputGainBound(voice.outputGain, member.frames) > 0 ? 1 : 0;
-            for (const auto& send : voice.voiceSends)
-                if (send.active && send.targetBusIndex == destination &&
-                    send.targetBusGeneration == info[destination].generation)
-                    bound += SendBound(send);
             return append(source, info[destination].inputNode, SignalBoundProduct(bound,
                 info[destination].inputNode == destination ? info[destination].inputBound : 1), false);
         };
-        if (!route(voice.busIndex)) return false;
-        for (std::size_t i = 0; i < std::size(voice.voiceSends); ++i) {
-            const auto& send = voice.voiceSends[i];
-            if (!send.active || send.targetBusIndex == voice.busIndex) continue;
-            bool earlier = false;
-            for (std::size_t j = 0; j < i; ++j)
-                earlier |= voice.voiceSends[j].active && voice.voiceSends[j].targetBusIndex == send.targetBusIndex;
-            if (!earlier && !route(send.targetBusIndex)) return false;
+        if (!route(voice.busIndex, SignalOutputGainBound(voice.outputGain, member.frames) > 0 ? 1 : 0)) return false;
+        for (const auto& send : voice.voiceSends) {
+            if (!send.active || send.targetBusIndex >= busCount ||
+                send.targetBusGeneration != info[send.targetBusIndex].generation) continue;
+            if (!route(send.targetBusIndex, SendBound(send))) return false;
         }
+        // Sum duplicate routes within this Voice before the existing maximum
+        // across members sharing a sound node. No degree-squared rescans.
+        auto memberEdges = edges.subspan(memberBegin, used - memberBegin);
+        std::sort(memberEdges.begin(), memberEdges.end(), [](const auto& a, const auto& b) {
+            return a.target < b.target;
+        });
+        auto merged = memberBegin;
+        for (const auto& edge : memberEdges) {
+            if (merged != memberBegin && edges[merged - 1].target == edge.target)
+                edges[merged - 1].bound += edge.bound;
+            else edges[merged++] = edge;
+        }
+        used = merged;
     }
     for (std::size_t i = 0; i < relations_.size(); ++i) {
         const auto& relation = relations_[i];

@@ -331,12 +331,7 @@ PlayableExecutionCanonicalResult ResolvePlayableExecutionEntry(
 // targets from every live, pending, and parked mirror before replay. Levels
 // replay as a snap (a returned voice starts fresh at its virtual offset).
 // Logic thread only.
-struct VoiceSendConfig {
-    bool active = false;
-    std::uint32_t targetBusIndex = 0;
-    float levelDb = 0.0f;
-    std::uint32_t targetBusGeneration = 0;
-};
+
 
 // Staging for a voice whose start was deferred — by a steal (the pool was
 // full when the raw voice start was requested, so a victim was told to stop and this voice
@@ -454,7 +449,7 @@ struct PendingStartRecord {
     // Per-voice sends staged while pending, applied at the deferred start (each
     // active slot re-issues a set-voice-send at start). A voice receives
     // nothing, so sends never create a cycle and need no re-validation here.
-    std::array<VoiceSendConfig, kMaxVoiceSendSlots> voiceSends{};
+    VoiceSendConfigs voiceSends{};
 
     // The resolved attachment set PINNED at play acceptance:
     // identities, never curve copies, so a Replace between acceptance and onset is live and the
@@ -526,12 +521,13 @@ struct EnginePlaybackPathStorage {
     PlaybackPathRow firstPathRow{};
     std::unique_ptr<PlaybackPathRow[]> additionalPathRows;
     std::uint32_t sendCount = 0;
-    TimelineVoiceSendInstall sends[kTimelineMaxVoiceSends]{};
+    std::vector<TimelineVoiceSendInstall> sends;
 
-    bool PreparePath(std::size_t count) noexcept {
+    bool PreparePath(std::size_t count, std::size_t sendRows = 0) noexcept {
         if (memguard::IsAudioTagged() || count > kPlaybackPathRowCapacity) return false;
-        if (count <= 1 || additionalPathRows != nullptr) return true;
         try {
+            sends.resize(sendRows);
+            if (count <= 1 || additionalPathRows != nullptr) return true;
             detail::LogicAllocCheckpoint(detail::LogicAllocSite::PlaybackPathStorage);
             additionalPathRows = std::make_unique<PlaybackPathRow[]>(kPlaybackPathRowCapacity - 1u);
         } catch (...) {
@@ -559,7 +555,7 @@ struct EnginePlaybackPathStorage {
         if (pathRowCount > 1)
             std::copy_n(additionalPathRows.get(), pathRowCount - 1u, observation.path.rows + 1);
         observation.sendCount = sendCount;
-        std::copy_n(sends, sendCount, observation.sends);
+        observation.sends = std::span<const TimelineVoiceSendInstall>(sends).first(sendCount);
         return observation;
     }
 };
@@ -668,7 +664,7 @@ struct ParkRecord {
     // Per-voice sends captured at park and re-applied on return (each active
     // slot re-issues a set-voice-send). Bus destruction clears captured slots
     // that target its tombstoned cascade before a return can replay them.
-    std::array<VoiceSendConfig, kMaxVoiceSendSlots> voiceSends{};
+    VoiceSendConfigs voiceSends{};
     bool heldPcmRef = false;            // a PCM use-count ref held while parked
     bool heldStreamRef = false;
     std::uint64_t streamParkRequestSequence = 0;
@@ -3177,7 +3173,7 @@ struct EngineTimelineVoiceInstallIdentity {
     TimelineArmToken startArm{};
     std::uint32_t busIndex = 0;
     std::uint32_t busGeneration = 0;
-    std::array<VoiceSendConfig, kMaxVoiceSendSlots> voiceSends{};
+    VoiceSendConfigs voiceSends{};
     std::uint64_t sourceFrameCount = 0;
     std::uint64_t loopStartFrame = 0;
     std::uint64_t loopEndFrame = 0;
@@ -3920,7 +3916,7 @@ private:
 struct EnginePreparedTimelineVoiceStart {
     EngineMonitorSelection monitorSelection{};
     static constexpr std::uint32_t kMaxCommandCount =
-        3u + kTimelineMaxVoiceSends + 2u * kTimelineMaxVoiceEffects + 2u +
+        3u + 2u * kTimelineMaxVoiceEffects + 2u +
         kMaxVoiceBindingInstanceSlots + kSpatialDrivenTargetsPerVoice;
 
     std::uint32_t ledgerSlot = UINT32_MAX;
@@ -3993,6 +3989,7 @@ struct EnginePreparedRoutingMigrationV1 {
     std::uint64_t domainEpoch = 0;
     std::uint64_t graphRevision = 0;
     std::vector<Row> rows;
+    std::vector<VoiceSendMirrorMigrationV1> sendMirrors;
 };
 
 struct EngineImmediateRetryCleanup {
@@ -7554,7 +7551,6 @@ public:
         selectionConfig.maxPendingEmitterPerRow =
             resolved.maxPendingSelectionDeltasEmitterPerRow;
         ResolvedPlayablePropertyCutConfigV1 cutConfig{};
-        cutConfig.maxSends = std::max(1u, resolved.voiceSendSlots);
         cutConfig.maxEffectNodes = std::max(1u, resolved.fxSlotsPerVoice);
         cutConfig.maxEffectParams =
             cutConfig.maxEffectNodes * kMaxEffectParamCount;
@@ -15616,7 +15612,7 @@ public:
     // index][send slot]. Reset for a slot at each start, written at
     // Vn_SetVoiceSend / Vn_ClearVoiceSend / Vn_SetVoiceSendLevel, captured at
     // park, and staged for a pending start. Logic thread only.
-    StableRowStorage<std::array<VoiceSendConfig, kMaxVoiceSendSlots>>
+    StableRowStorage<VoiceSendConfigs>
         voiceSendConfig;
     VoicePool::SlotStorageRegistration logicVoiceStorageRegistration;
 
@@ -15743,6 +15739,7 @@ public:
     std::uint64_t topologyRefusedCount = 0;
     std::uint64_t noSendCount = 0;
     std::uint64_t busSendActive = 0;   // active bus->bus edges
+    std::uint64_t nextVoiceSendIncarnation = 1;
     std::uint64_t voiceSendActive = 0; // active voice->bus send slots
     std::uint64_t sendSlotHighWater = 0;
     std::uint64_t acceptedBusTopologyRevision = 0;

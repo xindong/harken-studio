@@ -466,6 +466,8 @@ TEST(SpatialMatrix, DistinctStereoColumnsShareOffsetRetargetAndSendImage) {
     ctx.spatialized = true;
     ctx.firstBlock = false;
     ctx.outputGain.Set(.5f);
+    std::array<harken::VoiceSendSlot, 1> sendStates{};
+    ctx.voiceSends = sendStates;
     ctx.voiceSends[0].active = true;
     ctx.voiceSends[0].targetBusIndex = 1;
     ctx.voiceSends[0].gain.current = ctx.voiceSends[0].gain.target = .25f;
@@ -851,6 +853,8 @@ TEST(SpatialMatrix, CollectiveImageSharesMappingAndAdvancesOutputAndSendsOnlyOnF
                 original.outputGain.Set(.25f);
                 if (ramp) original.outputGain.Set(2.0f, 330);
                 original.voiceSendActiveCount = 1;
+                std::array<harken::VoiceSendSlot, 1> sendStates{};
+                original.voiceSends = sendStates;
                 original.voiceSends[0].active = true;
                 original.voiceSends[0].targetBusIndex = 1;
                 original.voiceSends[0].gain.SnapTo(.75f);
@@ -860,6 +864,8 @@ TEST(SpatialMatrix, CollectiveImageSharesMappingAndAdvancesOutputAndSendsOnlyOnF
                     original.cascade.scratch[ch] = source[ch].data();
                 }
                 auto collective = original;
+                auto collectiveSends = sendStates;
+                collective.voiceSends = collectiveSends;
                 for (std::uint32_t ch = 0; ch < channels; ++ch) {
                     original.cascade.tap[ch] = directTap[ch].data();
                     collective.cascade.tap[ch] = stagedTap[ch].data();

@@ -199,7 +199,7 @@ void MixReceivedOutput(const float* source, std::span<float* const> destinations
 void ScatterVoiceSends(VoiceRenderContext& ctx, float* const* busPlanes,
                        float* const* tap, std::uint32_t offset,
                        std::uint32_t produced, std::uint32_t mixChannels) {
-    for (std::uint32_t s = 0; s < kMaxVoiceSendSlots; ++s) {
+    for (std::uint32_t s = 0; s < ctx.voiceSends.size(); ++s) {
         VoiceSendSlot& send = ctx.voiceSends[s];
         if (!send.active) {
             continue;

@@ -723,6 +723,56 @@ TEST(PreviewAbi, PlaybackPathsPublishRenderedOccurrencesAndClearAfterStop) {
     EXPECT_NE(path.voiceInstance, firstVoice);
 }
 
+TEST(PreviewAbi, PlaybackPathsV2CapturesAllSendsAndReportsBothCapacities) {
+    PreviewSession fixture;
+    auto* engine = fixture.session.Engine();
+    ASSERT_NE(nullptr, engine);
+    PreviewWorldImage image(engine->registry.Lookup(kSound).contentRevision);
+    std::vector<harken::SendV1> sends;
+    for (uint32_t i = 0; i < 12; ++i) {
+        const auto target = harkentest::ObjectId(9000 + i);
+        ASSERT_EQ(VN_OK, Vn_CreateBus(target, VN_BUS_MASTER));
+        engine->nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        sends.push_back({i, 0, target, -60.0f, 0});
+    }
+    image.properties[0].payload.sends = sends.data();
+    image.properties[0].payload.sendCount = static_cast<uint32_t>(sends.size());
+    image.properties[0].programSemanticFingerprint = harken::ComputePlayablePropertyFingerprintV1(image.properties[0]);
+    image.child.playable.expectedProgramSemanticFingerprint = image.properties[0].programSemanticFingerprint;
+    image.occurrence.childPlayable = image.child.playable;
+    image.occurrence.occurrenceSemanticFingerprint = harken::ComputePlayableOccurrenceFingerprintV1(image.occurrence);
+    image.world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV4(image.world);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(*engine, image.world).status);
+    auto desc = Desc(VN_PREVIEW_PLAYABLE_KIND_SOUND, kSound);
+    VnPreviewPlayableHandle handle = 0;
+    ASSERT_EQ(VN_PREVIEW_OK, VnPreview_PlayPlayable(&desc, &handle));
+    ASSERT_TRUE(PumpUntilNonSilent(*engine));
+    uint32_t paths = 0;
+    uint64_t count = 0;
+    EXPECT_EQ(VN_PREVIEW_RESULT_CAPACITY,
+        VnPreview_CapturePlaybackPathsV2(nullptr, 0, &paths, nullptr, 0, &count));
+    ASSERT_EQ(1u, paths);
+    ASSERT_EQ(12u, count);
+    VnPreviewPlaybackPathV2 path{};
+    std::array<VnPreviewPlaybackSendV1, 13> output{};
+    output.back().reserved0 = 0x12345678;
+    EXPECT_EQ(VN_PREVIEW_RESULT_CAPACITY,
+        VnPreview_CapturePlaybackPathsV2(&path, 1, &paths, output.data(), 8, &count));
+    EXPECT_EQ(12u, path.sendCount);
+    EXPECT_EQ(0u, path.sendOffset);
+    EXPECT_EQ(VN_PREVIEW_OK,
+        VnPreview_CapturePlaybackPathsV2(&path, 1, &paths, output.data(), 12, &count));
+    EXPECT_EQ(sizeof(path), path.structSize);
+    for (uint32_t i = 0; i < 12; ++i) {
+        EXPECT_EQ(sends[i].targetBusId, output[i].targetBusId);
+        EXPECT_FLOAT_EQ(-60, output[i].levelDb);
+    }
+    EXPECT_EQ(0x12345678u, output.back().reserved0);
+    VnPreviewPlaybackPathV1 legacy{};
+    EXPECT_EQ(VN_PREVIEW_RESULT_CAPACITY, VnPreview_CapturePlaybackPaths(&legacy, 1, &paths));
+}
+
 TEST(PreviewAbi, EventSessionCapturesRealPreviewLifecycleWithoutControllingPlayback) {
     PreviewSession fixture;
     auto* engine = fixture.session.Engine();

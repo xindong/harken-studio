@@ -39,6 +39,7 @@
 #include "harken/render/RenderWorkerPool.h"
 #include "harken/render/StreamParkToken.h"
 #include "harken/render/Voice.h"
+#include "harken/render/VoiceSendSet.h"
 #include "harken/render/OriginalSourceInstallationLoan.h"
 #include "harken/render/OriginalSourceMutationActor.h"
 
@@ -649,13 +650,23 @@ public:
     // active slot's level with the multi-block bus-volume discipline. The
     // sendSlot index and target bus were validated on the logic side; a stale
     // handle or an out-of-range slot is a benign no-op.
+    // Logic prepares backing. An unpublished set can be cancelled; published
+    // sets return through Complete after the final audio/worker reader.
+    VnResult PrepareVoiceSendSet(VnVoiceHandle handle,
+        std::span<const VoiceSendDefinition> definitions, bool resetEdited,
+        std::uint32_t editedSlot, VoiceSendSet** out) noexcept;
+    bool InstallPreparedVoiceSendSet(VnVoiceHandle handle, VoiceSendSet& set) noexcept;
+    void ApplyVoiceSendSet(VoiceSendSet& set, const BusTree& buses) noexcept;
+    void CancelVoiceSendSet(VoiceSendSet& set) noexcept;
+    void DrainVoiceSendSets() noexcept;
+    std::uint64_t RetainedVoiceSendCount() const noexcept { return m_retainedVoiceSends; }
     void ApplySetVoiceSend(VnVoiceHandle handle, std::uint32_t sendSlot,
                            std::uint32_t targetBusIndex,
                            float levelDb,
                            std::uint32_t targetBusGeneration = 0);
-    void ApplyClearVoiceSend(VnVoiceHandle handle, std::uint32_t sendSlot);
+    void ApplyClearVoiceSend(VnVoiceHandle handle, std::uint32_t sendSlot, std::uint64_t incarnation = 0);
     void ApplySetVoiceSendLevel(VnVoiceHandle handle, std::uint32_t sendSlot,
-                                float levelDb, std::uint32_t rampMs);
+                                float levelDb, std::uint32_t rampMs, std::uint64_t incarnation = 0);
 
     struct RenderAllResult {
         std::uint64_t overrunTicks = 0;
@@ -826,15 +837,14 @@ public:
     static void FinishSourceCommandInstallation(SourceCommandInstallProof& proof) noexcept;
 
     struct PreparedRoutingV1 {
-        struct Send {
-            bool active = false;
-            std::uint32_t busIndex = 0;
-            std::uint32_t busGeneration = 0;
-            bool operator==(const Send&) const noexcept = default;
-        };
+        using Send = VoiceSendRoute;
         std::uint32_t busIndex = 0;
         std::uint32_t busGeneration = 0;
-        std::array<Send, kMaxVoiceSendSlots> sends{};
+        const VoiceSendSet* sendSet = nullptr;
+        std::shared_ptr<const std::vector<Send>> sends;
+        std::span<const Send> SendRoutes() const noexcept {
+            return sends ? std::span<const Send>(*sends) : std::span<const Send>{};
+        }
         bool operator==(const PreparedRoutingV1&) const noexcept = default;
     };
     struct PreparedCommitInput {
@@ -1314,6 +1324,10 @@ private:
     bool m_originalBodyShutdown = false;
     std::atomic<std::uint32_t> m_pendingEffectChains{0};
     StableRowStorage<Slot> m_slots;
+    std::vector<std::unique_ptr<VoiceSendSet>> m_voiceSendSets;
+    std::uint64_t m_retainedVoiceSends = 0;
+    static void ReleaseVoiceSendSet(VoiceRenderContext& render) noexcept;
+    static VoiceSendSlot* FindVoiceSend(VoiceRenderContext& render, std::uint32_t label, std::uint64_t incarnation = 0) noexcept;
     static void FillSourceCursor(const Slot& slot, SlotState state,
         SourceCursorMirror::Row& row, std::uint64_t serial, bool captureParking) noexcept;
     SlotStorageRegistration* m_slotStorageRegistrations = nullptr;

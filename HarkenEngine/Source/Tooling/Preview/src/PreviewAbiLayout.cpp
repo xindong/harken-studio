@@ -58,3 +58,7 @@ static_assert(offsetof(VnPreviewPlayableStateV2, pendingFutureCount) == 64,
 static_assert(offsetof(VnPreviewPlayableStateV2, reserved0) == 68, "");
 
 }
+
+static_assert(sizeof(VnPreviewPlaybackPathV2) == 1600);
+static_assert(offsetof(VnPreviewPlaybackPathV2, sendOffset) == 16);
+static_assert(offsetof(VnPreviewPlaybackPathV2, rows) == 64);

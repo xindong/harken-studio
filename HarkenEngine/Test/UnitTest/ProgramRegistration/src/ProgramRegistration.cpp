@@ -476,21 +476,15 @@ ResolvedProgram::InstallTimeline() const noexcept {
                 source.install.resolvedAttenuation;
             occurrence.voice.loopCount = source.install.loopCount;
             occurrence.voice.spatialized = source.install.is3DEnabled;
-            if (source.install.sends.size() > harken::kTimelineMaxVoiceSends ||
-                source.install.effectSlots.size() >
+            if (source.install.effectSlots.size() >
                     harken::kTimelineMaxVoiceEffects) {
                 return {harken::TimelineRuntimeInstallStatus::InvalidProgram, 0,
                         0};
             }
-            occurrence.voice.sendCount =
-                static_cast<std::uint32_t>(source.install.sends.size());
-            for (std::uint32_t send = 0; send < occurrence.voice.sendCount;
-                 ++send) {
-                occurrence.voice.sends[send].targetBusId =
-                    source.install.sends[send].targetBus;
-                occurrence.voice.sends[send].levelDb =
-                    source.install.sends[send].level;
-            }
+            std::vector<harken::TimelineVoiceSendInstall> sends;
+            for (const auto& send : source.install.sends)
+                sends.push_back({send.targetBus, send.level});
+            occurrence.voice.SetSends(std::move(sends));
             occurrence.voice.effectCount = static_cast<std::uint32_t>(
                 source.install.effectSlots.size());
             for (std::uint32_t effect = 0;

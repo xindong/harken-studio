@@ -4740,13 +4740,13 @@ TEST(PackLogicUnload,
         pending.active = true;
         pending.busIndex = voiceSend ? 0 : bus;
         if (voiceSend) {
-            pending.voiceSends[0] = {true, bus, -6.0f};
+            pending.voiceSends = pending.voiceSends.WithSet({true, bus, -6.0f, engine->buses.GenerationAt(bus), 0});
         }
 
         EXPECT_EQ(VN_IN_USE, Vn_UnloadPack(pack));
         EXPECT_TRUE(pending.active);
         EXPECT_EQ(voiceSend ? 0u : bus, pending.busIndex);
-        EXPECT_EQ(voiceSend, pending.voiceSends[0].active);
+        EXPECT_EQ(voiceSend, pending.voiceSends.Find(0) != nullptr);
         EXPECT_NE(nullptr, engine->logicPacks.RecordFor(pack));
         pending.Reset();
     }
@@ -4770,13 +4770,13 @@ TEST(PackLogicUnload,
         parked.active = true;
         parked.facts.busIndex = voiceSend ? 0 : bus;
         if (voiceSend) {
-            parked.voiceSends[0] = {true, bus, -9.0f};
+            parked.voiceSends = parked.voiceSends.WithSet({true, bus, -9.0f, engine->buses.GenerationAt(bus), 0});
         }
 
         EXPECT_EQ(VN_IN_USE, Vn_UnloadPack(pack));
         EXPECT_TRUE(parked.active);
         EXPECT_EQ(voiceSend ? 0u : bus, parked.facts.busIndex);
-        EXPECT_EQ(voiceSend, parked.voiceSends[0].active);
+        EXPECT_EQ(voiceSend, parked.voiceSends.Find(0) != nullptr);
         EXPECT_NE(nullptr, engine->logicPacks.RecordFor(pack));
         parked = harken::ParkRecord{};
     }

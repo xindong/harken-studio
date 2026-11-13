@@ -25,6 +25,7 @@
 EXPORTS
     VnPreview_CancelProject
     VnPreview_CapturePlaybackPaths
+    VnPreview_CapturePlaybackPathsV2
     VnPreview_CommitProject
     VnPreview_DrainProjectAcks
     VnPreview_EnableChannelPeakMetering

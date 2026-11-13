@@ -47,6 +47,7 @@ enum class LogicAllocSite : unsigned int {
     PlayableTreeStorage,
     FrontierOwnerLedgerStorage,
     BusSendStorage,
+    VoiceSendStorage,
 };
 
 struct LogicAllocFaultState {

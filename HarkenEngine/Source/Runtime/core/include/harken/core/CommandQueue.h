@@ -130,10 +130,11 @@ static_assert(std::is_trivial_v<PlayLedBatchHeader> &&
 inline constexpr std::uint8_t kCommandFlagPreparedCompressor = 1u << 0;
 inline constexpr std::uint8_t kCommandFlagVariableWeightSegment = 1u << 1;
 inline constexpr std::uint8_t kCommandFlagPreviewBusEffect = 1u << 2;
+inline constexpr std::uint8_t kCommandFlagVoiceSendSet = 1u << 3;
 inline constexpr std::uint8_t kCommandKnownFlagsMask =
-    kCommandFlagPreparedCompressor | kCommandFlagVariableWeightSegment | kCommandFlagPreviewBusEffect;
-static_assert(kCommandKnownFlagsMask == 0x07u,
-              "command flag bits 0 through 2 are assigned internal flags");
+    kCommandFlagPreparedCompressor | kCommandFlagVariableWeightSegment | kCommandFlagPreviewBusEffect | kCommandFlagVoiceSendSet;
+static_assert(kCommandKnownFlagsMask == 0x0fu,
+              "command flag bits 0 through 3 are assigned internal flags");
 
 struct PreparedBiquadCoeffs {
     float b0;
@@ -369,16 +370,19 @@ struct CommandRecord {
             std::uint32_t targetBusIndex; // dense index; kInvalidBusIndex clears
             std::uint32_t targetBusGeneration;
             float levelDb;
+            std::uint64_t setAddress;
         } setVoiceSend;
         struct ClearVoiceSend {
             VnVoiceHandle handle;
             std::uint32_t sendSlot;
+            std::uint64_t incarnation;
         } clearVoiceSend;
         struct SetVoiceSendLevel {
             VnVoiceHandle handle;
             std::uint32_t sendSlot;
             float levelDb;
             std::uint32_t rampMs;
+            std::uint64_t incarnation;
         } setVoiceSendLevel;
         struct SetBusEffect {
             // Mirror of SetVoiceEffect for a bus chain: the instance was
