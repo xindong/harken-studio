@@ -3,6 +3,7 @@
 // created bus with unknown bus ids refused.
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
+#include "HarkenApiInternal.h"
 
 #include "harken/dsp/GainRamp.h"
 #include "harken/param/BusTargetStore.h"
@@ -784,6 +785,135 @@ TEST(BusActivity, RealMixerUsesCompactPlanesAndReconstructedWorkRows) {
     EXPECT_EQ(0u, buses.ActivityFallbackCount());
     buses.DrainActivities();
     EXPECT_EQ(1u, engine.effectBank.InUseOf(VN_EFFECT_GAIN));
+}
+
+
+TEST(BusActivity, ReusedLogicalSlotRequiresANewWorkIncarnation) {
+    auto config = MakeNullConfig(2, kBlockFrames);
+    config.maxBuses = 2;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    auto& buses = engine.buses;
+    const auto firstId = harkentest::ObjectId(10), nextId = harkentest::ObjectId(11);
+    ASSERT_EQ(VN_OK, Vn_CreateBus(firstId, VN_BUS_MASTER));
+    engine.nullBackend.Pump(1);
+    const auto first = buses.FindRef(firstId);
+    const auto oldWork = buses.AudioWorkRef(first.index);
+    ASSERT_TRUE(buses.RetainWorkRow(oldWork));
+    ASSERT_EQ(VN_OK, Vn_DestroyBus(firstId));
+    engine.nullBackend.Pump(1);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    ASSERT_EQ(VN_OK, Vn_CreateBus(nextId, VN_BUS_MASTER));
+    engine.nullBackend.Pump(1);
+    const auto next = buses.FindRef(nextId), master = buses.FindRef(VN_BUS_MASTER);
+    ASSERT_EQ(first.index, next.index);
+    ASSERT_NE(first.generation, next.generation);
+    const std::array stale{
+        harken::BusTree::WorkBinding{master, buses.AudioWorkRef(0)},
+        harken::BusTree::WorkBinding{next, oldWork}};
+    EXPECT_EQ(nullptr, buses.PrepareActivity(buses.InstalledTopology(), stale));
+    const auto replacement = buses.PrepareWorkRow();
+    ASSERT_TRUE(replacement.Valid());
+    ASSERT_EQ(VN_OK, engine.PrepareBusWorkState(next.index, *buses.PreparedWorkRow(replacement)));
+    const std::array valid{stale[0], harken::BusTree::WorkBinding{next, replacement}};
+    auto* candidate = buses.PrepareActivity(buses.InstalledTopology(), valid);
+    ASSERT_NE(nullptr, candidate);
+    buses.CancelActivity(candidate);
+    buses.ReleaseWorkRow(replacement);
+    buses.DrainActivities();
+    buses.ReleaseWorkRow(oldWork);
+}
+
+
+TEST(BusActivity, SignalReplacementIsExplicitAndFencedToItsPreparedPredecessor) {
+    auto config = MakeNullConfig(2, kBlockFrames);
+    config.maxBuses = 2;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    auto& buses = engine.buses;
+    ASSERT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(10), VN_BUS_MASTER));
+    engine.nullBackend.Pump(1);
+    const std::array working{
+        harken::BusTree::WorkBinding{buses.RefAt(0), buses.AudioWorkRef(0)},
+        harken::BusTree::WorkBinding{buses.RefAt(1), buses.AudioWorkRef(1)}};
+    std::array<harken::SignalRenderNodeInput, 2> nodes{};
+    for (unsigned i = 0; i < nodes.size(); ++i) {
+        nodes[i].busIndex = i;
+        nodes[i].busId = buses.IdAt(i);
+        nodes[i].stableId = buses.IdAt(i);
+        nodes[i].busGeneration = buses.GenerationAt(i);
+    }
+    const auto signals = [&](std::uint64_t publication, std::uint64_t content,
+                             const harken::SignalRenderPlan* predecessor = nullptr) {
+        auto result = harken::SignalRenderPlan::Prepare(
+            {engine.config.mixChannelCount, kBlockFrames, 48000, engine.config.mixChannelLayout}, nodes, {}, {});
+        if (result != nullptr) {
+            result->EnableActualRouting(2);
+            if (!result->ConfigurePublication(publication, content, predecessor, kBlockFrames)) result.reset();
+        }
+        return result;
+    };
+    const auto adopt = [&](harken::BusActivityPlan* plan) {
+        auto* attachment = buses.ActivityAttachment(plan);
+        if (attachment == nullptr) return false;
+        attachment->queued(attachment->context);
+        harken::memguard::AudioThreadScope audio;
+        const bool result = attachment->adopt(attachment->context);
+        if (!result) attachment->discard(attachment->context);
+        return result;
+    };
+    auto* first = buses.PrepareActivity(buses.InstalledTopology(), working, signals(10, 100));
+    ASSERT_TRUE(adopt(first));
+    auto* original = buses.InstalledSignals();
+    using Transition = harken::BusTree::SignalTransition;
+    EXPECT_EQ(nullptr, buses.PrepareActivity(buses.InstalledTopology(), working,
+        signals(11, 100), Transition::ReplaceContent, original));
+    auto* staleReplacement = buses.PrepareActivity(buses.InstalledTopology(), working,
+        signals(12, 200), Transition::ReplaceContent, original);
+    ASSERT_NE(nullptr, staleReplacement);
+    auto* continuation = buses.PrepareActivity(buses.InstalledTopology(), working, signals(13, 100, original));
+    ASSERT_TRUE(adopt(continuation));
+    auto* continued = buses.InstalledSignals();
+    EXPECT_FALSE(adopt(staleReplacement));
+    EXPECT_EQ(continued, buses.InstalledSignals());
+    auto* unprepared = buses.PrepareActivity(buses.InstalledTopology(), working, signals(14, 100));
+    EXPECT_FALSE(adopt(unprepared));
+    EXPECT_EQ(continued, buses.InstalledSignals());
+    auto* replacement = buses.PrepareActivity(buses.InstalledTopology(), working,
+        signals(15, 200), Transition::ReplaceContent, continued);
+    ASSERT_TRUE(adopt(replacement));
+    EXPECT_EQ(200u, buses.InstalledSignals()->ContentIdentity());
+    auto* implicitRemoval = buses.PrepareActivity(buses.InstalledTopology(), working);
+    EXPECT_FALSE(adopt(implicitRemoval));
+    auto* removal = buses.PrepareActivity(buses.InstalledTopology(), working, {},
+        Transition::ReplaceContent, buses.InstalledSignals());
+    ASSERT_TRUE(adopt(removal));
+    EXPECT_EQ(nullptr, buses.InstalledSignals());
+    buses.DrainActivities();
+    EXPECT_EQ(0u, buses.ActivityFallbackCount());
+}
+
+TEST(BusActivity, InitialTransactionalSlotBindsItsWorkIdentity) {
+    auto config = MakeNullConfig(2, kBlockFrames);
+    config.maxBuses = 2;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    auto& buses = engine.buses;
+    buses.CommitLogicSlot(1, harkentest::ObjectId(10), 0, 1);
+    const auto index = engine.topologyPlans.AcquireSparse(0);
+    ASSERT_NE(harken::kInvalidTopologyPlanIndex, index);
+    harken::FillLiveSignalTopology(engine, index);
+    buses.ApplyTopologyPlan(index, harken::kInvalidBusIndex, harken::kInvalidBusIndex, 0);
+    const std::array working{
+        harken::BusTree::WorkBinding{buses.RefAt(0), buses.AudioWorkRef(0)},
+        harken::BusTree::WorkBinding{buses.RefAt(1), buses.AudioWorkRef(1)}};
+    auto* plan = buses.PrepareActivity(buses.InstalledTopology(), working);
+    ASSERT_NE(nullptr, plan);
+    buses.CancelActivity(plan);
+    buses.DrainActivities();
 }
 
 } // namespace

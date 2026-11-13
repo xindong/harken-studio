@@ -95,12 +95,15 @@ public:
     };
     struct Bus;
     struct WorkBinding { BusSlotRef bus; WorkRef work; };
+    enum class SignalTransition : std::uint8_t { Preserve, ReplaceContent };
     // Logic prepares a complete projection. The queue attachment transfers it
     // at the original publication boundary; its address remains stable until
     // cancellation or audio retirement has been drained on logic.
     BusActivityPlan* PrepareActivity(const TopologyPlanView& topology,
         std::span<const WorkBinding> working,
-        std::shared_ptr<SignalRenderPlan> signals = {}) noexcept;
+        std::unique_ptr<SignalRenderPlan> signals = {},
+        SignalTransition signalTransition = SignalTransition::Preserve,
+        const SignalRenderPlan* replacedSignals = nullptr) noexcept;
     void CancelActivity(BusActivityPlan* plan) noexcept;
     void DrainActivities() noexcept;
     CommandQueue::BusActivityAttachment* ActivityAttachment(BusActivityPlan* plan) noexcept;
@@ -618,6 +621,10 @@ private:
     enum class WorkPhase : std::uint8_t { Free, Preparing, Published, Retired };
     struct WorkRow {
         Bus bus;
+        // Bound by logic before publication and never rewritten by topology
+        // adoption. A new logical incarnation requires a new prepared row.
+        BusSlotRef host{};
+        VnBusId hostId{};
         std::atomic<std::uint32_t> references{0};
         std::atomic<WorkPhase> phase{WorkPhase::Free};
         std::uint64_t generation = 0;
@@ -635,6 +642,7 @@ private:
     void RetireWorkRow(WorkRow& row) noexcept;
     void RecycleWorkRow(WorkRow& row) noexcept;
     void ShutdownWorkRows() noexcept;
+    void BindInitialWorkIdentity(std::uint32_t busIndex) noexcept;
     bool HasWorkRow(std::uint32_t index) const noexcept {
         return index < m_audioCount && m_workSlots[index].Valid();
     }

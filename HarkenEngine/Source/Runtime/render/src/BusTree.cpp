@@ -92,6 +92,7 @@ BusTree::BusTree(const EngineConfig& config, TopologyPlanPool& plans,
     WorkState(0).id = VN_BUS_MASTER;
     WorkState(0).generation = 1;
     WorkState(0).parentIndex = 0;
+    BindInitialWorkIdentity(0);
     m_logicParent[0] = 0;
     m_logicAlive[0] = 1;
     m_logicId[0] = VN_BUS_MASTER;
@@ -174,6 +175,7 @@ void BusTree::MaterializePreparedBusSlots(
             slots[offset].generation != 0 ? slots[offset].generation : 1u;
         InitializeBusSlot(busIndex, slots[offset].id,
                           slots[offset].parentIndex, generation);
+        BindInitialWorkIdentity(busIndex);
     }
     m_materializedCount = firstIndex + slotCount;
 }
@@ -213,6 +215,16 @@ void BusTree::CommitLogicSlot(std::uint32_t busIndex, VnBusId id,
     }
     const bool reused =
         busIndex < m_count && m_logicGeneration[busIndex] != 0;
+    if (busIndex >= m_count) {
+        // Initial rows are reserved by physical index until their first
+        // topology publication. Pack/project commits need not initialize DSP
+        // on logic, but must bind this immutable identity before publication.
+        auto& initial = m_workRows[busIndex];
+        if (!initial.host.Valid()) {
+            initial.host = {busIndex, generation};
+            initial.hostId = id;
+        }
+    }
     m_logicId[busIndex] = id;
     m_logicParent[busIndex] = parentIndex;
     m_logicGeneration[busIndex] = generation;
@@ -273,6 +285,7 @@ VnResult BusTree::CreateBus(VnBusId id, VnBusId parentId) {
         // An appended slot is not audio-visible yet, so initializing its
         // render state on the logic thread is race-free.
         InitializeBusSlot(busIndex, id, parentIndex, generation);
+        BindInitialWorkIdentity(busIndex);
     }
     CommitLogicSlot(busIndex, id, parentIndex, generation);
     return VN_OK;

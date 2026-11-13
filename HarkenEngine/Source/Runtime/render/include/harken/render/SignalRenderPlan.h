@@ -193,6 +193,9 @@ public:
     std::span<const SignalFeedbackEdge> DefinitionPaths() const noexcept { return feedback_.Edges(); }
     std::span<const SignalMemberProof> Membership() const noexcept { return membership_; }
     std::uint64_t ContentIdentity() const noexcept { return contentIdentity_; }
+    bool SameContinuityDomain(const SignalRenderPlan& other) const noexcept {
+        return contentIdentity_ != 0 && contentIdentity_ == other.contentIdentity_ && SameFormat(other);
+    }
     std::unique_ptr<SignalRenderPlan> PrepareProjection(
         std::span<const std::uint32_t> selected, std::uint32_t topologySlots) const noexcept;
     // Logic compares immutable prepared definitions only. The content identity
@@ -345,6 +348,7 @@ public:
             routingBusSlotBound_ = busNodes_.back().first + 1u;
     }
     bool UsesActualRouting() const noexcept { return actualRouting_; }
+    std::uint32_t RoutingBusSlotBound() const noexcept { return routingBusSlotBound_; }
     // Current dynamic-route consumers target Buses, never Sound DSP. With
     // a prepared content DAG and at most one stage per member, every Bus
     // path is downstream and cannot change the prepared feedforward proof.

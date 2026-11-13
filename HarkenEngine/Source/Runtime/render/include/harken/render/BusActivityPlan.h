@@ -36,7 +36,9 @@ struct BusActivityPlan {
     std::vector<BusTree::WorkBinding> working;
     std::vector<BusRenderSlot> directory;
     std::vector<std::uint32_t> order;
-    std::shared_ptr<SignalRenderPlan> signals;
+    std::unique_ptr<SignalRenderPlan> signals;
+    BusTree::SignalTransition signalTransition = BusTree::SignalTransition::Preserve;
+    std::uint64_t replacedSignalPublication = 0;
 };
 
 } // namespace harken

@@ -27,6 +27,8 @@ BusTree::WorkRef BusTree::PrepareWorkRow() noexcept {
         ++row.generation;
         row.slot = slot;
         row.bus = {};
+        row.host = {};
+        row.hostId = {};
         row.next = nullptr;
         row.references.store(1, std::memory_order_relaxed);
         row.phase.store(WorkPhase::Preparing, std::memory_order_release);
@@ -88,6 +90,8 @@ bool BusTree::PublishWorkRow(WorkRef ref) noexcept {
     auto* row = ResolveWorkRow(ref);
     if (row == nullptr || row->phase.load(std::memory_order_acquire) != WorkPhase::Preparing ||
         row->references.load(std::memory_order_relaxed) == 0) return false;
+    row->host = {row->bus.busIndex, row->bus.generation};
+    row->hostId = row->bus.id;
     for (const auto& effect : row->bus.fxSlotEffectRef) {
         if (effect.type == kEffectTypeNone) continue;
         const bool committed = m_effectBank.CommitPrepared(effect);
@@ -97,6 +101,13 @@ bool BusTree::PublishWorkRow(WorkRef ref) noexcept {
     }
     row->phase.store(WorkPhase::Published, std::memory_order_release);
     return true;
+}
+
+void BusTree::BindInitialWorkIdentity(std::uint32_t index) noexcept {
+    auto& row = m_workRows[m_workSlots[index].slot];
+    assert(!row.host.Valid());
+    row.host = {row.bus.busIndex, row.bus.generation};
+    row.hostId = row.bus.id;
 }
 
 BusTree::WorkRef BusTree::AudioWorkRef(std::uint32_t index) const noexcept {

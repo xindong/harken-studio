@@ -3,13 +3,20 @@
 namespace harken {
 
 BusActivityPlan* BusTree::PrepareActivity(const TopologyPlanView& topology,
-    std::span<const WorkBinding> working, std::shared_ptr<SignalRenderPlan> signals) noexcept {
+    std::span<const WorkBinding> working, std::unique_ptr<SignalRenderPlan> signals,
+    SignalTransition signalTransition, const SignalRenderPlan* replacedSignals) noexcept {
     if (!topology.valid || topology.slotCount == 0 || topology.slotCount > m_capacity ||
         topology.parents == nullptr || topology.generations == nullptr || topology.alive == nullptr || topology.busIds == nullptr ||
         working.empty() || working.size() > topology.orderCount ||
         (topology.signals != nullptr && signals == nullptr)) return nullptr;
+    if (signalTransition == SignalTransition::ReplaceContent) {
+        if (replacedSignals != nullptr && (replacedSignals->PublicationIdentity() == 0 ||
+            (signals != nullptr && signals->SameContinuityDomain(*replacedSignals)))) return nullptr;
+    } else if (replacedSignals != nullptr) return nullptr;
     try {
         auto plan = std::make_unique<BusActivityPlan>(*this);
+        plan->signalTransition = signalTransition;
+        plan->replacedSignalPublication = replacedSignals != nullptr ? replacedSignals->PublicationIdentity() : 0;
         plan->working.reserve(working.size());
         plan->directory.resize(topology.slotCount);
         plan->order.reserve(working.size());
@@ -22,8 +29,11 @@ BusActivityPlan* BusTree::PrepareActivity(const TopologyPlanView& topology,
                 topology.generations[bus.index] != bus.generation ||
                 plan->directory[bus.index].plane != UINT32_MAX) return nullptr;
             auto* row = ResolveWorkRow(binding.work);
-            if (row == nullptr || row->bus.busIndex != bus.index || row->bus.generation != bus.generation ||
-                (topology.busIds != nullptr && row->bus.id != topology.busIds[bus.index]) ||
+            if (row != nullptr && row->phase.load(std::memory_order_acquire) == WorkPhase::Preparing) {
+                row->host = {row->bus.busIndex, row->bus.generation};
+                row->hostId = row->bus.id;
+            }
+            if (row == nullptr || row->host != bus || row->hostId != topology.busIds[bus.index] ||
                 !RetainWorkRow(binding.work)) return nullptr;
             plan->working.push_back(binding);
             plan->directory[bus.index].plane = bus.index == 0 ? 0 : 1;
@@ -51,6 +61,8 @@ BusActivityPlan* BusTree::PrepareActivity(const TopologyPlanView& topology,
         }
         if (plan->order.size() != working.size()) return nullptr;
         if (signals != nullptr) {
+            if (signals->PublicationIdentity() == 0 || !signals->UsesActualRouting() ||
+                signals->RoutingBusSlotBound() != topology.slotCount) return nullptr;
             for (std::uint32_t i = 0; i < signals->NodeCount(); ++i) {
                 const auto node = signals->NodeDefinition(i);
                 if (node.kind != SignalEndpointKindV1::Bus) continue;
@@ -61,7 +73,6 @@ BusActivityPlan* BusTree::PrepareActivity(const TopologyPlanView& topology,
             for (const auto& binding : plan->working)
                 if (signals->NodeForBus(binding.bus.index, topology.busIds[binding.bus.index],
                         binding.bus.generation) == UINT32_MAX) return nullptr;
-            signals->EnableActualRouting(topology.slotCount);
         }
         plan->signals = std::move(signals);
         auto* result = plan.get();
@@ -105,8 +116,14 @@ bool BusTree::AdoptActivity(BusActivityPlan& plan) noexcept {
             row->bus.busIndex != binding.bus.index || row->bus.generation != binding.bus.generation) return false;
     }
     auto* previousSignals = InstalledSignals();
-    if (plan.signals != nullptr && previousSignals != nullptr && plan.signals.get() != previousSignals &&
-        !plan.signals->AdoptContinuityFrom(*previousSignals)) return false;
+    if (plan.signalTransition == SignalTransition::ReplaceContent) {
+        // Content replacement is an explicit prepared transition, never a
+        // fallback for a failed same-content continuity mapping.
+        if ((previousSignals != nullptr ? previousSignals->PublicationIdentity() : 0) !=
+            plan.replacedSignalPublication) return false;
+    } else if (previousSignals != nullptr) {
+        if (plan.signals == nullptr || !plan.signals->AdoptContinuityFrom(*previousSignals)) return false;
+    }
     // Only the coordinator mutates the directory, after all prior workers join.
     // Every incoming candidate already owns a lease; none can retire here.
     for (const auto& binding : plan.working) {
