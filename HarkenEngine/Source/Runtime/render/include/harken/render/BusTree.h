@@ -476,6 +476,23 @@ public:
         ToneSection outputHpf;
     };
 
+    // Stored only for filters with retained history, not for every definition.
+    struct DormantToneSection {
+        BiquadCoeffs coefficients;
+        SignalBiquadBound signalBound;
+        double signalHighWater = 1;
+        float lastInput[kMaxChannels]{};
+        float log2Hz = 0, log2Q = 0, gainDb = 0;
+        std::uint32_t tailFrames = 0, zeroSigns = 0;
+        bool enabled = false;
+    };
+    // Audio owner, after actual section input is silent. Failure leaves out intact.
+    static bool CaptureDormantToneSection(const Bus::ToneSection& section,
+        std::uint32_t channels, DormantToneSection& out) noexcept;
+    // Unpublished work row, same identity, format and authoritative parameters.
+    static void RestoreDormantToneSection(Bus::ToneSection& section,
+        const DormantToneSection& saved) noexcept;
+
     // Render state of a bus by dense index, or nullptr out of range. Internal
     // (non-ABI) accessor mirroring VoicePool::Resolve; see Bus. Bounded by the
     // logic-visible count so a just-created bus is reachable before its first

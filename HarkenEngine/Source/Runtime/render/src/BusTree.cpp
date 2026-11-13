@@ -8,6 +8,7 @@
 #include "harken/core/ChannelLayout.h"
 #include "harken/core/SnapshotBuffer.h"
 #include "harken/dsp/DownmixSum.h"
+#include "harken/dsp/BiquadDormancy.h"
 #include "harken/render/BuiltinEffects.h"
 #include "harken/render/EffectChain.h"
 
@@ -494,6 +495,63 @@ bool ToneSectionActive(const BusTree::Bus::ToneSection& section) {
 }
 
 } // namespace
+
+bool BusTree::CaptureDormantToneSection(const Bus::ToneSection& section,
+    std::uint32_t channels, DormantToneSection& out) noexcept {
+    if (channels == 0 || channels > kMaxChannels || section.transition.transitioning ||
+        section.transition.pendingValid || section.glide.active ||
+        !IsBiquadStable(section.coeffs) || std::isnan(section.signalHighWater) ||
+        !std::isfinite(section.glide.currentLog2Hz) ||
+        !std::isfinite(section.glide.currentLog2Q) ||
+        !std::isfinite(section.glide.currentGainDb)) return false;
+    DormantToneSection next;
+    if (section.enabled) {
+        if (!CaptureBiquadZeroState(section.state, section.transition.lastInput, next.zeroSigns)) return false;
+        auto trial = section;
+        float zero[kMaxChannels]{};
+        float* planes[kMaxChannels];
+        for (std::uint32_t ch = 0; ch < channels; ++ch) planes[ch] = &zero[ch];
+        // Kind/rate are unused in the settled path; use the actual processing
+        // seam so both filter state and feedback certificates must be stable.
+        ProcessBusToneSection(trial, BusToneKind::Lowpass, nullptr, 0, planes, channels, 1);
+        std::uint32_t afterSigns = 0;
+        if (!CaptureBiquadZeroState(trial.state, trial.transition.lastInput, afterSigns) ||
+            next.zeroSigns != afterSigns ||
+            !section.signalBound.CaptureSettled().SameState(trial.signalBound.CaptureSettled()) ||
+            std::bit_cast<std::uint64_t>(section.signalHighWater) !=
+                std::bit_cast<std::uint64_t>(trial.signalHighWater)) return false;
+        for (std::uint32_t ch = 0; ch < channels; ++ch)
+            if (std::bit_cast<std::uint32_t>(zero[ch]) != 0) return false;
+    }
+    // Disabled sections freeze lastInput. The next enable seeds its new
+    // branch from it, while old inactive z history is never read again.
+    std::copy_n(section.transition.lastInput, kMaxChannels, next.lastInput);
+    next.enabled = section.enabled;
+    next.coefficients = section.coeffs;
+    next.tailFrames = section.tailFrames;
+    next.log2Hz = section.glide.currentLog2Hz;
+    next.log2Q = section.glide.currentLog2Q;
+    next.gainDb = section.glide.currentGainDb;
+    next.signalBound = section.signalBound.CaptureSettled();
+    next.signalHighWater = section.signalHighWater;
+    out = next;
+    return true;
+}
+
+void BusTree::RestoreDormantToneSection(Bus::ToneSection& section,
+    const DormantToneSection& saved) noexcept {
+    section = {};
+    section.enabled = saved.enabled;
+    section.coeffs = saved.coefficients;
+    section.tailFrames = saved.tailFrames;
+    section.glide.currentLog2Hz = saved.log2Hz;
+    section.glide.currentLog2Q = saved.log2Q;
+    section.glide.currentGainDb = saved.gainDb;
+    section.signalBound.RestoreSettled(saved.signalBound);
+    section.signalHighWater = saved.signalHighWater;
+    if (saved.enabled) RestoreBiquadZeroState(section.state, section.transition.lastInput, saved.zeroSigns);
+    else std::copy_n(saved.lastInput, kMaxChannels, section.transition.lastInput);
+}
 
 void BusTree::ApplySetBusFilter(std::uint32_t busIndex,
                                 std::uint32_t filterKind, bool enable,

@@ -1355,3 +1355,70 @@ TEST(BusSettings, ReusedLimiterHasDeterministicColdFirstParameterBehavior) {
     engine.CancelBusWorkState(row);
     EXPECT_EQ(1u, engine.effectBank.InUseOf(VN_EFFECT_LIMITER));
 }
+
+TEST(BusSettings, DormantFiltersPreserveFrozenSeedsAndSettledRetargeting) {
+    using namespace harken;
+    const auto render = [](bool reconstruct, Capture& output) {
+        EngineSession session(MakeNullConfig(2, kBlock));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        ASSERT_EQ(VN_OK, Vn_CreateBus(kBusA, VN_BUS_MASTER));
+        engine.nullBackend.Pump(1);
+        auto* bus = engine.buses.BusState(engine.buses.FindIndex(kBusA));
+        ASSERT_NE(nullptr, bus);
+        BusTree::Bus::ToneSection* sections[]{&bus->busLpf, &bus->busHpf,
+            &bus->outputLpf, &bus->outputHpf};
+        for (unsigned i = 0; i != 4; ++i) {
+            auto& section = *sections[i];
+            section.enabled = (i % 2 == 0);
+            section.coeffs = MakeLowpass(48000.f, 6000.f, .707f);
+            section.tailFrames = EstimateBiquadTailFrames(section.coeffs);
+            section.glide.Snap(123.45f, .83f, 0);
+            section.glide.Retarget(6789.12f, .91f, 0, 17);
+            section.glide.Advance(17);
+            section.signalHighWater = section.signalBound.Advance(section.enabled,
+                section.coeffs, section.transition, 1);
+            if (!section.enabled) {
+                section.transition.lastInput[0] = .125f;
+                section.transition.lastInput[1] = -.375f;
+                section.state[0].SetFloat(.7f, -.2f);
+            }
+            BusTree::DormantToneSection saved;
+            ASSERT_TRUE(BusTree::CaptureDormantToneSection(section, 2, saved));
+            if (reconstruct) BusTree::RestoreDormantToneSection(section, saved);
+        }
+        // Real public filter updates exercise frozen DC seeds and finished
+        // glide coordinates; both affect the next audible transition.
+        ASSERT_EQ(VN_OK, Vn_SetBusFilter(kBusA, kFilterKindLowpass, 3400.f, .81f, 1, 20));
+        ASSERT_EQ(VN_OK, Vn_SetBusFilter(kBusA, kFilterKindHighpass, 120.f, .8f, 1, 20));
+        ASSERT_EQ(VN_OK, Vn_SetBusOutputFilter(kBusA, kFilterKindLowpass, 4500.f, .73f, 1, 20));
+        ASSERT_EQ(VN_OK, Vn_SetBusOutputFilter(kBusA, kFilterKindHighpass, 60.f, .72f, 1, 20));
+        auto dc = MakeDC(kRate, .25f);
+        auto pcm = MonoDesc(dc, kRate);
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &pcm));
+        auto play = MakePlayDesc(harkentest::ObjectId(1), 0);
+        play.busId = kBusA;
+        VnVoiceHandle voice = 0;
+        ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+        PumpAndCapture(&engine, 8, output);
+    };
+    Capture normal, restored;
+    render(false, normal); render(true, restored);
+    ASSERT_FALSE(normal.left.empty());
+    ASSERT_EQ(normal.left.size(), restored.left.size());
+    ASSERT_EQ(normal.right.size(), restored.right.size());
+    EXPECT_EQ(0, std::memcmp(normal.left.data(), restored.left.data(), normal.left.size() * sizeof(float)));
+    EXPECT_EQ(0, std::memcmp(normal.right.data(), restored.right.data(), normal.right.size() * sizeof(float)));
+
+    BusTree::Bus::ToneSection section;
+    section.enabled = true;
+    section.signalHighWater = section.signalBound.Advance(true, section.coeffs, section.transition, 1);
+    BusTree::DormantToneSection saved;
+    ASSERT_TRUE(BusTree::CaptureDormantToneSection(section, 2, saved));
+    section.state[0].SetFloat(std::numeric_limits<float>::denorm_min(), 0);
+    EXPECT_FALSE(BusTree::CaptureDormantToneSection(section, 2, saved));
+    section.state[0].Reset(); section.transition.lastInput[0] = .1f;
+    EXPECT_FALSE(BusTree::CaptureDormantToneSection(section, 2, saved));
+    section.transition.lastInput[0] = 0; section.glide.active = true;
+    EXPECT_FALSE(BusTree::CaptureDormantToneSection(section, 2, saved));
+}

@@ -1,5 +1,6 @@
 #include "harken/render/BuiltinEffects.h"
 #include "harken/render/BuiltinEffectDormancy.h"
+#include "harken/dsp/BiquadDormancy.h"
 #include "harken/render/SignalPathBounds.h"
 #include "harken/dsp/GainRamp.h"
 
@@ -1665,38 +1666,9 @@ bool StableZeroStep(std::uint32_t type, const State& current,
     return current.hasRendered == trial.hasRendered && equal(current, trial);
 }
 
-// Bit tests must precede any float-to-double conversion: DAZ could otherwise
-// make a nonzero float subnormal appear to be a reconstructible zero.
-bool ZeroSectionSigns(const BiquadState* states, const float* lastInput,
-                      std::uint32_t& signs) noexcept {
-    static_assert(kMaxChannels <= 8);
-    signs = 0;
-    for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch) {
-        const auto& state = states[ch];
-        if (state.wide) {
-            const auto a = std::bit_cast<std::uint64_t>(state.memory.extended.z1);
-            const auto b = std::bit_cast<std::uint64_t>(state.memory.extended.z2);
-            if ((a & UINT64_C(0x7fffffffffffffff)) != 0 ||
-                (b & UINT64_C(0x7fffffffffffffff)) != 0) return false;
-            signs |= static_cast<std::uint32_t>(a >> 63) << (ch * 3);
-            signs |= static_cast<std::uint32_t>(b >> 63) << (ch * 3 + 1);
-            signs |= 1u << (24 + ch);
-        } else {
-            const auto a = std::bit_cast<std::uint32_t>(state.memory.normal.z1);
-            const auto b = std::bit_cast<std::uint32_t>(state.memory.normal.z2);
-            if ((a & 0x7fffffffu) != 0 || (b & 0x7fffffffu) != 0) return false;
-            signs |= (a >> 31) << (ch * 3);
-            signs |= (b >> 31) << (ch * 3 + 1);
-        }
-        const auto input = std::bit_cast<std::uint32_t>(lastInput[ch]);
-        if ((input & 0x7fffffffu) != 0) return false;
-        signs |= (input >> 31) << (ch * 3 + 2);
-    }
-    return true;
-}
 
 bool CaptureToneSections(const ToneEffectState& state, ToneDormantState& out) noexcept {
-    const BiquadState* histories[]{state.lowShelfState, state.peakState, state.highShelfState};
+    const BiquadState (*histories[])[kMaxChannels]{&state.lowShelfState, &state.peakState, &state.highShelfState};
     const BiquadTransitionState<kMaxChannels>* transitions[]{
         &state.lowShelfTransition, &state.peakTransition, &state.highShelfTransition};
     const BiquadCoeffs coefficients[]{state.lowShelf, state.peak, state.highShelf};
@@ -1708,7 +1680,7 @@ bool CaptureToneSections(const ToneEffectState& state, ToneDormantState& out) no
             !std::isfinite(c.b0) || !std::isfinite(c.b1) || !std::isfinite(c.b2) ||
             !std::isfinite(c.a1) || !std::isfinite(c.a2) ||
             std::isnan(state.signalBandHistory[i]) || state.signalBandHistory[i] < 0 ||
-            !ZeroSectionSigns(histories[i], transitions[i]->lastInput, out.sections[i].zeroSigns)) return false;
+            !CaptureBiquadZeroState(*histories[i], transitions[i]->lastInput, out.sections[i].zeroSigns)) return false;
         out.sections[i].coefficients = c;
         out.sections[i].tailFrames = tails[i];
         out.sections[i].everActive = enabled[i];
@@ -1739,6 +1711,8 @@ bool CaptureBuiltinEffectDormantState(std::uint32_t type, const void* state,
         const auto& s = *static_cast<const LimiterState*>(state);
         if (s.transitionFramesRemaining != 0 || !std::isfinite(s.currentGain) ||
             !std::isfinite(s.ceilingLinear) || !std::isfinite(s.releaseCoeff) ||
+            !SameBits(s.ceilingLinear, s.targetCeilingLinear) ||
+            !SameBits(s.releaseCoeff, s.targetReleaseCoeff) ||
             !StableZeroStep(type, s, channels, [](const auto& a, const auto& b) {
                 return SameBits(a.currentGain, b.currentGain);
             })) return false;
@@ -1766,6 +1740,7 @@ bool CaptureBuiltinEffectDormantState(std::uint32_t type, const void* state,
         if (s.transitionFramesRemaining != 0 || !s.hasRendered || s.lineBase == nullptr ||
             s.lineFrames == 0 || s.writeIndex >= s.lineFrames ||
             !std::isfinite(s.feedback) || !std::isfinite(s.maxFeedbackSinceReset) ||
+            !SameBits(s.wet, s.targetWet) || !SameBits(s.dry, s.targetDry) ||
             !std::isfinite(s.wet) || !std::isfinite(s.dry)) return false;
         const auto samples = static_cast<std::size_t>(s.lineFrames) * kMaxChannels;
         for (std::size_t i = 0; i < samples; ++i)
@@ -1834,7 +1809,7 @@ bool RestoreBuiltinEffectDormantState(void* state,
     case VN_EFFECT_THREE_BAND_TONE: {
         auto& s = *static_cast<ToneEffectState*>(state);
         if (s.sampleRate != saved.sampleRate || tone == nullptr) return false;
-        BiquadState* histories[]{s.lowShelfState, s.peakState, s.highShelfState};
+        BiquadState (*histories[])[kMaxChannels]{&s.lowShelfState, &s.peakState, &s.highShelfState};
         BiquadTransitionState<kMaxChannels>* transitions[]{
             &s.lowShelfTransition, &s.peakTransition, &s.highShelfTransition};
         BiquadCoeffs* coefficients[]{&s.lowShelf, &s.peak, &s.highShelf};
@@ -1846,19 +1821,7 @@ bool RestoreBuiltinEffectDormantState(void* state,
             *tails[i] = section.tailFrames;
             *enabled[i] = section.everActive;
             s.signalBandHistory[i] = section.signalHistory;
-            for (std::uint32_t ch = 0; ch < kMaxChannels; ++ch) {
-                const auto sign = [&](unsigned field) { return (section.zeroSigns >> (ch * 3 + field)) & 1u; };
-                auto& history = histories[i][ch];
-                if ((section.zeroSigns & (1u << (24 + ch))) != 0) {
-                    history.memory.extended = {
-                        std::bit_cast<double>(static_cast<std::uint64_t>(sign(0)) << 63),
-                        std::bit_cast<double>(static_cast<std::uint64_t>(sign(1)) << 63)};
-                    history.wide = true;
-                } else {
-                    history.SetFloat(std::bit_cast<float>(sign(0) << 31), std::bit_cast<float>(sign(1) << 31));
-                }
-                transitions[i]->lastInput[ch] = std::bit_cast<float>(sign(2) << 31);
-            }
+            RestoreBiquadZeroState(*histories[i], transitions[i]->lastInput, section.zeroSigns);
         }
         s.hasRendered = saved.hasRendered;
         return true;

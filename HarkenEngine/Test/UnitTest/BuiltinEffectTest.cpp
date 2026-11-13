@@ -1359,6 +1359,45 @@ TEST(BuiltinDormancy, PreservesExactLimiterAndCompressorFixedPointsWithoutTeleme
     EXPECT_FALSE(CaptureBuiltinEffectDormantState(VN_EFFECT_COMPRESSOR, &compressor, 2, saved));
 }
 
+TEST(BuiltinDormancy, InterruptedParameterRampsCannotBeRebuiltFromTargets) {
+    using namespace harken;
+    BuiltinEffectDormantState saved;
+    LimiterState limiter;
+    limiter.hasRendered = true;
+    limiter.sampleRate = kRate;
+    float zero = 0; float* planes[]{&zero};
+    LimiterRequestPreparedParam(&limiter, kLimiterParamCeilingDb, .5f, 16);
+    BuildEffect(VN_EFFECT_LIMITER, &limiter).process(&limiter, planes, 1, 0, 1);
+    LimiterApplyPreparedParam(&limiter, kLimiterParamReleaseMs, .99f);
+    ASSERT_EQ(0u, limiter.transitionFramesRemaining);
+    ASSERT_NE(limiter.ceilingLinear, limiter.targetCeilingLinear);
+    EXPECT_FALSE(CaptureBuiltinEffectDormantState(VN_EFFECT_LIMITER, &limiter, 1, saved));
+    LimiterApplyPreparedParam(&limiter, kLimiterParamCeilingDb, .5f);
+    ASSERT_TRUE(CaptureBuiltinEffectDormantState(VN_EFFECT_LIMITER, &limiter, 1, saved));
+    LimiterRequestPreparedParam(&limiter, kLimiterParamReleaseMs, .9f, 16);
+    BuildEffect(VN_EFFECT_LIMITER, &limiter).process(&limiter, planes, 1, 0, 1);
+    LimiterApplyPreparedParam(&limiter, kLimiterParamCeilingDb, .5f);
+    EXPECT_FALSE(CaptureBuiltinEffectDormantState(VN_EFFECT_LIMITER, &limiter, 1, saved));
+
+    std::array<float, 32 * kMaxChannels> line{};
+    DelayEffectState delay;
+    delay.hasRendered = true; delay.sampleRate = kRate;
+    delay.lineBase = line.data(); delay.lineFrames = 32;
+    auto effect = BuildEffect(VN_EFFECT_FEEDBACK_DELAY, &delay);
+    DelayApplyPreparedParam(&delay, kDelayParamWet, .5f, 16);
+    effect.process(&delay, planes, 1, 0, 1);
+    effect.setParam(&delay, kDelayParamDry, .5f);
+    ASSERT_EQ(0u, delay.transitionFramesRemaining);
+    ASSERT_NE(delay.wet, delay.targetWet);
+    EXPECT_FALSE(CaptureBuiltinEffectDormantState(VN_EFFECT_FEEDBACK_DELAY, &delay, 1, saved));
+    effect.setParam(&delay, kDelayParamWet, .5f);
+    ASSERT_TRUE(CaptureBuiltinEffectDormantState(VN_EFFECT_FEEDBACK_DELAY, &delay, 1, saved));
+    DelayApplyPreparedParam(&delay, kDelayParamDry, 1, 16);
+    effect.process(&delay, planes, 1, 0, 1);
+    effect.setParam(&delay, kDelayParamWet, .5f);
+    EXPECT_FALSE(CaptureBuiltinEffectDormantState(VN_EFFECT_FEEDBACK_DELAY, &delay, 1, saved));
+}
+
 TEST(BuiltinDormancy, DelayRequiresTheWholeFutureAddressableRingAndRestoresItsClock) {
     using namespace harken;
     constexpr unsigned frames = 32;
