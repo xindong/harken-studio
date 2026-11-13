@@ -230,6 +230,23 @@ TEST(CurrentWorldSignal, DirectInstallIsAtomicIdempotentAndPreservesLiveTopology
     EXPECT_EQ(engine.buses.InstalledSignals()->ContentIdentity(), second->ContentIdentity());
     EXPECT_EQ(engine.buses.InstalledSignals()->RelationCount(), second->RelationCount());
     EXPECT_TRUE(engine.buses.InstalledSignals()->SameMembership(*second));
+    for (const auto& expected : second->Relations()) {
+        const auto relations = engine.buses.InstalledSignals()->Relations();
+        const auto found = std::find_if(relations.begin(), relations.end(),
+            [&](const auto& relation) { return relation.stableId == expected.stableId; });
+        ASSERT_NE(found, relations.end());
+        EXPECT_FLOAT_EQ(found->level, expected.level);
+        const auto source = engine.buses.InstalledSignals()->NodeDefinition(found->source);
+        const auto target = engine.buses.InstalledSignals()->NodeDefinition(found->target);
+        EXPECT_EQ(source.stableId, second->NodeDefinition(expected.source).stableId);
+        EXPECT_EQ(source.kind, second->NodeDefinition(expected.source).kind);
+        const auto receiver = second->NodeDefinition(expected.target);
+        EXPECT_EQ(target.stableId, receiver.stableId);
+        EXPECT_EQ(target.kind, receiver.kind);
+        EXPECT_EQ(target.receiver, receiver.receiver);
+        EXPECT_FLOAT_EQ(target.attackMs, receiver.attackMs);
+        EXPECT_FLOAT_EQ(target.releaseMs, receiver.releaseMs);
+    }
     const auto current = engine.variables.CurrentWorldGeneration();
     fixture.relations[0].source.stableId = harkentest::ObjectId(999);
     fixture.Refresh();

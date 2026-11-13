@@ -127063,13 +127063,11 @@ VnResult ApplyPreparedPackTransaction(
         CommandQueue::PreparedBatchProof proof;
 
         ~QueueReservationGuard() {
-            proof.Release();
-            if (active) {
-                engine->commands.CancelReservedBatch(reservation);
-            }
+            Cancel();
         }
         void Cancel() noexcept {
             proof.Release();
+            engine->buses.DrainActivities();
             if (active) {
                 engine->commands.CancelReservedBatch(reservation);
                 active = false;
@@ -127125,25 +127123,6 @@ VnResult ApplyPreparedPackTransaction(
         CancelRevisionAttenuationDiscrete(engine, revision);
         return r;
     }
-    if (initialLoadToken != nullptr &&
-        PackFaultHit(PackStagingFault::InitialMediaPreparation)) {
-        if (commandCount != 0) {
-            queueGuard.Cancel();
-        }
-        CancelRevisionAttenuationDiscrete(engine, revision);
-        CancelRevisionBindings(engine, revision);
-        throw std::bad_alloc{};
-    }
-    if (initialLoadToken == nullptr &&
-        PackFaultHit(PackStagingFault::ActivationMediaPreparation)) {
-        if (commandCount != 0) {
-            queueGuard.Cancel();
-        }
-        CancelRevisionAttenuationDiscrete(engine, revision);
-        CancelRevisionBindings(engine, revision);
-        return VN_BACKPRESSURE;
-    }
-
     if (PreviewBusEffectAttachmentConflict(engine, image.bindingAttachments)) {
         if (commandCount != 0) queueGuard.Cancel();
         CancelRevisionAttenuationDiscrete(engine, revision);
@@ -127176,6 +127155,25 @@ VnResult ApplyPreparedPackTransaction(
         CancelRevisionBindings(engine, revision);
         return VN_BACKPRESSURE;
     }
+    if (initialLoadToken != nullptr &&
+        PackFaultHit(PackStagingFault::InitialMediaPreparation)) {
+        if (commandCount != 0) {
+            queueGuard.Cancel();
+        }
+        CancelRevisionAttenuationDiscrete(engine, revision);
+        CancelRevisionBindings(engine, revision);
+        throw std::bad_alloc{};
+    }
+    if (initialLoadToken == nullptr &&
+        PackFaultHit(PackStagingFault::ActivationMediaPreparation)) {
+        if (commandCount != 0) {
+            queueGuard.Cancel();
+        }
+        CancelRevisionAttenuationDiscrete(engine, revision);
+        CancelRevisionBindings(engine, revision);
+        return VN_BACKPRESSURE;
+    }
+
     VnPackHandle loadedHandle = 0;
     if (preserveMedia) {
         loadedHandle = revision.handle;

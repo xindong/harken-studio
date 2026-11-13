@@ -217,6 +217,23 @@ TEST(PackSignalRelation, FullSetAndContentOnlyPublicationUseOneCommandAndClearOn
     EXPECT_EQ(engine.acceptedSignalPlan->ContentIdentity(), engine.buses.InstalledSignals()->ContentIdentity());
     EXPECT_EQ(engine.acceptedSignalPlan->RelationCount(), engine.buses.InstalledSignals()->RelationCount());
     EXPECT_TRUE(engine.buses.InstalledSignals()->SameMembership(*engine.acceptedSignalPlan));
+    for (const auto& expected : engine.acceptedSignalPlan->Relations()) {
+        const auto relations = engine.buses.InstalledSignals()->Relations();
+        const auto found = std::find_if(relations.begin(), relations.end(),
+            [&](const auto& relation) { return relation.stableId == expected.stableId; });
+        ASSERT_NE(found, relations.end());
+        EXPECT_FLOAT_EQ(found->level, expected.level);
+        const auto source = engine.buses.InstalledSignals()->NodeDefinition(found->source);
+        const auto target = engine.buses.InstalledSignals()->NodeDefinition(found->target);
+        EXPECT_EQ(source.stableId, engine.acceptedSignalPlan->NodeDefinition(expected.source).stableId);
+        EXPECT_EQ(source.kind, engine.acceptedSignalPlan->NodeDefinition(expected.source).kind);
+        const auto receiver = engine.acceptedSignalPlan->NodeDefinition(expected.target);
+        EXPECT_EQ(target.stableId, receiver.stableId);
+        EXPECT_EQ(target.kind, receiver.kind);
+        EXPECT_EQ(target.receiver, receiver.receiver);
+        EXPECT_FLOAT_EQ(target.attackMs, receiver.attackMs);
+        EXPECT_FLOAT_EQ(target.releaseMs, receiver.releaseMs);
+    }
     VnCanonicalPackSetUnloadDescV1 unload{};
     unload.structSize = sizeof(unload);
     unload.expectedInitHandle = report.initHandle;

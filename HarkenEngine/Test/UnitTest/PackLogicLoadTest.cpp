@@ -3808,6 +3808,7 @@ TEST(PackLogicInitialAtomicity,
     ASSERT_TRUE(BuildInitialAtomicityTopologyPack(
         "plia_media_with_live_ticket", packPath, kTarget, kSource));
 
+    const auto rowsBefore = engine->buses.WorkRowsInUse();
     const std::uint32_t busesBefore = engine->buses.BusCount();
     const std::uint64_t sendsBefore = engine->busSendActive;
     const std::uint32_t packsBefore = engine->packs.LoadedCount();
@@ -3821,6 +3822,7 @@ TEST(PackLogicInitialAtomicity,
     const std::uint32_t effectsBefore =
         engine->effectBank.InUseOf(VN_EFFECT_COMPRESSOR);
     const auto expectUntouched = [&]() {
+        EXPECT_EQ(rowsBefore, engine->buses.WorkRowsInUse());
         EXPECT_EQ(busesBefore, engine->buses.BusCount());
         EXPECT_EQ(harken::kInvalidBusIndex,
                   engine->buses.FindIndex(kTarget));
