@@ -5,7 +5,7 @@
 VnMonitorRemoteHandshake field order (120 bytes LE). Packed frame
 counter is VnMonitorRemoteFrameCounter (16 bytes LE). Zero ABI.
 The Monitor function allowlist matches the ABI manifest excluding
-the dedicated Event Session APIs and keeps Vn_MonitorCompareSessions.
+the dedicated Event Session APIs.
 Handshake packing and the wire opcodes stay independent of that count.
 """
 from __future__ import annotations
@@ -37,7 +37,6 @@ PERM_OBSERVE_STATE = 1 << 0
 PERM_OBSERVE_EVENTS = 1 << 1
 PERM_OBSERVE_MEASUREMENTS = 1 << 2
 PERM_CAPTURE_CONTROL = 1 << 3
-PERM_RECORD = 1 << 4
 PERM_RAW_AUDIO = 1 << 5
 PERM_SYMBOLS = 1 << 6
 ALL_PERMS = (
@@ -45,7 +44,6 @@ ALL_PERMS = (
     | PERM_OBSERVE_EVENTS
     | PERM_OBSERVE_MEASUREMENTS
     | PERM_CAPTURE_CONTROL
-    | PERM_RECORD
     | PERM_RAW_AUDIO
     | PERM_SYMBOLS
 )
@@ -106,7 +104,6 @@ def counter(*, value: int, struct_size: int = COUNTER_PACKED, reserved: int = 0)
     return blob
 
 
-REQUIRED_MONITOR_FUNCTIONS = ("Vn_MonitorCompareSessions",)
 EVENT_SESSION_FUNCTIONS = (
     "Vn_MonitorOpenEventSession",
     "Vn_MonitorSealEventSession",
@@ -128,9 +125,6 @@ def parse_monitor_functions(manifest: dict) -> list[str]:
             names.append(name)
     if not names:
         raise SystemExit("Monitor ABI function list is empty")
-    missing = [name for name in REQUIRED_MONITOR_FUNCTIONS if name not in seen]
-    if missing:
-        raise SystemExit("Monitor ABI missing required function(s): %s" % missing)
     return names
 
 
@@ -174,7 +168,6 @@ def permission_rows() -> list[dict]:
         ("observe_events", PERM_OBSERVE_EVENTS),
         ("observe_measurements", PERM_OBSERVE_MEASUREMENTS),
         ("capture_control", PERM_CAPTURE_CONTROL),
-        ("record", PERM_RECORD),
         ("raw_audio", PERM_RAW_AUDIO),
         ("symbols", PERM_SYMBOLS),
     ]

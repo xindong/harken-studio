@@ -3,7 +3,6 @@
 
 #include "Engine.h"
 #include "MonitorCaptureHub.h"
-#include "MonitorSessionCompare.h"
 #include "HarkenApiInternal.h"
 #include "harken/core/MonitorVocabulary.h"
 
@@ -175,43 +174,6 @@ VnResult Vn_MonitorGetConsumerStatus(VnMonitorSessionHandle handle,
                                      uint32_t* requiredCount) {
     return harken::monitor::GetConsumerStatus(handle, outSummaries, capacity,
                                              requiredCount);
-}
-
-VnResult Vn_MonitorStartRecording(VnMonitorSessionHandle handle,
-                                  uint64_t leaseGeneration,
-                                  const VnMonitorRecordingDesc* desc) {
-    if (harken::detail::CanonicalSetMutationBlocked()) { return VN_IN_USE; }
-
-    const VnResult gate = MonitorEngineGate();
-    if (gate != VN_OK) {
-        return gate;
-    }
-    return harken::monitor::StartRecording(handle, leaseGeneration, desc);
-}
-
-VnResult Vn_MonitorStopRecording(VnMonitorSessionHandle handle,
-                                 uint64_t leaseGeneration) {
-    if (harken::detail::CanonicalSetMutationBlocked()) { return VN_IN_USE; }
-
-    const VnResult gate = MonitorEngineGate();
-    if (gate != VN_OK) {
-        return gate;
-    }
-    return harken::monitor::StopRecording(handle, leaseGeneration);
-}
-
-VnResult Vn_MonitorGetRecordingStatus(VnMonitorSessionHandle handle,
-                                      VnMonitorRecordingStatus* outStatus) {
-    const VnResult gate = MonitorEngineGate();
-    if (gate != VN_OK) {
-        return gate;
-    }
-    return harken::monitor::GetRecordingStatus(handle, outStatus);
-}
-
-VnResult Vn_MonitorCompareSessions(const VnMonitorSessionCompareDesc* desc,
-                                   VnMonitorCompareResult* out) {
-    return harken::monitor::CompareSessions(desc, out);
 }
 
 } // extern "C"

@@ -72,7 +72,6 @@ TEST(MonitorHubSession, CaptureResourcesStartWithFirstConsumer) {
     EXPECT_TRUE(harken::monitor::CaptureResourcesAllocatedForTests());
     EXPECT_EQ(0u, harken::monitor::InternalQueuedCountForTests(0));
     EXPECT_EQ(0u, harken::monitor::InternalQueuedCountForTests(1));
-    EXPECT_EQ(0u, harken::monitor::InternalQueuedCountForTests(2));
     ASSERT_EQ(VN_OK, Vn_MonitorCloseSession(session));
     ASSERT_EQ(VN_OK, Vn_Term());
     EXPECT_FALSE(harken::monitor::DrainRunningForTests());
@@ -192,7 +191,7 @@ TEST(MonitorHubSession, OpenPollZeroClose) {
 
     VnMonitorSessionDesc desc = MakeSessionDesc();
     desc.requestedPermissionMask =
-        VN_MONITOR_PERM_OBSERVE_STATE | VN_MONITOR_PERM_RECORD;
+        VN_MONITOR_PERM_OBSERVE_STATE;
     VnMonitorSessionHandle handle = 0;
     EXPECT_EQ(VN_OK, Vn_MonitorOpenSession(&desc, &handle));
     EXPECT_NE(0u, handle);
@@ -206,8 +205,7 @@ TEST(MonitorHubSession, OpenPollZeroClose) {
     status.structSize = sizeof(status);
     EXPECT_EQ(VN_OK, Vn_MonitorGetSubscriptionStatus(handle, &status));
     EXPECT_NE(0u, status.monitorSessionEpoch);
-    EXPECT_EQ(VN_MONITOR_PERM_OBSERVE_STATE | VN_MONITOR_PERM_RECORD,
-              status.acceptedPermissionMask);
+    EXPECT_EQ(VN_MONITOR_PERM_OBSERVE_STATE, status.acceptedPermissionMask);
     EXPECT_EQ(0u, status.unsupportedPermissionMask);
     EXPECT_EQ(0u, status.deniedPermissionMask);
     EXPECT_EQ(0u, status.rawAudioDecision);
@@ -234,26 +232,6 @@ TEST(MonitorHubSession, OpenPollZeroClose) {
               Vn_MonitorPoll(handle, &poll.desc, &poll.result));
     EXPECT_EQ(VN_MONITOR_STALE_SESSION,
               Vn_MonitorGetSubscriptionStatus(handle, &status));
-}
-
-TEST(MonitorHubSession, RecordingWrongThreadBeforeInvalidArg) {
-    harkentest::EngineSession engine(harkentest::MakeNullConfig());
-    ASSERT_EQ(VN_OK, engine.InitResult());
-    EXPECT_EQ(VN_INVALID_ARG, Vn_MonitorStartRecording(0, 0, nullptr));
-    EXPECT_EQ(VN_MONITOR_STALE_SESSION, Vn_MonitorStopRecording(0, 0));
-    EXPECT_EQ(VN_INVALID_ARG, Vn_MonitorGetRecordingStatus(0, nullptr));
-    std::atomic<VnResult> startResult{VN_OK};
-    std::atomic<VnResult> stopResult{VN_OK};
-    std::atomic<VnResult> statusResult{VN_OK};
-    std::thread worker([&]() {
-        startResult.store(Vn_MonitorStartRecording(0, 0, nullptr));
-        stopResult.store(Vn_MonitorStopRecording(0, 0));
-        statusResult.store(Vn_MonitorGetRecordingStatus(0, nullptr));
-    });
-    worker.join();
-    EXPECT_EQ(VN_MONITOR_WRONG_THREAD, startResult.load());
-    EXPECT_EQ(VN_MONITOR_WRONG_THREAD, stopResult.load());
-    EXPECT_EQ(VN_MONITOR_WRONG_THREAD, statusResult.load());
 }
 
 TEST(MonitorHubSession, PollDeliversQueuedRecordsWhenAllocationFails) {

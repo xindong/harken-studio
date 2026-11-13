@@ -2079,7 +2079,7 @@ static_assert(offsetof(VnMonitorMeasurementCapability, tolerance) == 24,
 static_assert(offsetof(VnMonitorMeasurementCapability, reserved1) == 28,
               "wire table offset drift: VnMonitorMeasurementCapability.reserved1");
 
-static_assert(sizeof(VnMonitorCapabilities) == 208,
+static_assert(sizeof(VnMonitorCapabilities) == 192,
               "wire table size drift: VnMonitorCapabilities");
 static_assert(offsetof(VnMonitorCapabilities, structSize) == 0,
               "wire table offset drift: VnMonitorCapabilities.structSize");
@@ -2139,21 +2139,17 @@ static_assert(offsetof(VnMonitorCapabilities, resolvedDerivedWorkItems) == 136,
               "wire table offset drift: VnMonitorCapabilities.resolvedDerivedWorkItems");
 static_assert(offsetof(VnMonitorCapabilities, hardDerivedWorkItems) == 140,
               "wire table offset drift: VnMonitorCapabilities.hardDerivedWorkItems");
-static_assert(offsetof(VnMonitorCapabilities, resolvedRecorderQueueBytes) == 144,
-              "wire table offset drift: VnMonitorCapabilities.resolvedRecorderQueueBytes");
-static_assert(offsetof(VnMonitorCapabilities, hardRecorderQueueBytes) == 152,
-              "wire table offset drift: VnMonitorCapabilities.hardRecorderQueueBytes");
-static_assert(offsetof(VnMonitorCapabilities, resolvedRemoteQueueBytes) == 160,
+static_assert(offsetof(VnMonitorCapabilities, resolvedRemoteQueueBytes) == 144,
               "wire table offset drift: VnMonitorCapabilities.resolvedRemoteQueueBytes");
-static_assert(offsetof(VnMonitorCapabilities, hardRemoteQueueBytes) == 168,
+static_assert(offsetof(VnMonitorCapabilities, hardRemoteQueueBytes) == 152,
               "wire table offset drift: VnMonitorCapabilities.hardRemoteQueueBytes");
-static_assert(offsetof(VnMonitorCapabilities, resolvedCaptureByteRate) == 176,
+static_assert(offsetof(VnMonitorCapabilities, resolvedCaptureByteRate) == 160,
               "wire table offset drift: VnMonitorCapabilities.resolvedCaptureByteRate");
-static_assert(offsetof(VnMonitorCapabilities, hardCaptureByteRate) == 184,
+static_assert(offsetof(VnMonitorCapabilities, hardCaptureByteRate) == 168,
               "wire table offset drift: VnMonitorCapabilities.hardCaptureByteRate");
-static_assert(offsetof(VnMonitorCapabilities, resolvedRawAudioByteRate) == 192,
+static_assert(offsetof(VnMonitorCapabilities, resolvedRawAudioByteRate) == 176,
               "wire table offset drift: VnMonitorCapabilities.resolvedRawAudioByteRate");
-static_assert(offsetof(VnMonitorCapabilities, hardRawAudioByteRate) == 200,
+static_assert(offsetof(VnMonitorCapabilities, hardRawAudioByteRate) == 184,
               "wire table offset drift: VnMonitorCapabilities.hardRawAudioByteRate");
 
 static_assert(sizeof(VnMonitorFactRequest) == 16,
@@ -2623,115 +2619,6 @@ static_assert(offsetof(VnMonitorPollResult, firstDeliverySequence) == 32,
 static_assert(offsetof(VnMonitorPollResult, lastDeliverySequence) == 40,
               "wire table offset drift: VnMonitorPollResult.lastDeliverySequence");
 
-static_assert(sizeof(VnMonitorRecordingDesc) == 24,
-              "wire table size drift: VnMonitorRecordingDesc");
-static_assert(offsetof(VnMonitorRecordingDesc, structSize) == 0,
-              "wire table offset drift: VnMonitorRecordingDesc.structSize");
-static_assert(offsetof(VnMonitorRecordingDesc, reserved0) == 4,
-              "wire table offset drift: VnMonitorRecordingDesc.reserved0");
-static_assert(offsetof(VnMonitorRecordingDesc, utf8Path) == 8,
-              "wire table offset drift: VnMonitorRecordingDesc.utf8Path");
-static_assert(offsetof(VnMonitorRecordingDesc, fileByteBudget) == 16,
-              "wire table offset drift: VnMonitorRecordingDesc.fileByteBudget");
-
-static_assert(sizeof(VnMonitorRecordingStatus) == 40,
-              "wire table size drift: VnMonitorRecordingStatus");
-static_assert(offsetof(VnMonitorRecordingStatus, structSize) == 0,
-              "wire table offset drift: VnMonitorRecordingStatus.structSize");
-static_assert(offsetof(VnMonitorRecordingStatus, state) == 4,
-              "wire table offset drift: VnMonitorRecordingStatus.state");
-static_assert(offsetof(VnMonitorRecordingStatus, fileBytes) == 8,
-              "wire table offset drift: VnMonitorRecordingStatus.fileBytes");
-static_assert(offsetof(VnMonitorRecordingStatus, lastCommittedChunk) == 16,
-              "wire table offset drift: VnMonitorRecordingStatus.lastCommittedChunk");
-static_assert(offsetof(VnMonitorRecordingStatus, queueBytes) == 24,
-              "wire table offset drift: VnMonitorRecordingStatus.queueBytes");
-static_assert(offsetof(VnMonitorRecordingStatus, recoveryNeeded) == 32,
-              "wire table offset drift: VnMonitorRecordingStatus.recoveryNeeded");
-static_assert(offsetof(VnMonitorRecordingStatus, errorReason) == 36,
-              "wire table offset drift: VnMonitorRecordingStatus.errorReason");
-
-static_assert(sizeof(VnMonitorSessionCompareView) == 152,
-              "wire table size drift: VnMonitorSessionCompareView");
-static_assert(offsetof(VnMonitorSessionCompareView, structSize) == 0,
-              "wire table offset drift: VnMonitorSessionCompareView.structSize");
-static_assert(offsetof(VnMonitorSessionCompareView, status) == 4,
-              "wire table offset drift: VnMonitorSessionCompareView.status");
-static_assert(offsetof(VnMonitorSessionCompareView, recoveryNeeded) == 8,
-              "wire table offset drift: VnMonitorSessionCompareView.recoveryNeeded");
-static_assert(offsetof(VnMonitorSessionCompareView, droppedRequired) == 12,
-              "wire table offset drift: VnMonitorSessionCompareView.droppedRequired");
-static_assert(offsetof(VnMonitorSessionCompareView, requiredUnknown) == 16,
-              "wire table offset drift: VnMonitorSessionCompareView.requiredUnknown");
-static_assert(offsetof(VnMonitorSessionCompareView, crcFailedRequired) == 20,
-              "wire table offset drift: VnMonitorSessionCompareView.crcFailedRequired");
-static_assert(offsetof(VnMonitorSessionCompareView, truncatedAfterCommit) == 24,
-              "wire table offset drift: VnMonitorSessionCompareView.truncatedAfterCommit");
-static_assert(offsetof(VnMonitorSessionCompareView, hasCompleteFooter) == 28,
-              "wire table offset drift: VnMonitorSessionCompareView.hasCompleteFooter");
-static_assert(offsetof(VnMonitorSessionCompareView, hasTraceCorrelation) == 32,
-              "wire table offset drift: VnMonitorSessionCompareView.hasTraceCorrelation");
-static_assert(offsetof(VnMonitorSessionCompareView, hasOptionalSymbols) == 36,
-              "wire table offset drift: VnMonitorSessionCompareView.hasOptionalSymbols");
-static_assert(offsetof(VnMonitorSessionCompareView, lastCompleteChunkSequence) == 40,
-              "wire table offset drift: VnMonitorSessionCompareView.lastCompleteChunkSequence");
-static_assert(offsetof(VnMonitorSessionCompareView, fileBytes) == 48,
-              "wire table offset drift: VnMonitorSessionCompareView.fileBytes");
-static_assert(offsetof(VnMonitorSessionCompareView, bytesConsumed) == 56,
-              "wire table offset drift: VnMonitorSessionCompareView.bytesConsumed");
-static_assert(offsetof(VnMonitorSessionCompareView, capabilityFingerprint) == 64,
-              "wire table offset drift: VnMonitorSessionCompareView.capabilityFingerprint");
-static_assert(offsetof(VnMonitorSessionCompareView, programSemanticFingerprint) == 72,
-              "wire table offset drift: VnMonitorSessionCompareView.programSemanticFingerprint");
-static_assert(offsetof(VnMonitorSessionCompareView, runtimeLineageFingerprint) == 80,
-              "wire table offset drift: VnMonitorSessionCompareView.runtimeLineageFingerprint");
-static_assert(offsetof(VnMonitorSessionCompareView, tapDescriptorId) == 88,
-              "wire table offset drift: VnMonitorSessionCompareView.tapDescriptorId");
-static_assert(offsetof(VnMonitorSessionCompareView, measurementSegmentGeneration) == 96,
-              "wire table offset drift: VnMonitorSessionCompareView.measurementSegmentGeneration");
-static_assert(offsetof(VnMonitorSessionCompareView, sampleRate) == 104,
-              "wire table offset drift: VnMonitorSessionCompareView.sampleRate");
-static_assert(offsetof(VnMonitorSessionCompareView, algorithmId) == 108,
-              "wire table offset drift: VnMonitorSessionCompareView.algorithmId");
-static_assert(offsetof(VnMonitorSessionCompareView, algorithmVersion) == 112,
-              "wire table offset drift: VnMonitorSessionCompareView.algorithmVersion");
-static_assert(offsetof(VnMonitorSessionCompareView, unitId) == 116,
-              "wire table offset drift: VnMonitorSessionCompareView.unitId");
-static_assert(offsetof(VnMonitorSessionCompareView, targetStreamKindMask) == 120,
-              "wire table offset drift: VnMonitorSessionCompareView.targetStreamKindMask");
-static_assert(offsetof(VnMonitorSessionCompareView, presentStreamKindMask) == 124,
-              "wire table offset drift: VnMonitorSessionCompareView.presentStreamKindMask");
-static_assert(offsetof(VnMonitorSessionCompareView, rangeBegin) == 128,
-              "wire table offset drift: VnMonitorSessionCompareView.rangeBegin");
-static_assert(offsetof(VnMonitorSessionCompareView, rangeEnd) == 136,
-              "wire table offset drift: VnMonitorSessionCompareView.rangeEnd");
-static_assert(offsetof(VnMonitorSessionCompareView, gapInvalidWarmup) == 144,
-              "wire table offset drift: VnMonitorSessionCompareView.gapInvalidWarmup");
-static_assert(offsetof(VnMonitorSessionCompareView, reserved0) == 148,
-              "wire table offset drift: VnMonitorSessionCompareView.reserved0");
-
-static_assert(sizeof(VnMonitorSessionCompareDesc) == 40,
-              "wire table size drift: VnMonitorSessionCompareDesc");
-static_assert(offsetof(VnMonitorSessionCompareDesc, structSize) == 0,
-              "wire table offset drift: VnMonitorSessionCompareDesc.structSize");
-static_assert(offsetof(VnMonitorSessionCompareDesc, reserved0) == 4,
-              "wire table offset drift: VnMonitorSessionCompareDesc.reserved0");
-static_assert(offsetof(VnMonitorSessionCompareDesc, left) == 8,
-              "wire table offset drift: VnMonitorSessionCompareDesc.left");
-static_assert(offsetof(VnMonitorSessionCompareDesc, right) == 16,
-              "wire table offset drift: VnMonitorSessionCompareDesc.right");
-static_assert(offsetof(VnMonitorSessionCompareDesc, executeFrameBegin) == 24,
-              "wire table offset drift: VnMonitorSessionCompareDesc.executeFrameBegin");
-static_assert(offsetof(VnMonitorSessionCompareDesc, executeFrameEnd) == 32,
-              "wire table offset drift: VnMonitorSessionCompareDesc.executeFrameEnd");
-
-static_assert(sizeof(VnMonitorCompareResult) == 8,
-              "wire table size drift: VnMonitorCompareResult");
-static_assert(offsetof(VnMonitorCompareResult, structSize) == 0,
-              "wire table offset drift: VnMonitorCompareResult.structSize");
-static_assert(offsetof(VnMonitorCompareResult, result) == 4,
-              "wire table offset drift: VnMonitorCompareResult.result");
-
 static_assert(sizeof(VnMonitorTapDescriptor) == 112,
               "wire table size drift: VnMonitorTapDescriptor");
 static_assert(offsetof(VnMonitorTapDescriptor, structSize) == 0,
@@ -2772,69 +2659,6 @@ static_assert(offsetof(VnMonitorTapDescriptor, availabilityState) == 104,
               "wire table offset drift: VnMonitorTapDescriptor.availabilityState");
 static_assert(offsetof(VnMonitorTapDescriptor, reason) == 108,
               "wire table offset drift: VnMonitorTapDescriptor.reason");
-
-static_assert(sizeof(VnMonitorSessionFileHeader) == 72,
-              "wire table size drift: VnMonitorSessionFileHeader");
-static_assert(offsetof(VnMonitorSessionFileHeader, structSize) == 0,
-              "wire table offset drift: VnMonitorSessionFileHeader.structSize");
-static_assert(offsetof(VnMonitorSessionFileHeader, formatMajor) == 4,
-              "wire table offset drift: VnMonitorSessionFileHeader.formatMajor");
-static_assert(offsetof(VnMonitorSessionFileHeader, formatMinor) == 8,
-              "wire table offset drift: VnMonitorSessionFileHeader.formatMinor");
-static_assert(offsetof(VnMonitorSessionFileHeader, reserved0) == 12,
-              "wire table offset drift: VnMonitorSessionFileHeader.reserved0");
-static_assert(offsetof(VnMonitorSessionFileHeader, fileMagic) == 16,
-              "wire table offset drift: VnMonitorSessionFileHeader.fileMagic");
-static_assert(offsetof(VnMonitorSessionFileHeader, headerBytes) == 24,
-              "wire table offset drift: VnMonitorSessionFileHeader.headerBytes");
-static_assert(offsetof(VnMonitorSessionFileHeader, engineBuildId) == 32,
-              "wire table offset drift: VnMonitorSessionFileHeader.engineBuildId");
-static_assert(offsetof(VnMonitorSessionFileHeader, engineMonitorInstanceId) == 40,
-              "wire table offset drift: VnMonitorSessionFileHeader.engineMonitorInstanceId");
-static_assert(offsetof(VnMonitorSessionFileHeader, createdUtcTicks) == 48,
-              "wire table offset drift: VnMonitorSessionFileHeader.createdUtcTicks");
-static_assert(offsetof(VnMonitorSessionFileHeader, capabilityFingerprint) == 56,
-              "wire table offset drift: VnMonitorSessionFileHeader.capabilityFingerprint");
-static_assert(offsetof(VnMonitorSessionFileHeader, headerCrc32c) == 64,
-              "wire table offset drift: VnMonitorSessionFileHeader.headerCrc32c");
-static_assert(offsetof(VnMonitorSessionFileHeader, reserved1) == 68,
-              "wire table offset drift: VnMonitorSessionFileHeader.reserved1");
-
-static_assert(sizeof(VnMonitorSessionChunkHeader) == 48,
-              "wire table size drift: VnMonitorSessionChunkHeader");
-static_assert(offsetof(VnMonitorSessionChunkHeader, structSize) == 0,
-              "wire table offset drift: VnMonitorSessionChunkHeader.structSize");
-static_assert(offsetof(VnMonitorSessionChunkHeader, kind) == 4,
-              "wire table offset drift: VnMonitorSessionChunkHeader.kind");
-static_assert(offsetof(VnMonitorSessionChunkHeader, flags) == 8,
-              "wire table offset drift: VnMonitorSessionChunkHeader.flags");
-static_assert(offsetof(VnMonitorSessionChunkHeader, version) == 12,
-              "wire table offset drift: VnMonitorSessionChunkHeader.version");
-static_assert(offsetof(VnMonitorSessionChunkHeader, headerBytes) == 16,
-              "wire table offset drift: VnMonitorSessionChunkHeader.headerBytes");
-static_assert(offsetof(VnMonitorSessionChunkHeader, payloadCrc32c) == 20,
-              "wire table offset drift: VnMonitorSessionChunkHeader.payloadCrc32c");
-static_assert(offsetof(VnMonitorSessionChunkHeader, headerCrc32c) == 24,
-              "wire table offset drift: VnMonitorSessionChunkHeader.headerCrc32c");
-static_assert(offsetof(VnMonitorSessionChunkHeader, reserved0) == 28,
-              "wire table offset drift: VnMonitorSessionChunkHeader.reserved0");
-static_assert(offsetof(VnMonitorSessionChunkHeader, payloadBytes) == 32,
-              "wire table offset drift: VnMonitorSessionChunkHeader.payloadBytes");
-static_assert(offsetof(VnMonitorSessionChunkHeader, chunkSequence) == 40,
-              "wire table offset drift: VnMonitorSessionChunkHeader.chunkSequence");
-
-static_assert(sizeof(VnMonitorSessionCommitFooter) == 32,
-              "wire table size drift: VnMonitorSessionCommitFooter");
-static_assert(offsetof(VnMonitorSessionCommitFooter, structSize) == 0,
-              "wire table offset drift: VnMonitorSessionCommitFooter.structSize");
-static_assert(offsetof(VnMonitorSessionCommitFooter, reserved0) == 4,
-              "wire table offset drift: VnMonitorSessionCommitFooter.reserved0");
-static_assert(offsetof(VnMonitorSessionCommitFooter, commitMagic) == 8,
-              "wire table offset drift: VnMonitorSessionCommitFooter.commitMagic");
-static_assert(offsetof(VnMonitorSessionCommitFooter, chunkSequence) == 16,
-              "wire table offset drift: VnMonitorSessionCommitFooter.chunkSequence");
-static_assert(offsetof(VnMonitorSessionCommitFooter, payloadBytes) == 24,
-              "wire table offset drift: VnMonitorSessionCommitFooter.payloadBytes");
 
 static_assert(sizeof(VnMonitorRemoteHandshake) == 120,
               "wire table size drift: VnMonitorRemoteHandshake");
@@ -3815,6 +3639,211 @@ static_assert(offsetof(VnMonitorStreamFactV1, readStatus) == 288,
               "wire table offset drift: VnMonitorStreamFactV1.readStatus");
 static_assert(offsetof(VnMonitorStreamFactV1, reserved0) == 292,
               "wire table offset drift: VnMonitorStreamFactV1.reserved0");
+
+static_assert(sizeof(VnPreviewPlayPlayableDescV2) == 40,
+              "wire table size drift: VnPreviewPlayPlayableDescV2");
+static_assert(offsetof(VnPreviewPlayPlayableDescV2, structSize) == 0,
+              "wire table offset drift: VnPreviewPlayPlayableDescV2.structSize");
+static_assert(offsetof(VnPreviewPlayPlayableDescV2, playableKind) == 4,
+              "wire table offset drift: VnPreviewPlayPlayableDescV2.playableKind");
+static_assert(offsetof(VnPreviewPlayPlayableDescV2, stableId) == 8,
+              "wire table offset drift: VnPreviewPlayPlayableDescV2.stableId");
+static_assert(offsetof(VnPreviewPlayPlayableDescV2, emitterHandle) == 24,
+              "wire table offset drift: VnPreviewPlayPlayableDescV2.emitterHandle");
+static_assert(offsetof(VnPreviewPlayPlayableDescV2, flags) == 32,
+              "wire table offset drift: VnPreviewPlayPlayableDescV2.flags");
+static_assert(offsetof(VnPreviewPlayPlayableDescV2, reserved0) == 36,
+              "wire table offset drift: VnPreviewPlayPlayableDescV2.reserved0");
+
+static_assert(sizeof(VnPreviewResetPlayableDescV2) == 40,
+              "wire table size drift: VnPreviewResetPlayableDescV2");
+static_assert(offsetof(VnPreviewResetPlayableDescV2, structSize) == 0,
+              "wire table offset drift: VnPreviewResetPlayableDescV2.structSize");
+static_assert(offsetof(VnPreviewResetPlayableDescV2, playableKind) == 4,
+              "wire table offset drift: VnPreviewResetPlayableDescV2.playableKind");
+static_assert(offsetof(VnPreviewResetPlayableDescV2, stableId) == 8,
+              "wire table offset drift: VnPreviewResetPlayableDescV2.stableId");
+static_assert(offsetof(VnPreviewResetPlayableDescV2, emitterHandle) == 24,
+              "wire table offset drift: VnPreviewResetPlayableDescV2.emitterHandle");
+static_assert(offsetof(VnPreviewResetPlayableDescV2, flags) == 32,
+              "wire table offset drift: VnPreviewResetPlayableDescV2.flags");
+static_assert(offsetof(VnPreviewResetPlayableDescV2, reserved0) == 36,
+              "wire table offset drift: VnPreviewResetPlayableDescV2.reserved0");
+
+static_assert(sizeof(VnPreviewPlayableStateV2) == 72,
+              "wire table size drift: VnPreviewPlayableStateV2");
+static_assert(offsetof(VnPreviewPlayableStateV2, structSize) == 0,
+              "wire table offset drift: VnPreviewPlayableStateV2.structSize");
+static_assert(offsetof(VnPreviewPlayableStateV2, playableKind) == 4,
+              "wire table offset drift: VnPreviewPlayableStateV2.playableKind");
+static_assert(offsetof(VnPreviewPlayableStateV2, lifecycle) == 8,
+              "wire table offset drift: VnPreviewPlayableStateV2.lifecycle");
+static_assert(offsetof(VnPreviewPlayableStateV2, reason) == 12,
+              "wire table offset drift: VnPreviewPlayableStateV2.reason");
+static_assert(offsetof(VnPreviewPlayableStateV2, stableId) == 16,
+              "wire table offset drift: VnPreviewPlayableStateV2.stableId");
+static_assert(offsetof(VnPreviewPlayableStateV2, worldGeneration) == 32,
+              "wire table offset drift: VnPreviewPlayableStateV2.worldGeneration");
+static_assert(offsetof(VnPreviewPlayableStateV2, acceptedLogicTicket) == 40,
+              "wire table offset drift: VnPreviewPlayableStateV2.acceptedLogicTicket");
+static_assert(offsetof(VnPreviewPlayableStateV2, lastAppliedBlockSequence) == 48,
+              "wire table offset drift: VnPreviewPlayableStateV2.lastAppliedBlockSequence");
+static_assert(offsetof(VnPreviewPlayableStateV2, childLiveCount) == 56,
+              "wire table offset drift: VnPreviewPlayableStateV2.childLiveCount");
+static_assert(offsetof(VnPreviewPlayableStateV2, childAudibleRetiringCount) == 60,
+              "wire table offset drift: VnPreviewPlayableStateV2.childAudibleRetiringCount");
+static_assert(offsetof(VnPreviewPlayableStateV2, pendingFutureCount) == 64,
+              "wire table offset drift: VnPreviewPlayableStateV2.pendingFutureCount");
+static_assert(offsetof(VnPreviewPlayableStateV2, reserved0) == 68,
+              "wire table offset drift: VnPreviewPlayableStateV2.reserved0");
+
+static_assert(sizeof(VnPreviewPlaybackPathRowV1) == 24,
+              "wire table size drift: VnPreviewPlaybackPathRowV1");
+static_assert(offsetof(VnPreviewPlaybackPathRowV1, stableId) == 0,
+              "wire table offset drift: VnPreviewPlaybackPathRowV1.stableId");
+static_assert(offsetof(VnPreviewPlaybackPathRowV1, occurrenceOrdinal) == 16,
+              "wire table offset drift: VnPreviewPlaybackPathRowV1.occurrenceOrdinal");
+static_assert(offsetof(VnPreviewPlaybackPathRowV1, reserved0) == 20,
+              "wire table offset drift: VnPreviewPlaybackPathRowV1.reserved0");
+
+static_assert(sizeof(VnPreviewPlaybackSendV1) == 24,
+              "wire table size drift: VnPreviewPlaybackSendV1");
+static_assert(offsetof(VnPreviewPlaybackSendV1, targetBusId) == 0,
+              "wire table offset drift: VnPreviewPlaybackSendV1.targetBusId");
+static_assert(offsetof(VnPreviewPlaybackSendV1, levelDb) == 16,
+              "wire table offset drift: VnPreviewPlaybackSendV1.levelDb");
+static_assert(offsetof(VnPreviewPlaybackSendV1, reserved0) == 20,
+              "wire table offset drift: VnPreviewPlaybackSendV1.reserved0");
+
+static_assert(sizeof(VnPreviewPlaybackPathV1) == 1784,
+              "wire table size drift: VnPreviewPlaybackPathV1");
+static_assert(offsetof(VnPreviewPlaybackPathV1, structSize) == 0,
+              "wire table offset drift: VnPreviewPlaybackPathV1.structSize");
+static_assert(offsetof(VnPreviewPlaybackPathV1, rowCount) == 4,
+              "wire table offset drift: VnPreviewPlaybackPathV1.rowCount");
+static_assert(offsetof(VnPreviewPlaybackPathV1, sendCount) == 8,
+              "wire table offset drift: VnPreviewPlaybackPathV1.sendCount");
+static_assert(offsetof(VnPreviewPlaybackPathV1, reserved0) == 12,
+              "wire table offset drift: VnPreviewPlaybackPathV1.reserved0");
+static_assert(offsetof(VnPreviewPlaybackPathV1, voiceInstance) == 16,
+              "wire table offset drift: VnPreviewPlaybackPathV1.voiceInstance");
+static_assert(offsetof(VnPreviewPlaybackPathV1, soundId) == 24,
+              "wire table offset drift: VnPreviewPlaybackPathV1.soundId");
+static_assert(offsetof(VnPreviewPlaybackPathV1, outputBusId) == 40,
+              "wire table offset drift: VnPreviewPlaybackPathV1.outputBusId");
+static_assert(offsetof(VnPreviewPlaybackPathV1, rows) == 56,
+              "wire table offset drift: VnPreviewPlaybackPathV1.rows");
+static_assert(offsetof(VnPreviewPlaybackPathV1, sends) == 1592,
+              "wire table offset drift: VnPreviewPlaybackPathV1.sends");
+
+static_assert(sizeof(VnPreviewChannelPeaksV1) == 1560,
+              "wire table size drift: VnPreviewChannelPeaksV1");
+static_assert(offsetof(VnPreviewChannelPeaksV1, structSize) == 0,
+              "wire table offset drift: VnPreviewChannelPeaksV1.structSize");
+static_assert(offsetof(VnPreviewChannelPeaksV1, mixChannelCount) == 4,
+              "wire table offset drift: VnPreviewChannelPeaksV1.mixChannelCount");
+static_assert(offsetof(VnPreviewChannelPeaksV1, busCount) == 8,
+              "wire table offset drift: VnPreviewChannelPeaksV1.busCount");
+static_assert(offsetof(VnPreviewChannelPeaksV1, reserved0) == 12,
+              "wire table offset drift: VnPreviewChannelPeaksV1.reserved0");
+static_assert(offsetof(VnPreviewChannelPeaksV1, consumeSerial) == 16,
+              "wire table offset drift: VnPreviewChannelPeaksV1.consumeSerial");
+static_assert(offsetof(VnPreviewChannelPeaksV1, busIds) == 24,
+              "wire table offset drift: VnPreviewChannelPeaksV1.busIds");
+static_assert(offsetof(VnPreviewChannelPeaksV1, channelPeaks) == 536,
+              "wire table offset drift: VnPreviewChannelPeaksV1.channelPeaks");
+
+static_assert(sizeof(VnPreviewBusV1) == 32,
+              "wire table size drift: VnPreviewBusV1");
+static_assert(offsetof(VnPreviewBusV1, id) == 0,
+              "wire table offset drift: VnPreviewBusV1.id");
+static_assert(offsetof(VnPreviewBusV1, parent) == 16,
+              "wire table offset drift: VnPreviewBusV1.parent");
+
+static_assert(sizeof(VnPreviewBusVolumeV2) == 24,
+              "wire table size drift: VnPreviewBusVolumeV2");
+static_assert(offsetof(VnPreviewBusVolumeV2, id) == 0,
+              "wire table offset drift: VnPreviewBusVolumeV2.id");
+static_assert(offsetof(VnPreviewBusVolumeV2, volumeDb) == 16,
+              "wire table offset drift: VnPreviewBusVolumeV2.volumeDb");
+static_assert(offsetof(VnPreviewBusVolumeV2, outputBusVolumeDb) == 20,
+              "wire table offset drift: VnPreviewBusVolumeV2.outputBusVolumeDb");
+
+static_assert(sizeof(VnPreviewBusSendV1) == 32,
+              "wire table size drift: VnPreviewBusSendV1");
+static_assert(offsetof(VnPreviewBusSendV1, source) == 0,
+              "wire table offset drift: VnPreviewBusSendV1.source");
+static_assert(offsetof(VnPreviewBusSendV1, target) == 16,
+              "wire table offset drift: VnPreviewBusSendV1.target");
+
+static_assert(sizeof(VnPreviewProjectDescV1) == 120,
+              "wire table size drift: VnPreviewProjectDescV1");
+static_assert(offsetof(VnPreviewProjectDescV1, structSize) == 0,
+              "wire table offset drift: VnPreviewProjectDescV1.structSize");
+static_assert(offsetof(VnPreviewProjectDescV1, bodyVintage) == 4,
+              "wire table offset drift: VnPreviewProjectDescV1.bodyVintage");
+static_assert(offsetof(VnPreviewProjectDescV1, projectSessionId) == 8,
+              "wire table offset drift: VnPreviewProjectDescV1.projectSessionId");
+static_assert(offsetof(VnPreviewProjectDescV1, authoringRevision) == 16,
+              "wire table offset drift: VnPreviewProjectDescV1.authoringRevision");
+static_assert(offsetof(VnPreviewProjectDescV1, runtimeEpoch) == 24,
+              "wire table offset drift: VnPreviewProjectDescV1.runtimeEpoch");
+static_assert(offsetof(VnPreviewProjectDescV1, submissionSerial) == 32,
+              "wire table offset drift: VnPreviewProjectDescV1.submissionSerial");
+static_assert(offsetof(VnPreviewProjectDescV1, publishedBusFingerprint) == 40,
+              "wire table offset drift: VnPreviewProjectDescV1.publishedBusFingerprint");
+static_assert(offsetof(VnPreviewProjectDescV1, compileTargetProfileFingerprint) == 48,
+              "wire table offset drift: VnPreviewProjectDescV1.compileTargetProfileFingerprint");
+static_assert(offsetof(VnPreviewProjectDescV1, ownerId) == 56,
+              "wire table offset drift: VnPreviewProjectDescV1.ownerId");
+static_assert(offsetof(VnPreviewProjectDescV1, ownerBaseRevision) == 64,
+              "wire table offset drift: VnPreviewProjectDescV1.ownerBaseRevision");
+static_assert(offsetof(VnPreviewProjectDescV1, ownerRevision) == 72,
+              "wire table offset drift: VnPreviewProjectDescV1.ownerRevision");
+static_assert(offsetof(VnPreviewProjectDescV1, body) == 80,
+              "wire table offset drift: VnPreviewProjectDescV1.body");
+static_assert(offsetof(VnPreviewProjectDescV1, bodyBytes) == 88,
+              "wire table offset drift: VnPreviewProjectDescV1.bodyBytes");
+static_assert(offsetof(VnPreviewProjectDescV1, buses) == 96,
+              "wire table offset drift: VnPreviewProjectDescV1.buses");
+static_assert(offsetof(VnPreviewProjectDescV1, busCount) == 104,
+              "wire table offset drift: VnPreviewProjectDescV1.busCount");
+static_assert(offsetof(VnPreviewProjectDescV1, sendCount) == 108,
+              "wire table offset drift: VnPreviewProjectDescV1.sendCount");
+static_assert(offsetof(VnPreviewProjectDescV1, sends) == 112,
+              "wire table offset drift: VnPreviewProjectDescV1.sends");
+
+static_assert(sizeof(VnPreviewProjectDescV2) == 160,
+              "wire table size drift: VnPreviewProjectDescV2");
+static_assert(offsetof(VnPreviewProjectDescV2, base) == 0,
+              "wire table offset drift: VnPreviewProjectDescV2.base");
+static_assert(offsetof(VnPreviewProjectDescV2, busVolumes) == 120,
+              "wire table offset drift: VnPreviewProjectDescV2.busVolumes");
+static_assert(offsetof(VnPreviewProjectDescV2, busVolumeCount) == 128,
+              "wire table offset drift: VnPreviewProjectDescV2.busVolumeCount");
+static_assert(offsetof(VnPreviewProjectDescV2, reserved0) == 132,
+              "wire table offset drift: VnPreviewProjectDescV2.reserved0");
+static_assert(offsetof(VnPreviewProjectDescV2, profileVintage) == 136,
+              "wire table offset drift: VnPreviewProjectDescV2.profileVintage");
+static_assert(offsetof(VnPreviewProjectDescV2, renderSampleRateHz) == 140,
+              "wire table offset drift: VnPreviewProjectDescV2.renderSampleRateHz");
+static_assert(offsetof(VnPreviewProjectDescV2, mixLayout) == 144,
+              "wire table offset drift: VnPreviewProjectDescV2.mixLayout");
+static_assert(offsetof(VnPreviewProjectDescV2, deviceLayout) == 148,
+              "wire table offset drift: VnPreviewProjectDescV2.deviceLayout");
+static_assert(offsetof(VnPreviewProjectDescV2, runtimeCapabilityMask) == 152,
+              "wire table offset drift: VnPreviewProjectDescV2.runtimeCapabilityMask");
+
+static_assert(sizeof(VnPreviewProjectDescV3) == 176,
+              "wire table size drift: VnPreviewProjectDescV3");
+static_assert(offsetof(VnPreviewProjectDescV3, base) == 0,
+              "wire table offset drift: VnPreviewProjectDescV3.base");
+static_assert(offsetof(VnPreviewProjectDescV3, busSendLevelsDb) == 160,
+              "wire table offset drift: VnPreviewProjectDescV3.busSendLevelsDb");
+static_assert(offsetof(VnPreviewProjectDescV3, busSendLevelCount) == 168,
+              "wire table offset drift: VnPreviewProjectDescV3.busSendLevelCount");
+static_assert(offsetof(VnPreviewProjectDescV3, reserved1) == 172,
+              "wire table offset drift: VnPreviewProjectDescV3.reserved1");
 
 } // namespace harkenremote
 

@@ -916,8 +916,17 @@ class Server {
             bytes += 20;
             result.entries.push_back({kind, id});
         };
+        std::vector<VnObjectId> actions;
         for (std::uint32_t i = 0; i < engine->variables.ActionProgramCount(); ++i)
-            append(CatalogKind::Action, engine->variables.ActionProgramAt(i).actionStableId);
+            actions.push_back(engine->variables.ActionProgramAt(i).actionStableId);
+        if (published != nullptr)
+            for (const auto &owner : published->owners)
+                for (std::uint32_t i = 0; i < owner.view.actionCount; ++i)
+                    actions.push_back(owner.view.actions[i].actionStableId);
+        std::sort(actions.begin(), actions.end());
+        actions.erase(std::unique(actions.begin(), actions.end()), actions.end());
+        for (const auto &action : actions)
+            append(CatalogKind::Action, action);
         for (std::uint32_t i = 0; i < engine->variables.DefinitionCount(); ++i)
             append(CatalogKind::Variable, engine->variables.DefinitionAt(i).variableId);
         const Snapshot snapshot = Capture();

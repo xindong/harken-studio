@@ -35878,7 +35878,7 @@ void ExpectEmitterStopsPlayable(int kind) {
         engine.registry.Lookup(CanonicalActionWorld::kSecondSound).contentRevision);
     if (kind == 0) {
         image.properties[0].payload.presentMask |= UINT64_C(0x8);
-        image.properties[0].payload.values[3].bits = UINT32_MAX;
+        image.properties[0].payload.values[3].bits = HK_PACK_PROPERTY_LOOP_COUNT_MAX;
         image.RelinkFirstSound();
         image.MakeImmediateSoundPlayAction();
     } else if (kind == 1) image.MakeImmediateCompositeTrackPlayAction();

@@ -3,6 +3,7 @@
 #include "MonitorHostContext.h"
 
 #include "Monitor/MonitorTypes.h"
+#include "MonitorSessionFile.h"
 
 #include <cstdint>
 #include <functional>
@@ -119,6 +120,7 @@ private:
     MonitorHostContext host_;
     mutable std::mutex mutex_;
     std::optional<Session> session_;
+    MonitorSessionWriter recorder_;
     std::vector<MonitorCallTrace> traces_;
     uint64_t nextEpoch_ = 1;
     uint64_t nextGeneration_ = 1;

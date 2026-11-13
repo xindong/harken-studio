@@ -42,11 +42,10 @@ MonitorRecordingBrowserState projectRecordingBrowser(
         state.reason = "Local recording contract absent";
         return state;
     }
-    if (!input.hasRecordPermission || !canApply(input.captureControl))
+    if (!canApply(input.captureControl))
     {
         state.face = MonitorRecordingFace::ReadOnly;
-        state.reason = input.hasRecordPermission ? "CaptureControl denied"
-                                                 : "Record denied";
+        state.reason = "CaptureControl denied";
         return state;
     }
 

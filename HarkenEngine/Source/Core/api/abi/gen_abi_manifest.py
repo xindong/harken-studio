@@ -9,7 +9,7 @@ two guarantees that the existing native/C# pins cannot provide alone:
 * provenance: one canonical JSON document binds layouts, values, functions,
   wire opcodes, Trace vocabulary, vintage rules, and generated-file hashes.
 
-The manifest describes the declared public Vn_* export set. Incidental C++
+The manifest describes the declared public Vn_* and VnPreview_* export set. Incidental C++
 symbols exported by a particular linker configuration are diagnostics, not
 public ABI.
 """
@@ -552,11 +552,11 @@ def parse_struct_shapes(
 
 
 def parse_functions(clean: str) -> list[dict[str, Any]]:
-    candidates = set(re.findall(r"\b(Vn_[A-Za-z0-9_]+)\s*\(", clean))
+    candidates = set(re.findall(r"\b((?:Vn_|VnPreview_)[A-Za-z0-9_]+)\s*\(", clean))
     functions: list[dict[str, Any]] = []
     pattern = re.compile(
         r"(?m)^[ \t]*([A-Za-z_][A-Za-z0-9_ \t\*]*?)[ \t]+"
-        r"(Vn_[A-Za-z0-9_]+)\s*\((.*?)\)\s*;",
+        r"((?:Vn_|VnPreview_)[A-Za-z0-9_]+)\s*\((.*?)\)\s*;",
         flags=re.DOTALL,
     )
     for match in pattern.finditer(clean):
@@ -593,23 +593,6 @@ def parse_define_value(expression: str) -> Any:
     while expression.startswith("(") and expression.endswith(")"):
         expression = expression[1:-1].strip()
     return evaluate_integer(expression)
-
-
-def strip_preview_surface(header: str) -> str:
-    text = re.sub(
-        r"(?ms)^#if defined\(__cplusplus\)\n#define VN_PREVIEW_STATIC_ASSERT.*?^#endif\n",
-        "", header)
-    text = re.sub(r"(?m)^#define (?:HARKEN|VN)_PREVIEW_\w+.*\n", "", text)
-    text = re.sub(r"(?ms)^VN_PREVIEW_STATIC_ASSERT\(.*?\);\n", "", text)
-    text = re.sub(
-        r"(?ms)^typedef (?:struct|enum) (?:VnPreview\w*)?\s*\{.*?^\} VnPreview\w+;\n",
-        "", text)
-    text = re.sub(r"(?m)^typedef [\w ]+ VnPreview\w+;\n", "", text)
-    text = re.sub(
-        r"(?ms)^[A-Za-z_][\w \*]*\bVnPreview_\w+\s*\(.*?\);\n", "", text)
-    if re.search(r"\b(?:VnPreview|VN_PREVIEW_|HARKEN_PREVIEW_)", remove_comments(text)):
-        raise ManifestError("development preview surface was not fully excluded")
-    return text
 
 
 def parse_header_contract(header: str) -> dict[str, Any]:
@@ -860,7 +843,7 @@ def validate_table_metadata(table: dict[str, Any]) -> None:
         "pointerBytes": 8,
         "byteOrder": "little",
         "callingConvention": "cdecl",
-        "publicExportPrefix": "Vn_",
+        "publicExportPrefix": "Vn",
         "publicExportPolicy": "required-set",
         "defaultStructSizePolicy": "exact-current",
     }
@@ -1422,8 +1405,7 @@ def build_manifest(repo_root: Path) -> dict[str, Any]:
     core_header = (identity_header_path.read_text(encoding="utf-8") + "\n" +
                    header_path.read_text(encoding="utf-8"))
     header = (core_header + "\n" +
-              strip_preview_surface(
-                  development_header_path.read_text(encoding="utf-8")))
+              development_header_path.read_text(encoding="utf-8"))
     core_contract = parse_header_contract(core_header)
     validate_table_metadata(table)
 

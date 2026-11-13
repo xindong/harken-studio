@@ -3,6 +3,11 @@
 
 #include "PackFile.h"
 
+#define HK_PACK_BUS_VOLUME_MIN (-96.0f)
+#define HK_PACK_BUS_VOLUME_MAX 24.0f
+#define HK_PACK_BUS_SEND_LEVEL_MIN (-96.0f)
+#define HK_PACK_BUS_SEND_LEVEL_MAX 24.0f
+
 typedef struct HkPackBus {
     HkPackObjectId busId;
     HkPackObjectId parentBusId;

@@ -16,6 +16,15 @@ static_assert(offsetof(VnPreviewPlaybackSendV1, targetBusId) == 0, "");
 static_assert(offsetof(VnPreviewPlaybackSendV1, levelDb) == 16, "");
 static_assert(offsetof(VnPreviewPlaybackSendV1, reserved0) == 20, "");
 
+static_assert(sizeof(VnPreviewPlaybackPathV1) == 1784, "");
+static_assert(alignof(VnPreviewPlaybackPathV1) == 8, "");
+static_assert(sizeof(VnPreviewPlayPlayableDescV2) == 40, "");
+static_assert(alignof(VnPreviewPlayPlayableDescV2) == 8, "");
+static_assert(sizeof(VnPreviewResetPlayableDescV2) == 40, "");
+static_assert(alignof(VnPreviewResetPlayableDescV2) == 8, "");
+static_assert(sizeof(VnPreviewPlayableStateV2) == 72, "");
+static_assert(alignof(VnPreviewPlayableStateV2) == 8, "");
+
 static_assert(offsetof(VnPreviewPlaybackPathV1, structSize) == 0, "");
 static_assert(offsetof(VnPreviewPlaybackPathV1, rowCount) == 4, "");
 static_assert(offsetof(VnPreviewPlaybackPathV1, sendCount) == 8, "");

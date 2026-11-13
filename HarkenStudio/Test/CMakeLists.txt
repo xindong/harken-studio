@@ -15,6 +15,9 @@ add_executable(harken_editor_tests
     UnitTest/TimeSeriesChartTest.cpp
     UnitTest/MonitorCursorModelTest.cpp
     UnitTest/MonitorStoreTest.cpp
+    UnitTest/MonitorDecoderTest.cpp
+    UnitTest/MonitorSessionFileTest.cpp
+    UnitTest/MeterScaleTest.cpp
     UnitTest/MonitorStateCutTest.cpp
 
     # P2-5 availability

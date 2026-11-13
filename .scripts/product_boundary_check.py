@@ -30,6 +30,7 @@ PRODUCTS = (
 )
 
 PACK_FORMAT_INCLUDE_PREFIX = "harken_pack/"
+CROSSPRODUCT_ROOT = ".scripts/crossproduct-test/"
 ENGINE_PUBLIC_HEADER_NAMES = ("Harken.h", "HarkenDevelopment.h")
 
 ALLOWED_EDGES = {
@@ -387,12 +388,28 @@ class Checker:
                 if script_owner != owner:
                     self.report("generator", path, 1, owner, script_owner, script)
 
+    def check_crossproduct(self) -> None:
+        product_path = re.compile(rf"(?<![A-Za-z])({'|'.join(PRODUCTS)})/")
+        for path in self.files:
+            owner = product_of(path)
+            if path.startswith(CROSSPRODUCT_ROOT):
+                text = self.read(path)
+                for match in product_path.finditer(text):
+                    self.report("crossproduct-source", path, line_of(text, match.start()),
+                                "crossproduct-test", match.group(1), match.group(0))
+            elif owner is not None and not path.endswith(".md"):
+                text = self.read(path)
+                for match in re.finditer(r"crossproduct-test", text):
+                    self.report("crossproduct-reference", path, line_of(text, match.start()),
+                                owner, "crossproduct-test", match.group(0))
+
     def run(self) -> list[Violation]:
         self.index_cmake()
         self.check_cmake()
         self.check_includes()
         self.check_build_descriptions()
         self.check_generated()
+        self.check_crossproduct()
         unique = sorted(set(self.violations),
                         key=lambda v: (v.check, v.source, v.line, v.detail))
         return unique

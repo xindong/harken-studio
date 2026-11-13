@@ -208,16 +208,6 @@
           "VN_CANONICAL_PACK_SET_MEMBER_RESULT_RETAINED",
           "VN_CANONICAL_PACK_SET_MEMBER_RESULT_ADDED",
           "VN_CANONICAL_PACK_SET_MEMBER_RESULT_INIT",
-          "VN_MONITOR_SESSION_FORMAT_MAJOR",
-          "VN_MONITOR_SESSION_FORMAT_MINOR",
-          "VN_MONITOR_SESSION_FILE_MAGIC",
-          "VN_MONITOR_SESSION_COMMIT_MAGIC",
-          "VN_MONITOR_SESSION_CHUNK_HEADER_BYTES",
-          "VN_MONITOR_SESSION_COMMIT_FOOTER_BYTES",
-          "VN_MONITOR_DEFAULT_SESSION_FILE_BYTES",
-          "VN_MONITOR_HARD_SESSION_FILE_BYTES",
-          "VN_MONITOR_DEFAULT_CHUNK_PAYLOAD_BYTES",
-          "VN_MONITOR_HARD_CHUNK_PAYLOAD_BYTES",
           "VN_MONITOR_HARD_REGISTRY_BLOB_BYTES",
           "VN_MONITOR_REMOTE_MESSAGE_COUNTER_START",
           "VN_MONITOR_REMOTE_NONCE_BYTES",
@@ -252,8 +242,6 @@
           "VN_MONITOR_HARD_CONSUMER_QUEUE_BYTES",
           "VN_MONITOR_DEFAULT_DERIVED_WORK_ITEMS",
           "VN_MONITOR_HARD_DERIVED_WORK_ITEMS",
-          "VN_MONITOR_DEFAULT_RECORDER_QUEUE_BYTES",
-          "VN_MONITOR_HARD_RECORDER_QUEUE_BYTES",
           "VN_MONITOR_DEFAULT_REMOTE_QUEUE_BYTES",
           "VN_MONITOR_HARD_REMOTE_QUEUE_BYTES",
           "VN_MONITOR_DEFAULT_CAPTURE_BYTE_RATE",
@@ -274,7 +262,45 @@
           "VN_BYTE_READ_IO_ERROR",
           "VN_MONITOR_STREAM_FACT_SUPPLY",
           "VN_MONITOR_STREAM_FACT_AUDIO",
-          "VN_REMOTE_PROTOCOL_MAJOR"
+          "VN_REMOTE_PROTOCOL_MAJOR",
+          "VN_PREVIEW_OK",
+          "VN_PREVIEW_INVALID_ARG",
+          "VN_PREVIEW_STRUCT_SIZE_MISMATCH",
+          "VN_PREVIEW_NOT_SUPPORTED",
+          "VN_PREVIEW_UNKNOWN_HANDLE",
+          "VN_PREVIEW_STALE_HANDLE",
+          "VN_PREVIEW_NO_PROGRAM",
+          "VN_PREVIEW_INSTANCE_CAPACITY",
+          "VN_PREVIEW_DEVELOPMENT_API_DISABLED",
+          "VN_PREVIEW_PROGRAM_MISMATCH",
+          "VN_PREVIEW_RESULT_CAPACITY",
+          "VN_PREVIEW_HOST_ERROR",
+          "VN_PREVIEW_EFFECT_CAPACITY",
+          "VN_PREVIEW_RESULT_EXPIRED",
+          "VN_PREVIEW_UNKNOWN_ID",
+          "VN_PREVIEW_NO_VOICE",
+          "VN_PREVIEW_BACKPRESSURE",
+          "VN_PREVIEW_REVISION_CONFLICT",
+          "VN_PREVIEW_PLAYABLE_KIND_SOUND",
+          "VN_PREVIEW_PLAYABLE_KIND_CONTAINER",
+          "VN_PREVIEW_PLAYABLE_KIND_TRACK",
+          "VN_PREVIEW_PLAYABLE_KIND_SEGMENT",
+          "VN_PREVIEW_LIFECYCLE_PREPARING",
+          "VN_PREVIEW_LIFECYCLE_ACTIVE",
+          "VN_PREVIEW_LIFECYCLE_CANCELLING",
+          "VN_PREVIEW_LIFECYCLE_LOGICAL_COMPLETE",
+          "VN_PREVIEW_LIFECYCLE_AUDIBLE_RETIRING",
+          "VN_PREVIEW_LIFECYCLE_FAILING_SOURCE_ACTIVE",
+          "VN_PREVIEW_LIFECYCLE_FAILING_AUDIBLE_RETIRING",
+          "VN_PREVIEW_REASON_NONE",
+          "VN_PREVIEW_REASON_NATURAL",
+          "VN_PREVIEW_REASON_STOP_REQUESTED",
+          "VN_PREVIEW_REASON_MEDIA_MISSING",
+          "VN_PREVIEW_REASON_CONTENT_REVISION",
+          "VN_PREVIEW_REASON_START_REFUSED",
+          "VN_PREVIEW_REASON_DEADLINE",
+          "VN_PREVIEW_PATH_ROW_CAPACITY",
+          "VN_PREVIEW_PATH_SEND_CAPACITY"
         ],
         "enumValues": {
           "VnActionFiringOutcome": [
@@ -496,38 +522,9 @@
           "VnMonitorChecksumAlgorithm": [
             "VN_MONITOR_CHECKSUM_CRC32C"
           ],
-          "VnMonitorChunkFlags": [
-            "VN_MONITOR_CHUNK_REQUIRED",
-            "VN_MONITOR_CHUNK_OPTIONAL"
-          ],
-          "VnMonitorChunkKind": [
-            "VN_MONITOR_CHUNK_SESSION_HEADER",
-            "VN_MONITOR_CHUNK_CAPABILITIES",
-            "VN_MONITOR_CHUNK_FINGERPRINTS",
-            "VN_MONITOR_CHUNK_CLOCK_ANCHORS",
-            "VN_MONITOR_CHUNK_OPTIONAL_SYMBOLS",
-            "VN_MONITOR_CHUNK_STATE",
-            "VN_MONITOR_CHUNK_EVENTS",
-            "VN_MONITOR_CHUNK_TIME_SERIES",
-            "VN_MONITOR_CHUNK_OPTIONAL_AUDIO",
-            "VN_MONITOR_CHUNK_TRACE_CORRELATION",
-            "VN_MONITOR_CHUNK_DROP_SUMMARIES",
-            "VN_MONITOR_CHUNK_FINAL_INDEX",
-            "VN_MONITOR_CHUNK_RECOVERY_INDEX",
-            "VN_MONITOR_CHUNK_EXECUTION_DESCRIPTOR",
-            "VN_MONITOR_CHUNK_EXECUTION_RECORD",
-            "VN_MONITOR_CHUNK_EXECUTION_END"
-          ],
-          "VnMonitorComparisonResult": [
-            "VN_MONITOR_COMPARE_COMPARABLE",
-            "VN_MONITOR_COMPARE_PARTIALLY_COMPARABLE",
-            "VN_MONITOR_COMPARE_INCOMPARABLE",
-            "VN_MONITOR_COMPARE_MISSING_DATA"
-          ],
           "VnMonitorDropStage": [
             "VN_MONITOR_DROP_SOURCE_PRODUCER",
             "VN_MONITOR_DROP_HUB_FANOUT",
-            "VN_MONITOR_DROP_RECORDER_QUEUE",
             "VN_MONITOR_DROP_REMOTE_TRANSPORT",
             "VN_MONITOR_DROP_DERIVED_INPUT"
           ],
@@ -819,7 +816,6 @@
             "VN_MONITOR_PERM_OBSERVE_EVENTS",
             "VN_MONITOR_PERM_OBSERVE_MEASUREMENTS",
             "VN_MONITOR_PERM_CAPTURE_CONTROL",
-            "VN_MONITOR_PERM_RECORD",
             "VN_MONITOR_PERM_RAW_AUDIO",
             "VN_MONITOR_PERM_SYMBOLS"
           ],
@@ -864,12 +860,6 @@
             "VN_MONITOR_RECORD_IDENTITY_CUT_END",
             "VN_MONITOR_RECORD_HOST_OBJECT_SYMBOL"
           ],
-          "VnMonitorRecordingState": [
-            "VN_MONITOR_RECORDING_STATE_STOPPED",
-            "VN_MONITOR_RECORDING_STATE_ACTIVE",
-            "VN_MONITOR_RECORDING_STATE_STOPPING",
-            "VN_MONITOR_RECORDING_STATE_FAILED"
-          ],
           "VnMonitorReductionMethod": [
             "VN_MONITOR_REDUCTION_NONE",
             "VN_MONITOR_REDUCTION_PEAK",
@@ -890,8 +880,7 @@
             "VN_MONITOR_REMOTE_OP_POLL",
             "VN_MONITOR_REMOTE_OP_STATE_RESYNC",
             "VN_MONITOR_REMOTE_OP_LEASE",
-            "VN_MONITOR_REMOTE_OP_PLAN",
-            "VN_MONITOR_REMOTE_OP_RECORDING"
+            "VN_MONITOR_REMOTE_OP_PLAN"
           ],
           "VnMonitorScopeEdge": [
             "VN_MONITOR_SCOPE_EDGE_RISING",
@@ -959,6 +948,23 @@
             "VN_PLAYBACK_READINESS_FAILED",
             "VN_PLAYBACK_READINESS_CANCELLED",
             "VN_PLAYBACK_READINESS_TERMINAL"
+          ],
+          "VnPreviewCommitStatus": [
+            "VN_PREVIEW_COMMIT_OK",
+            "VN_PREVIEW_COMMIT_BACKPRESSURE",
+            "VN_PREVIEW_COMMIT_INVALID",
+            "VN_PREVIEW_COMMIT_DEVICE_ERROR",
+            "VN_PREVIEW_COMMIT_UNAVAILABLE"
+          ],
+          "VnPreviewPrepareStatus": [
+            "VN_PREVIEW_PREPARE_OK",
+            "VN_PREVIEW_PREPARE_INVALID",
+            "VN_PREVIEW_PREPARE_BACKPRESSURE",
+            "VN_PREVIEW_PREPARE_CAPACITY",
+            "VN_PREVIEW_PREPARE_UNSUPPORTED",
+            "VN_PREVIEW_PREPARE_DEVICE_ERROR",
+            "VN_PREVIEW_PREPARE_INVALID_WORLD",
+            "VN_PREVIEW_PREPARE_UNAVAILABLE"
           ],
           "VnPropertyBindingFlags": [
             "VN_PROPERTY_BINDING_ACTIVE",
@@ -1149,17 +1155,13 @@
           "VnMonitorSecurityProfile",
           "VnRemoteFlags",
           "VnRemoteState",
-          "VnMonitorComparisonResult",
           "VnMonitorPlanActivationState",
           "VnMonitorStateCutResult",
           "VnMonitorMeasurementKind",
           "VnMonitorValidityFlags",
           "VnMonitorRegistryKind",
           "VnMonitorRemoteOpcode",
-          "VnMonitorRecordingState",
           "VnMonitorChannelMode",
-          "VnMonitorChunkFlags",
-          "VnMonitorChunkKind",
           "VnMonitorRecordFlags",
           "VnMonitorEventClass",
           "VnMonitorScopeEdge",
@@ -1175,7 +1177,9 @@
           "VnRemoteOperation",
           "VnRemoteCatalogKind",
           "VnRemoteClientEventKind",
-          "VnRemoteClientFailure"
+          "VnRemoteClientFailure",
+          "VnPreviewPrepareStatus",
+          "VnPreviewCommitStatus"
         ],
         "results": [
           "VN_OK",
@@ -1246,7 +1250,6 @@
           "VN_MONITOR_BUDGET_EXCEEDED",
           "VN_MONITOR_INCOMPATIBLE",
           "VN_MONITOR_SEQUENCE_EXHAUSTED",
-          "VN_MONITOR_RECORDING_FAILED",
           "VN_MONITOR_RESYNC_REQUIRED",
           "VN_VARIABLE_SCOPE_MISMATCH",
           "VN_VARIABLE_WRITER_FORBIDDEN",
@@ -1358,15 +1361,7 @@
           "VnMonitorEffectiveCapturePlan",
           "VnMonitorPollDesc",
           "VnMonitorPollResult",
-          "VnMonitorRecordingDesc",
-          "VnMonitorRecordingStatus",
-          "VnMonitorSessionCompareView",
-          "VnMonitorSessionCompareDesc",
-          "VnMonitorCompareResult",
           "VnMonitorTapDescriptor",
-          "VnMonitorSessionFileHeader",
-          "VnMonitorSessionChunkHeader",
-          "VnMonitorSessionCommitFooter",
           "VnMonitorRemoteHandshake",
           "VnMonitorRemoteFrameCounter",
           "VnMonitorMeasurementRequest",
@@ -1410,7 +1405,20 @@
           "VnStreamSourceInfoV1",
           "VnPlaybackReadinessMemberV1",
           "VnActionPlaybackReadinessV1",
-          "VnMonitorStreamFactV1"
+          "VnMonitorStreamFactV1",
+          "VnPreviewPlayPlayableDescV2",
+          "VnPreviewResetPlayableDescV2",
+          "VnPreviewPlayableStateV2",
+          "VnPreviewPlaybackPathRowV1",
+          "VnPreviewPlaybackSendV1",
+          "VnPreviewPlaybackPathV1",
+          "VnPreviewChannelPeaksV1",
+          "VnPreviewBusV1",
+          "VnPreviewBusVolumeV2",
+          "VnPreviewBusSendV1",
+          "VnPreviewProjectDescV1",
+          "VnPreviewProjectDescV2",
+          "VnPreviewProjectDescV3"
         ]
       },
       "defines": {
@@ -1527,11 +1535,6 @@
           "type": "u64",
           "value": 16777216
         },
-        "VN_MONITOR_DEFAULT_CHUNK_PAYLOAD_BYTES": {
-          "edition": "development",
-          "type": "u64",
-          "value": 67108864
-        },
         "VN_MONITOR_DEFAULT_CONSUMER_QUEUE_BYTES": {
           "edition": "development",
           "type": "u64",
@@ -1577,11 +1580,6 @@
           "type": "u64",
           "value": 8388608
         },
-        "VN_MONITOR_DEFAULT_RECORDER_QUEUE_BYTES": {
-          "edition": "development",
-          "type": "u64",
-          "value": 67108864
-        },
         "VN_MONITOR_DEFAULT_REMOTE_CLIENTS": {
           "edition": "development",
           "type": "u32",
@@ -1596,11 +1594,6 @@
           "edition": "development",
           "type": "u32",
           "value": 8
-        },
-        "VN_MONITOR_DEFAULT_SESSION_FILE_BYTES": {
-          "edition": "development",
-          "type": "u64",
-          "value": 8589934592
         },
         "VN_MONITOR_DEFAULT_STREAMS": {
           "edition": "development",
@@ -1626,11 +1619,6 @@
           "edition": "development",
           "type": "u64",
           "value": 134217728
-        },
-        "VN_MONITOR_HARD_CHUNK_PAYLOAD_BYTES": {
-          "edition": "development",
-          "type": "u64",
-          "value": 268435456
         },
         "VN_MONITOR_HARD_CONSUMER_QUEUE_BYTES": {
           "edition": "development",
@@ -1682,11 +1670,6 @@
           "type": "u64",
           "value": 67108864
         },
-        "VN_MONITOR_HARD_RECORDER_QUEUE_BYTES": {
-          "edition": "development",
-          "type": "u64",
-          "value": 536870912
-        },
         "VN_MONITOR_HARD_REGISTRY_BLOB_BYTES": {
           "edition": "development",
           "type": "u32",
@@ -1706,11 +1689,6 @@
           "edition": "development",
           "type": "u32",
           "value": 32
-        },
-        "VN_MONITOR_HARD_SESSION_FILE_BYTES": {
-          "edition": "development",
-          "type": "u64",
-          "value": 68719476736
         },
         "VN_MONITOR_HARD_STREAMS": {
           "edition": "development",
@@ -1746,36 +1724,6 @@
           "edition": "development",
           "type": "u32",
           "value": 32
-        },
-        "VN_MONITOR_SESSION_CHUNK_HEADER_BYTES": {
-          "edition": "development",
-          "type": "u32",
-          "value": 32
-        },
-        "VN_MONITOR_SESSION_COMMIT_FOOTER_BYTES": {
-          "edition": "development",
-          "type": "u32",
-          "value": 24
-        },
-        "VN_MONITOR_SESSION_COMMIT_MAGIC": {
-          "edition": "development",
-          "type": "u64",
-          "value": 13565037025381974
-        },
-        "VN_MONITOR_SESSION_FILE_MAGIC": {
-          "edition": "development",
-          "type": "u64",
-          "value": 13565011289787990
-        },
-        "VN_MONITOR_SESSION_FORMAT_MAJOR": {
-          "edition": "development",
-          "type": "u32",
-          "value": 1
-        },
-        "VN_MONITOR_SESSION_FORMAT_MINOR": {
-          "edition": "development",
-          "type": "u32",
-          "value": 0
         },
         "VN_MONITOR_STATE_ENTITY_SLOTS": {
           "edition": "development",
@@ -1851,6 +1799,196 @@
           "edition": "core",
           "type": "u32",
           "value": 1
+        },
+        "VN_PREVIEW_BACKPRESSURE": {
+          "edition": "development",
+          "type": "i32",
+          "value": 16
+        },
+        "VN_PREVIEW_DEVELOPMENT_API_DISABLED": {
+          "edition": "development",
+          "type": "i32",
+          "value": 8
+        },
+        "VN_PREVIEW_EFFECT_CAPACITY": {
+          "edition": "development",
+          "type": "i32",
+          "value": 12
+        },
+        "VN_PREVIEW_HOST_ERROR": {
+          "edition": "development",
+          "type": "i32",
+          "value": 11
+        },
+        "VN_PREVIEW_INSTANCE_CAPACITY": {
+          "edition": "development",
+          "type": "i32",
+          "value": 7
+        },
+        "VN_PREVIEW_INVALID_ARG": {
+          "edition": "development",
+          "type": "i32",
+          "value": 1
+        },
+        "VN_PREVIEW_LIFECYCLE_ACTIVE": {
+          "edition": "development",
+          "type": "i32",
+          "value": 2
+        },
+        "VN_PREVIEW_LIFECYCLE_AUDIBLE_RETIRING": {
+          "edition": "development",
+          "type": "i32",
+          "value": 5
+        },
+        "VN_PREVIEW_LIFECYCLE_CANCELLING": {
+          "edition": "development",
+          "type": "i32",
+          "value": 3
+        },
+        "VN_PREVIEW_LIFECYCLE_FAILING_AUDIBLE_RETIRING": {
+          "edition": "development",
+          "type": "i32",
+          "value": 7
+        },
+        "VN_PREVIEW_LIFECYCLE_FAILING_SOURCE_ACTIVE": {
+          "edition": "development",
+          "type": "i32",
+          "value": 6
+        },
+        "VN_PREVIEW_LIFECYCLE_LOGICAL_COMPLETE": {
+          "edition": "development",
+          "type": "i32",
+          "value": 4
+        },
+        "VN_PREVIEW_LIFECYCLE_PREPARING": {
+          "edition": "development",
+          "type": "i32",
+          "value": 1
+        },
+        "VN_PREVIEW_NOT_SUPPORTED": {
+          "edition": "development",
+          "type": "i32",
+          "value": 3
+        },
+        "VN_PREVIEW_NO_PROGRAM": {
+          "edition": "development",
+          "type": "i32",
+          "value": 6
+        },
+        "VN_PREVIEW_NO_VOICE": {
+          "edition": "development",
+          "type": "i32",
+          "value": 15
+        },
+        "VN_PREVIEW_OK": {
+          "edition": "development",
+          "type": "i32",
+          "value": 0
+        },
+        "VN_PREVIEW_PATH_ROW_CAPACITY": {
+          "edition": "development",
+          "type": "u32",
+          "value": 64
+        },
+        "VN_PREVIEW_PATH_SEND_CAPACITY": {
+          "edition": "development",
+          "type": "u32",
+          "value": 8
+        },
+        "VN_PREVIEW_PLAYABLE_KIND_CONTAINER": {
+          "edition": "development",
+          "type": "i32",
+          "value": 1
+        },
+        "VN_PREVIEW_PLAYABLE_KIND_SEGMENT": {
+          "edition": "development",
+          "type": "i32",
+          "value": 3
+        },
+        "VN_PREVIEW_PLAYABLE_KIND_SOUND": {
+          "edition": "development",
+          "type": "i32",
+          "value": 0
+        },
+        "VN_PREVIEW_PLAYABLE_KIND_TRACK": {
+          "edition": "development",
+          "type": "i32",
+          "value": 2
+        },
+        "VN_PREVIEW_PROGRAM_MISMATCH": {
+          "edition": "development",
+          "type": "i32",
+          "value": 9
+        },
+        "VN_PREVIEW_REASON_CONTENT_REVISION": {
+          "edition": "development",
+          "type": "i32",
+          "value": 4
+        },
+        "VN_PREVIEW_REASON_DEADLINE": {
+          "edition": "development",
+          "type": "i32",
+          "value": 6
+        },
+        "VN_PREVIEW_REASON_MEDIA_MISSING": {
+          "edition": "development",
+          "type": "i32",
+          "value": 3
+        },
+        "VN_PREVIEW_REASON_NATURAL": {
+          "edition": "development",
+          "type": "i32",
+          "value": 1
+        },
+        "VN_PREVIEW_REASON_NONE": {
+          "edition": "development",
+          "type": "i32",
+          "value": 0
+        },
+        "VN_PREVIEW_REASON_START_REFUSED": {
+          "edition": "development",
+          "type": "i32",
+          "value": 5
+        },
+        "VN_PREVIEW_REASON_STOP_REQUESTED": {
+          "edition": "development",
+          "type": "i32",
+          "value": 2
+        },
+        "VN_PREVIEW_RESULT_CAPACITY": {
+          "edition": "development",
+          "type": "i32",
+          "value": 10
+        },
+        "VN_PREVIEW_RESULT_EXPIRED": {
+          "edition": "development",
+          "type": "i32",
+          "value": 13
+        },
+        "VN_PREVIEW_REVISION_CONFLICT": {
+          "edition": "development",
+          "type": "i32",
+          "value": 17
+        },
+        "VN_PREVIEW_STALE_HANDLE": {
+          "edition": "development",
+          "type": "i32",
+          "value": 5
+        },
+        "VN_PREVIEW_STRUCT_SIZE_MISMATCH": {
+          "edition": "development",
+          "type": "i32",
+          "value": 2
+        },
+        "VN_PREVIEW_UNKNOWN_HANDLE": {
+          "edition": "development",
+          "type": "i32",
+          "value": 4
+        },
+        "VN_PREVIEW_UNKNOWN_ID": {
+          "edition": "development",
+          "type": "i32",
+          "value": 14
         },
         "VN_REMOTE_DEFAULT_DISCOVERY_PORT": {
           "edition": "development",
@@ -2255,53 +2393,12 @@
             "VN_MONITOR_CHECKSUM_CRC32C": 1
           }
         },
-        "VnMonitorChunkFlags": {
-          "backing": "u32",
-          "edition": "development",
-          "values": {
-            "VN_MONITOR_CHUNK_OPTIONAL": 2,
-            "VN_MONITOR_CHUNK_REQUIRED": 1
-          }
-        },
-        "VnMonitorChunkKind": {
-          "backing": "u32",
-          "edition": "development",
-          "values": {
-            "VN_MONITOR_CHUNK_CAPABILITIES": 2,
-            "VN_MONITOR_CHUNK_CLOCK_ANCHORS": 4,
-            "VN_MONITOR_CHUNK_DROP_SUMMARIES": 11,
-            "VN_MONITOR_CHUNK_EVENTS": 7,
-            "VN_MONITOR_CHUNK_EXECUTION_DESCRIPTOR": 14,
-            "VN_MONITOR_CHUNK_EXECUTION_END": 16,
-            "VN_MONITOR_CHUNK_EXECUTION_RECORD": 15,
-            "VN_MONITOR_CHUNK_FINAL_INDEX": 12,
-            "VN_MONITOR_CHUNK_FINGERPRINTS": 3,
-            "VN_MONITOR_CHUNK_OPTIONAL_AUDIO": 9,
-            "VN_MONITOR_CHUNK_OPTIONAL_SYMBOLS": 5,
-            "VN_MONITOR_CHUNK_RECOVERY_INDEX": 13,
-            "VN_MONITOR_CHUNK_SESSION_HEADER": 1,
-            "VN_MONITOR_CHUNK_STATE": 6,
-            "VN_MONITOR_CHUNK_TIME_SERIES": 8,
-            "VN_MONITOR_CHUNK_TRACE_CORRELATION": 10
-          }
-        },
-        "VnMonitorComparisonResult": {
-          "backing": "u32",
-          "edition": "development",
-          "values": {
-            "VN_MONITOR_COMPARE_COMPARABLE": 0,
-            "VN_MONITOR_COMPARE_INCOMPARABLE": 2,
-            "VN_MONITOR_COMPARE_MISSING_DATA": 3,
-            "VN_MONITOR_COMPARE_PARTIALLY_COMPARABLE": 1
-          }
-        },
         "VnMonitorDropStage": {
           "backing": "u32",
           "edition": "development",
           "values": {
             "VN_MONITOR_DROP_DERIVED_INPUT": 5,
             "VN_MONITOR_DROP_HUB_FANOUT": 2,
-            "VN_MONITOR_DROP_RECORDER_QUEUE": 3,
             "VN_MONITOR_DROP_REMOTE_TRANSPORT": 4,
             "VN_MONITOR_DROP_SOURCE_PRODUCER": 1
           }
@@ -2670,7 +2767,6 @@
             "VN_MONITOR_PERM_OBSERVE_MEASUREMENTS": 4,
             "VN_MONITOR_PERM_OBSERVE_STATE": 1,
             "VN_MONITOR_PERM_RAW_AUDIO": 32,
-            "VN_MONITOR_PERM_RECORD": 16,
             "VN_MONITOR_PERM_SYMBOLS": 64
           }
         },
@@ -2727,16 +2823,6 @@
             "VN_MONITOR_RECORD_WAVEFORM_BUCKET": 8
           }
         },
-        "VnMonitorRecordingState": {
-          "backing": "u32",
-          "edition": "development",
-          "values": {
-            "VN_MONITOR_RECORDING_STATE_ACTIVE": 1,
-            "VN_MONITOR_RECORDING_STATE_FAILED": 3,
-            "VN_MONITOR_RECORDING_STATE_STOPPED": 0,
-            "VN_MONITOR_RECORDING_STATE_STOPPING": 2
-          }
-        },
         "VnMonitorReductionMethod": {
           "backing": "u32",
           "edition": "development",
@@ -2768,7 +2854,6 @@
             "VN_MONITOR_REMOTE_OP_LEASE": 4,
             "VN_MONITOR_REMOTE_OP_PLAN": 5,
             "VN_MONITOR_REMOTE_OP_POLL": 2,
-            "VN_MONITOR_REMOTE_OP_RECORDING": 6,
             "VN_MONITOR_REMOTE_OP_STATE_RESYNC": 3
           }
         },
@@ -2881,6 +2966,31 @@
             "VN_PLAYBACK_READINESS_READY": 2,
             "VN_PLAYBACK_READINESS_TERMINAL": 6,
             "VN_PLAYBACK_READINESS_UNKNOWN": 0
+          }
+        },
+        "VnPreviewCommitStatus": {
+          "backing": "i32",
+          "edition": "development",
+          "values": {
+            "VN_PREVIEW_COMMIT_BACKPRESSURE": 1,
+            "VN_PREVIEW_COMMIT_DEVICE_ERROR": 3,
+            "VN_PREVIEW_COMMIT_INVALID": 2,
+            "VN_PREVIEW_COMMIT_OK": 0,
+            "VN_PREVIEW_COMMIT_UNAVAILABLE": 4
+          }
+        },
+        "VnPreviewPrepareStatus": {
+          "backing": "i32",
+          "edition": "development",
+          "values": {
+            "VN_PREVIEW_PREPARE_BACKPRESSURE": 2,
+            "VN_PREVIEW_PREPARE_CAPACITY": 3,
+            "VN_PREVIEW_PREPARE_DEVICE_ERROR": 5,
+            "VN_PREVIEW_PREPARE_INVALID": 1,
+            "VN_PREVIEW_PREPARE_INVALID_WORLD": 6,
+            "VN_PREVIEW_PREPARE_OK": 0,
+            "VN_PREVIEW_PREPARE_UNAVAILABLE": 7,
+            "VN_PREVIEW_PREPARE_UNSUPPORTED": 4
           }
         },
         "VnPropertyBindingFlags": {
@@ -5345,74 +5455,6 @@
         },
         {
           "callingConvention": "cdecl",
-          "edition": "development",
-          "name": "Vn_MonitorStartRecording",
-          "parameters": [
-            {
-              "ctype": "VnMonitorSessionHandle",
-              "name": "handle"
-            },
-            {
-              "ctype": "uint64_t",
-              "name": "leaseGeneration"
-            },
-            {
-              "ctype": "const VnMonitorRecordingDesc*",
-              "name": "desc"
-            }
-          ],
-          "returnType": "VnResult"
-        },
-        {
-          "callingConvention": "cdecl",
-          "edition": "development",
-          "name": "Vn_MonitorStopRecording",
-          "parameters": [
-            {
-              "ctype": "VnMonitorSessionHandle",
-              "name": "handle"
-            },
-            {
-              "ctype": "uint64_t",
-              "name": "leaseGeneration"
-            }
-          ],
-          "returnType": "VnResult"
-        },
-        {
-          "callingConvention": "cdecl",
-          "edition": "development",
-          "name": "Vn_MonitorGetRecordingStatus",
-          "parameters": [
-            {
-              "ctype": "VnMonitorSessionHandle",
-              "name": "handle"
-            },
-            {
-              "ctype": "VnMonitorRecordingStatus*",
-              "name": "outStatus"
-            }
-          ],
-          "returnType": "VnResult"
-        },
-        {
-          "callingConvention": "cdecl",
-          "edition": "development",
-          "name": "Vn_MonitorCompareSessions",
-          "parameters": [
-            {
-              "ctype": "const VnMonitorSessionCompareDesc*",
-              "name": "desc"
-            },
-            {
-              "ctype": "VnMonitorCompareResult*",
-              "name": "out"
-            }
-          ],
-          "returnType": "VnResult"
-        },
-        {
-          "callingConvention": "cdecl",
           "edition": "core",
           "name": "Vn_SetValues",
           "parameters": [
@@ -5730,6 +5772,327 @@
             }
           ],
           "returnType": "VnResult"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "development",
+          "name": "VnPreview_PlayPlayable",
+          "parameters": [
+            {
+              "ctype": "const VnPreviewPlayPlayableDescV2*",
+              "name": "desc"
+            },
+            {
+              "ctype": "VnPreviewPlayableHandle*",
+              "name": "outHandle"
+            }
+          ],
+          "returnType": "VnPreviewResult"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "development",
+          "name": "VnPreview_ResetPlayable",
+          "parameters": [
+            {
+              "ctype": "const VnPreviewResetPlayableDescV2*",
+              "name": "desc"
+            }
+          ],
+          "returnType": "VnPreviewResult"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "development",
+          "name": "VnPreview_StopPlayable",
+          "parameters": [
+            {
+              "ctype": "VnPreviewPlayableHandle",
+              "name": "handle"
+            },
+            {
+              "ctype": "uint32_t",
+              "name": "fadeMs"
+            }
+          ],
+          "returnType": "VnPreviewResult"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "development",
+          "name": "VnPreview_QueryPlayable",
+          "parameters": [
+            {
+              "ctype": "VnPreviewPlayableHandle",
+              "name": "handle"
+            },
+            {
+              "ctype": "VnPreviewPlayableStateV2*",
+              "name": "outState"
+            }
+          ],
+          "returnType": "VnPreviewResult"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "development",
+          "name": "VnPreview_CapturePlaybackPaths",
+          "parameters": [
+            {
+              "ctype": "VnPreviewPlaybackPathV1*",
+              "name": "outPaths"
+            },
+            {
+              "ctype": "uint32_t",
+              "name": "capacity"
+            },
+            {
+              "ctype": "uint32_t*",
+              "name": "requiredCount"
+            }
+          ],
+          "returnType": "VnPreviewResult"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "development",
+          "name": "VnPreview_PrepareProject",
+          "parameters": [
+            {
+              "ctype": "const VnPreviewProjectDescV1*",
+              "name": "desc"
+            },
+            {
+              "ctype": "VnPreviewProjectHandle*",
+              "name": "outHandle"
+            }
+          ],
+          "returnType": "VnPreviewPrepareStatus"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "development",
+          "name": "VnPreview_PrepareProjectV2",
+          "parameters": [
+            {
+              "ctype": "const VnPreviewProjectDescV2*",
+              "name": "desc"
+            },
+            {
+              "ctype": "VnPreviewProjectHandle*",
+              "name": "outHandle"
+            }
+          ],
+          "returnType": "VnPreviewPrepareStatus"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "development",
+          "name": "VnPreview_PrepareProjectV3",
+          "parameters": [
+            {
+              "ctype": "const VnPreviewProjectDescV3*",
+              "name": "desc"
+            },
+            {
+              "ctype": "VnPreviewProjectHandle*",
+              "name": "outHandle"
+            }
+          ],
+          "returnType": "VnPreviewPrepareStatus"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "development",
+          "name": "VnPreview_CommitProject",
+          "parameters": [
+            {
+              "ctype": "VnPreviewProjectHandle",
+              "name": "handle"
+            },
+            {
+              "ctype": "uint64_t*",
+              "name": "outGeneration"
+            }
+          ],
+          "returnType": "VnPreviewCommitStatus"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "development",
+          "name": "VnPreview_CancelProject",
+          "parameters": [
+            {
+              "ctype": "VnPreviewProjectHandle",
+              "name": "handle"
+            }
+          ],
+          "returnType": "void"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "development",
+          "name": "VnPreview_DrainProjectAcks",
+          "parameters": [],
+          "returnType": "uint32_t"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "development",
+          "name": "VnPreview_ProjectIsOpen",
+          "parameters": [
+            {
+              "ctype": "uint64_t",
+              "name": "generation"
+            }
+          ],
+          "returnType": "uint32_t"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "development",
+          "name": "VnPreview_QueryOwnerRevision",
+          "parameters": [
+            {
+              "ctype": "uint64_t",
+              "name": "ownerId"
+            },
+            {
+              "ctype": "uint64_t*",
+              "name": "outRevision"
+            }
+          ],
+          "returnType": "uint32_t"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "development",
+          "name": "VnPreview_HasPlayableConsumers",
+          "parameters": [],
+          "returnType": "uint32_t"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "development",
+          "name": "VnPreview_HasAction",
+          "parameters": [
+            {
+              "ctype": "VnObjectId",
+              "name": "actionId"
+            }
+          ],
+          "returnType": "uint32_t"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "development",
+          "name": "VnPreview_PumpNullMixer",
+          "parameters": [
+            {
+              "ctype": "uint32_t",
+              "name": "blockCount"
+            }
+          ],
+          "returnType": "void"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "development",
+          "name": "VnPreview_EnableChannelPeakMetering",
+          "parameters": [],
+          "returnType": "VnResult"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "development",
+          "name": "VnPreview_TakeChannelPeaks",
+          "parameters": [
+            {
+              "ctype": "VnPreviewChannelPeaksV1*",
+              "name": "outPeaks"
+            }
+          ],
+          "returnType": "VnResult"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "development",
+          "name": "VnPreview_RegisterPcm",
+          "parameters": [
+            {
+              "ctype": "VnSoundId",
+              "name": "soundId"
+            },
+            {
+              "ctype": "const VnPCMDesc*",
+              "name": "desc"
+            },
+            {
+              "ctype": "uint64_t",
+              "name": "loopStartFrame"
+            },
+            {
+              "ctype": "uint64_t",
+              "name": "loopEndFrame"
+            },
+            {
+              "ctype": "uint64_t*",
+              "name": "outContentRevision"
+            }
+          ],
+          "returnType": "VnResult"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "development",
+          "name": "VnPreview_PlayVoiceRaw",
+          "parameters": [
+            {
+              "ctype": "const VnPlayDesc*",
+              "name": "desc"
+            },
+            {
+              "ctype": "VnVoiceHandle*",
+              "name": "outHandle"
+            }
+          ],
+          "returnType": "VnResult"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "development",
+          "name": "VnPreview_RefreshVoiceBindings",
+          "parameters": [
+            {
+              "ctype": "uint64_t",
+              "name": "voiceInstance"
+            }
+          ],
+          "returnType": "VnResult"
+        },
+        {
+          "callingConvention": "cdecl",
+          "edition": "development",
+          "name": "VnPreview_SetVoiceProperty",
+          "parameters": [
+            {
+              "ctype": "uint64_t",
+              "name": "voiceInstance"
+            },
+            {
+              "ctype": "uint32_t",
+              "name": "property"
+            },
+            {
+              "ctype": "float",
+              "name": "value"
+            },
+            {
+              "ctype": "VnBusId",
+              "name": "sendBusId"
+            }
+          ],
+          "returnType": "VnResult"
         }
       ],
       "monitorRecordEnvelope": [
@@ -5912,10 +6275,32 @@
         "dataModel": "LLP64",
         "pointerBytes": 8,
         "publicExportPolicy": "required-set",
-        "publicExportPrefix": "Vn_",
+        "publicExportPrefix": "Vn",
         "target": "windows-msvc-x86_64"
       },
       "publicExports": [
+        "VnPreview_CancelProject",
+        "VnPreview_CapturePlaybackPaths",
+        "VnPreview_CommitProject",
+        "VnPreview_DrainProjectAcks",
+        "VnPreview_EnableChannelPeakMetering",
+        "VnPreview_HasAction",
+        "VnPreview_HasPlayableConsumers",
+        "VnPreview_PlayPlayable",
+        "VnPreview_PlayVoiceRaw",
+        "VnPreview_PrepareProject",
+        "VnPreview_PrepareProjectV2",
+        "VnPreview_PrepareProjectV3",
+        "VnPreview_ProjectIsOpen",
+        "VnPreview_PumpNullMixer",
+        "VnPreview_QueryOwnerRevision",
+        "VnPreview_QueryPlayable",
+        "VnPreview_RefreshVoiceBindings",
+        "VnPreview_RegisterPcm",
+        "VnPreview_ResetPlayable",
+        "VnPreview_SetVoiceProperty",
+        "VnPreview_StopPlayable",
+        "VnPreview_TakeChannelPeaks",
         "Vn_ActivateCanonicalPackSetV1",
         "Vn_ActivateCanonicalPackSetV2",
         "Vn_ApplyBusTopology",
@@ -5959,14 +6344,12 @@
         "Vn_MonitorBeginHostSession",
         "Vn_MonitorCaptureRegistry",
         "Vn_MonitorCloseSession",
-        "Vn_MonitorCompareSessions",
         "Vn_MonitorEndHostSession",
         "Vn_MonitorGetCapabilities",
         "Vn_MonitorGetCaptureControlStatus",
         "Vn_MonitorGetConsumerStatus",
         "Vn_MonitorGetEffectiveCapturePlan",
         "Vn_MonitorGetEventSessionStatus",
-        "Vn_MonitorGetRecordingStatus",
         "Vn_MonitorGetStateCutStatus",
         "Vn_MonitorGetSubscriptionStatus",
         "Vn_MonitorOpenEventSession",
@@ -5977,9 +6360,7 @@
         "Vn_MonitorReleaseCaptureControl",
         "Vn_MonitorRequestStateCut",
         "Vn_MonitorSealEventSession",
-        "Vn_MonitorStartRecording",
         "Vn_MonitorStopCapture",
-        "Vn_MonitorStopRecording",
         "Vn_MonitorValidateCapturePlan",
         "Vn_PostAction",
         "Vn_QueryAbiVersion",
@@ -6107,7 +6488,6 @@
           "VN_MONITOR_PERMISSION_DENIED": -335,
           "VN_MONITOR_PLAN_CAPACITY": -339,
           "VN_MONITOR_PRODUCER_CAPACITY": -341,
-          "VN_MONITOR_RECORDING_FAILED": -346,
           "VN_MONITOR_RESYNC_REQUIRED": -347,
           "VN_MONITOR_SEQUENCE_EXHAUSTED": -345,
           "VN_MONITOR_SESSION_CAPACITY": -340,
@@ -6195,16 +6575,12 @@
         "VnEffectType": "u32",
         "VnEmitterHandle": "u64",
         "VnMonitorChannelMode": "u32",
-        "VnMonitorChunkFlags": "u32",
-        "VnMonitorChunkKind": "u32",
-        "VnMonitorComparisonResult": "u32",
         "VnMonitorDropStage": "u32",
         "VnMonitorEntityKind": "u32",
         "VnMonitorMeasurementKind": "u32",
         "VnMonitorPermissionMask": "u32",
         "VnMonitorPlanActivationState": "u32",
         "VnMonitorRecordKind": "u32",
-        "VnMonitorRecordingState": "u32",
         "VnMonitorRegistryKind": "u32",
         "VnMonitorRemoteOpcode": "u32",
         "VnMonitorSecurityProfile": "u32",
@@ -6216,6 +6592,11 @@
         "VnMonitorValidityFlags": "u32",
         "VnPackHandle": "u64",
         "VnPlaybackReadinessState": "u32",
+        "VnPreviewCommitStatus": "i32",
+        "VnPreviewPlayableHandle": "u64",
+        "VnPreviewPrepareStatus": "i32",
+        "VnPreviewProjectHandle": "u64",
+        "VnPreviewResult": "i32",
         "VnRemoteClient": "u64",
         "VnResult": "i32",
         "VnStreamSourceRequest": "u64",
@@ -11460,7 +11841,7 @@
             },
             {
               "alignment": 8,
-              "name": "resolvedRecorderQueueBytes",
+              "name": "resolvedRemoteQueueBytes",
               "offset": 144,
               "shape": {
                 "kind": "scalar",
@@ -11470,7 +11851,7 @@
             },
             {
               "alignment": 8,
-              "name": "hardRecorderQueueBytes",
+              "name": "hardRemoteQueueBytes",
               "offset": 152,
               "shape": {
                 "kind": "scalar",
@@ -11480,7 +11861,7 @@
             },
             {
               "alignment": 8,
-              "name": "resolvedRemoteQueueBytes",
+              "name": "resolvedCaptureByteRate",
               "offset": 160,
               "shape": {
                 "kind": "scalar",
@@ -11490,7 +11871,7 @@
             },
             {
               "alignment": 8,
-              "name": "hardRemoteQueueBytes",
+              "name": "hardCaptureByteRate",
               "offset": 168,
               "shape": {
                 "kind": "scalar",
@@ -11500,7 +11881,7 @@
             },
             {
               "alignment": 8,
-              "name": "resolvedCaptureByteRate",
+              "name": "resolvedRawAudioByteRate",
               "offset": 176,
               "shape": {
                 "kind": "scalar",
@@ -11510,28 +11891,8 @@
             },
             {
               "alignment": 8,
-              "name": "hardCaptureByteRate",
-              "offset": 184,
-              "shape": {
-                "kind": "scalar",
-                "type": "u64"
-              },
-              "size": 8
-            },
-            {
-              "alignment": 8,
-              "name": "resolvedRawAudioByteRate",
-              "offset": 192,
-              "shape": {
-                "kind": "scalar",
-                "type": "u64"
-              },
-              "size": 8
-            },
-            {
-              "alignment": 8,
               "name": "hardRawAudioByteRate",
-              "offset": 200,
+              "offset": 184,
               "shape": {
                 "kind": "scalar",
                 "type": "u64"
@@ -11539,7 +11900,7 @@
               "size": 8
             }
           ],
-          "size": 208
+          "size": 192
         },
         "VnMonitorCaptureControlStatus": {
           "alignment": 8,
@@ -11796,33 +12157,6 @@
             }
           ],
           "size": 80
-        },
-        "VnMonitorCompareResult": {
-          "alignment": 4,
-          "edition": "development",
-          "fields": [
-            {
-              "alignment": 4,
-              "name": "structSize",
-              "offset": 0,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 4,
-              "name": "result",
-              "offset": 4,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            }
-          ],
-          "size": 8
         },
         "VnMonitorDropSummary": {
           "alignment": 8,
@@ -15208,131 +15542,6 @@
           ],
           "size": 328
         },
-        "VnMonitorRecordingDesc": {
-          "alignment": 8,
-          "edition": "development",
-          "fields": [
-            {
-              "alignment": 4,
-              "name": "structSize",
-              "offset": 0,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 4,
-              "name": "reserved0",
-              "offset": 4,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 8,
-              "name": "utf8Path",
-              "offset": 8,
-              "shape": {
-                "ctype": "const char*",
-                "kind": "pointer",
-                "storage": "string"
-              },
-              "size": 8
-            },
-            {
-              "alignment": 8,
-              "name": "fileByteBudget",
-              "offset": 16,
-              "shape": {
-                "kind": "scalar",
-                "type": "u64"
-              },
-              "size": 8
-            }
-          ],
-          "size": 24
-        },
-        "VnMonitorRecordingStatus": {
-          "alignment": 8,
-          "edition": "development",
-          "fields": [
-            {
-              "alignment": 4,
-              "name": "structSize",
-              "offset": 0,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 4,
-              "name": "state",
-              "offset": 4,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 8,
-              "name": "fileBytes",
-              "offset": 8,
-              "shape": {
-                "kind": "scalar",
-                "type": "u64"
-              },
-              "size": 8
-            },
-            {
-              "alignment": 8,
-              "name": "lastCommittedChunk",
-              "offset": 16,
-              "shape": {
-                "kind": "scalar",
-                "type": "u64"
-              },
-              "size": 8
-            },
-            {
-              "alignment": 8,
-              "name": "queueBytes",
-              "offset": 24,
-              "shape": {
-                "kind": "scalar",
-                "type": "u64"
-              },
-              "size": 8
-            },
-            {
-              "alignment": 4,
-              "name": "recoveryNeeded",
-              "offset": 32,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 4,
-              "name": "errorReason",
-              "offset": 36,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            }
-          ],
-          "size": 40
-        },
         "VnMonitorRemoteFrameCounter": {
           "alignment": 8,
           "edition": "development",
@@ -15776,526 +15985,6 @@
           ],
           "size": 144
         },
-        "VnMonitorSessionChunkHeader": {
-          "alignment": 8,
-          "edition": "development",
-          "fields": [
-            {
-              "alignment": 4,
-              "name": "structSize",
-              "offset": 0,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 4,
-              "name": "kind",
-              "offset": 4,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 4,
-              "name": "flags",
-              "offset": 8,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 4,
-              "name": "version",
-              "offset": 12,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 4,
-              "name": "headerBytes",
-              "offset": 16,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 4,
-              "name": "payloadCrc32c",
-              "offset": 20,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 4,
-              "name": "headerCrc32c",
-              "offset": 24,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 4,
-              "name": "reserved0",
-              "offset": 28,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 8,
-              "name": "payloadBytes",
-              "offset": 32,
-              "shape": {
-                "kind": "scalar",
-                "type": "u64"
-              },
-              "size": 8
-            },
-            {
-              "alignment": 8,
-              "name": "chunkSequence",
-              "offset": 40,
-              "shape": {
-                "kind": "scalar",
-                "type": "u64"
-              },
-              "size": 8
-            }
-          ],
-          "size": 48
-        },
-        "VnMonitorSessionCommitFooter": {
-          "alignment": 8,
-          "edition": "development",
-          "fields": [
-            {
-              "alignment": 4,
-              "name": "structSize",
-              "offset": 0,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 4,
-              "name": "reserved0",
-              "offset": 4,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 8,
-              "name": "commitMagic",
-              "offset": 8,
-              "shape": {
-                "kind": "scalar",
-                "type": "u64"
-              },
-              "size": 8
-            },
-            {
-              "alignment": 8,
-              "name": "chunkSequence",
-              "offset": 16,
-              "shape": {
-                "kind": "scalar",
-                "type": "u64"
-              },
-              "size": 8
-            },
-            {
-              "alignment": 8,
-              "name": "payloadBytes",
-              "offset": 24,
-              "shape": {
-                "kind": "scalar",
-                "type": "u64"
-              },
-              "size": 8
-            }
-          ],
-          "size": 32
-        },
-        "VnMonitorSessionCompareDesc": {
-          "alignment": 8,
-          "edition": "development",
-          "fields": [
-            {
-              "alignment": 4,
-              "name": "structSize",
-              "offset": 0,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 4,
-              "name": "reserved0",
-              "offset": 4,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 8,
-              "name": "left",
-              "offset": 8,
-              "shape": {
-                "ctype": "const VnMonitorSessionCompareView*",
-                "kind": "pointer",
-                "storage": "opaque"
-              },
-              "size": 8
-            },
-            {
-              "alignment": 8,
-              "name": "right",
-              "offset": 16,
-              "shape": {
-                "ctype": "const VnMonitorSessionCompareView*",
-                "kind": "pointer",
-                "storage": "opaque"
-              },
-              "size": 8
-            },
-            {
-              "alignment": 8,
-              "name": "executeFrameBegin",
-              "offset": 24,
-              "shape": {
-                "kind": "scalar",
-                "type": "u64"
-              },
-              "size": 8
-            },
-            {
-              "alignment": 8,
-              "name": "executeFrameEnd",
-              "offset": 32,
-              "shape": {
-                "kind": "scalar",
-                "type": "u64"
-              },
-              "size": 8
-            }
-          ],
-          "size": 40
-        },
-        "VnMonitorSessionCompareView": {
-          "alignment": 8,
-          "edition": "development",
-          "fields": [
-            {
-              "alignment": 4,
-              "name": "structSize",
-              "offset": 0,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 4,
-              "name": "status",
-              "offset": 4,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 4,
-              "name": "recoveryNeeded",
-              "offset": 8,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 4,
-              "name": "droppedRequired",
-              "offset": 12,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 4,
-              "name": "requiredUnknown",
-              "offset": 16,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 4,
-              "name": "crcFailedRequired",
-              "offset": 20,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 4,
-              "name": "truncatedAfterCommit",
-              "offset": 24,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 4,
-              "name": "hasCompleteFooter",
-              "offset": 28,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 4,
-              "name": "hasTraceCorrelation",
-              "offset": 32,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 4,
-              "name": "hasOptionalSymbols",
-              "offset": 36,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 8,
-              "name": "lastCompleteChunkSequence",
-              "offset": 40,
-              "shape": {
-                "kind": "scalar",
-                "type": "u64"
-              },
-              "size": 8
-            },
-            {
-              "alignment": 8,
-              "name": "fileBytes",
-              "offset": 48,
-              "shape": {
-                "kind": "scalar",
-                "type": "u64"
-              },
-              "size": 8
-            },
-            {
-              "alignment": 8,
-              "name": "bytesConsumed",
-              "offset": 56,
-              "shape": {
-                "kind": "scalar",
-                "type": "u64"
-              },
-              "size": 8
-            },
-            {
-              "alignment": 8,
-              "name": "capabilityFingerprint",
-              "offset": 64,
-              "shape": {
-                "kind": "scalar",
-                "type": "u64"
-              },
-              "size": 8
-            },
-            {
-              "alignment": 8,
-              "name": "programSemanticFingerprint",
-              "offset": 72,
-              "shape": {
-                "kind": "scalar",
-                "type": "u64"
-              },
-              "size": 8
-            },
-            {
-              "alignment": 8,
-              "name": "runtimeLineageFingerprint",
-              "offset": 80,
-              "shape": {
-                "kind": "scalar",
-                "type": "u64"
-              },
-              "size": 8
-            },
-            {
-              "alignment": 8,
-              "name": "tapDescriptorId",
-              "offset": 88,
-              "shape": {
-                "kind": "scalar",
-                "type": "u64"
-              },
-              "size": 8
-            },
-            {
-              "alignment": 8,
-              "name": "measurementSegmentGeneration",
-              "offset": 96,
-              "shape": {
-                "kind": "scalar",
-                "type": "u64"
-              },
-              "size": 8
-            },
-            {
-              "alignment": 4,
-              "name": "sampleRate",
-              "offset": 104,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 4,
-              "name": "algorithmId",
-              "offset": 108,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 4,
-              "name": "algorithmVersion",
-              "offset": 112,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 4,
-              "name": "unitId",
-              "offset": 116,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 4,
-              "name": "targetStreamKindMask",
-              "offset": 120,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 4,
-              "name": "presentStreamKindMask",
-              "offset": 124,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 8,
-              "name": "rangeBegin",
-              "offset": 128,
-              "shape": {
-                "kind": "scalar",
-                "type": "u64"
-              },
-              "size": 8
-            },
-            {
-              "alignment": 8,
-              "name": "rangeEnd",
-              "offset": 136,
-              "shape": {
-                "kind": "scalar",
-                "type": "u64"
-              },
-              "size": 8
-            },
-            {
-              "alignment": 4,
-              "name": "gapInvalidWarmup",
-              "offset": 144,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 4,
-              "name": "reserved0",
-              "offset": 148,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            }
-          ],
-          "size": 152
-        },
         "VnMonitorSessionDesc": {
           "alignment": 8,
           "edition": "development",
@@ -16469,133 +16158,6 @@
             }
           ],
           "size": 40
-        },
-        "VnMonitorSessionFileHeader": {
-          "alignment": 8,
-          "edition": "development",
-          "fields": [
-            {
-              "alignment": 4,
-              "name": "structSize",
-              "offset": 0,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 4,
-              "name": "formatMajor",
-              "offset": 4,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 4,
-              "name": "formatMinor",
-              "offset": 8,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 4,
-              "name": "reserved0",
-              "offset": 12,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 8,
-              "name": "fileMagic",
-              "offset": 16,
-              "shape": {
-                "kind": "scalar",
-                "type": "u64"
-              },
-              "size": 8
-            },
-            {
-              "alignment": 8,
-              "name": "headerBytes",
-              "offset": 24,
-              "shape": {
-                "kind": "scalar",
-                "type": "u64"
-              },
-              "size": 8
-            },
-            {
-              "alignment": 8,
-              "name": "engineBuildId",
-              "offset": 32,
-              "shape": {
-                "kind": "scalar",
-                "type": "u64"
-              },
-              "size": 8
-            },
-            {
-              "alignment": 8,
-              "name": "engineMonitorInstanceId",
-              "offset": 40,
-              "shape": {
-                "kind": "scalar",
-                "type": "u64"
-              },
-              "size": 8
-            },
-            {
-              "alignment": 8,
-              "name": "createdUtcTicks",
-              "offset": 48,
-              "shape": {
-                "kind": "scalar",
-                "type": "u64"
-              },
-              "size": 8
-            },
-            {
-              "alignment": 8,
-              "name": "capabilityFingerprint",
-              "offset": 56,
-              "shape": {
-                "kind": "scalar",
-                "type": "u64"
-              },
-              "size": 8
-            },
-            {
-              "alignment": 4,
-              "name": "headerCrc32c",
-              "offset": 64,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            },
-            {
-              "alignment": 4,
-              "name": "reserved1",
-              "offset": 68,
-              "shape": {
-                "kind": "scalar",
-                "type": "u32"
-              },
-              "size": 4
-            }
-          ],
-          "size": 72
         },
         "VnMonitorSpectrumPayload": {
           "alignment": 4,
@@ -20247,6 +19809,936 @@
             }
           ],
           "size": 48
+        },
+        "VnPreviewBusSendV1": {
+          "alignment": 8,
+          "edition": "development",
+          "fields": [
+            {
+              "alignment": 8,
+              "name": "source",
+              "offset": 0,
+              "shape": {
+                "kind": "struct",
+                "type": "VnObjectId"
+              },
+              "size": 16
+            },
+            {
+              "alignment": 8,
+              "name": "target",
+              "offset": 16,
+              "shape": {
+                "kind": "struct",
+                "type": "VnObjectId"
+              },
+              "size": 16
+            }
+          ],
+          "size": 32
+        },
+        "VnPreviewBusV1": {
+          "alignment": 8,
+          "edition": "development",
+          "fields": [
+            {
+              "alignment": 8,
+              "name": "id",
+              "offset": 0,
+              "shape": {
+                "kind": "struct",
+                "type": "VnObjectId"
+              },
+              "size": 16
+            },
+            {
+              "alignment": 8,
+              "name": "parent",
+              "offset": 16,
+              "shape": {
+                "kind": "struct",
+                "type": "VnObjectId"
+              },
+              "size": 16
+            }
+          ],
+          "size": 32
+        },
+        "VnPreviewBusVolumeV2": {
+          "alignment": 8,
+          "edition": "development",
+          "fields": [
+            {
+              "alignment": 8,
+              "name": "id",
+              "offset": 0,
+              "shape": {
+                "kind": "struct",
+                "type": "VnObjectId"
+              },
+              "size": 16
+            },
+            {
+              "alignment": 4,
+              "name": "volumeDb",
+              "offset": 16,
+              "shape": {
+                "kind": "scalar",
+                "type": "f32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "outputBusVolumeDb",
+              "offset": 20,
+              "shape": {
+                "kind": "scalar",
+                "type": "f32"
+              },
+              "size": 4
+            }
+          ],
+          "size": 24
+        },
+        "VnPreviewChannelPeaksV1": {
+          "alignment": 8,
+          "edition": "development",
+          "fields": [
+            {
+              "alignment": 4,
+              "name": "structSize",
+              "offset": 0,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "mixChannelCount",
+              "offset": 4,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "busCount",
+              "offset": 8,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "reserved0",
+              "offset": 12,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 8,
+              "name": "consumeSerial",
+              "offset": 16,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "busIds",
+              "offset": 24,
+              "shape": {
+                "count": 32,
+                "element": "VnObjectId",
+                "kind": "array"
+              },
+              "size": 512
+            },
+            {
+              "alignment": 4,
+              "name": "channelPeaks",
+              "offset": 536,
+              "shape": {
+                "count": 256,
+                "element": "f32",
+                "kind": "array"
+              },
+              "size": 1024
+            }
+          ],
+          "size": 1560
+        },
+        "VnPreviewPlayPlayableDescV2": {
+          "alignment": 8,
+          "edition": "development",
+          "fields": [
+            {
+              "alignment": 4,
+              "name": "structSize",
+              "offset": 0,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "playableKind",
+              "offset": 4,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 8,
+              "name": "stableId",
+              "offset": 8,
+              "shape": {
+                "kind": "struct",
+                "type": "VnObjectId"
+              },
+              "size": 16
+            },
+            {
+              "alignment": 8,
+              "name": "emitterHandle",
+              "offset": 24,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 4,
+              "name": "flags",
+              "offset": 32,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "reserved0",
+              "offset": 36,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            }
+          ],
+          "size": 40
+        },
+        "VnPreviewPlayableStateV2": {
+          "alignment": 8,
+          "edition": "development",
+          "fields": [
+            {
+              "alignment": 4,
+              "name": "structSize",
+              "offset": 0,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "playableKind",
+              "offset": 4,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "lifecycle",
+              "offset": 8,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "reason",
+              "offset": 12,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 8,
+              "name": "stableId",
+              "offset": 16,
+              "shape": {
+                "kind": "struct",
+                "type": "VnObjectId"
+              },
+              "size": 16
+            },
+            {
+              "alignment": 8,
+              "name": "worldGeneration",
+              "offset": 32,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "acceptedLogicTicket",
+              "offset": 40,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "lastAppliedBlockSequence",
+              "offset": 48,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 4,
+              "name": "childLiveCount",
+              "offset": 56,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "childAudibleRetiringCount",
+              "offset": 60,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "pendingFutureCount",
+              "offset": 64,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "reserved0",
+              "offset": 68,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            }
+          ],
+          "size": 72
+        },
+        "VnPreviewPlaybackPathRowV1": {
+          "alignment": 8,
+          "edition": "development",
+          "fields": [
+            {
+              "alignment": 8,
+              "name": "stableId",
+              "offset": 0,
+              "shape": {
+                "kind": "struct",
+                "type": "VnObjectId"
+              },
+              "size": 16
+            },
+            {
+              "alignment": 4,
+              "name": "occurrenceOrdinal",
+              "offset": 16,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "reserved0",
+              "offset": 20,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            }
+          ],
+          "size": 24
+        },
+        "VnPreviewPlaybackPathV1": {
+          "alignment": 8,
+          "edition": "development",
+          "fields": [
+            {
+              "alignment": 4,
+              "name": "structSize",
+              "offset": 0,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "rowCount",
+              "offset": 4,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "sendCount",
+              "offset": 8,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "reserved0",
+              "offset": 12,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 8,
+              "name": "voiceInstance",
+              "offset": 16,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "soundId",
+              "offset": 24,
+              "shape": {
+                "kind": "struct",
+                "type": "VnObjectId"
+              },
+              "size": 16
+            },
+            {
+              "alignment": 8,
+              "name": "outputBusId",
+              "offset": 40,
+              "shape": {
+                "kind": "struct",
+                "type": "VnObjectId"
+              },
+              "size": 16
+            },
+            {
+              "alignment": 8,
+              "name": "rows",
+              "offset": 56,
+              "shape": {
+                "count": 64,
+                "element": "VnPreviewPlaybackPathRowV1",
+                "kind": "array"
+              },
+              "size": 1536
+            },
+            {
+              "alignment": 8,
+              "name": "sends",
+              "offset": 1592,
+              "shape": {
+                "count": 8,
+                "element": "VnPreviewPlaybackSendV1",
+                "kind": "array"
+              },
+              "size": 192
+            }
+          ],
+          "size": 1784
+        },
+        "VnPreviewPlaybackSendV1": {
+          "alignment": 8,
+          "edition": "development",
+          "fields": [
+            {
+              "alignment": 8,
+              "name": "targetBusId",
+              "offset": 0,
+              "shape": {
+                "kind": "struct",
+                "type": "VnObjectId"
+              },
+              "size": 16
+            },
+            {
+              "alignment": 4,
+              "name": "levelDb",
+              "offset": 16,
+              "shape": {
+                "kind": "scalar",
+                "type": "f32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "reserved0",
+              "offset": 20,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            }
+          ],
+          "size": 24
+        },
+        "VnPreviewProjectDescV1": {
+          "alignment": 8,
+          "edition": "development",
+          "fields": [
+            {
+              "alignment": 4,
+              "name": "structSize",
+              "offset": 0,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "bodyVintage",
+              "offset": 4,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 8,
+              "name": "projectSessionId",
+              "offset": 8,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "authoringRevision",
+              "offset": 16,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "runtimeEpoch",
+              "offset": 24,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "submissionSerial",
+              "offset": 32,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "publishedBusFingerprint",
+              "offset": 40,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "compileTargetProfileFingerprint",
+              "offset": 48,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "ownerId",
+              "offset": 56,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "ownerBaseRevision",
+              "offset": 64,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "ownerRevision",
+              "offset": 72,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "body",
+              "offset": 80,
+              "shape": {
+                "ctype": "const uint8_t*",
+                "kind": "pointer",
+                "storage": "opaque"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "bodyBytes",
+              "offset": 88,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 8,
+              "name": "buses",
+              "offset": 96,
+              "shape": {
+                "ctype": "const VnPreviewBusV1*",
+                "kind": "pointer",
+                "storage": "opaque"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 4,
+              "name": "busCount",
+              "offset": 104,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "sendCount",
+              "offset": 108,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 8,
+              "name": "sends",
+              "offset": 112,
+              "shape": {
+                "ctype": "const VnPreviewBusSendV1*",
+                "kind": "pointer",
+                "storage": "opaque"
+              },
+              "size": 8
+            }
+          ],
+          "size": 120
+        },
+        "VnPreviewProjectDescV2": {
+          "alignment": 8,
+          "edition": "development",
+          "fields": [
+            {
+              "alignment": 8,
+              "name": "base",
+              "offset": 0,
+              "shape": {
+                "kind": "struct",
+                "type": "VnPreviewProjectDescV1"
+              },
+              "size": 120
+            },
+            {
+              "alignment": 8,
+              "name": "busVolumes",
+              "offset": 120,
+              "shape": {
+                "ctype": "const VnPreviewBusVolumeV2*",
+                "kind": "pointer",
+                "storage": "opaque"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 4,
+              "name": "busVolumeCount",
+              "offset": 128,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "reserved0",
+              "offset": 132,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "profileVintage",
+              "offset": 136,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "renderSampleRateHz",
+              "offset": 140,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "mixLayout",
+              "offset": 144,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "deviceLayout",
+              "offset": 148,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 8,
+              "name": "runtimeCapabilityMask",
+              "offset": 152,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            }
+          ],
+          "size": 160
+        },
+        "VnPreviewProjectDescV3": {
+          "alignment": 8,
+          "edition": "development",
+          "fields": [
+            {
+              "alignment": 8,
+              "name": "base",
+              "offset": 0,
+              "shape": {
+                "kind": "struct",
+                "type": "VnPreviewProjectDescV2"
+              },
+              "size": 160
+            },
+            {
+              "alignment": 8,
+              "name": "busSendLevelsDb",
+              "offset": 160,
+              "shape": {
+                "ctype": "const float*",
+                "kind": "pointer",
+                "storage": "opaque"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 4,
+              "name": "busSendLevelCount",
+              "offset": 168,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "reserved1",
+              "offset": 172,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            }
+          ],
+          "size": 176
+        },
+        "VnPreviewResetPlayableDescV2": {
+          "alignment": 8,
+          "edition": "development",
+          "fields": [
+            {
+              "alignment": 4,
+              "name": "structSize",
+              "offset": 0,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "playableKind",
+              "offset": 4,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 8,
+              "name": "stableId",
+              "offset": 8,
+              "shape": {
+                "kind": "struct",
+                "type": "VnObjectId"
+              },
+              "size": 16
+            },
+            {
+              "alignment": 8,
+              "name": "emitterHandle",
+              "offset": 24,
+              "shape": {
+                "kind": "scalar",
+                "type": "u64"
+              },
+              "size": 8
+            },
+            {
+              "alignment": 4,
+              "name": "flags",
+              "offset": 32,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            },
+            {
+              "alignment": 4,
+              "name": "reserved0",
+              "offset": 36,
+              "shape": {
+                "kind": "scalar",
+                "type": "u32"
+              },
+              "size": 4
+            }
+          ],
+          "size": 40
         },
         "VnPropertyBindingInfo": {
           "alignment": 8,
@@ -24663,9 +25155,9 @@
           },
           "VnMonitorCapabilities": {
             "acceptedSizes": [
-              208
+              192
             ],
-            "currentSize": 208,
+            "currentSize": 192,
             "mode": "exact-current",
             "source": "default",
             "unknownSize": "reject"
@@ -24684,15 +25176,6 @@
               80
             ],
             "currentSize": 80,
-            "mode": "exact-current",
-            "source": "default",
-            "unknownSize": "reject"
-          },
-          "VnMonitorCompareResult": {
-            "acceptedSizes": [
-              8
-            ],
-            "currentSize": 8,
             "mode": "exact-current",
             "source": "default",
             "unknownSize": "reject"
@@ -24895,24 +25378,6 @@
             "source": "default",
             "unknownSize": "reject"
           },
-          "VnMonitorRecordingDesc": {
-            "acceptedSizes": [
-              24
-            ],
-            "currentSize": 24,
-            "mode": "exact-current",
-            "source": "default",
-            "unknownSize": "reject"
-          },
-          "VnMonitorRecordingStatus": {
-            "acceptedSizes": [
-              40
-            ],
-            "currentSize": 40,
-            "mode": "exact-current",
-            "source": "default",
-            "unknownSize": "reject"
-          },
           "VnMonitorRemoteFrameCounter": {
             "acceptedSizes": [
               16
@@ -24940,42 +25405,6 @@
             "source": "default",
             "unknownSize": "reject"
           },
-          "VnMonitorSessionChunkHeader": {
-            "acceptedSizes": [
-              48
-            ],
-            "currentSize": 48,
-            "mode": "exact-current",
-            "source": "default",
-            "unknownSize": "reject"
-          },
-          "VnMonitorSessionCommitFooter": {
-            "acceptedSizes": [
-              32
-            ],
-            "currentSize": 32,
-            "mode": "exact-current",
-            "source": "default",
-            "unknownSize": "reject"
-          },
-          "VnMonitorSessionCompareDesc": {
-            "acceptedSizes": [
-              40
-            ],
-            "currentSize": 40,
-            "mode": "exact-current",
-            "source": "default",
-            "unknownSize": "reject"
-          },
-          "VnMonitorSessionCompareView": {
-            "acceptedSizes": [
-              152
-            ],
-            "currentSize": 152,
-            "mode": "exact-current",
-            "source": "default",
-            "unknownSize": "reject"
-          },
           "VnMonitorSessionDesc": {
             "acceptedSizes": [
               32
@@ -24990,15 +25419,6 @@
               40
             ],
             "currentSize": 40,
-            "mode": "exact-current",
-            "source": "default",
-            "unknownSize": "reject"
-          },
-          "VnMonitorSessionFileHeader": {
-            "acceptedSizes": [
-              72
-            ],
-            "currentSize": 72,
             "mode": "exact-current",
             "source": "default",
             "unknownSize": "reject"
@@ -25241,6 +25661,60 @@
               48
             ],
             "currentSize": 48,
+            "mode": "exact-current",
+            "source": "default",
+            "unknownSize": "reject"
+          },
+          "VnPreviewChannelPeaksV1": {
+            "acceptedSizes": [
+              1560
+            ],
+            "currentSize": 1560,
+            "mode": "exact-current",
+            "source": "default",
+            "unknownSize": "reject"
+          },
+          "VnPreviewPlayPlayableDescV2": {
+            "acceptedSizes": [
+              40
+            ],
+            "currentSize": 40,
+            "mode": "exact-current",
+            "source": "default",
+            "unknownSize": "reject"
+          },
+          "VnPreviewPlayableStateV2": {
+            "acceptedSizes": [
+              72
+            ],
+            "currentSize": 72,
+            "mode": "exact-current",
+            "source": "default",
+            "unknownSize": "reject"
+          },
+          "VnPreviewPlaybackPathV1": {
+            "acceptedSizes": [
+              1784
+            ],
+            "currentSize": 1784,
+            "mode": "exact-current",
+            "source": "default",
+            "unknownSize": "reject"
+          },
+          "VnPreviewProjectDescV1": {
+            "acceptedSizes": [
+              120
+            ],
+            "currentSize": 120,
+            "mode": "exact-current",
+            "source": "default",
+            "unknownSize": "reject"
+          },
+          "VnPreviewResetPlayableDescV2": {
+            "acceptedSizes": [
+              40
+            ],
+            "currentSize": 40,
             "mode": "exact-current",
             "source": "default",
             "unknownSize": "reject"
@@ -27462,11 +27936,11 @@
       "formatVersion": 8
     }
   },
-  "contractSha256": "8d4d511dfce07bc7790985d2a71977fb819c18d9f37abfdab15abe7251d86789",
+  "contractSha256": "35a0f9b65bd2b10da0f9160dcba878d8d5bdc5927d047b0bbbabb479f0e3a94e",
   "generatedFiles": {
     "HarkenEngine/Tool/HostControl/generated/harken_wire_desc_meta.h": {
-      "sha256": "bcee9798217bcf58801129124d84d247015babc0052e3a854c765e6d814248a3",
-      "size": 8313
+      "sha256": "e566d50272d34fd7a566f6bcfce62789c02580c0bdc700592a44f589090c51c4",
+      "size": 7858
     },
     "HarkenEngine/Tool/HostControl/generated/harken_wire_dispatch.inl": {
       "sha256": "cd3b9d40270bf4283199b58f15de648435ba025c3d57165af9a573f5cc6b716e",
@@ -27477,29 +27951,29 @@
       "size": 5421
     },
     "HarkenEngine/Tool/HostControl/generated/harken_wire_layout_asserts.h": {
-      "sha256": "2400d98a3321b837ccdae465dc76d6e86b71d3229b2d07b763000db03eac19ad",
-      "size": 262816
+      "sha256": "7f30d022be498eef788e07a2d820de7ef66d39c72651f057da0eab9f3765733c",
+      "size": 263636
     },
     "HarkenEngine/Tool/HostControl/harken_wire.py": {
-      "sha256": "86966429045daaa04e145b23912115eebffb42ca8fb85fe75a02f0130f13e8b5",
-      "size": 271664
+      "sha256": "f45095f79f9ad845bf3fdd7fe6c7ad999a95375fc36f5376f1f21333b7fb89ca",
+      "size": 281092
     }
   },
   "kind": "harken-contract-suite-manifest",
   "schemaVersion": 1,
   "sectionSha256": {
-    "nativeAbiSha256": "2209ee8ee3fc26022ebf06e6e4b87f6992de6b9390b97a277d0ab0d80be55ff7",
+    "nativeAbiSha256": "4df0fb5a222d2d24f3e34846b92d056da7d26f913ebf12313de761840f5db4f8",
     "remoteWireSha256": "d47f60b0d2b7c0c842900be965ebc513575209455558ad0d8fcb310c4395b8e7",
     "traceFormatSha256": "ff8cdaf56000521230e08660d9d9a0318f883e3b578cd85700a7df2d1af517a5"
   },
   "sourceFiles": {
     "HarkenEngine/Source/Core/api/abi/gen_abi_manifest.py": {
-      "sha256": "d8929dca2e9bd0f3898c5ea02e837f582350257893c08ad412386464ed4128f2",
-      "size": 59255
+      "sha256": "32c0925dbaa06aa00ffd7995986101716126f00dd32b258ede324e96014899b5",
+      "size": 58459
     },
     "HarkenEngine/Source/Core/api/include/harken/Harken.h": {
-      "sha256": "0ca5bc7197e5a94ab783ecff62b40b3ddd29d7dbf359652b0b0913fe6b9f19ec",
-      "size": 149082
+      "sha256": "70c02f8999a9d9fdf1b2392b2ba326091abb99fc5036812d7d13ea8fa58bd648",
+      "size": 151968
     },
     "HarkenEngine/Source/Core/api/include/harken/ObjectId.h": {
       "sha256": "90b6f66ad515c5e411564f1e5981b65bec2e461fabbdee6c57aa86b26b9a300d",
@@ -27510,8 +27984,8 @@
       "size": 19883
     },
     "HarkenEngine/Source/Development/include/harken/HarkenDevelopment.h": {
-      "sha256": "5c3a8f87d8ae037f5e620248c35a4477bbf829cf891191fac1ea46e628f8f2f3",
-      "size": 109252
+      "sha256": "e5611a88ef1bf070a6ac1d89cb3ba37fd25a7d25e57b223499d1066198b06a8d",
+      "size": 104019
     },
     "HarkenEngine/Source/Development/monitor/MonitorRecordPack.h": {
       "sha256": "fd77238d68b995660e23c8214fb6d0fc285b3611c351a75e4d9bbcaeab3835b9",
@@ -27522,8 +27996,8 @@
       "size": 30889
     },
     "HarkenEngine/Tool/HostControl/wire/harken_wire_table.json": {
-      "sha256": "ecda79ca59e3afa8ba36146398cca36900d2a0de47466a4671be3eb824f6c19d",
-      "size": 270424
+      "sha256": "c3bb9e4d7518204ec2bad949590a7ce92d0f97ed742a7fc31ecfc2b74a53dc35",
+      "size": 279852
     }
   }
 }

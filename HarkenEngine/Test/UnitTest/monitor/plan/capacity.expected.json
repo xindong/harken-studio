@@ -20,11 +20,9 @@
     "producerRingBytes": 4194304,
     "consumerQueueBytes": 16777216,
     "derivedWorkItems": 1024,
-    "recorderQueueBytes": 67108864,
     "remoteQueueBytes": 16777216,
     "captureByteRate": 16777216,
-    "rawAudioByteRate": 8388608,
-    "sessionFileBytes": 8589934592
+    "rawAudioByteRate": 8388608
   },
   "hard": {
     "sessionsPerEngine": 32,
@@ -43,11 +41,9 @@
     "producerRingBytes": 67108864,
     "consumerQueueBytes": 134217728,
     "derivedWorkItems": 8192,
-    "recorderQueueBytes": 536870912,
     "remoteQueueBytes": 134217728,
     "captureByteRate": 134217728,
-    "rawAudioByteRate": 67108864,
-    "sessionFileBytes": 68719476736
+    "rawAudioByteRate": 67108864
   },
   "resolvedSample": {
     "sessionsPerEngine": 4,

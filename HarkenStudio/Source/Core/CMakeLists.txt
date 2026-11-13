@@ -23,6 +23,8 @@ add_library(harken_studio_core STATIC
     AttenuationStore.cpp
     AttenuationStore.h
     AudioEngine.cpp
+    RemoteSession.cpp
+    RemoteSession.h
     AudioEngine.h
     AudioEngine_Bus.cpp
     AudioEngine_Debug.cpp

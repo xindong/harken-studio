@@ -246,6 +246,7 @@ set(HARKEN_STUDIO_COMMAND_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/EditorActions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/AuditionActions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/SystemActions.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/RemoteActions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/ContainerActions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/SpatialActions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/Actions/AdvancedActions.cpp

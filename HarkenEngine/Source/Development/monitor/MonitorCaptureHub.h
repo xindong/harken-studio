@@ -68,11 +68,6 @@ VnResult StopCapture(VnMonitorSessionHandle handle, uint64_t leaseGeneration,
 VnResult GetEffectiveCapturePlan(VnMonitorSessionHandle handle,
                                  uint64_t capturePlanGeneration,
                                  VnMonitorEffectiveCapturePlan* outPlan);
-VnResult StartRecording(VnMonitorSessionHandle handle, uint64_t leaseGeneration,
-                        const VnMonitorRecordingDesc* desc);
-VnResult StopRecording(VnMonitorSessionHandle handle, uint64_t leaseGeneration);
-VnResult GetRecordingStatus(VnMonitorSessionHandle handle,
-                            VnMonitorRecordingStatus* outStatus);
 bool PublishLogicPacked(const std::uint8_t* bytes, std::uint32_t size);
 std::uint64_t NextLogicSourceSequence();
 std::uint64_t CurrentExecuteFrame();

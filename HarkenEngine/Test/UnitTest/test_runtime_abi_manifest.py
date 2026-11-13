@@ -56,8 +56,7 @@ class RuntimeAbiManifestTest(unittest.TestCase):
         )
         cls.header_text = (cls.header_path.with_name("ObjectId.h").read_text(encoding="utf-8") +
                            "\n" + cls.header_path.read_text(encoding="utf-8") + "\n" +
-                           MODULE.strip_preview_surface(
-                               development_header_path.read_text(encoding="utf-8")))
+                           development_header_path.read_text(encoding="utf-8"))
         cls.header_contract = MODULE.parse_header_contract(
             cls.header_text
         )

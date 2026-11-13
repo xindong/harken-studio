@@ -170,38 +170,4 @@ int32_t getEffectiveCapturePlan(uint64_t handle, uint64_t generation,
     });
 }
 
-int32_t startRecording(uint64_t handle, uint64_t lease, const VNX::Monitor::MonitorRecordingDesc* desc)
-{
-    if (!desc) return VN_INVALID_ARG;
-    auto native = toNative(*desc);
-    native.utf8Path = desc->utf8Path;
-    return Vn_MonitorStartRecording(handle, lease, &native);
-}
-
-int32_t stopRecording(uint64_t handle, uint64_t lease) { return Vn_MonitorStopRecording(handle, lease); }
-
-int32_t getRecordingStatus(uint64_t handle, VNX::Monitor::MonitorRecordingStatus* out)
-{
-    return readValue<VnMonitorRecordingStatus>(out, [&](auto* value) {
-        return Vn_MonitorGetRecordingStatus(handle, value);
-    });
-}
-
-int32_t compareSessions(const VNX::Monitor::MonitorSessionCompareDesc* desc,
-                        VNX::Monitor::MonitorCompareResult* out)
-{
-    if (!desc || !desc->left || !desc->right || !out) return VN_INVALID_ARG;
-    const auto left = toNative(*desc->left);
-    const auto right = toNative(*desc->right);
-    VnMonitorSessionCompareDesc native{};
-    native.structSize = sizeof(native);
-    native.left = &left;
-    native.right = &right;
-    native.executeFrameBegin = desc->executeFrameBegin;
-    native.executeFrameEnd = desc->executeFrameEnd;
-    return readValue<VnMonitorCompareResult>(out, [&](auto* value) {
-        return Vn_MonitorCompareSessions(&native, value);
-    });
-}
-
 }

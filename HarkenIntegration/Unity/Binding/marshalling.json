@@ -1247,45 +1247,6 @@
         "wire": "outu32"
       }
     ],
-    "Vn_MonitorStartRecording": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "desc",
-        "type": "VnMonitorRecordingDesc"
-      }
-    ],
-    "Vn_MonitorStopRecording": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "u64"
-      }
-    ],
-    "Vn_MonitorGetRecordingStatus": [
-      {
-        "wire": "u64"
-      },
-      {
-        "wire": "outstruct",
-        "type": "VnMonitorRecordingStatus"
-      }
-    ],
-    "Vn_MonitorCompareSessions": [
-      {
-        "wire": "desc",
-        "type": "VnMonitorSessionCompareDesc"
-      },
-      {
-        "wire": "outstruct",
-        "type": "VnMonitorCompareResult"
-      }
-    ],
     "Vn_SetValues": [
       {
         "wire": "desc",
@@ -1466,6 +1427,170 @@
       },
       {
         "wire": "u32"
+      }
+    ],
+    "VnPreview_PlayPlayable": [
+      {
+        "wire": "desc",
+        "type": "VnPreviewPlayPlayableDescV2"
+      },
+      {
+        "wire": "out"
+      }
+    ],
+    "VnPreview_ResetPlayable": [
+      {
+        "wire": "desc",
+        "type": "VnPreviewResetPlayableDescV2"
+      }
+    ],
+    "VnPreview_StopPlayable": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "u32"
+      }
+    ],
+    "VnPreview_QueryPlayable": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "outstruct",
+        "type": "VnPreviewPlayableStateV2"
+      }
+    ],
+    "VnPreview_CapturePlaybackPaths": [
+      {
+        "wire": "outrows",
+        "type": "VnPreviewPlaybackPathV1",
+        "capacityParam": "capacity",
+        "countParam": "requiredCount"
+      },
+      {
+        "wire": "u32"
+      },
+      {
+        "wire": "outu32"
+      }
+    ],
+    "VnPreview_PrepareProject": [
+      {
+        "wire": "desc",
+        "type": "VnPreviewProjectDescV1"
+      },
+      {
+        "wire": "out"
+      }
+    ],
+    "VnPreview_PrepareProjectV2": [
+      {
+        "wire": "desc",
+        "type": "VnPreviewProjectDescV2"
+      },
+      {
+        "wire": "out"
+      }
+    ],
+    "VnPreview_PrepareProjectV3": [
+      {
+        "wire": "desc",
+        "type": "VnPreviewProjectDescV3"
+      },
+      {
+        "wire": "out"
+      }
+    ],
+    "VnPreview_CommitProject": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "out"
+      }
+    ],
+    "VnPreview_CancelProject": [
+      {
+        "wire": "u64"
+      }
+    ],
+    "VnPreview_DrainProjectAcks": [],
+    "VnPreview_ProjectIsOpen": [
+      {
+        "wire": "u64"
+      }
+    ],
+    "VnPreview_QueryOwnerRevision": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "out"
+      }
+    ],
+    "VnPreview_HasPlayableConsumers": [],
+    "VnPreview_HasAction": [
+      {
+        "wire": "objectid"
+      }
+    ],
+    "VnPreview_PumpNullMixer": [
+      {
+        "wire": "u32"
+      }
+    ],
+    "VnPreview_EnableChannelPeakMetering": [],
+    "VnPreview_TakeChannelPeaks": [
+      {
+        "wire": "outstruct",
+        "type": "VnPreviewChannelPeaksV1"
+      }
+    ],
+    "VnPreview_RegisterPcm": [
+      {
+        "wire": "objectid"
+      },
+      {
+        "wire": "desc",
+        "type": "VnPCMDesc"
+      },
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "out"
+      }
+    ],
+    "VnPreview_PlayVoiceRaw": [
+      {
+        "wire": "desc",
+        "type": "VnPlayDesc"
+      },
+      {
+        "wire": "out"
+      }
+    ],
+    "VnPreview_RefreshVoiceBindings": [
+      {
+        "wire": "u64"
+      }
+    ],
+    "VnPreview_SetVoiceProperty": [
+      {
+        "wire": "u64"
+      },
+      {
+        "wire": "u32"
+      },
+      {
+        "wire": "f32"
+      },
+      {
+        "wire": "objectid"
       }
     ]
   },

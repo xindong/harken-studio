@@ -127,9 +127,9 @@ TEST(RuntimeRemoteProtocol, ExecutionObservationHasIndependentStrictFrames) {
 
     EventCaptureStatusV2 status;
     status.acceptedExecutionFactVersion = 1;
-    status.requestedPermissionMask = VN_MONITOR_PERM_OBSERVE_EVENTS | VN_MONITOR_PERM_RECORD;
+    status.requestedPermissionMask = VN_MONITOR_PERM_OBSERVE_EVENTS | VN_MONITOR_PERM_RAW_AUDIO;
     status.acceptedPermissionMask = VN_MONITOR_PERM_OBSERVE_EVENTS;
-    status.deniedPermissionMask = VN_MONITOR_PERM_RECORD;
+    status.deniedPermissionMask = VN_MONITOR_PERM_RAW_AUDIO;
     status.supportedFactKinds[1] = 1ull << 48;
     status.identityUnavailableCount = 7;
     frame = MakeFrame(Message::EventStatusV2, 1, status);
@@ -159,7 +159,7 @@ TEST(RuntimeRemote, RestrictedExecutionObservationGrantDoesNotTrustRequest) {
     desc.requestedExecutionFactVersion = 1;
     desc.requestedStreamKindMask = VN_MONITOR_STREAM_EVENT | VN_MONITOR_STREAM_STATE;
     desc.requestedPermissionMask = VN_MONITOR_PERM_OBSERVE_EVENTS | VN_MONITOR_PERM_OBSERVE_STATE |
-        VN_MONITOR_PERM_RECORD | VN_MONITOR_PERM_CAPTURE_CONTROL | VN_MONITOR_PERM_RAW_AUDIO;
+        VN_MONITOR_PERM_CAPTURE_CONTROL | VN_MONITOR_PERM_RAW_AUDIO;
     VnMonitorSessionHandle handle = 0;
     ASSERT_EQ(VN_OK, harken::monitor::OpenEventSession(
         reinterpret_cast<const VnMonitorSessionDesc*>(&desc), &handle, true, 123,
@@ -685,8 +685,7 @@ TEST(RuntimeRemote, ExecutionObservationUsesServerWhitelistAndFreshConnectionGra
     EventCaptureRequestV2 request;
     request.requestedStreamKindMask = VN_MONITOR_STREAM_EVENT | VN_MONITOR_STREAM_STATE;
     request.requestedPermissionMask = VN_MONITOR_PERM_OBSERVE_EVENTS | VN_MONITOR_PERM_OBSERVE_STATE |
-        VN_MONITOR_PERM_SYMBOLS | VN_MONITOR_PERM_RAW_AUDIO | VN_MONITOR_PERM_CAPTURE_CONTROL |
-        VN_MONITOR_PERM_RECORD;
+        VN_MONITOR_PERM_SYMBOLS | VN_MONITOR_PERM_RAW_AUDIO | VN_MONITOR_PERM_CAPTURE_CONTROL;
     request.requestSymbols = 1;
     ASSERT_TRUE(client.Send(MakeFrame(Message::EventStartV2, 2, request)));
     Frame frame;
@@ -696,8 +695,7 @@ TEST(RuntimeRemote, ExecutionObservationUsesServerWhitelistAndFreshConnectionGra
     ASSERT_TRUE(DecodePayload(frame, started));
     ASSERT_EQ(VN_OK, started.base.result);
     EXPECT_EQ(1u, started.acceptedExecutionFactVersion);
-    constexpr auto forbidden = VN_MONITOR_PERM_RAW_AUDIO | VN_MONITOR_PERM_CAPTURE_CONTROL |
-        VN_MONITOR_PERM_RECORD;
+    constexpr auto forbidden = VN_MONITOR_PERM_RAW_AUDIO | VN_MONITOR_PERM_CAPTURE_CONTROL;
     EXPECT_EQ(0u, started.acceptedPermissionMask & forbidden);
     EXPECT_EQ(forbidden, started.deniedPermissionMask & forbidden);
     EXPECT_EQ(VN_MONITOR_PERM_OBSERVE_EVENTS | VN_MONITOR_PERM_OBSERVE_STATE,

@@ -1788,13 +1788,13 @@ TEST(MonitorIdentityHub, TypedStateNeverEntersLegacyInternalQueuesAndIgnoresEven
     // before isolating the typed baseline delivery under test.
     DrainOnceForTests();
     PollState(state);
-    EnableInternalConsumersForTests(7);
+    EnableInternalConsumersForTests(3);
     VnMonitorStateCutDesc cut{};
     cut.structSize = sizeof(cut);
     std::uint64_t id = 0;
     ASSERT_EQ(VN_OK, Vn_MonitorRequestStateCut(state, &cut, &id));
     DrainOnceForTests();
-    for (unsigned i = 0; i != 3; ++i) EXPECT_EQ(0u, InternalQueuedCountForTests(i));
+    for (unsigned i = 0; i != 2; ++i) EXPECT_EQ(0u, InternalQueuedCountForTests(i));
     MonitorExecutionFact foreign{};
     foreign.engine = ExecutionEngineInstance() + 1;
     foreign.kind = VN_MONITOR_FACT_REQUEST_SUBMITTED;

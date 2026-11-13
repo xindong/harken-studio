@@ -10,6 +10,7 @@
 #include "Core/ProjectInstance.h"
 #include "Core/ProjectLocator.h"
 #include "Core/ProjectManager.h"
+#include "Core/RemoteSession.h"
 #include "Core/SchemaArchive.h"
 
 #include <QCoreApplication>
@@ -71,6 +72,7 @@ StudioSession::~StudioSession()
     if (!state_) return;
     state_->dispatcher.waitForPendingOperations();
     QCoreApplication::sendPostedEvents(&state_->dispatcher, QEvent::MetaCall);
+    VNX::RemoteSession::instance().shutdown();
     if (state_->project.isProjectOpen()) state_->project.closeProject();
     state_->engine.shutdown();
     QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);

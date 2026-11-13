@@ -1,4 +1,5 @@
 #include <harken/core/BindingTransition.h>
+#include <harken_pack/PackBus.h>
 #include "harken/media/PackLogicImage.h"
 
 #include "harken/core/CurrentWorldCodec.h"
@@ -885,7 +886,8 @@ VnResult ParseBusDefinitionSnapshotPayload(
     for (std::uint32_t i = 0; i < header.busCount; ++i) {
         const auto& row = buses[i];
         if (row.busId == VnObjectId{} || !ids.insert(row.busId).second ||
-            !std::isfinite(row.faderDb) || row.faderDb < -96.0f || row.faderDb > 24.0f ||
+            !std::isfinite(row.faderDb) || row.faderDb < HK_PACK_BUS_VOLUME_MIN ||
+            row.faderDb > HK_PACK_BUS_VOLUME_MAX ||
             !std::isfinite(row.outputBusVolumeDb) ||
             !std::isfinite(std::pow(10.0f, row.outputBusVolumeDb / 20.0f)) ||
             row.effectFirst != 0 || row.effectCount != 0 ||
@@ -903,8 +905,8 @@ VnResult ParseBusDefinitionSnapshotPayload(
             (header.publicationCapabilityVintage == 4 &&
              row.target == VN_BUS_MASTER) ||
             (header.publicationCapabilityVintage == 3 ? row.levelDb != 0.0f :
-                (!std::isfinite(row.levelDb) || row.levelDb < -96.0f ||
-                 row.levelDb > 24.0f ||
+                (!std::isfinite(row.levelDb) || row.levelDb < HK_PACK_BUS_SEND_LEVEL_MIN ||
+                 row.levelDb > HK_PACK_BUS_SEND_LEVEL_MAX ||
                  !std::isfinite(std::pow(10.0f, row.levelDb / 20.0f)))) ||
             !sendEdges.emplace(row.source, row.target).second) {
             return VN_BAD_PACK;

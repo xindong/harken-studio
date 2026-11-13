@@ -45,7 +45,6 @@ static_assert(VN_MONITOR_STREAM_CAPACITY == -342, "monitor result must not renum
 static_assert(VN_MONITOR_BUDGET_EXCEEDED == -343, "monitor result must not renumber");
 static_assert(VN_MONITOR_INCOMPATIBLE == -344, "monitor result must not renumber");
 static_assert(VN_MONITOR_SEQUENCE_EXHAUSTED == -345, "monitor result must not renumber");
-static_assert(VN_MONITOR_RECORDING_FAILED == -346, "monitor result must not renumber");
 static_assert(VN_MONITOR_RESYNC_REQUIRED == -347, "monitor result must not renumber");
 static_assert(VN_MONITOR_STREAM_STATE == 1u << 0, "stream mask bit");
 static_assert(VN_MONITOR_RECORD_UNKNOWN == 0, "record kind");
@@ -63,35 +62,12 @@ static_assert(VN_MONITOR_ENTITY_VOICE == 4, "entity kind");
 static_assert(VN_MONITOR_TAP_SELECTOR_FOLLOW_SLOT == 1, "tap selector");
 static_assert(VN_MONITOR_PERM_RAW_AUDIO == 1u << 5, "permission bit");
 static_assert(VN_MONITOR_SECURITY_LAN_MTLS == 2, "security profile");
-static_assert(VN_MONITOR_COMPARE_MISSING_DATA == 3, "comparison result");
 static_assert(VN_MONITOR_PLAN_RETIRED == 2, "plan state");
 static_assert(VN_MONITOR_STATE_CUT_ABORTED == 2, "state cut");
 static_assert(VN_MONITOR_MEASURE_LUFS_INTEGRATED == 11, "measurement kind");
 static_assert(VN_MONITOR_VALID_UNSUPPORTED == 1u << 3, "validity flag");
 static_assert(VN_MONITOR_REGISTRY_CAPABILITY == 8, "registry kind");
-static_assert(VN_MONITOR_REMOTE_OP_RECORDING == 6, "remote opcode");
-static_assert(VN_MONITOR_RECORDING_STATE_FAILED == 3, "recording state");
 static_assert(VN_MONITOR_CHANNEL_MONO_AVERAGE == 1, "channel mode");
-static_assert(VN_MONITOR_CHUNK_OPTIONAL == 1u << 1, "chunk flag");
-static_assert(VN_MONITOR_CHUNK_RECOVERY_INDEX == 13, "chunk kind");
-static_assert(VN_MONITOR_SESSION_FORMAT_MAJOR == 1u, "file format major");
-static_assert(VN_MONITOR_SESSION_FORMAT_MINOR == 0u, "file format minor");
-static_assert(VN_MONITOR_SESSION_FILE_MAGIC == 0x30314e4f4d4e56ull, "VNMON10 LE");
-static_assert(VN_MONITOR_SESSION_COMMIT_MAGIC == 0x3031544d434e56ull, "VNCMT10 LE");
-static_assert(VN_MONITOR_SESSION_CHUNK_HEADER_BYTES == 32u, "on-disk packed chunk header");
-static_assert(VN_MONITOR_SESSION_COMMIT_FOOTER_BYTES == 24u, "on-disk packed commit footer");
-static_assert(sizeof(VnMonitorSessionChunkHeader) !=
-                  VN_MONITOR_SESSION_CHUNK_HEADER_BYTES,
-              "in-memory chunk header is not the packed file layout");
-static_assert(sizeof(VnMonitorSessionCommitFooter) !=
-                  VN_MONITOR_SESSION_COMMIT_FOOTER_BYTES,
-              "in-memory commit footer is not the packed file layout");
-static_assert(VN_MONITOR_SESSION_CHUNK_HEADER_BYTES == 32u, "PLAN-10 packed header");
-static_assert(VN_MONITOR_SESSION_COMMIT_FOOTER_BYTES == 24u, "PLAN-10 packed footer");
-static_assert(VN_MONITOR_DEFAULT_SESSION_FILE_BYTES == 8589934592ull, "8 GiB");
-static_assert(VN_MONITOR_HARD_SESSION_FILE_BYTES == 68719476736ull, "64 GiB");
-static_assert(VN_MONITOR_DEFAULT_CHUNK_PAYLOAD_BYTES == 67108864ull, "64 MiB");
-static_assert(VN_MONITOR_HARD_CHUNK_PAYLOAD_BYTES == 268435456ull, "256 MiB");
 static_assert(VN_MONITOR_HARD_REGISTRY_BLOB_BYTES == 65536u, "64 KiB");
 static_assert(VN_MONITOR_REMOTE_MESSAGE_COUNTER_START == 1ull, "counter start");
 static_assert(VN_MONITOR_REMOTE_NONCE_BYTES == 32u, "256-bit nonce");
@@ -126,8 +102,6 @@ static_assert(VN_MONITOR_DEFAULT_CONSUMER_QUEUE_BYTES == 16777216ull, "capacity"
 static_assert(VN_MONITOR_HARD_CONSUMER_QUEUE_BYTES == 134217728ull, "capacity");
 static_assert(VN_MONITOR_DEFAULT_DERIVED_WORK_ITEMS == 1024u, "capacity");
 static_assert(VN_MONITOR_HARD_DERIVED_WORK_ITEMS == 8192u, "capacity");
-static_assert(VN_MONITOR_DEFAULT_RECORDER_QUEUE_BYTES == 67108864ull, "capacity");
-static_assert(VN_MONITOR_HARD_RECORDER_QUEUE_BYTES == 536870912ull, "capacity");
 static_assert(VN_MONITOR_DEFAULT_REMOTE_QUEUE_BYTES == 16777216ull, "capacity");
 static_assert(VN_MONITOR_HARD_REMOTE_QUEUE_BYTES == 134217728ull, "capacity");
 static_assert(VN_MONITOR_DEFAULT_CAPTURE_BYTE_RATE == 16777216ull, "capacity");
@@ -157,15 +131,7 @@ static_assert(offsetof(VnMonitorCapturePlan, structSize) == 0, "structSize first
 static_assert(offsetof(VnMonitorEffectiveCapturePlan, structSize) == 0, "structSize first");
 static_assert(offsetof(VnMonitorPollDesc, structSize) == 0, "structSize first");
 static_assert(offsetof(VnMonitorPollResult, structSize) == 0, "structSize first");
-static_assert(offsetof(VnMonitorRecordingDesc, structSize) == 0, "structSize first");
-static_assert(offsetof(VnMonitorRecordingStatus, structSize) == 0, "structSize first");
-static_assert(offsetof(VnMonitorSessionCompareView, structSize) == 0, "structSize first");
-static_assert(offsetof(VnMonitorSessionCompareDesc, structSize) == 0, "structSize first");
-static_assert(offsetof(VnMonitorCompareResult, structSize) == 0, "structSize first");
 static_assert(offsetof(VnMonitorTapDescriptor, structSize) == 0, "structSize first");
-static_assert(offsetof(VnMonitorSessionFileHeader, structSize) == 0, "structSize first");
-static_assert(offsetof(VnMonitorSessionChunkHeader, structSize) == 0, "structSize first");
-static_assert(offsetof(VnMonitorSessionCommitFooter, structSize) == 0, "structSize first");
 static_assert(offsetof(VnMonitorRemoteHandshake, structSize) == 0, "structSize first");
 static_assert(offsetof(VnMonitorRemoteFrameCounter, structSize) == 0, "structSize first");
 static_assert(offsetof(VnMonitorStateCutBegin, structSize) == 0, "structSize first");
@@ -191,7 +157,6 @@ static_assert(VN_MONITOR_EVENT_DROP == 13, "event class");
 static_assert(VN_MONITOR_CHECKSUM_CRC32C == 1, "checksum");
 static_assert(alignof(VnMonitorRecordHeader) == 8, "record header align");
 static_assert(alignof(VnMonitorCapabilities) == 8, "capabilities align");
-static_assert(alignof(VnMonitorSessionFileHeader) == 8, "file header align");
 static_assert(alignof(VnMonitorRemoteHandshake) == 8, "handshake align");
 static_assert(sizeof(VnMonitorSessionHandle) == 8, "session handle");
 static_assert(sizeof(uint32_t) == 4, "enums stay uint32");
@@ -206,16 +171,6 @@ static_assert(sizeof(VnMonitorRemoteHandshake{}.clientNonce) ==
 static_assert(sizeof(VnMonitorRemoteHandshake{}.serverNonce) ==
                   VN_MONITOR_REMOTE_NONCE_BYTES,
               "server nonce is 32 bytes");
-
-TEST(MonitorAbiPin, FileMagicIsEightByteAscii) {
-    const char magic[8] = {"VNMON10"};
-    uint64_t encoded = 0;
-    std::memcpy(&encoded, magic, 8);
-    EXPECT_EQ(VN_MONITOR_SESSION_FILE_MAGIC, encoded);
-    const char commit[8] = {"VNCMT10"};
-    std::memcpy(&encoded, commit, 8);
-    EXPECT_EQ(VN_MONITOR_SESSION_COMMIT_MAGIC, encoded);
-}
 
 TEST(MonitorAbiPin, MonitorEntriesHaveNoRemoteOpcode) {
     const auto table = std::filesystem::path(__FILE__).parent_path().parent_path().parent_path() /
@@ -276,10 +231,6 @@ TEST(MonitorAbiPin, AllStubsReturnNotInitializedWithoutEngine) {
     VnMonitorDropSummary drop{};
     drop.structSize = sizeof(drop);
     uint32_t requiredCount = kPoison;
-    VnMonitorRecordingDesc recordingDesc{};
-    recordingDesc.structSize = sizeof(recordingDesc);
-    VnMonitorRecordingStatus recordingStatus{};
-    recordingStatus.structSize = sizeof(recordingStatus);
 
     EXPECT_EQ(VN_NOT_INITIALIZED, Vn_MonitorGetCapabilities(&capabilities));
     EXPECT_EQ(VN_NOT_INITIALIZED, Vn_MonitorOpenSession(&sessionDesc, &handle));
@@ -297,9 +248,6 @@ TEST(MonitorAbiPin, AllStubsReturnNotInitializedWithoutEngine) {
     EXPECT_EQ(VN_NOT_INITIALIZED, Vn_MonitorGetEffectiveCapturePlan(handle, 1, &accepted));
     EXPECT_EQ(VN_NOT_INITIALIZED, Vn_MonitorPoll(handle, &pollDesc, &pollResult));
     EXPECT_EQ(VN_NOT_INITIALIZED, Vn_MonitorGetConsumerStatus(handle, &drop, 1, &requiredCount));
-    EXPECT_EQ(VN_NOT_INITIALIZED, Vn_MonitorStartRecording(handle, 1, &recordingDesc));
-    EXPECT_EQ(VN_NOT_INITIALIZED, Vn_MonitorStopRecording(handle, 1));
-    EXPECT_EQ(VN_NOT_INITIALIZED, Vn_MonitorGetRecordingStatus(handle, &recordingStatus));
     EXPECT_EQ(kPoison, requiredBytes);
     EXPECT_EQ(kPoison, requiredCount);
 }
@@ -342,11 +290,6 @@ TEST(MonitorAbiPin, UnimplementedEntriesReturnUnsupportedWhenEngineExistsWithout
     drop.structSize = sizeof(drop);
     drop.recordCount = 11;
     uint32_t requiredCount = kPoison;
-    VnMonitorRecordingDesc recordingDesc{};
-    recordingDesc.structSize = sizeof(recordingDesc);
-    VnMonitorRecordingStatus recordingStatus{};
-    recordingStatus.structSize = sizeof(recordingStatus);
-    recordingStatus.state = kPoison;
 
     EXPECT_EQ(VN_MONITOR_UNSUPPORTED, Vn_MonitorCaptureRegistry(VN_MONITOR_REGISTRY_REASON, registry, sizeof(registry), &requiredBytes, &revision));
     EXPECT_EQ(VN_MONITOR_STALE_SESSION, Vn_MonitorRequestStateCut(1, &cutDesc, &stateCutId));
@@ -358,9 +301,6 @@ TEST(MonitorAbiPin, UnimplementedEntriesReturnUnsupportedWhenEngineExistsWithout
     EXPECT_EQ(VN_MONITOR_STALE_SESSION, Vn_MonitorApplyCapturePlan(1, 1, &plan, &accepted));
     EXPECT_EQ(VN_MONITOR_STALE_SESSION, Vn_MonitorStopCapture(1, 1, &accepted));
     EXPECT_EQ(VN_MONITOR_STALE_SESSION, Vn_MonitorGetEffectiveCapturePlan(1, 1, &accepted));
-    EXPECT_EQ(VN_INVALID_ARG, Vn_MonitorStartRecording(1, 1, &recordingDesc));
-    EXPECT_EQ(VN_MONITOR_STALE_SESSION, Vn_MonitorStopRecording(1, 1));
-    EXPECT_EQ(VN_MONITOR_STALE_SESSION, Vn_MonitorGetRecordingStatus(1, &recordingStatus));
 
     EXPECT_EQ(kPoison, requiredBytes);
     EXPECT_EQ(7u, revision);
@@ -371,7 +311,6 @@ TEST(MonitorAbiPin, UnimplementedEntriesReturnUnsupportedWhenEngineExistsWithout
     EXPECT_EQ(kPoison, pollResult.recordsWritten);
     EXPECT_EQ(11u, drop.recordCount);
     EXPECT_EQ(kPoison, requiredCount);
-    EXPECT_EQ(kPoison, recordingStatus.state);
     EXPECT_EQ(VN_OK, Vn_Term());
 }
 
@@ -400,18 +339,10 @@ TEST(MonitorAbiPin, OpenGGapsStayUnsupportedWhenEngineExistsWithoutWriting) {
     VnMonitorEffectiveCapturePlan accepted{};
     accepted.structSize = sizeof(accepted);
     accepted.activationState = kPoison;
-    VnMonitorRecordingDesc recordingDesc{};
-    recordingDesc.structSize = sizeof(recordingDesc);
-    VnMonitorRecordingStatus recordingStatus{};
-    recordingStatus.structSize = sizeof(recordingStatus);
-    recordingStatus.state = kPoison;
 
     EXPECT_EQ(VN_MONITOR_UNSUPPORTED, Vn_MonitorCaptureRegistry(VN_MONITOR_REGISTRY_REASON, registry, sizeof(registry), &requiredBytes, &revision));
     EXPECT_EQ(VN_MONITOR_STALE_SESSION, Vn_MonitorRequestStateCut(1, &cutDesc, &stateCutId));
     EXPECT_EQ(VN_MONITOR_STALE_SESSION, Vn_MonitorGetStateCutStatus(1, stateCutId, &cutStatus));
-    EXPECT_EQ(VN_INVALID_ARG, Vn_MonitorStartRecording(1, 1, &recordingDesc));
-    EXPECT_EQ(VN_MONITOR_STALE_SESSION, Vn_MonitorStopRecording(1, 1));
-    EXPECT_EQ(VN_MONITOR_STALE_SESSION, Vn_MonitorGetRecordingStatus(1, &recordingStatus));
 
     EXPECT_EQ(kPoison, requiredBytes);
     EXPECT_EQ(7u, revision);
@@ -419,6 +350,5 @@ TEST(MonitorAbiPin, OpenGGapsStayUnsupportedWhenEngineExistsWithoutWriting) {
     EXPECT_EQ(9u, stateCutId);
     EXPECT_EQ(kPoison, control.held);
     EXPECT_EQ(kPoison, accepted.activationState);
-    EXPECT_EQ(kPoison, recordingStatus.state);
     EXPECT_EQ(VN_OK, Vn_Term());
 }

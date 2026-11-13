@@ -12,8 +12,6 @@
 #include "MonitorIdentityState.h"
 #include "MonitorIdentityCut.h"
 #include "MonitorRecordPack.h"
-#include "MonitorSessionFileWrite.h"
-#include "MonitorRecordingCodec.h"
 
 #include "harken/core/AllocGuard.h"
 #include "harken/core/LogRing.h"
@@ -107,7 +105,6 @@ struct LeaseState {
 constexpr std::uint32_t kObservePermissionMask =
     VN_MONITOR_PERM_OBSERVE_STATE | VN_MONITOR_PERM_OBSERVE_EVENTS |
     VN_MONITOR_PERM_OBSERVE_MEASUREMENTS;
-constexpr std::uint32_t kRecordPermission = VN_MONITOR_PERM_RECORD;
 constexpr std::uint32_t kObserveStreamMask =
     VN_MONITOR_STREAM_STATE | VN_MONITOR_STREAM_EVENT |
     VN_MONITOR_STREAM_TIME_SERIES | VN_MONITOR_STREAM_OPTIONAL_AUDIO;
@@ -133,10 +130,9 @@ bool ValidStructSize(std::uint32_t structSize, std::uint32_t expected) {
 
 bool ReservedZero(std::uint32_t reserved) { return reserved == 0; }
 
-constexpr std::uint32_t kInternalRecorder = 0;
-constexpr std::uint32_t kInternalRemote0 = 1;
-constexpr std::uint32_t kInternalRemote1 = 2;
-constexpr std::uint32_t kInternalConsumerCount = 3;
+constexpr std::uint32_t kInternalRemote0 = 0;
+constexpr std::uint32_t kInternalRemote1 = 1;
+constexpr std::uint32_t kInternalConsumerCount = 2;
 constexpr std::uint32_t kScratchBytes = 4096;
 constexpr std::uint32_t kLiveTapSlots = VN_MONITOR_HARD_TAPS_PER_PLAN;
 constexpr std::uint32_t kAudioSampleFormatF32 = 1;
@@ -266,7 +262,6 @@ struct ConsumerQueue {
     std::array<DropAccum, kDropStreamCount> drops{};
     std::uint64_t droppedRecords = 0;
     std::array<std::uint64_t, kDropStreamCount> cumulativeDrops{};
-    bool recordingReceiver = false;
     std::mutex mutex;
 
     void Reset(std::uint64_t budget, std::uint32_t stage, std::uint64_t newEpoch,
@@ -284,7 +279,6 @@ struct ConsumerQueue {
         for (auto& drop : drops) drop.Clear();
         droppedRecords = 0;
         cumulativeDrops = {};
-        recordingReceiver = false;
         for (auto& drop : drops) drop.stage = stage;
         drops[0].streamId = kSyntheticStreamId;
         drops[1].streamId = kExecutionLogicStream;
@@ -404,14 +398,8 @@ struct Session {
     DropAccum symbolDrops{};
     bool sealRequested = false;
     bool eventCatalog = false;
-    bool recordingReceiver = false;
     bool identityInterestReleased = false;
-    std::array<std::uint64_t, 2> ringStarts{}, ringEnds{}, logStarts{}, nativeLogDrops{};
-    std::array<std::uint64_t, 2> logFiltered{}, logLost{}, logDownstreamEnds{};
-    std::array<std::uint64_t, 2> rawDropStarts{}, rawDropsAtEnd{};
-    std::array<std::uint64_t, 4> unavailableStarts{}, unavailableAtEnd{};
-    std::uint64_t logBudgetDropsAtEnd = 0;
-    std::uint64_t controlStart = 0, controlEnd = 0, controlDrops = 0;
+    std::array<std::uint64_t, 2> logStarts{}, logDownstreamEnds{};
     std::uint64_t eventStartedNs = 0;
     std::uint64_t eventStoppedNs = 0;
     std::uint64_t lastEventSequence = 0;
@@ -461,14 +449,8 @@ struct Session {
         symbolDrops = {};
         sealRequested = false;
         eventCatalog = false;
-        recordingReceiver = false;
         identityInterestReleased = false;
-        ringStarts = ringEnds = logStarts = nativeLogDrops = {};
-        logFiltered = logLost = logDownstreamEnds = {};
-        rawDropStarts = rawDropsAtEnd = {};
-        unavailableStarts = unavailableAtEnd = {};
-        logBudgetDropsAtEnd = 0;
-        controlStart = controlEnd = controlDrops = 0;
+        logStarts = logDownstreamEnds = {};
         eventStartedNs = 0;
         eventStoppedNs = 0;
         lastEventSequence = 0;
@@ -561,66 +543,7 @@ struct ProcessOwner {
     std::array<std::atomic<std::uint64_t>, 2> ringProjectionCompleted{}, logProjectionCompleted{};
     std::array<std::uint64_t, 2> pendingRingTickets{};
     std::array<std::uint64_t, 2> logTranscriptLast{};
-    std::uint64_t controlPublished = 0;
-    std::array<std::uint64_t, 4> logicUnavailable{};
-    std::atomic<bool> recorderLogicPending{false};
     std::atomic<std::uint64_t> lastEventFanoutSequence{0};
-    struct Recorder {
-        std::uint32_t state = VN_MONITOR_RECORDING_STATE_STOPPED;
-        std::uint32_t errorReason = 0;
-        std::uint32_t recoveryNeeded = 0;
-        std::uint64_t fileBytes = 0;
-        std::uint64_t lastCommittedChunk = 0;
-        std::uint64_t nextChunk = 1;
-        std::uint64_t fileByteBudget = 0;
-        std::uint64_t unflushedBytes = 0;
-        std::uint64_t queueEpoch = 0;
-        std::vector<std::uint8_t> packBuffer;
-        std::filesystem::path path;
-        std::ofstream file;
-        std::mutex mutex;
-        bool typed = false;
-        bool forceIncomplete = false;
-        bool identityCleanupPending = false;
-        std::uint32_t stopReason = 0;
-        VnMonitorSessionHandle receiver = 0;
-        RecordingDescriptor descriptor{};
-        RecordingEnd end{};
-        MonitorRecordingVerifier verifier;
-        std::vector<std::uint8_t> frameBuffer;
-        bool failNextWriteForTests = false;
-        bool failNextOptionalWriteForTests = false;
-        bool failOptionalRestoreForTests = false;
-        void (*beforeFailureCleanupForTests)(void*) = nullptr;
-        void* failureCleanupContextForTests = nullptr;
-        void (*afterReceiverOpenForTests)(void*) = nullptr;
-        void* receiverOpenContextForTests = nullptr;
-
-        void ResetStopped() {
-            state = VN_MONITOR_RECORDING_STATE_STOPPED;
-            errorReason = 0;
-            recoveryNeeded = 0;
-            fileBytes = 0;
-            lastCommittedChunk = 0;
-            nextChunk = 1;
-            fileByteBudget = 0;
-            unflushedBytes = 0;
-            queueEpoch = 0;
-            typed = forceIncomplete = identityCleanupPending = false;
-            stopReason = 0;
-            receiver = 0;
-            descriptor = {};
-            end = {};
-            verifier = {};
-            path.clear();
-            failNextWriteForTests = false;
-            beforeFailureCleanupForTests = afterReceiverOpenForTests = nullptr;
-            failureCleanupContextForTests = receiverOpenContextForTests = nullptr;
-            if (file.is_open()) {
-                file.close();
-            }
-        }
-    } recorder{};
     struct Endpoint {
         std::uint32_t profile = VN_MONITOR_SECURITY_DISABLED;
         std::uint64_t epoch = 0;
@@ -987,29 +910,10 @@ ProcessOwner& Owner() {
 
 VnResult RequireEngineAndLogicThread(bool pollPath);
 bool PublishPacked(const std::uint8_t* bytes, std::uint32_t size);
-void StopOwnedRecordingLocked(ProcessOwner& owner, VnMonitorSessionHandle handle,
-    std::uint64_t lease, std::uint32_t reason);
-void CleanupRecordingReceiverLocked(ProcessOwner& owner);
-Session* FindLive(ProcessOwner& owner, VnMonitorSessionHandle handle, bool allowRecording);
+Session* FindLive(ProcessOwner& owner, VnMonitorSessionHandle handle);
 std::uint32_t ReadPackedU32(const std::uint8_t* bytes, std::size_t offset);
 bool IsStateCutBoundRecordKind(std::uint32_t recordKind);
 
-// The same projection controls raw-source accounting and private receiver delivery.
-bool TypedRawProjection(const std::uint8_t* bytes, std::uint32_t size) {
-    if (!bytes || size < kPackedEnvelopeBytes) return false;
-    const auto kind = ReadPackedU32(bytes, 0);
-    if (ReadPackedU32(bytes, 12) == VN_MONITOR_STREAM_STATE) return false;
-    if (kind == VN_MONITOR_RECORD_EVENT_DETAIL && size < kPackedEnvelopeBytes + 12) return false;
-    return kind == VN_MONITOR_RECORD_EVENT_DETAIL ? RecordingKeepsLegacy(kind,
-        ReadPackedU32(bytes, kPackedEnvelopeBytes + 4), ReadPackedU32(bytes, kPackedEnvelopeBytes + 8)) : RecordingKeepsLegacy(kind);
-}
-
-std::uint32_t RecordingRawStreams(const std::uint8_t* bytes, std::uint32_t size, MonitorProducerOrigin origin = {}) {
-    if (!TypedRawProjection(bytes, size) || origin.source >= static_cast<unsigned>(RecordingSource::AudioLog)) return 0;
-    // Audio capture also produces synchronous measurement records on the drain thread.
-    return ReadPackedU32(bytes, 12) | (ReadPackedU32(bytes, 0) == VN_MONITOR_RECORD_AUDIO_CHUNK
-        ? VN_MONITOR_STREAM_TIME_SERIES : 0u);
-}
 struct LiveTapSnapshot {
     std::uint32_t kind = 0;
     std::uint32_t selector = 0;
@@ -1722,7 +1626,6 @@ bool ExpireLeaseIfDueLocked(ProcessOwner& owner) {
         owner.lease.expiryExecuteFrame) {
         return false;
     }
-    StopOwnedRecordingLocked(owner, owner.lease.holder, owner.lease.generation, kLeaseReasonExpiry);
     owner.lease.held = false;
     owner.lease.holder = 0;
     owner.lease.principalHash = 0;
@@ -1736,7 +1639,6 @@ void DisconnectHolderLocked(ProcessOwner& owner, VnMonitorSessionHandle handle) 
     if (!owner.lease.held || owner.lease.holder != handle) {
         return;
     }
-    StopOwnedRecordingLocked(owner, owner.lease.holder, owner.lease.generation, kLeaseReasonDisconnect);
     owner.lease.held = false;
     owner.lease.holder = 0;
     owner.lease.principalHash = 0;
@@ -1749,7 +1651,6 @@ void DisconnectRemoteControlLocked(ProcessOwner& owner) {
     if (!owner.lease.held) {
         return;
     }
-    StopOwnedRecordingLocked(owner, owner.lease.holder, owner.lease.generation, kLeaseReasonDisconnect);
     owner.lease.held = false;
     owner.lease.holder = 0;
     owner.lease.principalHash = 0;
@@ -1926,7 +1827,7 @@ bool EnqueueRecord(ConsumerQueue& queue, const std::uint8_t* bytes,
         record.recordKind = recordKind;
         record.origin = origin;
         StampDelivery(record.bytes.data(), size, deferSymbol ? 0 : queue.nextDelivery);
-        if (recordKind == VN_MONITOR_RECORD_EVENT_DETAIL || queue.recordingReceiver ||
+        if (recordKind == VN_MONITOR_RECORD_EVENT_DETAIL ||
             (recordKind >= VN_MONITOR_RECORD_EXECUTION_FACT && recordKind <= VN_MONITOR_RECORD_HOST_OBJECT_SYMBOL)) {
             WriteU64(record.bytes.data() + kPackedSessionEpochOffset, queue.epoch);
         }
@@ -2166,25 +2067,6 @@ void FanoutOne(ProcessOwner& owner, const std::uint8_t* bytes, std::uint32_t siz
                 continue;
             }
             if (session.eventDrained) continue;
-            if (session.recordingReceiver && recordKind != VN_MONITOR_RECORD_EXECUTION_FACT) {
-                if (!TypedRawProjection(bytes, size) || (session.acceptedStreamKindMask & streamKind) == 0) continue;
-                if (origin.source == static_cast<unsigned>(RecordingSource::LogicRing) ||
-                    origin.source == static_cast<unsigned>(RecordingSource::AudioRing)) {
-                    const auto index = origin.source - 1;
-                    if (origin.ticket <= session.ringStarts[index] ||
-                        (session.eventStoppedNs != 0 && origin.ticket > session.ringEnds[index])) continue;
-                } else if (origin.source == static_cast<unsigned>(RecordingSource::AudioLog) ||
-                    origin.source == static_cast<unsigned>(RecordingSource::LogicLog)) {
-                    const auto index = origin.source - 3;
-                    const auto end = index == 0 ? session.sealedAudioLogs : session.sealedLogicLogs;
-                    if (origin.ticket <= session.logStarts[index] ||
-                        (session.eventStoppedNs != 0 && origin.ticket > end)) continue;
-                } else continue;
-                FlushDropSummary(owner, *session.queue, VN_MONITOR_DROP_RECORDER_QUEUE, session.epoch, session.generation);
-                EnqueueRecord(*session.queue, bytes, size, sourceSequence, recordKind,
-                    VN_MONITOR_DROP_RECORDER_QUEUE, true, session.epoch, session.generation, false, origin);
-                continue;
-            }
             if (recordKind == VN_MONITOR_RECORD_EXECUTION_FACT) {
                 if (session.executionFactVersion == 0 || session.executionFactVersion < minimumExecutionVersion ||
                     session.executionFactVersion > maximumExecutionVersion || ReadPackedU32(bytes, 4) > session.executionFactVersion) continue;
@@ -2323,20 +2205,16 @@ void FanoutOne(ProcessOwner& owner, const std::uint8_t* bytes, std::uint32_t siz
                                  size);
         }
     }
-    static const std::uint32_t kInternalStages[kInternalConsumerCount] = {
-        VN_MONITOR_DROP_RECORDER_QUEUE, VN_MONITOR_DROP_REMOTE_TRANSPORT,
-        VN_MONITOR_DROP_REMOTE_TRANSPORT};
     for (std::uint32_t i = 0; i < kInternalConsumerCount; ++i) {
-        // Legacy recorder/transport queues have no typed owner grant. Typed
-        // recording installs its own authorized projection before enabling it.
+        // Legacy transport queues have no typed owner grant.
         if (recordKind == VN_MONITOR_RECORD_EXECUTION_FACT || IsIdentityRecord(recordKind)) continue;
         if ((owner.internalEnabledMask.load(std::memory_order_acquire) &
              (1u << i)) == 0) {
             continue;
         }
-        FlushDropSummary(owner, *owner.internals[i], kInternalStages[i]);
+        FlushDropSummary(owner, *owner.internals[i], VN_MONITOR_DROP_REMOTE_TRANSPORT);
         EnqueueRecord(*owner.internals[i], bytes, size, sourceSequence, recordKind,
-                      kInternalStages[i], true);
+                      VN_MONITOR_DROP_REMOTE_TRANSPORT, true);
     }
     owner.fanoutCompleted.fetch_add(1, std::memory_order_release);
     if (recordKind == VN_MONITOR_RECORD_EVENT_DETAIL) {
@@ -2384,15 +2262,6 @@ void ProcessPendingOnDrain(ProcessOwner& owner) {
             size = PrepareActivationLocked(
                 owner, packed, sizeof(packed),
                 stop ? kPlanReasonStop : kPlanReasonApply);
-            const auto ticket = owner.controlPublished == UINT64_MAX ? 0 : ++owner.controlPublished;
-            for (auto& session : owner.sessions) {
-                if (!session.live.load(std::memory_order_acquire) || !session.recordingReceiver || session.eventDrained ||
-                    session.eventStoppedNs != 0 || (session.acceptedStreamKindMask & VN_MONITOR_STREAM_EVENT) == 0) continue;
-                if (size == 0 || ticket == 0) ++session.controlDrops;
-                else EnqueueRecord(*session.queue, packed, size, ReadPackedU64(packed, kPackedSourceSequenceOffset),
-                    VN_MONITOR_RECORD_CAPTURE_PLAN_ACTIVATED, VN_MONITOR_DROP_RECORDER_QUEUE, true, session.epoch,
-                    session.generation, false, {static_cast<unsigned>(RecordingSource::Control), 0, ticket});
-            }
         }
         RetireLingeringLocked(owner);
     }
@@ -2845,156 +2714,7 @@ bool DrainOneFrom(ProcessOwner& owner, MonitorProducerRing& ring,
     return true;
 }
 
-std::uint32_t RecordingErrorCode(VnResult result) {
-    return result < 0 ? static_cast<std::uint32_t>(-result)
-                      : static_cast<std::uint32_t>(result);
-}
-
-void FailRecorderLocked(ProcessOwner::Recorder& recorder, VnResult reason) {
-    recorder.state = VN_MONITOR_RECORDING_STATE_FAILED;
-    recorder.errorReason = RecordingErrorCode(reason);
-    recorder.recoveryNeeded = 1;
-    if (recorder.file.is_open()) {
-        recorder.file.close();
-    }
-}
-
-VnResult RecorderFailureResult(const ProcessOwner::Recorder& recorder) {
-    if (recorder.errorReason == 0) {
-        return VN_MONITOR_RECORDING_FAILED;
-    }
-    return static_cast<VnResult>(-static_cast<VnResult>(recorder.errorReason));
-}
-
-VnResult FailAndRemoveStartFileLocked(ProcessOwner::Recorder& recorder,
-                                      VnResult reason) {
-    FailRecorderLocked(recorder, reason);
-    if (!recorder.path.empty()) {
-        std::error_code ec;
-        std::filesystem::remove(recorder.path, ec);
-    }
-    return reason;
-}
-
-void AbandonIncompleteRecordingLocked(ProcessOwner::Recorder& recorder) {
-    if (recorder.state != VN_MONITOR_RECORDING_STATE_ACTIVE &&
-        recorder.state != VN_MONITOR_RECORDING_STATE_STOPPING) {
-        return;
-    }
-    FailRecorderLocked(recorder, VN_MONITOR_RECORDING_FAILED);
-}
-
-bool WriteRecorderChunkLocked(ProcessOwner::Recorder& recorder, std::uint16_t kind,
-                              std::uint16_t flags, const std::uint8_t* payload,
-                              std::uint64_t payloadBytes) {
-    if (!recorder.file.is_open()) {
-        FailRecorderLocked(recorder, VN_MONITOR_RECORDING_FAILED);
-        return false;
-    }
-    PackSessionChunk(&recorder.packBuffer, kind, flags, recorder.nextChunk, payload,
-                     payloadBytes);
-    const std::uint64_t packedBytes = recorder.packBuffer.size();
-    const std::uint64_t nextBytes = recorder.fileBytes + packedBytes;
-    if (recorder.fileByteBudget != 0 && nextBytes > recorder.fileByteBudget) {
-        FailRecorderLocked(recorder, VN_MONITOR_BUDGET_EXCEEDED);
-        return false;
-    }
-    if (recorder.failNextWriteForTests) {
-        recorder.failNextWriteForTests = false;
-        FailRecorderLocked(recorder, VN_MONITOR_RECORDING_FAILED);
-        return false;
-    }
-    recorder.file.write(reinterpret_cast<const char*>(recorder.packBuffer.data()),
-                        static_cast<std::streamsize>(packedBytes));
-    if (!recorder.file.good()) {
-        FailRecorderLocked(recorder, VN_MONITOR_RECORDING_FAILED);
-        return false;
-    }
-    recorder.unflushedBytes += packedBytes;
-    constexpr std::uint64_t kFlushBytes = 65536;
-    if (recorder.state == VN_MONITOR_RECORDING_STATE_STOPPING ||
-        recorder.unflushedBytes >= kFlushBytes) {
-        recorder.file.flush();
-        if (!recorder.file.good()) {
-            FailRecorderLocked(recorder, VN_MONITOR_RECORDING_FAILED);
-            return false;
-        }
-        recorder.unflushedBytes = 0;
-    }
-    recorder.fileBytes = nextBytes;
-    recorder.lastCommittedChunk = recorder.nextChunk;
-    recorder.nextChunk += 1;
-    return true;
-}
-
-bool TryWriteOptionalRecorderChunkLocked(ProcessOwner::Recorder& recorder,
-                                         std::uint16_t kind, std::uint16_t flags,
-                                         const std::uint8_t* payload,
-                                         std::uint64_t payloadBytes) {
-    if (!recorder.file.is_open()) {
-        return false;
-    }
-    PackSessionChunk(&recorder.packBuffer, kind, flags, recorder.nextChunk, payload,
-                     payloadBytes);
-    const std::uint64_t packedBytes = recorder.packBuffer.size();
-    const std::uint64_t nextBytes = recorder.fileBytes + packedBytes;
-    if (recorder.fileByteBudget != 0 && nextBytes > recorder.fileByteBudget) {
-        return false;
-    }
-    if (recorder.unflushedBytes != 0) {
-        recorder.file.flush();
-        if (!recorder.file.good()) {
-            FailRecorderLocked(recorder, VN_MONITOR_RECORDING_FAILED);
-            return false;
-        }
-        recorder.unflushedBytes = 0;
-    }
-    auto restoreOptionalWrite = [&]() -> bool {
-        recorder.file.clear();
-        recorder.file.close();
-        std::error_code resizeEc;
-        if (recorder.failOptionalRestoreForTests) {
-            recorder.failOptionalRestoreForTests = false;
-            FailRecorderLocked(recorder, VN_MONITOR_RECORDING_FAILED);
-            return false;
-        }
-        std::filesystem::resize_file(recorder.path, recorder.fileBytes, resizeEc);
-        if (resizeEc) {
-            FailRecorderLocked(recorder, VN_MONITOR_RECORDING_FAILED);
-            return false;
-        }
-        recorder.file.open(recorder.path, std::ios::binary | std::ios::app);
-        if (!recorder.file.is_open() || !recorder.file.good()) {
-            FailRecorderLocked(recorder, VN_MONITOR_RECORDING_FAILED);
-            return false;
-        }
-        recorder.file.clear();
-        return true;
-    };
-    if (recorder.failNextOptionalWriteForTests) {
-        recorder.failNextOptionalWriteForTests = false;
-        const std::streamsize half = static_cast<std::streamsize>(packedBytes / 2);
-        if (half > 0) {
-            recorder.file.write(reinterpret_cast<const char*>(recorder.packBuffer.data()),
-                                half);
-        }
-        restoreOptionalWrite();
-        return false;
-    }
-    recorder.file.write(reinterpret_cast<const char*>(recorder.packBuffer.data()),
-                        static_cast<std::streamsize>(packedBytes));
-    if (!recorder.file.good()) {
-        restoreOptionalWrite();
-        return false;
-    }
-    recorder.unflushedBytes += packedBytes;
-    recorder.fileBytes = nextBytes;
-    recorder.lastCommittedChunk = recorder.nextChunk;
-    recorder.nextChunk += 1;
-    return true;
-}
-
-bool RecordingSourcesDrained(const ProcessOwner& owner, const Session& session, bool forced) {
+bool EventSourcesDrained(const ProcessOwner& owner, const Session& session, bool forced) {
     if (session.eventStoppedNs == 0 || (session.sealRequested && !forced)) return false;
     const auto streams = session.acceptedStreamKindMask;
     if ((streams & VN_MONITOR_STREAM_EVENT) != 0) {
@@ -3009,156 +2729,7 @@ bool RecordingSourcesDrained(const ProcessOwner& owner, const Session& session, 
     if ((streams & VN_MONITOR_STREAM_STATE) != 0 && (session.identity.requested || session.identity.active ||
         (session.identityEnd > session.identityStart && owner.identityProducer.Completed() < session.identityEnd))) return false;
     if (WantsSymbols(session) && session.symbolEnd > session.symbolStart && owner.symbolProducer.Completed() < session.symbolEnd) return false;
-    for (unsigned i = 0; i != 2; ++i)
-        if (session.ringEnds[i] > session.ringStarts[i] &&
-            owner.ringProjectionCompleted[i].load(std::memory_order_acquire) < session.ringEnds[i]) return false;
     return true;
-}
-
-RecordingEnd RecordingEndSnapshot(const ProcessOwner& owner, const Session& session,
-    const ProcessOwner::Recorder& recorder) {
-    RecordingEnd end{};
-    const auto& descriptor = recorder.descriptor;
-    end.engine = descriptor.engine;
-    end.epoch = descriptor.epoch;
-    end.recordingEpoch = descriptor.recordingEpoch;
-    end.stoppedNs = session.eventStoppedNs;
-    end.stopReason = recorder.stopReason;
-    end.controlEnd = (session.acceptedStreamKindMask & VN_MONITOR_STREAM_EVENT) != 0 ? session.controlEnd : descriptor.controlStart;
-    end.controlDrops = session.controlDrops;
-    end.boundaryComplete = recorder.forceIncomplete ? 0u : 1u;
-    const auto streams = session.acceptedStreamKindMask;
-    for (unsigned i = 0; i != 4; ++i) {
-        const bool subscribed = i < 2 ? (streams & VN_MONITOR_STREAM_EVENT) != 0 :
-            i == 2 ? (streams & VN_MONITOR_STREAM_STATE) != 0 : WantsSymbols(session);
-        end.ends[i] = !subscribed ? descriptor.starts[i] : i < 2 ? session.executionEnds[i] :
-            i == 2 ? session.identityEnd : session.symbolEnd;
-        end.completed[i] = i < 2 ? owner.executionProducers[i].Completed() :
-            i == 2 ? owner.identityProducer.Completed() : owner.symbolProducer.Completed();
-        end.unavailable[i] = subscribed && session.unavailableAtEnd[i] > descriptor.unavailableStarts[i]
-            ? session.unavailableAtEnd[i] - descriptor.unavailableStarts[i] : 0;
-    }
-    for (unsigned i = 0; i != 2; ++i) {
-        end.sourceDrops[i + 1] = session.executionSourceDrops[i].recordCount;
-        end.ringEnds[i] = session.ringEnds[i];
-        end.ringCompleted[i] = owner.ringProjectionCompleted[i].load(std::memory_order_acquire);
-        end.rawDrops[i] = session.rawDropsAtEnd[i] - descriptor.rawDropStarts[i];
-        end.logEnds[i] = (streams & VN_MONITOR_STREAM_EVENT) == 0 ? descriptor.logStarts[i] :
-            i == 0 ? session.sealedAudioLogs : session.sealedLogicLogs;
-        const bool downstream = owner.ringProjectionCompleted[0].load(std::memory_order_acquire) >= session.logDownstreamEnds[i];
-        end.logCompleted[i] = downstream ? owner.logProjectionCompleted[i].load(std::memory_order_acquire) : descriptor.logStarts[i];
-        end.nativeLogDrops[i] = (streams & VN_MONITOR_STREAM_EVENT) != 0 ? session.logLost[i] +
-            (i == 0 ? session.logBudgetDropsAtEnd - session.nativeLogDrops[0] : 0) : 0;
-        end.logFiltered[i] = session.logFiltered[i];
-    }
-    end.sourceDrops[3] = session.identityDrops.recordCount;
-    end.sourceDrops[4] = session.baselineDrops.recordCount;
-    end.sourceDrops[5] = session.symbolDrops.recordCount;
-    std::copy(session.queue->cumulativeDrops.begin(), session.queue->cumulativeDrops.end(), end.deliveryDrops);
-    end.eventSourceDrops = session.eventSourceDrops;
-    end.baselineAvailability = session.baselineAvailability;
-    end.symbolAvailability = session.symbolAvailability;
-    end.recordCount = recorder.verifier.Records();
-    end.checksum = recorder.verifier.Checksum();
-    return end;
-}
-
-void PumpRecorder(ProcessOwner& owner) {
-    // A finite batch leaves time for source drain even during sustained recording.
-    for (unsigned batch = 0; batch != 64; ++batch) {
-        std::unique_lock<std::mutex> ownerLock(owner.mutex);
-        ExpireLeaseIfDueLocked(owner);
-        std::unique_lock<std::mutex> recorderLock(owner.recorder.mutex);
-        auto& recorder = owner.recorder;
-        if (recorder.state != VN_MONITOR_RECORDING_STATE_ACTIVE &&
-            recorder.state != VN_MONITOR_RECORDING_STATE_STOPPING) return;
-        auto* session = recorder.typed ? FindLive(owner, recorder.receiver, true) : nullptr;
-        auto* queue = recorder.typed ? (session ? session->queue.get() : nullptr) : owner.internals[kInternalRecorder].get();
-        if (!queue) return;
-        PackedRecord record;
-        bool finish = false;
-        {
-            std::lock_guard<std::mutex> queueLock(queue->mutex);
-            if (!queue->records.empty()) {
-                record = std::move(queue->records.front());
-                queue->records.pop_front();
-                queue->usedBytes -= record.bytes.size();
-            } else {
-                finish = recorder.state == VN_MONITOR_RECORDING_STATE_STOPPING &&
-                    (!recorder.typed || (queue->deferredSymbols.empty() && RecordingSourcesDrained(owner, *session, recorder.forceIncomplete)));
-                if (!finish) return;
-                if (recorder.typed) {
-                    recorder.end = RecordingEndSnapshot(owner, *session, recorder);
-                    session->eventDrained = true;
-                }
-            }
-        }
-        ownerLock.unlock();
-        bool written = true;
-        try {
-            if (!record.bytes.empty()) {
-                if (recorder.typed) {
-                    recorder.frameBuffer.resize(kRecordingPositionBytes + record.bytes.size());
-                    PackRecordingPosition(recorder.frameBuffer.data(), {static_cast<RecordingSource>(record.origin.source),
-                        0, record.origin.ticket, record.bytes.size()});
-                    std::memcpy(recorder.frameBuffer.data() + kRecordingPositionBytes, record.bytes.data(), record.bytes.size());
-                    written = recorder.verifier.Record(recorder.frameBuffer.data(), recorder.frameBuffer.size()) &&
-                        WriteRecorderChunkLocked(recorder, VN_MONITOR_CHUNK_EXECUTION_RECORD, VN_MONITOR_CHUNK_REQUIRED,
-                            recorder.frameBuffer.data(), recorder.frameBuffer.size());
-                } else written = WriteRecorderChunkLocked(recorder, VN_MONITOR_CHUNK_EVENTS, VN_MONITOR_CHUNK_REQUIRED,
-                    record.bytes.data(), record.bytes.size());
-            } else if (finish) {
-                if (recorder.typed) {
-                    std::uint8_t packed[kRecordingEndBytes]{};
-                    ExecutionPayloadWriter write{packed};
-                    VisitRecordingEnd(write, recorder.end);
-                    written = recorder.verifier.End(recorder.end) && WriteRecorderChunkLocked(recorder,
-                        VN_MONITOR_CHUNK_EXECUTION_END, VN_MONITOR_CHUNK_REQUIRED, packed, sizeof(packed));
-                }
-                if (written) {
-                    recorder.file.flush();
-                    written = recorder.file.good();
-                }
-                if (written) {
-                    recorder.file.close();
-                    recorder.unflushedBytes = 0;
-                    recorder.state = VN_MONITOR_RECORDING_STATE_STOPPED;
-                    recorder.errorReason = 0;
-                    recorder.recoveryNeeded = recorder.typed && !recorder.verifier.Complete() ? 1u : 0u;
-                    owner.internalEnabledMask.fetch_and(~(1u << kInternalRecorder), std::memory_order_release);
-                    if (recorder.typed) owner.recorderLogicPending.store(true, std::memory_order_release);
-                    return;
-                }
-            }
-        } catch (const std::bad_alloc&) {
-            written = false;
-        }
-        if (!written) {
-            if (recorder.state != VN_MONITOR_RECORDING_STATE_FAILED) FailRecorderLocked(recorder, VN_MONITOR_RECORDING_FAILED);
-            owner.internalEnabledMask.fetch_and(~(1u << kInternalRecorder), std::memory_order_release);
-            const bool typed = recorder.typed;
-            const auto failedReceiver = recorder.receiver;
-            const auto failedEpoch = recorder.queueEpoch;
-            const auto beforeCleanup = recorder.beforeFailureCleanupForTests;
-            auto* cleanupContext = recorder.failureCleanupContextForTests;
-            recorder.beforeFailureCleanupForTests = nullptr;
-            recorder.failureCleanupContextForTests = nullptr;
-            recorder.identityCleanupPending |= typed;
-            recorderLock.unlock();
-            if (beforeCleanup) beforeCleanup(cleanupContext);
-            // Reenter the owner only after releasing the writer lock.
-            std::lock_guard<std::mutex> failedLock(owner.mutex);
-            std::lock_guard<std::mutex> failedRecorderLock(owner.recorder.mutex);
-            if (owner.recorder.queueEpoch != failedEpoch || owner.recorder.typed != typed ||
-                owner.recorder.receiver != failedReceiver) return;
-            if (typed) {
-                if (auto* receiver = FindLive(owner, failedReceiver, true)) receiver->eventDrained = true;
-                owner.recorderLogicPending.store(true, std::memory_order_release);
-            } else queue->Detach();
-            return;
-        }
-    }
-    owner.WakeDrain();
 }
 
 bool DrainOneRound(ProcessOwner& owner, std::uint8_t* scratch, std::uint32_t scratchBytes) {
@@ -3181,11 +2752,7 @@ void DrainLoop(ProcessOwner* owner) {
         if (PendingReadyToActivate(*owner)) {
             ProcessPendingOnDrain(*owner);
         }
-        if (DrainOneRound(*owner, scratch, scratchBytes)) {
-            PumpRecorder(*owner);
-            continue;
-        }
-        PumpRecorder(*owner);
+        if (DrainOneRound(*owner, scratch, scratchBytes)) continue;
         if (!owner->drainStop.load(std::memory_order_acquire) &&
             owner->logicRing.Empty() && owner->producerRing.Empty() && owner->identityRing.Empty() && owner->symbolRing.Empty() &&
             !PendingReadyToActivate(*owner)) {
@@ -3252,7 +2819,6 @@ void EnsureCaptureResources(ProcessOwner& owner) {
         owner.drainScratch.assign(slotBytes, 0);
         owner.audioPackScratch.assign(slotBytes, 0);
         owner.interleaveScratch.assign(kInterleaveScratchFloats, 0.0f);
-        owner.internals[kInternalRecorder] = std::make_unique<ConsumerQueue>();
         owner.captureResourcesReady = true;
     } catch (...) {
         ReleaseCaptureResources(owner);
@@ -3295,7 +2861,7 @@ bool PublishToRing(MonitorProducerRing& ring, const std::uint8_t* bytes,
     }
     ProcessOwner& owner = Owner();
 #if !defined(HARKEN_MONITOR_HUB_ABSENT)
-    if (!ring.TryPush(bytes, size, 0, origin, RecordingRawStreams(bytes, size, origin))) {
+    if (!ring.TryPush(bytes, size, 0, origin)) {
         const std::uint64_t sourceSequence =
             ReadPackedU64(bytes, kPackedSourceSequenceOffset);
         if (&ring == &owner.producerRing) {
@@ -3388,7 +2954,7 @@ VnResult GateControlEntry() {
     return RequireEngineAndLogicThread(false);
 }
 
-Session* FindLive(ProcessOwner& owner, VnMonitorSessionHandle handle, bool allowRecording = false) {
+Session* FindLive(ProcessOwner& owner, VnMonitorSessionHandle handle) {
     const std::uint32_t slot = HandleSlot(handle);
     const std::uint64_t generation = HandleGeneration(handle);
     if (slot >= owner.sessions.size()) {
@@ -3396,7 +2962,7 @@ Session* FindLive(ProcessOwner& owner, VnMonitorSessionHandle handle, bool allow
     }
     Session& session = owner.sessions[slot];
     if (!session.live.load(std::memory_order_acquire) ||
-        session.generation != generation || (session.recordingReceiver && !allowRecording)) {
+        session.generation != generation) {
         return nullptr;
     }
     return &session;
@@ -3418,23 +2984,6 @@ void RetireSessionLocked(ProcessOwner& owner, Session& session) {
     owner.RetireIfPollingLocked(session);
     session.Reset();
     owner.observerCount.fetch_sub(1, std::memory_order_release);
-}
-
-void CleanupRecordingReceiverLocked(ProcessOwner& owner) {
-    std::lock_guard<std::mutex> recorderLock(owner.recorder.mutex);
-    auto& recorder = owner.recorder;
-    if (!recorder.typed || recorder.receiver == 0) return;
-    auto* session = FindLive(owner, recorder.receiver, true);
-    if (!session) return;
-    if (recorder.identityCleanupPending && !session->identityInterestReleased) {
-        if ((session->acceptedStreamKindMask & VN_MONITOR_STREAM_STATE) != 0) --owner.identityObservers;
-        if (WantsSymbols(*session)) --owner.symbolObservers;
-        session->identityInterestReleased = true;
-    }
-    recorder.identityCleanupPending = false;
-    if (recorder.state == VN_MONITOR_RECORDING_STATE_ACTIVE || recorder.state == VN_MONITOR_RECORDING_STATE_STOPPING) return;
-    RetireSessionLocked(owner, *session);
-    recorder.receiver = 0;
 }
 
 void FillCapabilities(VnMonitorCapabilities* out, const ProcessOwner& owner) {
@@ -3465,8 +3014,6 @@ void FillCapabilities(VnMonitorCapabilities* out, const ProcessOwner& owner) {
     out->hardConsumerQueueBytes = VN_MONITOR_HARD_CONSUMER_QUEUE_BYTES;
     out->resolvedDerivedWorkItems = VN_MONITOR_DEFAULT_DERIVED_WORK_ITEMS;
     out->hardDerivedWorkItems = VN_MONITOR_HARD_DERIVED_WORK_ITEMS;
-    out->resolvedRecorderQueueBytes = VN_MONITOR_DEFAULT_RECORDER_QUEUE_BYTES;
-    out->hardRecorderQueueBytes = VN_MONITOR_HARD_RECORDER_QUEUE_BYTES;
     out->resolvedRemoteQueueBytes = VN_MONITOR_DEFAULT_REMOTE_QUEUE_BYTES;
     out->hardRemoteQueueBytes = VN_MONITOR_HARD_REMOTE_QUEUE_BYTES;
     out->resolvedCaptureByteRate = VN_MONITOR_DEFAULT_CAPTURE_BYTE_RATE;
@@ -3529,9 +3076,6 @@ VnResult OnEngineInit(Engine* engine) {
         for (auto& completed : owner.ringProjectionCompleted) completed.store(0, std::memory_order_relaxed);
         for (auto& completed : owner.logProjectionCompleted) completed.store(0, std::memory_order_relaxed);
         owner.pendingRingTickets = owner.logTranscriptLast = {};
-        owner.controlPublished = 0;
-        owner.logicUnavailable = {};
-        owner.recorderLogicPending.store(false, std::memory_order_relaxed);
         owner.identityProducer.Reset();
         owner.symbolProducer.Reset();
         owner.observationRevision = 1;
@@ -3596,11 +3140,6 @@ void OnEngineTeardown(Engine* engine) {
     owner.identityMutationDepth = 0;
     if (engine != nullptr) engine->monitorEmitters.SetChangeSink(nullptr);
     ReleaseCaptureResources(owner);
-    {
-        std::lock_guard<std::mutex> lock(owner.recorder.mutex);
-        AbandonIncompleteRecordingLocked(owner.recorder);
-        std::vector<std::uint8_t>().swap(owner.recorder.packBuffer);
-    }
     CloseBoundPipe(owner.endpoint);
     owner.endpoint = {};
     owner.engine = nullptr;
@@ -3849,77 +3388,10 @@ void SealAtIdentityBoundary(ProcessOwner& owner, Session& session) {
     session.sealedLogicLogs = owner.engine->logicLogRing.PublishedCount();
     for (unsigned i = 0; i != owner.executionProducers.size(); ++i)
         session.executionEnds[i] = owner.executionProducers[i].Published();
-    if (session.recordingReceiver) {
-        session.ringEnds[0] = std::max(session.ringStarts[0], owner.logicRing.PublishedForStreams(session.acceptedStreamKindMask));
-        session.ringEnds[1] = std::max(session.ringStarts[1], owner.producerRing.PublishedForStreams(session.acceptedStreamKindMask));
-        session.rawDropsAtEnd = {owner.logicRing.DroppedForStreams(session.acceptedStreamKindMask),
-            owner.producerRing.DroppedForStreams(session.acceptedStreamKindMask)};
-        session.unavailableAtEnd = owner.logicUnavailable;
-        session.unavailableAtEnd[0] = owner.executionProducers[0].Unavailable();
-        session.unavailableAtEnd[1] = owner.executionProducers[1].Unavailable();
-        session.logBudgetDropsAtEnd = owner.engine->logRing.QuantumBudgetDropCount();
-        session.controlEnd = owner.controlPublished;
-    }
-}
-
-void StopOwnedRecordingLocked(ProcessOwner& owner, VnMonitorSessionHandle handle,
-    std::uint64_t lease, std::uint32_t reason) {
-    std::lock_guard<std::mutex> recorderLock(owner.recorder.mutex);
-    auto& recorder = owner.recorder;
-    if (!recorder.typed || (recorder.state != VN_MONITOR_RECORDING_STATE_ACTIVE &&
-        recorder.state != VN_MONITOR_RECORDING_STATE_STOPPING) ||
-        recorder.descriptor.owner != handle || recorder.descriptor.leaseGeneration != lease) return;
-    auto* session = FindLive(owner, recorder.receiver, true);
-    if (!session) return;
-    const bool alreadyStopping = recorder.state == VN_MONITOR_RECORDING_STATE_STOPPING;
-    recorder.state = VN_MONITOR_RECORDING_STATE_STOPPING;
-    if (!alreadyStopping) recorder.stopReason = reason;
-    if (std::this_thread::get_id() == owner.logicThread) {
-        if (alreadyStopping) return;
-        if (IdentitySafeBoundary(owner)) SealAtIdentityBoundary(owner, *session);
-        else {
-            if (!session->sealRequested) ++owner.pendingIdentitySeals;
-            session->sealRequested = true;
-        }
-    } else {
-        // No logic scan or interest mutation is permitted on this thread.
-        recorder.forceIncomplete = recorder.identityCleanupPending = true;
-        if (session->eventStoppedNs != 0) {
-            owner.recorderLogicPending.store(true, std::memory_order_release);
-            owner.WakeDrain();
-            return;
-        }
-        session->eventStoppedNs = LogTimestampNs();
-        session->sealedAudioLogs = owner.engine->logRing.PublishedCount();
-        session->sealedLogicLogs = owner.engine->logicLogRing.PublishedCount();
-        for (unsigned i = 0; i != 2; ++i) session->executionEnds[i] = owner.executionProducers[i].Published();
-        session->identityEnd = owner.identityProducer.Published();
-        session->symbolEnd = owner.symbolProducer.Published();
-        session->ringEnds = {std::max(session->ringStarts[0], owner.logicRing.PublishedForStreams(session->acceptedStreamKindMask)),
-            std::max(session->ringStarts[1], owner.producerRing.PublishedForStreams(session->acceptedStreamKindMask))};
-        session->rawDropsAtEnd = {owner.logicRing.DroppedForStreams(session->acceptedStreamKindMask),
-            owner.producerRing.DroppedForStreams(session->acceptedStreamKindMask)};
-        session->unavailableAtEnd = owner.logicUnavailable;
-        session->unavailableAtEnd[0] = owner.executionProducers[0].Unavailable();
-        session->unavailableAtEnd[1] = owner.executionProducers[1].Unavailable();
-        session->logBudgetDropsAtEnd = owner.engine->logRing.QuantumBudgetDropCount();
-        session->controlEnd = owner.controlPublished;
-        if (session->identity.requested) {
-            session->identity.requested = false;
-            session->baselineAvailability = VN_MONITOR_OBSERVATION_INCOMPLETE;
-        }
-        owner.recorderLogicPending.store(true, std::memory_order_release);
-    }
-    owner.WakeDrain();
 }
 
 void RefreshIdentityBoundary() noexcept {
     auto& owner = Owner();
-    if (owner.recorderLogicPending.load(std::memory_order_acquire) && IdentitySafeBoundary(owner)) {
-        std::lock_guard<std::mutex> lock(owner.mutex);
-        CleanupRecordingReceiverLocked(owner);
-        owner.recorderLogicPending.store(false, std::memory_order_release);
-    }
     if ((owner.identityObservers == 0 && owner.symbolObservers == 0 && owner.pendingIdentitySeals == 0) ||
         !IdentitySafeBoundary(owner)) return;
     const auto beforeIdentity = owner.identityMirror.Revision();
@@ -3951,9 +3423,6 @@ void RefreshIdentityBoundary() noexcept {
     if (owner.identityMirror.Revision() != beforeIdentity || owner.symbolMirror.Revision() != beforeSymbols)
         owner.observationRevision = revision;
     std::lock_guard<std::mutex> lock(owner.mutex);
-    owner.logicUnavailable = {owner.executionProducers[0].Unavailable(), owner.executionProducers[1].Unavailable(),
-        owner.identityProducer.Unavailable() + owner.identityMirror.Unavailable(),
-        owner.symbolProducer.Unavailable() + owner.symbolMirror.Unavailable()};
     for (auto& session : owner.sessions) {
         if (!session.live.load(std::memory_order_acquire) || session.executionFactVersion == 0 ||
             session.eventStoppedNs != 0) continue;
@@ -3999,7 +3468,7 @@ VnResult OpenSessionWithPermissions(const VnMonitorSessionDesc* desc,
                                     std::uint32_t remoteGrant,
                                     std::uint64_t principalHash,
                                     VnMonitorSessionHandle* outHandle,
-                                    bool eventCatalog = false, bool recordingReceiver = false) {
+                                    bool eventCatalog = false) {
     if (desc == nullptr || outHandle == nullptr) {
         return VN_INVALID_ARG;
     }
@@ -4160,7 +3629,7 @@ VnResult OpenSessionWithPermissions(const VnMonitorSessionDesc* desc,
     slot->requestedPermissionMask = desc->requestedPermissionMask;
     slot->acceptedStreamKindMask = acceptedMask;
     const std::uint32_t knownPerm =
-        kObservePermissionMask | kCaptureControlPermission | kRecordPermission |
+        kObservePermissionMask | kCaptureControlPermission |
         VN_MONITOR_PERM_RAW_AUDIO | VN_MONITOR_PERM_SYMBOLS;
     const std::uint32_t requestedPerm = desc->requestedPermissionMask;
     std::uint32_t acceptedPerm = 0;
@@ -4171,7 +3640,6 @@ VnResult OpenSessionWithPermissions(const VnMonitorSessionDesc* desc,
     } else {
         acceptedPerm = (requestedPerm & kObservePermissionMask) |
                        (requestedPerm & kCaptureControlPermission) |
-                       (requestedPerm & kRecordPermission) |
                        (executionVersion != 0 ? requestedPerm & (VN_MONITOR_PERM_RAW_AUDIO | VN_MONITOR_PERM_SYMBOLS) : 0);
         unsupportedPerm = executionVersion != 0 ? 0u :
             requestedPerm & (VN_MONITOR_PERM_RAW_AUDIO | VN_MONITOR_PERM_SYMBOLS);
@@ -4234,9 +3702,6 @@ VnResult OpenSessionWithPermissions(const VnMonitorSessionDesc* desc,
     slot->streamTerminated.store(false, std::memory_order_relaxed);
     slot->cut = {};
     slot->identity.requested = identityRequested;
-    slot->unavailableStarts = owner.logicUnavailable;
-    slot->unavailableStarts[0] = owner.executionProducers[0].Unavailable();
-    slot->unavailableStarts[1] = owner.executionProducers[1].Unavailable();
     slot->identityStart = owner.identityProducer.Published();
     slot->identityEnd = 0;
     slot->identityDrops = {};
@@ -4254,18 +3719,10 @@ VnResult OpenSessionWithPermissions(const VnMonitorSessionDesc* desc,
     slot->symbolDrops.streamId = kHostSymbolStream;
     slot->sealRequested = false;
     slot->eventCatalog = eventCatalog;
-    slot->recordingReceiver = recordingReceiver;
     slot->identityInterestReleased = false;
-    // Loss bounds enclose the publication window: losses first on open, last on seal.
-    slot->rawDropStarts = {owner.logicRing.DroppedForStreams(acceptedMask), owner.producerRing.DroppedForStreams(acceptedMask)};
-    slot->ringStarts = {owner.logicRing.Published(), owner.producerRing.Published()};
-    slot->ringEnds = {};
-    slot->nativeLogDrops = {owner.engine->logRing.QuantumBudgetDropCount(), 0};
     slot->logStarts = {owner.engine->logRing.PublishedCount(), owner.engine->logicLogRing.PublishedCount()};
-    slot->logFiltered = slot->logLost = slot->logDownstreamEnds = {};
-    slot->controlStart = owner.controlPublished;
-    slot->controlEnd = slot->controlDrops = 0;
-    slot->eventStartedNs = eventCatalog || recordingReceiver ? LogTimestampNs() : 0;
+    slot->logDownstreamEnds = {};
+    slot->eventStartedNs = eventCatalog ? LogTimestampNs() : 0;
     slot->eventStoppedNs = 0;
     slot->lastEventSequence = 0;
     slot->eventSourceDrops = 0;
@@ -4286,7 +3743,6 @@ VnResult OpenSessionWithPermissions(const VnMonitorSessionDesc* desc,
     }
     slot->queue->Reset(requestedQueue, VN_MONITOR_DROP_HUB_FANOUT, slot->epoch,
                        slot->generation, SymbolStreamKind(*slot));
-    slot->queue->recordingReceiver = recordingReceiver;
     slot->queuePtr.store(slot->queue.get(), std::memory_order_release);
     slot->live.store(true, std::memory_order_release);
     if (eventCatalog) {
@@ -4307,7 +3763,7 @@ VnResult OpenSessionWithPermissions(const VnMonitorSessionDesc* desc,
     RefreshIdentityBoundary();
     // DSP three-quantity payload cannot fit frozen TimeSeries/Aggregate.
     // Publish one capability-unavailable DROP after the session is live.
-    if (!eventCatalog && !recordingReceiver) {
+    if (!eventCatalog) {
         harken::ObserveMonitorDspGap();
     }
     return VN_OK;
@@ -4415,7 +3871,7 @@ VnResult GetEventSessionStatus(VnMonitorSessionHandle handle,
         const bool legacyDrained = executionDrained && identityDrained && symbolDrained && owner.engine->logRing.ConsumedCount() >= session->sealedAudioLogs &&
             owner.engine->logicLogRing.ConsumedCount() >= session->sealedLogicLogs &&
             owner.lastEventFanoutSequence.load(std::memory_order_acquire) >= session->lastEventSequence;
-        const bool drained = (session->executionFactVersion != 0 ? RecordingSourcesDrained(owner, *session, false) : legacyDrained) &&
+        const bool drained = (session->executionFactVersion != 0 ? EventSourcesDrained(owner, *session, false) : legacyDrained) &&
             session->queue->deferredSymbols.empty() && session->queue->records.empty();
         if (drained && !session->eventDrained) {
             session->eventDrained = true;
@@ -4570,7 +4026,7 @@ bool PublishEventDetail(const VnMonitorEventDetail& detail,
         if (!session.live.load(std::memory_order_acquire) || !session.eventCatalog ||
             session.eventDrained ||
             (!(session.executionFactVersion != 0 && logSource >= 3 && logSource <= 4) &&
-             !session.recordingReceiver && (detail.timestampNs < session.eventStartedNs ||
+             (detail.timestampNs < session.eventStartedNs ||
                 (session.eventStoppedNs != 0 && detail.timestampNs > session.eventStoppedNs)))) continue;
         if (session.executionFactVersion != 0) {
             if (logSource >= 3 && logSource <= 4) {
@@ -4578,7 +4034,7 @@ bool PublishEventDetail(const VnMonitorEventDetail& detail,
                 const auto end = i == 0 ? session.sealedAudioLogs : session.sealedLogicLogs;
                 if (logTicket <= session.logStarts[i] || (session.eventStoppedNs != 0 && logTicket > end)) continue;
                 if (published) session.logDownstreamEnds[i] = owner.logicRing.Published();
-            } else if (session.recordingReceiver && session.eventStoppedNs != 0) continue;
+            }
         }
         if (session.executionFactVersion != 0 && ExecutionReplacesLegacyEvent(detail.category, detail.code)) continue;
         if (published) session.lastEventSequence = envelope.sourceSequence;
@@ -4676,15 +4132,6 @@ void ObserveDiagnostic(std::uint32_t level, std::uint32_t code,
     std::lock_guard<std::mutex> lock(owner.mutex);
     const auto index = logSource - 3;
     const auto previous = owner.logTranscriptLast[index];
-    for (auto& session : owner.sessions) {
-        if (!session.live.load(std::memory_order_acquire) || !session.recordingReceiver || session.eventDrained ||
-            (session.acceptedStreamKindMask & VN_MONITOR_STREAM_EVENT) == 0) continue;
-        const auto first = std::max(previous, session.logStarts[index]);
-        const auto end = session.eventStoppedNs == 0 ? logTicket : std::min(logTicket,
-            index == 0 ? session.sealedAudioLogs : session.sealedLogicLogs);
-        if (end > first) session.logLost[index] += end - first - (end == logTicket ? 1u : 0u);
-        if (!eligible && logTicket > session.logStarts[index] && end == logTicket) ++session.logFiltered[index];
-    }
     owner.logTranscriptLast[index] = logTicket;
     owner.logProjectionCompleted[index].store(logTicket, std::memory_order_release);
     owner.WakeDrain();
@@ -4696,14 +4143,6 @@ void CompleteLogTranscription(std::uint32_t source, std::uint64_t consumed) {
     std::lock_guard<std::mutex> lock(owner.mutex);
     const auto index = source - 3;
     const auto previous = owner.logTranscriptLast[index];
-    for (auto& session : owner.sessions) {
-        if (!session.live.load(std::memory_order_acquire) || !session.recordingReceiver || session.eventDrained ||
-            (session.acceptedStreamKindMask & VN_MONITOR_STREAM_EVENT) == 0) continue;
-        const auto end = session.eventStoppedNs == 0 ? consumed : std::min(consumed,
-            index == 0 ? session.sealedAudioLogs : session.sealedLogicLogs);
-        const auto first = std::max(previous, session.logStarts[index]);
-        if (end > first) session.logLost[index] += end - first;
-    }
     owner.logTranscriptLast[index] = std::max(previous, consumed);
     owner.logProjectionCompleted[index].store(owner.logTranscriptLast[index], std::memory_order_release);
     owner.WakeDrain();
@@ -5185,7 +4624,6 @@ VnResult AcquireCaptureControl(VnMonitorSessionHandle handle,
     if (owner.lease.held && owner.lease.holder != handle) {
         return VN_IN_USE;
     }
-    if (owner.lease.held) StopOwnedRecordingLocked(owner, handle, owner.lease.generation, kLeaseReasonAcquire);
     owner.lease.generation += 1;
     owner.lease.held = true;
     owner.lease.holder = handle;
@@ -5215,7 +4653,6 @@ VnResult ReleaseCaptureControl(VnMonitorSessionHandle handle,
     if (!IsCurrentHolderLocked(owner, *session, handle, leaseGeneration)) {
         return VN_MONITOR_STALE_LEASE;
     }
-    StopOwnedRecordingLocked(owner, handle, leaseGeneration, kLeaseReasonRelease);
     owner.lease.held = false;
     owner.lease.holder = 0;
     owner.lease.principalHash = 0;
@@ -5442,318 +4879,6 @@ VnResult GetEffectiveCapturePlan(VnMonitorSessionHandle handle,
     return VN_OK;
 }
 
-VnResult StartLegacyRecording(VnMonitorSessionHandle handle, uint64_t leaseGeneration,
-                        const VnMonitorRecordingDesc* desc) {
-    const VnResult gate = GateControlEntry();
-    if (gate != VN_OK) {
-        return gate;
-    }
-    if (desc == nullptr || desc->utf8Path == nullptr) {
-        return VN_INVALID_ARG;
-    }
-    if (!ValidStructSize(desc->structSize, sizeof(VnMonitorRecordingDesc)) ||
-        !ReservedZero(desc->reserved0)) {
-        return VN_INVALID_ARG;
-    }
-    std::filesystem::path path;
-    if (!TryMakeUtf8Path(desc->utf8Path, &path)) {
-        return VN_INVALID_ARG;
-    }
-    ProcessOwner& owner = Owner();
-    std::lock_guard<std::mutex> lock(owner.mutex);
-    ExpireLeaseIfDueLocked(owner);
-    Session* session = FindLive(owner, handle);
-    if (session == nullptr) {
-        return VN_MONITOR_STALE_SESSION;
-    }
-    if ((session->acceptedPermissionMask & kRecordPermission) == 0) {
-        return VN_MONITOR_PERMISSION_DENIED;
-    }
-    if (!IsCurrentHolderLocked(owner, *session, handle, leaseGeneration)) {
-        return VN_MONITOR_STALE_LEASE;
-    }
-    if (session->executionFactVersion != 0) return VN_MONITOR_UNSUPPORTED;
-    std::lock_guard<std::mutex> recorderLock(owner.recorder.mutex);
-    if (owner.recorder.state == VN_MONITOR_RECORDING_STATE_ACTIVE ||
-        owner.recorder.state == VN_MONITOR_RECORDING_STATE_STOPPING) {
-        return VN_IN_USE;
-    }
-    if (desc->fileByteBudget != 0 &&
-        desc->fileByteBudget > VN_MONITOR_HARD_SESSION_FILE_BYTES) {
-        return VN_MONITOR_BUDGET_EXCEEDED;
-    }
-    bool openedOutput = false;
-    const auto fail = [&](VnResult reason) {
-        owner.internalEnabledMask.fetch_and(~(1u << kInternalRecorder),
-                                            std::memory_order_release);
-        if (owner.internals[kInternalRecorder]) owner.internals[kInternalRecorder]->Detach();
-        if (openedOutput || owner.recorder.file.is_open())
-            return FailAndRemoveStartFileLocked(owner.recorder, reason);
-        FailRecorderLocked(owner.recorder, reason);
-        return reason;
-    };
-    try {
-        owner.recorder.ResetStopped();
-        owner.recorder.path = path;
-        owner.recorder.fileByteBudget =
-            desc->fileByteBudget == 0 ? VN_MONITOR_DEFAULT_SESSION_FILE_BYTES
-                                      : desc->fileByteBudget;
-        owner.recorder.file.open(path, std::ios::binary | std::ios::trunc);
-        if (!owner.recorder.file.is_open()) {
-            return fail(VN_MONITOR_RECORDING_FAILED);
-        }
-        openedOutput = true;
-        std::uint8_t header[kSessionFileHeaderPackedBytes];
-        PackSessionFileHeader(header, 1, 1, 0, 0);
-        owner.recorder.file.write(reinterpret_cast<const char*>(header),
-                                  sizeof(header));
-        if (!owner.recorder.file.good()) {
-            return fail(VN_MONITOR_RECORDING_FAILED);
-        }
-        if (!owner.internals[kInternalRecorder]) {
-            return fail(VN_MONITOR_RECORDING_FAILED);
-        }
-        owner.recorder.queueEpoch = owner.nextEpoch++;
-        owner.internals[kInternalRecorder]->Reset(
-            owner.recorder.fileByteBudget, VN_MONITOR_DROP_RECORDER_QUEUE,
-            owner.recorder.queueEpoch, 0);
-        owner.recorder.fileBytes = sizeof(header);
-        owner.recorder.state = VN_MONITOR_RECORDING_STATE_ACTIVE;
-        if (!WriteRecorderChunkLocked(owner.recorder, VN_MONITOR_CHUNK_SESSION_HEADER,
-                                      VN_MONITOR_CHUNK_REQUIRED, nullptr, 0)) {
-            return fail(RecorderFailureResult(owner.recorder));
-        }
-        if (owner.engine != nullptr && owner.engine->trace &&
-            owner.engine->trace->Active()) {
-            std::uint8_t correlation[kTraceCorrelationPackedBytes];
-            const std::uint64_t executeFrame =
-                owner.executeFrame.load(std::memory_order_relaxed);
-            const std::uint64_t logicCommit = owner.engine->logicCommits.Current();
-            PackTraceCorrelationPayload(correlation, 1, session->epoch, executeFrame,
-                                        logicCommit, 0, 0, session->epoch);
-            (void)TryWriteOptionalRecorderChunkLocked(
-                owner.recorder, VN_MONITOR_CHUNK_TRACE_CORRELATION,
-                VN_MONITOR_CHUNK_OPTIONAL, correlation, kTraceCorrelationPackedBytes);
-            if (owner.recorder.state == VN_MONITOR_RECORDING_STATE_FAILED) {
-                return fail(RecorderFailureResult(owner.recorder));
-            }
-        }
-        owner.internalEnabledMask.fetch_or(1u << kInternalRecorder,
-                                           std::memory_order_release);
-        return VN_OK;
-    } catch (const std::bad_alloc&) {
-        return fail(VN_MONITOR_BUDGET_EXCEEDED);
-    } catch (const std::ios_base::failure&) {
-        return fail(VN_MONITOR_RECORDING_FAILED);
-    } catch (const std::filesystem::filesystem_error&) {
-        return fail(VN_MONITOR_RECORDING_FAILED);
-    }
-}
-
-VnResult StartRecording(VnMonitorSessionHandle handle, uint64_t leaseGeneration,
-                        const VnMonitorRecordingDesc* desc) {
-    const auto gate = GateControlEntry();
-    if (gate != VN_OK) return gate;
-    if (!desc || !desc->utf8Path || desc->structSize != sizeof(*desc) || desc->reserved0 != 0) return VN_INVALID_ARG;
-    if (desc->fileByteBudget > VN_MONITOR_HARD_SESSION_FILE_BYTES) return VN_MONITOR_BUDGET_EXCEEDED;
-    std::filesystem::path path;
-    if (!TryMakeUtf8Path(desc->utf8Path, &path)) return VN_INVALID_ARG;
-    auto& owner = Owner();
-    if (IdentitySafeBoundary(owner)) RefreshIdentityBoundary();
-    VnMonitorSessionDescV2 receiverDesc{};
-    RecordingDescriptor descriptor{};
-    {
-        std::unique_lock<std::mutex> lock(owner.mutex);
-        ExpireLeaseIfDueLocked(owner);
-        CleanupRecordingReceiverLocked(owner);
-        auto* session = FindLive(owner, handle);
-        if (!session) return VN_MONITOR_STALE_SESSION;
-        if (session->executionFactVersion == 0) {
-            lock.unlock();
-            return StartLegacyRecording(handle, leaseGeneration, desc);
-        }
-        if ((session->acceptedPermissionMask & kRecordPermission) == 0) return VN_MONITOR_PERMISSION_DENIED;
-        if (!IsCurrentHolderLocked(owner, *session, handle, leaseGeneration)) return VN_MONITOR_STALE_LEASE;
-        if (!IdentitySafeBoundary(owner)) return VN_BACKPRESSURE;
-        std::lock_guard<std::mutex> recorderLock(owner.recorder.mutex);
-        if (owner.recorder.state == VN_MONITOR_RECORDING_STATE_ACTIVE ||
-            owner.recorder.state == VN_MONITOR_RECORDING_STATE_STOPPING) return VN_IN_USE;
-        descriptor.owner = handle;
-        descriptor.ownerGeneration = session->generation;
-        descriptor.ownerEpoch = session->epoch;
-        descriptor.leaseGeneration = leaseGeneration;
-        descriptor.engine = owner.engine->monitorRequests.EngineInstance();
-        descriptor.recordingEpoch = owner.nextEpoch++;
-        descriptor.schema = std::max(2u, session->executionFactVersion);
-        descriptor.streams = session->acceptedStreamKindMask;
-        descriptor.permissions = session->acceptedPermissionMask;
-        descriptor.requestSymbols = session->requestSymbols;
-        receiverDesc.structSize = sizeof(receiverDesc);
-        receiverDesc.requestedStreamKindMask = descriptor.streams;
-        receiverDesc.requestedPermissionMask = descriptor.permissions & ~(kRecordPermission | kCaptureControlPermission);
-        receiverDesc.consumerQueueBytes = VN_MONITOR_DEFAULT_RECORDER_QUEUE_BYTES;
-        receiverDesc.requestSymbols = session->requestSymbols;
-        receiverDesc.requestRawAudio = session->requestRawAudio;
-        receiverDesc.requestedExecutionFactVersion = descriptor.schema;
-    }
-    VnMonitorSessionHandle receiver = 0;
-    const auto opened = OpenSessionWithPermissions(reinterpret_cast<const VnMonitorSessionDesc*>(&receiverDesc), false, 0, 0,
-        &receiver, (descriptor.streams & VN_MONITOR_STREAM_EVENT) != 0, true);
-    if (opened != VN_OK) return opened;
-    void (*afterOpen)(void*) = nullptr;
-    void* openContext = nullptr;
-    {
-        std::lock_guard<std::mutex> lock(owner.recorder.mutex);
-        afterOpen = owner.recorder.afterReceiverOpenForTests;
-        openContext = owner.recorder.receiverOpenContextForTests;
-        owner.recorder.afterReceiverOpenForTests = nullptr;
-        owner.recorder.receiverOpenContextForTests = nullptr;
-    }
-    if (afterOpen) afterOpen(openContext);
-    std::lock_guard<std::mutex> ownerLock(owner.mutex);
-    auto* session = FindLive(owner, handle);
-    auto* subscription = FindLive(owner, receiver, true);
-    const auto discard = [&](VnResult result) {
-        if (subscription) RetireSessionLocked(owner, *subscription);
-        return result;
-    };
-    if (!session || session->epoch != descriptor.ownerEpoch ||
-        !IsCurrentHolderLocked(owner, *session, handle, leaseGeneration)) return discard(VN_MONITOR_STALE_LEASE);
-    if (!subscription || subscription->acceptedStreamKindMask != descriptor.streams ||
-        subscription->acceptedPermissionMask != receiverDesc.requestedPermissionMask ||
-        subscription->executionFactVersion != descriptor.schema) return discard(VN_MONITOR_PERMISSION_DENIED);
-    std::lock_guard<std::mutex> recorderLock(owner.recorder.mutex);
-    auto& recorder = owner.recorder;
-    bool openedOutput = false;
-    const auto fail = [&](VnResult reason) {
-        // A copied path is not an acquired output: preserve it until open succeeds.
-        if (openedOutput || recorder.file.is_open()) FailAndRemoveStartFileLocked(recorder, reason);
-        else FailRecorderLocked(recorder, reason);
-        recorder.receiver = 0;
-        return discard(reason);
-    };
-    try {
-        recorder.ResetStopped();
-        recorder.typed = true;
-        recorder.receiver = receiver;
-        descriptor.epoch = subscription->epoch;
-        descriptor.startedNs = subscription->eventStartedNs;
-        std::copy(subscription->supportedFactKinds.begin(), subscription->supportedFactKinds.end(), descriptor.supported);
-        descriptor.controlStart = subscription->controlStart;
-        std::copy(subscription->executionStarts.begin(), subscription->executionStarts.end(), descriptor.starts);
-        descriptor.starts[2] = subscription->identityStart;
-        descriptor.starts[3] = subscription->symbolStart;
-        std::copy(subscription->ringStarts.begin(), subscription->ringStarts.end(), descriptor.ringStarts);
-        std::copy(subscription->logStarts.begin(), subscription->logStarts.end(), descriptor.logStarts);
-        std::copy(subscription->rawDropStarts.begin(), subscription->rawDropStarts.end(), descriptor.rawDropStarts);
-        std::copy(subscription->unavailableStarts.begin(), subscription->unavailableStarts.end(), descriptor.unavailableStarts);
-        if ((descriptor.streams & VN_MONITOR_STREAM_STATE) != 0) {
-            descriptor.cutId = subscription->cut.id;
-            descriptor.cutRevision = subscription->identity.begin.identityRevision;
-            descriptor.cutFirst = subscription->cut.beginSourceSequence;
-            descriptor.cutLast = subscription->cut.endSourceSequence;
-        }
-        recorder.descriptor = descriptor;
-        recorder.fileByteBudget = desc->fileByteBudget == 0 ? VN_MONITOR_DEFAULT_SESSION_FILE_BYTES : desc->fileByteBudget;
-        if (!recorder.verifier.Begin(descriptor)) return fail(VN_MONITOR_INCOMPATIBLE);
-        recorder.path = path;
-        recorder.file.open(path, std::ios::binary | std::ios::trunc);
-        if (!recorder.file.is_open()) {
-            return fail(VN_MONITOR_RECORDING_FAILED);
-        }
-        openedOutput = true;
-        std::uint8_t header[kSessionFileHeaderPackedBytes];
-        PackSessionFileHeader(header, 1, descriptor.engine, 0, 0);
-        recorder.file.write(reinterpret_cast<const char*>(header), sizeof(header));
-        if (!recorder.file.good()) return fail(VN_MONITOR_RECORDING_FAILED);
-        recorder.fileBytes = sizeof(header);
-        recorder.queueEpoch = descriptor.epoch;
-        recorder.state = VN_MONITOR_RECORDING_STATE_ACTIVE;
-        std::uint8_t packed[kRecordingDescriptorBytes]{};
-        ExecutionPayloadWriter write{packed};
-        VisitRecordingDescriptor(write, descriptor);
-        if (!WriteRecorderChunkLocked(recorder, VN_MONITOR_CHUNK_EXECUTION_DESCRIPTOR, VN_MONITOR_CHUNK_REQUIRED, packed, sizeof(packed)))
-            return fail(RecorderFailureResult(recorder));
-        owner.WakeDrain();
-        return VN_OK;
-    } catch (const std::bad_alloc&) {
-        return fail(VN_MONITOR_BUDGET_EXCEEDED);
-    } catch (const std::ios_base::failure&) {
-        return fail(VN_MONITOR_RECORDING_FAILED);
-    } catch (const std::filesystem::filesystem_error&) {
-        return fail(VN_MONITOR_RECORDING_FAILED);
-    }
-}
-
-VnResult StopRecording(VnMonitorSessionHandle handle, uint64_t leaseGeneration) {
-    const VnResult gate = GateControlEntry();
-    if (gate != VN_OK) {
-        return gate;
-    }
-    ProcessOwner& owner = Owner();
-    RefreshIdentityBoundary();
-    std::lock_guard<std::mutex> lock(owner.mutex);
-    ExpireLeaseIfDueLocked(owner);
-    Session* session = FindLive(owner, handle);
-    if (session == nullptr) {
-        return VN_MONITOR_STALE_SESSION;
-    }
-    if (!IsCurrentHolderLocked(owner, *session, handle, leaseGeneration)) {
-        return VN_MONITOR_STALE_LEASE;
-    }
-    {
-        std::lock_guard<std::mutex> recorderLock(owner.recorder.mutex);
-        if (owner.recorder.typed && (owner.recorder.descriptor.owner != handle ||
-            owner.recorder.descriptor.leaseGeneration != leaseGeneration)) return VN_MONITOR_STALE_LEASE;
-    }
-    StopOwnedRecordingLocked(owner, handle, leaseGeneration, kLeaseReasonRelease);
-    std::lock_guard<std::mutex> recorderLock(owner.recorder.mutex);
-    if (owner.recorder.state == VN_MONITOR_RECORDING_STATE_ACTIVE) {
-        owner.recorder.state = VN_MONITOR_RECORDING_STATE_STOPPING;
-        owner.WakeDrain();
-        return VN_OK;
-    }
-    if (owner.recorder.state == VN_MONITOR_RECORDING_STATE_STOPPING ||
-        owner.recorder.state == VN_MONITOR_RECORDING_STATE_STOPPED) {
-        return VN_OK;
-    }
-    return VN_MONITOR_RECORDING_FAILED;
-}
-
-VnResult GetRecordingStatus(VnMonitorSessionHandle handle,
-                            VnMonitorRecordingStatus* outStatus) {
-    const VnResult gate = GateControlEntry();
-    if (gate != VN_OK) {
-        return gate;
-    }
-    if (outStatus == nullptr) {
-        return VN_INVALID_ARG;
-    }
-    if (!ValidStructSize(outStatus->structSize, sizeof(VnMonitorRecordingStatus))) {
-        return VN_INVALID_ARG;
-    }
-    ProcessOwner& owner = Owner();
-    std::lock_guard<std::mutex> lock(owner.mutex);
-    if (FindLive(owner, handle) == nullptr) {
-        return VN_MONITOR_STALE_SESSION;
-    }
-    std::lock_guard<std::mutex> recorderLock(owner.recorder.mutex);
-    std::memset(outStatus, 0, sizeof(*outStatus));
-    outStatus->structSize = sizeof(*outStatus);
-    outStatus->state = owner.recorder.state;
-    outStatus->fileBytes = owner.recorder.fileBytes;
-    outStatus->lastCommittedChunk = owner.recorder.lastCommittedChunk;
-    const auto* receiver = owner.recorder.typed ? FindLive(owner, owner.recorder.receiver, true) : nullptr;
-    auto* queue = owner.recorder.typed ? (receiver ? receiver->queue.get() : nullptr) : owner.internals[kInternalRecorder].get();
-    if (queue) {
-        std::lock_guard<std::mutex> queueLock(queue->mutex);
-        outStatus->queueBytes = queue->usedBytes;
-    }
-    outStatus->recoveryNeeded = owner.recorder.recoveryNeeded;
-    outStatus->errorReason = owner.recorder.errorReason;
-    return VN_OK;
-}
-
 bool PublishSyntheticTimeSeriesForTests(std::uint32_t count) {
     ProcessOwner& owner = Owner();
     EnsureCaptureResources(owner);
@@ -5793,31 +4918,6 @@ void DrainOnceForTests() {
 void DrainRoundForTests() {
     auto& owner = Owner();
     DrainOneRound(owner, owner.drainScratch.data(), static_cast<std::uint32_t>(owner.drainScratch.size()));
-}
-
-void PumpRecorderForTests() { PumpRecorder(Owner()); }
-
-void ReleaseRecorderScratchForTests() {
-    auto& recorder = Owner().recorder;
-    std::lock_guard<std::mutex> lock(recorder.mutex);
-    decltype(recorder.frameBuffer){}.swap(recorder.frameBuffer);
-    decltype(recorder.packBuffer){}.swap(recorder.packBuffer);
-}
-
-VnMonitorSessionHandle RecordingReceiverForTests() {
-    auto& owner = Owner();
-    std::lock_guard<std::mutex> lock(owner.recorder.mutex);
-    return owner.recorder.receiver;
-}
-
-void SetRecordingQueueBudgetForTests(std::uint64_t bytes) {
-    auto& owner = Owner();
-    std::lock_guard<std::mutex> lock(owner.mutex);
-    std::lock_guard<std::mutex> recorderLock(owner.recorder.mutex);
-    auto* session = FindLive(owner, owner.recorder.receiver, true);
-    if (!session) return;
-    std::lock_guard<std::mutex> queueLock(session->queue->mutex);
-    session->queue->budgetBytes = bytes;
 }
 
 void DrainOneIdentityForTests() {
@@ -6150,38 +5250,6 @@ void SetFailInitAfterThreadForTests(bool fail) {
     Owner().failInitAfterThread = fail;
 }
 
-void SetRecorderWriteFailureForTests(bool fail) {
-    ProcessOwner& owner = Owner();
-    std::lock_guard<std::mutex> lock(owner.recorder.mutex);
-    owner.recorder.failNextWriteForTests = fail;
-}
-
-void SetBeforeRecorderFailureCleanupForTests(void (*callback)(void*), void* context) {
-    auto& recorder = Owner().recorder;
-    std::lock_guard<std::mutex> lock(recorder.mutex);
-    recorder.beforeFailureCleanupForTests = callback;
-    recorder.failureCleanupContextForTests = context;
-}
-
-void SetAfterRecordingReceiverOpenForTests(void (*callback)(void*), void* context) {
-    auto& recorder = Owner().recorder;
-    std::lock_guard<std::mutex> lock(recorder.mutex);
-    recorder.afterReceiverOpenForTests = callback;
-    recorder.receiverOpenContextForTests = context;
-}
-
-void SetRecorderOptionalWriteFailureForTests(bool fail) {
-    ProcessOwner& owner = Owner();
-    std::lock_guard<std::mutex> lock(owner.recorder.mutex);
-    owner.recorder.failNextOptionalWriteForTests = fail;
-}
-
-void SetRecorderOptionalRestoreFailureForTests(bool fail) {
-    ProcessOwner& owner = Owner();
-    std::lock_guard<std::mutex> lock(owner.recorder.mutex);
-    owner.recorder.failOptionalRestoreForTests = fail;
-}
-
 std::uint32_t PublishMutexHitsForTests() {
     return Owner().publishMutexHits.load(std::memory_order_acquire);
 }
@@ -6279,11 +5347,6 @@ void SetFailCaptureResourcesForTests(bool fail) {
     Owner().failCaptureResourcesForTests = fail;
 }
 
-bool RecorderConsumerEnabledForTests() {
-    return (Owner().internalEnabledMask.load(std::memory_order_acquire) &
-            (1u << kInternalRecorder)) != 0;
-}
-
 void EnableInternalConsumersForTests(std::uint32_t mask) {
     ProcessOwner& owner = Owner();
     EnsureCaptureResources(owner);
@@ -6296,8 +5359,7 @@ void EnableInternalConsumersForTests(std::uint32_t mask) {
         }
         owner.internals[i]->Reset(
             static_cast<std::uint64_t>(PackedProducerSlotBytes()) * 4u,
-            i == kInternalRecorder ? VN_MONITOR_DROP_RECORDER_QUEUE
-                                   : VN_MONITOR_DROP_REMOTE_TRANSPORT,
+            VN_MONITOR_DROP_REMOTE_TRANSPORT,
             owner.nextEpoch, 0);
     }
     owner.internalEnabledMask.store(mask, std::memory_order_release);
@@ -6465,7 +5527,7 @@ void PublishTimeSeriesQuantum(std::uint32_t callbackCpuUs,
         if (size == 0) {
             continue;
         }
-        if (!owner.producerRing.TryPush(packed, size, 0, {}, monitor::RecordingRawStreams(packed, size))) {
+        if (!owner.producerRing.TryPush(packed, size)) {
             owner.producerDrop.Note(sourceSequence, size, VN_MONITOR_EVENT_DROP);
             continue;
         }
@@ -6635,7 +5697,7 @@ void PublishPackedAudioChunk(ProcessOwner& owner, std::uint8_t* packed,
     if (size == 0) {
         return;
     }
-    if (!owner.producerRing.TryPush(packed, size, 0, {}, monitor::RecordingRawStreams(packed, size))) {
+    if (!owner.producerRing.TryPush(packed, size)) {
         owner.producerDrop.Note(sourceSequence, size,
                                 VN_MONITOR_DROP_SOURCE_PRODUCER);
         return;
@@ -6678,7 +5740,7 @@ bool MaybeFollowSlotRebind(ProcessOwner& owner, std::uint32_t tapIndex,
     if (size == 0) {
         return false;
     }
-    if (!owner.producerRing.TryPush(packed, size, 0, {}, monitor::RecordingRawStreams(packed, size))) {
+    if (!owner.producerRing.TryPush(packed, size)) {
         owner.producerDrop.Note(sourceSequence, size,
                                 VN_MONITOR_DROP_SOURCE_PRODUCER);
         return false;
@@ -6715,7 +5777,7 @@ bool MaybeExactInstanceStale(ProcessOwner& owner, std::uint32_t tapIndex,
     if (size == 0) {
         return false;
     }
-    if (!owner.producerRing.TryPush(packed, size, 0, {}, monitor::RecordingRawStreams(packed, size))) {
+    if (!owner.producerRing.TryPush(packed, size)) {
         owner.producerDrop.Note(sourceSequence, size,
                                 VN_MONITOR_DROP_SOURCE_PRODUCER);
         return false;

@@ -54,12 +54,9 @@ add_executable(harken_monitor_runtime_tests
     UnitTest/MonitorHubPlanTest.cpp
     UnitTest/MonitorHubTimeSeriesTest.cpp
     UnitTest/MonitorHubConformanceTest.cpp
-    UnitTest/MonitorSessionRecordTest.cpp
-    UnitTest/MonitorSessionTraceTest.cpp
     UnitTest/MonitorRemoteEndpointTest.cpp
     UnitTest/MonitorRemoteAuthTest.cpp
     UnitTest/MonitorFixtureDecode.cpp
-    UnitTest/MonitorSessionCodec.cpp
     UnitTest/MonitorRemoteCodec.cpp)
 target_link_libraries(harken_monitor_runtime_tests PRIVATE harken_core harken_buildinfo GTest::gtest_main)
 target_include_directories(harken_monitor_runtime_tests PRIVATE
@@ -167,11 +164,9 @@ add_executable(harken_runtime_tests
     UnitTest/MonitorAbiPinC.c
     UnitTest/MonitorModelOnlyTest.cpp
     UnitTest/MonitorFixtureDecode.cpp
-    UnitTest/MonitorSessionCodec.cpp
     UnitTest/MonitorRemoteCodec.cpp
     UnitTest/MonitorFixtureRecordTest.cpp
     UnitTest/MonitorFixturePlanTest.cpp
-    UnitTest/MonitorFixtureSessionTest.cpp
     UnitTest/MonitorFixtureRemoteTest.cpp
     UnitTest/MonitorObserveLifecycleTest.cpp
     UnitTest/MonitorObserveLineageTest.cpp
@@ -186,8 +181,6 @@ add_executable(harken_runtime_tests
     UnitTest/MonitorMeasureMeterTest.cpp
     UnitTest/MonitorMeasureBudgetTest.cpp
     UnitTest/MonitorMeasureSegmentTest.cpp
-    UnitTest/MonitorSessionRecoverTest.cpp
-    UnitTest/MonitorSessionCompareTest.cpp
     UnitTest/ParkTest.cpp
     UnitTest/HotReloadTest.cpp
     UnitTest/BusSendTest.cpp
@@ -316,6 +309,7 @@ add_executable(harken_runtime_tests
     UnitTest/TimelineConvergenceTest.cpp
     UnitTest/TransportEpochOwnerTest.cpp
     UnitTest/PreviewAbiTest.cpp
+    UnitTest/PreviewProjectTransactionTest.cpp
     UnitTest/EffectDescriptorWriterTest.cpp
     E2E/BaselineRegressionTest.cpp
     E2E/RemoteChannelTest.cpp
@@ -349,7 +343,6 @@ target_compile_definitions(harken_runtime_tests PRIVATE
     HARKEN_BASELINE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/Baselines"
     HARKEN_MONITOR_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/UnitTest/monitor"
     HARKEN_MONITOR_PLAN_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/UnitTest/monitor/plan"
-    HARKEN_MONITOR_SESSION_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/UnitTest/monitor/session"
     HARKEN_MONITOR_REMOTE_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/UnitTest/monitor/remote")
 # Tests read process env vars (baseline recorder switch) via standard
 # std::getenv; silence the MS CRT deprecation aimed at it.
@@ -509,7 +502,6 @@ add_executable(harken_release_runtime_tests
     UnitTest/MixRateConfigTest.cpp
     UnitTest/MonitorFixturePlanTest.cpp
     UnitTest/MonitorFixtureRecordTest.cpp
-    UnitTest/MonitorFixtureSessionTest.cpp
     UnitTest/MonitorModelOnlyTest.cpp
     UnitTest/MultichannelPanGoldenTest.cpp
     UnitTest/MusicPlaybackTimelineTest.cpp
@@ -599,7 +591,6 @@ add_executable(harken_release_runtime_tests
     UnitTest/WidthCollapseGoldenTest.cpp
     UnitTest/MonitorFixtureDecode.cpp
     UnitTest/MonitorRemoteCodec.cpp
-    UnitTest/MonitorSessionCodec.cpp
     ${HARKEN_DEVELOPMENT_DIR}/api/SnapshotApi.cpp
 )
 target_link_libraries(harken_release_runtime_tests PRIVATE harken_core_release harken_buildinfo
@@ -614,7 +605,6 @@ target_compile_definitions(harken_release_runtime_tests PRIVATE
     HARKEN_BASELINE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/Baselines"
     HARKEN_MONITOR_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/UnitTest/monitor"
     HARKEN_MONITOR_PLAN_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/UnitTest/monitor/plan"
-    HARKEN_MONITOR_SESSION_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/UnitTest/monitor/session"
     HARKEN_MONITOR_REMOTE_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/UnitTest/monitor/remote"
     HARKEN_EFFECT_TYPE_STATS_PUBLISHED
     HARKEN_TEMP_DIR="${CMAKE_SOURCE_DIR}/.temp/release-runtime-tests"
@@ -668,8 +658,7 @@ gtest_discover_tests(harken_pack_schema_tests TEST_PREFIX "PackSchema.")
 
 add_executable(harken_monitor_public_api_probe
     UnitTest/MonitorPublicApiProbe.c
-    UnitTest/MonitorFixtureDecode.cpp
-    UnitTest/MonitorSessionCodec.cpp)
+    UnitTest/MonitorFixtureDecode.cpp)
 set_source_files_properties(UnitTest/MonitorPublicApiProbe.c PROPERTIES LANGUAGE C)
 target_include_directories(harken_monitor_public_api_probe PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/UnitTest
@@ -677,7 +666,6 @@ target_include_directories(harken_monitor_public_api_probe PRIVATE
     ${HARKEN_DEVELOPMENT_DIR}/include)
 target_compile_definitions(harken_monitor_public_api_probe PRIVATE
     HARKEN_MONITOR_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/UnitTest/monitor"
-    HARKEN_MONITOR_SESSION_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/UnitTest/monitor/session"
     _CRT_SECURE_NO_WARNINGS)
 add_test(NAME monitor_public_api_probe
          COMMAND "$<TARGET_FILE:harken_monitor_public_api_probe>")
@@ -831,9 +819,6 @@ harken_add_python_check_test(monitor_record_fixture_check
     --check)
 harken_add_python_check_test(monitor_plan_fixture_check
     "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Development/monitor/fixtures/generate_plan_fixtures.py"
-    --check)
-harken_add_python_check_test(monitor_session_fixture_check
-    "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Development/monitor/fixtures/generate_session_fixtures.py"
     --check)
 harken_add_python_check_test(monitor_remote_fixture_check
     "${CMAKE_SOURCE_DIR}/HarkenEngine/Source/Development/monitor/fixtures/generate_remote_fixtures.py"

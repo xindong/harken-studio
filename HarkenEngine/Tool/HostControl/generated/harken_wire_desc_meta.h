@@ -189,19 +189,6 @@ struct WireDescMeta<VnCurrentWorldLoadDesc> {
 };
 
 template <>
-struct WireDescMeta<VnMonitorRecordingDesc> {
-    static bool DecodeSections(WireReader& reader, WireArena& arena,
-                               VnMonitorRecordingDesc* desc, std::uint32_t declared) {
-        if (offsetof(VnMonitorRecordingDesc, utf8Path) + sizeof(void*) <= declared) {
-            if (!ReadStringSection(reader, arena, &desc->utf8Path)) {
-                return false;
-            }
-        }
-        return true;
-    }
-};
-
-template <>
 struct WireDescMeta<VnVariableBatchDescV1> {
     static bool DecodeSections(WireReader& reader, WireArena& arena,
                                VnVariableBatchDescV1* desc, std::uint32_t declared) {

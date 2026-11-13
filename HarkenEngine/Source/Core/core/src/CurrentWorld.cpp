@@ -349,6 +349,33 @@ bool ValidContinuousWeightCurve(const CurveV1& curve) noexcept {
     return true;
 }
 
+bool InPublishedPropertyRange(playableproperties::PlayablePropertyIdV1 id, std::uint64_t bits) noexcept {
+    using playableproperties::PlayablePropertyIdV1;
+    const float value = std::bit_cast<float>(static_cast<std::uint32_t>(bits));
+    const auto within = [value](float low, float high) { return value >= low && value <= high; };
+    switch (id) {
+    case PlayablePropertyIdV1::Volume:
+        return within(HK_PACK_PROPERTY_VOLUME_MIN, HK_PACK_PROPERTY_VOLUME_MAX);
+    case PlayablePropertyIdV1::Pitch:
+        return within(HK_PACK_PROPERTY_PITCH_MIN, HK_PACK_PROPERTY_PITCH_MAX);
+    case PlayablePropertyIdV1::LoopCount:
+        return bits >= HK_PACK_PROPERTY_LOOP_COUNT_MIN && bits <= HK_PACK_PROPERTY_LOOP_COUNT_MAX;
+    case PlayablePropertyIdV1::OutputBusVolume:
+        return within(HK_PACK_PROPERTY_OUTPUT_BUS_VOLUME_MIN, HK_PACK_PROPERTY_OUTPUT_BUS_VOLUME_MAX);
+    case PlayablePropertyIdV1::SpatialPanning:
+        return within(HK_PACK_PROPERTY_SPATIAL_PANNING_MIN, HK_PACK_PROPERTY_SPATIAL_PANNING_MAX);
+    case PlayablePropertyIdV1::SpatialSpread:
+        return within(HK_PACK_PROPERTY_SPATIAL_SPREAD_MIN, HK_PACK_PROPERTY_SPATIAL_SPREAD_MAX);
+    case PlayablePropertyIdV1::SpatialAttenuationDistanceScaling:
+        return within(HK_PACK_PROPERTY_SPATIAL_ATTENUATION_DISTANCE_SCALING_MIN,
+                      HK_PACK_PROPERTY_SPATIAL_ATTENUATION_DISTANCE_SCALING_MAX);
+    case PlayablePropertyIdV1::SpatializationMix:
+        return within(HK_PACK_PROPERTY_SPATIALIZATION_MIX_MIN, HK_PACK_PROPERTY_SPATIALIZATION_MIX_MAX);
+    default:
+        return true;
+    }
+}
+
 bool ValidPayload(const PlayablePropertyPayloadViewV1& payload, const detail::PackDecodeBudget& budget = {}) {
     detail::PackDecodeCharge scratch(budget);
     using playableproperties::PlayablePropertyDefaultV1;
@@ -408,21 +435,14 @@ bool ValidPayload(const PlayablePropertyPayloadViewV1& payload, const detail::Pa
         if ((meta.wire == PlayablePropertyWireV1::U32 && bits > UINT32_MAX) ||
             ((meta.wire == PlayablePropertyWireV1::RowSpan ||
               meta.wire == PlayablePropertyWireV1::EffectProgram) &&
-             bits != 0)) {
+             bits != 0) ||
+            !InPublishedPropertyRange(meta.id, bits)) {
             return false;
         }
     }
     if ((payload.presentMask & (UINT64_C(1) << 4)) != 0 &&
         payload.values[4].bits > 1) {
         return false;
-    }
-    if ((payload.presentMask & (UINT64_C(1) << 16)) != 0) {
-        const std::uint64_t bits = payload.values[16].bits;
-        const float value =
-            std::bit_cast<float>(static_cast<std::uint32_t>(bits));
-        if (!ValidFiniteF32(bits) || value < 0.0f || value > 1.0f) {
-            return false;
-        }
     }
     for (std::uint32_t i = 0; i < payload.sendCount; ++i) {
         const SendV1& row = payload.sends[i];
@@ -1837,17 +1857,20 @@ static bool ValidateResolvedSectionGroupPayloadCore(
         const float value = std::bit_cast<float>(static_cast<std::uint32_t>(bits));
         return ValidFiniteF32(bits) && value >= low && value <= high;
     };
-    if (!inRange(5, -96.0f, 24.0f) || !inRange(8, -1.0f, 1.0f) ||
-        !inRange(9, 0.0f, 100.0f) || !inRange(11, 0.01f, 100.0f) ||
-        !inRange(16, 0.0f, 1.0f)) {
+    if (!inRange(5, HK_PACK_PROPERTY_OUTPUT_BUS_VOLUME_MIN, HK_PACK_PROPERTY_OUTPUT_BUS_VOLUME_MAX) ||
+        !inRange(8, HK_PACK_PROPERTY_SPATIAL_PANNING_MIN, HK_PACK_PROPERTY_SPATIAL_PANNING_MAX) ||
+        !inRange(9, HK_PACK_PROPERTY_SPATIAL_SPREAD_MIN, HK_PACK_PROPERTY_SPATIAL_SPREAD_MAX) ||
+        !inRange(11, HK_PACK_PROPERTY_SPATIAL_ATTENUATION_DISTANCE_SCALING_MIN,
+                 HK_PACK_PROPERTY_SPATIAL_ATTENUATION_DISTANCE_SCALING_MAX) ||
+        !inRange(16, HK_PACK_PROPERTY_SPATIALIZATION_MIX_MIN, HK_PACK_PROPERTY_SPATIALIZATION_MIX_MAX)) {
         return false;
     }
     for (std::uint32_t i = 0; i < payload.sendCount; ++i) {
         const auto& send = payload.sends[i];
         if (send.targetBusId == VnObjectId{} || send.targetBusId == payload.values[6].objectId ||
             send.reserved != 0 || send.reserved2 != 0 ||
-            !std::isfinite(send.sendLevel) || send.sendLevel < -96.0f ||
-            send.sendLevel > 24.0f ||
+            !std::isfinite(send.sendLevel) || send.sendLevel < HK_PACK_PROPERTY_SEND_LEVEL_MIN ||
+            send.sendLevel > HK_PACK_PROPERTY_SEND_LEVEL_MAX ||
             (send.sendLevel == 0.0f && std::signbit(send.sendLevel)) ||
             (i != 0 && payload.sends[i - 1].stableSendOrdinal >= send.stableSendOrdinal)) {
             return false;

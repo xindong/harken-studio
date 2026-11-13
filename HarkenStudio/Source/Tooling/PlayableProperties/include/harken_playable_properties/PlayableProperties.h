@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <iterator>
+#include <optional>
 
 namespace harkenplayableproperties {
 
@@ -137,6 +138,35 @@ inline constexpr PlayablePropertyMetaV1 kPlayablePropertyRegistryV1[] = {
     {PlayablePropertyIdV1::SpatializationMix, HK_PACK_PROPERTY_BIT(HK_PACK_PROPERTY_SPATIALIZATION_MIX), "spatializationMix", "spatial.spatializationMix", static_cast<PlayablePropertyWireV1>(HK_PACK_PROPERTY_SPATIALIZATION_MIX_WIRE), PlayablePropertyPresenceV1::MaskBit, PlayablePropertyCombineRoleV1::NearestExplicit, PlayablePropertyReferenceRoleV1::None, PlayablePropertyCapabilityRoleV1::Spatial, PlayablePropertyPhaseRoleV1::FirstAudible, static_cast<PlayablePropertyDefaultV1>(HK_PACK_PROPERTY_SPATIALIZATION_MIX_DEFAULT)},
 };
 static_assert(std::size(kPlayablePropertyRegistryV1) == 14);
+
+struct PlayablePropertyRangeV1 {
+    double minimum;
+    double maximum;
+};
+
+constexpr std::optional<PlayablePropertyRangeV1> PublishedRangeV1(PlayablePropertyIdV1 id) noexcept {
+    switch (id) {
+    case PlayablePropertyIdV1::Volume:
+        return PlayablePropertyRangeV1{HK_PACK_PROPERTY_VOLUME_MIN, HK_PACK_PROPERTY_VOLUME_MAX};
+    case PlayablePropertyIdV1::Pitch:
+        return PlayablePropertyRangeV1{HK_PACK_PROPERTY_PITCH_MIN, HK_PACK_PROPERTY_PITCH_MAX};
+    case PlayablePropertyIdV1::LoopCount:
+        return PlayablePropertyRangeV1{HK_PACK_PROPERTY_LOOP_COUNT_MIN, HK_PACK_PROPERTY_LOOP_COUNT_MAX};
+    case PlayablePropertyIdV1::OutputBusVolume:
+        return PlayablePropertyRangeV1{HK_PACK_PROPERTY_OUTPUT_BUS_VOLUME_MIN, HK_PACK_PROPERTY_OUTPUT_BUS_VOLUME_MAX};
+    case PlayablePropertyIdV1::SpatialPanning:
+        return PlayablePropertyRangeV1{HK_PACK_PROPERTY_SPATIAL_PANNING_MIN, HK_PACK_PROPERTY_SPATIAL_PANNING_MAX};
+    case PlayablePropertyIdV1::SpatialSpread:
+        return PlayablePropertyRangeV1{HK_PACK_PROPERTY_SPATIAL_SPREAD_MIN, HK_PACK_PROPERTY_SPATIAL_SPREAD_MAX};
+    case PlayablePropertyIdV1::SpatialAttenuationDistanceScaling:
+        return PlayablePropertyRangeV1{HK_PACK_PROPERTY_SPATIAL_ATTENUATION_DISTANCE_SCALING_MIN,
+                                       HK_PACK_PROPERTY_SPATIAL_ATTENUATION_DISTANCE_SCALING_MAX};
+    case PlayablePropertyIdV1::SpatializationMix:
+        return PlayablePropertyRangeV1{HK_PACK_PROPERTY_SPATIALIZATION_MIX_MIN, HK_PACK_PROPERTY_SPATIALIZATION_MIX_MAX};
+    default:
+        return std::nullopt;
+    }
+}
 static_assert(sizeof(ChassisPresenceV1) == sizeof(std::uint64_t));
 
 }

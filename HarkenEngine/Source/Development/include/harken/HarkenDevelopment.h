@@ -5,16 +5,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#if defined(__cplusplus)
-#define VN_PREVIEW_STATIC_ASSERT(cond, msg) static_assert(cond, msg)
-#define VN_PREVIEW_ALIGNOF(type) alignof(type)
-#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
-#define VN_PREVIEW_STATIC_ASSERT(cond, msg) _Static_assert(cond, msg)
-#define VN_PREVIEW_ALIGNOF(type) _Alignof(type)
-#else
-#error "harken_preview requires C11 or C++11"
-#endif
-
 #define HARKEN_PREVIEW_CAPABILITY_DEVELOPMENT_PREVIEW "development-preview"
 
 #ifdef __cplusplus
@@ -614,15 +604,10 @@ typedef struct VnPropertyBindingInfo {
  * Vn_MonitorCaptureRegistry takes uint32_t kind because the binding u32
  * validator currently accepts only uint32_t or VnEffectType; values are
  * VnMonitorRegistryKind.
- * Session file/wire integers are little-endian and must not be a native
- * memcpy of these C structs. File magic/commit magic are 8-byte ASCII
- * NUL-terminated markers encoded as little-endian uint64 constants
- * (VNMON10 / VNCMT10).
- * VN_MONITOR_SESSION_CHUNK_HEADER_BYTES / COMMIT_FOOTER_BYTES are the
- * packed on-disk sizes from PLAN-10 (32 / 24), not sizeof the in-memory
- * VnMonitorSessionChunkHeader / VnMonitorSessionCommitFooter.
- * deliverySequence in VnMonitorRecordHeader is consumer-local: Session
- * files and Remote transcripts store 0; only Vn_MonitorPoll fills it.
+ * Wire integers are little-endian and must not be a native memcpy of these
+ * C structs.
+ * deliverySequence in VnMonitorRecordHeader is consumer-local: Remote
+ * transcripts store 0; only Vn_MonitorPoll fills it.
  * Names, paths, and labels do not enter RT records. Numeric 0 is silence
  * only when a record is armed and validity flags say the sample is valid.
  * Record flags occupy bits 0-1 of VnMonitorRecordHeader.flags
@@ -642,16 +627,12 @@ typedef uint32_t VnMonitorTapKind;
 typedef uint32_t VnMonitorTapSelectorMode;
 typedef uint32_t VnMonitorPermissionMask;
 typedef uint32_t VnMonitorSecurityProfile;
-typedef uint32_t VnMonitorComparisonResult;
 typedef uint32_t VnMonitorPlanActivationState;
 typedef uint32_t VnMonitorStateCutResult;
 typedef uint32_t VnMonitorMeasurementKind;
 typedef uint32_t VnMonitorValidityFlags;
 typedef uint32_t VnMonitorRemoteOpcode;
-typedef uint32_t VnMonitorRecordingState;
 typedef uint32_t VnMonitorChannelMode;
-typedef uint32_t VnMonitorChunkKind;
-typedef uint32_t VnMonitorChunkFlags;
 
 enum {
     VN_MONITOR_STREAM_STATE = 1u << 0,
@@ -695,7 +676,6 @@ enum {
 enum {
     VN_MONITOR_DROP_SOURCE_PRODUCER = 1,
     VN_MONITOR_DROP_HUB_FANOUT = 2,
-    VN_MONITOR_DROP_RECORDER_QUEUE = 3,
     VN_MONITOR_DROP_REMOTE_TRANSPORT = 4,
     VN_MONITOR_DROP_DERIVED_INPUT = 5
 };
@@ -736,7 +716,6 @@ enum {
     VN_MONITOR_PERM_OBSERVE_EVENTS = 1u << 1,
     VN_MONITOR_PERM_OBSERVE_MEASUREMENTS = 1u << 2,
     VN_MONITOR_PERM_CAPTURE_CONTROL = 1u << 3,
-    VN_MONITOR_PERM_RECORD = 1u << 4,
     VN_MONITOR_PERM_RAW_AUDIO = 1u << 5,
     VN_MONITOR_PERM_SYMBOLS = 1u << 6
 };
@@ -745,13 +724,6 @@ enum {
     VN_MONITOR_SECURITY_DISABLED = 0,
     VN_MONITOR_SECURITY_LOCAL_ACL = 1,
     VN_MONITOR_SECURITY_LAN_MTLS = 2
-};
-
-enum {
-    VN_MONITOR_COMPARE_COMPARABLE = 0,
-    VN_MONITOR_COMPARE_PARTIALLY_COMPARABLE = 1,
-    VN_MONITOR_COMPARE_INCOMPARABLE = 2,
-    VN_MONITOR_COMPARE_MISSING_DATA = 3
 };
 
 enum {
@@ -804,15 +776,7 @@ enum {
     VN_MONITOR_REMOTE_OP_POLL = 2,
     VN_MONITOR_REMOTE_OP_STATE_RESYNC = 3,
     VN_MONITOR_REMOTE_OP_LEASE = 4,
-    VN_MONITOR_REMOTE_OP_PLAN = 5,
-    VN_MONITOR_REMOTE_OP_RECORDING = 6
-};
-
-enum {
-    VN_MONITOR_RECORDING_STATE_STOPPED = 0,
-    VN_MONITOR_RECORDING_STATE_ACTIVE = 1,
-    VN_MONITOR_RECORDING_STATE_STOPPING = 2,
-    VN_MONITOR_RECORDING_STATE_FAILED = 3
+    VN_MONITOR_REMOTE_OP_PLAN = 5
 };
 
 enum {
@@ -856,42 +820,8 @@ enum {
     VN_MONITOR_REDUCTION_RMS = 2
 };
 
-enum {
-    VN_MONITOR_CHUNK_REQUIRED = 1u << 0,
-    VN_MONITOR_CHUNK_OPTIONAL = 1u << 1
-};
-
-enum {
-    VN_MONITOR_CHUNK_SESSION_HEADER = 1,
-    VN_MONITOR_CHUNK_CAPABILITIES = 2,
-    VN_MONITOR_CHUNK_FINGERPRINTS = 3,
-    VN_MONITOR_CHUNK_CLOCK_ANCHORS = 4,
-    VN_MONITOR_CHUNK_OPTIONAL_SYMBOLS = 5,
-    VN_MONITOR_CHUNK_STATE = 6,
-    VN_MONITOR_CHUNK_EVENTS = 7,
-    VN_MONITOR_CHUNK_TIME_SERIES = 8,
-    VN_MONITOR_CHUNK_OPTIONAL_AUDIO = 9,
-    VN_MONITOR_CHUNK_TRACE_CORRELATION = 10,
-    VN_MONITOR_CHUNK_DROP_SUMMARIES = 11,
-    VN_MONITOR_CHUNK_FINAL_INDEX = 12,
-    VN_MONITOR_CHUNK_RECOVERY_INDEX = 13,
-    VN_MONITOR_CHUNK_EXECUTION_DESCRIPTOR = 14,
-    VN_MONITOR_CHUNK_EXECUTION_RECORD = 15,
-    VN_MONITOR_CHUNK_EXECUTION_END = 16
-};
-
-#define VN_MONITOR_SESSION_FORMAT_MAJOR 1u
-#define VN_MONITOR_SESSION_FORMAT_MINOR 0u
-#define VN_MONITOR_SESSION_FILE_MAGIC 0x30314e4f4d4e56ull
-#define VN_MONITOR_SESSION_COMMIT_MAGIC 0x3031544d434e56ull
-#define VN_MONITOR_SESSION_CHUNK_HEADER_BYTES 32u
-#define VN_MONITOR_SESSION_COMMIT_FOOTER_BYTES 24u
 #define VN_MONITOR_RECORD_ENVELOPE_PACKED_BYTES 316u
 #define VN_MONITOR_STATE_ENTITY_SLOTS 16u
-#define VN_MONITOR_DEFAULT_SESSION_FILE_BYTES 8589934592ull
-#define VN_MONITOR_HARD_SESSION_FILE_BYTES 68719476736ull
-#define VN_MONITOR_DEFAULT_CHUNK_PAYLOAD_BYTES 67108864ull
-#define VN_MONITOR_HARD_CHUNK_PAYLOAD_BYTES 268435456ull
 #define VN_MONITOR_HARD_REGISTRY_BLOB_BYTES 65536u
 #define VN_MONITOR_REMOTE_MESSAGE_COUNTER_START 1ull
 #define VN_MONITOR_REMOTE_NONCE_BYTES 32u
@@ -927,8 +857,6 @@ enum {
 #define VN_MONITOR_HARD_CONSUMER_QUEUE_BYTES 134217728ull
 #define VN_MONITOR_DEFAULT_DERIVED_WORK_ITEMS 1024u
 #define VN_MONITOR_HARD_DERIVED_WORK_ITEMS 8192u
-#define VN_MONITOR_DEFAULT_RECORDER_QUEUE_BYTES 67108864ull
-#define VN_MONITOR_HARD_RECORDER_QUEUE_BYTES 536870912ull
 #define VN_MONITOR_DEFAULT_REMOTE_QUEUE_BYTES 16777216ull
 #define VN_MONITOR_HARD_REMOTE_QUEUE_BYTES 134217728ull
 #define VN_MONITOR_DEFAULT_CAPTURE_BYTE_RATE 16777216ull
@@ -1051,8 +979,6 @@ typedef struct VnMonitorCapabilities {
     uint64_t hardConsumerQueueBytes;
     uint32_t resolvedDerivedWorkItems;
     uint32_t hardDerivedWorkItems;
-    uint64_t resolvedRecorderQueueBytes;
-    uint64_t hardRecorderQueueBytes;
     uint64_t resolvedRemoteQueueBytes;
     uint64_t hardRemoteQueueBytes;
     uint64_t resolvedCaptureByteRate;
@@ -1614,69 +1540,6 @@ typedef struct VnMonitorPollResult {
     uint64_t lastDeliverySequence;
 } VnMonitorPollResult;
 
-typedef struct VnMonitorRecordingDesc {
-    uint32_t structSize;
-    uint32_t reserved0;
-    const char* utf8Path;
-    uint64_t fileByteBudget;
-} VnMonitorRecordingDesc;
-
-typedef struct VnMonitorRecordingStatus {
-    uint32_t structSize;
-    uint32_t state;
-    uint64_t fileBytes;
-    uint64_t lastCommittedChunk;
-    uint64_t queueBytes;
-    uint32_t recoveryNeeded;
-    uint32_t errorReason;
-} VnMonitorRecordingStatus;
-
-/* Offline compare input. Callers recover first (M4-2); this struct is a
- * projected view, not a file path and not SessionRecoverResult. */
-typedef struct VnMonitorSessionCompareView {
-    uint32_t structSize;
-    uint32_t status;
-    uint32_t recoveryNeeded;
-    uint32_t droppedRequired;
-    uint32_t requiredUnknown;
-    uint32_t crcFailedRequired;
-    uint32_t truncatedAfterCommit;
-    uint32_t hasCompleteFooter;
-    uint32_t hasTraceCorrelation;
-    uint32_t hasOptionalSymbols;
-    uint64_t lastCompleteChunkSequence;
-    uint64_t fileBytes;
-    uint64_t bytesConsumed;
-    uint64_t capabilityFingerprint;
-    uint64_t programSemanticFingerprint;
-    uint64_t runtimeLineageFingerprint;
-    uint64_t tapDescriptorId;
-    uint64_t measurementSegmentGeneration;
-    uint32_t sampleRate;
-    uint32_t algorithmId;
-    uint32_t algorithmVersion;
-    uint32_t unitId;
-    uint32_t targetStreamKindMask;
-    uint32_t presentStreamKindMask;
-    uint64_t rangeBegin;
-    uint64_t rangeEnd;
-    uint32_t gapInvalidWarmup;
-    uint32_t reserved0;
-} VnMonitorSessionCompareView;
-
-typedef struct VnMonitorSessionCompareDesc {
-    uint32_t structSize;
-    uint32_t reserved0;
-    const VnMonitorSessionCompareView* left;
-    const VnMonitorSessionCompareView* right;
-    uint64_t executeFrameBegin;
-    uint64_t executeFrameEnd;
-} VnMonitorSessionCompareDesc;
-
-typedef struct VnMonitorCompareResult {
-    uint32_t structSize;
-    uint32_t result;
-} VnMonitorCompareResult;
 
 typedef struct VnMonitorTapDescriptor {
     uint32_t structSize;
@@ -1719,49 +1582,6 @@ typedef struct VnMonitorMeasurementRequest {
     uint32_t triggerMode;
     uint32_t reserved1;
 } VnMonitorMeasurementRequest;
-
-typedef struct VnMonitorSessionFileHeader {
-    uint32_t structSize;
-    uint32_t formatMajor;
-    uint32_t formatMinor;
-    uint32_t reserved0;
-    uint64_t fileMagic;
-    uint64_t headerBytes;
-    uint64_t engineBuildId;
-    uint64_t engineMonitorInstanceId;
-    uint64_t createdUtcTicks;
-    uint64_t capabilityFingerprint;
-    uint32_t headerCrc32c;
-    uint32_t reserved1;
-} VnMonitorSessionFileHeader;
-
-/* In-memory description of one on-disk chunk. Packed file bytes are:
- * kind:u16, flags:u16, version:u16, headerBytes:u16, payloadBytes:u64,
- * chunkSequence:u64, payloadCrc32c:u32, headerCrc32c:u32 (32 bytes LE).
- * Do not memcpy this struct to disk. */
-typedef struct VnMonitorSessionChunkHeader {
-    uint32_t structSize;
-    uint32_t kind;
-    uint32_t flags;
-    uint32_t version;
-    uint32_t headerBytes;
-    uint32_t payloadCrc32c;
-    uint32_t headerCrc32c;
-    uint32_t reserved0;
-    uint64_t payloadBytes;
-    uint64_t chunkSequence;
-} VnMonitorSessionChunkHeader;
-
-/* In-memory description of one on-disk commit footer. Packed file bytes are:
- * commitMagic:u64 (VNCMT10), chunkSequence:u64, payloadBytes:u64 (24 bytes LE).
- * Do not memcpy this struct to disk. */
-typedef struct VnMonitorSessionCommitFooter {
-    uint32_t structSize;
-    uint32_t reserved0;
-    uint64_t commitMagic;
-    uint64_t chunkSequence;
-    uint64_t payloadBytes;
-} VnMonitorSessionCommitFooter;
 
 typedef struct VnMonitorStateCutBegin {
     uint32_t structSize;
@@ -2379,18 +2199,6 @@ VnResult Vn_MonitorGetConsumerStatus(VnMonitorSessionHandle handle,
                                      uint32_t capacity,
                                      uint32_t* requiredCount);
 
-VnResult Vn_MonitorStartRecording(VnMonitorSessionHandle handle,
-                                  uint64_t leaseGeneration,
-                                  const VnMonitorRecordingDesc* desc);
-
-VnResult Vn_MonitorStopRecording(VnMonitorSessionHandle handle,
-                                 uint64_t leaseGeneration);
-
-VnResult Vn_MonitorGetRecordingStatus(VnMonitorSessionHandle handle,
-                                      VnMonitorRecordingStatus* outStatus);
-
-VnResult Vn_MonitorCompareSessions(const VnMonitorSessionCompareDesc* desc,
-                                   VnMonitorCompareResult* out);
 
 VnResult Vn_RemoteStart(const VnRemoteConfig* config);
 
@@ -2719,24 +2527,6 @@ typedef struct VnPreviewPlaybackPathV1 {
     VnPreviewPlaybackSendV1 sends[VN_PREVIEW_PATH_SEND_CAPACITY];
 } VnPreviewPlaybackPathV1;
 
-VN_PREVIEW_STATIC_ASSERT(sizeof(VnPreviewPlaybackPathV1) == 1784,
-                         "VnPreviewPlaybackPathV1 size");
-VN_PREVIEW_STATIC_ASSERT(VN_PREVIEW_ALIGNOF(VnPreviewPlaybackPathV1) == 8,
-                         "VnPreviewPlaybackPathV1 alignment");
-
-VN_PREVIEW_STATIC_ASSERT(sizeof(VnPreviewPlayPlayableDescV2) == 40,
-                         "VnPreviewPlayPlayableDescV2 size");
-VN_PREVIEW_STATIC_ASSERT(VN_PREVIEW_ALIGNOF(VnPreviewPlayPlayableDescV2) == 8,
-                         "VnPreviewPlayPlayableDescV2 alignment");
-VN_PREVIEW_STATIC_ASSERT(sizeof(VnPreviewResetPlayableDescV2) == 40,
-                         "VnPreviewResetPlayableDescV2 size");
-VN_PREVIEW_STATIC_ASSERT(VN_PREVIEW_ALIGNOF(VnPreviewResetPlayableDescV2) == 8,
-                         "VnPreviewResetPlayableDescV2 alignment");
-VN_PREVIEW_STATIC_ASSERT(sizeof(VnPreviewPlayableStateV2) == 72,
-                         "VnPreviewPlayableStateV2 size");
-VN_PREVIEW_STATIC_ASSERT(VN_PREVIEW_ALIGNOF(VnPreviewPlayableStateV2) == 8,
-                         "VnPreviewPlayableStateV2 alignment");
-
 VnPreviewResult VnPreview_PlayPlayable(
     const VnPreviewPlayPlayableDescV2* desc,
     VnPreviewPlayableHandle* outHandle);
@@ -2816,7 +2606,8 @@ typedef struct VnPreviewProjectDescV3 {
     uint32_t reserved1;
 } VnPreviewProjectDescV3;
 
-typedef enum VnPreviewPrepareStatus {
+typedef int32_t VnPreviewPrepareStatus;
+enum {
     VN_PREVIEW_PREPARE_OK = 0,
     VN_PREVIEW_PREPARE_INVALID = 1,
     VN_PREVIEW_PREPARE_BACKPRESSURE = 2,
@@ -2825,15 +2616,16 @@ typedef enum VnPreviewPrepareStatus {
     VN_PREVIEW_PREPARE_DEVICE_ERROR = 5,
     VN_PREVIEW_PREPARE_INVALID_WORLD = 6,
     VN_PREVIEW_PREPARE_UNAVAILABLE = 7
-} VnPreviewPrepareStatus;
+};
 
-typedef enum VnPreviewCommitStatus {
+typedef int32_t VnPreviewCommitStatus;
+enum {
     VN_PREVIEW_COMMIT_OK = 0,
     VN_PREVIEW_COMMIT_BACKPRESSURE = 1,
     VN_PREVIEW_COMMIT_INVALID = 2,
     VN_PREVIEW_COMMIT_DEVICE_ERROR = 3,
     VN_PREVIEW_COMMIT_UNAVAILABLE = 4
-} VnPreviewCommitStatus;
+};
 
 VnPreviewPrepareStatus VnPreview_PrepareProject(
     const VnPreviewProjectDescV1* desc, VnPreviewProjectHandle* outHandle);

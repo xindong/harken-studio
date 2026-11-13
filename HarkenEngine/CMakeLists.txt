@@ -163,8 +163,6 @@ set(HARKEN_DEVELOPMENT_SOURCES
     ${HARKEN_DEVELOPMENT_DIR}/monitor/MonitorMeterReduce.cpp
     ${HARKEN_DEVELOPMENT_DIR}/monitor/MonitorScopeHandler.cpp
     ${HARKEN_DEVELOPMENT_DIR}/monitor/MonitorScopeTrigger.cpp
-    ${HARKEN_DEVELOPMENT_DIR}/monitor/MonitorSessionCompare.cpp
-    ${HARKEN_DEVELOPMENT_DIR}/monitor/MonitorSessionRecover.cpp
     ${HARKEN_DEVELOPMENT_DIR}/monitor/MonitorSpectrumFft.cpp
     ${HARKEN_DEVELOPMENT_DIR}/monitor/MonitorSpectrumHandler.cpp
     ${HARKEN_DEVELOPMENT_DIR}/monitor/MonitorWaveformHandler.cpp

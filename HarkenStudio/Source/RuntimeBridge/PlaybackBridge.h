@@ -31,7 +31,8 @@ namespace Bridge {
 
 enum class EngineDeviceMode : uint8_t {
     Real,
-    Null
+    Null,
+    NullRealtime
 };
 
 //==============================================================================

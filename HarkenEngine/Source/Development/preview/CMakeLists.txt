@@ -10,12 +10,14 @@
 add_library(harken_preview STATIC
     src/PreviewAbi.cpp
     src/PreviewAbiLayout.cpp
+    src/PreviewProject.cpp
 )
 target_include_directories(harken_preview
     PUBLIC
         ${HARKEN_DEVELOPMENT_DIR}/include
     PRIVATE
         ${HARKEN_DEVELOPMENT_PRIVATE_INCLUDES}
+        ${HARKEN_RUNTIME_PRIVATE_INCLUDES}
         ${HARKEN_CORE_DIR}/api/src
         ${HARKEN_CORE_DIR}/core/include
         ${HARKEN_CORE_DIR}/media/include

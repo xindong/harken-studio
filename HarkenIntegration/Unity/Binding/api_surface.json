@@ -559,14 +559,12 @@
         "native:Vn_MonitorBeginHostSession",
         "native:Vn_MonitorCaptureRegistry",
         "native:Vn_MonitorCloseSession",
-        "native:Vn_MonitorCompareSessions",
         "native:Vn_MonitorEndHostSession",
         "native:Vn_MonitorGetCapabilities",
         "native:Vn_MonitorGetCaptureControlStatus",
         "native:Vn_MonitorGetConsumerStatus",
         "native:Vn_MonitorGetEffectiveCapturePlan",
         "native:Vn_MonitorGetEventSessionStatus",
-        "native:Vn_MonitorGetRecordingStatus",
         "native:Vn_MonitorGetStateCutStatus",
         "native:Vn_MonitorGetSubscriptionStatus",
         "native:Vn_MonitorOpenEventSession",
@@ -577,9 +575,7 @@
         "native:Vn_MonitorReleaseCaptureControl",
         "native:Vn_MonitorRequestStateCut",
         "native:Vn_MonitorSealEventSession",
-        "native:Vn_MonitorStartRecording",
         "native:Vn_MonitorStopCapture",
-        "native:Vn_MonitorStopRecording",
         "native:Vn_MonitorValidateCapturePlan",
         "native:Vn_RegisterAttenuation",
         "native:Vn_RegisterBinding",
@@ -620,7 +616,29 @@
         "native:Vn_RemoteClientDisconnect",
         "native:Vn_RemoteClientDiscover",
         "native:Vn_RemoteClientPoll",
-        "native:Vn_RemoteClientRequest"
+        "native:Vn_RemoteClientRequest",
+        "native:VnPreview_PlayPlayable",
+        "native:VnPreview_ResetPlayable",
+        "native:VnPreview_StopPlayable",
+        "native:VnPreview_QueryPlayable",
+        "native:VnPreview_CapturePlaybackPaths",
+        "native:VnPreview_PrepareProject",
+        "native:VnPreview_PrepareProjectV2",
+        "native:VnPreview_PrepareProjectV3",
+        "native:VnPreview_CommitProject",
+        "native:VnPreview_CancelProject",
+        "native:VnPreview_DrainProjectAcks",
+        "native:VnPreview_ProjectIsOpen",
+        "native:VnPreview_QueryOwnerRevision",
+        "native:VnPreview_HasPlayableConsumers",
+        "native:VnPreview_HasAction",
+        "native:VnPreview_PumpNullMixer",
+        "native:VnPreview_EnableChannelPeakMetering",
+        "native:VnPreview_TakeChannelPeaks",
+        "native:VnPreview_RegisterPcm",
+        "native:VnPreview_PlayVoiceRaw",
+        "native:VnPreview_RefreshVoiceBindings",
+        "native:VnPreview_SetVoiceProperty"
       ]
     },
     "native-binding": {
@@ -2034,14 +2052,17 @@
       "types": [
         "VnMonitor",
         "VnPlaybackReadiness",
-        "VnActionPlaybackReadiness"
+        "VnActionPlaybackReadiness",
+        "VnPreview"
       ],
       "constants": [
-        "VN_MONITOR_"
+        "VN_MONITOR_",
+        "VN_PREVIEW_"
       ],
       "functions": [
         "Vn_Monitor",
-        "Vn_QueryActionPlaybackReadiness"
+        "Vn_QueryActionPlaybackReadiness",
+        "VnPreview_"
       ],
       "results": [
         "VN_MONITOR_"

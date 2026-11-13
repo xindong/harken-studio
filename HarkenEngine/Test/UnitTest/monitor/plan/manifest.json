@@ -24,7 +24,7 @@
     },
     {
       "path": "capacity.expected.json",
-      "sha256": "ce1f98d792b3a061a6feba6a6c6ac605c098426650fa8451e1ab2ff57a01605b",
+      "sha256": "d8c1176d65f00d7e29a862cd8ece2cc66c6c2c6efa2915cc0838aeb5c5836ba2",
       "isProvisional": false,
       "producingPackage": "m0-3",
       "contractVersion": 1,
@@ -87,7 +87,7 @@
     },
     {
       "path": "state_table.json",
-      "sha256": "06df4d070ae1359788f64077272bbc6f5743d78c3134400635bb9f2fa2cc3115",
+      "sha256": "b4f16d45bd8fa5f0c82f00f5d003aecbe37e4e4945644fdc7fb4b62d40abcd2b",
       "isProvisional": false,
       "producingPackage": "m0-3",
       "contractVersion": 1,

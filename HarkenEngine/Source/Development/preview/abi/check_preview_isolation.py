@@ -8,21 +8,18 @@ Two independent claims, both read from the tree rather than trusted:
      the header does not declare. Without this the manifest would decay into a
      comment, and the second claim would then be checking a stale list.
 
-  2. No token the preview surface owns appears in a gameplay product, or in either
-     input a gameplay product is generated from:
+  2. No token the preview surface owns appears in a gameplay product, or in the
+     input the release library is generated from:
 
        HarkenEngine/Source/Core/api/include/harken/Harken.h   public C API header
-       HarkenEngine/Tool/HostControl/wire/harken_wire_table.json  binding table
        HarkenEngine/Source/Core/api/abi/HarkenEngine.def       export allowlist
        HarkenIntegration/Unity/Harken/Runtime/Generated/*.g.cs                      C# binding
 
-     The two generators today derive their output from the header and the table
-     alone and never read the preview header, so the isolation is structural. This
-     check is what makes that structure load-bearing rather than incidental:
-     declaring a preview entry in the public header, or naming one in the wire
-     table, fails here immediately -- at the moment it is written, before anything
-     is regenerated and before a preview symbol could reach a shipped DLL or a
-     game's C# assembly.
+     The wire table and the ABI manifest describe both editions and tag every
+     entry with its edition, so they are not part of the gameplay face; the C#
+     binding excludes the preview surface by managed projection policy. Declaring
+     a preview entry in the public header or the release allowlist, or projecting
+     one into the C# binding, fails here immediately.
 
 Run:
 
@@ -52,14 +49,12 @@ PREVIEW_HEADER = os.path.join(
     REPO_ROOT, "HarkenEngine", "Source", "Development", "include",
     "harken", "HarkenDevelopment.h")
 
-# The gameplay face: the two generator inputs first, then the products. Inputs
-# are listed because failing on the input is what makes the failure early --
-# a product only acquires the name once somebody regenerates it.
+# The gameplay face: the release header first, then the products. The header is
+# listed because failing on the input is what makes the failure early -- a
+# product only acquires the name once somebody regenerates it.
 GAMEPLAY_FILES = [
     os.path.join(REPO_ROOT, "HarkenEngine", "Source", "Core", "api",
                  "include", "harken", "Harken.h"),
-    os.path.join(REPO_ROOT, "HarkenEngine", "Tool", "HostControl",
-                 "wire", "harken_wire_table.json"),
     os.path.join(REPO_ROOT, "HarkenEngine", "Source", "Core", "api", "abi",
                  "HarkenEngine.def"),
     os.path.join(REPO_ROOT, "HarkenIntegration", "Unity", "Harken", "Runtime", "Generated",

@@ -39,13 +39,11 @@ public:
         origins_.assign(cap, {});
         head_.store(0, std::memory_order_relaxed);
         tail_.store(0, std::memory_order_relaxed);
-        ResetRawCounters();
     }
 
     void Reset() {
         head_.store(0, std::memory_order_relaxed);
         tail_.store(0, std::memory_order_relaxed);
-        ResetRawCounters();
         if (!lengths_.empty()) {
             std::fill(lengths_.begin(), lengths_.end(), 0);
             std::fill(sourceKinds_.begin(), sourceKinds_.end(), 0);
@@ -61,7 +59,6 @@ public:
         mask_ = 0;
         head_.store(0, std::memory_order_relaxed);
         tail_.store(0, std::memory_order_relaxed);
-        ResetRawCounters();
     }
 
     std::uint32_t SlotBytes() const { return slotBytes_; }
@@ -89,24 +86,8 @@ public:
     std::uint64_t Published() const { return head_.load(std::memory_order_acquire); }
     std::uint64_t Consumed() const { return tail_.load(std::memory_order_acquire); }
 
-    std::uint64_t PublishedForStreams(std::uint32_t mask) const {
-        const auto published = Published();
-        std::uint64_t result = 0;
-        for (unsigned i = 0; i != rawPublished_.size(); ++i)
-            if ((mask & (1u << i)) != 0)
-                result = std::max(result, std::min(published, rawPublished_[i].load(std::memory_order_acquire)));
-        return result;
-    }
-
-    std::uint64_t DroppedForStreams(std::uint32_t mask) const {
-        std::uint64_t result = 0;
-        for (unsigned i = 0; i != rawDropped_.size(); ++i)
-            if ((mask & (1u << i)) != 0) result += rawDropped_[i].load(std::memory_order_acquire);
-        return result;
-    }
-
     bool TryPush(const std::uint8_t* bytes, std::uint32_t size, std::uint32_t sourceKind = 0,
-        MonitorProducerOrigin origin = {}, std::uint32_t rawStream = 0) {
+        MonitorProducerOrigin origin = {}) {
         if (bytes == nullptr || size == 0 || size > slotBytes_ ||
             lengths_.empty()) {
             return false;
@@ -114,8 +95,6 @@ public:
         const std::uint64_t head = head_.load(std::memory_order_relaxed);
         const std::uint64_t tail = tail_.load(std::memory_order_acquire);
         if (head - tail >= lengths_.size()) {
-            for (unsigned i = 0; i != rawDropped_.size(); ++i)
-                if ((rawStream & (1u << i)) != 0) rawDropped_[i].fetch_add(1, std::memory_order_release);
             return false;
         }
         const std::uint32_t index = static_cast<std::uint32_t>(head & mask_);
@@ -125,8 +104,6 @@ public:
         lengths_[index] = size;
         sourceKinds_[index] = sourceKind;
         origins_[index] = origin;
-        for (unsigned i = 0; i != rawPublished_.size(); ++i)
-            if ((rawStream & (1u << i)) != 0) rawPublished_[i].store(head + 1, std::memory_order_release);
         head_.store(head + 1, std::memory_order_release);
         return true;
     }
@@ -159,16 +136,11 @@ public:
     }
 
 private:
-    void ResetRawCounters() {
-        for (auto& value : rawPublished_) value.store(0, std::memory_order_relaxed);
-        for (auto& value : rawDropped_) value.store(0, std::memory_order_relaxed);
-    }
     std::vector<std::uint8_t> storage_{};
     std::vector<std::uint32_t> lengths_{};
     // The tag is slot metadata, not part of either source or public payload.
     std::vector<std::uint32_t> sourceKinds_{};
     std::vector<MonitorProducerOrigin> origins_{};
-    std::array<std::atomic<std::uint64_t>, 4> rawPublished_{}, rawDropped_{};
     std::uint32_t slotBytes_ = 0;
     std::uint32_t mask_ = 0;
     std::atomic<std::uint64_t> head_{0};

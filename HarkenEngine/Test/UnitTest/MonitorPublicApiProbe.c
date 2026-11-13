@@ -2,7 +2,6 @@
 #include <harken/HarkenDevelopment.h>
 
 #include "MonitorFixtureDecode.h"
-#include "MonitorSessionCodec.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -11,9 +10,6 @@
 
 #ifndef HARKEN_MONITOR_FIXTURE_DIR
 #define HARKEN_MONITOR_FIXTURE_DIR "."
-#endif
-#ifndef HARKEN_MONITOR_SESSION_FIXTURE_DIR
-#define HARKEN_MONITOR_SESSION_FIXTURE_DIR "."
 #endif
 
 #if defined(__cplusplus)
@@ -59,13 +55,9 @@ static uint8_t* ReadAll(const char* path, uint64_t* outBytes) {
 
 int main(void) {
     char recordPath[1024];
-    char sessionPath[1024];
     if (snprintf(recordPath, sizeof(recordPath), "%s/%s", HARKEN_MONITOR_FIXTURE_DIR,
                  "legal_event.bin") < 0)
         return Fail("missing-sample", "record path");
-    if (snprintf(sessionPath, sizeof(sessionPath), "%s/%s", HARKEN_MONITOR_SESSION_FIXTURE_DIR,
-                 "legal.bin") < 0)
-        return Fail("missing-sample", "session path");
 
     uint64_t recordBytes = 0;
     uint8_t* record = ReadAll(recordPath, &recordBytes);
@@ -100,21 +92,5 @@ int main(void) {
         return Fail("decode-error", detail);
     }
     free(record);
-
-    uint64_t sessionBytes = 0;
-    uint8_t* session = ReadAll(sessionPath, &sessionBytes);
-    if (session == NULL)
-        return Fail("missing-sample", sessionPath);
-    VnMonitorSessionCommitView commits[8];
-    VnMonitorDecodedRecord scratch[8];
-    uint8_t sessionSkip[2048];
-    memset(commits, 0, sizeof(commits));
-    memset(scratch, 0, sizeof(scratch));
-    memset(sessionSkip, 0, sizeof(sessionSkip));
-    VnMonitorSessionScanResult scanned = vn_monitor_scan_session(
-        session, sessionBytes, commits, 8, scratch, 8, sessionSkip, sizeof(sessionSkip));
-    free(session);
-    if (scanned.status != VN_OK || scanned.commitsWritten == 0)
-        return Fail("decode-error", "session");
     return 0;
 }

@@ -102,7 +102,7 @@ TABLE_JSON = r'''
     "pointerBytes": 8,
     "byteOrder": "little",
     "callingConvention": "cdecl",
-    "publicExportPrefix": "Vn_",
+    "publicExportPrefix": "Vn",
     "publicExportPolicy": "required-set",
     "defaultStructSizePolicy": "exact-current",
     "structSizePolicies": {
@@ -4676,14 +4676,6 @@ TABLE_JSON = r'''
           "u32"
         ],
         [
-          "resolvedRecorderQueueBytes",
-          "u64"
-        ],
-        [
-          "hardRecorderQueueBytes",
-          "u64"
-        ],
-        [
           "resolvedRemoteQueueBytes",
           "u64"
         ],
@@ -5666,223 +5658,6 @@ TABLE_JSON = r'''
         ]
       ]
     },
-    "VnMonitorRecordingDesc": {
-      "fields": [
-        [
-          "structSize",
-          "u32"
-        ],
-        [
-          "reserved0",
-          "u32"
-        ],
-        [
-          "utf8Path",
-          {
-            "ptr": "string",
-            "ctype": "const char*"
-          }
-        ],
-        [
-          "fileByteBudget",
-          "u64"
-        ]
-      ]
-    },
-    "VnMonitorRecordingStatus": {
-      "fields": [
-        [
-          "structSize",
-          "u32"
-        ],
-        [
-          "state",
-          "u32"
-        ],
-        [
-          "fileBytes",
-          "u64"
-        ],
-        [
-          "lastCommittedChunk",
-          "u64"
-        ],
-        [
-          "queueBytes",
-          "u64"
-        ],
-        [
-          "recoveryNeeded",
-          "u32"
-        ],
-        [
-          "errorReason",
-          "u32"
-        ]
-      ]
-    },
-    "VnMonitorSessionCompareView": {
-      "fields": [
-        [
-          "structSize",
-          "u32"
-        ],
-        [
-          "status",
-          "u32"
-        ],
-        [
-          "recoveryNeeded",
-          "u32"
-        ],
-        [
-          "droppedRequired",
-          "u32"
-        ],
-        [
-          "requiredUnknown",
-          "u32"
-        ],
-        [
-          "crcFailedRequired",
-          "u32"
-        ],
-        [
-          "truncatedAfterCommit",
-          "u32"
-        ],
-        [
-          "hasCompleteFooter",
-          "u32"
-        ],
-        [
-          "hasTraceCorrelation",
-          "u32"
-        ],
-        [
-          "hasOptionalSymbols",
-          "u32"
-        ],
-        [
-          "lastCompleteChunkSequence",
-          "u64"
-        ],
-        [
-          "fileBytes",
-          "u64"
-        ],
-        [
-          "bytesConsumed",
-          "u64"
-        ],
-        [
-          "capabilityFingerprint",
-          "u64"
-        ],
-        [
-          "programSemanticFingerprint",
-          "u64"
-        ],
-        [
-          "runtimeLineageFingerprint",
-          "u64"
-        ],
-        [
-          "tapDescriptorId",
-          "u64"
-        ],
-        [
-          "measurementSegmentGeneration",
-          "u64"
-        ],
-        [
-          "sampleRate",
-          "u32"
-        ],
-        [
-          "algorithmId",
-          "u32"
-        ],
-        [
-          "algorithmVersion",
-          "u32"
-        ],
-        [
-          "unitId",
-          "u32"
-        ],
-        [
-          "targetStreamKindMask",
-          "u32"
-        ],
-        [
-          "presentStreamKindMask",
-          "u32"
-        ],
-        [
-          "rangeBegin",
-          "u64"
-        ],
-        [
-          "rangeEnd",
-          "u64"
-        ],
-        [
-          "gapInvalidWarmup",
-          "u32"
-        ],
-        [
-          "reserved0",
-          "u32"
-        ]
-      ]
-    },
-    "VnMonitorSessionCompareDesc": {
-      "fields": [
-        [
-          "structSize",
-          "u32"
-        ],
-        [
-          "reserved0",
-          "u32"
-        ],
-        [
-          "left",
-          {
-            "ptr": "opaque",
-            "ctype": "const VnMonitorSessionCompareView*"
-          }
-        ],
-        [
-          "right",
-          {
-            "ptr": "opaque",
-            "ctype": "const VnMonitorSessionCompareView*"
-          }
-        ],
-        [
-          "executeFrameBegin",
-          "u64"
-        ],
-        [
-          "executeFrameEnd",
-          "u64"
-        ]
-      ]
-    },
-    "VnMonitorCompareResult": {
-      "fields": [
-        [
-          "structSize",
-          "u32"
-        ],
-        [
-          "result",
-          "u32"
-        ]
-      ]
-    },
     "VnMonitorTapDescriptor": {
       "fields": [
         [
@@ -5962,126 +5737,6 @@ TABLE_JSON = r'''
         [
           "reason",
           "u32"
-        ]
-      ]
-    },
-    "VnMonitorSessionFileHeader": {
-      "fields": [
-        [
-          "structSize",
-          "u32"
-        ],
-        [
-          "formatMajor",
-          "u32"
-        ],
-        [
-          "formatMinor",
-          "u32"
-        ],
-        [
-          "reserved0",
-          "u32"
-        ],
-        [
-          "fileMagic",
-          "u64"
-        ],
-        [
-          "headerBytes",
-          "u64"
-        ],
-        [
-          "engineBuildId",
-          "u64"
-        ],
-        [
-          "engineMonitorInstanceId",
-          "u64"
-        ],
-        [
-          "createdUtcTicks",
-          "u64"
-        ],
-        [
-          "capabilityFingerprint",
-          "u64"
-        ],
-        [
-          "headerCrc32c",
-          "u32"
-        ],
-        [
-          "reserved1",
-          "u32"
-        ]
-      ]
-    },
-    "VnMonitorSessionChunkHeader": {
-      "fields": [
-        [
-          "structSize",
-          "u32"
-        ],
-        [
-          "kind",
-          "u32"
-        ],
-        [
-          "flags",
-          "u32"
-        ],
-        [
-          "version",
-          "u32"
-        ],
-        [
-          "headerBytes",
-          "u32"
-        ],
-        [
-          "payloadCrc32c",
-          "u32"
-        ],
-        [
-          "headerCrc32c",
-          "u32"
-        ],
-        [
-          "reserved0",
-          "u32"
-        ],
-        [
-          "payloadBytes",
-          "u64"
-        ],
-        [
-          "chunkSequence",
-          "u64"
-        ]
-      ]
-    },
-    "VnMonitorSessionCommitFooter": {
-      "fields": [
-        [
-          "structSize",
-          "u32"
-        ],
-        [
-          "reserved0",
-          "u32"
-        ],
-        [
-          "commitMagic",
-          "u64"
-        ],
-        [
-          "chunkSequence",
-          "u64"
-        ],
-        [
-          "payloadBytes",
-          "u64"
         ]
       ]
     },
@@ -8062,6 +7717,453 @@ TABLE_JSON = r'''
         ],
         [
           "reserved0",
+          "u32"
+        ]
+      ]
+    },
+    "VnPreviewPlayPlayableDescV2": {
+      "fields": [
+        [
+          "structSize",
+          "u32"
+        ],
+        [
+          "playableKind",
+          "u32"
+        ],
+        [
+          "stableId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "emitterHandle",
+          "u64"
+        ],
+        [
+          "flags",
+          "u32"
+        ],
+        [
+          "reserved0",
+          "u32"
+        ]
+      ]
+    },
+    "VnPreviewResetPlayableDescV2": {
+      "fields": [
+        [
+          "structSize",
+          "u32"
+        ],
+        [
+          "playableKind",
+          "u32"
+        ],
+        [
+          "stableId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "emitterHandle",
+          "u64"
+        ],
+        [
+          "flags",
+          "u32"
+        ],
+        [
+          "reserved0",
+          "u32"
+        ]
+      ]
+    },
+    "VnPreviewPlayableStateV2": {
+      "fields": [
+        [
+          "structSize",
+          "u32"
+        ],
+        [
+          "playableKind",
+          "u32"
+        ],
+        [
+          "lifecycle",
+          "u32"
+        ],
+        [
+          "reason",
+          "u32"
+        ],
+        [
+          "stableId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "worldGeneration",
+          "u64"
+        ],
+        [
+          "acceptedLogicTicket",
+          "u64"
+        ],
+        [
+          "lastAppliedBlockSequence",
+          "u64"
+        ],
+        [
+          "childLiveCount",
+          "u32"
+        ],
+        [
+          "childAudibleRetiringCount",
+          "u32"
+        ],
+        [
+          "pendingFutureCount",
+          "u32"
+        ],
+        [
+          "reserved0",
+          "u32"
+        ]
+      ]
+    },
+    "VnPreviewPlaybackPathRowV1": {
+      "fields": [
+        [
+          "stableId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "occurrenceOrdinal",
+          "u32"
+        ],
+        [
+          "reserved0",
+          "u32"
+        ]
+      ]
+    },
+    "VnPreviewPlaybackSendV1": {
+      "fields": [
+        [
+          "targetBusId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "levelDb",
+          "f32"
+        ],
+        [
+          "reserved0",
+          "u32"
+        ]
+      ]
+    },
+    "VnPreviewPlaybackPathV1": {
+      "fields": [
+        [
+          "structSize",
+          "u32"
+        ],
+        [
+          "rowCount",
+          "u32"
+        ],
+        [
+          "sendCount",
+          "u32"
+        ],
+        [
+          "reserved0",
+          "u32"
+        ],
+        [
+          "voiceInstance",
+          "u64"
+        ],
+        [
+          "soundId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "outputBusId",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "rows",
+          {
+            "array": [
+              "VnPreviewPlaybackPathRowV1",
+              64
+            ]
+          }
+        ],
+        [
+          "sends",
+          {
+            "array": [
+              "VnPreviewPlaybackSendV1",
+              8
+            ]
+          }
+        ]
+      ]
+    },
+    "VnPreviewChannelPeaksV1": {
+      "fields": [
+        [
+          "structSize",
+          "u32"
+        ],
+        [
+          "mixChannelCount",
+          "u32"
+        ],
+        [
+          "busCount",
+          "u32"
+        ],
+        [
+          "reserved0",
+          "u32"
+        ],
+        [
+          "consumeSerial",
+          "u64"
+        ],
+        [
+          "busIds",
+          {
+            "array": [
+              "VnObjectId",
+              32
+            ]
+          }
+        ],
+        [
+          "channelPeaks",
+          {
+            "array": [
+              "f32",
+              256
+            ]
+          }
+        ]
+      ]
+    },
+    "VnPreviewBusV1": {
+      "fields": [
+        [
+          "id",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "parent",
+          {
+            "struct": "VnObjectId"
+          }
+        ]
+      ]
+    },
+    "VnPreviewBusVolumeV2": {
+      "fields": [
+        [
+          "id",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "volumeDb",
+          "f32"
+        ],
+        [
+          "outputBusVolumeDb",
+          "f32"
+        ]
+      ]
+    },
+    "VnPreviewBusSendV1": {
+      "fields": [
+        [
+          "source",
+          {
+            "struct": "VnObjectId"
+          }
+        ],
+        [
+          "target",
+          {
+            "struct": "VnObjectId"
+          }
+        ]
+      ]
+    },
+    "VnPreviewProjectDescV1": {
+      "fields": [
+        [
+          "structSize",
+          "u32"
+        ],
+        [
+          "bodyVintage",
+          "u32"
+        ],
+        [
+          "projectSessionId",
+          "u64"
+        ],
+        [
+          "authoringRevision",
+          "u64"
+        ],
+        [
+          "runtimeEpoch",
+          "u64"
+        ],
+        [
+          "submissionSerial",
+          "u64"
+        ],
+        [
+          "publishedBusFingerprint",
+          "u64"
+        ],
+        [
+          "compileTargetProfileFingerprint",
+          "u64"
+        ],
+        [
+          "ownerId",
+          "u64"
+        ],
+        [
+          "ownerBaseRevision",
+          "u64"
+        ],
+        [
+          "ownerRevision",
+          "u64"
+        ],
+        [
+          "body",
+          {
+            "ptr": "opaque",
+            "ctype": "const uint8_t*"
+          }
+        ],
+        [
+          "bodyBytes",
+          "u64"
+        ],
+        [
+          "buses",
+          {
+            "ptr": "opaque",
+            "ctype": "const VnPreviewBusV1*"
+          }
+        ],
+        [
+          "busCount",
+          "u32"
+        ],
+        [
+          "sendCount",
+          "u32"
+        ],
+        [
+          "sends",
+          {
+            "ptr": "opaque",
+            "ctype": "const VnPreviewBusSendV1*"
+          }
+        ]
+      ]
+    },
+    "VnPreviewProjectDescV2": {
+      "fields": [
+        [
+          "base",
+          {
+            "struct": "VnPreviewProjectDescV1"
+          }
+        ],
+        [
+          "busVolumes",
+          {
+            "ptr": "opaque",
+            "ctype": "const VnPreviewBusVolumeV2*"
+          }
+        ],
+        [
+          "busVolumeCount",
+          "u32"
+        ],
+        [
+          "reserved0",
+          "u32"
+        ],
+        [
+          "profileVintage",
+          "u32"
+        ],
+        [
+          "renderSampleRateHz",
+          "u32"
+        ],
+        [
+          "mixLayout",
+          "u32"
+        ],
+        [
+          "deviceLayout",
+          "u32"
+        ],
+        [
+          "runtimeCapabilityMask",
+          "u64"
+        ]
+      ]
+    },
+    "VnPreviewProjectDescV3": {
+      "fields": [
+        [
+          "base",
+          {
+            "struct": "VnPreviewProjectDescV2"
+          }
+        ],
+        [
+          "busSendLevelsDb",
+          {
+            "ptr": "opaque",
+            "ctype": "const float*"
+          }
+        ],
+        [
+          "busSendLevelCount",
+          "u32"
+        ],
+        [
+          "reserved1",
           "u32"
         ]
       ]
@@ -10696,79 +10798,6 @@ TABLE_JSON = r'''
       ]
     },
     {
-      "name": "Vn_MonitorStartRecording",
-      "note": "Runtime Monitor public C ABI; not part of the remote command-mirror (no opcode). Present so the C# binding covers the full public C API.",
-      "params": [
-        {
-          "name": "handle",
-          "ctype": "VnMonitorSessionHandle",
-          "wire": "u64"
-        },
-        {
-          "name": "leaseGeneration",
-          "ctype": "uint64_t",
-          "wire": "u64"
-        },
-        {
-          "name": "desc",
-          "ctype": "const VnMonitorRecordingDesc*",
-          "wire": "desc",
-          "type": "VnMonitorRecordingDesc"
-        }
-      ]
-    },
-    {
-      "name": "Vn_MonitorStopRecording",
-      "note": "Runtime Monitor public C ABI; not part of the remote command-mirror (no opcode). Present so the C# binding covers the full public C API.",
-      "params": [
-        {
-          "name": "handle",
-          "ctype": "VnMonitorSessionHandle",
-          "wire": "u64"
-        },
-        {
-          "name": "leaseGeneration",
-          "ctype": "uint64_t",
-          "wire": "u64"
-        }
-      ]
-    },
-    {
-      "name": "Vn_MonitorGetRecordingStatus",
-      "note": "Runtime Monitor public C ABI; not part of the remote command-mirror (no opcode). Present so the C# binding covers the full public C API.",
-      "params": [
-        {
-          "name": "handle",
-          "ctype": "VnMonitorSessionHandle",
-          "wire": "u64"
-        },
-        {
-          "name": "outStatus",
-          "ctype": "VnMonitorRecordingStatus*",
-          "wire": "outstruct",
-          "type": "VnMonitorRecordingStatus"
-        }
-      ]
-    },
-    {
-      "name": "Vn_MonitorCompareSessions",
-      "note": "Runtime Monitor public C ABI; not part of the remote command-mirror (no opcode). Offline session compare; present so the C# binding covers the full public C API.",
-      "params": [
-        {
-          "name": "desc",
-          "ctype": "const VnMonitorSessionCompareDesc*",
-          "wire": "desc",
-          "type": "VnMonitorSessionCompareDesc"
-        },
-        {
-          "name": "out",
-          "ctype": "VnMonitorCompareResult*",
-          "wire": "outstruct",
-          "type": "VnMonitorCompareResult"
-        }
-      ]
-    },
-    {
       "opcode": 192,
       "name": "Vn_SetValues",
       "policy": "mirror",
@@ -11122,6 +11151,348 @@ TABLE_JSON = r'''
         }
       ],
       "note": "Logic-thread native observation; no remote opcode. Required member count is returned in outInfo.memberCount."
+    },
+    {
+      "name": "VnPreview_PlayPlayable",
+      "note": "Development preview; process-local, no remote opcode.",
+      "returnType": "VnPreviewResult",
+      "params": [
+        {
+          "name": "desc",
+          "ctype": "const VnPreviewPlayPlayableDescV2*",
+          "wire": "desc",
+          "type": "VnPreviewPlayPlayableDescV2"
+        },
+        {
+          "name": "outHandle",
+          "ctype": "VnPreviewPlayableHandle*",
+          "wire": "out"
+        }
+      ]
+    },
+    {
+      "name": "VnPreview_ResetPlayable",
+      "note": "Development preview; process-local, no remote opcode.",
+      "returnType": "VnPreviewResult",
+      "params": [
+        {
+          "name": "desc",
+          "ctype": "const VnPreviewResetPlayableDescV2*",
+          "wire": "desc",
+          "type": "VnPreviewResetPlayableDescV2"
+        }
+      ]
+    },
+    {
+      "name": "VnPreview_StopPlayable",
+      "note": "Development preview; process-local, no remote opcode.",
+      "returnType": "VnPreviewResult",
+      "params": [
+        {
+          "name": "handle",
+          "ctype": "VnPreviewPlayableHandle",
+          "wire": "u64"
+        },
+        {
+          "name": "fadeMs",
+          "ctype": "uint32_t",
+          "wire": "u32"
+        }
+      ]
+    },
+    {
+      "name": "VnPreview_QueryPlayable",
+      "note": "Development preview; process-local, no remote opcode.",
+      "returnType": "VnPreviewResult",
+      "params": [
+        {
+          "name": "handle",
+          "ctype": "VnPreviewPlayableHandle",
+          "wire": "u64"
+        },
+        {
+          "name": "outState",
+          "ctype": "VnPreviewPlayableStateV2*",
+          "wire": "outstruct",
+          "type": "VnPreviewPlayableStateV2"
+        }
+      ]
+    },
+    {
+      "name": "VnPreview_CapturePlaybackPaths",
+      "note": "Development preview; process-local, no remote opcode.",
+      "returnType": "VnPreviewResult",
+      "params": [
+        {
+          "name": "outPaths",
+          "ctype": "VnPreviewPlaybackPathV1*",
+          "wire": "outrows",
+          "type": "VnPreviewPlaybackPathV1",
+          "capacityParam": "capacity",
+          "countParam": "requiredCount"
+        },
+        {
+          "name": "capacity",
+          "ctype": "uint32_t",
+          "wire": "u32"
+        },
+        {
+          "name": "requiredCount",
+          "ctype": "uint32_t*",
+          "wire": "outu32"
+        }
+      ]
+    },
+    {
+      "name": "VnPreview_PrepareProject",
+      "note": "Development preview; process-local, no remote opcode.",
+      "returnType": "VnPreviewPrepareStatus",
+      "params": [
+        {
+          "name": "desc",
+          "ctype": "const VnPreviewProjectDescV1*",
+          "wire": "desc",
+          "type": "VnPreviewProjectDescV1"
+        },
+        {
+          "name": "outHandle",
+          "ctype": "VnPreviewProjectHandle*",
+          "wire": "out"
+        }
+      ]
+    },
+    {
+      "name": "VnPreview_PrepareProjectV2",
+      "note": "Development preview; process-local, no remote opcode.",
+      "returnType": "VnPreviewPrepareStatus",
+      "params": [
+        {
+          "name": "desc",
+          "ctype": "const VnPreviewProjectDescV2*",
+          "wire": "desc",
+          "type": "VnPreviewProjectDescV2"
+        },
+        {
+          "name": "outHandle",
+          "ctype": "VnPreviewProjectHandle*",
+          "wire": "out"
+        }
+      ]
+    },
+    {
+      "name": "VnPreview_PrepareProjectV3",
+      "note": "Development preview; process-local, no remote opcode.",
+      "returnType": "VnPreviewPrepareStatus",
+      "params": [
+        {
+          "name": "desc",
+          "ctype": "const VnPreviewProjectDescV3*",
+          "wire": "desc",
+          "type": "VnPreviewProjectDescV3"
+        },
+        {
+          "name": "outHandle",
+          "ctype": "VnPreviewProjectHandle*",
+          "wire": "out"
+        }
+      ]
+    },
+    {
+      "name": "VnPreview_CommitProject",
+      "note": "Development preview; process-local, no remote opcode.",
+      "returnType": "VnPreviewCommitStatus",
+      "params": [
+        {
+          "name": "handle",
+          "ctype": "VnPreviewProjectHandle",
+          "wire": "u64"
+        },
+        {
+          "name": "outGeneration",
+          "ctype": "uint64_t*",
+          "wire": "out"
+        }
+      ]
+    },
+    {
+      "name": "VnPreview_CancelProject",
+      "note": "Development preview; process-local, no remote opcode.",
+      "returnType": "void",
+      "params": [
+        {
+          "name": "handle",
+          "ctype": "VnPreviewProjectHandle",
+          "wire": "u64"
+        }
+      ]
+    },
+    {
+      "name": "VnPreview_DrainProjectAcks",
+      "note": "Development preview; process-local, no remote opcode.",
+      "returnType": "uint32_t",
+      "params": []
+    },
+    {
+      "name": "VnPreview_ProjectIsOpen",
+      "note": "Development preview; process-local, no remote opcode.",
+      "returnType": "uint32_t",
+      "params": [
+        {
+          "name": "generation",
+          "ctype": "uint64_t",
+          "wire": "u64"
+        }
+      ]
+    },
+    {
+      "name": "VnPreview_QueryOwnerRevision",
+      "note": "Development preview; process-local, no remote opcode.",
+      "returnType": "uint32_t",
+      "params": [
+        {
+          "name": "ownerId",
+          "ctype": "uint64_t",
+          "wire": "u64"
+        },
+        {
+          "name": "outRevision",
+          "ctype": "uint64_t*",
+          "wire": "out"
+        }
+      ]
+    },
+    {
+      "name": "VnPreview_HasPlayableConsumers",
+      "note": "Development preview; process-local, no remote opcode.",
+      "returnType": "uint32_t",
+      "params": []
+    },
+    {
+      "name": "VnPreview_HasAction",
+      "note": "Development preview; process-local, no remote opcode.",
+      "returnType": "uint32_t",
+      "params": [
+        {
+          "name": "actionId",
+          "ctype": "VnObjectId",
+          "wire": "objectid"
+        }
+      ]
+    },
+    {
+      "name": "VnPreview_PumpNullMixer",
+      "note": "Development preview; process-local, no remote opcode.",
+      "returnType": "void",
+      "params": [
+        {
+          "name": "blockCount",
+          "ctype": "uint32_t",
+          "wire": "u32"
+        }
+      ]
+    },
+    {
+      "name": "VnPreview_EnableChannelPeakMetering",
+      "note": "Development preview; process-local, no remote opcode.",
+      "params": []
+    },
+    {
+      "name": "VnPreview_TakeChannelPeaks",
+      "note": "Development preview; process-local, no remote opcode.",
+      "params": [
+        {
+          "name": "outPeaks",
+          "ctype": "VnPreviewChannelPeaksV1*",
+          "wire": "outstruct",
+          "type": "VnPreviewChannelPeaksV1"
+        }
+      ]
+    },
+    {
+      "name": "VnPreview_RegisterPcm",
+      "note": "Development preview; process-local, no remote opcode.",
+      "params": [
+        {
+          "name": "soundId",
+          "ctype": "VnSoundId",
+          "wire": "objectid"
+        },
+        {
+          "name": "desc",
+          "ctype": "const VnPCMDesc*",
+          "wire": "desc",
+          "type": "VnPCMDesc"
+        },
+        {
+          "name": "loopStartFrame",
+          "ctype": "uint64_t",
+          "wire": "u64"
+        },
+        {
+          "name": "loopEndFrame",
+          "ctype": "uint64_t",
+          "wire": "u64"
+        },
+        {
+          "name": "outContentRevision",
+          "ctype": "uint64_t*",
+          "wire": "out"
+        }
+      ]
+    },
+    {
+      "name": "VnPreview_PlayVoiceRaw",
+      "note": "Development preview; process-local, no remote opcode.",
+      "params": [
+        {
+          "name": "desc",
+          "ctype": "const VnPlayDesc*",
+          "wire": "desc",
+          "type": "VnPlayDesc"
+        },
+        {
+          "name": "outHandle",
+          "ctype": "VnVoiceHandle*",
+          "wire": "out"
+        }
+      ]
+    },
+    {
+      "name": "VnPreview_RefreshVoiceBindings",
+      "note": "Development preview; process-local, no remote opcode.",
+      "params": [
+        {
+          "name": "voiceInstance",
+          "ctype": "uint64_t",
+          "wire": "u64"
+        }
+      ]
+    },
+    {
+      "name": "VnPreview_SetVoiceProperty",
+      "note": "Development preview; process-local, no remote opcode.",
+      "params": [
+        {
+          "name": "voiceInstance",
+          "ctype": "uint64_t",
+          "wire": "u64"
+        },
+        {
+          "name": "property",
+          "ctype": "uint32_t",
+          "wire": "u32"
+        },
+        {
+          "name": "value",
+          "ctype": "float",
+          "wire": "f32"
+        },
+        {
+          "name": "sendBusId",
+          "ctype": "VnBusId",
+          "wire": "objectid"
+        }
+      ]
     }
   ],
   "binding_overloads": [
@@ -11283,19 +11654,20 @@ TABLE_JSON = r'''
       "VnMonitorTapSelectorMode": "u32",
       "VnMonitorPermissionMask": "u32",
       "VnMonitorSecurityProfile": "u32",
-      "VnMonitorComparisonResult": "u32",
       "VnMonitorPlanActivationState": "u32",
       "VnMonitorStateCutResult": "u32",
       "VnMonitorMeasurementKind": "u32",
       "VnMonitorValidityFlags": "u32",
       "VnMonitorRemoteOpcode": "u32",
-      "VnMonitorRecordingState": "u32",
       "VnMonitorChannelMode": "u32",
-      "VnMonitorChunkKind": "u32",
-      "VnMonitorChunkFlags": "u32",
       "VnStreamSourceRequest": "u64",
       "VnPlaybackReadinessState": "u32",
-      "VnRemoteClient": "u64"
+      "VnRemoteClient": "u64",
+      "VnPreviewResult": "i32",
+      "VnPreviewPlayableHandle": "u64",
+      "VnPreviewProjectHandle": "u64",
+      "VnPreviewPrepareStatus": "i32",
+      "VnPreviewCommitStatus": "i32"
     },
     "results": {
       "backing": "i32",
@@ -11368,7 +11740,6 @@ TABLE_JSON = r'''
         "VN_MONITOR_BUDGET_EXCEEDED": -343,
         "VN_MONITOR_INCOMPATIBLE": -344,
         "VN_MONITOR_SEQUENCE_EXHAUSTED": -345,
-        "VN_MONITOR_RECORDING_FAILED": -346,
         "VN_MONITOR_RESYNC_REQUIRED": -347,
         "VN_VARIABLE_SCOPE_MISMATCH": -1200,
         "VN_VARIABLE_WRITER_FORBIDDEN": -1201,
@@ -12101,7 +12472,6 @@ TABLE_JSON = r'''
         "values": {
           "VN_MONITOR_DROP_SOURCE_PRODUCER": 1,
           "VN_MONITOR_DROP_HUB_FANOUT": 2,
-          "VN_MONITOR_DROP_RECORDER_QUEUE": 3,
           "VN_MONITOR_DROP_REMOTE_TRANSPORT": 4,
           "VN_MONITOR_DROP_DERIVED_INPUT": 5
         }
@@ -12150,7 +12520,6 @@ TABLE_JSON = r'''
           "VN_MONITOR_PERM_OBSERVE_EVENTS": 2,
           "VN_MONITOR_PERM_OBSERVE_MEASUREMENTS": 4,
           "VN_MONITOR_PERM_CAPTURE_CONTROL": 8,
-          "VN_MONITOR_PERM_RECORD": 16,
           "VN_MONITOR_PERM_RAW_AUDIO": 32,
           "VN_MONITOR_PERM_SYMBOLS": 64
         }
@@ -12176,15 +12545,6 @@ TABLE_JSON = r'''
           "VN_REMOTE_LISTENING": 1,
           "VN_REMOTE_CONNECTED": 2,
           "VN_REMOTE_FAILED": 3
-        }
-      },
-      "VnMonitorComparisonResult": {
-        "backing": "u32",
-        "values": {
-          "VN_MONITOR_COMPARE_COMPARABLE": 0,
-          "VN_MONITOR_COMPARE_PARTIALLY_COMPARABLE": 1,
-          "VN_MONITOR_COMPARE_INCOMPARABLE": 2,
-          "VN_MONITOR_COMPARE_MISSING_DATA": 3
         }
       },
       "VnMonitorPlanActivationState": {
@@ -12249,17 +12609,7 @@ TABLE_JSON = r'''
           "VN_MONITOR_REMOTE_OP_POLL": 2,
           "VN_MONITOR_REMOTE_OP_STATE_RESYNC": 3,
           "VN_MONITOR_REMOTE_OP_LEASE": 4,
-          "VN_MONITOR_REMOTE_OP_PLAN": 5,
-          "VN_MONITOR_REMOTE_OP_RECORDING": 6
-        }
-      },
-      "VnMonitorRecordingState": {
-        "backing": "u32",
-        "values": {
-          "VN_MONITOR_RECORDING_STATE_STOPPED": 0,
-          "VN_MONITOR_RECORDING_STATE_ACTIVE": 1,
-          "VN_MONITOR_RECORDING_STATE_STOPPING": 2,
-          "VN_MONITOR_RECORDING_STATE_FAILED": 3
+          "VN_MONITOR_REMOTE_OP_PLAN": 5
         }
       },
       "VnMonitorChannelMode": {
@@ -12267,34 +12617,6 @@ TABLE_JSON = r'''
         "values": {
           "VN_MONITOR_CHANNEL_PER_CHANNEL": 0,
           "VN_MONITOR_CHANNEL_MONO_AVERAGE": 1
-        }
-      },
-      "VnMonitorChunkFlags": {
-        "backing": "u32",
-        "values": {
-          "VN_MONITOR_CHUNK_REQUIRED": 1,
-          "VN_MONITOR_CHUNK_OPTIONAL": 2
-        }
-      },
-      "VnMonitorChunkKind": {
-        "backing": "u32",
-        "values": {
-          "VN_MONITOR_CHUNK_SESSION_HEADER": 1,
-          "VN_MONITOR_CHUNK_CAPABILITIES": 2,
-          "VN_MONITOR_CHUNK_FINGERPRINTS": 3,
-          "VN_MONITOR_CHUNK_CLOCK_ANCHORS": 4,
-          "VN_MONITOR_CHUNK_OPTIONAL_SYMBOLS": 5,
-          "VN_MONITOR_CHUNK_STATE": 6,
-          "VN_MONITOR_CHUNK_EVENTS": 7,
-          "VN_MONITOR_CHUNK_TIME_SERIES": 8,
-          "VN_MONITOR_CHUNK_OPTIONAL_AUDIO": 9,
-          "VN_MONITOR_CHUNK_TRACE_CORRELATION": 10,
-          "VN_MONITOR_CHUNK_DROP_SUMMARIES": 11,
-          "VN_MONITOR_CHUNK_FINAL_INDEX": 12,
-          "VN_MONITOR_CHUNK_RECOVERY_INDEX": 13,
-          "VN_MONITOR_CHUNK_EXECUTION_DESCRIPTOR": 14,
-          "VN_MONITOR_CHUNK_EXECUTION_RECORD": 15,
-          "VN_MONITOR_CHUNK_EXECUTION_END": 16
         }
       },
       "VnMonitorRecordFlags": {
@@ -12461,6 +12783,29 @@ TABLE_JSON = r'''
           "VN_REMOTE_CLIENT_FAILURE_SEND": 10,
           "VN_REMOTE_CLIENT_FAILURE_SEQUENCE_EXHAUSTED": 11
         }
+      },
+      "VnPreviewPrepareStatus": {
+        "backing": "i32",
+        "values": {
+          "VN_PREVIEW_PREPARE_OK": 0,
+          "VN_PREVIEW_PREPARE_INVALID": 1,
+          "VN_PREVIEW_PREPARE_BACKPRESSURE": 2,
+          "VN_PREVIEW_PREPARE_CAPACITY": 3,
+          "VN_PREVIEW_PREPARE_UNSUPPORTED": 4,
+          "VN_PREVIEW_PREPARE_DEVICE_ERROR": 5,
+          "VN_PREVIEW_PREPARE_INVALID_WORLD": 6,
+          "VN_PREVIEW_PREPARE_UNAVAILABLE": 7
+        }
+      },
+      "VnPreviewCommitStatus": {
+        "backing": "i32",
+        "values": {
+          "VN_PREVIEW_COMMIT_OK": 0,
+          "VN_PREVIEW_COMMIT_BACKPRESSURE": 1,
+          "VN_PREVIEW_COMMIT_INVALID": 2,
+          "VN_PREVIEW_COMMIT_DEVICE_ERROR": 3,
+          "VN_PREVIEW_COMMIT_UNAVAILABLE": 4
+        }
       }
     },
     "defines": {
@@ -12586,46 +12931,6 @@ TABLE_JSON = r'''
       "VN_CANONICAL_PACK_SET_MEMBER_RESULT_INIT": {
         "type": "u32",
         "value": 4
-      },
-      "VN_MONITOR_SESSION_FORMAT_MAJOR": {
-        "type": "u32",
-        "value": 1
-      },
-      "VN_MONITOR_SESSION_FORMAT_MINOR": {
-        "type": "u32",
-        "value": 0
-      },
-      "VN_MONITOR_SESSION_FILE_MAGIC": {
-        "type": "u64",
-        "value": 13565011289787990
-      },
-      "VN_MONITOR_SESSION_COMMIT_MAGIC": {
-        "type": "u64",
-        "value": 13565037025381974
-      },
-      "VN_MONITOR_SESSION_CHUNK_HEADER_BYTES": {
-        "type": "u32",
-        "value": 32
-      },
-      "VN_MONITOR_SESSION_COMMIT_FOOTER_BYTES": {
-        "type": "u32",
-        "value": 24
-      },
-      "VN_MONITOR_DEFAULT_SESSION_FILE_BYTES": {
-        "type": "u64",
-        "value": 8589934592
-      },
-      "VN_MONITOR_HARD_SESSION_FILE_BYTES": {
-        "type": "u64",
-        "value": 68719476736
-      },
-      "VN_MONITOR_DEFAULT_CHUNK_PAYLOAD_BYTES": {
-        "type": "u64",
-        "value": 67108864
-      },
-      "VN_MONITOR_HARD_CHUNK_PAYLOAD_BYTES": {
-        "type": "u64",
-        "value": 268435456
       },
       "VN_MONITOR_HARD_REGISTRY_BLOB_BYTES": {
         "type": "u32",
@@ -12763,14 +13068,6 @@ TABLE_JSON = r'''
         "type": "u32",
         "value": 8192
       },
-      "VN_MONITOR_DEFAULT_RECORDER_QUEUE_BYTES": {
-        "type": "u64",
-        "value": 67108864
-      },
-      "VN_MONITOR_HARD_RECORDER_QUEUE_BYTES": {
-        "type": "u64",
-        "value": 536870912
-      },
       "VN_MONITOR_DEFAULT_REMOTE_QUEUE_BYTES": {
         "type": "u64",
         "value": 16777216
@@ -12854,6 +13151,158 @@ TABLE_JSON = r'''
       "VN_REMOTE_PROTOCOL_MAJOR": {
         "type": "u32",
         "value": 3
+      },
+      "VN_PREVIEW_OK": {
+        "type": "i32",
+        "value": 0
+      },
+      "VN_PREVIEW_INVALID_ARG": {
+        "type": "i32",
+        "value": 1
+      },
+      "VN_PREVIEW_STRUCT_SIZE_MISMATCH": {
+        "type": "i32",
+        "value": 2
+      },
+      "VN_PREVIEW_NOT_SUPPORTED": {
+        "type": "i32",
+        "value": 3
+      },
+      "VN_PREVIEW_UNKNOWN_HANDLE": {
+        "type": "i32",
+        "value": 4
+      },
+      "VN_PREVIEW_STALE_HANDLE": {
+        "type": "i32",
+        "value": 5
+      },
+      "VN_PREVIEW_NO_PROGRAM": {
+        "type": "i32",
+        "value": 6
+      },
+      "VN_PREVIEW_INSTANCE_CAPACITY": {
+        "type": "i32",
+        "value": 7
+      },
+      "VN_PREVIEW_DEVELOPMENT_API_DISABLED": {
+        "type": "i32",
+        "value": 8
+      },
+      "VN_PREVIEW_PROGRAM_MISMATCH": {
+        "type": "i32",
+        "value": 9
+      },
+      "VN_PREVIEW_RESULT_CAPACITY": {
+        "type": "i32",
+        "value": 10
+      },
+      "VN_PREVIEW_HOST_ERROR": {
+        "type": "i32",
+        "value": 11
+      },
+      "VN_PREVIEW_EFFECT_CAPACITY": {
+        "type": "i32",
+        "value": 12
+      },
+      "VN_PREVIEW_RESULT_EXPIRED": {
+        "type": "i32",
+        "value": 13
+      },
+      "VN_PREVIEW_UNKNOWN_ID": {
+        "type": "i32",
+        "value": 14
+      },
+      "VN_PREVIEW_NO_VOICE": {
+        "type": "i32",
+        "value": 15
+      },
+      "VN_PREVIEW_BACKPRESSURE": {
+        "type": "i32",
+        "value": 16
+      },
+      "VN_PREVIEW_REVISION_CONFLICT": {
+        "type": "i32",
+        "value": 17
+      },
+      "VN_PREVIEW_PLAYABLE_KIND_SOUND": {
+        "type": "i32",
+        "value": 0
+      },
+      "VN_PREVIEW_PLAYABLE_KIND_CONTAINER": {
+        "type": "i32",
+        "value": 1
+      },
+      "VN_PREVIEW_PLAYABLE_KIND_TRACK": {
+        "type": "i32",
+        "value": 2
+      },
+      "VN_PREVIEW_PLAYABLE_KIND_SEGMENT": {
+        "type": "i32",
+        "value": 3
+      },
+      "VN_PREVIEW_LIFECYCLE_PREPARING": {
+        "type": "i32",
+        "value": 1
+      },
+      "VN_PREVIEW_LIFECYCLE_ACTIVE": {
+        "type": "i32",
+        "value": 2
+      },
+      "VN_PREVIEW_LIFECYCLE_CANCELLING": {
+        "type": "i32",
+        "value": 3
+      },
+      "VN_PREVIEW_LIFECYCLE_LOGICAL_COMPLETE": {
+        "type": "i32",
+        "value": 4
+      },
+      "VN_PREVIEW_LIFECYCLE_AUDIBLE_RETIRING": {
+        "type": "i32",
+        "value": 5
+      },
+      "VN_PREVIEW_LIFECYCLE_FAILING_SOURCE_ACTIVE": {
+        "type": "i32",
+        "value": 6
+      },
+      "VN_PREVIEW_LIFECYCLE_FAILING_AUDIBLE_RETIRING": {
+        "type": "i32",
+        "value": 7
+      },
+      "VN_PREVIEW_REASON_NONE": {
+        "type": "i32",
+        "value": 0
+      },
+      "VN_PREVIEW_REASON_NATURAL": {
+        "type": "i32",
+        "value": 1
+      },
+      "VN_PREVIEW_REASON_STOP_REQUESTED": {
+        "type": "i32",
+        "value": 2
+      },
+      "VN_PREVIEW_REASON_MEDIA_MISSING": {
+        "type": "i32",
+        "value": 3
+      },
+      "VN_PREVIEW_REASON_CONTENT_REVISION": {
+        "type": "i32",
+        "value": 4
+      },
+      "VN_PREVIEW_REASON_START_REFUSED": {
+        "type": "i32",
+        "value": 5
+      },
+      "VN_PREVIEW_REASON_DEADLINE": {
+        "type": "i32",
+        "value": 6
+      },
+      "VN_PREVIEW_PATH_ROW_CAPACITY": {
+        "type": "u32",
+        "value": 64
+      },
+      "VN_PREVIEW_PATH_SEND_CAPACITY": {
+        "type": "u32",
+        "value": 8
       }
     },
     "callbacks": {

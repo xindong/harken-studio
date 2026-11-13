@@ -2,6 +2,7 @@
 #include "Monitor/MonitorTypes.h"
 #include "RuntimeBridge/MonitorBridge.h"
 #include "MonitorCaptureControl.h"
+#include "harken_buildinfo.h"
 
 #include <cstring>
 #include <functional>
@@ -213,6 +214,8 @@ MonitorResult MonitorAdapter::poll(MonitorSessionHandle handle,
     MonitorPollResult local = {};
 
     const MonitorResult polled = HarkenEditor::Bridge::Monitoring::poll(handle, desc, &local);
+    if (polled == kOk && recorder_.isOpen())
+        recorder_.append(static_cast<const uint8_t*>(desc->buffer), local.bytesWritten);
     if (polled == kOk)
         *outResult = local;
     else
@@ -414,8 +417,12 @@ MonitorResult MonitorAdapter::startRecording(MonitorSessionHandle handle,
         std::lock_guard<std::mutex> lock(mutex_);
         if (!isCurrentControl(handle, epoch))
             return kMonitorStaleSession;
-        recordTrace("Vn_MonitorStartRecording");
-        return HarkenEditor::Bridge::Monitoring::startRecording(handle, leaseGeneration, desc);
+        if (desc->utf8Path == nullptr || recorder_.isOpen())
+            return kInvalidArg;
+        MonitorSessionSource source;
+        source.engineVersion = std::string(Harken::BuildInfo::Version);
+        source.engineMonitorInstanceId = handle;
+        return recorder_.open(desc->utf8Path, source, desc->fileByteBudget) ? kOk : kMonitorIncompatible;
     });
 }
 
@@ -427,8 +434,8 @@ MonitorResult MonitorAdapter::stopRecording(MonitorSessionHandle handle,
         std::lock_guard<std::mutex> lock(mutex_);
         if (!isCurrentControl(handle, epoch))
             return kMonitorStaleSession;
-        recordTrace("Vn_MonitorStopRecording");
-        return HarkenEditor::Bridge::Monitoring::stopRecording(handle, leaseGeneration);
+        recorder_.close();
+        return kOk;
     });
 }
 
@@ -443,13 +450,8 @@ MonitorResult MonitorAdapter::getRecordingStatus(MonitorSessionHandle handle,
         std::lock_guard<std::mutex> lock(mutex_);
         if (!isCurrentSession(handle))
             return kMonitorStaleSession;
-        recordTrace("Vn_MonitorGetRecordingStatus");
-        MonitorRecordingStatus local = {};
-
-        const MonitorResult status = HarkenEditor::Bridge::Monitoring::getRecordingStatus(handle, &local);
-        if (status == kOk)
-            *outStatus = local;
-        return status;
+        *outStatus = recorder_.status();
+        return kOk;
     });
 }
 

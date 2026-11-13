@@ -94,6 +94,20 @@ jobs:
           --group-timeout-seconds 300
           --output-dir .temp/ci-daily-${{ github.run_id }}-${{ github.run_attempt }}/editor
 
+      - name: Run cross-product verification
+        id: crossproduct
+        if: ${{ steps.build.outcome == 'success' && (success() || failure()) }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --build build-daily --config Release --target harken_engine harken_engine_dev harken_studio_cli
+          cmake --install build-daily --config Release --prefix .temp/ci-daily-${{ github.run_id }}-${{ github.run_attempt }}/engine-install
+          python .scripts/crossproduct-test/run.py \
+            --engine-install .temp/ci-daily-${{ github.run_id }}-${{ github.run_attempt }}/engine-install \
+            --studio-cli build-daily/bin/Release/HarkenStudioCLI.exe \
+            --work-dir .temp/ci-daily-${{ github.run_id }}-${{ github.run_attempt }}/crossproduct \
+            --require studio-cli --require engine-release --require engine-development
+
       - name: Upload test evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

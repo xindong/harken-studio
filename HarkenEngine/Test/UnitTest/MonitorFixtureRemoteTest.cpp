@@ -148,17 +148,16 @@ TEST(MonitorFixture, RemoteReservedAndStructSizeRejected) {
 TEST(MonitorFixture, RemotePermissionGrantAndDenyMatrix) {
     const char* names[] = {
         "observe_state", "observe_events", "observe_measurements", "capture_control",
-        "record",        "raw_audio",      "symbols",
+        "raw_audio",     "symbols",
     };
     const uint32_t bits[] = {
         VN_MONITOR_PERM_OBSERVE_STATE,        VN_MONITOR_PERM_OBSERVE_EVENTS,
         VN_MONITOR_PERM_OBSERVE_MEASUREMENTS, VN_MONITOR_PERM_CAPTURE_CONTROL,
-        VN_MONITOR_PERM_RECORD,               VN_MONITOR_PERM_RAW_AUDIO,
-        VN_MONITOR_PERM_SYMBOLS,
+        VN_MONITOR_PERM_RAW_AUDIO,            VN_MONITOR_PERM_SYMBOLS,
     };
     const auto sid = ReadAll(FixturePath("principal_local_acl.bin"));
     const auto spki = ReadAll(FixturePath("principal_lan_mtls.bin"));
-    for (size_t i = 0; i < 7; ++i) {
+    for (size_t i = 0; i < 6; ++i) {
         const auto grant = ReadAll(FixturePath((std::string("perm_grant_") + names[i] + ".bin").c_str()));
         auto granted = DecodeHandshake(grant, VN_MONITOR_SECURITY_LOCAL_ACL, bits[i], sid.data(),
                                        sid.size());
@@ -245,7 +244,6 @@ TEST(MonitorFixture, RemoteDefaultClosedHasNoEndpoint) {
     VnMonitorSessionHandle handle = 1;
     EXPECT_EQ(VN_NOT_INITIALIZED, Vn_MonitorOpenSession(&sessionDesc, &handle));
     EXPECT_EQ(VN_NOT_INITIALIZED, Vn_MonitorApplyCapturePlan(1, 1, nullptr, nullptr));
-    EXPECT_EQ(VN_NOT_INITIALIZED, Vn_MonitorStartRecording(1, 1, nullptr));
 }
 
 TEST(MonitorFixture, RemoteCheckedInHandshakeIsPackedNotNativePoison) {

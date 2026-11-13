@@ -20,6 +20,15 @@ ENGINE_CMAKE = "add_library(engine_private STATIC a.cpp)\n"
 
 
 class ProductBoundaryCheckTest(unittest.TestCase):
+    def test_crossproduct_test_and_products_do_not_reference_each_other(self) -> None:
+        found = run({
+            ".scripts/crossproduct-test/run.py": "sys.path.insert(0, 'HarkenStudio/Source')\n",
+            "HarkenStudio/Test/CMakeLists.txt": "add_test(NAME x COMMAND .scripts/crossproduct-test/run.py)\n",
+            ".scripts/crossproduct-test/drivers/engine.py": "library = 'bin/HarkenEngine.dll'\n",
+        })
+        self.assertEqual({("crossproduct-source", "crossproduct-test", "HarkenStudio"),
+                          ("crossproduct-reference", "HarkenStudio", "crossproduct-test")}, found)
+
     def test_foreign_private_target_is_reported(self) -> None:
         found = run({
             "HarkenEngine/CMakeLists.txt": ENGINE_CMAKE,

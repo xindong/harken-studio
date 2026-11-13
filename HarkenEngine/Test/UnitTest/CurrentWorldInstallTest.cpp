@@ -15,6 +15,7 @@
 #include <gtest/gtest.h>
 
 #include <bit>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <vector>
@@ -452,6 +453,29 @@ TEST(CurrentWorldInstall, GroupSnapshotsValidateRangesAndRoutingAsAWhole) {
     sends[1].targetBusId = harkentest::ObjectId(3);
     sends[1].sendLevel = 24.01f;
     EXPECT_FALSE(harken::ValidateResolvedSectionGroupPayloadV1(payload));
+}
+
+TEST(CurrentWorldInstall, PlaybackPropertiesRefuseValuesOutsideThePublishedRange) {
+    const auto accepts = [](std::uint32_t slot, std::uint32_t bits) {
+        RunnableWorld image;
+        image.properties[0].payload.presentMask |= UINT64_C(1) << slot;
+        image.properties[0].payload.values[slot].bits = bits;
+        image.RefreshSemanticRows();
+        return harken::ValidateCurrentWorldV1(image.world) == harken::WorldInstallStatus::Ok;
+    };
+    const auto f32 = [](float value) { return std::bit_cast<std::uint32_t>(value); };
+    const struct { std::uint32_t slot; float minimum; float maximum; } floats[] = {
+        {HK_PACK_PROPERTY_VOLUME - 1, HK_PACK_PROPERTY_VOLUME_MIN, HK_PACK_PROPERTY_VOLUME_MAX},
+        {HK_PACK_PROPERTY_PITCH - 1, HK_PACK_PROPERTY_PITCH_MIN, HK_PACK_PROPERTY_PITCH_MAX},
+    };
+    for (const auto& range : floats) {
+        EXPECT_TRUE(accepts(range.slot, f32(range.minimum))) << range.slot;
+        EXPECT_TRUE(accepts(range.slot, f32(range.maximum))) << range.slot;
+        EXPECT_FALSE(accepts(range.slot, f32(std::nextafter(range.minimum, -INFINITY)))) << range.slot;
+        EXPECT_FALSE(accepts(range.slot, f32(std::nextafter(range.maximum, INFINITY)))) << range.slot;
+    }
+    EXPECT_TRUE(accepts(HK_PACK_PROPERTY_LOOP_COUNT - 1, HK_PACK_PROPERTY_LOOP_COUNT_MAX));
+    EXPECT_FALSE(accepts(HK_PACK_PROPERTY_LOOP_COUNT - 1, HK_PACK_PROPERTY_LOOP_COUNT_MAX + 1u));
 }
 
 TEST(CurrentWorldInstall, StructuralContributionsExcludeGroupsStreamingAndEffects) {

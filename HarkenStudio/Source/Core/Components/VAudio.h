@@ -4,6 +4,7 @@
 #include "../Component.h"
 #include "../PropertyDescriptor.h"
 #include "../ProjectTypes.h"
+#include <harken_pack/PackProperties.h>
 #include <QJsonObject>
 
 #include <limits>
@@ -59,7 +60,7 @@ inline const PropertySchema& VAudio::schema()
 {
     static const PropertySchema s = withOwner<VAudio>({
         { .field="loopCount", .type=PropType::Int, .label="Loop", .section=PropertySection::Playback,
-          .min=0.0, .max=static_cast<double>(std::numeric_limits<int>::max()), .def=1.0,
+          .min=HK_PACK_PROPERTY_LOOP_COUNT_MIN, .max=HK_PACK_PROPERTY_LOOP_COUNT_MAX, .def=1.0,
           .flags={ .segmented=true },
           .segments={
               { .value=1, .numeric=true, .numericMin=1,

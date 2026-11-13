@@ -34,7 +34,6 @@ Columns:
 | Registry revision / tap descriptor identity | `VN_MONITOR_RECORD_REGISTRY_REVISION`; `VN_MONITOR_RECORD_TAP_BINDING_CHANGED` | ContractVerified | `MonitorFixture.PlanRegistryRevisionKeepsOldDescriptor` | m0-3 | monitor/plan/registry.bin |  |  |  |
 | Capability / effective plan / validity / drop | `validityFlags`; `VnMonitorDropSummary` | ContractVerified | `MonitorFixture.PlanMeasurementLayersStayIndependent` | m0-3 | monitor/plan/layers.bin |  |  |  |
 | Capacity default / hard / overflow result | `VN_MONITOR_DEFAULT_*`; `VN_MONITOR_HARD_*` | ContractVerified | `MonitorFixture.PlanCapacityConstantsMatchContract` | m0-3 | monitor/plan/capacity.expected.json |  |  |  |
-| Session file magic / chunk / footer / comparison four-state | `VN_MONITOR_SESSION_FILE_MAGIC`; packed 32/24; comparison enum | ContractVerified | `MonitorFixture.SessionCompareFourStates` | m0-4 | monitor/session/legal.bin |  |  |  |
 | Remote LocalAcl / LanMtls / allowlist / multi-client drop stage | `VN_MONITOR_SECURITY_*`; handshake / frame counter / remote op / drop stage | ContractVerified | `MonitorFixture.RemoteLocalAclAndLanMtlsRoundTrip` | m0-5 | monitor/remote/handshake_local_acl.bin |  |  |  |
 | Open G-gaps stay Unsupported | `VnMonitorCapabilities.monitorImplemented`; LUFS supported fields | RuntimeVerified | `MonitorAbiPin.OpenGGapsStayUnsupportedWhenEngineExistsWithoutWriting` | m0-6 |  |  |  |  |
 | Stop / lease live slot run | CapturePlan slot execution | deferred |  |  |  | M1 | M1-4 | Live plan slots belong to Hub CapturePlan, not M0 static fixtures. |
