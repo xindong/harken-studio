@@ -116,7 +116,7 @@ ActionSeekStartResult runtimeSeekAction(uint64_t playbackHandle,
 EngineResult runtimeQueryActionSeek(uint64_t operationId,
                                     ActionSeekInfo& outInfo);
 EngineResult runtimeReleaseActionSeek(uint64_t operationId);
-bool runtimeStopPlayback(uint64_t handle, uint32_t fadeMs);
+EngineResult runtimeStopPlayback(uint64_t handle, uint32_t fadeMs);
 bool runtimeStopAll(uint32_t fadeMs);
 bool runtimeHasCurrentWorldPlayableConsumers();
 bool runtimeHasEffectChainConsumers();

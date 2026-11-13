@@ -578,7 +578,6 @@ bool ensureRuntimeStarted()
     g_runtime.playbackByAction.clear();
     g_runtime.playbackByRawVoice.clear();
     g_runtime.actionSeeks.clear();
-    g_runtime.endedPlaybackHandles.clear();
     g_runtime.registeredSounds.clear();
     g_runtime.registeredSoundRevisions.clear();
     g_runtime.preparedSounds.clear();
@@ -827,12 +826,9 @@ void runtimeTerm()
     g_runtime.packSetRevision = 0;
     g_runtime.liveVoices.clear();
     g_runtime.voiceNameByHandle.clear();
-    g_runtime.playbacks.clear();
-    g_runtime.playbackByPreview.clear();
-    g_runtime.playbackByAction.clear();
-    g_runtime.playbackByRawVoice.clear();
+    while (!g_runtime.playbacks.empty())
+        releasePlayback(g_runtime.playbacks.begin()->first, true);
     g_runtime.actionSeeks.clear();
-    g_runtime.endedPlaybackHandles.clear();
     {
         QMutexLocker lock(&g_runtime.notificationMutex);
         ++g_runtime.notificationGeneration;
@@ -1184,7 +1180,6 @@ void runtimeClearSoundNames()
     g_runtime.playbackByPreview.clear();
     g_runtime.playbackByAction.clear();
     g_runtime.playbackByRawVoice.clear();
-    g_runtime.endedPlaybackHandles.clear();
     g_runtime.voicePitchCentsByName.clear();
     g_runtime.voiceVolumeDbByName.clear();
     g_runtime.voiceSpatMixByName.clear();
@@ -1866,13 +1861,15 @@ EngineResult runtimeReleaseActionSeek(uint64_t operationId)
     return kEngineOk;
 }
 
-bool runtimeStopPlayback(uint64_t handle, uint32_t fadeMs)
+EngineResult runtimeStopPlayback(uint64_t handle, uint32_t fadeMs)
 {
-    if (!g_runtime.initialized || handle == 0)
-        return false;
+    if (!g_runtime.initialized)
+        return kEngineNotInit;
+    if (handle == 0)
+        return kEngineInvalidArg;
     const auto playback = g_runtime.playbacks.find(handle);
     if (playback == g_runtime.playbacks.end())
-        return false;
+        return kEngineStaleHandle;
     const RuntimePlayback record = playback->second;
     const int32_t result =
         record.kind == RuntimePlaybackKind::Preview
@@ -1888,16 +1885,22 @@ bool runtimeStopPlayback(uint64_t handle, uint32_t fadeMs)
         ? result == VN_PREVIEW_STALE_HANDLE
         : result == VN_STALE_HANDLE;
     if (stale)
-        releasePlayback(handle, false);
+        releasePlayback(handle, true);
     if (result == 0 || stale)
     {
         qInfo() << "[PlaybackRoute] stop runtime:"
                 << "playback=" << static_cast<qulonglong>(handle)
                 << "native=" << static_cast<qulonglong>(record.nativeHandle)
                 << "result=" << static_cast<int>(result);
-        return true;
     }
-    return false;
+    if (stale)
+        return kEngineStaleHandle;
+    if (record.kind == RuntimePlaybackKind::Preview) {
+        if (result == VN_PREVIEW_BACKPRESSURE)
+            return kEngineBackpressure;
+        return result == VN_PREVIEW_OK ? kEngineOk : kEngineDeviceError;
+    }
+    return static_cast<EngineResult>(result);
 }
 
 bool runtimeStopAll(uint32_t fadeMs)

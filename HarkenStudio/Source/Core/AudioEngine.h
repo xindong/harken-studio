@@ -97,7 +97,7 @@ public:
 
     quintptr playByName(const QString& name);
     quintptr playByName3D(const QString& name, const HarkenEditor::Vec3& position);
-    bool stopPlayback(quintptr playbackHandle, float fadeMs = 0);
+    HarkenEditor::Bridge::EngineResult stopPlayback(quintptr playbackHandle, float fadeMs = 0);
     bool stopAll(float fadeMs = 0);
 
     struct PlaybackStartResult {

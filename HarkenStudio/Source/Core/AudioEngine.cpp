@@ -546,6 +546,7 @@ void AudioEngine::shutdown()
     if (session_)
         stopRuntimeSynchronization();
     session_.reset();
+    consumeRuntimeNotifications();
     runtimeProjectRestoreRequired_ = false;
 
     initialized_ = false;
@@ -605,6 +606,7 @@ void AudioEngine::stopOutput()
     }
 
     playing_ = false;
+    consumeRuntimeNotifications();
     masterMeterPeakL_ = 0.0f;
     masterMeterPeakR_ = 0.0f;
     emit meterLevelsUpdated();
@@ -831,14 +833,11 @@ AudioEngine::PlaybackStartResult AudioEngine::playByName3DDetailed(
     return result;
 }
 
-bool AudioEngine::stopPlayback(quintptr playbackHandle, float fadeMs)
+Bridge::EngineResult AudioEngine::stopPlayback(quintptr playbackHandle, float fadeMs)
 {
-    if (!playbackHandle || !session_
-        || !session_->stopPlayback(static_cast<uint64_t>(playbackHandle), fadeMs))
-        return false;
-
-    emit playbackStopped(playbackHandle);
-    return true;
+    if (!session_)
+        return Bridge::kEngineNotInit;
+    return session_->stopPlayback(static_cast<uint64_t>(playbackHandle), fadeMs);
 }
 
 bool AudioEngine::stopAll(float fadeMs)

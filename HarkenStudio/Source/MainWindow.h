@@ -455,6 +455,7 @@ private:
     QList<QPointer<QThread>> packExportThreads_;
 
     HarkenEditor::AuditionManager* auditionManager_ = nullptr;
+    bool auditionStopRequested_ = false;
     PlaybackControls* playbackControls_ = nullptr;
     ControlPanel* controlPanel_ = nullptr;
     ads::CDockWidget* controlDock_ = nullptr;

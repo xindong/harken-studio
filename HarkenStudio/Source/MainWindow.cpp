@@ -2404,9 +2404,13 @@ void MainWindow::connectWorkspaceWindowSignals()
 
     auditionManager_ = new HarkenEditor::AuditionManager(&AudioEngine::instance(), this);
     connect(auditionManager_, &HarkenEditor::AuditionManager::auditionStateChanged,
-            playbackControls_, [this](uint32_t, int state) {
-        if (state == 1)
-            playbackControls_->setPlaying(true);
+            playbackControls_, [this](uint32_t, int) {
+        const bool active = auditionManager_->hasActiveNonRawAudition();
+        playbackControls_->setPlaying(active);
+        if (auditionStopRequested_ && !active) {
+            auditionStopRequested_ = false;
+            setStatusMessage(tr("Stopped"));
+        }
     });
     connect(auditionManager_, &HarkenEditor::AuditionManager::allAuditionsStopped,
             playbackControls_, [this] { playbackControls_->setPlaying(false); });
@@ -2435,6 +2439,14 @@ void MainWindow::connectWorkspaceWindowSignals()
             else
                 log->logError(LogCategory::Audio, message);
         }
+    });
+    connect(auditionManager_, &HarkenEditor::AuditionManager::auditionStopFailed,
+            this, [this](uint32_t, const QString& objectName, int32_t engineResult) {
+        const QString message = tr("Could not stop '%1'. Try Stop again.").arg(objectName);
+        setStatusMessage(message);
+        if (auto* log = logPanel())
+            log->logError(LogCategory::Audio,
+                tr("%1 (engine result %2)").arg(message).arg(engineResult));
     });
     connect(auditionManager_, &HarkenEditor::AuditionManager::auditionSeekFinished,
             this, [this](uint32_t playingId, quint64 requestId,
@@ -5179,8 +5191,13 @@ void MainWindow::onPlayRequested()
 
 void MainWindow::onStopPressed()
 {
+    auditionStopRequested_ = true;
+    setStatusMessage(tr("Stopping..."));
     auditionManager_->stopAll(100);
-    setStatusMessage(tr("Stopped"));
+    if (!auditionManager_->hasActiveNonRawAudition()) {
+        auditionStopRequested_ = false;
+        setStatusMessage(tr("Stopped"));
+    }
 }
 
 ProjectItem* MainWindow::auditionTarget() const
