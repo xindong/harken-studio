@@ -61,16 +61,6 @@ class RuntimeAbiManifestTest(unittest.TestCase):
             cls.header_text
         )
         cls.table = MODULE.load_json_strict(cls.table_path)
-        cls.trace_text = (
-            REPO_ROOT
-            / "HarkenEngine"
-            / "Source"
-            / "Core"
-            / "api"
-            / "src"
-            / "TraceFormat.h"
-        ).read_text(encoding="utf-8")
-
     def test_public_contract_is_complete(self) -> None:
         issues = MODULE.compare_completeness(
             self.header_contract,
@@ -208,15 +198,6 @@ class RuntimeAbiManifestTest(unittest.TestCase):
             issues,
         )
 
-    def test_implicit_trace_call_id_fails_closed(self) -> None:
-        changed_text = self.trace_text.replace(
-            "kTraceCallUnregisterPCM = 2",
-            "kTraceCallUnregisterPCM",
-            1,
-        )
-        with self.assertRaises(MODULE.ManifestError):
-            MODULE.parse_trace_contract(changed_text)
-
     def test_duplicate_json_keys_and_unsupported_target_fail_closed(
         self,
     ) -> None:
@@ -346,10 +327,6 @@ class RuntimeAbiManifestTest(unittest.TestCase):
             "exact-current", policies["VnPCMDesc"]["mode"]
         )
         self.assertEqual("default", policies["VnPCMDesc"]["source"])
-        self.assertEqual(
-            {"nativeAbiSha256", "remoteWireSha256", "traceFormatSha256"},
-            set(first["sectionSha256"]),
-        )
 
     def test_dumpbin_parser_ignores_non_export_rows(self) -> None:
         output = """

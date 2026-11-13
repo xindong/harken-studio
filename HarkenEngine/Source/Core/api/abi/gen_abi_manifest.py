@@ -7,7 +7,7 @@ two guarantees that the existing native/C# pins cannot provide alone:
 * completeness: public header symbols cannot be silently omitted from the
   table;
 * provenance: one canonical JSON document binds layouts, values, functions,
-  wire opcodes, Trace vocabulary, vintage rules, and generated-file hashes.
+  and vintage rules.
 
 The manifest describes the declared public Vn_* and VnPreview_* export set. Incidental C++
 symbols exported by a particular linker configuration are diagnostics, not
@@ -1263,59 +1263,6 @@ def build_vintage_policies(
     }
 
 
-def parse_trace_contract(trace_header: str) -> dict[str, Any]:
-    clean = remove_comments(trace_header)
-    constants: dict[str, int] = {}
-    pattern = re.compile(
-        r"\b(?:inline\s+)?constexpr\s+"
-        r"(?:std::)?(?:u?int(?:16|32|64)_t|char)\s+"
-        r"(kTrace[A-Za-z0-9_]+)\s*=\s*([^;]+);"
-    )
-    for match in pattern.finditer(clean):
-        name = match.group(1)
-        expression = match.group(2).strip()
-        if expression.startswith("{"):
-            continue
-        constants[name] = evaluate_integer(expression, constants)
-
-    call_enum = re.search(
-        r"\benum\s*:\s*std::uint16_t\s*\{(.*?)\};",
-        clean,
-        flags=re.DOTALL,
-    )
-    if call_enum is None:
-        raise ManifestError("Trace call-id enum was not parsed")
-
-    call_ids: dict[str, int] = {}
-    for item in split_top_level(call_enum.group(1), ","):
-        match = re.fullmatch(
-            r"(kTraceCall[A-Za-z0-9_]+)\s*=\s*(.+)",
-            item.strip(),
-            flags=re.DOTALL,
-        )
-        if match is None:
-            raise ManifestError(
-                "Trace call ids require explicit values: %s"
-                % item.strip()
-            )
-        if match.group(1) in call_ids:
-            raise ManifestError(
-                "duplicate Trace call id: %s" % match.group(1)
-            )
-        call_ids[match.group(1)] = evaluate_integer(
-            match.group(2),
-            {**constants, **call_ids},
-        )
-    if "kTraceFormatVersion" not in constants:
-        raise ManifestError("Trace format version was not parsed")
-    return {
-        "formatVersion": constants["kTraceFormatVersion"],
-        "acceptance": "exact-current-version",
-        "constants": constants,
-        "callIds": call_ids,
-    }
-
-
 def edition_of(core: bool) -> str:
     return "core" if core else "development"
 
@@ -1330,20 +1277,6 @@ def parse_monitor_record_envelope(writer_source: str) -> list[dict[str, str]]:
     if not fields or sum(sizes[kind] for kind, _ in fields) != 316:
         raise ManifestError("Monitor record envelope writer changed")
     return [{"kind": kind, "field": field} for kind, field in fields]
-
-
-def generated_artifact_paths(repo_root: Path) -> list[Path]:
-    relative = [
-        "HarkenEngine/Tool/HostControl/generated/harken_wire_ids.h",
-        "HarkenEngine/Tool/HostControl/generated/"
-        "harken_wire_layout_asserts.h",
-        "HarkenEngine/Tool/HostControl/generated/"
-        "harken_wire_desc_meta.h",
-        "HarkenEngine/Tool/HostControl/generated/"
-        "harken_wire_dispatch.inl",
-        "HarkenEngine/Tool/HostControl/harken_wire.py",
-    ]
-    return [repo_root / item for item in relative]
 
 
 def build_manifest(repo_root: Path) -> dict[str, Any]:
@@ -1374,15 +1307,6 @@ def build_manifest(repo_root: Path) -> dict[str, Any]:
         / "harken"
         / "HarkenDevelopment.h"
     )
-    trace_path = (
-        repo_root
-        / "HarkenEngine"
-        / "Source"
-        / "Core"
-        / "api"
-        / "src"
-        / "TraceFormat.h"
-    )
     monitor_pack_path = (
         repo_root
         / "HarkenEngine"
@@ -1390,15 +1314,6 @@ def build_manifest(repo_root: Path) -> dict[str, Any]:
         / "Development"
         / "monitor"
         / "MonitorRecordPack.h"
-    )
-    generator_paths = (
-        SCRIPT_PATH,
-        repo_root
-        / "HarkenEngine"
-        / "Tool"
-        / "HostControl"
-        / "wire"
-        / "gen_wire.py",
     )
     table = load_json_strict(table_path)
     identity_header_path = header_path.with_name("ObjectId.h")
@@ -1470,7 +1385,6 @@ def build_manifest(repo_root: Path) -> dict[str, Any]:
     }
 
     native_functions = []
-    remote_operations = []
     for function in table["functions"]:
         parameters = [
             {
@@ -1491,23 +1405,6 @@ def build_manifest(repo_root: Path) -> dict[str, Any]:
                 ),
                 "parameters": parameters,
             })
-        if "opcode" in function:
-            remote_operations.append({
-                "name": function["name"],
-                "opcode": function["opcode"],
-                "policy": function.get("policy"),
-                "parameters": [
-                {
-                    "name": parameter["name"],
-                    "wire": parameter["wire"],
-                    **({
-                        "type": parameter["type"],
-                    } if "type" in parameter else {}),
-                }
-                for parameter in function.get("params", [])
-                ],
-            })
-
     native_abi = {
         "platform": {
             key: table["abi"][key]
@@ -1538,56 +1435,12 @@ def build_manifest(repo_root: Path) -> dict[str, Any]:
         ),
         "vintages": vintages,
     }
-    remote_wire = {
-        "protocol": table["protocol"],
-        "operations": remote_operations,
-    }
-    trace_format = parse_trace_contract(
-            trace_path.read_text(encoding="utf-8")
-    )
-    contract = {
-        "nativeAbi": native_abi,
-        "remoteWire": remote_wire,
-        "traceFormat": trace_format,
-    }
-    section_hashes = {
-        "nativeAbiSha256": sha256_bytes(canonical_bytes(native_abi)),
-        "remoteWireSha256": sha256_bytes(canonical_bytes(remote_wire)),
-        "traceFormatSha256": sha256_bytes(canonical_bytes(trace_format)),
-    }
-    source_files = {
-        str(path.relative_to(repo_root)).replace("\\", "/"): {
-            "sha256": sha256_file(path),
-            "size": path.stat().st_size,
-        }
-        for path in (
-            table_path,
-            header_path,
-            development_header_path,
-            identity_header_path,
-            trace_path,
-            monitor_pack_path,
-            *generator_paths,
-        )
-    }
-    generated_files = {}
-    for path in generated_artifact_paths(repo_root):
-        if not path.is_file():
-            raise ManifestError("generated artifact missing: %s" % path)
-        generated_files[
-            str(path.relative_to(repo_root)).replace("\\", "/")
-        ] = {
-            "sha256": sha256_file(path),
-            "size": path.stat().st_size,
-        }
+    contract = {"nativeAbi": native_abi}
     return {
         "schemaVersion": 1,
         "kind": "harken-contract-suite-manifest",
         "contractSha256": sha256_bytes(canonical_bytes(contract)),
-        "sectionSha256": section_hashes,
         "contract": contract,
-        "sourceFiles": source_files,
-        "generatedFiles": generated_files,
     }
 
 
