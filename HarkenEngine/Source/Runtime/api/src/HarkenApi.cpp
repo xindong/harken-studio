@@ -74724,10 +74724,9 @@ private:
     harken::Engine& engine_;
 };
 
-// The logic thread is the command queue's only producer. Once admission has
-// reserved `limit` slots, this writer fills the engine-owned fixed scratch and
-// publishes the entire play-led batch with one head release. Helper-emitted
-// records share the same writer so no partial prefix becomes audio-visible.
+// Admission bounds the scratch; Prepare reserves and freezes the actual run
+// before any irreversible Voice commit. Publish consumes that exact proof.
+// Helper-emitted records share this writer and never expose a partial prefix.
 class AdmittedCommandWriter {
 public:
     AdmittedCommandWriter(harken::Engine& engine, std::uint32_t limit,
@@ -74740,8 +74739,13 @@ public:
         assert(batchKind_ != harken::PlayLedBatchKind::None);
     }
 
+    ~AdmittedCommandWriter() {
+        proof_.Release();
+        engine_.commands.CancelReservedBatch(&reservation_);
+    }
+
     bool Push(harken::CommandRecord command) {
-        if (count_ >= limit_) {
+        if (proof_.Valid() || count_ >= limit_) {
             overflowed_ = true;
             return false;
         }
@@ -74760,21 +74764,31 @@ public:
     std::uint32_t Count() const noexcept { return count_; }
     bool Overflowed() const noexcept { return overflowed_; }
 
-    void VerifyComplete() {
-        if (count_ == 0 || count_ > limit_ || overflowed_) {
-            assert(false && "play-led writer exceeded admitted scratch");
-            return;
+    VnResult Prepare() noexcept {
+        if (count_ == 0 || count_ > limit_ || overflowed_ || proof_.Valid())
+            return VN_INVALID_CONFIG;
+        engine_.playLedBatchScratch[0].payload.play.batch.batchCommandCount = count_;
+        if (!engine_.commands.ReserveBatch(count_, &reservation_)) return VN_BACKPRESSURE;
+        if (!engine_.commands.ProvePreparedBatch(&reservation_,
+                engine_.playLedBatchScratch.data(), count_, &proof_)) {
+            engine_.commands.CancelReservedBatch(&reservation_);
+            return VN_DEVICE_ERROR;
         }
-        engine_.playLedBatchScratch[0].payload.play.batch.batchCommandCount =
-            count_;
-        const bool pushed = engine_.commands.TryPushBatch(
-            engine_.playLedBatchScratch.data(), count_);
-        assert(pushed);
+        return VN_OK;
+    }
+
+    void Publish() noexcept {
+        assert(proof_.Valid());
+        const auto published = engine_.commands.ConsumePreparedBatch(std::move(proof_));
+        assert(published.Count() == count_);
+        (void)published;
         count_ = 0;
     }
 
 private:
     harken::Engine& engine_;
+    harken::CommandQueue::BatchReservation reservation_{};
+    harken::CommandQueue::PreparedBatchProof proof_;
     std::uint32_t limit_ = 0;
     std::uint32_t count_ = 0;
     bool overflowed_ = false;
@@ -76878,6 +76892,9 @@ PendingStartOutcome StartDeferredVoice(
         return PendingStartOutcome::InvalidInput;
     }
     if (commands.Overflowed()) return PendingStartOutcome::BatchTooLarge;
+    const auto preparedCommands = commands.Prepare();
+    if (preparedCommands != VN_OK) return preparedCommands == VN_BACKPRESSURE
+        ? PendingStartOutcome::QueueFull : PendingStartOutcome::DeviceError;
     if (!variableCut.BindVoice(render)) return PendingStartOutcome::BankBlocked;
     if (!engine.voices.CommitPreparedVoice(render)) return PendingStartOutcome::DeviceError;
     engine.params.CommitStagedVoiceBindings(render);
@@ -76897,7 +76914,7 @@ PendingStartOutcome StartDeferredVoice(
                     rec.outputBusVolumeDb);
     for (std::uint32_t slot = 0; slot < rec.effects.size(); ++slot)
         if (rec.effects[slot].set) engine.effectBank.PublishInstalled(engine.voiceEffectInstanceRefs[renderSlot][slot]);
-    commands.VerifyComplete();
+    commands.Publish();
     variableCut.ReleaseCalendar();
     preparationGuard.armed = false;
     rec.Reset();
@@ -78617,8 +78634,8 @@ bool TryReturnParked(harken::Engine& engine, std::uint32_t ledgerSlot,
     // the restore is all-or-nothing.
     if (!PrimeParkedEffectBindings(engine, rec, publicHandle, newRender, commands, variableCut.Reader())) return false;
     if (InstallFutureVoiceSends(engine, newRender, rec.voiceSends, rec.preparedSends) != VN_OK) return false;
-    if (commands.Overflowed() || !variableCut.BindVoice(newRender) ||
-        !engine.voices.CommitPreparedVoice(newRender)) return false;
+    if (commands.Overflowed() || commands.Prepare() != VN_OK ||
+        !variableCut.BindVoice(newRender) || !engine.voices.CommitPreparedVoice(newRender)) return false;
     engine.params.CommitStagedVoiceBindings(newRender);
     rec.preparedBindings.clear();
     variableCut.Commit();
@@ -78652,7 +78669,7 @@ bool TryReturnParked(harken::Engine& engine, std::uint32_t ledgerSlot,
                                             : nullptr,
                     rec.facts.outputBusVolumeDb);
 
-    commands.VerifyComplete();
+    commands.Publish();
     variableCut.ReleaseCalendar();
     preparationGuard.armed = false;
     engine.ledger.ReturnPark(ledgerSlot, newRender);
@@ -114544,6 +114561,8 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
         engine->commands.NoteBackpressure();
         return VN_BACKPRESSURE;
     }
+    const auto preparedCommands = writer.Prepare();
+    if (preparedCommands != VN_OK) return preparedCommands;
     if (!variableCut.BindVoice(renderHandle)) return VN_BACKPRESSURE;
     if (!engine->voices.CommitPreparedVoice(renderHandle)) return VN_DEVICE_ERROR;
     engine->params.CommitStagedVoiceBindings(renderHandle);
@@ -114560,7 +114579,7 @@ VnResult PlayImpl(const VnPlayDesc* desc, VnVoiceHandle* outHandle,
     for (std::uint32_t slot = 0; slot < recipeEffects.size(); ++slot)
         if (recipeEffects[slot].set)
             engine->effectBank.PublishInstalled(engine->voiceEffectInstanceRefs[slotIndex][slot]);
-    writer.VerifyComplete();
+    writer.Publish();
     variableCut.ReleaseCalendar();
     directPreparationGuard.armed = false;
     recipeGuard.armed = false;

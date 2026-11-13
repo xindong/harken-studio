@@ -1188,3 +1188,30 @@ TEST(CommandBudget, InvalidBatchCrossingPublicationStillAdoptsItsActivity) {
     EXPECT_EQ(1u, engine.mixer.CommandProtocolViolationCount());
     EXPECT_FLOAT_EQ(1, engine.buses.BusState(0)->gain.target);
 }
+
+TEST(CommandBudget, RawStartProofRefusalReleasesPreparedVoiceBeforePublication) {
+    EngineSession session(BudgetConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    std::vector<float> pcm;
+    const auto existing = PlayDcVoice(harkentest::ObjectId(1), .25f, VN_BUS_MASTER, pcm);
+    ASSERT_NE(0u, existing);
+    const auto before = PumpBlock(&engine);
+    const auto commandHead = engine.commands.PublishedHead();
+    const auto voices = engine.voices.ActiveCount();
+    const auto references = engine.registry.Lookup(harkentest::ObjectId(1)).useCount->load();
+    harken::detail::CommandQueueSubmissionTestAccess::ExhaustFrozenOrigins(engine.commands);
+    auto play = MakePlayDesc(harkentest::ObjectId(1));
+    VnVoiceHandle refused = 0;
+    EXPECT_EQ(VN_DEVICE_ERROR, harkentest::PlayRaw(&play, &refused));
+    EXPECT_EQ(0u, refused);
+    EXPECT_EQ(commandHead, engine.commands.PublishedHead());
+    EXPECT_EQ(voices, engine.voices.ActiveCount());
+    EXPECT_EQ(references, engine.registry.Lookup(harkentest::ObjectId(1)).useCount->load());
+    const auto after = PumpBlock(&engine);
+    EXPECT_EQ(before.left, after.left);
+    EXPECT_EQ(before.right, after.right);
+    // A failed proof must also return its queue reservation to ordinary setters.
+    ASSERT_EQ(VN_OK, Vn_SetVoiceVolume(existing, -6, 0));
+    EXPECT_EQ(commandHead + 1, engine.commands.PublishedHead());
+}
