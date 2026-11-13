@@ -366,6 +366,8 @@ private:
     std::uint32_t m_deviceLayout;
     std::uint32_t m_sampleRate;
     std::atomic<std::uint64_t> m_blocksRendered{0};
+    // Audio-owned elapsed frames for recovery holds, including variable quanta.
+    std::uint64_t m_workObservationFrames = 0;
     // QPC tick rate, fetched once at construction (logic thread) so the
     // audio thread only ever reads the cached value.
     std::uint64_t m_cpuTicksPerSecond = 0;

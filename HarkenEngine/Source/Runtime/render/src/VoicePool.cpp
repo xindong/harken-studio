@@ -4602,6 +4602,17 @@ void VoicePool::ApplyBusTombstones(const std::uint8_t* alive,
     }
 }
 
+void VoicePool::MarkPhysicalBusUsers(BusTree& buses) const noexcept {
+    for (const auto& slot : m_slots) {
+        const auto state = slot.state.load(std::memory_order_relaxed);
+        if (!IsAudioRenderingState(state) && state != SlotState::VariableStartWaiting) continue;
+        const auto& render = slot.render;
+        buses.NoteAudioBusUser({render.busIndex, render.busGeneration});
+        for (const auto& send : render.voiceSends)
+            if (send.active) buses.NoteAudioBusUser({send.targetBusIndex, send.targetBusGeneration});
+    }
+}
+
 VnResult VoicePool::PrepareVoiceSendSet(VnVoiceHandle handle,
     std::span<const VoiceSendDefinition> definitions, bool resetEdited,
     std::uint32_t editedSlot, VoiceSendSet** out) noexcept {

@@ -26,6 +26,7 @@
 
 #include "harken/core/BusSlotRef.h"
 #include "harken/core/GrowingRowStorage.h"
+#include "harken/core/PinnedSnapshot3.h"
 #include "harken/core/EngineConfig.h"
 #include "harken/core/CommandQueue.h"
 #include "harken/dsp/GainRamp.h"
@@ -131,6 +132,25 @@ public:
     bool AudioDetachWorkRow(BusSlotRef bus) noexcept;
     void ServiceWorkRowRetirements() noexcept;
     std::uint32_t WorkRowsInUse() const noexcept { return m_workRowsInUse; }
+
+    struct WorkObservation {
+        BusSlotRef bus;
+        WorkRef work;
+        std::uint64_t blockSequence = 0, frameEnd = 0;
+        std::uint64_t graphRevision = 0, stateRevision = 0;
+        std::uint64_t quietFrames = 0, recoveryProbeFrame = 0;
+        std::uint32_t sendTailFrames = 0, outputTailFrames = 0;
+        bool rendered = false, physicalVoice = false;
+        bool inputActive = false, detectorActive = false, localRecoveryReady = false;
+    };
+    // Single logic reader; a retained WorkRef protects the snapshot storage.
+    // Local readiness is a sleep proposal, not a complete dependency proof.
+    bool CaptureWorkObservation(BusSlotRef bus, WorkRef work, WorkObservation& out) noexcept;
+    // Audio coordinator only, after the worker join and before publication.
+    void BeginWorkObservations() noexcept;
+    void NoteAudioBusUser(BusSlotRef bus) noexcept;
+    void PublishWorkObservations(std::uint64_t blockSequence, std::uint64_t frameEnd,
+        std::uint32_t frames, bool rendered) noexcept;
 
     // Prepared Pack activation seam. Capacity and append-position validation
     // happens before the non-failing materialization/commit tail. Hidden slots
@@ -451,6 +471,8 @@ public:
         std::uint32_t busIndex = 0;
         std::uint32_t generation = 0;
         std::uint32_t parentIndex = 0;
+        std::uint64_t activityRevision = 1;
+        bool activityInput = false, activityDetector = false;
         OutputGain gain;
         OutputGain outputGain;
         // First ApplyVolume snaps even if rampMs != 0 (no fictitious prior
@@ -636,6 +658,10 @@ private:
         std::uint64_t generation = 0;
         std::uint32_t slot = UINT32_MAX;
         WorkRow* next = nullptr;
+        PinnedSnapshot3<WorkObservation> observation;
+        WorkObservation observed;
+        std::uint64_t nextRecoveryProbeFrame = 0;
+        std::uint32_t recoveryProbeDelay = 0;
     };
     GrowingRowStorage<WorkRow> m_workRows;
     std::vector<WorkRef> m_workSlots;
@@ -649,6 +675,10 @@ private:
     void RecycleWorkRow(WorkRow& row) noexcept;
     void ShutdownWorkRows() noexcept;
     void BindInitialWorkIdentity(std::uint32_t busIndex) noexcept;
+    static void NoteWorkMutation(Bus& bus) noexcept {
+        if (bus.activityRevision != UINT64_MAX) ++bus.activityRevision;
+    }
+    bool LocalRecoveryReady(const Bus& bus) const noexcept;
     bool HasWorkRow(std::uint32_t index) const noexcept {
         return index < m_audioCount && m_workSlots[index].Valid();
     }

@@ -742,6 +742,107 @@ TEST(BusActivity, DependencyClosureKeepsDetectorsAndDropsRootlessComponents) {
     EXPECT_NE(std::find(selected.buses.begin(), selected.buses.end(), 3), selected.buses.end());
 }
 
+TEST(BusActivity, WorkObservationIsFreshAndRetainsSilentPhysicalVoicesAndTransitions) {
+    using namespace harken;
+    auto config = MakeNullConfig(2, 64, 48000);
+    config.maxBuses = 2;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    auto& buses = engine.buses;
+    const auto id = harkentest::ObjectId(301);
+    ASSERT_EQ(VN_OK, Vn_CreateBus(id, VN_BUS_MASTER));
+    const auto bus = buses.FindRef(id);
+    const auto work = buses.AcceptedWorkRef(bus);
+    BusTree::WorkObservation observed;
+    EXPECT_FALSE(buses.CaptureWorkObservation(bus, work, observed));
+    engine.nullBackend.Pump(1);
+    ASSERT_TRUE(buses.CaptureWorkObservation(bus, work, observed));
+    EXPECT_TRUE(observed.rendered);
+    EXPECT_TRUE(observed.localRecoveryReady);
+    EXPECT_FALSE(observed.physicalVoice);
+    EXPECT_EQ(observed.quietFrames, 0u);
+    const auto firstBlock = observed.blockSequence;
+    const std::vector<float> silence(64 * 4);
+    const auto pcm = MonoDesc(silence, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(302), &pcm));
+    auto play = MakePlayDesc(harkentest::ObjectId(302));
+    play.busId = id;
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+    engine.nullBackend.Pump(1);
+    ASSERT_TRUE(buses.CaptureWorkObservation(bus, work, observed));
+    EXPECT_GT(observed.blockSequence, firstBlock);
+    EXPECT_EQ(observed.frameEnd, observed.blockSequence * 64);
+    EXPECT_TRUE(observed.physicalVoice);
+    EXPECT_FALSE(observed.inputActive);
+    EXPECT_FALSE(observed.localRecoveryReady);
+    EXPECT_EQ(observed.quietFrames, 0u);
+    engine.nullBackend.Pump(8);
+    ASSERT_TRUE(buses.CaptureWorkObservation(bus, work, observed));
+    EXPECT_FALSE(observed.physicalVoice);
+    EXPECT_TRUE(observed.localRecoveryReady);
+    ASSERT_EQ(VN_OK, Vn_SetBusVolume(id, 0, 0));
+    engine.nullBackend.Pump(1);
+    ASSERT_TRUE(buses.CaptureWorkObservation(bus, work, observed));
+    const auto revision = observed.stateRevision;
+    const auto beforeRamp = observed.blockSequence;
+    ASSERT_EQ(VN_OK, Vn_SetBusVolume(id, -6, 100));
+    engine.nullBackend.Pump(1);
+    ASSERT_TRUE(buses.CaptureWorkObservation(bus, work, observed));
+    EXPECT_GT(observed.blockSequence, beforeRamp);
+    EXPECT_GT(observed.stateRevision, revision);
+    EXPECT_FALSE(observed.localRecoveryReady);
+    EXPECT_EQ(observed.quietFrames, 0u);
+    EXPECT_FALSE(buses.CaptureWorkObservation({bus.index, bus.generation + 1}, work, observed));
+    EXPECT_FALSE(buses.CaptureWorkObservation(bus, {work.slot, work.generation + 1}, observed));
+    engine.nullBackend.Pump(500);
+    ASSERT_TRUE(buses.CaptureWorkObservation(bus, work, observed));
+    EXPECT_TRUE(observed.localRecoveryReady);
+    EXPECT_GE(observed.quietFrames, 24000u);
+}
+
+TEST(BusActivity, ExactDelayRecoveryProbeBacksOffAfterFiniteTail) {
+    using namespace harken;
+    auto config = MakeNullConfig(2, 64, 48000);
+    config.maxBuses = 2;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    auto& buses = engine.buses;
+    const auto id = harkentest::ObjectId(301);
+    ASSERT_EQ(VN_OK, Vn_CreateBus(id, VN_BUS_MASTER));
+    VnFeedbackDelayDesc delay{};
+    delay.structSize = sizeof(delay);
+    delay.delayMs = 1;
+    delay.wet = delay.dry = 1;
+    ASSERT_EQ(VN_OK, Vn_SetBusEffect(id, 0, VN_EFFECT_FEEDBACK_DELAY,
+        reinterpret_cast<const VnEffectDesc*>(&delay)));
+    engine.nullBackend.Pump(1);
+    const auto bus = buses.FindRef(id);
+    const auto work = buses.AcceptedWorkRef(bus);
+    auto* state = static_cast<DelayEffectState*>(buses.BusState(bus.index)->fxSlots[0].state);
+    ASSERT_NE(state, nullptr);
+    ASSERT_GT(state->lineFrames, 1024u);
+    state->lineBase[state->lineFrames - 1] = .001f;
+    // Retuning invalidates the earlier zero-state proof without changing the
+    // distant ring sample; a finite tail estimate cannot certify that history.
+    ASSERT_EQ(VN_OK, Vn_SetBusVolume(id, -1, 0));
+    BusTree::WorkObservation observed;
+    engine.nullBackend.Pump(4);
+    ASSERT_TRUE(buses.CaptureWorkObservation(bus, work, observed));
+    EXPECT_EQ(observed.outputTailFrames, 0u);
+    EXPECT_FALSE(observed.localRecoveryReady);
+    ASSERT_GT(observed.recoveryProbeFrame, 0u);
+    const auto probeFrame = observed.recoveryProbeFrame;
+    const auto block = observed.blockSequence;
+    engine.nullBackend.Pump(4);
+    ASSERT_TRUE(buses.CaptureWorkObservation(bus, work, observed));
+    EXPECT_GT(observed.blockSequence, block);
+    EXPECT_EQ(observed.recoveryProbeFrame, probeFrame);
+    EXPECT_FALSE(observed.localRecoveryReady);
+}
+
 TEST(BusActivity, DependencyClosureDoesNotBindGhostToReusedBusAndRefusesStaleRoot) {
     using namespace harken;
     auto config = MakeNullConfig(2, 64);

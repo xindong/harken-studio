@@ -30,6 +30,9 @@ BusTree::WorkRef BusTree::PrepareWorkRow() noexcept {
         row.host = {};
         row.hostId = {};
         row.next = nullptr;
+        row.observed = {};
+        row.nextRecoveryProbeFrame = 0;
+        row.recoveryProbeDelay = 0;
         row.references.store(1, std::memory_order_relaxed);
         row.phase.store(WorkPhase::Preparing, std::memory_order_release);
         ++m_workRowsInUse;

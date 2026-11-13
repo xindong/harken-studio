@@ -1859,6 +1859,8 @@ void MixerLoop::RenderBlock(float* interleavedOut, std::uint32_t frames,
         m_renderDeferred = false;
 
         ticksVoices = CpuClockTicks();
+        m_buses.BeginWorkObservations();
+        m_voices.MarkPhysicalBusUsers(m_buses);
 
         // Bottom-up bus fold; afterwards the master planes (m_busPlanes[0..
         // m_mixChannels)) hold the final mix at the mix layout.
@@ -1965,6 +1967,10 @@ void MixerLoop::RenderBlock(float* interleavedOut, std::uint32_t frames,
         }
     }
     m_dynamicRoutes.EndBlock(blockIndex);
+    m_workObservationFrames = frames > UINT64_MAX - m_workObservationFrames
+        ? UINT64_MAX : m_workObservationFrames + frames;
+    m_buses.PublishWorkObservations(blockIndex + 1,
+        m_workObservationFrames, frames, planesOk && signalOk);
 
     if (m_arena.OverflowCount() != overflowsBefore) {
         // One notification per degraded block, not one per failed allocation: the

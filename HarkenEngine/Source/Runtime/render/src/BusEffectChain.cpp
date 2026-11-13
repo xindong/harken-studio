@@ -212,6 +212,7 @@ void BusTree::ApplyPreviewEffectChain(const BusEffectChainAdoption& adoption) no
         // This adoption changes only metadata, after a quiescent preflight.
         if (bus.generation == host.generation && bus.fxChainTransition == nullptr &&
             bus.previewEffectOwner == adoption.owner && bus.previewEffectRevision == update.baseRevision) {
+            NoteWorkMutation(bus);
             bus.previewEffectOwner = 0;
             bus.previewEffectRevision = update.targetRevision;
         }
@@ -229,6 +230,7 @@ void BusTree::ApplyPreviewEffectChain(const BusEffectChainAdoption& adoption) no
         RetirePreviewEffectReferences(update);
         return;
     }
+    NoteWorkMutation(bus);
     if (update.changedMask != 0) {
         for (std::uint32_t i = 0; i < m_fxSlots; ++i) {
             update.oldBypass[i] = bus.fxBypassMix[i];
@@ -293,6 +295,7 @@ void BusTree::ApplyPreviewEffectControl(BusSlotRef host, std::uint64_t owner,
     else if (parameter < 2) LimiterRequestPreparedParam(bus.fxSlots[slot].state, parameter, prepared, frames);
     else return;
     bus.previewEffectRevision = revision;
+    NoteWorkMutation(bus);
 }
 
 void BusTree::RetirePreviewEffectReferences(EffectChainUpdate& update, bool quiescent) noexcept {

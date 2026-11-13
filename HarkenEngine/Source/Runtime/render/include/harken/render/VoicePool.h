@@ -657,6 +657,8 @@ public:
         std::uint32_t editedSlot, VoiceSendSet** out) noexcept;
     bool InstallPreparedVoiceSendSet(VnVoiceHandle handle, VoiceSendSet& set) noexcept;
     void ApplyVoiceSendSet(VoiceSendSet& set, const BusTree& buses) noexcept;
+    // Audio coordinator after joining every worker; never a logic-side query.
+    void MarkPhysicalBusUsers(BusTree& buses) const noexcept;
     void CancelVoiceSendSet(VoiceSendSet& set) noexcept;
     void DrainVoiceSendSets() noexcept;
     std::uint64_t RetainedVoiceSendCount() const noexcept { return m_retainedVoiceSends; }

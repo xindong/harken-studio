@@ -604,6 +604,7 @@ void BusTree::ApplySetBusFilter(std::uint32_t busIndex,
     Bus::ToneSection& section =
         outputOnly ? (lowpass ? bus.outputLpf : bus.outputHpf)
                    : (lowpass ? bus.busLpf : bus.busHpf);
+    NoteWorkMutation(bus);
     // Buses are already mixing: Master from init, others after Create/Finalize.
     // Default bypass is a live section. First enable/retune/disable — including
     // rampMs==0 — follows Voice post-firstBlock. Zero-length ramps fall back to
@@ -648,6 +649,7 @@ void BusTree::ApplyVolume(std::uint32_t busIndex, float volumeDb,
     }
     const std::uint64_t rampFrames =
         (static_cast<std::uint64_t>(rampMs) * m_sampleRate + 999) / 1000;
+    NoteWorkMutation(bus);
     if (outputOnly) {
         bus.outputGain.Set(linear, rampFrames);
         return;
@@ -732,6 +734,7 @@ void BusTree::ApplyTopologyPlan(std::uint32_t planIndex,
     if (plan.parents != nullptr) {
         for (std::uint32_t i = 0; i < m_audioCount; ++i) {
             if (HasWorkRow(i) && plan.parents[i] != kPlanParentUnset) {
+                NoteWorkMutation(WorkState(i));
                 WorkState(i).parentIndex = plan.parents[i];
             }
         }
@@ -915,6 +918,7 @@ void BusTree::ApplySetBusSendLevel(std::uint32_t fromBus, std::uint32_t toBus,
         return;
     }
     if (edge == nullptr) return;
+    if (HasWorkRow(fromBus)) NoteWorkMutation(WorkState(fromBus));
     const float linear = std::pow(10.0f, levelDb / 20.0f);
     ArmRamp(edge->gain, edge->ramping, edge->rampStartGain, edge->rampEndGain,
             edge->rampBlocksTotal, edge->rampBlocksDone, linear, rampMs);
@@ -1015,6 +1019,9 @@ void BusTree::FinalizeBus(Bus& bus, float* const* planes,
                 m_sampleRate, sourceFrameBegin);
         }
         if (compressorState != nullptr) {
+            bus.activityDetector = bus.activityDetector ||
+                compressorState->telemetry.detectorPeak != 0.0f ||
+                detectorStatus.nonFiniteCount != 0;
             compressorState->telemetry.detectorNonFiniteCount +=
                 detectorStatus.nonFiniteCount;
             compressorState->telemetry.detectorSaturationCount +=
@@ -1523,6 +1530,9 @@ bool BusTree::MixDown(const BusRenderView& busPlanes, std::uint32_t blockFrames,
         const std::uint32_t i = order.empty() ? (n - 1 - k) : order[k];
         Bus& bus = WorkState(i);
         float* const* planes = busPlanes.ForBus(i, m_mixChannels, bus.generation);
+        for (std::uint32_t ch = 0; ch < m_mixChannels && !bus.activityInput; ++ch)
+            for (std::uint32_t frame = 0; frame < blockFrames; ++frame)
+                if (planes[ch][frame] != 0.0f) { bus.activityInput = true; break; }
         if (signals == nullptr || !signals->NeedsBlockRouting()) bus.signalBoundsPrepared = false;
         FinalizeBus(bus, planes, blockFrames, blockEpoch, sourceFrameBegin);
         const auto signalNode = signals == nullptr ? UINT32_MAX : signals->NodeForBus(i, bus.id, bus.generation);
@@ -1657,6 +1667,7 @@ void BusTree::ApplySetBusEffect(std::uint32_t busIndex, std::uint32_t slot,
     }
     Bus& bus = WorkState(busIndex);
     // In-place replace: whatever this slot held is retired for reclamation.
+    NoteWorkMutation(bus);
     if (bus.fxSlotEffectRef[slot].type != kEffectTypeNone) {
         if (harken::monitor::AudioLiveArmed()) {
             const std::uint64_t effectHandle =
@@ -1689,6 +1700,7 @@ void BusTree::ApplyClearBusEffect(std::uint32_t busIndex, std::uint32_t slot,
         return;
     }
     Bus& bus = WorkState(busIndex);
+    NoteWorkMutation(bus);
     if (bus.fxSlotEffectRef[slot].type != kEffectTypeNone) {
         // Retire the instance and empty the slot; its tail is cut here (a bus is
         // a persistent node with no drain, so a cleared effect simply stops).
@@ -1736,6 +1748,7 @@ void BusTree::ApplySetBusEffectParam(std::uint32_t busIndex, std::uint32_t slot,
     if (fx.process == nullptr) {
         return; // empty slot: nothing to parameterize
     }
+    NoteWorkMutation(bus);
     if (effectType == VN_EFFECT_THREE_BAND_TONE) {
         ToneApplyPreparedParam(fx.state, paramIndex, value, coeffs,
                                tailFrames);
@@ -1779,6 +1792,7 @@ void BusTree::ApplySetBusCompressorParameters(
     if (fx.process == nullptr) {
         return;
     }
+    NoteWorkMutation(bus);
     CompressorRequestPreparedParameters(
         static_cast<CompressorState*>(fx.state), prepared,
         transitionFrames);
@@ -1797,6 +1811,7 @@ void BusTree::ApplySetBusEffectBypass(std::uint32_t busIndex, std::uint32_t slot
     }
     Bus& bus = WorkState(busIndex);
     if (action == kEffectActionReset) {
+        NoteWorkMutation(bus);
         if (bus.fxSlotEffectRef[slot].type == expectedEffectType &&
             expectedEffectType == VN_EFFECT_COMPRESSOR &&
             bus.fxSlots[slot].reset != nullptr) {
@@ -1805,6 +1820,7 @@ void BusTree::ApplySetBusEffectBypass(std::uint32_t busIndex, std::uint32_t slot
         return;
     }
     // Target 1 = fully dry (bypassed), 0 = fully wet (active).
+    NoteWorkMutation(bus);
     const float target = (bypass != 0) ? 1.0f : 0.0f;
     const bool enablingLimiter =
         target == 0.0f && bus.fxBypassTarget[slot] == 1.0f &&
@@ -1839,6 +1855,7 @@ void BusTree::ApplySetBusFaderPoint(std::uint32_t busIndex,
          !AudioRefMatches({busIndex, busGeneration}))) {
         return;
     }
+    NoteWorkMutation(WorkState(busIndex));
     // A plain block-boundary swap of the split index. The logic side validated
     // faderAfterSlot <= fxSlotsPerBus; clamp defensively. FinalizeBus reads the
     // new split next block; see Vn_SetBusFaderPoint's public doc for the click

@@ -258,6 +258,7 @@ bool BusTree::AdoptActivity(BusActivityPlan& plan) noexcept {
     // Every incoming candidate already owns a lease; none can retire here.
     for (const auto& binding : plan.working) {
         const auto bus = binding.bus.index;
+        NoteWorkMutation(ResolveWorkRow(binding.work)->bus);
         if (m_workSlots[bus] == binding.work) continue;
         const bool retained = RetainWorkRow(binding.work);
         assert(retained);
