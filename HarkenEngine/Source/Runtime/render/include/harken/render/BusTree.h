@@ -112,6 +112,10 @@ public:
     WorkRef AcceptedWorkRef(BusSlotRef bus) const noexcept;
     bool HasAcceptedActivity() const noexcept { return m_lastQueuedActivity != nullptr; }
     const SignalRenderPlan* AcceptedActivitySignals() const noexcept;
+    // Logic-only latest published structural definition. Its pool slot cannot
+    // retire until a successor publication replaces this view on logic.
+    // Mutable Send state is deliberately excluded from this borrowed view.
+    TopologyPlanView AcceptedTopology() const noexcept { return m_acceptedTopology; }
     std::uint64_t NextActivitySignalPublication(const SignalRenderPlan* previous) noexcept;
     std::uint32_t WorkingPlaneCount() const noexcept;
     BusRenderView RenderView(float* const* planes) noexcept;
@@ -579,6 +583,7 @@ private:
     std::vector<std::unique_ptr<BusActivityPlan>> m_activities;
     BusActivityPlan* m_lastQueuedActivity = nullptr;
     BusActivityPlan* m_activeActivity = nullptr;
+    TopologyPlanView m_acceptedTopology;
     std::uint64_t m_activityFallbacks = 0;
     std::uint64_t m_activitySignalPublication = 0;
     SignalBusRoutingInfo SignalBusBounds(std::uint32_t bus, std::uint32_t frames,

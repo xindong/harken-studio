@@ -58,6 +58,8 @@ struct BusActivityPlan {
     std::vector<BusRenderSlot> directory;
     std::vector<std::uint32_t> order;
     std::unique_ptr<SignalRenderPlan> signals;
+    TopologyPlanView topologyDefinition;
+    bool adoptsTopology = false;
     BusTree::SignalTransition signalTransition = BusTree::SignalTransition::Preserve;
     std::uint64_t replacedSignalPublication = 0;
     struct BeforeDetach { BusEffectChainAdoption adoption; BusTree::WorkRef work; };

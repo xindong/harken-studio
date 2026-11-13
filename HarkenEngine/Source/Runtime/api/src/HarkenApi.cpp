@@ -79874,13 +79874,16 @@ std::uint32_t ReserveTopologyChange(harken::Engine& engine,
 // work precedes logical edits; publication consumes the already frozen batch.
 class PreparedTopologyPublication {
 public:
-    PreparedTopologyPublication(harken::Engine& engine, std::uint32_t index)
-        : engine_(engine), index_(index) {}
+    PreparedTopologyPublication(harken::Engine& engine, std::uint32_t index,
+        std::uint32_t ownedDynamicPlan = harken::kInvalidDynamicRoutePlanIndex)
+        : engine_(engine), index_(index), ownedDynamicPlan_(ownedDynamicPlan) {}
     ~PreparedTopologyPublication() {
         proof_.Release();
         engine_.buses.DrainActivities();
         engine_.commands.CancelReservedBatch(&reservation_);
         if (index_ != harken::kInvalidTopologyPlanIndex) engine_.topologyPlans.Recycle(index_);
+        if (ownedDynamicPlan_ != harken::kInvalidDynamicRoutePlanIndex)
+            engine_.dynamicRoutes.AbandonPlan(ownedDynamicPlan_);
     }
     bool Prepare(std::span<const harken::CommandRecord> following = {},
                  std::uint32_t dynamicPlan = harken::kInvalidDynamicRoutePlanIndex) {
@@ -79900,18 +79903,31 @@ public:
         return engine_.commands.ReserveBatch(count_, &reservation_) &&
             harken::PrepareTopologyActivity(engine_, engine_.topologyPlans.View(index_), reservation_, commands, proof_);
     }
+    bool PrepareEmbedded(const harken::CommandRecord& command) noexcept {
+        const auto index = command.opcode == harken::kOpcodeSetBusEffect
+            ? command.payload.setBusEffect.topologyPlanIndex
+            : command.opcode == harken::kOpcodeClearBusEffect
+                ? command.payload.clearBusEffect.topologyPlanIndex : harken::kInvalidTopologyPlanIndex;
+        if (index == harken::kInvalidTopologyPlanIndex || index != index_ || proof_.Valid()) return false;
+        count_ = 1;
+        return engine_.commands.ReserveBatch(count_, &reservation_) &&
+            harken::PrepareTopologyActivity(engine_, engine_.topologyPlans.View(index_),
+                reservation_, {&command, 1}, proof_);
+    }
     void Publish() noexcept {
-        assert(proof_.Valid() && revision_ == engine_.acceptedBusTopologyRevision + 1);
-        engine_.acceptedBusTopologyRevision = revision_;
+        assert(proof_.Valid() && (revision_ == 0 || revision_ == engine_.acceptedBusTopologyRevision + 1));
+        if (revision_ != 0) engine_.acceptedBusTopologyRevision = revision_;
         const auto published = engine_.commands.ConsumePreparedBatch(std::move(proof_));
         assert(published.Count() == count_);
         (void)published;
         ++engine_.topologyPlanCount;
         index_ = harken::kInvalidTopologyPlanIndex;
+        ownedDynamicPlan_ = harken::kInvalidDynamicRoutePlanIndex;
     }
 private:
     harken::Engine& engine_;
     std::uint32_t index_, count_ = 0;
+    std::uint32_t ownedDynamicPlan_;
     std::uint64_t revision_ = 0;
     harken::CommandQueue::BatchReservation reservation_{};
     harken::CommandQueue::PreparedBatchProof proof_;
@@ -117396,6 +117412,7 @@ VnResult Vn_SetBusEffect(VnBusId busId, uint32_t slot, VnEffectType type,
     std::uint32_t topologyPlanIndex = harken::kInvalidTopologyPlanIndex;
     std::uint32_t dynamicPlanIndex =
         harken::kInvalidDynamicRoutePlanIndex;
+    std::optional<PreparedTopologyPublication> publication;
     if (clearDynamicRoutes) {
         engine->topologyPlans.DrainRetire();
         engine->dynamicRoutes.DrainAudioMessages();
@@ -117418,17 +117435,18 @@ VnResult Vn_SetBusEffect(VnBusId busId, uint32_t slot, VnEffectType type,
             engine->topologyPlans.Recycle(topologyPlanIndex);
             return VN_BACKPRESSURE;
         }
+        publication.emplace(*engine, topologyPlanIndex, dynamicPlanIndex);
         FillPlan(*engine, topologyPlanIndex, nullptr, false, busIndex, slot);
     }
     const harken::EffectInstanceRef ref = engine->effectBank.Acquire(type,
         {desc->effectId, engine->CurrentProjectId()});
-    if (ref.type == harken::kEffectTypeNone) {
-        if (topologyPlanIndex != harken::kInvalidTopologyPlanIndex) {
-            engine->topologyPlans.Recycle(topologyPlanIndex);
-            engine->dynamicRoutes.AbandonPlan(dynamicPlanIndex);
-        }
-        return VN_NO_EFFECT; // this type's instance pool is exhausted
-    }
+    if (ref.type == harken::kEffectTypeNone) return VN_NO_EFFECT;
+    struct EffectRollback {
+        harken::Engine& engine;
+        harken::EffectInstanceRef ref;
+        bool transferred = false;
+        ~EffectRollback() { if (!transferred) engine.effectBank.Recycle(ref); }
+    } effectRollback{*engine, ref};
     // Construct on the logic side (the audio thread never does): deterministic
     // reset, then configure from the descriptor through the effect's logic-side
     // parameter path.
@@ -117440,18 +117458,6 @@ VnResult Vn_SetBusEffect(VnBusId busId, uint32_t slot, VnEffectType type,
     harken::ApplyEffectDesc(type, desc, state);
     float seedParams[harken::kMaxEffectParamCount] = {};
     (void)harken::EffectParamsFromDesc(type, desc, seedParams);
-    const bool seeded = engine->effectParamTargets.SeedInstalledEffect(
-        harken::EffectParamTargetStore::Scope::Bus,
-        static_cast<std::uint64_t>(busIndex), busGeneration, slot, type,
-        seedParams, seedCount);
-    if (!seeded) {
-        engine->effectBank.Recycle(ref);
-        if (topologyPlanIndex != harken::kInvalidTopologyPlanIndex) {
-            engine->topologyPlans.Recycle(topologyPlanIndex);
-            engine->dynamicRoutes.AbandonPlan(dynamicPlanIndex);
-        }
-        return VN_DEVICE_ERROR;
-    }
     harken::CommandRecord command{};
     command.opcode = harken::kOpcodeSetBusEffect;
     command.payload.setBusEffect.busIndex = busIndex;
@@ -117463,11 +117469,16 @@ VnResult Vn_SetBusEffect(VnBusId busId, uint32_t slot, VnEffectType type,
     command.payload.setBusEffect.dynamicRoutePlanIndex = dynamicPlanIndex;
     command.payload.setBusEffect.busGeneration =
         engine->buses.GenerationAt(busIndex);
-    (void)engine->PublishBusSettingCommand(command); // space verified above
-    if (clearDynamicRoutes) {
-        engine->dynamicRoutes.CommitClearTarget(busIndex, slot);
-        ++engine->topologyPlanCount;
-    }
+    if (publication && !publication->PrepareEmbedded(command)) return VN_BACKPRESSURE;
+    const bool seeded = engine->effectParamTargets.SeedInstalledEffect(
+        harken::EffectParamTargetStore::Scope::Bus,
+        static_cast<std::uint64_t>(busIndex), busGeneration, slot, type,
+        seedParams, seedCount);
+    if (!seeded) return VN_DEVICE_ERROR;
+    if (publication) publication->Publish();
+    else (void)engine->PublishBusSettingCommand(command); // space verified above
+    effectRollback.transferred = true;
+    if (clearDynamicRoutes) engine->dynamicRoutes.CommitClearTarget(busIndex, slot);
     // Mirror the installed type for parameter-range validation.
     if (busIndex < engine->busEffectSlotTypes.size()) {
         engine->busEffectSlotTypes[busIndex][slot] = type;
@@ -117548,6 +117559,7 @@ VnResult Vn_ClearBusEffect(VnBusId busId, uint32_t slot) {
     std::uint32_t topologyPlanIndex = harken::kInvalidTopologyPlanIndex;
     std::uint32_t dynamicPlanIndex =
         harken::kInvalidDynamicRoutePlanIndex;
+    std::optional<PreparedTopologyPublication> publication;
     if (clearDynamicRoutes) {
         engine->topologyPlans.DrainRetire();
         engine->dynamicRoutes.DrainAudioMessages();
@@ -117570,17 +117582,17 @@ VnResult Vn_ClearBusEffect(VnBusId busId, uint32_t slot) {
             engine->topologyPlans.Recycle(topologyPlanIndex);
             return VN_BACKPRESSURE;
         }
+        publication.emplace(*engine, topologyPlanIndex, dynamicPlanIndex);
         FillPlan(*engine, topologyPlanIndex, nullptr, false, busIndex, slot);
     }
     command.payload.clearBusEffect.topologyPlanIndex =
         topologyPlanIndex;
     command.payload.clearBusEffect.dynamicRoutePlanIndex =
         dynamicPlanIndex;
-    (void)engine->PublishBusSettingCommand(command); // space verified above
-    if (clearDynamicRoutes) {
-        engine->dynamicRoutes.CommitClearTarget(busIndex, slot);
-        ++engine->topologyPlanCount;
-    }
+    if (publication && !publication->PrepareEmbedded(command)) return VN_BACKPRESSURE;
+    if (publication) publication->Publish();
+    else (void)engine->PublishBusSettingCommand(command); // space verified above
+    if (clearDynamicRoutes) engine->dynamicRoutes.CommitClearTarget(busIndex, slot);
     harken::EffectInstanceRef released{};
     const auto releasedIdentity = engine->busEffectIdentities[busIndex][slot];
     if (busIndex < engine->busEffectInstanceRefs.size()) {

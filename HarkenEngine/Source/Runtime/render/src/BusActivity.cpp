@@ -127,6 +127,11 @@ BusActivityPlan* BusTree::PrepareActivity(const TopologyPlanView& topology,
     } else if (replacedSignals != nullptr) return nullptr;
     try {
         auto plan = std::make_unique<BusActivityPlan>(*this);
+        plan->adoptsTopology = adoptsTopology;
+        if (adoptsTopology) {
+            plan->topologyDefinition = topology;
+            plan->topologyDefinition.sendStates = nullptr;
+        }
         plan->signalTransition = signalTransition;
         plan->replacedSignalPublication = replacedSignals != nullptr ? replacedSignals->PublicationIdentity() : 0;
         plan->working.reserve(working.size());
@@ -228,6 +233,7 @@ void BusTree::QueueActivity(BusActivityPlan& plan) noexcept {
             (void)published;
         }
     }
+    if (plan.adoptsTopology) m_acceptedTopology = plan.topologyDefinition;
     m_lastQueuedActivity = &plan;
     plan.phase.store(BusActivityPlan::Phase::Queued, std::memory_order_release);
 }
