@@ -176,7 +176,7 @@ bool PrivateSignalTopology::Prepare(const PreparedSignalPublication& signals) no
     if (index_ != UINT32_MAX || !CanCommitSignals(engine_, signals) ||
         engine_.acceptedBusTopologyRevision == UINT64_MAX) return false;
     engine_.topologyPlans.DrainRetire();
-    index_ = engine_.topologyPlans.Acquire();
+    index_ = engine_.topologyPlans.AcquireSparse(engine_.busSendActive);
     if (index_ == UINT32_MAX) return false;
     ClearPairedInstallAckIdentity(engine_, index_);
     FillLiveSignalTopology(engine_, index_);

@@ -1,5 +1,6 @@
 #include "harken/render/SignalRenderPlan.h"
 #include "harken/render/SignalRoutingTypes.h"
+#include "harken/core/LogicAllocCheckpoint.h"
 // Bus-graph sends and the topology plan: bus->bus and voice->bus send mixing,
 // the post-pan voice-send tap, cycle refusal over the combined tree+send graph,
 // feeds-first plan order (a send source created before its receiver still
@@ -130,6 +131,28 @@ TEST_F(BusSendSlotReconcile, SameSlotAndTargetPreserveActiveRamp) {
         republish, harken::kInvalidBusIndex, harken::kInvalidBusIndex, 0.0f);
     const std::vector<float> second = RenderSourceBlock();
     EXPECT_NEAR(1.5f, second.back(), 1e-5f);
+}
+
+TEST_F(BusSendSlotReconcile, CompactRowsKeepRampAfterPredecessorStorageIsReused) {
+    const auto initial = BuildPlan(harken::kEmptySendTarget, 2);
+    ASSERT_NE(harken::kInvalidTopologyPlanIndex, initial);
+    engine->buses.ApplyTopologyPlan(initial, 1, 2, 0.0f);
+    engine->buses.ApplySetBusSendLevel(1, 2, 20.0f * std::log10(0.25f), 3);
+    ASSERT_NEAR(1.75f, RenderSourceBlock().back(), 1e-5f);
+
+    const auto compact = BuildPlan(harken::kEmptySendTarget, 2);
+    const std::uint32_t counts[] = {0, 1, 0, 0};
+    ASSERT_TRUE(engine->topologyPlans.PrepareSendRows(compact, counts));
+    engine->topologyPlans.SendSlotsRow(compact, 1)[0] = 1;
+    engine->topologyPlans.SendTargetsRow(compact, 1)[0] = 2;
+    engine->buses.ApplyTopologyPlan(compact, harken::kInvalidBusIndex,
+                                    harken::kInvalidBusIndex, 0.0f);
+    engine->topologyPlans.DrainRetire();
+    const auto reused = engine->topologyPlans.Acquire();
+    ASSERT_EQ(initial, reused);
+    engine->topologyPlans.Recycle(reused);
+    EXPECT_NEAR(1.5f, RenderSourceBlock().back(), 1e-5f);
+    EXPECT_NEAR(1.25f, RenderSourceBlock().back(), 1e-5f);
 }
 
 TEST_F(BusSendSlotReconcile, EmptyAuthoritativeSlotClearsEdge) {
@@ -889,6 +912,48 @@ TEST(BusSend, FullPlanPoolRefusesConnectThenSucceedsAfterDrain) {
 
 // Command-admission shortage: a full command queue refuses a connect, and the
 // same call succeeds after an audio block drains the queue.
+TEST(BusSend, StoragePreparationFailureKeepsPriorDefinitionAndAudio) {
+    for (std::size_t allocation = 1; allocation <= 7; ++allocation) {
+        SCOPED_TRACE(allocation);
+        VnConfig config = MakeNullConfig(2, kBlockFrames);
+        config.maxBuses = 4;
+        EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto* engine = session.Engine();
+        Capture warm;
+        for (const auto bus : {kBusA, kBusB, kBusC}) {
+            ASSERT_EQ(VN_OK, Vn_CreateBus(bus, VN_BUS_MASTER));
+            PumpAndCapture(engine, 1, warm);
+            Vn_Update();
+        }
+        const auto dc = RegisterDc(0.125f);
+        ASSERT_EQ(VN_OK, Vn_ConnectBusSend(kBusA, kBusB, 0.0f));
+        auto play = MakePlayDesc(harkentest::ObjectId(1));
+        play.busId = kBusA;
+        play.loopCount = 0;
+        VnVoiceHandle voice = 0;
+        ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+        PumpAndCapture(engine, 1, warm);
+        Vn_Update();
+        const auto before = engine->busSends;
+        const auto revision = engine->acceptedBusTopologyRevision;
+        const auto plans = engine->topologyPlans.InUse();
+        harken::detail::ArmLogicAllocFaultForTests(allocation,
+            harken::detail::LogicAllocSite::BusSendStorage);
+        const auto refused = Vn_ConnectBusSend(kBusA, kBusC, 0.0f);
+        harken::detail::DisarmLogicAllocFaultForTests();
+        ASSERT_EQ(VN_BACKPRESSURE, refused);
+        EXPECT_EQ(before, engine->busSends);
+        EXPECT_EQ(revision, engine->acceptedBusTopologyRevision);
+        EXPECT_EQ(plans, engine->topologyPlans.InUse());
+        EXPECT_EQ(1u, engine->busSendActive);
+        Capture after;
+        PumpAndCapture(engine, 1, after);
+        for (const auto sample : after.left) EXPECT_FLOAT_EQ(0.25f, sample);
+        EXPECT_EQ(VN_OK, Vn_ConnectBusSend(kBusA, kBusC, 0.0f));
+    }
+}
+
 TEST(BusSend, FullCommandQueueRefusesConnectThenSucceeds) {
     VnConfig config = MakeNullConfig(2, kBlockFrames);
     config.maxBuses = 4;

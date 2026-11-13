@@ -1689,7 +1689,7 @@ ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(
     const auto commandHeadBefore = engine.commands.PublishedHead();
     const auto initialSourceHeadBefore = engine.commands.InitialSourcePublishedHead();
     const std::uint32_t liveInUse = engine.topologyPlans.InUse();
-    const std::uint32_t planIndex = engine.preparedTopologyPlans.Acquire();
+    const std::uint32_t planIndex = engine.preparedTopologyPlans.AcquireSparse();
     if (planIndex == kInvalidTopologyPlanIndex) {
         result.status = ProjectGenerationPrepareStatusV1::Backpressure;
         return result;
@@ -2224,7 +2224,7 @@ ProjectGenerationCommitResultV1 CommitPreparedProjectGenerationV1(
         return result;
     }
     engine.topologyPlans.DrainRetire();
-    const std::uint32_t liveIndex = engine.topologyPlans.Acquire();
+    const std::uint32_t liveIndex = engine.topologyPlans.AcquireSparse(engine.busSendActive + 1);
     if (liveIndex == kInvalidTopologyPlanIndex) {
         result.status = ProjectGenerationCommitStatusV1::Backpressure;
         return result;

@@ -79300,7 +79300,8 @@ bool TopoSortBuses(harken::Engine& engine, std::uint32_t extraFrom,
                    std::uint32_t excludedBusCount = 0,
                    const std::uint8_t* removedSendSlots = nullptr,
                    std::uint32_t removedSendSlotCount = 0,
-                   const ProspectiveTopologyView* prospective = nullptr) {
+                   const ProspectiveTopologyView* prospective = nullptr,
+                   harken::TopologyBuildScratch* buildScratch = nullptr) {
     const std::uint32_t n =
         prospective != nullptr ? prospective->busCount
                                : engine.buses.BusCount();
@@ -79339,6 +79340,13 @@ bool TopoSortBuses(harken::Engine& engine, std::uint32_t extraFrom,
         feederCount = prospective->feederCount;
         emittedFeeders = prospective->emittedFeeders;
         emitted = prospective->emitted;
+        std::fill_n(feederCount, n, 0u);
+        std::fill_n(emittedFeeders, n, 0u);
+        std::fill_n(emitted, n, static_cast<std::uint8_t>(0));
+    } else if (buildScratch != nullptr) {
+        feederCount = buildScratch->feeders.data();
+        emittedFeeders = buildScratch->emittedFeeders.data();
+        emitted = buildScratch->emitted.data();
         std::fill_n(feederCount, n, 0u);
         std::fill_n(emittedFeeders, n, 0u);
         std::fill_n(emitted, n, static_cast<std::uint8_t>(0));
@@ -79560,7 +79568,8 @@ void FillPlan(harken::Engine& engine, std::uint32_t planIndex,
                         clearTargetBusIndex, clearTargetEffectSlot,
                         routeUpserts, routeUpsertCount, routeRemovals,
                         routeRemovalCount, excludedBuses, excludedBusCount,
-                        removedSendSlots, removedSendSlotCount, prospective);
+                        removedSendSlots, removedSendSlotCount, prospective,
+                        &plans.BuildScratch());
     plans.SetOrderCount(planIndex, liveCount);
     const auto sendTarget = [&](std::uint32_t from, std::uint32_t slot) {
         const auto flat = from * slots + slot;
@@ -79571,11 +79580,13 @@ void FillPlan(harken::Engine& engine, std::uint32_t planIndex,
             excluded(from) || (target != harken::kInvalidBusIndex && excluded(target));
         return removed ? harken::kInvalidBusIndex : target;
     };
-    std::vector<std::uint32_t> sendCounts(n, 0);
+    auto& sendCounts = plans.BuildScratch().sendCounts;
+    std::fill(sendCounts.begin(), sendCounts.end(), 0u);
     for (std::uint32_t from = 0; from < n; ++from)
         for (std::uint32_t slot = 0; slot < slots; ++slot)
             if (sendTarget(from, slot) != harken::kInvalidBusIndex) ++sendCounts[from];
-    if (!plans.PrepareSendRows(planIndex, sendCounts)) throw std::bad_alloc{};
+    if (!plans.PrepareSendRows(planIndex, std::span(sendCounts.data(), n)))
+        throw std::bad_alloc{};
     for (std::uint32_t from = 0; from < n; ++from) {
         auto* row = plans.SendTargetsRow(planIndex, from);
         auto* identities = plans.SendSlotsRow(planIndex, from);
@@ -79709,7 +79720,7 @@ std::uint32_t ReserveTopologyChange(harken::Engine& engine,
         ++engine.topologyRefusedCount;
         return harken::kInvalidTopologyPlanIndex;
     }
-    const std::uint32_t planIndex = engine.topologyPlans.Acquire();
+    const std::uint32_t planIndex = engine.topologyPlans.AcquireSparse(engine.busSendActive + 1);
     if (planIndex == harken::kInvalidTopologyPlanIndex) {
         // Plan-pool shortage: clears after Vn_Update drains plan retires.
         ++engine.topologyRefusedCount;
@@ -116002,7 +116013,7 @@ VnResult Vn_ApplyBusTopology(const VnBusTopologyDesc* topology) {
     }
 
     engine->topologyPlans.DrainRetire();
-    const std::uint32_t planIndex = engine->topologyPlans.Acquire();
+    const std::uint32_t planIndex = engine->topologyPlans.AcquireSparse(engine->busSendActive + 1);
     if (planIndex == harken::kInvalidTopologyPlanIndex) {
         ++engine->topologyRefusedCount;
         return refuse(VN_BACKPRESSURE, kTopologyRefusalBackpressure);
@@ -116677,7 +116688,7 @@ VnResult Vn_DestroyBus(VnBusId busId) {
         return VN_BACKPRESSURE;
     }
     engine->topologyPlans.DrainRetire();
-    const auto planIndex = engine->topologyPlans.Acquire();
+    const auto planIndex = engine->topologyPlans.AcquireSparse(engine->busSendActive + 1);
     if (planIndex == harken::kInvalidTopologyPlanIndex) return VN_BACKPRESSURE;
     harken::ClearPairedInstallAckIdentity(*engine, planIndex);
     const bool clearDynamicRoutes = !routeRemovals.empty();
@@ -117307,7 +117318,7 @@ VnResult Vn_SetBusEffect(VnBusId busId, uint32_t slot, VnEffectType type,
     if (clearDynamicRoutes) {
         engine->topologyPlans.DrainRetire();
         engine->dynamicRoutes.DrainAudioMessages();
-        topologyPlanIndex = engine->topologyPlans.Acquire();
+        topologyPlanIndex = engine->topologyPlans.AcquireSparse(engine->busSendActive + 1);
         harken::ClearPairedInstallAckIdentity(*engine, topologyPlanIndex);
         dynamicPlanIndex = engine->dynamicRoutes.AcquirePlan();
         if (topologyPlanIndex == harken::kInvalidTopologyPlanIndex ||
@@ -117458,7 +117469,7 @@ VnResult Vn_ClearBusEffect(VnBusId busId, uint32_t slot) {
     if (clearDynamicRoutes) {
         engine->topologyPlans.DrainRetire();
         engine->dynamicRoutes.DrainAudioMessages();
-        topologyPlanIndex = engine->topologyPlans.Acquire();
+        topologyPlanIndex = engine->topologyPlans.AcquireSparse(engine->busSendActive + 1);
         harken::ClearPairedInstallAckIdentity(*engine, topologyPlanIndex);
         dynamicPlanIndex = engine->dynamicRoutes.AcquirePlan();
         if (topologyPlanIndex == harken::kInvalidTopologyPlanIndex ||
@@ -117928,7 +117939,7 @@ VnResult Vn_SetBusEffectDynamicRoute(
         return VN_BACKPRESSURE;
     }
     const std::uint32_t topologyPlanIndex =
-        engine->topologyPlans.Acquire();
+        engine->topologyPlans.AcquireSparse(engine->busSendActive + 1);
     harken::ClearPairedInstallAckIdentity(*engine, topologyPlanIndex);
     const std::uint32_t dynamicPlanIndex =
         engine->dynamicRoutes.AcquirePlan();
@@ -118029,7 +118040,7 @@ VnResult Vn_ClearBusEffectDynamicRoute(
         return VN_BACKPRESSURE;
     }
     const std::uint32_t topologyPlanIndex =
-        engine->topologyPlans.Acquire();
+        engine->topologyPlans.AcquireSparse(engine->busSendActive + 1);
     harken::ClearPairedInstallAckIdentity(*engine, topologyPlanIndex);
     const std::uint32_t dynamicPlanIndex =
         engine->dynamicRoutes.AcquirePlan();
@@ -124792,7 +124803,7 @@ VnResult UnloadReversibleResident(Engine& engine,
     }
 
     engine.topologyPlans.DrainRetire();
-    const std::uint32_t topologyPlan = engine.topologyPlans.Acquire();
+    const std::uint32_t topologyPlan = engine.topologyPlans.AcquireSparse(engine.busSendActive + 1);
     harken::ClearPairedInstallAckIdentity(engine, topologyPlan);
     if (topologyPlan == kInvalidTopologyPlanIndex) {
         ++engine.topologyRefusedCount;
@@ -127880,7 +127891,7 @@ VnResult PrepareAndApplyInitialPackLogic(
             return VN_BAD_PACK;
         }
         engine.topologyPlans.DrainRetire();
-        revision.planIndex = engine.topologyPlans.Acquire();
+        revision.planIndex = engine.topologyPlans.AcquireSparse(engine.busSendActive + 1);
         harken::ClearPairedInstallAckIdentity(engine, revision.planIndex);
         if (revision.planIndex == kInvalidTopologyPlanIndex) {
             ++engine.topologyRefusedCount;
@@ -128121,7 +128132,7 @@ VnResult ReplacePackV2(Engine& engine, VnPackHandle handle,
     // activation's own re-check (the queue drains between ticks).
     if (revision.needsPlan) {
         engine.topologyPlans.DrainRetire();
-        revision.planIndex = engine.topologyPlans.Acquire();
+        revision.planIndex = engine.topologyPlans.AcquireSparse(engine.busSendActive + 1);
         harken::ClearPairedInstallAckIdentity(engine, revision.planIndex);
         if (revision.planIndex == kInvalidTopologyPlanIndex) {
             ++engine.topologyRefusedCount;
@@ -128430,7 +128441,7 @@ void ActivatePendingPackRevisions(Engine& engine) {
             !revision.activationAttemptPrepared) {
             if (revision.planIndex == kInvalidTopologyPlanIndex) {
                 engine.topologyPlans.DrainRetire();
-                revision.planIndex = engine.topologyPlans.Acquire();
+                revision.planIndex = engine.topologyPlans.AcquireSparse(engine.busSendActive + 1);
         harken::ClearPairedInstallAckIdentity(engine, revision.planIndex);
                 if (revision.planIndex == kInvalidTopologyPlanIndex) {
                     ++i;
@@ -131040,7 +131051,7 @@ VnResult PreparePackGraphV1(Engine& engine, const PackCanonicalImage* image,
     engine.topologyPlans.DrainRetire();
     // Register the owner before acquiring a plan so every refusal can unwind it.
     out.engine = &engine;
-    out.planIndex = engine.topologyPlans.Acquire();
+    out.planIndex = engine.topologyPlans.AcquireSparse(engine.busSendActive + 1);
     if (out.planIndex == kInvalidTopologyPlanIndex) {
         return VN_BACKPRESSURE;
     }

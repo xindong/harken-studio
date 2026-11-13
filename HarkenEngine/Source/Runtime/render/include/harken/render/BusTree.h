@@ -325,7 +325,7 @@ public:
                  std::uint64_t blockEpoch, std::uint64_t sourceFrameBegin = 0,
                  SignalRenderPlan* signals = nullptr);
     std::size_t SignalRoutingEdgeCapacity() const noexcept {
-        return static_cast<std::size_t>(m_audioCount) * (static_cast<std::size_t>(m_sendSlots) + 1) +
+        return static_cast<std::size_t>(m_audioCount) + m_plans.View(m_currentPlanIndex).sendCount +
             SignalRoutingExtraNodes() + m_dynamicRoutes.InstalledPlan().rowCount;
     }
     std::size_t SignalRoutingExtraNodes() const noexcept {
@@ -492,16 +492,7 @@ private:
     // the authoritative topology-plan membership slot; equal slot+target keeps
     // this level and ramp across ordinary republishes. Send still uses the
     // whole-block GainRamp plan; Bus Volume does not.
-    struct SendEdge {
-        std::uint32_t toIndex = kInvalidBusIndex; // invalid = empty level slot
-        std::uint32_t toGeneration = 0;
-        GainRamp gain;
-        bool ramping = false;
-        float rampStartGain = 1.0f;
-        float rampEndGain = 1.0f;
-        std::uint64_t rampBlocksTotal = 0;
-        std::uint64_t rampBlocksDone = 0;
-    };
+    using SendEdge = BusSendState;
 
     // Renders one bus's §7.3 pipeline over its accumulated planes for this
     // block: pre-fader fx slots [0, faderAfterSlot) -> pre-fader tap ->
@@ -533,7 +524,6 @@ private:
 
     // Row of send-level slots for a from-bus. Returns nullptr for the master's
     // row only if out of range (never in practice).
-    SendEdge* SendRow(std::uint32_t fromBus);
     // Finds the level slot addressing `toBus` in a from-bus's row, or nullptr.
     SendEdge* FindEdge(std::uint32_t fromBus, std::uint32_t toBus);
     // Applies a send ramp request to a GainRamp + its multi-block plan
@@ -575,10 +565,6 @@ private:
     // covers the installed plan's orderCount, at or below it.
     std::uint32_t m_audioCount = 0;
     std::uint64_t m_invalidVolumeApplies = 0;
-    // Send-level table, row-major by from-bus: m_sends[from*m_sendSlots + s].
-    // Audio-thread state; sized to capacity at init and never resized.
-    std::vector<SendEdge> m_sends;
-    std::uint32_t m_sendSlots = 0;
     std::uint32_t m_count = 0;
     std::uint32_t m_activeCount = 0;
     std::uint32_t m_quarantinedCount = 0;

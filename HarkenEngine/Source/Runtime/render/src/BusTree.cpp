@@ -49,9 +49,6 @@ BusTree::BusTree(const EngineConfig& config, TopologyPlanPool& plans,
       m_logicGeneration(config.maxBuses, 0),
       m_logicQuarantined(config.maxBuses, 0),
       m_logicRetireRevision(config.maxBuses, 0),
-      m_sends(static_cast<std::size_t>(config.maxBuses) *
-              config.busSendSlotsPerBus),
-      m_sendSlots(config.busSendSlotsPerBus),
       m_capacity(config.maxBuses),
       m_blockFrames(config.blockFrames),
       m_sampleRate(config.mixRate.SampleRate()),
@@ -123,13 +120,6 @@ void BusTree::InitializeBusSlot(std::uint32_t busIndex, VnBusId id,
     bus.faderAfterSlot = m_fxSlots;
     bus.outputLayout = m_mixLayout;
     DefaultDownmixMatrix(m_mixLayout, m_mixLayout, bus.downmixCoeffs);
-    if (m_sendSlots != 0) {
-        SendEdge* row =
-            &m_sends[static_cast<std::size_t>(busIndex) * m_sendSlots];
-        for (std::uint32_t slot = 0; slot < m_sendSlots; ++slot) {
-            row[slot] = SendEdge{};
-        }
-    }
 }
 
 void BusTree::RetireBusSlotEffects(Bus& bus) noexcept {
@@ -573,24 +563,15 @@ void BusTree::ApplyVolume(std::uint32_t busIndex, float volumeDb,
     bus.gain.Set(linear, rampFrames);
 }
 
-BusTree::SendEdge* BusTree::SendRow(std::uint32_t fromBus) {
-    if (fromBus >= m_audioCount || m_sendSlots == 0) {
-        return nullptr;
-    }
-    return &m_sends[static_cast<std::size_t>(fromBus) * m_sendSlots];
-}
-
 BusTree::SendEdge* BusTree::FindEdge(std::uint32_t fromBus,
                                      std::uint32_t toBus) {
-    SendEdge* row = SendRow(fromBus);
-    if (row == nullptr) {
+    const auto plan = m_plans.View(m_currentPlanIndex);
+    if (!plan.valid || fromBus >= m_audioCount || plan.sendStates == nullptr)
         return nullptr;
-    }
-    for (std::uint32_t s = 0; s < m_sendSlots; ++s) {
-        if (row[s].toIndex == toBus) {
-            return &row[s];
-        }
-    }
+    const auto range = plan.Sends(fromBus);
+    for (std::uint32_t s = 0; s < range.count; ++s)
+        if (plan.sendTargets[range.first + s] == toBus)
+            return &plan.sendStates[range.first + s];
     return nullptr;
 }
 
@@ -599,19 +580,17 @@ void BusTree::ApplyTopologyPlan(std::uint32_t planIndex,
                                 std::uint32_t connectTo, float connectLevelDb,
                                 std::uint64_t acceptedGraphRevision) {
     const TopologyPlanView plan = m_plans.View(planIndex);
+    if (!plan.valid) return;
+    const auto previousIndex = m_currentPlanIndex;
+    if (previousIndex == planIndex) return;
+    const auto previous = m_plans.View(previousIndex);
     auto* previousSignals = InstalledSignals();
     if (plan.signals != nullptr && previousSignals != nullptr && plan.signals != previousSignals)
         plan.signals->AdoptContinuityFrom(*previousSignals);
     // Swap: retire whatever plan was installed (the logic side reclaims it) and
     // adopt the new one. A single command record is inherently atomic, so this
     // whole apply is the block-boundary swap.
-    if (m_currentPlanIndex != kInvalidTopologyPlanIndex) {
-        m_plans.Retire(m_currentPlanIndex);
-    }
     m_currentPlanIndex = planIndex;
-    if (!plan.valid) {
-        return;
-    }
     // The swap is the one point where the audio thread learns of new buses:
     // adopt the committed dense-slot bound the plan carries. Any bus the
     // logic thread appended since the previous swap becomes indexable now,
@@ -730,35 +709,35 @@ void BusTree::ApplyTopologyPlan(std::uint32_t planIndex,
     }
     for (std::uint32_t i = 0; i < plan.effectUpdateCount; ++i)
         ApplyPreviewEffectChain(plan.effectUpdates[i]);
-    // Reconcile each audio edge directly against its authoritative plan slot.
-    // The logic-side adjacency keeps stable slots across republishes, so equal
-    // slot+target preserves the live gain and ramp, an empty slot clears it,
-    // and a changed target starts with fresh level state. This is one bounded
-    // pass over the fixed rows rather than searching each target in the row.
+    // Only audio reads the predecessor's live ramps. Both plans remain owned
+    // until this copy completes; publishing retirement earlier would race with
+    // logic reclamation. Source and target generations fence dense-slot reuse.
     for (std::uint32_t from = 0; from < m_audioCount; ++from) {
-        SendEdge* row = &m_sends[static_cast<std::size_t>(from) * m_sendSlots];
-        for (std::uint32_t s = 0; s < m_sendSlots; ++s) {
-            const auto planSlot = plan.SendOffset(from, s);
-            const auto target = planSlot == UINT32_MAX ? kEmptySendTarget
-                                                       : plan.sendTargets[planSlot];
+        const auto range = plan.Sends(from);
+        const auto previousCount = previous.slotCount != 0 ? previous.slotCount : previous.orderCount;
+        const bool sameSource = previous.valid && from < previousCount &&
+            (plan.generations == nullptr || previous.generations == nullptr ||
+             plan.generations[from] == previous.generations[from]);
+        for (std::uint32_t s = 0; s < range.count; ++s) {
+            const auto planSlot = range.first + s;
+            const auto target = plan.sendTargets[planSlot];
+            SendEdge& edge = plan.sendStates[planSlot];
+            edge = SendEdge{};
             if (target == kEmptySendTarget) {
-                row[s] = SendEdge{};
                 continue;
             }
-            SendEdge& edge = row[s];
             const std::uint32_t targetGeneration =
                 plan.generations != nullptr && target < m_audioCount
                     ? plan.generations[target]
                     : 0;
-            const bool retained =
-                edge.toIndex == target &&
-                (targetGeneration == 0 ||
-                 edge.toGeneration == targetGeneration);
-            if (!retained) {
-                edge = SendEdge{};
-                edge.toIndex = target;
-                edge.toGeneration = targetGeneration;
-            }
+            const auto priorSlot = sameSource ? previous.SendOffset(from, plan.LogicalSendSlot(planSlot))
+                                              : UINT32_MAX;
+            const bool retained = priorSlot != UINT32_MAX && previous.sendStates != nullptr &&
+                previous.sendStates[priorSlot].toIndex == target &&
+                (targetGeneration == 0 || previous.sendStates[priorSlot].toGeneration == targetGeneration);
+            if (retained) edge = previous.sendStates[priorSlot];
+            edge.toIndex = target;
+            edge.toGeneration = targetGeneration;
             if (plan.sendLevelApply != nullptr &&
                 plan.preparedSendLevels != nullptr &&
                 plan.sendLevelApply[planSlot] != 0) {
@@ -784,22 +763,10 @@ void BusTree::ApplyTopologyPlan(std::uint32_t planIndex,
         }
     }
     // A connect carries its new edge's initial level, applied atomically with
-    // the swap so the edge sounds correct on its first block. Find its level
-    // slot (a reconnect may not have one after reconcile) or take a free slot;
-    // the logic side verified capacity, so a free slot exists.
+    // the swap so the edge sounds correct on its first block. Storage was
+    // prepared for every membership record before publishing this plan.
     if (connectFrom != kInvalidBusIndex) {
         SendEdge* edge = FindEdge(connectFrom, connectTo);
-        if (edge == nullptr) {
-            SendEdge* row = SendRow(connectFrom);
-            if (row != nullptr) {
-                for (std::uint32_t s = 0; s < m_sendSlots; ++s) {
-                    if (row[s].toIndex == kInvalidBusIndex) {
-                        edge = &row[s];
-                        break;
-                    }
-                }
-            }
-        }
         if (edge != nullptr) {
             *edge = SendEdge{};
             edge->toIndex = connectTo;
@@ -810,6 +777,8 @@ void BusTree::ApplyTopologyPlan(std::uint32_t planIndex,
             edge->gain.SnapTo(std::pow(10.0f, connectLevelDb / 20.0f));
         }
     }
+    if (previousIndex != kInvalidTopologyPlanIndex && previousIndex != planIndex)
+        m_plans.Retire(previousIndex);
     if (acceptedGraphRevision != 0) {
         m_installedGraphRevision.store(acceptedGraphRevision,
                                        std::memory_order_release);
@@ -831,47 +800,7 @@ void BusTree::ApplySetBusSendLevel(std::uint32_t fromBus, std::uint32_t toBus,
         edge->toGeneration != toGeneration) {
         return;
     }
-    if (edge == nullptr) {
-        // An edge in the CURRENT plan's membership without a level slot:
-        // it entered by a whole-graph publish (a pack load's single plan,
-        // which carries no per-edge identity) rather than by a connect
-        // (whose swap seeds the slot). Seed the slot here and snap — the
-        // seeding command rides the same drain as the plan swap, so the
-        // edge never renders slot-less. A connect-built edge always finds
-        // its slot above, keeping every existing path byte-identical.
-        const TopologyPlanView plan = m_plans.View(m_currentPlanIndex);
-        bool member = false;
-        if (plan.valid && fromBus < m_audioCount) {
-            const auto range = plan.Sends(fromBus);
-            for (std::uint32_t s = 0; s < range.count; ++s) {
-                if (plan.sendTargets[range.first + s] == toBus) {
-                    member = true;
-                    break;
-                }
-            }
-        }
-        if (!member) {
-            return; // not in the membership; nothing to level
-        }
-        SendEdge* row = SendRow(fromBus);
-        if (row == nullptr) {
-            return;
-        }
-        for (std::uint32_t s = 0; s < m_sendSlots; ++s) {
-            if (row[s].toIndex == kInvalidBusIndex) {
-                edge = &row[s];
-                break;
-            }
-        }
-        if (edge == nullptr) {
-            return; // no free slot: unreachable, capacity was staged
-        }
-        *edge = SendEdge{};
-        edge->toIndex = toBus;
-        edge->toGeneration = toGeneration;
-        edge->gain.SnapTo(std::pow(10.0f, levelDb / 20.0f));
-        return;
-    }
+    if (edge == nullptr) return;
     const float linear = std::pow(10.0f, levelDb / 20.0f);
     ArmRamp(edge->gain, edge->ramping, edge->rampStartGain, edge->rampEndGain,
             edge->rampBlocksTotal, edge->rampBlocksDone, linear, rampMs);
@@ -1380,8 +1309,7 @@ std::uint32_t BusTree::SignalRoutingSnapshot(std::span<SignalBusRoutingInfo> inf
         for (std::uint32_t slot = 0; slot < range.count; ++slot) {
             const auto to = plan.sendTargets[range.first + slot];
             if (to == kEmptySendTarget || to >= m_audioCount || info[to].id == VnBusId{}) continue;
-            const auto* edge = FindEdge(from, to);
-            if (edge == nullptr) continue;
+            const auto* edge = &plan.sendStates[range.first + slot];
             auto gain = edge->gain;
             if (edge->ramping) gain.SetBlockTarget(edge->rampStartGain, edge->rampEndGain,
                 edge->rampBlocksDone, edge->rampBlocksTotal);
@@ -1520,7 +1448,7 @@ bool BusTree::MixDown(float* const* busPlanes, std::uint32_t blockFrames,
                 if (to == kEmptySendTarget) {
                     continue;
                 }
-                SendEdge* edge = FindEdge(i, to);
+                SendEdge* edge = &plan.sendStates[range.first + s];
                 if (edge != nullptr) {
                     ScatterSend(planes, busPlanes + to * m_mixChannels,
                                 blockFrames, *edge);

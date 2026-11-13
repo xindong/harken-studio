@@ -1,5 +1,6 @@
 #include "harken/render/TopologyPlan.h"
 #include "harken/render/SignalRenderPlan.h"
+#include "harken/core/LogicAllocCheckpoint.h"
 
 #include <algorithm>
 
@@ -34,6 +35,10 @@ TopologyPlanPool::TopologyPlanPool(std::uint32_t capacity,
       m_signals(capacity),
       m_effectUpdates(capacity),
       m_acquired(capacity, 0) {
+    m_buildScratch.feeders.resize(busCapacity);
+    m_buildScratch.emittedFeeders.resize(busCapacity);
+    m_buildScratch.emitted.resize(busCapacity);
+    m_buildScratch.sendCounts.resize(busCapacity);
     m_free.reserve(capacity);
     // Freelist stack: pop the lowest index first for deterministic slot reuse.
     for (std::uint32_t i = capacity; i-- > 0;) {
@@ -54,12 +59,24 @@ TopologyPlanPool::TopologyPlanPool(std::uint32_t capacity,
 }
 
 std::uint32_t TopologyPlanPool::Acquire() {
+    return AcquireImpl(true, 0);
+}
+
+std::uint32_t TopologyPlanPool::AcquireSparse(std::uint32_t sendAllowance) {
+    return AcquireImpl(false, sendAllowance);
+}
+
+std::uint32_t TopologyPlanPool::AcquireImpl(bool legacyRows, std::uint32_t sendAllowance) {
     if (m_free.empty()) {
         return kInvalidTopologyPlanIndex;
     }
     const std::uint32_t index = m_free.back();
-    std::vector<std::uint32_t> sendCounts(m_busCapacity, m_slotsPerBus);
-    if (!PrepareSendRows(index, sendCounts)) return kInvalidTopologyPlanIndex;
+    auto& sendCounts = m_buildScratch.sendCounts;
+    std::fill(sendCounts.begin(), sendCounts.end(), legacyRows ? m_slotsPerBus : 0);
+    if (!PrepareSendRows(index, sendCounts) || !ReserveSendCapacity(index, sendAllowance)) {
+        m_sends[index] = SendStorage{};
+        return kInvalidTopologyPlanIndex;
+    }
     m_free.pop_back();
     m_acquired[index] = 1;
     ++m_inUse;
@@ -114,7 +131,19 @@ bool TopologyPlanPool::CopyPlanFrom(const TopologyPlanPool& source,
               source.m_order.begin() + srcOrder + buses,
               m_order.begin() + dstOrder);
     m_orderCount[destinationIndex] = source.m_orderCount[sourceIndex];
-    try { m_sends[destinationIndex] = source.m_sends[sourceIndex]; }
+    try {
+        const auto& prior = source.m_sends[sourceIndex];
+        SendStorage next;
+        next.ranges = prior.ranges;
+        next.slots = prior.slots;
+        next.targets = prior.targets;
+        next.levels = prior.levels;
+        next.apply = prior.apply;
+        next.ramps = prior.ramps;
+        // Never read mutable audio state while preparing a successor plan.
+        next.states.resize(prior.targets.size());
+        m_sends[destinationIndex] = std::move(next);
+    }
     catch (...) { return false; }
     const std::size_t srcFold = source.FoldBase(sourceIndex);
     const std::size_t dstFold = FoldBase(destinationIndex);
@@ -212,23 +241,50 @@ bool TopologyPlanPool::PrepareSendRows(std::uint32_t planIndex,
     std::span<const std::uint32_t> counts) {
     if (planIndex >= m_capacity || counts.size() > m_busCapacity) return false;
     try {
-        SendStorage next;
-        next.ranges.resize(m_busCapacity);
         std::uint64_t total = 0;
         for (std::size_t i = 0; i < counts.size(); ++i) {
             if (counts[i] > UINT32_MAX - total) return false;
-            next.ranges[i] = {static_cast<std::uint32_t>(total), counts[i]};
             total += counts[i];
+        }
+        auto& next = m_sends[planIndex];
+        // Reserve every possibly failing allocation before changing contents.
+        // Acquire prepares the direct-mutation allowance; FillPlan then only
+        // rewrites unpublished rows within that allowance.
+        if (!ReserveSendCapacity(planIndex, static_cast<std::uint32_t>(total))) return false;
+        next.ranges.assign(m_busCapacity, {});
+        std::uint32_t first = 0;
+        for (std::size_t i = 0; i < counts.size(); ++i) {
+            next.ranges[i] = {first, counts[i]};
+            first += counts[i];
         }
         next.slots.resize(static_cast<std::size_t>(total));
         next.targets.assign(static_cast<std::size_t>(total), kEmptySendTarget);
-        next.levels.resize(static_cast<std::size_t>(total));
-        next.apply.resize(static_cast<std::size_t>(total));
-        next.ramps.resize(static_cast<std::size_t>(total));
+        next.levels.assign(static_cast<std::size_t>(total), 0.0f);
+        next.apply.assign(static_cast<std::size_t>(total), 0);
+        next.ramps.assign(static_cast<std::size_t>(total), 0);
+        next.states.assign(static_cast<std::size_t>(total), {});
         for (const auto range : next.ranges)
             for (std::uint32_t slot = 0; slot < range.count; ++slot)
                 next.slots[range.first + slot] = slot;
-        m_sends[planIndex] = std::move(next);
+        return true;
+    } catch (...) { return false; }
+}
+
+bool TopologyPlanPool::ReserveSendCapacity(std::uint32_t planIndex, std::uint32_t count) {
+    if (planIndex >= m_capacity) return false;
+    try {
+        auto& next = m_sends[planIndex];
+        const auto reserve = [](auto& values, std::size_t size) {
+            detail::CheckedGrow(values, size, detail::LogicAllocSite::BusSendStorage);
+            values.reserve(size);
+        };
+        reserve(next.ranges, m_busCapacity);
+        reserve(next.slots, count);
+        reserve(next.targets, count);
+        reserve(next.levels, count);
+        reserve(next.apply, count);
+        reserve(next.ramps, count);
+        reserve(next.states, count);
         return true;
     } catch (...) { return false; }
 }
@@ -340,6 +396,7 @@ TopologyPlanView TopologyPlanPool::View(std::uint32_t planIndex) const {
     v.sendLevelApply = sends.apply.data();
     v.sendLevelRampMs = sends.ramps.data();
     v.sendCount = static_cast<std::uint32_t>(sends.targets.size());
+    v.sendStates = sends.states.data();
     v.slotsPerBus = m_slotsPerBus;
     v.outputLayouts = m_outputLayouts.data() + FoldBase(planIndex);
     v.downmixCoeffs = m_downmixCoeffs.data() + CoeffBase(planIndex);

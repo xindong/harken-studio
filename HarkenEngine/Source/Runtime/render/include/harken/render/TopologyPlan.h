@@ -15,6 +15,7 @@
 #define HARKEN_RENDER_TOPOLOGY_PLAN_H
 
 #include "harken/core/EngineConfig.h"
+#include "harken/dsp/GainRamp.h"
 #include "harken/render/BusEffectChainUpdate.h"
 
 #include <atomic>
@@ -54,6 +55,28 @@ struct TopologySendRange {
     std::uint32_t count = 0;
 };
 
+// Logic-only workspace reused by structural publication. It is prepared before
+// a direct API commits its authoritative settings.
+struct TopologyBuildScratch {
+    std::vector<std::uint32_t> feeders;
+    std::vector<std::uint32_t> emittedFeeders;
+    std::vector<std::uint8_t> emitted;
+    std::vector<std::uint32_t> sendCounts;
+};
+
+// Prepared on logic, exclusively mutated on audio after adoption. The owning
+// plan is reclaimed only after the audio retirement handoff.
+struct BusSendState {
+    std::uint32_t toIndex = kEmptySendTarget;
+    std::uint32_t toGeneration = 0;
+    GainRamp gain;
+    bool ramping = false;
+    float rampStartGain = 1.0f;
+    float rampEndGain = 1.0f;
+    std::uint64_t rampBlocksTotal = 0;
+    std::uint64_t rampBlocksDone = 0;
+};
+
 struct TopologyPlanView {
     const std::uint32_t* order = nullptr; // orderCount dense bus indices,
                                           // feeds-first (every bus after all
@@ -67,6 +90,7 @@ struct TopologyPlanView {
     const std::uint8_t* sendLevelApply = nullptr;
     const std::uint32_t* sendLevelRampMs = nullptr;
     std::uint32_t sendCount = 0;
+    BusSendState* sendStates = nullptr;
     std::uint32_t slotsPerBus = 0;
 
     TopologySendRange Sends(std::uint32_t bus) const noexcept {
@@ -78,8 +102,16 @@ struct TopologyPlanView {
     }
     std::uint32_t SendOffset(std::uint32_t bus, std::uint32_t slot) const noexcept {
         const auto range = Sends(bus);
-        for (std::uint32_t i = 0; i < range.count; ++i)
-            if (LogicalSendSlot(range.first + i) == slot) return range.first + i;
+        if (sendSlots == nullptr)
+            return slot < range.count ? range.first + slot : UINT32_MAX;
+        // Builders keep logical slots sorted within each compact source row.
+        std::uint32_t first = range.first, last = first + range.count;
+        while (first < last) {
+            const auto middle = first + (last - first) / 2;
+            if (sendSlots[middle] < slot) first = middle + 1;
+            else last = middle;
+        }
+        if (first < range.first + range.count && sendSlots[first] == slot) return first;
         return UINT32_MAX;
     }
     // Per-bus output fold config (the multichannel amendment): outputLayouts is
@@ -131,6 +163,9 @@ public:
     // the pool is exhausted. The slot's contents are cleared (order empty, every
     // send target kEmptySendTarget) so a builder only writes what it populates.
     std::uint32_t Acquire();
+    // Production builders prepare only actual edges. The allowance covers any
+    // no-throw direct mutation between reservation and publication.
+    std::uint32_t AcquireSparse(std::uint32_t sendAllowance = 0);
     // Logic-owned references keep mutable audio state alive through ordinary
     // topology swaps. No shared_ptr operation runs on the audio coordinator.
     void SetEffectUpdates(std::uint32_t plan, std::vector<BusEffectChainAdoption> updates);
@@ -155,6 +190,7 @@ public:
     void SetOrderCount(std::uint32_t planIndex, std::uint32_t count);
     // Replaces only logic-owned, unpublished Send storage. Failure leaves it intact.
     bool PrepareSendRows(std::uint32_t planIndex, std::span<const std::uint32_t> counts);
+    TopologyBuildScratch& BuildScratch() noexcept { return m_buildScratch; }
     std::uint32_t* SendSlotsRow(std::uint32_t planIndex, std::uint32_t fromBus);
     std::uint32_t* SendTargetsRow(std::uint32_t planIndex,
                                   std::uint32_t fromBus);
@@ -209,6 +245,8 @@ public:
     std::uint32_t HighWater() const { return m_highWater; }
 
 private:
+    std::uint32_t AcquireImpl(bool legacyRows, std::uint32_t sendAllowance);
+    bool ReserveSendCapacity(std::uint32_t planIndex, std::uint32_t count);
     std::size_t OrderBase(std::uint32_t planIndex) const {
         return static_cast<std::size_t>(planIndex) * m_busCapacity;
     }
@@ -233,8 +271,10 @@ private:
         std::vector<float> levels;
         std::vector<std::uint8_t> apply;
         std::vector<std::uint32_t> ramps;
+        mutable std::vector<BusSendState> states;
     };
     std::vector<SendStorage> m_sends;
+    TopologyBuildScratch m_buildScratch;
     std::vector<std::uint32_t> m_outputLayouts; // capacity * busCapacity
     std::vector<float> m_downmixCoeffs;         // capacity * busCapacity * 64
     std::vector<std::uint32_t> m_parents;       // capacity * busCapacity
