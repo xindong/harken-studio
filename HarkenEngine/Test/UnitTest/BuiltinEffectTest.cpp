@@ -15,6 +15,7 @@
 #include "harken/dsp/Biquad.h"
 #include "harken/core/LogicAllocCheckpoint.h"
 #include "harken/render/BuiltinEffects.h"
+#include "harken/render/BuiltinEffectDormancy.h"
 #include "harken/render/EffectChain.h"
 
 #include <cmath>
@@ -22,6 +23,7 @@
 #include <vector>
 #include <limits>
 #include <utility>
+#include <bit>
 
 namespace {
 
@@ -1297,4 +1299,143 @@ TEST(BuiltinDelay, InvalidFramesPreserveValidTailAndAutomaticallyRecover) {
                 EXPECT_FLOAT_EQ(referenceLine[i], line[i]);
         }
     }
+}
+
+
+TEST(BuiltinDormancy, PreservesExactLimiterAndCompressorFixedPointsWithoutTelemetry) {
+    using namespace harken;
+    LimiterState limiter;
+    limiter.sampleRate = kRate;
+    limiter.releaseCoeff = limiter.targetReleaseCoeff = .999f;
+    limiter.releaseAdd = 1 - limiter.releaseCoeff;
+    limiter.hasRendered = true;
+    limiter.currentGain = std::nextafter(1.0, 0.0);
+    limiter.gainReduction.renderEpoch = 71;
+    BuiltinEffectDormantState saved;
+    ASSERT_TRUE(CaptureBuiltinEffectDormantState(VN_EFFECT_LIMITER, &limiter, 2, saved));
+    EXPECT_EQ(71u, limiter.gainReduction.renderEpoch);
+    LimiterState restored;
+    restored.sampleRate = kRate;
+    restored.releaseCoeff = restored.targetReleaseCoeff = limiter.releaseCoeff;
+    restored.releaseAdd = limiter.releaseAdd;
+    ASSERT_TRUE(RestoreBuiltinEffectDormantState(&restored, saved));
+    EXPECT_EQ(std::bit_cast<std::uint64_t>(limiter.currentGain),
+              std::bit_cast<std::uint64_t>(restored.currentGain));
+    EXPECT_LT(restored.currentGain, 1);
+    EXPECT_TRUE(restored.hasRendered);
+    EXPECT_EQ(0u, restored.gainReduction.renderEpoch);
+    limiter.currentGain = .5;
+    EXPECT_FALSE(CaptureBuiltinEffectDormantState(VN_EFFECT_LIMITER, &limiter, 2, saved));
+    limiter.currentGain = std::numeric_limits<double>::quiet_NaN();
+    EXPECT_FALSE(CaptureBuiltinEffectDormantState(VN_EFFECT_LIMITER, &limiter, 2, saved));
+
+    CompressorState compressor;
+    compressor.sampleRate = kRate;
+    compressor.parameters.releaseCoeff = .999f;
+    compressor.parameters.releaseAdd = 1 - compressor.parameters.releaseCoeff;
+    compressor.targetParameters = compressor.parameters;
+    compressor.hasRendered = true;
+    compressor.currentGain = compressor.lastAppliedWetGain = std::nextafter(1.0, 0.0);
+    compressor.resetBridgeStartGain = .37;
+    compressor.telemetry.detectorNonFiniteCount = 83;
+    ASSERT_TRUE(CaptureBuiltinEffectDormantState(VN_EFFECT_COMPRESSOR, &compressor, 2, saved));
+    EXPECT_EQ(83u, compressor.telemetry.detectorNonFiniteCount);
+    CompressorState next;
+    next.sampleRate = kRate;
+    next.parameters = next.targetParameters = compressor.parameters;
+    ASSERT_TRUE(RestoreBuiltinEffectDormantState(&next, saved));
+    EXPECT_EQ(std::bit_cast<std::uint64_t>(compressor.currentGain), std::bit_cast<std::uint64_t>(next.currentGain));
+    EXPECT_EQ(std::bit_cast<std::uint64_t>(compressor.lastAppliedWetGain), std::bit_cast<std::uint64_t>(next.lastAppliedWetGain));
+    EXPECT_DOUBLE_EQ(.37, next.resetBridgeStartGain);
+    EXPECT_TRUE(next.hasRendered);
+    EXPECT_EQ(0u, next.telemetry.detectorNonFiniteCount);
+    compressor.lastAppliedWetGain = .5;
+    EXPECT_FALSE(CaptureBuiltinEffectDormantState(VN_EFFECT_COMPRESSOR, &compressor, 2, saved));
+    compressor.lastAppliedWetGain = compressor.currentGain;
+    compressor.resetPending = true;
+    EXPECT_FALSE(CaptureBuiltinEffectDormantState(VN_EFFECT_COMPRESSOR, &compressor, 2, saved));
+    compressor.resetPending = false;
+    compressor.parameterTransitionFramesRemaining = 10;
+    EXPECT_FALSE(CaptureBuiltinEffectDormantState(VN_EFFECT_COMPRESSOR, &compressor, 2, saved));
+}
+
+TEST(BuiltinDormancy, DelayRequiresTheWholeFutureAddressableRingAndRestoresItsClock) {
+    using namespace harken;
+    constexpr unsigned frames = 32;
+    std::array<float, frames * kMaxChannels> line{}, freshLine{};
+    DelayEffectState delay;
+    delay.sampleRate = kRate;
+    delay.lineBase = line.data(); delay.lineFrames = frames;
+    delay.writeIndex = 17; delay.delaySamples = 1;
+    delay.hasRendered = true;
+    delay.maxFeedbackSinceReset = .8f;
+    BuiltinEffectDormantState saved;
+    // This hidden channel/position is not in the current read window. A later
+    // channel/time change can expose it even when wet and feedback are zero.
+    line.back() = .2f;
+    EXPECT_FALSE(CaptureBuiltinEffectDormantState(VN_EFFECT_FEEDBACK_DELAY, &delay, 1, saved));
+    line.back() = std::numeric_limits<float>::denorm_min();
+    EXPECT_FALSE(CaptureBuiltinEffectDormantState(VN_EFFECT_FEEDBACK_DELAY, &delay, 1, saved));
+    line.back() = 0;
+    ASSERT_TRUE(CaptureBuiltinEffectDormantState(VN_EFFECT_FEEDBACK_DELAY, &delay, 1, saved));
+    DelayEffectState restored = delay;
+    restored.lineBase = freshLine.data(); restored.writeIndex = 0;
+    restored.maxFeedbackSinceReset = 0; restored.hasRendered = false;
+    ASSERT_TRUE(RestoreBuiltinEffectDormantState(&restored, saved));
+    EXPECT_EQ(17u, restored.writeIndex);
+    EXPECT_FLOAT_EQ(.8f, restored.maxFeedbackSinceReset);
+    EXPECT_TRUE(restored.hasRendered);
+    delay.delaySamples = restored.delaySamples = frames - 1;
+    delay.wet = restored.wet = 1;
+    std::array<float, frames * 2> expected{}, actual{};
+    expected[0] = actual[0] = .5f;
+    float* referencePlanes[]{expected.data()}; float* planes[]{actual.data()};
+    BuildEffect(VN_EFFECT_FEEDBACK_DELAY, &delay).process(&delay, referencePlanes, 1, 0, expected.size());
+    BuildEffect(VN_EFFECT_FEEDBACK_DELAY, &restored).process(&restored, planes, 1, 0, actual.size());
+    EXPECT_EQ(expected, actual);
+    EXPECT_EQ(line, freshLine);
+}
+
+TEST(BuiltinDormancy, GainAndToneKeepFirstRenderAndReachableHistorySemantics) {
+    using namespace harken;
+    GainState gain;
+    BuiltinEffectDormantState saved;
+    EXPECT_FALSE(CaptureBuiltinEffectDormantState(VN_EFFECT_GAIN, &gain, 1, saved));
+    gain.hasRendered = true; gain.gainLinear = gain.targetGainLinear = .3f;
+    ASSERT_TRUE(CaptureBuiltinEffectDormantState(VN_EFFECT_GAIN, &gain, 1, saved));
+    GainState restoredGain;
+    ASSERT_TRUE(RestoreBuiltinEffectDormantState(&restoredGain, saved));
+    EXPECT_FLOAT_EQ(.3f, restoredGain.gainLinear);
+    EXPECT_TRUE(restoredGain.hasRendered);
+    gain.transitionFramesRemaining = 1;
+    EXPECT_FALSE(CaptureBuiltinEffectDormantState(VN_EFFECT_GAIN, &gain, 1, saved));
+
+    ToneEffectState tone;
+    tone.sampleRate = kRate;
+    auto effect = BuildEffect(VN_EFFECT_THREE_BAND_TONE, &tone);
+    effect.reset(&tone);
+    float zero = 0; float* planes[]{&zero};
+    effect.process(&tone, planes, 1, 0, 1);
+    tone.signalBandHistory[0] = 2.5;
+    tone.lowShelfEverActive = true;
+    ToneDormantState extra;
+    ASSERT_TRUE(CaptureBuiltinEffectDormantState(VN_EFFECT_THREE_BAND_TONE, &tone, 1, saved, &extra));
+    ToneEffectState restoredTone;
+    restoredTone.sampleRate = kRate;
+    auto restoredEffect = BuildEffect(VN_EFFECT_THREE_BAND_TONE, &restoredTone);
+    restoredEffect.reset(&restoredTone);
+    ASSERT_TRUE(RestoreBuiltinEffectDormantState(&restoredTone, saved, &extra));
+    EXPECT_DOUBLE_EQ(2.5, restoredTone.signalBandHistory[0]);
+    EXPECT_TRUE(restoredTone.lowShelfEverActive);
+    EXPECT_TRUE(restoredTone.hasRendered);
+    std::array<float, 64> expected{}, actual{};
+    expected[0] = actual[0] = .25f;
+    float* referencePlanes[]{expected.data()}; float* output[]{actual.data()};
+    effect.process(&tone, referencePlanes, 1, 0, expected.size());
+    restoredEffect.process(&restoredTone, output, 1, 0, actual.size());
+    EXPECT_EQ(expected, actual);
+    tone.lowShelfState[0].SetFloat(std::numeric_limits<float>::denorm_min(), 0);
+    EXPECT_FALSE(CaptureBuiltinEffectDormantState(VN_EFFECT_THREE_BAND_TONE, &tone, 1, saved, &extra));
+    tone.lowShelfState[0].Reset(); tone.lowShelfTransition.lastInput[0] = .1f;
+    EXPECT_FALSE(CaptureBuiltinEffectDormantState(VN_EFFECT_THREE_BAND_TONE, &tone, 1, saved, &extra));
 }
