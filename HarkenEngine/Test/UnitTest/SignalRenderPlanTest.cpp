@@ -294,3 +294,71 @@ TEST(SignalRenderPlan, QueuedParameterPublicationPreservesPcmEnvelopeAndRunningS
     EXPECT_LT(target.pcm.front(), .9f);
     EXPECT_GT(target.pcm.back(), target.pcm.front());
 }
+
+TEST(SignalRenderPlan, ActivityProjectionReordersAndRemovesNodesWithoutRestartingSignalHistory) {
+    std::array nodes{SignalRenderNodeInput{SignalEndpointKindV1::Sound},
+                     SignalRenderNodeInput{SignalEndpointKindV1::Sound, true}};
+    nodes[0].stableId = {0, 1}; nodes[1].stableId = {0, 2};
+    const std::array connections{SignalConnectionInput{0, 1, .025f, {0, 3}}};
+    const std::array paths{SignalFeedbackEdge{0, 1, 1, true}};
+    auto old = SignalRenderPlan::Prepare(kFormat, nodes, connections, paths);
+    auto reference = SignalRenderPlan::Prepare(kFormat, nodes, connections, paths);
+    ASSERT_NE(nullptr, old); ASSERT_NE(nullptr, reference);
+    ASSERT_TRUE(old->ConfigurePublication(10, 100, nullptr, 256));
+
+    std::array expanded{nodes[1], nodes[0], nodes[1]};
+    expanded[0].stableId = {0, 4};
+    const std::array expandedConnections{
+        SignalConnectionInput{1, 0, .1f, {0, 5}},
+        SignalConnectionInput{1, 2, .1f, {0, 3}}};
+    const std::array expandedPaths{SignalFeedbackEdge{1, 0, 1, true},
+                                   SignalFeedbackEdge{1, 2, 1, true}};
+    auto next = SignalRenderPlan::Prepare(kFormat, expanded, expandedConnections, expandedPaths);
+    ASSERT_NE(nullptr, next);
+    ASSERT_TRUE(next->ConfigurePublication(11, 100, old.get(), 256));
+    const std::array compact{nodes[1], nodes[0]};
+    const std::array compactConnections{SignalConnectionInput{1, 0, .1f, {0, 3}}};
+    const std::array compactPaths{SignalFeedbackEdge{1, 0, 1, true}};
+    auto queued = SignalRenderPlan::Prepare(kFormat, compact, compactConnections, compactPaths);
+    ASSERT_NE(nullptr, queued);
+    ASSERT_TRUE(queued->ConfigurePublication(12, 100, next.get(), 256));
+
+    Member source, target, added, refSource, refTarget;
+    refSource.nodes[0] = 0; refTarget.nodes[0] = 1;
+    auto* current = old.get();
+    for (std::uint64_t epoch = 0; epoch < 14; ++epoch) {
+        if (epoch == 4) {
+            ASSERT_TRUE(next->AdoptContinuityFrom(*old));
+            ASSERT_TRUE(reference->SetConnectionLevel(0, .1f, 256));
+            current = next.get();
+        }
+        if (epoch == 5) {
+            // This candidate was prepared before next adopted its predecessor.
+            ASSERT_TRUE(queued->AdoptContinuityFrom(*next));
+            current = queued.get();
+        }
+        source.nodes[0] = epoch < 4 ? 0 : 1;
+        target.nodes[0] = epoch < 4 ? 1 : epoch == 4 ? 2 : 0;
+        added.nodes[0] = 0;
+        source.pcm.fill(.5f + static_cast<float>(epoch) * .02f);
+        refSource.pcm = source.pcm;
+        target.pcm.fill(1); refTarget.pcm.fill(1); added.pcm.fill(1);
+        std::vector<SignalMemberImage> members{target.Image(1)};
+        std::vector<SignalMemberImage> refMembers{refTarget.Image(1)};
+        // Commit must publish fresh silence when a continuing source is absent.
+        if (epoch != 7) {
+            members.push_back(source.Image(1));
+            refMembers.push_back(refSource.Image(1));
+        }
+        if (epoch == 4) members.push_back(added.Image(1));
+        auto block = Block(epoch); block.world = current->WorldIdentity();
+        ASSERT_TRUE(current->BeginBlock(block));
+        ASSERT_TRUE(current->ProcessContent(members));
+        ASSERT_TRUE(current->CommitBlock());
+        ASSERT_TRUE(reference->BeginBlock(Block(epoch)));
+        ASSERT_TRUE(reference->ProcessContent(refMembers));
+        ASSERT_TRUE(reference->CommitBlock());
+        EXPECT_EQ(target.pcm, refTarget.pcm) << epoch;
+        if (epoch == 4) for (float sample : added.pcm) EXPECT_FLOAT_EQ(1, sample);
+    }
+}

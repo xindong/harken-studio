@@ -189,25 +189,43 @@ public:
         if (publicationIdentity_ != 0 || identity == 0 || contentIdentity == 0 || open_ || committed_)
             return false;
         try {
-            std::vector<std::uint32_t> receivers;
+            std::vector<std::uint32_t> receivers, sources, connections;
             const bool continuous = predecessor != nullptr && predecessor->publicationIdentity_ != 0 &&
                 contentIdentity == predecessor->contentIdentity_ && SameFormat(*predecessor);
             if (continuous) {
+                std::vector<std::uint32_t> nodePredecessors(nodes_.size(), UINT32_MAX);
                 receivers.assign(nodes_.size(), UINT32_MAX);
+                sources.assign(exchange_.m_sources, UINT32_MAX);
+                connections.assign(relations_.size(), UINT32_MAX);
                 for (std::size_t i = 0; i < nodes_.size(); ++i) {
                     const auto& next = nodes_[i];
-                    if (next.target == UINT32_MAX || next.stableId == VnObjectId{}) continue;
+                    if (next.stableId == VnObjectId{}) continue;
                     for (std::uint32_t j = 0; j < predecessor->nodes_.size(); ++j) {
+                        if (!SameNodeDefinition(i, *predecessor, j)) continue;
                         const auto& old = predecessor->nodes_[j];
-                        if (old.target != UINT32_MAX && old.kind == next.kind && old.stableId == next.stableId &&
-                            old.busId == next.busId && old.busGeneration == next.busGeneration) {
-                            receivers[i] = j;
+                        nodePredecessors[i] = j;
+                        if (next.target != UINT32_MAX && old.target != UINT32_MAX) receivers[i] = j;
+                        if (next.source != UINT32_MAX) sources[next.source] = old.source;
+                        break;
+                    }
+                }
+                for (std::size_t i = 0; i < relations_.size(); ++i) {
+                    const auto& next = relations_[i];
+                    if (next.stableId == VnObjectId{}) continue;
+                    for (std::uint32_t j = 0; j < predecessor->relations_.size(); ++j) {
+                        const auto& old = predecessor->relations_[j];
+                        if (next.stableId == old.stableId &&
+                            nodePredecessors[next.source] == old.source &&
+                            nodePredecessors[next.target] == old.target) {
+                            connections[i] = j;
                             break;
                         }
                     }
                 }
             }
             receiverPredecessors_ = std::move(receivers);
+            sourcePredecessors_ = std::move(sources);
+            connectionPredecessors_ = std::move(connections);
             publicationIdentity_ = worldIdentity_ = identity;
             contentIdentity_ = contentIdentity;
             updateRampFrames_ = rampFrames;
@@ -236,16 +254,23 @@ public:
         if (&previous == this || adopted_ || open_ || previous.open_ ||
             predecessorIdentity_ == 0 || predecessorIdentity_ != previous.publicationIdentity_)
             return false;
-        if (exchangeContinuous_) exchange_.Swap(previous.exchange_);
+        if (exchangeContinuous_) {
+            exchange_.Swap(previous.exchange_);
+        } else if (!exchange_.AdoptMappedContinuityFrom(previous.exchange_,
+                       sourcePredecessors_, connectionPredecessors_)) {
+            return false;
+        }
         for (std::size_t i = 0; i < receiverPredecessors_.size(); ++i)
             if (receiverPredecessors_[i] != UINT32_MAX)
                 nodes_[i].receiver.AdoptStateFrom(previous.nodes_[receiverPredecessors_[i]].receiver);
-        for (std::uint32_t i = 0; exchangeContinuous_ && i < relations_.size(); ++i)
-            if (relations_[i].level != previous.relations_[i].level) {
+        for (std::uint32_t i = 0; i < relations_.size(); ++i) {
+            const auto prior = exchangeContinuous_ ? i : connectionPredecessors_[i];
+            if (prior != UINT32_MAX && relations_[i].level != previous.relations_[prior].level) {
                 const bool changed = exchange_.SetLevel(i, relations_[i].level, updateRampFrames_);
                 assert(changed);
                 (void)changed;
             }
+        }
         previous_ = previous.previous_;
         committed_ = previous.committed_;
         adopted_ = true;
@@ -510,14 +535,35 @@ private:
         return format_.channels == other.format_.channels && format_.capacityFrames == other.format_.capacityFrames &&
             format_.sampleRate == other.format_.sampleRate && format_.layout == other.format_.layout;
     }
+    bool SameNodeDefinition(std::size_t index, const SignalRenderPlan& other,
+                            std::size_t prior) const noexcept {
+        const auto& a = nodes_[index]; const auto& b = other.nodes_[prior];
+        if (a.kind != b.kind || a.stableId != b.stableId || a.busId != b.busId ||
+            a.busGeneration != b.busGeneration) return false;
+        // Content nodes must retain their carrier proofs, not merely their ID.
+        const auto includes = [](const auto& from, std::size_t node,
+                                 const auto& to, std::size_t otherNode) {
+            for (const auto& proof : from.membership_) {
+                if (proof.node != node) continue;
+                const bool found = std::any_of(to.membership_.begin(), to.membership_.end(),
+                    [&](const auto& candidate) {
+                        return candidate.node == otherNode && candidate.stableId == proof.stableId &&
+                            candidate.propertyFingerprint == proof.propertyFingerprint &&
+                            SameDefinitionSource(candidate.source, proof.source);
+                    });
+                if (!found) return false;
+            }
+            return true;
+        };
+        return includes(*this, index, other, prior) && includes(other, prior, *this, index);
+    }
     bool SameStructure(const SignalRenderPlan& other) const noexcept {
         if (!SameFormat(other) ||
             actualRouting_ != other.actualRouting_ || busNodes_ != other.busNodes_ ||
             nodes_.size() != other.nodes_.size() || relations_.size() != other.relations_.size()) return false;
         for (std::size_t i = 0; i < nodes_.size(); ++i) {
             const auto& a = nodes_[i]; const auto& b = other.nodes_[i];
-            if (a.kind != b.kind || a.stableId != b.stableId || a.busId != b.busId ||
-                a.busGeneration != b.busGeneration || a.source != b.source || a.target != b.target) return false;
+            if (!SameNodeDefinition(i, other, i) || a.source != b.source || a.target != b.target) return false;
         }
         for (std::size_t i = 0; i < relations_.size(); ++i) {
             const auto& a = relations_[i]; const auto& b = other.relations_[i];
@@ -724,7 +770,7 @@ private:
     std::uint64_t predecessorIdentity_ = 0, updateRampFrames_ = 0;
     bool adopted_ = false;
     bool exchangeContinuous_ = false;
-    std::vector<std::uint32_t> receiverPredecessors_;
+    std::vector<std::uint32_t> receiverPredecessors_, sourcePredecessors_, connectionPredecessors_;
 };
 
 } // namespace harken
