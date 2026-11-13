@@ -367,10 +367,6 @@ bool DecodeTraceConfig(const std::uint8_t* bytes, std::size_t byteCount,
     if (vintage >= 17) {
         decoded.compressedDecoderBytes = reader.U64();
     }
-    if (vintage < 17) {
-        // Preserve the original field units and default selection on replay.
-        decoded.structSize = NativeConfigVintages()[vintage - 1];
-    }
     const std::uint32_t historicalPendingCapacity =
         decoded.pendingActionCapacity;
     decoded.pendingActionCapacity = 0;
@@ -392,22 +388,6 @@ bool DecodeTraceConfig(const std::uint8_t* bytes, std::size_t byteCount,
     if (resolvedDeviceLayout != nullptr) {
         *resolvedDeviceLayout = resolvedLayout;
     }
-    return true;
-}
-
-bool ProjectTraceReplayConfig(VnConfig& config, std::uint32_t sampleRate,
-                              std::uint32_t deviceLayout) noexcept {
-    const auto vintage = ConfigVintageFromNativeSize(config.structSize);
-    if (!vintage || !sampleRate || deviceLayout == VN_CHANNEL_LAYOUT_DEFAULT) return false;
-    VnConfig replay{};
-    std::memcpy(&replay, &config, config.structSize);
-    if (vintage < 8) replay.structSize = NativeConfigSizeForVintage(8);
-    replay.deviceMode = VN_DEVICE_NULL;
-    replay.sampleRate = sampleRate;
-    replay.deviceChannelLayout = deviceLayout;
-    replay.onNotification = nullptr; replay.notificationUserData = nullptr;
-    replay.logCallback = nullptr; replay.logUserData = nullptr;
-    config = replay;
     return true;
 }
 

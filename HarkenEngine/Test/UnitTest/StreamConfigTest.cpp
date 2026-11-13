@@ -37,10 +37,7 @@ TEST(StreamConfig, OldVintageIgnoresStreamFieldGarbage) {
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
     const harken::EngineConfig& resolved = session.Engine()->config;
-    EXPECT_EQ(524288u, resolved.streamRingBytes);
-    EXPECT_EQ(16384u, resolved.legacyStreamFrameLimit);
-    for (const auto channels : {1u, 8u})
-        EXPECT_EQ(16384u, session.Engine()->streams.RingOf(0)->FrameCapacity(channels));
+    EXPECT_EQ(262144u, resolved.streamRingBytes);
     EXPECT_EQ(16u, resolved.maxStreams);
     EXPECT_EQ(100u, resolved.prebufferMs);
     EXPECT_EQ(32u, resolved.starvationCooldownBlocks);
@@ -66,7 +63,8 @@ TEST(StreamConfig, FullVintageStreamFieldsResolve) {
 }
 
 TEST(StreamConfig, ZeroStreamFieldsSelectDefaults) {
-    // Zero selects the byte capacity for the current configuration vintage.
+    // Full vintage, all stream fields zero: same defaults as the old
+    // vintage — zero means "engine chooses" at every vintage.
     EngineSession session(MakeNullConfig());
     ASSERT_EQ(VN_OK, session.InitResult());
     const harken::EngineConfig& resolved = session.Engine()->config;
@@ -75,24 +73,6 @@ TEST(StreamConfig, ZeroStreamFieldsSelectDefaults) {
     EXPECT_EQ(100u, resolved.prebufferMs);
     EXPECT_EQ(32u, resolved.starvationCooldownBlocks);
     EXPECT_EQ(256u, resolved.maxPacks);
-}
-
-TEST(StreamConfig, HistoricalExplicitFrameCapacityPreservesFrameDepth) {
-    VnConfig config = MakeNullConfig();
-    config.structSize = offsetof(VnConfig, compressedDecoderBytes);
-    config.streamRingBytes = 2048;
-    harken::EngineConfig resolved;
-    ASSERT_EQ(VN_OK, harken::ResolveConfig(&config, &resolved));
-    EXPECT_EQ(2048u * harken::kMaxChannels * sizeof(float), resolved.streamRingBytes);
-    EXPECT_EQ(2048u, resolved.legacyStreamFrameLimit);
-    {
-        EngineSession session(config);
-        ASSERT_EQ(VN_OK, session.InitResult());
-        for (const auto channels : {1u, 6u, 8u})
-            EXPECT_EQ(2048u, session.Engine()->streams.RingOf(0)->FrameCapacity(channels));
-    }
-    config.streamRingBytes = UINT32_MAX;
-    EXPECT_EQ(VN_INVALID_CONFIG, harken::ResolveConfig(&config, &resolved));
 }
 
 TEST(StreamConfig, PerFieldCeilingsRefused) {

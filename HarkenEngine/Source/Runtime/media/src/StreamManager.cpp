@@ -179,7 +179,7 @@ StreamManager::StreamManager(const EngineConfig& config)
         throw std::bad_alloc();
     for (std::uint32_t slot = 0; slot < config.maxStreams; ++slot)
         m_slots[slot].ring.Wire(m_ringStorage.data() + static_cast<std::size_t>(slot) * m_ringBytes,
-                              m_ringBytes, config.legacyStreamFrameLimit);
+                              m_ringBytes);
     try {
         // Source validation/cleanup cannot occupy slot prebuffer execution,
         // and neither preparation domain borrows a steady refill worker.

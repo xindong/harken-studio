@@ -3546,7 +3546,7 @@ int RunTraceReplay(int argc, char** argv) {
                          "schema\n");
             return 1;
         }
-        configStructSize = config.structSize;
+        configStructSize = sizeof(VnConfig);
     }
     const std::uint32_t recordedDeviceMode = config.deviceMode;
     const bool recordedNullDevice =
@@ -3572,11 +3572,8 @@ int RunTraceReplay(int argc, char** argv) {
     config.structSize = configStructSize;
     config.deviceMode = VN_DEVICE_NULL;
     if (version >= harken::kTraceFormatVersionV3) {
-        if (!harken::ProjectTraceReplayConfig(config, recordedResolvedSampleRate,
-                                             recordedResolvedDeviceLayout)) {
-            std::fprintf(stderr, "error: invalid recorded replay format\n");
-            return 1;
-        }
+        config.sampleRate = recordedResolvedSampleRate;
+        config.deviceChannelLayout = recordedResolvedDeviceLayout;
     }
     config.onNotification = nullptr;
     config.notificationUserData = nullptr;

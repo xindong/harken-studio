@@ -102,7 +102,6 @@ struct StreamRing {
     std::uint32_t mask = 0;
     std::uint32_t channelCount = 0;
     std::uint32_t bytesPerFrame = 0;
-    std::uint32_t legacyFrameLimit = 0;
     bool packetEncoded = false;
     // Logic publishes once for an initially unprepared encoded source. Only
     // its renderer takes ownership while Active; detach retires an unclaimed
@@ -137,11 +136,9 @@ struct StreamRing {
     std::uint64_t sourceGeneration = 0;
     std::uint64_t contentRevision = 0;
 
-    void Wire(std::uint8_t* storage, std::uint32_t byteCapacity,
-              std::uint32_t frameLimit = 0) {
+    void Wire(std::uint8_t* storage, std::uint32_t byteCapacity) {
         assert(byteCapacity != 0 && (byteCapacity & (byteCapacity - 1)) == 0);
         bytes = storage; capacity = byteCapacity; mask = byteCapacity - 1;
-        legacyFrameLimit = frameLimit;
     }
 
     // Claim-time reset, logic thread only, while state is Free — neither
@@ -178,10 +175,7 @@ struct StreamRing {
     std::uint32_t WriteAvailableBytes() const {
         const auto w = writeIndex.load(std::memory_order_relaxed);
         const auto r = readIndex.load(std::memory_order_acquire);
-        const auto limit = legacyFrameLimit && !packetEncoded
-            ? std::min<std::uint64_t>(capacity, std::uint64_t(legacyFrameLimit) * bytesPerFrame)
-            : capacity;
-        return static_cast<std::uint32_t>(limit - (w - r));
+        return static_cast<std::uint32_t>(capacity - (w - r));
     }
 
     // Copying and publication are separate so a complete packet or PCM frame
@@ -206,11 +200,9 @@ struct StreamRing {
     }
     // Admission can query a free slot before its next generation is reset.
     std::uint32_t FrameCapacity(std::uint32_t channels = 0, bool encoded = false) const {
-        if (encoded || (!channels && packetEncoded))
-            return legacyFrameLimit ? legacyFrameLimit : UINT32_MAX;
+        if (encoded || (!channels && packetEncoded)) return UINT32_MAX;
         const auto stride = channels ? channels * sizeof(float) : bytesPerFrame;
-        const auto frames = stride ? static_cast<std::uint32_t>(capacity / stride) : 0;
-        return legacyFrameLimit ? std::min(frames, legacyFrameLimit) : frames;
+        return stride ? static_cast<std::uint32_t>(capacity / stride) : 0;
     }
     std::uint32_t PrebufferTarget(std::uint32_t requested) const noexcept {
         return std::min(requested, filledFrameLimit.load(std::memory_order_acquire));

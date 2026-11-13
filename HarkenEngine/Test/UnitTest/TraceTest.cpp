@@ -1910,11 +1910,7 @@ TEST(TraceCodec, VintageSixteenOmitsDecoderBudget) {
     EXPECT_EQ(16u, vintage);
     EXPECT_EQ(333u, decoded.maxActionCooldownRows);
     EXPECT_EQ(0u, decoded.compressedDecoderBytes);
-    EXPECT_EQ(config.structSize, decoded.structSize);
     EXPECT_EQ(2048u, decoded.streamRingBytes);
-    harken::EngineConfig resolved;
-    ASSERT_EQ(VN_OK, harken::ResolveConfig(&decoded, &resolved));
-    EXPECT_EQ(2048u, resolved.legacyStreamFrameLimit);
     config.reserved12 = 1;
     EXPECT_FALSE(harken::EncodeTraceConfig(config, wire));
 }
@@ -1924,33 +1920,6 @@ TEST(TraceCodec, CurrentRejectsNonZeroReserved12) {
     config.reserved12 = 1;
     std::vector<std::uint8_t> wire;
     EXPECT_FALSE(harken::EncodeTraceConfig(config, wire));
-}
-
-TEST(TraceCodec, ReplayProjectionRetainsHistoricalFrameDepthAndRecordedLayout) {
-    for (const auto vintage : {1u, 5u, 7u, 8u, 16u, 17u}) {
-        SCOPED_TRACE(vintage);
-        auto config = MakeNullConfig(7, kBlockFrames, 44100);
-        config.structSize = harken::NativeConfigSizeForVintage(vintage);
-        config.streamRingBytes = 2048;
-        // Bytes outside the original declaration must never become live when
-        // the replay projects a recorded layout onto a wider vocabulary.
-        std::memset(reinterpret_cast<std::uint8_t*>(&config) + config.structSize,
-                    0xff, sizeof(config) - config.structSize);
-        harken::EngineConfig before;
-        ASSERT_EQ(VN_OK, harken::ResolveConfig(&config, &before));
-        ASSERT_TRUE(harken::ProjectTraceReplayConfig(config, 48000, VN_CHANNEL_LAYOUT_MONO));
-        EXPECT_EQ(harken::NativeConfigSizeForVintage(std::max(vintage, 8u)), config.structSize);
-        harken::EngineConfig after;
-        ASSERT_EQ(VN_OK, harken::ResolveConfig(&config, &after));
-        EXPECT_EQ(after.deviceChannelLayout, VN_CHANNEL_LAYOUT_MONO);
-        EXPECT_EQ(after.mixChannelLayout, before.mixChannelLayout);
-        EXPECT_EQ(after.mixRate.SampleRate(), 48000u);
-        EXPECT_EQ(after.streamRingBytes, before.streamRingBytes);
-        EXPECT_EQ(after.legacyStreamFrameLimit, before.legacyStreamFrameLimit);
-        EXPECT_EQ(after.maxStreams, before.maxStreams);
-        EXPECT_EQ(after.maxContainers, before.maxContainers);
-        EXPECT_EQ(after.renderWorkerCount, before.renderWorkerCount);
-    }
 }
 
 TEST(TraceCodec, HistoricalPendingActionCapacityIsConsumedAndNormalized) {
