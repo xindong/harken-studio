@@ -2625,6 +2625,7 @@ extern "C" {
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_DestroyBus)(VnBusId) = &Vn_DestroyBus;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_Suspend)(void) = &Vn_Suspend;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_Resume)(void) = &Vn_Resume;
+[[maybe_unused]] static VnResult (*const binding_sig_Vn_SetHostOutputMute)(uint32_t, uint32_t) = &Vn_SetHostOutputMute;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_CaptureEffectCapabilities)(VnEffectCapability*, uint32_t, uint32_t*) = &Vn_CaptureEffectCapabilities;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_CaptureEffectParameterCapabilities)(VnEffectParameterCapability*, uint32_t, uint32_t*) = &Vn_CaptureEffectParameterCapabilities;
 [[maybe_unused]] static VnResult (*const binding_sig_Vn_SetBusEffectDynamicRoute)(VnBusId, uint32_t, uint32_t, const VnEffectDynamicRouteDesc*) = &Vn_SetBusEffectDynamicRoute;

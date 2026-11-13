@@ -5,6 +5,9 @@ namespace Harken.Unity.Editor
 {
     internal static class HarkenEditorLifecycle
     {
+        private const uint HostOutputMuteFadeMs = 10;
+        private static bool hostOutputMuted;
+
         [InitializeOnLoadMethod]
         private static void Register()
         {
@@ -14,7 +17,23 @@ namespace Harken.Unity.Editor
             AssemblyReloadEvents.beforeAssemblyReload += Shutdown;
             EditorApplication.quitting -= Shutdown;
             EditorApplication.quitting += Shutdown;
+            hostOutputMuted = EditorUtility.audioMasterMute;
+            HarkenEngine.Initialized -= ApplyHostOutputMute;
+            HarkenEngine.Initialized += ApplyHostOutputMute;
+            EditorApplication.update -= SyncHostOutputMute;
+            EditorApplication.update += SyncHostOutputMute;
         }
+
+        private static void SyncHostOutputMute()
+        {
+            bool muted = EditorUtility.audioMasterMute;
+            if (muted == hostOutputMuted) return;
+            hostOutputMuted = muted;
+            ApplyHostOutputMute();
+        }
+
+        private static void ApplyHostOutputMute()
+            => HarkenEngine.SetHostOutputMute(hostOutputMuted ? 1u : 0u, HostOutputMuteFadeMs);
 
         private static void HandlePlayModeState(PlayModeStateChange state)
         {

@@ -20,6 +20,7 @@ namespace Harken
         private static int updateDepth;
         internal static bool IsUpdating => updateDepth != 0;
         internal static event Action OutermostUpdateReturned;
+        internal static event Action Initialized;
 
         /// <summary>
         /// A <see cref="VnConfig"/> with <c>structSize</c> preset to the current
@@ -41,7 +42,9 @@ namespace Harken
             VnResult support = Emitter.CheckStateOnlySupport();
             if (support != VnResult.VN_OK) return support;
             VnResult result = HarkenNative.Vn_Init(config);
-            if (result == VnResult.VN_OK) VariableGameplay.NotifySessionChanged();
+            if (result != VnResult.VN_OK) return result;
+            VariableGameplay.NotifySessionChanged();
+            Initialized?.Invoke();
             return result;
         }
 
@@ -56,6 +59,13 @@ namespace Harken
         /// error leaves the engine suspended so the host can retry.
         /// </summary>
         public static VnResult Resume() => HarkenNative.Vn_Resume();
+
+        /// <summary>
+        /// Silences or restores the platform device output for the host, such as
+        /// an editor mute toggle. Mixing, metering and audio time are unaffected.
+        /// </summary>
+        public static VnResult SetHostOutputMute(uint mute01, uint fadeMs)
+            => HarkenNative.Vn_SetHostOutputMute(mute01, fadeMs);
 
         /// <summary>
         /// Explicitly enables optional communication for the initialized host.

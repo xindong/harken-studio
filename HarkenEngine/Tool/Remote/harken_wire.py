@@ -9250,6 +9250,22 @@ TABLE_JSON = r'''
       "params": []
     },
     {
+      "name": "Vn_SetHostOutputMute",
+      "note": "public Runtime API; the serving host owns its device output. Not part of the remote wire protocol (no opcode).",
+      "params": [
+        {
+          "name": "mute01",
+          "ctype": "uint32_t",
+          "wire": "u32"
+        },
+        {
+          "name": "fadeMs",
+          "ctype": "uint32_t",
+          "wire": "u32"
+        }
+      ]
+    },
+    {
       "opcode": 79,
       "name": "Vn_CaptureEffectCapabilities",
       "policy": "mirror",

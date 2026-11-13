@@ -127,6 +127,7 @@ EXPORTS
     Vn_SetEmitterValueByName
     Vn_SetEmitterValues
     Vn_SetGameplayCatalog
+    Vn_SetHostOutputMute
     Vn_SetListener
     Vn_SetListenerDistanceReference
     Vn_SetValue
