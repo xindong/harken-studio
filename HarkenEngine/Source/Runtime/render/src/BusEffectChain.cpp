@@ -18,6 +18,7 @@ bool SameRef(const EffectInstanceRef& a, const EffectInstanceRef& b) noexcept {
 
 BusTree::~BusTree() {
     ShutdownPreviewEffectChains();
+    ShutdownWorkRows();
     for (std::uint32_t i = 0; i < m_capacity; ++i)
         delete m_previewEffectStates[i].load(std::memory_order_relaxed);
 }
@@ -319,10 +320,10 @@ void BusTree::FinishPreviewEffectChain(Bus& bus, std::uint32_t frames) noexcept 
 }
 
 void BusTree::ReleasePreviewEffectChain(Bus& bus, bool quiescent) noexcept {
-    const auto index = bus.busIndex;
-    auto* state = m_previewEffectStates[index].load(std::memory_order_acquire);
-    if (state == nullptr || bus.previewEffectOwner == 0) return;
-    auto& update = state->update;
+    // The exact transition is borrowed by this work incarnation. The stable
+    // Bus slot may already name a newer owner's state when this row retires.
+    if (bus.fxChainTransition == nullptr) return;
+    auto& update = *bus.fxChainTransition;
     const auto phase = update.phase.load(std::memory_order_acquire);
     // A published replacement has not adopted yet. Ordinary topology swaps
     // cannot remove its host before the queued adoption command is consumed.
@@ -370,11 +371,6 @@ void BusTree::ShutdownPreviewEffectChains() noexcept {
     for (std::uint32_t i = 0; i < m_capacity; ++i) {
         auto* state = m_previewEffectStates[i].load(std::memory_order_acquire);
         if (state == nullptr) continue;
-        ReleasePreviewEffectChain(WorkState(i), true);
-        for (auto& ref : WorkState(i).fxSlotEffectRef) {
-            if (ref.type != kEffectTypeNone) m_effectBank.Recycle(ref);
-            ref = {};
-        }
         RetirePreviewEffectReferences(state->update, true);
     }
 }

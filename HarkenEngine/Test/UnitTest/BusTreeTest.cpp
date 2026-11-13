@@ -576,4 +576,112 @@ TEST(BusTree, VoiceRoutesToCreatedBusAndUnknownBusRefused) {
     }
 }
 
+
+TEST(BusWorkRows, CandidateKeepsDetachedEffectUntilAudioRetirement) {
+    auto config = MakeNullConfig(2, kBlockFrames);
+    config.maxBuses = 2;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    auto& buses = engine.buses;
+    const auto id = harkentest::ObjectId(10);
+    ASSERT_EQ(VN_OK, Vn_CreateBus(id, VN_BUS_MASTER));
+    VnGainDesc gain{};
+    gain.structSize = sizeof(gain);
+    gain.effectId = harkentest::ObjectId(100);
+    gain.gainDb = -6;
+    ASSERT_EQ(VN_OK, Vn_SetBusEffect(id, 0, VN_EFFECT_GAIN,
+        reinterpret_cast<const VnEffectDesc*>(&gain)));
+    engine.nullBackend.Pump(1);
+    const auto bus = buses.FindRef(id);
+    const auto old = buses.AudioWorkRef(bus.index);
+    auto* oldState = buses.BusState(bus.index);
+    const auto oldEffect = oldState->fxSlotEffectRef[0];
+    ASSERT_TRUE(buses.RetainWorkRow(old));
+    const auto next = buses.PrepareWorkRow();
+    ASSERT_TRUE(next.Valid());
+    auto* prepared = buses.PreparedWorkRow(next);
+    ASSERT_NE(nullptr, prepared);
+    ASSERT_EQ(VN_OK, engine.PrepareBusWorkState(bus.index, *prepared));
+    const auto nextEffect = prepared->fxSlotEffectRef[0];
+    ASSERT_TRUE(buses.PublishWorkRow(next));
+    EXPECT_EQ(nullptr, buses.PreparedWorkRow(next));
+    {
+        harken::memguard::AudioThreadScope audio;
+        ASSERT_TRUE(buses.AudioAdoptWorkRow(bus, next));
+    }
+    buses.DrainWorkRows();
+    EXPECT_NE(nullptr, engine.effectBank.LiveStateFor(oldEffect));
+    EXPECT_EQ(2u, engine.effectBank.InUseOf(VN_EFFECT_GAIN));
+    EXPECT_EQ(oldState->generation, bus.generation);
+    buses.ReleaseWorkRow(old);
+    EXPECT_FALSE(buses.RetainWorkRow(old));
+    buses.DrainWorkRows();
+    EXPECT_NE(nullptr, engine.effectBank.LiveStateFor(oldEffect));
+    {
+        harken::memguard::AudioThreadScope audio;
+        buses.ServiceWorkRowRetirements();
+    }
+    buses.DrainWorkRows();
+    EXPECT_EQ(nullptr, engine.effectBank.LiveStateFor(oldEffect));
+    EXPECT_NE(nullptr, engine.effectBank.LiveStateFor(nextEffect));
+    EXPECT_EQ(1u, engine.effectBank.InUseOf(VN_EFFECT_GAIN));
+    EXPECT_EQ(config.maxBuses, buses.WorkRowsInUse());
+    buses.ReleaseWorkRow(next);
+    const auto reused = buses.PrepareWorkRow();
+    EXPECT_EQ(old.slot, reused.slot);
+    EXPECT_GT(reused.generation, old.generation);
+    EXPECT_FALSE(buses.RetainWorkRow(old));
+    buses.ReleaseWorkRow(reused);
+    // The installed directory still owns its row after candidate destruction.
+    engine.nullBackend.Pump(1);
+    EXPECT_EQ(next, buses.AudioWorkRef(bus.index));
+    EXPECT_EQ(1u, engine.effectBank.InUseOf(VN_EFFECT_GAIN));
+}
+
+TEST(BusWorkRows, CancelPrivateRowReturnsEffectsAndColdIdentitySurvivesDetach) {
+    auto config = MakeNullConfig(2, kBlockFrames);
+    config.maxBuses = 2;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    auto& buses = engine.buses;
+    const auto id = harkentest::ObjectId(10);
+    ASSERT_EQ(VN_OK, Vn_CreateBus(id, VN_BUS_MASTER));
+    VnGainDesc gain{};
+    gain.structSize = sizeof(gain);
+    gain.effectId = harkentest::ObjectId(100);
+    ASSERT_EQ(VN_OK, Vn_SetBusEffect(id, 0, VN_EFFECT_GAIN,
+        reinterpret_cast<const VnEffectDesc*>(&gain)));
+    engine.nullBackend.Pump(1);
+    const auto bus = buses.FindRef(id);
+    const auto privateRow = buses.PrepareWorkRow();
+    ASSERT_TRUE(privateRow.Valid());
+    ASSERT_EQ(VN_OK, engine.PrepareBusWorkState(bus.index, *buses.PreparedWorkRow(privateRow)));
+    EXPECT_EQ(2u, engine.effectBank.InUseOf(VN_EFFECT_GAIN));
+    buses.ReleaseWorkRow(privateRow);
+    EXPECT_EQ(1u, engine.effectBank.InUseOf(VN_EFFECT_GAIN));
+    EXPECT_EQ(config.maxBuses, buses.WorkRowsInUse());
+    const auto retained = buses.AudioWorkRef(bus.index);
+    ASSERT_TRUE(buses.RetainWorkRow(retained));
+    auto* state = buses.BusState(bus.index);
+    state->outputPeak = .8f;
+    state->outputChannelPeaks[0] = .8f;
+    {
+        harken::memguard::AudioThreadScope audio;
+        ASSERT_TRUE(buses.AudioDetachWorkRow(bus));
+        EXPECT_TRUE(buses.AudioRefMatches(bus));
+        EXPECT_EQ(bus.generation, buses.AudioGenerationAt(bus.index));
+        EXPECT_EQ(nullptr, buses.BusState(bus.index));
+        EXPECT_FLOAT_EQ(0, buses.OutputPeak(bus.index));
+        EXPECT_FLOAT_EQ(0, buses.OutputChannelPeak(bus.index, 0));
+        ASSERT_TRUE(buses.AudioAdoptWorkRow(bus, retained));
+    }
+    EXPECT_EQ(state, buses.BusState(bus.index));
+    EXPECT_FLOAT_EQ(.8f, buses.OutputPeak(bus.index));
+    buses.ReleaseWorkRow(retained);
+    engine.nullBackend.Pump(1);
+    EXPECT_EQ(1u, engine.effectBank.InUseOf(VN_EFFECT_GAIN));
+}
+
 } // namespace

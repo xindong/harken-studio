@@ -112,6 +112,7 @@ set(HARKEN_RUNTIME_SOURCES
     ${HARKEN_RUNTIME_DIR}/param/src/Spatializer.cpp
     ${HARKEN_RUNTIME_DIR}/render/src/BuiltinEffects.cpp
     ${HARKEN_RUNTIME_DIR}/render/src/BusTree.cpp
+    ${HARKEN_RUNTIME_DIR}/render/src/BusWorkRows.cpp
     ${HARKEN_RUNTIME_DIR}/render/src/EffectPool.cpp
     ${HARKEN_RUNTIME_DIR}/render/src/InsertEffect.cpp
     ${HARKEN_RUNTIME_DIR}/render/src/MixerLoop.cpp

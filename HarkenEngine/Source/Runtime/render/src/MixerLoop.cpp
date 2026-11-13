@@ -976,6 +976,7 @@ std::uint32_t MixerLoop::DrainCommands(std::uint64_t blockIndex,
     // every raw prefix before an initial-installation barrier.
     m_voices.ServiceEffectChainRetirements();
     m_buses.ServicePreviewEffectRetirements();
+    m_buses.ServiceWorkRowRetirements();
     std::uint32_t rawApplied = 0;
     std::uint32_t initialApplied = 0;
     const auto initialBudget = static_cast<std::uint64_t>(m_voices.Capacity()) * 3u;

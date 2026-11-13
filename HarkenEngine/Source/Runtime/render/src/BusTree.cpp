@@ -75,7 +75,16 @@ BusTree::BusTree(const EngineConfig& config, TopologyPlanPool& plans,
       m_outputScratch(config.mixChannelCount),
       m_biquadTrig(biquadTrig) {
     if (!m_workRows.ConstructThrough(config.maxBuses)) throw std::bad_alloc{};
-    for (std::uint32_t i = 0; i < config.maxBuses; ++i) m_workSlots[i] = i;
+    m_freeWorkRows.reserve(config.maxBuses);
+    for (std::uint32_t i = 0; i < config.maxBuses; ++i) {
+        auto& row = m_workRows[i];
+        row.slot = i;
+        row.generation = 1;
+        row.references.store(1, std::memory_order_relaxed);
+        row.phase.store(WorkPhase::Published, std::memory_order_relaxed);
+        m_workSlots[i] = {i, 1};
+    }
+    m_workRowsInUse = config.maxBuses;
     // The master bus pre-exists at index 0 and is its own parent (the fold
     // never dereferences the master's parent). Its chain defaults to all
     // pre-fader, like every created bus.
@@ -269,7 +278,7 @@ VnResult BusTree::CreateBus(VnBusId id, VnBusId parentId) {
 }
 
 BusTree::Bus* BusTree::BusState(std::uint32_t busIndex) {
-    return busIndex < m_count ? &WorkState(busIndex) : nullptr;
+    return busIndex < m_count && m_workSlots[busIndex].Valid() ? &WorkState(busIndex) : nullptr;
 }
 
 std::uint32_t BusTree::FindIndex(VnBusId id) const {
@@ -320,11 +329,19 @@ bool BusTree::LogicRefMatches(BusSlotRef ref) const {
 
 bool BusTree::AudioRefMatches(BusSlotRef ref) const {
     if (!ref.Valid() || ref.index >= m_audioCount ||
-        WorkState(ref.index).generation != ref.generation) {
+        AudioGenerationAt(ref.index) != ref.generation) {
         return false;
     }
     const std::uint8_t* alive = InstalledAlive();
     return alive == nullptr ? ref.index == 0 : alive[ref.index] != 0;
+}
+
+std::uint32_t BusTree::AudioGenerationAt(std::uint32_t index) const {
+    if (index >= m_audioCount) return 0;
+    const auto plan = m_plans.View(m_currentPlanIndex);
+    if (plan.slotCount != 0 && plan.generations != nullptr && plan.generations[index] != 0)
+        return plan.generations[index];
+    return HasWorkRow(index) ? WorkState(index).generation : 0;
 }
 
 std::uint32_t BusTree::FreeBusSlotCount() const {
@@ -884,6 +901,7 @@ void BusTree::ApplySetBusSendLevel(std::uint32_t fromBus, std::uint32_t toBus,
 
 void BusTree::AudioDiscardLimiterGainReduction(std::uint64_t epoch) {
     for (std::uint32_t i = 0; i < m_audioCount; ++i) {
+        if (!HasWorkRow(i)) continue;
         auto& bus = WorkState(i);
         if (!AudioRefMatches({i, bus.generation})) continue;
         for (std::uint32_t s = 0; s < m_fxSlots; ++s) {
@@ -899,7 +917,7 @@ bool BusTree::AudioReadLimiterGainReduction(BusSlotRef ref, std::uint32_t slot,
     const EffectInstanceRef& expected, std::uint64_t epoch,
     std::uint64_t sourceFrameBegin, LimiterGainReduction& out) {
     out = {};
-    if (!AudioRefMatches(ref) || slot >= m_fxSlots) return false;
+    if (!AudioRefMatches(ref) || !HasWorkRow(ref.index) || slot >= m_fxSlots) return false;
     const auto& bus = WorkState(ref.index);
     return CopyLimiterGainReduction(bus.fxSlots[slot], bus.fxSlotEffectRef[slot],
                                    expected, epoch, sourceFrameBegin, out);

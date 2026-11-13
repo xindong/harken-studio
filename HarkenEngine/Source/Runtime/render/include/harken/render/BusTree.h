@@ -86,6 +86,30 @@ public:
         std::uint32_t generation = 0;
     };
 
+    struct WorkRef {
+        std::uint32_t slot = UINT32_MAX;
+        std::uint64_t generation = 0;
+        bool Valid() const noexcept { return slot != UINT32_MAX && generation != 0; }
+        bool operator==(const WorkRef&) const = default;
+    };
+    struct Bus;
+    // Logic owns candidate leases; the audio directory owns a separate lease.
+    // Only a private row may be initialized. Published rows are never reset by
+    // preparing another candidate, even when they are temporarily detached.
+    WorkRef PrepareWorkRow() noexcept;
+    Bus* PreparedWorkRow(WorkRef ref) noexcept;
+    bool RetainWorkRow(WorkRef ref) noexcept;
+    void ReleaseWorkRow(WorkRef ref) noexcept;
+    bool PublishWorkRow(WorkRef ref) noexcept;
+    void DrainWorkRows() noexcept;
+    // Audio coordinator, outside worker execution. A captured directory lease
+    // must be retained before the coordinator can replace or detach the row.
+    WorkRef AudioWorkRef(std::uint32_t index) const noexcept;
+    bool AudioAdoptWorkRow(BusSlotRef bus, WorkRef ref) noexcept;
+    bool AudioDetachWorkRow(BusSlotRef bus) noexcept;
+    void ServiceWorkRowRetirements() noexcept;
+    std::uint32_t WorkRowsInUse() const noexcept { return m_workRowsInUse; }
+
     // Prepared Pack activation seam. Capacity and append-position validation
     // happens before the non-failing materialization/commit tail. Hidden slots
     // are fully initialized in preallocated storage but remain outside every
@@ -167,9 +191,7 @@ public:
     // never before — the mixer sizes its plane set, folds, and snapshots
     // against this. Audio thread.
     std::uint32_t AudioBusCount() const { return m_audioCount; }
-    std::uint32_t AudioGenerationAt(std::uint32_t busIndex) const {
-        return busIndex < m_audioCount ? WorkState(busIndex).generation : 0;
-    }
+    std::uint32_t AudioGenerationAt(std::uint32_t busIndex) const;
 
     // Tree parent of a bus (itself for the master), from the LOGIC-side parent
     // shadow: the topology planner reads it to include tree edges in the
@@ -365,13 +387,13 @@ public:
     // ApplyTopologyPlan, seeded to the Appendix A default at construction.
     // Audio thread.
     const float* BusDownmixCoeffs(std::uint32_t busIndex) const {
-        return busIndex < m_audioCount ? WorkState(busIndex).downmixCoeffs
+        return HasWorkRow(busIndex) ? WorkState(busIndex).downmixCoeffs
                                        : nullptr;
     }
     // A bus's configured output layout (VnChannelLayout); for the master this
     // is the device layout. Audio thread.
     std::uint32_t BusOutputLayout(std::uint32_t busIndex) const {
-        return busIndex < m_audioCount ? WorkState(busIndex).outputLayout : 0;
+        return HasWorkRow(busIndex) ? WorkState(busIndex).outputLayout : 0;
     }
 
     // OutputPeak is the existing Post Effects bus meter: the peak absolute
@@ -384,18 +406,18 @@ public:
     // during MixDown; the mixer copies it into the snapshot payload and the
     // meter block ring in the same block.
     float OutputPeak(std::uint32_t busIndex) const {
-        return busIndex < m_audioCount ? WorkState(busIndex).outputPeak : 0.0f;
+        return HasWorkRow(busIndex) ? WorkState(busIndex).outputPeak : 0.0f;
     }
     float OutputChannelPeak(std::uint32_t busIndex, std::uint32_t channel) const {
-        return busIndex < m_audioCount && channel < m_mixChannels
+        return HasWorkRow(busIndex) && channel < m_mixChannels
             ? WorkState(busIndex).outputChannelPeaks[channel] : 0.0f;
     }
     float PreFaderPeak(std::uint32_t busIndex) const {
-        return busIndex < m_audioCount ? WorkState(busIndex).preFaderPeak
+        return HasWorkRow(busIndex) ? WorkState(busIndex).preFaderPeak
                                        : 0.0f;
     }
     float PostFaderPeak(std::uint32_t busIndex) const {
-        return busIndex < m_audioCount ? WorkState(busIndex).postFaderPeak
+        return HasWorkRow(busIndex) ? WorkState(busIndex).postFaderPeak
                                        : 0.0f;
     }
 
@@ -571,13 +593,34 @@ private:
 
     // Resized to capacity at Init. [0, m_count) is logic-visible;
     // [m_count, m_materializedCount) may hold one hidden prepared append batch.
-    GrowingRowStorage<Bus> m_workRows;
-    std::vector<std::uint32_t> m_workSlots;
+    enum class WorkPhase : std::uint8_t { Free, Preparing, Published, Retired };
+    struct WorkRow {
+        Bus bus;
+        std::atomic<std::uint32_t> references{0};
+        std::atomic<WorkPhase> phase{WorkPhase::Free};
+        std::uint64_t generation = 0;
+        std::uint32_t slot = UINT32_MAX;
+        WorkRow* next = nullptr;
+    };
+    GrowingRowStorage<WorkRow> m_workRows;
+    std::vector<WorkRef> m_workSlots;
+    std::vector<std::uint32_t> m_freeWorkRows;
+    std::atomic<WorkRow*> m_workRetireRequests{nullptr};
+    std::atomic<WorkRow*> m_workRetired{nullptr};
+    std::uint32_t m_workRowsInUse = 0;
+    WorkRow* ResolveWorkRow(WorkRef ref) noexcept;
+    void AudioReleaseWorkRow(WorkRef ref) noexcept;
+    void RetireWorkRow(WorkRow& row) noexcept;
+    void RecycleWorkRow(WorkRow& row) noexcept;
+    void ShutdownWorkRows() noexcept;
+    bool HasWorkRow(std::uint32_t index) const noexcept {
+        return index < m_audioCount && m_workSlots[index].Valid();
+    }
     Bus& WorkState(std::uint32_t busIndex) noexcept {
-        return m_workRows[m_workSlots[busIndex]];
+        return m_workRows[m_workSlots[busIndex].slot].bus;
     }
     const Bus& WorkState(std::uint32_t busIndex) const noexcept {
-        return m_workRows[m_workSlots[busIndex]];
+        return m_workRows[m_workSlots[busIndex].slot].bus;
     }
     std::unique_ptr<std::atomic<BusEffectChainState*>[]> m_previewEffectStates;
     std::atomic<std::uint32_t> m_pendingPreviewEffects{0};
