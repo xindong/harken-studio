@@ -33,4 +33,9 @@ HK_PACK_OFFSET(HkPackContainerHeader, selectionVariableId, 24);
 HK_PACK_OFFSET(HkPackContainerHeader, defaultIndex, 40);
 HK_PACK_OFFSET(HkPackContainerHeader, childCount, 44);
 
+HK_PACK_TABLE HkPackStreamStep hkPackStreamContainerPayload[] = {
+    HK_PACK_STREAM_RECORD(HkPackContainerHeader),
+    HK_PACK_STREAM_RECORD_EACH(HkPackContainerChild, HkPackContainerHeader, childCount),
+};
+
 #endif

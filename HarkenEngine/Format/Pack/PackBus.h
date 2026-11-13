@@ -216,4 +216,12 @@ HK_PACK_OFFSET(HkPackEffectDynamicRoute, levelDb, 56);
 HK_PACK_OFFSET(HkPackEffectDynamicRoute, reserved60, 60);
 HK_PACK_OFFSET(HkPackEffectDynamicRoute, reserved64, 64);
 
+HK_PACK_TABLE HkPackStreamStep hkPackStreamBusDefinitionSnapshot[] = {
+    HK_PACK_STREAM_RECORD(HkPackBusDefinitionSnapshotHeader),
+    HK_PACK_STREAM_RECORD_EACH(HkPackBusDefinitionBus, HkPackBusDefinitionSnapshotHeader, busCount),
+    HK_PACK_STREAM_RECORD_EACH(HkPackBusDefinitionSend, HkPackBusDefinitionSnapshotHeader, sendCount),
+    HK_PACK_STREAM_RECORD_EACH(HkPackBusDefinitionDownmix, HkPackBusDefinitionSnapshotHeader, downmixCount),
+    HK_PACK_STREAM_RECORD_EACH(HkPackBusDefinitionCoefficient, HkPackBusDefinitionSnapshotHeader, coefficientCount),
+};
+
 #endif

@@ -8,13 +8,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 FORMAT_DIR = "HarkenEngine/Format/Pack"
 LOCK_LINE = re.compile(r"^\s*HK_PACK_(?:SIZE|OFFSET)\(.*\);\s*$", re.M)
+STREAM_LINE = re.compile(r"^\s*(?:HK_PACK_TABLE HkPackStreamStep \w+\[\] = \{|HK_PACK_STREAM_[A-Z_]+\(.*\),)\s*$", re.M)
 VERSION = re.compile(r"^#define HK_PACK_FORMAT_VERSION (\d+)u\s*$", re.M)
 
 
-def lock_lines(files: dict[str, str]) -> list[str]:
+def lock_lines(files: dict[str, str], pattern: re.Pattern[str] = LOCK_LINE) -> list[str]:
     lines = []
     for name in sorted(files):
-        lines += [f"{name}: {line.strip()}" for line in LOCK_LINE.findall(files[name])]
+        lines += [f"{name}: {line.strip()}" for line in pattern.findall(files[name])]
     return lines
 
 
@@ -27,16 +28,18 @@ def format_version(files: dict[str, str]) -> int | None:
 
 
 def check(base: dict[str, str], head: dict[str, str]) -> list[str]:
-    if not base:
+    if not base or format_version(head) != format_version(base):
         return []
-    if lock_lines(base) == lock_lines(head):
-        return []
-    if format_version(head) != format_version(base):
-        return []
-    removed = sorted(set(lock_lines(base)) - set(lock_lines(head)))
-    added = sorted(set(lock_lines(head)) - set(lock_lines(base)))
-    return ["Pack layout lock changed without raising HK_PACK_FORMAT_VERSION"] + \
-        [f"- {line}" for line in removed] + [f"+ {line}" for line in added]
+    problems = []
+    for pattern in (LOCK_LINE, STREAM_LINE):
+        before, after = lock_lines(base, pattern), lock_lines(head, pattern)
+        if not before or before == after:
+            continue
+        problems += [f"- {line}" for line in sorted(set(before) - set(after))]
+        problems += [f"+ {line}" for line in sorted(set(after) - set(before))]
+        if set(before) == set(after):
+            problems.append("~ order changed")
+    return ["Pack layout lock changed without raising HK_PACK_FORMAT_VERSION"] + problems if problems else []
 
 
 def current_files(root: Path) -> dict[str, str]:

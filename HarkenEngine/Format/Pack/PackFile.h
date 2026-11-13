@@ -15,6 +15,40 @@
 #define HK_PACK_SIZE(type, bytes) HK_PACK_STATIC_ASSERT(sizeof(type) == (bytes), #type)
 #define HK_PACK_OFFSET(type, field, offset) HK_PACK_STATIC_ASSERT(offsetof(type, field) == (offset), #type "." #field)
 
+#define HK_PACK_STREAM_ONCE 0u
+#define HK_PACK_STREAM_EACH 1u
+#define HK_PACK_STREAM_EACH_LESS_ONE 2u
+#define HK_PACK_STREAM_WHEN 3u
+
+typedef struct HkPackStreamStep {
+    const char* part;
+    uint32_t partBytes;
+    const struct HkPackStreamStep* nested;
+    uint32_t nestedSteps;
+    uint32_t repeat;
+    const char* counter;
+    uint32_t counterOffset;
+    uint32_t counterBytes;
+    uint64_t whenValue;
+} HkPackStreamStep;
+
+#define HK_PACK_STREAM_FIELD_BYTES(type, field) ((uint32_t)sizeof(((type*)0)->field))
+#define HK_PACK_STREAM_COUNTER(repeat, counter, field, value) \
+    (repeat), #counter, (uint32_t)offsetof(counter, field), HK_PACK_STREAM_FIELD_BYTES(counter, field), (value)
+#define HK_PACK_STREAM_RECORD(type) {#type, (uint32_t)sizeof(type), NULL, 0u, HK_PACK_STREAM_ONCE, NULL, 0u, 0u, 0u}
+#define HK_PACK_STREAM_RECORD_EACH(type, counter, field) \
+    {#type, (uint32_t)sizeof(type), NULL, 0u, HK_PACK_STREAM_COUNTER(HK_PACK_STREAM_EACH, counter, field, 0u)}
+#define HK_PACK_STREAM_RECORD_EACH_LESS_ONE(type, counter, field) \
+    {#type, (uint32_t)sizeof(type), NULL, 0u, HK_PACK_STREAM_COUNTER(HK_PACK_STREAM_EACH_LESS_ONE, counter, field, 0u)}
+#define HK_PACK_STREAM_RECORD_WHEN(type, counter, field, value) \
+    {#type, (uint32_t)sizeof(type), NULL, 0u, HK_PACK_STREAM_COUNTER(HK_PACK_STREAM_WHEN, counter, field, value)}
+#define HK_PACK_STREAM_STEPS(stream) ((uint32_t)(sizeof(stream) / sizeof((stream)[0])))
+#define HK_PACK_STREAM_NESTED(stream) {#stream, 0u, stream, HK_PACK_STREAM_STEPS(stream), HK_PACK_STREAM_ONCE, NULL, 0u, 0u, 0u}
+#define HK_PACK_STREAM_NESTED_EACH(stream, counter, field) \
+    {#stream, 0u, stream, HK_PACK_STREAM_STEPS(stream), HK_PACK_STREAM_COUNTER(HK_PACK_STREAM_EACH, counter, field, 0u)}
+#define HK_PACK_STREAM_NESTED_WHEN(stream, counter, field, value) \
+    {#stream, 0u, stream, HK_PACK_STREAM_STEPS(stream), HK_PACK_STREAM_COUNTER(HK_PACK_STREAM_WHEN, counter, field, value)}
+
 typedef struct HkPackObjectId {
     uint8_t bytes[16];
 } HkPackObjectId;
@@ -26,6 +60,8 @@ HK_PACK_SIZE(HkPackObjectId, 16);
 #define HK_PACK_BUS_DEFINITION_DOWNMIX_COEFFICIENT_COUNT UINT64_C(64)
 #define HK_PACK_PAYLOAD_ALIGN UINT64_C(8)
 #define HK_PACK_SHIPPING_BODY_VINTAGE UINT64_C(18)
+#define HK_PACK_ENTRY_SCHEDULING_BODY_VINTAGE UINT64_C(19)
+#define HK_PACK_SIGNAL_RELATIONS_BODY_VINTAGE UINT64_C(20)
 #define HK_PACK_VOICE_RECIPE_MAX_PARAMS UINT64_C(64)
 
 #define HK_PACK_ENTRY_KIND_MEDIA 1u

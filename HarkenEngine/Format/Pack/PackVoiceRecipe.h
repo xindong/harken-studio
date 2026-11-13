@@ -99,4 +99,13 @@ HK_PACK_OFFSET(HkPackVoiceRecipeTone, highShelfFrequencyHz, 36);
 HK_PACK_OFFSET(HkPackVoiceRecipeTone, highShelfQ, 40);
 HK_PACK_OFFSET(HkPackVoiceRecipeTone, highShelfGainDb, 44);
 
+HK_PACK_TABLE HkPackStreamStep hkPackStreamVoiceRecipePayload[] = {
+    HK_PACK_STREAM_RECORD(HkPackVoiceRecipeHeader),
+    HK_PACK_STREAM_RECORD(HkPackVoiceRecipeTone),
+    HK_PACK_STREAM_RECORD(HkPackVoiceRecipeSpatial),
+    HK_PACK_STREAM_RECORD(HkPackVoiceRecipePlayback),
+    HK_PACK_STREAM_RECORD_EACH(HkPackVoiceRecipeInstall, HkPackVoiceRecipeHeader, installCount),
+    HK_PACK_STREAM_RECORD_EACH(HkPackVoiceRecipeBinding, HkPackVoiceRecipeHeader, bindingCount),
+};
+
 #endif

@@ -85,4 +85,26 @@ HK_PACK_OFFSET(HkPackVariableRequirementsHeader, rowCount, 0);
 HK_PACK_OFFSET(HkPackVariableRequirementsHeader, format, 4);
 HK_PACK_OFFSET(HkPackVariableRequirementsHeader, reserved, 8);
 
+HK_PACK_TABLE HkPackStreamStep hkPackStreamVariableAnchorSection[] = {
+    HK_PACK_STREAM_RECORD(HkPackVariableAnchorCount),
+    HK_PACK_STREAM_RECORD_EACH(HkPackVariableAnchor, HkPackVariableAnchorCount, count),
+};
+
+HK_PACK_TABLE HkPackStreamStep hkPackStreamVariableLabelSection[] = {
+    HK_PACK_STREAM_RECORD(HkPackVariableLabelHeader),
+    HK_PACK_STREAM_RECORD_EACH(HkPackVariableLabel, HkPackVariableLabelHeader, labelCount),
+};
+
+HK_PACK_TABLE HkPackStreamStep hkPackStreamVariablePolicyPayload[] = {
+    HK_PACK_STREAM_RECORD(HkPackVariablePolicyHeader),
+    HK_PACK_STREAM_RECORD_EACH(HkPackVariablePolicyRow, HkPackVariablePolicyHeader, rowCount),
+    HK_PACK_STREAM_NESTED_EACH(hkPackStreamVariableAnchorSection, HkPackVariablePolicyHeader, rowCount),
+    HK_PACK_STREAM_NESTED_EACH(hkPackStreamVariableLabelSection, HkPackVariablePolicyHeader, rowCount),
+};
+
+HK_PACK_TABLE HkPackStreamStep hkPackStreamVariableRequirementsPayload[] = {
+    HK_PACK_STREAM_RECORD(HkPackVariableRequirementsHeader),
+    HK_PACK_STREAM_RECORD_EACH(HkPackVariableRequirement, HkPackVariableRequirementsHeader, rowCount),
+};
+
 #endif

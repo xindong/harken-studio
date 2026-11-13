@@ -16,8 +16,17 @@ HK_PACK_OFFSET(HkPackRow, value, 0);
 """
 
 
-def files(version: int, size: int) -> dict[str, str]:
-    return {"PackFile.h": FILE.format(version=version, size=size)}
+STREAM = """HK_PACK_TABLE HkPackStreamStep hkPackStreamRow[] = {{
+    {steps}
+}};
+"""
+
+
+def files(version: int, size: int, steps: tuple[str, ...] = ()) -> dict[str, str]:
+    text = FILE.format(version=version, size=size)
+    if steps:
+        text += STREAM.format(steps="\n    ".join(steps))
+    return {"PackFile.h": text}
 
 
 class PackLayoutLockCheckTest(unittest.TestCase):
@@ -27,6 +36,12 @@ class PackLayoutLockCheckTest(unittest.TestCase):
     def test_layout_change_requires_version_bump(self) -> None:
         self.assertTrue(MODULE.check(files(4, 4), files(4, 8)))
         self.assertEqual([], MODULE.check(files(4, 4), files(5, 8)))
+
+    def test_stream_order_change_requires_version_bump(self) -> None:
+        steps = ("HK_PACK_STREAM_RECORD(HkPackRow),", "HK_PACK_STREAM_RECORD_EACH(HkPackItem, HkPackRow, value),")
+        self.assertTrue(MODULE.check(files(4, 4, steps), files(4, 4, steps[::-1])))
+        self.assertEqual([], MODULE.check(files(4, 4, steps), files(5, 4, steps[::-1])))
+        self.assertEqual([], MODULE.check(files(4, 4), files(4, 4, steps)))
 
     def test_first_introduction_passes(self) -> None:
         self.assertEqual([], MODULE.check({}, files(4, 4)))

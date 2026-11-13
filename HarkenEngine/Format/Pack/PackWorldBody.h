@@ -5,6 +5,9 @@
 
 #define HK_PACK_BODY_WORLD_VARIABLE_HEADER_SCOPE 1u
 
+#define HK_PACK_BODY_WORLD_CHILD_TIMING_INLINE_SOUND 1u
+#define HK_PACK_BODY_WORLD_CHILD_TIMING_SCHEDULE_REFERENCE 2u
+
 #define HK_PACK_WORLD_CAPABILITY_VARIABLE_DEFINITIONS (UINT64_C(1) << 0)
 #define HK_PACK_WORLD_CAPABILITY_PLAYABLE_PROPERTIES (UINT64_C(1) << 1)
 #define HK_PACK_WORLD_CAPABILITY_RANDOM_DRAW (UINT64_C(1) << 2)
@@ -962,5 +965,147 @@ HK_PACK_OFFSET(HkPackBodyWorldVariableHeader, rangeMin, 24);
 HK_PACK_OFFSET(HkPackBodyWorldVariableHeader, rangeMax, 28);
 HK_PACK_OFFSET(HkPackBodyWorldVariableHeader, defaultValue, 32);
 HK_PACK_OFFSET(HkPackBodyWorldVariableHeader, reserved, 36);
+
+HK_PACK_TABLE HkPackStreamStep hkPackStreamBodyPayloadEffectNode[] = {
+    HK_PACK_STREAM_RECORD(HkPackBodyPayloadEffectNodeHeader),
+    HK_PACK_STREAM_RECORD_EACH(HkPackBodyPayloadEffectParam, HkPackBodyPayloadEffectNodeHeader, paramCount),
+};
+
+HK_PACK_TABLE HkPackStreamStep hkPackStreamBodyPayloadBody[] = {
+    HK_PACK_STREAM_RECORD_EACH(HkPackBodyPayloadSend, HkPackBodyPayloadHeader, sendCount),
+    HK_PACK_STREAM_NESTED_EACH(hkPackStreamBodyPayloadEffectNode, HkPackBodyPayloadHeader, effectNodeCount),
+    HK_PACK_STREAM_RECORD_EACH(HkPackBodyPayloadEffectEdge, HkPackBodyPayloadHeader, effectEdgeCount),
+};
+
+HK_PACK_TABLE HkPackStreamStep hkPackStreamBodyPayload[] = {
+    HK_PACK_STREAM_RECORD(HkPackBodyPayloadHeader),
+    HK_PACK_STREAM_NESTED(hkPackStreamBodyPayloadBody),
+};
+
+HK_PACK_TABLE HkPackStreamStep hkPackStreamBodyWorldStructuralAncestor[] = {
+    HK_PACK_STREAM_RECORD(HkPackBodyWorldStructuralAncestorHeader),
+    HK_PACK_STREAM_NESTED(hkPackStreamBodyPayload),
+};
+
+HK_PACK_TABLE HkPackStreamStep hkPackStreamBodyWorldProperty[] = {
+    HK_PACK_STREAM_RECORD(HkPackBodyWorldPropertyHeader),
+    HK_PACK_STREAM_RECORD(HkPackBodyPayloadHeader),
+    HK_PACK_STREAM_RECORD_EACH(HkPackBodyWorldLayerAncestor, HkPackBodyWorldPropertyHeader, organizationLayerAncestorCount),
+    HK_PACK_STREAM_RECORD(HkPackBodyWorldStructuralHeader),
+    HK_PACK_STREAM_NESTED_EACH(hkPackStreamBodyWorldStructuralAncestor, HkPackBodyWorldStructuralHeader, structuralAncestorCount),
+    HK_PACK_STREAM_NESTED(hkPackStreamBodyPayloadBody),
+};
+
+HK_PACK_TABLE HkPackStreamStep hkPackStreamBodyWorldOccurrence[] = {
+    HK_PACK_STREAM_RECORD(HkPackBodyWorldOccurrenceHeader),
+    HK_PACK_STREAM_NESTED(hkPackStreamBodyPayload),
+};
+
+HK_PACK_TABLE HkPackStreamStep hkPackStreamBodyWorldTrack[] = {
+    HK_PACK_STREAM_RECORD(HkPackBodyWorldTrackHeader),
+    HK_PACK_STREAM_RECORD_EACH(HkPackBodyWorldPlacement, HkPackBodyWorldTrackHeader, placementCount),
+};
+
+HK_PACK_TABLE HkPackStreamStep hkPackStreamBodyWorldSegment[] = {
+    HK_PACK_STREAM_RECORD(HkPackBodyWorldSegmentHeader),
+    HK_PACK_STREAM_RECORD_EACH(HkPackBodyWorldTrackRef, HkPackBodyWorldSegmentHeader, trackRefCount),
+    HK_PACK_STREAM_RECORD_EACH(HkPackBodyWorldMarker, HkPackBodyWorldSegmentHeader, markerCount),
+};
+
+HK_PACK_TABLE HkPackStreamStep hkPackStreamBodyWorldSegmentEntryScheduling[] = {
+    HK_PACK_STREAM_RECORD(HkPackBodyWorldSegmentHeader),
+    HK_PACK_STREAM_RECORD(HkPackBodyWorldSegmentEntryTimeline),
+    HK_PACK_STREAM_RECORD_EACH(HkPackBodyWorldTrackRef, HkPackBodyWorldSegmentHeader, trackRefCount),
+    HK_PACK_STREAM_RECORD_EACH(HkPackBodyWorldMarker, HkPackBodyWorldSegmentHeader, markerCount),
+};
+
+HK_PACK_TABLE HkPackStreamStep hkPackStreamBodyWorldCurve[] = {
+    HK_PACK_STREAM_RECORD(HkPackBodyWorldCurveHeader),
+    HK_PACK_STREAM_RECORD_EACH(HkPackBodyWorldCurvePoint, HkPackBodyWorldCurveHeader, pointCount),
+    HK_PACK_STREAM_RECORD_EACH_LESS_ONE(HkPackBodyWorldCurveHandle, HkPackBodyWorldCurveHeader, pointCount),
+};
+
+HK_PACK_TABLE HkPackStreamStep hkPackStreamBodyWorldChild[] = {
+    HK_PACK_STREAM_RECORD(HkPackBodyWorldChildHeader),
+    HK_PACK_STREAM_RECORD_WHEN(HkPackBodyWorldInlineSound, HkPackBodyWorldChildHeader, timingKind, HK_PACK_BODY_WORLD_CHILD_TIMING_INLINE_SOUND),
+    HK_PACK_STREAM_RECORD_WHEN(HkPackBodyWorldScheduleKey, HkPackBodyWorldChildHeader, timingKind, HK_PACK_BODY_WORLD_CHILD_TIMING_SCHEDULE_REFERENCE),
+};
+
+HK_PACK_TABLE HkPackStreamStep hkPackStreamBodyWorldDiscreteGrid[] = {
+    HK_PACK_STREAM_RECORD(HkPackBodyWorldDiscreteGridHeader),
+    HK_PACK_STREAM_RECORD_EACH(HkPackBodyWorldDiscreteCell, HkPackBodyWorldDiscreteGridHeader, cellCount),
+};
+
+HK_PACK_TABLE HkPackStreamStep hkPackStreamBodyWorldContinuousGrid[] = {
+    HK_PACK_STREAM_RECORD(HkPackBodyWorldContinuousGridHeader),
+    HK_PACK_STREAM_RECORD_EACH(HkPackBodyWorldContinuousCell, HkPackBodyWorldContinuousGridHeader, cellCount),
+};
+
+HK_PACK_TABLE HkPackStreamStep hkPackStreamBodyWorldContainer[] = {
+    HK_PACK_STREAM_RECORD(HkPackBodyWorldContainerHeader),
+    HK_PACK_STREAM_NESTED_EACH(hkPackStreamBodyWorldCurve, HkPackBodyWorldContainerHeader, curveCount),
+    HK_PACK_STREAM_NESTED_EACH(hkPackStreamBodyWorldChild, HkPackBodyWorldContainerHeader, childCount),
+    HK_PACK_STREAM_RECORD_EACH(HkPackBodyWorldGridAxis, HkPackBodyWorldContainerHeader, discreteAxisCount),
+    HK_PACK_STREAM_NESTED_EACH(hkPackStreamBodyWorldDiscreteGrid, HkPackBodyWorldContainerHeader, discreteRowCount),
+    HK_PACK_STREAM_RECORD_EACH(HkPackBodyWorldGridAxis, HkPackBodyWorldContainerHeader, continuousAxisCount),
+    HK_PACK_STREAM_NESTED_EACH(hkPackStreamBodyWorldContinuousGrid, HkPackBodyWorldContainerHeader, continuousRowCount),
+};
+
+HK_PACK_TABLE HkPackStreamStep hkPackStreamBodyWorldTransition[] = {
+    HK_PACK_STREAM_RECORD(HkPackBodyWorldTransitionHeader),
+    HK_PACK_STREAM_RECORD_EACH(HkPackBodyWorldPathStep, HkPackBodyWorldTransitionHeader, downwardPathStepCount),
+    HK_PACK_STREAM_RECORD_EACH(HkPackBodyWorldTransitionRule, HkPackBodyWorldTransitionHeader, ruleCount),
+};
+
+HK_PACK_TABLE HkPackStreamStep hkPackStreamBodyWorldAction[] = {
+    HK_PACK_STREAM_RECORD(HkPackBodyWorldActionHeader),
+    HK_PACK_STREAM_RECORD_EACH(HkPackBodyWorldActionStep, HkPackBodyWorldActionHeader, stepCount),
+};
+
+HK_PACK_TABLE HkPackStreamStep hkPackStreamBodyWorld[] = {
+    HK_PACK_STREAM_RECORD(HkPackBodyWorldPrefix),
+    HK_PACK_STREAM_RECORD(HkPackBodyWorldActionCapacity),
+    HK_PACK_STREAM_RECORD(HkPackBodyWorldStructuralCount),
+    HK_PACK_STREAM_RECORD(HkPackBodyWorldCapacity),
+    HK_PACK_STREAM_RECORD(HkPackBodyWorldProjectId),
+    HK_PACK_STREAM_RECORD_EACH(HkPackBodyWorldVariableHeader, HkPackBodyWorldPrefix, variableCount),
+    HK_PACK_STREAM_NESTED_EACH(hkPackStreamBodyWorldProperty, HkPackBodyWorldPrefix, playablePropertyProgramCount),
+    HK_PACK_STREAM_NESTED_EACH(hkPackStreamBodyWorldOccurrence, HkPackBodyWorldPrefix, playableOccurrencePropertyCount),
+    HK_PACK_STREAM_NESTED_EACH(hkPackStreamBodyWorldTrack, HkPackBodyWorldPrefix, trackScheduleCount),
+    HK_PACK_STREAM_NESTED_EACH(hkPackStreamBodyWorldSegment, HkPackBodyWorldPrefix, segmentScheduleCount),
+    HK_PACK_STREAM_NESTED_EACH(hkPackStreamBodyWorldContainer, HkPackBodyWorldPrefix, containerCount),
+    HK_PACK_STREAM_NESTED_EACH(hkPackStreamBodyWorldTransition, HkPackBodyWorldPrefix, transitionProgramCount),
+    HK_PACK_STREAM_NESTED_EACH(hkPackStreamBodyWorldAction, HkPackBodyWorldActionCapacity, actionCount),
+};
+
+HK_PACK_TABLE HkPackStreamStep hkPackStreamBodyWorldEntryScheduling[] = {
+    HK_PACK_STREAM_RECORD(HkPackBodyWorldPrefix),
+    HK_PACK_STREAM_RECORD(HkPackBodyWorldActionCapacity),
+    HK_PACK_STREAM_RECORD(HkPackBodyWorldStructuralCount),
+    HK_PACK_STREAM_RECORD(HkPackBodyWorldCapacity),
+    HK_PACK_STREAM_RECORD(HkPackBodyWorldProjectId),
+    HK_PACK_STREAM_RECORD_EACH(HkPackBodyWorldVariableHeader, HkPackBodyWorldPrefix, variableCount),
+    HK_PACK_STREAM_NESTED_EACH(hkPackStreamBodyWorldProperty, HkPackBodyWorldPrefix, playablePropertyProgramCount),
+    HK_PACK_STREAM_NESTED_EACH(hkPackStreamBodyWorldOccurrence, HkPackBodyWorldPrefix, playableOccurrencePropertyCount),
+    HK_PACK_STREAM_NESTED_EACH(hkPackStreamBodyWorldTrack, HkPackBodyWorldPrefix, trackScheduleCount),
+    HK_PACK_STREAM_NESTED_EACH(hkPackStreamBodyWorldSegmentEntryScheduling, HkPackBodyWorldPrefix, segmentScheduleCount),
+    HK_PACK_STREAM_NESTED_EACH(hkPackStreamBodyWorldContainer, HkPackBodyWorldPrefix, containerCount),
+    HK_PACK_STREAM_NESTED_EACH(hkPackStreamBodyWorldTransition, HkPackBodyWorldPrefix, transitionProgramCount),
+    HK_PACK_STREAM_NESTED_EACH(hkPackStreamBodyWorldAction, HkPackBodyWorldActionCapacity, actionCount),
+};
+
+HK_PACK_TABLE HkPackStreamStep hkPackStreamBodyWorldSignalRelations[] = {
+    HK_PACK_STREAM_NESTED(hkPackStreamBodyWorld),
+    HK_PACK_STREAM_RECORD(HkPackBodyWorldSignalCounts),
+    HK_PACK_STREAM_RECORD_EACH(HkPackBodyWorldSignalRelation, HkPackBodyWorldSignalCounts, signalRelationCount),
+    HK_PACK_STREAM_RECORD_EACH(HkPackBodyWorldSignalReceiver, HkPackBodyWorldSignalCounts, signalReceiverCount),
+};
+
+HK_PACK_TABLE HkPackStreamStep hkPackStreamCanonicalDefinitionPartition[] = {
+    HK_PACK_STREAM_RECORD(HkPackCanonicalPartitionHeader),
+    HK_PACK_STREAM_NESTED_WHEN(hkPackStreamBodyWorld, HkPackCanonicalPartitionHeader, bodyVintage, HK_PACK_SHIPPING_BODY_VINTAGE),
+    HK_PACK_STREAM_NESTED_WHEN(hkPackStreamBodyWorldEntryScheduling, HkPackCanonicalPartitionHeader, bodyVintage, HK_PACK_ENTRY_SCHEDULING_BODY_VINTAGE),
+    HK_PACK_STREAM_NESTED_WHEN(hkPackStreamBodyWorldSignalRelations, HkPackCanonicalPartitionHeader, bodyVintage, HK_PACK_SIGNAL_RELATIONS_BODY_VINTAGE),
+};
 
 #endif
