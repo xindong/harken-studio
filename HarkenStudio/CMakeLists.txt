@@ -654,23 +654,13 @@ if(APPLE AND HARKEN_BUILD_EDITOR)
     if(NOT TARGET Qt6::QOffscreenIntegrationPlugin)
         message(FATAL_ERROR "Qt offscreen platform plugin is required for Studio Schema verification")
     endif()
-    find_program(MACDEPLOYQT_EXE macdeployqt
-        HINTS ${Qt6_DIR}/../../../bin
-        REQUIRED)
-
     add_custom_command(TARGET harken_editor POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory
             "$<TARGET_BUNDLE_DIR:harken_editor>/Contents/PlugIns/platforms"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "$<TARGET_FILE:Qt6::QOffscreenIntegrationPlugin>"
             "$<TARGET_BUNDLE_DIR:harken_editor>/Contents/PlugIns/platforms/"
-        COMMAND ${Python3_EXECUTABLE}
-            "${CMAKE_SOURCE_DIR}/.scripts/release/deploy_macos_bundle.py"
-            --build-dir "${CMAKE_BINARY_DIR}"
-            --bundle "$<TARGET_BUNDLE_DIR:harken_editor>"
-            --tool "${MACDEPLOYQT_EXE}"
-            --configuration "$<CONFIG>"
-        COMMENT "Deploying Qt runtime via macdeployqt"
+        COMMENT "Copying the Qt offscreen platform plugin into the bundle"
     )
 
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Templates")
