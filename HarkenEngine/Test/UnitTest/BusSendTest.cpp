@@ -123,6 +123,56 @@ protected:
     harken::Engine* engine = nullptr;
 };
 
+TEST(BusSend, CompactFormalMixDoesNotGroupDifferentBusGenerations) {
+    for (unsigned stale : {0u, 2u}) {
+        SCOPED_TRACE(stale);
+        EngineSession session(MakeNullConfig(4, kBlockFrames, 48000));
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        const auto samples = RegisterDc(.25f);
+        const auto pcm = engine.registry.Lookup(harkentest::ObjectId(1));
+        harken::SignalRenderNodeInput node{harken::SignalEndpointKindV1::Sound, true};
+        node.stableId = harkentest::ObjectId(1);
+        harken::SignalMemberProof proof{node.stableId, 1, {}, 0};
+        auto signals = harken::SignalRenderPlan::Prepare(
+            {2, kBlockFrames, 48000, VN_CHANNEL_LAYOUT_STEREO}, {&node, 1}, {}, {}, {&proof, 1});
+        ASSERT_NE(nullptr, signals);
+        harken::PlaybackPathRow path;
+        path.rowKind = harken::ResolvedPlayablePathRowKindV1::Definition;
+        path.contentPropertyKind = harken::playableproperties::ContentPropertyKindV1::Sound;
+        path.stableId = node.stableId;
+        path.propertyFingerprint = 1;
+        for (unsigned i = 0; i != 4; ++i) {
+            VnVoiceHandle voice = 0;
+            ASSERT_EQ(VN_OK, engine.voices.Play(pcm, 0, 1, 1, false, 0, 0, 0,
+                harken::ResolvePanGains(engine.config.mixChannelLayout, 0),
+                0, pcm.frames, 0, harken::ResampleProfile::LegacyCompatibility, &voice,
+                i == stale ? 1 : 2));
+            ASSERT_TRUE(engine.voices.BindPreparedSignalPath(voice, {&path, 1}));
+            engine.voices.ApplyPlay(voice, voice, 0, 0);
+        }
+        std::array<std::array<float, kBlockFrames>, 4> storage{};
+        float* planes[]{storage[0].data(), storage[1].data(), storage[2].data(), storage[3].data()};
+        const std::array<harken::BusRenderSlot, 2> mapping{{{1, 1, 0}, {0, 2, 0}}};
+        std::uint64_t fallbacks = 0;
+        const harken::BusRenderView view(planes, mapping, &fallbacks);
+        harken::BlockArena arena(1024 * 1024);
+        ASSERT_TRUE(signals->BeginBlock({1, 1, 1, 0, 0, kBlockFrames}));
+        const auto result = engine.voices.RenderAll(arena, view, kBlockFrames,
+            engine.notifications, 0, 0, 0, signals.get());
+        ASSERT_FALSE(result.signalFailed);
+        ASSERT_FALSE(result.batchDeferred);
+        ASSERT_TRUE(signals->CommitBlock());
+        for (unsigned frame = 0; frame != kBlockFrames; ++frame) {
+            EXPECT_FLOAT_EQ(.75f, storage[0][frame]);
+            EXPECT_FLOAT_EQ(.75f, storage[1][frame]);
+            EXPECT_FLOAT_EQ(.25f, storage[2][frame]);
+            EXPECT_FLOAT_EQ(.25f, storage[3][frame]);
+        }
+        EXPECT_EQ(1u, fallbacks);
+    }
+}
+
 TEST_F(BusSendSlotReconcile, SameSlotAndTargetPreserveActiveRamp) {
     const std::uint32_t initial = BuildPlan(2, harken::kEmptySendTarget);
     ASSERT_NE(harken::kInvalidTopologyPlanIndex, initial);

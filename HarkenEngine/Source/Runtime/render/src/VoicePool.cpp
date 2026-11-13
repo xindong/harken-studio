@@ -5166,6 +5166,7 @@ VoicePool::RenderAllResult VoicePool::RenderAll(
                         !candidate.cascade.signalImageReady || candidate.cascade.produced == 0 ||
                         candidate.voiceSendActiveCount != 0 ||
                         candidate.busIndex != slot.render.busIndex ||
+                        candidate.busGeneration != slot.render.busGeneration ||
                         candidate.cascade.offset != slot.render.cascade.offset ||
                         candidate.cascade.produced != slot.render.cascade.produced) {
                         eligible = false;
