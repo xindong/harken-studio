@@ -366,3 +366,88 @@ TEST(SignalRenderPlan, ActivityProjectionReordersAndRemovesNodesWithoutRestartin
     }
     }
 }
+
+TEST(SignalRenderPlan, WakeSelectsAcceptedOrRejectedSleepAndThenOneSuccessor) {
+    for (bool acceptSleep : {false, true}) for (bool sameBlock : {false, true}) {
+        SCOPED_TRACE(acceptSleep);
+        SCOPED_TRACE(sameBlock);
+        std::array nodes{SignalRenderNodeInput{SignalEndpointKindV1::Sound},
+                         SignalRenderNodeInput{SignalEndpointKindV1::Sound, true},
+                         SignalRenderNodeInput{SignalEndpointKindV1::Sound, true}};
+        for (unsigned i = 0; i != nodes.size(); ++i) nodes[i].stableId = {0, i + 1u};
+        const std::array relations{SignalConnectionInput{0, 1, .025f, {0, 4}}};
+        const std::array paths{SignalFeedbackEdge{0, 1, .025f, true}};
+        auto active = SignalRenderPlan::Prepare(kFormat, nodes, relations, paths);
+        auto reference = SignalRenderPlan::Prepare(kFormat, nodes, relations, paths);
+        ASSERT_NE(nullptr, active); ASSERT_NE(nullptr, reference);
+        ASSERT_TRUE(active->ConfigurePublication(10, 100, nullptr, 256));
+        const std::array compact{nodes[0], nodes[1]};
+        auto sleep = SignalRenderPlan::Prepare(kFormat, compact, relations, paths);
+        ASSERT_NE(nullptr, sleep);
+        ASSERT_TRUE(sleep->ConfigurePublication(11, 100, active.get(), 256));
+        const std::array reordered{nodes[2], nodes[1], nodes[0]};
+        const std::array wakeRelations{SignalConnectionInput{2, 1, .025f, {0, 4}}};
+        const std::array wakePaths{SignalFeedbackEdge{2, 1, .025f, true}};
+        auto wake = SignalRenderPlan::Prepare(kFormat, reordered, wakeRelations, wakePaths);
+        ASSERT_NE(nullptr, wake);
+        ASSERT_TRUE(wake->ConfigurePublication(12, 100, sleep.get(), 256, active.get()));
+        auto successor = SignalRenderPlan::Prepare(kFormat, nodes, relations, paths);
+        ASSERT_NE(nullptr, successor);
+        ASSERT_TRUE(successor->ConfigurePublication(13, 100, wake.get(), 256));
+        auto stranger = SignalRenderPlan::Prepare(kFormat, nodes, relations, paths);
+        ASSERT_TRUE(stranger->ConfigurePublication(99, 100, nullptr, 256));
+        EXPECT_FALSE(wake->AdoptContinuityFrom(*stranger));
+        DuckingDormantState fixed;
+        fixed.channels = 1; fixed.sampleRate = kFormat.sampleRate;
+        fixed.gain = std::nextafter(1.0, 0.0);
+        ASSERT_TRUE(wake->PrepareDormantReceiver(0, fixed));
+        Member source, target, idle, refSource, refTarget, refIdle;
+        refSource.nodes[0] = 0; refTarget.nodes[0] = 1; refIdle.nodes[0] = 2;
+        auto* current = active.get();
+        const unsigned wakeAt = sameBlock ? 4u : 6u;
+        for (unsigned epoch = 0; epoch != 12; ++epoch) {
+            if (epoch == 2) {
+                ASSERT_TRUE(active->SetConnectionLevel(0, .1f, 512));
+                ASSERT_TRUE(reference->SetConnectionLevel(0, .1f, 512));
+            }
+            if (epoch == 4 && acceptSleep) {
+                ASSERT_TRUE(sleep->AdoptContinuityFrom(*current));
+                current = sleep.get();
+            }
+            if (epoch == wakeAt) {
+                ASSERT_TRUE(wake->AdoptContinuityFrom(*current));
+                EXPECT_FALSE(wake->AdoptContinuityFrom(*current));
+                current = wake.get();
+            }
+            if (epoch == wakeAt + 1) {
+                ASSERT_TRUE(successor->AdoptContinuityFrom(*current));
+                current = successor.get();
+            }
+            source.nodes[0] = current == wake.get() ? 2 : 0;
+            target.nodes[0] = 1;
+            idle.nodes[0] = current == wake.get() ? 0 : 2;
+            source.pcm.fill(.4f + epoch * .03f); refSource.pcm = source.pcm;
+            target.pcm.fill(.8f); refTarget.pcm = target.pcm;
+            idle.pcm.fill(0); refIdle.pcm.fill(0);
+            std::vector<SignalMemberImage> members{source.Image(1), target.Image(1)};
+            if (current != sleep.get()) members.push_back(idle.Image(1));
+            const std::array refMembers{refSource.Image(1), refTarget.Image(1), refIdle.Image(1)};
+            auto block = Block(epoch); block.world = current->WorldIdentity();
+            ASSERT_TRUE(current->BeginBlock(block));
+            ASSERT_TRUE(current->ProcessContent(members));
+            ASSERT_TRUE(current->CommitBlock());
+            ASSERT_TRUE(reference->BeginBlock(Block(epoch)));
+            ASSERT_TRUE(reference->ProcessContent(refMembers));
+            ASSERT_TRUE(reference->CommitBlock());
+            EXPECT_EQ(target.pcm, refTarget.pcm) << epoch;
+            if (epoch == wakeAt) {
+                DuckingDormantState saved;
+                ASSERT_TRUE(current->CaptureDormantReceiver(0, false, saved));
+                // Accepted sleep keeps the seeded residual. Rejected sleep
+                // must use the actual live receiver, not overwrite it with cold data.
+                EXPECT_EQ(std::bit_cast<std::uint64_t>(acceptSleep ? fixed.gain : 1.0),
+                          std::bit_cast<std::uint64_t>(saved.gain));
+            }
+        }
+    }
+}

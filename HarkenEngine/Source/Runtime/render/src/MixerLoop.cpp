@@ -987,6 +987,7 @@ std::uint32_t MixerLoop::DrainCommands(std::uint64_t blockIndex,
             (m_originalSources->pending_ != nullptr &&
                 m_originalSources->pending_->range_.Kind() != CommandQueue::OriginalRangeKind::InitialSource) ||
             initialBudget - initialApplied < 3u) break;
+        if (!m_commands.AdoptInitialBusActivity(*entry)) break;
         std::uint64_t owed = 3;
         if (!DrainOriginalSource(blockIndex, owed, initialApplied, 3, entry)) break;
     }
@@ -1034,6 +1035,7 @@ std::uint32_t MixerLoop::DrainRawCommands(std::uint64_t blockIndex,
         if (remaining == 0) {
             break;
         }
+        if (!m_commands.AdoptRawBusActivity()) break;
         if (const auto* range = m_commands.OriginalRangeAtFront()) {
             if (range->Kind() == CommandQueue::OriginalRangeKind::ControlHeader) {
                 if (!DrainOriginalControlHeader(blockIndex, owed, applied)) break;

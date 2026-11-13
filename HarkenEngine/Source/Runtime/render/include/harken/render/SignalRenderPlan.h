@@ -186,59 +186,87 @@ public:
     std::size_t RelationCount() const noexcept { return relations_.size(); }
     // Logic compares immutable prepared definitions only. The content identity
     // excludes signal parameters but includes the authoritative content world.
+    // At most one unresolved sleep is allowed. Its following unconditional
+    // wake may name both the accepted-sleep and rejected-sleep predecessors.
     bool ConfigurePublication(std::uint64_t identity, std::uint64_t contentIdentity,
                               const SignalRenderPlan* predecessor,
-                              std::uint64_t rampFrames) noexcept {
+                              std::uint64_t rampFrames,
+                              const SignalRenderPlan* alternate = nullptr) noexcept {
         if (publicationIdentity_ != 0 || identity == 0 || contentIdentity == 0 || open_ || committed_)
             return false;
         try {
-            std::vector<std::uint32_t> receivers, sources, connections;
-            const bool continuous = predecessor != nullptr && predecessor->publicationIdentity_ != 0 &&
-                contentIdentity == predecessor->contentIdentity_ && SameFormat(*predecessor);
-            if (continuous) {
+            std::array<Continuity, 2> candidates;
+            const auto prepare = [&](const SignalRenderPlan* prior, Continuity& mapping) {
+                if (prior == nullptr || prior->publicationIdentity_ == 0 ||
+                    contentIdentity != prior->contentIdentity_ || !SameFormat(*prior)) return;
+                mapping.identity = prior->publicationIdentity_;
+                mapping.exchangeContinuous = SameStructure(*prior);
                 std::vector<std::uint32_t> nodePredecessors(nodes_.size(), UINT32_MAX);
-                receivers.assign(nodes_.size(), UINT32_MAX);
-                sources.assign(exchange_.m_sources, UINT32_MAX);
-                connections.assign(relations_.size(), UINT32_MAX);
+                mapping.receivers.assign(nodes_.size(), UINT32_MAX);
+                mapping.sources.assign(exchange_.m_sources, UINT32_MAX);
+                mapping.connections.assign(relations_.size(), UINT32_MAX);
                 for (std::size_t i = 0; i < nodes_.size(); ++i) {
                     const auto& next = nodes_[i];
                     if (next.stableId == VnObjectId{}) continue;
-                    for (std::uint32_t j = 0; j < predecessor->nodes_.size(); ++j) {
-                        if (!SameNodeDefinition(i, *predecessor, j)) continue;
-                        const auto& old = predecessor->nodes_[j];
+                    for (std::uint32_t j = 0; j < prior->nodes_.size(); ++j) {
+                        if (!SameNodeDefinition(i, *prior, j)) continue;
+                        const auto& old = prior->nodes_[j];
                         nodePredecessors[i] = j;
-                        if (next.target != UINT32_MAX && old.target != UINT32_MAX) receivers[i] = j;
-                        if (next.source != UINT32_MAX) sources[next.source] = old.source;
+                        if (next.target != UINT32_MAX && old.target != UINT32_MAX) mapping.receivers[i] = j;
+                        if (next.source != UINT32_MAX) mapping.sources[next.source] = old.source;
                         break;
                     }
                 }
                 for (std::size_t i = 0; i < relations_.size(); ++i) {
                     const auto& next = relations_[i];
                     if (next.stableId == VnObjectId{}) continue;
-                    for (std::uint32_t j = 0; j < predecessor->relations_.size(); ++j) {
-                        const auto& old = predecessor->relations_[j];
+                    for (std::uint32_t j = 0; j < prior->relations_.size(); ++j) {
+                        const auto& old = prior->relations_[j];
                         if (next.stableId == old.stableId &&
                             nodePredecessors[next.source] == old.source &&
                             nodePredecessors[next.target] == old.target) {
-                            connections[i] = j;
+                            mapping.connections[i] = j;
                             break;
                         }
                     }
                 }
+            };
+            prepare(predecessor, candidates[0]);
+            if (alternate != nullptr) {
+                prepare(alternate, candidates[1]);
+                if (candidates[0].identity == 0 || candidates[1].identity == 0 ||
+                    candidates[0].identity == candidates[1].identity ||
+                    predecessor->worldIdentity_ != alternate->worldIdentity_) return false;
             }
-            receiverPredecessors_ = std::move(receivers);
-            sourcePredecessors_ = std::move(sources);
-            connectionPredecessors_ = std::move(connections);
-            publicationIdentity_ = worldIdentity_ = identity;
+            continuity_ = std::move(candidates);
+            publicationIdentity_ = identity;
+            worldIdentity_ = continuity_[0].identity != 0 ? predecessor->worldIdentity_ : identity;
             contentIdentity_ = contentIdentity;
             updateRampFrames_ = rampFrames;
-            if (continuous) {
-                predecessorIdentity_ = predecessor->publicationIdentity_;
-                worldIdentity_ = predecessor->worldIdentity_;
-                exchangeContinuous_ = SameStructure(*predecessor);
-            }
         } catch (...) { return false; }
         return true;
+    }
+    std::uint64_t PublicationIdentity() const noexcept { return publicationIdentity_; }
+
+    // A legally sleeping receiver can carry a non-default floating-point
+    // fixed point. Seed only an unpublished candidate; mapped live receivers
+    // overwrite this seed from the actual predecessor during adoption.
+    bool PrepareDormantReceiver(std::uint32_t node, const DuckingDormantState& saved) noexcept {
+        if (open_ || committed_ || adopted_ || node >= nodes_.size() ||
+            nodes_[node].target == UINT32_MAX || saved.channels != format_.channels)
+            return false;
+        return nodes_[node].receiver.RestoreDormantState(saved);
+    }
+    // Audio owner at a completed block, before its borrowed routing scratch is
+    // reused. Main, detector and feedback references must all be proven silent.
+    bool CaptureDormantReceiver(std::uint32_t node, bool boundMain,
+                                DuckingDormantState& saved) const noexcept {
+        if (open_ || !committed_ || node >= nodes_.size() || nodes_[node].target == UINT32_MAX)
+            return false;
+        const auto& feedback = Feedback(node);
+        return nodes_[node].receiver.CaptureDormantState(format_.channels,
+            exchange_.HasTargetInput(nodes_[node].target), feedback.feedbackInput,
+            feedback.slope, boundMain, saved);
     }
     std::uint64_t WorldIdentity() const noexcept { return worldIdentity_; }
     bool SameMembership(const SignalRenderPlan& other) const noexcept {
@@ -254,20 +282,28 @@ public:
     // Run before retiring the old topology slot. Swapping transfers storage to
     // the retired owner, so neither allocation nor destruction occurs on audio.
     bool AdoptContinuityFrom(SignalRenderPlan& previous) noexcept {
-        if (&previous == this || adopted_ || open_ || previous.open_ ||
-            predecessorIdentity_ == 0 || predecessorIdentity_ != previous.publicationIdentity_)
+        if (&previous == this || adopted_ || open_ || committed_ || previous.open_)
             return false;
-        if (exchangeContinuous_) {
+        const Continuity* mapping = nullptr;
+        for (const auto& candidate : continuity_)
+            if (candidate.identity != 0 && candidate.identity == previous.publicationIdentity_)
+                mapping = &candidate;
+        if (mapping == nullptr || mapping->receivers.size() != nodes_.size()) return false;
+        for (auto receiver : mapping->receivers)
+            if (receiver != UINT32_MAX && receiver >= previous.nodes_.size()) return false;
+        // The chosen branch is fully validated before any swap/copy. A failed
+        // identity match cannot partially consume the other predecessor.
+        if (mapping->exchangeContinuous) {
             exchange_.Swap(previous.exchange_);
         } else if (!exchange_.AdoptMappedContinuityFrom(previous.exchange_,
-                       sourcePredecessors_, connectionPredecessors_)) {
+                       mapping->sources, mapping->connections)) {
             return false;
         }
-        for (std::size_t i = 0; i < receiverPredecessors_.size(); ++i)
-            if (receiverPredecessors_[i] != UINT32_MAX)
-                nodes_[i].receiver.AdoptStateFrom(previous.nodes_[receiverPredecessors_[i]].receiver);
+        for (std::size_t i = 0; i < mapping->receivers.size(); ++i)
+            if (mapping->receivers[i] != UINT32_MAX)
+                nodes_[i].receiver.AdoptStateFrom(previous.nodes_[mapping->receivers[i]].receiver);
         for (std::uint32_t i = 0; i < relations_.size(); ++i) {
-            const auto prior = exchangeContinuous_ ? i : connectionPredecessors_[i];
+            const auto prior = mapping->exchangeContinuous ? i : mapping->connections[i];
             if (prior != UINT32_MAX && relations_[i].level != previous.relations_[prior].level) {
                 const bool changed = exchange_.SetLevel(i, relations_[i].level, updateRampFrames_);
                 assert(changed);
@@ -770,10 +806,14 @@ private:
     std::uint32_t accumulationChannels_ = UINT32_MAX;
     bool open_ = false, committed_ = false, contentProcessed_ = false;
     std::uint64_t publicationIdentity_ = 0, contentIdentity_ = 0, worldIdentity_ = 1;
-    std::uint64_t predecessorIdentity_ = 0, updateRampFrames_ = 0;
+    struct Continuity {
+        std::uint64_t identity = 0;
+        bool exchangeContinuous = false;
+        std::vector<std::uint32_t> receivers, sources, connections;
+    };
+    std::array<Continuity, 2> continuity_;
+    std::uint64_t updateRampFrames_ = 0;
     bool adopted_ = false;
-    bool exchangeContinuous_ = false;
-    std::vector<std::uint32_t> receiverPredecessors_, sourcePredecessors_, connectionPredecessors_;
 };
 
 } // namespace harken

@@ -1082,3 +1082,109 @@ TEST(CommandBudget, OriginalQueueDispositionReceiptScopeExitCancelsOnlyItsTrueFr
     EXPECT_FALSE(next.CancelledUnpublishedFrom(queue));
     ASSERT_TRUE(queue.TryPop(record));
 }
+
+TEST(CommandBudget, ActivityAttachmentTracksProofDispositionAndRingReuse) {
+    using Queue = harken::CommandQueue;
+    Queue queue(2);
+    struct Probe {
+        unsigned queued = 0, cancelled = 0, adopted = 0, discarded = 0;
+        bool ready = false;
+    } probe;
+    Queue::BusActivityAttachment attachment{&probe,
+        +[](void* p) noexcept { ++static_cast<Probe*>(p)->queued; },
+        +[](void* p) noexcept { ++static_cast<Probe*>(p)->cancelled; },
+        +[](void* p) noexcept {
+            auto& state = *static_cast<Probe*>(p);
+            if (!state.ready) return false;
+            ++state.adopted;
+            return true;
+        },
+        +[](void* p) noexcept { ++static_cast<Probe*>(p)->discarded; }};
+    harken::CommandRecord record{};
+    record.opcode = harken::kOpcodeSetVoicePan;
+    Queue::BatchReservation reservation{};
+    Queue::PreparedBatchProof proof;
+    Queue::PublicationFrontiers frontier;
+    ASSERT_TRUE(queue.ReserveBatch(1, &reservation));
+    ASSERT_TRUE(queue.ProvePreparedBatch(&reservation, &record, 1, &proof));
+    ASSERT_TRUE(queue.BindPreparedBusActivity(proof, attachment));
+    EXPECT_FALSE(queue.BindPreparedBusActivity(proof, attachment));
+    unsigned sourceCancellations = 0;
+    ASSERT_TRUE(queue.SetPreparedBatchCancellationHandler(proof, &sourceCancellations,
+        +[](void* p) noexcept { ++*static_cast<unsigned*>(p); }));
+    proof.Release();
+    EXPECT_EQ(1u, sourceCancellations);
+    EXPECT_EQ(1u, probe.cancelled);
+    EXPECT_EQ(0u, probe.queued);
+    for (unsigned cycle = 0; cycle != 4; ++cycle) {
+        ASSERT_TRUE(queue.ReserveBatch(1, &reservation));
+        ASSERT_TRUE(queue.ProvePreparedBatch(&reservation, &record, 1, &proof));
+        ASSERT_TRUE(queue.PreparedPublicationFrontiers(proof, frontier));
+        EXPECT_EQ(queue.PublishedHead() + 1u, frontier.raw);
+        EXPECT_EQ(0u, frontier.initial);
+        ASSERT_TRUE(queue.BindPreparedBusActivity(proof, attachment));
+        ASSERT_EQ(1u, queue.ConsumePreparedBatch(std::move(proof)).Count());
+        EXPECT_EQ(cycle + 1u, probe.queued);
+        probe.ready = false;
+        harken::CommandRecord popped{};
+        const auto before = queue.ConsumedCount();
+        EXPECT_FALSE(queue.TryPop(popped));
+        EXPECT_EQ(before, queue.ConsumedCount());
+        probe.ready = true;
+        ASSERT_TRUE(queue.AdoptRawBusActivity());
+        ASSERT_TRUE(queue.AdoptRawBusActivity());
+        ASSERT_TRUE(queue.TryPop(popped));
+        EXPECT_EQ(cycle + 1u, probe.adopted);
+        // Exercise non-proof writers on the very same physical ring slots.
+        ASSERT_TRUE(queue.TryPush(record));
+        ASSERT_TRUE(queue.TryPop(popped));
+        ASSERT_TRUE(queue.TryPushBatch(&record, 1));
+        ASSERT_TRUE(queue.TryPop(popped));
+        ASSERT_TRUE(queue.ReserveBatch(1, &reservation));
+        queue.CommitPreparedBatch(&reservation, &record);
+        ASSERT_TRUE(queue.TryPop(popped));
+        EXPECT_EQ(cycle + 1u, probe.adopted);
+    }
+    ASSERT_TRUE(queue.ReserveBatch(1, &reservation));
+    ASSERT_TRUE(queue.ProvePreparedBatch(&reservation, &record, 1, &proof));
+    ASSERT_TRUE(queue.BindPreparedBusActivity(proof, attachment));
+    ASSERT_EQ(1u, queue.ConsumePreparedBatch(std::move(proof)).Count());
+    queue.DiscardPublishedAfterQuiescence();
+    EXPECT_EQ(1u, probe.discarded);
+    EXPECT_EQ(4u, probe.adopted);
+    EXPECT_EQ(queue.PublishedHead(), queue.ConsumedCount());
+}
+
+TEST(CommandBudget, InvalidBatchCrossingPublicationStillAdoptsItsActivity) {
+    unsigned adopted = 0;
+    harken::CommandQueue::BusActivityAttachment attachment{&adopted,
+        +[](void*) noexcept {}, +[](void*) noexcept {},
+        +[](void* p) noexcept { ++*static_cast<unsigned*>(p); return true; },
+        +[](void*) noexcept {}};
+    EngineSession session(BudgetConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    harken::CommandRecord malformed{};
+    malformed.opcode = harken::kOpcodePlay;
+    malformed.payload.play.batch.batchVersion = harken::kPlayLedBatchVersion;
+    malformed.payload.play.batch.batchKind = harken::PlayLedBatchKind::DeferredStart;
+    malformed.payload.play.batch.batchCommandCount = 2;
+    ASSERT_TRUE(engine.commands.TryPush(malformed));
+    harken::CommandRecord setter{};
+    setter.opcode = harken::kOpcodeSetBusVolume;
+    setter.payload.setBusVolume.busIndex = 0;
+    setter.payload.setBusVolume.volumeDb = -12;
+    harken::CommandQueue::BatchReservation reservation;
+    harken::CommandQueue::PreparedBatchProof proof;
+    ASSERT_TRUE(engine.commands.ReserveBatch(1, &reservation));
+    ASSERT_TRUE(engine.commands.ProvePreparedBatch(&reservation, &setter, 1, &proof));
+    ASSERT_TRUE(engine.commands.BindPreparedBusActivity(proof, attachment));
+    ASSERT_EQ(1u, engine.commands.ConsumePreparedBatch(std::move(proof)).Count());
+    engine.mixer.SuppressCommandProtocolAssertForTest(true);
+    engine.mixer.DrainCommandsForTest();
+    engine.mixer.SuppressCommandProtocolAssertForTest(false);
+    EXPECT_EQ(2u, engine.commands.ConsumedCount());
+    EXPECT_EQ(1u, adopted);
+    EXPECT_EQ(1u, engine.mixer.CommandProtocolViolationCount());
+    EXPECT_FLOAT_EQ(1, engine.buses.BusState(0)->gain.target);
+}
