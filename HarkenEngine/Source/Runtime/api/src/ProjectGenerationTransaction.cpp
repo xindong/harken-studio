@@ -1104,16 +1104,16 @@ bool BuildPreviewSlotPlan(Engine& engine, const ProspectiveTopologyView* incomin
         if (!engine.buses.AliveAt(from)) continue;
         for (std::uint32_t slot = 0; slot < sendSlots; ++slot) {
             const auto flat = static_cast<std::size_t>(from) * sendSlots + slot;
-            const auto target = engine.busSendAdj[flat];
-            if (target == kEmptySendTarget || engine.busSendTopologyOwnerIds[flat] == ownerId) continue;
+            const auto target = engine.busSends[flat].target;
+            if (target == kEmptySendTarget || engine.busSends[flat].topologyOwnerId == ownerId) continue;
             if (target >= oldCount || !engine.buses.AliveAt(target)) return false;
             const auto fromId = engine.buses.IdAt(from);
             const auto toId = engine.buses.IdAt(target);
             if (!graph.contains(fromId) || !graph.contains(toId)) return false;
             float linear = 0.0f;
-            if (!TryVolumeGainFromDb(engine.busSendLevelDb[flat], &linear)) return false;
-            graph.at(fromId).edges.push_back({toId, slot, engine.busSendLevelDb[flat], linear, 0, 0,
-                engine.busSendTopologyOwnerIds[flat], engine.busSendOwnerCookies[flat]});
+            if (!TryVolumeGainFromDb(engine.busSends[flat].levelDb, &linear)) return false;
+            graph.at(fromId).edges.push_back({toId, slot, engine.busSends[flat].levelDb, linear, 0, 0,
+                engine.busSends[flat].topologyOwnerId, engine.busSends[flat].ownerCookie});
         }
     }
     if (incoming->sendTargets != nullptr) {
@@ -1135,12 +1135,12 @@ bool BuildPreviewSlotPlan(Engine& engine, const ProspectiveTopologyView* incomin
                 if (oldFrom != kInvalidBusIndex) {
                     for (std::uint32_t s = 0; s < sendSlots; ++s) {
                         const auto flat = static_cast<std::size_t>(oldFrom) * sendSlots + s;
-                        const auto oldTarget = engine.busSendAdj[flat];
-                        if (engine.busSendTopologyOwnerIds[flat] == ownerId && oldTarget < oldCount &&
+                        const auto oldTarget = engine.busSends[flat].target;
+                        if (engine.busSends[flat].topologyOwnerId == ownerId && oldTarget < oldCount &&
                             engine.buses.IdAt(oldTarget) == targetId &&
                             std::none_of(edges.begin(), edges.end(), [&](const Edge& e) { return e.slot == s; })) {
                             chosen = s;
-                            db = engine.busSendLevelDb[flat];
+                            db = engine.busSends[flat].levelDb;
                             retained = true;
                             break;
                         }
@@ -1162,8 +1162,8 @@ bool BuildPreviewSlotPlan(Engine& engine, const ProspectiveTopologyView* incomin
                     if (!std::isfinite(db) || (incoming->sendLevelsDb != nullptr &&
                         (db < -96.0f || db > 24.0f))) return false;
                 } else if (!TryVolumeGainFromDb(db, &linear)) return false;
-                const bool changed = !retained || (apply && db != engine.busSendLevelDb[
-                    static_cast<std::size_t>(oldFrom) * sendSlots + chosen]);
+                const bool changed = !retained || (apply && db != engine.busSends[
+                    static_cast<std::size_t>(oldFrom) * sendSlots + chosen].levelDb);
                 edges.push_back({targetId, chosen, db, linear,
                     static_cast<std::uint8_t>(changed),
                     static_cast<std::uint32_t>(retained && changed ? 20 : 0), ownerId, 0});
@@ -1191,9 +1191,14 @@ bool BuildPreviewSlotPlan(Engine& engine, const ProspectiveTopologyView* incomin
     out.busCount = std::max(out.busCount, oldCount);
     out.busOwnerIds = engine.busTopologyOwnerIds;
     out.busCookies = engine.busOwnerCookies;
-    out.sendOwnerIds = engine.busSendTopologyOwnerIds;
-    out.sendCookies = engine.busSendOwnerCookies;
-    out.sendLevelDb = engine.busSendLevelDb;
+    out.sendOwnerIds.resize(engine.busSends.size());
+    out.sendCookies.resize(engine.busSends.size());
+    out.sendLevelDb.resize(engine.busSends.size());
+    for (std::size_t i = 0; i < engine.busSends.size(); ++i) {
+        out.sendOwnerIds[i] = engine.busSends[i].topologyOwnerId;
+        out.sendCookies[i] = engine.busSends[i].ownerCookie;
+        out.sendLevelDb[i] = engine.busSends[i].levelDb;
+    }
     out.sendLevelRampMs.assign(static_cast<std::size_t>(capacity) * sendSlots, 0);
     out.neutralSlots.assign(capacity, 0);
     out.neutralSlots[0] = static_cast<std::uint8_t>(PreviewOwnsSoleMasterV1(engine, ownerId));
@@ -1521,14 +1526,14 @@ void InstallSlotPlanLogic(Engine& engine, const SlotPlanV1& plan) noexcept {
         const std::uint32_t target =
             flat < plan.sendTargets.size() ? plan.sendTargets[flat]
                                            : kEmptySendTarget;
-        engine.busSendAdj[flat] = target;
-        engine.busSendTopologyOwnerIds[flat] = plan.preservesForeign
+        engine.busSends[flat].target = target;
+        engine.busSends[flat].topologyOwnerId = plan.preservesForeign
             ? plan.sendOwnerIds[flat]
             : (target != kEmptySendTarget && target != kInvalidBusIndex ? plan.ownerId : 0);
-        engine.busSendOwnerCookies[flat] = plan.preservesForeign ? plan.sendCookies[flat] : 0;
+        engine.busSends[flat].ownerCookie = plan.preservesForeign ? plan.sendCookies[flat] : 0;
         if (!plan.preservesForeign || plan.sendLevelApply[flat] != 0 ||
             target == kEmptySendTarget) {
-            engine.busSendLevelDb[flat] = plan.preservesForeign ? plan.sendLevelDb[flat] : 0.0f;
+            engine.busSends[flat].levelDb = plan.preservesForeign ? plan.sendLevelDb[flat] : 0.0f;
         }
         if (target != kEmptySendTarget && target != kInvalidBusIndex) {
             ++engine.busSendActive;

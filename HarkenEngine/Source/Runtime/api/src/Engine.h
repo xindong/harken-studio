@@ -7666,27 +7666,11 @@ public:
         spatial.AttachRetainedProfileStorage(this, [](void* context, std::size_t live, std::size_t retained) noexcept {
             return static_cast<Engine*>(context)->PrepareRetainedProfileKeyStorage(live, retained);
         });
-        // Logic-side source of truth for bus->bus send-edge membership, one row
-        // of busSendSlotsPerBus target dense indices per bus (kInvalidBusIndex =
-        // empty). The topology planner reads it (with the tree parents) to
-        // cycle-check and sort; a publish copies it into the plan.
-        busSendAdj.assign(static_cast<std::size_t>(resolved.maxBuses) *
-                              resolved.busSendSlotsPerBus,
-                          kInvalidBusIndex);
+        // Logic owns all Send settings and provenance in one record.
+        busSends.resize(static_cast<std::size_t>(resolved.maxBuses) *
+                        resolved.busSendSlotsPerBus);
         busOwnerCookies.assign(resolved.maxBuses, 0);
         busTopologyOwnerIds.assign(resolved.maxBuses, 0);
-        busSendOwnerCookies.assign(
-            static_cast<std::size_t>(resolved.maxBuses) *
-                resolved.busSendSlotsPerBus,
-            0);
-        busSendTopologyOwnerIds.assign(
-            static_cast<std::size_t>(resolved.maxBuses) *
-                resolved.busSendSlotsPerBus,
-            0);
-        busSendLevelDb.assign(
-            static_cast<std::size_t>(resolved.maxBuses) *
-                resolved.busSendSlotsPerBus,
-            0.0f);
         busTopologyOwners.assign(resolved.maxBusTopologyOwners,
                                  BusTopologyOwnerRecord{});
         previewMasterHolders.assign(resolved.maxBusTopologyOwners, PreviewMasterHolderV1{});
@@ -15663,14 +15647,16 @@ public:
         return true;
     }
 
-    // Bus->bus send-edge membership, the logic source of truth the topology
-    // planner sorts. Row-major by from-bus: busSendAdj[from*busSendSlotsPerBus
-    // + s] is a target dense index or kInvalidBusIndex. Sized once at init.
-    // Logic thread only.
-    std::vector<std::uint32_t> busSendAdj;
-    // Provenance imprints for the live Bus slot and each exact Bus Send slot.
-    // A zero cookie denotes a caller-created object. Sized once at init and
-    // indexed in lockstep with BusTree dense indices / busSendAdj.
+    // Logic-owned Send records. Topology publication copies membership;
+    // audio state never reads or mutates this storage.
+    struct BusSendRecord {
+        std::uint32_t target = kInvalidBusIndex;
+        float levelDb = 0.0f;
+        VnPackHandle ownerCookie = 0;
+        std::uint64_t topologyOwnerId = 0;
+        bool operator==(const BusSendRecord&) const = default;
+    };
+    std::vector<BusSendRecord> busSends;
     std::vector<VnPackHandle> busOwnerCookies;
     struct TopologyRetirementV1 {
         std::uint32_t generation = 0;
@@ -15679,10 +15665,7 @@ public:
         VnPackHandle cookie = 0;
     };
     std::vector<TopologyRetirementV1> busRetirements;
-    std::vector<VnPackHandle> busSendOwnerCookies;
     std::vector<std::uint64_t> busTopologyOwnerIds;
-    std::vector<std::uint64_t> busSendTopologyOwnerIds;
-    std::vector<float> busSendLevelDb;
     std::vector<BusTopologyOwnerRecord> busTopologyOwners;
     std::vector<PreviewMasterHolderV1> previewMasterHolders;
 

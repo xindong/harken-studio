@@ -442,7 +442,7 @@ std::uint32_t FindBusSendSlot(const harken::Engine& engine,
     const std::uint32_t slots = engine.config.busSendSlotsPerBus;
     const std::uint32_t base = from * slots;
     for (std::uint32_t slot = 0; slot < slots; ++slot) {
-        if (engine.busSendAdj[base + slot] == to) {
+        if (engine.busSends[base + slot].target == to) {
             return slot;
         }
     }
@@ -928,7 +928,7 @@ void ExpectMixedResidentStateUnchanged(
     const std::uint32_t sendFlat =
         before.sourceIndex * engine.config.busSendSlotsPerBus +
         before.sendSlot;
-    EXPECT_EQ(pack, engine.busSendOwnerCookies[sendFlat]);
+    EXPECT_EQ(pack, engine.busSends[sendFlat].ownerCookie);
     const harken::EffectInstanceRef effect =
         engine.busEffectInstanceRefs[before.targetIndex][0];
     EXPECT_EQ(before.effect.type, effect.type);
@@ -1147,8 +1147,8 @@ TEST(PackLogicLoad, BusAndSendOwnershipCookiesTrackLiveSlots) {
         FindBusSendSlot(*engine, harkentest::ObjectId(12001), harkentest::ObjectId(12002));
     ASSERT_LT(sendSlot, engine->config.busSendSlotsPerBus);
     EXPECT_EQ(pack,
-              engine->busSendOwnerCookies[
-                  first * engine->config.busSendSlotsPerBus + sendSlot]);
+              engine->busSends[
+                  first * engine->config.busSendSlotsPerBus + sendSlot].ownerCookie);
 
     const harken::PackLogicRecord* record =
         engine->logicPacks.RecordFor(pack);
@@ -4274,8 +4274,8 @@ TEST(PackLogicUnload,
     ASSERT_EQ(0u, engine->busOwnerCookies[source]);
     ASSERT_EQ(0u, engine->busOwnerCookies[target]);
     ASSERT_EQ(pack,
-              engine->busSendOwnerCookies[
-                  source * engine->config.busSendSlotsPerBus + sendSlot]);
+              engine->busSends[
+                  source * engine->config.busSendSlotsPerBus + sendSlot].ownerCookie);
     ASSERT_EQ(pack, engine->busEffectOwnerCookies[target][0]);
     ASSERT_NE(nullptr, engine->dynamicRoutes.Find(kTarget, 0, 0));
 
@@ -4887,8 +4887,8 @@ TEST(PackLogicUnload,
             FindBusSendSlot(*engine, harkentest::ObjectId(13091), harkentest::ObjectId(13092));
         ASSERT_LT(slot, engine->config.busSendSlotsPerBus);
         ASSERT_EQ(pack,
-                  engine->busSendOwnerCookies[
-                      from * engine->config.busSendSlotsPerBus + slot]);
+                  engine->busSends[
+                      from * engine->config.busSendSlotsPerBus + slot].ownerCookie);
 
         EXPECT_EQ(VN_OK, Vn_UnloadPack(pack));
         EXPECT_EQ(harken::kInvalidBusIndex,
@@ -5884,8 +5884,8 @@ TEST(PackLogicReplace, BusSendRelevelRetainsOwnerCookie) {
         FindBusSendSlot(*engine, harkentest::ObjectId(12101), harkentest::ObjectId(12102));
     ASSERT_LT(oldSlot, engine->config.busSendSlotsPerBus);
     ASSERT_EQ(pack,
-              engine->busSendOwnerCookies[
-                  from * engine->config.busSendSlotsPerBus + oldSlot]);
+              engine->busSends[
+                  from * engine->config.busSendSlotsPerBus + oldSlot].ownerCookie);
 
     ASSERT_EQ(VN_OK, ReplacePack(pack, v2Path));
     ASSERT_EQ(VN_OK, Vn_Update());
@@ -5893,8 +5893,8 @@ TEST(PackLogicReplace, BusSendRelevelRetainsOwnerCookie) {
         FindBusSendSlot(*engine, harkentest::ObjectId(12101), harkentest::ObjectId(12102));
     EXPECT_EQ(oldSlot, liveSlot);
     EXPECT_EQ(pack,
-              engine->busSendOwnerCookies[
-                  from * engine->config.busSendSlotsPerBus + liveSlot]);
+              engine->busSends[
+                  from * engine->config.busSendSlotsPerBus + liveSlot].ownerCookie);
     const harken::PackLogicRecord* record =
         engine->logicPacks.RecordFor(pack);
     ASSERT_NE(nullptr, record);
@@ -5950,15 +5950,15 @@ TEST(PackLogicReplace, BusSendRemoveAndAddUpdateOwnerCookies) {
     ASSERT_NE(harken::kInvalidBusIndex, addedBus);
     EXPECT_EQ(pack, engine->busOwnerCookies[addedBus]);
     EXPECT_EQ(pack,
-              engine->busSendOwnerCookies[
-                  from * engine->config.busSendSlotsPerBus + newSlot]);
+              engine->busSends[
+                  from * engine->config.busSendSlotsPerBus + newSlot].ownerCookie);
     for (std::uint32_t slot = 0;
          slot < engine->config.busSendSlotsPerBus; ++slot) {
         if (slot != newSlot) {
             EXPECT_EQ(
                 0u,
-                engine->busSendOwnerCookies[
-                    from * engine->config.busSendSlotsPerBus + slot]);
+                engine->busSends[
+                    from * engine->config.busSendSlotsPerBus + slot].ownerCookie);
         }
     }
 }
@@ -6009,22 +6009,22 @@ TEST(PackLogicLoad, DirectMutationCannotTakeOverPackOwnedSend) {
         FindBusSendSlot(*engine, harkentest::ObjectId(12401), harkentest::ObjectId(12402));
     ASSERT_LT(oldSlot, engine->config.busSendSlotsPerBus);
     ASSERT_EQ(pack,
-              engine->busSendOwnerCookies[
-                  from * engine->config.busSendSlotsPerBus + oldSlot]);
+              engine->busSends[
+                  from * engine->config.busSendSlotsPerBus + oldSlot].ownerCookie);
 
     ASSERT_EQ(VN_IN_USE,
               Vn_SetBusSendLevel(harkentest::ObjectId(12401), harkentest::ObjectId(12402), -7.0f, 0));
     EXPECT_EQ(pack,
-              engine->busSendOwnerCookies[
-                  from * engine->config.busSendSlotsPerBus + oldSlot]);
+              engine->busSends[
+                  from * engine->config.busSendSlotsPerBus + oldSlot].ownerCookie);
     ASSERT_EQ(VN_IN_USE, Vn_DisconnectBusSend(harkentest::ObjectId(12401), harkentest::ObjectId(12402)));
     ASSERT_EQ(VN_IN_USE, Vn_ConnectBusSend(harkentest::ObjectId(12401), harkentest::ObjectId(12402), -9.0f));
     const std::uint32_t newSlot =
         FindBusSendSlot(*engine, harkentest::ObjectId(12401), harkentest::ObjectId(12402));
     ASSERT_LT(newSlot, engine->config.busSendSlotsPerBus);
     EXPECT_EQ(pack,
-              engine->busSendOwnerCookies[
-                  from * engine->config.busSendSlotsPerBus + newSlot]);
+              engine->busSends[
+                  from * engine->config.busSendSlotsPerBus + newSlot].ownerCookie);
 }
 
 TEST(PackLogicReplace, DirectParentDriftIsBlockedByOwnership) {
@@ -6139,8 +6139,8 @@ TEST(PackLogicReplace, DirectSendOwnershipDriftIsBlocked) {
     ASSERT_LT(recycledSlot, engine->config.busSendSlotsPerBus);
     ASSERT_EQ(packSlot, recycledSlot);
     EXPECT_EQ(pack,
-              engine->busSendOwnerCookies[
-                  from * engine->config.busSendSlotsPerBus + recycledSlot]);
+              engine->busSends[
+                  from * engine->config.busSendSlotsPerBus + recycledSlot].ownerCookie);
 
     EXPECT_EQ(VN_OK, ReplacePack(pack, packPath));
     ASSERT_EQ(VN_OK, Vn_Update());
@@ -6189,14 +6189,14 @@ TEST(CanonicalPackSetActivate, ReplacementAndUnloadPreserveForeignPackSendSlot) 
     ASSERT_GT(physicalSlot, 0u);
     const auto flat = static_cast<std::size_t>(sourceIndex) * slotsPerBus +
         physicalSlot;
-    const auto ownerId = engine->busSendTopologyOwnerIds[flat];
+    const auto ownerId = engine->busSends[flat].topologyOwnerId;
     const auto checkForeignSend = [&] {
         EXPECT_EQ(sourceIndex, engine->buses.FindIndex(source));
         EXPECT_EQ(physicalSlot, FindBusSendSlot(*engine, source, target));
-        EXPECT_EQ(engine->buses.FindIndex(target), engine->busSendAdj[flat]);
-        EXPECT_FLOAT_EQ(expectedLevelDb, engine->busSendLevelDb[flat]);
-        EXPECT_EQ(ownerId, engine->busSendTopologyOwnerIds[flat]);
-        EXPECT_EQ(foreignPack, engine->busSendOwnerCookies[flat]);
+        EXPECT_EQ(engine->buses.FindIndex(target), engine->busSends[flat].target);
+        EXPECT_FLOAT_EQ(expectedLevelDb, engine->busSends[flat].levelDb);
+        EXPECT_EQ(ownerId, engine->busSends[flat].topologyOwnerId);
+        EXPECT_EQ(foreignPack, engine->busSends[flat].ownerCookie);
     };
     checkForeignSend();
 

@@ -1947,7 +1947,7 @@ TEST(BusAdmissionStart, PairedCommitInstallsLogicMasterAndChildBuses) {
     bool sawChildToMaster = false;
     for (std::uint32_t s = 0; s < sendSlots; ++s) {
         const std::uint32_t target =
-            engine->busSendAdj[static_cast<std::size_t>(child) * sendSlots + s];
+            engine->busSends[static_cast<std::size_t>(child) * sendSlots + s].target;
         if (target == 0) {
             sawChildToMaster = true;
         }
