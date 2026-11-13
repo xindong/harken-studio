@@ -615,6 +615,10 @@ VnResult VoicePool::PlayStream(StreamRing* ring, std::uint32_t channelCount,
                 saved->resampler, rings, channelCount, m_tables,
                 m_multirateTables, resampleProfile == ResampleProfile::Professional44148
                     ? &m_professionalStorage[slotIndex] : nullptr)) {
+            if (decoder != nullptr) {
+                decoder->Retire();
+                slot.render.mediaDecoder = nullptr;
+            }
             slot.state.store(SlotState::Free, std::memory_order_release);
             ++m_noVoiceRefusals;
             return VN_NO_VOICE;
