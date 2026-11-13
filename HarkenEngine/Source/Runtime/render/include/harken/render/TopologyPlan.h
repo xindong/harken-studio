@@ -85,6 +85,7 @@ struct TopologyPlanView {
     // Compact, source-grouped membership. Legacy input views may omit ranges.
     const TopologySendRange* sendRanges = nullptr;
     const std::uint32_t* sendSlots = nullptr;
+    const std::uint64_t* sendGenerations = nullptr;
     const std::uint32_t* sendTargets = nullptr;
     const float* preparedSendLevels = nullptr;
     const std::uint8_t* sendLevelApply = nullptr;
@@ -192,6 +193,7 @@ public:
     bool PrepareSendRows(std::uint32_t planIndex, std::span<const std::uint32_t> counts);
     TopologyBuildScratch& BuildScratch() noexcept { return m_buildScratch; }
     std::uint32_t* SendSlotsRow(std::uint32_t planIndex, std::uint32_t fromBus);
+    std::uint64_t* SendGenerationsRow(std::uint32_t planIndex, std::uint32_t fromBus);
     std::uint32_t* SendTargetsRow(std::uint32_t planIndex,
                                   std::uint32_t fromBus);
     float* PreparedSendLevelsRow(std::uint32_t planIndex,
@@ -267,6 +269,7 @@ private:
     struct SendStorage {
         std::vector<TopologySendRange> ranges;
         std::vector<std::uint32_t> slots;
+        std::vector<std::uint64_t> generations;
         std::vector<std::uint32_t> targets;
         std::vector<float> levels;
         std::vector<std::uint8_t> apply;

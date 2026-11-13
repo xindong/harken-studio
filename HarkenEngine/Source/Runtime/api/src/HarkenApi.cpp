@@ -79279,6 +79279,22 @@ void RunAudibilityPass(harken::Engine& engine) {
 // scratch is logic-side heap).
 using ProspectiveTopologyView = harken::ProspectiveTopologyView;
 
+template<class Visitor>
+void ForEachTopologySend(const harken::Engine& engine,
+    const ProspectiveTopologyView* prospective, std::uint32_t source, Visitor&& visit,
+    const harken::BusSendTable* sendsOverride = nullptr) {
+    if (sendsOverride != nullptr) {
+        for (const auto& edge : sendsOverride->From(source))
+            visit(edge, sendsOverride->IndexOf(edge));
+    } else if (prospective != nullptr) {
+        prospective->ForEachSend(source, engine.config.busSendSlotsPerBus,
+            std::forward<Visitor>(visit));
+    } else {
+        for (const auto& edge : engine.busSends.From(source))
+            visit(edge, engine.busSends.IndexOf(edge));
+    }
+}
+
 bool TopoSortBuses(harken::Engine& engine, std::uint32_t extraFrom,
                    std::uint32_t extraTo, std::uint32_t* order,
                    std::uint32_t treeChild = harken::kInvalidBusIndex,
@@ -79301,7 +79317,8 @@ bool TopoSortBuses(harken::Engine& engine, std::uint32_t extraFrom,
                    const std::uint8_t* removedSendSlots = nullptr,
                    std::uint32_t removedSendSlotCount = 0,
                    const ProspectiveTopologyView* prospective = nullptr,
-                   harken::TopologyBuildScratch* buildScratch = nullptr) {
+                   harken::TopologyBuildScratch* buildScratch = nullptr,
+                   const harken::BusSendTable* sendsOverride = nullptr) {
     const std::uint32_t n =
         prospective != nullptr ? prospective->busCount
                                : engine.buses.BusCount();
@@ -79375,22 +79392,12 @@ bool TopoSortBuses(harken::Engine& engine, std::uint32_t extraFrom,
         }
     }
     auto forEachSendTarget = [&](std::uint32_t from, auto&& fn) {
-        const std::uint32_t base = from * slots;
-        for (std::uint32_t s = 0; s < slots; ++s) {
-            const std::uint32_t flat = base + s;
-            if (removedSendSlots != nullptr &&
-                flat < removedSendSlotCount &&
-                removedSendSlots[flat] != 0) {
-                continue;
-            }
-            const std::uint32_t to =
-                prospective != nullptr
-                    ? prospective->sendTargets[base + s]
-                    : engine.busSends[base + s].target;
-            if (to != harken::kInvalidBusIndex && !excluded(to)) {
-                fn(to);
-            }
-        }
+        ForEachTopologySend(engine, prospective, from, [&](const harken::BusSendRecord& edge,
+                                                         std::uint32_t index) {
+            if (removedSendSlots != nullptr && index < removedSendSlotCount &&
+                removedSendSlots[index] != 0) return;
+            if (!excluded(edge.target)) fn(edge.target);
+        }, sendsOverride);
         if (from == extraFrom && extraTo != harken::kInvalidBusIndex &&
             !excluded(extraTo)) {
             fn(extraTo);
@@ -79547,7 +79554,8 @@ void FillPlan(harken::Engine& engine, std::uint32_t planIndex,
               const std::uint8_t* removedSendSlots = nullptr,
               std::uint32_t removedSendSlotCount = 0,
               const ProspectiveTopologyView* prospective = nullptr,
-              harken::TopologyPlanPool* destinationPool = nullptr) {
+              harken::TopologyPlanPool* destinationPool = nullptr,
+              const harken::BusSendTable* sendsOverride = nullptr) {
     harken::TopologyPlanPool& plans =
         destinationPool != nullptr ? *destinationPool : engine.topologyPlans;
     const std::uint32_t n =
@@ -79569,42 +79577,39 @@ void FillPlan(harken::Engine& engine, std::uint32_t planIndex,
                         routeUpserts, routeUpsertCount, routeRemovals,
                         routeRemovalCount, excludedBuses, excludedBusCount,
                         removedSendSlots, removedSendSlotCount, prospective,
-                        &plans.BuildScratch());
+                        &plans.BuildScratch(), sendsOverride);
     plans.SetOrderCount(planIndex, liveCount);
-    const auto sendTarget = [&](std::uint32_t from, std::uint32_t slot) {
-        const auto flat = from * slots + slot;
-        const auto target = prospective != nullptr ? prospective->sendTargets[flat]
-                                                   : engine.busSends[flat].target;
-        const bool removed = (removedSendSlots != nullptr &&
-            flat < removedSendSlotCount && removedSendSlots[flat] != 0) ||
-            excluded(from) || (target != harken::kInvalidBusIndex && excluded(target));
-        return removed ? harken::kInvalidBusIndex : target;
+    const auto included = [&](std::uint32_t from, const harken::BusSendRecord& edge,
+                              std::uint32_t index) {
+        return !(removedSendSlots != nullptr && index < removedSendSlotCount &&
+                 removedSendSlots[index] != 0) && !excluded(from) && !excluded(edge.target);
     };
     auto& sendCounts = plans.BuildScratch().sendCounts;
     std::fill(sendCounts.begin(), sendCounts.end(), 0u);
     for (std::uint32_t from = 0; from < n; ++from)
-        for (std::uint32_t slot = 0; slot < slots; ++slot)
-            if (sendTarget(from, slot) != harken::kInvalidBusIndex) ++sendCounts[from];
+        ForEachTopologySend(engine, prospective, from, [&](const auto& edge, auto index) {
+            if (included(from, edge, index)) ++sendCounts[from];
+        }, sendsOverride);
     if (!plans.PrepareSendRows(planIndex, std::span(sendCounts.data(), n)))
         throw std::bad_alloc{};
     for (std::uint32_t from = 0; from < n; ++from) {
         auto* row = plans.SendTargetsRow(planIndex, from);
         auto* identities = plans.SendSlotsRow(planIndex, from);
+        auto* generations = plans.SendGenerationsRow(planIndex, from);
         auto* prepared = plans.PreparedSendLevelsRow(planIndex, from);
         auto* apply = plans.SendLevelApplyRow(planIndex, from);
+        auto* ramps = plans.SendLevelRampMsRow(planIndex, from);
         std::uint32_t used = 0;
-        for (std::uint32_t slot = 0; slot < slots; ++slot) {
-            const auto target = sendTarget(from, slot);
-            if (target == harken::kInvalidBusIndex) continue;
-            const auto flat = from * slots + slot;
-            row[used] = target;
-            identities[used] = slot;
-            prepared[used] = prospective != nullptr && prospective->sendLevels != nullptr
-                ? prospective->sendLevels[flat] : 0.0f;
-            apply[used] = prospective != nullptr && prospective->sendLevelApply != nullptr
-                ? prospective->sendLevelApply[flat] : 0;
+        ForEachTopologySend(engine, prospective, from, [&](const auto& edge, auto index) {
+            if (!included(from, edge, index)) return;
+            row[used] = edge.target;
+            identities[used] = edge.slot;
+            generations[used] = edge.generation;
+            prepared[used] = edge.preparedGain;
+            apply[used] = (prospective != nullptr || sendsOverride != nullptr) && edge.applyLevel ? 1 : 0;
+            ramps[used] = (prospective != nullptr || sendsOverride != nullptr) ? edge.rampMs : 0;
             ++used;
-        }
+        }, sendsOverride);
     }
     const auto prepareSendLevels =
         [&](const std::vector<harken::PackBusSendEntry>* sends) {
@@ -79696,6 +79701,21 @@ void FillPlan(harken::Engine& engine, std::uint32_t planIndex,
     }
     plans.SetSlotCount(planIndex, n);
     plans.SetSignals(planIndex, engine.acceptedSignalPlan);
+    if (&plans == &engine.topologyPlans &&
+        !engine.mixer.PrepareVoiceBacking(engine.voices.ConstructedSlotCount())) throw std::bad_alloc{};
+}
+
+bool PrepareBusSendTopology(harken::Engine& engine, std::uint32_t index,
+                            const harken::BusSendTable& sends) {
+    try {
+        FillPlan(engine, index, nullptr, false, harken::kInvalidBusIndex, UINT32_MAX,
+            nullptr, 0, nullptr, 0, nullptr, nullptr, nullptr, 0, nullptr, 0,
+            nullptr, nullptr, &sends);
+        return true;
+    } catch (...) {
+        engine.topologyPlans.Recycle(index);
+        return false;
+    }
 }
 
 // Reserves the two resources a structural change needs: one free plan slot and
@@ -79737,8 +79757,9 @@ void PublishPlan(harken::Engine& engine, std::uint32_t planIndex,
                  std::uint32_t connectFrom, std::uint32_t connectTo,
                  float connectLevelDb,
                  std::uint32_t dynamicRoutePlanIndex =
-                     harken::kInvalidDynamicRoutePlanIndex) {
-    FillPlan(engine, planIndex);
+                     harken::kInvalidDynamicRoutePlanIndex,
+                 bool alreadyPrepared = false) {
+    if (!alreadyPrepared) FillPlan(engine, planIndex);
     harken::CommandRecord cmd{};
     cmd.opcode = harken::kOpcodeSetBusTopologyPlan;
     cmd.payload.setBusTopologyPlan.planIndex = planIndex;
@@ -79861,16 +79882,7 @@ void ResetBusLogicSlot(harken::Engine& engine,
         engine.busDownmixCoeffs.data() +
             static_cast<std::size_t>(busIndex) * 64);
 
-    const std::uint32_t base =
-        busIndex * engine.config.busSendSlotsPerBus;
-    for (std::uint32_t slot = 0;
-         slot < engine.config.busSendSlotsPerBus; ++slot) {
-        const std::uint32_t flat = base + slot;
-        engine.busSends[flat].target = harken::kInvalidBusIndex;
-        engine.busSends[flat].ownerCookie = 0;
-        engine.busSends[flat].topologyOwnerId = 0;
-        engine.busSends[flat].levelDb = 0.0f;
-    }
+    engine.busSends.EraseIf([&](const auto& edge) { return edge.source == busIndex; });
 }
 
 namespace {
@@ -80245,13 +80257,7 @@ bool DynamicInfluenceReaches(
         if (bus != 0) {
             visit(engine.buses.ParentOf(bus));
         }
-        const std::uint32_t base = bus * sendSlots;
-        for (std::uint32_t slot = 0; slot < sendSlots; ++slot) {
-            const std::uint32_t target = engine.busSends[base + slot].target;
-            if (target != harken::kInvalidBusIndex) {
-                visit(target);
-            }
-        }
+        for (const auto& edge : engine.busSends.From(bus)) visit(edge.target);
         bool replacementSeen = false;
         engine.dynamicRoutes.ForEachDefinition(
             [&](const harken::DynamicRouteDefinition& live) {
@@ -115409,11 +115415,7 @@ VnResult Vn_ApplyBusTopology(const VnBusTopologyDesc* topology) {
     if (topology->busCount >= engine->config.maxBuses) {
         return refuse(VN_NO_BUS, kTopologyRefusalCapacity);
     }
-    if (topology->sendCount >
-        static_cast<std::uint64_t>(engine->config.maxBuses) *
-            engine->config.busSendSlotsPerBus) {
-        return refuse(VN_NO_SEND, kTopologyRefusalCapacity);
-    }
+
 
     struct CanonicalBus {
         VnBusId busId{};
@@ -115557,9 +115559,6 @@ VnResult Vn_ApplyBusTopology(const VnBusTopologyDesc* topology) {
 
     const std::uint32_t oldCount = engine->buses.BusCount();
     const std::uint32_t capacity = engine->config.maxBuses;
-    const std::uint32_t sendSlots = engine->config.busSendSlotsPerBus;
-    const std::size_t sendCapacity =
-        static_cast<std::size_t>(capacity) * sendSlots;
     std::vector<VnBusId> busIds(capacity);
     std::vector<std::uint32_t> generations(capacity, 0);
     std::vector<std::uint32_t> parents(capacity, 0);
@@ -115567,14 +115566,7 @@ VnResult Vn_ApplyBusTopology(const VnBusTopologyDesc* topology) {
     std::vector<std::uint8_t> removedOld(oldCount, 0);
     std::vector<std::uint8_t> newSlot(capacity, 0);
     std::vector<std::uint32_t> migrationTargets(capacity, 0);
-    std::vector<std::uint32_t> sendTargets(
-        sendCapacity, harken::kInvalidBusIndex);
-    std::vector<std::uint64_t> sendTopologyOwners(sendCapacity, 0);
-    std::vector<VnPackHandle> sendPackOwners(sendCapacity, 0);
-    std::vector<float> sendLevelsDb(sendCapacity, 0.0f);
-    std::vector<float> sendLevelsLinear(sendCapacity, 0.0f);
-    std::vector<std::uint8_t> sendLevelApply(sendCapacity, 0);
-    std::vector<std::uint32_t> sendLevelRampMs(sendCapacity, 0);
+    harken::BusSendTable candidateSends;
     std::vector<std::uint32_t> feederCount(capacity, 0);
     std::vector<std::uint32_t> emittedFeeders(capacity, 0);
     std::vector<std::uint8_t> emitted(capacity, 0);
@@ -115683,42 +115675,17 @@ VnResult Vn_ApplyBusTopology(const VnBusTopologyDesc* topology) {
         }
     }
 
-    for (std::uint32_t i = 0; i < oldCount; ++i) {
-        if (!engine->buses.AliveAt(i)) {
-            continue;
-        }
-        const std::uint32_t base = i * sendSlots;
-        for (std::uint32_t slot = 0; slot < sendSlots; ++slot) {
-            const std::uint32_t flat = base + slot;
-            const std::uint32_t target = engine->busSends[flat].target;
-            if (target == harken::kInvalidBusIndex) {
-                continue;
-            }
-            const bool owned =
-                engine->busSends[flat].ownerCookie == 0 &&
-                engine->busSends[flat].topologyOwnerId ==
-                    topology->ownerId;
-            const bool endpointRemoved =
-                i >= candidateCount || target >= candidateCount ||
-                alive[i] == 0 || alive[target] == 0 ||
-                generations[i] != engine->buses.GenerationAt(i) ||
-                generations[target] !=
-                    engine->buses.GenerationAt(target);
-            if (!owned && endpointRemoved) {
-                return refuse(VN_IN_USE, kTopologyRefusalOwnership,
-                              engine->buses.IdAt(i),
-                              engine->buses.IdAt(target));
-            }
-            if (owned) {
-                continue;
-            }
-            sendTargets[flat] = target;
-            sendTopologyOwners[flat] =
-                engine->busSends[flat].topologyOwnerId;
-            sendPackOwners[flat] =
-                engine->busSends[flat].ownerCookie;
-            sendLevelsDb[flat] = engine->busSends[flat].levelDb;
-        }
+    for (const auto& edge : engine->busSends.Records()) {
+        const auto from = edge.source, target = edge.target;
+        const bool owned = edge.ownerCookie == 0 && edge.topologyOwnerId == topology->ownerId;
+        const bool endpointRemoved = from >= candidateCount || target >= candidateCount ||
+            alive[from] == 0 || alive[target] == 0 ||
+            generations[from] != engine->buses.GenerationAt(from) ||
+            generations[target] != engine->buses.GenerationAt(target);
+        if (!owned && endpointRemoved)
+            return refuse(VN_IN_USE, kTopologyRefusalOwnership,
+                engine->buses.IdAt(from), engine->buses.IdAt(target));
+        if (!owned) candidateSends.Add(edge);
     }
 
     const auto desiredSendByIds =
@@ -115733,6 +115700,7 @@ VnResult Vn_ApplyBusTopology(const VnBusTopologyDesc* topology) {
                             row.toBusId < value.second);
                 });
         };
+    for (int retainedPass = 1; retainedPass >= 0; --retainedPass) {
     for (const CanonicalSend& row : desiredSends) {
         const std::uint32_t from = findCandidateBus(row.fromBusId);
         const std::uint32_t to = findCandidateBus(row.toBusId);
@@ -115741,69 +115709,27 @@ VnResult Vn_ApplyBusTopology(const VnBusTopologyDesc* topology) {
             return refuse(VN_UNKNOWN_ID, kTopologyRefusalValidation,
                           row.fromBusId, row.toBusId);
         }
-        std::uint32_t retainedFlat = harken::kInvalidBusIndex;
-        for (std::uint32_t oldFrom = 0; oldFrom < oldCount; ++oldFrom) {
-            if (!engine->buses.AliveAt(oldFrom) ||
-                engine->buses.IdAt(oldFrom) != row.fromBusId) {
-                continue;
-            }
-            const std::uint32_t base = oldFrom * sendSlots;
-            for (std::uint32_t slot = 0; slot < sendSlots; ++slot) {
-                const std::uint32_t flat = base + slot;
-                const std::uint32_t oldTo = engine->busSends[flat].target;
-                if (oldTo == harken::kInvalidBusIndex ||
-                    engine->buses.IdAt(oldTo) != row.toBusId) {
-                    continue;
-                }
-                if (engine->busSends[flat].ownerCookie != 0 ||
-                    engine->busSends[flat].topologyOwnerId !=
-                        topology->ownerId) {
-                    return refuse(VN_IN_USE, kTopologyRefusalOwnership,
-                                  row.fromBusId, row.toBusId);
-                }
-                if (oldFrom == from && oldTo == to &&
-                    generations[from] ==
-                        engine->buses.GenerationAt(oldFrom) &&
-                    generations[to] ==
-                        engine->buses.GenerationAt(oldTo)) {
-                    retainedFlat = flat;
-                }
-            }
-        }
-        std::uint32_t flat = retainedFlat;
-        if (flat == harken::kInvalidBusIndex) {
-            const std::uint32_t base = from * sendSlots;
-            for (std::uint32_t slot = 0; slot < sendSlots; ++slot) {
-                if (sendTargets[base + slot] ==
-                    harken::kInvalidBusIndex) {
-                    flat = base + slot;
-                    break;
-                }
-            }
-            if (flat == harken::kInvalidBusIndex) {
-                return refuse(VN_NO_SEND, kTopologyRefusalCapacity,
-                              row.fromBusId, row.toBusId);
-            }
-            sendLevelApply[flat] = 1;
-        } else {
-            const float previous = engine->busSends[flat].levelDb;
-            std::uint32_t beforeBits = 0;
-            std::uint32_t afterBits = 0;
-            std::memcpy(&beforeBits, &previous, sizeof(beforeBits));
-            std::memcpy(&afterBits, &row.levelDb, sizeof(afterBits));
-            if (beforeBits != afterBits) {
-                sendLevelApply[flat] = 1;
-                sendLevelRampMs[flat] = row.rampMs;
-            }
-        }
-        sendTargets[flat] = to;
-        sendTopologyOwners[flat] = topology->ownerId;
-        sendPackOwners[flat] = 0;
-        sendLevelsDb[flat] = row.levelDb;
-        sendLevelsLinear[flat] =
-            row.levelDb == 0.0f
-                ? 1.0f
-                : std::pow(10.0f, row.levelDb / 20.0f);
+        const auto oldFrom = engine->buses.FindIndex(row.fromBusId);
+        const auto oldTo = engine->buses.FindIndex(row.toBusId);
+        const auto* prior = engine->busSends.Find(oldFrom, oldTo);
+        if (prior != nullptr && (prior->ownerCookie != 0 || prior->topologyOwnerId != topology->ownerId))
+            return refuse(VN_IN_USE, kTopologyRefusalOwnership, row.fromBusId, row.toBusId);
+        const bool retained = prior != nullptr && oldFrom == from && oldTo == to &&
+            generations[from] == engine->buses.GenerationAt(from) &&
+            generations[to] == engine->buses.GenerationAt(to);
+        if (retained != (retainedPass != 0)) continue;
+        harken::BusSendRecord edge;
+        if (retained) edge = *prior;
+        edge.source = from;
+        edge.target = to;
+        edge.topologyOwnerId = topology->ownerId;
+        edge.generation = retained ? prior->generation : engine->NewBusSendGeneration();
+        edge.applyLevel = !retained || std::memcmp(&prior->levelDb, &row.levelDb, sizeof(float)) != 0;
+        edge.rampMs = retained && edge.applyLevel ? row.rampMs : 0;
+        edge.levelDb = row.levelDb;
+        edge.preparedGain = row.levelDb == 0 ? 1.0f : std::pow(10.0f, row.levelDb / 20.0f);
+        candidateSends.Add(edge);
+    }
     }
 
     for (std::uint32_t i = 0; i < oldCount; ++i) {
@@ -115940,9 +115866,7 @@ VnResult Vn_ApplyBusTopology(const VnBusTopologyDesc* topology) {
     prospective.generations = generations.data();
     prospective.parents = parents.data();
     prospective.alive = alive.data();
-    prospective.sendTargets = sendTargets.data();
-    prospective.sendLevels = sendLevelsLinear.data();
-    prospective.sendLevelApply = sendLevelApply.data();
+    prospective.sends = &candidateSends;
     prospective.feederCount = feederCount.data();
     prospective.emittedFeeders = emittedFeeders.data();
     prospective.emitted = emitted.data();
@@ -116037,12 +115961,19 @@ VnResult Vn_ApplyBusTopology(const VnBusTopologyDesc* topology) {
                           kTopologyRefusalBackpressure);
         }
     }
-    FillPlan(
-        *engine, planIndex, nullptr, false,
-        harken::kInvalidBusIndex, 0xFFFFFFFFu, nullptr, 0,
-        routeRemovals.empty() ? nullptr : routeRemovals.data(),
-        static_cast<std::uint32_t>(routeRemovals.size()), nullptr,
-        nullptr, nullptr, 0, nullptr, 0, &prospective);
+    try {
+        FillPlan(
+            *engine, planIndex, nullptr, false,
+            harken::kInvalidBusIndex, 0xFFFFFFFFu, nullptr, 0,
+            routeRemovals.empty() ? nullptr : routeRemovals.data(),
+            static_cast<std::uint32_t>(routeRemovals.size()), nullptr,
+            nullptr, nullptr, 0, nullptr, 0, &prospective);
+    } catch (...) {
+        if (dynamicPlanIndex != harken::kInvalidDynamicRoutePlanIndex)
+            engine->dynamicRoutes.AbandonPlan(dynamicPlanIndex);
+        engine->topologyPlans.Recycle(planIndex);
+        return refuse(VN_DEVICE_ERROR, kTopologyRefusalBackpressure);
+    }
     std::uint32_t* migrationPlan =
         engine->topologyPlans.MigrationTargetsData(planIndex);
     float* busVolumePlan =
@@ -116093,15 +116024,6 @@ VnResult Vn_ApplyBusTopology(const VnBusTopologyDesc* topology) {
         harken::DefaultDownmixMatrix(engine->config.mixChannelLayout,
             engine->config.deviceChannelLayout, downmix);
     }
-    const auto preparedPlan = engine->topologyPlans.View(planIndex);
-    for (std::uint32_t from = 0; from < candidateCount; ++from) {
-        auto* ramps = engine->topologyPlans.SendLevelRampMsRow(planIndex, from);
-        const auto range = preparedPlan.Sends(from);
-        for (std::uint32_t send = 0; send < range.count; ++send)
-            ramps[send] = sendLevelRampMs[static_cast<std::size_t>(from) * sendSlots +
-                preparedPlan.LogicalSendSlot(range.first + send)];
-    }
-
     harken::CommandQueue::BatchReservation reservation{};
     if (!AdmitSingleCommand(*engine) ||
         !engine->commands.ReserveBatch(1, &reservation)) {
@@ -116207,17 +116129,9 @@ VnResult Vn_ApplyBusTopology(const VnBusTopologyDesc* topology) {
                 ? topology->ownerId
                 : engine->busTopologyOwnerIds[i];
     }
-    engine->busSendActive = 0;
-    for (std::size_t flat = 0; flat < sendCapacity; ++flat) {
-        engine->busSends[flat].target = sendTargets[flat];
-        engine->busSends[flat].topologyOwnerId =
-            sendTopologyOwners[flat];
-        engine->busSends[flat].ownerCookie = sendPackOwners[flat];
-        engine->busSends[flat].levelDb = sendLevelsDb[flat];
-        if (sendTargets[flat] != harken::kInvalidBusIndex) {
-            ++engine->busSendActive;
-        }
-    }
+    candidateSends.ClearActions();
+    engine->busSends.Swap(candidateSends);
+    engine->busSendActive = engine->busSends.Count();
     UpdateSendHighWater(*engine);
     harken::CommitMigratedLogicVoiceMirrorsV1(*engine, migrationTargets.data(), generations.data(),
         alive.data(), candidateCount);
@@ -116587,14 +116501,9 @@ VnResult Vn_DestroyBus(VnBusId busId) {
     const auto sourceRevision = engine->acceptedBusTopologyRevision;
     if (sourceRevision == UINT64_MAX) return VN_DEVICE_ERROR;
     const auto acceptedRevision = sourceRevision + 1;
-    const auto slots = engine->config.busSendSlotsPerBus;
-    const auto sendCount = static_cast<std::size_t>(count) * slots;
     std::vector<VnBusId> busIds(count);
     std::vector<std::uint32_t> generations(count), parents(count), migrations(count);
     std::vector<std::uint8_t> alive(count), wasAlive(count);
-    std::vector<std::uint32_t> sendTargets(sendCount, harken::kInvalidBusIndex);
-    std::vector<float> sendLevels(sendCount, 0.0f);
-    std::vector<std::uint8_t> sendApply(sendCount, 0);
     std::vector<std::uint32_t> feederCount(count), emittedFeeders(count);
     std::vector<std::uint8_t> emitted(count);
     std::vector<harken::BusSlotRef> removedRefs;
@@ -116602,6 +116511,12 @@ VnResult Vn_DestroyBus(VnBusId busId) {
     const auto sourceCookies = engine->busOwnerCookies;
     const auto sourceOwners = engine->busTopologyOwnerIds;
     const auto sourceSends = engine->busSends;
+    auto candidateSends = sourceSends;
+    candidateSends.EraseIf([&](const auto& edge) {
+        return dead[edge.source] != 0 || (edge.target < count && dead[edge.target] != 0);
+    });
+    for (const auto& edge : candidateSends.Records())
+        if (!harken::TryVolumeGainFromDb(edge.levelDb)) return VN_INVALID_ARG;
     const auto sourceMuted = engine->busMuted;
     const auto sourceSoloed = engine->busSoloed;
     const auto sourceSoloActive = engine->busSoloActiveCount;
@@ -116613,16 +116528,7 @@ VnResult Vn_DestroyBus(VnBusId busId) {
         alive[i] = static_cast<std::uint8_t>(wasAlive[i] != 0 && dead[i] == 0);
         migrations[i] = dead[i] != 0 ? migrateTarget : i;
         if (dead[i] != 0) removedRefs.push_back({i, generations[i]});
-        for (std::uint32_t slot = 0; slot < slots; ++slot) {
-            const auto flat = static_cast<std::size_t>(i) * slots + slot;
-            const auto to = sourceSends[flat].target;
-            if (dead[i] != 0 || to == harken::kInvalidBusIndex || (to < count && dead[to] != 0)) continue;
-            const float level = engine->busSends[flat].levelDb;
-            const float linear = level == 0.0f ? 1.0f : std::pow(10.0f, level / 20.0f);
-            if (!std::isfinite(linear)) return VN_INVALID_ARG;
-            sendTargets[flat] = to;
-            sendLevels[flat] = linear;
-        }
+
     }
     std::vector<harken::BindingTable::PreparedAttachmentToken> preparedDetaches(detaches.size());
     for (std::size_t i = 0; i < detaches.size(); ++i) {
@@ -116646,9 +116552,7 @@ VnResult Vn_DestroyBus(VnBusId busId) {
     prospective.generations = generations.data();
     prospective.parents = parents.data();
     prospective.alive = alive.data();
-    prospective.sendTargets = sendTargets.data();
-    prospective.sendLevels = sendLevels.data();
-    prospective.sendLevelApply = sendApply.data();
+    prospective.sends = &candidateSends;
     prospective.feederCount = feederCount.data();
     prospective.emittedFeeders = emittedFeeders.data();
     prospective.emitted = emitted.data();
@@ -116761,27 +116665,8 @@ VnResult Vn_DestroyBus(VnBusId busId) {
     for (const auto ref : removedRefs) harken::CommitRetireTopologyBusV1(*engine, ref, acceptedRevision);
     harken::CommitUnpublishedTimelineRoutingV1(*engine, unpublishedRouting);
     for (auto& detach : preparedDetaches) engine->bindings.CommitPreparedAttachment(&detach, nullptr);
-    // Send edges: every dead out-row and every surviving slot targeting a
-    // dead bus; the plan's membership then excludes them and the audio-side
-    // reconcile releases the orphaned levels at the swap.
-    for (std::uint32_t from = 0; from < count; ++from) {
-        const std::uint32_t base = from * slots;
-        for (std::uint32_t s = 0; s < slots; ++s) {
-            const std::uint32_t to = engine->busSends[base + s].target;
-            if (to == harken::kInvalidBusIndex) {
-                continue;
-            }
-            if (dead[from] != 0 || (to < count && dead[to] != 0)) {
-                engine->busSends[base + s].target = harken::kInvalidBusIndex;
-                engine->busSends[base + s].ownerCookie = 0;
-                engine->busSends[base + s].topologyOwnerId = 0;
-                engine->busSends[base + s].levelDb = 0.0f;
-                if (engine->busSendActive > 0) {
-                    --engine->busSendActive;
-                }
-            }
-        }
-    }
+    engine->busSends.Swap(candidateSends);
+    engine->busSendActive = engine->busSends.Count();
     // Voice-send mirrors (live staging, pending starts, parked replay state,
     // play facts, and published Timeline identities) drop dead targets / migrate
     // dead dry buses so a later park return or deferred start never resurrects a
@@ -116840,43 +116725,26 @@ VnResult Vn_ConnectBusSend(VnBusId fromBus, VnBusId toBus, float levelDb) {
     if (from == to) {
         return VN_INVALID_ARG; // a bus cannot send to itself
     }
-    const std::uint32_t slots = engine->config.busSendSlotsPerBus;
-    const std::uint32_t base = from * slots;
-    // A re-connect of an existing edge is refused rather than silently re-set,
-    // so the level path stays the one way to change a live edge (and the plan
-    // stays static across level changes).
-    std::uint32_t freeSlot = slots;
-    for (std::uint32_t s = 0; s < slots; ++s) {
-        if (engine->busSends[base + s].target == to) {
-            return VN_IN_USE;
-        }
-        if (engine->busSends[base + s].target == harken::kInvalidBusIndex &&
-            freeSlot == slots) {
-            freeSlot = s;
-        }
-    }
-    if (freeSlot == slots) {
-        ++engine->noSendCount;
-        return VN_NO_SEND; // this bus's send-slot table is full
-    }
-    // Cycle check over the combined tree+send graph with the prospective edge,
-    // before committing it (zero side effects on refusal).
-    if (!TopoSortBuses(*engine, from, to, nullptr)) {
-        return VN_SEND_CYCLE;
-    }
-    const std::uint32_t planIndex = ReserveTopologyChange(*engine);
-    if (planIndex == harken::kInvalidTopologyPlanIndex) {
-        return VN_BACKPRESSURE;
-    }
-    // Commit the edge, then publish: the plan carries the new membership + order
-    // and the swap command carries the edge's initial level, applied atomically.
-    engine->busSends[base + freeSlot].target = to;
-    engine->busSends[base + freeSlot].ownerCookie = 0;
-    engine->busSends[base + freeSlot].topologyOwnerId = 0;
-    engine->busSends[base + freeSlot].levelDb = levelDb;
-    ++engine->busSendActive;
+    if (engine->busSends.Find(from, to) != nullptr) return VN_IN_USE;
+    if (!TopoSortBuses(*engine, from, to, nullptr)) return VN_SEND_CYCLE;
+    auto candidate = engine->busSends;
+    harken::BusSendRecord edge;
+    edge.source = from;
+    edge.target = to;
+    edge.levelDb = levelDb;
+    edge.generation = engine->NewBusSendGeneration();
+    edge.preparedGain = std::pow(10.0f, levelDb / 20.0f);
+    edge.applyLevel = true;
+    candidate.Add(edge);
+    const auto planIndex = ReserveTopologyChange(*engine);
+    if (planIndex == harken::kInvalidTopologyPlanIndex) return VN_BACKPRESSURE;
+    if (!PrepareBusSendTopology(*engine, planIndex, candidate)) return VN_BACKPRESSURE;
+    candidate.ClearActions();
+    engine->busSends.Swap(candidate);
+    engine->busSendActive = engine->busSends.Count();
     UpdateSendHighWater(*engine);
-    PublishPlan(*engine, planIndex, from, to, levelDb);
+    PublishPlan(*engine, planIndex, harken::kInvalidBusIndex, harken::kInvalidBusIndex,
+                0.0f, harken::kInvalidDynamicRoutePlanIndex, true);
     // A send connect is the one LATER topology change that can close a
     // meter control loop (section 11.5): it is deliberately NOT refused
     // here — the next Vn_Update detects it and freezes the offending
@@ -116907,40 +116775,18 @@ VnResult Vn_DisconnectBusSend(VnBusId fromBus, VnBusId toBus) {
     if (from == harken::kInvalidBusIndex || to == harken::kInvalidBusIndex) {
         return VN_UNKNOWN_ID;
     }
-    const std::uint32_t slots = engine->config.busSendSlotsPerBus;
-    const std::uint32_t base = from * slots;
-    std::uint32_t edgeSlot = slots;
-    for (std::uint32_t s = 0; s < slots; ++s) {
-        if (engine->busSends[base + s].target == to) {
-            edgeSlot = s;
-            break;
-        }
-    }
-    if (edgeSlot == slots) {
-        // No such edge: nothing to disconnect and nothing to republish (the
-        // plan-publish counter stays static). Idempotent success.
-        return VN_OK;
-    }
-    if (engine->busSends[base + edgeSlot].ownerCookie != 0 ||
-        engine->busSends[base + edgeSlot].topologyOwnerId != 0) {
-        return VN_IN_USE;
-    }
-    const std::uint32_t planIndex = ReserveTopologyChange(*engine);
-    if (planIndex == harken::kInvalidTopologyPlanIndex) {
-        return VN_BACKPRESSURE;
-    }
-    // Remove the edge, then publish: the swap carries no edge identity (a
-    // disconnect is a plan-swap only), and the audio side's reconcile releases
-    // the now-orphaned send level.
-    engine->busSends[base + edgeSlot].target = harken::kInvalidBusIndex;
-    engine->busSends[base + edgeSlot].ownerCookie = 0;
-    engine->busSends[base + edgeSlot].topologyOwnerId = 0;
-    engine->busSends[base + edgeSlot].levelDb = 0.0f;
-    if (engine->busSendActive > 0) {
-        --engine->busSendActive;
-    }
-    PublishPlan(*engine, planIndex, harken::kInvalidBusIndex,
-                harken::kInvalidBusIndex, 0.0f);
+    const auto* edge = engine->busSends.Find(from, to);
+    if (edge == nullptr) return VN_OK;
+    if (edge->ownerCookie != 0 || edge->topologyOwnerId != 0) return VN_IN_USE;
+    auto candidate = engine->busSends;
+    candidate.EraseIf([&](const auto& row) { return row.source == from && row.target == to; });
+    const auto planIndex = ReserveTopologyChange(*engine);
+    if (planIndex == harken::kInvalidTopologyPlanIndex) return VN_BACKPRESSURE;
+    if (!PrepareBusSendTopology(*engine, planIndex, candidate)) return VN_BACKPRESSURE;
+    engine->busSends.Swap(candidate);
+    engine->busSendActive = engine->busSends.Count();
+    PublishPlan(*engine, planIndex, harken::kInvalidBusIndex, harken::kInvalidBusIndex,
+                0.0f, harken::kInvalidDynamicRoutePlanIndex, true);
     // The control graph shrank: a loop frozen through this edge may have
     // opened, so the next Vn_Update rescans the section-11.5 marks.
     return VN_OK;
@@ -116977,22 +116823,9 @@ VnResult Vn_SetBusSendLevel(VnBusId fromBus, VnBusId toBus, float levelDb,
     }
     // The edge must be an active send of `from`; a level on a non-edge is
     // meaningless.
-    const std::uint32_t slots = engine->config.busSendSlotsPerBus;
-    const std::uint32_t base = from * slots;
-    std::uint32_t edgeSlot = slots;
-    for (std::uint32_t s = 0; s < slots; ++s) {
-        if (engine->busSends[base + s].target == to) {
-            edgeSlot = s;
-            break;
-        }
-    }
-    if (edgeSlot == slots) {
-        return VN_UNKNOWN_ID;
-    }
-    if (engine->busSends[base + edgeSlot].ownerCookie != 0 ||
-        engine->busSends[base + edgeSlot].topologyOwnerId != 0) {
-        return VN_IN_USE;
-    }
+    auto* edge = engine->busSends.Find(from, to);
+    if (edge == nullptr) return VN_UNKNOWN_ID;
+    if (edge->ownerCookie != 0 || edge->topologyOwnerId != 0) return VN_IN_USE;
     // A level change is NOT a structural change: it republishes no plan (the
     // plan-publish counter stays static) and travels as its own audio-thread
     // command.
@@ -117004,6 +116837,7 @@ VnResult Vn_SetBusSendLevel(VnBusId fromBus, VnBusId toBus, float levelDb,
     cmd.opcode = harken::kOpcodeSetBusSendLevel;
     cmd.payload.setBusSendLevel.fromBus = from;
     cmd.payload.setBusSendLevel.toBus = to;
+    cmd.payload.setBusSendLevel.sendGeneration = edge->generation;
     cmd.payload.setBusSendLevel.levelDb = levelDb;
     cmd.payload.setBusSendLevel.rampMs = rampMs;
     cmd.payload.setBusSendLevel.fromGeneration =
@@ -117011,7 +116845,7 @@ VnResult Vn_SetBusSendLevel(VnBusId fromBus, VnBusId toBus, float levelDb,
     cmd.payload.setBusSendLevel.toGeneration =
         engine->buses.GenerationAt(to);
     (void)engine->commands.TryPush(cmd);
-    engine->busSends[base + edgeSlot].levelDb = levelDb;
+    edge->levelDb = levelDb;
     return VN_OK;
 
     } catch (const std::bad_alloc&) {
@@ -123866,13 +123700,8 @@ struct CombinedBusGraph {
     template <typename Fn>
     void ForEachSendTarget(std::uint32_t from, Fn&& fn) const {
         if (from < existing) {
-            const std::uint32_t slots = engine->config.busSendSlotsPerBus;
-            const std::uint32_t base = from * slots;
-            for (std::uint32_t s = 0; s < slots; ++s) {
-                const std::uint32_t to = engine->busSends[base + s].target;
-                if (to == harken::kInvalidBusIndex) {
-                    continue;
-                }
+            for (const auto& edge : engine->busSends.From(from)) {
+                const auto to = edge.target;
                 if (removeSends != nullptr) {
                     bool removed = false;
                     for (const harken::PackBusSendEntry& gone : *removeSends) {
@@ -124091,27 +123920,6 @@ VnResult StagePackLogic(harken::Engine& engine, PackStaging& staging) {
         graph.existing = engine.buses.BusCount();
         graph.total = graph.existing +
                       static_cast<std::uint32_t>(image.buses.size());
-        const std::uint32_t slots = engine.config.busSendSlotsPerBus;
-        for (std::uint32_t node = 0; node < graph.total; ++node) {
-            std::uint32_t used = 0;
-            if (node < graph.existing) {
-                for (std::uint32_t s = 0; s < slots; ++s) {
-                    if (engine.busSends[node * slots + s].target !=
-                        harken::kInvalidBusIndex) {
-                        ++used;
-                    }
-                }
-            }
-            for (const harken::PackBusSendEntry& send : image.busSends) {
-                if (graph.IndexOf(send.fromBusId) == node) {
-                    ++used;
-                }
-            }
-            if (used > slots) {
-                ++engine.noSendCount;
-                return VN_NO_SEND;
-            }
-        }
         if (!CombinedBusGraphAcyclic(graph)) {
             return VN_SEND_CYCLE;
         }
@@ -124406,7 +124214,6 @@ VnResult UnloadReversibleResident(Engine& engine,
     }
 
     const std::uint32_t busCount = engine.buses.BusCount();
-    const std::uint32_t sendSlots = engine.config.busSendSlotsPerBus;
     std::vector<std::uint8_t> dead;
     std::vector<std::uint8_t> removedSendSlots;
     std::vector<std::uint32_t> childFirst;
@@ -124416,8 +124223,7 @@ VnResult UnloadReversibleResident(Engine& engine,
     std::vector<CommandRecord> commands;
     try {
         dead.assign(busCount, 0);
-        removedSendSlots.assign(
-            static_cast<std::size_t>(busCount) * sendSlots, 0);
+        removedSendSlots.assign(engine.busSends.Count(), 0);
         childFirst.reserve(record.buses.size());
         routeRemovals.reserve(record.dynamicRoutes.size());
         soloFlips.reserve(busCount);
@@ -124446,8 +124252,8 @@ VnResult UnloadReversibleResident(Engine& engine,
         childFirst.push_back(index);
     }
 
-    // Every authored Send must still occupy one exact fixed slot carrying the
-    // Pack cookie. The slot mask is the read-only removal overlay.
+    // Every authored Send must still carry this Pack cookie. The removal mask
+    // addresses the current immutable candidate, never a configured matrix.
     for (const PackBusSendEntry& authored : record.busSends) {
         const std::uint32_t from =
             engine.buses.FindIndex(authored.fromBusId);
@@ -124456,20 +124262,9 @@ VnResult UnloadReversibleResident(Engine& engine,
         if (from == kInvalidBusIndex || to == kInvalidBusIndex) {
             return VN_IN_USE;
         }
-        bool found = false;
-        const std::uint32_t base = from * sendSlots;
-        for (std::uint32_t slot = 0; slot < sendSlots; ++slot) {
-            const std::uint32_t flat = base + slot;
-            if (engine.busSends[flat].target == to &&
-                engine.busSends[flat].ownerCookie == handle) {
-                removedSendSlots[flat] = 1;
-                found = true;
-                break;
-            }
-        }
-        if (!found) {
-            return VN_IN_USE;
-        }
+        const auto* edge = engine.busSends.Find(from, to);
+        if (edge == nullptr || edge->ownerCookie != handle) return VN_IN_USE;
+        removedSendSlots[engine.busSends.IndexOf(*edge)] = 1;
     }
 
     // No foreign child or Send may be removed as collateral damage.
@@ -124482,21 +124277,15 @@ VnResult UnloadReversibleResident(Engine& engine,
             return VN_IN_USE;
         }
     }
-    for (std::uint32_t from = 0; from < busCount; ++from) {
-        const std::uint32_t base = from * sendSlots;
-        for (std::uint32_t slot = 0; slot < sendSlots; ++slot) {
-            const std::uint32_t flat = base + slot;
-            const std::uint32_t to = engine.busSends[flat].target;
-            if (to == kInvalidBusIndex) {
-                continue;
-            }
-            const bool touchesDead =
-                dead[from] != 0 || (to < busCount && dead[to] != 0);
-            if (touchesDead && removedSendSlots[flat] == 0) {
-                return VN_IN_USE;
-            }
-        }
+    for (const auto& edge : engine.busSends.Records()) {
+        const bool touchesDead = dead[edge.source] != 0 ||
+            (edge.target < busCount && dead[edge.target] != 0);
+        if (touchesDead && removedSendSlots[engine.busSends.IndexOf(edge)] == 0) return VN_IN_USE;
     }
+    auto candidateSends = engine.busSends;
+    candidateSends.EraseIf([&](const auto& edge) {
+        return removedSendSlots[candidateSends.IndexOf(edge)] != 0;
+    });
 
     // Every Pack Effect must retain its exact Bus/slot/type cookie. Conversely
     // a Bus tombstone may not retire an Effect absent from this removal set.
@@ -124880,17 +124669,8 @@ VnResult UnloadReversibleResident(Engine& engine,
             static_cast<std::uint64_t>(bus),
             engine.buses.GenerationAt(bus), effect.slot);
     }
-    for (std::uint32_t flat = 0;
-         flat < removedSendSlots.size(); ++flat) {
-        if (removedSendSlots[flat] == 0) {
-            continue;
-        }
-        engine.busSends[flat].target = kInvalidBusIndex;
-        engine.busSends[flat].ownerCookie = 0;
-        if (engine.busSendActive > 0) {
-            --engine.busSendActive;
-        }
-    }
+    engine.busSends.Swap(candidateSends);
+    engine.busSendActive = engine.busSends.Count();
     for (std::uint32_t bus : childFirst) {
         ResetBusLogicSlot(engine, bus, engine.buses.GenerationAt(bus), 0);
         engine.buses.MarkLogicDead(bus);
@@ -125240,8 +125020,6 @@ VnResult ScreenPackRevision(Engine& engine, const PackLogicRecord& record,
             return VN_IN_USE;
         }
     }
-    const std::uint32_t sendSlots =
-        engine.config.busSendSlotsPerBus;
     for (const PackBusSendEntry& oldSend : record.busSends) {
         const std::uint32_t from =
             engine.buses.FindIndex(oldSend.fromBusId);
@@ -125250,19 +125028,8 @@ VnResult ScreenPackRevision(Engine& engine, const PackLogicRecord& record,
         if (from == kInvalidBusIndex || to == kInvalidBusIndex) {
             return VN_IN_USE;
         }
-        const std::uint32_t base = from * sendSlots;
-        std::uint32_t exactSlot = sendSlots;
-        for (std::uint32_t slot = 0; slot < sendSlots; ++slot) {
-            if (engine.busSends[base + slot].target == to) {
-                exactSlot = slot;
-                break;
-            }
-        }
-        if (exactSlot == sendSlots ||
-            engine.busSends[base + exactSlot].ownerCookie !=
-                revision.handle) {
-            return VN_IN_USE;
-        }
+        const auto* edge = engine.busSends.Find(from, to);
+        if (edge == nullptr || edge->ownerCookie != revision.handle) return VN_IN_USE;
     }
 
     r = ScreenPackRevisionRemovals(engine, record, revision);
@@ -125429,32 +125196,6 @@ VnResult ScreenPackRevision(Engine& engine, const PackLogicRecord& record,
         graph.addSends = &revision.addSends;
         graph.removeSends = &revision.removeSends;
         graph.replaceDynamicRouteOwner = revision.handle;
-        const std::uint32_t slots = engine.config.busSendSlotsPerBus;
-        for (std::uint32_t node = 0; node < graph.total; ++node) {
-            std::uint32_t used = 0;
-            if (node < graph.existing) {
-                for (std::uint32_t s = 0; s < slots; ++s) {
-                    if (engine.busSends[node * slots + s].target !=
-                        kInvalidBusIndex) {
-                        ++used;
-                    }
-                }
-                for (const PackBusSendEntry& gone : revision.removeSends) {
-                    if (graph.IndexOf(gone.fromBusId) == node) {
-                        --used;
-                    }
-                }
-            }
-            for (const PackBusSendEntry& send : revision.addSends) {
-                if (graph.IndexOf(send.fromBusId) == node) {
-                    ++used;
-                }
-            }
-            if (used > slots) {
-                ++engine.noSendCount;
-                return VN_NO_SEND;
-            }
-        }
         if (!CombinedBusGraphAcyclic(graph)) {
             return VN_BAD_PACK;
         }
@@ -125466,11 +125207,7 @@ VnResult ScreenPackRevision(Engine& engine, const PackLogicRecord& record,
             if (from == kInvalidBusIndex || to == kInvalidBusIndex) {
                 continue; // an endpoint is an added bus: no live edge
             }
-            for (std::uint32_t s = 0; s < slots; ++s) {
-                if (engine.busSends[from * slots + s].target == to) {
-                    return VN_IN_USE;
-                }
-            }
+            if (engine.busSends.Find(from, to) != nullptr) return VN_IN_USE;
         }
     }
     // Binding definitions and attachments, with net-arithmetic capacity.
@@ -126100,14 +125837,13 @@ std::uint32_t RevisionCommandCount(
 }
 
 bool PrepareRevisionProspectiveTopology(
-    Engine& engine, PackPendingRevision& revision) noexcept {
+    Engine& engine, PackPendingRevision& revision) try {
     if (!revision.needsPlan) {
         revision.prospectiveBusCount = engine.buses.BusCount();
         return true;
     }
     const std::uint32_t oldCount = engine.buses.BusCount();
     const std::uint32_t capacity = engine.config.maxBuses;
-    const std::uint32_t slots = engine.config.busSendSlotsPerBus;
     if (revision.prospectiveBusIds.size() < capacity ||
         revision.prospectiveBusGenerations.size() < capacity ||
         revision.prospectiveParents.size() < capacity ||
@@ -126115,18 +125851,6 @@ bool PrepareRevisionProspectiveTopology(
         revision.topologyFeederCount.size() < capacity ||
         revision.topologyEmittedFeeders.size() < capacity ||
         revision.topologyEmitted.size() < capacity ||
-        revision.prospectiveSendTargets.size() <
-            static_cast<std::size_t>(capacity) * slots ||
-        revision.prospectiveSendOwners.size() <
-            static_cast<std::size_t>(capacity) * slots ||
-        revision.prospectiveSendTopologyOwners.size() <
-            static_cast<std::size_t>(capacity) * slots ||
-        revision.prospectiveSendLevels.size() <
-            static_cast<std::size_t>(capacity) * slots ||
-        revision.prospectiveSendLevelsDb.size() <
-            static_cast<std::size_t>(capacity) * slots ||
-        revision.prospectiveSendLevelApply.size() <
-            static_cast<std::size_t>(capacity) * slots ||
         revision.prospectiveBusVolumeDb.size() < capacity ||
         revision.prospectiveBusOutputVolumeDb.size() < capacity ||
         revision.prospectiveBusVolumeApply.size() < capacity) {
@@ -126140,18 +125864,8 @@ bool PrepareRevisionProspectiveTopology(
               revision.prospectiveParents.end(), 0);
     std::fill(revision.prospectiveAlive.begin(),
               revision.prospectiveAlive.end(), 0);
-    std::fill(revision.prospectiveSendTargets.begin(),
-              revision.prospectiveSendTargets.end(), kInvalidBusIndex);
-    std::fill(revision.prospectiveSendOwners.begin(),
-              revision.prospectiveSendOwners.end(), 0);
-    std::fill(revision.prospectiveSendTopologyOwners.begin(),
-              revision.prospectiveSendTopologyOwners.end(), 0);
-    std::fill(revision.prospectiveSendLevels.begin(),
-              revision.prospectiveSendLevels.end(), 0.0f);
-    std::fill(revision.prospectiveSendLevelsDb.begin(),
-              revision.prospectiveSendLevelsDb.end(), 0.0f);
-    std::fill(revision.prospectiveSendLevelApply.begin(),
-              revision.prospectiveSendLevelApply.end(), 0);
+    BusSendTable candidateSends;
+    candidateSends.Reserve(engine.busSends.Count() + revision.image.busSends.size());
     std::fill(revision.prospectiveBusVolumeDb.begin(),
               revision.prospectiveBusVolumeDb.end(), 0.0f);
     std::fill(revision.prospectiveBusOutputVolumeDb.begin(),
@@ -126224,87 +125938,38 @@ bool PrepareRevisionProspectiveTopology(
         }
         revision.prospectiveParents[index] = parent;
     }
-    for (std::uint32_t from = 0; from < oldCount; ++from) {
-        if (!engine.buses.AliveAt(from)) {
-            continue;
-        }
-        const std::uint32_t base = from * slots;
-        for (std::uint32_t slot = 0; slot < slots; ++slot) {
-            const std::uint32_t flat = base + slot;
-            const std::uint32_t to = engine.busSends[flat].target;
-            if (to == kInvalidBusIndex ||
-                engine.busSends[flat].ownerCookie == revision.handle) {
-                continue;
-            }
-            if (from >= count || to >= count ||
-                revision.prospectiveAlive[from] == 0 ||
-                revision.prospectiveAlive[to] == 0 ||
-                revision.prospectiveBusGenerations[from] !=
-                    engine.buses.GenerationAt(from) ||
-                revision.prospectiveBusGenerations[to] !=
-                    engine.buses.GenerationAt(to)) {
-                return false;
-            }
-            revision.prospectiveSendTargets[flat] = to;
-            revision.prospectiveSendOwners[flat] =
-                engine.busSends[flat].ownerCookie;
-            revision.prospectiveSendTopologyOwners[flat] =
-                engine.busSends[flat].topologyOwnerId;
-            revision.prospectiveSendLevelsDb[flat] =
-                engine.busSends[flat].levelDb;
-        }
+    for (const auto& edge : engine.busSends.Records()) {
+        if (edge.ownerCookie == revision.handle) continue;
+        const auto from = edge.source, to = edge.target;
+        if (from >= count || to >= count ||
+            revision.prospectiveAlive[from] == 0 || revision.prospectiveAlive[to] == 0 ||
+            revision.prospectiveBusGenerations[from] != engine.buses.GenerationAt(from) ||
+            revision.prospectiveBusGenerations[to] != engine.buses.GenerationAt(to)) return false;
+        candidateSends.Add(edge);
     }
+    for (int retainedPass = 1; retainedPass >= 0; --retainedPass) {
     for (const PackBusSendEntry& send : revision.image.busSends) {
-        const std::uint32_t from = findBus(send.fromBusId);
-        const std::uint32_t to = findBus(send.toBusId);
-        if (from == kInvalidBusIndex || to == kInvalidBusIndex) {
+        const auto from = findBus(send.fromBusId), to = findBus(send.toBusId);
+        if (from == kInvalidBusIndex || to == kInvalidBusIndex)
             return false;
-        }
-        std::uint32_t chosen = kInvalidBusIndex;
-        if (from < oldCount &&
-            revision.prospectiveBusGenerations[from] ==
-                engine.buses.GenerationAt(from)) {
-            const std::uint32_t oldBase = from * slots;
-            for (std::uint32_t slot = 0; slot < slots; ++slot) {
-                const std::uint32_t flat = oldBase + slot;
-                if (engine.busSends[flat].target == to &&
-                    engine.busSends[flat].ownerCookie ==
-                        revision.handle) {
-                    chosen = flat;
-                    break;
-                }
-            }
-        }
-        const std::uint32_t base = from * slots;
-        if (chosen == kInvalidBusIndex) {
-            for (std::uint32_t slot = 0; slot < slots; ++slot) {
-                if (revision.prospectiveSendTargets[base + slot] ==
-                    kInvalidBusIndex) {
-                    chosen = base + slot;
-                    break;
-                }
-            }
-        }
-        if (chosen == kInvalidBusIndex) {
-            return false;
-        }
-        revision.prospectiveSendTargets[chosen] = to;
-        revision.prospectiveSendOwners[chosen] = revision.handle;
-        revision.prospectiveSendTopologyOwners[chosen] = 0;
-        revision.prospectiveSendLevels[chosen] =
-            send.levelDb == 0.0f
-                ? 1.0f
-                : std::pow(10.0f, send.levelDb / 20.0f);
-        revision.prospectiveSendLevelsDb[chosen] = send.levelDb;
-        const bool retained =
-            chosen < static_cast<std::size_t>(oldCount) * slots &&
-            engine.busSends[chosen].target == to &&
-            engine.busSends[chosen].ownerCookie == revision.handle;
-        revision.prospectiveSendLevelApply[chosen] =
-            !retained ||
-                    engine.busSends[chosen].levelDb != send.levelDb
-                ? 1
-                : 0;
+        const auto* prior = engine.busSends.Find(from, to);
+        const bool retained = prior && prior->ownerCookie == revision.handle &&
+            revision.prospectiveBusGenerations[from] == engine.buses.GenerationAt(from) &&
+            revision.prospectiveBusGenerations[to] == engine.buses.GenerationAt(to);
+        if (retained != (retainedPass != 0)) continue;
+        if (candidateSends.Find(from, to)) return false;
+        BusSendRecord edge;
+        edge.source = from;
+        edge.target = to;
+        edge.slot = retained ? prior->slot : UINT32_MAX;
+        edge.ownerCookie = revision.handle;
+        edge.generation = retained ? prior->generation : engine.NewBusSendGeneration();
+        if (edge.generation == 0) return false;
+        edge.levelDb = send.levelDb;
+        edge.preparedGain = send.levelDb == 0.0f ? 1.0f : std::pow(10.0f, send.levelDb / 20.0f);
+        edge.applyLevel = !retained || prior->levelDb != send.levelDb;
+        candidateSends.Add(edge);
+    }
     }
     for (const PackBusEntry& bus : revision.image.buses) {
         const std::uint32_t index = findBus(bus.busId);
@@ -126360,8 +126025,11 @@ bool PrepareRevisionProspectiveTopology(
         revision.prospectiveBusOutputVolumeDb[index] = bus.outputBusVolume;
         revision.prospectiveBusVolumeApply[index] = apply;
     }
+    revision.prospectiveSends.Swap(candidateSends);
     revision.prospectiveBusCount = count;
     return true;
+} catch (...) {
+    return false;
 }
 
 void StampRevisionMigrationTargets(
@@ -127342,24 +127010,9 @@ VnResult ApplyPreparedPackTransaction(
             revision.prospectiveAlive.data(), revision.prospectiveBusCount);
     }
     if (revision.needsPlan) {
-        const std::uint32_t slots =
-            engine.config.busSendSlotsPerBus;
-        const std::size_t flatCount =
-            static_cast<std::size_t>(
-                revision.prospectiveBusCount) *
-            slots;
-        for (std::size_t flat = 0; flat < flatCount; ++flat) {
-            engine.busSends[flat] = {revision.prospectiveSendTargets[flat],
-                revision.prospectiveSendLevelsDb[flat],
-                revision.prospectiveSendOwners[flat],
-                revision.prospectiveSendTopologyOwners[flat]};
-        }
-        engine.busSendActive = 0;
-        for (std::size_t flat = 0; flat < flatCount; ++flat) {
-            if (engine.busSends[flat].target != kInvalidBusIndex) {
-                ++engine.busSendActive;
-            }
-        }
+        revision.prospectiveSends.ClearActions();
+        engine.busSends.Swap(revision.prospectiveSends);
+        engine.busSendActive = engine.busSends.Count();
         UpdateSendHighWater(engine);
     }
     for (Spatializer::PreparedProfileToken& token :
@@ -127672,15 +127325,6 @@ VnResult PrepareAndApplyInitialPackLogic(
         return VN_INVALID_CONFIG;
     }
     const std::size_t busCapacity = engine.config.maxBuses;
-    const std::size_t sendSlots =
-        engine.config.busSendSlotsPerBus;
-    if (sendSlots != 0 &&
-        busCapacity >
-            (std::numeric_limits<std::size_t>::max)() /
-                sendSlots) {
-        return VN_INVALID_CONFIG;
-    }
-    const std::size_t sendCapacity = busCapacity * sendSlots;
 
     // Every allocation is complete before the Pack token or any runtime
     // reservation is acquired.
@@ -127711,12 +127355,6 @@ VnResult PrepareAndApplyInitialPackLogic(
         revision.prospectiveBusGenerations.resize(busCapacity);
         revision.prospectiveParents.resize(busCapacity);
         revision.prospectiveAlive.resize(busCapacity);
-        revision.prospectiveSendTargets.resize(sendCapacity);
-        revision.prospectiveSendOwners.resize(sendCapacity);
-        revision.prospectiveSendTopologyOwners.resize(sendCapacity);
-        revision.prospectiveSendLevels.resize(sendCapacity);
-        revision.prospectiveSendLevelsDb.resize(sendCapacity);
-        revision.prospectiveSendLevelApply.resize(sendCapacity);
         revision.prospectiveBusVolumeDb.resize(busCapacity);
         revision.prospectiveBusOutputVolumeDb.resize(busCapacity);
         revision.prospectiveBusVolumeApply.resize(busCapacity);
@@ -127865,12 +127503,7 @@ VnResult PrepareAndApplyInitialPackLogic(
         prospective.parents =
             revision.prospectiveParents.data();
         prospective.alive = revision.prospectiveAlive.data();
-        prospective.sendTargets =
-            revision.prospectiveSendTargets.data();
-        prospective.sendLevels =
-            revision.prospectiveSendLevels.data();
-        prospective.sendLevelApply =
-            revision.prospectiveSendLevelApply.data();
+        prospective.sends = &revision.prospectiveSends;
         prospective.feederCount =
             revision.topologyFeederCount.data();
         prospective.emittedFeeders =
@@ -128100,18 +127733,10 @@ VnResult ReplacePackV2(Engine& engine, VnPackHandle handle,
     revision.preparedBusSlots.resize(revision.addBuses.size());
     if (revision.needsPlan) {
         const std::size_t busCapacity = engine.config.maxBuses;
-        const std::size_t sendCapacity =
-            busCapacity * engine.config.busSendSlotsPerBus;
         revision.prospectiveBusIds.resize(busCapacity);
         revision.prospectiveBusGenerations.resize(busCapacity);
         revision.prospectiveParents.resize(busCapacity);
         revision.prospectiveAlive.resize(busCapacity);
-        revision.prospectiveSendTargets.resize(sendCapacity);
-        revision.prospectiveSendOwners.resize(sendCapacity);
-        revision.prospectiveSendTopologyOwners.resize(sendCapacity);
-        revision.prospectiveSendLevels.resize(sendCapacity);
-        revision.prospectiveSendLevelsDb.resize(sendCapacity);
-        revision.prospectiveSendLevelApply.resize(sendCapacity);
         revision.prospectiveBusVolumeDb.resize(busCapacity);
         revision.prospectiveBusOutputVolumeDb.resize(busCapacity);
         revision.prospectiveBusVolumeApply.resize(busCapacity);
@@ -128356,12 +127981,7 @@ void ActivatePendingPackRevisions(Engine& engine) {
                             revision.prospectiveParents.data();
                         prospective.alive =
                             revision.prospectiveAlive.data();
-                        prospective.sendTargets =
-                            revision.prospectiveSendTargets.data();
-                        prospective.sendLevels =
-                            revision.prospectiveSendLevels.data();
-                        prospective.sendLevelApply =
-                            revision.prospectiveSendLevelApply.data();
+                        prospective.sends = &revision.prospectiveSends;
                         prospective.feederCount =
                             revision.topologyFeederCount.data();
                         prospective.emittedFeeders =
@@ -128509,12 +128129,7 @@ void ActivatePendingPackRevisions(Engine& engine) {
                 revision.prospectiveBusGenerations.data();
             prospective.parents = revision.prospectiveParents.data();
             prospective.alive = revision.prospectiveAlive.data();
-            prospective.sendTargets =
-                revision.prospectiveSendTargets.data();
-            prospective.sendLevels =
-                revision.prospectiveSendLevels.data();
-            prospective.sendLevelApply =
-                revision.prospectiveSendLevelApply.data();
+            prospective.sends = &revision.prospectiveSends;
             prospective.feederCount =
                 revision.topologyFeederCount.data();
             prospective.emittedFeeders =
@@ -130824,83 +130439,40 @@ VnResult PreparePackGraphV1(Engine& engine, const PackCanonicalImage* image,
         indexes.emplace(id, static_cast<std::uint32_t>(ids.size()));
         ids.push_back(id);
     }
-    const auto sendSlots = engine.config.busSendSlotsPerBus;
     std::vector<std::uint32_t> parents(ids.size(), 0), generations(ids.size(), 1);
     std::vector<std::uint8_t> alive(ids.size(), 1);
-    std::vector<std::uint32_t> targets(ids.size() * sendSlots, kEmptySendTarget);
-    std::vector<float> levels(targets.size(), 0.0f);
-    std::vector<std::uint8_t> levelApply(targets.size(), 0);
-    std::vector<std::uint8_t> foreignTarget(targets.size(), 0);
-    struct PlannedSend {
-        VnBusId source{};
-        VnBusId target{};
-        float levelDb = 0.0f;
-        std::uint32_t oldSlot = UINT32_MAX;
-        std::uint64_t topologyOwner = 0;
-        VnPackHandle packOwner = 0;
-        bool foreign = false;
-    };
-    std::vector<PlannedSend> plannedSends;
+    BusSendTable sends;
     const auto oldHandle = out.basePublication != nullptr
         ? out.basePublication->initHandle : 0;
     for (const auto& [id, row] : graph) {
         const auto index = indexes.at(id);
         parents[index] = id == VN_BUS_MASTER ? index : indexes.at(row.first);
     }
-    for (std::uint32_t source = 0; source < engine.buses.BusCount(); ++source) {
-        if (!engine.buses.AliveAt(source)) continue;
-        for (std::uint32_t slot = 0; slot < sendSlots; ++slot) {
-            const auto flat = static_cast<std::size_t>(source) * sendSlots + slot;
-            const auto target = engine.busSends[flat].target;
-            if (target == kEmptySendTarget || target == kInvalidBusIndex ||
-                (oldHandle != 0 && engine.busSends[flat].ownerCookie == oldHandle))
-                continue;
-            if (target >= engine.buses.BusCount() || !engine.buses.AliveAt(target) ||
-                !graph.contains(engine.buses.IdAt(source)) ||
-                !graph.contains(engine.buses.IdAt(target)) ||
-                !TryVolumeGainFromDb(engine.busSends[flat].levelDb))
-                return VN_IN_USE;
-            plannedSends.push_back({engine.buses.IdAt(source), engine.buses.IdAt(target),
-                engine.busSends[flat].levelDb, slot, engine.busSends[flat].topologyOwnerId,
-                engine.busSends[flat].ownerCookie, true});
-        }
+    for (auto edge : engine.busSends.Records()) {
+        if (oldHandle != 0 && edge.ownerCookie == oldHandle) continue;
+        if (!engine.buses.AliveAt(edge.source) || !engine.buses.AliveAt(edge.target) ||
+            !graph.contains(engine.buses.IdAt(edge.source)) ||
+            !graph.contains(engine.buses.IdAt(edge.target))) return VN_IN_USE;
+        edge.source = indexes.at(engine.buses.IdAt(edge.source));
+        edge.target = indexes.at(engine.buses.IdAt(edge.target));
+        edge.applyLevel = false;
+        sends.Add(edge);
     }
     if (image != nullptr) {
-        for (const auto& send : snapshotSends)
-            plannedSends.push_back({send.source, send.target, send.levelDb});
-    }
-    {
-        std::vector<std::uint32_t> used(ids.size(), 0);
-        for (const auto& send : plannedSends) {
-            const VnBusId source = send.source;
-            const VnBusId target = send.target;
-            const auto sourceIt = indexes.find(source);
-            const auto targetIt = indexes.find(target);
-            if (sourceIt == indexes.end() || targetIt == indexes.end() ||
-                source == target) {
-                return send.foreign ? VN_IN_USE : VN_BAD_PACK;
-            }
-            const auto from = sourceIt->second;
-            const auto to = targetIt->second;
-            for (std::uint32_t slot = 0; slot < used[from]; ++slot) {
-                if (targets[static_cast<std::size_t>(from) * sendSlots + slot] ==
-                    to) {
-                    return foreignTarget[static_cast<std::size_t>(from) * sendSlots + slot]
-                        ? VN_IN_USE : VN_BAD_PACK;
-                }
-            }
-            if (used[from] >= sendSlots) {
-                return VN_NO_BUS;
-            }
-            if (!TryVolumeGainFromDb(send.levelDb))
-                return send.foreign ? VN_IN_USE : VN_BAD_PACK;
-            const auto flat =
-                static_cast<std::size_t>(from) * sendSlots + used[from];
-            targets[flat] = to;
-            levels[flat] = send.levelDb;
-            levelApply[flat] = 1;
-            foreignTarget[flat] = static_cast<std::uint8_t>(send.foreign);
-            ++used[from];
+        for (const auto& send : snapshotSends) {
+            if (!indexes.contains(send.source) || !indexes.contains(send.target) ||
+                send.source == send.target || !TryVolumeGainFromDb(send.levelDb)) return VN_BAD_PACK;
+            const auto from = indexes.at(send.source), to = indexes.at(send.target);
+            if (const auto* existing = sends.Find(from, to))
+                return existing->generation != 0 ? VN_IN_USE : VN_BAD_PACK;
+            BusSendRecord edge;
+            edge.source = from;
+            edge.target = to;
+            edge.levelDb = send.levelDb;
+            edge.ownerCookie = initHandle;
+            edge.preparedGain = std::pow(10.0f, send.levelDb / 20.0f);
+            edge.applyLevel = true;
+            sends.Add(edge);
         }
     }
     ProspectiveTopologyView view{};
@@ -130909,74 +130481,46 @@ VnResult PreparePackGraphV1(Engine& engine, const PackCanonicalImage* image,
     view.parents = parents.data();
     view.generations = generations.data();
     view.alive = alive.data();
-    view.sendTargets = targets.data();
-    view.sendLevels = levels.data();
-    view.sendLevelApply = levelApply.data();
+    view.sends = &sends;
     std::vector<std::uint32_t> feederScratch(ids.size(), 0);
     std::vector<std::uint32_t> emittedFeederScratch(ids.size(), 0);
     std::vector<std::uint8_t> emittedScratch(ids.size(), 0);
     view.feederCount = feederScratch.data();
     view.emittedFeeders = emittedFeederScratch.data();
     view.emitted = emittedScratch.data();
-    if (!ProspectiveTopologyIsAcyclic(engine, &view)) {
-        return VN_BAD_PACK;
-    }
-    if (!BuildSlotPlanFromProspective(engine, &view, 0, out.slotPlan)) {
-        return VN_NO_BUS;
-    }
-    out.slotPlan.sendLevelRampMs.assign(out.slotPlan.sendTargets.size(), 0);
-    std::fill(out.slotPlan.sendTargets.begin(), out.slotPlan.sendTargets.end(), kEmptySendTarget);
-    std::fill(out.slotPlan.sendLevels.begin(), out.slotPlan.sendLevels.end(), 0.0f);
-    std::fill(out.slotPlan.sendLevelApply.begin(), out.slotPlan.sendLevelApply.end(), 0);
-    std::vector<std::uint8_t> occupied(out.slotPlan.sendTargets.size(), 0);
-    for (const auto& send : plannedSends) {
-        if (!send.foreign) continue;
-        const auto source = FindAssignedSlot(out.slotPlan, send.source);
-        const auto target = FindAssignedSlot(out.slotPlan, send.target);
-        const auto oldSource = engine.buses.FindIndex(send.source);
-        if (source == UINT32_MAX || target == UINT32_MAX || source != oldSource)
-            return VN_IN_USE;
-        const auto flat = static_cast<std::size_t>(source) * sendSlots + send.oldSlot;
-        if (flat >= occupied.size() || occupied[flat]) return VN_IN_USE;
-        occupied[flat] = 1;
-        out.slotPlan.sendTargets[flat] = target;
-        out.slotPlan.sendLevels[flat] = send.levelDb;
-    }
-    for (const auto& send : plannedSends) {
-        if (send.foreign) continue;
-        const auto source = FindAssignedSlot(out.slotPlan, send.source);
-        const auto target = FindAssignedSlot(out.slotPlan, send.target);
-        const auto oldSource = engine.buses.FindIndex(send.source);
-        if (source == UINT32_MAX || target == UINT32_MAX) return VN_BAD_PACK;
-        std::uint32_t chosen = UINT32_MAX;
-        if (oldHandle != 0 && oldSource != kInvalidBusIndex) {
-            for (std::uint32_t slot = 0; slot < sendSlots; ++slot) {
-                const auto oldFlat = static_cast<std::size_t>(oldSource) * sendSlots + slot;
-                const auto oldTarget = engine.busSends[oldFlat].target;
-                const auto flat = static_cast<std::size_t>(source) * sendSlots + slot;
-                if (oldTarget < engine.buses.BusCount() && engine.buses.AliveAt(oldTarget) &&
-                    engine.buses.IdAt(oldTarget) == send.target &&
-                    engine.busSends[oldFlat].ownerCookie == oldHandle && !occupied[flat]) {
-                    chosen = slot;
-                    break;
-                }
-            }
+    if (!ProspectiveTopologyIsAcyclic(engine, &view)) return VN_BAD_PACK;
+    if (!BuildSlotPlanFromProspective(engine, &view, 0, out.slotPlan)) return VN_NO_BUS;
+    BusSendTable remappedSends;
+    remappedSends.Reserve(sends.Count());
+    // Reserve continuing ordinals before filling holes with newly authored edges.
+    for (int retainedPass = 1; retainedPass >= 0; --retainedPass) {
+        for (auto edge : sends.Records()) {
+            const auto sourceId = ids[edge.source], targetId = ids[edge.target];
+            const auto source = FindAssignedSlot(out.slotPlan, sourceId);
+            const auto target = FindAssignedSlot(out.slotPlan, targetId);
+            const auto oldSource = engine.buses.FindIndex(sourceId);
+            const auto oldTarget = engine.buses.FindIndex(targetId);
+            const auto* prior = engine.busSends.Find(oldSource, oldTarget);
+            const bool foreign = edge.generation != 0;
+            const bool retained = prior && source == oldSource && target == oldTarget &&
+                out.slotPlan.generations[source] == engine.buses.GenerationAt(source) &&
+                out.slotPlan.generations[target] == engine.buses.GenerationAt(target) &&
+                (foreign ? prior->generation == edge.generation :
+                    oldHandle != 0 && prior->ownerCookie == oldHandle && oldHandle == initHandle);
+            if (foreign && !retained) return VN_IN_USE;
+            if (retained != (retainedPass != 0)) continue;
+            edge.source = source;
+            edge.target = target;
+            edge.slot = retained ? prior->slot : UINT32_MAX;
+            edge.generation = retained ? prior->generation : engine.NewBusSendGeneration();
+            if (edge.generation == 0) return VN_RUNTIME_RECREATE_REQUIRED;
+            edge.applyLevel = !foreign && (!retained || prior->levelDb != edge.levelDb);
+            edge.rampMs = retained && edge.applyLevel && image != nullptr &&
+                image->busDefinitionSnapshotHeader.publicationCapabilityVintage >= 4 ? 20u : 0u;
+            remappedSends.Add(edge);
         }
-        const bool retained = chosen != UINT32_MAX;
-        for (std::uint32_t slot = 0; chosen == UINT32_MAX && slot < sendSlots; ++slot) {
-            if (!occupied[static_cast<std::size_t>(source) * sendSlots + slot]) chosen = slot;
-        }
-        if (chosen == UINT32_MAX) return VN_NO_BUS;
-        const auto flat = static_cast<std::size_t>(source) * sendSlots + chosen;
-        occupied[flat] = 1;
-        out.slotPlan.sendTargets[flat] = target;
-        out.slotPlan.sendLevels[flat] = send.levelDb;
-        const bool changed = !retained || engine.busSends[
-            static_cast<std::size_t>(oldSource) * sendSlots + chosen].levelDb != send.levelDb;
-        out.slotPlan.sendLevelApply[flat] = static_cast<std::uint8_t>(changed);
-        out.slotPlan.sendLevelRampMs[flat] = retained && changed && image != nullptr &&
-            image->busDefinitionSnapshotHeader.publicationCapabilityVintage >= 4 ? 20u : 0u;
     }
+    out.slotPlan.sends.Swap(remappedSends);
     const auto capacity = engine.config.maxBuses;
     const auto oldCount = engine.buses.BusCount();
     out.slotPlan.preservesForeign = true;
@@ -130986,21 +130530,6 @@ VnResult PreparePackGraphV1(Engine& engine, const PackCanonicalImage* image,
     out.slotPlan.busCount = std::max(out.slotPlan.busCount, oldCount);
     out.slotPlan.busOwnerIds = engine.busTopologyOwnerIds;
     out.slotPlan.busCookies = engine.busOwnerCookies;
-    out.slotPlan.sendOwnerIds.assign(out.slotPlan.sendTargets.size(), 0);
-    out.slotPlan.sendCookies.assign(out.slotPlan.sendTargets.size(), 0);
-    out.slotPlan.sendLevelDb.assign(out.slotPlan.sendTargets.size(), 0.0f);
-    for (const auto& send : plannedSends) {
-        const auto source = FindAssignedSlot(out.slotPlan, send.source);
-        const auto target = FindAssignedSlot(out.slotPlan, send.target);
-        for (std::uint32_t slot = 0; slot < sendSlots; ++slot) {
-            const auto flat = static_cast<std::size_t>(source) * sendSlots + slot;
-            if (out.slotPlan.sendTargets[flat] != target) continue;
-            out.slotPlan.sendOwnerIds[flat] = send.topologyOwner;
-            out.slotPlan.sendCookies[flat] = send.foreign ? send.packOwner : initHandle;
-            out.slotPlan.sendLevelDb[flat] = send.levelDb;
-            break;
-        }
-    }
     out.slotPlan.neutralSlots.assign(capacity, 0);
     if (volumeOnly || (image == nullptr && oldHandle != 0 &&
         std::any_of(engine.busEffectOwnerCookies[0].begin(), engine.busEffectOwnerCookies[0].end(),
@@ -131057,22 +130586,7 @@ VnResult PreparePackGraphV1(Engine& engine, const PackCanonicalImage* image,
     }
     ProspectiveTopologyView remapped{};
     ApplySlotPlanToProspective(out.slotPlan, remapped);
-    std::vector<float> linear = out.slotPlan.sendLevels;
-    for (auto& value : linear) { value = std::pow(10.0f, value / 20.0f); }
-    remapped.sendLevels = linear.data();
     FillLiveOrPreparedPlan(engine, engine.topologyPlans, out.planIndex, &remapped);
-    if (image != nullptr &&
-        image->busDefinitionSnapshotHeader.publicationCapabilityVintage >= 4) {
-        for (std::uint32_t slot = 0; slot < out.slotPlan.busCount; ++slot) {
-            auto* ramps = engine.topologyPlans.SendLevelRampMsRow(out.planIndex, slot);
-            const auto preparedPlan = engine.topologyPlans.View(out.planIndex);
-            const auto range = preparedPlan.Sends(slot);
-            for (std::uint32_t send = 0; send < range.count; ++send)
-                ramps[send] = out.slotPlan.sendLevelRampMs[
-                    static_cast<std::size_t>(slot) * sendSlots +
-                    preparedPlan.LogicalSendSlot(range.first + send)];
-        }
-    }
     out.volumeOnly = volumeOnly;
     // Publication v5 owns its snapshot rows. Older publications retain their
     // sidecar effects through the same atomic installer.

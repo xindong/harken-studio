@@ -136,6 +136,7 @@ bool TopologyPlanPool::CopyPlanFrom(const TopologyPlanPool& source,
         SendStorage next;
         next.ranges = prior.ranges;
         next.slots = prior.slots;
+        next.generations = prior.generations;
         next.targets = prior.targets;
         next.levels = prior.levels;
         next.apply = prior.apply;
@@ -258,6 +259,7 @@ bool TopologyPlanPool::PrepareSendRows(std::uint32_t planIndex,
             first += counts[i];
         }
         next.slots.resize(static_cast<std::size_t>(total));
+        next.generations.assign(static_cast<std::size_t>(total), 0);
         next.targets.assign(static_cast<std::size_t>(total), kEmptySendTarget);
         next.levels.assign(static_cast<std::size_t>(total), 0.0f);
         next.apply.assign(static_cast<std::size_t>(total), 0);
@@ -280,6 +282,7 @@ bool TopologyPlanPool::ReserveSendCapacity(std::uint32_t planIndex, std::uint32_
         };
         reserve(next.ranges, m_busCapacity);
         reserve(next.slots, count);
+        reserve(next.generations, count);
         reserve(next.targets, count);
         reserve(next.levels, count);
         reserve(next.apply, count);
@@ -294,6 +297,13 @@ std::uint32_t* TopologyPlanPool::SendSlotsRow(std::uint32_t planIndex,
     auto& sends = m_sends[planIndex];
     return sends.slots.empty() ? nullptr
         : sends.slots.data() + sends.ranges[fromBus].first;
+}
+
+std::uint64_t* TopologyPlanPool::SendGenerationsRow(std::uint32_t planIndex,
+    std::uint32_t fromBus) {
+    auto& sends = m_sends[planIndex];
+    return sends.generations.empty() ? nullptr
+        : sends.generations.data() + sends.ranges[fromBus].first;
 }
 
 std::uint32_t* TopologyPlanPool::SendTargetsRow(std::uint32_t planIndex,
@@ -391,6 +401,7 @@ TopologyPlanView TopologyPlanPool::View(std::uint32_t planIndex) const {
     const auto& sends = m_sends[planIndex];
     v.sendRanges = sends.ranges.data();
     v.sendSlots = sends.slots.data();
+    v.sendGenerations = sends.generations.data();
     v.sendTargets = sends.targets.data();
     v.preparedSendLevels = sends.levels.data();
     v.sendLevelApply = sends.apply.data();

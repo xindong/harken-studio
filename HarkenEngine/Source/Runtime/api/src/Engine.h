@@ -7666,9 +7666,6 @@ public:
         spatial.AttachRetainedProfileStorage(this, [](void* context, std::size_t live, std::size_t retained) noexcept {
             return static_cast<Engine*>(context)->PrepareRetainedProfileKeyStorage(live, retained);
         });
-        // Logic owns all Send settings and provenance in one record.
-        busSends.resize(static_cast<std::size_t>(resolved.maxBuses) *
-                        resolved.busSendSlotsPerBus);
         busOwnerCookies.assign(resolved.maxBuses, 0);
         busTopologyOwnerIds.assign(resolved.maxBuses, 0);
         busTopologyOwners.assign(resolved.maxBusTopologyOwners,
@@ -15649,14 +15646,13 @@ public:
 
     // Logic-owned Send records. Topology publication copies membership;
     // audio state never reads or mutates this storage.
-    struct BusSendRecord {
-        std::uint32_t target = kInvalidBusIndex;
-        float levelDb = 0.0f;
-        VnPackHandle ownerCookie = 0;
-        std::uint64_t topologyOwnerId = 0;
-        bool operator==(const BusSendRecord&) const = default;
-    };
-    std::vector<BusSendRecord> busSends;
+    BusSendTable busSends;
+    std::uint64_t nextBusSendGeneration = 1;
+    std::uint64_t NewBusSendGeneration() {
+        if (nextBusSendGeneration == UINT64_MAX)
+            throw std::length_error("Bus Send generation exhausted");
+        return nextBusSendGeneration++;
+    }
     std::vector<VnPackHandle> busOwnerCookies;
     struct TopologyRetirementV1 {
         std::uint32_t generation = 0;

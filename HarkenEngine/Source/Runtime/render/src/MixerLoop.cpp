@@ -126,7 +126,6 @@ MixerLoop::MixerLoop(const EngineConfig& config, VoicePool& voices,
       m_arena(config.arenaBytes, BlockArena::BackingMode::OnDemand),
       m_arenaLowBytes(static_cast<std::uint64_t>(config.maxBuses) *
                       config.mixChannelCount * config.blockFrames * sizeof(float)),
-      m_busSendSlots(config.busSendSlotsPerBus),
       m_busFxSlots(config.fxSlotsPerBus),
       m_dynamicRouteCapacity(config.dynamicRouteCapacity),
       m_arenaBytesPerSlot(std::min<std::uint64_t>(config.arenaBytes,
@@ -218,7 +217,7 @@ std::uint64_t MixerLoop::SignalScratchBytes(std::uint32_t slots, std::uint32_t n
     const auto graphNodes = nodes + extra;
     if (graphNodes > UINT32_MAX) return UINT64_MAX;
     const std::uint64_t edges = extra + m_dynamicRouteCapacity +
-        static_cast<std::uint64_t>(m_maxBuses) * (m_busSendSlots + 1ull) +
+        static_cast<std::uint64_t>(m_maxBuses) + m_buses.RetainedSendCount() +
         relations + m_voices.PreparedSignalPathRows(slots) +
         static_cast<std::uint64_t>(slots) * (kMaxVoiceSendSlots + 1ull);
     return SignalRenderPlan::RoutingScratchBytes(static_cast<std::uint32_t>(graphNodes), m_maxBuses, edges, m_blockFrames);
@@ -238,7 +237,7 @@ std::uint64_t MixerLoop::RetainedSignalScratchBytes(std::uint32_t slots) const n
     const auto extra = m_dynamicRouteCapacity == 0 ? 0ull :
         static_cast<std::uint64_t>(m_maxBuses) * (m_busFxSlots + 2ull);
     const auto edges = extra + m_dynamicRouteCapacity +
-        static_cast<std::uint64_t>(m_maxBuses) * (m_busSendSlots + 1ull) +
+        static_cast<std::uint64_t>(m_maxBuses) + m_buses.RetainedSendCount() +
         m_voices.PreparedSignalPathRows(slots) +
         static_cast<std::uint64_t>(slots) * (kMaxVoiceSendSlots + 1ull);
     return m_buses.RetainedSignalScratchBytes(extra, edges, m_blockFrames);
@@ -1502,7 +1501,8 @@ std::uint32_t MixerLoop::DrainRawCommands(std::uint64_t blockIndex,
                 command.payload.setBusSendLevel.levelDb,
                 command.payload.setBusSendLevel.rampMs,
                 command.payload.setBusSendLevel.fromGeneration,
-                command.payload.setBusSendLevel.toGeneration);
+                command.payload.setBusSendLevel.toGeneration,
+                command.payload.setBusSendLevel.sendGeneration);
             break;
         case kOpcodeSetBusEffect:
             m_buses.ApplySetBusEffect(command.payload.setBusEffect.busIndex,

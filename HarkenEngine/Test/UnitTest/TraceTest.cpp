@@ -51,8 +51,8 @@ static_assert(VN_TRACE_TOO_LATE == -318,
               "trace gate refusal sits in the -3xx state band");
 static_assert(VN_BAD_TRACE_FILE == -403,
               "trace file refusal sits in the -4xx system band");
-static_assert(harken::kTraceFormatVersion == 7,
-              "the portable semantic trace format is VTRC v6");
+static_assert(harken::kTraceFormatVersion == 8,
+              "the portable semantic trace format is VTRC v8");
 static_assert(harken::kTraceCaptureResultFeature == 0x52504356u &&
                   harken::kTraceCaptureResultVintage == 1u &&
                   harken::kTraceCaptureResultTailBytes == 16u &&
@@ -2542,7 +2542,7 @@ TEST(Trace, IllegalUtf8StreamPathDuringActiveTraceRefusedAndSurvives) {
 TEST(Trace, ProjectGenerationInstallAckRecordIsFortyByteLayout) {
     EXPECT_EQ(harken::kTraceRecordProjectGenerationInstallAck, 14);
     EXPECT_EQ(harken::kTraceRecordPreparedTopologyPlan, 15);
-    EXPECT_EQ(harken::kTracePreparedTopologyPlanVintage, 1u);
+    EXPECT_EQ(harken::kTracePreparedTopologyPlanVintage, 2u);
     EXPECT_EQ(harken::kTraceCurrentWorldInstallPairedTailBytes, 52u);
     EXPECT_EQ(harken::kTracePreviewPlayPairedTailBytes, 52u);
     EXPECT_EQ(harken::kTracePostActionPairedTailBytes, 52u);

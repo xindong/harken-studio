@@ -785,9 +785,8 @@ TEST(BusSend, ConnectRefusesTreePlusSendCycle) {
     EXPECT_EQ(VN_SEND_CYCLE, Vn_ConnectBusSend(kBusA, kBusB, 0.0f));
 }
 
-// Per-bus send-slot capacity: connecting more than busSendSlotsPerBus distinct
-// targets from one bus is refused VN_NO_SEND and counted.
-TEST(BusSend, ConnectRefusesWhenSendSlotsExhausted) {
+// The legacy configuration field does not limit actual Send membership.
+TEST(BusSend, ConnectGrowsBeyondLegacySendSlots) {
     VnConfig config = MakeNullConfig(2, kBlockFrames);
     config.maxBuses = 6;
     config.busSendSlotsPerBus = 2;
@@ -801,12 +800,12 @@ TEST(BusSend, ConnectRefusesWhenSendSlotsExhausted) {
     ASSERT_EQ(VN_OK, Vn_CreateBus(kBusD, VN_BUS_MASTER));
     ASSERT_EQ(VN_OK, Vn_ConnectBusSend(kBusA, kBusB, 0.0f));
     ASSERT_EQ(VN_OK, Vn_ConnectBusSend(kBusA, kBusC, 0.0f));
-    // A's two send slots are full; a third distinct target is refused.
-    EXPECT_EQ(VN_NO_SEND, Vn_ConnectBusSend(kBusA, kBusD, 0.0f));
+    // A third distinct target grows the sparse row.
+    EXPECT_EQ(VN_OK, Vn_ConnectBusSend(kBusA, kBusD, 0.0f));
     VnSnapshot s{};
     s.structSize = sizeof(VnSnapshot);
     Vn_CaptureSnapshot(&s);
-    EXPECT_EQ(1u, s.noSendCount);
+    EXPECT_EQ(0u, s.noSendCount);
 }
 
 // A send-level change is not a structural change: it republishes no plan, so the
@@ -1594,4 +1593,63 @@ TEST(BusSend, FormalFeedbackRecoversThroughActiveEffectsAndParameterTransitions)
         EXPECT_LE(std::sqrt(squared / 12000), 2e-6);
         EXPECT_GT(activeDifference, 1e-4);
     }
+}
+
+TEST(BusSend, SixteenDestinationsRenderThroughFormalSignalRouting) {
+    auto config = MakeNullConfig(2, kBlockFrames);
+    config.maxBuses = 20;
+    config.busSendSlotsPerBus = 1;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    Capture warm;
+    const auto drain = [&] { PumpAndCapture(engine, 1, warm); EXPECT_EQ(VN_OK, Vn_Update()); };
+    ASSERT_EQ(VN_OK, Vn_CreateBus(kBusA, VN_BUS_MASTER));
+    drain();
+    const auto detector = harkentest::ObjectId(500);
+    ASSERT_EQ(VN_OK, Vn_CreateBus(detector, VN_BUS_MASTER));
+    drain();
+    harken::SignalReceiverV1 receiver;
+    receiver.target.stableId = kBusA;
+    harken::SignalRelationV1 relation;
+    relation.stableId = harkentest::ObjectId(501);
+    relation.source.stableId = detector;
+    relation.target = receiver.target;
+    harken::ContainerWorldInstallViewV1 world;
+    world.sourceBodyVintage = harken::kCurrentWorldBodyVintageV20;
+    world.signalRelations = &relation; world.signalRelationCount = 1;
+    world.signalReceivers = &receiver; world.signalReceiverCount = 1;
+    world.identity.capabilityMask = harken::kWorldCapabilitySignalRelations;
+    world.identity.runtimeSemanticFingerprint = harken::ComputeCurrentWorldFingerprintV7(world);
+    ASSERT_EQ(harken::WorldInstallStatus::Ok, harken::InstallContainerWorldV1(*engine, world).status);
+    drain();
+    for (std::uint32_t i = 0; i < 16; ++i) {
+        const auto target = harkentest::ObjectId(100 + i);
+        ASSERT_EQ(VN_OK, Vn_CreateBus(target, VN_BUS_MASTER));
+        drain();
+        ASSERT_EQ(VN_OK, Vn_ConnectBusSend(kBusA, target, 0));
+        drain();
+    }
+    // Shared destinations make total edges exceed the former Bus-count budget.
+    for (std::uint32_t from = 0; from < 8; ++from) {
+        for (std::uint32_t to = 8; to < 16; ++to) {
+            ASSERT_EQ(VN_OK, Vn_ConnectBusSend(harkentest::ObjectId(100 + from),
+                harkentest::ObjectId(100 + to), 0));
+            drain();
+        }
+    }
+    const auto dc = RegisterDc(0.01f);
+    auto play = MakePlayDesc(harkentest::ObjectId(1));
+    play.busId = kBusA; play.loopCount = 0;
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+    Capture out;
+    PumpAndCapture(engine, 4, out);
+    ASSERT_EQ(4 * kBlockFrames, out.left.size());
+    for (const auto sample : out.left) EXPECT_NEAR(0.81f, sample, 3.0e-6f);
+    ASSERT_EQ(VN_OK, Vn_SetBusSendLevel(kBusA, harkentest::ObjectId(115), -1000, 0));
+    ASSERT_EQ(VN_OK, Vn_DisconnectBusSend(kBusA, harkentest::ObjectId(100)));
+    out = {};
+    PumpAndCapture(engine, 2, out);
+    for (const auto sample : out.left) EXPECT_NEAR(0.71f, sample, 3.0e-6f);
 }

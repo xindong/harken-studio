@@ -285,7 +285,7 @@ typedef struct VnConfig {
     uint32_t randomSeed;            /* engine PRNG seed; 0 = documented default
                                      * constant */
     uint32_t voiceSendSlots;        /* per-voice send slots; 0 = 2 */
-    uint32_t busSendSlotsPerBus;    /* per-bus send-edge slots; 0 = 4 */
+    uint32_t busSendSlotsPerBus;    /* legacy hint; does not limit Bus Send count */
     uint32_t fxSlotsPerBus;         /* per-bus insert-effect slots; 0 = 8 */
     uint32_t topologyPlanPoolCapacity; /* published bus-topology plan pool;
                                         * 0 = 4 */
@@ -2992,8 +2992,8 @@ VnResult Vn_StopAll(uint32_t fadeMs);
  * The edge is additive: `toBus` receives a copy of `fromBus`'s finalized output
  * scaled by the level, on top of `toBus`'s own inputs. Refusals: an unknown bus
  * is VN_UNKNOWN_ID; fromBus == toBus (or a non-finite level) is VN_INVALID_ARG;
- * an already-connected edge is VN_IN_USE; a full per-bus send-slot table
- * (busSendSlotsPerBus) is VN_NO_SEND; an edge that would close a routing cycle
+ * an already-connected edge is VN_IN_USE; Send storage grows with actual edges.
+ * An edge that would close a routing cycle
  * through the combined tree+send graph is VN_SEND_CYCLE; and a full topology
  * plan pool or command queue is VN_BACKPRESSURE (retry after Vn_Update drains
  * plan retires, or after an audio block drains, respectively). Every refusal

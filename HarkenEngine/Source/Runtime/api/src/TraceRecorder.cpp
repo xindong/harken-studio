@@ -330,7 +330,7 @@ bool TraceRecorder::PrepareProjectGenerationTraceV1(
         out->prepared_ = true;
         return true;
     }
-    if (!plan.valid || plan.slotCount == 0 || plan.slotsPerBus == 0 ||
+    if (!plan.valid || plan.slotCount == 0 ||
         plan.busIds == nullptr || plan.parents == nullptr || plan.alive == nullptr ||
         (plan.sendTargets == nullptr && plan.sendRanges == nullptr) || !TokenIsPaired(token) ||
         result.status != WorldInstallStatus::Ok || recorder->m_appendFailed ||
@@ -339,9 +339,13 @@ bool TraceRecorder::PrepareProjectGenerationTraceV1(
         return false;
     }
     const std::uint64_t count = plan.slotCount;
-    const std::uint64_t sends = count * plan.slotsPerBus;
-    if (count > engine.config.maxBuses || plan.slotsPerBus > engine.config.busSendSlotsPerBus ||
-        sends > (1u << 20)) {
+    std::uint64_t sends = 0;
+    for (std::uint32_t bus = 0; bus < count; ++bus) {
+        const auto range = plan.Sends(bus);
+        for (std::uint32_t j = 0; j < range.count; ++j)
+            sends += plan.sendTargets[range.first + j] != kEmptySendTarget;
+    }
+    if (count > engine.config.maxBuses || sends > UINT32_MAX) {
         out->Reset();
         return false;
     }
@@ -353,7 +357,7 @@ bool TraceRecorder::PrepareProjectGenerationTraceV1(
             out->Reset();
             return false;
         }
-        const std::uint64_t topologyBytes = 16 + count * 32 + sends * 12;
+        const std::uint64_t topologyBytes = 16 + count * 32 + sends * 24;
         const std::uint64_t worldBytes = 32 + static_cast<std::uint64_t>(body.size()) + 52;
         const std::uint64_t totalBytes = topologyBytes + worldBytes + 2 * kTraceRecordHeaderBytes;
         if (topologyBytes > UINT32_MAX || worldBytes > UINT32_MAX ||
@@ -377,7 +381,7 @@ bool TraceRecorder::PrepareProjectGenerationTraceV1(
         header(static_cast<std::uint32_t>(topologyBytes), kTraceRecordPreparedTopologyPlan, out->ordinal_);
         u32(kTracePreparedTopologyPlanVintage);
         u32(plan.slotCount);
-        u32(plan.slotsPerBus);
+        u32(static_cast<std::uint32_t>(sends));
         u32(0);
         for (std::uint32_t i = 0; i < plan.slotCount; ++i) {
             const auto idBytes = ObjectIdBytes(plan.busIds[i]);
@@ -388,17 +392,23 @@ bool TraceRecorder::PrepareProjectGenerationTraceV1(
             u32(plan.alive[i]);
             u32(0);
         }
-        for (std::uint64_t i = 0; i < sends; ++i) {
-            const auto offset = plan.SendOffset(static_cast<std::uint32_t>(i / plan.slotsPerBus),
-                                                static_cast<std::uint32_t>(i % plan.slotsPerBus));
-            u32(offset == UINT32_MAX ? kEmptySendTarget : plan.sendTargets[offset]);
-            std::uint32_t bits = 0;
-            const float level = offset != UINT32_MAX && plan.preparedSendLevels != nullptr
-                ? plan.preparedSendLevels[offset] : 0.0f;
-            std::memcpy(&bits, &level, sizeof(bits));
-            u32(bits);
-            u32(offset != UINT32_MAX && plan.sendLevelApply != nullptr ? plan.sendLevelApply[offset] : 0);
+        for (std::uint32_t bus = 0; bus < count; ++bus) {
+            const auto range = plan.Sends(bus);
+            for (std::uint32_t j = 0; j < range.count; ++j) {
+                const auto offset = range.first + j;
+                if (plan.sendTargets[offset] == kEmptySendTarget) continue;
+                u32(bus);
+                u32(plan.sendTargets[offset]);
+                u32(plan.LogicalSendSlot(offset));
+                std::uint32_t bits = 0;
+                const float level = plan.preparedSendLevels != nullptr ? plan.preparedSendLevels[offset] : 1.0f;
+                std::memcpy(&bits, &level, sizeof(bits));
+                u32(bits);
+                u32(plan.sendLevelApply != nullptr ? plan.sendLevelApply[offset] : 0);
+                u32(plan.sendLevelRampMs != nullptr ? plan.sendLevelRampMs[offset] : 0);
+            }
         }
+
         header(static_cast<std::uint32_t>(worldBytes), kTraceRecordCurrentWorldInstall, out->ordinal_ + 1);
         u32(world.sourceBodyVintage);
         u32(0);
@@ -520,26 +530,27 @@ void TraceRecorder::RecordPreparedTopologyPlan(
     if (!m_active) {
         return;
     }
-    if (!plan.valid || plan.slotCount == 0 || plan.slotsPerBus == 0 ||
+    if (!plan.valid || plan.slotCount == 0 ||
         plan.busIds == nullptr || plan.parents == nullptr ||
         plan.alive == nullptr || (plan.sendTargets == nullptr && plan.sendRanges == nullptr)) {
         FailTrace();
         return;
     }
     const std::uint32_t n = plan.slotCount;
-    const std::uint32_t slots = plan.slotsPerBus;
-    const std::uint64_t sendCount =
-        static_cast<std::uint64_t>(n) * slots;
-    if (n > m_engine.config.maxBuses ||
-        slots > m_engine.config.busSendSlotsPerBus ||
-        sendCount > (1u << 20)) {
+    std::uint64_t sendCount = 0;
+    for (std::uint32_t bus = 0; bus < n; ++bus) {
+        const auto range = plan.Sends(bus);
+        for (std::uint32_t j = 0; j < range.count; ++j)
+            sendCount += plan.sendTargets[range.first + j] != kEmptySendTarget;
+    }
+    if (n > m_engine.config.maxBuses || 16ull + n * 32ull + sendCount * 24ull > UINT32_MAX) {
         FailTrace();
         return;
     }
     const std::size_t start = BeginRecord(kTraceRecordPreparedTopologyPlan);
     AppendU32(kTracePreparedTopologyPlanVintage);
     AppendU32(n);
-    AppendU32(slots);
+    AppendU32(static_cast<std::uint32_t>(sendCount));
     AppendU32(0);
     for (std::uint32_t i = 0; i < n; ++i) {
         AppendObjectId(plan.busIds[i]);
@@ -548,16 +559,21 @@ void TraceRecorder::RecordPreparedTopologyPlan(
         AppendU32(plan.alive[i]);
         AppendU32(0);
     }
-    for (std::uint64_t i = 0; i < sendCount; ++i) {
-        const auto offset = plan.SendOffset(static_cast<std::uint32_t>(i / slots),
-                                           static_cast<std::uint32_t>(i % slots));
-        AppendU32(offset == UINT32_MAX ? kEmptySendTarget : plan.sendTargets[offset]);
-        std::uint32_t bits = 0;
-        const float level = offset != UINT32_MAX && plan.preparedSendLevels != nullptr
-            ? plan.preparedSendLevels[offset] : 0.0f;
-        std::memcpy(&bits, &level, sizeof(bits));
-        AppendU32(bits);
-        AppendU32(offset != UINT32_MAX && plan.sendLevelApply != nullptr ? plan.sendLevelApply[offset] : 0);
+    for (std::uint32_t bus = 0; bus < n; ++bus) {
+        const auto range = plan.Sends(bus);
+        for (std::uint32_t j = 0; j < range.count; ++j) {
+            const auto offset = range.first + j;
+            if (plan.sendTargets[offset] == kEmptySendTarget) continue;
+            AppendU32(bus);
+            AppendU32(plan.sendTargets[offset]);
+            AppendU32(plan.LogicalSendSlot(offset));
+            std::uint32_t bits = 0;
+            const float level = plan.preparedSendLevels != nullptr ? plan.preparedSendLevels[offset] : 1.0f;
+            std::memcpy(&bits, &level, sizeof(bits));
+            AppendU32(bits);
+            AppendU32(plan.sendLevelApply != nullptr ? plan.sendLevelApply[offset] : 0);
+            AppendU32(plan.sendLevelRampMs != nullptr ? plan.sendLevelRampMs[offset] : 0);
+        }
     }
     CommitRecord(start);
 }
@@ -1467,9 +1483,6 @@ TraceCallScribe& TraceCallScribe::BusTopologyDesc(
         d->busStructSize == sizeof(VnBusTopologyBus) &&
         d->sendStructSize == sizeof(VnBusTopologySend) &&
         d->busCount < engine.config.maxBuses &&
-        d->sendCount <=
-            static_cast<std::uint64_t>(engine.config.maxBuses) *
-                engine.config.busSendSlotsPerBus &&
         (d->busCount == 0 || d->buses != nullptr) &&
         (d->sendCount == 0 || d->sends != nullptr);
     if (!valid) {

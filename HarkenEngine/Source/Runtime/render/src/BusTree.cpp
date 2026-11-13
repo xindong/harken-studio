@@ -18,6 +18,13 @@
 #include <limits>
 
 namespace harken {
+std::uint32_t BusTree::RetainedSendCount() const noexcept {
+    std::uint32_t result = 0;
+    for (std::uint32_t i = 0; i < m_plans.Capacity(); ++i)
+        if (m_plans.IsAcquired(i)) result = std::max(result, m_plans.View(i).sendCount);
+    return result;
+}
+
 std::uint64_t BusTree::RetainedSignalScratchBytes(std::uint64_t extraNodes,
     std::uint64_t extraEdges, std::uint32_t frames) const noexcept {
     std::uint64_t result = 0;
@@ -733,6 +740,8 @@ void BusTree::ApplyTopologyPlan(std::uint32_t planIndex,
             const auto priorSlot = sameSource ? previous.SendOffset(from, plan.LogicalSendSlot(planSlot))
                                               : UINT32_MAX;
             const bool retained = priorSlot != UINT32_MAX && previous.sendStates != nullptr &&
+                (plan.sendGenerations == nullptr || previous.sendGenerations == nullptr ||
+                 plan.sendGenerations[planSlot] == previous.sendGenerations[priorSlot]) &&
                 previous.sendStates[priorSlot].toIndex == target &&
                 (targetGeneration == 0 || previous.sendStates[priorSlot].toGeneration == targetGeneration);
             if (retained) edge = previous.sendStates[priorSlot];
@@ -788,7 +797,8 @@ void BusTree::ApplyTopologyPlan(std::uint32_t planIndex,
 void BusTree::ApplySetBusSendLevel(std::uint32_t fromBus, std::uint32_t toBus,
                                    float levelDb, std::uint32_t rampMs,
                                    std::uint32_t fromGeneration,
-                                   std::uint32_t toGeneration) {
+                                   std::uint32_t toGeneration,
+                                   std::uint64_t sendGeneration) {
     if ((fromGeneration != 0 &&
          !AudioRefMatches({fromBus, fromGeneration})) ||
         (toGeneration != 0 &&
@@ -796,6 +806,11 @@ void BusTree::ApplySetBusSendLevel(std::uint32_t fromBus, std::uint32_t toBus,
         return;
     }
     SendEdge* edge = FindEdge(fromBus, toBus);
+    if (edge != nullptr && sendGeneration != 0) {
+        const auto plan = m_plans.View(m_currentPlanIndex);
+        const auto index = static_cast<std::size_t>(edge - plan.sendStates);
+        if (plan.sendGenerations == nullptr || plan.sendGenerations[index] != sendGeneration) return;
+    }
     if (edge != nullptr && toGeneration != 0 &&
         edge->toGeneration != toGeneration) {
         return;

@@ -59,6 +59,16 @@ VnConfig CanonicalActivationConfig(std::uint32_t maxVoices = 0,
     return config;
 }
 
+namespace {
+harken::BusSendRecord LogicalSendAt(const harken::Engine& engine,
+    std::uint32_t source, std::uint32_t slot) {
+    for (const auto& edge : engine.busSends.From(source))
+        if (edge.slot == slot) return edge;
+    return {};
+}
+
+}
+
 TEST(CanonicalPackSetActivate, PathInitOnlyActivateRetryUnload) {
     const std::filesystem::path directory =
         std::filesystem::path(HARKEN_TEMP_DIR) / "canonical-pack-set-activate";
@@ -1839,7 +1849,7 @@ TEST(CanonicalPackSetActivate, SnapshotSendPreservesForeignLiveSend) {
     const auto sendSlots = engine->config.busSendSlotsPerBus;
     std::uint32_t foreignSlot = sendSlots;
     for (std::uint32_t slot = 0; slot < sendSlots; ++slot) {
-        if (engine->busSends[static_cast<std::size_t>(sourceSlot) * sendSlots + slot].target ==
+        if (LogicalSendAt(*engine, sourceSlot, slot).target ==
             targetSlot) foreignSlot = slot;
     }
     ASSERT_LT(foreignSlot, sendSlots);
@@ -1849,9 +1859,9 @@ TEST(CanonicalPackSetActivate, SnapshotSendPreservesForeignLiveSend) {
         harkentest::BuildMasterSendInitBytes(-6.0f),
         harkentest::packfoundation::kInitPackStableId);
     ASSERT_EQ(VN_OK, first.result);
-    EXPECT_EQ(targetSlot, engine->busSends[foreignFlat].target);
-    EXPECT_FLOAT_EQ(-9.0f, engine->busSends[foreignFlat].levelDb);
-    EXPECT_EQ(0u, engine->busSends[foreignFlat].ownerCookie);
+    EXPECT_EQ(targetSlot, LogicalSendAt(*engine, sourceSlot, foreignSlot).target);
+    EXPECT_FLOAT_EQ(-9.0f, LogicalSendAt(*engine, sourceSlot, foreignSlot).levelDb);
+    EXPECT_EQ(0u, LogicalSendAt(*engine, sourceSlot, foreignSlot).ownerCookie);
     const auto packSource = engine->buses.FindIndex(VN_OBJECT_ID(0, 2));
     ASSERT_NE(harken::kInvalidBusIndex, packSource);
     const auto packTarget = engine->buses.FindIndex(VN_OBJECT_ID(0, 3));
@@ -1859,9 +1869,9 @@ TEST(CanonicalPackSetActivate, SnapshotSendPreservesForeignLiveSend) {
     bool foundPackSend = false;
     for (std::uint32_t slot = 0; slot < sendSlots; ++slot) {
         const auto flat = static_cast<std::size_t>(packSource) * sendSlots + slot;
-        if (engine->busSends[flat].target != packTarget) continue;
-        EXPECT_EQ(first.initHandle, engine->busSends[flat].ownerCookie);
-        EXPECT_FLOAT_EQ(-6.0f, engine->busSends[flat].levelDb);
+        if (LogicalSendAt(*engine, packSource, slot).target != packTarget) continue;
+        EXPECT_EQ(first.initHandle, LogicalSendAt(*engine, packSource, slot).ownerCookie);
+        EXPECT_FLOAT_EQ(-6.0f, LogicalSendAt(*engine, packSource, slot).levelDb);
         EXPECT_EQ(VN_IN_USE, Vn_SetBusSendLevel(VN_OBJECT_ID(0, 2),
             VN_OBJECT_ID(0, 3), -12.0f, 0));
         EXPECT_EQ(VN_IN_USE, Vn_DisconnectBusSend(VN_OBJECT_ID(0, 2),
@@ -1877,8 +1887,8 @@ TEST(CanonicalPackSetActivate, SnapshotSendPreservesForeignLiveSend) {
     engine->nullBackend.Pump(1);
     ASSERT_EQ(VN_OK, Vn_Update());
     ASSERT_EQ(VN_OK, Vn_UnloadCanonicalPackSetV1(&unload));
-    EXPECT_EQ(targetSlot, engine->busSends[foreignFlat].target);
-    EXPECT_FLOAT_EQ(-9.0f, engine->busSends[foreignFlat].levelDb);
+    EXPECT_EQ(targetSlot, LogicalSendAt(*engine, sourceSlot, foreignSlot).target);
+    EXPECT_FLOAT_EQ(-9.0f, LogicalSendAt(*engine, sourceSlot, foreignSlot).levelDb);
 }
 
 TEST(CanonicalPackSetActivate, ForeignSendCycleRefusesReplacementAndAllowsRetry) {
@@ -1903,7 +1913,7 @@ TEST(CanonicalPackSetActivate, ForeignSendCycleRefusesReplacementAndAllowsRetry)
     const auto sendSlots = engine->config.busSendSlotsPerBus;
     std::uint32_t edgeSlot = sendSlots;
     for (std::uint32_t slot = 0; slot < sendSlots; ++slot) {
-        if (engine->busSends[static_cast<std::size_t>(foreignSlot) * sendSlots + slot].target ==
+        if (LogicalSendAt(*engine, foreignSlot, slot).target ==
             packSlot) edgeSlot = slot;
     }
     ASSERT_LT(edgeSlot, sendSlots);
@@ -1934,20 +1944,20 @@ TEST(CanonicalPackSetActivate, ForeignSendCycleRefusesReplacementAndAllowsRetry)
     EXPECT_EQ(VN_BAD_PACK, activate(&refused));
     EXPECT_EQ(beforePublication, engine->packComposition.PublishedHandle());
     EXPECT_EQ(beforeRevision, engine->acceptedBusTopologyRevision);
-    EXPECT_EQ(packSlot, engine->busSends[foreignFlat].target);
-    EXPECT_FLOAT_EQ(-9.0f, engine->busSends[foreignFlat].levelDb);
-    EXPECT_EQ(0u, engine->busSends[foreignFlat].ownerCookie);
+    EXPECT_EQ(packSlot, LogicalSendAt(*engine, foreignSlot, edgeSlot).target);
+    EXPECT_FLOAT_EQ(-9.0f, LogicalSendAt(*engine, foreignSlot, edgeSlot).levelDb);
+    EXPECT_EQ(0u, LogicalSendAt(*engine, foreignSlot, edgeSlot).ownerCookie);
     ASSERT_EQ(VN_OK, Vn_DisconnectBusSend(foreignBus, packBus));
     engine->nullBackend.Pump(1);
     ASSERT_EQ(VN_OK, Vn_Update());
     VnCanonicalPackSetActivationReportV1 accepted{};
     ASSERT_EQ(VN_OK, activate(&accepted));
     EXPECT_EQ(first.report.resultSetRevision + 1, accepted.resultSetRevision);
-    EXPECT_EQ(harken::kInvalidBusIndex, engine->busSends[foreignFlat].target);
-    EXPECT_EQ(0u, engine->busSends[foreignFlat].ownerCookie);
+    EXPECT_EQ(harken::kInvalidBusIndex, LogicalSendAt(*engine, foreignSlot, edgeSlot).target);
+    EXPECT_EQ(0u, LogicalSendAt(*engine, foreignSlot, edgeSlot).ownerCookie);
 }
 
-TEST(CanonicalPackSetActivate, ForeignSendConsumesPackSourceCapacityWithoutMutation) {
+TEST(CanonicalPackSetActivate, ForeignSendAndPackSendGrowBeyondLegacyCapacity) {
     auto config = CanonicalActivationConfig();
     config.busSendSlotsPerBus = 1;
     harkentest::EngineSession session(config);
@@ -1980,23 +1990,17 @@ TEST(CanonicalPackSetActivate, ForeignSendConsumesPackSourceCapacityWithoutMutat
     VnCanonicalPackSetMemberResultV1 row{};
     row.structSize = sizeof(row);
     VnCanonicalPackSetActivationReportV1 report{};
-    EXPECT_EQ(VN_NO_BUS, harkentest::ActivateCanonicalMembersV1(
-        &member, 1, &row, report, first.initHandle,
-        first.report.resultSetRevision));
-    EXPECT_EQ(beforePublication, engine->packComposition.PublishedHandle());
-    EXPECT_EQ(beforeRevision, engine->acceptedBusTopologyRevision);
-    EXPECT_EQ(foreignSlot, engine->busSends[foreignFlat].target);
-    EXPECT_FLOAT_EQ(-9.0f, engine->busSends[foreignFlat].levelDb);
-    EXPECT_EQ(0u, engine->busSends[foreignFlat].ownerCookie);
-    ASSERT_EQ(VN_OK, Vn_DisconnectBusSend(packBus, foreignBus));
-    engine->nullBackend.Pump(1);
-    ASSERT_EQ(VN_OK, Vn_Update());
     ASSERT_EQ(VN_OK, harkentest::ActivateCanonicalMembersV1(
         &member, 1, &row, report, first.initHandle,
         first.report.resultSetRevision));
-    EXPECT_EQ(engine->buses.FindIndex(VN_OBJECT_ID(0, 3)),
-              engine->busSends[foreignFlat].target);
-    EXPECT_EQ(report.initHandle, engine->busSends[foreignFlat].ownerCookie);
+    EXPECT_EQ(foreignSlot, LogicalSendAt(*engine, packSlot, 0).target);
+    EXPECT_FLOAT_EQ(-9.0f, LogicalSendAt(*engine, packSlot, 0).levelDb);
+    EXPECT_EQ(0u, LogicalSendAt(*engine, packSlot, 0).ownerCookie);
+    const auto* authored = engine->busSends.Find(packSlot, engine->buses.FindIndex(VN_OBJECT_ID(0, 3)));
+    ASSERT_NE(nullptr, authored);
+    EXPECT_EQ(report.initHandle, authored->ownerCookie);
+    EXPECT_FLOAT_EQ(-6.0f, authored->levelDb);
+    EXPECT_EQ(2u, engine->busSends.From(packSlot).size());
 }
 
 TEST(CanonicalPackSetActivate, DuplicateSnapshotSendIsBadPack) {

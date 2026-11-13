@@ -3,6 +3,7 @@
 
 #include <harken/ObjectId.h>
 #include "PlayableRuntime.h"
+#include "BusSendTable.h"
 #include "SignalPublication.h"
 #include "harken/core/PreviewBusEffects.h"
 #include "harken/render/BusEffectChainUpdate.h"
@@ -99,6 +100,30 @@ struct ProspectiveTopologyView {
     std::uint32_t* emittedFeeders = nullptr;
     std::uint8_t* emitted = nullptr;
     const float* sendLevelsDb = nullptr;
+    const BusSendTable* sends = nullptr;
+
+    template<class Visitor> void ForEachSend(std::uint32_t from,
+        std::uint32_t legacySlots, Visitor&& visit) const {
+        if (sends != nullptr) {
+            for (const auto& edge : sends->From(from)) visit(edge, sends->IndexOf(edge));
+            return;
+        }
+        // Compatibility input for older topology producers while they migrate.
+        if (sendTargets == nullptr) return;
+        for (std::uint32_t slot = 0; slot < legacySlots; ++slot) {
+            const auto index = static_cast<std::size_t>(from) * legacySlots + slot;
+            if (sendTargets[index] == UINT32_MAX) continue;
+            BusSendRecord edge;
+            edge.source = from;
+            edge.target = sendTargets[index];
+            edge.slot = slot;
+            edge.preparedGain = sendLevels != nullptr ? sendLevels[index] : 1.0f;
+            edge.applyLevel = sendLevels != nullptr &&
+                (sendLevelApply == nullptr || sendLevelApply[index] != 0);
+            edge.levelDb = sendLevelsDb != nullptr ? sendLevelsDb[index] : 0.0f;
+            visit(edge, static_cast<std::uint32_t>(index));
+        }
+    }
 };
 
 struct ProjectGenerationInstallViewV1 {
@@ -174,9 +199,7 @@ struct SlotPlanV1 {
     std::uint32_t sourceBusCount = 0;
     std::vector<std::uint64_t> busOwnerIds;
     std::vector<VnPackHandle> busCookies;
-    std::vector<std::uint64_t> sendOwnerIds;
-    std::vector<VnPackHandle> sendCookies;
-    std::vector<float> sendLevelDb;
+    BusSendTable sends;
     std::vector<std::uint8_t> neutralSlots;
     std::vector<std::uint32_t> migrationTargets;
     std::uint32_t busCount = 0;
@@ -189,10 +212,6 @@ struct SlotPlanV1 {
     std::vector<VnBusId> busIds;
     std::vector<std::uint32_t> generations;
     std::vector<std::uint32_t> parents;
-    std::vector<std::uint32_t> sendTargets;
-    std::vector<float> sendLevels;
-    std::vector<std::uint8_t> sendLevelApply;
-    std::vector<std::uint32_t> sendLevelRampMs;
 };
 
 bool BuildSlotPlanFromProspective(Engine& engine, const ProspectiveTopologyView* prospective,
@@ -201,7 +220,7 @@ bool BuildPreviewSlotPlan(Engine& engine, const ProspectiveTopologyView* incomin
     std::uint64_t ownerId, SlotPlanV1& out);
 void ApplySlotPlanToProspective(SlotPlanV1& plan, ProspectiveTopologyView& view) noexcept;
 bool SlotPlanMatchesLive(const Engine& engine, const SlotPlanV1& plan) noexcept;
-void InstallSlotPlanLogic(Engine& engine, const SlotPlanV1& plan) noexcept;
+void InstallSlotPlanLogic(Engine& engine, SlotPlanV1& plan) noexcept;
 std::uint32_t FindAssignedSlot(const SlotPlanV1& plan, VnBusId id) noexcept;
 
 class PreparedBusEffectsV1 {

@@ -830,7 +830,7 @@ bool BuildSlotPlanFromProspective(Engine& engine,
     out = SlotPlanV1{};
     const std::uint32_t capacity = engine.config.maxBuses;
     const std::uint32_t sendSlots = engine.config.busSendSlotsPerBus;
-    if (capacity == 0 || sendSlots == 0) {
+    if (capacity == 0) {
         return false;
     }
     out.ownerId = ownerId;
@@ -840,10 +840,6 @@ bool BuildSlotPlanFromProspective(Engine& engine,
     out.busIds.assign(capacity, VnBusId{});
     out.generations.assign(capacity, 0);
     out.parents.assign(capacity, 0);
-    out.sendTargets.assign(static_cast<std::size_t>(capacity) * sendSlots,
-                           kEmptySendTarget);
-    out.sendLevels.assign(static_cast<std::size_t>(capacity) * sendSlots, 0.0f);
-    out.sendLevelApply.assign(static_cast<std::size_t>(capacity) * sendSlots, 0);
 
     const std::uint32_t masterGeneration = engine.buses.GenerationAt(0) == 0
                                                ? 1u
@@ -993,55 +989,42 @@ bool BuildSlotPlanFromProspective(Engine& engine,
         out.parents[row.slot] = parentSlot;
     }
 
-    if (prospective != nullptr && prospective->sendTargets != nullptr) {
-        std::vector<std::uint32_t> used(out.busCount, 0);
+    bool edgesValid = true;
+    if (prospective != nullptr) {
         for (std::uint32_t from = 0; from < prospective->busCount; ++from) {
-            if (prospective->alive != nullptr && prospective->alive[from] == 0) {
-                continue;
-            }
-            const VnBusId fromId = prospective->busIds != nullptr
-                                       ? prospective->busIds[from]
-                                       : VnBusId{};
-            const std::uint32_t fromSlot = FindAssignedSlot(out, fromId);
-            if (fromSlot == 0xFFFFFFFFu || fromSlot >= out.busCount) {
-                return false;
-            }
-            for (std::uint32_t s = 0; s < sendSlots; ++s) {
-                const std::uint32_t to = prospective->sendTargets[
-                    static_cast<std::size_t>(from) * sendSlots + s];
-                if (to == kEmptySendTarget || to == kInvalidBusIndex) {
-                    continue;
+            if (prospective->alive != nullptr && prospective->alive[from] == 0) continue;
+            const auto fromSlot = FindAssignedSlot(out, prospective->busIds[from]);
+            if (fromSlot == UINT32_MAX || fromSlot >= out.busCount) return false;
+            prospective->ForEachSend(from, sendSlots, [&](BusSendRecord edge, auto) {
+                if (!edgesValid) return;
+                if (edge.target >= prospective->busCount || prospective->busIds == nullptr) {
+                    edgesValid = false;
+                    return;
                 }
-                if (to >= prospective->busCount ||
-                    prospective->busIds == nullptr) {
-                    return false;
+                const auto targetSlot = FindAssignedSlot(out, prospective->busIds[edge.target]);
+                if (targetSlot == UINT32_MAX || targetSlot == fromSlot || targetSlot >= out.busCount ||
+                    !out.alive[targetSlot] || out.sends.Find(fromSlot, targetSlot) != nullptr) {
+                    edgesValid = false;
+                    return;
                 }
-                const VnBusId toId = prospective->busIds[to];
-                const std::uint32_t toSlot = FindAssignedSlot(out, toId);
-                if (toSlot == 0xFFFFFFFFu || toSlot == fromSlot ||
-                    toSlot >= out.busCount || out.alive[toSlot] == 0) {
-                    return false;
-                }
-                if (used[fromSlot] >= sendSlots) {
-                    return false;
-                }
-                const std::size_t srcFlat =
-                    static_cast<std::size_t>(from) * sendSlots + s;
-                const std::size_t flat =
-                    static_cast<std::size_t>(fromSlot) * sendSlots +
-                    used[fromSlot];
-                out.sendTargets[flat] = toSlot;
-                if (prospective->sendLevels != nullptr) {
-                    out.sendLevels[flat] = prospective->sendLevels[srcFlat];
-                }
-                if (prospective->sendLevelApply != nullptr) {
-                    out.sendLevelApply[flat] =
-                        prospective->sendLevelApply[srcFlat];
-                }
-                ++used[fromSlot];
-            }
+                edge.source = fromSlot;
+                edge.target = targetSlot;
+                edge.topologyOwnerId = ownerId;
+                edge.ownerCookie = 0;
+                if (prospective->sends == nullptr && prospective->sendLevelsDb == nullptr && edge.applyLevel)
+                    edge.levelDb = edge.preparedGain == 0 ? -160.0f : 20.0f * std::log10(edge.preparedGain);
+                const auto* prior = engine.busSends.Find(fromSlot, targetSlot);
+                const bool retained = prior != nullptr && prior->topologyOwnerId == ownerId &&
+                    prior->ownerCookie == 0 &&
+                    out.generations[fromSlot] == engine.buses.GenerationAt(fromSlot) &&
+                    out.generations[targetSlot] == engine.buses.GenerationAt(targetSlot);
+                edge.generation = retained ? prior->generation : engine.NewBusSendGeneration();
+                if (retained) edge.slot = prior->slot;
+                out.sends.Add(edge);
+            });
         }
     }
+    if (!edgesValid) return false;
     out.valid = true;
     return true;
 }
@@ -1057,6 +1040,7 @@ bool BuildPreviewSlotPlan(Engine& engine, const ProspectiveTopologyView* incomin
         std::uint32_t rampMs = 0;
         std::uint64_t owner = 0;
         VnPackHandle cookie = 0;
+        std::uint64_t generation = 0;
     };
     struct Node { VnBusId parent{}; bool owned = false; std::vector<Edge> edges; };
     const auto capacity = engine.config.maxBuses;
@@ -1100,76 +1084,68 @@ bool BuildPreviewSlotPlan(Engine& engine, const ProspectiveTopologyView* incomin
     for (const auto& [id, node] : graph) {
         if (id != VN_BUS_MASTER && !graph.contains(node.parent)) return false;
     }
-    for (std::uint32_t from = 0; from < oldCount; ++from) {
-        if (!engine.buses.AliveAt(from)) continue;
-        for (std::uint32_t slot = 0; slot < sendSlots; ++slot) {
-            const auto flat = static_cast<std::size_t>(from) * sendSlots + slot;
-            const auto target = engine.busSends[flat].target;
-            if (target == kEmptySendTarget || engine.busSends[flat].topologyOwnerId == ownerId) continue;
-            if (target >= oldCount || !engine.buses.AliveAt(target)) return false;
-            const auto fromId = engine.buses.IdAt(from);
-            const auto toId = engine.buses.IdAt(target);
-            if (!graph.contains(fromId) || !graph.contains(toId)) return false;
-            float linear = 0.0f;
-            if (!TryVolumeGainFromDb(engine.busSends[flat].levelDb, &linear)) return false;
-            graph.at(fromId).edges.push_back({toId, slot, engine.busSends[flat].levelDb, linear, 0, 0,
-                engine.busSends[flat].topologyOwnerId, engine.busSends[flat].ownerCookie});
-        }
+    for (const auto& edge : engine.busSends.Records()) {
+        if (edge.topologyOwnerId == ownerId) continue;
+        if (edge.source >= oldCount || edge.target >= oldCount ||
+            !engine.buses.AliveAt(edge.source) || !engine.buses.AliveAt(edge.target)) return false;
+        const auto fromId = engine.buses.IdAt(edge.source);
+        const auto toId = engine.buses.IdAt(edge.target);
+        if (!graph.contains(fromId) || !graph.contains(toId)) return false;
+        float linear = 0;
+        if (!TryVolumeGainFromDb(edge.levelDb, &linear)) return false;
+        graph.at(fromId).edges.push_back({toId, edge.slot, edge.levelDb, linear, 0, 0,
+            edge.topologyOwnerId, edge.ownerCookie, edge.generation});
     }
-    if (incoming->sendTargets != nullptr) {
-        for (std::uint32_t from = 0; from < incoming->busCount; ++from) {
-            if (!incoming->alive[from]) continue;
-            auto& edges = graph.at(incoming->busIds[from]).edges;
-            const auto oldFrom = engine.buses.FindIndex(incoming->busIds[from]);
-            for (std::uint32_t i = 0; i < sendSlots; ++i) {
-                const auto src = static_cast<std::size_t>(from) * sendSlots + i;
-                const auto target = incoming->sendTargets[src];
-                if (target == kEmptySendTarget) continue;
-                if (target >= incoming->busCount || !incoming->alive[target]) return false;
-                const auto targetId = incoming->busIds[target];
-                if (!graph.contains(targetId) || std::any_of(edges.begin(), edges.end(),
-                    [&](const Edge& edge) { return edge.target == targetId; })) return false;
-                std::uint32_t chosen = UINT32_MAX;
-                float db = 0.0f;
-                bool retained = false;
-                if (oldFrom != kInvalidBusIndex) {
-                    for (std::uint32_t s = 0; s < sendSlots; ++s) {
-                        const auto flat = static_cast<std::size_t>(oldFrom) * sendSlots + s;
-                        const auto oldTarget = engine.busSends[flat].target;
-                        if (engine.busSends[flat].topologyOwnerId == ownerId && oldTarget < oldCount &&
-                            engine.buses.IdAt(oldTarget) == targetId &&
-                            std::none_of(edges.begin(), edges.end(), [&](const Edge& e) { return e.slot == s; })) {
-                            chosen = s;
-                            db = engine.busSends[flat].levelDb;
-                            retained = true;
-                            break;
-                        }
-                    }
-                }
-                for (std::uint32_t s = 0; chosen == UINT32_MAX && s < sendSlots; ++s) {
-                    if (std::none_of(edges.begin(), edges.end(), [&](const Edge& e) { return e.slot == s; })) chosen = s;
-                }
-                if (chosen == UINT32_MAX) return false;
-                const bool apply = incoming->sendLevels != nullptr &&
-                    (incoming->sendLevelApply == nullptr || incoming->sendLevelApply[src] != 0);
-                float linear = 1.0f;
-                if (apply) {
-                    linear = incoming->sendLevels[src];
-                    if (!std::isfinite(linear) || linear < 0.0f) return false;
-                    db = incoming->sendLevelsDb != nullptr
-                        ? incoming->sendLevelsDb[src]
-                        : (linear == 0.0f ? -160.0f : 20.0f * std::log10(linear));
-                    if (!std::isfinite(db) || (incoming->sendLevelsDb != nullptr &&
-                        (db < -96.0f || db > 24.0f))) return false;
-                } else if (!TryVolumeGainFromDb(db, &linear)) return false;
-                const bool changed = !retained || (apply && db != engine.busSends[
-                    static_cast<std::size_t>(oldFrom) * sendSlots + chosen].levelDb);
-                edges.push_back({targetId, chosen, db, linear,
-                    static_cast<std::uint8_t>(changed),
-                    static_cast<std::uint32_t>(retained && changed ? 20 : 0), ownerId, 0});
+    bool edgesValid = true;
+    for (int retainedPass = 1; retainedPass >= 0; --retainedPass) {
+    for (std::uint32_t from = 0; from < incoming->busCount; ++from) {
+        if (!incoming->alive[from]) continue;
+        auto& edges = graph.at(incoming->busIds[from]).edges;
+        const auto oldFrom = engine.buses.FindIndex(incoming->busIds[from]);
+        incoming->ForEachSend(from, sendSlots, [&](const BusSendRecord& input, auto) {
+            if (!edgesValid) return;
+            if (input.target >= incoming->busCount || !incoming->alive[input.target]) {
+                edgesValid = false;
+                return;
             }
-        }
+            const auto targetId = incoming->busIds[input.target];
+            if (!graph.contains(targetId)) {
+                edgesValid = false;
+                return;
+            }
+            const auto oldTarget = engine.buses.FindIndex(targetId);
+            const auto* prior = engine.busSends.Find(oldFrom, oldTarget);
+            const bool retained = prior != nullptr && prior->topologyOwnerId == ownerId &&
+                prior->ownerCookie == 0;
+            if (retained != (retainedPass != 0)) return;
+            if (std::any_of(edges.begin(), edges.end(), [&](const Edge& edge) { return edge.target == targetId; })) {
+                edgesValid = false; return;
+            }
+            std::uint32_t chosen = retained ? prior->slot : 0;
+            if (!retained) {
+                while (std::any_of(edges.begin(), edges.end(), [&](const auto& edge) { return edge.slot == chosen; }))
+                    ++chosen;
+            }
+            float db = retained ? prior->levelDb : 0;
+            float linear = 1;
+            if (input.applyLevel) {
+                linear = input.preparedGain;
+                if (!std::isfinite(linear) || linear < 0) { edgesValid = false; return; }
+                db = incoming->sends != nullptr || incoming->sendLevelsDb != nullptr ? input.levelDb
+                    : (linear == 0 ? -160.0f : 20.0f * std::log10(linear));
+                if (!std::isfinite(db) || (incoming->sendLevelsDb != nullptr && (db < -96 || db > 24))) {
+                    edgesValid = false;
+                    return;
+                }
+            } else if (!TryVolumeGainFromDb(db, &linear)) { edgesValid = false; return; }
+            const bool changed = !retained || (input.applyLevel && db != prior->levelDb);
+            edges.push_back({targetId, chosen, db, linear, static_cast<std::uint8_t>(changed),
+                static_cast<std::uint32_t>(retained && changed ? 20 : 0), ownerId, 0,
+                retained ? prior->generation : engine.NewBusSendGeneration()});
+        });
     }
+    }
+    if (!edgesValid) return false;
     std::vector<VnBusId> ids;
     std::map<VnBusId, std::uint32_t> index;
     for (const auto& [id, node] : graph) {
@@ -1191,15 +1167,6 @@ bool BuildPreviewSlotPlan(Engine& engine, const ProspectiveTopologyView* incomin
     out.busCount = std::max(out.busCount, oldCount);
     out.busOwnerIds = engine.busTopologyOwnerIds;
     out.busCookies = engine.busOwnerCookies;
-    out.sendOwnerIds.resize(engine.busSends.size());
-    out.sendCookies.resize(engine.busSends.size());
-    out.sendLevelDb.resize(engine.busSends.size());
-    for (std::size_t i = 0; i < engine.busSends.size(); ++i) {
-        out.sendOwnerIds[i] = engine.busSends[i].topologyOwnerId;
-        out.sendCookies[i] = engine.busSends[i].ownerCookie;
-        out.sendLevelDb[i] = engine.busSends[i].levelDb;
-    }
-    out.sendLevelRampMs.assign(static_cast<std::size_t>(capacity) * sendSlots, 0);
     out.neutralSlots.assign(capacity, 0);
     out.neutralSlots[0] = static_cast<std::uint8_t>(PreviewOwnsSoleMasterV1(engine, ownerId));
     out.migrationTargets.resize(capacity);
@@ -1215,13 +1182,6 @@ bool BuildPreviewSlotPlan(Engine& engine, const ProspectiveTopologyView* incomin
             out.migrationTargets[slot] = parent < capacity && out.alive[parent] ? parent : 0;
         }
     }
-    for (std::size_t flat = 0; flat < out.sendOwnerIds.size(); ++flat) {
-        if (out.sendOwnerIds[flat] == ownerId) {
-            out.sendOwnerIds[flat] = 0;
-            out.sendCookies[flat] = 0;
-            out.sendLevelDb[flat] = 0.0f;
-        }
-    }
     for (const auto& [id, node] : graph) {
         const auto slot = FindAssignedSlot(out, id);
         if (node.owned) {
@@ -1230,14 +1190,18 @@ bool BuildPreviewSlotPlan(Engine& engine, const ProspectiveTopologyView* incomin
             out.neutralSlots[slot] = 1;
         }
         for (const auto& edge : node.edges) {
-            const auto flat = static_cast<std::size_t>(slot) * sendSlots + edge.slot;
-            out.sendTargets[flat] = FindAssignedSlot(out, edge.target);
-            out.sendLevels[flat] = edge.linear;
-            out.sendLevelApply[flat] = edge.apply;
-            out.sendLevelRampMs[flat] = edge.rampMs;
-            out.sendOwnerIds[flat] = edge.owner;
-            out.sendCookies[flat] = edge.cookie;
-            out.sendLevelDb[flat] = edge.db;
+            BusSendRecord record;
+            record.source = slot;
+            record.target = FindAssignedSlot(out, edge.target);
+            record.slot = edge.slot;
+            record.levelDb = edge.db;
+            record.ownerCookie = edge.cookie;
+            record.topologyOwnerId = edge.owner;
+            record.generation = edge.generation;
+            record.preparedGain = edge.linear;
+            record.rampMs = edge.rampMs;
+            record.applyLevel = edge.apply != 0;
+            out.sends.Add(record);
         }
     }
     return true;
@@ -1248,6 +1212,8 @@ struct AuthoredTraceProjectionV1 {
     std::vector<std::uint32_t> generations;
     std::vector<std::uint32_t> parents;
     std::vector<std::uint8_t> alive;
+    std::vector<TopologySendRange> ranges;
+    std::vector<std::uint32_t> slots;
     std::vector<std::uint32_t> targets;
     std::vector<float> levels;
     std::vector<std::uint8_t> apply;
@@ -1271,10 +1237,7 @@ bool BuildAuthoredTraceProjection(const SlotPlanV1& plan,
     out.generations.resize(count);
     out.parents.assign(count, 0);
     out.alive.assign(count, 1);
-    const auto edgeCount = static_cast<std::size_t>(count) * plan.sendSlotsPerBus;
-    out.targets.assign(edgeCount, kEmptySendTarget);
-    out.levels.assign(edgeCount, 0.0f);
-    out.apply.assign(edgeCount, 0);
+    out.ranges.resize(count);
     for (std::uint32_t i = 0; i < count; ++i) {
         dense[slots[i]] = i;
         out.ids[i] = plan.busIds[slots[i]];
@@ -1287,17 +1250,16 @@ bool BuildAuthoredTraceProjection(const SlotPlanV1& plan,
             if (parent >= dense.size() || dense[parent] == UINT32_MAX) return false;
             out.parents[i] = dense[parent];
         }
-        std::uint32_t written = 0;
-        for (std::uint32_t s = 0; s < plan.sendSlotsPerBus; ++s) {
-            const auto source = static_cast<std::size_t>(slot) * plan.sendSlotsPerBus + s;
-            const auto target = plan.sendTargets[source];
-            if (target == kEmptySendTarget || plan.sendOwnerIds[source] != plan.ownerId) continue;
-            if (target >= dense.size() || dense[target] == UINT32_MAX ||
-                !std::isfinite(plan.sendLevels[source]) || plan.sendLevels[source] < 0.0f) return false;
-            const auto destination = static_cast<std::size_t>(i) * plan.sendSlotsPerBus + written++;
-            out.targets[destination] = dense[target];
-            out.levels[destination] = plan.sendLevels[source];
-            out.apply[destination] = plan.sendLevelApply[source];
+        auto& range = out.ranges[i];
+        range.first = static_cast<std::uint32_t>(out.targets.size());
+        for (const auto& edge : plan.sends.From(slot)) {
+            if (edge.topologyOwnerId != plan.ownerId) continue;
+            if (edge.target >= dense.size() || dense[edge.target] == UINT32_MAX ||
+                !std::isfinite(edge.preparedGain) || edge.preparedGain < 0) return false;
+            out.slots.push_back(range.count++);
+            out.targets.push_back(dense[edge.target]);
+            out.levels.push_back(edge.preparedGain);
+            out.apply.push_back(edge.applyLevel ? 1 : 0);
         }
     }
     out.view.slotCount = count;
@@ -1306,6 +1268,9 @@ bool BuildAuthoredTraceProjection(const SlotPlanV1& plan,
     out.view.generations = out.generations.data();
     out.view.parents = out.parents.data();
     out.view.alive = out.alive.data();
+    out.view.sendRanges = out.ranges.data();
+    out.view.sendSlots = out.slots.data();
+    out.view.sendCount = static_cast<std::uint32_t>(out.targets.size());
     out.view.sendTargets = out.targets.data();
     out.view.preparedSendLevels = out.levels.data();
     out.view.sendLevelApply = out.apply.data();
@@ -1320,9 +1285,7 @@ void ApplySlotPlanToProspective(SlotPlanV1& plan,
     view.generations = plan.generations.data();
     view.parents = plan.parents.data();
     view.alive = plan.alive.data();
-    view.sendTargets = plan.sendTargets.data();
-    view.sendLevels = plan.sendLevels.data();
-    view.sendLevelApply = plan.sendLevelApply.data();
+    view.sends = &plan.sends;
 }
 
 bool HasPredecessorDirectWorldPublication(const Engine& engine) noexcept {
@@ -1469,12 +1432,8 @@ bool SlotPlanMatchesLive(const Engine& engine, const SlotPlanV1& plan) noexcept 
     return true;
 }
 
-void InstallSlotPlanLogic(Engine& engine, const SlotPlanV1& plan) noexcept {
+void InstallSlotPlanLogic(Engine& engine, SlotPlanV1& plan) noexcept {
     const std::uint32_t oldCount = engine.buses.BusCount();
-    const std::uint32_t capacity = engine.config.maxBuses;
-    const std::uint32_t sendSlots = engine.config.busSendSlotsPerBus;
-    const std::size_t sendCapacity =
-        static_cast<std::size_t>(capacity) * sendSlots;
     for (std::uint32_t i = 1; i < oldCount; ++i) {
         if (!engine.buses.AliveAt(i)) {
             continue;
@@ -1521,24 +1480,9 @@ void InstallSlotPlanLogic(Engine& engine, const SlotPlanV1& plan) noexcept {
             if (plan.preservesForeign) engine.busOwnerCookies[row.slot] = plan.busCookies[row.slot];
         }
     }
-    engine.busSendActive = 0;
-    for (std::size_t flat = 0; flat < sendCapacity; ++flat) {
-        const std::uint32_t target =
-            flat < plan.sendTargets.size() ? plan.sendTargets[flat]
-                                           : kEmptySendTarget;
-        engine.busSends[flat].target = target;
-        engine.busSends[flat].topologyOwnerId = plan.preservesForeign
-            ? plan.sendOwnerIds[flat]
-            : (target != kEmptySendTarget && target != kInvalidBusIndex ? plan.ownerId : 0);
-        engine.busSends[flat].ownerCookie = plan.preservesForeign ? plan.sendCookies[flat] : 0;
-        if (!plan.preservesForeign || plan.sendLevelApply[flat] != 0 ||
-            target == kEmptySendTarget) {
-            engine.busSends[flat].levelDb = plan.preservesForeign ? plan.sendLevelDb[flat] : 0.0f;
-        }
-        if (target != kEmptySendTarget && target != kInvalidBusIndex) {
-            ++engine.busSendActive;
-        }
-    }
+    plan.sends.ClearActions();
+    engine.busSends.Swap(plan.sends);
+    engine.busSendActive = engine.busSends.Count();
     UpdateSendHighWater(engine);
 }
 
@@ -1847,15 +1791,6 @@ ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(
         }
         FillLiveOrPreparedPlan(engine, engine.preparedTopologyPlans, planIndex,
                                fillView);
-        for (std::uint32_t slot = 0; slot < slotPlan.busCount; ++slot) {
-            auto* ramps = engine.preparedTopologyPlans.SendLevelRampMsRow(planIndex, slot);
-            const auto preparedPlan = engine.preparedTopologyPlans.View(planIndex);
-            const auto range = preparedPlan.Sends(slot);
-            for (std::uint32_t send = 0; send < range.count; ++send)
-                ramps[send] = slotPlan.sendLevelRampMs[
-                    static_cast<std::size_t>(slot) * slotPlan.sendSlotsPerBus +
-                    preparedPlan.LogicalSendSlot(range.first + send)];
-        }
         if (volumeOnly) {
             authoredMixDb.assign(slotPlan.busCount, 0.0f);
             authoredOutputDb.assign(slotPlan.busCount, 0.0f);

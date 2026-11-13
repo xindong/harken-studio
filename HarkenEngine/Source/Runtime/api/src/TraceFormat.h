@@ -30,11 +30,12 @@
 namespace harken {
 
 inline constexpr char kTraceMagic[4] = {'V', 'T', 'R', 'C'};
-// The replayer accepts only the current writer vintage.
+// The replayer also accepts v7 and converts its dense Send rows.
 inline constexpr std::uint32_t kTraceFormatVersionV2 = 2;
 inline constexpr std::uint32_t kTraceFormatVersionV3 = 3;
 inline constexpr std::uint32_t kTraceFormatVersionV4 = 4;
-inline constexpr std::uint32_t kTraceFormatVersion = 7;
+inline constexpr std::uint32_t kTraceFormatVersionV7 = 7;
+inline constexpr std::uint32_t kTraceFormatVersion = 8;
 
 // Fixed-size header fields ahead of the config image. Serialized field by
 // field (never as a struct overlay — the container-format discipline).
@@ -99,7 +100,7 @@ inline constexpr std::uint16_t kTraceRecordSessionTerminate = 16; // empty paylo
 // u64 resource ID, u64 FNV64 checksum, u64 byte count, immutable Pack bytes.
 // Media is embedded in the Pack. Subsequent operations reference the ID.
 inline constexpr std::uint16_t kTraceRecordPackBytes = 17;
-inline constexpr std::uint32_t kTracePreparedTopologyPlanVintage = 1;
+inline constexpr std::uint32_t kTracePreparedTopologyPlanVintage = 2;
 // Token U64×4 + publishedBusFingerprint + compileTargetProfileFingerprint +
 // U32 (publicationVintage or admission). The arithmetic is 52, not 60.
 inline constexpr std::uint32_t kTraceCurrentWorldInstallPairedTailBytes =

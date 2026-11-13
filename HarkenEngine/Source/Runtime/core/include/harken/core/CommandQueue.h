@@ -361,6 +361,7 @@ struct CommandRecord {
             std::uint32_t rampMs;
             std::uint32_t fromGeneration;
             std::uint32_t toGeneration;
+            std::uint64_t sendGeneration;
         } setBusSendLevel;
         struct SetVoiceSend {
             VnVoiceHandle handle;

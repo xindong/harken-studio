@@ -94,7 +94,6 @@ constexpr std::uint32_t kMaxPendingActionCeiling = 1 << 20;
 constexpr std::uint32_t kMaxEmittersCeiling = 1 << 16;
 constexpr std::uint32_t kMaxEmitterVariableSlotsCeiling = 1 << 12;
 constexpr std::uint32_t kMaxParkedVoicesCeiling = 1 << 14;
-constexpr std::uint32_t kMaxBusSendSlotsCeiling = 1 << 8;
 constexpr std::uint32_t kMaxTopologyPlanPoolCeiling = 1 << 12;
 constexpr std::uint32_t kMaxBusTopologyOwnersCeiling = 1 << 16;
 constexpr std::uint64_t kMaxTopologyPlanBytesCeiling =
@@ -608,7 +607,6 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
         // voiceSendSlots is bounded by the POD-layout constant that sizes the
         // per-voice send array (kMaxVoiceSendSlots), like fxSlotsPerVoice.
         resolved.voiceSendSlots > kMaxVoiceSendSlots ||
-        resolved.busSendSlotsPerBus > kMaxBusSendSlotsCeiling ||
         // Bus effect chains share the compile-time slot maximum with voices.
         resolved.fxSlotsPerBus > kMaxFxSlotsPerVoice ||
         resolved.topologyPlanPoolCapacity > kMaxTopologyPlanPoolCeiling ||
@@ -711,7 +709,6 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
     // exact aggregate before construction so no legal-looking count set can
     // overflow size_t arithmetic or bypass the caller's byte budget.
     std::uint64_t planBus = 0;
-    std::uint64_t planBusSend = 0;
     std::uint64_t planBusCoefficients = 0;
     std::uint64_t bytes = 0;
     const auto addBytes = [&bytes](std::uint64_t count,
@@ -727,15 +724,10 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
     };
     if (!CheckedMul(resolved.topologyPlanPoolCapacity, resolved.maxBuses,
                     &planBus) ||
-        !CheckedMul(planBus, resolved.busSendSlotsPerBus, &planBusSend) ||
         !CheckedMul(planBus, 64u, &planBusCoefficients) ||
         !addBytes(planBus, sizeof(std::uint32_t)) ||       // order
         !addBytes(resolved.topologyPlanPoolCapacity,
                   sizeof(std::uint32_t)) ||                // order count
-        !addBytes(planBusSend, sizeof(std::uint32_t)) ||   // send targets
-        !addBytes(planBusSend, sizeof(float)) ||           // send levels
-        !addBytes(planBusSend, sizeof(std::uint8_t)) ||    // level apply
-        !addBytes(planBusSend, sizeof(std::uint32_t)) ||   // level ramps
         !addBytes(planBus, sizeof(std::uint32_t)) ||       // layouts
         !addBytes(planBusCoefficients, sizeof(float)) ||   // fold matrices
         !addBytes(planBus, sizeof(std::uint32_t)) ||       // parents

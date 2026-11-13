@@ -245,6 +245,7 @@ public:
     // Logic thread: include every plan that can still be consumed on audio.
     std::uint64_t RetainedSignalScratchBytes(std::uint64_t extraNodes,
         std::uint64_t extraEdges, std::uint32_t frames) const noexcept;
+    std::uint32_t RetainedSendCount() const noexcept;
     std::uint64_t InstalledGraphRevision() const noexcept {
         return m_installedGraphRevision.load(std::memory_order_acquire);
     }
@@ -262,7 +263,8 @@ public:
     void ApplySetBusSendLevel(std::uint32_t fromBus, std::uint32_t toBus,
                               float levelDb, std::uint32_t rampMs,
                               std::uint32_t fromGeneration = 0,
-                              std::uint32_t toGeneration = 0);
+                              std::uint32_t toGeneration = 0,
+                              std::uint64_t sendGeneration = 0);
 
     // Bus insert-effect chain apply methods (audio thread, at block start).
     // Pure mirrors of the voice-pool effect apply path: install an already-built

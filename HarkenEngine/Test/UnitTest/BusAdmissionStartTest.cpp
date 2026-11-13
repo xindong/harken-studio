@@ -1945,9 +1945,8 @@ TEST(BusAdmissionStart, PairedCommitInstallsLogicMasterAndChildBuses) {
     EXPECT_EQ(engine->buses.ParentOf(child), 0u);
     EXPECT_EQ(engine->buses.ParentOf(other), 0u);
     bool sawChildToMaster = false;
-    for (std::uint32_t s = 0; s < sendSlots; ++s) {
-        const std::uint32_t target =
-            engine->busSends[static_cast<std::size_t>(child) * sendSlots + s].target;
+    for (const auto& edge : engine->busSends.From(child)) {
+        const std::uint32_t target = edge.target;
         if (target == 0) {
             sawChildToMaster = true;
         }

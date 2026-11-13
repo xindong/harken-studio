@@ -1,3 +1,4 @@
+#include "harken/core/LogicAllocCheckpoint.h"
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
 
@@ -151,24 +152,24 @@ TEST(BusTopologySnapshot,
     EXPECT_EQ(planCount + 1u, engine->topologyPlanCount);
 }
 
-TEST(BusTopologySnapshot, ThirtyBusGraphAndSendLevelRevisionUseOneCommandEach) {
+TEST(BusTopologySnapshot, ThreeHundredSendGraphAndLevelRevisionUseOneCommandEach) {
     VnConfig config = MakeNullConfig(2, kBlockFrames);
-    config.maxBuses = 31;
+    config.maxBuses = 302;
     config.busSendSlotsPerBus = 1;
     config.commandQueueDepth = 2;
     config.topologyPlanPoolCapacity = 2;
     EngineSession session(config);
     ASSERT_EQ(VN_OK, session.InitResult());
 
-    std::array<VnBusTopologyBus, 30> buses{};
+    std::array<VnBusTopologyBus, 301> buses{};
     for (std::size_t i = 0; i < buses.size(); ++i) {
         buses[i] = Bus(harkentest::ObjectId(10 + i), VN_BUS_MASTER);
     }
 
-    std::array<VnBusTopologySend, 15> sends{};
+    std::array<VnBusTopologySend, 300> sends{};
     for (std::size_t i = 0; i < sends.size(); ++i) {
-        const VnBusId from = harkentest::ObjectId(10 + i * 2);
-        sends[i] = Send(from, harkentest::ObjectId(11 + i * 2), -3.0f, 10);
+        const VnBusId from = harkentest::ObjectId(10);
+        sends[i] = Send(from, harkentest::ObjectId(11 + i), -3.0f, 10);
     }
 
     VnBusTopologyDesc desc =
@@ -179,7 +180,7 @@ TEST(BusTopologySnapshot, ThirtyBusGraphAndSendLevelRevisionUseOneCommandEach) {
 
     Pump(session.Engine());
     const VnSnapshot installed = Snapshot();
-    EXPECT_EQ(31u, installed.activeBusCount);
+    EXPECT_EQ(302u, installed.activeBusCount);
     EXPECT_EQ(1u, installed.installedBusTopologyRevision);
 
     for (VnBusTopologySend& send : sends) {
@@ -466,3 +467,33 @@ TEST(BusTopologySnapshot, RevisionAndDescriptorValidationAreDeterministic) {
 }
 
 } // namespace
+
+TEST(BusTopologySnapshot, SparseStorageFailureRecyclesPlanAndKeepsAcceptedGraph) {
+    auto config = MakeNullConfig(2, kBlockFrames);
+    config.maxBuses = 10;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto* engine = session.Engine();
+    std::array<VnBusTopologyBus, 9> buses{};
+    std::array<VnBusTopologySend, 8> sends{};
+    for (std::size_t i = 0; i < buses.size(); ++i) buses[i] = Bus(harkentest::ObjectId(10 + i), VN_BUS_MASTER);
+    for (std::size_t i = 0; i < sends.size(); ++i) sends[i] = Send(buses[0].busId, buses[i + 1].busId);
+    auto desc = Topology(0, 1, buses.data(), buses.size(), sends.data(), sends.size());
+    const auto plans = engine->topologyPlans.InUse();
+    const auto revision = engine->acceptedBusTopologyRevision;
+    const auto commands = engine->commands.PublishedHead();
+    for (std::size_t failure = 1; failure <= 15; ++failure) {
+        SCOPED_TRACE(failure);
+        harken::detail::ArmLogicAllocFaultForTests(failure, harken::detail::LogicAllocSite::BusSendStorage);
+        const auto result = Vn_ApplyBusTopology(&desc);
+        harken::detail::DisarmLogicAllocFaultForTests();
+        ASSERT_NE(VN_OK, result);
+        EXPECT_EQ(plans, engine->topologyPlans.InUse());
+        EXPECT_EQ(revision, engine->acceptedBusTopologyRevision);
+        EXPECT_EQ(commands, engine->commands.PublishedHead());
+        EXPECT_TRUE(engine->busSends.Empty());
+        EXPECT_EQ(1u, engine->buses.BusCount());
+    }
+    EXPECT_EQ(VN_OK, Vn_ApplyBusTopology(&desc));
+    EXPECT_EQ(8u, engine->busSends.Count());
+}
