@@ -15,6 +15,7 @@
 #include "Widgets/EffectEditor/EffectEditorPanel.h"
 #include "Widgets/Common/ParameterSlider.h"
 #include "Widgets/Common/ParameterBinding.h"
+#include "Components/VAudio.h"
 #include "IPC/IPCServer.h"
 #include "ProjectManager.h"
 #include "ProjectTypes.h"
@@ -849,6 +850,223 @@ TEST_F(AudioPlaybackRegression, EffectEditorBusDragCannotRestoreADeletedPresetRe
     EXPECT_FLOAT_EQ(0, restored.entries()[0].custom.parameters[0]);
     EXPECT_EQ(reference.effectGuid, restored.entries()[1].effectGuid);
     }
+}
+
+class AuditionLifecycleTest : public AudioPlaybackRegression {
+protected:
+    HarkenEditor::AuditionManager audition{&engine};
+
+    void makeLooping()
+    {
+        for (auto* sound : sounds)
+            sound->comp<VNX::VAudio>()->loopCount = 0;
+        VNX::ProjectManager::syncProjectToRuntime(projects.currentProject());
+        ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    }
+
+    void poll()
+    {
+        ASSERT_TRUE(QMetaObject::invokeMethod(
+            &audition, "pollAuditionStates", Qt::DirectConnection));
+    }
+
+    float pump(uint32_t blocks)
+    {
+        auto* runtime = harken::detail::ActiveEngine();
+        float peak = 0.0f;
+        for (uint32_t block = 0; block < blocks; ++block) {
+            engine.serviceRuntime();
+            runtime->nullBackend.Pump(1);
+            const auto count = runtime->nullBackend.BlockFrames() * runtime->nullBackend.Channels();
+            const float* output = runtime->nullBackend.LastBlock();
+            for (uint32_t sample = 0; sample < count; ++sample)
+                peak = std::max(peak, std::abs(output[sample]));
+            engine.serviceRuntime();
+            poll();
+        }
+        return peak;
+    }
+
+    void fillCommands()
+    {
+        auto* runtime = harken::detail::ActiveEngine();
+        harken::CommandRecord filler{};
+        filler.opcode = harken::kOpcodeStop;
+        filler.version = harken::kCommandVersion;
+        filler.payload.stop.handle = 1;
+        while (runtime->commands.FreeSlots() != 0)
+            ASSERT_TRUE(runtime->commands.TryPush(filler));
+    }
+};
+
+TEST_F(AuditionLifecycleTest, SilentScheduledTreesRemainControllableUntilTheyReallyEnd)
+{
+    makeLooping();
+    action->comp<VNX::VAction>()->steps.front().delay = 2000;
+    auto* parent = projects.createActionTargeting(
+        action, VNX::VActionStep::Type::PostAction, QStringLiteral("Parent"));
+    ASSERT_NE(parent, nullptr);
+    VNX::ProjectManager::syncProjectToRuntime(projects.currentProject());
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+
+    const auto first = audition.playItem(*action);
+    const auto second = audition.playItem(*parent);
+    ASSERT_NE(first, 0u);
+    ASSERT_NE(second, 0u);
+    EXPECT_FLOAT_EQ(pump(400), 0.0f);
+    EXPECT_EQ(audition.activeAuditionCount(), 2);
+    EXPECT_TRUE(audition.hasActiveNonRawAudition());
+
+    audition.stopAll(100);
+    EXPECT_FLOAT_EQ(pump(2000), 0.0f);
+    EXPECT_EQ(audition.activeAuditionCount(), 0);
+    audition.stopAll(100);
+    EXPECT_FLOAT_EQ(pump(2000), 0.0f);
+}
+
+TEST_F(AuditionLifecycleTest, CompletionAndToolbarScopeAreIndependentOfOtherAudio)
+{
+    const auto rawSound = engine.mintRawPcmSoundId();
+    const auto registered = engine.registerRawPcmSlice(
+        rawSound, std::vector<float>(48000, 0.25f), 1, 48000, 0, 48000, true);
+    ASSERT_EQ(registered.result, HarkenEditor::Bridge::kEngineOk);
+    const auto rawHandle = engine.playRawPcm(rawSound, true);
+    ASSERT_NE(rawHandle, 0u);
+    const auto raw = audition.registerRawFilePlayback(QStringLiteral("Raw"), rawHandle);
+    ASSERT_NE(audition.playItem(*action), 0u);
+    EXPECT_GT(pump(1800), 0.05f);
+    EXPECT_EQ(audition.activeAuditionCount(), 1);
+    EXPECT_EQ(audition.getAudition(raw).playbackHandle, rawHandle);
+    EXPECT_FALSE(audition.hasActiveNonRawAudition());
+
+    ASSERT_NE(audition.playItem(*action), 0u);
+    pump(32);
+    audition.stopAll(100);
+    pump(160);
+    EXPECT_EQ(audition.activeAuditionCount(), 1);
+    EXPECT_GT(pump(100), 0.05f);
+    audition.stop(raw);
+    pump(32);
+    EXPECT_FLOAT_EQ(pump(100), 0.0f);
+    EXPECT_EQ(audition.activeAuditionCount(), 0);
+    EXPECT_EQ(engine.unregisterRawPcm(rawSound), HarkenEditor::Bridge::kEngineOk);
+}
+
+TEST_F(AuditionLifecycleTest, StopCompletionFollowsAudioAndRepeatedRequestsDoNotExtendFades)
+{
+    makeLooping();
+    const auto first = audition.playItem(*action);
+    const auto second = audition.playItem(*action);
+    const auto preview = audition.playItem(*sounds[1]);
+    ASSERT_NE(first, 0u);
+    ASSERT_NE(second, 0u);
+    ASSERT_NE(preview, 0u);
+    EXPECT_GT(pump(32), 0.05f);
+    EXPECT_EQ(audition.getActiveAuditions().size(), 3);
+    int completed = 0;
+    QObject::connect(&audition, &HarkenEditor::AuditionManager::allAuditionsStopped,
+                     &audition, [&] { ++completed; });
+
+    audition.stopAll(100);
+    EXPECT_EQ(completed, 0);
+    EXPECT_EQ(audition.activeAuditionCount(), 3);
+    EXPECT_EQ(audition.stopIpcSnapshot().value("state").toString(), "stopping");
+    EXPECT_GT(pump(16), 0.01f);
+    EXPECT_EQ(audition.activeAuditionCount(), 3);
+    for (int attempt = 0; attempt < 16; ++attempt) {
+        audition.stopAll(100);
+        pump(10);
+    }
+    EXPECT_EQ(audition.activeAuditionCount(), 0);
+    EXPECT_EQ(completed, 1);
+    EXPECT_FLOAT_EQ(pump(1500), 0.0f);
+}
+
+TEST_F(AuditionLifecycleTest, TemporaryRefusalRetriesWithoutReportingCompletion)
+{
+    makeLooping();
+    for (float fade : {0.0f, 100.0f}) {
+        SCOPED_TRACE(fade);
+        ASSERT_NE(audition.playItem(*action), 0u);
+        ASSERT_NE(audition.playItem(*sounds[1]), 0u);
+        EXPECT_GT(pump(32), 0.05f);
+        fillCommands();
+        audition.stopAll(fade);
+        EXPECT_EQ(audition.activeAuditionCount(), 2);
+        for (const auto& info : audition.getActiveAuditions()) {
+            EXPECT_EQ(info.stopResult, HarkenEditor::Bridge::kEngineBackpressure);
+            EXPECT_EQ(info.stopState, HarkenEditor::AuditionStopState::Pending);
+        }
+        harken::detail::ActiveEngine()->nullBackend.Pump(1);
+        poll();
+        pump(160);
+        EXPECT_EQ(audition.activeAuditionCount(), 0);
+        EXPECT_FLOAT_EQ(pump(100), 0.0f);
+    }
+}
+
+TEST_F(AuditionLifecycleTest, ReplacingAStoppingPreviewKeepsTheNewPlaybackControllable)
+{
+    makeLooping();
+    const auto id = audition.playItem(*sounds[1]);
+    ASSERT_NE(id, 0u);
+    EXPECT_GT(pump(32), 0.05f);
+    audition.stop(id, 100);
+    ASSERT_NE(audition.playItem(*sounds[1]), 0u);
+    pump(160);
+    EXPECT_EQ(audition.activeAuditionCount(), 1);
+    EXPECT_GT(pump(32), 0.05f);
+    audition.stopAll(100);
+    pump(160);
+    EXPECT_EQ(audition.activeAuditionCount(), 0);
+    EXPECT_FLOAT_EQ(pump(100), 0.0f);
+}
+
+TEST_F(AuditionLifecycleTest, PersistentRefusalIsBoundedAndPreservesManualControl)
+{
+    makeLooping();
+    const auto id = audition.playItem(*action);
+    ASSERT_NE(id, 0u);
+    EXPECT_GT(pump(32), 0.05f);
+    int failures = 0;
+    QObject::connect(&audition, &HarkenEditor::AuditionManager::auditionStopFailed,
+                     &audition, [&](uint32_t, const QString&, int32_t) { ++failures; });
+    fillCommands();
+    audition.stopAll();
+    for (int attempt = 0; attempt < 100; ++attempt)
+        poll();
+    EXPECT_EQ(failures, 1);
+    EXPECT_EQ(audition.activeAuditionCount(), 1);
+    EXPECT_EQ(audition.stopIpcSnapshot().value("state").toString(), "stop_failed");
+    const auto pressure = harken::detail::ActiveEngine()->commands.BackpressureCount();
+    for (int attempt = 0; attempt < 100; ++attempt)
+        poll();
+    EXPECT_EQ(harken::detail::ActiveEngine()->commands.BackpressureCount(), pressure);
+    EXPECT_GT(pump(32), 0.05f);
+    audition.stop(id);
+    pump(32);
+    EXPECT_FLOAT_EQ(pump(100), 0.0f);
+    EXPECT_EQ(audition.activeAuditionCount(), 0);
+}
+
+TEST_F(AuditionLifecycleTest, RejectedStopKeepsItsResultAndCanBeRetried)
+{
+    makeLooping();
+    const auto id = audition.playItem(*action);
+    ASSERT_NE(id, 0u);
+    EXPECT_GT(pump(32), 0.05f);
+    {
+        QScopedValueRollback refusal(harken::detail::ActiveEngine()->callbackFatalSticky, true);
+        audition.stop(id);
+        EXPECT_EQ(audition.activeAuditionCount(), 1);
+        EXPECT_EQ(audition.getAudition(id).stopState, HarkenEditor::AuditionStopState::Failed);
+        EXPECT_EQ(audition.getAudition(id).stopResult, HarkenEditor::Bridge::kEngineNotInit);
+    }
+    EXPECT_GT(pump(32), 0.05f);
+    audition.stop(id);
+    pump(32);
+    EXPECT_FLOAT_EQ(pump(100), 0.0f);
+    EXPECT_EQ(audition.activeAuditionCount(), 0);
 }
 
 TEST_F(AudioPlaybackRegression, ConcurrentPreviewCancelAndUndoRemainConsistentForCurrentAndFuturePlayback)

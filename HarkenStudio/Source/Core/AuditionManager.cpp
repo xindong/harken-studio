@@ -49,6 +49,7 @@ constexpr int kPreviewStartRetryIntervalMs = 10;
 constexpr uint32_t kPreviewStartRetryLimit = 16;
 constexpr int kPreviewRevisionTimeoutMs = 5000;
 constexpr int kPreviewStopStuckMs = 1000;
+constexpr uint32_t kAuditionStopAttemptLimit = 10;
 
 bool actionHasAuthoredPlayableStep(const VNX::ProjectItem& item)
 {
@@ -285,6 +286,9 @@ bool AuditionManager::startTypedPreviewNow(AuditionInfo& info)
     info.previewCancelling = false;
     info.previewStopStuck = false;
     info.previewStopDeadlineMs = 0;
+    info.stopState = AuditionStopState::None;
+    info.stopResult = Bridge::kEngineOk;
+    info.stopAttempts = 0;
 
     if (!coordinator.hasInstalledWorld() || !installed) {
         failImmediatePlay(QStringLiteral("unknown"),
@@ -337,7 +341,6 @@ bool AuditionManager::startTypedPreviewNow(AuditionInfo& info)
     lastPlayEngineResult_ = HarkenEditor::Bridge::kEngineOk;
     lastPlayReason_.clear();
     lastPlayPending_ = false;
-    idleZeroPolls_ = 0;
     emit auditionStarted(playingId, objectName);
     emit auditionStateChanged(playingId, 1);
     return true;
@@ -358,6 +361,8 @@ void AuditionManager::startLatchedTypedPreview(AuditionInfo& info)
 
 void AuditionManager::requestTypedPreviewStop(AuditionInfo& info)
 {
+    info.stopState = AuditionStopState::None;
+    info.stopResult = Bridge::kEngineOk;
     if (info.playbackHandle == 0) {
         if (info.previewReplacePending && !info.previewStopStuck)
             startLatchedTypedPreview(info);
@@ -434,7 +439,6 @@ uint32_t AuditionManager::playTypedPreview(
     info.bIsPlaying = false;
     info.bIsDelayed = true;
     auditions_[info.playingId] = info;
-    idleZeroPolls_ = 0;
     auto it = auditions_.find(info.playingId);
     if (!startTypedPreviewNow(*it))
         return 0;
@@ -581,7 +585,6 @@ uint32_t AuditionManager::playResolved(const QString& objectName,
     info.previewReason = lastPlayReason_;
     info.previewEngineResult = static_cast<int32_t>(lastPlayEngineResult_);
     auditions_[info.playingId] = info;
-    idleZeroPolls_ = 0;
 
     if (previewStartPending) {
         if (!previewStartRetryTimer_.isActive())
@@ -608,7 +611,6 @@ uint32_t AuditionManager::registerExternalPlayback(const QString& objectName,
     info.state = 1;
     info.bIsPlaying = true;
     auditions_[info.playingId] = info;
-    idleZeroPolls_ = 0;
 
     emit auditionStarted(info.playingId, objectName);
     return info.playingId;
@@ -630,7 +632,6 @@ uint32_t AuditionManager::registerRawFilePlayback(const QString& objectName,
     info.state = 1;
     info.bIsPlaying = true;
     auditions_[info.playingId] = info;
-    idleZeroPolls_ = 0;
 
     emit auditionStarted(info.playingId, objectName);
     return info.playingId;
@@ -663,69 +664,77 @@ void AuditionManager::stop(uint32_t playingId, float fadeMs)
         return;
     }
 
-    if (it->mode == AuditionMode::Preview && engine_) {
-        it->previewReplacePending = false;
-        if (handle == 0) {
-            auditions_.erase(it);
-            emit auditionStateChanged(playingId, 0);
-            emitIfAllStopped();
-            return;
-        }
-        it->previewStopFadeMs = previewFadeMs(fadeMs);
-        const int32_t result = engine_->stopPreviewPlayable(
-            handle, it->previewStopFadeMs);
-        VNX::AudioEngine::PreviewPlayableState state;
-        const int32_t queryResult =
-            engine_->queryPreviewPlayable(handle, state);
-        applyPreviewQuery(*it, queryResult, state);
-        if (previewQueryRetired(queryResult, state, true)
-            || (result != HarkenEditor::Bridge::kPreviewOk && result != HarkenEditor::Bridge::kPreviewBackpressure)) {
-            auditions_.erase(it);
-            emit auditionStateChanged(playingId, 0);
-            emitIfAllStopped();
-            return;
-        }
-        if (it->previewStopDeadlineMs == 0) {
-            it->previewStopDeadlineMs =
-                monotonicMilliseconds() + kPreviewStopStuckMs;
-        }
-        it->bIsPlaying = false;
-        it->state = 0;
-        it->previewReason = QStringLiteral("occupancy");
-        if (result == HarkenEditor::Bridge::kPreviewBackpressure
-            && previewQueryActive(queryResult, state)) {
-            it->previewStopPending = true;
-            it->previewCancelling = false;
-            it->bIsFading = it->previewStopFadeMs != 0;
+    it->previewReplacePending = false;
+    if (it->stopState == AuditionStopState::Pending
+        || it->stopState == AuditionStopState::Stopping)
+        return;
+    if (handle == 0) {
+        finishAudition(playingId);
+        return;
+    }
+    it->stopFadeMs = previewFadeMs(fadeMs);
+    it->stopAttempts = 0;
+    it->stopState = AuditionStopState::Pending;
+    if (it->mode == AuditionMode::Preview) {
+        it->previewStopPending = false;
+        it->previewStopStuck = false;
+        it->previewStopDeadlineMs = 0;
+        if (it->previewCancelling) {
+            it->stopState = AuditionStopState::Stopping;
             emit auditionStateChanged(playingId, it->state);
             return;
         }
-        it->previewStopPending = false;
-        it->previewCancelling = true;
-        it->bIsFading = true;
-        emit auditionStateChanged(playingId, it->state);
+    }
+    tryStopAudition(playingId);
+}
+
+void AuditionManager::tryStopAudition(uint32_t playingId)
+{
+    auto it = auditions_.find(playingId);
+    if (it == auditions_.end() || it->stopState != AuditionStopState::Pending)
+        return;
+    ++it->stopAttempts;
+    auto result = Bridge::kEngineNotInit;
+    if (engine_) {
+        if (it->mode == AuditionMode::Preview) {
+            const int32_t stopped = engine_->stopPreviewPlayable(
+                it->playbackHandle, it->stopFadeMs);
+            result = stopped == Bridge::kPreviewStaleHandle
+                    || stopped == Bridge::kPreviewUnknownHandle
+                ? Bridge::kEngineStaleHandle : previewEngineResult(stopped);
+        } else {
+            result = engine_->stopPlayback(it->playbackHandle, it->stopFadeMs);
+        }
+    }
+    it->stopResult = result;
+    if (result == Bridge::kEngineStaleHandle) {
+        finishAudition(playingId);
         return;
     }
-
-    if (fadeMs > 0.0f && handle != 0) {
-        it->bIsFading = true;
-        emit auditionStateChanged(playingId, it->state);
-        if (engine_)
-            engine_->stopPlayback(handle, fadeMs);
-        return;
+    if (result == Bridge::kEngineOk) {
+        it->stopState = AuditionStopState::Stopping;
+        it->bIsFading = it->stopFadeMs != 0;
+        if (it->mode == AuditionMode::Preview)
+            it->previewCancelling = true;
+    } else if (result != Bridge::kEngineBackpressure
+               || it->stopAttempts >= kAuditionStopAttemptLimit) {
+        it->stopState = AuditionStopState::Failed;
+        const QString objectName = it->objectName;
+        emit auditionStopFailed(playingId, objectName, static_cast<int32_t>(result));
     }
-
-    if (engine_ && handle != 0)
-        engine_->stopPlayback(handle, fadeMs);
-
     it = auditions_.find(playingId);
-    if (it == auditions_.end())
-        return;
+    if (it != auditions_.end())
+        emit auditionStateChanged(playingId, it->state);
+}
 
-    auditions_.erase(it);
+void AuditionManager::finishAudition(uint32_t playingId)
+{
+    if (!auditions_.remove(playingId))
+        return;
     emit auditionStateChanged(playingId, 0);
     emitIfAllStopped();
 }
+
 
 void AuditionManager::stopAll(float fadeMs)
 {
@@ -924,27 +933,8 @@ QVector<AuditionInfo> AuditionManager::getActiveAuditions() const
     QVector<AuditionInfo> result;
     result.reserve(auditions_.size());
 
-    QMap<QString, int> rowByObject;
-    for (const auto& t : auditions_) {
-        const QString key = t.objectName;
-        auto rowIt = rowByObject.find(key);
-        if (rowIt == rowByObject.end()) {
-            rowByObject.insert(key, result.size());
-            result.append(t);
-            continue;
-        }
-
-        AuditionInfo& aggregate = result[*rowIt];
-        aggregate.bIsPlaying = aggregate.bIsPlaying || t.bIsPlaying;
-        aggregate.bIsDelayed = aggregate.bIsDelayed || t.bIsDelayed;
-        aggregate.bIsFading  = aggregate.bIsFading  || t.bIsFading;
-
-        if (t.state == 1) {
-            aggregate.state = 1;
-        } else if (aggregate.state != 1 && t.state == 2) {
-            aggregate.state = 2;
-        }
-    }
+    for (const auto& info : auditions_)
+        result.append(info);
     return result;
 }
 
@@ -988,10 +978,7 @@ void AuditionManager::onEnginePlaybackStopped(quintptr handle)
     for (auto it = auditions_.begin(); it != auditions_.end(); ++it) {
         if ((it->mode == AuditionMode::NamedPlayback || it->mode == AuditionMode::RawFile)
             && it->playbackHandle == handle) {
-            uint32_t id = it.key();
-            auditions_.erase(it);
-            emit auditionStateChanged(id, 0);
-            emitIfAllStopped();
+            finishAudition(it.key());
             return;
         }
     }
@@ -1102,7 +1089,6 @@ void AuditionManager::retryPendingPreviewStarts()
         it->bIsDelayed = false;
         it->bIsPlaying = true;
         it->state = 1;
-        idleZeroPolls_ = 0;
         started.push_back({it.key(), it->objectName});
     }
 
@@ -1210,7 +1196,6 @@ void AuditionManager::onRuntimeSyncBarrierChanged()
             it->state = 1;
             it->previewReason.clear();
             it->previewEngineResult = 0;
-            idleZeroPolls_ = 0;
             started.push_back({it.key(), it->objectName});
             continue;
         }
@@ -1276,7 +1261,6 @@ void AuditionManager::onRuntimeSyncBarrierChanged()
             it->bIsPlaying = true;
             it->state = 1;
             it->previewReason.clear();
-            idleZeroPolls_ = 0;
             started.push_back({it.key(), it->objectName});
             continue;
         }
@@ -1308,7 +1292,6 @@ void AuditionManager::onRuntimeSyncBarrierChanged()
         it->bIsDelayed = false;
         it->bIsPlaying = true;
         it->state = 1;
-        idleZeroPolls_ = 0;
         started.push_back({it.key(), it->objectName});
     }
 
@@ -1372,10 +1355,11 @@ void AuditionManager::pollAuditionStates()
 
     pollPendingActionSeeks();
 
-    if (auditions_.isEmpty()) {
-        idleZeroPolls_ = 0;
+    const auto ids = auditions_.keys();
+    for (uint32_t id : ids)
+        tryStopAudition(id);
+    if (auditions_.isEmpty())
         return;
-    }
 
     QList<uint32_t> completedPreviews;
     QList<uint32_t> retiredThenStart;
@@ -1440,51 +1424,8 @@ void AuditionManager::pollAuditionStates()
         if (it != auditions_.end())
             startLatchedTypedPreview(*it);
     }
-    if (auditions_.isEmpty()) {
-        idleZeroPolls_ = 0;
-        emit allAuditionsStopped();
-        return;
-    }
-
-    bool hasNamedPlayback = false;
-    for (auto it = auditions_.cbegin(); it != auditions_.cend(); ++it) {
-        if (it->mode == AuditionMode::NamedPlayback
-            && !it->revisionPending
-            && !it->actionInstallPending) {
-            hasNamedPlayback = true;
-            break;
-        }
-    }
-    if (!hasNamedPlayback) {
-        idleZeroPolls_ = 0;
-        return;
-    }
-
-    if (engine_->activeVoiceCount() > 0) {
-        idleZeroPolls_ = 0;
-        return;
-    }
-
-    // Typed preview auditions were reconciled above. Named playback has no
-    // exact root query, so retire its auditions only after engine silence is
-    // observed twice to debounce momentary snapshot dips.
-    if (++idleZeroPolls_ < 2)
-        return;
-
-    idleZeroPolls_ = 0;
-    QList<uint32_t> ids;
-    for (auto it = auditions_.cbegin(); it != auditions_.cend(); ++it) {
-        if (it->mode == AuditionMode::NamedPlayback
-            && !it->revisionPending
-            && !it->actionInstallPending)
-            ids.push_back(it.key());
-    }
-    for (uint32_t id : ids)
-    {
-        auditions_.remove(id);
-        emit auditionStateChanged(id, 0);
-    }
-    emitIfAllStopped();
+    if (!completedPreviews.isEmpty())
+        emitIfAllStopped();
 }
 
 void AuditionManager::pollPendingActionSeeks()
@@ -1566,7 +1507,36 @@ QJsonObject AuditionManager::previewIpcSnapshot(uint32_t playingId) const
         static_cast<int>(have ? info.pendingFutureCount : 0));
     snapshot.insert(
         QStringLiteral("state"), have ? info.state : 0);
+    QString stopState = QStringLiteral("none");
+    if (info.stopState == AuditionStopState::Pending)
+        stopState = QStringLiteral("pending");
+    else if (info.stopState == AuditionStopState::Stopping)
+        stopState = QStringLiteral("stopping");
+    else if (info.stopState == AuditionStopState::Failed)
+        stopState = QStringLiteral("failed");
+    snapshot.insert(QStringLiteral("stop_state"), stopState);
+    snapshot.insert(QStringLiteral("stop_result"), static_cast<int32_t>(info.stopResult));
     return snapshot;
+}
+
+QJsonObject AuditionManager::stopIpcSnapshot(uint32_t playingId) const
+{
+    int pending = 0;
+    int failed = 0;
+    auto result = Bridge::kEngineOk;
+    for (auto it = auditions_.cbegin(); it != auditions_.cend(); ++it) {
+        if (playingId != 0 ? it.key() != playingId : it->mode == AuditionMode::RawFile)
+            continue;
+        if (it->stopState == AuditionStopState::Failed) {
+            ++failed;
+            result = it->stopResult;
+        } else {
+            ++pending;
+        }
+    }
+    return {{"state", failed != 0 ? "stop_failed" : pending != 0 ? "stopping" : "stopped"},
+            {"pending", pending != 0}, {"stopping_count", pending}, {"failed_count", failed},
+            {"engine_result", static_cast<int32_t>(result)}};
 }
 
 void AuditionManager::emitIfAllStopped()

@@ -241,7 +241,7 @@ public:
     uint64_t playByName(const QString& name);
     uint64_t playByName3D(const QString& name, float x, float y, float z);
     bool hasActionProgram(harkenstudio::ObjectId actionId) const;
-    bool stopPlayback(uint64_t handle, float fadeMs);
+    EngineResult stopPlayback(uint64_t handle, float fadeMs);
     bool stopAll(float fadeMs);
     bool hasCurrentWorldPlayableConsumers() const;
     void pumpNullMixer(std::uint32_t blockCount);

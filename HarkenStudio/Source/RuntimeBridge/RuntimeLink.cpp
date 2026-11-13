@@ -1866,13 +1866,15 @@ EngineResult runtimeReleaseActionSeek(uint64_t operationId)
     return kEngineOk;
 }
 
-bool runtimeStopPlayback(uint64_t handle, uint32_t fadeMs)
+EngineResult runtimeStopPlayback(uint64_t handle, uint32_t fadeMs)
 {
-    if (!g_runtime.initialized || handle == 0)
-        return false;
+    if (!g_runtime.initialized)
+        return kEngineNotInit;
+    if (handle == 0)
+        return kEngineInvalidArg;
     const auto playback = g_runtime.playbacks.find(handle);
     if (playback == g_runtime.playbacks.end())
-        return false;
+        return kEngineStaleHandle;
     const RuntimePlayback record = playback->second;
     const int32_t result =
         record.kind == RuntimePlaybackKind::Preview
@@ -1888,16 +1890,22 @@ bool runtimeStopPlayback(uint64_t handle, uint32_t fadeMs)
         ? result == VN_PREVIEW_STALE_HANDLE
         : result == VN_STALE_HANDLE;
     if (stale)
-        releasePlayback(handle, false);
+        releasePlayback(handle, true);
     if (result == 0 || stale)
     {
         qInfo() << "[PlaybackRoute] stop runtime:"
                 << "playback=" << static_cast<qulonglong>(handle)
                 << "native=" << static_cast<qulonglong>(record.nativeHandle)
                 << "result=" << static_cast<int>(result);
-        return true;
     }
-    return false;
+    if (stale)
+        return kEngineStaleHandle;
+    if (record.kind == RuntimePlaybackKind::Preview) {
+        if (result == VN_PREVIEW_BACKPRESSURE)
+            return kEngineBackpressure;
+        return result == VN_PREVIEW_OK ? kEngineOk : kEngineDeviceError;
+    }
+    return static_cast<EngineResult>(result);
 }
 
 bool runtimeStopAll(uint32_t fadeMs)

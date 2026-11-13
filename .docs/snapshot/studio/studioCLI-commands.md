@@ -1,6 +1,6 @@
 # HarkenStudioCLI 命令用法
 
-快照日期：2026-11-07。独立无窗口程序 `HarkenStudioCLI.exe`（macOS 为 `HarkenStudioCLI`）与 [Studio 本体](studio-commands.md) 共享工程核心命令、创作模型、资源处理和打包服务。
+快照日期：2026-11-13。独立无窗口程序 `HarkenStudioCLI.exe`（macOS 为 `HarkenStudioCLI`）与 [Studio 本体](studio-commands.md) 共享工程核心命令、创作模型、资源处理和打包服务。
 
 ## 入口组织
 
@@ -173,6 +173,8 @@ CLI 自动等待同一作业的最终结果。单条结果含实际 `cache_path/
 `export_pack` 的单个平台与平台数组互斥，平台数组须非空且无重复；`all:true/self_clean:true` 不能与非空 `action_name` 同用。支持 `output_path/language/force`。两种构建均会写出包体、缓存及临时锁；只读指创作文件。已被 Studio 或其他进程占用的工程返回 `PROJECT_IN_USE`。
 
 未打开工程的运行时会话可 `load_pack/unload_pack`：先 Init 再内容包，卸载 Init 卸载集合；与工程 Current World 互斥。CLI 等待短暂背压消退，运行时错误、超时或中断才失败。
+
+`audition_stop` 返回停止请求的当前状态：`stopping` 表示仍在停止，`stopped` 表示目标试听已经结束，`stop_failed` 表示失败且保留控制记录。该命令不阻塞等待淡出；通过 `audition_get_state` 查看逐实例 `stop_state/stop_result`，直到目标实例消失。等待延迟、无声间隙和未来调度均属于试听生命周期。`stop_action` 同样区分 `stopping/stopped/rejected`，只在运行时确认结束后从播放列表移除。
 
 ## 输出与退出码
 

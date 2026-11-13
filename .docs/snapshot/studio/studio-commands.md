@@ -1,6 +1,6 @@
 # HarkenStudio 命令接口
 
-快照日期：2026-11-07。Studio 与独立 [HarkenStudioCLI](studioCLI-commands.md) 共享工程、创作、资源处理、撤销、保存及打包命令；Studio 额外提供窗口、选择、布局与控件命令。
+快照日期：2026-11-13。Studio 与独立 [HarkenStudioCLI](studioCLI-commands.md) 共享工程、创作、资源处理、撤销、保存及打包命令；Studio 额外提供窗口、选择、布局与控件命令。
 
 ## 产品边界
 
@@ -104,6 +104,7 @@ HarkenStudioCLI --instance <id> exec list_ui_windows --json
 | 引擎与播放 | `init_engine`、`shutdown_engine`、`start_output`、`stop_output`、`post_action`；与 CLI 顶层创建工程的 `init` 区分 |
 | 播放就绪 | `post_action/post_action_3d/audition_play` 在共享分发器检查当前创作版本；未就绪返回 `RUNTIME_SYNC_PENDING`，尚未提交播放。三种 CLI 会话统一等待，工程改变时拒绝继续原请求 |
 | 试听定位 | `audition_set_position` 返回同一请求的异步完成协议；`audition_get_seek_status(audition_seek_request_id)` 查询最终 `applied/failed`。CLI 等待终态后才响应 |
+| 试听停止 | `audition_stop` 停止指定实例，省略 ID 时停止所有非 RawFile 试听。返回 `state: stopping/stopped/stop_failed`，请求被接受不代表淡出完成；`audition_get_state` 逐实例返回 `stop_state: none/pending/stopping/failed` 和 `stop_result`，真正结束后移除实例。同名 Action 的实例分别列出。背压会有限重试，失败保留实例供再次停止；重复请求不重启淡出 |
 | 音频转码 | `transcode_asset`、`batch_convert_media` 共享转码作业、结果查询和取消协议；不以入队冒充完成 |
 | 保存与打包 | `save_project`、`export_pack`；与桌面使用相同工程格式、校验和 `ProjectPackBuildService` |
 | 文件比较 | `compare_files(reference_path, candidate_path)` 按字节比较，不解码音频；返回 `identical`、`compared_bytes`、`different_bytes`、`length_match` |
