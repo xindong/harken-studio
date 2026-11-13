@@ -1849,9 +1849,12 @@ ProjectGenerationPrepareResultV1 PrepareProjectGenerationV1(
                                fillView);
         for (std::uint32_t slot = 0; slot < slotPlan.busCount; ++slot) {
             auto* ramps = engine.preparedTopologyPlans.SendLevelRampMsRow(planIndex, slot);
-            for (std::uint32_t send = 0; send < slotPlan.sendSlotsPerBus; ++send)
+            const auto preparedPlan = engine.preparedTopologyPlans.View(planIndex);
+            const auto range = preparedPlan.Sends(slot);
+            for (std::uint32_t send = 0; send < range.count; ++send)
                 ramps[send] = slotPlan.sendLevelRampMs[
-                    static_cast<std::size_t>(slot) * slotPlan.sendSlotsPerBus + send];
+                    static_cast<std::size_t>(slot) * slotPlan.sendSlotsPerBus +
+                    preparedPlan.LogicalSendSlot(range.first + send)];
         }
         if (volumeOnly) {
             authoredMixDb.assign(slotPlan.busCount, 0.0f);

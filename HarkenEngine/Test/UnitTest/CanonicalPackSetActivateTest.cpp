@@ -1810,9 +1810,9 @@ TEST(CanonicalPackSetActivate, SnapshotSendInstallsProspectiveEdge) {
             plan.preparedSendLevels == nullptr || plan.sendLevelApply == nullptr) {
             continue;
         }
-        for (std::uint32_t slot = 0; slot < plan.slotsPerBus; ++slot) {
-            const auto flat =
-                static_cast<std::size_t>(source) * plan.slotsPerBus + slot;
+        const auto range = plan.Sends(source);
+        for (std::uint32_t slot = 0; slot < range.count; ++slot) {
+            const auto flat = range.first + slot;
             if (plan.sendTargets[flat] != target || plan.sendLevelApply[flat] == 0) {
                 continue;
             }

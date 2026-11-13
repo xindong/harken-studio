@@ -735,15 +735,12 @@ void BusTree::ApplyTopologyPlan(std::uint32_t planIndex,
     // slot+target preserves the live gain and ramp, an empty slot clears it,
     // and a changed target starts with fresh level state. This is one bounded
     // pass over the fixed rows rather than searching each target in the row.
-    const std::uint32_t membershipSlots =
-        plan.slotsPerBus < m_sendSlots ? plan.slotsPerBus : m_sendSlots;
     for (std::uint32_t from = 0; from < m_audioCount; ++from) {
-        const std::uint32_t* membership =
-            plan.sendTargets + static_cast<std::size_t>(from) * plan.slotsPerBus;
         SendEdge* row = &m_sends[static_cast<std::size_t>(from) * m_sendSlots];
         for (std::uint32_t s = 0; s < m_sendSlots; ++s) {
-            const std::uint32_t target =
-                s < membershipSlots ? membership[s] : kEmptySendTarget;
+            const auto planSlot = plan.SendOffset(from, s);
+            const auto target = planSlot == UINT32_MAX ? kEmptySendTarget
+                                                       : plan.sendTargets[planSlot];
             if (target == kEmptySendTarget) {
                 row[s] = SendEdge{};
                 continue;
@@ -762,8 +759,6 @@ void BusTree::ApplyTopologyPlan(std::uint32_t planIndex,
                 edge.toIndex = target;
                 edge.toGeneration = targetGeneration;
             }
-            const std::size_t planSlot =
-                static_cast<std::size_t>(from) * plan.slotsPerBus + s;
             if (plan.sendLevelApply != nullptr &&
                 plan.preparedSendLevels != nullptr &&
                 plan.sendLevelApply[planSlot] != 0) {
@@ -847,11 +842,9 @@ void BusTree::ApplySetBusSendLevel(std::uint32_t fromBus, std::uint32_t toBus,
         const TopologyPlanView plan = m_plans.View(m_currentPlanIndex);
         bool member = false;
         if (plan.valid && fromBus < m_audioCount) {
-            const std::uint32_t* membership =
-                plan.sendTargets +
-                static_cast<std::size_t>(fromBus) * plan.slotsPerBus;
-            for (std::uint32_t s = 0; s < plan.slotsPerBus; ++s) {
-                if (membership[s] == toBus) {
+            const auto range = plan.Sends(fromBus);
+            for (std::uint32_t s = 0; s < range.count; ++s) {
+                if (plan.sendTargets[range.first + s] == toBus) {
                     member = true;
                     break;
                 }
@@ -1383,9 +1376,9 @@ std::uint32_t BusTree::SignalRoutingSnapshot(std::span<SignalBusRoutingInfo> inf
                 SignalBoundProduct(info[from].outputFilterBound,
                     segmented ? 1 : info[bus.parentIndex].inputBound), false};
         if (!plan.valid) continue;
-        const auto* membership = plan.sendTargets + static_cast<std::size_t>(from) * plan.slotsPerBus;
-        for (std::uint32_t slot = 0; slot < plan.slotsPerBus; ++slot) {
-            const auto to = membership[slot];
+        const auto range = plan.Sends(from);
+        for (std::uint32_t slot = 0; slot < range.count; ++slot) {
+            const auto to = plan.sendTargets[range.first + slot];
             if (to == kEmptySendTarget || to >= m_audioCount || info[to].id == VnBusId{}) continue;
             const auto* edge = FindEdge(from, to);
             if (edge == nullptr) continue;
@@ -1412,9 +1405,11 @@ bool BusTree::SignalReceiversCannotReachSources(std::span<std::uint8_t> roles) c
         const auto parent = m_buses[from].parentIndex;
         if (from != 0 && parent < m_audioCount) roles[from] |= roles[parent] & 1u;
         if (plan.valid) {
-            const auto* targets = plan.sendTargets + static_cast<std::size_t>(from) * plan.slotsPerBus;
-            for (std::uint32_t slot = 0; slot < plan.slotsPerBus; ++slot)
-                if (targets[slot] < m_audioCount) roles[from] |= roles[targets[slot]] & 1u;
+            const auto range = plan.Sends(from);
+            for (std::uint32_t slot = 0; slot < range.count; ++slot) {
+                const auto target = plan.sendTargets[range.first + slot];
+                if (target < m_audioCount) roles[from] |= roles[target] & 1u;
+            }
         }
         if ((roles[from] & 3u) == 3u) return false;
     }
@@ -1519,10 +1514,9 @@ bool BusTree::MixDown(float* const* busPlanes, std::uint32_t blockFrames,
         // pre-plan renders skip this entirely. Send reads post-S2 planes and
         // does not take Output Volume or Output Bus filter.
         if (usePlan) {
-            const std::uint32_t* membership =
-                plan.sendTargets + static_cast<std::size_t>(i) * plan.slotsPerBus;
-            for (std::uint32_t s = 0; s < plan.slotsPerBus; ++s) {
-                const std::uint32_t to = membership[s];
+            const auto range = plan.Sends(i);
+            for (std::uint32_t s = 0; s < range.count; ++s) {
+                const auto to = plan.sendTargets[range.first + s];
                 if (to == kEmptySendTarget) {
                     continue;
                 }

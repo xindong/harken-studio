@@ -79562,35 +79562,37 @@ void FillPlan(harken::Engine& engine, std::uint32_t planIndex,
                         routeRemovalCount, excludedBuses, excludedBusCount,
                         removedSendSlots, removedSendSlotCount, prospective);
     plans.SetOrderCount(planIndex, liveCount);
+    const auto sendTarget = [&](std::uint32_t from, std::uint32_t slot) {
+        const auto flat = from * slots + slot;
+        const auto target = prospective != nullptr ? prospective->sendTargets[flat]
+                                                   : engine.busSends[flat].target;
+        const bool removed = (removedSendSlots != nullptr &&
+            flat < removedSendSlotCount && removedSendSlots[flat] != 0) ||
+            excluded(from) || (target != harken::kInvalidBusIndex && excluded(target));
+        return removed ? harken::kInvalidBusIndex : target;
+    };
+    std::vector<std::uint32_t> sendCounts(n, 0);
+    for (std::uint32_t from = 0; from < n; ++from)
+        for (std::uint32_t slot = 0; slot < slots; ++slot)
+            if (sendTarget(from, slot) != harken::kInvalidBusIndex) ++sendCounts[from];
+    if (!plans.PrepareSendRows(planIndex, sendCounts)) throw std::bad_alloc{};
     for (std::uint32_t from = 0; from < n; ++from) {
-        std::uint32_t* row = plans.SendTargetsRow(planIndex, from);
-        float* prepared = plans.PreparedSendLevelsRow(planIndex, from);
-        std::uint8_t* apply = plans.SendLevelApplyRow(planIndex, from);
-        const std::uint32_t base = from * slots;
-        for (std::uint32_t s = 0; s < slots; ++s) {
-            const std::uint32_t flat = base + s;
-            const std::uint32_t target =
-                prospective != nullptr
-                    ? prospective->sendTargets[flat]
-                    : engine.busSends[flat].target;
-            const bool removed =
-                (removedSendSlots != nullptr &&
-                 flat < removedSendSlotCount &&
-                 removedSendSlots[flat] != 0) ||
-                excluded(from) ||
-                (target != harken::kInvalidBusIndex && excluded(target));
-            row[s] = removed ? harken::kInvalidBusIndex
-                             : target; // sentinels coincide
-            prepared[s] =
-                prospective != nullptr &&
-                        prospective->sendLevels != nullptr
-                    ? prospective->sendLevels[flat]
-                    : 0.0f;
-            apply[s] =
-                prospective != nullptr &&
-                        prospective->sendLevelApply != nullptr
-                    ? prospective->sendLevelApply[flat]
-                    : 0;
+        auto* row = plans.SendTargetsRow(planIndex, from);
+        auto* identities = plans.SendSlotsRow(planIndex, from);
+        auto* prepared = plans.PreparedSendLevelsRow(planIndex, from);
+        auto* apply = plans.SendLevelApplyRow(planIndex, from);
+        std::uint32_t used = 0;
+        for (std::uint32_t slot = 0; slot < slots; ++slot) {
+            const auto target = sendTarget(from, slot);
+            if (target == harken::kInvalidBusIndex) continue;
+            const auto flat = from * slots + slot;
+            row[used] = target;
+            identities[used] = slot;
+            prepared[used] = prospective != nullptr && prospective->sendLevels != nullptr
+                ? prospective->sendLevels[flat] : 0.0f;
+            apply[used] = prospective != nullptr && prospective->sendLevelApply != nullptr
+                ? prospective->sendLevelApply[flat] : 0;
+            ++used;
         }
     }
     const auto prepareSendLevels =
@@ -79620,7 +79622,7 @@ void FillPlan(harken::Engine& engine, std::uint32_t planIndex,
                 std::uint32_t* row = plans.SendTargetsRow(planIndex, from);
                 float* prepared = plans.PreparedSendLevelsRow(planIndex, from);
                 std::uint8_t* apply = plans.SendLevelApplyRow(planIndex, from);
-                for (std::uint32_t s = 0; s < slots; ++s) {
+                for (std::uint32_t s = 0; s < sendCounts[from]; ++s) {
                     if (row[s] != to) {
                         continue;
                     }
@@ -116032,8 +116034,6 @@ VnResult Vn_ApplyBusTopology(const VnBusTopologyDesc* topology) {
         nullptr, nullptr, 0, nullptr, 0, &prospective);
     std::uint32_t* migrationPlan =
         engine->topologyPlans.MigrationTargetsData(planIndex);
-    std::uint32_t* rampPlan =
-        engine->topologyPlans.SendLevelRampMsRow(planIndex, 0);
     float* busVolumePlan =
         engine->topologyPlans.PreparedBusVolumeDbData(planIndex);
     std::uint32_t* busVolumeRampPlan =
@@ -116082,8 +116082,14 @@ VnResult Vn_ApplyBusTopology(const VnBusTopologyDesc* topology) {
         harken::DefaultDownmixMatrix(engine->config.mixChannelLayout,
             engine->config.deviceChannelLayout, downmix);
     }
-    std::copy(sendLevelRampMs.begin(), sendLevelRampMs.end(),
-              rampPlan);
+    const auto preparedPlan = engine->topologyPlans.View(planIndex);
+    for (std::uint32_t from = 0; from < candidateCount; ++from) {
+        auto* ramps = engine->topologyPlans.SendLevelRampMsRow(planIndex, from);
+        const auto range = preparedPlan.Sends(from);
+        for (std::uint32_t send = 0; send < range.count; ++send)
+            ramps[send] = sendLevelRampMs[static_cast<std::size_t>(from) * sendSlots +
+                preparedPlan.LogicalSendSlot(range.first + send)];
+    }
 
     harken::CommandQueue::BatchReservation reservation{};
     if (!AdmitSingleCommand(*engine) ||
@@ -131048,9 +131054,12 @@ VnResult PreparePackGraphV1(Engine& engine, const PackCanonicalImage* image,
         image->busDefinitionSnapshotHeader.publicationCapabilityVintage >= 4) {
         for (std::uint32_t slot = 0; slot < out.slotPlan.busCount; ++slot) {
             auto* ramps = engine.topologyPlans.SendLevelRampMsRow(out.planIndex, slot);
-            for (std::uint32_t send = 0; send < sendSlots; ++send)
+            const auto preparedPlan = engine.topologyPlans.View(out.planIndex);
+            const auto range = preparedPlan.Sends(slot);
+            for (std::uint32_t send = 0; send < range.count; ++send)
                 ramps[send] = out.slotPlan.sendLevelRampMs[
-                    static_cast<std::size_t>(slot) * sendSlots + send];
+                    static_cast<std::size_t>(slot) * sendSlots +
+                    preparedPlan.LogicalSendSlot(range.first + send)];
         }
     }
     out.volumeOnly = volumeOnly;

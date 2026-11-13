@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <vector>
 #include <memory>
+#include <span>
 
 namespace harken {
 
@@ -48,24 +49,39 @@ inline constexpr std::uint32_t kPlanParentUnset = 0xFFFFFFFFu;
 // to copy; both threads use it (the audio thread walks it every block, the logic
 // thread reads membership to reconcile). Non-owning: valid while the plan slot
 // stays live.
+struct TopologySendRange {
+    std::uint32_t first = 0;
+    std::uint32_t count = 0;
+};
+
 struct TopologyPlanView {
     const std::uint32_t* order = nullptr; // orderCount dense bus indices,
                                           // feeds-first (every bus after all
                                           // buses that feed it; master last)
     std::uint32_t orderCount = 0;
-    const std::uint32_t* sendTargets = nullptr; // busCapacity rows of
-                                                 // slotsPerBus entries, row-major
-                                                 // by from-bus. Slot identity is
-                                                 // authoritative and stable;
-                                                 // kEmptySendTarget marks unused.
-    // Optional per-membership-slot level action, indexed exactly like
-    // sendTargets. A set flag snaps that exact audio edge slot to the prepared
-    // logic-side linear gain and clears its ramp bookkeeping; a clear flag
-    // preserves the live level/ramp only when slot and target both match.
+    // Compact, source-grouped membership. Legacy input views may omit ranges.
+    const TopologySendRange* sendRanges = nullptr;
+    const std::uint32_t* sendSlots = nullptr;
+    const std::uint32_t* sendTargets = nullptr;
     const float* preparedSendLevels = nullptr;
     const std::uint8_t* sendLevelApply = nullptr;
     const std::uint32_t* sendLevelRampMs = nullptr;
+    std::uint32_t sendCount = 0;
     std::uint32_t slotsPerBus = 0;
+
+    TopologySendRange Sends(std::uint32_t bus) const noexcept {
+        return sendRanges != nullptr ? sendRanges[bus]
+            : TopologySendRange{bus * slotsPerBus, slotsPerBus};
+    }
+    std::uint32_t LogicalSendSlot(std::uint32_t offset) const noexcept {
+        return sendSlots != nullptr ? sendSlots[offset] : offset % slotsPerBus;
+    }
+    std::uint32_t SendOffset(std::uint32_t bus, std::uint32_t slot) const noexcept {
+        const auto range = Sends(bus);
+        for (std::uint32_t i = 0; i < range.count; ++i)
+            if (LogicalSendSlot(range.first + i) == slot) return range.first + i;
+        return UINT32_MAX;
+    }
     // Per-bus output fold config (the multichannel amendment): outputLayouts is
     // busCapacity VnChannelLayout values (each bus's presented output layout;
     // the master's is the device layout, a value equal to the mix layout means
@@ -137,6 +153,9 @@ public:
     // pointers address stable pool storage for the plan's life.
     std::uint32_t* OrderData(std::uint32_t planIndex);
     void SetOrderCount(std::uint32_t planIndex, std::uint32_t count);
+    // Replaces only logic-owned, unpublished Send storage. Failure leaves it intact.
+    bool PrepareSendRows(std::uint32_t planIndex, std::span<const std::uint32_t> counts);
+    std::uint32_t* SendSlotsRow(std::uint32_t planIndex, std::uint32_t fromBus);
     std::uint32_t* SendTargetsRow(std::uint32_t planIndex,
                                   std::uint32_t fromBus);
     float* PreparedSendLevelsRow(std::uint32_t planIndex,
@@ -193,10 +212,6 @@ private:
     std::size_t OrderBase(std::uint32_t planIndex) const {
         return static_cast<std::size_t>(planIndex) * m_busCapacity;
     }
-    std::size_t EdgeBase(std::uint32_t planIndex) const {
-        return static_cast<std::size_t>(planIndex) * m_busCapacity *
-               m_slotsPerBus;
-    }
     std::size_t FoldBase(std::uint32_t planIndex) const {
         return static_cast<std::size_t>(planIndex) * m_busCapacity;
     }
@@ -211,10 +226,15 @@ private:
     // Flat, index-addressed storage sized once at construction.
     std::vector<std::uint32_t> m_order;       // capacity * busCapacity
     std::vector<std::uint32_t> m_orderCount;  // capacity
-    std::vector<std::uint32_t> m_sendTargets; // capacity * busCapacity * slots
-    std::vector<float> m_preparedSendLevels;  // same shape as m_sendTargets
-    std::vector<std::uint8_t> m_sendLevelApply; // same shape, 0 = preserve
-    std::vector<std::uint32_t> m_sendLevelRampMs; // same shape
+    struct SendStorage {
+        std::vector<TopologySendRange> ranges;
+        std::vector<std::uint32_t> slots;
+        std::vector<std::uint32_t> targets;
+        std::vector<float> levels;
+        std::vector<std::uint8_t> apply;
+        std::vector<std::uint32_t> ramps;
+    };
+    std::vector<SendStorage> m_sends;
     std::vector<std::uint32_t> m_outputLayouts; // capacity * busCapacity
     std::vector<float> m_downmixCoeffs;         // capacity * busCapacity * 64
     std::vector<std::uint32_t> m_parents;       // capacity * busCapacity

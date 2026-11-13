@@ -13,18 +13,7 @@ TopologyPlanPool::TopologyPlanPool(std::uint32_t capacity,
       m_slotsPerBus(slotsPerBus),
       m_order(static_cast<std::size_t>(capacity) * busCapacity, 0),
       m_orderCount(capacity, 0),
-      m_sendTargets(static_cast<std::size_t>(capacity) * busCapacity *
-                        slotsPerBus,
-                    kEmptySendTarget),
-      m_preparedSendLevels(static_cast<std::size_t>(capacity) * busCapacity *
-                               slotsPerBus,
-                           0.0f),
-      m_sendLevelApply(static_cast<std::size_t>(capacity) * busCapacity *
-                           slotsPerBus,
-                       0),
-      m_sendLevelRampMs(static_cast<std::size_t>(capacity) * busCapacity *
-                            slotsPerBus,
-                        0),
+      m_sends(capacity),
       m_outputLayouts(static_cast<std::size_t>(capacity) * busCapacity, 0),
       m_downmixCoeffs(static_cast<std::size_t>(capacity) * busCapacity * 64,
                       0.0f),
@@ -69,6 +58,8 @@ std::uint32_t TopologyPlanPool::Acquire() {
         return kInvalidTopologyPlanIndex;
     }
     const std::uint32_t index = m_free.back();
+    std::vector<std::uint32_t> sendCounts(m_busCapacity, m_slotsPerBus);
+    if (!PrepareSendRows(index, sendCounts)) return kInvalidTopologyPlanIndex;
     m_free.pop_back();
     m_acquired[index] = 1;
     ++m_inUse;
@@ -77,13 +68,6 @@ std::uint32_t TopologyPlanPool::Acquire() {
     }
     // Clear the slot so a builder writes only what it populates.
     m_orderCount[index] = 0;
-    const std::size_t eb = EdgeBase(index);
-    for (std::uint32_t i = 0; i < m_busCapacity * m_slotsPerBus; ++i) {
-        m_sendTargets[eb + i] = kEmptySendTarget;
-        m_preparedSendLevels[eb + i] = 0.0f;
-        m_sendLevelApply[eb + i] = 0;
-        m_sendLevelRampMs[eb + i] = 0;
-    }
     // Clear the fold config to "no fold": a builder that ignores it publishes a
     // plan that folds no bus (layout 0, zero coefficients).
     const std::size_t fb = FoldBase(index);
@@ -123,7 +107,6 @@ bool TopologyPlanPool::CopyPlanFrom(const TopologyPlanPool& source,
         return false;
     }
     const std::size_t buses = m_busCapacity;
-    const std::size_t edges = static_cast<std::size_t>(m_busCapacity) * m_slotsPerBus;
     const std::size_t coeffs = buses * 64;
     const std::size_t srcOrder = source.OrderBase(sourceIndex);
     const std::size_t dstOrder = OrderBase(destinationIndex);
@@ -131,20 +114,8 @@ bool TopologyPlanPool::CopyPlanFrom(const TopologyPlanPool& source,
               source.m_order.begin() + srcOrder + buses,
               m_order.begin() + dstOrder);
     m_orderCount[destinationIndex] = source.m_orderCount[sourceIndex];
-    const std::size_t srcEdge = source.EdgeBase(sourceIndex);
-    const std::size_t dstEdge = EdgeBase(destinationIndex);
-    std::copy(source.m_sendTargets.begin() + srcEdge,
-              source.m_sendTargets.begin() + srcEdge + edges,
-              m_sendTargets.begin() + dstEdge);
-    std::copy(source.m_preparedSendLevels.begin() + srcEdge,
-              source.m_preparedSendLevels.begin() + srcEdge + edges,
-              m_preparedSendLevels.begin() + dstEdge);
-    std::copy(source.m_sendLevelApply.begin() + srcEdge,
-              source.m_sendLevelApply.begin() + srcEdge + edges,
-              m_sendLevelApply.begin() + dstEdge);
-    std::copy(source.m_sendLevelRampMs.begin() + srcEdge,
-              source.m_sendLevelRampMs.begin() + srcEdge + edges,
-              m_sendLevelRampMs.begin() + dstEdge);
+    try { m_sends[destinationIndex] = source.m_sends[sourceIndex]; }
+    catch (...) { return false; }
     const std::size_t srcFold = source.FoldBase(sourceIndex);
     const std::size_t dstFold = FoldBase(destinationIndex);
     std::copy(source.m_outputLayouts.begin() + srcFold,
@@ -196,6 +167,7 @@ void TopologyPlanPool::Recycle(std::uint32_t planIndex) noexcept {
     if (!IsAcquired(planIndex) || m_free.size() >= m_free.capacity()) {
         return;
     }
+    m_sends[planIndex] = SendStorage{};
     m_signals[planIndex].reset();
     m_effectUpdates[planIndex].clear();
     m_free.push_back(planIndex);
@@ -236,28 +208,64 @@ void TopologyPlanPool::SetOrderCount(std::uint32_t planIndex,
     }
 }
 
+bool TopologyPlanPool::PrepareSendRows(std::uint32_t planIndex,
+    std::span<const std::uint32_t> counts) {
+    if (planIndex >= m_capacity || counts.size() > m_busCapacity) return false;
+    try {
+        SendStorage next;
+        next.ranges.resize(m_busCapacity);
+        std::uint64_t total = 0;
+        for (std::size_t i = 0; i < counts.size(); ++i) {
+            if (counts[i] > UINT32_MAX - total) return false;
+            next.ranges[i] = {static_cast<std::uint32_t>(total), counts[i]};
+            total += counts[i];
+        }
+        next.slots.resize(static_cast<std::size_t>(total));
+        next.targets.assign(static_cast<std::size_t>(total), kEmptySendTarget);
+        next.levels.resize(static_cast<std::size_t>(total));
+        next.apply.resize(static_cast<std::size_t>(total));
+        next.ramps.resize(static_cast<std::size_t>(total));
+        for (const auto range : next.ranges)
+            for (std::uint32_t slot = 0; slot < range.count; ++slot)
+                next.slots[range.first + slot] = slot;
+        m_sends[planIndex] = std::move(next);
+        return true;
+    } catch (...) { return false; }
+}
+
+std::uint32_t* TopologyPlanPool::SendSlotsRow(std::uint32_t planIndex,
+    std::uint32_t fromBus) {
+    auto& sends = m_sends[planIndex];
+    return sends.slots.empty() ? nullptr
+        : sends.slots.data() + sends.ranges[fromBus].first;
+}
+
 std::uint32_t* TopologyPlanPool::SendTargetsRow(std::uint32_t planIndex,
-                                                std::uint32_t fromBus) {
-    return m_sendTargets.data() + EdgeBase(planIndex) +
-           static_cast<std::size_t>(fromBus) * m_slotsPerBus;
+    std::uint32_t fromBus) {
+    auto& sends = m_sends[planIndex];
+    return sends.targets.empty() ? nullptr
+        : sends.targets.data() + sends.ranges[fromBus].first;
 }
 
 float* TopologyPlanPool::PreparedSendLevelsRow(std::uint32_t planIndex,
-                                               std::uint32_t fromBus) {
-    return m_preparedSendLevels.data() + EdgeBase(planIndex) +
-           static_cast<std::size_t>(fromBus) * m_slotsPerBus;
+    std::uint32_t fromBus) {
+    auto& sends = m_sends[planIndex];
+    return sends.levels.empty() ? nullptr
+        : sends.levels.data() + sends.ranges[fromBus].first;
 }
 
-std::uint8_t* TopologyPlanPool::SendLevelApplyRow(
-    std::uint32_t planIndex, std::uint32_t fromBus) {
-    return m_sendLevelApply.data() + EdgeBase(planIndex) +
-           static_cast<std::size_t>(fromBus) * m_slotsPerBus;
+std::uint8_t* TopologyPlanPool::SendLevelApplyRow(std::uint32_t planIndex,
+    std::uint32_t fromBus) {
+    auto& sends = m_sends[planIndex];
+    return sends.apply.empty() ? nullptr
+        : sends.apply.data() + sends.ranges[fromBus].first;
 }
 
-std::uint32_t* TopologyPlanPool::SendLevelRampMsRow(
-    std::uint32_t planIndex, std::uint32_t fromBus) {
-    return m_sendLevelRampMs.data() + EdgeBase(planIndex) +
-           static_cast<std::size_t>(fromBus) * m_slotsPerBus;
+std::uint32_t* TopologyPlanPool::SendLevelRampMsRow(std::uint32_t planIndex,
+    std::uint32_t fromBus) {
+    auto& sends = m_sends[planIndex];
+    return sends.ramps.empty() ? nullptr
+        : sends.ramps.data() + sends.ranges[fromBus].first;
 }
 
 std::uint32_t* TopologyPlanPool::OutputLayoutData(std::uint32_t planIndex) {
@@ -319,16 +327,19 @@ void TopologyPlanPool::SetSlotCount(std::uint32_t planIndex,
 
 TopologyPlanView TopologyPlanPool::View(std::uint32_t planIndex) const {
     TopologyPlanView v;
-    if (planIndex >= m_capacity) {
+    if (!IsAcquired(planIndex)) {
         return v; // valid == false
     }
     v.order = m_order.data() + OrderBase(planIndex);
     v.orderCount = m_orderCount[planIndex];
-    v.sendTargets = m_sendTargets.data() + EdgeBase(planIndex);
-    v.preparedSendLevels =
-        m_preparedSendLevels.data() + EdgeBase(planIndex);
-    v.sendLevelApply = m_sendLevelApply.data() + EdgeBase(planIndex);
-    v.sendLevelRampMs = m_sendLevelRampMs.data() + EdgeBase(planIndex);
+    const auto& sends = m_sends[planIndex];
+    v.sendRanges = sends.ranges.data();
+    v.sendSlots = sends.slots.data();
+    v.sendTargets = sends.targets.data();
+    v.preparedSendLevels = sends.levels.data();
+    v.sendLevelApply = sends.apply.data();
+    v.sendLevelRampMs = sends.ramps.data();
+    v.sendCount = static_cast<std::uint32_t>(sends.targets.size());
     v.slotsPerBus = m_slotsPerBus;
     v.outputLayouts = m_outputLayouts.data() + FoldBase(planIndex);
     v.downmixCoeffs = m_downmixCoeffs.data() + CoeffBase(planIndex);

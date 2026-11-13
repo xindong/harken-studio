@@ -1962,13 +1962,15 @@ TEST(BusAdmissionStart, PairedCommitInstallsLogicMasterAndChildBuses) {
             plan.slotsPerBus != sendSlots) {
             continue;
         }
-        for (std::uint32_t s = 0; s < sendSlots; ++s) {
-            if (plan.preparedSendLevels[static_cast<std::size_t>(child) *
-                                            sendSlots +
-                                        s] == 0.5f) {
+        const auto childSends = plan.Sends(child);
+        for (std::uint32_t s = 0; s < childSends.count; ++s) {
+            if (plan.preparedSendLevels[childSends.first + s] == 0.5f) {
                 childSlotHasPreparedLevel = true;
             }
-            if (child != 0 && plan.preparedSendLevels[s] == 0.5f) {
+        }
+        const auto masterSends = plan.Sends(0);
+        for (std::uint32_t s = 0; s < masterSends.count; ++s) {
+            if (child != 0 && plan.preparedSendLevels[masterSends.first + s] == 0.5f) {
                 projectionIndexKeepsLevel = true;
             }
         }
