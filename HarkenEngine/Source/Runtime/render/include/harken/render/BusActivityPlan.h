@@ -5,6 +5,24 @@
 
 namespace harken {
 
+struct BusActivitySelection {
+    std::vector<std::uint32_t> buses;
+    std::vector<std::uint32_t> signalNodes;
+};
+
+struct BusActivityDetectorDependency { BusSlotRef target, source; };
+struct BusActivityMemberRoute { std::uint32_t signalNode; BusSlotRef bus; };
+
+// Logic-only reachability over a prospective definition. Roots come from
+// actual accepted owners or coherent audio recovery facts, never from the
+// previous working set. Unrooted feedback components therefore do not self-retain.
+bool PrepareBusActivitySelection(const TopologyPlanView& topology,
+    const SignalRenderPlan* signals, std::span<const BusSlotRef> busRoots,
+    std::span<const std::uint32_t> signalRoots,
+    std::span<const BusActivityDetectorDependency> detectors,
+    std::span<const BusActivityMemberRoute> members,
+    BusActivitySelection& out) noexcept;
+
 // Control-owned immutable projection, with one audio publication lifecycle.
 // The installed directory separately retains the exact work-row incarnations.
 struct BusActivityPlan {

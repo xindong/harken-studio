@@ -4,6 +4,7 @@
 #include "Common/ObjectIdTestSupport.h"
 #include "Common/TestUtil.h"
 #include "HarkenApiInternal.h"
+#include "harken/render/BusActivityPlan.h"
 
 #include "harken/dsp/GainRamp.h"
 #include "harken/param/BusTargetStore.h"
@@ -690,6 +691,87 @@ TEST(BusWorkRows, CancelPrivateRowReturnsEffectsAndColdIdentitySurvivesDetach) {
     EXPECT_EQ(1u, engine.effectBank.InUseOf(VN_EFFECT_GAIN));
 }
 
+
+TEST(BusActivity, DependencyClosureKeepsDetectorsAndDropsRootlessComponents) {
+    using namespace harken;
+    auto config = MakeNullConfig(2, 64);
+    config.maxBuses = 7;
+    config.topologyPlanPoolCapacity = 16;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    for (std::uint32_t i = 1; i < 7; ++i)
+        ASSERT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(i + 100), VN_BUS_MASTER));
+    ASSERT_EQ(VN_OK, Vn_ReparentBus(harkentest::ObjectId(101), harkentest::ObjectId(102)));
+    ASSERT_EQ(VN_OK, Vn_ConnectBusSend(harkentest::ObjectId(102), harkentest::ObjectId(103), 0));
+    engine.nullBackend.Pump(1);
+    const auto topology = engine.buses.InstalledTopology();
+    std::array<SignalRenderNodeInput, 9> nodes{};
+    for (std::uint32_t i = 0; i < 7; ++i) {
+        nodes[i].busIndex = i;
+        nodes[i].busId = nodes[i].stableId = topology.busIds[i];
+        nodes[i].busGeneration = topology.generations[i];
+    }
+    for (std::uint32_t i = 7; i < 9; ++i) {
+        nodes[i].kind = SignalEndpointKindV1::Sound;
+        nodes[i].stableId = harkentest::ObjectId(200 + i);
+        nodes[i].receiver = true;
+    }
+    nodes[5].receiver = nodes[6].receiver = true;
+    const SignalConnectionInput relations[]{{4, 5, 0}, {0, 6, 1}, {7, 8, 1}, {8, 7, 1}};
+    auto signals = SignalRenderPlan::Prepare({2, 64, 48000, VN_CHANNEL_LAYOUT_STEREO}, nodes, relations, {});
+    ASSERT_NE(signals, nullptr);
+    const BusActivityDetectorDependency detectors[]{{engine.buses.RefAt(3), engine.buses.RefAt(4)}};
+    const BusActivityMemberRoute members[]{{7, engine.buses.RefAt(2)}};
+    BusActivitySelection selected;
+    ASSERT_TRUE(PrepareBusActivitySelection(topology, signals.get(), {}, {}, detectors, members, selected));
+    EXPECT_EQ(selected.buses, std::vector<std::uint32_t>{0});
+    EXPECT_TRUE(selected.signalNodes.empty());
+    const BusSlotRef root[]{engine.buses.RefAt(1)};
+    ASSERT_TRUE(PrepareBusActivitySelection(topology, signals.get(), root, {}, detectors, members, selected));
+    EXPECT_EQ(selected.buses.size(), 7u);
+    EXPECT_EQ(selected.signalNodes, (std::vector<std::uint32_t>{0, 1, 2, 3, 4, 5, 6}));
+    const std::uint32_t contentRoot[]{8};
+    ASSERT_TRUE(PrepareBusActivitySelection(topology, signals.get(), {}, contentRoot, detectors, members, selected));
+    EXPECT_EQ(selected.buses.size(), 6u);
+    EXPECT_EQ(std::find(selected.buses.begin(), selected.buses.end(), 1), selected.buses.end());
+    EXPECT_EQ(selected.signalNodes, (std::vector<std::uint32_t>{0, 2, 3, 4, 5, 6, 7, 8}));
+    // A source must wake its receiver even if no dry audio reaches the latter.
+    const BusSlotRef detectorRoot[]{engine.buses.RefAt(4)};
+    ASSERT_TRUE(PrepareBusActivitySelection(topology, signals.get(), detectorRoot, {}, detectors, members, selected));
+    EXPECT_NE(std::find(selected.buses.begin(), selected.buses.end(), 3), selected.buses.end());
+}
+
+TEST(BusActivity, DependencyClosureDoesNotBindGhostToReusedBusAndRefusesStaleRoot) {
+    using namespace harken;
+    auto config = MakeNullConfig(2, 64);
+    config.maxBuses = 2;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    ASSERT_EQ(VN_OK, Vn_CreateBus(harkentest::ObjectId(101), VN_BUS_MASTER));
+    engine.nullBackend.Pump(1);
+    const auto topology = engine.buses.InstalledTopology();
+    SignalRenderNodeInput nodes[2];
+    nodes[0].kind = SignalEndpointKindV1::Sound;
+    nodes[0].stableId = harkentest::ObjectId(400);
+    nodes[1].busIndex = 1;
+    nodes[1].busId = nodes[1].stableId = harkentest::ObjectId(401);
+    nodes[1].busGeneration = topology.generations[1] + 1;
+    nodes[1].receiver = true;
+    const SignalConnectionInput relation{0, 1, 1};
+    auto signals = SignalRenderPlan::Prepare({2, 64, 48000, VN_CHANNEL_LAYOUT_STEREO}, nodes, {&relation, 1}, {});
+    ASSERT_NE(signals, nullptr);
+    const std::uint32_t root[]{0};
+    BusActivitySelection selected;
+    ASSERT_TRUE(PrepareBusActivitySelection(topology, signals.get(), {}, root, {}, {}, selected));
+    EXPECT_EQ(selected.buses, std::vector<std::uint32_t>{0});
+    EXPECT_EQ(selected.signalNodes, (std::vector<std::uint32_t>{0, 1}));
+    const BusSlotRef stale[]{BusSlotRef{1, nodes[1].busGeneration}};
+    EXPECT_FALSE(PrepareBusActivitySelection(topology, signals.get(), stale, {}, {}, {}, selected));
+    EXPECT_EQ(selected.buses, std::vector<std::uint32_t>{0});
+    EXPECT_EQ(selected.signalNodes, (std::vector<std::uint32_t>{0, 1}));
+}
 
 TEST(BusActivity, RealMixerUsesCompactPlanesAndReconstructedWorkRows) {
     auto config = MakeNullConfig(4, kBlockFrames);

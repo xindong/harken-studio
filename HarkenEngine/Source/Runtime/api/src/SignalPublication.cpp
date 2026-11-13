@@ -1,6 +1,7 @@
 #include "SignalPublication.h"
 #include "Engine.h"
 #include "HarkenApiInternal.h"
+#include "harken/render/BusActivityPlan.h"
 
 namespace harken {
 WorldInstallStatus PrepareSignalPublication(Engine& engine,
@@ -178,14 +179,23 @@ bool PrepareTopologyActivity(Engine& engine, const TopologyPlanView& topology,
     } privateRows{engine.buses};
     BusActivityPlan* activity = nullptr;
     try {
+        std::vector<BusSlotRef> roots;
+        roots.reserve(topology.orderCount);
+        for (std::uint32_t i = 0; i < topology.orderCount; ++i) {
+            const auto bus = topology.order[i];
+            if (bus >= topology.slotCount || !topology.alive[bus]) return false;
+            roots.push_back({bus, topology.generations[bus]});
+        }
+        std::vector<std::uint32_t> signalRoots(topology.signals != nullptr ? topology.signals->NodeCount() : 0);
+        for (std::uint32_t i = 0; i < signalRoots.size(); ++i) signalRoots[i] = i;
+        BusActivitySelection selection;
+        if (!PrepareBusActivitySelection(topology, topology.signals, roots, signalRoots, {}, {}, selection)) return false;
         std::vector<BusTree::WorkBinding> working;
         std::vector<SignalRenderNodeInput> busBindings;
         working.reserve(topology.orderCount);
         busBindings.reserve(topology.orderCount);
         privateRows.rows.reserve(topology.orderCount);
-        for (std::uint32_t i = 0; i < topology.orderCount; ++i) {
-            const auto bus = topology.order[i];
-            if (bus >= topology.slotCount || !topology.alive[bus]) return false;
+        for (const auto bus : selection.buses) {
             const BusSlotRef host{bus, topology.generations[bus]};
             auto work = engine.buses.AcceptedWorkRef(host);
             if (!work.Valid()) {
@@ -218,9 +228,7 @@ bool PrepareTopologyActivity(Engine& engine, const TopologyPlanView& topology,
             ? engine.buses.AcceptedActivitySignals() : engine.acceptedSignalPlan.get();
         std::unique_ptr<SignalRenderPlan> signals;
         if (topology.signals != nullptr) {
-            std::vector<std::uint32_t> selected(topology.signals->NodeCount());
-            for (std::uint32_t i = 0; i < selected.size(); ++i) selected[i] = i;
-            signals = topology.signals->PrepareProjection(selected, topology.slotCount, busBindings);
+            signals = topology.signals->PrepareProjection(selection.signalNodes, topology.slotCount, busBindings);
             if (!signals || !signals->ConfigurePublication(engine.buses.NextActivitySignalPublication(previous),
                     topology.signals->ContentIdentity(), previous,
                     (static_cast<std::uint64_t>(engine.config.mixRate.SampleRate()) * 10 + 999) / 1000) ||

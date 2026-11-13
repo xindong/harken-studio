@@ -2,6 +2,118 @@
 
 namespace harken {
 
+bool PrepareBusActivitySelection(const TopologyPlanView& topology,
+    const SignalRenderPlan* signals, std::span<const BusSlotRef> busRoots,
+    std::span<const std::uint32_t> signalRoots,
+    std::span<const BusActivityDetectorDependency> detectors,
+    std::span<const BusActivityMemberRoute> members,
+    BusActivitySelection& out) noexcept {
+    if (!topology.valid || topology.slotCount == 0 || topology.alive == nullptr ||
+        topology.generations == nullptr || topology.parents == nullptr || topology.busIds == nullptr ||
+        topology.order == nullptr || !topology.alive[0]) return false;
+    const auto signalCount = signals != nullptr ? signals->NodeCount() : 0u;
+    if (signalCount > UINT32_MAX - topology.slotCount) return false;
+    const auto count = topology.slotCount + signalCount;
+    const auto validBus = [&](BusSlotRef bus) {
+        return bus.Valid() && bus.index < topology.slotCount && topology.alive[bus.index] &&
+            topology.generations[bus.index] == bus.generation;
+    };
+    try {
+        std::vector<std::pair<std::uint32_t, std::uint32_t>> edges;
+        std::vector<std::size_t> offsets(static_cast<std::size_t>(count) + 1);
+        const auto edge = [&](std::uint32_t from, std::uint32_t to) {
+            edges.emplace_back(from, to);
+            ++offsets[from + 1];
+        };
+        std::vector<std::uint8_t> live(topology.slotCount);
+        for (std::uint32_t i = 0; i < topology.orderCount; ++i) {
+            const auto bus = topology.order[i];
+            if (bus >= topology.slotCount || !topology.alive[bus] || live[bus]++) return false;
+            if (bus != 0) {
+                const auto parent = topology.parents[bus];
+                if (parent >= topology.slotCount || !topology.alive[parent]) return false;
+                edge(bus, parent);
+            }
+            const auto sends = topology.Sends(bus);
+            for (std::uint32_t s = 0; s < sends.count; ++s) {
+                const auto target = topology.sendTargets[sends.first + s];
+                if (target == kEmptySendTarget) continue;
+                if (target >= topology.slotCount || !topology.alive[target]) return false;
+                edge(bus, target);
+            }
+        }
+        if (!live[0]) return false;
+        std::vector<std::uint8_t> formal(signalCount);
+        if (signals != nullptr) {
+            for (const auto& relation : signals->Relations()) {
+                if (relation.source >= signalCount || relation.target >= signalCount) return false;
+                formal[relation.source] = formal[relation.target] = 1;
+                edge(topology.slotCount + relation.source, topology.slotCount + relation.target);
+                edge(topology.slotCount + relation.target, topology.slotCount + relation.source);
+            }
+            for (const auto& path : signals->DefinitionPaths()) {
+                if (path.source >= signalCount || path.target >= signalCount) return false;
+                edge(topology.slotCount + path.source, topology.slotCount + path.target);
+            }
+            for (std::uint32_t i = 0; i < signalCount; ++i) {
+                const auto node = signals->NodeDefinition(i);
+                if (node.kind != SignalEndpointKindV1::Bus || node.busIndex >= topology.slotCount ||
+                    !topology.alive[node.busIndex]) continue;
+                // Formal deleted endpoints stay connected silence, rather than
+                // silently attaching to a new incarnation in the same slot.
+                if ((formal[i] || node.receiver) &&
+                    (node.busId != topology.busIds[node.busIndex] ||
+                     node.busGeneration != topology.generations[node.busIndex])) continue;
+                edge(node.busIndex, topology.slotCount + i);
+                edge(topology.slotCount + i, node.busIndex);
+            }
+        }
+        for (const auto& detector : detectors) {
+            if (!validBus(detector.target) || !validBus(detector.source)) return false;
+            // A live detector advances a silent Compressor's release state.
+            // Conversely an active receiver needs its connected zero source.
+            edge(detector.target.index, detector.source.index);
+            edge(detector.source.index, detector.target.index);
+        }
+        for (const auto& member : members) {
+            if (member.signalNode >= signalCount || !validBus(member.bus)) return false;
+            edge(topology.slotCount + member.signalNode, member.bus.index);
+        }
+        for (std::uint32_t i = 0; i < count; ++i) offsets[i + 1] += offsets[i];
+        auto cursor = offsets;
+        std::vector<std::uint32_t> outgoing(edges.size());
+        for (const auto& [from, to] : edges) outgoing[cursor[from]++] = to;
+        std::vector<std::uint8_t> selected(count);
+        std::vector<std::uint32_t> queue;
+        queue.reserve(count);
+        const auto select = [&](std::uint32_t node) {
+            if (!selected[node]) { selected[node] = 1; queue.push_back(node); }
+        };
+        for (const auto bus : busRoots) {
+            if (!validBus(bus)) return false;
+            select(bus.index);
+        }
+        for (const auto node : signalRoots) {
+            if (node >= signalCount) return false;
+            select(topology.slotCount + node);
+        }
+        for (std::size_t i = 0; i < queue.size(); ++i)
+            for (auto j = offsets[queue[i]]; j < offsets[queue[i] + 1]; ++j) select(outgoing[j]);
+        // Plane zero remains available even for an entirely silent engine.
+        // Its existence alone must not keep every Master sidechain awake.
+        selected[0] = 1;
+        BusActivitySelection next;
+        for (std::uint32_t i = 0; i < topology.orderCount; ++i)
+            if (selected[topology.order[i]]) next.buses.push_back(topology.order[i]);
+        for (std::uint32_t i = 0; i < topology.slotCount; ++i)
+            if (selected[i] && !live[i]) return false;
+        for (std::uint32_t i = 0; i < signalCount; ++i)
+            if (selected[topology.slotCount + i]) next.signalNodes.push_back(i);
+        out = std::move(next);
+        return true;
+    } catch (...) { return false; }
+}
+
 BusActivityPlan* BusTree::PrepareActivity(const TopologyPlanView& topology,
     std::span<const WorkBinding> working, std::unique_ptr<SignalRenderPlan> signals,
     SignalTransition signalTransition, const SignalRenderPlan* replacedSignals, bool adoptsTopology) noexcept {
