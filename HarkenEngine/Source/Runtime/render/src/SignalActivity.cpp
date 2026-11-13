@@ -19,19 +19,47 @@ SignalRenderNodeInput SignalRenderPlan::NodeDefinition(std::uint32_t index) cons
 }
 
 std::unique_ptr<SignalRenderPlan> SignalRenderPlan::PrepareProjection(
-    std::span<const std::uint32_t> selected, std::uint32_t topologySlots) const noexcept {
+    std::span<const std::uint32_t> selected, std::uint32_t topologySlots,
+    std::span<const SignalRenderNodeInput> busBindings) const noexcept {
     if (selected.size() > UINT32_MAX) return {};
     try {
         std::vector<std::uint32_t> remap(nodes_.size(), UINT32_MAX);
+        std::vector<std::uint32_t> bindingByBus;
+        std::vector<std::uint8_t> mapped(busBindings.size());
+        if (!busBindings.empty()) {
+            bindingByBus.assign(topologySlots, UINT32_MAX);
+            for (std::uint32_t i = 0; i < busBindings.size(); ++i) {
+                const auto& bus = busBindings[i];
+                if (bus.kind != SignalEndpointKindV1::Bus || bus.receiver || bus.busIndex >= topologySlots ||
+                    bus.busId == VnObjectId{} || bus.busGeneration == 0 ||
+                    bus.stableId != bus.busId || bindingByBus[bus.busIndex] != UINT32_MAX) return {};
+                bindingByBus[bus.busIndex] = i;
+            }
+        }
         std::vector<SignalRenderNodeInput> nodes;
-        nodes.reserve(selected.size());
+        nodes.reserve(selected.size() + busBindings.size());
         for (auto index : selected) {
             if (index >= nodes_.size() || remap[index] != UINT32_MAX) return {};
-            const auto input = NodeDefinition(index);
-            if (input.kind == SignalEndpointKindV1::Bus && input.busIndex >= topologySlots) return {};
+            auto input = NodeDefinition(index);
+            if (input.kind == SignalEndpointKindV1::Bus && !busBindings.empty()) {
+                const auto ordinal = input.busIndex < topologySlots ? bindingByBus[input.busIndex] : UINT32_MAX;
+                const bool formal = nodes_[index].source != UINT32_MAX || nodes_[index].target != UINT32_MAX;
+                if (ordinal != UINT32_MAX && (!formal ||
+                    (input.busId == busBindings[ordinal].busId && input.busGeneration == busBindings[ordinal].busGeneration))) {
+                    if (mapped[ordinal]++) return {};
+                    if (!formal) input = busBindings[ordinal];
+                } else {
+                    // Retain an old formal endpoint as connected silence. A
+                    // reincarnated physical Bus gets its own ordinary mapping.
+                    input.busIndex = UINT32_MAX;
+                }
+            } else if (input.kind == SignalEndpointKindV1::Bus && input.busIndex != UINT32_MAX &&
+                       input.busIndex >= topologySlots) return {};
             remap[index] = static_cast<std::uint32_t>(nodes.size());
             nodes.push_back(input);
         }
+        for (std::uint32_t i = 0; i < busBindings.size(); ++i)
+            if (!mapped[i]) nodes.push_back(busBindings[i]);
         std::vector<SignalConnectionInput> relations;
         for (auto relation : relations_) {
             const auto source = remap[relation.source], target = remap[relation.target];

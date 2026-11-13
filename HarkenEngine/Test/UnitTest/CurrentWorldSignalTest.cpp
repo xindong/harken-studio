@@ -200,7 +200,11 @@ TEST(CurrentWorldSignal, DirectInstallIsAtomicIdempotentAndPreservesLiveTopology
     EXPECT_EQ(engine.variables.CurrentWorldGeneration(), generation);
     EXPECT_EQ(engine.acceptedSignalPlan.get(), first);
     engine.nullBackend.Pump(8);
-    EXPECT_EQ(engine.buses.InstalledSignals(), first);
+    ASSERT_NE(engine.buses.InstalledSignals(), nullptr);
+    EXPECT_EQ(engine.buses.InstalledSignals(), engine.buses.AcceptedActivitySignals());
+    EXPECT_EQ(engine.buses.InstalledSignals()->ContentIdentity(), first->ContentIdentity());
+    EXPECT_EQ(engine.buses.InstalledSignals()->RelationCount(), first->RelationCount());
+    EXPECT_TRUE(engine.buses.InstalledSignals()->SameMembership(*first));
     const auto bus = engine.buses.FindIndex(source);
     EXPECT_EQ(engine.buses.BusOutputLayout(bus), static_cast<std::uint32_t>(VN_CHANNEL_LAYOUT_MONO));
     VariableServiceV1::PreparedCurrentWorldImageV1 stale;
@@ -221,7 +225,11 @@ TEST(CurrentWorldSignal, DirectInstallIsAtomicIdempotentAndPreservesLiveTopology
     EXPECT_EQ(second->WorldIdentity(), first->WorldIdentity());
     ASSERT_EQ(Vn_CreateBus(harkentest::ObjectId(99), VN_BUS_MASTER), VN_OK);
     engine.nullBackend.Pump(2);
-    EXPECT_EQ(engine.buses.InstalledSignals(), second);
+    ASSERT_NE(engine.buses.InstalledSignals(), nullptr);
+    EXPECT_EQ(engine.buses.InstalledSignals(), engine.buses.AcceptedActivitySignals());
+    EXPECT_EQ(engine.buses.InstalledSignals()->ContentIdentity(), second->ContentIdentity());
+    EXPECT_EQ(engine.buses.InstalledSignals()->RelationCount(), second->RelationCount());
+    EXPECT_TRUE(engine.buses.InstalledSignals()->SameMembership(*second));
     const auto current = engine.variables.CurrentWorldGeneration();
     fixture.relations[0].source.stableId = harkentest::ObjectId(999);
     fixture.Refresh();
@@ -290,7 +298,11 @@ TEST(CurrentWorldSignal, PairedPublicationCarriesSignalsInItsSingleTopologyComma
     ASSERT_NE(engine.acceptedSignalPlan, nullptr);
     EXPECT_EQ(engine.commands.FreeSlots(), free - 1);
     engine.nullBackend.Pump(1);
-    EXPECT_EQ(engine.buses.InstalledSignals(), engine.acceptedSignalPlan.get());
+    ASSERT_NE(engine.buses.InstalledSignals(), nullptr);
+    EXPECT_EQ(engine.buses.InstalledSignals(), engine.buses.AcceptedActivitySignals());
+    EXPECT_EQ(engine.buses.InstalledSignals()->ContentIdentity(), engine.acceptedSignalPlan->ContentIdentity());
+    EXPECT_EQ(engine.buses.InstalledSignals()->RelationCount(), engine.acceptedSignalPlan->RelationCount());
+    EXPECT_TRUE(engine.buses.InstalledSignals()->SameMembership(*engine.acceptedSignalPlan));
 }
 
 TEST(CurrentWorldSignal, PendingPlanBackingIsReleasedOnlyAfterRetirementDrain) {

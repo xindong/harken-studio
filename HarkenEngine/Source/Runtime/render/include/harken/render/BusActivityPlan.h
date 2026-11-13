@@ -28,7 +28,10 @@ struct BusActivityPlan {
         };
     }
     ~BusActivityPlan() {
-        for (const auto& binding : working) tree.ReleaseWorkRow(binding.work);
+        if (!workingReleased)
+            for (const auto& binding : working) tree.ReleaseWorkRow(binding.work);
+        if (!beforeDetachReleased)
+            for (const auto& entry : beforeDetach) tree.ReleaseWorkRow(entry.work);
     }
     BusTree& tree;
     CommandQueue::BusActivityAttachment attachment{};
@@ -39,6 +42,10 @@ struct BusActivityPlan {
     std::unique_ptr<SignalRenderPlan> signals;
     BusTree::SignalTransition signalTransition = BusTree::SignalTransition::Preserve;
     std::uint64_t replacedSignalPublication = 0;
+    struct BeforeDetach { BusEffectChainAdoption adoption; BusTree::WorkRef work; };
+    std::vector<BeforeDetach> beforeDetach;
+    bool workingReleased = false;
+    bool beforeDetachReleased = false;
 };
 
 } // namespace harken

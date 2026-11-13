@@ -30,6 +30,9 @@ void CommitSignals(Engine& engine, PreparedSignalPublication& prepared) noexcept
 WorldInstallStatus PreparePackSignals(Engine& engine, const PackComposition::PublishedView* published,
     const TopologyPlanView* topology, PreparedSignalPublication& out) noexcept;
 void RefreshRetainedPackSignals(Engine& engine) noexcept;
+bool PrepareTopologyActivity(Engine& engine, const TopologyPlanView& topology,
+    CommandQueue::BatchReservation& reservation, std::span<const CommandRecord> commands,
+    CommandQueue::PreparedBatchProof& proof) noexcept;
 
 // For an owner transaction without an existing topology publication. Its
 // reservation must not span cancellation/drain work that can enqueue commands.
@@ -45,6 +48,8 @@ private:
     Engine& engine_;
     std::uint32_t index_ = UINT32_MAX;
     CommandQueue::BatchReservation reservation_{};
+    CommandQueue::PreparedBatchProof proof_;
+    std::uint64_t acceptedRevision_ = 0;
 };
 }
 #endif

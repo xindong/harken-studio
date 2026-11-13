@@ -586,7 +586,12 @@ TEST(BusWorkRows, CandidateKeepsDetachedEffectUntilAudioRetirement) {
     auto& engine = *session.Engine();
     auto& buses = engine.buses;
     const auto id = harkentest::ObjectId(10);
-    ASSERT_EQ(VN_OK, Vn_CreateBus(id, VN_BUS_MASTER));
+    // Isolate row leases from the activity owner's additional lease.
+    ASSERT_EQ(VN_OK, buses.CreateBus(id, VN_BUS_MASTER));
+    const auto topology = engine.topologyPlans.AcquireSparse(0);
+    ASSERT_NE(harken::kInvalidTopologyPlanIndex, topology);
+    harken::FillLiveSignalTopology(engine, topology);
+    buses.ApplyTopologyPlan(topology, harken::kInvalidBusIndex, harken::kInvalidBusIndex, 0);
     VnGainDesc gain{};
     gain.structSize = sizeof(gain);
     gain.effectId = harkentest::ObjectId(100);
@@ -770,8 +775,8 @@ TEST(BusActivity, RealMixerUsesCompactPlanesAndReconstructedWorkRows) {
     EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_GAIN));
     const auto restored = buses.PrepareWorkRow();
     ASSERT_TRUE(restored.Valid());
-    EXPECT_EQ(idleWork.slot, restored.slot);
-    EXPECT_GT(restored.generation, idleWork.generation);
+    EXPECT_FALSE(buses.RetainWorkRow(idleWork));
+    EXPECT_NE(idleWork, restored);
     ASSERT_EQ(VN_OK, engine.PrepareBusWorkState(idle.index, *buses.PreparedWorkRow(restored)));
     const std::array expanded{compact[0], compact[1], harken::BusTree::WorkBinding{idle, restored}};
     publish(buses.PrepareActivity(buses.InstalledTopology(), expanded));

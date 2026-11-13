@@ -167,11 +167,95 @@ void CommitSignals(Engine& engine, PreparedSignalPublication& prepared) noexcept
     ++engine.acceptedSignalRevision;
 }
 
+bool PrepareTopologyActivity(Engine& engine, const TopologyPlanView& topology,
+    CommandQueue::BatchReservation& reservation, std::span<const CommandRecord> commands,
+    CommandQueue::PreparedBatchProof& proof) noexcept {
+    if (!topology.valid || commands.empty() || commands.size() > UINT32_MAX || proof.Valid()) return false;
+    struct PrivateRows {
+        BusTree& tree;
+        std::vector<BusTree::WorkRef> rows;
+        ~PrivateRows() { for (auto row : rows) tree.ReleaseWorkRow(row); }
+    } privateRows{engine.buses};
+    BusActivityPlan* activity = nullptr;
+    try {
+        std::vector<BusTree::WorkBinding> working;
+        std::vector<SignalRenderNodeInput> busBindings;
+        working.reserve(topology.orderCount);
+        busBindings.reserve(topology.orderCount);
+        privateRows.rows.reserve(topology.orderCount);
+        for (std::uint32_t i = 0; i < topology.orderCount; ++i) {
+            const auto bus = topology.order[i];
+            if (bus >= topology.slotCount || !topology.alive[bus]) return false;
+            const BusSlotRef host{bus, topology.generations[bus]};
+            auto work = engine.buses.AcceptedWorkRef(host);
+            if (!work.Valid()) {
+                work = engine.buses.PrepareWorkRow();
+                if (!work.Valid()) return false;
+                privateRows.rows.push_back(work);
+                auto& row = *engine.buses.PreparedWorkRow(work);
+                if (engine.buses.RefAt(bus) == host && engine.buses.IdAt(bus) == topology.busIds[bus]) {
+                    if (engine.PrepareBusWorkState(bus, row) != VN_OK) return false;
+                } else {
+                    // New incarnations have no inherited settings or physical
+                    // effect ownership. The same batch installs prepared edits.
+                    row.id = topology.busIds[bus];
+                    row.busIndex = bus;
+                    row.generation = host.generation;
+                    row.faderAfterSlot = engine.config.fxSlotsPerBus;
+                }
+                row.parentIndex = topology.parents[bus];
+                row.outputLayout = topology.outputLayouts[bus];
+                std::copy_n(topology.downmixCoeffs + static_cast<std::size_t>(bus) * 64, 64, row.downmixCoeffs);
+            }
+            working.push_back({host, work});
+            SignalRenderNodeInput node;
+            node.busIndex = bus;
+            node.busId = node.stableId = topology.busIds[bus];
+            node.busGeneration = host.generation;
+            busBindings.push_back(node);
+        }
+        const auto* previous = engine.buses.HasAcceptedActivity()
+            ? engine.buses.AcceptedActivitySignals() : engine.acceptedSignalPlan.get();
+        std::unique_ptr<SignalRenderPlan> signals;
+        if (topology.signals != nullptr) {
+            std::vector<std::uint32_t> selected(topology.signals->NodeCount());
+            for (std::uint32_t i = 0; i < selected.size(); ++i) selected[i] = i;
+            signals = topology.signals->PrepareProjection(selected, topology.slotCount, busBindings);
+            if (!signals || !signals->ConfigurePublication(engine.buses.NextActivitySignalPublication(previous),
+                    topology.signals->ContentIdentity(), previous,
+                    (static_cast<std::uint64_t>(engine.config.mixRate.SampleRate()) * 10 + 999) / 1000) ||
+                !engine.mixer.PrepareSignalBacking(*signals)) return false;
+        }
+        const bool replace = previous != nullptr &&
+            (signals == nullptr || !signals->SameContinuityDomain(*previous));
+        activity = engine.buses.PrepareActivity(topology, working, std::move(signals),
+            replace ? BusTree::SignalTransition::ReplaceContent : BusTree::SignalTransition::Preserve,
+            replace ? previous : nullptr, true);
+        if (activity == nullptr) return false;
+        if (!engine.commands.ProvePreparedBatch(&reservation, commands.data(),
+                static_cast<std::uint32_t>(commands.size()), &proof) ||
+            !engine.commands.BindPreparedBusActivity(proof, *engine.buses.ActivityAttachment(activity))) {
+            proof.Release();
+            engine.buses.CancelActivity(activity);
+            engine.buses.DrainActivities();
+            return false;
+        }
+        return true;
+    } catch (...) {
+        if (activity != nullptr) engine.buses.CancelActivity(activity);
+        engine.buses.DrainActivities();
+        return false;
+    }
+}
+
 PrivateSignalTopology::~PrivateSignalTopology() {
+    proof_.Release();
+    engine_.buses.DrainActivities();
     engine_.commands.CancelReservedBatch(&reservation_);
     if (index_ != UINT32_MAX) engine_.topologyPlans.Recycle(index_);
 }
 bool PrivateSignalTopology::Prepare(const PreparedSignalPublication& signals) noexcept {
+    try {
     if (!signals.changed) return true;
     if (index_ != UINT32_MAX || !CanCommitSignals(engine_, signals) ||
         engine_.acceptedBusTopologyRevision == UINT64_MAX) return false;
@@ -181,19 +265,26 @@ bool PrivateSignalTopology::Prepare(const PreparedSignalPublication& signals) no
     ClearPairedInstallAckIdentity(engine_, index_);
     FillLiveSignalTopology(engine_, index_);
     AttachPreparedSignals(engine_.topologyPlans, index_, signals);
-    return AdmitSingleLiveCommand(engine_) && engine_.commands.ReserveBatch(1, &reservation_);
-}
-void PrivateSignalTopology::Commit() noexcept {
-    if (index_ == UINT32_MAX) return;
+    if (!AdmitSingleLiveCommand(engine_) || !engine_.commands.ReserveBatch(1, &reservation_)) return false;
     CommandRecord command{};
     command.opcode = kOpcodeSetBusTopologyPlan;
     command.payload.setBusTopologyPlan.planIndex = index_;
     command.payload.setBusTopologyPlan.dynamicRoutePlanIndex = kInvalidDynamicRoutePlanIndex;
     command.payload.setBusTopologyPlan.connectFrom = kInvalidBusIndex;
     command.payload.setBusTopologyPlan.connectTo = kInvalidBusIndex;
-    command.payload.setBusTopologyPlan.acceptedGraphRevision = ++engine_.acceptedBusTopologyRevision;
+    acceptedRevision_ = engine_.acceptedBusTopologyRevision + 1;
+    command.payload.setBusTopologyPlan.acceptedGraphRevision = acceptedRevision_;
     command.payload.setBusTopologyPlan.batchCommandCount = 1;
-    engine_.commands.CommitPreparedBatch(&reservation_, &command);
+    return PrepareTopologyActivity(engine_, engine_.topologyPlans.View(index_), reservation_, {&command, 1}, proof_);
+    } catch (...) { return false; }
+}
+void PrivateSignalTopology::Commit() noexcept {
+    if (index_ == UINT32_MAX) return;
+    assert(proof_.Valid() && acceptedRevision_ == engine_.acceptedBusTopologyRevision + 1);
+    engine_.acceptedBusTopologyRevision = acceptedRevision_;
+    const auto published = engine_.commands.ConsumePreparedBatch(std::move(proof_));
+    assert(published.Count() == 1);
+    (void)published;
     ++engine_.topologyPlanCount;
     index_ = UINT32_MAX;
 }

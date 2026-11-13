@@ -1215,3 +1215,43 @@ TEST(CommandBudget, RawStartProofRefusalReleasesPreparedVoiceBeforePublication) 
     ASSERT_EQ(VN_OK, Vn_SetVoiceVolume(existing, -6, 0));
     EXPECT_EQ(commandHead + 1, engine.commands.PublishedHead());
 }
+
+
+TEST(CommandBudget, TopologyProofRefusalKeepsDefinitionsAudioAndPreparedRows) {
+    EngineSession session(BudgetConfig());
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const auto a = harkentest::ObjectId(10), b = harkentest::ObjectId(11), added = harkentest::ObjectId(12);
+    ASSERT_EQ(VN_OK, Vn_CreateBus(a, VN_BUS_MASTER));
+    ASSERT_EQ(VN_OK, Vn_CreateBus(b, VN_BUS_MASTER));
+    std::vector<float> pcm;
+    ASSERT_NE(0u, PlayDcVoice(harkentest::ObjectId(1), .25f, a, pcm));
+    const auto before = PumpBlock(&engine);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    const auto head = engine.commands.PublishedHead();
+    const auto revision = engine.acceptedBusTopologyRevision;
+    const auto rows = engine.buses.WorkRowsInUse();
+    const auto count = engine.buses.BusCount();
+    const auto free = engine.commands.FreeSlots();
+    const auto index = engine.buses.FindIndex(b);
+    const auto parent = engine.buses.ParentOf(index);
+    const auto layout = engine.busOutputLayout[index];
+    harken::detail::CommandQueueSubmissionTestAccess::ExhaustFrozenOrigins(engine.commands);
+    EXPECT_EQ(VN_BACKPRESSURE, Vn_CreateBus(added, VN_BUS_MASTER));
+    EXPECT_EQ(harken::kInvalidBusIndex, engine.buses.FindIndex(added));
+    EXPECT_EQ(count, engine.buses.BusCount());
+    EXPECT_EQ(VN_BACKPRESSURE, Vn_ReparentBus(b, a));
+    EXPECT_EQ(parent, engine.buses.ParentOf(index));
+    EXPECT_EQ(VN_BACKPRESSURE, Vn_ConnectBusSend(a, b, 0));
+    EXPECT_EQ(0u, engine.busSends.Count());
+    EXPECT_EQ(VN_BACKPRESSURE, Vn_SetBusOutputLayout(b, VN_CHANNEL_LAYOUT_MONO));
+    EXPECT_EQ(layout, engine.busOutputLayout[index]);
+    EXPECT_EQ(head, engine.commands.PublishedHead());
+    EXPECT_EQ(revision, engine.acceptedBusTopologyRevision);
+    EXPECT_EQ(rows, engine.buses.WorkRowsInUse());
+    EXPECT_EQ(free, engine.commands.FreeSlots());
+    const auto after = PumpBlock(&engine);
+    EXPECT_EQ(before.left, after.left);
+    EXPECT_EQ(before.right, after.right);
+    EXPECT_EQ(0u, engine.buses.ActivityFallbackCount());
+}

@@ -188,6 +188,47 @@ TEST(SignalRenderPlan, SourceCaptureUsesActualMemberOutputRoundingBeforeSignedSu
         for (const auto sample : target.pcm) EXPECT_FLOAT_EQ(sample, 1e-6f);
     }
 }
+
+TEST(SignalRenderPlan, TopologyProjectionKeepsRetiredBusEndpointConnectedToSilence) {
+    std::array nodes{SignalRenderNodeInput{}, SignalRenderNodeInput{}, SignalRenderNodeInput{}};
+    for (unsigned i = 0; i < nodes.size(); ++i) {
+        nodes[i].busIndex = i;
+        nodes[i].busId = nodes[i].stableId = {0, i + 1u};
+        nodes[i].busGeneration = 1;
+    }
+    nodes[2].receiver = true;
+    const std::array relations{SignalConnectionInput{1, 2, .5f, {0, 10}}};
+    auto full = SignalRenderPlan::Prepare(kFormat, nodes, relations, {});
+    ASSERT_NE(nullptr, full);
+    full->EnableActualRouting(3);
+    ASSERT_TRUE(full->ConfigurePublication(1, 100, nullptr, 0));
+    const std::array selected{0u, 1u, 2u};
+    std::array current{nodes[0], nodes[1], nodes[2]};
+    current[2].receiver = false;
+    current[1].busId = current[1].stableId = {0, 20};
+    current[1].busGeneration = 2;
+    auto projected = full->PrepareProjection(selected, 3, current);
+    ASSERT_NE(nullptr, projected);
+    EXPECT_EQ(4u, projected->NodeCount());
+    EXPECT_EQ(UINT32_MAX, projected->NodeDefinition(1).busIndex);
+    EXPECT_EQ(nodes[1].busId, projected->NodeDefinition(1).busId);
+    EXPECT_EQ(1u, projected->NodeDefinition(1).busGeneration);
+    EXPECT_EQ(3u, projected->NodeForBus(1, current[1].busId, 2));
+    EXPECT_EQ(UINT32_MAX, projected->NodeForBus(1, nodes[1].busId, 1));
+    EXPECT_EQ(1u, projected->Relations()[0].source);
+    ASSERT_TRUE(projected->ConfigurePublication(2, 100, full.get(), 0));
+    ASSERT_TRUE(projected->AdoptContinuityFrom(*full));
+    // Both old and new Bus nodes can be absent from physical processing. The
+    // retained connection is still committed as fresh zero input each block.
+    for (std::uint64_t epoch = 0; epoch < 4; ++epoch) {
+        auto block = Block(epoch);
+        block.world = projected->WorldIdentity();
+        ASSERT_TRUE(projected->BeginBlock(block));
+        ASSERT_TRUE(projected->ProcessContent({}));
+        ASSERT_TRUE(projected->CommitBlock());
+    }
+}
+
 } // namespace
 
 TEST(SignalRenderPlan, FormalDefinitionProofUsesCarrierOwnershipAndBusIdentity) {

@@ -200,7 +200,10 @@ TEST(PackSignalRelation, FullSetAndContentOnlyPublicationUseOneCommandAndClearOn
     ASSERT_NE(engine.acceptedSignalPlan, nullptr);
     EXPECT_EQ(engine.commands.FreeSlots(), free - 1);
     engine.nullBackend.Pump(1);
-    EXPECT_EQ(engine.buses.InstalledSignals(), engine.acceptedSignalPlan.get());
+    ASSERT_NE(nullptr, engine.buses.InstalledSignals());
+    EXPECT_EQ(engine.acceptedSignalPlan->ContentIdentity(), engine.buses.InstalledSignals()->ContentIdentity());
+    EXPECT_EQ(engine.acceptedSignalPlan->RelationCount(), engine.buses.InstalledSignals()->RelationCount());
+    EXPECT_TRUE(engine.buses.InstalledSignals()->SameMembership(*engine.acceptedSignalPlan));
     const auto identity = engine.acceptedSignalPlan->WorldIdentity();
     for (unsigned i = 0; i < 2; ++i) members[i].expectedHandle = rows[i].handle;
     content.bytes = SignalContentPack(2, -6);
@@ -210,7 +213,10 @@ TEST(PackSignalRelation, FullSetAndContentOnlyPublicationUseOneCommandAndClearOn
     EXPECT_EQ(engine.commands.FreeSlots(), free - 1);
     EXPECT_EQ(engine.acceptedSignalPlan->WorldIdentity(), identity);
     engine.nullBackend.Pump(1);
-    EXPECT_EQ(engine.buses.InstalledSignals(), engine.acceptedSignalPlan.get());
+    ASSERT_NE(nullptr, engine.buses.InstalledSignals());
+    EXPECT_EQ(engine.acceptedSignalPlan->ContentIdentity(), engine.buses.InstalledSignals()->ContentIdentity());
+    EXPECT_EQ(engine.acceptedSignalPlan->RelationCount(), engine.buses.InstalledSignals()->RelationCount());
+    EXPECT_TRUE(engine.buses.InstalledSignals()->SameMembership(*engine.acceptedSignalPlan));
     VnCanonicalPackSetUnloadDescV1 unload{};
     unload.structSize = sizeof(unload);
     unload.expectedInitHandle = report.initHandle;
@@ -272,6 +278,9 @@ TEST(PackSignalRelation, RetainedPreparedAndLiveLeasesKeepExactProofUntilLastRel
     row.source.ownerRevision = 2;
     EXPECT_EQ(engine.acceptedSignalPlan->MatchMember({&row, 1}, matched), 1u);
     engine.nullBackend.Pump(1);
-    EXPECT_EQ(engine.buses.InstalledSignals(), engine.acceptedSignalPlan.get());
+    ASSERT_NE(nullptr, engine.buses.InstalledSignals());
+    EXPECT_EQ(engine.acceptedSignalPlan->ContentIdentity(), engine.buses.InstalledSignals()->ContentIdentity());
+    EXPECT_EQ(engine.acceptedSignalPlan->RelationCount(), engine.buses.InstalledSignals()->RelationCount());
+    EXPECT_TRUE(engine.buses.InstalledSignals()->SameMembership(*engine.acceptedSignalPlan));
 }
 } // namespace

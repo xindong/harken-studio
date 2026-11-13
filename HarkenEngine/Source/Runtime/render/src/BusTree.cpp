@@ -710,6 +710,12 @@ void BusTree::ApplyTopologyPlan(std::uint32_t planIndex,
                 continue;
             }
             if (HasWorkRow(i) && WorkState(i).generation != generation) {
+                if (m_activeActivity != nullptr) {
+                    // Topology publication must already have adopted a fresh
+                    // incarnation. Never reset a leased published work row.
+                    assert(false && "topology activity must prepare the new Bus incarnation");
+                    continue;
+                }
                 RetireBusSlotEffects(WorkState(i));
                 const std::uint32_t parent =
                     plan.parents != nullptr &&

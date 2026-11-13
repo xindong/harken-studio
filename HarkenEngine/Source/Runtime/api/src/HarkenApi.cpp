@@ -79870,38 +79870,52 @@ std::uint32_t ReserveTopologyChange(harken::Engine& engine,
     return planIndex;
 }
 
-// Fills the reserved plan and pushes the single atomic plan-swap command. For a
-// connect, connectFrom/To/level ride the same record so the edge's level snaps
-// with the swap; a create or disconnect passes connectFrom == kInvalidBusIndex.
-void PublishPlan(harken::Engine& engine, std::uint32_t planIndex,
-                 std::uint32_t connectFrom, std::uint32_t connectTo,
-                 float connectLevelDb,
-                 std::uint32_t dynamicRoutePlanIndex =
-                     harken::kInvalidDynamicRoutePlanIndex,
-                 bool alreadyPrepared = false) {
-    if (!alreadyPrepared) FillPlan(engine, planIndex);
-    harken::CommandRecord cmd{};
-    cmd.opcode = harken::kOpcodeSetBusTopologyPlan;
-    cmd.payload.setBusTopologyPlan.planIndex = planIndex;
-    cmd.payload.setBusTopologyPlan.dynamicRoutePlanIndex =
-        dynamicRoutePlanIndex;
-    cmd.payload.setBusTopologyPlan.connectFrom = connectFrom;
-    cmd.payload.setBusTopologyPlan.connectTo = connectTo;
-    cmd.payload.setBusTopologyPlan.connectLevelDb = connectLevelDb;
-    cmd.payload.setBusTopologyPlan.connectFromGeneration =
-        connectFrom == harken::kInvalidBusIndex
-            ? 0
-            : engine.buses.GenerationAt(connectFrom);
-    cmd.payload.setBusTopologyPlan.connectToGeneration =
-        connectTo == harken::kInvalidBusIndex
-            ? 0
-            : engine.buses.GenerationAt(connectTo);
-    cmd.payload.setBusTopologyPlan.acceptedGraphRevision =
-        ++engine.acceptedBusTopologyRevision;
-    cmd.payload.setBusTopologyPlan.batchCommandCount = 1;
-    (void)engine.PublishBusSettingCommand(cmd); // admission verified in Reserve
-    ++engine.topologyPlanCount;
-}
+// Own the existing plan slot and queue proof through preparation. All fallible
+// work precedes logical edits; publication consumes the already frozen batch.
+class PreparedTopologyPublication {
+public:
+    PreparedTopologyPublication(harken::Engine& engine, std::uint32_t index)
+        : engine_(engine), index_(index) {}
+    ~PreparedTopologyPublication() {
+        proof_.Release();
+        engine_.buses.DrainActivities();
+        engine_.commands.CancelReservedBatch(&reservation_);
+        if (index_ != harken::kInvalidTopologyPlanIndex) engine_.topologyPlans.Recycle(index_);
+    }
+    bool Prepare(std::span<const harken::CommandRecord> following = {},
+                 std::uint32_t dynamicPlan = harken::kInvalidDynamicRoutePlanIndex) {
+        if (following.size() >= UINT32_MAX || engine_.acceptedBusTopologyRevision == UINT64_MAX) return false;
+        std::vector<harken::CommandRecord> commands(1);
+        auto& command = commands.front();
+        command.opcode = harken::kOpcodeSetBusTopologyPlan;
+        command.payload.setBusTopologyPlan.planIndex = index_;
+        command.payload.setBusTopologyPlan.dynamicRoutePlanIndex = dynamicPlan;
+        command.payload.setBusTopologyPlan.connectFrom = harken::kInvalidBusIndex;
+        command.payload.setBusTopologyPlan.connectTo = harken::kInvalidBusIndex;
+        revision_ = engine_.acceptedBusTopologyRevision + 1;
+        command.payload.setBusTopologyPlan.acceptedGraphRevision = revision_;
+        count_ = static_cast<std::uint32_t>(following.size() + 1);
+        command.payload.setBusTopologyPlan.batchCommandCount = count_;
+        commands.insert(commands.end(), following.begin(), following.end());
+        return engine_.commands.ReserveBatch(count_, &reservation_) &&
+            harken::PrepareTopologyActivity(engine_, engine_.topologyPlans.View(index_), reservation_, commands, proof_);
+    }
+    void Publish() noexcept {
+        assert(proof_.Valid() && revision_ == engine_.acceptedBusTopologyRevision + 1);
+        engine_.acceptedBusTopologyRevision = revision_;
+        const auto published = engine_.commands.ConsumePreparedBatch(std::move(proof_));
+        assert(published.Count() == count_);
+        (void)published;
+        ++engine_.topologyPlanCount;
+        index_ = harken::kInvalidTopologyPlanIndex;
+    }
+private:
+    harken::Engine& engine_;
+    std::uint32_t index_, count_ = 0;
+    std::uint64_t revision_ = 0;
+    harken::CommandQueue::BatchReservation reservation_{};
+    harken::CommandQueue::PreparedBatchProof proof_;
+};
 
 } // namespace
 
@@ -116276,6 +116290,15 @@ VnResult Vn_ApplyBusTopology(const VnBusTopologyDesc* topology) {
         return refuse(volumesValid ? VN_IN_USE : VN_INVALID_ARG,
             volumesValid ? kTopologyRefusalOwnership : kTopologyRefusalValidation);
     }
+    harken::CommandQueue::PreparedBatchProof proof;
+    if (!harken::PrepareTopologyActivity(*engine, engine->topologyPlans.View(planIndex),
+            reservation, {&command, 1}, proof)) {
+        engine->commands.CancelReservedBatch(&reservation);
+        if (dynamicPlanIndex != harken::kInvalidDynamicRoutePlanIndex)
+            engine->dynamicRoutes.AbandonPlan(dynamicPlanIndex);
+        engine->topologyPlans.Recycle(planIndex);
+        return refuse(VN_BACKPRESSURE, kTopologyRefusalBackpressure);
+    }
     for (std::uint32_t i = 1; i < oldCount; ++i) {
         if (removedOld[i] != 0 && newSlot[i] == 0)
             harken::CommitRetireTopologyBusV1(*engine, {i, generations[i]}, acceptedRevision);
@@ -116339,7 +116362,9 @@ VnResult Vn_ApplyBusTopology(const VnBusTopologyDesc* topology) {
     ++engine->topologyPlanCount;
     harken::ClearPairedInstallAckIdentity(*engine, planIndex);
     harken::ClearCurrentWorldBusAdmissionV1(*engine);
-    engine->commands.CommitPreparedBatch(&reservation, &command);
+    const auto published = engine->commands.ConsumePreparedBatch(std::move(proof));
+    assert(published.Count() == 1);
+    (void)published;
     engine->NoteBusSettingCommand(command);
     return VN_OK;
 
@@ -116389,14 +116414,40 @@ VnResult Vn_CreateBus(VnBusId busId, VnBusId parentId) {
     if (planIndex == harken::kInvalidTopologyPlanIndex) {
         return VN_BACKPRESSURE;
     }
-    const VnResult created = engine->buses.CreateBus(busId, parentId);
-    if (created != VN_OK) {
-        engine->topologyPlans.Recycle(planIndex); // defensive: preflight ruled these out
-        return created;
+    PreparedTopologyPublication publication(*engine, planIndex);
+    std::uint32_t newBusIndex = 1;
+    while (newBusIndex < engine->buses.BusCount() &&
+        (engine->buses.AliveAt(newBusIndex) || engine->buses.NextGenerationForSlot(newBusIndex) == 0)) ++newBusIndex;
+    const auto generation = engine->buses.NextGenerationForSlot(newBusIndex);
+    if (generation == 0) return VN_NO_BUS;
+    const auto count = std::max(engine->buses.BusCount(), newBusIndex + 1);
+    std::vector<VnBusId> ids(count);
+    std::vector<std::uint32_t> parents(count), generations(count);
+    std::vector<std::uint8_t> alive(count);
+    for (std::uint32_t i = 0; i < engine->buses.BusCount(); ++i) {
+        ids[i] = engine->buses.IdAt(i);
+        parents[i] = engine->buses.ParentOf(i);
+        generations[i] = engine->buses.GenerationAt(i);
+        alive[i] = engine->buses.AliveAt(i);
     }
-    const std::uint32_t newBusIndex = engine->buses.FindIndex(busId);
-    ResetBusLogicSlot(*engine, newBusIndex, 0,
-                      engine->buses.GenerationAt(newBusIndex));
+    ids[newBusIndex] = busId;
+    parents[newBusIndex] = engine->buses.FindIndex(parentId);
+    generations[newBusIndex] = generation;
+    alive[newBusIndex] = 1;
+    ProspectiveTopologyView prospective{};
+    prospective.busCount = count;
+    prospective.busIds = ids.data();
+    prospective.parents = parents.data();
+    prospective.generations = generations.data();
+    prospective.alive = alive.data();
+    prospective.sends = &engine->busSends;
+    harken::FillLiveOrPreparedPlan(*engine, engine->topologyPlans, planIndex, &prospective);
+    engine->topologyPlans.OutputLayoutData(planIndex)[newBusIndex] = engine->config.mixChannelLayout;
+    harken::DefaultDownmixMatrix(engine->config.mixChannelLayout, engine->config.mixChannelLayout,
+        engine->topologyPlans.DownmixCoeffsData(planIndex) + static_cast<std::size_t>(newBusIndex) * 64);
+    if (!publication.Prepare()) return VN_BACKPRESSURE;
+    engine->buses.CommitLogicSlot(newBusIndex, busId, parents[newBusIndex], generation);
+    ResetBusLogicSlot(*engine, newBusIndex, 0, generation);
 
     {
         harken::MonitorBusFacts facts{};
@@ -116406,10 +116457,7 @@ VnResult Vn_CreateBus(VnBusId busId, VnBusId parentId) {
         harken::ObserveMonitorBus(newBusIndex + 1u, engine->buses.GenerationAt(newBusIndex), busId,
                           facts);
     }
-    // The new bus has no send edges; the plan's feeds-first order for the pure
-    // tree is descending index, so the mix is unchanged from the pre-plan fold.
-    PublishPlan(*engine, planIndex, harken::kInvalidBusIndex,
-                harken::kInvalidBusIndex, 0.0f);
+    publication.Publish();
     return VN_OK;
 
     } catch (const std::bad_alloc&) {
@@ -116491,25 +116539,28 @@ VnResult Vn_ReparentBus(VnBusId busId, VnBusId newParentId) {
     if (planIndex == harken::kInvalidTopologyPlanIndex) {
         return VN_BACKPRESSURE;
     }
-    // Commit the logic-side parent, then publish: the plan carries the full
-    // authoritative parent set and the swap installs it at the block
-    // boundary, so the audio thread never sees a half-applied tree.
-    engine->buses.SetLogicParent(busIndex, parentIndex);
-    PublishPlan(*engine, planIndex, harken::kInvalidBusIndex,
-                harken::kInvalidBusIndex, 0.0f);
-    for (const std::uint32_t i : soloFlips) {
+    PreparedTopologyPublication publication(*engine, planIndex);
+    FillPlan(*engine, planIndex);
+    if (!TopoSortBuses(*engine, harken::kInvalidBusIndex, harken::kInvalidBusIndex,
+            engine->topologyPlans.OrderData(planIndex), busIndex, parentIndex)) return VN_SEND_CYCLE;
+    engine->topologyPlans.ParentsData(planIndex)[busIndex] = parentIndex;
+    std::vector<harken::CommandRecord> volumes;
+    volumes.reserve(soloFlips.size());
+    for (const auto i : soloFlips) {
         harken::CommandRecord command{};
         command.opcode = harken::kOpcodeSetBusVolume;
         command.payload.setBusVolume.busIndex = i;
-        command.payload.setBusVolume.volumeDb =
-            BusEffectivelyAudible(*engine, i)
-                ? engine->busTargets.Reduce(i, harken::kBusTargetBusVolume)
-                : kBusMuteFloorDb;
-        command.payload.setBusVolume.rampMs = 0;
-        command.payload.setBusVolume.busGeneration =
-            engine->buses.GenerationAt(i);
-        (void)engine->PublishBusSettingCommand(command); // batch reserved above
+        const bool audible = engine->busMuted[i] == 0 &&
+            BusOnSoloPathWith(*engine, i, harken::kInvalidBusIndex, 0, busIndex, parentIndex);
+        command.payload.setBusVolume.volumeDb = audible
+            ? engine->busTargets.Reduce(i, harken::kBusTargetBusVolume) : kBusMuteFloorDb;
+        command.payload.setBusVolume.busGeneration = engine->buses.GenerationAt(i);
+        volumes.push_back(command);
     }
+    if (!publication.Prepare(volumes)) return VN_BACKPRESSURE;
+    engine->buses.SetLogicParent(busIndex, parentIndex);
+    publication.Publish();
+    for (const auto& command : volumes) engine->NoteBusSettingCommand(command);
     // Tree edges are control-graph edges for the meter loop scan: rescan at
     // the next Vn_Update, exactly like a send connect/disconnect.
     return VN_OK;
@@ -116848,6 +116899,12 @@ VnResult Vn_DestroyBus(VnBusId busId) {
         abandonPlans();
         return VN_IN_USE;
     }
+    harken::CommandQueue::PreparedBatchProof proof;
+    if (!harken::PrepareTopologyActivity(*engine, engine->topologyPlans.View(planIndex), reservation, commands, proof)) {
+        engine->commands.CancelReservedBatch(&reservation);
+        abandonPlans();
+        return VN_BACKPRESSURE;
+    }
     for (const auto ref : removedRefs) harken::CommitRetireTopologyBusV1(*engine, ref, acceptedRevision);
     harken::CommitUnpublishedTimelineRoutingV1(*engine, unpublishedRouting);
     for (auto& detach : preparedDetaches) engine->bindings.CommitPreparedAttachment(&detach, nullptr);
@@ -116865,7 +116922,9 @@ VnResult Vn_DestroyBus(VnBusId busId) {
     engine->busSoloActiveCount = newSoloActive;
     engine->acceptedBusTopologyRevision = acceptedRevision;
     ++engine->topologyPlanCount;
-    engine->commands.CommitPreparedBatch(&reservation, commands.data());
+    const auto published = engine->commands.ConsumePreparedBatch(std::move(proof));
+    assert(published.Count() == commands.size());
+    (void)published;
     for (const auto& command : commands) engine->NoteBusSettingCommand(command);
     // The control graph shrank: frozen meter loops through the cascade may
     // have opened, so the next Vn_Update rescans.
@@ -116926,12 +116985,13 @@ VnResult Vn_ConnectBusSend(VnBusId fromBus, VnBusId toBus, float levelDb) {
     const auto planIndex = ReserveTopologyChange(*engine);
     if (planIndex == harken::kInvalidTopologyPlanIndex) return VN_BACKPRESSURE;
     if (!PrepareBusSendTopology(*engine, planIndex, candidate)) return VN_BACKPRESSURE;
+    PreparedTopologyPublication publication(*engine, planIndex);
+    if (!publication.Prepare()) return VN_BACKPRESSURE;
     candidate.ClearActions();
     engine->busSends.Swap(candidate);
     engine->busSendActive = engine->busSends.Count();
     UpdateSendHighWater(*engine);
-    PublishPlan(*engine, planIndex, harken::kInvalidBusIndex, harken::kInvalidBusIndex,
-                0.0f, harken::kInvalidDynamicRoutePlanIndex, true);
+    publication.Publish();
     // A send connect is the one LATER topology change that can close a
     // meter control loop (section 11.5): it is deliberately NOT refused
     // here — the next Vn_Update detects it and freezes the offending
@@ -116970,10 +117030,11 @@ VnResult Vn_DisconnectBusSend(VnBusId fromBus, VnBusId toBus) {
     const auto planIndex = ReserveTopologyChange(*engine);
     if (planIndex == harken::kInvalidTopologyPlanIndex) return VN_BACKPRESSURE;
     if (!PrepareBusSendTopology(*engine, planIndex, candidate)) return VN_BACKPRESSURE;
+    PreparedTopologyPublication publication(*engine, planIndex);
+    if (!publication.Prepare()) return VN_BACKPRESSURE;
     engine->busSends.Swap(candidate);
     engine->busSendActive = engine->busSends.Count();
-    PublishPlan(*engine, planIndex, harken::kInvalidBusIndex, harken::kInvalidBusIndex,
-                0.0f, harken::kInvalidDynamicRoutePlanIndex, true);
+    publication.Publish();
     // The control graph shrank: a loop frozen through this edge may have
     // opened, so the next Vn_Update rescans the section-11.5 marks.
     return VN_OK;
@@ -117993,21 +118054,23 @@ VnResult Vn_SetBusEffectDynamicRoute(
         }
         return VN_BACKPRESSURE;
     }
-    FillPlan(*engine, topologyPlanIndex, &candidate, false);
-
-    harken::CommandRecord command{};
-    command.opcode = harken::kOpcodeSetBusTopologyPlan;
-    command.payload.setBusTopologyPlan.planIndex = topologyPlanIndex;
-    command.payload.setBusTopologyPlan.dynamicRoutePlanIndex =
-        dynamicPlanIndex;
-    command.payload.setBusTopologyPlan.connectFrom =
-        harken::kInvalidBusIndex;
-    command.payload.setBusTopologyPlan.acceptedGraphRevision =
-        ++engine->acceptedBusTopologyRevision;
-    command.payload.setBusTopologyPlan.batchCommandCount = 1;
-    (void)engine->commands.TryPush(command);
+    PreparedTopologyPublication publication(*engine, topologyPlanIndex);
+    try {
+        FillPlan(*engine, topologyPlanIndex, &candidate, false);
+        if (!publication.Prepare({}, dynamicPlanIndex)) {
+            engine->dynamicRoutes.AbandonPlan(dynamicPlanIndex);
+        engine->dynamicRoutes.ReleaseRouteTap(candidate);
+        if (newRouteSlot) engine->dynamicRoutes.ReleaseUncommittedRouteSlot(candidate.tableIndex);
+            return VN_BACKPRESSURE;
+        }
+    } catch (...) {
+        engine->dynamicRoutes.AbandonPlan(dynamicPlanIndex);
+        engine->dynamicRoutes.ReleaseRouteTap(candidate);
+        if (newRouteSlot) engine->dynamicRoutes.ReleaseUncommittedRouteSlot(candidate.tableIndex);
+        throw;
+    }
     engine->dynamicRoutes.CommitSet(candidate);
-    ++engine->topologyPlanCount;
+    publication.Publish();
     return VN_OK;
 
     } catch (const std::bad_alloc&) {
@@ -118081,22 +118144,20 @@ VnResult Vn_ClearBusEffectDynamicRoute(
         engine->topologyPlans.Recycle(topologyPlanIndex);
         return VN_BACKPRESSURE;
     }
-    FillPlan(*engine, topologyPlanIndex, &removal, true);
-    harken::CommandRecord command{};
-    command.opcode = harken::kOpcodeSetBusTopologyPlan;
-    command.payload.setBusTopologyPlan.planIndex = topologyPlanIndex;
-    command.payload.setBusTopologyPlan.dynamicRoutePlanIndex =
-        dynamicPlanIndex;
-    command.payload.setBusTopologyPlan.connectFrom =
-        harken::kInvalidBusIndex;
-    command.payload.setBusTopologyPlan.acceptedGraphRevision =
-        ++engine->acceptedBusTopologyRevision;
-    command.payload.setBusTopologyPlan.batchCommandCount = 1;
-    (void)engine->commands.TryPush(command);
-    engine->dynamicRoutes.CommitClear(
-        removal.tableIndex,
+    PreparedTopologyPublication publication(*engine, topologyPlanIndex);
+    try {
+        FillPlan(*engine, topologyPlanIndex, &removal, true);
+        if (!publication.Prepare({}, dynamicPlanIndex)) {
+            engine->dynamicRoutes.AbandonPlan(dynamicPlanIndex);
+            return VN_BACKPRESSURE;
+        }
+    } catch (...) {
+        engine->dynamicRoutes.AbandonPlan(dynamicPlanIndex);
+        throw;
+    }
+    engine->dynamicRoutes.CommitClear(removal.tableIndex,
         engine->dynamicRoutes.PlanRevision(dynamicPlanIndex));
-    ++engine->topologyPlanCount;
+    publication.Publish();
     return VN_OK;
 
     } catch (const std::bad_alloc&) {
@@ -123171,6 +123232,12 @@ VnResult Vn_SetBusOutputLayout(VnBusId busId, uint32_t layout) {
     if (planIndex == harken::kInvalidTopologyPlanIndex) {
         return VN_BACKPRESSURE;
     }
+    PreparedTopologyPublication publication(*engine, planIndex);
+    FillPlan(*engine, planIndex);
+    engine->topologyPlans.OutputLayoutData(planIndex)[busIndex] = layout;
+    harken::DefaultDownmixMatrix(engine->config.mixChannelLayout, layout,
+        engine->topologyPlans.DownmixCoeffsData(planIndex) + static_cast<std::size_t>(busIndex) * 64);
+    if (!publication.Prepare()) return VN_BACKPRESSURE;
     // Adopt the new output layout and (re)seed its default matrix for the
     // resolved mix -> layout fold; a later Vn_SetBusDownmixMatrix overrides it,
     // and Vn_ResetBusDownmixMatrix returns to this default.
@@ -123179,8 +123246,7 @@ VnResult Vn_SetBusOutputLayout(VnBusId busId, uint32_t layout) {
         engine->config.mixChannelLayout, layout,
         engine->busDownmixCoeffs.data() +
             static_cast<std::size_t>(busIndex) * 64);
-    PublishPlan(*engine, planIndex, harken::kInvalidBusIndex,
-                harken::kInvalidBusIndex, 0.0f);
+    publication.Publish();
     return VN_OK;
 
     } catch (const std::bad_alloc&) {
@@ -123248,14 +123314,18 @@ VnResult Vn_SetBusDownmixMatrix(VnBusId busId, const VnDownmixMatrixDesc* desc) 
     if (planIndex == harken::kInvalidTopologyPlanIndex) {
         return VN_BACKPRESSURE;
     }
+    PreparedTopologyPublication publication(*engine, planIndex);
+    FillPlan(*engine, planIndex);
+    std::copy_n(desc->coeffs, 64,
+        engine->topologyPlans.DownmixCoeffsData(planIndex) + static_cast<std::size_t>(busIndex) * 64);
+    if (!publication.Prepare()) return VN_BACKPRESSURE;
     // Store the full 8x8 table as given (no normalization); the fold reads only
     // the sub-block the bus's (mix -> output) layouts define, which the match
     // above pinned to the desc's own layouts.
     std::memcpy(engine->busDownmixCoeffs.data() +
                     static_cast<std::size_t>(busIndex) * 64,
                 desc->coeffs, 64 * sizeof(float));
-    PublishPlan(*engine, planIndex, harken::kInvalidBusIndex,
-                harken::kInvalidBusIndex, 0.0f);
+    publication.Publish();
     return VN_OK;
 
     } catch (const std::bad_alloc&) {
@@ -123282,6 +123352,11 @@ VnResult Vn_ResetBusDownmixMatrix(VnBusId busId) {
     if (planIndex == harken::kInvalidTopologyPlanIndex) {
         return VN_BACKPRESSURE;
     }
+    PreparedTopologyPublication publication(*engine, planIndex);
+    FillPlan(*engine, planIndex);
+    harken::DefaultDownmixMatrix(engine->config.mixChannelLayout, engine->busOutputLayout[busIndex],
+        engine->topologyPlans.DownmixCoeffsData(planIndex) + static_cast<std::size_t>(busIndex) * 64);
+    if (!publication.Prepare()) return VN_BACKPRESSURE;
     // Recompute the Appendix A default for the bus's current fold (src = mix,
     // dst = the bus's output layout; for the master that output layout is the
     // device layout).
@@ -123289,8 +123364,7 @@ VnResult Vn_ResetBusDownmixMatrix(VnBusId busId) {
         engine->config.mixChannelLayout, engine->busOutputLayout[busIndex],
         engine->busDownmixCoeffs.data() +
             static_cast<std::size_t>(busIndex) * 64);
-    PublishPlan(*engine, planIndex, harken::kInvalidBusIndex,
-                harken::kInvalidBusIndex, 0.0f);
+    publication.Publish();
     return VN_OK;
 
     } catch (const std::bad_alloc&) {
@@ -124830,13 +124904,18 @@ VnResult UnloadReversibleResident(Engine& engine,
         static_cast<std::uint32_t>(commands.size() + 1);
     commands.insert(commands.begin(), swap); // capacity was reserved above
 
-    if (!engine.commands.TryPushBatch(
-            commands.data(),
-            static_cast<std::uint32_t>(commands.size()))) {
+    CommandQueue::BatchReservation reservation{};
+    CommandQueue::PreparedBatchProof proof;
+    if (!engine.commands.ReserveBatch(static_cast<std::uint32_t>(commands.size()), &reservation) ||
+        !PrepareTopologyActivity(engine, engine.topologyPlans.View(topologyPlan), reservation, commands, proof)) {
+        engine.commands.CancelReservedBatch(&reservation);
         engine.dynamicRoutes.AbandonPlan(dynamicPlan);
         engine.topologyPlans.Recycle(topologyPlan);
         return VN_BACKPRESSURE;
     }
+    const auto published = engine.commands.ConsumePreparedBatch(std::move(proof));
+    assert(published.Count() == commands.size());
+    (void)published;
     for (const auto& command : commands) engine.NoteBusSettingCommand(command);
     ++engine.acceptedBusTopologyRevision;
     const std::uint64_t dynamicPlanRevision =
@@ -126981,13 +127060,16 @@ VnResult ApplyPreparedPackTransaction(
         Engine* engine = nullptr;
         CommandQueue::BatchReservation* reservation = nullptr;
         bool active = false;
+        CommandQueue::PreparedBatchProof proof;
 
         ~QueueReservationGuard() {
+            proof.Release();
             if (active) {
                 engine->commands.CancelReservedBatch(reservation);
             }
         }
         void Cancel() noexcept {
+            proof.Release();
             if (active) {
                 engine->commands.CancelReservedBatch(reservation);
                 active = false;
@@ -126995,8 +127077,10 @@ VnResult ApplyPreparedPackTransaction(
         }
         void Commit(const CommandRecord* commands) noexcept {
             assert(active);
-            engine->commands.CommitPreparedBatch(
-                reservation, commands);
+            (void)commands;
+            const auto published = engine->commands.ConsumePreparedBatch(std::move(proof));
+            assert(published.Count() != 0);
+            (void)published;
             active = false;
         }
     } queueGuard{&engine, &queueReservation, false};
@@ -127082,6 +127166,15 @@ VnResult ApplyPreparedPackTransaction(
             CancelRevisionBindings(engine, revision);
             return VN_DEVICE_ERROR;
         }
+    }
+    if (commandCount != 0 && !(revision.needsPlan
+            ? PrepareTopologyActivity(engine, engine.topologyPlans.View(revision.planIndex),
+                queueReservation, packCommands, queueGuard.proof)
+            : engine.commands.ProvePreparedBatch(&queueReservation, packCommands.data(), commandCount, &queueGuard.proof))) {
+        queueGuard.Cancel();
+        CancelRevisionAttenuationDiscrete(engine, revision);
+        CancelRevisionBindings(engine, revision);
+        return VN_BACKPRESSURE;
     }
     VnPackHandle loadedHandle = 0;
     if (preserveMedia) {
@@ -130145,6 +130238,7 @@ struct PreparedCanonicalPackSetV1 {
     bool volumeOnly = false;
     std::uint32_t planIndex = kInvalidTopologyPlanIndex;
     CommandQueue::BatchReservation reservation{};
+    CommandQueue::PreparedBatchProof proof;
     EnginePreparedRoutingMigrationV1 unpublishedRouting{};
     std::uint32_t ownerSlot = UINT32_MAX;
     BusTopologyOwnerRecord expectedOwner{};
@@ -130164,6 +130258,7 @@ struct PreparedCanonicalPackSetV1 {
         CancelCanonicalBindingPlan(*engine, bindings);
         engine->packs.CancelPreparedSet(&storage);
         engine->spatial.CancelPreparedSet(&attenuation);
+        proof.Release();
         engine->commands.CancelReservedBatch(&reservation);
         if (planIndex != kInvalidTopologyPlanIndex) {
             engine->topologyPlans.Recycle(planIndex);
@@ -131066,6 +131161,23 @@ bool CanCommitCanonicalVolumesV2(const Engine& engine,
     return true;
 }
 
+bool FreezeCanonicalPackTopology(Engine& engine, PreparedCanonicalPackSetV1& prepared) noexcept {
+    if (prepared.planIndex == kInvalidTopologyPlanIndex) return true;
+    if (prepared.commands.empty() || engine.acceptedBusTopologyRevision == UINT64_MAX) return false;
+    const auto acceptedRevision = engine.acceptedBusTopologyRevision + 1;
+    auto& command = prepared.commands.front();
+    command.opcode = kOpcodeSetBusTopologyPlan;
+    command.payload.setBusTopologyPlan.planIndex = prepared.planIndex;
+    command.payload.setBusTopologyPlan.dynamicRoutePlanIndex = kInvalidDynamicRoutePlanIndex;
+    command.payload.setBusTopologyPlan.connectFrom = kInvalidBusIndex;
+    command.payload.setBusTopologyPlan.connectTo = kInvalidBusIndex;
+    command.payload.setBusTopologyPlan.acceptedGraphRevision = acceptedRevision;
+    command.payload.setBusTopologyPlan.batchCommandCount =
+        static_cast<std::uint32_t>(prepared.commands.size());
+    return PrepareTopologyActivity(engine, engine.topologyPlans.View(prepared.planIndex),
+    prepared.reservation, prepared.commands, prepared.proof);
+}
+
 void CommitCanonicalPackSet(Engine& engine, PreparedCanonicalPackSetV1& prepared) noexcept {
     assert(engine.canonicalPackSetBusy);
     assert(engine.packComposition.Published() == prepared.basePublication);
@@ -131136,16 +131248,9 @@ void CommitCanonicalPackSet(Engine& engine, PreparedCanonicalPackSetV1& prepared
             }
         }
         if (prepared.busEffects) prepared.busEffects->Commit();
-        auto& command = prepared.commands.front();
-        command.opcode = kOpcodeSetBusTopologyPlan;
-        command.payload.setBusTopologyPlan.planIndex = prepared.planIndex;
-        command.payload.setBusTopologyPlan.dynamicRoutePlanIndex = kInvalidDynamicRoutePlanIndex;
-        command.payload.setBusTopologyPlan.connectFrom = kInvalidBusIndex;
-        command.payload.setBusTopologyPlan.connectTo = kInvalidBusIndex;
-        command.payload.setBusTopologyPlan.acceptedGraphRevision = acceptedRevision;
-        command.payload.setBusTopologyPlan.batchCommandCount =
-            static_cast<std::uint32_t>(prepared.commands.size());
-        engine.commands.CommitPreparedBatch(&prepared.reservation, prepared.commands.data());
+        const auto published = engine.commands.ConsumePreparedBatch(std::move(prepared.proof));
+        assert(published.Count() == prepared.commands.size());
+        (void)published;
         for (const auto& command : prepared.commands) engine.NoteBusSettingCommand(command);
         ++engine.acceptedBusTopologyRevision;
         prepared.planIndex = kInvalidTopologyPlanIndex;
@@ -131715,6 +131820,7 @@ VnResult ActivateCanonicalPackSetImpl(
                         prepared.baseGeneration) {
                     return VN_BACKPRESSURE;
                 }
+                if (!FreezeCanonicalPackTopology(engine, prepared)) return VN_BACKPRESSURE;
                 success = prepared.publication.composition.Published();
                 commit = true;
                 return VN_OK;
@@ -131987,7 +132093,8 @@ VnResult UnloadCanonicalPackSetV1(Engine& engine,
             if (PackFault(PackStagingFault::AfterAllPreparedBeforeCommit)) {
                 return VN_PACK_RESIDENT_CAPACITY;
             }
-            if (!CanCommitCanonicalVolumesV2(engine, prepared)) return VN_BACKPRESSURE;
+            if (!CanCommitCanonicalVolumesV2(engine, prepared) ||
+                !FreezeCanonicalPackTopology(engine, prepared)) return VN_BACKPRESSURE;
             commit = true;
             return VN_OK;
         }();

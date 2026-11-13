@@ -103,10 +103,15 @@ public:
         std::span<const WorkBinding> working,
         std::unique_ptr<SignalRenderPlan> signals = {},
         SignalTransition signalTransition = SignalTransition::Preserve,
-        const SignalRenderPlan* replacedSignals = nullptr) noexcept;
+        const SignalRenderPlan* replacedSignals = nullptr,
+        bool adoptsTopology = false) noexcept;
     void CancelActivity(BusActivityPlan* plan) noexcept;
     void DrainActivities() noexcept;
     CommandQueue::BusActivityAttachment* ActivityAttachment(BusActivityPlan* plan) noexcept;
+    WorkRef AcceptedWorkRef(BusSlotRef bus) const noexcept;
+    bool HasAcceptedActivity() const noexcept { return m_lastQueuedActivity != nullptr; }
+    const SignalRenderPlan* AcceptedActivitySignals() const noexcept;
+    std::uint64_t NextActivitySignalPublication(const SignalRenderPlan* previous) noexcept;
     std::uint32_t WorkingPlaneCount() const noexcept;
     BusRenderView RenderView(float* const* planes) noexcept;
     std::uint64_t ActivityFallbackCount() const noexcept { return m_activityFallbacks; }
@@ -553,6 +558,7 @@ private:
     BusActivityPlan* m_lastQueuedActivity = nullptr;
     BusActivityPlan* m_activeActivity = nullptr;
     std::uint64_t m_activityFallbacks = 0;
+    std::uint64_t m_activitySignalPublication = 0;
     SignalBusRoutingInfo SignalBusBounds(std::uint32_t bus, std::uint32_t frames,
                                         std::span<SignalBiquadSegment> schedules) noexcept;
     void InitializeBusSlot(std::uint32_t busIndex, VnBusId id,

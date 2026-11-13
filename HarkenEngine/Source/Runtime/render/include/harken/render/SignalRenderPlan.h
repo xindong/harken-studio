@@ -197,7 +197,8 @@ public:
         return contentIdentity_ != 0 && contentIdentity_ == other.contentIdentity_ && SameFormat(other);
     }
     std::unique_ptr<SignalRenderPlan> PrepareProjection(
-        std::span<const std::uint32_t> selected, std::uint32_t topologySlots) const noexcept;
+        std::span<const std::uint32_t> selected, std::uint32_t topologySlots,
+        std::span<const SignalRenderNodeInput> busBindings = {}) const noexcept;
     // Logic compares immutable prepared definitions only. The content identity
     // excludes signal parameters but includes the authoritative content world.
     // At most one unresolved sleep is allowed. Its following unconditional

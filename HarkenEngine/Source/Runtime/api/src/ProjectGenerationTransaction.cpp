@@ -2308,6 +2308,27 @@ ProjectGenerationCommitResultV1 CommitPreparedProjectGenerationV1(
         result.status = ProjectGenerationCommitStatusV1::Backpressure;
         return result;
     }
+    auto& command = commands.front();
+    command.opcode = kOpcodeSetBusTopologyPlan;
+    command.payload.setBusTopologyPlan.planIndex = liveIndex;
+    command.payload.setBusTopologyPlan.dynamicRoutePlanIndex =
+        kInvalidDynamicRoutePlanIndex;
+    command.payload.setBusTopologyPlan.connectFrom = kInvalidBusIndex;
+    command.payload.setBusTopologyPlan.connectTo = kInvalidBusIndex;
+    command.payload.setBusTopologyPlan.connectLevelDb = 0.0f;
+    command.payload.setBusTopologyPlan.planFlags = 0;
+    command.payload.setBusTopologyPlan.connectFromGeneration = 0;
+    command.payload.setBusTopologyPlan.connectToGeneration = 0;
+    command.payload.setBusTopologyPlan.acceptedGraphRevision =
+        acceptedRevision;
+    command.payload.setBusTopologyPlan.batchCommandCount = static_cast<std::uint32_t>(commands.size());
+    CommandQueue::PreparedBatchProof proof;
+    if (!PrepareTopologyActivity(engine, engine.topologyPlans.View(liveIndex), reservation, commands, proof)) {
+        engine.commands.CancelReservedBatch(&reservation);
+        engine.topologyPlans.Recycle(liveIndex);
+        result.status = ProjectGenerationCommitStatusV1::Backpressure;
+        return result;
+    }
     for (const auto& removed : prepared.slotPlan_.removed)
         CommitRetireTopologyBusV1(engine, {removed.slot, removed.generation}, acceptedRevision);
     CommitUnpublishedTimelineRoutingV1(engine, unpublishedRouting);
@@ -2416,21 +2437,9 @@ ProjectGenerationCommitResultV1 CommitPreparedProjectGenerationV1(
     ++engine.acceptedBusTopologyRevision;
 
     if (prepared.effects_) prepared.effects_->Commit();
-    auto& command = commands.front();
-    command.opcode = kOpcodeSetBusTopologyPlan;
-    command.payload.setBusTopologyPlan.planIndex = liveIndex;
-    command.payload.setBusTopologyPlan.dynamicRoutePlanIndex =
-        kInvalidDynamicRoutePlanIndex;
-    command.payload.setBusTopologyPlan.connectFrom = kInvalidBusIndex;
-    command.payload.setBusTopologyPlan.connectTo = kInvalidBusIndex;
-    command.payload.setBusTopologyPlan.connectLevelDb = 0.0f;
-    command.payload.setBusTopologyPlan.planFlags = 0;
-    command.payload.setBusTopologyPlan.connectFromGeneration = 0;
-    command.payload.setBusTopologyPlan.connectToGeneration = 0;
-    command.payload.setBusTopologyPlan.acceptedGraphRevision =
-        engine.acceptedBusTopologyRevision;
-    command.payload.setBusTopologyPlan.batchCommandCount = static_cast<std::uint32_t>(commands.size());
-    engine.commands.CommitPreparedBatch(&reservation, commands.data());
+    const auto publishedBatch = engine.commands.ConsumePreparedBatch(std::move(proof));
+    assert(publishedBatch.Count() == commands.size());
+    (void)publishedBatch;
     for (const auto& published : commands) engine.NoteBusSettingCommand(published);
 
     ReleasePreparedSlot(engine, prepared.preparedPlanIndex_,

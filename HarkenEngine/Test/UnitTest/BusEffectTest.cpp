@@ -121,10 +121,10 @@ TEST(BusEffect, SlotsProcessInAscendingOrder) {
         play.busId = kBusA;
         VnVoiceHandle handle = 0;
         EXPECT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
-        // Inject the synthetic pair straight into the bus's chain (the bus is
-        // reachable by dense index the moment it is created; it renders once the
-        // create swap applies on the pump below).
+        // Inject the synthetic pair into the published audio work row.
         const std::uint32_t idx = session.Engine()->buses.FindIndex(kBusA);
+        // Install the private work row before injecting synthetic DSP.
+        session.Engine()->mixer.DrainQueuedCommands(1);
         harken::BusTree::Bus* bus = session.Engine()->buses.BusState(idx);
         EXPECT_NE(nullptr, bus);
         bus->fxSlots[0].process = addFirst ? AddConstantProcess : MultiplyProcess;
@@ -167,6 +167,8 @@ TEST(BusEffect, PerSlotBypassIsClickFree) {
     VnVoiceHandle handle = 0;
     ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
     const std::uint32_t idx = session.Engine()->buses.FindIndex(kBusA);
+    // Install the private work row before injecting synthetic DSP.
+    session.Engine()->mixer.DrainQueuedCommands(1);
     harken::BusTree::Bus* bus = session.Engine()->buses.BusState(idx);
     ASSERT_NE(nullptr, bus);
     bus->fxSlots[0].process = MultiplyProcess;
@@ -213,6 +215,8 @@ TEST(BusEffect, PreFaderVsPostFaderSplitDiffersAsComputed) {
         VnVoiceHandle handle = 0;
         EXPECT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
         const std::uint32_t idx = session.Engine()->buses.FindIndex(kBusA);
+        // Install the private work row before injecting synthetic DSP.
+        session.Engine()->mixer.DrainQueuedCommands(1);
         harken::BusTree::Bus* bus = session.Engine()->buses.BusState(idx);
         EXPECT_NE(nullptr, bus);
         bus->fxSlots[0].process = AddConstantProcess;
@@ -255,6 +259,8 @@ TEST(BusEffect, InternalMeterTapsFollowBusSignalBoundaries) {
 
     harken::Engine* const engine = session.Engine();
     const std::uint32_t busIndex = engine->buses.FindIndex(kBusA);
+    // Install the private work row before injecting synthetic DSP.
+    engine->mixer.DrainQueuedCommands(1);
     harken::BusTree::Bus* const bus = engine->buses.BusState(busIndex);
     ASSERT_NE(nullptr, bus);
     bus->fxSlots[0].process = AddConstantProcess;
@@ -318,6 +324,8 @@ TEST(BusEffect, MeterProbesSelectAllThreeSignalTaps) {
 
     harken::Engine* engine = session.Engine();
     const std::uint32_t busIndex = engine->buses.FindIndex(kBusA);
+    // Install the private work row before injecting synthetic DSP.
+    engine->mixer.DrainQueuedCommands(1);
     harken::BusTree::Bus* const bus = engine->buses.BusState(busIndex);
     ASSERT_NE(nullptr, bus);
     bus->fxSlots[0].process = AddConstantProcess;
@@ -409,6 +417,8 @@ TEST(BusEffect, FaderMoveAppliesAtBlockBoundaryWithoutClick) {
     VnVoiceHandle handle = 0;
     ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &handle));
     const std::uint32_t idx = session.Engine()->buses.FindIndex(kBusA);
+    // Install the private work row before injecting synthetic DSP.
+    session.Engine()->mixer.DrainQueuedCommands(1);
     harken::BusTree::Bus* bus = session.Engine()->buses.BusState(idx);
     ASSERT_NE(nullptr, bus);
     bus->fxSlots[0].process = MultiplyProcess;
@@ -787,7 +797,22 @@ TEST(BusEffect, NeutralPlanGenerationTransitionAndRepeatedSwapsRetireOnce) {
             engine, index, harken::kApplyBusNeutralProperties);
         ASSERT_NE(harken::kInvalidTopologyPlanIndex, plan);
         engine.topologyPlans.GenerationsData(plan)[index] = generation;
-        ApplyNeutralTestPlan(engine, plan);
+        harken::CommandRecord command{};
+        command.opcode = harken::kOpcodeSetBusTopologyPlan;
+        command.payload.setBusTopologyPlan.planIndex = plan;
+        command.payload.setBusTopologyPlan.dynamicRoutePlanIndex = harken::kInvalidDynamicRoutePlanIndex;
+        command.payload.setBusTopologyPlan.connectFrom = harken::kInvalidBusIndex;
+        command.payload.setBusTopologyPlan.connectTo = harken::kInvalidBusIndex;
+        command.payload.setBusTopologyPlan.batchCommandCount = 1;
+        harken::CommandQueue::BatchReservation reservation;
+        harken::CommandQueue::PreparedBatchProof proof;
+        ASSERT_TRUE(engine.commands.ReserveBatch(1, &reservation));
+        ASSERT_TRUE(harken::PrepareTopologyActivity(engine, engine.topologyPlans.View(plan),
+            reservation, {&command, 1}, proof));
+        ASSERT_EQ(1u, engine.commands.ConsumePreparedBatch(std::move(proof)).Count());
+        const auto hits = harken::memguard::HitCount();
+        engine.mixer.DrainQueuedCommands(1);
+        EXPECT_EQ(hits, harken::memguard::HitCount());
         EXPECT_EQ(generation, engine.buses.BusState(index)->generation);
         EXPECT_EQ(1u, engine.effectBank.InUseOf(VN_EFFECT_GAIN));
     }

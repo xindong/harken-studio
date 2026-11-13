@@ -205,7 +205,7 @@ void BusTree::ApplyPreviewEffectChain(const BusEffectChainAdoption& adoption) no
     if (adoption.host != update.host || adoption.owner != state.preparedOwner ||
         adoption.revision != update.targetRevision) return;
     const auto host = BusSlotRef::FromPacked(update.host);
-    if (!host.Valid() || host.index >= m_audioCount) return;
+    if (!host.Valid() || !HasWorkRow(host.index)) return;
     auto& bus = WorkState(host.index);
     if (adoption.releaseOwner) {
         // The following cold Set/Clear commands retain sole ownership of refs.
