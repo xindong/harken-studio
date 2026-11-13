@@ -451,7 +451,7 @@ namespace Harken.Test
                 ref config, inspection, 3);
             bool ok = result == VnResult.VN_OK &&
                 config.maxCatalogEntries == 50000 &&
-                config.maxActions == 1024 &&
+                config.maxActions == 0 &&
                 config.maxCatalogBytes == 15200088 &&
                 config.maxResidentDefinitionBytes == (8UL << 20);
 
@@ -477,7 +477,7 @@ namespace Harken.Test
             actionsLow.maxActions = 1023;
             ok &= PackBootstrap.ApplyRecommendations(
                 ref actionsLow, inspection, 3) ==
-                VnResult.VN_PACK_RESIDENT_CAPACITY;
+                VnResult.VN_OK;
 
             VnConfig packCountDefault = HarkenEngine.DefaultConfig();
             ok &= PackBootstrap.ApplyRecommendations(

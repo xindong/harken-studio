@@ -1495,7 +1495,6 @@ private:
 
     std::uint32_t maxEmitters_ = 0;
     std::uint32_t overridesPerEmitter_ = 0;
-    const std::uint32_t maxActionDefinitions_ = 0;
     std::vector<GatheredTarget> censusScratch_;
     bool hasWorld_ = false;
     WorldIdentityV1 identity_{};

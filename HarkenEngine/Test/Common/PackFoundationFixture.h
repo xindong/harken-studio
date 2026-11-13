@@ -578,7 +578,8 @@ inline std::vector<std::uint8_t> BuildContent(
     std::uint64_t revision, std::uint32_t actionCount,
     std::uint32_t valueBits, std::uint64_t* bodyBytes) {
     std::vector<std::uint8_t> partition = PartitionPayload(
-        kResidentPackStableId, revision, actionCount, valueBits, bodyBytes);
+        kResidentPackStableId, revision, actionCount, valueBits, bodyBytes,
+        std::max(64u, actionCount));
     if (partition.empty()) {
         return {};
     }
@@ -638,7 +639,8 @@ inline bool BuildFixture(std::uint32_t residentCount,
     }
 
     std::vector<std::uint8_t> initPartition = PartitionPayload(
-        kInitPackStableId, 1, 0, 0, &next.initBodyBytes);
+        kInitPackStableId, 1, 0, 0, &next.initBodyBytes,
+        std::max(64u, residentCount));
     if (initPartition.empty()) {
         return false;
     }

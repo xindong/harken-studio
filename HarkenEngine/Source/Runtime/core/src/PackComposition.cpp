@@ -2119,7 +2119,7 @@ VnResult ValidateCompositeWorld(
         if (owner.readiness != PackOwnerReadiness::Active) {
             continue;
         }
-        if (entryVintage) {
+        {
             for (std::uint32_t i = 0; i < owner.view.segmentScheduleCount; ++i) {
                 if (!segmentVintages.contains(owner.view.segmentSchedules[i].rootDefinition.stableId))
                     vintageStaging.AddRows<decltype(segmentVintages)::value_type>(1);
@@ -2241,18 +2241,11 @@ VnResult ValidateCompositeWorld(
         scratch.occurrences.size() > capacity.maxPlayableOccurrencePropertyRows ||
         scratch.tracks.size() > capacity.maxTrackSchedulePrograms ||
         scratch.segments.size() > capacity.maxSegmentSchedulePrograms ||
-        scratch.containers.size() > capacity.maxContainerPrograms ||
-        scratch.actions.size() > capacity.maxActionDefinitions) {
+        scratch.containers.size() > capacity.maxContainerPrograms) {
         return VN_PACK_RESIDENT_CAPACITY;
     }
-    std::uint64_t actionStepTotal = 0;
-    for (const auto& action : scratch.actions) {
-        if (action.stepCount > capacity.maxActionStepsPerDefinition ||
-            !CheckedCompositeCount(&actionStepTotal, action.stepCount,
-                capacity.maxActionStepsTotal)) {
-            return VN_PACK_RESIDENT_CAPACITY;
-        }
-    }
+    // Each owner has already passed its partition's Action format bounds.
+    // The union is memory-budgeted, not bounded by the first owner's counts.
 
     for (ContainerProgramViewV3& container : scratch.containers) {
         if (container.transitionProgramIndex == UINT32_MAX) {
@@ -2330,7 +2323,7 @@ VnResult ValidateCompositeWorld(
     }
 
     std::vector<std::uint32_t> segmentVersions, actionVersions;
-    if (entryVintage) {
+    {
         detail::DecodeReserve(segmentVersions, scratch.segments.size(), vintageStaging);
         detail::DecodeReserve(actionVersions, scratch.actions.size(), vintageStaging);
         for (const auto& segment : scratch.segments)
@@ -2339,8 +2332,8 @@ VnResult ValidateCompositeWorld(
             actionVersions.push_back(actionVintages.at(action.actionStableId));
     }
     const detail::CompositeWorldVintagesV1 vintages{segmentVersions, actionVersions, entryVintage};
-    switch (entryVintage ? detail::ValidateCurrentWorldCompositeV1(scratch.view, vintages, published.staging.Budget())
-                         : detail::ValidateCurrentWorldWithBudget(scratch.view, published.staging.Budget())) {
+    switch (detail::ValidateCurrentWorldCompositeV1(
+        scratch.view, vintages, published.staging.Budget())) {
     case WorldInstallStatus::Ok:
         worldSemanticFingerprint =
             scratch.view.identity.runtimeSemanticFingerprint;
@@ -3290,7 +3283,7 @@ VnResult PackComposition::Commit(std::vector<CandidateOwner> owners,
 VnResult PackComposition::PrepareCommit(
     std::vector<CandidateOwner> owners,
     const PackCanonicalImage* catalogOrNull, VnPackHandle initHandle,
-    std::uint32_t maxActions, std::uint64_t serviceFrame,
+    std::uint32_t /*maxActions*/, std::uint64_t serviceFrame,
     PreparedCommit* out,
     const PackAttenuationBindingMapV1* attenuationBindings,
     const CanonicalPackSetLedgerV1* ledger, bool clearInit,
@@ -3565,19 +3558,6 @@ VnResult PackComposition::PrepareCommit(
         facts_.conflictingPackA = prepared.facts_.conflictingPackA;
         facts_.conflictingPackB = prepared.facts_.conflictingPackB;
         return indexed;
-    }
-    std::uint64_t loadedActions = 0;
-    VnObjectId lastActionId{};
-    for (const auto& entry : next->index) {
-        if (entry.identityClass == kInitCatalogIdentityClassAction &&
-            entry.stableId != lastActionId) {
-            ++loadedActions;
-            lastActionId = entry.stableId;
-        }
-    }
-    if (loadedActions > maxActions) {
-        NoteRefusal(loadedActions, maxActions, VN_PACK_RESIDENT_CAPACITY);
-        return VN_PACK_RESIDENT_CAPACITY;
     }
     const VnResult companions = ValidateSameOwnerCompanions(*next, maxPacks_);
     if (companions != VN_OK) {

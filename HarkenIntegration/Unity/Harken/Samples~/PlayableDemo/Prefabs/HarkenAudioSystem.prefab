@@ -56,7 +56,6 @@ MonoBehaviour:
   persistAcrossScenes: 0
   maxVoices: 32
   maxPacks: 16
-  maxActions: 64
   maxActionFirings: 64
   suppressUnityAudio: 0
   shutdownWhenDisabled: 0

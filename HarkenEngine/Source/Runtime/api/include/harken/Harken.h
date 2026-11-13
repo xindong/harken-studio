@@ -240,7 +240,7 @@ typedef struct VnConfig {
      * parking) capacities size features that later engine versions wire. A
      * config that leaves any of them zero behaves exactly as one built against
      * an older header vintage. */
-    uint32_t maxActions;            /* Action registry capacity; 0 = 256 */
+    uint32_t maxActions;            /* Reserved legacy field; Action definition counts are not limited by config. */
     uint32_t maxContainers;         /* container-asset registry capacity; 0 = 64 */
     uint32_t maxContainerChildren;  /* global container-child pool; 0 = 1024 */
     uint32_t containerCursorCapacity; /* retained legacy value (0 = 256), validated
@@ -1825,7 +1825,7 @@ typedef struct VnInitPackInspectReport {
     uint64_t catalogEntries;
     uint64_t catalogBytes;
     uint32_t recommendedMaxCatalogEntries;
-    uint32_t recommendedMaxActions;
+    uint32_t recommendedMaxActions; /* Reserved legacy field; no Action-count recommendation is required. */
     uint64_t recommendedCatalogBytes;
     uint64_t recommendedResidentDefinitionBytes;
     uint64_t requiredCapabilityMask;

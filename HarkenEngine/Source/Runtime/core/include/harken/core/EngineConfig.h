@@ -190,7 +190,7 @@ struct EngineConfig {
     // consumed by the engine; the Action/send/topology fields are validated and
     // stored for the features that own them, and their defaults keep behavior
     // identical when left unset.
-    std::uint32_t maxActions = 256;
+    std::uint32_t maxActions = 0; // Legacy config value; no definition-count quota.
     std::uint32_t maxActionFirings = 256;
     std::uint32_t maxContainers = 64;
     std::uint32_t maxContainerChildren = 1024;

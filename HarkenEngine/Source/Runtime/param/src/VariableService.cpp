@@ -223,14 +223,13 @@ WorldInstallResult InstallContainerWorldV1(
 VariableServiceV1::VariableServiceV1(
     std::uint32_t maxEmitters, std::uint32_t overridesPerEmitter,
     std::uint32_t maxPropertiesPerCurrentSlice,
-    std::uint32_t maxActionDefinitions,
+    std::uint32_t /*maxActionDefinitions*/,
     LogicCommitCoordinator& commits, TransportEpochOwner& transport,
     VariableSliceTable& slices, ScheduledTransactionPool& timeline,
     std::uint64_t readCutCapacity, std::uint32_t timelineReadUseCapacity,
     std::uint32_t meterProbeCapacity)
     : maxEmitters_(maxEmitters),
       overridesPerEmitter_(overridesPerEmitter),
-      maxActionDefinitions_(maxActionDefinitions),
       censusScratch_(maxPropertiesPerCurrentSlice <=
                              kVariableSliceTargetHardLimit
                          ? maxPropertiesPerCurrentSlice
@@ -494,10 +493,6 @@ WorldInstallResult VariableServiceV1::InstallImpl(
         return result;
     }
     const ContainerWorldInstallViewV1& install = installInput;
-    if (install.actionCount > maxActionDefinitions_) {
-        result.status = WorldInstallStatus::Capacity;
-        return result;
-    }
     if (install.variableCount > install.capacity.maxVariableDefinitions) {
         result.status = WorldInstallStatus::Capacity;
         return result;
@@ -571,9 +566,6 @@ WorldInstallStatus VariableServiceV1::PrepareCurrentWorldImageV1(
         return worldStatus;
     }
     const ContainerWorldInstallViewV1& install = installInput;
-    if (install.actionCount > maxActionDefinitions_) {
-        return WorldInstallStatus::Capacity;
-    }
     if (install.variableCount > install.capacity.maxVariableDefinitions) {
         return WorldInstallStatus::Capacity;
     }

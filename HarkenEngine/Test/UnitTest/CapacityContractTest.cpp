@@ -1008,7 +1008,7 @@ TEST(CapacityContract, StartupDefaultsAre256AndExplicitCapacitiesRemainEffective
     ASSERT_EQ(VN_OK, harken::ResolveConfig(&config, &resolved));
     EXPECT_EQ(256u, resolved.voiceCapacity.Render());
     EXPECT_EQ(256u, resolved.maxPacks);
-    EXPECT_EQ(256u, resolved.maxActions);
+    EXPECT_EQ(0u, resolved.maxActions);
     EXPECT_EQ(256u, resolved.maxActionFirings);
 
     config.maxVoices = 128;
@@ -1020,6 +1020,8 @@ TEST(CapacityContract, StartupDefaultsAre256AndExplicitCapacitiesRemainEffective
     EXPECT_EQ(8u, resolved.maxPacks);
     EXPECT_EQ(32u, resolved.maxActions);
     EXPECT_EQ(64u, resolved.maxActionFirings);
+    config.maxActions = UINT32_MAX;
+    EXPECT_EQ(VN_OK, harken::ResolveConfig(&config, &resolved));
 }
 
 template <typename T>

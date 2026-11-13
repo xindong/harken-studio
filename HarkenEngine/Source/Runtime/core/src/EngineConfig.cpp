@@ -86,7 +86,6 @@ constexpr std::uint64_t kMaxPackReplacementPeakBytesCeiling =
 // plainly nonsensical capacities before construction attempts an allocation.
 // These bound logic-side pools; none of them approach the delay-line or ring
 // footprints that need a byte-level ceiling.
-constexpr std::uint32_t kMaxActionsCeiling = 1 << 16;
 constexpr std::uint32_t kMaxActionFiringsCeiling = 4096;
 constexpr std::uint32_t kMaxContainersCeiling = 1 << 16;
 constexpr std::uint32_t kMaxContainerChildrenCeiling = 1 << 20;
@@ -594,7 +593,6 @@ VnResult ResolveConfigForInitialDevice(const VnConfig* config,
             kMaxPackDecodeStagingBytesCeiling ||
         resolved.maxPackReplacementPeakBytes >
             kMaxPackReplacementPeakBytesCeiling ||
-        resolved.maxActions > kMaxActionsCeiling ||
         resolved.maxActionFirings > kMaxActionFiringsCeiling ||
         resolved.maxActionCooldownRows > kMaxActionCooldownRowsHard ||
         resolved.maxContainers > kMaxContainersCeiling ||

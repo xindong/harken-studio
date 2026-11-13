@@ -763,9 +763,9 @@ TEST(CurrentWorldInstall,
 }
 
 TEST(CurrentWorldInstall,
-     ConfiguredActionDefinitionCapacityAcceptsExactAndRejectsExcessWithoutMutation) {
-    constexpr std::uint32_t configuredCapacity = 64;
-    constexpr std::uint32_t artifactCapacity = configuredCapacity + 1;
+     LegacyActionDefinitionCapacityDoesNotLimitLoadedContent) {
+    constexpr std::uint32_t configuredCapacity = 1;
+    constexpr std::uint32_t artifactCapacity = 1025;
     RunnableWorld image;
     std::vector<harken::ActionStepProgramViewV1> steps(artifactCapacity);
     std::vector<harken::ActionProgramViewV1> actions(artifactCapacity);
@@ -820,14 +820,15 @@ TEST(CurrentWorldInstall,
     image.RefreshWorldFingerprint();
     ASSERT_EQ(harken::WorldInstallStatus::Ok,
               harken::ValidateCurrentWorldV1(image.world));
-    const harken::WorldInstallResult rejected =
+    const harken::WorldInstallResult expanded =
         harken::InstallContainerWorldV1(*session.Engine(), image.world);
-    EXPECT_EQ(harken::WorldInstallStatus::Capacity, rejected.status);
-    EXPECT_EQ(accepted.resultGeneration, rejected.priorGeneration);
-    EXPECT_EQ(0u, rejected.resultGeneration);
-    EXPECT_EQ(accepted.resultGeneration,
+    EXPECT_EQ(harken::WorldInstallStatus::Ok, expanded.status);
+    EXPECT_EQ(accepted.resultGeneration, expanded.priorGeneration);
+    EXPECT_NE(0u, expanded.resultGeneration);
+    EXPECT_NE(accepted.resultGeneration, expanded.resultGeneration);
+    EXPECT_EQ(expanded.resultGeneration,
               session.Engine()->variables.CurrentWorldGeneration());
-    ASSERT_EQ(configuredCapacity,
+    ASSERT_EQ(artifactCapacity,
               session.Engine()->variables.ActionProgramCount());
     EXPECT_EQ(installedFingerprint,
               session.Engine()->variables.ActionProgramAt(

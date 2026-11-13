@@ -15,7 +15,6 @@ namespace Harken.Unity
         public const string ResourceName = "HarkenProjectSettings";
         public const uint DefaultMaxVoices = 256;
         public const uint DefaultMaxPacks = 256;
-        public const uint DefaultMaxActions = 256;
         public const uint DefaultMaxActionFirings = 256;
         public const uint UnlimitedActionFirings = 256;
         internal const string ObsoleteRelativePackRoot = "Audio/GeneratedPacks";
@@ -29,7 +28,6 @@ namespace Harken.Unity
         [SerializeField] private string remoteApplicationName = string.Empty;
         [SerializeField] private uint maxVoices = DefaultMaxVoices;
         [SerializeField] private uint maxPacks = DefaultMaxPacks;
-        [SerializeField] private uint maxActions = DefaultMaxActions;
         [SerializeField] private uint maxActionFirings = DefaultMaxActionFirings;
         [SerializeField] private uint maxEmitters;
         [SerializeField] private uint emitterVariableSlots;
@@ -46,7 +44,6 @@ namespace Harken.Unity
         public bool EnableCommunicationInBuilds => enableCommunicationInBuilds;
         public uint MaxVoices => NonZero(maxVoices, DefaultMaxVoices);
         public uint MaxPacks => NonZero(maxPacks, DefaultMaxPacks);
-        public uint MaxActions => NonZero(maxActions, DefaultMaxActions);
         public uint MaxActionFirings => maxActionFirings != 0 ? maxActionFirings : UnlimitedActionFirings;
         public uint MaxEmitters => maxEmitters;
         public uint EmitterVariableSlots => emitterVariableSlots;
@@ -108,7 +105,6 @@ namespace Harken.Unity
                 config.maxControlCommandsPerQuantum = Math.Max(config.maxControlCommandsPerQuantum, config.maxVoices);
             }
             config.maxPacks = settings.MaxPacks;
-            config.maxActions = settings.MaxActions;
             config.maxActionFirings = settings.MaxActionFirings;
             config.maxEmitters = settings.maxEmitters;
             config.emitterVariableSlots = settings.emitterVariableSlots;
