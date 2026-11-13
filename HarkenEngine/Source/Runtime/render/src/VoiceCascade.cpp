@@ -310,12 +310,11 @@ bool FeedResamplerFromStream(VoiceRenderContext& ctx) {
     if (ctx.mediaDecodeFailed) return false;
     ResamplerView& rs = ctx.resampler;
     StreamRing& ring = *ctx.streamRing;
-    if (ring.ConsumerPreparationResult() != VN_OK) {
+    if (ring.preparationResult.load(std::memory_order_acquire) != VN_OK) {
         ctx.mediaDecodeFailed = true;
         return false;
     }
     if (ring.packetEncoded && ctx.mediaDecoder == nullptr) {
-        if (!ring.ConsumerDecoderReady()) return false;
         ctx.mediaDecoder = ring.pendingDecoder.exchange(nullptr, std::memory_order_acq_rel);
         if (ctx.mediaDecoder == nullptr) return false;
     }
@@ -326,9 +325,9 @@ bool FeedResamplerFromStream(VoiceRenderContext& ctx) {
     // after ended==true is genuinely drained. Reading in the opposite
     // order could pair a stale (empty) span with a fresh ended flag and
     // truncate the tail.
-    const bool ended = ring.ConsumerSourceEnded();
-    const std::uint32_t span = ring.ConsumerBufferedFrames();
-    if (span > 0 || (ctx.mediaDecoder != nullptr && ring.ConsumerAvailableBytes() != 0)) {
+    const bool ended = ring.SourceEnded();
+    const std::uint32_t span = ring.BufferedFrames();
+    if (span > 0 || (ctx.mediaDecoder != nullptr && ring.ReadAvailableBytes() != 0)) {
         const std::uint32_t chunk = std::min(kResampleChunkFrames,
             ctx.mediaDecoder != nullptr ? rs.FreeFrames() : std::min(span, rs.FreeFrames()));
         if (chunk == 0) return false;
@@ -380,39 +379,6 @@ bool FeedResamplerFromStream(VoiceRenderContext& ctx) {
         return true;
     }
     return false;
-}
-
-bool FeedGroupVirtualInput(VoiceRenderContext& ctx) noexcept {
-    auto& rs = ctx.resampler;
-    if (!ctx.groupVirtualInput) {
-        ctx.groupVirtualInput = true;
-        // The real FIFO already owns every delivered frame, including its
-        // look-ahead. Virtual input continues that frontier, not consumption.
-        ctx.groupVirtualFramesFed = ctx.streamRing->readFrames.load(std::memory_order_relaxed);
-    }
-    const auto free = std::min(kResampleChunkFrames, rs.FreeFrames());
-    if (free == 0) return false;
-    if (rs.InputEnded()) {
-        if (rs.Exhausted()) return false;
-        rs.PushSilence(free);
-        return true;
-    }
-    std::uint64_t remaining = UINT64_MAX;
-    if (ctx.streamFeedActivationLoopsRemaining != 0) {
-        const auto span = ctx.streamLoopEndFrame - ctx.streamLoopStartFrame;
-        const auto passes = ctx.streamFeedActivationLoopsRemaining - 1u;
-        const auto first = ctx.streamFrameCount - ctx.streamFeedActivationStartFrame;
-        const auto total = passes != 0 && span > (UINT64_MAX - first) / passes
-            ? UINT64_MAX : first + span * passes;
-        remaining = total - std::min(total, ctx.groupVirtualFramesFed);
-    }
-    const auto count = static_cast<std::uint32_t>(std::min<std::uint64_t>(remaining, free));
-    if (count != 0) {
-        rs.PushSilence(count);
-        ctx.groupVirtualFramesFed += std::min<std::uint64_t>(count, UINT64_MAX - ctx.groupVirtualFramesFed);
-    }
-    if (remaining == count) rs.MarkInputEnd();
-    return count != 0 || rs.InputEnded();
 }
 
 struct TailFrameAggregate {
@@ -683,9 +649,9 @@ bool PreparePlainPcm(const VoiceRenderContext& ctx, std::uint32_t blockFrames,
         // helper copies it into the voice-owned FIFO, including byte wraps.
         if (rs.phaseHigh != 0 || rs.phaseLow != 0 ||
             frames > UINT64_MAX - rs.readIndex || extra > rs.FreeFrames() ||
-            extra > UINT64_MAX - rs.writeIndex || ctx.streamRing->ConsumerSourceEnded())
+            extra > UINT64_MAX - rs.writeIndex || ctx.streamRing->SourceEnded())
             return false;
-        if (ctx.streamRing->ConsumerBufferedFrames() < extra) return false;
+        if (ctx.streamRing->BufferedFrames() < extra) return false;
         feedFrames = static_cast<std::uint32_t>(extra);
         return true;
     }
@@ -918,10 +884,11 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
         ctx.authoredSourceDeadlineFrame < quantumStart + blockFrames;
     const bool rootStopArrived = ctx.authoredRootStopFrame < quantumStart + blockFrames;
     const bool decoderWaiting = ctx.streamRing != nullptr && ctx.streamRing->packetEncoded &&
-        ctx.mediaDecoder == nullptr && !ctx.streamRing->ConsumerDecoderReady();
+        ctx.mediaDecoder == nullptr &&
+        ctx.streamRing->pendingDecoder.load(std::memory_order_acquire) == nullptr;
     const bool prebufferWaiting = ctx.streamRing != nullptr && !ctx.streamGateOpen &&
-        (decoderWaiting || ctx.streamRing->ConsumerBufferedFrames() < ctx.streamRing->ConsumerPrebufferTarget(ctx.prebufferTargetFrames)) &&
-        !ctx.streamRing->ConsumerSourceEnded();
+        (decoderWaiting || ctx.streamRing->BufferedFrames() < ctx.streamRing->PrebufferTarget(ctx.prebufferTargetFrames)) &&
+        !ctx.streamRing->SourceEnded();
     if (rootStopArrived && (prebufferWaiting ||
         (ctx.timelineGated && ctx.authoredRootStopFrame <= quantumStart + earliestStart))) {
         ctx.authoredRootStopApplied = true;
@@ -949,10 +916,10 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
     // gate opens. Underruns after the gate opens are starvation, never a
     // return to Preparing.
     if (ctx.streamRing != nullptr && !ctx.streamGateOpen) {
-        if ((!decoderWaiting && (ctx.streamRing->ConsumerBufferedFrames() >= ctx.streamRing->ConsumerPrebufferTarget(ctx.prebufferTargetFrames) ||
-                ctx.streamRing->ConsumerSourceEnded())) ||
-            ctx.streamRing->ConsumerPreparationResult() != VN_OK ||
-            ctx.streamRing->ConsumerTerminalReason() == StreamTerminalReason::ProducerFailure || authoredDeadlineArrives) {
+        if ((!decoderWaiting && (ctx.streamRing->BufferedFrames() >= ctx.streamRing->PrebufferTarget(ctx.prebufferTargetFrames) ||
+                ctx.streamRing->SourceEnded())) ||
+            ctx.streamRing->preparationResult.load(std::memory_order_acquire) != VN_OK ||
+            ctx.streamRing->TerminalReason() == StreamTerminalReason::ProducerFailure || authoredDeadlineArrives) {
             ctx.streamGateOpen = true;
         } else {
             ctx.starvedThisBlock = false;
@@ -1066,9 +1033,9 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
     // only the observational taps update, to report the silence. The
     // arena's overflow counter records the event.
     if (ctx.resyncOnStarve && !ctx.resyncLatched && ctx.resyncFadeOutTotal == 0 &&
-        ctx.streamRing != nullptr && ctx.streamGateOpen && !ctx.streamRing->ConsumerSourceEnded()) {
+        ctx.streamRing != nullptr && ctx.streamGateOpen && !ctx.streamRing->SourceEnded()) {
         const double ratio = ctx.resampler.CurrentRatio();
-        const double buffered = static_cast<double>(ctx.streamRing->ConsumerBufferedFrames()) +
+        const double buffered = static_cast<double>(ctx.streamRing->BufferedFrames()) +
             static_cast<double>(ctx.resampler.writeIndex - ctx.resampler.readIndex);
         const double available = ratio > 0.0 ? buffered / ratio : 0.0;
         // A just-opened prebuffer gate must not read as an imminent underrun.
@@ -1082,7 +1049,6 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
         }
     }
     ctx.cascade.plainPcmCandidate =
-        !(ctx.streamRing != nullptr && (ctx.groupSilentThisBlock || ctx.groupVirtualInput)) &&
         PreparePlainPcm(ctx, blockFrames, offset, ctx.cascade.plainPcmFeedFrames);
     float* scratch[kMaxChannels] = {};
     for (std::uint32_t ch = 0; ch < channels; ++ch) {
@@ -1244,7 +1210,7 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
     std::uint32_t resyncSwitchAt = UINT32_MAX;
     bool resyncEnded = false;
     const auto resyncTerminal = ctx.resyncLatched && ctx.streamRing != nullptr
-        ? ctx.streamRing->ConsumerTerminalReason() : StreamTerminalReason::None;
+        ? ctx.streamRing->TerminalReason() : StreamTerminalReason::None;
     const bool resyncFailed = resyncTerminal == StreamTerminalReason::ProducerFailure ||
                               resyncTerminal == StreamTerminalReason::IntegrityAbort;
     if (ctx.resyncLatched) {
@@ -1270,26 +1236,15 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
             std::fill_n(scratch[ch] + offset, silent, 0.0f);
         produced = silent;
     }
-    if (ctx.streamRecoveryGroup != nullptr && ctx.streamRing != nullptr &&
-        (ctx.streamRing->ConsumerPreparationResult() != VN_OK ||
-         ctx.streamRing->ConsumerTerminalReason() == StreamTerminalReason::ProducerFailure ||
-         ctx.streamRing->ConsumerTerminalReason() == StreamTerminalReason::IntegrityAbort))
-        ctx.mediaDecodeFailed = true;
     while (!ctx.resyncLatched && !ctx.mediaDecodeFailed && produced < sourceTarget) {
         produced += ctx.resampler.Produce(scratch, offset + produced,
                                           sourceTarget - produced);
         if (produced >= sourceTarget) {
             break;
         }
-        bool fed = (ctx.streamRing != nullptr)
-            ? ((ctx.groupSilentThisBlock || ctx.groupVirtualInput)
-                ? FeedGroupVirtualInput(ctx) : FeedResamplerFromStream(ctx))
-            : FeedResampler(ctx);
-        if (!fed && ctx.streamRecoveryGroup != nullptr && ctx.streamRing != nullptr &&
-            !ctx.mediaDecodeFailed && !ctx.streamRing->ConsumerSourceEnded() && !ctx.resampler.Exhausted()) {
-            ctx.groupStarvedThisBlock = true;
-            fed = FeedGroupVirtualInput(ctx);
-        }
+        const bool fed = (ctx.streamRing != nullptr)
+                             ? FeedResamplerFromStream(ctx)
+                             : FeedResampler(ctx);
         if (!fed) {
             break;
         }
@@ -1302,7 +1257,7 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
     ctx.logicalSourceOutputFramesThisBlock = produced;
     if (ctx.resyncFadeOutTotal != 0 && !ctx.resyncLatched &&
         ctx.streamRing != nullptr &&
-        ctx.streamRing->ConsumerTerminalReason() == StreamTerminalReason::NaturalEnd) {
+        ctx.streamRing->TerminalReason() == StreamTerminalReason::NaturalEnd) {
         // The producer finished filling the ring, not playing its buffered tail.
         // Reverse a preventive fade from its last gain using the existing ramp.
         if (ctx.resyncFadeOutDone != 0) {
@@ -1339,7 +1294,7 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
         ctx.resyncFadeOutDone >= ctx.resyncFadeOutTotal;
     if (ctx.resyncOnStarve && !ctx.resyncLatched && ctx.streamRing != nullptr &&
         ctx.streamGateOpen && (produced < sourceTarget || resyncFadedOut) &&
-        !ctx.streamRing->ConsumerSourceEnded() && !ctx.resampler.Exhausted()) {
+        !ctx.streamRing->SourceEnded() && !ctx.resampler.Exhausted()) {
         // The source is still live but the ring cannot keep up: fade out,
         // latch, and pin where the timeline would find the source.
         if (ctx.resyncFadeOutTotal == 0) {
@@ -1392,7 +1347,7 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
     if (sourceEnded) {
         sourceResult = SourceTerminalKind::Natural;
         if ((!authoredDeadlineReached || resyncFailed) && !resyncEnded && ctx.streamRing != nullptr) {
-            switch (ctx.streamRing->ConsumerTerminalReason()) {
+            switch (ctx.streamRing->TerminalReason()) {
             case StreamTerminalReason::NaturalEnd:
                 if (ctx.sourceTerminal != nullptr && ctx.sourceTerminalStreamGeneration !=
                         ctx.streamRing->generation.load(std::memory_order_acquire))
@@ -1402,15 +1357,14 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
                 sourceResult = SourceTerminalKind::ProducerFailure; break;
             case StreamTerminalReason::IntegrityAbort:
                 sourceResult = SourceTerminalKind::IntegrityAbort; break;
-            default: sourceResult = ctx.groupVirtualInput && sourceExhausted
-                ? SourceTerminalKind::Natural : SourceTerminalKind::None; break;
+            default: sourceResult = SourceTerminalKind::None; break;
             }
         }
     }
     if (ctx.mediaDecodeFailed) {
-        const auto error = ctx.streamRing ? ctx.streamRing->ConsumerPreparationResult() : VN_OK;
+        const auto error = ctx.streamRing ? ctx.streamRing->preparationResult.load(std::memory_order_acquire) : VN_OK;
         sourceResult = (error != VN_OK && error != VN_BAD_STREAM_FILE) ||
-            (ctx.streamRing != nullptr && ctx.streamRing->ConsumerTerminalReason() == StreamTerminalReason::ProducerFailure)
+            (ctx.streamRing != nullptr && ctx.streamRing->TerminalReason() == StreamTerminalReason::ProducerFailure)
             ? SourceTerminalKind::ProducerFailure : SourceTerminalKind::IntegrityAbort;
     }
     std::uint32_t stopCutoff = UINT32_MAX;
@@ -1499,8 +1453,7 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
     if (ctx.streamRing != nullptr) {
         ctx.starvedThisBlock =
             (phase == SourcePhase::Active) &&
-            (ctx.logicalSourceOutputFramesThisBlock < sourceTarget || ctx.resyncLatchedThisBlock ||
-             ctx.groupStarvedThisBlock || ctx.groupVirtualInput);
+            (ctx.logicalSourceOutputFramesThisBlock < sourceTarget || ctx.resyncLatchedThisBlock);
     }
 
     // --- insert-effect chain ---
@@ -1874,13 +1827,6 @@ void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames) {
     ctx.cascade.produced = produced;
     ctx.phase = phase;
     ctx.lastResult = StageResult{produced, phase};
-}
-
-void SilenceVoiceCascade(VoiceRenderContext& ctx) noexcept {
-    if (!ctx.cascade.runnable) return;
-    if (ctx.cascade.borrowed.frames != 0) MaterializePlainPcm(ctx);
-    for (std::uint32_t channel = 0; channel < ctx.pcm.channelCount; ++channel)
-        std::fill_n(ctx.cascade.scratch[channel] + ctx.cascade.offset, ctx.cascade.produced, 0.0f);
 }
 
 template<bool imageOnly>

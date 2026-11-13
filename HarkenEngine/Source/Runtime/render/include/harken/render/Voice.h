@@ -241,42 +241,6 @@ struct VoiceEventSpan {
     VoiceTimelineEvent events[kTimelineMaxCombinedEventsPerVoiceQuantum]{};
 };
 
-// The service generation owns this storage until all member voices and
-// recovery handoffs physically release it. Only the main audio thread writes
-// recovery state; workers report shortage through their own voice context.
-struct StreamRecoveryGroup {
-    std::atomic<bool> hasStreams{false};
-    std::atomic<std::uint64_t> recoverySerial{0};
-    bool recovering = false;
-    bool failed = false;
-    std::atomic<SourceTerminalKind> failure{SourceTerminalKind::None};
-    void Fail(SourceTerminalKind reason) noexcept {
-        if (failed) return;
-        failed = true;
-        failure.store(reason, std::memory_order_release);
-    }
-};
-
-enum class StreamRecoveryResult : std::uint8_t { Waiting, Applied, Retry, Cancelled, Failed };
-struct StreamRecoveryMember {
-    VnVoiceHandle render = 0;
-    std::uint64_t oldRingToken = 0;
-    StreamRing* ring = nullptr;
-    std::uint64_t ringToken = 0;
-    std::uint64_t sourceReadFrame = 0;
-    std::uint64_t sourceFrame = 0;
-    std::uint32_t loopsRemaining = 1;
-};
-// Logic retains immutable members, rings and the service until the stable
-// VoicePool mailbox acknowledges this attempt. Only cancellation is mutable.
-struct StreamRecoveryAttempt {
-    StreamRecoveryGroup* group = nullptr;
-    std::uint64_t serial = 0;
-    std::span<const StreamRecoveryMember> members;
-    std::atomic<bool> cancelRequested{false};
-    StreamRecoveryResult result = StreamRecoveryResult::Waiting;
-};
-
 struct VoiceRenderContext {
     // Keep authoritative block eligibility state together; all owners and checks remain unchanged.
     StreamRing* streamRing = nullptr;
@@ -390,11 +354,6 @@ struct VoiceRenderContext {
     // not fill the block); the cooldown spaces STARVED notifications exactly
     // starvationCooldownBlocks apart under continuous starvation.
     bool starvedThisBlock = false;
-    StreamRecoveryGroup* streamRecoveryGroup = nullptr;
-    bool groupSilentThisBlock = false;
-    bool groupStarvedThisBlock = false;
-    bool groupVirtualInput = false;
-    std::uint64_t groupVirtualFramesFed = 0;
     std::uint32_t starveCooldownRemaining = 0;
 
     // Timeline resync for a streamed clip on a track. A starvation fades the
@@ -807,10 +766,6 @@ bool PrepareVoiceCascade(VoiceRenderContext& ctx, BlockArena& arena,
 // Records the produced frame count in ctx.cascade and the protocol facts in
 // ctx.lastResult. Call only when PrepareVoiceCascade returned true.
 void RunVoiceCascade(VoiceRenderContext& ctx, std::uint32_t blockFrames);
-
-// Suppress an already-rendered image without changing time, lifecycle or
-// gain progress. Borrowed resident samples are materialized before clearing.
-void SilenceVoiceCascade(VoiceRenderContext& ctx) noexcept;
 
 // Phase 3 (serial, fixed slot order): fold the completed cascade's scratch into
 // the voice's bus accumulator and scatter its sends into the tap reserved by

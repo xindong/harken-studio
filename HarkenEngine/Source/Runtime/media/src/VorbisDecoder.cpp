@@ -276,10 +276,10 @@ StreamDecodeResult VorbisStatePool::State::ReadStream(StreamRing& ring,
     }
     // Positive output needs committed frame coverage. Zero-output preroll can
     // consume published bytes alone, allowing a small ring to make progress.
-    const auto coverage = ring.ConsumerBufferedFrames();
+    const auto coverage = ring.BufferedFrames();
     auto& workspace = *codec->workspaces[thread];
     while (decodedOffset == decodedFrames) {
-        const auto available = ring.ConsumerAvailableBytes();
+        const auto available = ring.ReadAvailableBytes();
         if (!available) return coverage ? StreamDecodeResult::Invalid : StreamDecodeResult::Dry;
         if (available < sizeof(StreamPacketHeader)) return StreamDecodeResult::Invalid;
         const auto at = ring.readIndex.load(std::memory_order_relaxed);
@@ -307,52 +307,6 @@ StreamDecodeResult VorbisStatePool::State::ReadStream(StreamRing& ring,
     decodedOffset += count;
     return StreamDecodeResult::Ready;
 }
-StreamDecodeResult VorbisStatePool::State::CropStream(StreamRing& ring,
-    std::uint32_t frames, std::uint32_t thread) noexcept {
-    if (!codec || thread >= codec->workspaces.size() || ring.channelCount != settings->Channels() ||
-        ring.ConsumedFrames() != 0) return StreamDecodeResult::Invalid;
-    const auto coverage = ring.ConsumerBufferedFrames();
-    if (frames >= coverage) return StreamDecodeResult::Dry;
-    auto& workspace = *codec->workspaces[thread];
-    const auto begin = ring.readIndex.load(std::memory_order_relaxed);
-    const auto available = ring.ConsumerAvailableBytes();
-    std::uint32_t offset = 0, previous = 0, skipped = 0;
-    bool havePrevious = false;
-    StreamPacketHeader predecessor{}, target{};
-    for (;;) {
-        if (available - offset < sizeof(StreamPacketHeader)) return StreamDecodeResult::Invalid;
-        ring.CopyOut(begin + offset, &target, sizeof(target));
-        if (!target.packetBytes || target.packetBytes > workspace.packet_.size() || target.restart > 1 ||
-            target.packetBytes > available - offset - sizeof(target) || target.frames > coverage - skipped ||
-            (target.restart && (target.frames || target.discardFrames))) return StreamDecodeResult::Invalid;
-        if (target.frames > frames - skipped) break;
-        skipped += target.frames;
-        previous = offset;
-        predecessor = target;
-        havePrevious = true;
-        offset += static_cast<std::uint32_t>(sizeof(target)) + target.packetBytes;
-    }
-    if (!havePrevious) return StreamDecodeResult::Invalid;
-    Restart();
-    streamRing = &ring;
-    streamGeneration = ring.generation.load(std::memory_order_relaxed);
-    // Overlap uses only the immediately preceding packet, including a zero-
-    // coverage preroll. Do not release its bytes until its MDCT has finished.
-    ring.CopyOut(begin + previous + sizeof(predecessor), workspace.packet_.data(), predecessor.packetBytes);
-    unsigned decoded = 0;
-    if (!Decode(workspace, workspace.packet_.data(), predecessor.packetBytes, planes, decoded) || decoded != 0)
-        return StreamDecodeResult::Invalid;
-    ring.CopyOut(begin + offset + sizeof(target), workspace.packet_.data(), target.packetBytes);
-    if (!Decode(workspace, workspace.packet_.data(), target.packetBytes, planes, decoded) ||
-        target.discardFrames > decoded || target.frames > decoded - target.discardFrames)
-        return StreamDecodeResult::Invalid;
-    decodedOffset = target.discardFrames + (frames - skipped);
-    decodedFrames = target.discardFrames + target.frames;
-    ring.DiscardFrames(frames);
-    ring.ConsumeBytes(offset + static_cast<std::uint32_t>(sizeof(target)) + target.packetBytes);
-    return StreamDecodeResult::Ready;
-}
-
 bool VorbisStatePool::State::Decode(VorbisWorkspace& workspace, const std::uint8_t* packet,
     std::size_t bytes, const float* (&pcm)[8], unsigned& frames) noexcept {
     float** decoded = nullptr;

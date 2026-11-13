@@ -139,13 +139,6 @@ public:
     // is never handed to a second claimant. Logic thread only.
     std::uint32_t FreeSlotCount() const;
 
-    // A composite stream retains two physical slots until its source releases:
-    // one current ring and one replacement. Retired rings keep the reservation
-    // until I/O detaches, so cancellation cannot lend their storage twice.
-    VnResult ReserveRecoverySlot(std::uint64_t activeRingToken,
-        std::uint32_t pendingSlotReservations, std::uint64_t* outReservation);
-    void ReleaseRecoverySlot(std::uint64_t reservation) noexcept;
-
     // The slot's ring, for wiring into the voice render context.
     StreamRing* RingOf(std::uint32_t slot);
 
@@ -185,7 +178,6 @@ public:
         std::uint32_t loopCount = 1;
         std::uint32_t prebufferTargetFrames = 0;
         std::uint32_t pendingSlotReservations = 0;
-        std::uint64_t recoveryReservation = 0;
     };
 
     // Preparation ownership is independent of the ring generation: taking a
@@ -379,9 +371,6 @@ private:
 
     struct StreamSlot {
         StreamRing ring;
-        // Numeric ownership survives ring generation changes and physical
-        // detach. Zero admits ordinary starts; no service pointer is retained.
-        std::atomic<std::uint64_t> recoveryReservation{0};
         bool metadataWaiting = false; // Protected by the manager mutex.
         bool prefetchedStart = false; // Immutable during the Active generation.
         bool promotionPending = false; // Logic-owned; not ring ownership.
@@ -552,7 +541,6 @@ private:
     // Monotonic identities; exhaustion refuses publication rather than reuse.
     std::uint64_t m_lastSourceGeneration = 0; // under m_mutex
     std::uint64_t m_lastPreparationGeneration = 0; // logic thread only
-    std::uint64_t m_lastRecoveryReservation = 0; // under m_mutex
 
     std::vector<StreamSlot> m_slots;
     std::uint32_t m_pendingPromotionCount = 0;

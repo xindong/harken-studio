@@ -12,7 +12,6 @@
 #include <cassert>
 #include <cstdint>
 #include <new>
-#include <span>
 #include <type_traits>
 
 namespace harken {
@@ -40,7 +39,6 @@ public:
         bool awaitingStart = false;
         bool loopInfinite = false;
         bool hasExitMarker = false;
-        bool groupTimingValid = false;
         ConsumedProgress progress{};
     };
 
@@ -148,21 +146,6 @@ public:
                     ? ParkingRow{row.sourceFrame, row.renderGeneration,
                                  row.loopPassesRemaining, row.active}
                     : ParkingRow{};
-            }
-            return true;
-        }, publication);
-    }
-
-    // Every requested member comes from one pinned publication. Independent
-    // CaptureRow calls could otherwise mix clocks from different quanta.
-    bool CaptureRows(std::span<const std::uint32_t> indices, std::span<Row> rows,
-                     Publication* publication) const {
-        if (publication == nullptr || rows.size() != indices.size()) return false;
-        return CapturePinned([&](const Slot& slot, const Publication& captured) {
-            for (std::size_t i = 0; i < indices.size(); ++i) {
-                if (indices[i] >= captured.availableCount) return false;
-                const auto& row = slot.rows.data()[indices[i]];
-                rows[i] = row.publicationSerial == captured.serial ? row : Row{};
             }
             return true;
         }, publication);

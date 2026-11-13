@@ -4819,7 +4819,6 @@ bool WithdrawUnpublishedSourceLoansBeforeExposure(harken::Engine& engine,
         if (source->State() == harken::OriginalSourceSubmissionRegistry::Phase::Disposed) {
             // Installation also disposes the command range. Only a real physical
             // release permits returning the new storage loans here.
-            engine.ReleaseGroupRecoverySource(start.renderHandle);
             (void)engine.ReturnPendingVariableLeafSourceAfterPhysicalRelease(start.arm);
             return true;
         }
@@ -4844,7 +4843,6 @@ bool WithdrawUnpublishedSourceLoansBeforeExposure(harken::Engine& engine,
         // Transfer the actual completed physical disposition to the stable owner before
         // Exposure can retire the Arm and another issuance can reuse the registry row.
         start.voiceOwnershipHeld = false;
-        engine.ReleaseGroupRecoverySource(start.renderHandle);
         if (!engine.ReturnPendingVariableLeafSourceAfterPhysicalRelease(start.arm)) return false;
         return engine.originalSourceSubmissions.WithdrawUnpublished(start.arm);
     };
@@ -8998,7 +8996,6 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
             (void)engine.originalSourceSubmissions.DisposeUnpublishedVoice(arm);
         else if (!engine.voices.CancelPreparedVoice(render))
             (void)engine.voices.AbortClaimedVoice(render);
-        engine.ReleaseGroupRecoverySource(render);
         const bool queueReturned = engine.ReturnOriginalQueueSourcePreparationAfterPhysicalRelease(arm);
         const bool singleReturned = engine.ReturnOriginalSingleSourcePreparationAfterPhysicalRelease(arm);
         const bool pendingReturned = engine.ReturnPendingVariableLeafSourceAfterPhysicalRelease(arm);
@@ -9324,9 +9321,6 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
             });
         if (controller != engine.playableServices.end()) resourceService = &*controller;
     }
-    const auto groupBound = engine.BindGroupRecoverySource(programGeneration, render, releaseObserver,
-        install, streamFacts, streamLoopStart, streamLoopEnd);
-    if (groupBound != VN_OK) return rollback(groupBound);
     if (resourceService != nullptr) {
         auto* controller = engine.ResolvePlayableService(resourceService->identity,
             resourceService->ownerInstance, resourceService->ownerEpoch);
@@ -9724,7 +9718,6 @@ bool CancelPreparedTimelineVoiceStart(
         }
     }
     if (!prepared->voiceOwnershipHeld) {
-        engine.ReleaseGroupRecoverySource(prepared->renderHandle);
         if (!engine.ReturnOriginalQueueSourcePreparationAfterPhysicalRelease(prepared->arm)) return false;
         if (!engine.ReturnOriginalSingleSourcePreparationAfterPhysicalRelease(prepared->arm)) return false;
         if (!engine.ReturnPendingVariableLeafSourceAfterPhysicalRelease(prepared->arm)) return false;
@@ -9759,7 +9752,6 @@ bool CancelPreparedTimelineVoiceStart(
             }
         }
     }
-    engine.ReleaseGroupRecoverySource(prepared->renderHandle);
     if (prepared->ledgerOwnershipHeld) {
         if (engine.ledger.CancelPreparedPlayableOwned(
                 prepared->ledgerSlot)) {
@@ -9938,7 +9930,6 @@ bool RollbackCommittedTimelineVoiceStart(
         }
         prepared->ledgerOwnershipHeld = false;
         prepared->voiceOwnershipHeld = false;
-        engine.ReleaseGroupRecoverySource(prepared->renderHandle);
         // Physical Voice retirement owns the published effects' retire queue.
         prepared->effectOwnershipHeld = {};
         if (prepared->armOwnershipHeld) {
@@ -10009,7 +10000,6 @@ bool RollbackCommittedTimelineVoiceStart(
             return false;
         }
         prepared->voiceOwnershipHeld = false;
-        engine.ReleaseGroupRecoverySource(prepared->renderHandle);
     }
     if (prepared->ledgerOwnershipHeld) {
         engine.ledger.Release(prepared->ledgerSlot);
@@ -37607,13 +37597,10 @@ bool ScheduleSourcePreparationHorizon(harken::Engine& engine, std::uint64_t* hor
 // Answers each new resync serial with one replacement ring prepared at the
 // source frame the voice's timeline reaches at the first preparable boundary.
 // A boundary past the clip end leaves the voice silent until it ends.
-void ServiceStreamResyncs(harken::Engine& engine) {
-    std::uint64_t preparationHorizon = UINT64_MAX;
-    (void)ScheduleSourcePreparationHorizon(engine, &preparationHorizon);
-    engine.ServiceGroupRecoveries(preparationHorizon);
+void ServiceStreamResyncs(harken::Engine& engine) noexcept {
     constexpr std::uint64_t kResyncTicketBit = UINT64_C(1) << 63;
     for (auto& row : engine.streamResyncs) {
-        if (row.handle == 0 || row.group) continue;
+        if (row.handle == 0) continue;
         harken::VoicePool::StreamResyncView view;
         if (!engine.voices.ReadStreamResync(row.handle, &view)) {
             if (row.token != 0) (void)engine.streamSeekHandoffs.Abandon(row.token);

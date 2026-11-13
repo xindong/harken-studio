@@ -53,11 +53,6 @@ void SetResamplerConsumedPosition(ResamplerAdvanceState* state,
                                   std::uint32_t baseLoopsRemaining,
                                   std::uint64_t consumedSourceFrames) noexcept;
 
-// Advance the runtime's exact source clock without sampling media. Finite
-// sources stop at their natural end; a failure leaves the input unchanged.
-bool AdvanceResamplerPosition(ResamplerAdvanceState* state,
-                               std::uint64_t outputFrames) noexcept;
-
 bool ResolveResamplerBoundary(ResamplerAdvanceState state,
                               ResamplerBoundaryKind kind,
                               std::uint64_t delayedFrame,

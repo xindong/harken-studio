@@ -120,12 +120,6 @@ void CaptureMembers(Engine& engine, VnActionFiringHandle firing,
         const auto slot = static_cast<std::uint32_t>(installation.renderHandle);
         if (!installation.streamed || slot >= engine.streamResyncs.size()) continue;
         const auto& recovery = engine.streamResyncs[slot];
-        if (recovery.group) {
-            auto replacement = value;
-            if (engine.CaptureGroupRecovery(installation.renderHandle, replacement))
-                members.push_back(replacement);
-            continue;
-        }
         VoicePool::StreamResyncView resync{};
         if (recovery.handle != installation.renderHandle ||
             !engine.voices.ReadStreamResync(recovery.handle, &resync) || !resync.latched) continue;

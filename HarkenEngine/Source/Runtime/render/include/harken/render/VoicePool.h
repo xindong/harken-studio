@@ -738,10 +738,6 @@ public:
         std::uint64_t endFrame = 0;
     };
     bool EnableStreamResync(VnVoiceHandle handle) noexcept;
-    bool BindStreamRecoveryGroup(VnVoiceHandle handle, StreamRecoveryGroup* group) noexcept;
-    bool PostGroupRecovery(VnVoiceHandle representative, StreamRecoveryAttempt* attempt,
-                           std::uint64_t* ticket) noexcept;
-    bool CollectGroupRecovery(std::uint64_t ticket, StreamRecoveryAttempt* attempt) noexcept;
     bool ReadStreamResync(VnVoiceHandle handle, StreamResyncView* out) const noexcept;
     bool PostStreamResync(VnVoiceHandle handle, std::uint64_t serial,
                           std::uint64_t ticket, std::uint64_t token,
@@ -1059,7 +1055,6 @@ private:
         WeightSegmentV1 weightSegment{};
         bool weightRemoved = false;
     };
-    enum class GroupRequestPhase : std::uint8_t { Empty, Published, Done };
     struct alignas(64) Slot {
         std::atomic<SlotState> state{SlotState::Free};
         std::atomic<std::uint32_t> generation{1};
@@ -1091,9 +1086,6 @@ private:
         std::atomic<std::uint64_t> resyncRequestTicket{0};
         std::atomic<std::uint64_t> resyncRequestFrame{0};
         std::atomic<std::uint64_t> resyncRequestToken{0};
-        std::atomic<GroupRequestPhase> groupRequestPhase{GroupRequestPhase::Empty};
-        StreamRecoveryAttempt* groupRequest = nullptr;
-        std::uint32_t groupRequestSerial = 0;
         mutable std::atomic<std::uint64_t> renderedState{0};
         VoiceRenderContext render;
         // Only logic resizes this storage while the slot is private. Physical
@@ -1206,9 +1198,6 @@ private:
     static void CompleteOriginalSourceBodyDisposition(Slot& slot) noexcept;
     static void ResetOriginalSourceBodyForReuse(Slot& slot) noexcept;
     static bool CanClaimSlot(const Slot& slot) noexcept;
-    void ProcessGroupRecoveries(std::uint32_t blockFrames, std::uint64_t blockIndex) noexcept;
-    StreamRecoveryResult ApplyGroupRecovery(StreamRecoveryAttempt& attempt,
-                                            std::uint32_t blockFrames, std::uint64_t blockIndex) noexcept;
     static void PublishRelease(Slot& slot) noexcept;
 
     enum class StreamParkTokenState : std::uint8_t {
@@ -1302,7 +1291,6 @@ private:
     StreamSeekHandoffTable* m_streamSeekHandoffs = nullptr;
     const SourceCommandInstallProof* m_commandMetadataProof = nullptr;
     std::atomic<std::uint64_t> m_liveOriginalVoiceOwners{0};
-    std::atomic<std::uint32_t> m_groupRequestCount{0};
     std::uint64_t m_nextOriginalBodyMarker = 1;
     bool m_originalBodyMarkerExhausted = false;
     bool m_originalBodyShutdown = false;

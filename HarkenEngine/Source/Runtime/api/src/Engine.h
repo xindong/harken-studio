@@ -2343,9 +2343,6 @@ struct EngineSourceStartLane {
     std::uint64_t onset = 0;
 };
 
-struct EngineStreamRecoveryState;
-struct EngineStreamRecoveryBinding;
-
 struct EnginePlayableServiceRow {
     using UnpublishedVariableGroupCancellation =
         EngineServiceFeatureArrays::UnpublishedVariableGroupCancellation;
@@ -2365,7 +2362,6 @@ struct EnginePlayableServiceRow {
     std::vector<EngineMemberProgramToken> memberPrograms;
     std::vector<EnginePlayableMemberToken> members;
     std::unique_ptr<EngineScheduleAggregateState> scheduleAggregate;
-    std::vector<std::shared_ptr<EngineStreamRecoveryState>> streamRecoveries;
     EngineScheduleSourceCohort* scheduleSourceCohort = nullptr;
     EngineScheduleCohortSource* scheduleCohortSource = nullptr;
     EnginePlayableServiceReference sourceCohortFailureOwner{};
@@ -10881,7 +10877,6 @@ public:
         // Join every offline/real-time worker before Source registry destruction.
         // Disposed Source records can still have a physical installed Slot loan.
         voices.ShutdownOriginalSourceBodiesAfterQuiescence();
-        ShutdownGroupRecoveriesAfterQuiescence();
         variables.ShutdownReadCutsAfterQuiescence();
         originalSourceSubmissions.ShutdownAfterQuiescence();
         ReturnScheduleCohortSourceLoansAfterQuiescence();
@@ -15260,7 +15255,6 @@ public:
     // Logic-side owner of timeline resync per voice slot: the stream facts a
     // replacement ring needs and the one request outstanding for the voice.
     struct StreamResyncRow {
-        std::shared_ptr<EngineStreamRecoveryBinding> group;
         VnVoiceHandle handle = 0;
         std::uint32_t fileIndex = 0;
         std::uint32_t sampleRate = 0;
@@ -15274,13 +15268,6 @@ public:
     };
     std::vector<StreamResyncRow> streamResyncs;
     std::uint64_t streamResyncTickets = 0;
-    VnResult BindGroupRecoverySource(PlayableInstanceHandle leaf, VnVoiceHandle render,
-        VoiceReleaseObserver release, const TimelineVoiceInstallFacts& install,
-        const StreamManager::StreamFacts& facts, std::uint64_t loopStart, std::uint64_t loopEnd);
-    void ReleaseGroupRecoverySource(VnVoiceHandle render) noexcept;
-    void ServiceGroupRecoveries(std::uint64_t preparationHorizon);
-    bool CaptureGroupRecovery(VnVoiceHandle render, VnPlaybackReadinessMemberV1& out);
-    void ShutdownGroupRecoveriesAfterQuiescence() noexcept;
     ActionDeferredRecordTable actionDeferredRecords;
     ActionDeferredPairState lastDeferredPairFault{};
     VnResult lastDeferredPairFaultLeaseResult = VN_OK;

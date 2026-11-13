@@ -935,70 +935,6 @@ TEST(StreamRegister, ReplacementWaitsForPrebufferAndTransfersOwnershipOnce) {
     streams.ReleasePendingRef(facts.fileIndex);
 }
 
-TEST(StreamRegister, RecoverySpareCannotBeTakenByOrdinaryStartsAndRotatesAfterDetach) {
-    using Manager = harken::StreamManager;
-    harken::EngineConfig config{};
-    config.maxStreams = 3;
-    config.streamRingBytes = 256;
-    Manager streams(config);
-    streams.SetThrottled(true);
-    const auto id = harkentest::ObjectId(17210);
-    std::shared_ptr<const harken::PackMediaRange> range;
-    Manager::StreamFacts facts{};
-    ASSERT_EQ(VN_OK, PreparePcmFixture(streams, MakeValidImage(id), range, facts));
-    auto request = ReplacementAt(facts);
-    Manager::PreparedToken initial{}, other{}, next{};
-    ASSERT_EQ(VN_OK, streams.BeginReplacement(request, &initial));
-    Manager::PreparedStream current{};
-    ASSERT_EQ(VN_OK, streams.TransferReplacement(initial, &current));
-    std::uint64_t reservation = 0;
-    EXPECT_EQ(VN_BACKPRESSURE, streams.ReserveRecoverySlot(current.ringToken, 2, &reservation));
-    EXPECT_EQ(0u, reservation);
-    EXPECT_EQ(2u, streams.FreeSlotCount());
-    ASSERT_EQ(VN_OK, streams.ReserveRecoverySlot(current.ringToken, 1, &reservation));
-    ASSERT_NE(0u, reservation);
-    std::uint64_t duplicate = 1;
-    EXPECT_EQ(VN_IN_USE, streams.ReserveRecoverySlot(current.ringToken, 0, &duplicate));
-    EXPECT_EQ(0u, duplicate);
-    EXPECT_EQ(1u, streams.FreeSlotCount());
-    ASSERT_EQ(VN_OK, streams.BeginReplacement(request, &other));
-    EXPECT_EQ(VN_BACKPRESSURE, streams.BeginReplacement(request, &next));
-    EXPECT_EQ(0u, streams.FreeSlotCount());
-    auto recovery = request;
-    recovery.recoveryReservation = reservation;
-    recovery.pendingSlotReservations = config.maxStreams;
-    for (unsigned iteration = 0; iteration != 8; ++iteration) {
-        SCOPED_TRACE(iteration);
-        ASSERT_EQ(VN_OK, streams.BeginReplacement(recovery, &next));
-        EXPECT_EQ(VN_BACKPRESSURE, streams.BeginReplacement(recovery, &initial));
-        Manager::PreparedStream replacement{};
-        ASSERT_EQ(VN_OK, streams.TransferReplacement(next, &replacement));
-        EXPECT_NE(current.ring, replacement.ring);
-        ASSERT_TRUE(streams.RetirePreparedSlot(current.ring, current.ringToken));
-        streams.SyncServe();
-        std::uint64_t rejected = 0;
-        EXPECT_EQ(VN_BACKPRESSURE, streams.ActivateSlot(current.slot, facts.fileIndex,
-            0, 0, facts.frameCount, 1, &rejected));
-        EXPECT_EQ(0u, rejected);
-        EXPECT_EQ(0u, streams.FreeSlotCount());
-        current = replacement;
-    }
-    ASSERT_EQ(VN_OK, streams.BeginReplacement(recovery, &next));
-    ASSERT_TRUE(streams.CancelReplacement(next));
-    streams.SyncServe();
-    EXPECT_EQ(0u, streams.FreeSlotCount());
-    streams.ReleaseRecoverySlot(reservation);
-    EXPECT_EQ(1u, streams.FreeSlotCount());
-    EXPECT_EQ(VN_STALE_HANDLE, streams.BeginReplacement(recovery, &next));
-    streams.ReleaseRecoverySlot(reservation);
-    EXPECT_EQ(1u, streams.FreeSlotCount());
-    ASSERT_TRUE(streams.RetirePreparedSlot(current.ring, current.ringToken));
-    ASSERT_TRUE(streams.CancelReplacement(other));
-    streams.SyncServe();
-    EXPECT_EQ(3u, streams.FreeSlotCount());
-    streams.ReleasePendingRef(facts.fileIndex);
-}
-
 TEST(StreamRegister, PrivateTransferKeepsMediaPendingAndRejectsOldOwnershipAfterReuse) {
     using Manager = harken::StreamManager;
     using State = Manager::PreparationState;
@@ -2661,7 +2597,6 @@ TEST(StreamRegister, LazyVorbisDecoderTransfersOnceAndRetiresAcrossCancellationA
         EXPECT_EQ(0u, owned.ring->readFrames.load());
         EXPECT_EQ(harken::VariableReadCutStatus::Waiting, engine.voices.TimelineStreamStartStatus(
             static_cast<std::uint32_t>(voice), static_cast<std::uint32_t>(voice >> 32)));
-        if (variant == 0) owned.ring->CaptureConsumerSnapshot();
         if (variant == 1) {
             locator->blockNextOpen.store(true);
             engine.streams.ServicePackSources(engine.vorbis, 4 * 1024 * 1024);
@@ -2684,12 +2619,6 @@ TEST(StreamRegister, LazyVorbisDecoderTransfersOnceAndRetiresAcrossCancellationA
             }
         }
         if (variant == 0) {
-            engine.nullBackend.Pump(1);
-            ASSERT_NE(nullptr, engine.voices.Resolve(voice));
-            EXPECT_EQ(nullptr, engine.voices.Resolve(voice)->mediaDecoder);
-            EXPECT_EQ(0u, owned.ring->readFrames.load());
-            EXPECT_NE(nullptr, owned.ring->pendingDecoder.load());
-            owned.ring->ClearConsumerSnapshot();
             engine.nullBackend.Pump(1);
             auto* rendered = engine.voices.Resolve(voice);
             ASSERT_NE(nullptr, rendered);
