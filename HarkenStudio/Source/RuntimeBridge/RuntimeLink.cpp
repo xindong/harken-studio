@@ -578,7 +578,6 @@ bool ensureRuntimeStarted()
     g_runtime.playbackByAction.clear();
     g_runtime.playbackByRawVoice.clear();
     g_runtime.actionSeeks.clear();
-    g_runtime.endedPlaybackHandles.clear();
     g_runtime.registeredSounds.clear();
     g_runtime.registeredSoundRevisions.clear();
     g_runtime.preparedSounds.clear();
@@ -827,12 +826,9 @@ void runtimeTerm()
     g_runtime.packSetRevision = 0;
     g_runtime.liveVoices.clear();
     g_runtime.voiceNameByHandle.clear();
-    g_runtime.playbacks.clear();
-    g_runtime.playbackByPreview.clear();
-    g_runtime.playbackByAction.clear();
-    g_runtime.playbackByRawVoice.clear();
+    while (!g_runtime.playbacks.empty())
+        releasePlayback(g_runtime.playbacks.begin()->first, true);
     g_runtime.actionSeeks.clear();
-    g_runtime.endedPlaybackHandles.clear();
     {
         QMutexLocker lock(&g_runtime.notificationMutex);
         ++g_runtime.notificationGeneration;
@@ -1184,7 +1180,6 @@ void runtimeClearSoundNames()
     g_runtime.playbackByPreview.clear();
     g_runtime.playbackByAction.clear();
     g_runtime.playbackByRawVoice.clear();
-    g_runtime.endedPlaybackHandles.clear();
     g_runtime.voicePitchCentsByName.clear();
     g_runtime.voiceVolumeDbByName.clear();
     g_runtime.voiceSpatMixByName.clear();

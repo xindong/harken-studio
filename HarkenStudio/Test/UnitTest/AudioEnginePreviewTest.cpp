@@ -952,6 +952,90 @@ TEST_F(AuditionLifecycleTest, CompletionAndToolbarScopeAreIndependentOfOtherAudi
     EXPECT_EQ(engine.unregisterRawPcm(rawSound), HarkenEditor::Bridge::kEngineOk);
 }
 
+TEST_F(AuditionLifecycleTest, OutputTeardownRetiresPlaybacksAndCancelsFutureAudio)
+{
+    makeLooping();
+    auto* delayed = projects.createActionTargeting(
+        sounds[1], VNX::VActionStep::Type::Play, QStringLiteral("Delayed"));
+    ASSERT_NE(delayed, nullptr);
+    delayed->comp<VNX::VAction>()->steps.front().delay = 2000;
+    VNX::ProjectManager::syncProjectToRuntime(projects.currentProject());
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    VNX::IPCServer ipc(&engine);
+    QVector<quintptr> ended;
+    QObject::connect(&engine, &VNX::AudioEngine::playbackStopped,
+                     &ipc, [&](quintptr handle) { ended.append(handle); });
+
+    const auto playing = audition.playItem(*action);
+    const auto waiting = audition.playItem(*delayed);
+    ASSERT_NE(playing, 0u);
+    ASSERT_NE(waiting, 0u);
+    ASSERT_NE(audition.playItem(*sounds[1]), 0u);
+    const auto rawSound = engine.mintRawPcmSoundId();
+    ASSERT_EQ(engine.registerRawPcmSlice(rawSound, std::vector<float>(48000, 0.25f),
+        1, 48000, 0, 48000, true).result, HarkenEditor::Bridge::kEngineOk);
+    const auto rawHandle = engine.playRawPcm(rawSound, true);
+    ASSERT_NE(rawHandle, 0u);
+    audition.registerRawFilePlayback(QStringLiteral("Raw"), rawHandle);
+    const QVector<quintptr> expectedEnds{
+        audition.getAudition(playing).playbackHandle,
+        audition.getAudition(waiting).playbackHandle, rawHandle};
+    EXPECT_GT(pump(32), 0.05f);
+    ASSERT_EQ(audition.activeAuditionCount(), 4);
+    ASSERT_EQ(ipc.activePlaybacksMap()->size(), 2);
+    audition.stop(playing, 1000);
+    fillCommands();
+
+    engine.stopOutput();
+    poll();
+    EXPECT_TRUE(engine.isInitialized());
+    EXPECT_FALSE(engine.isPlaying());
+    EXPECT_EQ(audition.activeAuditionCount(), 0);
+    EXPECT_TRUE(ipc.activePlaybacksMap()->isEmpty());
+    EXPECT_EQ(ended.size(), expectedEnds.size());
+    for (quintptr handle : expectedEnds)
+        EXPECT_EQ(ended.count(handle), 1);
+    engine.stopOutput();
+    EXPECT_EQ(ended.size(), expectedEnds.size());
+
+    ASSERT_TRUE(engine.startOutput());
+    ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+    EXPECT_FLOAT_EQ(pump(1800), 0.0f);
+    EXPECT_EQ(audition.activeAuditionCount(), 0);
+    ASSERT_NE(audition.playItem(*action), 0u);
+    EXPECT_GT(pump(32), 0.05f);
+    EXPECT_EQ(audition.activeAuditionCount(), 1);
+    EXPECT_EQ(ipc.activePlaybacksMap()->size(), 1);
+    engine.shutdown();
+    EXPECT_EQ(audition.activeAuditionCount(), 0);
+    EXPECT_TRUE(ipc.activePlaybacksMap()->isEmpty());
+}
+
+TEST_F(AuditionLifecycleTest, RuntimeRestartPreservesPlaybackCompletion)
+{
+    makeLooping();
+    VNX::IPCServer ipc(&engine);
+    for (int bufferSize : {128, 64}) {
+        SCOPED_TRACE(bufferSize);
+        ASSERT_NE(audition.playItem(*action), 0u);
+        EXPECT_GT(pump(32), 0.05f);
+        fillCommands();
+        ASSERT_TRUE(engine.reconfigureBufferSize(bufferSize));
+        ASSERT_TRUE(serviceUntilCurrentWorldReady(engine));
+        EXPECT_FLOAT_EQ(pump(32), 0.0f);
+        EXPECT_EQ(audition.activeAuditionCount(), 0);
+        EXPECT_TRUE(ipc.activePlaybacksMap()->isEmpty());
+    }
+    ASSERT_NE(audition.playItem(*action), 0u);
+    EXPECT_GT(pump(32), 0.05f);
+    EXPECT_EQ(audition.activeAuditionCount(), 1);
+    audition.stopAll(100);
+    pump(160);
+    EXPECT_FLOAT_EQ(pump(32), 0.0f);
+    EXPECT_EQ(audition.activeAuditionCount(), 0);
+    EXPECT_TRUE(ipc.activePlaybacksMap()->isEmpty());
+}
+
 TEST_F(AuditionLifecycleTest, StopCompletionFollowsAudioAndRepeatedRequestsDoNotExtendFades)
 {
     makeLooping();

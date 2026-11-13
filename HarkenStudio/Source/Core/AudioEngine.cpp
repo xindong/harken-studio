@@ -546,6 +546,7 @@ void AudioEngine::shutdown()
     if (session_)
         stopRuntimeSynchronization();
     session_.reset();
+    consumeRuntimeNotifications();
     runtimeProjectRestoreRequired_ = false;
 
     initialized_ = false;
@@ -605,6 +606,7 @@ void AudioEngine::stopOutput()
     }
 
     playing_ = false;
+    consumeRuntimeNotifications();
     masterMeterPeakL_ = 0.0f;
     masterMeterPeakR_ = 0.0f;
     emit meterLevelsUpdated();

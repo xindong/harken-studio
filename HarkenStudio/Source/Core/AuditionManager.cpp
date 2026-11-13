@@ -173,9 +173,8 @@ AuditionManager::AuditionManager(VNX::AudioEngine* engine, QObject* parent)
         connect(&engine_->runtimeSyncCoordinator(),
                 &VNX::RuntimeSyncCoordinator::barrierChanged,
                 this, &AuditionManager::onRuntimeSyncBarrierChanged);
-        connect(engine_, &VNX::AudioEngine::initializedChanged,
-                 this, [this](bool initialized) {
-            if (initialized)
+        const auto clearAuditionsWhenInactive = [this](bool active) {
+            if (active)
                 return;
             for (auto pending = pendingActionSeeks_.cbegin();
                  pending != pendingActionSeeks_.cend(); ++pending) {
@@ -191,7 +190,11 @@ AuditionManager::AuditionManager(VNX::AudioEngine* engine, QObject* parent)
             for (uint32_t id : ids)
                 emit auditionStateChanged(id, 0);
             emitIfAllStopped();
-        });
+        };
+        connect(engine_, &VNX::AudioEngine::initializedChanged,
+                this, clearAuditionsWhenInactive);
+        connect(engine_, &VNX::AudioEngine::playingChanged,
+                this, clearAuditionsWhenInactive);
     }
 }
 
