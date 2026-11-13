@@ -7279,7 +7279,13 @@ void ServicePendingImmediateStopIntents(
 class AdmittedCommandWriter;
 void ResetVoiceSendMirror(harken::Engine& engine, std::uint32_t slot);
 VnResult ApplyVoiceSendLive(harken::Engine& engine, VnVoiceHandle render,
-    std::uint32_t sendSlot, std::uint32_t targetBusIndex, float levelDb);
+    std::uint32_t sendSlot, std::uint32_t targetBusIndex, float levelDb) noexcept;
+void CancelPreparedVoiceSends(harken::Engine& engine, harken::PreparedVoiceSends& prepared) noexcept;
+VnResult PrepareFutureVoiceSends(harken::Engine& engine, VnVoiceHandle render,
+    const harken::VoiceSendConfigs& sends, harken::PreparedVoiceSends& prepared) noexcept;
+VnResult InstallFutureVoiceSends(harken::Engine& engine, VnVoiceHandle render,
+    const harken::VoiceSendConfigs& sends, harken::PreparedVoiceSends& prepared) noexcept;
+
 VnResult PrepareInitialVoiceSends(harken::Engine& engine, VnVoiceHandle render,
     const harken::VoiceSendConfigs& sends);
 std::uint64_t NextVoiceSendIncarnation(harken::Engine& engine);
@@ -8521,9 +8527,11 @@ void ReleaseTimelineVoiceBindings(harken::Engine& engine, VnVoiceHandle render,
     engine.params.RetireVoiceTargets(render);
     engine.propertyPublisher.ShrinkWorstCase(
         engine.params.PurgeVoiceInstances(render, snapshotOnly));
-    if (!snapshotOnly)
+    if (!snapshotOnly) {
         engine.effectParamTargets.ClearObject(harken::EffectParamTargetStore::Scope::Voice,
             static_cast<std::uint64_t>(render), static_cast<std::uint32_t>(render >> 32));
+        ResetVoiceSendMirror(engine, static_cast<std::uint32_t>(render));
+    }
 }
 
 VnResult PreflightTimelineVoiceStart(
@@ -75592,6 +75600,7 @@ void FormatLogRecord(const harken::LogRecord& record, char* out,
 // logic-side notification queue (it has no render block, so its timestamp is 0).
 void CancelPendingEffectSeeds(harken::Engine& engine,
                               harken::PendingStartRecord& rec) {
+    CancelPreparedVoiceSends(engine, rec.preparedSends);
     for (auto& token : rec.preparedSeedTokens) {
         engine.effectParamTargets.CancelPreparedInstalledEffectSeed(&token);
     }
@@ -75604,7 +75613,7 @@ bool PreparePendingEffectSeeds(harken::Engine& engine,
                                VnVoiceHandle renderHandle) {
     if (rec.effectSeedsPrepared &&
         rec.preparedSeedRenderHandle == renderHandle) {
-        return true;
+        return PrepareFutureVoiceSends(engine, renderHandle, rec.voiceSends, rec.preparedSends) == VN_OK;
     }
     if (rec.effectSeedsPrepared) {
         CancelPendingEffectSeeds(engine, rec);
@@ -75627,6 +75636,10 @@ bool PreparePendingEffectSeeds(harken::Engine& engine,
     }
     rec.preparedSeedRenderHandle = renderHandle;
     rec.effectSeedsPrepared = true;
+    if (PrepareFutureVoiceSends(engine, renderHandle, rec.voiceSends, rec.preparedSends) != VN_OK) {
+        CancelPendingEffectSeeds(engine, rec);
+        return false;
+    }
     return true;
 }
 
@@ -75690,6 +75703,7 @@ bool IsParkedRenderHandle(const harken::Engine& engine,
 
 void CancelPreparedParkReturn(harken::Engine& engine,
                               harken::ParkRecord& rec) {
+    CancelPreparedVoiceSends(engine, rec.preparedSends);
     for (std::uint32_t i = 0; i < rec.returnEffectCount; ++i) {
         engine.effectParamTargets.CancelPreparedInstalledEffectSeed(
             &rec.returnSeedTokens[i]);
@@ -76720,7 +76734,7 @@ PendingStartOutcome StartDeferredVoice(
     // command room is protected by the single-producer admission writer. A
     // refusal here therefore indicates broken bookkeeping, not a runtime path.
     if (!recipePrimed) return PendingStartOutcome::InvalidInput;
-    if (PrepareInitialVoiceSends(engine, render, rec.voiceSends) != VN_OK)
+    if (InstallFutureVoiceSends(engine, render, rec.voiceSends, rec.preparedSends) != VN_OK)
         return PendingStartOutcome::Unavailable;
     // Onset of the pinned attachment set (section 5.7): instantiate the
     // identities pinned at acceptance against the CURRENT definition
@@ -78018,7 +78032,7 @@ bool TryReturnParked(harken::Engine& engine, std::uint32_t ledgerSlot,
     const auto prepareEffects = [&](VnVoiceHandle renderHandle) {
         if (rec.returnEffectsPrepared &&
             rec.returnPreparedRenderHandle == renderHandle) {
-            return true;
+            return PrepareFutureVoiceSends(engine, renderHandle, rec.voiceSends, rec.preparedSends) == VN_OK;
         }
         if (rec.returnEffectsPrepared) {
             recyclePreparedEffects();
@@ -78045,6 +78059,10 @@ bool TryReturnParked(harken::Engine& engine, std::uint32_t ledgerSlot,
         }
         rec.returnPreparedRenderHandle = renderHandle;
         rec.returnEffectsPrepared = true;
+        if (PrepareFutureVoiceSends(engine, renderHandle, rec.voiceSends, rec.preparedSends) != VN_OK) {
+            recyclePreparedEffects();
+            return false;
+        }
         return true;
     };
     harken::VoiceManager::FreeRender target;
@@ -78476,7 +78494,7 @@ bool TryReturnParked(harken::Engine& engine, std::uint32_t ledgerSlot,
     // that never allocates and cannot be refused — the reservation guarantees
     // the restore is all-or-nothing.
     if (!PrimeParkedEffectBindings(engine, rec, publicHandle, newRender, commands, variableCut.Reader())) return false;
-    if (PrepareInitialVoiceSends(engine, newRender, rec.voiceSends) != VN_OK) return false;
+    if (InstallFutureVoiceSends(engine, newRender, rec.voiceSends, rec.preparedSends) != VN_OK) return false;
     if (commands.Overflowed() || !variableCut.BindVoice(newRender) ||
         !engine.voices.CommitPreparedVoice(newRender)) return false;
     engine.params.CommitStagedVoiceBindings(newRender);
@@ -80129,7 +80147,9 @@ std::uint64_t NextVoiceSendIncarnation(harken::Engine& engine) {
 
 VnResult PrepareVoiceSendBacking(harken::Engine& engine, VnVoiceHandle render,
     const harken::VoiceSendConfigs& sends, bool resetEdited, std::uint32_t editedSlot,
-    harken::VoiceSendSet** out) {
+    harken::VoiceSendSet** out) noexcept {
+    *out = nullptr;
+    try {
     std::vector<harken::VoiceSendDefinition> definitions;
     definitions.reserve(sends.size());
     for (const auto& send : sends) {
@@ -80146,6 +80166,7 @@ VnResult PrepareVoiceSendBacking(harken::Engine& engine, VnVoiceHandle render,
         return VN_DEVICE_ERROR;
     }
     return VN_OK;
+    } catch (...) { return VN_DEVICE_ERROR; }
 }
 
 void CommitVoiceSendMirror(harken::Engine& engine, VnVoiceHandle render,
@@ -80155,6 +80176,36 @@ void CommitVoiceSendMirror(harken::Engine& engine, VnVoiceHandle render,
     engine.voiceSendConfig[slot] = sends;
     engine.voiceSendActive += sends.size();
     UpdateSendHighWater(engine);
+}
+
+void CancelPreparedVoiceSends(harken::Engine& engine, harken::PreparedVoiceSends& prepared) noexcept {
+    if (prepared.set != nullptr) engine.voices.CancelVoiceSendSet(*prepared.set);
+    prepared = {};
+}
+
+VnResult PrepareFutureVoiceSends(harken::Engine& engine, VnVoiceHandle render,
+    const harken::VoiceSendConfigs& sends, harken::PreparedVoiceSends& prepared) noexcept {
+    if (prepared.render == render && prepared.snapshot == sends) return VN_OK;
+    harken::VoiceSendSet* next = nullptr;
+    if (!sends.empty()) {
+        const auto status = PrepareVoiceSendBacking(engine, render, sends, false, 0, &next);
+        if (status != VN_OK) return status;
+    }
+    CancelPreparedVoiceSends(engine, prepared);
+    prepared.set = next;
+    prepared.render = render;
+    prepared.snapshot = sends;
+    return VN_OK;
+}
+
+VnResult InstallFutureVoiceSends(harken::Engine& engine, VnVoiceHandle render,
+    const harken::VoiceSendConfigs& sends, harken::PreparedVoiceSends& prepared) noexcept {
+    if (prepared.render != render || !(prepared.snapshot == sends)) return VN_STALE_HANDLE;
+    if (prepared.set != nullptr && !engine.voices.InstallPreparedVoiceSendSet(render, *prepared.set))
+        return VN_STALE_HANDLE;
+    prepared = {};
+    CommitVoiceSendMirror(engine, render, sends);
+    return VN_OK;
 }
 
 VnResult PrepareInitialVoiceSends(harken::Engine& engine, VnVoiceHandle render,
@@ -80175,7 +80226,8 @@ VnResult PrepareInitialVoiceSends(harken::Engine& engine, VnVoiceHandle render,
 }
 
 VnResult ApplyVoiceSendLive(harken::Engine& engine, VnVoiceHandle render,
-    std::uint32_t sendSlot, std::uint32_t targetBusIndex, float levelDb) {
+    std::uint32_t sendSlot, std::uint32_t targetBusIndex, float levelDb) noexcept {
+    try {
     const auto slot = static_cast<std::uint32_t>(render);
     auto candidate = engine.voiceSendConfig[slot].WithSet({true, targetBusIndex, levelDb,
         engine.buses.GenerationAt(targetBusIndex), sendSlot, NextVoiceSendIncarnation(engine)});
@@ -80196,6 +80248,7 @@ VnResult ApplyVoiceSendLive(harken::Engine& engine, VnVoiceHandle render,
     }
     CommitVoiceSendMirror(engine, render, candidate);
     return VN_OK;
+    } catch (...) { return VN_DEVICE_ERROR; }
 }
 
 bool DynamicInfluenceReaches(

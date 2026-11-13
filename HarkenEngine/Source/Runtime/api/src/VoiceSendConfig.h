@@ -74,4 +74,12 @@ private:
     std::shared_ptr<const Records> m_rows;
 };
 
+struct VoiceSendSet;
+// Logic-owned backing reserved before a pending/park return can stop a victim.
+struct PreparedVoiceSends {
+    VoiceSendSet* set = nullptr;
+    VoiceSendConfigs snapshot;
+    std::uint64_t render = 0;
+};
+
 } // namespace harken

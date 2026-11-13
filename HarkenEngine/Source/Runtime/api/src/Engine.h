@@ -450,6 +450,7 @@ struct PendingStartRecord {
     // active slot re-issues a set-voice-send at start). A voice receives
     // nothing, so sends never create a cycle and need no re-validation here.
     VoiceSendConfigs voiceSends{};
+    PreparedVoiceSends preparedSends{};
 
     // The resolved attachment set PINNED at play acceptance:
     // identities, never curve copies, so a Replace between acceptance and onset is live and the
@@ -665,6 +666,7 @@ struct ParkRecord {
     // slot re-issues a set-voice-send). Bus destruction clears captured slots
     // that target its tombstoned cascade before a return can replay them.
     VoiceSendConfigs voiceSends{};
+    PreparedVoiceSends preparedSends{};
     bool heldPcmRef = false;            // a PCM use-count ref held while parked
     bool heldStreamRef = false;
     std::uint64_t streamParkRequestSequence = 0;

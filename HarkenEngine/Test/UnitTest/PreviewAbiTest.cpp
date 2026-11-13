@@ -769,6 +769,18 @@ TEST(PreviewAbi, PlaybackPathsV2CapturesAllSendsAndReportsBothCapacities) {
         EXPECT_FLOAT_EQ(-60, output[i].levelDb);
     }
     EXPECT_EQ(0x12345678u, output.back().reserved0);
+    const auto head = engine->commands.PublishedHead();
+    for (std::size_t failure = 1; failure <= 8; ++failure) {
+        harken::detail::ArmLogicAllocFaultForTests(failure, harken::detail::LogicAllocSite::VoiceSendStorage);
+        const auto result = harken::SetPreviewVoiceProperty(path.voiceInstance,
+            harken::playableproperties::PlayablePropertyIdV1::Sends, -30, sends[0].targetBusId);
+        harken::detail::DisarmLogicAllocFaultForTests();
+        EXPECT_EQ(VN_DEVICE_ERROR, result);
+        EXPECT_EQ(head, engine->commands.PublishedHead());
+        EXPECT_EQ(VN_PREVIEW_OK,
+            VnPreview_CapturePlaybackPathsV2(&path, 1, &paths, output.data(), 12, &count));
+        EXPECT_FLOAT_EQ(-60, output[0].levelDb);
+    }
     VnPreviewPlaybackPathV1 legacy{};
     EXPECT_EQ(VN_PREVIEW_RESULT_CAPACITY, VnPreview_CapturePlaybackPaths(&legacy, 1, &paths));
 }

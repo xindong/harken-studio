@@ -4608,7 +4608,10 @@ VnResult VoicePool::PrepareVoiceSendSet(VnVoiceHandle handle,
     if (out == nullptr) return VN_INVALID_ARG;
     *out = nullptr;
     DrainVoiceSendSets();
-    if (CheckLive(handle) != VN_OK) return VN_STALE_HANDLE;
+    // Future render generations may reserve backing before committing a steal.
+    // Adoption still validates the exact live/prepared host identity.
+    if (handle == 0 || static_cast<std::uint32_t>(handle) >= Capacity() ||
+        static_cast<std::uint32_t>(handle >> 32) == 0) return VN_STALE_HANDLE;
     try {
         if (definitions.size() > UINT32_MAX ||
             definitions.size() > UINT64_MAX - m_retainedVoiceSends) return VN_DEVICE_ERROR;

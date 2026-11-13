@@ -1088,6 +1088,49 @@ TEST(BusSend, SparseVoiceLabelsAndQueuedEditsPreserveOtherRamps) {
     EXPECT_EQ(0u, session.Engine()->voices.RetainedVoiceSendCount());
 }
 
+TEST(BusSend, PendingSendPreparationFailureNeverStopsVictimAndRetriesWithLatestConfig) {
+    auto config = MakeNullConfig(1, kBlockFrames);
+    config.voiceStealPolicy = 2;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    const auto dc = RegisterDc(0.1f);
+    auto play = MakePlayDesc(harkentest::ObjectId(1));
+    play.loopCount = 0;
+    play.priority = 10;
+    VnVoiceHandle victim = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &victim));
+    engine.nullBackend.Pump(1);
+    play.priority = 200;
+    play.reserved0 = VN_PLAY_FLAG_STAGED_INSTALL;
+    VnVoiceHandle pending = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &pending));
+    ASSERT_EQ(VN_OK, Vn_SetVoiceSend(pending, UINT32_MAX, VN_BUS_MASTER, -20));
+    const auto head = engine.commands.PublishedHead();
+    for (std::size_t failure = 1; failure <= 6; ++failure) {
+        harken::detail::ArmLogicAllocFaultForTests(failure, harken::detail::LogicAllocSite::VoiceSendStorage);
+        const auto result = Vn_CommitVoiceStart(pending);
+        harken::detail::DisarmLogicAllocFaultForTests();
+        EXPECT_EQ(VN_DEVICE_ERROR, result);
+        EXPECT_EQ(head, engine.commands.PublishedHead());
+        EXPECT_EQ(0u, engine.voiceStolenCount);
+        EXPECT_NE(0u, engine.ledger.ToRender(victim));
+        VnVoiceHandle claimed = 0;
+        EXPECT_FALSE(engine.voiceManager.ClaimFor(pending, &claimed));
+    }
+    ASSERT_EQ(VN_OK, Vn_CommitVoiceStart(pending));
+    EXPECT_EQ(1u, engine.voiceStolenCount);
+    ASSERT_EQ(VN_OK, Vn_SetVoiceSend(pending, 700000, VN_BUS_MASTER, -30));
+    for (unsigned i = 0; i < 4; ++i) {
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+    }
+    const auto render = engine.ledger.ToRender(pending);
+    ASSERT_NE(0u, render);
+    EXPECT_EQ(2u, engine.voices.Resolve(render)->voiceSendActiveCount);
+    EXPECT_EQ(2u, engine.voices.RetainedVoiceSendCount());
+}
+
 TEST(BusSend, VoiceSendPreparationFailureKeepsAcceptedRouting) {
     EngineSession session(MakeNullConfig(2, kBlockFrames));
     ASSERT_EQ(VN_OK, session.InitResult());
