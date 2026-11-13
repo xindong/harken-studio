@@ -37,11 +37,8 @@ inline constexpr std::uint32_t kOutputChannels = 2;
 // runtime's arrays and config validation read it everywhere.
 inline constexpr std::uint32_t kMaxFxSlotsPerVoice = kMaxVoiceFxSlots;
 
-// Compile-time upper bound on a voice's send slots (kMaxVoiceSendSlots) lives
-// in the engine-free ABI layout contract included above, so the offline program
-// compiler resolves the same ceiling this runtime sizes its per-voice send
-// array to. It stays in namespace harken, so every consumer here reads it
-// unchanged.
+// kMaxVoiceSendSlots in the ABI contract is a legacy observation width.
+// Runtime Voice Sends use actual-size storage, independent of the config hint.
 
 // Compile-time upper bound on a voice's binding instance slots (the
 // per-voice ceiling of the public binding system's instance layer). This is

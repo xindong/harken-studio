@@ -871,7 +871,8 @@ TEST(TimelineVoiceInstall, ThreeHundredSendsStartInOneDefaultQueueBatch) {
     std::vector<harken::TimelineVoiceSendInstall> sends(300, {VN_BUS_MASTER, -60});
     const harken::TimelineVoiceInstallInput input{&facts, {}, {}, sends};
     ASSERT_EQ(VN_OK, harken::test::PreflightTimelineVoiceStart(engine, input));
-    const auto result = harken::test::InstallTimelineVoiceStart(engine, input, parent, parent, parent);
+    const auto result = harken::test::InstallTimelineVoiceStart(engine, input, parent, parent, parent, true,
+        engine.timelinePool.PublishCutoffFrame());
     ASSERT_EQ(VN_OK, result.status);
     auto* voice = engine.voices.Resolve(result.renderHandle);
     ASSERT_NE(nullptr, voice);
@@ -2703,6 +2704,7 @@ TEST(TimelineVoiceInstall, OriginalSourceUnpublishedRollbackPreservesActualRepla
     ASSERT_EQ(harken::PlayableStartStatus::Accepted,
         harken::test::BuildTimelineVoiceInstallFromCut(engine, cut, &replacement.install));
     ASSERT_EQ(1u, replacement.install.bindingCount);
+    replacement.install.SetSends({{VN_BUS_MASTER, -12.0f}, {VN_BUS_MASTER, -18.0f}});
     VnBindingAttachDesc detach{};
     detach.structSize = sizeof(detach);
     detach.scopeKind = VN_TARGET_SCOPE_VOICE;
@@ -2732,6 +2734,12 @@ TEST(TimelineVoiceInstall, OriginalSourceUnpublishedRollbackPreservesActualRepla
     ASSERT_EQ(replacement.old, replacement.fresh);
     EXPECT_FALSE(engine.voices.ReleaseObserved(replacement.identity.releaseObserver));
     EXPECT_EQ(1u, BindingInstanceCount(&engine, replacement.fresh));
+    const auto replacementSlot = static_cast<std::uint32_t>(replacement.fresh);
+    ASSERT_EQ(2u, engine.voiceSendConfig[replacementSlot].size());
+    EXPECT_EQ(2u, engine.voiceSendActive);
+    ASSERT_EQ(VN_OK, Vn_Update());
+    ASSERT_EQ(2u, engine.voiceSendConfig[replacementSlot].size());
+    EXPECT_EQ(2u, engine.voiceSendActive);
     float contribution = 0;
     EXPECT_TRUE(BindingContribution(&engine, replacement.fresh, &contribution));
     harken::EngineTimelineVoiceInstallIdentity retained{};

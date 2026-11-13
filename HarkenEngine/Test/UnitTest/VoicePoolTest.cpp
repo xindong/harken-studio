@@ -845,6 +845,10 @@ TEST(VoicePool, SourceTerminalUnjoinedWorkerRetainsSourceAndLeaf) {
         VnVoiceHandle voice = 0;
         ASSERT_EQ(VN_OK, ClaimObserverVoice(engine, &voice));
         ASSERT_TRUE(BindHeldSource(engine, voice, &source));
+        const harken::VoiceSendDefinition definition{UINT32_MAX, 0, engine.buses.GenerationAt(0), -6, 1};
+        harken::VoiceSendSet* sends = nullptr;
+        ASSERT_EQ(VN_OK, engine.voices.PrepareVoiceSendSet(voice, {&definition, 1}, false, 0, &sends));
+        ASSERT_TRUE(engine.voices.InstallPreparedVoiceSendSet(voice, *sends));
         auto* context = engine.voices.Resolve(voice);
         ASSERT_NE(nullptr, context);
         context->fxSlots[0].state = &gate;
@@ -875,6 +879,8 @@ TEST(VoicePool, SourceTerminalUnjoinedWorkerRetainsSourceAndLeaf) {
         if (!engine.voices.ReleaseObserved(source.release)) unjoined = &source;
     }
     ASSERT_NE(nullptr, unjoined);
+    engine.voices.DrainVoiceSendSets();
+    EXPECT_GE(engine.voices.RetainedVoiceSendCount(), 1u);
     harken::SourceTerminalPayload result{};
     EXPECT_FALSE(engine.sourceTerminals.Capture(unjoined->token, UINT64_MAX, &result));
     EXPECT_TRUE(engine.playableInstances.HasSourceRetirementHold(unjoined->leaf));
@@ -903,6 +909,8 @@ TEST(VoicePool, SourceTerminalUnjoinedWorkerRetainsSourceAndLeaf) {
         EXPECT_EQ(harken::SourceTerminalKind::Natural, result.kind);
         EXPECT_EQ(64u, result.frame);
     }
+    engine.voices.DrainVoiceSendSets();
+    EXPECT_EQ(0u, engine.voices.RetainedVoiceSendCount());
     ASSERT_EQ(VN_OK, ClaimObserverVoice(engine, &following));
     engine.voices.ApplyPlay(following, following, 0, 0);
     engine.nullBackend.Pump(1);

@@ -7278,6 +7278,7 @@ void ServicePendingImmediateStopIntents(
 // definitions.
 class AdmittedCommandWriter;
 void ResetVoiceSendMirror(harken::Engine& engine, std::uint32_t slot);
+void ResetFreeVoiceSendMirror(harken::Engine& engine, std::uint32_t slot);
 VnResult ApplyVoiceSendLive(harken::Engine& engine, VnVoiceHandle render,
     std::uint32_t sendSlot, std::uint32_t targetBusIndex, float levelDb) noexcept;
 void CancelPreparedVoiceSends(harken::Engine& engine, harken::PreparedVoiceSends& prepared) noexcept;
@@ -8530,7 +8531,6 @@ void ReleaseTimelineVoiceBindings(harken::Engine& engine, VnVoiceHandle render,
     if (!snapshotOnly) {
         engine.effectParamTargets.ClearObject(harken::EffectParamTargetStore::Scope::Voice,
             static_cast<std::uint64_t>(render), static_cast<std::uint32_t>(render >> 32));
-        ResetVoiceSendMirror(engine, static_cast<std::uint32_t>(render));
     }
 }
 
@@ -9184,6 +9184,7 @@ TimelineVoiceInstallResult InstallTimelineVoiceStart(
             (void)engine.originalSourceSubmissions.DisposeUnpublishedVoice(arm);
         else if (!engine.voices.CancelPreparedVoice(render))
             (void)engine.voices.AbortClaimedVoice(render);
+        ResetFreeVoiceSendMirror(engine, static_cast<std::uint32_t>(render));
         const bool queueReturned = engine.ReturnOriginalQueueSourcePreparationAfterPhysicalRelease(arm);
         const bool singleReturned = engine.ReturnOriginalSingleSourcePreparationAfterPhysicalRelease(arm);
         const bool pendingReturned = engine.ReturnPendingVariableLeafSourceAfterPhysicalRelease(arm);
@@ -9895,6 +9896,7 @@ bool CancelPreparedTimelineVoiceStart(
               engine.voices.AbortClaimedVoice(prepared->renderHandle) ||
               !engine.voices.IsAlive(prepared->renderHandle);
         if (disposed) {
+            ResetFreeVoiceSendMirror(engine, static_cast<std::uint32_t>(prepared->renderHandle));
             prepared->voiceOwnershipHeld = false;
         } else {
             ok = false;
@@ -10182,6 +10184,7 @@ bool RollbackCommittedTimelineVoiceStart(
         if (!disposed) {
             return false;
         }
+        ResetFreeVoiceSendMirror(engine, static_cast<std::uint32_t>(prepared->renderHandle));
         prepared->voiceOwnershipHeld = false;
     }
     if (prepared->ledgerOwnershipHeld) {
@@ -80140,6 +80143,16 @@ void ResetVoiceSendMirror(harken::Engine& engine, std::uint32_t slot) {
     engine.voiceSendConfig[slot] = {};
 }
 
+void ResetFreeVoiceSendMirror(harken::Engine& engine, std::uint32_t slot) {
+    // Only the logic thread claims slots. An old source's release observer
+    // cannot prove that the physical slot is still unoccupied after reuse.
+    std::uint32_t generation = 0;
+    if (slot < engine.voiceSendConfig.size() && !engine.voiceSendConfig[slot].empty() &&
+        engine.voices.FreeSlotGeneration(slot, &generation)) {
+        ResetVoiceSendMirror(engine, slot);
+    }
+}
+
 std::uint64_t NextVoiceSendIncarnation(harken::Engine& engine) {
     if (engine.nextVoiceSendIncarnation == UINT64_MAX) throw std::bad_alloc{};
     return engine.nextVoiceSendIncarnation++;
@@ -112001,6 +112014,9 @@ VnResult Vn_Update(void) {
     engine->effectBank.DrainRetire();
     engine->voices.DrainEffectChainUpdates();
     engine->voices.DrainVoiceSendSets();
+    for (std::uint32_t slot = 0; slot < engine->voiceSendConfig.size(); ++slot) {
+        ResetFreeVoiceSendMirror(*engine, slot);
+    }
     engine->buses.DrainPreviewEffectChains();
     /* Hot-reload retirement detection: destroy every old content generation
      * whose last logical voice has drained. The audio thread only ever
