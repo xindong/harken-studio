@@ -539,3 +539,124 @@ TEST(SignalRenderPlan, ActivityProjectionPreservesAuthoredRecoveryAndAllCarrierP
     const std::array highBus{2u};
     EXPECT_EQ(nullptr, full->PrepareProjection(highBus, 31));
 }
+
+
+TEST(SignalRenderPlan, ColdProjectionPreservesReceiverConnectionAndActualResetHistory) {
+    for (bool accepted : {false, true}) for (bool sameBlock : {false, true})
+    for (bool reset : {false, true}) {
+        SCOPED_TRACE(accepted);
+        SCOPED_TRACE(sameBlock);
+        SCOPED_TRACE(reset);
+        std::array nodes{SignalRenderNodeInput{SignalEndpointKindV1::Sound},
+                         SignalRenderNodeInput{SignalEndpointKindV1::Sound, true},
+                         SignalRenderNodeInput{SignalEndpointKindV1::Sound}};
+        for (unsigned i = 0; i < nodes.size(); ++i) nodes[i].stableId = {0, i + 1u};
+        std::array relations{SignalConnectionInput{0, 1, .025f, {0, 4}}};
+        const std::array paths{SignalFeedbackEdge{0, 1, .025f, true}};
+        const std::array keeper{nodes[2]};
+        auto boot = SignalRenderPlan::Prepare(kFormat, keeper, {}, {});
+        ASSERT_TRUE(boot->ConfigurePublication(1, 100, nullptr, 256));
+        auto first = Block(0); first.world = boot->WorldIdentity();
+        ASSERT_TRUE(boot->BeginBlock(first));
+        ASSERT_TRUE(boot->ProcessContent({})); ASSERT_TRUE(boot->CommitBlock());
+        auto active = SignalRenderPlan::Prepare(kFormat, nodes, relations, paths);
+        auto reference = SignalRenderPlan::Prepare(kFormat, nodes, relations, paths);
+        ASSERT_TRUE(active->ConfigurePublication(2, 100, boot.get(), 256));
+        ASSERT_TRUE(reference->ConfigurePublication(2, 100, boot.get(), 256));
+        DuckingDormantState fixed;
+        fixed.channels = 1; fixed.sampleRate = kFormat.sampleRate;
+        fixed.gain = std::nextafter(1.0, 0.0);
+        ASSERT_TRUE(active->PrepareDormantReceiver(1, fixed));
+        ASSERT_TRUE(reference->PrepareDormantReceiver(1, fixed));
+        ASSERT_TRUE(active->AdoptContinuityFrom(*boot));
+        ASSERT_TRUE(reference->AdoptContinuityFrom(*boot));
+        auto sleep = SignalRenderPlan::Prepare(kFormat, keeper, {}, {});
+        ASSERT_TRUE(sleep->ConfigurePublication(3, 100, active.get(), 256));
+        auto cold = sleep->PrepareDormantState(*active);
+        ASSERT_NE(nullptr, cold);
+        relations[0].level = .1f;
+        auto wake = SignalRenderPlan::Prepare(kFormat, nodes, relations, paths);
+        ASSERT_TRUE(wake->ConfigurePublication(4, 100, sleep.get(), 256, active.get()));
+        ASSERT_TRUE(wake->PrepareDormantContinuity(*sleep, cold));
+        // An accepted branch cannot restore an unfilled ticket. Refusal leaves
+        // the candidate usable with its real active predecessor later.
+        EXPECT_FALSE(wake->AdoptContinuityFrom(*sleep));
+        Member source, target, refSource, refTarget;
+        source.nodes[0] = refSource.nodes[0] = 0;
+        target.nodes[0] = refTarget.nodes[0] = 1;
+        const std::array members{source.Image(1), target.Image(1)};
+        const std::array refMembers{refSource.Image(1), refTarget.Image(1)};
+        auto* current = active.get();
+        const unsigned wakeAt = sameBlock ? 3u : 5u;
+        for (unsigned epoch = 1; epoch < 14; ++epoch) {
+            if (epoch == 3 && accepted) {
+                ASSERT_TRUE(sleep->CaptureDormantState(*active, *cold));
+                ASSERT_TRUE(sleep->AdoptContinuityFrom(*active));
+                current = sleep.get();
+            }
+            if (epoch == wakeAt) {
+                if (reset) { current->Invalidate(); reference->Invalidate(); }
+                ASSERT_TRUE(reference->SetConnectionLevel(0, .1f, 256));
+                // The wake lease owns the immutable payload even if the
+                // control side has already consumed the sleep acknowledgement.
+                cold.reset();
+                ASSERT_TRUE(wake->AdoptContinuityFrom(*current));
+                current = wake.get();
+                if (!reset) {
+                    DuckingDormantState restored;
+                    ASSERT_TRUE(current->CaptureDormantReceiver(1, false, restored));
+                    EXPECT_EQ(std::bit_cast<std::uint64_t>(restored.gain),
+                              std::bit_cast<std::uint64_t>(fixed.gain));
+                }
+            }
+            source.pcm.fill(epoch >= wakeAt ? .5f : 0);
+            target.pcm.fill(epoch >= wakeAt ? .75f : 0);
+            refSource.pcm = source.pcm; refTarget.pcm = target.pcm;
+            auto block = Block(epoch); block.world = current->WorldIdentity();
+            ASSERT_TRUE(current->BeginBlock(block));
+            ASSERT_TRUE(current->ProcessContent(current == sleep.get()
+                ? std::span<const SignalMemberImage>{} : std::span<const SignalMemberImage>{members}));
+            ASSERT_TRUE(current->CommitBlock());
+            ASSERT_TRUE(reference->BeginBlock(block));
+            ASSERT_TRUE(reference->ProcessContent(refMembers));
+            ASSERT_TRUE(reference->CommitBlock());
+            if (current != sleep.get()) EXPECT_EQ(target.pcm, refTarget.pcm) << epoch;
+            if (epoch == 2) {
+                DuckingDormantState proof;
+                ASSERT_TRUE(current->CaptureDormantReceiver(1, false, proof));
+                EXPECT_EQ(std::bit_cast<std::uint64_t>(proof.gain), std::bit_cast<std::uint64_t>(fixed.gain));
+            }
+        }
+    }
+}
+
+TEST(SignalRenderPlan, ColdCaptureRefusesRealInputSourceHistoryAndConnectionRamp) {
+    const std::array nodes{SignalRenderNodeInput{SignalEndpointKindV1::Sound, false, 8, 80,
+                              UINT32_MAX, {}, 0, {0, 1}},
+                          SignalRenderNodeInput{SignalEndpointKindV1::Sound, true, 8, 80,
+                              UINT32_MAX, {}, 0, {0, 2}}};
+    const std::array relations{SignalConnectionInput{0, 1, 0, {0, 3}}};
+    auto active = SignalRenderPlan::Prepare(kFormat, nodes, relations, {});
+    ASSERT_TRUE(active->ConfigurePublication(1, 100, nullptr, 256));
+    auto sleep = SignalRenderPlan::Prepare(kFormat, {}, {}, {});
+    ASSERT_TRUE(sleep->ConfigurePublication(2, 100, active.get(), 256));
+    auto cold = sleep->PrepareDormantState(*active);
+    ASSERT_NE(nullptr, cold);
+    Member source, target;
+    source.nodes[0] = 0; target.nodes[0] = 1;
+    const std::array members{source.Image(1), target.Image(1)};
+    source.pcm.fill(1); target.pcm.fill(0);
+    ASSERT_TRUE(active->BeginBlock(Block(0)));
+    ASSERT_TRUE(active->ProcessContent(members)); ASSERT_TRUE(active->CommitBlock());
+    // A zero connection level hides the source in the detector, but its
+    // preceding PCM must still prevent removal of the producer history.
+    EXPECT_FALSE(sleep->CaptureDormantState(*active, *cold));
+    source.pcm.fill(0);
+    ASSERT_TRUE(active->BeginBlock(Block(1)));
+    ASSERT_TRUE(active->ProcessContent(members)); ASSERT_TRUE(active->CommitBlock());
+    ASSERT_TRUE(active->SetConnectionLevel(0, .5f, 256));
+    EXPECT_FALSE(sleep->CaptureDormantState(*active, *cold));
+    ASSERT_TRUE(active->SetConnectionLevel(0, 0, 0));
+    ASSERT_TRUE(sleep->CaptureDormantState(*active, *cold));
+    EXPECT_FALSE(sleep->CaptureDormantState(*active, *cold));
+}

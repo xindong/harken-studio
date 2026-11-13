@@ -127,6 +127,7 @@ set(HARKEN_RUNTIME_SOURCES
     ${HARKEN_RUNTIME_DIR}/render/src/VoicePool.cpp
     ${HARKEN_RUNTIME_DIR}/render/src/SignalRouting.cpp
     ${HARKEN_RUNTIME_DIR}/render/src/SignalActivity.cpp
+    ${HARKEN_RUNTIME_DIR}/render/src/SignalDormancy.cpp
     ${HARKEN_RUNTIME_DIR}/render/src/FrontierTimelineFinalizer.cpp
     ${HARKEN_RUNTIME_DIR}/render/src/ImmediateLaneTimelineFinalizer.cpp
 )

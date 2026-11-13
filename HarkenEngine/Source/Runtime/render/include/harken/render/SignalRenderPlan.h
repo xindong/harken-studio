@@ -263,6 +263,15 @@ public:
     }
     std::uint64_t PublicationIdentity() const noexcept { return publicationIdentity_; }
 
+    struct DormantState;
+    // Logic prepares immutable identity maps and storage. Audio fills them
+    // once, before detaching the completed predecessor. Each wake owns its
+    // payload independently of the sleep publication's acknowledgement.
+    std::shared_ptr<DormantState> PrepareDormantState(const SignalRenderPlan& previous) const noexcept;
+    bool CaptureDormantState(SignalRenderPlan& previous, DormantState& state) const noexcept;
+    bool PrepareDormantContinuity(const SignalRenderPlan& previous,
+        std::shared_ptr<const DormantState> state) noexcept;
+
     // A legally sleeping receiver can carry a non-default floating-point
     // fixed point. Seed only an unpublished candidate; mapped live receivers
     // overwrite this seed from the actual predecessor during adoption.
@@ -296,40 +305,7 @@ public:
 
     // Run before retiring the old topology slot. Swapping transfers storage to
     // the retired owner, so neither allocation nor destruction occurs on audio.
-    bool AdoptContinuityFrom(SignalRenderPlan& previous) noexcept {
-        if (&previous == this || adopted_ || open_ || committed_ || previous.open_)
-            return false;
-        const Continuity* mapping = nullptr;
-        for (const auto& candidate : continuity_)
-            if (candidate.identity != 0 && candidate.identity == previous.publicationIdentity_)
-                mapping = &candidate;
-        if (mapping == nullptr || mapping->receivers.size() != nodes_.size()) return false;
-        for (auto receiver : mapping->receivers)
-            if (receiver != UINT32_MAX && receiver >= previous.nodes_.size()) return false;
-        // The chosen branch is fully validated before any swap/copy. A failed
-        // identity match cannot partially consume the other predecessor.
-        if (mapping->exchangeContinuous) {
-            exchange_.Swap(previous.exchange_);
-        } else if (!exchange_.AdoptMappedContinuityFrom(previous.exchange_,
-                       mapping->sources, mapping->connections)) {
-            return false;
-        }
-        for (std::size_t i = 0; i < mapping->receivers.size(); ++i)
-            if (mapping->receivers[i] != UINT32_MAX)
-                nodes_[i].receiver.AdoptStateFrom(previous.nodes_[mapping->receivers[i]].receiver);
-        for (std::uint32_t i = 0; i < relations_.size(); ++i) {
-            const auto prior = mapping->exchangeContinuous ? i : mapping->connections[i];
-            if (prior != UINT32_MAX && relations_[i].level != previous.relations_[prior].level) {
-                const bool changed = exchange_.SetLevel(i, relations_[i].level, updateRampFrames_);
-                assert(changed);
-                (void)changed;
-            }
-        }
-        previous_ = previous.previous_;
-        committed_ = previous.committed_;
-        adopted_ = true;
-        return true;
-    }
+    bool AdoptContinuityFrom(SignalRenderPlan& previous) noexcept;
     std::uint32_t NodeCount() const noexcept { return static_cast<std::uint32_t>(nodes_.size()); }
     // A candidate graph is borrowed only for this quantum. Its slab must not
     // alias a live prior graph; failed compilation is never a usable fallback.
@@ -392,7 +368,10 @@ public:
             previous_.epoch != UINT64_MAX && identity.epoch == previous_.epoch + 1 &&
             identity.frames == previous_.frames &&
             identity.frameBegin == previous_.frameBegin + previous_.frames;
-        if (!continuous) for (auto& node : nodes_) node.receiver.Reset();
+        if (!continuous) {
+            if (historyRevision_ != UINT64_MAX) ++historyRevision_;
+            for (auto& node : nodes_) node.receiver.Reset();
+        }
         for (auto& node : nodes_) { node.processed = false; node.deferOutput = false; }
         contentProcessed_ = false;
         preparedSoundRouting_ = false;
@@ -581,6 +560,7 @@ public:
     void Invalidate() noexcept {
         exchange_.Invalidate();
         open_ = committed_ = false;
+        if (historyRevision_ != UINT64_MAX) ++historyRevision_;
         for (auto& node : nodes_) node.receiver.Reset();
     }
 
@@ -641,6 +621,8 @@ private:
         DuckingReceiver receiver;
         bool processed = false;
         bool deferOutput = false;
+        bool dormantInputsQuiet = false, dormantBoundMain = false, dormantFeedback = false;
+        double dormantSlope = 0;
         std::size_t outputGainOffset = SIZE_MAX;
     };
     static bool Contains(std::span<const std::uint32_t> nodes, std::uint32_t node) noexcept {
@@ -796,6 +778,21 @@ private:
             feedback.feedbackInput ? pre_.data() : nullptr,
             feedback.feedbackInput ? (sharedReferences ? pre_.data() : post_.data()) : nullptr, feedback.slope,
             outputGains == nullptr ? gain_.data() : outputGains, suppliedMain != nullptr);
+        // Record the actual main/detector/reference branch before shared
+        // scratch is reused by another receiver. A muted output is not proof.
+        node.dormantInputsQuiet = processed;
+        for (std::uint32_t ch = 0; ch < format_.channels && node.dormantInputsQuiet; ++ch) {
+            node.dormantInputsQuiet = SignalPlaneIsSilent(main[ch], current_.frames) &&
+                (!exchange_.HasTargetInput(node.target) || SignalPlaneIsSilent(side[ch], current_.frames));
+        }
+        if (feedback.feedbackInput && node.dormantInputsQuiet) {
+            const auto* post = sharedReferences ? pre_.data() : post_.data();
+            for (std::uint32_t n = 0; n < current_.frames; ++n)
+                if (pre_[n] != 0 || post[n] != 0) { node.dormantInputsQuiet = false; break; }
+        }
+        node.dormantBoundMain = suppliedMain != nullptr;
+        node.dormantFeedback = feedback.feedbackInput;
+        node.dormantSlope = feedback.slope;
         assert(processed);
         (void)processed;
     }
@@ -830,6 +827,13 @@ private:
     };
     std::array<Continuity, 2> continuity_;
     std::uint64_t updateRampFrames_ = 0;
+    std::uint64_t historyRevision_ = 1;
+    struct DormantRestore {
+        std::shared_ptr<const DormantState> state;
+        std::uint64_t predecessor = 0;
+        std::vector<std::uint32_t> receivers, connections;
+    };
+    std::vector<DormantRestore> dormantRestores_;
     bool adopted_ = false;
 };
 
