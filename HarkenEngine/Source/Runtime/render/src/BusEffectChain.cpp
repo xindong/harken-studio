@@ -1,4 +1,5 @@
 #include "harken/render/BusTree.h"
+#include "harken/render/BusActivityPlan.h"
 #include "harken/render/BuiltinEffects.h"
 #include "MonitorCaptureHub.h"
 #include <algorithm>
@@ -17,6 +18,7 @@ bool SameRef(const EffectInstanceRef& a, const EffectInstanceRef& b) noexcept {
 }
 
 BusTree::~BusTree() {
+    ShutdownActivities();
     ShutdownPreviewEffectChains();
     ShutdownWorkRows();
     for (std::uint32_t i = 0; i < m_capacity; ++i)

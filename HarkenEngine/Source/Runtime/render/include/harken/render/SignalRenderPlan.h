@@ -72,6 +72,8 @@ public:
                 node.busId = input.busId;
                 node.busGeneration = input.busGeneration;
                 node.stableId = input.stableId;
+                node.attackMs = input.attackMs;
+                node.releaseMs = input.releaseMs;
                 if (input.kind == SignalEndpointKindV1::Bus && input.busIndex != UINT32_MAX)
                     next->busNodes_.push_back({input.busIndex, static_cast<std::uint32_t>(i)});
                 if (input.kind != SignalEndpointKindV1::Bus &&
@@ -184,6 +186,15 @@ public:
             ? it->second : UINT32_MAX;
     }
     std::size_t RelationCount() const noexcept { return relations_.size(); }
+    // Immutable definition access for logic-side activity compilation. Never
+    // read running receiver parameters or PCM while preparing a projection.
+    SignalRenderNodeInput NodeDefinition(std::uint32_t node) const noexcept;
+    std::span<const SignalConnectionInput> Relations() const noexcept { return relations_; }
+    std::span<const SignalFeedbackEdge> DefinitionPaths() const noexcept { return feedback_.Edges(); }
+    std::span<const SignalMemberProof> Membership() const noexcept { return membership_; }
+    std::uint64_t ContentIdentity() const noexcept { return contentIdentity_; }
+    std::unique_ptr<SignalRenderPlan> PrepareProjection(
+        std::span<const std::uint32_t> selected, std::uint32_t topologySlots) const noexcept;
     // Logic compares immutable prepared definitions only. The content identity
     // excludes signal parameters but includes the authoritative content world.
     // At most one unresolved sleep is allowed. Its following unconditional
@@ -620,6 +631,7 @@ private:
         VnObjectId stableId{};
         VnBusId busId{};
         std::uint32_t busGeneration = 0;
+        float attackMs = kDuckingDefaultAttackMs, releaseMs = kDuckingDefaultReleaseMs;
         std::uint32_t source = UINT32_MAX, target = UINT32_MAX;
         DuckingReceiver receiver;
         bool processed = false;

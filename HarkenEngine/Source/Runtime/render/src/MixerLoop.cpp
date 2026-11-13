@@ -1770,7 +1770,7 @@ void MixerLoop::RenderBlock(float* interleavedOut, std::uint32_t frames,
         // plan swap this block is already in effect): a bus not yet swapped in has
         // no plane and is not folded, and no voice can be routed to it because its
         // routing command necessarily drains after that swap.
-        const std::uint32_t busCount = m_buses.AudioBusCount();
+        const std::uint32_t busCount = m_buses.WorkingPlaneCount();
 
         for (std::uint32_t i = 0; i < busCount * m_mixChannels; ++i) {
             m_busPlanes[i] = m_arena.AllocFloats(frames);
@@ -1836,7 +1836,7 @@ void MixerLoop::RenderBlock(float* interleavedOut, std::uint32_t frames,
     std::uint64_t ticksBuses = ticksDrained;
     if (planesOk) {
         const VoicePool::RenderAllResult voicesOutcome =
-            m_voices.RenderAll(m_arena, m_busPlanes.data(), frames,
+            m_voices.RenderAll(m_arena, m_buses.RenderView(m_busPlanes.data()), frames,
                                m_notifications, blockIndex,
                                workerDeadlineAt != 0 ? workerDeadlineAt : ticksEntry + m_jobDeadlineTicks,
                                static_cast<std::uint64_t>(blockIndex) * frames, signals, &m_buses);
@@ -1862,7 +1862,7 @@ void MixerLoop::RenderBlock(float* interleavedOut, std::uint32_t frames,
 
         // Bottom-up bus fold; afterwards the master planes (m_busPlanes[0..
         // m_mixChannels)) hold the final mix at the mix layout.
-        signalOk = signalOk && m_buses.MixDown(m_busPlanes.data(), frames, blockIndex,
+        signalOk = signalOk && m_buses.MixDown(m_buses.RenderView(m_busPlanes.data()), frames, blockIndex,
                         static_cast<std::uint64_t>(blockIndex) * frames, signals);
         // Lay the master's mix-width output into the device buffer at the
         // device boundary. Three cases; the first is the M4 path (stereo mix,

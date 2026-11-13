@@ -684,4 +684,106 @@ TEST(BusWorkRows, CancelPrivateRowReturnsEffectsAndColdIdentitySurvivesDetach) {
     EXPECT_EQ(1u, engine.effectBank.InUseOf(VN_EFFECT_GAIN));
 }
 
+
+TEST(BusActivity, RealMixerUsesCompactPlanesAndReconstructedWorkRows) {
+    auto config = MakeNullConfig(4, kBlockFrames);
+    config.maxBuses = 4;
+    EngineSession session(config);
+    ASSERT_EQ(VN_OK, session.InitResult());
+    auto& engine = *session.Engine();
+    auto& buses = engine.buses;
+    const auto activeId = harkentest::ObjectId(10), idleId = harkentest::ObjectId(11);
+    ASSERT_EQ(VN_OK, Vn_CreateBus(activeId, VN_BUS_MASTER));
+    ASSERT_EQ(VN_OK, Vn_CreateBus(idleId, VN_BUS_MASTER));
+    VnGainDesc gain{};
+    gain.structSize = sizeof(gain);
+    gain.effectId = harkentest::ObjectId(100);
+    gain.gainDb = -6.0205999f;
+    ASSERT_EQ(VN_OK, Vn_SetBusEffect(idleId, 0, VN_EFFECT_GAIN,
+        reinterpret_cast<const VnEffectDesc*>(&gain)));
+    engine.nullBackend.Pump(1);
+    const auto master = buses.FindRef(VN_BUS_MASTER), active = buses.FindRef(activeId), idle = buses.FindRef(idleId);
+    const auto idleWork = buses.AudioWorkRef(idle.index);
+    const std::array compact{
+        harken::BusTree::WorkBinding{active, buses.AudioWorkRef(active.index)},
+        harken::BusTree::WorkBinding{master, buses.AudioWorkRef(master.index)}};
+    const auto publish = [&](harken::BusActivityPlan* plan) {
+        ASSERT_NE(nullptr, plan);
+        harken::CommandRecord carrier{};
+        carrier.opcode = harken::kOpcodeSetBusVolume;
+        carrier.payload.setBusVolume.busIndex = 0;
+        carrier.payload.setBusVolume.volumeDb = 0;
+        harken::CommandQueue::BatchReservation reservation;
+        harken::CommandQueue::PreparedBatchProof proof;
+        ASSERT_TRUE(engine.commands.ReserveBatch(1, &reservation));
+        ASSERT_TRUE(engine.commands.ProvePreparedBatch(&reservation, &carrier, 1, &proof));
+        ASSERT_TRUE(engine.commands.BindPreparedBusActivity(proof, *buses.ActivityAttachment(plan)));
+        EXPECT_EQ(1u, engine.commands.ConsumePreparedBatch(std::move(proof)).Count());
+    };
+    EXPECT_EQ(nullptr, buses.PrepareActivity(buses.InstalledTopology(), {compact.data(), 1}));
+    publish(buses.PrepareActivity(buses.InstalledTopology(), compact));
+    const auto pcm = harkentest::MakeDC(kBlockFrames, .5f);
+    const auto desc = MonoDesc(pcm, 48000);
+    ASSERT_EQ(VN_OK, Vn_RegisterPCM(harkentest::ObjectId(1), &desc));
+    auto play = MakePlayDesc(harkentest::ObjectId(1));
+    play.busId = activeId;
+    VnVoiceHandle voice = 0;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+    Capture first;
+    harkentest::PumpAndCapture(&engine, 1, first);
+    EXPECT_EQ(2u, buses.WorkingPlaneCount());
+    VnSnapshot snapshot{};
+    snapshot.structSize = sizeof(snapshot);
+    ASSERT_EQ(VN_OK, Vn_CaptureSnapshot(&snapshot));
+    EXPECT_EQ(3u, snapshot.busCount);
+    EXPECT_EQ(nullptr, buses.BusState(idle.index));
+    EXPECT_TRUE(buses.AudioRefMatches(idle));
+    EXPECT_FLOAT_EQ(0, buses.OutputPeak(idle.index));
+    for (auto sample : first.left) EXPECT_FLOAT_EQ(.5f, sample);
+    buses.DrainActivities();
+    EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_GAIN));
+    // A cancelled real candidate must return its private effects without
+    // changing the installed projection or manufacturing a queued predecessor.
+    const auto cancelled = buses.PrepareWorkRow();
+    ASSERT_TRUE(cancelled.Valid());
+    ASSERT_EQ(VN_OK, engine.PrepareBusWorkState(idle.index, *buses.PreparedWorkRow(cancelled)));
+    const std::array cancelledRows{compact[0], compact[1], harken::BusTree::WorkBinding{idle, cancelled}};
+    auto* abandoned = buses.PrepareActivity(buses.InstalledTopology(), cancelledRows);
+    ASSERT_NE(nullptr, abandoned);
+    buses.ReleaseWorkRow(cancelled);
+    const auto before = engine.commands.PublishedHead();
+    {
+        harken::CommandRecord carrier{};
+        carrier.opcode = harken::kOpcodeSetBusVolume;
+        harken::CommandQueue::BatchReservation reservation;
+        harken::CommandQueue::PreparedBatchProof proof;
+        ASSERT_TRUE(engine.commands.ReserveBatch(1, &reservation));
+        ASSERT_TRUE(engine.commands.ProvePreparedBatch(&reservation, &carrier, 1, &proof));
+        ASSERT_TRUE(engine.commands.BindPreparedBusActivity(proof, *buses.ActivityAttachment(abandoned)));
+        proof.Release();
+        engine.commands.CancelReservedBatch(&reservation);
+    }
+    buses.DrainActivities();
+    EXPECT_EQ(before, engine.commands.PublishedHead());
+    EXPECT_EQ(2u, buses.WorkingPlaneCount());
+    EXPECT_EQ(0u, engine.effectBank.InUseOf(VN_EFFECT_GAIN));
+    const auto restored = buses.PrepareWorkRow();
+    ASSERT_TRUE(restored.Valid());
+    EXPECT_EQ(idleWork.slot, restored.slot);
+    EXPECT_GT(restored.generation, idleWork.generation);
+    ASSERT_EQ(VN_OK, engine.PrepareBusWorkState(idle.index, *buses.PreparedWorkRow(restored)));
+    const std::array expanded{compact[0], compact[1], harken::BusTree::WorkBinding{idle, restored}};
+    publish(buses.PrepareActivity(buses.InstalledTopology(), expanded));
+    buses.ReleaseWorkRow(restored);
+    play.busId = idleId;
+    ASSERT_EQ(VN_OK, harkentest::PlayRaw(&play, &voice));
+    Capture second;
+    harkentest::PumpAndCapture(&engine, 1, second);
+    EXPECT_EQ(3u, buses.WorkingPlaneCount());
+    for (auto sample : second.left) EXPECT_NEAR(.25f, sample, 1e-6f);
+    EXPECT_EQ(0u, buses.ActivityFallbackCount());
+    buses.DrainActivities();
+    EXPECT_EQ(1u, engine.effectBank.InUseOf(VN_EFFECT_GAIN));
+}
+
 } // namespace

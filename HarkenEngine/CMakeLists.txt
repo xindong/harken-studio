@@ -113,6 +113,7 @@ set(HARKEN_RUNTIME_SOURCES
     ${HARKEN_RUNTIME_DIR}/render/src/BuiltinEffects.cpp
     ${HARKEN_RUNTIME_DIR}/render/src/BusTree.cpp
     ${HARKEN_RUNTIME_DIR}/render/src/BusWorkRows.cpp
+    ${HARKEN_RUNTIME_DIR}/render/src/BusActivity.cpp
     ${HARKEN_RUNTIME_DIR}/render/src/EffectPool.cpp
     ${HARKEN_RUNTIME_DIR}/render/src/InsertEffect.cpp
     ${HARKEN_RUNTIME_DIR}/render/src/MixerLoop.cpp
@@ -124,6 +125,7 @@ set(HARKEN_RUNTIME_SOURCES
     ${HARKEN_RUNTIME_DIR}/render/src/BusEffectChain.cpp
     ${HARKEN_RUNTIME_DIR}/render/src/VoicePool.cpp
     ${HARKEN_RUNTIME_DIR}/render/src/SignalRouting.cpp
+    ${HARKEN_RUNTIME_DIR}/render/src/SignalActivity.cpp
     ${HARKEN_RUNTIME_DIR}/render/src/FrontierTimelineFinalizer.cpp
     ${HARKEN_RUNTIME_DIR}/render/src/ImmediateLaneTimelineFinalizer.cpp
 )

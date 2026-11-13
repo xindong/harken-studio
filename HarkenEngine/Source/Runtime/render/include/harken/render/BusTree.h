@@ -44,6 +44,7 @@
 namespace harken {
 struct SignalFeedbackEdge;
 struct SignalBusRoutingInfo;
+struct BusActivityPlan;
 
 inline constexpr std::uint32_t kInvalidBusIndex = 0xFFFFFFFFu;
 
@@ -93,6 +94,19 @@ public:
         bool operator==(const WorkRef&) const = default;
     };
     struct Bus;
+    struct WorkBinding { BusSlotRef bus; WorkRef work; };
+    // Logic prepares a complete projection. The queue attachment transfers it
+    // at the original publication boundary; its address remains stable until
+    // cancellation or audio retirement has been drained on logic.
+    BusActivityPlan* PrepareActivity(const TopologyPlanView& topology,
+        std::span<const WorkBinding> working,
+        std::shared_ptr<SignalRenderPlan> signals = {}) noexcept;
+    void CancelActivity(BusActivityPlan* plan) noexcept;
+    void DrainActivities() noexcept;
+    CommandQueue::BusActivityAttachment* ActivityAttachment(BusActivityPlan* plan) noexcept;
+    std::uint32_t WorkingPlaneCount() const noexcept;
+    BusRenderView RenderView(float* const* planes) noexcept;
+    std::uint64_t ActivityFallbackCount() const noexcept { return m_activityFallbacks; }
     // Logic owns candidate leases; the audio directory owns a separate lease.
     // Only a private row may be initialized. Published rows are never reset by
     // preparing another candidate, even when they are temporarily detached.
@@ -371,9 +385,8 @@ public:
         SignalBusMapping mapping) noexcept;
     bool SignalReceiversCannotReachSources(std::span<std::uint8_t> roles,
         SignalBusMapping mapping) const noexcept;
-    SignalRenderPlan* InstalledSignals() const {
-        return m_plans.View(m_currentPlanIndex).signals;
-    }
+    SignalRenderPlan* InstalledSignals() const;
+    TopologyPlanView InstalledTopology() const { return m_plans.View(m_currentPlanIndex); }
 
     // The mix-layout channel count every bus renders at (resolved config).
     std::uint32_t MixChannels() const { return m_mixChannels; }
@@ -528,6 +541,15 @@ public:
     Bus* BusState(std::uint32_t busIndex);
 
 private:
+    friend struct BusActivityPlan;
+    bool AdoptActivity(BusActivityPlan& plan) noexcept;
+    void QueueActivity(BusActivityPlan& plan) noexcept;
+    void ShutdownActivities() noexcept;
+    std::span<const std::uint32_t> WorkingOrder() const noexcept;
+    std::vector<std::unique_ptr<BusActivityPlan>> m_activities;
+    BusActivityPlan* m_lastQueuedActivity = nullptr;
+    BusActivityPlan* m_activeActivity = nullptr;
+    std::uint64_t m_activityFallbacks = 0;
     SignalBusRoutingInfo SignalBusBounds(std::uint32_t bus, std::uint32_t frames,
                                         std::span<SignalBiquadSegment> schedules) noexcept;
     void InitializeBusSlot(std::uint32_t busIndex, VnBusId id,

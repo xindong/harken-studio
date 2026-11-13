@@ -1,0 +1,174 @@
+#include "harken/render/BusActivityPlan.h"
+
+namespace harken {
+
+BusActivityPlan* BusTree::PrepareActivity(const TopologyPlanView& topology,
+    std::span<const WorkBinding> working, std::shared_ptr<SignalRenderPlan> signals) noexcept {
+    if (!topology.valid || topology.slotCount == 0 || topology.slotCount > m_capacity ||
+        topology.parents == nullptr || topology.generations == nullptr || topology.alive == nullptr || topology.busIds == nullptr ||
+        working.empty() || working.size() > topology.orderCount ||
+        (topology.signals != nullptr && signals == nullptr)) return nullptr;
+    try {
+        auto plan = std::make_unique<BusActivityPlan>(*this);
+        plan->working.reserve(working.size());
+        plan->directory.resize(topology.slotCount);
+        plan->order.reserve(working.size());
+        for (std::uint32_t i = 0; i < topology.slotCount; ++i)
+            plan->directory[i] = {UINT32_MAX, topology.generations[i], topology.parents[i]};
+        // Master always occupies plane zero, independent of feeds-first order.
+        for (const auto& binding : working) {
+            const auto bus = binding.bus;
+            if (!bus.Valid() || bus.index >= topology.slotCount || topology.alive[bus.index] == 0 ||
+                topology.generations[bus.index] != bus.generation ||
+                plan->directory[bus.index].plane != UINT32_MAX) return nullptr;
+            auto* row = ResolveWorkRow(binding.work);
+            if (row == nullptr || row->bus.busIndex != bus.index || row->bus.generation != bus.generation ||
+                (topology.busIds != nullptr && row->bus.id != topology.busIds[bus.index]) ||
+                !RetainWorkRow(binding.work)) return nullptr;
+            plan->working.push_back(binding);
+            plan->directory[bus.index].plane = bus.index == 0 ? 0 : 1;
+        }
+        if (plan->directory[0].plane != 0) return nullptr;
+        std::uint32_t plane = 1;
+        for (auto& binding : plan->working)
+            if (binding.bus.index != 0) plan->directory[binding.bus.index].plane = plane++;
+        for (const auto& binding : plan->working) {
+            const auto bus = binding.bus.index;
+            if (bus != 0 && (topology.parents[bus] >= topology.slotCount ||
+                plan->directory[topology.parents[bus]].plane == UINT32_MAX)) return nullptr;
+            const auto sends = topology.Sends(bus);
+            for (std::uint32_t s = 0; s < sends.count; ++s) {
+                const auto target = topology.sendTargets[sends.first + s];
+                if (target != kEmptySendTarget && (target >= topology.slotCount ||
+                    plan->directory[target].plane == UINT32_MAX)) return nullptr;
+            }
+        }
+        std::vector<std::uint8_t> seen(topology.slotCount);
+        for (std::uint32_t i = 0; i < topology.orderCount; ++i) {
+            const auto bus = topology.order[i];
+            if (bus >= topology.slotCount || seen[bus]++) return nullptr;
+            if (plan->directory[bus].plane != UINT32_MAX) plan->order.push_back(bus);
+        }
+        if (plan->order.size() != working.size()) return nullptr;
+        if (signals != nullptr) {
+            for (std::uint32_t i = 0; i < signals->NodeCount(); ++i) {
+                const auto node = signals->NodeDefinition(i);
+                if (node.kind != SignalEndpointKindV1::Bus) continue;
+                if (node.busIndex >= topology.slotCount || plan->directory[node.busIndex].plane == UINT32_MAX ||
+                    node.busId != topology.busIds[node.busIndex] || node.busGeneration != topology.generations[node.busIndex])
+                    return nullptr;
+            }
+            for (const auto& binding : plan->working)
+                if (signals->NodeForBus(binding.bus.index, topology.busIds[binding.bus.index],
+                        binding.bus.generation) == UINT32_MAX) return nullptr;
+            signals->EnableActualRouting(topology.slotCount);
+        }
+        plan->signals = std::move(signals);
+        auto* result = plan.get();
+        m_activities.push_back(std::move(plan));
+        return result;
+    } catch (...) { return nullptr; }
+}
+
+CommandQueue::BusActivityAttachment* BusTree::ActivityAttachment(BusActivityPlan* plan) noexcept {
+    return plan != nullptr && &plan->tree == this &&
+        plan->phase.load(std::memory_order_acquire) == BusActivityPlan::Phase::Preparing
+        ? &plan->attachment : nullptr;
+}
+
+void BusTree::CancelActivity(BusActivityPlan* plan) noexcept {
+    if (plan == nullptr || &plan->tree != this) return;
+    auto expected = BusActivityPlan::Phase::Preparing;
+    plan->phase.compare_exchange_strong(expected, BusActivityPlan::Phase::Retired,
+        std::memory_order_release, std::memory_order_relaxed);
+}
+
+void BusTree::QueueActivity(BusActivityPlan& plan) noexcept {
+    assert(plan.phase.load(std::memory_order_relaxed) == BusActivityPlan::Phase::Preparing);
+    for (const auto& binding : plan.working) {
+        if (PreparedWorkRow(binding.work) != nullptr) {
+            const bool published = PublishWorkRow(binding.work);
+            assert(published);
+            (void)published;
+        }
+    }
+    m_lastQueuedActivity = &plan;
+    plan.phase.store(BusActivityPlan::Phase::Queued, std::memory_order_release);
+}
+
+bool BusTree::AdoptActivity(BusActivityPlan& plan) noexcept {
+    if (plan.phase.load(std::memory_order_acquire) != BusActivityPlan::Phase::Queued) return false;
+    for (const auto& binding : plan.working) {
+        const auto* row = ResolveWorkRow(binding.work);
+        if (row == nullptr || row->phase.load(std::memory_order_acquire) != WorkPhase::Published ||
+            row->references.load(std::memory_order_relaxed) >= UINT32_MAX - 1 ||
+            row->bus.busIndex != binding.bus.index || row->bus.generation != binding.bus.generation) return false;
+    }
+    auto* previousSignals = InstalledSignals();
+    if (plan.signals != nullptr && previousSignals != nullptr && plan.signals.get() != previousSignals &&
+        !plan.signals->AdoptContinuityFrom(*previousSignals)) return false;
+    // Only the coordinator mutates the directory, after all prior workers join.
+    // Every incoming candidate already owns a lease; none can retire here.
+    for (const auto& binding : plan.working) {
+        const auto bus = binding.bus.index;
+        if (m_workSlots[bus] == binding.work) continue;
+        const bool retained = RetainWorkRow(binding.work);
+        assert(retained);
+        if (!retained) std::terminate();
+        const auto old = m_workSlots[bus];
+        m_workSlots[bus] = binding.work;
+        AudioReleaseWorkRow(old);
+    }
+    const auto remove = [&](std::uint32_t bus) {
+        if (bus < plan.directory.size() && plan.directory[bus].plane != UINT32_MAX) return;
+        const auto old = m_workSlots[bus];
+        m_workSlots[bus] = {};
+        AudioReleaseWorkRow(old);
+    };
+    if (m_activeActivity != nullptr) {
+        for (auto bus : m_activeActivity->order) remove(bus);
+        m_activeActivity->phase.store(BusActivityPlan::Phase::Retired, std::memory_order_release);
+    } else {
+        // Bootstrap only: subsequent adoptions visit the previous work set.
+        for (std::uint32_t bus = 0; bus < m_audioCount; ++bus) remove(bus);
+    }
+    m_activeActivity = &plan;
+    plan.phase.store(BusActivityPlan::Phase::Active, std::memory_order_release);
+    return true;
+}
+
+void BusTree::DrainActivities() noexcept {
+    std::erase_if(m_activities, [&](const auto& plan) {
+        if (plan->phase.load(std::memory_order_acquire) != BusActivityPlan::Phase::Retired) return false;
+        if (m_lastQueuedActivity == plan.get()) m_lastQueuedActivity = nullptr;
+        return true;
+    });
+    DrainWorkRows();
+}
+
+void BusTree::ShutdownActivities() noexcept {
+    m_activeActivity = m_lastQueuedActivity = nullptr;
+    m_activities.clear();
+}
+
+std::uint32_t BusTree::WorkingPlaneCount() const noexcept {
+    return m_activeActivity != nullptr ? static_cast<std::uint32_t>(m_activeActivity->working.size()) : m_audioCount;
+}
+
+BusRenderView BusTree::RenderView(float* const* planes) noexcept {
+    return m_activeActivity != nullptr ? BusRenderView(planes, m_activeActivity->directory, &m_activityFallbacks)
+        : BusRenderView(planes);
+}
+
+std::span<const std::uint32_t> BusTree::WorkingOrder() const noexcept {
+    if (m_activeActivity != nullptr) return m_activeActivity->order;
+    const auto plan = m_plans.View(m_currentPlanIndex);
+    return plan.valid ? std::span<const std::uint32_t>(plan.order, plan.orderCount)
+        : std::span<const std::uint32_t>{};
+}
+
+SignalRenderPlan* BusTree::InstalledSignals() const {
+    return m_activeActivity != nullptr ? m_activeActivity->signals.get() : m_plans.View(m_currentPlanIndex).signals;
+}
+
+} // namespace harken

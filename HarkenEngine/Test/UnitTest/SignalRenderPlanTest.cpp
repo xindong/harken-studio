@@ -451,3 +451,50 @@ TEST(SignalRenderPlan, WakeSelectsAcceptedOrRejectedSleepAndThenOneSuccessor) {
         }
     }
 }
+
+TEST(SignalRenderPlan, ActivityProjectionPreservesAuthoredRecoveryAndAllCarrierProofs) {
+    std::array nodes{SignalRenderNodeInput{SignalEndpointKindV1::Sound},
+                     SignalRenderNodeInput{SignalEndpointKindV1::Container, true, 37, 777},
+                     SignalRenderNodeInput{SignalEndpointKindV1::Bus}};
+    for (unsigned i = 0; i < nodes.size(); ++i) nodes[i].stableId = {0, i + 1u};
+    nodes[2].busIndex = 31;
+    const std::array relations{SignalConnectionInput{0, 1, .4f, {0, 4}}};
+    const std::array paths{SignalFeedbackEdge{0, 1, .4f, true}};
+    std::array<SignalMemberProof, 3> proofs{};
+    proofs[0].stableId = nodes[0].stableId; proofs[0].propertyFingerprint = 11; proofs[0].node = 0;
+    proofs[1].stableId = nodes[1].stableId; proofs[1].propertyFingerprint = 22; proofs[1].node = 1;
+    proofs[2] = proofs[1]; proofs[2].source.ownerStableId = 10; proofs[2].source.ownerRevision = 2;
+    auto full = SignalRenderPlan::Prepare(kFormat, nodes, relations, paths, proofs);
+    ASSERT_NE(nullptr, full);
+    const std::array selected{1u, 0u};
+    auto projection = full->PrepareProjection(selected, 32);
+    ASSERT_NE(nullptr, projection);
+    EXPECT_EQ(2u, projection->NodeCount());
+    EXPECT_EQ(3u, projection->Membership().size());
+    EXPECT_FLOAT_EQ(37, projection->NodeDefinition(0).attackMs);
+    EXPECT_FLOAT_EQ(777, projection->NodeDefinition(0).releaseMs);
+    EXPECT_EQ(1u, projection->Relations()[0].source);
+    EXPECT_EQ(0u, projection->Relations()[0].target);
+    Member source, target, refSource, refTarget;
+    source.nodes[0] = 1; target.nodes[0] = 0;
+    refSource.nodes[0] = 0; refTarget.nodes[0] = 1;
+    const std::array members{source.Image(1), target.Image(1)};
+    const std::array reference{refSource.Image(1), refTarget.Image(1)};
+    for (unsigned epoch = 0; epoch < 40; ++epoch) {
+        source.pcm.fill(epoch < 12 ? .7f : 0); refSource.pcm = source.pcm;
+        target.pcm.fill(.5f); refTarget.pcm = target.pcm;
+        ASSERT_TRUE(projection->BeginBlock(Block(epoch)));
+        ASSERT_TRUE(projection->ProcessContent(members));
+        ASSERT_TRUE(projection->CommitBlock());
+        ASSERT_TRUE(full->BeginBlock(Block(epoch)));
+        ASSERT_TRUE(full->ProcessContent(reference));
+        ASSERT_TRUE(full->CommitBlock());
+        EXPECT_EQ(target.pcm, refTarget.pcm) << epoch;
+    }
+    const std::array severed{1u};
+    EXPECT_EQ(nullptr, full->PrepareProjection(severed, 32));
+    const std::array duplicate{0u, 0u};
+    EXPECT_EQ(nullptr, full->PrepareProjection(duplicate, 32));
+    const std::array highBus{2u};
+    EXPECT_EQ(nullptr, full->PrepareProjection(highBus, 31));
+}

@@ -82913,7 +82913,7 @@ VnResult SetPreviewVoiceEffectChain(std::uint64_t render,
     engine->voices.DrainEffectChainUpdates();
     engine->voices.DrainVoiceSendSets();
     engine->buses.DrainPreviewEffectChains();
-    engine->buses.DrainWorkRows();
+    engine->buses.DrainActivities();
     EffectChainUpdate* update = nullptr;
     auto dspMask = parameterMask;
     for (std::uint32_t i = 0; i < engine->config.fxSlotsPerVoice; ++i)
@@ -112157,7 +112157,7 @@ VnResult Vn_Update(void) {
         ResetFreeVoiceSendMirror(*engine, slot);
     }
     engine->buses.DrainPreviewEffectChains();
-    engine->buses.DrainWorkRows();
+    engine->buses.DrainActivities();
     /* Hot-reload retirement detection: destroy every old content generation
      * whose last logical voice has drained. The audio thread only ever
      * decrements the shared use counters; all freeing happens here on the
