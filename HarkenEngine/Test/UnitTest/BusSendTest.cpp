@@ -173,6 +173,112 @@ TEST(BusSend, CompactFormalMixDoesNotGroupDifferentBusGenerations) {
     }
 }
 
+
+TEST(BusSend, CompactSignalRoutingPreservesVoiceSendsAndSegmentedFeedback) {
+    using namespace harken;
+    const auto render = [](bool compact, bool dynamic, std::vector<float>& output) {
+        auto config = MakeNullConfig(1, kBlockFrames, 48000);
+        config.maxBuses = 5; config.fxSlotsPerBus = 2;
+        config.compressorEffectPoolCapacity = 1;
+        EngineSession session(config);
+        ASSERT_EQ(VN_OK, session.InitResult());
+        auto& engine = *session.Engine();
+        for (auto id : {kBusA, kBusB, kBusC, kBusD})
+            ASSERT_EQ(VN_OK, Vn_CreateBus(id, VN_BUS_MASTER));
+        engine.nullBackend.Pump(1);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        ASSERT_EQ(VN_OK, Vn_ConnectBusSend(kBusA, kBusD, -6));
+        ASSERT_EQ(VN_OK, Vn_SetBusOutputFilter(kBusD, kFilterKindLowpass, 4000, .707f, 1, 0));
+        if (dynamic) {
+            VnCompressorDesc compressor{};
+            compressor.structSize = sizeof(compressor); compressor.thresholdDb = -18;
+            compressor.ratio = 4; compressor.attackMs = 5; compressor.releaseMs = 80;
+            compressor.kneeDb = 3;
+            ASSERT_EQ(VN_OK, Vn_SetBusEffect(kBusD, 1, VN_EFFECT_COMPRESSOR,
+                reinterpret_cast<const VnEffectDesc*>(&compressor)));
+        }
+        engine.nullBackend.Pump(16);
+        ASSERT_EQ(VN_OK, Vn_Update());
+        if (dynamic) {
+            VnEffectDynamicRouteDesc route{};
+            route.structSize = sizeof(route); route.signalForm = VN_DYNAMIC_SIGNAL_RAW_AUDIO;
+            route.sourceKind = VN_DYNAMIC_SOURCE_BUS; route.sourceId = kBusA;
+            route.expectedEffectType = VN_EFFECT_COMPRESSOR; route.tap = VN_DYNAMIC_TAP_BUS_PRE_FADER;
+            ASSERT_EQ(VN_OK, Vn_SetBusEffectDynamicRoute(kBusD, 1, 0, &route));
+            engine.nullBackend.Pump(1);
+        }
+        const auto soundId = harkentest::ObjectId(901);
+        auto samples = MakeDC(kBlockFrames * 32, .125f);
+        const auto desc = MonoDesc(samples, 48000);
+        ASSERT_EQ(VN_OK, Vn_RegisterPCM(soundId, &desc));
+        const auto pcm = engine.registry.Lookup(soundId);
+        const auto soundNode = compact ? 0u : 5u;
+        const auto sourceNode = compact ? 1u : 4u;
+        const auto targetNode = compact ? 3u : 1u;
+        std::vector<SignalRenderNodeInput> nodes(compact ? 4 : 6);
+        const auto addBus = [&](unsigned node, unsigned bus) {
+            nodes[node].busIndex = bus; nodes[node].busId = engine.buses.IdAt(bus);
+            nodes[node].stableId = nodes[node].busId;
+            nodes[node].busGeneration = engine.buses.GenerationAt(bus);
+        };
+        if (compact) { addBus(1, 4); addBus(2, 0); addBus(3, 1); }
+        else for (unsigned bus = 0; bus != 5; ++bus) addBus(bus, bus);
+        nodes[soundNode].kind = SignalEndpointKindV1::Sound;
+        nodes[soundNode].stableId = soundId; nodes[soundNode].receiver = true;
+        nodes[targetNode].receiver = true;
+        const std::array relations{SignalConnectionInput{sourceNode, soundNode, .05f},
+                                  SignalConnectionInput{soundNode, targetNode, .03f}};
+        const std::array paths{SignalFeedbackEdge{sourceNode, soundNode, .05f, true},
+                              SignalFeedbackEdge{soundNode, targetNode, .03f, true}};
+        SignalMemberProof proof{soundId, 1, {}, soundNode};
+        auto signals = SignalRenderPlan::Prepare({2, kBlockFrames, 48000, VN_CHANNEL_LAYOUT_STEREO},
+            nodes, relations, paths, {&proof, 1});
+        ASSERT_NE(nullptr, signals);
+        signals->EnableActualRouting(engine.buses.AudioBusCount());
+        VnVoiceHandle voice = 0;
+        ASSERT_EQ(VN_OK, engine.voices.Play(pcm, 0, 1, 1, false, 0, 0, 0,
+            ResolvePanGains(engine.config.mixChannelLayout, 0), 0, pcm.frames, 0,
+            ResampleProfile::LegacyCompatibility, &voice));
+        PlaybackPathRow path;
+        path.rowKind = ResolvedPlayablePathRowKindV1::Definition;
+        path.contentPropertyKind = playableproperties::ContentPropertyKindV1::Sound;
+        path.stableId = soundId; path.propertyFingerprint = 1;
+        ASSERT_TRUE(engine.voices.BindPreparedSignalPath(voice, {&path, 1}));
+        VoiceSendDefinition definition{7000, 4, engine.buses.GenerationAt(4), -6, 1};
+        VoiceSendSet* sends = nullptr;
+        ASSERT_EQ(VN_OK, engine.voices.PrepareVoiceSendSet(voice, {&definition, 1}, false, 0, &sends));
+        ASSERT_TRUE(engine.voices.InstallPreparedVoiceSendSet(voice, *sends));
+        engine.voices.ApplyPlay(voice, voice, 0, 0);
+        std::array<std::array<float, kBlockFrames>, 10> storage{};
+        std::array<float*, 10> planes{};
+        for (unsigned i = 0; i != planes.size(); ++i) planes[i] = storage[i].data();
+        BlockArena arena(1024 * 1024);
+        for (std::uint32_t block = 0; block != 16; ++block) {
+            arena.Reset();
+            for (auto& lane : storage) lane.fill(0);
+            engine.dynamicRoutes.BeginBlock();
+            ASSERT_TRUE(signals->BeginBlock({1, 1, 1, block, block * kBlockFrames, kBlockFrames}));
+            const auto result = engine.voices.RenderAll(arena, planes.data(), kBlockFrames,
+                engine.notifications, block, 0, block * kBlockFrames, signals.get(), &engine.buses);
+            ASSERT_FALSE(result.signalFailed); ASSERT_FALSE(result.batchDeferred);
+            ASSERT_TRUE(engine.buses.MixDown(planes.data(), kBlockFrames, block,
+                block * kBlockFrames, signals.get()));
+            ASSERT_TRUE(signals->CommitBlock());
+            output.insert(output.end(), storage[0].begin(), storage[0].end());
+            output.insert(output.end(), storage[1].begin(), storage[1].end());
+        }
+    };
+    for (bool dynamic : {false, true}) {
+        SCOPED_TRACE(dynamic);
+        std::vector<float> dense, compact;
+        render(false, dynamic, dense); render(true, dynamic, compact);
+        ASSERT_EQ(16u * kBlockFrames * 2u, dense.size());
+        ASSERT_EQ(dense.size(), compact.size());
+        EXPECT_GT(dense.back(), 0);
+        EXPECT_EQ(0, std::memcmp(dense.data(), compact.data(), dense.size() * sizeof(float)));
+    }
+}
+
 TEST_F(BusSendSlotReconcile, SameSlotAndTargetPreserveActiveRamp) {
     const std::uint32_t initial = BuildPlan(2, harken::kEmptySendTarget);
     ASSERT_NE(harken::kInvalidTopologyPlanIndex, initial);

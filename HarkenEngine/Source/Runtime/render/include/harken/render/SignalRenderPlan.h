@@ -88,6 +88,9 @@ public:
             std::sort(next->busNodes_.begin(), next->busNodes_.end());
             for (std::size_t i = 1; i < next->busNodes_.size(); ++i)
                 if (next->busNodes_[i - 1].first == next->busNodes_[i].first) return {};
+            next->busOrdinalByNode_.resize(nodes.size(), UINT32_MAX);
+            for (std::uint32_t i = 0; i < next->busNodes_.size(); ++i)
+                next->busOrdinalByNode_[next->busNodes_[i].second] = i;
             next->membership_.assign(membership.begin(), membership.end());
             std::sort(next->membership_.begin(), next->membership_.end(),
                 [](const auto& a, const auto& b) { return a.stableId < b.stableId; });
@@ -286,14 +289,13 @@ public:
         blockRouting_ = routing;
         return true;
     }
-    void EnableActualRouting() noexcept {
+    // The definition bound belongs to the topology used to prepare this
+    // projection; it is independent of how many Bus nodes remain active.
+    void EnableActualRouting(std::uint32_t preparedBusSlots = 0) noexcept {
         actualRouting_ = true;
-        routingBusCount_ = 0;
-        while (routingBusCount_ < nodes_.size() &&
-               nodes_[routingBusCount_].kind == SignalEndpointKindV1::Bus &&
-               routingBusCount_ < busNodes_.size() &&
-               busNodes_[routingBusCount_] == std::pair(routingBusCount_, routingBusCount_))
-            ++routingBusCount_;
+        routingBusSlotBound_ = preparedBusSlots;
+        if (routingBusSlotBound_ == 0 && !busNodes_.empty())
+            routingBusSlotBound_ = busNodes_.back().first + 1u;
     }
     bool UsesActualRouting() const noexcept { return actualRouting_; }
     // Current dynamic-route consumers target Buses, never Sound DSP. With
@@ -753,7 +755,8 @@ private:
     bool independentSounds_ = false, preparedSoundRouting_ = false;
     bool independentBuses_ = false;
     std::vector<std::uint8_t> busReachability_;
-    std::uint32_t routingBusCount_ = 0;
+    std::vector<std::uint32_t> busOrdinalByNode_;
+    std::uint32_t routingBusSlotBound_ = 0;
     SignalFeedbackPlan feedback_;
     SignalFeedbackView blockRouting_{};
     std::span<std::byte> routingStorage_{};

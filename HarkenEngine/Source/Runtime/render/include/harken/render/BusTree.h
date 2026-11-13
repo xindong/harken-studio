@@ -35,6 +35,7 @@
 #include "harken/render/InsertEffect.h"
 #include "harken/render/TopologyPlan.h"
 #include "harken/render/SignalPathBounds.h"
+#include "harken/render/SignalRoutingTypes.h"
 
 #include <cstdint>
 #include <atomic>
@@ -329,20 +330,25 @@ public:
                  std::uint64_t blockEpoch, std::uint64_t sourceFrameBegin = 0,
                  SignalRenderPlan* signals = nullptr);
     std::size_t SignalRoutingEdgeCapacity() const noexcept {
-        return static_cast<std::size_t>(m_audioCount) + m_plans.View(m_currentPlanIndex).sendCount +
-            SignalRoutingExtraNodes() + m_dynamicRoutes.InstalledPlan().rowCount;
+        return SignalRoutingEdgeCapacity(SignalBusMapping::Dense(m_audioCount));
     }
     std::size_t SignalRoutingExtraNodes() const noexcept {
-        const auto plan = m_dynamicRoutes.InstalledPlan();
-        for (std::uint32_t i = 0; i < plan.rowCount; ++i)
-            if (plan.rows[i].sourceKind == VN_DYNAMIC_SOURCE_BUS)
-                return static_cast<std::size_t>(m_audioCount) * (m_fxSlots + 2ull);
-        return 0;
+        return SignalRoutingExtraNodes(SignalBusMapping::Dense(m_audioCount));
+    }
+    std::size_t SignalRoutingEdgeCapacity(SignalBusMapping mapping) const noexcept;
+    std::size_t SignalRoutingExtraNodes(SignalBusMapping mapping) const noexcept;
+    std::uint32_t SignalRoutingSnapshot(std::span<SignalBusRoutingInfo> buses,
+        std::span<SignalFeedbackEdge> edges, std::uint32_t frames,
+        std::span<SignalBiquadSegment> schedules, std::uint32_t nodeOffset) noexcept {
+        return SignalRoutingSnapshot(buses, edges, frames, schedules, nodeOffset,
+            SignalBusMapping::Dense(m_audioCount));
     }
     std::uint32_t SignalRoutingSnapshot(std::span<SignalBusRoutingInfo> buses,
         std::span<SignalFeedbackEdge> edges, std::uint32_t frames,
-        std::span<SignalBiquadSegment> schedules, std::uint32_t nodeOffset) noexcept;
-    bool SignalReceiversCannotReachSources(std::span<std::uint8_t> roles) const noexcept;
+        std::span<SignalBiquadSegment> schedules, std::uint32_t nodeOffset,
+        SignalBusMapping mapping) noexcept;
+    bool SignalReceiversCannotReachSources(std::span<std::uint8_t> roles,
+        SignalBusMapping mapping) const noexcept;
     SignalRenderPlan* InstalledSignals() const {
         return m_plans.View(m_currentPlanIndex).signals;
     }

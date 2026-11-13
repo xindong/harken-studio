@@ -1312,29 +1312,60 @@ SignalBusRoutingInfo BusTree::SignalBusBounds(std::uint32_t index, std::uint32_t
     return result;
 }
 
+std::size_t BusTree::SignalRoutingExtraNodes(SignalBusMapping mapping) const noexcept {
+    const auto plan = m_dynamicRoutes.InstalledPlan();
+    for (std::uint32_t i = 0; i < plan.rowCount; ++i) {
+        const auto& row = plan.rows[i];
+        if (row.sourceKind == VN_DYNAMIC_SOURCE_BUS &&
+            mapping.Ordinal(row.sourceIndex) != UINT32_MAX &&
+            mapping.Ordinal(row.targetBusIndex) != UINT32_MAX)
+            return static_cast<std::size_t>(mapping.Count()) * (m_fxSlots + 2ull);
+    }
+    return 0;
+}
+
+std::size_t BusTree::SignalRoutingEdgeCapacity(SignalBusMapping mapping) const noexcept {
+    const auto plan = m_plans.View(m_currentPlanIndex);
+    auto result = static_cast<std::size_t>(mapping.Count()) + SignalRoutingExtraNodes(mapping) +
+        m_dynamicRoutes.InstalledPlan().rowCount;
+    if (plan.valid)
+        for (std::uint32_t i = 0; i < mapping.Count(); ++i)
+            if (mapping.Bus(i) < m_audioCount) result += plan.Sends(mapping.Bus(i)).count;
+    return result;
+}
+
 std::uint32_t BusTree::SignalRoutingSnapshot(std::span<SignalBusRoutingInfo> info,
     std::span<SignalFeedbackEdge> edges, std::uint32_t frames,
-    std::span<SignalBiquadSegment> schedules, std::uint32_t nodeOffset) noexcept {
+    std::span<SignalBiquadSegment> schedules, std::uint32_t nodeOffset,
+    SignalBusMapping mapping) noexcept {
+    const auto count = mapping.Count();
     const auto perBus = static_cast<std::size_t>(4) * (frames / 16u + 2u);
-    if (info.size() < m_audioCount || edges.size() < SignalRoutingEdgeCapacity() ||
-        schedules.size() < m_audioCount * perBus) return UINT32_MAX;
+    const auto extraNodes = SignalRoutingExtraNodes(mapping);
+    if (info.size() < count || edges.size() < SignalRoutingEdgeCapacity(mapping) ||
+        schedules.size() < count * perBus || extraNodes > UINT32_MAX -
+            static_cast<std::uint64_t>(nodeOffset)) return UINT32_MAX;
     const auto plan = m_plans.View(m_currentPlanIndex);
-    const bool segmented = SignalRoutingExtraNodes() != 0;
-    if (SignalRoutingExtraNodes() > UINT32_MAX - static_cast<std::uint64_t>(nodeOffset)) return UINT32_MAX;
-    const auto inputNode = [&](std::uint32_t bus) {
-        return segmented ? nodeOffset + bus * (m_fxSlots + 2) : bus;
+    const bool segmented = extraNodes != 0;
+    const auto inputNode = [&](std::uint32_t ordinal) {
+        return segmented ? nodeOffset + ordinal * (m_fxSlots + 2) : mapping.Node(ordinal);
     };
-    for (std::uint32_t i = 0; i < m_audioCount; ++i) {
-        if (plan.valid && plan.alive != nullptr && plan.alive[i] == 0) continue;
-        info[i] = SignalBusBounds(i, frames, schedules.subspan(i * perBus, perBus));
+    for (std::uint32_t i = 0; i < count; ++i) {
+        info[i] = {};
+        const auto bus = mapping.Bus(i);
+        if (mapping.Node(i) >= nodeOffset) return UINT32_MAX;
+        // A prepared world can retain empty definition slots beyond the
+        // installed topology. They have no routing state to sample.
+        if (bus >= m_audioCount) continue;
+        if (plan.valid && plan.alive != nullptr && plan.alive[bus] == 0) continue;
+        info[i] = SignalBusBounds(bus, frames, schedules.subspan(i * perBus, perBus));
         info[i].inputNode = inputNode(i);
-        WorkState(i).signalBoundsPrepared = true;
+        WorkState(bus).signalBoundsPrepared = true;
     }
     std::uint32_t used = 0;
     if (segmented) {
-        for (std::uint32_t bus = 0; bus < m_audioCount; ++bus) {
-            if (info[bus].id == VnBusId{}) continue;
-            const auto base = inputNode(bus);
+        for (std::uint32_t i = 0; i < count; ++i) {
+            if (info[i].id == VnBusId{}) continue;
+            const auto bus = mapping.Bus(i), base = inputNode(i);
             const auto fader = std::min(WorkState(bus).faderAfterSlot, m_fxSlots);
             auto previous = base;
             for (std::uint32_t slot = 0; slot <= m_fxSlots; ++slot) {
@@ -1347,16 +1378,16 @@ std::uint32_t BusTree::SignalRoutingSnapshot(std::span<SignalBusRoutingInfo> inf
                     previous = base + slot + 1;
                 }
             }
-            edges[used++] = {previous, bus, info[bus].inputBound, false};
+            edges[used++] = {previous, mapping.Node(i), info[i].inputBound, false};
         }
         const auto routes = m_dynamicRoutes.InstalledPlan();
         for (std::uint32_t i = 0; i < routes.rowCount; ++i) {
             const auto& row = routes.rows[i];
-            if (!m_dynamicRoutes.InstalledBusTapMatches(row) || row.sourceIndex >= m_audioCount ||
-                row.targetBusIndex >= m_audioCount || row.effectSlot >= m_fxSlots ||
-                info[row.sourceIndex].id == VnBusId{} || info[row.targetBusIndex].id == VnBusId{} ||
+            const auto from = mapping.Ordinal(row.sourceIndex), to = mapping.Ordinal(row.targetBusIndex);
+            if (!m_dynamicRoutes.InstalledBusTapMatches(row) || from == UINT32_MAX || to == UINT32_MAX ||
+                row.effectSlot >= m_fxSlots || info[from].id == VnBusId{} || info[to].id == VnBusId{} ||
                 WorkState(row.targetBusIndex).fxSlotEffectRef[row.effectSlot].type != VN_EFFECT_COMPRESSOR) continue;
-            const auto base = inputNode(row.sourceIndex);
+            const auto base = inputNode(from);
             const auto fader = std::min(WorkState(row.sourceIndex).faderAfterSlot, m_fxSlots);
             std::uint32_t source = 0;
             switch (row.tap) {
@@ -1366,39 +1397,44 @@ std::uint32_t BusTree::SignalRoutingSnapshot(std::span<SignalBusRoutingInfo> inf
                 source = base + m_fxSlots + (fader == m_fxSlots ? 1u : 0u); break;
             default: return UINT32_MAX;
             }
-            // External detector sensitivity has no main-independent finite
-            // bound. Preserve its actual injection point and localize that
-            // limit to components that really return through this dependency.
-            edges[used++] = {source, inputNode(row.targetBusIndex) + row.effectSlot + 1,
+            edges[used++] = {source, inputNode(to) + row.effectSlot + 1,
                 row.levelLinear == 0 ? 0 : std::numeric_limits<double>::infinity(), false};
         }
     }
-    for (std::uint32_t from = 0; from < m_audioCount; ++from) {
-        if (info[from].id == VnBusId{}) continue;
+    for (std::uint32_t i = 0; i < count; ++i) {
+        if (info[i].id == VnBusId{}) continue;
+        const auto from = mapping.Bus(i);
         const auto& bus = WorkState(from);
-        if (from != 0 && bus.parentIndex < m_audioCount && info[bus.parentIndex].id != VnBusId{})
-            edges[used++] = {from, inputNode(bus.parentIndex),
-                SignalBoundProduct(info[from].outputFilterBound,
-                    segmented ? 1 : info[bus.parentIndex].inputBound), false};
+        const auto parent = mapping.Ordinal(bus.parentIndex);
+        if (from != 0 && parent != UINT32_MAX && info[parent].id != VnBusId{})
+            edges[used++] = {mapping.Node(i), inputNode(parent),
+                SignalBoundProduct(info[i].outputFilterBound, segmented ? 1 : info[parent].inputBound), false};
         if (!plan.valid) continue;
         const auto range = plan.Sends(from);
         for (std::uint32_t slot = 0; slot < range.count; ++slot) {
-            const auto to = plan.sendTargets[range.first + slot];
-            if (to == kEmptySendTarget || to >= m_audioCount || info[to].id == VnBusId{}) continue;
+            const auto to = mapping.Ordinal(plan.sendTargets[range.first + slot]);
+            if (to == UINT32_MAX || info[to].id == VnBusId{}) continue;
             const auto* edge = &plan.sendStates[range.first + slot];
             auto gain = edge->gain;
             if (edge->ramping) gain.SetBlockTarget(edge->rampStartGain, edge->rampEndGain,
                 edge->rampBlocksDone, edge->rampBlocksTotal);
             const double level = std::max(std::abs(static_cast<double>(gain.current)),
                 std::abs(static_cast<double>(gain.target)));
-            edges[used++] = {from, inputNode(to), SignalBoundProduct(level, segmented ? 1 : info[to].inputBound), false};
+            edges[used++] = {mapping.Node(i), inputNode(to),
+                SignalBoundProduct(level, segmented ? 1 : info[to].inputBound), false};
         }
     }
     return used;
 }
 
-bool BusTree::SignalReceiversCannotReachSources(std::span<std::uint8_t> roles) const noexcept {
-    if (roles.size() < m_audioCount || SignalRoutingExtraNodes() != 0) return false;
+bool BusTree::SignalReceiversCannotReachSources(std::span<std::uint8_t> roles,
+    SignalBusMapping mapping) const noexcept {
+    // The full-tree shortcut is optional. A compact/reordered projection uses
+    // the exact active graph below, never a scan of unrelated definitions.
+    if (mapping.Count() != m_audioCount || roles.size() < mapping.Count() ||
+        SignalRoutingExtraNodes(mapping) != 0) return false;
+    for (std::uint32_t i = 0; i < mapping.Count(); ++i)
+        if (mapping.Bus(i) != i || mapping.Node(i) != i) return false;
     const auto plan = m_plans.View(m_currentPlanIndex);
     const auto count = plan.valid ? plan.orderCount : m_audioCount;
     // Reverse the existing feeds-first ordinary order. Bit 1 propagates from
