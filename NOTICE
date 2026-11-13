@@ -26,6 +26,7 @@ recorded in `.docs/quality/DEPENDENCY_POLICY.md`).
 |---|---|---|---|---|
 | GoogleTest | v1.17.0 | BSD-3-Clause | Test framework (tests only, never shipped) | CMake FetchContent, official GitHub release archive |
 | miniaudio | v0.11.22 (2025-02-24), with local WASAPI lifecycle changes | MIT-0 or public domain (dual, caller's choice) | Shared-mode audio device output in the engine's device backend: WASAPI (Windows), Core Audio (macOS/iOS), AAudio with OpenSL ES fallback (Android); wav decoding in the host tool. Studio independently uses the decoder for source media and Pack compilation. Compiled without feature trimming in the Engine, which builds the full upstream feature set; Studio's offline decoder disables device I/O and the high-level engine | Independently vendored at `HarkenEngine/ThirdParty/miniaudio/miniaudio.h` and `HarkenStudio/ThirdParty/miniaudio/miniaudio.h` (both sha256 1ed4f1588d5413b90fa189640e7de5c8082039d2f666ef2dd3a378396954a936); full license text embedded in each header |
+| Harken Vorbis decoder | Derived from libvorbis 1.3.7 decode sources and libogg 1.3.6 `bitwise.c`, with local changes | BSD-3-Clause | Decoding of resident and streamed Vorbis media in the engine. Floor 0 with its LSP/LPC support, the encoder and Ogg framing are removed; external symbols are renamed and memory comes from engine-supplied storage | Vendored at `HarkenEngine/ThirdParty/vorbis-decoder`, derived from the copies vendored at `HarkenStudio/ThirdParty/libvorbis` and `HarkenStudio/ThirdParty/libogg` |
 
 ## Studio front end only (`HarkenStudio/` subtree, never in the runtime closure)
 
@@ -88,7 +89,15 @@ complete corresponding source accessible to binary recipients.
 
 - **The standalone Unity integration** carries Apache-2.0 `LICENSE.md` and an integration-specific
   `NOTICE.md` inside `HarkenIntegration/Unity/Harken`, including the chosen MIT-0 terms
-  for miniaudio.
+  for miniaudio and the BSD-3-Clause texts for the Harken Vorbis decoder.
+
+- **The Harken Vorbis decoder** (`HarkenEngine/ThirdParty/vorbis-decoder`) keeps the
+  upstream BSD-3-Clause texts beside the derived sources: `COPYING` for the
+  files derived from libvorbis and `COPYING.ogg` for `bitwise.c` and the `ogg/`
+  headers derived from libogg. Each derived file keeps its upstream header.
+  Runtime tests additionally link the unmodified libogg and libvorbis from
+  `HarkenStudio/ThirdParty` as an independent reference decoder; that use is
+  test-only and never shipped.
 
 - **miniaudio** is vendored, so its full license text travels with the source:
   the dual Unlicense / MIT-0 notice (including the upstream copyright line) is
