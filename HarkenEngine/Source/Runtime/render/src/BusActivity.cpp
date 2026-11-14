@@ -1,8 +1,33 @@
 #include "harken/render/BusActivityPlan.h"
 #include "harken/render/VoicePool.h"
+#include <bit>
 #include <stdexcept>
 
 namespace harken {
+
+namespace {
+bool DefaultDormantFilter(const BusTree::DormantToneSection& value) noexcept {
+    const BusTree::DormantToneSection initial;
+    const auto same = [](float a, float b) { return std::bit_cast<std::uint32_t>(a) == std::bit_cast<std::uint32_t>(b); };
+    const auto& a = value.coefficients;
+    const auto& b = initial.coefficients;
+    return !value.enabled && value.zeroSigns == 0 && value.tailFrames == 0 &&
+        same(a.b0, b.b0) && same(a.b1, b.b1) && same(a.b2, b.b2) && same(a.a1, b.a1) && same(a.a2, b.a2) &&
+        same(value.log2Hz, initial.log2Hz) && same(value.log2Q, initial.log2Q) && same(value.gainDb, initial.gainDb) &&
+        std::bit_cast<std::uint64_t>(value.signalHighWater) == std::bit_cast<std::uint64_t>(initial.signalHighWater) &&
+        value.signalBound.SameState(initial.signalBound) &&
+        std::all_of(std::begin(value.lastInput), std::end(value.lastInput), [](float sample) {
+            return std::bit_cast<std::uint32_t>(sample) == 0;
+        });
+}
+
+bool DefaultDormantWork(const BusDormantWork& saved) noexcept {
+    return std::all_of(saved.filters.begin(), saved.filters.end(), DefaultDormantFilter) &&
+        std::all_of(saved.effects.begin(), saved.effects.end(), [](const auto& effect) {
+            return effect.type == kEffectTypeNone;
+        });
+}
+}
 
 bool PrepareBusActivitySelection(const TopologyPlanView& topology,
     const SignalRenderPlan* signals, std::span<const BusSlotRef> busRoots,
@@ -333,7 +358,9 @@ bool BusTree::AcknowledgeSleep() noexcept {
                     latest->directory[bus.index].generation != bus.generation ||
                     latest->directory[bus.index].plane != UINT32_MAX) continue;
                 std::erase_if(next->buses, [&](const auto& old) { return old->bus == bus; });
-                next->buses.push_back(row.saved);
+                // Exact defaults reconstruct without history. Disabled filters
+                // with frozen input or non-default certificates remain owned.
+                if (!DefaultDormantWork(*row.saved)) next->buses.push_back(row.saved);
             }
             if (plan.dormantSignals && latest->signals) {
                 std::shared_ptr<const SignalRenderPlan::DormantState> rest;

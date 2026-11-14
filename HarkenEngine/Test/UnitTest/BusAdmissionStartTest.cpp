@@ -270,6 +270,7 @@ harken::ProjectGenerationInstallViewV1 MakeInstallView(
 
 TEST(BusAdmissionStart, PreparedPoolRecyclesExactlyOnceAfterRetirement) {
     harken::TopologyPlanPool pool(2, 4, 2);
+    const auto idleBytes = pool.StorageBytes();
     static_assert(noexcept(pool.Recycle(0)));
     static_assert(noexcept(std::declval<harken::ParamSystem&>().SetInstalledValue(harkentest::ObjectId(1), 0.0f)));
     static_assert(noexcept(std::declval<harken::ParamSystem&>().NoteVariableWrite(harkentest::ObjectId(1))));
@@ -278,11 +279,15 @@ TEST(BusAdmissionStart, PreparedPoolRecyclesExactlyOnceAfterRetirement) {
     const auto first = pool.Acquire();
     const auto second = pool.Acquire();
     ASSERT_NE(first, second);
+    const auto occupiedBytes = pool.StorageBytes();
+    EXPECT_GT(occupiedBytes, idleBytes);
     pool.Retire(first);
+    EXPECT_EQ(occupiedBytes, pool.StorageBytes());
     EXPECT_TRUE(pool.IsAcquired(first));
     EXPECT_EQ(2u, pool.InUse());
     EXPECT_EQ(harken::kInvalidTopologyPlanIndex, pool.Acquire());
     pool.DrainRetire();
+    EXPECT_LT(pool.StorageBytes(), occupiedBytes);
     EXPECT_FALSE(pool.IsAcquired(first));
     EXPECT_EQ(1u, pool.InUse());
     pool.Recycle(first);
@@ -294,6 +299,7 @@ TEST(BusAdmissionStart, PreparedPoolRecyclesExactlyOnceAfterRetirement) {
     pool.Recycle(second);
     pool.Recycle(second);
     EXPECT_EQ(0u, pool.InUse());
+    EXPECT_EQ(idleBytes, pool.StorageBytes());
 }
 
 TEST(BusAdmissionStart, PreparationAllowsAudioToConsumePreviouslyPublishedCommands) {

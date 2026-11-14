@@ -12,25 +12,8 @@ TopologyPlanPool::TopologyPlanPool(std::uint32_t capacity,
     : m_capacity(capacity),
       m_busCapacity(busCapacity),
       m_slotsPerBus(slotsPerBus),
-      m_order(static_cast<std::size_t>(capacity) * busCapacity, 0),
       m_orderCount(capacity, 0),
-      m_sends(capacity),
-      m_outputLayouts(static_cast<std::size_t>(capacity) * busCapacity, 0),
-      m_downmixCoeffs(static_cast<std::size_t>(capacity) * busCapacity * 64,
-                      0.0f),
-      m_parents(static_cast<std::size_t>(capacity) * busCapacity,
-                kPlanParentUnset),
-      m_alive(static_cast<std::size_t>(capacity) * busCapacity, 1),
-      m_busIds(static_cast<std::size_t>(capacity) * busCapacity),
-      m_generations(static_cast<std::size_t>(capacity) * busCapacity, 0),
-      m_migrationTargets(static_cast<std::size_t>(capacity) * busCapacity, 0),
-      m_preparedBusVolumeDb(static_cast<std::size_t>(capacity) * busCapacity,
-                            0.0f),
-      m_preparedBusOutputVolumeDb(
-          static_cast<std::size_t>(capacity) * busCapacity, 0.0f),
-      m_preparedBusVolumeRampMs(
-          static_cast<std::size_t>(capacity) * busCapacity, 0),
-      m_busVolumeApply(static_cast<std::size_t>(capacity) * busCapacity, 0),
+      m_storage(capacity),
       m_slotCount(capacity, 0),
       m_signals(capacity),
       m_effectUpdates(capacity),
@@ -71,47 +54,35 @@ std::uint32_t TopologyPlanPool::AcquireImpl(bool legacyRows, std::uint32_t sendA
         return kInvalidTopologyPlanIndex;
     }
     const std::uint32_t index = m_free.back();
-    auto& sendCounts = m_buildScratch.sendCounts;
-    std::fill(sendCounts.begin(), sendCounts.end(), legacyRows ? m_slotsPerBus : 0);
-    if (!PrepareSendRows(index, sendCounts) || !ReserveSendCapacity(index, sendAllowance)) {
-        m_sends[index] = SendStorage{};
+    auto& storage = m_storage[index];
+    try {
+        storage.order.assign(m_busCapacity, 0);
+        storage.outputLayouts.assign(m_busCapacity, 0);
+        storage.downmixCoeffs.assign(static_cast<std::size_t>(m_busCapacity) * 64, 0);
+        storage.parents.assign(m_busCapacity, kPlanParentUnset);
+        storage.alive.assign(m_busCapacity, 1);
+        storage.busIds.resize(m_busCapacity);
+        storage.busGenerations.assign(m_busCapacity, 0);
+        storage.migrationTargets.resize(m_busCapacity);
+        for (std::uint32_t i = 0; i < m_busCapacity; ++i) storage.migrationTargets[i] = i;
+        storage.preparedBusVolumeDb.assign(m_busCapacity, 0);
+        storage.preparedBusOutputVolumeDb.assign(m_busCapacity, 0);
+        storage.preparedBusVolumeRampMs.assign(m_busCapacity, 0);
+        storage.busVolumeApply.assign(m_busCapacity, 0);
+        auto& counts = m_buildScratch.sendCounts;
+        std::fill(counts.begin(), counts.end(), legacyRows ? m_slotsPerBus : 0);
+        if (!PrepareSendRows(index, counts) || !ReserveSendCapacity(index, sendAllowance)) {
+            storage = {};
+            return kInvalidTopologyPlanIndex;
+        }
+    } catch (...) {
+        storage = {};
         return kInvalidTopologyPlanIndex;
     }
     m_free.pop_back();
     m_acquired[index] = 1;
-    ++m_inUse;
-    if (m_inUse > m_highWater) {
-        m_highWater = m_inUse;
-    }
-    // Clear the slot so a builder writes only what it populates.
-    m_orderCount[index] = 0;
-    // Clear the fold config to "no fold": a builder that ignores it publishes a
-    // plan that folds no bus (layout 0, zero coefficients).
-    const std::size_t fb = FoldBase(index);
-    for (std::uint32_t i = 0; i < m_busCapacity; ++i) {
-        m_outputLayouts[fb + i] = 0;
-    }
-    const std::size_t cb = CoeffBase(index);
-    for (std::uint32_t i = 0; i < m_busCapacity * 64; ++i) {
-        m_downmixCoeffs[cb + i] = 0.0f;
-    }
-    // Clear parents to leave-unchanged and liveness to alive: a builder that
-    // ignores them publishes a plan that moves no tree edge and tombstones
-    // nothing. slotCount 0 marks "no slot info" (adopted as orderCount).
-    const std::size_t pb = FoldBase(index);
-    for (std::uint32_t i = 0; i < m_busCapacity; ++i) {
-        m_parents[pb + i] = kPlanParentUnset;
-        m_alive[pb + i] = 1;
-        m_busIds[pb + i] = {};
-        m_generations[pb + i] = 0;
-        m_migrationTargets[pb + i] = i;
-        m_preparedBusVolumeDb[pb + i] = 0.0f;
-        m_preparedBusOutputVolumeDb[pb + i] = 0.0f;
-        m_preparedBusVolumeRampMs[pb + i] = 0;
-        m_busVolumeApply[pb + i] = 0;
-    }
-    m_slotCount[index] = 0;
-    m_effectUpdates[index].clear();
+    m_highWater = std::max(m_highWater, ++m_inUse);
+    m_orderCount[index] = m_slotCount[index] = 0;
     return index;
 }
 
@@ -123,83 +94,48 @@ bool TopologyPlanPool::CopyPlanFrom(const TopologyPlanPool& source,
         source.m_slotsPerBus != m_slotsPerBus) {
         return false;
     }
-    const std::size_t buses = m_busCapacity;
-    const std::size_t coeffs = buses * 64;
-    const std::size_t srcOrder = source.OrderBase(sourceIndex);
-    const std::size_t dstOrder = OrderBase(destinationIndex);
-    std::copy(source.m_order.begin() + srcOrder,
-              source.m_order.begin() + srcOrder + buses,
-              m_order.begin() + dstOrder);
-    m_orderCount[destinationIndex] = source.m_orderCount[sourceIndex];
+    if (!source.IsAcquired(sourceIndex) || !IsAcquired(destinationIndex)) return false;
     try {
-        const auto& prior = source.m_sends[sourceIndex];
-        SendStorage next;
+        const auto& prior = source.m_storage[sourceIndex];
+        PlanStorage next;
+        next.order = prior.order;
+        next.outputLayouts = prior.outputLayouts;
+        next.downmixCoeffs = prior.downmixCoeffs;
+        next.parents = prior.parents;
+        next.alive = prior.alive;
+        next.busIds = prior.busIds;
+        next.busGenerations = prior.busGenerations;
+        next.generations = prior.generations;
+        next.migrationTargets = prior.migrationTargets;
+        next.preparedBusVolumeDb = prior.preparedBusVolumeDb;
+        next.preparedBusOutputVolumeDb = prior.preparedBusOutputVolumeDb;
+        next.preparedBusVolumeRampMs = prior.preparedBusVolumeRampMs;
+        next.busVolumeApply = prior.busVolumeApply;
         next.ranges = prior.ranges;
         next.slots = prior.slots;
-        next.generations = prior.generations;
         next.targets = prior.targets;
         next.levels = prior.levels;
         next.apply = prior.apply;
         next.ramps = prior.ramps;
-        // Never read mutable audio state while preparing a successor plan.
-        next.states.resize(prior.targets.size());
-        m_sends[destinationIndex] = std::move(next);
-    }
-    catch (...) { return false; }
-    const std::size_t srcFold = source.FoldBase(sourceIndex);
-    const std::size_t dstFold = FoldBase(destinationIndex);
-    std::copy(source.m_outputLayouts.begin() + srcFold,
-              source.m_outputLayouts.begin() + srcFold + buses,
-              m_outputLayouts.begin() + dstFold);
-    std::copy(source.m_parents.begin() + srcFold,
-              source.m_parents.begin() + srcFold + buses,
-              m_parents.begin() + dstFold);
-    std::copy(source.m_alive.begin() + srcFold,
-              source.m_alive.begin() + srcFold + buses,
-              m_alive.begin() + dstFold);
-    std::copy(source.m_busIds.begin() + srcFold,
-              source.m_busIds.begin() + srcFold + buses,
-              m_busIds.begin() + dstFold);
-    std::copy(source.m_generations.begin() + srcFold,
-              source.m_generations.begin() + srcFold + buses,
-              m_generations.begin() + dstFold);
-    std::copy(source.m_migrationTargets.begin() + srcFold,
-              source.m_migrationTargets.begin() + srcFold + buses,
-              m_migrationTargets.begin() + dstFold);
-    std::copy(source.m_preparedBusVolumeDb.begin() + srcFold,
-              source.m_preparedBusVolumeDb.begin() + srcFold + buses,
-              m_preparedBusVolumeDb.begin() + dstFold);
-    std::copy(source.m_preparedBusOutputVolumeDb.begin() + srcFold,
-              source.m_preparedBusOutputVolumeDb.begin() + srcFold + buses,
-              m_preparedBusOutputVolumeDb.begin() + dstFold);
-    std::copy(source.m_preparedBusVolumeRampMs.begin() + srcFold,
-              source.m_preparedBusVolumeRampMs.begin() + srcFold + buses,
-              m_preparedBusVolumeRampMs.begin() + dstFold);
-    std::copy(source.m_busVolumeApply.begin() + srcFold,
-              source.m_busVolumeApply.begin() + srcFold + buses,
-              m_busVolumeApply.begin() + dstFold);
-    const std::size_t srcCoeff = source.CoeffBase(sourceIndex);
-    const std::size_t dstCoeff = CoeffBase(destinationIndex);
-    std::copy(source.m_downmixCoeffs.begin() + srcCoeff,
-              source.m_downmixCoeffs.begin() + srcCoeff + coeffs,
-              m_downmixCoeffs.begin() + dstCoeff);
-    m_slotCount[destinationIndex] = source.m_slotCount[sourceIndex];
-    m_signals[destinationIndex] = source.m_signals[sourceIndex];
-    try {
-        m_effectUpdates[destinationIndex] = source.m_effectUpdates[sourceIndex];
-    } catch (...) {
-        return false;
-    }
-    return true;
+        // Send envelopes belong to audio; continuity adopts them at publication.
+        next.states.resize(prior.states.size());
+        auto effects = source.m_effectUpdates[sourceIndex];
+        m_storage[destinationIndex] = std::move(next);
+        m_effectUpdates[destinationIndex] = std::move(effects);
+        m_orderCount[destinationIndex] = source.m_orderCount[sourceIndex];
+        m_slotCount[destinationIndex] = source.m_slotCount[sourceIndex];
+        m_signals[destinationIndex] = source.m_signals[sourceIndex];
+        return true;
+    } catch (...) { return false; }
 }
 
 void TopologyPlanPool::Recycle(std::uint32_t planIndex) noexcept {
     if (!IsAcquired(planIndex) || m_free.size() >= m_free.capacity()) {
         return;
     }
-    m_sends[planIndex] = SendStorage{};
+    m_storage[planIndex] = PlanStorage{};
     m_signals[planIndex].reset();
-    m_effectUpdates[planIndex].clear();
+    std::vector<BusEffectChainAdoption>{}.swap(m_effectUpdates[planIndex]);
     m_free.push_back(planIndex);
     m_acquired[planIndex] = 0;
     --m_inUse;
@@ -207,6 +143,23 @@ void TopologyPlanPool::Recycle(std::uint32_t planIndex) noexcept {
 
 void TopologyPlanPool::SetEffectUpdates(std::uint32_t plan, std::vector<BusEffectChainAdoption> updates) {
     if (IsAcquired(plan)) m_effectUpdates[plan] = std::move(updates);
+}
+
+std::size_t TopologyPlanPool::StorageBytes() const noexcept {
+    const auto bytes = [](const auto& rows) { return rows.capacity() * sizeof(rows[0]); };
+    std::size_t total = sizeof(*this) + bytes(m_storage) + bytes(m_orderCount) + bytes(m_slotCount) +
+        bytes(m_signals) + bytes(m_effectUpdates) + bytes(m_acquired) + bytes(m_free) + bytes(m_retire) +
+        bytes(m_buildScratch.feeders) + bytes(m_buildScratch.emittedFeeders) +
+        bytes(m_buildScratch.emitted) + bytes(m_buildScratch.sendCounts);
+    for (const auto& row : m_storage)
+        total += bytes(row.order) + bytes(row.outputLayouts) + bytes(row.parents) + bytes(row.busGenerations) +
+            bytes(row.migrationTargets) + bytes(row.downmixCoeffs) + bytes(row.preparedBusVolumeDb) +
+            bytes(row.preparedBusOutputVolumeDb) + bytes(row.preparedBusVolumeRampMs) + bytes(row.alive) +
+            bytes(row.busVolumeApply) + bytes(row.busIds) + bytes(row.ranges) + bytes(row.slots) +
+            bytes(row.generations) + bytes(row.targets) + bytes(row.levels) + bytes(row.apply) +
+            bytes(row.ramps) + bytes(row.states);
+    for (const auto& updates : m_effectUpdates) total += bytes(updates);
+    return total;
 }
 
 void TopologyPlanPool::SetSignals(std::uint32_t plan, std::shared_ptr<SignalRenderPlan> signals) {
@@ -228,7 +181,7 @@ void TopologyPlanPool::DrainRetire() {
 }
 
 std::uint32_t* TopologyPlanPool::OrderData(std::uint32_t planIndex) {
-    return m_order.data() + OrderBase(planIndex);
+    return m_storage[planIndex].order.data();
 }
 
 void TopologyPlanPool::SetOrderCount(std::uint32_t planIndex,
@@ -247,7 +200,7 @@ bool TopologyPlanPool::PrepareSendRows(std::uint32_t planIndex,
             if (counts[i] > UINT32_MAX - total) return false;
             total += counts[i];
         }
-        auto& next = m_sends[planIndex];
+        auto& next = m_storage[planIndex];
         // Reserve every possibly failing allocation before changing contents.
         // Acquire prepares the direct-mutation allowance; FillPlan then only
         // rewrites unpublished rows within that allowance.
@@ -275,7 +228,7 @@ bool TopologyPlanPool::PrepareSendRows(std::uint32_t planIndex,
 bool TopologyPlanPool::ReserveSendCapacity(std::uint32_t planIndex, std::uint32_t count) {
     if (planIndex >= m_capacity) return false;
     try {
-        auto& next = m_sends[planIndex];
+        auto& next = m_storage[planIndex];
         const auto reserve = [](auto& values, std::size_t size) {
             detail::CheckedGrow(values, size, detail::LogicAllocSite::BusSendStorage);
             values.reserve(size);
@@ -294,94 +247,94 @@ bool TopologyPlanPool::ReserveSendCapacity(std::uint32_t planIndex, std::uint32_
 
 std::uint32_t* TopologyPlanPool::SendSlotsRow(std::uint32_t planIndex,
     std::uint32_t fromBus) {
-    auto& sends = m_sends[planIndex];
+    auto& sends = m_storage[planIndex];
     return sends.slots.empty() ? nullptr
         : sends.slots.data() + sends.ranges[fromBus].first;
 }
 
 std::uint64_t* TopologyPlanPool::SendGenerationsRow(std::uint32_t planIndex,
     std::uint32_t fromBus) {
-    auto& sends = m_sends[planIndex];
+    auto& sends = m_storage[planIndex];
     return sends.generations.empty() ? nullptr
         : sends.generations.data() + sends.ranges[fromBus].first;
 }
 
 std::uint32_t* TopologyPlanPool::SendTargetsRow(std::uint32_t planIndex,
     std::uint32_t fromBus) {
-    auto& sends = m_sends[planIndex];
+    auto& sends = m_storage[planIndex];
     return sends.targets.empty() ? nullptr
         : sends.targets.data() + sends.ranges[fromBus].first;
 }
 
 float* TopologyPlanPool::PreparedSendLevelsRow(std::uint32_t planIndex,
     std::uint32_t fromBus) {
-    auto& sends = m_sends[planIndex];
+    auto& sends = m_storage[planIndex];
     return sends.levels.empty() ? nullptr
         : sends.levels.data() + sends.ranges[fromBus].first;
 }
 
 std::uint8_t* TopologyPlanPool::SendLevelApplyRow(std::uint32_t planIndex,
     std::uint32_t fromBus) {
-    auto& sends = m_sends[planIndex];
+    auto& sends = m_storage[planIndex];
     return sends.apply.empty() ? nullptr
         : sends.apply.data() + sends.ranges[fromBus].first;
 }
 
 std::uint32_t* TopologyPlanPool::SendLevelRampMsRow(std::uint32_t planIndex,
     std::uint32_t fromBus) {
-    auto& sends = m_sends[planIndex];
+    auto& sends = m_storage[planIndex];
     return sends.ramps.empty() ? nullptr
         : sends.ramps.data() + sends.ranges[fromBus].first;
 }
 
 std::uint32_t* TopologyPlanPool::OutputLayoutData(std::uint32_t planIndex) {
-    return m_outputLayouts.data() + FoldBase(planIndex);
+    return m_storage[planIndex].outputLayouts.data();
 }
 
 float* TopologyPlanPool::DownmixCoeffsData(std::uint32_t planIndex) {
-    return m_downmixCoeffs.data() + CoeffBase(planIndex);
+    return m_storage[planIndex].downmixCoeffs.data();
 }
 
 std::uint32_t* TopologyPlanPool::ParentsData(std::uint32_t planIndex) {
-    return m_parents.data() + FoldBase(planIndex);
+    return m_storage[planIndex].parents.data();
 }
 
 std::uint8_t* TopologyPlanPool::AliveData(std::uint32_t planIndex) {
-    return m_alive.data() + FoldBase(planIndex);
+    return m_storage[planIndex].alive.data();
 }
 
 VnBusId* TopologyPlanPool::BusIdsData(std::uint32_t planIndex) {
-    return m_busIds.data() + FoldBase(planIndex);
+    return m_storage[planIndex].busIds.data();
 }
 
 std::uint32_t* TopologyPlanPool::GenerationsData(
     std::uint32_t planIndex) {
-    return m_generations.data() + FoldBase(planIndex);
+    return m_storage[planIndex].busGenerations.data();
 }
 
 std::uint32_t* TopologyPlanPool::MigrationTargetsData(
     std::uint32_t planIndex) {
-    return m_migrationTargets.data() + FoldBase(planIndex);
+    return m_storage[planIndex].migrationTargets.data();
 }
 
 float* TopologyPlanPool::PreparedBusVolumeDbData(
     std::uint32_t planIndex) {
-    return m_preparedBusVolumeDb.data() + FoldBase(planIndex);
+    return m_storage[planIndex].preparedBusVolumeDb.data();
 }
 
 float* TopologyPlanPool::PreparedBusOutputVolumeDbData(
     std::uint32_t planIndex) {
-    return m_preparedBusOutputVolumeDb.data() + FoldBase(planIndex);
+    return m_storage[planIndex].preparedBusOutputVolumeDb.data();
 }
 
 std::uint32_t* TopologyPlanPool::PreparedBusVolumeRampMsData(
     std::uint32_t planIndex) {
-    return m_preparedBusVolumeRampMs.data() + FoldBase(planIndex);
+    return m_storage[planIndex].preparedBusVolumeRampMs.data();
 }
 
 std::uint8_t* TopologyPlanPool::BusVolumeApplyData(
     std::uint32_t planIndex) {
-    return m_busVolumeApply.data() + FoldBase(planIndex);
+    return m_storage[planIndex].busVolumeApply.data();
 }
 
 void TopologyPlanPool::SetSlotCount(std::uint32_t planIndex,
@@ -396,9 +349,9 @@ TopologyPlanView TopologyPlanPool::View(std::uint32_t planIndex) const {
     if (!IsAcquired(planIndex)) {
         return v; // valid == false
     }
-    v.order = m_order.data() + OrderBase(planIndex);
+    v.order = m_storage[planIndex].order.data();
     v.orderCount = m_orderCount[planIndex];
-    const auto& sends = m_sends[planIndex];
+    const auto& sends = m_storage[planIndex];
     v.sendRanges = sends.ranges.data();
     v.sendSlots = sends.slots.data();
     v.sendGenerations = sends.generations.data();
@@ -409,21 +362,21 @@ TopologyPlanView TopologyPlanPool::View(std::uint32_t planIndex) const {
     v.sendCount = static_cast<std::uint32_t>(sends.targets.size());
     v.sendStates = sends.states.data();
     v.slotsPerBus = m_slotsPerBus;
-    v.outputLayouts = m_outputLayouts.data() + FoldBase(planIndex);
-    v.downmixCoeffs = m_downmixCoeffs.data() + CoeffBase(planIndex);
-    v.parents = m_parents.data() + FoldBase(planIndex);
-    v.alive = m_alive.data() + FoldBase(planIndex);
-    v.busIds = m_busIds.data() + FoldBase(planIndex);
-    v.generations = m_generations.data() + FoldBase(planIndex);
+    v.outputLayouts = m_storage[planIndex].outputLayouts.data();
+    v.downmixCoeffs = m_storage[planIndex].downmixCoeffs.data();
+    v.parents = m_storage[planIndex].parents.data();
+    v.alive = m_storage[planIndex].alive.data();
+    v.busIds = m_storage[planIndex].busIds.data();
+    v.generations = m_storage[planIndex].busGenerations.data();
     v.migrationTargets =
-        m_migrationTargets.data() + FoldBase(planIndex);
+        m_storage[planIndex].migrationTargets.data();
     v.preparedBusVolumeDb =
-        m_preparedBusVolumeDb.data() + FoldBase(planIndex);
+        m_storage[planIndex].preparedBusVolumeDb.data();
     v.preparedBusOutputVolumeDb =
-        m_preparedBusOutputVolumeDb.data() + FoldBase(planIndex);
+        m_storage[planIndex].preparedBusOutputVolumeDb.data();
     v.preparedBusVolumeRampMs =
-        m_preparedBusVolumeRampMs.data() + FoldBase(planIndex);
-    v.busVolumeApply = m_busVolumeApply.data() + FoldBase(planIndex);
+        m_storage[planIndex].preparedBusVolumeRampMs.data();
+    v.busVolumeApply = m_storage[planIndex].busVolumeApply.data();
     v.slotCount = m_slotCount[planIndex];
     v.signals = m_signals[planIndex].get();
     v.effectUpdates = m_effectUpdates[planIndex].data();

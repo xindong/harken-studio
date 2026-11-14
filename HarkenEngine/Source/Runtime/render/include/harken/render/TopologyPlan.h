@@ -245,28 +245,25 @@ public:
     std::uint32_t Capacity() const { return m_capacity; }
     std::uint32_t InUse() const { return m_inUse; }
     std::uint32_t HighWater() const { return m_highWater; }
+    std::size_t StorageBytes() const noexcept;
 
 private:
     std::uint32_t AcquireImpl(bool legacyRows, std::uint32_t sendAllowance);
     bool ReserveSendCapacity(std::uint32_t planIndex, std::uint32_t count);
-    std::size_t OrderBase(std::uint32_t planIndex) const {
-        return static_cast<std::size_t>(planIndex) * m_busCapacity;
-    }
-    std::size_t FoldBase(std::uint32_t planIndex) const {
-        return static_cast<std::size_t>(planIndex) * m_busCapacity;
-    }
-    std::size_t CoeffBase(std::uint32_t planIndex) const {
-        return static_cast<std::size_t>(planIndex) * m_busCapacity * 64;
-    }
 
     std::uint32_t m_capacity;
     std::uint32_t m_busCapacity;
     std::uint32_t m_slotsPerBus;
 
-    // Flat, index-addressed storage sized once at construction.
-    std::vector<std::uint32_t> m_order;       // capacity * busCapacity
+    // Only acquired plans own Bus arrays. Published arrays remain immutable
+    // until audio retirement reaches the serialized logic-side recycler.
     std::vector<std::uint32_t> m_orderCount;  // capacity
-    struct SendStorage {
+    struct PlanStorage {
+        std::vector<std::uint32_t> order, outputLayouts, parents, busGenerations, migrationTargets;
+        std::vector<float> downmixCoeffs, preparedBusVolumeDb, preparedBusOutputVolumeDb;
+        std::vector<std::uint32_t> preparedBusVolumeRampMs;
+        std::vector<std::uint8_t> alive, busVolumeApply;
+        std::vector<VnBusId> busIds;
         std::vector<TopologySendRange> ranges;
         std::vector<std::uint32_t> slots;
         std::vector<std::uint64_t> generations;
@@ -276,19 +273,8 @@ private:
         std::vector<std::uint32_t> ramps;
         mutable std::vector<BusSendState> states;
     };
-    std::vector<SendStorage> m_sends;
+    std::vector<PlanStorage> m_storage;
     TopologyBuildScratch m_buildScratch;
-    std::vector<std::uint32_t> m_outputLayouts; // capacity * busCapacity
-    std::vector<float> m_downmixCoeffs;         // capacity * busCapacity * 64
-    std::vector<std::uint32_t> m_parents;       // capacity * busCapacity
-    std::vector<std::uint8_t> m_alive;          // capacity * busCapacity
-    std::vector<VnBusId> m_busIds;         // capacity * busCapacity
-    std::vector<std::uint32_t> m_generations;    // capacity * busCapacity
-    std::vector<std::uint32_t> m_migrationTargets; // capacity * busCapacity
-    std::vector<float> m_preparedBusVolumeDb;      // capacity * busCapacity
-    std::vector<float> m_preparedBusOutputVolumeDb;
-    std::vector<std::uint32_t> m_preparedBusVolumeRampMs;
-    std::vector<std::uint8_t> m_busVolumeApply;
     std::vector<std::uint32_t> m_slotCount;     // capacity
 
     std::vector<std::shared_ptr<SignalRenderPlan>> m_signals;

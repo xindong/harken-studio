@@ -3262,6 +3262,7 @@ TEST(VariableCurrentSlice, ColdBusWaitsAsAWholeSliceThenWakesOrDisappears) {
         const auto host = engine->buses.FindRef(id);
         ASSERT_TRUE(host.Valid());
         ASSERT_FALSE(engine->buses.AcceptedWorkRef(host).Valid());
+        EXPECT_EQ(engine->buses.DormantWorkFor(host), nullptr);
         auto child = BusVolumeSliceTarget(engine, -12);
         child.locator.object = host.index;
         child.locator.objectGeneration = host.generation;
